@@ -8,7 +8,9 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import React from 'react';
 import { AutoRun, AutoRunHandle } from '../../../renderer/components/AutoRun';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
+import { imageCache } from '../../../renderer/hooks/batch/useAutoRunImageHandling';
 import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
+import { getEncoder } from '../../../renderer/utils/tokenCounter';
 import type { Theme, BatchRunState, SessionState } from '../../../renderer/types';
 import { useBatchStore } from '../../../renderer/stores/batchStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
@@ -57,9 +59,44 @@ beforeEach(() => {
 
 // Mock the external dependencies
 vi.mock('react-markdown', () => ({
-	default: ({ children }: { children: string }) => (
-		<div data-testid="react-markdown">{children}</div>
-	),
+	default: ({
+		children,
+		components,
+	}: {
+		children: string;
+		components?: Record<string, React.ComponentType<any>>;
+	}) => {
+		const ImageComponent = components?.img;
+		const ParagraphComponent = components?.p;
+		const AnchorComponent = components?.a;
+		const PreComponent = components?.pre;
+		const imageMatches = [...children.matchAll(/!\[([^\]]*)\]\(([^)]*)\)/g)];
+		const linkMatches = [...children.matchAll(/\[([^\]]+)\]\(([^)]+)\)/g)];
+		const mermaidMatches = [...children.matchAll(/```mermaid\n([\s\S]*?)```/g)];
+
+		return (
+			<div data-testid="react-markdown">
+				{children}
+				{ParagraphComponent && <ParagraphComponent>{children}</ParagraphComponent>}
+				{AnchorComponent &&
+					linkMatches.map((match, index) => (
+						<AnchorComponent key={`${match[2]}-${index}`} href={match[2]}>
+							{match[1]}
+						</AnchorComponent>
+					))}
+				{PreComponent &&
+					mermaidMatches.map((match, index) => (
+						<PreComponent key={`mermaid-${index}`}>
+							<code className="language-mermaid">{match[1]}</code>
+						</PreComponent>
+					))}
+				{ImageComponent &&
+					imageMatches.map((match, index) => (
+						<ImageComponent key={`image-${index}`} alt={match[1]} src={match[2]} />
+					))}
+			</div>
+		);
+	},
 }));
 
 vi.mock('remark-gfm', () => ({
@@ -86,6 +123,11 @@ vi.mock('react-syntax-highlighter', () => ({
 vi.mock('react-syntax-highlighter/dist/esm/styles/prism', () => ({
 	vscDarkPlus: {},
 	vs: {},
+}));
+
+vi.mock('../../../renderer/utils/tokenCounter', () => ({
+	getEncoder: vi.fn(() => new Promise(() => {})),
+	formatTokenCount: vi.fn((count: number) => `${count}`),
 }));
 
 vi.mock('../../../renderer/components/AutoRunnerHelpModal', () => ({
@@ -143,6 +185,7 @@ vi.mock('../../../renderer/components/AutoRunDocumentSelector', () => ({
 
 // Store the onChange handler so our mock can call it
 let autocompleteOnChange: ((content: string) => void) | null = null;
+let autocompleteHandlesKeyDown = false;
 
 vi.mock('../../../renderer/hooks/input/useTemplateAutocomplete', () => ({
 	useTemplateAutocomplete: ({
@@ -161,7 +204,7 @@ vi.mock('../../../renderer/hooks/input/useTemplateAutocomplete', () => ({
 				selectedIndex: 0,
 				position: { top: 0, left: 0 },
 			},
-			handleKeyDown: () => false,
+			handleKeyDown: () => autocompleteHandlesKeyDown,
 			handleChange: (e: React.ChangeEvent<HTMLTextAreaElement>) => {
 				// Actually call onChange with the new value to update state
 				onChange(e.target.value);
@@ -200,13 +243,14 @@ const createMockTheme = (): Theme => ({
 
 // Setup window.maestro mock
 const setupMaestroMock = () => {
+	autocompleteHandlesKeyDown = false;
 	const mockMaestro = {
 		fs: {
 			readFile: vi.fn().mockResolvedValue('data:image/png;base64,abc123'),
 			readDir: vi.fn().mockResolvedValue([]),
 		},
 		autorun: {
-			listImages: vi.fn().mockResolvedValue({ success: true, images: [] }),
+			listImages: vi.fn(() => new Promise(() => {})),
 			saveImage: vi.fn().mockResolvedValue({ success: true, relativePath: 'images/test-123.png' }),
 			deleteImage: vi.fn().mockResolvedValue({ success: true }),
 			writeDoc: vi.fn().mockResolvedValue(undefined),
@@ -214,6 +258,9 @@ const setupMaestroMock = () => {
 		settings: {
 			get: vi.fn().mockResolvedValue(null),
 			set: vi.fn().mockResolvedValue(undefined),
+		},
+		shell: {
+			openExternal: vi.fn().mockResolvedValue(undefined),
 		},
 	};
 
@@ -261,15 +308,33 @@ const createDefaultProps = (overrides: Partial<React.ComponentProps<typeof AutoR
 	...overrides,
 });
 
+const createDeferred = <T,>() => {
+	let resolve!: (value: T) => void;
+	let reject!: (reason?: unknown) => void;
+	const promise = new Promise<T>((promiseResolve, promiseReject) => {
+		resolve = promiseResolve;
+		reject = promiseReject;
+	});
+	return { promise, resolve, reject };
+};
+
+const advanceTimers = (ms: number) =>
+	act(async () => {
+		await vi.advanceTimersByTimeAsync(ms);
+	});
+
 describe('AutoRun', () => {
 	let mockMaestro: ReturnType<typeof setupMaestroMock>;
 
 	beforeEach(() => {
 		mockMaestro = setupMaestroMock();
+		imageCache.clear();
+		autocompleteHandlesKeyDown = false;
 		vi.useFakeTimers({ shouldAdvanceTime: true });
 	});
 
 	afterEach(() => {
+		imageCache.clear();
 		vi.clearAllMocks();
 		vi.useRealTimers();
 	});
@@ -361,6 +426,93 @@ describe('AutoRun', () => {
 			expect(props.onModeChange).toHaveBeenCalledWith('preview');
 		});
 
+		it('uses local mode state and preserves scroll percentage when no mode callback is provided', async () => {
+			let rafCallback: FrameRequestCallback | null = null;
+			const requestAnimationFrameSpy = vi
+				.spyOn(window, 'requestAnimationFrame')
+				.mockImplementation((callback: FrameRequestCallback) => {
+					rafCallback = callback;
+					return 1;
+				});
+			const props = createDefaultProps({
+				mode: undefined as any,
+				onModeChange: undefined as any,
+				content: 'Line\n'.repeat(100),
+				onStateChange: vi.fn(),
+			});
+
+			try {
+				renderWithProvider(<AutoRun {...props} />);
+
+				const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+				Object.defineProperty(textarea, 'scrollHeight', { configurable: true, value: 1000 });
+				Object.defineProperty(textarea, 'clientHeight', { configurable: true, value: 200 });
+				textarea.scrollTop = 400;
+
+				fireEvent.click(screen.getByTitle('Preview document'));
+
+				const preview = await screen
+					.findByTestId('react-markdown')
+					.then((node) => node.parentElement!);
+				Object.defineProperty(preview, 'scrollHeight', { configurable: true, value: 2000 });
+				Object.defineProperty(preview, 'clientHeight', { configurable: true, value: 500 });
+
+				act(() => {
+					rafCallback?.(0);
+				});
+
+				expect(preview.scrollTop).toBe(750);
+
+				preview.scrollTop = 300;
+				Object.defineProperty(preview, 'scrollHeight', { configurable: true, value: 1200 });
+				Object.defineProperty(preview, 'clientHeight', { configurable: true, value: 200 });
+				fireEvent.click(screen.getByTitle('Edit document'));
+
+				const nextTextarea = await screen.findByRole('textbox');
+				Object.defineProperty(nextTextarea, 'scrollHeight', { configurable: true, value: 900 });
+				Object.defineProperty(nextTextarea, 'clientHeight', { configurable: true, value: 300 });
+
+				act(() => {
+					rafCallback?.(0);
+				});
+
+				expect(nextTextarea.scrollTop).toBe(180);
+			} finally {
+				requestAnimationFrameSpy.mockRestore();
+			}
+		});
+
+		it('handles mode changes when no editor refs are mounted', () => {
+			let rafCallback: FrameRequestCallback | null = null;
+			const requestAnimationFrameSpy = vi
+				.spyOn(window, 'requestAnimationFrame')
+				.mockImplementation((callback: FrameRequestCallback) => {
+					rafCallback = callback;
+					return 1;
+				});
+			const ref = React.createRef<AutoRunHandle>();
+			const props = createDefaultProps({
+				folderPath: null,
+				mode: undefined as any,
+				onModeChange: undefined as any,
+			});
+
+			try {
+				renderWithProvider(<AutoRun {...props} ref={ref} />);
+
+				act(() => {
+					ref.current?.switchMode('preview');
+				});
+				act(() => {
+					rafCallback?.(0);
+				});
+
+				expect(screen.getByText('Select Auto Run Folder')).toBeInTheDocument();
+			} finally {
+				requestAnimationFrameSpy.mockRestore();
+			}
+		});
+
 		it('disables Edit button when batch run is active', () => {
 			const batchRunState = createBatchRunState();
 			const props = createDefaultProps({ batchRunState });
@@ -379,6 +531,17 @@ describe('AutoRun', () => {
 			fireEvent.change(textarea, { target: { value: 'New content' } });
 
 			expect(textarea).toHaveValue('New content');
+		});
+
+		it('uses cursor position zero as the undo snapshot fallback boundary', async () => {
+			const props = createDefaultProps({ content: 'Initial' });
+			renderWithProvider(<AutoRun {...props} />);
+
+			const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+			Object.defineProperty(textarea, 'selectionStart', { configurable: true, value: 0 });
+			fireEvent.change(textarea, { target: { value: 'Changed at start' } });
+
+			expect(textarea).toHaveValue('Changed at start');
 		});
 
 		it('shows Save/Revert buttons when content is dirty', async () => {
@@ -405,6 +568,18 @@ describe('AutoRun', () => {
 			const textarea = screen.getByRole('textbox');
 			expect(textarea).toHaveAttribute('readonly');
 		});
+
+		it('ignores textarea change events while locked', () => {
+			const batchRunState = createBatchRunState();
+			const props = createDefaultProps({ batchRunState, content: 'Locked content' });
+			renderWithProvider(<AutoRun {...props} />);
+
+			const textarea = screen.getByRole('textbox');
+			fireEvent.change(textarea, { target: { value: 'Should not apply' } });
+
+			expect(textarea).toHaveValue('Locked content');
+			expect(props.onContentChange).not.toHaveBeenCalled();
+		});
 	});
 
 	describe('Manual Save Functionality', () => {
@@ -416,7 +591,10 @@ describe('AutoRun', () => {
 			fireEvent.change(textarea, { target: { value: 'Updated content' } });
 
 			// Click the Save button
-			fireEvent.click(screen.getByText('Save'));
+			await act(async () => {
+				fireEvent.click(screen.getByText('Save'));
+				await Promise.resolve();
+			});
 
 			expect(mockMaestro.autorun.writeDoc).toHaveBeenCalledWith(
 				'/test/folder',
@@ -424,6 +602,31 @@ describe('AutoRun', () => {
 				'Updated content',
 				undefined // sshRemoteId (undefined for local sessions)
 			);
+		});
+
+		it('reports save failures without clearing dirty content', async () => {
+			const saveFailure = new Error('disk full');
+			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+			mockMaestro.autorun.writeDoc.mockRejectedValue(saveFailure);
+
+			try {
+				const props = createDefaultProps({ content: 'Initial' });
+				renderWithProvider(<AutoRun {...props} />);
+
+				const textarea = screen.getByRole('textbox');
+				fireEvent.change(textarea, { target: { value: 'Unsaved content' } });
+
+				await act(async () => {
+					fireEvent.click(screen.getByText('Save'));
+					await Promise.resolve();
+				});
+
+				expect(consoleError).toHaveBeenCalledWith('Failed to save:', saveFailure);
+				expect(textarea).toHaveValue('Unsaved content');
+				expect(screen.getByText('Save')).toBeInTheDocument();
+			} finally {
+				consoleError.mockRestore();
+			}
 		});
 
 		it('reverts content when clicking Revert button', async () => {
@@ -552,6 +755,52 @@ describe('AutoRun', () => {
 			});
 		});
 
+		it('lets template autocomplete consume textarea keys before editor shortcuts', async () => {
+			autocompleteHandlesKeyDown = true;
+			const props = createDefaultProps({ content: 'Hello World' });
+			renderWithProvider(<AutoRun {...props} />);
+
+			const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+			textarea.selectionStart = 5;
+			textarea.selectionEnd = 5;
+
+			fireEvent.keyDown(textarea, { key: 'Tab' });
+
+			expect(textarea).toHaveValue('Hello World');
+		});
+
+		it('saves dirty content on Cmd+S', async () => {
+			const props = createDefaultProps({ content: 'Initial' });
+			renderWithProvider(<AutoRun {...props} />);
+
+			const textarea = screen.getByRole('textbox');
+			fireEvent.change(textarea, { target: { value: 'Saved from shortcut' } });
+
+			await act(async () => {
+				fireEvent.keyDown(textarea, { key: 's', metaKey: true });
+				await Promise.resolve();
+			});
+
+			expect(mockMaestro.autorun.writeDoc).toHaveBeenCalledWith(
+				'/test/folder',
+				'test-doc.md',
+				'Saved from shortcut',
+				undefined
+			);
+		});
+
+		it('does not save clean content on Cmd+S', async () => {
+			const props = createDefaultProps({ content: 'Already saved' });
+			renderWithProvider(<AutoRun {...props} />);
+
+			await act(async () => {
+				fireEvent.keyDown(screen.getByRole('textbox'), { key: 's', metaKey: true });
+				await Promise.resolve();
+			});
+
+			expect(mockMaestro.autorun.writeDoc).not.toHaveBeenCalled();
+		});
+
 		it('toggles mode on Cmd+E', async () => {
 			const props = createDefaultProps({ mode: 'edit' });
 			renderWithProvider(<AutoRun {...props} />);
@@ -560,6 +809,19 @@ describe('AutoRun', () => {
 			fireEvent.keyDown(textarea, { key: 'e', metaKey: true });
 
 			expect(props.onModeChange).toHaveBeenCalledWith('preview');
+		});
+
+		it('does not toggle mode on Cmd+E while locked', () => {
+			const props = createDefaultProps({
+				mode: 'edit',
+				batchRunState: createBatchRunState(),
+			});
+			renderWithProvider(<AutoRun {...props} />);
+			props.onModeChange.mockClear();
+
+			fireEvent.keyDown(screen.getByRole('textbox'), { key: 'e', metaKey: true });
+
+			expect(props.onModeChange).not.toHaveBeenCalled();
 		});
 
 		it('inserts checkbox on Cmd+L at start of line', async () => {
@@ -581,6 +843,40 @@ describe('AutoRun', () => {
 			});
 		});
 
+		it('inserts checkbox at the start of the current line after a newline', async () => {
+			const props = createDefaultProps({ content: 'Intro\n' });
+			renderWithProvider(<AutoRun {...props} />);
+
+			const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+			textarea.selectionStart = 6;
+			textarea.selectionEnd = 6;
+
+			fireEvent.keyDown(textarea, { key: 'l', metaKey: true });
+			await advanceTimers(0);
+
+			expect(textarea).toHaveValue('Intro\n- [ ] ');
+			expect(textarea.selectionStart).toBe(12);
+		});
+
+		it('skips checkbox cursor restoration after unmount', async () => {
+			const onExternalLocalContentChange = vi.fn();
+			const props = createDefaultProps({
+				content: 'Intro\n',
+				onExternalLocalContentChange,
+			});
+			const { unmount } = renderWithProvider(<AutoRun {...props} />);
+
+			const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+			textarea.selectionStart = 6;
+			textarea.selectionEnd = 6;
+			fireEvent.keyDown(textarea, { key: 'l', metaKey: true });
+			unmount();
+
+			await advanceTimers(0);
+
+			expect(onExternalLocalContentChange).toHaveBeenCalledWith('Intro\n- [ ] ');
+		});
+
 		it('inserts checkbox on new line with Cmd+L in middle of text', async () => {
 			const props = createDefaultProps({ content: 'Some text' });
 			renderWithProvider(<AutoRun {...props} />);
@@ -597,6 +893,19 @@ describe('AutoRun', () => {
 			await waitFor(() => {
 				expect(textarea.value).toContain('\n- [ ] ');
 			});
+		});
+
+		it('leaves plain shifted Enter events alone', () => {
+			const props = createDefaultProps({ content: 'Plain line' });
+			renderWithProvider(<AutoRun {...props} />);
+
+			const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+			textarea.selectionStart = textarea.value.length;
+			textarea.selectionEnd = textarea.value.length;
+
+			fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: true });
+
+			expect(textarea).toHaveValue('Plain line');
 		});
 	});
 
@@ -671,6 +980,39 @@ describe('AutoRun', () => {
 			await waitFor(() => {
 				expect(textarea.value).toContain('  - Nested item\n  - ');
 			});
+		});
+
+		it('does not continue non-list lines on Enter', () => {
+			const props = createDefaultProps({ content: 'Plain line' });
+			renderWithProvider(<AutoRun {...props} />);
+
+			const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+			textarea.selectionStart = textarea.value.length;
+			textarea.selectionEnd = textarea.value.length;
+
+			fireEvent.keyDown(textarea, { key: 'Enter' });
+
+			expect(textarea).toHaveValue('Plain line');
+		});
+
+		it.each([
+			{ name: 'task list', content: '- [ ] First task', cursor: 16 },
+			{ name: 'unordered list', content: '- Item one', cursor: 10 },
+			{ name: 'ordered list', content: '1. First item', cursor: 13 },
+		])('skips delayed cursor restoration after unmount for $name', async ({ content, cursor }) => {
+			const onExternalLocalContentChange = vi.fn();
+			const props = createDefaultProps({ content, onExternalLocalContentChange });
+			const { unmount } = renderWithProvider(<AutoRun {...props} />);
+
+			const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+			textarea.selectionStart = cursor;
+			textarea.selectionEnd = cursor;
+			fireEvent.keyDown(textarea, { key: 'Enter' });
+			unmount();
+
+			await advanceTimers(0);
+
+			expect(onExternalLocalContentChange).toHaveBeenCalled();
 		});
 	});
 
@@ -779,10 +1121,89 @@ describe('AutoRun', () => {
 
 			const searchInput = await screen.findByPlaceholderText(/Search/);
 			fireEvent.change(searchInput, { target: { value: 'xyz' } });
+			await advanceTimers(150);
 
 			await waitFor(() => {
 				expect(screen.getByText('No matches')).toBeInTheDocument();
 			});
+
+			fireEvent.keyDown(searchInput, { key: 'Enter' });
+			fireEvent.keyDown(searchInput, { key: 'Enter', shiftKey: true });
+			expect(screen.getByText('No matches')).toBeInTheDocument();
+		});
+
+		it('debounces search counting and resets stale match navigation index', async () => {
+			const props = createDefaultProps({ content: 'alpha alpha beta' });
+			renderWithProvider(<AutoRun {...props} />);
+
+			const textarea = screen.getByRole('textbox');
+			fireEvent.keyDown(textarea, { key: 'f', metaKey: true });
+
+			const searchInput = await screen.findByPlaceholderText(/Search/);
+			fireEvent.change(searchInput, { target: { value: 'alpha' } });
+			await advanceTimers(150);
+
+			expect(screen.getByText('1/2')).toBeInTheDocument();
+
+			fireEvent.keyDown(searchInput, { key: 'Enter' });
+			expect(screen.getByText('2/2')).toBeInTheDocument();
+
+			fireEvent.change(searchInput, { target: { value: 'beta' } });
+			await advanceTimers(150);
+
+			expect(screen.getByText('1/1')).toBeInTheDocument();
+		});
+
+		it('keeps stale edit-mode match navigation from scrolling when content shrinks', async () => {
+			const props = createDefaultProps({ content: 'alpha alpha' });
+			renderWithProvider(<AutoRun {...props} />);
+
+			const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+			fireEvent.keyDown(textarea, { key: 'f', metaKey: true });
+
+			const searchInput = await screen.findByPlaceholderText(/Search/);
+			fireEvent.change(searchInput, { target: { value: 'alpha' } });
+			await advanceTimers(150);
+
+			fireEvent.change(textarea, { target: { value: 'alpha only once' } });
+			fireEvent.keyDown(searchInput, { key: 'Enter' });
+
+			expect(Element.prototype.scrollIntoView).not.toHaveBeenCalledWith({
+				behavior: 'smooth',
+				block: 'center',
+			});
+		});
+
+		it('closes preview search without a preview ref when no folder is selected', async () => {
+			const props = createDefaultProps({ folderPath: null, mode: 'preview' });
+			const { container } = renderWithProvider(<AutoRun {...props} />);
+
+			fireEvent.keyDown(container.firstChild as HTMLElement, { key: 'f', metaKey: true });
+			const searchInput = await screen.findByPlaceholderText(/Search/);
+			fireEvent.keyDown(searchInput, { key: 'Escape' });
+
+			await waitFor(() => {
+				expect(screen.queryByPlaceholderText(/Search/)).not.toBeInTheDocument();
+			});
+		});
+
+		it('returns focus to the preview container when closing preview search', async () => {
+			const props = createDefaultProps({ mode: 'preview', content: 'preview searchable preview' });
+			renderWithProvider(<AutoRun {...props} />);
+
+			const preview = screen.getByTestId('react-markdown').parentElement!;
+			fireEvent.keyDown(preview, { key: 'f', metaKey: true });
+
+			const searchInput = await screen.findByPlaceholderText(/Search/);
+			fireEvent.change(searchInput, { target: { value: 'preview' } });
+			await advanceTimers(150);
+			fireEvent.keyDown(searchInput, { key: 'Enter' });
+			fireEvent.keyDown(searchInput, { key: 'Escape' });
+
+			await waitFor(() => {
+				expect(screen.queryByPlaceholderText(/Search/)).not.toBeInTheDocument();
+			});
+			expect(document.activeElement).toBe(preview);
 		});
 	});
 
@@ -796,7 +1217,10 @@ describe('AutoRun', () => {
 			const textarea = screen.getByRole('textbox');
 			fireEvent.change(textarea, { target: { value: 'new content' } });
 
-			fireEvent.click(screen.getByText('Run'));
+			await act(async () => {
+				fireEvent.click(screen.getByText('Run'));
+				await Promise.resolve();
+			});
 
 			// Should save the dirty content before opening batch runner
 			expect(mockMaestro.autorun.writeDoc).toHaveBeenCalledWith(
@@ -805,6 +1229,20 @@ describe('AutoRun', () => {
 				'new content',
 				undefined // sshRemoteId (undefined for local sessions)
 			);
+			expect(onOpenBatchRunner).toHaveBeenCalled();
+		});
+
+		it('opens the batch runner without saving when content is clean', async () => {
+			const onOpenBatchRunner = vi.fn();
+			const props = createDefaultProps({ onOpenBatchRunner, content: 'clean content' });
+			renderWithProvider(<AutoRun {...props} />);
+
+			await act(async () => {
+				fireEvent.click(screen.getByText('Run'));
+				await Promise.resolve();
+			});
+
+			expect(mockMaestro.autorun.writeDoc).not.toHaveBeenCalled();
 			expect(onOpenBatchRunner).toHaveBeenCalled();
 		});
 
@@ -839,6 +1277,16 @@ describe('AutoRun', () => {
 			renderWithProvider(<AutoRun {...props} />);
 
 			expect(screen.getByText('Stopping...')).toBeInTheDocument();
+		});
+
+		it('opens the Playbook Exchange when the marketplace callback is provided', () => {
+			const onOpenMarketplace = vi.fn();
+			const props = createDefaultProps({ onOpenMarketplace });
+			renderWithProvider(<AutoRun {...props} />);
+
+			fireEvent.click(screen.getByText('PlayBooks'));
+
+			expect(onOpenMarketplace).toHaveBeenCalledTimes(1);
 		});
 	});
 
@@ -1074,6 +1522,47 @@ describe('AutoRun', () => {
 
 			expect(document.activeElement).toBe(textarea);
 		});
+
+		it('reports dirty state and guards no-op imperative actions', async () => {
+			const ref = React.createRef<AutoRunHandle>();
+			const props = createDefaultProps({ mode: 'edit', content: 'Initial' });
+			renderWithProvider(<AutoRun {...props} ref={ref} />);
+
+			expect(ref.current?.isDirty()).toBe(false);
+			ref.current?.switchMode('edit');
+			await act(async () => {
+				await ref.current?.save();
+			});
+			expect(props.onModeChange).not.toHaveBeenCalled();
+			expect(mockMaestro.autorun.writeDoc).not.toHaveBeenCalled();
+
+			fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Changed' } });
+
+			expect(ref.current?.isDirty()).toBe(true);
+		});
+
+		it('does not open reset modal when there are no completed tasks', () => {
+			const ref = React.createRef<AutoRunHandle>();
+			const props = createDefaultProps({ content: '- [ ] Pending task' });
+			renderWithProvider(<AutoRun {...props} ref={ref} />);
+
+			ref.current?.openResetTasksModal();
+
+			expect(screen.queryByText('Reset Completed Tasks')).not.toBeInTheDocument();
+		});
+
+		it('does not open reset modal while locked', () => {
+			const ref = React.createRef<AutoRunHandle>();
+			const props = createDefaultProps({
+				content: '- [x] Done task',
+				batchRunState: createBatchRunState(),
+			});
+			renderWithProvider(<AutoRun {...props} ref={ref} />);
+
+			ref.current?.openResetTasksModal();
+
+			expect(screen.queryByText('Reset Completed Tasks')).not.toBeInTheDocument();
+		});
 	});
 
 	describe('Session Switching', () => {
@@ -1210,6 +1699,15 @@ describe('AutoRun', () => {
 
 			expect(props.onModeChange).toHaveBeenCalledWith('preview');
 		});
+
+		it('does not request preview mode again when batch run starts in preview', () => {
+			const props = createDefaultProps({ mode: 'preview' });
+			const { rerender } = renderWithProvider(<AutoRun {...props} />);
+
+			rerender(<AutoRun {...props} batchRunState={createBatchRunState()} />);
+
+			expect(props.onModeChange).not.toHaveBeenCalled();
+		});
 	});
 
 	describe('Legacy onChange Prop', () => {
@@ -1243,6 +1741,19 @@ describe('AutoRun', () => {
 			expect(props.onModeChange).toHaveBeenCalledWith('preview');
 		});
 
+		it('does not toggle from container Cmd+E while locked', () => {
+			const props = createDefaultProps({
+				mode: 'edit',
+				batchRunState: createBatchRunState(),
+			});
+			const { container } = renderWithProvider(<AutoRun {...props} />);
+			props.onModeChange.mockClear();
+
+			fireEvent.keyDown(container.firstChild as HTMLElement, { key: 'e', metaKey: true });
+
+			expect(props.onModeChange).not.toHaveBeenCalled();
+		});
+
 		it('handles Cmd+F on container level', async () => {
 			const props = createDefaultProps({ mode: 'edit' });
 			const { container } = renderWithProvider(<AutoRun {...props} />);
@@ -1262,6 +1773,577 @@ describe('AutoRun', () => {
 			renderWithProvider(<AutoRun {...props} />);
 
 			expect(screen.getByTestId('react-markdown')).toHaveTextContent('No content yet');
+		});
+
+		it('ignores malformed attachment images with an empty source', () => {
+			const props = createDefaultProps({
+				mode: 'preview',
+				content: '![Empty]()',
+			});
+
+			renderWithProvider(<AutoRun {...props} />);
+
+			expect(screen.queryByAltText('Empty')).not.toBeInTheDocument();
+			expect(screen.queryByText('Loading image...')).not.toBeInTheDocument();
+			expect(mockMaestro.fs.readFile).not.toHaveBeenCalled();
+		});
+
+		it('loads URL-encoded relative attachment images from the Auto Run folder with SSH context', async () => {
+			mockMaestro.fs.readFile.mockResolvedValueOnce('data:image/png;base64,relative-image');
+			const props = createDefaultProps({
+				mode: 'preview',
+				content: '![Diagram](images/My%20Diagram.png)',
+				sshRemoteId: 'remote-123',
+			});
+
+			renderWithProvider(<AutoRun {...props} />);
+
+			expect(screen.getByText('Loading image...')).toBeInTheDocument();
+
+			const image = await screen.findByAltText('Diagram');
+			expect(mockMaestro.fs.readFile).toHaveBeenCalledWith(
+				'/test/folder/images/My Diagram.png',
+				'remote-123'
+			);
+			expect(image).toHaveAttribute('src', 'data:image/png;base64,relative-image');
+			expect(image.closest('span')).toHaveAttribute('title', 'Click to enlarge: My Diagram.png');
+		});
+
+		it('uses cached Auto Run folder images without reading from disk', async () => {
+			imageCache.set('/test/folder:images/cached.png', 'data:image/png;base64,cached-image');
+			const props = createDefaultProps({
+				mode: 'preview',
+				content: '![Cached](images/cached.png)',
+			});
+
+			renderWithProvider(<AutoRun {...props} />);
+
+			const image = await screen.findByAltText('Cached');
+			expect(image).toHaveAttribute('src', 'data:image/png;base64,cached-image');
+			expect(image.closest('span')).toHaveAttribute('title', 'Click to enlarge: cached.png');
+			expect(mockMaestro.fs.readFile).not.toHaveBeenCalled();
+		});
+
+		it('uses cached Auto Run folder images with trailing-slash filename fallback', async () => {
+			imageCache.set('/test/folder:images/', 'data:image/png;base64,trailing-cache');
+			const props = createDefaultProps({
+				mode: 'preview',
+				content: '![Trailing Folder](images/)',
+			});
+
+			renderWithProvider(<AutoRun {...props} />);
+
+			const image = await screen.findByAltText('Trailing Folder');
+			expect(image).toHaveAttribute('src', 'data:image/png;base64,trailing-cache');
+			expect(image.closest('span')).toHaveAttribute('title', 'Click to enlarge: images/');
+			expect(mockMaestro.fs.readFile).not.toHaveBeenCalled();
+		});
+
+		it('uses Auto Run folder image cache populated after initial render', async () => {
+			const cacheKey = '/test/folder:images/race.png';
+			let hasCalls = 0;
+			const hasSpy = vi.spyOn(imageCache, 'has').mockImplementation((key) => {
+				hasCalls += 1;
+				return key === cacheKey && hasCalls > 2;
+			});
+			const getSpy = vi.spyOn(imageCache, 'get').mockImplementation((key) => {
+				return key === cacheKey ? 'data:image/png;base64,race-image' : undefined;
+			});
+
+			try {
+				const props = createDefaultProps({
+					mode: 'preview',
+					content: '![Race](images/race.png)',
+				});
+
+				renderWithProvider(<AutoRun {...props} />);
+
+				const image = await screen.findByAltText('Race');
+				expect(image).toHaveAttribute('src', 'data:image/png;base64,race-image');
+				expect(mockMaestro.fs.readFile).not.toHaveBeenCalled();
+			} finally {
+				hasSpy.mockRestore();
+				getSpy.mockRestore();
+			}
+		});
+
+		it('uses cached non-image relative attachment paths without reading from disk', async () => {
+			imageCache.set('/test/folder:assets/logo.png', 'data:image/png;base64,asset-image');
+			const props = createDefaultProps({
+				mode: 'preview',
+				content: '![Logo](assets/logo.png)',
+			});
+
+			renderWithProvider(<AutoRun {...props} />);
+
+			const image = await screen.findByAltText('Logo');
+			expect(image).toHaveAttribute('src', 'data:image/png;base64,asset-image');
+			expect(image.closest('span')).toHaveAttribute('title', 'Click to enlarge: logo.png');
+			expect(mockMaestro.fs.readFile).not.toHaveBeenCalled();
+		});
+
+		it('uses cached relative attachment folders with generic lightbox title', async () => {
+			imageCache.set('/test/folder:assets/', 'data:image/png;base64,asset-folder');
+			const props = createDefaultProps({
+				mode: 'preview',
+				content: '![Asset Folder](assets/)',
+			});
+
+			renderWithProvider(<AutoRun {...props} />);
+
+			const image = await screen.findByAltText('Asset Folder');
+			expect(image).toHaveAttribute('src', 'data:image/png;base64,asset-folder');
+			expect(image.closest('span')).toHaveAttribute('title', 'Click to enlarge');
+			expect(mockMaestro.fs.readFile).not.toHaveBeenCalled();
+		});
+
+		it('uses relative attachment cache populated after initial render', async () => {
+			const cacheKey = '/test/folder:assets/race.png';
+			let hasCalls = 0;
+			const hasSpy = vi.spyOn(imageCache, 'has').mockImplementation((key) => {
+				hasCalls += 1;
+				return key === cacheKey && hasCalls > 1;
+			});
+			const getSpy = vi.spyOn(imageCache, 'get').mockImplementation((key) => {
+				return key === cacheKey ? 'data:image/png;base64,asset-race' : undefined;
+			});
+
+			try {
+				const props = createDefaultProps({
+					mode: 'preview',
+					content: '![Asset Race](assets/race.png)',
+				});
+
+				renderWithProvider(<AutoRun {...props} />);
+
+				const image = await screen.findByAltText('Asset Race');
+				expect(image).toHaveAttribute('src', 'data:image/png;base64,asset-race');
+				expect(mockMaestro.fs.readFile).not.toHaveBeenCalled();
+			} finally {
+				hasSpy.mockRestore();
+				getSpy.mockRestore();
+			}
+		});
+
+		it.each([
+			{
+				name: 'Auto Run folder image',
+				oldContent: '![Fresh](images/stale-old.png)',
+				newContent: '![Fresh](images/fresh.png)',
+				oldReadPath: '/test/folder/images/stale-old.png',
+				newReadPath: '/test/folder/images/fresh.png',
+				staleCacheKey: '/test/folder:images/stale-old.png',
+			},
+			{
+				name: 'absolute image path',
+				oldContent: '![Fresh](/tmp/stale-old.png)',
+				newContent: '![Fresh](/tmp/fresh.png)',
+				oldReadPath: '/tmp/stale-old.png',
+				newReadPath: '/tmp/fresh.png',
+			},
+			{
+				name: 'relative attachment path',
+				oldContent: '![Fresh](assets/stale-old.png)',
+				newContent: '![Fresh](assets/fresh.png)',
+				oldReadPath: '/test/folder/assets/stale-old.png',
+				newReadPath: '/test/folder/assets/fresh.png',
+				staleCacheKey: '/test/folder:assets/stale-old.png',
+			},
+		])(
+			'ignores stale successful reads for $name after the preview source changes',
+			async (scenario) => {
+				const staleRead = createDeferred<string>();
+				const freshRead = createDeferred<string>();
+				mockMaestro.fs.readFile
+					.mockReturnValueOnce(staleRead.promise)
+					.mockReturnValueOnce(freshRead.promise);
+				const props = createDefaultProps({
+					mode: 'preview',
+					content: scenario.oldContent,
+				});
+				const { rerender } = renderWithProvider(<AutoRun {...props} />);
+
+				await waitFor(() => {
+					expect(mockMaestro.fs.readFile).toHaveBeenCalledWith(scenario.oldReadPath, undefined);
+				});
+
+				rerender(<AutoRun {...props} content={scenario.newContent} contentVersion={1} />);
+				await waitFor(() => {
+					expect(mockMaestro.fs.readFile).toHaveBeenCalledWith(scenario.newReadPath, undefined);
+				});
+
+				await act(async () => {
+					freshRead.resolve('data:image/png;base64,fresh-image');
+					await freshRead.promise;
+				});
+
+				expect(await screen.findByAltText('Fresh')).toHaveAttribute(
+					'src',
+					'data:image/png;base64,fresh-image'
+				);
+
+				await act(async () => {
+					staleRead.resolve('data:image/png;base64,stale-image');
+					await staleRead.promise;
+				});
+
+				expect(screen.getByAltText('Fresh')).toHaveAttribute(
+					'src',
+					'data:image/png;base64,fresh-image'
+				);
+				if (scenario.staleCacheKey) {
+					expect(imageCache.has(scenario.staleCacheKey)).toBe(false);
+				}
+			}
+		);
+
+		it.each([
+			{
+				name: 'Auto Run folder image',
+				oldContent: '![Fresh](images/stale-failure.png)',
+				newContent: '![Fresh](images/fresh-after-failure.png)',
+			},
+			{
+				name: 'absolute image path',
+				oldContent: '![Fresh](/tmp/stale-failure.png)',
+				newContent: '![Fresh](/tmp/fresh-after-failure.png)',
+			},
+			{
+				name: 'relative attachment path',
+				oldContent: '![Fresh](assets/stale-failure.png)',
+				newContent: '![Fresh](assets/fresh-after-failure.png)',
+			},
+		])(
+			'ignores stale failed reads for $name after the preview source changes',
+			async (scenario) => {
+				const staleRead = createDeferred<string>();
+				const freshRead = createDeferred<string>();
+				mockMaestro.fs.readFile
+					.mockReturnValueOnce(staleRead.promise)
+					.mockReturnValueOnce(freshRead.promise);
+				const props = createDefaultProps({
+					mode: 'preview',
+					content: scenario.oldContent,
+				});
+				const { rerender } = renderWithProvider(<AutoRun {...props} />);
+
+				await waitFor(() => {
+					expect(mockMaestro.fs.readFile).toHaveBeenCalledTimes(1);
+				});
+
+				rerender(<AutoRun {...props} content={scenario.newContent} contentVersion={1} />);
+				await waitFor(() => {
+					expect(mockMaestro.fs.readFile).toHaveBeenCalledTimes(2);
+				});
+
+				await act(async () => {
+					freshRead.resolve('data:image/png;base64,fresh-image');
+					await freshRead.promise;
+				});
+
+				expect(await screen.findByAltText('Fresh')).toHaveAttribute(
+					'src',
+					'data:image/png;base64,fresh-image'
+				);
+
+				await act(async () => {
+					staleRead.reject(new Error('stale read failed'));
+					await staleRead.promise.catch(() => undefined);
+				});
+
+				expect(
+					screen.queryByText('Failed to load image: stale read failed')
+				).not.toBeInTheDocument();
+				expect(screen.getByAltText('Fresh')).toHaveAttribute(
+					'src',
+					'data:image/png;base64,fresh-image'
+				);
+			}
+		);
+
+		it('renders data URL and remote URL attachment images without reading from disk', async () => {
+			const props = createDefaultProps({
+				mode: 'preview',
+				content:
+					'![Inline](data:image/png;base64,inline-image)\n![Remote](https://example.com/remote.png)',
+			});
+
+			renderWithProvider(<AutoRun {...props} />);
+
+			expect(await screen.findByAltText('Inline')).toHaveAttribute(
+				'src',
+				'data:image/png;base64,inline-image'
+			);
+			expect(screen.getByAltText('Remote')).toHaveAttribute(
+				'src',
+				'https://example.com/remote.png'
+			);
+			expect(mockMaestro.fs.readFile).not.toHaveBeenCalled();
+		});
+
+		it('opens the lightbox when clicking a rendered markdown image', async () => {
+			const props = createDefaultProps({
+				mode: 'preview',
+				content: '![Inline](data:image/png;base64,inline-image)',
+			});
+
+			renderWithProvider(<AutoRun {...props} />);
+
+			fireEvent.click(await screen.findByAltText('Inline'));
+
+			await waitFor(() => {
+				expect(screen.getByText(/ESC to close/)).toBeInTheDocument();
+			});
+		});
+
+		it('renders mermaid blocks and handles markdown links in preview mode', async () => {
+			const props = createDefaultProps({
+				mode: 'preview',
+				content:
+					'[Plan](maestro-file://Specs/Plan.md)\n[Docs](https://example.com/docs)\n[Local](file:///tmp/local.md)\n\n```mermaid\ngraph TD;\n```',
+			});
+
+			renderWithProvider(<AutoRun {...props} />);
+
+			expect(screen.getByTestId('mermaid-renderer')).toHaveTextContent('graph TD;');
+
+			fireEvent.click(screen.getByText('Plan'));
+			expect(props.onSelectDocument).toHaveBeenCalledWith('Specs/Plan');
+
+			fireEvent.click(screen.getByText('Docs'));
+			expect(mockMaestro.shell.openExternal).toHaveBeenCalledWith('https://example.com/docs');
+
+			mockMaestro.shell.openExternal.mockClear();
+			fireEvent.click(screen.getByText('Local'));
+			expect(mockMaestro.shell.openExternal).not.toHaveBeenCalled();
+		});
+
+		it('uses search-highlighted markdown components for preview links, mermaid, and images', async () => {
+			const props = createDefaultProps({
+				mode: 'preview',
+				content:
+					'match [Docs](https://example.com/search) [Local](file:///tmp/search.md)\n\n```mermaid\ngraph LR;\n```\n![Inline](data:image/png;base64,inline-search)',
+			});
+
+			renderWithProvider(<AutoRun {...props} />);
+
+			const preview = screen.getByTestId('react-markdown').parentElement!;
+			fireEvent.keyDown(preview, { key: 'f', metaKey: true });
+
+			const searchInput = await screen.findByPlaceholderText(/Search/);
+			fireEvent.change(searchInput, { target: { value: 'match' } });
+			await advanceTimers(150);
+
+			expect(screen.getByTestId('mermaid-renderer')).toHaveTextContent('graph LR;');
+			expect(await screen.findByAltText('Inline')).toHaveAttribute(
+				'src',
+				'data:image/png;base64,inline-search'
+			);
+
+			fireEvent.click(screen.getByText('Docs'));
+			expect(mockMaestro.shell.openExternal).toHaveBeenCalledWith('https://example.com/search');
+			mockMaestro.shell.openExternal.mockClear();
+			fireEvent.click(screen.getByText('Local'));
+			expect(mockMaestro.shell.openExternal).not.toHaveBeenCalled();
+			expect(Element.prototype.scrollIntoView).toHaveBeenCalledWith({
+				behavior: 'smooth',
+				block: 'center',
+			});
+		});
+
+		it('loads absolute attachment image paths through the filesystem bridge', async () => {
+			mockMaestro.fs.readFile.mockResolvedValueOnce('data:image/png;base64,absolute-image');
+			const props = createDefaultProps({
+				mode: 'preview',
+				content: '![Absolute](/tmp/logo.png)',
+			});
+
+			renderWithProvider(<AutoRun {...props} />);
+
+			const image = await screen.findByAltText('Absolute');
+			expect(mockMaestro.fs.readFile).toHaveBeenCalledWith('/tmp/logo.png', undefined);
+			expect(image).toHaveAttribute('src', 'data:image/png;base64,absolute-image');
+			expect(image.closest('span')).toHaveAttribute('title', 'Click to enlarge: logo.png');
+		});
+
+		it('loads non-image relative attachment paths from the Auto Run folder', async () => {
+			mockMaestro.fs.readFile.mockResolvedValueOnce('data:image/png;base64,asset-image');
+			const props = createDefaultProps({
+				mode: 'preview',
+				content: '![Asset](assets/logo.png)',
+				sshRemoteId: 'remote-123',
+			});
+
+			renderWithProvider(<AutoRun {...props} />);
+
+			const image = await screen.findByAltText('Asset');
+			expect(mockMaestro.fs.readFile).toHaveBeenCalledWith(
+				'/test/folder/assets/logo.png',
+				'remote-123'
+			);
+			expect(image).toHaveAttribute('src', 'data:image/png;base64,asset-image');
+			expect(image.closest('span')).toHaveAttribute('title', 'Click to enlarge: logo.png');
+		});
+
+		it('loads trailing-slash Auto Run folder images with filename fallback', async () => {
+			mockMaestro.fs.readFile.mockResolvedValueOnce('data:image/png;base64,trailing-image');
+			const props = createDefaultProps({
+				mode: 'preview',
+				content: '![Trailing Folder](images/)',
+			});
+
+			renderWithProvider(<AutoRun {...props} />);
+
+			const image = await screen.findByAltText('Trailing Folder');
+			expect(mockMaestro.fs.readFile).toHaveBeenCalledWith('/test/folder/images/', undefined);
+			expect(image).toHaveAttribute('src', 'data:image/png;base64,trailing-image');
+			expect(image.closest('span')).toHaveAttribute('title', 'Click to enlarge: images/');
+		});
+
+		it('shows an invalid image error for absolute paths that do not return data URLs', async () => {
+			mockMaestro.fs.readFile.mockResolvedValueOnce('not-a-data-url');
+			const props = createDefaultProps({
+				mode: 'preview',
+				content: '![Bad](/tmp/bad.png)',
+			});
+
+			renderWithProvider(<AutoRun {...props} />);
+
+			await screen.findByText('Invalid image data');
+			expect(mockMaestro.fs.readFile).toHaveBeenCalledWith('/tmp/bad.png', undefined);
+		});
+
+		it('shows an unknown-error fallback for failed absolute image reads', async () => {
+			mockMaestro.fs.readFile.mockRejectedValueOnce({});
+			const props = createDefaultProps({
+				mode: 'preview',
+				content: '![Broken](/tmp/broken.png)',
+			});
+
+			renderWithProvider(<AutoRun {...props} />);
+
+			await screen.findByText('Failed to load image: Unknown error');
+			expect(mockMaestro.fs.readFile).toHaveBeenCalledWith('/tmp/broken.png', undefined);
+		});
+
+		it('shows unknown-error fallback for failed Auto Run folder image reads', async () => {
+			mockMaestro.fs.readFile.mockRejectedValueOnce({});
+			const props = createDefaultProps({
+				mode: 'preview',
+				content: '![Broken Diagram](images/broken.png)',
+			});
+
+			renderWithProvider(<AutoRun {...props} />);
+
+			await screen.findByText('Failed to load image: Unknown error');
+			expect(mockMaestro.fs.readFile).toHaveBeenCalledWith(
+				'/test/folder/images/broken.png',
+				undefined
+			);
+		});
+
+		it('shows an invalid image error for Auto Run folder images that return non-data content', async () => {
+			mockMaestro.fs.readFile.mockResolvedValueOnce('not-a-data-url');
+			const props = createDefaultProps({
+				mode: 'preview',
+				content: '![Bad Diagram](images/bad.png)',
+			});
+
+			renderWithProvider(<AutoRun {...props} />);
+
+			await screen.findByText('Invalid image data');
+			expect(mockMaestro.fs.readFile).toHaveBeenCalledWith(
+				'/test/folder/images/bad.png',
+				undefined
+			);
+		});
+
+		it('shows a load error for unresolved Auto Run folder images', async () => {
+			mockMaestro.fs.readFile.mockRejectedValueOnce(new Error('missing diagram'));
+			const props = createDefaultProps({
+				mode: 'preview',
+				content: '![Missing Diagram](images/missing.png)',
+			});
+
+			renderWithProvider(<AutoRun {...props} />);
+
+			await screen.findByText('Failed to load image: missing diagram');
+			expect(mockMaestro.fs.readFile).toHaveBeenCalledWith(
+				'/test/folder/images/missing.png',
+				undefined
+			);
+		});
+
+		it('shows an invalid image error for non-image relative paths that return non-data content', async () => {
+			mockMaestro.fs.readFile.mockResolvedValueOnce('not-a-data-url');
+			const props = createDefaultProps({
+				mode: 'preview',
+				content: '![Bad Asset](assets/bad.png)',
+			});
+
+			renderWithProvider(<AutoRun {...props} />);
+
+			await screen.findByText('Invalid image data');
+			expect(mockMaestro.fs.readFile).toHaveBeenCalledWith(
+				'/test/folder/assets/bad.png',
+				undefined
+			);
+		});
+
+		it('shows a load error for unresolved relative attachment images', async () => {
+			mockMaestro.fs.readFile.mockRejectedValueOnce(new Error('missing image'));
+			const props = createDefaultProps({
+				mode: 'preview',
+				content: '![Missing](assets/missing.png)',
+			});
+
+			renderWithProvider(<AutoRun {...props} />);
+
+			expect(await screen.findByText('Failed to load image: missing image')).toBeInTheDocument();
+			expect(mockMaestro.fs.readFile).toHaveBeenCalledWith(
+				'/test/folder/assets/missing.png',
+				undefined
+			);
+		});
+
+		it('shows unknown-error fallback for failed non-image relative attachment reads', async () => {
+			mockMaestro.fs.readFile.mockRejectedValueOnce({});
+			const props = createDefaultProps({
+				mode: 'preview',
+				content: '![Broken Asset](assets/broken.png)',
+			});
+
+			renderWithProvider(<AutoRun {...props} />);
+
+			expect(await screen.findByText('Failed to load image: Unknown error')).toBeInTheDocument();
+			expect(mockMaestro.fs.readFile).toHaveBeenCalledWith(
+				'/test/folder/assets/broken.png',
+				undefined
+			);
+		});
+
+		it('renders no-filename images with empty alt and generic lightbox title', async () => {
+			mockMaestro.fs.readFile
+				.mockResolvedValueOnce('data:image/png;base64,absolute-folder')
+				.mockResolvedValueOnce('data:image/png;base64,relative-folder');
+			const props = createDefaultProps({
+				mode: 'preview',
+				content: '![](/tmp/assets/)\\n![Relative Folder](assets/)',
+			});
+
+			const { container } = renderWithProvider(<AutoRun {...props} />);
+
+			await waitFor(() => expect(mockMaestro.fs.readFile).toHaveBeenCalledTimes(2));
+			expect(mockMaestro.fs.readFile).toHaveBeenNthCalledWith(1, '/tmp/assets/', undefined);
+			expect(mockMaestro.fs.readFile).toHaveBeenNthCalledWith(2, '/test/folder/assets/', undefined);
+
+			const emptyAltImage = container.querySelector('img[alt=""]');
+			expect(emptyAltImage).toHaveAttribute('src', 'data:image/png;base64,absolute-folder');
+			expect(screen.getByAltText('Relative Folder')).toHaveAttribute(
+				'src',
+				'data:image/png;base64,relative-folder'
+			);
+			expect(screen.getAllByTitle('Click to enlarge')).toHaveLength(2);
 		});
 	});
 });
@@ -2101,6 +3183,15 @@ describe('Empty State Refresh', () => {
 
 		// The button should show animation class
 		expect(onRefresh).toHaveBeenCalled();
+		expect(emptyStateRefresh.querySelector('[data-testid="refreshcw-icon"]')).toHaveClass(
+			'animate-spin'
+		);
+
+		await advanceTimers(700);
+
+		expect(emptyStateRefresh.querySelector('[data-testid="refreshcw-icon"]')).not.toHaveClass(
+			'animate-spin'
+		);
 	});
 });
 
@@ -2195,10 +3286,138 @@ describe('Scroll Position Persistence', () => {
 		fireEvent.scroll(preview);
 
 		// onStateChange is debounced by 500ms, so we need to advance timers
-		await vi.advanceTimersByTimeAsync(500);
+		await advanceTimers(500);
 
 		// onStateChange should be called with scroll position
 		expect(onStateChange).toHaveBeenCalled();
+	});
+
+	it('restores initial preview scroll position on mount', () => {
+		const props = createDefaultProps({
+			mode: 'preview',
+			initialPreviewScrollPos: 120,
+			content: 'Line\n'.repeat(40),
+		});
+		renderWithProvider(<AutoRun {...props} />);
+
+		const preview = screen.getByTestId('react-markdown').parentElement!;
+		expect(preview.scrollTop).toBe(120);
+	});
+
+	it('replaces pending preview scroll notifications with the latest scroll position', async () => {
+		const onStateChange = vi.fn();
+		const props = createDefaultProps({
+			mode: 'preview',
+			onStateChange,
+			content: 'Line\n'.repeat(100),
+		});
+		renderWithProvider(<AutoRun {...props} />);
+
+		const preview = screen.getByTestId('react-markdown').parentElement!;
+		preview.scrollTop = 10;
+		fireEvent.scroll(preview);
+		preview.scrollTop = 55;
+		fireEvent.scroll(preview);
+
+		await advanceTimers(500);
+
+		expect(onStateChange).toHaveBeenCalledTimes(1);
+		expect(onStateChange).toHaveBeenCalledWith(expect.objectContaining({ previewScrollPos: 55 }));
+	});
+
+	it('records preview scroll locally without a state-change callback', async () => {
+		const props = createDefaultProps({
+			mode: 'preview',
+			onStateChange: undefined,
+			content: 'Line\n'.repeat(100),
+		});
+		renderWithProvider(<AutoRun {...props} />);
+
+		const preview = screen.getByTestId('react-markdown').parentElement!;
+		preview.scrollTop = 25;
+		fireEvent.scroll(preview);
+
+		await advanceTimers(500);
+
+		expect(preview.scrollTop).toBe(25);
+	});
+
+	it('restores preview scroll after preview content changes', async () => {
+		let rafCallback: FrameRequestCallback | null = null;
+		const requestAnimationFrameSpy = vi
+			.spyOn(window, 'requestAnimationFrame')
+			.mockImplementation((callback: FrameRequestCallback) => {
+				rafCallback = callback;
+				return 1;
+			});
+		const props = createDefaultProps({
+			mode: 'preview',
+			content: 'Original preview',
+			contentVersion: 1,
+		});
+
+		try {
+			const { rerender } = renderWithProvider(<AutoRun {...props} />);
+			const preview = screen.getByTestId('react-markdown').parentElement!;
+			preview.scrollTop = 90;
+			fireEvent.scroll(preview);
+
+			rerender(
+				<AutoRun
+					{...createDefaultProps({
+						mode: 'preview',
+						content: 'Updated preview',
+						contentVersion: 2,
+					})}
+				/>
+			);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('react-markdown')).toHaveTextContent('Updated preview');
+			});
+
+			preview.scrollTop = 0;
+			act(() => {
+				rafCallback?.(0);
+			});
+
+			expect(preview.scrollTop).toBe(90);
+		} finally {
+			requestAnimationFrameSpy.mockRestore();
+		}
+	});
+
+	it('skips preview scroll restoration after unmount', async () => {
+		let rafCallback: FrameRequestCallback | null = null;
+		const requestAnimationFrameSpy = vi
+			.spyOn(window, 'requestAnimationFrame')
+			.mockImplementation((callback: FrameRequestCallback) => {
+				rafCallback = callback;
+				return 1;
+			});
+		const props = createDefaultProps({
+			mode: 'preview',
+			content: 'Original preview',
+			contentVersion: 1,
+		});
+
+		try {
+			const { rerender, unmount } = renderWithProvider(<AutoRun {...props} />);
+			const preview = screen.getByTestId('react-markdown').parentElement!;
+			preview.scrollTop = 90;
+			fireEvent.scroll(preview);
+
+			rerender(<AutoRun {...props} content="Updated preview" contentVersion={2} />);
+			unmount();
+
+			act(() => {
+				rafCallback?.(0);
+			});
+
+			expect(preview.scrollTop).toBe(90);
+		} finally {
+			requestAnimationFrameSpy.mockRestore();
+		}
 	});
 });
 
@@ -2212,6 +3431,118 @@ describe('Focus via Imperative Handle', () => {
 		ref.current?.focus();
 
 		expect(document.activeElement).toBe(preview);
+	});
+
+	it('does not throw when focusing preview mode without a mounted preview container', () => {
+		const ref = React.createRef<AutoRunHandle>();
+		const props = createDefaultProps({ folderPath: null, mode: 'preview' });
+		renderWithProvider(<AutoRun {...props} ref={ref} />);
+
+		expect(() => ref.current?.focus()).not.toThrow();
+	});
+
+	it('focuses textarea after switching documents in edit mode', () => {
+		let rafCallback: FrameRequestCallback | null = null;
+		const requestAnimationFrameSpy = vi
+			.spyOn(window, 'requestAnimationFrame')
+			.mockImplementation((callback: FrameRequestCallback) => {
+				rafCallback = callback;
+				return 1;
+			});
+		const props = createDefaultProps({
+			mode: 'edit',
+			selectedFile: 'test-doc',
+			content: 'Doc one',
+		});
+
+		try {
+			const { rerender } = renderWithProvider(<AutoRun {...props} />);
+			const textarea = screen.getByRole('textbox');
+
+			rerender(
+				<AutoRun
+					{...createDefaultProps({
+						mode: 'edit',
+						selectedFile: 'another-doc',
+						content: 'Doc two',
+					})}
+				/>
+			);
+
+			act(() => {
+				rafCallback?.(0);
+			});
+
+			expect(document.activeElement).toBe(textarea);
+		} finally {
+			requestAnimationFrameSpy.mockRestore();
+		}
+	});
+
+	it('focuses preview container after switching documents in preview mode', () => {
+		let rafCallback: FrameRequestCallback | null = null;
+		const requestAnimationFrameSpy = vi
+			.spyOn(window, 'requestAnimationFrame')
+			.mockImplementation((callback: FrameRequestCallback) => {
+				rafCallback = callback;
+				return 1;
+			});
+		const props = createDefaultProps({
+			mode: 'preview',
+			selectedFile: 'test-doc',
+			content: 'Doc one',
+		});
+
+		try {
+			const { rerender } = renderWithProvider(<AutoRun {...props} />);
+			const preview = screen.getByTestId('react-markdown').parentElement!;
+
+			rerender(
+				<AutoRun
+					{...createDefaultProps({
+						mode: 'preview',
+						selectedFile: 'another-doc',
+						content: 'Doc two',
+					})}
+				/>
+			);
+
+			act(() => {
+				rafCallback?.(0);
+			});
+
+			expect(document.activeElement).toBe(preview);
+		} finally {
+			requestAnimationFrameSpy.mockRestore();
+		}
+	});
+
+	it('does not throw when preview document focus runs without a mounted preview', () => {
+		let rafCallback: FrameRequestCallback | null = null;
+		const requestAnimationFrameSpy = vi
+			.spyOn(window, 'requestAnimationFrame')
+			.mockImplementation((callback: FrameRequestCallback) => {
+				rafCallback = callback;
+				return 1;
+			});
+		const props = createDefaultProps({
+			folderPath: null,
+			mode: 'preview',
+			selectedFile: 'test-doc',
+		});
+
+		try {
+			const { rerender } = renderWithProvider(<AutoRun {...props} />);
+			rerender(<AutoRun {...props} selectedFile="another-doc" />);
+
+			expect(() => {
+				act(() => {
+					rafCallback?.(0);
+				});
+			}).not.toThrow();
+		} finally {
+			requestAnimationFrameSpy.mockRestore();
+		}
 	});
 });
 
@@ -2330,6 +3661,49 @@ describe('Preview Mode with Search', () => {
 		fireEvent.keyDown(preview, { key: 'e', metaKey: true });
 
 		expect(props.onModeChange).toHaveBeenCalledWith('edit');
+	});
+
+	it('toggles mode with Ctrl+E from preview', async () => {
+		const props = createDefaultProps({ mode: 'preview' });
+		renderWithProvider(<AutoRun {...props} />);
+
+		const preview = screen.getByTestId('react-markdown').parentElement!;
+		fireEvent.keyDown(preview, { key: 'e', ctrlKey: true });
+
+		expect(props.onModeChange).toHaveBeenCalledWith('edit');
+	});
+
+	it('does not toggle preview mode with Cmd+E while locked', () => {
+		const props = createDefaultProps({
+			mode: 'preview',
+			batchRunState: createBatchRunState(),
+		});
+		renderWithProvider(<AutoRun {...props} />);
+
+		const preview = screen.getByTestId('react-markdown').parentElement!;
+		fireEvent.keyDown(preview, { key: 'e', metaKey: true });
+
+		expect(props.onModeChange).not.toHaveBeenCalled();
+	});
+
+	it('lets Cmd+Shift+F propagate in preview mode', () => {
+		const props = createDefaultProps({ mode: 'preview' });
+		renderWithProvider(<AutoRun {...props} />);
+
+		const preview = screen.getByTestId('react-markdown').parentElement!;
+		fireEvent.keyDown(preview, { key: 'f', metaKey: true, shiftKey: true });
+
+		expect(screen.queryByPlaceholderText(/Search/)).not.toBeInTheDocument();
+	});
+
+	it('opens search with Ctrl+F in preview mode', async () => {
+		const props = createDefaultProps({ mode: 'preview' });
+		renderWithProvider(<AutoRun {...props} />);
+
+		const preview = screen.getByTestId('react-markdown').parentElement!;
+		fireEvent.keyDown(preview, { key: 'f', ctrlKey: true });
+
+		expect(await screen.findByPlaceholderText(/Search/)).toBeInTheDocument();
 	});
 });
 
@@ -3197,6 +4571,53 @@ describe('Content Versioning and External Changes', () => {
 		// Content synced, no longer dirty
 		expect(screen.queryByText('Save')).not.toBeInTheDocument();
 	});
+
+	it('syncs externally controlled draft and saved state while propagating edits', async () => {
+		const onExternalLocalContentChange = vi.fn();
+		const onExternalSavedContentChange = vi.fn();
+		const props = createDefaultProps({
+			content: 'Saved draft',
+			externalLocalContent: 'Local draft',
+			externalSavedContent: 'Saved draft',
+			onExternalLocalContentChange,
+			onExternalSavedContentChange,
+		});
+		const { rerender } = renderWithProvider(<AutoRun {...props} />);
+
+		const textarea = screen.getByRole('textbox');
+		expect(textarea).toHaveValue('Local draft');
+
+		fireEvent.change(textarea, { target: { value: 'Edited shared draft' } });
+		expect(onExternalLocalContentChange).toHaveBeenCalledWith('Edited shared draft');
+
+		fireEvent.click(screen.getByTitle(`Save changes (${formatShortcutKeys(['Meta', 's'])})`));
+
+		await waitFor(() => {
+			expect(mockMaestro.autorun.writeDoc).toHaveBeenCalledWith(
+				'/test/folder',
+				'test-doc.md',
+				'Edited shared draft',
+				undefined
+			);
+		});
+		expect(onExternalSavedContentChange).toHaveBeenCalledWith('Edited shared draft');
+
+		rerender(
+			<AutoRun
+				{...createDefaultProps({
+					content: 'Externally saved draft',
+					externalLocalContent: 'Externally edited draft',
+					externalSavedContent: 'Externally saved draft',
+					onExternalLocalContentChange,
+					onExternalSavedContentChange,
+				})}
+			/>
+		);
+
+		await waitFor(() => {
+			expect(screen.getByRole('textbox')).toHaveValue('Externally edited draft');
+		});
+	});
 });
 
 describe('Task Count Display', () => {
@@ -3304,6 +4725,36 @@ describe('Task Count Display', () => {
 
 		expect(screen.getByText(getByNormalizedText(/1 of 2 tasks completed/))).toBeInTheDocument();
 	});
+
+	it('displays token count when the encoder resolves', async () => {
+		vi.mocked(getEncoder).mockResolvedValueOnce({
+			encode: vi.fn(() => [1, 2, 3, 4]),
+		} as any);
+		const props = createDefaultProps({ content: 'Count these tokens' });
+		renderWithProvider(<AutoRun {...props} />);
+
+		await waitFor(() => {
+			expect(screen.getByText('Tokens:')).toBeInTheDocument();
+		});
+		expect(screen.getByText('4')).toBeInTheDocument();
+	});
+
+	it('logs token counting failures without showing a stale token count', async () => {
+		const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+		vi.mocked(getEncoder).mockRejectedValueOnce(new Error('encoder unavailable'));
+		const props = createDefaultProps({ content: 'Cannot count this' });
+
+		try {
+			renderWithProvider(<AutoRun {...props} />);
+
+			await waitFor(() => {
+				expect(consoleError).toHaveBeenCalledWith('Failed to count tokens:', expect.any(Error));
+			});
+			expect(screen.queryByText('Tokens:')).not.toBeInTheDocument();
+		} finally {
+			consoleError.mockRestore();
+		}
+	});
 });
 
 describe('Expand Button Behavior', () => {
@@ -3363,6 +4814,49 @@ describe('Expand Button Behavior', () => {
 describe('Responsive Bottom Panel', () => {
 	// The default ResizeObserver mock in setup.ts returns 1000px width
 	// Since our compact threshold is 350px, the default mode is non-compact
+
+	it('shows icon-only Save/Revert controls and hides completed text in compact mode', async () => {
+		const OriginalResizeObserver = globalThis.ResizeObserver;
+		class CompactResizeObserver {
+			constructor(private readonly callback: ResizeObserverCallback) {}
+
+			observe(element: Element) {
+				this.callback(
+					[
+						{
+							target: element,
+							contentRect: { width: 320 } as DOMRectReadOnly,
+						} as ResizeObserverEntry,
+					],
+					this as unknown as ResizeObserver
+				);
+			}
+
+			unobserve = vi.fn();
+			disconnect = vi.fn();
+		}
+		globalThis.ResizeObserver = CompactResizeObserver as unknown as typeof ResizeObserver;
+
+		try {
+			const contentWithTasks = '# Tasks\n- [x] Done task\n- [ ] Pending task';
+			const props = createDefaultProps({ content: contentWithTasks });
+			renderWithProvider(<AutoRun {...props} />);
+
+			const textarea = screen.getByRole('textbox');
+			fireEvent.change(textarea, { target: { value: `${contentWithTasks}\nUpdated` } });
+
+			const saveButton = screen.getByTitle(`Save changes (${formatShortcutKeys(['Meta', 's'])})`);
+			const revertButton = screen.getByTitle('Discard changes');
+
+			await waitFor(() => {
+				expect(saveButton).toHaveTextContent('');
+				expect(revertButton).toHaveTextContent('');
+				expect(screen.queryByText(/completed/)).not.toBeInTheDocument();
+			});
+		} finally {
+			globalThis.ResizeObserver = OriginalResizeObserver;
+		}
+	});
 
 	it('shows Save button with text label in non-compact mode (width > 350px)', async () => {
 		const props = createDefaultProps({ content: 'Initial' });
@@ -3439,10 +4933,35 @@ describe('Reset Tasks Flash Notification', () => {
 			ref.current?.openResetTasksModal();
 		});
 
-		// The modal should be open but we can't easily test the confirm flow here
-		// since the ResetTasksConfirmModal is a separate component
-		// Instead, let's just verify onShowFlash is part of the component props
-		expect(onShowFlash).not.toHaveBeenCalled(); // Not called until confirmed
+		fireEvent.click(screen.getByRole('button', { name: 'Reset Tasks' }));
+
+		await waitFor(() => {
+			expect(window.maestro.autorun.writeDoc).toHaveBeenCalledWith(
+				'/test/folder',
+				'test-doc.md',
+				'- [ ] Done task\n- [ ] Pending task',
+				undefined
+			);
+		});
+		expect(onShowFlash).toHaveBeenCalledWith('1 task reverted to incomplete');
+	});
+
+	it('does not reset tasks when no Auto Run folder or document is selected', async () => {
+		const ref = React.createRef<AutoRunHandle>();
+		const props = createDefaultProps({
+			folderPath: null,
+			selectedFile: 'test-doc',
+			content: '- [x] Done task',
+		});
+		renderWithProvider(<AutoRun ref={ref} {...props} />);
+
+		await act(async () => {
+			ref.current?.openResetTasksModal();
+		});
+
+		expect(screen.getByText('Reset Completed Tasks')).toBeInTheDocument();
+		fireEvent.click(screen.getByRole('button', { name: 'Reset Tasks' }));
+		expect(window.maestro.autorun.writeDoc).not.toHaveBeenCalled();
 	});
 
 	it('onShowFlash is called after handleResetTasks saves the document', async () => {
@@ -3479,6 +4998,90 @@ describe('Reset Tasks Flash Notification', () => {
 		renderWithProvider(<AutoRun ref={ref} {...props} />);
 
 		expect(ref.current?.getCompletedTaskCount()).toBe(0);
+	});
+
+	it('resets with no completed tasks without showing a flash message', async () => {
+		const mockMaestro = setupMaestroMock();
+		const contentWithCompletedTask = '- [x] Task 1\n- [ ] Task 2';
+		const contentWithoutCompletedTasks = '- [ ] Task 1\n- [ ] Task 2';
+		const onShowFlash = vi.fn();
+		const ref = React.createRef<AutoRunHandle>();
+		const props = createDefaultProps({
+			content: contentWithCompletedTask,
+			onShowFlash,
+		});
+		renderWithProvider(<AutoRun ref={ref} {...props} />);
+
+		await act(async () => {
+			ref.current?.openResetTasksModal();
+		});
+		fireEvent.change(screen.getByRole('textbox'), {
+			target: { value: contentWithoutCompletedTasks },
+		});
+		fireEvent.click(screen.getByRole('button', { name: 'Reset Tasks' }));
+
+		await waitFor(() => {
+			expect(mockMaestro.autorun.writeDoc).toHaveBeenCalledWith(
+				'/test/folder',
+				'test-doc.md',
+				contentWithoutCompletedTasks,
+				undefined
+			);
+		});
+		expect(onShowFlash).not.toHaveBeenCalled();
+	});
+
+	it('confirms reset tasks, writes unchecked content, and shows a flash message', async () => {
+		const mockMaestro = setupMaestroMock();
+		const contentWithTasks = '- [x] First done\n* [x] Second done\n- [ ] Pending';
+		const onShowFlash = vi.fn();
+		const props = createDefaultProps({
+			content: contentWithTasks,
+			onShowFlash,
+			sshRemoteId: 'remote-123',
+		});
+		renderWithProvider(<AutoRun {...props} />);
+
+		fireEvent.click(screen.getByTitle('Reset 2 completed tasks'));
+		expect(screen.getByText('Reset Completed Tasks')).toBeInTheDocument();
+
+		fireEvent.click(screen.getByRole('button', { name: 'Reset Tasks' }));
+
+		await waitFor(() => {
+			expect(mockMaestro.autorun.writeDoc).toHaveBeenCalledWith(
+				'/test/folder',
+				'test-doc.md',
+				'- [ ] First done\n* [ ] Second done\n- [ ] Pending',
+				'remote-123'
+			);
+		});
+		expect(onShowFlash).toHaveBeenCalledWith('2 tasks reverted to incomplete');
+		expect(screen.queryByText('Reset Completed Tasks')).not.toBeInTheDocument();
+	});
+
+	it('logs reset task save failures without showing a success flash', async () => {
+		const mockMaestro = setupMaestroMock();
+		mockMaestro.autorun.writeDoc.mockRejectedValueOnce(new Error('permission denied'));
+		const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const onShowFlash = vi.fn();
+		const props = createDefaultProps({
+			content: '- [x] Cannot save',
+			onShowFlash,
+		});
+
+		try {
+			renderWithProvider(<AutoRun {...props} />);
+
+			fireEvent.click(screen.getByTitle('Reset 1 completed task'));
+			fireEvent.click(screen.getByRole('button', { name: 'Reset Tasks' }));
+
+			await waitFor(() => {
+				expect(consoleError).toHaveBeenCalledWith('Failed to save after reset:', expect.any(Error));
+			});
+			expect(onShowFlash).not.toHaveBeenCalled();
+		} finally {
+			consoleError.mockRestore();
+		}
 	});
 
 	describe('Error Banner (Phase 5.10)', () => {

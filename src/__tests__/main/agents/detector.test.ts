@@ -20,9 +20,14 @@ vi.mock('../../../main/utils/logger', () => ({
 	},
 }));
 
+vi.mock('../../../main/utils/sentry', () => ({
+	captureException: vi.fn(),
+}));
+
 // Get mocked modules
 import { execFileNoThrow } from '../../../main/utils/execFile';
 import { logger } from '../../../main/utils/logger';
+import { captureException } from '../../../main/utils/sentry';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -1044,6 +1049,31 @@ describe('agent-detector', () => {
 			expect(models).toEqual([]);
 		});
 
+		it('should return empty array when no model discovery command is implemented', async () => {
+			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
+				const binaryName = args[0];
+				if (binaryName === 'codex') {
+					return { stdout: '/usr/bin/codex\n', stderr: '', exitCode: 0 };
+				}
+				if (binaryName === 'bash') {
+					return { stdout: '/bin/bash\n', stderr: '', exitCode: 0 };
+				}
+				return { stdout: '', stderr: 'not found', exitCode: 1 };
+			});
+
+			detector.clearCache();
+			detector.clearModelCache();
+			await detector.detectAgents();
+
+			const models = await detector.discoverModels('codex');
+
+			expect(models).toEqual([]);
+			expect(logger.debug).toHaveBeenCalledWith(
+				expect.stringContaining('No model discovery implemented for codex'),
+				'AgentDetector'
+			);
+		});
+
 		it('should discover models for OpenCode', async () => {
 			const models = await detector.discoverModels('opencode');
 			expect(models).toEqual(['opencode/gpt-5-nano', 'opencode/grok-code', 'ollama/qwen3:8b']);
@@ -1131,6 +1161,34 @@ describe('agent-detector', () => {
 				'AgentDetector',
 				expect.any(Object)
 			);
+		});
+
+		it('should log and capture model discovery exceptions', async () => {
+			const error = new Error('spawn exploded');
+			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
+				if (cmd === '/usr/bin/opencode' && args[0] === 'models') {
+					throw error;
+				}
+				if (args[0] === 'opencode') {
+					return { stdout: '/usr/bin/opencode\n', stderr: '', exitCode: 0 };
+				}
+				return { stdout: '', stderr: '', exitCode: 1 };
+			});
+
+			detector.clearModelCache();
+
+			const models = await detector.discoverModels('opencode');
+
+			expect(models).toEqual([]);
+			expect(logger.error).toHaveBeenCalledWith(
+				expect.stringContaining('Model discovery threw exception for opencode'),
+				'AgentDetector',
+				{ error }
+			);
+			expect(captureException).toHaveBeenCalledWith(error, {
+				operation: 'agent:modelDiscovery',
+				agentId: 'opencode',
+			});
 		});
 
 		it('should handle empty model list', async () => {
@@ -1378,6 +1436,83 @@ describe('agent-detector', () => {
 
 			expect(models).toEqual(['refreshed-model']);
 			expect(mockExecFileNoThrow).toHaveBeenCalled();
+		});
+	});
+
+	describe('pathless detection fallbacks', () => {
+		it('should log Windows diagnostics and discover models with the agent command when no path is resolved', async () => {
+			const execMock = vi.fn(async (cmd: string, args: string[]) => {
+				if (cmd === 'opencode' && args[0] === 'models') {
+					return { stdout: 'fallback/model\n', stderr: '', exitCode: 0 };
+				}
+				return { stdout: '', stderr: 'not found', exitCode: 1 };
+			});
+			const loggerInfo = vi.fn();
+
+			vi.resetModules();
+			vi.doMock('../../../shared/platformDetection', async (importOriginal) => ({
+				...(await importOriginal<typeof import('../../../shared/platformDetection')>()),
+				isWindows: () => true,
+			}));
+			vi.doMock('../../../main/agents/path-prober', () => ({
+				getExpandedEnv: () => ({ PATH: 'C:\\Tools' }),
+				checkCustomPath: vi.fn(async () => ({ exists: false })),
+				checkBinaryExists: vi.fn(async (binaryName: string) =>
+					binaryName === 'opencode' ? { exists: true } : { exists: false }
+				),
+			}));
+			vi.doMock('../../../main/utils/execFile', () => ({
+				execFileNoThrow: execMock,
+			}));
+			vi.doMock('../../../main/utils/logger', () => ({
+				logger: {
+					info: loggerInfo,
+					warn: vi.fn(),
+					error: vi.fn(),
+					debug: vi.fn(),
+				},
+			}));
+			vi.doMock('../../../main/utils/sentry', () => ({
+				captureException: vi.fn(),
+			}));
+
+			try {
+				const { AgentDetector: IsolatedAgentDetector } =
+					await import('../../../main/agents/detector');
+				const pathlessDetector = new IsolatedAgentDetector();
+
+				await pathlessDetector.detectAgents();
+				const models = await pathlessDetector.discoverModels('opencode', true);
+
+				expect(models).toEqual(['fallback/model']);
+				expect(execMock).toHaveBeenCalledWith(
+					'opencode',
+					['models'],
+					undefined,
+					expect.objectContaining({ PATH: 'C:\\Tools' })
+				);
+
+				const completeCall = loggerInfo.mock.calls.find(
+					(call) => call[0] === 'Agent detection complete (Windows)'
+				);
+				const details = completeCall?.[2] as
+					| { agents: Array<{ id: string; pathExtension: string; willUseShell: boolean }> }
+					| undefined;
+				expect(details?.agents).toContainEqual(
+					expect.objectContaining({
+						id: 'opencode',
+						pathExtension: 'none',
+						willUseShell: true,
+					})
+				);
+			} finally {
+				vi.doUnmock('../../../shared/platformDetection');
+				vi.doUnmock('../../../main/agents/path-prober');
+				vi.doUnmock('../../../main/utils/execFile');
+				vi.doUnmock('../../../main/utils/logger');
+				vi.doUnmock('../../../main/utils/sentry');
+				vi.resetModules();
+			}
 		});
 	});
 });

@@ -1367,14 +1367,10 @@ export function navigateToLastUnifiedTab(session: Session): NavigateToUnifiedTab
  * Returns the index of the currently active tab (file tab if active, otherwise AI tab).
  *
  * @param session - The Maestro session
+ * @param order - The repaired unified tab order from the caller
  * @returns The index in unifiedTabOrder, or -1 if not found
  */
-function getCurrentUnifiedTabIndex(session: Session, effectiveOrder?: UnifiedTabRef[]): number {
-	const order = effectiveOrder || getRepairedUnifiedTabOrder(session);
-	if (order.length === 0) {
-		return -1;
-	}
-
+function getCurrentUnifiedTabIndex(session: Session, order: UnifiedTabRef[]): number {
 	// If a file tab is active, find it in the unified order
 	if (session.activeFileTabId) {
 		return order.findIndex((ref) => ref.type === 'file' && ref.id === session.activeFileTabId);

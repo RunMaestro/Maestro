@@ -244,12 +244,12 @@ export interface AgentConfigPanelProps {
 	// Custom path
 	customPath: string;
 	onCustomPathChange: (value: string) => void;
-	onCustomPathBlur: () => void;
+	onCustomPathBlur?: () => void;
 	onCustomPathClear: () => void;
 	// Custom arguments
 	customArgs: string;
 	onCustomArgsChange: (value: string) => void;
-	onCustomArgsBlur: () => void;
+	onCustomArgsBlur?: () => void;
 	onCustomArgsClear: () => void;
 	// Environment variables
 	customEnvVars: Record<string, string>;
@@ -257,12 +257,12 @@ export interface AgentConfigPanelProps {
 	onEnvVarValueChange: (key: string, value: string) => void;
 	onEnvVarRemove: (key: string) => void;
 	onEnvVarAdd: () => void;
-	onEnvVarsBlur: () => void;
+	onEnvVarsBlur?: () => void;
 	// Agent-specific config options
 	agentConfig: Record<string, any>;
 	onConfigChange: (key: string, value: any) => void;
 	/** Called when a config field blurs. For text fields, `committedValue` is the value that was just saved. */
-	onConfigBlur: (key: string, committedValue: any) => void | Promise<void>;
+	onConfigBlur?: (key: string, committedValue: any) => void | Promise<void>;
 	// Model selection (if supported)
 	availableModels?: string[];
 	loadingModels?: boolean;
@@ -308,6 +308,7 @@ export function AgentConfigPanel({
 	isSshEnabled = false,
 }: AgentConfigPanelProps): JSX.Element {
 	const callOnConfigBlurSafely = (key: string, committedValue: any) => {
+		if (!onConfigBlur) return;
 		const maybePromise = onConfigBlur(key, committedValue);
 		if (maybePromise && typeof (maybePromise as Promise<void>).catch === 'function') {
 			void (maybePromise as Promise<void>).catch((error: unknown) => {
@@ -364,14 +365,12 @@ export function AgentConfigPanel({
 
 		// Update the ID map if key changed
 		if (pendingKey !== undefined && pendingKey !== originalKey) {
-			const id = envVarIdsRef.current.get(originalKey);
-			if (id !== undefined) {
-				envVarIdsRef.current.delete(originalKey);
-				envVarIdsRef.current.set(pendingKey, id);
-			}
+			const id = getEnvVarId(originalKey);
+			envVarIdsRef.current.delete(originalKey);
+			envVarIdsRef.current.set(pendingKey, id);
 			onEnvVarKeyChange(originalKey, pendingKey, currentValue);
 		}
-		onEnvVarsBlur();
+		onEnvVarsBlur?.();
 	};
 
 	return (

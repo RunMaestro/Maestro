@@ -93,6 +93,32 @@ describe('SkinnySidebar', () => {
 		expect(setActiveSessionId).toHaveBeenCalledWith('test-id');
 	});
 
+	it('calls setActiveSessionId when a focused dot is activated by keyboard', () => {
+		const s1 = makeSession({ id: 'keyboard-id' });
+		const setActiveSessionId = vi.fn();
+		render(<SkinnySidebar {...createProps({ sortedSessions: [s1], setActiveSessionId })} />);
+
+		const dotButton = screen.getByRole('button', { name: 'Switch to Session 1' });
+		fireEvent.keyDown(dotButton, { key: 'Enter' });
+		fireEvent.keyDown(dotButton, { key: ' ' });
+
+		expect(setActiveSessionId).toHaveBeenCalledTimes(2);
+		expect(setActiveSessionId).toHaveBeenNthCalledWith(1, 'keyboard-id');
+		expect(setActiveSessionId).toHaveBeenNthCalledWith(2, 'keyboard-id');
+	});
+
+	it('ignores unrelated key presses on focused dots', () => {
+		const s1 = makeSession({ id: 'keyboard-id' });
+		const setActiveSessionId = vi.fn();
+		render(<SkinnySidebar {...createProps({ sortedSessions: [s1], setActiveSessionId })} />);
+
+		fireEvent.keyDown(screen.getByRole('button', { name: 'Switch to Session 1' }), {
+			key: 'Escape',
+		});
+
+		expect(setActiveSessionId).not.toHaveBeenCalled();
+	});
+
 	it('calls handleContextMenu on right-click', () => {
 		const s1 = makeSession({ id: 'ctx-id' });
 		const handleContextMenu = vi.fn();
@@ -176,6 +202,20 @@ describe('SkinnySidebar', () => {
 		render(<SkinnySidebar {...createProps({ sortedSessions: [s1] })} />);
 
 		expect(screen.getByText('My Special Agent')).toBeTruthy();
+	});
+
+	it('renders the group name in the tooltip when a session belongs to a group', () => {
+		const s1 = makeSession({ groupId: 'group-1' });
+		render(
+			<SkinnySidebar
+				{...createProps({
+					sortedSessions: [s1],
+					groups: [{ id: 'group-1', name: 'Review Crew', sessionIds: [s1.id] } as Group],
+				})}
+			/>
+		);
+
+		expect(screen.getByText('Review Crew')).toBeInTheDocument();
 	});
 
 	it('uses hollow style for claude-code sessions without agentSessionId', () => {

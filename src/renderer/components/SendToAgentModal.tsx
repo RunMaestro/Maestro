@@ -27,7 +27,7 @@ import { ScreenReaderAnnouncement, useAnnouncement } from './Wizard/ScreenReader
 /**
  * Session availability status for display in the selection list
  */
-export type SessionStatus = 'idle' | 'busy' | 'current';
+export type SessionStatus = 'idle' | 'busy';
 
 /**
  * Session option for display in the selection list
@@ -76,10 +76,6 @@ function getStatusLabel(status: SessionStatus): string {
 			return 'Idle';
 		case 'busy':
 			return 'Busy';
-		case 'current':
-			return 'Source';
-		default:
-			return '';
 	}
 }
 
@@ -92,10 +88,6 @@ function getStatusColor(status: SessionStatus, theme: Theme): string {
 			return theme.colors.success;
 		case 'busy':
 			return theme.colors.warning;
-		case 'current':
-			return theme.colors.textDim;
-		default:
-			return theme.colors.textDim;
 	}
 }
 
@@ -158,7 +150,6 @@ export function SendToAgentModal({
 
 	// Refs
 	const inputRef = useRef<HTMLInputElement>(null);
-	const layerIdRef = useRef<string>();
 	const onCloseRef = useRef(onClose);
 	const selectedItemRef = useRef<HTMLButtonElement>(null);
 
@@ -172,13 +163,13 @@ export function SendToAgentModal({
 		setSelectedIndex(0);
 	}, []);
 
-	const { registerLayer, unregisterLayer, updateLayerHandler } = useLayerStack();
+	const { registerLayer, unregisterLayer } = useLayerStack();
 
 	// Register layer on mount
 	useEffect(() => {
 		if (!isOpen) return;
 
-		layerIdRef.current = registerLayer({
+		const id = registerLayer({
 			type: 'modal',
 			priority: MODAL_PRIORITIES.SEND_TO_AGENT,
 			blocksLowerLayers: true,
@@ -189,18 +180,9 @@ export function SendToAgentModal({
 		});
 
 		return () => {
-			if (layerIdRef.current) {
-				unregisterLayer(layerIdRef.current);
-			}
+			unregisterLayer(id);
 		};
 	}, [isOpen, registerLayer, unregisterLayer]);
-
-	// Update handler when onClose changes
-	useEffect(() => {
-		if (layerIdRef.current) {
-			updateLayerHandler(layerIdRef.current, () => onCloseRef.current());
-		}
-	}, [updateLayerHandler]);
 
 	// Focus input on mount
 	useEffect(() => {
@@ -241,15 +223,7 @@ export function SendToAgentModal({
 				return true;
 			})
 			.map((session) => {
-				let status: SessionStatus;
-
-				if (session.id === sourceSession.id) {
-					status = 'current';
-				} else if (session.state === 'busy') {
-					status = 'busy';
-				} else {
-					status = 'idle';
-				}
+				const status: SessionStatus = session.state === 'busy' ? 'busy' : 'idle';
 
 				return {
 					id: session.id,
@@ -320,33 +294,28 @@ export function SendToAgentModal({
 	}, [isSending, announce]);
 
 	// Handle session selection
-	const handleSelectSession = useCallback(
-		(sessionId: string) => {
-			const session = sessionOptions.find((s) => s.id === sessionId);
-			if (session && session.status !== 'current') {
-				setSelectedSessionId(sessionId);
-			}
-		},
-		[sessionOptions]
-	);
+	const handleSelectSession = useCallback((sessionId: string) => {
+		setSelectedSessionId(sessionId);
+	}, []);
 
 	// Handle send action
-	const handleSend = useCallback(async () => {
-		if (!selectedSessionId) return;
-
-		setIsSending(true);
-		try {
-			await onSend(selectedSessionId, {
-				groomContext,
-				targetSessionId: selectedSessionId,
-			});
-			onClose();
-		} catch (error) {
-			console.error('Send to session failed:', error);
-		} finally {
-			setIsSending(false);
-		}
-	}, [selectedSessionId, groomContext, onSend, onClose]);
+	const handleSend = useCallback(
+		async (targetSessionId: string) => {
+			setIsSending(true);
+			try {
+				await onSend(targetSessionId, {
+					groomContext,
+					targetSessionId,
+				});
+				onClose();
+			} catch (error) {
+				console.error('Send to session failed:', error);
+			} finally {
+				setIsSending(false);
+			}
+		},
+		[groomContext, onSend, onClose]
+	);
 
 	// Handle key down - list navigation (up/down only)
 	const handleKeyDown = useCallback(
@@ -374,9 +343,7 @@ export function SendToAgentModal({
 				const index = parseInt(e.key, 10) - 1;
 				if (index < filteredSessions.length) {
 					const session = filteredSessions[index];
-					if (session.status !== 'current') {
-						handleSelectSession(session.id);
-					}
+					handleSelectSession(session.id);
 				}
 				return;
 			}
@@ -385,9 +352,7 @@ export function SendToAgentModal({
 			if (e.key === ' ' && !e.shiftKey && filteredSessions[selectedIndex]) {
 				e.preventDefault();
 				const session = filteredSessions[selectedIndex];
-				if (session.status !== 'current') {
-					handleSelectSession(session.id);
-				}
+				handleSelectSession(session.id);
 				return;
 			}
 
@@ -396,12 +361,10 @@ export function SendToAgentModal({
 				e.preventDefault();
 				e.stopPropagation();
 				if (selectedSessionId) {
-					handleSend();
+					handleSend(selectedSessionId);
 				} else if (filteredSessions[selectedIndex]) {
 					const session = filteredSessions[selectedIndex];
-					if (session.status !== 'current') {
-						handleSelectSession(session.id);
-					}
+					handleSelectSession(session.id);
 				}
 				return;
 			}
@@ -425,7 +388,7 @@ export function SendToAgentModal({
 		if (isSending) return false;
 		if (!selectedSessionId) return false;
 		const session = sessionOptions.find((s) => s.id === selectedSessionId);
-		return session && session.status !== 'current';
+		return Boolean(session);
 	}, [selectedSessionId, sessionOptions, isSending]);
 
 	if (!isOpen) return null;
@@ -538,32 +501,28 @@ export function SendToAgentModal({
 								{filteredSessions.map((session, index) => {
 									const isHighlighted = index === selectedIndex;
 									const isSelected = selectedSessionId === session.id;
-									const isDisabled = session.status === 'current';
 
 									return (
 										<button
 											key={session.id}
 											ref={isHighlighted ? selectedItemRef : undefined}
-											onClick={() => !isDisabled && handleSelectSession(session.id)}
-											disabled={isDisabled}
+											onClick={() => handleSelectSession(session.id)}
 											role="option"
 											aria-selected={isSelected}
-											aria-disabled={isDisabled}
 											aria-label={`${session.name}, ${getStatusLabel(session.status)}${index < 9 ? `, press ${index + 1} to select` : ''}`}
-											className={`w-full p-3 rounded-lg border text-left transition-all duration-150 disabled:cursor-not-allowed flex items-center gap-3 ${isSelected ? 'animate-highlight-pulse' : ''}`}
+											className={`w-full p-3 rounded-lg border text-left transition-all duration-150 flex items-center gap-3 ${isSelected ? 'animate-highlight-pulse' : ''}`}
 											style={
 												{
 													backgroundColor: isSelected
 														? theme.colors.accent
-														: isHighlighted && !isDisabled
+														: isHighlighted
 															? `${theme.colors.accent}20`
 															: theme.colors.bgMain,
 													borderColor: isSelected
 														? theme.colors.accent
-														: isHighlighted && !isDisabled
+														: isHighlighted
 															? theme.colors.accent
 															: theme.colors.border,
-													opacity: isDisabled ? 0.5 : 1,
 													'--pulse-color': `${theme.colors.accent}40`,
 												} as React.CSSProperties
 											}
@@ -617,7 +576,7 @@ export function SendToAgentModal({
 											</div>
 
 											{/* Quick Select Number */}
-											{index < 9 && !isDisabled && (
+											{index < 9 && (
 												<div
 													className="text-[10px] opacity-50 shrink-0"
 													style={{
@@ -721,7 +680,7 @@ export function SendToAgentModal({
 					</button>
 					<button
 						type="button"
-						onClick={handleSend}
+						onClick={selectedSessionId ? () => handleSend(selectedSessionId) : undefined}
 						disabled={!canSend}
 						aria-busy={isSending}
 						className="px-4 py-2 rounded text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"

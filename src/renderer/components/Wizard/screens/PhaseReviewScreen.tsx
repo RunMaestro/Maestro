@@ -71,12 +71,12 @@ function DocumentReview({
 		useWizard();
 
 	const { generatedDocuments, directoryPath, currentDocumentIndex } = state;
-	const currentDoc = generatedDocuments[currentDocumentIndex] || generatedDocuments[0];
+	const currentDoc = generatedDocuments[currentDocumentIndex] ?? generatedDocuments[0]!;
 	const folderPath = `${directoryPath}/${AUTO_RUN_FOLDER_NAME}`;
 
 	// Local content state for editing - tracks current document
 	const [localContent, setLocalContent] = useState(
-		currentDocumentIndex === 0 ? getPhase1Content() : currentDoc?.content || ''
+		currentDocumentIndex === 0 ? getPhase1Content() : currentDoc.content || ''
 	);
 	const [mode, setMode] = useState<'edit' | 'preview'>('preview');
 	const [attachments, setAttachments] = useState<Array<{ filename: string; dataUrl: string }>>([]);
@@ -103,10 +103,8 @@ function DocumentReview({
 
 	// Update local content when switching documents
 	useEffect(() => {
-		const newContent =
-			currentDocumentIndex === 0
-				? getPhase1Content()
-				: generatedDocuments[currentDocumentIndex]?.content || '';
+		const nextDoc = generatedDocuments[currentDocumentIndex] ?? generatedDocuments[0]!;
+		const newContent = currentDocumentIndex === 0 ? getPhase1Content() : nextDoc.content || '';
 		setLocalContent(newContent);
 		lastSavedContentRef.current = newContent;
 		// Only reset to preview when actually switching documents, not on every effect run
@@ -146,7 +144,7 @@ function DocumentReview({
 				return;
 			}
 
-			if (localContent !== lastSavedContentRef.current && currentDoc) {
+			if (localContent !== lastSavedContentRef.current) {
 				isSavingRef.current = true;
 				try {
 					await window.maestro.autorun.writeDoc(folderPath, currentDoc.filename, localContent);
@@ -190,9 +188,7 @@ function DocumentReview({
 		}, AUTO_SAVE_DELAY);
 
 		return () => {
-			if (autoSaveTimeoutRef.current) {
-				clearTimeout(autoSaveTimeoutRef.current);
-			}
+			clearTimeout(autoSaveTimeoutRef.current!);
 		};
 	}, [localContent, folderPath, currentDoc, currentDocumentIndex, setEditedPhase1Content]);
 
@@ -303,8 +299,9 @@ function DocumentReview({
 
 			try {
 				// Save final content before launching
-				if (currentDoc && localContent !== lastSavedContentRef.current) {
+				if (localContent !== lastSavedContentRef.current) {
 					await window.maestro.autorun.writeDoc(folderPath, currentDoc.filename, localContent);
+					lastSavedContentRef.current = localContent;
 					if (currentDocumentIndex === 0) {
 						setEditedPhase1Content(localContent);
 					}
@@ -383,14 +380,6 @@ function DocumentReview({
 	// Task count
 	const taskCount = countTasks(localContent);
 	const totalTasks = generatedDocuments.reduce((sum, doc) => sum + doc.taskCount, 0);
-
-	if (!currentDoc) {
-		return (
-			<div className="flex-1 flex items-center justify-center">
-				<p style={{ color: theme.colors.textDim }}>No documents generated</p>
-			</div>
-		);
-	}
 
 	// Build stats text
 	const statsText =
@@ -620,6 +609,12 @@ export function PhaseReviewScreen({
 		}
 	}, [state.generatedDocuments]);
 
+	useEffect(() => {
+		if (state.generatedDocuments.length === 0) {
+			previousStep();
+		}
+	}, [previousStep, state.generatedDocuments.length]);
+
 	const announcementElement = (
 		<ScreenReaderAnnouncement
 			message={announcement}
@@ -630,7 +625,6 @@ export function PhaseReviewScreen({
 
 	// If no documents, go back to preparing step
 	if (state.generatedDocuments.length === 0) {
-		previousStep();
 		return (
 			<div className="flex-1 flex items-center justify-center">
 				<p style={{ color: theme.colors.textDim }}>Redirecting...</p>

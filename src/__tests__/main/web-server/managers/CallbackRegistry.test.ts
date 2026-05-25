@@ -60,6 +60,10 @@ describe('CallbackRegistry', () => {
 			expect(registry.getTheme()).toBeNull();
 		});
 
+		it('getBionifyReadingMode() returns false when no callback set', () => {
+			expect(registry.getBionifyReadingMode()).toBe(false);
+		});
+
 		it('getCustomCommands() returns empty array when no callback set', () => {
 			expect(registry.getCustomCommands()).toEqual([]);
 		});
@@ -104,6 +108,18 @@ describe('CallbackRegistry', () => {
 			expect(await registry.renameTab('session-1', 'tab-1', 'New Name')).toBe(false);
 		});
 
+		it('starTab() returns false when no callback set', async () => {
+			expect(await registry.starTab('session-1', 'tab-1', true)).toBe(false);
+		});
+
+		it('reorderTab() returns false when no callback set', async () => {
+			expect(await registry.reorderTab('session-1', 2, 0)).toBe(false);
+		});
+
+		it('toggleBookmark() returns false when no callback set', async () => {
+			expect(await registry.toggleBookmark('session-1')).toBe(false);
+		});
+
 		it('getHistory() returns empty array when no callback set', () => {
 			expect(registry.getHistory()).toEqual([]);
 		});
@@ -133,6 +149,9 @@ describe('CallbackRegistry', () => {
 				'newTab',
 				'closeTab',
 				'renameTab',
+				'starTab',
+				'reorderTab',
+				'toggleBookmark',
 				'getHistory',
 			] as const;
 
@@ -204,6 +223,21 @@ describe('CallbackRegistry', () => {
 		it('returns true for renameTab after setting it', () => {
 			registry.setRenameTabCallback(async () => false);
 			expect(registry.hasCallback('renameTab')).toBe(true);
+		});
+
+		it('returns true for starTab after setting it', () => {
+			registry.setStarTabCallback(async () => false);
+			expect(registry.hasCallback('starTab')).toBe(true);
+		});
+
+		it('returns true for reorderTab after setting it', () => {
+			registry.setReorderTabCallback(async () => false);
+			expect(registry.hasCallback('reorderTab')).toBe(true);
+		});
+
+		it('returns true for toggleBookmark after setting it', () => {
+			registry.setToggleBookmarkCallback(async () => false);
+			expect(registry.hasCallback('toggleBookmark')).toBe(true);
 		});
 
 		it('returns true for getHistory after setting it', () => {
@@ -306,6 +340,13 @@ describe('CallbackRegistry', () => {
 		it('returns null when callback returns null', () => {
 			registry.setGetThemeCallback(() => null);
 			expect(registry.getTheme()).toBeNull();
+		});
+	});
+
+	describe('setGetBionifyReadingModeCallback / getBionifyReadingMode()', () => {
+		it('returns the callback result', () => {
+			registry.setGetBionifyReadingModeCallback(() => true);
+			expect(registry.getBionifyReadingMode()).toBe(true);
 		});
 	});
 
@@ -551,6 +592,37 @@ describe('CallbackRegistry', () => {
 			await registry.renameTab('session-2', 'tab-5', 'My Renamed Tab');
 
 			expect(callback).toHaveBeenCalledWith('session-2', 'tab-5', 'My Renamed Tab');
+		});
+	});
+
+	describe('tab metadata callbacks', () => {
+		it('starTab forwards session, tab, and starred state and returns the callback result', async () => {
+			const callback = vi.fn().mockResolvedValue(true);
+			registry.setStarTabCallback(callback);
+
+			await expect(registry.starTab('session-2', 'tab-5', true)).resolves.toBe(true);
+			await expect(registry.starTab('session-2', 'tab-5', false)).resolves.toBe(true);
+
+			expect(callback).toHaveBeenNthCalledWith(1, 'session-2', 'tab-5', true);
+			expect(callback).toHaveBeenNthCalledWith(2, 'session-2', 'tab-5', false);
+		});
+
+		it('reorderTab forwards the source and target indexes and returns the callback result', async () => {
+			const callback = vi.fn().mockResolvedValue(true);
+			registry.setReorderTabCallback(callback);
+
+			await expect(registry.reorderTab('session-3', 3, 1)).resolves.toBe(true);
+
+			expect(callback).toHaveBeenCalledWith('session-3', 3, 1);
+		});
+
+		it('toggleBookmark forwards the session ID and preserves a false callback result', async () => {
+			const callback = vi.fn().mockResolvedValue(false);
+			registry.setToggleBookmarkCallback(callback);
+
+			await expect(registry.toggleBookmark('session-bookmarked')).resolves.toBe(false);
+
+			expect(callback).toHaveBeenCalledWith('session-bookmarked');
 		});
 	});
 

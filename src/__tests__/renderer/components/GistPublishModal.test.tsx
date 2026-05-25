@@ -13,7 +13,7 @@
 
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { GistPublishModal } from '../../../renderer/components/GistPublishModal';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 import type { Theme } from '../../../renderer/types';
@@ -329,6 +329,26 @@ describe('GistPublishModal', () => {
 			});
 		});
 
+		it('displays fallback error message when createGist fails without details', async () => {
+			mockCreateGist.mockResolvedValue({ success: false });
+
+			renderWithLayerStack(
+				<GistPublishModal
+					theme={testTheme}
+					filename="test.js"
+					content="const x = 1;"
+					onClose={vi.fn()}
+					onSuccess={vi.fn()}
+				/>
+			);
+
+			fireEvent.click(screen.getByRole('button', { name: 'Publish Secret' }));
+
+			await waitFor(() => {
+				expect(screen.getByText('Failed to create gist')).toBeInTheDocument();
+			});
+		});
+
 		it('displays error message when createGist throws', async () => {
 			mockCreateGist.mockRejectedValue(new Error('Network error'));
 
@@ -346,6 +366,26 @@ describe('GistPublishModal', () => {
 
 			await waitFor(() => {
 				expect(screen.getByText('Network error')).toBeInTheDocument();
+			});
+		});
+
+		it('displays fallback error message when createGist throws a non-Error value', async () => {
+			mockCreateGist.mockRejectedValue('network unavailable');
+
+			renderWithLayerStack(
+				<GistPublishModal
+					theme={testTheme}
+					filename="test.js"
+					content="const x = 1;"
+					onClose={vi.fn()}
+					onSuccess={vi.fn()}
+				/>
+			);
+
+			fireEvent.click(screen.getByRole('button', { name: 'Publish Secret' }));
+
+			await waitFor(() => {
+				expect(screen.getByText('Failed to create gist')).toBeInTheDocument();
 			});
 		});
 
@@ -487,6 +527,28 @@ describe('GistPublishModal', () => {
 			expect(screen.getByDisplayValue('https://gist.github.com/existing123')).toBeInTheDocument();
 		});
 
+		it('selects the existing gist URL when the URL input is clicked', () => {
+			const select = vi
+				.spyOn(HTMLInputElement.prototype, 'select')
+				.mockImplementation(() => undefined);
+
+			renderWithLayerStack(
+				<GistPublishModal
+					theme={testTheme}
+					filename="test.js"
+					content="const x = 1;"
+					onClose={vi.fn()}
+					onSuccess={vi.fn()}
+					existingGist={existingGist}
+				/>
+			);
+
+			fireEvent.click(screen.getByDisplayValue('https://gist.github.com/existing123'));
+
+			expect(select).toHaveBeenCalledTimes(1);
+			select.mockRestore();
+		});
+
 		it('shows visibility status (secret/public)', () => {
 			renderWithLayerStack(
 				<GistPublishModal
@@ -559,6 +621,109 @@ describe('GistPublishModal', () => {
 			await waitFor(() => {
 				expect(mockClipboardWriteText).toHaveBeenCalledWith('https://gist.github.com/existing123');
 			});
+		});
+
+		it('does not show copied feedback when clipboard write fails', async () => {
+			mockClipboardWriteText.mockRejectedValueOnce(new Error('clipboard denied'));
+
+			renderWithLayerStack(
+				<GistPublishModal
+					theme={testTheme}
+					filename="test.js"
+					content="const x = 1;"
+					onClose={vi.fn()}
+					onSuccess={vi.fn()}
+					existingGist={existingGist}
+				/>
+			);
+
+			const copyButtons = screen
+				.getAllByRole('button')
+				.filter((btn) => btn.textContent?.includes('Copy URL'));
+			fireEvent.click(copyButtons[0]);
+
+			await waitFor(() => {
+				expect(mockClipboardWriteText).toHaveBeenCalledWith('https://gist.github.com/existing123');
+			});
+			expect(screen.queryByText('Copied!')).not.toBeInTheDocument();
+		});
+
+		it('ignores copy and open actions when existing gist URL is missing', async () => {
+			renderWithLayerStack(
+				<GistPublishModal
+					theme={testTheme}
+					filename="test.js"
+					content="const x = 1;"
+					onClose={vi.fn()}
+					onSuccess={vi.fn()}
+					existingGist={{ ...existingGist, gistUrl: '' }}
+				/>
+			);
+
+			fireEvent.click(screen.getByTitle('Copy URL'));
+			fireEvent.click(screen.getByTitle('Open in browser'));
+
+			await act(async () => {
+				await Promise.resolve();
+			});
+
+			expect(mockClipboardWriteText).not.toHaveBeenCalled();
+			expect(mockOpenExternal).not.toHaveBeenCalled();
+		});
+
+		it('resets copied URL feedback after the timeout', async () => {
+			vi.useFakeTimers();
+
+			try {
+				renderWithLayerStack(
+					<GistPublishModal
+						theme={testTheme}
+						filename="test.js"
+						content="const x = 1;"
+						onClose={vi.fn()}
+						onSuccess={vi.fn()}
+						existingGist={existingGist}
+					/>
+				);
+
+				const copyButtons = screen
+					.getAllByRole('button')
+					.filter((btn) => btn.textContent?.includes('Copy URL'));
+				fireEvent.click(copyButtons[0]);
+
+				await act(async () => {
+					await Promise.resolve();
+				});
+
+				expect(screen.getByRole('button', { name: 'Copied!' })).toBeInTheDocument();
+
+				act(() => {
+					vi.advanceTimersByTime(2000);
+				});
+
+				expect(
+					screen.getAllByRole('button').some((btn) => btn.textContent?.includes('Copy URL'))
+				).toBe(true);
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
+		it('opens the existing gist URL in the browser', () => {
+			renderWithLayerStack(
+				<GistPublishModal
+					theme={testTheme}
+					filename="test.js"
+					content="const x = 1;"
+					onClose={vi.fn()}
+					onSuccess={vi.fn()}
+					existingGist={existingGist}
+				/>
+			);
+
+			fireEvent.click(screen.getByTitle('Open in browser'));
+
+			expect(mockOpenExternal).toHaveBeenCalledWith('https://gist.github.com/existing123');
 		});
 
 		it('switches to re-publish view when Re-publish is clicked', async () => {

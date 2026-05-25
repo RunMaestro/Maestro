@@ -466,7 +466,7 @@ function renderDocumentNode(
 		ctx.textBaseline = 'middle';
 
 		const maxPathWidth = width - folderIconSize - 24;
-		const pathText = truncateText(folderPath || './', Math.floor(maxPathWidth / 5.5));
+		const pathText = truncateText(folderPath, Math.floor(maxPathWidth / 5.5));
 		ctx.fillText(
 			pathText,
 			folderIconX + folderIconSize + 6,
@@ -545,7 +545,7 @@ function renderExternalNode(
 	ctx.font = '11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
 	ctx.textAlign = 'center';
 	ctx.textBaseline = 'middle';
-	ctx.fillText(truncateText(domain || '', 18), x, y);
+	ctx.fillText(truncateText(domain!, 18), x, y);
 
 	ctx.globalAlpha = 1;
 }
@@ -671,15 +671,15 @@ export function MindMap({
 
 			if (node.nodeType === 'document') {
 				return (
-					(node.label?.toLowerCase().includes(query) ?? false) ||
+					node.label.toLowerCase().includes(query) ||
 					(node.filePath?.toLowerCase().includes(query) ?? false) ||
 					(node.description?.toLowerCase().includes(query) ?? false) ||
 					(node.contentPreview?.toLowerCase().includes(query) ?? false)
 				);
 			} else {
 				return (
-					(node.domain?.toLowerCase().includes(query) ?? false) ||
-					(node.urls?.some((url) => url.toLowerCase().includes(query)) ?? false)
+					node.domain!.toLowerCase().includes(query) ||
+					node.urls!.some((url) => url.toLowerCase().includes(query))
 				);
 			}
 		},
@@ -726,8 +726,6 @@ export function MindMap({
 	// Check if click is on the open icon
 	const isClickOnOpenIcon = useCallback(
 		(node: MindMapNode, canvasX: number, canvasY: number): boolean => {
-			if (node.nodeType !== 'document') return false;
-
 			const iconX = node.x + node.width / 2 - OPEN_ICON_SIZE - OPEN_ICON_PADDING;
 			const iconY = node.y - node.height / 2 + OPEN_ICON_PADDING;
 
@@ -765,9 +763,8 @@ export function MindMap({
 		// Render links first (behind nodes)
 		const nodeMap = new Map(nodesWithState.map((n) => [n.id, n]));
 		layout.links.forEach((link) => {
-			const sourceNode = nodeMap.get(link.source);
-			const targetNode = nodeMap.get(link.target);
-			if (!sourceNode || !targetNode) return;
+			const sourceNode = nodeMap.get(link.source)!;
+			const targetNode = nodeMap.get(link.target)!;
 
 			const isHighlighted =
 				sourceNode.id === selectedNodeId ||
@@ -878,17 +875,15 @@ export function MindMap({
 
 	// Center view on mount and when center file changes
 	useEffect(() => {
-		if (layout.nodes.length > 0) {
-			// Center on the center node
-			const centerNode = layout.nodes.find((n) => n.isFocused);
-			if (centerNode) {
-				setTransform((prev) => ({
-					...prev,
-					panX: width / 2 - centerNode.x * prev.zoom,
-					panY: height / 2 - centerNode.y * prev.zoom,
-				}));
-			}
-		}
+		if (layout.nodes.length === 0) return;
+
+		// Layout algorithms mark one focused center node whenever nodes exist.
+		const centerNode = layout.nodes.find((n) => n.isFocused)!;
+		setTransform((prev) => ({
+			...prev,
+			panX: width / 2 - centerNode.x * prev.zoom,
+			panY: height / 2 - centerNode.y * prev.zoom,
+		}));
 	}, [centerFilePath, width, height, layout.nodes]);
 
 	// Mouse event handlers
@@ -963,9 +958,7 @@ export function MindMap({
 				onNodePositionChange(draggingNodeId, { x: newX, y: newY });
 
 				// Update cursor
-				if (canvasRef.current) {
-					canvasRef.current.style.cursor = 'grabbing';
-				}
+				canvasRef.current!.style.cursor = 'grabbing';
 			} else if (isPanning) {
 				setTransform((prev) => ({
 					...prev,
@@ -978,9 +971,7 @@ export function MindMap({
 				setHoveredNodeId(node?.id ?? null);
 
 				// Update cursor
-				if (canvasRef.current) {
-					canvasRef.current.style.cursor = node ? 'grab' : 'default';
-				}
+				canvasRef.current!.style.cursor = node ? 'grab' : 'default';
 			}
 		},
 		[
@@ -998,9 +989,7 @@ export function MindMap({
 	const handleMouseUp = useCallback(() => {
 		setDraggingNodeId(null);
 		setIsPanning(false);
-		if (canvasRef.current) {
-			canvasRef.current.style.cursor = hoveredNodeId ? 'grab' : 'default';
-		}
+		canvasRef.current!.style.cursor = hoveredNodeId ? 'grab' : 'default';
 	}, [hoveredNodeId]);
 
 	const handleMouseLeave = useCallback(() => {
@@ -1049,8 +1038,7 @@ export function MindMap({
 
 	// Attach wheel event listener with passive: false to allow preventDefault
 	useEffect(() => {
-		const canvas = canvasRef.current;
-		if (!canvas) return;
+		const canvas = canvasRef.current!;
 
 		canvas.addEventListener('wheel', handleWheel, { passive: false });
 		return () => {

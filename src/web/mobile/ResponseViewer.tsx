@@ -158,7 +158,6 @@ export function ResponseViewer({
 
 	// Helper function to calculate distance between two touch points
 	const getTouchDistance = useCallback((touches: React.TouchList): number => {
-		if (touches.length < 2) return 0;
 		const dx = touches[0].clientX - touches[1].clientX;
 		const dy = touches[0].clientY - touches[1].clientY;
 		return Math.sqrt(dx * dx + dy * dy);
@@ -297,10 +296,6 @@ export function ResponseViewer({
 		if (isPinching) {
 			setIsPinching(false);
 			setInitialPinchDistance(null);
-			// If zoomed out below 1, snap back to 1
-			if (zoomScale < 1) {
-				setZoomScale(1);
-			}
 			// Haptic feedback when zoom changes significantly
 			if (zoomScale !== initialZoomScale) {
 				triggerHaptic(HAPTIC_PATTERNS.tap);
@@ -353,8 +348,6 @@ export function ResponseViewer({
 	// Handle keyboard navigation (Escape to close, Arrow keys to navigate)
 	useEffect(() => {
 		const handleKeyDown = (e: KeyboardEvent) => {
-			if (!isOpen) return;
-
 			if (e.key === 'Escape') {
 				onClose();
 			} else if (e.key === 'ArrowLeft' && canGoLeft && onNavigate) {
@@ -412,12 +405,10 @@ export function ResponseViewer({
 				} else {
 					// Zoom in to 2x at tap location
 					const touch = e.touches[0];
-					if (zoomableRef.current) {
-						const rect = zoomableRef.current.getBoundingClientRect();
-						const x = ((touch.clientX - rect.left) / rect.width) * 100;
-						const y = ((touch.clientY - rect.top) / rect.height) * 100;
-						setTransformOrigin({ x, y });
-					}
+					const rect = zoomableRef.current!.getBoundingClientRect();
+					const x = ((touch.clientX - rect.left) / rect.width) * 100;
+					const y = ((touch.clientY - rect.top) / rect.height) * 100;
+					setTransformOrigin({ x, y });
 					setZoomScale(2);
 					triggerHaptic(HAPTIC_PATTERNS.tap);
 				}
@@ -435,10 +426,7 @@ export function ResponseViewer({
 	}
 
 	// Use the active response for display
-	const displayResponse = activeResponse || response;
-	if (!displayResponse) {
-		return null;
-	}
+	const displayResponse = activeResponse || response!;
 
 	// Display text - use full text if available, otherwise preview
 	// Strip ANSI codes since web interface doesn't render terminal colors
@@ -736,10 +724,8 @@ export function ResponseViewer({
 							<button
 								key={index}
 								onClick={() => {
-									if (onNavigate) {
-										triggerHaptic(HAPTIC_PATTERNS.tap);
-										onNavigate(index);
-									}
+									triggerHaptic(HAPTIC_PATTERNS.tap);
+									onNavigate!(index);
 								}}
 								style={{
 									width: index === currentIndex ? '16px' : '8px',

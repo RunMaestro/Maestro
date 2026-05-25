@@ -63,6 +63,9 @@ vi.mock('lucide-react', () => ({
 	LayoutGrid: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
 		<svg data-testid="layout-grid-icon" className={className} style={style} />
 	),
+	AlertTriangle: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<svg data-testid="alert-triangle-icon" className={className} style={style} />
+	),
 }));
 
 // Track AutoRun ref methods
@@ -73,12 +76,13 @@ let autoRunRefMethods: {
 	save: ReturnType<typeof vi.fn>;
 	revert: ReturnType<typeof vi.fn>;
 };
+let autoRunShouldExposeRef = true;
 
 // Mock AutoRun component
 vi.mock('../../../renderer/components/AutoRun', () => ({
 	AutoRun: React.forwardRef((props: any, ref: any) => {
 		// Expose ref methods
-		React.useImperativeHandle(ref, () => autoRunRefMethods);
+		React.useImperativeHandle(ref, () => (autoRunShouldExposeRef ? autoRunRefMethods : null));
 		return (
 			<div data-testid="autorun-component">
 				<span data-testid="autorun-mode">{props.mode}</span>
@@ -89,6 +93,20 @@ vi.mock('../../../renderer/components/AutoRun', () => ({
 					value={props.content}
 					onChange={(e) => props.onContentChange(e.target.value)}
 				/>
+				<button
+					type="button"
+					data-testid="autorun-state-change"
+					onClick={() =>
+						props.onStateChange?.({
+							mode: 'preview',
+							cursorPosition: 12,
+							editScrollPos: 34,
+							previewScrollPos: 56,
+						})
+					}
+				>
+					Emit state change
+				</button>
 			</div>
 		);
 	}),
@@ -158,6 +176,7 @@ const renderWithProvider = (ui: React.ReactElement) => {
 
 describe('AutoRunExpandedModal', () => {
 	beforeEach(() => {
+		autoRunShouldExposeRef = true;
 		// Reset AutoRun ref methods
 		autoRunRefMethods = {
 			focus: vi.fn(),
@@ -298,6 +317,30 @@ describe('AutoRunExpandedModal', () => {
 
 			expect(props.onModeChange).toHaveBeenCalledWith('preview');
 		});
+
+		it('should forward AutoRun state changes without leaking modal mode changes to the parent', () => {
+			const onStateChange = vi.fn();
+			const props = createDefaultProps({ mode: 'edit', onStateChange });
+			renderWithProvider(<AutoRunExpandedModal {...props} />);
+
+			fireEvent.click(screen.getByTestId('autorun-state-change'));
+
+			expect(onStateChange).toHaveBeenCalledWith({
+				mode: 'edit',
+				cursorPosition: 12,
+				editScrollPos: 34,
+				previewScrollPos: 56,
+			});
+		});
+
+		it('should ignore AutoRun state changes when no state-change callback is provided', () => {
+			const props = createDefaultProps({ mode: 'edit' });
+			renderWithProvider(<AutoRunExpandedModal {...props} />);
+
+			fireEvent.click(screen.getByTestId('autorun-state-change'));
+
+			expect(props.onModeChange).not.toHaveBeenCalled();
+		});
 	});
 
 	describe('Batch Run State', () => {
@@ -354,6 +397,16 @@ describe('AutoRunExpandedModal', () => {
 			fireEvent.click(runButton);
 
 			expect(onOpenBatchRunner).toHaveBeenCalled();
+		});
+
+		it('should call onOpenMarketplace when PlayBooks button is clicked', () => {
+			const onOpenMarketplace = vi.fn();
+			const props = createDefaultProps({ onOpenMarketplace });
+			renderWithProvider(<AutoRunExpandedModal {...props} />);
+
+			fireEvent.click(screen.getByRole('button', { name: /playbooks/i }));
+
+			expect(onOpenMarketplace).toHaveBeenCalled();
 		});
 
 		it('should disable Run button when agent is busy', () => {
@@ -440,6 +493,21 @@ describe('AutoRunExpandedModal', () => {
 			expect(screen.queryByRole('button', { name: /revert/i })).not.toBeInTheDocument();
 		});
 
+		it('should keep dirty controls hidden when the AutoRun ref is unavailable while polling', async () => {
+			autoRunShouldExposeRef = false;
+
+			const props = createDefaultProps({ mode: 'edit' });
+			renderWithProvider(<AutoRunExpandedModal {...props} />);
+
+			await act(async () => {
+				vi.advanceTimersByTime(200);
+			});
+
+			expect(autoRunRefMethods.isDirty).not.toHaveBeenCalled();
+			expect(screen.queryByRole('button', { name: /save/i })).not.toBeInTheDocument();
+			expect(screen.queryByRole('button', { name: /revert/i })).not.toBeInTheDocument();
+		});
+
 		it('should show Save/Revert buttons when dirty', async () => {
 			autoRunRefMethods.isDirty.mockReturnValue(true);
 
@@ -467,7 +535,9 @@ describe('AutoRunExpandedModal', () => {
 			});
 
 			const saveButton = screen.getByRole('button', { name: /save/i });
-			fireEvent.click(saveButton);
+			await act(async () => {
+				fireEvent.click(saveButton);
+			});
 
 			expect(autoRunRefMethods.save).toHaveBeenCalled();
 		});
@@ -487,6 +557,37 @@ describe('AutoRunExpandedModal', () => {
 			fireEvent.click(revertButton);
 
 			expect(autoRunRefMethods.revert).toHaveBeenCalled();
+		});
+
+		it('should ignore Save and Revert clicks if the AutoRun ref detaches after becoming dirty', async () => {
+			autoRunRefMethods.isDirty.mockReturnValue(true);
+
+			const props = createDefaultProps({ mode: 'edit' });
+			const { rerender } = renderWithProvider(<AutoRunExpandedModal {...props} />);
+
+			await act(async () => {
+				vi.advanceTimersByTime(200);
+			});
+
+			expect(screen.getByRole('button', { name: /save/i })).toBeInTheDocument();
+			expect(screen.getByRole('button', { name: /revert/i })).toBeInTheDocument();
+
+			autoRunShouldExposeRef = false;
+			await act(async () => {
+				rerender(
+					<LayerStackProvider>
+						<AutoRunExpandedModal {...props} />
+					</LayerStackProvider>
+				);
+			});
+
+			await act(async () => {
+				fireEvent.click(screen.getByRole('button', { name: /save/i }));
+			});
+			fireEvent.click(screen.getByRole('button', { name: /revert/i }));
+
+			expect(autoRunRefMethods.save).not.toHaveBeenCalled();
+			expect(autoRunRefMethods.revert).not.toHaveBeenCalled();
 		});
 
 		it('should not show Save/Revert in preview mode even if dirty', async () => {
@@ -534,7 +635,9 @@ describe('AutoRunExpandedModal', () => {
 
 			// Click Run button
 			const runButton = screen.getByRole('button', { name: /run/i });
-			fireEvent.click(runButton);
+			await act(async () => {
+				fireEvent.click(runButton);
+			});
 
 			expect(autoRunRefMethods.save).toHaveBeenCalled();
 			expect(onOpenBatchRunner).toHaveBeenCalled();
@@ -585,6 +688,54 @@ describe('AutoRunExpandedModal', () => {
 
 			expect(props.onClose).not.toHaveBeenCalled();
 		});
+
+		it('should show an unsaved changes confirmation instead of closing when dirty', async () => {
+			autoRunRefMethods.isDirty.mockReturnValue(true);
+			const props = createDefaultProps({ mode: 'edit' });
+			renderWithProvider(<AutoRunExpandedModal {...props} />);
+
+			await act(async () => {
+				vi.advanceTimersByTime(200);
+			});
+
+			fireEvent.click(screen.getByTitle('Close (Esc)'));
+
+			expect(props.onClose).not.toHaveBeenCalled();
+			expect(screen.getByRole('dialog', { name: 'Unsaved Changes' })).toBeInTheDocument();
+		});
+
+		it('should discard dirty edits and close when unsaved confirmation is accepted', async () => {
+			autoRunRefMethods.isDirty.mockReturnValue(true);
+			const props = createDefaultProps({ mode: 'edit' });
+			renderWithProvider(<AutoRunExpandedModal {...props} />);
+
+			await act(async () => {
+				vi.advanceTimersByTime(200);
+			});
+			fireEvent.click(screen.getByTitle('Close (Esc)'));
+			fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
+
+			expect(autoRunRefMethods.revert).toHaveBeenCalledTimes(1);
+			expect(props.onClose).toHaveBeenCalledTimes(1);
+			expect(screen.queryByRole('dialog', { name: 'Unsaved Changes' })).not.toBeInTheDocument();
+		});
+
+		it('should keep the modal open when unsaved confirmation is cancelled', async () => {
+			autoRunRefMethods.isDirty.mockReturnValue(true);
+			const props = createDefaultProps({ mode: 'edit' });
+			renderWithProvider(<AutoRunExpandedModal {...props} />);
+
+			await act(async () => {
+				vi.advanceTimersByTime(200);
+			});
+			fireEvent.click(screen.getByTitle('Close (Esc)'));
+			fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+			expect(autoRunRefMethods.revert).not.toHaveBeenCalled();
+			expect(props.onClose).not.toHaveBeenCalled();
+			expect(screen.queryByRole('dialog', { name: 'Unsaved Changes' })).not.toBeInTheDocument();
+			expect(screen.getByText('Auto Run')).toBeInTheDocument();
+		});
 	});
 
 	describe('Layer Stack Integration', () => {
@@ -593,11 +744,26 @@ describe('AutoRunExpandedModal', () => {
 			renderWithProvider(<AutoRunExpandedModal {...props} />);
 
 			// Simulate Escape key (handled by layer stack)
-			fireEvent.keyDown(document, { key: 'Escape' });
+			await act(async () => {});
+			fireEvent.keyDown(window, { key: 'Escape' });
 
 			await waitFor(() => {
 				expect(props.onClose).toHaveBeenCalled();
 			});
+		});
+
+		it('should route Escape through the latest dirty-state close handler', async () => {
+			autoRunRefMethods.isDirty.mockReturnValue(true);
+			const props = createDefaultProps({ mode: 'edit' });
+			renderWithProvider(<AutoRunExpandedModal {...props} />);
+
+			await act(async () => {
+				vi.advanceTimersByTime(200);
+			});
+			fireEvent.keyDown(window, { key: 'Escape' });
+
+			expect(props.onClose).not.toHaveBeenCalled();
+			expect(screen.getByRole('dialog', { name: 'Unsaved Changes' })).toBeInTheDocument();
 		});
 	});
 

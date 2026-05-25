@@ -306,9 +306,7 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 											ac.agentConfigRef.current = newConfig;
 										}}
 										onConfigBlur={async () => {
-											if (directorNotesSettings.provider) {
-												await ac.saveAgentConfig(directorNotesSettings.provider);
-											}
+											await ac.saveAgentConfig(directorNotesSettings.provider);
 										}}
 										availableModels={ac.availableModels}
 										loadingModels={ac.loadingModels}

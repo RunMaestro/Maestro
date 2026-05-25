@@ -29,6 +29,8 @@ export const KNOWN_TOOL_NAMES = [
 	'LSP',
 ];
 
+const TOOL_NAMES_BY_MATCH_PRIORITY = [...KNOWN_TOOL_NAMES].sort((a, b) => b.length - a.length);
+
 /**
  * Check if a string looks like concatenated tool names (e.g., "TaskGrepGrepReadReadRead")
  * This can happen if malformed content is emitted as thinking chunks
@@ -39,7 +41,7 @@ export function isLikelyConcatenatedToolNames(text: string): boolean {
 	let remaining = text.trim();
 
 	// Also handle MCP tools with pattern mcp__<provider>__<tool>
-	const mcpPattern = /^mcp__[a-zA-Z0-9_]+__[a-zA-Z0-9_]+/;
+	const mcpPattern = /^mcp__[a-zA-Z0-9_]+?__[a-zA-Z0-9_]+?(?=mcp__|$)/;
 
 	while (remaining.length > 0) {
 		let foundMatch = false;
@@ -52,7 +54,7 @@ export function isLikelyConcatenatedToolNames(text: string): boolean {
 			foundMatch = true;
 		} else {
 			// Check for known tool names
-			for (const toolName of KNOWN_TOOL_NAMES) {
+			for (const toolName of TOOL_NAMES_BY_MATCH_PRIORITY) {
 				if (remaining.startsWith(toolName)) {
 					matchCount++;
 					remaining = remaining.substring(toolName.length);

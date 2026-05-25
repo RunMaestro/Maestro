@@ -109,7 +109,7 @@ interface CodexMessageContent {
  * Extract the session ID (UUID) from a Codex session filename
  * Format: rollout-TIMESTAMP-UUID.jsonl
  */
-function extractSessionIdFromFilename(filename: string): string | null {
+function extractSessionIdFromFilename(filename: string): string {
 	// Match pattern: rollout-YYYYMMDD_HHMMSS_MMM-UUID.jsonl or similar
 	const match = filename.match(/rollout-[\d_]+-([a-f0-9-]+)\.jsonl$/i);
 	if (match) {
@@ -140,7 +140,7 @@ function extractTextFromContent(content: CodexMessageContent[] | undefined): str
 /**
  * Check if text is a system/environment context message that should be skipped for preview
  */
-function isSystemContextMessage(text: string): boolean {
+export function isSystemContextMessage(text: string): boolean {
 	if (!text) return false;
 	const trimmed = text.trim();
 	// Skip messages that start with environment/system context XML tags
@@ -267,7 +267,7 @@ async function parseSessionFile(
 			// Legacy format: { id, timestamp, ... } at top level
 			else if (firstLine.id && firstLine.timestamp) {
 				metadata = firstLine as CodexSessionMetadata;
-				timestamp = firstLine.timestamp || timestamp;
+				timestamp = firstLine.timestamp;
 			}
 		} catch {
 			// First line may not be metadata, continue parsing
@@ -644,7 +644,7 @@ export class CodexSessionStorage extends BaseSessionStorage {
 				// Legacy format: { id, timestamp, ... } at top level
 				else if (firstLine.id && firstLine.timestamp) {
 					metadata = firstLine as CodexSessionMetadata;
-					timestamp = firstLine.timestamp || timestamp;
+					timestamp = firstLine.timestamp;
 				}
 			} catch {
 				// First line may not be metadata, continue parsing
@@ -847,7 +847,7 @@ export class CodexSessionStorage extends BaseSessionStorage {
 				continue;
 			}
 
-			const sessionId = extractSessionIdFromFilename(filename) || filename;
+			const sessionId = extractSessionIdFromFilename(filename);
 			const session = await parseSessionFile(filePath, sessionId, {
 				size: stats.size,
 				mtimeMs: stats.mtimeMs,
@@ -916,7 +916,7 @@ export class CodexSessionStorage extends BaseSessionStorage {
 			const stats = { size: statResult.data.size, mtimeMs: statResult.data.mtime };
 			if (stats.size === 0) continue;
 
-			const sessionId = extractSessionIdFromFilename(filename) || filename;
+			const sessionId = extractSessionIdFromFilename(filename);
 			const session = await this.parseSessionFileRemote(filePath, sessionId, stats, sshConfig);
 
 			if (session) {
@@ -1025,7 +1025,7 @@ export class CodexSessionStorage extends BaseSessionStorage {
 							const args = JSON.parse(entry.payload.arguments || '{}');
 							argsStr = JSON.stringify(args, null, 2);
 						} catch {
-							argsStr = entry.payload.arguments || '';
+							argsStr = entry.payload.arguments;
 						}
 						const toolInfo = {
 							tool: entry.payload.name,

@@ -788,9 +788,7 @@ export const RightPanel = memo(
 						confirmLabel="Kill Process"
 						destructive
 						onConfirm={() => {
-							if (session?.id) {
-								onKillBatchRun?.(session.id);
-							}
+							onKillBatchRun?.(session.id);
 						}}
 						onClose={() => setShowKillConfirm(false)}
 					/>

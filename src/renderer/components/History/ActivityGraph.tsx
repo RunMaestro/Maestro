@@ -42,7 +42,7 @@ export const ActivityGraph: React.FC<ActivityGraphProps> = ({
 				entries.length > 0
 					? Math.min(...entries.map((e) => e.timestamp))
 					: endTime - 24 * 60 * 60 * 1000;
-			const totalMs = endTime - earliest;
+			const totalMs = Math.max(1, endTime - earliest);
 			const count = lookbackConfig.bucketCount;
 			return {
 				startTime: earliest,
@@ -72,12 +72,10 @@ export const ActivityGraph: React.FC<ActivityGraphProps> = ({
 					bucketCount - 1,
 					Math.floor((entry.timestamp - startTime) / msPerBucket)
 				);
-				if (bucketIndex >= 0 && bucketIndex < bucketCount) {
-					if (entry.type === 'AUTO') {
-						buckets[bucketIndex].auto++;
-					} else if (entry.type === 'USER') {
-						buckets[bucketIndex].user++;
-					}
+				if (entry.type === 'AUTO') {
+					buckets[bucketIndex].auto++;
+				} else if (entry.type === 'USER') {
+					buckets[bucketIndex].user++;
 				}
 			}
 		});
@@ -160,7 +158,6 @@ export const ActivityGraph: React.FC<ActivityGraphProps> = ({
 		const diffMins = Math.floor(diffMs / 60000);
 		const diffHours = Math.floor(diffMins / 60);
 
-		if (diffMins < 1) return 'Now';
 		if (diffMins < 60) return `${diffMins}m ago`;
 		if (diffHours < 24) return `${diffHours}h ago`;
 		return new Date(endTime).toLocaleDateString([], { month: 'short', day: 'numeric' });

@@ -191,7 +191,7 @@ export function getWindowsShellForAgentExecution(
 	if (currentShell && currentShell.trim()) {
 		const shellLower = currentShell.toLowerCase();
 		// Check basename to avoid false positives (e.g., C:\Users\commander\bash.exe)
-		const basename = shellLower.split(/[\\/]/).pop() || '';
+		const basename = shellLower.split(/[\\/]/).pop()!;
 		const isCmdExe = basename === 'cmd' || basename === 'cmd.exe';
 		// Skip cmd.exe to avoid command line length limits
 		if (!isCmdExe) {
@@ -208,36 +208,24 @@ export function getWindowsShellForAgentExecution(
 	// - PSHOME environment variable (most reliable)
 	// - PowerShell Core (pwsh.exe) if installed
 	// - Windows PowerShell (powershell.exe)
-	// - Fall back to ComSpec (cmd.exe) as last resort with warning
 	const fs = require('fs');
-	const possiblePaths: string[] = [];
+	const powershellPaths: string[] = [];
 
 	// Add PSHOME path if environment variable is set
 	if (process.env.PSHOME) {
-		possiblePaths.push(`${process.env.PSHOME}\\powershell.exe`);
+		powershellPaths.push(`${process.env.PSHOME}\\powershell.exe`);
 	}
 
 	// Add common PowerShell locations
-	possiblePaths.push(
+	powershellPaths.push(
 		// Windows PowerShell (built into Windows)
 		`${process.env.SystemRoot || 'C:\\Windows'}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`,
 		// PowerShell Core (if installed)
-		`${process.env.ProgramFiles || 'C:\\Program Files'}\\PowerShell\\7\\pwsh.exe`,
-		// Fallback to bare name (relies on PATH)
-		'powershell.exe'
+		`${process.env.ProgramFiles || 'C:\\Program Files'}\\PowerShell\\7\\pwsh.exe`
 	);
 
-	// Try each path and use the first that exists
-	for (const shellPath of possiblePaths) {
-		// For bare names like 'powershell.exe', assume it's in PATH
-		if (!shellPath.includes('\\') && !shellPath.includes('/')) {
-			return {
-				shell: shellPath,
-				useShell: true,
-				source: 'powershell-default',
-			};
-		}
-		// For full paths, check if file exists
+	// Try each full path and use the first that exists
+	for (const shellPath of powershellPaths) {
 		try {
 			if (fs.existsSync(shellPath)) {
 				return {
@@ -251,17 +239,10 @@ export function getWindowsShellForAgentExecution(
 		}
 	}
 
-	// Last resort: fall back to ComSpec (cmd.exe)
-	// This may cause command line length issues, but at least it will work
-	const comSpec = process.env.ComSpec || 'cmd.exe';
-	console.warn(
-		`[shellEscape] PowerShell not found, falling back to ${comSpec}. ` +
-			`Long commands may fail due to cmd.exe's ~8191 character limit.`
-	);
-
+	// Fallback to bare name and let PATH resolution find PowerShell.
 	return {
-		shell: comSpec,
+		shell: 'powershell.exe',
 		useShell: true,
-		source: 'powershell-default', // Keep source consistent for logging
+		source: 'powershell-default',
 	};
 }

@@ -20,12 +20,13 @@ vi.mock('../../../../renderer/hooks/settings/useSettings', () => ({
 const mockHandleKeyDown = vi.fn();
 const mockSetSelectedIndex = vi.fn();
 let mockOnSelect: ((index: number) => void) | undefined;
+let mockSelectedIndex = -1;
 
 vi.mock('../../../../renderer/hooks/keyboard/useListNavigation', () => ({
 	useListNavigation: (opts: any) => {
 		mockOnSelect = opts.onSelect;
 		return {
-			selectedIndex: -1,
+			selectedIndex: mockSelectedIndex,
 			setSelectedIndex: mockSetSelectedIndex,
 			handleKeyDown: mockHandleKeyDown,
 		};
@@ -34,23 +35,26 @@ vi.mock('../../../../renderer/hooks/keyboard/useListNavigation', () => ({
 
 // Mock @tanstack/react-virtual
 vi.mock('@tanstack/react-virtual', () => ({
-	useVirtualizer: (opts: any) => ({
-		getVirtualItems: () =>
-			Array.from({ length: Math.min(opts.count, 20) }, (_, i) => ({
-				index: i,
-				start: i * 80,
-				size: 80,
-				key: `virtual-${i}`,
-			})),
-		getTotalSize: () => opts.count * 80,
-		scrollToIndex: vi.fn(),
-		measureElement: vi.fn(),
-	}),
+	useVirtualizer: (opts: any) => {
+		opts.getScrollElement?.();
+		return {
+			getVirtualItems: () =>
+				Array.from({ length: Math.min(opts.count + 1, 21) }, (_, i) => ({
+					index: i,
+					start: i * 80,
+					size: opts.estimateSize(i),
+					key: `virtual-${i}`,
+				})),
+			getTotalSize: () => opts.count * 80,
+			scrollToIndex: vi.fn(),
+			measureElement: vi.fn(),
+		};
+	},
 }));
 
 // Mock HistoryDetailModal
 vi.mock('../../../../renderer/components/HistoryDetailModal', () => ({
-	HistoryDetailModal: ({ entry, onClose, onNavigate, onUpdate }: any) => (
+	HistoryDetailModal: ({ entry, onClose, onNavigate, onUpdate, onResumeSession }: any) => (
 		<div data-testid="history-detail-modal">
 			<span data-testid="detail-entry-summary">{entry?.summary}</span>
 			<span data-testid="detail-entry-validated">{entry?.validated ? 'true' : 'false'}</span>
@@ -71,6 +75,30 @@ vi.mock('../../../../renderer/components/HistoryDetailModal', () => ({
 					Toggle Validated
 				</button>
 			)}
+			{onUpdate && (
+				<button
+					data-testid="detail-toggle-missing"
+					onClick={() => onUpdate('missing-entry', { validated: true })}
+				>
+					Toggle Missing
+				</button>
+			)}
+			{onUpdate && (
+				<button
+					data-testid="detail-toggle-other"
+					onClick={() => onUpdate('entry-2', { validated: true })}
+				>
+					Toggle Other
+				</button>
+			)}
+			{onResumeSession && (
+				<button
+					data-testid="detail-resume"
+					onClick={() => onResumeSession(entry?.agentSessionId ?? 'agent-session-1')}
+				>
+					Resume
+				</button>
+			)}
 		</div>
 	),
 }));
@@ -87,6 +115,9 @@ vi.mock('../../../../renderer/components/History', () => ({
 			>
 				Click Bar
 			</button>
+			<button data-testid="bar-click-empty" onClick={() => onBarClick?.(0, 1)}>
+				Click Empty Bar
+			</button>
 			<button data-testid="lookback-change-168" onClick={() => onLookbackChange?.(168)}>
 				1 Week
 			</button>
@@ -95,7 +126,14 @@ vi.mock('../../../../renderer/components/History', () => ({
 			</button>
 		</div>
 	),
-	HistoryEntryItem: ({ entry, index, isSelected, onOpenDetailModal, showAgentName }: any) => (
+	HistoryEntryItem: ({
+		entry,
+		index,
+		isSelected,
+		onOpenDetailModal,
+		onOpenSessionAsTab,
+		showAgentName,
+	}: any) => (
 		<div
 			data-testid={`history-entry-${index}`}
 			data-selected={isSelected}
@@ -105,6 +143,25 @@ vi.mock('../../../../renderer/components/History', () => ({
 			<span>{entry.summary}</span>
 			{showAgentName && entry.agentName && (
 				<span data-testid={`agent-name-${index}`}>{entry.agentName}</span>
+			)}
+			{onOpenSessionAsTab && entry.agentSessionId && (
+				<button
+					data-testid={`resume-entry-${index}`}
+					onClick={(event) => {
+						event.stopPropagation();
+						onOpenSessionAsTab(entry.agentSessionId);
+					}}
+				>
+					Resume
+				</button>
+			)}
+			{onOpenSessionAsTab && (
+				<button
+					data-testid={`resume-missing-entry-${index}`}
+					onClick={() => onOpenSessionAsTab('missing-agent-session')}
+				>
+					Resume Missing
+				</button>
 			)}
 		</div>
 	),
@@ -180,6 +237,7 @@ const createMockEntries = () => [
 		timestamp: Date.now() - 1000,
 		summary: 'User performed action A',
 		sourceSessionId: 'session-1',
+		agentSessionId: 'agent-session-1',
 		agentName: 'Claude Code',
 		projectPath: '/test',
 	},
@@ -189,8 +247,10 @@ const createMockEntries = () => [
 		timestamp: Date.now() - 2000,
 		summary: 'Auto action B',
 		sourceSessionId: 'session-2',
+		agentSessionId: 'agent-session-2',
 		agentName: 'Codex',
 		projectPath: '/test',
+		elapsedTimeMs: 2500,
 		success: true,
 		validated: false,
 	},
@@ -200,8 +260,10 @@ const createMockEntries = () => [
 		timestamp: Date.now() - 3000,
 		summary: 'User performed action C',
 		sourceSessionId: 'session-1',
+		agentSessionId: 'agent-session-3',
 		agentName: 'Claude Code',
 		projectPath: '/test',
+		usageStats: { totalCostUsd: 0.25 },
 	},
 ];
 
@@ -222,6 +284,8 @@ const createPaginatedResponse = (entries: any[], hasMore = false, total?: number
 });
 
 beforeEach(() => {
+	mockGetUnifiedHistory.mockReset();
+	mockHistoryUpdate.mockReset();
 	mockDirNotesSettings.defaultLookbackDays = 7;
 	(window as any).maestro = {
 		directorNotes: {
@@ -238,6 +302,7 @@ beforeEach(() => {
 afterEach(() => {
 	vi.clearAllMocks();
 	mockOnSelect = undefined;
+	mockSelectedIndex = -1;
 });
 
 describe('UnifiedHistoryTab', () => {
@@ -277,6 +342,21 @@ describe('UnifiedHistoryTab', () => {
 			expect(screen.getByTestId('activity-lookback-hours')).toHaveTextContent('null');
 		});
 
+		it('falls back to all-time history when default lookback exceeds available options', async () => {
+			mockDirNotesSettings.defaultLookbackDays = 10_000;
+			render(<UnifiedHistoryTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(mockGetUnifiedHistory).toHaveBeenCalledWith({
+					lookbackDays: 0,
+					filter: null,
+					limit: 100,
+					offset: 0,
+				});
+			});
+			expect(screen.getByTestId('activity-lookback-hours')).toHaveTextContent('null');
+		});
+
 		it('shows empty state when no entries found', async () => {
 			mockGetUnifiedHistory.mockResolvedValue(createPaginatedResponse([]));
 			render(<UnifiedHistoryTab theme={mockTheme} />);
@@ -287,6 +367,16 @@ describe('UnifiedHistoryTab', () => {
 			});
 		});
 
+		it('shows all-time empty state when no entries exist and lookback is all time', async () => {
+			mockDirNotesSettings.defaultLookbackDays = 0;
+			mockGetUnifiedHistory.mockResolvedValue(createPaginatedResponse([]));
+			render(<UnifiedHistoryTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('No history entries found across any agents.')).toBeInTheDocument();
+			});
+		});
+
 		it('renders entries from all sessions (aggregated)', async () => {
 			render(<UnifiedHistoryTab theme={mockTheme} />);
 
@@ -294,6 +384,24 @@ describe('UnifiedHistoryTab', () => {
 				expect(screen.getByText('User performed action A')).toBeInTheDocument();
 				expect(screen.getByText('Auto action B')).toBeInTheDocument();
 				expect(screen.getByText('User performed action C')).toBeInTheDocument();
+			});
+		});
+
+		it('renders legacy entries that are missing an id using the virtual index fallback', async () => {
+			mockGetUnifiedHistory.mockResolvedValue(
+				createPaginatedResponse([
+					{
+						...createMockEntries()[0],
+						id: undefined,
+						summary: 'Legacy entry without id',
+					} as any,
+				])
+			);
+
+			render(<UnifiedHistoryTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('Legacy entry without id')).toBeInTheDocument();
 			});
 		});
 
@@ -332,6 +440,20 @@ describe('UnifiedHistoryTab', () => {
 				expect(screen.getByTestId('stats-agents')).toHaveTextContent('2');
 				expect(screen.getByTestId('stats-sessions')).toHaveTextContent('5');
 			});
+		});
+
+		it('does not render stats bar when a response omits stats', async () => {
+			mockGetUnifiedHistory.mockResolvedValue({
+				...createPaginatedResponse(createMockEntries()),
+				stats: undefined,
+			});
+
+			render(<UnifiedHistoryTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('User performed action A')).toBeInTheDocument();
+			});
+			expect(screen.queryByTestId('history-stats-bar')).not.toBeInTheDocument();
 		});
 
 		it('does not render stats bar when no entries exist', async () => {
@@ -394,6 +516,33 @@ describe('UnifiedHistoryTab', () => {
 
 			// USER entries should remain
 			expect(screen.getByText('User performed action A')).toBeInTheDocument();
+		});
+
+		it('can toggle a filter off and back on', async () => {
+			render(<UnifiedHistoryTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('filter-auto')).toHaveAttribute('data-active', 'true');
+			});
+
+			fireEvent.click(screen.getByTestId('filter-auto'));
+			expect(screen.getByTestId('filter-auto')).toHaveAttribute('data-active', 'false');
+
+			fireEvent.click(screen.getByTestId('filter-auto'));
+			expect(screen.getByTestId('filter-auto')).toHaveAttribute('data-active', 'true');
+		});
+
+		it('shows the current-filters empty state when all filters are disabled', async () => {
+			render(<UnifiedHistoryTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('User performed action A')).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getByTestId('filter-auto'));
+			fireEvent.click(screen.getByTestId('filter-user'));
+
+			expect(screen.getByText('No entries match the current filters.')).toBeInTheDocument();
 		});
 	});
 
@@ -519,6 +668,182 @@ describe('UnifiedHistoryTab', () => {
 			// Graph should still show 3 (the initial snapshot), not 6
 			expect(screen.getByTestId('activity-entry-count')).toHaveTextContent('3');
 		});
+
+		it('loads the next page on near-bottom scroll without changing graph snapshot', async () => {
+			let resolveNextPage: (value: ReturnType<typeof createPaginatedResponse>) => void = () => {};
+			mockGetUnifiedHistory
+				.mockResolvedValueOnce(createPaginatedResponse(createMockEntries(), true, 6))
+				.mockReturnValueOnce(
+					new Promise((resolve) => {
+						resolveNextPage = resolve;
+					})
+				);
+
+			render(<UnifiedHistoryTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('User performed action A')).toBeInTheDocument();
+			});
+
+			const listContainer = screen.getByText('User performed action A').closest('[tabindex="0"]')!;
+			Object.defineProperty(listContainer, 'scrollHeight', { value: 1000, configurable: true });
+			Object.defineProperty(listContainer, 'scrollTop', { value: 600, configurable: true });
+			Object.defineProperty(listContainer, 'clientHeight', { value: 10, configurable: true });
+
+			act(() => {
+				fireEvent.scroll(listContainer);
+			});
+
+			expect(screen.getByText('Loading more...')).toBeInTheDocument();
+			expect(mockGetUnifiedHistory).toHaveBeenLastCalledWith(
+				expect.objectContaining({ offset: 3 })
+			);
+
+			await act(async () => {
+				resolveNextPage(
+					createPaginatedResponse(
+						[
+							{
+								id: 'entry-4',
+								type: 'AUTO',
+								timestamp: Date.now() - 4000,
+								summary: 'Action D',
+								sourceSessionId: 's1',
+								projectPath: '/test',
+							},
+						],
+						false,
+						4
+					)
+				);
+			});
+
+			expect(screen.getByText('Action D')).toBeInTheDocument();
+			expect(screen.getByTestId('activity-entry-count')).toHaveTextContent('3');
+		});
+
+		it('does not load the next page when scroll is not near the bottom', async () => {
+			mockGetUnifiedHistory.mockResolvedValue(
+				createPaginatedResponse(createMockEntries(), true, 6)
+			);
+
+			render(<UnifiedHistoryTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('User performed action A')).toBeInTheDocument();
+			});
+
+			const listContainer = screen.getByText('User performed action A').closest('[tabindex="0"]')!;
+			Object.defineProperty(listContainer, 'scrollHeight', { value: 1000, configurable: true });
+			Object.defineProperty(listContainer, 'scrollTop', { value: 0, configurable: true });
+			Object.defineProperty(listContainer, 'clientHeight', { value: 300, configurable: true });
+
+			act(() => {
+				fireEvent.scroll(listContainer);
+			});
+
+			expect(mockGetUnifiedHistory).toHaveBeenCalledTimes(1);
+			expect(screen.queryByText('Loading more...')).not.toBeInTheDocument();
+		});
+
+		it('selects the first entry in range when an activity bar is clicked', async () => {
+			render(<UnifiedHistoryTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('history-entry-0')).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getByTestId('bar-click'));
+
+			expect(mockSetSelectedIndex).toHaveBeenCalledWith(0);
+		});
+
+		it('leaves selection unchanged when an activity bar has no matching entries', async () => {
+			render(<UnifiedHistoryTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('history-entry-0')).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getByTestId('bar-click-empty'));
+
+			expect(mockSetSelectedIndex).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('Search', () => {
+		it('opens search with the button and filters by summary', async () => {
+			render(<UnifiedHistoryTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('User performed action A')).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getByTitle('Search entries (⌘F)'));
+			const searchInput = screen.getByPlaceholderText('Filter by summary or agent name...');
+			fireEvent.change(searchInput, { target: { value: 'action b' } });
+
+			expect(screen.getByText('Auto action B')).toBeInTheDocument();
+			expect(screen.queryByText('User performed action A')).not.toBeInTheDocument();
+			expect(screen.getAllByText('1').length).toBeGreaterThanOrEqual(1);
+		});
+
+		it('filters by agent name and shows no-match search state', async () => {
+			render(<UnifiedHistoryTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('User performed action A')).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getByTitle('Search entries (⌘F)'));
+			const searchInput = screen.getByPlaceholderText('Filter by summary or agent name...');
+			fireEvent.change(searchInput, { target: { value: 'codex' } });
+			expect(screen.getByText('Auto action B')).toBeInTheDocument();
+			expect(screen.queryByText('User performed action A')).not.toBeInTheDocument();
+
+			fireEvent.change(searchInput, { target: { value: 'missing' } });
+			expect(screen.getByText('No entries matching "missing".')).toBeInTheDocument();
+		});
+
+		it('opens search with Cmd+F and closes it with the close button', async () => {
+			render(<UnifiedHistoryTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('User performed action A')).toBeInTheDocument();
+			});
+
+			const listContainer = screen.getByText('User performed action A').closest('[tabindex="0"]');
+			expect(listContainer).toBeTruthy();
+
+			fireEvent.keyDown(listContainer!, { key: 'f', metaKey: true });
+			const searchInput = screen.getByPlaceholderText('Filter by summary or agent name...');
+			fireEvent.change(searchInput, { target: { value: 'codex' } });
+
+			fireEvent.click(screen.getByTitle('Close search (Esc)'));
+
+			expect(
+				screen.queryByPlaceholderText('Filter by summary or agent name...')
+			).not.toBeInTheDocument();
+			expect(screen.getByText('User performed action A')).toBeInTheDocument();
+		});
+
+		it('focuses and selects the search input when Cmd+F is pressed while search is open', async () => {
+			const selectSpy = vi.spyOn(HTMLInputElement.prototype, 'select').mockImplementation(() => {});
+			render(<UnifiedHistoryTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('User performed action A')).toBeInTheDocument();
+			});
+
+			const listContainer = screen.getByText('User performed action A').closest('[tabindex="0"]')!;
+			fireEvent.keyDown(listContainer, { key: 'f', metaKey: true });
+			expect(screen.getByPlaceholderText('Filter by summary or agent name...')).toBeInTheDocument();
+
+			fireEvent.keyDown(listContainer, { key: 'f', metaKey: true });
+
+			expect(selectSpy).toHaveBeenCalled();
+			selectSpy.mockRestore();
+		});
 	});
 
 	describe('Keyboard Navigation', () => {
@@ -548,6 +873,67 @@ describe('UnifiedHistoryTab', () => {
 			fireEvent.keyDown(listContainer!, { key: 'ArrowDown' });
 
 			expect(mockHandleKeyDown).toHaveBeenCalled();
+		});
+
+		it('ignores invalid list navigation selections', async () => {
+			render(<UnifiedHistoryTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('User performed action A')).toBeInTheDocument();
+			});
+
+			act(() => {
+				mockOnSelect?.(-1);
+			});
+
+			expect(screen.queryByTestId('history-detail-modal')).not.toBeInTheDocument();
+		});
+
+		it('does not trigger pagination when there are no more entries', async () => {
+			render(<UnifiedHistoryTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('User performed action A')).toBeInTheDocument();
+			});
+
+			const listContainer = screen.getByText('User performed action A').closest('[tabindex="0"]')!;
+			fireEvent.scroll(listContainer);
+
+			expect(mockGetUnifiedHistory).toHaveBeenCalledTimes(1);
+		});
+
+		it('scrolls the selected row into view when selected index is restored', async () => {
+			mockSelectedIndex = 1;
+			render(<UnifiedHistoryTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('history-entry-1')).toHaveAttribute('data-selected', 'true');
+			});
+		});
+
+		it('focuses through the imperative handle and uses Escape to collapse search', async () => {
+			const ref = React.createRef<any>();
+			render(<UnifiedHistoryTab ref={ref} theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('User performed action A')).toBeInTheDocument();
+			});
+
+			expect(ref.current.onEscape()).toBe(false);
+
+			fireEvent.click(screen.getByTitle('Search entries (⌘F)'));
+			fireEvent.change(screen.getByPlaceholderText('Filter by summary or agent name...'), {
+				target: { value: 'codex' },
+			});
+
+			expect(ref.current.onEscape()).toBe(true);
+			await waitFor(() => {
+				expect(
+					screen.queryByPlaceholderText('Filter by summary or agent name...')
+				).not.toBeInTheDocument();
+			});
+
+			expect(() => ref.current.focus()).not.toThrow();
 		});
 
 		it('opens detail modal via onSelect callback (Enter key)', async () => {
@@ -668,6 +1054,88 @@ describe('UnifiedHistoryTab', () => {
 			// setSelectedIndex should be called with new index
 			expect(mockSetSelectedIndex).toHaveBeenCalledWith(1);
 		});
+
+		it('does not update local state when history update fails', async () => {
+			mockHistoryUpdate.mockResolvedValueOnce(false);
+			render(<UnifiedHistoryTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('history-entry-1')).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getByTestId('history-entry-1'));
+
+			await act(async () => {
+				fireEvent.click(screen.getByTestId('detail-toggle-validated'));
+			});
+
+			expect(mockHistoryUpdate).toHaveBeenCalledWith('entry-2', { validated: true }, 'session-2');
+			expect(screen.getByTestId('detail-entry-validated')).toHaveTextContent('false');
+		});
+
+		it('returns false without IPC when updating an entry that is no longer loaded', async () => {
+			render(<UnifiedHistoryTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('history-entry-0')).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getByTestId('history-entry-0'));
+
+			await act(async () => {
+				fireEvent.click(screen.getByTestId('detail-toggle-missing'));
+			});
+
+			expect(mockHistoryUpdate).not.toHaveBeenCalled();
+		});
+
+		it('updates the list without replacing the currently open detail entry for another row', async () => {
+			render(<UnifiedHistoryTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('history-entry-0')).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getByTestId('history-entry-0'));
+
+			await act(async () => {
+				fireEvent.click(screen.getByTestId('detail-toggle-other'));
+			});
+
+			expect(mockHistoryUpdate).toHaveBeenCalledWith('entry-2', { validated: true }, 'session-2');
+			expect(screen.getByTestId('detail-entry-summary')).toHaveTextContent(
+				'User performed action A'
+			);
+		});
+
+		it('resumes sessions from entry items and the detail modal', async () => {
+			const onResumeSession = vi.fn();
+			render(<UnifiedHistoryTab theme={mockTheme} onResumeSession={onResumeSession} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('resume-entry-0')).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getByTestId('resume-entry-0'));
+			expect(onResumeSession).toHaveBeenCalledWith('session-1', 'agent-session-1');
+
+			fireEvent.click(screen.getByTestId('history-entry-1'));
+			fireEvent.click(screen.getByTestId('detail-resume'));
+			expect(onResumeSession).toHaveBeenCalledWith('session-2', 'agent-session-2');
+		});
+
+		it('ignores stale entry resume requests for unloaded agent sessions', async () => {
+			const onResumeSession = vi.fn();
+			render(<UnifiedHistoryTab theme={mockTheme} onResumeSession={onResumeSession} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('resume-missing-entry-0')).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getByTestId('resume-missing-entry-0'));
+
+			expect(onResumeSession).not.toHaveBeenCalled();
+		});
 	});
 
 	describe('Agent Name Display', () => {
@@ -718,6 +1186,35 @@ describe('UnifiedHistoryTab', () => {
 			await waitFor(() => {
 				expect(screen.getByText(/No history entries in this time range/)).toBeInTheDocument();
 			});
+		});
+
+		it('keeps existing entries when append loading fails', async () => {
+			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+			mockGetUnifiedHistory
+				.mockResolvedValueOnce(createPaginatedResponse(createMockEntries(), true, 6))
+				.mockRejectedValueOnce(new Error('Append failed'));
+			render(<UnifiedHistoryTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('User performed action A')).toBeInTheDocument();
+			});
+
+			const listContainer = screen.getByText('User performed action A').closest('[tabindex="0"]')!;
+			Object.defineProperty(listContainer, 'scrollHeight', { value: 1000, configurable: true });
+			Object.defineProperty(listContainer, 'scrollTop', { value: 600, configurable: true });
+			Object.defineProperty(listContainer, 'clientHeight', { value: 10, configurable: true });
+
+			await act(async () => {
+				fireEvent.scroll(listContainer);
+			});
+
+			await waitFor(() => {
+				expect(mockGetUnifiedHistory).toHaveBeenLastCalledWith(
+					expect.objectContaining({ offset: 3 })
+				);
+			});
+			expect(screen.getByText('User performed action A')).toBeInTheDocument();
+			consoleError.mockRestore();
 		});
 	});
 });

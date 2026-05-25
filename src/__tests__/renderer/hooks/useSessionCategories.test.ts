@@ -172,6 +172,17 @@ describe('useSessionCategories', () => {
 			expect(result.current.sortedFilteredSessions).toHaveLength(2);
 		});
 
+		it('treats an undefined filter as empty', () => {
+			const s1 = makeSession({ name: 'Alpha' });
+			const s2 = makeSession({ name: 'Beta' });
+			resetStore([s1, s2]);
+
+			const { result } = renderHook(() => useSessionCategories(undefined as any, [s1, s2]));
+
+			expect(result.current.sortedFilteredSessions).toHaveLength(2);
+			expect(result.current.sortedFilteredSessions.map((s) => s.name)).toEqual(['Alpha', 'Beta']);
+		});
+
 		it('filters by session name (case-insensitive)', () => {
 			const s1 = makeSession({ name: 'Frontend Work' });
 			const s2 = makeSession({ name: 'Backend API' });

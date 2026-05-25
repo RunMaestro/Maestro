@@ -216,19 +216,20 @@ function DocumentSelectorModal({
 			let message: string;
 			if (diff > 0) {
 				message = `Found ${diff} new document${diff === 1 ? '' : 's'}`;
-			} else if (diff < 0) {
-				message = `${Math.abs(diff)} document${Math.abs(diff) === 1 ? '' : 's'} removed`;
 			} else {
-				message = 'No changes';
+				message = `${Math.abs(diff)} document${Math.abs(diff) === 1 ? '' : 's'} removed`;
 			}
 			setRefreshMessage(message);
 			setPrevDocCount(allDocuments.length);
-
-			// Clear message after 3 seconds
-			const timer = setTimeout(() => setRefreshMessage(null), 3000);
-			return () => clearTimeout(timer);
 		}
 	}, [allDocuments.length, prevDocCount, refreshing]);
+
+	useEffect(() => {
+		if (!refreshMessage) return;
+
+		const timer = setTimeout(() => setRefreshMessage(null), 3000);
+		return () => clearTimeout(timer);
+	}, [refreshMessage]);
 
 	// Render a tree node recursively with checkboxes
 	const renderTreeNode = (node: DocTreeNode, depth: number = 0): React.ReactNode => {
@@ -1245,11 +1246,11 @@ export function DocumentsPanel({
 									type="range"
 									min="1"
 									max="25"
-									value={maxLoops ?? 5}
+									value={maxLoops!}
 									onChange={(e) => setMaxLoops(parseInt(e.target.value))}
 									className="w-32 h-1 rounded-lg appearance-none cursor-pointer"
 									style={{
-										background: `linear-gradient(to right, ${theme.colors.accent} 0%, ${theme.colors.accent} ${((maxLoops ?? 5) / 25) * 100}%, ${theme.colors.border} ${((maxLoops ?? 5) / 25) * 100}%, ${theme.colors.border} 100%)`,
+										background: `linear-gradient(to right, ${theme.colors.accent} 0%, ${theme.colors.accent} ${(maxLoops! / 25) * 100}%, ${theme.colors.border} ${(maxLoops! / 25) * 100}%, ${theme.colors.border} 100%)`,
 									}}
 								/>
 								<span

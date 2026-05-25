@@ -20,10 +20,14 @@ import { THEMES } from '../../../../shared/themes';
 import {
 	COLORBLIND_AGENT_PALETTE,
 	COLORBLIND_BINARY_PALETTE,
+	COLORBLIND_EXTENSION_PALETTE,
 	COLORBLIND_HEATMAP_SCALE,
 	COLORBLIND_LINE_COLORS,
+	COLORBLIND_PATTERNS,
 	getColorBlindAgentColor,
+	getColorBlindExtensionColor,
 	getColorBlindHeatmapColor,
+	getColorBlindPattern,
 } from '../../../../renderer/constants/colorblindPalettes';
 
 // Test theme
@@ -133,6 +137,56 @@ describe('Colorblind Palette Constants', () => {
 		it('clamps values outside 0-4 range', () => {
 			expect(getColorBlindHeatmapColor(-1)).toBe(COLORBLIND_HEATMAP_SCALE[0]);
 			expect(getColorBlindHeatmapColor(5)).toBe(COLORBLIND_HEATMAP_SCALE[4]);
+		});
+	});
+
+	describe('getColorBlindPattern', () => {
+		it('returns stable pattern keys by index', () => {
+			expect(getColorBlindPattern(0)).toBe('solid');
+			expect(getColorBlindPattern(1)).toBe('diagonal');
+			expect(getColorBlindPattern(5)).toBe('vertical');
+			expect(COLORBLIND_PATTERNS[getColorBlindPattern(3)]).toBe('crosshatch');
+		});
+
+		it('wraps around after the last pattern', () => {
+			expect(getColorBlindPattern(6)).toBe('solid');
+			expect(getColorBlindPattern(8)).toBe('dots');
+		});
+	});
+
+	describe('getColorBlindExtensionColor', () => {
+		it('normalizes extension case and returns the requested theme mode', () => {
+			expect(getColorBlindExtensionColor('.TS', true)).toBe(
+				COLORBLIND_EXTENSION_PALETTE.typescript.light
+			);
+			expect(getColorBlindExtensionColor('.Tsx', false)).toBe(
+				COLORBLIND_EXTENSION_PALETTE.typescript.dark
+			);
+		});
+
+		it.each([
+			['.md', 'markdown'],
+			['.json', 'config'],
+			['.css', 'styles'],
+			['.html', 'html'],
+			['.py', 'python'],
+			['.rs', 'rust'],
+			['.go', 'go'],
+			['.sh', 'shell'],
+			['.png', 'image'],
+			['.java', 'java'],
+			['.cpp', 'cpp'],
+			['.rb', 'ruby'],
+			['.sql', 'data'],
+			['.pdf', 'document'],
+		] as const)('maps %s to the %s palette', (extension, paletteKey) => {
+			expect(getColorBlindExtensionColor(extension, true)).toBe(
+				COLORBLIND_EXTENSION_PALETTE[paletteKey].light
+			);
+		});
+
+		it('returns null for unknown extensions so callers can use theme colors', () => {
+			expect(getColorBlindExtensionColor('.unknown', true)).toBeNull();
 		});
 	});
 });

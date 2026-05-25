@@ -786,237 +786,236 @@ export async function generateInlineDocuments(
 		// Track documents created via file watcher (for real-time streaming)
 		const documentsFromWatcher: InlineGeneratedDocument[] = [];
 
-		const result = await new Promise<{ success: boolean; rawOutput: string; error?: string }>(
-			(resolve) => {
-				let outputBuffer = '';
-				let dataListenerCleanup: (() => void) | undefined;
-				let exitListenerCleanup: (() => void) | undefined;
-				let fileWatcherCleanup: (() => void) | undefined;
+		type GenerationProcessResult =
+			| { success: true; rawOutput: string }
+			| { success: false; rawOutput: string; error: string };
 
-				/**
-				 * Reset the inactivity timeout - called on any activity
-				 */
-				const resetTimeout = () => {
-					clearTimeout(timeoutId);
+		const result = await new Promise<GenerationProcessResult>((resolve) => {
+			let outputBuffer = '';
+			let dataListenerCleanup: (() => void) | undefined;
+			let exitListenerCleanup: (() => void) | undefined;
+			let fileWatcherCleanup: (() => void) | undefined;
 
-					timeoutId = setTimeout(() => {
-						console.error('[InlineWizardDocGen] TIMEOUT fired! Session:', sessionId);
-						cleanupAll();
-						window.maestro.process.kill(sessionId).catch(() => {});
-						resolve({
-							success: false,
-							rawOutput: outputBuffer,
-							error: 'Generation timed out after 20 minutes of inactivity. Please try again.',
-						});
-					}, GENERATION_TIMEOUT);
-				};
+			/**
+			 * Reset the inactivity timeout - called on any activity
+			 */
+			const resetTimeout = () => {
+				clearTimeout(timeoutId);
 
-				// Set up timeout (20 minutes for complex generation)
-				let timeoutId = setTimeout(() => {
+				timeoutId = setTimeout(() => {
 					console.error('[InlineWizardDocGen] TIMEOUT fired! Session:', sessionId);
 					cleanupAll();
 					window.maestro.process.kill(sessionId).catch(() => {});
 					resolve({
 						success: false,
 						rawOutput: outputBuffer,
-						error: 'Generation timed out after 20 minutes. Please try again.',
+						error: 'Generation timed out after 20 minutes of inactivity. Please try again.',
 					});
 				}, GENERATION_TIMEOUT);
+			};
 
-				function cleanupAll() {
-					if (dataListenerCleanup) {
-						dataListenerCleanup();
-						dataListenerCleanup = undefined;
-					}
-					if (exitListenerCleanup) {
-						exitListenerCleanup();
-						exitListenerCleanup = undefined;
-					}
-					if (fileWatcherCleanup) {
-						fileWatcherCleanup();
-						fileWatcherCleanup = undefined;
-					}
-					// Stop watching the subfolder
-					window.maestro.autorun.unwatchFolder(subfolderPath).catch(() => {});
+			// Set up timeout (20 minutes for complex generation)
+			let timeoutId = setTimeout(() => {
+				console.error('[InlineWizardDocGen] TIMEOUT fired! Session:', sessionId);
+				cleanupAll();
+				window.maestro.process.kill(sessionId).catch(() => {});
+				resolve({
+					success: false,
+					rawOutput: outputBuffer,
+					error: 'Generation timed out after 20 minutes. Please try again.',
+				});
+			}, GENERATION_TIMEOUT);
+
+			function cleanupAll() {
+				if (dataListenerCleanup) {
+					dataListenerCleanup();
+					dataListenerCleanup = undefined;
 				}
+				if (exitListenerCleanup) {
+					exitListenerCleanup();
+					exitListenerCleanup = undefined;
+				}
+				if (fileWatcherCleanup) {
+					fileWatcherCleanup();
+					fileWatcherCleanup = undefined;
+				}
+				// Stop watching the subfolder
+				window.maestro.autorun.unwatchFolder(subfolderPath).catch(() => {});
+			}
 
-				// Set up file watcher for real-time document streaming
-				// The agent writes files directly, and we detect them here
-				window.maestro.autorun
-					.watchFolder(subfolderPath, sshRemoteId)
-					.then((watchResult) => {
-						if (watchResult.success) {
-							console.log('[InlineWizardDocGen] Started watching folder:', subfolderPath);
+			// Set up file watcher for real-time document streaming
+			// The agent writes files directly, and we detect them here
+			window.maestro.autorun
+				.watchFolder(subfolderPath, sshRemoteId)
+				.then((watchResult) => {
+					if (watchResult.success) {
+						console.log('[InlineWizardDocGen] Started watching folder:', subfolderPath);
 
-							// Set up file change listener
-							fileWatcherCleanup = window.maestro.autorun.onFileChanged((data) => {
-								if (data.folderPath === subfolderPath) {
-									console.log('[InlineWizardDocGen] File activity:', data.filename, data.eventType);
+						// Set up file change listener
+						fileWatcherCleanup = window.maestro.autorun.onFileChanged((data) => {
+							if (data.folderPath === subfolderPath) {
+								console.log('[InlineWizardDocGen] File activity:', data.filename, data.eventType);
 
-									// Reset timeout on file activity
-									resetTimeout();
+								// Reset timeout on file activity
+								resetTimeout();
 
-									// If a file was created/changed, read it and notify
-									if (
-										data.filename &&
-										(data.eventType === 'rename' || data.eventType === 'change')
-									) {
-										// Re-add the .md extension since main process may strip it
-										const filenameWithExt = data.filename.endsWith('.md')
-											? data.filename
-											: `${data.filename}.md`;
-										const fullPath = `${subfolderPath}/${filenameWithExt}`;
+								// If a file was created/changed, read it and notify
+								if (data.filename && (data.eventType === 'rename' || data.eventType === 'change')) {
+									// Re-add the .md extension since main process may strip it
+									const filenameWithExt = data.filename.endsWith('.md')
+										? data.filename
+										: `${data.filename}.md`;
+									const fullPath = `${subfolderPath}/${filenameWithExt}`;
 
-										// Use retry logic since file might still be being written
-										const readWithRetry = async (retries = 3, delayMs = 200): Promise<void> => {
-											for (let attempt = 1; attempt <= retries; attempt++) {
-												try {
-													const content = await window.maestro.fs.readFile(fullPath, sshRemoteId);
-													if (content && typeof content === 'string' && content.length > 0) {
+									// Use retry logic since file might still be being written
+									const readWithRetry = async (retries = 3, delayMs = 200): Promise<void> => {
+										for (let attempt = 1; attempt <= retries; attempt++) {
+											try {
+												const content = await window.maestro.fs.readFile(fullPath, sshRemoteId);
+												if (content && typeof content === 'string' && content.length > 0) {
+													console.log(
+														'[InlineWizardDocGen] File read successful:',
+														filenameWithExt,
+														'size:',
+														content.length
+													);
+
+													// Check if we've already processed this document
+													const alreadyProcessed = documentsFromWatcher.some(
+														(d) => d.filename === filenameWithExt
+													);
+													if (alreadyProcessed) {
 														console.log(
-															'[InlineWizardDocGen] File read successful:',
-															filenameWithExt,
-															'size:',
-															content.length
+															'[InlineWizardDocGen] Document already processed:',
+															filenameWithExt
 														);
-
-														// Check if we've already processed this document
-														const alreadyProcessed = documentsFromWatcher.some(
-															(d) => d.filename === filenameWithExt
-														);
-														if (alreadyProcessed) {
-															console.log(
-																'[InlineWizardDocGen] Document already processed:',
-																filenameWithExt
-															);
-															return;
-														}
-
-														const doc: InlineGeneratedDocument = {
-															filename: filenameWithExt,
-															content,
-															taskCount: countTasks(content),
-															savedPath: fullPath,
-														};
-
-														documentsFromWatcher.push(doc);
-														callbacks?.onDocumentComplete?.(doc);
 														return;
 													}
-												} catch (err) {
-													console.log(
-														`[InlineWizardDocGen] File read attempt ${attempt}/${retries} failed for ${filenameWithExt}:`,
-														err
-													);
+
+													const doc: InlineGeneratedDocument = {
+														filename: filenameWithExt,
+														content,
+														taskCount: countTasks(content),
+														savedPath: fullPath,
+													};
+
+													documentsFromWatcher.push(doc);
+													callbacks?.onDocumentComplete?.(doc);
+													return;
 												}
-												if (attempt < retries) {
-													await new Promise((r) => setTimeout(r, delayMs));
-												}
+											} catch (err) {
+												console.log(
+													`[InlineWizardDocGen] File read attempt ${attempt}/${retries} failed for ${filenameWithExt}:`,
+													err
+												);
 											}
+											if (attempt < retries) {
+												await new Promise((r) => setTimeout(r, delayMs));
+											}
+										}
 
-											// Even if we couldn't read content, note that file exists
-											console.log(
-												'[InlineWizardDocGen] Could not read file content:',
-												filenameWithExt
-											);
-										};
+										// Even if we couldn't read content, note that file exists
+										console.log(
+											'[InlineWizardDocGen] Could not read file content:',
+											filenameWithExt
+										);
+									};
 
-										readWithRetry();
-									}
+									readWithRetry();
 								}
-							});
-						} else {
-							console.warn('[InlineWizardDocGen] Could not watch folder:', watchResult.error);
-						}
-					})
-					.catch((err) => {
-						console.warn('[InlineWizardDocGen] Error setting up folder watcher:', err);
-					});
-
-				// Set up data listener
-				dataListenerCleanup = window.maestro.process.onData(
-					(receivedSessionId: string, data: string) => {
-						if (receivedSessionId === sessionId) {
-							outputBuffer += data;
-							resetTimeout();
-							callbacks?.onChunk?.(data);
-						}
-					}
-				);
-
-				// Set up exit listener
-				exitListenerCleanup = window.maestro.process.onExit(
-					(receivedSessionId: string, code: number) => {
-						if (receivedSessionId === sessionId) {
-							clearTimeout(timeoutId);
-							cleanupAll();
-
-							console.log('[InlineWizardDocGen] Agent exited with code:', code);
-
-							if (code === 0) {
-								resolve({
-									success: true,
-									rawOutput: outputBuffer,
-								});
-							} else {
-								resolve({
-									success: false,
-									rawOutput: outputBuffer,
-									error: `Agent exited with code ${code}`,
-								});
 							}
-						}
+						});
+					} else {
+						console.warn('[InlineWizardDocGen] Could not watch folder:', watchResult.error);
 					}
-				);
-
-				// Spawn the agent process
-				logger.info(`Spawning document generation agent`, '[InlineWizardDocGen]', {
-					sessionId,
-					agentType,
-					cwd: directoryPath,
-					hasAgent: !!agent,
-					isRemote: isRemoteSession,
+				})
+				.catch((err) => {
+					console.warn('[InlineWizardDocGen] Error setting up folder watcher:', err);
 				});
 
-				// Use the agent's resolved path if available, falling back to agent type name
-				// For remote sessions, we use the agent type name since the agent is installed on the remote host
-				const commandToUse = agent?.path || agent?.command || agentType;
+			// Set up data listener
+			dataListenerCleanup = window.maestro.process.onData(
+				(receivedSessionId: string, data: string) => {
+					if (receivedSessionId === sessionId) {
+						outputBuffer += data;
+						resetTimeout();
+						callbacks?.onChunk?.(data);
+					}
+				}
+			);
 
-				window.maestro.process
-					.spawn({
-						sessionId,
-						toolType: agentType,
-						cwd: directoryPath,
-						command: commandToUse,
-						args: argsForSpawn,
-						prompt,
-						// Pass SSH config for remote execution
-						sessionSshRemoteConfig: config.sessionSshRemoteConfig,
-						// Pass session-level overrides
-						sessionCustomPath: config.sessionCustomPath,
-						sessionCustomArgs: config.sessionCustomArgs,
-						sessionCustomEnvVars: config.sessionCustomEnvVars,
-						sessionCustomModel: config.sessionCustomModel,
-					})
-					.then(() => {
-						logger.debug('Document generation agent spawned successfully', '[InlineWizardDocGen]', {
-							sessionId,
-						});
-					})
-					.catch((error: Error) => {
-						cleanupAll();
+			// Set up exit listener
+			exitListenerCleanup = window.maestro.process.onExit(
+				(receivedSessionId: string, code: number) => {
+					if (receivedSessionId === sessionId) {
 						clearTimeout(timeoutId);
-						resolve({
-							success: false,
-							rawOutput: outputBuffer,
-							error: `Failed to spawn agent: ${error.message}`,
-						});
+						cleanupAll();
+
+						console.log('[InlineWizardDocGen] Agent exited with code:', code);
+
+						if (code === 0) {
+							resolve({
+								success: true,
+								rawOutput: outputBuffer,
+							});
+						} else {
+							resolve({
+								success: false,
+								rawOutput: outputBuffer,
+								error: `Agent exited with code ${code}`,
+							});
+						}
+					}
+				}
+			);
+
+			// Spawn the agent process
+			logger.info(`Spawning document generation agent`, '[InlineWizardDocGen]', {
+				sessionId,
+				agentType,
+				cwd: directoryPath,
+				hasAgent: !!agent,
+				isRemote: isRemoteSession,
+			});
+
+			// Use the agent's resolved path if available, falling back to agent type name
+			// For remote sessions, we use the agent type name since the agent is installed on the remote host
+			const commandToUse = agent?.path || agent?.command || agentType;
+
+			window.maestro.process
+				.spawn({
+					sessionId,
+					toolType: agentType,
+					cwd: directoryPath,
+					command: commandToUse,
+					args: argsForSpawn,
+					prompt,
+					// Pass SSH config for remote execution
+					sessionSshRemoteConfig: config.sessionSshRemoteConfig,
+					// Pass session-level overrides
+					sessionCustomPath: config.sessionCustomPath,
+					sessionCustomArgs: config.sessionCustomArgs,
+					sessionCustomEnvVars: config.sessionCustomEnvVars,
+					sessionCustomModel: config.sessionCustomModel,
+				})
+				.then(() => {
+					logger.debug('Document generation agent spawned successfully', '[InlineWizardDocGen]', {
+						sessionId,
 					});
-			}
-		);
+				})
+				.catch((error: Error) => {
+					cleanupAll();
+					clearTimeout(timeoutId);
+					resolve({
+						success: false,
+						rawOutput: outputBuffer,
+						error: `Failed to spawn agent: ${error.message}`,
+					});
+				});
+		});
 
 		if (!result.success) {
-			callbacks?.onError?.(result.error || 'Generation failed');
+			callbacks?.onError?.(result.error);
 			return {
 				success: false,
 				error: result.error,

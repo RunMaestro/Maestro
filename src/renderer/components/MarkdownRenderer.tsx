@@ -19,6 +19,28 @@ import { REMARK_GFM_PLUGINS, applyReadableTextTransforms } from '../utils/markdo
 // Module-level cache for local images to prevent flicker on re-render
 const localImageCache = new Map<string, string>();
 
+const markdownUrlTransform = (url: string, key: string): string => {
+	const trimmed = url.trim();
+
+	if (key === 'src' && /^data:image\//i.test(trimmed)) {
+		return url;
+	}
+
+	if (
+		trimmed.startsWith('#') ||
+		trimmed.startsWith('git@') ||
+		/^(https?:|mailto:|file:|maestro-file:)/i.test(trimmed)
+	) {
+		return url;
+	}
+
+	if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed)) {
+		return '';
+	}
+
+	return url;
+};
+
 interface LocalImageProps {
 	src?: string;
 	alt?: string;
@@ -313,6 +335,7 @@ export const MarkdownRenderer = memo(
 				<ReactMarkdown
 					remarkPlugins={remarkPlugins}
 					rehypePlugins={allowRawHtml ? [rehypeRaw] : undefined}
+					urlTransform={markdownUrlTransform}
 					components={{
 						a: ({ node: _node, href, children, ...props }) => {
 							// Check for maestro-file:// protocol OR data-maestro-file attribute

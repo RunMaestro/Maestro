@@ -8,9 +8,26 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // Mock fetch globally
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
+const originalPlatform = process.platform;
+
+const mockLogger = vi.hoisted(() => ({
+	info: vi.fn(),
+	error: vi.fn(),
+}));
+
+vi.mock('../../main/utils/logger', () => ({
+	logger: mockLogger,
+}));
 
 // Import after mocking
 import { checkForUpdates } from '../../main/update-checker';
+
+const createMockAsset = (name: string) => ({
+	name,
+	browser_download_url: `https://example.com/${name}`,
+	size: 1024,
+	content_type: 'application/octet-stream',
+});
 
 // Helper to create mock release
 const createMockRelease = (
@@ -22,6 +39,7 @@ const createMockRelease = (
 		published_at: string;
 		prerelease: boolean;
 		draft: boolean;
+		assets: ReturnType<typeof createMockAsset>[];
 	}> = {}
 ) => ({
 	tag_name: 'v1.0.0',
@@ -31,6 +49,7 @@ const createMockRelease = (
 	published_at: '2024-01-15T12:00:00Z',
 	prerelease: false,
 	draft: false,
+	assets: [],
 	...overrides,
 });
 
@@ -40,8 +59,19 @@ describe('update-checker', () => {
 	});
 
 	afterEach(() => {
+		Object.defineProperty(process, 'platform', {
+			value: originalPlatform,
+			configurable: true,
+		});
 		vi.restoreAllMocks();
 	});
+
+	function mockPlatform(platform: NodeJS.Platform): void {
+		Object.defineProperty(process, 'platform', {
+			value: platform,
+			configurable: true,
+		});
+	}
 
 	describe('checkForUpdates', () => {
 		it('returns update available when newer version exists', async () => {
@@ -217,6 +247,11 @@ describe('update-checker', () => {
 
 			expect(result.updateAvailable).toBe(false);
 			expect(result.error).toContain('GitHub API error');
+			expect(mockLogger.error).toHaveBeenCalledWith(
+				'GitHub API error: 403 Forbidden',
+				'UpdateChecker',
+				expect.objectContaining({ status: 403, statusText: 'Forbidden' })
+			);
 		});
 
 		it('handles network errors gracefully', async () => {
@@ -226,6 +261,31 @@ describe('update-checker', () => {
 
 			expect(result.updateAvailable).toBe(false);
 			expect(result.error).toBe('Network error');
+			expect(mockLogger.error).toHaveBeenCalledWith(
+				'Update check failed: Network error',
+				'UpdateChecker',
+				expect.objectContaining({ currentVersion: '1.0.0' })
+			);
+		});
+
+		it('handles non-Error failures as unknown update-check errors', async () => {
+			mockFetch.mockRejectedValue('offline');
+
+			const result = await checkForUpdates('1.0.0');
+
+			expect(result).toMatchObject({
+				currentVersion: '1.0.0',
+				latestVersion: '1.0.0',
+				updateAvailable: false,
+				versionsBehind: 0,
+				assetsReady: false,
+				error: 'Unknown error',
+			});
+			expect(mockLogger.error).toHaveBeenCalledWith(
+				'Update check failed: Unknown error',
+				'UpdateChecker',
+				expect.objectContaining({ stack: undefined })
+			);
 		});
 
 		it('counts multiple versions behind correctly', async () => {
@@ -276,6 +336,18 @@ describe('update-checker', () => {
 			expect(result.releases.length).toBe(0);
 		});
 
+		it('reports assets as not ready when the latest release has no downloadable assets', async () => {
+			mockFetch.mockResolvedValue({
+				ok: true,
+				json: () => Promise.resolve([createMockRelease({ tag_name: 'v1.1.0' })]),
+			});
+
+			const result = await checkForUpdates('1.0.0');
+
+			expect(result.updateAvailable).toBe(true);
+			expect(result.assetsReady).toBe(false);
+		});
+
 		it('handles version with v prefix in current version', async () => {
 			mockFetch.mockResolvedValue({
 				ok: true,
@@ -287,6 +359,88 @@ describe('update-checker', () => {
 
 			expect(result.updateAvailable).toBe(true);
 		});
+	});
+
+	describe('platform asset readiness', () => {
+		it.each([
+			{
+				platform: 'darwin' as NodeJS.Platform,
+				assets: ['readme.txt', 'Maestro-1.2.0-mac.zip'],
+				expectedAssetsReady: true,
+			},
+			{
+				platform: 'darwin' as NodeJS.Platform,
+				assets: ['Maestro-1.2.0-darwin.zip'],
+				expectedAssetsReady: true,
+			},
+			{
+				platform: 'darwin' as NodeJS.Platform,
+				assets: ['Maestro-1.2.0.dmg'],
+				expectedAssetsReady: true,
+			},
+			{
+				platform: 'win32' as NodeJS.Platform,
+				assets: ['readme.txt', 'MaestroSetup.msi'],
+				expectedAssetsReady: true,
+			},
+			{
+				platform: 'win32' as NodeJS.Platform,
+				assets: ['MaestroSetup.exe'],
+				expectedAssetsReady: true,
+			},
+			{
+				platform: 'linux' as NodeJS.Platform,
+				assets: ['Maestro.tar.gz', 'Maestro-linux.tar.gz'],
+				expectedAssetsReady: true,
+			},
+			{
+				platform: 'linux' as NodeJS.Platform,
+				assets: ['Maestro.AppImage'],
+				expectedAssetsReady: true,
+			},
+			{
+				platform: 'linux' as NodeJS.Platform,
+				assets: ['maestro.deb'],
+				expectedAssetsReady: true,
+			},
+			{
+				platform: 'linux' as NodeJS.Platform,
+				assets: ['maestro.rpm'],
+				expectedAssetsReady: true,
+			},
+			{
+				platform: 'linux' as NodeJS.Platform,
+				assets: ['Maestro.tar.gz'],
+				expectedAssetsReady: false,
+			},
+			{
+				platform: 'freebsd' as NodeJS.Platform,
+				assets: ['Maestro.pkg'],
+				expectedAssetsReady: true,
+			},
+		])(
+			'reports assetsReady=$expectedAssetsReady for $platform assets $assets',
+			async ({ platform, assets, expectedAssetsReady }) => {
+				mockPlatform(platform);
+				mockFetch.mockResolvedValue({
+					ok: true,
+					json: () =>
+						Promise.resolve([
+							createMockRelease({
+								tag_name: 'v1.2.0',
+								assets: assets.map(createMockAsset),
+							}),
+							createMockRelease({ tag_name: 'v1.0.0' }),
+						]),
+				});
+
+				const result = await checkForUpdates('1.0.0');
+
+				expect(result.updateAvailable).toBe(true);
+				expect(result.latestVersion).toBe('1.2.0');
+				expect(result.assetsReady).toBe(expectedAssetsReady);
+			}
+		);
 	});
 
 	describe('checkForUpdates with includePrerelease', () => {

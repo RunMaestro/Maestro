@@ -75,6 +75,43 @@ describe('useMobileKeyboardHandler', () => {
 		expect(handleModeToggle).toHaveBeenCalledWith('terminal');
 	});
 
+	it('toggles terminal mode to AI with Ctrl+J and defaults missing mode to AI', () => {
+		const handleModeToggle = vi.fn();
+		const handleSelectTab = vi.fn();
+		const { rerender } = renderHook(
+			({ activeSession }) =>
+				useMobileKeyboardHandler({
+					activeSessionId: 'session-1',
+					activeSession,
+					handleModeToggle,
+					handleSelectTab,
+				}),
+			{
+				initialProps: {
+					activeSession: { inputMode: 'terminal' } as MobileKeyboardSession,
+				},
+			}
+		);
+
+		act(() => {
+			document.dispatchEvent(
+				new KeyboardEvent('keydown', { key: 'j', ctrlKey: true, cancelable: true })
+			);
+		});
+
+		expect(handleModeToggle).toHaveBeenCalledWith('ai');
+
+		rerender({ activeSession: {} });
+
+		act(() => {
+			document.dispatchEvent(
+				new KeyboardEvent('keydown', { key: 'j', ctrlKey: true, cancelable: true })
+			);
+		});
+
+		expect(handleModeToggle).toHaveBeenLastCalledWith('terminal');
+	});
+
 	it('cycles to previous and next tabs with Cmd+[ and Cmd+]', () => {
 		const handleModeToggle = vi.fn();
 		const handleSelectTab = vi.fn();
@@ -108,6 +145,121 @@ describe('useMobileKeyboardHandler', () => {
 		});
 
 		expect(handleSelectTab).toHaveBeenCalledWith('tab-3');
+	});
+
+	it('wraps previous and next tab shortcuts at list boundaries', () => {
+		const handleModeToggle = vi.fn();
+		const handleSelectTab = vi.fn();
+		const tabs = createTabs();
+		const { rerender } = renderHook(
+			({ activeTabId }) =>
+				useMobileKeyboardHandler({
+					activeSessionId: 'session-1',
+					activeSession: {
+						inputMode: 'ai',
+						aiTabs: tabs,
+						activeTabId,
+					},
+					handleModeToggle,
+					handleSelectTab,
+				}),
+			{ initialProps: { activeTabId: 'tab-1' } }
+		);
+
+		act(() => {
+			document.dispatchEvent(
+				new KeyboardEvent('keydown', { key: '[', ctrlKey: true, cancelable: true })
+			);
+		});
+
+		expect(handleSelectTab).toHaveBeenCalledWith('tab-3');
+
+		rerender({ activeTabId: 'tab-3' });
+
+		act(() => {
+			document.dispatchEvent(
+				new KeyboardEvent('keydown', { key: ']', ctrlKey: true, cancelable: true })
+			);
+		});
+
+		expect(handleSelectTab).toHaveBeenLastCalledWith('tab-1');
+	});
+
+	it('ignores tab shortcuts when there are too few tabs or active tab is missing', () => {
+		const handleModeToggle = vi.fn();
+		const handleSelectTab = vi.fn();
+		const { rerender } = renderHook(
+			({ activeSession }) =>
+				useMobileKeyboardHandler({
+					activeSessionId: 'session-1',
+					activeSession,
+					handleModeToggle,
+					handleSelectTab,
+				}),
+			{
+				initialProps: {
+					activeSession: {
+						aiTabs: [createTabs()[0]],
+						activeTabId: 'tab-1',
+					} as MobileKeyboardSession,
+				},
+			}
+		);
+
+		act(() => {
+			document.dispatchEvent(
+				new KeyboardEvent('keydown', { key: '[', metaKey: true, cancelable: true })
+			);
+			document.dispatchEvent(
+				new KeyboardEvent('keydown', { key: ']', metaKey: true, cancelable: true })
+			);
+		});
+
+		expect(handleSelectTab).not.toHaveBeenCalled();
+
+		rerender({
+			activeSession: {
+				aiTabs: createTabs(),
+				activeTabId: 'missing-tab',
+			},
+		});
+
+		act(() => {
+			document.dispatchEvent(
+				new KeyboardEvent('keydown', { key: '[', metaKey: true, cancelable: true })
+			);
+			document.dispatchEvent(
+				new KeyboardEvent('keydown', { key: ']', metaKey: true, cancelable: true })
+			);
+		});
+
+		expect(handleSelectTab).not.toHaveBeenCalled();
+	});
+
+	it('ignores unrelated keyboard events', () => {
+		const handleModeToggle = vi.fn();
+		const handleSelectTab = vi.fn();
+		renderHook(() =>
+			useMobileKeyboardHandler({
+				activeSessionId: 'session-1',
+				activeSession: {
+					inputMode: 'ai',
+					aiTabs: createTabs(),
+					activeTabId: 'tab-1',
+				},
+				handleModeToggle,
+				handleSelectTab,
+			})
+		);
+
+		act(() => {
+			document.dispatchEvent(new KeyboardEvent('keydown', { key: 'x', metaKey: true }));
+			document.dispatchEvent(new KeyboardEvent('keydown', { key: 'j' }));
+			document.dispatchEvent(new KeyboardEvent('keydown', { key: '[', altKey: true }));
+		});
+
+		expect(handleModeToggle).not.toHaveBeenCalled();
+		expect(handleSelectTab).not.toHaveBeenCalled();
 	});
 
 	it('does not handle shortcuts when there is no active session', () => {

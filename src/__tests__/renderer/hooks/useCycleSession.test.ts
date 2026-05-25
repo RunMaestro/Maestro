@@ -465,6 +465,33 @@ describe('useCycleSession', () => {
 			expect(useSessionStore.getState().cyclePosition).toBe(2);
 		});
 
+		it('sorts multiple bookmarked sessions alphabetically', () => {
+			const sessB = makeSession({ id: 'b', name: 'Beta', bookmarked: true });
+			const sessA = makeSession({ id: 'a', name: 'Alpha', bookmarked: true });
+
+			useSessionStore.setState({
+				sessions: [sessB, sessA],
+				activeSessionId: 'a',
+				cyclePosition: -1,
+			} as any);
+			useUIStore.setState({
+				leftSidebarOpen: true,
+				bookmarksCollapsed: false,
+				groupChatsExpanded: false,
+			} as any);
+			useSettingsStore.setState({ ungroupedCollapsed: true } as any);
+
+			const deps = makeDeps();
+			const { result } = renderHook(() => useCycleSession(deps));
+
+			act(() => {
+				result.current.cycleSession('next');
+			});
+
+			expect(useSessionStore.getState().activeSessionId).toBe('b');
+			expect(useSessionStore.getState().cyclePosition).toBe(1);
+		});
+
 		it('bookmarks collapsed: bookmarked sessions only appear in ungrouped section', () => {
 			const sessA = makeSession({ id: 'a', name: 'Alpha' });
 			const sessB = makeSession({ id: 'b', name: 'Beta', bookmarked: true });
@@ -1240,6 +1267,44 @@ describe('useCycleSession', () => {
 			expect(useSessionStore.getState().activeSessionId).toBe('cz');
 		});
 
+		it('uses child session names for sorting and display when worktreeBranch is missing', () => {
+			const parent = makeSession({ id: 'p', name: 'Parent', worktreesExpanded: true });
+			const childBeta = makeSession({
+				id: 'cb',
+				name: 'Beta child',
+				parentSessionId: 'p',
+			});
+			const childAlpha = makeSession({
+				id: 'ca',
+				name: 'Alpha child',
+				parentSessionId: 'p',
+			});
+
+			useSessionStore.setState({
+				sessions: [parent, childBeta, childAlpha],
+				activeSessionId: 'p',
+				cyclePosition: -1,
+			} as any);
+			useUIStore.setState({
+				leftSidebarOpen: true,
+				bookmarksCollapsed: true,
+				groupChatsExpanded: false,
+			} as any);
+
+			const deps = makeDeps();
+			const { result } = renderHook(() => useCycleSession(deps));
+
+			act(() => {
+				result.current.cycleSession('next');
+			});
+			expect(useSessionStore.getState().activeSessionId).toBe('ca');
+
+			act(() => {
+				result.current.cycleSession('next');
+			});
+			expect(useSessionStore.getState().activeSessionId).toBe('cb');
+		});
+
 		it('worktree child sessions do not appear as top-level entries', () => {
 			// The parent-child model should not add the child at the ungrouped level separately
 			const parent = makeSession({ id: 'p', name: 'Parent', worktreesExpanded: true });
@@ -1369,6 +1434,38 @@ describe('useCycleSession', () => {
 			// Falls back to findIndex — Alpha found at 0 → next is Beta at 1
 			expect(useSessionStore.getState().activeSessionId).toBe('b');
 			expect(useSessionStore.getState().cyclePosition).toBe(1);
+		});
+
+		it('resets cyclePosition lookup for an active group chat', () => {
+			const sessA = makeSession({ id: 'a', name: 'Alpha' });
+			const gc1 = makeGroupChat('gc-1', 'Chat One');
+
+			useSessionStore.setState({
+				sessions: [sessA],
+				activeSessionId: 'a',
+				cyclePosition: 0, // stale: index 0 is Alpha, not the active group chat
+			} as any);
+			useGroupChatStore.setState({
+				groupChats: [gc1],
+				activeGroupChatId: 'gc-1',
+			} as any);
+			useUIStore.setState({
+				leftSidebarOpen: true,
+				bookmarksCollapsed: true,
+				groupChatsExpanded: true,
+			} as any);
+
+			const handleOpenGroupChat = vi.fn();
+			const deps = makeDeps({ handleOpenGroupChat });
+			const { result } = renderHook(() => useCycleSession(deps));
+
+			act(() => {
+				result.current.cycleSession('next');
+			});
+
+			expect(useSessionStore.getState().activeSessionId).toBe('a');
+			expect(useGroupChatStore.getState().activeGroupChatId).toBeNull();
+			expect(useSessionStore.getState().cyclePosition).toBe(0);
 		});
 
 		it('handles cyclePosition that is out of bounds', () => {

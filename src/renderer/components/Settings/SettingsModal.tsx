@@ -52,6 +52,134 @@ interface SettingsModalProps {
 	hasNoAgents?: boolean;
 	onThemeImportError?: (message: string) => void;
 	onThemeImportSuccess?: (message: string) => void;
+	featureFlags?: {
+		llmSettings?: boolean;
+	};
+}
+
+interface SettingsLlmConnectionOptions {
+	llmProvider: LLMProvider;
+	apiKey: string;
+	modelSlug: string;
+	fetchImpl?: typeof fetch;
+}
+
+interface SettingsLlmConnectionResult {
+	status: 'success' | 'error';
+	message: string;
+}
+
+export async function testSettingsLlmConnection({
+	llmProvider,
+	apiKey,
+	modelSlug,
+	fetchImpl = globalThis.fetch,
+}: SettingsLlmConnectionOptions): Promise<SettingsLlmConnectionResult> {
+	try {
+		let response;
+		const testPrompt = 'Respond with exactly: "Connection successful"';
+
+		if (llmProvider === 'openrouter') {
+			if (!apiKey) {
+				throw new Error('API key is required for OpenRouter');
+			}
+
+			response = await fetchImpl('https://openrouter.ai/api/v1/chat/completions', {
+				method: 'POST',
+				headers: {
+					Authorization: `Bearer ${apiKey}`,
+					'Content-Type': 'application/json',
+					'HTTP-Referer': 'https://maestro.local',
+				},
+				body: JSON.stringify({
+					model: modelSlug || 'anthropic/claude-3.5-sonnet',
+					messages: [{ role: 'user', content: testPrompt }],
+					max_tokens: 50,
+				}),
+			});
+
+			if (!response.ok) {
+				const error = await response.json();
+				throw new Error(error.error?.message || `OpenRouter API error: ${response.status}`);
+			}
+
+			const data = await response.json();
+			if (!data.choices?.[0]?.message?.content) {
+				throw new Error('Invalid response from OpenRouter');
+			}
+
+			return {
+				status: 'success',
+				message: 'Successfully connected to OpenRouter!',
+			};
+		} else if (llmProvider === 'anthropic') {
+			if (!apiKey) {
+				throw new Error('API key is required for Anthropic');
+			}
+
+			response = await fetchImpl('https://api.anthropic.com/v1/messages', {
+				method: 'POST',
+				headers: {
+					'x-api-key': apiKey,
+					'anthropic-version': '2023-06-01',
+					'Content-Type': 'application/json',
+				},
+				body: JSON.stringify({
+					model: modelSlug || 'claude-3-5-sonnet-20241022',
+					max_tokens: 50,
+					messages: [{ role: 'user', content: testPrompt }],
+				}),
+			});
+
+			if (!response.ok) {
+				const error = await response.json();
+				throw new Error(error.error?.message || `Anthropic API error: ${response.status}`);
+			}
+
+			const data = await response.json();
+			if (!data.content?.[0]?.text) {
+				throw new Error('Invalid response from Anthropic');
+			}
+
+			return {
+				status: 'success',
+				message: 'Successfully connected to Anthropic!',
+			};
+		} else {
+			response = await fetchImpl('http://localhost:11434/api/generate', {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+				},
+				body: JSON.stringify({
+					model: modelSlug || 'llama3:latest',
+					prompt: testPrompt,
+					stream: false,
+				}),
+			});
+
+			if (!response.ok) {
+				throw new Error(
+					`Ollama API error: ${response.status}. Make sure Ollama is running locally.`
+				);
+			}
+
+			const data = await response.json();
+			if (!data.response) {
+				throw new Error('Invalid response from Ollama');
+			}
+
+			return {
+				status: 'success',
+				message: 'Successfully connected to Ollama!',
+			};
+		}
+	} catch (error: any) {
+		return {
+			status: 'error',
+			message: error.message || 'Connection failed',
+		};
+	}
 }
 
 export const SettingsModal = memo(function SettingsModal(props: SettingsModalProps) {
@@ -64,7 +192,9 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 		hasNoAgents,
 		onThemeImportError,
 		onThemeImportSuccess,
+		featureFlags,
 	} = props;
+	const llmSettingsEnabled = featureFlags?.llmSettings ?? FEATURE_FLAGS.LLM_SETTINGS;
 
 	// All settings from useSettings hook (self-sourced, Tier 1B)
 	// General tab settings are now self-sourced by GeneralTab
@@ -118,7 +248,6 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 	}>({ status: null, message: '' });
 	// Layer stack integration
 	const { registerLayer, unregisterLayer } = useLayerStack();
-	const layerIdRef = useRef<string>();
 	const isRecordingShortcutRef = useRef(false);
 
 	useEffect(() => {
@@ -150,12 +279,8 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 			},
 		});
 
-		layerIdRef.current = id;
-
 		return () => {
-			if (layerIdRef.current) {
-				unregisterLayer(layerIdRef.current);
-			}
+			unregisterLayer(id);
 		};
 	}, [isOpen, registerLayer, unregisterLayer]); // Removed onClose from deps
 
@@ -175,7 +300,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 				| 'groupchat'
 				| 'ssh'
 				| 'encore'
-			> = FEATURE_FLAGS.LLM_SETTINGS
+			> = llmSettingsEnabled
 				? [
 						'general',
 						'display',
@@ -214,116 +339,14 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 
 		window.addEventListener('keydown', handleTabNavigation);
 		return () => window.removeEventListener('keydown', handleTabNavigation);
-	}, [isOpen, activeTab]);
+	}, [isOpen, activeTab, llmSettingsEnabled]);
 
 	const testLLMConnection = async () => {
 		setTestingLLM(true);
 		setTestResult({ status: null, message: '' });
 
 		try {
-			let response;
-			const testPrompt = 'Respond with exactly: "Connection successful"';
-
-			if (llmProvider === 'openrouter') {
-				if (!apiKey) {
-					throw new Error('API key is required for OpenRouter');
-				}
-
-				response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-					method: 'POST',
-					headers: {
-						Authorization: `Bearer ${apiKey}`,
-						'Content-Type': 'application/json',
-						'HTTP-Referer': 'https://maestro.local',
-					},
-					body: JSON.stringify({
-						model: modelSlug || 'anthropic/claude-3.5-sonnet',
-						messages: [{ role: 'user', content: testPrompt }],
-						max_tokens: 50,
-					}),
-				});
-
-				if (!response.ok) {
-					const error = await response.json();
-					throw new Error(error.error?.message || `OpenRouter API error: ${response.status}`);
-				}
-
-				const data = await response.json();
-				if (!data.choices?.[0]?.message?.content) {
-					throw new Error('Invalid response from OpenRouter');
-				}
-
-				setTestResult({
-					status: 'success',
-					message: 'Successfully connected to OpenRouter!',
-				});
-			} else if (llmProvider === 'anthropic') {
-				if (!apiKey) {
-					throw new Error('API key is required for Anthropic');
-				}
-
-				response = await fetch('https://api.anthropic.com/v1/messages', {
-					method: 'POST',
-					headers: {
-						'x-api-key': apiKey,
-						'anthropic-version': '2023-06-01',
-						'Content-Type': 'application/json',
-					},
-					body: JSON.stringify({
-						model: modelSlug || 'claude-3-5-sonnet-20241022',
-						max_tokens: 50,
-						messages: [{ role: 'user', content: testPrompt }],
-					}),
-				});
-
-				if (!response.ok) {
-					const error = await response.json();
-					throw new Error(error.error?.message || `Anthropic API error: ${response.status}`);
-				}
-
-				const data = await response.json();
-				if (!data.content?.[0]?.text) {
-					throw new Error('Invalid response from Anthropic');
-				}
-
-				setTestResult({
-					status: 'success',
-					message: 'Successfully connected to Anthropic!',
-				});
-			} else if (llmProvider === 'ollama') {
-				response = await fetch('http://localhost:11434/api/generate', {
-					method: 'POST',
-					headers: {
-						'Content-Type': 'application/json',
-					},
-					body: JSON.stringify({
-						model: modelSlug || 'llama3:latest',
-						prompt: testPrompt,
-						stream: false,
-					}),
-				});
-
-				if (!response.ok) {
-					throw new Error(
-						`Ollama API error: ${response.status}. Make sure Ollama is running locally.`
-					);
-				}
-
-				const data = await response.json();
-				if (!data.response) {
-					throw new Error('Invalid response from Ollama');
-				}
-
-				setTestResult({
-					status: 'success',
-					message: 'Successfully connected to Ollama!',
-				});
-			}
-		} catch (error: any) {
-			setTestResult({
-				status: 'error',
-				message: error.message || 'Connection failed',
-			});
+			setTestResult(await testSettingsLlmConnection({ llmProvider, apiKey, modelSlug }));
 		} finally {
 			setTestingLLM(false);
 		}
@@ -359,7 +382,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 						<Monitor className="w-4 h-4" />
 						{activeTab === 'display' && <span>Display</span>}
 					</button>
-					{FEATURE_FLAGS.LLM_SETTINGS && (
+					{llmSettingsEnabled && (
 						<button
 							onClick={() => setActiveTab('llm')}
 							className={`px-4 py-4 text-sm font-bold border-b-2 cursor-pointer ${activeTab === 'llm' ? 'border-indigo-500' : 'border-transparent'}`}
@@ -439,7 +462,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 
 					{activeTab === 'display' && <DisplayTab theme={theme} />}
 
-					{activeTab === 'llm' && FEATURE_FLAGS.LLM_SETTINGS && (
+					{activeTab === 'llm' && llmSettingsEnabled && (
 						<div className="space-y-5">
 							<div>
 								<div className="block text-xs font-bold opacity-70 uppercase mb-2">

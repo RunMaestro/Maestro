@@ -105,8 +105,7 @@ const DEFAULT_CONFETTI_COLORS = [
 ];
 
 export function PlaygroundPanel({ theme, themeMode, onClose }: PlaygroundPanelProps) {
-	const { registerLayer, unregisterLayer, updateLayerHandler } = useLayerStack();
-	const layerIdRef = useRef<string>();
+	const { registerLayer, unregisterLayer } = useLayerStack();
 	const containerRef = useRef<HTMLDivElement>(null);
 	const onCloseRef = useRef(onClose);
 
@@ -155,7 +154,6 @@ export function PlaygroundPanel({ theme, themeMode, onClose }: PlaygroundPanelPr
 	const [batonEasing, setBatonEasing] = useState<EasingOption>(BATON_DEFAULTS.easing);
 	const [batonActive, setBatonActive] = useState(true);
 	const [batonCopySuccess, setBatonCopySuccess] = useState(false);
-	const batonStyleRef = useRef<HTMLStyleElement | null>(null);
 
 	// Handle keyboard shortcuts for tab switching
 	useEffect(() => {
@@ -195,22 +193,12 @@ export function PlaygroundPanel({ theme, themeMode, onClose }: PlaygroundPanelPr
 			ariaLabel: 'Developer Playground',
 			onEscape: () => onCloseRef.current(),
 		});
-		layerIdRef.current = id;
 		containerRef.current?.focus();
 
 		return () => {
-			if (layerIdRef.current) {
-				unregisterLayer(layerIdRef.current);
-			}
+			unregisterLayer(id);
 		};
 	}, [registerLayer, unregisterLayer]);
-
-	// Update handler when dependencies change
-	useEffect(() => {
-		if (layerIdRef.current) {
-			updateLayerHandler(layerIdRef.current, () => onCloseRef.current());
-		}
-	}, [updateLayerHandler]);
 
 	// Build mock AutoRunStats
 	const mockAutoRunStats: AutoRunStats = {
@@ -319,8 +307,6 @@ export function PlaygroundPanel({ theme, themeMode, onClose }: PlaygroundPanelPr
 
 	// Fire confetti with current settings
 	const firePlaygroundConfetti = useCallback(() => {
-		if (selectedOrigins.size === 0) return;
-
 		const origins: { x: number; y: number }[] = [];
 		selectedOrigins.forEach((key) => {
 			const [row, col] = key.split('-').map(Number);
@@ -495,18 +481,13 @@ ${staggerDelays.map((delay, i) => `svg.baton-sparkle-active path:nth-child(${i +
 
 	// Inject/update dynamic style element for baton preview
 	useEffect(() => {
-		if (!batonStyleRef.current) {
-			batonStyleRef.current = document.createElement('style');
-			batonStyleRef.current.setAttribute('data-baton-playground', 'true');
-			document.head.appendChild(batonStyleRef.current);
-		}
-		batonStyleRef.current.textContent = batonAnimationCSS();
+		const styleEl = document.createElement('style');
+		styleEl.setAttribute('data-baton-playground', 'true');
+		styleEl.textContent = batonAnimationCSS();
+		document.head.appendChild(styleEl);
 
 		return () => {
-			if (batonStyleRef.current) {
-				document.head.removeChild(batonStyleRef.current);
-				batonStyleRef.current = null;
-			}
+			document.head.removeChild(styleEl);
 		};
 	}, [batonAnimationCSS]);
 

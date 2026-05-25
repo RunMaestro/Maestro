@@ -960,6 +960,34 @@ describe('Tab completion navigation — additional', () => {
 		expect(mockInputContext.setTabCompletionOpen).toHaveBeenCalledWith(false);
 	});
 
+	it('Tab in non-git repo with out-of-bounds index closes dropdown without setting input', () => {
+		mockInputContext.selectedTabCompletionIndex = 10; // out of bounds
+		const deps = createMockDeps({ tabCompletionSuggestions: suggestions });
+		const { result } = renderHook(() => useInputKeyDown(deps));
+		const e = createKeyEvent('Tab');
+
+		act(() => {
+			result.current.handleInputKeyDown(e);
+		});
+
+		expect(deps.setInputValue).not.toHaveBeenCalled();
+		expect(deps.syncFileTreeToTabCompletion).not.toHaveBeenCalled();
+		expect(mockInputContext.setTabCompletionOpen).toHaveBeenCalledWith(false);
+	});
+
+	it('unhandled key while tab completion is open falls through without closing dropdown', () => {
+		const deps = createMockDeps({ tabCompletionSuggestions: suggestions });
+		const { result } = renderHook(() => useInputKeyDown(deps));
+		const e = createKeyEvent('a');
+
+		act(() => {
+			result.current.handleInputKeyDown(e);
+		});
+
+		expect(e.preventDefault).not.toHaveBeenCalled();
+		expect(mockInputContext.setTabCompletionOpen).not.toHaveBeenCalled();
+	});
+
 	it('ArrowDown with single suggestion clamps to 0', () => {
 		const singleSuggestion = [{ value: 'only/', type: 'folder' as const, label: 'only/' }] as any;
 		mockInputContext.selectedTabCompletionIndex = 0;
@@ -1067,6 +1095,47 @@ describe('@ mention completion — additional', () => {
 		// beforeAt = '', afterFilter = ' rest'
 		expect(deps.setInputValue).toHaveBeenCalledWith('@src/app.ts  rest');
 	});
+
+	it('ArrowDown updater clamps at the final mention suggestion', () => {
+		const deps = createMockDeps({ atMentionSuggestions: mentions });
+		const { result } = renderHook(() => useInputKeyDown(deps));
+		const e = createKeyEvent('ArrowDown');
+
+		act(() => {
+			result.current.handleInputKeyDown(e);
+		});
+
+		const updateIndex = mockInputContext.setSelectedAtMentionIndex.mock.calls[0][0];
+		expect(updateIndex(1)).toBe(1);
+	});
+
+	it('ArrowUp updater clamps at the first mention suggestion', () => {
+		const deps = createMockDeps({ atMentionSuggestions: mentions });
+		const { result } = renderHook(() => useInputKeyDown(deps));
+		const e = createKeyEvent('ArrowUp');
+
+		act(() => {
+			result.current.handleInputKeyDown(e);
+		});
+
+		const updateIndex = mockInputContext.setSelectedAtMentionIndex.mock.calls[0][0];
+		expect(updateIndex(0)).toBe(0);
+	});
+
+	it('unhandled key while @ mention completion is open falls through without clearing state', () => {
+		const deps = createMockDeps({ atMentionSuggestions: mentions });
+		const { result } = renderHook(() => useInputKeyDown(deps));
+		const e = createKeyEvent('a');
+
+		act(() => {
+			result.current.handleInputKeyDown(e);
+		});
+
+		expect(e.preventDefault).not.toHaveBeenCalled();
+		expect(mockInputContext.setAtMentionOpen).not.toHaveBeenCalled();
+		expect(mockInputContext.setAtMentionFilter).not.toHaveBeenCalled();
+		expect(mockInputContext.setAtMentionStartIndex).not.toHaveBeenCalled();
+	});
 });
 
 // ============================================================================
@@ -1098,6 +1167,8 @@ describe('Slash command autocomplete — additional', () => {
 
 		// Should call with a function that clamps: prev + 1 capped at length - 1
 		expect(mockInputContext.setSelectedSlashCommandIndex).toHaveBeenCalled();
+		const updateIndex = mockInputContext.setSelectedSlashCommandIndex.mock.calls[0][0];
+		expect(updateIndex(2)).toBe(2);
 	});
 
 	it('ArrowUp clamps at top (0)', () => {
@@ -1111,6 +1182,8 @@ describe('Slash command autocomplete — additional', () => {
 		});
 
 		expect(mockInputContext.setSelectedSlashCommandIndex).toHaveBeenCalled();
+		const updateIndex = mockInputContext.setSelectedSlashCommandIndex.mock.calls[0][0];
+		expect(updateIndex(0)).toBe(0);
 	});
 
 	it('Enter with out-of-bounds selectedSlashCommandIndex does not set input', () => {

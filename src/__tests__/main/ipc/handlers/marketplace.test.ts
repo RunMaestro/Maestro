@@ -10,8 +10,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { ipcMain, App } from 'electron';
+import { ipcMain, App, BrowserWindow } from 'electron';
 import fs from 'fs/promises';
+import fsSync from 'fs';
 import crypto from 'crypto';
 import path from 'path';
 import Store from 'electron-store';
@@ -19,6 +20,7 @@ import {
 	registerMarketplaceHandlers,
 	MarketplaceHandlerDependencies,
 } from '../../../../main/ipc/handlers/marketplace';
+import { logger } from '../../../../main/utils/logger';
 import type { MarketplaceManifest, MarketplaceCache } from '../../../../shared/marketplace-types';
 import type { SshRemoteConfig } from '../../../../shared/types';
 
@@ -31,6 +33,9 @@ vi.mock('electron', () => ({
 	app: {
 		getPath: vi.fn(),
 		on: vi.fn(),
+	},
+	BrowserWindow: {
+		getAllWindows: vi.fn(),
 	},
 }));
 
@@ -219,6 +224,189 @@ describe('marketplace IPC handlers', () => {
 		});
 	});
 
+	describe('local manifest watcher', () => {
+		it('should broadcast manifest change events and clean up the watcher on quit', async () => {
+			vi.useFakeTimers();
+			const watcher = { close: vi.fn() };
+			let watchCallback: ((eventType: string) => void) | undefined;
+			const watchSpy = vi.spyOn(fsSync, 'watch').mockImplementation(((_filename, listener) => {
+				watchCallback = listener as (eventType: string) => void;
+				return watcher as unknown as fsSync.FSWatcher;
+			}) as typeof fsSync.watch);
+			const window = {
+				isDestroyed: vi.fn().mockReturnValue(false),
+				webContents: {
+					isDestroyed: vi.fn().mockReturnValue(false),
+					send: vi.fn(),
+				},
+			};
+
+			try {
+				handlers.clear();
+				vi.mocked(mockApp.on).mockClear();
+				vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([window as any]);
+				registerMarketplaceHandlers(mockDeps);
+				registerMarketplaceHandlers(mockDeps);
+				expect(watcher.close).toHaveBeenCalledTimes(1);
+
+				expect(watchCallback).toBeDefined();
+				watchCallback!('change');
+				watchCallback!('change');
+				await vi.advanceTimersByTimeAsync(500);
+
+				expect(window.webContents.send).toHaveBeenCalledWith('marketplace:manifestChanged');
+
+				const quitHandler = vi
+					.mocked(mockApp.on)
+					.mock.calls.find(([eventName]) => eventName === 'will-quit')?.[1] as
+					| (() => void)
+					| undefined;
+				expect(quitHandler).toBeDefined();
+				quitHandler!();
+				expect(watcher.close).toHaveBeenCalledTimes(2);
+			} finally {
+				vi.useRealTimers();
+				watchSpy.mockRestore();
+			}
+		});
+
+		it('should skip destroyed windows when broadcasting manifest changes', async () => {
+			vi.useFakeTimers();
+			const watcher = { close: vi.fn() };
+			let watchCallback: ((eventType: string) => void) | undefined;
+			const watchSpy = vi.spyOn(fsSync, 'watch').mockImplementation(((_filename, listener) => {
+				watchCallback = listener as (eventType: string) => void;
+				return watcher as unknown as fsSync.FSWatcher;
+			}) as typeof fsSync.watch);
+			const window = {
+				isDestroyed: vi.fn().mockReturnValue(true),
+				webContents: {
+					isDestroyed: vi.fn().mockReturnValue(false),
+					send: vi.fn(),
+				},
+			};
+
+			try {
+				handlers.clear();
+				vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([window as any]);
+				registerMarketplaceHandlers(mockDeps);
+
+				expect(watchCallback).toBeDefined();
+				watchCallback!('change');
+				await vi.advanceTimersByTimeAsync(500);
+
+				expect(window.webContents.send).not.toHaveBeenCalled();
+			} finally {
+				vi.useRealTimers();
+				watchSpy.mockRestore();
+			}
+		});
+
+		it('should log and continue when watcher cleanup fails', () => {
+			const watcher = {
+				close: vi.fn(() => {
+					throw new Error('close failed');
+				}),
+			};
+			const watchSpy = vi
+				.spyOn(fsSync, 'watch')
+				.mockReturnValue(watcher as unknown as fsSync.FSWatcher);
+
+			try {
+				handlers.clear();
+				vi.mocked(mockApp.on).mockClear();
+				registerMarketplaceHandlers(mockDeps);
+
+				const quitHandler = vi
+					.mocked(mockApp.on)
+					.mock.calls.find(([eventName]) => eventName === 'will-quit')?.[1] as
+					| (() => void)
+					| undefined;
+				expect(quitHandler).toBeDefined();
+				quitHandler!();
+
+				expect(logger.warn).toHaveBeenCalledWith(
+					'Error closing local manifest watcher',
+					'[Marketplace]',
+					expect.objectContaining({ error: expect.any(Error) })
+				);
+			} finally {
+				watchSpy.mockRestore();
+			}
+		});
+
+		it('should log local manifest watcher runtime errors', () => {
+			let errorHandler: ((error: Error) => void) | undefined;
+			const watcher = {
+				close: vi.fn(),
+				on: vi.fn((event: string, handler: (error: Error) => void) => {
+					if (event === 'error') {
+						errorHandler = handler;
+					}
+				}),
+			};
+			const watchSpy = vi
+				.spyOn(fsSync, 'watch')
+				.mockReturnValue(watcher as unknown as fsSync.FSWatcher);
+
+			try {
+				handlers.clear();
+				registerMarketplaceHandlers(mockDeps);
+
+				expect(errorHandler).toBeDefined();
+				expect(() => errorHandler?.(new Error('watch failed'))).not.toThrow();
+				expect(logger.warn).toHaveBeenCalledWith(
+					'Local manifest watcher error: watch failed',
+					'[Marketplace]'
+				);
+			} finally {
+				watchSpy.mockRestore();
+			}
+		});
+
+		it('should no-op watcher cleanup when the local manifest file is missing', () => {
+			const watchSpy = vi.spyOn(fsSync, 'watch').mockImplementation(() => {
+				throw Object.assign(new Error('missing manifest'), { code: 'ENOENT' });
+			});
+
+			try {
+				handlers.clear();
+				vi.mocked(mockApp.on).mockClear();
+				registerMarketplaceHandlers(mockDeps);
+
+				const quitHandler = vi
+					.mocked(mockApp.on)
+					.mock.calls.find(([eventName]) => eventName === 'will-quit')?.[1] as
+					| (() => void)
+					| undefined;
+				expect(quitHandler).toBeDefined();
+				expect(() => quitHandler!()).not.toThrow();
+			} finally {
+				watchSpy.mockRestore();
+			}
+		});
+
+		it('should warn and continue when watcher setup fails for non-missing-file errors', () => {
+			const error = Object.assign(new Error('permission denied'), { code: 'EACCES' });
+			const watchSpy = vi.spyOn(fsSync, 'watch').mockImplementation(() => {
+				throw error;
+			});
+
+			try {
+				handlers.clear();
+				registerMarketplaceHandlers(mockDeps);
+
+				expect(logger.warn).toHaveBeenCalledWith(
+					'Failed to setup local manifest watcher (non-fatal)',
+					'[Marketplace]',
+					{ error }
+				);
+			} finally {
+				watchSpy.mockRestore();
+			}
+		});
+	});
+
 	describe('marketplace:getManifest', () => {
 		it('should create cache file in userData after first fetch', async () => {
 			// No existing cache, no local manifest
@@ -351,6 +539,136 @@ describe('marketplace IPC handlers', () => {
 			expect(result.fromCache).toBe(false);
 		});
 
+		it('should return a local-only manifest when official fetch fails', async () => {
+			const localManifest: MarketplaceManifest = {
+				lastUpdated: '2024-02-01',
+				playbooks: [
+					{
+						id: 'local-only',
+						title: 'Local Only',
+						description: 'Available without GitHub',
+						category: 'Custom',
+						author: 'Local Author',
+						lastUpdated: '2024-02-01',
+						path: '/local/playbooks/local-only',
+						documents: [{ filename: 'plan', resetOnCompletion: false }],
+						loopEnabled: false,
+						maxLoops: null,
+						prompt: null,
+					},
+				],
+			};
+
+			vi.mocked(fs.readFile)
+				.mockRejectedValueOnce({ code: 'ENOENT' })
+				.mockResolvedValueOnce(JSON.stringify(localManifest));
+			mockFetch.mockRejectedValue(new Error('offline'));
+
+			const handler = handlers.get('marketplace:getManifest');
+			const result = await handler!({} as any);
+
+			expect(result.fromCache).toBe(false);
+			expect(result.manifest.playbooks).toEqual([
+				expect.objectContaining({
+					id: 'local-only',
+					source: 'local',
+				}),
+			]);
+		});
+
+		it('should use local manifest lastUpdated when official manifest has none', async () => {
+			const officialManifest = {
+				playbooks: [],
+			} as unknown as MarketplaceManifest;
+			const localManifest: MarketplaceManifest = {
+				lastUpdated: '2024-02-01',
+				playbooks: [
+					{
+						id: 'local-date',
+						title: 'Local Date',
+						description: 'Provides the merged manifest date',
+						category: 'Custom',
+						author: 'Local Author',
+						lastUpdated: '2024-02-01',
+						path: '/local/playbooks/date',
+						documents: [{ filename: 'plan', resetOnCompletion: false }],
+						loopEnabled: false,
+						maxLoops: null,
+						prompt: null,
+					},
+				],
+			};
+
+			vi.mocked(fs.readFile)
+				.mockRejectedValueOnce({ code: 'ENOENT' })
+				.mockResolvedValueOnce(JSON.stringify(localManifest));
+			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+			mockFetch.mockResolvedValue({
+				ok: true,
+				json: () => Promise.resolve(officialManifest),
+			});
+
+			const handler = handlers.get('marketplace:getManifest');
+			const result = await handler!({} as any);
+
+			expect(result.manifest.lastUpdated).toBe('2024-02-01');
+			expect(result.manifest.playbooks).toEqual([
+				expect.objectContaining({ id: 'local-date', source: 'local' }),
+			]);
+		});
+
+		it('should use the current date when merged manifests have no lastUpdated value', async () => {
+			vi.useFakeTimers();
+			vi.setSystemTime(new Date('2026-05-12T12:00:00Z'));
+
+			try {
+				const officialManifest = {
+					playbooks: [],
+				} as unknown as MarketplaceManifest;
+				const localManifest = {
+					playbooks: [],
+				} as unknown as MarketplaceManifest;
+
+				vi.mocked(fs.readFile)
+					.mockRejectedValueOnce({ code: 'ENOENT' })
+					.mockResolvedValueOnce(JSON.stringify(localManifest));
+				vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+				mockFetch.mockResolvedValue({
+					ok: true,
+					json: () => Promise.resolve(officialManifest),
+				});
+
+				const handler = handlers.get('marketplace:getManifest');
+				const result = await handler!({} as any);
+
+				expect(result.manifest.lastUpdated).toBe('2026-05-12');
+				expect(result.manifest.playbooks).toEqual([]);
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
+		it('should stringify non-Error manifest fetch failures', async () => {
+			vi.mocked(fs.readFile)
+				.mockRejectedValueOnce({ code: 'ENOENT' })
+				.mockRejectedValueOnce({ code: 'ENOENT' });
+			mockFetch.mockRejectedValue('offline');
+
+			const handler = handlers.get('marketplace:getManifest');
+			const result = await handler!({} as any);
+
+			expect(result.manifest.playbooks).toEqual([]);
+			expect(logger.warn).toHaveBeenCalledWith(
+				'Failed to fetch official manifest from GitHub',
+				'[Marketplace]',
+				expect.objectContaining({
+					error: expect.objectContaining({
+						message: 'Network error fetching manifest: offline',
+					}),
+				})
+			);
+		});
+
 		it('should fallback to expired cache when network fetch fails', async () => {
 			const cacheAge = 1000 * 60 * 60 * 7; // 7 hours ago (past 6 hour TTL)
 			const expiredCache: MarketplaceCache = {
@@ -392,6 +710,148 @@ describe('marketplace IPC handlers', () => {
 			expect(result.manifest).toBeDefined();
 			expect(result.manifest.playbooks).toEqual([]);
 			expect(result.fromCache).toBe(false);
+		});
+
+		it('should ignore non-ENOENT cache read errors and fetch fresh data', async () => {
+			vi.mocked(fs.readFile)
+				.mockRejectedValueOnce({ code: 'EACCES' })
+				.mockRejectedValueOnce({ code: 'ENOENT' });
+			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+			mockFetch.mockResolvedValue({
+				ok: true,
+				json: () => Promise.resolve(sampleManifest),
+			});
+
+			const handler = handlers.get('marketplace:getManifest');
+			const result = await handler!({} as any);
+
+			expect(result.fromCache).toBe(false);
+			expect(mockFetch).toHaveBeenCalled();
+			expect(logger.debug).toHaveBeenCalledWith(
+				'Cache read error (non-ENOENT)',
+				'[Marketplace]',
+				expect.objectContaining({ error: expect.objectContaining({ code: 'EACCES' }) })
+			);
+		});
+
+		it('should continue when cache writes fail after a successful fetch', async () => {
+			vi.mocked(fs.readFile)
+				.mockRejectedValueOnce({ code: 'ENOENT' })
+				.mockRejectedValueOnce({ code: 'ENOENT' });
+			vi.mocked(fs.writeFile).mockRejectedValueOnce(new Error('disk full'));
+			mockFetch.mockResolvedValue({
+				ok: true,
+				json: () => Promise.resolve(sampleManifest),
+			});
+
+			const handler = handlers.get('marketplace:getManifest');
+			const result = await handler!({} as any);
+
+			expect(result.fromCache).toBe(false);
+			expect(result.manifest.playbooks).toHaveLength(sampleManifest.playbooks.length);
+			expect(logger.warn).toHaveBeenCalledWith(
+				'Failed to write cache',
+				'[Marketplace]',
+				expect.objectContaining({ error: expect.any(Error) })
+			);
+		});
+
+		it('should reject invalid official manifest payloads and continue with local-only fallback', async () => {
+			const localManifest: MarketplaceManifest = {
+				lastUpdated: '2024-02-01',
+				playbooks: [
+					{
+						id: 'local-fallback',
+						title: 'Local Fallback',
+						description: 'Fallback playbook',
+						category: 'Custom',
+						author: 'Local Author',
+						lastUpdated: '2024-02-01',
+						path: '/local/playbooks/fallback',
+						documents: [{ filename: 'plan', resetOnCompletion: false }],
+						loopEnabled: false,
+						maxLoops: null,
+						prompt: null,
+					},
+				],
+			};
+
+			vi.mocked(fs.readFile)
+				.mockRejectedValueOnce({ code: 'ENOENT' })
+				.mockResolvedValueOnce(JSON.stringify(localManifest));
+			mockFetch.mockResolvedValue({
+				ok: true,
+				json: () => Promise.resolve({ lastUpdated: '2024-02-01' }),
+			});
+
+			const handler = handlers.get('marketplace:getManifest');
+			const result = await handler!({} as any);
+
+			expect(result.manifest.playbooks).toEqual([
+				expect.objectContaining({ id: 'local-fallback', source: 'local' }),
+			]);
+		});
+
+		it('should ignore invalid local manifest JSON', async () => {
+			const validCache: MarketplaceCache = {
+				fetchedAt: Date.now(),
+				manifest: sampleManifest,
+			};
+
+			vi.mocked(fs.readFile)
+				.mockResolvedValueOnce(JSON.stringify(validCache))
+				.mockResolvedValueOnce('{invalid-json');
+
+			const handler = handlers.get('marketplace:getManifest');
+			const result = await handler!({} as any);
+
+			expect(result.manifest.playbooks).toHaveLength(sampleManifest.playbooks.length);
+			expect(logger.warn).toHaveBeenCalledWith(
+				'Failed to read local manifest, ignoring',
+				'[Marketplace]',
+				expect.objectContaining({ error: expect.any(SyntaxError) })
+			);
+		});
+
+		it('should skip local manifest playbooks that are missing required fields', async () => {
+			const validCache: MarketplaceCache = {
+				fetchedAt: Date.now(),
+				manifest: sampleManifest,
+			};
+			const localManifest = {
+				lastUpdated: '2024-02-01',
+				playbooks: [
+					{
+						title: 'Missing ID',
+						description: 'Cannot be merged',
+						path: '/local/missing-id',
+						documents: [{ filename: 'doc', resetOnCompletion: false }],
+					},
+					{
+						id: 'missing-docs',
+						title: 'Missing Documents',
+						path: '/local/missing-docs',
+					},
+				],
+			};
+
+			vi.mocked(fs.readFile)
+				.mockResolvedValueOnce(JSON.stringify(validCache))
+				.mockResolvedValueOnce(JSON.stringify(localManifest));
+
+			const handler = handlers.get('marketplace:getManifest');
+			const result = await handler!({} as any);
+
+			expect(result.manifest.playbooks.map((p: any) => p.id)).not.toContain('missing-docs');
+			expect(logger.warn).toHaveBeenCalledWith(
+				'Local playbook missing required "id" field, skipping',
+				'[Marketplace]',
+				{ title: 'Missing ID' }
+			);
+			expect(logger.warn).toHaveBeenCalledWith(
+				'Local playbook "missing-docs" missing required fields, skipping',
+				'[Marketplace]'
+			);
 		});
 	});
 
@@ -509,6 +969,72 @@ describe('marketplace IPC handlers', () => {
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('Document not found');
 		});
+
+		it('should report non-404 document fetch failures', async () => {
+			mockFetch.mockResolvedValue({
+				ok: false,
+				status: 503,
+				statusText: 'Service Unavailable',
+			});
+
+			const handler = handlers.get('marketplace:getDocument');
+			const result = await handler!({} as any, 'playbooks/unavailable', 'doc');
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Failed to fetch document: 503 Service Unavailable');
+		});
+
+		it('should report network errors while fetching documents', async () => {
+			mockFetch.mockRejectedValue(new Error('connection reset'));
+
+			const handler = handlers.get('marketplace:getDocument');
+			const result = await handler!({} as any, 'playbooks/network', 'doc');
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Network error fetching document: connection reset');
+		});
+
+		it('should stringify non-Error network document failures', async () => {
+			mockFetch.mockRejectedValue('offline');
+
+			const handler = handlers.get('marketplace:getDocument');
+			const result = await handler!({} as any, 'playbooks/network', 'doc');
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Network error fetching document: offline');
+		});
+
+		it('should report local document read failures', async () => {
+			vi.mocked(fs.readFile).mockRejectedValueOnce(
+				Object.assign(new Error('permission denied'), { code: 'EACCES' })
+			);
+
+			const handler = handlers.get('marketplace:getDocument');
+			const result = await handler!({} as any, '/local/playbook', 'doc');
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Failed to read local document: permission denied');
+		});
+
+		it('should stringify non-Error local document read failures', async () => {
+			vi.mocked(fs.readFile).mockRejectedValueOnce('disk offline');
+
+			const handler = handlers.get('marketplace:getDocument');
+			const result = await handler!({} as any, '/local/playbook', 'doc');
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Failed to read local document: disk offline');
+		});
+
+		it('should report missing local documents', async () => {
+			vi.mocked(fs.readFile).mockRejectedValueOnce({ code: 'ENOENT' });
+
+			const handler = handlers.get('marketplace:getDocument');
+			const result = await handler!({} as any, '/local/playbook', 'missing-doc');
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Local document not found:');
+		});
 	});
 
 	describe('marketplace:getReadme', () => {
@@ -540,6 +1066,68 @@ describe('marketplace IPC handlers', () => {
 			const result = await handler!({} as any, 'playbooks/no-readme');
 
 			expect(result.content).toBeNull();
+		});
+
+		it('should read README files from local playbook paths', async () => {
+			vi.mocked(fs.readFile).mockResolvedValueOnce('# Local README');
+
+			const handler = handlers.get('marketplace:getReadme');
+			const result = await handler!({} as any, '/local/playbook');
+
+			expect(fs.readFile).toHaveBeenCalledWith(
+				path.resolve('/local/playbook', 'README.md'),
+				'utf-8'
+			);
+			expect(result.content).toBe('# Local README');
+		});
+
+		it('should return null when local README is missing', async () => {
+			vi.mocked(fs.readFile).mockRejectedValueOnce({ code: 'ENOENT' });
+
+			const handler = handlers.get('marketplace:getReadme');
+			const result = await handler!({} as any, '/local/no-readme');
+
+			expect(result.content).toBeNull();
+		});
+
+		it('should return null for non-fatal local README read errors', async () => {
+			vi.mocked(fs.readFile).mockRejectedValueOnce(new Error('permission denied'));
+
+			const handler = handlers.get('marketplace:getReadme');
+			const result = await handler!({} as any, '/local/readme-error');
+
+			expect(result.content).toBeNull();
+			expect(logger.debug).toHaveBeenCalledWith(
+				expect.stringContaining('Local README read failed (non-fatal):'),
+				'[Marketplace]'
+			);
+		});
+
+		it('should report non-404 README fetch failures', async () => {
+			mockFetch.mockResolvedValue({
+				ok: false,
+				status: 500,
+				statusText: 'Internal Server Error',
+			});
+
+			const handler = handlers.get('marketplace:getReadme');
+			const result = await handler!({} as any, 'playbooks/readme-error');
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Failed to fetch README: 500 Internal Server Error');
+		});
+
+		it('should return null for network README fetch failures', async () => {
+			mockFetch.mockRejectedValue(new Error('offline'));
+
+			const handler = handlers.get('marketplace:getReadme');
+			const result = await handler!({} as any, 'playbooks/readme-network');
+
+			expect(result.content).toBeNull();
+			expect(logger.debug).toHaveBeenCalledWith(
+				expect.stringContaining('README fetch failed (non-fatal):'),
+				'[Marketplace]'
+			);
 		});
 	});
 
@@ -605,6 +1193,54 @@ describe('marketplace IPC handlers', () => {
 				{ filename: 'My Test Playbook/phase-1', resetOnCompletion: false },
 				{ filename: 'My Test Playbook/phase-2', resetOnCompletion: true },
 			]);
+		});
+
+		it('should keep document filenames unprefixed for root imports and replace invalid stored playbooks', async () => {
+			const validCache: MarketplaceCache = {
+				fetchedAt: Date.now(),
+				manifest: sampleManifest,
+			};
+
+			vi.mocked(fs.readFile)
+				.mockResolvedValueOnce(JSON.stringify(validCache))
+				.mockRejectedValueOnce({ code: 'ENOENT' })
+				.mockResolvedValueOnce(JSON.stringify({ playbooks: { invalid: true } }));
+			vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+			mockFetch
+				.mockResolvedValueOnce({
+					ok: true,
+					text: () => Promise.resolve('# Phase 1 Content'),
+				})
+				.mockResolvedValueOnce({
+					ok: true,
+					text: () => Promise.resolve('# Phase 2 Content'),
+				});
+
+			const handler = handlers.get('marketplace:importPlaybook');
+			const result = await handler!(
+				{} as any,
+				'test-playbook-1',
+				'',
+				'/autorun/folder',
+				'session-123'
+			);
+
+			expect(result.success).toBe(true);
+			expect(result.playbook.documents).toEqual([
+				{ filename: 'phase-1', resetOnCompletion: false },
+				{ filename: 'phase-2', resetOnCompletion: true },
+			]);
+
+			const playbooksWrite = vi
+				.mocked(fs.writeFile)
+				.mock.calls.find(([filePath]) =>
+					String(filePath).endsWith(path.join('playbooks', 'session-123.json'))
+				);
+			expect(playbooksWrite).toBeDefined();
+			const saved = JSON.parse(playbooksWrite![1] as string);
+			expect(saved.playbooks).toHaveLength(1);
+			expect(saved.playbooks[0].id).toBe('test-uuid-123');
 		});
 
 		it('should store empty string for null prompt (Maestro default fallback)', async () => {
@@ -1043,6 +1679,89 @@ describe('marketplace IPC handlers', () => {
 			expect(result.importedDocs).toEqual(['phase-2']);
 		});
 
+		it('should import from local manifest when official fetch fails during import', async () => {
+			const localPlaybook = {
+				id: 'local-import-fallback',
+				title: 'Local Import Fallback',
+				description: 'Importable without official manifest',
+				category: 'Custom',
+				author: 'Local Author',
+				lastUpdated: '2024-02-01',
+				path: 'custom/local-import-fallback',
+				documents: [{ filename: 'local-doc', resetOnCompletion: false }],
+				loopEnabled: false,
+				maxLoops: null,
+				prompt: null,
+			};
+			const localManifest: MarketplaceManifest = {
+				lastUpdated: '2024-02-01',
+				playbooks: [localPlaybook],
+			};
+
+			vi.mocked(fs.readFile)
+				.mockRejectedValueOnce({ code: 'ENOENT' })
+				.mockResolvedValueOnce(JSON.stringify(localManifest))
+				.mockRejectedValueOnce({ code: 'ENOENT' });
+			vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+			mockFetch.mockRejectedValueOnce(new Error('official offline')).mockResolvedValueOnce({
+				ok: true,
+				text: () => Promise.resolve('# Local fallback doc'),
+			});
+
+			const handler = handlers.get('marketplace:importPlaybook');
+			const result = await handler!(
+				{} as any,
+				'local-import-fallback',
+				'Local Fallback',
+				'/autorun',
+				'session-123'
+			);
+
+			expect(result.success).toBe(true);
+			expect(result.importedDocs).toEqual(['local-doc']);
+			expect(logger.warn).toHaveBeenCalledWith(
+				'Failed to fetch official manifest during import, continuing with local only',
+				'[Marketplace]',
+				expect.objectContaining({ error: expect.any(Error) })
+			);
+		});
+
+		it('should fetch and cache official manifest during import when no valid cache exists', async () => {
+			vi.mocked(fs.readFile)
+				.mockRejectedValueOnce({ code: 'ENOENT' })
+				.mockRejectedValueOnce({ code: 'ENOENT' })
+				.mockRejectedValueOnce({ code: 'ENOENT' });
+			vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+			mockFetch
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve(sampleManifest),
+				})
+				.mockResolvedValueOnce({
+					ok: true,
+					text: () => Promise.resolve('# Security content'),
+				});
+
+			const handler = handlers.get('marketplace:importPlaybook');
+			const result = await handler!(
+				{} as any,
+				'test-playbook-2',
+				'Fetched Manifest Import',
+				'/autorun',
+				'session-123'
+			);
+
+			expect(result.success).toBe(true);
+			expect(result.importedDocs).toEqual(['security-check']);
+			expect(fs.writeFile).toHaveBeenCalledWith(
+				path.join('/mock/userData', 'marketplace-cache.json'),
+				expect.stringContaining('"manifest"'),
+				'utf-8'
+			);
+		});
+
 		describe('SSH remote import', () => {
 			it('should use remote-fs for SSH imports with POSIX paths', async () => {
 				const validCache: MarketplaceCache = {
@@ -1115,6 +1834,52 @@ describe('marketplace IPC handlers', () => {
 
 				expect(result.success).toBe(true);
 				expect(result.importedDocs).toEqual(['phase-1', 'phase-2']);
+			});
+
+			it('should avoid double slashes when remote Auto Run folder already ends with a slash', async () => {
+				const validCache: MarketplaceCache = {
+					fetchedAt: Date.now(),
+					manifest: sampleManifest,
+				};
+
+				vi.mocked(fs.readFile)
+					.mockResolvedValueOnce(JSON.stringify(validCache))
+					.mockRejectedValueOnce({ code: 'ENOENT' });
+				vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+				vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+				mockMkdirRemote.mockResolvedValue({ success: true });
+				mockWriteFileRemote.mockResolvedValue({ success: true });
+				mockFetch
+					.mockResolvedValueOnce({
+						ok: true,
+						text: () => Promise.resolve('# Phase 1 Content'),
+					})
+					.mockResolvedValueOnce({
+						ok: true,
+						text: () => Promise.resolve('# Phase 2 Content'),
+					});
+
+				const handler = handlers.get('marketplace:importPlaybook');
+				const result = await handler!(
+					{} as any,
+					'test-playbook-1',
+					'Remote Slash',
+					'/remote/autorun/',
+					'session-123',
+					'ssh-remote-1'
+				);
+
+				expect(result.success).toBe(true);
+				expect(mockMkdirRemote).toHaveBeenCalledWith(
+					'/remote/autorun/Remote Slash',
+					sampleSshRemote,
+					true
+				);
+				expect(mockMkdirRemote).not.toHaveBeenCalledWith(
+					'/remote/autorun//Remote Slash',
+					expect.anything(),
+					expect.anything()
+				);
 			});
 
 			it('should fall back to local fs when SSH remote not found', async () => {
@@ -1197,6 +1962,43 @@ describe('marketplace IPC handlers', () => {
 				expect(result.success).toBe(true);
 			});
 
+			it('should fall back to local fs when settings store is unavailable for SSH lookup', async () => {
+				handlers.clear();
+				registerMarketplaceHandlers({ app: mockApp });
+
+				const validCache: MarketplaceCache = {
+					fetchedAt: Date.now(),
+					manifest: sampleManifest,
+				};
+
+				vi.mocked(fs.readFile)
+					.mockResolvedValueOnce(JSON.stringify(validCache))
+					.mockRejectedValueOnce({ code: 'ENOENT' });
+				vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+				vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+				mockFetch.mockResolvedValue({
+					ok: true,
+					text: () => Promise.resolve('# Content'),
+				});
+
+				const handler = handlers.get('marketplace:importPlaybook');
+				const result = await handler!(
+					{} as any,
+					'test-playbook-2',
+					'No Store',
+					'/autorun',
+					'session-123',
+					'ssh-remote-1'
+				);
+
+				expect(result.success).toBe(true);
+				expect(mockMkdirRemote).not.toHaveBeenCalled();
+				expect(logger.warn).toHaveBeenCalledWith(
+					'[Marketplace] Settings store not available for SSH remote lookup',
+					'[Marketplace]'
+				);
+			});
+
 			it('should handle SSH mkdir failure gracefully', async () => {
 				const validCache: MarketplaceCache = {
 					fetchedAt: Date.now(),
@@ -1223,9 +2025,95 @@ describe('marketplace IPC handlers', () => {
 				expect(result.error).toContain('SSH connection failed');
 			});
 
-			// Note: The SSH writeFile failure scenario is already covered by the
-			// non-SSH test "should continue importing when individual document fetch fails".
-			// The SSH path uses the same try/catch pattern to continue on errors.
+			it('should continue importing remaining remote documents when one remote write fails', async () => {
+				const validCache: MarketplaceCache = {
+					fetchedAt: Date.now(),
+					manifest: sampleManifest,
+				};
+
+				vi.mocked(fs.readFile)
+					.mockResolvedValueOnce(JSON.stringify(validCache))
+					.mockRejectedValueOnce({ code: 'ENOENT' });
+				vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+				vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+				mockMkdirRemote.mockResolvedValue({ success: true });
+				mockWriteFileRemote
+					.mockResolvedValueOnce({ success: false, error: 'remote disk full' })
+					.mockResolvedValueOnce({ success: true });
+				mockFetch
+					.mockResolvedValueOnce({
+						ok: true,
+						text: () => Promise.resolve('# Phase 1 Content'),
+					})
+					.mockResolvedValueOnce({
+						ok: true,
+						text: () => Promise.resolve('# Phase 2 Content'),
+					});
+
+				const handler = handlers.get('marketplace:importPlaybook');
+				const result = await handler!(
+					{} as any,
+					'test-playbook-1',
+					'Remote Partial',
+					'/remote/autorun',
+					'session-123',
+					'ssh-remote-1'
+				);
+
+				expect(result.success).toBe(true);
+				expect(result.importedDocs).toEqual(['phase-2']);
+				expect(logger.warn).toHaveBeenCalledWith(
+					'Failed to import document phase-1',
+					'[Marketplace]',
+					expect.objectContaining({ error: expect.any(Error) })
+				);
+			});
+
+			it('should use fallback message when remote document write fails without an error', async () => {
+				const validCache: MarketplaceCache = {
+					fetchedAt: Date.now(),
+					manifest: sampleManifest,
+				};
+
+				vi.mocked(fs.readFile)
+					.mockResolvedValueOnce(JSON.stringify(validCache))
+					.mockRejectedValueOnce({ code: 'ENOENT' });
+				vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+				vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+				mockMkdirRemote.mockResolvedValue({ success: true });
+				mockWriteFileRemote
+					.mockResolvedValueOnce({ success: false })
+					.mockResolvedValueOnce({ success: true });
+				mockFetch
+					.mockResolvedValueOnce({
+						ok: true,
+						text: () => Promise.resolve('# Phase 1 Content'),
+					})
+					.mockResolvedValueOnce({
+						ok: true,
+						text: () => Promise.resolve('# Phase 2 Content'),
+					});
+
+				const handler = handlers.get('marketplace:importPlaybook');
+				const result = await handler!(
+					{} as any,
+					'test-playbook-1',
+					'Remote Document Fallback',
+					'/remote/autorun',
+					'session-123',
+					'ssh-remote-1'
+				);
+
+				expect(result.success).toBe(true);
+				expect(result.importedDocs).toEqual(['phase-2']);
+				expect(logger.warn).toHaveBeenCalledWith(
+					'Failed to import document phase-1',
+					'[Marketplace]',
+					expect.objectContaining({
+						error: expect.objectContaining({ message: 'Failed to write remote file' }),
+					})
+				);
+			});
 
 			it('should use local fs when no sshRemoteId provided', async () => {
 				// Reset mocks from previous tests
@@ -1374,6 +2262,134 @@ describe('marketplace IPC handlers', () => {
 				expect(result.importedAssets).toEqual(['logo.png']);
 			});
 
+			it('should continue when remote asset fetch returns a non-404 error', async () => {
+				const validCache: MarketplaceCache = {
+					fetchedAt: Date.now(),
+					manifest: sampleManifest,
+				};
+
+				vi.mocked(fs.readFile)
+					.mockResolvedValueOnce(JSON.stringify(validCache))
+					.mockRejectedValueOnce({ code: 'ENOENT' });
+				vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+				vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+				mockFetch
+					.mockResolvedValueOnce({
+						ok: true,
+						text: () => Promise.resolve('# Main Doc'),
+					})
+					.mockResolvedValueOnce({
+						ok: false,
+						status: 500,
+						statusText: 'Internal Server Error',
+					})
+					.mockResolvedValueOnce({
+						ok: true,
+						arrayBuffer: () => Promise.resolve(Buffer.from('png').buffer),
+					});
+
+				const handler = handlers.get('marketplace:importPlaybook');
+				const result = await handler!(
+					{} as any,
+					'test-playbook-with-assets',
+					'Asset HTTP Error',
+					'/autorun',
+					'session-123'
+				);
+
+				expect(result.success).toBe(true);
+				expect(result.importedAssets).toEqual(['logo.png']);
+				expect(logger.warn).toHaveBeenCalledWith(
+					'Failed to import asset config.yaml',
+					'[Marketplace]',
+					expect.objectContaining({ error: expect.any(Error) })
+				);
+			});
+
+			it('should continue when remote asset fetch has a network error', async () => {
+				const validCache: MarketplaceCache = {
+					fetchedAt: Date.now(),
+					manifest: sampleManifest,
+				};
+
+				vi.mocked(fs.readFile)
+					.mockResolvedValueOnce(JSON.stringify(validCache))
+					.mockRejectedValueOnce({ code: 'ENOENT' });
+				vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+				vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+				mockFetch
+					.mockResolvedValueOnce({
+						ok: true,
+						text: () => Promise.resolve('# Main Doc'),
+					})
+					.mockRejectedValueOnce(new Error('asset network down'))
+					.mockResolvedValueOnce({
+						ok: true,
+						arrayBuffer: () => Promise.resolve(Buffer.from('png').buffer),
+					});
+
+				const handler = handlers.get('marketplace:importPlaybook');
+				const result = await handler!(
+					{} as any,
+					'test-playbook-with-assets',
+					'Asset Network Error',
+					'/autorun',
+					'session-123'
+				);
+
+				expect(result.success).toBe(true);
+				expect(result.importedAssets).toEqual(['logo.png']);
+				expect(logger.warn).toHaveBeenCalledWith(
+					'Failed to import asset config.yaml',
+					'[Marketplace]',
+					expect.objectContaining({ error: expect.any(Error) })
+				);
+			});
+
+			it('should stringify non-Error remote asset fetch failures', async () => {
+				const validCache: MarketplaceCache = {
+					fetchedAt: Date.now(),
+					manifest: sampleManifest,
+				};
+
+				vi.mocked(fs.readFile)
+					.mockResolvedValueOnce(JSON.stringify(validCache))
+					.mockRejectedValueOnce({ code: 'ENOENT' });
+				vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+				vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+				mockFetch
+					.mockResolvedValueOnce({
+						ok: true,
+						text: () => Promise.resolve('# Main Doc'),
+					})
+					.mockRejectedValueOnce('asset offline')
+					.mockResolvedValueOnce({
+						ok: true,
+						arrayBuffer: () => Promise.resolve(Buffer.from('png').buffer),
+					});
+
+				const handler = handlers.get('marketplace:importPlaybook');
+				const result = await handler!(
+					{} as any,
+					'test-playbook-with-assets',
+					'Asset String Error',
+					'/autorun',
+					'session-123'
+				);
+
+				expect(result.success).toBe(true);
+				expect(result.importedAssets).toEqual(['logo.png']);
+				expect(logger.warn).toHaveBeenCalledWith(
+					'Failed to import asset config.yaml',
+					'[Marketplace]',
+					expect.objectContaining({
+						error: expect.objectContaining({
+							message: 'Network error fetching asset: asset offline',
+						}),
+					})
+				);
+			});
+
 			it('should import assets via SSH for remote sessions', async () => {
 				const validCache: MarketplaceCache = {
 					fetchedAt: Date.now(),
@@ -1434,6 +2450,153 @@ describe('marketplace IPC handlers', () => {
 				);
 
 				expect(result.importedAssets).toEqual(['config.yaml', 'logo.png']);
+			});
+
+			it('should continue remote asset imports when remote assets directory creation fails', async () => {
+				const validCache: MarketplaceCache = {
+					fetchedAt: Date.now(),
+					manifest: sampleManifest,
+				};
+
+				vi.mocked(fs.readFile)
+					.mockResolvedValueOnce(JSON.stringify(validCache))
+					.mockRejectedValueOnce({ code: 'ENOENT' });
+				vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+				vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+				mockMkdirRemote
+					.mockResolvedValueOnce({ success: true })
+					.mockResolvedValueOnce({ success: false, error: 'mkdir assets failed' });
+				mockWriteFileRemote.mockResolvedValue({ success: true });
+				mockFetch
+					.mockResolvedValueOnce({
+						ok: true,
+						text: () => Promise.resolve('# Main Doc'),
+					})
+					.mockResolvedValueOnce({
+						ok: true,
+						arrayBuffer: () => Promise.resolve(Buffer.from('yaml: content').buffer),
+					})
+					.mockResolvedValueOnce({
+						ok: true,
+						arrayBuffer: () => Promise.resolve(Buffer.from('png').buffer),
+					});
+
+				const handler = handlers.get('marketplace:importPlaybook');
+				const result = await handler!(
+					{} as any,
+					'test-playbook-with-assets',
+					'Remote Assets Mkdir Failure',
+					'/remote/autorun',
+					'session-123',
+					'ssh-remote-1'
+				);
+
+				expect(result.success).toBe(true);
+				expect(result.importedAssets).toEqual(['config.yaml', 'logo.png']);
+				expect(logger.warn).toHaveBeenCalledWith(
+					'Failed to create remote assets directory: mkdir assets failed',
+					'[Marketplace]'
+				);
+			});
+
+			it('should continue importing remaining remote assets when one remote asset write fails', async () => {
+				const validCache: MarketplaceCache = {
+					fetchedAt: Date.now(),
+					manifest: sampleManifest,
+				};
+
+				vi.mocked(fs.readFile)
+					.mockResolvedValueOnce(JSON.stringify(validCache))
+					.mockRejectedValueOnce({ code: 'ENOENT' });
+				vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+				vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+				mockMkdirRemote.mockResolvedValue({ success: true });
+				mockWriteFileRemote
+					.mockResolvedValueOnce({ success: true })
+					.mockResolvedValueOnce({ success: false, error: 'asset disk full' })
+					.mockResolvedValueOnce({ success: true });
+				mockFetch
+					.mockResolvedValueOnce({
+						ok: true,
+						text: () => Promise.resolve('# Main Doc'),
+					})
+					.mockResolvedValueOnce({
+						ok: true,
+						arrayBuffer: () => Promise.resolve(Buffer.from('yaml: content').buffer),
+					})
+					.mockResolvedValueOnce({
+						ok: true,
+						arrayBuffer: () => Promise.resolve(Buffer.from('png').buffer),
+					});
+
+				const handler = handlers.get('marketplace:importPlaybook');
+				const result = await handler!(
+					{} as any,
+					'test-playbook-with-assets',
+					'Remote Asset Partial',
+					'/remote/autorun',
+					'session-123',
+					'ssh-remote-1'
+				);
+
+				expect(result.success).toBe(true);
+				expect(result.importedAssets).toEqual(['logo.png']);
+				expect(logger.warn).toHaveBeenCalledWith(
+					'Failed to import asset config.yaml',
+					'[Marketplace]',
+					expect.objectContaining({ error: expect.any(Error) })
+				);
+			});
+
+			it('should use fallback message when remote asset write fails without an error', async () => {
+				const validCache: MarketplaceCache = {
+					fetchedAt: Date.now(),
+					manifest: sampleManifest,
+				};
+
+				vi.mocked(fs.readFile)
+					.mockResolvedValueOnce(JSON.stringify(validCache))
+					.mockRejectedValueOnce({ code: 'ENOENT' });
+				vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+				vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+				mockMkdirRemote.mockResolvedValue({ success: true });
+				mockWriteFileRemote
+					.mockResolvedValueOnce({ success: true })
+					.mockResolvedValueOnce({ success: false })
+					.mockResolvedValueOnce({ success: true });
+				mockFetch
+					.mockResolvedValueOnce({
+						ok: true,
+						text: () => Promise.resolve('# Main Doc'),
+					})
+					.mockResolvedValueOnce({
+						ok: true,
+						arrayBuffer: () => Promise.resolve(Buffer.from('yaml: content').buffer),
+					})
+					.mockResolvedValueOnce({
+						ok: true,
+						arrayBuffer: () => Promise.resolve(Buffer.from('png').buffer),
+					});
+
+				const handler = handlers.get('marketplace:importPlaybook');
+				const result = await handler!(
+					{} as any,
+					'test-playbook-with-assets',
+					'Remote Asset Fallback',
+					'/remote/autorun',
+					'session-123',
+					'ssh-remote-1'
+				);
+
+				expect(result.success).toBe(true);
+				expect(result.importedAssets).toEqual(['logo.png']);
+				expect(logger.warn).toHaveBeenCalledWith(
+					'Failed to import asset config.yaml',
+					'[Marketplace]',
+					expect.objectContaining({
+						error: expect.objectContaining({ message: 'Failed to write remote asset file' }),
+					})
+				);
 			});
 
 			it('should not create assets folder when playbook has no assets', async () => {
@@ -1535,6 +2698,117 @@ describe('marketplace IPC handlers', () => {
 				expect(mockFetch).not.toHaveBeenCalled();
 			});
 
+			it('should ignore discovered local asset candidates that are directories', async () => {
+				const localPlaybookNoManifestAssets = {
+					id: 'local-assets-directory-candidate',
+					title: 'Local Assets Directory Candidate',
+					description: 'Directories should not be imported as assets',
+					category: 'Custom',
+					author: 'Local Author',
+					lastUpdated: '2024-01-20',
+					path: '/Users/test/local-playbooks/directory-candidate',
+					documents: [{ filename: 'main-doc', resetOnCompletion: false }],
+					loopEnabled: false,
+					maxLoops: null,
+					prompt: null,
+				};
+				const localManifest: MarketplaceManifest = {
+					lastUpdated: '2024-01-20',
+					playbooks: [localPlaybookNoManifestAssets],
+				};
+				const validCache: MarketplaceCache = {
+					fetchedAt: Date.now(),
+					manifest: sampleManifest,
+				};
+
+				vi.mocked(fs.readFile)
+					.mockResolvedValueOnce(JSON.stringify(validCache))
+					.mockResolvedValueOnce(JSON.stringify(localManifest))
+					.mockResolvedValueOnce('# Main local doc')
+					.mockResolvedValueOnce(Buffer.from('asset-one'))
+					.mockRejectedValueOnce({ code: 'ENOENT' });
+				vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+				vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+				vi.mocked(fs.readdir).mockResolvedValue(['nested-folder', 'settings.yaml']);
+				vi.mocked(fs.stat).mockImplementation(async (assetPath) => {
+					if (String(assetPath).endsWith('nested-folder')) {
+						return { isFile: () => false } as any;
+					}
+					return { isFile: () => true } as any;
+				});
+
+				const handler = handlers.get('marketplace:importPlaybook');
+				const result = await handler!(
+					{} as any,
+					'local-assets-directory-candidate',
+					'Imported Directory Candidate',
+					'/autorun/folder',
+					'session-123'
+				);
+
+				expect(result.success).toBe(true);
+				expect(result.importedAssets).toEqual(['settings.yaml']);
+				expect(fs.writeFile).not.toHaveBeenCalledWith(
+					path.join('/autorun/folder', 'Imported Directory Candidate', 'assets', 'nested-folder'),
+					expect.any(Buffer)
+				);
+			});
+
+			it('should stringify non-Error local asset read failures', async () => {
+				const localPlaybookWithBrokenAsset = {
+					id: 'local-assets-string-error',
+					title: 'Local Asset String Error',
+					description: 'String asset read failures should be reported',
+					category: 'Custom',
+					author: 'Local Author',
+					lastUpdated: '2024-01-20',
+					path: '/Users/test/local-playbooks/string-error',
+					documents: [{ filename: 'main-doc', resetOnCompletion: false }],
+					loopEnabled: false,
+					maxLoops: null,
+					prompt: null,
+					assets: ['broken.bin'],
+				};
+				const localManifest: MarketplaceManifest = {
+					lastUpdated: '2024-01-20',
+					playbooks: [localPlaybookWithBrokenAsset],
+				};
+				const validCache: MarketplaceCache = {
+					fetchedAt: Date.now(),
+					manifest: sampleManifest,
+				};
+
+				vi.mocked(fs.readFile)
+					.mockResolvedValueOnce(JSON.stringify(validCache))
+					.mockResolvedValueOnce(JSON.stringify(localManifest))
+					.mockResolvedValueOnce('# Main local doc')
+					.mockRejectedValueOnce('asset disk offline')
+					.mockRejectedValueOnce({ code: 'ENOENT' });
+				vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+				vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+
+				const handler = handlers.get('marketplace:importPlaybook');
+				const result = await handler!(
+					{} as any,
+					'local-assets-string-error',
+					'Imported String Error',
+					'/autorun/folder',
+					'session-123'
+				);
+
+				expect(result.success).toBe(true);
+				expect(result.importedAssets).toEqual([]);
+				expect(logger.warn).toHaveBeenCalledWith(
+					'Failed to import asset broken.bin',
+					'[Marketplace]',
+					expect.objectContaining({
+						error: expect.objectContaining({
+							message: 'Failed to read local asset: asset disk offline',
+						}),
+					})
+				);
+			});
+
 			it('should merge local discovered assets with manifest assets without duplicates', async () => {
 				const localPlaybookWithManifestAssets = {
 					id: 'local-assets-with-manifest',
@@ -1598,6 +2872,168 @@ describe('marketplace IPC handlers', () => {
 					expect.any(Buffer)
 				);
 				expect(mockFetch).not.toHaveBeenCalled();
+			});
+
+			it('should skip local asset candidates that cannot be statted', async () => {
+				const localPlaybook = {
+					id: 'local-assets-stat-error',
+					title: 'Local Assets Stat Error',
+					description: 'Bad asset candidates should not stop import',
+					category: 'Custom',
+					author: 'Local Author',
+					lastUpdated: '2024-02-01',
+					path: '/Users/test/local-playbooks/stat-error',
+					documents: [{ filename: 'main-doc', resetOnCompletion: false }],
+					loopEnabled: false,
+					maxLoops: null,
+					prompt: null,
+				};
+				const localManifest: MarketplaceManifest = {
+					lastUpdated: '2024-02-01',
+					playbooks: [localPlaybook],
+				};
+				const validCache: MarketplaceCache = {
+					fetchedAt: Date.now(),
+					manifest: sampleManifest,
+				};
+
+				vi.mocked(fs.readFile)
+					.mockResolvedValueOnce(JSON.stringify(validCache))
+					.mockResolvedValueOnce(JSON.stringify(localManifest))
+					.mockResolvedValueOnce('# Main local doc')
+					.mockResolvedValueOnce(Buffer.from('good asset'))
+					.mockRejectedValueOnce({ code: 'ENOENT' });
+				vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+				vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+				vi.mocked(fs.readdir).mockResolvedValue(['broken.yaml', 'good.yaml']);
+				vi.mocked(fs.stat)
+					.mockRejectedValueOnce(new Error('stat failed'))
+					.mockResolvedValueOnce({ isFile: () => true } as any);
+
+				const handler = handlers.get('marketplace:importPlaybook');
+				const result = await handler!(
+					{} as any,
+					'local-assets-stat-error',
+					'Stat Error Assets',
+					'/autorun/folder',
+					'session-123'
+				);
+
+				expect(result.success).toBe(true);
+				expect(result.importedAssets).toEqual(['good.yaml']);
+				expect(logger.warn).toHaveBeenCalledWith(
+					expect.stringContaining('Failed to stat local asset candidate:'),
+					'[Marketplace]',
+					expect.objectContaining({ error: expect.any(Error) })
+				);
+			});
+
+			it('should warn and continue when local asset discovery cannot read the assets directory', async () => {
+				const localPlaybook = {
+					id: 'local-assets-read-error',
+					title: 'Local Assets Read Error',
+					description: 'Asset discovery errors should be non-fatal',
+					category: 'Custom',
+					author: 'Local Author',
+					lastUpdated: '2024-02-01',
+					path: '/Users/test/local-playbooks/read-error',
+					documents: [{ filename: 'main-doc', resetOnCompletion: false }],
+					loopEnabled: false,
+					maxLoops: null,
+					prompt: null,
+				};
+				const localManifest: MarketplaceManifest = {
+					lastUpdated: '2024-02-01',
+					playbooks: [localPlaybook],
+				};
+				const validCache: MarketplaceCache = {
+					fetchedAt: Date.now(),
+					manifest: sampleManifest,
+				};
+
+				vi.mocked(fs.readFile)
+					.mockResolvedValueOnce(JSON.stringify(validCache))
+					.mockResolvedValueOnce(JSON.stringify(localManifest))
+					.mockResolvedValueOnce('# Main local doc')
+					.mockRejectedValueOnce({ code: 'ENOENT' });
+				vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+				vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+				vi.mocked(fs.readdir).mockRejectedValue({ code: 'EACCES' });
+
+				const handler = handlers.get('marketplace:importPlaybook');
+				const result = await handler!(
+					{} as any,
+					'local-assets-read-error',
+					'Read Error Assets',
+					'/autorun/folder',
+					'session-123'
+				);
+
+				expect(result.success).toBe(true);
+				expect(result.importedAssets).toEqual([]);
+				expect(logger.warn).toHaveBeenCalledWith(
+					expect.stringContaining('Failed to read local assets directory:'),
+					'[Marketplace]',
+					expect.objectContaining({ error: expect.objectContaining({ code: 'EACCES' }) })
+				);
+			});
+
+			it('should continue when local manifest assets are missing or unreadable', async () => {
+				const localPlaybook = {
+					id: 'local-assets-read-failures',
+					title: 'Local Asset Read Failures',
+					description: 'Bad manifest assets should be skipped',
+					category: 'Custom',
+					author: 'Local Author',
+					lastUpdated: '2024-02-01',
+					path: '/Users/test/local-playbooks/read-failures',
+					documents: [{ filename: 'main-doc', resetOnCompletion: false }],
+					loopEnabled: false,
+					maxLoops: null,
+					prompt: null,
+					assets: ['missing.yaml', 'forbidden.png'],
+				};
+				const localManifest: MarketplaceManifest = {
+					lastUpdated: '2024-02-01',
+					playbooks: [localPlaybook],
+				};
+				const validCache: MarketplaceCache = {
+					fetchedAt: Date.now(),
+					manifest: sampleManifest,
+				};
+
+				vi.mocked(fs.readFile)
+					.mockResolvedValueOnce(JSON.stringify(validCache))
+					.mockResolvedValueOnce(JSON.stringify(localManifest))
+					.mockResolvedValueOnce('# Main local doc')
+					.mockRejectedValueOnce({ code: 'ENOENT' })
+					.mockRejectedValueOnce(Object.assign(new Error('permission denied'), { code: 'EACCES' }))
+					.mockRejectedValueOnce({ code: 'ENOENT' });
+				vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+				vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+				vi.mocked(fs.readdir).mockRejectedValue({ code: 'ENOENT' });
+
+				const handler = handlers.get('marketplace:importPlaybook');
+				const result = await handler!(
+					{} as any,
+					'local-assets-read-failures',
+					'Asset Read Failures',
+					'/autorun/folder',
+					'session-123'
+				);
+
+				expect(result.success).toBe(true);
+				expect(result.importedAssets).toEqual([]);
+				expect(logger.warn).toHaveBeenCalledWith(
+					'Failed to import asset missing.yaml',
+					'[Marketplace]',
+					expect.objectContaining({ error: expect.any(Error) })
+				);
+				expect(logger.warn).toHaveBeenCalledWith(
+					'Failed to import asset forbidden.png',
+					'[Marketplace]',
+					expect.objectContaining({ error: expect.any(Error) })
+				);
 			});
 		});
 	});

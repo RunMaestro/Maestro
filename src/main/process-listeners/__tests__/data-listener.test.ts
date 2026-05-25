@@ -3,11 +3,12 @@
  * Handles process output data including group chat buffering and web broadcasting.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { setupDataListener } from '../data-listener';
 import type { ProcessManager } from '../../process-manager';
 import type { SafeSendFn } from '../../utils/safe-send';
 import type { ProcessListenerDependencies } from '../types';
+import { groupChatEmitters } from '../../ipc/handlers/groupChat';
 
 describe('Data Listener', () => {
 	let mockProcessManager: ProcessManager;
@@ -38,6 +39,7 @@ describe('Data Listener', () => {
 			extractTextFromStreamJson: vi.fn().mockReturnValue('parsed response'),
 			parseParticipantSessionId: vi.fn().mockReturnValue(null),
 		};
+		groupChatEmitters.emitParticipantLiveOutput = vi.fn();
 		mockDebugLog = vi.fn();
 		mockPatterns = {
 			REGEX_MODERATOR_SESSION: /^group-chat-(.+)-moderator-/,
@@ -55,6 +57,10 @@ describe('Data Listener', () => {
 		} as unknown as ProcessManager;
 	});
 
+	afterEach(() => {
+		delete groupChatEmitters.emitParticipantLiveOutput;
+	});
+
 	const setupListener = () => {
 		setupDataListener(mockProcessManager, {
 			safeSend: mockSafeSend,
@@ -70,6 +76,55 @@ describe('Data Listener', () => {
 		it('should register the data event listener', () => {
 			setupListener();
 			expect(mockProcessManager.on).toHaveBeenCalledWith('data', expect.any(Function));
+		});
+
+		it('should register the raw stdout listener for group chat live output', () => {
+			setupListener();
+			expect(mockProcessManager.on).toHaveBeenCalledWith('raw-stdout', expect.any(Function));
+		});
+	});
+
+	describe('Raw Stdout Live Output', () => {
+		it('should ignore raw stdout for non-group-chat sessions', () => {
+			setupListener();
+			const handler = eventHandlers.get('raw-stdout');
+
+			handler?.('regular-session-123', 'live chunk');
+
+			expect(mockOutputParser.parseParticipantSessionId).not.toHaveBeenCalled();
+			expect(groupChatEmitters.emitParticipantLiveOutput).not.toHaveBeenCalled();
+		});
+
+		it('should emit participant live output for parsed group chat sessions', () => {
+			mockOutputParser.parseParticipantSessionId = vi.fn().mockReturnValue({
+				groupChatId: 'test-chat-123',
+				participantName: 'TestAgent',
+			});
+			setupListener();
+			const handler = eventHandlers.get('raw-stdout');
+			const sessionId = 'group-chat-test-chat-123-participant-TestAgent-abc123';
+
+			handler?.(sessionId, 'live chunk');
+
+			expect(mockOutputParser.parseParticipantSessionId).toHaveBeenCalledWith(sessionId);
+			expect(groupChatEmitters.emitParticipantLiveOutput).toHaveBeenCalledWith(
+				'test-chat-123',
+				'TestAgent',
+				'live chunk'
+			);
+		});
+
+		it('should skip group chat raw stdout when the participant session cannot be parsed', () => {
+			mockOutputParser.parseParticipantSessionId = vi.fn().mockReturnValue(null);
+			setupListener();
+			const handler = eventHandlers.get('raw-stdout');
+
+			handler?.('group-chat-test-chat-123-unknown-abc123', 'live chunk');
+
+			expect(mockOutputParser.parseParticipantSessionId).toHaveBeenCalledWith(
+				'group-chat-test-chat-123-unknown-abc123'
+			);
+			expect(groupChatEmitters.emitParticipantLiveOutput).not.toHaveBeenCalled();
 		});
 	});
 

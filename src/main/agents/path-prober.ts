@@ -147,7 +147,7 @@ export async function getExpandedEnvWithShell(): Promise<NodeJS.ProcessEnv> {
 
 		const delim = path.delimiter;
 		const shellParts = shellPath.split(delim).filter(Boolean);
-		const currentParts = (env.PATH || '').split(delim).filter(Boolean);
+		const currentParts = env.PATH!.split(delim).filter(Boolean);
 
 		const merged: string[] = [];
 		// Start with shell parts to prioritize them
@@ -523,8 +523,8 @@ export async function checkBinaryExists(binaryName: string): Promise<BinaryDetec
 					(p) => !p.toLowerCase().endsWith('.exe') && !p.toLowerCase().endsWith('.cmd')
 				);
 
-				// Return the best match: .exe > extensionless shell scripts > .cmd > first result
-				let bestMatch = exeMatch || extensionlessMatch || cmdMatch || matches[0];
+				// Return the best match: .exe > extensionless shell scripts > .cmd
+				let bestMatch = (exeMatch || extensionlessMatch || cmdMatch)!;
 
 				// If the first match doesn't have an extension, check if .cmd or .exe version exists
 				// This handles cases where 'where' returns a path without extension

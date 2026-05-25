@@ -13,12 +13,24 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { app } from 'electron';
 import path from 'path';
+import fs from 'fs/promises';
 import {
-	SessionStatsCache,
+	encodeClaudeProjectPath,
+	getGlobalStatsCachePath,
+	getStatsCachePath,
+	GLOBAL_STATS_CACHE_VERSION,
+	loadGlobalStatsCache,
+	loadStatsCache,
+	saveGlobalStatsCache,
+	saveStatsCache,
 	STATS_CACHE_VERSION,
+	type GlobalStatsCache,
 	PerProjectSessionStats,
+	SessionStatsCache,
 } from '../../../main/utils/statsCache';
+import { logger } from '../../../main/utils/logger';
 
 // Mock electron app module
 vi.mock('electron', () => ({
@@ -38,6 +50,21 @@ vi.mock('fs/promises', () => ({
 		stat: vi.fn(),
 	},
 }));
+
+vi.mock('../../../main/utils/logger', () => ({
+	logger: {
+		warn: vi.fn(),
+	},
+}));
+
+beforeEach(() => {
+	vi.resetAllMocks();
+	vi.mocked(app.getPath).mockReturnValue('/mock/user/data');
+});
+
+afterEach(() => {
+	vi.clearAllMocks();
+});
 
 describe('SessionStatsCache', () => {
 	describe('Archive Preservation Pattern', () => {
@@ -144,6 +171,165 @@ describe('SessionStatsCache', () => {
 			expect(cache.totals.totalSessions).toBe(2);
 			expect(cache.totals.totalMessages).toBe(300);
 			expect(cache.totals.totalCostUsd).toBe(30.0);
+		});
+	});
+
+	describe('Cache IO helpers', () => {
+		const projectPath = '/Users/test/My Project';
+
+		function createProjectCache(version = STATS_CACHE_VERSION): SessionStatsCache {
+			return {
+				version,
+				sessions: {
+					'session-1': {
+						messages: 10,
+						costUsd: 1.5,
+						sizeBytes: 1234,
+						tokens: 100,
+						oldestTimestamp: '2026-01-01T00:00:00Z',
+						fileMtimeMs: 1000,
+						archived: false,
+					},
+				},
+				totals: {
+					totalSessions: 1,
+					totalMessages: 10,
+					totalCostUsd: 1.5,
+					totalSizeBytes: 1234,
+					totalTokens: 100,
+					oldestTimestamp: '2026-01-01T00:00:00Z',
+				},
+				lastUpdated: 2000,
+			};
+		}
+
+		function createGlobalCache(version = GLOBAL_STATS_CACHE_VERSION): GlobalStatsCache {
+			return {
+				version,
+				providers: {
+					'claude-code': {
+						sessions: {
+							'project/session-1': {
+								messages: 10,
+								inputTokens: 20,
+								outputTokens: 30,
+								cacheReadTokens: 40,
+								cacheCreationTokens: 50,
+								cachedInputTokens: 60,
+								sizeBytes: 1234,
+								fileMtimeMs: 1000,
+								archived: false,
+							},
+						},
+					},
+				},
+				lastUpdated: 2000,
+			};
+		}
+
+		it('should build a project cache path under the user data stats-cache directory', () => {
+			const cachePath = getStatsCachePath(projectPath);
+
+			expect(cachePath).toBe(
+				path.join('/mock/user/data', 'stats-cache', `${encodeClaudeProjectPath(projectPath)}.json`)
+			);
+		});
+
+		it('should build the global stats cache path under the user data stats-cache directory', () => {
+			expect(getGlobalStatsCachePath()).toBe(
+				path.join('/mock/user/data', 'stats-cache', 'global-stats.json')
+			);
+		});
+
+		it('should load a project stats cache when the version matches', async () => {
+			const cache = createProjectCache();
+			vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(cache));
+
+			await expect(loadStatsCache(projectPath)).resolves.toEqual(cache);
+			expect(fs.readFile).toHaveBeenCalledWith(getStatsCachePath(projectPath), 'utf-8');
+		});
+
+		it('should return null when the project stats cache version is stale', async () => {
+			vi.mocked(fs.readFile).mockResolvedValue(
+				JSON.stringify(createProjectCache(STATS_CACHE_VERSION - 1))
+			);
+
+			await expect(loadStatsCache(projectPath)).resolves.toBeNull();
+		});
+
+		it('should return null when the project stats cache cannot be read', async () => {
+			vi.mocked(fs.readFile).mockRejectedValue(new Error('missing cache'));
+
+			await expect(loadStatsCache(projectPath)).resolves.toBeNull();
+		});
+
+		it('should save a project stats cache after creating the cache directory', async () => {
+			const cache = createProjectCache();
+
+			await saveStatsCache(projectPath, cache);
+
+			const cachePath = getStatsCachePath(projectPath);
+			expect(fs.mkdir).toHaveBeenCalledWith(path.dirname(cachePath), { recursive: true });
+			expect(fs.writeFile).toHaveBeenCalledWith(cachePath, JSON.stringify(cache), 'utf-8');
+		});
+
+		it('should log and swallow project stats cache save failures', async () => {
+			const error = new Error('permission denied');
+			vi.mocked(fs.mkdir).mockRejectedValue(error);
+
+			await expect(saveStatsCache(projectPath, createProjectCache())).resolves.toBeUndefined();
+
+			expect(logger.warn).toHaveBeenCalledWith('Failed to save stats cache', 'ClaudeSessions', {
+				projectPath,
+				error,
+			});
+		});
+
+		it('should load a global stats cache when the version matches', async () => {
+			const cache = createGlobalCache();
+			vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(cache));
+
+			await expect(loadGlobalStatsCache()).resolves.toEqual(cache);
+			expect(fs.readFile).toHaveBeenCalledWith(getGlobalStatsCachePath(), 'utf-8');
+		});
+
+		it('should return null when the global stats cache version is stale', async () => {
+			vi.mocked(fs.readFile).mockResolvedValue(
+				JSON.stringify(createGlobalCache(GLOBAL_STATS_CACHE_VERSION - 1))
+			);
+
+			await expect(loadGlobalStatsCache()).resolves.toBeNull();
+		});
+
+		it('should return null when the global stats cache cannot be read', async () => {
+			vi.mocked(fs.readFile).mockRejectedValue(new Error('missing cache'));
+
+			await expect(loadGlobalStatsCache()).resolves.toBeNull();
+		});
+
+		it('should save a global stats cache after creating the cache directory', async () => {
+			const cache = createGlobalCache();
+
+			await saveGlobalStatsCache(cache);
+
+			const cachePath = getGlobalStatsCachePath();
+			expect(fs.mkdir).toHaveBeenCalledWith(path.dirname(cachePath), { recursive: true });
+			expect(fs.writeFile).toHaveBeenCalledWith(cachePath, JSON.stringify(cache), 'utf-8');
+		});
+
+		it('should log and swallow global stats cache save failures', async () => {
+			const error = new Error('disk full');
+			vi.mocked(fs.writeFile).mockRejectedValue(error);
+
+			await expect(saveGlobalStatsCache(createGlobalCache())).resolves.toBeUndefined();
+
+			expect(logger.warn).toHaveBeenCalledWith(
+				'Failed to save global stats cache',
+				'ClaudeSessions',
+				{
+					error,
+				}
+			);
 		});
 	});
 });

@@ -225,6 +225,22 @@ describe('ThinkingStatusPill', () => {
 			expect(screen.getByText('Custom Name')).toBeInTheDocument();
 		});
 
+		it('uses namedSessions lookup for tab-level agent session IDs', () => {
+			const item = createThinkingItemWithTab(
+				{},
+				{ agentSessionId: 'tab-agent-123', name: 'Fallback Tab Name' }
+			);
+			render(
+				<ThinkingStatusPill
+					thinkingItems={[item]}
+					theme={mockTheme}
+					namedSessions={{ 'tab-agent-123': 'Named Tab Session' }}
+				/>
+			);
+
+			expect(screen.getByText('Named Tab Session')).toBeInTheDocument();
+		});
+
 		it('falls back to tab name when no namedSession', () => {
 			const item = createThinkingItemWithTab(
 				{ agentSessionId: undefined },
@@ -254,6 +270,20 @@ describe('ThinkingStatusPill', () => {
 			render(<ThinkingStatusPill thinkingItems={[item]} theme={mockTheme} />);
 			const buttons = screen.getAllByText('Session Name');
 			expect(buttons.length).toBeGreaterThanOrEqual(1);
+		});
+
+		it('falls back to the Maestro session name when no agent or tab name exists', () => {
+			const item = createThinkingItem(
+				{
+					name: 'Plain Session Name',
+					agentSessionId: undefined,
+					aiTabs: undefined,
+				},
+				null
+			);
+			render(<ThinkingStatusPill thinkingItems={[item]} theme={mockTheme} />);
+
+			expect(screen.getAllByText('Plain Session Name').length).toBeGreaterThanOrEqual(1);
 		});
 	});
 
@@ -526,6 +556,37 @@ describe('ThinkingStatusPill', () => {
 
 			expect(screen.getByText('2m 0s')).toBeInTheDocument();
 		});
+
+		it('uses named session labels and session-name fallback in item rows', () => {
+			const items = [
+				createThinkingItem({ id: 'sess-1', name: 'Primary' }),
+				createThinkingItem({
+					id: 'sess-2',
+					name: 'Custom Named Source',
+					agentSessionId: 'custom-agent-id',
+				}),
+				createThinkingItem({
+					id: 'sess-3',
+					name: 'Session Name Fallback',
+					agentSessionId: undefined,
+					aiTabs: undefined,
+					currentCycleTokens: undefined,
+				}),
+			];
+			render(
+				<ThinkingStatusPill
+					thinkingItems={items}
+					theme={mockTheme}
+					namedSessions={{ 'custom-agent-id': 'Custom Named Row' }}
+				/>
+			);
+
+			const indicator = screen.getByText('+2').parentElement!;
+			fireEvent.mouseEnter(indicator);
+
+			expect(screen.getByText('Custom Named Row')).toBeInTheDocument();
+			expect(screen.getAllByText('Session Name Fallback').length).toBeGreaterThanOrEqual(1);
+		});
 	});
 
 	describe('AutoRun mode', () => {
@@ -587,6 +648,37 @@ describe('ThinkingStatusPill', () => {
 			);
 			expect(screen.getByText('Elapsed:')).toBeInTheDocument();
 			expect(screen.getByText('0m 45s')).toBeInTheDocument();
+		});
+
+		it('shows worktree indicator with branch and active fallback titles', () => {
+			const autoRunState: BatchRunState = {
+				isRunning: true,
+				isPaused: false,
+				isStopping: false,
+				currentTaskIndex: 0,
+				totalTasks: 5,
+				completedTasks: 0,
+				startTime: Date.now(),
+				tasks: [],
+				batchName: 'Batch',
+				worktreeActive: true,
+				worktreeBranch: 'feature/test-branch',
+			};
+			const { rerender } = render(
+				<ThinkingStatusPill thinkingItems={[]} theme={mockTheme} autoRunState={autoRunState} />
+			);
+
+			expect(screen.getByTitle('Worktree: feature/test-branch')).toBeInTheDocument();
+
+			rerender(
+				<ThinkingStatusPill
+					thinkingItems={[]}
+					theme={mockTheme}
+					autoRunState={{ ...autoRunState, worktreeBranch: undefined }}
+				/>
+			);
+
+			expect(screen.getByTitle('Worktree: active')).toBeInTheDocument();
 		});
 
 		it('shows stop button in AutoRunPill when onStopAutoRun is provided', () => {
@@ -748,6 +840,19 @@ describe('ThinkingStatusPill', () => {
 			// Should show 1m 30s from tab, not 0m 30s from session
 			expect(screen.getByText('1m 30s')).toBeInTheDocument();
 		});
+
+		it('uses generic Claude session title when a tab has no agent session id', () => {
+			const item = createThinkingItemWithTab(
+				{ agentSessionId: undefined },
+				{ name: 'Detached Tab', agentSessionId: null }
+			);
+			render(<ThinkingStatusPill thinkingItems={[item]} theme={mockTheme} />);
+
+			expect(screen.getByRole('button', { name: 'Detached Tab' })).toHaveAttribute(
+				'title',
+				'Claude Session'
+			);
+		});
 	});
 
 	describe('styling', () => {
@@ -828,6 +933,62 @@ describe('ThinkingStatusPill', () => {
 			expect(screen.getByText('AutoRun')).toBeInTheDocument();
 		});
 
+		it('re-renders when running AutoRun progress changes', () => {
+			const baseAutoRunState = {
+				isRunning: true,
+				isStopping: false,
+				completedTasks: 1,
+				totalTasks: 5,
+				startTime: Date.now() - 1000,
+			} as BatchRunState;
+			const { rerender } = render(
+				<ThinkingStatusPill thinkingItems={[]} theme={mockTheme} autoRunState={baseAutoRunState} />
+			);
+
+			expect(screen.getByText('1/5')).toBeInTheDocument();
+
+			rerender(
+				<ThinkingStatusPill
+					thinkingItems={[]}
+					theme={mockTheme}
+					autoRunState={{ ...baseAutoRunState, completedTasks: 2 }}
+				/>
+			);
+
+			expect(screen.getByText('2/5')).toBeInTheDocument();
+		});
+
+		it('keeps running AutoRun rendering stable when only thinking items change', () => {
+			const autoRunState = {
+				isRunning: true,
+				isStopping: false,
+				completedTasks: 3,
+				totalTasks: 5,
+				startTime: Date.now() - 1000,
+			} as BatchRunState;
+			const firstItem = createThinkingItem({ name: 'Hidden Thinking One' });
+			const secondItem = createThinkingItem({ name: 'Hidden Thinking Two' });
+			const { rerender } = render(
+				<ThinkingStatusPill
+					thinkingItems={[firstItem]}
+					theme={mockTheme}
+					autoRunState={autoRunState}
+				/>
+			);
+
+			rerender(
+				<ThinkingStatusPill
+					thinkingItems={[secondItem]}
+					theme={mockTheme}
+					autoRunState={{ ...autoRunState }}
+				/>
+			);
+
+			expect(screen.getByText('AutoRun')).toBeInTheDocument();
+			expect(screen.getByText('3/5')).toBeInTheDocument();
+			expect(screen.queryByText('Hidden Thinking Two')).not.toBeInTheDocument();
+		});
+
 		it('re-renders when thinking item count changes', () => {
 			const item1 = createThinkingItem({ id: 'sess-1', name: 'Session 1' });
 			const item2 = createThinkingItem({ id: 'sess-2', name: 'Session 2' });
@@ -839,6 +1000,40 @@ describe('ThinkingStatusPill', () => {
 			rerender(<ThinkingStatusPill thinkingItems={[item1, item2]} theme={mockTheme} />);
 
 			expect(screen.getByText('+1')).toBeInTheDocument();
+		});
+
+		it('re-renders when activeSessionId changes the primary thinking item', () => {
+			const item1 = createThinkingItem({
+				id: 'sess-1',
+				name: 'Primary One',
+				agentSessionId: undefined,
+				aiTabs: undefined,
+			});
+			const item2 = createThinkingItem({
+				id: 'sess-2',
+				name: 'Primary Two',
+				agentSessionId: undefined,
+				aiTabs: undefined,
+			});
+			const { rerender } = render(
+				<ThinkingStatusPill
+					thinkingItems={[item1, item2]}
+					theme={mockTheme}
+					activeSessionId="sess-1"
+				/>
+			);
+
+			expect(screen.getAllByText('Primary One').length).toBeGreaterThanOrEqual(1);
+
+			rerender(
+				<ThinkingStatusPill
+					thinkingItems={[item1, item2]}
+					theme={mockTheme}
+					activeSessionId="sess-2"
+				/>
+			);
+
+			expect(screen.getAllByText('Primary Two').length).toBeGreaterThanOrEqual(1);
 		});
 
 		it('re-renders when item property changes', () => {
@@ -856,6 +1051,21 @@ describe('ThinkingStatusPill', () => {
 			rerender(<ThinkingStatusPill thinkingItems={[updatedItem]} theme={mockTheme} />);
 
 			expect(screen.getByText('1.5K')).toBeInTheDocument();
+		});
+
+		it('re-renders when tab-level item properties change', () => {
+			const item = createThinkingItemWithTab({}, { name: 'Old Tab Name' });
+			const { rerender } = render(<ThinkingStatusPill thinkingItems={[item]} theme={mockTheme} />);
+
+			expect(screen.getAllByText('Old Tab Name').length).toBeGreaterThanOrEqual(1);
+
+			const updatedItem: ThinkingItem = {
+				session: item.session,
+				tab: { ...item.tab!, name: 'New Tab Name' },
+			};
+			rerender(<ThinkingStatusPill thinkingItems={[updatedItem]} theme={mockTheme} />);
+
+			expect(screen.getAllByText('New Tab Name').length).toBeGreaterThanOrEqual(1);
 		});
 
 		it('re-renders when theme changes', () => {
@@ -896,6 +1106,51 @@ describe('ThinkingStatusPill', () => {
 			);
 
 			expect(screen.getByText('Custom Name')).toBeInTheDocument();
+		});
+
+		it('keeps render stable when a new namedSessions object has the same relevant name', () => {
+			const item = createThinkingItem({
+				name: 'Stable Named Session',
+				agentSessionId: 'stable-agent-id',
+			});
+			const { rerender } = render(
+				<ThinkingStatusPill
+					thinkingItems={[item]}
+					theme={mockTheme}
+					namedSessions={{ 'stable-agent-id': 'Stable Name' }}
+				/>
+			);
+
+			rerender(
+				<ThinkingStatusPill
+					thinkingItems={[item]}
+					theme={mockTheme}
+					namedSessions={{ 'stable-agent-id': 'Stable Name', unrelated: 'Other Name' }}
+				/>
+			);
+
+			expect(screen.getByText('Stable Name')).toBeInTheDocument();
+		});
+
+		it('ignores namedSessions object identity when thinking items have no agent session id', () => {
+			const item = createThinkingItem({
+				name: 'Unnamed Session',
+				agentSessionId: undefined,
+				aiTabs: undefined,
+			});
+			const { rerender } = render(
+				<ThinkingStatusPill thinkingItems={[item]} theme={mockTheme} namedSessions={{}} />
+			);
+
+			rerender(
+				<ThinkingStatusPill
+					thinkingItems={[item]}
+					theme={mockTheme}
+					namedSessions={{ unrelated: 'Other Name' }}
+				/>
+			);
+
+			expect(screen.getAllByText('Unnamed Session').length).toBeGreaterThanOrEqual(1);
 		});
 	});
 

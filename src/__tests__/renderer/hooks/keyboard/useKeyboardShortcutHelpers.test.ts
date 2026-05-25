@@ -46,6 +46,7 @@ describe('useKeyboardShortcutHelpers', () => {
 				quickAction: { id: 'quickAction', label: 'Quick Actions', keys: ['Meta', 'k'] },
 				settings: { id: 'settings', label: 'Open Settings', keys: ['Meta', ','] },
 				newTab: { id: 'newTab', label: 'New Tab', keys: ['Meta', 't'] },
+				commandAlias: { id: 'commandAlias', label: 'Command Alias', keys: ['Command', 'p'] },
 			};
 
 			it('should match Meta+K shortcut when Cmd key is pressed (macOS)', () => {
@@ -102,6 +103,25 @@ describe('useKeyboardShortcutHelpers', () => {
 				expect(result.current.isShortcut(event, 'newTab')).toBe(true);
 			});
 
+			it('should match Command alias shortcuts with Cmd or Ctrl', () => {
+				const { result } = renderHook(() =>
+					useKeyboardShortcutHelpers({ shortcuts, tabShortcuts: {} })
+				);
+
+				expect(
+					result.current.isShortcut(
+						createKeyboardEvent({ key: 'p', metaKey: true }),
+						'commandAlias'
+					)
+				).toBe(true);
+				expect(
+					result.current.isShortcut(
+						createKeyboardEvent({ key: 'p', ctrlKey: true }),
+						'commandAlias'
+					)
+				).toBe(true);
+			});
+
 			it('should NOT match when neither Cmd nor Ctrl is pressed', () => {
 				const { result } = renderHook(() =>
 					useKeyboardShortcutHelpers({ shortcuts, tabShortcuts: {} })
@@ -144,6 +164,15 @@ describe('useKeyboardShortcutHelpers', () => {
 				);
 
 				const event = createKeyboardEvent({ key: '[', ctrlKey: true, shiftKey: true });
+				expect(result.current.isShortcut(event, 'prevTab')).toBe(true);
+			});
+
+			it('should match Cmd+Shift+[ when Shift produces {', () => {
+				const { result } = renderHook(() =>
+					useKeyboardShortcutHelpers({ shortcuts, tabShortcuts: {} })
+				);
+
+				const event = createKeyboardEvent({ key: '{', metaKey: true, shiftKey: true });
 				expect(result.current.isShortcut(event, 'prevTab')).toBe(true);
 			});
 
@@ -393,6 +422,95 @@ describe('useKeyboardShortcutHelpers', () => {
 				expect(result.current.isTabShortcut(event, 'prevTab')).toBe(true);
 			});
 
+			it('should match Cmd+Shift+] for next tab when Shift produces }', () => {
+				const { result } = renderHook(() =>
+					useKeyboardShortcutHelpers({ shortcuts: {}, tabShortcuts })
+				);
+
+				const event = createKeyboardEvent({ key: '}', metaKey: true, shiftKey: true });
+				expect(result.current.isTabShortcut(event, 'nextTab')).toBe(true);
+			});
+
+			it('should reject tab shortcuts when required modifiers differ', () => {
+				const altTabShortcuts: Record<string, Shortcut> = {
+					...tabShortcuts,
+					altComma: { id: 'altComma', label: 'Alt Comma', keys: ['Alt', 'Meta', ','] },
+				};
+				const { result } = renderHook(() =>
+					useKeyboardShortcutHelpers({ shortcuts: {}, tabShortcuts: altTabShortcuts })
+				);
+
+				expect(result.current.isTabShortcut(createKeyboardEvent({ key: 't' }), 'newTab')).toBe(
+					false
+				);
+				expect(
+					result.current.isTabShortcut(createKeyboardEvent({ key: ']', metaKey: true }), 'nextTab')
+				).toBe(false);
+				expect(
+					result.current.isTabShortcut(createKeyboardEvent({ key: ',', metaKey: true }), 'altComma')
+				).toBe(false);
+			});
+
+			it('should match tab shortcut using physical key code for Alt-produced characters', () => {
+				const altTabShortcuts: Record<string, Shortcut> = {
+					altComma: { id: 'altComma', label: 'Alt Comma', keys: ['Alt', 'Meta', ','] },
+				};
+				const { result } = renderHook(() =>
+					useKeyboardShortcutHelpers({ shortcuts: {}, tabShortcuts: altTabShortcuts })
+				);
+
+				const event = createKeyboardEvent({
+					key: '≤',
+					code: 'Comma',
+					altKey: true,
+					metaKey: true,
+				});
+				expect(result.current.isTabShortcut(event, 'altComma')).toBe(true);
+			});
+
+			it('should match tab shortcut using physical letter code for Alt-produced characters', () => {
+				const altTabShortcuts: Record<string, Shortcut> = {
+					altT: { id: 'altT', label: 'Alt T', keys: ['Alt', 'Meta', 't'] },
+				};
+				const { result } = renderHook(() =>
+					useKeyboardShortcutHelpers({ shortcuts: {}, tabShortcuts: altTabShortcuts })
+				);
+
+				const event = createKeyboardEvent({
+					key: '†',
+					code: 'KeyT',
+					altKey: true,
+					metaKey: true,
+				});
+				expect(result.current.isTabShortcut(event, 'altT')).toBe(true);
+			});
+
+			it('should support tab shortcuts configured with explicit Ctrl', () => {
+				const ctrlTabShortcuts: Record<string, Shortcut> = {
+					closeTab: { id: 'closeTab', label: 'Close Tab', keys: ['Ctrl', 'w'] },
+				};
+				const { result } = renderHook(() =>
+					useKeyboardShortcutHelpers({ shortcuts: {}, tabShortcuts: ctrlTabShortcuts })
+				);
+
+				expect(
+					result.current.isTabShortcut(createKeyboardEvent({ key: 'w', ctrlKey: true }), 'closeTab')
+				).toBe(true);
+			});
+
+			it('should support tab shortcuts configured with Command alias', () => {
+				const commandTabShortcuts: Record<string, Shortcut> = {
+					newTab: { id: 'newTab', label: 'New Tab', keys: ['Command', 't'] },
+				};
+				const { result } = renderHook(() =>
+					useKeyboardShortcutHelpers({ shortcuts: {}, tabShortcuts: commandTabShortcuts })
+				);
+
+				expect(
+					result.current.isTabShortcut(createKeyboardEvent({ key: 't', metaKey: true }), 'newTab')
+				).toBe(true);
+			});
+
 			it('should fall back to global shortcuts if tab shortcut not defined', () => {
 				const shortcuts: Record<string, Shortcut> = {
 					fallbackAction: { id: 'fallbackAction', label: 'Fallback', keys: ['Meta', 'f'] },
@@ -447,6 +565,19 @@ describe('useKeyboardShortcutHelpers', () => {
 				ctrlKey: true,
 			});
 			expect(result.current.isShortcut(event, 'toggleSidebar')).toBe(true);
+		});
+
+		it('should match ArrowRight with Cmd+Alt on macOS', () => {
+			const { result } = renderHook(() =>
+				useKeyboardShortcutHelpers({ shortcuts, tabShortcuts: {} })
+			);
+
+			const event = createKeyboardEvent({
+				key: 'ArrowRight',
+				altKey: true,
+				metaKey: true,
+			});
+			expect(result.current.isShortcut(event, 'toggleRightPanel')).toBe(true);
 		});
 
 		it('should match ArrowUp with Cmd on macOS', () => {

@@ -655,6 +655,25 @@ describe('Symphony Runner Service', () => {
 			expect(result.draftPrNumber).toBe(99);
 		});
 
+		it('returns success without draftPrNumber when PR URL has no pull number', async () => {
+			mockSuccessfulWorkflow('https://github.com/owner/repo/pulls');
+
+			const result = await startContribution({
+				contributionId: 'test-id',
+				repoSlug: 'owner/repo',
+				repoUrl: 'https://github.com/owner/repo',
+				issueNumber: 123,
+				issueTitle: 'Test Issue',
+				documentPaths: [],
+				localPath: '/tmp/test-repo',
+				branchName: 'symphony/test-branch',
+			});
+
+			expect(result.success).toBe(true);
+			expect(result.draftPrUrl).toBe('https://github.com/owner/repo/pulls');
+			expect(result.draftPrNumber).toBeUndefined();
+		});
+
 		it('returns error message on failure', async () => {
 			vi.mocked(execFileNoThrow)
 				.mockResolvedValueOnce({ stdout: '', stderr: '', exitCode: 0 }) // clone
@@ -910,6 +929,30 @@ describe('Symphony Runner Service', () => {
 			);
 		});
 
+		it('logs non-Error copy failures without stopping', async () => {
+			vi.mocked(fs.copyFile).mockRejectedValueOnce('Copy failed');
+
+			mockSuccessfulWorkflow();
+
+			const result = await startContribution({
+				contributionId: 'test-id',
+				repoSlug: 'owner/repo',
+				repoUrl: 'https://github.com/owner/repo',
+				issueNumber: 123,
+				issueTitle: 'Test Issue',
+				documentPaths: [{ name: 'fail.md', path: 'docs/fail.md', isExternal: false }],
+				localPath: '/tmp/test-repo',
+				branchName: 'symphony/test-branch',
+			});
+
+			expect(result.success).toBe(true);
+			expect(logger.warn).toHaveBeenCalledWith(
+				'Failed to copy document',
+				expect.any(String),
+				expect.objectContaining({ error: 'Copy failed' })
+			);
+		});
+
 		it('returns path to Auto Run Docs directory', async () => {
 			mockSuccessfulWorkflow();
 
@@ -1024,6 +1067,33 @@ describe('Symphony Runner Service', () => {
 			expect(fs.rm).toHaveBeenCalledWith('/tmp/test-repo', { recursive: true, force: true });
 		});
 
+		it('logs cleanup failures without hiding the original setup error', async () => {
+			const cleanupError = new Error('permission denied');
+			vi.mocked(fs.rm).mockRejectedValueOnce(cleanupError);
+			vi.mocked(execFileNoThrow)
+				.mockResolvedValueOnce({ stdout: '', stderr: '', exitCode: 0 }) // clone
+				.mockResolvedValueOnce({ stdout: '', stderr: 'branch failed', exitCode: 1 }); // checkout -b fails
+
+			const result = await startContribution({
+				contributionId: 'test-id',
+				repoSlug: 'owner/repo',
+				repoUrl: 'https://github.com/owner/repo',
+				issueNumber: 123,
+				issueTitle: 'Test Issue',
+				documentPaths: [],
+				localPath: '/tmp/test-repo',
+				branchName: 'symphony/test-branch',
+			});
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Branch creation failed');
+			expect(logger.warn).toHaveBeenCalledWith(
+				'Failed to cleanup local repository',
+				'[SymphonyRunner]',
+				{ localPath: '/tmp/test-repo', error: cleanupError }
+			);
+		});
+
 		it('cleans up on empty commit failure', async () => {
 			vi.mocked(execFileNoThrow)
 				.mockResolvedValueOnce({ stdout: '', stderr: '', exitCode: 0 }) // clone
@@ -1133,6 +1203,26 @@ describe('Symphony Runner Service', () => {
 			expect(result.error).toBe('Unexpected error');
 			expect(fs.rm).toHaveBeenCalledWith('/tmp/test-repo', { recursive: true, force: true });
 		});
+
+		it('returns unknown error when setup throws a non-Error value', async () => {
+			vi.mocked(execFileNoThrow)
+				.mockResolvedValueOnce({ stdout: '', stderr: '', exitCode: 0 }) // clone
+				.mockRejectedValueOnce('Unexpected string failure');
+
+			const result = await startContribution({
+				contributionId: 'test-id',
+				repoSlug: 'owner/repo',
+				repoUrl: 'https://github.com/owner/repo',
+				issueNumber: 123,
+				issueTitle: 'Test Issue',
+				documentPaths: [],
+				localPath: '/tmp/test-repo',
+				branchName: 'symphony/test-branch',
+			});
+
+			expect(result).toEqual({ success: false, error: 'Unknown error' });
+			expect(fs.rm).toHaveBeenCalledWith('/tmp/test-repo', { recursive: true, force: true });
+		});
 	});
 
 	// ============================================================================
@@ -1200,6 +1290,21 @@ describe('Symphony Runner Service', () => {
 
 			// Should continue despite nothing to commit
 			expect(result.success).toBe(true);
+		});
+
+		it('returns an error when finalize commit fails with real stderr', async () => {
+			vi.mocked(execFileNoThrow)
+				.mockResolvedValueOnce({ stdout: '', stderr: '', exitCode: 0 }) // config user.name
+				.mockResolvedValueOnce({ stdout: '', stderr: '', exitCode: 0 }) // config user.email
+				.mockResolvedValueOnce({ stdout: '', stderr: '', exitCode: 0 }) // git add -A
+				.mockResolvedValueOnce({ stdout: '', stderr: 'pre-commit failed', exitCode: 1 }); // git commit
+
+			const result = await finalizeContribution('/tmp/test-repo', 1, 123, 'Test Issue');
+
+			expect(result).toEqual({
+				success: false,
+				error: 'Commit failed: pre-commit failed',
+			});
 		});
 
 		it('pushes changes to remote', async () => {
@@ -1306,6 +1411,22 @@ describe('Symphony Runner Service', () => {
 			);
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('pr close failed');
+		});
+
+		it('uses stdout in failure message when PR close fails without stderr', async () => {
+			vi.mocked(execFileNoThrow).mockResolvedValueOnce({
+				stdout: 'pr close failed on stdout',
+				stderr: '',
+				exitCode: 1,
+			});
+
+			const result = await cancelContribution('/tmp/test-repo', 42, true);
+
+			expect(result).toEqual({
+				success: false,
+				error: 'Failed to close PR #42: pr close failed on stdout',
+			});
+			expect(fs.rm).not.toHaveBeenCalled();
 		});
 
 		it('removes local directory when cleanup=true', async () => {
@@ -1447,6 +1568,28 @@ describe('Symphony Runner Service', () => {
 				expect(prCreateCall![1]).toContain('upstream-owner/repo');
 				expect(prCreateCall![1]).toContain('--head');
 				expect(prCreateCall![1]).toContain('myuser:symphony/test-branch');
+			});
+
+			it('returns an error when fork PR creation cannot determine the branch name', async () => {
+				vi.mocked(ensureForkSetup).mockResolvedValue({
+					isFork: true,
+					forkSlug: 'myuser/repo',
+				});
+				vi.mocked(execFileNoThrow)
+					.mockResolvedValueOnce({ stdout: '', stderr: '', exitCode: 0 }) // clone
+					.mockResolvedValueOnce({ stdout: '', stderr: '', exitCode: 0 }) // checkout -b
+					.mockResolvedValueOnce({ stdout: '', stderr: '', exitCode: 0 }) // config user.name
+					.mockResolvedValueOnce({ stdout: '', stderr: '', exitCode: 0 }) // config user.email
+					.mockResolvedValueOnce({ stdout: '', stderr: '', exitCode: 0 }) // commit --allow-empty
+					.mockResolvedValueOnce({ stdout: '', stderr: '', exitCode: 0 }) // push
+					.mockResolvedValueOnce({ stdout: '', stderr: 'detached HEAD', exitCode: 1 }); // branch name
+
+				const result = await startContribution(defaultOptions);
+
+				expect(result).toEqual({
+					success: false,
+					error: 'Failed to determine current branch name',
+				});
 			});
 
 			it('cleans up and returns error when ensureForkSetup fails', async () => {

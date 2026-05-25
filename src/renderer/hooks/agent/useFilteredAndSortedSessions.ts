@@ -55,7 +55,7 @@ export interface UseFilteredAndSortedSessionsReturn {
  *
  * Features:
  * - Filters sessions by visibility (showAllSessions, namedOnly)
- * - Filters by search query (title, sessionId, first octet, sessionName)
+ * - Filters by search query (title, sessionId including displayed first octet, sessionName)
  * - Supports backend content search results for user/assistant/all modes
  * - Sorts starred sessions to the top, then by modified date
  *
@@ -120,10 +120,8 @@ export function useFilteredAndSortedSessions(
 				if (aStarred && !bStarred) return -1;
 				if (!aStarred && bStarred) return 1;
 				// Within same starred status, sort by most recent (using cached timestamps)
-				const aModifiedAt =
-					sessionModifiedTimestamps.get(a.sessionId) ?? new Date(a.modifiedAt).getTime();
-				const bModifiedAt =
-					sessionModifiedTimestamps.get(b.sessionId) ?? new Date(b.modifiedAt).getTime();
+				const aModifiedAt = sessionModifiedTimestamps.get(a.sessionId)!;
+				const bModifiedAt = sessionModifiedTimestamps.get(b.sessionId)!;
 				return bModifiedAt - aModifiedAt;
 			});
 		};
@@ -132,18 +130,14 @@ export function useFilteredAndSortedSessions(
 			return sortWithStarred(visibleSessions);
 		}
 
-		// For title search, filter locally (fast) - include sessionName, sessionId (UUID), and first octet
+		// For title search, filter locally (fast) - include sessionName and sessionId (UUID/prefix)
 		if (searchMode === 'title') {
 			const searchLower = search.toLowerCase();
-			const searchUpper = search.toUpperCase();
 			const filtered = visibleSessions.filter((s) => {
 				// Check firstMessage
 				if (s.firstMessage.toLowerCase().includes(searchLower)) return true;
 				// Check full sessionId (UUID)
 				if (s.sessionId.toLowerCase().includes(searchLower)) return true;
-				// Check first octet (displayed format) - e.g., "D02D0BD6"
-				const firstOctet = s.sessionId.split('-')[0].toUpperCase();
-				if (firstOctet.includes(searchUpper)) return true;
 				// Check sessionName
 				if (s.sessionName && s.sessionName.toLowerCase().includes(searchLower)) return true;
 				return false;
@@ -152,12 +146,11 @@ export function useFilteredAndSortedSessions(
 		}
 
 		// For content searches, use backend results to filter sessions
-		// Also include sessions that match by sessionName, sessionId (UUID), or first octet
+		// Also include sessions that match by sessionName or sessionId (UUID/prefix)
 		const searchLower = search.toLowerCase();
-		const searchUpper = search.toUpperCase();
 		const matchingIds = new Set(searchResults.map((r) => r.sessionId));
 
-		// Add sessions that match by sessionName, sessionId (UUID), or first octet to the results
+		// Add sessions that match by sessionName or sessionId (UUID/prefix) to the results
 		const filtered = visibleSessions.filter((s) => {
 			// Check if matched by backend content search
 			if (matchingIds.has(s.sessionId)) return true;
@@ -165,9 +158,6 @@ export function useFilteredAndSortedSessions(
 			if (s.sessionName && s.sessionName.toLowerCase().includes(searchLower)) return true;
 			// Check full sessionId (UUID) match
 			if (s.sessionId.toLowerCase().includes(searchLower)) return true;
-			// Check first octet (displayed format) match - e.g., "D02D0BD6"
-			const firstOctet = s.sessionId.split('-')[0].toUpperCase();
-			if (firstOctet.includes(searchUpper)) return true;
 			return false;
 		});
 

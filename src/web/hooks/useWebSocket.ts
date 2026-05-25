@@ -508,7 +508,6 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
 	const shouldReconnectRef = useRef(true);
 	// Connection ID to handle StrictMode double-mounting - each mount gets unique ID
 	const connectionIdRef = useRef<number>(0);
-	const mountIdRef = useRef<number>(0);
 	// Track seen message IDs to dedupe duplicate broadcasts
 	const seenMsgIdsRef = useRef<Set<string>>(new Set());
 	// Ref for handleMessage to avoid stale closure issues
@@ -905,14 +904,9 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
 		return false;
 	}, []);
 
-	// Cleanup on unmount - track mount ID to handle StrictMode double-mount
+	// Cleanup on unmount
 	useEffect(() => {
-		const thisMountId = ++mountIdRef.current;
-
 		return () => {
-			// Only cleanup if this is the most recent mount (handles StrictMode)
-			if (mountIdRef.current !== thisMountId) return;
-
 			shouldReconnectRef.current = false;
 			if (reconnectTimeoutRef.current) {
 				clearTimeout(reconnectTimeoutRef.current);

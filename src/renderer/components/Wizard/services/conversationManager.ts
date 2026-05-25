@@ -410,16 +410,12 @@ class ConversationManager {
 					});
 				}, INACTIVITY_TIMEOUT_MS);
 
-				if (this.session) {
-					this.session.responseTimeoutId = newTimeoutId;
-				}
+				this.session!.responseTimeoutId = newTimeoutId;
 			};
 
 			// Start the initial timeout and store the reset function for listeners
 			resetTimeout();
-			if (this.session) {
-				this.session.resetResponseTimeout = resetTimeout;
-			}
+			this.session!.resetResponseTimeout = resetTimeout;
 
 			// Set up data listener
 			this.session!.dataListenerCleanup = window.maestro.process.onData(

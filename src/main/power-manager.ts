@@ -167,11 +167,6 @@ class PowerManager {
 	 * Uses 'prevent-display-sleep' which also prevents system sleep.
 	 */
 	private startBlocking(): void {
-		if (this.blockerId !== null) {
-			logger.debug('Already blocking, skipping start', CONTEXT);
-			return;
-		}
-
 		try {
 			// 'prevent-display-sleep' prevents both display and system sleep
 			// This is the more aggressive option, appropriate for long-running AI tasks
@@ -190,18 +185,14 @@ class PowerManager {
 	 * Stop the power save blocker.
 	 */
 	private stopBlocking(): void {
-		if (this.blockerId === null) {
-			logger.debug('Not blocking, skipping stop', CONTEXT);
-			return;
-		}
-
+		const blockerId = this.blockerId!;
 		try {
 			// Verify the blocker is still active before stopping
-			if (powerSaveBlocker.isStarted(this.blockerId)) {
-				powerSaveBlocker.stop(this.blockerId);
-				logger.info(`Stopped power save blocker (id: ${this.blockerId})`, CONTEXT);
+			if (powerSaveBlocker.isStarted(blockerId)) {
+				powerSaveBlocker.stop(blockerId);
+				logger.info(`Stopped power save blocker (id: ${blockerId})`, CONTEXT);
 			} else {
-				logger.debug(`Power save blocker ${this.blockerId} was already stopped`, CONTEXT);
+				logger.debug(`Power save blocker ${blockerId} was already stopped`, CONTEXT);
 			}
 		} catch (error) {
 			logger.error('Error stopping power save blocker', CONTEXT, error);

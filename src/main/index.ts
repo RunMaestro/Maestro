@@ -734,58 +734,56 @@ function setupIpcHandlers() {
 // Handle process output streaming (set up after initialization)
 // Phase 3 refactoring - delegates to extracted process-listeners module
 function setupProcessListeners() {
-	if (processManager) {
-		setupProcessListenersModule(processManager, {
-			getProcessManager: () => processManager,
-			getWebServer: () => webServer,
-			getAgentDetector: () => agentDetector,
-			safeSend,
-			powerManager,
-			groupChatEmitters,
-			groupChatRouter: {
-				routeModeratorResponse,
-				routeAgentResponse,
-				markParticipantResponded,
-				spawnModeratorSynthesis,
-				getGroupChatReadOnlyState,
-				respawnParticipantWithRecovery,
-				clearActiveParticipantTaskSession,
-			},
-			groupChatStorage: {
-				loadGroupChat,
-				updateGroupChat,
-				updateParticipant,
-			},
-			sessionRecovery: {
-				needsSessionRecovery,
-				initiateSessionRecovery,
-			},
-			outputBuffer: {
-				appendToGroupChatBuffer,
-				getGroupChatBufferedOutput,
-				clearGroupChatBuffer,
-			},
-			outputParser: {
-				extractTextFromStreamJson,
-				parseParticipantSessionId,
-			},
-			usageAggregator: {
-				calculateContextTokens,
-			},
-			getStatsDB,
-			debugLog,
-			patterns: {
-				REGEX_MODERATOR_SESSION,
-				REGEX_MODERATOR_SESSION_TIMESTAMP,
-				REGEX_AI_SUFFIX,
-				REGEX_AI_TAB_ID,
-				REGEX_BATCH_SESSION,
-				REGEX_SYNOPSIS_SESSION,
-			},
-			logger,
-		});
+	setupProcessListenersModule(processManager!, {
+		getProcessManager: () => processManager,
+		getWebServer: () => webServer,
+		getAgentDetector: () => agentDetector,
+		safeSend,
+		powerManager,
+		groupChatEmitters,
+		groupChatRouter: {
+			routeModeratorResponse,
+			routeAgentResponse,
+			markParticipantResponded,
+			spawnModeratorSynthesis,
+			getGroupChatReadOnlyState,
+			respawnParticipantWithRecovery,
+			clearActiveParticipantTaskSession,
+		},
+		groupChatStorage: {
+			loadGroupChat,
+			updateGroupChat,
+			updateParticipant,
+		},
+		sessionRecovery: {
+			needsSessionRecovery,
+			initiateSessionRecovery,
+		},
+		outputBuffer: {
+			appendToGroupChatBuffer,
+			getGroupChatBufferedOutput,
+			clearGroupChatBuffer,
+		},
+		outputParser: {
+			extractTextFromStreamJson,
+			parseParticipantSessionId,
+		},
+		usageAggregator: {
+			calculateContextTokens,
+		},
+		getStatsDB,
+		debugLog,
+		patterns: {
+			REGEX_MODERATOR_SESSION,
+			REGEX_MODERATOR_SESSION_TIMESTAMP,
+			REGEX_AI_SUFFIX,
+			REGEX_AI_TAB_ID,
+			REGEX_BATCH_SESSION,
+			REGEX_SYNOPSIS_SESSION,
+		},
+		logger,
+	});
 
-		// WakaTime heartbeat listener (query-complete → heartbeat, exit → cleanup)
-		setupWakaTimeListener(processManager, wakatimeManager, store);
-	}
+	// WakaTime heartbeat listener (query-complete → heartbeat, exit → cleanup)
+	setupWakaTimeListener(processManager!, wakatimeManager, store);
 }

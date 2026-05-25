@@ -22,6 +22,7 @@ const mockProcess = {
 	onData: vi.fn(),
 	onExit: vi.fn(),
 	onSessionId: vi.fn(),
+	onToolExecution: vi.fn(),
 };
 
 // Setup mock before each test
@@ -459,6 +460,39 @@ describe('processService', () => {
 			processService.onSessionId(handler);
 
 			expect(handler).toHaveBeenCalledWith('session-1', 'claude-abc123');
+		});
+	});
+
+	describe('onToolExecution', () => {
+		test('registers tool execution handler and returns cleanup function', () => {
+			const cleanup = vi.fn();
+			mockProcess.onToolExecution.mockReturnValue(cleanup);
+			const handler = vi.fn();
+
+			const result = processService.onToolExecution(handler);
+
+			expect(mockProcess.onToolExecution).toHaveBeenCalledWith(handler);
+			expect(result).toBe(cleanup);
+		});
+
+		test('handler receives session ID and tool execution payload', () => {
+			const cleanup = vi.fn();
+			const toolEvent = {
+				toolName: 'read',
+				state: { path: '/tmp/file.txt' },
+				timestamp: 1710000000000,
+			};
+
+			type ToolExecutionHandler = Parameters<typeof processService.onToolExecution>[0];
+			mockProcess.onToolExecution.mockImplementation((handler: ToolExecutionHandler) => {
+				handler('session-1', toolEvent);
+				return cleanup;
+			});
+			const handler = vi.fn();
+
+			processService.onToolExecution(handler);
+
+			expect(handler).toHaveBeenCalledWith('session-1', toolEvent);
 		});
 	});
 

@@ -205,9 +205,7 @@ export function useSessionViewer({
 
 			// Maintain scroll position after loading
 			requestAnimationFrame(() => {
-				if (container) {
-					container.scrollTop = container.scrollHeight - prevScrollHeight;
-				}
+				container.scrollTop = container.scrollHeight - prevScrollHeight;
 			});
 		}
 	}, [hasMoreMessages, messagesLoading, handleLoadMore]);

@@ -5,7 +5,7 @@
  * for detecting agent errors from output text.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import {
 	getErrorPatterns,
 	matchErrorPattern,
@@ -16,6 +16,7 @@ import {
 	SSH_ERROR_PATTERNS,
 	type AgentErrorPatterns,
 } from '../../../main/parsers/error-patterns';
+import { logger } from '../../../main/utils/logger';
 
 // Access per-agent patterns via the registry (single public API)
 const CLAUDE_ERROR_PATTERNS = getErrorPatterns('claude-code');
@@ -192,8 +193,15 @@ describe('error-patterns', () => {
 		});
 
 		it('should return empty object for unknown agent', () => {
-			const patterns = getErrorPatterns('unknown-agent');
-			expect(patterns).toEqual({});
+			const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+
+			try {
+				const patterns = getErrorPatterns('unknown-agent');
+				expect(patterns).toEqual({});
+				expect(warnSpy).toHaveBeenCalledWith('getErrorPatterns: Unknown agent ID "unknown-agent".');
+			} finally {
+				warnSpy.mockRestore();
+			}
 		});
 	});
 
@@ -755,6 +763,32 @@ describe('error-patterns', () => {
 				const result = matchSshErrorPattern('ssh: protocol error');
 				expect(result).not.toBeNull();
 				expect(result?.type).toBe('agent_crashed');
+			});
+
+			it('should match shell profile parse errors and log diagnostic context', () => {
+				const infoSpy = vi.spyOn(logger, 'info').mockImplementation(() => {});
+
+				try {
+					const result = matchSshErrorPattern("zsh:35: parse error near `do'");
+
+					expect(result).not.toBeNull();
+					expect(result?.type).toBe('agent_crashed');
+					expect(result?.message).toBe(
+						'Shell profile syntax error on remote host: zsh:35: parse error. Check .zshrc or .bashrc on the remote server.'
+					);
+					expect(result?.recoverable).toBe(false);
+					expect(infoSpy).toHaveBeenCalledWith(
+						'[ErrorPatterns] Shell parse error detected',
+						'error-patterns',
+						expect.objectContaining({
+							errorType: 'agent_crashed',
+							matchedText: 'zsh:35: parse error',
+							lineLength: "zsh:35: parse error near `do'".length,
+						})
+					);
+				} finally {
+					infoSpy.mockRestore();
+				}
 			});
 		});
 

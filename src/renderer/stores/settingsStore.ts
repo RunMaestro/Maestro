@@ -1188,14 +1188,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 				totalConversationExchanges: newTotalExchanges,
 				totalConversationsCompleted: prev.totalConversationsCompleted + 1,
 				averageConversationExchanges:
-					newCompletionCount > 0
-						? Math.round((newTotalExchanges / newCompletionCount) * 10) / 10
-						: 0,
+					Math.round((newTotalExchanges / newCompletionCount) * 10) / 10,
 
 				// Phase generation stats
 				totalPhasesGenerated: newTotalPhases,
-				averagePhasesPerWizard:
-					newCompletionCount > 0 ? Math.round((newTotalPhases / newCompletionCount) * 10) / 10 : 0,
+				averagePhasesPerWizard: Math.round((newTotalPhases / newCompletionCount) * 10) / 10,
 				totalTasksGenerated: newTotalTasks,
 				averageTasksPerPhase:
 					newTotalPhases > 0 ? Math.round((newTotalTasks / newTotalPhases) * 10) / 10 : 0,
@@ -1244,8 +1241,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 				...prev,
 				tourCompletionCount: newCompletionCount,
 				tourStepsViewedTotal: newTotalStepsViewed,
-				averageTourStepsViewed:
-					totalTours > 0 ? Math.round((newTotalStepsViewed / totalTours) * 10) / 10 : stepsViewed,
+				averageTourStepsViewed: Math.round((newTotalStepsViewed / totalTours) * 10) / 10,
 			};
 			set({ onboardingStats: updated });
 			window.maestro.settings.set('onboardingStats', updated);
@@ -1261,8 +1257,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 				...prev,
 				tourSkipCount: newSkipCount,
 				tourStepsViewedTotal: newTotalStepsViewed,
-				averageTourStepsViewed:
-					totalTours > 0 ? Math.round((newTotalStepsViewed / totalTours) * 10) / 10 : stepsViewed,
+				averageTourStepsViewed: Math.round((newTotalStepsViewed / totalTours) * 10) / 10,
 			};
 			set({ onboardingStats: updated });
 			window.maestro.settings.set('onboardingStats', updated);

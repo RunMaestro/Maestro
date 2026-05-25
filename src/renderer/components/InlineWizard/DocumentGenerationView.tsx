@@ -34,9 +34,9 @@ export interface DocumentGenerationViewProps {
 	/** Streaming content being generated (shown during generation) */
 	streamingContent?: string;
 	/** Called when generation completes and user clicks Done */
-	onComplete: () => void;
+	onComplete?: () => void;
 	/** Called when user selects a different document */
-	onDocumentSelect: (index: number) => void;
+	onDocumentSelect?: (index: number) => void;
 	/** Folder path for Auto Run docs */
 	folderPath?: string;
 	/** Called when document content changes (for editing) */
@@ -189,16 +189,17 @@ function CreatedFilesList({
 	useEffect(() => {
 		if (documents.length > prevFilesCountRef.current && documents.length > 0) {
 			const newestFile = documents[documents.length - 1];
+			const previousAutoExpandedFile = lastAutoExpandedRef.current;
 
 			setExpandedFiles((prev) => {
 				const next = new Set(prev);
 
 				// Collapse the previous auto-expanded file (only if user hasn't touched it)
 				if (
-					lastAutoExpandedRef.current &&
-					!userToggledFilesRef.current.has(lastAutoExpandedRef.current)
+					previousAutoExpandedFile &&
+					!userToggledFilesRef.current.has(previousAutoExpandedFile)
 				) {
-					next.delete(lastAutoExpandedRef.current);
+					next.delete(previousAutoExpandedFile);
 				}
 
 				// Expand the new file

@@ -223,9 +223,7 @@ export function useSymphony(): UseSymphonyReturn {
 
 	// Fetch issue counts once repositories are loaded
 	useEffect(() => {
-		if (repositories.length > 0) {
-			fetchIssueCounts(repositories);
-		}
+		fetchIssueCounts(repositories);
 	}, [repositories, fetchIssueCounts]);
 
 	// Real-time updates (matches Usage Dashboard pattern)

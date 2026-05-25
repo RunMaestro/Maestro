@@ -231,10 +231,9 @@ export const AgentUsageChart = memo(function AgentUsageChart({
 		const combinedData: DayData[] = sortedDates.map((date) => {
 			const agents: Record<string, { count: number; duration: number }> = {};
 			for (const sessionId of agentList) {
-				const dayData = agentData[sessionId].find((d) => d.date === date);
-				if (dayData) {
-					agents[sessionId] = { count: dayData.count, duration: dayData.duration };
-				}
+				// agentData is pre-aligned to every sorted date above.
+				const dayData = agentData[sessionId].find((d) => d.date === date) as AgentDayData;
+				agents[sessionId] = { count: dayData.count, duration: dayData.duration };
 			}
 			return {
 				date,
@@ -253,14 +252,6 @@ export const AgentUsageChart = memo(function AgentUsageChart({
 
 	// Calculate scales
 	const { xScale, yScale, yTicks } = useMemo(() => {
-		if (allDates.length === 0) {
-			return {
-				xScale: (_: number) => padding.left,
-				yScale: (_: number) => chartHeight - padding.bottom,
-				yTicks: [0],
-			};
-		}
-
 		// Find max value across all agents
 		let maxValue = 1;
 		for (const agent of agents) {

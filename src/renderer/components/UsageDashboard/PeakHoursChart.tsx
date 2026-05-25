@@ -172,7 +172,7 @@ export const PeakHoursChart = memo(function PeakHoursChart({
 					<div className="flex items-end gap-px" style={{ height: chartHeight }}>
 						{hourlyData.map((h) => {
 							const value = metricMode === 'count' ? h.count : h.duration;
-							const height = maxValue > 0 ? (value / maxValue) * 100 : 0;
+							const height = (value / maxValue) * 100;
 							const isPeak = h.hour === peakHour && value > 0;
 							const isHovered = hoveredHour === h.hour;
 

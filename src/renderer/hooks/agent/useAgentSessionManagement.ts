@@ -277,8 +277,7 @@ export function useAgentSessionManagement(
 							usageStats: finalUsageStats,
 							saveToHistory: defaultSaveToHistory,
 							showThinking: defaultShowThinking,
-						});
-						if (!result) return s;
+						})!;
 
 						return { ...result.session, activeFileTabId: null, inputMode: 'ai' };
 					})

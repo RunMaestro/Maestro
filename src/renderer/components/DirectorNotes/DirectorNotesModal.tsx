@@ -49,7 +49,6 @@ export function DirectorNotesModal({
 
 	// Layer stack registration for Escape handling
 	const { registerLayer, unregisterLayer } = useLayerStack();
-	const layerIdRef = useRef<string>();
 	const modalRef = useRef<HTMLDivElement>(null);
 
 	// Tab content refs for focus management
@@ -63,9 +62,12 @@ export function DirectorNotesModal({
 			const target = tabId ?? activeTab;
 			// Delay to allow React to render/show the tab
 			requestAnimationFrame(() => {
-				if (target === 'overview') overviewTabRef.current?.focus();
-				else if (target === 'history') historyTabRef.current?.focus();
-				else if (target === 'ai-overview') aiOverviewContentRef.current?.focus();
+				const focusTargets = {
+					overview: overviewTabRef.current,
+					history: historyTabRef.current,
+					'ai-overview': aiOverviewContentRef.current,
+				};
+				focusTargets[target]?.focus();
 			});
 		},
 		[activeTab]
@@ -81,7 +83,7 @@ export function DirectorNotesModal({
 
 	// Register modal layer
 	useEffect(() => {
-		layerIdRef.current = registerLayer({
+		const id = registerLayer({
 			type: 'modal',
 			priority: MODAL_PRIORITIES.DIRECTOR_NOTES,
 			blocksLowerLayers: true,
@@ -100,13 +102,13 @@ export function DirectorNotesModal({
 			},
 		});
 		return () => {
-			if (layerIdRef.current) unregisterLayer(layerIdRef.current);
+			unregisterLayer(id);
 		};
 	}, [registerLayer, unregisterLayer]);
 
 	// Focus the active tab content when tab changes (including initial mount)
 	useEffect(() => {
-		focusActiveTab(activeTab);
+		focusActiveTab();
 	}, [activeTab, focusActiveTab]);
 
 	// Handle synopsis ready callback from AIOverviewTab

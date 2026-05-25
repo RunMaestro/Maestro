@@ -62,6 +62,16 @@ describe('synopsis', () => {
 				expect(result.fullSynopsis).toContain('Made several changes:');
 				expect(result.fullSynopsis).toContain('- Updated state management');
 			});
+
+			it('should drop template placeholder details', () => {
+				const response =
+					'**Summary:** Fixed task handling\n\n**Details:** [A paragraph with implementation details]';
+				const result = parseSynopsis(response);
+
+				expect(result.shortSummary).toBe('Fixed task handling');
+				expect(result.fullSynopsis).toBe('Fixed task handling');
+				expect(result.nothingToReport).toBe(false);
+			});
 		});
 
 		describe('ANSI code cleaning', () => {

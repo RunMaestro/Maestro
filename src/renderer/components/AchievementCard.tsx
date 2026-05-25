@@ -170,16 +170,9 @@ interface BadgeTooltipProps {
 	theme: Theme;
 	isUnlocked: boolean;
 	position: 'left' | 'center' | 'right';
-	onClose: () => void;
 }
 
-function BadgeTooltip({
-	badge,
-	theme,
-	isUnlocked,
-	position,
-	onClose: _onClose,
-}: BadgeTooltipProps) {
+function BadgeTooltip({ badge, theme, isUnlocked, position }: BadgeTooltipProps) {
 	// Calculate horizontal positioning based on badge position
 	const getPositionStyles = () => {
 		switch (position) {
@@ -392,8 +385,8 @@ export function AchievementCard({
 				currentLine = testLine;
 			}
 		});
-		if (currentLine) lines.push(currentLine);
-		return lines;
+		lines.push(currentLine);
+		return lines.filter(Boolean);
 	};
 
 	// formatTokensCompact imported from ../utils/formatters
@@ -845,7 +838,7 @@ export function AchievementCard({
 					ctx.textAlign = 'center';
 					ctx.textBaseline = 'middle';
 					ctx.fillText('in', x, y + 1);
-				} else if (icon === 'discord') {
+				} else {
 					// Discord Clyde logo - the controller/gamepad face
 					ctx.fillStyle = '#5865F2';
 					ctx.beginPath();
@@ -1205,7 +1198,6 @@ export function AchievementCard({
 										theme={theme}
 										isUnlocked={isUnlocked}
 										position={getTooltipPosition(badge.level)}
-										onClose={() => setSelectedBadge(null)}
 									/>
 								)}
 							</div>

@@ -66,15 +66,16 @@ const imageCache = new Map<
 const IMAGE_CACHE_TTL = 10 * 60 * 1000;
 const BIONIFY_BUTTON_LABEL = 'B';
 
-// Clean up old cache entries periodically
-setInterval(() => {
-	const now = Date.now();
+// Clean up old cache entries periodically.
+export const _clearExpiredImageCacheForTesting = (now = Date.now()) => {
 	for (const [key, value] of imageCache.entries()) {
 		if (now - value.loadedAt > IMAGE_CACHE_TTL) {
 			imageCache.delete(key);
 		}
 	}
-}, IMAGE_CACHE_TTL);
+};
+
+setInterval(_clearExpiredImageCacheForTesting, IMAGE_CACHE_TTL);
 
 interface FileStats {
 	size: number;
@@ -369,11 +370,6 @@ const extractHeadings = (content: string): TocEntry[] => {
 
 // Helper to resolve image path relative to markdown file directory
 const resolveImagePath = (src: string, markdownFilePath: string): string => {
-	// If it's already a data URL or http(s) URL, return as-is
-	if (src.startsWith('data:') || src.startsWith('http://') || src.startsWith('https://')) {
-		return src;
-	}
-
 	// Get the directory containing the markdown file
 	const markdownDir = markdownFilePath.substring(0, markdownFilePath.lastIndexOf('/'));
 
@@ -510,12 +506,9 @@ const MarkdownImage = React.memo(function MarkdownImage({
 			const height = img.naturalHeight;
 			setDimensions({ width, height });
 
-			// Update cache with dimensions
-			if (cacheKey && dataUrl) {
-				const cached = imageCache.get(cacheKey);
-				if (cached) {
-					imageCache.set(cacheKey, { ...cached, width, height });
-				}
+			const cached = imageCache.get(cacheKey!);
+			if (cached) {
+				imageCache.set(cacheKey!, { ...cached, width, height });
 			}
 		},
 		[cacheKey, dataUrl]
@@ -638,10 +631,7 @@ function remarkHighlight() {
 				});
 			}
 
-			// Replace the text node with the parts
-			if (parts.length > 0) {
-				parent.children.splice(index, 1, ...parts);
-			}
+			parent.children.splice(index, 1, ...parts);
 		});
 	};
 }
@@ -733,12 +723,14 @@ export const FilePreview = React.memo(
 		const codeContainerRef = useRef<HTMLDivElement>(null);
 		const contentRef = useRef<HTMLDivElement>(null);
 		const containerRef = useRef<HTMLDivElement>(null);
-		const textareaRef = useRef<HTMLTextAreaElement>(null);
+		const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+		const lastTextareaElementRef = useRef<HTMLTextAreaElement | null>(null);
 		const markdownContainerRef = useRef<HTMLDivElement>(null);
 		const layerIdRef = useRef<string>();
 		const matchElementsRef = useRef<HTMLElement[]>([]);
 		const cancelButtonRef = useRef<HTMLButtonElement>(null);
 		const scrollSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+		const copyNotificationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 		const tocButtonRef = useRef<HTMLButtonElement>(null);
 		const tocOverlayRef = useRef<HTMLDivElement>(null);
 
@@ -766,7 +758,7 @@ export const FilePreview = React.memo(
 					const stat = await window.maestro?.fs?.stat(file.path, sshRemoteId);
 					if (!stat?.modifiedAt) return;
 					const currentMtime = new Date(stat.modifiedAt).getTime();
-					if (currentMtime > (lastModifiedRef.current ?? 0)) {
+					if (currentMtime > lastModifiedRef.current!) {
 						setFileChangedOnDisk(true);
 					}
 				} catch {
@@ -862,7 +854,7 @@ export const FilePreview = React.memo(
 				<AlertTriangle className="w-4 h-4 flex-shrink-0" />
 				<span>
 					Large file preview truncated. Showing first {formatFileSize(LARGE_FILE_PREVIEW_LIMIT)} of{' '}
-					{formatFileSize(file?.content.length ?? 0)}.
+					{formatFileSize(file!.content.length)}.
 				</span>
 				<button
 					className="px-2 py-0.5 rounded text-xs font-medium hover:brightness-125 transition-all"
@@ -899,8 +891,7 @@ export const FilePreview = React.memo(
 
 		const scrollMarkdownToBoundary = useCallback((direction: 'top' | 'bottom') => {
 			// Use contentRef which is the actual scrollable container
-			const container = contentRef.current;
-			if (!container) return;
+			const container = contentRef.current!;
 			const top = direction === 'top' ? 0 : container.scrollHeight;
 			container.scrollTo({ top, behavior: 'smooth' });
 		}, []);
@@ -922,7 +913,7 @@ export const FilePreview = React.memo(
 				remarkFrontmatterTable,
 				remarkHighlight,
 				...(fileTree && fileTree.length > 0 && cwd !== undefined
-					? [[remarkFileLinks, { indices: fileTreeIndices || undefined, cwd }] as any]
+					? [[remarkFileLinks, { indices: fileTreeIndices, cwd }] as any]
 					: []),
 			],
 			[fileTree, fileTreeIndices, cwd]
@@ -949,9 +940,7 @@ export const FilePreview = React.memo(
 						void window.maestro.shell.openPath(href.replace(/^file:\/\//, ''));
 						return;
 					}
-					if (/^https?:\/\/|^mailto:/.test(href)) {
-						void window.maestro.shell.openExternal(href);
-					}
+					void window.maestro.shell.openExternal(href);
 				},
 				containerRef: markdownContainerRef,
 			});
@@ -980,7 +969,7 @@ export const FilePreview = React.memo(
 						<MarkdownImage
 							src={src}
 							alt={alt}
-							markdownFilePath={file?.path || ''}
+							markdownFilePath={file!.path}
 							theme={theme}
 							showRemoteImages={showRemoteImages}
 							isFromFileTree={isFromTree}
@@ -1087,25 +1076,44 @@ export const FilePreview = React.memo(
 				textareaRef.current.focus();
 			} else if (!markdownEditMode && wasEditMode && containerRef.current) {
 				// Exiting edit mode - focus container and sync scroll from textarea
-				if (textareaRef.current && contentRef.current) {
-					// Calculate scroll percentage from edit mode
-					const { scrollTop, scrollHeight, clientHeight } = textareaRef.current;
+				const textarea = lastTextareaElementRef.current;
+				const content = contentRef.current;
+				if (textarea && content) {
+					const { scrollTop, scrollHeight, clientHeight } = textarea;
 					const maxScroll = scrollHeight - clientHeight;
 					const scrollPercent = maxScroll > 0 ? scrollTop / maxScroll : 0;
 
 					// Apply scroll percentage to preview after it renders
 					requestAnimationFrame(() => {
-						if (contentRef.current) {
-							const { scrollHeight: previewScrollHeight, clientHeight: previewClientHeight } =
-								contentRef.current;
-							const previewMaxScroll = previewScrollHeight - previewClientHeight;
-							contentRef.current.scrollTop = Math.round(scrollPercent * previewMaxScroll);
-						}
+						const { scrollHeight: previewScrollHeight, clientHeight: previewClientHeight } =
+							content;
+						const previewMaxScroll = previewScrollHeight - previewClientHeight;
+						content.scrollTop = Math.round(scrollPercent * previewMaxScroll);
 					});
 				}
 				containerRef.current.focus();
 			}
 		}, [markdownEditMode]);
+
+		const hideCopyNotificationAfterDelay = useCallback(() => {
+			if (copyNotificationTimerRef.current) {
+				clearTimeout(copyNotificationTimerRef.current);
+			}
+
+			copyNotificationTimerRef.current = setTimeout(() => {
+				setShowCopyNotification(false);
+				copyNotificationTimerRef.current = null;
+			}, 2000);
+		}, []);
+
+		useEffect(() => {
+			return () => {
+				if (copyNotificationTimerRef.current) {
+					clearTimeout(copyNotificationTimerRef.current);
+					copyNotificationTimerRef.current = null;
+				}
+			};
+		}, []);
 
 		// Save handler
 		const handleSave = useCallback(async () => {
@@ -1116,16 +1124,16 @@ export const FilePreview = React.memo(
 				await onSave(file.path, editContent);
 				setCopyNotificationMessage('File Saved');
 				setShowCopyNotification(true);
-				setTimeout(() => setShowCopyNotification(false), 2000);
+				hideCopyNotificationAfterDelay();
 			} catch (err) {
 				console.error('Failed to save file:', err);
 				setCopyNotificationMessage('Save Failed');
 				setShowCopyNotification(true);
-				setTimeout(() => setShowCopyNotification(false), 2000);
+				hideCopyNotificationAfterDelay();
 			} finally {
 				setIsSaving(false);
 			}
-		}, [file, onSave, hasChanges, isSaving, editContent]);
+		}, [file, onSave, hasChanges, isSaving, editContent, hideCopyNotificationAfterDelay]);
 
 		// Track scroll position to show/hide stats bar and report changes
 		useEffect(() => {
@@ -1239,9 +1247,7 @@ export const FilePreview = React.memo(
 			});
 
 			return () => {
-				if (layerIdRef.current) {
-					unregisterLayer(layerIdRef.current);
-				}
+				unregisterLayer(layerIdRef.current!);
 			};
 		}, [registerLayer, unregisterLayer, isTabMode]);
 
@@ -1304,7 +1310,7 @@ export const FilePreview = React.memo(
 
 			// Highlight matches using safe DOM methods
 			textNodes.forEach((textNode) => {
-				const text = textNode.textContent || '';
+				const text = textNode.data;
 				const matches = text.match(regex);
 
 				if (matches) {
@@ -1356,11 +1362,9 @@ export const FilePreview = React.memo(
 			// Cleanup function to remove highlights
 			return () => {
 				container.querySelectorAll('mark.search-match').forEach((mark) => {
-					const parent = mark.parentNode;
-					if (parent) {
-						parent.replaceChild(document.createTextNode(mark.textContent || ''), mark);
-						parent.normalize();
-					}
+					const parent = mark.parentNode!;
+					parent.replaceChild(document.createTextNode(mark.textContent!), mark);
+					parent.normalize();
 				});
 				matchElementsRef.current = [];
 			};
@@ -1407,7 +1411,7 @@ export const FilePreview = React.memo(
 				// Find all text nodes and create ranges for matches
 				let textNode;
 				while ((textNode = walker.nextNode())) {
-					const text = textNode.textContent || '';
+					const text = (textNode as Text).data;
 					let match;
 					const localRegex = new RegExp(escapedQuery, 'gi');
 					while ((match = localRegex.exec(text)) !== null) {
@@ -1436,20 +1440,15 @@ export const FilePreview = React.memo(
 					// Scroll to current match
 					const currentRange = allRanges[targetIndex];
 					const rect = currentRange.getBoundingClientRect();
-					const scrollParent = contentRef.current;
+					const scrollParent = contentRef.current!;
 
-					if (scrollParent && rect) {
-						// Calculate position of the match relative to the scroll container's top
-						// rect.top is viewport-relative, so we need to account for current scroll
-						// and the scroll container's viewport position
-						const scrollContainerRect = scrollParent.getBoundingClientRect();
-						const matchOffsetInScrollContainer =
-							rect.top - scrollContainerRect.top + scrollParent.scrollTop;
-						// Calculate scroll position to center the match vertically
-						const scrollTop =
-							matchOffsetInScrollContainer - scrollParent.clientHeight / 2 + rect.height / 2;
-						scrollParent.scrollTo({ top: Math.max(0, scrollTop), behavior: 'smooth' });
-					}
+					// Calculate position of the match relative to the scroll container's top.
+					const scrollContainerRect = scrollParent.getBoundingClientRect();
+					const matchOffsetInScrollContainer =
+						rect.top - scrollContainerRect.top + scrollParent.scrollTop;
+					const scrollTop =
+						matchOffsetInScrollContainer - scrollParent.clientHeight / 2 + rect.height / 2;
+					scrollParent.scrollTo({ top: Math.max(0, scrollTop), behavior: 'smooth' });
 				} else {
 					(CSS as any).highlights.delete('search-results');
 					(CSS as any).highlights.delete('search-current');
@@ -1473,15 +1472,13 @@ export const FilePreview = React.memo(
 
 					let textNode;
 					while ((textNode = walker.nextNode())) {
-						const text = textNode.textContent || '';
+						const text = (textNode as Text).data;
 						const nodeMatches = text.match(searchRegex);
 						if (nodeMatches) {
 							for (const _ of nodeMatches) {
 								if (matchCount === targetIndex) {
 									const parentElement = (textNode as Text).parentElement;
-									if (parentElement) {
-										parentElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
-									}
+									parentElement!.scrollIntoView({ behavior: 'smooth', block: 'center' });
 									return;
 								}
 								matchCount++;
@@ -1503,26 +1500,26 @@ export const FilePreview = React.memo(
 		]);
 
 		const copyPathToClipboard = async () => {
-			if (!file) return;
-			const ok = await safeClipboardWrite(file.path);
+			const currentFile = file!;
+			const ok = await safeClipboardWrite(currentFile.path);
 			setCopyNotificationMessage(ok ? 'File Path Copied to Clipboard' : 'Failed to Copy Path');
 			setShowCopyNotification(true);
-			setTimeout(() => setShowCopyNotification(false), 2000);
+			hideCopyNotificationAfterDelay();
 		};
 
 		const copyContentToClipboard = async () => {
-			if (!file) return;
+			const currentFile = file!;
 			if (isImage) {
 				// For images, copy the image to clipboard
 				try {
-					const response = await fetch(file.content);
+					const response = await fetch(currentFile.content);
 					const blob = await response.blob();
 					const ok = await safeClipboardWriteBlob([new ClipboardItem({ [blob.type]: blob })]);
 					if (ok) {
 						setCopyNotificationMessage('Image Copied to Clipboard');
 					} else {
 						// Fallback: copy the data URL if image copy fails
-						const fallbackOk = await safeClipboardWrite(file.content);
+						const fallbackOk = await safeClipboardWrite(currentFile.content);
 						setCopyNotificationMessage(
 							fallbackOk ? 'Image URL Copied to Clipboard' : 'Failed to Copy Image'
 						);
@@ -1530,18 +1527,18 @@ export const FilePreview = React.memo(
 				} catch (err) {
 					captureException(err);
 					// Fallback: copy the data URL if fetch/blob fails
-					const fallbackOk = await safeClipboardWrite(file.content);
+					const fallbackOk = await safeClipboardWrite(currentFile.content);
 					setCopyNotificationMessage(
 						fallbackOk ? 'Image URL Copied to Clipboard' : 'Failed to Copy Image'
 					);
 				}
 			} else {
 				// For text files, copy the content
-				const ok = await safeClipboardWrite(file.content);
+				const ok = await safeClipboardWrite(currentFile.content);
 				setCopyNotificationMessage(ok ? 'Content Copied to Clipboard' : 'Failed to Copy Content');
 			}
 			setShowCopyNotification(true);
-			setTimeout(() => setShowCopyNotification(false), 2000);
+			hideCopyNotificationAfterDelay();
 		};
 
 		// Navigate to next search match
@@ -1555,17 +1552,11 @@ export const FilePreview = React.memo(
 			// For code files, handle DOM-based highlighting
 			const matches = matchElementsRef.current;
 			if (matches.length > 0) {
-				// Reset previous highlight
-				if (matches[currentMatchIndex]) {
-					matches[currentMatchIndex].style.backgroundColor = '#ffd700';
-					matches[currentMatchIndex].style.color = '#000';
-				}
-				// Highlight new current match and scroll to it
-				if (matches[nextIndex]) {
-					matches[nextIndex].style.backgroundColor = theme.colors.accent;
-					matches[nextIndex].style.color = '#fff';
-					matches[nextIndex].scrollIntoView({ behavior: 'smooth', block: 'center' });
-				}
+				matches[currentMatchIndex]!.style.backgroundColor = '#ffd700';
+				matches[currentMatchIndex]!.style.color = '#000';
+				matches[nextIndex]!.style.backgroundColor = theme.colors.accent;
+				matches[nextIndex]!.style.color = '#fff';
+				matches[nextIndex]!.scrollIntoView({ behavior: 'smooth', block: 'center' });
 			}
 			// For markdown edit mode, the effect will handle selecting text
 		};
@@ -1581,17 +1572,11 @@ export const FilePreview = React.memo(
 			// For code files, handle DOM-based highlighting
 			const matches = matchElementsRef.current;
 			if (matches.length > 0) {
-				// Reset previous highlight
-				if (matches[currentMatchIndex]) {
-					matches[currentMatchIndex].style.backgroundColor = '#ffd700';
-					matches[currentMatchIndex].style.color = '#000';
-				}
-				// Highlight new current match and scroll to it
-				if (matches[prevIndex]) {
-					matches[prevIndex].style.backgroundColor = theme.colors.accent;
-					matches[prevIndex].style.color = '#fff';
-					matches[prevIndex].scrollIntoView({ behavior: 'smooth', block: 'center' });
-				}
+				matches[currentMatchIndex]!.style.backgroundColor = '#ffd700';
+				matches[currentMatchIndex]!.style.color = '#000';
+				matches[prevIndex]!.style.backgroundColor = theme.colors.accent;
+				matches[prevIndex]!.style.color = '#fff';
+				matches[prevIndex]!.scrollIntoView({ behavior: 'smooth', block: 'center' });
 			}
 			// For markdown edit mode, the effect will handle selecting text
 		};
@@ -1653,20 +1638,18 @@ export const FilePreview = React.memo(
 
 			// Select the current match in the textarea only when navigating
 			if (isNavigating) {
-				const currentMatch = matches[validIndex];
-				if (currentMatch) {
-					const textarea = textareaRef.current;
-					textarea.focus();
-					textarea.setSelectionRange(currentMatch.start, currentMatch.end);
+				const currentMatch = matches[validIndex]!;
+				const textarea = textareaRef.current;
+				textarea.focus();
+				textarea.setSelectionRange(currentMatch.start, currentMatch.end);
 
-					// Scroll to make the selection visible
-					// Calculate approximate line number and scroll to it
-					const textBeforeMatch = content.substring(0, currentMatch.start);
-					const lineNumber = textBeforeMatch.split('\n').length;
-					const lineHeight = parseInt(getComputedStyle(textarea).lineHeight) || 24;
-					const targetScroll = (lineNumber - 5) * lineHeight; // Leave some lines above
-					textarea.scrollTop = Math.max(0, targetScroll);
-				}
+				// Scroll to make the selection visible
+				// Calculate approximate line number and scroll to it
+				const textBeforeMatch = content.substring(0, currentMatch.start);
+				const lineNumber = textBeforeMatch.split('\n').length;
+				const lineHeight = parseInt(getComputedStyle(textarea).lineHeight) || 24;
+				const targetScroll = (lineNumber - 5) * lineHeight; // Leave some lines above
+				textarea.scrollTop = Math.max(0, targetScroll);
 			}
 		}, [searchQuery, currentMatchIndex, isEditableText, markdownEditMode, editContent]);
 
@@ -1675,12 +1658,11 @@ export const FilePreview = React.memo(
 			const shortcut = shortcuts[shortcutId];
 			if (!shortcut) return false;
 
-			const hasModifier = (key: string) => {
-				if (key === 'Meta') return e.metaKey;
-				if (key === 'Ctrl') return e.ctrlKey;
-				if (key === 'Alt') return e.altKey;
-				if (key === 'Shift') return e.shiftKey;
-				return false;
+			const modifierState: Record<string, boolean> = {
+				Meta: e.metaKey,
+				Ctrl: e.ctrlKey,
+				Alt: e.altKey,
+				Shift: e.shiftKey,
 			};
 
 			const modifiers = shortcut.keys.filter((k: string) =>
@@ -1690,7 +1672,7 @@ export const FilePreview = React.memo(
 				(k: string) => !['Meta', 'Ctrl', 'Alt', 'Shift'].includes(k)
 			);
 
-			const modifiersMatch = modifiers.every((m: string) => hasModifier(m));
+			const modifiersMatch = modifiers.every((m: string) => modifierState[m]);
 			const keyMatches = mainKey?.toLowerCase() === e.key.toLowerCase();
 
 			return modifiersMatch && keyMatches;
@@ -1746,8 +1728,7 @@ export const FilePreview = React.memo(
 				if (isEditableText && markdownEditMode) return;
 
 				e.preventDefault();
-				const container = contentRef.current;
-				if (!container) return;
+				const container = contentRef.current!;
 
 				if (e.metaKey || e.ctrlKey) {
 					// Cmd/Ctrl + Up: Jump to top
@@ -1765,8 +1746,7 @@ export const FilePreview = React.memo(
 				if (isEditableText && markdownEditMode) return;
 
 				e.preventDefault();
-				const container = contentRef.current;
-				if (!container) return;
+				const container = contentRef.current!;
 
 				if (e.metaKey || e.ctrlKey) {
 					// Cmd/Ctrl + Down: Jump to bottom
@@ -2310,7 +2290,12 @@ export const FilePreview = React.memo(
 					) : isEditableText && markdownEditMode ? (
 						// Edit mode - show editable textarea for any text file
 						<textarea
-							ref={textareaRef}
+							ref={(node) => {
+								textareaRef.current = node;
+								if (node) {
+									lastTextareaElementRef.current = node;
+								}
+							}}
 							value={editContent}
 							onChange={(e) => setEditContent(e.target.value)}
 							className="w-full h-full font-mono text-sm resize-none outline-none bg-transparent"

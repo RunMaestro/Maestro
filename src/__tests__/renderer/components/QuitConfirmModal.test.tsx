@@ -263,5 +263,64 @@ describe('QuitConfirmModal', () => {
 			expect(screen.getByRole('dialog')).toBeInTheDocument();
 			expect(() => unmount()).not.toThrow();
 		});
+
+		it('uses the latest cancel handler when Escape closes the top layer', async () => {
+			const firstCancel = vi.fn();
+			const secondCancel = vi.fn();
+			const { rerender } = renderWithLayerStack(
+				<QuitConfirmModal
+					theme={testTheme}
+					busyAgentCount={1}
+					busyAgentNames={['Agent A']}
+					onConfirmQuit={vi.fn()}
+					onCancel={firstCancel}
+				/>
+			);
+
+			rerender(
+				<LayerStackProvider>
+					<QuitConfirmModal
+						theme={testTheme}
+						busyAgentCount={1}
+						busyAgentNames={['Agent A']}
+						onConfirmQuit={vi.fn()}
+						onCancel={secondCancel}
+					/>
+				</LayerStackProvider>
+			);
+
+			fireEvent.keyDown(window, { key: 'Escape' });
+
+			await waitFor(() => {
+				expect(secondCancel).toHaveBeenCalledTimes(1);
+			});
+			expect(firstCancel).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('keyboard propagation', () => {
+		it('allows Tab to flow naturally and stops other dialog key presses', () => {
+			renderWithLayerStack(
+				<QuitConfirmModal
+					theme={testTheme}
+					busyAgentCount={1}
+					busyAgentNames={['Agent A']}
+					onConfirmQuit={vi.fn()}
+					onCancel={vi.fn()}
+				/>
+			);
+			const dialog = screen.getByRole('dialog');
+
+			const tabEvent = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true });
+			const tabStopPropagation = vi.spyOn(tabEvent, 'stopPropagation');
+			dialog.dispatchEvent(tabEvent);
+
+			const enterEvent = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true });
+			const enterStopPropagation = vi.spyOn(enterEvent, 'stopPropagation');
+			dialog.dispatchEvent(enterEvent);
+
+			expect(tabStopPropagation).not.toHaveBeenCalled();
+			expect(enterStopPropagation).toHaveBeenCalled();
+		});
 	});
 });

@@ -266,8 +266,7 @@ export class StdoutHandler {
 		// Extract usage
 		const usage = outputParser.extractUsage(event);
 		if (usage) {
-			// DEBUG: Log usage extracted from parser
-			console.log('[StdoutHandler] Usage from parser (line 255 path)', {
+			logger.debug('[StdoutHandler] Usage from parser', 'ProcessManager', {
 				sessionId,
 				toolType: managedProcess.toolType,
 				parsedUsage: usage,
@@ -288,8 +287,7 @@ export class StdoutHandler {
 					? normalizeUsageToDelta(managedProcess, usageStats)
 					: usageStats;
 
-			// DEBUG: Log normalized stats being emitted
-			console.log('[StdoutHandler] Emitting usage (line 255 path)', {
+			logger.debug('[StdoutHandler] Emitting usage', 'ProcessManager', {
 				sessionId,
 				normalizedUsageStats,
 			});
@@ -464,8 +462,7 @@ export class StdoutHandler {
 		}
 
 		if (msgRecord.modelUsage || msgRecord.usage || msgRecord.total_cost_usd !== undefined) {
-			// DEBUG: Log raw usage data from Claude Code before aggregation
-			console.log('[StdoutHandler] Raw usage data from Claude Code', {
+			logger.debug('[StdoutHandler] Raw usage data from Claude Code', 'ProcessManager', {
 				sessionId,
 				modelUsage: msgRecord.modelUsage,
 				usage: msgRecord.usage,
@@ -478,8 +475,7 @@ export class StdoutHandler {
 				(msgRecord.total_cost_usd as number) || 0
 			);
 
-			// DEBUG: Log aggregated result
-			console.log('[StdoutHandler] Aggregated usage stats', {
+			logger.debug('[StdoutHandler] Aggregated usage stats', 'ProcessManager', {
 				sessionId,
 				usageStats,
 			});

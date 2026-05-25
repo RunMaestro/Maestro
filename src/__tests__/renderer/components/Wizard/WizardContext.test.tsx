@@ -614,6 +614,18 @@ describe('WizardContext', () => {
 				expect(result.current.canProceedToNext()).toBe(true);
 			});
 		});
+
+		it('returns false for a malformed restored step', () => {
+			const { result } = renderHook(() => useWizard(), { wrapper });
+
+			act(() => {
+				result.current.restoreState({
+					currentStep: 'unknown-step' as WizardStep,
+				});
+			});
+
+			expect(result.current.canProceedToNext()).toBe(false);
+		});
 	});
 
 	describe('Agent Selection State', () => {
@@ -679,6 +691,45 @@ describe('WizardContext', () => {
 				result.current.setAgentName('');
 			});
 			expect(result.current.state.agentName).toBe('');
+		});
+
+		it('sets optional custom launch configuration', () => {
+			const { result } = renderHook(() => useWizard(), { wrapper });
+
+			act(() => {
+				result.current.setCustomPath('/opt/agents/custom-agent');
+				result.current.setCustomArgs('--model sonnet --verbose');
+				result.current.setCustomEnvVars({ MAESTRO_MODE: 'wizard', DEBUG: '1' });
+				result.current.setSessionSshRemoteConfig({
+					enabled: true,
+					remoteId: 'remote-prod',
+					workingDirOverride: '/srv/project',
+				});
+			});
+
+			expect(result.current.state.customPath).toBe('/opt/agents/custom-agent');
+			expect(result.current.state.customArgs).toBe('--model sonnet --verbose');
+			expect(result.current.state.customEnvVars).toEqual({
+				MAESTRO_MODE: 'wizard',
+				DEBUG: '1',
+			});
+			expect(result.current.state.sessionSshRemoteConfig).toEqual({
+				enabled: true,
+				remoteId: 'remote-prod',
+				workingDirOverride: '/srv/project',
+			});
+
+			act(() => {
+				result.current.setCustomPath(undefined);
+				result.current.setCustomArgs(undefined);
+				result.current.setCustomEnvVars(undefined);
+				result.current.setSessionSshRemoteConfig(undefined);
+			});
+
+			expect(result.current.state.customPath).toBeUndefined();
+			expect(result.current.state.customArgs).toBeUndefined();
+			expect(result.current.state.customEnvVars).toBeUndefined();
+			expect(result.current.state.sessionSshRemoteConfig).toBeUndefined();
 		});
 	});
 
@@ -765,6 +816,28 @@ describe('WizardContext', () => {
 				result.current.setDirectoryError(null);
 			});
 			expect(result.current.state.directoryError).toBeNull();
+		});
+
+		it('tracks existing Auto Run docs metadata and choice', () => {
+			const { result } = renderHook(() => useWizard(), { wrapper });
+
+			act(() => {
+				result.current.setHasExistingAutoRunDocs(true, 3);
+				result.current.setExistingDocsChoice('continue');
+			});
+
+			expect(result.current.state.hasExistingAutoRunDocs).toBe(true);
+			expect(result.current.state.existingDocsCount).toBe(3);
+			expect(result.current.state.existingDocsChoice).toBe('continue');
+
+			act(() => {
+				result.current.setHasExistingAutoRunDocs(false, 0);
+				result.current.setExistingDocsChoice(null);
+			});
+
+			expect(result.current.state.hasExistingAutoRunDocs).toBe(false);
+			expect(result.current.state.existingDocsCount).toBe(0);
+			expect(result.current.state.existingDocsChoice).toBeNull();
 		});
 	});
 

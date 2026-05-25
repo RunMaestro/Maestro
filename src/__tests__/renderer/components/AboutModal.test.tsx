@@ -176,8 +176,10 @@ describe('AboutModal', () => {
 			return unsubscribeMock;
 		});
 
-		// Mock getGlobalStats (now uses agentSessions API)
-		vi.mocked(window.maestro.agentSessions.getGlobalStats).mockResolvedValue(createGlobalStats());
+		// Keep the default promise pending so static render tests do not leak async state updates.
+		vi.mocked(window.maestro.agentSessions.getGlobalStats).mockImplementation(
+			() => new Promise(() => {})
+		);
 
 		// Mock shell.openExternal
 		vi.mocked(window.maestro.shell.openExternal).mockResolvedValue(undefined);
@@ -247,6 +249,25 @@ describe('AboutModal', () => {
 			);
 
 			expect(screen.getByText('v1.0.0')).toBeInTheDocument();
+		});
+
+		it('should render commit hash when provided', () => {
+			(globalThis as unknown as { __COMMIT_HASH__: string }).__COMMIT_HASH__ = 'abc123';
+
+			try {
+				render(
+					<AboutModal
+						theme={theme}
+						handsOnTimeMs={0}
+						autoRunStats={createAutoRunStats()}
+						onClose={onClose}
+					/>
+				);
+
+				expect(screen.getByText('v1.0.0 (abc123)')).toBeInTheDocument();
+			} finally {
+				(globalThis as unknown as { __COMMIT_HASH__: string }).__COMMIT_HASH__ = '';
+			}
 		});
 
 		it('should render subtitle', () => {
@@ -349,6 +370,25 @@ describe('AboutModal', () => {
 	});
 
 	describe('External links', () => {
+		it.each([
+			['Visit runmaestro.ai', 'https://runmaestro.ai'],
+			['Join our Discord', 'https://runmaestro.ai/discord'],
+			['Documentation', 'https://docs.runmaestro.ai/'],
+		])('should open header link %s', async (title, url) => {
+			render(
+				<AboutModal
+					theme={theme}
+					handsOnTimeMs={0}
+					autoRunStats={createAutoRunStats()}
+					onClose={onClose}
+				/>
+			);
+
+			fireEvent.click(screen.getByTitle(title));
+
+			expect(window.maestro.shell.openExternal).toHaveBeenCalledWith(url);
+		});
+
 		it('should open GitHub repo on project GitHub click', async () => {
 			render(
 				<AboutModal
@@ -606,6 +646,33 @@ describe('AboutModal', () => {
 			// Should show stats
 			expect(screen.getByText('42')).toBeInTheDocument();
 			expect(screen.getByText('123')).toBeInTheDocument();
+		});
+
+		it('should use getGlobalStats result when no streaming update arrives', async () => {
+			vi.mocked(window.maestro.agentSessions.getGlobalStats).mockResolvedValueOnce(
+				createGlobalStats({
+					totalSessions: 7,
+					totalMessages: 11,
+					isComplete: true,
+				})
+			);
+
+			render(
+				<AboutModal
+					theme={theme}
+					handsOnTimeMs={0}
+					autoRunStats={createAutoRunStats()}
+					onClose={onClose}
+				/>
+			);
+
+			await act(async () => {
+				await Promise.resolve();
+			});
+
+			expect(screen.queryByText('Loading stats...')).not.toBeInTheDocument();
+			expect(screen.getByText('7')).toBeInTheDocument();
+			expect(screen.getByText('11')).toBeInTheDocument();
 		});
 
 		it('should show spinner when stats are not complete', async () => {
@@ -1071,6 +1138,63 @@ describe('AboutModal', () => {
 
 			const title = screen.getByText('MAESTRO');
 			expect(title).toHaveStyle({ color: theme.colors.textMain });
+		});
+	});
+
+	describe('Leaderboard registration action', () => {
+		it('should hide the leaderboard action when no registration handler is provided', () => {
+			render(
+				<AboutModal
+					theme={theme}
+					handsOnTimeMs={0}
+					autoRunStats={createAutoRunStats()}
+					onClose={onClose}
+				/>
+			);
+
+			expect(screen.queryByRole('button', { name: /join leaderboard/i })).not.toBeInTheDocument();
+			expect(screen.queryByRole('button', { name: /^leaderboard$/i })).not.toBeInTheDocument();
+		});
+
+		it('should render and invoke the unregistered leaderboard action', () => {
+			const onOpenLeaderboardRegistration = vi.fn();
+
+			render(
+				<AboutModal
+					theme={theme}
+					handsOnTimeMs={0}
+					autoRunStats={createAutoRunStats()}
+					onClose={onClose}
+					onOpenLeaderboardRegistration={onOpenLeaderboardRegistration}
+					isLeaderboardRegistered={false}
+				/>
+			);
+
+			const button = screen.getByRole('button', { name: /join leaderboard/i });
+			expect(button).toBeInTheDocument();
+
+			fireEvent.click(button);
+
+			expect(onOpenLeaderboardRegistration).toHaveBeenCalledTimes(1);
+		});
+
+		it('should render the registered leaderboard action state', () => {
+			const onOpenLeaderboardRegistration = vi.fn();
+
+			render(
+				<AboutModal
+					theme={theme}
+					handsOnTimeMs={0}
+					autoRunStats={createAutoRunStats()}
+					onClose={onClose}
+					onOpenLeaderboardRegistration={onOpenLeaderboardRegistration}
+					isLeaderboardRegistered
+				/>
+			);
+
+			expect(screen.getByText('Leaderboard')).toBeInTheDocument();
+			expect(screen.getByTestId('check-icon')).toBeInTheDocument();
+			expect(screen.queryByRole('button', { name: /join leaderboard/i })).not.toBeInTheDocument();
 		});
 	});
 

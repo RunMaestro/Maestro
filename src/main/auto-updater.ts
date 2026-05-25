@@ -32,6 +32,20 @@ let ipcHandlersRegistered = false;
 
 // Lazy-loaded autoUpdater instance
 let _autoUpdater: AppUpdater | null = null;
+type AutoUpdaterLoader = () => AppUpdater;
+const defaultAutoUpdaterLoader: AutoUpdaterLoader = () => {
+	const { autoUpdater } = require('electron-updater');
+	return autoUpdater;
+};
+let autoUpdaterLoader = defaultAutoUpdaterLoader;
+
+export function _setAutoUpdaterLoaderForTesting(loader: AutoUpdaterLoader): void {
+	autoUpdaterLoader = loader;
+	_autoUpdater = null;
+	mainWindow = null;
+	currentStatus = { status: 'idle' };
+	ipcHandlersRegistered = false;
+}
 
 /**
  * Get the autoUpdater instance, initializing it lazily
@@ -39,9 +53,7 @@ let _autoUpdater: AppUpdater | null = null;
  */
 function getAutoUpdater(): AppUpdater {
 	if (!_autoUpdater) {
-		// Dynamic require to defer the module load
-		const { autoUpdater } = require('electron-updater');
-		_autoUpdater = autoUpdater;
+		_autoUpdater = autoUpdaterLoader();
 		// Configure defaults
 		_autoUpdater!.autoDownload = false;
 		_autoUpdater!.autoInstallOnAppQuit = true;

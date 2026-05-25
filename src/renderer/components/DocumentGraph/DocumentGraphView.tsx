@@ -513,140 +513,133 @@ export function DocumentGraphView({
 	/**
 	 * Load and build graph data
 	 */
-	const loadGraphData = useCallback(
-		async (resetPagination = true) => {
-			// Abort any ongoing backlink scan
-			if (abortBacklinkScanRef.current) {
-				abortBacklinkScanRef.current();
-				abortBacklinkScanRef.current = null;
-			}
+	const loadGraphData = useCallback(async () => {
+		// Abort any ongoing backlink scan
+		if (abortBacklinkScanRef.current) {
+			abortBacklinkScanRef.current();
+			abortBacklinkScanRef.current = null;
+		}
 
-			setLoading(true);
-			setError(null);
-			setProgress(null);
-			setBacklinksLoading(false);
-			setBacklinkProgress(null);
+		setLoading(true);
+		setError(null);
+		setProgress(null);
+		setBacklinksLoading(false);
+		setBacklinkProgress(null);
+		setMaxNodes(defaultMaxNodes);
 
-			if (resetPagination) {
-				setMaxNodes(defaultMaxNodes);
-			}
+		try {
+			console.log('[DocumentGraph] Building graph data:', {
+				rootPath,
+				focusFilePath,
+				includeExternalLinks,
+				sshRemoteId: !!sshRemoteId,
+			});
 
-			try {
-				console.log('[DocumentGraph] Building graph data:', {
-					rootPath,
-					focusFilePath,
-					includeExternalLinks,
-					sshRemoteId: !!sshRemoteId,
-				});
+			const graphData = await buildGraphData({
+				rootPath,
+				focusFile: focusFilePath,
+				maxDepth: neighborDepth > 0 ? neighborDepth : 10, // Use large depth for "all"
+				maxNodes: defaultMaxNodes,
+				onProgress: handleProgress,
+				sshRemoteId,
+			});
 
-				const graphData = await buildGraphData({
-					rootPath,
-					focusFile: focusFilePath,
-					maxDepth: neighborDepth > 0 ? neighborDepth : 10, // Use large depth for "all"
-					maxNodes: resetPagination ? defaultMaxNodes : maxNodes,
-					onProgress: handleProgress,
-					sshRemoteId,
-				});
+			// Store reference to current graph data for backlink scanning
+			currentGraphDataRef.current = graphData;
 
-				// Store reference to current graph data for backlink scanning
-				currentGraphDataRef.current = graphData;
+			console.log('[DocumentGraph] Graph data built (outgoing links only):', {
+				totalDocuments: graphData.totalDocuments,
+				loadedDocuments: graphData.loadedDocuments,
+				nodeCount: graphData.nodes.length,
+				edgeCount: graphData.edges.length,
+				internalLinkCount: graphData.internalLinkCount,
+				externalLinkCount: graphData.cachedExternalData.totalLinkCount,
+				externalDomains: graphData.cachedExternalData.domainCount,
+				sampleNodeIds: graphData.nodes.slice(0, 5).map((n) => n.id),
+			});
 
-				console.log('[DocumentGraph] Graph data built (outgoing links only):', {
-					totalDocuments: graphData.totalDocuments,
-					loadedDocuments: graphData.loadedDocuments,
-					nodeCount: graphData.nodes.length,
-					edgeCount: graphData.edges.length,
-					internalLinkCount: graphData.internalLinkCount,
-					externalLinkCount: graphData.cachedExternalData.totalLinkCount,
-					externalDomains: graphData.cachedExternalData.domainCount,
-					sampleNodeIds: graphData.nodes.slice(0, 5).map((n) => n.id),
-				});
+			// Update pagination state
+			setTotalDocuments(graphData.totalDocuments);
+			setLoadedDocuments(graphData.loadedDocuments);
+			setHasMore(graphData.hasMore);
 
-				// Update pagination state
-				setTotalDocuments(graphData.totalDocuments);
-				setLoadedDocuments(graphData.loadedDocuments);
-				setHasMore(graphData.hasMore);
+			// Store all markdown files for wiki-link resolution in preview panel
+			setAllMarkdownFiles(graphData.allMarkdownFiles);
 
-				// Store all markdown files for wiki-link resolution in preview panel
-				setAllMarkdownFiles(graphData.allMarkdownFiles);
+			// Cache external data and link counts for instant toggling
+			setCachedExternalData(graphData.cachedExternalData);
+			setInternalLinkCount(graphData.internalLinkCount);
 
-				// Cache external data and link counts for instant toggling
-				setCachedExternalData(graphData.cachedExternalData);
-				setInternalLinkCount(graphData.internalLinkCount);
+			// Convert document-only nodes/links to mind map format (for toggling)
+			const docOnlyNodes = graphData.nodes.filter((n) => n.type === 'documentNode');
+			const docOnlyEdges = graphData.edges.filter((e) => e.type !== 'external');
+			const { nodes: docMindMapNodes, links: docMindMapLinks } = convertToMindMapData(
+				docOnlyNodes.map((n) => ({ id: n.id, data: n.data })),
+				docOnlyEdges.map((e) => ({ source: e.source, target: e.target, type: e.type })),
+				previewCharLimit
+			);
+			setDocumentOnlyNodes(docMindMapNodes);
+			setDocumentOnlyLinks(docMindMapLinks);
 
-				// Convert document-only nodes/links to mind map format (for toggling)
-				const docOnlyNodes = graphData.nodes.filter((n) => n.type === 'documentNode');
-				const docOnlyEdges = graphData.edges.filter((e) => e.type !== 'external');
-				const { nodes: docMindMapNodes, links: docMindMapLinks } = convertToMindMapData(
-					docOnlyNodes.map((n) => ({ id: n.id, data: n.data })),
-					docOnlyEdges.map((e) => ({ source: e.source, target: e.target, type: e.type })),
-					previewCharLimit
+			// Convert ALL nodes/links (with external) to mind map format (for toggling)
+			const allNodes = [...docOnlyNodes, ...graphData.cachedExternalData.externalNodes];
+			const allEdges = [...docOnlyEdges, ...graphData.cachedExternalData.externalEdges];
+			const { nodes: allMindMapNodes, links: allMindMapLinks } = convertToMindMapData(
+				allNodes.map((n) => ({ id: n.id, data: n.data })),
+				allEdges.map((e) => ({ source: e.source, target: e.target, type: e.type })),
+				previewCharLimit
+			);
+			setAllNodesWithExternal(allMindMapNodes);
+			setAllLinksWithExternal(allMindMapLinks);
+
+			// Set current display based on includeExternalLinks setting
+			const mindMapNodes = includeExternalLinks ? allMindMapNodes : docMindMapNodes;
+			const mindMapLinks = includeExternalLinks ? allMindMapLinks : docMindMapLinks;
+
+			console.log('[DocumentGraph] Converted to mind map format:', {
+				nodeCount: mindMapNodes.length,
+				linkCount: mindMapLinks.length,
+				docOnlyCount: docMindMapNodes.length,
+				withExternalCount: allMindMapNodes.length,
+				sampleFilePaths: mindMapNodes
+					.filter((n) => n.nodeType === 'document')
+					.slice(0, 5)
+					.map((n) => n.filePath),
+				focusFilePath,
+			});
+
+			setNodes(mindMapNodes);
+			setLinks(mindMapLinks);
+
+			// Set active focus file from the required focusFilePath prop
+			setActiveFocusFile(focusFilePath);
+
+			// Start background backlink scan after initial graph is displayed
+			if (graphData.startBacklinkScan) {
+				setBacklinksLoading(true);
+				abortBacklinkScanRef.current = graphData.startBacklinkScan(
+					handleBacklinkUpdate,
+					handleBacklinkComplete
 				);
-				setDocumentOnlyNodes(docMindMapNodes);
-				setDocumentOnlyLinks(docMindMapLinks);
-
-				// Convert ALL nodes/links (with external) to mind map format (for toggling)
-				const allNodes = [...docOnlyNodes, ...graphData.cachedExternalData.externalNodes];
-				const allEdges = [...docOnlyEdges, ...graphData.cachedExternalData.externalEdges];
-				const { nodes: allMindMapNodes, links: allMindMapLinks } = convertToMindMapData(
-					allNodes.map((n) => ({ id: n.id, data: n.data })),
-					allEdges.map((e) => ({ source: e.source, target: e.target, type: e.type })),
-					previewCharLimit
-				);
-				setAllNodesWithExternal(allMindMapNodes);
-				setAllLinksWithExternal(allMindMapLinks);
-
-				// Set current display based on includeExternalLinks setting
-				const mindMapNodes = includeExternalLinks ? allMindMapNodes : docMindMapNodes;
-				const mindMapLinks = includeExternalLinks ? allMindMapLinks : docMindMapLinks;
-
-				console.log('[DocumentGraph] Converted to mind map format:', {
-					nodeCount: mindMapNodes.length,
-					linkCount: mindMapLinks.length,
-					docOnlyCount: docMindMapNodes.length,
-					withExternalCount: allMindMapNodes.length,
-					sampleFilePaths: mindMapNodes
-						.filter((n) => n.nodeType === 'document')
-						.slice(0, 5)
-						.map((n) => n.filePath),
-					focusFilePath,
-				});
-
-				setNodes(mindMapNodes);
-				setLinks(mindMapLinks);
-
-				// Set active focus file from the required focusFilePath prop
-				setActiveFocusFile(focusFilePath);
-
-				// Start background backlink scan after initial graph is displayed
-				if (graphData.startBacklinkScan) {
-					setBacklinksLoading(true);
-					abortBacklinkScanRef.current = graphData.startBacklinkScan(
-						handleBacklinkUpdate,
-						handleBacklinkComplete
-					);
-				}
-			} catch (err) {
-				console.error('Failed to build graph data:', err);
-				setError(err instanceof Error ? err.message : 'Failed to load document graph');
-			} finally {
-				setLoading(false);
 			}
-		},
-		[
-			rootPath,
-			includeExternalLinks,
-			maxNodes,
-			defaultMaxNodes,
-			handleProgress,
-			focusFilePath,
-			neighborDepth,
-			previewCharLimit,
-			handleBacklinkUpdate,
-			handleBacklinkComplete,
-			sshRemoteId,
-		]
-	);
+		} catch (err) {
+			console.error('Failed to build graph data:', err);
+			setError(err instanceof Error ? err.message : 'Failed to load document graph');
+		} finally {
+			setLoading(false);
+		}
+	}, [
+		rootPath,
+		includeExternalLinks,
+		defaultMaxNodes,
+		handleProgress,
+		focusFilePath,
+		neighborDepth,
+		previewCharLimit,
+		handleBacklinkUpdate,
+		handleBacklinkComplete,
+		sshRemoteId,
+	]);
 
 	/**
 	 * Debounced version of loadGraphData for settings changes
@@ -899,8 +892,6 @@ export function DocumentGraphView({
 	 * Handle load more
 	 */
 	const handleLoadMore = useCallback(async () => {
-		if (!hasMore || loadingMore) return;
-
 		setLoadingMore(true);
 		const newMaxNodes = maxNodes + LOAD_MORE_INCREMENT;
 		setMaxNodes(newMaxNodes);
@@ -932,8 +923,6 @@ export function DocumentGraphView({
 			setLoadingMore(false);
 		}
 	}, [
-		hasMore,
-		loadingMore,
 		maxNodes,
 		rootPath,
 		activeFocusFile,
@@ -1102,30 +1091,26 @@ export function DocumentGraphView({
 	 * Navigate back in preview history
 	 */
 	const handlePreviewBack = useCallback(() => {
-		if (previewHistoryIndex > 0) {
-			const newIndex = previewHistoryIndex - 1;
-			setPreviewHistoryIndex(newIndex);
-			setPreviewFile(previewHistory[newIndex]);
-			// Focus the content area for keyboard scrolling
-			requestAnimationFrame(() => {
-				previewContentRef.current?.focus();
-			});
-		}
+		const newIndex = previewHistoryIndex - 1;
+		setPreviewHistoryIndex(newIndex);
+		setPreviewFile(previewHistory[newIndex]);
+		// Focus the content area for keyboard scrolling
+		requestAnimationFrame(() => {
+			previewContentRef.current?.focus();
+		});
 	}, [previewHistoryIndex, previewHistory]);
 
 	/**
 	 * Navigate forward in preview history
 	 */
 	const handlePreviewForward = useCallback(() => {
-		if (previewHistoryIndex < previewHistory.length - 1) {
-			const newIndex = previewHistoryIndex + 1;
-			setPreviewHistoryIndex(newIndex);
-			setPreviewFile(previewHistory[newIndex]);
-			// Focus the content area for keyboard scrolling
-			requestAnimationFrame(() => {
-				previewContentRef.current?.focus();
-			});
-		}
+		const newIndex = previewHistoryIndex + 1;
+		setPreviewHistoryIndex(newIndex);
+		setPreviewFile(previewHistory[newIndex]);
+		// Focus the content area for keyboard scrolling
+		requestAnimationFrame(() => {
+			previewContentRef.current?.focus();
+		});
 	}, [previewHistoryIndex, previewHistory]);
 
 	// Can navigate back/forward?
@@ -1252,7 +1237,7 @@ export function DocumentGraphView({
 				const query = searchQuery.toLowerCase();
 				if (n.nodeType === 'document') {
 					return (
-						(n.label?.toLowerCase().includes(query) ?? false) ||
+						n.label.toLowerCase().includes(query) ||
 						(n.filePath?.toLowerCase().includes(query) ?? false)
 					);
 				} else {
@@ -1933,21 +1918,21 @@ export function DocumentGraphView({
 									<p className="text-xs" style={{ color: theme.colors.textDim }}>
 										{previewError}
 									</p>
-								) : previewFile ? (
+								) : (
 									<MarkdownRenderer
-										content={previewFile.content}
+										content={previewFile!.content}
 										theme={theme}
 										onCopy={async (text: string) => {
 											await safeClipboardWrite(text);
 										}}
 										fileTree={previewFileTree}
 										projectRoot={rootPath}
-										cwd={previewFile.relativePath.split('/').slice(0, -1).join('/')}
+										cwd={previewFile!.relativePath.split('/').slice(0, -1).join('/')}
 										onFileClick={handlePreviewFile}
 										sshRemoteId={sshRemoteId}
 										enableBionifyReadingMode={bionifyReadingMode}
 									/>
-								) : null}
+								)}
 							</div>
 						</div>
 					)}

@@ -46,6 +46,19 @@ vi.mock('../../../renderer/hooks/batch/useBatchProcessor', () => ({
 	})),
 }));
 
+const { mockNotifyToast, mockCaptureException } = vi.hoisted(() => ({
+	mockNotifyToast: vi.fn(),
+	mockCaptureException: vi.fn(),
+}));
+
+vi.mock('../../../renderer/stores/notificationStore', () => ({
+	notifyToast: mockNotifyToast,
+}));
+
+vi.mock('@sentry/electron/renderer', () => ({
+	captureException: mockCaptureException,
+}));
+
 // ============================================================================
 // Now import the hook and stores
 // ============================================================================
@@ -59,6 +72,7 @@ import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useBatchStore } from '../../../renderer/stores/batchStore';
 import { useModalStore } from '../../../renderer/stores/modalStore';
+import { registerGroupChatAutoRun } from '../../../renderer/utils/groupChatAutoRunRegistry';
 
 // ============================================================================
 // Helpers
@@ -367,6 +381,16 @@ describe('useBatchHandlers', () => {
 	// ====================================================================
 
 	describe('handleStopBatchRun', () => {
+		let consoleLog: ReturnType<typeof vi.spyOn>;
+
+		beforeEach(() => {
+			consoleLog = vi.spyOn(console, 'log').mockImplementation(() => {});
+		});
+
+		afterEach(() => {
+			consoleLog.mockRestore();
+		});
+
 		it('opens confirm modal and stops batch on confirm', () => {
 			const session = createMockSession({ id: 'session-1', name: 'My Agent' });
 			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
@@ -388,6 +412,10 @@ describe('useBatchHandlers', () => {
 			});
 
 			expect(mockStopBatchRun).toHaveBeenCalledWith('session-1');
+			expect(consoleLog).toHaveBeenCalledWith(
+				'[App:handleStopBatchRun] Confirmation callback executing for sessionId:',
+				'session-1'
+			);
 		});
 
 		it('uses active session when no targetSessionId provided', () => {
@@ -437,13 +465,22 @@ describe('useBatchHandlers', () => {
 
 	describe('handleKillBatchRun', () => {
 		it('delegates to killBatchRun with session ID', async () => {
-			const { result } = renderHook(() => useBatchHandlers(createDeps()));
+			const consoleLog = vi.spyOn(console, 'log').mockImplementation(() => {});
+			try {
+				const { result } = renderHook(() => useBatchHandlers(createDeps()));
 
-			await act(async () => {
-				await result.current.handleKillBatchRun('session-1');
-			});
+				await act(async () => {
+					await result.current.handleKillBatchRun('session-1');
+				});
 
-			expect(mockKillBatchRun).toHaveBeenCalledWith('session-1');
+				expect(mockKillBatchRun).toHaveBeenCalledWith('session-1');
+				expect(consoleLog).toHaveBeenCalledWith(
+					'[App:handleKillBatchRun] Force killing sessionId:',
+					'session-1'
+				);
+			} finally {
+				consoleLog.mockRestore();
+			}
 		});
 	});
 
@@ -1001,6 +1038,1047 @@ describe('useBatchHandlers', () => {
 			expect(mockSetFirstAutoRunCompleted).toHaveBeenCalledWith(true);
 		});
 
+		it('opens first run celebration data after the toast delay', () => {
+			vi.useFakeTimers();
+			try {
+				const session = createMockSession({ id: 'session-1' });
+				useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+				useSettingsStore.setState({
+					firstAutoRunCompleted: false,
+					setFirstAutoRunCompleted: vi.fn(),
+					autoRunStats: {
+						cumulativeTimeMs: 0,
+						totalRuns: 0,
+						currentBadgeLevel: 0,
+						longestRunMs: 0,
+						longestRunTimestamp: 0,
+						lastBadgeUnlockLevel: 0,
+						lastAcknowledgedBadgeLevel: 0,
+					},
+					recordAutoRunComplete: vi
+						.fn()
+						.mockReturnValue({ newBadgeLevel: null, isNewRecord: false }),
+					leaderboardRegistration: null,
+				});
+				renderHook(() => useBatchHandlers(createDeps()));
+
+				const callArgs = vi.mocked(useBatchProcessor).mock.calls[0][0];
+
+				act(() => {
+					callArgs.onComplete({
+						sessionId: 'session-1',
+						sessionName: 'Test',
+						completedTasks: 4,
+						totalTasks: 4,
+						wasStopped: false,
+						elapsedTimeMs: 12000,
+						inputTokens: 600,
+						outputTokens: 300,
+						totalCostUsd: 0.03,
+						documentsProcessed: 2,
+					});
+					vi.advanceTimersByTime(500);
+				});
+
+				expect(useModalStore.getState().getData('firstRunCelebration')).toEqual(
+					expect.objectContaining({
+						elapsedTimeMs: 12000,
+						completedTasks: 4,
+						totalTasks: 4,
+					})
+				);
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
+		it('opens standing ovation data for a new badge or record after the toast delay', () => {
+			vi.useFakeTimers();
+			try {
+				const session = createMockSession({ id: 'session-1' });
+				useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+				useSettingsStore.setState({
+					firstAutoRunCompleted: true,
+					autoRunStats: {
+						cumulativeTimeMs: 0,
+						totalRuns: 0,
+						currentBadgeLevel: 0,
+						longestRunMs: 7000,
+						longestRunTimestamp: 0,
+						lastBadgeUnlockLevel: 0,
+						lastAcknowledgedBadgeLevel: 0,
+					},
+					recordAutoRunComplete: vi.fn().mockReturnValue({ newBadgeLevel: 1, isNewRecord: true }),
+					leaderboardRegistration: null,
+				});
+				renderHook(() => useBatchHandlers(createDeps()));
+
+				const callArgs = vi.mocked(useBatchProcessor).mock.calls[0][0];
+
+				act(() => {
+					callArgs.onComplete({
+						sessionId: 'session-1',
+						sessionName: 'Test',
+						completedTasks: 2,
+						totalTasks: 2,
+						wasStopped: false,
+						elapsedTimeMs: 15000,
+						inputTokens: 600,
+						outputTokens: 300,
+						totalCostUsd: 0.03,
+						documentsProcessed: 1,
+					});
+					vi.advanceTimersByTime(500);
+				});
+
+				expect(useModalStore.getState().getData('standingOvation')).toEqual(
+					expect.objectContaining({
+						isNewRecord: true,
+						recordTimeMs: 15000,
+					})
+				);
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
+		it('uses the current badge for a record-only standing ovation', () => {
+			vi.useFakeTimers();
+			try {
+				const session = createMockSession({ id: 'session-1' });
+				useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+				useSettingsStore.setState({
+					firstAutoRunCompleted: true,
+					autoRunStats: {
+						cumulativeTimeMs: 0,
+						totalRuns: 0,
+						currentBadgeLevel: 1,
+						longestRunMs: 7000,
+						longestRunTimestamp: 0,
+						lastBadgeUnlockLevel: 0,
+						lastAcknowledgedBadgeLevel: 0,
+					},
+					recordAutoRunComplete: vi
+						.fn()
+						.mockReturnValue({ newBadgeLevel: null, isNewRecord: true }),
+					leaderboardRegistration: null,
+				});
+				renderHook(() => useBatchHandlers(createDeps()));
+
+				const callArgs = vi.mocked(useBatchProcessor).mock.calls[0][0];
+
+				act(() => {
+					callArgs.onComplete({
+						sessionId: 'session-1',
+						sessionName: 'Test',
+						completedTasks: 1,
+						totalTasks: 1,
+						wasStopped: false,
+						elapsedTimeMs: 18000,
+						inputTokens: 100,
+						outputTokens: 50,
+						totalCostUsd: 0.01,
+						documentsProcessed: 1,
+					});
+					vi.advanceTimersByTime(500);
+				});
+
+				expect(useModalStore.getState().getData('standingOvation')).toEqual(
+					expect.objectContaining({
+						badge: expect.objectContaining({ level: 1 }),
+						isNewRecord: true,
+						recordTimeMs: 18000,
+					})
+				);
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
+		it('uses the previous longest run for badge-only standing ovations', () => {
+			vi.useFakeTimers();
+			try {
+				const session = createMockSession({ id: 'session-1' });
+				useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+				useSettingsStore.setState({
+					firstAutoRunCompleted: true,
+					autoRunStats: {
+						cumulativeTimeMs: 0,
+						totalRuns: 0,
+						currentBadgeLevel: 0,
+						longestRunMs: 7000,
+						longestRunTimestamp: 0,
+						lastBadgeUnlockLevel: 0,
+						lastAcknowledgedBadgeLevel: 0,
+					},
+					recordAutoRunComplete: vi.fn().mockReturnValue({ newBadgeLevel: 1, isNewRecord: false }),
+					leaderboardRegistration: null,
+				});
+				renderHook(() => useBatchHandlers(createDeps()));
+
+				const callArgs = vi.mocked(useBatchProcessor).mock.calls[0][0];
+
+				act(() => {
+					callArgs.onComplete({
+						sessionId: 'session-1',
+						sessionName: 'Test',
+						completedTasks: 1,
+						totalTasks: 1,
+						wasStopped: false,
+						elapsedTimeMs: 9000,
+						inputTokens: 100,
+						outputTokens: 50,
+						totalCostUsd: 0.01,
+						documentsProcessed: 1,
+					});
+					vi.advanceTimersByTime(500);
+				});
+
+				expect(useModalStore.getState().getData('standingOvation')).toEqual(
+					expect.objectContaining({
+						badge: expect.objectContaining({ level: 1 }),
+						isNewRecord: false,
+						recordTimeMs: 7000,
+					})
+				);
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
+		it('warns and skips leaderboard submission when a registered user has no auth token', () => {
+			const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+			try {
+				const session = createMockSession({ id: 'session-1' });
+				useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+				useSettingsStore.setState({
+					firstAutoRunCompleted: true,
+					autoRunStats: {
+						cumulativeTimeMs: 1000,
+						totalRuns: 2,
+						currentBadgeLevel: 0,
+						longestRunMs: 500,
+						longestRunTimestamp: 0,
+						lastBadgeUnlockLevel: 0,
+						lastAcknowledgedBadgeLevel: 0,
+					},
+					recordAutoRunComplete: vi
+						.fn()
+						.mockReturnValue({ newBadgeLevel: null, isNewRecord: false }),
+					leaderboardRegistration: {
+						email: 'dev@example.com',
+						displayName: 'Dev',
+						registeredAt: 1,
+						emailConfirmed: true,
+					},
+				});
+				renderHook(() => useBatchHandlers(createDeps()));
+
+				const callArgs = vi.mocked(useBatchProcessor).mock.calls[0][0];
+
+				act(() => {
+					callArgs.onComplete({
+						sessionId: 'session-1',
+						sessionName: 'Test',
+						completedTasks: 1,
+						totalTasks: 1,
+						wasStopped: false,
+						elapsedTimeMs: 2000,
+						inputTokens: 100,
+						outputTokens: 50,
+						totalCostUsd: 0.01,
+						documentsProcessed: 1,
+					});
+				});
+
+				expect(consoleWarn).toHaveBeenCalledWith('Leaderboard submission skipped: no auth token');
+				expect(window.maestro.leaderboard.submit).not.toHaveBeenCalled();
+			} finally {
+				consoleWarn.mockRestore();
+			}
+		});
+
+		it('does not update leaderboard registration when submission is unsuccessful', async () => {
+			const session = createMockSession({ id: 'session-1' });
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+			window.maestro.leaderboard.submit = vi.fn().mockResolvedValue({ success: false });
+			useSettingsStore.setState({
+				firstAutoRunCompleted: true,
+				autoRunStats: {
+					cumulativeTimeMs: 1000,
+					totalRuns: 2,
+					currentBadgeLevel: 0,
+					longestRunMs: 0,
+					longestRunTimestamp: 0,
+					lastBadgeUnlockLevel: 0,
+					lastAcknowledgedBadgeLevel: 0,
+				},
+				recordAutoRunComplete: vi.fn().mockReturnValue({ newBadgeLevel: null, isNewRecord: false }),
+				leaderboardRegistration: {
+					email: 'dev@example.com',
+					displayName: 'Dev',
+					registeredAt: 1,
+					emailConfirmed: true,
+					authToken: 'token-123',
+				},
+			});
+			renderHook(() => useBatchHandlers(createDeps()));
+
+			const callArgs = vi.mocked(useBatchProcessor).mock.calls[0][0];
+
+			await act(async () => {
+				callArgs.onComplete({
+					sessionId: 'session-1',
+					sessionName: 'Test',
+					completedTasks: 1,
+					totalTasks: 1,
+					wasStopped: false,
+					elapsedTimeMs: 2000,
+					inputTokens: 100,
+					outputTokens: 50,
+					totalCostUsd: 0.01,
+					documentsProcessed: 1,
+				});
+				await Promise.resolve();
+				await Promise.resolve();
+			});
+
+			expect(window.maestro.leaderboard.submit).toHaveBeenCalledWith(
+				expect.objectContaining({
+					longestRunMs: 2000,
+				})
+			);
+			expect(useSettingsStore.getState().leaderboardRegistration?.lastSubmissionAt).toBeUndefined();
+		});
+
+		it('submits leaderboard stats and syncs higher server totals', async () => {
+			const session = createMockSession({ id: 'session-1' });
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+			(window as any).maestro.settings = {
+				set: vi.fn().mockResolvedValue(undefined),
+			};
+			window.maestro.leaderboard.submit = vi.fn().mockResolvedValue({
+				success: true,
+				requiresConfirmation: false,
+				ranking: {
+					cumulative: {
+						previousRank: null,
+						rank: 7,
+						total: 42,
+						improved: false,
+					},
+					longestRun: null,
+				},
+				serverTotals: {
+					cumulativeTimeMs: 500000,
+					totalRuns: 12,
+				},
+			});
+			useSettingsStore.setState({
+				firstAutoRunCompleted: true,
+				activeThemeId: 'dark',
+				autoRunStats: {
+					cumulativeTimeMs: 1000,
+					totalRuns: 2,
+					currentBadgeLevel: 0,
+					longestRunMs: 500,
+					longestRunTimestamp: 123456,
+					lastBadgeUnlockLevel: 0,
+					lastAcknowledgedBadgeLevel: 0,
+				},
+				recordAutoRunComplete: vi.fn().mockReturnValue({ newBadgeLevel: null, isNewRecord: false }),
+				leaderboardRegistration: {
+					email: 'dev@example.com',
+					displayName: 'Dev',
+					githubUsername: 'devhub',
+					twitterHandle: 'devx',
+					linkedinHandle: 'devin',
+					registeredAt: 1,
+					emailConfirmed: true,
+					authToken: 'token-123',
+				},
+			});
+			renderHook(() => useBatchHandlers(createDeps()));
+
+			const callArgs = vi.mocked(useBatchProcessor).mock.calls[0][0];
+
+			await act(async () => {
+				callArgs.onComplete({
+					sessionId: 'session-1',
+					sessionName: 'Test',
+					completedTasks: 3,
+					totalTasks: 5,
+					wasStopped: false,
+					elapsedTimeMs: 2000,
+					inputTokens: 600,
+					outputTokens: 300,
+					totalCostUsd: 0.03,
+					documentsProcessed: 2,
+				});
+				await Promise.resolve();
+				await Promise.resolve();
+			});
+
+			expect(window.maestro.leaderboard.submit).toHaveBeenCalledWith(
+				expect.objectContaining({
+					email: 'dev@example.com',
+					displayName: 'Dev',
+					githubUsername: 'devhub',
+					twitterHandle: 'devx',
+					linkedinHandle: 'devin',
+					cumulativeTimeMs: 3000,
+					totalRuns: 3,
+					longestRunMs: 2000,
+					currentRunMs: 2000,
+					theme: 'dark',
+					authToken: 'token-123',
+					deltaMs: 2000,
+					deltaRuns: 1,
+					clientTotalTimeMs: 3000,
+				})
+			);
+			expect(useSettingsStore.getState().leaderboardRegistration?.lastSubmissionAt).toEqual(
+				expect.any(Number)
+			);
+			expect(useSettingsStore.getState().autoRunStats).toEqual(
+				expect.objectContaining({
+					cumulativeTimeMs: 500000,
+					totalRuns: 12,
+					longestRunMs: 2000,
+					longestRunTimestamp: 123456,
+				})
+			);
+		});
+
+		it('handles successful leaderboard submission without ranking or higher server totals', async () => {
+			const session = createMockSession({ id: 'session-1' });
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+			window.maestro.leaderboard.submit = vi.fn().mockResolvedValue({
+				success: true,
+				requiresConfirmation: true,
+				serverTotals: {
+					cumulativeTimeMs: 2000,
+					totalRuns: 2,
+				},
+			});
+			useSettingsStore.setState({
+				firstAutoRunCompleted: true,
+				autoRunStats: {
+					cumulativeTimeMs: 1000,
+					totalRuns: 2,
+					currentBadgeLevel: 0,
+					longestRunMs: 500,
+					longestRunTimestamp: 123456,
+					lastBadgeUnlockLevel: 0,
+					lastAcknowledgedBadgeLevel: 0,
+				},
+				recordAutoRunComplete: vi.fn().mockReturnValue({ newBadgeLevel: null, isNewRecord: false }),
+				leaderboardRegistration: {
+					email: 'dev@example.com',
+					displayName: 'Dev',
+					registeredAt: 1,
+					emailConfirmed: true,
+					authToken: 'token-123',
+				},
+			});
+			renderHook(() => useBatchHandlers(createDeps()));
+
+			const callArgs = vi.mocked(useBatchProcessor).mock.calls[0][0];
+
+			await act(async () => {
+				callArgs.onComplete({
+					sessionId: 'session-1',
+					sessionName: 'Test',
+					completedTasks: 1,
+					totalTasks: 1,
+					wasStopped: false,
+					elapsedTimeMs: 2000,
+					inputTokens: 100,
+					outputTokens: 50,
+					totalCostUsd: 0.01,
+					documentsProcessed: 1,
+				});
+				await Promise.resolve();
+				await Promise.resolve();
+			});
+
+			expect(useSettingsStore.getState().leaderboardRegistration).toEqual(
+				expect.objectContaining({
+					emailConfirmed: false,
+					lastSubmissionAt: expect.any(Number),
+				})
+			);
+			expect(useSettingsStore.getState().autoRunStats.cumulativeTimeMs).toBe(1000);
+			expect(mockNotifyToast).not.toHaveBeenCalledWith(
+				expect.objectContaining({
+					title: 'Leaderboard Updated',
+				})
+			);
+		});
+
+		it.each([
+			{
+				label: 'improved by multiple spots with a longest-run record',
+				cumulative: { previousRank: 5, rank: 3, total: 20, improved: true },
+				isNewRecord: true,
+				longestRun: { rank: 2 },
+				expectedMessage:
+					'You moved up 2 spots! Now #3 (was #5) | New personal best! #2 on longest runs!',
+			},
+			{
+				label: 'improved by one spot',
+				cumulative: { previousRank: 5, rank: 4, total: 20, improved: true },
+				isNewRecord: false,
+				longestRun: null,
+				expectedMessage: 'You moved up 1 spot! Now #4 (was #5)',
+			},
+			{
+				label: 'held the same rank',
+				cumulative: { previousRank: 4, rank: 4, total: 20, improved: false },
+				isNewRecord: false,
+				longestRun: null,
+				expectedMessage: "You're holding steady at #4",
+			},
+			{
+				label: 'dropped to a lower rank',
+				cumulative: { previousRank: 3, rank: 6, total: 20, improved: false },
+				isNewRecord: false,
+				longestRun: null,
+				expectedMessage: "You're now #6 of 20",
+			},
+		])(
+			'shows leaderboard ranking notification when the user $label',
+			async ({ cumulative, isNewRecord, longestRun, expectedMessage }) => {
+				const session = createMockSession({ id: 'session-1' });
+				useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+				window.maestro.leaderboard.submit = vi.fn().mockResolvedValue({
+					success: true,
+					requiresConfirmation: false,
+					ranking: {
+						cumulative,
+						longestRun,
+					},
+				});
+				useSettingsStore.setState({
+					firstAutoRunCompleted: true,
+					activeThemeId: 'dark',
+					autoRunStats: {
+						cumulativeTimeMs: 1000,
+						totalRuns: 2,
+						currentBadgeLevel: 0,
+						longestRunMs: 500,
+						longestRunTimestamp: 123456,
+						lastBadgeUnlockLevel: 0,
+						lastAcknowledgedBadgeLevel: 0,
+					},
+					recordAutoRunComplete: vi.fn().mockReturnValue({
+						newBadgeLevel: null,
+						isNewRecord,
+					}),
+					leaderboardRegistration: {
+						email: 'dev@example.com',
+						displayName: 'Dev',
+						registeredAt: 1,
+						emailConfirmed: true,
+						authToken: 'token-123',
+					},
+				});
+				renderHook(() => useBatchHandlers(createDeps()));
+
+				const callArgs = vi.mocked(useBatchProcessor).mock.calls[0][0];
+
+				await act(async () => {
+					callArgs.onComplete({
+						sessionId: 'session-1',
+						sessionName: 'Test',
+						completedTasks: 1,
+						totalTasks: 1,
+						wasStopped: false,
+						elapsedTimeMs: 2000,
+						inputTokens: 100,
+						outputTokens: 50,
+						totalCostUsd: 0.01,
+						documentsProcessed: 1,
+					});
+					await Promise.resolve();
+					await Promise.resolve();
+				});
+
+				expect(mockNotifyToast).toHaveBeenCalledWith(
+					expect.objectContaining({
+						type: 'success',
+						title: 'Leaderboard Updated',
+						message: expectedMessage,
+					})
+				);
+				if (isNewRecord) {
+					expect(window.maestro.leaderboard.submit).toHaveBeenCalledWith(
+						expect.objectContaining({
+							longestRunDate: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+						})
+					);
+				}
+			}
+		);
+
+		it('captures leaderboard submission failures', async () => {
+			const submitError = new Error('leaderboard offline');
+			const session = createMockSession({ id: 'session-1' });
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+			window.maestro.leaderboard.submit = vi.fn().mockRejectedValue(submitError);
+			useSettingsStore.setState({
+				firstAutoRunCompleted: true,
+				autoRunStats: {
+					cumulativeTimeMs: 1000,
+					totalRuns: 2,
+					currentBadgeLevel: 0,
+					longestRunMs: 500,
+					longestRunTimestamp: 0,
+					lastBadgeUnlockLevel: 0,
+					lastAcknowledgedBadgeLevel: 0,
+				},
+				recordAutoRunComplete: vi.fn().mockReturnValue({ newBadgeLevel: null, isNewRecord: false }),
+				leaderboardRegistration: {
+					email: 'dev@example.com',
+					displayName: 'Dev',
+					registeredAt: 1,
+					emailConfirmed: true,
+					authToken: 'token-123',
+				},
+			});
+			renderHook(() => useBatchHandlers(createDeps()));
+
+			const callArgs = vi.mocked(useBatchProcessor).mock.calls[0][0];
+
+			await act(async () => {
+				callArgs.onComplete({
+					sessionId: 'session-1',
+					sessionName: 'Test',
+					completedTasks: 1,
+					totalTasks: 1,
+					wasStopped: false,
+					elapsedTimeMs: 2000,
+					inputTokens: 100,
+					outputTokens: 50,
+					totalCostUsd: 0.01,
+					documentsProcessed: 1,
+				});
+				await Promise.resolve();
+			});
+
+			expect(mockCaptureException).toHaveBeenCalledWith(submitError, {
+				extra: { operation: 'leaderboard-submit', badgeLevel: expect.any(Number) },
+			});
+		});
+
+		it('reports group chat Auto Run completion and surfaces report failures', async () => {
+			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+			try {
+				const session = createMockSession({ id: 'session-1' });
+				useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+				window.maestro.groupChat = {
+					reportAutoRunComplete: vi.fn().mockRejectedValue(new Error('ipc unavailable')),
+				};
+				useSettingsStore.setState({
+					firstAutoRunCompleted: true,
+					autoRunStats: {
+						cumulativeTimeMs: 0,
+						totalRuns: 0,
+						currentBadgeLevel: 0,
+						longestRunMs: 0,
+						longestRunTimestamp: 0,
+						lastBadgeUnlockLevel: 0,
+						lastAcknowledgedBadgeLevel: 0,
+					},
+					recordAutoRunComplete: vi
+						.fn()
+						.mockReturnValue({ newBadgeLevel: null, isNewRecord: false }),
+					leaderboardRegistration: null,
+				});
+				registerGroupChatAutoRun('session-1', 'group-chat-1', 'Client');
+				renderHook(() => useBatchHandlers(createDeps()));
+
+				const callArgs = vi.mocked(useBatchProcessor).mock.calls[0][0];
+
+				act(() => {
+					callArgs.onComplete({
+						sessionId: 'session-1',
+						sessionName: 'Test',
+						completedTasks: 2,
+						totalTasks: 5,
+						wasStopped: true,
+						elapsedTimeMs: 1000,
+						inputTokens: 600,
+						outputTokens: 300,
+						totalCostUsd: 0.03,
+						documentsProcessed: 3,
+					});
+				});
+				await Promise.resolve();
+				await Promise.resolve();
+
+				expect(window.maestro.groupChat.reportAutoRunComplete).toHaveBeenCalledWith(
+					'group-chat-1',
+					'Client',
+					'Auto Run stopped: completed 2 of 5 tasks across 3 document(s).'
+				);
+				expect(consoleError).toHaveBeenCalledWith(
+					'[GroupChat] Failed to report auto run complete:',
+					expect.any(Error)
+				);
+			} finally {
+				consoleError.mockRestore();
+			}
+		});
+
+		it('reports successful group chat Auto Run completion summaries', async () => {
+			const session = createMockSession({ id: 'session-1' });
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+			window.maestro.groupChat = {
+				reportAutoRunComplete: vi.fn().mockResolvedValue(undefined),
+			};
+			useSettingsStore.setState({
+				firstAutoRunCompleted: true,
+				autoRunStats: {
+					cumulativeTimeMs: 0,
+					totalRuns: 0,
+					currentBadgeLevel: 0,
+					longestRunMs: 0,
+					longestRunTimestamp: 0,
+					lastBadgeUnlockLevel: 0,
+					lastAcknowledgedBadgeLevel: 0,
+				},
+				recordAutoRunComplete: vi.fn().mockReturnValue({ newBadgeLevel: null, isNewRecord: false }),
+				leaderboardRegistration: null,
+			});
+			registerGroupChatAutoRun('session-1', 'group-chat-1', 'Client');
+			renderHook(() => useBatchHandlers(createDeps()));
+
+			const callArgs = vi.mocked(useBatchProcessor).mock.calls[0][0];
+
+			act(() => {
+				callArgs.onComplete({
+					sessionId: 'session-1',
+					sessionName: 'Test',
+					completedTasks: 5,
+					totalTasks: 5,
+					wasStopped: false,
+					elapsedTimeMs: 1000,
+					inputTokens: 600,
+					outputTokens: 300,
+					totalCostUsd: 0.03,
+					documentsProcessed: 3,
+				});
+			});
+			await Promise.resolve();
+
+			expect(window.maestro.groupChat.reportAutoRunComplete).toHaveBeenCalledWith(
+				'group-chat-1',
+				'Client',
+				'Auto Run complete: 5/5 tasks finished across 3 document(s).'
+			);
+		});
+
+		it('auto-finalizes Symphony sessions and records PR history', async () => {
+			vi.useFakeTimers();
+			try {
+				const refreshHistoryPanel = vi.fn();
+				const session = createMockSession({
+					id: 'session-1',
+					cwd: '/repo',
+					symphonyMetadata: {
+						isSymphonySession: true,
+						contributionId: 'contribution-1',
+						issueNumber: 123,
+						issueTitle: 'Fix checkout flow',
+					},
+				} as any);
+				useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+				window.maestro.symphony = {
+					complete: vi.fn().mockResolvedValue({ prUrl: 'https://github.com/org/repo/pull/10' }),
+					updateStatus: vi.fn().mockResolvedValue(undefined),
+				};
+				window.maestro.history.add = vi.fn().mockResolvedValue(undefined);
+				useSettingsStore.setState({
+					firstAutoRunCompleted: true,
+					autoRunStats: {
+						cumulativeTimeMs: 0,
+						totalRuns: 0,
+						currentBadgeLevel: 0,
+						longestRunMs: 0,
+						longestRunTimestamp: 0,
+						lastBadgeUnlockLevel: 0,
+						lastAcknowledgedBadgeLevel: 0,
+					},
+					recordAutoRunComplete: vi
+						.fn()
+						.mockReturnValue({ newBadgeLevel: null, isNewRecord: false }),
+					leaderboardRegistration: null,
+				});
+				renderHook(() =>
+					useBatchHandlers(
+						createDeps({
+							rightPanelRef: { current: { refreshHistoryPanel } as any },
+						})
+					)
+				);
+
+				const callArgs = vi.mocked(useBatchProcessor).mock.calls[0][0];
+
+				await act(async () => {
+					callArgs.onComplete({
+						sessionId: 'session-1',
+						sessionName: 'Test',
+						completedTasks: 4,
+						totalTasks: 4,
+						wasStopped: false,
+						elapsedTimeMs: 10000,
+						inputTokens: 600,
+						outputTokens: 300,
+						totalCostUsd: 0.03,
+						documentsProcessed: 2,
+					});
+					await vi.advanceTimersByTimeAsync(2000);
+				});
+
+				expect(window.maestro.symphony.complete).toHaveBeenCalledWith({
+					contributionId: 'contribution-1',
+					stats: {
+						inputTokens: 600,
+						outputTokens: 300,
+						estimatedCost: 0.03,
+						timeSpentMs: 10000,
+						documentsProcessed: 2,
+						tasksCompleted: 4,
+					},
+				});
+				expect(window.maestro.history.add).toHaveBeenCalledWith(
+					expect.objectContaining({
+						type: 'AUTO',
+						summary: 'Symphony PR ready for review: https://github.com/org/repo/pull/10',
+						projectPath: '/repo',
+						sessionId: 'session-1',
+						success: true,
+					})
+				);
+				expect(refreshHistoryPanel).toHaveBeenCalled();
+				expect(mockNotifyToast).toHaveBeenCalledWith(
+					expect.objectContaining({
+						type: 'success',
+						title: 'Symphony: PR Ready for Review',
+					})
+				);
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
+		it('marks Symphony sessions completed when auto-finalize returns no PR URL', async () => {
+			vi.useFakeTimers();
+			try {
+				const session = createMockSession({
+					id: 'session-1',
+					symphonyMetadata: {
+						isSymphonySession: true,
+						contributionId: 'contribution-1',
+						issueNumber: 123,
+						issueTitle: 'Fix checkout flow',
+					},
+				} as any);
+				useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+				window.maestro.symphony = {
+					complete: vi.fn().mockResolvedValue({ error: 'merge conflict' }),
+					updateStatus: vi.fn().mockResolvedValue(undefined),
+				};
+				useSettingsStore.setState({
+					firstAutoRunCompleted: true,
+					autoRunStats: {
+						cumulativeTimeMs: 0,
+						totalRuns: 0,
+						currentBadgeLevel: 0,
+						longestRunMs: 0,
+						longestRunTimestamp: 0,
+						lastBadgeUnlockLevel: 0,
+						lastAcknowledgedBadgeLevel: 0,
+					},
+					recordAutoRunComplete: vi
+						.fn()
+						.mockReturnValue({ newBadgeLevel: null, isNewRecord: false }),
+					leaderboardRegistration: null,
+				});
+				renderHook(() => useBatchHandlers(createDeps()));
+
+				const callArgs = vi.mocked(useBatchProcessor).mock.calls[0][0];
+
+				await act(async () => {
+					callArgs.onComplete({
+						sessionId: 'session-1',
+						sessionName: 'Test',
+						completedTasks: 4,
+						totalTasks: 4,
+						wasStopped: false,
+						elapsedTimeMs: 10000,
+						inputTokens: 600,
+						outputTokens: 300,
+						totalCostUsd: 0.03,
+						documentsProcessed: 2,
+					});
+					await vi.advanceTimersByTimeAsync(2000);
+				});
+
+				expect(window.maestro.symphony.updateStatus).toHaveBeenCalledWith({
+					contributionId: 'contribution-1',
+					status: 'completed',
+				});
+				expect(mockNotifyToast).toHaveBeenCalledWith(
+					expect.objectContaining({
+						type: 'warning',
+						title: 'Symphony: Manual Finalization Needed',
+						message: 'merge conflict',
+					})
+				);
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
+		it('uses the manual-finalization fallback when Symphony returns no PR URL or error', async () => {
+			vi.useFakeTimers();
+			try {
+				const session = createMockSession({
+					id: 'session-1',
+					symphonyMetadata: {
+						isSymphonySession: true,
+						contributionId: 'contribution-1',
+						issueNumber: 123,
+						issueTitle: 'Fix checkout flow',
+					},
+				} as any);
+				useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+				window.maestro.symphony = {
+					complete: vi.fn().mockResolvedValue({}),
+					updateStatus: vi.fn().mockResolvedValue(undefined),
+				};
+				useSettingsStore.setState({
+					firstAutoRunCompleted: true,
+					autoRunStats: {
+						cumulativeTimeMs: 0,
+						totalRuns: 0,
+						currentBadgeLevel: 0,
+						longestRunMs: 0,
+						longestRunTimestamp: 0,
+						lastBadgeUnlockLevel: 0,
+						lastAcknowledgedBadgeLevel: 0,
+					},
+					recordAutoRunComplete: vi
+						.fn()
+						.mockReturnValue({ newBadgeLevel: null, isNewRecord: false }),
+					leaderboardRegistration: null,
+				});
+				renderHook(() => useBatchHandlers(createDeps()));
+
+				const callArgs = vi.mocked(useBatchProcessor).mock.calls[0][0];
+
+				await act(async () => {
+					callArgs.onComplete({
+						sessionId: 'session-1',
+						sessionName: 'Test',
+						completedTasks: 4,
+						totalTasks: 4,
+						wasStopped: false,
+						elapsedTimeMs: 10000,
+						inputTokens: 600,
+						outputTokens: 300,
+						totalCostUsd: 0.03,
+						documentsProcessed: 2,
+					});
+					await vi.advanceTimersByTimeAsync(2000);
+				});
+
+				expect(mockNotifyToast).toHaveBeenCalledWith(
+					expect.objectContaining({
+						type: 'warning',
+						title: 'Symphony: Manual Finalization Needed',
+						message: 'Could not auto-finalize PR. Open Symphony to finalize.',
+					})
+				);
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
+		it('captures Symphony auto-finalize failures and marks the contribution completed', async () => {
+			vi.useFakeTimers();
+			try {
+				const finalizeError = new Error('push failed');
+				const session = createMockSession({
+					id: 'session-1',
+					symphonyMetadata: {
+						isSymphonySession: true,
+						contributionId: 'contribution-1',
+						issueNumber: 123,
+						issueTitle: 'Fix checkout flow',
+					},
+				} as any);
+				useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+				window.maestro.symphony = {
+					complete: vi.fn().mockRejectedValue(finalizeError),
+					updateStatus: vi.fn().mockResolvedValue(undefined),
+				};
+				useSettingsStore.setState({
+					firstAutoRunCompleted: true,
+					autoRunStats: {
+						cumulativeTimeMs: 0,
+						totalRuns: 0,
+						currentBadgeLevel: 0,
+						longestRunMs: 0,
+						longestRunTimestamp: 0,
+						lastBadgeUnlockLevel: 0,
+						lastAcknowledgedBadgeLevel: 0,
+					},
+					recordAutoRunComplete: vi
+						.fn()
+						.mockReturnValue({ newBadgeLevel: null, isNewRecord: false }),
+					leaderboardRegistration: null,
+				});
+				renderHook(() => useBatchHandlers(createDeps()));
+
+				const callArgs = vi.mocked(useBatchProcessor).mock.calls[0][0];
+
+				await act(async () => {
+					callArgs.onComplete({
+						sessionId: 'session-1',
+						sessionName: 'Test',
+						completedTasks: 4,
+						totalTasks: 4,
+						wasStopped: false,
+						elapsedTimeMs: 10000,
+						inputTokens: 600,
+						outputTokens: 300,
+						totalCostUsd: 0.03,
+						documentsProcessed: 2,
+					});
+					await vi.advanceTimersByTimeAsync(2000);
+				});
+
+				expect(window.maestro.symphony.updateStatus).toHaveBeenCalledWith({
+					contributionId: 'contribution-1',
+					status: 'completed',
+				});
+				expect(mockCaptureException).toHaveBeenCalledWith(finalizeError, {
+					extra: { operation: 'symphony-auto-finalize', contributionId: 'contribution-1' },
+				});
+				expect(mockNotifyToast).toHaveBeenCalledWith(
+					expect.objectContaining({
+						type: 'warning',
+						title: 'Symphony: Auto-Finalize Failed',
+					})
+				);
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
 		it('skips achievements when elapsedTimeMs is 0', () => {
 			const session = createMockSession({ id: 'session-1' });
 			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
@@ -1146,6 +2224,60 @@ describe('useBatchHandlers', () => {
 				});
 			});
 		});
+
+		it('uses Ungrouped when the session group no longer exists', () => {
+			const session = createMockSession({ id: 'session-1', groupId: 'missing-group' });
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'session-1',
+				groups: [{ id: 'other-group', name: 'Other' }],
+			});
+
+			renderHook(() => useBatchHandlers(createDeps()));
+
+			const callArgs = vi.mocked(useBatchProcessor).mock.calls[0][0];
+
+			act(() => {
+				callArgs.onPRResult({
+					sessionId: 'session-1',
+					sessionName: 'Test',
+					success: true,
+					prUrl: 'https://github.com/test/pr/1',
+				});
+			});
+
+			expect(mockNotifyToast).toHaveBeenCalledWith(
+				expect.objectContaining({
+					title: 'PR Created',
+					group: 'Ungrouped',
+				})
+			);
+		});
+
+		it('uses fallback copy when a failed PR result has no error message', () => {
+			const session = createMockSession({ id: 'session-1', name: 'My Agent' });
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			renderHook(() => useBatchHandlers(createDeps()));
+
+			const callArgs = vi.mocked(useBatchProcessor).mock.calls[0][0];
+
+			act(() => {
+				callArgs.onPRResult({
+					sessionId: 'session-1',
+					sessionName: 'My Agent',
+					success: false,
+				});
+			});
+
+			expect(mockNotifyToast).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'warning',
+					title: 'PR Creation Failed',
+					message: 'Failed to create pull request',
+				})
+			);
+		});
 	});
 
 	// ====================================================================
@@ -1182,6 +2314,42 @@ describe('useBatchHandlers', () => {
 			// Queue should have been shortened
 			const updatedSession = useSessionStore.getState().sessions[0];
 			expect(updatedSession.executionQueue.length).toBe(1);
+		});
+
+		it('marks the session busy and processes the queue when the target tab is missing', () => {
+			const mockProcessQueuedItem = vi.fn().mockResolvedValue(undefined);
+			const processQueuedItemRef = { current: mockProcessQueuedItem };
+
+			const unaffectedSession = createMockSession({ id: 'session-1', name: 'Other Agent' });
+			const queuedSession = createMockSession({
+				id: 'session-2',
+				aiTabs: [],
+				activeTabId: 'missing-tab',
+				executionQueue: [{ id: 'q1', type: 'message', text: 'Hello', tabId: 'missing-tab' }] as any,
+			});
+			useSessionStore.setState({
+				sessions: [unaffectedSession, queuedSession],
+				activeSessionId: 'session-2',
+			});
+
+			renderHook(() => useBatchHandlers(createDeps({ processQueuedItemRef })));
+
+			const callArgs = vi.mocked(useBatchProcessor).mock.calls[0][0];
+
+			act(() => {
+				callArgs.onProcessQueueAfterCompletion('session-2');
+			});
+
+			const [other, updatedSession] = useSessionStore.getState().sessions;
+			expect(other).toBe(unaffectedSession);
+			expect(updatedSession.state).toBe('busy');
+			expect(updatedSession.busySource).toBe('ai');
+			expect(updatedSession.executionQueue).toEqual([]);
+			expect(updatedSession.thinkingStartTime).toEqual(expect.any(Number));
+			expect(mockProcessQueuedItem).toHaveBeenCalledWith(
+				'session-2',
+				expect.objectContaining({ id: 'q1', text: 'Hello' })
+			);
 		});
 
 		it('does nothing when queue is empty', () => {
@@ -1253,6 +2421,16 @@ describe('useBatchHandlers', () => {
 	// ====================================================================
 
 	describe('handleStopBatchRun edge cases', () => {
+		let consoleLog: ReturnType<typeof vi.spyOn>;
+
+		beforeEach(() => {
+			consoleLog = vi.spyOn(console, 'log').mockImplementation(() => {});
+		});
+
+		afterEach(() => {
+			consoleLog.mockRestore();
+		});
+
 		it('does NOT call stopBatchRun when user cancels confirmation', () => {
 			const session = createMockSession({ id: 'session-1', name: 'My Agent' });
 			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
@@ -1425,6 +2603,16 @@ describe('useBatchHandlers', () => {
 	// ====================================================================
 
 	describe('quit confirmation edge cases', () => {
+		it('does not register a quit listener when the app bridge is missing it', () => {
+			(window as any).maestro.app = {
+				confirmQuit: vi.fn(),
+				cancelQuit: vi.fn(),
+			};
+
+			expect(() => renderHook(() => useBatchHandlers(createDeps()))).not.toThrow();
+			expect(window.maestro.app.confirmQuit).not.toHaveBeenCalled();
+		});
+
 		it('shows modal (does not confirm) when both busy agents AND active auto-runs exist', () => {
 			const busySession = createMockSession({
 				id: 'session-1',
@@ -1721,6 +2909,43 @@ describe('useBatchHandlers', () => {
 			expect(mockProcessQueuedItem).toHaveBeenCalledWith(
 				'session-1',
 				expect.objectContaining({ id: 'q1', text: 'First' })
+			);
+		});
+
+		it('processes non-message queue items without appending a user log entry', () => {
+			const mockProcessQueuedItem = vi.fn().mockResolvedValue(undefined);
+			const processQueuedItemRef = { current: mockProcessQueuedItem };
+
+			const session = createMockSession({
+				id: 'session-1',
+				aiTabs: [
+					{
+						id: 'tab-1',
+						label: 'AI',
+						type: 'ai',
+						logs: [],
+						state: 'idle',
+					},
+				],
+				activeTabId: 'tab-1',
+				executionQueue: [{ id: 'q1', type: 'command', text: 'npm test', tabId: 'tab-1' }] as any,
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			renderHook(() => useBatchHandlers(createDeps({ processQueuedItemRef })));
+
+			const callArgs = vi.mocked(useBatchProcessor).mock.calls[0][0];
+
+			act(() => {
+				callArgs.onProcessQueueAfterCompletion('session-1');
+			});
+
+			const updatedSession = useSessionStore.getState().sessions[0];
+			expect(updatedSession.aiTabs[0].logs).toEqual([]);
+			expect(updatedSession.activeTabId).toBe('tab-1');
+			expect(mockProcessQueuedItem).toHaveBeenCalledWith(
+				'session-1',
+				expect.objectContaining({ id: 'q1', type: 'command' })
 			);
 		});
 	});

@@ -34,6 +34,7 @@ export function listSessions(agentIdArg: string, options: ListSessionsOptions): 
 				console.error(formatError(`Agent not found: ${agentIdArg}`));
 			}
 			process.exit(1);
+			return;
 		}
 
 		if (!SUPPORTED_TYPES.includes(agent.toolType)) {
@@ -46,6 +47,7 @@ export function listSessions(agentIdArg: string, options: ListSessionsOptions): 
 				console.error(formatError(msg));
 			}
 			process.exit(1);
+			return;
 		}
 
 		const limit = options.limit ? parseInt(options.limit, 10) : 25;
@@ -59,6 +61,7 @@ export function listSessions(agentIdArg: string, options: ListSessionsOptions): 
 				console.error(formatError(msg));
 			}
 			process.exit(1);
+			return;
 		}
 
 		const skip = options.skip ? parseInt(options.skip, 10) : 0;
@@ -72,6 +75,7 @@ export function listSessions(agentIdArg: string, options: ListSessionsOptions): 
 				console.error(formatError(msg));
 			}
 			process.exit(1);
+			return;
 		}
 
 		const projectPath = agent.cwd;

@@ -309,6 +309,53 @@ diff --git a/src/test.ts b/src/test.ts
 			});
 		});
 
+		it('should hide additions and deletions when git log omits numstat fields', async () => {
+			gitLogMock().mockResolvedValue({
+				entries: [createGitLogEntry({ additions: undefined, deletions: undefined })],
+				error: undefined,
+			});
+
+			render(<GitLogViewer {...defaultProps} />);
+
+			await waitFor(() => {
+				expect(screen.queryByText('Loading git log...')).not.toBeInTheDocument();
+			});
+
+			expect(screen.queryByText(/^\+/)).not.toBeInTheDocument();
+			expect(screen.queryByText(/^-/)).not.toBeInTheDocument();
+		});
+
+		it('should display partial numstat when one side is omitted', async () => {
+			gitLogMock().mockResolvedValue({
+				entries: [
+					createGitLogEntry({
+						hash: 'additions-only',
+						shortHash: 'addonly',
+						subject: 'Additions only',
+						additions: 5,
+						deletions: undefined,
+					}),
+					createGitLogEntry({
+						hash: 'deletions-only',
+						shortHash: 'delonly',
+						subject: 'Deletions only',
+						additions: undefined,
+						deletions: 3,
+					}),
+				],
+				error: undefined,
+			});
+
+			render(<GitLogViewer {...defaultProps} />);
+
+			await waitFor(() => {
+				expect(screen.queryByText('Loading git log...')).not.toBeInTheDocument();
+			});
+
+			expect(screen.getByText('+5')).toBeInTheDocument();
+			expect(screen.getByText('-3')).toBeInTheDocument();
+		});
+
 		it('should hide additions when zero', async () => {
 			gitLogMock().mockResolvedValue({
 				entries: [createGitLogEntry({ additions: 0, deletions: 5 })],
@@ -462,6 +509,22 @@ diff --git a/src/test.ts b/src/test.ts
 			// Component should render without crashing even with invalid date
 			expect(screen.getByText('1 commits')).toBeInTheDocument();
 		});
+
+		it('should fall back to the raw date when date formatting throws', async () => {
+			const toLocaleDateString = vi
+				.spyOn(Date.prototype, 'toLocaleDateString')
+				.mockImplementation(() => {
+					throw new Error('date formatting unavailable');
+				});
+
+			render(<GitLogViewer {...defaultProps} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('2025-12-07T10:30:00Z')).toBeInTheDocument();
+			});
+
+			expect(toLocaleDateString).toHaveBeenCalled();
+		});
 	});
 
 	describe('Commit selection', () => {
@@ -511,7 +574,9 @@ diff --git a/src/test.ts b/src/test.ts
 			fireEvent.click(screen.getByText('Second commit'));
 
 			// Check that second commit's hash is shown (this would trigger a new show call)
-			expect(gitShowMock()).toHaveBeenCalledWith('/test/project', 'abc2', undefined);
+			await waitFor(() => {
+				expect(gitShowMock()).toHaveBeenCalledWith('/test/project', 'abc2', undefined);
+			});
 		});
 
 		it('should display commit position in footer', async () => {
@@ -744,6 +809,20 @@ diff --git a/src/test.ts b/src/test.ts
 				expect(screen.getByText('Commit 2 of 2')).toBeInTheDocument();
 			});
 		});
+
+		it('should ignore Enter activation because commits are selected by click', async () => {
+			render(<GitLogViewer {...defaultProps} />);
+
+			await waitFor(() => {
+				expect(screen.queryByText('Loading git log...')).not.toBeInTheDocument();
+			});
+
+			gitShowMock().mockClear();
+			fireEvent.keyDown(window, { key: 'Enter' });
+
+			expect(gitShowMock()).not.toHaveBeenCalled();
+			expect(defaultProps.onClose).not.toHaveBeenCalled();
+		});
 	});
 
 	describe('Close functionality', () => {
@@ -794,6 +873,10 @@ diff --git a/src/test.ts b/src/test.ts
 		it('should register layer on mount', async () => {
 			render(<GitLogViewer {...defaultProps} />);
 
+			await waitFor(() => {
+				expect(screen.queryByText('Loading git log...')).not.toBeInTheDocument();
+			});
+
 			expect(mockRegisterLayer).toHaveBeenCalledWith({
 				type: 'modal',
 				priority: expect.any(Number),
@@ -808,14 +891,38 @@ diff --git a/src/test.ts b/src/test.ts
 		it('should unregister layer on unmount', async () => {
 			const { unmount } = render(<GitLogViewer {...defaultProps} />);
 
+			await waitFor(() => {
+				expect(screen.queryByText('Loading git log...')).not.toBeInTheDocument();
+			});
+
 			unmount();
 
 			expect(mockUnregisterLayer).toHaveBeenCalledWith('mock-layer-id');
 		});
 
+		it('should skip layer updates and unregister when registration returns no layer id', async () => {
+			mockRegisterLayer.mockReturnValueOnce('');
+
+			const { unmount } = render(<GitLogViewer {...defaultProps} />);
+
+			await waitFor(() => {
+				expect(screen.queryByText('Loading git log...')).not.toBeInTheDocument();
+			});
+
+			expect(mockUpdateLayerHandler).not.toHaveBeenCalled();
+
+			unmount();
+
+			expect(mockUnregisterLayer).not.toHaveBeenCalled();
+		});
+
 		it('should call onClose when escape handler is triggered', async () => {
 			const onClose = vi.fn();
 			render(<GitLogViewer {...defaultProps} onClose={onClose} />);
+
+			await waitFor(() => {
+				expect(screen.queryByText('Loading git log...')).not.toBeInTheDocument();
+			});
 
 			// Get the onEscape handler from register call
 			const registerCall = mockRegisterLayer.mock.calls[0][0];
@@ -827,10 +934,18 @@ diff --git a/src/test.ts b/src/test.ts
 		it('should update layer handler when onClose changes', async () => {
 			const { rerender } = render(<GitLogViewer {...defaultProps} />);
 
+			await waitFor(() => {
+				expect(screen.queryByText('Loading git log...')).not.toBeInTheDocument();
+			});
+
 			const newOnClose = vi.fn();
 			rerender(<GitLogViewer {...defaultProps} onClose={newOnClose} />);
 
-			expect(mockUpdateLayerHandler).toHaveBeenCalled();
+			const [, latestHandler] = mockUpdateLayerHandler.mock.calls.at(-1) ?? [];
+			expect(mockUpdateLayerHandler).toHaveBeenCalledWith('mock-layer-id', expect.any(Function));
+
+			latestHandler();
+			expect(newOnClose).toHaveBeenCalledTimes(1);
 		});
 	});
 
@@ -1053,6 +1168,32 @@ diff --git a/src/foo.ts b/src/foo.ts`,
 
 			expect(screen.getByText('src/foo.ts | 5 +++++')).toBeInTheDocument();
 			expect(screen.getByText('src/bar.ts | 3 +--')).toBeInTheDocument();
+		});
+
+		it('should stop parsing file stats at the blank separator before the diff', async () => {
+			gitShowMock().mockResolvedValue({
+				stdout: `commit abc123
+Author: Test Author <test@example.com>
+Date:   Sat Dec 7 10:30:00 2025 -0800
+
+    feat: add new feature
+
+---
+ src/foo.ts | 5 +++++
+
+diff --git a/src/foo.ts b/src/foo.ts`,
+				stderr: '',
+				exitCode: 0,
+			});
+
+			render(<GitLogViewer {...defaultProps} />);
+
+			await waitFor(() => {
+				expect(screen.queryByText('Loading diff...')).not.toBeInTheDocument();
+			});
+
+			expect(screen.getByText('src/foo.ts | 5 +++++')).toBeInTheDocument();
+			expect(screen.queryByText(/diff --git/)).not.toBeInTheDocument();
 		});
 	});
 

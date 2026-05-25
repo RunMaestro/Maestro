@@ -16,7 +16,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { renderHook, act, waitFor } from '@testing-library/react';
+import { renderHook, act } from '@testing-library/react';
 import { useAutoRunHandlers } from '../../../renderer/hooks';
 import type { Session, BatchRunConfig } from '../../../renderer/types';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
@@ -285,11 +285,13 @@ describe('useAutoRunHandlers', () => {
 			});
 
 			const updateFn = mockDeps.setSessions.mock.calls[0][0];
-			const updatedSessions = updateFn([mockSession]);
-			expect(updatedSessions[0].autoRunMode).toBe('preview');
-			expect(updatedSessions[0].autoRunCursorPosition).toBe(100);
-			expect(updatedSessions[0].autoRunEditScrollPos).toBe(200);
-			expect(updatedSessions[0].autoRunPreviewScrollPos).toBe(300);
+			const otherSession = createMockSession({ id: 'other-session', autoRunMode: 'edit' });
+			const updatedSessions = updateFn([otherSession, mockSession]);
+			expect(updatedSessions[0]).toBe(otherSession);
+			expect(updatedSessions[1].autoRunMode).toBe('preview');
+			expect(updatedSessions[1].autoRunCursorPosition).toBe(100);
+			expect(updatedSessions[1].autoRunEditScrollPos).toBe(200);
+			expect(updatedSessions[1].autoRunPreviewScrollPos).toBe(300);
 		});
 
 		it('should do nothing when activeSession is null', () => {
@@ -362,6 +364,30 @@ describe('useAutoRunHandlers', () => {
 			const updatedSessions = updateFn([mockSession]);
 			expect(updatedSessions[0].autoRunSelectedFile).toBe('Missing Doc');
 			expect(updatedSessions[0].autoRunContent).toBe('');
+		});
+
+		it('should keep other sessions and default missing content/version when read succeeds without content', async () => {
+			const mockSession = createMockSession({ autoRunContentVersion: undefined });
+			const otherSession = createMockSession({ id: 'other-session', autoRunContent: 'Other' });
+			const mockDeps = createMockDeps();
+
+			vi.mocked(window.maestro.autorun.readDoc).mockResolvedValue({
+				success: true,
+				content: undefined,
+			});
+
+			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+
+			await act(async () => {
+				await result.current.handleAutoRunSelectDocument('Empty Doc');
+			});
+
+			const updateFn = mockDeps.setSessions.mock.calls[0][0];
+			const updatedSessions = updateFn([otherSession, mockSession]);
+			expect(updatedSessions[0]).toBe(otherSession);
+			expect(updatedSessions[1].autoRunSelectedFile).toBe('Empty Doc');
+			expect(updatedSessions[1].autoRunContent).toBe('');
+			expect(updatedSessions[1].autoRunContentVersion).toBe(1);
 		});
 
 		it('should do nothing when activeSession is null', async () => {
@@ -484,6 +510,26 @@ describe('useAutoRunHandlers', () => {
 			});
 
 			expect(mockDeps.setSuccessFlashNotification).toHaveBeenCalledWith('2 documents removed');
+		});
+
+		it('should handle a successful refresh payload with missing files/tree as one removal', async () => {
+			const mockSession = createMockSession();
+			const mockDeps = createMockDeps();
+			mockDeps.autoRunDocumentList = ['Phase 1'];
+
+			vi.mocked(window.maestro.autorun.listDocs).mockResolvedValue({
+				success: true,
+			});
+
+			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+
+			await act(async () => {
+				await result.current.handleAutoRunRefresh();
+			});
+
+			expect(mockDeps.setAutoRunDocumentList).toHaveBeenCalledWith([]);
+			expect(mockDeps.setAutoRunDocumentTree).toHaveBeenCalledWith([]);
+			expect(mockDeps.setSuccessFlashNotification).toHaveBeenCalledWith('1 document removed');
 		});
 
 		it('should show "no new documents" when count unchanged', async () => {
@@ -636,6 +682,25 @@ describe('useAutoRunHandlers', () => {
 			]);
 		});
 
+		it('should default missing refreshed document files and tree to empty arrays', async () => {
+			const mockSession = createMockSession();
+			const mockDeps = createMockDeps();
+
+			vi.mocked(window.maestro.autorun.writeDoc).mockResolvedValue({ success: true });
+			vi.mocked(window.maestro.autorun.listDocs).mockResolvedValue({
+				success: true,
+			});
+
+			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+
+			await act(async () => {
+				await result.current.handleAutoRunCreateDocument('New Doc');
+			});
+
+			expect(mockDeps.setAutoRunDocumentList).toHaveBeenCalledWith([]);
+			expect(mockDeps.setAutoRunDocumentTree).toHaveBeenCalledWith([]);
+		});
+
 		it('should select the new document and switch to edit mode', async () => {
 			const mockSession = createMockSession({ autoRunMode: 'preview' });
 			const mockDeps = createMockDeps();
@@ -680,6 +745,30 @@ describe('useAutoRunHandlers', () => {
 			const updateFn = mockDeps.setSessions.mock.calls[0][0];
 			const updatedSessions = updateFn([mockSession]);
 			expect(updatedSessions[0].autoRunContentVersion).toBe(4);
+		});
+
+		it('should still select the new document when refresh list fails', async () => {
+			const mockSession = createMockSession({ autoRunContentVersion: undefined });
+			const otherSession = createMockSession({ id: 'other-session' });
+			const mockDeps = createMockDeps();
+
+			vi.mocked(window.maestro.autorun.writeDoc).mockResolvedValue({ success: true });
+			vi.mocked(window.maestro.autorun.listDocs).mockResolvedValue({ success: false });
+
+			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+
+			let success: boolean = false;
+			await act(async () => {
+				success = await result.current.handleAutoRunCreateDocument('New Doc');
+			});
+
+			const updateFn = mockDeps.setSessions.mock.calls[0][0];
+			const updatedSessions = updateFn([otherSession, mockSession]);
+			expect(success).toBe(true);
+			expect(mockDeps.setAutoRunDocumentList).not.toHaveBeenCalled();
+			expect(updatedSessions[0]).toBe(otherSession);
+			expect(updatedSessions[1].autoRunSelectedFile).toBe('New Doc');
+			expect(updatedSessions[1].autoRunContentVersion).toBe(1);
 		});
 
 		it('should return false when write fails', async () => {
@@ -731,8 +820,10 @@ describe('useAutoRunHandlers', () => {
 		it('should handle write exception gracefully', async () => {
 			const mockSession = createMockSession();
 			const mockDeps = createMockDeps();
+			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-			vi.mocked(window.maestro.autorun.writeDoc).mockRejectedValue(new Error('Write failed'));
+			const error = new Error('Write failed');
+			vi.mocked(window.maestro.autorun.writeDoc).mockRejectedValue(error);
 
 			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
 
@@ -742,6 +833,8 @@ describe('useAutoRunHandlers', () => {
 			});
 
 			expect(success).toBe(false);
+			expect(consoleError).toHaveBeenCalledWith('Failed to create document:', error);
+			consoleError.mockRestore();
 		});
 	});
 
@@ -985,6 +1078,61 @@ describe('useAutoRunHandlers', () => {
 			expect(updatedSessions[0].autoRunContent).toBe('# First Doc Content');
 		});
 
+		it('should default missing first document content and preserve unrelated sessions', async () => {
+			const mockSession = createMockSession({ autoRunContentVersion: undefined });
+			const otherSession = createMockSession({ id: 'other-session' });
+			const mockDeps = createMockDeps();
+
+			vi.mocked(window.maestro.autorun.listDocs).mockResolvedValue({
+				success: true,
+				files: ['First Doc'],
+				tree: [],
+			});
+			vi.mocked(window.maestro.autorun.readDoc).mockResolvedValue({
+				success: true,
+				content: undefined,
+			});
+
+			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+
+			await act(async () => {
+				await result.current.handleAutoRunFolderSelected('/folder');
+			});
+
+			const updateFn = mockDeps.setSessions.mock.calls[0][0];
+			const updatedSessions = updateFn([otherSession, mockSession]);
+			expect(updatedSessions[0]).toBe(otherSession);
+			expect(updatedSessions[1].autoRunSelectedFile).toBe('First Doc');
+			expect(updatedSessions[1].autoRunContent).toBe('');
+			expect(updatedSessions[1].autoRunContentVersion).toBe(1);
+		});
+
+		it('should leave first document content empty when the initial read fails', async () => {
+			const mockSession = createMockSession();
+			const mockDeps = createMockDeps();
+
+			vi.mocked(window.maestro.autorun.listDocs).mockResolvedValue({
+				success: true,
+				files: ['Unreadable Doc'],
+				tree: [],
+			});
+			vi.mocked(window.maestro.autorun.readDoc).mockResolvedValue({
+				success: false,
+				content: 'ignored',
+			});
+
+			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+
+			await act(async () => {
+				await result.current.handleAutoRunFolderSelected('/folder');
+			});
+
+			const updateFn = mockDeps.setSessions.mock.calls[0][0];
+			const updatedSessions = updateFn([mockSession]);
+			expect(updatedSessions[0].autoRunSelectedFile).toBe('Unreadable Doc');
+			expect(updatedSessions[0].autoRunContent).toBe('');
+		});
+
 		it('should handle empty folder', async () => {
 			const mockSession = createMockSession();
 			const mockDeps = createMockDeps();
@@ -1011,8 +1159,33 @@ describe('useAutoRunHandlers', () => {
 			expect(updatedSessions[0].autoRunContent).toBe('');
 		});
 
+		it('should treat successful folder selection without files/tree as empty', async () => {
+			const mockSession = createMockSession({ autoRunContentVersion: undefined });
+			const otherSession = createMockSession({ id: 'other-session' });
+			const mockDeps = createMockDeps();
+
+			vi.mocked(window.maestro.autorun.listDocs).mockResolvedValue({
+				success: true,
+			});
+
+			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+
+			await act(async () => {
+				await result.current.handleAutoRunFolderSelected('/empty-payload');
+			});
+
+			expect(mockDeps.setAutoRunDocumentList).toHaveBeenCalledWith([]);
+			expect(mockDeps.setAutoRunDocumentTree).toHaveBeenCalledWith([]);
+			const updateFn = mockDeps.setSessions.mock.calls[0][0];
+			const updatedSessions = updateFn([otherSession, mockSession]);
+			expect(updatedSessions[0]).toBe(otherSession);
+			expect(updatedSessions[1].autoRunFolderPath).toBe('/empty-payload');
+			expect(updatedSessions[1].autoRunContentVersion).toBe(1);
+		});
+
 		it('should handle listDocs failure', async () => {
-			const mockSession = createMockSession();
+			const mockSession = createMockSession({ autoRunContentVersion: undefined });
+			const otherSession = createMockSession({ id: 'other-session' });
 			const mockDeps = createMockDeps();
 
 			vi.mocked(window.maestro.autorun.listDocs).mockResolvedValue({
@@ -1030,8 +1203,31 @@ describe('useAutoRunHandlers', () => {
 			expect(mockDeps.setAutoRunDocumentList).toHaveBeenCalledWith([]);
 			expect(mockDeps.setAutoRunDocumentTree).toHaveBeenCalledWith([]);
 			const updateFn = mockDeps.setSessions.mock.calls[0][0];
+			const updatedSessions = updateFn([otherSession, mockSession]);
+			expect(updatedSessions[0]).toBe(otherSession);
+			expect(updatedSessions[1].autoRunFolderPath).toBe('/bad/folder');
+			expect(updatedSessions[1].autoRunSelectedFile).toBeUndefined();
+			expect(updatedSessions[1].autoRunContent).toBe('');
+			expect(updatedSessions[1].autoRunContentVersion).toBe(1);
+		});
+
+		it('should clear document state when listDocs throws', async () => {
+			const mockSession = createMockSession();
+			const mockDeps = createMockDeps();
+
+			vi.mocked(window.maestro.autorun.listDocs).mockRejectedValue(new Error('IPC failed'));
+
+			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+
+			await act(async () => {
+				await result.current.handleAutoRunFolderSelected('/throws/folder');
+			});
+
+			expect(mockDeps.setAutoRunDocumentList).toHaveBeenCalledWith([]);
+			expect(mockDeps.setAutoRunDocumentTree).toHaveBeenCalledWith([]);
+			const updateFn = mockDeps.setSessions.mock.calls[0][0];
 			const updatedSessions = updateFn([mockSession]);
-			expect(updatedSessions[0].autoRunFolderPath).toBe('/bad/folder');
+			expect(updatedSessions[0].autoRunFolderPath).toBe('/throws/folder');
 			expect(updatedSessions[0].autoRunSelectedFile).toBeUndefined();
 			expect(updatedSessions[0].autoRunContent).toBe('');
 		});
@@ -1363,6 +1559,53 @@ describe('useAutoRunHandlers', () => {
 			);
 		});
 
+		it('should use fetched branch when create-new target has an empty branch name', async () => {
+			const mockSession = createMockSession({
+				worktreeConfig: { basePath: '/projects/worktrees' },
+			});
+			const mockDeps = createMockDeps();
+
+			vi.mocked(window.maestro.git.worktreeSetup).mockResolvedValue({
+				success: true,
+			});
+			vi.mocked(gitService.getBranches).mockResolvedValue(['fallback-branch']);
+
+			const config: BatchRunConfig = {
+				documents: [{ id: '1', filename: 'Phase 1', resetOnCompletion: false, isDuplicate: false }],
+				prompt: 'Test prompt',
+				loopEnabled: false,
+				worktreeTarget: {
+					mode: 'create-new',
+					newBranchName: '',
+					createPROnCompletion: true,
+				},
+			};
+
+			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+
+			await act(async () => {
+				await result.current.handleStartBatchRun(config);
+			});
+
+			expect(window.maestro.git.worktreeSetup).toHaveBeenCalledWith(
+				'/test/project',
+				'/projects/worktrees/',
+				'',
+				undefined
+			);
+			expect(config.worktree).toEqual({
+				enabled: true,
+				path: '/projects/worktrees/',
+				branchName: 'fallback-branch',
+				createPROnCompletion: true,
+				prTargetBranch: 'main',
+			});
+			const sessions = useSessionStore.getState().sessions;
+			const newSession = sessions.find((s) => s.cwd === '/projects/worktrees/');
+			expect(newSession?.worktreeBranch).toBe('fallback-branch');
+			expect(mockDeps.startBatchRun).toHaveBeenCalledTimes(1);
+		});
+
 		it('should handle existing-closed worktree mode', async () => {
 			const mockSession = createMockSession();
 			const mockDeps = createMockDeps();
@@ -1506,6 +1749,91 @@ describe('useAutoRunHandlers', () => {
 			});
 
 			expect(mockDeps.setAutoRunSetupModalOpen).toHaveBeenCalledWith(true);
+		});
+
+		it('should open setup modal for SSH sessions without a configured folder', async () => {
+			const mockSession = createMockSession({
+				autoRunFolderPath: undefined,
+				sessionSshRemoteConfig: { remoteId: 'remote-1', name: 'Remote', host: 'example.com' },
+			});
+			const mockDeps = createMockDeps();
+
+			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+
+			await act(async () => {
+				await result.current.handleAutoRunOpenSetup();
+			});
+
+			expect(mockDeps.setAutoRunSetupModalOpen).toHaveBeenCalledWith(true);
+			expect(window.maestro.dialog.selectFolder).not.toHaveBeenCalled();
+		});
+
+		it('should use local folder picker and configure selected folder', async () => {
+			const mockSession = createMockSession({ autoRunFolderPath: undefined });
+			const mockDeps = createMockDeps();
+
+			vi.mocked(window.maestro.dialog.selectFolder).mockResolvedValue('/picked/folder');
+			vi.mocked(window.maestro.autorun.listDocs).mockResolvedValue({
+				success: true,
+				files: ['Picked'],
+				tree: [],
+			});
+			vi.mocked(window.maestro.autorun.readDoc).mockResolvedValue({
+				success: true,
+				content: '# Picked',
+			});
+
+			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+
+			await act(async () => {
+				await result.current.handleAutoRunOpenSetup();
+			});
+			await act(async () => {
+				await Promise.resolve();
+			});
+
+			expect(window.maestro.dialog.selectFolder).toHaveBeenCalledOnce();
+			expect(window.maestro.autorun.listDocs).toHaveBeenCalledWith('/picked/folder', undefined);
+			const updateFn = mockDeps.setSessions.mock.calls[0][0];
+			const updatedSessions = updateFn([mockSession]);
+			expect(updatedSessions[0].autoRunFolderPath).toBe('/picked/folder');
+			expect(updatedSessions[0].autoRunSelectedFile).toBe('Picked');
+			expect(updatedSessions[0].autoRunContent).toBe('# Picked');
+		});
+
+		it('should leave setup unchanged when local folder picker is cancelled', async () => {
+			const mockSession = createMockSession({ autoRunFolderPath: undefined });
+			const mockDeps = createMockDeps();
+
+			vi.mocked(window.maestro.dialog.selectFolder).mockResolvedValue(null);
+
+			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+
+			await act(async () => {
+				await result.current.handleAutoRunOpenSetup();
+			});
+
+			expect(window.maestro.dialog.selectFolder).toHaveBeenCalledOnce();
+			expect(window.maestro.autorun.listDocs).not.toHaveBeenCalled();
+			expect(mockDeps.setSessions).not.toHaveBeenCalled();
+			expect(mockDeps.setAutoRunSetupModalOpen).not.toHaveBeenCalled();
+		});
+
+		it('should leave setup unchanged when there is no active session and picker is cancelled', async () => {
+			const mockDeps = createMockDeps();
+
+			vi.mocked(window.maestro.dialog.selectFolder).mockResolvedValue(null);
+
+			const { result } = renderHook(() => useAutoRunHandlers(null, mockDeps));
+
+			await act(async () => {
+				await result.current.handleAutoRunOpenSetup();
+			});
+
+			expect(window.maestro.dialog.selectFolder).toHaveBeenCalledOnce();
+			expect(window.maestro.autorun.listDocs).not.toHaveBeenCalled();
+			expect(mockDeps.setSessions).not.toHaveBeenCalled();
+			expect(mockDeps.setAutoRunSetupModalOpen).not.toHaveBeenCalled();
 		});
 	});
 

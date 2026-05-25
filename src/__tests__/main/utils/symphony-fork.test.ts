@@ -155,6 +155,22 @@ describe('ensureForkSetup', () => {
 		);
 	});
 
+	it('returns error when remote add fails after remote rename succeeds', async () => {
+		mockExecFileNoThrow
+			.mockResolvedValueOnce(ok('chris\n')) // gh api user
+			.mockResolvedValueOnce(ok('false\n')) // permissions.push
+			.mockResolvedValueOnce(ok('')) // gh repo fork
+			.mockResolvedValueOnce(ok('https://github.com/chris/repo.git\n')) // clone url
+			.mockResolvedValueOnce(ok('')) // git remote rename
+			.mockResolvedValueOnce(fail('origin already exists')); // git remote add
+
+		const result = await ensureForkSetup('/tmp/repo', 'owner/repo');
+
+		expect(result.isFork).toBe(false);
+		expect(result.error).toContain('Failed to add origin remote');
+		expect(result.error).toContain('origin already exists');
+	});
+
 	it('returns error when both remote rename and set-url fail', async () => {
 		mockExecFileNoThrow
 			.mockResolvedValueOnce(ok('chris\n')) // gh api user

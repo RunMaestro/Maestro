@@ -201,6 +201,50 @@ describe('send command', () => {
 		expect(processExitSpy).toHaveBeenCalledWith(1);
 	});
 
+	it('should emit unknown resolver errors when agent ID resolution throws a non-Error value', async () => {
+		const exitError = new Error('process.exit: 1');
+		processExitSpy.mockImplementationOnce(() => {
+			throw exitError;
+		});
+		vi.mocked(resolveAgentId).mockImplementationOnce(() => {
+			throw 'bad resolver state';
+		});
+
+		await expect(send('bad-id', 'Hello', {})).rejects.toBe(exitError);
+
+		const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+		expect(output).toEqual({
+			success: false,
+			error: 'Unknown error',
+			code: 'AGENT_NOT_FOUND',
+		});
+		expect(processExitSpy).toHaveBeenCalledWith(1);
+		expect(getSessionById).not.toHaveBeenCalled();
+		expect(spawnAgent).not.toHaveBeenCalled();
+	});
+
+	it('should exit with error when the resolved agent session is missing', async () => {
+		const exitError = new Error('process.exit: 1');
+		processExitSpy.mockImplementationOnce(() => {
+			throw exitError;
+		});
+		vi.mocked(resolveAgentId).mockReturnValue('agent-missing-123');
+		vi.mocked(getSessionById).mockReturnValue(null);
+
+		await expect(send('agent-missing', 'Hello', {})).rejects.toBe(exitError);
+
+		const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+		expect(output).toEqual({
+			success: false,
+			error: 'Agent not found: agent-missing',
+			code: 'AGENT_NOT_FOUND',
+		});
+		expect(getSessionById).toHaveBeenCalledWith('agent-missing-123');
+		expect(processExitSpy).toHaveBeenCalledWith(1);
+		expect(detectAgent).not.toHaveBeenCalled();
+		expect(spawnAgent).not.toHaveBeenCalled();
+	});
+
 	it('should exit with error for unsupported agent type', async () => {
 		vi.mocked(resolveAgentId).mockReturnValue('agent-term-1');
 		vi.mocked(getSessionById).mockReturnValue(
@@ -274,5 +318,28 @@ describe('send command', () => {
 		const output = JSON.parse(consoleSpy.mock.calls[0][0]);
 		expect(output.success).toBe(true);
 		expect(output.usage).toBeNull();
+	});
+
+	it('should serialize missing successful agent session and response fields as null', async () => {
+		vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+		vi.mocked(getSessionById).mockReturnValue(mockAgent());
+		vi.mocked(detectAgent).mockResolvedValue({ available: true, path: '/usr/bin/claude' });
+		vi.mocked(spawnAgent).mockResolvedValue({
+			success: true,
+		});
+
+		await send('agent-abc', 'Simple message', {});
+
+		const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+		expect(output).toEqual({
+			agentId: 'agent-abc-123',
+			agentName: 'Test Agent',
+			sessionId: null,
+			response: null,
+			success: true,
+			usage: null,
+		});
+		expect(processExitSpy).not.toHaveBeenCalled();
+		expect(estimateContextUsage).not.toHaveBeenCalled();
 	});
 });

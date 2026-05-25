@@ -44,7 +44,7 @@
 		"format": "prettier --write \"src/**/*.{ts,tsx}\"",
 		"format:all": "prettier --write .",
 		"format:check": "prettier --check \"src/**/*.{ts,tsx}\"",
-		"format:check:all": "prettier --check .",
+		"format:check:all": "node --max-old-space-size=8192 ./node_modules/prettier/bin/prettier.cjs --check .",
 		"validate:push": "npm run build:prompts && npm run format:check:all && npm run lint && npm run lint:eslint && npm run test",
 		"test": "vitest run",
 		"test:watch": "vitest",

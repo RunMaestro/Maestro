@@ -93,14 +93,14 @@ export function useSortedSessions(deps: UseSortedSessionsDeps): UseSortedSession
 		const sortedGroups = [...groups].sort((a, b) => compareNamesIgnoringEmojis(a.name, b.name));
 		sortedGroups.forEach((group) => {
 			const groupSessions = sessions
-				.filter((s) => s.groupId === group.id && !s.parentSessionId)
+				.filter((s) => s.groupId === group.id)
 				.sort((a, b) => compareNamesIgnoringEmojis(a.name, b.name));
 			groupSessions.forEach(addSessionWithWorktrees);
 		});
 
 		// Then, add ungrouped sessions (sorted alphabetically, ignoring leading emojis)
 		const ungroupedSessions = sessions
-			.filter((s) => !s.groupId && !s.parentSessionId)
+			.filter((s) => !s.groupId)
 			.sort((a, b) => compareNamesIgnoringEmojis(a.name, b.name));
 		ungroupedSessions.forEach(addSessionWithWorktrees);
 

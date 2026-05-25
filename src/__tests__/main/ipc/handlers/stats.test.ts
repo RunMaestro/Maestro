@@ -81,6 +81,7 @@ describe('stats IPC handlers', () => {
 			recordSessionCreated: vi.fn().mockReturnValue('session-lifecycle-id'),
 			recordSessionClosed: vi.fn().mockReturnValue(true),
 			getSessionLifecycleEvents: vi.fn().mockReturnValue([]),
+			getEarliestTimestamp: vi.fn().mockReturnValue(1234567890),
 		};
 
 		vi.mocked(statsDbModule.getStatsDB).mockReturnValue(mockStatsDB as unknown as StatsDB);
@@ -127,6 +128,9 @@ describe('stats IPC handlers', () => {
 				'stats:record-session-created',
 				'stats:record-session-closed',
 				'stats:get-session-lifecycle',
+				'stats:get-earliest-timestamp',
+				'stats:get-initialization-result',
+				'stats:clear-initialization-result',
 			];
 
 			for (const channel of expectedChannels) {
@@ -271,6 +275,55 @@ describe('stats IPC handlers', () => {
 		});
 	});
 
+	describe('stats collection disabled', () => {
+		it('should skip write handlers controlled by the stats collection setting', async () => {
+			const settingsStore = {
+				get: vi.fn().mockReturnValue(false),
+			};
+			handlers.clear();
+			vi.mocked(ipcMain.handle).mockImplementation((channel, handler) => {
+				handlers.set(channel, handler);
+			});
+			registerStatsHandlers({ getMainWindow, settingsStore });
+
+			const queryResult = await handlers.get('stats:record-query')!({} as any, {
+				sessionId: 'session-1',
+				agentType: 'claude-code',
+				source: 'user' as const,
+				startTime: Date.now(),
+				duration: 5000,
+			});
+			const autoRunResult = await handlers.get('stats:start-autorun')!({} as any, {
+				sessionId: 'session-1',
+				agentType: 'claude-code',
+				startTime: Date.now(),
+				tasksTotal: 2,
+			});
+			const taskResult = await handlers.get('stats:record-task')!({} as any, {
+				autoRunSessionId: 'autorun-session-1',
+				sessionId: 'session-1',
+				agentType: 'claude-code',
+				taskIndex: 0,
+				startTime: Date.now(),
+				duration: 10000,
+				success: true,
+			});
+			const sessionCreatedResult = await handlers.get('stats:record-session-created')!({} as any, {
+				sessionId: 'session-1',
+				agentType: 'claude-code',
+				createdAt: Date.now(),
+			});
+
+			expect(queryResult).toBeNull();
+			expect(autoRunResult).toBeNull();
+			expect(taskResult).toBeNull();
+			expect(sessionCreatedResult).toBeNull();
+			expect(settingsStore.get).toHaveBeenCalledWith('statsCollectionEnabled');
+			expect(statsDbModule.getStatsDB).not.toHaveBeenCalled();
+			expect(mockMainWindow.webContents.send).not.toHaveBeenCalled();
+		});
+	});
+
 	describe('read-only operations should not broadcast', () => {
 		describe('stats:get-stats', () => {
 			it('should not broadcast stats:updated when getting stats', async () => {
@@ -325,6 +378,50 @@ describe('stats IPC handlers', () => {
 				await handler!({} as any, 'all');
 
 				expect(mockStatsDB.exportToCsv).toHaveBeenCalledWith('all');
+				expect(mockMainWindow.webContents.send).not.toHaveBeenCalled();
+			});
+		});
+
+		describe('stats:get-database-size', () => {
+			it('should not broadcast stats:updated when getting database size', async () => {
+				const handler = handlers.get('stats:get-database-size');
+
+				const result = await handler!({} as any);
+
+				expect(result).toEqual({ sizeBytes: 1024, sizeFormatted: '1 KB' });
+				expect(mockStatsDB.getDatabaseSize).toHaveBeenCalled();
+				expect(mockMainWindow.webContents.send).not.toHaveBeenCalled();
+			});
+		});
+
+		describe('stats:get-earliest-timestamp', () => {
+			it('should not broadcast stats:updated when getting earliest timestamp', async () => {
+				const handler = handlers.get('stats:get-earliest-timestamp');
+
+				const result = await handler!({} as any);
+
+				expect(result).toBe(1234567890);
+				expect(mockStatsDB.getEarliestTimestamp).toHaveBeenCalled();
+				expect(mockMainWindow.webContents.send).not.toHaveBeenCalled();
+			});
+		});
+
+		describe('initialization result stubs', () => {
+			it('should return null for initialization result until reset tracking is implemented', async () => {
+				const handler = handlers.get('stats:get-initialization-result');
+
+				const result = await handler!({} as any);
+
+				expect(result).toBeNull();
+				expect(mockMainWindow.webContents.send).not.toHaveBeenCalled();
+			});
+
+			it('should acknowledge initialization result clearing until reset tracking is implemented', async () => {
+				const handler = handlers.get('stats:clear-initialization-result');
+
+				const result = await handler!({} as any);
+
+				expect(result).toBe(true);
 				expect(mockMainWindow.webContents.send).not.toHaveBeenCalled();
 			});
 		});

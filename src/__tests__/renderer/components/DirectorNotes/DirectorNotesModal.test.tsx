@@ -6,6 +6,8 @@ import type { Theme } from '../../../../renderer/types';
 // Mock layer stack context
 const mockRegisterLayer = vi.fn(() => 'layer-director-notes');
 const mockUnregisterLayer = vi.fn();
+const mockOverviewEscape = vi.fn(() => false);
+const mockHasCachedSynopsis = vi.hoisted(() => vi.fn(() => false));
 
 vi.mock('../../../../renderer/contexts/LayerStackContext', () => ({
 	useLayerStack: () => ({
@@ -59,7 +61,7 @@ vi.mock('../../../../renderer/components/DirectorNotes/AIOverviewTab', () => ({
 			</button>
 		</div>
 	),
-	hasCachedSynopsis: () => false,
+	hasCachedSynopsis: mockHasCachedSynopsis,
 }));
 
 vi.mock('../../../../renderer/hooks', () => ({
@@ -69,11 +71,18 @@ vi.mock('../../../../renderer/hooks', () => ({
 }));
 
 vi.mock('../../../../renderer/components/DirectorNotes/OverviewTab', () => ({
-	OverviewTab: React.forwardRef(({ theme }: { theme: Theme }, _ref: any) => (
-		<div data-testid="overview-tab" tabIndex={0}>
-			Overview Content
-		</div>
-	)),
+	OverviewTab: React.forwardRef(({ theme }: { theme: Theme }, ref: any) => {
+		React.useImperativeHandle(ref, () => ({
+			focus: vi.fn(),
+			onEscape: mockOverviewEscape,
+		}));
+
+		return (
+			<div data-testid="overview-tab" tabIndex={0}>
+				Overview Content
+			</div>
+		);
+	}),
 	TabFocusHandle: {},
 }));
 
@@ -108,6 +117,10 @@ describe('DirectorNotesModal', () => {
 		onClose = vi.fn();
 		mockRegisterLayer.mockClear();
 		mockUnregisterLayer.mockClear();
+		mockOverviewEscape.mockReset();
+		mockOverviewEscape.mockReturnValue(false);
+		mockHasCachedSynopsis.mockReset();
+		mockHasCachedSynopsis.mockReturnValue(false);
 	});
 
 	afterEach(() => {
@@ -184,6 +197,18 @@ describe('DirectorNotesModal', () => {
 			await waitFor(() => {
 				expect(screen.getByText('(generating...)')).toBeInTheDocument();
 			});
+		});
+
+		it('does not show generating indicator when synopsis is already cached', async () => {
+			mockHasCachedSynopsis.mockReturnValue(true);
+
+			renderModal();
+
+			await waitFor(() => {
+				const overviewTabButton = screen.getByText('AI Overview').closest('button');
+				expect(overviewTabButton).not.toBeDisabled();
+			});
+			expect(screen.queryByText('(generating...)')).not.toBeInTheDocument();
 		});
 
 		it('renders into a portal on document.body', async () => {
@@ -399,6 +424,28 @@ describe('DirectorNotesModal', () => {
 			const overviewContainer = screen.getByTestId('overview-tab').closest('.h-full');
 			expect(overviewContainer).not.toHaveClass('hidden');
 		});
+
+		it('ignores unrelated keyboard shortcuts', async () => {
+			renderModal();
+
+			await waitFor(() => {
+				expect(screen.getByTestId('unified-history-tab')).toBeInTheDocument();
+			});
+
+			await act(async () => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: 'P',
+						metaKey: true,
+						shiftKey: true,
+						bubbles: true,
+					})
+				);
+			});
+
+			const historyContainer = screen.getByTestId('unified-history-tab').closest('.h-full');
+			expect(historyContainer).not.toHaveClass('hidden');
+		});
 	});
 
 	describe('Close Behavior', () => {
@@ -463,6 +510,37 @@ describe('DirectorNotesModal', () => {
 			const layerConfig = mockRegisterLayer.mock.calls[0][0];
 			layerConfig.onEscape();
 
+			expect(onClose).toHaveBeenCalledTimes(1);
+		});
+
+		it('onEscape stops when the active tab consumes Escape', async () => {
+			mockOverviewEscape.mockReturnValue(true);
+			renderModal();
+
+			fireEvent.click(screen.getByRole('button', { name: /Help/i }));
+			await waitFor(() => {
+				expect(screen.getByTestId('overview-tab').closest('.h-full')).not.toHaveClass('hidden');
+			});
+
+			const layerConfig = mockRegisterLayer.mock.calls[0][0];
+			layerConfig.onEscape();
+
+			expect(mockOverviewEscape).toHaveBeenCalledOnce();
+			expect(onClose).not.toHaveBeenCalled();
+		});
+
+		it('onEscape closes directly from the AI Overview tab', async () => {
+			renderModal();
+
+			await act(async () => {
+				fireEvent.click(screen.getByTestId('trigger-synopsis-ready'));
+			});
+			fireEvent.click(screen.getByText('AI Overview').closest('button')!);
+
+			const layerConfig = mockRegisterLayer.mock.calls[0][0];
+			layerConfig.onEscape();
+
+			expect(mockOverviewEscape).not.toHaveBeenCalled();
 			expect(onClose).toHaveBeenCalledTimes(1);
 		});
 	});
@@ -536,6 +614,28 @@ describe('DirectorNotesModal', () => {
 
 			const overviewTabButton = screen.getByText('AI Overview').closest('button');
 			expect(overviewTabButton).not.toBeDisabled();
+		});
+
+		it('focuses AI Overview content when switching to the AI Overview tab', async () => {
+			const rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+				callback(0);
+				return 1;
+			});
+
+			try {
+				renderModal();
+
+				await act(async () => {
+					fireEvent.click(screen.getByTestId('trigger-synopsis-ready'));
+				});
+				fireEvent.click(screen.getByText('AI Overview').closest('button')!);
+
+				await waitFor(() => {
+					expect(screen.getByTestId('ai-overview-tab').closest('.h-full')).toHaveFocus();
+				});
+			} finally {
+				rafSpy.mockRestore();
+			}
 		});
 	});
 });

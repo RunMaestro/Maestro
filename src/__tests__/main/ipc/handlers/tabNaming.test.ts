@@ -225,6 +225,51 @@ describe('Tab Naming IPC Handlers', () => {
 			expect(result).toBe('Login Form Implementation');
 		});
 
+		it('uses the agent command and empty args when no path or args are configured', async () => {
+			mockAgentDetector.getAgent.mockResolvedValue({
+				id: 'opencode',
+				name: 'OpenCode',
+				command: 'opencode',
+			});
+
+			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
+			let onExitCallback: ((sessionId: string) => void) | undefined;
+
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Name this tab',
+				agentType: 'opencode',
+				cwd: '/test/project',
+				sessionSshRemoteConfig: {
+					enabled: true,
+					remoteId: null,
+				},
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalled();
+			});
+
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					command: 'opencode',
+					args: [],
+					sendPromptViaStdin: false,
+				})
+			);
+
+			onDataCallback?.('tab-naming-mock-uuid-1234', 'OpenCode Naming');
+			onExitCallback?.('tab-naming-mock-uuid-1234');
+
+			await expect(resultPromise).resolves.toBe('OpenCode Naming');
+		});
+
 		it('filters out --dangerously-skip-permissions for read-only parallel execution', async () => {
 			const { buildAgentArgs } = await import('../../../../main/utils/agent-args');
 
@@ -379,6 +424,46 @@ describe('Tab Naming IPC Handlers', () => {
 			expect(mockProcessManager.kill).toHaveBeenCalledWith('tab-naming-mock-uuid-1234');
 
 			vi.useRealTimers();
+		});
+
+		it('ignores stale timeout and exit events after completion', async () => {
+			vi.useFakeTimers();
+			const clearTimeoutSpy = vi
+				.spyOn(global, 'clearTimeout')
+				.mockImplementation(() => undefined as any);
+			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
+			let onExitCallback: ((sessionId: string) => void) | undefined;
+
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
+
+			try {
+				const resultPromise = invokeHandler('tabNaming:generateTabName', {
+					userMessage: 'Complete before timeout',
+					agentType: 'claude-code',
+					cwd: '/test/project',
+				});
+
+				await vi.waitFor(() => {
+					expect(mockProcessManager.spawn).toHaveBeenCalled();
+				});
+
+				onDataCallback?.('tab-naming-mock-uuid-1234', 'Fast Result');
+				onExitCallback?.('other-session-id');
+				onExitCallback?.('tab-naming-mock-uuid-1234');
+				onExitCallback?.('tab-naming-mock-uuid-1234');
+				await vi.advanceTimersByTimeAsync(31000);
+
+				await expect(resultPromise).resolves.toBe('Fast Result');
+				expect(mockProcessManager.kill).not.toHaveBeenCalled();
+			} finally {
+				clearTimeoutSpy.mockRestore();
+				vi.useRealTimers();
+			}
 		});
 
 		it('cleans up listeners on completion', async () => {
@@ -620,6 +705,325 @@ describe('Tab Naming IPC Handlers', () => {
 
 			const result = await resultPromise;
 			expect(result).toBe('SSH Remote Feature');
+		});
+
+		it('wraps SSH commands without stdin when stream-json input is unsupported', async () => {
+			const { getSshRemoteConfig } = await import('../../../../main/utils/ssh-remote-resolver');
+			const { buildSshCommand } = await import('../../../../main/utils/ssh-command-builder');
+
+			(getSshRemoteConfig as Mock).mockReturnValue({
+				config: {
+					id: 'test-remote',
+					host: 'test.example.com',
+					port: 22,
+				},
+				source: 'session',
+			});
+			(buildSshCommand as Mock).mockResolvedValue({
+				command: '/usr/bin/ssh',
+				args: ['test.example.com', 'claude --print'],
+			});
+			mockAgentDetector.getAgent.mockResolvedValue({
+				...mockClaudeAgent,
+				capabilities: {},
+			});
+
+			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
+			let onExitCallback: ((sessionId: string) => void) | undefined;
+
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Use SSH without stdin',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+				sessionSshRemoteConfig: {
+					enabled: true,
+					remoteId: 'test-remote-id',
+					workingDirOverride: '/remote/project',
+				},
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalled();
+			});
+
+			expect(buildSshCommand).toHaveBeenCalledWith(
+				expect.anything(),
+				expect.objectContaining({
+					command: 'claude',
+					cwd: '/remote/project',
+					useStdin: false,
+				})
+			);
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					sendPromptViaStdin: false,
+				})
+			);
+
+			onDataCallback?.('tab-naming-mock-uuid-1234', 'SSH Command Naming');
+			onExitCallback?.('tab-naming-mock-uuid-1234');
+
+			await expect(resultPromise).resolves.toBe('SSH Command Naming');
+		});
+
+		it('falls back to local execution when SSH remote config cannot be resolved', async () => {
+			const { getSshRemoteConfig } = await import('../../../../main/utils/ssh-remote-resolver');
+			const { buildSshCommand } = await import('../../../../main/utils/ssh-command-builder');
+
+			(getSshRemoteConfig as Mock).mockReturnValue({
+				config: null,
+				source: 'missing',
+			});
+
+			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
+			let onExitCallback: ((sessionId: string) => void) | undefined;
+
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'SSH config missing',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+				sessionSshRemoteConfig: {
+					enabled: true,
+					remoteId: 'missing-remote',
+				},
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalled();
+			});
+
+			expect(buildSshCommand).not.toHaveBeenCalled();
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					command: '/usr/local/bin/claude',
+					cwd: '/test/project',
+					sendPromptViaStdin: false,
+				})
+			);
+
+			onDataCallback?.('tab-naming-mock-uuid-1234', 'Local Fallback Naming');
+			onExitCallback?.('tab-naming-mock-uuid-1234');
+
+			await expect(resultPromise).resolves.toBe('Local Fallback Naming');
+		});
+
+		it('adds stream-json stdin args when only the input-format flag is present', async () => {
+			const { getSshRemoteConfig } = await import('../../../../main/utils/ssh-remote-resolver');
+			const { buildSshCommand } = await import('../../../../main/utils/ssh-command-builder');
+
+			(getSshRemoteConfig as Mock).mockReturnValue({
+				config: {
+					id: 'test-remote',
+					host: 'test.example.com',
+					port: 22,
+				},
+				source: 'session',
+			});
+			(buildSshCommand as Mock).mockResolvedValue({
+				command: '/usr/bin/ssh',
+				args: ['test.example.com', 'claude --input-format stream-json'],
+			});
+			mockAgentDetector.getAgent.mockResolvedValue({
+				...mockClaudeAgent,
+				args: ['--print', '--input-format'],
+				capabilities: {
+					supportsStreamJsonInput: true,
+				},
+			});
+
+			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
+			let onExitCallback: ((sessionId: string) => void) | undefined;
+
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Use SSH with incomplete stdin args',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+				sessionSshRemoteConfig: {
+					enabled: true,
+					remoteId: 'test-remote-id',
+				},
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalled();
+			});
+
+			expect(buildSshCommand).toHaveBeenCalledWith(
+				expect.anything(),
+				expect.objectContaining({
+					args: expect.arrayContaining(['--input-format', 'stream-json']),
+					useStdin: true,
+				})
+			);
+
+			onDataCallback?.('tab-naming-mock-uuid-1234', 'SSH Partial Args Naming');
+			onExitCallback?.('tab-naming-mock-uuid-1234');
+
+			await expect(resultPromise).resolves.toBe('SSH Partial Args Naming');
+		});
+
+		it('does not duplicate stream-json stdin args when they are already present', async () => {
+			const { getSshRemoteConfig } = await import('../../../../main/utils/ssh-remote-resolver');
+			const { buildSshCommand } = await import('../../../../main/utils/ssh-command-builder');
+
+			(getSshRemoteConfig as Mock).mockReturnValue({
+				config: {
+					id: 'test-remote',
+					host: 'test.example.com',
+					port: 22,
+				},
+				source: 'session',
+			});
+			(buildSshCommand as Mock).mockResolvedValue({
+				command: '/usr/bin/ssh',
+				args: ['test.example.com', 'claude --input-format stream-json'],
+			});
+			mockAgentDetector.getAgent.mockResolvedValue({
+				...mockClaudeAgent,
+				args: ['--print', '--input-format', 'stream-json'],
+				capabilities: {
+					supportsStreamJsonInput: true,
+				},
+			});
+
+			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
+			let onExitCallback: ((sessionId: string) => void) | undefined;
+
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Use SSH with complete stdin args',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+				sessionSshRemoteConfig: {
+					enabled: true,
+					remoteId: 'test-remote-id',
+				},
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalled();
+			});
+
+			expect(buildSshCommand).toHaveBeenCalledWith(
+				expect.anything(),
+				expect.objectContaining({
+					args: ['--print', '--input-format', 'stream-json'],
+					useStdin: true,
+				})
+			);
+
+			onDataCallback?.('tab-naming-mock-uuid-1234', 'SSH Complete Args Naming');
+			onExitCallback?.('tab-naming-mock-uuid-1234');
+
+			await expect(resultPromise).resolves.toBe('SSH Complete Args Naming');
+		});
+
+		it('adds stream-json input args for SSH stdin when the agent args do not already include them', async () => {
+			const { getSshRemoteConfig } = await import('../../../../main/utils/ssh-remote-resolver');
+			const { buildSshCommand } = await import('../../../../main/utils/ssh-command-builder');
+
+			(getSshRemoteConfig as Mock).mockReturnValue({
+				config: {
+					id: 'test-remote',
+					host: 'test.example.com',
+					port: 22,
+				},
+				source: 'session',
+			});
+			(buildSshCommand as Mock).mockResolvedValue({
+				command: '/usr/bin/ssh',
+				args: ['test.example.com', 'claude --print --input-format stream-json'],
+			});
+			mockAgentDetector.getAgent.mockResolvedValue({
+				...mockClaudeAgent,
+				args: ['--print'],
+				capabilities: {
+					supportsStreamJsonInput: true,
+				},
+			});
+
+			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
+			let onExitCallback: ((sessionId: string) => void) | undefined;
+
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Use SSH with stdin args',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+				sessionSshRemoteConfig: {
+					enabled: true,
+					remoteId: 'test-remote-id',
+				},
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalled();
+			});
+
+			expect(buildSshCommand).toHaveBeenCalledWith(
+				expect.anything(),
+				expect.objectContaining({
+					args: ['--print', '--input-format', 'stream-json'],
+					useStdin: true,
+				})
+			);
+
+			onDataCallback?.('tab-naming-mock-uuid-1234', 'SSH Stdin Naming');
+			onExitCallback?.('tab-naming-mock-uuid-1234');
+
+			await expect(resultPromise).resolves.toBe('SSH Stdin Naming');
+		});
+
+		it('returns null and tolerates cleanup failure when configuration resolution throws', async () => {
+			const { applyAgentConfigOverrides } = await import('../../../../main/utils/agent-args');
+			(applyAgentConfigOverrides as Mock).mockImplementationOnce(() => {
+				throw new Error('bad config');
+			});
+			mockProcessManager.kill.mockImplementationOnce(() => {
+				throw new Error('already gone');
+			});
+
+			const result = await invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Trigger config failure',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+			});
+
+			expect(result).toBeNull();
+			expect(mockProcessManager.kill).toHaveBeenCalledWith('tab-naming-mock-uuid-1234');
 		});
 
 		it('handles process manager not available', async () => {

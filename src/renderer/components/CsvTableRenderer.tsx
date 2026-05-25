@@ -52,13 +52,13 @@ function parseCsv(content: string, delimiter = ','): string[][] {
 			} else if (ch === '\r' && next === '\n') {
 				row.push(current);
 				current = '';
-				if (row.length > 0) rows.push(row);
+				rows.push(row);
 				row = [];
 				i++; // skip \n
 			} else if (ch === '\n') {
 				row.push(current);
 				current = '';
-				if (row.length > 0) rows.push(row);
+				rows.push(row);
 				row = [];
 			} else {
 				current += ch;
@@ -80,7 +80,6 @@ function parseCsv(content: string, delimiter = ','): string[][] {
  */
 function isNumericValue(value: string): boolean {
 	const trimmed = value.trim();
-	if (trimmed === '') return false;
 	// Match: optional currency/sign prefix, digits with optional commas, optional decimal, optional suffix
 	return /^[($\-]*[\d,]+(\.\d+)?[%)]*$/.test(trimmed);
 }
@@ -141,7 +140,6 @@ function compareValues(a: string, b: string, direction: SortDirection): number {
  * Highlight matching substrings within a cell value.
  */
 function highlightMatches(text: string, query: string, accentColor: string): ReactNode {
-	if (!query) return text;
 	const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 	const regex = new RegExp(`(${escaped})`, 'gi');
 	const parts = text.split(regex);
@@ -149,8 +147,8 @@ function highlightMatches(text: string, query: string, accentColor: string): Rea
 	// Use running character offset as key to guarantee uniqueness across
 	// identical substrings appearing at different positions.
 	let offset = 0;
-	return parts.map((part) => {
-		const key = offset;
+	return parts.map((part, index) => {
+		const key = `${offset}-${index}`;
 		offset += part.length;
 		return regex.test(part) ? (
 			<mark
@@ -291,7 +289,7 @@ export function CsvTableRenderer({
 									onClick={() => handleHeaderClick(i)}
 									style={{
 										padding: '8px 12px',
-										textAlign: alignments[i] ?? 'left',
+										textAlign: alignments[i]!,
 										backgroundColor:
 											sort?.column === i ? theme.colors.accent + '20' : theme.colors.bgActivity,
 										borderBottom: `2px solid ${theme.colors.border}`,
@@ -353,7 +351,7 @@ export function CsvTableRenderer({
 										key={colIdx}
 										style={{
 											padding: '6px 12px',
-											textAlign: alignments[colIdx] ?? 'left',
+											textAlign: alignments[colIdx]!,
 											borderRight:
 												colIdx < columnCount - 1 ? `1px solid ${theme.colors.border}` : undefined,
 											color: theme.colors.textMain,

@@ -125,22 +125,20 @@ export function AgentCreationDialog({
 			setIsCreating(false);
 
 			// Generate default values for this repo/issue
-			if (repo && issue) {
-				setSessionName(`Symphony: ${repo.slug} #${issue.number}`);
-				const [owner, repoName] = repo.slug.split('/');
-				// Include issue number in directory name to avoid collisions across contributions
-				const dirName = `${owner}-${repoName}-${issue.number}`;
-				// Get actual home directory from main process to avoid tilde expansion issues
-				window.maestro.fs
-					.homeDir()
-					.then((homeDir) => {
-						setWorkingDirectory(`${homeDir}/Maestro-Symphony/${dirName}`);
-					})
-					.catch(() => {
-						// Fallback to tilde (will be expanded in process-manager)
-						setWorkingDirectory(`~/Maestro-Symphony/${dirName}`);
-					});
-			}
+			setSessionName(`Symphony: ${repo.slug} #${issue.number}`);
+			const [owner, repoName] = repo.slug.split('/');
+			// Include issue number in directory name to avoid collisions across contributions
+			const dirName = `${owner}-${repoName}-${issue.number}`;
+			// Get actual home directory from main process to avoid tilde expansion issues
+			window.maestro.fs
+				.homeDir()
+				.then((homeDir) => {
+					setWorkingDirectory(`${homeDir}/Maestro-Symphony/${dirName}`);
+				})
+				.catch(() => {
+					// Fallback to tilde (will be expanded in process-manager)
+					setWorkingDirectory(`~/Maestro-Symphony/${dirName}`);
+				});
 		}
 	}, [isOpen, repo, issue]);
 
@@ -195,7 +193,7 @@ export function AgentCreationDialog({
 		if (isOpen) {
 			const id = registerLayer({
 				type: 'modal',
-				priority: MODAL_PRIORITIES.SYMPHONY_AGENT_CREATION ?? 711,
+				priority: MODAL_PRIORITIES.SYMPHONY_AGENT_CREATION,
 				blocksLowerLayers: true,
 				capturesFocus: true,
 				focusTrap: 'strict',
@@ -231,22 +229,22 @@ export function AgentCreationDialog({
 
 	// Handle create
 	const handleCreate = useCallback(async () => {
-		if (!selectedAgent || !sessionName.trim()) return;
-
 		setIsCreating(true);
 		setError(null);
+		const agentId = selectedAgent!;
+		const trimmedSessionName = sessionName.trim();
 
 		try {
 			const result = await onCreateAgent({
-				agentType: selectedAgent,
-				sessionName: sessionName.trim(),
+				agentType: agentId,
+				sessionName: trimmedSessionName,
 				workingDirectory,
 				repo,
 				issue,
-				customPath: customAgentPaths[selectedAgent] || undefined,
-				customArgs: customAgentArgs[selectedAgent] || undefined,
-				customEnvVars: customAgentEnvVars[selectedAgent] || undefined,
-				agentConfig: agentConfigs[selectedAgent] || undefined,
+				customPath: customAgentPaths[agentId] || undefined,
+				customArgs: customAgentArgs[agentId] || undefined,
+				customEnvVars: customAgentEnvVars[agentId] || undefined,
+				agentConfig: agentConfigs[agentId] || undefined,
 			});
 
 			if (!result.success) {
@@ -272,6 +270,12 @@ export function AgentCreationDialog({
 	]);
 
 	if (!isOpen) return null;
+
+	const canCreate =
+		selectedAgent !== null &&
+		sessionName.trim().length > 0 &&
+		!isCreating &&
+		ac.detectedAgents.length > 0;
 
 	const modalContent = (
 		<div
@@ -439,7 +443,6 @@ export function AgentCreationDialog({
 														onCustomPathChange={(value) => {
 															setCustomAgentPaths((prev) => ({ ...prev, [agent.id]: value }));
 														}}
-														onCustomPathBlur={() => {}}
 														onCustomPathClear={() => {
 															setCustomAgentPaths((prev) => {
 																const newPaths = { ...prev };
@@ -451,7 +454,6 @@ export function AgentCreationDialog({
 														onCustomArgsChange={(value) => {
 															setCustomAgentArgs((prev) => ({ ...prev, [agent.id]: value }));
 														}}
-														onCustomArgsBlur={() => {}}
 														onCustomArgsClear={() => {
 															setCustomAgentArgs((prev) => {
 																const newArgs = { ...prev };
@@ -510,7 +512,6 @@ export function AgentCreationDialog({
 																},
 															}));
 														}}
-														onEnvVarsBlur={() => {}}
 														agentConfig={agentConfigs[agent.id] || {}}
 														onConfigChange={(key, value) => {
 															setAgentConfigs((prev) => ({
@@ -521,7 +522,6 @@ export function AgentCreationDialog({
 																},
 															}));
 														}}
-														onConfigBlur={(_key, _value) => {}}
 														availableModels={availableModels[agent.id] || []}
 														loadingModels={loadingModels[agent.id] || false}
 														onRefreshModels={() => loadModelsForAgent(agent.id, true)}
@@ -614,10 +614,8 @@ export function AgentCreationDialog({
 						Cancel
 					</button>
 					<button
-						onClick={handleCreate}
-						disabled={
-							!selectedAgent || !sessionName.trim() || isCreating || ac.detectedAgents.length === 0
-						}
+						onClick={canCreate ? handleCreate : undefined}
+						disabled={!canCreate}
 						className="px-4 py-2 rounded font-semibold text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
 						style={{ backgroundColor: theme.colors.accent, color: theme.colors.accentForeground }}
 					>

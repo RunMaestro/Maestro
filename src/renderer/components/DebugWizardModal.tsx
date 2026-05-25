@@ -57,7 +57,7 @@ export function DebugWizardModal({
 			if (result) {
 				setDirectoryPath(result);
 				// Auto-populate agent name from folder name
-				const folderName = result.split('/').pop() || result.split('\\').pop() || 'My Project';
+				const folderName = result.split(/[\\/]/).filter(Boolean).pop() || 'My Project';
 				if (!agentName) {
 					setAgentName(folderName);
 				}
@@ -179,7 +179,7 @@ export function DebugWizardModal({
 		<Modal
 			theme={theme}
 			title="Debug: Jump to Phase Review"
-			priority={MODAL_PRIORITIES.CONFIRM || 100}
+			priority={MODAL_PRIORITIES.CONFIRM}
 			onClose={onClose}
 			width={500}
 			initialFocusRef={inputRef}

@@ -17,7 +17,10 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act, waitFor, within } from '@testing-library/react';
-import { SettingsModal } from '../../../renderer/components/Settings/SettingsModal';
+import {
+	SettingsModal,
+	testSettingsLlmConnection,
+} from '../../../renderer/components/Settings/SettingsModal';
 import { formatEnterToSend } from '../../../renderer/utils/shortcutFormatter';
 import type {
 	Theme,
@@ -58,6 +61,37 @@ vi.mock('../../../renderer/components/AICommandsPanel', () => ({
 vi.mock('../../../renderer/components/SpecKitCommandsPanel', () => ({
 	SpecKitCommandsPanel: ({ theme }: { theme: Theme }) => (
 		<div data-testid="spec-kit-commands-panel">Spec Kit Commands Panel</div>
+	),
+}));
+
+// Mock OpenSpecCommandsPanel
+vi.mock('../../../renderer/components/OpenSpecCommandsPanel', () => ({
+	OpenSpecCommandsPanel: ({ theme }: { theme: Theme }) => (
+		<div data-testid="openspec-commands-panel">OpenSpec Commands Panel</div>
+	),
+}));
+
+vi.mock('../../../renderer/components/Settings/SshRemotesSection', () => ({
+	SshRemotesSection: () => <div data-testid="ssh-remotes-section">SSH Remotes Section</div>,
+}));
+
+vi.mock('../../../renderer/components/Settings/SshRemoteIgnoreSection', () => ({
+	SshRemoteIgnoreSection: ({
+		ignorePatterns,
+		honorGitignore,
+		onIgnorePatternsChange,
+		onHonorGitignoreChange,
+	}: any) => (
+		<div data-testid="ssh-remote-ignore-section">
+			<span data-testid="ssh-ignore-patterns">{ignorePatterns.join(',')}</span>
+			<span data-testid="ssh-honor-gitignore">{String(honorGitignore)}</span>
+			<button onClick={() => onIgnorePatternsChange(['.git', 'node_modules'])}>
+				Update SSH Ignore Patterns
+			</button>
+			<button onClick={() => onHonorGitignoreChange(!honorGitignore)}>
+				Toggle SSH Honor Gitignore
+			</button>
+		</div>
 	),
 }));
 
@@ -108,6 +142,7 @@ const mockSetCrashReportingEnabled = vi.fn();
 const mockSetCustomAICommands = vi.fn();
 const mockSetEncoreFeatures = vi.fn();
 const mockSetDirectorNotesSettings = vi.fn();
+const mockSetModeratorStandingInstructions = vi.fn();
 
 // Mock useSettings hook (now self-sources all settings previously passed as props)
 let mockUseSettingsOverrides: Record<string, any> = {};
@@ -261,6 +296,9 @@ vi.mock('../../../renderer/hooks/settings/useSettings', () => ({
 			defaultLookbackDays: 7,
 		},
 		setDirectorNotesSettings: mockSetDirectorNotesSettings,
+		// Group Chat settings
+		moderatorStandingInstructions: '',
+		setModeratorStandingInstructions: mockSetModeratorStandingInstructions,
 		// WakaTime integration settings
 		wakatimeEnabled: false,
 		setWakatimeEnabled: vi.fn(),
@@ -365,9 +403,37 @@ const createDefaultProps = (overrides = {}) => ({
 	...overrides,
 });
 
+const createFetchResponse = (options: { ok: boolean; status?: number; body: unknown }): Response =>
+	({
+		ok: options.ok,
+		status: options.status ?? (options.ok ? 200 : 500),
+		json: vi.fn().mockResolvedValue(options.body),
+	}) as unknown as Response;
+
+async function flushSettingsEffects(ms = 50) {
+	await act(async () => {
+		await Promise.resolve();
+		await vi.advanceTimersByTimeAsync(ms);
+		await Promise.resolve();
+	});
+}
+
+async function flushConnectionTest() {
+	await act(async () => {
+		fireEvent.click(screen.getByRole('button', { name: 'Test Connection' }));
+		await Promise.resolve();
+		await Promise.resolve();
+		await Promise.resolve();
+		await Promise.resolve();
+	});
+}
+
 describe('SettingsModal', () => {
+	let originalFetch: typeof globalThis.fetch;
+
 	beforeEach(() => {
 		vi.useFakeTimers();
+		originalFetch = globalThis.fetch;
 
 		// Reset window.maestro mocks
 		vi.mocked(window.maestro.agents.detect).mockResolvedValue([
@@ -404,6 +470,7 @@ describe('SettingsModal', () => {
 	});
 
 	afterEach(() => {
+		globalThis.fetch = originalFetch;
 		vi.useRealTimers();
 		vi.clearAllMocks();
 		mockUseSettingsOverrides = {};
@@ -415,13 +482,15 @@ describe('SettingsModal', () => {
 			expect(container.firstChild).toBeNull();
 		});
 
-		it('should render modal when isOpen is true', () => {
+		it('should render modal when isOpen is true', async () => {
 			render(<SettingsModal {...createDefaultProps()} />);
+			await flushSettingsEffects();
 			expect(screen.getByRole('dialog')).toBeInTheDocument();
 		});
 
-		it('should have correct aria attributes', () => {
+		it('should have correct aria attributes', async () => {
 			render(<SettingsModal {...createDefaultProps()} />);
+			await flushSettingsEffects();
 			const dialog = screen.getByRole('dialog');
 			expect(dialog).toHaveAttribute('aria-modal', 'true');
 			expect(dialog).toHaveAttribute('aria-label', 'Settings');
@@ -483,6 +552,65 @@ describe('SettingsModal', () => {
 			expect(screen.getByPlaceholderText('Filter shortcuts...')).toBeInTheDocument();
 		});
 
+		it('should switch between display, theme, and general tabs from the tab buttons', async () => {
+			render(<SettingsModal {...createDefaultProps()} />);
+
+			await flushSettingsEffects();
+
+			fireEvent.click(screen.getByTitle('Display'));
+			await flushSettingsEffects();
+			expect(screen.getByText('Interface Font')).toBeInTheDocument();
+
+			fireEvent.click(screen.getByTitle('Themes'));
+			await flushSettingsEffects();
+			expect(screen.getByText('dark Mode')).toBeInTheDocument();
+
+			fireEvent.click(screen.getByTitle('General'));
+			await flushSettingsEffects();
+			expect(screen.getByText('Default Terminal Shell')).toBeInTheDocument();
+		});
+
+		it('should show and update dormant LLM settings when the feature flag seam is enabled', async () => {
+			render(<SettingsModal {...createDefaultProps({ featureFlags: { llmSettings: true } })} />);
+
+			await flushSettingsEffects();
+
+			fireEvent.click(screen.getByTitle('LLM'));
+			await flushSettingsEffects();
+
+			expect(screen.getByText('LLM Provider')).toBeInTheDocument();
+			fireEvent.change(screen.getByRole('combobox'), { target: { value: 'anthropic' } });
+			fireEvent.change(screen.getByPlaceholderText('anthropic/claude-3.5-sonnet'), {
+				target: { value: 'claude-3-5-sonnet-20241022' },
+			});
+			fireEvent.change(screen.getByPlaceholderText('sk-...'), {
+				target: { value: 'sk-test' },
+			});
+
+			expect(mockSetLlmProvider).toHaveBeenCalledWith('anthropic');
+			expect(mockSetModelSlug).toHaveBeenCalledWith('claude-3-5-sonnet-20241022');
+			expect(mockSetApiKey).toHaveBeenCalledWith('sk-test');
+		});
+
+		it('should include the dormant LLM tab in keyboard navigation when enabled', async () => {
+			render(
+				<SettingsModal
+					{...createDefaultProps({
+						initialTab: 'display',
+						featureFlags: { llmSettings: true },
+					})}
+				/>
+			);
+
+			await flushSettingsEffects();
+
+			fireEvent.keyDown(window, { key: ']', metaKey: true, shiftKey: true });
+
+			await flushSettingsEffects();
+
+			expect(screen.getByText('LLM Provider')).toBeInTheDocument();
+		});
+
 		it('should switch to notifications tab when clicked', async () => {
 			render(<SettingsModal {...createDefaultProps()} />);
 
@@ -513,6 +641,64 @@ describe('SettingsModal', () => {
 			});
 
 			expect(screen.getByTestId('ai-commands-panel')).toBeInTheDocument();
+		});
+
+		it('should switch to Group Chat tab and update moderator instructions', async () => {
+			mockUseSettingsOverrides = {
+				moderatorStandingInstructions: 'Always use branches',
+			};
+			render(<SettingsModal {...createDefaultProps()} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			fireEvent.click(screen.getByTitle('Group Chat'));
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			expect(screen.getByText('Moderator Standing Instructions')).toBeInTheDocument();
+			const textarea = screen.getByDisplayValue('Always use branches');
+			fireEvent.change(textarea, { target: { value: 'Use feature branches and autorun' } });
+
+			expect(mockSetModeratorStandingInstructions).toHaveBeenCalledWith(
+				'Use feature branches and autorun'
+			);
+			expect(screen.getByText('19 / 2000')).toBeInTheDocument();
+		});
+
+		it('should switch to SSH tab and wire ignore setting callbacks', async () => {
+			const setSshRemoteIgnorePatterns = vi.fn();
+			const setSshRemoteHonorGitignore = vi.fn();
+			mockUseSettingsOverrides = {
+				sshRemoteIgnorePatterns: ['.git', '.cache'],
+				setSshRemoteIgnorePatterns,
+				sshRemoteHonorGitignore: true,
+				setSshRemoteHonorGitignore,
+			};
+			render(<SettingsModal {...createDefaultProps()} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			fireEvent.click(screen.getByTitle('SSH Hosts'));
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			expect(screen.getByTestId('ssh-remotes-section')).toBeInTheDocument();
+			expect(screen.getByTestId('ssh-ignore-patterns')).toHaveTextContent('.git,.cache');
+			expect(screen.getByTestId('ssh-honor-gitignore')).toHaveTextContent('true');
+
+			fireEvent.click(screen.getByRole('button', { name: 'Update SSH Ignore Patterns' }));
+			fireEvent.click(screen.getByRole('button', { name: 'Toggle SSH Honor Gitignore' }));
+
+			expect(setSshRemoteIgnorePatterns).toHaveBeenCalledWith(['.git', 'node_modules']);
+			expect(setSshRemoteHonorGitignore).toHaveBeenCalledWith(false);
 		});
 	});
 
@@ -598,6 +784,397 @@ describe('SettingsModal', () => {
 			});
 
 			expect(screen.getByText('Encore Features', { selector: 'h3' })).toBeInTheDocument();
+		});
+	});
+
+	describe('LLM settings feature flag', () => {
+		it('should test OpenRouter connections successfully', async () => {
+			mockUseSettingsOverrides = {
+				llmProvider: 'openrouter',
+				apiKey: 'sk-openrouter',
+				modelSlug: '',
+			};
+			const fetchMock = vi.fn().mockResolvedValue(
+				createFetchResponse({
+					ok: true,
+					body: { choices: [{ message: { content: 'Connection successful' } }] },
+				})
+			);
+			globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+			render(
+				<SettingsModal
+					{...createDefaultProps({
+						initialTab: 'llm',
+						featureFlags: { llmSettings: true },
+					})}
+				/>
+			);
+
+			await flushSettingsEffects();
+			await flushConnectionTest();
+
+			expect(fetchMock).toHaveBeenCalledWith(
+				'https://openrouter.ai/api/v1/chat/completions',
+				expect.objectContaining({
+					method: 'POST',
+					headers: expect.objectContaining({ Authorization: 'Bearer sk-openrouter' }),
+				})
+			);
+			expect(JSON.parse(fetchMock.mock.calls[0][1].body).model).toBe('anthropic/claude-3.5-sonnet');
+			expect(screen.getByText('Successfully connected to OpenRouter!')).toBeInTheDocument();
+		});
+
+		it('should show OpenRouter API and invalid response errors', async () => {
+			mockUseSettingsOverrides = {
+				llmProvider: 'openrouter',
+				apiKey: 'sk-openrouter',
+			};
+			const fetchMock = vi.fn().mockResolvedValueOnce(
+				createFetchResponse({
+					ok: false,
+					status: 401,
+					body: { error: { message: 'OpenRouter rejected the key' } },
+				})
+			);
+			globalThis.fetch = fetchMock as unknown as typeof fetch;
+			const view = render(
+				<SettingsModal
+					{...createDefaultProps({
+						initialTab: 'llm',
+						featureFlags: { llmSettings: true },
+					})}
+				/>
+			);
+
+			await flushSettingsEffects();
+			await flushConnectionTest();
+
+			expect(screen.getByText('OpenRouter rejected the key')).toBeInTheDocument();
+			view.unmount();
+
+			fetchMock.mockResolvedValueOnce(
+				createFetchResponse({
+					ok: true,
+					body: { choices: [] },
+				})
+			);
+			render(
+				<SettingsModal
+					{...createDefaultProps({
+						initialTab: 'llm',
+						featureFlags: { llmSettings: true },
+					})}
+				/>
+			);
+
+			await flushSettingsEffects();
+			await flushConnectionTest();
+
+			expect(screen.getByText('Invalid response from OpenRouter')).toBeInTheDocument();
+		});
+
+		it('should show testing state while an LLM connection check is pending', async () => {
+			mockUseSettingsOverrides = {
+				llmProvider: 'openrouter',
+				apiKey: 'sk-openrouter',
+				modelSlug: '',
+			};
+			let resolveFetch: ((response: Response) => void) | undefined;
+			const fetchMock = vi.fn(
+				() =>
+					new Promise<Response>((resolve) => {
+						resolveFetch = resolve;
+					})
+			);
+			globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+			render(
+				<SettingsModal
+					{...createDefaultProps({
+						initialTab: 'llm',
+						featureFlags: { llmSettings: true },
+					})}
+				/>
+			);
+
+			await flushSettingsEffects();
+
+			await act(async () => {
+				fireEvent.click(screen.getByRole('button', { name: 'Test Connection' }));
+				await Promise.resolve();
+			});
+
+			expect(screen.getByText('Testing Connection...')).toBeInTheDocument();
+
+			await act(async () => {
+				resolveFetch?.(
+					createFetchResponse({
+						ok: true,
+						body: { choices: [{ message: { content: 'Connection successful' } }] },
+					})
+				);
+				await Promise.resolve();
+				await Promise.resolve();
+				await Promise.resolve();
+			});
+
+			expect(screen.getByText('Successfully connected to OpenRouter!')).toBeInTheDocument();
+		});
+
+		it('should guard OpenRouter and Anthropic connection tests when the API key is missing', async () => {
+			const fetchMock = vi.fn();
+
+			await expect(
+				testSettingsLlmConnection({
+					llmProvider: 'openrouter',
+					apiKey: '',
+					modelSlug: '',
+					fetchImpl: fetchMock as unknown as typeof fetch,
+				})
+			).resolves.toEqual({
+				status: 'error',
+				message: 'API key is required for OpenRouter',
+			});
+
+			await expect(
+				testSettingsLlmConnection({
+					llmProvider: 'anthropic',
+					apiKey: '',
+					modelSlug: '',
+					fetchImpl: fetchMock as unknown as typeof fetch,
+				})
+			).resolves.toEqual({
+				status: 'error',
+				message: 'API key is required for Anthropic',
+			});
+
+			expect(fetchMock).not.toHaveBeenCalled();
+		});
+
+		it('should use fallback messages for provider API errors and unknown thrown values', async () => {
+			await expect(
+				testSettingsLlmConnection({
+					llmProvider: 'openrouter',
+					apiKey: 'sk-openrouter',
+					modelSlug: '',
+					fetchImpl: vi.fn().mockResolvedValue(
+						createFetchResponse({
+							ok: false,
+							status: 418,
+							body: { error: {} },
+						})
+					) as unknown as typeof fetch,
+				})
+			).resolves.toEqual({
+				status: 'error',
+				message: 'OpenRouter API error: 418',
+			});
+
+			await expect(
+				testSettingsLlmConnection({
+					llmProvider: 'anthropic',
+					apiKey: 'sk-ant',
+					modelSlug: '',
+					fetchImpl: vi.fn().mockResolvedValue(
+						createFetchResponse({
+							ok: false,
+							status: 429,
+							body: { error: {} },
+						})
+					) as unknown as typeof fetch,
+				})
+			).resolves.toEqual({
+				status: 'error',
+				message: 'Anthropic API error: 429',
+			});
+
+			await expect(
+				testSettingsLlmConnection({
+					llmProvider: 'ollama',
+					apiKey: '',
+					modelSlug: '',
+					fetchImpl: vi.fn().mockRejectedValue({ message: '' }) as unknown as typeof fetch,
+				})
+			).resolves.toEqual({
+				status: 'error',
+				message: 'Connection failed',
+			});
+		});
+
+		it('should test Anthropic connections successfully', async () => {
+			mockUseSettingsOverrides = {
+				llmProvider: 'anthropic',
+				apiKey: 'sk-ant',
+				modelSlug: '',
+			};
+			const fetchMock = vi.fn().mockResolvedValue(
+				createFetchResponse({
+					ok: true,
+					body: { content: [{ text: 'Connection successful' }] },
+				})
+			);
+			globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+			render(
+				<SettingsModal
+					{...createDefaultProps({
+						initialTab: 'llm',
+						featureFlags: { llmSettings: true },
+					})}
+				/>
+			);
+
+			await flushSettingsEffects();
+			await flushConnectionTest();
+
+			expect(fetchMock).toHaveBeenCalledWith(
+				'https://api.anthropic.com/v1/messages',
+				expect.objectContaining({
+					method: 'POST',
+					headers: expect.objectContaining({ 'x-api-key': 'sk-ant' }),
+				})
+			);
+			expect(JSON.parse(fetchMock.mock.calls[0][1].body).model).toBe('claude-3-5-sonnet-20241022');
+			expect(screen.getByText('Successfully connected to Anthropic!')).toBeInTheDocument();
+		});
+
+		it('should show Anthropic API and invalid response errors', async () => {
+			mockUseSettingsOverrides = {
+				llmProvider: 'anthropic',
+				apiKey: 'sk-ant',
+			};
+			const fetchMock = vi.fn().mockResolvedValueOnce(
+				createFetchResponse({
+					ok: false,
+					status: 429,
+					body: { error: { message: 'Anthropic rate limit' } },
+				})
+			);
+			globalThis.fetch = fetchMock as unknown as typeof fetch;
+			const view = render(
+				<SettingsModal
+					{...createDefaultProps({
+						initialTab: 'llm',
+						featureFlags: { llmSettings: true },
+					})}
+				/>
+			);
+
+			await flushSettingsEffects();
+			await flushConnectionTest();
+
+			expect(screen.getByText('Anthropic rate limit')).toBeInTheDocument();
+			view.unmount();
+
+			fetchMock.mockResolvedValueOnce(
+				createFetchResponse({
+					ok: true,
+					body: { content: [] },
+				})
+			);
+			render(
+				<SettingsModal
+					{...createDefaultProps({
+						initialTab: 'llm',
+						featureFlags: { llmSettings: true },
+					})}
+				/>
+			);
+
+			await flushSettingsEffects();
+			await flushConnectionTest();
+
+			expect(screen.getByText('Invalid response from Anthropic')).toBeInTheDocument();
+		});
+
+		it('should test Ollama connections without requiring an API key', async () => {
+			mockUseSettingsOverrides = {
+				llmProvider: 'ollama',
+				apiKey: '',
+				modelSlug: '',
+			};
+			const fetchMock = vi.fn().mockResolvedValue(
+				createFetchResponse({
+					ok: true,
+					body: { response: 'Connection successful' },
+				})
+			);
+			globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+			render(
+				<SettingsModal
+					{...createDefaultProps({
+						initialTab: 'llm',
+						featureFlags: { llmSettings: true },
+					})}
+				/>
+			);
+
+			await flushSettingsEffects();
+
+			expect(screen.queryByText('API Key')).not.toBeInTheDocument();
+			expect(screen.getByPlaceholderText('llama3:latest')).toBeInTheDocument();
+
+			await flushConnectionTest();
+
+			expect(fetchMock).toHaveBeenCalledWith(
+				'http://localhost:11434/api/generate',
+				expect.objectContaining({ method: 'POST' })
+			);
+			expect(JSON.parse(fetchMock.mock.calls[0][1].body).model).toBe('llama3:latest');
+			expect(screen.getByText('Successfully connected to Ollama!')).toBeInTheDocument();
+		});
+
+		it('should show Ollama API and invalid response errors', async () => {
+			mockUseSettingsOverrides = {
+				llmProvider: 'ollama',
+				apiKey: '',
+			};
+			const fetchMock = vi.fn().mockResolvedValueOnce(
+				createFetchResponse({
+					ok: false,
+					status: 503,
+					body: {},
+				})
+			);
+			globalThis.fetch = fetchMock as unknown as typeof fetch;
+			const view = render(
+				<SettingsModal
+					{...createDefaultProps({
+						initialTab: 'llm',
+						featureFlags: { llmSettings: true },
+					})}
+				/>
+			);
+
+			await flushSettingsEffects();
+			await flushConnectionTest();
+
+			expect(
+				screen.getByText('Ollama API error: 503. Make sure Ollama is running locally.')
+			).toBeInTheDocument();
+			view.unmount();
+
+			fetchMock.mockResolvedValueOnce(
+				createFetchResponse({
+					ok: true,
+					body: {},
+				})
+			);
+			render(
+				<SettingsModal
+					{...createDefaultProps({
+						initialTab: 'llm',
+						featureFlags: { llmSettings: true },
+					})}
+				/>
+			);
+
+			await flushSettingsEffects();
+			await flushConnectionTest();
+
+			expect(screen.getByText('Invalid response from Ollama')).toBeInTheDocument();
 		});
 	});
 
@@ -1633,6 +2210,37 @@ describe('SettingsModal', () => {
 			rerender(<SettingsModal {...createDefaultProps({ isOpen: false })} />);
 
 			expect(mockUnregisterLayer).toHaveBeenCalledWith('layer-123');
+		});
+
+		it('should close from the layer Escape handler when no shortcut is recording', async () => {
+			const onClose = vi.fn();
+			const { useLayerStack } = await import('../../../renderer/contexts/LayerStackContext');
+
+			let capturedEscapeHandler: (() => void) | undefined;
+			vi.mocked(useLayerStack).mockReturnValue({
+				registerLayer: vi.fn((config) => {
+					capturedEscapeHandler = config.onEscape;
+					return 'layer-123';
+				}),
+				unregisterLayer: vi.fn(),
+				updateLayerHandler: vi.fn(),
+				getTopLayer: vi.fn(),
+				closeTopLayer: vi.fn(),
+				getLayers: vi.fn(),
+				hasOpenLayers: vi.fn(),
+				hasOpenModal: vi.fn(),
+				layerCount: 0,
+			});
+
+			render(<SettingsModal {...createDefaultProps({ onClose })} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			capturedEscapeHandler?.();
+
+			expect(onClose).toHaveBeenCalledOnce();
 		});
 	});
 

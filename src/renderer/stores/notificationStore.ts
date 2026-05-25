@@ -195,11 +195,16 @@ export function notifyToast(toast: Omit<Toast, 'id' | 'timestamp'>): string {
 	// --- Side effects ---
 
 	const hasContent = toast.message && toast.message.trim().length > 0;
-	const willTriggerCustomNotification =
-		config.audioFeedbackEnabled &&
-		config.audioFeedbackCommand &&
-		!toast.skipCustomNotification &&
-		hasContent;
+	const customNotificationDisabledReason = !config.audioFeedbackEnabled
+		? 'disabled'
+		: !config.audioFeedbackCommand
+			? 'no-command'
+			: toast.skipCustomNotification
+				? 'opted-out'
+				: !hasContent
+					? 'no-content'
+					: null;
+	const willTriggerCustomNotification = customNotificationDisabledReason === null;
 
 	// Log to system logs
 	if (typeof window !== 'undefined' && window.maestro?.logger?.toast) {
@@ -218,15 +223,7 @@ export function notifyToast(toast: Omit<Toast, 'id' | 'timestamp'>): string {
 					}
 				: {
 						enabled: false,
-						reason: !config.audioFeedbackEnabled
-							? 'disabled'
-							: !config.audioFeedbackCommand
-								? 'no-command'
-								: toast.skipCustomNotification
-									? 'opted-out'
-									: !hasContent
-										? 'no-content'
-										: 'unknown',
+						reason: customNotificationDisabledReason,
 					},
 		});
 	}
@@ -249,10 +246,7 @@ export function notifyToast(toast: Omit<Toast, 'id' | 'timestamp'>): string {
 				toast.tabName || (toast.agentSessionId ? toast.agentSessionId.slice(0, 8) : null);
 
 			// Extract first sentence from message
-			const firstSentenceMatch = toast.message.match(/^[^.!?]*[.!?]?/);
-			const firstSentence = firstSentenceMatch
-				? firstSentenceMatch[0].trim()
-				: toast.message.slice(0, 80);
+			const firstSentence = toast.message.match(/^[^.!?]*[.!?]?/)![0].trim();
 
 			const bodyParts: string[] = [];
 			if (toast.group) {

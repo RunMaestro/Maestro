@@ -365,18 +365,14 @@ function HistoryDetailView({
 	}, [onClose]);
 
 	const handlePrev = useCallback(() => {
-		if (canGoPrev) {
-			triggerHaptic(HAPTIC_PATTERNS.tap);
-			onNavigate(currentIndex - 1);
-		}
-	}, [canGoPrev, currentIndex, onNavigate]);
+		triggerHaptic(HAPTIC_PATTERNS.tap);
+		onNavigate(currentIndex - 1);
+	}, [currentIndex, onNavigate]);
 
 	const handleNext = useCallback(() => {
-		if (canGoNext) {
-			triggerHaptic(HAPTIC_PATTERNS.tap);
-			onNavigate(currentIndex + 1);
-		}
-	}, [canGoNext, currentIndex, onNavigate]);
+		triggerHaptic(HAPTIC_PATTERNS.tap);
+		onNavigate(currentIndex + 1);
+	}, [currentIndex, onNavigate]);
 
 	return (
 		<div
@@ -978,9 +974,7 @@ export function MobileHistoryPanel({
 	const handleSelectEntry = useCallback(
 		(entry: HistoryEntry) => {
 			const index = filteredEntries.findIndex((e) => e.id === entry.id);
-			if (index !== -1) {
-				setSelectedIndex(index);
-			}
+			setSelectedIndex(index);
 		},
 		[filteredEntries]
 	);
@@ -991,14 +985,9 @@ export function MobileHistoryPanel({
 	}, []);
 
 	// Handle navigating to a specific index
-	const handleNavigate = useCallback(
-		(index: number) => {
-			if (index >= 0 && index < filteredEntries.length) {
-				setSelectedIndex(index);
-			}
-		},
-		[filteredEntries.length]
-	);
+	const handleNavigate = useCallback((index: number) => {
+		setSelectedIndex(index);
+	}, []);
 
 	// Handle close button
 	const handleClose = useCallback(() => {

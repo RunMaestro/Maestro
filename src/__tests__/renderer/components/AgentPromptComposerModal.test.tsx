@@ -717,6 +717,33 @@ describe('AgentPromptComposerModal', () => {
 			expect(mockHandleKeyDown).toHaveBeenCalled();
 		});
 
+		it('does not handle textarea keys when autocomplete consumes the event', async () => {
+			mockHandleKeyDown.mockReturnValueOnce(true);
+
+			renderWithLayerStack(
+				<AgentPromptComposerModal
+					isOpen={true}
+					onClose={vi.fn()}
+					theme={theme}
+					initialValue="HelloWorld"
+					onSubmit={vi.fn()}
+				/>
+			);
+
+			const textarea = screen.getByPlaceholderText(
+				'Enter your agent prompt... (type {{ for variables)'
+			) as HTMLTextAreaElement;
+			textarea.selectionStart = 5;
+			textarea.selectionEnd = 5;
+
+			await act(async () => {
+				fireEvent.keyDown(textarea, { key: 'Tab' });
+			});
+
+			expect(mockHandleKeyDown).toHaveBeenCalled();
+			expect(textarea.value).toBe('HelloWorld');
+		});
+
 		it('updates character count as user types', async () => {
 			renderWithLayerStack(
 				<AgentPromptComposerModal

@@ -223,37 +223,25 @@ export function LogViewer({
 			capturesFocus: true,
 			focusTrap: 'lenient',
 			ariaLabel: 'System Log Viewer',
-			onEscape: () => {
-				if (searchOpen) {
-					setSearchOpen(false);
-					setSearchQuery('');
-					containerRef.current?.focus();
-				} else {
-					onCloseRef.current();
-				}
-			},
+			onEscape: () => onCloseRef.current(),
 		});
 
 		return () => {
-			if (layerIdRef.current) {
-				unregisterLayer(layerIdRef.current);
-			}
+			unregisterLayer(layerIdRef.current!);
 		};
 	}, [registerLayer, unregisterLayer]); // Note: onClose NOT in deps (using ref)
 
 	// Update layer handler when dependencies change
 	useEffect(() => {
-		if (layerIdRef.current) {
-			updateLayerHandler(layerIdRef.current, () => {
-				if (searchOpen) {
-					setSearchOpen(false);
-					setSearchQuery('');
-					containerRef.current?.focus();
-				} else {
-					onCloseRef.current();
-				}
-			});
-		}
+		updateLayerHandler(layerIdRef.current!, () => {
+			if (searchOpen) {
+				setSearchOpen(false);
+				setSearchQuery('');
+				containerRef.current?.focus();
+			} else {
+				onCloseRef.current();
+			}
+		});
 	}, [searchOpen, updateLayerHandler]); // Note: onClose NOT in deps (using ref)
 
 	// Auto-focus container on mount for keyboard navigation
@@ -335,16 +323,12 @@ export function LogViewer({
 		// Page up/down with Opt+Up/Down
 		else if (e.altKey && e.key === 'ArrowUp' && !searchOpen) {
 			e.preventDefault();
-			const container = containerRef.current;
-			if (container) {
-				container.scrollBy({ top: -container.clientHeight * 0.8, behavior: 'smooth' });
-			}
+			const container = containerRef.current!;
+			container.scrollBy({ top: -container.clientHeight * 0.8, behavior: 'smooth' });
 		} else if (e.altKey && e.key === 'ArrowDown' && !searchOpen) {
 			e.preventDefault();
-			const container = containerRef.current;
-			if (container) {
-				container.scrollBy({ top: container.clientHeight * 0.8, behavior: 'smooth' });
-			}
+			const container = containerRef.current!;
+			container.scrollBy({ top: container.clientHeight * 0.8, behavior: 'smooth' });
 		}
 		// Scroll with plain arrow keys (only when search is not open)
 		else if (e.key === 'ArrowUp' && !searchOpen) {
@@ -455,11 +439,9 @@ export function LogViewer({
 						);
 						if (allEnabledSelected) {
 							// Turn off all enabled levels
-							setSelectedLevels((prev) => {
-								const newSet = new Set(prev);
-								enabledLevelArray.forEach((level) => newSet.delete(level));
-								return newSet;
-							});
+							const newSet = new Set(selectedLevels);
+							enabledLevelArray.forEach((level) => newSet.delete(level));
+							setSelectedLevels(newSet);
 						} else {
 							// Turn on all enabled levels
 							setSelectedLevels((prev) => {
@@ -492,7 +474,6 @@ export function LogViewer({
 							key={level}
 							disabled={!isEnabled}
 							onClick={() => {
-								if (!isEnabled) return; // Safety check
 								setSelectedLevels((prev) => {
 									const newSet = new Set(prev);
 									if (newSet.has(level)) {
@@ -541,13 +522,11 @@ export function LogViewer({
 							title={`${new Date(log.timestamp).toLocaleTimeString()} - ${log.level.toUpperCase()}: ${log.message.substring(0, 50)}${log.message.length > 50 ? '...' : ''}`}
 							onClick={() => {
 								// Calculate scroll position based on log index
-								if (containerRef.current) {
-									const container = containerRef.current;
-									const scrollPercentage = idx / Math.max(filteredLogs.length - 1, 1);
-									const targetScroll =
-										scrollPercentage * (container.scrollHeight - container.clientHeight);
-									container.scrollTo({ top: targetScroll, behavior: 'smooth' });
-								}
+								const container = containerRef.current!;
+								const scrollPercentage = idx / Math.max(filteredLogs.length - 1, 1);
+								const targetScroll =
+									scrollPercentage * (container.scrollHeight - container.clientHeight);
+								container.scrollTo({ top: targetScroll, behavior: 'smooth' });
 							}}
 						/>
 					))}

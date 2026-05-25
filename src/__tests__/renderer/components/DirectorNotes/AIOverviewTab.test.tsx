@@ -22,13 +22,23 @@ vi.mock('../../../../renderer/hooks/settings/useSettings', () => ({
 vi.mock('../../../../renderer/components/MarkdownRenderer', () => ({
 	MarkdownRenderer: ({
 		content,
+		onCopy,
 		enableBionifyReadingMode,
 	}: {
 		content: string;
+		onCopy: (text: string) => void;
 		enableBionifyReadingMode?: boolean;
 	}) => (
 		<div data-testid="markdown-renderer" data-bionify={enableBionifyReadingMode ? 'on' : 'off'}>
 			{content}
+			<button
+				type="button"
+				aria-label="Copy markdown block"
+				data-testid="markdown-copy"
+				onClick={() => onCopy('copied markdown')}
+			>
+				Copy markdown block
+			</button>
 		</div>
 	),
 }));
@@ -98,6 +108,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+	vi.useRealTimers();
 	vi.clearAllMocks();
 });
 
@@ -177,6 +188,46 @@ describe('AIOverviewTab', () => {
 		});
 	});
 
+	it('displays default error when generation fails without a message', async () => {
+		mockGenerateSynopsis.mockResolvedValue({
+			success: false,
+			synopsis: '',
+		});
+
+		render(<AIOverviewTab theme={mockTheme} />);
+
+		await waitFor(() => {
+			expect(screen.getByText('Failed to generate synopsis')).toBeInTheDocument();
+		});
+	});
+
+	it('shows regeneration errors above existing synopsis content', async () => {
+		mockGenerateSynopsis
+			.mockResolvedValueOnce({
+				success: true,
+				synopsis: '# Existing Synopsis',
+			})
+			.mockResolvedValueOnce({
+				success: false,
+				synopsis: '',
+				error: 'Regeneration failed',
+			});
+
+		render(<AIOverviewTab theme={mockTheme} />);
+
+		await waitFor(() => {
+			expect(screen.getByText(/# Existing Synopsis/)).toBeInTheDocument();
+		});
+
+		await act(async () => {
+			fireEvent.click(screen.getByText('Regenerate'));
+		});
+
+		const errorBanner = await screen.findByText('Regeneration failed');
+		expect(errorBanner).toHaveClass('mb-4');
+		expect(screen.getByText(/# Existing Synopsis/)).toBeInTheDocument();
+	});
+
 	it('displays error on exception', async () => {
 		mockGenerateSynopsis.mockRejectedValue(new Error('Network error'));
 
@@ -184,6 +235,16 @@ describe('AIOverviewTab', () => {
 
 		await waitFor(() => {
 			expect(screen.getByText('Network error')).toBeInTheDocument();
+		});
+	});
+
+	it('displays default error for non-Error rejections', async () => {
+		mockGenerateSynopsis.mockRejectedValue('rejected without Error');
+
+		render(<AIOverviewTab theme={mockTheme} />);
+
+		await waitFor(() => {
+			expect(screen.getByText('Failed to generate synopsis')).toBeInTheDocument();
 		});
 	});
 
@@ -196,6 +257,31 @@ describe('AIOverviewTab', () => {
 
 		const slider = screen.getByRole('slider');
 		expect(slider).toHaveValue('7');
+	});
+
+	it('uses updated lookback days when regenerating', async () => {
+		mockGenerateSynopsis.mockResolvedValue({
+			success: true,
+			synopsis: '# Synopsis',
+		});
+
+		render(<AIOverviewTab theme={mockTheme} />);
+
+		await waitFor(() => {
+			expect(screen.getByTestId('markdown-renderer')).toBeInTheDocument();
+		});
+
+		fireEvent.change(screen.getByRole('slider'), { target: { value: '30' } });
+		expect(screen.getByText('Lookback: 30 days')).toBeInTheDocument();
+
+		fireEvent.click(screen.getByText('Regenerate'));
+
+		await waitFor(() => {
+			expect(mockGenerateSynopsis).toHaveBeenCalledTimes(2);
+		});
+		expect(mockGenerateSynopsis).toHaveBeenLastCalledWith(
+			expect.objectContaining({ lookbackDays: 30 })
+		);
 	});
 
 	it('renders Regenerate button', async () => {
@@ -256,6 +342,85 @@ describe('AIOverviewTab', () => {
 		fireEvent.click(screen.getByText('Save'));
 
 		expect(screen.getByTestId('save-markdown-modal')).toBeInTheDocument();
+	});
+
+	it('copies synopsis markdown and resets the copied state', async () => {
+		mockGenerateSynopsis.mockResolvedValue({
+			success: true,
+			synopsis: '# Synopsis',
+		});
+
+		render(<AIOverviewTab theme={mockTheme} />);
+
+		await waitFor(() => {
+			expect(screen.getByTestId('markdown-renderer')).toBeInTheDocument();
+		});
+
+		vi.useFakeTimers();
+		fireEvent.click(screen.getByText('Copy'));
+		await act(async () => {
+			await Promise.resolve();
+		});
+
+		expect(mockWriteText).toHaveBeenCalledWith('# Synopsis');
+		expect(screen.getByText('Copied!')).toBeInTheDocument();
+
+		act(() => {
+			vi.advanceTimersByTime(2000);
+		});
+		expect(screen.getByText('Copy')).toBeInTheDocument();
+	});
+
+	it('keeps copy disabled while synopsis is unavailable', async () => {
+		mockGenerateSynopsis.mockReturnValue(new Promise(() => {}));
+
+		render(<AIOverviewTab theme={mockTheme} />);
+
+		const copyButton = screen.getByRole('button', { name: 'Copy' });
+		expect(copyButton).toBeDisabled();
+
+		fireEvent.click(copyButton);
+		expect(mockWriteText).not.toHaveBeenCalled();
+	});
+
+	it('leaves copy state unchanged when clipboard write fails', async () => {
+		mockWriteText.mockRejectedValueOnce(new Error('clipboard denied'));
+		mockGenerateSynopsis.mockResolvedValue({
+			success: true,
+			synopsis: '# Synopsis',
+		});
+
+		render(<AIOverviewTab theme={mockTheme} />);
+
+		await waitFor(() => {
+			expect(screen.getByTestId('markdown-renderer')).toBeInTheDocument();
+		});
+
+		fireEvent.click(screen.getByText('Copy'));
+
+		await waitFor(() => {
+			expect(mockWriteText).toHaveBeenCalledWith('# Synopsis');
+		});
+		expect(screen.queryByText('Copied!')).not.toBeInTheDocument();
+	});
+
+	it('passes markdown renderer copy requests through the safe clipboard helper', async () => {
+		mockGenerateSynopsis.mockResolvedValue({
+			success: true,
+			synopsis: '# Synopsis',
+		});
+
+		render(<AIOverviewTab theme={mockTheme} />);
+
+		await waitFor(() => {
+			expect(screen.getByTestId('markdown-renderer')).toBeInTheDocument();
+		});
+
+		fireEvent.click(screen.getByTestId('markdown-copy'));
+
+		await waitFor(() => {
+			expect(mockWriteText).toHaveBeenCalledWith('copied markdown');
+		});
 	});
 
 	it('displays stats bar when synopsis includes stats', async () => {
@@ -333,6 +498,77 @@ describe('AIOverviewTab', () => {
 		const { hasCachedSynopsis } =
 			await import('../../../../renderer/components/DirectorNotes/AIOverviewTab');
 		expect(hasCachedSynopsis()).toBe(true);
+	});
+
+	it('uses cached synopsis on remount without regenerating', async () => {
+		const generatedAt = new Date('2025-01-15T12:00:00Z').getTime();
+		mockGenerateSynopsis.mockResolvedValue({
+			success: true,
+			synopsis: '# Cached Synopsis',
+			generatedAt,
+			stats: { agentCount: 1, entryCount: 1, durationMs: 0 },
+		});
+
+		const { unmount } = render(<AIOverviewTab theme={mockTheme} />);
+
+		await waitFor(() => {
+			expect(screen.getByText(/# Cached Synopsis/)).toBeInTheDocument();
+		});
+		unmount();
+
+		mockGenerateSynopsis.mockClear();
+		const onSynopsisReady = vi.fn();
+		render(<AIOverviewTab theme={mockTheme} onSynopsisReady={onSynopsisReady} />);
+
+		expect(screen.getByText(/# Cached Synopsis/)).toBeInTheDocument();
+		expect(screen.getByText(/history entry\b/)).toBeInTheDocument();
+		expect(mockGenerateSynopsis).not.toHaveBeenCalled();
+		expect(onSynopsisReady).toHaveBeenCalled();
+	});
+
+	it('uses cached synopsis without rendering stats when cached stats are absent', async () => {
+		const generatedAt = new Date('2025-01-15T12:00:00Z').getTime();
+		mockGenerateSynopsis.mockResolvedValue({
+			success: true,
+			synopsis: '# Cached Without Stats',
+			generatedAt,
+		});
+
+		const { unmount } = render(<AIOverviewTab theme={mockTheme} />);
+
+		await waitFor(() => {
+			expect(screen.getByText(/# Cached Without Stats/)).toBeInTheDocument();
+		});
+		unmount();
+
+		mockGenerateSynopsis.mockClear();
+		render(<AIOverviewTab theme={mockTheme} />);
+
+		expect(screen.getByText(/# Cached Without Stats/)).toBeInTheDocument();
+		expect(screen.queryByText(/history entr/)).not.toBeInTheDocument();
+		expect(mockGenerateSynopsis).not.toHaveBeenCalled();
+	});
+
+	it('ignores generation errors that settle after unmount', async () => {
+		let rejectGeneration!: (error: Error) => void;
+		mockGenerateSynopsis.mockReturnValue(
+			new Promise((_, reject) => {
+				rejectGeneration = reject;
+			})
+		);
+
+		const { unmount } = render(<AIOverviewTab theme={mockTheme} />);
+
+		await waitFor(() => {
+			expect(mockGenerateSynopsis).toHaveBeenCalledTimes(1);
+		});
+
+		unmount();
+
+		await act(async () => {
+			rejectGeneration(new Error('late failure'));
+			await Promise.resolve();
+		});
 	});
 
 	it('closes save modal when close button is clicked', async () => {

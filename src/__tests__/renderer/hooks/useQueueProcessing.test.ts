@@ -889,6 +889,62 @@ describe('startup recovery — error handling', () => {
 		expect(recovered[0].executionQueue[1].id).toBe('item-later');
 	});
 
+	it('leaves unrelated sessions unchanged during error recovery', async () => {
+		vi.useFakeTimers();
+
+		const failedTab = createTab({ id: 'tab-fail', state: 'idle' });
+		const failedItem = createQueuedItem({ id: 'item-fail', tabId: 'tab-fail' });
+		const failedSession = createSession({
+			id: 'sess-fail',
+			state: 'idle',
+			aiTabs: [failedTab],
+			activeTabId: 'tab-fail',
+			executionQueue: [failedItem],
+		});
+		const unrelatedSession = createSession({
+			id: 'sess-unrelated',
+			name: 'Unrelated Agent',
+			executionQueue: [],
+		});
+
+		mockSessionStoreState.sessionsLoaded = true;
+		mockSessionStoreState.sessions = [failedSession, unrelatedSession];
+		mockGetActiveTab.mockReturnValue(failedTab);
+		mockAgentStoreProcessQueuedItem.mockRejectedValueOnce(new Error('boom'));
+
+		const setSessionsUpdaters: Array<(prev: Session[]) => Session[]> = [];
+		mockSetSessions.mockImplementation((updater: any) => {
+			setSessionsUpdaters.push(updater);
+		});
+
+		const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		renderHook(() => useQueueProcessing(createDeps()));
+
+		await act(async () => {
+			vi.advanceTimersByTime(500);
+			await Promise.resolve();
+			await Promise.resolve();
+		});
+
+		consoleError.mockRestore();
+
+		expect(setSessionsUpdaters.length).toBeGreaterThanOrEqual(2);
+
+		const busyFailedSession: Session = {
+			...failedSession,
+			state: 'busy' as any,
+			executionQueue: [],
+			aiTabs: [{ ...failedTab, state: 'busy' as const }],
+		};
+
+		const recovered = setSessionsUpdaters[1]([unrelatedSession, busyFailedSession]);
+		expect(recovered[0]).toBe(unrelatedSession);
+		expect(recovered[1].id).toBe('sess-fail');
+		expect(recovered[1].state).toBe('idle');
+		expect(recovered[1].executionQueue[0]).toBe(failedItem);
+	});
+
 	it('resets busy tabs to idle on error recovery', async () => {
 		vi.useFakeTimers();
 

@@ -325,12 +325,10 @@ export function FileSearchModal({
 
 	// Track scroll position to determine which items are visible
 	const handleScroll = () => {
-		if (scrollContainerRef.current) {
-			const scrollTop = scrollContainerRef.current.scrollTop;
-			const itemHeight = 40; // Approximate height of each item
-			const visibleIndex = Math.floor(scrollTop / itemHeight);
-			setFirstVisibleIndex(visibleIndex);
-		}
+		const scrollTop = scrollContainerRef.current!.scrollTop;
+		const itemHeight = 40; // Approximate height of each item
+		const visibleIndex = Math.floor(scrollTop / itemHeight);
+		setFirstVisibleIndex(visibleIndex);
 	};
 
 	const handleItemSelect = (file: FlatFileItem) => {

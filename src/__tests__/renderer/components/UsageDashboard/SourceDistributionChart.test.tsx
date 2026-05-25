@@ -15,6 +15,7 @@ import { describe, it, expect } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import React from 'react';
 import { SourceDistributionChart } from '../../../../renderer/components/UsageDashboard/SourceDistributionChart';
+import { COLORBLIND_BINARY_PALETTE } from '../../../../renderer/constants/colorblindPalettes';
 import type { StatsAggregation } from '../../../../renderer/hooks/stats/useStats';
 import { THEMES } from '../../../../shared/themes';
 
@@ -207,6 +208,20 @@ describe('SourceDistributionChart', () => {
 				expect(labelAfter).toHaveStyle({ color: theme.colors.textMain });
 			}
 		});
+
+		it('restores legend item color when hover leaves', () => {
+			const { container } = render(<SourceDistributionChart data={mockData} theme={theme} />);
+
+			const legendItems = container.querySelectorAll('.flex.items-center.gap-3.cursor-default');
+			expect(legendItems.length).toBeGreaterThan(0);
+
+			const label = legendItems[0].querySelector('.text-sm.font-medium');
+			fireEvent.mouseEnter(legendItems[0]);
+			expect(label).toHaveStyle({ color: theme.colors.textMain });
+
+			fireEvent.mouseLeave(legendItems[0]);
+			expect(label).toHaveStyle({ color: theme.colors.textDim });
+		});
 	});
 
 	describe('Metric Mode Toggle', () => {
@@ -228,6 +243,19 @@ describe('SourceDistributionChart', () => {
 			expect(durationButton).toHaveStyle({
 				color: theme.colors.accent,
 			});
+		});
+
+		it('switches back to count mode after duration mode', () => {
+			render(<SourceDistributionChart data={mockData} theme={theme} />);
+
+			fireEvent.click(screen.getByRole('button', { name: 'Show total duration' }));
+			fireEvent.click(screen.getByRole('button', { name: 'Show query count' }));
+
+			expect(screen.getByRole('button', { name: 'Show query count' })).toHaveAttribute(
+				'aria-pressed',
+				'true'
+			);
+			expect(screen.getByText('50')).toBeInTheDocument();
 		});
 
 		it('updates legend values when switching modes', () => {
@@ -267,6 +295,20 @@ describe('SourceDistributionChart', () => {
 
 			// Should have 2 different colors
 			expect(new Set(fills).size).toBe(2);
+		});
+
+		it('uses the colorblind-safe binary palette when colorblind mode is enabled', () => {
+			const { container } = render(
+				<SourceDistributionChart data={mockData} theme={theme} colorBlindMode={true} />
+			);
+
+			const fills = Array.from(container.querySelectorAll('svg path')).map((path) =>
+				path.getAttribute('fill')
+			);
+			expect(fills).toEqual([
+				COLORBLIND_BINARY_PALETTE.primary,
+				COLORBLIND_BINARY_PALETTE.secondary,
+			]);
 		});
 
 		it('renders full donut for single source', () => {
@@ -376,6 +418,58 @@ describe('SourceDistributionChart', () => {
 			});
 		});
 
+		it('uses parsed rgb accents to choose a contrasting auto color', () => {
+			const rgbTheme = {
+				...theme,
+				colors: {
+					...theme.colors,
+					accent: 'rgb(240, 240, 240)',
+				},
+			};
+			const { container } = render(<SourceDistributionChart data={mockData} theme={rgbTheme} />);
+
+			const fills = Array.from(container.querySelectorAll('svg path')).map((path) =>
+				path.getAttribute('fill')
+			);
+			expect(fills).toContain('#64748b');
+		});
+
+		it('falls back to a neutral auto color when accent cannot be parsed', () => {
+			const fallbackTheme = {
+				...theme,
+				colors: {
+					...theme.colors,
+					accent: 'var(--accent)',
+				},
+			};
+			const { container } = render(
+				<SourceDistributionChart data={mockData} theme={fallbackTheme} />
+			);
+
+			const fills = Array.from(container.querySelectorAll('svg path')).map((path) =>
+				path.getAttribute('fill')
+			);
+			expect(fills).toContain('#6b7280');
+		});
+
+		it('falls back to a neutral auto color when rgb accent lacks three channels', () => {
+			const fallbackTheme = {
+				...theme,
+				colors: {
+					...theme.colors,
+					accent: 'rgb(12, 34)',
+				},
+			};
+			const { container } = render(
+				<SourceDistributionChart data={mockData} theme={fallbackTheme} />
+			);
+
+			const fills = Array.from(container.querySelectorAll('svg path')).map((path) =>
+				path.getAttribute('fill')
+			);
+			expect(fills).toContain('#6b7280');
+		});
+
 		it('center label uses theme text colors', () => {
 			const { container } = render(<SourceDistributionChart data={mockData} theme={theme} />);
 
@@ -426,11 +520,62 @@ describe('SourceDistributionChart', () => {
 			// Should show hours/minutes format
 			expect(screen.getByText('time')).toBeInTheDocument();
 		});
+
+		it('formats sub-minute duration values in seconds', () => {
+			const secondsData: StatsAggregation = {
+				...mockData,
+				totalDuration: 45000,
+				bySource: { user: 1, auto: 0 },
+			};
+
+			render(<SourceDistributionChart data={secondsData} theme={theme} />);
+
+			fireEvent.click(screen.getByRole('button', { name: 'Show total duration' }));
+
+			expect(screen.getByText('45s')).toBeInTheDocument();
+		});
 	});
 
 	describe('Edge Cases', () => {
 		it('handles zero total gracefully', () => {
 			render(<SourceDistributionChart data={emptyData} theme={theme} />);
+
+			expect(screen.getByText('No source data available')).toBeInTheDocument();
+		});
+
+		it('keeps empty duration mode stable when source counts total zero', () => {
+			render(<SourceDistributionChart data={emptyData} theme={theme} />);
+
+			fireEvent.click(screen.getByRole('button', { name: 'Show total duration' }));
+
+			expect(screen.getByRole('button', { name: 'Show total duration' })).toHaveAttribute(
+				'aria-pressed',
+				'true'
+			);
+			expect(screen.getByText('No source data available')).toBeInTheDocument();
+			expect(screen.getByRole('figure')).toHaveAccessibleName(
+				/Session type chart showing duration breakdown/
+			);
+		});
+
+		it('treats malformed negative interactive counts as no displayable source data', () => {
+			render(
+				<SourceDistributionChart
+					data={{ ...emptyData, bySource: { user: -5, auto: 0 } }}
+					theme={theme}
+				/>
+			);
+
+			expect(screen.getByText('No source data available')).toBeInTheDocument();
+		});
+
+		it('treats malformed negative auto counts as no displayable source data', () => {
+			render(
+				<SourceDistributionChart
+					data={{ ...emptyData, bySource: { user: 0, auto: -5 } }}
+					theme={theme}
+				/>
+			);
 
 			expect(screen.getByText('No source data available')).toBeInTheDocument();
 		});

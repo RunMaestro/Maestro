@@ -565,6 +565,114 @@ describe('substituteTemplateVariables', () => {
 		});
 	});
 
+	describe('Maestro Variables', () => {
+		const originalPlatform = process.platform;
+		const originalProgramFiles = process.env.ProgramFiles;
+
+		afterEach(() => {
+			Object.defineProperty(process, 'platform', { value: originalPlatform });
+			if (originalProgramFiles === undefined) {
+				delete process.env.ProgramFiles;
+			} else {
+				process.env.ProgramFiles = originalProgramFiles;
+			}
+		});
+
+		it('should replace {{MAESTRO_CLI_PATH}} with the macOS app bundle path', () => {
+			Object.defineProperty(process, 'platform', { value: 'darwin' });
+
+			const result = substituteTemplateVariables('{{MAESTRO_CLI_PATH}}', createTestContext());
+
+			expect(result).toBe('node "/Applications/Maestro.app/Contents/Resources/maestro-cli.js"');
+		});
+
+		it('should replace {{MAESTRO_CLI_PATH}} with the Windows Program Files path', () => {
+			Object.defineProperty(process, 'platform', { value: 'win32' });
+			process.env.ProgramFiles = 'D:\\Apps';
+
+			const result = substituteTemplateVariables('{{MAESTRO_CLI_PATH}}', createTestContext());
+
+			expect(result).toBe('node "D:\\Apps\\Maestro\\resources\\maestro-cli.js"');
+		});
+
+		it('should use the default Windows Program Files path when ProgramFiles is unset', () => {
+			Object.defineProperty(process, 'platform', { value: 'win32' });
+			delete process.env.ProgramFiles;
+
+			const result = substituteTemplateVariables('{{MAESTRO_CLI_PATH}}', createTestContext());
+
+			expect(result).toBe('node "C:\\Program Files\\Maestro\\resources\\maestro-cli.js"');
+		});
+
+		it('should use the Linux CLI path for other Node platforms', () => {
+			Object.defineProperty(process, 'platform', { value: 'linux' });
+
+			const result = substituteTemplateVariables('{{MAESTRO_CLI_PATH}}', createTestContext());
+
+			expect(result).toBe('node "/opt/Maestro/resources/maestro-cli.js"');
+		});
+
+		it('should use preload platform when process is unavailable', () => {
+			const processDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'process');
+			const originalMaestro = (globalThis as any).maestro;
+			try {
+				Object.defineProperty(globalThis, 'process', {
+					value: undefined,
+					configurable: true,
+					writable: true,
+				});
+				(globalThis as any).maestro = { platform: 'win32' };
+
+				const result = substituteTemplateVariables('{{MAESTRO_CLI_PATH}}', createTestContext());
+
+				expect(result).toBe('node "C:\\Program Files\\Maestro\\resources\\maestro-cli.js"');
+			} finally {
+				if (processDescriptor) {
+					Object.defineProperty(globalThis, 'process', processDescriptor);
+				} else {
+					delete (globalThis as any).process;
+				}
+				(globalThis as any).maestro = originalMaestro;
+			}
+		});
+
+		it('should fall back to the Linux CLI path when platform cannot be detected', () => {
+			const processDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'process');
+			const originalMaestro = (globalThis as any).maestro;
+			try {
+				Object.defineProperty(globalThis, 'process', {
+					value: undefined,
+					configurable: true,
+					writable: true,
+				});
+				(globalThis as any).maestro = undefined;
+
+				const result = substituteTemplateVariables('{{MAESTRO_CLI_PATH}}', createTestContext());
+
+				expect(result).toBe('node "/opt/Maestro/resources/maestro-cli.js"');
+			} finally {
+				if (processDescriptor) {
+					Object.defineProperty(globalThis, 'process', processDescriptor);
+				} else {
+					delete (globalThis as any).process;
+				}
+				(globalThis as any).maestro = originalMaestro;
+			}
+		});
+
+		it('should replace {{READ_ONLY_MODE}} with read-only state', () => {
+			expect(
+				substituteTemplateVariables(
+					'Read only: {{READ_ONLY_MODE}}',
+					createTestContext({ readOnlyMode: true })
+				)
+			).toBe('Read only: true');
+			expect(
+				substituteTemplateVariables('Read only: {{READ_ONLY_MODE}}', createTestContext())
+			).toBe('Read only: false');
+		});
+	});
+
 	describe('Case Insensitivity', () => {
 		it('should handle lowercase variables', () => {
 			const context = createTestContext({
@@ -707,6 +815,20 @@ describe('substituteTemplateVariables', () => {
 			// Windows paths now split on both / and \ to extract the last segment
 			const result = substituteTemplateVariables('{{PROJECT_NAME}}', context);
 			expect(result).toBe('project');
+		});
+
+		it('should use an empty project name when no path segments are available', () => {
+			const context = createTestContext({
+				session: createTestSession({
+					fullPath: undefined,
+					projectRoot: undefined,
+					cwd: '',
+				}),
+			});
+
+			const result = substituteTemplateVariables('Project: {{PROJECT_NAME}}', context);
+
+			expect(result).toBe('Project: ');
 		});
 
 		it('should handle very long templates efficiently', () => {

@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { WizardInputPanel } from '../../../../renderer/components/InlineWizard/WizardInputPanel';
 import {
 	formatShortcutKeys,
@@ -147,6 +147,44 @@ describe('WizardInputPanel', () => {
 	});
 
 	describe('input functionality', () => {
+		it('auto-focuses the textarea after mount', async () => {
+			const focusSpy = vi
+				.spyOn(HTMLTextAreaElement.prototype, 'focus')
+				.mockImplementation(() => {});
+			const inputRef = { current: null } as React.RefObject<HTMLTextAreaElement>;
+
+			try {
+				render(<WizardInputPanel {...defaultProps} inputRef={inputRef} />);
+
+				await waitFor(() => {
+					expect(focusSpy).toHaveBeenCalled();
+				});
+			} finally {
+				focusSpy.mockRestore();
+			}
+		});
+
+		it('skips auto-resize when the textarea ref is unavailable', () => {
+			const refSetter = vi.fn();
+			const unavailableRef = {} as React.RefObject<HTMLTextAreaElement>;
+			Object.defineProperty(unavailableRef, 'current', {
+				configurable: true,
+				get: () => null,
+				set: refSetter,
+			});
+
+			render(
+				<WizardInputPanel
+					{...defaultProps}
+					inputRef={unavailableRef}
+					inputValue="Resize defensively"
+				/>
+			);
+
+			expect(screen.getByDisplayValue('Resize defensively')).toBeInTheDocument();
+			expect(refSetter).toHaveBeenCalledWith(expect.any(HTMLTextAreaElement));
+		});
+
 		it('displays the current input value', () => {
 			render(<WizardInputPanel {...defaultProps} inputValue="Hello wizard" />);
 			expect(screen.getByDisplayValue('Hello wizard')).toBeInTheDocument();
@@ -285,6 +323,22 @@ describe('WizardInputPanel', () => {
 			expect(images).toHaveLength(2);
 		});
 
+		it('opens staged images in the lightbox with staged context', () => {
+			const setLightboxImage = vi.fn();
+			const stagedImages = ['data:image/png;base64,abc123', 'data:image/png;base64,def456'];
+			render(
+				<WizardInputPanel
+					{...defaultProps}
+					stagedImages={stagedImages}
+					setLightboxImage={setLightboxImage}
+				/>
+			);
+
+			fireEvent.click(screen.getByAltText('Staged wizard image 1'));
+
+			expect(setLightboxImage).toHaveBeenCalledWith(stagedImages[0], stagedImages, 'staged');
+		});
+
 		it('calls setStagedImages when removing an image', () => {
 			const setStagedImages = vi.fn();
 			const stagedImages = ['data:image/png;base64,abc123'];
@@ -303,6 +357,116 @@ describe('WizardInputPanel', () => {
 			fireEvent.click(xButton!);
 
 			expect(setStagedImages).toHaveBeenCalled();
+			const updater = setStagedImages.mock.calls[0][0] as (prev: string[]) => string[];
+			expect(updater(['data:image/png;base64,abc123', 'data:image/png;base64,keep'])).toEqual([
+				'data:image/png;base64,keep',
+			]);
+		});
+
+		it('clicks the hidden file input from the attach image button', () => {
+			render(<WizardInputPanel {...defaultProps} canAttachImages={true} />);
+
+			const fileInput = document.getElementById('wizard-image-file-input') as HTMLInputElement;
+			const clickSpy = vi.spyOn(fileInput, 'click').mockImplementation(() => {});
+
+			try {
+				fireEvent.click(screen.getByTitle('Attach Image'));
+
+				expect(clickSpy).toHaveBeenCalledTimes(1);
+			} finally {
+				clickSpy.mockRestore();
+			}
+		});
+
+		it('adds selected image files and ignores duplicate image data', () => {
+			const imageData = 'data:image/png;base64,new-image';
+			const setStagedImages = vi.fn();
+			const showFlashNotification = vi.fn();
+			const OriginalFileReader = globalThis.FileReader;
+
+			class MockFileReader {
+				onload: ((event: { target: { result: string } }) => void) | null = null;
+
+				readAsDataURL(): void {
+					this.onload?.({ target: { result: imageData } });
+				}
+			}
+
+			vi.stubGlobal('FileReader', MockFileReader);
+
+			try {
+				render(
+					<WizardInputPanel
+						{...defaultProps}
+						canAttachImages={true}
+						setStagedImages={setStagedImages}
+						showFlashNotification={showFlashNotification}
+					/>
+				);
+
+				const fileInput = document.getElementById('wizard-image-file-input') as HTMLInputElement;
+				const file = new File(['image'], 'wizard.png', { type: 'image/png' });
+				fireEvent.change(fileInput, { target: { files: [file] } });
+
+				expect(setStagedImages).toHaveBeenCalledTimes(1);
+				const updater = setStagedImages.mock.calls[0][0] as (prev: string[]) => string[];
+				expect(updater([])).toEqual([imageData]);
+
+				const existing = [imageData];
+				expect(updater(existing)).toBe(existing);
+				expect(showFlashNotification).toHaveBeenCalledWith('Duplicate image ignored');
+			} finally {
+				vi.stubGlobal('FileReader', OriginalFileReader);
+			}
+		});
+
+		it('ignores file input changes without selected files', () => {
+			const setStagedImages = vi.fn();
+			render(
+				<WizardInputPanel
+					{...defaultProps}
+					canAttachImages={true}
+					setStagedImages={setStagedImages}
+				/>
+			);
+
+			const fileInput = document.getElementById('wizard-image-file-input') as HTMLInputElement;
+			fireEvent.change(fileInput, { target: { files: null } });
+
+			expect(setStagedImages).not.toHaveBeenCalled();
+		});
+
+		it('ignores image reader loads without image data', () => {
+			const setStagedImages = vi.fn();
+			const OriginalFileReader = globalThis.FileReader;
+
+			class MockFileReader {
+				onload: ((event: { target: { result: string | null } | null }) => void) | null = null;
+
+				readAsDataURL(): void {
+					this.onload?.({ target: { result: null } });
+				}
+			}
+
+			vi.stubGlobal('FileReader', MockFileReader);
+
+			try {
+				render(
+					<WizardInputPanel
+						{...defaultProps}
+						canAttachImages={true}
+						setStagedImages={setStagedImages}
+					/>
+				);
+
+				const fileInput = document.getElementById('wizard-image-file-input') as HTMLInputElement;
+				const file = new File(['image'], 'empty.png', { type: 'image/png' });
+				fireEvent.change(fileInput, { target: { files: [file] } });
+
+				expect(setStagedImages).not.toHaveBeenCalled();
+			} finally {
+				vi.stubGlobal('FileReader', OriginalFileReader);
+			}
 		});
 	});
 

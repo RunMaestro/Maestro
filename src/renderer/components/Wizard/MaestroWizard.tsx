@@ -123,12 +123,15 @@ export function MaestroWizard({
 	const wizardStartTimeRef = useRef<number>(0);
 	// Track if wizard start has been recorded for this open session
 	const wizardStartedRef = useRef(false);
+	// Track open transitions so restored steps sync only when the wizard opens
+	const wasOpenRef = useRef(false);
 
 	// State for screen transition animations
 	// displayedStep is the step actually being rendered (lags behind currentStep during transitions)
 	const [displayedStep, setDisplayedStep] = useState<WizardStep>(state.currentStep);
 	// isTransitioning tracks whether we're in a fade-out/fade-in animation
 	const [isTransitioning, setIsTransitioning] = useState(false);
+	const isTransitioningRef = useRef(false);
 	// transitionDirection indicates whether we're moving forward or backward
 	const [transitionDirection, setTransitionDirection] = useState<'forward' | 'backward'>('forward');
 
@@ -148,6 +151,7 @@ export function MaestroWizard({
 	clearResumeStateRef.current = clearResumeState;
 	const resetWizardRef = useRef(resetWizard);
 	resetWizardRef.current = resetWizard;
+	isTransitioningRef.current = isTransitioning;
 
 	/**
 	 * Handle wizard close request
@@ -202,7 +206,7 @@ export function MaestroWizard({
 	// Handle step transitions with fade animation
 	useEffect(() => {
 		// Only animate if step has actually changed and we're not already transitioning
-		if (state.currentStep !== displayedStep && !isTransitioning) {
+		if (state.currentStep !== displayedStep && !isTransitioningRef.current) {
 			// Determine direction based on step indices
 			const currentIndex = STEP_INDEX[state.currentStep];
 			const displayedIndex = STEP_INDEX[displayedStep];
@@ -218,7 +222,7 @@ export function MaestroWizard({
 
 			return () => clearTimeout(fadeOutTimer);
 		}
-	}, [state.currentStep, displayedStep, isTransitioning]);
+	}, [state.currentStep, displayedStep]);
 
 	// End transition after displayedStep updates
 	useEffect(() => {
@@ -233,7 +237,10 @@ export function MaestroWizard({
 
 	// Sync displayedStep when wizard opens (in case state was restored)
 	useEffect(() => {
-		if (state.isOpen) {
+		const justOpened = state.isOpen && !wasOpenRef.current;
+		wasOpenRef.current = state.isOpen;
+
+		if (justOpened) {
 			setDisplayedStep(state.currentStep);
 			setIsTransitioning(false); // Ensure we're not stuck in transitioning state
 		}
@@ -295,8 +302,7 @@ export function MaestroWizard({
 	useEffect(() => {
 		if (!state.isOpen) return;
 
-		const modal = modalRef.current;
-		if (!modal) return;
+		const modal = modalRef.current!;
 
 		const handleCaptureKeyDown = (e: KeyboardEvent) => {
 			// Cmd+Shift+K to toggle thinking display (only on conversation step)
@@ -319,8 +325,7 @@ export function MaestroWizard({
 	useEffect(() => {
 		if (!state.isOpen) return;
 
-		const modal = modalRef.current;
-		if (!modal) return;
+		const modal = modalRef.current!;
 
 		const handleBubbleKeyDown = (e: KeyboardEvent) => {
 			// Stop Cmd+E from bubbling further after the wizard's internal handlers process it
@@ -339,8 +344,7 @@ export function MaestroWizard({
 	useEffect(() => {
 		if (!state.isOpen || showExitConfirm) return;
 
-		const modal = modalRef.current;
-		if (!modal) return;
+		const modal = modalRef.current!;
 
 		const handleFocusTrap = (e: KeyboardEvent) => {
 			if (e.key !== 'Tab') return;
@@ -348,8 +352,6 @@ export function MaestroWizard({
 			// Get all focusable elements within the modal
 			const focusableElements = modal.querySelectorAll(FOCUSABLE_SELECTOR);
 			const focusableArray = Array.from(focusableElements) as HTMLElement[];
-
-			if (focusableArray.length === 0) return;
 
 			const firstElement = focusableArray[0];
 			const lastElement = focusableArray[focusableArray.length - 1];
@@ -383,13 +385,11 @@ export function MaestroWizard({
 		if (state.isOpen && modalRef.current) {
 			// Focus the first focusable element in the modal
 			const focusableElements = modalRef.current.querySelectorAll(FOCUSABLE_SELECTOR);
-			const firstFocusable = focusableElements[0] as HTMLElement | undefined;
-			if (firstFocusable) {
-				// Small delay to let the modal render
-				requestAnimationFrame(() => {
-					firstFocusable.focus();
-				});
-			}
+			const firstFocusable = focusableElements[0] as HTMLElement;
+			// Small delay to let the modal render
+			requestAnimationFrame(() => {
+				firstFocusable.focus();
+			});
 		}
 	}, [state.isOpen]);
 
@@ -510,12 +510,7 @@ export function MaestroWizard({
 								<button
 									key={stepNum}
 									onClick={() => {
-										if (canNavigate) {
-											const targetStep = INDEX_TO_STEP[stepNum];
-											if (targetStep) {
-												goToStep(targetStep);
-											}
-										}
+										goToStep(INDEX_TO_STEP[stepNum]!);
 									}}
 									disabled={!canNavigate}
 									className={`w-2.5 h-2.5 rounded-full transition-all duration-300 ${
@@ -543,10 +538,7 @@ export function MaestroWizard({
 							<button
 								onClick={() => {
 									const prevStepNum = currentStepNumber - 1;
-									const targetStep = INDEX_TO_STEP[prevStepNum];
-									if (targetStep) {
-										goToStep(targetStep);
-									}
+									goToStep(INDEX_TO_STEP[prevStepNum]!);
 								}}
 								className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-offset-1"
 								style={{

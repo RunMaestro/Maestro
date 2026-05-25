@@ -350,9 +350,6 @@ export default function MobileApp() {
 		},
 	});
 
-	// Reference to send function for offline queue (will be set after useWebSocket)
-	const sendRef = useRef<((sessionId: string, command: string) => boolean) | null>(null);
-
 	// Save view state when overlays change (using hook's persistence function)
 	useEffect(() => {
 		persistViewState({ showAllSessions, showHistoryPanel, showTabSearch });
@@ -368,8 +365,6 @@ export default function MobileApp() {
 	 * Strips markdown/code markers and truncates to reasonable length
 	 */
 	const getFirstLineOfResponse = useCallback((text: string): string => {
-		if (!text) return 'Response completed';
-
 		// Split by newlines and find first non-empty, non-markdown line
 		const lines = text.split('\n');
 		for (const line of lines) {
@@ -519,17 +514,14 @@ export default function MobileApp() {
 	// to avoid race conditions with __MAESTRO_CONFIG__ injection
 	useEffect(() => {
 		let timeoutId: number | null = null;
-		let cancelled = false;
 
 		const scheduleAttempt = (delay: number) => {
 			timeoutId = window.setTimeout(() => {
-				if (cancelled) return;
 				attemptConnect();
 			}, delay);
 		};
 
 		const attemptConnect = () => {
-			if (cancelled) return;
 			// Verify config is available before connecting
 			if (window.__MAESTRO_CONFIG__) {
 				connect();
@@ -559,7 +551,6 @@ export default function MobileApp() {
 		}
 
 		return () => {
-			cancelled = true;
 			if (timeoutId) {
 				window.clearTimeout(timeoutId);
 			}
@@ -568,17 +559,6 @@ export default function MobileApp() {
 			}
 		};
 	}, []);
-
-	// Update sendRef after WebSocket is initialized (for offline queue)
-	useEffect(() => {
-		sendRef.current = (sessionId: string, command: string) => {
-			return send({
-				type: 'send_command',
-				sessionId,
-				command,
-			});
-		};
-	}, [send]);
 
 	// Determine if we're actually connected
 	const isActuallyConnected =
@@ -597,10 +577,11 @@ export default function MobileApp() {
 		isOnline: !isOffline,
 		isConnected: isActuallyConnected,
 		sendCommand: (sessionId, command) => {
-			if (sendRef.current) {
-				return sendRef.current(sessionId, command);
-			}
-			return false;
+			return send({
+				type: 'send_command',
+				sessionId,
+				command,
+			});
 		},
 		onCommandSent: (cmd) => {
 			webLogger.debug(`Queued command sent: ${cmd.command.substring(0, 50)}`, 'Mobile');
@@ -694,11 +675,9 @@ export default function MobileApp() {
 	);
 
 	const clearCommandDraft = useCallback(
-		(mode: InputMode = currentInputMode) => {
-			if (!activeSessionId) return;
-
+		(sessionId: string, mode: InputMode = currentInputMode) => {
 			setCommandDrafts((prev) => {
-				const currentDrafts = prev[activeSessionId] || getEmptyDrafts();
+				const currentDrafts = prev[sessionId] || getEmptyDrafts();
 
 				if (mode === 'terminal') {
 					if (currentDrafts.terminal === '') {
@@ -707,7 +686,7 @@ export default function MobileApp() {
 
 					return {
 						...prev,
-						[activeSessionId]: {
+						[sessionId]: {
 							...currentDrafts,
 							terminal: '',
 						},
@@ -723,14 +702,14 @@ export default function MobileApp() {
 
 				return {
 					...prev,
-					[activeSessionId]: {
+					[sessionId]: {
 						...currentDrafts,
 						aiByTab: nextAiByTab,
 					},
 				};
 			});
 		},
-		[activeAiDraftKey, activeSessionId, currentInputMode]
+		[activeAiDraftKey, currentInputMode]
 	);
 
 	useEffect(() => {
@@ -846,7 +825,7 @@ export default function MobileApp() {
 			}
 
 			// Clear the input
-			clearCommandDraft(currentMode);
+			clearCommandDraft(activeSessionId, currentMode);
 		},
 		[
 			activeSessionId,
@@ -890,15 +869,13 @@ export default function MobileApp() {
 	);
 
 	// Handle interrupt request
-	const handleInterrupt = useCallback(async () => {
-		if (!activeSessionId) return;
-
+	const handleInterrupt = useCallback(async (sessionId: string) => {
 		// Provide haptic feedback
 		triggerHaptic(HAPTIC_PATTERNS.tap);
 
 		try {
 			// Build the API URL with security token in path
-			const apiUrl = buildApiUrl(`/session/${activeSessionId}/interrupt`);
+			const apiUrl = buildApiUrl(`/session/${sessionId}/interrupt`);
 			const response = await fetch(apiUrl, {
 				method: 'POST',
 				headers: {
@@ -909,7 +886,7 @@ export default function MobileApp() {
 			const result = await response.json();
 
 			if (response.ok && result.success) {
-				webLogger.debug(`Session interrupted: ${activeSessionId}`, 'Mobile');
+				webLogger.debug(`Session interrupted: ${sessionId}`, 'Mobile');
 				triggerHaptic(HAPTIC_PATTERNS.success);
 			} else {
 				webLogger.error(`Failed to interrupt session: ${result.error}`, 'Mobile');
@@ -917,7 +894,7 @@ export default function MobileApp() {
 		} catch (error) {
 			webLogger.error('Error interrupting session', 'Mobile', error);
 		}
-	}, [activeSessionId]);
+	}, []);
 
 	// Combined slash commands (default + custom from desktop)
 	const allSlashCommands = useMemo((): SlashCommand[] => {
@@ -1310,7 +1287,7 @@ export default function MobileApp() {
 				inputMode={(activeSession?.inputMode as InputMode) || 'ai'}
 				onModeToggle={handleModeToggle}
 				isSessionBusy={activeSession?.state === 'busy'}
-				onInterrupt={handleInterrupt}
+				onInterrupt={activeSessionId ? () => handleInterrupt(activeSessionId) : undefined}
 				hasActiveSession={!!activeSessionId}
 				cwd={activeSession?.cwd}
 				slashCommands={allSlashCommands}

@@ -282,15 +282,14 @@ function SessionListInner(props: SessionListProps) {
 		[setSessions]
 	);
 
-	const handleDeleteSession = (sessionId: string) => {
+	const handleDeleteSession = (session: Session) => {
+		const sessionId = session.id;
 		// Use the parent's delete handler if provided (includes proper cleanup)
 		if (onDeleteSession) {
 			onDeleteSession(sessionId);
 			return;
 		}
 		// Fallback to local delete logic
-		const session = sessions.find((s) => s.id === sessionId);
-		if (!session) return;
 		showConfirmation(
 			`Are you sure you want to remove "${session.name}"? This action cannot be undone.`,
 			() => {
@@ -327,10 +326,11 @@ function SessionListInner(props: SessionListProps) {
 				if (liveOverlayOpen) {
 					setLiveOverlayOpen(false);
 					e.stopPropagation();
-				} else if (menuOpen) {
-					setMenuOpen(false);
-					e.stopPropagation();
+					return;
 				}
+
+				setMenuOpen(false);
+				e.stopPropagation();
 			}
 		};
 		if (liveOverlayOpen || menuOpen) {
@@ -509,7 +509,7 @@ function SessionListInner(props: SessionListProps) {
 					>
 						{/* Worktree children list */}
 						<div>
-							{(sortedWorktreeChildrenByParentId.get(session.id) || []).map((child) => {
+							{sortedWorktreeChildrenByParentId.get(session.id)!.map((child) => {
 								const childGlobalIdx = sortedSessionIndexById.get(child.id) ?? -1;
 								const isChildKeyboardSelected =
 									activeFocus === 'sidebar' && childGlobalIdx === selectedSidebarIndex;
@@ -1211,7 +1211,7 @@ function SessionListInner(props: SessionListProps) {
 					}}
 					onToggleBookmark={() => toggleBookmark(contextMenuSession.id)}
 					onMoveToGroup={(groupId) => handleMoveToGroup(contextMenuSession.id, groupId)}
-					onDelete={() => handleDeleteSession(contextMenuSession.id)}
+					onDelete={() => handleDeleteSession(contextMenuSession)}
 					onDismiss={() => setContextMenu(null)}
 					onCreatePR={
 						onOpenCreatePR && contextMenuSession.parentSessionId

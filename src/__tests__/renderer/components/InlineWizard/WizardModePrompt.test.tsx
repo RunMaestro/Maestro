@@ -288,6 +288,11 @@ describe('WizardModePrompt', () => {
 
 			// Continue button should still be disabled for whitespace-only
 			expect(screen.getByTestId('wizard-mode-confirm-button')).toBeDisabled();
+			fireEvent.keyDown(input, { key: 'Enter' });
+			fireEvent.click(screen.getByTestId('wizard-mode-confirm-button'));
+
+			expect(onSetGoal).not.toHaveBeenCalled();
+			expect(onSelectMode).not.toHaveBeenCalled();
 		});
 
 		it('hides goal input when Back is clicked', async () => {

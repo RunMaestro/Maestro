@@ -573,6 +573,17 @@ describe('applyAgentConfigOverrides', () => {
 		expect(result.customEnvSource).toBe('none');
 	});
 
+	it('uses configured env vars when the agent has no default env vars', () => {
+		const agent = makeAgent();
+
+		const result = applyAgentConfigOverrides(agent, [], {
+			agentConfigValues: { customEnvVars: { FOO: 'bar' } },
+		});
+
+		expect(result.effectiveCustomEnvVars).toEqual({ FOO: 'bar' });
+		expect(result.customEnvSource).toBe('agent');
+	});
+
 	it('returns agent defaultEnvVars when no overrides are provided', () => {
 		const agent = makeAgent({
 			defaultEnvVars: { FOO: 'bar' },

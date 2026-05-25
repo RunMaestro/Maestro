@@ -185,6 +185,14 @@ export function AgentSessionsBrowser({
 
 	const { registerLayer, unregisterLayer, updateLayerHandler } = useLayerStack();
 
+	const handleLayerEscape = useCallback(() => {
+		if (viewingSessionRef.current) {
+			clearViewingSession();
+		} else {
+			onCloseRef.current();
+		}
+	}, [clearViewingSession]);
+
 	const handleSearchChange = useCallback((value: string) => {
 		setSearch(value);
 		setSelectedIndex(0);
@@ -204,14 +212,7 @@ export function AgentSessionsBrowser({
 			capturesFocus: true,
 			focusTrap: 'lenient',
 			ariaLabel: 'Agent Sessions Browser',
-			onEscape: () => {
-				// If viewing a session detail, go back to list; otherwise close the panel
-				if (viewingSessionRef.current) {
-					clearViewingSession();
-				} else {
-					onCloseRef.current();
-				}
-			},
+			onEscape: handleLayerEscape,
 		});
 
 		return () => {
@@ -219,20 +220,14 @@ export function AgentSessionsBrowser({
 				unregisterLayer(layerIdRef.current);
 			}
 		};
-	}, [registerLayer, unregisterLayer, clearViewingSession]);
+	}, [registerLayer, unregisterLayer, handleLayerEscape]);
 
 	// Update handler when viewingSession changes
 	useEffect(() => {
 		if (layerIdRef.current) {
-			updateLayerHandler(layerIdRef.current, () => {
-				if (viewingSessionRef.current) {
-					clearViewingSession();
-				} else {
-					onCloseRef.current();
-				}
-			});
+			updateLayerHandler(layerIdRef.current, handleLayerEscape);
 		}
-	}, [viewingSession, updateLayerHandler, clearViewingSession]);
+	}, [viewingSession, updateLayerHandler, handleLayerEscape]);
 
 	// Restore focus and scroll position when returning from detail view to list view
 	const prevViewingSessionRef = useRef<ClaudeSession | null>(null);
@@ -473,10 +468,6 @@ export function AgentSessionsBrowser({
 
 	// Perform search when query or mode changes (with debounce for non-title searches)
 	useEffect(() => {
-		if (searchTimeoutRef.current) {
-			clearTimeout(searchTimeoutRef.current);
-		}
-
 		// For title search, filter immediately (it's fast)
 		if (searchMode === 'title' || !search.trim()) {
 			setSearchResults([]);
@@ -487,6 +478,7 @@ export function AgentSessionsBrowser({
 		// For content searches, debounce and call backend
 		setIsSearching(true);
 		searchTimeoutRef.current = setTimeout(async () => {
+			searchTimeoutRef.current = null;
 			if (!projectPathForSessions || !search.trim()) {
 				setSearchResults([]);
 				setIsSearching(false);
@@ -516,6 +508,7 @@ export function AgentSessionsBrowser({
 		return () => {
 			if (searchTimeoutRef.current) {
 				clearTimeout(searchTimeoutRef.current);
+				searchTimeoutRef.current = null;
 			}
 		};
 	}, [search, searchMode, projectPathForSessions, agentId, sshRemoteId]);
@@ -555,21 +548,15 @@ export function AgentSessionsBrowser({
 	// Keyboard navigation
 	const handleKeyDown = (e: React.KeyboardEvent) => {
 		if (viewingSession) {
-			if (e.key === 'Escape') {
-				e.preventDefault();
-				clearViewingSession();
-			} else if (e.key === 'Enter') {
+			if (e.key === 'Enter') {
 				// Enter in session details view resumes the session
 				e.preventDefault();
-				handleResume();
+				handleResume(viewingSession);
 			}
 			return;
 		}
 
-		if (e.key === 'Escape') {
-			e.preventDefault();
-			onClose();
-		} else if (e.key === 'ArrowDown') {
+		if (e.key === 'ArrowDown') {
 			e.preventDefault();
 			setSelectedIndex((prev) => Math.min(prev + 1, filteredSessions.length - 1));
 		} else if (e.key === 'ArrowUp') {
@@ -597,35 +584,30 @@ export function AgentSessionsBrowser({
 			outputTokens: 0,
 			cacheReadInputTokens: 0,
 			cacheCreationInputTokens: 0,
-			totalCostUsd: session.costUsd || 0,
+			totalCostUsd: session.costUsd,
 			contextWindow: FALLBACK_CONTEXT_WINDOW, // Default Claude context window
 		};
 	}, []);
 
 	// Handle resuming a session
-	const handleResume = useCallback(() => {
-		if (viewingSession) {
+	const handleResume = useCallback(
+		(session: ClaudeSession) => {
 			// Convert messages to LogEntry format for AI terminal
 			const logEntries: LogEntry[] = messages.map((msg, idx) => ({
-				id: msg.uuid || `${viewingSession.sessionId}-${idx}`,
+				id: msg.uuid || `${session.sessionId}-${idx}`,
 				timestamp: new Date(msg.timestamp).getTime(),
 				source: msg.type === 'user' ? ('user' as const) : ('stdout' as const),
 				text: msg.content || (msg.toolUse ? `[Tool: ${getToolName(msg.toolUse)}]` : '[No content]'),
 			}));
 			// Pass session name and starred status for the new tab
-			const isStarred = starredSessions.has(viewingSession.sessionId);
+			const isStarred = starredSessions.has(session.sessionId);
 			// Build usageStats from session metadata so restored tabs show context/cost
-			const usageStats = buildUsageStats(viewingSession);
-			onResumeSession(
-				viewingSession.sessionId,
-				logEntries,
-				viewingSession.sessionName,
-				isStarred,
-				usageStats
-			);
+			const usageStats = buildUsageStats(session);
+			onResumeSession(session.sessionId, logEntries, session.sessionName, isStarred, usageStats);
 			onClose();
-		}
-	}, [viewingSession, messages, onResumeSession, onClose, starredSessions, buildUsageStats]);
+		},
+		[messages, onResumeSession, onClose, starredSessions, buildUsageStats]
+	);
 
 	// Handle quick resume from the list view (without going to detail view)
 	const handleQuickResume = useCallback(
@@ -680,13 +662,11 @@ export function AgentSessionsBrowser({
 			if (sessionInBucket) {
 				// Find its index and scroll to it
 				const index = filteredSessions.findIndex((s) => s.sessionId === sessionInBucket.sessionId);
-				if (index !== -1) {
-					setSelectedIndex(index);
-					// Scroll the item into view after state update
-					setTimeout(() => {
-						selectedItemRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' });
-					}, 50);
-				}
+				setSelectedIndex(index);
+				// Scroll the item into view after state update
+				setTimeout(() => {
+					selectedItemRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+				}, 50);
 			}
 		},
 		[filteredSessions]
@@ -765,9 +745,6 @@ export function AgentSessionsBrowser({
 												if (e.key === 'Enter') {
 													e.preventDefault();
 													submitRename(viewingSession.sessionId);
-												} else if (e.key === 'Escape') {
-													e.preventDefault();
-													cancelRename();
 												}
 											}}
 											onBlur={() => submitRename(viewingSession.sessionId)}
@@ -792,7 +769,7 @@ export function AgentSessionsBrowser({
 											onClick={(e) => {
 												e.stopPropagation();
 												setRenamingSessionId(viewingSession.sessionId);
-												setRenameValue(viewingSession.sessionName || '');
+												setRenameValue(viewingSession.sessionName as string);
 												setTimeout(() => renameInputRef.current?.focus(), 50);
 											}}
 											className="p-0.5 rounded hover:bg-white/10 transition-colors"
@@ -883,7 +860,7 @@ export function AgentSessionsBrowser({
 				<div className="flex items-center gap-2">
 					{viewingSession ? (
 						<button
-							onClick={handleResume}
+							onClick={() => handleResume(viewingSession)}
 							className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors hover:opacity-80"
 							style={{
 								backgroundColor: theme.colors.accent,
@@ -1309,16 +1286,7 @@ export function AgentSessionsBrowser({
 											style={{ color: theme.colors.textMain }}
 											value={search}
 											onChange={(e) => handleSearchChange(e.target.value)}
-											onKeyDown={(e) => {
-												if (e.key === 'Escape') {
-													e.preventDefault();
-													e.stopPropagation();
-													setShowSearchPanel(false);
-													handleSearchChange('');
-												} else {
-													handleKeyDown(e);
-												}
-											}}
+											onKeyDown={handleKeyDown}
 										/>
 										{isSearching && (
 											<Loader2

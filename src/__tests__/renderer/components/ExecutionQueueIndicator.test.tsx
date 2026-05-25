@@ -39,10 +39,14 @@ class MockResizeObserver {
 global.ResizeObserver = MockResizeObserver as unknown as typeof ResizeObserver;
 
 // Mock Element.prototype.clientWidth for calculateMaxPills
-Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
-	configurable: true,
-	value: 800, // Simulate a wide container
-});
+function setClientWidth(width: number): void {
+	Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
+		configurable: true,
+		value: width,
+	});
+}
+
+setClientWidth(800); // Simulate a wide container by default
 
 // Mock getBoundingClientRect for layout calculations
 Element.prototype.getBoundingClientRect = vi.fn().mockReturnValue({
@@ -127,6 +131,7 @@ describe('ExecutionQueueIndicator', () => {
 		mockObserve.mockClear();
 		mockUnobserve.mockClear();
 		mockDisconnect.mockClear();
+		setClientWidth(800);
 	});
 
 	afterEach(() => {
@@ -330,6 +335,20 @@ describe('ExecutionQueueIndicator', () => {
 			expect(screen.getByText('Unknown')).toBeInTheDocument();
 		});
 
+		it('handles a sparse queue without tab names during resize calculation', async () => {
+			const sparseQueue = new Array<QueuedItem>(1);
+			const session = createSession({ executionQueue: sparseQueue });
+
+			render(<ExecutionQueueIndicator session={session} theme={theme} onClick={mockOnClick} />);
+
+			expect(screen.getByRole('button')).toHaveTextContent('1');
+			expect(screen.getByRole('button')).toHaveTextContent('item queued');
+			await waitFor(() => {
+				expect(mockObserve).toHaveBeenCalledTimes(1);
+			});
+			expect(screen.queryByText('Unknown')).not.toBeInTheDocument();
+		});
+
 		it('should show +N indicator when there are more tabs than can be displayed', () => {
 			// Create many tabs to exceed the visible limit (default ~2-5)
 			const session = createSession({
@@ -348,6 +367,28 @@ describe('ExecutionQueueIndicator', () => {
 			// Should show +N indicator for extra tabs
 			// The exact number depends on maxVisiblePills state
 			expect(screen.getByText(/^\+\d+$/)).toBeInTheDocument();
+		});
+
+		it('collapses all tab pills into a highlighted +N indicator when space is too narrow', async () => {
+			setClientWidth(380);
+			const session = createSession({
+				executionQueue: [
+					createQueuedItem({ tabName: 'Tab1' }),
+					createQueuedItem({ tabName: 'Tab2' }),
+					createQueuedItem({ tabName: 'Tab3' }),
+					createQueuedItem({ tabName: 'Tab4' }),
+				],
+			});
+
+			render(<ExecutionQueueIndicator session={session} theme={theme} onClick={mockOnClick} />);
+
+			const overflowIndicator = await screen.findByText('+4');
+			await waitFor(() => {
+				expect(screen.queryByText('Tab1')).not.toBeInTheDocument();
+			});
+			expect(overflowIndicator.style.backgroundColor).not.toBe('');
+			expect(overflowIndicator.style.backgroundColor).not.toBe('transparent');
+			expect(overflowIndicator.getAttribute('style')).toContain('color');
 		});
 	});
 

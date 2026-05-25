@@ -11,12 +11,70 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { ipcMain } from 'electron';
+import { ipcMain, BrowserWindow } from 'electron';
 
 // Create hoisted mocks for more reliable mocking
 const mocks = vi.hoisted(() => ({
 	mockNotificationShow: vi.fn(),
 	mockNotificationIsSupported: vi.fn().mockReturnValue(true),
+	mockSpawn: vi.fn(),
+	createdProcesses: [] as any[],
+	createMockProcess: (options: { stderr?: null; stdin?: null; stdinWriteError?: Error } = {}) => {
+		const processHandlers: Record<string, Array<(...args: any[]) => void>> = {};
+		const stdinHandlers: Record<string, Array<(...args: any[]) => void>> = {};
+		const stderrHandlers: Record<string, Array<(...args: any[]) => void>> = {};
+		const process: any = {
+			on: vi.fn((event: string, handler: (...args: any[]) => void) => {
+				processHandlers[event] ??= [];
+				processHandlers[event].push(handler);
+				return process;
+			}),
+			kill: vi.fn(),
+			__emit: (event: string, ...args: any[]) => {
+				for (const handler of processHandlers[event] ?? []) {
+					handler(...args);
+				}
+			},
+			__emitStdin: (event: string, ...args: any[]) => {
+				for (const handler of stdinHandlers[event] ?? []) {
+					handler(...args);
+				}
+			},
+			__emitStderr: (event: string, ...args: any[]) => {
+				for (const handler of stderrHandlers[event] ?? []) {
+					handler(...args);
+				}
+			},
+		};
+
+		process.stdin =
+			options.stdin === null
+				? null
+				: {
+						write: vi.fn((_data: string, _encoding: string, cb?: (err?: Error) => void) => {
+							cb?.(options.stdinWriteError);
+						}),
+						end: vi.fn(),
+						on: vi.fn((event: string, handler: (...args: any[]) => void) => {
+							stdinHandlers[event] ??= [];
+							stdinHandlers[event].push(handler);
+							return process.stdin;
+						}),
+					};
+		process.stderr =
+			options.stderr === null
+				? null
+				: {
+						on: vi.fn((event: string, handler: (...args: any[]) => void) => {
+							stderrHandlers[event] ??= [];
+							stderrHandlers[event].push(handler);
+							return process.stderr;
+						}),
+					};
+
+		mocks.createdProcesses.push(process);
+		return process;
+	},
 }));
 
 // Mock electron with a proper class for Notification
@@ -59,30 +117,13 @@ vi.mock('../../../../main/utils/logger', () => ({
 vi.mock('child_process', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('child_process')>();
 
-	const mockProcess = {
-		stdin: {
-			write: vi.fn((_data: string, _encoding: string, cb?: () => void) => {
-				if (cb) cb();
-			}),
-			end: vi.fn(),
-			on: vi.fn(),
-		},
-		stderr: {
-			on: vi.fn(),
-		},
-		on: vi.fn(),
-		kill: vi.fn(),
-	};
-
-	const mockSpawn = vi.fn(() => mockProcess);
-
 	return {
 		...actual,
 		default: {
 			...actual,
-			spawn: mockSpawn,
+			spawn: mocks.mockSpawn,
 		},
-		spawn: mockSpawn,
+		spawn: mocks.mockSpawn,
 	};
 });
 
@@ -95,6 +136,7 @@ import {
 	getNotificationMaxQueueSize,
 	parseNotificationCommand,
 } from '../../../../main/ipc/handlers/notifications';
+import { logger } from '../../../../main/utils/logger';
 
 describe('Notification IPC Handlers', () => {
 	let handlers: Map<string, Function>;
@@ -107,6 +149,10 @@ describe('Notification IPC Handlers', () => {
 		// Reset mocks
 		mocks.mockNotificationIsSupported.mockReturnValue(true);
 		mocks.mockNotificationShow.mockClear();
+		mocks.createdProcesses.length = 0;
+		mocks.mockSpawn.mockReset();
+		mocks.mockSpawn.mockImplementation(() => mocks.createMockProcess());
+		vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([]);
 
 		// Capture registered handlers
 		vi.mocked(ipcMain.handle).mockImplementation((channel: string, handler: Function) => {
@@ -186,6 +232,295 @@ describe('Notification IPC Handlers', () => {
 		});
 	});
 
+	describe('notification:speak process execution', () => {
+		it('should spawn the configured command, write text to stdin, and notify renderers on completion', async () => {
+			const window = {
+				isDestroyed: vi.fn().mockReturnValue(false),
+				webContents: {
+					isDestroyed: vi.fn().mockReturnValue(false),
+					send: vi.fn(),
+				},
+			};
+			vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([window as any]);
+
+			const handler = handlers.get('notification:speak')!;
+			const resultPromise = handler({}, 'Hello world', '  say -v Alex  ');
+			const process = mocks.createdProcesses[0];
+
+			expect(mocks.mockSpawn).toHaveBeenCalledWith('say -v Alex', [], {
+				stdio: ['pipe', 'ignore', 'pipe'],
+				shell: true,
+			});
+			expect(process.stdin.write).toHaveBeenCalledWith('Hello world', 'utf8', expect.any(Function));
+			expect(process.stdin.end).toHaveBeenCalled();
+
+			process.__emit('close', 0, null);
+			const result = await resultPromise;
+
+			expect(result).toEqual({ success: true, notificationId: 1 });
+			expect(window.webContents.send).toHaveBeenCalledWith('notification:commandCompleted', 1);
+			expect(getActiveNotificationCount()).toBe(0);
+		});
+
+		it('should capture stderr and return failure for non-zero command exits', async () => {
+			const handler = handlers.get('notification:speak')!;
+			const resultPromise = handler({}, 'Speak this', 'failing-command');
+			const process = mocks.createdProcesses[0];
+
+			process.__emitStderr('data', Buffer.from('boom'));
+			process.__emit('close', 1, null);
+			const result = await resultPromise;
+
+			expect(result).toEqual({ success: false, notificationId: 1 });
+			expect(logger.error).toHaveBeenCalledWith(
+				'Notification process error output',
+				'Notification',
+				expect.objectContaining({
+					exitCode: 1,
+					stderr: 'boom',
+					command: 'failing-command',
+				})
+			);
+		});
+
+		it('should return a failed result when the child process emits a spawn error', async () => {
+			const handler = handlers.get('notification:speak')!;
+			const resultPromise = handler({}, 'Speak this', 'missing-command');
+			const process = mocks.createdProcesses[0];
+
+			process.__emit('error', new Error('spawn failed'));
+			const result = await resultPromise;
+
+			expect(result.success).toBe(false);
+			expect(result.notificationId).toBe(1);
+			expect(result.error).toBe('Error: spawn failed');
+			expect(getActiveNotificationCount()).toBe(0);
+		});
+
+		it('should shorten long text previews when logging child process errors', async () => {
+			const handler = handlers.get('notification:speak')!;
+			const longText = 'x'.repeat(150);
+			const resultPromise = handler({}, longText, 'missing-command');
+			const process = mocks.createdProcesses[0];
+
+			process.__emit('error', new Error('spawn failed'));
+			const result = await resultPromise;
+			process.__emit('close', 0, null);
+
+			expect(result.success).toBe(false);
+			expect(logger.error).toHaveBeenCalledWith(
+				'Notification spawn error',
+				'Notification',
+				expect.objectContaining({
+					textPreview: `${'x'.repeat(100)}...`,
+				})
+			);
+		});
+
+		it('should shorten very long text previews when logging command requests', async () => {
+			const handler = handlers.get('notification:speak')!;
+			const longText = 'x'.repeat(250);
+			const resultPromise = handler({}, longText, 'say');
+			const process = mocks.createdProcesses[0];
+
+			process.__emit('close', 0, null);
+			const result = await resultPromise;
+
+			expect(result.success).toBe(true);
+			expect(logger.info).toHaveBeenCalledWith(
+				'Notification command request received',
+				'Notification',
+				expect.objectContaining({
+					textLength: 250,
+					textPreview: `${'x'.repeat(200)}...`,
+				})
+			);
+		});
+
+		it('should ignore late spawn errors after the process has already closed', async () => {
+			const handler = handlers.get('notification:speak')!;
+			const resultPromise = handler({}, 'Speak this', 'say');
+			const process = mocks.createdProcesses[0];
+
+			process.__emit('close', 0, null);
+			const result = await resultPromise;
+			process.__emit('error', new Error('late spawn failure'));
+
+			expect(result).toEqual({ success: true, notificationId: 1 });
+			expect(logger.error).toHaveBeenCalledWith(
+				'Notification spawn error',
+				'Notification',
+				expect.objectContaining({
+					error: 'Error: late spawn failure',
+					command: 'say',
+				})
+			);
+		});
+
+		it('should log stdin EPIPE and non-EPIPE write-stream errors without failing the command', async () => {
+			const handler = handlers.get('notification:speak')!;
+			const resultPromise = handler({}, 'Speak this', 'say');
+			const process = mocks.createdProcesses[0];
+
+			process.__emitStdin('error', { code: 'EPIPE' });
+			process.__emitStdin('error', Object.assign(new Error('bad pipe'), { code: 'EIO' }));
+			process.__emit('close', 0, null);
+			const result = await resultPromise;
+
+			expect(result.success).toBe(true);
+			expect(logger.debug).toHaveBeenCalledWith(
+				'Notification stdin EPIPE - process closed before write completed',
+				'Notification'
+			);
+			expect(logger.error).toHaveBeenCalledWith(
+				'Notification stdin error',
+				'Notification',
+				expect.objectContaining({
+					error: 'Error: bad pipe',
+					code: 'EIO',
+				})
+			);
+		});
+
+		it('should log non-object stdin errors without an errno code', async () => {
+			const handler = handlers.get('notification:speak')!;
+			const resultPromise = handler({}, 'Speak this', 'say');
+			const process = mocks.createdProcesses[0];
+
+			process.__emitStdin('error', 'string stream failure');
+			process.__emit('close', 0, null);
+			const result = await resultPromise;
+
+			expect(result.success).toBe(true);
+			expect(logger.error).toHaveBeenCalledWith(
+				'Notification stdin error',
+				'Notification',
+				expect.objectContaining({
+					error: 'string stream failure',
+					code: undefined,
+				})
+			);
+		});
+
+		it('should log stdin write callback errors', async () => {
+			const process = mocks.createMockProcess({ stdinWriteError: new Error('write failed') });
+			mocks.mockSpawn.mockReturnValueOnce(process);
+
+			const handler = handlers.get('notification:speak')!;
+			const resultPromise = handler({}, 'Speak this', 'say');
+
+			process.__emit('close', 0, null);
+			const result = await resultPromise;
+
+			expect(result.success).toBe(true);
+			expect(logger.error).toHaveBeenCalledWith('Notification stdin write error', 'Notification', {
+				error: 'Error: write failed',
+			});
+		});
+
+		it('should log when a child process has no stdin and still resolve on close', async () => {
+			const process = mocks.createMockProcess({ stdin: null });
+			mocks.mockSpawn.mockReturnValueOnce(process);
+
+			const handler = handlers.get('notification:speak')!;
+			const resultPromise = handler({}, 'Speak this', 'say');
+
+			process.__emit('close', 0, null);
+			const result = await resultPromise;
+
+			expect(result.success).toBe(true);
+			expect(logger.error).toHaveBeenCalledWith(
+				'Notification no stdin available on child process',
+				'Notification'
+			);
+		});
+
+		it('should complete when a child process exposes no stderr stream', async () => {
+			const process = mocks.createMockProcess({ stderr: null });
+			mocks.mockSpawn.mockReturnValueOnce(process);
+
+			const handler = handlers.get('notification:speak')!;
+			const resultPromise = handler({}, 'Speak this', 'say');
+
+			process.__emit('close', 0, null);
+			const result = await resultPromise;
+
+			expect(result.success).toBe(true);
+		});
+
+		it('should not notify renderer windows whose webContents are unavailable', async () => {
+			const window = {
+				isDestroyed: vi.fn().mockReturnValue(false),
+				webContents: {
+					isDestroyed: vi.fn().mockReturnValue(true),
+					send: vi.fn(),
+				},
+			};
+			vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([window as any]);
+
+			const handler = handlers.get('notification:speak')!;
+			const resultPromise = handler({}, 'Speak this', 'say');
+			const process = mocks.createdProcesses[0];
+
+			process.__emit('close', 0, null);
+			const result = await resultPromise;
+
+			expect(result.success).toBe(true);
+			expect(window.webContents.send).not.toHaveBeenCalled();
+		});
+
+		it('should return a failed result when spawning throws synchronously', async () => {
+			mocks.mockSpawn.mockImplementationOnce(() => {
+				throw new Error('spawn exploded');
+			});
+
+			const handler = handlers.get('notification:speak')!;
+			const result = await handler({}, 'Speak this', 'say');
+
+			expect(result.success).toBe(false);
+			expect(result.error).toBe('Error: spawn exploded');
+			expect(logger.error).toHaveBeenCalledWith(
+				'Notification error starting command',
+				'Notification',
+				expect.objectContaining({
+					error: 'Error: spawn exploded',
+					command: 'say',
+				})
+			);
+		});
+
+		it('should wait between queued notification commands to avoid overlap', async () => {
+			vi.useFakeTimers();
+			vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+
+			try {
+				const handler = handlers.get('notification:speak')!;
+				const firstPromise = handler({}, 'First', 'say');
+				const firstProcess = mocks.createdProcesses[0];
+				firstProcess.__emit('close', 0, null);
+				await firstPromise;
+
+				const secondPromise = handler({}, 'Second', 'say');
+				await vi.advanceTimersByTimeAsync(14999);
+				expect(mocks.createdProcesses).toHaveLength(1);
+
+				await vi.advanceTimersByTimeAsync(1);
+				const secondProcess = mocks.createdProcesses[1];
+				expect(secondProcess).toBeDefined();
+				secondProcess.__emit('close', 0, null);
+				const secondResult = await secondPromise;
+
+				expect(secondResult).toEqual({ success: true, notificationId: 2 });
+				expect(logger.debug).toHaveBeenCalledWith(
+					'Notification queue waiting 15000ms before next command',
+					'Notification'
+				);
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+	});
+
 	describe('notification:stopSpeak', () => {
 		it('should return error when no active notification process', async () => {
 			const handler = handlers.get('notification:stopSpeak')!;
@@ -193,6 +528,50 @@ describe('Notification IPC Handlers', () => {
 
 			expect(result.success).toBe(false);
 			expect(result.error).toBe('No active notification process with that ID');
+		});
+
+		it('should stop an active notification process', async () => {
+			const speakHandler = handlers.get('notification:speak')!;
+			const speakPromise = speakHandler({}, 'Speak this', 'say');
+			const process = mocks.createdProcesses[0];
+
+			expect(getActiveNotificationCount()).toBe(1);
+
+			const stopHandler = handlers.get('notification:stopSpeak')!;
+			const stopResult = await stopHandler({}, 1);
+
+			expect(stopResult).toEqual({ success: true });
+			expect(process.kill).toHaveBeenCalledWith('SIGTERM');
+			expect(getActiveNotificationCount()).toBe(0);
+
+			process.__emit('close', 0, null);
+			await speakPromise;
+		});
+
+		it('should report kill failures when stopping an active notification process', async () => {
+			const speakHandler = handlers.get('notification:speak')!;
+			const speakPromise = speakHandler({}, 'Speak this', 'say');
+			const process = mocks.createdProcesses[0];
+			process.kill.mockImplementationOnce(() => {
+				throw new Error('kill failed');
+			});
+
+			const stopHandler = handlers.get('notification:stopSpeak')!;
+			const stopResult = await stopHandler({}, 1);
+
+			expect(stopResult.success).toBe(false);
+			expect(stopResult.error).toBe('Error: kill failed');
+			expect(logger.error).toHaveBeenCalledWith(
+				'Notification error stopping process',
+				'Notification',
+				expect.objectContaining({
+					notificationId: 1,
+					error: 'Error: kill failed',
+				})
+			);
+
+			process.__emit('close', 0, null);
+			await speakPromise;
 		});
 	});
 

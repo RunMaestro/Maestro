@@ -78,7 +78,7 @@ export function WizardModePrompt({
 
 	const handleIterateConfirm = useCallback(() => {
 		const trimmedGoal = iterateGoal.trim();
-		onSetGoal(trimmedGoal || null);
+		onSetGoal(trimmedGoal);
 		onSelectMode('iterate');
 		onClose();
 	}, [iterateGoal, onSelectMode, onSetGoal, onClose]);

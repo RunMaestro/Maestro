@@ -751,10 +751,10 @@ describe('AICommandsPanel', () => {
 			expect(callArg[1].command).toBe('/second'); // Unchanged
 		});
 
-		it('should not save edit if editingCommand is null', () => {
+		it('should not show save action before edit mode', () => {
 			const commands = [createMockCommand({ id: 'cmd-1', command: '/test' })];
 
-			const { rerender } = render(
+			render(
 				<AICommandsPanel
 					theme={mockTheme}
 					customAICommands={commands}
@@ -762,8 +762,7 @@ describe('AICommandsPanel', () => {
 				/>
 			);
 
-			// This tests the early return in handleSaveEdit when editingCommand is null
-			// By testing that if we never enter edit mode, nothing is saved
+			expect(screen.queryByRole('button', { name: /Save/i })).not.toBeInTheDocument();
 			expect(mockSetCustomAICommands).not.toHaveBeenCalled();
 		});
 
@@ -1002,6 +1001,31 @@ describe('AICommandsPanel', () => {
 			expandCommand('/test');
 
 			expect(screen.getByText('This is the prompt content')).toBeInTheDocument();
+		});
+
+		it('should collapse an expanded command when clicked again', () => {
+			const commands = [
+				createMockCommand({
+					id: 'cmd-collapse',
+					command: '/collapse',
+					prompt: 'Prompt visible only while expanded',
+				}),
+			];
+
+			render(
+				<AICommandsPanel
+					theme={mockTheme}
+					customAICommands={commands}
+					setCustomAICommands={mockSetCustomAICommands}
+				/>
+			);
+
+			expandCommand('/collapse');
+			expect(screen.getByText('Prompt visible only while expanded')).toBeInTheDocument();
+
+			expandCommand('/collapse');
+			expect(screen.queryByText('Prompt visible only while expanded')).not.toBeInTheDocument();
+			expect(screen.queryByTitle('Edit command')).not.toBeInTheDocument();
 		});
 
 		it('should apply theme colors to components', () => {
@@ -1476,6 +1500,76 @@ describe('AICommandsPanel', () => {
 			// The Tab key handler should have been triggered
 			// Note: Due to mocking, we can't fully test the tab insertion but can verify the handler was called
 			expect(mockHandleKeyDown).toHaveBeenCalled();
+		});
+
+		it('should let autocomplete consume Tab in the create prompt', () => {
+			mockHandleKeyDown.mockReturnValueOnce(true);
+
+			render(
+				<AICommandsPanel
+					theme={mockTheme}
+					customAICommands={[]}
+					setCustomAICommands={mockSetCustomAICommands}
+				/>
+			);
+
+			fireEvent.click(screen.getByRole('button', { name: /Add Command/i }));
+
+			const textarea = screen.getByPlaceholderText(/type {{ for variables/i) as HTMLTextAreaElement;
+			fireEvent.change(textarea, { target: { value: 'line1' } });
+			textarea.setSelectionRange(5, 5);
+
+			fireEvent.keyDown(textarea, { key: 'Tab' });
+
+			expect(mockHandleKeyDown).toHaveBeenCalled();
+			expect(textarea).toHaveValue('line1');
+		});
+
+		it('should let autocomplete consume Tab in the edit prompt', () => {
+			mockHandleKeyDown.mockReturnValueOnce(true);
+			const commands = [createMockCommand({ id: 'cmd-1', command: '/test', prompt: 'Original' })];
+
+			render(
+				<AICommandsPanel
+					theme={mockTheme}
+					customAICommands={commands}
+					setCustomAICommands={mockSetCustomAICommands}
+				/>
+			);
+
+			expandCommand('/test');
+			fireEvent.click(screen.getByTitle('Edit command'));
+
+			const textarea = screen.getByDisplayValue('Original') as HTMLTextAreaElement;
+			textarea.setSelectionRange(8, 8);
+
+			fireEvent.keyDown(textarea, { key: 'Tab' });
+
+			expect(mockHandleKeyDown).toHaveBeenCalled();
+			expect(textarea).toHaveValue('Original');
+		});
+
+		it('should insert a tab character in the edit prompt when autocomplete does not handle Tab', () => {
+			const commands = [createMockCommand({ id: 'cmd-1', command: '/test', prompt: 'line1' })];
+
+			render(
+				<AICommandsPanel
+					theme={mockTheme}
+					customAICommands={commands}
+					setCustomAICommands={mockSetCustomAICommands}
+				/>
+			);
+
+			expandCommand('/test');
+			fireEvent.click(screen.getByTitle('Edit command'));
+
+			const textarea = screen.getByDisplayValue('line1') as HTMLTextAreaElement;
+			textarea.setSelectionRange(5, 5);
+
+			fireEvent.keyDown(textarea, { key: 'Tab' });
+
+			expect(mockHandleKeyDown).toHaveBeenCalled();
+			expect(textarea).toHaveValue('line1\t');
 		});
 	});
 });

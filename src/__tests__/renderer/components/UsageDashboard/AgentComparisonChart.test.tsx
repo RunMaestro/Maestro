@@ -18,6 +18,7 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import React from 'react';
 import { AgentComparisonChart } from '../../../../renderer/components/UsageDashboard/AgentComparisonChart';
 import type { StatsAggregation } from '../../../../renderer/hooks/stats/useStats';
+import { COLORBLIND_AGENT_PALETTE } from '../../../../renderer/constants/colorblindPalettes';
 import { THEMES } from '../../../../shared/themes';
 
 // Test theme
@@ -200,6 +201,17 @@ describe('AgentComparisonChart', () => {
 			// Should have different colors for each agent
 			expect(new Set(colors).size).toBe(colors.length);
 		});
+
+		it('uses the colorblind-safe palette when colorblind mode is enabled', () => {
+			const { container } = render(
+				<AgentComparisonChart data={mockData} theme={theme} colorBlindMode />
+			);
+
+			const bars = container.querySelectorAll('.h-full.rounded.flex.items-center');
+
+			expect(bars[0]).toHaveStyle({ backgroundColor: COLORBLIND_AGENT_PALETTE[0] });
+			expect(bars[1]).toHaveStyle({ backgroundColor: COLORBLIND_AGENT_PALETTE[1] });
+		});
 	});
 
 	describe('Legend', () => {
@@ -271,6 +283,39 @@ describe('AgentComparisonChart', () => {
 				expect(tooltip?.textContent).toContain('total');
 			}
 		});
+
+		it('uses singular query text in the tooltip for one query', () => {
+			const singleQueryData: StatsAggregation = {
+				...singleAgentData,
+				byAgent: {
+					'claude-code': { count: 1, duration: 1000000 },
+				},
+			};
+			const { container } = render(<AgentComparisonChart data={singleQueryData} theme={theme} />);
+
+			const barRows = container.querySelectorAll('.flex.items-center.gap-3');
+			expect(barRows.length).toBeGreaterThan(0);
+
+			fireEvent.mouseEnter(barRows[0]);
+
+			expect(container.querySelector('.fixed.z-50')?.textContent).toContain('1 query');
+		});
+
+		it('hides a hover tooltip when refreshed data no longer contains that agent', () => {
+			const { container, rerender } = render(
+				<AgentComparisonChart data={mockData} theme={theme} />
+			);
+			const barRows = container.querySelectorAll('.flex.items-center.gap-3');
+			expect(barRows.length).toBeGreaterThan(0);
+
+			fireEvent.mouseEnter(barRows[0]);
+			expect(container.querySelector('.fixed.z-50')).toBeInTheDocument();
+
+			rerender(<AgentComparisonChart data={emptyData} theme={theme} />);
+
+			expect(container.querySelector('.fixed.z-50')).not.toBeInTheDocument();
+			expect(screen.getByText('No agent data available')).toBeInTheDocument();
+		});
 	});
 
 	describe('Theme Support', () => {
@@ -333,6 +378,20 @@ describe('AgentComparisonChart', () => {
 			expect(screen.getByText(/1\.5K/)).toBeInTheDocument();
 		});
 
+		it('formats million-scale counts and sub-minute durations', () => {
+			const millionCountData: StatsAggregation = {
+				...mockData,
+				byAgent: {
+					'claude-code': { count: 1500000, duration: 45000 },
+				},
+			};
+
+			render(<AgentComparisonChart data={millionCountData} theme={theme} />);
+
+			expect(screen.getByText(/1\.5M/)).toBeInTheDocument();
+			expect(screen.getByText('45s')).toBeInTheDocument();
+		});
+
 		it('formats hours correctly', () => {
 			const longDurationData: StatsAggregation = {
 				...mockData,
@@ -360,6 +419,25 @@ describe('AgentComparisonChart', () => {
 				// Should have close to 100% width
 				expect(firstBar.style.width).toBe('100%');
 			}
+		});
+
+		it('keeps zero-duration agents visible with zero percentages', () => {
+			const zeroDurationData: StatsAggregation = {
+				...mockData,
+				byAgent: {
+					'claude-code': { count: 3, duration: 0 },
+					'factory-droid': { count: 2, duration: 0 },
+				},
+			};
+			const { container } = render(<AgentComparisonChart data={zeroDurationData} theme={theme} />);
+
+			const meters = screen.getAllByRole('meter');
+			expect(meters).toHaveLength(2);
+			expect(meters[0]).toHaveAttribute('aria-valuenow', '0');
+			expect(screen.getAllByText('0.0%')).toHaveLength(2);
+
+			const bars = container.querySelectorAll('.h-full.rounded.flex.items-center');
+			expect((bars[0] as HTMLElement).style.width).toBe('2%');
 		});
 	});
 

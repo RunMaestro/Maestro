@@ -156,8 +156,7 @@ export function QuickActionsMenu({
 		},
 	];
 
-	const handleItemClick = (action: QuickAction, disabled: boolean) => {
-		if (disabled) return;
+	const handleItemClick = (action: QuickAction) => {
 		onSelectAction(action);
 		onClose();
 	};
@@ -182,11 +181,11 @@ export function QuickActionsMenu({
 
 			{/* Menu container */}
 			<div ref={menuRef} role="menu" aria-label="Quick actions" style={menuStyle}>
-				{menuItems.map((item, index) => (
+				{menuItems.map((item) => (
 					<button
 						key={item.action}
 						role="menuitem"
-						onClick={() => handleItemClick(item.action, item.disabled)}
+						onClick={() => handleItemClick(item.action)}
 						disabled={item.disabled}
 						aria-disabled={item.disabled}
 						style={{
@@ -198,7 +197,7 @@ export function QuickActionsMenu({
 							minHeight: `${MIN_TOUCH_TARGET}px`,
 							backgroundColor: 'transparent',
 							border: 'none',
-							borderBottom: index < menuItems.length - 1 ? `1px solid ${colors.border}` : 'none',
+							borderBottom: 'none',
 							color: item.disabled ? colors.textDim : colors.textMain,
 							fontSize: '15px',
 							fontWeight: 500,
@@ -217,9 +216,7 @@ export function QuickActionsMenu({
 							e.currentTarget.style.backgroundColor = 'transparent';
 						}}
 						onMouseEnter={(e) => {
-							if (!item.disabled) {
-								e.currentTarget.style.backgroundColor = `${colors.accent}20`;
-							}
+							e.currentTarget.style.backgroundColor = `${colors.accent}20`;
 						}}
 						onMouseLeave={(e) => {
 							e.currentTarget.style.backgroundColor = 'transparent';

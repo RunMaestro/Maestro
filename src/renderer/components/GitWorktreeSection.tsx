@@ -72,8 +72,6 @@ export function GitWorktreeSection({
 
 	// Handle browse button click for base directory
 	const handleBrowseBaseDir = async () => {
-		// Browse is only available for local sessions
-		if (isRemoteSession) return;
 		const result = await window.maestro.dialog.selectFolder();
 		if (result) {
 			setWorktreeBaseDir(result);

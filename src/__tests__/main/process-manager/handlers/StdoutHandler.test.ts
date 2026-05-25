@@ -48,7 +48,9 @@ vi.mock('../../../../main/parsers/error-patterns', () => ({
 // ── Imports (after mocks) ──────────────────────────────────────────────────
 
 import { StdoutHandler } from '../../../../main/process-manager/handlers/StdoutHandler';
-import type { ManagedProcess } from '../../../../main/process-manager/types';
+import type { AgentError, ManagedProcess } from '../../../../main/process-manager/types';
+import { logger } from '../../../../main/utils/logger';
+import { matchSshErrorPattern } from '../../../../main/parsers/error-patterns';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -85,11 +87,13 @@ function createMockBufferManager() {
 	};
 }
 
-function createTestContext(processOverrides: Partial<ManagedProcess> = {}) {
+function createTestContext(
+	processOverrides: Partial<ManagedProcess> = {},
+	sessionId = 'test-session'
+) {
 	const processes = new Map<string, ManagedProcess>();
 	const emitter = new EventEmitter();
 	const bufferManager = createMockBufferManager();
-	const sessionId = 'test-session';
 	const proc = createMockProcess({ sessionId, ...processOverrides });
 	processes.set(sessionId, proc);
 
@@ -106,6 +110,21 @@ function sendJsonLine(handler: StdoutHandler, sessionId: string, obj: Record<str
 	handler.handleData(sessionId, JSON.stringify(obj) + '\n');
 }
 
+function createPassthroughParser(overrides: Record<string, unknown> = {}) {
+	return {
+		agentId: 'claude-code',
+		parseJsonLine: vi.fn(),
+		parseJsonObject: vi.fn((parsed: unknown) => parsed),
+		extractUsage: vi.fn((event: any) => event.usage || null),
+		extractSessionId: vi.fn((event: any) => event.sessionId || null),
+		extractSlashCommands: vi.fn((event: any) => event.slashCommands || null),
+		isResultMessage: vi.fn((event: any) => event.type === 'result'),
+		detectErrorFromLine: vi.fn(() => null),
+		detectErrorFromParsed: vi.fn(() => null),
+		...overrides,
+	};
+}
+
 // ── Tests ──────────────────────────────────────────────────────────────────
 
 describe('StdoutHandler', () => {
@@ -119,6 +138,14 @@ describe('StdoutHandler', () => {
 		it('should silently return when sessionId is not found in processes map', () => {
 			const { handler, bufferManager } = createTestContext();
 			handler.handleData('nonexistent-session', 'some output');
+			expect(bufferManager.emitDataBuffered).not.toHaveBeenCalled();
+		});
+
+		it('should return when stripped stdout has no content', () => {
+			const { handler, bufferManager, sessionId } = createTestContext();
+
+			handler.handleData(sessionId, '\x1b[31m\x1b[0m');
+
 			expect(bufferManager.emitDataBuffered).not.toHaveBeenCalled();
 		});
 
@@ -206,6 +233,277 @@ describe('StdoutHandler', () => {
 
 			handler.handleData(sessionId, '\n\n\n');
 			expect(bufferManager.emitDataBuffered).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('stream error handling', () => {
+		it('emits parser-detected JSON agent errors and rewrites remote auth guidance', () => {
+			const agentError: AgentError = {
+				type: 'auth_expired',
+				message: 'Claude authentication expired',
+				recoverable: true,
+				agentId: 'claude-code',
+				timestamp: 123,
+				raw: {},
+			};
+			const parser = createPassthroughParser({
+				detectErrorFromParsed: vi.fn(() => agentError),
+			});
+			const { handler, emitter, sessionId, proc } = createTestContext({
+				isStreamJsonMode: true,
+				outputParser: parser as any,
+				sshRemoteId: 'remote-1',
+				sshRemoteHost: 'build-box',
+			});
+			const errorSpy = vi.fn();
+			emitter.on('agent-error', errorSpy);
+
+			sendJsonLine(handler, sessionId, { type: 'error' });
+
+			expect(proc.errorEmitted).toBe(true);
+			expect(agentError.sessionId).toBe(sessionId);
+			expect(agentError.message).toBe(
+				'Authentication failed on remote host "build-box". SSH into the remote and run "claude login" to re-authenticate.'
+			);
+			expect(errorSpy).toHaveBeenCalledWith(sessionId, agentError);
+			expect(logger.debug).toHaveBeenCalledWith(
+				'[ProcessManager] Error detected from output',
+				'ProcessManager',
+				expect.objectContaining({
+					sessionId,
+					errorType: 'auth_expired',
+					isRemote: true,
+				})
+			);
+		});
+
+		it('emits parser-detected non-JSON agent errors', () => {
+			const agentError: AgentError = {
+				type: 'agent_crashed',
+				message: 'agent crashed',
+				recoverable: false,
+				agentId: 'claude-code',
+				timestamp: 123,
+			};
+			const parser = createPassthroughParser({
+				detectErrorFromLine: vi.fn(() => agentError),
+			});
+			const { handler, emitter, sessionId } = createTestContext({
+				isStreamJsonMode: true,
+				outputParser: parser as any,
+			});
+			const errorSpy = vi.fn();
+			emitter.on('agent-error', errorSpy);
+
+			handler.handleData(sessionId, 'agent crashed badly\n');
+
+			expect(parser.detectErrorFromLine).toHaveBeenCalledWith('agent crashed badly');
+			expect(errorSpy).toHaveBeenCalledWith(sessionId, agentError);
+		});
+
+		it('emits SSH errors from remote stdout before buffering the line', () => {
+			vi.mocked(matchSshErrorPattern).mockReturnValueOnce({
+				type: 'ssh_connection_failed',
+				message: 'Could not resolve hostname',
+				recoverable: true,
+			});
+			const { handler, emitter, bufferManager, sessionId, proc } = createTestContext({
+				isStreamJsonMode: true,
+				sshRemoteId: 'remote-1',
+				toolType: 'codex',
+			});
+			const errorSpy = vi.fn();
+			emitter.on('agent-error', errorSpy);
+
+			handler.handleData(sessionId, 'ssh: Could not resolve hostname example\n');
+
+			expect(proc.errorEmitted).toBe(true);
+			expect(errorSpy).toHaveBeenCalledWith(
+				sessionId,
+				expect.objectContaining({
+					type: 'ssh_connection_failed',
+					message: 'Could not resolve hostname',
+					agentId: 'codex',
+					raw: { errorLine: 'ssh: Could not resolve hostname example' },
+				})
+			);
+			expect(bufferManager.emitDataBuffered).not.toHaveBeenCalled();
+		});
+
+		it('buffers remote stdout lines when no SSH error pattern matches', () => {
+			vi.mocked(matchSshErrorPattern).mockReturnValueOnce(null);
+			const { handler, bufferManager, sessionId, proc } = createTestContext({
+				isStreamJsonMode: true,
+				sshRemoteId: 'remote-1',
+			});
+
+			handler.handleData(sessionId, 'normal remote output\n');
+
+			expect(proc.errorEmitted).toBe(false);
+			expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith(
+				sessionId,
+				'normal remote output'
+			);
+		});
+	});
+
+	describe('output parser event handling', () => {
+		it('returns when the output parser does not produce an event', () => {
+			const parser = createPassthroughParser({
+				parseJsonObject: vi.fn(() => null),
+			});
+			const { handler, bufferManager, sessionId } = createTestContext({
+				isStreamJsonMode: true,
+				outputParser: parser as any,
+			});
+
+			sendJsonLine(handler, sessionId, { type: 'unknown' });
+
+			expect(bufferManager.emitDataBuffered).not.toHaveBeenCalled();
+		});
+
+		it('emits parser-provided slash commands', () => {
+			const parser = createPassthroughParser();
+			const { handler, emitter, sessionId } = createTestContext({
+				isStreamJsonMode: true,
+				outputParser: parser as any,
+			});
+			const slashSpy = vi.fn();
+			emitter.on('slash-commands', slashSpy);
+
+			sendJsonLine(handler, sessionId, {
+				type: 'system',
+				slashCommands: ['/help', '/compact'],
+			});
+
+			expect(slashSpy).toHaveBeenCalledWith(sessionId, ['/help', '/compact']);
+		});
+
+		it('emits tool execution events for embedded tool-use blocks', () => {
+			const parser = createPassthroughParser();
+			const { handler, emitter, sessionId } = createTestContext({
+				isStreamJsonMode: true,
+				outputParser: parser as any,
+			});
+			const toolSpy = vi.fn();
+			emitter.on('tool-execution', toolSpy);
+
+			sendJsonLine(handler, sessionId, {
+				type: 'text',
+				toolUseBlocks: [{ name: 'Read', input: { file_path: 'README.md' } }],
+			});
+
+			expect(toolSpy).toHaveBeenCalledWith(
+				sessionId,
+				expect.objectContaining({
+					toolName: 'Read',
+					state: { status: 'running', input: { file_path: 'README.md' } },
+				})
+			);
+		});
+
+		it('stops further parser-event processing for error events', () => {
+			const parser = createPassthroughParser();
+			const { handler, bufferManager, sessionId } = createTestContext({
+				isStreamJsonMode: true,
+				outputParser: parser as any,
+			});
+
+			sendJsonLine(handler, sessionId, { type: 'error', text: 'handled elsewhere' });
+
+			expect(bufferManager.emitDataBuffered).not.toHaveBeenCalled();
+		});
+
+		it('does not emit a Codex turn result when completion has no captured text', () => {
+			const parser = createPassthroughParser();
+			const { handler, bufferManager, emitter, sessionId, proc } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'codex',
+				outputParser: parser as any,
+			});
+			const usageSpy = vi.fn();
+			emitter.on('usage', usageSpy);
+
+			sendJsonLine(handler, sessionId, {
+				type: 'usage',
+				usage: {
+					inputTokens: 10,
+					outputTokens: 5,
+					contextWindow: 200000,
+				},
+			});
+
+			expect(usageSpy).toHaveBeenCalledTimes(1);
+			expect(proc.resultEmitted).toBe(false);
+			expect(bufferManager.emitDataBuffered).not.toHaveBeenCalled();
+		});
+
+		it('uses streamed text as a synopsis result fallback and logs diagnostics', () => {
+			const parser = createPassthroughParser();
+			const { handler, bufferManager, sessionId } = createTestContext(
+				{
+					isStreamJsonMode: true,
+					outputParser: parser as any,
+					streamedText: 'streamed synopsis answer',
+				},
+				'run-synopsis-1'
+			);
+
+			sendJsonLine(handler, sessionId, { type: 'result' });
+
+			expect(logger.info).toHaveBeenCalledWith(
+				'[ProcessManager] Synopsis result processing',
+				'ProcessManager',
+				expect.objectContaining({
+					sessionId,
+					eventText: '(empty)',
+					streamedText: 'streamed synopsis answer',
+					resultTextLength: 'streamed synopsis answer'.length,
+				})
+			);
+			expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith(
+				sessionId,
+				'streamed synopsis answer'
+			);
+		});
+
+		it('warns when a synopsis result event has no text to emit', () => {
+			const parser = createPassthroughParser();
+			const { handler, bufferManager, sessionId } = createTestContext(
+				{
+					isStreamJsonMode: true,
+					outputParser: parser as any,
+					streamedText: '',
+				},
+				'empty-synopsis-1'
+			);
+
+			sendJsonLine(handler, sessionId, { type: 'result' });
+
+			expect(bufferManager.emitDataBuffered).not.toHaveBeenCalled();
+			expect(logger.warn).toHaveBeenCalledWith(
+				'[ProcessManager] Synopsis result is empty - no text to emit',
+				'ProcessManager',
+				expect.objectContaining({ sessionId })
+			);
+		});
+
+		it('does not warn for empty non-synopsis parser results', () => {
+			const parser = createPassthroughParser();
+			const { handler, bufferManager, sessionId } = createTestContext({
+				isStreamJsonMode: true,
+				outputParser: parser as any,
+				streamedText: '',
+			});
+
+			sendJsonLine(handler, sessionId, { type: 'result' });
+
+			expect(bufferManager.emitDataBuffered).not.toHaveBeenCalled();
+			expect(logger.warn).not.toHaveBeenCalledWith(
+				'[ProcessManager] Synopsis result is empty - no text to emit',
+				'ProcessManager',
+				expect.anything()
+			);
 		});
 	});
 

@@ -539,6 +539,42 @@ describe('handleStartBatchRun — worktree dispatch integration', () => {
 
 			expect(config.worktree?.branchName).toBe('path-derived');
 		});
+
+		it('falls back to generic worktree branch name when existing-open path has no final segment', async () => {
+			const session = createMockSession();
+			const deps = createMockDeps();
+
+			const worktreeChild = createMockSession({
+				id: 'wt-empty-segment',
+				state: 'idle',
+				cwd: '/projects/worktrees/',
+				worktreeBranch: undefined,
+				parentSessionId: session.id,
+			});
+			useSessionStore.setState({
+				sessions: [session, worktreeChild],
+				activeSessionId: session.id,
+			} as any);
+
+			const config: BatchRunConfig = {
+				documents: baseDocuments,
+				prompt: 'Go',
+				loopEnabled: false,
+				worktreeTarget: {
+					mode: 'existing-open',
+					sessionId: 'wt-empty-segment',
+					createPROnCompletion: true,
+				},
+			};
+
+			const { result } = renderHook(() => useAutoRunHandlers(session, deps));
+
+			await act(async () => {
+				await result.current.handleStartBatchRun(config);
+			});
+
+			expect(config.worktree?.branchName).toBe('worktree');
+		});
 	});
 
 	// -----------------------------------------------------------------------
@@ -689,6 +725,43 @@ describe('handleStartBatchRun — worktree dispatch integration', () => {
 			const sessions = useSessionStore.getState().sessions;
 			const parent = sessions.find((s) => s.id === 'parent-session-1');
 			expect(parent?.worktreesExpanded).toBe(true);
+		});
+
+		it('preserves unrelated sessions while expanding the parent', async () => {
+			const session = createMockSession();
+			const sibling = createMockSession({ id: 'sibling-session', name: 'Sibling Agent' });
+			const deps = createMockDeps();
+			useSessionStore.setState({
+				sessions: [sibling, session],
+				activeSessionId: session.id,
+			} as any);
+
+			vi.mocked(window.maestro.git.worktreeSetup).mockResolvedValue({
+				success: true,
+			});
+			vi.mocked(gitService.getBranches).mockResolvedValue(['main']);
+
+			const config: BatchRunConfig = {
+				documents: baseDocuments,
+				prompt: 'Go',
+				loopEnabled: false,
+				worktreeTarget: {
+					mode: 'create-new',
+					newBranchName: 'sibling-safe',
+					baseBranch: 'main',
+					createPROnCompletion: false,
+				},
+			};
+
+			const { result } = renderHook(() => useAutoRunHandlers(session, deps));
+
+			await act(async () => {
+				await result.current.handleStartBatchRun(config);
+			});
+
+			const sessions = useSessionStore.getState().sessions;
+			expect(sessions[0]).toBe(sibling);
+			expect(sessions.find((s) => s.id === session.id)?.worktreesExpanded).toBe(true);
 		});
 	});
 
@@ -864,6 +937,40 @@ describe('handleStartBatchRun — worktree dispatch integration', () => {
 			);
 		});
 
+		it('shows unknown error toast when worktreeSetup fails without an error message', async () => {
+			const session = createMockSession();
+			const deps = createMockDeps();
+
+			vi.mocked(window.maestro.git.worktreeSetup).mockResolvedValue({
+				success: false,
+			});
+
+			const config: BatchRunConfig = {
+				documents: baseDocuments,
+				prompt: 'Go',
+				loopEnabled: false,
+				worktreeTarget: {
+					mode: 'create-new',
+					newBranchName: 'unknown-failure',
+					createPROnCompletion: false,
+				},
+			};
+
+			const { result } = renderHook(() => useAutoRunHandlers(session, deps));
+
+			await act(async () => {
+				await result.current.handleStartBatchRun(config);
+			});
+
+			expect(notifyToast).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'error',
+					title: 'Failed to Create Worktree',
+					message: 'Unknown error',
+				})
+			);
+		});
+
 		it('does not add a session to the store when worktreeSetup fails', async () => {
 			const session = createMockSession();
 			const deps = createMockDeps();
@@ -920,6 +1027,44 @@ describe('handleStartBatchRun — worktree dispatch integration', () => {
 			});
 
 			expect(deps.startBatchRun).not.toHaveBeenCalled();
+			expect(notifyToast).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'error',
+					title: 'Worktree Error',
+					message: 'IPC channel closed',
+				})
+			);
+		});
+
+		it('handles non-Error exceptions from worktreeSetup gracefully', async () => {
+			const session = createMockSession();
+			const deps = createMockDeps();
+
+			vi.mocked(window.maestro.git.worktreeSetup).mockRejectedValue('IPC channel closed');
+
+			const config: BatchRunConfig = {
+				documents: baseDocuments,
+				prompt: 'Go',
+				loopEnabled: false,
+				worktreeTarget: {
+					mode: 'create-new',
+					newBranchName: 'string-exception',
+					createPROnCompletion: false,
+				},
+			};
+
+			const { result } = renderHook(() => useAutoRunHandlers(session, deps));
+
+			await act(async () => {
+				await result.current.handleStartBatchRun(config);
+			});
+
+			expect(deps.startBatchRun).not.toHaveBeenCalled();
+			expect(window.maestro.logger.log).toHaveBeenCalledWith(
+				'error',
+				'Failed to spawn worktree agent: IPC channel closed',
+				'AutoRunHandlers'
+			);
 			expect(notifyToast).toHaveBeenCalledWith(
 				expect.objectContaining({
 					type: 'error',
@@ -1001,6 +1146,35 @@ describe('handleStartBatchRun — worktree dispatch integration', () => {
 			expect(newSession).toBeDefined();
 			// Branch name should be derived from the last path segment
 			expect(newSession!.worktreeBranch).toBe('my-feature');
+		});
+
+		it('uses a generic branch name for existing-closed paths with no final segment', async () => {
+			const session = createMockSession();
+			const deps = createMockDeps();
+
+			vi.mocked(gitService.getBranches).mockResolvedValue([]);
+
+			const config: BatchRunConfig = {
+				documents: baseDocuments,
+				prompt: 'Go',
+				loopEnabled: false,
+				worktreeTarget: {
+					mode: 'existing-closed',
+					worktreePath: '/deep/nested/path/',
+					createPROnCompletion: false,
+				},
+			};
+
+			const { result } = renderHook(() => useAutoRunHandlers(session, deps));
+
+			await act(async () => {
+				await result.current.handleStartBatchRun(config);
+			});
+
+			const sessions = useSessionStore.getState().sessions;
+			const newSession = sessions.find((s) => s.cwd === '/deep/nested/path/');
+			expect(newSession).toBeDefined();
+			expect(newSession!.worktreeBranch).toBe('worktree');
 		});
 
 		it('populates config.worktree for PR creation when requested', async () => {

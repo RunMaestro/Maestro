@@ -140,8 +140,8 @@ export const LocationDistributionChart = memo(function LocationDistributionChart
 
 	// Calculate location data
 	const locationData = useMemo((): LocationData[] => {
-		const localValue = data.byLocation?.local ?? 0;
-		const remoteValue = data.byLocation?.remote ?? 0;
+		const localValue = Math.max(0, data.byLocation?.local ?? 0);
+		const remoteValue = Math.max(0, data.byLocation?.remote ?? 0);
 		const total = localValue + remoteValue;
 
 		const locations: LocationData[] = [];
@@ -157,7 +157,7 @@ export const LocationDistributionChart = memo(function LocationDistributionChart
 				location: 'local',
 				label: 'Local',
 				value: localValue,
-				percentage: total > 0 ? (localValue / total) * 100 : total === 0 ? 50 : 0,
+				percentage: total > 0 ? (localValue / total) * 100 : 50,
 				color: localColor,
 			});
 		}
@@ -167,7 +167,7 @@ export const LocationDistributionChart = memo(function LocationDistributionChart
 				location: 'remote',
 				label: 'SSH Remote',
 				value: remoteValue,
-				percentage: total > 0 ? (remoteValue / total) * 100 : total === 0 ? 50 : 0,
+				percentage: total > 0 ? (remoteValue / total) * 100 : 50,
 				color: remoteColor,
 			});
 		}

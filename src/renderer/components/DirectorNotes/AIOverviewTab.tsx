@@ -75,7 +75,6 @@ export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
 
 	// Copy synopsis markdown to clipboard
 	const copyToClipboard = useCallback(async () => {
-		if (!synopsis) return;
 		const ok = await safeClipboardWrite(synopsis);
 		if (ok) {
 			setCopied(true);
@@ -330,7 +329,7 @@ export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
 								style={{ color: theme.colors.accent }}
 							/>
 							<p className="text-sm" style={{ color: theme.colors.textDim }}>
-								{progress.message || 'Generating synopsis...'}
+								{progress.message}
 							</p>
 						</div>
 					</div>

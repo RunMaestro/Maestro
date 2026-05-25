@@ -242,7 +242,7 @@ export const SessionStats = memo(function SessionStats({
 				</h4>
 				<div className="space-y-2">
 					{sortedAgents.map((agent) => {
-						const percentage = stats.total > 0 ? (agent.count / stats.total) * 100 : 0;
+						const percentage = (agent.count / stats.total) * 100;
 						return (
 							<div key={agent.agent} className="flex items-center gap-3">
 								{/* Agent name */}

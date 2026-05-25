@@ -131,12 +131,8 @@ async function executeNotificationCommand(
 	command?: string
 ): Promise<NotificationCommandResponse> {
 	const fullCommand = parseNotificationCommand(command);
-	const textLength = text?.length || 0;
-	const textPreview = text
-		? text.length > 200
-			? text.substring(0, 200) + '...'
-			: text
-		: '(no text)';
+	const textLength = text.length;
+	const textPreview = text.length > 200 ? text.substring(0, 200) + '...' : text;
 
 	// Log the incoming request with full details for debugging
 	logger.info('Notification command request received', 'Notification', {
@@ -208,11 +204,7 @@ async function executeNotificationCommand(
 				logger.error('Notification spawn error', 'Notification', {
 					error: String(err),
 					command: fullCommand,
-					textPreview: text
-						? text.length > 100
-							? text.substring(0, 100) + '...'
-							: text
-						: '(no text)',
+					textPreview: text.length > 100 ? text.substring(0, 100) + '...' : text,
 				});
 				activeNotificationProcesses.delete(notificationId);
 				if (!resolved) {
@@ -282,8 +274,8 @@ async function executeNotificationCommand(
  * Process the next item in the notification queue.
  *
  * Uses a flag-first approach to prevent race conditions:
- * 1. Check and set the processing flag atomically
- * 2. Then check the queue
+ * 1. Return immediately when the queue is empty or already processing
+ * 2. Set the processing flag before shifting the next item
  * This ensures only one processNextNotification call can proceed at a time.
  */
 async function processNextNotification(): Promise<void> {
@@ -294,12 +286,6 @@ async function processNextNotification(): Promise<void> {
 	// where multiple calls could pass the isNotificationProcessing check simultaneously
 	if (isNotificationProcessing) return;
 	isNotificationProcessing = true;
-
-	// Double-check queue after setting flag (another call might have emptied it)
-	if (notificationQueue.length === 0) {
-		isNotificationProcessing = false;
-		return;
-	}
 
 	const item = notificationQueue.shift()!;
 

@@ -17,6 +17,7 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { TabSwitcherModal } from '../../../renderer/components/TabSwitcherModal';
 import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
+import * as LayerStackContext from '../../../renderer/contexts/LayerStackContext';
 import type { Theme, AITab } from '../../../renderer/types';
 
 // Mock lucide-react
@@ -87,8 +88,12 @@ describe('TabSwitcherModal', () => {
 		Element.prototype.scrollIntoView = vi.fn();
 
 		// Reset the mocks for each test
-		vi.mocked(window.maestro.agentSessions.getAllNamedSessions).mockResolvedValue([]);
+		vi.mocked(window.maestro.agentSessions.getAllNamedSessions).mockReturnValue(
+			new Promise(() => {})
+		);
 		vi.mocked(window.maestro.agentSessions.updateSessionName).mockResolvedValue(undefined);
+		vi.mocked(window.maestro.agentSessions.setSessionName).mockResolvedValue(undefined);
+		vi.mocked(window.maestro.claude.updateSessionName).mockResolvedValue(undefined);
 	});
 
 	afterEach(() => {
@@ -568,6 +573,32 @@ describe('TabSwitcherModal', () => {
 				expect(screen.getByText('20%')).toBeInTheDocument();
 			});
 
+			it('defaults missing cache token counters to zero', () => {
+				const tab = createTestTab({
+					usageStats: {
+						inputTokens: 1000,
+						outputTokens: 500,
+						totalCostUsd: 0.1,
+						contextWindow: 200000,
+					} as AITab['usageStats'],
+				});
+
+				renderWithLayerStack(
+					<TabSwitcherModal
+						theme={theme}
+						tabs={[tab]}
+						activeTabId={tab.id}
+						projectRoot="/test"
+						onTabSelect={vi.fn()}
+						onNamedSessionSelect={vi.fn()}
+						onClose={vi.fn()}
+					/>
+				);
+
+				expect(screen.getByText('1.5K tokens')).toBeInTheDocument();
+				expect(screen.getByText('1%')).toBeInTheDocument();
+			});
+
 			it('caps at 100%', () => {
 				const tab = createTestTab({
 					usageStats: {
@@ -929,6 +960,53 @@ describe('TabSwitcherModal', () => {
 			});
 		});
 
+		it('syncs named tabs through provider session storage for non-Claude agents', async () => {
+			const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+			const tab = createTestTab({
+				name: 'Codex Plan',
+				agentSessionId: 'codex-session-123',
+			});
+			vi.mocked(window.maestro.agentSessions.setSessionName).mockRejectedValueOnce(
+				new Error('write failed')
+			);
+			vi.mocked(window.maestro.agentSessions.getAllNamedSessions).mockResolvedValue([
+				{
+					agentId: 'codex',
+					agentSessionId: 'codex-session-123',
+					projectPath: '/test',
+					sessionName: 'Codex Plan',
+					starred: false,
+				},
+			]);
+
+			renderWithLayerStack(
+				<TabSwitcherModal
+					theme={theme}
+					tabs={[tab]}
+					activeTabId={tab.id}
+					projectRoot="/test"
+					agentId="codex"
+					onTabSelect={vi.fn()}
+					onNamedSessionSelect={vi.fn()}
+					onClose={vi.fn()}
+				/>
+			);
+
+			await waitFor(() => {
+				expect(window.maestro.agentSessions.setSessionName).toHaveBeenCalledWith(
+					'codex',
+					'/test',
+					'codex-session-123',
+					'Codex Plan'
+				);
+				expect(window.maestro.agentSessions.getAllNamedSessions).toHaveBeenCalled();
+			});
+			expect(warnSpy).toHaveBeenCalledWith(
+				'[TabSwitcher] Failed to sync tab name:',
+				expect.any(Error)
+			);
+		});
+
 		it('switches modes with Tab key', async () => {
 			const tabs = [createTestTab({ name: 'Open Tab' })];
 
@@ -1112,6 +1190,50 @@ describe('TabSwitcherModal', () => {
 			});
 		});
 
+		it('shows "No named sessions found" when All Named mode has no items', async () => {
+			vi.mocked(window.maestro.agentSessions.getAllNamedSessions).mockResolvedValue([
+				{
+					agentId: 'claude-code',
+					agentSessionId: 'uuid-name-123',
+					projectPath: '/test',
+					sessionName: 'uuid-name-123',
+					starred: false,
+				},
+				{
+					agentId: 'claude-code',
+					agentSessionId: 'octet-name-456',
+					projectPath: '/test',
+					sessionName: 'OCTET',
+					starred: false,
+				},
+			]);
+			const unnamedTab = createTestTab({ name: '', agentSessionId: 'unnamed-open' });
+			const tabWithoutSessionId = createTestTab({
+				name: 'Named Before Session Starts',
+				agentSessionId: undefined,
+			});
+
+			renderWithLayerStack(
+				<TabSwitcherModal
+					theme={theme}
+					tabs={[unnamedTab, tabWithoutSessionId]}
+					activeTabId=""
+					projectRoot="/test"
+					onTabSelect={vi.fn()}
+					onNamedSessionSelect={vi.fn()}
+					onClose={vi.fn()}
+				/>
+			);
+
+			await waitFor(() => {
+				expect(window.maestro.agentSessions.getAllNamedSessions).toHaveBeenCalled();
+			});
+
+			fireEvent.click(screen.getByText(/All Named/));
+
+			expect(screen.getByText('No named sessions found')).toBeInTheDocument();
+		});
+
 		it('shows correct count for Starred pill', async () => {
 			const starredTab1 = createTestTab({ name: 'Starred 1', starred: true });
 			const starredTab2 = createTestTab({ name: 'Starred 2', starred: true });
@@ -1174,14 +1296,54 @@ describe('TabSwitcherModal', () => {
 			fireEvent.keyDown(input, { key: 'Tab' });
 			expect(screen.getByPlaceholderText('Search open tabs...')).toBeInTheDocument();
 		});
+
+		it('cycles modes backward with Shift+Tab and returns to open mode from the pill', () => {
+			renderWithLayerStack(
+				<TabSwitcherModal
+					theme={theme}
+					tabs={[createTestTab({ name: 'Test Tab' })]}
+					activeTabId=""
+					projectRoot="/test"
+					onTabSelect={vi.fn()}
+					onNamedSessionSelect={vi.fn()}
+					onClose={vi.fn()}
+				/>
+			);
+
+			const input = screen.getByPlaceholderText('Search open tabs...');
+
+			fireEvent.keyDown(input, { key: 'Tab', shiftKey: true });
+			expect(screen.getByPlaceholderText('Search starred sessions...')).toBeInTheDocument();
+
+			fireEvent.keyDown(input, { key: 'Tab', shiftKey: true });
+			expect(screen.getByPlaceholderText('Search named sessions...')).toBeInTheDocument();
+
+			fireEvent.keyDown(input, { key: 'Tab', shiftKey: true });
+			expect(screen.getByPlaceholderText('Search open tabs...')).toBeInTheDocument();
+
+			fireEvent.click(screen.getByRole('button', { name: /All Named/i }));
+			expect(screen.getByPlaceholderText('Search named sessions...')).toBeInTheDocument();
+
+			fireEvent.click(screen.getByRole('button', { name: /Open Tabs/i }));
+			expect(screen.getByPlaceholderText('Search open tabs...')).toBeInTheDocument();
+		});
 	});
 
 	describe('search functionality', () => {
-		it('filters tabs by name', () => {
+		it('filters tabs by name', async () => {
 			const tabs = [
-				createTestTab({ name: 'Alpha Session' }),
-				createTestTab({ name: 'Beta Session' }),
-				createTestTab({ name: 'Gamma Session' }),
+				createTestTab({
+					name: 'Alpha Session',
+					agentSessionId: '11111111-1111-1111-1111-111111111111',
+				}),
+				createTestTab({
+					name: 'Beta Session',
+					agentSessionId: '22222222-2222-2222-2222-222222222222',
+				}),
+				createTestTab({
+					name: 'Gamma Session',
+					agentSessionId: '33333333-3333-3333-3333-333333333333',
+				}),
 			];
 
 			renderWithLayerStack(
@@ -1199,9 +1361,11 @@ describe('TabSwitcherModal', () => {
 			const input = screen.getByPlaceholderText('Search open tabs...');
 			fireEvent.change(input, { target: { value: 'beta' } });
 
-			expect(screen.getByText('Beta Session')).toBeInTheDocument();
-			expect(screen.queryByText('Alpha Session')).not.toBeInTheDocument();
-			expect(screen.queryByText('Gamma Session')).not.toBeInTheDocument();
+			await waitFor(() => {
+				expect(screen.getByText('Beta Session')).toBeInTheDocument();
+				expect(screen.queryByText('Alpha Session')).not.toBeInTheDocument();
+				expect(screen.queryByText('Gamma Session')).not.toBeInTheDocument();
+			});
 		});
 
 		it('filters by claude session ID', () => {
@@ -1311,6 +1475,75 @@ describe('TabSwitcherModal', () => {
 			expect(screen.getByText('Authentication Service')).toBeInTheDocument();
 			expect(screen.getByText('User Auth Module')).toBeInTheDocument();
 			expect(screen.queryByText('API Gateway')).not.toBeInTheDocument();
+		});
+
+		it('filters closed named sessions by session name or agent session ID', async () => {
+			vi.mocked(window.maestro.agentSessions.getAllNamedSessions).mockResolvedValue([
+				{
+					agentId: 'claude-code',
+					agentSessionId: 'closed-alpha-123',
+					projectPath: '/test',
+					sessionName: 'Closed Alpha',
+					starred: false,
+				},
+				{
+					agentId: 'claude-code',
+					agentSessionId: 'closed-beta-456',
+					projectPath: '/test',
+					sessionName: 'Closed Beta',
+					starred: false,
+				},
+			]);
+
+			renderWithLayerStack(
+				<TabSwitcherModal
+					theme={theme}
+					tabs={[]}
+					activeTabId=""
+					projectRoot="/test"
+					onTabSelect={vi.fn()}
+					onNamedSessionSelect={vi.fn()}
+					onClose={vi.fn()}
+				/>
+			);
+
+			await waitFor(() => {
+				expect(window.maestro.agentSessions.getAllNamedSessions).toHaveBeenCalled();
+			});
+
+			fireEvent.click(screen.getByRole('button', { name: /All Named/i }));
+			const input = screen.getByPlaceholderText('Search named sessions...');
+			fireEvent.change(input, { target: { value: 'beta-456' } });
+
+			expect(screen.getByText('Closed Beta')).toBeInTheDocument();
+			expect(screen.queryByText('Closed Alpha')).not.toBeInTheDocument();
+		});
+
+		it('filters an open tab without an agent session id by display name', () => {
+			const scratchTab = createTestTab({
+				name: 'Scratch Notes',
+				agentSessionId: undefined,
+			});
+			const otherTab = createTestTab({ name: 'Release Plan' });
+
+			renderWithLayerStack(
+				<TabSwitcherModal
+					theme={theme}
+					tabs={[scratchTab, otherTab]}
+					activeTabId={scratchTab.id}
+					projectRoot="/test"
+					onTabSelect={vi.fn()}
+					onNamedSessionSelect={vi.fn()}
+					onClose={vi.fn()}
+				/>
+			);
+
+			fireEvent.change(screen.getByPlaceholderText('Search open tabs...'), {
+				target: { value: 'scratch' },
+			});
+
+			expect(screen.getByText('Scratch Notes')).toBeInTheDocument();
+			expect(screen.queryByText('Release Plan')).not.toBeInTheDocument();
 		});
 	});
 
@@ -1527,6 +1760,34 @@ describe('TabSwitcherModal', () => {
 			expect(onTabSelect).toHaveBeenCalledWith(tab10!.id);
 		});
 
+		it('uses scroll position when resolving visible number hotkeys', () => {
+			const tabs = Array.from({ length: 12 }, (_, i) =>
+				createTestTab({ name: `Tab ${String(i + 1).padStart(2, '0')}` })
+			);
+			const onTabSelect = vi.fn();
+			const { container } = renderWithLayerStack(
+				<TabSwitcherModal
+					theme={theme}
+					tabs={tabs}
+					activeTabId={tabs[0].id}
+					projectRoot="/test"
+					onTabSelect={onTabSelect}
+					onNamedSessionSelect={vi.fn()}
+					onClose={vi.fn()}
+				/>
+			);
+
+			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLDivElement;
+			scrollContainer.scrollTop = 104;
+			fireEvent.scroll(scrollContainer);
+
+			const input = screen.getByPlaceholderText('Search open tabs...');
+			fireEvent.keyDown(input, { key: '1', metaKey: true });
+
+			const tab3 = tabs.find((t) => t.name === 'Tab 03');
+			expect(onTabSelect).toHaveBeenCalledWith(tab3!.id);
+		});
+
 		it('renders number badges for first 10 visible items', () => {
 			const tabs = Array.from({ length: 5 }, (_, i) => createTestTab({ name: `Tab ${i + 1}` }));
 
@@ -1740,6 +2001,39 @@ describe('TabSwitcherModal', () => {
 			unmount();
 		});
 
+		it('registers an escape handler that calls the latest onClose ref', () => {
+			const tabs = [createTestTab()];
+			const onClose = vi.fn();
+			let registeredEscapeHandler: (() => void) | undefined;
+
+			vi.spyOn(LayerStackContext, 'useLayerStack').mockReturnValue({
+				registerLayer: vi.fn((layer) => {
+					registeredEscapeHandler = layer.onEscape;
+					return 'mock-tab-switcher-layer';
+				}),
+				unregisterLayer: vi.fn(),
+				updateLayerHandler: vi.fn(),
+			} as unknown as ReturnType<typeof LayerStackContext.useLayerStack>);
+
+			render(
+				<TabSwitcherModal
+					theme={theme}
+					tabs={tabs}
+					activeTabId={tabs[0].id}
+					projectRoot="/test"
+					onTabSelect={vi.fn()}
+					onNamedSessionSelect={vi.fn()}
+					onClose={onClose}
+				/>
+			);
+
+			expect(registeredEscapeHandler).toEqual(expect.any(Function));
+
+			registeredEscapeHandler?.();
+
+			expect(onClose).toHaveBeenCalledTimes(1);
+		});
+
 		it('updates handler when onClose changes', async () => {
 			const tabs = [createTestTab()];
 			const onClose1 = vi.fn();
@@ -1771,8 +2065,14 @@ describe('TabSwitcherModal', () => {
 				</LayerStackProvider>
 			);
 
-			// Should still be visible
 			expect(screen.getByRole('dialog')).toBeInTheDocument();
+
+			fireEvent.keyDown(window, { key: 'Escape' });
+
+			await waitFor(() => {
+				expect(onClose2).toHaveBeenCalledTimes(1);
+			});
+			expect(onClose1).not.toHaveBeenCalled();
 		});
 	});
 
@@ -2107,6 +2407,50 @@ describe('TabSwitcherModal', () => {
 		});
 	});
 
+	describe('branch completion coverage', () => {
+		it('renders a late closed named session without a number badge and with activity time', async () => {
+			vi.mocked(window.maestro.agentSessions.getAllNamedSessions).mockResolvedValue([
+				...Array.from({ length: 10 }, (_, index) => ({
+					agentId: 'claude-code',
+					agentSessionId: `closed-${index}`,
+					projectPath: '/test',
+					sessionName: `Alpha Closed ${index}`,
+					starred: false,
+				})),
+				{
+					agentId: 'claude-code',
+					agentSessionId: 'closed-zulu',
+					projectPath: '/test',
+					sessionName: 'Zulu Closed',
+					starred: false,
+					lastActivityAt: Date.now() - 2 * 60 * 60 * 1000,
+				},
+			]);
+
+			renderWithLayerStack(
+				<TabSwitcherModal
+					theme={theme}
+					tabs={[]}
+					activeTabId=""
+					projectRoot="/test"
+					onTabSelect={vi.fn()}
+					onNamedSessionSelect={vi.fn()}
+					onClose={vi.fn()}
+				/>
+			);
+
+			await waitFor(() => {
+				expect(window.maestro.agentSessions.getAllNamedSessions).toHaveBeenCalled();
+			});
+
+			fireEvent.click(screen.getByText(/All Named/));
+
+			expect(screen.getByText('Zulu Closed')).toBeInTheDocument();
+			expect(screen.getByText('2h ago')).toBeInTheDocument();
+			expect(screen.getByText('11 sessions')).toBeInTheDocument();
+		});
+	});
+
 	describe('file tab support', () => {
 		// Helper to create a test file tab
 		const createTestFileTab = (
@@ -2358,6 +2702,36 @@ describe('TabSwitcherModal', () => {
 			);
 
 			expect(screen.getByText('/project/src/components/example.ts')).toBeInTheDocument();
+		});
+
+		it('renders a late file tab without a number badge', () => {
+			const aiTabs = Array.from({ length: 10 }, (_, index) =>
+				createTestTab({ name: `Alpha AI ${index}` })
+			);
+			const fileTabs = [
+				createTestFileTab({
+					name: 'Zulu File',
+					extension: '.md',
+					path: '/test/project/Zulu.md',
+				}),
+			];
+
+			renderWithLayerStack(
+				<TabSwitcherModal
+					theme={theme}
+					tabs={aiTabs}
+					fileTabs={fileTabs}
+					activeTabId={aiTabs[0].id}
+					projectRoot="/test"
+					onTabSelect={vi.fn()}
+					onNamedSessionSelect={vi.fn()}
+					onClose={vi.fn()}
+				/>
+			);
+
+			expect(screen.getByText('Zulu File')).toBeInTheDocument();
+			expect(screen.getByText('File')).toBeInTheDocument();
+			expect(screen.getByText('Open Tabs (11)')).toBeInTheDocument();
 		});
 	});
 });

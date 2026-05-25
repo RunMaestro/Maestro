@@ -197,6 +197,52 @@ describe('Leaderboard IPC Handlers', () => {
 			const body = JSON.parse(fetchCall[1].body);
 			expect(body.installId).toBe('auto-injected-id');
 		});
+
+		it('should use fallback messages when submit responses omit optional fields', async () => {
+			const handler = handlers.get('leaderboard:submit')!;
+
+			mockFetch.mockResolvedValueOnce({
+				ok: true,
+				json: () => Promise.resolve({ success: true }),
+			});
+			await expect(handler({}, mockSubmitData)).resolves.toMatchObject({
+				success: true,
+				message: 'Submission received',
+			});
+
+			mockFetch.mockResolvedValueOnce({
+				ok: false,
+				status: 401,
+				json: () => Promise.resolve({}),
+			});
+			await expect(handler({}, mockSubmitData)).resolves.toMatchObject({
+				success: false,
+				message: 'Authentication required',
+				error: 'Auth token required for confirmed email addresses',
+				authTokenRequired: true,
+			});
+
+			mockFetch.mockResolvedValueOnce({
+				ok: false,
+				status: 503,
+				json: () => Promise.resolve({}),
+			});
+			await expect(handler({}, mockSubmitData)).resolves.toMatchObject({
+				success: false,
+				message: 'Submission failed',
+				error: 'Server error: 503',
+			});
+		});
+
+		it('should return an unknown error for non-Error submit failures', async () => {
+			mockFetch.mockRejectedValue('offline');
+
+			const handler = handlers.get('leaderboard:submit')!;
+			const result = await handler({}, mockSubmitData);
+
+			expect(result.success).toBe(false);
+			expect(result.error).toBe('Unknown error');
+		});
 	});
 
 	describe('leaderboard:pollAuthStatus', () => {
@@ -258,6 +304,26 @@ describe('Leaderboard IPC Handlers', () => {
 			expect(result.status).toBe('error');
 			expect(result.error).toBe('Network error');
 		});
+
+		it('should use fallback server errors and unknown errors for auth polling', async () => {
+			const handler = handlers.get('leaderboard:pollAuthStatus')!;
+
+			mockFetch.mockResolvedValueOnce({
+				ok: false,
+				status: 502,
+				json: () => Promise.resolve({}),
+			});
+			await expect(handler({}, 'client-token')).resolves.toEqual({
+				status: 'error',
+				error: 'Server error: 502',
+			});
+
+			mockFetch.mockRejectedValueOnce('offline');
+			await expect(handler({}, 'client-token')).resolves.toEqual({
+				status: 'error',
+				error: 'Unknown error',
+			});
+		});
 	});
 
 	describe('leaderboard:resendConfirmation', () => {
@@ -304,6 +370,46 @@ describe('Leaderboard IPC Handlers', () => {
 
 			expect(result.success).toBe(false);
 			expect(result.error).toBe('Network error');
+		});
+
+		it('should use fallback resend messages and unknown network errors', async () => {
+			const handler = handlers.get('leaderboard:resendConfirmation')!;
+			const payload = { email: 'test@example.com', clientToken: 'token' };
+
+			mockFetch.mockResolvedValueOnce({
+				ok: true,
+				json: () => Promise.resolve({ success: true }),
+			});
+			await expect(handler({}, payload)).resolves.toEqual({
+				success: true,
+				message: 'Confirmation email sent. Please check your inbox.',
+			});
+
+			mockFetch.mockResolvedValueOnce({
+				ok: false,
+				status: 429,
+				json: () => Promise.resolve({ message: 'Try later' }),
+			});
+			await expect(handler({}, payload)).resolves.toEqual({
+				success: false,
+				error: 'Try later',
+			});
+
+			mockFetch.mockResolvedValueOnce({
+				ok: false,
+				status: 500,
+				json: () => Promise.resolve({}),
+			});
+			await expect(handler({}, payload)).resolves.toEqual({
+				success: false,
+				error: 'Server error: 500',
+			});
+
+			mockFetch.mockRejectedValueOnce('offline');
+			await expect(handler({}, payload)).resolves.toEqual({
+				success: false,
+				error: 'Unknown error',
+			});
 		});
 	});
 
@@ -367,6 +473,16 @@ describe('Leaderboard IPC Handlers', () => {
 			expect(result.success).toBe(false);
 			expect(result.error).toBe('Network error');
 		});
+
+		it('should return unknown error for non-Error leaderboard fetch failures', async () => {
+			mockFetch.mockRejectedValue('offline');
+
+			const handler = handlers.get('leaderboard:get')!;
+			const result = await handler({});
+
+			expect(result.success).toBe(false);
+			expect(result.error).toBe('Unknown error');
+		});
 	});
 
 	describe('leaderboard:getLongestRuns', () => {
@@ -428,6 +544,16 @@ describe('Leaderboard IPC Handlers', () => {
 			expect(result.success).toBe(false);
 			expect(result.error).toBe('Network error');
 		});
+
+		it('should return unknown error for non-Error longest-runs fetch failures', async () => {
+			mockFetch.mockRejectedValue('offline');
+
+			const handler = handlers.get('leaderboard:getLongestRuns')!;
+			const result = await handler({});
+
+			expect(result.success).toBe(false);
+			expect(result.error).toBe('Unknown error');
+		});
 	});
 
 	describe('leaderboard:sync', () => {
@@ -477,6 +603,24 @@ describe('Leaderboard IPC Handlers', () => {
 
 			expect(result.success).toBe(true);
 			expect(result.found).toBe(false);
+		});
+
+		it('should use fallback message when synced user is not found', async () => {
+			mockFetch.mockResolvedValue({
+				ok: true,
+				json: () =>
+					Promise.resolve({
+						success: true,
+						found: false,
+					}),
+			});
+
+			const handler = handlers.get('leaderboard:sync')!;
+			const result = await handler({}, { email: 'test@example.com', authToken: 'token' });
+
+			expect(result.success).toBe(true);
+			expect(result.found).toBe(false);
+			expect(result.message).toBe('No existing registration found');
 		});
 
 		it('should handle invalid token (401)', async () => {
@@ -552,6 +696,80 @@ describe('Leaderboard IPC Handlers', () => {
 			expect(result.success).toBe(false);
 			expect(result.found).toBe(false);
 			expect(result.error).toBe('Request timed out');
+		});
+
+		it('should use fallback errors for sync error statuses', async () => {
+			const handler = handlers.get('leaderboard:sync')!;
+			const payload = { email: 'test@example.com', authToken: 'token' };
+
+			mockFetch.mockResolvedValueOnce({
+				ok: false,
+				status: 401,
+				json: () => Promise.resolve({}),
+			});
+			await expect(handler({}, payload)).resolves.toMatchObject({
+				success: false,
+				found: false,
+				error: 'Invalid authentication token',
+				errorCode: 'INVALID_TOKEN',
+			});
+
+			mockFetch.mockResolvedValueOnce({
+				ok: false,
+				status: 403,
+				json: () => Promise.resolve({}),
+			});
+			await expect(handler({}, payload)).resolves.toMatchObject({
+				success: false,
+				found: false,
+				error: 'Email not yet confirmed',
+				errorCode: 'EMAIL_NOT_CONFIRMED',
+			});
+
+			mockFetch.mockResolvedValueOnce({
+				ok: false,
+				status: 400,
+				json: () => Promise.resolve({}),
+			});
+			await expect(handler({}, payload)).resolves.toMatchObject({
+				success: false,
+				found: false,
+				error: 'Missing required fields',
+				errorCode: 'MISSING_FIELDS',
+			});
+
+			mockFetch.mockResolvedValueOnce({
+				ok: false,
+				status: 503,
+				json: () => Promise.resolve({ error: 'Server unavailable' }),
+			});
+			await expect(handler({}, payload)).resolves.toMatchObject({
+				success: false,
+				found: false,
+				error: 'Server unavailable',
+			});
+
+			mockFetch.mockResolvedValueOnce({
+				ok: false,
+				status: 502,
+				json: () => Promise.resolve({}),
+			});
+			await expect(handler({}, payload)).resolves.toMatchObject({
+				success: false,
+				found: false,
+				error: 'Server error: 502',
+			});
+		});
+
+		it('should return unknown error for non-Error sync failures', async () => {
+			mockFetch.mockRejectedValue('offline');
+
+			const handler = handlers.get('leaderboard:sync')!;
+			const result = await handler({}, { email: 'test@example.com', authToken: 'token' });
+
+			expect(result.success).toBe(false);
+			expect(result.found).toBe(false);
+			expect(result.error).toBe('Unknown error');
 		});
 	});
 

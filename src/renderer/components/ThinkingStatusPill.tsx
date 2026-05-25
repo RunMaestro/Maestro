@@ -519,7 +519,9 @@ export const ThinkingStatusPill = memo(ThinkingStatusPillInner, (prevProps, next
 			prevAutoRun?.completedTasks !== nextAutoRun?.completedTasks ||
 			prevAutoRun?.totalTasks !== nextAutoRun?.totalTasks ||
 			prevAutoRun?.isStopping !== nextAutoRun?.isStopping ||
-			prevAutoRun?.startTime !== nextAutoRun?.startTime
+			prevAutoRun?.startTime !== nextAutoRun?.startTime ||
+			prevAutoRun?.worktreeActive !== nextAutoRun?.worktreeActive ||
+			prevAutoRun?.worktreeBranch !== nextAutoRun?.worktreeBranch
 		) {
 			return false;
 		}

@@ -326,6 +326,54 @@ describe('HistoryManager', () => {
 			expect(typeof marker.migratedAt).toBe('number');
 		});
 
+		it('should handle legacy entries disappearing between migration check and migration read', async () => {
+			mockExistsSync.mockImplementation((p: fs.PathLike) => {
+				const s = p.toString();
+				if (s.endsWith('history')) return false;
+				if (s.endsWith('history-migrated.json')) return false;
+				if (s.endsWith('maestro-history.json')) return true;
+				return false;
+			});
+			mockReadFileSync
+				.mockReturnValueOnce(
+					JSON.stringify({ entries: [createMockEntry({ sessionId: 'sess-vanished' })] })
+				)
+				.mockReturnValueOnce(JSON.stringify({}));
+
+			await manager.initialize();
+
+			const markerCall = mockWriteFileSync.mock.calls.find((c) =>
+				c[0].toString().endsWith('history-migrated.json')
+			);
+			expect(markerCall).toBeDefined();
+			const marker = JSON.parse(markerCall![1] as string);
+			expect(marker.legacyEntryCount).toBe(0);
+			expect(marker.sessionsMigrated).toBe(0);
+		});
+
+		it('should use an empty project path when migrated entries have no projectPath', async () => {
+			const entry = createMockEntry({ sessionId: 'sess-no-project' });
+			delete (entry as Partial<HistoryEntry>).projectPath;
+
+			mockExistsSync.mockImplementation((p: fs.PathLike) => {
+				const s = p.toString();
+				if (s.endsWith('history')) return false;
+				if (s.endsWith('history-migrated.json')) return false;
+				if (s.endsWith('maestro-history.json')) return true;
+				return false;
+			});
+			mockReadFileSync.mockReturnValue(JSON.stringify({ entries: [entry] }));
+
+			await manager.initialize();
+
+			const sessionCall = mockWriteFileSync.mock.calls.find((c) =>
+				c[0].toString().includes('sess-no-project.json')
+			);
+			expect(sessionCall).toBeDefined();
+			const sessionData = JSON.parse(sessionCall![1] as string);
+			expect(sessionData.projectPath).toBe('');
+		});
+
 		it('should skip orphaned entries (no sessionId)', async () => {
 			const goodEntry = createMockEntry({ sessionId: 'sess-1', id: 'good' });
 			const orphanedEntry = createMockEntry({ id: 'orphan' });
@@ -458,6 +506,21 @@ describe('HistoryManager', () => {
 			);
 			mockExistsSync.mockImplementation((p: fs.PathLike) => p.toString() === filePath);
 			mockReadFileSync.mockReturnValue('not valid json');
+
+			const result = manager.getEntries('session-1');
+			expect(result).toEqual([]);
+		});
+
+		it('should return empty array when file omits entries', () => {
+			const filePath = path.join(
+				'/mock/userData',
+				'history',
+				`${sanitizeSessionId('session-1')}.json`
+			);
+			mockExistsSync.mockImplementation((p: fs.PathLike) => p.toString() === filePath);
+			mockReadFileSync.mockReturnValue(
+				JSON.stringify({ version: HISTORY_VERSION, sessionId: 'session-1' })
+			);
 
 			const result = manager.getEntries('session-1');
 			expect(result).toEqual([]);
@@ -978,6 +1041,21 @@ describe('HistoryManager', () => {
 			expect(result.total).toBe(3);
 			expect(result.hasMore).toBe(true);
 		});
+
+		it('should skip sessions whose first entry belongs to another project path', () => {
+			mockExistsSync.mockReturnValue(true);
+			mockReaddirSync.mockReturnValue(['sess_a.json' as unknown as fs.Dirent]);
+			mockReadFileSync.mockReturnValue(
+				createHistoryFileData('sess_a', [createMockEntry({ projectPath: '/other' })], '/other')
+			);
+
+			const result = manager.getEntriesByProjectPathPaginated('/target', {
+				limit: 10,
+				offset: 0,
+			});
+			expect(result.entries).toEqual([]);
+			expect(result.total).toBe(0);
+		});
 	});
 
 	// ----------------------------------------------------------------
@@ -1091,6 +1169,17 @@ describe('HistoryManager', () => {
 			const count = manager.updateSessionNameByClaudeSessionId('agent-123', 'new-name');
 			expect(count).toBe(0);
 			expect(vi.mocked(logger.warn)).toHaveBeenCalled();
+		});
+
+		it('should skip a session file that disappears after session listing', () => {
+			mockExistsSync.mockImplementation((p: fs.PathLike) => p.toString().endsWith('history'));
+			mockReaddirSync.mockReturnValue(['sess_a.json' as unknown as fs.Dirent]);
+
+			const count = manager.updateSessionNameByClaudeSessionId('agent-123', 'new-name');
+
+			expect(count).toBe(0);
+			expect(mockReadFileSync).not.toHaveBeenCalled();
+			expect(mockWriteFileSync).not.toHaveBeenCalled();
 		});
 	});
 
@@ -1296,6 +1385,29 @@ describe('HistoryManager', () => {
 			expect(onSpy).toHaveBeenCalledWith('error', expect.any(Function));
 		});
 
+		it('should log watcher runtime errors without throwing', () => {
+			let errorHandler: ((error: Error) => void) | undefined;
+			const mockWatcher = {
+				close: vi.fn(),
+				on: vi.fn((event: string, handler: (error: Error) => void) => {
+					if (event === 'error') {
+						errorHandler = handler;
+					}
+				}),
+			} as unknown as fs.FSWatcher;
+			mockWatch.mockReturnValue(mockWatcher);
+			mockExistsSync.mockReturnValue(true);
+
+			manager.startWatching(vi.fn());
+
+			expect(errorHandler).toBeDefined();
+			expect(() => errorHandler?.(new Error('UNKNOWN: watcher failed'))).not.toThrow();
+			expect(logger.warn).toHaveBeenCalledWith(
+				'History watcher error: UNKNOWN: watcher failed',
+				expect.any(String)
+			);
+		});
+
 		it('should log and not throw if fs.watch itself throws', () => {
 			mockWatch.mockImplementation(() => {
 				throw new Error('EBUSY: resource busy');
@@ -1305,6 +1417,19 @@ describe('HistoryManager', () => {
 			expect(() => manager.startWatching(vi.fn())).not.toThrow();
 			expect(logger.warn).toHaveBeenCalledWith(
 				expect.stringContaining('Failed to start history watcher'),
+				expect.any(String)
+			);
+		});
+
+		it('should stringify non-Error fs.watch failures', () => {
+			mockWatch.mockImplementation(() => {
+				throw 'watch unavailable';
+			});
+			mockExistsSync.mockReturnValue(true);
+
+			expect(() => manager.startWatching(vi.fn())).not.toThrow();
+			expect(logger.warn).toHaveBeenCalledWith(
+				'Failed to start history watcher: watch unavailable',
 				expect.any(String)
 			);
 		});

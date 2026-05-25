@@ -46,6 +46,24 @@ function createLogEntry(overrides: Partial<LogEntry> = {}): LogEntry {
 	};
 }
 
+function setScrollMetrics(
+	element: HTMLElement,
+	metrics: { scrollHeight: number; scrollTop: number; clientHeight: number }
+) {
+	Object.defineProperty(element, 'scrollHeight', {
+		value: metrics.scrollHeight,
+		configurable: true,
+	});
+	Object.defineProperty(element, 'scrollTop', {
+		value: metrics.scrollTop,
+		configurable: true,
+	});
+	Object.defineProperty(element, 'clientHeight', {
+		value: metrics.clientHeight,
+		configurable: true,
+	});
+}
+
 // Mock scrollIntoView
 const mockScrollIntoView = vi.fn();
 window.HTMLElement.prototype.scrollIntoView = mockScrollIntoView;
@@ -69,8 +87,21 @@ describe('MessageHistory', () => {
 		it('throws when logs is undefined (component requires logs prop)', () => {
 			// Note: The component crashes when logs is undefined due to logs.length check
 			// This documents the expected behavior - logs is required
-			// @ts-expect-error - Testing edge case
-			expect(() => render(<MessageHistory logs={undefined} inputMode="ai" />)).toThrow();
+			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const preventExpectedWindowError = vi.fn((event: ErrorEvent) => {
+				event.preventDefault();
+			});
+			window.addEventListener('error', preventExpectedWindowError);
+
+			try {
+				// @ts-expect-error - Testing edge case
+				expect(() => render(<MessageHistory logs={undefined} inputMode="ai" />)).toThrow();
+				expect(consoleError).toHaveBeenCalled();
+				expect(preventExpectedWindowError).toHaveBeenCalled();
+			} finally {
+				window.removeEventListener('error', preventExpectedWindowError);
+				consoleError.mockRestore();
+			}
 		});
 
 		it('applies correct styling to empty state', () => {
@@ -453,63 +484,95 @@ describe('MessageHistory', () => {
 			fireEvent.scroll(scrollContainer!);
 			// Component should handle scroll without errors
 		});
+
+		it('tracks away-from-bottom scroll state and uses indicator foreground fallback', async () => {
+			vi.useRealTimers();
+			const originalAccentForeground = mockColors.accentForeground;
+			(mockColors as { accentForeground?: string }).accentForeground = undefined;
+			try {
+				const logs: LogEntry[] = [createLogEntry({ id: 'initial', text: 'Initial message' })];
+				const { container, rerender } = render(
+					<MessageHistory logs={logs} inputMode="ai" autoScroll={false} />
+				);
+				const scrollContainer = container.querySelector(
+					'[style*="overflow-y: auto"]'
+				) as HTMLElement;
+				setScrollMetrics(scrollContainer, {
+					scrollHeight: 1000,
+					scrollTop: 100,
+					clientHeight: 300,
+				});
+
+				fireEvent.scroll(scrollContainer);
+				rerender(
+					<MessageHistory
+						logs={[...logs, createLogEntry({ id: 'new-1', text: 'First new message' })]}
+						inputMode="ai"
+						autoScroll={false}
+					/>
+				);
+
+				const button = await screen.findByTitle('Scroll to new messages');
+				expect(button).toHaveTextContent('1');
+				expect(button).toHaveStyle({ color: '#fff' });
+			} finally {
+				mockColors.accentForeground = originalAccentForeground;
+			}
+		});
 	});
 
 	describe('New Message Indicator', () => {
-		it('shows new message indicator button styling when hasNewMessages is true', () => {
-			// This tests the new message indicator button rendering
-			// The actual state is difficult to trigger due to scroll mechanics
-			// We verify the component structure and button properties
-			const logs: LogEntry[] = [
-				createLogEntry({ text: 'Message 1' }),
-				createLogEntry({ text: 'Message 2' }),
-			];
-			const { container } = render(<MessageHistory logs={logs} inputMode="ai" />);
+		it('shows and clears the new message indicator when messages arrive away from bottom', async () => {
+			vi.useRealTimers();
+			const logs: LogEntry[] = [createLogEntry({ id: 'initial', text: 'Initial message' })];
+			const { container, rerender } = render(
+				<MessageHistory logs={logs} inputMode="ai" autoScroll={false} />
+			);
 
-			// Verify the container has position: relative for absolute button positioning
-			const wrapper = container.firstChild as HTMLElement;
-			expect(wrapper).toHaveStyle({ position: 'relative' });
+			const scrollContainer = container.querySelector('[style*="overflow-y: auto"]') as HTMLElement;
+			setScrollMetrics(scrollContainer, { scrollHeight: 1000, scrollTop: 100, clientHeight: 300 });
+			mockScrollIntoView.mockClear();
 
-			// Verify scroll container exists
-			const scrollContainer = container.querySelector('[style*="overflow-y: auto"]');
-			expect(scrollContainer).toBeInTheDocument();
+			rerender(
+				<MessageHistory
+					logs={[
+						...logs,
+						createLogEntry({ id: 'new-1', text: 'First new message' }),
+						createLogEntry({ id: 'new-2', text: 'Second new message' }),
+					]}
+					inputMode="ai"
+					autoScroll={false}
+				/>
+			);
+
+			const button = await screen.findByTitle('Scroll to new messages');
+			expect(button).toHaveTextContent('2');
+			expect(screen.getByTestId('arrow-down-icon')).toBeInTheDocument();
+
+			fireEvent.click(button);
+
+			expect(mockScrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth' });
+			await waitFor(() =>
+				expect(screen.queryByTitle('Scroll to new messages')).not.toBeInTheDocument()
+			);
 		});
 
-		it('renders ArrowDown icon in indicator button', () => {
-			const logs: LogEntry[] = [createLogEntry({ text: 'Test' })];
-			render(<MessageHistory logs={logs} inputMode="ai" />);
+		it('caps large new message counts at 99+', async () => {
+			vi.useRealTimers();
+			const logs: LogEntry[] = [createLogEntry({ id: 'initial', text: 'Initial' })];
+			const { container, rerender } = render(
+				<MessageHistory logs={logs} inputMode="ai" autoScroll={false} />
+			);
 
-			// The ArrowDown icon is mocked
-			// In the actual component, hasNewMessages && !isAtBottom controls visibility
-			// We test the icon mock is working
-			expect(true).toBe(true);
-		});
+			const scrollContainer = container.querySelector('[style*="overflow-y: auto"]') as HTMLElement;
+			setScrollMetrics(scrollContainer, { scrollHeight: 2000, scrollTop: 100, clientHeight: 300 });
 
-		it('updates newMessageCount state correctly', () => {
-			// Test that the message count calculation logic exists
-			const logs: LogEntry[] = [createLogEntry({ text: 'Initial' })];
-			const { rerender } = render(<MessageHistory logs={logs} inputMode="ai" />);
+			const burst = Array.from({ length: 120 }, (_, index) =>
+				createLogEntry({ id: `new-${index}`, text: `Message ${index}` })
+			);
+			rerender(<MessageHistory logs={[...logs, ...burst]} inputMode="ai" autoScroll={false} />);
 
-			// Add multiple messages
-			const newLogs = [...logs];
-			for (let i = 0; i < 5; i++) {
-				newLogs.push(createLogEntry({ text: `Message ${i}` }));
-			}
-			rerender(<MessageHistory logs={newLogs} inputMode="ai" />);
-
-			// Component should render without errors
-			expect(screen.getByText('Initial')).toBeInTheDocument();
-		});
-
-		it('handles scrollToBottom callback', () => {
-			const logs: LogEntry[] = [createLogEntry({ text: 'Test' })];
-			render(<MessageHistory logs={logs} inputMode="ai" />);
-
-			// The scrollToBottom function uses bottomRef.current?.scrollIntoView
-			// We verify the ref is set up (the bottom element exists)
-			const { container } = render(<MessageHistory logs={logs} inputMode="ai" />);
-			const bottomRef = container.querySelector('[style*="min-height: 8px"]');
-			expect(bottomRef).toBeInTheDocument();
+			expect(await screen.findByTitle('Scroll to new messages')).toHaveTextContent('99+');
 		});
 
 		it('hides indicator when scrolled to bottom', () => {
@@ -521,9 +584,7 @@ describe('MessageHistory', () => {
 
 			// Simulate being at bottom
 			const scrollContainer = container.querySelector('[style*="overflow-y: auto"]') as HTMLElement;
-			Object.defineProperty(scrollContainer, 'scrollHeight', { value: 300, configurable: true });
-			Object.defineProperty(scrollContainer, 'scrollTop', { value: 0, configurable: true });
-			Object.defineProperty(scrollContainer, 'clientHeight', { value: 300, configurable: true });
+			setScrollMetrics(scrollContainer, { scrollHeight: 300, scrollTop: 0, clientHeight: 300 });
 
 			fireEvent.scroll(scrollContainer);
 

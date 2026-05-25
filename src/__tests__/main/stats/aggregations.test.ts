@@ -686,6 +686,69 @@ describe('Aggregation queries return correct calculations', () => {
 		vi.resetModules();
 	});
 
+	const createAggregationDb = ({
+		totals = { count: 0, total_duration: 0 },
+		byAgent = [],
+		bySource = [],
+		byLocation = [],
+		byDay = [],
+		byAgentByDay = [],
+		byHour = [],
+		sessionTotals = { count: 0 },
+		avgSessionDuration = { avg_duration: 0 },
+		sessionsByAgent = [],
+		sessionsByDay = [],
+		bySessionByDay = [],
+	}: {
+		totals?: { count: number; total_duration: number };
+		byAgent?: Array<{ agent_type: string; count: number; duration: number }>;
+		bySource?: Array<{ source: 'user' | 'auto'; count: number }>;
+		byLocation?: Array<{ is_remote: number | null; count: number }>;
+		byDay?: Array<{ date: string; count: number; duration: number }>;
+		byAgentByDay?: Array<{
+			agent_type: string;
+			date: string;
+			count: number;
+			duration: number;
+		}>;
+		byHour?: Array<{ hour: number; count: number; duration: number }>;
+		sessionTotals?: { count: number };
+		avgSessionDuration?: { avg_duration: number };
+		sessionsByAgent?: Array<{ agent_type: string; count: number }>;
+		sessionsByDay?: Array<{ date: string; count: number }>;
+		bySessionByDay?: Array<{
+			session_id: string;
+			date: string;
+			count: number;
+			duration: number;
+		}>;
+	}) => ({
+		prepare: vi.fn((sql: string) => ({
+			get: vi.fn(() => {
+				if (sql.includes('COUNT(*) as count, COALESCE(SUM(duration), 0)')) return totals;
+				if (sql.includes('COUNT(DISTINCT session_id)')) return sessionTotals;
+				if (sql.includes('AVG(duration)')) return avgSessionDuration;
+				return {};
+			}),
+			all: vi.fn(() => {
+				if (sql.includes('GROUP BY agent_type, date(')) return byAgentByDay;
+				if (sql.includes('GROUP BY session_id, date(')) return bySessionByDay;
+				if (sql.includes('GROUP BY is_remote')) return byLocation;
+				if (sql.includes('GROUP BY source')) return bySource;
+				if (sql.includes('GROUP BY hour')) return byHour;
+				if (sql.includes('FROM session_lifecycle') && sql.includes('GROUP BY agent_type')) {
+					return sessionsByAgent;
+				}
+				if (sql.includes('FROM session_lifecycle') && sql.includes('GROUP BY date(')) {
+					return sessionsByDay;
+				}
+				if (sql.includes('GROUP BY agent_type')) return byAgent;
+				if (sql.includes('GROUP BY date(')) return byDay;
+				return [];
+			}),
+		})),
+	});
+
 	describe('totalQueries and totalDuration calculations', () => {
 		it('should return correct totalQueries count from database', async () => {
 			// Mock the totals query result
@@ -1291,6 +1354,81 @@ describe('Aggregation queries return correct calculations', () => {
 			);
 
 			expect(byDayCall).toBeDefined();
+		});
+	});
+
+	describe('aggregation edge branches', () => {
+		it('separates remote rows from local and legacy-null location rows', async () => {
+			const { getAggregatedStats } = await import('../../../main/stats/aggregations');
+			const db = createAggregationDb({
+				byLocation: [
+					{ is_remote: 1, count: 2 },
+					{ is_remote: 0, count: 3 },
+					{ is_remote: null, count: 4 },
+				],
+			}) as Parameters<typeof getAggregatedStats>[0];
+
+			const stats = getAggregatedStats(db, 'all');
+
+			expect(stats.byLocation).toEqual({ local: 7, remote: 2 });
+		});
+
+		it('appends multiple daily rows for the same agent', async () => {
+			const { getAggregatedStats } = await import('../../../main/stats/aggregations');
+			const db = createAggregationDb({
+				byAgentByDay: [
+					{ agent_type: 'claude-code', date: '2026-01-01', count: 1, duration: 1000 },
+					{ agent_type: 'claude-code', date: '2026-01-02', count: 2, duration: 2000 },
+				],
+			}) as Parameters<typeof getAggregatedStats>[0];
+
+			const stats = getAggregatedStats(db, 'week');
+
+			expect(stats.byAgentByDay['claude-code']).toEqual([
+				{ date: '2026-01-01', count: 1, duration: 1000 },
+				{ date: '2026-01-02', count: 2, duration: 2000 },
+			]);
+		});
+
+		it('appends multiple daily rows for the same session', async () => {
+			const { getAggregatedStats } = await import('../../../main/stats/aggregations');
+			const db = createAggregationDb({
+				bySessionByDay: [
+					{ session_id: 'session-1', date: '2026-01-01', count: 1, duration: 1000 },
+					{ session_id: 'session-1', date: '2026-01-02', count: 2, duration: 2000 },
+				],
+			}) as Parameters<typeof getAggregatedStats>[0];
+
+			const stats = getAggregatedStats(db, 'week');
+
+			expect(stats.bySessionByDay['session-1']).toEqual([
+				{ date: '2026-01-01', count: 1, duration: 1000 },
+				{ date: '2026-01-02', count: 2, duration: 2000 },
+			]);
+		});
+
+		it('warns when total aggregation duration exceeds the dashboard threshold', async () => {
+			const { getAggregatedStats } = await import('../../../main/stats/aggregations');
+			const { perfMetrics, LOG_CONTEXT } = await import('../../../main/stats/utils');
+			const { logger } = await import('../../../main/utils/logger');
+			const endSpy = vi.spyOn(perfMetrics, 'end').mockImplementation((_start, label) => {
+				return label === 'getAggregatedStats:total' ? 10000 : 1;
+			});
+			const db = createAggregationDb({
+				totals: { count: 4, total_duration: 12000 },
+			}) as Parameters<typeof getAggregatedStats>[0];
+
+			try {
+				getAggregatedStats(db, 'month');
+
+				expect(logger.warn).toHaveBeenCalledWith(
+					expect.stringContaining('getAggregatedStats took 10000ms'),
+					LOG_CONTEXT,
+					{ range: 'month', totalQueries: 4 }
+				);
+			} finally {
+				endSpy.mockRestore();
+			}
 		});
 	});
 

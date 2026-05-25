@@ -26,7 +26,6 @@ function dirname(filePath: string): string {
  * Get the extension of a path (browser-compatible path.extname)
  */
 function extname(filePath: string): string {
-	if (!filePath) return '';
 	const normalized = filePath.replace(/\\/g, '/');
 	const basename = normalized.slice(normalized.lastIndexOf('/') + 1);
 	const dotIndex = basename.lastIndexOf('.');
@@ -311,11 +310,6 @@ function findFileByName(
  * @returns Normalized relative path from project root, or null if invalid
  */
 function resolveRelativePath(linkPath: string, currentFilePath: string): string | null {
-	// Guard against null/undefined/non-string inputs
-	if (!linkPath || typeof linkPath !== 'string') {
-		return null;
-	}
-
 	// Skip URLs, anchors, and mailto links
 	if (URL_PATTERN.test(linkPath) || linkPath.startsWith('#') || linkPath.startsWith('mailto:')) {
 		return null;
@@ -337,11 +331,8 @@ function resolveRelativePath(linkPath: string, currentFilePath: string): string 
 	// Join and normalize the path
 	let resolved = joinPath(currentDir, decodedPath);
 
-	// Normalize path separators and remove leading ./
+	// Normalize path separators
 	resolved = resolved.replace(/\\/g, '/');
-	if (resolved.startsWith('./')) {
-		resolved = resolved.slice(2);
-	}
 
 	// Ensure it ends with .md if it doesn't have an extension
 	if (!extname(resolved)) {
@@ -438,8 +429,7 @@ export function parseMarkdownLinks(
 		let match;
 		MARKDOWN_LINK_PATTERN.lastIndex = 0;
 		while ((match = MARKDOWN_LINK_PATTERN.exec(content)) !== null) {
-			const linkUrl = match[2]?.trim();
-			if (!linkUrl) continue;
+			const linkUrl = match[2]!.trim();
 
 			// Check if it's an external URL
 			if (URL_PATTERN.test(linkUrl)) {

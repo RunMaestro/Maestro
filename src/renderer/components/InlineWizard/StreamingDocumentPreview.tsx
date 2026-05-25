@@ -12,7 +12,7 @@
  * Used by DocumentGenerationView during document generation phase.
  */
 
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo, type UIEvent } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { FileText, Code2, AlignLeft } from 'lucide-react';
 import type { Theme } from '../../types';
@@ -122,10 +122,8 @@ export function StreamingDocumentPreview({
 	}, [content, filename]);
 
 	// Handle scroll to detect if user has manually scrolled
-	const handleScroll = () => {
-		if (!containerRef.current) return;
-
-		const { scrollTop, scrollHeight, clientHeight } = containerRef.current;
+	const handleScroll = (event: UIEvent<HTMLDivElement>) => {
+		const { scrollTop, scrollHeight, clientHeight } = event.currentTarget;
 		const isNearBottom = scrollHeight - scrollTop - clientHeight < 50;
 
 		// If user scrolls up, stop auto-scroll. If they scroll back to bottom, resume.
@@ -151,9 +149,7 @@ export function StreamingDocumentPreview({
 				theme,
 				enableBionifyReadingMode: bionifyReadingMode,
 				onExternalLinkClick: (href) => {
-					if (/^https?:\/\/|^mailto:/.test(href)) {
-						void window.maestro.shell.openExternal(href);
-					}
+					void window.maestro.shell.openExternal(href);
 				},
 				codeBlockStyle: {
 					padding: '0.75em',
@@ -279,9 +275,8 @@ export function StreamingDocumentPreview({
 					<button
 						onClick={() => {
 							updateUserScrolled(false);
-							if (containerRef.current) {
-								containerRef.current.scrollTop = containerRef.current.scrollHeight;
-							}
+							const container = containerRef.current!;
+							container.scrollTop = container.scrollHeight;
 						}}
 						className="px-3 py-1.5 rounded-full text-xs shadow-lg transition-colors hover:opacity-90"
 						style={{

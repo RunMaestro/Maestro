@@ -194,7 +194,7 @@ function prepareLayoutInput(
 	let actualCenterNodeId = '';
 
 	const documentNodes = allNodes.filter((n) => n.nodeType === 'document');
-	const nodeIdSet = new Set(documentNodes.map((n) => n.id));
+	const nodeById = new Map(documentNodes.map((n) => [n.id, n]));
 	const filePathToNode = new Map<string, MindMapNode>();
 	documentNodes.forEach((n) => {
 		if (n.filePath) {
@@ -215,12 +215,11 @@ function prepareLayoutInput(
 	// Try node ID match
 	for (const variation of searchVariations) {
 		const nodeId = `doc-${variation}`;
-		if (nodeIdSet.has(nodeId)) {
-			centerNode = documentNodes.find((n) => n.id === nodeId);
-			if (centerNode) {
-				actualCenterNodeId = nodeId;
-				break;
-			}
+		const node = nodeById.get(nodeId);
+		if (node) {
+			centerNode = node;
+			actualCenterNodeId = nodeId;
+			break;
 		}
 	}
 
@@ -320,9 +319,6 @@ function calculateBounds(
 	positionedNodes: MindMapNode[],
 	previewCharLimit: number
 ): LayoutResult['bounds'] {
-	if (positionedNodes.length === 0) {
-		return { minX: 0, maxX: 0, minY: 0, maxY: 0 };
-	}
 	const maxNodeHeight = calculateNodeHeight('x'.repeat(previewCharLimit), previewCharLimit);
 	const xs = positionedNodes.map((n) => n.x);
 	const ys = positionedNodes.map((n) => n.y);
@@ -357,8 +353,8 @@ function filterLinks(
 			return;
 		}
 
-		const sourceDepth = nodeDepthMap.get(link.source) ?? 0;
-		const targetDepth = nodeDepthMap.get(link.target) ?? 0;
+		const sourceDepth = nodeDepthMap.get(link.source)!;
+		const targetDepth = nodeDepthMap.get(link.target)!;
 		const sourceType = nodeTypeMap.get(link.source);
 		const targetType = nodeTypeMap.get(link.target);
 		const depthDiff = Math.abs(sourceDepth - targetDepth);
@@ -441,7 +437,7 @@ export const calculateMindMapLayout: LayoutFunction = (
 	const nodesByDepth = new Map<number, MindMapNode[]>();
 	visibleDocumentNodes.forEach((node) => {
 		if (node.id === actualCenterNodeId) return;
-		const depth = visited.get(node.id) || 1;
+		const depth = visited.get(node.id)!;
 		if (!nodesByDepth.has(depth)) nodesByDepth.set(depth, []);
 		nodesByDepth.get(depth)!.push(node);
 	});
@@ -590,7 +586,7 @@ export const calculateRadialLayout: LayoutFunction = (
 	const nodesByDepth = new Map<number, MindMapNode[]>();
 	visibleDocumentNodes.forEach((node) => {
 		if (node.id === actualCenterNodeId) return;
-		const depth = visited.get(node.id) || 1;
+		const depth = visited.get(node.id)!;
 		if (!nodesByDepth.has(depth)) nodesByDepth.set(depth, []);
 		nodesByDepth.get(depth)!.push(node);
 	});
@@ -735,7 +731,7 @@ export const calculateForceLayout: LayoutFunction = (
 		const height = calculateNodeHeight(previewText, previewCharLimit);
 		// Deterministic initial position: spread in a circle around center
 		const angle = (2 * Math.PI * i) / Math.max(docNodesForSim.length, 1);
-		const initRadius = 200 + (visited.get(node.id) || 1) * 100;
+		const initRadius = 200 + visited.get(node.id)! * 100;
 		return {
 			id: node.id,
 			x: centerX + initRadius * Math.cos(angle),
@@ -796,7 +792,7 @@ export const calculateForceLayout: LayoutFunction = (
 	simulation.tick(FORCE_TICK_COUNT);
 
 	// Build position map from simulation
-	const positionMap = new Map(simNodes.map((n) => [n.id, { x: n.x ?? 0, y: n.y ?? 0 }]));
+	const positionMap = new Map(simNodes.map((n) => [n.id, { x: n.x!, y: n.y! }]));
 
 	// Build positioned nodes
 	const positionedNodes: MindMapNode[] = [];
@@ -815,11 +811,10 @@ export const calculateForceLayout: LayoutFunction = (
 
 	// Document nodes
 	docNodesForSim.forEach((node) => {
-		const pos = positionMap.get(node.id);
-		if (!pos) return;
+		const pos = positionMap.get(node.id)!;
 		const previewText = node.description || node.contentPreview;
 		const height = calculateNodeHeight(previewText, previewCharLimit);
-		const depth = visited.get(node.id) || 1;
+		const depth = visited.get(node.id)!;
 		const side: MindMapNode['side'] = pos.x < centerX - 10 ? 'left' : 'right';
 
 		positionedNodes.push({
@@ -895,9 +890,8 @@ function positionExternalNodesBottom(
 	externalNodes.sort((a, b) => (a.domain || '').localeCompare(b.domain || ''));
 
 	const maxYDistance = positionedNodes.reduce((max, n) => {
-		if (n.side === 'external') return max;
 		const dist = Math.abs(n.y - centerY);
-		return dist > max ? dist : max;
+		return Math.max(max, dist);
 	}, 0);
 	const externalY = centerY + maxYDistance + EXTERNAL_CLUSTER_OFFSET;
 	const totalExternalWidth = externalNodes.length * (EXTERNAL_NODE_WIDTH + 20);

@@ -257,7 +257,7 @@ export function useCommandHistory(options: UseCommandHistoryOptions = {}): UseCo
 
 		const newIndex = Math.min(navigationIndex + 1, history.length - 1);
 		setNavigationIndex(newIndex);
-		return history[newIndex]?.command ?? null;
+		return history[newIndex]!.command;
 	}, [history, navigationIndex]);
 
 	/**
@@ -271,7 +271,7 @@ export function useCommandHistory(options: UseCommandHistoryOptions = {}): UseCo
 
 		const newIndex = navigationIndex - 1;
 		setNavigationIndex(newIndex);
-		return history[newIndex]?.command ?? null;
+		return history[newIndex]!.command;
 	}, [history, navigationIndex]);
 
 	/**

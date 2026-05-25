@@ -139,33 +139,32 @@ export function DebugPackageModal({ theme, isOpen, onClose }: DebugPackageModalP
 
 	// Reveal the generated file in Finder
 	const handleRevealInFinder = useCallback(() => {
-		if (resultPath) {
-			// Use shell to open the containing folder
-			window.maestro.process
-				.runCommand({
-					sessionId: 'debug-package',
-					command: `open -R "${resultPath}"`,
-					cwd: '/',
-					shell: '/bin/bash',
-				})
-				.catch(console.error);
-		}
+		// The success view is only rendered after createPackage returns a truthy path.
+		const path = resultPath!;
+		window.maestro.process
+			.runCommand({
+				sessionId: 'debug-package',
+				command: `open -R "${path}"`,
+				cwd: '/',
+				shell: '/bin/bash',
+			})
+			.catch(console.error);
 	}, [resultPath]);
 
 	// Copy file path to clipboard
 	const handleCopyPath = useCallback(() => {
-		if (resultPath) {
-			navigator.clipboard
-				.writeText(resultPath)
-				.then(() => {
-					notifyToast({
-						type: 'success',
-						title: 'Copied',
-						message: 'File path copied to clipboard',
-					});
-				})
-				.catch(console.error);
-		}
+		// The success view is only rendered after createPackage returns a truthy path.
+		const path = resultPath!;
+		navigator.clipboard
+			.writeText(path)
+			.then(() => {
+				notifyToast({
+					type: 'success',
+					title: 'Copied',
+					message: 'File path copied to clipboard',
+				});
+			})
+			.catch(console.error);
 	}, [resultPath]);
 
 	if (!isOpen) return null;

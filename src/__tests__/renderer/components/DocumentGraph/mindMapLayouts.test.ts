@@ -71,6 +71,17 @@ function createLink(
 	return { source, target, type };
 }
 
+function createExternalNodeWithoutDomain(id = 'ext-unknown'): MindMapNode {
+	return createNode(id, {
+		nodeType: 'external',
+		side: 'external',
+		domain: undefined,
+		urls: [],
+		width: EXTERNAL_NODE_WIDTH,
+		height: EXTERNAL_NODE_HEIGHT,
+	});
+}
+
 /**
  * Build a simple graph: center -> A, center -> B, center -> C
  */
@@ -318,6 +329,115 @@ describe('mindMapLayouts', () => {
 			expect(centerNode!.side).toBe('center');
 		});
 
+		it('matches generated document ids before falling back to the first document', () => {
+			const generatedCenterId = 'doc-docs/Focus.md';
+			const linkedNode = createNode('A');
+			const nodes = [
+				createNode(generatedCenterId, {
+					label: 'Generated Id Center',
+					filePath: 'elsewhere.md',
+				}),
+				linkedNode,
+			];
+			const links = [createLink(generatedCenterId, linkedNode.id)];
+			const adjacency = buildAdjacencyMap(links);
+
+			const idMatch = calculateMindMapLayout(
+				nodes,
+				links,
+				adjacency,
+				'docs/Focus.md',
+				2,
+				1200,
+				800,
+				false,
+				100
+			);
+
+			expect(idMatch.nodes.find((node) => node.isFocused)?.id).toBe(generatedCenterId);
+
+			const fallbackNodes = [
+				createNode('first', { filePath: '' }),
+				createNode('second', { filePath: 'second.md' }),
+			];
+			const fallback = calculateMindMapLayout(
+				fallbackNodes,
+				[],
+				buildAdjacencyMap([]),
+				'/',
+				2,
+				1200,
+				800,
+				false,
+				100
+			);
+
+			expect(fallback.nodes).toHaveLength(1);
+			expect(fallback.nodes[0].id).toBe('first');
+			expect(fallback.nodes[0].isFocused).toBe(true);
+		});
+
+		it('matches centers by basename and fuzzy label when ids do not match', () => {
+			const basenameCenter = createNode('basename-center', {
+				label: 'Basename Center',
+				filePath: 'docs/Focus.md',
+			});
+			const labelOnlyCenter = createNode('label-only-center', {
+				label: 'Label Only',
+				filePath: undefined,
+			});
+
+			const basenameMatch = calculateMindMapLayout(
+				[basenameCenter],
+				[],
+				buildAdjacencyMap([]),
+				'Focus.md',
+				2,
+				1200,
+				800,
+				false,
+				100
+			);
+			const labelMatch = calculateMindMapLayout(
+				[labelOnlyCenter],
+				[],
+				buildAdjacencyMap([]),
+				'Label Only.md',
+				2,
+				1200,
+				800,
+				false,
+				100
+			);
+
+			expect(basenameMatch.nodes.find((node) => node.isFocused)?.id).toBe('basename-center');
+			expect(labelMatch.nodes.find((node) => node.isFocused)?.id).toBe('label-only-center');
+		});
+
+		it('falls back cleanly when fuzzy matching sees an unlabeled document node', () => {
+			const unlabeled = createNode('unlabeled', {
+				filePath: undefined,
+				label: undefined,
+			});
+			const fallback = createNode('fallback', { filePath: 'fallback.md' });
+
+			const result = calculateMindMapLayout(
+				[unlabeled, fallback],
+				[],
+				buildAdjacencyMap([]),
+				'missing.md',
+				2,
+				1200,
+				800,
+				false,
+				100
+			);
+
+			expect(result.nodes).toHaveLength(1);
+			expect(result.nodes[0].id).toBe('unlabeled');
+			expect(result.nodes[0].isFocused).toBe(true);
+		});
+
 		it('distributes children left and right', () => {
 			const { nodes, links } = buildStarGraph();
 			const adjacency = buildAdjacencyMap(links);
@@ -359,6 +479,38 @@ describe('mindMapLayouts', () => {
 			expect(nodeIds).toContain('center');
 		});
 
+		it('filters long-range document links from adjacent-depth layouts', () => {
+			const center = createNode('center');
+			const a = createNode('A');
+			const b = createNode('B');
+			const d = createNode('D');
+			const e = createNode('E');
+			const traversalLinks = [
+				createLink('center', 'A'),
+				createLink('A', 'D'),
+				createLink('D', 'E'),
+				createLink('center', 'B'),
+			];
+			const links = [...traversalLinks, createLink('E', 'B')];
+			const adjacency = buildAdjacencyMap(traversalLinks);
+
+			const result = calculateMindMapLayout(
+				[center, a, b, d, e],
+				links,
+				adjacency,
+				'center',
+				3,
+				1200,
+				800,
+				false,
+				100
+			);
+
+			expect(result.links).toContainEqual(createLink('center', 'A'));
+			expect(result.links).toContainEqual(createLink('center', 'B'));
+			expect(result.links).not.toContainEqual(createLink('E', 'B'));
+		});
+
 		it('includes external nodes when showExternalLinks is true', () => {
 			const ext = createExternalNode('github.com');
 			const nodes = [createNode('center'), ext];
@@ -378,6 +530,75 @@ describe('mindMapLayouts', () => {
 			);
 			const hasExternal = result.nodes.some((n) => n.nodeType === 'external');
 			expect(hasExternal).toBe(true);
+		});
+
+		it('sorts and positions external nodes in a bottom row', () => {
+			const center = createNode('center');
+			const unknownExternal = createExternalNodeWithoutDomain();
+			const githubExternal = createExternalNode('github.com');
+			const nodes = [center, githubExternal, unknownExternal];
+			const links = [
+				createLink('center', githubExternal.id, 'external'),
+				createLink('center', unknownExternal.id, 'external'),
+			];
+			const adjacency = buildAdjacencyMap(links);
+
+			const result = calculateMindMapLayout(
+				nodes,
+				links,
+				adjacency,
+				'center',
+				2,
+				1200,
+				800,
+				true,
+				100
+			);
+
+			const centerNode = result.nodes.find((node) => node.id === 'center')!;
+			const externalNodes = result.nodes.filter((node) => node.nodeType === 'external');
+
+			expect(externalNodes.map((node) => node.id)).toEqual([unknownExternal.id, githubExternal.id]);
+			expect(externalNodes.every((node) => node.side === 'external')).toBe(true);
+			expect(externalNodes.every((node) => node.y > centerNode.y)).toBe(true);
+			expect(externalNodes[0].x).toBeLessThan(externalNodes[1].x);
+		});
+
+		it('positions unknown-domain external nodes below the visible document span', () => {
+			const center = createNode('center');
+			const child = createNode('A');
+			const secondChild = createNode('B');
+			const unknownA = createExternalNodeWithoutDomain('ext-unknown-a');
+			const unknownB = createExternalNodeWithoutDomain('ext-unknown-b');
+			const nodes = [center, child, secondChild, unknownA, unknownB];
+			const links = [
+				createLink('center', child.id),
+				createLink('center', secondChild.id),
+				createLink('center', unknownA.id, 'external'),
+				createLink('center', unknownB.id, 'external'),
+			];
+			const adjacency = buildAdjacencyMap(links);
+
+			const result = calculateMindMapLayout(
+				nodes,
+				links,
+				adjacency,
+				'center',
+				2,
+				1200,
+				800,
+				true,
+				100
+			);
+
+			const childNodes = result.nodes.filter(
+				(node) => node.id === child.id || node.id === secondChild.id
+			);
+			const externalNodes = result.nodes.filter((node) => node.nodeType === 'external');
+			const lowestChildY = Math.max(...childNodes.map((node) => node.y));
+
+			expect(externalNodes.map((node) => node.id)).toEqual([unknownA.id, unknownB.id]);
+			expect(externalNodes.every((node) => node.y > lowestChildY)).toBe(true);
 		});
 
 		it('excludes external nodes when showExternalLinks is false', () => {
@@ -487,6 +708,71 @@ describe('mindMapLayouts', () => {
 					expect(Math.abs(d - avgDist)).toBeLessThan(avgDist * 0.3);
 				}
 			}
+		});
+
+		it('places external nodes on an outer ring with stable domain sorting', () => {
+			const center = createNode('center');
+			const child = createNode('A');
+			const unknownExternal = createExternalNodeWithoutDomain();
+			const githubExternal = createExternalNode('github.com');
+			const nodes = [center, child, githubExternal, unknownExternal];
+			const links = [
+				createLink('center', child.id),
+				createLink('center', githubExternal.id, 'external'),
+				createLink('center', unknownExternal.id, 'external'),
+			];
+			const adjacency = buildAdjacencyMap(links);
+
+			const result = calculateRadialLayout(
+				nodes,
+				links,
+				adjacency,
+				'center',
+				2,
+				1200,
+				800,
+				true,
+				100
+			);
+
+			const centerNode = result.nodes.find((node) => node.id === 'center')!;
+			const childNode = result.nodes.find((node) => node.id === child.id)!;
+			const externalNodes = result.nodes.filter((node) => node.nodeType === 'external');
+			const childDistance = Math.hypot(childNode.x - centerNode.x, childNode.y - centerNode.y);
+			const externalDistances = externalNodes.map((node) =>
+				Math.hypot(node.x - centerNode.x, node.y - centerNode.y)
+			);
+
+			expect(externalNodes.map((node) => node.id)).toEqual([unknownExternal.id, githubExternal.id]);
+			expect(externalNodes.every((node) => node.side === 'external')).toBe(true);
+			expect(externalDistances.every((distance) => distance > childDistance)).toBe(true);
+		});
+
+		it('keeps radial unknown-domain external nodes in deterministic order', () => {
+			const center = createNode('center');
+			const unknownA = createExternalNodeWithoutDomain('ext-unknown-a');
+			const unknownB = createExternalNodeWithoutDomain('ext-unknown-b');
+			const nodes = [center, unknownA, unknownB];
+			const links = [
+				createLink('center', unknownA.id, 'external'),
+				createLink('center', unknownB.id, 'external'),
+			];
+			const adjacency = buildAdjacencyMap(links);
+
+			const result = calculateRadialLayout(
+				nodes,
+				links,
+				adjacency,
+				'center',
+				2,
+				1200,
+				800,
+				true,
+				100
+			);
+
+			const externalNodes = result.nodes.filter((node) => node.nodeType === 'external');
+			expect(externalNodes.map((node) => node.id)).toEqual([unknownA.id, unknownB.id]);
 		});
 
 		it('produces valid bounds', () => {
@@ -611,6 +897,68 @@ describe('mindMapLayouts', () => {
 				100
 			);
 			expect(result.links.length).toBeGreaterThan(0);
+		});
+
+		it('positions external nodes and filters unusable simulation links', () => {
+			const center = createNode('center');
+			const child = createNode('A', { description: 'Child document' });
+			const unknownExternal = createExternalNodeWithoutDomain();
+			const githubExternal = createExternalNode('github.com');
+			const nodes = [center, child, githubExternal, unknownExternal];
+			const links = [
+				createLink('center', child.id),
+				createLink(child.id, 'center'),
+				createLink('center', githubExternal.id, 'external'),
+				createLink('center', unknownExternal.id, 'external'),
+				createLink(child.id, 'missing-node'),
+			];
+			const adjacency = buildAdjacencyMap(links);
+
+			const result = calculateForceLayout(
+				nodes,
+				links,
+				adjacency,
+				'center',
+				2,
+				1200,
+				800,
+				true,
+				100
+			);
+
+			const externalNodes = result.nodes.filter((node) => node.nodeType === 'external');
+
+			expect(externalNodes.map((node) => node.id)).toEqual([unknownExternal.id, githubExternal.id]);
+			expect(externalNodes.every((node) => node.side === 'external')).toBe(true);
+			expect(result.links).toContainEqual(createLink('center', githubExternal.id, 'external'));
+			expect(result.links).not.toContainEqual(createLink(child.id, 'missing-node'));
+		});
+
+		it('keeps force-layout unknown-domain external nodes in deterministic order', () => {
+			const center = createNode('center');
+			const unknownA = createExternalNodeWithoutDomain('ext-unknown-a');
+			const unknownB = createExternalNodeWithoutDomain('ext-unknown-b');
+			const nodes = [center, unknownA, unknownB];
+			const links = [
+				createLink('center', unknownA.id, 'external'),
+				createLink('center', unknownB.id, 'external'),
+			];
+			const adjacency = buildAdjacencyMap(links);
+
+			const result = calculateForceLayout(
+				nodes,
+				links,
+				adjacency,
+				'center',
+				2,
+				1200,
+				800,
+				true,
+				100
+			);
+
+			const externalNodes = result.nodes.filter((node) => node.nodeType === 'external');
+			expect(externalNodes.map((node) => node.id)).toEqual([unknownA.id, unknownB.id]);
 		});
 	});
 

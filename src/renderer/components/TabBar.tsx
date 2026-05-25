@@ -139,9 +139,9 @@ interface TabProps {
 	/** Stable callback - receives tabId */
 	onCloseTabsRight?: (tabId: string) => void;
 	/** Total number of tabs */
-	totalTabs?: number;
+	totalTabs: number;
 	/** Tab index in the full list (0-based) */
-	tabIndex?: number;
+	tabIndex: number;
 }
 
 /**
@@ -240,6 +240,11 @@ const Tab = memo(function Tab({
 	const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const tabRef = useRef<HTMLDivElement>(null);
 
+	const clearHoverTimeout = () => {
+		clearTimeout(hoverTimeoutRef.current as ReturnType<typeof setTimeout>);
+		hoverTimeoutRef.current = null;
+	};
+
 	// Register ref with parent for scroll-into-view functionality
 	const setTabRef = useCallback(
 		(el: HTMLDivElement | null) => {
@@ -266,6 +271,7 @@ const Tab = memo(function Tab({
 				setOverlayPosition({ top: rect.bottom, left: rect.left, tabWidth: rect.width });
 			}
 			setOverlayOpen(true);
+			hoverTimeoutRef.current = null;
 		}, 400);
 	};
 
@@ -274,10 +280,7 @@ const Tab = memo(function Tab({
 
 	const handleMouseLeave = () => {
 		setIsHovered(false);
-		if (hoverTimeoutRef.current) {
-			clearTimeout(hoverTimeoutRef.current);
-			hoverTimeoutRef.current = null;
-		}
+		clearHoverTimeout();
 		// Delay closing overlay to allow mouse to reach it (there's a gap between tab and overlay)
 		hoverTimeoutRef.current = setTimeout(() => {
 			if (!isOverOverlayRef.current) {
@@ -309,11 +312,9 @@ const Tab = memo(function Tab({
 	const handleCopySessionId = useCallback(
 		(e: React.MouseEvent) => {
 			e.stopPropagation();
-			if (tab.agentSessionId) {
-				safeClipboardWrite(tab.agentSessionId);
-				setShowCopied(true);
-				setTimeout(() => setShowCopied(false), 1500);
-			}
+			safeClipboardWrite(tab.agentSessionId!);
+			setShowCopied(true);
+			setTimeout(() => setShowCopied(false), 1500);
 		},
 		[tab.agentSessionId]
 	);
@@ -628,10 +629,7 @@ const Tab = memo(function Tab({
 						onMouseEnter={() => {
 							// Keep overlay open when mouse enters it
 							isOverOverlayRef.current = true;
-							if (hoverTimeoutRef.current) {
-								clearTimeout(hoverTimeoutRef.current);
-								hoverTimeoutRef.current = null;
-							}
+							clearHoverTimeout();
 						}}
 						onMouseLeave={() => {
 							// Close overlay when mouse leaves it
@@ -899,12 +897,10 @@ const Tab = memo(function Tab({
 									<button
 										onClick={handleCloseTabsRightClick}
 										className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs transition-colors ${
-											tabIndex === (totalTabs ?? 1) - 1
-												? 'opacity-40 cursor-default'
-												: 'hover:bg-white/10'
+											tabIndex === totalTabs - 1 ? 'opacity-40 cursor-default' : 'hover:bg-white/10'
 										}`}
 										style={{ color: theme.colors.textMain }}
-										disabled={tabIndex === (totalTabs ?? 1) - 1}
+										disabled={tabIndex === totalTabs - 1}
 									>
 										<ChevronsRight
 											className="w-3.5 h-3.5"
@@ -959,9 +955,9 @@ interface FileTabProps {
 	/** Stable callback - receives tabId - closes tabs to the right */
 	onCloseTabsRight?: (tabId: string) => void;
 	/** Total number of unified tabs */
-	totalTabs?: number;
+	totalTabs: number;
 	/** Tab index in the full unified list (0-based) */
-	tabIndex?: number;
+	tabIndex: number;
 	/** Whether colorblind-friendly colors should be used for extension badges */
 	colorBlindMode?: boolean;
 	/** Shortcut hint badge number (1-9 for Cmd+1-9, 0 for Cmd+0/last tab) */
@@ -1014,6 +1010,11 @@ const FileTab = memo(function FileTab({
 	const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const tabRef = useRef<HTMLDivElement>(null);
 
+	const clearHoverTimeout = () => {
+		clearTimeout(hoverTimeoutRef.current as ReturnType<typeof setTimeout>);
+		hoverTimeoutRef.current = null;
+	};
+
 	// Register ref with parent for scroll-into-view functionality
 	const setTabRef = useCallback(
 		(el: HTMLDivElement | null) => {
@@ -1035,6 +1036,7 @@ const FileTab = memo(function FileTab({
 				setOverlayPosition({ top: rect.bottom, left: rect.left, tabWidth: rect.width });
 			}
 			setOverlayOpen(true);
+			hoverTimeoutRef.current = null;
 		}, 400);
 	};
 
@@ -1043,10 +1045,7 @@ const FileTab = memo(function FileTab({
 
 	const handleMouseLeave = () => {
 		setIsHovered(false);
-		if (hoverTimeoutRef.current) {
-			clearTimeout(hoverTimeoutRef.current);
-			hoverTimeoutRef.current = null;
-		}
+		clearHoverTimeout();
 		// Delay closing overlay to allow mouse to reach it (there's a gap between tab and overlay)
 		hoverTimeoutRef.current = setTimeout(() => {
 			if (!isOverOverlayRef.current) {
@@ -1328,10 +1327,7 @@ const FileTab = memo(function FileTab({
 						onMouseEnter={() => {
 							// Keep overlay open when mouse enters it
 							isOverOverlayRef.current = true;
-							if (hoverTimeoutRef.current) {
-								clearTimeout(hoverTimeoutRef.current);
-								hoverTimeoutRef.current = null;
-							}
+							clearHoverTimeout();
 						}}
 						onMouseLeave={() => {
 							// Close overlay when mouse leaves it
@@ -1476,12 +1472,10 @@ const FileTab = memo(function FileTab({
 									<button
 										onClick={handleCloseTabsRightClick}
 										className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs transition-colors ${
-											tabIndex === (totalTabs ?? 1) - 1
-												? 'opacity-40 cursor-default'
-												: 'hover:bg-white/10'
+											tabIndex === totalTabs - 1 ? 'opacity-40 cursor-default' : 'hover:bg-white/10'
 										}`}
 										style={{ color: theme.colors.textMain }}
-										disabled={tabIndex === (totalTabs ?? 1) - 1}
+										disabled={tabIndex === totalTabs - 1}
 									>
 										<ChevronsRight
 											className="w-3.5 h-3.5"
@@ -1579,8 +1573,8 @@ function TabBarInner({
 					const tabRect = tabElement.getBoundingClientRect();
 
 					// Account for sticky elements that overlay the scroll area
-					const stickyLeftWidth = stickyLeftRef.current?.offsetWidth ?? 0;
-					const stickyRightWidth = stickyRightRef.current?.offsetWidth ?? 0;
+					const stickyLeftWidth = stickyLeftRef.current!.offsetWidth;
+					const stickyRightWidth = stickyRightRef.current!.offsetWidth;
 
 					// Check if right edge is behind the sticky "+" button
 					const visibleRight = containerRect.right - stickyRightWidth;
@@ -1691,10 +1685,8 @@ function TabBarInner({
 	// Check if tabs overflow the container (need sticky + button)
 	useEffect(() => {
 		const checkOverflow = () => {
-			if (tabBarRef.current) {
-				// scrollWidth > clientWidth means content overflows
-				setIsOverflowing(tabBarRef.current.scrollWidth > tabBarRef.current.clientWidth);
-			}
+			// scrollWidth > clientWidth means content overflows
+			setIsOverflowing(tabBarRef.current!.scrollWidth > tabBarRef.current!.clientWidth);
 		};
 
 		// Check after DOM renders
@@ -1711,18 +1703,15 @@ function TabBarInner({
 	const handleMoveToFirst = useCallback(
 		(tabId: string) => {
 			// When unified tabs are used, prefer onUnifiedTabReorder
-			if (unifiedTabs && onUnifiedTabReorder) {
+			if (unifiedTabs) {
 				const currentIndex = unifiedTabs.findIndex((ut) => ut.id === tabId);
-				if (currentIndex > 0) {
-					onUnifiedTabReorder(currentIndex, 0);
-				}
-			} else if (onTabReorder) {
-				// Fallback to legacy AI-tab-only reorder
-				const currentIndex = tabs.findIndex((t) => t.id === tabId);
-				if (currentIndex > 0) {
-					onTabReorder(currentIndex, 0);
-				}
+				onUnifiedTabReorder!(currentIndex, 0);
+				return;
 			}
+
+			// Fallback to legacy AI-tab-only reorder
+			const currentIndex = tabs.findIndex((t) => t.id === tabId);
+			onTabReorder!(currentIndex, 0);
 		},
 		[tabs, onTabReorder, unifiedTabs, onUnifiedTabReorder]
 	);
@@ -1730,18 +1719,15 @@ function TabBarInner({
 	const handleMoveToLast = useCallback(
 		(tabId: string) => {
 			// When unified tabs are used, prefer onUnifiedTabReorder
-			if (unifiedTabs && onUnifiedTabReorder) {
+			if (unifiedTabs) {
 				const currentIndex = unifiedTabs.findIndex((ut) => ut.id === tabId);
-				if (currentIndex < unifiedTabs.length - 1) {
-					onUnifiedTabReorder(currentIndex, unifiedTabs.length - 1);
-				}
-			} else if (onTabReorder) {
-				// Fallback to legacy AI-tab-only reorder
-				const currentIndex = tabs.findIndex((t) => t.id === tabId);
-				if (currentIndex < tabs.length - 1) {
-					onTabReorder(currentIndex, tabs.length - 1);
-				}
+				onUnifiedTabReorder!(currentIndex, unifiedTabs.length - 1);
+				return;
 			}
+
+			// Fallback to legacy AI-tab-only reorder
+			const currentIndex = tabs.findIndex((t) => t.id === tabId);
+			onTabReorder!(currentIndex, tabs.length - 1);
 		},
 		[tabs, onTabReorder, unifiedTabs, onUnifiedTabReorder]
 	);
@@ -1919,7 +1905,7 @@ function TabBarInner({
 							: false;
 
 						// Get original index in the FULL unified list (not filtered)
-						const allTabs = unifiedTabs ?? [];
+						const allTabs = unifiedTabs!;
 						const originalIndex = allTabs.findIndex((ut) => ut.id === unifiedTab.id);
 
 						// Show separator between inactive tabs

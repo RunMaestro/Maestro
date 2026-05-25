@@ -163,6 +163,11 @@ describe('wizardIntentParser', () => {
 				const result = parseWizardIntent('please add a feature', true);
 				expect(result.mode).toBe('iterate');
 			});
+
+			it('does not match keywords inside larger words', () => {
+				const result = parseWizardIntent('renew authentication flow', true);
+				expect(result.mode).toBe('ask');
+			});
 		});
 
 		describe('edge cases', () => {

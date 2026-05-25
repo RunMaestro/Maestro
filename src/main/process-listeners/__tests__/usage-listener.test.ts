@@ -182,6 +182,25 @@ describe('Usage Listener', () => {
 			});
 		});
 
+		it('should skip participant context fields when accumulated tokens exceed the context window', async () => {
+			mockDeps.usageAggregator.calculateContextTokens = vi.fn().mockReturnValue(250000);
+			setupListener();
+			const handler = eventHandlers.get('usage');
+			const usageStats = createMockUsageStats({ contextWindow: 100000 });
+
+			handler?.('group-chat-test-chat-123-participant-TestAgent-abc123', usageStats);
+
+			await vi.waitFor(() => {
+				expect(mockDeps.groupChatStorage.updateParticipant).toHaveBeenCalledWith(
+					'test-chat-123',
+					'TestAgent',
+					{
+						totalCost: 0.05,
+					}
+				);
+			});
+		});
+
 		it('should emit participants changed after update', async () => {
 			setupListener();
 			const handler = eventHandlers.get('usage');
@@ -340,6 +359,38 @@ describe('Usage Listener', () => {
 					contextUsage: 25,
 				})
 			);
+		});
+
+		it('should use the fallback context window for moderator usage when context window is missing', () => {
+			setupListener();
+			const handler = eventHandlers.get('usage');
+			const usageStats = createMockUsageStats({ contextWindow: 0 });
+
+			handler?.('group-chat-test-chat-123-moderator-1234567890', usageStats);
+
+			expect(mockDeps.groupChatEmitters.emitModeratorUsage).toHaveBeenCalledWith(
+				'test-chat-123',
+				expect.objectContaining({
+					contextUsage: 1,
+					tokenCount: 1800,
+					totalCost: 0.05,
+				})
+			);
+		});
+
+		it('should preserve prior moderator context values when accumulated tokens exceed the window', () => {
+			mockDeps.usageAggregator.calculateContextTokens = vi.fn().mockReturnValue(250000);
+			setupListener();
+			const handler = eventHandlers.get('usage');
+			const usageStats = createMockUsageStats({ contextWindow: 100000 });
+
+			handler?.('group-chat-test-chat-123-moderator-1234567890', usageStats);
+
+			expect(mockDeps.groupChatEmitters.emitModeratorUsage).toHaveBeenCalledWith('test-chat-123', {
+				contextUsage: -1,
+				totalCost: 0.05,
+				tokenCount: -1,
+			});
 		});
 
 		it('should still forward to renderer for moderator usage', () => {

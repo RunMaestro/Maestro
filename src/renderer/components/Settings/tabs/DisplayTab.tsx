@@ -83,8 +83,6 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 	};
 
 	const loadFonts = async () => {
-		if (fontsLoaded) return; // Don't reload if already loaded
-
 		setFontLoading(true);
 		try {
 			const detected = await window.maestro.fonts.detect();
@@ -111,11 +109,9 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 	};
 
 	const addCustomFont = (font: string) => {
-		if (font && !customFonts.includes(font)) {
-			const newCustomFonts = [...customFonts, font];
-			setCustomFonts(newCustomFonts);
-			window.maestro.settings.set('customFonts', newCustomFonts);
-		}
+		const newCustomFonts = [...customFonts, font];
+		setCustomFonts(newCustomFonts);
+		window.maestro.settings.set('customFonts', newCustomFonts);
 	};
 
 	const removeCustomFont = (font: string) => {

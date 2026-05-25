@@ -218,8 +218,9 @@ export function IgnorePatternsSection({
 							className="w-full px-3 py-2 rounded text-sm font-mono outline-none"
 							style={{
 								backgroundColor: theme.colors.bgActivity,
+								borderStyle: 'solid',
+								borderWidth: '1px',
 								borderColor: inputError ? theme.colors.error : theme.colors.border,
-								border: '1px solid',
 								color: theme.colors.textMain,
 							}}
 						/>

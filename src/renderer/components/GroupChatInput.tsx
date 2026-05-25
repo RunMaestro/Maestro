@@ -438,10 +438,9 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 
 	// Auto-resize textarea as content changes (matches InputArea behavior)
 	useEffect(() => {
-		if (inputRef.current) {
-			inputRef.current.style.height = 'auto';
-			inputRef.current.style.height = `${Math.min(inputRef.current.scrollHeight, 176)}px`;
-		}
+		const input = inputRef.current!;
+		input.style.height = 'auto';
+		input.style.height = `${Math.min(input.scrollHeight, 176)}px`;
 	}, [message]);
 
 	const isBusy = state !== 'idle';

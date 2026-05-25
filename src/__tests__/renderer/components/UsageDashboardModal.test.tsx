@@ -173,6 +173,7 @@ describe('UsageDashboardModal', () => {
 	});
 
 	afterEach(() => {
+		vi.useRealTimers();
 		vi.restoreAllMocks();
 	});
 
@@ -239,6 +240,56 @@ describe('UsageDashboardModal', () => {
 				expect(screen.getByTitle('Close (Esc)')).toBeInTheDocument();
 			});
 		});
+
+		it('uses measured narrow and medium widths for responsive chart columns', async () => {
+			const offsetWidthSpy = vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get');
+
+			try {
+				offsetWidthSpy.mockReturnValue(500);
+				const { unmount } = render(
+					<UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />
+				);
+
+				await waitFor(() => {
+					expect(screen.getByTestId('section-source-distribution').parentElement).toHaveStyle({
+						gridTemplateColumns: 'repeat(1, minmax(0, 1fr))',
+					});
+				});
+
+				unmount();
+				vi.clearAllMocks();
+				mockGetAggregation.mockResolvedValue(createSampleData());
+				mockGetDatabaseSize.mockResolvedValue(1024 * 1024 * 5);
+				mockGetAutoRunSessions.mockResolvedValue([
+					{
+						id: 'autorun-1',
+						sessionId: 'session-1',
+						agentType: 'claude-code',
+						startTime: Date.now(),
+						duration: 1000,
+						tasksTotal: 2,
+						tasksCompleted: 1,
+					},
+				]);
+				offsetWidthSpy.mockReturnValue(700);
+
+				render(<UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />);
+
+				await waitFor(() => {
+					expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
+				});
+
+				fireEvent.click(screen.getAllByRole('tab')[3]);
+
+				await waitFor(() => {
+					expect(screen.getByTestId('autorun-metrics')).toHaveStyle({
+						gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+					});
+				});
+			} finally {
+				offsetWidthSpy.mockRestore();
+			}
+		});
 	});
 
 	describe('Layer Stack Integration', () => {
@@ -255,6 +306,19 @@ describe('UsageDashboardModal', () => {
 					})
 				);
 			});
+		});
+
+		it('closes through the registered layer escape handler', async () => {
+			render(<UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />);
+
+			await waitFor(() => {
+				expect(mockRegisterLayer).toHaveBeenCalled();
+			});
+
+			const layerConfig = mockRegisterLayer.mock.calls[0][0];
+			layerConfig.onEscape();
+
+			expect(onClose).toHaveBeenCalledTimes(1);
 		});
 
 		it('unregisters from layer stack when closed', async () => {
@@ -341,7 +405,9 @@ describe('UsageDashboardModal', () => {
 		});
 
 		it('shows error state on fetch failure', async () => {
-			mockGetAggregation.mockRejectedValue(new Error('Network error'));
+			const error = new Error('Network error');
+			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+			mockGetAggregation.mockRejectedValue(error);
 
 			render(<UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />);
 
@@ -349,6 +415,55 @@ describe('UsageDashboardModal', () => {
 				expect(screen.getByText('Failed to load usage data')).toBeInTheDocument();
 				expect(screen.getByText('Retry')).toBeInTheDocument();
 			});
+			expect(consoleError).toHaveBeenCalledWith('Failed to fetch usage stats:', error);
+		});
+
+		it('warns when stats loading exceeds the dashboard threshold', async () => {
+			let currentTime = 0;
+			const nowSpy = vi.spyOn(performance, 'now').mockImplementation(() => {
+				const value = currentTime;
+				currentTime += 250;
+				return value;
+			});
+			const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+			render(<UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />);
+
+			await waitFor(() => {
+				expect(warnSpy).toHaveBeenCalledWith(
+					expect.stringMatching(/\[UsageDashboard\] fetchStats took \d+ms \(threshold: 200ms\)/),
+					expect.objectContaining({ timeRange: 'week', totalQueries: 150 })
+				);
+			});
+
+			warnSpy.mockRestore();
+			nowSpy.mockRestore();
+		});
+
+		it('retries after a non-Error fetch failure', async () => {
+			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			mockGetAggregation
+				.mockRejectedValueOnce('temporarily unavailable')
+				.mockResolvedValueOnce(createSampleData());
+
+			render(<UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('Retry')).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getByText('Retry'));
+
+			await waitFor(() => {
+				expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
+			});
+			expect(mockGetAggregation).toHaveBeenCalledTimes(2);
+			expect(consoleSpy).toHaveBeenCalledWith(
+				'Failed to fetch usage stats:',
+				'temporarily unavailable'
+			);
+
+			consoleSpy.mockRestore();
 		});
 	});
 
@@ -401,6 +516,38 @@ describe('UsageDashboardModal', () => {
 			// The tab should now be active (different styling)
 			expect(agentsTab).toHaveStyle({ color: theme.colors.accent });
 		});
+
+		it('applies hover styles to export, close, and inactive tab controls', async () => {
+			render(<UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('Export CSV')).toBeInTheDocument();
+			});
+
+			const exportButton = screen.getByText('Export CSV').closest('button')!;
+			fireEvent.mouseEnter(exportButton);
+			expect(exportButton).toHaveStyle({ backgroundColor: `${theme.colors.accent}25` });
+			fireEvent.mouseLeave(exportButton);
+			expect(exportButton).toHaveStyle({ backgroundColor: `${theme.colors.accent}15` });
+
+			const closeButton = screen.getByTitle('Close (Esc)');
+			fireEvent.mouseEnter(closeButton);
+			expect(closeButton).toHaveStyle({ backgroundColor: `${theme.colors.accent}20` });
+			fireEvent.mouseLeave(closeButton);
+			expect(closeButton.style.backgroundColor).toBe('transparent');
+
+			const agentsTab = screen.getAllByRole('tab')[1];
+			fireEvent.mouseEnter(agentsTab);
+			expect(agentsTab).toHaveStyle({ backgroundColor: `${theme.colors.accent}10` });
+			fireEvent.mouseLeave(agentsTab);
+			expect(agentsTab.style.backgroundColor).toBe('transparent');
+
+			const overviewTab = screen.getAllByRole('tab')[0];
+			fireEvent.mouseEnter(overviewTab);
+			expect(overviewTab).toHaveStyle({ backgroundColor: `${theme.colors.accent}20` });
+			fireEvent.mouseLeave(overviewTab);
+			expect(overviewTab).toHaveStyle({ backgroundColor: `${theme.colors.accent}20` });
+		});
 	});
 
 	describe('Close Behavior', () => {
@@ -425,6 +572,18 @@ describe('UsageDashboardModal', () => {
 			// Click on the overlay (the parent div with modal-overlay class)
 			const overlay = screen.getByRole('dialog').parentElement;
 			fireEvent.click(overlay!);
+
+			expect(onClose).toHaveBeenCalledTimes(1);
+		});
+
+		it('calls onClose when clicking the accessible overlay button', async () => {
+			render(<UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />);
+
+			await waitFor(() => {
+				expect(screen.getByLabelText('Close usage dashboard')).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getByLabelText('Close usage dashboard'));
 
 			expect(onClose).toHaveBeenCalledTimes(1);
 		});
@@ -553,6 +712,42 @@ describe('UsageDashboardModal', () => {
 			rerender(<UsageDashboardModal isOpen={false} onClose={onClose} theme={theme} />);
 
 			expect(unsubscribe).toHaveBeenCalled();
+		});
+	});
+
+	describe('Resize Observer', () => {
+		it('ignores resize callbacks after the content ref is cleared', async () => {
+			const OriginalResizeObserver = globalThis.ResizeObserver;
+			let resizeCallback: ResizeObserverCallback | undefined;
+
+			class TestResizeObserver {
+				constructor(callback: ResizeObserverCallback) {
+					resizeCallback = callback;
+				}
+
+				observe = vi.fn();
+				disconnect = vi.fn();
+			}
+
+			globalThis.ResizeObserver = TestResizeObserver as unknown as typeof ResizeObserver;
+
+			try {
+				const { unmount } = render(
+					<UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />
+				);
+
+				await waitFor(() => {
+					expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
+				});
+
+				unmount();
+
+				expect(() => {
+					resizeCallback?.([] as ResizeObserverEntry[], {} as ResizeObserver);
+				}).not.toThrow();
+			} finally {
+				globalThis.ResizeObserver = OriginalResizeObserver;
+			}
 		});
 	});
 
@@ -687,6 +882,47 @@ describe('UsageDashboardModal', () => {
 			// Content should still be visible (real-time updates don't show skeleton)
 			expect(screen.queryByTestId('dashboard-skeleton')).not.toBeInTheDocument();
 			expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
+		});
+
+		it('shows and hides the new data indicator after a real-time update', async () => {
+			const initialData = createSampleData();
+			const updatedData = { ...createSampleData(), totalQueries: 301 };
+			mockGetAggregation.mockResolvedValueOnce(initialData);
+
+			let statsCallback: (() => void) | null = null;
+			mockOnStatsUpdate.mockImplementation((callback: () => void) => {
+				statsCallback = callback;
+				return vi.fn();
+			});
+
+			render(<UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
+			});
+
+			mockGetAggregation.mockResolvedValueOnce(updatedData);
+			vi.useFakeTimers();
+
+			try {
+				await act(async () => {
+					statsCallback?.();
+					await vi.advanceTimersByTimeAsync(1000);
+					await Promise.resolve();
+				});
+
+				expect(mockGetAggregation).toHaveBeenCalledTimes(2);
+				expect(screen.getByTestId('new-data-indicator')).toBeInTheDocument();
+
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(3000);
+					await Promise.resolve();
+				});
+
+				expect(screen.queryByTestId('new-data-indicator')).not.toBeInTheDocument();
+			} finally {
+				vi.useRealTimers();
+			}
 		});
 
 		it('unsubscribes from stats updates when modal closes', async () => {
@@ -1575,6 +1811,46 @@ describe('UsageDashboardModal', () => {
 			});
 		});
 
+		it('switches view modes with global Cmd+Shift bracket shortcuts', async () => {
+			render(<UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
+			});
+
+			fireEvent.keyDown(window, { key: ']', metaKey: true, shiftKey: true });
+
+			await waitFor(() => {
+				expect(screen.getAllByRole('tab')[1]).toHaveAttribute('aria-selected', 'true');
+			});
+
+			fireEvent.keyDown(window, { key: '[', metaKey: true, shiftKey: true });
+
+			await waitFor(() => {
+				expect(screen.getAllByRole('tab')[0]).toHaveAttribute('aria-selected', 'true');
+			});
+		});
+
+		it('wraps global Cmd+Shift bracket shortcuts at both tab boundaries', async () => {
+			render(<UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
+			});
+
+			fireEvent.keyDown(window, { key: '[', metaKey: true, shiftKey: true });
+
+			await waitFor(() => {
+				expect(screen.getAllByRole('tab')[3]).toHaveAttribute('aria-selected', 'true');
+			});
+
+			fireEvent.keyDown(window, { key: ']', metaKey: true, shiftKey: true });
+
+			await waitFor(() => {
+				expect(screen.getAllByRole('tab')[0]).toHaveAttribute('aria-selected', 'true');
+			});
+		});
+
 		it('switches tabs with ArrowLeft key', async () => {
 			render(<UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />);
 
@@ -1734,6 +2010,34 @@ describe('UsageDashboardModal', () => {
 			});
 		});
 
+		it('navigates through overview sections beyond the first chart', async () => {
+			render(<UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
+			});
+
+			const sourceSection = screen.getByTestId('section-source-distribution');
+			sourceSection.focus();
+			fireEvent.keyDown(sourceSection, { key: 'ArrowDown' });
+
+			await waitFor(() => {
+				expect(document.activeElement).toBe(screen.getByTestId('section-location-distribution'));
+			});
+
+			fireEvent.keyDown(screen.getByTestId('section-location-distribution'), { key: 'ArrowDown' });
+
+			await waitFor(() => {
+				expect(document.activeElement).toBe(screen.getByTestId('section-peak-hours'));
+			});
+
+			fireEvent.keyDown(screen.getByTestId('section-peak-hours'), { key: 'ArrowDown' });
+
+			await waitFor(() => {
+				expect(document.activeElement).toBe(screen.getByTestId('section-activity-heatmap'));
+			});
+		});
+
 		it('navigates between chart sections with ArrowUp key', async () => {
 			render(<UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />);
 
@@ -1808,6 +2112,219 @@ describe('UsageDashboardModal', () => {
 				// Check for focus ring style
 				expect(summarySection).toHaveStyle({ boxShadow: `0 0 0 2px ${theme.colors.accent}` });
 			});
+		});
+
+		it('keeps Tab on the view tabs inert while data is still loading', async () => {
+			mockGetAggregation.mockImplementation(() => new Promise(() => {}));
+
+			render(<UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('dashboard-skeleton')).toBeInTheDocument();
+			});
+
+			fireEvent.keyDown(screen.getByTestId('view-mode-tabs'), { key: 'Tab' });
+
+			expect(screen.queryByTestId('section-summary-cards')).not.toBeInTheDocument();
+		});
+
+		it('ignores unrelated keys on the view mode tablist', async () => {
+			render(<UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
+			});
+
+			fireEvent.keyDown(screen.getByTestId('view-mode-tabs'), { key: 'Escape' });
+
+			expect(screen.getAllByRole('tab')[0]).toHaveAttribute('aria-selected', 'true');
+		});
+
+		it('leaves section focus unchanged for unhandled section keys', async () => {
+			render(<UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
+			});
+
+			const summarySection = screen.getByTestId('section-summary-cards');
+			summarySection.focus();
+			fireEvent.keyDown(summarySection, { key: 'PageDown' });
+
+			expect(document.activeElement).toBe(summarySection);
+		});
+
+		it('shows focused section rings for source, agent, activity, and autorun sections', async () => {
+			render(<UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
+			});
+
+			const summarySection = screen.getByTestId('section-summary-cards');
+			summarySection.focus();
+			fireEvent.keyDown(summarySection, { key: 'ArrowDown' });
+			fireEvent.keyDown(screen.getByTestId('section-agent-comparison'), { key: 'ArrowDown' });
+
+			await waitFor(() => {
+				expect(screen.getByTestId('section-source-distribution')).toHaveStyle({
+					boxShadow: `0 0 0 2px ${theme.colors.accent}`,
+				});
+			});
+
+			const tablist = screen.getByTestId('view-mode-tabs');
+
+			fireEvent.click(screen.getAllByRole('tab')[1]);
+			fireEvent.keyDown(tablist, { key: 'Tab' });
+
+			await waitFor(() => {
+				expect(screen.getByTestId('section-session-stats')).toHaveStyle({
+					boxShadow: `0 0 0 2px ${theme.colors.accent}`,
+				});
+			});
+
+			fireEvent.click(screen.getAllByRole('tab')[2]);
+			fireEvent.keyDown(tablist, { key: 'Tab' });
+
+			await waitFor(() => {
+				expect(screen.getByTestId('section-activity-heatmap')).toHaveStyle({
+					boxShadow: `0 0 0 2px ${theme.colors.accent}`,
+				});
+			});
+
+			fireEvent.click(screen.getAllByRole('tab')[3]);
+			fireEvent.keyDown(tablist, { key: 'Tab' });
+
+			await waitFor(() => {
+				expect(screen.getByTestId('section-autorun-stats')).toHaveStyle({
+					boxShadow: `0 0 0 2px ${theme.colors.accent}`,
+				});
+			});
+		});
+
+		it('navigates within the agents view sections', async () => {
+			render(<UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getAllByRole('tab')[1]);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('section-session-stats')).toBeInTheDocument();
+			});
+
+			const sessionStats = screen.getByTestId('section-session-stats');
+			sessionStats.focus();
+			fireEvent.keyDown(sessionStats, { key: 'ArrowDown' });
+
+			await waitFor(() => {
+				expect(document.activeElement).toBe(screen.getByTestId('section-agent-efficiency'));
+			});
+
+			fireEvent.keyDown(screen.getByTestId('section-agent-efficiency'), { key: 'ArrowDown' });
+
+			await waitFor(() => {
+				expect(document.activeElement).toBe(screen.getByTestId('section-agent-comparison'));
+			});
+
+			fireEvent.keyDown(screen.getByTestId('section-agent-comparison'), { key: 'ArrowDown' });
+
+			await waitFor(() => {
+				expect(document.activeElement).toBe(screen.getByTestId('section-agent-usage'));
+			});
+		});
+
+		it('navigates within activity and autorun view sections', async () => {
+			render(<UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getAllByRole('tab')[2]);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('section-weekday-comparison')).toBeInTheDocument();
+			});
+
+			const weekdaySection = screen.getByTestId('section-weekday-comparison');
+			weekdaySection.focus();
+			fireEvent.keyDown(weekdaySection, { key: 'ArrowDown' });
+
+			await waitFor(() => {
+				expect(document.activeElement).toBe(screen.getByTestId('section-duration-trends'));
+			});
+
+			fireEvent.click(screen.getAllByRole('tab')[3]);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('section-autorun-stats')).toBeInTheDocument();
+			});
+
+			const autorunStats = screen.getByTestId('section-autorun-stats');
+			autorunStats.focus();
+			fireEvent.keyDown(autorunStats, { key: 'ArrowDown' });
+
+			await waitFor(() => {
+				expect(document.activeElement).toBe(screen.getByTestId('section-tasks-by-hour'));
+			});
+
+			fireEvent.keyDown(screen.getByTestId('section-tasks-by-hour'), { key: 'ArrowDown' });
+
+			await waitFor(() => {
+				expect(document.activeElement).toBe(screen.getByTestId('section-longest-autoruns'));
+			});
+		});
+
+		it('handles keydown from overview, agents, activity, and autorun terminal sections', async () => {
+			render(<UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
+			});
+
+			const overviewHeatmap = screen.getByTestId('section-activity-heatmap');
+			overviewHeatmap.focus();
+			fireEvent.keyDown(overviewHeatmap, { key: 'ArrowDown' });
+
+			await waitFor(() => {
+				expect(document.activeElement).toBe(screen.getByTestId('section-duration-trends'));
+			});
+
+			fireEvent.click(screen.getAllByRole('tab')[1]);
+			await waitFor(() => {
+				expect(screen.getByTestId('section-agent-usage')).toBeInTheDocument();
+			});
+
+			const agentUsage = screen.getByTestId('section-agent-usage');
+			agentUsage.focus();
+			fireEvent.keyDown(agentUsage, { key: 'ArrowDown' });
+			expect(document.activeElement).toBe(agentUsage);
+
+			fireEvent.click(screen.getAllByRole('tab')[2]);
+			await waitFor(() => {
+				expect(screen.getByTestId('section-duration-trends')).toBeInTheDocument();
+			});
+
+			const activityDuration = screen.getByTestId('section-duration-trends');
+			activityDuration.focus();
+			fireEvent.keyDown(activityDuration, { key: 'ArrowUp' });
+
+			await waitFor(() => {
+				expect(document.activeElement).toBe(screen.getByTestId('section-weekday-comparison'));
+			});
+
+			fireEvent.click(screen.getAllByRole('tab')[3]);
+			await waitFor(() => {
+				expect(screen.getByTestId('section-longest-autoruns')).toBeInTheDocument();
+			});
+
+			const longestAutoRuns = screen.getByTestId('section-longest-autoruns');
+			longestAutoRuns.focus();
+			fireEvent.keyDown(longestAutoRuns, { key: 'ArrowDown' });
+			expect(document.activeElement).toBe(longestAutoRuns);
 		});
 
 		it('renders only one section in agents view mode', async () => {

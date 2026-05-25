@@ -1,4 +1,5 @@
-import React, { memo } from 'react';
+import { memo } from 'react';
+import type { DragEvent, MouseEvent } from 'react';
 import { Activity, GitBranch, Bot, Bookmark, AlertCircle, Server } from 'lucide-react';
 import type { Session, Group, Theme } from '../types';
 import { getStatusColor } from '../utils/theme';
@@ -39,9 +40,9 @@ export interface SessionItemProps {
 	// Handlers
 	onSelect: () => void;
 	onDragStart: () => void;
-	onDragOver?: (e: React.DragEvent) => void;
+	onDragOver?: (e: DragEvent) => void;
 	onDrop?: () => void;
-	onContextMenu: (e: React.MouseEvent) => void;
+	onContextMenu: (e: MouseEvent) => void;
 	onFinishRename: (newName: string) => void;
 	onStartRename: () => void;
 	onToggleBookmark: () => void;

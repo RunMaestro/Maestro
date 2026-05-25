@@ -430,11 +430,7 @@ export function AutoRunDocumentSelector({
 					role="dialog"
 					aria-modal="true"
 					aria-label="Create New Document"
-					onClick={(e) => {
-						if (e.target === e.currentTarget) {
-							handleCloseCreateModal();
-						}
-					}}
+					onClick={handleCloseCreateModal}
 					onKeyDown={(e) => {
 						if (e.key === 'Escape') {
 							e.stopPropagation();

@@ -215,6 +215,20 @@ describe('SummaryCards', () => {
 			const tabsCard = screen.getByRole('group', { name: /Open Tabs: 0/i });
 			expect(tabsCard).toBeInTheDocument();
 		});
+
+		it('counts sessions with missing tab arrays as zero open tabs', () => {
+			const sessionsWithoutTabs = [
+				{
+					id: 's-no-tabs',
+					toolType: 'claude-code',
+				},
+			] as unknown as Session[];
+
+			render(<SummaryCards data={mockData} theme={theme} sessions={sessionsWithoutTabs} />);
+
+			expect(screen.getByRole('group', { name: /Agents: 1/i })).toBeInTheDocument();
+			expect(screen.getByRole('group', { name: /Open Tabs: 0/i })).toBeInTheDocument();
+		});
 	});
 
 	describe('Number Formatting', () => {
@@ -417,6 +431,32 @@ describe('SummaryCards', () => {
 	});
 
 	describe('Edge Cases', () => {
+		it('formats noon as the peak usage hour', () => {
+			const noonPeakData: StatsAggregation = {
+				...mockData,
+				byHour: [
+					{ hour: 9, count: 2, duration: 2000 },
+					{ hour: 12, count: 5, duration: 5000 },
+					{ hour: 15, count: 1, duration: 1000 },
+				],
+			};
+
+			render(<SummaryCards data={noonPeakData} theme={theme} />);
+
+			expect(screen.getByRole('group', { name: /Peak Hour: 12 PM/i })).toBeInTheDocument();
+		});
+
+		it('formats morning peak usage hours', () => {
+			const morningPeakData: StatsAggregation = {
+				...mockData,
+				byHour: [{ hour: 9, count: 5, duration: 5000 }],
+			};
+
+			render(<SummaryCards data={morningPeakData} theme={theme} />);
+
+			expect(screen.getByRole('group', { name: /Peak Hour: 9 AM/i })).toBeInTheDocument();
+		});
+
 		it('handles all zero values', () => {
 			render(<SummaryCards data={emptyData} theme={theme} />);
 

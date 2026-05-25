@@ -1469,6 +1469,56 @@ describe('useSettings', () => {
 		});
 	});
 
+	describe('external settings change behavior', () => {
+		it('should skip lifecycle listeners when bridge callbacks are unavailable', async () => {
+			const originalOnSystemResume = window.maestro.app.onSystemResume;
+			const originalOnExternalChange = window.maestro.settings.onExternalChange;
+
+			try {
+				(window.maestro.app as any).onSystemResume = undefined;
+				(window.maestro.settings as any).onExternalChange = undefined;
+
+				const { result, unmount } = renderHook(() => useSettings());
+
+				await waitForSettingsLoaded(result);
+				expect(result.current.settingsLoaded).toBe(true);
+
+				unmount();
+			} finally {
+				window.maestro.app.onSystemResume = originalOnSystemResume;
+				window.maestro.settings.onExternalChange = originalOnExternalChange;
+			}
+		});
+
+		it('should reload settings when an external settings change is detected', async () => {
+			let externalChangeCallback: (() => void) | undefined;
+			vi.mocked(window.maestro.settings.onExternalChange).mockImplementation((cb) => {
+				externalChangeCallback = cb;
+				return () => {};
+			});
+
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				maxOutputLines: 25,
+			});
+
+			const { result } = renderHook(() => useSettings());
+			await waitForSettingsLoaded(result);
+
+			expect(result.current.maxOutputLines).toBe(25);
+
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				maxOutputLines: 10,
+			});
+
+			await act(async () => {
+				externalChangeCallback?.();
+				await new Promise((resolve) => setTimeout(resolve, 0));
+			});
+
+			expect(result.current.maxOutputLines).toBe(10);
+		});
+	});
+
 	describe('edge cases', () => {
 		it('should handle undefined values from settings.getAll gracefully', async () => {
 			// All settings return empty object (uses defaults)

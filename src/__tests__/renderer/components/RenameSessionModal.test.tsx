@@ -111,7 +111,8 @@ describe('RenameSessionModal', () => {
 
 	afterEach(() => {
 		cleanup();
-		vi.clearAllMocks();
+		vi.restoreAllMocks();
+		vi.useRealTimers();
 	});
 
 	describe('Basic Rendering', () => {
@@ -565,6 +566,108 @@ describe('RenameSessionModal', () => {
 			);
 		});
 
+		it('logs Claude session rename failures without blocking the local rename', async () => {
+			const error = new Error('claude rename failed');
+			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+			(window as any).maestro.claude.updateSessionName.mockRejectedValueOnce(error);
+
+			render(
+				<TestWrapper>
+					<RenameSessionModal
+						theme={mockTheme}
+						value="New Name"
+						setValue={mockSetValue}
+						onClose={mockOnClose}
+						sessions={mockSessions}
+						setSessions={mockSetSessions}
+						activeSessionId="session-1"
+					/>
+				</TestWrapper>
+			);
+
+			fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
+
+			expect(mockSetSessions).toHaveBeenCalled();
+			expect(mockOnClose).toHaveBeenCalledTimes(1);
+			await waitFor(() => {
+				expect(consoleError).toHaveBeenCalledWith('Failed to update agent session name:', error);
+			});
+		});
+
+		it('falls back to claude-code persistence when the session tool type is missing', () => {
+			mockSessions = [
+				{
+					...mockSessions[0],
+					toolType: undefined as unknown as Session['toolType'],
+					agentSessionId: 'claude-123',
+					projectRoot: '/home/user/project',
+				},
+			];
+
+			render(
+				<TestWrapper>
+					<RenameSessionModal
+						theme={mockTheme}
+						value="Fallback Name"
+						setValue={mockSetValue}
+						onClose={mockOnClose}
+						sessions={mockSessions}
+						setSessions={mockSetSessions}
+						activeSessionId="session-1"
+					/>
+				</TestWrapper>
+			);
+
+			fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
+
+			expect((window as any).maestro.claude.updateSessionName).toHaveBeenCalledWith(
+				'/home/user/project',
+				'claude-123',
+				'Fallback Name'
+			);
+			expect((window as any).maestro.agentSessions.setSessionName).not.toHaveBeenCalled();
+		});
+
+		it('updates non-Claude provider session names and logs persistence failures', async () => {
+			const error = new Error('provider rename failed');
+			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+			(window as any).maestro.agentSessions.setSessionName.mockRejectedValueOnce(error);
+			mockSessions = [
+				{
+					...mockSessions[0],
+					toolType: 'codex',
+					agentSessionId: 'codex-123',
+					projectRoot: '/home/user/codex-project',
+				},
+			];
+
+			render(
+				<TestWrapper>
+					<RenameSessionModal
+						theme={mockTheme}
+						value="Codex Name"
+						setValue={mockSetValue}
+						onClose={mockOnClose}
+						sessions={mockSessions}
+						setSessions={mockSetSessions}
+						activeSessionId="session-1"
+					/>
+				</TestWrapper>
+			);
+
+			fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
+
+			expect((window as any).maestro.agentSessions.setSessionName).toHaveBeenCalledWith(
+				'codex',
+				'/home/user/codex-project',
+				'codex-123',
+				'Codex Name'
+			);
+			await waitFor(() => {
+				expect(consoleError).toHaveBeenCalledWith('Failed to update agent session name:', error);
+			});
+		});
+
 		it('does not update agent session name when session has no agentSessionId', () => {
 			render(
 				<TestWrapper>
@@ -584,6 +687,67 @@ describe('RenameSessionModal', () => {
 
 			expect((window as any).maestro.claude.updateSessionName).not.toHaveBeenCalled();
 			expect((window as any).maestro.agentSessions.setSessionName).not.toHaveBeenCalled();
+		});
+
+		it('does not update agent session name when projectRoot is missing', () => {
+			mockSessions = [
+				{
+					...mockSessions[0],
+					agentSessionId: 'claude-123',
+					projectRoot: undefined,
+				},
+			];
+
+			render(
+				<TestWrapper>
+					<RenameSessionModal
+						theme={mockTheme}
+						value="New Name"
+						setValue={mockSetValue}
+						onClose={mockOnClose}
+						sessions={mockSessions}
+						setSessions={mockSetSessions}
+						activeSessionId="session-1"
+					/>
+				</TestWrapper>
+			);
+
+			fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
+
+			expect(mockSetSessions).toHaveBeenCalled();
+			expect((window as any).maestro.claude.updateSessionName).not.toHaveBeenCalled();
+			expect((window as any).maestro.agentSessions.setSessionName).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('Persistence Flush', () => {
+		it('defers onAfterRename until after the modal closes', () => {
+			vi.useFakeTimers();
+			const onAfterRename = vi.fn();
+
+			render(
+				<TestWrapper>
+					<RenameSessionModal
+						theme={mockTheme}
+						value="New Name"
+						setValue={mockSetValue}
+						onClose={mockOnClose}
+						sessions={mockSessions}
+						setSessions={mockSetSessions}
+						activeSessionId="session-1"
+						onAfterRename={onAfterRename}
+					/>
+				</TestWrapper>
+			);
+
+			fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
+
+			expect(mockOnClose).toHaveBeenCalledTimes(1);
+			expect(onAfterRename).not.toHaveBeenCalled();
+
+			vi.runOnlyPendingTimers();
+
+			expect(onAfterRename).toHaveBeenCalledTimes(1);
 		});
 	});
 

@@ -7,7 +7,7 @@
 
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, within } from '@testing-library/react';
+import { render, screen, fireEvent, within, act } from '@testing-library/react';
 import { ExecutionQueueBrowser } from '../../../renderer/components/ExecutionQueueBrowser';
 import type { Session, Theme, QueuedItem } from '../../../renderer/types';
 
@@ -89,6 +89,8 @@ describe('ExecutionQueueBrowser', () => {
 	});
 
 	afterEach(() => {
+		vi.useRealTimers();
+		vi.restoreAllMocks();
 		vi.clearAllMocks();
 	});
 
@@ -370,6 +372,34 @@ describe('ExecutionQueueBrowser', () => {
 			expect(allAgentsButton).toHaveStyle({
 				backgroundColor: theme.colors.accent,
 			});
+		});
+
+		it('should switch back to current agent view after global view is active', () => {
+			const session = createSession({
+				id: 'active-session',
+				executionQueue: [createQueuedItem({ text: 'Current item' })],
+			});
+			render(
+				<ExecutionQueueBrowser
+					isOpen={true}
+					onClose={mockOnClose}
+					sessions={[session]}
+					activeSessionId="active-session"
+					theme={theme}
+					onRemoveItem={mockOnRemoveItem}
+					onSwitchSession={mockOnSwitchSession}
+				/>
+			);
+
+			const allAgentsButton = screen.getByText('All Agents').closest('button');
+			const currentButton = screen.getByText('Current Agent').closest('button');
+			fireEvent.click(allAgentsButton!);
+			fireEvent.click(currentButton!);
+
+			expect(currentButton).toHaveStyle({
+				backgroundColor: theme.colors.accent,
+			});
+			expect(screen.getByText('Current item')).toBeInTheDocument();
 		});
 
 		it('should show current session item count in toggle', () => {
@@ -1703,6 +1733,30 @@ describe('ExecutionQueueBrowser', () => {
 			expect(dropZones.length).toBe(4); // n+1 drop zones for n items
 		});
 
+		it('should ignore drop-zone hover when no drag is active', () => {
+			const session = createSession({
+				id: 'active-session',
+				executionQueue: [createQueuedItem({ id: 'item-1' }), createQueuedItem({ id: 'item-2' })],
+			});
+			const { container } = render(
+				<ExecutionQueueBrowser
+					isOpen={true}
+					onClose={mockOnClose}
+					sessions={[session]}
+					activeSessionId="active-session"
+					theme={theme}
+					onRemoveItem={mockOnRemoveItem}
+					onSwitchSession={mockOnSwitchSession}
+					onReorderItems={mockOnReorderItems}
+				/>
+			);
+
+			const dropZones = container.querySelectorAll('.relative.h-1');
+			fireEvent.mouseEnter(dropZones[0]!);
+
+			expect(mockOnReorderItems).not.toHaveBeenCalled();
+		});
+
 		it('should not initiate drag when clicking on remove button', () => {
 			const session = createSession({
 				id: 'active-session',
@@ -1882,6 +1936,477 @@ describe('ExecutionQueueBrowser', () => {
 			// The outer wrapper divs (with onMouseMove for drop targeting) should exist
 			const wrappers = container.querySelectorAll('.relative.my-1');
 			expect(wrappers.length).toBe(2);
+		});
+
+		it('should show drag-ready visual state when hovering a draggable row', () => {
+			const session = createSession({
+				id: 'active-session',
+				executionQueue: [createQueuedItem({ id: 'item-1' }), createQueuedItem({ id: 'item-2' })],
+			});
+			const { container } = render(
+				<ExecutionQueueBrowser
+					isOpen={true}
+					onClose={mockOnClose}
+					sessions={[session]}
+					activeSessionId="active-session"
+					theme={theme}
+					onRemoveItem={mockOnRemoveItem}
+					onSwitchSession={mockOnSwitchSession}
+					onReorderItems={mockOnReorderItems}
+				/>
+			);
+
+			const itemRow = container.querySelector('.group.select-none');
+			const dragHandle = container.querySelector('.absolute.left-1');
+
+			fireEvent.mouseEnter(itemRow!);
+
+			expect(dragHandle).toHaveStyle({ opacity: '0.6' });
+		});
+
+		it('should reorder to an earlier index after the drag delay and drop indicator are set', () => {
+			vi.useFakeTimers();
+			const session = createSession({
+				id: 'active-session',
+				executionQueue: [
+					createQueuedItem({ id: 'item-1', text: 'First item' }),
+					createQueuedItem({ id: 'item-2', text: 'Second item' }),
+					createQueuedItem({ id: 'item-3', text: 'Third item' }),
+				],
+			});
+			const { container } = render(
+				<ExecutionQueueBrowser
+					isOpen={true}
+					onClose={mockOnClose}
+					sessions={[session]}
+					activeSessionId="active-session"
+					theme={theme}
+					onRemoveItem={mockOnRemoveItem}
+					onSwitchSession={mockOnSwitchSession}
+					onReorderItems={mockOnReorderItems}
+				/>
+			);
+
+			const itemRows = container.querySelectorAll('.group.select-none');
+			fireEvent.mouseDown(itemRows[2]!, { button: 0 });
+			act(() => vi.advanceTimersByTime(150));
+
+			const dropZones = container.querySelectorAll('.relative.h-1');
+			fireEvent.mouseEnter(dropZones[0]!);
+			fireEvent.mouseUp(itemRows[2]!);
+
+			expect(mockOnReorderItems).toHaveBeenCalledWith('active-session', 2, 0);
+		});
+
+		it('should adjust the target index when dropping after the dragged item', () => {
+			vi.useFakeTimers();
+			const session = createSession({
+				id: 'active-session',
+				executionQueue: [
+					createQueuedItem({ id: 'item-1', text: 'First item' }),
+					createQueuedItem({ id: 'item-2', text: 'Second item' }),
+					createQueuedItem({ id: 'item-3', text: 'Third item' }),
+				],
+			});
+			const { container } = render(
+				<ExecutionQueueBrowser
+					isOpen={true}
+					onClose={mockOnClose}
+					sessions={[session]}
+					activeSessionId="active-session"
+					theme={theme}
+					onRemoveItem={mockOnRemoveItem}
+					onSwitchSession={mockOnSwitchSession}
+					onReorderItems={mockOnReorderItems}
+				/>
+			);
+
+			const itemRows = container.querySelectorAll('.group.select-none');
+			fireEvent.mouseDown(itemRows[0]!, { button: 0 });
+			act(() => vi.advanceTimersByTime(150));
+
+			const dropZones = container.querySelectorAll('.relative.h-1');
+			fireEvent.mouseEnter(dropZones[3]!);
+			fireEvent.mouseUp(itemRows[0]!);
+
+			expect(mockOnReorderItems).toHaveBeenCalledWith('active-session', 0, 2);
+		});
+
+		it('should not reorder when dropping into the adjacent original slot', () => {
+			vi.useFakeTimers();
+			const session = createSession({
+				id: 'active-session',
+				executionQueue: [createQueuedItem({ id: 'item-1' }), createQueuedItem({ id: 'item-2' })],
+			});
+			const { container } = render(
+				<ExecutionQueueBrowser
+					isOpen={true}
+					onClose={mockOnClose}
+					sessions={[session]}
+					activeSessionId="active-session"
+					theme={theme}
+					onRemoveItem={mockOnRemoveItem}
+					onSwitchSession={mockOnSwitchSession}
+					onReorderItems={mockOnReorderItems}
+				/>
+			);
+
+			const itemRows = container.querySelectorAll('.group.select-none');
+			fireEvent.mouseDown(itemRows[0]!, { button: 0 });
+			act(() => vi.advanceTimersByTime(150));
+
+			const dropZones = container.querySelectorAll('.relative.h-1');
+			fireEvent.mouseEnter(dropZones[1]!);
+			fireEvent.mouseUp(itemRows[0]!);
+
+			expect(mockOnReorderItems).not.toHaveBeenCalled();
+		});
+
+		it('should use row midpoint mouse movement to choose before or after drop targets', () => {
+			vi.useFakeTimers();
+			const session = createSession({
+				id: 'active-session',
+				executionQueue: [
+					createQueuedItem({ id: 'item-1', text: 'First item' }),
+					createQueuedItem({ id: 'item-2', text: 'Second item' }),
+					createQueuedItem({ id: 'item-3', text: 'Third item' }),
+				],
+			});
+			const { container } = render(
+				<ExecutionQueueBrowser
+					isOpen={true}
+					onClose={mockOnClose}
+					sessions={[session]}
+					activeSessionId="active-session"
+					theme={theme}
+					onRemoveItem={mockOnRemoveItem}
+					onSwitchSession={mockOnSwitchSession}
+					onReorderItems={mockOnReorderItems}
+				/>
+			);
+
+			const itemRows = container.querySelectorAll('.group.select-none');
+			fireEvent.mouseDown(itemRows[0]!, { button: 0 });
+			act(() => vi.advanceTimersByTime(150));
+
+			const wrappers = container.querySelectorAll('.relative.my-1');
+			vi.spyOn(wrappers[1]!, 'getBoundingClientRect').mockReturnValue({
+				top: 100,
+				bottom: 140,
+				left: 0,
+				right: 300,
+				width: 300,
+				height: 40,
+				x: 0,
+				y: 100,
+				toJSON: () => ({}),
+			});
+			fireEvent.mouseMove(wrappers[1]!, { clientY: 130 });
+			fireEvent.mouseUp(itemRows[0]!);
+
+			expect(mockOnReorderItems).toHaveBeenCalledWith('active-session', 0, 1);
+		});
+
+		it('should activate the before-row drop zone when the pointer is above the row midpoint', () => {
+			vi.useFakeTimers();
+			const session = createSession({
+				id: 'active-session',
+				executionQueue: [
+					createQueuedItem({ id: 'item-1', text: 'First item' }),
+					createQueuedItem({ id: 'item-2', text: 'Second item' }),
+				],
+			});
+			const { container } = render(
+				<ExecutionQueueBrowser
+					isOpen={true}
+					onClose={mockOnClose}
+					sessions={[session]}
+					activeSessionId="active-session"
+					theme={theme}
+					onRemoveItem={mockOnRemoveItem}
+					onSwitchSession={mockOnSwitchSession}
+					onReorderItems={mockOnReorderItems}
+				/>
+			);
+
+			const itemRows = container.querySelectorAll('.group.select-none');
+			fireEvent.mouseDown(itemRows[0]!, { button: 0 });
+			act(() => vi.advanceTimersByTime(150));
+
+			const wrappers = container.querySelectorAll('.relative.my-1');
+			vi.spyOn(wrappers[1]!, 'getBoundingClientRect').mockReturnValue({
+				top: 100,
+				bottom: 140,
+				left: 0,
+				right: 300,
+				width: 300,
+				height: 40,
+				x: 0,
+				y: 100,
+				toJSON: () => ({}),
+			});
+			fireEvent.mouseMove(wrappers[1]!, { clientY: 110 });
+
+			const dropZones = container.querySelectorAll('.relative.h-1');
+			const activeIndicator = dropZones[1]!.querySelector('div');
+			expect(activeIndicator).toHaveStyle({ transform: 'translateY(-50%) scaleX(1)' });
+			expect(mockOnReorderItems).not.toHaveBeenCalled();
+		});
+
+		it('should ignore row midpoint movement when no drag is active', () => {
+			const session = createSession({
+				id: 'active-session',
+				executionQueue: [
+					createQueuedItem({ id: 'item-1', text: 'First item' }),
+					createQueuedItem({ id: 'item-2', text: 'Second item' }),
+				],
+			});
+			const { container } = render(
+				<ExecutionQueueBrowser
+					isOpen={true}
+					onClose={mockOnClose}
+					sessions={[session]}
+					activeSessionId="active-session"
+					theme={theme}
+					onRemoveItem={mockOnRemoveItem}
+					onSwitchSession={mockOnSwitchSession}
+					onReorderItems={mockOnReorderItems}
+				/>
+			);
+
+			const wrappers = container.querySelectorAll('.relative.my-1');
+			fireEvent.mouseMove(wrappers[1]!, { clientY: 130 });
+
+			expect(mockOnReorderItems).not.toHaveBeenCalled();
+		});
+
+		it('should ignore right-click drag attempts', () => {
+			vi.useFakeTimers();
+			const session = createSession({
+				id: 'active-session',
+				executionQueue: [createQueuedItem({ id: 'item-1' }), createQueuedItem({ id: 'item-2' })],
+			});
+			const { container } = render(
+				<ExecutionQueueBrowser
+					isOpen={true}
+					onClose={mockOnClose}
+					sessions={[session]}
+					activeSessionId="active-session"
+					theme={theme}
+					onRemoveItem={mockOnRemoveItem}
+					onSwitchSession={mockOnSwitchSession}
+					onReorderItems={mockOnReorderItems}
+				/>
+			);
+
+			const itemRow = container.querySelector('.group.select-none');
+			fireEvent.mouseDown(itemRow!, { button: 2 });
+			act(() => vi.advanceTimersByTime(150));
+			fireEvent.mouseUp(itemRow!);
+
+			expect(mockOnReorderItems).not.toHaveBeenCalled();
+		});
+
+		it('should ignore drag attempts that start on row buttons', () => {
+			vi.useFakeTimers();
+			const session = createSession({
+				id: 'active-session',
+				executionQueue: [createQueuedItem({ id: 'item-1' }), createQueuedItem({ id: 'item-2' })],
+			});
+			render(
+				<ExecutionQueueBrowser
+					isOpen={true}
+					onClose={mockOnClose}
+					sessions={[session]}
+					activeSessionId="active-session"
+					theme={theme}
+					onRemoveItem={mockOnRemoveItem}
+					onSwitchSession={mockOnSwitchSession}
+					onReorderItems={mockOnReorderItems}
+				/>
+			);
+
+			const removeButton = screen.getAllByTitle('Remove from queue')[0]!;
+			fireEvent.mouseDown(removeButton, { button: 0 });
+			act(() => vi.advanceTimersByTime(150));
+			fireEvent.mouseUp(removeButton);
+
+			expect(mockOnReorderItems).not.toHaveBeenCalled();
+		});
+
+		it('should clear a pending drag timer on mouse leave before drag starts', () => {
+			vi.useFakeTimers();
+			const session = createSession({
+				id: 'active-session',
+				executionQueue: [createQueuedItem({ id: 'item-1' }), createQueuedItem({ id: 'item-2' })],
+			});
+			const { container } = render(
+				<ExecutionQueueBrowser
+					isOpen={true}
+					onClose={mockOnClose}
+					sessions={[session]}
+					activeSessionId="active-session"
+					theme={theme}
+					onRemoveItem={mockOnRemoveItem}
+					onSwitchSession={mockOnSwitchSession}
+					onReorderItems={mockOnReorderItems}
+				/>
+			);
+
+			const itemRow = container.querySelector('.group.select-none');
+			fireEvent.mouseDown(itemRow!, { button: 0 });
+			fireEvent.mouseLeave(itemRow!);
+			act(() => vi.advanceTimersByTime(150));
+			fireEvent.mouseUp(itemRow!);
+
+			expect(mockOnReorderItems).not.toHaveBeenCalled();
+		});
+
+		it('should handle mouse leave when no drag timer is pending', () => {
+			const session = createSession({
+				id: 'active-session',
+				executionQueue: [createQueuedItem({ id: 'item-1' }), createQueuedItem({ id: 'item-2' })],
+			});
+			const { container } = render(
+				<ExecutionQueueBrowser
+					isOpen={true}
+					onClose={mockOnClose}
+					sessions={[session]}
+					activeSessionId="active-session"
+					theme={theme}
+					onRemoveItem={mockOnRemoveItem}
+					onSwitchSession={mockOnSwitchSession}
+					onReorderItems={mockOnReorderItems}
+				/>
+			);
+
+			const itemRow = container.querySelector('.group.select-none');
+			fireEvent.mouseEnter(itemRow!);
+			fireEvent.mouseLeave(itemRow!);
+
+			expect(mockOnReorderItems).not.toHaveBeenCalled();
+		});
+
+		it('should keep an active drag alive when the pointer leaves the row', () => {
+			vi.useFakeTimers();
+			const session = createSession({
+				id: 'active-session',
+				executionQueue: [createQueuedItem({ id: 'item-1' }), createQueuedItem({ id: 'item-2' })],
+			});
+			const { container } = render(
+				<ExecutionQueueBrowser
+					isOpen={true}
+					onClose={mockOnClose}
+					sessions={[session]}
+					activeSessionId="active-session"
+					theme={theme}
+					onRemoveItem={mockOnRemoveItem}
+					onSwitchSession={mockOnSwitchSession}
+					onReorderItems={mockOnReorderItems}
+				/>
+			);
+
+			const itemRows = container.querySelectorAll('.group.select-none');
+			fireEvent.mouseDown(itemRows[0]!, { button: 0 });
+			act(() => vi.advanceTimersByTime(150));
+			fireEvent.mouseLeave(itemRows[0]!);
+			const dropZones = container.querySelectorAll('.relative.h-1');
+			fireEvent.mouseEnter(dropZones[2]!);
+			fireEvent.mouseUp(itemRows[0]!);
+
+			expect(mockOnReorderItems).toHaveBeenCalledWith('active-session', 0, 1);
+		});
+
+		it('should clear a pending drag timer when the row unmounts', () => {
+			vi.useFakeTimers();
+			const clearTimeoutSpy = vi.spyOn(global, 'clearTimeout');
+			const session = createSession({
+				id: 'active-session',
+				executionQueue: [createQueuedItem({ id: 'item-1' }), createQueuedItem({ id: 'item-2' })],
+			});
+			const { container, unmount } = render(
+				<ExecutionQueueBrowser
+					isOpen={true}
+					onClose={mockOnClose}
+					sessions={[session]}
+					activeSessionId="active-session"
+					theme={theme}
+					onRemoveItem={mockOnRemoveItem}
+					onSwitchSession={mockOnSwitchSession}
+					onReorderItems={mockOnReorderItems}
+				/>
+			);
+
+			const itemRow = container.querySelector('.group.select-none');
+			fireEvent.mouseDown(itemRow!, { button: 0 });
+			unmount();
+
+			expect(clearTimeoutSpy).toHaveBeenCalled();
+			clearTimeoutSpy.mockRestore();
+		});
+
+		it('should cancel an active drag with Escape and remove window listeners', () => {
+			vi.useFakeTimers();
+			const addListenerSpy = vi.spyOn(window, 'addEventListener');
+			const removeListenerSpy = vi.spyOn(window, 'removeEventListener');
+			const session = createSession({
+				id: 'active-session',
+				executionQueue: [createQueuedItem({ id: 'item-1' }), createQueuedItem({ id: 'item-2' })],
+			});
+			const { container } = render(
+				<ExecutionQueueBrowser
+					isOpen={true}
+					onClose={mockOnClose}
+					sessions={[session]}
+					activeSessionId="active-session"
+					theme={theme}
+					onRemoveItem={mockOnRemoveItem}
+					onSwitchSession={mockOnSwitchSession}
+					onReorderItems={mockOnReorderItems}
+				/>
+			);
+
+			const itemRow = container.querySelector('.group.select-none');
+			fireEvent.mouseDown(itemRow!, { button: 0 });
+			act(() => vi.advanceTimersByTime(150));
+			fireEvent.keyDown(window, { key: 'Escape' });
+			fireEvent.mouseUp(window);
+
+			expect(mockOnReorderItems).not.toHaveBeenCalled();
+			expect(addListenerSpy).toHaveBeenCalledWith('keydown', expect.any(Function));
+			expect(addListenerSpy).toHaveBeenCalledWith('mouseup', expect.any(Function));
+			expect(removeListenerSpy).toHaveBeenCalledWith('keydown', expect.any(Function));
+			expect(removeListenerSpy).toHaveBeenCalledWith('mouseup', expect.any(Function));
+			addListenerSpy.mockRestore();
+			removeListenerSpy.mockRestore();
+		});
+
+		it('should ignore non-Escape keys while dragging', () => {
+			vi.useFakeTimers();
+			const session = createSession({
+				id: 'active-session',
+				executionQueue: [createQueuedItem({ id: 'item-1' }), createQueuedItem({ id: 'item-2' })],
+			});
+			const { container } = render(
+				<ExecutionQueueBrowser
+					isOpen={true}
+					onClose={mockOnClose}
+					sessions={[session]}
+					activeSessionId="active-session"
+					theme={theme}
+					onRemoveItem={mockOnRemoveItem}
+					onSwitchSession={mockOnSwitchSession}
+					onReorderItems={mockOnReorderItems}
+				/>
+			);
+
+			const itemRow = container.querySelector('.group.select-none');
+			fireEvent.mouseDown(itemRow!, { button: 0 });
+			act(() => vi.advanceTimersByTime(150));
+			fireEvent.keyDown(window, { key: 'Enter' });
+			fireEvent.mouseUp(itemRow!);
+
+			expect(mockOnReorderItems).not.toHaveBeenCalled();
 		});
 	});
 });

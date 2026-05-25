@@ -66,6 +66,19 @@ export interface UseSummarizeAndContinueResult {
 	handleSummarizeAndContinue: (tabId?: string) => void;
 }
 
+export function createSummarizeSystemLogEntry(message: string, result?: SummarizeResult): LogEntry {
+	let text = message;
+	if (result && result.success) {
+		text = `${message}\n\nToken reduction: ${result.reductionPercent}% (~${(result.originalTokens ?? 0).toLocaleString()} → ~${(result.compactedTokens ?? 0).toLocaleString()} tokens)`;
+	}
+	return {
+		id: `system-summarize-${Date.now()}`,
+		timestamp: Date.now(),
+		source: 'system',
+		text,
+	};
+}
+
 /**
  * Hook for managing the "Summarize & Continue" workflow.
  *
@@ -129,25 +142,6 @@ export function useSummarizeAndContinue(session: Session | null): UseSummarizeAn
 	}, []);
 
 	/**
-	 * Create a system log entry for the chat history
-	 */
-	const createSystemLogEntry = useCallback(
-		(message: string, result?: SummarizeResult): LogEntry => {
-			let text = message;
-			if (result && result.success) {
-				text = `${message}\n\nToken reduction: ${result.reductionPercent}% (~${(result.originalTokens ?? 0).toLocaleString()} → ~${(result.compactedTokens ?? 0).toLocaleString()} tokens)`;
-			}
-			return {
-				id: `system-summarize-${Date.now()}`,
-				timestamp: Date.now(),
-				source: 'system',
-				text,
-			};
-		},
-		[]
-	);
-
-	/**
 	 * Start the summarization process for a specific tab.
 	 */
 	const startSummarize = useCallback(
@@ -204,9 +198,10 @@ export function useSummarizeAndContinue(session: Session | null): UseSummarizeAn
 					},
 					sourceTab.logs,
 					(p) => {
-						if (!cancelRefs.current.get(sourceTabId)) {
-							useOperationStore.getState().updateSummarizeTabState(sourceTabId, { progress: p });
+						if (cancelRefs.current.get(sourceTabId)) {
+							return;
 						}
+						useOperationStore.getState().updateSummarizeTabState(sourceTabId, { progress: p });
 					}
 				);
 
@@ -257,7 +252,7 @@ export function useSummarizeAndContinue(session: Session | null): UseSummarizeAn
 				});
 
 				// Create system log entry for the chat history
-				const systemLogEntry = createSystemLogEntry(
+				const systemLogEntry = createSummarizeSystemLogEntry(
 					`Context summarized and continued in new tab "${compactedTabName}"`,
 					finalResult
 				);
@@ -292,7 +287,7 @@ export function useSummarizeAndContinue(session: Session | null): UseSummarizeAn
 				return null;
 			}
 		},
-		[session, createSystemLogEntry]
+		[session]
 	);
 
 	/**

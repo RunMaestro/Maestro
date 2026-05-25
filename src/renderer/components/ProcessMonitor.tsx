@@ -136,6 +136,8 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 	const detailViewRef = useRef<HTMLDivElement>(null);
 	const { registerLayer, unregisterLayer, updateLayerHandler } = useLayerStack();
 	const layerIdRef = useRef<string>();
+	const onCloseRef = useRef(onClose);
+	onCloseRef.current = onClose;
 
 	// Fetch active processes from ProcessManager
 	const fetchActiveProcesses = useCallback(async (showRefresh = false) => {
@@ -190,7 +192,7 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 			capturesFocus: true,
 			focusTrap: 'strict',
 			ariaLabel: 'System Processes',
-			onEscape: () => {},
+			onEscape: () => onCloseRef.current(),
 		});
 		layerIdRef.current = layerId;
 		return () => unregisterLayer(layerId);
@@ -226,11 +228,11 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 
 	// Focus detail view when it opens, restore focus to container when it closes
 	useEffect(() => {
-		if (detailView && detailViewRef.current) {
-			detailViewRef.current.focus();
-		} else if (!detailView && containerRef.current) {
+		if (detailView) {
+			detailViewRef.current!.focus();
+		} else {
 			// Restore focus to the container when returning from detail view
-			containerRef.current.focus();
+			containerRef.current!.focus();
 		}
 	}, [detailView]);
 
@@ -683,9 +685,6 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 				e.preventDefault();
 				if (currentIndex < visibleNodes.length - 1) {
 					setSelectedNodeId(visibleNodes[currentIndex + 1].id);
-				} else if (currentIndex === -1 && visibleNodes.length > 0) {
-					// If nothing selected, select first node
-					setSelectedNodeId(visibleNodes[0].id);
 				}
 				break;
 
@@ -761,10 +760,10 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 				if (selectedNodeId) {
 					const selectedNode = visibleNodes.find((n) => n.id === selectedNodeId);
 					if (selectedNode) {
-						if (selectedNode.type === 'process' && selectedNode.processSessionId) {
+						if (selectedNode.type === 'process') {
 							// Open detail view for process nodes
 							openProcessDetail(selectedNode);
-						} else if (selectedNode.children && selectedNode.children.length > 0) {
+						} else {
 							// Toggle expand/collapse for group/session nodes
 							toggleNode(selectedNodeId);
 						}
@@ -782,11 +781,12 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 
 	const renderNode = (node: ProcessNode, depth: number = 0): React.ReactNode => {
 		const isExpanded = expandedNodes.has(node.id);
-		const hasChildren = node.children && node.children.length > 0;
 		const paddingLeft = depth * 20 + 16; // 20px per depth level + 16px base
 		const isSelected = selectedNodeId === node.id;
 
 		if (node.type === 'group') {
+			const children = node.children!;
+
 			return (
 				<div key={node.id}>
 					<button
@@ -810,37 +810,32 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 							if (!isSelected) e.currentTarget.style.backgroundColor = 'transparent';
 						}}
 					>
-						{hasChildren &&
-							(isExpanded ? (
-								<ChevronDown
-									className="w-4 h-4 flex-shrink-0"
-									style={{ color: theme.colors.textDim }}
-								/>
-							) : (
-								<ChevronRight
-									className="w-4 h-4 flex-shrink-0"
-									style={{ color: theme.colors.textDim }}
-								/>
-							))}
-						{!hasChildren && <div className="w-4 h-4 flex-shrink-0" />}
+						{isExpanded ? (
+							<ChevronDown
+								className="w-4 h-4 flex-shrink-0"
+								style={{ color: theme.colors.textDim }}
+							/>
+						) : (
+							<ChevronRight
+								className="w-4 h-4 flex-shrink-0"
+								style={{ color: theme.colors.textDim }}
+							/>
+						)}
 						<span className="mr-2">{node.emoji}</span>
 						<span className="font-medium flex-1 truncate">{node.label}</span>
-						{hasChildren && (
-							<span className="text-xs flex-shrink-0" style={{ color: theme.colors.textDim }}>
-								{node.children!.length} {node.children!.length === 1 ? 'session' : 'sessions'}
-							</span>
-						)}
+						<span className="text-xs flex-shrink-0" style={{ color: theme.colors.textDim }}>
+							{children.length} {children.length === 1 ? 'session' : 'sessions'}
+						</span>
 					</button>
-					{isExpanded && hasChildren && (
-						<div>{node.children!.map((child) => renderNode(child, depth + 1))}</div>
-					)}
+					{isExpanded && <div>{children.map((child) => renderNode(child, depth + 1))}</div>}
 				</div>
 			);
 		}
 
 		if (node.type === 'session') {
+			const children = node.children!;
 			// Count active processes for this session
-			const activeCount = node.children?.filter((c) => c.isAlive).length || 0;
+			const activeCount = children.filter((c) => c.isAlive).length;
 
 			return (
 				<div key={node.id}>
@@ -865,45 +860,36 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 							if (!isSelected) e.currentTarget.style.backgroundColor = 'transparent';
 						}}
 					>
-						{hasChildren &&
-							(isExpanded ? (
-								<ChevronDown
-									className="w-4 h-4 flex-shrink-0"
-									style={{ color: theme.colors.textDim }}
-								/>
-							) : (
-								<ChevronRight
-									className="w-4 h-4 flex-shrink-0"
-									style={{ color: theme.colors.textDim }}
-								/>
-							))}
-						{!hasChildren && <div className="w-4 h-4 flex-shrink-0" />}
-						<Activity
-							className="w-4 h-4 flex-shrink-0"
-							style={{ color: activeCount > 0 ? theme.colors.success : theme.colors.textDim }}
-						/>
+						{isExpanded ? (
+							<ChevronDown
+								className="w-4 h-4 flex-shrink-0"
+								style={{ color: theme.colors.textDim }}
+							/>
+						) : (
+							<ChevronRight
+								className="w-4 h-4 flex-shrink-0"
+								style={{ color: theme.colors.textDim }}
+							/>
+						)}
+						<Activity className="w-4 h-4 flex-shrink-0" style={{ color: theme.colors.success }} />
 						<span className="flex-1 truncate">{node.label}</span>
 						<span
 							className="text-xs flex items-center gap-2 flex-shrink-0"
 							style={{ color: theme.colors.textDim }}
 						>
-							{activeCount > 0 && (
-								<span
-									className="px-1.5 py-0.5 rounded text-xs"
-									style={{
-										backgroundColor: `${theme.colors.success}20`,
-										color: theme.colors.success,
-									}}
-								>
-									{activeCount} running
-								</span>
-							)}
+							<span
+								className="px-1.5 py-0.5 rounded text-xs"
+								style={{
+									backgroundColor: `${theme.colors.success}20`,
+									color: theme.colors.success,
+								}}
+							>
+								{activeCount} running
+							</span>
 							<span>Session: {node.sessionId?.substring(0, 8)}...</span>
 						</span>
 					</button>
-					{isExpanded && hasChildren && (
-						<div>{node.children!.map((child) => renderNode(child, depth + 1))}</div>
-					)}
+					{isExpanded && <div>{children.map((child) => renderNode(child, depth + 1))}</div>}
 				</div>
 			);
 		}
@@ -1071,98 +1057,102 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 		}
 
 		// Render group chat node (individual group chat within GROUP CHATS section)
-		if (node.type === 'groupchat') {
-			const activeCount = node.children?.filter((c) => c.isAlive).length || 0;
+		const children = node.children!;
+		const activeCount = children.filter((c) => c.isAlive).length;
 
-			return (
-				<div key={node.id}>
-					<button
-						ref={isSelected ? (selectedNodeRef as React.RefObject<HTMLButtonElement>) : null}
-						onClick={() => {
+		return (
+			<div key={node.id}>
+				<div
+					ref={isSelected ? (selectedNodeRef as React.RefObject<HTMLDivElement>) : null}
+					role="treeitem"
+					aria-expanded={isExpanded}
+					tabIndex={0}
+					onClick={() => {
+						setSelectedNodeId(node.id);
+						toggleNode(node.id);
+					}}
+					onKeyDown={(e) => {
+						if (e.target !== e.currentTarget) {
+							if (e.key === 'Enter' || e.key === ' ') e.stopPropagation();
+							return;
+						}
+						if (e.key === 'Enter' || e.key === ' ') {
+							e.preventDefault();
+							e.stopPropagation();
 							setSelectedNodeId(node.id);
 							toggleNode(node.id);
-						}}
-						className="w-full text-left px-4 py-2 flex items-center gap-2 hover:bg-opacity-5"
-						style={{
-							paddingLeft: `${paddingLeft}px`,
-							backgroundColor: isSelected ? `${theme.colors.accent}25` : 'transparent',
-							color: theme.colors.textMain,
-							outline: isSelected ? `2px solid ${theme.colors.accent}` : 'none',
-							outlineOffset: '-2px',
-						}}
-						onMouseEnter={(e) => {
-							if (!isSelected) e.currentTarget.style.backgroundColor = `${theme.colors.accent}15`;
-						}}
-						onMouseLeave={(e) => {
-							if (!isSelected) e.currentTarget.style.backgroundColor = 'transparent';
-						}}
-					>
-						{hasChildren &&
-							(isExpanded ? (
-								<ChevronDown
-									className="w-4 h-4 flex-shrink-0"
-									style={{ color: theme.colors.textDim }}
-								/>
-							) : (
-								<ChevronRight
-									className="w-4 h-4 flex-shrink-0"
-									style={{ color: theme.colors.textDim }}
-								/>
-							))}
-						{!hasChildren && <div className="w-4 h-4 flex-shrink-0" />}
-						<span className="mr-2">{node.emoji}</span>
-						<span className="flex-1 truncate">{node.label}</span>
-						<span
-							className="text-xs flex items-center gap-2 flex-shrink-0"
+						}
+					}}
+					className="w-full text-left px-4 py-2 flex items-center gap-2 hover:bg-opacity-5"
+					style={{
+						paddingLeft: `${paddingLeft}px`,
+						backgroundColor: isSelected ? `${theme.colors.accent}25` : 'transparent',
+						color: theme.colors.textMain,
+						outline: isSelected ? `2px solid ${theme.colors.accent}` : 'none',
+						outlineOffset: '-2px',
+					}}
+					onMouseEnter={(e) => {
+						if (!isSelected) e.currentTarget.style.backgroundColor = `${theme.colors.accent}15`;
+					}}
+					onMouseLeave={(e) => {
+						if (!isSelected) e.currentTarget.style.backgroundColor = 'transparent';
+					}}
+				>
+					{isExpanded ? (
+						<ChevronDown
+							className="w-4 h-4 flex-shrink-0"
 							style={{ color: theme.colors.textDim }}
-						>
-							{activeCount > 0 && (
-								<span
-									className="px-1.5 py-0.5 rounded text-xs"
-									style={{
-										backgroundColor: `${theme.colors.success}20`,
-										color: theme.colors.success,
-									}}
-								>
-									{activeCount} running
-								</span>
-							)}
-							{node.groupChatId && onNavigateToGroupChat && (
-								<button
-									className="text-xs hover:underline cursor-pointer"
-									style={{ color: theme.colors.accent }}
-									onClick={(e) => {
-										e.stopPropagation();
-										onNavigateToGroupChat(node.groupChatId!);
-									}}
-									title="Go to group chat"
-								>
-									Open
-								</button>
-							)}
-						</span>
-					</button>
-					{isExpanded && hasChildren && (
-						<div>{node.children!.map((child) => renderNode(child, depth + 1))}</div>
+						/>
+					) : (
+						<ChevronRight
+							className="w-4 h-4 flex-shrink-0"
+							style={{ color: theme.colors.textDim }}
+						/>
 					)}
+					<span className="mr-2">{node.emoji}</span>
+					<span className="flex-1 truncate">{node.label}</span>
+					<span
+						className="text-xs flex items-center gap-2 flex-shrink-0"
+						style={{ color: theme.colors.textDim }}
+					>
+						<span
+							className="px-1.5 py-0.5 rounded text-xs"
+							style={{
+								backgroundColor: `${theme.colors.success}20`,
+								color: theme.colors.success,
+							}}
+						>
+							{activeCount} running
+						</span>
+						{node.groupChatId && onNavigateToGroupChat && (
+							<button
+								className="text-xs hover:underline cursor-pointer"
+								style={{ color: theme.colors.accent }}
+								onClick={(e) => {
+									e.stopPropagation();
+									onNavigateToGroupChat(node.groupChatId!);
+								}}
+								title="Go to group chat"
+							>
+								Open
+							</button>
+						)}
+					</span>
 				</div>
-			);
-		}
-
-		return null;
+				{isExpanded && <div>{children.map((child) => renderNode(child, depth + 1))}</div>}
+			</div>
+		);
 	};
 
 	const processTree = buildProcessTree();
 	const totalActiveProcesses = activeProcesses.length;
 
 	// Render the detail view for a selected process
-	const renderDetailView = () => {
-		if (!detailView) return null;
-
+	const renderDetailView = (detail: ProcessDetailData) => {
 		const commandLine =
-			detailView.command && detailView.args
-				? `${detailView.command} ${detailView.args.join(' ')}`
-				: detailView.command || 'N/A';
+			detail.command && detail.args
+				? `${detail.command} ${detail.args.join(' ')}`
+				: detail.command || 'N/A';
 
 		return (
 			<div
@@ -1192,7 +1182,7 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 						<h2 className="text-lg font-semibold" style={{ color: theme.colors.textMain }}>
 							Process Details
 						</h2>
-						{detailView.isAutoRun && (
+						{detail.isAutoRun && (
 							<span
 								className="text-xs font-semibold px-2 py-1 rounded"
 								style={{
@@ -1227,7 +1217,7 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 							style={{ backgroundColor: theme.colors.success }}
 						/>
 						<span className="text-xl font-semibold" style={{ color: theme.colors.textMain }}>
-							{detailView.sessionName || 'Process'}
+							{detail.sessionName || 'Process'}
 						</span>
 						<span
 							className="text-xs px-2 py-1 rounded"
@@ -1257,12 +1247,12 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 								className="text-sm font-mono break-all"
 								style={{ color: theme.colors.textMain, userSelect: 'text', cursor: 'text' }}
 							>
-								{detailView.processSessionId}
+								{detail.processSessionId}
 							</code>
 						</div>
 
 						{/* Agent Session ID (if available) */}
-						{detailView.agentSessionId && (
+						{detail.agentSessionId && (
 							<div className="p-4 rounded-lg" style={{ backgroundColor: theme.colors.bgMain }}>
 								<div className="flex items-center gap-2 mb-2">
 									<Activity className="w-4 h-4" style={{ color: theme.colors.accent }} />
@@ -1277,7 +1267,7 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 									className="text-sm font-mono break-all"
 									style={{ color: theme.colors.textMain, userSelect: 'text', cursor: 'text' }}
 								>
-									{detailView.agentSessionId}
+									{detail.agentSessionId}
 								</code>
 							</div>
 						)}
@@ -1298,7 +1288,7 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 									className="text-lg font-mono"
 									style={{ color: theme.colors.textMain, userSelect: 'text', cursor: 'text' }}
 								>
-									{detailView.pid}
+									{detail.pid}
 								</code>
 							</div>
 
@@ -1313,7 +1303,7 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 									</span>
 								</div>
 								<span className="text-lg font-mono" style={{ color: theme.colors.textMain }}>
-									{formatRuntime(detailView.startTime)}
+									{formatRuntime(detail.startTime)}
 								</span>
 							</div>
 						</div>
@@ -1331,11 +1321,11 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 									</span>
 								</div>
 								<span className="text-sm" style={{ color: theme.colors.textMain }}>
-									{detailView.toolType}
+									{detail.toolType}
 								</span>
 							</div>
 
-							{detailView.processType && (
+							{detail.processType && (
 								<div className="p-4 rounded-lg" style={{ backgroundColor: theme.colors.bgMain }}>
 									<div className="flex items-center gap-2 mb-2">
 										<Activity className="w-4 h-4" style={{ color: theme.colors.accent }} />
@@ -1347,7 +1337,7 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 										</span>
 									</div>
 									<span className="text-sm" style={{ color: theme.colors.textMain }}>
-										{detailView.processType}
+										{detail.processType}
 									</span>
 								</div>
 							)}
@@ -1368,7 +1358,7 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 								className="text-sm font-mono break-all"
 								style={{ color: theme.colors.textMain, userSelect: 'text', cursor: 'text' }}
 							>
-								{detailView.cwd || 'N/A'}
+								{detail.cwd || 'N/A'}
 							</code>
 						</div>
 
@@ -1403,7 +1393,7 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 								</span>
 							</div>
 							<span className="text-sm" style={{ color: theme.colors.textMain }}>
-								{new Date(detailView.startTime).toLocaleString()}
+								{new Date(detail.startTime).toLocaleString()}
 							</span>
 						</div>
 					</div>
@@ -1447,7 +1437,7 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 				onKeyDown={detailView ? undefined : handleKeyDown}
 			>
 				{detailView ? (
-					renderDetailView()
+					renderDetailView(detailView)
 				) : (
 					<>
 						{/* Header */}

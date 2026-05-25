@@ -394,6 +394,54 @@ describe('process IPC handlers', () => {
 			expect(mockProcessManager.spawn).toHaveBeenCalled();
 		});
 
+		it('should log session model and custom argument overrides', async () => {
+			const { applyAgentConfigOverrides } = await import('../../../../main/utils/agent-args');
+			const { logger } = await import('../../../../main/utils/logger');
+			vi.mocked(applyAgentConfigOverrides).mockReturnValueOnce({
+				args: ['--model', 'opus', '--extra-flag'],
+				modelSource: 'session',
+				customArgsSource: 'session',
+				customEnvSource: 'session',
+				effectiveCustomEnvVars: { SESSION_TOKEN: 'placeholder' },
+			});
+
+			const mockAgent = {
+				id: 'claude-code',
+				requiresPty: false,
+			};
+
+			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
+			mockProcessManager.spawn.mockReturnValue({ pid: 1002, success: true });
+
+			const handler = handlers.get('process:spawn');
+			await handler!({} as any, {
+				sessionId: 'session-overrides',
+				toolType: 'claude-code',
+				cwd: '/test',
+				command: 'claude',
+				args: [],
+				sessionCustomModel: 'opus',
+				sessionCustomArgs: '--extra-flag',
+				sessionCustomEnvVars: { SESSION_TOKEN: 'placeholder' },
+			});
+
+			expect(logger.debug).toHaveBeenCalledWith(
+				'Using session-level model for claude-code',
+				'[ProcessManager]',
+				{ model: 'opus' }
+			);
+			expect(logger.debug).toHaveBeenCalledWith(
+				'Appending custom args for claude-code (session-level)',
+				'[ProcessManager]'
+			);
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					args: ['--model', 'opus', '--extra-flag'],
+					customEnvVars: { SESSION_TOKEN: 'placeholder' },
+				})
+			);
+		});
+
 		it('should apply readOnlyEnvOverrides when readOnlyMode is true', async () => {
 			const { applyAgentConfigOverrides } = await import('../../../../main/utils/agent-args');
 			const mockApply = vi.mocked(applyAgentConfigOverrides);
@@ -487,6 +535,49 @@ describe('process IPC handlers', () => {
 			);
 		});
 
+		it('should apply readOnlyEnvOverrides when no custom env vars already exist', async () => {
+			const { applyAgentConfigOverrides } = await import('../../../../main/utils/agent-args');
+			const mockApply = vi.mocked(applyAgentConfigOverrides);
+
+			mockApply.mockReturnValueOnce({
+				args: [],
+				modelSource: 'default',
+				customArgsSource: 'none',
+				customEnvSource: 'none',
+				effectiveCustomEnvVars: undefined,
+			});
+
+			const mockAgent = {
+				id: 'opencode',
+				requiresPty: false,
+				readOnlyEnvOverrides: {
+					OPENCODE_CONFIG_CONTENT: '{"permission":{"question":"deny"},"tools":{"question":false}}',
+				},
+			};
+
+			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
+			mockProcessManager.spawn.mockReturnValue({ pid: 2002, success: true });
+
+			const handler = handlers.get('process:spawn');
+			await handler!({} as any, {
+				sessionId: 'session-readonly-no-env',
+				toolType: 'opencode',
+				cwd: '/test',
+				command: 'opencode',
+				args: [],
+				readOnlyMode: true,
+			});
+
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					customEnvVars: {
+						OPENCODE_CONFIG_CONTENT:
+							'{"permission":{"question":"deny"},"tools":{"question":false}}',
+					},
+				})
+			);
+		});
+
 		it('should use sessionCustomPath for local execution when provided', async () => {
 			// When user sets a custom path for a session, it should be used for the command
 			// This allows users to use a different binary (e.g., a wrapper script)
@@ -573,6 +664,216 @@ describe('process IPC handlers', () => {
 					shell: 'fish',
 				})
 			);
+		});
+
+		it('should use custom shell path and shell args for terminal sessions', async () => {
+			const mockAgent = { id: 'terminal', requiresPty: true };
+
+			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
+			mockSettingsStore.get.mockImplementation((key, defaultValue) => {
+				if (key === 'defaultShell') return 'zsh';
+				if (key === 'customShellPath') return '  /opt/shells/fish  ';
+				if (key === 'shellArgs') return '--login --interactive';
+				return defaultValue;
+			});
+			mockProcessManager.spawn.mockReturnValue({ pid: 1003, success: true });
+
+			const handler = handlers.get('process:spawn');
+			await handler!({} as any, {
+				sessionId: 'session-terminal-custom-shell',
+				toolType: 'terminal',
+				cwd: '/test',
+				command: '/bin/zsh',
+				args: [],
+			});
+
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					shell: '/opt/shells/fish',
+					shellArgs: '--login --interactive',
+				})
+			);
+		});
+
+		it('should force shell execution for local agent spawns on Windows', async () => {
+			const originalPlatform = process.platform;
+			Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+
+			try {
+				const mockAgent = {
+					id: 'claude-code',
+					requiresPty: false,
+				};
+
+				mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
+				mockSettingsStore.get.mockImplementation((key, defaultValue) => {
+					if (key === 'customShellPath') return 'C:\\Tools\\pwsh.exe';
+					if (key === 'shellEnvVars') return { WIN_GLOBAL: '1' };
+					return defaultValue;
+				});
+				mockProcessManager.spawn.mockReturnValue({ pid: 1004, success: true });
+
+				const handler = handlers.get('process:spawn');
+				await handler!({} as any, {
+					sessionId: 'session-windows-agent',
+					toolType: 'claude-code',
+					cwd: 'C:\\repo',
+					command: 'claude',
+					args: ['--print'],
+				});
+
+				expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+					expect.objectContaining({
+						runInShell: true,
+						shell: 'C:\\Tools\\pwsh.exe',
+						shellEnvVars: { WIN_GLOBAL: '1' },
+					})
+				);
+			} finally {
+				Object.defineProperty(process, 'platform', {
+					value: originalPlatform,
+					configurable: true,
+				});
+			}
+		});
+
+		it('should include prompt preview details when logging Windows spawns', async () => {
+			const { logger } = await import('../../../../main/utils/logger');
+			const originalPlatform = process.platform;
+			Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+
+			try {
+				const mockAgent = {
+					id: 'claude-code',
+					requiresPty: false,
+				};
+
+				mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
+				mockProcessManager.spawn.mockReturnValue({ pid: 1005, success: true });
+
+				const handler = handlers.get('process:spawn');
+				await handler!({} as any, {
+					sessionId: 'session-windows-prompt',
+					toolType: 'claude-code',
+					cwd: 'C:\\repo',
+					command: 'claude',
+					args: ['--print'],
+					prompt: 'Windows prompt with #hash\nand newline',
+				});
+
+				expect(logger.info).toHaveBeenCalledWith(
+					'Spawn config received',
+					'[ProcessManager]',
+					expect.objectContaining({
+						promptPreview: {
+							first50: 'Windows prompt with #hash\nand newline',
+							last50: 'Windows prompt with #hash\nand newline',
+							containsHash: true,
+							containsNewline: true,
+						},
+					})
+				);
+			} finally {
+				Object.defineProperty(process, 'platform', {
+					value: originalPlatform,
+					configurable: true,
+				});
+			}
+		});
+
+		it('should log resume args, model flags, yolo mode, and truncated prompts', async () => {
+			const { logger } = await import('../../../../main/utils/logger');
+			const mockAgent = {
+				id: 'claude-code',
+				requiresPty: false,
+			};
+			const longPrompt = 'x'.repeat(501);
+
+			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
+			mockProcessManager.spawn.mockReturnValue({ pid: 1006, success: true });
+
+			const handler = handlers.get('process:spawn');
+			await handler!({} as any, {
+				sessionId: 'session-resume-log',
+				toolType: 'claude-code',
+				cwd: '/test/project',
+				command: 'claude',
+				args: ['--resume', 'provider-session-1'],
+				prompt: longPrompt,
+				yoloMode: true,
+				modelId: 'opus',
+			});
+
+			expect(logger.info).toHaveBeenCalledWith(
+				'Spawning process: claude',
+				'[ProcessManager]',
+				expect.objectContaining({
+					agentSessionId: 'provider-session-1',
+					yoloMode: true,
+					modelId: 'opus',
+					prompt: `${'x'.repeat(500)}...`,
+				})
+			);
+		});
+
+		it('should log provider session ids from --session args', async () => {
+			const { logger } = await import('../../../../main/utils/logger');
+			const mockAgent = {
+				id: 'claude-code',
+				requiresPty: false,
+			};
+
+			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
+			mockProcessManager.spawn.mockReturnValue({ pid: 1007, success: true });
+
+			const handler = handlers.get('process:spawn');
+			await handler!({} as any, {
+				sessionId: 'session-session-arg-log',
+				toolType: 'claude-code',
+				cwd: '/test/project',
+				command: 'claude',
+				args: ['--session', 'provider-session-2'],
+			});
+
+			expect(logger.info).toHaveBeenCalledWith(
+				'Spawning process: claude',
+				'[ProcessManager]',
+				expect.objectContaining({
+					agentSessionId: 'provider-session-2',
+				})
+			);
+		});
+
+		it('should spawn when no renderer window is available for SSH status events', async () => {
+			handlers.clear();
+			deps = {
+				...deps,
+				getMainWindow: () => null,
+			};
+			registerProcessHandlers(deps);
+
+			const mockAgent = {
+				id: 'claude-code',
+				requiresPty: false,
+			};
+
+			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
+			mockProcessManager.spawn.mockReturnValue({ pid: 1008, success: true });
+
+			const handler = handlers.get('process:spawn');
+			const result = await handler!({} as any, {
+				sessionId: 'session-no-window',
+				toolType: 'claude-code',
+				cwd: '/test/project',
+				command: 'claude',
+				args: ['--print'],
+			});
+
+			expect(result).toEqual({
+				pid: 1008,
+				success: true,
+				sshRemote: undefined,
+			});
 		});
 
 		it('should pass promptArgs to spawn for agents that use flag-based prompts (like OpenCode -p)', async () => {
@@ -913,6 +1214,81 @@ describe('process IPC handlers', () => {
 				'/opt/custom/shell',
 				{},
 				null // sshRemoteConfig (not set in this test)
+			);
+		});
+
+		it('should resolve SSH remote config for runCommand when session SSH is enabled', async () => {
+			const mockSshRemote = {
+				id: 'remote-1',
+				name: 'Dev Server',
+				host: 'dev.example.com',
+				port: 22,
+				username: 'devuser',
+				privateKeyPath: '~/.ssh/id_ed25519',
+				enabled: true,
+			};
+			mockSettingsStore.get.mockImplementation((key, defaultValue) => {
+				if (key === 'defaultShell') return 'zsh';
+				if (key === 'customShellPath') return '';
+				if (key === 'shellEnvVars') return { CUSTOM_VAR: 'value' };
+				if (key === 'sshRemotes') return [mockSshRemote];
+				return defaultValue;
+			});
+			mockProcessManager.runCommand.mockResolvedValue({ exitCode: 0 });
+
+			const handler = handlers.get('process:runCommand');
+			await handler!({} as any, {
+				sessionId: 'session-ssh-command',
+				command: 'npm test',
+				cwd: '/remote/project',
+				sessionSshRemoteConfig: {
+					enabled: true,
+					remoteId: 'remote-1',
+				},
+			});
+
+			expect(mockProcessManager.runCommand).toHaveBeenCalledWith(
+				'session-ssh-command',
+				'npm test',
+				'/remote/project',
+				'zsh',
+				{ CUSTOM_VAR: 'value' },
+				expect.objectContaining({
+					id: 'remote-1',
+					name: 'Dev Server',
+					host: 'dev.example.com',
+				})
+			);
+		});
+
+		it('should run command locally when session SSH remote cannot be resolved', async () => {
+			mockSettingsStore.get.mockImplementation((key, defaultValue) => {
+				if (key === 'defaultShell') return 'zsh';
+				if (key === 'customShellPath') return '';
+				if (key === 'shellEnvVars') return { CUSTOM_VAR: 'value' };
+				if (key === 'sshRemotes') return [];
+				return defaultValue;
+			});
+			mockProcessManager.runCommand.mockResolvedValue({ exitCode: 0 });
+
+			const handler = handlers.get('process:runCommand');
+			await handler!({} as any, {
+				sessionId: 'session-missing-ssh-command',
+				command: 'npm test',
+				cwd: '/remote/project',
+				sessionSshRemoteConfig: {
+					enabled: true,
+					remoteId: 'missing-remote',
+				},
+			});
+
+			expect(mockProcessManager.runCommand).toHaveBeenCalledWith(
+				'session-missing-ssh-command',
+				'npm test',
+				'/remote/project',
+				'zsh',
+				{ CUSTOM_VAR: 'value' },
+				null
 			);
 		});
 
@@ -1419,6 +1795,100 @@ describe('process IPC handlers', () => {
 			// --input-format stream-json should be in the args
 			expect(sshCallArgs.args).toContain('--input-format');
 			expect(sshCallArgs.args).toContain('stream-json');
+		});
+
+		it('should not duplicate stream-json input format args for SSH image spawns', async () => {
+			const { applyAgentConfigOverrides } = await import('../../../../main/utils/agent-args');
+			const mockAgent = {
+				id: 'claude-code',
+				name: 'Claude Code',
+				binaryName: 'claude',
+				requiresPty: false,
+				capabilities: {
+					supportsStreamJsonInput: true,
+				},
+			};
+
+			vi.mocked(applyAgentConfigOverrides).mockReturnValueOnce({
+				args: ['--print', '--input-format', 'stream-json'],
+				modelSource: 'none',
+				customArgsSource: 'none',
+				customEnvSource: 'none',
+				effectiveCustomEnvVars: undefined,
+			});
+			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
+			mockSettingsStore.get.mockImplementation((key, defaultValue) => {
+				if (key === 'sshRemotes') return [mockSshRemote];
+				return defaultValue;
+			});
+			mockProcessManager.spawn.mockReturnValue({ pid: 12345, success: true });
+
+			const handler = handlers.get('process:spawn');
+			await handler!({} as any, {
+				sessionId: 'session-ssh-images-existing-input-format',
+				toolType: 'claude-code',
+				cwd: '/home/devuser/project',
+				command: 'claude',
+				args: ['--print', '--input-format', 'stream-json'],
+				prompt: 'describe this image',
+				images: ['data:image/png;base64,iVBORw0KGgo=='],
+				sessionSshRemoteConfig: {
+					enabled: true,
+					remoteId: 'remote-1',
+				},
+			});
+
+			const { buildSshCommandWithStdin: mockBuildSsh } =
+				await import('../../../../main/utils/ssh-command-builder');
+			const sshCallArgs = vi.mocked(mockBuildSsh).mock.calls[0][1];
+			expect(sshCallArgs.stdinInput).toContain('"type":"image"');
+			expect(sshCallArgs.args.filter((arg: string) => arg === '--input-format')).toHaveLength(1);
+			expect(sshCallArgs.args).toEqual(['--print', '--input-format', 'stream-json']);
+		});
+
+		it('should signal prompt-embed resume mode for SSH image resumes', async () => {
+			const mockImageArgs = (path: string) => ['-i', path];
+			const mockAgent = {
+				id: 'codex',
+				name: 'Codex',
+				binaryName: 'codex',
+				requiresPty: false,
+				imageArgs: mockImageArgs,
+				capabilities: {
+					imageResumeMode: 'prompt-embed',
+				},
+			};
+			const testImages = ['data:image/png;base64,iVBORw0KGgo=='];
+
+			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
+			mockSettingsStore.get.mockImplementation((key, defaultValue) => {
+				if (key === 'sshRemotes') return [mockSshRemote];
+				return defaultValue;
+			});
+			mockProcessManager.spawn.mockReturnValue({ pid: 12345, success: true });
+
+			const handler = handlers.get('process:spawn');
+			await handler!({} as any, {
+				sessionId: 'session-ssh-image-resume',
+				toolType: 'codex',
+				cwd: '/home/devuser/project',
+				command: 'codex',
+				args: ['exec'],
+				prompt: 'continue with this image',
+				images: testImages,
+				agentSessionId: 'provider-session-1',
+				sessionSshRemoteConfig: {
+					enabled: true,
+					remoteId: 'remote-1',
+				},
+			});
+
+			const { buildSshCommandWithStdin: mockBuildSsh } =
+				await import('../../../../main/utils/ssh-command-builder');
+			const sshCallArgs = vi.mocked(mockBuildSsh).mock.calls[0][1];
+			expect(sshCallArgs.images).toEqual(testImages);
+			expect(sshCallArgs.imageArgs).toBe(mockImageArgs);
+			expect(sshCallArgs.imageResumeMode).toBe('prompt-embed');
 		});
 
 		it('should pass images and imageArgs to SSH builder for file-based agents (regression: images dropped over SSH)', async () => {

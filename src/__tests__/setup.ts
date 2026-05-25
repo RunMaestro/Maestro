@@ -369,6 +369,7 @@ const mockMaestro = {
 		getSessionOrigins: vi.fn().mockResolvedValue({}),
 		getOrigins: vi.fn().mockResolvedValue({}),
 		setSessionName: vi.fn().mockResolvedValue(undefined),
+		setSessionStarred: vi.fn().mockResolvedValue(undefined),
 		updateSessionName: vi.fn().mockResolvedValue(undefined),
 		updateSessionStarred: vi.fn().mockResolvedValue(undefined),
 		registerSessionOrigin: vi.fn().mockResolvedValue(undefined),
@@ -420,6 +421,7 @@ const mockMaestro = {
 	web: {
 		broadcastAutoRunState: vi.fn(),
 		broadcastSessionState: vi.fn(),
+		broadcastUserInput: vi.fn(),
 		start: vi.fn().mockResolvedValue(undefined),
 		stop: vi.fn().mockResolvedValue(undefined),
 		getStatus: vi.fn().mockResolvedValue({ running: false }),
@@ -527,6 +529,7 @@ const mockMaestro = {
 		getActive: vi.fn().mockResolvedValue({ success: true, contributions: [] }),
 		getCompleted: vi.fn().mockResolvedValue({ success: true, contributions: [] }),
 		getStats: vi.fn().mockResolvedValue({ success: true, stats: {} }),
+		getIssueCounts: vi.fn().mockResolvedValue({ success: true, counts: {} }),
 		start: vi.fn().mockResolvedValue({ success: true, contributionId: 'test-id' }),
 		registerActive: vi.fn().mockResolvedValue({ success: true }),
 		updateStatus: vi.fn().mockResolvedValue({ success: true, updated: true }),

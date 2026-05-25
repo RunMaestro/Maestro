@@ -105,6 +105,26 @@ describe('PowerManager', () => {
 			powerManager.setEnabled(true);
 			expect(vi.mocked(mockBlocker.start)).toHaveBeenCalled();
 		});
+
+		it('should not restart or stop blockers when set to the existing enabled state', async () => {
+			const { powerManager } = PowerManagerModule;
+			const { powerSaveBlocker: mockBlocker } = await import('electron');
+
+			powerManager.setEnabled(false);
+			expect(vi.mocked(mockBlocker.start)).not.toHaveBeenCalled();
+			expect(vi.mocked(mockBlocker.stop)).not.toHaveBeenCalled();
+
+			powerManager.setEnabled(true);
+			powerManager.addBlockReason('test:session1');
+			vi.mocked(mockBlocker.start).mockClear();
+			vi.mocked(mockBlocker.stop).mockClear();
+
+			powerManager.setEnabled(true);
+
+			expect(vi.mocked(mockBlocker.start)).not.toHaveBeenCalled();
+			expect(vi.mocked(mockBlocker.stop)).not.toHaveBeenCalled();
+			expect(powerManager.getStatus().blocking).toBe(true);
+		});
 	});
 
 	describe('isEnabled', () => {

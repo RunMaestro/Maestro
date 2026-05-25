@@ -218,8 +218,6 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 
 	const [search, setSearch] = useState('');
 	const [mode, setMode] = useState<'main' | 'move-to-group'>(initialMode);
-	const [renamingSession, setRenamingSession] = useState(false);
-	const [renameValue, setRenameValue] = useState('');
 	const [firstVisibleIndex, setFirstVisibleIndex] = useState(0);
 	const inputRef = useRef<HTMLInputElement>(null);
 	const selectedItemRef = useRef<HTMLButtonElement>(null);
@@ -229,6 +227,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 
 	const { registerLayer, unregisterLayer, updateLayerHandler } = useLayerStack();
 	const activeSession = sessions.find((s) => s.id === activeSessionId);
+	const closeQuickActions = useCallback(() => setQuickActionOpen(false), [setQuickActionOpen]);
 
 	// Register layer on mount (handler will be updated by separate effect)
 	useEffect(() => {
@@ -239,7 +238,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			capturesFocus: true,
 			focusTrap: 'strict',
 			ariaLabel: 'Quick Actions',
-			onEscape: () => setQuickActionOpen(false), // Initial handler, updated below
+			onEscape: closeQuickActions, // Initial handler, updated below
 		});
 
 		return () => {
@@ -247,10 +246,10 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 				unregisterLayer(layerIdRef.current);
 			}
 		};
-	}, [registerLayer, unregisterLayer, setQuickActionOpen]);
+	}, [registerLayer, unregisterLayer, closeQuickActions]);
 
 	// Update handler when mode changes - use a ref-based approach to avoid stale closure
-	const handleEscapeRef = useRef<() => void>(() => setQuickActionOpen(false));
+	const handleEscapeRef = useRef<() => void>(closeQuickActions);
 	useEffect(() => {
 		handleEscapeRef.current = () => {
 			// Handle escape based on current mode
@@ -258,10 +257,10 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 				setMode('main');
 				// Note: Selection will be reset by the search/mode change useEffect
 			} else {
-				setQuickActionOpen(false);
+				closeQuickActions();
 			}
 		};
-	}, [mode, setQuickActionOpen]);
+	}, [mode, closeQuickActions]);
 
 	useEffect(() => {
 		if (layerIdRef.current) {
@@ -277,23 +276,11 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	}, []);
 
 	// Track scroll position to determine which items are visible
-	const handleScroll = () => {
-		if (scrollContainerRef.current) {
-			const scrollTop = scrollContainerRef.current.scrollTop;
-			const itemHeight = 52; // Approximate height of each item (py-3 = 12px top + 12px bottom + content)
-			const visibleIndex = Math.floor(scrollTop / itemHeight);
-			setFirstVisibleIndex(visibleIndex);
-		}
-	};
-
-	const handleRenameSession = () => {
-		if (renameValue.trim()) {
-			const updatedSessions = sessions.map((s) =>
-				s.id === activeSessionId ? { ...s, name: renameValue.trim() } : s
-			);
-			setSessions(updatedSessions);
-			setQuickActionOpen(false);
-		}
+	const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+		const scrollTop = e.currentTarget.scrollTop;
+		const itemHeight = 52; // Approximate height of each item (py-3 = 12px top + 12px bottom + content)
+		const visibleIndex = Math.floor(scrollTop / itemHeight);
+		setFirstVisibleIndex(visibleIndex);
 	};
 
 	const handleMoveToGroup = (groupId: string) => {
@@ -1389,11 +1376,11 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			// Don't close modal if action switches modes
 			const switchesModes = selectedAction.id === 'moveToGroup' || selectedAction.id === 'back';
 			selectedAction.action();
-			if (!renamingSession && mode === 'main' && !switchesModes) {
+			if (mode === 'main' && !switchesModes) {
 				setQuickActionOpen(false);
 			}
 		},
-		[renamingSession, mode, setQuickActionOpen]
+		[mode, setQuickActionOpen]
 	);
 
 	// Use hook for list navigation (arrow keys, number hotkeys, Enter)
@@ -1407,7 +1394,6 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		onSelect: handleSelectByIndex,
 		enableNumberHotkeys: true,
 		firstVisibleIndex,
-		enabled: !renamingSession, // Disable navigation when renaming
 	});
 
 	// Scroll selected item into view
@@ -1432,18 +1418,6 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	}, [mode]);
 
 	const handleKeyDown = (e: React.KeyboardEvent) => {
-		// Handle rename mode separately
-		if (renamingSession) {
-			if (e.key === 'Enter') {
-				e.preventDefault();
-				handleRenameSession();
-			} else if (e.key === 'Escape') {
-				e.preventDefault();
-				setRenamingSession(false);
-			}
-			return;
-		}
-
 		// Delegate to list navigation hook
 		listHandleKeyDown(e);
 
@@ -1469,32 +1443,19 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 					style={{ borderColor: theme.colors.border }}
 				>
 					<Search className="w-5 h-5" style={{ color: theme.colors.textDim }} />
-					{renamingSession ? (
-						<input
-							ref={inputRef}
-							className="flex-1 bg-transparent outline-none text-lg"
-							placeholder="Enter new name..."
-							style={{ color: theme.colors.textMain }}
-							value={renameValue}
-							onChange={(e) => setRenameValue(e.target.value)}
-							onKeyDown={handleKeyDown}
-							autoFocus
-						/>
-					) : (
-						<input
-							ref={inputRef}
-							className="flex-1 bg-transparent outline-none text-lg placeholder-opacity-50"
-							placeholder={
-								mode === 'move-to-group'
-									? `Move ${activeSession?.name || 'session'} to...`
-									: 'Type a command or jump to agent...'
-							}
-							style={{ color: theme.colors.textMain }}
-							value={search}
-							onChange={(e) => setSearch(e.target.value)}
-							onKeyDown={handleKeyDown}
-						/>
-					)}
+					<input
+						ref={inputRef}
+						className="flex-1 bg-transparent outline-none text-lg placeholder-opacity-50"
+						placeholder={
+							mode === 'move-to-group'
+								? `Move ${activeSession?.name || 'session'} to...`
+								: 'Type a command or jump to agent...'
+						}
+						style={{ color: theme.colors.textMain }}
+						value={search}
+						onChange={(e) => setSearch(e.target.value)}
+						onKeyDown={handleKeyDown}
+					/>
 					<div
 						className="px-2 py-0.5 rounded text-xs font-bold"
 						style={{ backgroundColor: theme.colors.bgMain, color: theme.colors.textDim }}
@@ -1502,65 +1463,63 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 						ESC
 					</div>
 				</div>
-				{!renamingSession && (
-					<div
-						className="overflow-y-auto py-2 scrollbar-thin"
-						ref={scrollContainerRef}
-						onScroll={handleScroll}
-					>
-						{filtered.map((a, i) => {
-							// Calculate dynamic number badge (1-9, 0) based on first visible item
-							// Cap firstVisibleIndex so we always show 10 numbered items when near the end
-							const maxFirstIndex = Math.max(0, filtered.length - 10);
-							const effectiveFirstIndex = Math.min(firstVisibleIndex, maxFirstIndex);
-							const distanceFromFirstVisible = i - effectiveFirstIndex;
-							const showNumber = distanceFromFirstVisible >= 0 && distanceFromFirstVisible < 10;
-							// 1-9 for positions 1-9, 0 for position 10
-							const numberBadge = distanceFromFirstVisible === 9 ? 0 : distanceFromFirstVisible + 1;
+				<div
+					className="overflow-y-auto py-2 scrollbar-thin"
+					ref={scrollContainerRef}
+					onScroll={handleScroll}
+				>
+					{filtered.map((a, i) => {
+						// Calculate dynamic number badge (1-9, 0) based on first visible item
+						// Cap firstVisibleIndex so we always show 10 numbered items when near the end
+						const maxFirstIndex = Math.max(0, filtered.length - 10);
+						const effectiveFirstIndex = Math.min(firstVisibleIndex, maxFirstIndex);
+						const distanceFromFirstVisible = i - effectiveFirstIndex;
+						const showNumber = distanceFromFirstVisible >= 0 && distanceFromFirstVisible < 10;
+						// 1-9 for positions 1-9, 0 for position 10
+						const numberBadge = distanceFromFirstVisible === 9 ? 0 : distanceFromFirstVisible + 1;
 
-							return (
-								<button
-									key={a.id}
-									ref={i === selectedIndex ? selectedItemRef : null}
-									onClick={() => {
-										const switchesModes = a.id === 'moveToGroup' || a.id === 'back';
-										a.action();
-										if (mode === 'main' && !switchesModes) setQuickActionOpen(false);
-									}}
-									className={`w-full text-left px-4 py-3 flex items-center gap-3 hover:bg-opacity-10 ${i === selectedIndex ? 'bg-opacity-10' : ''}`}
-									style={{
-										backgroundColor: i === selectedIndex ? theme.colors.accent : 'transparent',
-										color:
-											i === selectedIndex ? theme.colors.accentForeground : theme.colors.textMain,
-									}}
-								>
-									{showNumber ? (
-										<div
-											className="flex-shrink-0 w-5 h-5 rounded flex items-center justify-center text-xs font-bold"
-											style={{ backgroundColor: theme.colors.bgMain, color: theme.colors.textDim }}
-										>
-											{numberBadge}
-										</div>
-									) : (
-										<div className="flex-shrink-0 w-5 h-5" />
-									)}
-									<div className="flex flex-col flex-1">
-										<span className="font-medium">{a.label}</span>
-										{a.subtext && <span className="text-[10px] opacity-50">{a.subtext}</span>}
+						return (
+							<button
+								key={a.id}
+								ref={i === selectedIndex ? selectedItemRef : null}
+								onClick={() => {
+									const switchesModes = a.id === 'moveToGroup' || a.id === 'back';
+									a.action();
+									if (mode === 'main' && !switchesModes) setQuickActionOpen(false);
+								}}
+								className={`w-full text-left px-4 py-3 flex items-center gap-3 hover:bg-opacity-10 ${i === selectedIndex ? 'bg-opacity-10' : ''}`}
+								style={{
+									backgroundColor: i === selectedIndex ? theme.colors.accent : 'transparent',
+									color:
+										i === selectedIndex ? theme.colors.accentForeground : theme.colors.textMain,
+								}}
+							>
+								{showNumber ? (
+									<div
+										className="flex-shrink-0 w-5 h-5 rounded flex items-center justify-center text-xs font-bold"
+										style={{ backgroundColor: theme.colors.bgMain, color: theme.colors.textDim }}
+									>
+										{numberBadge}
 									</div>
-									{a.shortcut && (
-										<span className="text-xs font-mono opacity-60">
-											{formatShortcutKeys(a.shortcut.keys)}
-										</span>
-									)}
-								</button>
-							);
-						})}
-						{filtered.length === 0 && (
-							<div className="px-4 py-4 text-center opacity-50 text-sm">No actions found</div>
-						)}
-					</div>
-				)}
+								) : (
+									<div className="flex-shrink-0 w-5 h-5" />
+								)}
+								<div className="flex flex-col flex-1">
+									<span className="font-medium">{a.label}</span>
+									{a.subtext && <span className="text-[10px] opacity-50">{a.subtext}</span>}
+								</div>
+								{a.shortcut && (
+									<span className="text-xs font-mono opacity-60">
+										{formatShortcutKeys(a.shortcut.keys)}
+									</span>
+								)}
+							</button>
+						);
+					})}
+					{filtered.length === 0 && (
+						<div className="px-4 py-4 text-center opacity-50 text-sm">No actions found</div>
+					)}
+				</div>
 			</div>
 		</div>
 	);

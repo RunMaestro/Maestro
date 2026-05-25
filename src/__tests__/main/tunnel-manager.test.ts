@@ -66,6 +66,8 @@ const createMockProcess = () => {
 	return process;
 };
 
+const waitForSpawn = () => new Promise<void>((resolve) => setImmediate(resolve));
+
 describe('TunnelManager', () => {
 	let tunnelManager: typeof import('../../main/tunnel-manager').tunnelManager;
 	let mockProcess: ReturnType<typeof createMockProcess>;
@@ -88,6 +90,7 @@ describe('TunnelManager', () => {
 	});
 
 	afterEach(() => {
+		vi.useRealTimers();
 		vi.clearAllMocks();
 	});
 
@@ -304,6 +307,180 @@ describe('TunnelManager', () => {
 			);
 
 			mockProcess.emit('exit', 0);
+		});
+	});
+
+	// =============================================================================
+	// START PROCESS LIFECYCLE TESTS
+	// =============================================================================
+
+	describe('start - process lifecycle', () => {
+		it('resolves when cloudflared emits a split tunnel URL and reports running', async () => {
+			const promise = tunnelManager.start(3000);
+			await waitForSpawn();
+
+			expect(tunnelManager.getStatus()).toEqual({
+				isRunning: false,
+				url: null,
+				error: null,
+			});
+
+			mockProcess.stderr.emit('data', Buffer.from('starting https://abc123'));
+			mockProcess.stderr.emit('data', Buffer.from('.trycloudflare.com ready'));
+
+			await expect(promise).resolves.toEqual({
+				success: true,
+				url: 'https://abc123.trycloudflare.com',
+			});
+			expect(tunnelManager.getStatus()).toEqual({
+				isRunning: true,
+				url: 'https://abc123.trycloudflare.com',
+				error: null,
+			});
+
+			mockProcess.stderr.emit('data', Buffer.from(' https://late.trycloudflare.com'));
+			mockProcess.emit('error', new Error('late error'));
+
+			expect(tunnelManager.getStatus()).toEqual({
+				isRunning: true,
+				url: 'https://abc123.trycloudflare.com',
+				error: null,
+			});
+		});
+
+		it('returns a failure when cloudflared emits an error before a URL', async () => {
+			const promise = tunnelManager.start(3000);
+			await waitForSpawn();
+
+			mockProcess.emit('error', new Error('spawn failed'));
+
+			await expect(promise).resolves.toEqual({
+				success: false,
+				error: 'Failed to start cloudflared: spawn failed',
+			});
+			expect(tunnelManager.getStatus()).toEqual({
+				isRunning: false,
+				url: null,
+				error: 'Failed to start cloudflared: spawn failed',
+			});
+		});
+
+		it('returns a failure when cloudflared exits before a URL', async () => {
+			const promise = tunnelManager.start(3000);
+			await waitForSpawn();
+
+			mockProcess.emit('exit', 2);
+
+			await expect(promise).resolves.toEqual({
+				success: false,
+				error: 'cloudflared exited unexpectedly (code 2)',
+			});
+			expect(tunnelManager.getStatus()).toEqual({
+				isRunning: false,
+				url: null,
+				error: 'cloudflared exited unexpectedly (code 2)',
+			});
+		});
+
+		it('preserves the established URL after cloudflared exits until stop clears it', async () => {
+			const promise = tunnelManager.start(3000);
+			await waitForSpawn();
+
+			mockProcess.stderr.emit('data', Buffer.from('https://abc123.trycloudflare.com'));
+			await expect(promise).resolves.toEqual({
+				success: true,
+				url: 'https://abc123.trycloudflare.com',
+			});
+
+			mockProcess.emit('exit', 0);
+
+			expect(tunnelManager.getStatus()).toEqual({
+				isRunning: false,
+				url: 'https://abc123.trycloudflare.com',
+				error: 'cloudflared exited unexpectedly (code 0)',
+			});
+
+			await tunnelManager.stop();
+
+			expect(tunnelManager.getStatus()).toEqual({
+				isRunning: false,
+				url: null,
+				error: null,
+			});
+		});
+
+		it('times out when cloudflared never emits a URL', async () => {
+			vi.useFakeTimers();
+			const promise = tunnelManager.start(3000);
+			await vi.advanceTimersByTimeAsync(0);
+
+			expect(mocks.mockSpawn).toHaveBeenCalled();
+
+			await vi.advanceTimersByTimeAsync(30000);
+
+			await expect(promise).resolves.toEqual({
+				success: false,
+				error: 'Tunnel startup timed out (30s)',
+			});
+			expect(mockProcess.kill).toHaveBeenCalledWith('SIGTERM');
+
+			mockProcess.emit('exit', 0);
+		});
+	});
+
+	// =============================================================================
+	// STOP TESTS
+	// =============================================================================
+
+	describe('stop', () => {
+		it('waits for a graceful process exit before clearing tunnel state', async () => {
+			const promise = tunnelManager.start(3000);
+			await waitForSpawn();
+			mockProcess.stderr.emit('data', Buffer.from('https://abc123.trycloudflare.com'));
+			await promise;
+
+			const stopPromise = tunnelManager.stop();
+
+			expect(mockProcess.kill).toHaveBeenCalledWith('SIGTERM');
+
+			mockProcess.emit('exit', 0);
+			await stopPromise;
+
+			expect(mockProcess.kill).not.toHaveBeenCalledWith('SIGKILL');
+			expect(tunnelManager.getStatus()).toEqual({
+				isRunning: false,
+				url: null,
+				error: null,
+			});
+		});
+
+		it('force kills when the process does not exit after SIGTERM', async () => {
+			const promise = tunnelManager.start(3000);
+			await waitForSpawn();
+			mockProcess.stderr.emit('data', Buffer.from('https://abc123.trycloudflare.com'));
+			await promise;
+
+			vi.useFakeTimers();
+			mockProcess.kill.mockImplementation((signal: string) => {
+				if (signal === 'SIGKILL') {
+					throw new Error('already exited');
+				}
+				return true;
+			});
+
+			const stopPromise = tunnelManager.stop();
+
+			expect(mockProcess.kill).toHaveBeenCalledWith('SIGTERM');
+
+			await vi.advanceTimersByTimeAsync(3000);
+			await stopPromise;
+
+			expect(mockProcess.kill).toHaveBeenCalledWith('SIGKILL');
+			expect(tunnelManager.getStatus()).toEqual({
+				isRunning: false,
+				url: null,
+				error: null,
+			});
 		});
 	});
 

@@ -17,7 +17,7 @@ jobs:
           cache: 'npm'
       - run: npm ci
       - run: npm run build:prompts
-      - run: npx prettier --check .
+      - run: npm run format:check:all
       - run: npx eslint src/
       - run: npm run lint # TypeScript type checking
 

@@ -1,9 +1,29 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
-import { FilePreview } from '../../../renderer/components/FilePreview';
+import { render, screen, fireEvent, act, waitFor, within } from '@testing-library/react';
+import { visit } from 'unist-util-visit';
+import {
+	FilePreview,
+	_clearExpiredImageCacheForTesting,
+} from '../../../renderer/components/FilePreview';
+import { remarkFileLinks } from '../../../renderer/utils/remarkFileLinks';
+import { captureException } from '../../../renderer/utils/sentry';
 import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
+import { getEncoder } from '../../../renderer/utils/tokenCounter';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+
+const reactMarkdownMocks = vi.hoisted(() => ({
+	lastRemarkPlugins: null as unknown[] | null,
+}));
+
+const csvRendererMocks = vi.hoisted(() => ({
+	lastOnMatchCount: null as ((count: number) => void) | null,
+}));
+
+const clipboardMocks = vi.hoisted(() => ({
+	safeClipboardWrite: vi.fn(),
+	safeClipboardWriteBlob: vi.fn(),
+}));
 
 // Mock lucide-react icons
 vi.mock('lucide-react', () => ({
@@ -32,9 +52,63 @@ vi.mock('lucide-react', () => ({
 
 // Mock react-markdown
 vi.mock('react-markdown', () => ({
-	default: ({ children }: { children: string }) => (
-		<div data-testid="markdown-content">{children}</div>
-	),
+	default: ({
+		children,
+		components,
+		remarkPlugins,
+	}: {
+		children: string;
+		components?: Record<string, React.ComponentType<any>>;
+		remarkPlugins?: unknown[];
+	}) => {
+		reactMarkdownMocks.lastRemarkPlugins = remarkPlugins ?? null;
+		const ImageComponent = components?.img;
+		const AnchorComponent = components?.a;
+		const PreComponent = components?.pre;
+		const DetailsComponent = components?.details;
+		const imageMatches = [...children.matchAll(/!\[([^\]]*)\]\(([^)]*)\)/g)];
+		const linkMatches = [...children.matchAll(/(?<!!)\[([^\]]+)\]\(([^)]*)\)/g)];
+		const mermaidMatches = [...children.matchAll(/```mermaid\s*\n([\s\S]*?)```/g)];
+		const hasDetails = /<details[\s>]/.test(children);
+
+		return (
+			<div data-testid="markdown-content">
+				{children}
+				{PreComponent &&
+					mermaidMatches.map((match, index) => (
+						<PreComponent key={`mermaid-${index}`}>
+							<code className="language-mermaid">{match[1].replace(/\n$/, '')}</code>
+						</PreComponent>
+					))}
+				{DetailsComponent && hasDetails && (
+					<DetailsComponent data-testid="sanitized-details" onToggle="raw-string-handler" open>
+						<summary>More</summary>
+						<div>Details body</div>
+					</DetailsComponent>
+				)}
+				{ImageComponent &&
+					imageMatches.map((match, index) => {
+						const isFromTree = match[1].startsWith('Tree:');
+						const alt = isFromTree ? match[1].replace(/^Tree:\s*/, '') : match[1];
+
+						return (
+							<ImageComponent
+								key={`${match[2]}-${index}`}
+								alt={alt}
+								src={match[2]}
+								data-maestro-from-tree={isFromTree ? 'true' : undefined}
+							/>
+						);
+					})}
+				{AnchorComponent &&
+					linkMatches.map((match, index) => (
+						<AnchorComponent key={`${match[2]}-${index}`} href={match[2]}>
+							{match[1]}
+						</AnchorComponent>
+					))}
+			</div>
+		);
+	},
 }));
 
 // Mock remark/rehype plugins
@@ -116,25 +190,37 @@ vi.mock('../../../renderer/components/CsvTableRenderer', () => ({
 		content,
 		searchQuery,
 		delimiter,
+		onMatchCount,
 	}: {
 		content: string;
 		searchQuery?: string;
 		delimiter?: string;
-	}) => (
-		<div
-			data-testid="csv-table-renderer"
-			data-search={searchQuery ?? ''}
-			data-delimiter={delimiter ?? ','}
-		>
-			{content.substring(0, 50)}
-		</div>
-	),
+		onMatchCount?: (count: number) => void;
+	}) =>
+		(() => {
+			csvRendererMocks.lastOnMatchCount = onMatchCount ?? null;
+			return (
+				<div
+					data-testid="csv-table-renderer"
+					data-search={searchQuery ?? ''}
+					data-delimiter={delimiter ?? ','}
+				>
+					{content.substring(0, 50)}
+				</div>
+			);
+		})(),
 }));
 
 // Mock token counter - getEncoder must return a Promise
 vi.mock('../../../renderer/utils/tokenCounter', () => ({
 	getEncoder: vi.fn(() => Promise.resolve({ encode: () => [1, 2, 3] })),
 	formatTokenCount: vi.fn((count: number) => `${count} tokens`),
+}));
+
+vi.mock('../../../renderer/utils/clipboard', () => clipboardMocks);
+
+vi.mock('../../../renderer/utils/sentry', () => ({
+	captureException: vi.fn(),
 }));
 
 // Mock shortcut formatter
@@ -154,6 +240,10 @@ vi.mock('../../../renderer/utils/shortcutFormatter', () => ({
 // Mock remarkFileLinks
 vi.mock('../../../renderer/utils/remarkFileLinks', () => ({
 	remarkFileLinks: vi.fn(() => () => {}),
+	buildFileTreeIndices: vi.fn(() => ({
+		allPaths: new Set(['docs/guide.md']),
+		filenameIndex: new Map([['guide.md', ['docs/guide.md']]]),
+	})),
 }));
 
 // Mock remarkFrontmatterTable
@@ -197,6 +287,25 @@ describe('FilePreview', () => {
 		mockContainerClickOutside.enabled = false;
 		mockTocClickOutside.callback = null;
 		mockTocClickOutside.enabled = false;
+		clipboardMocks.safeClipboardWrite.mockResolvedValue(true);
+		clipboardMocks.safeClipboardWriteBlob.mockResolvedValue(true);
+		reactMarkdownMocks.lastRemarkPlugins = null;
+		csvRendererMocks.lastOnMatchCount = null;
+		vi.mocked(getEncoder).mockImplementation(() => new Promise(() => {}));
+		window.maestro.fs.stat = vi.fn(() => new Promise(() => {}));
+		window.maestro.fs.readFile = vi.fn().mockResolvedValue('');
+		globalThis.fetch = vi.fn().mockResolvedValue({
+			blob: vi.fn().mockResolvedValue(new Blob(['image'], { type: 'image/png' })),
+		}) as any;
+		Object.defineProperty(globalThis, 'ClipboardItem', {
+			value: class MockClipboardItem {
+				items: Record<string, Blob>;
+				constructor(items: Record<string, Blob>) {
+					this.items = items;
+				}
+			},
+			configurable: true,
+		});
 	});
 
 	describe('Document Graph button', () => {
@@ -280,6 +389,70 @@ describe('FilePreview', () => {
 			expect(
 				screen.getByTitle(`View in Document Graph (${formatShortcutKeys(['Meta', 'Shift', 'g'])})`)
 			).toBeInTheDocument();
+		});
+	});
+
+	describe('GitHub Gist publish button', () => {
+		it('shows and calls the publish action when GitHub CLI is available', () => {
+			const onPublishGist = vi.fn();
+			const { rerender } = render(
+				<FilePreview
+					{...defaultProps}
+					ghCliAvailable={true}
+					onPublishGist={onPublishGist}
+					hasGist={false}
+				/>
+			);
+
+			fireEvent.click(screen.getByTitle('Publish as GitHub Gist'));
+			expect(onPublishGist).toHaveBeenCalledOnce();
+
+			rerender(
+				<FilePreview
+					{...defaultProps}
+					ghCliAvailable={true}
+					onPublishGist={onPublishGist}
+					hasGist={true}
+				/>
+			);
+
+			expect(screen.getByTitle('View published gist')).toBeInTheDocument();
+		});
+
+		it('hides the publish action when unavailable, editing, or previewing an image', () => {
+			const onPublishGist = vi.fn();
+			const { rerender } = render(
+				<FilePreview {...defaultProps} ghCliAvailable={false} onPublishGist={onPublishGist} />
+			);
+
+			expect(screen.queryByTestId('share-icon')).not.toBeInTheDocument();
+
+			rerender(<FilePreview {...defaultProps} ghCliAvailable={true} />);
+			expect(screen.queryByTestId('share-icon')).not.toBeInTheDocument();
+
+			rerender(
+				<FilePreview
+					{...defaultProps}
+					ghCliAvailable={true}
+					onPublishGist={onPublishGist}
+					markdownEditMode={true}
+				/>
+			);
+			expect(screen.queryByTestId('share-icon')).not.toBeInTheDocument();
+
+			rerender(
+				<FilePreview
+					{...defaultProps}
+					file={{
+						name: 'diagram.png',
+						content: 'data:image/png;base64,abc123',
+						path: '/test/diagram.png',
+					}}
+					ghCliAvailable={true}
+					onPublishGist={onPublishGist}
+				/>
+			);
+			expect(screen.queryByTestId('share-icon')).not.toBeInTheDocument();
 		});
 	});
 
@@ -614,6 +787,48 @@ describe('FilePreview', () => {
 
 			vi.useRealTimers();
 		});
+
+		it('keeps the reload banner hidden when polled stats are missing or unchanged', async () => {
+			vi.useFakeTimers();
+			const mockStat = vi
+				.fn()
+				.mockResolvedValueOnce({
+					size: 100,
+					createdAt: '2024-01-01T00:00:00.000Z',
+					modifiedAt: new Date(1000).toISOString(),
+				})
+				.mockResolvedValueOnce({ size: 100 })
+				.mockResolvedValueOnce({
+					size: 100,
+					modifiedAt: new Date(1000).toISOString(),
+				});
+			window.maestro.fs.stat = mockStat;
+
+			try {
+				render(<FilePreview {...defaultProps} lastModified={1000} onReloadFile={vi.fn()} />);
+
+				await act(async () => {
+					await Promise.resolve();
+				});
+
+				await act(async () => {
+					vi.advanceTimersByTime(3000);
+					await Promise.resolve();
+				});
+
+				expect(screen.queryByText('File changed on disk.')).not.toBeInTheDocument();
+
+				await act(async () => {
+					vi.advanceTimersByTime(3000);
+					await Promise.resolve();
+				});
+
+				expect(screen.queryByText('File changed on disk.')).not.toBeInTheDocument();
+				expect(mockStat).toHaveBeenCalledTimes(3);
+			} finally {
+				vi.useRealTimers();
+			}
+		});
 	});
 
 	describe('text file editing', () => {
@@ -656,6 +871,38 @@ describe('FilePreview', () => {
 			expect(screen.getByTestId('edit-icon')).toBeInTheDocument();
 		});
 
+		it('treats unknown extensions and extensionless files as editable text', () => {
+			const { rerender } = render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'settings.custom', content: 'key=value', path: '/test/settings.custom' }}
+				/>
+			);
+
+			expect(screen.getByTestId('edit-icon')).toBeInTheDocument();
+
+			rerender(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'README', content: '', path: '/test/README' }}
+				/>
+			);
+
+			expect(screen.getByTestId('edit-icon')).toBeInTheDocument();
+		});
+
+		it('treats a filename with an empty trailing extension as editable text', () => {
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'README.', content: 'plain text', path: '/test/README.' }}
+				/>
+			);
+
+			expect(screen.getByTestId('edit-icon')).toBeInTheDocument();
+			expect(screen.getByTestId('syntax-highlighter')).toHaveTextContent('plain text');
+		});
+
 		it('does not show edit button for image files', () => {
 			render(
 				<FilePreview
@@ -668,6 +915,74 @@ describe('FilePreview', () => {
 				/>
 			);
 
+			expect(screen.queryByTestId('edit-icon')).not.toBeInTheDocument();
+		});
+
+		it('renders binary extension files without text editing controls', () => {
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'archive.zip', content: 'PK\\u0003\\u0004', path: '/test/archive.zip' }}
+				/>
+			);
+
+			expect(screen.getByText('Binary File')).toBeInTheDocument();
+			expect(screen.getByText('This file cannot be displayed as text.')).toBeInTheDocument();
+			expect(screen.queryByTestId('edit-icon')).not.toBeInTheDocument();
+		});
+
+		it('opens binary files in the default app from the binary fallback', () => {
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'archive.zip', content: 'PK\\u0003\\u0004', path: '/test/archive.zip' }}
+				/>
+			);
+
+			fireEvent.click(screen.getByRole('button', { name: 'Open in Default App' }));
+
+			expect(window.maestro.shell.openPath).toHaveBeenCalledWith('/test/archive.zip');
+		});
+
+		it('renders files with binary-looking text content without text editing controls', () => {
+			const { rerender } = render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'payload.txt', content: 'hello\0world', path: '/test/payload.txt' }}
+				/>
+			);
+
+			expect(screen.getByText('Binary File')).toBeInTheDocument();
+			expect(screen.queryByTestId('edit-icon')).not.toBeInTheDocument();
+
+			rerender(
+				<FilePreview
+					{...defaultProps}
+					file={{
+						name: 'controls.txt',
+						content: '\u0001\u0002\u0003text',
+						path: '/test/controls.txt',
+					}}
+				/>
+			);
+
+			expect(screen.getByText('Binary File')).toBeInTheDocument();
+			expect(screen.queryByTestId('edit-icon')).not.toBeInTheDocument();
+		});
+
+		it('treats C1 control characters as binary-looking content', () => {
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{
+						name: 'controls.txt',
+						content: `${'\u0080'.repeat(4)}text`,
+						path: '/test/c1-controls.txt',
+					}}
+				/>
+			);
+
+			expect(screen.getByText('Binary File')).toBeInTheDocument();
 			expect(screen.queryByTestId('edit-icon')).not.toBeInTheDocument();
 		});
 
@@ -724,6 +1039,25 @@ describe('FilePreview', () => {
 			expect(textarea.selectionEnd).toBe(14);
 		});
 
+		it('Cmd+Shift+Up preserves the backward selection anchor', () => {
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'test.txt', content: multiLineContent, path: '/test/test.txt' }}
+					markdownEditMode={true}
+				/>
+			);
+
+			const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+			textarea.setSelectionRange(8, 14, 'backward');
+
+			fireEvent.keyDown(textarea, { key: 'ArrowUp', metaKey: true, shiftKey: true });
+
+			expect(textarea.selectionStart).toBe(0);
+			expect(textarea.selectionEnd).toBe(14);
+			expect(textarea.selectionDirection).toBe('backward');
+		});
+
 		it('Cmd+Shift+Down selects from cursor to end of document', () => {
 			render(
 				<FilePreview
@@ -741,6 +1075,25 @@ describe('FilePreview', () => {
 
 			expect(textarea.selectionStart).toBe(14);
 			expect(textarea.selectionEnd).toBe(multiLineContent.length);
+		});
+
+		it('Cmd+Shift+Down preserves the forward selection anchor', () => {
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'test.txt', content: multiLineContent, path: '/test/test.txt' }}
+					markdownEditMode={true}
+				/>
+			);
+
+			const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+			textarea.setSelectionRange(8, 14, 'forward');
+
+			fireEvent.keyDown(textarea, { key: 'ArrowDown', metaKey: true, shiftKey: true });
+
+			expect(textarea.selectionStart).toBe(8);
+			expect(textarea.selectionEnd).toBe(multiLineContent.length);
+			expect(textarea.selectionDirection).toBe('forward');
 		});
 
 		it('Cmd+Up moves cursor to beginning without selection', () => {
@@ -778,6 +1131,371 @@ describe('FilePreview', () => {
 			expect(textarea.selectionStart).toBe(multiLineContent.length);
 			expect(textarea.selectionEnd).toBe(multiLineContent.length);
 		});
+
+		it('saves from the textarea shortcut and exits edit mode on Escape', async () => {
+			const onSave = vi.fn().mockResolvedValue(undefined);
+			const setMarkdownEditMode = vi.fn();
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'test.txt', content: 'original', path: '/test/test.txt' }}
+					markdownEditMode={true}
+					onSave={onSave}
+					setMarkdownEditMode={setMarkdownEditMode}
+				/>
+			);
+
+			const textarea = screen.getByRole('textbox');
+			fireEvent.change(textarea, { target: { value: 'changed' } });
+			fireEvent.keyDown(textarea, { key: 's', metaKey: true });
+
+			await waitFor(() => {
+				expect(onSave).toHaveBeenCalledWith('/test/test.txt', 'changed');
+			});
+
+			fireEvent.change(textarea, { target: { value: 'changed again' } });
+			fireEvent.keyDown(textarea, { key: 's', ctrlKey: true });
+			await waitFor(() => {
+				expect(onSave).toHaveBeenCalledWith('/test/test.txt', 'changed again');
+			});
+
+			fireEvent.keyDown(textarea, { key: 'Escape' });
+			expect(setMarkdownEditMode).toHaveBeenCalledWith(false);
+		});
+
+		it('moves the textarea cursor by page with Option+Arrow shortcuts', () => {
+			const content = 'aaaa\nbbbb\ncccc\ndddd\neeee';
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'test.txt', content, path: '/test/test.txt' }}
+					markdownEditMode={true}
+				/>
+			);
+
+			const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+			Object.defineProperty(textarea, 'clientHeight', { value: 2, configurable: true });
+			textarea.scrollTop = 20;
+			const downStart = content.indexOf('bbbb') + 2;
+			textarea.setSelectionRange(downStart, downStart);
+
+			fireEvent.keyDown(textarea, { key: 'ArrowDown', altKey: true });
+
+			expect(textarea.selectionStart).toBeGreaterThan(downStart);
+			expect(textarea.scrollTop).toBe(22);
+
+			const upStart = content.indexOf('dddd') + 2;
+			textarea.setSelectionRange(upStart, upStart);
+			textarea.scrollTop = 20;
+
+			fireEvent.keyDown(textarea, { key: 'ArrowUp', altKey: true });
+
+			expect(textarea.selectionStart).toBeLessThan(upStart);
+			expect(textarea.scrollTop).toBe(18);
+		});
+
+		it('keeps Option+Arrow page movement inside empty document boundaries', () => {
+			const getComputedStyleSpy = vi
+				.spyOn(window, 'getComputedStyle')
+				.mockReturnValue({ lineHeight: 'normal' } as CSSStyleDeclaration);
+
+			try {
+				render(
+					<FilePreview
+						{...defaultProps}
+						file={{ name: 'empty.txt', content: '', path: '/test/empty.txt' }}
+						markdownEditMode={true}
+						externalEditContent=""
+					/>
+				);
+
+				const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+				Object.defineProperty(textarea, 'clientHeight', { value: 48, configurable: true });
+				textarea.setSelectionRange(0, 0);
+
+				fireEvent.keyDown(textarea, { key: 'ArrowUp', altKey: true });
+				expect(textarea.selectionStart).toBe(0);
+
+				fireEvent.keyDown(textarea, { key: 'ArrowUp' });
+				expect(textarea.selectionStart).toBe(0);
+
+				fireEvent.keyDown(textarea, { key: 'ArrowDown', altKey: true });
+				expect(textarea.selectionStart).toBe(0);
+			} finally {
+				getComputedStyleSpy.mockRestore();
+			}
+		});
+	});
+
+	describe('container keyboard shortcuts', () => {
+		it('saves changed edit content from the container Cmd+S shortcut', async () => {
+			const onSave = vi.fn().mockResolvedValue(undefined);
+			const { container } = render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'notes.txt', content: 'original', path: '/test/notes.txt' }}
+					markdownEditMode={true}
+					onSave={onSave}
+				/>
+			);
+
+			fireEvent.change(screen.getByRole('textbox'), { target: { value: 'updated' } });
+			fireEvent.keyDown(container.firstChild as HTMLElement, { key: 's', metaKey: true });
+
+			await waitFor(() => {
+				expect(onSave).toHaveBeenCalledWith('/test/notes.txt', 'updated');
+			});
+		});
+
+		it('handles copy path and markdown-mode toggle shortcuts', async () => {
+			const setMarkdownEditMode = vi.fn();
+			const onShortcutUsed = vi.fn();
+			const { container } = render(
+				<FilePreview
+					{...defaultProps}
+					setMarkdownEditMode={setMarkdownEditMode}
+					onShortcutUsed={onShortcutUsed}
+					shortcuts={{
+						copyFilePath: { keys: ['Meta', 'Shift', 'c'] },
+						toggleMarkdownMode: { keys: ['Meta', 'e'] },
+					}}
+				/>
+			);
+			const root = container.firstChild as HTMLElement;
+
+			fireEvent.keyDown(root, { key: 'c', metaKey: true, shiftKey: true });
+			await waitFor(() => {
+				expect(clipboardMocks.safeClipboardWrite).toHaveBeenCalledWith('/test/test.md');
+			});
+			expect(onShortcutUsed).toHaveBeenCalledWith('copyFilePath');
+
+			fireEvent.keyDown(root, { key: 'e', metaKey: true });
+			expect(setMarkdownEditMode).toHaveBeenCalledWith(true);
+		});
+
+		it('matches Ctrl, Alt, and Shift shortcut modifiers for custom bindings', async () => {
+			const { container } = render(
+				<FilePreview
+					{...defaultProps}
+					shortcuts={{ copyFilePath: { keys: ['Ctrl', 'Alt', 'Shift', 'p'] } }}
+				/>
+			);
+
+			fireEvent.keyDown(container.firstChild as HTMLElement, {
+				key: 'p',
+				ctrlKey: true,
+				altKey: true,
+				shiftKey: true,
+			});
+
+			await waitFor(() => {
+				expect(clipboardMocks.safeClipboardWrite).toHaveBeenCalledWith('/test/test.md');
+			});
+		});
+
+		it('ignores shortcut bindings when a required modifier is not pressed', () => {
+			const { container } = render(
+				<FilePreview
+					{...defaultProps}
+					shortcuts={{ copyFilePath: { keys: ['Ctrl', 'Alt', 'Shift', 'p'] } }}
+				/>
+			);
+
+			fireEvent.keyDown(container.firstChild as HTMLElement, {
+				key: 'p',
+				ctrlKey: true,
+				altKey: true,
+			});
+
+			expect(clipboardMocks.safeClipboardWrite).not.toHaveBeenCalled();
+		});
+
+		it('scrolls preview content with arrow key variants', () => {
+			const { container } = render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'notes.txt', content: 'line 1\nline 2', path: '/test/notes.txt' }}
+				/>
+			);
+			const root = container.firstChild as HTMLElement;
+			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
+			Object.defineProperty(scrollContainer, 'clientHeight', { value: 200, configurable: true });
+			Object.defineProperty(scrollContainer, 'scrollHeight', { value: 1000, configurable: true });
+			scrollContainer.scrollTop = 400;
+
+			fireEvent.keyDown(root, { key: 'ArrowUp' });
+			expect(scrollContainer.scrollTop).toBe(360);
+
+			fireEvent.keyDown(root, { key: 'ArrowDown' });
+			expect(scrollContainer.scrollTop).toBe(400);
+
+			fireEvent.keyDown(root, { key: 'ArrowUp', altKey: true });
+			expect(scrollContainer.scrollTop).toBe(200);
+
+			fireEvent.keyDown(root, { key: 'ArrowDown', altKey: true });
+			expect(scrollContainer.scrollTop).toBe(400);
+
+			fireEvent.keyDown(root, { key: 'ArrowUp', metaKey: true });
+			expect(scrollContainer.scrollTop).toBe(0);
+
+			fireEvent.keyDown(root, { key: 'ArrowDown', metaKey: true });
+			expect(scrollContainer.scrollTop).toBe(1000);
+		});
+
+		it('routes history, graph, and fuzzy-search keyboard shortcuts', () => {
+			const onNavigateBack = vi.fn();
+			const onNavigateForward = vi.fn();
+			const onOpenInGraph = vi.fn();
+			const onOpenFuzzySearch = vi.fn();
+			const onShortcutUsed = vi.fn();
+			const { container } = render(
+				<FilePreview
+					{...defaultProps}
+					canGoBack={true}
+					canGoForward={true}
+					onNavigateBack={onNavigateBack}
+					onNavigateForward={onNavigateForward}
+					onOpenInGraph={onOpenInGraph}
+					onOpenFuzzySearch={onOpenFuzzySearch}
+					onShortcutUsed={onShortcutUsed}
+					shortcuts={{ fuzzyFileSearch: { keys: ['Meta', 'g'] } }}
+				/>
+			);
+			const root = container.firstChild as HTMLElement;
+
+			fireEvent.keyDown(root, { key: 'ArrowLeft', metaKey: true });
+			expect(onNavigateBack).toHaveBeenCalledOnce();
+			expect(onShortcutUsed).toHaveBeenCalledWith('filePreviewBack');
+
+			fireEvent.keyDown(root, { key: 'ArrowRight', metaKey: true });
+			expect(onNavigateForward).toHaveBeenCalledOnce();
+			expect(onShortcutUsed).toHaveBeenCalledWith('filePreviewForward');
+
+			fireEvent.keyDown(root, { key: 'ArrowLeft', ctrlKey: true });
+			fireEvent.keyDown(root, { key: 'ArrowRight', ctrlKey: true });
+			expect(onNavigateBack).toHaveBeenCalledTimes(2);
+			expect(onNavigateForward).toHaveBeenCalledTimes(2);
+
+			fireEvent.keyDown(root, { key: 'g', metaKey: true, shiftKey: true });
+			expect(onOpenInGraph).toHaveBeenCalledOnce();
+			expect(onOpenFuzzySearch).not.toHaveBeenCalled();
+
+			fireEvent.keyDown(root, { key: 'g', metaKey: true });
+			expect(onOpenFuzzySearch).toHaveBeenCalledOnce();
+		});
+
+		it('does not navigate history when keyboard shortcuts are unavailable', () => {
+			const onNavigateBack = vi.fn();
+			const onNavigateForward = vi.fn();
+			const onShortcutUsed = vi.fn();
+			const { container } = render(
+				<FilePreview
+					{...defaultProps}
+					canGoBack={false}
+					canGoForward={false}
+					onNavigateBack={onNavigateBack}
+					onNavigateForward={onNavigateForward}
+					onShortcutUsed={onShortcutUsed}
+				/>
+			);
+			const root = container.firstChild as HTMLElement;
+
+			fireEvent.keyDown(root, { key: 'ArrowLeft', metaKey: true });
+			fireEvent.keyDown(root, { key: 'ArrowRight', metaKey: true });
+
+			expect(onNavigateBack).not.toHaveBeenCalled();
+			expect(onNavigateForward).not.toHaveBeenCalled();
+			expect(onShortcutUsed).not.toHaveBeenCalled();
+		});
+
+		it('leaves history and fuzzy-search shortcuts inactive in edit mode', () => {
+			const onNavigateBack = vi.fn();
+			const onOpenFuzzySearch = vi.fn();
+			const { container } = render(
+				<FilePreview
+					{...defaultProps}
+					markdownEditMode={true}
+					canGoBack={true}
+					onNavigateBack={onNavigateBack}
+					onOpenFuzzySearch={onOpenFuzzySearch}
+					shortcuts={{ fuzzyFileSearch: { keys: ['Meta', 'g'] } }}
+				/>
+			);
+			const root = container.firstChild as HTMLElement;
+
+			fireEvent.keyDown(root, { key: 'ArrowLeft', metaKey: true });
+			fireEvent.keyDown(root, { key: 'g', metaKey: true });
+			fireEvent.keyDown(root, { key: 'ArrowRight', metaKey: true });
+
+			expect(onNavigateBack).not.toHaveBeenCalled();
+			expect(onOpenFuzzySearch).not.toHaveBeenCalled();
+		});
+
+		it('copies image content from the container Cmd+C shortcut', async () => {
+			const imageDataUrl = 'data:image/png;base64,abc123';
+			const { container } = render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'diagram.png', content: imageDataUrl, path: '/test/diagram.png' }}
+				/>
+			);
+
+			fireEvent.keyDown(container.firstChild as HTMLElement, { key: 'c', metaKey: true });
+
+			await screen.findByText('Image Copied to Clipboard');
+			expect(globalThis.fetch).toHaveBeenCalledWith(imageDataUrl);
+			expect(clipboardMocks.safeClipboardWriteBlob).toHaveBeenCalledOnce();
+		});
+
+		it('supports Ctrl-key variants for search, save, graph, and image copy shortcuts', async () => {
+			const onSave = vi.fn().mockResolvedValue(undefined);
+			const onOpenInGraph = vi.fn();
+			const textView = render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'notes.md', content: '# Notes', path: '/test/notes.md' }}
+					onOpenInGraph={onOpenInGraph}
+				/>
+			);
+
+			fireEvent.keyDown(textView.container.firstChild as HTMLElement, { key: 'f', ctrlKey: true });
+			expect(screen.getByPlaceholderText(/Search in file/)).toBeInTheDocument();
+
+			fireEvent.keyDown(textView.container.firstChild as HTMLElement, {
+				key: 'g',
+				ctrlKey: true,
+				shiftKey: true,
+			});
+			expect(onOpenInGraph).toHaveBeenCalledOnce();
+			textView.unmount();
+
+			const editView = render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'notes.txt', content: 'original', path: '/test/notes.txt' }}
+					markdownEditMode={true}
+					onSave={onSave}
+				/>
+			);
+			const textarea = screen.getByRole('textbox');
+			fireEvent.change(textarea, { target: { value: 'changed' } });
+			fireEvent.keyDown(editView.container.firstChild as HTMLElement, { key: 's', ctrlKey: true });
+			await waitFor(() => {
+				expect(onSave).toHaveBeenCalledWith('/test/notes.txt', 'changed');
+			});
+			editView.unmount();
+
+			const imageDataUrl = 'data:image/png;base64,ctrl-image';
+			const imageView = render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'diagram.png', content: imageDataUrl, path: '/test/diagram.png' }}
+				/>
+			);
+			fireEvent.keyDown(imageView.container.firstChild as HTMLElement, { key: 'c', ctrlKey: true });
+			await screen.findByText('Image Copied to Clipboard');
+			expect(globalThis.fetch).toHaveBeenCalledWith(imageDataUrl);
+		});
 	});
 
 	describe('basic rendering', () => {
@@ -787,6 +1505,17 @@ describe('FilePreview', () => {
 			expect(screen.getByText('test.md')).toBeInTheDocument();
 		});
 
+		it('exposes an imperative focus method for tab focus restoration', () => {
+			const previewRef = React.createRef<FilePreviewHandle>();
+			const { container } = render(<FilePreview {...defaultProps} ref={previewRef} />);
+			const root = container.firstChild as HTMLElement;
+			const focus = vi.spyOn(root, 'focus');
+
+			previewRef.current?.focus();
+
+			expect(focus).toHaveBeenCalledOnce();
+		});
+
 		// Close button was removed - now handled by file tab's X button
 		// See Phase 8: Cleanup & Polish task for details
 
@@ -794,6 +1523,1012 @@ describe('FilePreview', () => {
 			const { container } = render(<FilePreview {...defaultProps} file={null} />);
 
 			expect(container.firstChild).toBeNull();
+		});
+	});
+
+	describe('metadata, save, and clipboard actions', () => {
+		it('renders file stats and token count for text files', async () => {
+			window.maestro.fs.stat = vi.fn().mockResolvedValue({
+				size: 2048,
+				createdAt: '2024-01-01T00:00:00.000Z',
+				modifiedAt: '2024-01-15T12:30:00.000Z',
+			});
+			vi.mocked(getEncoder).mockResolvedValue({ encode: () => [1, 2, 3, 4] } as any);
+
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'notes.txt', content: 'plain text content', path: '/test/notes.txt' }}
+				/>
+			);
+
+			expect(await screen.findByText('2 KB')).toBeInTheDocument();
+			expect(await screen.findByText('4 tokens')).toBeInTheDocument();
+			expect(window.maestro.fs.stat).toHaveBeenCalledWith('/test/notes.txt', undefined);
+		});
+
+		it('renders zero-byte file stats', async () => {
+			window.maestro.fs.stat = vi.fn().mockResolvedValue({
+				size: 0,
+				createdAt: '2024-01-01T00:00:00.000Z',
+				modifiedAt: '2024-01-15T12:30:00.000Z',
+			});
+
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'empty.txt', content: '', path: '/test/empty.txt' }}
+				/>
+			);
+
+			expect(await screen.findByText('0 B')).toBeInTheDocument();
+		});
+
+		it('renders markdown task counts in the metadata bar', () => {
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{
+						name: 'tasks.md',
+						content: '- [ ] Open item\n- [x] Done item\n* [X] Another done item',
+						path: '/test/tasks.md',
+					}}
+				/>
+			);
+
+			const taskStats = screen.getByText('Tasks:').parentElement;
+			expect(taskStats).not.toBeNull();
+			expect(within(taskStats!).getByText('2')).toBeInTheDocument();
+			expect(within(taskStats!).getByText(/of 3/)).toBeInTheDocument();
+		});
+
+		it('falls back cleanly when file stats and token counting fail', async () => {
+			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+			window.maestro.fs.stat = vi.fn().mockRejectedValue(new Error('stat failed'));
+			vi.mocked(getEncoder).mockRejectedValueOnce(new Error('encoder failed'));
+
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'notes.txt', content: 'plain text content', path: '/test/notes.txt' }}
+				/>
+			);
+
+			await act(async () => {
+				await Promise.resolve();
+			});
+
+			expect(screen.queryByText(/tokens/)).not.toBeInTheDocument();
+			expect(consoleError).toHaveBeenCalledWith('Failed to get file stats:', expect.any(Error));
+			expect(consoleError).toHaveBeenCalledWith('Failed to count tokens:', expect.any(Error));
+			consoleError.mockRestore();
+		});
+
+		it('saves modified text content and hides the success notification after the timeout', async () => {
+			vi.useFakeTimers();
+			const onSave = vi.fn().mockResolvedValue(undefined);
+
+			try {
+				render(
+					<FilePreview
+						{...defaultProps}
+						file={{ name: 'notes.txt', content: 'original', path: '/test/notes.txt' }}
+						markdownEditMode={true}
+						externalEditContent="updated"
+						onSave={onSave}
+					/>
+				);
+
+				fireEvent.click(screen.getByTitle('Save changes (Ctrl+S)'));
+
+				await act(async () => {
+					await Promise.resolve();
+				});
+				expect(screen.getByText('File Saved')).toBeInTheDocument();
+				expect(onSave).toHaveBeenCalledWith('/test/notes.txt', 'updated');
+
+				act(() => {
+					vi.advanceTimersByTime(2000);
+				});
+				expect(screen.queryByText('File Saved')).not.toBeInTheDocument();
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
+		it('shows a failure notification when saving modified content rejects and hides it', async () => {
+			vi.useFakeTimers();
+			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const onSave = vi.fn().mockRejectedValue(new Error('save failed'));
+
+			try {
+				render(
+					<FilePreview
+						{...defaultProps}
+						file={{ name: 'notes.txt', content: 'original', path: '/test/notes.txt' }}
+						markdownEditMode={true}
+						externalEditContent="updated"
+						onSave={onSave}
+					/>
+				);
+
+				fireEvent.click(screen.getByTitle('Save changes (Ctrl+S)'));
+
+				await act(async () => {
+					await Promise.resolve();
+				});
+				expect(screen.getByText('Save Failed')).toBeInTheDocument();
+				expect(consoleError).toHaveBeenCalledWith('Failed to save file:', expect.any(Error));
+
+				act(() => {
+					vi.advanceTimersByTime(2000);
+				});
+				expect(screen.queryByText('Save Failed')).not.toBeInTheDocument();
+			} finally {
+				consoleError.mockRestore();
+				vi.useRealTimers();
+			}
+		});
+
+		it('does not call onSave for unchanged edit content from a save shortcut', () => {
+			const onSave = vi.fn();
+			const { container } = render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'notes.txt', content: 'original', path: '/test/notes.txt' }}
+					markdownEditMode={true}
+					externalEditContent="original"
+					onSave={onSave}
+				/>
+			);
+
+			fireEvent.keyDown(container.firstChild as HTMLElement, { key: 's', metaKey: true });
+
+			expect(onSave).not.toHaveBeenCalled();
+		});
+
+		it('copies the file path to the clipboard', async () => {
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'notes.txt', content: 'plain text content', path: '/test/notes.txt' }}
+				/>
+			);
+
+			fireEvent.click(screen.getByTitle('Copy full path to clipboard'));
+
+			await screen.findByText('File Path Copied to Clipboard');
+			expect(clipboardMocks.safeClipboardWrite).toHaveBeenCalledWith('/test/notes.txt');
+		});
+
+		it('hides copy notifications after the timeout', async () => {
+			vi.useFakeTimers();
+
+			try {
+				render(
+					<FilePreview
+						{...defaultProps}
+						file={{ name: 'notes.txt', content: 'plain text content', path: '/test/notes.txt' }}
+					/>
+				);
+
+				fireEvent.click(screen.getByTitle('Copy full path to clipboard'));
+
+				await act(async () => {
+					await Promise.resolve();
+				});
+				expect(screen.getByText('File Path Copied to Clipboard')).toBeInTheDocument();
+
+				act(() => {
+					vi.advanceTimersByTime(2000);
+				});
+				expect(screen.queryByText('File Path Copied to Clipboard')).not.toBeInTheDocument();
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
+		it('shows a failure notification when copying the file path fails', async () => {
+			clipboardMocks.safeClipboardWrite.mockResolvedValueOnce(false);
+
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'notes.txt', content: 'plain text content', path: '/test/notes.txt' }}
+				/>
+			);
+
+			fireEvent.click(screen.getByTitle('Copy full path to clipboard'));
+
+			await screen.findByText('Failed to Copy Path');
+			expect(clipboardMocks.safeClipboardWrite).toHaveBeenCalledWith('/test/notes.txt');
+		});
+
+		it('copies text content to the clipboard', async () => {
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'notes.txt', content: 'plain text content', path: '/test/notes.txt' }}
+				/>
+			);
+
+			fireEvent.click(screen.getByTitle('Copy content to clipboard'));
+
+			await screen.findByText('Content Copied to Clipboard');
+			expect(clipboardMocks.safeClipboardWrite).toHaveBeenCalledWith('plain text content');
+		});
+
+		it('hides text content copy notifications after the timeout', async () => {
+			vi.useFakeTimers();
+
+			try {
+				render(
+					<FilePreview
+						{...defaultProps}
+						file={{ name: 'notes.txt', content: 'plain text content', path: '/test/notes.txt' }}
+					/>
+				);
+
+				fireEvent.click(screen.getByTitle('Copy content to clipboard'));
+
+				await act(async () => {
+					await Promise.resolve();
+				});
+				expect(screen.getByText('Content Copied to Clipboard')).toBeInTheDocument();
+
+				act(() => {
+					vi.advanceTimersByTime(2000);
+				});
+				expect(screen.queryByText('Content Copied to Clipboard')).not.toBeInTheDocument();
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
+		it('shows a failure notification when copying text content fails', async () => {
+			clipboardMocks.safeClipboardWrite.mockResolvedValueOnce(false);
+
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'notes.txt', content: 'plain text content', path: '/test/notes.txt' }}
+				/>
+			);
+
+			fireEvent.click(screen.getByTitle('Copy content to clipboard'));
+
+			await screen.findByText('Failed to Copy Content');
+			expect(clipboardMocks.safeClipboardWrite).toHaveBeenCalledWith('plain text content');
+		});
+
+		it('copies image blobs to the clipboard', async () => {
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{
+						name: 'diagram.png',
+						content: 'data:image/png;base64,diagram',
+						path: '/test/diagram.png',
+					}}
+				/>
+			);
+
+			fireEvent.click(screen.getByTitle('Copy image to clipboard (Ctrl+C)'));
+
+			await screen.findByText('Image Copied to Clipboard');
+			expect(globalThis.fetch).toHaveBeenCalledWith('data:image/png;base64,diagram');
+			expect(clipboardMocks.safeClipboardWriteBlob).toHaveBeenCalledOnce();
+		});
+
+		it('falls back to copying the image data URL when blob clipboard write fails', async () => {
+			clipboardMocks.safeClipboardWriteBlob.mockResolvedValueOnce(false);
+
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{
+						name: 'diagram.png',
+						content: 'data:image/png;base64,diagram',
+						path: '/test/diagram.png',
+					}}
+				/>
+			);
+
+			fireEvent.click(screen.getByTitle('Copy image to clipboard (Ctrl+C)'));
+
+			await screen.findByText('Image URL Copied to Clipboard');
+			expect(clipboardMocks.safeClipboardWrite).toHaveBeenCalledWith(
+				'data:image/png;base64,diagram'
+			);
+		});
+
+		it('shows a failure notification when blob copy and image data URL fallback both fail', async () => {
+			clipboardMocks.safeClipboardWriteBlob.mockResolvedValueOnce(false);
+			clipboardMocks.safeClipboardWrite.mockResolvedValueOnce(false);
+
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{
+						name: 'diagram.png',
+						content: 'data:image/png;base64,diagram',
+						path: '/test/diagram.png',
+					}}
+				/>
+			);
+
+			fireEvent.click(screen.getByTitle('Copy image to clipboard (Ctrl+C)'));
+
+			await screen.findByText('Failed to Copy Image');
+			expect(clipboardMocks.safeClipboardWrite).toHaveBeenCalledWith(
+				'data:image/png;base64,diagram'
+			);
+		});
+
+		it('copies the image data URL when image fetch fails but fallback succeeds', async () => {
+			const imageFetchError = new Error('image fetch failed');
+			vi.mocked(globalThis.fetch).mockRejectedValueOnce(imageFetchError);
+
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{
+						name: 'diagram.png',
+						content: 'data:image/png;base64,diagram',
+						path: '/test/diagram.png',
+					}}
+				/>
+			);
+
+			fireEvent.click(screen.getByTitle('Copy image to clipboard (Ctrl+C)'));
+
+			await screen.findByText('Image URL Copied to Clipboard');
+			expect(captureException).toHaveBeenCalledWith(imageFetchError);
+			expect(clipboardMocks.safeClipboardWrite).toHaveBeenCalledWith(
+				'data:image/png;base64,diagram'
+			);
+		});
+
+		it('shows a failure notification when image fetch and data URL fallback both fail', async () => {
+			const imageFetchError = new Error('image fetch failed');
+			vi.mocked(globalThis.fetch).mockRejectedValueOnce(imageFetchError);
+			clipboardMocks.safeClipboardWrite.mockResolvedValueOnce(false);
+
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{
+						name: 'diagram.png',
+						content: 'data:image/png;base64,diagram',
+						path: '/test/diagram.png',
+					}}
+				/>
+			);
+
+			fireEvent.click(screen.getByTitle('Copy image to clipboard (Ctrl+C)'));
+
+			await screen.findByText('Failed to Copy Image');
+			expect(captureException).toHaveBeenCalledWith(imageFetchError);
+		});
+	});
+
+	describe('markdown links', () => {
+		it('opens file, web, and mailto markdown links through shell callbacks', () => {
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{
+						name: 'readme.md',
+						content:
+							'[Local file](file:///tmp/readme.md) [Website](https://example.com/docs) [Email](mailto:support@example.com)',
+						path: '/project/docs/readme.md',
+					}}
+				/>
+			);
+
+			fireEvent.click(screen.getByRole('link', { name: 'Local file' }));
+			fireEvent.click(screen.getByRole('link', { name: 'Website' }));
+			fireEvent.click(screen.getByRole('link', { name: 'Email' }));
+
+			expect(window.maestro.shell.openPath).toHaveBeenCalledWith('/tmp/readme.md');
+			expect(window.maestro.shell.openExternal).toHaveBeenCalledWith('https://example.com/docs');
+			expect(window.maestro.shell.openExternal).toHaveBeenCalledWith('mailto:support@example.com');
+		});
+
+		it('routes relative markdown links through onFileClick with modifier state', () => {
+			const onFileClick = vi.fn();
+
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{
+						name: 'readme.md',
+						content: '[Guide](docs/guide.md) [License](LICENSE)',
+						path: '/project/docs/readme.md',
+					}}
+					onFileClick={onFileClick}
+				/>
+			);
+
+			fireEvent.click(screen.getByRole('link', { name: 'Guide' }));
+			fireEvent.click(screen.getByRole('link', { name: 'License' }), { metaKey: true });
+
+			expect(onFileClick).toHaveBeenCalledWith('docs/guide.md', { openInNewTab: false });
+			expect(onFileClick).toHaveBeenCalledWith('LICENSE', { openInNewTab: true });
+		});
+
+		it('ignores unsupported external markdown link protocols', () => {
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{
+						name: 'readme.md',
+						content: '[Custom](custom://open-me)',
+						path: '/project/docs/readme.md',
+					}}
+				/>
+			);
+
+			fireEvent.click(screen.getByRole('link', { name: 'Custom' }));
+
+			expect(window.maestro.shell.openPath).not.toHaveBeenCalled();
+			expect(window.maestro.shell.openExternal).not.toHaveBeenCalled();
+		});
+
+		it('renders mermaid code fences and strips raw details event handlers', () => {
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{
+						name: 'readme.md',
+						content:
+							'```mermaid\nflowchart TD\nA-->B\n```\n<details onToggle="alert(1)"><summary>More</summary>Body</details>',
+						path: '/project/docs/readme.md',
+					}}
+				/>
+			);
+
+			expect(screen.getByTestId('mermaid-renderer')).toBeInTheDocument();
+			expect(screen.getByTestId('sanitized-details')).toBeInTheDocument();
+			expect(screen.getByTestId('sanitized-details')).not.toHaveAttribute('onToggle');
+		});
+	});
+
+	describe('markdown images', () => {
+		it('ignores markdown image nodes without a source', async () => {
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{
+						name: 'readme.md',
+						content: '![Missing source]()',
+						path: '/project/docs/readme.md',
+					}}
+				/>
+			);
+
+			await act(async () => {
+				await Promise.resolve();
+			});
+
+			expect(window.maestro.fs.readFile).not.toHaveBeenCalled();
+			expect(screen.queryByText('Loading image...')).not.toBeInTheDocument();
+		});
+
+		it('renders inline data URL markdown images without filesystem reads', async () => {
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{
+						name: 'readme.md',
+						content: '![Inline diagram](data:image/png;base64,inline-diagram)',
+						path: '/project/docs/readme.md',
+					}}
+				/>
+			);
+
+			const image = await screen.findByAltText('Inline diagram');
+			expect(image).toHaveAttribute('src', 'data:image/png;base64,inline-diagram');
+			expect(window.maestro.fs.readFile).not.toHaveBeenCalled();
+		});
+
+		it('uses empty alt text for markdown images without alt text', async () => {
+			const { container } = render(
+				<FilePreview
+					{...defaultProps}
+					file={{
+						name: 'readme.md',
+						content: '![](data:image/png;base64,decorative-diagram)',
+						path: '/project/docs/readme.md',
+					}}
+				/>
+			);
+
+			await waitFor(() => expect(container.querySelector('img')).toBeInTheDocument());
+			const image = container.querySelector('img')!;
+			expect(container.querySelector('img')).toBe(image);
+			expect(image).toHaveAttribute('alt', '');
+			expect(image).toHaveAttribute('src', 'data:image/png;base64,decorative-diagram');
+		});
+
+		it('blocks remote markdown images by default', async () => {
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{
+						name: 'readme.md',
+						content: '![Remote diagram](https://example.com/diagram.png)',
+						path: '/project/docs/readme.md',
+					}}
+				/>
+			);
+
+			expect(await screen.findByText('Remote image blocked')).toBeInTheDocument();
+			expect(window.maestro.fs.readFile).not.toHaveBeenCalled();
+		});
+
+		it('shows remote markdown images when the remote image toggle is enabled', async () => {
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{
+						name: 'readme.md',
+						content: '![Remote diagram](https://example.com/remote-diagram.png)',
+						path: '/project/docs/readme.md',
+					}}
+				/>
+			);
+
+			fireEvent.click(screen.getByTitle('Show remote images'));
+
+			const image = await screen.findByAltText('Remote diagram');
+			expect(image).toHaveAttribute('src', 'https://example.com/remote-diagram.png');
+		});
+
+		it('shows http markdown images when the remote image toggle is enabled', async () => {
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{
+						name: 'readme.md',
+						content: '![HTTP diagram](http://example.com/http-diagram.png)',
+						path: '/project/docs/readme.md',
+					}}
+				/>
+			);
+
+			fireEvent.click(screen.getByTitle('Show remote images'));
+
+			const image = await screen.findByAltText('HTTP diagram');
+			expect(image).toHaveAttribute('src', 'http://example.com/http-diagram.png');
+			expect(window.maestro.fs.readFile).not.toHaveBeenCalled();
+		});
+
+		it('loads local markdown images through the filesystem bridge', async () => {
+			window.maestro.fs.readFile = vi.fn().mockResolvedValue('data:image/png;base64,local-diagram');
+
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{
+						name: 'readme.md',
+						content: '![Local diagram](./images/local.png)',
+						path: '/project/docs/readme.md',
+					}}
+					sshRemoteId="remote-1"
+				/>
+			);
+
+			const image = await screen.findByAltText('Local diagram');
+			expect(window.maestro.fs.readFile).toHaveBeenCalledWith(
+				'/project/docs/images/local.png',
+				'remote-1'
+			);
+			expect(image).toHaveAttribute('src', 'data:image/png;base64,local-diagram');
+
+			Object.defineProperty(image, 'naturalWidth', { value: 640, configurable: true });
+			Object.defineProperty(image, 'naturalHeight', { value: 480, configurable: true });
+			fireEvent.load(image);
+		});
+
+		it('loads absolute markdown image paths without rebasing to the markdown directory', async () => {
+			window.maestro.fs.readFile = vi
+				.fn()
+				.mockResolvedValue('data:image/png;base64,absolute-diagram');
+
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{
+						name: 'readme.md',
+						content: '![Absolute diagram](/assets/absolute.png)',
+						path: '/project/docs/readme.md',
+					}}
+				/>
+			);
+
+			const image = await screen.findByAltText('Absolute diagram');
+			expect(window.maestro.fs.readFile).toHaveBeenCalledWith('/assets/absolute.png', undefined);
+			expect(image).toHaveAttribute('src', 'data:image/png;base64,absolute-diagram');
+		});
+
+		it('enables file-tree link plugins when fileTree and cwd are provided', () => {
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{
+						name: 'readme.md',
+						content: '# Linked docs',
+						path: '/project/docs/readme.md',
+					}}
+					fileTree={
+						[
+							{
+								name: 'docs',
+								path: '/project/docs',
+								type: 'directory',
+								children: [
+									{
+										name: 'guide.md',
+										path: '/project/docs/guide.md',
+										type: 'file',
+									},
+								],
+							},
+						] as any
+					}
+					cwd="project"
+				/>
+			);
+
+			expect(reactMarkdownMocks.lastRemarkPlugins).toEqual(
+				expect.arrayContaining([
+					expect.arrayContaining([
+						remarkFileLinks,
+						expect.objectContaining({
+							cwd: 'project',
+							indices: expect.any(Object),
+						}),
+					]),
+				])
+			);
+		});
+
+		it('rewrites ==highlight== markdown text into mark HTML nodes', () => {
+			vi.mocked(visit).mockImplementation((tree: any, type: string, visitor: any) => {
+				const walk = (node: any, parent?: any) => {
+					if (node.type === type && parent?.children) {
+						visitor(node, parent.children.indexOf(node), parent);
+					}
+					for (const child of node.children ? [...node.children] : []) {
+						walk(child, node);
+					}
+				};
+				walk(tree);
+			});
+
+			try {
+				render(
+					<FilePreview
+						{...defaultProps}
+						file={{
+							name: 'notes.md',
+							content: 'Before ==important== middle ==urgent== after',
+							path: '/project/notes.md',
+						}}
+					/>
+				);
+
+				const highlightPlugin = reactMarkdownMocks.lastRemarkPlugins?.find(
+					(plugin) => typeof plugin === 'function' && plugin.name === 'remarkHighlight'
+				) as (() => (tree: any) => void) | undefined;
+				expect(highlightPlugin).toBeDefined();
+
+				const tree = {
+					type: 'root',
+					children: [
+						{
+							type: 'paragraph',
+							children: [{ type: 'text', value: 'Before ==important== middle ==urgent== after' }],
+						},
+					],
+				};
+
+				highlightPlugin!()(tree);
+
+				expect(tree.children[0].children).toEqual([
+					{ type: 'text', value: 'Before ' },
+					{
+						type: 'html',
+						value:
+							'<mark style="background-color: #ffd700; color: #000; padding: 0 4px; border-radius: 2px;">important</mark>',
+					},
+					{ type: 'text', value: ' middle ' },
+					{
+						type: 'html',
+						value:
+							'<mark style="background-color: #ffd700; color: #000; padding: 0 4px; border-radius: 2px;">urgent</mark>',
+					},
+					{ type: 'text', value: ' after' },
+				]);
+			} finally {
+				vi.mocked(visit).mockReset();
+			}
+		});
+
+		it('leaves markdown highlight text unchanged when there is no match or parent context', () => {
+			const parent = {
+				type: 'paragraph',
+				children: [{ type: 'text', value: 'plain text' }],
+			};
+			vi.mocked(visit).mockImplementation((_tree: any, _type: string, visitor: any) => {
+				visitor(parent.children[0], 0, parent);
+				visitor({ type: 'text', value: '==orphan==' }, null, undefined);
+			});
+
+			try {
+				render(
+					<FilePreview
+						{...defaultProps}
+						file={{
+							name: 'notes.md',
+							content: 'plain text',
+							path: '/project/notes.md',
+						}}
+					/>
+				);
+
+				const highlightPlugin = reactMarkdownMocks.lastRemarkPlugins?.find(
+					(plugin) => typeof plugin === 'function' && plugin.name === 'remarkHighlight'
+				) as (() => (tree: any) => void) | undefined;
+				expect(highlightPlugin).toBeDefined();
+
+				highlightPlugin!()({ type: 'root', children: [parent] });
+
+				expect(parent.children).toEqual([{ type: 'text', value: 'plain text' }]);
+			} finally {
+				vi.mocked(visit).mockReset();
+			}
+		});
+
+		it('rewrites highlight text that occupies the full text node', () => {
+			vi.mocked(visit).mockImplementation((tree: any, _type: string, visitor: any) => {
+				const parent = {
+					type: 'paragraph',
+					children: [{ type: 'text', value: '==solo==' }],
+				};
+				visitor(parent.children[0], 0, parent);
+				tree.children = [parent];
+			});
+
+			try {
+				render(
+					<FilePreview
+						{...defaultProps}
+						file={{
+							name: 'notes.md',
+							content: '==solo==',
+							path: '/project/notes.md',
+						}}
+					/>
+				);
+
+				const highlightPlugin = reactMarkdownMocks.lastRemarkPlugins?.find(
+					(plugin) => typeof plugin === 'function' && plugin.name === 'remarkHighlight'
+				) as (() => (tree: any) => void) | undefined;
+				expect(highlightPlugin).toBeDefined();
+
+				const tree = { type: 'root', children: [] as any[] };
+				highlightPlugin!()(tree);
+
+				expect(tree.children[0].children).toEqual([
+					{
+						type: 'html',
+						value:
+							'<mark style="background-color: #ffd700; color: #000; padding: 0 4px; border-radius: 2px;">solo</mark>',
+					},
+				]);
+			} finally {
+				vi.mocked(visit).mockReset();
+			}
+		});
+
+		it('loads file-tree markdown images from the project root when cwd matches', async () => {
+			window.maestro.fs.readFile = vi.fn().mockResolvedValue('data:image/png;base64,tree-image');
+
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{
+						name: 'readme.md',
+						content: '![Tree: Repo image](assets/logo.png)',
+						path: '/workspace/project/docs/readme.md',
+					}}
+					cwd="project"
+				/>
+			);
+
+			const image = await screen.findByAltText('Repo image');
+			expect(window.maestro.fs.readFile).toHaveBeenCalledWith(
+				'/workspace/assets/logo.png',
+				undefined
+			);
+			expect(image).toHaveAttribute('src', 'data:image/png;base64,tree-image');
+		});
+
+		it('falls back to the first cwd segment for file-tree markdown images', async () => {
+			window.maestro.fs.readFile = vi.fn().mockResolvedValue('data:image/png;base64,segment-image');
+
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{
+						name: 'readme.md',
+						content: '![Tree: Segment image](assets/from-segment.png)',
+						path: '/workspace/root/project/readme.md',
+					}}
+					cwd="project/docs"
+				/>
+			);
+
+			const image = await screen.findByAltText('Segment image');
+			expect(window.maestro.fs.readFile).toHaveBeenCalledWith(
+				'/workspace/root/assets/from-segment.png',
+				undefined
+			);
+			expect(image).toHaveAttribute('src', 'data:image/png;base64,segment-image');
+		});
+
+		it('falls back to markdown-relative paths for file-tree images outside the cwd', async () => {
+			window.maestro.fs.readFile = vi.fn().mockResolvedValue('data:image/png;base64,rootless');
+
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{
+						name: 'readme.md',
+						content: '![Tree: Rootless image](assets/rootless.png)',
+						path: '/workspace/other/docs/readme.md',
+					}}
+					cwd="project/docs"
+				/>
+			);
+
+			const image = await screen.findByAltText('Rootless image');
+			expect(window.maestro.fs.readFile).toHaveBeenCalledWith(
+				'/workspace/other/docs/assets/rootless.png',
+				undefined
+			);
+			expect(image).toHaveAttribute('src', 'data:image/png;base64,rootless');
+		});
+
+		it('decodes URL-encoded local markdown image paths before reading them', async () => {
+			window.maestro.fs.readFile = vi.fn().mockResolvedValue('data:image/png;base64,encoded');
+
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{
+						name: 'readme.md',
+						content: '![Encoded diagram](./images/local%20diagram.png)',
+						path: '/project/docs/readme.md',
+					}}
+				/>
+			);
+
+			const image = await screen.findByAltText('Encoded diagram');
+			expect(window.maestro.fs.readFile).toHaveBeenCalledWith(
+				'/project/docs/images/local diagram.png',
+				undefined
+			);
+			expect(image).toHaveAttribute('src', 'data:image/png;base64,encoded');
+		});
+
+		it('reuses cached local markdown image data on later renders', async () => {
+			const readFile = vi.fn().mockResolvedValue('data:image/png;base64,cached-diagram');
+			window.maestro.fs.readFile = readFile;
+
+			const file = {
+				name: 'readme.md',
+				content: '![Cached diagram](./images/cached.png)',
+				path: '/project/docs/cache-test.md',
+			};
+			const { unmount } = render(<FilePreview {...defaultProps} file={file} />);
+
+			expect(await screen.findByAltText('Cached diagram')).toHaveAttribute(
+				'src',
+				'data:image/png;base64,cached-diagram'
+			);
+			expect(readFile).toHaveBeenCalledTimes(1);
+
+			unmount();
+			readFile.mockClear();
+
+			render(<FilePreview {...defaultProps} file={file} />);
+
+			expect(await screen.findByAltText('Cached diagram')).toHaveAttribute(
+				'src',
+				'data:image/png;base64,cached-diagram'
+			);
+			expect(readFile).not.toHaveBeenCalled();
+		});
+
+		it('expires stale local markdown image cache entries', async () => {
+			const readFile = vi
+				.fn()
+				.mockResolvedValueOnce('data:image/png;base64,stale-diagram')
+				.mockResolvedValue('data:image/png;base64,fresh-diagram');
+			window.maestro.fs.readFile = readFile;
+
+			const file = {
+				name: 'readme.md',
+				content: '![Expiring diagram](./images/expiring.png)',
+				path: '/project/docs/expiring-cache.md',
+			};
+			let view = render(<FilePreview {...defaultProps} file={file} />);
+
+			expect(await screen.findByAltText('Expiring diagram')).toHaveAttribute(
+				'src',
+				'data:image/png;base64,stale-diagram'
+			);
+			expect(readFile).toHaveBeenCalledTimes(1);
+
+			view.unmount();
+			readFile.mockClear();
+			_clearExpiredImageCacheForTesting(Date.now());
+
+			view = render(<FilePreview {...defaultProps} file={file} />);
+			const cachedImage = await screen.findByAltText('Expiring diagram');
+			expect(cachedImage).toHaveAttribute('src', 'data:image/png;base64,stale-diagram');
+			expect(readFile).not.toHaveBeenCalled();
+
+			Object.defineProperty(cachedImage, 'naturalWidth', { value: 320, configurable: true });
+			Object.defineProperty(cachedImage, 'naturalHeight', { value: 200, configurable: true });
+			_clearExpiredImageCacheForTesting(Date.now() + 10 * 60 * 1000 + 1);
+			fireEvent.load(cachedImage);
+
+			view.unmount();
+
+			render(<FilePreview {...defaultProps} file={file} />);
+			expect(await screen.findByAltText('Expiring diagram')).toHaveAttribute(
+				'src',
+				'data:image/png;base64,fresh-diagram'
+			);
+			expect(readFile).toHaveBeenCalledTimes(1);
+		});
+
+		it('shows an error when local markdown image data is invalid', async () => {
+			window.maestro.fs.readFile = vi.fn().mockResolvedValue('not-an-image-data-url');
+
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{
+						name: 'readme.md',
+						content: '![Broken diagram](broken.png)',
+						path: '/project/docs/readme.md',
+					}}
+				/>
+			);
+
+			expect(await screen.findByText('Invalid image data')).toBeInTheDocument();
+		});
+
+		it('shows an unknown error message when local markdown image loading rejects without a message', async () => {
+			window.maestro.fs.readFile = vi.fn().mockRejectedValue({});
+
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{
+						name: 'readme.md',
+						content: '![Rejected diagram](rejected.png)',
+						path: '/project/docs/readme.md',
+					}}
+				/>
+			);
+
+			expect(await screen.findByText('Failed to load image: Unknown error')).toBeInTheDocument();
 		});
 	});
 
@@ -946,17 +2681,92 @@ describe('FilePreview', () => {
 			expect(onClose).toHaveBeenCalledOnce();
 		});
 
+		it('click outside closes TOC before search and keeps the preview open', () => {
+			const onClose = vi.fn();
+			render(
+				<FilePreview
+					{...defaultProps}
+					onClose={onClose}
+					file={{ name: 'doc.md', content: '# Heading\nalpha alpha', path: '/test/doc.md' }}
+					initialSearchQuery="alpha"
+				/>
+			);
+
+			fireEvent.click(screen.getByTitle('Table of Contents'));
+			expect(screen.getByText('Contents')).toBeInTheDocument();
+			expect(screen.getByPlaceholderText(/Search in file/)).toBeInTheDocument();
+
+			act(() => {
+				mockClickOutsideCallback.current?.();
+			});
+			expect(screen.queryByText('Contents')).not.toBeInTheDocument();
+			expect(screen.getByPlaceholderText(/Search in file/)).toBeInTheDocument();
+			expect(onClose).not.toHaveBeenCalled();
+
+			act(() => {
+				mockClickOutsideCallback.current?.();
+			});
+			expect(screen.queryByPlaceholderText(/Search in file/)).not.toBeInTheDocument();
+			expect(onClose).not.toHaveBeenCalled();
+		});
+
+		it('asks for confirmation before closing dirty overlay edit content', () => {
+			const onClose = vi.fn();
+			render(
+				<FilePreview
+					{...defaultProps}
+					onClose={onClose}
+					file={{ name: 'test.md', content: 'original', path: '/test/test.md' }}
+					markdownEditMode={true}
+					externalEditContent="changed"
+					isTabMode={false}
+				/>
+			);
+
+			act(() => {
+				mockClickOutsideCallback.current?.();
+			});
+			expect(screen.getByText('Unsaved Changes')).toBeInTheDocument();
+
+			fireEvent.click(screen.getByLabelText('Close modal'));
+			expect(screen.queryByText('Unsaved Changes')).not.toBeInTheDocument();
+			expect(onClose).not.toHaveBeenCalled();
+
+			act(() => {
+				mockClickOutsideCallback.current?.();
+			});
+			expect(screen.getByText('Unsaved Changes')).toBeInTheDocument();
+
+			fireEvent.click(screen.getByText('No, Stay'));
+			expect(screen.queryByText('Unsaved Changes')).not.toBeInTheDocument();
+			expect(onClose).not.toHaveBeenCalled();
+
+			act(() => {
+				mockClickOutsideCallback.current?.();
+			});
+			fireEvent.click(screen.getByText('Yes, Discard'));
+
+			expect(onClose).toHaveBeenCalledOnce();
+		});
+
 		it('does not close tab on Escape key when isTabMode is true', () => {
 			// In tab mode, Escape should only close internal UI (search, TOC)
 			// not the tab itself - tabs close via Cmd+W or close button
 			const onClose = vi.fn();
-			render(<FilePreview {...defaultProps} onClose={onClose} isTabMode={true} />);
+			const { container } = render(
+				<FilePreview {...defaultProps} onClose={onClose} isTabMode={true} />
+			);
 
 			// The callback should be registered but disabled in tab mode
 			expect(mockClickOutsideEnabled.current).toBe(false);
 
-			// Even if callback is invoked, it should NOT close in tab mode
-			// This matches the updated handleEscapeRequest behavior
+			fireEvent.keyDown(container.firstChild as HTMLElement, { key: 'Escape' });
+			expect(onClose).not.toHaveBeenCalled();
+
+			act(() => {
+				mockClickOutsideCallback.current?.();
+			});
+			expect(onClose).not.toHaveBeenCalled();
 		});
 
 		it('disables click-outside-to-close when isTabMode is true', () => {
@@ -1160,6 +2970,22 @@ print("world")
 			expect(screen.getByText('Heading 3')).toBeInTheDocument();
 		});
 
+		it('renders deeper heading levels with compact TOC styling', () => {
+			const markdownWithDeepHeading = '# Top\n#### Deep Heading';
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'doc.md', content: markdownWithDeepHeading, path: '/test/doc.md' }}
+					markdownEditMode={false}
+				/>
+			);
+
+			fireEvent.click(screen.getByTitle('Table of Contents'));
+
+			const deepHeadingButton = screen.getByTitle('Deep Heading');
+			expect(deepHeadingButton).toHaveStyle({ opacity: '0.85', fontSize: '0.75rem' });
+		});
+
 		it('keeps TOC overlay open when clicking a heading entry', () => {
 			const markdownWithHeadings = '# Heading 1\n## Heading 2';
 			render(
@@ -1180,6 +3006,63 @@ print("world")
 
 			// TOC overlay should stay open so user can click multiple items
 			expect(screen.getByText('Contents')).toBeInTheDocument();
+		});
+
+		it('scrolls to heading entries and stops wheel propagation inside the TOC', () => {
+			const originalScrollIntoView = HTMLElement.prototype.scrollIntoView;
+			const scrollIntoView = vi.fn();
+			Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+				value: scrollIntoView,
+				configurable: true,
+			});
+
+			try {
+				const { container } = render(
+					<FilePreview
+						{...defaultProps}
+						file={{ name: 'doc.md', content: '# Heading 1\n## Heading 2', path: '/test/doc.md' }}
+						markdownEditMode={false}
+					/>
+				);
+
+				fireEvent.click(screen.getByTitle('Table of Contents'));
+				const markdownContainer = container.querySelector('.file-preview-content')!;
+				const targetHeading = document.createElement('h1');
+				targetHeading.id = 'heading-1';
+				markdownContainer.appendChild(targetHeading);
+
+				fireEvent.click(screen.getByTitle('Heading 1'));
+				expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'start' });
+
+				const overlay = screen.getByText('Contents').parentElement?.parentElement as HTMLElement;
+				const overlayWheel = new WheelEvent('wheel', { bubbles: true });
+				const stopOverlayWheel = vi.fn();
+				Object.defineProperty(overlayWheel, 'stopPropagation', {
+					value: stopOverlayWheel,
+					configurable: true,
+				});
+				overlay.dispatchEvent(overlayWheel);
+				expect(stopOverlayWheel).toHaveBeenCalledOnce();
+
+				const entriesScroller = screen.getByTitle('Heading 1').parentElement!;
+				const listWheel = new WheelEvent('wheel', { bubbles: true });
+				const stopListWheel = vi.fn();
+				Object.defineProperty(listWheel, 'stopPropagation', {
+					value: stopListWheel,
+					configurable: true,
+				});
+				entriesScroller.dispatchEvent(listWheel);
+				expect(stopListWheel).toHaveBeenCalledOnce();
+			} finally {
+				if (originalScrollIntoView === undefined) {
+					delete (HTMLElement.prototype as any).scrollIntoView;
+				} else {
+					Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+						value: originalScrollIntoView,
+						configurable: true,
+					});
+				}
+			}
 		});
 
 		it('displays Top and Bottom navigation buttons as sticky sash elements', () => {
@@ -1388,6 +3271,436 @@ print("world")
 			expect(searchInput).toHaveValue('foo');
 		});
 
+		it('uses CSS Custom Highlight API for markdown search matches and cleans up on unmount', async () => {
+			const originalHighlights = (CSS as any).highlights;
+			const originalHighlight = (window as any).Highlight;
+			const originalRangeRect = (Range.prototype as any).getBoundingClientRect;
+			const originalScrollTo = HTMLElement.prototype.scrollTo;
+			const highlights = {
+				set: vi.fn(),
+				delete: vi.fn(),
+			};
+
+			(CSS as any).highlights = highlights;
+			(window as any).Highlight = vi.fn(function MockHighlight(...ranges: Range[]) {
+				this.ranges = ranges;
+			});
+			Object.defineProperty(Range.prototype, 'getBoundingClientRect', {
+				value: vi.fn(() => ({
+					top: 24,
+					bottom: 34,
+					left: 0,
+					right: 10,
+					width: 10,
+					height: 10,
+					x: 0,
+					y: 24,
+					toJSON: () => ({}),
+				})),
+				configurable: true,
+			});
+			Object.defineProperty(HTMLElement.prototype, 'scrollTo', {
+				value: vi.fn(),
+				configurable: true,
+			});
+
+			try {
+				const { unmount } = render(
+					<FilePreview
+						{...defaultProps}
+						file={{ name: 'notes.md', content: 'alpha beta alpha', path: '/test/notes.md' }}
+						initialSearchQuery="alpha"
+					/>
+				);
+
+				expect(await screen.findByText('1/2')).toBeInTheDocument();
+				expect(highlights.set).toHaveBeenCalledWith('search-results', expect.any(Object));
+				expect(highlights.set).toHaveBeenCalledWith('search-current', expect.any(Object));
+
+				fireEvent.click(screen.getByTitle('Next match (Enter)'));
+				expect(await screen.findByText('2/2')).toBeInTheDocument();
+
+				unmount();
+				expect(highlights.delete).toHaveBeenCalledWith('search-results');
+				expect(highlights.delete).toHaveBeenCalledWith('search-current');
+			} finally {
+				if (originalHighlights === undefined) {
+					delete (CSS as any).highlights;
+				} else {
+					(CSS as any).highlights = originalHighlights;
+				}
+				if (originalHighlight === undefined) {
+					delete (window as any).Highlight;
+				} else {
+					(window as any).Highlight = originalHighlight;
+				}
+				if (originalRangeRect === undefined) {
+					delete (Range.prototype as any).getBoundingClientRect;
+				} else {
+					Object.defineProperty(Range.prototype, 'getBoundingClientRect', {
+						value: originalRangeRect,
+						configurable: true,
+					});
+				}
+				if (originalScrollTo === undefined) {
+					delete (HTMLElement.prototype as any).scrollTo;
+				} else {
+					Object.defineProperty(HTMLElement.prototype, 'scrollTo', {
+						value: originalScrollTo,
+						configurable: true,
+					});
+				}
+			}
+		});
+
+		it('clears CSS markdown search highlights when there are no matches', async () => {
+			const originalHighlights = (CSS as any).highlights;
+			const highlights = {
+				set: vi.fn(),
+				delete: vi.fn(),
+			};
+			(CSS as any).highlights = highlights;
+
+			try {
+				const { unmount } = render(
+					<FilePreview
+						{...defaultProps}
+						file={{ name: 'notes.md', content: 'alpha beta', path: '/test/notes.md' }}
+						initialSearchQuery="missing"
+					/>
+				);
+
+				expect(await screen.findByText('No matches')).toBeInTheDocument();
+				expect(highlights.delete).toHaveBeenCalledWith('search-results');
+				expect(highlights.delete).toHaveBeenCalledWith('search-current');
+				unmount();
+			} finally {
+				if (originalHighlights === undefined) {
+					delete (CSS as any).highlights;
+				} else {
+					(CSS as any).highlights = originalHighlights;
+				}
+			}
+		});
+
+		it('clears CSS markdown highlights when the search query is emptied', async () => {
+			const originalHighlights = (CSS as any).highlights;
+			const originalHighlight = (window as any).Highlight;
+			const originalRangeRect = (Range.prototype as any).getBoundingClientRect;
+			const originalScrollTo = HTMLElement.prototype.scrollTo;
+			const highlights = {
+				set: vi.fn(),
+				delete: vi.fn(),
+			};
+			(CSS as any).highlights = highlights;
+			(window as any).Highlight = vi.fn(function MockHighlight(...ranges: Range[]) {
+				this.ranges = ranges;
+			});
+			Object.defineProperty(Range.prototype, 'getBoundingClientRect', {
+				value: vi.fn(() => ({
+					top: 24,
+					bottom: 34,
+					left: 0,
+					right: 10,
+					width: 10,
+					height: 10,
+					x: 0,
+					y: 24,
+					toJSON: () => ({}),
+				})),
+				configurable: true,
+			});
+			Object.defineProperty(HTMLElement.prototype, 'scrollTo', {
+				value: vi.fn(),
+				configurable: true,
+			});
+
+			try {
+				const { unmount } = render(
+					<FilePreview
+						{...defaultProps}
+						file={{ name: 'notes.md', content: 'alpha beta alpha', path: '/test/notes.md' }}
+						initialSearchQuery="alpha"
+					/>
+				);
+
+				expect(await screen.findByText('1/2')).toBeInTheDocument();
+				fireEvent.change(screen.getByPlaceholderText(/Search in file/), { target: { value: '' } });
+
+				await waitFor(() => {
+					expect(highlights.delete).toHaveBeenCalledWith('search-results');
+					expect(highlights.delete).toHaveBeenCalledWith('search-current');
+				});
+				unmount();
+			} finally {
+				if (originalHighlights === undefined) {
+					delete (CSS as any).highlights;
+				} else {
+					(CSS as any).highlights = originalHighlights;
+				}
+				if (originalHighlight === undefined) {
+					delete (window as any).Highlight;
+				} else {
+					(window as any).Highlight = originalHighlight;
+				}
+				if (originalRangeRect === undefined) {
+					delete (Range.prototype as any).getBoundingClientRect;
+				} else {
+					Object.defineProperty(Range.prototype, 'getBoundingClientRect', {
+						value: originalRangeRect,
+						configurable: true,
+					});
+				}
+				if (originalScrollTo === undefined) {
+					delete (HTMLElement.prototype as any).scrollTo;
+				} else {
+					Object.defineProperty(HTMLElement.prototype, 'scrollTo', {
+						value: originalScrollTo,
+						configurable: true,
+					});
+				}
+			}
+		});
+
+		it('falls back to text walking for markdown search when CSS highlights are unavailable', async () => {
+			const originalHighlights = (CSS as any).highlights;
+			const originalScrollIntoView = HTMLElement.prototype.scrollIntoView;
+			const scrollIntoView = vi.fn();
+
+			delete (CSS as any).highlights;
+			Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+				value: scrollIntoView,
+				configurable: true,
+			});
+
+			try {
+				render(
+					<FilePreview
+						{...defaultProps}
+						file={{ name: 'notes.md', content: 'alpha beta alpha', path: '/test/notes.md' }}
+						initialSearchQuery="alpha"
+					/>
+				);
+
+				expect(await screen.findByText('1/2')).toBeInTheDocument();
+				expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'center' });
+
+				fireEvent.click(screen.getByTitle('Next match (Enter)'));
+
+				expect(await screen.findByText('2/2')).toBeInTheDocument();
+			} finally {
+				if (originalHighlights !== undefined) {
+					(CSS as any).highlights = originalHighlights;
+				}
+				if (originalScrollIntoView === undefined) {
+					delete (HTMLElement.prototype as any).scrollIntoView;
+				} else {
+					Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+						value: originalScrollIntoView,
+						configurable: true,
+					});
+				}
+			}
+		});
+
+		it('reports no markdown matches in the text-walking fallback', async () => {
+			const originalHighlights = (CSS as any).highlights;
+			delete (CSS as any).highlights;
+
+			try {
+				render(
+					<FilePreview
+						{...defaultProps}
+						file={{ name: 'notes.md', content: 'alpha beta', path: '/test/notes.md' }}
+						initialSearchQuery="missing"
+					/>
+				);
+
+				expect(await screen.findByText('No matches')).toBeInTheDocument();
+			} finally {
+				if (originalHighlights !== undefined) {
+					(CSS as any).highlights = originalHighlights;
+				}
+			}
+		});
+
+		it('navigates highlighted code search matches with next and previous controls', async () => {
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{
+						name: 'test.ts',
+						content: 'const foo = "foo";\nfoo();',
+						path: '/test/test.ts',
+					}}
+					initialSearchQuery="foo"
+				/>
+			);
+
+			expect(await screen.findByText('1/3')).toBeInTheDocument();
+			expect(document.querySelectorAll('mark.search-match')).toHaveLength(3);
+
+			fireEvent.click(screen.getByTitle('Next match (Enter)'));
+			expect(await screen.findByText('2/3')).toBeInTheDocument();
+
+			fireEvent.click(screen.getByTitle('Previous match (Shift+Enter)'));
+			expect(await screen.findByText('1/3')).toBeInTheDocument();
+		});
+
+		it('highlights a code search match that spans the entire text node', async () => {
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'test.ts', content: 'foo', path: '/test/test.ts' }}
+					initialSearchQuery="foo"
+				/>
+			);
+
+			expect(await screen.findByText('1/1')).toBeInTheDocument();
+			expect(document.querySelectorAll('mark.search-match')).toHaveLength(1);
+		});
+
+		it('counts no matches for edit-mode search queries', async () => {
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'notes.txt', content: 'alpha beta gamma', path: '/test/notes.txt' }}
+					markdownEditMode={true}
+					initialSearchQuery="missing"
+				/>
+			);
+
+			expect(await screen.findByText('No matches')).toBeInTheDocument();
+			expect(screen.getByDisplayValue('alpha beta gamma')).toBeInTheDocument();
+		});
+
+		it('selects the active match when navigating edit-mode search results', async () => {
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'notes.txt', content: 'alpha beta alpha', path: '/test/notes.txt' }}
+					markdownEditMode={true}
+					initialSearchQuery="alpha"
+				/>
+			);
+
+			const textarea = screen.getByDisplayValue('alpha beta alpha') as HTMLTextAreaElement;
+			expect(await screen.findByText('1/2')).toBeInTheDocument();
+
+			fireEvent.click(screen.getByTitle('Next match (Enter)'));
+
+			expect(await screen.findByText('2/2')).toBeInTheDocument();
+			await waitFor(() => {
+				expect(textarea.selectionStart).toBe(11);
+				expect(textarea.selectionEnd).toBe(16);
+			});
+
+			fireEvent.click(screen.getByTitle('Previous match (Shift+Enter)'));
+
+			expect(await screen.findByText('1/2')).toBeInTheDocument();
+		});
+
+		it('uses a fallback line height when navigating edit-mode search matches', async () => {
+			const getComputedStyleSpy = vi
+				.spyOn(window, 'getComputedStyle')
+				.mockReturnValue({ lineHeight: 'normal' } as CSSStyleDeclaration);
+
+			try {
+				const { container } = render(
+					<FilePreview
+						{...defaultProps}
+						file={{ name: 'notes.txt', content: 'alpha\nbeta\nalpha', path: '/test/notes.txt' }}
+						markdownEditMode={true}
+						initialSearchQuery="alpha"
+					/>
+				);
+
+				const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
+				expect(await screen.findByText('1/2')).toBeInTheDocument();
+
+				fireEvent.click(screen.getByTitle('Next match (Enter)'));
+
+				expect(await screen.findByText('2/2')).toBeInTheDocument();
+				await waitFor(() => {
+					expect(textarea.selectionStart).toBe(11);
+				});
+			} finally {
+				getComputedStyleSpy.mockRestore();
+			}
+		});
+
+		it('clamps edit-mode search index when edited content loses matches', async () => {
+			const file = { name: 'notes.txt', content: 'alpha beta alpha', path: '/test/notes.txt' };
+			const { rerender } = render(
+				<FilePreview
+					{...defaultProps}
+					file={file}
+					markdownEditMode={true}
+					externalEditContent="alpha beta alpha"
+					initialSearchQuery="alpha"
+				/>
+			);
+
+			expect(await screen.findByText('1/2')).toBeInTheDocument();
+			fireEvent.click(screen.getByTitle('Next match (Enter)'));
+			expect(await screen.findByText('2/2')).toBeInTheDocument();
+
+			rerender(
+				<FilePreview
+					{...defaultProps}
+					file={file}
+					markdownEditMode={true}
+					externalEditContent="alpha only once"
+					initialSearchQuery="alpha"
+				/>
+			);
+
+			expect(await screen.findByText('1/1')).toBeInTheDocument();
+		});
+
+		it('handles search input Enter, Shift+Enter, and Escape keys', async () => {
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'test.ts', content: 'const foo = "foo";\nfoo();', path: '/test/test.ts' }}
+					initialSearchQuery="foo"
+				/>
+			);
+
+			const searchInput = screen.getByPlaceholderText(/Search in file/);
+			expect(await screen.findByText('1/3')).toBeInTheDocument();
+
+			fireEvent.keyDown(searchInput, { key: 'Enter' });
+			expect(await screen.findByText('2/3')).toBeInTheDocument();
+
+			fireEvent.keyDown(searchInput, { key: 'Enter', shiftKey: true });
+			expect(await screen.findByText('1/3')).toBeInTheDocument();
+
+			fireEvent.keyDown(searchInput, { key: 'Tab' });
+			expect(await screen.findByText('1/3')).toBeInTheDocument();
+
+			fireEvent.keyDown(searchInput, { key: 'Escape' });
+			expect(screen.queryByPlaceholderText(/Search in file/)).not.toBeInTheDocument();
+		});
+
+		it('keeps no-match search navigation as a no-op', async () => {
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'test.ts', content: 'const foo = "bar";', path: '/test/test.ts' }}
+					initialSearchQuery="missing"
+				/>
+			);
+
+			const searchInput = screen.getByPlaceholderText(/Search in file/);
+			expect(await screen.findByText('No matches')).toBeInTheDocument();
+
+			fireEvent.keyDown(searchInput, { key: 'Enter' });
+			fireEvent.keyDown(searchInput, { key: 'Enter', shiftKey: true });
+
+			expect(screen.getByText('No matches')).toBeInTheDocument();
+		});
+
 		it('does not auto-open search when initialSearchQuery is empty', () => {
 			render(
 				<FilePreview
@@ -1415,6 +3728,183 @@ print("world")
 			fireEvent.keyDown(mainContainer, { key: 'f', metaKey: true });
 			const searchInput = screen.getByPlaceholderText(/Search in file/);
 			expect(() => fireEvent.change(searchInput, { target: { value: 'test' } })).not.toThrow();
+		});
+	});
+
+	describe('navigation history controls', () => {
+		it('opens back and forward history popups and navigates to selected entries', async () => {
+			const onNavigateBack = vi.fn();
+			const onNavigateForward = vi.fn();
+			const onNavigateToIndex = vi.fn();
+
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'current.md', content: '# Current', path: '/test/current.md' }}
+					canGoBack={true}
+					canGoForward={true}
+					onNavigateBack={onNavigateBack}
+					onNavigateForward={onNavigateForward}
+					onNavigateToIndex={onNavigateToIndex}
+					currentHistoryIndex={1}
+					backHistory={[
+						{ name: 'Earlier.md', path: '/test/earlier.md' },
+						{ name: 'Previous.md', path: '/test/previous.md' },
+					]}
+					forwardHistory={[
+						{ name: 'Next.md', path: '/test/next.md' },
+						{ name: 'Later.md', path: '/test/later.md' },
+					]}
+				/>
+			);
+
+			const backButton = screen.getByTitle('Go back (Ctrl+ARROWLEFT)');
+			const forwardButton = screen.getByTitle('Go forward (Ctrl+ARROWRIGHT)');
+
+			fireEvent.click(backButton);
+			fireEvent.click(forwardButton);
+			expect(onNavigateBack).toHaveBeenCalledOnce();
+			expect(onNavigateForward).toHaveBeenCalledOnce();
+
+			fireEvent.mouseEnter(backButton.parentElement!);
+			fireEvent.click(await screen.findByText('Previous.md'));
+			expect(onNavigateToIndex).toHaveBeenCalledWith(1);
+
+			fireEvent.mouseEnter(forwardButton.parentElement!);
+			fireEvent.click(await screen.findByText('Later.md'));
+			expect(onNavigateToIndex).toHaveBeenCalledWith(3);
+		});
+
+		it('closes navigation popups after their hover leave delay', () => {
+			vi.useFakeTimers();
+
+			try {
+				render(
+					<FilePreview
+						{...defaultProps}
+						file={{ name: 'current.md', content: '# Current', path: '/test/current.md' }}
+						canGoBack={true}
+						canGoForward={true}
+						onNavigateBack={vi.fn()}
+						onNavigateForward={vi.fn()}
+						backHistory={[{ name: 'Previous.md', path: '/test/previous.md' }]}
+						forwardHistory={[{ name: 'Next.md', path: '/test/next.md' }]}
+					/>
+				);
+
+				const backWrapper = screen.getByTitle('Go back (Ctrl+ARROWLEFT)').parentElement!;
+				fireEvent.mouseEnter(backWrapper);
+				expect(screen.getByText('Previous.md')).toBeInTheDocument();
+				fireEvent.mouseLeave(backWrapper);
+				act(() => {
+					vi.advanceTimersByTime(150);
+				});
+				expect(screen.queryByText('Previous.md')).not.toBeInTheDocument();
+
+				const forwardWrapper = screen.getByTitle('Go forward (Ctrl+ARROWRIGHT)').parentElement!;
+				fireEvent.mouseEnter(forwardWrapper);
+				expect(screen.getByText('Next.md')).toBeInTheDocument();
+				fireEvent.mouseLeave(forwardWrapper);
+				act(() => {
+					vi.advanceTimersByTime(150);
+				});
+				expect(screen.queryByText('Next.md')).not.toBeInTheDocument();
+			} finally {
+				vi.runOnlyPendingTimers();
+				vi.useRealTimers();
+			}
+		});
+
+		it('clears pending navigation popup close timers when hovering back in', () => {
+			vi.useFakeTimers();
+			const clearTimeoutSpy = vi.spyOn(globalThis, 'clearTimeout');
+
+			try {
+				render(
+					<FilePreview
+						{...defaultProps}
+						file={{ name: 'current.md', content: '# Current', path: '/test/current.md' }}
+						canGoBack={true}
+						onNavigateBack={vi.fn()}
+						backHistory={[{ name: 'Previous.md', path: '/test/previous.md' }]}
+					/>
+				);
+
+				const backButton = screen.getByTitle('Go back (Ctrl+ARROWLEFT)');
+				const wrapper = backButton.parentElement!;
+
+				fireEvent.mouseEnter(wrapper);
+				expect(screen.getByText('Previous.md')).toBeInTheDocument();
+
+				fireEvent.mouseLeave(wrapper);
+				fireEvent.mouseEnter(wrapper);
+
+				expect(clearTimeoutSpy).toHaveBeenCalled();
+			} finally {
+				vi.runOnlyPendingTimers();
+				clearTimeoutSpy.mockRestore();
+				vi.useRealTimers();
+			}
+		});
+
+		it('clears pending forward popup close timers when hovering back in', () => {
+			vi.useFakeTimers();
+			const clearTimeoutSpy = vi.spyOn(globalThis, 'clearTimeout');
+
+			try {
+				render(
+					<FilePreview
+						{...defaultProps}
+						file={{ name: 'current.md', content: '# Current', path: '/test/current.md' }}
+						canGoForward={true}
+						onNavigateForward={vi.fn()}
+						forwardHistory={[{ name: 'Next.md', path: '/test/next.md' }]}
+					/>
+				);
+
+				const forwardButton = screen.getByTitle('Go forward (Ctrl+ARROWRIGHT)');
+				const wrapper = forwardButton.parentElement!;
+
+				fireEvent.mouseEnter(wrapper);
+				expect(screen.getByText('Next.md')).toBeInTheDocument();
+
+				fireEvent.mouseLeave(wrapper);
+				fireEvent.mouseEnter(wrapper);
+
+				expect(clearTimeoutSpy).toHaveBeenCalled();
+			} finally {
+				vi.runOnlyPendingTimers();
+				clearTimeoutSpy.mockRestore();
+				vi.useRealTimers();
+			}
+		});
+
+		it('does not open disabled navigation history popups on hover', () => {
+			const { rerender } = render(
+				<FilePreview
+					{...defaultProps}
+					canGoBack={false}
+					canGoForward={true}
+					backHistory={[{ name: 'Back item', path: '/test/back.md' }]}
+					forwardHistory={[{ name: 'Forward item', path: '/test/forward.md' }]}
+				/>
+			);
+
+			fireEvent.mouseEnter(screen.getByTitle('Go back (Ctrl+ARROWLEFT)').parentElement!);
+			expect(screen.queryByText('Back item')).not.toBeInTheDocument();
+
+			rerender(
+				<FilePreview
+					{...defaultProps}
+					canGoBack={true}
+					canGoForward={false}
+					backHistory={[{ name: 'Back item', path: '/test/back.md' }]}
+					forwardHistory={[{ name: 'Forward item', path: '/test/forward.md' }]}
+				/>
+			);
+
+			fireEvent.mouseEnter(screen.getByTitle('Go forward (Ctrl+ARROWRIGHT)').parentElement!);
+			expect(screen.queryByText('Forward item')).not.toBeInTheDocument();
 		});
 	});
 
@@ -1449,6 +3939,37 @@ print("world")
 			vi.useRealTimers();
 		});
 
+		it('replaces pending scroll save timers when scroll events repeat quickly', () => {
+			const onScrollPositionChange = vi.fn();
+			vi.useFakeTimers();
+			const clearTimeoutSpy = vi.spyOn(globalThis, 'clearTimeout');
+			let unmount: (() => void) | undefined;
+
+			try {
+				({ unmount } = render(
+					<FilePreview
+						{...defaultProps}
+						file={{ name: 'test.md', content: 'Some content', path: '/test/test.md' }}
+						onScrollPositionChange={onScrollPositionChange}
+					/>
+				));
+
+				const container = document.querySelector('.overflow-y-auto')!;
+				fireEvent.scroll(container, { target: { scrollTop: 100 } });
+				fireEvent.scroll(container, { target: { scrollTop: 200 } });
+
+				expect(clearTimeoutSpy).toHaveBeenCalled();
+				act(() => {
+					vi.advanceTimersByTime(200);
+				});
+				expect(onScrollPositionChange).toHaveBeenCalledWith(200);
+			} finally {
+				unmount?.();
+				clearTimeoutSpy.mockRestore();
+				vi.useRealTimers();
+			}
+		});
+
 		it('accepts initialScrollTop prop without errors', () => {
 			// This just verifies the prop is accepted without errors
 			// The actual scroll restoration uses requestAnimationFrame which is hard to test
@@ -1461,6 +3982,172 @@ print("world")
 					/>
 				)
 			).not.toThrow();
+		});
+
+		it('does not restore scroll again for the same file after the first restore', () => {
+			const originalGlobalRaf = Object.getOwnPropertyDescriptor(
+				globalThis,
+				'requestAnimationFrame'
+			);
+			const originalWindowRaf = Object.getOwnPropertyDescriptor(window, 'requestAnimationFrame');
+			const requestAnimationFrameMock = vi.fn((callback: FrameRequestCallback) => {
+				callback(0);
+				return 1;
+			});
+			Object.defineProperty(globalThis, 'requestAnimationFrame', {
+				value: requestAnimationFrameMock,
+				configurable: true,
+				writable: true,
+			});
+			Object.defineProperty(window, 'requestAnimationFrame', {
+				value: requestAnimationFrameMock,
+				configurable: true,
+				writable: true,
+			});
+
+			try {
+				const file = { name: 'test.md', content: 'Some content', path: '/test/test.md' };
+				const { rerender } = render(
+					<FilePreview {...defaultProps} file={file} initialScrollTop={150} />
+				);
+				expect(requestAnimationFrameMock).toHaveBeenCalledTimes(1);
+
+				rerender(<FilePreview {...defaultProps} file={file} />);
+
+				expect(requestAnimationFrameMock).toHaveBeenCalledTimes(1);
+			} finally {
+				if (originalGlobalRaf === undefined) {
+					delete (globalThis as any).requestAnimationFrame;
+				} else {
+					Object.defineProperty(globalThis, 'requestAnimationFrame', originalGlobalRaf);
+				}
+				if (originalWindowRaf === undefined) {
+					delete (window as any).requestAnimationFrame;
+				} else {
+					Object.defineProperty(window, 'requestAnimationFrame', originalWindowRaf);
+				}
+			}
+		});
+
+		it('syncs preview scroll percentage into the textarea when entering edit mode', () => {
+			const originalGlobalRaf = Object.getOwnPropertyDescriptor(
+				globalThis,
+				'requestAnimationFrame'
+			);
+			const originalWindowRaf = Object.getOwnPropertyDescriptor(window, 'requestAnimationFrame');
+			const rafCallbacks: FrameRequestCallback[] = [];
+			const requestAnimationFrameMock = vi.fn((callback: FrameRequestCallback) => {
+				rafCallbacks.push(callback);
+				return rafCallbacks.length;
+			});
+			Object.defineProperty(globalThis, 'requestAnimationFrame', {
+				value: requestAnimationFrameMock,
+				configurable: true,
+				writable: true,
+			});
+			Object.defineProperty(window, 'requestAnimationFrame', {
+				value: requestAnimationFrameMock,
+				configurable: true,
+				writable: true,
+			});
+
+			try {
+				const file = { name: 'notes.txt', content: 'line\n'.repeat(50), path: '/test/notes.txt' };
+				const { container, rerender } = render(
+					<FilePreview {...defaultProps} file={file} markdownEditMode={false} />
+				);
+				const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
+				Object.defineProperty(scrollContainer, 'scrollHeight', { value: 1000, configurable: true });
+				Object.defineProperty(scrollContainer, 'clientHeight', { value: 200, configurable: true });
+				scrollContainer.scrollTop = 400;
+
+				rerender(<FilePreview {...defaultProps} file={file} markdownEditMode={true} />);
+				const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+				Object.defineProperty(textarea, 'scrollHeight', { value: 500, configurable: true });
+				Object.defineProperty(textarea, 'clientHeight', { value: 100, configurable: true });
+
+				act(() => {
+					rafCallbacks.forEach((callback) => callback(0));
+				});
+
+				expect(textarea.scrollTop).toBe(200);
+			} finally {
+				if (originalGlobalRaf === undefined) {
+					delete (globalThis as any).requestAnimationFrame;
+				} else {
+					Object.defineProperty(globalThis, 'requestAnimationFrame', originalGlobalRaf);
+				}
+				if (originalWindowRaf === undefined) {
+					delete (window as any).requestAnimationFrame;
+				} else {
+					Object.defineProperty(window, 'requestAnimationFrame', originalWindowRaf);
+				}
+			}
+		});
+
+		it('syncs textarea scroll percentage back into preview when leaving edit mode', () => {
+			const originalGlobalRaf = Object.getOwnPropertyDescriptor(
+				globalThis,
+				'requestAnimationFrame'
+			);
+			const originalWindowRaf = Object.getOwnPropertyDescriptor(window, 'requestAnimationFrame');
+			const requestAnimationFrameMock = vi.fn((callback: FrameRequestCallback) => {
+				callback(0);
+				return 1;
+			});
+			Object.defineProperty(globalThis, 'requestAnimationFrame', {
+				value: requestAnimationFrameMock,
+				configurable: true,
+				writable: true,
+			});
+			Object.defineProperty(window, 'requestAnimationFrame', {
+				value: requestAnimationFrameMock,
+				configurable: true,
+				writable: true,
+			});
+
+			try {
+				const file = { name: 'notes.txt', content: 'line\n'.repeat(50), path: '/test/notes.txt' };
+				const { container, rerender } = render(
+					<FilePreview {...defaultProps} file={file} markdownEditMode={true} />
+				);
+				const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+				Object.defineProperty(textarea, 'scrollHeight', { value: 1000, configurable: true });
+				Object.defineProperty(textarea, 'clientHeight', { value: 200, configurable: true });
+				textarea.scrollTop = 400;
+
+				const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
+				Object.defineProperty(scrollContainer, 'scrollHeight', { value: 1200, configurable: true });
+				Object.defineProperty(scrollContainer, 'clientHeight', { value: 200, configurable: true });
+
+				rerender(<FilePreview {...defaultProps} file={file} markdownEditMode={false} />);
+
+				expect(requestAnimationFrameMock).toHaveBeenCalled();
+				expect(scrollContainer.scrollTop).toBe(500);
+			} finally {
+				if (originalGlobalRaf === undefined) {
+					delete (globalThis as any).requestAnimationFrame;
+				} else {
+					Object.defineProperty(globalThis, 'requestAnimationFrame', originalGlobalRaf);
+				}
+				if (originalWindowRaf === undefined) {
+					delete (window as any).requestAnimationFrame;
+				} else {
+					Object.defineProperty(window, 'requestAnimationFrame', originalWindowRaf);
+				}
+			}
+		});
+
+		it('does not require a previous textarea when leaving edit mode after a null file', () => {
+			const file = { name: 'notes.txt', content: 'line\n'.repeat(5), path: '/test/notes.txt' };
+			const { rerender } = render(
+				<FilePreview {...defaultProps} file={null} markdownEditMode={true} />
+			);
+
+			expect(() =>
+				rerender(<FilePreview {...defaultProps} file={file} markdownEditMode={false} />)
+			).not.toThrow();
+			expect(screen.getByText('notes.txt')).toBeInTheDocument();
 		});
 
 		it('does not call onScrollPositionChange when not provided', () => {
@@ -1574,6 +4261,28 @@ print("world")
 			);
 
 			expect(screen.queryByTestId('csv-table-renderer')).not.toBeInTheDocument();
+		});
+
+		it('uses CsvTableRenderer match counts for search status', () => {
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'data.csv', content: 'Name,Age\nAlice,30', path: '/test/data.csv' }}
+					initialSearchQuery="Alice"
+				/>
+			);
+
+			expect(csvRendererMocks.lastOnMatchCount).toEqual(expect.any(Function));
+
+			act(() => {
+				csvRendererMocks.lastOnMatchCount?.(3);
+			});
+			expect(screen.getByText('1/3')).toBeInTheDocument();
+
+			act(() => {
+				csvRendererMocks.lastOnMatchCount?.(0);
+			});
+			expect(screen.getByText('No matches')).toBeInTheDocument();
 		});
 	});
 });

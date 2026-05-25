@@ -139,6 +139,27 @@ describe('Auto Run session and task recording', () => {
 			expect(mockStatement.run).toHaveBeenCalled();
 		});
 
+		it('should insert Auto Run sessions with nullable task counters', async () => {
+			const { StatsDB } = await import('../../../main/stats');
+			const db = new StatsDB();
+			db.initialize();
+
+			db.insertAutoRunSession({
+				sessionId: 'session-1',
+				agentType: 'claude-code',
+				documentPath: '/docs/TASK-1.md',
+				startTime: Date.now(),
+				duration: 0,
+				tasksTotal: null,
+				tasksCompleted: null,
+				projectPath: '/project',
+			});
+
+			const runCall = mockStatement.run.mock.calls[mockStatement.run.mock.calls.length - 1];
+			expect(runCall[6]).toBeNull();
+			expect(runCall[7]).toBeNull();
+		});
+
 		it('should update Auto Run session on completion', async () => {
 			mockStatement.run.mockReturnValue({ changes: 1 });
 
@@ -153,6 +174,22 @@ describe('Auto Run session and task recording', () => {
 
 			expect(updated).toBe(true);
 			expect(mockStatement.run).toHaveBeenCalled();
+		});
+
+		it('should persist nullable Auto Run task counters when clearing progress', async () => {
+			mockStatement.run.mockReturnValue({ changes: 1 });
+
+			const { StatsDB } = await import('../../../main/stats');
+			const db = new StatsDB();
+			db.initialize();
+
+			const updated = db.updateAutoRunSession('session-id', {
+				tasksTotal: null,
+				tasksCompleted: null,
+			});
+
+			expect(updated).toBe(true);
+			expect(mockStatement.run).toHaveBeenCalledWith(null, null, 'session-id');
 		});
 
 		it('should retrieve Auto Run sessions within time range', async () => {
@@ -372,6 +409,46 @@ describe('Auto Run sessions and tasks recorded correctly', () => {
 
 			// Verify UPDATE was called
 			expect(mockStatement.run).toHaveBeenCalled();
+		});
+
+		it('should update Auto Run session task total independently', async () => {
+			const { StatsDB } = await import('../../../main/stats');
+			const db = new StatsDB();
+			db.initialize();
+			mockStatement.run.mockClear();
+
+			const updated = db.updateAutoRunSession('session-id', {
+				tasksTotal: 0,
+			});
+
+			expect(updated).toBe(true);
+			expect(mockStatement.run).toHaveBeenCalledWith(0, 'session-id');
+		});
+
+		it('should update Auto Run session document path independently', async () => {
+			const { StatsDB } = await import('../../../main/stats');
+			const db = new StatsDB();
+			db.initialize();
+			mockStatement.run.mockClear();
+
+			const updated = db.updateAutoRunSession('session-id', {
+				documentPath: 'docs/TASKS.md',
+			});
+
+			expect(updated).toBe(true);
+			expect(mockStatement.run).toHaveBeenCalledWith('docs/TASKS.md', 'session-id');
+		});
+
+		it('should not update Auto Run session when no supported fields are provided', async () => {
+			const { StatsDB } = await import('../../../main/stats');
+			const db = new StatsDB();
+			db.initialize();
+			mockStatement.run.mockClear();
+
+			const updated = db.updateAutoRunSession('session-id', {});
+
+			expect(updated).toBe(false);
+			expect(mockStatement.run).not.toHaveBeenCalled();
 		});
 
 		it('should update Auto Run session with partial completion (some tasks skipped)', async () => {
@@ -677,6 +754,20 @@ describe('Auto Run sessions and tasks recorded correctly', () => {
 
 			// Third task - failed
 			expect(tasks[2].success).toBe(false); // 0 -> false
+		});
+
+		it('should clear cached Auto Run statements when requested', async () => {
+			const { getAutoRunTasks, clearAutoRunCache } = await import('../../../main/stats/auto-run');
+
+			mockDb.prepare.mockClear();
+			getAutoRunTasks(mockDb as never, 'auto-run-1');
+			getAutoRunTasks(mockDb as never, 'auto-run-2');
+			expect(mockDb.prepare).toHaveBeenCalledTimes(1);
+
+			clearAutoRunCache();
+			getAutoRunTasks(mockDb as never, 'auto-run-3');
+
+			expect(mockDb.prepare).toHaveBeenCalledTimes(2);
 		});
 
 		it('should return tasks ordered by task_index ASC', async () => {

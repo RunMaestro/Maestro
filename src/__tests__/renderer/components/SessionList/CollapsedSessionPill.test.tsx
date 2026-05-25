@@ -118,6 +118,75 @@ describe('CollapsedSessionPill', () => {
 		expect(setActiveSessionId).toHaveBeenCalledWith('test-session');
 	});
 
+	it('calls setActiveSessionId when Enter or Space is pressed', () => {
+		const session = makeSession({ id: 'keyboard-session' });
+		const setActiveSessionId = vi.fn();
+		const props = createDefaultProps({ session, setActiveSessionId });
+
+		const { container } = render(<CollapsedSessionPill {...props} />);
+
+		const segment = container.firstElementChild!.firstElementChild!;
+		fireEvent.keyDown(segment, { key: 'Enter' });
+		fireEvent.keyDown(segment, { key: ' ' });
+
+		expect(setActiveSessionId).toHaveBeenNthCalledWith(1, 'keyboard-session');
+		expect(setActiveSessionId).toHaveBeenNthCalledWith(2, 'keyboard-session');
+	});
+
+	it('ignores unrelated keyboard input', () => {
+		const setActiveSessionId = vi.fn();
+		const props = createDefaultProps({ setActiveSessionId });
+
+		const { container } = render(<CollapsedSessionPill {...props} />);
+
+		fireEvent.keyDown(container.firstElementChild!.firstElementChild!, { key: 'Escape' });
+
+		expect(setActiveSessionId).not.toHaveBeenCalled();
+	});
+
+	it('positions tooltip on focus and clears it on blur', () => {
+		const props = createDefaultProps();
+		const { container } = render(<CollapsedSessionPill {...props} />);
+
+		const segment = container.firstElementChild!.firstElementChild! as HTMLElement;
+		vi.spyOn(segment, 'getBoundingClientRect').mockReturnValue({
+			x: 42,
+			y: 64,
+			width: 10,
+			height: 10,
+			top: 64,
+			right: 52,
+			bottom: 74,
+			left: 42,
+			toJSON: () => ({}),
+		} as DOMRect);
+
+		fireEvent.focus(segment);
+
+		const tooltip = segment.querySelector('.fixed') as HTMLElement;
+		expect(tooltip.style.top).toBe('64px');
+
+		fireEvent.blur(segment);
+
+		expect(tooltip.style.top).toBe('');
+	});
+
+	it('positions tooltip on hover and clears it on mouse leave', () => {
+		const props = createDefaultProps();
+		const { container } = render(<CollapsedSessionPill {...props} />);
+
+		const segment = container.firstElementChild!.firstElementChild! as HTMLElement;
+		const tooltip = segment.querySelector('.fixed') as HTMLElement;
+
+		fireEvent.mouseEnter(segment, { clientX: 90, clientY: 123 });
+
+		expect(tooltip.style.top).toBe('123px');
+
+		fireEvent.mouseLeave(segment);
+
+		expect(tooltip.style.top).toBe('');
+	});
+
 	it('stops event propagation on click', () => {
 		const props = createDefaultProps();
 		const { container } = render(<CollapsedSessionPill {...props} />);
@@ -169,6 +238,21 @@ describe('CollapsedSessionPill', () => {
 		const segment = container.firstElementChild!.firstElementChild! as HTMLElement;
 		expect(segment.style.border).toContain('1px solid');
 		expect(segment.style.backgroundColor).toBe('transparent');
+	});
+
+	it('uses status color for non-hollow sessions', () => {
+		const session = makeSession({
+			toolType: 'codex',
+			state: 'busy',
+			agentSessionId: 'agent-session',
+		});
+		const props = createDefaultProps({ session });
+
+		const { container } = render(<CollapsedSessionPill {...props} />);
+
+		const segment = container.firstElementChild!.firstElementChild! as HTMLElement;
+		expect(segment.style.backgroundColor).toBe('rgb(255, 170, 0)');
+		expect(segment.style.border).toBe('');
 	});
 
 	it('renders tooltip content within each segment', () => {

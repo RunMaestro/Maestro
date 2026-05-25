@@ -265,5 +265,31 @@ describe('shellEscape', () => {
 				}
 			}
 		});
+
+		it('should use bare powershell.exe when full PowerShell paths are unavailable', () => {
+			const fs = require('fs');
+			const originalExistsSync = fs.existsSync;
+			const originalComSpec = process.env.ComSpec;
+
+			try {
+				process.env.ComSpec = 'C:\\Windows\\System32\\cmd.exe';
+				fs.existsSync = vi.fn(() => false);
+
+				const result = getWindowsShellForAgentExecution({});
+
+				expect(result).toEqual({
+					shell: 'powershell.exe',
+					useShell: true,
+					source: 'powershell-default',
+				});
+			} finally {
+				fs.existsSync = originalExistsSync;
+				if (originalComSpec === undefined) {
+					delete process.env.ComSpec;
+				} else {
+					process.env.ComSpec = originalComSpec;
+				}
+			}
+		});
 	});
 });

@@ -391,14 +391,9 @@ function GroupChatActivityGraph({
 						className="absolute text-[8px] font-mono"
 						style={{
 							color: theme.colors.textDim,
-							left:
-								index === 0
-									? '0'
-									: index === bucketCount - 1
-										? 'auto'
-										: `${(index / (bucketCount - 1)) * 100}%`,
+							left: index === 0 ? '0' : 'auto',
 							right: index === bucketCount - 1 ? '0' : 'auto',
-							transform: index > 0 && index < bucketCount - 1 ? 'translateX(-50%)' : 'none',
+							transform: 'none',
 						}}
 					>
 						{label}
@@ -517,12 +512,10 @@ export function GroupChatHistoryPanel({
 		const entriesInBucket = filteredEntries.filter(
 			(e) => e.timestamp >= bucketStart && e.timestamp < bucketEnd
 		);
-		if (entriesInBucket.length > 0 && listRef.current) {
-			const firstEntryId = entriesInBucket[0].id;
-			const element = listRef.current.querySelector(`[data-entry-id="${firstEntryId}"]`);
-			if (element) {
-				element.scrollIntoView({ block: 'center', behavior: 'smooth' });
-			}
+		const firstEntryId = entriesInBucket[0]!.id;
+		const element = listRef.current!.querySelector(`[data-entry-id="${firstEntryId}"]`);
+		if (element) {
+			element.scrollIntoView({ block: 'center', behavior: 'smooth' });
 		}
 	};
 

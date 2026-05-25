@@ -70,7 +70,7 @@ const activeGroomingSessions = new Map<
 	{
 		groomerSessionId: string;
 		startTime: number;
-		cancel?: () => void;
+		cancel: () => void;
 	}
 >();
 
@@ -84,10 +84,8 @@ export function cancelAllGroomingSessions(): void {
 	});
 
 	for (const [sessionId, session] of activeGroomingSessions) {
-		if (session.cancel) {
-			logger.debug('Cancelling grooming session', LOG_CONTEXT, { sessionId });
-			session.cancel();
-		}
+		logger.debug('Cancelling grooming session', LOG_CONTEXT, { sessionId });
+		session.cancel();
 	}
 }
 

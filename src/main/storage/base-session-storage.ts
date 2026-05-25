@@ -133,13 +133,14 @@ export abstract class BaseSessionStorage implements AgentSessionStorage {
 			}
 
 			// Title match: check session metadata (sessionName / firstMessage) independently
-			const titleText = (session.sessionName || session.firstMessage || '').toLowerCase();
+			const titleSource = session.sessionName || session.firstMessage || '';
+			const titleText = titleSource.toLowerCase();
 			const titleMatch = titleText.includes(searchLower);
 			let matchPreview = '';
 
 			if (titleMatch) {
 				matchPreview = BaseSessionStorage.extractMatchPreview(
-					session.sessionName || session.firstMessage || '',
+					titleSource,
 					titleText,
 					searchLower,
 					query.length

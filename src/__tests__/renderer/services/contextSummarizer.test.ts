@@ -48,10 +48,14 @@ function createLogsWithTokenCount(targetTokens: number): LogEntry[] {
 
 describe('ContextSummarizationService', () => {
 	let service: ContextSummarizationService;
+	let consoleLog: ReturnType<typeof vi.spyOn>;
+	let consoleError: ReturnType<typeof vi.spyOn>;
 
 	beforeEach(() => {
 		service = new ContextSummarizationService();
 		vi.clearAllMocks();
+		consoleLog = vi.spyOn(console, 'log').mockImplementation(() => {});
+		consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 
 		// Default mock implementation
 		mockGroomContext.mockResolvedValue(`## Summary
@@ -66,6 +70,8 @@ Continue with implementation.`);
 	});
 
 	afterEach(() => {
+		consoleLog.mockRestore();
+		consoleError.mockRestore();
 		vi.resetAllMocks();
 	});
 
@@ -307,9 +313,6 @@ Continue with implementation.`);
 		});
 
 		it('should propagate the underlying IPC error', async () => {
-			// Preserving the inner message lets the renderer surface real
-			// causes (e.g. "Agent X is not available") in the failure toast
-			// instead of a generic "Context summarization failed".
 			mockGroomContext.mockRejectedValue(new Error('IPC failed'));
 
 			const logs = [createMockLog({ text: 'Test' })];
@@ -317,6 +320,17 @@ Continue with implementation.`);
 			await expect(service.summarizeContext(baseRequest, logs, () => {})).rejects.toThrow(
 				'IPC failed'
 			);
+		});
+
+		it('should handle an empty groomed response', async () => {
+			mockGroomContext.mockResolvedValue('');
+			const logs = [createMockLog({ text: 'Test content' })];
+
+			const result = await service.summarizeContext(baseRequest, logs, () => {});
+
+			expect(result).not.toBeNull();
+			expect(result!.compactedTokens).toBe(0);
+			expect(consoleLog).toHaveBeenCalledWith('[ContextSummarizer] Received response, length:', 0);
 		});
 	});
 
@@ -428,6 +442,16 @@ Continue with implementation.`);
 
 			expect(mockGroomContext.mock.calls.length).toBe(initialCalls);
 		});
+
+		it('should return no chunks for empty log input', () => {
+			const chunkLogs = (
+				service as unknown as {
+					chunkLogs: (logs: LogEntry[], maxTokensPerChunk: number) => LogEntry[][];
+				}
+			).chunkLogs.bind(service);
+
+			expect(chunkLogs([], 50000)).toEqual([]);
+		});
 	});
 
 	describe('singleton instance', () => {
@@ -444,8 +468,13 @@ Continue with implementation.`);
 		});
 
 		it('should not throw when IPC call fails', async () => {
-			mockCancelGrooming.mockRejectedValue(new Error('IPC error'));
+			const error = new Error('IPC error');
+			mockCancelGrooming.mockRejectedValue(error);
 			await expect(service.cancelSummarization()).resolves.not.toThrow();
+			expect(consoleError).toHaveBeenCalledWith(
+				'[ContextSummarizer] Failed to cancel grooming:',
+				error
+			);
 		});
 	});
 

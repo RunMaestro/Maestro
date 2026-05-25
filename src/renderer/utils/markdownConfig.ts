@@ -522,13 +522,18 @@ export function createMarkdownComponents(options: MarkdownComponentsOptions): Pa
 									targetElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
 								}
 							}
-						} else if (href && onExternalLinkClick && /^https?:\/\/|^mailto:/.test(href)) {
+						} else if (
+							href &&
+							onExternalLinkClick &&
+							/^(https?:\/\/|mailto:|file:\/\/)/.test(href)
+						) {
 							onExternalLinkClick(href);
 						} else if (
 							href &&
 							onFileClick &&
 							!href.startsWith('mailto:') &&
-							!/^https?:\/\//.test(href)
+							!/^https?:\/\//.test(href) &&
+							!href.startsWith('file://')
 						) {
 							// Treat relative paths (e.g. LICENSE, ./README.md) as file links
 							onFileClick(href, { openInNewTab: e.metaKey || e.ctrlKey });

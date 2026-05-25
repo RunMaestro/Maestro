@@ -36,7 +36,9 @@ vi.mock('../../../../main/process-manager/utils/bufferUtils', () => ({
 // ── Imports (after mocks) ──────────────────────────────────────────────────
 
 import { StderrHandler } from '../../../../main/process-manager/handlers/StderrHandler';
-import type { ManagedProcess } from '../../../../main/process-manager/types';
+import type { AgentError, ManagedProcess } from '../../../../main/process-manager/types';
+import { logger } from '../../../../main/utils/logger';
+import { matchSshErrorPattern } from '../../../../main/parsers/error-patterns';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -71,6 +73,122 @@ function createTestContext(processOverrides: Partial<ManagedProcess> = {}) {
 describe('StderrHandler', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+	});
+
+	describe('error detection', () => {
+		it('returns without logging or emitting when the session is unknown', () => {
+			const { handler, emitter } = createTestContext();
+			const stderrSpy = vi.fn();
+			emitter.on('stderr', stderrSpy);
+
+			handler.handleData('missing-session', 'fatal error');
+
+			expect(stderrSpy).not.toHaveBeenCalled();
+			expect(logger.debug).not.toHaveBeenCalled();
+		});
+
+		it('emits parser-detected agent errors and marks the process', () => {
+			const parserError: AgentError = {
+				type: 'rate_limited',
+				message: 'Rate limit exceeded',
+				recoverable: true,
+				agentId: 'claude-code',
+				timestamp: 123,
+				raw: {},
+			};
+			const outputParser = {
+				detectErrorFromLine: vi.fn(() => parserError),
+			};
+			const { handler, emitter, sessionId, proc } = createTestContext({
+				outputParser: outputParser as ManagedProcess['outputParser'],
+			});
+			const errorSpy = vi.fn();
+			emitter.on('agent-error', errorSpy);
+
+			handler.handleData(sessionId, 'rate limit exceeded');
+
+			expect(outputParser.detectErrorFromLine).toHaveBeenCalledWith('rate limit exceeded');
+			expect(proc.errorEmitted).toBe(true);
+			expect(parserError.sessionId).toBe(sessionId);
+			expect(errorSpy).toHaveBeenCalledWith(sessionId, parserError);
+			expect(logger.debug).toHaveBeenCalledWith(
+				'[ProcessManager] Error detected from stderr',
+				'ProcessManager',
+				expect.objectContaining({
+					sessionId,
+					errorType: 'rate_limited',
+					errorMessage: 'Rate limit exceeded',
+				})
+			);
+		});
+
+		it('continues normal stderr handling when the parser finds no error', () => {
+			const outputParser = {
+				detectErrorFromLine: vi.fn(() => null),
+			};
+			const { handler, emitter, sessionId } = createTestContext({
+				outputParser: outputParser as ManagedProcess['outputParser'],
+			});
+			const stderrSpy = vi.fn();
+			emitter.on('stderr', stderrSpy);
+
+			handler.handleData(sessionId, 'ordinary stderr');
+
+			expect(outputParser.detectErrorFromLine).toHaveBeenCalledWith('ordinary stderr');
+			expect(stderrSpy).toHaveBeenCalledWith(sessionId, 'ordinary stderr');
+		});
+
+		it('emits SSH errors from remote stderr with raw stderr context', () => {
+			vi.mocked(matchSshErrorPattern).mockReturnValueOnce({
+				type: 'ssh_auth_failed',
+				message: 'Permission denied',
+				recoverable: true,
+			});
+			const { handler, emitter, sessionId, proc } = createTestContext({
+				sshRemoteId: 'remote-1',
+				toolType: 'codex',
+			});
+			const errorSpy = vi.fn();
+			emitter.on('agent-error', errorSpy);
+
+			handler.handleData(sessionId, 'Permission denied (publickey).');
+
+			expect(proc.errorEmitted).toBe(true);
+			expect(errorSpy).toHaveBeenCalledWith(
+				sessionId,
+				expect.objectContaining({
+					type: 'ssh_auth_failed',
+					message: 'Permission denied',
+					recoverable: true,
+					agentId: 'codex',
+					sessionId,
+					raw: { stderr: 'Permission denied (publickey).' },
+				})
+			);
+			expect(logger.debug).toHaveBeenCalledWith(
+				'[ProcessManager] SSH error detected from stderr',
+				'ProcessManager',
+				expect.objectContaining({
+					sessionId,
+					errorType: 'ssh_auth_failed',
+					errorMessage: 'Permission denied',
+				})
+			);
+		});
+
+		it('continues normal stderr handling when remote stderr is not an SSH error', () => {
+			vi.mocked(matchSshErrorPattern).mockReturnValueOnce(null);
+			const { handler, emitter, sessionId, proc } = createTestContext({
+				sshRemoteId: 'remote-1',
+			});
+			const stderrSpy = vi.fn();
+			emitter.on('stderr', stderrSpy);
+
+			handler.handleData(sessionId, 'remote command warning');
+
+			expect(proc.errorEmitted).toBe(false);
+			expect(stderrSpy).toHaveBeenCalledWith(sessionId, 'remote command warning');
+		});
 	});
 
 	describe('SSH informational message filtering', () => {

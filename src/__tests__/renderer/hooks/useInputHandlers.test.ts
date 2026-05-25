@@ -200,6 +200,54 @@ function createMockDeps(overrides: Partial<UseInputHandlersDeps> = {}): UseInput
 	};
 }
 
+function installMockFileReader(result: string): typeof FileReader {
+	const originalFileReader = global.FileReader;
+
+	class MockFileReaderLocal {
+		onload: ((ev: any) => void) | null = null;
+		readAsDataURL = vi.fn(function (this: MockFileReaderLocal) {
+			this.onload?.({ target: { result } });
+		});
+	}
+
+	global.FileReader = MockFileReaderLocal as unknown as typeof FileReader;
+	return originalFileReader;
+}
+
+function createImagePasteEvent(): React.ClipboardEvent {
+	const mockBlob = new Blob(['image-data'], { type: 'image/png' });
+	const mockItem = {
+		type: 'image/png',
+		getAsFile: vi.fn().mockReturnValue(mockBlob),
+	};
+
+	return {
+		preventDefault: vi.fn(),
+		clipboardData: {
+			items: {
+				length: 1,
+				0: mockItem,
+				[Symbol.iterator]: function* () {
+					yield mockItem;
+				},
+			},
+			getData: vi.fn().mockReturnValue(''),
+		},
+	} as unknown as React.ClipboardEvent;
+}
+
+function createImageDropEvent(): React.DragEvent {
+	return {
+		preventDefault: vi.fn(),
+		dataTransfer: {
+			files: {
+				length: 1,
+				0: { type: 'image/png', name: 'image.png' },
+			} as any,
+		},
+	} as unknown as React.DragEvent;
+}
+
 // ============================================================================
 // Setup / Teardown
 // ============================================================================
@@ -433,6 +481,84 @@ describe('useInputHandlers', () => {
 			const sessions = useSessionStore.getState().sessions;
 			const tab = sessions[0].aiTabs.find((t: any) => t.id === 'tab-1');
 			expect(tab?.stagedImages).toEqual(['existing.png', 'added.png']);
+		});
+
+		it('setStagedImages initializes a missing staged image array before applying updater', () => {
+			useSessionStore.setState({
+				sessions: [
+					createMockSession({
+						aiTabs: [
+							{
+								id: 'tab-1',
+								name: 'Tab 1',
+								inputValue: '',
+								data: [],
+							} as any,
+						],
+						activeTabId: 'tab-1',
+					}),
+				],
+				activeSessionId: 'session-1',
+			} as any);
+
+			const { result } = renderHook(() => useInputHandlers(createMockDeps()));
+
+			act(() => {
+				result.current.setStagedImages((prev) => [...prev, 'initialized.png']);
+			});
+
+			const tab = useSessionStore.getState().sessions[0].aiTabs[0];
+			expect(tab.stagedImages).toEqual(['initialized.png']);
+		});
+
+		it('setStagedImages preserves other sessions and inactive tabs', () => {
+			useSessionStore.setState({
+				sessions: [
+					createMockSession({
+						id: 'session-1',
+						aiTabs: [
+							{ id: 'tab-1', name: 'Tab 1', inputValue: '', data: [], stagedImages: [] } as any,
+							{
+								id: 'tab-2',
+								name: 'Tab 2',
+								inputValue: '',
+								data: [],
+								stagedImages: ['inactive.png'],
+							} as any,
+						],
+						activeTabId: 'tab-1',
+					}),
+					createMockSession({
+						id: 'session-2',
+						aiTabs: [
+							{
+								id: 'tab-other',
+								name: 'Other',
+								inputValue: '',
+								data: [],
+								stagedImages: ['other.png'],
+							} as any,
+						],
+						activeTabId: 'tab-other',
+					}),
+				],
+				activeSessionId: 'session-1',
+			} as any);
+
+			const { result } = renderHook(() => useInputHandlers(createMockDeps()));
+
+			act(() => {
+				result.current.setStagedImages(['active.png']);
+			});
+
+			const [activeSession, otherSession] = useSessionStore.getState().sessions;
+			expect(activeSession.aiTabs.find((t: any) => t.id === 'tab-1')?.stagedImages).toEqual([
+				'active.png',
+			]);
+			expect(activeSession.aiTabs.find((t: any) => t.id === 'tab-2')?.stagedImages).toEqual([
+				'inactive.png',
+			]);
+			expect(otherSession.aiTabs[0].stagedImages).toEqual(['other.png']);
 		});
 	});
 
@@ -887,6 +1013,11 @@ describe('useInputHandlers', () => {
 
 			expect(mockPreventDefault).toHaveBeenCalled();
 			expect(result.current.inputValue).toBe('trimmed text');
+			act(() => {
+				vi.runAllTimers();
+			});
+			expect(mockTarget.selectionStart).toBe('trimmed text'.length);
+			expect(mockTarget.selectionEnd).toBe('trimmed text'.length);
 		});
 
 		it('does not intercept text paste when no trimming needed', () => {
@@ -999,35 +1130,44 @@ describe('useInputHandlers', () => {
 		});
 
 		it('accepts image drops in group chat mode', () => {
-			const mockSetGroupChatStagedImages = vi.fn();
+			const mockSetGroupChatStagedImages = vi.fn().mockImplementation((updater: any) => {
+				if (typeof updater === 'function') {
+					expect(updater([])).toEqual(['data:image/png;base64,groupDropImage']);
+				}
+			});
 			useGroupChatStore.setState({
 				activeGroupChatId: 'group-1',
 				setGroupChatStagedImages: mockSetGroupChatStagedImages,
 			} as any);
+			const originalFileReader = installMockFileReader('data:image/png;base64,groupDropImage');
 
-			const deps = createMockDeps();
-			const { result } = renderHook(() => useInputHandlers(deps));
+			try {
+				const deps = createMockDeps();
+				const { result } = renderHook(() => useInputHandlers(deps));
 
-			// Create a mock file with FileReader support
-			const mockFile = new Blob(['mock-image-data'], { type: 'image/png' });
-			Object.defineProperty(mockFile, 'type', { value: 'image/png' });
+				// Create a mock file with FileReader support
+				const mockFile = new Blob(['mock-image-data'], { type: 'image/png' });
+				Object.defineProperty(mockFile, 'type', { value: 'image/png' });
 
-			const dropEvent = {
-				preventDefault: vi.fn(),
-				dataTransfer: {
-					files: {
-						length: 1,
-						0: mockFile,
-					} as any,
-				},
-			} as unknown as React.DragEvent;
+				const dropEvent = {
+					preventDefault: vi.fn(),
+					dataTransfer: {
+						files: {
+							length: 1,
+							0: mockFile,
+						} as any,
+					},
+				} as unknown as React.DragEvent;
 
-			act(() => {
-				result.current.handleDrop(dropEvent);
-			});
+				act(() => {
+					result.current.handleDrop(dropEvent);
+				});
 
-			// The drop handler creates a FileReader — just verify it doesn't throw
-			expect(dropEvent.preventDefault).toHaveBeenCalled();
+				expect(dropEvent.preventDefault).toHaveBeenCalled();
+				expect(mockSetGroupChatStagedImages).toHaveBeenCalled();
+			} finally {
+				global.FileReader = originalFileReader;
+			}
 		});
 	});
 
@@ -1240,6 +1380,81 @@ describe('useInputHandlers', () => {
 			expect(tab2?.hasUnread).toBe(false);
 		});
 
+		it('clears hasUnread only on the active session when switching tabs', () => {
+			const otherSession = createMockSession({
+				id: 'session-2',
+				aiTabs: [
+					{
+						id: 'other-tab',
+						name: 'Other Tab',
+						inputValue: '',
+						data: [],
+						stagedImages: [],
+						hasUnread: true,
+					} as any,
+				],
+				activeTabId: 'other-tab',
+			});
+
+			useSessionStore.setState({
+				sessions: [
+					createMockSession({
+						aiTabs: [
+							{ id: 'tab-1', name: 'Tab 1', inputValue: '', data: [], stagedImages: [] } as any,
+							{
+								id: 'tab-2',
+								name: 'Tab 2',
+								inputValue: '',
+								data: [],
+								stagedImages: [],
+								hasUnread: true,
+							} as any,
+						],
+						activeTabId: 'tab-1',
+					}),
+					otherSession,
+				],
+				activeSessionId: 'session-1',
+			} as any);
+
+			const { rerender } = renderHook(() => useInputHandlers(createMockDeps()));
+
+			act(() => {
+				useSessionStore.setState({
+					sessions: [
+						createMockSession({
+							aiTabs: [
+								{
+									id: 'tab-1',
+									name: 'Tab 1',
+									inputValue: '',
+									data: [],
+									stagedImages: [],
+								} as any,
+								{
+									id: 'tab-2',
+									name: 'Tab 2',
+									inputValue: '',
+									data: [],
+									stagedImages: [],
+									hasUnread: true,
+								} as any,
+							],
+							activeTabId: 'tab-2',
+						}),
+						otherSession,
+					],
+					activeSessionId: 'session-1',
+				} as any);
+			});
+
+			rerender();
+
+			const sessions = useSessionStore.getState().sessions;
+			expect(sessions[0].aiTabs.find((t: any) => t.id === 'tab-2')?.hasUnread).toBe(false);
+			expect(sessions[1].aiTabs[0].hasUnread).toBe(true);
+		});
+
 		it('handles switching when target tab has no inputValue property (defaults to empty)', () => {
 			useSessionStore.setState({
 				sessions: [
@@ -1390,6 +1605,68 @@ describe('useInputHandlers', () => {
 			const s1 = sessions.find((s: any) => s.id === 'session-1');
 			expect(s1?.terminalDraftInput).toBe('');
 		});
+
+		it('defaults terminal input to empty when switched session has no saved draft', () => {
+			const session1 = createMockSession({
+				id: 'session-1',
+				inputMode: 'terminal',
+				terminalDraftInput: 'previous draft',
+			});
+			const session2 = createMockSession({
+				id: 'session-2',
+				inputMode: 'terminal',
+				terminalDraftInput: undefined,
+			});
+
+			useSessionStore.setState({
+				sessions: [session1, session2],
+				activeSessionId: 'session-1',
+			} as any);
+
+			const { result, rerender } = renderHook(() => useInputHandlers(createMockDeps()));
+
+			act(() => {
+				result.current.setInputValue('typed before switch');
+			});
+
+			act(() => {
+				useSessionStore.setState({
+					sessions: [session1, session2],
+					activeSessionId: 'session-2',
+				} as any);
+			});
+
+			rerender();
+
+			expect(result.current.inputValue).toBe('');
+		});
+
+		it('loads terminal input without saving a previous session when none was active', () => {
+			const session = createMockSession({
+				id: 'session-1',
+				inputMode: 'terminal',
+				terminalDraftInput: undefined,
+			});
+
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'missing-session',
+			} as any);
+
+			const { result, rerender } = renderHook(() => useInputHandlers(createMockDeps()));
+
+			act(() => {
+				useSessionStore.setState({
+					sessions: [session],
+					activeSessionId: 'session-1',
+				} as any);
+			});
+
+			rerender();
+
+			expect(result.current.inputValue).toBe('');
+			expect(useSessionStore.getState().sessions[0].terminalDraftInput).toBeUndefined();
+		});
 	});
 
 	// ========================================================================
@@ -1397,6 +1674,46 @@ describe('useInputHandlers', () => {
 	// ========================================================================
 
 	describe('handlePaste edge cases', () => {
+		it('does not intercept empty text paste', () => {
+			const { result } = renderHook(() => useInputHandlers(createMockDeps()));
+
+			const pasteEvent = {
+				preventDefault: vi.fn(),
+				clipboardData: {
+					items: { length: 0, [Symbol.iterator]: function* () {} },
+					getData: vi.fn().mockReturnValue(''),
+				},
+				target: { value: '' },
+			} as unknown as React.ClipboardEvent;
+
+			act(() => {
+				result.current.handlePaste(pasteEvent);
+			});
+
+			expect(pasteEvent.preventDefault).not.toHaveBeenCalled();
+			expect(result.current.inputValue).toBe('');
+		});
+
+		it('trims text paste using zero selection defaults when selection positions are missing', () => {
+			const { result } = renderHook(() => useInputHandlers(createMockDeps()));
+			const mockTarget = { value: 'draft' };
+			const pasteEvent = {
+				preventDefault: vi.fn(),
+				clipboardData: {
+					items: { length: 0, [Symbol.iterator]: function* () {} },
+					getData: vi.fn().mockReturnValue('  pasted  '),
+				},
+				target: mockTarget,
+			} as unknown as React.ClipboardEvent;
+
+			act(() => {
+				result.current.handlePaste(pasteEvent);
+			});
+
+			expect(pasteEvent.preventDefault).toHaveBeenCalled();
+			expect(result.current.inputValue).toBe('pasteddraft');
+		});
+
 		it('stages image on active tab when pasting image in AI mode', () => {
 			// Mock FileReader
 			const mockReadAsDataURL = vi.fn();
@@ -1511,6 +1828,166 @@ describe('useInputHandlers', () => {
 			}
 		});
 
+		it('ignores non-image paste items while group chat is active', () => {
+			const mockSetGroupChatStagedImages = vi.fn();
+			useGroupChatStore.setState({
+				activeGroupChatId: 'group-1',
+				setGroupChatStagedImages: mockSetGroupChatStagedImages,
+			} as any);
+
+			const { result } = renderHook(() => useInputHandlers(createMockDeps()));
+			const textItem = {
+				type: 'text/plain',
+				getAsFile: vi.fn(),
+			};
+			const pasteEvent = {
+				preventDefault: vi.fn(),
+				clipboardData: {
+					items: {
+						length: 1,
+						0: textItem,
+						[Symbol.iterator]: function* () {
+							yield textItem;
+						},
+					},
+					getData: vi.fn().mockReturnValue('plain text'),
+				},
+			} as unknown as React.ClipboardEvent;
+
+			act(() => {
+				result.current.handlePaste(pasteEvent);
+			});
+
+			expect(pasteEvent.preventDefault).not.toHaveBeenCalled();
+			expect(mockSetGroupChatStagedImages).not.toHaveBeenCalled();
+		});
+
+		it('prevents image paste but skips staging when the clipboard item has no blob', () => {
+			const { result } = renderHook(() => useInputHandlers(createMockDeps()));
+			const imageItem = {
+				type: 'image/png',
+				getAsFile: vi.fn().mockReturnValue(null),
+			};
+			const pasteEvent = {
+				preventDefault: vi.fn(),
+				clipboardData: {
+					items: {
+						length: 1,
+						0: imageItem,
+						[Symbol.iterator]: function* () {
+							yield imageItem;
+						},
+					},
+					getData: vi.fn().mockReturnValue(''),
+				},
+			} as unknown as React.ClipboardEvent;
+
+			act(() => {
+				result.current.handlePaste(pasteEvent);
+			});
+
+			expect(pasteEvent.preventDefault).toHaveBeenCalled();
+			expect(result.current.stagedImages).toEqual([]);
+		});
+
+		it('skips pasted image staging when FileReader returns no result', () => {
+			const originalFileReader = global.FileReader;
+			class MockFileReaderLocal {
+				onload: ((ev: any) => void) | null = null;
+				readAsDataURL = vi.fn(function (this: MockFileReaderLocal) {
+					this.onload?.({ target: { result: '' } });
+				});
+			}
+			global.FileReader = MockFileReaderLocal as unknown as typeof FileReader;
+
+			try {
+				const { result } = renderHook(() => useInputHandlers(createMockDeps()));
+
+				act(() => {
+					result.current.handlePaste(createImagePasteEvent());
+				});
+
+				expect(result.current.stagedImages).toEqual([]);
+			} finally {
+				global.FileReader = originalFileReader;
+			}
+		});
+
+		it('ignores duplicate pasted images in AI mode and clears the flash notification', () => {
+			const duplicateImage = 'data:image/png;base64,duplicateImage';
+			const setSuccessFlashNotification = vi.fn();
+			useUIStore.setState({ setSuccessFlashNotification } as any);
+			useSessionStore.setState({
+				sessions: [
+					createMockSession({
+						aiTabs: [
+							{
+								id: 'tab-1',
+								name: 'Tab 1',
+								inputValue: '',
+								data: [],
+								stagedImages: [duplicateImage],
+							} as any,
+						],
+					}),
+				],
+				activeSessionId: 'session-1',
+			} as any);
+			const originalFileReader = installMockFileReader(duplicateImage);
+
+			try {
+				const { result } = renderHook(() => useInputHandlers(createMockDeps()));
+
+				act(() => {
+					result.current.handlePaste(createImagePasteEvent());
+				});
+
+				const tab = useSessionStore.getState().sessions[0].aiTabs[0];
+				expect(tab.stagedImages).toEqual([duplicateImage]);
+				expect(setSuccessFlashNotification).toHaveBeenCalledWith('Duplicate image ignored');
+
+				act(() => {
+					vi.runAllTimers();
+				});
+				expect(setSuccessFlashNotification).toHaveBeenCalledWith(null);
+			} finally {
+				global.FileReader = originalFileReader;
+			}
+		});
+
+		it('ignores duplicate pasted images in group chat mode', () => {
+			const duplicateImage = 'data:image/png;base64,groupDuplicate';
+			const setSuccessFlashNotification = vi.fn();
+			const mockSetGroupChatStagedImages = vi.fn().mockImplementation((updater: any) => {
+				if (typeof updater === 'function') {
+					expect(updater([duplicateImage])).toEqual([duplicateImage]);
+				}
+			});
+			useUIStore.setState({ setSuccessFlashNotification } as any);
+			useGroupChatStore.setState({
+				activeGroupChatId: 'group-1',
+				setGroupChatStagedImages: mockSetGroupChatStagedImages,
+			} as any);
+			const originalFileReader = installMockFileReader(duplicateImage);
+
+			try {
+				const { result } = renderHook(() => useInputHandlers(createMockDeps()));
+
+				act(() => {
+					result.current.handlePaste(createImagePasteEvent());
+				});
+
+				expect(mockSetGroupChatStagedImages).toHaveBeenCalled();
+				expect(setSuccessFlashNotification).toHaveBeenCalledWith('Duplicate image ignored');
+				act(() => {
+					vi.runAllTimers();
+				});
+				expect(setSuccessFlashNotification).toHaveBeenCalledWith(null);
+			} finally {
+				global.FileReader = originalFileReader;
+			}
+		});
+
 		it('does not call preventDefault for text paste with no whitespace to trim', () => {
 			const { result } = renderHook(() => useInputHandlers(createMockDeps()));
 
@@ -1611,6 +2088,106 @@ describe('useInputHandlers', () => {
 				global.FileReader = originalFileReader;
 			}
 		});
+
+		it('skips dropped image staging when FileReader returns no result', () => {
+			const originalFileReader = global.FileReader;
+			class MockFileReaderLocal {
+				onload: ((ev: any) => void) | null = null;
+				readAsDataURL = vi.fn(function (this: MockFileReaderLocal) {
+					this.onload?.({ target: { result: '' } });
+				});
+			}
+			global.FileReader = MockFileReaderLocal as unknown as typeof FileReader;
+
+			try {
+				const deps = createMockDeps();
+				const { result } = renderHook(() => useInputHandlers(deps));
+
+				act(() => {
+					result.current.handleDrop(createImageDropEvent());
+				});
+
+				const sessions = useSessionStore.getState().sessions;
+				const tab = sessions[0].aiTabs.find((t: any) => t.id === 'tab-1');
+				expect(tab?.stagedImages).toEqual([]);
+			} finally {
+				global.FileReader = originalFileReader;
+			}
+		});
+
+		it('ignores duplicate dropped images in AI mode', () => {
+			const duplicateImage = 'data:image/png;base64,droppedDuplicate';
+			const setSuccessFlashNotification = vi.fn();
+			useUIStore.setState({ setSuccessFlashNotification } as any);
+			useSessionStore.setState({
+				sessions: [
+					createMockSession({
+						aiTabs: [
+							{
+								id: 'tab-1',
+								name: 'Tab 1',
+								inputValue: '',
+								data: [],
+								stagedImages: [duplicateImage],
+							} as any,
+						],
+					}),
+				],
+				activeSessionId: 'session-1',
+			} as any);
+			const originalFileReader = installMockFileReader(duplicateImage);
+
+			try {
+				const { result } = renderHook(() => useInputHandlers(createMockDeps()));
+
+				act(() => {
+					result.current.handleDrop(createImageDropEvent());
+				});
+
+				const tab = useSessionStore.getState().sessions[0].aiTabs[0];
+				expect(tab.stagedImages).toEqual([duplicateImage]);
+				expect(setSuccessFlashNotification).toHaveBeenCalledWith('Duplicate image ignored');
+				act(() => {
+					vi.runAllTimers();
+				});
+				expect(setSuccessFlashNotification).toHaveBeenCalledWith(null);
+			} finally {
+				global.FileReader = originalFileReader;
+			}
+		});
+
+		it('ignores duplicate dropped images in group chat mode', () => {
+			const duplicateImage = 'data:image/png;base64,groupDroppedDuplicate';
+			const setSuccessFlashNotification = vi.fn();
+			const mockSetGroupChatStagedImages = vi.fn().mockImplementation((updater: any) => {
+				if (typeof updater === 'function') {
+					expect(updater([duplicateImage])).toEqual([duplicateImage]);
+				}
+			});
+			useUIStore.setState({ setSuccessFlashNotification } as any);
+			useGroupChatStore.setState({
+				activeGroupChatId: 'group-1',
+				setGroupChatStagedImages: mockSetGroupChatStagedImages,
+			} as any);
+			const originalFileReader = installMockFileReader(duplicateImage);
+
+			try {
+				const { result } = renderHook(() => useInputHandlers(createMockDeps()));
+
+				act(() => {
+					result.current.handleDrop(createImageDropEvent());
+				});
+
+				expect(mockSetGroupChatStagedImages).toHaveBeenCalled();
+				expect(setSuccessFlashNotification).toHaveBeenCalledWith('Duplicate image ignored');
+				act(() => {
+					vi.runAllTimers();
+				});
+				expect(setSuccessFlashNotification).toHaveBeenCalledWith(null);
+			} finally {
+				global.FileReader = originalFileReader;
+			}
+		});
 	});
 
 	// ========================================================================
@@ -1634,6 +2211,58 @@ describe('useInputHandlers', () => {
 			const sessions = useSessionStore.getState().sessions;
 			const tab = sessions[0].aiTabs.find((t: any) => t.id === 'tab-1');
 			expect(tab?.stagedImages).toEqual(['existing.png']);
+		});
+
+		it('replays without restoring staged images when the active tab has no staged image array', () => {
+			useSessionStore.setState({
+				sessions: [
+					createMockSession({
+						aiTabs: [
+							{
+								id: 'tab-1',
+								name: 'Tab 1',
+								inputValue: '',
+								data: [],
+							} as any,
+						],
+						activeTabId: 'tab-1',
+					}),
+				],
+				activeSessionId: 'session-1',
+			} as any);
+
+			const { result } = renderHook(() => useInputHandlers(createMockDeps()));
+
+			act(() => {
+				result.current.handleReplayMessage('replay without staged images');
+				vi.runAllTimers();
+			});
+
+			expect(mockProcessInput).toHaveBeenCalledWith('replay without staged images');
+			const tab = useSessionStore.getState().sessions[0].aiTabs[0];
+			expect(tab.stagedImages).toBeUndefined();
+		});
+
+		it('restores draft staged images after replay with temporary images', () => {
+			const { result } = renderHook(() => useInputHandlers(createMockDeps()));
+
+			act(() => {
+				result.current.setStagedImages(['draft.png']);
+			});
+
+			act(() => {
+				result.current.handleReplayMessage('replay with images', ['replay.png']);
+			});
+
+			let tab = useSessionStore.getState().sessions[0].aiTabs.find((t: any) => t.id === 'tab-1');
+			expect(tab?.stagedImages).toEqual(['replay.png']);
+
+			act(() => {
+				vi.runAllTimers();
+			});
+
+			tab = useSessionStore.getState().sessions[0].aiTabs.find((t: any) => t.id === 'tab-1');
+			expect(tab?.stagedImages).toEqual(['draft.png']);
 		});
 
 		it('preserves draft input value after replay sends', () => {
@@ -1727,6 +2356,29 @@ describe('useInputHandlers', () => {
 
 			expect(deps.fileTreeKeyboardNavRef.current).toBe(true);
 			expect(mockSetSelectedFileIndex).toHaveBeenCalledWith(0);
+		});
+
+		it('leaves file tree selection unchanged when no completion path matches', () => {
+			const mockSetSelectedFileIndex = vi.fn();
+
+			useFileExplorerStore.setState({
+				flatFileList: [{ fullPath: 'src/main.ts', name: 'main.ts', isDirectory: false, depth: 1 }],
+				setSelectedFileIndex: mockSetSelectedFileIndex,
+			} as any);
+
+			const deps = createMockDeps();
+			const { result } = renderHook(() => useInputHandlers(deps));
+
+			act(() => {
+				result.current.syncFileTreeToTabCompletion({
+					type: 'file',
+					value: 'missing.ts',
+					display: 'missing.ts',
+				} as any);
+			});
+
+			expect(deps.fileTreeKeyboardNavRef.current).toBe(false);
+			expect(mockSetSelectedFileIndex).not.toHaveBeenCalled();
 		});
 	});
 });
