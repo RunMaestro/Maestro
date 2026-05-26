@@ -648,13 +648,25 @@ export function calculateTotalTokens(contexts: ContextSource[]): number {
 	return contexts.reduce((total, context) => total + estimateTokenCount(context), 0);
 }
 
+export interface FormatLogsOptions {
+	/**
+	 * Include `source: 'thinking'` entries in the output, labeled as `THINKING:`.
+	 * Defaults to false — thinking blocks can be verbose and most exports want
+	 * just the user/assistant dialogue.
+	 */
+	includeThinking?: boolean;
+}
+
 /**
  * Convert log entries to a simple text format for clipboard copying.
- * Only includes user messages and AI responses - excludes thinking, system prompts,
- * tool calls, and other internal entries.
+ *
+ * By default only user messages and AI responses are included. Pass
+ * `{ includeThinking: true }` to also include reasoning blocks — the HTML
+ * export already includes them, so this option lets clipboard/gist match.
  *
  * @param logs - Array of log entries to convert
- * @returns Plain text with USER/ASSISTANT labels
+ * @param options - Optional inclusion flags
+ * @returns Plain text with USER/ASSISTANT/THINKING labels
  *
  * @example
  * const text = formatLogsForClipboard(tab.logs);
@@ -665,7 +677,8 @@ export function calculateTotalTokens(contexts: ContextSource[]): number {
  * // ASSISTANT:
  * // To implement feature X, you should...
  */
-export function formatLogsForClipboard(logs: LogEntry[]): string {
+export function formatLogsForClipboard(logs: LogEntry[], options: FormatLogsOptions = {}): string {
+	const { includeThinking = false } = options;
 	const sections: string[] = [];
 
 	for (const log of logs) {
@@ -680,11 +693,27 @@ export function formatLogsForClipboard(logs: LogEntry[]): string {
 			sections.push(`USER:\n${log.text}`);
 		} else if (log.source === 'ai' || log.source === 'stdout') {
 			sections.push(`ASSISTANT:\n${log.text}`);
+		} else if (log.source === 'thinking' && includeThinking) {
+			sections.push(`THINKING:\n${log.text}`);
 		}
-		// Skip: thinking, tool, system, stderr, error
+		// Skip: tool, system, stderr, error (and thinking when not opted in)
 	}
 
 	return sections.join('\n\n');
+}
+
+/**
+ * Whether a log array contains any reasoning/thinking entries with non-empty text.
+ * Used to decide whether to surface the "Include reasoning" toggle in export UIs.
+ */
+export function hasThinkingEntries(logs: LogEntry[] | undefined | null): boolean {
+	if (!logs) return false;
+	for (const log of logs) {
+		if (log.source === 'thinking' && log.text && log.text.trim() !== '') {
+			return true;
+		}
+	}
+	return false;
 }
 
 /**

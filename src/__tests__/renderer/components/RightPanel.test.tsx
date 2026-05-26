@@ -85,6 +85,11 @@ vi.mock('lucide-react', () => ({
 			XCircle
 		</span>
 	),
+	Square: ({ className }: { className?: string }) => (
+		<span data-testid="square" className={className}>
+			Square
+		</span>
+	),
 }));
 
 describe('RightPanel', () => {
@@ -635,6 +640,75 @@ describe('RightPanel', () => {
 			render(<RightPanel {...props} />);
 
 			expect(screen.queryByTitle('Force kill the running process')).not.toBeInTheDocument();
+		});
+
+		it('should show Stop button when running and not stopping or error-paused', () => {
+			const currentSessionBatchState: BatchRunState = {
+				isRunning: true,
+				isStopping: false,
+				documents: ['doc1'],
+				currentDocumentIndex: 0,
+				totalTasks: 10,
+				completedTasks: 5,
+				currentDocTasksTotal: 10,
+				currentDocTasksCompleted: 5,
+				totalTasksAcrossAllDocs: 10,
+				completedTasksAcrossAllDocs: 5,
+				loopEnabled: false,
+				loopIteration: 0,
+			};
+			const props = createDefaultProps({ currentSessionBatchState });
+			render(<RightPanel {...props} />);
+
+			expect(
+				screen.getByTitle('Stop auto-run after the current task finishes')
+			).toBeInTheDocument();
+		});
+
+		it('should hide Stop button when isStopping is true', () => {
+			const currentSessionBatchState: BatchRunState = {
+				isRunning: true,
+				isStopping: true,
+				documents: ['doc1'],
+				currentDocumentIndex: 0,
+				totalTasks: 10,
+				completedTasks: 5,
+				currentDocTasksTotal: 10,
+				currentDocTasksCompleted: 5,
+				totalTasksAcrossAllDocs: 10,
+				completedTasksAcrossAllDocs: 5,
+				loopEnabled: false,
+				loopIteration: 0,
+			};
+			const props = createDefaultProps({ currentSessionBatchState });
+			render(<RightPanel {...props} />);
+
+			expect(
+				screen.queryByTitle('Stop auto-run after the current task finishes')
+			).not.toBeInTheDocument();
+		});
+
+		it('should call onStopBatchRun with session id when Stop button is clicked', () => {
+			const onStopBatchRun = vi.fn();
+			const currentSessionBatchState: BatchRunState = {
+				isRunning: true,
+				isStopping: false,
+				documents: ['doc1'],
+				currentDocumentIndex: 0,
+				totalTasks: 10,
+				completedTasks: 5,
+				currentDocTasksTotal: 10,
+				currentDocTasksCompleted: 5,
+				totalTasksAcrossAllDocs: 10,
+				completedTasksAcrossAllDocs: 5,
+				loopEnabled: false,
+				loopIteration: 0,
+			};
+			const props = createDefaultProps({ currentSessionBatchState, onStopBatchRun });
+			render(<RightPanel {...props} />);
+
+			fireEvent.click(screen.getByTitle('Stop auto-run after the current task finishes'));
+			expect(onStopBatchRun).toHaveBeenCalledWith('session-1');
 		});
 
 		it('should show confirmation modal when Kill pill is clicked', () => {

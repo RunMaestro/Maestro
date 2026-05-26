@@ -78,11 +78,12 @@ function pipeline(
 
 describe('pipelineValidation', () => {
 	describe('DEFAULT_TRIGGER_LABELS', () => {
-		it('covers all 9 CueEventType values', () => {
-			expect(Object.keys(DEFAULT_TRIGGER_LABELS)).toHaveLength(9);
+		it('covers all 10 CueEventType values', () => {
+			expect(Object.keys(DEFAULT_TRIGGER_LABELS)).toHaveLength(10);
 			expect(DEFAULT_TRIGGER_LABELS['app.startup']).toBe('Startup');
 			expect(DEFAULT_TRIGGER_LABELS['time.heartbeat']).toBe('Heartbeat');
 			expect(DEFAULT_TRIGGER_LABELS['time.scheduled']).toBe('Scheduled');
+			expect(DEFAULT_TRIGGER_LABELS['time.once']).toBe('One-Time');
 			expect(DEFAULT_TRIGGER_LABELS['file.changed']).toBe('File Change');
 			expect(DEFAULT_TRIGGER_LABELS['agent.completed']).toBe('Agent Done');
 			expect(DEFAULT_TRIGGER_LABELS['github.pull_request']).toBe('Pull Request');

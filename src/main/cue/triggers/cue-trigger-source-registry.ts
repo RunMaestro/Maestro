@@ -44,8 +44,10 @@ export function createTriggerSource(
 		case 'agent.completed':
 		case 'app.startup':
 		case 'cli.trigger':
-			// These are not timer/watcher-driven ��� the runtime handles them
-			// directly via the completion service / startup loop / CLI command.
+		case 'time.once':
+			// These are not timer/watcher-driven — the runtime handles them
+			// directly via the completion service / startup loop / CLI command
+			// / fire_at poll.
 			return null;
 		default: {
 			const unsupported: never = eventType;

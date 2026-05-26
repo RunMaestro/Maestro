@@ -104,13 +104,14 @@ describe('agent-definitions', () => {
 			expect(config.tools.question).toBe(false);
 		});
 
-		it('should have claude-code with batchModeEnvVars disabling background tasks', () => {
-			// Background tasks in CLI batch mode silently fail because the session exits
-			// before async work completes. batchModeEnvVars is applied only by the CLI
-			// spawners, not by the desktop UI path (see #861).
+		it('should have claude-code with defaultEnvVars disabling background tasks', () => {
+			// Background tasks are disabled across every spawn path (desktop UI, CLI batch, --live, SSH).
+			// Two motivations: short-lived batch sessions exit before background tasks finish (#861), and
+			// the run_in_background + Monitor poll wrapper deadlocks on a self-matching `pgrep -f` when
+			// the watched regex appears in the wrapper's own argv — observed in long-running desktop tabs.
 			const claudeCode = AGENT_DEFINITIONS.find((def) => def.id === 'claude-code');
-			expect(claudeCode?.batchModeEnvVars).toBeDefined();
-			expect(claudeCode?.batchModeEnvVars?.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS).toBe('1');
+			expect(claudeCode?.defaultEnvVars).toBeDefined();
+			expect(claudeCode?.defaultEnvVars?.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS).toBe('1');
 		});
 	});
 

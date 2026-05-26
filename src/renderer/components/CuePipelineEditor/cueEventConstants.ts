@@ -22,6 +22,7 @@ export const EVENT_ICONS: Record<CueEventType, typeof Clock> = {
 	'app.startup': Power,
 	'time.heartbeat': Clock,
 	'time.scheduled': Clock,
+	'time.once': Clock,
 	'file.changed': FileText,
 	'agent.completed': Zap,
 	'github.pull_request': GitPullRequest,
@@ -35,6 +36,7 @@ export const EVENT_LABELS: Record<CueEventType, string> = {
 	'app.startup': 'App Startup',
 	'time.heartbeat': 'Heartbeat Timer',
 	'time.scheduled': 'Scheduled',
+	'time.once': 'One-Time',
 	'file.changed': 'File Change',
 	'agent.completed': 'Agent Completed',
 	'github.pull_request': 'Pull Request',
@@ -74,6 +76,7 @@ Labels: {{CUE_GH_LABELS}}
 	'cli.trigger': '{{CUE_CLI_PROMPT}}\n\n',
 	'time.heartbeat': '',
 	'time.scheduled': '',
+	'time.once': '',
 	'app.startup': '',
 };
 
@@ -91,6 +94,7 @@ export const EVENT_COLORS: Record<CueEventType, string> = {
 	'app.startup': '#10b981',
 	'time.heartbeat': '#f59e0b',
 	'time.scheduled': '#8b5cf6',
+	'time.once': '#8b5cf6',
 	'file.changed': '#3b82f6',
 	'agent.completed': '#22c55e',
 	'github.pull_request': '#a855f7',

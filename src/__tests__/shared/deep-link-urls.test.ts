@@ -6,6 +6,7 @@ import { describe, it, expect } from 'vitest';
 import {
 	buildSessionDeepLink,
 	buildGroupDeepLink,
+	buildFileDeepLink,
 	parseMaestroDeepLink,
 } from '../../shared/deep-link-urls';
 
@@ -89,5 +90,63 @@ describe('parseMaestroDeepLink', () => {
 		expect(parseMaestroDeepLink('maestro://session')).toBeNull();
 		expect(parseMaestroDeepLink('maestro://session/')).toBeNull();
 		expect(parseMaestroDeepLink('maestro://group')).toBeNull();
+	});
+
+	it('parses file URLs with and without line fragments', () => {
+		const path = '/Users/me/proj/notes.md';
+		expect(parseMaestroDeepLink(buildFileDeepLink('sess1', path))).toEqual({
+			action: 'file',
+			sessionId: 'sess1',
+			filePath: path,
+		});
+		expect(parseMaestroDeepLink(buildFileDeepLink('sess1', path, 42))).toEqual({
+			action: 'file',
+			sessionId: 'sess1',
+			filePath: path,
+			line: 42,
+		});
+	});
+
+	it('ignores malformed line fragments on file URLs', () => {
+		const url = `${buildFileDeepLink('sess1', '/x/y.md')}#L0`;
+		expect(parseMaestroDeepLink(url)).toEqual({
+			action: 'file',
+			sessionId: 'sess1',
+			filePath: '/x/y.md',
+		});
+		const url2 = `${buildFileDeepLink('sess1', '/x/y.md')}#Lfoo`;
+		expect(parseMaestroDeepLink(url2)).toEqual({
+			action: 'file',
+			sessionId: 'sess1',
+			filePath: '/x/y.md',
+		});
+	});
+
+	it('round-trips file paths with spaces and special characters', () => {
+		const path = '/Users/me/My Notes/2026 plan & ideas.md';
+		const url = buildFileDeepLink('s', path, 7);
+		expect(parseMaestroDeepLink(url)).toEqual({
+			action: 'file',
+			sessionId: 's',
+			filePath: path,
+			line: 7,
+		});
+	});
+});
+
+describe('buildFileDeepLink', () => {
+	it('encodes the file path so slashes do not break path-segment parsing', () => {
+		const url = buildFileDeepLink('sess', '/a/b.md');
+		expect(url).toBe(`maestro://file/sess/${encodeURIComponent('/a/b.md')}`);
+	});
+
+	it('omits the line fragment when line is undefined or non-positive', () => {
+		expect(buildFileDeepLink('s', '/x.md')).not.toMatch(/#/);
+		expect(buildFileDeepLink('s', '/x.md', 0)).not.toMatch(/#/);
+		expect(buildFileDeepLink('s', '/x.md', -1)).not.toMatch(/#/);
+	});
+
+	it('emits #L<n> when line is a positive integer', () => {
+		expect(buildFileDeepLink('s', '/x.md', 3)).toMatch(/#L3$/);
 	});
 });

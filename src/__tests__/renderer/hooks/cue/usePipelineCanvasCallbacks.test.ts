@@ -90,7 +90,7 @@ describe('usePipelineCanvasCallbacks', () => {
 	});
 
 	describe('onNodesChange', () => {
-		it('updates displayNodes only, does not touch pipelineState', () => {
+		it('updates displayNodes only for non-remove changes, does not touch pipelineState', () => {
 			const h = setup({ nodes: [rfNode('p1:t1', 'trigger')] });
 			act(() => {
 				h.result.current.onNodesChange([
@@ -99,6 +99,99 @@ describe('usePipelineCanvasCallbacks', () => {
 			});
 			expect(h.setDisplayNodes).toHaveBeenCalled();
 			expect(h.setPipelineState).not.toHaveBeenCalled();
+		});
+
+		it('commits remove changes (box-select delete) to pipelineState and prunes connected edges', () => {
+			const t1 = {
+				id: 't1',
+				type: 'trigger' as const,
+				position: { x: 0, y: 0 },
+				data: { eventType: 'app.startup' as const, label: 'T', config: {} },
+			};
+			const a1 = {
+				id: 'a1',
+				type: 'agent' as const,
+				position: { x: 0, y: 0 },
+				data: { sessionId: 's1', sessionName: 'A', toolType: 'x' },
+			};
+			const h = setup({
+				pipelines: [
+					pipeline('p1', [t1, a1], [{ id: 'e1', source: 't1', target: 'a1', mode: 'pass' }]),
+				],
+			});
+			act(() => {
+				h.result.current.onNodesChange([
+					{ id: 'p1:t1', type: 'remove' },
+					{ id: 'p1:a1', type: 'remove' },
+				]);
+			});
+			expect(h.getState().pipelines[0].nodes).toHaveLength(0);
+			// Edge connected to the removed nodes is pruned too.
+			expect(h.getState().pipelines[0].edges).toHaveLength(0);
+			// Selection cleared so a stale composite id can't linger.
+			expect(h.setSelectedNodeId).toHaveBeenCalledWith(null);
+			expect(h.setSelectedEdgeId).toHaveBeenCalledWith(null);
+		});
+
+		it('does not commit remove changes in All Pipelines view (read-only)', () => {
+			const t1 = {
+				id: 't1',
+				type: 'trigger' as const,
+				position: { x: 0, y: 0 },
+				data: { eventType: 'app.startup' as const, label: 'T', config: {} },
+			};
+			const h = setup({ pipelines: [pipeline('p1', [t1])], isAllPipelinesView: true });
+			act(() => {
+				h.result.current.onNodesChange([{ id: 'p1:t1', type: 'remove' }]);
+			});
+			expect(h.setPipelineState).not.toHaveBeenCalled();
+			expect(h.getState().pipelines[0].nodes).toHaveLength(1);
+		});
+	});
+
+	describe('onEdgesChange', () => {
+		it('commits edge remove changes to pipelineState', () => {
+			const h = setup({
+				pipelines: [
+					pipeline(
+						'p1',
+						[],
+						[
+							{ id: 'e1', source: 't1', target: 'a1', mode: 'pass' },
+							{ id: 'e2', source: 't1', target: 'a2', mode: 'pass' },
+						]
+					),
+				],
+			});
+			act(() => {
+				h.result.current.onEdgesChange([{ id: 'p1:e1', type: 'remove' }]);
+			});
+			expect(h.getState().pipelines[0].edges).toHaveLength(1);
+			expect(h.getState().pipelines[0].edges[0].id).toBe('e2');
+			expect(h.setSelectedEdgeId).toHaveBeenCalledWith(null);
+		});
+
+		it('no-op for non-remove edge changes', () => {
+			const h = setup({
+				pipelines: [pipeline('p1', [], [{ id: 'e1', source: 't1', target: 'a1', mode: 'pass' }])],
+			});
+			act(() => {
+				h.result.current.onEdgesChange([{ id: 'p1:e1', type: 'select', selected: true }]);
+			});
+			expect(h.setPipelineState).not.toHaveBeenCalled();
+			expect(h.getState().pipelines[0].edges).toHaveLength(1);
+		});
+
+		it('no-op in All Pipelines view (read-only)', () => {
+			const h = setup({
+				pipelines: [pipeline('p1', [], [{ id: 'e1', source: 't1', target: 'a1', mode: 'pass' }])],
+				isAllPipelinesView: true,
+			});
+			act(() => {
+				h.result.current.onEdgesChange([{ id: 'p1:e1', type: 'remove' }]);
+			});
+			expect(h.setPipelineState).not.toHaveBeenCalled();
+			expect(h.getState().pipelines[0].edges).toHaveLength(1);
 		});
 	});
 

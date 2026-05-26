@@ -21,6 +21,34 @@ import type { ConductorBadge } from '../constants/conductorBadges';
 import { logger } from '../utils/logger';
 
 // ============================================================================
+// Prompt Composer full-screen preference (persisted)
+// ============================================================================
+// The Prompt Composer remembers whether the user last left it windowed or
+// full-screen ("expanded-expanded"). The open-composer hotkey cycles between
+// the two while the modal is open, so this lives in the store (shared by the
+// keyboard handler and the modal) rather than as component-local state.
+
+const PROMPT_COMPOSER_FULLSCREEN_KEY = 'maestro.promptComposer.fullscreen';
+
+function readStoredPromptComposerFullscreen(): boolean {
+	if (typeof window === 'undefined') return false;
+	try {
+		return window.localStorage.getItem(PROMPT_COMPOSER_FULLSCREEN_KEY) === 'true';
+	} catch {
+		return false;
+	}
+}
+
+function writeStoredPromptComposerFullscreen(value: boolean): void {
+	if (typeof window === 'undefined') return;
+	try {
+		window.localStorage.setItem(PROMPT_COMPOSER_FULLSCREEN_KEY, String(value));
+	} catch {
+		// Ignore quota / privacy-mode errors — preference just won't persist.
+	}
+}
+
+// ============================================================================
 // Modal Data Types
 // ============================================================================
 
@@ -323,6 +351,8 @@ interface ModalEntry<T = unknown> {
 
 interface ModalStoreState {
 	modals: Map<ModalId, ModalEntry>;
+	/** Whether the Prompt Composer is in full-screen ("expanded-expanded") mode. */
+	promptComposerFullscreen: boolean;
 }
 
 interface ModalStoreActions {
@@ -362,6 +392,19 @@ interface ModalStoreActions {
 	 * Close all open modals.
 	 */
 	closeAll: () => void;
+
+	/**
+	 * Toggle the Prompt Composer between full-screen and windowed mode.
+	 * Persists the preference so the next open restores the same size.
+	 */
+	togglePromptComposerFullscreen: () => void;
+
+	/**
+	 * Keyboard entry point for the open-composer hotkey. Opens the Prompt
+	 * Composer when it's closed, otherwise cycles it between windowed and
+	 * full-screen — so repeated presses switch sizes instead of doing nothing.
+	 */
+	cyclePromptComposer: () => void;
 }
 
 export type ModalStore = ModalStoreState & ModalStoreActions;
@@ -372,6 +415,7 @@ export type ModalStore = ModalStoreState & ModalStoreActions;
 
 export const useModalStore = create<ModalStore>()((set, get) => ({
 	modals: new Map(),
+	promptComposerFullscreen: readStoredPromptComposerFullscreen(),
 
 	openModal: (id, data) => {
 		set((state) => {
@@ -459,6 +503,23 @@ export const useModalStore = create<ModalStore>()((set, get) => ({
 			});
 			return { modals: newModals };
 		});
+	},
+
+	togglePromptComposerFullscreen: () => {
+		set((state) => {
+			const next = !state.promptComposerFullscreen;
+			writeStoredPromptComposerFullscreen(next);
+			return { promptComposerFullscreen: next };
+		});
+	},
+
+	cyclePromptComposer: () => {
+		const state = get();
+		if (state.modals.get('promptComposer')?.open) {
+			state.togglePromptComposerFullscreen();
+		} else {
+			state.openModal('promptComposer');
+		}
 	},
 }));
 

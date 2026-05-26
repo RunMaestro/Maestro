@@ -114,6 +114,7 @@ const prepareSessionForPersistence = (session: Session): Session => {
 	const {
 		closedTabHistory: _closedTabHistory,
 		unifiedClosedTabHistory: _unifiedClosedTabHistory,
+		orphanedThinkingTabs: _orphanedThinkingTabs,
 		agentError: _agentError,
 		agentErrorPaused: _agentErrorPaused,
 		agentErrorTabId: _agentErrorTabId,

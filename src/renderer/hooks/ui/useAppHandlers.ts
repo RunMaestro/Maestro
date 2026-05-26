@@ -8,7 +8,9 @@ import {
 import type { FileNode } from '../../types/fileTree';
 import { useModalStore } from '../../stores/modalStore';
 import { useSessionStore } from '../../stores/sessionStore';
+import { useUIStore } from '../../stores/uiStore';
 import { generateId } from '../../utils/ids';
+import { isAbsolutePath } from '../../../shared/formatters';
 import { closeFileTab as closeFileTabHelper } from '../../utils/tabHelpers';
 import { logger } from '../../utils/logger';
 
@@ -90,15 +92,15 @@ export interface UseAppHandlersDeps {
 export interface UseAppHandlersReturn {
 	// Drag handlers
 	/** Handle drag enter for image drop zone */
-	handleImageDragEnter: (e: React.DragEvent) => void;
+	handleFileDragEnter: (e: React.DragEvent) => void;
 	/** Handle drag leave for image drop zone */
-	handleImageDragLeave: (e: React.DragEvent) => void;
+	handleFileDragLeave: (e: React.DragEvent) => void;
 	/** Handle drag over for image drop zone */
-	handleImageDragOver: (e: React.DragEvent) => void;
+	handleFileDragOver: (e: React.DragEvent) => void;
 	/** Whether an image is currently being dragged over the app */
-	isDraggingImage: boolean;
+	isDraggingFile: boolean;
 	/** Setter for drag state (used by drop handler) */
-	setIsDraggingImage: React.Dispatch<React.SetStateAction<boolean>>;
+	setIsDraggingFile: React.Dispatch<React.SetStateAction<boolean>>;
 	/** Ref to drag counter for drop handler */
 	dragCounterRef: React.MutableRefObject<number>;
 
@@ -198,33 +200,37 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 	} = deps;
 
 	// --- DRAG STATE ---
-	const [isDraggingImage, setIsDraggingImage] = useState(false);
+	const [isDraggingFile, setIsDraggingFile] = useState(false);
 	const dragCounterRef = useRef(0);
 
 	// --- DRAG HANDLERS ---
 
-	const handleImageDragEnter = useCallback((e: React.DragEvent) => {
+	const handleFileDragEnter = useCallback((e: React.DragEvent) => {
 		e.preventDefault();
 		e.stopPropagation();
 		dragCounterRef.current++;
-		// Check if dragging files that include images
-		if (e.dataTransfer.types.includes('Files')) {
-			setIsDraggingImage(true);
+		// Show the overlay for either OS-level file drags ("Files") or internal
+		// drags from the Files panel (which only carry the custom MIME type).
+		if (
+			e.dataTransfer.types.includes('Files') ||
+			e.dataTransfer.types.includes('application/x-maestro-file-path')
+		) {
+			setIsDraggingFile(true);
 		}
 	}, []);
 
-	const handleImageDragLeave = useCallback((e: React.DragEvent) => {
+	const handleFileDragLeave = useCallback((e: React.DragEvent) => {
 		e.preventDefault();
 		e.stopPropagation();
 		dragCounterRef.current--;
 		// Only hide overlay when all nested elements have been left
 		if (dragCounterRef.current <= 0) {
 			dragCounterRef.current = 0;
-			setIsDraggingImage(false);
+			setIsDraggingFile(false);
 		}
 	}, []);
 
-	const handleImageDragOver = useCallback((e: React.DragEvent) => {
+	const handleFileDragOver = useCallback((e: React.DragEvent) => {
 		e.preventDefault();
 		e.stopPropagation();
 	}, []);
@@ -237,7 +243,13 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 	useEffect(() => {
 		const handleDragEnd = () => {
 			dragCounterRef.current = 0;
-			setIsDraggingImage(false);
+			setIsDraggingFile(false);
+			// Session drag state is only cleared on successful drops onto groups or
+			// the ungrouped zone. If the drag ends anywhere else (released on the
+			// originating row, an empty area, ESC, or outside the window), the row
+			// would otherwise stay stuck at opacity-50 ("ghosted"). dragend always
+			// fires after drop, so clearing here is safe.
+			useUIStore.getState().setDraggingSessionId(null);
 		};
 
 		const handleDocumentDragOver = (e: DragEvent) => {
@@ -249,17 +261,58 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 			handleDragEnd();
 		};
 
+		// Escape during a drag doesn't reliably fire `dragend` for OS-initiated
+		// drags in Chromium/Electron, leaving the overlay stuck. Catch ESC
+		// directly as a fallback.
+		const handleKeyDown = (e: KeyboardEvent) => {
+			if (e.key === 'Escape' && dragCounterRef.current > 0) {
+				handleDragEnd();
+			}
+		};
+
+		// When the cursor leaves the window entirely during an external drag,
+		// any subsequent ESC/drop happens outside our event scope. Detect this
+		// via a `dragleave` whose relatedTarget is null OR whose coordinates are
+		// at/past the viewport edge, and reset the overlay state proactively.
+		const handleDocumentDragLeave = (e: DragEvent) => {
+			const leftWindow =
+				e.relatedTarget === null ||
+				e.clientX <= 0 ||
+				e.clientY <= 0 ||
+				e.clientX >= window.innerWidth ||
+				e.clientY >= window.innerHeight;
+			if (leftWindow) {
+				handleDragEnd();
+			}
+		};
+
+		// Mouse release always ends a session drag, period. `dragend` covers the
+		// HTML5 drag lifecycle, but releasing the button is the user's mental
+		// model of "the drag is over" — clear the ghosting flag unconditionally
+		// on mouseup so a row can never stay faded once the mouse is up.
+		const handleMouseUp = () => {
+			if (useUIStore.getState().draggingSessionId !== null) {
+				useUIStore.getState().setDraggingSessionId(null);
+			}
+		};
+
 		// dragend fires when the drag operation ends (drop or cancel)
 		document.addEventListener('dragend', handleDragEnd);
+		document.addEventListener('mouseup', handleMouseUp);
 		// Use capture phase for dragover/drop so they fire BEFORE React handlers that call stopPropagation().
 		// This ensures preventDefault() is called at document level even when element handlers stop bubbling.
 		document.addEventListener('dragover', handleDocumentDragOver, { capture: true });
 		document.addEventListener('drop', handleDocumentDrop, { capture: true });
+		document.addEventListener('keydown', handleKeyDown);
+		document.addEventListener('dragleave', handleDocumentDragLeave);
 
 		return () => {
 			document.removeEventListener('dragend', handleDragEnd);
+			document.removeEventListener('mouseup', handleMouseUp);
 			document.removeEventListener('dragover', handleDocumentDragOver, { capture: true });
 			document.removeEventListener('drop', handleDocumentDrop, { capture: true });
+			document.removeEventListener('keydown', handleKeyDown);
+			document.removeEventListener('dragleave', handleDocumentDragLeave);
 		};
 	}, []);
 
@@ -270,15 +323,21 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 			if (!activeSession) return; // Guard against null session
 			if (node.type !== 'file') return;
 
-			// Construct full file path using projectRoot (not fullPath which can diverge from file tree root)
-			// The file tree is rooted at projectRoot, so paths are relative to it
+			// An already-absolute `path` (e.g. from the Fuzzy File Search absolute-path
+			// open) is used verbatim. Otherwise the file tree is rooted at projectRoot,
+			// so a relative path is resolved against it (not fullPath, which can diverge
+			// from the file tree root).
+			const isAbsoluteInput = isAbsolutePath(path);
 			const treeRoot = activeSession.projectRoot || activeSession.fullPath;
-			const fullPath = `${treeRoot}/${path}`;
+			const fullPath = isAbsoluteInput ? path : `${treeRoot}/${path}`;
 
 			// Get SSH remote ID - use sshRemoteId (set after AI spawns) or fall back to sessionSshRemoteConfig
 			// (set before spawn). This ensures file operations work for both AI and terminal-only SSH sessions.
-			const sshRemoteId =
-				activeSession.sshRemoteId || activeSession.sessionSshRemoteConfig?.remoteId || undefined;
+			// An absolute path typed into Fuzzy File Search always refers to the local
+			// filesystem, so SSH dispatch is skipped for it.
+			const sshRemoteId = isAbsoluteInput
+				? undefined
+				: activeSession.sshRemoteId || activeSession.sessionSshRemoteConfig?.remoteId || undefined;
 
 			// Check if file should be opened externally (only for local files)
 			if (!sshRemoteId && shouldOpenExternally(node.name)) {
@@ -491,11 +550,11 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 
 	return {
 		// Drag handlers
-		handleImageDragEnter,
-		handleImageDragLeave,
-		handleImageDragOver,
-		isDraggingImage,
-		setIsDraggingImage,
+		handleFileDragEnter,
+		handleFileDragLeave,
+		handleFileDragOver,
+		isDraggingFile,
+		setIsDraggingFile,
 		dragCounterRef,
 
 		// File handlers

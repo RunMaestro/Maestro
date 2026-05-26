@@ -357,6 +357,46 @@ describe('EnvVarsEditor', () => {
 		expect(screen.queryByDisplayValue('OLD')).not.toBeInTheDocument();
 	});
 
+	it('rejects a relative CLAUDE_CONFIG_DIR value', () => {
+		// Guards against the real-world typo `sm/Users/pedram/.claude-smash` —
+		// a relative path silently resolved against the main-process cwd at
+		// sample time and pointed at a non-existent dir, producing a phantom
+		// "smash" tab in the Usage Dashboard.
+		render(<EnvVarsEditor envVars={{}} setEnvVars={mockSetEnvVars} theme={mockTheme} />);
+
+		const addButton = screen.getByRole('button', { name: 'Add Variable' });
+		fireEvent.click(addButton);
+
+		const keyInput = screen.getAllByPlaceholderText('VARIABLE_NAME')[0];
+		fireEvent.change(keyInput, { target: { value: 'CLAUDE_CONFIG_DIR' } });
+
+		const valueInput = screen.getAllByPlaceholderText('value')[0];
+		fireEvent.change(valueInput, { target: { value: 'sm/Users/me/.claude-smash' } });
+
+		expect(screen.getByText(/CLAUDE_CONFIG_DIR must be an absolute path/)).toBeInTheDocument();
+
+		// And the invalid entry must NOT have been committed back to the parent.
+		const lastCall = mockSetEnvVars.mock.calls[mockSetEnvVars.mock.calls.length - 1][0];
+		expect(lastCall['CLAUDE_CONFIG_DIR']).toBeUndefined();
+	});
+
+	it('accepts an absolute CLAUDE_CONFIG_DIR value', () => {
+		render(<EnvVarsEditor envVars={{}} setEnvVars={mockSetEnvVars} theme={mockTheme} />);
+
+		const addButton = screen.getByRole('button', { name: 'Add Variable' });
+		fireEvent.click(addButton);
+
+		const keyInput = screen.getAllByPlaceholderText('VARIABLE_NAME')[0];
+		fireEvent.change(keyInput, { target: { value: 'CLAUDE_CONFIG_DIR' } });
+
+		const valueInput = screen.getAllByPlaceholderText('value')[0];
+		fireEvent.change(valueInput, { target: { value: '/Users/me/.claude-smash' } });
+
+		expect(screen.queryByText(/must be an absolute path/)).not.toBeInTheDocument();
+		const lastCall = mockSetEnvVars.mock.calls[mockSetEnvVars.mock.calls.length - 1][0];
+		expect(lastCall['CLAUDE_CONFIG_DIR']).toBe('/Users/me/.claude-smash');
+	});
+
 	it('should show = separator between key and value', () => {
 		render(
 			<EnvVarsEditor envVars={{ MY_VAR: 'hello' }} setEnvVars={mockSetEnvVars} theme={mockTheme} />

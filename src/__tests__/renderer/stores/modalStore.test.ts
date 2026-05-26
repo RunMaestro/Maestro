@@ -22,7 +22,7 @@ import type { Session } from '../../../renderer/types';
 describe('modalStore', () => {
 	beforeEach(() => {
 		// Reset store to initial state before each test
-		useModalStore.setState({ modals: new Map() });
+		useModalStore.setState({ modals: new Map(), promptComposerFullscreen: false });
 	});
 
 	describe('initial state', () => {
@@ -1174,6 +1174,45 @@ describe('modalStore', () => {
 			expect(result.current.cueYamlEditorOpen).toBe(false);
 			expect(result.current.cueYamlEditorSessionId).toBeNull();
 			expect(result.current.cueYamlEditorProjectRoot).toBeNull();
+		});
+	});
+
+	describe('Prompt Composer full-screen cycle', () => {
+		it('togglePromptComposerFullscreen flips the persisted flag', () => {
+			const store = useModalStore.getState();
+			expect(store.promptComposerFullscreen).toBe(false);
+
+			store.togglePromptComposerFullscreen();
+			expect(useModalStore.getState().promptComposerFullscreen).toBe(true);
+
+			useModalStore.getState().togglePromptComposerFullscreen();
+			expect(useModalStore.getState().promptComposerFullscreen).toBe(false);
+		});
+
+		it('cyclePromptComposer opens the composer (windowed) when it is closed', () => {
+			const store = useModalStore.getState();
+			expect(store.isOpen('promptComposer')).toBe(false);
+
+			store.cyclePromptComposer();
+
+			expect(useModalStore.getState().isOpen('promptComposer')).toBe(true);
+			// Opening must not change the size — it stays in its last-used mode.
+			expect(useModalStore.getState().promptComposerFullscreen).toBe(false);
+		});
+
+		it('cyclePromptComposer toggles size while the composer stays open', () => {
+			const store = useModalStore.getState();
+			store.openModal('promptComposer');
+
+			// First press while open → full-screen ("expanded-expanded").
+			useModalStore.getState().cyclePromptComposer();
+			expect(useModalStore.getState().isOpen('promptComposer')).toBe(true);
+			expect(useModalStore.getState().promptComposerFullscreen).toBe(true);
+
+			// Next press → back to windowed ("contracted-expanded"), still open.
+			useModalStore.getState().cyclePromptComposer();
+			expect(useModalStore.getState().isOpen('promptComposer')).toBe(true);
+			expect(useModalStore.getState().promptComposerFullscreen).toBe(false);
 		});
 	});
 });

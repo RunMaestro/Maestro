@@ -30,13 +30,18 @@ import type {
 	EncoreFeatureFlags,
 } from '../../types';
 import type { FileExplorerIconTheme } from '../../utils/fileExplorerIcons/shared';
+import type { ToastWidth } from '../../../shared/toastWidth';
 import {
 	useSettingsStore,
 	loadAllSettings,
 	selectIsLeaderboardRegistered,
 } from '../../stores/settingsStore';
 import type { SettingsStore } from '../../stores/settingsStore';
-import type { DocumentGraphLayoutType } from '../../stores/settingsStore';
+import type {
+	DocumentGraphLayoutType,
+	FilePreviewToolbarButton,
+	FilePreviewToolbarVisibility,
+} from '../../stores/settingsStore';
 import { notifyToast } from '../../stores/notificationStore';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { logger } from '../../utils/logger';
@@ -116,6 +121,8 @@ export interface UseSettingsReturn {
 	setShowHiddenFiles: (value: boolean) => void;
 	fileExplorerIconTheme: FileExplorerIconTheme;
 	setFileExplorerIconTheme: (value: FileExplorerIconTheme) => void;
+	toastWidth: ToastWidth;
+	setToastWidth: (value: ToastWidth) => void;
 
 	// Logging settings
 	logLevel: string;
@@ -255,6 +262,10 @@ export interface UseSettingsReturn {
 	setShowStarredInUnreadFilter: (value: boolean) => void;
 	showFilePreviewsInUnreadFilter: boolean;
 	setShowFilePreviewsInUnreadFilter: (value: boolean) => void;
+	useCmd0AsLastTab: boolean;
+	setUseCmd0AsLastTab: (value: boolean) => void;
+	showBrowserTabDomain: boolean;
+	setShowBrowserTabDomain: (value: boolean) => void;
 
 	// Document Graph settings
 	documentGraphShowExternalLinks: boolean;
@@ -309,6 +320,8 @@ export interface UseSettingsReturn {
 	setUseSystemBrowser: (value: boolean) => void;
 	browserHomeUrl: string;
 	setBrowserHomeUrl: (value: string) => void;
+	htmlDoubleClickOpensInBrowser: boolean;
+	setHtmlDoubleClickOpensInBrowser: (value: boolean) => void;
 
 	// Automatic tab naming settings
 	automaticTabNamingEnabled: boolean;
@@ -385,8 +398,24 @@ export interface UseSettingsReturn {
 	// Left side panel
 	showLeftPanelGroupMemberCount: boolean;
 	setShowLeftPanelGroupMemberCount: (value: boolean) => void;
+	leftPanelCollapsedPillsPerRow: number;
+	setLeftPanelCollapsedPillsPerRow: (value: number) => void;
 	showLeftPanelLocationPills: boolean;
 	setShowLeftPanelLocationPills: (value: boolean) => void;
+	showLeftPanelGitIndicator: boolean;
+	setShowLeftPanelGitIndicator: (value: boolean) => void;
+	showLeftPanelCueIndicator: boolean;
+	setShowLeftPanelCueIndicator: (value: boolean) => void;
+	showLeftPanelStartupCommandIndicator: boolean;
+	setShowLeftPanelStartupCommandIndicator: (value: boolean) => void;
+
+	// File Edit & Preview
+	fileEditWordWrap: boolean;
+	setFileEditWordWrap: (value: boolean) => void;
+	fileEditShowLineNumbers: boolean;
+	setFileEditShowLineNumbers: (value: boolean) => void;
+	filePreviewToolbarVisibility: FilePreviewToolbarVisibility;
+	setFilePreviewToolbarButtonVisibility: (button: FilePreviewToolbarButton, value: boolean) => void;
 
 	// Group Chat settings
 	moderatorStandingInstructions: string;

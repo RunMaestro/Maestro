@@ -34,6 +34,11 @@ export const DEFAULT_SHORTCUTS: Record<string, Shortcut> = {
 	goToHistory: { id: 'goToHistory', label: 'Go to History Tab', keys: ['Meta', 'Shift', 'h'] },
 	goToAutoRun: { id: 'goToAutoRun', label: 'Go to Auto Run Tab', keys: ['Meta', 'Shift', '1'] },
 	copyFilePath: { id: 'copyFilePath', label: 'Copy File Path (in Preview)', keys: ['Meta', 'p'] },
+	toggleFilePreviewToc: {
+		id: 'toggleFilePreviewToc',
+		label: 'Toggle Table of Contents (Markdown Preview)',
+		keys: ['Meta', '\\'],
+	},
 	toggleMarkdownMode: {
 		id: 'toggleMarkdownMode',
 		label: 'Toggle Edit/Preview',
@@ -41,8 +46,8 @@ export const DEFAULT_SHORTCUTS: Record<string, Shortcut> = {
 	},
 	toggleAutoRunExpanded: {
 		id: 'toggleAutoRunExpanded',
-		label: 'Toggle Auto Run Expanded',
-		keys: ['Meta', 'Shift', 'e'],
+		label: 'Auto Run Expanded Preview',
+		keys: ['Meta', 'Shift', '2'],
 	},
 	focusInput: { id: 'focusInput', label: 'Toggle Input/Output Focus', keys: ['Meta', '.'] },
 	focusSidebar: { id: 'focusSidebar', label: 'Focus Left Panel', keys: ['Meta', 'Shift', 'a'] },
@@ -60,6 +65,11 @@ export const DEFAULT_SHORTCUTS: Record<string, Shortcut> = {
 		keys: ['Alt', 'Meta', 'p'],
 	},
 	usageDashboard: { id: 'usageDashboard', label: 'Usage Dashboard', keys: ['Alt', 'Meta', 'u'] },
+	executionQueue: {
+		id: 'executionQueue',
+		label: 'View Execution Queue',
+		keys: ['Meta', 'Shift', 'x'],
+	},
 	jumpToBottom: { id: 'jumpToBottom', label: 'Jump to Bottom', keys: ['Alt', 'j'] },
 	prevTab: { id: 'prevTab', label: 'Previous Tab', keys: ['Meta', 'Shift', '['] },
 	nextTab: { id: 'nextTab', label: 'Next Tab', keys: ['Meta', 'Shift', ']'] },
@@ -87,7 +97,7 @@ export const DEFAULT_SHORTCUTS: Record<string, Shortcut> = {
 	filterUnreadAgents: {
 		id: 'filterUnreadAgents',
 		label: 'Filter Unread Agents',
-		keys: ['Meta', 'Shift', 'u'],
+		keys: ['Alt', 'u'],
 	},
 	nextUnreadTab: {
 		id: 'nextUnreadTab',
@@ -221,7 +231,7 @@ export const TAB_SHORTCUTS: Record<string, Shortcut> = {
 	toggleTabUnread: {
 		id: 'toggleTabUnread',
 		label: 'Toggle Tab Unread',
-		keys: ['Alt', 'Shift', 'u'],
+		keys: ['Meta', 'Shift', 'u'],
 	},
 	goToTab1: { id: 'goToTab1', label: 'Go to Tab 1', keys: ['Meta', '1'] },
 	goToTab2: { id: 'goToTab2', label: 'Go to Tab 2', keys: ['Meta', '2'] },

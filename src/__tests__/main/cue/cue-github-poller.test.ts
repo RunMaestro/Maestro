@@ -82,6 +82,7 @@ vi.mock('../../../main/cue/cue-db', () => ({
 
 import {
 	createCueGitHubPoller,
+	isGitHubConnectivityError,
 	isGitHubRateLimitError,
 	GITHUB_RATE_LIMIT_MAX_BACKOFF_MS,
 	type CueGitHubPollerConfig,
@@ -909,6 +910,26 @@ describe('cue-github-poller', () => {
 		});
 	});
 
+	describe('connectivity detection (isGitHubConnectivityError)', () => {
+		it('matches GitHub CLI connection failures', () => {
+			expect(
+				isGitHubConnectivityError(
+					new Error(
+						'error connecting to api.github.com\ncheck your internet connection or https://githubstatus.com'
+					)
+				)
+			).toBe(true);
+		});
+
+		it('matches DNS failures', () => {
+			expect(isGitHubConnectivityError(new Error('ENOTFOUND api.github.com'))).toBe(true);
+		});
+
+		it('does not match auth/configuration failures', () => {
+			expect(isGitHubConnectivityError(new Error('gh auth login required'))).toBe(false);
+		});
+	});
+
 	// ─── Phase 12C + 13A: backoff + Sentry behavior ────────────────────────
 	describe('rate-limit backoff and Sentry reporting', () => {
 		it('emits rateLimitBackoff payload on rate-limit error without Sentry', async () => {
@@ -932,9 +953,25 @@ describe('cue-github-poller', () => {
 			cleanup();
 		});
 
-		it('reports non-rate-limit errors to Sentry with cue:github:doPoll tag', async () => {
+		it('does not report GitHub connectivity errors to Sentry', async () => {
 			const config = makeConfig();
 			setupExecFileReject('pr list', 'ENOTFOUND api.github.com');
+			mockExecFile.mockImplementationOnce((_c, _a, _o, cb) => cb(null, '2.0.0', ''));
+
+			const cleanup = createCueGitHubPoller(config);
+			await vi.advanceTimersByTimeAsync(2100);
+
+			const sentryCalls = mockCaptureException.mock.calls.filter(
+				(c) => (c[1] as { operation: string }).operation === 'cue:github:doPoll'
+			);
+			expect(sentryCalls).toHaveLength(0);
+
+			cleanup();
+		});
+
+		it('reports non-rate-limit/non-connectivity errors to Sentry with cue:github:doPoll tag', async () => {
+			const config = makeConfig();
+			setupExecFileReject('pr list', 'gh auth login required');
 			mockExecFile.mockImplementationOnce((_c, _a, _o, cb) => cb(null, '2.0.0', ''));
 
 			const cleanup = createCueGitHubPoller(config);

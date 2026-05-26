@@ -1,11 +1,12 @@
-import { useRef, useState, useCallback } from 'react';
+import { useRef, useState, useCallback, useMemo } from 'react';
 import { Share2, Copy, Check, ExternalLink } from 'lucide-react';
 import { GhostIconButton } from './ui/GhostIconButton';
-import type { Theme } from '../types';
+import type { LogEntry, Theme } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Modal } from './ui/Modal';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { openUrl } from '../utils/openUrl';
+import { formatLogsForClipboard, hasThinkingEntries } from '../utils/contextExtractor';
 
 export interface GistInfo {
 	gistUrl: string;
@@ -21,6 +22,12 @@ interface GistPublishModalProps {
 	onSuccess: (gistUrl: string, isPublic: boolean) => void;
 	/** Existing gist info if the file was previously published */
 	existingGist?: GistInfo;
+	/**
+	 * Raw log entries that produced `content`. When provided and the logs
+	 * contain reasoning/thinking blocks, the modal shows an "Include
+	 * reasoning" toggle that re-formats the body before publishing.
+	 */
+	sourceLogs?: LogEntry[];
 }
 
 /**
@@ -35,6 +42,7 @@ export function GistPublishModal({
 	onClose,
 	onSuccess,
 	existingGist,
+	sourceLogs,
 }: GistPublishModalProps) {
 	const secretButtonRef = useRef<HTMLButtonElement>(null);
 	const copyButtonRef = useRef<HTMLButtonElement>(null);
@@ -42,6 +50,16 @@ export function GistPublishModal({
 	const [error, setError] = useState<string | null>(null);
 	const [copied, setCopied] = useState(false);
 	const [showRepublishOptions, setShowRepublishOptions] = useState(false);
+	const [includeThinking, setIncludeThinking] = useState(false);
+
+	const canToggleThinking = useMemo(() => hasThinkingEntries(sourceLogs), [sourceLogs]);
+
+	const effectiveContent = useMemo(() => {
+		if (canToggleThinking && includeThinking && sourceLogs) {
+			return formatLogsForClipboard(sourceLogs, { includeThinking: true });
+		}
+		return content;
+	}, [canToggleThinking, includeThinking, sourceLogs, content]);
 
 	const handlePublish = useCallback(
 		async (isPublic: boolean) => {
@@ -51,7 +69,7 @@ export function GistPublishModal({
 			try {
 				const result = await window.maestro.git.createGist(
 					filename,
-					content,
+					effectiveContent,
 					'', // No description - file name serves as context
 					isPublic
 				);
@@ -68,7 +86,7 @@ export function GistPublishModal({
 				setIsPublishing(false);
 			}
 		},
-		[filename, content, onSuccess, onClose]
+		[filename, effectiveContent, onSuccess, onClose]
 	);
 
 	const handlePublishSecret = useCallback(() => {
@@ -278,6 +296,27 @@ export function GistPublishModal({
 					<p className="text-xs" style={{ color: theme.colors.warning }}>
 						This will create a new gist. The existing gist URL will be replaced.
 					</p>
+				)}
+
+				{canToggleThinking && (
+					<label
+						className="flex items-start gap-2 text-xs cursor-pointer select-none"
+						style={{ color: theme.colors.textMain }}
+					>
+						<input
+							type="checkbox"
+							checked={includeThinking}
+							onChange={(e) => setIncludeThinking(e.target.checked)}
+							disabled={isPublishing}
+							className="mt-0.5"
+						/>
+						<span>
+							Include reasoning/thinking logs
+							<span className="block text-xs" style={{ color: theme.colors.textDim }}>
+								Adds the agent's reasoning blocks alongside the user/assistant turns.
+							</span>
+						</span>
+					</label>
 				)}
 
 				<div className="text-xs space-y-2" style={{ color: theme.colors.textDim }}>

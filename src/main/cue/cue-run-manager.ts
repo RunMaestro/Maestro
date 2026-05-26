@@ -409,7 +409,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 				// flight. The finally block's cleanup is gated on activeRuns
 				// having this run, so without an explicit DB write the row
 				// would stay `running` forever in the activity log.
-				safeUpdateCueEventStatus(runId, runResult.status);
+				safeUpdateCueEventStatus(runId, runResult.status, runResult.providerSessionId);
 				// Emit with the structured runFinished payload so live
 				// listeners (activity log, queue indicators) observe the
 				// transition identically to a normal completion — this is
@@ -431,6 +431,10 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 			result.stdout = runResult.stdout;
 			result.stderr = runResult.stderr;
 			result.exitCode = runResult.exitCode;
+			// Carry the main task's provider session id for token attribution.
+			// The output-prompt phase (below) overwrites stdout but NOT this —
+			// it records its own session id on its own event row (outputRunId).
+			result.providerSessionId = runResult.providerSessionId;
 
 			// Execute output prompt if the main task succeeded and an output prompt is configured.
 			// Skipped for `action: command` runs — output_prompt is an AI follow-up, not a
@@ -508,7 +512,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 					// as `safeUpdateCueEventStatus`, which is too coarse to
 					// tell this failure mode apart from a normal run update.
 					try {
-						updateCueEventStatus(outputRunId, outputStatus);
+						updateCueEventStatus(outputRunId, outputStatus, outputResult?.providerSessionId);
 					} catch (finalizeErr) {
 						captureException(finalizeErr, {
 							operation: 'cue:finalizeOutputRunStatus',
@@ -527,7 +531,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 					// false. Finalize it here so the activity log doesn't show a
 					// phantom never-ending run. Mirrors the earlier handling at
 					// line ~245 for the pre-output-prompt case.
-					safeUpdateCueEventStatus(runId, result.status);
+					safeUpdateCueEventStatus(runId, result.status, result.providerSessionId);
 					deps.onLog(
 						'cue',
 						`[CUE] Run "${subscriptionName}" output phase completed after engine stop — parent status recorded (${result.status}), result discarded`,
@@ -636,7 +640,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 				drainQueue(sessionId);
 
 				try {
-					updateCueEventStatus(runId, result.status);
+					updateCueEventStatus(runId, result.status, result.providerSessionId);
 				} catch (err) {
 					deps.onLog('warn', `[CUE] Failed to update DB status for run ${runId}`);
 					captureException(err, {

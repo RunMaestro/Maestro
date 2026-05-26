@@ -40,8 +40,10 @@ vi.mock('../../../renderer/stores/modalStore', () => ({
 
 // Mock contextExtractor
 const mockFormatLogsForClipboard = vi.fn();
+const mockHasThinkingEntries = vi.fn();
 vi.mock('../../../renderer/utils/contextExtractor', () => ({
 	formatLogsForClipboard: (...args: unknown[]) => mockFormatLogsForClipboard(...args),
+	hasThinkingEntries: (...args: unknown[]) => mockHasThinkingEntries(...args),
 }));
 
 // Mock notificationStore
@@ -143,6 +145,9 @@ beforeEach(() => {
 	// Default: formatLogsForClipboard returns a predictable string
 	mockFormatLogsForClipboard.mockReturnValue('formatted conversation text');
 
+	// Default: tabs have no thinking entries. Individual tests override.
+	mockHasThinkingEntries.mockReturnValue(false);
+
 	// Default: downloadTabExport resolves
 	mockDownloadTabExport.mockResolvedValue(undefined);
 
@@ -198,7 +203,9 @@ describe('useTabExportHandlers', () => {
 				await Promise.resolve();
 			});
 
-			expect(mockFormatLogsForClipboard).toHaveBeenCalledWith(tab.logs);
+			expect(mockFormatLogsForClipboard).toHaveBeenCalledWith(tab.logs, {
+				includeThinking: false,
+			});
 			expect(mockClipboardWriteText).toHaveBeenCalledWith('formatted conversation text');
 		});
 
@@ -211,6 +218,71 @@ describe('useTabExportHandlers', () => {
 
 			await act(async () => {
 				result.current.handleCopyContext('tab-1');
+				await Promise.resolve();
+			});
+
+			expect(mockFlashCopiedToClipboard).toHaveBeenCalledWith(undefined, 'Conversation Copied');
+		});
+
+		it('passes includeThinking through to formatLogsForClipboard', async () => {
+			const tab = createMockTab({ id: 'tab-1' });
+			const session = createMockSession({ aiTabs: [tab] });
+			const deps = createDeps({ sessionsRef: { current: [session] } });
+
+			const { result } = renderHook(() => useTabExportHandlers(deps));
+
+			await act(async () => {
+				result.current.handleCopyContext('tab-1', { includeThinking: true });
+				await Promise.resolve();
+			});
+
+			expect(mockFormatLogsForClipboard).toHaveBeenCalledWith(tab.logs, {
+				includeThinking: true,
+			});
+		});
+
+		it('uses the "with reasoning" flash label when the tab actually has thinking entries', async () => {
+			mockHasThinkingEntries.mockReturnValue(true);
+			const tab = createMockTab({
+				id: 'tab-1',
+				logs: [
+					createLogEntry({ source: 'user', text: 'Hi' }),
+					createLogEntry({ source: 'thinking', text: 'thinking step' }),
+					createLogEntry({ source: 'ai', text: 'Reply' }),
+				],
+			});
+			const session = createMockSession({ aiTabs: [tab] });
+			const deps = createDeps({ sessionsRef: { current: [session] } });
+
+			const { result } = renderHook(() => useTabExportHandlers(deps));
+
+			await act(async () => {
+				result.current.handleCopyContext('tab-1', { includeThinking: true });
+				await Promise.resolve();
+			});
+
+			expect(mockHasThinkingEntries).toHaveBeenCalledWith(tab.logs);
+			expect(mockFlashCopiedToClipboard).toHaveBeenCalledWith(
+				undefined,
+				'Conversation Copied (with reasoning)'
+			);
+		});
+
+		it('does not claim "with reasoning" when the flag is set but the tab has no thinking entries', async () => {
+			const tab = createMockTab({
+				id: 'tab-1',
+				logs: [
+					createLogEntry({ source: 'user', text: 'Hi' }),
+					createLogEntry({ source: 'ai', text: 'Reply' }),
+				],
+			});
+			const session = createMockSession({ aiTabs: [tab] });
+			const deps = createDeps({ sessionsRef: { current: [session] } });
+
+			const { result } = renderHook(() => useTabExportHandlers(deps));
+
+			await act(async () => {
+				result.current.handleCopyContext('tab-1', { includeThinking: true });
 				await Promise.resolve();
 			});
 
@@ -526,7 +598,29 @@ describe('useTabExportHandlers', () => {
 			expect(mockSetTabGistContent).toHaveBeenCalledWith({
 				filename: 'My_Tab_context.md',
 				content: 'gist body content',
+				sourceLogs: tab.logs,
 			});
+		});
+
+		it('forwards raw logs as sourceLogs so the modal can re-format on toggle', () => {
+			const logs = [
+				createLogEntry({ source: 'user', text: 'Hi' }),
+				createLogEntry({ source: 'thinking', text: 'I should explain X' }),
+				createLogEntry({ source: 'ai', text: 'Hello' }),
+			];
+			const tab = createMockTab({ id: 'tab-1', logs });
+			const session = createMockSession({ aiTabs: [tab] });
+			const deps = createDeps({ sessionsRef: { current: [session] } });
+
+			const { result } = renderHook(() => useTabExportHandlers(deps));
+
+			act(() => {
+				result.current.handlePublishTabGist('tab-1');
+			});
+
+			expect(mockSetTabGistContent).toHaveBeenCalledWith(
+				expect.objectContaining({ sourceLogs: logs })
+			);
 		});
 
 		it('opens the gist publish modal', () => {
@@ -929,8 +1023,10 @@ describe('useTabExportHandlers', () => {
 				await Promise.resolve();
 			});
 
-			expect(mockFormatLogsForClipboard).toHaveBeenCalledWith(activeTab.logs);
-			expect(mockFormatLogsForClipboard).not.toHaveBeenCalledWith(otherTab.logs);
+			expect(mockFormatLogsForClipboard).toHaveBeenCalledWith(activeTab.logs, {
+				includeThinking: false,
+			});
+			expect(mockFormatLogsForClipboard).not.toHaveBeenCalledWith(otherTab.logs, expect.anything());
 		});
 
 		it('does not find a tab from a non-active session', async () => {

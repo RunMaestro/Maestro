@@ -79,6 +79,20 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 		description: 'Auto Run synopsis generation prompt',
 		category: 'autorun',
 	},
+	{
+		id: 'autorun-per-task',
+		filename: 'autorun-per-task.md',
+		description:
+			'Task-selection block injected into {{TASK_SELECTION_BLOCK}} when Fresh Context Per is set to Task',
+		category: 'autorun',
+	},
+	{
+		id: 'autorun-per-document',
+		filename: 'autorun-per-document.md',
+		description:
+			'Task-selection block injected into {{TASK_SELECTION_BLOCK}} when Fresh Context Per is set to Document',
+		category: 'autorun',
+	},
 	// Commands
 	{
 		id: 'image-only-default',
@@ -251,6 +265,8 @@ export const PROMPT_IDS = {
 	// AutoRun
 	AUTORUN_DEFAULT: 'autorun-default',
 	AUTORUN_SYNOPSIS: 'autorun-synopsis',
+	AUTORUN_PER_TASK: 'autorun-per-task',
+	AUTORUN_PER_DOCUMENT: 'autorun-per-document',
 	// Commands
 	IMAGE_ONLY_DEFAULT: 'image-only-default',
 	COMMIT_COMMAND: 'commit-command',

@@ -171,6 +171,13 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: false,
 		category: 'appearance',
 	},
+	leftPanelCollapsedPillsPerRow: {
+		description:
+			'Maximum number of collapsed-group activity pills per row in the left side bar before wrapping to a new row. Range: 5-50.',
+		type: 'number',
+		default: 20,
+		category: 'appearance',
+	},
 	showLeftPanelLocationPills: {
 		description:
 			'Show the REMOTE / LOCAL / GIT location pills next to agents in the left side bar.',
@@ -178,10 +185,70 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: true,
 		category: 'appearance',
 	},
+	showLeftPanelGitIndicator: {
+		description:
+			'Show the git change indicator (branch icon + dirty file count) next to agents in the left side bar.',
+		type: 'boolean',
+		default: true,
+		category: 'appearance',
+	},
+	showLeftPanelCueIndicator: {
+		description:
+			'Show the Maestro Cue activity indicator (lightning bolt) next to agents with active Cue subscriptions in the left side bar. Hidden when the Maestro Cue Encore Feature is disabled.',
+		type: 'boolean',
+		default: true,
+		category: 'appearance',
+	},
+	showLeftPanelStartupCommandIndicator: {
+		description:
+			'Show the terminal prompt glyph (>_) next to agents that have at least one terminal tab with a saved startup command.',
+		type: 'boolean',
+		default: true,
+		category: 'appearance',
+	},
+	fileEditWordWrap: {
+		description:
+			'Wrap long lines in the file editor at whitespace boundaries instead of scrolling horizontally.',
+		type: 'boolean',
+		default: true,
+		category: 'appearance',
+	},
+	fileEditShowLineNumbers: {
+		description: 'Show the line-number gutter in the file editor.',
+		type: 'boolean',
+		default: true,
+		category: 'appearance',
+	},
+	filePreviewToolbarVisibility: {
+		description:
+			'Per-button visibility map for the file preview / edit toolbar. Keys: save, wordWrap, remoteImages, htmlRender, previewTier, editToggle, copyContent, publishGist, documentGraph, openInBrowser, openInDefault, copyPath.',
+		type: 'object',
+		default: {
+			save: true,
+			wordWrap: true,
+			remoteImages: true,
+			htmlRender: true,
+			previewTier: true,
+			editToggle: true,
+			copyContent: true,
+			publishGist: true,
+			documentGraph: true,
+			openInBrowser: true,
+			openInDefault: true,
+			copyPath: true,
+		},
+		category: 'appearance',
+	},
 	fileExplorerIconTheme: {
 		description: 'Icon theme for the file explorer sidebar. Options: default, material, or none.',
 		type: 'string',
 		default: 'default',
+		category: 'appearance',
+	},
+	toastWidth: {
+		description: 'Width of toast notifications. Options: small (default), medium, large.',
+		type: 'string',
+		default: 'small',
 		category: 'appearance',
 	},
 	disableConfetti: {
@@ -233,6 +300,31 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		description: 'Image annotator taper distance at the end of a stroke (in pixels).',
 		type: 'number',
 		default: 0,
+		category: 'appearance',
+	},
+	annotatorTextColor: {
+		description: 'Default text color (hex string) for image annotator text labels.',
+		type: 'string',
+		default: '#9146FF',
+		category: 'appearance',
+	},
+	annotatorTextSize: {
+		description: 'Default text size (in pixels) for image annotator text labels.',
+		type: 'number',
+		default: 24,
+		category: 'appearance',
+	},
+	annotatorTextFont: {
+		description: 'Default font family for image annotator text labels (CSS font-family string).',
+		type: 'string',
+		default: 'sans-serif',
+		category: 'appearance',
+	},
+	annotatorTextBgColor: {
+		description:
+			'Default background color (hex string) behind image annotator text labels. Empty string means no background.',
+		type: 'string',
+		default: '',
 		category: 'appearance',
 	},
 
@@ -824,6 +916,13 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		description: 'The default URL loaded when opening a new browser tab.',
 		type: 'string',
 		default: 'https://runmaestro.ai/#leaderboard',
+		category: 'editor',
+	},
+	htmlDoubleClickOpensInBrowser: {
+		description:
+			'When enabled, double-clicking an HTML file in the file explorer opens it in the Maestro browser instead of the file preview.',
+		type: 'boolean',
+		default: false,
 		category: 'editor',
 	},
 

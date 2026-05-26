@@ -25,56 +25,16 @@
  *     reports stay traceable to the tier that produced them.
  *   - `themeName` — derived from the Theme.mode by the caller (or passed
  *     directly for tests).
- *
- * Pure separation: this module owns Shiki + IntersectionObserver. Tier shells
- * pass an HTMLElement root and forward the imperative handle to React.
  */
 
 import type { Theme } from '../../../constants/themes';
 import { captureException } from '../../../utils/sentry';
-
-type ShikiModule = typeof import('shiki');
-type Highlighter = Awaited<ReturnType<ShikiModule['createHighlighter']>>;
-
-/** Languages we eagerly load. Others fall through to plain rendering. */
-const SUPPORTED_LANGUAGES = [
-	'javascript',
-	'typescript',
-	'tsx',
-	'jsx',
-	'json',
-	'python',
-	'bash',
-	'shell',
-	'sh',
-	'html',
-	'css',
-	'scss',
-	'markdown',
-	'md',
-	'yaml',
-	'yml',
-	'rust',
-	'go',
-	'java',
-	'c',
-	'cpp',
-	'sql',
-	'xml',
-] as const;
-
-type SupportedLanguage = (typeof SUPPORTED_LANGUAGES)[number];
-
-/** Aliases commonly used in markdown fences (`ts`, `js`, `py`, `zsh`). */
-const LANGUAGE_ALIASES: Record<string, SupportedLanguage> = {
-	ts: 'typescript',
-	js: 'javascript',
-	py: 'python',
-	zsh: 'bash',
-};
-
-const LIGHT_THEME = 'github-light';
-const DARK_THEME = 'github-dark';
+import {
+	ensureLanguage,
+	getHighlighter,
+	resolveLanguageSync,
+	themeNameForMode,
+} from '../../../utils/shiki/highlighterManager';
 
 /** Marker attribute placed on highlighted `<code>` elements (idempotency). */
 export const HIGHLIGHTED_ATTR = 'data-shiki-highlighted';
@@ -111,39 +71,31 @@ const DEFAULT_SELECTOR = 'pre > code[class*="language-"]';
 export function createLazyShikiObserver(
 	options: LazyShikiObserverOptions
 ): LazyShikiObserverHandle {
-	const themeName = options.theme.mode === 'light' ? LIGHT_THEME : DARK_THEME;
+	const themeName = themeNameForMode(options.theme.mode);
 	const selector = options.selector ?? DEFAULT_SELECTOR;
 	const componentName = options.componentName;
 
 	let observer: IntersectionObserver | null = null;
-	let highlighterPromise: Promise<Highlighter> | null = null;
-
-	const ensureHighlighter = async (): Promise<Highlighter> => {
-		if (highlighterPromise) return highlighterPromise;
-		highlighterPromise = (async () => {
-			const shiki = await import('shiki');
-			return shiki.createHighlighter({
-				themes: [LIGHT_THEME, DARK_THEME],
-				langs: [...SUPPORTED_LANGUAGES],
-			});
-		})();
-		return highlighterPromise;
-	};
 
 	const highlight = async (el: HTMLElement): Promise<void> => {
 		if (el.getAttribute(HIGHLIGHTED_ATTR) === 'true') return;
 		// Mark up-front so concurrent observers don't double-highlight.
 		el.setAttribute(HIGHLIGHTED_ATTR, 'true');
 
-		const lang = detectLanguage(el);
+		const rawLang = extractFenceLang(el);
+		// Fast path: keep the legacy "preloaded only" behaviour to avoid pulling
+		// extra language grammars in the file-preview hot path.
+		const lang = resolveLanguageSync(rawLang);
 		if (!lang) return;
 
 		const code = el.textContent ?? '';
 		if (!code.trim()) return;
 
 		try {
-			const hl = await ensureHighlighter();
-			const html = hl.codeToHtml(code, { lang, theme: themeName });
+			const hl = await getHighlighter();
+			const resolved = await ensureLanguage(hl, lang);
+			if (!resolved) return;
+			const html = hl.codeToHtml(code, { lang: resolved, theme: themeName });
 			el.innerHTML = stripShikiWrapper(html);
 		} catch (err) {
 			// Unknown language or runtime error — fall back to the existing
@@ -191,7 +143,6 @@ export function createLazyShikiObserver(
 		disconnect() {
 			observer?.disconnect();
 			observer = null;
-			highlighterPromise = null;
 		},
 	};
 }
@@ -202,18 +153,10 @@ function selectElements(root: HTMLElement, selector: string): HTMLElement[] {
 	);
 }
 
-function detectLanguage(el: HTMLElement): SupportedLanguage | null {
+function extractFenceLang(el: HTMLElement): string | null {
 	const className = el.getAttribute('class') ?? '';
 	const match = /\blanguage-([\w+\-#]+)/.exec(className);
-	if (!match) return null;
-	const lang = match[1].toLowerCase();
-	if ((SUPPORTED_LANGUAGES as readonly string[]).includes(lang)) {
-		return lang as SupportedLanguage;
-	}
-	if (LANGUAGE_ALIASES[lang]) {
-		return LANGUAGE_ALIASES[lang];
-	}
-	return null;
+	return match ? match[1] : null;
 }
 
 function stripShikiWrapper(html: string): string {

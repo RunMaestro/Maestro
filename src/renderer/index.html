@@ -2,9 +2,14 @@
 <html lang="en">
 	<head>
 		<meta charset="UTF-8" />
+		<!-- 'wasm-unsafe-eval' in script-src is REQUIRED: Shiki's syntax highlighter
+		     compiles an Oniguruma WebAssembly regex engine, which Chromium blocks
+		     under a bare `script-src 'self'`. Removing this token silently breaks all
+		     code-fence highlighting (falls back to plain <pre>). The token permits
+		     WebAssembly compilation only; it does NOT enable dynamic JS evaluation. -->
 		<meta
 			http-equiv="Content-Security-Policy"
-			content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https: blob:; connect-src 'self' https: wss: ws:; worker-src 'self' blob:; media-src 'self' blob:;"
+			content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https: blob:; connect-src 'self' https: wss: ws:; worker-src 'self' blob:; media-src 'self' blob:;"
 		/>
 		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 		<title>Maestro - Agent Orchestration Command Center</title>

@@ -31,6 +31,14 @@ export interface CueEventRecord {
 	pipelineId?: string | null;
 	chainRootId?: string | null;
 	parentEventId?: string | null;
+	/**
+	 * Provider session id (e.g. Claude's `session_id`) the run produced, parsed
+	 * from agent stdout and written on completion. Distinct from `sessionId`
+	 * (the Maestro agent id). Token attribution in the stats dashboard joins on
+	 * this — the agents' on-disk session files are keyed by it. NULL until the
+	 * run finishes, for command/shell runs, or when stdout carried no id.
+	 */
+	providerSessionId?: string | null;
 }
 
 // ============================================================================
@@ -50,15 +58,22 @@ const CREATE_CUE_EVENTS_SQL = `
     payload TEXT,
     pipeline_id TEXT,
     chain_root_id TEXT,
-    parent_event_id TEXT
+    parent_event_id TEXT,
+    provider_session_id TEXT
   )
 `;
 
-// Phase 01 additive columns. These are nullable on purpose: existing callers
-// that don't pass lineage / pipeline metadata (e.g. when usageStats is off)
-// must continue to record events. The migration block in initCueDb() ALTERs
-// existing databases to match the CREATE TABLE schema.
-const CUE_EVENTS_ADDITIVE_COLUMNS = ['pipeline_id', 'chain_root_id', 'parent_event_id'] as const;
+// Additive columns. These are nullable on purpose: existing callers that don't
+// pass lineage / pipeline metadata (e.g. when usageStats is off) must continue
+// to record events. `provider_session_id` is written on run completion (NULL
+// at record time, and for command/shell runs). The migration block in
+// initCueDb() ALTERs existing databases to match the CREATE TABLE schema.
+const CUE_EVENTS_ADDITIVE_COLUMNS = [
+	'pipeline_id',
+	'chain_root_id',
+	'parent_event_id',
+	'provider_session_id',
+] as const;
 
 const CREATE_CUE_EVENTS_INDEXES_SQL = `
   CREATE INDEX IF NOT EXISTS idx_cue_events_created ON cue_events(created_at);
@@ -353,9 +368,27 @@ export function recordCueEvent(event: {
 }
 
 /**
- * Update the status (and optionally completed_at) of a previously recorded event.
+ * Update the status (and completed_at) of a previously recorded event.
+ *
+ * When `providerSessionId` is provided (non-null/undefined), the run's parsed
+ * provider session id is stamped on the row so stats can attribute token usage.
+ * Omitting it leaves the column untouched — callers that don't have a session
+ * id (command/shell runs, or status flips that aren't run completions) simply
+ * don't pass it rather than clobbering a previously-written value with NULL.
  */
-export function updateCueEventStatus(id: string, status: string): void {
+export function updateCueEventStatus(
+	id: string,
+	status: string,
+	providerSessionId?: string | null
+): void {
+	if (providerSessionId) {
+		getDb()
+			.prepare(
+				`UPDATE cue_events SET status = ?, completed_at = ?, provider_session_id = ? WHERE id = ?`
+			)
+			.run(status, Date.now(), providerSessionId, id);
+		return;
+	}
 	getDb()
 		.prepare(`UPDATE cue_events SET status = ?, completed_at = ? WHERE id = ?`)
 		.run(status, Date.now(), id);
@@ -402,7 +435,11 @@ export function safeRecordCueEvent(event: Parameters<typeof recordCueEvent>[0]):
  * Safe wrapper: updates Cue event status; logs warn on failure instead of throwing.
  * Non-fatal — callers must not rely on successful persistence.
  */
-export function safeUpdateCueEventStatus(id: string, status: string): void {
+export function safeUpdateCueEventStatus(
+	id: string,
+	status: string,
+	providerSessionId?: string | null
+): void {
 	if (!db) {
 		// Expected during shutdown or before init completes — log and skip Sentry.
 		log(
@@ -412,7 +449,7 @@ export function safeUpdateCueEventStatus(id: string, status: string): void {
 		return;
 	}
 	try {
-		updateCueEventStatus(id, status);
+		updateCueEventStatus(id, status, providerSessionId);
 	} catch (err) {
 		log(
 			'warn',
@@ -461,6 +498,7 @@ export function getRecentCueEvents(since: number, limit?: number): CueEventRecor
 		pipeline_id: string | null;
 		chain_root_id: string | null;
 		parent_event_id: string | null;
+		provider_session_id: string | null;
 	}>;
 
 	return rows.map((row) => ({
@@ -476,6 +514,7 @@ export function getRecentCueEvents(since: number, limit?: number): CueEventRecor
 		pipelineId: row.pipeline_id,
 		chainRootId: row.chain_root_id,
 		parentEventId: row.parent_event_id,
+		providerSessionId: row.provider_session_id,
 	}));
 }
 

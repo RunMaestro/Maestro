@@ -3,6 +3,7 @@ import type {
 	SearchHit,
 	FilePreviewSearchAdapter,
 } from '../../components/FilePreview/search/types';
+import type { MarkdownEditorHandle } from '../../components/FilePreview/markdownEditor';
 
 /** Maximum search query length to prevent expensive regex operations */
 const MAX_SEARCH_QUERY_LENGTH = 200;
@@ -99,7 +100,8 @@ export interface UseFilePreviewSearchParams {
 	codeContainerRef: RefObject<HTMLDivElement | null>;
 	markdownContainerRef: RefObject<HTMLDivElement | null>;
 	contentRef: RefObject<HTMLDivElement | null>;
-	textareaRef: RefObject<HTMLTextAreaElement | null>;
+	/** Imperative handle for the CM6-based edit editor. Drives match decorations and selection. */
+	editorRef: RefObject<MarkdownEditorHandle | null>;
 	isMarkdown: boolean;
 	/** Readable-text previews (plain prose files like .txt) share the markdown search path. */
 	isReadableText?: boolean;
@@ -140,7 +142,7 @@ export function useFilePreviewSearch({
 	codeContainerRef,
 	markdownContainerRef,
 	contentRef,
-	textareaRef,
+	editorRef,
 	isMarkdown,
 	isReadableText = false,
 	isImage,
@@ -486,21 +488,21 @@ export function useFilePreviewSearch({
 		contentRef,
 	]);
 
-	// Handle search in edit mode - count matches, paint highlights, and update state
-	// Note: We separate counting from selection to avoid stealing focus while typing
+	// Handle search in edit mode — count matches, push CM6 decorations, and
+	// reveal the active match. Counting and decoration painting are owned
+	// here; the CodeMirror editor renders the highlight via its decoration
+	// pipeline (no DOM walking, no CSS Custom Highlight overlay).
 	useEffect(() => {
-		const clearEditHighlights = () => {
-			if ('highlights' in CSS) {
-				(CSS as any).highlights.delete('search-results');
-				(CSS as any).highlights.delete('search-current');
-			}
+		const editor = editorRef.current;
+		const clearEditDecos = () => {
+			editor?.setSearchMatches([], -1);
 		};
 
-		if (!isEditableText || !markdownEditMode || !searchQuery.trim() || !textareaRef.current) {
+		if (!isEditableText || !markdownEditMode || !searchQuery.trim() || !editor) {
 			if (isEditableText && markdownEditMode) {
 				setTotalMatches(0);
 				setCurrentMatchIndex(-1);
-				clearEditHighlights();
+				clearEditDecos();
 			}
 			return;
 		}
@@ -509,17 +511,18 @@ export function useFilePreviewSearch({
 		const escapedQuery = searchQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 		const regex = new RegExp(escapedQuery, 'gi');
 
-		// Find all matches and their positions
-		const matches: { start: number; end: number }[] = [];
+		const matches: { from: number; to: number }[] = [];
 		let matchResult;
 		while ((matchResult = regex.exec(content)) !== null) {
-			matches.push({ start: matchResult.index, end: matchResult.index + matchResult[0].length });
+			matches.push({ from: matchResult.index, to: matchResult.index + matchResult[0].length });
+			// Guard against zero-length matches infinite-looping.
+			if (matchResult.index === regex.lastIndex) regex.lastIndex++;
 		}
 
 		setTotalMatches(matches.length);
 		if (matches.length === 0) {
 			setCurrentMatchIndex(-1);
-			clearEditHighlights();
+			clearEditDecos();
 			return;
 		}
 
@@ -530,101 +533,33 @@ export function useFilePreviewSearch({
 			return;
 		}
 
-		// Paint highlights on the syntax-highlighted overlay. The textarea has
-		// color:transparent so its native selection is invisible — instead we
-		// apply the CSS Custom Highlight API on the overlay's text nodes, which
-		// show through the transparent textarea sitting on top.
-		if ('highlights' in CSS && textareaRef.current.parentElement) {
-			const container = textareaRef.current.parentElement;
-			const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, {
-				acceptNode: (node) =>
-					(node as Text).parentElement?.tagName === 'TEXTAREA'
-						? NodeFilter.FILTER_REJECT
-						: NodeFilter.FILTER_ACCEPT,
-			});
-			const textNodes: { node: Text; start: number; end: number }[] = [];
-			let pos = 0;
-			let textNode: Node | null;
-			while ((textNode = walker.nextNode())) {
-				const text = (textNode as Text).textContent || '';
-				textNodes.push({ node: textNode as Text, start: pos, end: pos + text.length });
-				pos += text.length;
-			}
+		// Push the match decorations into the editor — paints all matches and
+		// emphasizes the active one. Re-runs on every dep change so typing into
+		// the query updates highlights in real time.
+		editor.setSearchMatches(matches, validIndex);
 
-			const findContainingNode = (offset: number, isRangeStart: boolean) => {
-				for (const tn of textNodes) {
-					if (isRangeStart) {
-						if (offset >= tn.start && offset < tn.end) return tn;
-					} else if (offset > tn.start && offset <= tn.end) {
-						return tn;
-					}
-				}
-				if (textNodes.length > 0 && offset === textNodes[textNodes.length - 1].end) {
-					return textNodes[textNodes.length - 1];
-				}
-				return null;
-			};
-
-			const allRanges: Range[] = [];
-			for (const m of matches) {
-				const startTn = findContainingNode(m.start, true);
-				const endTn = findContainingNode(m.end, false);
-				if (!startTn || !endTn) continue;
-				try {
-					const range = document.createRange();
-					range.setStart(startTn.node, m.start - startTn.start);
-					range.setEnd(endTn.node, m.end - endTn.start);
-					allRanges.push(range);
-				} catch {
-					// Range creation can fail if offsets fall outside the text node
-					// (e.g. overlay text out of sync mid-render). Skip this match.
-				}
-			}
-
-			if (allRanges.length > 0) {
-				(CSS as any).highlights.set('search-results', new (window as any).Highlight(...allRanges));
-				const currentRange = allRanges[validIndex] ?? allRanges[0];
-				(CSS as any).highlights.set('search-current', new (window as any).Highlight(currentRange));
-			} else {
-				clearEditHighlights();
-			}
-		}
-
-		// Only scroll and select when navigating between matches (Enter/Shift+Enter)
-		// or when search query is complete (user stopped typing)
-		// We detect navigation by checking if currentMatchIndex changed without searchQuery changing
+		// Reveal the active match only when navigating (Enter / Shift+Enter).
+		// We detect navigation by an unchanged query with a changed index — that
+		// way typing doesn't yank scroll position or focus.
 		const isNavigating =
 			prevSearchQueryRef.current === searchQuery && prevMatchIndexRef.current !== currentMatchIndex;
 		prevSearchQueryRef.current = searchQuery;
 		prevMatchIndexRef.current = currentMatchIndex;
 
-		// Select the current match in the textarea only when navigating
 		if (isNavigating) {
 			const currentMatch = matches[validIndex];
 			if (currentMatch) {
-				const textarea = textareaRef.current;
-				// Briefly focus the textarea to set selection, then return focus to the
-				// search input so the user can keep typing/navigating without the cursor
-				// jumping into the editor (matches browser Cmd+F behavior).
-				textarea.focus();
-				textarea.setSelectionRange(currentMatch.start, currentMatch.end);
-
-				// Scroll to make the selection visible
-				// Calculate approximate line number and scroll to it
-				const textBeforeMatch = content.substring(0, currentMatch.start);
-				const lineNumber = textBeforeMatch.split('\n').length;
-				const lineHeight = parseInt(getComputedStyle(textarea).lineHeight) || 24;
-				const targetScroll = (lineNumber - 5) * lineHeight; // Leave some lines above
-				textarea.scrollTop = Math.max(0, targetScroll);
-
+				editor.setSelection(currentMatch.from, currentMatch.to, true);
+				// Return focus to the search input so the user can keep typing /
+				// navigating without the caret jumping into the editor.
 				searchInputRef.current?.focus();
 			}
 		}
 
 		return () => {
-			clearEditHighlights();
+			clearEditDecos();
 		};
-	}, [searchQuery, currentMatchIndex, isEditableText, markdownEditMode, editContent]);
+	}, [searchQuery, currentMatchIndex, isEditableText, markdownEditMode, editContent, editorRef]);
 
 	// Navigate to next search match
 	const goToNextMatch = useCallback(() => {

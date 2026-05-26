@@ -10,6 +10,7 @@ import type {
 	AgentError,
 	QueuedItem,
 } from '../../types';
+import type { CopyContextOptions } from '../../hooks/tabs/useTabExportHandlers';
 
 export interface SlashCommand {
 	command: string;
@@ -155,6 +156,7 @@ export interface MainPanelProps {
 	onToggleTabReadOnlyMode?: () => void;
 	onToggleTabSaveToHistory?: () => void;
 	onToggleTabShowThinking?: () => void;
+	onToggleTabEnterToSend?: () => void;
 	onToggleUnreadFilter?: () => void;
 	onOpenTabSearch?: () => void;
 	/** Handler to open output/message search (Cmd+F) */
@@ -213,6 +215,17 @@ export interface MainPanelProps {
 	// Replay a user message (AI mode)
 	onReplayMessage?: (text: string, images?: string[]) => void;
 	onForkConversation?: (logId: string) => void;
+	// In-place recovery from session_not_found errors. Triggered by the
+	// SessionRecoveryCard inside system log entries that carry a
+	// `recoveryAction` payload.
+	onSessionRecover?: (opts: {
+		sessionId: string;
+		tabId: string;
+		lastUserPrompt: string;
+		groomContext: boolean;
+	}) => void;
+	isRecoveringSession?: boolean;
+	sessionRecoveryError?: string | null;
 	// File tree for linking file references in AI responses
 	fileTree?: import('../../types/fileTree').FileNode[];
 	// Callback when a file link is clicked in AI response
@@ -258,7 +271,7 @@ export interface MainPanelProps {
 	onSummarizeAndContinue?: (tabId: string) => void;
 	onMergeWith?: (tabId: string) => void;
 	onSendToAgent?: (tabId: string) => void;
-	onCopyContext?: (tabId: string) => void;
+	onCopyContext?: (tabId: string, options?: CopyContextOptions) => void;
 	onExportHtml?: (tabId: string) => void;
 	onPublishTabGist?: (tabId: string) => void;
 	/** Copy arbitrary text to the clipboard (wired by MainPanel for terminal buffer actions). */
@@ -297,6 +310,9 @@ export interface MainPanelProps {
 
 	// Document Graph
 	onOpenInGraph?: () => void;
+
+	/** Open the currently previewed file in a new Maestro browser tab. */
+	onOpenInBrowser?: () => void;
 
 	// Wizard document generation callbacks
 	/** Called when wizard document generation completes and user clicks Done */

@@ -24,7 +24,7 @@ import { generateId } from '../../utils/ids';
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useClickOutside } from '../ui';
-import type { Playbook, BatchDocumentEntry } from '../../types';
+import type { Playbook, BatchDocumentEntry, TaskSelectionMode } from '../../types';
 import { DEFAULT_BATCH_PROMPT } from './batchUtils';
 import { logger } from '../../utils/logger';
 
@@ -37,6 +37,7 @@ export interface PlaybookConfigState {
 	loopEnabled: boolean;
 	maxLoops: number | null;
 	prompt: string;
+	taskSelectionMode: TaskSelectionMode;
 }
 
 /**
@@ -135,7 +136,7 @@ export function usePlaybookManagement(
 	const isPlaybookModified = useMemo(() => {
 		if (!loadedPlaybook) return false;
 
-		const { documents, loopEnabled, maxLoops, prompt } = config;
+		const { documents, loopEnabled, maxLoops, prompt, taskSelectionMode } = config;
 
 		// Compare documents
 		const currentDocs = documents.map((d) => ({
@@ -163,6 +164,10 @@ export function usePlaybookManagement(
 
 		// Compare prompt
 		if (prompt !== loadedPlaybook.prompt) return true;
+
+		// Compare task selection mode (legacy playbooks → 'task')
+		const savedMode = loadedPlaybook.taskSelectionMode ?? 'task';
+		if (taskSelectionMode !== savedMode) return true;
 
 		return false;
 	}, [config, loadedPlaybook]);
@@ -194,6 +199,7 @@ export function usePlaybookManagement(
 				loopEnabled: playbook.loopEnabled,
 				maxLoops: playbook.maxLoops ?? null,
 				prompt: effectivePrompt,
+				taskSelectionMode: playbook.taskSelectionMode ?? 'task',
 			});
 
 			setLoadedPlaybook(playbook);
@@ -275,7 +281,7 @@ export function usePlaybookManagement(
 
 			setSavingPlaybook(true);
 			try {
-				const { documents, loopEnabled, maxLoops, prompt } = config;
+				const { documents, loopEnabled, maxLoops, prompt, taskSelectionMode } = config;
 
 				// Build playbook data
 				// Note: Worktree settings are no longer stored in playbooks - see WorktreeConfigModal
@@ -288,6 +294,7 @@ export function usePlaybookManagement(
 					loopEnabled,
 					maxLoops,
 					prompt,
+					taskSelectionMode,
 				};
 
 				const result = await window.maestro.playbooks.create(sessionId, playbookData);
@@ -311,7 +318,7 @@ export function usePlaybookManagement(
 
 		setSavingPlaybook(true);
 		try {
-			const { documents, loopEnabled, maxLoops, prompt } = config;
+			const { documents, loopEnabled, maxLoops, prompt, taskSelectionMode } = config;
 
 			// Build update data
 			// Note: Worktree settings are no longer stored in playbooks - see WorktreeConfigModal
@@ -323,6 +330,7 @@ export function usePlaybookManagement(
 				loopEnabled,
 				maxLoops,
 				prompt,
+				taskSelectionMode,
 				updatedAt: Date.now(),
 			};
 

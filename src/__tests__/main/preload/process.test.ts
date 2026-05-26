@@ -168,6 +168,17 @@ describe('Process Preload API', () => {
 		});
 	});
 
+	describe('isTerminalBusy', () => {
+		it('should invoke process:isTerminalBusy with the session id', async () => {
+			mockInvoke.mockResolvedValue(true);
+
+			const result = await api.isTerminalBusy('session-1-terminal-tab-1');
+
+			expect(mockInvoke).toHaveBeenCalledWith('process:isTerminalBusy', 'session-1-terminal-tab-1');
+			expect(result).toBe(true);
+		});
+	});
+
 	describe('onData', () => {
 		it('should register event listener for process:data', () => {
 			const callback = vi.fn();

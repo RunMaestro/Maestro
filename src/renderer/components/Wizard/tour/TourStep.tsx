@@ -101,13 +101,20 @@ interface TourStepProps {
 function calculateTooltipPosition(
 	spotlight: SpotlightInfo | null,
 	preferredPosition: TourStepConfig['position'],
-	hasExtraContent?: boolean
+	hasExtraContent?: boolean,
+	totalSteps: number = 0
 ): {
 	position: 'top' | 'bottom' | 'left' | 'right' | 'center' | 'center-overlay';
 	style: React.CSSProperties;
 } {
-	// Wider tooltip when step has extra content or is flagged as wide
-	const tooltipWidth = hasExtraContent ? 520 : 360;
+	// Base tooltip width; widen if extra content OR if there are enough progress
+	// dots that the row would crowd the Continue button. Each dot is 8px wide
+	// with a 6px gap, the dot row sits opposite a ~110px Continue button, and
+	// the container has 20px padding on each side, so reserve roughly
+	// totalSteps * 14 + 170px for the navigation row.
+	const minWidthForDots = totalSteps > 0 ? totalSteps * 14 + 170 : 0;
+	const baseWidth = Math.max(360, minWidthForDots);
+	const tooltipWidth = hasExtraContent ? Math.max(520, minWidthForDots) : baseWidth;
 	const tooltipHeight = hasExtraContent ? 360 : 240; // Estimated max height
 	const margin = 16;
 
@@ -324,7 +331,12 @@ export function TourStep({
 	// Determine if we have extra content or explicit wide flag (for wider tooltip)
 	const hasExtraContent = !!descriptionContent || !!step.wide;
 
-	const { position, style } = calculateTooltipPosition(spotlight, step.position, hasExtraContent);
+	const { position, style } = calculateTooltipPosition(
+		spotlight,
+		step.position,
+		hasExtraContent,
+		totalSteps
+	);
 
 	// Description stays as raw text; shortcut badges are rendered inline as JSX
 

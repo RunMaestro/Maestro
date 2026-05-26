@@ -252,4 +252,18 @@ describe('extractCueOutputExcerpt', () => {
 		const stdout = 'First. Second. Third.';
 		expect(extractCueOutputExcerpt(stdout, { maxSentences: 1 })).toBe('First.');
 	});
+
+	it('drops markdown table grids so they never reach the History summary', () => {
+		const stdout = [
+			'All four steps complete.',
+			'',
+			'| Step | Result |',
+			'|------|--------|',
+			'| 1. Build | Pass |',
+			'| 2. Test | Pass |',
+		].join('\n');
+		const out = extractCueOutputExcerpt(stdout);
+		expect(out).toBe('All four steps complete.');
+		expect(out).not.toContain('|');
+	});
 });

@@ -17,6 +17,7 @@ export interface SearchableSetting {
 	id: string;
 	/** Which tab this setting lives in */
 	tab:
+		| 'about'
 		| 'general'
 		| 'display'
 		| 'shortcuts'
@@ -326,6 +327,27 @@ export const GENERAL_SETTINGS: SearchableSetting[] = [
 		],
 	},
 	{
+		id: 'general-html-double-click',
+		tab: 'general',
+		tabLabel: 'General',
+		label: 'Open HTML files in Maestro Browser on double-click',
+		description:
+			'When enabled, double-clicking an HTML file in the file explorer opens it in the Maestro browser tab instead of the file preview.',
+		keywords: [
+			'html',
+			'double click',
+			'double-click',
+			'dblclick',
+			'file explorer',
+			'preview',
+			'browser',
+			'open',
+			'render',
+			'webview',
+			'dashboard',
+		],
+	},
+	{
 		id: 'general-storage',
 		tab: 'general',
 		tabLabel: 'General',
@@ -469,6 +491,14 @@ export const DISPLAY_SETTINGS: SearchableSetting[] = [
 		keywords: ['icon', 'theme', 'files', 'material', 'rich', 'explorer'],
 	},
 	{
+		id: 'display-toast-width',
+		tab: 'display',
+		tabLabel: 'Display',
+		label: 'Toast Notification Width',
+		description: 'Width of toast notifications: Small, Medium, or Large',
+		keywords: ['toast', 'notification', 'width', 'size', 'small', 'medium', 'large'],
+	},
+	{
 		id: 'display-window-chrome',
 		tab: 'display',
 		tabLabel: 'Display',
@@ -520,7 +550,7 @@ export const DISPLAY_SETTINGS: SearchableSetting[] = [
 		tabLabel: 'Display',
 		label: 'Left Side Panel',
 		description:
-			'Configure the left side bar: group member counts and REMOTE / LOCAL / GIT location pills',
+			'Configure the left side bar: group member counts, collapsed pills per row, location pills, git change indicator, Cue indicator, and worktree badges',
 		keywords: [
 			'left',
 			'side',
@@ -540,37 +570,89 @@ export const DISPLAY_SETTINGS: SearchableSetting[] = [
 			'git',
 			'pill',
 			'pills',
+			'per row',
+			'row',
+			'rows',
+			'wrap',
+			'density',
+			'collapsed',
 			'badge',
 			'badges',
 			'location',
+			'change',
+			'changes',
+			'dirty',
+			'cue',
+			'indicator',
+			'terminal',
+			'startup',
+			'startup command',
+			'sticky',
+			'persistent',
+			'prompt',
+			'worktree',
+			'work tree',
+			'branch',
+			'branch name',
+			'agent list',
+			'session list',
 		],
 	},
 	{
-		id: 'display-worktree',
+		id: 'display-file-edit-preview',
 		tab: 'display',
 		tabLabel: 'Display',
-		label: 'Worktree Display',
-		description: 'Toggle the WORKTREE pill and branch name shown in the left panel agent list',
+		label: 'File Edit & Preview',
+		description:
+			'Line numbers, word wrap default, and per-button visibility for the file preview / editor toolbar',
 		keywords: [
-			'worktree',
-			'work tree',
-			'pill',
-			'badge',
-			'branch',
-			'branch name',
-			'left panel',
-			'sidebar',
-			'agent list',
-			'session list',
+			'file',
+			'edit',
+			'editor',
+			'preview',
+			'line numbers',
+			'gutter',
+			'word wrap',
+			'wrap',
+			'soft wrap',
+			'horizontal scroll',
+			'toolbar',
+			'buttons',
+			'visibility',
+			'deep link',
+			'maestro://',
 		],
 	},
 	{
 		id: 'display-tab-filtering',
 		tab: 'display',
 		tabLabel: 'Display',
-		label: 'Tab Filtering',
-		description: 'Show starred and file preview tabs when filtering by unread',
-		keywords: ['tab', 'filter', 'unread', 'starred', 'file preview'],
+		label: 'Tab Options',
+		description:
+			'Show starred and file preview tabs when filtering by unread; Command+0 vs Command+9 last-tab shortcut; browser tab domain pill',
+		keywords: [
+			'tab',
+			'filter',
+			'unread',
+			'starred',
+			'file preview',
+			'cmd 0',
+			'cmd 9',
+			'command 0',
+			'command 9',
+			'ctrl 0',
+			'ctrl 9',
+			'last tab',
+			'go to last tab',
+			'shortcut',
+			'keyboard',
+			'browser style',
+			'browser tab',
+			'domain',
+			'hostname',
+			'url',
+			'pill',
+		],
 	},
 	{
 		id: 'display-document-graph',
@@ -1007,9 +1089,35 @@ export const PROMPTS_SETTINGS: SearchableSetting[] = [
 ];
 
 // ---------------------------------------------------------------------------
+// About Tab
+// ---------------------------------------------------------------------------
+export const ABOUT_SETTINGS: SearchableSetting[] = [
+	{
+		id: 'about-maestro',
+		tab: 'about',
+		tabLabel: 'About',
+		label: 'About Maestro',
+		description: 'Maestro version, tagline, and origin — born on Nov 26, 2025 in Austin, TX',
+		keywords: [
+			'about',
+			'version',
+			'maestro',
+			'tagline',
+			'origin',
+			'austin',
+			'texas',
+			'born',
+			'commit',
+			'build',
+		],
+	},
+];
+
+// ---------------------------------------------------------------------------
 // Composed registry
 // ---------------------------------------------------------------------------
 export const ALL_SEARCHABLE_SETTINGS: SearchableSetting[] = [
+	...ABOUT_SETTINGS,
 	...GENERAL_SETTINGS,
 	...DISPLAY_SETTINGS,
 	...SHORTCUTS_SETTINGS,

@@ -27,6 +27,7 @@ export function AgentPromptComposerModal({
 	const [value, setValue] = useState(initialValue);
 	const [variablesExpanded, setVariablesExpanded] = useState(false);
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
+	const backdropMouseDownRef = useRef(false);
 	const onCloseRef = useRef(onClose);
 	onCloseRef.current = onClose;
 	const onSubmitRef = useRef(onSubmit);
@@ -118,8 +119,13 @@ export function AgentPromptComposerModal({
 		<div
 			className="fixed inset-0 z-[10001] flex items-center justify-center"
 			style={{ backgroundColor: 'rgba(0,0,0,0.7)' }}
+			onMouseDown={(e) => {
+				backdropMouseDownRef.current = e.target === e.currentTarget;
+			}}
 			onClick={(e) => {
-				if (e.target === e.currentTarget) {
+				const startedOnBackdrop = backdropMouseDownRef.current;
+				backdropMouseDownRef.current = false;
+				if (startedOnBackdrop && e.target === e.currentTarget) {
 					onSubmit(value);
 					onClose();
 				}

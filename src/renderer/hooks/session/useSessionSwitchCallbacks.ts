@@ -186,6 +186,26 @@ export function useSessionSwitchCallbacks(
 				setGroups((prev) =>
 					prev.map((g) => (g.id === deepLink.groupId ? { ...g, collapsed: false } : g))
 				);
+				return;
+			}
+			if (deepLink.action === 'file' && deepLink.sessionId && deepLink.filePath) {
+				// Open the file inside the target session's file-preview tab.
+				// Re-uses the same CustomEvent pipeline the CLI / remote layer
+				// drives so the open path stays unified. The line number is
+				// surfaced via `detail.line` for callers that want to scroll on
+				// mount; older listeners that ignore it still open the file.
+				const sessions = useSessionStore.getState().sessions;
+				const targetExists = sessions.some((s) => s.id === deepLink.sessionId);
+				if (!targetExists) return;
+				window.dispatchEvent(
+					new CustomEvent('maestro:openFileTab', {
+						detail: {
+							sessionId: deepLink.sessionId,
+							filePath: deepLink.filePath,
+							line: deepLink.line,
+						},
+					})
+				);
 			}
 		};
 		const unsubscribeIpc = window.maestro.app.onDeepLink(handleDeepLink);

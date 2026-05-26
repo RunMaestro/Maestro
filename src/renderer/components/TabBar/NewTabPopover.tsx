@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect, memo } from 'react';
+import { useState, useRef, useCallback, useEffect, useLayoutEffect, memo } from 'react';
 import { createPortal } from 'react-dom';
 import { FilePlus, Globe, Plus, Terminal } from 'lucide-react';
 import type { Theme } from '../../types';
@@ -55,6 +55,30 @@ export const NewTabPopover = memo(function NewTabPopover({
 		document.addEventListener('mousedown', handler);
 		return () => document.removeEventListener('mousedown', handler);
 	}, [popoverOpen]);
+
+	// Clamp the popover into the viewport once mounted. The initial position is
+	// anchored to the + button's left edge, which renders off-screen when the
+	// button sits near the right edge (e.g. right panel collapsed). Runs as a
+	// layout effect so the correction happens before paint — no visible flicker.
+	useLayoutEffect(() => {
+		if (!popoverOpen || !popoverPos) return;
+		const el = popoverRef.current;
+		if (!el) return;
+		const rect = el.getBoundingClientRect();
+		const margin = 8;
+		let { top, left } = popoverPos;
+		if (left + rect.width > window.innerWidth - margin) {
+			left = window.innerWidth - rect.width - margin;
+		}
+		if (left < margin) left = margin;
+		if (top + rect.height > window.innerHeight - margin) {
+			top = window.innerHeight - rect.height - margin;
+		}
+		if (top < margin) top = margin;
+		if (top !== popoverPos.top || left !== popoverPos.left) {
+			setPopoverPos({ top, left });
+		}
+	}, [popoverOpen, popoverPos]);
 
 	// Auto-focus popover when opened, restore focus to button when closed
 	useEffect(() => {

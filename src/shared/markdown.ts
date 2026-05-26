@@ -9,7 +9,9 @@
  * Strip markdown formatting to plain text.
  *
  * Removes code blocks, inline code, bold/italic, headers, blockquotes,
- * horizontal rules, links, images, strikethrough, and normalizes lists.
+ * horizontal rules, links, images, strikethrough, tables, and normalizes
+ * lists. Table grids in particular must never reach list/preview views (e.g.
+ * the History list) where raw `| col | col |` pipes render as garbage.
  */
 export const stripMarkdown = (text: string): string => {
 	return (
@@ -40,6 +42,17 @@ export const stripMarkdown = (text: string): string => {
 			.replace(/!\[([^\]]*)\]\([^)]+\)/g, '$1')
 			// Remove strikethrough
 			.replace(/~~(.+?)~~/g, '$1')
+			// Remove markdown table rows and separators. Runs before any caller
+			// collapses whitespace, so line anchoring works on multi-line output:
+			// a row is a line wrapped in pipes (| col | col |), a separator is a
+			// pipe/dash/colon-only line (|---|:--:|). Both are dropped entirely.
+			.replace(/^[ \t]*\|.*\|[ \t]*$/gm, '')
+			.replace(/^[ \t]*(?=.*\|)[ \t:|-]*-{2,}[ \t:|-]*$/gm, '')
+			// Collapse inline pipe-cell runs (3+ pipes) that survive whitespace
+			// flattening — covers already-stored summaries where a table was
+			// joined onto one line, e.g. "Summary: | Step | Result | |---|---| |".
+			// Requires 3+ pipes so prose like "a | b" is left untouched.
+			.replace(/(?:[ \t]*\|[^|\n]*){2,}\|/g, ' ')
 			// Clean up bullet points - convert to simple dashes
 			.replace(/^[\s]*[-*+]\s+/gm, '- ')
 			// Clean up numbered lists - keep the numbers

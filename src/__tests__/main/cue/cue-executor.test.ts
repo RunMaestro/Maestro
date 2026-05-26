@@ -1248,6 +1248,7 @@ describe('cue-executor', () => {
 			].join('\n');
 
 			mockGetOutputParser.mockReturnValue({
+				extractSessionId: () => null,
 				parseJsonLine: (line: string) => {
 					try {
 						const msg = JSON.parse(line);
@@ -1274,6 +1275,7 @@ describe('cue-executor', () => {
 
 		it('should join multiple result-event text chunks with newlines', async () => {
 			mockGetOutputParser.mockReturnValue({
+				extractSessionId: () => null,
 				parseJsonLine: (line: string) => {
 					try {
 						const msg = JSON.parse(line);
@@ -1306,6 +1308,7 @@ describe('cue-executor', () => {
 		it('should fall back to raw stdout when parser finds no result events', async () => {
 			// Parser that only returns system events (no result events)
 			mockGetOutputParser.mockReturnValue({
+				extractSessionId: () => null,
 				parseJsonLine: (_line: string) => ({ type: 'system', raw: {} }),
 			} as any);
 
@@ -1327,6 +1330,7 @@ describe('cue-executor', () => {
 			// string but assistant messages contain the actual response text.
 			const msgId = 'msg_test123';
 			mockGetOutputParser.mockReturnValue({
+				extractSessionId: () => null,
 				parseJsonLine: (line: string) => {
 					try {
 						const msg = JSON.parse(line);
@@ -1393,6 +1397,7 @@ describe('cue-executor', () => {
 			// keep only the longest (latest) version per message ID.
 			const msgId = 'msg_dedup';
 			mockGetOutputParser.mockReturnValue({
+				extractSessionId: () => null,
 				parseJsonLine: (line: string) => {
 					try {
 						const msg = JSON.parse(line);
@@ -1439,6 +1444,78 @@ describe('cue-executor', () => {
 			const result = await resultPromise;
 
 			expect(result.stdout).toBe('Hello, here is a longer response.');
+		});
+	});
+
+	describe('provider session id extraction', () => {
+		it('returns the provider session id parsed from stdout (last id wins)', async () => {
+			// Each run produces one provider session; the parser may surface the id
+			// on several events. The last one (the authoritative `result` event,
+			// emitted last) is what we keep for token attribution.
+			mockGetOutputParser.mockReturnValue({
+				parseJsonLine: (line: string) => {
+					try {
+						return JSON.parse(line);
+					} catch {
+						return null;
+					}
+				},
+				extractSessionId: (event: any) => event?.session_id ?? null,
+			} as any);
+
+			const ndjson = [
+				JSON.stringify({ type: 'system', session_id: 'sess-init' }),
+				JSON.stringify({ type: 'assistant', message: {} }),
+				JSON.stringify({ type: 'result', session_id: 'sess-final' }),
+			].join('\n');
+
+			const config = createExecutionConfig({ toolType: 'claude-code' });
+			const resultPromise = executeCuePrompt(config);
+			await vi.advanceTimersByTimeAsync(0);
+
+			mockChild.stdout.emit('data', ndjson);
+			mockChild.emit('close', 0);
+			const result = await resultPromise;
+
+			expect(result.providerSessionId).toBe('sess-final');
+		});
+
+		it('returns null provider session id when no parser is registered', async () => {
+			// Plain-text agents / command runs have no parser to mine an id from.
+			mockGetOutputParser.mockReturnValue(null);
+
+			const config = createExecutionConfig({ toolType: 'claude-code' });
+			const resultPromise = executeCuePrompt(config);
+			await vi.advanceTimersByTimeAsync(0);
+
+			mockChild.stdout.emit('data', 'plain text output\n');
+			mockChild.emit('close', 0);
+			const result = await resultPromise;
+
+			expect(result.providerSessionId).toBeNull();
+		});
+
+		it('returns null provider session id when stdout carries no session id', async () => {
+			mockGetOutputParser.mockReturnValue({
+				parseJsonLine: (line: string) => {
+					try {
+						return JSON.parse(line);
+					} catch {
+						return null;
+					}
+				},
+				extractSessionId: () => null,
+			} as any);
+
+			const config = createExecutionConfig({ toolType: 'claude-code' });
+			const resultPromise = executeCuePrompt(config);
+			await vi.advanceTimersByTimeAsync(0);
+
+			mockChild.stdout.emit('data', JSON.stringify({ type: 'result', text: 'done' }));
+			mockChild.emit('close', 0);
+			const result = await resultPromise;
+
+			expect(result.providerSessionId).toBeNull();
 		});
 	});
 

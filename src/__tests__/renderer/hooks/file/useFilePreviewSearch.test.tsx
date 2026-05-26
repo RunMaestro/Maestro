@@ -19,6 +19,7 @@ import type {
 	FilePreviewSearchAdapter,
 	SearchHit,
 } from '../../../../renderer/components/FilePreview/search/types';
+import type { MarkdownEditorHandle } from '../../../../renderer/components/FilePreview/markdownEditor';
 
 // jsdom doesn't ship the CSS Custom Highlight API. Polyfill enough surface so
 // the hook's `'highlights' in CSS` branch executes and we can introspect what
@@ -72,13 +73,13 @@ function Host(props: {
 	const containerRef = useRef<HTMLDivElement>(null);
 	const codeRef = useRef<HTMLDivElement>(null);
 	const contentRef = useRef<HTMLDivElement>(null);
-	const textareaRef = useRef<HTMLTextAreaElement>(null);
+	const editorRef = useRef<MarkdownEditorHandle>(null);
 
 	const hook = useFilePreviewSearch({
 		codeContainerRef: codeRef,
 		markdownContainerRef: containerRef,
 		contentRef,
-		textareaRef,
+		editorRef,
 		isMarkdown: true,
 		isReadableText: false,
 		isImage: false,
@@ -113,7 +114,6 @@ function Host(props: {
 				</div>
 			</div>
 			<div ref={codeRef} />
-			<textarea ref={textareaRef} />
 		</div>
 	);
 }
@@ -379,12 +379,12 @@ describe('useFilePreviewSearch — gutter exclusion (B5)', () => {
 			const containerRef = React.useRef<HTMLDivElement>(null);
 			const codeRef = React.useRef<HTMLDivElement>(null);
 			const contentRef = React.useRef<HTMLDivElement>(null);
-			const textareaRef = React.useRef<HTMLTextAreaElement>(null);
+			const editorRef = React.useRef<MarkdownEditorHandle>(null);
 			const hook = useFilePreviewSearch({
 				codeContainerRef: codeRef,
 				markdownContainerRef: containerRef,
 				contentRef,
-				textareaRef,
+				editorRef,
 				isMarkdown: false,
 				isReadableText: true,
 				isImage: false,
