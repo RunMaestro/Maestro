@@ -67,12 +67,9 @@ docs/
 ## Instructions
 
 1. Project Orientation
-   Begin by reviewing CLAUDE.md (when available) in this folder to understand the project's structure, conventions, and workflow expectations.
+   Begin by reviewing CLAUDE.md / AGENTS.md (when available) in this folder to understand the project's structure, conventions, and workflow expectations.
 
-2. Task Selection
-   Process the FIRST unchecked task (- [ ]) from top to bottom. Note that there may be relevant images associated with the task. If there are, analyze them, and include in your final synopsis back how many images you analyzed in preparation for solving the task.
-
-   IMPORTANT: You will only work on this single task. If the task description contains multiple steps or subtasks (e.g., bullet points, numbered lists, or semicolon-separated items), treat them as one cohesive unit—they were intentionally grouped by the document author to share context. Complete all parts before marking done. Do not move on to the next major checkbox item.
+{{TASK_SELECTION_BLOCK}}
 
 3. Task Evaluation
    - Fully understand the task and inspect the relevant code.
@@ -97,7 +94,7 @@ docs/
    For any code or documentation changes, if we're in a Github repo:
    - Commit using a descriptive message prefixed with "MAESTRO: ".
    - Push to GitHub.
-   - Update CLAUDE.md, README.md, or any other top-level documentation if appropriate.
+   - Update CLAUDE.md / AGENTS.md, README.md, or any other top-level documentation if appropriate.
 
 7. Halting the Auto Run (Early Exit)
    If you encounter a blocking condition that means the rest of the playbook cannot meaningfully proceed — a missing dependency, a broken precondition, an ambiguous spec you cannot resolve, a destructive change you refuse to make, or a test failure that invalidates everything downstream — you can halt the entire Auto Run immediately. This skips all remaining tasks in the current document AND all subsequent documents in the playbook.

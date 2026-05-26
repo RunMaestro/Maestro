@@ -253,6 +253,11 @@ export interface PlaybookDocumentEntry {
 	resetOnCompletion: boolean;
 }
 
+// Controls whether each Auto Run agent invocation processes a single task or the
+// whole document. Resolves `{{TASK_SELECTION_BLOCK}}` inside the autorun prompt.
+// Omitted on legacy playbooks → treated as 'task' (the historical behavior).
+export type TaskSelectionMode = 'task' | 'document';
+
 // A saved Playbook configuration
 export interface Playbook {
 	id: string;
@@ -263,6 +268,7 @@ export interface Playbook {
 	loopEnabled: boolean;
 	maxLoops?: number | null;
 	prompt: string;
+	taskSelectionMode?: TaskSelectionMode;
 	worktreeSettings?: {
 		branchNameTemplate: string;
 		createPROnCompletion: boolean;
@@ -304,6 +310,7 @@ export interface BatchRunConfig {
 	prompt: string;
 	loopEnabled: boolean;
 	maxLoops?: number | null;
+	taskSelectionMode?: TaskSelectionMode;
 	worktree?: WorktreeConfig;
 	worktreeTarget?: WorktreeRunTarget;
 }
@@ -432,6 +439,7 @@ export type AgentErrorType =
 	| 'agent_crashed' // Process exited unexpectedly
 	| 'permission_denied' // Agent lacks required permissions
 	| 'session_not_found' // Session was deleted or doesn't exist
+	| 'hitl_gate' // Playbook reached a human-in-the-loop review marker
 	| 'unknown'; // Unrecognized error
 
 /**
@@ -672,13 +680,17 @@ export interface AgentSshRemoteConfig {
  */
 export interface ParsedDeepLink {
 	/** The type of navigation action */
-	action: 'focus' | 'session' | 'group';
-	/** Maestro session ID (for action: 'session') */
+	action: 'focus' | 'session' | 'group' | 'file';
+	/** Maestro session ID (for action: 'session' and 'file') */
 	sessionId?: string;
 	/** Tab ID within the session (for action: 'session') */
 	tabId?: string;
 	/** Group ID (for action: 'group') */
 	groupId?: string;
+	/** Absolute filesystem path (for action: 'file') */
+	filePath?: string;
+	/** 1-based line number within the file (for action: 'file', optional) */
+	line?: number;
 }
 
 // ============================================================================

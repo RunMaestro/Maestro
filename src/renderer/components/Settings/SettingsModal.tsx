@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, memo } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef, useCallback, memo } from 'react';
 import {
 	X,
 	Key,
@@ -13,6 +13,7 @@ import {
 	Globe,
 	Wand2,
 	Box,
+	Info,
 } from 'lucide-react';
 import { useSettings } from '../../hooks';
 import type { Theme, LLMProvider } from '../../types';
@@ -33,6 +34,7 @@ import { ShortcutsTab } from './tabs/ShortcutsTab';
 import { ThemeTab } from './tabs/ThemeTab';
 import { EnvironmentTab } from './tabs/EnvironmentTab';
 import { AgentsTab } from './tabs/AgentsTab';
+import { AboutTab } from './tabs/AboutTab';
 import { useSettingsSearch, SettingsSearchInput, SettingsSearchResults } from './SettingsSearch';
 import type { SearchableSetting } from './searchableSettings';
 
@@ -42,6 +44,7 @@ const FEATURE_FLAGS = {
 };
 
 type SettingsTabId =
+	| 'about'
 	| 'general'
 	| 'display'
 	| 'llm'
@@ -55,15 +58,45 @@ type SettingsTabId =
 	| 'encore'
 	| 'prompts';
 
+// Alphabetized by label (case-insensitive) so the sidebar reads predictably
+// regardless of which tabs ship. Mount-time default is still 'general' —
+// that's enforced by the useState init below, not by list position.
+const TAB_ITEMS: Array<{
+	id: SettingsTabId;
+	label: string;
+	icon: typeof Settings;
+}> = [
+	{ id: 'about', label: 'About', icon: Info },
+	{ id: 'agents', label: 'Agents', icon: Box },
+	{ id: 'aicommands', label: 'AI Commands', icon: Cpu },
+	{ id: 'display', label: 'Display', icon: Monitor },
+	{ id: 'encore', label: 'Encore Features', icon: FlaskConical },
+	{ id: 'environment', label: 'Environment', icon: Globe },
+	{ id: 'general', label: 'General', icon: Settings },
+	...(FEATURE_FLAGS.LLM_SETTINGS ? [{ id: 'llm' as const, label: 'LLM', icon: Key }] : []),
+	{ id: 'prompts', label: 'Maestro Prompts', icon: Wand2 },
+	{ id: 'notifications', label: 'Notifications', icon: Bell },
+	{ id: 'shortcuts', label: 'Shortcuts', icon: Keyboard },
+	{ id: 'ssh', label: 'SSH Hosts', icon: Server },
+	{ id: 'theme', label: 'Themes', icon: Palette },
+];
+
 // In-memory only — last tab the user was on. Resets on app restart, so the
 // modal still defaults to General on a fresh launch. Honors any explicit
 // `initialTab` prop (e.g. when a caller deep-links into a specific tab).
 let lastOpenSettingsTab: SettingsTabId | null = null;
 
+// In-memory only — last vertical scroll position per tab. Pairs with
+// lastOpenSettingsTab so the user can reopen Settings (or flip between tabs)
+// and land exactly where they were, instead of having to re-find the control
+// they were tweaking. Resets on app restart.
+const lastTabScrollPositions = new Map<SettingsTabId, number>();
+
 // Test-only: reset the remembered tab so suites that assume a fresh open
 // (e.g. "modal opens to General") aren't polluted by prior tests in the file.
 export function __resetLastOpenSettingsTabForTests(): void {
 	lastOpenSettingsTab = null;
+	lastTabScrollPositions.clear();
 }
 
 interface SettingsModalProps {
@@ -248,6 +281,31 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 		lastOpenSettingsTab = activeTab;
 	}, [activeTab]);
 
+	// Restore the per-tab scroll position whenever the active tab changes (or
+	// the modal reopens on a remembered tab). useLayoutEffect runs after the
+	// new tab's content has committed to the DOM but before paint, so the
+	// scroll lands without a visible flash at the top. `behavior: 'auto'` is
+	// intentional — smooth-scrolling on tab switch reads as sluggish.
+	useLayoutEffect(() => {
+		if (!isOpen) return;
+		const el = contentRef.current;
+		if (!el) return;
+		const saved = lastTabScrollPositions.get(activeTab) ?? 0;
+		el.scrollTop = saved;
+	}, [activeTab, isOpen]);
+
+	// Save scroll position for the currently active tab on every scroll event.
+	// Direct map write is cheap; no throttling needed. Pairs with the restore
+	// effect above so the user can tweak a setting low in a long panel, flip
+	// to another tab to verify the effect, and come back to exactly the same
+	// position.
+	const handleContentScroll = useCallback(
+		(e: React.UIEvent<HTMLDivElement>) => {
+			lastTabScrollPositions.set(activeTab, e.currentTarget.scrollTop);
+		},
+		[activeTab]
+	);
+
 	// Store onClose in a ref to avoid re-registering layer when onClose changes
 	const onCloseRef = useRef(onClose);
 	onCloseRef.current = onClose;
@@ -271,47 +329,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 		if (!isOpen) return;
 
 		const handleTabNavigation = (e: KeyboardEvent) => {
-			const tabs: Array<
-				| 'general'
-				| 'display'
-				| 'llm'
-				| 'shortcuts'
-				| 'theme'
-				| 'notifications'
-				| 'aicommands'
-				| 'agents'
-				| 'ssh'
-				| 'environment'
-				| 'encore'
-				| 'prompts'
-			> = FEATURE_FLAGS.LLM_SETTINGS
-				? [
-						'general',
-						'display',
-						'llm',
-						'shortcuts',
-						'theme',
-						'notifications',
-						'aicommands',
-						'agents',
-						'prompts',
-						'ssh',
-						'environment',
-						'encore',
-					]
-				: [
-						'general',
-						'display',
-						'shortcuts',
-						'theme',
-						'notifications',
-						'aicommands',
-						'agents',
-						'prompts',
-						'ssh',
-						'environment',
-						'encore',
-					];
+			const tabs = TAB_ITEMS.map((t) => t.id);
 			const currentIndex = tabs.indexOf(activeTab);
 
 			if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === '[') {
@@ -444,26 +462,6 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 
 	if (!isOpen) return null;
 
-	const TAB_ITEMS: Array<{
-		id: typeof activeTab;
-		label: string;
-		icon: typeof Settings;
-		featureFlag?: boolean;
-	}> = [
-		{ id: 'general', label: 'General', icon: Settings },
-		{ id: 'display', label: 'Display', icon: Monitor },
-		...(FEATURE_FLAGS.LLM_SETTINGS ? [{ id: 'llm' as const, label: 'LLM', icon: Key }] : []),
-		{ id: 'shortcuts', label: 'Shortcuts', icon: Keyboard },
-		{ id: 'theme', label: 'Themes', icon: Palette },
-		{ id: 'notifications', label: 'Notifications', icon: Bell },
-		{ id: 'aicommands', label: 'AI Commands', icon: Cpu },
-		{ id: 'agents', label: 'Agents', icon: Box },
-		{ id: 'prompts', label: 'Maestro Prompts', icon: Wand2 },
-		{ id: 'ssh', label: 'SSH Hosts', icon: Server },
-		{ id: 'environment', label: 'Environment', icon: Globe },
-		{ id: 'encore', label: 'Encore Features', icon: FlaskConical },
-	];
-
 	return (
 		<div
 			className="fixed inset-0 modal-overlay flex items-center justify-center z-[9999]"
@@ -472,7 +470,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 			aria-label="Settings"
 		>
 			<div
-				className="w-[960px] h-[720px] rounded-xl border shadow-2xl overflow-hidden flex flex-col select-none"
+				className="modal-w-xl h-[720px] rounded-xl border shadow-2xl overflow-hidden flex flex-col select-none"
 				style={{ backgroundColor: theme.colors.bgSidebar, borderColor: theme.colors.border }}
 			>
 				{/* Search Bar + Close Button */}
@@ -538,7 +536,11 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 					</nav>
 
 					{/* Content Area */}
-					<div ref={contentRef} className="flex-1 p-6 overflow-y-auto scrollbar-thin">
+					<div
+						ref={contentRef}
+						onScroll={handleContentScroll}
+						className="flex-1 p-6 overflow-y-auto scrollbar-thin"
+					>
 						{activeTab === 'general' && <GeneralTab theme={theme} isOpen={isOpen} />}
 
 						{activeTab === 'display' && <DisplayTab theme={theme} />}
@@ -760,6 +762,8 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 						{activeTab === 'encore' && <EncoreTab theme={theme} isOpen={isOpen} />}
 
 						{activeTab === 'agents' && <AgentsTab theme={theme} />}
+
+						{activeTab === 'about' && <AboutTab theme={theme} />}
 					</div>
 				</div>
 			</div>

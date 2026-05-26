@@ -147,87 +147,102 @@ export const AgentUsageChart = memo(function AgentUsageChart({
 	const innerHeight = chartHeight - padding.top - padding.bottom;
 
 	// Get list of agents and their data (limited to top 10 by total queries)
-	const { agents, chartData, allDates, agentDisplayNames, worktreeAgents } = useMemo(() => {
-		const bySessionByDay = data.bySessionByDay || {};
+	const { agents, chartData, allDates, agentDisplayNames, worktreeAgents, agentRanges } =
+		useMemo(() => {
+			const bySessionByDay = data.bySessionByDay || {};
 
-		// Calculate total queries per session to rank them
-		const sessionTotals: Array<{ sessionId: string; totalQueries: number }> = [];
-		for (const sessionId of Object.keys(bySessionByDay)) {
-			const totalQueries = bySessionByDay[sessionId].reduce((sum, day) => sum + day.count, 0);
-			sessionTotals.push({ sessionId, totalQueries });
-		}
-
-		// Sort by total queries descending and take top 10
-		sessionTotals.sort((a, b) => b.totalQueries - a.totalQueries);
-		const topSessions = sessionTotals.slice(0, 10);
-		const agentList = topSessions.map((s) => s.sessionId);
-
-		// Resolve session IDs to user-facing display names via the shared
-		// `buildNameMap` utility — keeps name resolution consistent with the
-		// other dashboard charts. Worktree sessions still get a " (WT)" text
-		// suffix on top of the visual dashed-line indicator so they're
-		// distinguishable in tooltips where the line marker isn't visible.
-		const nameMap = buildNameMap(agentList, sessions);
-		const displayNames: Record<string, string> = {};
-		const worktreeSet = new Set<string>();
-		for (const sessionId of agentList) {
-			const resolved = nameMap.get(sessionId);
-			if (!resolved) continue;
-			displayNames[sessionId] = resolved.isWorktree ? `${resolved.name} (WT)` : resolved.name;
-			if (resolved.isWorktree) {
-				worktreeSet.add(sessionId);
-			}
-		}
-
-		// Collect all unique dates from selected agents
-		const dateSet = new Set<string>();
-		for (const sessionId of agentList) {
-			for (const day of bySessionByDay[sessionId]) {
-				dateSet.add(day.date);
-			}
-		}
-		const sortedDates = Array.from(dateSet).sort();
-
-		// Build per-agent arrays aligned to all dates
-		const agentData: Record<string, AgentDayData[]> = {};
-		for (const sessionId of agentList) {
-			const dayMap = new Map<string, { count: number; duration: number }>();
-			for (const day of bySessionByDay[sessionId]) {
-				dayMap.set(day.date, { count: day.count, duration: day.duration });
+			// Calculate total queries per session to rank them
+			const sessionTotals: Array<{ sessionId: string; totalQueries: number }> = [];
+			for (const sessionId of Object.keys(bySessionByDay)) {
+				const totalQueries = bySessionByDay[sessionId].reduce((sum, day) => sum + day.count, 0);
+				sessionTotals.push({ sessionId, totalQueries });
 			}
 
-			agentData[sessionId] = sortedDates.map((date) => ({
-				date,
-				formattedDate: format(parseISO(date), 'EEEE, MMM d, yyyy'),
-				count: dayMap.get(date)?.count || 0,
-				duration: dayMap.get(date)?.duration || 0,
-			}));
-		}
+			// Sort by total queries descending and take top 10
+			sessionTotals.sort((a, b) => b.totalQueries - a.totalQueries);
+			const topSessions = sessionTotals.slice(0, 10);
+			const agentList = topSessions.map((s) => s.sessionId);
 
-		// Build combined day data for tooltips
-		const combinedData: DayData[] = sortedDates.map((date) => {
-			const agents: Record<string, { count: number; duration: number }> = {};
+			// Resolve session IDs to user-facing display names via the shared
+			// `buildNameMap` utility — keeps name resolution consistent with the
+			// other dashboard charts. Worktree sessions still get a " (WT)" text
+			// suffix on top of the visual dashed-line indicator so they're
+			// distinguishable in tooltips where the line marker isn't visible.
+			const nameMap = buildNameMap(agentList, sessions);
+			const displayNames: Record<string, string> = {};
+			const worktreeSet = new Set<string>();
 			for (const sessionId of agentList) {
-				const dayData = agentData[sessionId].find((d) => d.date === date);
-				if (dayData) {
-					agents[sessionId] = { count: dayData.count, duration: dayData.duration };
+				const resolved = nameMap.get(sessionId);
+				if (!resolved) continue;
+				displayNames[sessionId] = resolved.isWorktree ? `${resolved.name} (WT)` : resolved.name;
+				if (resolved.isWorktree) {
+					worktreeSet.add(sessionId);
 				}
 			}
-			return {
-				date,
-				formattedDate: format(parseISO(date), 'EEEE, MMM d, yyyy'),
-				agents,
-			};
-		});
 
-		return {
-			agents: agentList,
-			chartData: agentData,
-			allDates: combinedData,
-			agentDisplayNames: displayNames,
-			worktreeAgents: worktreeSet,
-		};
-	}, [data.bySessionByDay, sessions]);
+			// Collect all unique dates from selected agents
+			const dateSet = new Set<string>();
+			for (const sessionId of agentList) {
+				for (const day of bySessionByDay[sessionId]) {
+					dateSet.add(day.date);
+				}
+			}
+			const sortedDates = Array.from(dateSet).sort();
+
+			// Build per-agent arrays aligned to all dates, and track each agent's
+			// first/last index with real data so we don't draw the line across
+			// dates where the agent didn't exist yet (or no longer existed).
+			const agentData: Record<string, AgentDayData[]> = {};
+			const ranges: Record<string, { firstIdx: number; lastIdx: number }> = {};
+			for (const sessionId of agentList) {
+				const dayMap = new Map<string, { count: number; duration: number }>();
+				for (const day of bySessionByDay[sessionId]) {
+					dayMap.set(day.date, { count: day.count, duration: day.duration });
+				}
+
+				agentData[sessionId] = sortedDates.map((date) => ({
+					date,
+					formattedDate: format(parseISO(date), 'EEEE, MMM d, yyyy'),
+					count: dayMap.get(date)?.count || 0,
+					duration: dayMap.get(date)?.duration || 0,
+				}));
+
+				let firstIdx = -1;
+				let lastIdx = -1;
+				for (let i = 0; i < sortedDates.length; i++) {
+					if (dayMap.has(sortedDates[i])) {
+						if (firstIdx === -1) firstIdx = i;
+						lastIdx = i;
+					}
+				}
+				ranges[sessionId] = { firstIdx, lastIdx };
+			}
+
+			// Build combined day data for tooltips
+			const combinedData: DayData[] = sortedDates.map((date) => {
+				const agents: Record<string, { count: number; duration: number }> = {};
+				for (const sessionId of agentList) {
+					const dayData = agentData[sessionId].find((d) => d.date === date);
+					if (dayData) {
+						agents[sessionId] = { count: dayData.count, duration: dayData.duration };
+					}
+				}
+				return {
+					date,
+					formattedDate: format(parseISO(date), 'EEEE, MMM d, yyyy'),
+					agents,
+				};
+			});
+
+			return {
+				agents: agentList,
+				chartData: agentData,
+				allDates: combinedData,
+				agentDisplayNames: displayNames,
+				worktreeAgents: worktreeSet,
+				agentRanges: ranges,
+			};
+		}, [data.bySessionByDay, sessions]);
 
 	// Calculate scales
 	const { xScale, yScale, yTicks } = useMemo(() => {
@@ -239,11 +254,14 @@ export const AgentUsageChart = memo(function AgentUsageChart({
 			};
 		}
 
-		// Find max value across all agents
+		// Find max value across all agents (only within each agent's active range)
 		let maxValue = 1;
 		for (const agent of agents) {
+			const range = agentRanges[agent];
+			if (!range || range.firstIdx === -1) continue;
+			const slice = chartData[agent].slice(range.firstIdx, range.lastIdx + 1);
 			const agentMax = Math.max(
-				...chartData[agent].map((d) => (metricMode === 'count' ? d.count : d.duration))
+				...slice.map((d) => (metricMode === 'count' ? d.count : d.duration))
 			);
 			maxValue = Math.max(maxValue, agentMax);
 		}
@@ -266,25 +284,39 @@ export const AgentUsageChart = memo(function AgentUsageChart({
 				: Array.from({ length: tickCount }, (_, i) => (yMax / (tickCount - 1)) * i);
 
 		return { xScale: xScaleFn, yScale: yScaleFn, yTicks: yTicksArr };
-	}, [allDates, agents, chartData, metricMode, chartHeight, innerWidth, innerHeight, padding]);
+	}, [
+		allDates,
+		agents,
+		chartData,
+		agentRanges,
+		metricMode,
+		chartHeight,
+		innerWidth,
+		innerHeight,
+		padding,
+	]);
 
-	// Generate line paths for each agent
+	// Generate line paths for each agent — only draw across the agent's active
+	// range so newly-introduced agents don't get a flat line backfilled from
+	// the chart's start (and removed agents don't extend to the end).
 	const linePaths = useMemo(() => {
 		const paths: Record<string, string> = {};
 		for (const agent of agents) {
 			const agentDays = chartData[agent];
-			if (agentDays.length === 0) continue;
+			const range = agentRanges[agent];
+			if (!agentDays.length || !range || range.firstIdx === -1) continue;
 
-			paths[agent] = agentDays
-				.map((day, idx) => {
-					const x = xScale(idx);
-					const y = yScale(metricMode === 'count' ? day.count : day.duration);
-					return `${idx === 0 ? 'M' : 'L'} ${x} ${y}`;
-				})
-				.join(' ');
+			const segments: string[] = [];
+			for (let idx = range.firstIdx; idx <= range.lastIdx; idx++) {
+				const day = agentDays[idx];
+				const x = xScale(idx);
+				const y = yScale(metricMode === 'count' ? day.count : day.duration);
+				segments.push(`${idx === range.firstIdx ? 'M' : 'L'} ${x} ${y}`);
+			}
+			paths[agent] = segments.join(' ');
 		}
 		return paths;
-	}, [agents, chartData, xScale, yScale, metricMode]);
+	}, [agents, chartData, agentRanges, xScale, yScale, metricMode]);
 
 	// Anchor the tooltip to the cursor (not the dot's bounding rect) so it stays
 	// next to the user's pointer regardless of where on the chart they hover.
@@ -463,7 +495,11 @@ export const AgentUsageChart = memo(function AgentUsageChart({
 							const isFiltered = activeFilterKey != null;
 							const isSelected = isFiltered && activeFilterKey === agent;
 							const isDimmed = isFiltered && !isSelected;
+							const range = agentRanges[agent];
 							return chartData[agent].map((day, dayIdx) => {
+								if (!range || dayIdx < range.firstIdx || dayIdx > range.lastIdx) {
+									return null;
+								}
 								const x = xScale(dayIdx);
 								const y = yScale(metricMode === 'count' ? day.count : day.duration);
 								const isHovered = hoveredDay?.dayIndex === dayIdx && hoveredDay?.agent === agent;
@@ -509,6 +545,14 @@ export const AgentUsageChart = memo(function AgentUsageChart({
 					allDates[hoveredDay.dayIndex] &&
 					(() => {
 						const visibleAgents = agents.filter((agent) => {
+							const range = agentRanges[agent];
+							if (
+								!range ||
+								hoveredDay.dayIndex < range.firstIdx ||
+								hoveredDay.dayIndex > range.lastIdx
+							) {
+								return false;
+							}
 							const dayData = allDates[hoveredDay.dayIndex].agents[agent];
 							return dayData && (dayData.count > 0 || dayData.duration > 0);
 						});
@@ -524,6 +568,14 @@ export const AgentUsageChart = memo(function AgentUsageChart({
 								</div>
 								<div style={{ color: theme.colors.textDim }}>
 									{agents.map((agent, idx) => {
+										const range = agentRanges[agent];
+										if (
+											!range ||
+											hoveredDay.dayIndex < range.firstIdx ||
+											hoveredDay.dayIndex > range.lastIdx
+										) {
+											return null;
+										}
 										const dayData = allDates[hoveredDay.dayIndex].agents[agent];
 										if (!dayData || (dayData.count === 0 && dayData.duration === 0)) return null;
 										const color = getAgentColor(idx, colorBlindMode);

@@ -1,7 +1,6 @@
 // Batch processor service for CLI
 // Executes playbooks and yields JSONL events
 
-import { execFileSync } from 'child_process';
 import type { Playbook, SessionInfo, UsageStats, HistoryEntry } from '../../shared/types';
 import type { JsonlEvent } from '../output/jsonl';
 import {
@@ -20,22 +19,8 @@ import { generateUUID } from '../../shared/uuid';
 import { formatElapsedTime } from '../../shared/formatters';
 import { PROMPT_IDS } from '../../shared/promptDefinitions';
 import { getCliPrompt } from './prompt-loader';
-
-/**
- * Get the current git branch for a directory
- */
-function getGitBranch(cwd: string): string | undefined {
-	try {
-		const branch = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
-			cwd,
-			encoding: 'utf-8',
-			stdio: ['pipe', 'pipe', 'pipe'],
-		}).trim();
-		return branch || undefined;
-	} catch {
-		return undefined;
-	}
-}
+import { getGitBranch, isGitRepo } from './git-utils';
+import { prepareMaestroSystemPromptCli } from './system-prompt';
 
 /**
  * Detect the `<!-- maestro:halt -->` early-exit marker in a document.
@@ -58,22 +43,6 @@ export function detectHaltMarker(content: string): { halted: boolean; reason?: s
 	if (!match) return { halted: false };
 	const reason = match[1]?.trim();
 	return { halted: true, reason: reason || undefined };
-}
-
-/**
- * Check if a directory is a git repository
- */
-function isGitRepo(cwd: string): boolean {
-	try {
-		execFileSync('git', ['rev-parse', '--is-inside-work-tree'], {
-			cwd,
-			encoding: 'utf-8',
-			stdio: ['pipe', 'pipe', 'pipe'],
-		});
-		return true;
-	} catch {
-		return false;
-	}
 }
 
 /**
@@ -266,6 +235,15 @@ export async function* runPlaybook(
 			};
 			return;
 		}
+
+		// Build the Maestro system prompt once per playbook run. It's identical
+		// for every task in the loop (session/branch/conductor don't change
+		// between tasks), so caching avoids repeating the prompt-load + git
+		// branch probe per task. Mirrors the desktop Auto Run path which calls
+		// `prepareMaestroSystemPrompt` per spawn but reads from a hot in-memory
+		// cache (`useAgentExecution.ts:226`). Failure is non-fatal: tasks run
+		// without the system prompt rather than aborting the playbook.
+		const playbookSystemPrompt = await prepareMaestroSystemPromptCli(session);
 
 		// Track totals
 		let totalCompletedTasks = 0;
@@ -492,13 +470,20 @@ export async function* runPlaybook(
 						};
 					}
 
-					// Spawn agent with combined prompt + document
+					// Spawn agent with combined prompt + document. The Maestro
+					// system prompt is delivered as an out-of-band flag (or
+					// embedded in turn 1 for agents lacking native support) so
+					// the agent sees the same Maestro context as a desktop Auto
+					// Run task. Synopsis spawn below intentionally omits this
+					// — it's a resume into the same agent that already has the
+					// prompt and re-sending would waste tokens.
 					const result = await spawnAgent(session.toolType, session.cwd, finalPrompt, undefined, {
 						customModel: session.customModel,
 						customEffort: session.customEffort,
 						customArgs: session.customArgs,
 						customEnvVars: session.customEnvVars,
 						sshRemoteConfig: session.sessionSshRemoteConfig,
+						appendSystemPrompt: playbookSystemPrompt,
 					});
 
 					const elapsedMs = Date.now() - taskStartTime;

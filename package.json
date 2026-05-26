@@ -1,6 +1,6 @@
 {
 	"name": "maestro",
-	"version": "0.16.17-RC",
+	"version": "0.16.19-RC",
 	"description": "Maestro hones fractured attention into focused intent.",
 	"main": "dist/main/index.js",
 	"author": {
@@ -13,7 +13,8 @@
 		"url": "https://github.com/RunMaestro/Maestro.git"
 	},
 	"bin": {
-		"maestro-cli": "./dist/cli/maestro-cli.js"
+		"maestro-cli": "./dist/cli/maestro-cli.js",
+		"maestro-p": "./dist/cli/maestro-p.js"
 	},
 	"scripts": {
 		"dev": "node scripts/dev.mjs",
@@ -24,10 +25,11 @@
 		"dev:renderer": "vite",
 		"dev:web": "vite --config vite.config.web.mts",
 		"dev:win": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/start-dev.ps1",
-		"build": "npm run build:main && npm run build:preload && npm run build:renderer && npm run build:web && npm run build:cli",
+		"build": "npm run build:main && npm run build:preload && npm run build:renderer && npm run build:web && npm run build:cli && npm run build:maestro-p",
 		"build:main": "tsc -p tsconfig.main.json",
 		"build:preload": "node scripts/build-preload.mjs",
 		"build:cli": "node scripts/build-cli.mjs",
+		"build:maestro-p": "node scripts/build-maestro-p.mjs",
 		"build:renderer": "vite build",
 		"build:web": "vite build --config vite.config.web.mts",
 		"package": "node scripts/set-version.mjs npm run build && node scripts/set-version.mjs electron-builder --mac --win --linux",
@@ -107,6 +109,10 @@
 					"to": "maestro-cli.js"
 				},
 				{
+					"from": "dist/cli/maestro-p.js",
+					"to": "maestro-p.js"
+				},
+				{
 					"from": "src/prompts",
 					"to": "prompts/core",
 					"filter": [
@@ -150,6 +156,10 @@
 					"to": "maestro-cli.js"
 				},
 				{
+					"from": "dist/cli/maestro-p.js",
+					"to": "maestro-p.js"
+				},
+				{
 					"from": "src/prompts",
 					"to": "prompts/core",
 					"filter": [
@@ -183,6 +193,10 @@
 				{
 					"from": "dist/cli/maestro-cli.js",
 					"to": "maestro-cli.js"
+				},
+				{
+					"from": "dist/cli/maestro-p.js",
+					"to": "maestro-p.js"
 				},
 				{
 					"from": "src/prompts",
@@ -263,7 +277,7 @@
 		"@fastify/static": "^7.0.4",
 		"@fastify/websocket": "^9.0.0",
 		"@lezer/highlight": "^1.2.3",
-		"@sentry/electron": "^7.5.0",
+		"@sentry/electron": "^7.13.0",
 		"@tanstack/react-virtual": "^3.13.13",
 		"@types/d3-force": "^3.0.10",
 		"@types/dompurify": "^3.0.5",
@@ -284,9 +298,10 @@
 		"date-fns": "^4.1.0",
 		"diff": "^8.0.2",
 		"dompurify": "^3.3.0",
-		"electron-store": "^8.1.0",
-		"electron-updater": "^6.6.2",
+		"electron-store": "^8.2.0",
+		"electron-updater": "^6.8.3",
 		"fastify": "^4.25.2",
+		"highlight.js": "^11.11.1",
 		"js-tiktoken": "^1.0.21",
 		"js-yaml": "^4.1.1",
 		"markdown-it": "^14.1.1",
@@ -305,6 +320,7 @@
 		"recharts": "^3.6.0",
 		"rehype-raw": "^7.0.0",
 		"rehype-slug": "^6.0.0",
+		"remark-breaks": "^4.0.0",
 		"remark-frontmatter": "^5.0.0",
 		"remark-gfm": "^4.0.1",
 		"semver": "^7.7.4",
@@ -325,7 +341,7 @@
 		"@types/electron-devtools-installer": "^2.2.5",
 		"@types/js-yaml": "^4.0.9",
 		"@types/markdown-it": "^14.1.2",
-		"@types/node": "^20.10.6",
+		"@types/node": "^22.19.17",
 		"@types/picomatch": "^4.0.2",
 		"@types/qrcode": "^1.5.6",
 		"@types/react": "^18.2.47",
@@ -333,21 +349,20 @@
 		"@types/react-syntax-highlighter": "^15.5.13",
 		"@types/semver": "^7.7.1",
 		"@types/ws": "^8.5.10",
-		"@typescript-eslint/eslint-plugin": "^8.50.1",
-		"@typescript-eslint/parser": "^8.50.1",
-		"@vitejs/plugin-react": "^4.2.1",
-		"@vitest/coverage-v8": "^4.0.15",
+		"@typescript-eslint/eslint-plugin": "^8.59.2",
+		"@typescript-eslint/parser": "^8.59.2",
+		"@vitejs/plugin-react": "^6.0.1",
+		"@vitest/coverage-v8": "^4.1.5",
 		"@welldone-software/why-did-you-render": "^8.0.3",
 		"autoprefixer": "^10.4.16",
 		"baseline-browser-mapping": "^2.9.17",
 		"canvas": "^3.2.0",
 		"concurrently": "^8.2.2",
-		"electron": "^28.3.3",
-		"electron-builder": "^24.9.1",
+		"electron": "^41.5.0",
+		"electron-builder": "^26.8.1",
 		"electron-devtools-installer": "^4.0.0",
-		"electron-playwright-helpers": "^2.0.1",
 		"electron-rebuild": "^3.2.9",
-		"esbuild": "^0.24.2",
+		"esbuild": "^0.28.0",
 		"eslint": "^9.39.2",
 		"eslint-config-prettier": "^10.1.8",
 		"eslint-plugin-react": "^7.37.5",
@@ -363,11 +378,10 @@
 		"react": "^18.2.0",
 		"react-dom": "^18.2.0",
 		"tailwindcss": "^3.4.1",
-		"typescript": "^5.3.3",
-		"typescript-eslint": "^8.50.1",
-		"vite": "^5.0.11",
-		"vite-plugin-electron": "^0.28.2",
-		"vitest": "^4.0.15"
+		"typescript": "^6.0.3",
+		"typescript-eslint": "^8.59.2",
+		"vite": "^8.0.11",
+		"vitest": "^4.1.5"
 	},
 	"engines": {
 		"node": ">=22.0.0"

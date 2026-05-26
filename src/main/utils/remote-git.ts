@@ -314,13 +314,17 @@ async function findRemoteWorktreeForBranch(
  * @param worktreePath Path where the worktree should be created
  * @param branchName Branch name for the worktree
  * @param sshRemote SSH remote configuration
+ * @param baseBranch When the branch does not exist, the ref to branch from
+ *                   (passed to `git worktree add -b <new> <path> <base>`).
+ *                   Defaults to the remote main repo's HEAD when omitted.
  * @returns Setup result with success/failure and branch info
  */
 export async function worktreeSetupRemote(
 	mainRepoCwd: string,
 	worktreePath: string,
 	branchName: string,
-	sshRemote: SshRemoteConfig
+	sshRemote: SshRemoteConfig,
+	baseBranch?: string
 ): Promise<RemoteGitResult<RemoteWorktreeSetupResult>> {
 	// Check if worktree path is inside the main repo (nested worktree)
 	const checkNestedResult = await execRemoteShellCommand(
@@ -453,10 +457,19 @@ export async function worktreeSetupRemote(
 
 	let createResult: ExecResult;
 	if (branchExists) {
+		// baseBranch is irrelevant when the branch already exists.
 		createResult = await execGitRemote(['worktree', 'add', worktreePath, branchName], {
 			sshRemote,
 			remoteCwd: mainRepoCwd,
 		});
+	} else if (baseBranch) {
+		createResult = await execGitRemote(
+			['worktree', 'add', '-b', branchName, worktreePath, baseBranch],
+			{
+				sshRemote,
+				remoteCwd: mainRepoCwd,
+			}
+		);
 	} else {
 		createResult = await execGitRemote(['worktree', 'add', '-b', branchName, worktreePath], {
 			sshRemote,

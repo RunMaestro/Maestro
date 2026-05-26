@@ -302,6 +302,22 @@ describe('QuickActionsModal', () => {
 
 			expect(screen.getByText('BUSY')).toBeInTheDocument();
 		});
+
+		it('does not render Clear All Bookmarks when no sessions are bookmarked', () => {
+			const props = createDefaultProps();
+			render(<QuickActionsModal {...props} />);
+
+			expect(screen.queryByText('Clear All Bookmarks')).not.toBeInTheDocument();
+		});
+
+		it('renders Clear All Bookmarks when at least one session is bookmarked', () => {
+			const props = createDefaultProps({
+				sessions: [createMockSession({ bookmarked: true })],
+			});
+			render(<QuickActionsModal {...props} />);
+
+			expect(screen.getByText('Clear All Bookmarks')).toBeInTheDocument();
+		});
 	});
 
 	describe('Session actions', () => {
@@ -1067,7 +1083,7 @@ describe('QuickActionsModal', () => {
 			fireEvent.click(screen.getByText('Move to Group...'));
 
 			expect(screen.getByText('← Back to main menu')).toBeInTheDocument();
-			expect(screen.getByText('📁 No Group (Root)')).toBeInTheDocument();
+			expect(screen.getByText('📁 No Group (Ungrouped)')).toBeInTheDocument();
 		});
 
 		it('shows groups in move-to-group mode', () => {
@@ -1116,7 +1132,7 @@ describe('QuickActionsModal', () => {
 			render(<QuickActionsModal {...props} />);
 
 			fireEvent.click(screen.getByText('Move to Group...'));
-			fireEvent.click(screen.getByText('📁 No Group (Root)'));
+			fireEvent.click(screen.getByText('📁 No Group (Ungrouped)'));
 
 			expect(props.setSessions).toHaveBeenCalled();
 			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
@@ -1212,7 +1228,7 @@ describe('QuickActionsModal', () => {
 			// When initialMode is 'move-to-group' the "Back to main menu" action is
 			// suppressed (the user never saw the main menu), so assert on group-mode
 			// specific entries instead.
-			expect(screen.getByText('📁 No Group (Root)')).toBeInTheDocument();
+			expect(screen.getByText('📁 No Group (Ungrouped)')).toBeInTheDocument();
 			expect(screen.getByText('+ Create New Group')).toBeInTheDocument();
 		});
 	});
@@ -1294,7 +1310,7 @@ describe('QuickActionsModal', () => {
 			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
 		});
 
-		it('does not show tab actions when not in AI mode', () => {
+		it('hides AI-only tab actions when not in AI mode, but keeps Tab Switcher available', () => {
 			const props = createDefaultProps({
 				isAiMode: false,
 				onOpenTabSwitcher: vi.fn(),
@@ -1303,7 +1319,10 @@ describe('QuickActionsModal', () => {
 			});
 			render(<QuickActionsModal {...props} />);
 
-			expect(screen.queryByText('Tab Switcher')).not.toBeInTheDocument();
+			// Tab Switcher is now mode-agnostic: as long as the agent has aiTabs
+			// the command shows up so users can jump back into an AI tab even
+			// from terminal / file / browser modes.
+			expect(screen.getByText('Tab Switcher')).toBeInTheDocument();
 			expect(screen.queryByText('Rename Tab')).not.toBeInTheDocument();
 			expect(screen.queryByText('Toggle Read-Only Mode')).not.toBeInTheDocument();
 		});

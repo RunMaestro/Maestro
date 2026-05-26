@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import type { BrowserTab, Theme } from '../../types';
 import { useTabHoverOverlay } from '../../hooks/tabs/useTabHoverOverlay';
+import { getTabKindColor } from './tabBarUtils';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 
@@ -112,6 +113,7 @@ export const BrowserTabItem = memo(function BrowserTabItem({
 	} = useTabHoverOverlay({ registerRef });
 
 	const tabShortcuts = useSettingsStore((s) => s.tabShortcuts);
+	const showBrowserTabDomain = useSettingsStore((s) => s.showBrowserTabDomain);
 
 	const ShortcutHint = ({ keys }: { keys: string[] }) => (
 		<span
@@ -322,7 +324,10 @@ export const BrowserTabItem = memo(function BrowserTabItem({
 					onError={() => setFaviconFailed(true)}
 				/>
 			) : (
-				<Globe className="w-3.5 h-3.5 shrink-0" style={{ color: theme.colors.textDim }} />
+				<Globe
+					className="w-3.5 h-3.5 shrink-0"
+					style={{ color: getTabKindColor('browser', theme) }}
+				/>
 			)}
 
 			<span
@@ -332,7 +337,7 @@ export const BrowserTabItem = memo(function BrowserTabItem({
 				{label}
 			</span>
 
-			{host && host !== label && (
+			{showBrowserTabDomain && host && host !== label && (
 				<span
 					className="px-1 rounded text-[9px] font-semibold leading-none shrink-0"
 					style={{

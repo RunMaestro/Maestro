@@ -33,3 +33,6 @@ export { ShortcutFilterButton } from './ShortcutFilterButton';
 export type { ShortcutFilterButtonProps } from './ShortcutFilterButton';
 
 export { WorktreePill } from './WorktreePill';
+
+export { HoverTooltip } from './HoverTooltip';
+export type { HoverTooltipProps } from './HoverTooltip';

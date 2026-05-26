@@ -26,6 +26,8 @@ export interface ActiveProcess {
 	cueSubscriptionName?: string;
 	cueEventType?: string;
 	childProcesses?: Array<{ pid: number; command: string }>;
+	/** Env vars Maestro is explicitly setting on this process (global + agent + session overrides). */
+	maestroEnvVars?: Record<string, string>;
 }
 
 export type ProcessTypeTag =
@@ -68,6 +70,7 @@ export interface ProcessNode {
 	cueSessionName?: string;
 	tabName?: string;
 	childProcesses?: Array<{ pid: number; command: string }>;
+	maestroEnvVars?: Record<string, string>;
 }
 
 export interface ProcessDetailData {
@@ -88,4 +91,5 @@ export interface ProcessDetailData {
 	cueSessionName?: string;
 	tabName?: string;
 	childProcesses?: Array<{ pid: number; command: string }>;
+	maestroEnvVars?: Record<string, string>;
 }

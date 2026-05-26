@@ -91,6 +91,8 @@ beforeEach(() => {
 	useFileExplorerStore.setState({
 		selectedFileIndex: 0,
 		flatFileList: [],
+		selectedPaths: new Set(),
+		selectionAnchorIndex: -1,
 	});
 
 	// Setup window.maestro
@@ -805,6 +807,128 @@ describe('useFileExplorerEffects', () => {
 			});
 
 			expect(useFileExplorerStore.getState().selectedFileIndex).toBe(2);
+		});
+	});
+
+	// ====================================================================
+	// Keyboard multi-select (Shift+Arrow range select)
+	// ====================================================================
+
+	describe('keyboard multi-select (Shift+Arrow)', () => {
+		const fourFileList = [
+			{ name: 'a', fullPath: 'a', isFolder: false, type: 'file' as const },
+			{ name: 'b', fullPath: 'b', isFolder: false, type: 'file' as const },
+			{ name: 'c', fullPath: 'c', isFolder: false, type: 'file' as const },
+			{ name: 'd', fullPath: 'd', isFolder: false, type: 'file' as const },
+		];
+
+		const setup = async (selectedFileIndex: number, selectionAnchorIndex: number) => {
+			const useFileExplorerEffects = await loadHook();
+			useUIStore.setState({ activeFocus: 'right', activeRightTab: 'files' });
+			useSessionStore.setState({
+				sessions: [createMockSession()],
+				activeSessionId: 'session-1',
+			});
+			const deps = createDeps();
+			const view = renderHook(() => useFileExplorerEffects(deps));
+			act(() => {
+				useFileExplorerStore.setState({
+					flatFileList: fourFileList,
+					selectedFileIndex,
+					selectionAnchorIndex,
+					selectedPaths: new Set(),
+				});
+			});
+			view.rerender();
+			return view;
+		};
+
+		it('Shift+ArrowDown extends the selection to the next row', async () => {
+			await setup(1, 1);
+
+			act(() => {
+				window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', shiftKey: true }));
+			});
+
+			const state = useFileExplorerStore.getState();
+			expect(state.selectedFileIndex).toBe(2);
+			expect([...state.selectedPaths].sort()).toEqual(['b', 'c']);
+			// Anchor stays put so further extension pivots from the original row.
+			expect(state.selectionAnchorIndex).toBe(1);
+		});
+
+		it('Shift+ArrowUp extends the selection to the previous row', async () => {
+			await setup(2, 2);
+
+			act(() => {
+				window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', shiftKey: true }));
+			});
+
+			const state = useFileExplorerStore.getState();
+			expect(state.selectedFileIndex).toBe(1);
+			expect([...state.selectedPaths].sort()).toEqual(['b', 'c']);
+		});
+
+		it('consecutive Shift+ArrowDown grows the range from a sticky anchor', async () => {
+			const view = await setup(1, 1);
+
+			act(() => {
+				window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', shiftKey: true }));
+			});
+			view.rerender();
+			act(() => {
+				window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', shiftKey: true }));
+			});
+
+			const state = useFileExplorerStore.getState();
+			expect(state.selectedFileIndex).toBe(3);
+			expect([...state.selectedPaths].sort()).toEqual(['b', 'c', 'd']);
+			expect(state.selectionAnchorIndex).toBe(1);
+		});
+
+		it('establishes the anchor from the cursor when none is set (-1)', async () => {
+			await setup(1, -1);
+
+			act(() => {
+				window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', shiftKey: true }));
+			});
+
+			const state = useFileExplorerStore.getState();
+			expect(state.selectionAnchorIndex).toBe(1);
+			expect([...state.selectedPaths].sort()).toEqual(['b', 'c']);
+		});
+
+		it('Shift+ArrowDown clamps at the last row without dropping the range', async () => {
+			await setup(3, 1);
+
+			act(() => {
+				window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', shiftKey: true }));
+			});
+
+			const state = useFileExplorerStore.getState();
+			expect(state.selectedFileIndex).toBe(3);
+			expect([...state.selectedPaths].sort()).toEqual(['b', 'c', 'd']);
+		});
+
+		it('plain ArrowDown collapses the multi-selection and re-anchors', async () => {
+			const view = await setup(1, 1);
+
+			// Build a range first.
+			act(() => {
+				window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', shiftKey: true }));
+			});
+			view.rerender();
+			expect(useFileExplorerStore.getState().selectedPaths.size).toBe(2);
+
+			// A plain move collapses it.
+			act(() => {
+				window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown' }));
+			});
+
+			const state = useFileExplorerStore.getState();
+			expect(state.selectedFileIndex).toBe(3);
+			expect(state.selectedPaths.size).toBe(0);
+			expect(state.selectionAnchorIndex).toBe(3);
 		});
 	});
 

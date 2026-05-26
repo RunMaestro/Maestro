@@ -901,9 +901,22 @@ describe('web handlers', () => {
 			expect(writeCliServerInfo).not.toHaveBeenCalled();
 		});
 
-		it('skips work when no server is running', () => {
+		it('brings up the server when none is running, so the discovery file appears without a Live Mode toggle', async () => {
 			vi.useFakeTimers();
 			webServerRef.current = null;
+			// Start with no live server so the watchdog falls back to ensureCliServer.
+			mockWebServer.isActive.mockReturnValue(false);
+
+			startCliDiscoveryWatchdog(buildDeps(), 1000);
+			await vi.advanceTimersByTimeAsync(1000);
+
+			expect(mockCreateWebServer).toHaveBeenCalled();
+			expect(writeCliServerInfo).toHaveBeenCalled();
+		});
+
+		it('skips work when a server exists but is not yet active', () => {
+			vi.useFakeTimers();
+			mockWebServer.isActive.mockReturnValue(false);
 
 			startCliDiscoveryWatchdog(buildDeps(), 1000);
 			vi.advanceTimersByTime(2000);

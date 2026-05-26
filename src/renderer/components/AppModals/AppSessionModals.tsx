@@ -42,10 +42,13 @@ export interface AppSessionModalsProps {
 			workingDirOverride?: string;
 		},
 		customEffort?: string,
-		groupId?: string
+		groupId?: string,
+		enableMaestroP?: boolean,
+		maestroPPath?: string
 	) => void;
 	existingSessions: Session[];
 	sourceSession?: Session; // For agent duplication
+	newInstancePresetGroupId?: string | null; // Group to place the new agent in
 
 	// EditAgentModal
 	editAgentModalOpen: boolean;
@@ -65,7 +68,9 @@ export interface AppSessionModalsProps {
 			enabled: boolean;
 			remoteId: string | null;
 			workingDirOverride?: string;
-		}
+		},
+		enableMaestroP?: boolean,
+		maestroPPath?: string
 	) => void;
 	editAgentSession: Session | null;
 
@@ -112,6 +117,7 @@ export const AppSessionModals = memo(function AppSessionModals({
 	onCreateSession,
 	existingSessions,
 	sourceSession,
+	newInstancePresetGroupId,
 	// EditAgentModal
 	editAgentModalOpen,
 	onCloseEditAgentModal,
@@ -175,6 +181,7 @@ export const AppSessionModals = memo(function AppSessionModals({
 					theme={theme}
 					existingSessions={existingSessions}
 					sourceSession={sourceSession}
+					presetGroupId={newInstancePresetGroupId}
 				/>
 			)}
 

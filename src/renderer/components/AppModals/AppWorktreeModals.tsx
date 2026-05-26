@@ -26,7 +26,7 @@ export interface AppWorktreeModalsProps {
 	createWorktreeModalOpen: boolean;
 	createWorktreeSession: Session | null;
 	onCloseCreateWorktreeModal: () => void;
-	onCreateWorktree: (branchName: string) => Promise<void>;
+	onCreateWorktree: (branchName: string, baseBranch?: string) => Promise<void>;
 
 	// CreatePRModal
 	createPRModalOpen: boolean;

@@ -1,10 +1,9 @@
 import React, { memo, useMemo, useState, useCallback, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
+import remarkBreaks from 'remark-breaks';
 import DOMPurify from 'dompurify';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { getSyntaxStyle } from '../utils/syntaxTheme';
-import { Clipboard, ImageOff } from 'lucide-react';
+import { ImageOff } from 'lucide-react';
 import { Spinner } from './ui/Spinner';
 import type { Theme } from '../types';
 import type { FileNode } from '../types/fileTree';
@@ -22,9 +21,11 @@ import {
 } from '../utils/inlineCodeCopy';
 import { LinkContextMenu, type LinkContextMenuState } from './LinkContextMenu';
 import { FileContextMenu, type FileContextMenuState } from './FileContextMenu';
-import { SyntaxHighlightBoundary } from './SyntaxHighlightBoundary';
+import { CodeFence } from './CodeFence/CodeFence';
 import { getHomeDir, getHomeDirAsync } from '../utils/homeDir';
 import { openUrl } from '../utils/openUrl';
+import { openMaestroLink } from '../utils/openMaestroLink';
+import { urlTransformAllowingMaestro } from '../utils/markdownUrlTransform';
 
 // ============================================================================
 // LocalImage - Loads local images via IPC
@@ -174,52 +175,6 @@ LocalImage.displayName = 'LocalImage';
 // CodeBlockWithCopy - Code block with copy button overlay
 // ============================================================================
 
-interface CodeBlockWithCopyProps {
-	language: string;
-	codeContent: string;
-	theme: Theme;
-	onCopy: (text: string) => void;
-}
-
-const CodeBlockWithCopy = memo(
-	({ language, codeContent, theme, onCopy }: CodeBlockWithCopyProps) => {
-		return (
-			<div className="relative group/codeblock" translate="no">
-				<button
-					onClick={() => onCopy(codeContent)}
-					className="absolute bottom-2 right-2 p-1.5 rounded opacity-0 group-hover/codeblock:opacity-70 hover:!opacity-100 transition-opacity z-10"
-					style={{
-						backgroundColor: theme.colors.bgActivity,
-						color: theme.colors.textDim,
-						border: `1px solid ${theme.colors.border}`,
-					}}
-					title="Copy code"
-				>
-					<Clipboard className="w-3.5 h-3.5" />
-				</button>
-				<SyntaxHighlightBoundary code={codeContent} theme={theme}>
-					<SyntaxHighlighter
-						language={language}
-						style={getSyntaxStyle(theme.mode)}
-						customStyle={{
-							margin: '0.5em 0',
-							padding: '1em',
-							background: theme.colors.bgSidebar,
-							fontSize: '0.9em',
-							borderRadius: '6px',
-						}}
-						PreTag="div"
-					>
-						{codeContent}
-					</SyntaxHighlighter>
-				</SyntaxHighlightBoundary>
-			</div>
-		);
-	}
-);
-
-CodeBlockWithCopy.displayName = 'CodeBlockWithCopy';
-
 // ============================================================================
 // fixMarkdownLinkSpaces — pre-process markdown so CommonMark can parse links
 // whose URL destinations contain spaces.
@@ -313,6 +268,16 @@ interface MarkdownRendererProps {
 	bionifyIntensity?: number;
 	/** Algorithm string controlling Bionify highlight lengths */
 	bionifyAlgorithm?: string;
+	/**
+	 * Treat single newlines as hard line breaks (chat-style rendering).
+	 *
+	 * Default CommonMark collapses single `\n` between non-blank lines into a
+	 * space. That's correct for document/file preview, but wrong for chat
+	 * surfaces where users expect line structure to be preserved (#622). When
+	 * enabled, this routes content through `remark-breaks` so single newlines
+	 * render as `<br>`.
+	 */
+	chatLineBreaks?: boolean;
 }
 
 /**
@@ -342,6 +307,7 @@ export const MarkdownRenderer = memo(
 		enableBionifyReadingMode = false,
 		bionifyIntensity,
 		bionifyAlgorithm,
+		chatLineBreaks = false,
 	}: MarkdownRendererProps) => {
 		// Resolve homeDir for tilde path expansion (module-level cache, fetched once)
 		const [homeDir, setHomeDir] = useState<string | undefined>(getHomeDir);
@@ -367,6 +333,11 @@ export const MarkdownRenderer = memo(
 				remarkFrontmatter,
 				remarkFrontmatterTable,
 			];
+			// Chat surfaces need single-newline-as-<br> semantics (#622); file/doc
+			// preview keeps default CommonMark behavior so paragraph reflow works.
+			if (chatLineBreaks) {
+				plugins.push(remarkBreaks);
+			}
 			// Add remarkFileLinks if we have file tree for relative paths,
 			// OR if we have projectRoot for absolute paths (even with empty file tree)
 			// OR if we have homeDir for tilde paths (even without file tree or projectRoot)
@@ -377,7 +348,7 @@ export const MarkdownRenderer = memo(
 				]);
 			}
 			return plugins;
-		}, [fileTree, fileTreeIndices, cwd, projectRoot, homeDir]);
+		}, [fileTree, fileTreeIndices, cwd, projectRoot, homeDir, chatLineBreaks]);
 
 		// Defense-in-depth: sanitize raw HTML with DOMPurify before markdown parsing
 		// to strip script tags, event handlers, and other XSS vectors
@@ -412,6 +383,7 @@ export const MarkdownRenderer = memo(
 				<ReactMarkdown
 					remarkPlugins={remarkPlugins}
 					rehypePlugins={allowRawHtml ? [rehypeRaw] : undefined}
+					urlTransform={urlTransformAllowingMaestro}
 					components={{
 						a: ({ node: _node, href, children, ...props }) => {
 							// Check for maestro-file:// protocol OR data-maestro-file attribute
@@ -433,8 +405,11 @@ export const MarkdownRenderer = memo(
 										if (isMaestroFile && filePath && onFileClick) {
 											onFileClick(filePath);
 										} else if (href) {
-											// Open http/https URLs via openUrl; file:// URLs via openPath
-											if (/^file:\/\//.test(href)) {
+											// Open http/https URLs via openUrl; file:// URLs via openPath;
+											// maestro:// URLs route through the in-app deep link handler.
+											if (href.startsWith('maestro://')) {
+												openMaestroLink(href);
+											} else if (/^file:\/\//.test(href)) {
 												window.maestro.shell.openPath(href.replace(/^file:\/\//, ''));
 											} else if (/^https?:\/\//.test(href)) {
 												openUrl(href, { ctrlKey: e.ctrlKey });
@@ -497,17 +472,12 @@ export const MarkdownRenderer = memo(
 
 							if (codeElement?.props) {
 								const { className, children: codeChildren } = codeElement.props;
-								const match = (className || '').match(/language-(\w+)/);
-								const language = match ? match[1] : 'text';
+								const match = (className || '').match(/language-([\w+\-#]+)/);
+								const language = match ? match[1] : '';
 								const codeContent = String(codeChildren).replace(/\n$/, '');
 
 								return (
-									<CodeBlockWithCopy
-										language={language}
-										codeContent={codeContent}
-										theme={theme}
-										onCopy={onCopy}
-									/>
+									<CodeFence language={language} code={codeContent} theme={theme} onCopy={onCopy} />
 								);
 							}
 
@@ -686,6 +656,4 @@ export const MarkdownRenderer = memo(
 
 MarkdownRenderer.displayName = 'MarkdownRenderer';
 
-// Also export CodeBlockWithCopy for cases where only the code block is needed
-export { CodeBlockWithCopy };
-export type { CodeBlockWithCopyProps, MarkdownRendererProps };
+export type { MarkdownRendererProps };

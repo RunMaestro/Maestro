@@ -434,6 +434,23 @@ function validateEventSpecificFields(
 				);
 			}
 		}
+		if (sub.retrigger_on_comments !== undefined && typeof sub.retrigger_on_comments !== 'boolean') {
+			errors.push(
+				`${prefix}: "retrigger_on_comments" must be a boolean (true to re-fire on new activity, false or omitted to fire once per item)`
+			);
+		}
+		if (sub.max_notifications !== undefined) {
+			if (
+				typeof sub.max_notifications !== 'number' ||
+				!Number.isFinite(sub.max_notifications) ||
+				!Number.isInteger(sub.max_notifications) ||
+				sub.max_notifications < 0
+			) {
+				errors.push(
+					`${prefix}: "max_notifications" must be a non-negative integer (0 = unlimited, omitted = default 10)`
+				);
+			}
+		}
 	} else if (event === 'app.startup') {
 		// No additional required fields for the startup trigger.
 	} else if (event === 'cli.trigger') {

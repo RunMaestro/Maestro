@@ -2565,6 +2565,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 				}
 
 				const { groomContext } = await import('../utils/context-groomer');
+				const { buildDirectorNotesSynopsisPrompt } = await import('../utils/director-notes-prompt');
 				const { getPrompt } = await import('../prompt-manager');
 				const { AgentDetector } = await import('../agents');
 				const { getAgentConfigsStore } = await import('../stores');
@@ -2582,8 +2583,6 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 				}
 
 				const historyManager = getHistoryManager();
-				const cutoffTime = Date.now() - lookbackDays * 24 * 60 * 60 * 1000;
-				const sessionIds = await historyManager.listSessionsWithHistory();
 
 				// Build session name map
 				const storedSessions = sessionsStore.get('sessions', []) as Array<{
@@ -2595,32 +2594,16 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 					if (s.id && s.name) sessionNameMap.set(s.id, s.name);
 				}
 
-				const sessionManifest: Array<{
-					sessionId: string;
-					displayName: string;
-					historyFilePath: string;
-				}> = [];
-				let agentCount = 0;
-				let entryCount = 0;
+				// Scope the manifest to the lookback window so the batch agent only
+				// reads files it needs (see director-notes-prompt for the rationale).
+				const { prompt, agentCount, entryCount } = await buildDirectorNotesSynopsisPrompt({
+					historyManager,
+					sessionNameMap,
+					lookbackDays,
+					basePrompt: getPrompt('director-notes'),
+				});
 
-				for (const sessionId of sessionIds) {
-					const filePath = await historyManager.getHistoryFilePath(sessionId);
-					if (!filePath) continue;
-					const displayName = sessionNameMap.get(sessionId) || sessionId;
-					sessionManifest.push({ sessionId, displayName, historyFilePath: filePath });
-
-					const entries = await historyManager.getEntries(sessionId);
-					let agentHasEntries = false;
-					for (const entry of entries) {
-						if (entry.timestamp >= cutoffTime) {
-							entryCount++;
-							agentHasEntries = true;
-						}
-					}
-					if (agentHasEntries) agentCount++;
-				}
-
-				if (sessionManifest.length === 0) {
+				if (!prompt) {
 					return {
 						success: true,
 						synopsis: `# Director's Notes\n\n*Generated for the past ${lookbackDays} days*\n\nNo history files found.`,
@@ -2628,44 +2611,6 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 						stats: { agentCount: 0, entryCount: 0, durationMs: 0 },
 					};
 				}
-
-				const sanitizeDisplayName = (name: string): string =>
-					name
-						.replace(/[#*_`~\[\]()!|>]/g, '')
-						.replace(/\s+/g, ' ')
-						.trim();
-
-				const manifestLines = sessionManifest
-					.map(
-						(s) =>
-							`- Session "${sanitizeDisplayName(s.displayName)}" (ID: ${s.sessionId}): ${s.historyFilePath}`
-					)
-					.join('\n');
-
-				const cutoffDate = new Date(cutoffTime).toLocaleDateString('en-US', {
-					month: 'short',
-					day: 'numeric',
-					year: 'numeric',
-				});
-				const nowDate = new Date().toLocaleDateString('en-US', {
-					month: 'short',
-					day: 'numeric',
-					year: 'numeric',
-				});
-
-				const prompt = [
-					getPrompt('director-notes'),
-					'',
-					'---',
-					'',
-					'## Session History Files',
-					'',
-					`Lookback period: ${lookbackDays} days (${cutoffDate} – ${nowDate})`,
-					`Timestamp cutoff: ${cutoffTime} (only consider entries with timestamp >= this value)`,
-					`${agentCount} agents had ${entryCount} qualifying entries.`,
-					'',
-					manifestLines,
-				].join('\n');
 
 				try {
 					const allConfigs = agentConfigsStore.get('configs', {});

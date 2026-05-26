@@ -229,12 +229,14 @@ export function useAgentSessionManagement(
 				} else {
 					// Load the session messages using the generic agentSessions API
 					// Use projectRoot (not cwd) for consistent session storage access
+					// Pass sshRemoteId so SSH-remote sessions read from the correct host
 					const agentId = activeSession.toolType || 'claude-code';
 					const result = await window.maestro.agentSessions.read(
 						agentId,
 						resolvedProjectRoot,
 						agentSessionId,
-						{ offset: 0, limit: 500 }
+						{ offset: 0, limit: 500 },
+						activeSession.sshRemoteId
 					);
 
 					// Convert to log entries, keeping only messages with actual text content.

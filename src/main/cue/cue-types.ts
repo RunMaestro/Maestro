@@ -9,6 +9,7 @@ export type {
 	CueEventType,
 	CueGitHubState,
 	CueGraphSession,
+	CueNotifyConfig,
 	CueRunResult,
 	CueRunStatus,
 	CueScheduleDay,

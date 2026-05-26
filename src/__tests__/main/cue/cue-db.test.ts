@@ -85,6 +85,18 @@ const mockDb = {
 				{ name: 'parent_event_id' },
 			];
 		}
+		// cue_github_seen — the GitHub re-trigger feature added `last_revision`
+		// and `fire_count` columns. Returning the full column set keeps the
+		// additive migration a no-op under the mock.
+		if (query.startsWith('table_info(cue_github_seen)')) {
+			return [
+				{ name: 'subscription_id' },
+				{ name: 'item_key' },
+				{ name: 'seen_at' },
+				{ name: 'last_revision' },
+				{ name: 'fire_count' },
+			];
+		}
 		return undefined;
 	}),
 	prepare: vi.fn((sql: string) => {

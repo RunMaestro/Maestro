@@ -1,11 +1,31 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
-import { UnifiedHistoryTab } from '../../../../renderer/components/DirectorNotes/UnifiedHistoryTab';
+import { UnifiedHistoryTab as RawUnifiedHistoryTab } from '../../../../renderer/components/DirectorNotes/UnifiedHistoryTab';
 
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 
 import { mockTheme } from '../../../helpers/mockTheme';
+
+// Lookback is owned by DirectorNotesModal in real use; tests use this
+// stateful wrapper so we can keep `<UnifiedHistoryTab ... />` ergonomics.
+function UnifiedHistoryTab(
+	props: Omit<
+		React.ComponentProps<typeof RawUnifiedHistoryTab>,
+		'lookbackHours' | 'onLookbackChange'
+	>
+) {
+	const [hours, setHours] = useState<number | null>(() => {
+		const days = mockDirNotesSettings.defaultLookbackDays;
+		if (days <= 0) return null;
+		const target = days * 24;
+		for (const h of [24, 72, 168, 336, 720, 4320, 8760]) {
+			if (h >= target) return h;
+		}
+		return null;
+	});
+	return <RawUnifiedHistoryTab {...props} lookbackHours={hours} onLookbackChange={setHours} />;
+}
 // Mock useSettings hook (mutable so individual tests can override)
 const mockDirNotesSettings = vi.hoisted(() => ({
 	provider: 'claude-code' as const,
@@ -244,6 +264,13 @@ beforeEach(() => {
 		},
 		history: {
 			update: mockHistoryUpdate,
+		},
+		// Needed by trackShortcutUsage (settings persistence + daily counter).
+		settings: {
+			set: vi.fn().mockResolvedValue(undefined),
+		},
+		stats: {
+			recordShortcutUsage: vi.fn().mockResolvedValue(null),
 		},
 	};
 	mockHistoryUpdate.mockResolvedValue(true);
@@ -591,6 +618,30 @@ describe('UnifiedHistoryTab', () => {
 			fireEvent.keyDown(listContainer!, { key: 'ArrowDown' });
 
 			expect(mockHandleKeyDown).toHaveBeenCalled();
+		});
+
+		it('records searchDirectorNotes shortcut usage when Cmd+F opens the search', async () => {
+			render(<UnifiedHistoryTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('User performed action A')).toBeInTheDocument();
+			});
+
+			const beforeUsed = useSettingsStore.getState().keyboardMasteryStats.usedShortcuts;
+			expect(beforeUsed).not.toContain('searchDirectorNotes');
+
+			const listContainer = screen.getByText('User performed action A').closest('[tabindex="0"]');
+			expect(listContainer).toBeTruthy();
+
+			act(() => {
+				fireEvent.keyDown(listContainer!, { key: 'f', metaKey: true });
+			});
+
+			const afterUsed = useSettingsStore.getState().keyboardMasteryStats.usedShortcuts;
+			expect(afterUsed).toContain('searchDirectorNotes');
+			expect(vi.mocked(window.maestro.stats.recordShortcutUsage)).toHaveBeenCalledWith(
+				expect.any(Number)
+			);
 		});
 
 		it('opens detail modal via onSelect callback (Enter key)', async () => {

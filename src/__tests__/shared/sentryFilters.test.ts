@@ -160,6 +160,17 @@ describe('shouldDropSentryEvent', () => {
 			).toBe(true);
 		});
 
+		it('drops GitHub CLI network failures when the user is offline', () => {
+			expect(
+				shouldDropSentryEvent(
+					exceptionEvent(
+						'Error',
+						'Command failed: gh pr list\nerror connecting to api.github.com\ncheck your internet connection'
+					)
+				)
+			).toBe(true);
+		});
+
 		it('drops shell PATH probe timeouts', () => {
 			expect(shouldDropSentryEvent(exceptionEvent('Error', 'Timed out reading shell PATH'))).toBe(
 				true

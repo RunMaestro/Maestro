@@ -881,6 +881,66 @@ describe('useSessionLifecycle', () => {
 
 			expect(window.maestro.claude.updateSessionStarred).not.toHaveBeenCalled();
 		});
+
+		it('is a no-op when the active view is a terminal tab', () => {
+			const tab = createMockAITab({ id: 'tab-1', starred: false, agentSessionId: 'ag-1' });
+			const session = createMockSession({
+				id: 'session-1',
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+				inputMode: 'terminal',
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+			act(() => {
+				result.current.toggleTabStar();
+			});
+
+			expect(useSessionStore.getState().sessions[0].aiTabs[0].starred).toBe(false);
+			expect(window.maestro.claude.updateSessionStarred).not.toHaveBeenCalled();
+		});
+
+		it('is a no-op when a file preview tab is focused', () => {
+			const tab = createMockAITab({ id: 'tab-1', starred: false, agentSessionId: 'ag-1' });
+			const session = createMockSession({
+				id: 'session-1',
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+				activeFileTabId: 'file-tab-1',
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+			act(() => {
+				result.current.toggleTabStar();
+			});
+
+			expect(useSessionStore.getState().sessions[0].aiTabs[0].starred).toBe(false);
+			expect(window.maestro.claude.updateSessionStarred).not.toHaveBeenCalled();
+		});
+
+		it('is a no-op when a browser tab is focused', () => {
+			const tab = createMockAITab({ id: 'tab-1', starred: false, agentSessionId: 'ag-1' });
+			const session = createMockSession({
+				id: 'session-1',
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+				activeBrowserTabId: 'browser-tab-1',
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+			act(() => {
+				result.current.toggleTabStar();
+			});
+
+			expect(useSessionStore.getState().sessions[0].aiTabs[0].starred).toBe(false);
+			expect(window.maestro.claude.updateSessionStarred).not.toHaveBeenCalled();
+		});
 	});
 
 	// ======================================================================

@@ -3,6 +3,23 @@
  * Used by both the renderer (file tree loading) and main process (directory stats).
  */
 
+// Cache compiled regexes per pattern string. File-tree traversals call
+// matchGlobPattern once per (file × pattern), so without this cache every
+// refresh recompiles tens of thousands of identical regexes.
+const globRegexCache = new Map<string, RegExp>();
+
+function compileGlobRegex(pattern: string): RegExp {
+	const cached = globRegexCache.get(pattern);
+	if (cached) return cached;
+	const regexStr = pattern
+		.replace(/[.+^${}()|[\]\\]/g, '\\$&') // Escape special chars
+		.replace(/\*/g, '.*') // * matches any chars
+		.replace(/\?/g, '.'); // ? matches single char
+	const regex = new RegExp(`^${regexStr}$`, 'i');
+	globRegexCache.set(pattern, regex);
+	return regex;
+}
+
 /**
  * Simple glob pattern matcher for ignore patterns.
  * Supports basic glob patterns: *, ?, and character classes.
@@ -11,16 +28,7 @@
  * @returns true if the name matches the pattern
  */
 export function matchGlobPattern(pattern: string, name: string): boolean {
-	// Convert glob pattern to regex
-	// Escape special regex chars except * and ?
-	const regexStr = pattern
-		.replace(/[.+^${}()|[\]\\]/g, '\\$&') // Escape special chars
-		.replace(/\*/g, '.*') // * matches any chars
-		.replace(/\?/g, '.'); // ? matches single char
-
-	// Make it case-insensitive and match full string
-	const regex = new RegExp(`^${regexStr}$`, 'i');
-	return regex.test(name);
+	return compileGlobRegex(pattern).test(name);
 }
 
 /**

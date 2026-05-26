@@ -61,6 +61,13 @@ export interface StructuredAgentResponse {
 	ready: boolean;
 	/** The agent's message to display to the user */
 	message: string;
+	/**
+	 * Short human-readable name for the playbook/project, derived from the
+	 * conversation (e.g. "HTML Chat Interface"). Used to name the dated
+	 * subfolder created under Auto Run Docs. Optional — when absent, the
+	 * caller falls back to the session name.
+	 */
+	projectName?: string;
 }
 
 /**
@@ -126,6 +133,11 @@ export const STRUCTURED_OUTPUT_SCHEMA = {
 			type: 'string',
 			description: 'Your response message to the user (questions, clarifications, or confirmation)',
 		},
+		projectName: {
+			type: 'string',
+			description:
+				'Short human-readable name for the playbook (3-6 words, e.g. "HTML Chat Interface"). Update as your understanding sharpens. Used to name the playbook folder.',
+		},
 	},
 	required: ['confidence', 'ready', 'message'],
 } as const;
@@ -136,7 +148,7 @@ export const STRUCTURED_OUTPUT_SCHEMA = {
 export const STRUCTURED_OUTPUT_SUFFIX = `
 
 IMPORTANT: Remember to respond ONLY with valid JSON in this exact format:
-{"confidence": <0-100>, "ready": <true/false>, "message": "<your response>"}`;
+{"confidence": <0-100>, "ready": <true/false>, "message": "<your response>", "projectName": "<short playbook name>"}`;
 
 /**
  * Default confidence level when parsing fails
@@ -317,10 +329,15 @@ function isValidStructuredResponse(obj: unknown): obj is StructuredAgentResponse
  * Normalize a response to ensure valid ranges and types
  */
 function normalizeResponse(response: StructuredAgentResponse): StructuredAgentResponse {
+	const projectName =
+		typeof response.projectName === 'string' && response.projectName.trim().length > 0
+			? response.projectName.trim()
+			: undefined;
 	return {
 		confidence: Math.max(0, Math.min(100, Math.round(response.confidence))),
 		ready: response.ready && response.confidence >= READY_CONFIDENCE_THRESHOLD,
 		message: response.message.trim(),
+		projectName,
 	};
 }
 

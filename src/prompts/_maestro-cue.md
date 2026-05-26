@@ -16,17 +16,17 @@ Each subscription has a unique `name`, an `event` type, an `enabled` flag, a `pr
 
 ### Event Types
 
-| Event                 | Fires when…                                     | Key config fields                                     |
-| --------------------- | ----------------------------------------------- | ----------------------------------------------------- |
-| `app.startup`         | Maestro launches                                | —                                                     |
-| `time.heartbeat`      | Every N minutes                                 | `interval_minutes`                                    |
-| `time.scheduled`      | At specific clock times (cron-like)             | `schedule_times`, `schedule_days`                     |
-| `file.changed`        | Files matching a glob are added/changed/removed | `watch` (glob)                                        |
-| `agent.completed`     | An upstream agent finishes a run                | `source_session` (name or names)                      |
-| `github.pull_request` | A PR matches a filter (polled)                  | `repo`, `gh_state`, `label`, `poll_minutes`, `filter` |
-| `github.issue`        | An issue matches a filter (polled)              | `repo`, `gh_state`, `label`, `poll_minutes`, `filter` |
-| `task.pending`        | Pending `- [ ]` tasks detected in watched files | `watch`                                               |
-| `cli.trigger`         | Manually fired via `maestro-cli cue trigger`    | —                                                     |
+| Event                 | Fires when…                                     | Key config fields                                                                                   |
+| --------------------- | ----------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `app.startup`         | Maestro launches                                | —                                                                                                   |
+| `time.heartbeat`      | Every N minutes                                 | `interval_minutes`                                                                                  |
+| `time.scheduled`      | At specific clock times (cron-like)             | `schedule_times`, `schedule_days`                                                                   |
+| `file.changed`        | Files matching a glob are added/changed/removed | `watch` (glob)                                                                                      |
+| `agent.completed`     | An upstream agent finishes a run                | `source_session` (name or names)                                                                    |
+| `github.pull_request` | A PR matches a filter (polled)                  | `repo`, `gh_state`, `label`, `poll_minutes`, `filter`, `retrigger_on_comments`, `max_notifications` |
+| `github.issue`        | An issue matches a filter (polled)              | `repo`, `gh_state`, `label`, `poll_minutes`, `filter`, `retrigger_on_comments`, `max_notifications` |
+| `task.pending`        | Pending `- [ ]` tasks detected in watched files | `watch`                                                                                             |
+| `cli.trigger`         | Manually fired via `maestro-cli cue trigger`    | —                                                                                                   |
 
 ### Pipelines vs. Chains (READ THIS FIRST)
 
@@ -226,7 +226,7 @@ subscriptions:
 `{{CUE_SOURCE_SESSION}}`, `{{CUE_SOURCE_OUTPUT}}`, `{{CUE_SOURCE_STATUS}}` (`completed` | `failed` | `timeout`), `{{CUE_SOURCE_EXIT_CODE}}`, `{{CUE_SOURCE_DURATION}}`, `{{CUE_SOURCE_TRIGGERED_BY}}`
 
 **`github.*`:**
-`{{CUE_GH_TYPE}}`, `{{CUE_GH_NUMBER}}`, `{{CUE_GH_TITLE}}`, `{{CUE_GH_AUTHOR}}`, `{{CUE_GH_URL}}`, `{{CUE_GH_BODY}}`, `{{CUE_GH_LABELS}}`, `{{CUE_GH_STATE}}`, `{{CUE_GH_REPO}}`, `{{CUE_GH_BRANCH}}`, `{{CUE_GH_BASE_BRANCH}}`, `{{CUE_GH_ASSIGNEES}}`, `{{CUE_GH_MERGED_AT}}`
+`{{CUE_GH_TYPE}}`, `{{CUE_GH_NUMBER}}`, `{{CUE_GH_TITLE}}`, `{{CUE_GH_AUTHOR}}`, `{{CUE_GH_URL}}`, `{{CUE_GH_BODY}}`, `{{CUE_GH_LABELS}}`, `{{CUE_GH_STATE}}`, `{{CUE_GH_REPO}}`, `{{CUE_GH_BRANCH}}`, `{{CUE_GH_BASE_BRANCH}}`, `{{CUE_GH_ASSIGNEES}}`, `{{CUE_GH_MERGED_AT}}`, `{{CUE_NEW_COMMENTS}}` (comments posted since the last fire — only populated when `retrigger_on_comments: true`), `{{CUE_GH_IS_RETRIGGER}}` (`"true"` / `"false"`), `{{CUE_GH_RETRIGGER_COUNT}}` (re-fire counter, `0` on initial discovery)
 
 **`cli.trigger`:**
 `{{CUE_CLI_PROMPT}}`, `{{CUE_SOURCE_AGENT_ID}}`
@@ -404,6 +404,30 @@ subscriptions:
 
     Skim the diff, suggest reviewers, and propose labels.
 ```
+
+**"Re-fire when a PR/issue receives new activity (comments, reviews, labels)" — opt-in re-trigger.**
+
+By default, a `github.pull_request` / `github.issue` subscription fires **once** per item, on initial discovery. Set `retrigger_on_comments: true` to also re-fire when the item's `updatedAt` advances — comments, edits, reviews, label changes all qualify. Each re-fire payload carries the comments posted since the previous fire as `{{CUE_NEW_COMMENTS}}` so the prompt can react to the new context. Use `max_notifications` to cap how many times a single PR/issue can re-fire (default `10`; set to `0` for unlimited). This is what enables agent-to-agent back-and-forth over GitHub without flooding when a stranger spams a public repo.
+
+```yaml
+- name: pr-discussion
+  event: github.pull_request
+  enabled: true
+  repo: owner/name
+  poll_minutes: 5
+  retrigger_on_comments: true # off by default; opt in for agent ↔ GitHub conversations
+  max_notifications: 10 # per-PR cap on re-fires (0 = unlimited)
+  agent_id: <agent-id>
+  prompt: |
+    PR #{{CUE_GH_NUMBER}}: "{{CUE_GH_TITLE}}" — {{CUE_GH_URL}}
+
+    {{#CUE_GH_IS_RETRIGGER}}New activity since the last fire:{{/CUE_GH_IS_RETRIGGER}}
+    {{CUE_NEW_COMMENTS}}
+
+    Decide whether a reply is warranted, and post one with `gh pr comment` if so.
+```
+
+Counter semantics: the **initial discovery fire is always allowed** and does NOT count toward the cap. With `max_notifications: 10` you get 1 initial + 10 re-fires = 11 total fires per PR/issue. Once the cap is hit, the poller stops emitting events for that item but freezes its tracked revision, so raising the cap later resumes from the right point rather than replaying stale activity.
 
 **"When pending tasks pile up in /docs/tasks, work on them" → `task.pending`**
 

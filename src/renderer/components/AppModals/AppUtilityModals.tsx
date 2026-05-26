@@ -88,6 +88,7 @@ export interface AppUtilityModalsProps {
 	onRenameTab: () => void;
 	onToggleReadOnlyMode: () => void;
 	onToggleTabShowThinking: () => void;
+	onToggleTabEnterToSend: () => void;
 	onOpenTabSwitcher: () => void;
 	// Bulk tab close operations
 	onCloseAllTabs?: () => void;
@@ -132,6 +133,7 @@ export interface AppUtilityModalsProps {
 	autoRunSelectedDocument: string | null;
 	autoRunCompletedTaskCount: number;
 	onAutoRunResetTasks: () => void;
+	onToggleAutoRunExpanded?: () => void;
 	onClearActiveTerminal?: () => void;
 
 	// Tab-level actions (for QuickActionsModal)
@@ -253,10 +255,18 @@ export interface AppUtilityModalsProps {
 
 	// ExecutionQueueBrowser
 	queueBrowserOpen: boolean;
+	onOpenQueueBrowser: () => void;
 	onCloseQueueBrowser: () => void;
 	onRemoveQueueItem: (sessionId: string, itemId: string) => void;
 	onSwitchQueueSession: (sessionId: string, tabId?: string) => void;
 	onReorderQueueItems: (sessionId: string, fromIndex: number, toIndex: number) => void;
+	// New tab creation (for QuickActionsModal)
+	onQuickActionsNewTab?: () => void;
+	onQuickActionsNewFileTab?: () => void;
+	onQuickActionsNewBrowserTab?: () => void;
+	onQuickActionsNewTerminalTab?: () => void;
+	// Next unread / draft tab navigation (shared with Alt+Cmd+Down)
+	onGoToNextUnread?: () => void;
 }
 
 /**
@@ -319,6 +329,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 	onRenameTab,
 	onToggleReadOnlyMode,
 	onToggleTabShowThinking,
+	onToggleTabEnterToSend,
 	onOpenTabSwitcher,
 	// Bulk tab close operations
 	onCloseAllTabs,
@@ -356,6 +367,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 	autoRunSelectedDocument,
 	autoRunCompletedTaskCount,
 	onAutoRunResetTasks,
+	onToggleAutoRunExpanded,
 	onClearActiveTerminal,
 	// Tab-level actions
 	onCloseCurrentTab,
@@ -447,10 +459,17 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 	onPromptToggleEnterToSend,
 	// ExecutionQueueBrowser
 	queueBrowserOpen,
+	onOpenQueueBrowser,
 	onCloseQueueBrowser,
 	onRemoveQueueItem,
 	onSwitchQueueSession,
 	onReorderQueueItems,
+	// New tab creation (for QuickActionsModal)
+	onQuickActionsNewTab,
+	onQuickActionsNewFileTab,
+	onQuickActionsNewBrowserTab,
+	onQuickActionsNewTerminalTab,
+	onGoToNextUnread,
 }: AppUtilityModalsProps) {
 	// Read per-modal data from the modal store for modals that support it.
 	// `presetDocuments` is set by the inline wizard's "Start Auto Run" button so
@@ -504,6 +523,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 					onRenameTab={onRenameTab}
 					onToggleReadOnlyMode={onToggleReadOnlyMode}
 					onToggleTabShowThinking={onToggleTabShowThinking}
+					onToggleTabEnterToSend={onToggleTabEnterToSend}
 					onOpenTabSwitcher={onOpenTabSwitcher}
 					onCloseAllTabs={onCloseAllTabs}
 					onCloseOtherTabs={onCloseOtherTabs}
@@ -540,6 +560,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 					autoRunSelectedDocument={autoRunSelectedDocument}
 					autoRunCompletedTaskCount={autoRunCompletedTaskCount}
 					onAutoRunResetTasks={onAutoRunResetTasks}
+					onToggleAutoRunExpanded={onToggleAutoRunExpanded}
 					onClearActiveTerminal={onClearActiveTerminal}
 					onCloseCurrentTab={onCloseCurrentTab}
 					onMoveTabToFirst={onMoveTabToFirst}
@@ -558,6 +579,12 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 					onOpenDirectorNotes={onOpenDirectorNotes}
 					onOpenMaestroCue={onOpenMaestroCue}
 					onConfigureCue={onConfigureCue}
+					onOpenQueueBrowser={onOpenQueueBrowser}
+					onNewTab={onQuickActionsNewTab}
+					onNewFileTab={onQuickActionsNewFileTab}
+					onNewBrowserTab={onQuickActionsNewBrowserTab}
+					onNewTerminalTab={onQuickActionsNewTerminalTab}
+					onGoToNextUnread={onGoToNextUnread}
 				/>
 			)}
 

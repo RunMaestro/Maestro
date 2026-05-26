@@ -351,4 +351,96 @@ describe('MarkdownPreviewFast', () => {
 			expect(ref.current?.scrollToHeading('whatever')).toBe(false);
 		});
 	});
+
+	describe('scrollToMatch precision (B2)', () => {
+		// rAF doesn't fire synchronously in jsdom; flush by polling task queue.
+		function flushRaf(): Promise<void> {
+			return new Promise((resolve) => requestAnimationFrame(() => resolve()));
+		}
+
+		it('scrolls Virtuoso to the matched block AND nudges the matched word into view', async () => {
+			const ref = { current: null } as React.MutableRefObject<MarkdownPreviewFastHandle | null>;
+			const containerRef = { current: null } as React.MutableRefObject<HTMLDivElement | null>;
+			// Two blocks, each with a distinct word so we can verify scrollIntoView
+			// targets the right block.
+			const twoBlocks = ['first block alpha', '', 'second block beta'].join('\n');
+			render(
+				<MarkdownPreviewFast
+					ref={ref}
+					content={twoBlocks}
+					theme={mockTheme}
+					markdownContainerRef={containerRef}
+				/>
+			);
+
+			// Stub scrollIntoView on every element so we can detect the precision
+			// scroll firing without depending on layout.
+			const scrollIntoViewSpy = vi.fn();
+			Element.prototype.scrollIntoView = scrollIntoViewSpy;
+
+			// Find the offsetWithinBlock for "beta" — the second block has text
+			// "second block beta", so "beta" starts at character 13.
+			ref.current?.scrollToMatch({
+				sourceOffset: 0, // not used by handle
+				length: 4,
+				blockIndex: 1,
+				offsetWithinBlock: 13,
+			});
+
+			expect(scrollToIndexSpy).toHaveBeenCalledWith(
+				expect.objectContaining({ index: 1, align: 'center' })
+			);
+
+			// Let the post-scroll rAF fire.
+			await flushRaf();
+			await flushRaf();
+
+			// scrollIntoView should have been called for the word's parent element.
+			expect(scrollIntoViewSpy).toHaveBeenCalled();
+			// The last call must use {block: 'nearest', behavior: 'auto'} per the
+			// scrollRangeIntoView contract.
+			const lastCall = scrollIntoViewSpy.mock.calls.at(-1);
+			expect(lastCall?.[0]).toEqual({ block: 'nearest', behavior: 'auto' });
+		});
+
+		it('no-ops when blockIndex is out of range', () => {
+			const ref = { current: null } as React.MutableRefObject<MarkdownPreviewFastHandle | null>;
+			const containerRef = { current: null } as React.MutableRefObject<HTMLDivElement | null>;
+			render(
+				<MarkdownPreviewFast
+					ref={ref}
+					content="only one block"
+					theme={mockTheme}
+					markdownContainerRef={containerRef}
+				/>
+			);
+
+			ref.current?.scrollToMatch({
+				sourceOffset: 0,
+				length: 4,
+				blockIndex: 99,
+				offsetWithinBlock: 0,
+			});
+			expect(scrollToIndexSpy).not.toHaveBeenCalled();
+		});
+
+		it('renders blocks with data-block-index so scrollToMatch can find them', () => {
+			const ref = { current: null } as React.MutableRefObject<MarkdownPreviewFastHandle | null>;
+			const containerRef = { current: null } as React.MutableRefObject<HTMLDivElement | null>;
+			const threeParagraphs = ['alpha', '', 'beta', '', 'gamma'].join('\n');
+			const { container } = render(
+				<MarkdownPreviewFast
+					ref={ref}
+					content={threeParagraphs}
+					theme={mockTheme}
+					markdownContainerRef={containerRef}
+				/>
+			);
+			const blocks = container.querySelectorAll('[data-block-index]');
+			expect(blocks.length).toBe(3);
+			expect(blocks[0].getAttribute('data-block-index')).toBe('0');
+			expect(blocks[1].getAttribute('data-block-index')).toBe('1');
+			expect(blocks[2].getAttribute('data-block-index')).toBe('2');
+		});
+	});
 });

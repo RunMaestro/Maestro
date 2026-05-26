@@ -46,6 +46,11 @@ vi.mock('../../../main/utils/ssh-spawn-wrapper', () => ({
 	wrapSpawnWithSsh: (...args: unknown[]) => mockWrapSpawnWithSsh(...args),
 }));
 
+const mockCaptureException = vi.fn();
+vi.mock('../../../main/utils/sentry', () => ({
+	captureException: (...args: unknown[]) => mockCaptureException(...args),
+}));
+
 vi.mock('../../../main/prompt-manager', () => ({
 	getPrompt: vi.fn((id: string) => {
 		const fs = require('fs');
@@ -860,6 +865,30 @@ describe('group-chat-router', () => {
 				call[0].sessionId?.includes(`group-chat-${chat.id}-participant-Client-`)
 			);
 			expect(participantSpawns).toHaveLength(1);
+		});
+
+		it('does not report auto-add races after the moderator has stopped', async () => {
+			const chat = await createTestChatWithModerator('Auto Add Stopped Moderator Test');
+			clearAllModeratorSessions();
+			mockCaptureException.mockClear();
+			setGetSessionsCallback(() => [
+				{
+					id: 'session-client',
+					name: 'Client',
+					toolType: 'claude-code',
+					cwd: '/tmp/project',
+				},
+			]);
+
+			await routeModeratorResponse(
+				chat.id,
+				'@Client: Please create the requested file',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			expect(mockCaptureException).not.toHaveBeenCalled();
+			expect((await loadGroupChat(chat.id))?.participants).toEqual([]);
 		});
 	});
 

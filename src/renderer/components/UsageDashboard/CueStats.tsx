@@ -435,7 +435,7 @@ const TimeSeriesChart = memo(function TimeSeriesChart({
 
 /* ----------------------------- Group tables ------------------------------ */
 
-type GroupSortKey = 'occurrences' | 'success' | 'avgDuration' | 'tokens' | 'cost';
+type GroupSortKey = 'occurrences' | 'success' | 'avgDuration' | 'totalDuration' | 'tokens' | 'cost';
 
 interface GroupTableProps {
 	title: string;
@@ -479,6 +479,9 @@ const GroupTable = memo(function GroupTable({
 					break;
 				case 'avgDuration':
 					diff = aAvg - bAvg;
+					break;
+				case 'totalDuration':
+					diff = a.totals.totalDurationMs - b.totals.totalDurationMs;
 					break;
 				case 'tokens':
 					diff = aTokens - bTokens;
@@ -544,6 +547,7 @@ const GroupTable = memo(function GroupTable({
 										['occurrences', 'Occurrences'],
 										['success', 'Success Rate'],
 										['avgDuration', 'Avg Duration'],
+										['totalDuration', 'Total Duration'],
 										['tokens', 'Total Tokens'],
 										['cost', 'Total Cost'],
 									] as Array<[GroupSortKey, string]>
@@ -589,6 +593,9 @@ const GroupTable = memo(function GroupTable({
 										</td>
 										<td className="px-3 py-2 font-mono" style={{ color: theme.colors.textDim }}>
 											{formatDurationHuman(avg)}
+										</td>
+										<td className="px-3 py-2 font-mono" style={{ color: theme.colors.textDim }}>
+											{formatDurationHuman(row.totals.totalDurationMs)}
 										</td>
 										{!hideTokenColumns && (
 											<>

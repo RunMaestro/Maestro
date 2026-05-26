@@ -62,7 +62,7 @@ Load and read full config from `{main_config}` and resolve:
 - `communication_language`, `document_output_language`, `user_skill_level`
 - `date` as system-generated current datetime
 - `project_context` = `**/project-context.md` (load if exists)
-- CLAUDE.md / memory files (load if exist)
+- CLAUDE.md / AGENTS.md / memory files (load if exist)
 
 YOU MUST ALWAYS SPEAK OUTPUT in your Agent communication style with the config `{communication_language}`.
 

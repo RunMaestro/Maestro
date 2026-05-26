@@ -41,6 +41,20 @@ vi.mock('../../../cli/services/agent-spawner', () => ({
 	writeDoc: vi.fn(),
 }));
 
+// Mock the CLI system-prompt builder. Real-impl would read the bundled
+// `maestro-system-prompt` template from disk + call git — neither is
+// available or interesting under unit tests. We can still observe whether
+// runPlaybook calls it and what it produces by tweaking the mock per test.
+vi.mock('../../../cli/services/system-prompt', () => ({
+	prepareMaestroSystemPromptCli: vi.fn(),
+}));
+
+// Mock CLI prompt-loader so batch-processor can read the default Auto Run
+// + synopsis prompts without hitting disk. Per-test overrides allowed.
+vi.mock('../../../cli/services/prompt-loader', () => ({
+	getCliPrompt: vi.fn().mockResolvedValue('Default Auto Run prompt'),
+}));
+
 // Mock storage
 vi.mock('../../../cli/services/storage', () => ({
 	addHistoryEntry: vi.fn(),
@@ -77,6 +91,7 @@ import {
 } from '../../../cli/services/agent-spawner';
 import { addHistoryEntry, readGroups } from '../../../cli/services/storage';
 import { registerCliActivity, unregisterCliActivity } from '../../../shared/cli-activity';
+import { prepareMaestroSystemPromptCli } from '../../../cli/services/system-prompt';
 
 describe('batch-processor', () => {
 	// Helper to create mock session
@@ -126,6 +141,10 @@ describe('batch-processor', () => {
 			agentSessionId: 'claude-session-123',
 		});
 		vi.mocked(uncheckAllTasks).mockImplementation((content) => content.replace(/\[x\]/gi, '[ ]'));
+		// Default: system prompt builder returns undefined (matches the
+		// non-fatal fallback when the template can't be loaded). Tests that
+		// care about positive-case wiring override this in-test.
+		vi.mocked(prepareMaestroSystemPromptCli).mockResolvedValue(undefined);
 	});
 
 	afterEach(() => {
@@ -328,6 +347,74 @@ describe('batch-processor', () => {
 			expect(taskStartEvents.length).toBe(1);
 			expect(taskCompleteEvents.length).toBe(1);
 			expect(taskCompleteEvents[0]?.success).toBe(true);
+		});
+
+		it('injects the Maestro system prompt into the task spawn (parity with desktop Auto Run)', async () => {
+			vi.mocked(prepareMaestroSystemPromptCli).mockResolvedValue('the maestro context');
+			let callCount = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				callCount++;
+				if (callCount <= 3) return { content: '- [ ] Task', taskCount: 1 };
+				return { content: '', taskCount: 0 };
+			});
+
+			const session = mockSession();
+			const playbook = mockPlaybook();
+
+			await collectEvents(runPlaybook(session, playbook, '/playbooks'));
+
+			expect(prepareMaestroSystemPromptCli).toHaveBeenCalledWith(session);
+			// Spawn call #0 is the task spawn — must carry appendSystemPrompt
+			const taskSpawnOpts = vi.mocked(spawnAgent).mock.calls[0][4];
+			expect(taskSpawnOpts?.appendSystemPrompt).toBe('the maestro context');
+		});
+
+		it('omits the Maestro system prompt from the synopsis spawn (resume reuses the existing transcript)', async () => {
+			vi.mocked(prepareMaestroSystemPromptCli).mockResolvedValue('the maestro context');
+			let callCount = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				callCount++;
+				if (callCount <= 3) return { content: '- [ ] Task', taskCount: 1 };
+				return { content: '', taskCount: 0 };
+			});
+			vi.mocked(spawnAgent).mockResolvedValue({
+				success: true,
+				response: '**Summary:** ok\n**Details:** ok',
+				agentSessionId: 'claude-session-123',
+			});
+
+			const session = mockSession();
+			const playbook = mockPlaybook();
+
+			await collectEvents(runPlaybook(session, playbook, '/playbooks'));
+
+			// Two spawns: index 0 = task spawn, index 1 = synopsis (resume).
+			// Synopsis spawn must NOT carry appendSystemPrompt — matches the
+			// desktop `spawnBackgroundSynopsis` path which omits it on resume.
+			expect(vi.mocked(spawnAgent).mock.calls.length).toBeGreaterThanOrEqual(2);
+			const synopsisSpawnOpts = vi.mocked(spawnAgent).mock.calls[1][4];
+			expect(synopsisSpawnOpts?.appendSystemPrompt).toBeUndefined();
+		});
+
+		it('builds the system prompt once per playbook run, not once per task', async () => {
+			vi.mocked(prepareMaestroSystemPromptCli).mockResolvedValue('the maestro context');
+			// Three tasks then completion: scan + processing call + after-task call
+			let callCount = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				callCount++;
+				if (callCount <= 6) return { content: '- [ ] A\n- [ ] B', taskCount: 2 };
+				return { content: '', taskCount: 0 };
+			});
+
+			const session = mockSession();
+			const playbook = mockPlaybook();
+
+			await collectEvents(runPlaybook(session, playbook, '/playbooks'));
+
+			// Called exactly once for the playbook, not per-task — important for
+			// avoiding repeated git execFile + prompt-read overhead inside the
+			// task loop.
+			expect(prepareMaestroSystemPromptCli).toHaveBeenCalledTimes(1);
 		});
 
 		it('should call spawnAgent with combined prompt and document', async () => {

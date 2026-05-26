@@ -186,6 +186,7 @@ Key design:
 - Supports `gh_state` filter: `"open"` (default), `"closed"`, `"merged"` (PRs only), `"all"`
 - 30-day retention on seen records; prunes every 24 hours
 - Has its own `execFileAsync` wrapper (local, not the shared utils version)
+- **Re-trigger on activity** (`retrigger_on_comments: true`): re-fires when an item's `updatedAt` advances past the stored revision. Default off — when on, fetches comments-since-last-fire via `gh pr|issue view --json comments` and attaches them to the event payload as `new_comments` (surfaced as `{{CUE_NEW_COMMENTS}}` template var). Capped per-item by `max_notifications` (default 10, `0` = unlimited). Counter tracks re-fires only — initial discovery is always allowed regardless of cap. Once the cap is hit, the poller stops emitting events but freezes `last_revision` so raising the cap later resumes from the right point rather than replaying stale activity.
 
 ### cue-heartbeat.ts (~52 lines)
 

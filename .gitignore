@@ -11,6 +11,7 @@ community-data/
 specs/
 .maestro/
 maestro-cue.yaml
+sm/
 
 # Tests
 coverage/

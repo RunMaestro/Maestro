@@ -80,6 +80,7 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 			cueSessionName: node.cueSessionName,
 			tabName: node.tabName,
 			childProcesses: node.childProcesses,
+			maestroEnvVars: node.maestroEnvVars,
 		});
 	}, []);
 

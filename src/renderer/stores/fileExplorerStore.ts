@@ -25,6 +25,15 @@ export interface FileExplorerStoreState {
 	fileTreeFilter: string;
 	fileTreeFilterOpen: boolean;
 
+	// Multi-selection (Cmd/Shift+click and Shift+Arrow keyboard range select).
+	// `selectedPaths` holds the *explicitly* selected relative paths; when empty,
+	// the row at `selectedFileIndex` is the implicit single selection. Lives here
+	// (not local panel state) so the window-level keyboard handler in
+	// useFileExplorerEffects and the mouse handlers in the panel share one anchor.
+	selectedPaths: Set<string>;
+	/** Anchor row for range selection. -1 = no active anchor (fall back to selectedFileIndex). */
+	selectionAnchorIndex: number;
+
 	// Filtered file tree (tree-structured, for FileExplorerPanel rendering)
 	filteredFileTree: FileNode[];
 
@@ -42,6 +51,10 @@ export interface FileExplorerStoreActions {
 	setSelectedFileIndex: (index: number | ((prev: number) => number)) => void;
 	setFileTreeFilter: (filter: string | ((prev: string) => string)) => void;
 	setFileTreeFilterOpen: (open: boolean | ((prev: boolean) => boolean)) => void;
+
+	// Multi-selection
+	setSelectedPaths: (paths: Set<string> | ((prev: Set<string>) => Set<string>)) => void;
+	setSelectionAnchorIndex: (index: number) => void;
 
 	// File tree data
 	setFilteredFileTree: (tree: FileNode[]) => void;
@@ -80,6 +93,8 @@ export const useFileExplorerStore = create<FileExplorerStore>()((set, get) => ({
 	selectedFileIndex: 0,
 	fileTreeFilter: '',
 	fileTreeFilterOpen: false,
+	selectedPaths: new Set(),
+	selectionAnchorIndex: -1,
 	filteredFileTree: [],
 	flatFileList: [],
 	isGraphViewOpen: false,
@@ -91,6 +106,9 @@ export const useFileExplorerStore = create<FileExplorerStore>()((set, get) => ({
 	setFileTreeFilter: (v) => set((s) => ({ fileTreeFilter: resolve(v, s.fileTreeFilter) })),
 	setFileTreeFilterOpen: (v) =>
 		set((s) => ({ fileTreeFilterOpen: resolve(v, s.fileTreeFilterOpen) })),
+
+	setSelectedPaths: (v) => set((s) => ({ selectedPaths: resolve(v, s.selectedPaths) })),
+	setSelectionAnchorIndex: (index) => set({ selectionAnchorIndex: index }),
 
 	setFilteredFileTree: (tree) => set({ filteredFileTree: tree }),
 	setFlatFileList: (list) => set({ flatFileList: list }),

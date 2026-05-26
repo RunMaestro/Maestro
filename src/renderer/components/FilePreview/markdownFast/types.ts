@@ -1,5 +1,6 @@
 import type { Theme } from '../../../constants/themes';
 import type { FileTreeIndices } from '../../../utils/remarkFileLinks';
+import type { SearchHit } from '../search/types';
 
 /**
  * One rendered top-level block from a markdown document. The Fast tier emits an
@@ -36,31 +37,25 @@ export interface MarkdownBlock {
  * to know the slug.
  */
 /**
- * One match returned by `findInContent`. Block-relative info lets the caller
- * scroll the virtualizer to the right block; source offset lets the caller
- * apply highlights inside the source view if it has one.
+ * Per-match shape returned by `findInContent`. Aliased to the shared
+ * `SearchHit` so the Cmd+F path treats every tier uniformly.
  */
-export interface MarkdownPreviewSearchMatch {
-	sourceOffset: number;
-	length: number;
-	blockIndex: number;
-}
+export type MarkdownPreviewSearchMatch = SearchHit;
 
 export interface MarkdownPreviewFastHandle {
 	scrollToHeading: (slug: string) => boolean;
 	/**
-	 * Search the source string for `query` and return all matches with their
-	 * block indices. The Cmd+F UI calls this to drive match counts. Empty
-	 * query returns []. Result is ordered by source offset ascending.
+	 * Search the source string for `query` and return all matches. The Cmd+F UI
+	 * calls this once per query change to drive match counts. Empty query
+	 * returns []. Result is ordered by source offset ascending.
 	 */
 	findInContent: (query: string) => MarkdownPreviewSearchMatch[];
 	/**
-	 * Scroll the virtualizer to the block containing the given match. Accepts
-	 * any object carrying `blockIndex` so adapters that only know the block
-	 * index (e.g. the search hook) can call it without manufacturing the
-	 * other fields. No-op when the index is out of range.
+	 * Scroll the virtualizer to the matched block AND the matched text within
+	 * it. Requires the full SearchHit so the within-block offset is available
+	 * for precise scrolling. No-op when the block index is out of range.
 	 */
-	scrollToMatch: (match: { blockIndex: number }) => void;
+	scrollToMatch: (hit: SearchHit) => void;
 }
 
 /**
@@ -108,6 +103,7 @@ export interface LinkDescriptor {
  */
 export type LinkAction =
 	| { kind: 'maestro-file'; path: string; openInNewTab: boolean }
+	| { kind: 'maestro-deep-link'; href: string }
 	| { kind: 'external'; href: string; openInNewTab: boolean }
 	| { kind: 'anchor'; hash: string }
 	| { kind: 'none' };

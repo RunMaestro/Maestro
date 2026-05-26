@@ -2,8 +2,10 @@ import React, { memo, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { Theme } from '../types';
 import { useNotificationStore, type Toast as ToastType } from '../stores/notificationStore';
+import { useSettingsStore } from '../stores/settingsStore';
 import { openUrl } from '../utils/openUrl';
 import { formatDurationParts as formatDuration } from '../../shared/formatters';
+import { TOAST_WIDTH_DIMENSIONS } from '../../shared/toastWidth';
 
 interface ToastContainerProps {
 	theme: Theme;
@@ -15,11 +17,13 @@ const ToastItem = memo(function ToastItem({
 	theme,
 	onRemove,
 	onSessionClick,
+	widthDimensions,
 }: {
 	toast: ToastType;
 	theme: Theme;
 	onRemove: (toastId: string) => void;
 	onSessionClick?: (sessionId: string, tabId?: string) => void;
+	widthDimensions: { minWidth: number; maxWidth: number };
 }) {
 	const [isExiting, setIsExiting] = useState(false);
 	const [isEntering, setIsEntering] = useState(true);
@@ -184,8 +188,8 @@ const ToastItem = memo(function ToastItem({
 				style={{
 					backgroundColor: theme.colors.bgSidebar,
 					border: `1px solid ${theme.colors.border}`,
-					minWidth: '320px',
-					maxWidth: '400px',
+					minWidth: `${widthDimensions.minWidth}px`,
+					maxWidth: `${widthDimensions.maxWidth}px`,
 				}}
 				onClick={isClickable ? handleToastClick : undefined}
 			>
@@ -349,6 +353,8 @@ export const ToastContainer = memo(function ToastContainer({
 }: ToastContainerProps) {
 	const toasts = useNotificationStore((s) => s.toasts);
 	const removeToast = useNotificationStore((s) => s.removeToast);
+	const toastWidth = useSettingsStore((s) => s.toastWidth);
+	const widthDimensions = TOAST_WIDTH_DIMENSIONS[toastWidth];
 
 	if (toasts.length === 0) return null;
 
@@ -365,6 +371,7 @@ export const ToastContainer = memo(function ToastContainer({
 						theme={theme}
 						onRemove={removeToast}
 						onSessionClick={onSessionClick}
+						widthDimensions={widthDimensions}
 					/>
 				))}
 			</div>

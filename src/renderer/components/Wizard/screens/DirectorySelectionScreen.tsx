@@ -20,6 +20,7 @@ import { ScreenReaderAnnouncement } from '../ScreenReaderAnnouncement';
 import { ExistingDocsModal } from '../ExistingDocsModal';
 import { PLAYBOOKS_DIR } from '../../../../shared/maestro-paths';
 import { logger } from '../../../utils/logger';
+import { gitService } from '../../../services/git';
 
 interface DirectorySelectionScreenProps {
 	theme: Theme;
@@ -48,6 +49,8 @@ export function DirectorySelectionScreen({ theme }: DirectorySelectionScreenProp
 	const [agentConfig, setAgentConfig] = useState<AgentConfig | null>(null);
 	const [showExistingDocsModal, setShowExistingDocsModal] = useState(false);
 	const [sshRemoteHost, setSshRemoteHost] = useState<string | null>(null);
+	const [isInitializingRepo, setIsInitializingRepo] = useState(false);
+	const [initRepoError, setInitRepoError] = useState<string | null>(null);
 
 	// Screen reader announcement state
 	const [announcement, setAnnouncement] = useState('');
@@ -311,11 +314,18 @@ export function DirectorySelectionScreen({ theme }: DirectorySelectionScreenProp
 
 			// Debounce validation to avoid excessive API calls while typing (especially over SSH)
 			if (newPath.trim()) {
+				// Mark as validating immediately so the (stale) git status panel is
+				// hidden during the 800ms debounce — otherwise the "Initialize as
+				// Git Repository" button can render against the previous path and
+				// run `git init` on whatever is currently in the input.
+				setIsValidating(true);
+				setInitRepoError(null);
 				validationTimeoutRef.current = setTimeout(() => {
 					validateDirectory(newPath);
 					validationTimeoutRef.current = null;
 				}, 800); // 800ms debounce for SSH remote checks
 			} else {
+				setIsValidating(false);
 				setDirectoryError(null);
 				setIsGitRepo(false);
 				setHasExistingAutoRunDocs(false, 0);
@@ -354,6 +364,30 @@ export function DirectorySelectionScreen({ theme }: DirectorySelectionScreenProp
 
 		setIsBrowsing(false);
 	}, [setDirectoryPath, validateDirectory, setDirectoryError]);
+
+	/**
+	 * Initialize the selected directory as a git repository.
+	 * Runs `git init` and re-validates so the panel flips to "Git Repository Detected".
+	 */
+	const handleInitRepo = useCallback(async () => {
+		if (!state.directoryPath.trim() || isInitializingRepo || isValidating) return;
+
+		setIsInitializingRepo(true);
+		setInitRepoError(null);
+		try {
+			const sshRemoteId = getSshRemoteId();
+			const result = await gitService.init(state.directoryPath, sshRemoteId);
+			if (!result.success) {
+				setInitRepoError(result.error || 'Failed to initialize git repository');
+				return;
+			}
+			setIsGitRepo(true);
+			setAnnouncement('Git repository initialized.');
+			setAnnouncementKey((prev) => prev + 1);
+		} finally {
+			setIsInitializingRepo(false);
+		}
+	}, [state.directoryPath, isInitializingRepo, isValidating, getSshRemoteId, setIsGitRepo]);
 
 	/**
 	 * Attempt to proceed to next step
@@ -742,13 +776,37 @@ export function DirectorySelectionScreen({ theme }: DirectorySelectionScreenProp
 											/>
 										</svg>
 									</div>
-									<div>
-										<p className="font-medium" style={{ color: theme.colors.textMain }}>
-											Regular Directory
-										</p>
-										<p className="text-xs" style={{ color: theme.colors.textDim }}>
-											Not a Git repository. You can initialize one later if needed.
-										</p>
+									<div className="flex-1 flex flex-col gap-2">
+										<div>
+											<p className="font-medium" style={{ color: theme.colors.textMain }}>
+												Regular Directory
+											</p>
+											<p className="text-xs" style={{ color: theme.colors.textDim }}>
+												Not a Git repository.
+											</p>
+										</div>
+										<button
+											type="button"
+											onClick={handleInitRepo}
+											disabled={isInitializingRepo || isValidating}
+											className="self-start text-xs px-3 py-1.5 rounded border transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2"
+											style={{
+												backgroundColor: 'transparent',
+												borderColor: theme.colors.accent,
+												color: theme.colors.accent,
+												opacity: isInitializingRepo || isValidating ? 0.6 : 1,
+												cursor: isInitializingRepo || isValidating ? 'wait' : 'pointer',
+												['--tw-ring-color' as any]: theme.colors.accent,
+												['--tw-ring-offset-color' as any]: theme.colors.bgMain,
+											}}
+										>
+											{isInitializingRepo ? 'Initializing…' : 'Initialize as Git Repository'}
+										</button>
+										{initRepoError && (
+											<p className="text-xs" style={{ color: theme.colors.error }}>
+												{initRepoError}
+											</p>
+										)}
 									</div>
 								</>
 							)}

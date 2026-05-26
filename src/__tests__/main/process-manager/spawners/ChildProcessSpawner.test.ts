@@ -70,6 +70,7 @@ vi.mock('../../../../main/agents', () => ({
 
 vi.mock('../../../../main/process-manager/utils/envBuilder', () => ({
 	buildChildProcessEnv: vi.fn(() => ({ PATH: '/usr/bin' })),
+	collectMaestroEnvVars: vi.fn(() => ({})),
 }));
 
 vi.mock('../../../../main/process-manager/utils/imageUtils', () => ({
@@ -206,7 +207,7 @@ describe('ChildProcessSpawner', () => {
 				})
 			);
 
-			expect(buildChildProcessEnv).toHaveBeenCalledWith(undefined, true, undefined);
+			expect(buildChildProcessEnv).toHaveBeenCalledWith(undefined, true, undefined, undefined);
 		});
 
 		it('should enable stream-json mode when sendPromptViaStdin is true', () => {

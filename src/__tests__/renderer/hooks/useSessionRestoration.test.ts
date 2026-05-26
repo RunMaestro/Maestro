@@ -185,6 +185,81 @@ describe('restoreSession — Migration logic', () => {
 		expect(restored!.fileTreeAutoRefreshInterval).toBe(180);
 	});
 
+	it('backfills createdAt from the earliest tab/log/workLog timestamp when missing', async () => {
+		const oldestTab = 1_700_000_000_000;
+		const oldestLog = 1_690_000_000_000; // older than the tab
+		const session = createMockSession({
+			createdAt: undefined as any,
+			aiTabs: [
+				{
+					id: 'tab-1',
+					agentSessionId: null,
+					name: null,
+					state: 'idle',
+					logs: [
+						{ id: 'l1', timestamp: oldestLog, source: 'system' as const, text: 'first' },
+						{ id: 'l2', timestamp: oldestLog + 1000, source: 'system' as const, text: 'later' },
+					],
+					starred: false,
+					inputValue: '',
+					stagedImages: [],
+					createdAt: oldestTab,
+				},
+			] as any,
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		expect(restored!.createdAt).toBe(oldestLog);
+	});
+
+	it('backfills createdAt to Date.now() when no historical timestamps exist', async () => {
+		const before = Date.now();
+		const session = createMockSession({
+			createdAt: undefined as any,
+			aiTabs: [
+				{
+					id: 'tab-1',
+					agentSessionId: null,
+					name: null,
+					state: 'idle',
+					logs: [],
+					starred: false,
+					inputValue: '',
+					stagedImages: [],
+					createdAt: 0,
+				},
+			] as any,
+			workLog: [],
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		expect(restored!.createdAt).toBeGreaterThanOrEqual(before);
+		expect(restored!.createdAt).toBeLessThanOrEqual(Date.now());
+	});
+
+	it('leaves an existing createdAt untouched', async () => {
+		const original = 1_650_000_000_000;
+		const session = createMockSession({ createdAt: original });
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		expect(restored!.createdAt).toBe(original);
+	});
+
 	it('rehydrates browser tabs with a safe URL, title, and partition', async () => {
 		const session = createMockSession({
 			browserTabs: [

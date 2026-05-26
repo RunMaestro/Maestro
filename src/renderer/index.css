@@ -370,6 +370,23 @@ textarea::placeholder {
 	}
 }
 
+/* Claude Plan Usage - in-flight refresh sweep (indeterminate progress).
+   Wider than the button so the gradient enters from offscreen on the left,
+   passes through, and exits offscreen on the right — reads as a recurring
+   light sweep rather than a strobing flash. */
+@keyframes claude-plan-refresh-sweep {
+	0% {
+		transform: translateX(-100%);
+	}
+	100% {
+		transform: translateX(100%);
+	}
+}
+
+.claude-plan-refresh-sweep {
+	animation: claude-plan-refresh-sweep 1.2s ease-in-out infinite;
+}
+
 /* Usage Dashboard - Skeleton loading animation */
 @keyframes skeleton-shimmer {
 	0% {
@@ -716,6 +733,30 @@ textarea::placeholder {
 /* New: bg-black/85 (solid, no blur) */
 .modal-overlay {
 	background-color: rgba(0, 0, 0, 0.85);
+}
+
+/* Modal width utilities — scale with the Cmd+= font-size setting via --font-scale
+ * (set in useSettings.ts; 14px is the design baseline → scale = 1). Use these
+ * instead of w-[Npx] on modal containers so contents that grow with rem
+ * (pills, headers, buttons) don't wrap into a fixed-width shell. The 95vw
+ * clamp keeps modals usable on narrow windows and at max font size. */
+.modal-w-xs {
+	width: min(calc(400px * var(--font-scale, 1)), 95vw);
+}
+.modal-w-sm {
+	width: min(calc(480px * var(--font-scale, 1)), 95vw);
+}
+.modal-w-md {
+	width: min(calc(600px * var(--font-scale, 1)), 95vw);
+}
+.modal-w-lg {
+	width: min(calc(720px * var(--font-scale, 1)), 95vw);
+}
+.modal-w-xl {
+	width: min(calc(960px * var(--font-scale, 1)), 95vw);
+}
+.modal-w-2xl {
+	width: min(calc(1200px * var(--font-scale, 1)), 95vw);
 }
 
 /* Document Graph - Search highlight animation for matching nodes */
@@ -1088,4 +1129,30 @@ svg.wand-sparkle-active path:nth-child(8) {
 	.animate-status-glow {
 		animation: none !important;
 	}
+}
+
+/* Shiki-highlighted code fences. The highlighter emits its own <pre class="shiki">
+ * with a theme-driven background and inline token styles. We override padding /
+ * radius / overflow to match the surrounding chat bubble, and force `color:
+ * unset` on the structural elements so prose styles (e.g. `.terminal-output
+ * code { color: ... }` in markdownConfig) don't cascade past Shiki's per-token
+ * inline colors via the `<code>` element. */
+.shiki-host pre.shiki {
+	margin: 0;
+	padding: 1em;
+	border-radius: 0;
+	overflow-x: auto;
+	white-space: pre;
+	font-family: inherit;
+}
+
+.shiki-host pre.shiki code {
+	font-family: inherit;
+	background: transparent !important;
+	color: unset !important;
+	padding: 0 !important;
+}
+
+.shiki-host pre.shiki .line {
+	color: unset;
 }

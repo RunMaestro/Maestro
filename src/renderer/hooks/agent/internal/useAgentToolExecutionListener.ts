@@ -59,6 +59,11 @@ export function useAgentToolExecutionListener(): void {
 							| NonNullable<LogEntry['metadata']>['toolState']
 							| undefined;
 
+						// Tag tool entries with `renderStyle: 'text-stream'` when the
+						// session's resolved Claude mode is interactive so the TUI/API
+						// footer pill matches the assistant text in the same turn.
+						const isInteractive = s.claudeInteractive?.mode === 'interactive';
+
 						const isFinalizing =
 							newState?.status === 'completed' ||
 							newState?.status === 'failed' ||
@@ -92,6 +97,7 @@ export function useAgentToolExecutionListener(): void {
 							const mergedLog: LogEntry = {
 								...existing,
 								metadata: { ...existing.metadata, toolState: mergedState },
+								...(isInteractive ? { renderStyle: 'text-stream' as const } : {}),
 							};
 							updatedLogs = [
 								...targetTab.logs.slice(0, existingIdx),
@@ -105,6 +111,7 @@ export function useAgentToolExecutionListener(): void {
 								source: 'tool',
 								text: toolEvent.toolName,
 								metadata: { toolState: newState },
+								...(isInteractive ? { renderStyle: 'text-stream' as const } : {}),
 							};
 							updatedLogs = [...targetTab.logs, toolLog];
 						}

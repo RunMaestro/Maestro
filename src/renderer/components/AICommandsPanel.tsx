@@ -171,8 +171,8 @@ export function AICommandsPanel({
 					Custom AI Commands
 				</label>
 				<p className="text-xs opacity-50" style={{ color: theme.colors.textDim }}>
-					Slash commands available in AI terminal mode. Built-in commands can be edited but not
-					deleted.
+					Slash commands are available in 1-1 AI chats. Built-in commands can be edited but not
+					deleted. Template variables are available.
 				</p>
 			</div>
 

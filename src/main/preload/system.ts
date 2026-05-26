@@ -207,6 +207,16 @@ export function createAppApi() {
 			ipcRenderer.on('app:deepLink', handler);
 			return () => ipcRenderer.removeListener('app:deepLink', handler);
 		},
+		/**
+		 * Listen for global hotkey registration failures (e.g. another app already
+		 * owns the combo). Renderer should surface this to the user so they pick a
+		 * different key.
+		 */
+		onGlobalHotkeyRegistrationFailed: (callback: (keys: string[]) => void): (() => void) => {
+			const handler = (_: unknown, keys: string[]) => callback(keys);
+			ipcRenderer.on('globalHotkey:registrationFailed', handler);
+			return () => ipcRenderer.removeListener('globalHotkey:registrationFailed', handler);
+		},
 	};
 }
 

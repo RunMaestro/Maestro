@@ -37,6 +37,7 @@ describe('useSettings', () => {
 		useSettingsStore.setState({
 			settingsLoaded: false,
 			conductorProfile: '',
+			globalShowHotkey: [],
 			llmProvider: 'openrouter',
 			modelSlug: 'anthropic/claude-3.5-sonnet',
 			apiKey: '',

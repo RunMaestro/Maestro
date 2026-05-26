@@ -413,6 +413,7 @@ function AppStandaloneModalsInner({
 						(activeFileTab ? activeFileTab.name + activeFileTab.extension : 'conversation.md')
 					}
 					content={tabGistContent?.content ?? activeFileTab?.content ?? ''}
+					sourceLogs={tabGistContent?.sourceLogs}
 					onClose={() => {
 						setGistPublishModalOpen(false);
 						useTabStore.getState().setTabGistContent(null);

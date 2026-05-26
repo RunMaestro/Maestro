@@ -17,7 +17,7 @@ import { substituteTemplateVariables, type TemplateContext } from '../../shared/
 import { buildCueTemplateContext } from './cue-template-context-builder';
 import { buildSpawnSpec } from './cue-spawn-builder';
 import { sliceHeadByChars } from './cue-text-utils';
-import { buildCueRunSummary } from '../../shared/cue/cue-summary';
+import { buildCueRunSummary, extractCueOutputExcerpt } from '../../shared/cue/cue-summary';
 import type { SshRemoteSettingsStore } from '../utils/ssh-remote-resolver';
 import {
 	runProcess,
@@ -107,6 +107,32 @@ function extractCleanStdout(rawStdout: string, toolType: string): string {
 		return [...assistantTextByMessage.values(), ...assistantTextWithoutId].join('\n');
 	}
 	return rawStdout;
+}
+
+/**
+ * Parse the provider session id (e.g. Claude's `session_id`) out of agent
+ * stdout. Each Cue run spawns a fresh agent process with no `--resume`, so the
+ * run produces exactly one provider session; we return the last id the parser
+ * surfaces (the `result` event is authoritative and emitted last). Returns null
+ * for plain-text agents, command runs with no parser, or output that never
+ * carried a session id. This is what lets the Cue stats dashboard attribute
+ * token usage — the on-disk session files are keyed by this id, not by the
+ * Maestro agent id stored on the event row.
+ */
+function extractProviderSessionId(rawStdout: string, toolType: string): string | null {
+	if (!rawStdout.trim()) return null;
+	const parser = getOutputParser(toolType as ToolType);
+	if (!parser) return null;
+
+	let sessionId: string | null = null;
+	for (const line of rawStdout.split('\n')) {
+		if (!line.trim()) continue;
+		const event = parser.parseJsonLine(line);
+		if (!event) continue;
+		const parsed = parser.extractSessionId(event);
+		if (parsed) sessionId = parsed;
+	}
+	return sessionId;
 }
 
 /**
@@ -210,6 +236,7 @@ export async function executeCuePrompt(config: CueExecutionConfig): Promise<CueR
 		durationMs: Date.now() - startTime,
 		startedAt,
 		endedAt: new Date().toISOString(),
+		providerSessionId: extractProviderSessionId(processResult.stdout, config.toolType),
 	};
 }
 
@@ -267,11 +294,13 @@ export function recordCueHistoryEntry(result: CueRunResult, session: SessionInfo
 			? sliceHeadByChars(result.stdout, MAX_HISTORY_RESPONSE_LENGTH)
 			: result.stdout;
 
+	const excerpt = extractCueOutputExcerpt(result.stdout);
+
 	return {
 		id: crypto.randomUUID(),
 		type: 'CUE',
 		timestamp: Date.now(),
-		summary: buildCueRunSummary(result),
+		summary: excerpt ?? buildCueRunSummary(result),
 		fullResponse: fullResponse || undefined,
 		projectPath: session.projectRoot || session.cwd,
 		sessionId: session.id,

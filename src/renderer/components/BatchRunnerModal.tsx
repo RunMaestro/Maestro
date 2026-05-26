@@ -13,9 +13,16 @@ import {
 	Download,
 	Upload,
 	LayoutGrid,
+	Brain,
 } from 'lucide-react';
 import { Spinner } from './ui/Spinner';
-import type { Theme, BatchDocumentEntry, BatchRunConfig, WorktreeRunTarget } from '../types';
+import type {
+	Theme,
+	BatchDocumentEntry,
+	BatchRunConfig,
+	TaskSelectionMode,
+	WorktreeRunTarget,
+} from '../types';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { TEMPLATE_VARIABLES } from '../utils/templateVariables';
@@ -23,6 +30,7 @@ import { PlaybookDeleteConfirmModal } from './PlaybookDeleteConfirmModal';
 import { PlaybookNameModal } from './PlaybookNameModal';
 import { AgentPromptComposerModal } from './AgentPromptComposerModal';
 import { DocumentsPanel } from './DocumentsPanel';
+import { ToggleButtonGroup } from './ToggleButtonGroup';
 import { WorktreeRunSection } from './WorktreeRunSection';
 import { useSessionStore, selectSessionById } from '../stores/sessionStore';
 import { useBatchStore } from '../stores/batchStore';
@@ -36,6 +44,8 @@ import {
 import { generateId } from '../utils/ids';
 import { formatMetaKey } from '../utils/shortcutFormatter';
 import { logger } from '../utils/logger';
+import { resolveEffectiveContextWindow } from '../utils/contextWindowResolver';
+import { PER_DOCUMENT_CONTEXT_THRESHOLD } from '../../shared/agentConstants';
 
 // Re-export for external consumers
 export { DEFAULT_BATCH_PROMPT, validateAgentPromptHasTaskReference } from '../hooks';
@@ -208,6 +218,12 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 	const initialLoopEnabledRef = useRef(false);
 	const initialMaxLoopsRef = useRef<number | null>(null);
 
+	// Fresh-context-per mode. Default 'task' preserves legacy behavior (one
+	// agent invocation per unchecked task). 'document' makes the agent walk
+	// every task in a single invocation, sharing context across them.
+	const [taskSelectionMode, setTaskSelectionMode] = useState<TaskSelectionMode>('task');
+	const initialTaskSelectionModeRef = useRef<TaskSelectionMode>('task');
+
 	// Prompt state
 	const [prompt, setPrompt] = useState(initialPrompt || DEFAULT_BATCH_PROMPT);
 	const [variablesExpanded, setVariablesExpanded] = useState(false);
@@ -235,8 +251,11 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 		// Check if prompt has changed
 		const promptChanged = prompt !== initialPromptRef.current;
 
-		return documentsChanged || loopChanged || promptChanged;
-	}, [documents, loopEnabled, maxLoops, prompt]);
+		// Check if task-selection mode has changed
+		const taskSelectionModeChanged = taskSelectionMode !== initialTaskSelectionModeRef.current;
+
+		return documentsChanged || loopChanged || promptChanged || taskSelectionModeChanged;
+	}, [documents, loopEnabled, maxLoops, prompt, taskSelectionMode]);
 
 	// Handler for closing with unsaved changes check
 	const handleCloseWithConfirmation = useCallback(() => {
@@ -259,11 +278,13 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 			loopEnabled: boolean;
 			maxLoops: number | null;
 			prompt: string;
+			taskSelectionMode: TaskSelectionMode;
 		}) => {
 			setDocuments(data.documents);
 			setLoopEnabled(data.loopEnabled);
 			setMaxLoops(data.maxLoops);
 			setPrompt(data.prompt);
+			setTaskSelectionMode(data.taskSelectionMode);
 		},
 		[]
 	);
@@ -300,9 +321,52 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 			loopEnabled,
 			maxLoops,
 			prompt,
+			taskSelectionMode,
 		},
 		onApplyPlaybook: handleApplyPlaybook,
 	});
+
+	// Auto-pick the fresh-context mode from the active agent's context window the
+	// first time the modal opens on a blank config (no loaded playbook). Windows
+	// at/above the per-document threshold (Claude 1M, etc.) default to walking the
+	// whole document in one shared context; smaller windows default to per-task.
+	// A loaded playbook's saved mode and any manual toggle take precedence — this
+	// only seeds the initial default, and updating the ref keeps it non-dirty.
+	const autoModeAppliedRef = useRef(false);
+	const loadedPlaybookRef = useRef(loadedPlaybook);
+	loadedPlaybookRef.current = loadedPlaybook;
+	useEffect(() => {
+		if (autoModeAppliedRef.current) return;
+		// A playbook supplies its own mode — don't second-guess it.
+		if (loadedPlaybook) {
+			autoModeAppliedRef.current = true;
+			return;
+		}
+		if (!activeSession) return;
+
+		let active = true;
+		(async () => {
+			const configured = await resolveEffectiveContextWindow(activeSession);
+			// Also honor a window the agent reported at runtime (e.g. Claude's 1M
+			// beta) even when the configured value was left at the default.
+			const reported = activeSession.aiTabs.reduce(
+				(max, tab) => Math.max(max, tab.usageStats?.contextWindow ?? 0),
+				0
+			);
+			const contextWindow = Math.max(configured, reported);
+			// Re-check via refs: a playbook may have loaded (or the auto-pick may
+			// have already run) while the agent config IPC was in flight.
+			if (!active || autoModeAppliedRef.current || loadedPlaybookRef.current) return;
+			const mode: TaskSelectionMode =
+				contextWindow >= PER_DOCUMENT_CONTEXT_THRESHOLD ? 'document' : 'task';
+			autoModeAppliedRef.current = true;
+			setTaskSelectionMode(mode);
+			initialTaskSelectionModeRef.current = mode;
+		})();
+		return () => {
+			active = false;
+		};
+	}, [activeSession, loadedPlaybook]);
 
 	// Use ref for getDocumentTaskCount to avoid dependency issues
 	const getDocumentTaskCountRef = useRef(getDocumentTaskCount);
@@ -373,6 +437,14 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 	const hasValidPrompt = validateAgentPromptHasTaskReference(prompt);
 	const isPromptEmpty = !prompt || !prompt.trim();
 
+	// Block launch (but not configuration) while the agent for this session is mid-thought.
+	const isAgentBusy = activeSession?.state === 'busy' || activeSession?.state === 'connecting';
+
+	// Dispatching to a separate worktree spawns/uses a different agent, so the current
+	// session being busy is irrelevant — let the user launch regardless. (Busy open-worktree
+	// targets are already disabled in the WorktreeRunSection dropdown.)
+	const blocksLaunchWhileBusy = isAgentBusy && worktreeTarget === null;
+
 	useModalLayer(MODAL_PRIORITIES.BATCH_RUNNER, undefined, () => {
 		if (showDeleteConfirmModal) {
 			handleCancelDeletePlaybook();
@@ -414,6 +486,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 			prompt,
 			loopEnabled,
 			maxLoops: loopEnabled ? maxLoops : null,
+			taskSelectionMode,
 			...(worktreeTarget && { worktreeTarget }),
 		};
 
@@ -454,7 +527,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 			tabIndex={-1}
 		>
 			<div
-				className="w-[700px] max-h-[85vh] border rounded-lg shadow-2xl overflow-hidden flex flex-col"
+				className="modal-w-lg max-h-[92vh] border rounded-lg shadow-2xl overflow-hidden flex flex-col"
 				style={{ backgroundColor: theme.colors.bgSidebar, borderColor: theme.colors.border }}
 			>
 				{/* Header */}
@@ -466,6 +539,22 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 						Auto Run Configuration
 					</h2>
 					<div className="flex items-center gap-4">
+						{/* Agent thinking pill — shown only while the session agent is busy.
+						    Lives in the header (rather than over the Go button) so it stays
+						    visible without forcing the modal footer to grow. */}
+						{isAgentBusy && (
+							<div
+								className="flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-semibold whitespace-nowrap"
+								style={{
+									backgroundColor: theme.colors.warning,
+									color: theme.colors.bgMain,
+									border: `1px solid ${theme.colors.warning}`,
+								}}
+							>
+								<Brain className="w-2.5 h-2.5 animate-pulse" />
+								<span>Agent thinking</span>
+							</div>
+						)}
 						{/* Total Task Count Badge */}
 						<div
 							className="flex items-center gap-2 px-3 py-1.5 rounded-lg"
@@ -569,27 +658,25 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 													</div>
 												))}
 											</div>
-											{/* Import playbook button */}
-											<div
-												className="border-t px-3 py-2"
-												style={{ borderColor: theme.colors.border }}
-											>
-												<button
-													onClick={(e) => {
-														e.stopPropagation();
-														handleImportPlaybook();
-													}}
-													className="flex items-center gap-2 w-full px-2 py-1.5 rounded hover:bg-white/5 transition-colors text-sm"
-													style={{ color: theme.colors.accent }}
-												>
-													<Upload className="w-3.5 h-3.5" />
-													Import Playbook
-												</button>
-											</div>
 										</div>
 									)}
 								</div>
 							)}
+
+							{/* Import Playbook — always visible so users with zero existing
+							    playbooks can still import a .maestro-playbook.zip. Previously
+							    lived inside the Load Playbook dropdown, which only renders when
+							    at least one playbook exists — making the entry point unreachable
+							    on fresh worktrees / first-time users. */}
+							<button
+								onClick={handleImportPlaybook}
+								className="flex items-center gap-2 px-3 py-1.5 rounded-lg border hover:bg-white/5 transition-colors"
+								style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+								title="Import a playbook from a .maestro-playbook.zip file"
+							>
+								<Upload className="w-4 h-4" style={{ color: theme.colors.accent }} />
+								<span className="text-sm">Import Playbook</span>
+							</button>
 
 							{/* Playbook Exchange button */}
 							{onOpenMarketplace && (
@@ -724,6 +811,30 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 									Last modified {formatLastModified(lastModifiedAt)}.
 								</span>
 							)}
+						</div>
+
+						{/* Fresh-context-per selector — drives {{TASK_SELECTION_BLOCK}} */}
+						<div className="mb-2">
+							<div
+								className="text-[10px] font-bold uppercase mb-1.5"
+								style={{ color: theme.colors.textDim }}
+							>
+								Fresh context per:
+							</div>
+							<ToggleButtonGroup<TaskSelectionMode>
+								options={[
+									{ value: 'task', label: 'Task' },
+									{ value: 'document', label: 'Document' },
+								]}
+								value={taskSelectionMode}
+								onChange={setTaskSelectionMode}
+								theme={theme}
+							/>
+							<p className="text-[10px] mt-1.5" style={{ color: theme.colors.textDim }}>
+								{taskSelectionMode === 'task'
+									? 'A new agent is spawned for each unchecked task — clean context every time.'
+									: 'A single agent walks every unchecked task in the document, sharing context across them.'}
+							</p>
 						</div>
 
 						{/* Template Variables Documentation */}
@@ -911,7 +1022,8 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 								documents.length === 0 ||
 								documents.length === missingDocCount ||
 								isPromptEmpty ||
-								!hasValidPrompt
+								!hasValidPrompt ||
+								blocksLaunchWhileBusy
 							}
 							className="flex items-center gap-2 px-4 py-2 rounded text-white font-bold disabled:opacity-40 disabled:cursor-not-allowed"
 							style={{
@@ -921,24 +1033,27 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 									documents.length === 0 ||
 									documents.length === missingDocCount ||
 									isPromptEmpty ||
-									!hasValidPrompt
+									!hasValidPrompt ||
+									blocksLaunchWhileBusy
 										? theme.colors.textDim
 										: theme.colors.accent,
 							}}
 							title={
 								isPreparingWorktree
 									? 'Preparing worktree...'
-									: isPromptEmpty
-										? 'Agent prompt cannot be empty'
-										: !hasValidPrompt
-											? 'Agent prompt must reference Markdown tasks (e.g., checkbox syntax "- [ ]")'
-											: documents.length === 0
-												? 'No documents selected'
-												: documents.length === missingDocCount
-													? 'All selected documents are missing'
-													: hasNoTasks
-														? 'No unchecked tasks in documents'
-														: 'Start auto-run'
+									: blocksLaunchWhileBusy
+										? 'Agent is thinking — finish or interrupt the current task before launching auto-run'
+										: isPromptEmpty
+											? 'Agent prompt cannot be empty'
+											: !hasValidPrompt
+												? 'Agent prompt must reference Markdown tasks (e.g., checkbox syntax "- [ ]")'
+												: documents.length === 0
+													? 'No documents selected'
+													: documents.length === missingDocCount
+														? 'All selected documents are missing'
+														: hasNoTasks
+															? 'No unchecked tasks in documents'
+															: 'Start auto-run'
 							}
 						>
 							{isPreparingWorktree ? <Spinner size={16} /> : <Play className="w-4 h-4" />}

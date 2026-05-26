@@ -435,7 +435,9 @@ describe('createCueRunManager', () => {
 			manager.execute('session-1', 'prompt', createEvent(), 'test-sub');
 			await vi.advanceTimersByTimeAsync(0);
 
-			expect(updateCueEventStatus).toHaveBeenCalledWith('run-1', 'completed');
+			// Third arg is the run's provider session id (undefined here — the
+			// mocked result sets none).
+			expect(updateCueEventStatus).toHaveBeenCalledWith('run-1', 'completed', undefined);
 		});
 
 		it('updates DB status to stopped on manual stop', () => {
@@ -503,7 +505,14 @@ describe('createCueRunManager', () => {
 
 			// DB status MUST be updated to the final result state so the
 			// activity log doesn't show a phantom never-ending run.
-			expect(safeUpdateCueEventStatus).toHaveBeenCalledWith(expect.any(String), 'completed');
+			// Third arg is the run's provider session id (undefined here — the
+			// mocked result sets none); passing it through is what lets Cue stats
+			// attribute token usage.
+			expect(safeUpdateCueEventStatus).toHaveBeenCalledWith(
+				expect.any(String),
+				'completed',
+				undefined
+			);
 			// And a log should explain the run was recorded post-stop AND
 			// include the structured runFinished payload so the renderer
 			// observes the transition identically to a normal completion.
@@ -534,7 +543,11 @@ describe('createCueRunManager', () => {
 			resolveRun!(makeResult({ status: 'failed', stderr: 'boom' }));
 			await vi.advanceTimersByTimeAsync(0);
 
-			expect(safeUpdateCueEventStatus).toHaveBeenCalledWith(expect.any(String), 'failed');
+			expect(safeUpdateCueEventStatus).toHaveBeenCalledWith(
+				expect.any(String),
+				'failed',
+				undefined
+			);
 		});
 
 		it('stopAll followed by reset: no spurious onRunCompleted', async () => {
@@ -645,7 +658,14 @@ describe('createCueRunManager', () => {
 			// via safeUpdateCueEventStatus with the main task's status.
 			// Only the parent-side safe call is asserted because that's the
 			// regression we're guarding.
-			expect(safeUpdateCueEventStatus).toHaveBeenCalledWith(expect.any(String), 'completed');
+			// Third arg is the run's provider session id (undefined here — the
+			// mocked result sets none); passing it through is what lets Cue stats
+			// attribute token usage.
+			expect(safeUpdateCueEventStatus).toHaveBeenCalledWith(
+				expect.any(String),
+				'completed',
+				undefined
+			);
 			// And the post-stop log MUST include the structured runFinished
 			// payload so renderer listeners observe the transition.
 			expect(deps.onLog).toHaveBeenCalledWith(

@@ -565,23 +565,29 @@ describe('tabHelpers', () => {
 			expect(result!.session.activeTabId).toBe('tab-1');
 		});
 
-		it('sets session to idle when closing the last busy tab', () => {
+		it('keeps session busy and tracks the closed tab in orphanedThinkingTabs when its agent is still running', () => {
 			const busyTab = createMockTab({ id: 'tab-busy', state: 'busy' });
 			const idleTab = createMockTab({ id: 'tab-idle', state: 'idle' });
+			const thinkingStartTime = Date.now();
 			const session = createMockSession({
 				aiTabs: [busyTab, idleTab],
 				activeTabId: 'tab-busy',
 				state: 'busy',
 				busySource: 'ai',
-				thinkingStartTime: Date.now(),
+				thinkingStartTime,
 			});
 
 			const result = closeTab(session, 'tab-busy');
 
 			expect(result).not.toBeNull();
-			expect(result!.session.state).toBe('idle');
-			expect(result!.session.busySource).toBeUndefined();
-			expect(result!.session.thinkingStartTime).toBeUndefined();
+			// Session stays busy — the underlying agent process is still running
+			// even though the tab is no longer visible.
+			expect(result!.session.state).toBe('busy');
+			expect(result!.session.busySource).toBe('ai');
+			expect(result!.session.thinkingStartTime).toBe(thinkingStartTime);
+			// The closed busy tab is tracked for the thinking pill.
+			expect(result!.session.orphanedThinkingTabs).toHaveLength(1);
+			expect(result!.session.orphanedThinkingTabs![0].id).toBe('tab-busy');
 		});
 
 		it('keeps session busy when another tab is still busy', () => {
@@ -636,14 +642,15 @@ describe('tabHelpers', () => {
 			expect(result!.session.busySource).toBe('terminal');
 		});
 
-		it('clears session busy state when closing busy tab that was the only tab (fresh tab created)', () => {
+		it('keeps session busy via orphanedThinkingTabs when closing the only (busy) tab and replacing it with a fresh idle tab', () => {
 			const busyTab = createMockTab({ id: 'tab-only', state: 'busy' });
+			const thinkingStartTime = Date.now();
 			const session = createMockSession({
 				aiTabs: [busyTab],
 				activeTabId: 'tab-only',
 				state: 'busy',
 				busySource: 'ai',
-				thinkingStartTime: Date.now(),
+				thinkingStartTime,
 			});
 
 			const result = closeTab(session, 'tab-only');
@@ -652,10 +659,12 @@ describe('tabHelpers', () => {
 			// A fresh idle tab was created to replace the closed one
 			expect(result!.session.aiTabs).toHaveLength(1);
 			expect(result!.session.aiTabs[0].state).toBe('idle');
-			// Session should be idle since the new tab is idle
-			expect(result!.session.state).toBe('idle');
-			expect(result!.session.busySource).toBeUndefined();
-			expect(result!.session.thinkingStartTime).toBeUndefined();
+			// Session stays busy — the orphaned tab is still thinking in the background.
+			expect(result!.session.state).toBe('busy');
+			expect(result!.session.busySource).toBe('ai');
+			expect(result!.session.thinkingStartTime).toBe(thinkingStartTime);
+			expect(result!.session.orphanedThinkingTabs).toHaveLength(1);
+			expect(result!.session.orphanedThinkingTabs![0].id).toBe('tab-only');
 		});
 	});
 
@@ -2559,6 +2568,32 @@ describe('tabHelpers', () => {
 			expect(result!.id).toBe('unread-tab');
 		});
 
+		it('keeps the active file tab visible in showUnreadOnly mode even when file-preview setting is off', () => {
+			useSettingsStore.setState({ showFilePreviewsInUnreadFilter: false });
+			const readTab = createMockTab({ id: 'read-tab', hasUnread: false, inputValue: '' });
+			const activeFile = createMockFileTab({ id: 'file-active' });
+			const otherFile = createMockFileTab({ id: 'file-other' });
+			const session = createMockSession({
+				aiTabs: [readTab],
+				filePreviewTabs: [activeFile, otherFile],
+				activeTabId: 'read-tab',
+				activeFileTabId: 'file-active',
+				unifiedTabOrder: [
+					{ type: 'file', id: 'file-active' },
+					{ type: 'file', id: 'file-other' },
+					{ type: 'ai', id: 'read-tab' },
+				],
+			});
+
+			// From the active file tab, Next should wrap past the hidden non-active file tab
+			// and land back on the AI tab, then on the active file tab again — confirming the
+			// active file is the only file ref in the filtered list.
+			const result = navigateToNextUnifiedTab(session, true);
+
+			expect(result!.type).toBe('ai');
+			expect(result!.id).toBe('read-tab');
+		});
+
 		it('includes browser tabs in showUnreadOnly mode', () => {
 			const readTab = createMockTab({ id: 'read-tab', hasUnread: false, inputValue: '' });
 			const browserTab = createMockBrowserTab({ id: 'browser-1' });
@@ -3683,7 +3718,10 @@ describe('tabHelpers', () => {
 			expect(result.targetSessionId).toBe('a');
 		});
 
-		it('returns jumped=false when no other session has unread tabs', () => {
+		it('returns jumped=false when no other session has unread tabs and the only unread is the active tab', () => {
+			// Active tab with hasUnread is unusual but we tolerate it: the
+			// active tab is what the user is looking at, so we don't silently
+			// clear it and don't claim to have "jumped" anywhere.
 			const sessions = [
 				createMockSession({
 					id: 'a',
@@ -3698,6 +3736,48 @@ describe('tabHelpers', () => {
 			];
 			const result = findNextUnreadSession(sessions, 'a');
 			expect(result.jumped).toBe(false);
+			expect(result.clearedCurrent).toBe(false);
+		});
+
+		it('jumps to a non-active unread tab within the current session before searching others', () => {
+			const sessions = [
+				createMockSession({
+					id: 'a',
+					aiTabs: [
+						createMockTab({ id: 'tab-a1', hasUnread: false }),
+						createMockTab({ id: 'tab-a2', hasUnread: true }),
+					],
+					activeTabId: 'tab-a1',
+				}),
+				createMockSession({
+					id: 'b',
+					aiTabs: [createMockTab({ id: 'tab-b', hasUnread: true })],
+					activeTabId: 'tab-b',
+				}),
+			];
+			const result = findNextUnreadSession(sessions, 'a');
+			expect(result.jumped).toBe(true);
+			expect(result.targetSessionId).toBe('a');
+			expect(result.targetTabId).toBe('tab-a2');
+			expect(result.clearedCurrent).toBe(false);
+		});
+
+		it('reports clearedCurrent=true when moving to another session and current has unread', () => {
+			const sessions = [
+				createMockSession({
+					id: 'a',
+					aiTabs: [createMockTab({ id: 'tab-a', hasUnread: true })],
+					activeTabId: 'tab-a',
+				}),
+				createMockSession({
+					id: 'b',
+					aiTabs: [createMockTab({ id: 'tab-b', hasUnread: true })],
+					activeTabId: 'tab-b',
+				}),
+			];
+			const result = findNextUnreadSession(sessions, 'a');
+			expect(result.jumped).toBe(true);
+			expect(result.targetSessionId).toBe('b');
 			expect(result.clearedCurrent).toBe(true);
 		});
 
@@ -3756,7 +3836,9 @@ describe('tabHelpers', () => {
 			expect(result.targetSessionId).toBe('b');
 		});
 
-		it('reports clearedCurrent when current session has draft tabs', () => {
+		it('does not report clearedCurrent when the only draft tab is the active one', () => {
+			// The active tab's draft is what the user is composing — we don't
+			// jump anywhere and we don't clear unread/draft state.
 			const sessions = [
 				createMockSession({
 					id: 'a',
@@ -3766,7 +3848,24 @@ describe('tabHelpers', () => {
 			];
 			const result = findNextUnreadSession(sessions, 'a');
 			expect(result.jumped).toBe(false);
-			expect(result.clearedCurrent).toBe(true);
+			expect(result.clearedCurrent).toBe(false);
+		});
+
+		it('jumps within the current session to a non-active draft tab', () => {
+			const sessions = [
+				createMockSession({
+					id: 'a',
+					aiTabs: [
+						createMockTab({ id: 'tab-a1', hasUnread: false }),
+						createMockTab({ id: 'tab-a2', hasUnread: false, inputValue: 'unsent text' }),
+					],
+					activeTabId: 'tab-a1',
+				}),
+			];
+			const result = findNextUnreadSession(sessions, 'a');
+			expect(result.jumped).toBe(true);
+			expect(result.targetSessionId).toBe('a');
+			expect(result.targetTabId).toBe('tab-a2');
 		});
 
 		it('prefers the next session in order over earlier ones', () => {

@@ -22,6 +22,12 @@ export interface WorktreeConfig {
 	path?: string;
 	/** Branch name to use for the worktree */
 	branchName?: string;
+	/**
+	 * Base ref the new branch should be created from when it doesn't yet exist.
+	 * Forwarded to `git worktree add -b <new> <path> <base>`. If omitted, the
+	 * new branch is created from the main repo's current HEAD (legacy behavior).
+	 */
+	baseBranch?: string;
 	/** Whether to create a PR on batch completion */
 	createPROnCompletion?: boolean;
 	/** Target branch for the PR (falls back to default branch) */
@@ -231,7 +237,8 @@ export function useWorktreeManager(): UseWorktreeManagerReturn {
 					sessionCwd,
 					worktree.path,
 					worktree.branchName,
-					worktree.sshRemoteId
+					worktree.sshRemoteId,
+					worktree.baseBranch
 				);
 
 				window.maestro.logger.log('info', 'worktreeSetup result', 'WorktreeManager', {

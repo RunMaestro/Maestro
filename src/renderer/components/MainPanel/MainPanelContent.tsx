@@ -187,6 +187,14 @@ export interface MainPanelContentProps {
 	onOpenPromptComposer?: () => void;
 	onReplayMessage?: (text: string, images?: string[]) => void;
 	onForkConversation?: (logId: string) => void;
+	onSessionRecover?: (opts: {
+		sessionId: string;
+		tabId: string;
+		lastUserPrompt: string;
+		groomContext: boolean;
+	}) => void;
+	isRecoveringSession?: boolean;
+	sessionRecoveryError?: string | null;
 	fileTree?: FileNode[];
 	onFileClick?: (relativePath: string, options?: { openInNewTab?: boolean }) => void;
 	refreshFileTree?: (
@@ -213,10 +221,13 @@ export interface MainPanelContentProps {
 	onPublishGist?: () => void;
 	hasGist?: boolean;
 	onOpenInGraph?: () => void;
+	/** Open the currently previewed file in a new Maestro browser tab. */
+	onOpenInBrowser?: () => void;
 	onPublishMessageGist?: (text: string, messageId?: string) => void;
 	onToggleTabReadOnlyMode?: () => void;
 	onToggleTabSaveToHistory?: () => void;
 	onToggleTabShowThinking?: () => void;
+	onToggleTabEnterToSend?: () => void;
 
 	// Wizard callbacks
 	onWizardComplete?: () => void;
@@ -348,6 +359,9 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 		onOpenPromptComposer,
 		onReplayMessage,
 		onForkConversation,
+		onSessionRecover,
+		isRecoveringSession,
+		sessionRecoveryError,
 		fileTree,
 		onFileClick,
 		refreshFileTree,
@@ -367,10 +381,12 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 		onPublishGist,
 		hasGist,
 		onOpenInGraph,
+		onOpenInBrowser,
 		onPublishMessageGist,
 		onToggleTabReadOnlyMode,
 		onToggleTabSaveToHistory,
 		onToggleTabShowThinking,
+		onToggleTabEnterToSend,
 		onWizardComplete,
 		onWizardCompleteAndStartAutoRun,
 		onWizardDocumentSelect,
@@ -479,6 +495,7 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 						onPublishGist={onPublishGist}
 						hasGist={hasGist}
 						onOpenInGraph={onOpenInGraph}
+						onOpenInBrowser={onOpenInBrowser}
 						sshRemoteId={filePreviewSshRemoteId}
 						// Pass external edit content for persistence across tab switches
 						externalEditContent={activeFileTab.editContent}
@@ -501,6 +518,13 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 						htmlRenderMode={activeFileTab.htmlRenderMode}
 						onHtmlRenderModeChange={(value) =>
 							useTabStore.getState().setFileTabHtmlRenderMode(activeFileTabId, value)
+						}
+						// Transient deep-link scroll target. FilePreview clears this
+						// via onPendingScrollToLineConsumed once the editor has
+						// jumped, so subsequent re-renders don't re-scroll.
+						pendingScrollToLine={activeFileTab.pendingScrollToLine}
+						onPendingScrollToLineConsumed={() =>
+							useTabStore.getState().clearFileTabPendingScrollToLine(activeFileTabId)
 						}
 					/>
 				</div>
@@ -588,6 +612,9 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 								setMarkdownEditMode={useSettingsStore.getState().setChatRawTextMode}
 								onReplayMessage={onReplayMessage}
 								onForkConversation={onForkConversation}
+								onSessionRecover={onSessionRecover}
+								isRecoveringSession={isRecoveringSession}
+								sessionRecoveryError={sessionRecoveryError}
 								fileTree={fileTree}
 								cwd={
 									activeSession.cwd?.startsWith(activeSession.fullPath)
@@ -619,8 +646,12 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 									theme={theme}
 									inputValue={inputValue}
 									setInputValue={setInputValue}
-									enterToSend={enterToSendAI}
-									setEnterToSend={useSettingsStore.getState().setEnterToSendAI}
+									enterToSend={activeTab?.enterToSend ?? enterToSendAI}
+									setEnterToSend={
+										onToggleTabEnterToSend
+											? () => onToggleTabEnterToSend()
+											: useSettingsStore.getState().setEnterToSendAI
+									}
 									stagedImages={stagedImages}
 									setStagedImages={setStagedImages}
 									setLightboxImage={setLightboxImage}
