@@ -187,6 +187,14 @@ export interface MainPanelContentProps {
 	onOpenPromptComposer?: () => void;
 	onReplayMessage?: (text: string, images?: string[]) => void;
 	onForkConversation?: (logId: string) => void;
+	onSessionRecover?: (opts: {
+		sessionId: string;
+		tabId: string;
+		lastUserPrompt: string;
+		groomContext: boolean;
+	}) => void;
+	isRecoveringSession?: boolean;
+	sessionRecoveryError?: string | null;
 	fileTree?: FileNode[];
 	onFileClick?: (relativePath: string, options?: { openInNewTab?: boolean }) => void;
 	refreshFileTree?: (
@@ -351,6 +359,9 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 		onOpenPromptComposer,
 		onReplayMessage,
 		onForkConversation,
+		onSessionRecover,
+		isRecoveringSession,
+		sessionRecoveryError,
 		fileTree,
 		onFileClick,
 		refreshFileTree,
@@ -601,6 +612,9 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 								setMarkdownEditMode={useSettingsStore.getState().setChatRawTextMode}
 								onReplayMessage={onReplayMessage}
 								onForkConversation={onForkConversation}
+								onSessionRecover={onSessionRecover}
+								isRecoveringSession={isRecoveringSession}
+								sessionRecoveryError={sessionRecoveryError}
 								fileTree={fileTree}
 								cwd={
 									activeSession.cwd?.startsWith(activeSession.fullPath)

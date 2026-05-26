@@ -306,6 +306,23 @@ describe('envBuilder - Global Environment Variables', () => {
 			expect((env.PATH as string).length).toBeGreaterThan(0);
 		});
 
+		it('should prepend extraPathDirs ahead of the expanded PATH', () => {
+			const originalPlatform = process.platform;
+			Object.defineProperty(process, 'platform', { value: 'darwin' });
+
+			try {
+				const env = buildChildProcessEnv(undefined, false, undefined, ['/Users/me/opt/node/bin']);
+				const parts = (env.PATH as string).split(path.delimiter);
+
+				// extraPathDirs entry must come first
+				expect(parts[0]).toBe('/Users/me/opt/node/bin');
+				// hardcoded expanded paths still present after
+				expect(parts).toContain('/opt/homebrew/bin');
+			} finally {
+				Object.defineProperty(process, 'platform', { value: originalPlatform });
+			}
+		});
+
 		it('should include detected Node version manager bins in PATH', () => {
 			const originalPlatform = process.platform;
 			Object.defineProperty(process, 'platform', { value: 'darwin' });

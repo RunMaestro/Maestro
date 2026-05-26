@@ -577,6 +577,13 @@ describe('director-notes IPC handlers', () => {
 	});
 
 	describe('director-notes:generateSynopsis', () => {
+		// The manifest is scoped to sessions that have entries inside the lookback
+		// window, so default getEntries to a fresh entry. Tests that exercise the
+		// empty / out-of-window paths override this explicitly.
+		beforeEach(() => {
+			vi.mocked(mockHistoryManager.getEntries).mockReturnValue([createMockEntry()]);
+		});
+
 		it('should return error when agent is not available', async () => {
 			mockAgentDetector.getAgent.mockResolvedValue({ available: false });
 
@@ -851,6 +858,40 @@ describe('director-notes IPC handlers', () => {
 			const promptArg = vi.mocked(groomContext).mock.calls[0][0].prompt;
 			expect(promptArg).toContain('Lookback period: 14 days');
 			expect(promptArg).toContain('Timestamp cutoff:');
+		});
+
+		it('excludes sessions with no entries inside the lookback window', async () => {
+			const { groomContext } = await import('../../../../main/utils/context-groomer');
+			vi.mocked(groomContext).mockResolvedValue({
+				response: '# Synopsis',
+				durationMs: 1000,
+				completionReason: 'process exited with code 0',
+			});
+
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue([
+				'recent-session',
+				'stale-session',
+			]);
+			vi.mocked(mockHistoryManager.getHistoryFilePath)
+				.mockReturnValueOnce('/data/history/recent-session.json')
+				.mockReturnValueOnce('/data/history/stale-session.json');
+			// stale-session only has entries far outside the 7-day window and must be
+			// left out of the manifest — otherwise the grooming agent burns its whole
+			// timeout reading out-of-range history files and emits no synopsis.
+			vi.mocked(mockHistoryManager.getEntries)
+				.mockReturnValueOnce([createMockEntry({ timestamp: Date.now() })])
+				.mockReturnValueOnce([
+					createMockEntry({ timestamp: Date.now() - 90 * 24 * 60 * 60 * 1000 }),
+				]);
+
+			const handler = handlers.get('director-notes:generateSynopsis');
+			const result = await handler!({} as any, { lookbackDays: 7, provider: 'claude-code' });
+
+			expect(result.success).toBe(true);
+			expect(result.stats.agentCount).toBe(1);
+			const promptArg = vi.mocked(groomContext).mock.calls[0][0].prompt;
+			expect(promptArg).toContain('/data/history/recent-session.json');
+			expect(promptArg).not.toContain('stale-session');
 		});
 	});
 });

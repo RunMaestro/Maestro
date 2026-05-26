@@ -1,4 +1,5 @@
 import type { AITab, Theme, UnifiedTab } from '../../types';
+import type { CopyContextOptions } from '../../hooks/tabs/useTabExportHandlers';
 
 export interface TabBarProps {
 	tabs: AITab[];
@@ -28,7 +29,7 @@ export interface TabBarProps {
 	/** Handler to summarize and continue in a new tab */
 	onSummarizeAndContinue?: (tabId: string) => void;
 	/** Handler to copy conversation context to clipboard */
-	onCopyContext?: (tabId: string) => void;
+	onCopyContext?: (tabId: string, options?: CopyContextOptions) => void;
 	/** Handler to export tab as HTML */
 	onExportHtml?: (tabId: string) => void;
 	/** Handler to publish tab context as GitHub Gist */

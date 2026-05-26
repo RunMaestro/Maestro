@@ -294,6 +294,7 @@ export function useBatchProcessor({
 		broadcastAutoRunState,
 		flushDebouncedUpdate,
 		dispatch,
+		pauseBatchOnError,
 		timeTracking,
 		worktreeManager,
 		documentProcessor,

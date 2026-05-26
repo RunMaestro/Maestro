@@ -12,6 +12,8 @@ import {
 	Users,
 	File,
 	Folder,
+	Maximize2,
+	Minimize2,
 } from 'lucide-react';
 import { GhostIconButton } from './ui/GhostIconButton';
 import type { Theme, ThinkingMode, Session, Group } from '../types';
@@ -26,6 +28,9 @@ import {
 } from '../utils/shortcutFormatter';
 import { normalizeMentionName } from '../utils/participantColors';
 import { useAtMentionCompletion } from '../hooks/input/useAtMentionCompletion';
+import { useSettingsStore } from '../stores/settingsStore';
+import { useModalStore } from '../stores/modalStore';
+import { isMacOSPlatform } from '../utils/platformUtils';
 
 const EMPTY_STAGED_IMAGES: string[] = [];
 
@@ -103,7 +108,18 @@ export function PromptComposerModal({
 	sessions,
 	groups,
 }: PromptComposerModalProps) {
+	const useNativeTitleBar = useSettingsStore((s) => s.useNativeTitleBar);
+	// In fullscreen mode the modal covers the app's custom 40px draggable title
+	// bar. We need to (a) shift the header below macOS traffic lights and (b)
+	// opt the modal out of -webkit-app-region:drag so clicks reach buttons
+	// instead of being swallowed as window-drag gestures.
+	const needsTitleBarInset = !useNativeTitleBar;
+	const isMac = isMacOSPlatform();
 	const [value, setValue] = useState('');
+	// Full-screen state lives in the modal store so the open-composer hotkey can
+	// cycle sizes while the modal is open (see cyclePromptComposer in modalStore).
+	const isFullscreen = useModalStore((s) => s.promptComposerFullscreen);
+	const toggleFullscreen = useModalStore((s) => s.togglePromptComposerFullscreen);
 	const [showMentions, setShowMentions] = useState(false);
 	const [mentionFilter, setMentionFilter] = useState('');
 	const [selectedMentionIndex, setSelectedMentionIndex] = useState(0);
@@ -472,16 +488,25 @@ export function PromptComposerModal({
 				aria-label="Close prompt composer"
 			/>
 			<div
-				className="relative z-10 w-[90vw] h-[80vh] max-w-5xl rounded-xl border shadow-2xl flex flex-col overflow-hidden"
+				className={`relative z-10 shadow-2xl flex flex-col overflow-hidden ${
+					isFullscreen ? 'w-screen h-screen' : 'w-[90vw] h-[80vh] max-w-5xl rounded-xl border'
+				}`}
 				onClick={(e) => e.stopPropagation()}
-				style={{
-					backgroundColor: theme.colors.bgMain,
-					borderColor: theme.colors.border,
-				}}
+				style={
+					{
+						backgroundColor: theme.colors.bgMain,
+						borderColor: theme.colors.border,
+						// Opt out of the app's draggable title-bar region in fullscreen so
+						// clicks on header buttons aren't swallowed by window-drag.
+						...(isFullscreen && needsTitleBarInset ? { WebkitAppRegion: 'no-drag' as const } : {}),
+					} as React.CSSProperties
+				}
 			>
 				{/* Header */}
 				<div
-					className="flex items-center justify-between px-4 py-3 border-b"
+					className={`flex items-center justify-between py-3 border-b ${
+						isFullscreen && needsTitleBarInset ? (isMac ? 'pl-24 pr-4 pt-5' : 'px-4 pt-5') : 'px-4'
+					}`}
 					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgSidebar }}
 				>
 					<div className="flex items-center gap-2">
@@ -493,7 +518,18 @@ export function PromptComposerModal({
 							— {sessionName}
 						</span>
 					</div>
-					<div className="flex items-center gap-3">
+					<div className="flex items-center gap-1">
+						<GhostIconButton
+							onClick={toggleFullscreen}
+							padding="p-1.5"
+							title={isFullscreen ? 'Collapse' : 'Expand to full screen'}
+						>
+							{isFullscreen ? (
+								<Minimize2 className="w-5 h-5" style={{ color: theme.colors.textDim }} />
+							) : (
+								<Maximize2 className="w-5 h-5" style={{ color: theme.colors.textDim }} />
+							)}
+						</GhostIconButton>
 						<GhostIconButton
 							onClick={() => {
 								onSubmit(value);

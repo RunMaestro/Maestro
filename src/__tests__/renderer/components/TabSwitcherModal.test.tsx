@@ -1213,6 +1213,50 @@ describe('TabSwitcherModal', () => {
 			fireEvent.keyDown(input, { key: 'Tab' });
 			expect(screen.getByPlaceholderText('Search open tabs...')).toBeInTheDocument();
 		});
+
+		it('cycles modes forward with Cmd+Shift+]', () => {
+			renderWithLayerStack(
+				<TabSwitcherModal
+					theme={theme}
+					tabs={[createTestTab({ name: 'Test Tab' })]}
+					activeTabId=""
+					projectRoot="/test"
+					onTabSelect={vi.fn()}
+					onNamedSessionSelect={vi.fn()}
+					onClose={vi.fn()}
+				/>
+			);
+
+			const input = screen.getByPlaceholderText('Search open tabs...');
+
+			// open -> all-named
+			fireEvent.keyDown(input, { key: ']', code: 'BracketRight', metaKey: true, shiftKey: true });
+			expect(screen.getByPlaceholderText('Search named sessions...')).toBeInTheDocument();
+
+			// all-named -> starred
+			fireEvent.keyDown(input, { key: ']', code: 'BracketRight', metaKey: true, shiftKey: true });
+			expect(screen.getByPlaceholderText('Search starred sessions...')).toBeInTheDocument();
+		});
+
+		it('cycles modes backward with Cmd+Shift+[', () => {
+			renderWithLayerStack(
+				<TabSwitcherModal
+					theme={theme}
+					tabs={[createTestTab({ name: 'Test Tab' })]}
+					activeTabId=""
+					projectRoot="/test"
+					onTabSelect={vi.fn()}
+					onNamedSessionSelect={vi.fn()}
+					onClose={vi.fn()}
+				/>
+			);
+
+			const input = screen.getByPlaceholderText('Search open tabs...');
+
+			// open -> starred (reverse)
+			fireEvent.keyDown(input, { key: '[', code: 'BracketLeft', metaKey: true, shiftKey: true });
+			expect(screen.getByPlaceholderText('Search starred sessions...')).toBeInTheDocument();
+		});
 	});
 
 	describe('search functionality', () => {

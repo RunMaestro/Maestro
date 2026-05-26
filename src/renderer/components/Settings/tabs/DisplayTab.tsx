@@ -13,6 +13,7 @@ import {
 	AlignHorizontalJustifyCenter,
 	AlertTriangle,
 	AppWindow,
+	Bell,
 	Database,
 	Eye,
 	FileText,
@@ -88,12 +89,16 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 		setUserMessageAlignment,
 		fileExplorerIconTheme,
 		setFileExplorerIconTheme,
+		toastWidth,
+		setToastWidth,
 		showStarredInUnreadFilter,
 		setShowStarredInUnreadFilter,
 		showFilePreviewsInUnreadFilter,
 		setShowFilePreviewsInUnreadFilter,
 		useCmd0AsLastTab,
 		setUseCmd0AsLastTab,
+		showBrowserTabDomain,
+		setShowBrowserTabDomain,
 		useNativeTitleBar,
 		setUseNativeTitleBar,
 		autoHideMenuBar,
@@ -110,6 +115,8 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 		setShowWorktreeBranchName,
 		showLeftPanelGroupMemberCount,
 		setShowLeftPanelGroupMemberCount,
+		leftPanelCollapsedPillsPerRow,
+		setLeftPanelCollapsedPillsPerRow,
 		showLeftPanelLocationPills,
 		setShowLeftPanelLocationPills,
 		showLeftPanelGitIndicator,
@@ -314,6 +321,24 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 				<p className="text-xs opacity-50 mt-2">
 					Rich uses Material Icon Theme style file and folder SVGs in the Files pane. Default
 					preserves Maestro&apos;s current icon behavior.
+				</p>
+			</div>
+
+			<div data-setting-id="display-toast-width">
+				<SettingsSectionHeading icon={Bell}>Toast Notification Width</SettingsSectionHeading>
+				<ToggleButtonGroup
+					options={[
+						{ value: 'small', label: 'Small' },
+						{ value: 'medium', label: 'Medium' },
+						{ value: 'large', label: 'Large' },
+					]}
+					value={toastWidth}
+					onChange={setToastWidth}
+					theme={theme}
+				/>
+				<p className="text-xs opacity-50 mt-2">
+					Controls how wide toast notifications appear in the corner. Small is the default compact
+					size; Large is roughly 1.8&times; wider.
 				</p>
 			</div>
 
@@ -538,6 +563,39 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 								}`}
 							/>
 						</button>
+					</div>
+
+					{/* Collapsed pills per row */}
+					<div className="pt-3 border-t" style={{ borderColor: theme.colors.border }}>
+						<p className="text-sm" style={{ color: theme.colors.textMain }}>
+							Collapsed group pills per row
+						</p>
+						<p className="text-xs opacity-50 mt-0.5 mb-2">
+							When a group is collapsed, its agents render as a row of activity pills. Pills wrap to
+							a new row once this many are shown, so large groups stay readable instead of
+							condensing into invisible slivers.
+						</p>
+						<div className="flex items-center gap-3">
+							<input
+								type="range"
+								min={5}
+								max={50}
+								step={5}
+								value={leftPanelCollapsedPillsPerRow}
+								onChange={(e) => setLeftPanelCollapsedPillsPerRow(Number(e.target.value))}
+								className="flex-1 h-2 rounded-lg appearance-none cursor-pointer"
+								style={{
+									background: `linear-gradient(to right, ${theme.colors.accent} 0%, ${theme.colors.accent} ${((leftPanelCollapsedPillsPerRow - 5) / 45) * 100}%, ${theme.colors.bgActivity} ${((leftPanelCollapsedPillsPerRow - 5) / 45) * 100}%, ${theme.colors.bgActivity} 100%)`,
+								}}
+								aria-label="Collapsed group pills per row"
+							/>
+							<span
+								className="text-sm font-mono w-8 text-right"
+								style={{ color: theme.colors.textMain }}
+							>
+								{leftPanelCollapsedPillsPerRow}
+							</span>
+						</div>
 					</div>
 
 					{/* Show location pills */}
@@ -883,7 +941,7 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 
 			{/* Starred Tabs in Unread Filter */}
 			<div data-setting-id="display-tab-filtering">
-				<SettingsSectionHeading icon={ListFilter}>Tab Filtering</SettingsSectionHeading>
+				<SettingsSectionHeading icon={ListFilter}>Tab Options</SettingsSectionHeading>
 				<div
 					className="p-3 rounded border space-y-3"
 					style={{
@@ -985,6 +1043,41 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 							<span
 								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
 									useCmd0AsLastTab ? 'translate-x-5' : 'translate-x-0.5'
+								}`}
+							/>
+						</button>
+					</div>
+
+					{/* Show Domain Pill on Browser Tabs */}
+					<div
+						className="flex items-center justify-between pt-3 border-t"
+						style={{ borderColor: theme.colors.border }}
+					>
+						<div>
+							<p className="text-sm" style={{ color: theme.colors.textMain }}>
+								Show domain on browser tabs
+							</p>
+							<p className="text-xs opacity-50 mt-0.5">
+								Display a small domain pill (e.g. www.google.com) next to the page title on browser
+								tabs. Disable to hide it.
+							</p>
+						</div>
+						<button
+							onClick={() => setShowBrowserTabDomain(!showBrowserTabDomain)}
+							className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0 outline-none"
+							tabIndex={0}
+							style={{
+								backgroundColor: showBrowserTabDomain
+									? theme.colors.accent
+									: theme.colors.bgActivity,
+							}}
+							role="switch"
+							aria-checked={showBrowserTabDomain}
+							aria-label="Show domain on browser tabs"
+						>
+							<span
+								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+									showBrowserTabDomain ? 'translate-x-5' : 'translate-x-0.5'
 								}`}
 							/>
 						</button>

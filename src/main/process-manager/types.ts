@@ -46,6 +46,12 @@ export interface ProcessConfig {
 	cols?: number;
 	/** PTY terminal height in rows (default 24) */
 	rows?: number;
+	/** Extra directories to prepend to the spawn-time PATH. Typically the
+	 *  parent directory of the detected agent binary, so co-located runtimes
+	 *  (e.g. the `node` next to an npm-installed `codex`) resolve via the
+	 *  script's `#!/usr/bin/env node` shebang. Local spawn only — SSH builds
+	 *  its remote PATH separately. */
+	extraPathDirs?: string[];
 }
 
 /**

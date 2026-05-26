@@ -198,6 +198,10 @@ describe('searchableSettings', () => {
 			['wizard prompt', 'prompts-editor'],
 			['group chat', 'prompts-editor'],
 			['inline wizard', 'prompts-editor'],
+
+			// About tab
+			['about maestro', 'about-maestro'],
+			['version', 'about-maestro'],
 		])('should find "%s" and return id %s', (query, expectedId) => {
 			const results = searchSettings(query);
 			expect(

@@ -1,11 +1,12 @@
 import React, { memo, useMemo, useState, useCallback, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
+import rehypeKatex from 'rehype-katex';
 import remarkBreaks from 'remark-breaks';
+import remarkMath from 'remark-math';
 import DOMPurify from 'dompurify';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { getSyntaxStyle } from '../utils/syntaxTheme';
-import { Clipboard, ImageOff } from 'lucide-react';
+import 'katex/dist/katex.min.css';
+import { ImageOff } from 'lucide-react';
 import { Spinner } from './ui/Spinner';
 import type { Theme } from '../types';
 import type { FileNode } from '../types/fileTree';
@@ -23,11 +24,12 @@ import {
 } from '../utils/inlineCodeCopy';
 import { LinkContextMenu, type LinkContextMenuState } from './LinkContextMenu';
 import { FileContextMenu, type FileContextMenuState } from './FileContextMenu';
-import { SyntaxHighlightBoundary } from './SyntaxHighlightBoundary';
+import { CodeFence } from './CodeFence/CodeFence';
 import { getHomeDir, getHomeDirAsync } from '../utils/homeDir';
 import { openUrl } from '../utils/openUrl';
 import { openMaestroLink } from '../utils/openMaestroLink';
 import { urlTransformAllowingMaestro } from '../utils/markdownUrlTransform';
+import { remarkPromoteDisplayMath } from '../../shared/remarkPromoteDisplayMath';
 
 // ============================================================================
 // LocalImage - Loads local images via IPC
@@ -177,52 +179,6 @@ LocalImage.displayName = 'LocalImage';
 // CodeBlockWithCopy - Code block with copy button overlay
 // ============================================================================
 
-interface CodeBlockWithCopyProps {
-	language: string;
-	codeContent: string;
-	theme: Theme;
-	onCopy: (text: string) => void;
-}
-
-const CodeBlockWithCopy = memo(
-	({ language, codeContent, theme, onCopy }: CodeBlockWithCopyProps) => {
-		return (
-			<div className="relative group/codeblock" translate="no">
-				<button
-					onClick={() => onCopy(codeContent)}
-					className="absolute bottom-2 right-2 p-1.5 rounded opacity-0 group-hover/codeblock:opacity-70 hover:!opacity-100 transition-opacity z-10"
-					style={{
-						backgroundColor: theme.colors.bgActivity,
-						color: theme.colors.textDim,
-						border: `1px solid ${theme.colors.border}`,
-					}}
-					title="Copy code"
-				>
-					<Clipboard className="w-3.5 h-3.5" />
-				</button>
-				<SyntaxHighlightBoundary code={codeContent} theme={theme}>
-					<SyntaxHighlighter
-						language={language}
-						style={getSyntaxStyle(theme.mode)}
-						customStyle={{
-							margin: '0.5em 0',
-							padding: '1em',
-							background: theme.colors.bgSidebar,
-							fontSize: '0.9em',
-							borderRadius: '6px',
-						}}
-						PreTag="div"
-					>
-						{codeContent}
-					</SyntaxHighlighter>
-				</SyntaxHighlightBoundary>
-			</div>
-		);
-	}
-);
-
-CodeBlockWithCopy.displayName = 'CodeBlockWithCopy';
-
 // ============================================================================
 // fixMarkdownLinkSpaces — pre-process markdown so CommonMark can parse links
 // whose URL destinations contain spaces.
@@ -326,6 +282,15 @@ interface MarkdownRendererProps {
 	 * render as `<br>`.
 	 */
 	chatLineBreaks?: boolean;
+	/**
+	 * Render `$...$` and `$$...$$` as math via KaTeX (chat-style rendering).
+	 *
+	 * Off by default so file/doc preview keeps treating `$` as literal text —
+	 * markdown files with currency or shell prompts shouldn't suddenly parse
+	 * as math. Enable on chat surfaces so a line-isolated `$$x+y$$` renders
+	 * as a centered block formula (#622).
+	 */
+	chatMath?: boolean;
 }
 
 /**
@@ -356,6 +321,7 @@ export const MarkdownRenderer = memo(
 		bionifyIntensity,
 		bionifyAlgorithm,
 		chatLineBreaks = false,
+		chatMath = false,
 	}: MarkdownRendererProps) => {
 		// Resolve homeDir for tilde path expansion (module-level cache, fetched once)
 		const [homeDir, setHomeDir] = useState<string | undefined>(getHomeDir);
@@ -386,6 +352,17 @@ export const MarkdownRenderer = memo(
 			if (chatLineBreaks) {
 				plugins.push(remarkBreaks);
 			}
+			// Chat surfaces parse `$$...$$` as math (#622). `singleDollarTextMath:
+			// false` disables single-dollar inline math so chat content with
+			// currency (`$5`), shell variables (`$HOME`), or code snippets isn't
+			// reinterpreted as broken math — see remark-math's own warning that
+			// single-dollar math "often interferes with normal dollars in text".
+			// `remarkPromoteDisplayMath` runs after `remarkMath` so a single-line
+			// `$$x+y$$` gets the centered block treatment users expect.
+			if (chatMath) {
+				plugins.push([remarkMath, { singleDollarTextMath: false }]);
+				plugins.push(remarkPromoteDisplayMath);
+			}
 			// Add remarkFileLinks if we have file tree for relative paths,
 			// OR if we have projectRoot for absolute paths (even with empty file tree)
 			// OR if we have homeDir for tilde paths (even without file tree or projectRoot)
@@ -396,7 +373,7 @@ export const MarkdownRenderer = memo(
 				]);
 			}
 			return plugins;
-		}, [fileTree, fileTreeIndices, cwd, projectRoot, homeDir, chatLineBreaks]);
+		}, [fileTree, fileTreeIndices, cwd, projectRoot, homeDir, chatLineBreaks, chatMath]);
 
 		// Defense-in-depth: sanitize raw HTML with DOMPurify before markdown parsing
 		// to strip script tags, event handlers, and other XSS vectors
@@ -423,6 +400,15 @@ export const MarkdownRenderer = memo(
 				bionifyAlgorithm,
 			});
 
+		// rehype-raw and rehype-katex are independent and can stack. Build the
+		// list once per render rather than reconstructing in JSX.
+		const rehypePlugins = useMemo(() => {
+			const plugins: any[] = [];
+			if (allowRawHtml) plugins.push(rehypeRaw);
+			if (chatMath) plugins.push(rehypeKatex);
+			return plugins.length > 0 ? plugins : undefined;
+		}, [allowRawHtml, chatMath]);
+
 		return (
 			<div
 				className={`prose prose-sm max-w-none text-sm ${className}`}
@@ -430,7 +416,7 @@ export const MarkdownRenderer = memo(
 			>
 				<ReactMarkdown
 					remarkPlugins={remarkPlugins}
-					rehypePlugins={allowRawHtml ? [rehypeRaw] : undefined}
+					rehypePlugins={rehypePlugins}
 					urlTransform={urlTransformAllowingMaestro}
 					components={{
 						a: ({ node: _node, href, children, ...props }) => {
@@ -520,17 +506,12 @@ export const MarkdownRenderer = memo(
 
 							if (codeElement?.props) {
 								const { className, children: codeChildren } = codeElement.props;
-								const match = (className || '').match(/language-(\w+)/);
-								const language = match ? match[1] : 'text';
+								const match = (className || '').match(/language-([\w+\-#]+)/);
+								const language = match ? match[1] : '';
 								const codeContent = String(codeChildren).replace(/\n$/, '');
 
 								return (
-									<CodeBlockWithCopy
-										language={language}
-										codeContent={codeContent}
-										theme={theme}
-										onCopy={onCopy}
-									/>
+									<CodeFence language={language} code={codeContent} theme={theme} onCopy={onCopy} />
 								);
 							}
 
@@ -709,6 +690,4 @@ export const MarkdownRenderer = memo(
 
 MarkdownRenderer.displayName = 'MarkdownRenderer';
 
-// Also export CodeBlockWithCopy for cases where only the code block is needed
-export { CodeBlockWithCopy };
-export type { CodeBlockWithCopyProps, MarkdownRendererProps };
+export type { MarkdownRendererProps };

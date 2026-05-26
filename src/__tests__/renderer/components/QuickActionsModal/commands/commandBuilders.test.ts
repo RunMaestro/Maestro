@@ -144,18 +144,15 @@ describe('QuickActions command builders', () => {
 			buildNavigationCommands({
 				activeSession: session,
 				activeSessionId: 's1',
-				sessions: [session],
-				setSessions,
-				setActiveSessionId: vi.fn(),
 				setQuickActionOpen: close,
 				setLeftSidebarOpen: vi.fn(),
 				setRightPanelOpen: vi.fn(),
-				setSuccessFlashNotification: vi.fn(),
 				addNewSession: vi.fn(),
 				deleteSession: vi.fn(),
 				getOpenInLabel: () => 'Open',
 				platform: 'darwin',
 				openPath: vi.fn(),
+				onGoToNextUnread: vi.fn(),
 				shortcuts: {},
 			}).map((a) => a.id)
 		).toContain('nextUnreadTab');

@@ -32,6 +32,11 @@ import type {
 	AgentConfig,
 } from '../../../renderer/types';
 
+// __APP_VERSION__ / __COMMIT_HASH__ are injected by the bundler at build time.
+// The About tab renders them, so stub them for the jsdom test environment.
+(globalThis as unknown as { __APP_VERSION__: string }).__APP_VERSION__ = '1.0.0';
+(globalThis as unknown as { __COMMIT_HASH__: string }).__COMMIT_HASH__ = '';
+
 // Mock the LayerStackContext
 vi.mock('../../../renderer/contexts/LayerStackContext', () => ({
 	useLayerStack: vi.fn(() => ({
@@ -644,7 +649,7 @@ describe('SettingsModal', () => {
 
 	describe('keyboard tab navigation', () => {
 		// Sidebar is alphabetized by label, so the order under no LLM flag is:
-		// AI Commands, Display, Encore Features, Environment, General,
+		// About, AI Commands, Display, Encore Features, Environment, General,
 		// Maestro Prompts, Notifications, Shortcuts, SSH Hosts, Themes.
 		it('should navigate to next tab with Cmd+Shift+] from default (general)', async () => {
 			render(<SettingsModal {...createDefaultProps({ initialTab: 'general' })} />);
@@ -697,29 +702,25 @@ describe('SettingsModal', () => {
 			// Themes is the last tab alphabetically
 			expect(screen.getByText('dark Mode')).toBeInTheDocument();
 
-			// Press Cmd+Shift+] to wrap to Agents (first tab alphabetically)
+			// Press Cmd+Shift+] to wrap to About (first tab alphabetically)
 			fireEvent.keyDown(window, { key: ']', metaKey: true, shiftKey: true });
 
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
-			expect(
-				screen.getByText(/Maestro probes each agent's binary at startup/i)
-			).toBeInTheDocument();
+			expect(screen.getByTitle('About')).toHaveClass('font-bold');
 		});
 
-		it('should wrap around when navigating before first tab (Agents)', async () => {
-			render(<SettingsModal {...createDefaultProps({ initialTab: 'agents' })} />);
+		it('should wrap around when navigating before first tab (About)', async () => {
+			render(<SettingsModal {...createDefaultProps({ initialTab: 'about' })} />);
 
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			// Agents is the first tab alphabetically
-			expect(
-				screen.getByText(/Maestro probes each agent's binary at startup/i)
-			).toBeInTheDocument();
+			// About is the first tab alphabetically
+			expect(screen.getByTitle('About')).toHaveClass('font-bold');
 
 			// Press Cmd+Shift+[ to wrap to Themes (last tab alphabetically)
 			fireEvent.keyDown(window, { key: '[', metaKey: true, shiftKey: true });
@@ -808,7 +809,12 @@ describe('SettingsModal', () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
-			fireEvent.click(screen.getByRole('button', { name: 'Small' }));
+			// Scope to the font-size section — the toast-width setting also renders
+			// Small/Medium/Large buttons, so an unscoped query is ambiguous.
+			const fontSizeSection = within(
+				document.querySelector('[data-setting-id="display-font-size"]') as HTMLElement
+			);
+			fireEvent.click(fontSizeSection.getByRole('button', { name: 'Small' }));
 			expect(mockSetFontSize).toHaveBeenCalledWith(12);
 		});
 
@@ -820,7 +826,10 @@ describe('SettingsModal', () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
-			fireEvent.click(screen.getByRole('button', { name: 'Medium' }));
+			const fontSizeSection = within(
+				document.querySelector('[data-setting-id="display-font-size"]') as HTMLElement
+			);
+			fireEvent.click(fontSizeSection.getByRole('button', { name: 'Medium' }));
 			expect(mockSetFontSize).toHaveBeenCalledWith(14);
 		});
 
@@ -832,7 +841,10 @@ describe('SettingsModal', () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
-			fireEvent.click(screen.getByRole('button', { name: 'Large' }));
+			const fontSizeSection = within(
+				document.querySelector('[data-setting-id="display-font-size"]') as HTMLElement
+			);
+			fireEvent.click(fontSizeSection.getByRole('button', { name: 'Large' }));
 			expect(mockSetFontSize).toHaveBeenCalledWith(16);
 		});
 
@@ -855,7 +867,10 @@ describe('SettingsModal', () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
-			const mediumButton = screen.getByText('Medium');
+			const fontSizeSection = within(
+				document.querySelector('[data-setting-id="display-font-size"]') as HTMLElement
+			);
+			const mediumButton = fontSizeSection.getByText('Medium');
 			expect(mediumButton).toHaveClass('ring-2');
 		});
 	});

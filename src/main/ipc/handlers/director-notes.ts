@@ -23,6 +23,7 @@ import {
 	CreateHandlerOptions,
 } from '../../utils/ipcHandler';
 import { groomContext } from '../../utils/context-groomer';
+import { buildDirectorNotesSynopsisPrompt } from '../../utils/director-notes-prompt';
 import { getPrompt } from '../../prompt-manager';
 import type { ProcessManager } from '../../process-manager';
 import type { AgentDetector } from '../../agents';
@@ -37,22 +38,6 @@ import { buildBucketAggregate } from '../../utils/history-bucket-builder';
 import type { HistoryGraphData } from './history';
 
 const LOG_CONTEXT = '[DirectorNotes]';
-
-/**
- * Sanitize a session display name for safe embedding in AI prompts.
- * Strips markdown formatting characters and control sequences that could
- * be interpreted as prompt instructions by the AI agent.
- */
-function sanitizeDisplayName(name: string): string {
-	return (
-		name
-			// Strip markdown headers, bold, italic, links, images
-			.replace(/[#*_`~\[\]()!|>]/g, '')
-			// Collapse multiple whitespace/newlines into single space
-			.replace(/\s+/g, ' ')
-			.trim()
-	);
-}
 
 // Helper to create handler options with consistent context
 const handlerOpts = (operation: string): Pick<CreateHandlerOptions, 'context' | 'operation'> => ({
@@ -493,40 +478,16 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 					};
 				}
 
-				// Build file-path manifest so the agent reads history files directly
-				const cutoffTime = Date.now() - options.lookbackDays * 24 * 60 * 60 * 1000;
-				const sessionIds = await historyManager.listSessionsWithHistory();
-				const sessionNameMap = buildSessionNameMap();
+				// Build the synopsis prompt: a manifest of history file paths scoped
+				// to the lookback window so the agent only reads files it needs.
+				const { prompt, agentCount, entryCount } = await buildDirectorNotesSynopsisPrompt({
+					historyManager,
+					sessionNameMap: buildSessionNameMap(),
+					lookbackDays: options.lookbackDays,
+					basePrompt: getPrompt('director-notes'),
+				});
 
-				const sessionManifest: Array<{
-					sessionId: string;
-					displayName: string;
-					historyFilePath: string;
-				}> = [];
-
-				// Collect stats: agents with entries and total entries within lookback
-				let agentCount = 0;
-				let entryCount = 0;
-
-				for (const sessionId of sessionIds) {
-					const filePath = await historyManager.getHistoryFilePath(sessionId);
-					if (!filePath) continue;
-					const displayName = sessionNameMap.get(sessionId) || sessionId;
-					sessionManifest.push({ sessionId, displayName, historyFilePath: filePath });
-
-					// Count entries in lookback window and track which agents contributed
-					const entries = await historyManager.getEntries(sessionId);
-					let agentHasEntries = false;
-					for (const entry of entries) {
-						if (entry.timestamp >= cutoffTime) {
-							entryCount++;
-							agentHasEntries = true;
-						}
-					}
-					if (agentHasEntries) agentCount++;
-				}
-
-				if (sessionManifest.length === 0) {
+				if (!prompt) {
 					return {
 						success: true,
 						synopsis: `# Director's Notes\n\n*Generated for the past ${options.lookbackDays} days*\n\nNo history files found.`,
@@ -535,44 +496,10 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 					};
 				}
 
-				// Build the prompt with file paths instead of inline data
-				const manifestLines = sessionManifest
-					.map(
-						(s) =>
-							`- Session "${sanitizeDisplayName(s.displayName)}" (ID: ${s.sessionId}): ${s.historyFilePath}`
-					)
-					.join('\n');
-
-				const cutoffDate = new Date(cutoffTime).toLocaleDateString('en-US', {
-					month: 'short',
-					day: 'numeric',
-					year: 'numeric',
+				logger.info(`Generating synopsis from ${agentCount} session files`, LOG_CONTEXT, {
+					promptLength: prompt.length,
+					sessionCount: agentCount,
 				});
-				const nowDate = new Date().toLocaleDateString('en-US', {
-					month: 'short',
-					day: 'numeric',
-					year: 'numeric',
-				});
-
-				const prompt = [
-					getPrompt('director-notes'),
-					'',
-					'---',
-					'',
-					'## Session History Files',
-					'',
-					`Lookback period: ${options.lookbackDays} days (${cutoffDate} – ${nowDate})`,
-					`Timestamp cutoff: ${cutoffTime} (only consider entries with timestamp >= this value)`,
-					`${agentCount} agents had ${entryCount} qualifying entries.`,
-					'',
-					manifestLines,
-				].join('\n');
-
-				logger.info(
-					`Generating synopsis from ${sessionManifest.length} session files`,
-					LOG_CONTEXT,
-					{ promptLength: prompt.length, sessionCount: sessionManifest.length }
-				);
 
 				try {
 					// Look up agent-level config values for override resolution

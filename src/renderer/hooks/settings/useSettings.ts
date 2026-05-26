@@ -30,6 +30,7 @@ import type {
 	EncoreFeatureFlags,
 } from '../../types';
 import type { FileExplorerIconTheme } from '../../utils/fileExplorerIcons/shared';
+import type { ToastWidth } from '../../../shared/toastWidth';
 import {
 	useSettingsStore,
 	loadAllSettings,
@@ -120,6 +121,8 @@ export interface UseSettingsReturn {
 	setShowHiddenFiles: (value: boolean) => void;
 	fileExplorerIconTheme: FileExplorerIconTheme;
 	setFileExplorerIconTheme: (value: FileExplorerIconTheme) => void;
+	toastWidth: ToastWidth;
+	setToastWidth: (value: ToastWidth) => void;
 
 	// Logging settings
 	logLevel: string;
@@ -261,6 +264,8 @@ export interface UseSettingsReturn {
 	setShowFilePreviewsInUnreadFilter: (value: boolean) => void;
 	useCmd0AsLastTab: boolean;
 	setUseCmd0AsLastTab: (value: boolean) => void;
+	showBrowserTabDomain: boolean;
+	setShowBrowserTabDomain: (value: boolean) => void;
 
 	// Document Graph settings
 	documentGraphShowExternalLinks: boolean;
@@ -393,6 +398,8 @@ export interface UseSettingsReturn {
 	// Left side panel
 	showLeftPanelGroupMemberCount: boolean;
 	setShowLeftPanelGroupMemberCount: (value: boolean) => void;
+	leftPanelCollapsedPillsPerRow: number;
+	setLeftPanelCollapsedPillsPerRow: (value: number) => void;
 	showLeftPanelLocationPills: boolean;
 	setShowLeftPanelLocationPills: (value: boolean) => void;
 	showLeftPanelGitIndicator: boolean;

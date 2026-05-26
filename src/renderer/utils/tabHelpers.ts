@@ -2405,8 +2405,9 @@ export interface GoToNextUnreadResult {
 }
 
 /**
- * Compute the next unread session to jump to (relative to the current session
- * in the ordered session list), and return instructions for the caller to apply.
+ * Compute the next unread/draft tab to jump to. Prefers a non-active actionable
+ * tab in the current session (tab-level jump, no session change); otherwise
+ * searches forward through other sessions in the ordered list, wrapping around.
  *
  * Does NOT mutate state — the caller applies the result via setSessions/setActiveSessionId.
  */
@@ -2417,9 +2418,28 @@ export function findNextUnreadSession(
 	const currentIndex = orderedSessions.findIndex((s) => s.id === activeSessionId);
 	const currentSession = orderedSessions.find((s) => s.id === activeSessionId);
 	const isActionable = (tab: AITab) => tab.hasUnread || hasDraft(tab);
+
+	// 1) Tab-level jump within the current session: if there's an unread/draft
+	//    tab here that isn't already active, switch to it without changing
+	//    sessions. The shortcut is called "Next Unread / Draft *Tab*" — staying
+	//    in the same session is the closest "next" when one exists.
+	if (currentSession) {
+		const inSessionTarget = currentSession.aiTabs?.find(
+			(t) => t.id !== currentSession.activeTabId && isActionable(t)
+		);
+		if (inSessionTarget) {
+			return {
+				jumped: true,
+				clearedCurrent: false,
+				targetSessionId: currentSession.id,
+				targetTabId: inSessionTarget.id,
+			};
+		}
+	}
+
 	const currentHasUnread = currentSession?.aiTabs?.some(isActionable) ?? false;
 
-	// Search forward from current position, wrapping around
+	// 2) Search forward through other sessions, wrapping around.
 	for (let i = 1; i <= orderedSessions.length; i++) {
 		const candidate = orderedSessions[(currentIndex + i) % orderedSessions.length];
 		if (candidate.id !== activeSessionId && candidate.aiTabs?.some(isActionable)) {
@@ -2433,9 +2453,11 @@ export function findNextUnreadSession(
 		}
 	}
 
-	// No other session has unread tabs
+	// Nothing actionable elsewhere. Don't silently clear the current session's
+	// unread flags — if the user can see an unread badge here, they should be
+	// able to find it (it would have been handled by step 1 above when present).
 	return {
 		jumped: false,
-		clearedCurrent: currentHasUnread,
+		clearedCurrent: false,
 	};
 }

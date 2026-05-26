@@ -19,6 +19,8 @@ import type { AITab, Theme } from '../../types';
 import { buildSessionDeepLink } from '../../../shared/deep-link-urls';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
+import { hasThinkingEntries } from '../../utils/contextExtractor';
+import type { CopyContextOptions } from '../../hooks/tabs/useTabExportHandlers';
 
 export interface AITabOverlayMenuProps {
 	tab: AITab;
@@ -36,6 +38,7 @@ export interface AITabOverlayMenuProps {
 	onMarkUnreadClick: (e: React.MouseEvent) => void;
 	onExportHtmlClick: (e: React.MouseEvent) => void;
 	onCopyContextClick: (e: React.MouseEvent) => void;
+	onCopyContextWithReasoningClick: (e: React.MouseEvent) => void;
 	onSummarizeAndContinueClick: (e: React.MouseEvent) => void;
 	onMergeWithClick: (e: React.MouseEvent) => void;
 	onSendToAgentClick: (e: React.MouseEvent) => void;
@@ -50,7 +53,7 @@ export interface AITabOverlayMenuProps {
 	onMergeWith?: (tabId: string) => void;
 	onSendToAgent?: (tabId: string) => void;
 	onSummarizeAndContinue?: (tabId: string) => void;
-	onCopyContext?: (tabId: string) => void;
+	onCopyContext?: (tabId: string, options?: CopyContextOptions) => void;
 	onExportHtml?: (tabId: string) => void;
 	onPublishGist?: (tabId: string) => void;
 	onMoveToFirst?: (tabId: string) => void;
@@ -79,6 +82,7 @@ export const AITabOverlayMenu = memo(function AITabOverlayMenu({
 	onMarkUnreadClick,
 	onExportHtmlClick,
 	onCopyContextClick,
+	onCopyContextWithReasoningClick,
 	onSummarizeAndContinueClick,
 	onMergeWithClick,
 	onSendToAgentClick,
@@ -244,6 +248,18 @@ export const AITabOverlayMenu = memo(function AITabOverlayMenu({
 					>
 						<Clipboard className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 						Context: Copy to Clipboard
+					</button>
+				)}
+
+				{/* Context: Copy with Reasoning — only when the tab has reasoning blocks */}
+				{onCopyContext && hasThinkingEntries(tab.logs) && (
+					<button
+						onClick={onCopyContextWithReasoningClick}
+						className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+						style={{ color: theme.colors.textMain }}
+					>
+						<Clipboard className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+						Context: Copy with Reasoning
 					</button>
 				)}
 

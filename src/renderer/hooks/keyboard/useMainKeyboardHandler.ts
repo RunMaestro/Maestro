@@ -509,9 +509,11 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				trackShortcut('toggleTabStar');
 			} else if (ctx.isShortcut(e, 'openPromptComposer')) {
 				e.preventDefault();
-				// Only open in AI mode
+				// Only act in AI mode — the composer is AI-only. While it's already
+				// open, the hotkey cycles between windowed and full-screen instead of
+				// being a no-op.
 				if (ctx.activeSession?.inputMode === 'ai') {
-					ctx.setPromptComposerOpen(true);
+					useModalStore.getState().cyclePromptComposer();
 					trackShortcut('openPromptComposer');
 				}
 			} else if (ctx.isShortcut(e, 'openWizard')) {
@@ -900,8 +902,17 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 						}
 					}
 				}
-				// AI-tab-specific metadata toggles (not applicable to terminal tabs)
-				if (ctx.activeSession.inputMode === 'ai') {
+				// AI-tab-specific metadata toggles (read-only, save-to-history,
+				// show-thinking). These only make sense when an AI chat tab is the
+				// active tab. inputMode alone is insufficient: file and browser tabs
+				// keep inputMode 'ai' (only terminal flips it), so without also
+				// excluding active file/browser tabs these shortcuts would silently
+				// mutate the last-visited AI tab while the user is looking at a file.
+				const isAiChatTabActive =
+					ctx.activeSession.inputMode === 'ai' &&
+					!ctx.activeSession.activeFileTabId &&
+					!ctx.activeSession.activeBrowserTabId;
+				if (isAiChatTabActive) {
 					if (ctx.isTabShortcut(e, 'toggleReadOnlyMode')) {
 						e.preventDefault();
 						ctx.setSessions((prev: Session[]) =>

@@ -1991,6 +1991,104 @@ describe('process IPC handlers', () => {
 			// The stdin script should use just 'codex', not the full local path
 			expect(spawnCall.sshStdinScript).toContain('codex');
 			expect(spawnCall.sshStdinScript).not.toContain('/opt/homebrew/bin/codex');
+
+			// Regression for #1016: when SSH is enabled, no local dirs should be
+			// injected via extraPathDirs — those would leak macOS paths into the
+			// remote spawn env (the SSH command itself runs locally, but the script
+			// it runs on the remote builds its own PATH).
+			expect(spawnCall.extraPathDirs).toBeUndefined();
+		});
+
+		it('should inject the detected agent parent dir as extraPathDirs for local (non-SSH) spawns', async () => {
+			// Regression for #1016: when codex (or any node-script agent) was
+			// installed alongside a non-standard `node` (e.g. /Users/me/opt/node/bin),
+			// Maestro detected it via shell PATH but spawned with a narrower PATH
+			// that didn't include that bin dir — the `#!/usr/bin/env node` shebang
+			// then failed with exit 127. Fix: prepend dirname(agent.path) so the
+			// co-located runtime is reachable.
+			const mockAgent = {
+				id: 'codex',
+				name: 'Codex',
+				binaryName: 'codex',
+				path: '/Users/me/opt/node/bin/codex',
+				requiresPty: false,
+				capabilities: {
+					supportsStreamJsonInput: false,
+				},
+			};
+
+			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
+			mockProcessManager.spawn.mockReturnValue({ pid: 12345, success: true });
+
+			const handler = handlers.get('process:spawn');
+			await handler!({} as any, {
+				sessionId: 'session-1',
+				toolType: 'codex',
+				cwd: '/home/devuser/project',
+				command: '/Users/me/opt/node/bin/codex',
+				args: ['exec', '--json'],
+				// NOTE: no sessionSshRemoteConfig — this is a local spawn
+			});
+
+			const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
+			expect(spawnCall.extraPathDirs).toEqual(['/Users/me/opt/node/bin']);
+		});
+
+		it('should prefer sessionCustomPath over agent.path when deriving extraPathDirs (local)', async () => {
+			// When the user overrides the binary, the co-located runtime lives
+			// next to *that* binary — not the auto-detected one. Per CodeRabbit
+			// + Greptile review on #1021.
+			const mockAgent = {
+				id: 'codex',
+				name: 'Codex',
+				binaryName: 'codex',
+				path: '/opt/homebrew/bin/codex',
+				requiresPty: false,
+				capabilities: { supportsStreamJsonInput: false },
+			};
+			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
+			mockProcessManager.spawn.mockReturnValue({ pid: 12345, success: true });
+
+			const handler = handlers.get('process:spawn');
+			await handler!({} as any, {
+				sessionId: 'session-1',
+				toolType: 'codex',
+				cwd: '/home/devuser/project',
+				command: '/opt/homebrew/bin/codex',
+				args: ['exec'],
+				sessionCustomPath: '/Users/me/opt/node/bin/codex',
+			});
+
+			const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
+			expect(spawnCall.extraPathDirs).toEqual(['/Users/me/opt/node/bin']);
+		});
+
+		it('should not inject extraPathDirs when the spawn binary path is not absolute', async () => {
+			// path.dirname("codex") would return "." — prepending that to PATH
+			// would let a binary in the spawn cwd shadow system tools.
+			// Per Greptile review on #1021.
+			const mockAgent = {
+				id: 'codex',
+				name: 'Codex',
+				binaryName: 'codex',
+				path: 'codex', // bare binary name, no directory
+				requiresPty: false,
+				capabilities: { supportsStreamJsonInput: false },
+			};
+			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
+			mockProcessManager.spawn.mockReturnValue({ pid: 12345, success: true });
+
+			const handler = handlers.get('process:spawn');
+			await handler!({} as any, {
+				sessionId: 'session-1',
+				toolType: 'codex',
+				cwd: '/home/devuser/project',
+				command: 'codex',
+				args: ['exec'],
+			});
+
+			const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
+			expect(spawnCall.extraPathDirs).toBeUndefined();
 		});
 
 		it('should use sessionCustomPath for SSH remote when user specifies a custom path', async () => {

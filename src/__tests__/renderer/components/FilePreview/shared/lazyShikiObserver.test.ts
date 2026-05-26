@@ -10,6 +10,7 @@ import {
 	createLazyShikiObserver,
 	HIGHLIGHTED_ATTR,
 } from '../../../../../renderer/components/FilePreview/shared/lazyShikiObserver';
+import { __resetForTests } from '../../../../../renderer/utils/shiki/highlighterManager';
 import { mockTheme } from '../../../../helpers/mockTheme';
 
 class FakeIntersectionObserver implements IntersectionObserver {
@@ -54,12 +55,45 @@ class FakeIntersectionObserver implements IntersectionObserver {
 	}
 }
 
-vi.mock('shiki', () => ({
-	createHighlighter: vi.fn(async () => ({
-		codeToHtml: (code: string, opts: { lang: string }) =>
-			`<pre class="shiki"><code class="language-${opts.lang}">SHIKI:${code}</code></pre>`,
-	})),
-}));
+vi.mock('shiki', () => {
+	const loaded = new Set<string>([
+		'javascript',
+		'typescript',
+		'tsx',
+		'jsx',
+		'json',
+		'python',
+		'bash',
+		'shell',
+		'sh',
+		'html',
+		'css',
+		'scss',
+		'markdown',
+		'md',
+		'yaml',
+		'yml',
+		'rust',
+		'go',
+		'java',
+		'c',
+		'cpp',
+		'sql',
+		'xml',
+	]);
+	return {
+		createHighlighter: vi.fn(async () => ({
+			codeToHtml: (code: string, opts: { lang: string }) =>
+				`<pre class="shiki"><code class="language-${opts.lang}">SHIKI:${code}</code></pre>`,
+			getLoadedLanguages: () => Array.from(loaded),
+			loadLanguage: async (lang: string) => {
+				loaded.add(lang);
+			},
+		})),
+		bundledLanguagesInfo: [],
+		bundledLanguagesAlias: {},
+	};
+});
 
 const createdRoots: HTMLDivElement[] = [];
 
@@ -68,6 +102,7 @@ beforeEach(() => {
 		globalThis as typeof globalThis & { IntersectionObserver: typeof IntersectionObserver }
 	).IntersectionObserver = FakeIntersectionObserver as unknown as typeof IntersectionObserver;
 	FakeIntersectionObserver.instances.length = 0;
+	__resetForTests();
 });
 
 afterEach(() => {
@@ -167,7 +202,7 @@ describe('createLazyShikiObserver', () => {
 		expect(root.querySelector('code')!.innerHTML).toBe('+++');
 	});
 
-	it('disconnect() tears down the observer and drops the shiki promise', () => {
+	it('disconnect() tears down the observer', () => {
 		const root = makeRoot('<pre><code class="language-ts">x</code></pre>');
 		const handle = createLazyShikiObserver({
 			theme: mockTheme,

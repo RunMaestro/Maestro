@@ -40,6 +40,8 @@ import { safeClipboardWrite } from '../utils/clipboard';
 import { flashCopiedToClipboard } from '../utils/flashCopiedToClipboard';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useMessageGistStore } from '../stores/messageGistStore';
+import { useSessionStore } from '../stores/sessionStore';
+import { SessionRecoveryCard } from './SessionRecoveryCard';
 
 // ============================================================================
 // Tool display helpers (pure functions, hoisted out of render path)
@@ -137,6 +139,42 @@ const summarizeToolInput = (input: unknown): ToolSummary | null => {
 const isHiddenProgressEntry = (log: LogEntry): boolean =>
 	log.source === 'system' && log.id.startsWith('hidden-progress:');
 
+/**
+ * Connector that reads the live tab from the session store and renders the
+ * SessionRecoveryCard. Keeps LogItem's prop surface narrow (just sessionId)
+ * instead of passing the full Session object through every log entry.
+ */
+function SessionRecoveryCardConnector(props: {
+	theme: Theme;
+	sessionId: string;
+	recoveryAction: NonNullable<LogEntry['recoveryAction']>;
+	isRecovering: boolean;
+	recoveryError: string | null;
+	onRecover: (opts: {
+		sessionId: string;
+		tabId: string;
+		lastUserPrompt: string;
+		groomContext: boolean;
+	}) => void;
+}) {
+	const tab = useSessionStore((s) => {
+		const session = s.sessions.find((sess) => sess.id === props.sessionId);
+		return session?.aiTabs.find((t) => t.id === props.recoveryAction.tabId);
+	});
+	if (!tab) return null;
+	return (
+		<SessionRecoveryCard
+			theme={props.theme}
+			sessionId={props.sessionId}
+			tab={tab}
+			lastUserPrompt={props.recoveryAction.lastUserPrompt}
+			isRecovering={props.isRecovering}
+			recoveryError={props.recoveryError}
+			onRecover={props.onRecover}
+		/>
+	);
+}
+
 // ============================================================================
 // LogItem - Memoized component for individual log entries
 // ============================================================================
@@ -209,6 +247,17 @@ interface LogItemProps {
 	// Claude mode pill — both passed as primitives so LogItem memo equality stays cheap.
 	isClaudeCode: boolean;
 	isAdaptiveMode: boolean;
+	// Session recovery (session_not_found inline card). Only consumed when
+	// log.recoveryAction is set; otherwise these props are ignored.
+	sessionId: string;
+	onSessionRecover?: (opts: {
+		sessionId: string;
+		tabId: string;
+		lastUserPrompt: string;
+		groomContext: boolean;
+	}) => void;
+	isRecoveringSession?: boolean;
+	sessionRecoveryError?: string | null;
 }
 
 const LogItemComponent = memo(
@@ -256,6 +305,10 @@ const LogItemComponent = memo(
 		userMessageAlignment,
 		isClaudeCode,
 		isAdaptiveMode,
+		sessionId,
+		onSessionRecover,
+		isRecoveringSession,
+		sessionRecoveryError,
 	}: LogItemProps) => {
 		// Ref for the log item container - used for scroll-into-view on expand
 		const logItemRef = useRef<HTMLDivElement>(null);
@@ -497,6 +550,7 @@ const LogItemComponent = memo(
 									projectRoot={projectRoot}
 									onFileClick={onFileClick}
 									chatLineBreaks
+									chatMath
 								/>
 							</div>
 							{!!log.agentError?.parsedJson && onShowErrorDetails && (
@@ -549,6 +603,7 @@ const LogItemComponent = memo(
 										projectRoot={projectRoot}
 										onFileClick={onFileClick}
 										chatLineBreaks
+										chatMath
 									/>
 								) : (
 									log.text
@@ -715,6 +770,7 @@ const LogItemComponent = memo(
 											projectRoot={projectRoot}
 											onFileClick={onFileClick}
 											chatLineBreaks
+											chatMath
 										/>
 									) : (
 										displayText
@@ -802,6 +858,7 @@ const LogItemComponent = memo(
 											projectRoot={projectRoot}
 											onFileClick={onFileClick}
 											chatLineBreaks
+											chatMath
 										/>
 									) : (
 										<div>{filteredText}</div>
@@ -881,6 +938,7 @@ const LogItemComponent = memo(
 										projectRoot={projectRoot}
 										onFileClick={onFileClick}
 										chatLineBreaks
+										chatMath
 									/>
 								) : (
 									// Raw markdown source mode (show original text with markdown syntax visible)
@@ -893,6 +951,20 @@ const LogItemComponent = memo(
 								)}
 							</>
 						))}
+					{/* Session-not-found recovery card. Rendered inline directly
+					    under the system message that announced the dead session. The
+					    card reads the tab from the store so we don't have to pass the
+					    full Session through LogItem (would defeat memoization). */}
+					{log.recoveryAction && (
+						<SessionRecoveryCardConnector
+							theme={theme}
+							sessionId={sessionId}
+							recoveryAction={log.recoveryAction}
+							isRecovering={!!isRecoveringSession}
+							recoveryError={sessionRecoveryError ?? null}
+							onRecover={(opts) => onSessionRecover?.(opts)}
+						/>
+					)}
 					{/* Mode pill — shows which CLI captured this Claude turn (TUI = maestro-p,
 					    API = claude --print). "Adaptive " prefix indicates the session has
 					    Adaptive Mode enabled (auto-switching between the two). */}
@@ -1179,6 +1251,17 @@ interface TerminalOutputProps {
 		content: string;
 		sshRemoteId?: string;
 	}) => void; // Callback to open saved file in a tab
+	// In-place recovery from session_not_found errors. Invoked by the
+	// SessionRecoveryCard that renders inside system log entries carrying a
+	// `recoveryAction` payload.
+	onSessionRecover?: (opts: {
+		sessionId: string;
+		tabId: string;
+		lastUserPrompt: string;
+		groomContext: boolean;
+	}) => void;
+	isRecoveringSession?: boolean;
+	sessionRecoveryError?: string | null;
 }
 
 // PERFORMANCE: Wrap in React.memo to prevent re-renders when parent re-renders
@@ -1225,6 +1308,9 @@ export const TerminalOutput = memo(
 			onOpenInTab,
 			ghCliAvailable,
 			onPublishMessageGist,
+			onSessionRecover,
+			isRecoveringSession,
+			sessionRecoveryError,
 		} = props;
 		const globalBionifyReadingMode = useSettingsStore((s) => s.bionifyReadingMode);
 		const globalBionifyIntensity = useSettingsStore((s) => s.bionifyIntensity);
@@ -2156,6 +2242,10 @@ export const TerminalOutput = memo(
 							onToggleMarkdownEditMode={toggleMarkdownEditMode}
 							onReplayMessage={onReplayMessage}
 							onForkConversation={onForkConversation}
+							sessionId={session.id}
+							onSessionRecover={onSessionRecover}
+							isRecoveringSession={isRecoveringSession}
+							sessionRecoveryError={sessionRecoveryError}
 							fileTree={fileTree}
 							cwd={cwd}
 							projectRoot={projectRoot}

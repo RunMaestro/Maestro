@@ -3,19 +3,25 @@ import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { MarkdownRenderer } from '../../../renderer/components/MarkdownRenderer';
 
-vi.mock('react-syntax-highlighter', () => ({
-	Prism: ({ children }: { children: string }) => (
-		<pre data-testid="syntax-highlighter">{children}</pre>
-	),
+vi.mock('shiki', () => ({
+	createHighlighter: vi.fn(async () => ({
+		codeToHtml: () => '<pre class="shiki"><code>mocked</code></pre>',
+		getLoadedLanguages: () => [],
+		loadLanguage: async () => undefined,
+	})),
+	bundledLanguagesInfo: [],
+	bundledLanguagesAlias: {},
 }));
-vi.mock('react-syntax-highlighter/dist/esm/styles/prism', () => ({
-	vscDarkPlus: {},
-	vs: {},
+vi.mock('highlight.js', () => ({
+	default: { highlightAuto: () => ({ language: null, relevance: 0 }) },
 }));
 vi.mock('lucide-react', () => ({
 	Clipboard: () => <span data-testid="clipboard-icon">Clipboard</span>,
 	Loader2: () => <span data-testid="loader-icon">Loader</span>,
 	ImageOff: () => <span data-testid="image-off-icon">ImageOff</span>,
+	ChevronDown: () => <span data-testid="chevron-down-icon">ChevronDown</span>,
+	Search: () => <span data-testid="search-icon">Search</span>,
+	Check: () => <span data-testid="check-icon">Check</span>,
 }));
 
 const mockTheme = {
@@ -75,7 +81,9 @@ describe('MarkdownRenderer bionify opt-in', () => {
 		expect(checkbox).not.toBeNull();
 		expect(checkbox?.checked).toBe(true);
 		expect(checkbox?.closest('li')).toHaveTextContent('Ship reader tests');
-		expect(screen.getByTestId('syntax-highlighter')).toHaveTextContent('const value = 1;');
+		expect(screen.getByTestId('code-fence').querySelector('code')).toHaveTextContent(
+			'const value = 1;'
+		);
 		expect(document.querySelector('pre .bionify-word')).not.toBeInTheDocument();
 	});
 });

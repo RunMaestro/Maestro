@@ -38,6 +38,8 @@ import { getLevelIndex } from '../constants/keyboardMastery';
 import { RIGHT_PANEL_MIN_WIDTH, RIGHT_PANEL_MAX_WIDTH } from '../constants/rightPanel';
 import type { FileExplorerIconTheme } from '../utils/fileExplorerIcons/shared';
 import { isFileExplorerIconTheme } from '../utils/fileExplorerIcons/shared';
+import type { ToastWidth } from '../../shared/toastWidth';
+import { isToastWidth } from '../../shared/toastWidth';
 import { logger } from '../utils/logger';
 
 // ============================================================================
@@ -327,6 +329,7 @@ export interface SettingsStoreState {
 	bionifyAlgorithm: string;
 	showHiddenFiles: boolean;
 	fileExplorerIconTheme: FileExplorerIconTheme;
+	toastWidth: ToastWidth;
 	terminalWidth: number;
 	logLevel: string;
 	maxLogBuffer: number;
@@ -362,6 +365,7 @@ export interface SettingsStoreState {
 	showStarredInUnreadFilter: boolean;
 	showFilePreviewsInUnreadFilter: boolean;
 	useCmd0AsLastTab: boolean;
+	showBrowserTabDomain: boolean;
 	documentGraphShowExternalLinks: boolean;
 	documentGraphMaxNodes: number;
 	documentGraphPreviewCharLimit: number;
@@ -404,6 +408,7 @@ export interface SettingsStoreState {
 	showWorktreePill: boolean;
 	showWorktreeBranchName: boolean;
 	showLeftPanelGroupMemberCount: boolean;
+	leftPanelCollapsedPillsPerRow: number;
 	showLeftPanelLocationPills: boolean;
 	showLeftPanelGitIndicator: boolean;
 	showLeftPanelCueIndicator: boolean;
@@ -466,6 +471,7 @@ export interface SettingsStoreActions {
 	setBionifyAlgorithm: (value: string) => void;
 	setShowHiddenFiles: (value: boolean) => void;
 	setFileExplorerIconTheme: (value: FileExplorerIconTheme) => void;
+	setToastWidth: (value: ToastWidth) => void;
 	setTerminalWidth: (value: number) => void;
 	setMaxOutputLines: (value: number) => void;
 	setOsNotificationsEnabled: (value: boolean) => void;
@@ -493,6 +499,7 @@ export interface SettingsStoreActions {
 	setShowStarredInUnreadFilter: (value: boolean) => void;
 	setShowFilePreviewsInUnreadFilter: (value: boolean) => void;
 	setUseCmd0AsLastTab: (value: boolean) => void;
+	setShowBrowserTabDomain: (value: boolean) => void;
 	setDocumentGraphShowExternalLinks: (value: boolean) => void;
 	setDocumentGraphMaxNodes: (value: number) => void;
 	setDocumentGraphPreviewCharLimit: (value: number) => void;
@@ -534,6 +541,7 @@ export interface SettingsStoreActions {
 	setShowWorktreePill: (value: boolean) => void;
 	setShowWorktreeBranchName: (value: boolean) => void;
 	setShowLeftPanelGroupMemberCount: (value: boolean) => void;
+	setLeftPanelCollapsedPillsPerRow: (value: number) => void;
 	setShowLeftPanelLocationPills: (value: boolean) => void;
 	setShowLeftPanelGitIndicator: (value: boolean) => void;
 	setShowLeftPanelCueIndicator: (value: boolean) => void;
@@ -666,6 +674,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		bionifyAlgorithm: '- 0 1 1 2 0.4',
 		showHiddenFiles: true,
 		fileExplorerIconTheme: 'default',
+		toastWidth: 'small',
 		terminalWidth: 100,
 		logLevel: 'info',
 		maxLogBuffer: 5000,
@@ -701,6 +710,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		showStarredInUnreadFilter: false,
 		showFilePreviewsInUnreadFilter: false,
 		useCmd0AsLastTab: true,
+		showBrowserTabDomain: true,
 		documentGraphShowExternalLinks: false,
 		documentGraphMaxNodes: 50,
 		documentGraphPreviewCharLimit: 100,
@@ -743,6 +753,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		showWorktreePill: false,
 		showWorktreeBranchName: false,
 		showLeftPanelGroupMemberCount: false,
+		leftPanelCollapsedPillsPerRow: 20,
 		showLeftPanelLocationPills: true,
 		showLeftPanelGitIndicator: true,
 		showLeftPanelCueIndicator: true,
@@ -930,6 +941,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setFileExplorerIconTheme: (value) => {
 			set({ fileExplorerIconTheme: value });
 			window.maestro.settings.set('fileExplorerIconTheme', value);
+		},
+
+		setToastWidth: (value) => {
+			set({ toastWidth: value });
+			window.maestro.settings.set('toastWidth', value);
 		},
 
 		setTerminalWidth: (value) => {
@@ -1135,6 +1151,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setUseCmd0AsLastTab: (value) => {
 			set({ useCmd0AsLastTab: value });
 			window.maestro.settings.set('useCmd0AsLastTab', value);
+		},
+
+		setShowBrowserTabDomain: (value) => {
+			set({ showBrowserTabDomain: value });
+			window.maestro.settings.set('showBrowserTabDomain', value);
 		},
 
 		setDocumentGraphShowExternalLinks: (value) => {
@@ -1359,6 +1380,12 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setShowLeftPanelGroupMemberCount: (value) => {
 			set({ showLeftPanelGroupMemberCount: value });
 			window.maestro.settings.set('showLeftPanelGroupMemberCount', value);
+		},
+
+		setLeftPanelCollapsedPillsPerRow: (value) => {
+			const clamped = Math.max(5, Math.min(50, Math.round(value)));
+			set({ leftPanelCollapsedPillsPerRow: clamped });
+			window.maestro.settings.set('leftPanelCollapsedPillsPerRow', clamped);
 		},
 
 		setShowLeftPanelLocationPills: (value) => {
@@ -2169,6 +2196,12 @@ export async function loadAllSettings(): Promise<void> {
 				: 'default';
 		}
 
+		if (allSettings['toastWidth'] !== undefined) {
+			patch.toastWidth = isToastWidth(allSettings['toastWidth'])
+				? allSettings['toastWidth']
+				: 'small';
+		}
+
 		if (allSettings['terminalWidth'] !== undefined)
 			patch.terminalWidth = allSettings['terminalWidth'] as number;
 
@@ -2383,6 +2416,9 @@ export async function loadAllSettings(): Promise<void> {
 
 		if (allSettings['useCmd0AsLastTab'] !== undefined)
 			patch.useCmd0AsLastTab = allSettings['useCmd0AsLastTab'] as boolean;
+
+		if (allSettings['showBrowserTabDomain'] !== undefined)
+			patch.showBrowserTabDomain = allSettings['showBrowserTabDomain'] as boolean;
 
 		// Document Graph settings (with validation)
 		if (allSettings['documentGraphShowExternalLinks'] !== undefined)
@@ -2606,6 +2642,13 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['showLeftPanelGroupMemberCount'] !== undefined)
 			patch.showLeftPanelGroupMemberCount = allSettings['showLeftPanelGroupMemberCount'] as boolean;
 
+		if (allSettings['leftPanelCollapsedPillsPerRow'] !== undefined) {
+			const perRow = allSettings['leftPanelCollapsedPillsPerRow'] as number;
+			if (typeof perRow === 'number' && perRow >= 5 && perRow <= 50) {
+				patch.leftPanelCollapsedPillsPerRow = perRow;
+			}
+		}
+
 		if (allSettings['showLeftPanelLocationPills'] !== undefined)
 			patch.showLeftPanelLocationPills = allSettings['showLeftPanelLocationPills'] as boolean;
 
@@ -2743,6 +2786,7 @@ export function getSettingsActions() {
 		setBionifyAlgorithm: state.setBionifyAlgorithm,
 		setShowHiddenFiles: state.setShowHiddenFiles,
 		setFileExplorerIconTheme: state.setFileExplorerIconTheme,
+		setToastWidth: state.setToastWidth,
 		setTerminalWidth: state.setTerminalWidth,
 		setLogLevel: state.setLogLevel,
 		setMaxLogBuffer: state.setMaxLogBuffer,
@@ -2824,6 +2868,7 @@ export function getSettingsActions() {
 		setShowWorktreePill: state.setShowWorktreePill,
 		setShowWorktreeBranchName: state.setShowWorktreeBranchName,
 		setShowLeftPanelGroupMemberCount: state.setShowLeftPanelGroupMemberCount,
+		setLeftPanelCollapsedPillsPerRow: state.setLeftPanelCollapsedPillsPerRow,
 		setShowLeftPanelLocationPills: state.setShowLeftPanelLocationPills,
 		setShowLeftPanelGitIndicator: state.setShowLeftPanelGitIndicator,
 		setShowLeftPanelCueIndicator: state.setShowLeftPanelCueIndicator,

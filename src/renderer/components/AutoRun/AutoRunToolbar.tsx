@@ -84,14 +84,17 @@ export const AutoRunToolbar = memo(function AutoRunToolbar({
 						}
 						onOpenBatchRunner?.();
 					}}
-					disabled={isAgentBusy}
-					className={`${btnClass} ${isAgentBusy ? 'opacity-50 cursor-not-allowed' : ''}`}
+					className={btnClass}
 					style={{
 						color: theme.colors.accent,
 						border: `1px solid ${theme.colors.accent}40`,
 						backgroundColor: `${theme.colors.accent}15`,
 					}}
-					title={isAgentBusy ? 'Cannot run while agent is thinking' : 'Run auto-run on tasks'}
+					title={
+						isAgentBusy
+							? 'Agent is thinking — you can configure auto-run, but launching is paused until it finishes'
+							: 'Run auto-run on tasks'
+					}
 				>
 					{!compact && <Play className="w-3.5 h-3.5" />}
 					Run

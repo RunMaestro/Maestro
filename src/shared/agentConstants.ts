@@ -30,6 +30,27 @@ export const DEFAULT_CONTEXT_WINDOWS: Partial<Record<AgentId, number>> = {
 export const FALLBACK_CONTEXT_WINDOW = 200000;
 
 /**
+ * Context-window threshold (tokens) at/above which Auto Run defaults to
+ * fresh-context-per-document instead of fresh-context-per-task. Windows this
+ * large (Claude 1M, etc.) can comfortably hold a whole document's worth of
+ * tasks in one shared context, so the agent walks the document in a single
+ * invocation; smaller windows reset per task to avoid context exhaustion.
+ */
+export const PER_DOCUMENT_CONTEXT_THRESHOLD = 1_000_000;
+
+/**
+ * Whether Adaptive Mode (a.k.a. maestro-p / automatic Claude token-source
+ * management, persisted as `enableMaestroP`) is enabled by default for newly
+ * created agents of the given type. Currently Claude Code only — the spawner
+ * ignores `enableMaestroP` for every other agent. This is the single source of
+ * truth for the "default on for new agents" rule; the one-shot migration in
+ * `src/main/stores/migrations/` backfills the same default onto existing agents.
+ */
+export function isAdaptiveModeDefaultOn(agentId: string): boolean {
+	return agentId === 'claude-code';
+}
+
+/**
  * Agents that use combined input+output context windows.
  * OpenAI models (Codex, o3, o4-mini) have a single context window that includes
  * both input and output tokens, unlike Claude which has separate limits.

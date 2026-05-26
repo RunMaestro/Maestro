@@ -12,7 +12,9 @@
 
 import type Store from 'electron-store';
 
+import { logger } from '../../utils/logger';
 import type { MaestroSettings } from '../types';
+import { migrateAdaptiveModeDefault } from './adaptive-mode-default';
 
 /**
  * Run all registered settings-store migrations once. Safe to call on every
@@ -21,6 +23,10 @@ import type { MaestroSettings } from '../types';
  * Any migration that throws is logged at error and swallowed so a buggy
  * migration cannot block startup.
  */
-export function runSettingsMigrations(_store: Store<MaestroSettings>): void {
-	// No migrations currently registered.
+export function runSettingsMigrations(store: Store<MaestroSettings>): void {
+	try {
+		migrateAdaptiveModeDefault(store);
+	} catch (error) {
+		logger.error('Adaptive Mode default migration failed', 'Migration', error);
+	}
 }

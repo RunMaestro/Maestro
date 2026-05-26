@@ -1523,6 +1523,21 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 		)
 	);
 
+	// Auto-detected maestro-p binary path (bundled with the app). The renderer's
+	// AgentConfigPanel shows this as helper text for the Batch Mode path override.
+	// Returns null when no bundled script can be located — usually means the user
+	// is running a dev build without `npm run build` having produced
+	// `dist/cli/maestro-p.js`.
+	ipcMain.handle(
+		'agents:getMaestroPDetectedPath',
+		withIpcErrorLogging(
+			handlerOpts('getMaestroPDetectedPath'),
+			async (): Promise<string | null> => {
+				return getMaestroPBinPath();
+			}
+		)
+	);
+
 	// Get every persisted snapshot — used by the renderer at startup to
 	// hydrate the agents store before the first live detection completes.
 	ipcMain.handle(
@@ -1574,21 +1589,6 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 			await agentDetector.detectAgents();
 			return capabilitySnapshots.get(agentId) ?? null;
 		})
-	);
-
-	// Auto-detected maestro-p binary path (bundled with the app). The renderer's
-	// AgentConfigPanel shows this as helper text for the Batch Mode path override.
-	// Returns null when no bundled script can be located — usually means the user
-	// is running a dev build without `npm run build` having produced
-	// `dist/cli/maestro-p.js`.
-	ipcMain.handle(
-		'agents:getMaestroPDetectedPath',
-		withIpcErrorLogging(
-			handlerOpts('getMaestroPDetectedPath'),
-			async (): Promise<string | null> => {
-				return getMaestroPBinPath();
-			}
-		)
 	);
 
 	// Snapshot mirror for the renderer: returns every non-expired Claude Max-plan

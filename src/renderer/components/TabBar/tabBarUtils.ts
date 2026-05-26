@@ -1,4 +1,38 @@
-import type { UnifiedTab } from '../../types';
+import type { Theme, UnifiedTab } from '../../types';
+
+/** The kind of content a tab holds — matches the UnifiedTab discriminant. */
+export type TabKind = UnifiedTab['type'];
+
+/**
+ * Signature color for each tab kind. AI/file/terminal track the active theme
+ * via semantic tokens so the palette adapts to light/dark/vibe themes. Browser
+ * uses a fixed sky blue — there's no "info/blue" semantic token in the theme,
+ * and the obvious fallback (`ansiBlue`) lands on desaturated purples/grays in
+ * several vibe themes (pedurple, winamp, inquest), making the icon read as
+ * gray next to the other kinds. A stable browser-blue keeps the kind visually
+ * distinct from accent/warning/success on every theme.
+ * - ai      → accent  (brand hue)
+ * - browser → sky blue (fixed; universal "browser" color)
+ * - file    → warning (yellow/orange)
+ * - terminal→ success (green) — terminal tabs additionally override with
+ *             their run-state, so this is the idle base.
+ */
+const BROWSER_TAB_COLOR = '#3b82f6';
+
+export function getTabKindColor(kind: TabKind, theme: Theme): string {
+	switch (kind) {
+		case 'ai':
+			return theme.colors.accent;
+		case 'browser':
+			return BROWSER_TAB_COLOR;
+		case 'file':
+			return theme.colors.warning;
+		case 'terminal':
+			return theme.colors.success;
+		default:
+			return theme.colors.textDim;
+	}
+}
 
 /**
  * Determine if a unified tab is currently active, based on tab type and input mode.

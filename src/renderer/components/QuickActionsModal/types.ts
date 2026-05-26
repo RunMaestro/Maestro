@@ -153,4 +153,10 @@ export interface QuickActionsModalProps {
 	onNewFileTab?: () => void;
 	onNewBrowserTab?: () => void;
 	onNewTerminalTab?: () => void;
+	/**
+	 * Shared "Next Unread / Draft Tab" action — same callback bound to the
+	 * Alt+Cmd+Down keyboard shortcut in App.tsx so both invocation paths use
+	 * the sidebar's visible ordering.
+	 */
+	onGoToNextUnread?: () => void;
 }

@@ -543,6 +543,26 @@ export const THEMES: Record<ThemeId, Theme> = {
 			error: '#dc322f',
 		},
 	},
+	'olive-nights': {
+		id: 'olive-nights',
+		name: 'Olive Nights',
+		mode: 'dark',
+		colors: {
+			bgMain: '#0a0b0a',
+			bgSidebar: '#0a0a0a',
+			bgActivity: '#111311',
+			border: '#0f0f0f',
+			textMain: '#f2ebc0',
+			textDim: '#cec8ba',
+			accent: '#5b675b',
+			accentDim: 'rgba(31, 43, 31, 1)',
+			accentText: '#ffffff',
+			accentForeground: '#fcfcfc',
+			success: '#bed78e',
+			warning: '#d0a795',
+			error: '#ff5555',
+		},
+	},
 	// Light themes
 	'github-light': {
 		id: 'github-light',

@@ -3,21 +3,26 @@
  *
  * Builds the single payload consumed by the renderer-side Cue Dashboard.
  * Joins `cue_events` (with the Phase 01 lineage columns) to per-session token
- * totals from the Phase 02 token accessor, then rolls up by pipeline, agent,
+ * totals from the token accessor, then rolls up by pipeline, agent,
  * subscription, chain, and time-bucket.
  *
- * Token attribution: each event is credited with its session's full token
- * totals from `getSessionTokenSummaries` (Phase 02 "credit-the-whole-session"
- * model). Multiple events from the same session therefore each carry the same
- * token numbers — the totals across events reflect this. Sessions with no
- * resolvable token data contribute zeros.
+ * Token attribution: each event is credited with the token totals of the
+ * provider session it produced (`cue_events.provider_session_id`), resolved via
+ * `getSessionTokenSummaries`. Each Cue run spawns a fresh agent process, so one
+ * event maps to exactly one provider session — no double-counting. Events with
+ * no recorded provider session id (command/shell runs, or rows written before
+ * provider-id capture landed) contribute zeros.
  */
 
 import { getRecentCueEvents } from '../cue-db';
 import type { CueEventRecord } from '../cue-db';
 import { getTimeRangeStart } from '../../stats/utils';
 import { getAgentDisplayName } from '../../../shared/agentMetadata';
-import { getSessionTokenSummaries, type SessionTokenSummary } from './cue-token-accessor';
+import {
+	getAgentTypesForSessions,
+	getSessionTokenSummaries,
+	type SessionTokenSummary,
+} from './cue-token-accessor';
 import type {
 	CueChain,
 	CueChainNode,
@@ -99,6 +104,20 @@ function classifyStatus(status: string): { isSuccess: boolean; isFailure: boolea
 		isSuccess: SUCCESS_STATUSES.has(status),
 		isFailure: FAILURE_STATUSES.has(status),
 	};
+}
+
+/**
+ * Token totals for an event, looked up by the run's provider session id (the
+ * key the on-disk session files use). Events with no recorded provider session
+ * id — command/shell runs, or rows written before provider-id capture landed —
+ * contribute no tokens.
+ */
+function tokensForEvent(
+	event: CueEventRecord,
+	tokensByProvider: Map<string, SessionTokenSummary>
+): SessionTokenSummary | null {
+	if (!event.providerSessionId) return null;
+	return tokensByProvider.get(event.providerSessionId) ?? null;
 }
 
 function computeDuration(event: CueEventRecord): number | null {
@@ -237,7 +256,7 @@ function ensureGroup(
 
 function buildTimeSeries(
 	events: CueEventRecord[],
-	tokensBySession: Map<string, SessionTokenSummary>,
+	tokensByProvider: Map<string, SessionTokenSummary>,
 	bucketSizeMs: number
 ): CueTimeBucket[] {
 	const buckets = new Map<number, CueTimeBucket>();
@@ -259,7 +278,7 @@ function buildTimeSeries(
 		const { isSuccess, isFailure } = classifyStatus(event.status);
 		if (isSuccess) bucket.successCount += 1;
 		if (isFailure) bucket.failureCount += 1;
-		const tokens = tokensBySession.get(event.sessionId);
+		const tokens = tokensForEvent(event, tokensByProvider);
 		if (tokens) {
 			bucket.inputTokens += tokens.inputTokens;
 			bucket.outputTokens += tokens.outputTokens;
@@ -270,7 +289,7 @@ function buildTimeSeries(
 
 function buildChains(
 	events: CueEventRecord[],
-	tokensBySession: Map<string, SessionTokenSummary>,
+	tokensByProvider: Map<string, SessionTokenSummary>,
 	agentTypeBySession: Map<string, string | null>
 ): CueChain[] {
 	const byRoot = new Map<string, CueEventRecord[]>();
@@ -310,7 +329,7 @@ function buildChains(
 		}
 
 		for (const event of sorted) {
-			const tokens = tokensBySession.get(event.sessionId) ?? null;
+			const tokens = tokensForEvent(event, tokensByProvider);
 			const agentType = agentTypeBySession.get(event.sessionId) ?? null;
 			const { isSuccess, isFailure } = classifyStatus(event.status);
 			const durationMs = computeDuration(event);
@@ -418,15 +437,22 @@ export async function getCueStatsAggregation(
 
 	const events = getRecentCueEvents(windowStartMs);
 
-	const uniqueSessionIds = Array.from(new Set(events.map((e) => e.sessionId)));
-	const tokensBySession = await getSessionTokenSummaries(uniqueSessionIds, {
+	// Token attribution joins on the provider session id each run produced
+	// (the key the on-disk session files use); agent-type labelling joins on
+	// the Maestro agent id (what `session_lifecycle` stores, available even for
+	// runs that never recorded a provider session id).
+	const tokenLookups = events
+		.filter((e) => e.providerSessionId)
+		.map((e) => ({ maestroSessionId: e.sessionId, providerSessionId: e.providerSessionId! }));
+	const tokensByProvider = await getSessionTokenSummaries(tokenLookups, {
 		sinceMs: windowStartMs,
 	});
 
+	const uniqueSessionIds = Array.from(new Set(events.map((e) => e.sessionId)));
+	const agentTypeByLifecycle = getAgentTypesForSessions(uniqueSessionIds);
 	const agentTypeBySession = new Map<string, string | null>();
 	for (const sid of uniqueSessionIds) {
-		const summary = tokensBySession.get(sid);
-		agentTypeBySession.set(sid, summary?.agentType ?? null);
+		agentTypeBySession.set(sid, agentTypeByLifecycle.get(sid) ?? null);
 	}
 
 	const totals = emptyMutableTotals();
@@ -438,7 +464,7 @@ export async function getCueStatsAggregation(
 	for (const event of events) {
 		const { isSuccess, isFailure } = classifyStatus(event.status);
 		const durationMs = computeDuration(event);
-		const tokens = tokensBySession.get(event.sessionId) ?? null;
+		const tokens = tokensForEvent(event, tokensByProvider);
 		const contrib: EventContribution = { durationMs, tokens, isSuccess, isFailure };
 
 		applyEvent(totals, contrib);
@@ -465,10 +491,10 @@ export async function getCueStatsAggregation(
 		applyEvent(ensureGroup(byTriggerType, trigger.key, trigger.label, false).totals, contrib);
 	}
 
-	const chains = buildChains(events, tokensBySession, agentTypeBySession);
-	const timeSeries = buildTimeSeries(events, tokensBySession, bucketSizeMs);
+	const chains = buildChains(events, tokensByProvider, agentTypeBySession);
+	const timeSeries = buildTimeSeries(events, tokensByProvider, bucketSizeMs);
 	const byHourOfDay = buildHourOfDay(events);
-	const coverageWarnings = buildCoverageWarnings(tokensBySession);
+	const coverageWarnings = buildCoverageWarnings(tokensByProvider);
 
 	return {
 		timeRange,

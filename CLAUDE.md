@@ -55,7 +55,7 @@ Grep-verified 2026-04-10. Import from these canonical locations:
 - **Format duration (ms):** `formatDuration()` in `src/shared/performance-metrics.ts` (NOT formatters.ts - common mistake)
 - **Format relative time:** `formatRelativeTime()` in `src/shared/formatters.ts`
 - **Format cost:** `formatCost()` in `src/shared/formatters.ts`
-- **Path utilities:** `truncatePath()`, `getParentDir()`, `truncateCommand()` in `src/shared/formatters.ts`
+- **Path utilities:** `truncatePath()`, `getParentDir()`, `truncateCommand()`, `isAbsolutePath()`, `getBasename()` in `src/shared/formatters.ts`
 - **Strip ANSI:** `stripAnsiCodes()` in `src/shared/stringUtils.ts`
 - **Shell escape:** `shellEscape()`, `shellEscapeArgs()`, `shellEscapeForDoubleQuotes()` in `src/main/utils/shell-escape.ts`
 - **Platform detection:** `isWindows()`, `isMacOS()`, `isLinux()` in `src/shared/platformDetection.ts`

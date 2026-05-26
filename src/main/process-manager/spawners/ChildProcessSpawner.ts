@@ -221,7 +221,12 @@ export class ChildProcessSpawner {
 			const isResuming =
 				args.some((arg) => arg === '--resume' || arg.startsWith('--resume=')) ||
 				args.includes('--session');
-			const env = buildChildProcessEnv(customEnvVars, isResuming, shellEnvVars);
+			const env = buildChildProcessEnv(
+				customEnvVars,
+				isResuming,
+				shellEnvVars,
+				config.extraPathDirs
+			);
 
 			// Log environment variable application for troubleshooting
 			if (shellEnvVars && Object.keys(shellEnvVars).length > 0) {

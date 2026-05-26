@@ -569,6 +569,21 @@ export function TabSwitcherModal({
 				toggleViewMode(e.shiftKey);
 				return;
 			}
+			// Cmd/Ctrl+Shift+[ / ] also cycles the view-mode pills (matches the
+			// app-wide prev/next-tab shortcut). Use e.code so it works regardless
+			// of the brace characters Shift produces on macOS.
+			if ((e.metaKey || e.ctrlKey) && e.shiftKey) {
+				if (e.code === 'BracketRight') {
+					e.preventDefault();
+					toggleViewMode(false);
+					return;
+				}
+				if (e.code === 'BracketLeft') {
+					e.preventDefault();
+					toggleViewMode(true);
+					return;
+				}
+			}
 			// Stop propagation on Enter to prevent parent handlers
 			if (e.key === 'Enter') {
 				e.stopPropagation();

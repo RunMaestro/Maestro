@@ -233,6 +233,14 @@ export interface UseMainPanelPropsDeps {
 	handleOpenPromptComposer: () => void;
 	handleReplayMessage: (text: string, images?: string[]) => void;
 	handleForkConversation: (logId: string) => void;
+	handleSessionRecover: (opts: {
+		sessionId: string;
+		tabId: string;
+		lastUserPrompt: string;
+		groomContext: boolean;
+	}) => void;
+	isRecoveringSession: boolean;
+	sessionRecoveryError: string | null;
 	handleMainPanelFileClick: (relativePath: string) => void;
 	handleNavigateBack: () => void;
 	handleNavigateForward: () => void;
@@ -438,6 +446,9 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			onOpenPromptComposer: deps.handleOpenPromptComposer,
 			onReplayMessage: deps.handleReplayMessage,
 			onForkConversation: deps.handleForkConversation,
+			onSessionRecover: deps.handleSessionRecover,
+			isRecoveringSession: deps.isRecoveringSession,
+			sessionRecoveryError: deps.sessionRecoveryError,
 			fileTree: deps.fileTree,
 			onFileClick: deps.handleMainPanelFileClick,
 			canGoBack: deps.canGoBack,
@@ -683,6 +694,9 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			deps.handleOpenPromptComposer,
 			deps.handleReplayMessage,
 			deps.handleForkConversation,
+			deps.handleSessionRecover,
+			deps.isRecoveringSession,
+			deps.sessionRecoveryError,
 			deps.handleMainPanelFileClick,
 			deps.handleNavigateBack,
 			deps.handleNavigateForward,

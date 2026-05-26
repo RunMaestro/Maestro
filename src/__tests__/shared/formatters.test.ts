@@ -18,6 +18,8 @@ import {
 	truncatePath,
 	truncateCommand,
 	abbreviateGroupName,
+	isAbsolutePath,
+	getBasename,
 } from '../../shared/formatters';
 
 describe('shared/formatters', () => {
@@ -536,6 +538,12 @@ describe('shared/formatters', () => {
 			expect(abbreviateGroupName('client-facing-team')).toBe('CFT');
 		});
 
+		it('drops leading numbering/bracket tokens from initials', () => {
+			expect(abbreviateGroupName('[1] Aleyemma/Money-Sessions')).toBe('AMS');
+			expect(abbreviateGroupName('(2) Research Operations')).toBe('RO');
+			expect(abbreviateGroupName('#3 backend-api-gateway')).toBe('BAG');
+		});
+
 		it('strips vowels from single long words, preserving the first character', () => {
 			expect(abbreviateGroupName('Engineering')).toBe('Engnrng');
 			expect(abbreviateGroupName('Documentation')).toBe('Dcmnttn');
@@ -550,6 +558,61 @@ describe('shared/formatters', () => {
 		it('respects custom target/max', () => {
 			expect(abbreviateGroupName('Engineering', { max: 5 })).toBe('Engnr');
 			expect(abbreviateGroupName('TenChars10', { max: 5 })).toBe('TnChr');
+		});
+	});
+
+	// ==========================================================================
+	// isAbsolutePath tests
+	// ==========================================================================
+	describe('isAbsolutePath', () => {
+		it('recognizes Unix absolute paths', () => {
+			expect(isAbsolutePath('/Users/name/file.ts')).toBe(true);
+			expect(isAbsolutePath('/')).toBe(true);
+		});
+
+		it('recognizes Windows drive paths with either separator', () => {
+			expect(isAbsolutePath('C:\\Users\\name\\file.ts')).toBe(true);
+			expect(isAbsolutePath('C:/Users/name/file.ts')).toBe(true);
+			expect(isAbsolutePath('d:\\temp')).toBe(true);
+		});
+
+		it('recognizes backslash-prefixed (UNC / drive-relative) paths', () => {
+			expect(isAbsolutePath('\\\\server\\share')).toBe(true);
+			expect(isAbsolutePath('\\folder\\file')).toBe(true);
+		});
+
+		it('rejects relative paths and non-paths', () => {
+			expect(isAbsolutePath('')).toBe(false);
+			expect(isAbsolutePath('src/components/Foo.tsx')).toBe(false);
+			expect(isAbsolutePath('./file.ts')).toBe(false);
+			expect(isAbsolutePath('file.ts')).toBe(false);
+			expect(isAbsolutePath('C:file.ts')).toBe(false); // no separator after drive
+		});
+	});
+
+	// ==========================================================================
+	// getBasename tests
+	// ==========================================================================
+	describe('getBasename', () => {
+		it('extracts the final segment of a Unix path', () => {
+			expect(getBasename('/Users/name/file.ts')).toBe('file.ts');
+		});
+
+		it('extracts the final segment of a Windows path', () => {
+			expect(getBasename('C:\\Users\\name\\file.ts')).toBe('file.ts');
+		});
+
+		it('ignores a trailing separator', () => {
+			expect(getBasename('/Users/name/folder/')).toBe('folder');
+			expect(getBasename('C:\\Users\\name\\folder\\')).toBe('folder');
+		});
+
+		it('returns the input unchanged when there is no separator', () => {
+			expect(getBasename('file.ts')).toBe('file.ts');
+		});
+
+		it('handles empty input', () => {
+			expect(getBasename('')).toBe('');
 		});
 	});
 });

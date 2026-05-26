@@ -617,20 +617,22 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				actionLabel,
 				clickAction,
 			} = params;
-			// Resolve agent metadata for the header strip. Prefer the caller's
-			// explicit `tabId` so the chip matches the click target; fall back
-			// to the session's currently-active AI tab.
+			// Resolve agent metadata for the header strip. Only stamp a tab on
+			// the toast when the caller explicitly passed one — otherwise the
+			// agent's currently-focused tab would leak onto every agent-scoped
+			// toast (e.g. cron-fired notifications), which is misleading.
 			let project: string | undefined;
 			let tabId: string | undefined = explicitTabId;
 			let tabName: string | undefined;
 			if (sessionId) {
 				const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
 				project = session?.name;
-				const targetTabId = explicitTabId ?? session?.activeTabId;
-				const targetTab = session?.aiTabs?.find((t) => t.id === targetTabId);
-				if (targetTab) {
-					tabId = targetTab.id;
-					tabName = targetTab.name ?? undefined;
+				if (explicitTabId) {
+					const targetTab = session?.aiTabs?.find((t) => t.id === explicitTabId);
+					if (targetTab) {
+						tabId = targetTab.id;
+						tabName = targetTab.name ?? undefined;
+					}
 				}
 			}
 			notifyToast({

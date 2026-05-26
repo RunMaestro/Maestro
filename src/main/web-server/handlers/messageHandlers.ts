@@ -1749,19 +1749,19 @@ export class WebSocketMessageHandler {
 			return;
 		}
 
-		// Path traversal protection: resolve against session root
 		const sessions = this.callbacks.getSessions?.();
 		const session = sessions?.find((s) => s.id === sessionId);
 		if (!session?.cwd) {
 			sendErrorResult('Session not found or has no working directory');
 			return;
 		}
+		// Relative paths resolve against the agent's working directory; absolute
+		// paths are honored as-is. Opening files outside the worktree is
+		// intentionally allowed — a paired client already has shell-level access
+		// (execute_command), so confining preview tabs to the worktree gated
+		// nothing the connection token doesn't already gate.
 		const sessionRoot = path.resolve(session.cwd);
 		const resolved = path.resolve(sessionRoot, filePath);
-		if (!resolved.startsWith(sessionRoot + path.sep) && resolved !== sessionRoot) {
-			sendErrorResult('Invalid file path: path is outside the agent working directory');
-			return;
-		}
 
 		if (!this.callbacks.openFileTab) {
 			sendErrorResult('File tab opening not configured');

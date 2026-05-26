@@ -4,6 +4,8 @@ import { useRemoteIntegration } from '../../../renderer/hooks';
 import type { Session, AITab } from '../../../renderer/types';
 import { createMockAITab } from '../../helpers/mockTab';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { useNotificationStore } from '../../../renderer/stores/notificationStore';
 
 const createMockTab = (overrides: Partial<AITab> = {}): AITab =>
 	createMockAITab({
@@ -48,6 +50,23 @@ describe('useRemoteIntegration', () => {
 	let onRemoteToggleBookmarkHandler: ((sessionId: string) => void) | undefined;
 	let onRemoteNewAITabWithPromptHandler:
 		| ((sessionId: string, prompt: string, responseChannel: string) => void)
+		| undefined;
+	let onRemoteNotifyToastHandler:
+		| ((params: {
+				title: string;
+				message: string;
+				color: 'green' | 'yellow' | 'orange' | 'red' | 'theme';
+				duration?: number;
+				dismissible?: boolean;
+				sessionId?: string;
+				tabId?: string;
+				actionUrl?: string;
+				actionLabel?: string;
+				clickAction?:
+					| { kind: 'jump-session'; sessionId: string; tabId?: string }
+					| { kind: 'open-file'; sessionId: string; path: string }
+					| { kind: 'open-url'; url: string };
+		  }) => void)
 		| undefined;
 
 	const mockProcess = {
@@ -208,7 +227,8 @@ describe('useRemoteIntegration', () => {
 		sendRemoteUpdatePlaybookResponse: vi.fn(),
 		onRemoteDeletePlaybook: vi.fn().mockImplementation(() => () => {}),
 		sendRemoteDeletePlaybookResponse: vi.fn(),
-		onRemoteNotifyToast: vi.fn().mockImplementation(() => {
+		onRemoteNotifyToast: vi.fn().mockImplementation((handler) => {
+			onRemoteNotifyToastHandler = handler;
 			return () => {};
 		}),
 		onRemoteNotifyCenterFlash: vi.fn().mockImplementation(() => {
@@ -262,6 +282,11 @@ describe('useRemoteIntegration', () => {
 		onRemoteReorderTabHandler = undefined;
 		onRemoteToggleBookmarkHandler = undefined;
 		onRemoteNewAITabWithPromptHandler = undefined;
+		onRemoteNotifyToastHandler = undefined;
+
+		// Reset zustand stores so cross-test state doesn't leak.
+		useSessionStore.setState({ sessions: [] });
+		useNotificationStore.setState({ toasts: [] });
 
 		window.maestro = {
 			...originalMaestro,
@@ -813,6 +838,112 @@ describe('useRemoteIntegration', () => {
 
 			expect(mockClaude.updateSessionName).not.toHaveBeenCalled();
 			expect(mockAgentSessions.setSessionName).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('remote notify toast', () => {
+		// Regression: the renderer used to fall back to `session.activeTabId` when
+		// the IPC payload omitted `tabId`. That caused every agent-scoped toast
+		// (e.g. cron-fired notifications) to be stamped with whatever AI tab was
+		// front-most in that agent, leaking an unrelated tab name into the toast.
+		it('does NOT synthesize a tabId from activeTabId when caller omits tabId', () => {
+			const tab = createMockTab({ id: 'tab-foreground', name: 'Foreground Tab' });
+			const session = createMockSession({
+				id: 'session-1',
+				name: 'Pedsidian-chain-7',
+				aiTabs: [tab],
+				activeTabId: 'tab-foreground',
+			});
+			useSessionStore.setState({ sessions: [session] });
+			const deps = createDeps({ sessions: [session] });
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteNotifyToastHandler?.({
+					title: 'New stars',
+					message: 'Hello world',
+					color: 'yellow',
+					dismissible: true,
+					sessionId: 'session-1',
+					clickAction: {
+						kind: 'open-file',
+						sessionId: 'session-1',
+						path: '/notes/stars.md',
+					},
+				});
+			});
+
+			const toasts = useNotificationStore.getState().toasts;
+			expect(toasts).toHaveLength(1);
+			expect(toasts[0]).toMatchObject({
+				title: 'New stars',
+				message: 'Hello world',
+				project: 'Pedsidian-chain-7',
+				sessionId: 'session-1',
+			});
+			expect(toasts[0].tabId).toBeUndefined();
+			expect(toasts[0].tabName).toBeUndefined();
+		});
+
+		it('honors an explicit tabId from the caller', () => {
+			const tab = createMockTab({ id: 'tab-target', name: 'Target Tab' });
+			const otherTab = createMockTab({ id: 'tab-foreground', name: 'Foreground Tab' });
+			const session = createMockSession({
+				id: 'session-1',
+				name: 'Some Agent',
+				aiTabs: [otherTab, tab],
+				activeTabId: 'tab-foreground',
+			});
+			useSessionStore.setState({ sessions: [session] });
+			const deps = createDeps({ sessions: [session] });
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteNotifyToastHandler?.({
+					title: 'Done',
+					message: 'Task finished',
+					color: 'green',
+					sessionId: 'session-1',
+					tabId: 'tab-target',
+				});
+			});
+
+			const toasts = useNotificationStore.getState().toasts;
+			expect(toasts).toHaveLength(1);
+			expect(toasts[0]).toMatchObject({
+				project: 'Some Agent',
+				sessionId: 'session-1',
+				tabId: 'tab-target',
+				tabName: 'Target Tab',
+			});
+		});
+
+		it('still resolves project (agent) name when sessionId is provided without tabId', () => {
+			const session = createMockSession({
+				id: 'session-1',
+				name: 'Pedsidian',
+				aiTabs: [],
+			});
+			useSessionStore.setState({ sessions: [session] });
+			const deps = createDeps({ sessions: [session] });
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteNotifyToastHandler?.({
+					title: 'Heads up',
+					message: 'Cron fired',
+					color: 'theme',
+					sessionId: 'session-1',
+				});
+			});
+
+			const toasts = useNotificationStore.getState().toasts;
+			expect(toasts[0]?.project).toBe('Pedsidian');
+			expect(toasts[0]?.tabId).toBeUndefined();
+			expect(toasts[0]?.tabName).toBeUndefined();
 		});
 	});
 

@@ -176,6 +176,18 @@ vi.mock('../../../shared/gitUtils', () => ({
 	isImageFile: (filename: string) => /\.(png|jpg|jpeg|gif|webp|svg)$/i.test(filename),
 }));
 
+// Mock MarkdownEditor. The real editor wraps CodeMirror, which jsdom can't
+// satisfy `getByRole('textbox')` against. A bare `<textarea>` lets us keep
+// the FilePreview wiring tests (controlled vs. internal editContent, onChange
+// fan-out) without coupling to CodeMirror internals.
+vi.mock('../../../renderer/components/FilePreview/markdownEditor', () => ({
+	MarkdownEditor: React.forwardRef<unknown, { value: string; onChange: (v: string) => void }>(
+		({ value, onChange }, _ref) => (
+			<textarea value={value} onChange={(e) => onChange(e.target.value)} />
+		)
+	),
+}));
+
 const defaultProps = {
 	file: { name: 'test.md', content: '# Hello World', path: '/test/test.md' },
 	onClose: vi.fn(),
@@ -669,83 +681,12 @@ describe('FilePreview', () => {
 		});
 	});
 
-	describe('edit mode keyboard navigation', () => {
-		const multiLineContent = 'Line 1\nLine 2\nLine 3\nLine 4\nLine 5';
-
-		it('Cmd+Shift+Up selects from cursor to beginning of document', () => {
-			render(
-				<FilePreview
-					{...defaultProps}
-					file={{ name: 'test.txt', content: multiLineContent, path: '/test/test.txt' }}
-					markdownEditMode={true}
-				/>
-			);
-
-			const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
-			// Place cursor at position 14 (start of Line 3)
-			textarea.setSelectionRange(14, 14);
-
-			fireEvent.keyDown(textarea, { key: 'ArrowUp', metaKey: true, shiftKey: true });
-
-			expect(textarea.selectionStart).toBe(0);
-			expect(textarea.selectionEnd).toBe(14);
-		});
-
-		it('Cmd+Shift+Down selects from cursor to end of document', () => {
-			render(
-				<FilePreview
-					{...defaultProps}
-					file={{ name: 'test.txt', content: multiLineContent, path: '/test/test.txt' }}
-					markdownEditMode={true}
-				/>
-			);
-
-			const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
-			// Place cursor at position 14 (start of Line 3)
-			textarea.setSelectionRange(14, 14);
-
-			fireEvent.keyDown(textarea, { key: 'ArrowDown', metaKey: true, shiftKey: true });
-
-			expect(textarea.selectionStart).toBe(14);
-			expect(textarea.selectionEnd).toBe(multiLineContent.length);
-		});
-
-		it('Cmd+Up moves cursor to beginning without selection', () => {
-			render(
-				<FilePreview
-					{...defaultProps}
-					file={{ name: 'test.txt', content: multiLineContent, path: '/test/test.txt' }}
-					markdownEditMode={true}
-				/>
-			);
-
-			const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
-			textarea.setSelectionRange(14, 14);
-
-			fireEvent.keyDown(textarea, { key: 'ArrowUp', metaKey: true });
-
-			expect(textarea.selectionStart).toBe(0);
-			expect(textarea.selectionEnd).toBe(0);
-		});
-
-		it('Cmd+Down moves cursor to end without selection', () => {
-			render(
-				<FilePreview
-					{...defaultProps}
-					file={{ name: 'test.txt', content: multiLineContent, path: '/test/test.txt' }}
-					markdownEditMode={true}
-				/>
-			);
-
-			const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
-			textarea.setSelectionRange(14, 14);
-
-			fireEvent.keyDown(textarea, { key: 'ArrowDown', metaKey: true });
-
-			expect(textarea.selectionStart).toBe(multiLineContent.length);
-			expect(textarea.selectionEnd).toBe(multiLineContent.length);
-		});
-	});
+	// `edit mode keyboard navigation` tests were removed when FilePreview's edit
+	// surface was swapped from a raw <textarea> to CodeMirror. Cmd+Up/Down and
+	// Cmd+Shift+Up/Down are now provided by CodeMirror's `defaultKeymap`
+	// (cursorDocStart / cursorDocEnd / selectDocStart / selectDocEnd) — there's
+	// no FilePreview-level handler to test, so the old tests would have only
+	// exercised our mock.
 
 	describe('basic rendering', () => {
 		it('renders file preview with file name', () => {

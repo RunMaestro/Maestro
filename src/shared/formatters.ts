@@ -368,6 +368,30 @@ export function getParentDir(path: string): string {
 }
 
 /**
+ * Returns true if `path` is an absolute filesystem path.
+ *
+ * Matches Unix absolute paths (`/foo`), Windows drive paths (`C:\foo`,
+ * `C:/foo`), and UNC / drive-relative paths starting with a backslash
+ * (`\\server\share`, `\foo`).
+ */
+export function isAbsolutePath(path: string): boolean {
+	if (!path) return false;
+	return /^(\/|\\|[a-zA-Z]:[/\\])/.test(path);
+}
+
+/**
+ * Extract the final path segment (file or folder name) from a path.
+ * Handles both `/` and `\` separators and ignores a trailing separator.
+ * Returns the input unchanged when it contains no separators.
+ */
+export function getBasename(path: string): string {
+	if (!path) return '';
+	const trimmed = path.replace(/[/\\]+$/, '');
+	const parts = trimmed.split(/[/\\]/);
+	return parts[parts.length - 1] || trimmed;
+}
+
+/**
  * Truncate command text for display.
  * Replaces newlines with spaces, trims whitespace, and adds ellipsis if truncated.
  *
@@ -518,6 +542,8 @@ export function estimateTokensFromLogs(logs: { text: string }[]): number {
  *   2. Contains "&" or " and " conjunction → acronym joined by "&"
  *      ("Amini & Conant" → "A&C", "Foo and Bar and Baz" → "F&B&B").
  *   3. Multi-word (split on whitespace, "_", "-", "/") → initials ("Acme Corp" → "AC").
+ *      Each initial is the word's first letter, so leading numbering/bracket
+ *      tokens drop out ("[1] Aleyemma/Money-Sessions" → "AMS", not "[AMS").
  *   4. Single long word → strip vowels keeping the first character
  *      ("Engineering" → "Engnrng", "Documentation" → "Dcmnttn").
  *   5. Still too long → hard-truncate the devoweled form.
@@ -534,20 +560,30 @@ export function abbreviateGroupName(
 	if (!trimmed) return trimmed;
 	if (trimmed.length <= max) return trimmed;
 
+	// First letter of a word, skipping any leading non-letters so numbering or
+	// bracket prefixes drop out entirely ("[1]" → "", "MONEY" → "M").
+	const firstLetter = (word: string): string => {
+		const match = word.match(/[a-z]/i);
+		return match ? match[0].toUpperCase() : '';
+	};
+
 	// Acronym joined by "&" — handles "A & B" and "A and B" forms.
 	const conjunctionParts = trimmed
 		.split(/\s*&\s*|\s+and\s+/i)
-		.map((p) => p.trim())
+		.map((p) => firstLetter(p))
 		.filter(Boolean);
 	if (conjunctionParts.length >= 2) {
-		const acronym = conjunctionParts.map((p) => p.charAt(0).toUpperCase()).join('&');
+		const acronym = conjunctionParts.join('&');
 		if (acronym.length <= max) return acronym;
 	}
 
 	// Plain initials for multi-word names.
-	const words = trimmed.split(/[\s_\-/]+/).filter(Boolean);
-	if (words.length >= 2) {
-		const initials = words.map((w) => w.charAt(0).toUpperCase()).join('');
+	const initials = trimmed
+		.split(/[\s_\-/]+/)
+		.map((w) => firstLetter(w))
+		.filter(Boolean)
+		.join('');
+	if (initials.length >= 2) {
 		if (initials.length <= max) return initials;
 		return initials.slice(0, max);
 	}

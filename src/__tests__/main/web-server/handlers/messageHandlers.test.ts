@@ -888,18 +888,23 @@ describe('WebSocketMessageHandler', () => {
 			});
 		});
 
-		it('should reject path traversal attempts', () => {
+		it('should forward paths that resolve outside the worktree', async () => {
+			// Opening files outside the worktree is intentionally allowed — a paired
+			// client already has shell-level access (execute_command), so confining
+			// preview tabs to the worktree gated nothing the connection token didn't.
 			handler.handleMessage(client, {
 				type: 'open_file_tab',
 				sessionId: 'session-1',
 				filePath: '/home/user/project/../../etc/passwd',
 			});
 
+			await vi.waitFor(() => {
+				expect(callbacks.openFileTab).toHaveBeenCalledWith('session-1', '/home/etc/passwd', true);
+			});
+
 			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
 			expect(response.type).toBe('open_file_tab_result');
-			expect(response.success).toBe(false);
-			expect(response.error).toContain('Invalid file path');
-			expect(callbacks.openFileTab).not.toHaveBeenCalled();
+			expect(response.success).toBe(true);
 		});
 	});
 

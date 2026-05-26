@@ -8,7 +8,9 @@ import {
 import type { FileNode } from '../../types/fileTree';
 import { useModalStore } from '../../stores/modalStore';
 import { useSessionStore } from '../../stores/sessionStore';
+import { useUIStore } from '../../stores/uiStore';
 import { generateId } from '../../utils/ids';
+import { isAbsolutePath } from '../../../shared/formatters';
 import { closeFileTab as closeFileTabHelper } from '../../utils/tabHelpers';
 import { logger } from '../../utils/logger';
 
@@ -242,6 +244,12 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 		const handleDragEnd = () => {
 			dragCounterRef.current = 0;
 			setIsDraggingFile(false);
+			// Session drag state is only cleared on successful drops onto groups or
+			// the ungrouped zone. If the drag ends anywhere else (released on the
+			// originating row, an empty area, ESC, or outside the window), the row
+			// would otherwise stay stuck at opacity-50 ("ghosted"). dragend always
+			// fires after drop, so clearing here is safe.
+			useUIStore.getState().setDraggingSessionId(null);
 		};
 
 		const handleDocumentDragOver = (e: DragEvent) => {
@@ -278,8 +286,19 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 			}
 		};
 
+		// Mouse release always ends a session drag, period. `dragend` covers the
+		// HTML5 drag lifecycle, but releasing the button is the user's mental
+		// model of "the drag is over" — clear the ghosting flag unconditionally
+		// on mouseup so a row can never stay faded once the mouse is up.
+		const handleMouseUp = () => {
+			if (useUIStore.getState().draggingSessionId !== null) {
+				useUIStore.getState().setDraggingSessionId(null);
+			}
+		};
+
 		// dragend fires when the drag operation ends (drop or cancel)
 		document.addEventListener('dragend', handleDragEnd);
+		document.addEventListener('mouseup', handleMouseUp);
 		// Use capture phase for dragover/drop so they fire BEFORE React handlers that call stopPropagation().
 		// This ensures preventDefault() is called at document level even when element handlers stop bubbling.
 		document.addEventListener('dragover', handleDocumentDragOver, { capture: true });
@@ -289,6 +308,7 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 
 		return () => {
 			document.removeEventListener('dragend', handleDragEnd);
+			document.removeEventListener('mouseup', handleMouseUp);
 			document.removeEventListener('dragover', handleDocumentDragOver, { capture: true });
 			document.removeEventListener('drop', handleDocumentDrop, { capture: true });
 			document.removeEventListener('keydown', handleKeyDown);
@@ -303,15 +323,21 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 			if (!activeSession) return; // Guard against null session
 			if (node.type !== 'file') return;
 
-			// Construct full file path using projectRoot (not fullPath which can diverge from file tree root)
-			// The file tree is rooted at projectRoot, so paths are relative to it
+			// An already-absolute `path` (e.g. from the Fuzzy File Search absolute-path
+			// open) is used verbatim. Otherwise the file tree is rooted at projectRoot,
+			// so a relative path is resolved against it (not fullPath, which can diverge
+			// from the file tree root).
+			const isAbsoluteInput = isAbsolutePath(path);
 			const treeRoot = activeSession.projectRoot || activeSession.fullPath;
-			const fullPath = `${treeRoot}/${path}`;
+			const fullPath = isAbsoluteInput ? path : `${treeRoot}/${path}`;
 
 			// Get SSH remote ID - use sshRemoteId (set after AI spawns) or fall back to sessionSshRemoteConfig
 			// (set before spawn). This ensures file operations work for both AI and terminal-only SSH sessions.
-			const sshRemoteId =
-				activeSession.sshRemoteId || activeSession.sessionSshRemoteConfig?.remoteId || undefined;
+			// An absolute path typed into Fuzzy File Search always refers to the local
+			// filesystem, so SSH dispatch is skipped for it.
+			const sshRemoteId = isAbsoluteInput
+				? undefined
+				: activeSession.sshRemoteId || activeSession.sessionSshRemoteConfig?.remoteId || undefined;
 
 			// Check if file should be opened externally (only for local files)
 			if (!sshRemoteId && shouldOpenExternally(node.name)) {

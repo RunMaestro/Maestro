@@ -896,7 +896,7 @@ export function LeaderboardRegistrationModal({
 						{/* Social handles - Optional */}
 						<div className="pt-2 border-t" style={{ borderColor: theme.colors.border }}>
 							<p className="text-xs font-medium mb-3" style={{ color: theme.colors.textDim }}>
-								Optional: Link your social profiles
+								Optional: Link your social profiles, your leaderboard avatar is sourced from GitHub
 							</p>
 
 							<div className="space-y-3">

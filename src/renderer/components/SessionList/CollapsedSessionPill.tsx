@@ -17,22 +17,29 @@ interface CollapsedSessionPillProps {
 	setActiveSessionId: (id: string) => void;
 }
 
-const MAX_PILLS_PER_ROW = 25;
+/** Bounds + default for the configurable "pills per row" Left Bar setting. */
+export const COLLAPSED_PILLS_PER_ROW_MIN = 5;
+export const COLLAPSED_PILLS_PER_ROW_MAX = 50;
+export const COLLAPSED_PILLS_PER_ROW_DEFAULT = 20;
 
 type CollapsedSessionPillRowsProps = Omit<CollapsedSessionPillProps, 'session'> & {
 	sessions: Session[];
 	onContainerClick: () => void;
+	/** Max pills per row before wrapping. Defaults to {@link COLLAPSED_PILLS_PER_ROW_DEFAULT}. */
+	maxPerRow?: number;
 };
 
 export function CollapsedSessionPillRows({
 	sessions,
 	keyPrefix,
 	onContainerClick,
+	maxPerRow = COLLAPSED_PILLS_PER_ROW_DEFAULT,
 	...pillProps
 }: CollapsedSessionPillRowsProps) {
+	const perRow = Math.max(1, Math.floor(maxPerRow) || COLLAPSED_PILLS_PER_ROW_DEFAULT);
 	const rows: Session[][] = [];
-	for (let i = 0; i < sessions.length; i += MAX_PILLS_PER_ROW) {
-		rows.push(sessions.slice(i, i + MAX_PILLS_PER_ROW));
+	for (let i = 0; i < sessions.length; i += perRow) {
+		rows.push(sessions.slice(i, i + perRow));
 	}
 	return (
 		<div
@@ -40,7 +47,7 @@ export function CollapsedSessionPillRows({
 			onClick={onContainerClick}
 		>
 			{rows.map((row, rowIdx) => {
-				const padding = rows.length > 1 ? MAX_PILLS_PER_ROW - row.length : 0;
+				const padding = rows.length > 1 ? perRow - row.length : 0;
 				return (
 					<div key={`${keyPrefix}-row-${rowIdx}`} className="flex gap-1 h-1.5">
 						{row.map((s) => (

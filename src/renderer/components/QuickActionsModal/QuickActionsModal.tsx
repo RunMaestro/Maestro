@@ -148,6 +148,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		onNewFileTab,
 		onNewBrowserTab,
 		onNewTerminalTab,
+		onGoToNextUnread,
 	} = props;
 
 	// UI store actions for search commands (avoid threading more props through 3-layer chain)
@@ -297,19 +298,16 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		...buildNavigationCommands({
 			activeSession,
 			activeSessionId,
-			sessions,
-			setSessions,
-			setActiveSessionId,
 			setQuickActionOpen,
 			setLeftSidebarOpen,
 			setRightPanelOpen,
-			setSuccessFlashNotification,
 			addNewSession,
 			deleteSession,
 			openWizard,
 			getOpenInLabel,
 			platform: window.maestro?.platform || 'darwin',
 			openPath: window.maestro?.shell?.openPath,
+			onGoToNextUnread,
 			shortcuts: {
 				newInstance: shortcuts.newInstance,
 				openWizard: shortcuts.openWizard,

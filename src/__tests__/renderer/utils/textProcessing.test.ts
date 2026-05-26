@@ -428,6 +428,30 @@ describe('stripMarkdown', () => {
 		expect(stripMarkdown(input)).toBe(expected);
 	});
 
+	it('removes multi-line markdown tables entirely', () => {
+		const input = [
+			'Summary:',
+			'',
+			'| Step | Result |',
+			'|------|--------|',
+			'| 1. Build | Pass |',
+		].join('\n');
+		// Table rows/separator are dropped; only the prose lines remain.
+		expect(stripMarkdown(input).replace(/\n+/g, '\n').trim()).toBe('Summary:');
+	});
+
+	it('collapses a table that was flattened onto one line', () => {
+		// Mirrors a stored History summary where newlines were already squashed.
+		const input = 'All four steps complete. Summary: | Step | Result | |------|--------| |';
+		const out = stripMarkdown(input).replace(/\s+/g, ' ').trim();
+		expect(out).toBe('All four steps complete. Summary:');
+		expect(out).not.toContain('|');
+	});
+
+	it('leaves prose with fewer than three pipes untouched', () => {
+		expect(stripMarkdown('choose a | b')).toBe('choose a | b');
+	});
+
 	it('returns plain text unchanged', () => {
 		expect(stripMarkdown('just plain text')).toBe('just plain text');
 	});

@@ -219,7 +219,9 @@ export const SessionItem = memo(function SessionItem({
 			// Worktree children have extra left padding and smaller text
 			return `pl-8 pr-4 py-1.5 ${base}`;
 		}
-		return `px-4 py-2 ${base}`;
+		// mr-px keeps the active/selected highlight from bleeding into the
+		// sidebar's right divider (border-r / focused inset accent shadow).
+		return `px-4 py-2 mr-px ${base}`;
 	};
 
 	return (

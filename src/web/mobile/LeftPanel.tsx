@@ -106,7 +106,13 @@ function GitBranchIcon({ size = 14, color }: { size?: number; color: string }) {
 	);
 }
 
+/** Stable collapse/React keys for the synthetic (non-user) sections. */
+const BOOKMARKS_GROUP_ID = '__bookmarks';
+const UNGROUPED_GROUP_ID = '__ungrouped';
+
 interface GroupedResult {
+	/** Stable key for React lists + collapse state (never a user-controlled name). */
+	id: string;
 	groupName: string;
 	groupEmoji?: string | null;
 	sessions: Session[];
@@ -138,8 +144,18 @@ function passesUnreadFilter(
 /**
  * Group sessions by their groupName (or "Ungrouped"),
  * filtering out worktree children from the top-level list.
+ *
+ * When `includeBookmarks` is true, bookmarked top-level sessions also appear in
+ * a dedicated "Bookmarks" section at the top — in addition to their normal
+ * group. This mirrors the desktop Left Bar and the mobile AllSessionsView /
+ * SessionPillBar. The bookmarks section is suppressed under the unread filter
+ * (same as the desktop Left Bar) so the filtered list only shows agents that
+ * actually need attention.
  */
-function groupSessions(sessions: Session[]): {
+function groupSessions(
+	sessions: Session[],
+	includeBookmarks: boolean
+): {
 	groups: GroupedResult[];
 	worktreeChildrenMap: Map<string, Session[]>;
 } {
@@ -173,10 +189,24 @@ function groupSessions(sessions: Session[]): {
 		.map(([, v]) => v);
 
 	const groups: GroupedResult[] = [];
-	if (ungrouped && ungrouped.sessions.length > 0) {
-		groups.push(ungrouped);
+
+	// Bookmarks section pinned to the top.
+	if (includeBookmarks) {
+		const bookmarked = topLevel.filter((s) => s.bookmarked);
+		if (bookmarked.length > 0) {
+			groups.push({
+				id: BOOKMARKS_GROUP_ID,
+				groupName: 'Bookmarks',
+				groupEmoji: '★',
+				sessions: bookmarked,
+			});
+		}
 	}
-	groups.push(...named);
+
+	if (ungrouped && ungrouped.sessions.length > 0) {
+		groups.push({ id: UNGROUPED_GROUP_ID, ...ungrouped });
+	}
+	groups.push(...named.map((g) => ({ id: g.groupName, ...g })));
 	return { groups, worktreeChildrenMap };
 }
 
@@ -654,13 +684,13 @@ export function LeftPanel({
 	}, [onClose]);
 
 	const toggleGroup = useCallback(
-		(groupName: string) => {
+		(groupKey: string) => {
 			setCollapsedGroups((prev) => {
 				const next = new Set(prev);
-				if (next.has(groupName)) {
-					next.delete(groupName);
+				if (next.has(groupKey)) {
+					next.delete(groupKey);
 				} else {
-					next.add(groupName);
+					next.add(groupKey);
 				}
 				return next;
 			});
@@ -694,8 +724,10 @@ export function LeftPanel({
 	}, [sessions, showUnreadOnly, activeSessionId, worktreeChildrenByParent]);
 
 	const { groups: grouped, worktreeChildrenMap } = useMemo(
-		() => groupSessions(visibleSessions),
-		[visibleSessions]
+		// Bookmarks section is hidden while the unread filter is active, matching
+		// the desktop Left Bar.
+		() => groupSessions(visibleSessions, !showUnreadOnly),
+		[visibleSessions, showUnreadOnly]
 	);
 
 	const [expandedWorktrees, setExpandedWorktrees] = useState<Set<string>>(
@@ -1055,18 +1087,18 @@ export function LeftPanel({
 					)}
 
 					{grouped.map((group) => (
-						<div key={group.groupName || '__ungrouped'}>
-							{/* Group header (only for named groups) */}
+						<div key={group.id}>
+							{/* Group header (named groups + the Bookmarks section; not Ungrouped) */}
 							{group.groupName && (
 								<div
-									onClick={() => toggleGroup(group.groupName)}
+									onClick={() => toggleGroup(group.id)}
 									role="button"
 									tabIndex={0}
-									aria-expanded={!collapsedGroups.has(group.groupName)}
+									aria-expanded={!collapsedGroups.has(group.id)}
 									onKeyDown={(e) => {
 										if (e.key === 'Enter' || e.key === ' ') {
 											e.preventDefault();
-											toggleGroup(group.groupName);
+											toggleGroup(group.id);
 										}
 									}}
 									style={{
@@ -1095,9 +1127,7 @@ export function LeftPanel({
 										strokeLinejoin="round"
 										style={{
 											transition: 'transform 0.15s ease',
-											transform: collapsedGroups.has(group.groupName)
-												? 'rotate(0deg)'
-												: 'rotate(90deg)',
+											transform: collapsedGroups.has(group.id) ? 'rotate(0deg)' : 'rotate(90deg)',
 											flexShrink: 0,
 										}}
 									>
@@ -1111,7 +1141,7 @@ export function LeftPanel({
 							)}
 
 							{/* Session items - shown when expanded, pills when collapsed */}
-							{group.groupName && collapsedGroups.has(group.groupName) ? (
+							{group.groupName && collapsedGroups.has(group.id) ? (
 								/* Collapsed: show status pills */
 								<div
 									style={{
@@ -1122,7 +1152,7 @@ export function LeftPanel({
 										height: '10px',
 										alignItems: 'center',
 									}}
-									onClick={() => toggleGroup(group.groupName)}
+									onClick={() => toggleGroup(group.id)}
 								>
 									{group.sessions.map((session) => (
 										<div

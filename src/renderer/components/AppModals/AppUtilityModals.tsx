@@ -265,6 +265,8 @@ export interface AppUtilityModalsProps {
 	onQuickActionsNewFileTab?: () => void;
 	onQuickActionsNewBrowserTab?: () => void;
 	onQuickActionsNewTerminalTab?: () => void;
+	// Next unread / draft tab navigation (shared with Alt+Cmd+Down)
+	onGoToNextUnread?: () => void;
 }
 
 /**
@@ -467,6 +469,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 	onQuickActionsNewFileTab,
 	onQuickActionsNewBrowserTab,
 	onQuickActionsNewTerminalTab,
+	onGoToNextUnread,
 }: AppUtilityModalsProps) {
 	// Read per-modal data from the modal store for modals that support it.
 	// `presetDocuments` is set by the inline wizard's "Start Auto Run" button so
@@ -581,6 +584,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 					onNewFileTab={onQuickActionsNewFileTab}
 					onNewBrowserTab={onQuickActionsNewBrowserTab}
 					onNewTerminalTab={onQuickActionsNewTerminalTab}
+					onGoToNextUnread={onGoToNextUnread}
 				/>
 			)}
 

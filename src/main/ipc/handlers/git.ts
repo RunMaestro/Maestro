@@ -154,6 +154,36 @@ export function registerGitHandlers(_deps: GitHandlerDependencies): void {
 		)
 	);
 
+	// Initialize a new git repository at the given directory.
+	// Returns { success, error? }. Used by the agent-create UI to offer
+	// `git init` when a chosen working directory isn't already a repo.
+	ipcMain.handle(
+		'git:init',
+		withIpcErrorLogging(
+			handlerOpts('init'),
+			async (cwd: string, sshRemoteId?: string, remoteCwd?: string) => {
+				const sshRemote = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
+				// Fail fast if an SSH remote was requested but can't be resolved —
+				// otherwise we'd silently `git init` the wrong (local) directory.
+				if (sshRemoteId && !sshRemote) {
+					return {
+						success: false,
+						error: `SSH remote not found: ${sshRemoteId}`,
+					};
+				}
+				const effectiveRemoteCwd = sshRemote ? remoteCwd || cwd : undefined;
+				const result = await execGit(['init'], cwd, sshRemote, effectiveRemoteCwd);
+				if (result.exitCode !== 0) {
+					return {
+						success: false,
+						error: result.stderr?.trim() || 'git init failed',
+					};
+				}
+				return { success: true };
+			}
+		)
+	);
+
 	ipcMain.handle(
 		'git:numstat',
 		withIpcErrorLogging(

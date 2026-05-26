@@ -51,7 +51,7 @@ interface GraphSessionInput {
 		include_output_from?: string[];
 		forward_output_from?: string[];
 		cli_output?: { target: string };
-		action?: 'prompt' | 'command';
+		action?: 'prompt' | 'command' | 'notify';
 		command?: CueCommand;
 		target_node_key?: string;
 		fan_out_node_keys?: string[];

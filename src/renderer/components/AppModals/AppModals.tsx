@@ -349,6 +349,8 @@ export interface AppModalsProps {
 	onQuickActionsNewFileTab?: () => void;
 	onQuickActionsNewBrowserTab?: () => void;
 	onQuickActionsNewTerminalTab?: () => void;
+	// Next unread / draft tab navigation (shared with Alt+Cmd+Down)
+	onGoToNextUnread?: () => void;
 
 	// --- AppGroupChatModals props ---
 	onCloseNewGroupChatModal: () => void;
@@ -755,6 +757,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		onQuickActionsNewFileTab,
 		onQuickActionsNewBrowserTab,
 		onQuickActionsNewTerminalTab,
+		onGoToNextUnread,
 		// Group Chat modals
 		onCloseNewGroupChatModal,
 		onCreateGroupChat,
@@ -1098,6 +1101,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				onQuickActionsNewFileTab={onQuickActionsNewFileTab}
 				onQuickActionsNewBrowserTab={onQuickActionsNewBrowserTab}
 				onQuickActionsNewTerminalTab={onQuickActionsNewTerminalTab}
+				onGoToNextUnread={onGoToNextUnread}
 				onRemoveQueueItem={onRemoveQueueItem}
 				onSwitchQueueSession={onSwitchQueueSession}
 				onReorderQueueItems={onReorderQueueItems}

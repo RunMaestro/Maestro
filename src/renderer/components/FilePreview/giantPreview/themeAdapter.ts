@@ -86,6 +86,18 @@ export function buildEditorTheme(theme: Theme): Extension {
 				backgroundColor: c.accent + '60',
 				outline: `1px solid ${c.accent}`,
 			},
+			// Host-driven search match decorations (see markdownEditor/searchHighlight).
+			// Kept in this shared theme so both writable editors and any future
+			// CM6-based read path pick up the same colors. Naming is prefixed
+			// `cm-app-` to make it unambiguous that these come from app code,
+			// not CodeMirror itself.
+			'.cm-app-search-match': {
+				backgroundColor: c.warning + '40',
+			},
+			'.cm-app-search-current': {
+				backgroundColor: c.accent + '60',
+				outline: `1px solid ${c.accent}`,
+			},
 		},
 		{ dark: isDark }
 	);

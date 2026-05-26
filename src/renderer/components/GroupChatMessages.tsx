@@ -360,6 +360,7 @@ export const GroupChatMessages = forwardRef<GroupChatMessagesHandle, GroupChatMe
 														theme={theme}
 														onCopy={copyToClipboard}
 														chatLineBreaks
+														chatMath
 													/>
 												) : (
 													<div className="whitespace-pre-wrap">
@@ -402,6 +403,7 @@ export const GroupChatMessages = forwardRef<GroupChatMessagesHandle, GroupChatMe
 														theme={theme}
 														onCopy={copyToClipboard}
 														chatLineBreaks
+														chatMath
 													/>
 												) : (
 													<div className="whitespace-pre-wrap">
@@ -430,6 +432,7 @@ export const GroupChatMessages = forwardRef<GroupChatMessagesHandle, GroupChatMe
 												theme={theme}
 												onCopy={copyToClipboard}
 												chatLineBreaks
+												chatMath
 											/>
 										</div>
 									) : (

@@ -1,20 +1,29 @@
 import React from 'react';
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MarkdownRenderer } from '../../../renderer/components/MarkdownRenderer';
 
 import { mockTheme } from '../../helpers/mockTheme';
-// Mock react-syntax-highlighter
-vi.mock('react-syntax-highlighter', () => ({
-	Prism: ({ children, language }: { children: string; language?: string }) => (
-		<pre data-testid="syntax-highlighter" data-language={language}>
-			{children}
-		</pre>
-	),
+// Mock Shiki so CodeFence's async highlighting doesn't hit the real library.
+// The tests assert on the synchronous fallback render before highlighting completes.
+vi.mock('shiki', () => ({
+	createHighlighter: vi.fn(async () => ({
+		codeToHtml: () => '<pre class="shiki"><code>mocked</code></pre>',
+		getLoadedLanguages: () => [],
+		loadLanguage: async () => undefined,
+	})),
+	bundledLanguagesInfo: [],
+	bundledLanguagesAlias: {},
 }));
-vi.mock('react-syntax-highlighter/dist/esm/styles/prism', () => ({
-	vscDarkPlus: {},
-	vs: {},
+
+// Mock highlight.js so detection imports don't blow up in jsdom. Exposed as a
+// controllable spy (default: no confident guess) so individual tests can make
+// auto-detection succeed without affecting the others.
+const { mockHighlightAuto } = vi.hoisted(() => ({
+	mockHighlightAuto: vi.fn(() => ({ language: null, relevance: 0 })),
+}));
+vi.mock('highlight.js', () => ({
+	default: { highlightAuto: mockHighlightAuto },
 }));
 
 // Mock lucide-react icons
@@ -27,6 +36,9 @@ vi.mock('lucide-react', () => ({
 	Globe: () => <span data-testid="globe-icon">Globe</span>,
 	FileText: () => <span data-testid="file-text-icon">FileText</span>,
 	Target: () => <span data-testid="target-icon">Target</span>,
+	ChevronDown: () => <span data-testid="chevron-down-icon">ChevronDown</span>,
+	Search: () => <span data-testid="search-icon">Search</span>,
+	Check: () => <span data-testid="check-icon">Check</span>,
 }));
 
 // Mock window.maestro for IPC calls (LocalImage, shell, etc.)
@@ -228,18 +240,31 @@ describe('MarkdownRenderer', () => {
 		it('renders fenced code block with language', () => {
 			const content = '```typescript\nconst x: number = 42;\n```';
 			const { container } = renderMd(content);
-			const highlighter = container.querySelector('[data-testid="syntax-highlighter"]');
+			const highlighter = container.querySelector('[data-testid="code-fence"]');
 			expect(highlighter).toBeInTheDocument();
 			expect(highlighter!.getAttribute('data-language')).toBe('typescript');
-			expect(highlighter!.textContent).toBe('const x: number = 42;');
+			expect(highlighter!.querySelector('code')!.textContent).toBe('const x: number = 42;');
 		});
 
 		it('renders fenced code block without language', () => {
 			const content = '```\nsome code here\n```';
 			const { container } = renderMd(content);
-			const highlighter = container.querySelector('[data-testid="syntax-highlighter"]');
+			const highlighter = container.querySelector('[data-testid="code-fence"]');
 			expect(highlighter).toBeInTheDocument();
 			expect(highlighter!.getAttribute('data-language')).toBe('text');
+		});
+
+		it('auto-detects the language for an untagged fence', async () => {
+			// Regression: a bare ``` fence used to resolve to `text` and skip
+			// detection entirely, leaving the block unhighlighted until the user
+			// manually picked a language. It must now guess from the body.
+			mockHighlightAuto.mockReturnValueOnce({ language: 'javascript', relevance: 10 });
+			const content = '```\nconsole.log("hello world");\n```';
+			const { container } = renderMd(content);
+			await waitFor(() => {
+				const highlighter = container.querySelector('[data-testid="code-fence"]');
+				expect(highlighter!.getAttribute('data-language')).toBe('javascript');
+			});
 		});
 
 		it('renders multiple code blocks', () => {
@@ -256,21 +281,21 @@ describe('MarkdownRenderer', () => {
 				'```',
 			].join('\n');
 			const { container } = renderMd(content);
-			const highlighters = container.querySelectorAll('[data-testid="syntax-highlighter"]');
+			const highlighters = container.querySelectorAll('[data-testid="code-fence"]');
 			expect(highlighters.length).toBe(2);
 		});
 
 		it('renders code block with special characters', () => {
 			const content = '```html\n<div class="foo">&amp; bar</div>\n```';
 			const { container } = renderMd(content);
-			const highlighter = container.querySelector('[data-testid="syntax-highlighter"]');
+			const highlighter = container.querySelector('[data-testid="code-fence"]');
 			expect(highlighter).toBeInTheDocument();
 		});
 
 		it('renders code block with empty lines preserved', () => {
 			const content = '```\nline 1\n\nline 3\n```';
 			const { container } = renderMd(content);
-			const highlighter = container.querySelector('[data-testid="syntax-highlighter"]');
+			const highlighter = container.querySelector('[data-testid="code-fence"]');
 			expect(highlighter!.textContent).toContain('line 1');
 			expect(highlighter!.textContent).toContain('line 3');
 		});
@@ -292,25 +317,27 @@ describe('MarkdownRenderer', () => {
 		});
 
 		it('renders various language identifiers', () => {
-			const languages = [
-				'js',
-				'ts',
-				'py',
-				'rust',
-				'go',
-				'bash',
-				'sh',
-				'json',
-				'yaml',
-				'sql',
-				'css',
-				'diff',
+			// CodeFence normalises common short tags to their canonical Shiki id
+			// on first paint via the local alias table.
+			const cases: Array<[string, string]> = [
+				['js', 'javascript'],
+				['ts', 'typescript'],
+				['py', 'python'],
+				['rust', 'rust'],
+				['go', 'go'],
+				['bash', 'bash'],
+				['sh', 'sh'],
+				['json', 'json'],
+				['yaml', 'yaml'],
+				['sql', 'sql'],
+				['css', 'css'],
+				['diff', 'diff'],
 			];
-			for (const lang of languages) {
-				const { container, unmount } = renderMd(`\`\`\`${lang}\ncode\n\`\`\``);
-				const highlighter = container.querySelector('[data-testid="syntax-highlighter"]');
+			for (const [fenceTag, expected] of cases) {
+				const { container, unmount } = renderMd(`\`\`\`${fenceTag}\ncode\n\`\`\``);
+				const highlighter = container.querySelector('[data-testid="code-fence"]');
 				expect(highlighter).toBeInTheDocument();
-				expect(highlighter!.getAttribute('data-language')).toBe(lang);
+				expect(highlighter!.getAttribute('data-language')).toBe(expected);
 				unmount();
 			}
 		});
@@ -714,7 +741,7 @@ describe('MarkdownRenderer', () => {
 			].join('\n');
 			const { container } = renderMd(content);
 			expect(container.querySelector('ol')).toBeInTheDocument();
-			const highlighters = container.querySelectorAll('[data-testid="syntax-highlighter"]');
+			const highlighters = container.querySelectorAll('[data-testid="code-fence"]');
 			expect(highlighters.length).toBe(3);
 		});
 
@@ -761,7 +788,7 @@ describe('MarkdownRenderer', () => {
 				'> **Note:** This is a breaking change if callers depend on the throw behavior.',
 			].join('\n');
 			const { container } = renderMd(content);
-			expect(container.querySelector('[data-testid="syntax-highlighter"]')).toBeInTheDocument();
+			expect(container.querySelector('[data-testid="code-fence"]')).toBeInTheDocument();
 			expect(container.querySelector('blockquote')).toBeInTheDocument();
 			// Multiple inline code elements
 			const codes = container.querySelectorAll('code');
@@ -827,7 +854,7 @@ describe('MarkdownRenderer', () => {
 			const lines = Array.from({ length: 50 }, (_, i) => `  line ${i + 1}: doSomething(${i});`);
 			const content = '```javascript\nfunction big() {\n' + lines.join('\n') + '\n}\n```';
 			const { container } = renderMd(content);
-			const highlighter = container.querySelector('[data-testid="syntax-highlighter"]');
+			const highlighter = container.querySelector('[data-testid="code-fence"]');
 			expect(highlighter).toBeInTheDocument();
 			expect(highlighter!.textContent).toContain('line 1');
 			expect(highlighter!.textContent).toContain('line 50');
@@ -872,7 +899,7 @@ describe('MarkdownRenderer', () => {
 		it('handles consecutive code blocks with no gap', () => {
 			const content = '```js\nfirst\n```\n```py\nsecond\n```';
 			const { container } = renderMd(content);
-			const highlighters = container.querySelectorAll('[data-testid="syntax-highlighter"]');
+			const highlighters = container.querySelectorAll('[data-testid="code-fence"]');
 			expect(highlighters.length).toBe(2);
 		});
 
@@ -893,7 +920,7 @@ describe('MarkdownRenderer', () => {
 		it('handles HTML entities in code blocks', () => {
 			const content = '```\n<div>&amp;</div>\n```';
 			const { container } = renderMd(content);
-			const highlighter = container.querySelector('[data-testid="syntax-highlighter"]');
+			const highlighter = container.querySelector('[data-testid="code-fence"]');
 			expect(highlighter).toBeInTheDocument();
 		});
 
@@ -924,7 +951,7 @@ describe('MarkdownRenderer', () => {
 			const content = '### Example\n```ts\nconst x = 1;\n```';
 			const { container } = renderMd(content);
 			expect(container.querySelector('h3')).toBeInTheDocument();
-			expect(container.querySelector('[data-testid="syntax-highlighter"]')).toBeInTheDocument();
+			expect(container.querySelector('[data-testid="code-fence"]')).toBeInTheDocument();
 		});
 
 		it('handles paragraphs separated by single newline (should merge)', () => {
@@ -1192,7 +1219,7 @@ describe('MarkdownRenderer', () => {
 			const { container } = renderMd(content);
 			const ol = container.querySelector('ol');
 			expect(ol).toBeInTheDocument();
-			const highlighters = container.querySelectorAll('[data-testid="syntax-highlighter"]');
+			const highlighters = container.querySelectorAll('[data-testid="code-fence"]');
 			expect(highlighters.length).toBe(2);
 		});
 
@@ -1221,7 +1248,7 @@ describe('MarkdownRenderer', () => {
 			// Using 4 backticks to wrap content that contains 3 backticks
 			const content = '````\n```\ninner code\n```\n````';
 			const { container } = renderMd(content);
-			const highlighter = container.querySelector('[data-testid="syntax-highlighter"]');
+			const highlighter = container.querySelector('[data-testid="code-fence"]');
 			expect(highlighter).toBeInTheDocument();
 		});
 
@@ -1285,6 +1312,72 @@ describe('MarkdownRenderer', () => {
 				<MarkdownRenderer {...defaultProps} content={content} chatLineBreaks />
 			);
 			expect(chatRender.container.querySelectorAll('p').length).toBe(2);
+		});
+	});
+
+	describe('chatMath (#622)', () => {
+		it('does not parse $...$ as math by default (document semantics)', () => {
+			const content = 'price is $5 and $10 today';
+			const { container } = render(<MarkdownRenderer {...defaultProps} content={content} />);
+			// No KaTeX rendering — `$` characters stay as literal text
+			expect(container.querySelector('.katex')).toBeNull();
+			expect(container.textContent).toContain('$5');
+			expect(container.textContent).toContain('$10');
+		});
+
+		it('does NOT parse single-dollar $x$ as inline math even when chatMath is enabled', () => {
+			// `singleDollarTextMath: false` keeps single-dollar content as literal
+			// text so chat messages with `$5`, `$HOME`, etc. don't misparse.
+			const content = 'inline $x + y$ math';
+			const { container } = render(
+				<MarkdownRenderer {...defaultProps} content={content} chatMath />
+			);
+			expect(container.querySelector('.katex')).toBeNull();
+			expect(container.textContent).toContain('$x + y$');
+		});
+
+		it('preserves currency / shell-variable dollar text when chatMath is enabled', () => {
+			const content = 'It costs $5 and shipping is $3; my path is $HOME/bin';
+			const { container } = render(
+				<MarkdownRenderer {...defaultProps} content={content} chatMath />
+			);
+			expect(container.querySelector('.katex')).toBeNull();
+			expect(container.textContent).toContain('$5');
+			expect(container.textContent).toContain('$HOME/bin');
+		});
+
+		it('renders line-isolated $$...$$ as display math when chatMath is enabled', () => {
+			const content = 'before\n\n$$x + y$$\n\nafter';
+			const { container } = render(
+				<MarkdownRenderer {...defaultProps} content={content} chatMath />
+			);
+			// Display math gets the `.katex-display` wrapper
+			expect(container.querySelector('.katex-display')).not.toBeNull();
+		});
+
+		it('promotes $$...$$ inside a blockquote to display math (nested containers)', () => {
+			const content = '> $$E = mc^2$$';
+			const { container } = render(
+				<MarkdownRenderer {...defaultProps} content={content} chatMath />
+			);
+			const block = container.querySelector('blockquote .katex-display');
+			expect(block).not.toBeNull();
+		});
+
+		it('promotes $$...$$ inside a list item to display math (nested containers)', () => {
+			const content = '- $$E = mc^2$$';
+			const { container } = render(
+				<MarkdownRenderer {...defaultProps} content={content} chatMath />
+			);
+			const block = container.querySelector('li .katex-display');
+			expect(block).not.toBeNull();
+		});
+
+		it('leaves $$...$$ as literal text when chatMath is disabled', () => {
+			const content = 'before\n\n$$x + y$$\n\nafter';
+			const { container } = render(<MarkdownRenderer {...defaultProps} content={content} />);
+			expect(container.querySelector('.katex')).toBeNull();
+			expect(container.textContent).toContain('$$x + y$$');
 		});
 	});
 });

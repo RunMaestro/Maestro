@@ -453,6 +453,15 @@ describe('agents IPC handlers', () => {
 				supportsResultMessages: true,
 				supportsModelSelection: false,
 				supportsStreamJsonInput: true,
+				supportsThinkingDisplay: false,
+				supportsContextMerge: false,
+				supportsContextExport: false,
+				supportsWizard: false,
+				supportsGroupChatModeration: false,
+				usesJsonLineOutput: false,
+				usesCombinedContextWindow: false,
+				supportsAppendSystemPrompt: false,
+				supportsProjectMemory: false,
 			};
 
 			vi.mocked(agentCapabilities.getAgentCapabilities).mockReturnValue(mockCapabilities);
@@ -482,6 +491,15 @@ describe('agents IPC handlers', () => {
 				supportsResultMessages: false,
 				supportsModelSelection: false,
 				supportsStreamJsonInput: false,
+				supportsThinkingDisplay: false,
+				supportsContextMerge: false,
+				supportsContextExport: false,
+				supportsWizard: false,
+				supportsGroupChatModeration: false,
+				usesJsonLineOutput: false,
+				usesCombinedContextWindow: false,
+				supportsAppendSystemPrompt: false,
+				supportsProjectMemory: false,
 			};
 
 			vi.mocked(agentCapabilities.getAgentCapabilities).mockReturnValue(defaultCaps);
@@ -511,6 +529,15 @@ describe('agents IPC handlers', () => {
 				supportsResultMessages: true,
 				supportsModelSelection: true,
 				supportsStreamJsonInput: true,
+				supportsThinkingDisplay: false,
+				supportsContextMerge: false,
+				supportsContextExport: false,
+				supportsWizard: false,
+				supportsGroupChatModeration: false,
+				usesJsonLineOutput: false,
+				usesCombinedContextWindow: false,
+				supportsAppendSystemPrompt: false,
+				supportsProjectMemory: false,
 			};
 
 			vi.mocked(agentCapabilities.getAgentCapabilities).mockReturnValue(mockCapabilities);

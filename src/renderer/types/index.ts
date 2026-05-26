@@ -24,6 +24,7 @@ export type {
 	BatchDocumentEntry,
 	PlaybookDocumentEntry,
 	Playbook,
+	TaskSelectionMode,
 	ThinkingMode,
 	WorktreeRunTarget,
 } from '../../shared/types';
@@ -41,6 +42,7 @@ import type {
 	UsageStats,
 	ToolType,
 	ThinkingMode,
+	TaskSelectionMode,
 } from '../../shared/types';
 
 // Re-export group chat types from shared location
@@ -122,6 +124,8 @@ export interface WizardGeneratedDocument {
 export interface SessionWizardState {
 	/** Whether wizard is currently active */
 	isActive: boolean;
+	/** Whether the wizard is performing first-load initialization (fetching docs, parsing intent) */
+	isInitializing?: boolean;
 	/** Whether waiting for AI response */
 	isWaiting?: boolean;
 	/** Current wizard mode: 'new' for creating documents, 'iterate' for modifying existing */
@@ -225,6 +229,15 @@ export interface LogEntry {
 	// "Captured via interactive TUI" footer pill on non-user entries. Exists as
 	// forward-compatible metadata for any future divergence.
 	renderStyle?: 'structured' | 'text-stream';
+	// For session_not_found system entries — payload for the inline "Create new
+	// session from prior context" action. The button on the entry opens
+	// SessionRecoveryModal which re-spawns the agent in place on `tabId`,
+	// carrying the prior conversation as merged context and re-sending
+	// `lastUserPrompt` (the message that hit the dead session).
+	recoveryAction?: {
+		lastUserPrompt: string;
+		tabId: string;
+	};
 }
 
 // Queued item for the session-level execution queue
@@ -300,6 +313,7 @@ export interface BatchRunConfig {
 	prompt: string;
 	loopEnabled: boolean; // Loop back to first doc when done
 	maxLoops?: number | null; // Max loop iterations (null/undefined = infinite)
+	taskSelectionMode?: TaskSelectionMode; // 'task' (default) or 'document' — controls {{TASK_SELECTION_BLOCK}}
 	worktree?: WorktreeConfig; // Optional worktree configuration
 	worktreeTarget?: WorktreeRunTarget; // Optional target for dispatching to a worktree agent
 }

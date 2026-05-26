@@ -668,6 +668,11 @@ interface MaestroAPI {
 			remoteCwd?: string
 		) => Promise<{ stdout: string; stderr: string }>;
 		isRepo: (cwd: string, sshRemoteId?: string, remoteCwd?: string) => Promise<boolean>;
+		init: (
+			cwd: string,
+			sshRemoteId?: string,
+			remoteCwd?: string
+		) => Promise<{ success: boolean; error?: string }>;
 		numstat: (
 			cwd: string,
 			sshRemoteId?: string,
@@ -1824,6 +1829,7 @@ interface MaestroAPI {
 				loopEnabled: boolean;
 				maxLoops?: number | null;
 				prompt: string;
+				taskSelectionMode?: 'task' | 'document';
 				worktreeSettings?: {
 					branchNameTemplate: string;
 					createPROnCompletion: boolean;
@@ -1840,6 +1846,7 @@ interface MaestroAPI {
 				loopEnabled: boolean;
 				maxLoops?: number | null;
 				prompt: string;
+				taskSelectionMode?: 'task' | 'document';
 				updatedAt: number;
 				worktreeSettings?: {
 					branchNameTemplate: string;

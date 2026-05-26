@@ -1,24 +1,21 @@
-import type React from 'react';
 import type { Session } from '../../../types';
-import { findNextUnreadSession } from '../../../utils/tabHelpers';
 import type { QuickAction } from '../types';
 
 interface BuildNavigationCommandsArgs {
 	activeSession: Session | undefined;
 	activeSessionId: string;
-	sessions: Session[];
-	setSessions: React.Dispatch<React.SetStateAction<Session[]>>;
-	setActiveSessionId: (id: string) => void;
 	setQuickActionOpen: (open: boolean) => void;
 	setLeftSidebarOpen: (open: boolean | ((prev: boolean) => boolean)) => void;
 	setRightPanelOpen: (open: boolean | ((prev: boolean) => boolean)) => void;
-	setSuccessFlashNotification: (message: string | null) => void;
 	addNewSession: () => void;
 	deleteSession: (id: string) => void;
 	openWizard?: () => void;
 	getOpenInLabel: (platform: string) => string;
 	platform: string;
 	openPath?: (path: string) => void;
+	// Shared with the Alt+Cmd+Down keyboard shortcut so both invocation paths
+	// use the same sidebar-visible ordering and current-session clear semantics.
+	onGoToNextUnread?: () => void;
 	shortcuts: {
 		newInstance?: QuickAction['shortcut'];
 		openWizard?: QuickAction['shortcut'];
@@ -32,19 +29,16 @@ interface BuildNavigationCommandsArgs {
 export function buildNavigationCommands({
 	activeSession,
 	activeSessionId,
-	sessions,
-	setSessions,
-	setActiveSessionId,
 	setQuickActionOpen,
 	setLeftSidebarOpen,
 	setRightPanelOpen,
-	setSuccessFlashNotification,
 	addNewSession,
 	deleteSession,
 	openWizard,
 	getOpenInLabel,
 	platform,
 	openPath,
+	onGoToNextUnread,
 	shortcuts,
 }: BuildNavigationCommandsArgs): QuickAction[] {
 	const commands: QuickAction[] = [
@@ -86,37 +80,10 @@ export function buildNavigationCommands({
 			label: 'Next Unread / Draft Tab',
 			shortcut: shortcuts.nextUnreadTab,
 			action: () => {
-				const result = findNextUnreadSession(sessions, activeSessionId);
-
-				if (result.clearedCurrent) {
-					setSessions((prev) =>
-						prev.map((session) => {
-							if (session.id !== activeSessionId) return session;
-							return {
-								...session,
-								aiTabs: session.aiTabs.map((tab) =>
-									tab.hasUnread ? { ...tab, hasUnread: false } : tab
-								),
-							};
-						})
-					);
-				}
-
-				if (result.jumped && result.targetSessionId) {
-					setActiveSessionId(result.targetSessionId);
-					const targetTabId = result.targetTabId;
-					if (targetTabId) {
-						setSessions((prev) =>
-							prev.map((session) => {
-								if (session.id !== result.targetSessionId) return session;
-								return { ...session, activeTabId: targetTabId };
-							})
-						);
-					}
-				} else {
-					setSuccessFlashNotification('No unread or draft tabs');
-					setTimeout(() => setSuccessFlashNotification(null), 2000);
-				}
+				// Delegate to the shared App.tsx callback so this matches the
+				// Alt+Cmd+Down keyboard shortcut exactly (uses sortedSessions —
+				// the sidebar's visible order — and the same clear semantics).
+				onGoToNextUnread?.();
 				setQuickActionOpen(false);
 			},
 		}

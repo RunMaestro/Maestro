@@ -149,6 +149,7 @@ function SessionListInner(props: SessionListProps) {
 	const webInterfaceCustomPort = useSettingsStore((s) => s.webInterfaceCustomPort);
 	const ungroupedCollapsed = useSettingsStore((s) => s.ungroupedCollapsed);
 	const showLeftPanelGroupMemberCount = useSettingsStore((s) => s.showLeftPanelGroupMemberCount);
+	const leftPanelCollapsedPillsPerRow = useSettingsStore((s) => s.leftPanelCollapsedPillsPerRow);
 	const autoRunStats = useSettingsStore((s) => s.autoRunStats);
 	const contextWarningYellowThreshold = useSettingsStore(
 		(s) => s.contextManagementSettings.contextWarningYellowThreshold
@@ -1075,6 +1076,7 @@ function SessionListInner(props: SessionListProps) {
 								<CollapsedSessionPillRows
 									sessions={sortedBookmarkedParentSessions}
 									keyPrefix="bookmark-collapsed"
+									maxPerRow={leftPanelCollapsedPillsPerRow}
 									onContainerClick={() => setBookmarksCollapsed(false)}
 									theme={theme}
 									activeBatchSessionIds={activeBatchSessionIds}
@@ -1210,6 +1212,7 @@ function SessionListInner(props: SessionListProps) {
 									<CollapsedSessionPillRows
 										sessions={groupCollapsedPills}
 										keyPrefix={`group-collapsed-${group.id}`}
+										maxPerRow={leftPanelCollapsedPillsPerRow}
 										onContainerClick={() => toggleGroup(group.id)}
 										theme={theme}
 										activeBatchSessionIds={activeBatchSessionIds}
@@ -1318,6 +1321,7 @@ function SessionListInner(props: SessionListProps) {
 								<CollapsedSessionPillRows
 									sessions={sortedUngroupedParentSessions}
 									keyPrefix="ungrouped-collapsed"
+									maxPerRow={leftPanelCollapsedPillsPerRow}
 									onContainerClick={() => setUngroupedCollapsed(false)}
 									theme={theme}
 									activeBatchSessionIds={activeBatchSessionIds}

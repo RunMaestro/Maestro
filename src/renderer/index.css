@@ -1130,3 +1130,29 @@ svg.wand-sparkle-active path:nth-child(8) {
 		animation: none !important;
 	}
 }
+
+/* Shiki-highlighted code fences. The highlighter emits its own <pre class="shiki">
+ * with a theme-driven background and inline token styles. We override padding /
+ * radius / overflow to match the surrounding chat bubble, and force `color:
+ * unset` on the structural elements so prose styles (e.g. `.terminal-output
+ * code { color: ... }` in markdownConfig) don't cascade past Shiki's per-token
+ * inline colors via the `<code>` element. */
+.shiki-host pre.shiki {
+	margin: 0;
+	padding: 1em;
+	border-radius: 0;
+	overflow-x: auto;
+	white-space: pre;
+	font-family: inherit;
+}
+
+.shiki-host pre.shiki code {
+	font-family: inherit;
+	background: transparent !important;
+	color: unset !important;
+	padding: 0 !important;
+}
+
+.shiki-host pre.shiki .line {
+	color: unset;
+}

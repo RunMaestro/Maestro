@@ -30,7 +30,6 @@ import { DurationTrendsChart } from './DurationTrendsChart';
 import { AgentUsageChart } from './AgentUsageChart';
 import { AutoRunStats } from './AutoRunStats';
 import { SessionStats } from './SessionStats';
-import { ClaudePlanUsage } from './ClaudePlanUsage';
 import { WorktreeAnalytics } from './WorktreeAnalytics';
 import { AgentEfficiencyChart } from './AgentEfficiencyChart';
 import { WeekdayComparisonChart } from './WeekdayComparisonChart';
@@ -61,7 +60,6 @@ import { PERFORMANCE_THRESHOLDS } from '../../../shared/performance-metrics';
 
 // Section IDs for keyboard navigation
 const OVERVIEW_SECTIONS = [
-	'claude-plan-usage',
 	'year-in-pixels',
 	'summary-cards',
 	'agent-comparison',
@@ -385,20 +383,10 @@ export function UsageDashboardModal({
 	}, [containerWidth]);
 
 	// Get sections for current view mode
-	// The Claude Plan Usage section is suppressed when no Claude Code sessions
-	// exist (see overview JSX below). Mirror that gate here so keyboard nav
-	// doesn't try to focus an invisible section.
-	const hasClaudeSessions = useMemo(
-		() => sessions.some((s) => s.toolType === 'claude-code'),
-		[sessions]
-	);
-
 	const currentSections = useMemo((): readonly SectionId[] => {
 		switch (viewMode) {
 			case 'overview':
-				return hasClaudeSessions
-					? OVERVIEW_SECTIONS
-					: OVERVIEW_SECTIONS.filter((id) => id !== 'claude-plan-usage');
+				return OVERVIEW_SECTIONS;
 			case 'agents':
 				return AGENTS_SECTIONS;
 			case 'agent-overview':
@@ -414,7 +402,7 @@ export function UsageDashboardModal({
 			default:
 				return OVERVIEW_SECTIONS;
 		}
-	}, [viewMode, hasClaudeSessions]);
+	}, [viewMode]);
 
 	// Fall back to 'overview' if either Encore flag flips off while the Cue tab is active
 	useEffect(() => {
@@ -430,7 +418,6 @@ export function UsageDashboardModal({
 			'summary-cards': 'Summary Cards',
 			'agent-overview-cards': 'Active Agents Overview',
 			'session-stats': 'Agent Statistics',
-			'claude-plan-usage': 'Claude Max Plan Usage',
 			'agent-efficiency': 'Agent Efficiency Chart',
 			'agent-comparison': 'Provider Comparison Chart',
 			'provider-trends': 'Provider Trends Over Time',
@@ -824,34 +811,6 @@ export function UsageDashboardModal({
 							{/* View-specific content based on viewMode */}
 							{viewMode === 'overview' && (
 								<>
-									{/* Claude Max Plan Usage — per-account quota burndown.
-									    Sits at the top of Overview so the most cost-sensitive
-									    info is visible before scrolling. Suppressed when the
-									    user has no Claude Code sessions, since the widget has
-									    no meaning without a Claude account to sample. */}
-									{sessions.some((s) => s.toolType === 'claude-code') && (
-										<div
-											ref={setSectionRef('claude-plan-usage')}
-											tabIndex={0}
-											role="region"
-											aria-label={getSectionLabel('claude-plan-usage')}
-											onKeyDown={(e) => handleSectionKeyDown(e, 'claude-plan-usage')}
-											className="outline-none rounded-lg transition-shadow dashboard-section-enter"
-											style={{
-												boxShadow:
-													focusedSection === 'claude-plan-usage'
-														? `0 0 0 2px ${theme.colors.accent}`
-														: 'none',
-												animationDelay: '0ms',
-											}}
-											data-testid="section-claude-plan-usage"
-										>
-											<ChartErrorBoundary theme={theme} chartName="Claude Max Plan Usage">
-												<ClaudePlanUsage theme={theme} />
-											</ChartErrorBoundary>
-										</div>
-									)}
-
 									{/* Year-in-pixels hero strip — single-row signature graphic
 									    showing the past 365 days at a glance. Self-hides when the
 									    user has no activity in the lookback window. */}

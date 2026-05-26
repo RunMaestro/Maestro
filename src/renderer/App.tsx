@@ -127,6 +127,7 @@ import {
 } from './hooks';
 import { useMainPanelProps, useSessionListProps, useRightPanelProps } from './hooks/props';
 import { useAgentListeners } from './hooks/agent/useAgentListeners';
+import { useSessionRecovery } from './hooks/agent/useSessionRecovery';
 import { useSymphonyContribution } from './hooks/symphony/useSymphonyContribution';
 import { useCueAutoDiscovery } from './hooks/useCueAutoDiscovery';
 import { useCueVisibilityWiring } from './hooks/cue/useCueVisibilityWiring';
@@ -1482,6 +1483,7 @@ function MaestroConsoleInner() {
 		stagedImages,
 		setStagedImages,
 		processInput,
+		processInputRef,
 		handleInputKeyDown,
 		handleMainPanelInputBlur,
 		handleReplayMessage,
@@ -1509,6 +1511,17 @@ function MaestroConsoleInner() {
 		sessionsRef,
 		activeSessionIdRef,
 	});
+
+	// In-place recovery from session_not_found errors. The hook drives the
+	// inline SessionRecoveryCard surfaced by useAgentErrorListener — it grooms
+	// (or passes raw) the tab's prior conversation, sets pendingMergedContext,
+	// and re-sends the failed prompt via processInputRef so the existing
+	// spawn path stands up a fresh session on the same tab.
+	const {
+		startRecovery: handleSessionRecover,
+		isRecovering: isRecoveringSession,
+		recoveryError: sessionRecoveryError,
+	} = useSessionRecovery({ processInputRef });
 
 	// Force Send: dispatch a queued item immediately with forceParallel=true.
 	// Mirrors the user's manual flow (copy text → delete queued → Cmd+Shift+Enter)
@@ -2460,6 +2473,9 @@ function MaestroConsoleInner() {
 		handleOpenPromptComposer,
 		handleReplayMessage,
 		handleForkConversation,
+		handleSessionRecover,
+		isRecoveringSession,
+		sessionRecoveryError,
 		handleMainPanelFileClick,
 		handleNavigateBack: handleFileTabNavigateBack,
 		handleNavigateForward: handleFileTabNavigateForward,
@@ -3004,6 +3020,7 @@ function MaestroConsoleInner() {
 					onQuickActionsNewFileTab={handleNewFileTab}
 					onQuickActionsNewBrowserTab={handleNewBrowserTab}
 					onQuickActionsNewTerminalTab={handleOpenTerminalTab}
+					onGoToNextUnread={goToNextUnreadTab}
 					onRemoveQueueItem={handleRemoveQueueItem}
 					onSwitchQueueSession={handleSwitchQueueSession}
 					onReorderQueueItems={handleReorderQueueItems}

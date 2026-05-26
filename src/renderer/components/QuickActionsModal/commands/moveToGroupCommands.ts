@@ -31,7 +31,7 @@ export function buildMoveToGroupCommands({
 					},
 				]
 			: []),
-		{ id: 'no-group', label: '📁 No Group (Root)', action: () => handleMoveToGroup('') },
+		{ id: 'no-group', label: '📁 No Group (Ungrouped)', action: () => handleMoveToGroup('') },
 		...groups.map((group) => ({
 			id: `group-${group.id}`,
 			label: `${group.emoji} ${group.name}`,

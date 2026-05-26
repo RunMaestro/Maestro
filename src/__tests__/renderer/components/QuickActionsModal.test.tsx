@@ -1083,7 +1083,7 @@ describe('QuickActionsModal', () => {
 			fireEvent.click(screen.getByText('Move to Group...'));
 
 			expect(screen.getByText('← Back to main menu')).toBeInTheDocument();
-			expect(screen.getByText('📁 No Group (Root)')).toBeInTheDocument();
+			expect(screen.getByText('📁 No Group (Ungrouped)')).toBeInTheDocument();
 		});
 
 		it('shows groups in move-to-group mode', () => {
@@ -1132,7 +1132,7 @@ describe('QuickActionsModal', () => {
 			render(<QuickActionsModal {...props} />);
 
 			fireEvent.click(screen.getByText('Move to Group...'));
-			fireEvent.click(screen.getByText('📁 No Group (Root)'));
+			fireEvent.click(screen.getByText('📁 No Group (Ungrouped)'));
 
 			expect(props.setSessions).toHaveBeenCalled();
 			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
@@ -1228,7 +1228,7 @@ describe('QuickActionsModal', () => {
 			// When initialMode is 'move-to-group' the "Back to main menu" action is
 			// suppressed (the user never saw the main menu), so assert on group-mode
 			// specific entries instead.
-			expect(screen.getByText('📁 No Group (Root)')).toBeInTheDocument();
+			expect(screen.getByText('📁 No Group (Ungrouped)')).toBeInTheDocument();
 			expect(screen.getByText('+ Create New Group')).toBeInTheDocument();
 		});
 	});

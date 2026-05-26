@@ -7,4 +7,3 @@
 
 export { UsageDashboardModal } from './UsageDashboardModal';
 export { SessionStats } from './SessionStats';
-export { ClaudePlanUsage } from './ClaudePlanUsage';

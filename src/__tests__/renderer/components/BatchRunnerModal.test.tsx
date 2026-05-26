@@ -2490,6 +2490,7 @@ describe('Worktree Loading State', () => {
 			projectRoot: '/project',
 			state: 'idle',
 			tabs: [],
+			aiTabs: [],
 			activeTabIndex: 0,
 			isGitRepo: true,
 			isLive: false,
@@ -2579,5 +2580,76 @@ describe('Worktree Loading State', () => {
 
 		// Should NOT show "Preparing Worktree..." text
 		expect(screen.queryByText('Preparing Worktree...')).not.toBeInTheDocument();
+	});
+});
+
+describe('Auto Run Fresh-Context Mode Auto-Selection', () => {
+	afterEach(async () => {
+		const { useSessionStore } = await import('../../../renderer/stores/sessionStore');
+		useSessionStore.setState({ sessions: [], activeSessionId: '' });
+	});
+
+	// Build a session whose context window is forced via customContextWindow.
+	// customContextWindow short-circuits resolveEffectiveContextWindow, so the
+	// auto-mode picker resolves deterministically without depending on the
+	// agents.getConfig IPC mock.
+	async function setupSessionWithContextWindow(customContextWindow: number) {
+		const { useSessionStore } = await import('../../../renderer/stores/sessionStore');
+		const session = {
+			id: 'session-123',
+			name: 'Test Agent',
+			toolType: 'claude-code',
+			cwd: '/project',
+			fullPath: '/project',
+			projectRoot: '/project',
+			state: 'idle',
+			tabs: [],
+			aiTabs: [],
+			activeTabIndex: 0,
+			isGitRepo: true,
+			isLive: false,
+			changedFiles: [],
+			fileTree: [],
+			fileExplorerExpanded: [],
+			fileExplorerScrollPos: 0,
+			customContextWindow,
+		};
+		useSessionStore.setState({
+			sessions: [session as never],
+			activeSessionId: 'session-123',
+		});
+	}
+
+	it('defaults to Document mode for very large context windows (>= 1M tokens)', async () => {
+		await setupSessionWithContextWindow(1_000_000);
+
+		render(<BatchRunnerModal {...createDefaultProps()} />);
+
+		// Wait for documents/tasks to load so the fresh-context selector renders.
+		await waitFor(() => {
+			expect(screen.getByText('5')).toBeInTheDocument();
+		});
+
+		await waitFor(() => {
+			expect(screen.getByRole('button', { name: 'Document' })).toHaveClass('ring-2');
+		});
+		expect(screen.getByRole('button', { name: 'Task' })).not.toHaveClass('ring-2');
+	});
+
+	it('defaults to Task mode for smaller context windows (< 1M tokens)', async () => {
+		await setupSessionWithContextWindow(200_000);
+
+		render(<BatchRunnerModal {...createDefaultProps()} />);
+
+		await waitFor(() => {
+			expect(screen.getByText('5')).toBeInTheDocument();
+		});
+
+		// Task is the baseline default; assert it stays selected and is not flipped
+		// to Document for a sub-threshold window.
+		await waitFor(() => {
+			expect(screen.getByRole('button', { name: 'Task' })).toHaveClass('ring-2');
+		});
+		expect(screen.getByRole('button', { name: 'Document' })).not.toHaveClass('ring-2');
 	});
 });

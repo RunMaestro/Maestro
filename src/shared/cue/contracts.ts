@@ -23,6 +23,7 @@ export type CueEventType =
 	| 'app.startup'
 	| 'time.heartbeat'
 	| 'time.scheduled'
+	| 'time.once'
 	| 'file.changed'
 	| 'agent.completed'
 	| 'github.pull_request'
@@ -35,6 +36,7 @@ export const CUE_EVENT_TYPES: CueEventType[] = [
 	'app.startup',
 	'time.heartbeat',
 	'time.scheduled',
+	'time.once',
 	'file.changed',
 	'agent.completed',
 	'github.pull_request',
@@ -50,10 +52,28 @@ export type CueGitHubState = 'open' | 'closed' | 'merged' | 'all';
 export const CUE_GITHUB_STATES: CueGitHubState[] = ['open', 'closed', 'merged', 'all'];
 
 /** What a subscription does when it fires. */
-export type CueAction = 'prompt' | 'command';
+export type CueAction = 'prompt' | 'command' | 'notify';
 
 /** Sub-mode of a `command` action. */
 export type CueCommandMode = 'shell' | 'cli';
+
+/**
+ * Toast notification config for `action: 'notify'` subscriptions.
+ * Notify subscriptions surface a toast in the desktop UI via the owning
+ * agent — clicking the toast jumps to that agent.
+ *
+ * Used primarily by `time.once` reminder/task subscriptions emitted from
+ * `maestro-cli cue schedule --notify`, but any event type can drive a
+ * notify action.
+ */
+export interface CueNotifyConfig {
+	/** Toast body. When omitted, falls back to the subscription's `label`
+	 *  (preferred), then `prompt`, then `name`. */
+	message?: string;
+	/** When true, render the toast as dismissible (no auto-timeout — the
+	 *  user must explicitly close it). Maps to `notifyToast({ dismissible: true })`. */
+	sticky?: boolean;
+}
 
 /**
  * A maestro-cli sub-command. Currently only `send` is supported, but the
@@ -98,6 +118,29 @@ export interface CueSubscription {
 	interval_minutes?: number;
 	schedule_times?: string[];
 	schedule_days?: CueScheduleDay[];
+	/** ISO-8601 timestamp at which a `time.once` subscription should fire.
+	 *  Required for `time.once` events; ignored for all other event types.
+	 *  Must include a timezone offset (Z or ±HH:MM) — the engine parses with
+	 *  `Date.parse` and naive local-time strings produce surprising behavior
+	 *  across DST boundaries and SSH-spawned remote runs. */
+	fire_at?: string;
+	/** Grace window (in minutes) for `time.once` subscriptions whose `fire_at`
+	 *  has already passed when the engine starts (or hot-reloads cue.yaml).
+	 *  If `now - fire_at <= grace_minutes`, the subscription fires immediately
+	 *  on first poll; otherwise it self-destructs without firing and logs a
+	 *  "missed" entry. Defaults to 360 (6h). Set to 0 to disable missed-fire
+	 *  rescue entirely. Only meaningful for `time.once`. */
+	grace_minutes?: number;
+	/** Whether a `time.once` subscription should self-destruct (delete itself
+	 *  from cue.yaml) after a failed or timed-out run. Default `true`:
+	 *  one-shot tasks are consumed on every terminal status. Set `false` to
+	 *  keep the subscription around for inspection / manual re-trigger after
+	 *  a failure. Completed runs always self-destruct regardless of this flag.
+	 *  Only meaningful for `time.once`. */
+	self_destruct_on_failure?: boolean;
+	/** Toast notification config for `action: 'notify'` subscriptions.
+	 *  Required when `action === 'notify'`. See {@link CueNotifyConfig}. */
+	notify?: CueNotifyConfig;
 	watch?: string;
 	source_session?: string | string[];
 	/** Stable session ID(s) for chain subscriptions (event === 'agent.completed').
@@ -291,6 +334,14 @@ export interface CueRunResult {
 	durationMs: number;
 	startedAt: string;
 	endedAt: string;
+	/**
+	 * Provider session id (e.g. Claude's `session_id`) parsed from the agent's
+	 * stdout. Distinct from `sessionId`, which is the Maestro agent id. Used by
+	 * the Cue stats dashboard to attribute token usage to the on-disk session
+	 * file the run actually produced. Undefined for shell/CLI command runs (no
+	 * AI session) and for runs whose stdout carried no parseable session id.
+	 */
+	providerSessionId?: string | null;
 }
 
 /** Status summary for a Cue-enabled session */
