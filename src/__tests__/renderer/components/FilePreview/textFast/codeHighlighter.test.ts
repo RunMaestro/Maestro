@@ -10,6 +10,7 @@ import {
 	createTextCodeHighlighter,
 	HIGHLIGHTED_ATTR,
 } from '../../../../../renderer/components/FilePreview/textFast/codeHighlighter';
+import { __resetForTests } from '../../../../../renderer/utils/shiki/highlighterManager';
 import { mockTheme } from '../../../../helpers/mockTheme';
 
 class FakeIntersectionObserver implements IntersectionObserver {
@@ -54,12 +55,45 @@ class FakeIntersectionObserver implements IntersectionObserver {
 	}
 }
 
-vi.mock('shiki', () => ({
-	createHighlighter: vi.fn(async () => ({
-		codeToHtml: (code: string, opts: { lang: string }) =>
-			`<pre class="shiki"><code class="language-${opts.lang}">TXT-HL:${code}</code></pre>`,
-	})),
-}));
+vi.mock('shiki', () => {
+	const loaded = new Set<string>([
+		'javascript',
+		'typescript',
+		'tsx',
+		'jsx',
+		'json',
+		'python',
+		'bash',
+		'shell',
+		'sh',
+		'html',
+		'css',
+		'scss',
+		'markdown',
+		'md',
+		'yaml',
+		'yml',
+		'rust',
+		'go',
+		'java',
+		'c',
+		'cpp',
+		'sql',
+		'xml',
+	]);
+	return {
+		createHighlighter: vi.fn(async () => ({
+			codeToHtml: (code: string, opts: { lang: string }) =>
+				`<pre class="shiki"><code class="language-${opts.lang}">TXT-HL:${code}</code></pre>`,
+			getLoadedLanguages: () => Array.from(loaded),
+			loadLanguage: async (lang: string) => {
+				loaded.add(lang);
+			},
+		})),
+		bundledLanguagesInfo: [],
+		bundledLanguagesAlias: {},
+	};
+});
 
 // Track every root appended via makeRoot so afterEach can detach them and keep
 // document.body clean between tests (prevents DOM leakage across the suite).
@@ -70,6 +104,7 @@ beforeEach(() => {
 		globalThis as typeof globalThis & { IntersectionObserver: typeof IntersectionObserver }
 	).IntersectionObserver = FakeIntersectionObserver as unknown as typeof IntersectionObserver;
 	FakeIntersectionObserver.instances.length = 0;
+	__resetForTests();
 });
 
 afterEach(() => {

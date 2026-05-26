@@ -94,6 +94,35 @@ export function isGitHubRateLimitError(err: unknown): boolean {
 	);
 }
 
+/**
+ * Detect connectivity failures from the GitHub CLI. These are operational
+ * conditions (offline/VPN/DNS/GitHub unreachable), not app crashes.
+ */
+export function isGitHubConnectivityError(err: unknown): boolean {
+	const msg = (
+		err && typeof err === 'object' && 'message' in err && typeof err.message === 'string'
+			? err.message
+			: String(err ?? '')
+	).toLowerCase();
+	const stderr =
+		err &&
+		typeof err === 'object' &&
+		'stderr' in err &&
+		typeof (err as { stderr: unknown }).stderr === 'string'
+			? (err as { stderr: string }).stderr.toLowerCase()
+			: '';
+	const haystack = `${msg}\n${stderr}`;
+	return (
+		haystack.includes('error connecting to api.github.com') ||
+		haystack.includes('check your internet connection') ||
+		haystack.includes('enotfound api.github.com') ||
+		haystack.includes('econnreset') ||
+		haystack.includes('etimedout') ||
+		haystack.includes('network is unreachable') ||
+		haystack.includes('could not resolve host: api.github.com')
+	);
+}
+
 /** Expanded env so packaged Electron can find gh in /opt/homebrew/bin, /usr/local/bin, etc. */
 const ghEnv = getExpandedEnv();
 
@@ -542,6 +571,11 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 					'warn',
 					`[CUE] "${triggerName}" rate-limited by GitHub — backing off to ${backoffMin}m`,
 					payload
+				);
+			} else if (isGitHubConnectivityError(err)) {
+				onLog(
+					'warn',
+					`[CUE] GitHub poll skipped for "${triggerName}" because GitHub is unreachable: ${message}`
 				);
 			} else {
 				// Emit typed payload so the metric interceptor bumps the

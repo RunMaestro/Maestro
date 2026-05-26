@@ -7,7 +7,7 @@ import { EventEmitter } from 'events';
 import * as pty from 'node-pty';
 import { logger } from '../../utils/logger';
 import type { CommandResult } from '../types';
-import { buildExpandedPath } from '../../../shared/pathUtils';
+import { buildSpawnPath } from '../../utils/spawnPath';
 import {
 	resolveShellPath,
 	buildInteractiveShellArgs,
@@ -91,7 +91,7 @@ export class LocalCommandRunner {
 					SHELL: process.env.SHELL,
 					TERM: 'xterm-256color',
 					LANG: process.env.LANG || 'en_US.UTF-8',
-					PATH: buildExpandedPath(),
+					PATH: buildSpawnPath(),
 				};
 			}
 

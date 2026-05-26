@@ -7,14 +7,18 @@ import {
 	Clipboard,
 	Copy,
 	Globe,
+	AppWindow,
 	Image as ImageIcon,
 	Save,
 	Edit,
 	Share2,
 	GitGraph,
 	ExternalLink,
+	WrapText,
 } from 'lucide-react';
+import type { FilePreviewToolbarVisibility } from '../../stores/settingsStore';
 import { Spinner } from '../ui/Spinner';
+import { HoverTooltip } from '../ui/HoverTooltip';
 import { captureException } from '../../utils/sentry';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { formatFileSize, formatDateTime } from './filePreviewUtils';
@@ -54,6 +58,8 @@ interface FilePreviewHeaderProps {
 	onPublishGist?: () => void;
 	hasGist?: boolean;
 	onOpenInGraph?: () => void;
+	/** Open this file as a new tab in the embedded Maestro browser. */
+	onOpenInBrowser?: () => void;
 	sshRemoteId?: string;
 	copyContentToClipboard: () => Promise<void>;
 	copyPathToClipboard: () => void;
@@ -71,6 +77,12 @@ interface FilePreviewHeaderProps {
 	autoTier: PreviewTier;
 	previewTierOverride: PreviewTier | undefined;
 	onPreviewTierChange?: (tier: PreviewTier | undefined) => void;
+	/** Editor word-wrap state + toggle. Shown in edit mode as a toolbar button. */
+	wordWrap: boolean;
+	setWordWrap: (v: boolean) => void;
+	/** Per-button visibility map. When a key is false, the corresponding
+	 *  toolbar button is hidden (functionality stays reachable via shortcut). */
+	toolbarVisibility: FilePreviewToolbarVisibility;
 }
 
 export const FilePreviewHeader = React.memo(function FilePreviewHeader({
@@ -105,6 +117,7 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 	onPublishGist,
 	hasGist,
 	onOpenInGraph,
+	onOpenInBrowser,
 	sshRemoteId,
 	copyContentToClipboard,
 	copyPathToClipboard,
@@ -117,6 +130,9 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 	autoTier,
 	previewTierOverride,
 	onPreviewTierChange,
+	wordWrap,
+	setWordWrap,
+	toolbarVisibility,
 }: FilePreviewHeaderProps) {
 	const [showBackPopup, setShowBackPopup] = useState(false);
 	const [showForwardPopup, setShowForwardPopup] = useState(false);
@@ -149,53 +165,84 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 						</div>
 					</div>
 					<div className="flex items-center gap-2 shrink-0">
-						{/* Save button - shown in edit mode with changes for any editable text file */}
-						{isEditableText && markdownEditMode && onSave && (
-							<button
-								onClick={onSave}
-								disabled={!hasChanges || isSaving}
-								className="px-3 py-1.5 rounded text-xs font-medium transition-colors flex items-center gap-1.5"
-								style={{
-									backgroundColor: hasChanges ? theme.colors.accent : theme.colors.bgActivity,
-									color: hasChanges ? theme.colors.accentForeground : theme.colors.textDim,
-									opacity: hasChanges && !isSaving ? 1 : 0.5,
-									cursor: hasChanges && !isSaving ? 'pointer' : 'default',
-								}}
-								title={
-									hasChanges
-										? `Save changes (${formatShortcutKeys(['Meta', 's'])})`
-										: 'No changes to save'
-								}
+						{/* Save button - shown in edit mode, or in preview when unsaved edits remain
+						    (the user can flip to preview while dirty and still needs Save). */}
+						{toolbarVisibility.save &&
+							isEditableText &&
+							(markdownEditMode || hasChanges) &&
+							onSave && (
+								<HoverTooltip
+									theme={theme}
+									label={hasChanges ? 'Save changes' : 'No changes to save'}
+									shortcut={hasChanges ? formatShortcutKeys(['Meta', 's']) : undefined}
+								>
+									<button
+										onClick={onSave}
+										disabled={!hasChanges || isSaving}
+										className="px-3 py-1.5 rounded text-xs font-medium transition-colors flex items-center gap-1.5"
+										style={{
+											backgroundColor: hasChanges ? theme.colors.accent : theme.colors.bgActivity,
+											color: hasChanges ? theme.colors.accentForeground : theme.colors.textDim,
+											opacity: hasChanges && !isSaving ? 1 : 0.5,
+											cursor: hasChanges && !isSaving ? 'pointer' : 'default',
+										}}
+									>
+										{isSaving ? <Spinner size={14} /> : <Save className="w-3.5 h-3.5" />}
+										{isSaving ? 'Saving...' : 'Save'}
+									</button>
+								</HoverTooltip>
+							)}
+						{/* Word-wrap toggle — edit mode only. Switches between soft-wrap
+						    (default; long lines wrap at whitespace) and no-wrap
+						    (horizontal scroll). */}
+						{toolbarVisibility.wordWrap && isEditableText && markdownEditMode && (
+							<HoverTooltip
+								theme={theme}
+								label={wordWrap ? 'Disable word wrap' : 'Enable word wrap'}
 							>
-								{isSaving ? <Spinner size={14} /> : <Save className="w-3.5 h-3.5" />}
-								{isSaving ? 'Saving...' : 'Save'}
-							</button>
+								<button
+									onClick={() => setWordWrap(!wordWrap)}
+									className={headerBtnClass}
+									style={{ color: wordWrap ? theme.colors.accent : theme.colors.textDim }}
+									data-testid="editor-wrap-toggle"
+								>
+									<WrapText className={headerIconClass} />
+								</button>
+							</HoverTooltip>
 						)}
 						{/* Show remote images toggle - only for markdown in preview mode */}
-						{isMarkdown && !markdownEditMode && (
-							<button
-								onClick={() => setShowRemoteImages(!showRemoteImages)}
-								className={headerBtnClass}
-								style={{ color: showRemoteImages ? theme.colors.accent : theme.colors.textDim }}
-								title={showRemoteImages ? 'Hide remote images' : 'Show remote images'}
+						{toolbarVisibility.remoteImages && isMarkdown && !markdownEditMode && (
+							<HoverTooltip
+								theme={theme}
+								label={showRemoteImages ? 'Hide remote images' : 'Show remote images'}
 							>
-								<ImageIcon className={headerIconClass} />
-							</button>
+								<button
+									onClick={() => setShowRemoteImages(!showRemoteImages)}
+									className={headerBtnClass}
+									style={{ color: showRemoteImages ? theme.colors.accent : theme.colors.textDim }}
+								>
+									<ImageIcon className={headerIconClass} />
+								</button>
+							</HoverTooltip>
 						)}
 						{/* HTML render toggle - swap between rendered HTML and source view */}
-						{isHtml && !markdownEditMode && (
-							<button
-								onClick={() => setHtmlRenderMode(!htmlRenderMode)}
-								className={headerBtnClass}
-								style={{ color: htmlRenderMode ? theme.colors.accent : theme.colors.textDim }}
-								title={htmlRenderMode ? 'Show HTML source' : 'Render HTML in browser'}
-								data-testid="html-render-toggle"
+						{toolbarVisibility.htmlRender && isHtml && !markdownEditMode && (
+							<HoverTooltip
+								theme={theme}
+								label={htmlRenderMode ? 'Show HTML source' : 'Render HTML in browser'}
 							>
-								<Globe className={headerIconClass} />
-							</button>
+								<button
+									onClick={() => setHtmlRenderMode(!htmlRenderMode)}
+									className={headerBtnClass}
+									style={{ color: htmlRenderMode ? theme.colors.accent : theme.colors.textDim }}
+									data-testid="html-render-toggle"
+								>
+									<Globe className={headerIconClass} />
+								</button>
+							</HoverTooltip>
 						)}
 						{/* Preview tier chip - compact icon-only mode inside the toolbar */}
-						{showTierChip && (
+						{toolbarVisibility.previewTier && showTierChip && (
 							<PreviewTierChip
 								theme={theme}
 								autoTier={autoTier}
@@ -207,72 +254,113 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 							/>
 						)}
 						{/* Toggle between edit and preview/view mode - for any editable text file */}
-						{isEditableText && (
-							<button
-								onClick={() => setMarkdownEditMode(!markdownEditMode)}
-								className={headerBtnClass}
-								style={{ color: markdownEditMode ? theme.colors.accent : theme.colors.textDim }}
-								title={`${markdownEditMode ? (isMarkdown ? 'Show preview' : 'View file') : 'Edit file'} (${formatShortcut('toggleMarkdownMode')})`}
+						{toolbarVisibility.editToggle && isEditableText && (
+							<HoverTooltip
+								theme={theme}
+								label={markdownEditMode ? (isMarkdown ? 'Show preview' : 'View file') : 'Edit file'}
+								shortcut={formatShortcut('toggleMarkdownMode')}
 							>
-								{markdownEditMode ? (
-									<Eye className={headerIconClass} />
-								) : (
-									<Edit className={headerIconClass} />
-								)}
-							</button>
+								<button
+									onClick={() => setMarkdownEditMode(!markdownEditMode)}
+									className={headerBtnClass}
+									style={{ color: markdownEditMode ? theme.colors.accent : theme.colors.textDim }}
+								>
+									{markdownEditMode ? (
+										<Eye className={headerIconClass} />
+									) : (
+										<Edit className={headerIconClass} />
+									)}
+								</button>
+							</HoverTooltip>
 						)}
-						<button
-							onClick={() => copyContentToClipboard().catch(captureException)}
-							className={headerBtnClass}
-							style={{ color: theme.colors.textDim }}
-							title={
-								isImage
-									? `Copy image to clipboard (${formatShortcutKeys(['Meta', 'c'])})`
-									: 'Copy content to clipboard'
-							}
-						>
-							<Clipboard className={headerIconClass} />
-						</button>
+						{toolbarVisibility.copyContent && (
+							<HoverTooltip
+								theme={theme}
+								label={isImage ? 'Copy image to clipboard' : 'Copy content to clipboard'}
+								shortcut={isImage ? formatShortcutKeys(['Meta', 'c']) : undefined}
+							>
+								<button
+									onClick={() => copyContentToClipboard().catch(captureException)}
+									className={headerBtnClass}
+									style={{ color: theme.colors.textDim }}
+								>
+									<Clipboard className={headerIconClass} />
+								</button>
+							</HoverTooltip>
+						)}
 						{/* Publish as Gist button - only show if gh CLI is available and not in edit mode */}
-						{ghCliAvailable && !markdownEditMode && onPublishGist && !isImage && (
-							<button
-								onClick={onPublishGist}
-								className={headerBtnClass}
-								style={{ color: hasGist ? theme.colors.accent : theme.colors.textDim }}
-								title={hasGist ? 'View published gist' : 'Publish as GitHub Gist'}
-							>
-								<Share2 className={headerIconClass} />
-							</button>
-						)}
+						{toolbarVisibility.publishGist &&
+							ghCliAvailable &&
+							!markdownEditMode &&
+							onPublishGist &&
+							!isImage && (
+								<HoverTooltip
+									theme={theme}
+									label={hasGist ? 'View published gist' : 'Publish as GitHub Gist'}
+								>
+									<button
+										onClick={onPublishGist}
+										className={headerBtnClass}
+										style={{ color: hasGist ? theme.colors.accent : theme.colors.textDim }}
+									>
+										<Share2 className={headerIconClass} />
+									</button>
+								</HoverTooltip>
+							)}
 						{/* Document Graph button - show for markdown files when callback is available */}
-						{isMarkdown && onOpenInGraph && (
-							<button
-								onClick={onOpenInGraph}
-								className={headerBtnClass}
-								style={{ color: theme.colors.textDim }}
-								title={`View in Document Graph (${formatShortcutKeys(['Meta', 'Shift', 'g'])})`}
+						{toolbarVisibility.documentGraph && isMarkdown && onOpenInGraph && (
+							<HoverTooltip
+								theme={theme}
+								label="View in Document Graph"
+								shortcut={formatShortcutKeys(['Meta', 'Shift', 'g'])}
 							>
-								<GitGraph className={headerIconClass} />
-							</button>
+								<button
+									onClick={onOpenInGraph}
+									className={headerBtnClass}
+									style={{ color: theme.colors.textDim }}
+								>
+									<GitGraph className={headerIconClass} />
+								</button>
+							</HoverTooltip>
 						)}
-						{!sshRemoteId && (
-							<button
-								onClick={() => window.maestro?.shell?.openPath(file.path)}
-								className={headerBtnClass}
-								style={{ color: theme.colors.textDim }}
-								title="Open in Default App"
-							>
-								<ExternalLink className={headerIconClass} />
-							</button>
+						{/* Open in Maestro Browser — HTML files only, not over SSH
+						    (file:// can't reach the remote host). Mirrors the file-tree
+						    right-click action so JS-heavy local HTML renders in the full
+						    webview instead of the sandboxed preview iframe. */}
+						{toolbarVisibility.openInBrowser && isHtml && !sshRemoteId && onOpenInBrowser && (
+							<HoverTooltip theme={theme} label="Open in Maestro Browser">
+								<button
+									onClick={onOpenInBrowser}
+									className={headerBtnClass}
+									style={{ color: theme.colors.textDim }}
+									data-testid="open-in-maestro-browser"
+								>
+									<AppWindow className={headerIconClass} />
+								</button>
+							</HoverTooltip>
 						)}
-						<button
-							onClick={copyPathToClipboard}
-							className={headerBtnClass}
-							style={{ color: theme.colors.textDim }}
-							title="Copy full path to clipboard"
-						>
-							<Copy className={headerIconClass} />
-						</button>
+						{toolbarVisibility.openInDefault && !sshRemoteId && (
+							<HoverTooltip theme={theme} label="Open in Default App">
+								<button
+									onClick={() => window.maestro?.shell?.openPath(file.path)}
+									className={headerBtnClass}
+									style={{ color: theme.colors.textDim }}
+								>
+									<ExternalLink className={headerIconClass} />
+								</button>
+							</HoverTooltip>
+						)}
+						{toolbarVisibility.copyPath && (
+							<HoverTooltip theme={theme} label="Copy full path to clipboard">
+								<button
+									onClick={copyPathToClipboard}
+									className={headerBtnClass}
+									style={{ color: theme.colors.textDim }}
+								>
+									<Copy className={headerIconClass} />
+								</button>
+							</HoverTooltip>
+						)}
 					</div>
 				</div>
 				{showPath && (

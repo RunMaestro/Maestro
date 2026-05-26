@@ -25,6 +25,15 @@ These are two distinct actions and the user's phrasing tells you which (or both)
 
 **Critical:** When the user asks you to _run_ an auto-run, do NOT execute the tasks yourself by reading the document and doing the work in this chat. That bypasses the Auto Run engine, leaves nothing in the UI, produces no playbook record, and loses the per-task fresh-context isolation that makes auto-runs reliable. Launching via `maestro-cli auto-run --launch` is the only correct path. Always pass `--agent {{AGENT_ID}}` so the run targets you (without it the CLI picks the first available agent).
 
+### Playbook Type: Task-Based vs Document-Based
+
+Every playbook runs in one of two fresh-context modes. **When you create a playbook, explicitly tell the user which type it is** (one line is enough) so they know how it will execute:
+
+- **Task-based** — Maestro spawns a fresh agent for each `- [ ]` task, with no memory of previous tasks. Maximum isolation; every task must be fully self-contained (see Task Format below). This is the default and the right choice for most agents.
+- **Document-based** — a single agent walks every task in the document in one continuous session, carrying context forward between tasks. Appropriate only for agents with very large context windows (≥1M tokens), where a whole document's worth of work fits in one context.
+
+Maestro auto-selects the mode from the running agent's context window — document-based at ≥1M tokens, task-based below that — and the user can override it per run. Because a playbook may run either way, **always author self-contained tasks** (Task Format below); document-based execution is an optimization, not a license to write tasks that depend on chat memory. After you create a playbook, state its type plainly, e.g. _"Created a task-based playbook — each task runs in a fresh agent context."_
+
 ### File Naming
 
 Use the format `PREFIX-XX.md` where `XX` is a zero-padded two-digit phase number (01, 02, ...). Zero-padding ensures correct lexicographic sorting.

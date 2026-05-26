@@ -28,6 +28,29 @@ Use markdown checkboxes in your documents:
 
 **Tip**: Press `Cmd+L` (Mac) or `Ctrl+L` (Windows/Linux) to quickly insert a new checkbox at your cursor position.
 
+### Task Granularity: Two Approaches
+
+There are two viable ways to structure work across Auto Run documents. Pick the one that fits your project — they can also coexist.
+
+**1. Many tasks per document (classic approach)**
+
+One document holds a long list of checkboxes; the runner walks through them serially, each in a fresh session.
+
+- Good when tasks are small, independent, and share a common framing that's cheap to restate in the document body.
+- Each task gets a clean context, so the agent doesn't drift across them.
+- Tradeoff: the agent has to re-derive shared context for every task from whatever lives in the document.
+
+**2. One task (or a few) per document (recommended for richer work)**
+
+Each document is a focused brief — heavy on context, light on checkboxes. Often just a single `- [ ]` "execute the plan" task at the bottom.
+
+- Good when each unit of work needs substantial setup, references, constraints, or prior decisions to do well.
+- Modern agents have large context windows, so loading a richer document per task is cheap and usually produces better results than splintering it into many small checkboxes that each lose the shared framing.
+- Compose multi-step workflows by chaining several of these focused documents inside a Playbook instead of stuffing them into one file.
+- Tradeoff: more files to manage; the dropdown list grows.
+
+**Rule of thumb:** if you find yourself repeating the same context paragraph above several checkboxes in one document, that's a signal to split into multiple focused documents and let the Playbook handle ordering.
+
 ## Running Single Documents
 
 1. Select a document from the dropdown
@@ -46,6 +69,25 @@ Auto Run supports running multiple documents in sequence:
    - **Duplicate** - Add the same document multiple times
 5. Enable **Loop Mode** to cycle back to the first document after completing the last
 6. Click **Go** to start running documents
+
+## Fresh Context: Task vs Document
+
+The run configuration modal has a **Fresh context per** toggle that controls how context is scoped as the runner works through a document. This is distinct from [task granularity](#task-granularity-two-approaches) above — granularity is how you _structure_ a document, while this is how Maestro _executes_ it.
+
+**Task** — A new agent is spawned for each unchecked task, with a clean context every time.
+
+- Maximum isolation; the agent never drifts across tasks.
+- Each task must be fully self-contained, since the agent sees nothing from previous tasks except what's written in the document.
+- The right choice for most agents.
+
+**Document** — A single agent walks every unchecked task in the document in one continuous session, carrying context forward between tasks.
+
+- Best for agents with very large context windows, and for work where later tasks build on earlier ones.
+- Requires enough context window to hold a whole document's worth of work in one session.
+
+**Auto-selection:** Maestro picks the mode from the running agent's context window — **Document** at 1M tokens or more (e.g. Claude's 1M window), **Task** below that. You can override it per run, and a loaded Playbook's saved mode always takes precedence.
+
+> **Tip:** Author tasks to be self-contained regardless of mode. Document mode is an optimization, not a license to write tasks that depend on chat memory.
 
 ## Playbooks
 

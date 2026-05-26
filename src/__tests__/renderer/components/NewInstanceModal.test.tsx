@@ -9,6 +9,7 @@ import { logger } from '../../../renderer/utils/logger';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { NewInstanceModal } from '../../../renderer/components/NewInstanceModal';
 import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import type { Theme, Session } from '../../../renderer/types';
 import type { AgentConfig } from '../../../renderer/types';
 
@@ -97,6 +98,8 @@ describe('NewInstanceModal', () => {
 
 	afterEach(() => {
 		vi.clearAllMocks();
+		// Reset groups so tests don't leak group state between cases
+		useSessionStore.setState({ groups: [] });
 	});
 
 	describe('Initial render and visibility', () => {
@@ -730,8 +733,10 @@ describe('NewInstanceModal', () => {
 				undefined,
 				undefined,
 				undefined,
-				{ enabled: false, remoteId: null },
+				expect.objectContaining({ enabled: false, remoteId: null }),
 				undefined,
+				undefined,
+				true, // enableMaestroP defaults on for Claude Code (Adaptive Mode)
 				undefined
 			);
 		});
@@ -779,8 +784,10 @@ describe('NewInstanceModal', () => {
 				undefined,
 				undefined,
 				undefined,
-				{ enabled: false, remoteId: null },
+				expect.objectContaining({ enabled: false, remoteId: null }),
 				undefined,
+				undefined,
+				true, // enableMaestroP defaults on for Claude Code (Adaptive Mode)
 				undefined
 			);
 		});
@@ -828,8 +835,10 @@ describe('NewInstanceModal', () => {
 				undefined,
 				undefined,
 				undefined,
-				{ enabled: false, remoteId: null },
+				expect.objectContaining({ enabled: false, remoteId: null }),
 				undefined,
+				undefined,
+				true, // enableMaestroP defaults on for Claude Code (Adaptive Mode)
 				undefined
 			);
 		});
@@ -878,8 +887,10 @@ describe('NewInstanceModal', () => {
 				undefined,
 				undefined,
 				undefined,
-				{ enabled: false, remoteId: null },
+				expect.objectContaining({ enabled: false, remoteId: null }),
 				undefined,
+				undefined,
+				true, // enableMaestroP defaults on for Claude Code (Adaptive Mode)
 				undefined
 			);
 			expect(onClose).toHaveBeenCalled();
@@ -1391,8 +1402,10 @@ describe('NewInstanceModal', () => {
 				undefined,
 				undefined,
 				undefined,
-				{ enabled: false, remoteId: null },
+				expect.objectContaining({ enabled: false, remoteId: null }),
 				undefined,
+				undefined,
+				true, // enableMaestroP defaults on for Claude Code (Adaptive Mode)
 				undefined
 			);
 		});
@@ -1540,8 +1553,10 @@ describe('NewInstanceModal', () => {
 				undefined,
 				undefined,
 				undefined,
-				{ enabled: false, remoteId: null },
+				expect.objectContaining({ enabled: false, remoteId: null }),
 				undefined,
+				undefined,
+				true, // enableMaestroP defaults on for Claude Code (Adaptive Mode)
 				undefined
 			);
 		});
@@ -2691,12 +2706,14 @@ describe('NewInstanceModal', () => {
 				undefined,
 				undefined,
 				undefined,
-				{
+				expect.objectContaining({
 					enabled: true,
 					remoteId: 'remote-1',
 					syncHistory: false,
 					workingDirOverride: '/test/path',
-				},
+				}),
+				undefined,
+				undefined,
 				undefined,
 				undefined
 			);
@@ -2924,6 +2941,8 @@ describe('NewInstanceModal', () => {
 					workingDirOverride: '/home/devuser/my-project',
 				}),
 				undefined,
+				undefined,
+				true, // enableMaestroP defaults on for Claude Code (Adaptive Mode)
 				undefined
 			);
 		});
@@ -3036,6 +3055,8 @@ describe('NewInstanceModal', () => {
 					workingDirOverride: '/explicit/override/path',
 				}),
 				undefined,
+				undefined,
+				true, // enableMaestroP defaults on for Claude Code (Adaptive Mode)
 				undefined
 			);
 		});
@@ -3108,6 +3129,97 @@ describe('NewInstanceModal', () => {
 
 			// Agent list should not be visible
 			expect(screen.queryByText('Claude Code')).not.toBeInTheDocument();
+		});
+	});
+
+	describe('Agent Group selector', () => {
+		it('hides the Agent Group control when no groups exist', async () => {
+			useSessionStore.setState({ groups: [] });
+
+			render(
+				<NewInstanceModal
+					isOpen={true}
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[]}
+				/>
+			);
+
+			await waitFor(() => {
+				expect(screen.getByText('Create New Agent')).toBeInTheDocument();
+			});
+			expect(screen.queryByLabelText('Agent Group')).not.toBeInTheDocument();
+		});
+
+		it('renders the dropdown and forwards the picked group through onCreate', async () => {
+			useSessionStore.setState({
+				groups: [
+					{ id: 'group-alpha', name: 'Alpha', emoji: '🅰️', collapsed: false },
+					{ id: 'group-beta', name: 'Beta', emoji: '🅱️', collapsed: false },
+				],
+			});
+
+			render(
+				<NewInstanceModal
+					isOpen={true}
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[]}
+				/>
+			);
+
+			// Dropdown is present and defaults to "No Group (Ungrouped)"
+			const trigger = await screen.findByLabelText('Agent Group');
+			expect(trigger).toHaveTextContent('No Group (Ungrouped)');
+
+			// Pick "Beta"
+			fireEvent.click(trigger);
+			fireEvent.click(await screen.findByRole('option', { name: /Beta/ }));
+
+			// Fill required fields and submit
+			fireEvent.change(screen.getByLabelText('Agent Name'), {
+				target: { value: 'My Agent' },
+			});
+			fireEvent.change(screen.getByLabelText('Working Directory'), {
+				target: { value: '/tmp/work' },
+			});
+
+			await waitFor(() => {
+				const btn = screen.getByRole('button', { name: 'Create Agent' });
+				expect(btn).not.toBeDisabled();
+			});
+
+			await act(async () => {
+				fireEvent.click(screen.getByRole('button', { name: 'Create Agent' }));
+			});
+
+			expect(onCreate).toHaveBeenCalled();
+			// 14th positional arg (index 13) is groupId.
+			expect(onCreate.mock.calls[0][13]).toBe('group-beta');
+		});
+
+		it('seeds the dropdown from presetGroupId so the caller-supplied group is preselected', async () => {
+			useSessionStore.setState({
+				groups: [{ id: 'group-preset', name: 'Preset', emoji: '📦', collapsed: false }],
+			});
+
+			render(
+				<NewInstanceModal
+					isOpen={true}
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[]}
+					presetGroupId="group-preset"
+				/>
+			);
+
+			const trigger = await screen.findByLabelText('Agent Group');
+			await waitFor(() => {
+				expect(trigger).toHaveTextContent(/Preset/);
+			});
 		});
 	});
 });

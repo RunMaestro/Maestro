@@ -235,7 +235,7 @@ describe('CollapsedSessionPillRows', () => {
 	});
 
 	it('renders a single row when session count is at or below the per-row cap', () => {
-		const sessions = Array.from({ length: 25 }, () => makeSession());
+		const sessions = Array.from({ length: 20 }, () => makeSession());
 		const props = createRowsProps(sessions);
 		const { container } = render(<CollapsedSessionPillRows {...props} />);
 
@@ -243,14 +243,14 @@ describe('CollapsedSessionPillRows', () => {
 		expect(wrapper.children.length).toBe(1);
 
 		const row = wrapper.firstElementChild as HTMLElement;
-		expect(row.children.length).toBe(25);
+		expect(row.children.length).toBe(20);
 		// No spacers should exist when there is only a single row
 		const spacers = row.querySelectorAll(':scope > div.flex-1:not(.rounded-full)');
 		expect(spacers.length).toBe(0);
 	});
 
 	it('wraps to a new row when exceeding the per-row cap', () => {
-		const sessions = Array.from({ length: 27 }, () => makeSession());
+		const sessions = Array.from({ length: 22 }, () => makeSession());
 		const props = createRowsProps(sessions);
 		const { container } = render(<CollapsedSessionPillRows {...props} />);
 
@@ -259,23 +259,47 @@ describe('CollapsedSessionPillRows', () => {
 
 		const firstRow = wrapper.children[0] as HTMLElement;
 		const secondRow = wrapper.children[1] as HTMLElement;
-		// First row is full (25 pills, no spacers)
-		expect(firstRow.children.length).toBe(25);
-		// Second row has 2 pills + 23 spacers so widths stay aligned with row above
-		expect(secondRow.children.length).toBe(25);
+		// First row is full (20 pills, no spacers)
+		expect(firstRow.children.length).toBe(20);
+		// Second row has 2 pills + 18 spacers so widths stay aligned with row above
+		expect(secondRow.children.length).toBe(20);
 	});
 
-	it('produces three rows for 51 sessions (25 + 25 + 1 + 24 spacers)', () => {
-		const sessions = Array.from({ length: 51 }, () => makeSession());
+	it('produces three rows for 41 sessions (20 + 20 + 1 + 19 spacers)', () => {
+		const sessions = Array.from({ length: 41 }, () => makeSession());
 		const props = createRowsProps(sessions);
 		const { container } = render(<CollapsedSessionPillRows {...props} />);
 
 		const wrapper = container.firstElementChild as HTMLElement;
 		expect(wrapper.children.length).toBe(3);
-		expect((wrapper.children[0] as HTMLElement).children.length).toBe(25);
-		expect((wrapper.children[1] as HTMLElement).children.length).toBe(25);
-		// Last row padded to 25 (1 pill + 24 spacers)
-		expect((wrapper.children[2] as HTMLElement).children.length).toBe(25);
+		expect((wrapper.children[0] as HTMLElement).children.length).toBe(20);
+		expect((wrapper.children[1] as HTMLElement).children.length).toBe(20);
+		// Last row padded to 20 (1 pill + 19 spacers)
+		expect((wrapper.children[2] as HTMLElement).children.length).toBe(20);
+	});
+
+	it('honors a custom maxPerRow, wrapping and padding to that cap', () => {
+		const sessions = Array.from({ length: 12 }, () => makeSession());
+		const props = createRowsProps(sessions, { maxPerRow: 5 });
+		const { container } = render(<CollapsedSessionPillRows {...props} />);
+
+		const wrapper = container.firstElementChild as HTMLElement;
+		// 12 sessions at 5/row → 3 rows (5 + 5 + 2)
+		expect(wrapper.children.length).toBe(3);
+		expect((wrapper.children[0] as HTMLElement).children.length).toBe(5);
+		expect((wrapper.children[1] as HTMLElement).children.length).toBe(5);
+		// Last row padded to 5 (2 pills + 3 spacers)
+		expect((wrapper.children[2] as HTMLElement).children.length).toBe(5);
+	});
+
+	it('falls back to the default cap of 20 when maxPerRow is omitted', () => {
+		const sessions = Array.from({ length: 21 }, () => makeSession());
+		const props = createRowsProps(sessions);
+		const { container } = render(<CollapsedSessionPillRows {...props} />);
+
+		const wrapper = container.firstElementChild as HTMLElement;
+		expect(wrapper.children.length).toBe(2);
+		expect((wrapper.children[0] as HTMLElement).children.length).toBe(20);
 	});
 
 	it('fires onContainerClick when the wrapper is clicked', () => {

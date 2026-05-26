@@ -7,7 +7,7 @@ import { mockTheme } from '../../../helpers/mockTheme';
 
 const defaultShortcuts = {
 	toggleSidebar: { keys: ['Cmd', 'B'], label: 'Toggle Sidebar' },
-	filterUnreadAgents: { keys: ['Meta', 'Shift', 'u'], label: 'Filter Unread Agents' },
+	filterUnreadAgents: { keys: ['Alt', 'u'], label: 'Filter Unread Agents' },
 } as any;
 
 function createProps(overrides: Partial<Parameters<typeof SidebarActions>[0]> = {}) {

@@ -18,6 +18,7 @@ import { useUIStore } from '../../stores/uiStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { filterSlashCommands } from '../../utils/search';
 import { logger } from '../../utils/logger';
+import { trackShortcutUsage } from '../../utils/shortcutTracking';
 
 // ============================================================================
 // Dependencies interface
@@ -233,9 +234,12 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 				return;
 			}
 
-			// Read enter-to-send settings at call time (not closure)
+			// Read enter-to-send settings at call time (not closure).
+			// A per-tab override wins over the global default — set when the user
+			// clicks the chip or runs the palette toggle on a specific tab.
 			const settings = useSettingsStore.getState();
-			const enterToSendAI = settings.enterToSendAI;
+			const activeTab = activeSession?.aiTabs?.find((t) => t.id === activeSession.activeTabId);
+			const enterToSendAI = activeTab?.enterToSend ?? settings.enterToSendAI;
 
 			if (e.key === 'Enter') {
 				// Check for forced parallel send shortcut (only in AI mode, only when feature enabled)
@@ -276,6 +280,7 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 							e.key.toLowerCase() === fpMainKey
 						) {
 							e.preventDefault();
+							trackShortcutUsage('forcedParallelSend');
 							// Empty input + shortcut: open the Force Send confirmation modal for
 							// the most recent eligible queued item (keyboard equivalent of
 							// clicking the per-item Force Send button).

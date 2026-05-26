@@ -23,6 +23,7 @@ import {
 	hasDraft,
 	buildUnifiedTabs,
 	ensureInUnifiedTabOrder,
+	restoreOrphanedTab,
 } from '../../utils/tabHelpers';
 import {
 	closeTerminalTab as closeTerminalTabHelper,
@@ -88,6 +89,9 @@ interface FileTabOpenParams {
 	isLoading?: boolean;
 	/** While isLoading, the in-flight fs:readFile requestId — cancelled if the tab is closed mid-load. */
 	loadRequestId?: string;
+	/** If set, FilePreview flips to edit mode and scrolls the editor to this
+	 *  1-based line on next render. Set by maestro://file/...#L<n> deep links. */
+	pendingScrollToLine?: number;
 }
 
 export interface TabHandlersReturn {
@@ -128,6 +132,7 @@ export interface TabHandlersReturn {
 	handleToggleTabReadOnlyMode: () => void;
 	handleToggleTabSaveToHistory: () => void;
 	handleToggleTabShowThinking: () => void;
+	handleToggleTabEnterToSend: () => void;
 
 	// File Tab handlers
 	handleOpenFileTab: (
@@ -286,6 +291,12 @@ export function useTabHandlers(): TabHandlersReturn {
 										lastModified: file.lastModified ?? tab.lastModified,
 										isLoading: file.isLoading ?? false,
 										loadRequestId: file.isLoading ? file.loadRequestId : undefined,
+										// Only overwrite when the caller is explicitly requesting
+										// a jump; otherwise keep whatever was there.
+										pendingScrollToLine:
+											file.pendingScrollToLine !== undefined
+												? file.pendingScrollToLine
+												: tab.pendingScrollToLine,
 									}
 								: tab
 						);
@@ -368,6 +379,7 @@ export function useTabHandlers(): TabHandlersReturn {
 								loadRequestId: file.isLoading ? file.loadRequestId : undefined,
 								navigationHistory: finalHistory,
 								navigationIndex: finalHistory.length - 1,
+								pendingScrollToLine: file.pendingScrollToLine,
 							};
 						});
 						return {
@@ -400,6 +412,7 @@ export function useTabHandlers(): TabHandlersReturn {
 						loadRequestId: file.isLoading ? file.loadRequestId : undefined,
 						navigationHistory: [{ path: file.path, name: nameWithoutExtension, scrollTop: 0 }],
 						navigationIndex: 0,
+						pendingScrollToLine: file.pendingScrollToLine,
 					};
 
 					// Create the unified tab reference. Insert directly to the right of the
@@ -452,6 +465,13 @@ export function useTabHandlers(): TabHandlersReturn {
 		setSessions((prev: Session[]) =>
 			prev.map((s) => {
 				if (s.id !== activeSessionId) return s;
+				// If the requested tab is an orphan (closed while still thinking),
+				// restore it back into aiTabs first so the tab bar shows it and
+				// streaming output resumes routing to the visible tab.
+				if (s.orphanedThinkingTabs?.some((t) => t.id === tabId)) {
+					const restored = restoreOrphanedTab(s, tabId);
+					if (restored) return restored.session;
+				}
 				const result = setActiveTab(s, tabId);
 				return result ? result.session : s;
 			})
@@ -1656,6 +1676,21 @@ export function useTabHandlers(): TabHandlersReturn {
 		});
 	}, []);
 
+	const handleToggleTabEnterToSend = useCallback(() => {
+		const session = selectActiveSession(useSessionStore.getState());
+		if (!session) return;
+		const currentActiveTab = getActiveTab(session);
+		if (!currentActiveTab) return;
+		const globalDefault = useSettingsStore.getState().enterToSendAI;
+		updateAiTab(session.id, currentActiveTab.id, (tab) => ({
+			...tab,
+			// Flip the *effective* value (override if set, otherwise global default).
+			// Result becomes a sticky per-tab override; future tabs still follow the
+			// global default until they're toggled themselves.
+			enterToSend: !(tab.enterToSend ?? globalDefault),
+		}));
+	}, []);
+
 	// ========================================================================
 	// Scroll State
 	// ========================================================================
@@ -1879,6 +1914,7 @@ export function useTabHandlers(): TabHandlersReturn {
 		handleToggleTabReadOnlyMode,
 		handleToggleTabSaveToHistory,
 		handleToggleTabShowThinking,
+		handleToggleTabEnterToSend,
 
 		// File Tab handlers
 		handleOpenFileTab,
@@ -1938,7 +1974,26 @@ export function useTerminalTabHandlers(): TerminalTabHandlersReturn {
 
 	const handleCloseTerminalTab = useCallback(
 		(tabId: string) => {
-			closeTerminalTab(tabId);
+			const session = selectActiveSession(useSessionStore.getState());
+			if (!session) {
+				closeTerminalTab(tabId);
+				return;
+			}
+			const ptySessionId = getTerminalSessionId(session.id, tabId);
+			window.maestro.process
+				.isTerminalBusy(ptySessionId)
+				.then((busy) => {
+					if (busy) {
+						useModalStore.getState().openModal('confirm', {
+							message: 'This terminal is running a command. Close it and stop the command?',
+							onConfirm: () => closeTerminalTab(tabId),
+							destructive: true,
+						});
+					} else {
+						closeTerminalTab(tabId);
+					}
+				})
+				.catch(() => closeTerminalTab(tabId));
 		},
 		[closeTerminalTab]
 	);

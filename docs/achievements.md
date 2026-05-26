@@ -90,3 +90,5 @@ The leaderboard tracks two competitive categories:
 | **Longest Single Auto Run**  | Personal record for longest continuous Auto Run  |
 
 Each entry shows the user's conductor badge level, social links, and ranking. Your stats sync across devices when you're signed in, so your achievements follow you wherever you use Maestro.
+
+Your leaderboard avatar is sourced from GitHub. Link your GitHub profile in the registration form, and update your picture on GitHub to change how it appears on the leaderboard.

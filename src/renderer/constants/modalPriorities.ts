@@ -137,6 +137,10 @@ export const MODAL_PRIORITIES = {
 	/** Auto Run search bar (within expanded modal) */
 	AUTORUN_SEARCH: 706,
 
+	/** Auto Run document selector dropdown (above expanded modal so Esc closes
+	 * the dropdown first, leaving the modal open for a second Esc). */
+	AUTORUN_DOC_SELECTOR: 707,
+
 	/** Playbook Exchange modal - browse and import community playbooks (opens from BatchRunner or AutoRunExpanded, so needs higher priority than both) */
 	MARKETPLACE: 735,
 
@@ -241,6 +245,10 @@ export const MODAL_PRIORITIES = {
 
 	/** SSH Remote configuration modal (above settings) */
 	SSH_REMOTE: 458,
+
+	/** Custom theme base-theme picker dropdown (above settings so Escape closes
+	 * the dropdown first, leaving the Settings modal open for a second Esc). */
+	CUSTOM_THEME_BASE_SELECTOR: 451,
 
 	/** Settings modal */
 	SETTINGS: 450,

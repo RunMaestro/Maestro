@@ -139,14 +139,6 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 
 			const isSessionNotFound = agentError.type === 'session_not_found';
 
-			const errorLogEntry: LogEntry = {
-				id: generateId(),
-				timestamp: agentError.timestamp,
-				source: isSessionNotFound ? 'system' : 'error',
-				text: agentError.message,
-				agentError: isSessionNotFound ? undefined : agentError,
-			};
-
 			if (tabIdFromSession) {
 				deps.activeHiddenToolRef.current?.delete(`${actualSessionId}:${tabIdFromSession}`);
 			}
@@ -155,9 +147,61 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 				prev.map((s) => {
 					if (s.id !== actualSessionId) return s;
 
+					// If the error is for a tab the user closed mid-thinking, drop the
+					// orphan entry — there's no tab UI to surface the error on, and the
+					// pill should stop showing this thinking item.
+					const isOrphanError =
+						!!tabIdFromSession &&
+						!!s.orphanedThinkingTabs?.some((tab) => tab.id === tabIdFromSession);
+					if (isOrphanError && s.orphanedThinkingTabs) {
+						const updatedOrphans = s.orphanedThinkingTabs.filter(
+							(tab) => tab.id !== tabIdFromSession
+						);
+						const anyAiTabStillBusy = s.aiTabs?.some((tab) => tab.state === 'busy') ?? false;
+						const stillThinking = anyAiTabStillBusy || updatedOrphans.length > 0;
+						return {
+							...s,
+							orphanedThinkingTabs: updatedOrphans.length > 0 ? updatedOrphans : undefined,
+							state: stillThinking ? s.state : ('idle' as SessionState),
+							busySource: stillThinking ? s.busySource : undefined,
+							thinkingStartTime: stillThinking ? s.thinkingStartTime : undefined,
+						};
+					}
+
 					const targetTab = tabIdFromSession
 						? s.aiTabs.find((tab) => tab.id === tabIdFromSession)
 						: getActiveTab(s);
+
+					// For session_not_found, find the most recent user message on the
+					// target tab so the recovery modal can re-send it after grooming.
+					// Without this, the prompt that triggered the dead session is lost.
+					const lastUserPrompt =
+						isSessionNotFound && targetTab
+							? [...targetTab.logs].reverse().find((l) => l.source === 'user')?.text
+							: undefined;
+
+					// Tag the error frame with `renderStyle: 'text-stream'` when the
+					// session is running through maestro-p (interactive TUI) so the
+					// bottom-center pill on the error card reads "TUI" instead of
+					// "API". The same tagger runs on assistant output in
+					// useBatchedSessionUpdates; errors live in their own listener and
+					// need parity here. system-source entries (session_not_found
+					// recovery) stay untagged — they aren't real Claude turns.
+					const isInteractive = s.claudeInteractive?.mode === 'interactive';
+					const canOfferRecovery = isSessionNotFound && !!lastUserPrompt && !!targetTab;
+					const errorLogEntry: LogEntry = {
+						id: generateId(),
+						timestamp: agentError.timestamp,
+						source: isSessionNotFound ? 'system' : 'error',
+						text: canOfferRecovery
+							? 'Session not found, however we can recover it raw or compressed.'
+							: agentError.message,
+						agentError: isSessionNotFound ? undefined : agentError,
+						...(isInteractive && !isSessionNotFound ? { renderStyle: 'text-stream' as const } : {}),
+						...(canOfferRecovery
+							? { recoveryAction: { lastUserPrompt: lastUserPrompt!, tabId: targetTab!.id } }
+							: {}),
+					};
 					const updatedAiTabs = targetTab
 						? s.aiTabs.map((tab) =>
 								tab.id === targetTab.id

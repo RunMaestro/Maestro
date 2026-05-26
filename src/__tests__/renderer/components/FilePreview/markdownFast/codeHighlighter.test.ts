@@ -11,6 +11,7 @@ import {
 	createCodeHighlighter,
 	HIGHLIGHTED_ATTR,
 } from '../../../../../renderer/components/FilePreview/markdownFast/codeHighlighter';
+import { __resetForTests } from '../../../../../renderer/utils/shiki/highlighterManager';
 import { mockTheme } from '../../../../helpers/mockTheme';
 
 // Capture the most recently created IntersectionObserver so tests can trigger
@@ -61,11 +62,42 @@ class FakeIntersectionObserver implements IntersectionObserver {
 }
 
 vi.mock('shiki', () => {
+	const loaded = new Set<string>([
+		'javascript',
+		'typescript',
+		'tsx',
+		'jsx',
+		'json',
+		'python',
+		'bash',
+		'shell',
+		'sh',
+		'html',
+		'css',
+		'scss',
+		'markdown',
+		'md',
+		'yaml',
+		'yml',
+		'rust',
+		'go',
+		'java',
+		'c',
+		'cpp',
+		'sql',
+		'xml',
+	]);
 	return {
 		createHighlighter: vi.fn(async () => ({
 			codeToHtml: (code: string, opts: { lang: string }) =>
 				`<pre class="shiki"><code class="language-${opts.lang}">HL:${code}</code></pre>`,
+			getLoadedLanguages: () => Array.from(loaded),
+			loadLanguage: async (lang: string) => {
+				loaded.add(lang);
+			},
 		})),
+		bundledLanguagesInfo: [],
+		bundledLanguagesAlias: {},
 	};
 });
 
@@ -74,6 +106,7 @@ beforeEach(() => {
 		globalThis as typeof globalThis & { IntersectionObserver: typeof IntersectionObserver }
 	).IntersectionObserver = FakeIntersectionObserver as unknown as typeof IntersectionObserver;
 	FakeIntersectionObserver.instances.length = 0;
+	__resetForTests();
 });
 
 function makeBlock(html: string): HTMLDivElement {

@@ -37,7 +37,10 @@ const MemoizedMarkdownPreview = memo(function MemoizedMarkdownPreview(props: {
 	);
 });
 import { ResetTasksConfirmModal } from '../ResetTasksConfirmModal';
-import { AutoRunDocumentSelector } from './AutoRunDocumentSelector';
+import {
+	AutoRunDocumentSelector,
+	type AutoRunDocumentSelectorHandle,
+} from './AutoRunDocumentSelector';
 import { AutoRunLightbox } from './AutoRunLightbox';
 import { AutoRunSearchBar } from './AutoRunSearchBar';
 import { AutoRunToolbar } from './AutoRunToolbar';
@@ -183,6 +186,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 	const [resetTasksModalOpen, setResetTasksModalOpen] = useState(false);
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
 	const previewRef = useRef<HTMLDivElement>(null);
+	const documentSelectorRef = useRef<AutoRunDocumentSelectorHandle>(null);
 
 	// Bionify reading mode (global setting; disabled while search highlights are active)
 	const bionifyReadingMode = useSettingsStore((s) => s.bionifyReadingMode);
@@ -381,6 +385,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 				}
 			},
 			getCompletedTaskCount: getCompletedTaskCountFromContent,
+			openDocumentSelector: () => documentSelectorRef.current?.open(),
 		}),
 		[
 			mode,
@@ -590,6 +595,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 			{folderPath && (
 				<div className="px-2 mb-2" data-tour="autorun-document-selector">
 					<AutoRunDocumentSelector
+						ref={documentSelectorRef}
 						theme={theme}
 						documents={documentList}
 						documentTree={

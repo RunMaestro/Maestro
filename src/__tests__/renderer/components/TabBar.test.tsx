@@ -128,6 +128,11 @@ vi.mock('lucide-react', () => ({
 			🕐
 		</span>
 	),
+	MessageSquare: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<span data-testid="message-square-icon" className={className} style={style}>
+			💬
+		</span>
+	),
 }));
 
 // Mock react-dom createPortal

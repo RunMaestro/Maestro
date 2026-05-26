@@ -43,7 +43,12 @@ vi.mock('../../../../shared/cli-server-discovery', () => ({
 	readCliServerInfo: vi.fn(() => lastWrittenInfo),
 }));
 
-import { registerWebHandlers, ensureCliServer } from '../../../../main/ipc/handlers/web';
+import {
+	registerWebHandlers,
+	ensureCliServer,
+	startCliDiscoveryWatchdog,
+	stopCliDiscoveryWatchdog,
+} from '../../../../main/ipc/handlers/web';
 import {
 	writeCliServerInfo,
 	deleteCliServerInfo,
@@ -835,6 +840,100 @@ describe('web handlers', () => {
 
 			expect(ok).toBe(true);
 			expect(writeCount).toBeGreaterThanOrEqual(2);
+		});
+	});
+
+	describe('cli discovery watchdog', () => {
+		function buildDeps() {
+			return {
+				getWebServer: () => webServerRef.current,
+				setWebServer: (server: any) => {
+					webServerRef.current = server;
+				},
+				createWebServer: mockCreateWebServer,
+				settingsStore: mockSettingsStore,
+			};
+		}
+
+		afterEach(() => {
+			stopCliDiscoveryWatchdog();
+			vi.useRealTimers();
+		});
+
+		it('rewrites the discovery file when it goes missing while the server is running', () => {
+			vi.useFakeTimers();
+			mockWebServer.isActive.mockReturnValue(true);
+			// Prime the file as if a previous write succeeded.
+			lastWrittenInfo = {
+				port: 8080,
+				token: 'mock-security-token',
+				pid: process.pid,
+				startedAt: Date.now(),
+			};
+
+			startCliDiscoveryWatchdog(buildDeps(), 1000);
+
+			// Simulate external deletion of the discovery file.
+			lastWrittenInfo = null;
+			vi.mocked(writeCliServerInfo).mockClear();
+
+			vi.advanceTimersByTime(1000);
+
+			expect(writeCliServerInfo).toHaveBeenCalledWith(
+				expect.objectContaining({ port: 8080, token: 'mock-security-token' })
+			);
+		});
+
+		it('does nothing when the discovery file already matches the running server', () => {
+			vi.useFakeTimers();
+			mockWebServer.isActive.mockReturnValue(true);
+			lastWrittenInfo = {
+				port: 8080,
+				token: 'mock-security-token',
+				pid: process.pid,
+				startedAt: Date.now(),
+			};
+
+			startCliDiscoveryWatchdog(buildDeps(), 1000);
+			vi.mocked(writeCliServerInfo).mockClear();
+			vi.advanceTimersByTime(1000);
+
+			expect(writeCliServerInfo).not.toHaveBeenCalled();
+		});
+
+		it('brings up the server when none is running, so the discovery file appears without a Live Mode toggle', async () => {
+			vi.useFakeTimers();
+			webServerRef.current = null;
+			// Start with no live server so the watchdog falls back to ensureCliServer.
+			mockWebServer.isActive.mockReturnValue(false);
+
+			startCliDiscoveryWatchdog(buildDeps(), 1000);
+			await vi.advanceTimersByTimeAsync(1000);
+
+			expect(mockCreateWebServer).toHaveBeenCalled();
+			expect(writeCliServerInfo).toHaveBeenCalled();
+		});
+
+		it('skips work when a server exists but is not yet active', () => {
+			vi.useFakeTimers();
+			mockWebServer.isActive.mockReturnValue(false);
+
+			startCliDiscoveryWatchdog(buildDeps(), 1000);
+			vi.advanceTimersByTime(2000);
+
+			expect(writeCliServerInfo).not.toHaveBeenCalled();
+		});
+
+		it('stops firing after stopCliDiscoveryWatchdog is called', () => {
+			vi.useFakeTimers();
+			mockWebServer.isActive.mockReturnValue(true);
+			lastWrittenInfo = null; // missing — would normally trigger a write
+
+			startCliDiscoveryWatchdog(buildDeps(), 1000);
+			stopCliDiscoveryWatchdog();
+			vi.advanceTimersByTime(5000);
+
+			expect(writeCliServerInfo).not.toHaveBeenCalled();
 		});
 	});
 });

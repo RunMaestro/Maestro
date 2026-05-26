@@ -1,11 +1,14 @@
 import React, { useState, useCallback, useEffect, useRef, memo, useMemo } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Star, Pencil, Loader2, AlertCircle } from 'lucide-react';
+import { X, Star, Pencil, Loader2, AlertCircle, MessageSquare } from 'lucide-react';
 import type { AITab as AITabType, Theme } from '../../types';
+import type { CopyContextOptions } from '../../hooks/tabs/useTabExportHandlers';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { buildSessionDeepLink } from '../../../shared/deep-link-urls';
 import { useTabHoverOverlay } from '../../hooks/tabs/useTabHoverOverlay';
+import { getTabKindColor } from './tabBarUtils';
 import { AITabOverlayMenu } from './AITabOverlayMenu';
+import { WizardIndicator } from '../SessionList/WizardIndicator';
 
 export interface AITabProps {
 	tab: AITabType;
@@ -42,8 +45,8 @@ export interface AITabProps {
 	onSendToAgent?: (tabId: string) => void;
 	/** Stable callback - receives tabId */
 	onSummarizeAndContinue?: (tabId: string) => void;
-	/** Stable callback - receives tabId */
-	onCopyContext?: (tabId: string) => void;
+	/** Stable callback - receives tabId (and optional CopyContextOptions for variants like "with reasoning") */
+	onCopyContext?: (tabId: string, options?: CopyContextOptions) => void;
 	/** Stable callback - receives tabId */
 	onExportHtml?: (tabId: string) => void;
 	/** Stable callback - receives tabId */
@@ -284,6 +287,15 @@ export const AITab = memo(function AITab({
 		[onCopyContext, tabId, setOverlayOpen]
 	);
 
+	const handleCopyContextWithReasoningClick = useCallback(
+		(e: React.MouseEvent) => {
+			e.stopPropagation();
+			onCopyContext?.(tabId, { includeThinking: true });
+			setOverlayOpen(false);
+		},
+		[onCopyContext, tabId, setOverlayOpen]
+	);
+
 	const handleExportHtmlClick = useCallback(
 		(e: React.MouseEvent) => {
 			e.stopPropagation();
@@ -463,6 +475,12 @@ export const AITab = memo(function AITab({
 				/>
 			)}
 
+			{/* Inline wizard indicator - purple wand (sparkles while generating Auto Run docs) */}
+			<WizardIndicator
+				active={!!(tab.wizardState?.isActive || tab.wizardState?.isGeneratingDocs)}
+				generatingDocs={!!tab.wizardState?.isGeneratingDocs}
+			/>
+
 			{/* Generating name indicator - spinning loader while tab name is being generated */}
 			{/* Show regardless of busy state since tab naming runs in parallel with the main request */}
 			{tab.isGeneratingName && (
@@ -507,6 +525,13 @@ export const AITab = memo(function AITab({
 					{shortcutHint}
 				</span>
 			)}
+
+			{/* Kind icon - identifies this as an AI chat tab, always visible (active or not) */}
+			<MessageSquare
+				className="w-3.5 h-3.5 shrink-0"
+				style={{ color: getTabKindColor('ai', theme) }}
+				aria-hidden="true"
+			/>
 
 			{/* Tab name - show full name for active tab, truncate inactive tabs */}
 			<span
@@ -558,6 +583,7 @@ export const AITab = memo(function AITab({
 							onMarkUnreadClick={handleMarkUnreadClick}
 							onExportHtmlClick={handleExportHtmlClick}
 							onCopyContextClick={handleCopyContextClick}
+							onCopyContextWithReasoningClick={handleCopyContextWithReasoningClick}
 							onSummarizeAndContinueClick={handleSummarizeAndContinueClick}
 							onMergeWithClick={handleMergeWithClick}
 							onSendToAgentClick={handleSendToAgentClick}

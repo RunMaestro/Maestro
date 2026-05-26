@@ -149,6 +149,7 @@ function SessionListInner(props: SessionListProps) {
 	const webInterfaceCustomPort = useSettingsStore((s) => s.webInterfaceCustomPort);
 	const ungroupedCollapsed = useSettingsStore((s) => s.ungroupedCollapsed);
 	const showLeftPanelGroupMemberCount = useSettingsStore((s) => s.showLeftPanelGroupMemberCount);
+	const leftPanelCollapsedPillsPerRow = useSettingsStore((s) => s.leftPanelCollapsedPillsPerRow);
 	const autoRunStats = useSettingsStore((s) => s.autoRunStats);
 	const contextWarningYellowThreshold = useSettingsStore(
 		(s) => s.contextManagementSettings.contextWarningYellowThreshold
@@ -984,7 +985,7 @@ function SessionListInner(props: SessionListProps) {
 				>
 					{/* Session Filter */}
 					{sessionFilterOpen && (
-						<div className="mx-3 mb-3">
+						<div className="mx-3 mb-3 relative">
 							<input
 								autoFocus
 								type="text"
@@ -997,9 +998,18 @@ function SessionListInner(props: SessionListProps) {
 										setSessionFilter('');
 									}
 								}}
-								className="w-full px-3 py-2 rounded border bg-transparent outline-none text-sm"
+								className="w-full pl-3 pr-14 py-2 rounded border bg-transparent outline-none text-sm"
 								style={{ borderColor: theme.colors.accent, color: theme.colors.textMain }}
 							/>
+							<div
+								className="absolute right-2 top-1/2 -translate-y-1/2 px-2 py-0.5 rounded text-xs font-bold pointer-events-none"
+								style={{
+									backgroundColor: theme.colors.bgMain,
+									color: theme.colors.textDim,
+								}}
+							>
+								ESC
+							</div>
 						</div>
 					)}
 
@@ -1066,6 +1076,7 @@ function SessionListInner(props: SessionListProps) {
 								<CollapsedSessionPillRows
 									sessions={sortedBookmarkedParentSessions}
 									keyPrefix="bookmark-collapsed"
+									maxPerRow={leftPanelCollapsedPillsPerRow}
 									onContainerClick={() => setBookmarksCollapsed(false)}
 									theme={theme}
 									activeBatchSessionIds={activeBatchSessionIds}
@@ -1201,6 +1212,7 @@ function SessionListInner(props: SessionListProps) {
 									<CollapsedSessionPillRows
 										sessions={groupCollapsedPills}
 										keyPrefix={`group-collapsed-${group.id}`}
+										maxPerRow={leftPanelCollapsedPillsPerRow}
 										onContainerClick={() => toggleGroup(group.id)}
 										theme={theme}
 										activeBatchSessionIds={activeBatchSessionIds}
@@ -1309,6 +1321,7 @@ function SessionListInner(props: SessionListProps) {
 								<CollapsedSessionPillRows
 									sessions={sortedUngroupedParentSessions}
 									keyPrefix="ungrouped-collapsed"
+									maxPerRow={leftPanelCollapsedPillsPerRow}
 									onContainerClick={() => setUngroupedCollapsed(false)}
 									theme={theme}
 									activeBatchSessionIds={activeBatchSessionIds}

@@ -816,7 +816,11 @@ describe('AgentPromptComposerModal', () => {
 			const backdrop = document.querySelector('.fixed.inset-0');
 			expect(backdrop).toBeInTheDocument();
 
+			// Backdrop close requires both mousedown AND click to originate on the
+			// backdrop element itself — guards against drag-overshoot from text
+			// selection inside the modal accidentally closing it.
 			await act(async () => {
+				fireEvent.mouseDown(backdrop!);
 				fireEvent.click(backdrop!);
 			});
 

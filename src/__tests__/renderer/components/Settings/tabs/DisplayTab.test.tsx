@@ -36,9 +36,11 @@ const mockSetBionifyIntensity = vi.fn();
 const mockSetBionifyAlgorithm = vi.fn();
 const mockSetUserMessageAlignment = vi.fn();
 const mockSetFileExplorerIconTheme = vi.fn();
+const mockSetToastWidth = vi.fn();
 const mockSetUseNativeTitleBar = vi.fn();
 const mockSetAutoHideMenuBar = vi.fn();
 const mockSetDocumentGraphShowExternalLinks = vi.fn();
+const mockSetLeftPanelCollapsedPillsPerRow = vi.fn();
 const mockSetDocumentGraphMaxNodes = vi.fn();
 const mockUpdateContextManagementSettings = vi.fn();
 const mockSetLocalIgnorePatterns = vi.fn();
@@ -49,6 +51,9 @@ const mockSetSshReduceEntryCapEnabled = vi.fn();
 const mockSetSshReduceEntryCapFraction = vi.fn();
 const mockSetShowStarredInUnreadFilter = vi.fn();
 const mockSetShowFilePreviewsInUnreadFilter = vi.fn();
+const mockSetFileEditWordWrap = vi.fn();
+const mockSetFileEditShowLineNumbers = vi.fn();
+const mockSetFilePreviewToolbarButtonVisibility = vi.fn();
 
 // Per-test overrides (merged into useSettings return)
 let mockUseSettingsOverrides: Record<string, any> = {};
@@ -73,10 +78,14 @@ vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 		setUserMessageAlignment: mockSetUserMessageAlignment,
 		fileExplorerIconTheme: 'default',
 		setFileExplorerIconTheme: mockSetFileExplorerIconTheme,
+		toastWidth: 'small',
+		setToastWidth: mockSetToastWidth,
 		useNativeTitleBar: false,
 		setUseNativeTitleBar: mockSetUseNativeTitleBar,
 		autoHideMenuBar: false,
 		setAutoHideMenuBar: mockSetAutoHideMenuBar,
+		leftPanelCollapsedPillsPerRow: 15,
+		setLeftPanelCollapsedPillsPerRow: mockSetLeftPanelCollapsedPillsPerRow,
 		documentGraphShowExternalLinks: true,
 		setDocumentGraphShowExternalLinks: mockSetDocumentGraphShowExternalLinks,
 		documentGraphMaxNodes: 200,
@@ -108,6 +117,25 @@ vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 		setShowStarredInUnreadFilter: mockSetShowStarredInUnreadFilter,
 		showFilePreviewsInUnreadFilter: false,
 		setShowFilePreviewsInUnreadFilter: mockSetShowFilePreviewsInUnreadFilter,
+		fileEditWordWrap: true,
+		setFileEditWordWrap: mockSetFileEditWordWrap,
+		fileEditShowLineNumbers: true,
+		setFileEditShowLineNumbers: mockSetFileEditShowLineNumbers,
+		filePreviewToolbarVisibility: {
+			save: true,
+			wordWrap: true,
+			remoteImages: true,
+			htmlRender: true,
+			previewTier: true,
+			editToggle: true,
+			copyContent: true,
+			publishGist: true,
+			documentGraph: true,
+			openInBrowser: true,
+			openInDefault: true,
+			copyPath: true,
+		},
+		setFilePreviewToolbarButtonVisibility: mockSetFilePreviewToolbarButtonVisibility,
 		...mockUseSettingsOverrides,
 	}),
 }));
@@ -616,7 +644,10 @@ describe('DisplayTab', () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			fireEvent.click(screen.getByRole('button', { name: 'Small' }));
+			const fontSizeSection = within(
+				document.querySelector('[data-setting-id="display-font-size"]') as HTMLElement
+			);
+			fireEvent.click(fontSizeSection.getByRole('button', { name: 'Small' }));
 			expect(mockSetFontSize).toHaveBeenCalledWith(12);
 		});
 
@@ -627,7 +658,10 @@ describe('DisplayTab', () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			fireEvent.click(screen.getByRole('button', { name: 'Medium' }));
+			const fontSizeSection = within(
+				document.querySelector('[data-setting-id="display-font-size"]') as HTMLElement
+			);
+			fireEvent.click(fontSizeSection.getByRole('button', { name: 'Medium' }));
 			expect(mockSetFontSize).toHaveBeenCalledWith(14);
 		});
 
@@ -638,7 +672,10 @@ describe('DisplayTab', () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			fireEvent.click(screen.getByRole('button', { name: 'Large' }));
+			const fontSizeSection = within(
+				document.querySelector('[data-setting-id="display-font-size"]') as HTMLElement
+			);
+			fireEvent.click(fontSizeSection.getByRole('button', { name: 'Large' }));
 			expect(mockSetFontSize).toHaveBeenCalledWith(16);
 		});
 
@@ -660,7 +697,10 @@ describe('DisplayTab', () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			const mediumButton = screen.getByText('Medium');
+			const fontSizeSection = within(
+				document.querySelector('[data-setting-id="display-font-size"]') as HTMLElement
+			);
+			const mediumButton = fontSizeSection.getByText('Medium');
 			expect(mediumButton).toHaveClass('ring-2');
 		});
 
@@ -672,8 +712,63 @@ describe('DisplayTab', () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			const smallButton = screen.getByText('Small');
+			const fontSizeSection = within(
+				document.querySelector('[data-setting-id="display-font-size"]') as HTMLElement
+			);
+			const smallButton = fontSizeSection.getByText('Small');
 			expect(smallButton).toHaveClass('ring-2');
+		});
+	});
+
+	// =========================================================================
+	// Toast Width
+	// =========================================================================
+
+	describe('Toast Width', () => {
+		const toastSection = () =>
+			within(document.querySelector('[data-setting-id="display-toast-width"]') as HTMLElement);
+
+		it('should call setToastWidth with "medium" when Medium is clicked', async () => {
+			render(<DisplayTab theme={mockTheme} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			fireEvent.click(toastSection().getByRole('button', { name: 'Medium' }));
+			expect(mockSetToastWidth).toHaveBeenCalledWith('medium');
+		});
+
+		it('should call setToastWidth with "large" when Large is clicked', async () => {
+			render(<DisplayTab theme={mockTheme} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			fireEvent.click(toastSection().getByRole('button', { name: 'Large' }));
+			expect(mockSetToastWidth).toHaveBeenCalledWith('large');
+		});
+
+		it('should highlight the selected width (Small by default)', async () => {
+			render(<DisplayTab theme={mockTheme} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			expect(toastSection().getByText('Small')).toHaveClass('ring-2');
+		});
+
+		it('should highlight Large when toastWidth is large', async () => {
+			mockUseSettingsOverrides = { toastWidth: 'large' };
+			render(<DisplayTab theme={mockTheme} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			expect(toastSection().getByText('Large')).toHaveClass('ring-2');
 		});
 	});
 
@@ -1240,10 +1335,12 @@ describe('DisplayTab', () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			// Multiple sliders exist (doc graph, yellow threshold, red threshold)
-			// The doc graph slider is the first one
-			const sliders = screen.getAllByRole('slider');
-			const docGraphSlider = sliders[0];
+			// Scope to the Document Graph section so unrelated sliders elsewhere on
+			// the tab (e.g. left-panel pills-per-row) don't shift positional indices.
+			const docGraphSection = document.querySelector(
+				'[data-setting-id="display-document-graph"]'
+			) as HTMLElement;
+			const docGraphSlider = within(docGraphSection).getByRole('slider');
 			fireEvent.change(docGraphSlider, { target: { value: '500' } });
 
 			expect(mockSetDocumentGraphMaxNodes).toHaveBeenCalledWith(500);
@@ -1394,10 +1491,11 @@ describe('DisplayTab', () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			// Find the yellow threshold slider (first range input in the threshold area)
-			const sliders = screen.getAllByRole('slider');
-			// First slider is document graph max nodes, second is yellow, third is red
-			const yellowSlider = sliders[1];
+			// Scope to the Context Window Warnings section: slider[0] is yellow, slider[1] is red.
+			const warningsSection = document.querySelector(
+				'[data-setting-id="display-context-warnings"]'
+			) as HTMLElement;
+			const yellowSlider = within(warningsSection).getAllByRole('slider')[0];
 			fireEvent.change(yellowSlider, { target: { value: '70' } });
 
 			expect(mockUpdateContextManagementSettings).toHaveBeenCalledWith({
@@ -1412,8 +1510,10 @@ describe('DisplayTab', () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			const sliders = screen.getAllByRole('slider');
-			const yellowSlider = sliders[1];
+			const warningsSection = document.querySelector(
+				'[data-setting-id="display-context-warnings"]'
+			) as HTMLElement;
+			const yellowSlider = within(warningsSection).getAllByRole('slider')[0];
 
 			// Set yellow to 85, which is >= red (80)
 			fireEvent.change(yellowSlider, { target: { value: '85' } });
@@ -1431,8 +1531,10 @@ describe('DisplayTab', () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			const sliders = screen.getAllByRole('slider');
-			const redSlider = sliders[2];
+			const warningsSection = document.querySelector(
+				'[data-setting-id="display-context-warnings"]'
+			) as HTMLElement;
+			const redSlider = within(warningsSection).getAllByRole('slider')[1];
 			fireEvent.change(redSlider, { target: { value: '90' } });
 
 			expect(mockUpdateContextManagementSettings).toHaveBeenCalledWith({
@@ -1447,8 +1549,10 @@ describe('DisplayTab', () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			const sliders = screen.getAllByRole('slider');
-			const redSlider = sliders[2];
+			const warningsSection = document.querySelector(
+				'[data-setting-id="display-context-warnings"]'
+			) as HTMLElement;
+			const redSlider = within(warningsSection).getAllByRole('slider')[1];
 
 			// Set red to 50, which is <= yellow (60)
 			fireEvent.change(redSlider, { target: { value: '50' } });

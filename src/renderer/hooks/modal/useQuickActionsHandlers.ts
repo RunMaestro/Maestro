@@ -58,6 +58,8 @@ export interface UseQuickActionsHandlersDeps {
 export interface UseQuickActionsHandlersReturn {
 	/** Toggle read-only mode on the active tab */
 	handleQuickActionsToggleReadOnlyMode: () => void;
+	/** Toggle enter-to-send mode on the active AI tab (overrides global default) */
+	handleQuickActionsToggleTabEnterToSend: () => void;
 	/** Cycle thinking mode on the active tab */
 	handleQuickActionsToggleTabShowThinking: () => void;
 	/** Refresh git, file tree, and history */
@@ -70,6 +72,8 @@ export interface UseQuickActionsHandlersReturn {
 	handleQuickActionsSummarizeAndContinue: () => void;
 	/** Open Auto Run reset tasks modal */
 	handleQuickActionsAutoRunResetTasks: () => void;
+	/** Toggle the Auto Run Expanded Preview modal */
+	handleQuickActionsToggleAutoRunExpanded: () => void;
 	/** Clear the active terminal xterm buffer */
 	handleQuickActionsClearActiveTerminal: () => void;
 	/** Scroll the active tab header into view and focus it */
@@ -151,6 +155,24 @@ export function useQuickActionsHandlers(
 				})
 			);
 		}
+	}, [activeSession]);
+
+	const handleQuickActionsToggleTabEnterToSend = useCallback(() => {
+		if (activeSession?.inputMode !== 'ai' || !activeSession.activeTabId) return;
+		const globalDefault = useSettingsStore.getState().enterToSendAI;
+		setSessions((prev) =>
+			prev.map((s) => {
+				if (s.id !== activeSession.id) return s;
+				return {
+					...s,
+					aiTabs: s.aiTabs.map((tab) =>
+						tab.id === s.activeTabId
+							? { ...tab, enterToSend: !(tab.enterToSend ?? globalDefault) }
+							: tab
+					),
+				};
+			})
+		);
 	}, [activeSession]);
 
 	const handleQuickActionsToggleTabShowThinking = useCallback(() => {
@@ -253,6 +275,10 @@ export function useQuickActionsHandlers(
 		rightPanelRef.current?.openAutoRunResetTasksModal();
 	}, []);
 
+	const handleQuickActionsToggleAutoRunExpanded = useCallback(() => {
+		rightPanelRef.current?.toggleAutoRunExpanded();
+	}, []);
+
 	const handleQuickActionsClearActiveTerminal = useCallback(() => {
 		mainPanelRef.current?.clearActiveTerminal();
 	}, []);
@@ -307,12 +333,14 @@ export function useQuickActionsHandlers(
 
 	return {
 		handleQuickActionsToggleReadOnlyMode,
+		handleQuickActionsToggleTabEnterToSend,
 		handleQuickActionsToggleTabShowThinking,
 		handleQuickActionsRefreshGitFileState,
 		handleQuickActionsDebugReleaseQueuedItem,
 		handleQuickActionsToggleMarkdownEditMode,
 		handleQuickActionsSummarizeAndContinue,
 		handleQuickActionsAutoRunResetTasks,
+		handleQuickActionsToggleAutoRunExpanded,
 		handleQuickActionsClearActiveTerminal,
 		handleQuickActionsFocusActiveTab,
 		handleQuickActionsCloseCurrentTab,

@@ -70,7 +70,7 @@ export function resolveBrowserTabNavigationTarget(value: string): BrowserTabNavi
 		if (url.protocol === 'about:' && url.href === DEFAULT_BROWSER_TAB_URL) {
 			return { kind: 'url', url: DEFAULT_BROWSER_TAB_URL };
 		}
-		if (url.protocol === 'http:' || url.protocol === 'https:') {
+		if (url.protocol === 'http:' || url.protocol === 'https:' || url.protocol === 'file:') {
 			return { kind: 'url', url: url.toString() };
 		}
 
@@ -98,6 +98,10 @@ export function getBrowserTabTitle(url: string, title?: string | null): string {
 
 	try {
 		const parsed = new URL(url);
+		if (parsed.protocol === 'file:') {
+			const basename = decodeURIComponent(parsed.pathname.split('/').pop() || '');
+			return basename || parsed.href;
+		}
 		return parsed.host || parsed.href;
 	} catch {
 		return url || DEFAULT_BROWSER_TAB_TITLE;

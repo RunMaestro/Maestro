@@ -88,6 +88,45 @@ describe('useAgentErrorListener', () => {
 		expect(entry?.open ?? false).toBe(false);
 	});
 
+	it('stamps recoveryAction with the last user prompt on session_not_found', () => {
+		const userLog = {
+			id: 'log-user',
+			timestamp: 100,
+			source: 'user' as const,
+			text: 'do the thing that died',
+		};
+		const tab = createMockAITab({
+			id: 'tab-1',
+			agentSessionId: 'old-id',
+			logs: [userLog],
+		});
+		const session = createMockSession({ id: 'sess-1', aiTabs: [tab], activeTabId: 'tab-1' });
+		useSessionStore.setState({ sessions: [session] } as any);
+
+		renderHook(() => useAgentErrorListener(makeDeps()));
+		handler!('sess-1-ai-tab-1', { ...baseError, type: 'session_not_found' });
+
+		const tabAfter = useSessionStore.getState().sessions[0].aiTabs[0];
+		const systemEntry = tabAfter.logs.find((l) => l.source === 'system');
+		expect(systemEntry?.recoveryAction).toEqual({
+			lastUserPrompt: 'do the thing that died',
+			tabId: 'tab-1',
+		});
+	});
+
+	it('omits recoveryAction when no user message exists yet', () => {
+		const tab = createMockAITab({ id: 'tab-1', agentSessionId: 'old-id', logs: [] });
+		const session = createMockSession({ id: 'sess-1', aiTabs: [tab], activeTabId: 'tab-1' });
+		useSessionStore.setState({ sessions: [session] } as any);
+
+		renderHook(() => useAgentErrorListener(makeDeps()));
+		handler!('sess-1-ai-tab-1', { ...baseError, type: 'session_not_found' });
+
+		const tabAfter = useSessionStore.getState().sessions[0].aiTabs[0];
+		const systemEntry = tabAfter.logs.find((l) => l.source === 'system');
+		expect(systemEntry?.recoveryAction).toBeUndefined();
+	});
+
 	it('appends an error log entry to the targeted tab', () => {
 		const tab = createMockAITab({ id: 'tab-1' });
 		const session = createMockSession({ id: 'sess-1', aiTabs: [tab], activeTabId: 'tab-1' });
@@ -100,6 +139,42 @@ describe('useAgentErrorListener', () => {
 		const errorLog = tabAfter.logs.find((l) => l.source === 'error');
 		expect(errorLog).toBeDefined();
 		expect(errorLog?.text).toBe('expired');
+	});
+
+	it('tags the error log with renderStyle=text-stream when the session is interactive', () => {
+		const tab = createMockAITab({ id: 'tab-1' });
+		const session = createMockSession({
+			id: 'sess-1',
+			aiTabs: [tab],
+			activeTabId: 'tab-1',
+			claudeInteractive: { mode: 'interactive', modeReason: 'auto' },
+		} as any);
+		useSessionStore.setState({ sessions: [session] } as any);
+
+		renderHook(() => useAgentErrorListener(makeDeps()));
+		handler!('sess-1-ai-tab-1', baseError);
+
+		const tabAfter = useSessionStore.getState().sessions[0].aiTabs[0];
+		const errorLog = tabAfter.logs.find((l) => l.source === 'error');
+		expect(errorLog?.renderStyle).toBe('text-stream');
+	});
+
+	it('leaves renderStyle unset on API-mode (non-interactive) errors', () => {
+		const tab = createMockAITab({ id: 'tab-1' });
+		const session = createMockSession({
+			id: 'sess-1',
+			aiTabs: [tab],
+			activeTabId: 'tab-1',
+			claudeInteractive: { mode: 'api', modeReason: 'auto' },
+		} as any);
+		useSessionStore.setState({ sessions: [session] } as any);
+
+		renderHook(() => useAgentErrorListener(makeDeps()));
+		handler!('sess-1-ai-tab-1', baseError);
+
+		const tabAfter = useSessionStore.getState().sessions[0].aiTabs[0];
+		const errorLog = tabAfter.logs.find((l) => l.source === 'error');
+		expect(errorLog?.renderStyle).toBeUndefined();
 	});
 
 	it('deletes the activeHiddenToolRef entry on error', () => {

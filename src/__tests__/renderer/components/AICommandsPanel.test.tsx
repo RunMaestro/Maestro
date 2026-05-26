@@ -109,7 +109,7 @@ describe('AICommandsPanel', () => {
 			);
 
 			expect(screen.getByText('Custom AI Commands')).toBeInTheDocument();
-			expect(screen.getByText(/Slash commands available in AI terminal mode/)).toBeInTheDocument();
+			expect(screen.getByText(/Slash commands are available in 1-1 AI chats/)).toBeInTheDocument();
 		});
 
 		it('should render template variables section collapsed by default', () => {

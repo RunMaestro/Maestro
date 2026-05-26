@@ -110,6 +110,32 @@ function extractCleanStdout(rawStdout: string, toolType: string): string {
 }
 
 /**
+ * Parse the provider session id (e.g. Claude's `session_id`) out of agent
+ * stdout. Each Cue run spawns a fresh agent process with no `--resume`, so the
+ * run produces exactly one provider session; we return the last id the parser
+ * surfaces (the `result` event is authoritative and emitted last). Returns null
+ * for plain-text agents, command runs with no parser, or output that never
+ * carried a session id. This is what lets the Cue stats dashboard attribute
+ * token usage — the on-disk session files are keyed by this id, not by the
+ * Maestro agent id stored on the event row.
+ */
+function extractProviderSessionId(rawStdout: string, toolType: string): string | null {
+	if (!rawStdout.trim()) return null;
+	const parser = getOutputParser(toolType as ToolType);
+	if (!parser) return null;
+
+	let sessionId: string | null = null;
+	for (const line of rawStdout.split('\n')) {
+		if (!line.trim()) continue;
+		const event = parser.parseJsonLine(line);
+		if (!event) continue;
+		const parsed = parser.extractSessionId(event);
+		if (parsed) sessionId = parsed;
+	}
+	return sessionId;
+}
+
+/**
  * Execute a Cue-triggered prompt by spawning an agent process.
  *
  * Orchestrates: template context → variable substitution → spawn spec → process.
@@ -210,6 +236,7 @@ export async function executeCuePrompt(config: CueExecutionConfig): Promise<CueR
 		durationMs: Date.now() - startTime,
 		startedAt,
 		endedAt: new Date().toISOString(),
+		providerSessionId: extractProviderSessionId(processResult.stdout, config.toolType),
 	};
 }
 

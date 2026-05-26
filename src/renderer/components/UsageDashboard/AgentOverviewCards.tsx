@@ -14,6 +14,7 @@ import { memo, useMemo, useState } from 'react';
 import type { Session, SessionState, Theme } from '../../types';
 import type { StatsAggregation } from '../../hooks/stats/useStats';
 import { compareNamesIgnoringEmojis } from '../../../shared/emojiUtils';
+import { formatAgeShort } from '../../../shared/formatters';
 import { Sparkline } from './Sparkline';
 
 const SPARKLINE_DAYS = 7;
@@ -117,6 +118,10 @@ function isSessionHighlighted(session: Session, activeFilterKey: string | null):
 	return !session.parentSessionId && session.toolType === activeFilterKey;
 }
 
+/** Per-card stat we should visually emphasize. Mirrors `SortMode` minus `name`
+ *  (the default sort has no per-card highlight). */
+type HighlightedStat = 'created' | 'queries' | 'tabs' | 'auto' | null;
+
 interface AgentCardProps {
 	session: Session;
 	data: StatsAggregation;
@@ -127,6 +132,9 @@ interface AgentCardProps {
 	isSelected: boolean;
 	/** All visible sessions; needed to disambiguate the provider-fallback count */
 	visibleSessions: Session[];
+	/** Which stat to color-emphasize so it's obvious what the cards are sorted by.
+	 *  `null` (Name sort, the default) leaves all stats in their neutral color. */
+	highlightedStat: HighlightedStat;
 	/** Click handler for the entire card. When provided, the tile becomes a
 	 *  button that opens the per-agent stats sub-modal and gains a hover
 	 *  affordance to signal clickability. */
@@ -140,6 +148,7 @@ const AgentCard = memo(function AgentCard({
 	animationIndex,
 	isSelected,
 	visibleSessions,
+	highlightedStat,
 	onShowDetails,
 }: AgentCardProps) {
 	const isWorktree = Boolean(session.parentSessionId);
@@ -188,9 +197,15 @@ const AgentCard = memo(function AgentCard({
 		: undefined;
 
 	const autoPctLabel = autoPercent === null ? 'no recorded queries' : `${autoPercent}% auto`;
+	const ageLabel = session.createdAt ? formatAgeShort(session.createdAt) : null;
+	const ageTitle = session.createdAt
+		? `Created ${new Date(session.createdAt).toLocaleString()}`
+		: undefined;
 	const baseAriaLabel = `${session.name}, ${session.state}, ${queryCount} ${
 		queryCount === 1 ? 'query' : 'queries'
-	}, ${tabCount} ${tabCount === 1 ? 'tab' : 'tabs'}, ${autoPctLabel}`;
+	}, ${tabCount} ${tabCount === 1 ? 'tab' : 'tabs'}, ${autoPctLabel}${
+		ageLabel ? `, age ${ageLabel}` : ''
+	}`;
 	const ariaLabel = isClickable ? `${baseAriaLabel}. View detailed stats.` : baseAriaLabel;
 
 	return (
@@ -245,6 +260,20 @@ const AgentCard = memo(function AgentCard({
 						WT
 					</span>
 				)}
+				{ageLabel && (
+					<span
+						className="flex-shrink-0 text-[10px] tabular-nums"
+						style={{
+							color: highlightedStat === 'created' ? theme.colors.accent : theme.colors.textDim,
+							fontWeight: highlightedStat === 'created' ? 600 : undefined,
+						}}
+						title={ageTitle}
+						data-testid="agent-card-age"
+						data-highlighted={highlightedStat === 'created' ? 'true' : undefined}
+					>
+						{ageLabel}
+					</span>
+				)}
 			</div>
 			{isWorktree && session.worktreeBranch && (
 				<div
@@ -261,14 +290,19 @@ const AgentCard = memo(function AgentCard({
 					<div className="flex flex-col min-w-0">
 						<span
 							className="text-[9px] uppercase tracking-wide"
-							style={{ color: theme.colors.textDim }}
+							style={{
+								color: highlightedStat === 'queries' ? theme.colors.accent : theme.colors.textDim,
+							}}
 						>
 							Queries
 						</span>
 						<span
 							className="text-base font-semibold"
-							style={{ color: theme.colors.textMain }}
+							style={{
+								color: highlightedStat === 'queries' ? theme.colors.accent : theme.colors.textMain,
+							}}
 							data-testid="agent-card-query-count"
+							data-highlighted={highlightedStat === 'queries' ? 'true' : undefined}
 						>
 							{queryCount}
 						</span>
@@ -276,14 +310,19 @@ const AgentCard = memo(function AgentCard({
 					<div className="flex flex-col min-w-0">
 						<span
 							className="text-[9px] uppercase tracking-wide"
-							style={{ color: theme.colors.textDim }}
+							style={{
+								color: highlightedStat === 'tabs' ? theme.colors.accent : theme.colors.textDim,
+							}}
 						>
 							Tabs
 						</span>
 						<span
 							className="text-base font-semibold"
-							style={{ color: theme.colors.textMain }}
+							style={{
+								color: highlightedStat === 'tabs' ? theme.colors.accent : theme.colors.textMain,
+							}}
 							data-testid="agent-card-tab-count"
+							data-highlighted={highlightedStat === 'tabs' ? 'true' : undefined}
 						>
 							{tabCount}
 						</span>
@@ -291,16 +330,24 @@ const AgentCard = memo(function AgentCard({
 					<div className="flex flex-col min-w-0">
 						<span
 							className="text-[9px] uppercase tracking-wide"
-							style={{ color: theme.colors.textDim }}
+							style={{
+								color: highlightedStat === 'auto' ? theme.colors.accent : theme.colors.textDim,
+							}}
 						>
 							Auto %
 						</span>
 						<span
 							className="text-base font-semibold"
 							style={{
-								color: autoPercent === null ? theme.colors.textDim : theme.colors.textMain,
+								color:
+									highlightedStat === 'auto' && autoPercent !== null
+										? theme.colors.accent
+										: autoPercent === null
+											? theme.colors.textDim
+											: theme.colors.textMain,
 							}}
 							data-testid="agent-card-auto-pct"
+							data-highlighted={highlightedStat === 'auto' ? 'true' : undefined}
 							title={
 								autoPercent === null
 									? 'No recorded queries'
@@ -337,10 +384,11 @@ interface AgentOverviewCardsProps {
 	onShowAgentDetails?: (session: Session) => void;
 }
 
-type SortMode = 'name' | 'queries' | 'tabs' | 'auto';
+type SortMode = 'name' | 'created' | 'queries' | 'tabs' | 'auto';
 
 const SORT_OPTIONS: { value: SortMode; label: string }[] = [
 	{ value: 'name', label: 'Name' },
+	{ value: 'created', label: 'Created' },
 	{ value: 'queries', label: 'Queries' },
 	{ value: 'tabs', label: 'Tabs' },
 	{ value: 'auto', label: 'Auto %' },
@@ -370,6 +418,16 @@ export const AgentOverviewCards = memo(function AgentOverviewCards({
 
 		// Pre-sort alphabetically so equal counts fall back to a stable, scannable order.
 		const alphabetical = filtered.slice().sort(byName);
+
+		if (sortMode === 'created') {
+			// Most-recent-first. Sessions missing `createdAt` (legacy data) sink
+			// to the bottom rather than masquerading as the newest agent.
+			return alphabetical.slice().sort((a, b) => {
+				const aTs = a.createdAt ?? 0;
+				const bTs = b.createdAt ?? 0;
+				return bTs - aTs;
+			});
+		}
 
 		if (sortMode === 'queries') {
 			return alphabetical
@@ -452,6 +510,7 @@ export const AgentOverviewCards = memo(function AgentOverviewCards({
 						animationIndex={index}
 						isSelected={isSessionHighlighted(session, activeFilterKey)}
 						visibleSessions={activeSessions}
+						highlightedStat={sortMode === 'name' ? null : sortMode}
 						onShowDetails={onShowAgentDetails}
 					/>
 				))}

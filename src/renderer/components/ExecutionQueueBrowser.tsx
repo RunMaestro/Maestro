@@ -65,6 +65,21 @@ export function ExecutionQueueBrowser({
 		{ enabled: isOpen }
 	);
 
+	// Cmd/Ctrl+Shift+[ / ] cycles between the Current Agent / All Agents tabs
+	// (matches the app-wide prev/next-tab shortcut). Use e.code so it works
+	// regardless of the brace characters Shift produces on macOS.
+	useEventListener(
+		'keydown',
+		(e) => {
+			const ke = e as KeyboardEvent;
+			if (!(ke.metaKey || ke.ctrlKey) || !ke.shiftKey) return;
+			if (ke.code !== 'BracketLeft' && ke.code !== 'BracketRight') return;
+			ke.preventDefault();
+			setViewMode((prev) => (prev === 'current' ? 'global' : 'current'));
+		},
+		{ enabled: isOpen }
+	);
+
 	// Drag handlers
 	const handleDragStart = (sessionId: string, itemId: string, index: number) => {
 		setDragState({ sessionId, itemId, fromIndex: index });

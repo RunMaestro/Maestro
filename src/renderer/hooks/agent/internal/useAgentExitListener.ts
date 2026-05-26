@@ -140,17 +140,21 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 						};
 					}
 
+					// Look up the completed tab in aiTabs first, then in orphanedThinkingTabs —
+					// tabs closed mid-thinking land in the orphan list, and their exit still
+					// needs to drive toast/synopsis side-effects.
 					const completedTab = tabIdFromSession
-						? currentSession.aiTabs?.find((tab) => tab.id === tabIdFromSession)
+						? currentSession.aiTabs?.find((tab) => tab.id === tabIdFromSession) ||
+							currentSession.orphanedThinkingTabs?.find((tab) => tab.id === tabIdFromSession)
 						: getActiveTab(currentSession);
 					const logs = completedTab?.logs || [];
 					const lastUserLog = logs.filter((log) => log.source === 'user').pop();
 					const lastAiLog = logs
 						.filter((log) => log.source === 'stdout' || log.source === 'ai')
 						.pop();
-					const completedTabData = currentSession.aiTabs?.find(
-						(tab) => tab.id === tabIdFromSession
-					);
+					const completedTabData =
+						currentSession.aiTabs?.find((tab) => tab.id === tabIdFromSession) ||
+						currentSession.orphanedThinkingTabs?.find((tab) => tab.id === tabIdFromSession);
 					const duration = completedTabData?.thinkingStartTime
 						? Date.now() - completedTabData.thinkingStartTime
 						: currentSession.thinkingStartTime
@@ -254,6 +258,29 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 			setSessions((prev) =>
 				prev.map((s) => {
 					if (s.id !== actualSessionId) return s;
+
+					// If this exit belongs to a tab the user already closed while it was
+					// still thinking, the tab is no longer in s.aiTabs — it lives in
+					// s.orphanedThinkingTabs purely so the thinking pill can keep
+					// surfacing it. Drop it from orphans and recompute session-level
+					// busy state. Nothing else (queue, logs, synopsis, toast) needs to
+					// touch aiTabs because the tab is gone.
+					const orphanIndex =
+						tabIdFromSession && s.orphanedThinkingTabs
+							? s.orphanedThinkingTabs.findIndex((t) => t.id === tabIdFromSession)
+							: -1;
+					if (isFromAi && orphanIndex !== -1 && s.orphanedThinkingTabs) {
+						const updatedOrphans = s.orphanedThinkingTabs.filter((_, i) => i !== orphanIndex);
+						const anyAiTabStillBusy = s.aiTabs?.some((tab) => tab.state === 'busy') ?? false;
+						const stillThinking = anyAiTabStillBusy || updatedOrphans.length > 0;
+						return {
+							...s,
+							orphanedThinkingTabs: updatedOrphans.length > 0 ? updatedOrphans : undefined,
+							state: stillThinking ? s.state : ('idle' as SessionState),
+							busySource: stillThinking ? s.busySource : undefined,
+							thinkingStartTime: stillThinking ? s.thinkingStartTime : undefined,
+						};
+					}
 
 					if (isFromAi) {
 						if (s.state === 'error' && s.agentError) {

@@ -36,6 +36,8 @@ vi.mock('lucide-react', () => ({
 	Sparkles: () => <span data-testid="sparkles-icon">Sparkles</span>,
 	Zap: () => <span data-testid="zap-icon">Zap</span>,
 	Database: () => <span data-testid="database-icon">Database</span>,
+	WrapText: () => <span data-testid="wraptext-icon">WrapText</span>,
+	AppWindow: () => <span data-testid="appwindow-icon">AppWindow</span>,
 }));
 
 // Mock react-markdown
@@ -174,6 +176,18 @@ vi.mock('../../../shared/gitUtils', () => ({
 	isImageFile: (filename: string) => /\.(png|jpg|jpeg|gif|webp|svg)$/i.test(filename),
 }));
 
+// Mock MarkdownEditor. The real editor wraps CodeMirror, which jsdom can't
+// satisfy `getByRole('textbox')` against. A bare `<textarea>` lets us keep
+// the FilePreview wiring tests (controlled vs. internal editContent, onChange
+// fan-out) without coupling to CodeMirror internals.
+vi.mock('../../../renderer/components/FilePreview/markdownEditor', () => ({
+	MarkdownEditor: React.forwardRef<unknown, { value: string; onChange: (v: string) => void }>(
+		({ value, onChange }, _ref) => (
+			<textarea value={value} onChange={(e) => onChange(e.target.value)} />
+		)
+	),
+}));
+
 const defaultProps = {
 	file: { name: 'test.md', content: '# Hello World', path: '/test/test.md' },
 	onClose: vi.fn(),
@@ -212,11 +226,9 @@ describe('FilePreview', () => {
 				/>
 			);
 
-			const graphButton = screen.getByTitle(
-				`View in Document Graph (${formatShortcutKeys(['Meta', 'Shift', 'g'])})`
-			);
-			expect(graphButton).toBeInTheDocument();
-			expect(screen.getByTestId('gitgraph-icon')).toBeInTheDocument();
+			const graphIcon = screen.getByTestId('gitgraph-icon');
+			expect(graphIcon).toBeInTheDocument();
+			expect(graphIcon.closest('button')).toBeInTheDocument();
 		});
 
 		it('calls onOpenInGraph when Document Graph button is clicked', () => {
@@ -229,9 +241,7 @@ describe('FilePreview', () => {
 				/>
 			);
 
-			const graphButton = screen.getByTitle(
-				`View in Document Graph (${formatShortcutKeys(['Meta', 'Shift', 'g'])})`
-			);
+			const graphButton = screen.getByTestId('gitgraph-icon').closest('button')!;
 			fireEvent.click(graphButton);
 
 			expect(onOpenInGraph).toHaveBeenCalledOnce();
@@ -245,11 +255,7 @@ describe('FilePreview', () => {
 				/>
 			);
 
-			expect(
-				screen.queryByTitle(
-					`View in Document Graph (${formatShortcutKeys(['Meta', 'Shift', 'g'])})`
-				)
-			).not.toBeInTheDocument();
+			expect(screen.queryByTestId('gitgraph-icon')).not.toBeInTheDocument();
 		});
 
 		it('does not show Document Graph button for non-markdown files', () => {
@@ -262,11 +268,7 @@ describe('FilePreview', () => {
 				/>
 			);
 
-			expect(
-				screen.queryByTitle(
-					`View in Document Graph (${formatShortcutKeys(['Meta', 'Shift', 'g'])})`
-				)
-			).not.toBeInTheDocument();
+			expect(screen.queryByTestId('gitgraph-icon')).not.toBeInTheDocument();
 		});
 
 		it('shows Document Graph button for uppercase .MD extension', () => {
@@ -279,9 +281,7 @@ describe('FilePreview', () => {
 				/>
 			);
 
-			expect(
-				screen.getByTitle(`View in Document Graph (${formatShortcutKeys(['Meta', 'Shift', 'g'])})`)
-			).toBeInTheDocument();
+			expect(screen.getByTestId('gitgraph-icon')).toBeInTheDocument();
 		});
 	});
 
@@ -289,9 +289,9 @@ describe('FilePreview', () => {
 		it('shows Open in Default App button with ExternalLink icon', () => {
 			render(<FilePreview {...defaultProps} />);
 
-			const button = screen.getByTitle('Open in Default App');
-			expect(button).toBeInTheDocument();
-			expect(screen.getByTestId('external-link-icon')).toBeInTheDocument();
+			const icon = screen.getByTestId('external-link-icon');
+			expect(icon).toBeInTheDocument();
+			expect(icon.closest('button')).toBeInTheDocument();
 		});
 
 		it('calls shell.openPath with file path when clicked', () => {
@@ -302,7 +302,7 @@ describe('FilePreview', () => {
 				/>
 			);
 
-			const button = screen.getByTitle('Open in Default App');
+			const button = screen.getByTestId('external-link-icon').closest('button')!;
 			fireEvent.click(button);
 
 			expect(window.maestro?.shell?.openPath).toHaveBeenCalledWith('/test/readme.md');
@@ -311,7 +311,7 @@ describe('FilePreview', () => {
 		it('hides Open in Default App button for SSH remote sessions', () => {
 			render(<FilePreview {...defaultProps} sshRemoteId="remote-host-1" />);
 
-			expect(screen.queryByTitle('Open in Default App')).not.toBeInTheDocument();
+			expect(screen.queryByTestId('external-link-icon')).not.toBeInTheDocument();
 		});
 	});
 
@@ -681,83 +681,12 @@ describe('FilePreview', () => {
 		});
 	});
 
-	describe('edit mode keyboard navigation', () => {
-		const multiLineContent = 'Line 1\nLine 2\nLine 3\nLine 4\nLine 5';
-
-		it('Cmd+Shift+Up selects from cursor to beginning of document', () => {
-			render(
-				<FilePreview
-					{...defaultProps}
-					file={{ name: 'test.txt', content: multiLineContent, path: '/test/test.txt' }}
-					markdownEditMode={true}
-				/>
-			);
-
-			const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
-			// Place cursor at position 14 (start of Line 3)
-			textarea.setSelectionRange(14, 14);
-
-			fireEvent.keyDown(textarea, { key: 'ArrowUp', metaKey: true, shiftKey: true });
-
-			expect(textarea.selectionStart).toBe(0);
-			expect(textarea.selectionEnd).toBe(14);
-		});
-
-		it('Cmd+Shift+Down selects from cursor to end of document', () => {
-			render(
-				<FilePreview
-					{...defaultProps}
-					file={{ name: 'test.txt', content: multiLineContent, path: '/test/test.txt' }}
-					markdownEditMode={true}
-				/>
-			);
-
-			const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
-			// Place cursor at position 14 (start of Line 3)
-			textarea.setSelectionRange(14, 14);
-
-			fireEvent.keyDown(textarea, { key: 'ArrowDown', metaKey: true, shiftKey: true });
-
-			expect(textarea.selectionStart).toBe(14);
-			expect(textarea.selectionEnd).toBe(multiLineContent.length);
-		});
-
-		it('Cmd+Up moves cursor to beginning without selection', () => {
-			render(
-				<FilePreview
-					{...defaultProps}
-					file={{ name: 'test.txt', content: multiLineContent, path: '/test/test.txt' }}
-					markdownEditMode={true}
-				/>
-			);
-
-			const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
-			textarea.setSelectionRange(14, 14);
-
-			fireEvent.keyDown(textarea, { key: 'ArrowUp', metaKey: true });
-
-			expect(textarea.selectionStart).toBe(0);
-			expect(textarea.selectionEnd).toBe(0);
-		});
-
-		it('Cmd+Down moves cursor to end without selection', () => {
-			render(
-				<FilePreview
-					{...defaultProps}
-					file={{ name: 'test.txt', content: multiLineContent, path: '/test/test.txt' }}
-					markdownEditMode={true}
-				/>
-			);
-
-			const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
-			textarea.setSelectionRange(14, 14);
-
-			fireEvent.keyDown(textarea, { key: 'ArrowDown', metaKey: true });
-
-			expect(textarea.selectionStart).toBe(multiLineContent.length);
-			expect(textarea.selectionEnd).toBe(multiLineContent.length);
-		});
-	});
+	// `edit mode keyboard navigation` tests were removed when FilePreview's edit
+	// surface was swapped from a raw <textarea> to CodeMirror. Cmd+Up/Down and
+	// Cmd+Shift+Up/Down are now provided by CodeMirror's `defaultKeymap`
+	// (cursorDocStart / cursorDocEnd / selectDocStart / selectDocEnd) — there's
+	// no FilePreview-level handler to test, so the old tests would have only
+	// exercised our mock.
 
 	describe('basic rendering', () => {
 		it('renders file preview with file name', () => {
@@ -1141,6 +1070,67 @@ print("world")
 			expect(screen.getByText('Heading 1')).toBeInTheDocument();
 			expect(screen.getByText('Heading 2')).toBeInTheDocument();
 			expect(screen.getByText('Heading 3')).toBeInTheDocument();
+		});
+
+		it('toggles TOC overlay with the toggleFilePreviewToc shortcut and reports usage', () => {
+			const onShortcutUsed = vi.fn();
+			const markdownWithHeadings = '# Heading 1\n## Heading 2\n### Heading 3';
+			const { container } = render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'doc.md', content: markdownWithHeadings, path: '/test/doc.md' }}
+					markdownEditMode={false}
+					isTabMode={true}
+					shortcuts={{
+						toggleFilePreviewToc: {
+							id: 'toggleFilePreviewToc',
+							label: 'Toggle Table of Contents (Markdown Preview)',
+							keys: ['Meta', '\\'],
+						},
+					}}
+					onShortcutUsed={onShortcutUsed}
+				/>
+			);
+
+			const previewContainer = container.querySelector('[tabindex="0"]');
+			expect(previewContainer).not.toBeNull();
+
+			// First firing opens the overlay and reports usage
+			fireEvent.keyDown(previewContainer!, { key: '\\', metaKey: true });
+			expect(screen.getByText('Contents')).toBeInTheDocument();
+			expect(onShortcutUsed).toHaveBeenCalledWith('toggleFilePreviewToc');
+
+			// Second firing closes it
+			fireEvent.keyDown(previewContainer!, { key: '\\', metaKey: true });
+			expect(screen.queryByText('Contents')).not.toBeInTheDocument();
+			expect(onShortcutUsed).toHaveBeenCalledTimes(2);
+		});
+
+		it('ignores toggleFilePreviewToc shortcut in edit mode (no TOC available)', () => {
+			const onShortcutUsed = vi.fn();
+			const { container } = render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'doc.md', content: '# Heading 1', path: '/test/doc.md' }}
+					markdownEditMode={true}
+					isTabMode={true}
+					shortcuts={{
+						toggleFilePreviewToc: {
+							id: 'toggleFilePreviewToc',
+							label: 'Toggle Table of Contents (Markdown Preview)',
+							keys: ['Meta', '\\'],
+						},
+					}}
+					onShortcutUsed={onShortcutUsed}
+				/>
+			);
+
+			const previewContainer = container.querySelector('[tabindex="0"]');
+			expect(previewContainer).not.toBeNull();
+
+			fireEvent.keyDown(previewContainer!, { key: '\\', metaKey: true });
+			expect(screen.queryByText('Contents')).not.toBeInTheDocument();
+			expect(onShortcutUsed).not.toHaveBeenCalled();
 		});
 
 		it('keeps TOC overlay open when clicking a heading entry', () => {

@@ -34,6 +34,7 @@ vi.mock('fs/promises', () => ({
 
 import { CopilotSessionStorage } from '../../../main/storage/copilot-session-storage';
 import * as remoteFs from '../../../main/utils/remote-fs';
+import fs from 'fs/promises';
 import type { SshRemoteConfig } from '../../../shared/types';
 
 // ============================================================================
@@ -283,5 +284,178 @@ describe('CopilotSessionStorage — remote SSH listing', () => {
 		expect(sessions).toHaveLength(1);
 		expect(sessions[0].sizeBytes).toBe(12345);
 		expect(vi.mocked(remoteFs.directorySizeRemote)).not.toHaveBeenCalled();
+	});
+});
+
+describe('CopilotSessionStorage — paginated listing', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+	});
+
+	/** Wire up the SSH read mocks to serve workspace.yaml for the given owner map and events.jsonl for everyone. */
+	function mockRemoteReads(ownerByName: Record<string, string>) {
+		vi.mocked(remoteFs.readFileRemote).mockImplementation(async (filePath: string) => {
+			const id = filePath.split('/').slice(-2, -1)[0];
+			if (filePath.endsWith('/workspace.yaml')) {
+				const owner = ownerByName[id];
+				if (!owner) return { success: false, error: 'No such file' };
+				return { success: true, data: workspaceYaml(id, owner) };
+			}
+			return { success: true, data: eventsJsonl() };
+		});
+		vi.mocked(remoteFs.directorySizeRemote).mockResolvedValue({ success: true, data: 4096 });
+	}
+
+	it('paginates over thousands of remote sessions, sorting by events.jsonl mtime desc', async () => {
+		// Regression: the base-class paginator reads every session up front,
+		// which is unusable over SSH at this scale. The override must do real
+		// cursor pagination with a bounded number of file reads per page.
+		const projectPath = '/remote/project';
+		const totalCount = 2500;
+		const ids = Array.from({ length: totalCount }, (_, i) => `sess-${i}`);
+		// Older session ids have lower mtimes — newest id ('sess-2499') sorts first.
+		const baseMtime = 1_776_000_000_000;
+
+		vi.mocked(remoteFs.readDirRemote).mockResolvedValue({
+			success: true,
+			data: ids.map((name) => ({ name, isDirectory: true, isSymlink: false })),
+		});
+		vi.mocked(remoteFs.bulkStatFileInSubdirsRemote).mockResolvedValue({
+			success: true,
+			data: ids.map((name, i) => ({ name, size: 2048, mtime: baseMtime + i })),
+		});
+		mockRemoteReads(Object.fromEntries(ids.map((id) => [id, projectPath])));
+
+		const storage = new CopilotSessionStorage();
+		const page = await storage.listSessionsPaginated(projectPath, { limit: 50 }, sshConfig);
+
+		expect(page.sessions).toHaveLength(50);
+		expect(page.totalCount).toBe(totalCount);
+		expect(page.hasMore).toBe(true);
+		// Newest-first ordering: the highest-mtime ids land on the first page.
+		expect(page.sessions[0].sessionId).toBe('sess-2499');
+		expect(page.sessions[49].sessionId).toBe('sess-2450');
+		expect(page.nextCursor).toBe('sess-2450');
+		// Crucially: we must NOT have read all 2500 sessions to deliver page 1.
+		const readCount = vi.mocked(remoteFs.readFileRemote).mock.calls.length;
+		expect(readCount).toBeLessThan(totalCount);
+	});
+
+	it('resumes from the nextCursor with no overlap or gaps', async () => {
+		const projectPath = '/remote/project';
+		const ids = Array.from({ length: 130 }, (_, i) => `sess-${i}`);
+		const baseMtime = 1_776_000_000_000;
+
+		vi.mocked(remoteFs.readDirRemote).mockResolvedValue({
+			success: true,
+			data: ids.map((name) => ({ name, isDirectory: true, isSymlink: false })),
+		});
+		vi.mocked(remoteFs.bulkStatFileInSubdirsRemote).mockResolvedValue({
+			success: true,
+			data: ids.map((name, i) => ({ name, size: 2048, mtime: baseMtime + i })),
+		});
+		mockRemoteReads(Object.fromEntries(ids.map((id) => [id, projectPath])));
+
+		const storage = new CopilotSessionStorage();
+		const page1 = await storage.listSessionsPaginated(projectPath, { limit: 50 }, sshConfig);
+		const page2 = await storage.listSessionsPaginated(
+			projectPath,
+			{ limit: 50, cursor: page1.nextCursor ?? undefined },
+			sshConfig
+		);
+		const page3 = await storage.listSessionsPaginated(
+			projectPath,
+			{ limit: 50, cursor: page2.nextCursor ?? undefined },
+			sshConfig
+		);
+
+		const allIds = [
+			...page1.sessions.map((s) => s.sessionId),
+			...page2.sessions.map((s) => s.sessionId),
+			...page3.sessions.map((s) => s.sessionId),
+		];
+		// No duplicates across pages — cursor must advance strictly past each match.
+		expect(new Set(allIds).size).toBe(allIds.length);
+		// Together the three pages cover all 130 sessions.
+		expect(allIds).toHaveLength(130);
+		// Final page exhausts the candidates.
+		expect(page3.hasMore).toBe(false);
+		expect(page3.nextCursor).toBeNull();
+	});
+
+	it('skips sessions owned by other projects without burning the page budget', async () => {
+		// The killer case for thousands-of-sessions hosts: the requested
+		// project owns a minority of sessions, so the scan must walk past
+		// foreign sessions without counting them toward the page limit.
+		const projectPath = '/remote/project';
+		const otherPath = '/remote/other';
+		const ids = Array.from({ length: 200 }, (_, i) => `sess-${i}`);
+		// Only every 4th session belongs to projectPath.
+		const ownerByName = Object.fromEntries(
+			ids.map((id, i) => [id, i % 4 === 0 ? projectPath : otherPath])
+		);
+
+		vi.mocked(remoteFs.readDirRemote).mockResolvedValue({
+			success: true,
+			data: ids.map((name) => ({ name, isDirectory: true, isSymlink: false })),
+		});
+		vi.mocked(remoteFs.bulkStatFileInSubdirsRemote).mockResolvedValue({
+			success: true,
+			data: ids.map((name, i) => ({ name, size: 1024, mtime: 1_776_000_000_000 + i })),
+		});
+		mockRemoteReads(ownerByName);
+
+		const storage = new CopilotSessionStorage();
+		const page = await storage.listSessionsPaginated(projectPath, { limit: 20 }, sshConfig);
+
+		expect(page.sessions).toHaveLength(20);
+		// Every returned session must match the requested project.
+		for (const session of page.sessions) {
+			expect(session.projectPath).toBe(projectPath);
+		}
+	});
+
+	it('paginates locally using fs.stat on each session events.jsonl', async () => {
+		// The local path must use the same lazy-scan pagination so a user
+		// with thousands of local sessions doesn't pay full-load latency
+		// on every modal open.
+		const projectPath = '/local/project';
+		const ids = ['sess-a', 'sess-b', 'sess-c'];
+
+		vi.mocked(fs.readdir).mockImplementation(async (_dir, options) => {
+			if (options && typeof options === 'object' && 'withFileTypes' in options) {
+				return ids.map((name) => ({
+					name,
+					isDirectory: () => true,
+					isFile: () => false,
+				})) as never;
+			}
+			return ids as never;
+		});
+
+		vi.mocked(fs.stat).mockImplementation(async (filePath) => {
+			const p = String(filePath);
+			if (p.endsWith('/events.jsonl')) {
+				const id = p.split('/').slice(-2, -1)[0];
+				const idx = ids.indexOf(id);
+				return { size: 2048, mtimeMs: 1_776_000_000_000 + idx, mtime: new Date() } as never;
+			}
+			return { size: 4096, mtimeMs: 1_776_000_000_000 } as never;
+		});
+
+		vi.mocked(fs.readFile).mockImplementation(async (filePath) => {
+			const p = String(filePath);
+			const id = p.split('/').slice(-2, -1)[0];
+			if (p.endsWith('/workspace.yaml')) return workspaceYaml(id, projectPath);
+			return eventsJsonl();
+		});
+
+		const storage = new CopilotSessionStorage();
+		const page = await storage.listSessionsPaginated(projectPath, { limit: 10 });
+
+		expect(page.sessions.map((s) => s.sessionId)).toEqual(['sess-c', 'sess-b', 'sess-a']);
+		expect(page.hasMore).toBe(false);
+		expect(page.nextCursor).toBeNull();
+		expect(page.totalCount).toBe(3);
 	});
 });

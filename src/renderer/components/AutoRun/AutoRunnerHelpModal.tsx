@@ -18,6 +18,7 @@ import {
 	ArrowDownToLine,
 	Globe,
 	StopCircle,
+	Layers,
 } from 'lucide-react';
 import type { Theme } from '../../types';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
@@ -61,8 +62,12 @@ export function AutoRunnerHelpModal({ theme, onClose }: AutoRunnerHelpModalProps
 					<p className="text-sm leading-relaxed" style={{ color: theme.colors.textDim }}>
 						Auto Run is a file-system-based document runner that automates AI-driven task execution.
 						Create markdown documents with checkbox tasks, and let AI agents work through them one
-						by one, each with a fresh context window. Run single documents or chain multiple
-						documents together for complex workflows—a collection of Auto Run documents is called a{' '}
+						by one, each with a fresh context window—per task or per document (see{' '}
+						<strong style={{ color: theme.colors.textMain }}>
+							Fresh Context: Task vs Document
+						</strong>{' '}
+						below). Run single documents or chain multiple documents together for complex
+						workflows—a collection of Auto Run documents is called a{' '}
 						<strong style={{ color: theme.colors.textMain }}>Playbook</strong>.
 					</p>
 				</section>
@@ -298,6 +303,60 @@ export function AutoRunnerHelpModal({ theme, onClose }: AutoRunnerHelpModalProps
 					</div>
 				</section>
 
+				{/* Fresh Context: Task vs Document */}
+				<section>
+					<div className="flex items-center gap-2 mb-3">
+						<Layers className="w-5 h-5" style={{ color: theme.colors.accent }} />
+						<h3 className="font-bold">Fresh Context: Task vs Document</h3>
+					</div>
+					<div className="text-sm space-y-2 pl-7" style={{ color: theme.colors.textDim }}>
+						<p>
+							The <strong style={{ color: theme.colors.textMain }}>Fresh context per</strong> toggle
+							in the run configuration controls how context is scoped as the runner works through a
+							document:
+						</p>
+						<div className="space-y-3">
+							<div className="flex items-start gap-2">
+								<CheckSquare
+									className="w-4 h-4 mt-0.5 shrink-0"
+									style={{ color: theme.colors.accent }}
+								/>
+								<div>
+									<strong style={{ color: theme.colors.textMain }}>Task</strong> — A new agent is
+									spawned for each unchecked task with a clean context every time. Maximum
+									isolation; no drift between tasks. Each task must be fully self-contained, since
+									the agent sees nothing from previous tasks except what's written in the document.
+								</div>
+							</div>
+							<div className="flex items-start gap-2">
+								<FileText
+									className="w-4 h-4 mt-0.5 shrink-0"
+									style={{ color: theme.colors.accent }}
+								/>
+								<div>
+									<strong style={{ color: theme.colors.textMain }}>Document</strong> — A single
+									agent walks every unchecked task in the document in one continuous session,
+									carrying context forward between tasks. Best for large-context agents and work
+									where later tasks build on earlier ones.
+								</div>
+							</div>
+						</div>
+						<p>
+							Maestro <strong style={{ color: theme.colors.textMain }}>auto-selects</strong> the
+							mode from the running agent's context window—
+							<strong style={{ color: theme.colors.textMain }}>Document</strong> at 1M tokens or
+							more (e.g. Claude's 1M window),{' '}
+							<strong style={{ color: theme.colors.textMain }}>Task</strong> below that—and you can
+							override it per run. A loaded Playbook's saved mode always takes precedence.
+						</p>
+						<p>
+							<strong style={{ color: theme.colors.textMain }}>Tip:</strong> Author tasks to be
+							self-contained either way. Document mode is an optimization, not a license to write
+							tasks that depend on chat memory.
+						</p>
+					</div>
+				</section>
+
 				{/* Running Multiple Documents */}
 				<section>
 					<div className="flex items-center gap-2 mb-3">
@@ -455,6 +514,7 @@ export function AutoRunnerHelpModal({ theme, onClose }: AutoRunnerHelpModalProps
 							<li>Document selection and order</li>
 							<li>Reset-on-completion settings per document</li>
 							<li>Loop mode preference</li>
+							<li>Fresh-context mode (Task or Document)</li>
 							<li>Custom agent prompt</li>
 						</ul>
 						<p>
