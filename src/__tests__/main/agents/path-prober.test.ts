@@ -34,6 +34,7 @@ import {
 	checkBinaryExists,
 	probeWindowsPaths,
 	probeUnixPaths,
+	findAllBinaryPaths,
 	type BinaryDetectionResult,
 } from '../../../main/agents';
 import { execFileNoThrow } from '../../../main/utils/execFile';
@@ -607,6 +608,120 @@ describe('path-prober', () => {
 				expect(result.path).toBe('C:\\path\\to\\binary.exe');
 				// Path should not contain \r
 				expect(result.path).not.toContain('\r');
+			} finally {
+				Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+			}
+		});
+	});
+
+	describe('findAllBinaryPaths', () => {
+		let accessMock: ReturnType<typeof vi.spyOn>;
+		let realpathMock: ReturnType<typeof vi.spyOn>;
+		const mockedExec = execFileNoThrow as ReturnType<typeof vi.fn>;
+
+		beforeEach(() => {
+			accessMock = vi.spyOn(fs.promises, 'access');
+			realpathMock = vi.spyOn(fs.promises, 'realpath');
+			// Default: realpath returns the input unchanged (no symlinks)
+			realpathMock.mockImplementation(async (p: any) => String(p));
+			mockedExec.mockReset();
+		});
+
+		afterEach(() => {
+			accessMock.mockRestore();
+			realpathMock.mockRestore();
+		});
+
+		it('returns every existing direct probe match in priority order', async () => {
+			const originalPlatform = process.platform;
+			Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+
+			try {
+				// Two homebrew probe locations exist for codex (both are absolute and don't depend on $HOME)
+				accessMock.mockImplementation(async (probePath) => {
+					const s = String(probePath);
+					if (s === '/opt/homebrew/bin/codex' || s === '/usr/local/bin/codex') {
+						return undefined;
+					}
+					throw new Error('ENOENT');
+				});
+				// `which -a` reports a wrapper script as an additional alternative
+				mockedExec.mockResolvedValue({
+					exitCode: 0,
+					stdout: '/opt/homebrew/bin/codex\n/usr/local/bin/codex-multi-auth-codex\n',
+					stderr: '',
+				});
+
+				const result = await findAllBinaryPaths('codex');
+
+				expect(result).toContain('/opt/homebrew/bin/codex');
+				expect(result).toContain('/usr/local/bin/codex');
+				expect(result).toContain('/usr/local/bin/codex-multi-auth-codex');
+				// Probed paths come before which-only results
+				expect(result.indexOf('/opt/homebrew/bin/codex')).toBeLessThan(
+					result.indexOf('/usr/local/bin/codex-multi-auth-codex')
+				);
+			} finally {
+				Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+			}
+		});
+
+		it('de-duplicates paths that resolve to the same canonical target', async () => {
+			const originalPlatform = process.platform;
+			Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+
+			try {
+				// Probe finds homebrew copy
+				accessMock.mockImplementation(async (probePath) => {
+					if (String(probePath) === '/opt/homebrew/bin/codex') return undefined;
+					throw new Error('ENOENT');
+				});
+				// `which -a` finds a symlinked alias that resolves to the same real path
+				mockedExec.mockResolvedValue({
+					exitCode: 0,
+					stdout: '/opt/homebrew/bin/codex\n/usr/local/bin/codex\n',
+					stderr: '',
+				});
+				realpathMock.mockImplementation(async (p: any) => {
+					// Both paths resolve to the same canonical file
+					if (String(p) === '/opt/homebrew/bin/codex' || String(p) === '/usr/local/bin/codex') {
+						return '/opt/homebrew/Cellar/codex/1.0.0/bin/codex';
+					}
+					return String(p);
+				});
+
+				const result = await findAllBinaryPaths('codex');
+
+				// Symlinked duplicate is collapsed
+				expect(result).toHaveLength(1);
+				// Direct-probed path wins (it's first in priority order)
+				expect(result[0]).toBe('/opt/homebrew/bin/codex');
+			} finally {
+				Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+			}
+		});
+
+		it('returns empty array when no installations are found', async () => {
+			accessMock.mockRejectedValue(new Error('ENOENT'));
+			mockedExec.mockResolvedValue({ exitCode: 1, stdout: '', stderr: '' });
+
+			const result = await findAllBinaryPaths('unknown-binary');
+			expect(result).toEqual([]);
+		});
+
+		it('still returns probed paths when which command throws', async () => {
+			const originalPlatform = process.platform;
+			Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+
+			try {
+				accessMock.mockImplementation(async (probePath) => {
+					if (String(probePath) === '/opt/homebrew/bin/codex') return undefined;
+					throw new Error('ENOENT');
+				});
+				mockedExec.mockRejectedValue(new Error('spawn ENOENT'));
+
+				const result = await findAllBinaryPaths('codex');
+				expect(result).toEqual(['/opt/homebrew/bin/codex']);
 			} finally {
 				Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
 			}

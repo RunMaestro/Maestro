@@ -430,6 +430,47 @@ export function AgentConfigPanel({
 						</button>
 					)}
 				</div>
+				{/*
+				 * Multi-install chooser (e.g. nvm-managed codex alongside a
+				 * codex-multi-auth-codex wrapper). Only shown for local agents
+				 * when detection found more than one valid binary.
+				 */}
+				{!isSshEnabled && agent.allPaths && agent.allPaths.length > 1 && (
+					<div className="mt-2">
+						<label
+							className="block text-xs font-medium mb-1"
+							style={{ color: theme.colors.textDim }}
+						>
+							Detected installations ({agent.allPaths.length})
+						</label>
+						<select
+							value={customPath || agent.path || ''}
+							onChange={(e) => {
+								const next = e.target.value;
+								onCustomPathChange(next);
+								// Persist immediately - selecting from the chooser is an explicit commit
+								onCustomPathBlur?.();
+							}}
+							onClick={(e) => e.stopPropagation()}
+							className="w-full p-2 rounded border bg-transparent outline-none text-xs font-mono cursor-pointer"
+							style={{
+								borderColor: theme.colors.border,
+								color: theme.colors.textMain,
+								backgroundColor: theme.colors.bgMain,
+							}}
+						>
+							{agent.allPaths.map((p) => (
+								<option key={p} value={p} style={{ backgroundColor: theme.colors.bgMain }}>
+									{p}
+								</option>
+							))}
+						</select>
+						<p className="text-xs opacity-50 mt-1">
+							Multiple {agent.binaryName} binaries were found. Your selection is saved as the
+							default for future agents.
+						</p>
+					</div>
+				)}
 				<p className="text-xs opacity-50 mt-2">
 					{isSshEnabled
 						? `Remote command/binary for ${agent.binaryName}. Leave empty to use default.`
