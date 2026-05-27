@@ -10,6 +10,12 @@ name: Release Windows Rebuild (one-off)
 # on the branch holding this file.
 
 on:
+  # Push trigger pinned to this throwaway branch so the workflow fires
+  # without needing the file on the default branch (gh workflow run /
+  # workflow_dispatch both require that).
+  push:
+    branches:
+      - 'release-fix/v0.16.18-RC-windows'
   workflow_dispatch:
     inputs:
       target_tag:
@@ -42,16 +48,18 @@ jobs:
         with:
           python-version: '3.11'
 
-      # Derive version from the target tag (strip leading 'v')
+      # Derive version from the target tag (strip leading 'v').
+      # Falls back to v0.16.18-RC when triggered by push (no inputs).
       - name: Set version from target tag
         id: version
         shell: bash
         env:
-          TARGET_TAG: ${{ github.event.inputs.target_tag }}
+          TARGET_TAG: ${{ github.event.inputs.target_tag || 'v0.16.18-RC' }}
         run: |
           VERSION="${TARGET_TAG#v}"
           echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
-          echo "Building version: $VERSION"
+          echo "TARGET_TAG=$TARGET_TAG" >> $GITHUB_OUTPUT
+          echo "Building version: $VERSION (tag: $TARGET_TAG)"
 
       - name: Update package.json version
         shell: bash
@@ -156,11 +164,12 @@ jobs:
       - name: Attach Windows artifacts to existing release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.event.inputs.target_tag }}
+          tag_name: ${{ github.event.inputs.target_tag || 'v0.16.18-RC' }}
           files: artifacts/maestro-windows/*
           fail_on_unmatched_files: true
           draft: false
-          prerelease: ${{ contains(github.event.inputs.target_tag, '-rc') || contains(github.event.inputs.target_tag, '-RC') || contains(github.event.inputs.target_tag, '-beta') || contains(github.event.inputs.target_tag, '-alpha') }}
+          # v0.16.18-RC is a prerelease; the fallback handles push-trigger runs.
+          prerelease: true
           generate_release_notes: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
