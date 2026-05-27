@@ -1,0 +1,166 @@
+name: Release Windows Rebuild (one-off)
+
+# Rebuilds ONLY the Windows artifacts and uploads them to an existing GitHub
+# Release at the supplied tag. Created to backfill Windows binaries for
+# v0.16.18-RC after the original release failed at the native-module verify
+# step (build/Release/pty.node — node-pty actually ships conpty.node on
+# Windows). Safe to delete after the missing assets are attached.
+#
+# Trigger via Actions → "Release Windows Rebuild (one-off)" → Run workflow
+# on the branch holding this file.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_tag:
+        description: 'Existing release tag to attach Windows artifacts to (e.g. v0.16.18-RC)'
+        required: true
+        default: 'v0.16.18-RC'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Setup Windows build tools
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Setup Python for node-gyp
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      # Derive version from the target tag (strip leading 'v')
+      - name: Set version from target tag
+        id: version
+        shell: bash
+        env:
+          TARGET_TAG: ${{ github.event.inputs.target_tag }}
+        run: |
+          VERSION="${TARGET_TAG#v}"
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          echo "Building version: $VERSION"
+
+      - name: Update package.json version
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.VERSION }}
+        run: |
+          node -e "
+            const fs = require('fs');
+            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+            pkg.version = process.env.VERSION;
+            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+          "
+          echo "Updated package.json to version $VERSION"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Rebuild native modules (Windows)
+        run: npm run postinstall
+        env:
+          npm_config_build_from_source: true
+
+      - name: Build application
+        run: npm run build
+        env:
+          VITE_APP_VERSION: ${{ steps.version.outputs.VERSION }}
+
+      - name: Create release directory
+        run: mkdir -p release
+        shell: bash
+
+      - name: Package for Windows
+        shell: bash
+        env:
+          DEBUG: electron-builder
+          VERSION: ${{ steps.version.outputs.VERSION }}
+        run: npx electron-builder --win --publish never --config.extraMetadata.version="$VERSION"
+
+      # Verify native modules are correctly included in unpacked resources.
+      # node-pty on Windows uses ConPTY: ships conpty.node + conpty_console_list.node, not pty.node
+      - name: Verify native modules in package
+        shell: pwsh
+        run: |
+          $unpackedDir = "release/win-unpacked/resources/app.asar.unpacked"
+          $nativeModules = @(
+            "node_modules/node-pty/build/Release/conpty.node",
+            "node_modules/node-pty/build/Release/conpty_console_list.node",
+            "node_modules/better-sqlite3/build/Release/better_sqlite3.node"
+          )
+
+          foreach ($relativePath in $nativeModules) {
+            $nativePath = Join-Path $unpackedDir $relativePath
+            Write-Host "Checking for $relativePath in unpacked resources..."
+            if (Test-Path $nativePath) {
+              Get-Item $nativePath | Format-List FullName,Length
+            } else {
+              Write-Error "ERROR: $relativePath not found in unpacked resources"
+              Write-Host "Available native modules:"
+              if (Test-Path $unpackedDir) {
+                Get-ChildItem -Path $unpackedDir -Filter *.node -Recurse -ErrorAction SilentlyContinue |
+                  Select-Object -ExpandProperty FullName
+              } else {
+                Write-Host "Directory not found: $unpackedDir"
+              }
+              exit 1
+            }
+          }
+
+      - name: List release artifacts
+        run: ls -la release/
+        shell: bash
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: maestro-windows
+          path: |
+            release/*.exe
+            release/latest.yml
+          if-no-files-found: error
+          retention-days: 5
+
+  attach:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download Windows artifacts
+        uses: actions/download-artifact@v7
+        with:
+          name: maestro-windows
+          path: artifacts/maestro-windows
+
+      - name: List downloaded artifacts
+        run: |
+          echo "Available artifacts:"
+          find artifacts -type f
+
+      # softprops/action-gh-release@v2 appends to an existing release without
+      # deleting other assets — mac/linux artifacts on the target tag are
+      # untouched.
+      - name: Attach Windows artifacts to existing release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.target_tag }}
+          files: artifacts/maestro-windows/*
+          fail_on_unmatched_files: true
+          draft: false
+          prerelease: ${{ contains(github.event.inputs.target_tag, '-rc') || contains(github.event.inputs.target_tag, '-RC') || contains(github.event.inputs.target_tag, '-beta') || contains(github.event.inputs.target_tag, '-alpha') }}
+          generate_release_notes: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
