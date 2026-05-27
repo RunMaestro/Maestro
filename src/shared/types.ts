@@ -144,6 +144,7 @@ export interface AgentConfig {
 	args: string[];
 	available: boolean;
 	path?: string;
+	pathCandidates?: string[];
 	requiresPty?: boolean;
 	hidden?: boolean;
 }

@@ -751,6 +751,7 @@ export interface AgentConfig {
 	binaryName?: string;
 	available: boolean;
 	path?: string;
+	pathCandidates?: string[];
 	customPath?: string; // User-specified custom path (shown in UI even if not available)
 	command?: string;
 	args?: string[];

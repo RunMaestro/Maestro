@@ -440,8 +440,13 @@ export function AgentCreationDialog({
 														theme={theme}
 														agent={agent}
 														customPath={customAgentPaths[agent.id] || ''}
+														pathOptions={agent.pathCandidates || []}
 														onCustomPathChange={(value) => {
 															setCustomAgentPaths((prev) => ({ ...prev, [agent.id]: value }));
+														}}
+														onCustomPathBlur={() => {
+															const pathToSet = customAgentPaths[agent.id]?.trim() || null;
+															void window.maestro.agents.setCustomPath(agent.id, pathToSet);
 														}}
 														onCustomPathClear={() => {
 															setCustomAgentPaths((prev) => {
@@ -449,6 +454,10 @@ export function AgentCreationDialog({
 																delete newPaths[agent.id];
 																return newPaths;
 															});
+															void window.maestro.agents.setCustomPath(agent.id, null);
+														}}
+														onPathOptionSelect={(value) => {
+															void window.maestro.agents.setCustomPath(agent.id, value);
 														}}
 														customArgs={customAgentArgs[agent.id] || ''}
 														onCustomArgsChange={(value) => {

@@ -379,6 +379,30 @@ describe('AgentConfigPanel', () => {
 			expect(props.onRefreshAgent).toHaveBeenCalled();
 		});
 
+		it('offers detected path choices and commits the selected path', () => {
+			const props = createDefaultProps({
+				agent: createMockAgent({
+					id: 'codex',
+					name: 'Codex',
+					binaryName: 'codex',
+					path: '/Users/test/.nvm/versions/node/v25.3.0/bin/codex-multi-auth-codex',
+				}),
+				pathOptions: [
+					'/Users/test/.nvm/versions/node/v25.3.0/bin/codex-multi-auth-codex',
+					'/opt/homebrew/bin/codex',
+				],
+				onPathOptionSelect: vi.fn(),
+			});
+
+			render(<AgentConfigPanel {...props} />);
+
+			fireEvent.click(screen.getByTitle('Choose detected path'));
+			fireEvent.click(screen.getByText('/opt/homebrew/bin/codex'));
+
+			expect(props.onCustomPathChange).toHaveBeenCalledWith('/opt/homebrew/bin/codex');
+			expect(props.onPathOptionSelect).toHaveBeenCalledWith('/opt/homebrew/bin/codex');
+		});
+
 		it('shows a read-only remote command field when SSH is enabled without a custom path', () => {
 			const props = createDefaultProps({
 				isSshEnabled: true,

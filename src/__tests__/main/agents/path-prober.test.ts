@@ -32,6 +32,7 @@ import {
 	getExpandedEnv,
 	checkCustomPath,
 	checkBinaryExists,
+	findBinaryCandidates,
 	probeWindowsPaths,
 	probeUnixPaths,
 	type BinaryDetectionResult,
@@ -361,6 +362,46 @@ describe('path-prober', () => {
 
 				// Verify access was called with F_OK | X_OK
 				expect(accessMock).toHaveBeenCalled();
+			} finally {
+				Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+			}
+		});
+	});
+
+	describe('findBinaryCandidates', () => {
+		let accessMock: ReturnType<typeof vi.spyOn>;
+		const execMock = vi.mocked(execFileNoThrow);
+
+		beforeEach(() => {
+			accessMock = vi.spyOn(fs.promises, 'access');
+		});
+
+		afterEach(() => {
+			accessMock.mockRestore();
+		});
+
+		it('returns multiple Unix candidates in detection priority order', async () => {
+			const originalPlatform = process.platform;
+			Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+
+			try {
+				accessMock.mockImplementation(async (probePath) => {
+					const candidate = String(probePath);
+					if (candidate === '/opt/homebrew/bin/codex' || candidate === '/usr/local/bin/codex') {
+						return undefined;
+					}
+					throw new Error('ENOENT');
+				});
+				execMock.mockResolvedValue({
+					exitCode: 0,
+					stdout: '/opt/homebrew/bin/codex\n',
+					stderr: '',
+				});
+
+				const result = await findBinaryCandidates('codex');
+
+				expect(result).toEqual(['/opt/homebrew/bin/codex', '/usr/local/bin/codex']);
+				expect(execMock).not.toHaveBeenCalled();
 			} finally {
 				Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
 			}

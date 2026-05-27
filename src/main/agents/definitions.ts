@@ -77,6 +77,7 @@ export interface AgentConfig {
 	args: string[]; // Base args always included (excludes batch mode prefix)
 	available: boolean;
 	path?: string;
+	pathCandidates?: string[];
 	customPath?: string; // User-specified custom path (shown in UI even if not available)
 	requiresPty?: boolean; // Whether this agent needs a pseudo-terminal
 	configOptions?: AgentConfigOption[]; // Agent-specific configuration
@@ -99,6 +100,7 @@ export interface AgentConfig {
 	defaultEnvVars?: Record<string, string>; // Default environment variables for this agent (merged with user customEnvVars)
 	readOnlyEnvOverrides?: Record<string, string>; // Env var overrides applied in read-only mode (replaces keys from defaultEnvVars)
 	readOnlyCliEnforced?: boolean; // Whether the agent's CLI enforces read-only mode (false = prompt-only enforcement)
+	pathCandidateBinaryNames?: string[]; // Extra binary names to offer as selectable executable paths
 }
 
 /**
@@ -145,6 +147,7 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		name: 'Codex',
 		binaryName: 'codex',
 		command: 'codex',
+		pathCandidateBinaryNames: ['codex-multi-auth-codex'],
 		// Base args for interactive mode (no flags that are exec-only)
 		args: [],
 		// Codex CLI argument builders
