@@ -298,8 +298,10 @@ jobs:
         shell: pwsh
         run: |
           $unpackedDir = "release/win-unpacked/resources/app.asar.unpacked"
+          # node-pty on Windows uses ConPTY: ships conpty.node + conpty_console_list.node, not pty.node
           $nativeModules = @(
-            "node_modules/node-pty/build/Release/pty.node",
+            "node_modules/node-pty/build/Release/conpty.node",
+            "node_modules/node-pty/build/Release/conpty_console_list.node",
             "node_modules/better-sqlite3/build/Release/better_sqlite3.node"
           )
 
