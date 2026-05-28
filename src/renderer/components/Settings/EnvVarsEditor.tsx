@@ -110,23 +110,19 @@ export function EnvVarsEditor({ envVars, setEnvVars, theme }: EnvVarsEditorProps
 	}, [envVars]);
 
 	const updateEntry = (id: number, field: 'key' | 'value', newValue: string) => {
-		setEntries((prev) => {
-			const updated = prev.map((entry) =>
-				entry.id === id ? { ...entry, [field]: newValue } : entry
-			);
-			// Commit changes on every update for value field, but for key field
-			// only commit valid keys to avoid issues with empty keys
-			commitChanges(updated);
-			return updated;
-		});
+		const updated = entries.map((entry) =>
+			entry.id === id ? { ...entry, [field]: newValue } : entry
+		);
+		// Commit changes on every update for value field, but for key field
+		// only commit valid keys to avoid issues with empty keys.
+		setEntries(updated);
+		commitChanges(updated);
 	};
 
 	const removeEntry = (id: number) => {
-		setEntries((prev) => {
-			const updated = prev.filter((entry) => entry.id !== id);
-			commitChanges(updated);
-			return updated;
-		});
+		const updated = entries.filter((entry) => entry.id !== id);
+		setEntries(updated);
+		commitChanges(updated);
 	};
 
 	const addEntry = () => {

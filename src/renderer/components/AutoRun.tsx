@@ -2269,6 +2269,11 @@ export const AutoRun = memo(AutoRunInner, (prevProps, nextProps) => {
 		prevProps.onRefresh === nextProps.onRefresh &&
 		prevProps.onSelectDocument === nextProps.onSelectDocument &&
 		prevProps.onShowFlash === nextProps.onShowFlash &&
+		// External draft state is shared between the panel and expanded modal
+		prevProps.externalLocalContent === nextProps.externalLocalContent &&
+		prevProps.externalSavedContent === nextProps.externalSavedContent &&
+		prevProps.onExternalLocalContentChange === nextProps.onExternalLocalContentChange &&
+		prevProps.onExternalSavedContentChange === nextProps.onExternalSavedContentChange &&
 		// UI control props
 		prevProps.hideTopControls === nextProps.hideTopControls &&
 		// External change detection

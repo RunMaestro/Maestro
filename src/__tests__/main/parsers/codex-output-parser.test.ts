@@ -7,6 +7,7 @@ import { CodexOutputParser } from '../../../main/parsers/codex-output-parser';
 describe('CodexOutputParser', () => {
 	const parser = new CodexOutputParser();
 	const originalCodexHome = process.env.CODEX_HOME;
+	const originalHome = process.env.HOME;
 	const tempDirs: string[] = [];
 
 	afterEach(() => {
@@ -15,6 +16,11 @@ describe('CodexOutputParser', () => {
 			delete process.env.CODEX_HOME;
 		} else {
 			process.env.CODEX_HOME = originalCodexHome;
+		}
+		if (originalHome === undefined) {
+			delete process.env.HOME;
+		} else {
+			process.env.HOME = originalHome;
 		}
 		for (const tempDir of tempDirs.splice(0)) {
 			fs.rmSync(tempDir, { recursive: true, force: true });
@@ -65,6 +71,18 @@ describe('CodexOutputParser', () => {
 			createCodexHome('model = "unknown-model"\n');
 
 			expect(usageContextWindow(new CodexOutputParser())).toBe(400000);
+		});
+
+		it('should fall back to ~/.codex config when CODEX_HOME is unset', () => {
+			const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-codex-home-'));
+			tempDirs.push(homeDir);
+			const defaultCodexHome = path.join(homeDir, '.codex');
+			fs.mkdirSync(defaultCodexHome);
+			fs.writeFileSync(path.join(defaultCodexHome, 'config.toml'), 'model = "gpt-4"\n');
+			delete process.env.CODEX_HOME;
+			process.env.HOME = homeDir;
+
+			expect(usageContextWindow(new CodexOutputParser())).toBe(8192);
 		});
 
 		it('should use defaults when config is missing or unreadable', () => {

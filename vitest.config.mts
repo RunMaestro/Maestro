@@ -35,6 +35,7 @@ export default defineConfig({
 				'node_modules',
 				'dist',
 				'src/__tests__/**',
+				'**/__tests__/**',
 				'**/*.d.ts',
 				'src/main/preload.ts', // Electron preload script
 			],
