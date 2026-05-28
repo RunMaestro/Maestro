@@ -68,6 +68,7 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 	// ----------------------------------------------------------------
 	useAgentDataListener({ batchedUpdater: deps.batchedUpdater, activeHiddenToolRef });
 	useAgentExitListener({
+		batchedUpdater: deps.batchedUpdater,
 		getBatchStateRef: deps.getBatchStateRef,
 		processQueuedItemRef: deps.processQueuedItemRef,
 		addHistoryEntryRef: deps.addHistoryEntryRef,

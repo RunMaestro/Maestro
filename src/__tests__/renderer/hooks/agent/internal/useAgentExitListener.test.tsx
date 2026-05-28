@@ -22,8 +22,22 @@ function makeRef(): {
 	return { current: new Map() };
 }
 
+function makeBatched() {
+	return {
+		appendLog: vi.fn(),
+		markDelivered: vi.fn(),
+		markUnread: vi.fn(),
+		updateUsage: vi.fn(),
+		updateContextUsage: vi.fn(),
+		updateCycleBytes: vi.fn(),
+		updateCycleTokens: vi.fn(),
+		flushNow: vi.fn(),
+	};
+}
+
 function makeDeps() {
 	return {
+		batchedUpdater: makeBatched(),
 		getBatchStateRef: { current: null },
 		processQueuedItemRef: { current: null },
 		addHistoryEntryRef: { current: null },
@@ -100,6 +114,19 @@ describe('useAgentExitListener', () => {
 		const updated = useSessionStore.getState().sessions[0];
 		const log = updated.shellLogs[updated.shellLogs.length - 1];
 		expect(log?.text).toContain('exited with code 1');
+	});
+
+	// Regression for #1022: trailing batched stdout chunks must be flushed
+	// before the queued-message dispatch appends a new user log entry,
+	// otherwise late chunks land after the user entry and merge with the
+	// next response's bubble in collapsedLogs grouping.
+	it('flushes batched updates at the top of onExit', async () => {
+		const deps = makeDeps();
+		renderHook(() => useAgentExitListener(deps));
+		await act(async () => {
+			await handler!('sess-1-ai-tab-1', 0);
+		});
+		expect(deps.batchedUpdater.flushNow).toHaveBeenCalled();
 	});
 
 	it('deletes activeHiddenToolRef entry on AI exit', async () => {

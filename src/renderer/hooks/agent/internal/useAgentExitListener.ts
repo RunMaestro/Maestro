@@ -38,6 +38,7 @@ import type { LogEntry, QueuedItem, SessionState, UsageStats } from '../../../ty
 import type { UseAgentListenersDeps, ToolProgressState } from './types';
 
 export interface UseAgentExitListenerDeps {
+	batchedUpdater: UseAgentListenersDeps['batchedUpdater'];
 	getBatchStateRef: UseAgentListenersDeps['getBatchStateRef'];
 	processQueuedItemRef: UseAgentListenersDeps['processQueuedItemRef'];
 	addHistoryEntryRef: UseAgentListenersDeps['addHistoryEntryRef'];
@@ -57,6 +58,16 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 
 		const unsubscribe = window.maestro.process.onExit(async (sessionId: string, code: number) => {
 			if (sessionId.includes('-terminal-')) return;
+
+			// Flush any pending batched stdout/stderr chunks before we mutate
+			// state. Without this, when a queued message is dispatched on exit
+			// the user log entry is appended ahead of the trailing chunks from
+			// the response that just finished, causing those chunks to fall
+			// after the new user message in tab.logs and merge with the next
+			// response's bubble in TerminalOutput's collapsedLogs grouping.
+			// Mirrors the same fix on `main` (#1023) for the post-decompose
+			// file layout. See #1022.
+			deps.batchedUpdater.flushNow();
 
 			logger.info('[onExit] Process exit event received:', undefined, {
 				rawSessionId: sessionId,

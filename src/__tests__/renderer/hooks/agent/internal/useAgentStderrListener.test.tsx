@@ -22,6 +22,7 @@ function makeBatched(): BatchedUpdater {
 		updateContextUsage: vi.fn(),
 		updateCycleBytes: vi.fn(),
 		updateCycleTokens: vi.fn(),
+		flushNow: vi.fn(),
 	};
 }
 

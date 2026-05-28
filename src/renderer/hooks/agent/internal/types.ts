@@ -33,6 +33,7 @@ export interface BatchedUpdater {
 	updateContextUsage: (sessionId: string, percentage: number) => void;
 	updateCycleBytes: (sessionId: string, bytes: number) => void;
 	updateCycleTokens: (sessionId: string, tokens: number) => void;
+	flushNow: () => void;
 }
 
 /** Dependencies passed from App.tsx to the hook */
