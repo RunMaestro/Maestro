@@ -15,7 +15,6 @@ import {
 	GitGraph,
 	ExternalLink,
 	WrapText,
-	Wand2,
 } from 'lucide-react';
 import type { FilePreviewToolbarVisibility } from '../../stores/settingsStore';
 import { Spinner } from '../ui/Spinner';
@@ -268,6 +267,7 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 									onClick={() => setMarkdownEditMode(!markdownEditMode)}
 									className={headerBtnClass}
 									style={{ color: markdownEditMode ? theme.colors.accent : theme.colors.textDim }}
+									data-testid="edit-text-toggle"
 								>
 									{markdownEditMode ? (
 										<Eye className={headerIconClass} />
@@ -286,7 +286,7 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 									style={{ color: theme.colors.textDim }}
 									data-testid="edit-image-button"
 								>
-									<Wand2 className={headerIconClass} />
+									<Edit className={headerIconClass} />
 								</button>
 							</HoverTooltip>
 						)}

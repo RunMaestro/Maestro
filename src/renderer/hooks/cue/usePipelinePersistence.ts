@@ -317,45 +317,50 @@ export function usePipelinePersistence({
 				);
 			}
 
-			// Write each cwd's yaml. Skip cwds also referenced by error-node
-			// pipelines: those pipelines exist on disk with valid YAML that we
-			// cannot reproduce without their missing agents. Writing the cwd
-			// here would silently strip those pipelines from disk (data loss).
-			for (const [cwd, { yaml: yamlContent, promptFiles }] of byCwd) {
-				if (errorPipelineRoots.has(cwd)) continue;
-				const promptFilesObj: Record<string, string> = {};
-				for (const [filePath, content] of promptFiles) {
-					promptFilesObj[filePath] = content;
-				}
-				cueDebugLog('save:writeYaml:request', {
-					root: cwd,
-					yamlBytes: yamlContent.length,
-					promptFileCount: Object.keys(promptFilesObj).length,
-					promptFileKeys: Object.keys(promptFilesObj),
-					yaml: yamlContent,
-				});
-				await cueService.writeYaml(cwd, yamlContent, promptFilesObj);
+			// Write each cwd's yaml in parallel. Skip cwds also referenced by
+			// error-node pipelines: those pipelines exist on disk with valid YAML
+			// that we cannot reproduce without their missing agents. Writing the
+			// cwd here would silently strip those pipelines from disk (data loss).
+			// Each entry targets a distinct root, so the writes/read-backs are
+			// independent; dispatching them together removes the per-root IPC
+			// round-trip latency from stacking serially.
+			await Promise.all(
+				[...byCwd].map(async ([cwd, { yaml: yamlContent, promptFiles }]) => {
+					if (errorPipelineRoots.has(cwd)) return;
+					const promptFilesObj: Record<string, string> = {};
+					for (const [filePath, content] of promptFiles) {
+						promptFilesObj[filePath] = content;
+					}
+					cueDebugLog('save:writeYaml:request', {
+						root: cwd,
+						yamlBytes: yamlContent.length,
+						promptFileCount: Object.keys(promptFilesObj).length,
+						promptFileKeys: Object.keys(promptFilesObj),
+						yaml: yamlContent,
+					});
+					await cueService.writeYaml(cwd, yamlContent, promptFilesObj);
 
-				// Write-back verification: read the YAML we just wrote and
-				// confirm our content is on disk. Guards against any silent
-				// IPC failure path — if disk doesn't match memory, we throw
-				// so the user sees an error instead of a fake "Saved".
-				const onDisk = await cueService.readYaml(cwd);
-				cueDebugLog('save:writeYaml:verify', {
-					root: cwd,
-					match: onDisk === yamlContent,
-					diskBytes: onDisk?.length ?? null,
-					expectedBytes: yamlContent.length,
-				});
-				if (onDisk === null) {
-					throw new Error(`writeYaml to "${cwd}" did not persist: no file on disk`);
-				}
-				if (onDisk !== yamlContent) {
-					throw new Error(
-						`writeYaml to "${cwd}" did not persist the expected content (${onDisk.length} bytes on disk vs ${yamlContent.length} expected)`
-					);
-				}
-			}
+					// Write-back verification: read the YAML we just wrote and
+					// confirm our content is on disk. Guards against any silent
+					// IPC failure path - if disk doesn't match memory, we throw
+					// so the user sees an error instead of a fake "Saved".
+					const onDisk = await cueService.readYaml(cwd);
+					cueDebugLog('save:writeYaml:verify', {
+						root: cwd,
+						match: onDisk === yamlContent,
+						diskBytes: onDisk?.length ?? null,
+						expectedBytes: yamlContent.length,
+					});
+					if (onDisk === null) {
+						throw new Error(`writeYaml to "${cwd}" did not persist: no file on disk`);
+					}
+					if (onDisk !== yamlContent) {
+						throw new Error(
+							`writeYaml to "${cwd}" did not persist the expected content (${onDisk.length} bytes on disk vs ${yamlContent.length} expected)`
+						);
+					}
+				})
+			);
 
 			// Pipeline write count for the success toast. A pipeline counts as
 			// "written" if at least one of its owner cwds wasn't skipped due to
@@ -366,43 +371,51 @@ export function usePipelinePersistence({
 				return [...cwds].some((c) => !errorPipelineRoots.has(c));
 			}).length;
 
-			// Delete cue.yaml (and clean up prompts + .maestro/) for any root
-			// whose last pipeline was removed this save. Deleting the file is
-			// the correct behaviour — writing an empty YAML left a stale
-			// .maestro/cue.yaml on disk that confused users and the engine.
-			for (const root of previousRoots) {
-				if (currentRoots.has(root)) continue;
-				// Don't delete roots still referenced by error-node pipelines — the
-				// pipeline exists in the editor and will be writable once the user
-				// fixes the unresolved agent references.
-				if (errorPipelineRoots.has(root)) continue;
-				await cueService.deleteYaml(root);
-				// Verify the file is gone so a silent IPC failure surfaces as an
-				// error instead of a ghost pipeline reappearing on next launch.
-				const onDisk = await cueService.readYaml(root);
-				if (onDisk !== null) {
-					throw new Error(
-						`deleteYaml of "${root}" did not remove the file — cue.yaml still present on disk`
-					);
-				}
-				rootsCleared++;
-			}
+			// Delete cue.yaml (and clean up prompts + .maestro/) for any root whose
+			// last pipeline was removed this save, in parallel. Deleting the file is
+			// the correct behaviour - writing an empty YAML left a stale
+			// .maestro/cue.yaml on disk that confused users and the engine. Roots
+			// still referenced by error-node pipelines are preserved: the pipeline
+			// exists in the editor and becomes writable once the user fixes the
+			// unresolved agent references.
+			const rootsToClear = [...previousRoots].filter(
+				(root) => !currentRoots.has(root) && !errorPipelineRoots.has(root)
+			);
+			await Promise.all(
+				rootsToClear.map(async (root) => {
+					await cueService.deleteYaml(root);
+					// Verify the file is gone so a silent IPC failure surfaces as an
+					// error instead of a ghost pipeline reappearing on next launch.
+					const onDisk = await cueService.readYaml(root);
+					if (onDisk !== null) {
+						throw new Error(
+							`deleteYaml of "${root}" did not remove the file - cue.yaml still present on disk`
+						);
+					}
+				})
+			);
+			rootsCleared = rootsToClear.length;
 
 			// Refresh every session whose project root was touched so the engine
-			// reloads the freshly written YAML. Under the per-agent-cwd model
-			// each session reads only its OWN cwd's cue.yaml, so an exact-match
-			// check is sufficient — there is no longer an ancestor-walk fallback
-			// that would force descendant sessions to refresh too.
-			for (const session of sessions) {
-				if (!session.projectRoot) continue;
-				if (!touchedRoots.has(session.projectRoot)) continue;
-				cueDebugLog('save:refreshSession', {
-					sessionId: session.id,
-					sessionName: session.name,
-					projectRoot: session.projectRoot,
-				});
-				await cueService.refreshSession(session.id, session.projectRoot);
-			}
+			// reloads the freshly written YAML, in parallel. Under the
+			// per-agent-cwd model each session reads only its OWN cwd's cue.yaml,
+			// so an exact-match check is sufficient - there is no longer an
+			// ancestor-walk fallback that would force descendant sessions to
+			// refresh too. Each refresh tears down and re-arms that session's
+			// trigger sources independently, so dispatching them together avoids
+			// stacking one IPC round trip per session.
+			await Promise.all(
+				sessions.map(async (session) => {
+					if (!session.projectRoot) return;
+					if (!touchedRoots.has(session.projectRoot)) return;
+					cueDebugLog('save:refreshSession', {
+						sessionId: session.id,
+						sessionName: session.name,
+						projectRoot: session.projectRoot,
+					});
+					await cueService.refreshSession(session.id, session.projectRoot);
+				})
+			);
 
 			// Refs MUST update before setIsDirty(false) — the dirty-tracking
 			// effect compares against savedStateRef.current, so flipping dirty

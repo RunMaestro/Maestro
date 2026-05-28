@@ -635,7 +635,7 @@ describe('FilePreview', () => {
 			expect(screen.getByTestId('edit-icon')).toBeInTheDocument();
 		});
 
-		it('does not show edit button for image files', () => {
+		it('does not show the text edit toggle for image files', () => {
 			render(
 				<FilePreview
 					{...defaultProps}
@@ -647,7 +647,9 @@ describe('FilePreview', () => {
 				/>
 			);
 
-			expect(screen.queryByTestId('edit-icon')).not.toBeInTheDocument();
+			// Images can be opened in the annotator ("Edit image"), but never get
+			// the text/markdown edit-mode toggle.
+			expect(screen.queryByTestId('edit-text-toggle')).not.toBeInTheDocument();
 		});
 
 		it('toggles to edit mode when edit button is clicked', () => {

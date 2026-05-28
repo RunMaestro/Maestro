@@ -11,6 +11,7 @@ import { ArrowDownUp, Ban, Brush, Palette, RotateCcw, SlidersHorizontal, Type } 
 import type { Theme } from '../../../shared/theme-types';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { SettingsSectionHeading } from '../Settings/SettingsSectionHeading';
+import { ANNOTATOR_PALETTE } from './annotatorConstants';
 import type {
 	Shape,
 	ShapeStyle,
@@ -25,17 +26,6 @@ interface AnnotatorSettingsDrawerProps {
 	theme: Theme;
 	state: UseAnnotatorStateReturn;
 }
-
-const SWATCHES: readonly string[] = [
-	'#ec4899',
-	'#ef4444',
-	'#f59e0b',
-	'#10b981',
-	'#3b82f6',
-	'#a855f7',
-	'#000000',
-	'#ffffff',
-];
 
 // Mirror of `src/main/stores/defaults.ts`. Keep these in lock-step.
 const ANNOTATOR_DEFAULTS = {
@@ -517,7 +507,7 @@ function ColorPalette({
 						<Ban className="w-4 h-4" style={{ color: theme.colors.textDim }} />
 					</button>
 				)}
-				{SWATCHES.map((color) => {
+				{ANNOTATOR_PALETTE.map((color) => {
 					const active = !isNone && color.toLowerCase() === value.toLowerCase();
 					return (
 						<button

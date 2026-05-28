@@ -35,6 +35,7 @@ import { GhostIconButton } from '../ui/GhostIconButton';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import type { AnnotatorTool, UseAnnotatorStateReturn } from './useAnnotatorState';
+import { ANNOTATOR_PALETTE } from './annotatorConstants';
 
 interface AnnotatorToolbarProps {
 	state: UseAnnotatorStateReturn;
@@ -60,6 +61,8 @@ export const AnnotatorToolbar = memo(function AnnotatorToolbar({
 	const { tool, setTool, strokes, shapes, texts, undo, clear } = state;
 	const [confirmingClear, setConfirmingClear] = useState(false);
 	const confirmWrapRef = useRef<HTMLDivElement>(null);
+	const [colorPickerOpen, setColorPickerOpen] = useState(false);
+	const colorWrapRef = useRef<HTMLDivElement>(null);
 	const hasContent = strokes.length > 0 || shapes.length > 0 || texts.length > 0;
 
 	// Current-color swatch. Resolution mirrors AnnotatorSettingsDrawer so the
@@ -156,6 +159,17 @@ export const AnnotatorToolbar = memo(function AnnotatorToolbar({
 	useEffect(() => {
 		if (!hasContent && confirmingClear) setConfirmingClear(false);
 	}, [hasContent, confirmingClear]);
+
+	useEffect(() => {
+		if (!colorPickerOpen) return;
+		const onMouseDown = (e: MouseEvent) => {
+			if (colorWrapRef.current && !colorWrapRef.current.contains(e.target as Node)) {
+				setColorPickerOpen(false);
+			}
+		};
+		document.addEventListener('mousedown', onMouseDown);
+		return () => document.removeEventListener('mousedown', onMouseDown);
+	}, [colorPickerOpen]);
 
 	const handleConfirmClear = useCallback(() => {
 		clear();
@@ -330,27 +344,71 @@ export const AnnotatorToolbar = memo(function AnnotatorToolbar({
 
 			{divider}
 
-			<label
-				title={`Current color (${currentColor}) - click to change`}
-				className="rounded hover:bg-white/10 transition-colors cursor-pointer relative flex items-center justify-center"
-				style={{ padding: 8, lineHeight: 0 }}
-			>
-				<span
-					aria-hidden
-					className="block w-5 h-5 rounded-full"
-					style={{
-						backgroundColor: currentColor,
-						boxShadow: `inset 0 0 0 1px rgba(0, 0, 0, 0.25), 0 0 0 1px ${theme.colors.border}`,
-					}}
-				/>
-				<input
-					type="color"
-					value={currentColor}
-					onChange={(e) => setCurrentColor(e.target.value)}
+			<div ref={colorWrapRef} style={{ position: 'relative' }}>
+				<button
+					type="button"
+					onClick={() => setColorPickerOpen((v) => !v)}
+					title={`Current color (${currentColor}) - click to change`}
 					aria-label="Current drawing color"
-					className="absolute inset-0 w-full h-full cursor-pointer opacity-0"
-				/>
-			</label>
+					aria-haspopup="true"
+					aria-expanded={colorPickerOpen}
+					className="rounded hover:bg-white/10 transition-colors cursor-pointer flex items-center justify-center"
+					style={{ padding: 8, lineHeight: 0 }}
+				>
+					<span
+						aria-hidden
+						className="block w-5 h-5 rounded-full"
+						style={{
+							backgroundColor: currentColor,
+							boxShadow: `inset 0 0 0 1px rgba(0, 0, 0, 0.25), 0 0 0 1px ${theme.colors.border}`,
+						}}
+					/>
+				</button>
+				{colorPickerOpen && (
+					<div
+						role="listbox"
+						aria-label="Drawing color"
+						className="absolute flex flex-col gap-1.5 rounded-lg p-2"
+						style={{
+							right: '100%',
+							top: '50%',
+							transform: 'translateY(-50%)',
+							marginRight: 8,
+							backgroundColor: theme.colors.bgMain,
+							border: `1px solid ${theme.colors.border}`,
+							boxShadow: '0 8px 24px -8px rgba(0, 0, 0, 0.5)',
+							zIndex: 1,
+						}}
+					>
+						{ANNOTATOR_PALETTE.map((color) => {
+							const selected = currentColor.toLowerCase() === color.toLowerCase();
+							return (
+								<button
+									key={color}
+									type="button"
+									role="option"
+									aria-selected={selected}
+									onClick={() => {
+										setCurrentColor(color);
+										setColorPickerOpen(false);
+									}}
+									className="rounded-full transition-transform hover:scale-110"
+									style={{
+										width: 22,
+										height: 22,
+										backgroundColor: color,
+										border: selected
+											? `2px solid ${theme.colors.accent}`
+											: `2px solid ${theme.colors.border}`,
+										boxShadow: selected ? `0 0 0 2px ${theme.colors.accent}55` : undefined,
+									}}
+									aria-label={`Set color to ${color}`}
+								/>
+							);
+						})}
+					</div>
+				)}
+			</div>
 
 			<GhostIconButton
 				onClick={onToggleDrawer}
