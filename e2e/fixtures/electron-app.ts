@@ -32,6 +32,11 @@ interface LaunchAppWithStateOptions {
 	settings?: Record<string, unknown>;
 }
 
+interface LaunchAppFromExistingStateOptions {
+	homeDir: string;
+	userDataPath?: string;
+}
+
 interface LaunchAppWithStateResult {
 	electronApp: ElectronApplication;
 	window: Page;
@@ -279,6 +284,44 @@ export const helpers = {
 				}
 			}
 		}
+
+		const electronApp = await electron.launch({
+			args: [appPath],
+			env,
+			timeout: 30000,
+		});
+		const window = await electronApp.firstWindow();
+		await window.waitForLoadState('domcontentloaded');
+		await window.waitForTimeout(500);
+
+		return {
+			electronApp,
+			window,
+			homeDir,
+			userDataPath,
+			cleanup: async () => {
+				await electronApp.close().catch(() => undefined);
+				fs.rmSync(homeDir, { recursive: true, force: true });
+			},
+		};
+	},
+
+	/**
+	 * Launch the app against an existing deterministic persisted state.
+	 */
+	async launchAppFromExistingState({
+		homeDir,
+		userDataPath = path.join(homeDir, 'user-data'),
+	}: LaunchAppFromExistingStateOptions): Promise<LaunchAppWithStateResult> {
+		const appPath = getMainPath();
+		const env = {
+			...process.env,
+			HOME: homeDir,
+			MAESTRO_DATA_DIR: userDataPath,
+			ELECTRON_DISABLE_GPU: '1',
+			NODE_ENV: 'test',
+			MAESTRO_E2E_TEST: 'true',
+		};
 
 		const electronApp = await electron.launch({
 			args: [appPath],

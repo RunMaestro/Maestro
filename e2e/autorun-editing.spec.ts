@@ -87,6 +87,20 @@ function createEditingWorkbenchSession(
 	};
 }
 
+async function launchEditingDocumentWorkbench(
+	projectDir: string,
+	autoRunFolder: string,
+	selectedFile: string,
+	content: string
+) {
+	fs.writeFileSync(path.join(autoRunFolder, `${selectedFile}.md`), content, 'utf-8');
+
+	return helpers.launchAppWithState({
+		homeDir: projectDir,
+		sessions: [createEditingWorkbenchSession(projectDir, autoRunFolder, selectedFile)],
+	});
+}
+
 /**
  * Test suite for Auto Run editing E2E tests
  *
@@ -832,21 +846,111 @@ Some sample content for testing.
  * These tests verify end-to-end workflows
  */
 test.describe('Auto Run Editing Integration', () => {
-	test.skip('should persist edits across session restarts', async ({ window }) => {
-		// This test requires:
-		// 1. Creating a session with Auto Run
-		// 2. Making edits
-		// 3. Saving
-		// 4. Restarting app
-		// 5. Verifying edits persist
+	let integrationAutoRunFolder: string;
+	let integrationProjectDir: string;
+
+	test.beforeEach(async () => {
+		integrationProjectDir = path.join(os.tmpdir(), `maestro-test-project-${Date.now()}`);
+		integrationAutoRunFolder = path.join(integrationProjectDir, 'Auto Run Docs');
+		fs.mkdirSync(integrationAutoRunFolder, { recursive: true });
 	});
 
-	test.skip('should handle external file changes', async ({ window }) => {
-		// This test requires:
-		// 1. Opening Auto Run with a document
-		// 2. Modifying the file externally
-		// 3. Verifying contentVersion increments
-		// 4. Verifying content updates
+	test.afterEach(async () => {
+		try {
+			fs.rmSync(integrationProjectDir, { recursive: true, force: true });
+		} catch {
+			// Ignore cleanup errors
+		}
+	});
+
+	test('should persist edits across session restarts', async () => {
+		const selectedFile = 'PersistenceDoc';
+		const initialContent = `# Persistence Coverage
+
+- [ ] Persist this task
+`;
+		const editedContent = `# Persistence Coverage
+
+Edited content survived relaunch.
+
+- [x] Persist this task
+`;
+		const filePath = path.join(integrationAutoRunFolder, `${selectedFile}.md`);
+		const launched = await launchEditingDocumentWorkbench(
+			integrationProjectDir,
+			integrationAutoRunFolder,
+			selectedFile,
+			initialContent
+		);
+		let relaunched: Awaited<ReturnType<typeof helpers.launchAppFromExistingState>> | undefined;
+
+		try {
+			await helpers.openRightPanelTab(launched.window, 'Auto Run');
+			await launched.window.getByTitle('Edit document').click();
+			const textarea = launched.window.locator('[data-tour="autorun-panel"] textarea').first();
+			await expect(textarea).toHaveValue(initialContent);
+
+			await textarea.fill(editedContent);
+			await launched.window.getByTitle(/Save changes/).click();
+			await expect.poll(() => fs.readFileSync(filePath, 'utf-8')).toBe(editedContent);
+
+			await launched.electronApp.close();
+			relaunched = await helpers.launchAppFromExistingState({
+				homeDir: launched.homeDir,
+				userDataPath: launched.userDataPath,
+			});
+
+			await helpers.openRightPanelTab(relaunched.window, 'Auto Run');
+			await relaunched.window.getByTitle('Edit document').click();
+			await expect(
+				relaunched.window.locator('[data-tour="autorun-panel"] textarea').first()
+			).toHaveValue(editedContent);
+		} finally {
+			if (relaunched) {
+				await relaunched.cleanup();
+			} else {
+				await launched.cleanup();
+			}
+		}
+	});
+
+	test('should handle external file changes', async () => {
+		const selectedFile = 'ExternalDoc';
+		const initialContent = `# External Coverage
+
+- [ ] Original task
+`;
+		const updatedContent = `# External Coverage
+
+External editor wrote this content.
+
+- [x] Original task
+- [ ] New external task
+`;
+		const launched = await launchEditingDocumentWorkbench(
+			integrationProjectDir,
+			integrationAutoRunFolder,
+			selectedFile,
+			initialContent
+		);
+
+		try {
+			await helpers.openRightPanelTab(launched.window, 'Auto Run');
+			await launched.window.getByTitle('Edit document').click();
+			const textarea = launched.window.locator('[data-tour="autorun-panel"] textarea').first();
+			await expect(textarea).toHaveValue(initialContent);
+
+			fs.writeFileSync(
+				path.join(integrationAutoRunFolder, `${selectedFile}.md`),
+				updatedContent,
+				'utf-8'
+			);
+
+			await expect(textarea).toHaveValue(updatedContent, { timeout: 10000 });
+			await expect(launched.window.getByText(/1\s+of\s+2\s+tasks/i)).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
 	});
 
 	test.skip('should handle concurrent editing from multiple sources', async ({ window }) => {
