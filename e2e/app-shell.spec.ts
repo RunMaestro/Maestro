@@ -304,6 +304,32 @@ async function openUsageDashboard(window: Page) {
 	return usageDashboard;
 }
 
+async function openSystemLogViewer(window: Page) {
+	const quickActionsDialog = await openQuickActions(window);
+	await quickActionsDialog
+		.getByPlaceholder('Type a command or jump to agent...')
+		.fill('View System Logs');
+	await quickActionsDialog.getByRole('button', { name: /View System Logs/ }).click();
+
+	await expect(quickActionsDialog).toBeHidden();
+	const logViewer = window.getByRole('dialog', { name: 'System Log Viewer' });
+	await expect(logViewer).toBeVisible();
+	return logViewer;
+}
+
+async function openProcessMonitor(window: Page) {
+	const quickActionsDialog = await openQuickActions(window);
+	await quickActionsDialog
+		.getByPlaceholder('Type a command or jump to agent...')
+		.fill('View System Processes');
+	await quickActionsDialog.getByRole('button', { name: /View System Processes/ }).click();
+
+	await expect(quickActionsDialog).toBeHidden();
+	const processMonitor = window.getByRole('dialog', { name: 'System Processes' });
+	await expect(processMonitor).toBeVisible();
+	return processMonitor;
+}
+
 async function seedUsageDashboardStats(window: Page) {
 	await window.evaluate(async () => {
 		const now = Date.now();
@@ -364,6 +390,68 @@ async function seedUsageDashboardStats(window: Page) {
 			await window.maestro.stats.endAutoRun(autoRunSessionId, 600_000, 4);
 		}
 	});
+}
+
+async function seedSystemLogs(window: Page) {
+	await window.evaluate(async () => {
+		await window.maestro.logger.clearLogs();
+		await window.maestro.logger.log('info', 'E2E info sentinel', 'E2ELog', {
+			marker: 'system-log-data',
+		});
+		await window.maestro.logger.log('error', 'E2E error sentinel', 'E2ELog', {
+			marker: 'system-log-error',
+		});
+		await window.maestro.logger.log('warn', 'E2E warn sentinel', 'E2ELog', {
+			marker: 'system-log-warn',
+		});
+	});
+}
+
+async function stubProcessMonitorProcesses(
+	electronApp: ElectronApplication,
+	seeded: ReturnType<typeof createSeededWorkbench>
+) {
+	const codexSession = seeded.sessions[0];
+	const terminalSession = seeded.sessions[1];
+
+	await electronApp.evaluate(
+		({ ipcMain }, payload) => {
+			ipcMain.removeHandler('process:getActiveProcesses');
+			ipcMain.handle('process:getActiveProcesses', async () => [
+				{
+					sessionId: `${payload.codexSessionId}-ai`,
+					toolType: 'codex',
+					pid: 41001,
+					cwd: payload.codexCwd,
+					isTerminal: false,
+					isBatchMode: false,
+					startTime: Date.now() - 90_000,
+					command: 'codex',
+					args: ['--model', 'gpt-5-codex'],
+				},
+				{
+					sessionId: `${payload.terminalSessionId}-terminal`,
+					toolType: 'terminal',
+					pid: 41002,
+					cwd: payload.terminalCwd,
+					isTerminal: true,
+					isBatchMode: false,
+					startTime: Date.now() - 45_000,
+					command: 'zsh',
+					args: ['-l'],
+				},
+			]);
+
+			ipcMain.removeHandler('process:kill');
+			ipcMain.handle('process:kill', async () => true);
+		},
+		{
+			codexSessionId: codexSession.id,
+			codexCwd: codexSession.cwd,
+			terminalSessionId: terminalSession.id,
+			terminalCwd: terminalSession.cwd,
+		}
+	);
 }
 
 async function closeQuickActions(window: Page, quickActionsDialog: Locator) {
@@ -531,12 +619,13 @@ test.describe('App shell seeded workbench', () => {
 	let window: Page;
 	let electronApp: ElectronApplication;
 	let cleanupApp: (() => Promise<void>) | undefined;
+	let seededWorkbench: ReturnType<typeof createSeededWorkbench>;
 
 	test.beforeEach(async () => {
-		const seeded = createSeededWorkbench();
+		seededWorkbench = createSeededWorkbench();
 		const launched = await helpers.launchAppWithState({
-			homeDir: seeded.homeDir,
-			sessions: seeded.sessions,
+			homeDir: seededWorkbench.homeDir,
+			sessions: seededWorkbench.sessions,
 			settings: {
 				encoreFeatures: {
 					directorNotes: true,
@@ -551,7 +640,11 @@ test.describe('App shell seeded workbench', () => {
 		electronApp = launched.electronApp;
 		cleanupApp = launched.cleanup;
 		await stubDirectorNotesSynopsis(electronApp);
-		await seedHistoryEntries(window, seeded.sessions[0].cwd, seeded.sessions[0].id);
+		await seedHistoryEntries(
+			window,
+			seededWorkbench.sessions[0].cwd,
+			seededWorkbench.sessions[0].id
+		);
 	});
 
 	test.afterEach(async () => {
@@ -1131,15 +1224,7 @@ test.describe('App shell seeded workbench', () => {
 	});
 
 	test('opens the System Log Viewer from Quick Actions', async () => {
-		const quickActionsDialog = await openQuickActions(window);
-		await quickActionsDialog
-			.getByPlaceholder('Type a command or jump to agent...')
-			.fill('View System Logs');
-		await quickActionsDialog.getByRole('button', { name: /View System Logs/ }).click();
-
-		await expect(quickActionsDialog).toBeHidden();
-		const logViewer = window.getByRole('dialog', { name: 'System Log Viewer' });
-		await expect(logViewer).toBeVisible();
+		const logViewer = await openSystemLogViewer(window);
 		await expect(logViewer.getByText('Maestro System Logs')).toBeVisible();
 		await expect(logViewer.getByRole('button', { name: 'ALL', exact: true })).toBeVisible();
 
@@ -1147,22 +1232,98 @@ test.describe('App shell seeded workbench', () => {
 		await expect(logViewer).toBeHidden();
 	});
 
-	test('opens the System Processes monitor from Quick Actions', async () => {
-		const quickActionsDialog = await openQuickActions(window);
-		await quickActionsDialog
-			.getByPlaceholder('Type a command or jump to agent...')
-			.fill('View System Processes');
-		await quickActionsDialog.getByRole('button', { name: /View System Processes/ }).click();
+	test('searches and filters System Log Viewer entries', async () => {
+		await seedSystemLogs(window);
+		const logViewer = await openSystemLogViewer(window);
 
-		await expect(quickActionsDialog).toBeHidden();
-		const processMonitor = window.getByRole('dialog', { name: 'System Processes' });
-		await expect(processMonitor).toBeVisible();
+		await expect(logViewer.getByText('E2E info sentinel')).toBeVisible();
+		await expect(logViewer.getByText('E2E error sentinel')).toBeVisible();
+		await expect(logViewer.getByText('E2E warn sentinel')).toBeVisible();
+
+		await logViewer.evaluate((element) => {
+			element.dispatchEvent(
+				new KeyboardEvent('keydown', { key: 'f', ctrlKey: true, bubbles: true })
+			);
+		});
+		const searchInput = logViewer.getByPlaceholder('Search logs...');
+		await expect(searchInput).toBeVisible();
+		await searchInput.fill('error sentinel');
+		await expect(logViewer.getByText('E2E error sentinel')).toBeVisible();
+		await expect(logViewer.getByText('E2E info sentinel')).toBeHidden();
+
+		await window.keyboard.press('Escape');
+		await expect(searchInput).toBeHidden();
+		await expect(logViewer.getByText('E2E info sentinel')).toBeVisible();
+
+		await logViewer.locator('button').filter({ hasText: 'INFO' }).click();
+		await expect(logViewer.getByText('E2E info sentinel')).toBeHidden();
+		await expect(logViewer.getByText('E2E error sentinel')).toBeVisible();
+	});
+
+	test('expands structured System Log Viewer data and clears logs after confirmation', async () => {
+		await seedSystemLogs(window);
+		const logViewer = await openSystemLogViewer(window);
+
+		await logViewer.getByTitle('Expand all').click();
+		await expect(logViewer.getByText('system-log-data')).toBeVisible();
+		await expect(logViewer.getByText('system-log-error')).toBeVisible();
+
+		await logViewer.getByTitle('Clear logs').click();
+		const confirmDialog = window.getByRole('dialog', { name: 'Confirm' });
+		await expect(confirmDialog).toBeVisible();
+		await expect(confirmDialog.getByText('clear all Maestro system logs')).toBeVisible();
+		await confirmDialog.getByRole('button', { name: 'Confirm' }).click();
+
+		await expect(logViewer.getByText('No logs yet')).toBeVisible();
+	});
+
+	test('opens the System Processes monitor from Quick Actions', async () => {
+		const processMonitor = await openProcessMonitor(window);
 		await expect(processMonitor.getByText('System Processes')).toBeVisible();
 		await expect(processMonitor.getByTitle('Refresh (R)')).toBeVisible();
 		await expect(processMonitor.getByText(/2 sessions.*0 groups/)).toBeVisible();
 
 		await processMonitor.getByTitle('Close (Esc)').click();
 		await expect(processMonitor).toBeHidden();
+	});
+
+	test('opens Process Monitor details for stubbed active processes', async () => {
+		await stubProcessMonitorProcesses(electronApp, seededWorkbench);
+		const processMonitor = await openProcessMonitor(window);
+
+		await expect(processMonitor.getByText('2 active')).toBeVisible();
+		await expect(processMonitor.getByText('UNGROUPED AGENTS')).toBeVisible();
+		await expect(processMonitor.getByText('E2E Workbench - AI Agent (codex)')).toBeVisible();
+		await expect(processMonitor.getByText('E2E Terminal - Terminal Shell')).toBeVisible();
+
+		await processMonitor.getByText('E2E Workbench - AI Agent (codex)').dblclick();
+		const details = window.getByRole('dialog', { name: 'Process Details' });
+		await expect(details).toBeVisible();
+		await expect(details.getByText('Process Details')).toBeVisible();
+		await expect(details.getByText('Process Session ID')).toBeVisible();
+		await expect(details.getByText('gpt-5-codex')).toBeVisible();
+		await expect(details.getByText('Tool Type')).toBeVisible();
+		await expect(
+			details
+				.locator('span')
+				.filter({ hasText: /^codex$/ })
+				.first()
+		).toBeVisible();
+
+		await details.getByTitle('Back (Esc)').click();
+		await expect(window.getByRole('dialog', { name: 'System Processes' })).toBeVisible();
+	});
+
+	test('opens and cancels the Process Monitor kill confirmation', async () => {
+		await stubProcessMonitorProcesses(electronApp, seededWorkbench);
+		const processMonitor = await openProcessMonitor(window);
+
+		await expect(processMonitor.getByText('E2E Terminal - Terminal Shell')).toBeVisible();
+		await processMonitor.getByTitle('Kill process').first().click({ force: true });
+
+		await expect(window.getByText('Kill Process?')).toBeVisible();
+		await window.getByRole('button', { name: 'Cancel' }).click();
+		await expect(window.getByText('Kill Process?')).toBeHidden();
 	});
 
 	test('opens the Usage Dashboard from Quick Actions', async () => {
