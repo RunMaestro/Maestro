@@ -444,6 +444,18 @@ async function openRepositoryInBrowserFromQuickActions(window: Page) {
 	await expect(quickActionsDialog).toBeHidden();
 }
 
+async function openCreateNewAgentFromQuickActions(window: Page) {
+	const quickActionsDialog = await openQuickActions(window);
+	await quickActionsDialog
+		.getByPlaceholder('Type a command or jump to agent...')
+		.fill('Create New Agent');
+	await quickActionsDialog.getByRole('button', { name: /Create New Agent/ }).click();
+	await expect(quickActionsDialog).toBeHidden();
+	const createAgentDialog = window.getByRole('dialog', { name: 'Create New Agent' });
+	await expect(createAgentDialog).toBeVisible();
+	return createAgentDialog;
+}
+
 async function getHeaderGitStatusButton(window: Page) {
 	const gitStatusButton = window
 		.locator('button[title^="+"]')
@@ -766,6 +778,73 @@ async function getStubbedCreatePRRequest(electronApp: ElectronApplication) {
 			} | null;
 		};
 		return state.__maestroE2eCreatePRRequest ?? null;
+	});
+}
+
+async function stubAgentDetectionForNewAgent(electronApp: ElectronApplication) {
+	await electronApp.evaluate(({ ipcMain }) => {
+		const capabilities = { supportsBatchMode: true, supportsModelSelection: false };
+		const agents = [
+			{
+				id: 'codex',
+				name: 'Codex',
+				binaryName: 'codex',
+				command: 'codex',
+				args: [],
+				available: true,
+				path: '/usr/local/bin/codex',
+				capabilities,
+			},
+			{
+				id: 'claude-code',
+				name: 'Claude Code',
+				binaryName: 'claude',
+				command: 'claude',
+				args: [],
+				available: false,
+				capabilities,
+			},
+			{
+				id: 'opencode',
+				name: 'OpenCode',
+				binaryName: 'opencode',
+				command: 'opencode',
+				args: [],
+				available: false,
+				capabilities,
+			},
+			{
+				id: 'factory-droid',
+				name: 'Factory Droid',
+				binaryName: 'factory',
+				command: 'factory',
+				args: [],
+				available: false,
+				capabilities,
+			},
+			{
+				id: 'gemini-cli',
+				name: 'Gemini CLI',
+				binaryName: 'gemini',
+				command: 'gemini',
+				args: [],
+				available: false,
+				capabilities,
+			},
+		];
+
+		ipcMain.removeHandler('agents:detect');
+		ipcMain.handle('agents:detect', async () => agents);
+		ipcMain.removeHandler('agents:refresh');
+		ipcMain.handle('agents:refresh', async (_event, agentId: string) =>
+			agents.find((agent) => agent.id === agentId)
+		);
+		ipcMain.removeHandler('agents:getConfig');
+		ipcMain.handle('agents:getConfig', async () => ({}));
+		ipcMain.removeHandler('agents:setConfig');
+		ipcMain.handle('agents:setConfig', async () => true);
+		ipcMain.removeHandler('agents:getModels');
+		ipcMain.handle('agents:getModels', async () => []);
 	});
 }
 
@@ -1453,18 +1532,64 @@ test.describe('App shell seeded workbench', () => {
 	});
 
 	test('opens Create New Agent from Quick Actions', async () => {
-		const quickActionsDialog = await openQuickActions(window);
-		await quickActionsDialog
-			.getByPlaceholder('Type a command or jump to agent...')
-			.fill('Create New Agent');
-		await quickActionsDialog.getByRole('button', { name: /Create New Agent/ }).click();
-
-		await expect(quickActionsDialog).toBeHidden();
-		const createAgentDialog = window.getByRole('dialog', { name: 'Create New Agent' });
-		await expect(createAgentDialog).toBeVisible();
+		const createAgentDialog = await openCreateNewAgentFromQuickActions(window);
 		await expect(createAgentDialog.getByLabel('Agent Name')).toBeVisible();
 		await expect(createAgentDialog.getByText('Agent Provider')).toBeVisible();
 		await expect(createAgentDialog.getByRole('button', { name: 'Create Agent' })).toBeDisabled();
+	});
+
+	test('shows available unavailable and coming-soon providers in Create New Agent', async () => {
+		await stubAgentDetectionForNewAgent(electronApp);
+
+		const createAgentDialog = await openCreateNewAgentFromQuickActions(window);
+
+		await expect(createAgentDialog.getByRole('option', { name: /Codex/ })).toContainText(
+			'Available'
+		);
+		await expect(createAgentDialog.getByRole('option', { name: /Claude Code/ })).toContainText(
+			'Not Found'
+		);
+		await expect(createAgentDialog.getByRole('option', { name: /OpenCode/ })).toContainText('Beta');
+		await expect(createAgentDialog.getByRole('option', { name: /Factory Droid/ })).toContainText(
+			'Beta'
+		);
+		await expect(createAgentDialog.getByRole('option', { name: /Gemini CLI/ })).toContainText(
+			'Coming Soon'
+		);
+
+		await createAgentDialog.getByRole('option', { name: /OpenCode/ }).click();
+		await expect(createAgentDialog.getByPlaceholder('/path/to/opencode')).toBeVisible();
+		await expect(createAgentDialog.getByText('MAESTRO_SESSION_RESUMED').first()).toBeVisible();
+	});
+
+	test('creates an unavailable non-Codex agent using static custom configuration', async () => {
+		const staticProjectDir = path.join(seededWorkbench.homeDir, 'opencode-static-project');
+		fs.mkdirSync(staticProjectDir, { recursive: true });
+		await stubAgentDetectionForNewAgent(electronApp);
+
+		const createAgentDialog = await openCreateNewAgentFromQuickActions(window);
+		await createAgentDialog.getByRole('option', { name: /OpenCode/ }).click();
+		await createAgentDialog.getByLabel('Agent Name').fill('OpenCode Static Agent');
+		await createAgentDialog.getByLabel('Working Directory').fill(staticProjectDir);
+		await createAgentDialog
+			.getByPlaceholder('/path/to/opencode')
+			.fill('/usr/local/bin/opencode-e2e');
+		await createAgentDialog
+			.getByPlaceholder('--flag value --another-flag')
+			.fill('--model static-e2e');
+		await createAgentDialog.getByRole('button', { name: 'Add Variable' }).click();
+		await createAgentDialog.getByPlaceholder('VARIABLE_NAME').fill('OPENCODE_E2E');
+		await createAgentDialog.getByPlaceholder('value', { exact: true }).fill('1');
+
+		await expect(createAgentDialog.getByRole('button', { name: 'Create Agent' })).toBeEnabled();
+		await createAgentDialog.getByRole('button', { name: 'Create Agent' }).click();
+
+		await expect(createAgentDialog).toBeHidden();
+		await expect(
+			window
+				.locator('[data-tour="session-list"]')
+				.getByText('OpenCode Static Agent', { exact: true })
+		).toBeVisible();
 	});
 
 	test('opens Edit Agent from Quick Actions for the active Codex agent', async () => {

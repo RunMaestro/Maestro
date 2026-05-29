@@ -10,10 +10,10 @@ Measured inventory:
 
 | Area                              |              Current Count |
 | --------------------------------- | -------------------------: |
-| E2E spec files after batch 34     |                          7 |
-| Declared E2E tests after batch 34 |                        246 |
+| E2E spec files after batch 35     |                          7 |
+| Declared E2E tests after batch 35 |                        248 |
 | Last pre-campaign full E2E result |      91 passed, 49 skipped |
-| Latest full E2E validation        |     197 passed, 49 skipped |
+| Latest full E2E validation        |     199 passed, 49 skipped |
 | Renderer component files          |                        236 |
 | Renderer hook files               |                        123 |
 | Renderer store files              |                         11 |
@@ -48,7 +48,7 @@ That range is high enough to cover the app surface, but low enough to avoid a br
 | Surface                                                        | Current Active | Target Active | Notes                                                                                  |
 | -------------------------------------------------------------- | -------------: | ------------: | -------------------------------------------------------------------------------------- |
 | App shell, layout, sidebars, resizing, focus, global shortcuts |              6 |           110 | Left Bar, Right Bar, Main Window, collapse/restore, focus traps, keyboard-only paths   |
-| Agent CRUD and provider setup                                  |              8 |           160 | Codex live/config flows, Terminal flows, non-Codex static and unavailable states       |
+| Agent CRUD and provider setup                                  |             10 |           160 | Codex live/config, provider availability, and non-Codex static custom config flows     |
 | Codex AI terminal workflows                                    |              0 |           170 | Send, interrupt, retry, replay, copy/save, streaming, tool/thinking displays, errors   |
 | Command terminal workflows                                     |              4 |            95 | Shell transcript, output search/filter, command history; resize/stop/errors next       |
 | Tabs and tab overlays                                          |             13 |           120 | AI/file hover actions, AI rename/new/close, file close/reopen; reorder variants next   |
@@ -160,3 +160,5 @@ The first implementation batch should focus on infrastructure and high-ROI exist
 - Validation: `npx playwright test app-shell.spec.ts -g "repository"` passed 2/2; `npx playwright test app-shell.spec.ts -g "configured Git remote"` passed 1/1; `npx playwright test app-shell.spec.ts` passed 93/93; `npx playwright test` passed 193 with 49 existing intentional skips; `npm run lint` passed. Full-suite log: `/tmp/maestro-full-e2e-open-repo-batch33.log`.
 - 2026-05-29 batch 34: added header Git status widget E2E coverage for changed-file tooltip details plus widget-launched diff/log dialogs, and deterministic Create PR modal coverage for unauthenticated GitHub CLI guidance plus stubbed PR creation from a local worktree child session.
 - Validation: `npx playwright test app-shell.spec.ts -g "diff from the widget|widget tooltip|Create PR modal|stubbed GitHub CLI"` passed 4/4; `npx playwright test app-shell.spec.ts` passed 97/97; `npx playwright test` passed 197 with 49 existing intentional skips; `npm run lint` passed. Full-suite log: `/tmp/maestro-full-e2e-git-widget-pr-batch34.log`.
+- 2026-05-29 batch 35: added deterministic Create New Agent provider setup E2E coverage for available Codex, unavailable Claude/OpenCode/Factory states, coming-soon Gemini state, and static custom-path creation for an unavailable non-Codex provider without launching it.
+- Validation: `npx playwright test app-shell.spec.ts -g "Create New Agent|static custom"` passed 3/3; `npx playwright test app-shell.spec.ts` passed 99/99; `npx playwright test` passed 199 with 49 existing intentional skips; `npm run lint` passed. Full-suite log: `/tmp/maestro-full-e2e-agent-provider-batch35.log`.
