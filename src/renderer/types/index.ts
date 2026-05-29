@@ -752,6 +752,7 @@ export interface AgentConfig {
 	available: boolean;
 	path?: string;
 	customPath?: string; // User-specified custom path (shown in UI even if not available)
+	allPaths?: string[]; // All detected installation paths (in priority order). Populated when more than one is found, so the UI can show a chooser.
 	command?: string;
 	args?: string[];
 	hidden?: boolean; // If true, agent is hidden from UI (internal use only)

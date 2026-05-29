@@ -78,6 +78,7 @@ export interface AgentConfig {
 	available: boolean;
 	path?: string;
 	customPath?: string; // User-specified custom path (shown in UI even if not available)
+	allPaths?: string[]; // All detected installation paths (in priority order). Lets the UI offer a chooser when more than one is found.
 	requiresPty?: boolean; // Whether this agent needs a pseudo-terminal
 	configOptions?: AgentConfigOption[]; // Agent-specific configuration
 	hidden?: boolean; // If true, agent is hidden from UI (internal use only)

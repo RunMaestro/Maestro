@@ -329,13 +329,25 @@ function getWindowsKnownPaths(binaryName: string): string[] {
  * Uses parallel probing for performance on slow file systems.
  */
 export async function probeWindowsPaths(binaryName: string): Promise<string | null> {
+	const all = await probeWindowsPathsAll(binaryName);
+	const first = all[0] ?? null;
+	if (first) {
+		logger.debug(`Direct probe found ${binaryName}`, LOG_CONTEXT, { path: first });
+	}
+	return first;
+}
+
+/**
+ * Like {@link probeWindowsPaths} but returns every existing match in priority order.
+ * Used so the UI can surface alternative installations when more than one is detected.
+ */
+export async function probeWindowsPathsAll(binaryName: string): Promise<string[]> {
 	const pathsToCheck = getWindowsKnownPaths(binaryName);
 
 	if (pathsToCheck.length === 0) {
-		return null;
+		return [];
 	}
 
-	// Check all paths in parallel for performance
 	const results = await Promise.allSettled(
 		pathsToCheck.map(async (probePath) => {
 			await fs.promises.access(probePath, fs.constants.F_OK);
@@ -343,16 +355,13 @@ export async function probeWindowsPaths(binaryName: string): Promise<string | nu
 		})
 	);
 
-	// Return the first successful result (maintains priority order from pathsToCheck)
-	for (let i = 0; i < results.length; i++) {
-		const result = results[i];
+	const found: string[] = [];
+	for (const result of results) {
 		if (result.status === 'fulfilled') {
-			logger.debug(`Direct probe found ${binaryName}`, LOG_CONTEXT, { path: result.value });
-			return result.value;
+			found.push(result.value);
 		}
 	}
-
-	return null;
+	return found;
 }
 
 // ============ Unix Path Probing ============
@@ -440,31 +449,40 @@ function getUnixKnownPaths(binaryName: string): string[] {
  * Uses parallel probing for performance on slow file systems.
  */
 export async function probeUnixPaths(binaryName: string): Promise<string | null> {
+	const all = await probeUnixPathsAll(binaryName);
+	const first = all[0] ?? null;
+	if (first) {
+		logger.debug(`Direct probe found ${binaryName}`, LOG_CONTEXT, { path: first });
+	}
+	return first;
+}
+
+/**
+ * Like {@link probeUnixPaths} but returns every existing executable match in
+ * priority order. Used so the UI can offer alternative installations when
+ * more than one valid binary is detected (e.g. Codex wrapper + npm global).
+ */
+export async function probeUnixPathsAll(binaryName: string): Promise<string[]> {
 	const pathsToCheck = getUnixKnownPaths(binaryName);
 
 	if (pathsToCheck.length === 0) {
-		return null;
+		return [];
 	}
 
-	// Check all paths in parallel for performance
 	const results = await Promise.allSettled(
 		pathsToCheck.map(async (probePath) => {
-			// Check both existence and executability
 			await fs.promises.access(probePath, fs.constants.F_OK | fs.constants.X_OK);
 			return probePath;
 		})
 	);
 
-	// Return the first successful result (maintains priority order from pathsToCheck)
-	for (let i = 0; i < results.length; i++) {
-		const result = results[i];
+	const found: string[] = [];
+	for (const result of results) {
 		if (result.status === 'fulfilled') {
-			logger.debug(`Direct probe found ${binaryName}`, LOG_CONTEXT, { path: result.value });
-			return result.value;
+			found.push(result.value);
 		}
 	}
-
-	return null;
+	return found;
 }
 
 // ============ Binary Detection ============
@@ -578,4 +596,68 @@ export async function checkBinaryExists(binaryName: string): Promise<BinaryDetec
 	} catch {
 		return { exists: false };
 	}
+}
+
+/**
+ * Find every existing path where a binary is installed.
+ *
+ * Combines:
+ * - Direct probes of known installation locations (Homebrew, npm global, nvm/fnm/volta, etc.)
+ * - `which -a` (Unix) or `where` (Windows) lookups against the expanded shell PATH
+ *
+ * Returns absolute paths in priority order, de-duplicated by resolved canonical path
+ * (so the same binary reached via symlink and direct path is reported once).
+ *
+ * Used by the agent detector to populate `AgentConfig.allPaths` so the renderer
+ * can present a chooser when multiple valid installations exist (e.g. an
+ * `nvm`-managed `codex` alongside a `codex-multi-auth-codex` wrapper).
+ */
+export async function findAllBinaryPaths(binaryName: string): Promise<string[]> {
+	// 1. Direct probes
+	const probedPaths = isWindows()
+		? await probeWindowsPathsAll(binaryName)
+		: await probeUnixPathsAll(binaryName);
+
+	// 2. which/where lookup
+	const fromShell: string[] = [];
+	try {
+		const command = getWhichCommand();
+		const env = await getExpandedEnvWithShell();
+		// On Unix, `which -a` returns every match in PATH. On Windows, `where`
+		// returns every match by default.
+		const args = isWindows() ? [binaryName] : ['-a', binaryName];
+		const result = await execFileNoThrow(command, args, undefined, env);
+		if (result.exitCode === 0 && result.stdout.trim()) {
+			const matches = result.stdout
+				.trim()
+				.split(/\r?\n/)
+				.map((p) => p.trim())
+				.filter((p) => p);
+			fromShell.push(...matches);
+		}
+	} catch {
+		// which/where failures are non-fatal; we still have direct probe results
+	}
+
+	// 3. De-duplicate by canonical resolved path, preserving order
+	const seenKeys = new Set<string>();
+	const result: string[] = [];
+	const candidates = [...probedPaths, ...fromShell];
+
+	for (const candidate of candidates) {
+		let key: string;
+		try {
+			// realpath collapses symlinks (e.g., volta/bin/codex → volta/tools/...)
+			key = await fs.promises.realpath(candidate);
+		} catch {
+			key = candidate;
+		}
+		// Windows is case-insensitive
+		const normalizedKey = isWindows() ? key.toLowerCase() : key;
+		if (seenKeys.has(normalizedKey)) continue;
+		seenKeys.add(normalizedKey);
+		result.push(candidate);
+	}
+
+	return result;
 }

@@ -43,8 +43,11 @@ export {
 	getExpandedEnv,
 	checkCustomPath,
 	probeWindowsPaths,
+	probeWindowsPathsAll,
 	probeUnixPaths,
+	probeUnixPathsAll,
 	checkBinaryExists,
+	findAllBinaryPaths,
 } from './path-prober';
 
 // ============ Session Storage ============
