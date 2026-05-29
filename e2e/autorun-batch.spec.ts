@@ -110,6 +110,15 @@ async function openDocumentSelector(window: Page, batchDialog: Locator) {
 	return selectorDialog;
 }
 
+async function addAllDocumentsToBatch(window: Page, batchDialog: Locator) {
+	const selectorDialog = await openDocumentSelector(window, batchDialog);
+	await selectorDialog.getByRole('button', { name: 'Select All' }).click();
+	await expect(selectorDialog.getByRole('button', { name: /Add 3 files.*6 tasks/ })).toBeEnabled();
+	await selectorDialog.getByRole('button', { name: /Add 3 files/ }).click();
+	await expect(batchDialog.getByText('Phase 2.md')).toBeVisible();
+	await expect(batchDialog.getByText('Completed.md')).toBeVisible();
+}
+
 /**
  * Test suite for Auto Run batch processing E2E tests
  *
@@ -710,22 +719,54 @@ test.describe('Batch Processing with Multiple Documents', () => {
 	});
 
 	test.describe('Loop Mode', () => {
-		test.skip('should support loop mode for repeated processing', async ({ window }) => {
-			// This test verifies loop mode functionality
-			// Skip until batch modal infrastructure is complete
-			// Expected behavior:
-			// 1. Enable loop mode in modal
-			// 2. Run batch
-			// 3. Processing repeats until stopped or max loops reached
+		test('should enable loop controls for repeated processing', async () => {
+			const launched = await launchBatchWorkbench();
+			try {
+				const batchDialog = await openBatchRunnerModal(launched.window);
+
+				await expect(
+					batchDialog.getByText('You can enable loops with two or more documents')
+				).toBeVisible();
+
+				await addAllDocumentsToBatch(launched.window, batchDialog);
+				await expect(batchDialog.getByText('Total: 6 tasks across 3 documents')).toBeVisible();
+
+				const loopButton = batchDialog.getByRole('button', { name: 'Loop' });
+				await expect(loopButton).toHaveAttribute(
+					'title',
+					'Loop back to first document when finished'
+				);
+				await loopButton.click();
+
+				await expect(batchDialog.getByTitle('Loop forever until all tasks complete')).toBeVisible();
+				await expect(batchDialog.getByRole('button', { name: 'max' })).toBeVisible();
+			} finally {
+				await launched.cleanup();
+			}
 		});
 
-		test.skip('should respect max loops setting', async ({ window }) => {
-			// This test verifies loop limits
-			// Skip until batch modal infrastructure is complete
-			// Expected behavior:
-			// 1. Set max loops = 3
-			// 2. Run batch
-			// 3. Processing stops after 3 iterations
+		test('should configure finite max loops setting', async () => {
+			const launched = await launchBatchWorkbench();
+			try {
+				const batchDialog = await openBatchRunnerModal(launched.window);
+
+				await addAllDocumentsToBatch(launched.window, batchDialog);
+				await batchDialog.getByRole('button', { name: 'Loop' }).click();
+				await batchDialog.getByRole('button', { name: 'max' }).click();
+
+				const maxLoopsSlider = batchDialog.locator('input[type="range"][min="1"][max="25"]');
+				await expect(maxLoopsSlider).toHaveValue('5');
+				await maxLoopsSlider.focus();
+				await maxLoopsSlider.press('ArrowLeft');
+				await maxLoopsSlider.press('ArrowLeft');
+
+				await expect(maxLoopsSlider).toHaveValue('3');
+				await expect(batchDialog.getByText('3', { exact: true })).toBeVisible();
+				await batchDialog.getByTitle('Loop forever until all tasks complete').click();
+				await expect(maxLoopsSlider).toBeHidden();
+			} finally {
+				await launched.cleanup();
+			}
 		});
 	});
 });
