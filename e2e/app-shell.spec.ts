@@ -444,6 +444,27 @@ async function openRepositoryInBrowserFromQuickActions(window: Page) {
 	await expect(quickActionsDialog).toBeHidden();
 }
 
+async function getHeaderGitStatusButton(window: Page) {
+	const gitStatusButton = window
+		.locator('button[title^="+"]')
+		.filter({ has: window.locator('.header-git-status-full') })
+		.first();
+	await expect(gitStatusButton).toBeVisible({ timeout: 15000 });
+	return gitStatusButton;
+}
+
+async function openHeaderGitStatusTooltip(window: Page) {
+	const gitStatusButton = await getHeaderGitStatusButton(window);
+	await gitStatusButton.hover();
+
+	const changedFilesHeading = window.getByText(/Changed Files \(/).last();
+	await expect(changedFilesHeading).toBeVisible({ timeout: 5000 });
+	const tooltip = changedFilesHeading.locator(
+		'xpath=ancestor::div[contains(@class, "absolute")][1]'
+	);
+	return { gitStatusButton, tooltip };
+}
+
 function modalRootByHeading(window: Page, heading: string) {
 	return window
 		.getByText(heading, { exact: true })
@@ -483,6 +504,26 @@ async function saveDefaultWorktreeConfig(
 	await expect(directoryInput).toHaveValue(seeded.homeDir);
 	await worktreeModal.getByRole('button', { name: 'Save Configuration' }).click();
 	await expect(worktreeModal).toBeHidden();
+}
+
+async function createLocalWorktreeSession(
+	window: Page,
+	seeded: ReturnType<typeof createSeededWorkbench>,
+	branchName: string
+) {
+	const sessionList = window.locator('[data-tour="session-list"]');
+	await saveDefaultWorktreeConfig(window, seeded);
+
+	const contextMenu = await openSessionContextMenu(window, 'E2E Workbench', 'Create Worktree');
+	await contextMenu.getByRole('button', { name: 'Create Worktree', exact: true }).click();
+
+	const createModal = modalRootByHeading(window, 'Create New Worktree');
+	await createModal.getByPlaceholder('feature-xyz').fill(branchName);
+	await createModal.getByRole('button', { name: 'Create', exact: true }).click();
+	await expect(createModal).toBeHidden({ timeout: 15000 });
+	await expect(sessionList.getByText(branchName, { exact: true })).toBeVisible({
+		timeout: 15000,
+	});
 }
 
 async function seedUsageDashboardStats(window: Page) {
@@ -668,6 +709,63 @@ async function getStubbedOpenExternalUrl(electronApp: ElectronApplication) {
 			__maestroE2eOpenExternalUrl?: string;
 		};
 		return state.__maestroE2eOpenExternalUrl ?? null;
+	});
+}
+
+async function stubPullRequestCreation(
+	electronApp: ElectronApplication,
+	status: { installed: boolean; authenticated: boolean },
+	result: { success: boolean; prUrl?: string; error?: string }
+) {
+	await electronApp.evaluate(
+		({ ipcMain }, payload) => {
+			const state = globalThis as typeof globalThis & {
+				__maestroE2eCreatePRRequest?: {
+					worktreePath: string;
+					targetBranch: string;
+					title: string;
+					description: string;
+				} | null;
+			};
+			state.__maestroE2eCreatePRRequest = null;
+
+			ipcMain.removeHandler('git:checkGhCli');
+			ipcMain.handle('git:checkGhCli', async () => payload.status);
+			ipcMain.removeHandler('git:createPR');
+			ipcMain.handle(
+				'git:createPR',
+				async (
+					_event,
+					worktreePath: string,
+					targetBranch: string,
+					title: string,
+					description: string
+				) => {
+					state.__maestroE2eCreatePRRequest = {
+						worktreePath,
+						targetBranch,
+						title,
+						description,
+					};
+					return payload.result;
+				}
+			);
+		},
+		{ status, result }
+	);
+}
+
+async function getStubbedCreatePRRequest(electronApp: ElectronApplication) {
+	return electronApp.evaluate(() => {
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eCreatePRRequest?: {
+				worktreePath: string;
+				targetBranch: string;
+				title: string;
+				description: string;
+			} | null;
+		};
+		return state.__maestroE2eCreatePRRequest ?? null;
 	});
 }
 
@@ -1496,6 +1594,33 @@ test.describe('App shell seeded workbench', () => {
 		await expect(gitLogDialog).toBeHidden();
 	});
 
+	test('shows header Git status details and opens the diff from the widget', async () => {
+		const { gitStatusButton, tooltip } = await openHeaderGitStatusTooltip(window);
+
+		await expect(gitStatusButton).toHaveAttribute('title', /\+4/);
+		await expect(gitStatusButton).toHaveAttribute('title', /~2/);
+		await expect(tooltip.getByText('README.md')).toBeVisible();
+		await expect(tooltip.getByText('FLOW.md')).toBeVisible();
+
+		await tooltip.getByRole('button', { name: 'View Full Diff' }).click();
+		const gitDiffDialog = window.getByRole('dialog', { name: 'Git Diff Preview' });
+		await expect(gitDiffDialog).toBeVisible();
+		await expect(gitDiffDialog.getByText('2 files changed')).toBeVisible();
+		await gitDiffDialog.getByRole('button', { name: 'Close (Esc)' }).click();
+		await expect(gitDiffDialog).toBeHidden();
+	});
+
+	test('opens Git Log from the header Git status widget tooltip', async () => {
+		const { tooltip } = await openHeaderGitStatusTooltip(window);
+
+		await tooltip.getByRole('button', { name: 'View Git Log' }).click();
+		const gitLogDialog = window.getByRole('dialog', { name: 'Git Log Viewer' });
+		await expect(gitLogDialog.getByText('2 commits')).toBeVisible({ timeout: 15000 });
+		await expect(gitLogDialog.getByText('docs: add git log fixture').first()).toBeVisible();
+		await gitLogDialog.getByRole('button', { name: 'Close (Esc)' }).click();
+		await expect(gitLogDialog).toBeHidden();
+	});
+
 	test('shows a Git remote error when opening a repository without origin', async () => {
 		await openRepositoryInBrowserFromQuickActions(window);
 
@@ -1579,6 +1704,62 @@ test.describe('App shell seeded workbench', () => {
 
 		await expect(deleteModal).toBeHidden();
 		await expect(sessionList.getByText(branchName, { exact: true })).toBeHidden();
+	});
+
+	test('shows GitHub CLI authentication guidance in the Create PR modal', async () => {
+		const branchName = 'feat-e2e-pr-auth';
+		await stubPullRequestCreation(
+			electronApp,
+			{ installed: true, authenticated: false },
+			{ success: false, error: 'not authenticated' }
+		);
+		await createLocalWorktreeSession(window, seededWorkbench, branchName);
+
+		const contextMenu = await openSessionContextMenu(window, branchName, 'Create Pull Request');
+		await contextMenu.getByRole('button', { name: 'Create Pull Request', exact: true }).click();
+
+		const prModal = modalRootByHeading(window, 'Create Pull Request');
+		await expect(prModal.getByText('GitHub CLI not authenticated')).toBeVisible();
+		await expect(prModal.getByText('gh auth login')).toBeVisible();
+		await expect(prModal.getByRole('button', { name: 'Create PR' })).toBeDisabled();
+		await prModal.getByRole('button', { name: 'Cancel' }).click();
+		await expect(prModal).toBeHidden();
+	});
+
+	test('creates a pull request from a worktree child with a stubbed GitHub CLI', async () => {
+		const branchName = 'feat-e2e-pr-success';
+		const prUrl = 'https://github.com/RunMaestro/Maestro/pull/42';
+		await stubPullRequestCreation(
+			electronApp,
+			{ installed: true, authenticated: true },
+			{ success: true, prUrl }
+		);
+		await createLocalWorktreeSession(window, seededWorkbench, branchName);
+
+		const contextMenu = await openSessionContextMenu(window, branchName, 'Create Pull Request');
+		await contextMenu.getByRole('button', { name: 'Create Pull Request', exact: true }).click();
+
+		const prModal = modalRootByHeading(window, 'Create Pull Request');
+		await expect(prModal.getByText(branchName).first()).toBeVisible();
+		await expect(prModal.getByRole('button', { name: 'Create PR' })).toBeEnabled({
+			timeout: 5000,
+		});
+		await prModal.getByPlaceholder('PR title...').fill('E2E PR title');
+		await prModal.getByPlaceholder('Add a description...').fill('E2E PR body');
+		await prModal.getByRole('button', { name: 'Create PR' }).click();
+
+		await expect
+			.poll(async () => (await getStubbedCreatePRRequest(electronApp))?.title ?? null)
+			.toBe('E2E PR title');
+		const request = await getStubbedCreatePRRequest(electronApp);
+		expect(request).toMatchObject({
+			targetBranch: 'main',
+			title: 'E2E PR title',
+			description: 'E2E PR body',
+		});
+		expect(request?.worktreePath).toContain(branchName);
+		await expect(prModal).toBeHidden({ timeout: 5000 });
+		await expect(window.getByText('Pull Request Created')).toBeVisible();
 	});
 
 	test('validates the Git worktree configuration directory before saving', async () => {
