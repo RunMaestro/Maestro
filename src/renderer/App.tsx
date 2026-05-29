@@ -348,6 +348,7 @@ function MaestroConsoleInner() {
 	const {
 		state: wizardState,
 		openWizard: _baseOpenWizardModal,
+		resetWizard: resetWizardState,
 		restoreState: restoreWizardState,
 		loadResumeState: _loadResumeState,
 		clearResumeState,
@@ -1430,7 +1431,8 @@ function MaestroConsoleInner() {
 			state: wizardState,
 			completeWizard,
 			clearResumeState,
-			openWizard: openWizardModal,
+			openWizard: _baseOpenWizardModal,
+			resetWizard: resetWizardState,
 			restoreState: restoreWizardState,
 		},
 		spawnBackgroundSynopsis,

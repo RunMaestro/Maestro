@@ -53,12 +53,13 @@ import type { AgentSpawnResult } from '../agent/useAgentExecution';
 export interface UseWizardHandlersDeps {
 	/** Inline wizard context — the full return value from useInlineWizard */
 	inlineWizardContext: UseInlineWizardReturn;
-	/** Onboarding wizard context — state, completeWizard, clearResumeState, openWizard, restoreState */
+	/** Onboarding wizard context — state, completeWizard, clearResumeState, openWizard, resetWizard, restoreState */
 	wizardContext: {
 		state: WizardState;
 		completeWizard: (sessionId: string | null) => void;
 		clearResumeState: () => void;
 		openWizard: () => void;
+		resetWizard: () => void;
 		restoreState: (state: Partial<WizardState>) => void;
 	};
 	/** Spawn a background synopsis for /history command */
@@ -1292,6 +1293,8 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 		setWizardResumeModalOpen(false);
 		// Clear any saved resume state
 		wizardContext.clearResumeState();
+		// Clear in-memory wizard state before reopening
+		wizardContext.resetWizard();
 		// Open a fresh wizard
 		wizardContext.openWizard();
 		// Clear the resume state holder

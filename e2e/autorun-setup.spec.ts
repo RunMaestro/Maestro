@@ -23,6 +23,22 @@ async function selectClaudeCodeAgent(window: Page, agentName = 'E2E Agent'): Pro
 	await window.getByRole('textbox', { name: /agent name/i }).fill(agentName);
 }
 
+async function advanceCodexWizardToDirectorySelection(
+	window: Page,
+	agentName = 'Codex E2E Agent'
+): Promise<void> {
+	await helpers.openWizardViaShortcut(window);
+	const codexAgent = window.getByRole('button', { name: /^Codex$/ });
+	await expect(codexAgent).toBeVisible();
+	await expect(codexAgent).toBeEnabled({ timeout: 10000 });
+	await codexAgent.click();
+	await window.getByRole('textbox', { name: /agent name/i }).fill(agentName);
+	const continueButton = window.getByRole('button', { name: 'Continue' });
+	await expect(continueButton).toBeEnabled();
+	await continueButton.click();
+	await expect(window.getByRole('heading', { name: 'Where Should We Work?' })).toBeVisible();
+}
+
 /**
  * Test suite for Auto Run setup wizard E2E tests
  *
@@ -249,20 +265,72 @@ test.describe('Auto Run Setup Wizard', () => {
 	});
 
 	test.describe('Exit Confirmation', () => {
-		test.skip('should show confirmation when exiting after step 1', async ({ window }) => {
-			// Navigate past step 1
-			// Press Escape
-			// Should show confirmation dialog
-			// Options: "Save and Exit", "Quit without Saving", "Cancel"
+		test('should show confirmation when exiting after step 1', async ({ window }) => {
+			await advanceCodexWizardToDirectorySelection(window);
+
+			await window.getByRole('button', { name: 'Close wizard' }).click();
+			const confirmDialog = window.getByRole('dialog', { name: 'Exit Setup Wizard?' });
+			await expect(confirmDialog).toBeVisible();
+			await expect(confirmDialog.getByText('Step 2 of 5')).toBeVisible();
+			await expect(
+				confirmDialog.getByRole('button', { name: 'Exit & Save Progress' })
+			).toBeVisible();
+			await expect(confirmDialog.getByRole('button', { name: 'Just Quit' })).toBeVisible();
+			await expect(confirmDialog.getByRole('button', { name: 'Cancel' })).toBeFocused();
+
+			await confirmDialog.getByRole('button', { name: 'Cancel' }).click();
+			await expect(confirmDialog).toBeHidden();
+			await expect(window.getByRole('heading', { name: 'Where Should We Work?' })).toBeVisible();
 		});
 
-		test.skip('should save state when choosing Save and Exit', async ({ window }) => {
-			// Would verify wizard state is persisted
-			// On next open, should offer to resume
+		test('should save state when choosing Exit & Save Progress', async ({ window }) => {
+			await advanceCodexWizardToDirectorySelection(window, 'Resume Codex Agent');
+
+			await window.getByRole('button', { name: 'Close wizard' }).click();
+			const confirmDialog = window.getByRole('dialog', { name: 'Exit Setup Wizard?' });
+			await expect(confirmDialog).toBeVisible();
+			await confirmDialog.getByRole('button', { name: 'Exit & Save Progress' }).click();
+			await expect(window.getByRole('heading', { name: 'Where Should We Work?' })).toBeHidden();
+			await expect
+				.poll(async () =>
+					window.evaluate(async () => {
+						const resumeState = await window.maestro.settings.get('wizardResumeState');
+						if (!resumeState || typeof resumeState !== 'object') {
+							return null;
+						}
+
+						return `${resumeState.currentStep}:${resumeState.agentName}:${resumeState.selectedAgent}`;
+					})
+				)
+				.toBe('directory-selection:Resume Codex Agent:codex');
+
+			await window.keyboard.press('Meta+Shift+N');
+			const resumeDialog = window.getByRole('dialog', { name: 'Resume Setup Wizard' });
+			await expect(resumeDialog).toBeVisible();
+			await expect(resumeDialog.getByText('Directory Selection')).toBeVisible();
+			await expect(resumeDialog.getByText('Resume Codex Agent')).toBeVisible();
+			await resumeDialog.getByRole('button', { name: 'Start Fresh' }).click();
+			await expect
+				.poll(async () => window.evaluate(() => window.maestro.settings.get('wizardResumeState')))
+				.toBeNull();
+			await expect(window.getByRole('heading', { name: 'Create a Maestro Agent' })).toBeVisible();
 		});
 
-		test.skip('should clear state when choosing Quit without Saving', async ({ window }) => {
-			// Would verify wizard starts fresh on next open
+		test('should clear state when choosing Just Quit', async ({ window }) => {
+			await advanceCodexWizardToDirectorySelection(window, 'Discard Codex Agent');
+
+			await window.getByRole('button', { name: 'Close wizard' }).click();
+			const confirmDialog = window.getByRole('dialog', { name: 'Exit Setup Wizard?' });
+			await expect(confirmDialog).toBeVisible();
+			await confirmDialog.getByRole('button', { name: 'Just Quit' }).click();
+			await expect(window.getByRole('heading', { name: 'Where Should We Work?' })).toBeHidden();
+			await expect
+				.poll(async () => window.evaluate(() => window.maestro.settings.get('wizardResumeState')))
+				.toBeNull();
+
+			await window.keyboard.press('Meta+Shift+N');
+			await expect(window.getByRole('dialog', { name: 'Resume Setup Wizard' })).toBeHidden();
+			await expect(window.getByRole('heading', { name: 'Create a Maestro Agent' })).toBeVisible();
 		});
 	});
 
