@@ -288,6 +288,13 @@ async function openSshSettings(window: Page) {
 	return settingsDialog;
 }
 
+async function openSettingsTab(window: Page, tabTitle: string, expectedText: string) {
+	const settingsDialog = await openSettings(window);
+	await settingsDialog.locator(`button[title="${tabTitle}"]`).click();
+	await expect(settingsDialog.getByText(expectedText).first()).toBeVisible();
+	return settingsDialog;
+}
+
 async function scrollSettingsToText(settingsDialog: Locator, text: string) {
 	await settingsDialog
 		.locator('.scrollbar-thin')
@@ -2123,5 +2130,115 @@ test.describe('App shell seeded workbench', () => {
 				useSshConfig: true,
 				sshConfigHost: 'e2e-build',
 			});
+	});
+
+	test('persists notification Settings toggles command and toast duration', async () => {
+		const settingsDialog = await openSettingsTab(
+			window,
+			'Notifications',
+			'Operating System Notifications'
+		);
+
+		await settingsDialog.getByRole('button', { name: /Enable OS Notifications/ }).click();
+		await settingsDialog.getByRole('button', { name: /Enable Custom Notification/ }).click();
+		await settingsDialog.getByPlaceholder('say').fill('printf maestro-e2e');
+		await settingsDialog.getByRole('button', { name: '5s' }).click();
+
+		await expect
+			.poll(async () => {
+				return await window.evaluate(async () => ({
+					osNotificationsEnabled: await window.maestro.settings.get('osNotificationsEnabled'),
+					audioFeedbackEnabled: await window.maestro.settings.get('audioFeedbackEnabled'),
+					audioFeedbackCommand: await window.maestro.settings.get('audioFeedbackCommand'),
+					toastDuration: await window.maestro.settings.get('toastDuration'),
+				}));
+			})
+			.toEqual({
+				osNotificationsEnabled: false,
+				audioFeedbackEnabled: true,
+				audioFeedbackCommand: 'printf maestro-e2e',
+				toastDuration: 5,
+			});
+
+		await settingsDialog.getByRole('button', { name: 'Never' }).click();
+		await expect
+			.poll(async () => {
+				return await window.evaluate(async () => {
+					return await window.maestro.settings.get('toastDuration');
+				});
+			})
+			.toBe(0);
+	});
+
+	test('creates edits and deletes custom AI command settings', async () => {
+		const settingsDialog = await openSettingsTab(window, 'AI Commands', 'Custom AI Commands');
+
+		await settingsDialog.getByRole('button', { name: /Template Variables/ }).click();
+		await expect(settingsDialog.getByText('{{CWD}}')).toBeVisible();
+
+		await settingsDialog.getByRole('button', { name: 'Add Command' }).click();
+		const createButton = settingsDialog.getByRole('button', { name: 'Create' }).first();
+		await expect(createButton).toBeDisabled();
+
+		await settingsDialog.getByPlaceholder('/mycommand').fill('/e2e-check');
+		await settingsDialog
+			.getByPlaceholder('Short description for autocomplete')
+			.fill('E2E command description');
+		await settingsDialog
+			.getByPlaceholder(/The actual prompt sent to the AI agent/)
+			.fill('Review {{CWD}} for E2E coverage gaps.');
+		await createButton.click();
+
+		await expect(settingsDialog.getByText('/e2e-check')).toBeVisible();
+		await expect
+			.poll(async () => {
+				return await window.evaluate(async () => {
+					const commands = await window.maestro.settings.get('customAICommands');
+					return Array.isArray(commands)
+						? commands.find((command) => command.command === '/e2e-check')
+						: undefined;
+				});
+			})
+			.toMatchObject({
+				command: '/e2e-check',
+				description: 'E2E command description',
+				prompt: 'Review {{CWD}} for E2E coverage gaps.',
+				isBuiltIn: false,
+			});
+
+		await settingsDialog.getByRole('button', { name: /\/e2e-check/ }).click();
+		await settingsDialog.getByTitle('Edit command').click();
+		const editForm = settingsDialog
+			.getByText('/e2e-check')
+			.first()
+			.locator('xpath=ancestor::div[contains(@class, "space-y-3")][1]');
+		await editForm.locator('input').nth(1).fill('Updated E2E command');
+		await editForm.locator('textarea').fill('Updated prompt for {{AGENT_NAME}}.');
+		await editForm.getByRole('button', { name: 'Save' }).click();
+		await expect
+			.poll(async () => {
+				return await window.evaluate(async () => {
+					const commands = await window.maestro.settings.get('customAICommands');
+					return Array.isArray(commands)
+						? commands.find((command) => command.command === '/e2e-check')
+						: undefined;
+				});
+			})
+			.toMatchObject({
+				description: 'Updated E2E command',
+				prompt: 'Updated prompt for {{AGENT_NAME}}.',
+			});
+
+		await settingsDialog.getByTitle('Delete command').click();
+		await expect
+			.poll(async () => {
+				return await window.evaluate(async () => {
+					const commands = await window.maestro.settings.get('customAICommands');
+					return Array.isArray(commands)
+						? commands.some((command) => command.command === '/e2e-check')
+						: true;
+				});
+			})
+			.toBe(false);
 	});
 });
