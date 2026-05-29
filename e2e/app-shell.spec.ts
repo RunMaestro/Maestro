@@ -656,6 +656,30 @@ test.describe('App shell seeded workbench', () => {
 		await expect(window.getByText('File Preview Surface')).toBeVisible();
 	});
 
+	test('shows file tab hover actions from the TabBar overlay', async () => {
+		const readmeTab = window.locator('[data-tab-id]').filter({ hasText: 'README' }).first();
+
+		await readmeTab.hover();
+		await expect(window.getByText('Copy File Name')).toBeVisible({ timeout: 2000 });
+		await expect(window.getByText('Open in Default App')).toBeVisible();
+		await expect(window.getByRole('button', { name: 'Close Tab', exact: true })).toBeVisible();
+
+		await window.getByText('Copy File Name').click();
+		await expect(window.getByText('Copied!')).toBeVisible();
+	});
+
+	test('closes and reopens a file tab with keyboard shortcuts', async () => {
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+
+		await window.keyboard.press('Meta+W');
+		await expect(window.getByText('File Preview Surface')).toBeHidden();
+		await expect(window.getByText('Codex seeded response is visible.')).toBeVisible();
+
+		await window.keyboard.press('Meta+Shift+T');
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+		await expect(window.getByText('README', { exact: true })).toBeVisible();
+	});
+
 	test('filters and selects a file tab from the Tab Switcher', async () => {
 		await window.getByText('Main', { exact: true }).click();
 		await expect(window.getByText('Codex seeded response is visible.')).toBeVisible();
