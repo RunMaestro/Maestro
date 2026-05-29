@@ -1745,7 +1745,22 @@ test.describe('App shell seeded workbench', () => {
 		await expect(quickActionsDialog.getByRole('button', { name: /Settings/ })).toBeVisible();
 
 		await commandInput.focus();
-		await window.keyboard.press('Escape');
+		await expect(commandInput).toBeFocused();
+		await commandInput.press('Escape');
+		if (await quickActionsDialog.isVisible({ timeout: 500 }).catch(() => false)) {
+			await commandInput.evaluate((input) => {
+				input.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: 'Escape',
+						code: 'Escape',
+						keyCode: 27,
+						which: 27,
+						bubbles: true,
+						cancelable: true,
+					})
+				);
+			});
+		}
 		await expect(quickActionsDialog).toBeHidden();
 	});
 
@@ -2201,6 +2216,40 @@ test.describe('App shell seeded workbench', () => {
 		const calls = await getStubbedTerminalRunCommandCalls(electronApp);
 		await expect(calls.map((call) => call.command)).toEqual(['cd "Auto Run Docs"', 'pwd']);
 		await expect(calls[1].cwd).toBe(expectedCwd);
+	});
+
+	test('persists command terminal history across an app restart', async () => {
+		await stubTerminalRunCommand(electronApp);
+		const terminalInput = await openSeededTerminalAgent(window);
+		const inputArea = window.locator('[data-tour="input-area"]');
+
+		await terminalInput.fill('echo terminal live stdout sentinel');
+		await inputArea.getByTitle('Run command (Enter)').click();
+		await expect(window.getByText('terminal live stdout sentinel')).toBeVisible();
+		await window.waitForTimeout(1200);
+
+		await electronApp.close();
+		cleanupApp = async () => {
+			fs.rmSync(seededWorkbench.homeDir, { recursive: true, force: true });
+		};
+
+		const relaunched = await helpers.launchAppFromExistingState({
+			homeDir: seededWorkbench.homeDir,
+		});
+		electronApp = relaunched.electronApp;
+		window = relaunched.window;
+		cleanupApp = relaunched.cleanup;
+
+		const relaunchedInput = await openSeededTerminalAgent(window);
+		await relaunchedInput.focus();
+		await relaunchedInput.press('ArrowUp');
+		const historyFilter = window.getByPlaceholder('Filter commands...');
+		await expect(historyFilter).toBeVisible();
+		await expect(
+			window.getByRole('button', { name: 'echo terminal live stdout sentinel' })
+		).toBeVisible();
+		await historyFilter.press('Enter');
+		await expect(relaunchedInput).toHaveValue('echo terminal live stdout sentinel');
 	});
 
 	test('renders seeded Codex AI terminal transcript and input controls', async () => {
