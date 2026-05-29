@@ -19,6 +19,12 @@ Measured inventory:
 | Renderer store files              |                         11 |
 | Web/mobile files                  |                         59 |
 | IPC handler modules               |                         30 |
+| Approx. main IPC registrations    |                        303 |
+| Preload namespaces                |                         24 |
+| Approx. preload IPC calls         |                        422 |
+| Settings metadata keys            |                         88 |
+| Keyboard shortcut IDs             |                         77 |
+| High-signal surface files         |                        573 |
 | Current `npm run test` result     | 28,521 passed, 106 skipped |
 
 The current E2E suite is mostly an Auto Run suite plus one Bionify reading-mode scenario. It is not deep app-wide coverage.
@@ -33,37 +39,37 @@ The current E2E suite is mostly an Auto Run suite plus one Bionify reading-mode 
 
 ## Target Size Estimate
 
-Best current estimate: 1,350 to 1,850 active E2E scenarios, plus 150 to 300 explicitly skipped or environment-gated scenarios.
+Recalculated after the 2026-05-29 static surface audit: 2,900 to 3,700 declared E2E scenarios. The expected local executable target is roughly 2,350 to 3,025 active tests, plus 550 to 750 explicit skipped or environment-gated tests for unavailable providers, account-backed services, Cloudflare/mobile-bridge paths, and other flows that need real external state.
 
-That range is high enough to cover the app surface, but low enough to avoid a brittle suite that mirrors unit tests one assertion at a time. At the current Electron runtime of roughly 2.5 seconds per passing scenario, 1,500 active scenarios would take about 60 to 70 minutes serially and should eventually be sharded.
+That range is high enough to cover the app surface, but low enough to avoid a brittle suite that mirrors unit tests one assertion at a time. At the current Electron runtime of roughly 2.5 seconds per passing scenario, 2,500 active scenarios would take about 105 minutes serially and must be sharded.
 
 ## Coverage Matrix
 
-| Surface                                                        | Existing Active | Target Active | Notes                                                                                  |
-| -------------------------------------------------------------- | --------------: | ------------: | -------------------------------------------------------------------------------------- |
-| App shell, layout, sidebars, resizing, focus, global shortcuts |               0 |            90 | Left Bar, Right Bar, Main Window, collapse/restore, focus traps, keyboard-only paths   |
-| Agent CRUD and provider setup                                  |               0 |           120 | Codex live/config flows, Terminal flows, non-Codex static and unavailable states       |
-| Codex AI terminal workflows                                    |               0 |           140 | Send, interrupt, retry, replay, copy/save, streaming, tool/thinking displays, errors   |
-| Command terminal workflows                                     |               4 |            70 | Shell transcript, output search/filter, command history; resize/stop/errors next       |
-| Tabs and tab overlays                                          |               5 |            95 | AI/file hover actions, AI rename/new/close, file close/reopen; reorder variants next   |
-| File explorer and file operations                              |               5 |           110 | Filter, dotfiles, context preview, rename, delete; refresh and empty/error states next |
-| File preview and document rendering                            |               8 |           150 | Markdown, CSV, binary handoff, image, Mermaid, large file, search, edit/preview        |
-| History panel                                                  |               3 |            70 | Detail navigation, delete confirmation/execution, graph lookback; empty/loading next   |
-| Auto Run                                                       |              91 |           220 | Existing suite plus skipped batch, image, error, multi-document, persistence flows     |
-| New Agent Wizard and inline wizard                             |              16 |           140 | Setup/resume/exit, directory, conversation, phase review, generated docs               |
-| Settings                                                       |               2 |           130 | General default persistence and Display/Bionify persistence; SSH/env/theme/error next  |
-| Git, worktrees, PR, diff/log, Gist                             |               0 |           120 | Local temp repos first; GitHub/Gist account paths gated                                |
-| Group chat                                                     |               0 |           100 | Creation, participants, Codex-only routing, history, errors, deletion                  |
-| Usage dashboard and stats                                      |               0 |            80 | Charts, lookbacks, loading, empty, errors, detail modals                               |
-| Document graph                                                 |               0 |            90 | Graph build, node selection, preview, settings, layout, persistence                    |
-| Playbooks, marketplace, Spec Kit, OpenSpec                     |               0 |            95 | Local/import/export/search flows; network paths mocked/gated                           |
-| Symphony, leaderboard, achievements                            |               0 |            90 | Static, auth/error, modal, history and CTA flows                                       |
-| Director notes and prompt composer                             |               7 |            55 | Director's Notes settings/history/help/AI overview; prompt composer open/edit/control  |
-| Debug/about/update/app info/agent error modals                 |               0 |            65 | Modal open/close, copy/report, expected error paths                                    |
-| Mobile/web bridge                                              |               0 |           130 | Web/mobile shell, session list, terminal, Auto Run, offline queue, websocket states    |
-| Accessibility smoke and destructive-action confirmations       |               0 |            90 | Keyboard paths, escape behavior, focus restore, confirmation flows                     |
+| Surface                                                        | Current Active | Target Active | Notes                                                                                  |
+| -------------------------------------------------------------- | -------------: | ------------: | -------------------------------------------------------------------------------------- |
+| App shell, layout, sidebars, resizing, focus, global shortcuts |              6 |           110 | Left Bar, Right Bar, Main Window, collapse/restore, focus traps, keyboard-only paths   |
+| Agent CRUD and provider setup                                  |              8 |           160 | Codex live/config flows, Terminal flows, non-Codex static and unavailable states       |
+| Codex AI terminal workflows                                    |              0 |           170 | Send, interrupt, retry, replay, copy/save, streaming, tool/thinking displays, errors   |
+| Command terminal workflows                                     |              4 |            95 | Shell transcript, output search/filter, command history; resize/stop/errors next       |
+| Tabs and tab overlays                                          |             13 |           120 | AI/file hover actions, AI rename/new/close, file close/reopen; reorder variants next   |
+| File explorer and file operations                              |              7 |           140 | Filter, dotfiles, context preview, rename, delete; refresh and empty/error states next |
+| File preview and document rendering                            |              7 |           180 | Markdown, CSV, binary handoff, image, Mermaid, large file, search, edit/preview        |
+| History panel                                                  |              7 |            95 | Detail navigation, delete confirmation/execution, graph lookback; empty/loading next   |
+| Auto Run                                                       |             90 |           260 | Existing suite plus skipped batch, image, error, multi-document, persistence flows     |
+| New Agent Wizard and inline wizard                             |             13 |           190 | Setup/resume/exit, directory, conversation, phase review, generated docs               |
+| Settings                                                       |              9 |           190 | General default persistence and Display/Bionify persistence; SSH/env/theme/error next  |
+| Git, worktrees, PR, diff/log, Gist                             |              0 |           160 | Local temp repos first; GitHub/Gist account paths gated                                |
+| Group chat                                                     |             10 |           140 | Creation, participants, Codex-only routing, history, errors, deletion                  |
+| Usage dashboard and stats                                      |              1 |           125 | Charts, lookbacks, loading, empty, errors, detail modals                               |
+| Document graph                                                 |              2 |           130 | Graph build, node selection, preview, settings, layout, persistence                    |
+| Playbooks, marketplace, Spec Kit, OpenSpec                     |              0 |           145 | Local/import/export/search flows; network paths mocked/gated                           |
+| Symphony, leaderboard, achievements                            |              0 |           120 | Static, auth/error, modal, history and CTA flows                                       |
+| Director notes and prompt composer                             |              7 |            90 | Director's Notes settings/history/help/AI overview; prompt composer open/edit/control  |
+| Debug/about/update/app info/agent error modals                 |              3 |            85 | Modal open/close, copy/report, expected error paths                                    |
+| Mobile/web bridge                                              |              0 |           190 | Web/mobile shell, session list, terminal, Auto Run, offline queue, websocket states    |
+| Accessibility smoke and destructive-action confirmations       |              0 |           130 | Keyboard paths, escape behavior, focus restore, confirmation flows                     |
 
-Estimated matrix total: 2,250 active scenarios. After removing provider-unavailable and account-gated scenarios, the likely executable local target is 1,350 to 1,850.
+Estimated matrix total: 3,025 active scenarios. The current-active column is primary-surface directional coverage and can overlap where one smoke test exercises multiple surfaces.
 
 ## Phase Order
 
@@ -133,3 +139,4 @@ The first implementation batch should focus on infrastructure and high-ROI exist
 - Validation: `npx playwright test app-shell.spec.ts -g "AI tab|new AI tab|TabBar|Tab Switcher"` passed 7/7; `npx playwright test app-shell.spec.ts` passed 66/66; `npx playwright test` passed 166 with 49 existing intentional skips. Full-suite log: `/tmp/maestro-full-e2e-ai-tab-batch23.log`.
 - 2026-05-29 batch 24: added Settings E2E coverage for General defaults persistence across history, thinking display, and auto-scroll, plus Display/Bionify reading-mode and intensity persistence.
 - Validation: `npx playwright test app-shell.spec.ts -g "Settings"` passed 9/9; `npx playwright test app-shell.spec.ts` passed 68/68; `npx playwright test` passed 168 with 49 existing intentional skips. Full-suite log: `/tmp/maestro-full-e2e-settings-batch24.log`.
+- 2026-05-29 recalculation pass: re-audited app-wide E2E scope from source inventory and raised the estimated matrix from 2,250 active scenarios to 3,025 active scenarios, with 2,900 to 3,700 total declared scenarios expected after explicit skipped/environment-gated coverage is included.
