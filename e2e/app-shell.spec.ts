@@ -2084,6 +2084,84 @@ test.describe('App shell seeded workbench', () => {
 		await expect(window.getByAltText('Staged image 1')).toBeHidden();
 	});
 
+	test('filters and completes Codex slash commands without sending', async () => {
+		const promptInput = await openSeededCodexAiTerminal(window);
+
+		await promptInput.fill('/');
+		await expect(
+			window.getByRole('button', { name: /\/history Generate a synopsis/ })
+		).toBeVisible();
+		await expect(
+			window.getByRole('button', { name: /\/wizard Start the planning wizard/ })
+		).toBeVisible();
+		await expect(window.getByRole('button', { name: /\/skills/ })).toHaveCount(0);
+
+		await promptInput.press('ArrowDown');
+		await promptInput.press('Tab');
+		await expect(promptInput).toHaveValue('/wizard');
+		await expect(window.getByRole('button', { name: /\/history/ })).toHaveCount(0);
+		await expect(window.locator('[data-log-index]')).toHaveCount(1);
+	});
+
+	test('inserts a Codex @mention from file suggestions without sending', async () => {
+		const promptInput = await openSeededCodexAiTerminal(window);
+
+		await promptInput.fill('Please inspect @REA');
+		await expect(window.getByText('Files matching "REA"')).toBeVisible();
+		const fileSuggestions = window
+			.getByText('Files matching "REA"')
+			.locator('xpath=ancestor::div[contains(@class, "absolute")][1]');
+		const readmeSuggestion = fileSuggestions.getByRole('button', { name: 'README.md file' });
+		await expect(readmeSuggestion).toBeVisible();
+
+		await readmeSuggestion.click();
+		await expect(promptInput).toHaveValue('Please inspect @README.md ');
+		await expect(window.getByText('Files matching "REA"')).toBeHidden();
+		await expect(window.locator('[data-log-index]')).toHaveCount(1);
+	});
+
+	test('dismisses Codex @mention suggestions while preserving the draft', async () => {
+		const promptInput = await openSeededCodexAiTerminal(window);
+
+		await promptInput.fill('Keep this draft @NOT');
+		await expect(window.getByText('Files matching "NOT"')).toBeVisible();
+		const fileSuggestions = window
+			.getByText('Files matching "NOT"')
+			.locator('xpath=ancestor::div[contains(@class, "absolute")][1]');
+		await expect(fileSuggestions.getByRole('button', { name: 'NOTES.md file' })).toBeVisible();
+
+		await promptInput.press('Escape');
+		await expect(window.getByText('Files matching "NOT"')).toBeHidden();
+		await expect(promptInput).toHaveValue('Keep this draft @NOT');
+	});
+
+	test('toggles Codex Enter-to-send mode without dispatching a draft', async () => {
+		const promptInput = await openSeededCodexAiTerminal(window);
+		await promptInput.fill('Draft should remain local through Enter mode changes');
+
+		const enterToggle = window.getByTitle('Switch to Enter to send');
+		await expect(enterToggle).toBeVisible();
+		await enterToggle.click();
+		await expect(window.getByTitle('Switch to Cmd+Enter to send')).toBeVisible();
+		await expect(promptInput).toHaveValue('Draft should remain local through Enter mode changes');
+		await expect(window.locator('[data-log-index]')).toHaveCount(1);
+	});
+
+	test('switches Codex input between AI and terminal modes without sending', async () => {
+		await openSeededCodexAiTerminal(window);
+
+		await window.getByTitle(/Toggle Mode/).click();
+		const terminalInput = window.getByPlaceholder('Run shell command...');
+		await expect(terminalInput).toBeVisible();
+		await expect(window.getByTitle('Run command (Enter)')).toBeVisible();
+
+		await window.getByTitle(/Toggle Mode/).click();
+		await expect(
+			window.getByPlaceholder(/Talking to E2E Workbench powered by Codex/)
+		).toBeVisible();
+		await expect(window.getByTitle('Send message')).toBeVisible();
+	});
+
 	test('switches between AI and file tabs in the TabBar', async () => {
 		await window.getByText('Main', { exact: true }).click();
 		await expect(window.getByText('Codex seeded response is visible.')).toBeVisible();
