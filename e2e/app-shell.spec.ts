@@ -16,6 +16,8 @@ function createSeededWorkbench() {
 	const autoRunDir = path.join(projectDir, 'Auto Run Docs');
 	const previewFilePath = path.join(projectDir, 'README.md');
 	const notesFilePath = path.join(projectDir, 'NOTES.md');
+	const metricsFilePath = path.join(projectDir, 'metrics.csv');
+	const binaryFilePath = path.join(projectDir, 'artifact.bin');
 	const autoRunFilePath = path.join(autoRunDir, 'Phase 1.md');
 	const now = Date.now();
 	const idSuffix = `${now}-${Math.random().toString(36).slice(2)}`;
@@ -50,6 +52,15 @@ Backlink to [[README]] for document graph coverage.
 `,
 		'utf-8'
 	);
+	fs.writeFileSync(
+		metricsFilePath,
+		`scenario,duration,passed
+app shell,2.4,true
+prompt composer,2.3,true
+`,
+		'utf-8'
+	);
+	fs.writeFileSync(binaryFilePath, Buffer.from([0x00, 0x01, 0x02, 0x03, 0xff]));
 	fs.writeFileSync(
 		autoRunFilePath,
 		`# Auto Run Surface
@@ -897,6 +908,36 @@ test.describe('App shell seeded workbench', () => {
 
 		await searchInput.press('Escape');
 		await expect(searchInput).toBeHidden();
+	});
+
+	test('renders CSV file preview and filters table rows through file search', async () => {
+		await helpers.openRightPanelTab(window, 'Files');
+		await window.getByText('metrics.csv').dblclick();
+
+		await expect(window.getByText('scenario')).toBeVisible();
+		await expect(window.getByText('duration')).toBeVisible();
+		await expect(window.getByText('2 rows')).toBeVisible();
+		await expect(window.getByText(/3 columns/)).toBeVisible();
+
+		await window.getByTestId('file-preview-root').press('Control+f');
+		const searchInput = window.getByPlaceholder(/Search in file/);
+		await searchInput.fill('prompt composer');
+		await expect(window.getByText('1/1')).toBeVisible();
+		await expect(window.getByText('1 of 2 rows match')).toBeVisible();
+		await expect(window.getByText('prompt composer')).toBeVisible();
+	});
+
+	test('prompts before opening a binary file in the default app', async () => {
+		await helpers.openRightPanelTab(window, 'Files');
+		await window.getByText('artifact.bin').dblclick();
+
+		const confirmDialog = window.getByRole('dialog', { name: 'Confirm' });
+		await expect(confirmDialog).toBeVisible();
+		await expect(
+			confirmDialog.getByText('Open "artifact.bin" in external application?')
+		).toBeVisible();
+		await confirmDialog.getByRole('button', { name: 'Cancel' }).click();
+		await expect(confirmDialog).toBeHidden();
 	});
 
 	test('opens Document Graph from file preview and uses core graph controls', async () => {

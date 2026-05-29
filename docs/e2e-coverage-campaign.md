@@ -10,10 +10,10 @@ Measured inventory:
 
 | Area                              |              Current Count |
 | --------------------------------- | -------------------------: |
-| E2E spec files after batch 16     |                          7 |
-| Declared E2E tests after batch 16 |                        193 |
+| E2E spec files after batch 17     |                          7 |
+| Declared E2E tests after batch 17 |                        195 |
 | Last pre-campaign full E2E result |      91 passed, 49 skipped |
-| Latest full E2E validation        |     144 passed, 49 skipped |
+| Latest full E2E validation        |     146 passed, 49 skipped |
 | Renderer component files          |                        236 |
 | Renderer hook files               |                        123 |
 | Renderer store files              |                         11 |
@@ -47,7 +47,7 @@ That range is high enough to cover the app surface, but low enough to avoid a br
 | Command terminal workflows                                     |               0 |            70 | Shell mode, history, cwd, output, resize, stop, errors                                |
 | Tabs and tab overlays                                          |               0 |            95 | AI tabs, file tabs, rename, close variants, reorder, export, merge/send context       |
 | File explorer and file operations                              |               0 |           110 | Browse, search, refresh, rename, delete, context menu, empty/error states             |
-| File preview and document rendering                            |               0 |           150 | Markdown, images, Mermaid, CSV, binary, large files, search, TOC, edit/save, links    |
+| File preview and document rendering                            |               5 |           150 | Markdown, CSV, binary handoff, search, edit/preview; images/Mermaid/large files next  |
 | History panel                                                  |               0 |            70 | Filtering, details, lookback, search, empty/loading/error states                      |
 | Auto Run                                                       |              91 |           220 | Existing suite plus skipped batch, image, error, multi-document, persistence flows    |
 | New Agent Wizard and inline wizard                             |              16 |           140 | Setup/resume/exit, directory, conversation, phase review, generated docs              |
@@ -117,3 +117,5 @@ The first implementation batch should focus on infrastructure and high-ROI exist
 - Validation: `npx playwright test app-shell.spec.ts -g "Director"` passed 4/4; `npx playwright test app-shell.spec.ts` passed 41/41; `npx playwright test` passed 141 with 49 existing intentional skips. Full-suite log: `/tmp/maestro-full-e2e-director-notes-batch15.log`.
 - 2026-05-29 batch 16: added Prompt Composer E2E coverage for opening from the AI input toolbar, opening with the keyboard shortcut, editing multi-line drafts, Tab insertion, control visibility/toggling, disabled/enabled Send state, and closing without dispatching a live prompt.
 - Validation: `npx playwright test app-shell.spec.ts -g "Prompt Composer"` passed 3/3; `npx playwright test app-shell.spec.ts` passed 44/44; `npx playwright test` passed 144 with 49 existing intentional skips. Full-suite log: `/tmp/maestro-full-e2e-prompt-composer-batch16.log`.
+- 2026-05-29 batch 17: added File Preview E2E breadth for CSV table rendering/search and binary file external-open confirmation, including seeded CSV and binary fixture files in the app-shell workbench.
+- Validation: `npx playwright test app-shell.spec.ts -g "CSV|binary"` passed 2/2; `npx playwright test app-shell.spec.ts` passed 46/46; `npx playwright test` passed 146 with 49 existing intentional skips. Full-suite log: `/tmp/maestro-full-e2e-file-preview-batch17.log`.
