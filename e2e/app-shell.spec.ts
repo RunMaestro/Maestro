@@ -624,6 +624,22 @@ async function stubSshConfigHosts(electronApp: ElectronApplication) {
 	});
 }
 
+async function stubGistPublishing(
+	electronApp: ElectronApplication,
+	window: Page,
+	result: { success: boolean; gistUrl?: string; error?: string }
+) {
+	await electronApp.evaluate(({ ipcMain }, payload) => {
+		ipcMain.removeHandler('git:checkGhCli');
+		ipcMain.handle('git:checkGhCli', async () => ({ installed: true, authenticated: true }));
+		ipcMain.removeHandler('git:createGist');
+		ipcMain.handle('git:createGist', async () => payload);
+	}, result);
+	await window.reload({ waitUntil: 'domcontentloaded' });
+	await window.waitForTimeout(500);
+	await expect(window.getByText('File Preview Surface')).toBeVisible();
+}
+
 async function closeQuickActions(window: Page, quickActionsDialog: Locator) {
 	for (let attempt = 0; attempt < 5; attempt++) {
 		if (!(await quickActionsDialog.isVisible().catch(() => false))) return;
@@ -1569,6 +1585,52 @@ test.describe('App shell seeded workbench', () => {
 		await expect(deleteModal).toBeHidden({ timeout: 15000 });
 		await expect(sessionList.getByText(branchName, { exact: true })).toBeHidden();
 		await expect.poll(() => fs.existsSync(worktreePath)).toBe(false);
+	});
+
+	test('publishes the active file preview as a secret GitHub Gist with stubbed gh CLI', async () => {
+		const gistUrl = 'https://gist.github.com/e2e/file-preview-secret';
+		await stubGistPublishing(electronApp, window, { success: true, gistUrl });
+
+		await window.getByTitle('Publish as GitHub Gist').click();
+		const publishModal = window.getByRole('dialog', { name: 'Publish as GitHub Gist' });
+		await expect(publishModal.getByText('README.md')).toBeVisible();
+		await publishModal.getByRole('button', { name: 'Publish Secret' }).click();
+
+		await expect(publishModal).toBeHidden({ timeout: 10000 });
+		await expect(window.getByText('Gist Published')).toBeVisible();
+		await expect(window.getByTitle('View published gist')).toBeVisible();
+
+		await window.getByTitle('View published gist').click();
+		const publishedModal = window.getByRole('dialog', { name: 'Published Gist' });
+		await expect(publishedModal.locator('input')).toHaveValue(gistUrl);
+		await expect(publishedModal.getByText('secret gist')).toBeVisible();
+
+		await publishedModal.getByRole('button', { name: 'Re-publish' }).click();
+		const republishModal = window.getByRole('dialog', { name: 'Re-publish as GitHub Gist' });
+		await expect(republishModal.getByText('This will create a new gist')).toBeVisible();
+		await republishModal.getByRole('button', { name: 'Back' }).click();
+		await expect(window.getByRole('dialog', { name: 'Published Gist' })).toBeVisible();
+		await window
+			.getByRole('dialog', { name: 'Published Gist' })
+			.getByRole('button', { name: 'Close', exact: true })
+			.click();
+		await expect(window.getByRole('dialog', { name: 'Published Gist' })).toBeHidden();
+	});
+
+	test('keeps the GitHub Gist publish modal open when publishing fails', async () => {
+		await stubGistPublishing(electronApp, window, {
+			success: false,
+			error: 'E2E gist publish failure',
+		});
+
+		await window.getByTitle('Publish as GitHub Gist').click();
+		const publishModal = window.getByRole('dialog', { name: 'Publish as GitHub Gist' });
+		await publishModal.getByRole('button', { name: 'Publish Public' }).click();
+
+		await expect(publishModal.getByText('E2E gist publish failure')).toBeVisible();
+		await expect(publishModal).toBeVisible();
+		await publishModal.getByRole('button', { name: 'Cancel' }).click();
+		await expect(publishModal).toBeHidden();
 	});
 
 	test('opens the System Log Viewer from Quick Actions', async () => {
