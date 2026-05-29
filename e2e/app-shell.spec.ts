@@ -606,6 +606,92 @@ test.describe('App shell seeded workbench', () => {
 		await expect(window.locator('[data-tour="files-panel"]')).toBeVisible();
 	});
 
+	test('opens Create New Agent from Quick Actions', async () => {
+		const quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('Create New Agent');
+		await quickActionsDialog.getByRole('button', { name: /Create New Agent/ }).click();
+
+		await expect(quickActionsDialog).toBeHidden();
+		const createAgentDialog = window.getByRole('dialog', { name: 'Create New Agent' });
+		await expect(createAgentDialog).toBeVisible();
+		await expect(createAgentDialog.getByLabel('Agent Name')).toBeVisible();
+		await expect(createAgentDialog.getByText('Agent Provider')).toBeVisible();
+		await expect(createAgentDialog.getByRole('button', { name: 'Create Agent' })).toBeDisabled();
+	});
+
+	test('opens Edit Agent from Quick Actions for the active Codex agent', async () => {
+		const quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('Edit Agent');
+		await quickActionsDialog.getByRole('button', { name: /Edit Agent: E2E Workbench/ }).click();
+
+		await expect(quickActionsDialog).toBeHidden();
+		const editAgentDialog = window.getByRole('dialog', { name: 'Edit Agent: E2E Workbench' });
+		await expect(editAgentDialog).toBeVisible();
+		await expect(editAgentDialog.getByLabel('Agent Name')).toHaveValue('E2E Workbench');
+		await expect(editAgentDialog.getByText('Agent Provider')).toBeVisible();
+		await expect(editAgentDialog.getByText('Working Directory')).toBeVisible();
+	});
+
+	test('renames the active agent from Quick Actions', async () => {
+		const quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('Rename Agent');
+		await quickActionsDialog.getByRole('button', { name: /Rename Agent: E2E Workbench/ }).click();
+
+		await expect(quickActionsDialog).toBeHidden();
+		const renameDialog = window.getByRole('dialog', { name: 'Rename Agent' });
+		await expect(renameDialog).toBeVisible();
+		await renameDialog.getByPlaceholder('Enter agent name...').fill('Renamed Workbench');
+		await renameDialog.getByRole('button', { name: 'Rename' }).click();
+
+		await expect(renameDialog).toBeHidden();
+		await expect(window.getByText('Renamed Workbench').first()).toBeVisible();
+	});
+
+	test('toggles bookmark state for the active agent from Quick Actions', async () => {
+		let quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('Bookmark');
+		await quickActionsDialog.getByRole('button', { name: /Bookmark: E2E Workbench/ }).click();
+		await expect(quickActionsDialog).toBeHidden();
+
+		quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('Unbookmark');
+		await expect(
+			quickActionsDialog.getByRole('button', { name: /Unbookmark: E2E Workbench/ })
+		).toBeVisible();
+	});
+
+	test('switches the active agent between AI and shell mode from Quick Actions', async () => {
+		await window.getByText('Main', { exact: true }).click();
+		await expect(window.getByText('Codex seeded response is visible.')).toBeVisible();
+		await expect(window.getByTitle('Send message')).toBeVisible();
+
+		let quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('Switch AI/Shell Mode');
+		await quickActionsDialog.getByRole('button', { name: /Switch AI\/Shell Mode/ }).click();
+		await expect(quickActionsDialog).toBeHidden();
+		await expect(window.getByTitle('Run command (Enter)')).toBeVisible();
+
+		quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('Switch AI/Shell Mode');
+		await quickActionsDialog.getByRole('button', { name: /Switch AI\/Shell Mode/ }).click();
+		await expect(quickActionsDialog).toBeHidden();
+		await expect(window.getByTitle('Send message')).toBeVisible();
+	});
+
 	test('opens the System Log Viewer from Quick Actions', async () => {
 		const quickActionsDialog = await openQuickActions(window);
 		await quickActionsDialog

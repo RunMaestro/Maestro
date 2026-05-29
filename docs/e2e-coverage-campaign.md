@@ -11,9 +11,9 @@ Measured inventory:
 | Area                              |              Current Count |
 | --------------------------------- | -------------------------: |
 | E2E spec files after batch 1      |                          6 |
-| Declared E2E tests after batch 10 |                        170 |
+| Declared E2E tests after batch 11 |                        175 |
 | Last pre-campaign full E2E result |      91 passed, 49 skipped |
-| Latest full E2E validation        |     121 passed, 49 skipped |
+| Latest full E2E validation        |     126 passed, 49 skipped |
 | Renderer component files          |                        236 |
 | Renderer hook files               |                        123 |
 | Renderer store files              |                         11 |
@@ -105,3 +105,5 @@ The first implementation batch should focus on infrastructure and high-ROI exist
 - Validation: `npx playwright test app-shell.spec.ts` passed 26/26; `npx playwright test` passed 117 with 49 existing intentional skips.
 - 2026-05-29 batch 10: extended `e2e/app-shell.spec.ts` to cover Quick Actions paths for targeted Settings sections, group creation, fuzzy file search file selection, and Right Bar tab navigation.
 - Validation: `npx playwright test app-shell.spec.ts -g "creates a group from Quick Actions"` passed 1/1; `npx playwright test app-shell.spec.ts` passed 30/30; `npx playwright test` passed 121 with 49 existing intentional skips.
+- 2026-05-29 batch 11: extended `e2e/app-shell.spec.ts` to cover Quick Actions agent-management paths for Create New Agent, Edit Agent, Rename Agent, bookmark toggling, and AI/shell mode switching.
+- Validation: `npx playwright test app-shell.spec.ts -g "Create New Agent|Edit Agent|renames the active agent|toggles bookmark|switches the active agent"` passed 5/5; `npx playwright test app-shell.spec.ts` passed 35/35; `npx playwright test` passed 126 with 49 existing intentional skips.
