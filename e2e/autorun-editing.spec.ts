@@ -953,11 +953,64 @@ External editor wrote this content.
 		}
 	});
 
-	test.skip('should handle concurrent editing from multiple sources', async ({ window }) => {
-		// This test would verify behavior when:
-		// - Main panel and expanded modal both show same document
-		// - External process modifies file
-		// - Both views should update correctly
+	test('should handle concurrent editing from multiple sources', async () => {
+		const selectedFile = 'ConcurrentDoc';
+		const initialContent = `# Concurrent Coverage
+
+- [ ] Original task
+`;
+		const panelDraft = `# Concurrent Coverage
+
+Panel draft content.
+
+- [ ] Original task
+`;
+		const modalDraft = `# Concurrent Coverage
+
+Expanded modal draft content.
+
+- [ ] Original task
+`;
+		const externalContent = `# Concurrent Coverage
+
+External update replaced the shared draft.
+
+- [x] Original task
+- [ ] External task
+`;
+		const launched = await launchEditingDocumentWorkbench(
+			integrationProjectDir,
+			integrationAutoRunFolder,
+			selectedFile,
+			initialContent
+		);
+
+		try {
+			await helpers.openRightPanelTab(launched.window, 'Auto Run');
+			await launched.window.getByTitle('Edit document').click();
+			const panelTextarea = launched.window.locator('[data-tour="autorun-panel"] textarea').first();
+			await expect(panelTextarea).toHaveValue(initialContent);
+
+			await panelTextarea.fill(panelDraft);
+			await launched.window.getByTitle(/Expand to full screen/).click();
+
+			const modalTextarea = launched.window.locator('div.fixed.inset-0 textarea').first();
+			await expect(modalTextarea).toHaveValue(panelDraft);
+
+			await modalTextarea.fill(modalDraft);
+			await expect(panelTextarea).toHaveValue(modalDraft);
+
+			fs.writeFileSync(
+				path.join(integrationAutoRunFolder, `${selectedFile}.md`),
+				externalContent,
+				'utf-8'
+			);
+
+			await expect(modalTextarea).toHaveValue(externalContent, { timeout: 10000 });
+			await expect(panelTextarea).toHaveValue(externalContent);
+		} finally {
+			await launched.cleanup();
+		}
 	});
 });
 
