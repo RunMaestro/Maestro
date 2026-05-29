@@ -197,6 +197,16 @@ async function openSettings(window: Page) {
 	return settingsDialog;
 }
 
+async function openQuickActions(window: Page) {
+	await window.keyboard.press('Meta+K');
+	const quickActionsDialog = window.getByRole('dialog', { name: 'Quick Actions' });
+	await expect(quickActionsDialog).toBeVisible();
+	await expect(
+		quickActionsDialog.getByPlaceholder('Type a command or jump to agent...')
+	).toBeVisible();
+	return quickActionsDialog;
+}
+
 test.describe('App shell seeded workbench', () => {
 	let window: Page;
 	let cleanupApp: (() => Promise<void>) | undefined;
@@ -306,8 +316,80 @@ test.describe('App shell seeded workbench', () => {
 		await expect(window.getByText('File Preview Surface')).toBeVisible();
 	});
 
+	test('filters Quick Actions and opens Shortcuts Help', async () => {
+		const quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('View Shortcuts');
+		await quickActionsDialog.getByRole('button', { name: /View Shortcuts/ }).click();
+
+		await expect(quickActionsDialog).toBeHidden();
+		const shortcutsDialog = window.getByRole('dialog', { name: 'Keyboard Shortcuts' });
+		await expect(shortcutsDialog).toBeVisible();
+		const shortcutSearch = shortcutsDialog.getByPlaceholder('Search shortcuts...');
+		await shortcutSearch.fill('tab');
+		await expect(shortcutsDialog.getByText(/\d+ \/ \d+/).first()).toBeVisible();
+		await expect(shortcutsDialog.getByText('Tab Switcher')).toBeVisible();
+	});
+
+	test('opens About Maestro from Quick Actions', async () => {
+		const quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('About Maestro');
+		await quickActionsDialog.getByRole('button', { name: /About Maestro/ }).click();
+
+		await expect(quickActionsDialog).toBeHidden();
+		const aboutDialog = window.getByRole('dialog', { name: 'About Maestro' });
+		await expect(aboutDialog).toBeVisible();
+		await expect(aboutDialog.getByRole('heading', { name: 'About Maestro' })).toBeVisible();
+		await expect(aboutDialog.getByTitle('Documentation')).toBeVisible();
+	});
+
+	test('opens the Tab Switcher from Quick Actions', async () => {
+		await window.getByText('Main', { exact: true }).click();
+		await expect(window.getByText('Codex seeded response is visible.')).toBeVisible();
+
+		const quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('Tab Switcher');
+		await quickActionsDialog.getByRole('button', { name: /Tab Switcher/ }).click();
+
+		await expect(quickActionsDialog).toBeHidden();
+		const switcher = window.getByRole('dialog', { name: 'Tab Switcher' });
+		await expect(switcher).toBeVisible();
+		await switcher.getByPlaceholder('Search open tabs...').fill('README');
+		await expect(switcher.getByRole('button', { name: /README/ })).toBeVisible();
+	});
+
+	test('opens Settings from Quick Actions', async () => {
+		const quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('Settings');
+		await quickActionsDialog.getByRole('button', { name: /Settings/ }).click();
+
+		await expect(quickActionsDialog).toBeHidden();
+		const settingsDialog = window.getByRole('dialog', { name: 'Settings' });
+		await expect(settingsDialog).toBeVisible();
+		await expect(settingsDialog.locator('button[title="General"]')).toBeVisible();
+	});
+
+	test('shows an empty state for unmatched Quick Actions searches', async () => {
+		const quickActionsDialog = await openQuickActions(window);
+		const commandSearch = quickActionsDialog.getByPlaceholder('Type a command or jump to agent...');
+
+		await commandSearch.fill('definitely missing command');
+		await expect(quickActionsDialog.getByText('No actions found')).toBeVisible();
+
+		await window.keyboard.press('Escape');
+		await expect(quickActionsDialog).toBeHidden();
+	});
+
 	test('expands and collapses folders in the File Explorer', async () => {
 		await helpers.openRightPanelTab(window, 'Files');
+		await expect(window.getByText('NOTES.md')).toBeVisible();
 		await window.getByTitle('Expand all folders').click();
 		await expect(window.getByText('Phase 1.md')).toBeVisible();
 

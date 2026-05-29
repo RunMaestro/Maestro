@@ -11,9 +11,9 @@ Measured inventory:
 | Area                              |              Current Count |
 | --------------------------------- | -------------------------: |
 | E2E spec files after batch 1      |                          6 |
-| Declared E2E tests after batch 4  |                        153 |
+| Declared E2E tests after batch 5  |                        158 |
 | Last pre-campaign full E2E result |      91 passed, 49 skipped |
-| Latest full E2E validation        |     104 passed, 49 skipped |
+| Latest full E2E validation        |     109 passed, 49 skipped |
 | Renderer component files          |                        236 |
 | Renderer hook files               |                        123 |
 | Renderer store files              |                         11 |
@@ -93,3 +93,5 @@ The first implementation batch should focus on infrastructure and high-ROI exist
 - Validation: `npx playwright test app-shell.spec.ts` passed 10/10; `npx playwright test` passed 101 with 49 existing intentional skips.
 - 2026-05-29 batch 4: extended `e2e/app-shell.spec.ts` to cover Settings tab navigation, shortcut filtering, and Display settings persistence for the Files pane icon theme.
 - Validation: `npx playwright test app-shell.spec.ts` passed 13/13; `npx playwright test` passed 104 with 49 existing intentional skips.
+- 2026-05-29 batch 5: extended `e2e/app-shell.spec.ts` to cover Quick Actions filtering, Shortcuts Help launch/search, About launch, Tab Switcher launch, Settings launch, and unmatched command empty state.
+- Validation: `npx playwright test app-shell.spec.ts` passed 18/18; `npx playwright test app-shell.spec.ts -g "expands and collapses folders" --repeat-each=3` passed 3/3 after adding a file-tree readiness guard; `npx playwright test` passed 109 with 49 existing intentional skips.
