@@ -550,6 +550,35 @@ test.describe('App shell seeded workbench', () => {
 		await expect(processMonitor).toBeHidden();
 	});
 
+	test('opens the Usage Dashboard from Quick Actions', async () => {
+		const quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('Usage Dashboard');
+		await quickActionsDialog.getByRole('button', { name: /Usage Dashboard/ }).click();
+
+		await expect(quickActionsDialog).toBeHidden();
+		const usageDashboard = window.getByRole('dialog', { name: 'Usage Dashboard' });
+		await expect(usageDashboard).toBeVisible();
+		await expect(usageDashboard.getByRole('tab', { name: 'Overview' })).toBeVisible();
+		await expect(usageDashboard.getByRole('tab', { name: 'Agents' })).toBeVisible();
+		await expect(usageDashboard.getByRole('tab', { name: 'Activity' })).toBeVisible();
+		await expect(usageDashboard.getByRole('tab', { name: 'Auto Run' })).toBeVisible();
+
+		await usageDashboard.getByRole('tab', { name: 'Agents' }).click();
+		await expect(usageDashboard.getByRole('tab', { name: 'Agents' })).toHaveAttribute(
+			'aria-selected',
+			'true'
+		);
+
+		const timeRange = usageDashboard.locator('select').first();
+		await timeRange.selectOption('all');
+		await expect(timeRange).toHaveValue('all');
+
+		await usageDashboard.getByTitle('Close (Esc)').click();
+		await expect(usageDashboard).toBeHidden();
+	});
+
 	test('shows an empty state for unmatched Quick Actions searches', async () => {
 		const quickActionsDialog = await openQuickActions(window);
 		const commandSearch = quickActionsDialog.getByPlaceholder('Type a command or jump to agent...');
