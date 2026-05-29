@@ -190,6 +190,13 @@ Searchable note body for file explorer coverage.
 	};
 }
 
+async function openSettings(window: Page) {
+	await window.keyboard.press('Meta+,');
+	const settingsDialog = window.getByRole('dialog', { name: 'Settings' });
+	await expect(settingsDialog).toBeVisible();
+	return settingsDialog;
+}
+
 test.describe('App shell seeded workbench', () => {
 	let window: Page;
 	let cleanupApp: (() => Promise<void>) | undefined;
@@ -329,5 +336,46 @@ test.describe('App shell seeded workbench', () => {
 
 		await searchInput.press('Escape');
 		await expect(searchInput).toBeHidden();
+	});
+
+	test('navigates core Settings tabs', async () => {
+		const settingsDialog = await openSettings(window);
+
+		await settingsDialog.locator('button[title="Display"]').click();
+		await expect(settingsDialog.getByText('Font Size')).toBeVisible();
+
+		await settingsDialog.locator('button[title="Shortcuts"]').click();
+		await expect(settingsDialog.getByPlaceholder('Filter shortcuts...')).toBeVisible();
+
+		await settingsDialog.locator('button[title="Themes"]').click();
+		await expect(settingsDialog.getByRole('group', { name: 'Theme picker' })).toBeVisible();
+
+		await settingsDialog.locator('button[title="Encore Features"]').click();
+		await expect(settingsDialog.getByText("Director's Notes")).toBeVisible();
+	});
+
+	test('filters shortcuts inside Settings', async () => {
+		const settingsDialog = await openSettings(window);
+		await settingsDialog.locator('button[title="Shortcuts"]').click();
+
+		const shortcutFilter = settingsDialog.getByPlaceholder('Filter shortcuts...');
+		await shortcutFilter.fill('tab');
+
+		await expect(settingsDialog.getByText('AI Tab')).toBeVisible();
+		await expect(settingsDialog.getByText(/\d+ \/ \d+/)).toBeVisible();
+	});
+
+	test('persists the file explorer icon theme setting from Display settings', async () => {
+		const settingsDialog = await openSettings(window);
+		await settingsDialog.locator('button[title="Display"]').click();
+
+		await settingsDialog.getByRole('button', { name: 'Rich' }).click();
+		await expect
+			.poll(async () => {
+				return await window.evaluate(async () => {
+					return await window.maestro.settings.get('fileExplorerIconTheme');
+				});
+			})
+			.toBe('rich');
 	});
 });
