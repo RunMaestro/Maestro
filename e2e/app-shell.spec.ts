@@ -848,6 +848,228 @@ async function stubAgentDetectionForNewAgent(electronApp: ElectronApplication) {
 	});
 }
 
+async function stubMarketplaceForPlaybookExchange(electronApp: ElectronApplication) {
+	await electronApp.evaluate(({ ipcMain }) => {
+		const manifest = {
+			lastUpdated: '2026-05-29',
+			playbooks: [
+				{
+					id: 'issue-triage',
+					title: 'Issue Triage',
+					description: 'Classify incoming GitHub issues and prepare a response queue.',
+					category: 'Security',
+					subcategory: 'Reviews',
+					author: 'RunMaestro',
+					authorLink: 'https://github.com/RunMaestro',
+					tags: ['triage', 'security', 'github'],
+					lastUpdated: '2026-05-28',
+					path: 'security/issue-triage',
+					documents: [
+						{ filename: 'triage-plan', resetOnCompletion: true },
+						{ filename: 'response-checklist', resetOnCompletion: false },
+					],
+					loopEnabled: true,
+					maxLoops: 2,
+					prompt: 'Review every issue before moving to the next document.',
+					source: 'official',
+				},
+				{
+					id: 'release-checklist',
+					title: 'Release Checklist',
+					description: 'Prepare release notes and validation steps.',
+					category: 'Release',
+					author: 'RunMaestro',
+					tags: ['release'],
+					lastUpdated: '2026-05-27',
+					path: 'release/checklist',
+					documents: [{ filename: 'release-plan', resetOnCompletion: true }],
+					loopEnabled: false,
+					maxLoops: null,
+					prompt: null,
+					source: 'local',
+				},
+			],
+		};
+		const readmes: Record<string, string> = {
+			'security/issue-triage': '# README for issue triage\n\nUse this playbook to route issues.',
+			'release/checklist': '# Release checklist\n\nPrepare the release.',
+		};
+		const documents: Record<string, string> = {
+			'security/issue-triage/triage-plan': '# Triage Plan\n\nTriage plan body for E2E.',
+			'security/issue-triage/response-checklist':
+				'# Response Checklist\n\nResponse checklist body.',
+			'release/checklist/release-plan': '# Release Plan\n\nRelease plan body.',
+		};
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eMarketplaceImportRequest?: {
+				playbookId: string;
+				targetFolderName: string;
+				autoRunFolderPath: string;
+				sessionId: string;
+				sshRemoteId?: string;
+			} | null;
+		};
+		state.__maestroE2eMarketplaceImportRequest = null;
+
+		ipcMain.removeHandler('marketplace:getManifest');
+		ipcMain.handle('marketplace:getManifest', async () => ({
+			success: true,
+			manifest,
+			fromCache: true,
+			cacheAge: 120_000,
+		}));
+		ipcMain.removeHandler('marketplace:refreshManifest');
+		ipcMain.handle('marketplace:refreshManifest', async () => ({
+			success: true,
+			manifest,
+			fromCache: false,
+			cacheAge: 0,
+		}));
+		ipcMain.removeHandler('marketplace:getReadme');
+		ipcMain.handle('marketplace:getReadme', async (_event, playbookPath: string) => ({
+			success: true,
+			content: readmes[playbookPath] ?? null,
+		}));
+		ipcMain.removeHandler('marketplace:getDocument');
+		ipcMain.handle(
+			'marketplace:getDocument',
+			async (_event, playbookPath: string, filename: string) => ({
+				success: true,
+				content: documents[`${playbookPath}/${filename}`] ?? null,
+			})
+		);
+		ipcMain.removeHandler('marketplace:importPlaybook');
+		ipcMain.handle(
+			'marketplace:importPlaybook',
+			async (
+				_event,
+				playbookId: string,
+				targetFolderName: string,
+				autoRunFolderPath: string,
+				sessionId: string,
+				sshRemoteId?: string
+			) => {
+				state.__maestroE2eMarketplaceImportRequest = {
+					playbookId,
+					targetFolderName,
+					autoRunFolderPath,
+					sessionId,
+					sshRemoteId,
+				};
+				return { success: true };
+			}
+		);
+	});
+}
+
+async function getStubbedMarketplaceImportRequest(electronApp: ElectronApplication) {
+	return electronApp.evaluate(() => {
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eMarketplaceImportRequest?: {
+				playbookId: string;
+				targetFolderName: string;
+				autoRunFolderPath: string;
+				sessionId: string;
+				sshRemoteId?: string;
+			} | null;
+		};
+		return state.__maestroE2eMarketplaceImportRequest ?? null;
+	});
+}
+
+async function stubSpecKitAndOpenSpecCommands(electronApp: ElectronApplication) {
+	await electronApp.evaluate(({ ipcMain }) => {
+		const makeMetadata = (sourceVersion: string, sourceUrl: string) => ({
+			lastRefreshed: '2026-05-29T12:00:00.000Z',
+			commitSha: 'e2e1234',
+			sourceVersion,
+			sourceUrl,
+		});
+		const specDefaults: Record<string, string> = {
+			specify: 'Bundled specify prompt for {{CWD}}.',
+		};
+		const openDefaults: Record<string, string> = {
+			proposal: 'Bundled proposal prompt for {{AGENT_NAME}}.',
+		};
+		let specCommands = [
+			{
+				id: 'specify',
+				command: '/speckit.specify',
+				description: 'Create a new product specification.',
+				prompt: specDefaults.specify,
+				isCustom: false,
+				isModified: false,
+			},
+		];
+		let openCommands = [
+			{
+				id: 'proposal',
+				command: '/openspec.proposal',
+				description: 'Draft a structured change proposal.',
+				prompt: openDefaults.proposal,
+				isCustom: false,
+				isModified: false,
+			},
+		];
+
+		ipcMain.removeHandler('speckit:getMetadata');
+		ipcMain.handle('speckit:getMetadata', async () => ({
+			success: true,
+			metadata: makeMetadata('v1.2.3', 'https://github.com/github/spec-kit'),
+		}));
+		ipcMain.removeHandler('speckit:getPrompts');
+		ipcMain.handle('speckit:getPrompts', async () => ({ success: true, commands: specCommands }));
+		ipcMain.removeHandler('speckit:savePrompt');
+		ipcMain.handle('speckit:savePrompt', async (_event, id: string, prompt: string) => {
+			specCommands = specCommands.map((cmd) =>
+				cmd.id === id ? { ...cmd, prompt, isModified: true } : cmd
+			);
+			return { success: true };
+		});
+		ipcMain.removeHandler('speckit:resetPrompt');
+		ipcMain.handle('speckit:resetPrompt', async (_event, id: string) => {
+			const prompt = specDefaults[id] ?? '';
+			specCommands = specCommands.map((cmd) =>
+				cmd.id === id ? { ...cmd, prompt, isModified: false } : cmd
+			);
+			return { success: true, prompt };
+		});
+		ipcMain.removeHandler('speckit:refresh');
+		ipcMain.handle('speckit:refresh', async () => ({
+			success: true,
+			metadata: makeMetadata('v1.2.4', 'https://github.com/github/spec-kit'),
+		}));
+
+		ipcMain.removeHandler('openspec:getMetadata');
+		ipcMain.handle('openspec:getMetadata', async () => ({
+			success: true,
+			metadata: makeMetadata('v2.0.1', 'https://github.com/Fission-AI/OpenSpec'),
+		}));
+		ipcMain.removeHandler('openspec:getPrompts');
+		ipcMain.handle('openspec:getPrompts', async () => ({ success: true, commands: openCommands }));
+		ipcMain.removeHandler('openspec:savePrompt');
+		ipcMain.handle('openspec:savePrompt', async (_event, id: string, prompt: string) => {
+			openCommands = openCommands.map((cmd) =>
+				cmd.id === id ? { ...cmd, prompt, isModified: true } : cmd
+			);
+			return { success: true };
+		});
+		ipcMain.removeHandler('openspec:resetPrompt');
+		ipcMain.handle('openspec:resetPrompt', async (_event, id: string) => {
+			const prompt = openDefaults[id] ?? '';
+			openCommands = openCommands.map((cmd) =>
+				cmd.id === id ? { ...cmd, prompt, isModified: false } : cmd
+			);
+			return { success: true, prompt };
+		});
+		ipcMain.removeHandler('openspec:refresh');
+		ipcMain.handle('openspec:refresh', async () => ({
+			success: true,
+			metadata: makeMetadata('v2.0.2', 'https://github.com/Fission-AI/OpenSpec'),
+		}));
+	});
+}
+
 async function closeQuickActions(window: Page, quickActionsDialog: Locator) {
 	for (let attempt = 0; attempt < 5; attempt++) {
 		if (!(await quickActionsDialog.isVisible().catch(() => false))) return;
@@ -1209,6 +1431,60 @@ test.describe('App shell seeded workbench', () => {
 		await expect(guideDialog.getByText('Document Format')).toBeVisible();
 		await guideDialog.getByRole('button', { name: 'Got it' }).click();
 		await expect(guideDialog).toBeHidden();
+	});
+
+	test('browses and previews Playbook Exchange with stubbed marketplace data', async () => {
+		await stubMarketplaceForPlaybookExchange(electronApp);
+
+		await helpers.openRightPanelTab(window, 'Auto Run');
+		await window.getByTitle('Browse PlayBooks - discover and share community playbooks').click();
+		const marketplaceDialog = window.getByRole('dialog').first();
+		await expect(marketplaceDialog).toBeVisible();
+		await expect(marketplaceDialog.getByText('Playbook Exchange')).toBeVisible();
+		await expect(marketplaceDialog.getByText(/Cached 2m ago|Cached/)).toBeVisible();
+
+		await expect(marketplaceDialog.getByRole('button', { name: 'Security(1)' })).toBeVisible();
+		await expect(marketplaceDialog.getByRole('button', { name: 'Release(1)' })).toBeVisible();
+		await marketplaceDialog.getByPlaceholder('Search playbooks...').fill('triage');
+		await expect(marketplaceDialog.getByRole('button', { name: /Issue Triage/ })).toBeVisible();
+		await expect(marketplaceDialog.getByText('Release Checklist')).toBeHidden();
+
+		await marketplaceDialog.getByRole('button', { name: /Issue Triage/ }).click();
+		await expect(
+			marketplaceDialog.getByRole('heading', { name: 'Issue Triage', exact: true })
+		).toBeVisible();
+		await expect(marketplaceDialog.getByText('README for issue triage')).toBeVisible();
+		await expect(marketplaceDialog.getByText('Loop: Yes (max 2)')).toBeVisible();
+
+		await marketplaceDialog.getByRole('button', { name: /triage-plan\.md/ }).click();
+		await expect(marketplaceDialog.getByText('Triage plan body for E2E.')).toBeVisible();
+
+		await window.keyboard.press('Escape');
+		await expect(marketplaceDialog.getByPlaceholder('Search playbooks...')).toBeVisible();
+	});
+
+	test('imports a marketplace playbook into the Auto Run folder with a deterministic stub', async () => {
+		await stubMarketplaceForPlaybookExchange(electronApp);
+
+		await helpers.openRightPanelTab(window, 'Auto Run');
+		await window.getByTitle('Browse PlayBooks - discover and share community playbooks').click();
+		const marketplaceDialog = window.getByRole('dialog').first();
+		await expect(marketplaceDialog.getByText('Playbook Exchange')).toBeVisible();
+		await marketplaceDialog.getByRole('button', { name: /Issue Triage/ }).click();
+		await expect(marketplaceDialog.getByText('README for issue triage')).toBeVisible();
+
+		await marketplaceDialog.getByRole('button', { name: 'Import Playbook' }).click();
+		await expect(marketplaceDialog).toBeHidden();
+		await expect(window.getByText('Playbook Imported')).toBeVisible();
+
+		await expect
+			.poll(async () => getStubbedMarketplaceImportRequest(electronApp))
+			.toMatchObject({
+				playbookId: 'issue-triage',
+				targetFolderName: 'security/issue-triage',
+				autoRunFolderPath: seededWorkbench.sessions[0].autoRunFolderPath,
+				sessionId: seededWorkbench.sessions[0].id,
+			});
 	});
 
 	test('toggles the markdown file preview between preview and edit modes', async () => {
@@ -2937,5 +3213,51 @@ test.describe('App shell seeded workbench', () => {
 				});
 			})
 			.toBe(false);
+	});
+
+	test('edits and resets bundled Spec Kit and OpenSpec command prompts in Settings', async () => {
+		await stubSpecKitAndOpenSpecCommands(electronApp);
+		const settingsDialog = await openSettingsTab(window, 'AI Commands', 'Custom AI Commands');
+
+		await expect(settingsDialog.getByText('Spec Kit Commands')).toBeVisible();
+		await expect(settingsDialog.getByText('OpenSpec Commands')).toBeVisible();
+		await expect(settingsDialog.getByText('v1.2.3')).toBeVisible();
+		await expect(settingsDialog.getByText('v2.0.1')).toBeVisible();
+
+		await settingsDialog.getByRole('button', { name: /\/speckit\.specify/ }).click();
+		const specKitPanel = settingsDialog
+			.getByText('/speckit.specify')
+			.first()
+			.locator('xpath=ancestor::div[contains(@class, "rounded-lg")][1]');
+		await expect(specKitPanel.getByText('Bundled specify prompt for {{CWD}}.')).toBeVisible();
+		await specKitPanel.getByTitle('Edit prompt').click();
+		await specKitPanel.locator('textarea').fill('Updated Spec Kit prompt for {{CWD}}.');
+		await specKitPanel.getByRole('button', { name: 'Save' }).click();
+		await expect(specKitPanel.getByText('Modified')).toBeVisible();
+		await expect(specKitPanel.getByText('Updated Spec Kit prompt for {{CWD}}.')).toBeVisible();
+		await specKitPanel.getByTitle('Reset to bundled default').click();
+		await expect(specKitPanel.getByText('Modified')).toBeHidden();
+		await expect(specKitPanel.getByText('Bundled specify prompt for {{CWD}}.')).toBeVisible();
+
+		await settingsDialog.getByRole('button', { name: /\/openspec\.proposal/ }).click();
+		const openSpecPanel = settingsDialog
+			.getByText('/openspec.proposal')
+			.first()
+			.locator('xpath=ancestor::div[contains(@class, "rounded-lg")][1]');
+		await expect(
+			openSpecPanel.getByText('Bundled proposal prompt for {{AGENT_NAME}}.')
+		).toBeVisible();
+		await openSpecPanel.getByTitle('Edit prompt').click();
+		await openSpecPanel.locator('textarea').fill('Updated OpenSpec prompt for {{AGENT_NAME}}.');
+		await openSpecPanel.getByRole('button', { name: 'Save' }).click();
+		await expect(openSpecPanel.getByText('Modified')).toBeVisible();
+		await expect(
+			openSpecPanel.getByText('Updated OpenSpec prompt for {{AGENT_NAME}}.')
+		).toBeVisible();
+		await openSpecPanel.getByTitle('Reset to bundled default').click();
+		await expect(openSpecPanel.getByText('Modified')).toBeHidden();
+		await expect(
+			openSpecPanel.getByText('Bundled proposal prompt for {{AGENT_NAME}}.')
+		).toBeVisible();
 	});
 });

@@ -10,10 +10,10 @@ Measured inventory:
 
 | Area                              |              Current Count |
 | --------------------------------- | -------------------------: |
-| E2E spec files after batch 35     |                          7 |
-| Declared E2E tests after batch 35 |                        248 |
+| E2E spec files after batch 36     |                          7 |
+| Declared E2E tests after batch 36 |                        251 |
 | Last pre-campaign full E2E result |      91 passed, 49 skipped |
-| Latest full E2E validation        |     199 passed, 49 skipped |
+| Latest full E2E validation        |     202 passed, 49 skipped |
 | Renderer component files          |                        236 |
 | Renderer hook files               |                        123 |
 | Renderer store files              |                         11 |
@@ -62,7 +62,7 @@ That range is high enough to cover the app surface, but low enough to avoid a br
 | Group chat                                                     |             10 |           140 | Creation, participants, Codex-only routing, history, errors, deletion                  |
 | Usage dashboard and stats                                      |              4 |           125 | Overview metrics, chart sections, Activity/Auto Run tabs, keyboard navigation          |
 | Document graph                                                 |              2 |           130 | Graph build, node selection, preview, settings, layout, persistence                    |
-| Playbooks, marketplace, Spec Kit, OpenSpec                     |              0 |           145 | Local/import/export/search flows; network paths mocked/gated                           |
+| Playbooks, marketplace, Spec Kit, OpenSpec                     |              3 |           145 | Marketplace browse/import and bundled command edit/reset covered                       |
 | Symphony, leaderboard, achievements                            |              0 |           120 | Static, auth/error, modal, history and CTA flows                                       |
 | Director notes and prompt composer                             |              7 |            90 | Director's Notes settings/history/help/AI overview; prompt composer open/edit/control  |
 | Debug/about/update/app info/agent error modals                 |              7 |            85 | System Log search/filter/clear and Process Monitor detail/kill confirmation            |
@@ -162,3 +162,5 @@ The first implementation batch should focus on infrastructure and high-ROI exist
 - Validation: `npx playwright test app-shell.spec.ts -g "diff from the widget|widget tooltip|Create PR modal|stubbed GitHub CLI"` passed 4/4; `npx playwright test app-shell.spec.ts` passed 97/97; `npx playwright test` passed 197 with 49 existing intentional skips; `npm run lint` passed. Full-suite log: `/tmp/maestro-full-e2e-git-widget-pr-batch34.log`.
 - 2026-05-29 batch 35: added deterministic Create New Agent provider setup E2E coverage for available Codex, unavailable Claude/OpenCode/Factory states, coming-soon Gemini state, and static custom-path creation for an unavailable non-Codex provider without launching it.
 - Validation: `npx playwright test app-shell.spec.ts -g "Create New Agent|static custom"` passed 3/3; `npx playwright test app-shell.spec.ts` passed 99/99; `npx playwright test` passed 199 with 49 existing intentional skips; `npm run lint` passed. Full-suite log: `/tmp/maestro-full-e2e-agent-provider-batch35.log`.
+- 2026-05-29 batch 36: added deterministic Playbook Exchange and bundled command E2E coverage for stubbed marketplace browse/search/detail/document preview, marketplace import request handling, and Spec Kit/OpenSpec command edit/save/reset flows.
+- Validation: `npx playwright test app-shell.spec.ts -g "Playbook Exchange|marketplace playbook|Spec Kit and OpenSpec"` passed 3/3; `npx playwright test app-shell.spec.ts` passed 102/102; `npx playwright test` passed 202 with 49 existing intentional skips; `npm run lint` passed. Full-suite log: `/tmp/maestro-full-e2e-playbooks-speckit-batch36.log`.
