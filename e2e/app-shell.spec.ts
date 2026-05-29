@@ -1455,6 +1455,19 @@ async function openSeededTerminalAgent(window: Page) {
 	return window.getByPlaceholder('Run shell command...');
 }
 
+async function openSeededCodexAiTerminal(window: Page) {
+	await window
+		.locator('[data-tour="session-list"]')
+		.getByText('E2E Workbench', { exact: true })
+		.first()
+		.click();
+	await window.getByText('Main', { exact: true }).click();
+	await expect(window.getByText('Codex seeded response is visible.')).toBeVisible();
+	const promptInput = window.getByPlaceholder(/Talking to E2E Workbench powered by Codex/);
+	await expect(promptInput).toBeVisible();
+	return promptInput;
+}
+
 async function openDocumentGraphFromPreview(window: Page) {
 	await window.getByTitle('View in Document Graph (⌘ ⇧ G)').click();
 	const graphDialog = window.getByRole('dialog', { name: 'Document Graph' });
@@ -1990,6 +2003,85 @@ test.describe('App shell seeded workbench', () => {
 		await historyFilter.press('Enter');
 		await expect(historyFilter).toBeHidden();
 		await expect(terminalInput).toHaveValue('git status --short');
+	});
+
+	test('renders seeded Codex AI terminal transcript and input controls', async () => {
+		const promptInput = await openSeededCodexAiTerminal(window);
+
+		await expect(window.getByText('AI Terminal')).toBeVisible();
+		await expect(promptInput).toHaveAttribute(
+			'placeholder',
+			'Talking to E2E Workbench powered by Codex'
+		);
+		await expect(window.getByTitle(/Open Prompt Composer/)).toBeVisible();
+		await expect(window.getByTitle('Attach Image')).toBeVisible();
+		await expect(window.getByTitle(/Save to History/)).toBeVisible();
+		await expect(
+			window.getByTitle("Toggle Read-Only mode (agent won't modify files)")
+		).toBeVisible();
+		await expect(window.getByTitle('Show Thinking - Click to stream AI reasoning')).toBeVisible();
+		await expect(window.getByTitle(/Toggle Mode/)).toBeVisible();
+		await expect(window.getByTitle('Send message')).toBeVisible();
+	});
+
+	test('edits a Codex prompt draft without sending a live prompt', async () => {
+		const promptInput = await openSeededCodexAiTerminal(window);
+
+		await expect(window.locator('[data-log-index]')).toHaveCount(1);
+		await promptInput.fill('Draft Codex prompt line one\nDraft Codex prompt line two');
+		await expect(promptInput).toHaveValue(
+			'Draft Codex prompt line one\nDraft Codex prompt line two'
+		);
+		await expect(window.getByText('Codex seeded response is visible.')).toBeVisible();
+		await expect(window.locator('[data-log-index]')).toHaveCount(1);
+	});
+
+	test('cycles Codex thinking display toggle states without sending', async () => {
+		await openSeededCodexAiTerminal(window);
+
+		await window.getByTitle('Show Thinking - Click to stream AI reasoning').click();
+		await expect(window.getByTitle('Thinking (temporary) - Click for sticky mode')).toBeVisible();
+
+		await window.getByTitle('Thinking (temporary) - Click for sticky mode').click();
+		await expect(window.getByTitle('Thinking (sticky) - Click to turn off')).toBeVisible();
+
+		await window.getByTitle('Thinking (sticky) - Click to turn off').click();
+		await expect(window.getByTitle('Show Thinking - Click to stream AI reasoning')).toBeVisible();
+	});
+
+	test('toggles Codex history and read-only controls without sending', async () => {
+		const promptInput = await openSeededCodexAiTerminal(window);
+		await promptInput.fill('Draft remains local while toggles change');
+
+		const historyToggle = window.getByTitle(/Save to History/);
+		await expect(historyToggle).toBeVisible();
+		await historyToggle.click();
+		await expect(promptInput).toHaveValue('Draft remains local while toggles change');
+
+		const readOnlyToggle = window.getByTitle("Toggle Read-Only mode (agent won't modify files)");
+		await expect(readOnlyToggle).toBeVisible();
+		await readOnlyToggle.click();
+		await expect(window.getByText('Read-Only')).toBeVisible();
+		await expect(promptInput).toHaveValue('Draft remains local while toggles change');
+	});
+
+	test('stages deduplicates and removes a Codex image attachment without sending', async () => {
+		await openSeededCodexAiTerminal(window);
+
+		const imagePath = path.join(seededWorkbench.sessions[0].cwd, 'diagram.png');
+		const imageInput = window.locator('#image-file-input');
+		await imageInput.setInputFiles(imagePath);
+		await expect(window.getByAltText('Staged image 1')).toBeVisible();
+
+		await imageInput.setInputFiles(imagePath);
+		await expect(window.getByAltText('Staged image 1')).toHaveCount(1);
+		await expect(window.getByText('Duplicate image ignored')).toBeVisible();
+
+		const stagedImageContainer = window
+			.getByAltText('Staged image 1')
+			.locator('xpath=ancestor::div[contains(@class, "relative")][1]');
+		await stagedImageContainer.locator('button').last().click();
+		await expect(window.getByAltText('Staged image 1')).toBeHidden();
 	});
 
 	test('switches between AI and file tabs in the TabBar', async () => {
