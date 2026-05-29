@@ -49,6 +49,7 @@ vi.mock('fs/promises', () => ({
 	default: {
 		access: vi.fn(),
 		readdir: vi.fn(),
+		realpath: vi.fn(async (filePath: string) => filePath),
 		rmdir: vi.fn(),
 		rm: vi.fn(),
 	},
@@ -4717,6 +4718,55 @@ branch refs/heads/bugfix-123
 						name: 'repo-dir',
 						isWorktree: false,
 						branch: 'develop',
+						repoRoot: '/parent/repo-dir',
+					},
+				],
+			});
+		});
+
+		it('should fall back to resolved paths when realpath lookup fails', async () => {
+			vi.mocked(mockFs.readdir).mockResolvedValue([
+				{ name: 'repo-dir', isDirectory: () => true },
+			] as any);
+			vi.mocked(mockFs.realpath)
+				.mockRejectedValueOnce(new Error('realpath failed for subdir'))
+				.mockRejectedValueOnce(new Error('realpath failed for toplevel'));
+
+			vi.mocked(execFile.execFileNoThrow).mockImplementation(async (cmd, args, cwd) => {
+				const cwdStr = String(cwd);
+
+				if (cwdStr.endsWith('repo-dir')) {
+					if (args?.includes('--is-inside-work-tree')) {
+						return { stdout: 'true\n', stderr: '', exitCode: 0 };
+					}
+					if (args?.includes('--show-toplevel')) {
+						return { stdout: '/parent/repo-dir', stderr: '', exitCode: 0 };
+					}
+					if (args?.includes('--git-dir')) {
+						return { stdout: '.git', stderr: '', exitCode: 0 };
+					}
+					if (args?.includes('--git-common-dir')) {
+						return { stdout: '.git', stderr: '', exitCode: 0 };
+					}
+					if (args?.includes('--abbrev-ref')) {
+						return { stdout: 'main\n', stderr: '', exitCode: 0 };
+					}
+				}
+
+				return { stdout: '', stderr: 'fatal: not a git repository', exitCode: 128 };
+			});
+
+			const handler = handlers.get('git:scanWorktreeDirectory');
+			const result = await handler!({} as any, '/parent');
+
+			expect(result).toEqual({
+				success: true,
+				gitSubdirs: [
+					{
+						path: path.join('/parent', 'repo-dir'),
+						name: 'repo-dir',
+						isWorktree: false,
+						branch: 'main',
 						repoRoot: '/parent/repo-dir',
 					},
 				],

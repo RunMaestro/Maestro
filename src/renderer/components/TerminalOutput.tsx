@@ -1254,6 +1254,11 @@ export const TerminalOutput = memo(
 		// Layer stack integration for search overlay
 		const { registerLayer, unregisterLayer, updateLayerHandler } = useLayerStack();
 		const layerIdRef = useRef<string>();
+		const closeOutputSearch = useCallback(() => {
+			setOutputSearchOpen(false);
+			setOutputSearchQuery('');
+			terminalOutputRef.current?.focus();
+		}, [setOutputSearchOpen, setOutputSearchQuery]);
 
 		// Register layer when search is open
 		useEffect(() => {
@@ -1264,11 +1269,7 @@ export const TerminalOutput = memo(
 					blocksLowerLayers: false,
 					capturesFocus: true,
 					focusTrap: 'none',
-					onEscape: () => {
-						setOutputSearchOpen(false);
-						setOutputSearchQuery('');
-						terminalOutputRef.current?.focus();
-					},
+					onEscape: closeOutputSearch,
 					allowClickOutside: true,
 					ariaLabel: 'Output Search',
 				});
@@ -1279,18 +1280,14 @@ export const TerminalOutput = memo(
 					}
 				};
 			}
-		}, [outputSearchOpen, registerLayer, unregisterLayer]);
+		}, [closeOutputSearch, outputSearchOpen, registerLayer, unregisterLayer]);
 
 		// Update the handler when dependencies change
 		useEffect(() => {
 			if (outputSearchOpen && layerIdRef.current) {
-				updateLayerHandler(layerIdRef.current, () => {
-					setOutputSearchOpen(false);
-					setOutputSearchQuery('');
-					terminalOutputRef.current?.focus();
-				});
+				updateLayerHandler(layerIdRef.current, closeOutputSearch);
 			}
-		}, [outputSearchOpen, updateLayerHandler]);
+		}, [closeOutputSearch, outputSearchOpen, updateLayerHandler]);
 
 		const toggleExpanded = useCallback((logId: string) => {
 			setExpandedLogs((prev) => {

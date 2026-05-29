@@ -1984,6 +1984,7 @@ export function getSettingsActions() {
 		setFileTabAutoRefreshEnabled: state.setFileTabAutoRefreshEnabled,
 		setSuppressWindowsWarning: state.setSuppressWindowsWarning,
 		setAutoScrollAiMode: state.setAutoScrollAiMode,
+		setUserMessageAlignment: state.setUserMessageAlignment,
 		setEncoreFeatures: state.setEncoreFeatures,
 		setDirectorNotesSettings: state.setDirectorNotesSettings,
 		setWakatimeApiKey: state.setWakatimeApiKey,

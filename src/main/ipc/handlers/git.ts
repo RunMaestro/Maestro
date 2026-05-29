@@ -1158,9 +1158,15 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 								return null; // Git command failed — treat as invalid
 							}
 							const toplevel = toplevelResult.stdout.trim();
-							// For SSH, compare as-is; for local, resolve to handle symlinks
-							const normalizedSubdir = sshRemote ? subdirPath : path.resolve(subdirPath);
-							const normalizedToplevel = sshRemote ? toplevel : path.resolve(toplevel);
+							// For SSH, compare as-is; for local, resolve real paths to handle symlinks.
+							let normalizedSubdir = subdirPath;
+							let normalizedToplevel = toplevel;
+							if (!sshRemote) {
+								[normalizedSubdir, normalizedToplevel] = await Promise.all([
+									fs.realpath(subdirPath).catch(() => path.resolve(subdirPath)),
+									fs.realpath(toplevel).catch(() => path.resolve(toplevel)),
+								]);
+							}
 							if (normalizedSubdir !== normalizedToplevel) {
 								return null; // Subdirectory inside a repo, not a repo/worktree root
 							}

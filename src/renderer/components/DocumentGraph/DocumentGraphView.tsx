@@ -976,13 +976,17 @@ export function DocumentGraphView({
 	/**
 	 * Handle node position change from drag operations
 	 */
-	const handleNodePositionChange = useCallback((nodeId: string, position: NodePositionOverride) => {
-		setNodePositions((prev) => {
-			const next = new Map(prev);
-			next.set(nodeId, position);
-			return next;
-		});
-	}, []);
+	const handleNodePositionChange = useCallback(
+		(nodeId: string, position: NodePositionOverride) => {
+			positionsContextRef.current = { focusFile: activeFocusFile, depth: neighborDepth };
+			setNodePositions((prev) => {
+				const next = new Map(prev);
+				next.set(nodeId, position);
+				return next;
+			});
+		},
+		[activeFocusFile, neighborDepth]
+	);
 
 	/**
 	 * Reset all node positions to algorithmic layout
