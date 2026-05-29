@@ -396,6 +396,44 @@ function appendCodexStaticSurfaceLogs(seeded: ReturnType<typeof createSeededWork
 	}
 }
 
+const E2E_SSH_REMOTE_ID = 'e2e-ssh-remote';
+const E2E_SSH_REMOTE_BASE_CWD = '/srv/maestro-e2e/base';
+const E2E_SSH_REMOTE_CURRENT_CWD = '/srv/maestro-e2e/current';
+
+function enableTerminalSshRemote(seeded: ReturnType<typeof createSeededWorkbench>) {
+	const terminalSession = seeded.sessions[1] as (typeof seeded.sessions)[number] & {
+		remoteCwd?: string;
+		sessionSshRemoteConfig?: {
+			enabled: boolean;
+			remoteId: string | null;
+			workingDirOverride?: string;
+		};
+	};
+	terminalSession.remoteCwd = E2E_SSH_REMOTE_CURRENT_CWD;
+	terminalSession.sessionSshRemoteConfig = {
+		enabled: true,
+		remoteId: E2E_SSH_REMOTE_ID,
+		workingDirOverride: E2E_SSH_REMOTE_BASE_CWD,
+	};
+}
+
+async function seedSshRemoteConfig(window: Page) {
+	await window.evaluate(
+		async ({ remoteId }) => {
+			await window.maestro.sshRemote.saveConfig({
+				id: remoteId,
+				name: 'E2E SSH Remote',
+				host: 'e2e.example.internal',
+				port: 2200,
+				username: 'codex',
+				privateKeyPath: '',
+				enabled: true,
+			});
+		},
+		{ remoteId: E2E_SSH_REMOTE_ID }
+	);
+}
+
 async function openSettings(window: Page) {
 	await window.keyboard.press('Meta+,');
 	const settingsDialog = window.getByRole('dialog', { name: 'Settings' });
@@ -763,6 +801,11 @@ type TerminalRunCommandCall = {
 	sessionId: string;
 	command: string;
 	cwd: string;
+	sessionSshRemoteConfig?: {
+		enabled: boolean;
+		remoteId: string | null;
+		workingDirOverride?: string;
+	};
 };
 
 async function stubTerminalRunCommand(electronApp: ElectronApplication) {
@@ -781,12 +824,18 @@ async function stubTerminalRunCommand(electronApp: ElectronApplication) {
 					sessionId: string;
 					command: string;
 					cwd: string;
+					sessionSshRemoteConfig?: {
+						enabled: boolean;
+						remoteId: string | null;
+						workingDirOverride?: string;
+					};
 				}
 			) => {
 				state.__maestroE2eRunCommandCalls?.push({
 					sessionId: config.sessionId,
 					command: config.command,
 					cwd: config.cwd,
+					sessionSshRemoteConfig: config.sessionSshRemoteConfig,
 				});
 
 				const sendExit = (code: number) => {
@@ -4453,5 +4502,75 @@ test.describe('Codex AI terminal static transcript surfaces', () => {
 		await expect(errorModal.getByText('Codex historical error detail sentinel')).toBeVisible();
 		await errorModal.getByRole('button', { name: 'Error Details (JSON)' }).click();
 		await expect(errorModal.getByText('synthetic_e2e_static_error')).toBeVisible();
+	});
+});
+
+test.describe('Command terminal SSH remote surfaces', () => {
+	let window: Page;
+	let electronApp: ElectronApplication;
+	let cleanupApp: (() => Promise<void>) | undefined;
+	let seededWorkbench: ReturnType<typeof createSeededWorkbench>;
+
+	test.beforeEach(async () => {
+		seededWorkbench = createSeededWorkbench();
+		enableTerminalSshRemote(seededWorkbench);
+		const launched = await helpers.launchAppWithState({
+			homeDir: seededWorkbench.homeDir,
+			sessions: seededWorkbench.sessions,
+		});
+		window = launched.window;
+		electronApp = launched.electronApp;
+		cleanupApp = launched.cleanup;
+		await seedSshRemoteConfig(window);
+	});
+
+	test.afterEach(async () => {
+		await cleanupApp?.();
+		cleanupApp = undefined;
+	});
+
+	test('routes SSH terminal commands through the remote cwd and config', async () => {
+		await stubTerminalRunCommand(electronApp);
+		const terminalInput = await openSeededTerminalAgent(window);
+		const inputArea = window.locator('[data-tour="input-area"]');
+
+		await expect(window.getByTitle('SSH Remote: E2E SSH Remote')).toBeVisible();
+		await terminalInput.fill('pwd');
+		await inputArea.getByTitle('Run command (Enter)').click();
+
+		await expect(
+			window.locator('[data-log-index]').last().getByText(E2E_SSH_REMOTE_CURRENT_CWD)
+		).toBeVisible();
+		const calls = await getStubbedTerminalRunCommandCalls(electronApp);
+		await expect(calls[0]).toMatchObject({
+			command: 'pwd',
+			cwd: E2E_SSH_REMOTE_CURRENT_CWD,
+			sessionSshRemoteConfig: {
+				enabled: true,
+				remoteId: E2E_SSH_REMOTE_ID,
+				workingDirOverride: E2E_SSH_REMOTE_BASE_CWD,
+			},
+		});
+	});
+
+	test('resets SSH terminal cwd to the configured remote working directory with bare cd', async () => {
+		await stubTerminalRunCommand(electronApp);
+		const terminalInput = await openSeededTerminalAgent(window);
+		const inputArea = window.locator('[data-tour="input-area"]');
+
+		await terminalInput.fill('cd');
+		await inputArea.getByTitle('Run command (Enter)').click();
+		await expect(inputArea.getByText(E2E_SSH_REMOTE_BASE_CWD)).toBeVisible();
+
+		await terminalInput.fill('pwd');
+		await inputArea.getByTitle('Run command (Enter)').click();
+
+		await expect(
+			window.locator('[data-log-index]').last().getByText(E2E_SSH_REMOTE_BASE_CWD)
+		).toBeVisible();
+		const calls = await getStubbedTerminalRunCommandCalls(electronApp);
+		await expect(calls.map((call) => call.command)).toEqual(['cd', 'pwd']);
+		await expect(calls[0].cwd).toBe(E2E_SSH_REMOTE_CURRENT_CWD);
+		await expect(calls[1].cwd).toBe(E2E_SSH_REMOTE_BASE_CWD);
 	});
 });
