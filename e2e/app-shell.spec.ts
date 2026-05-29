@@ -242,6 +242,16 @@ async function openDirectorNotesFromQuickActions(window: Page) {
 	return directorNotesDialog;
 }
 
+async function openPromptComposer(window: Page) {
+	await window.getByText('Main', { exact: true }).click();
+	await expect(window.getByTitle('Send message')).toBeVisible();
+	await window.getByTitle(/Open Prompt Composer/).click();
+	await expect(window.getByText('Prompt Composer')).toBeVisible();
+	const composerInput = window.getByPlaceholder(/Write your prompt here/);
+	await expect(composerInput).toBeVisible();
+	return composerInput;
+}
+
 async function stubDirectorNotesSynopsis(electronApp: ElectronApplication) {
 	await electronApp.evaluate(({ ipcMain }) => {
 		ipcMain.removeHandler('director-notes:generateSynopsis');
@@ -1035,6 +1045,54 @@ test.describe('App shell seeded workbench', () => {
 
 		await window.keyboard.press('Escape');
 		await expect(directorNotesDialog).toBeHidden();
+	});
+
+	test('opens Prompt Composer and edits a draft without sending', async () => {
+		const composerInput = await openPromptComposer(window);
+
+		await composerInput.fill('Draft prompt line one\nDraft prompt line two');
+		await composerInput.press('Tab');
+		await expect(composerInput).toHaveValue(/Draft prompt line two\t$/);
+		await expect(window.getByText(/characters/).last()).toBeVisible();
+
+		await window.keyboard.press('Escape');
+		await expect(window.getByText('Prompt Composer')).toBeHidden();
+	});
+
+	test('opens Prompt Composer from the keyboard shortcut', async () => {
+		await window.getByText('Main', { exact: true }).click();
+		await expect(window.getByTitle('Send message')).toBeVisible();
+		await window.keyboard.press('Meta+Shift+P');
+		await expect(window.getByText('Prompt Composer')).toBeVisible();
+		const composerInput = window.getByPlaceholder(/Write your prompt here/);
+
+		await composerInput.fill('Keyboard-opened prompt draft');
+		await expect(composerInput).toHaveValue('Keyboard-opened prompt draft');
+		await window.keyboard.press('Escape');
+		await expect(window.getByText('Prompt Composer')).toBeHidden();
+	});
+
+	test('shows Prompt Composer controls without sending a live prompt', async () => {
+		const composerInput = await openPromptComposer(window);
+		const composerDialog = window
+			.getByText('Prompt Composer')
+			.locator('xpath=ancestor::div[contains(@class, "z-10")][1]');
+
+		const historyToggle = composerDialog.getByTitle(/Save to History/);
+		await expect(historyToggle).toBeVisible();
+		await historyToggle.click();
+		const readOnlyToggle = composerDialog.getByTitle(/Toggle Read-Only mode/);
+		await expect(readOnlyToggle).toBeVisible();
+		await readOnlyToggle.click();
+		await expect(composerDialog.getByText('Read-Only')).toBeVisible();
+
+		await expect(composerDialog.getByTitle(/Enter/)).toBeVisible();
+		await expect(composerDialog.getByRole('button', { name: 'Send' })).toBeDisabled();
+		await composerInput.fill('Prepared prompt that is not sent');
+		await expect(composerDialog.getByRole('button', { name: 'Send' })).toBeEnabled();
+
+		await window.keyboard.press('Escape');
+		await expect(window.getByText('Prompt Composer')).toBeHidden();
 	});
 
 	test('navigates core Settings tabs', async () => {
