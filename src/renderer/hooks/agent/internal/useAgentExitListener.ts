@@ -58,6 +58,7 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 
 		const unsubscribe = window.maestro.process.onExit(async (sessionId: string, code: number) => {
 			if (sessionId.includes('-terminal-')) return;
+			if (sessionId.includes('-batch-')) return;
 
 			// Flush any pending batched stdout/stderr chunks before we mutate
 			// state. Without this, when a queued message is dispatched on exit
@@ -636,6 +637,7 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 	}, [
 		deps.activeHiddenToolRef,
 		deps.addHistoryEntryRef,
+		deps.batchedUpdater,
 		deps.getBatchStateRef,
 		deps.processQueuedItemRef,
 		deps.rightPanelRef,
