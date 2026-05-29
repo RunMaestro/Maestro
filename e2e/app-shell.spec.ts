@@ -6,9 +6,21 @@
  */
 import { test, expect, helpers } from './fixtures/electron-app';
 import type { ElectronApplication, Locator, Page } from '@playwright/test';
+import { execFileSync } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+
+function runGit(cwd: string, args: string[], env: Record<string, string> = {}) {
+	execFileSync('git', args, {
+		cwd,
+		stdio: 'ignore',
+		env: {
+			...process.env,
+			...env,
+		},
+	});
+}
 
 function createSeededWorkbench() {
 	const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-e2e-shell-'));
@@ -107,6 +119,24 @@ flowchart TD
 	);
 	fs.writeFileSync(hiddenFilePath, 'MAESTRO_E2E_HIDDEN_FILE=true\n', 'utf-8');
 
+	runGit(projectDir, ['init']);
+	runGit(projectDir, ['checkout', '-B', 'main']);
+	runGit(projectDir, ['config', 'user.name', 'E2E Bot']);
+	runGit(projectDir, ['config', 'user.email', 'e2e@example.com']);
+	runGit(projectDir, ['add', '.']);
+	runGit(projectDir, ['commit', '-m', 'chore: seed initial fixture'], {
+		GIT_AUTHOR_DATE: '2026-01-02T03:04:05Z',
+		GIT_COMMITTER_DATE: '2026-01-02T03:04:05Z',
+	});
+	fs.appendFileSync(notesFilePath, '\nGit log committed sentinel.\n', 'utf-8');
+	runGit(projectDir, ['add', 'NOTES.md']);
+	runGit(projectDir, ['commit', '-m', 'docs: add git log fixture'], {
+		GIT_AUTHOR_DATE: '2026-01-02T03:05:05Z',
+		GIT_COMMITTER_DATE: '2026-01-02T03:05:05Z',
+	});
+	fs.appendFileSync(previewFilePath, '\nWorking tree diff sentinel for Git Diff E2E.\n', 'utf-8');
+	fs.appendFileSync(mermaidFilePath, '\nGit diff mermaid sentinel.\n', 'utf-8');
+
 	return {
 		homeDir,
 		sessions: [
@@ -136,7 +166,7 @@ flowchart TD
 				port: 0,
 				isLive: false,
 				changedFiles: [],
-				isGitRepo: false,
+				isGitRepo: true,
 				fileTree: [],
 				fileExplorerExpanded: [],
 				fileExplorerScrollPos: 0,
@@ -377,6 +407,32 @@ async function openProcessMonitor(window: Page) {
 	const processMonitor = window.getByRole('dialog', { name: 'System Processes' });
 	await expect(processMonitor).toBeVisible();
 	return processMonitor;
+}
+
+async function openGitDiffFromQuickActions(window: Page) {
+	const quickActionsDialog = await openQuickActions(window);
+	await quickActionsDialog
+		.getByPlaceholder('Type a command or jump to agent...')
+		.fill('View Git Diff');
+	await quickActionsDialog.getByRole('button', { name: /View Git Diff/ }).click();
+
+	await expect(quickActionsDialog).toBeHidden();
+	const gitDiffDialog = window.getByRole('dialog', { name: 'Git Diff Preview' });
+	await expect(gitDiffDialog).toBeVisible();
+	return gitDiffDialog;
+}
+
+async function openGitLogFromQuickActions(window: Page) {
+	const quickActionsDialog = await openQuickActions(window);
+	await quickActionsDialog
+		.getByPlaceholder('Type a command or jump to agent...')
+		.fill('View Git Log');
+	await quickActionsDialog.getByRole('button', { name: /View Git Log/ }).click();
+
+	await expect(quickActionsDialog).toBeHidden();
+	const gitLogDialog = window.getByRole('dialog', { name: 'Git Log Viewer' });
+	await expect(gitLogDialog).toBeVisible();
+	return gitLogDialog;
 }
 
 async function seedUsageDashboardStats(window: Page) {
@@ -1294,6 +1350,62 @@ test.describe('App shell seeded workbench', () => {
 		await quickActionsDialog.getByRole('button', { name: /Switch AI\/Shell Mode/ }).click();
 		await expect(quickActionsDialog).toBeHidden();
 		await expect(window.getByTitle('Send message')).toBeVisible();
+	});
+
+	test('surfaces local Git actions for the active repository', async () => {
+		const quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog.getByPlaceholder('Type a command or jump to agent...').fill('Git');
+
+		await expect(quickActionsDialog.getByRole('button', { name: /View Git Diff/ })).toBeVisible();
+		await expect(quickActionsDialog.getByRole('button', { name: /View Git Log/ })).toBeVisible();
+		await expect(
+			quickActionsDialog.getByRole('button', { name: /Refresh Files, Git, History/ })
+		).toBeVisible();
+
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('Repository');
+		await expect(
+			quickActionsDialog.getByRole('button', { name: /Open Repository in Browser/ })
+		).toBeVisible();
+
+		await closeQuickActions(window, quickActionsDialog);
+	});
+
+	test('opens Git Diff from Quick Actions for deterministic working tree changes', async () => {
+		const gitDiffDialog = await openGitDiffFromQuickActions(window);
+
+		await expect(gitDiffDialog.getByText('2 files changed')).toBeVisible();
+		await expect(gitDiffDialog.getByRole('button', { name: /README\.md/ })).toBeVisible();
+		await expect(gitDiffDialog.getByRole('button', { name: /FLOW\.md/ })).toBeVisible();
+		await expect(gitDiffDialog.getByText('Git diff mermaid sentinel.')).toBeVisible();
+
+		await gitDiffDialog.getByRole('button', { name: /README\.md/ }).click();
+		await expect(
+			gitDiffDialog.getByText('Working tree diff sentinel for Git Diff E2E.')
+		).toBeVisible();
+
+		await gitDiffDialog.getByRole('button', { name: 'Close (Esc)' }).click();
+		await expect(gitDiffDialog).toBeHidden();
+	});
+
+	test('opens Git Log from Quick Actions and navigates committed history', async () => {
+		const gitLogDialog = await openGitLogFromQuickActions(window);
+
+		await expect(gitLogDialog.getByText('2 commits')).toBeVisible({ timeout: 15000 });
+		await expect(gitLogDialog.getByText('docs: add git log fixture').first()).toBeVisible();
+		await expect(gitLogDialog.getByText('E2E Bot').first()).toBeVisible();
+		await expect(gitLogDialog.getByText('NOTES.md').first()).toBeVisible({ timeout: 15000 });
+		await expect(gitLogDialog.getByText('Git log committed sentinel.')).toBeVisible({
+			timeout: 15000,
+		});
+
+		await window.keyboard.press('ArrowDown');
+		await expect(gitLogDialog.getByText('Commit 2 of 2')).toBeVisible();
+		await expect(gitLogDialog.getByText('chore: seed initial fixture').first()).toBeVisible();
+
+		await gitLogDialog.getByRole('button', { name: 'Close (Esc)' }).click();
+		await expect(gitLogDialog).toBeHidden();
 	});
 
 	test('opens the System Log Viewer from Quick Actions', async () => {
