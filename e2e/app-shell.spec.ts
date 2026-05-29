@@ -42,6 +42,27 @@ function createSeededWorkbench() {
 	const aiTabId = `ai-tab-shell-${idSuffix}`;
 	const fileTabId = `file-tab-shell-${idSuffix}`;
 	const terminalTabId = `terminal-tab-shell-${idSuffix}`;
+	const codexAiLogs = [
+		{
+			id: `ai-tab-log-shell-${idSuffix}`,
+			timestamp: now,
+			source: 'stdout',
+			text: '# AI Terminal\n\nCodex seeded response is visible.',
+		},
+		{
+			id: `ai-tab-user-log-shell-${idSuffix}`,
+			timestamp: now + 1,
+			source: 'user',
+			text: 'Review README for Codex user-message action coverage',
+			delivered: true,
+		},
+		{
+			id: `ai-tab-response-log-shell-${idSuffix}`,
+			timestamp: now + 2,
+			source: 'stdout',
+			text: 'Codex paired response for user-message action coverage.',
+		},
+	];
 
 	fs.mkdirSync(autoRunDir, { recursive: true });
 	fs.writeFileSync(
@@ -149,14 +170,7 @@ flowchart TD
 				fullPath: projectDir,
 				projectRoot: projectDir,
 				createdAt: now,
-				aiLogs: [
-					{
-						id: `ai-log-shell-${idSuffix}`,
-						timestamp: now,
-						source: 'stdout',
-						text: '# AI Terminal\n\nCodex seeded response is visible.',
-					},
-				],
+				aiLogs: codexAiLogs,
 				shellLogs: [],
 				workLog: [],
 				contextUsage: 0,
@@ -179,14 +193,7 @@ flowchart TD
 						agentSessionId: 'thread_e2e_tab_seed',
 						name: 'Main',
 						starred: false,
-						logs: [
-							{
-								id: `ai-tab-log-shell-${idSuffix}`,
-								timestamp: now,
-								source: 'stdout',
-								text: '# AI Terminal\n\nCodex seeded response is visible.',
-							},
-						],
+						logs: codexAiLogs,
 						inputValue: '',
 						stagedImages: [],
 						createdAt: now,
@@ -1671,7 +1678,8 @@ test.describe('App shell seeded workbench', () => {
 		await commandInput.fill('Settings');
 		await expect(quickActionsDialog.getByRole('button', { name: /Settings/ })).toBeVisible();
 
-		await commandInput.press('Escape');
+		await commandInput.focus();
+		await window.keyboard.press('Escape');
 		await expect(quickActionsDialog).toBeHidden();
 	});
 
@@ -2027,13 +2035,13 @@ test.describe('App shell seeded workbench', () => {
 	test('edits a Codex prompt draft without sending a live prompt', async () => {
 		const promptInput = await openSeededCodexAiTerminal(window);
 
-		await expect(window.locator('[data-log-index]')).toHaveCount(1);
+		await expect(window.locator('[data-log-index]')).toHaveCount(3);
 		await promptInput.fill('Draft Codex prompt line one\nDraft Codex prompt line two');
 		await expect(promptInput).toHaveValue(
 			'Draft Codex prompt line one\nDraft Codex prompt line two'
 		);
 		await expect(window.getByText('Codex seeded response is visible.')).toBeVisible();
-		await expect(window.locator('[data-log-index]')).toHaveCount(1);
+		await expect(window.locator('[data-log-index]')).toHaveCount(3);
 	});
 
 	test('cycles Codex thinking display toggle states without sending', async () => {
@@ -2100,7 +2108,7 @@ test.describe('App shell seeded workbench', () => {
 		await promptInput.press('Tab');
 		await expect(promptInput).toHaveValue('/wizard');
 		await expect(window.getByRole('button', { name: /\/history/ })).toHaveCount(0);
-		await expect(window.locator('[data-log-index]')).toHaveCount(1);
+		await expect(window.locator('[data-log-index]')).toHaveCount(3);
 	});
 
 	test('inserts a Codex @mention from file suggestions without sending', async () => {
@@ -2117,7 +2125,7 @@ test.describe('App shell seeded workbench', () => {
 		await readmeSuggestion.click();
 		await expect(promptInput).toHaveValue('Please inspect @README.md ');
 		await expect(window.getByText('Files matching "REA"')).toBeHidden();
-		await expect(window.locator('[data-log-index]')).toHaveCount(1);
+		await expect(window.locator('[data-log-index]')).toHaveCount(3);
 	});
 
 	test('dismisses Codex @mention suggestions while preserving the draft', async () => {
@@ -2144,7 +2152,7 @@ test.describe('App shell seeded workbench', () => {
 		await enterToggle.click();
 		await expect(window.getByTitle('Switch to Cmd+Enter to send')).toBeVisible();
 		await expect(promptInput).toHaveValue('Draft should remain local through Enter mode changes');
-		await expect(window.locator('[data-log-index]')).toHaveCount(1);
+		await expect(window.locator('[data-log-index]')).toHaveCount(3);
 	});
 
 	test('switches Codex input between AI and terminal modes without sending', async () => {
@@ -2225,6 +2233,58 @@ test.describe('App shell seeded workbench', () => {
 		const savedPath = path.join(seededWorkbench.sessions[0].cwd, 'codex-response-e2e.md');
 		await expect.poll(() => fs.existsSync(savedPath)).toBe(true);
 		expect(fs.readFileSync(savedPath, 'utf-8')).toContain('Codex seeded response is visible.');
+	});
+
+	test('shows delivered Codex user-message transcript actions without replaying', async () => {
+		await openSeededCodexAiTerminal(window);
+
+		const userBlock = window.locator('[data-log-index="1"]');
+		await expect(
+			userBlock.getByText('Review README for Codex user-message action coverage')
+		).toBeVisible();
+
+		await userBlock.hover();
+		await expect(userBlock.getByTitle('Message delivered')).toBeVisible();
+		await expect(userBlock.getByTitle('Replay message')).toBeVisible();
+		await expect(userBlock.getByTitle('Delete message and response')).toBeVisible();
+		await expect(window.locator('[data-log-index]')).toHaveCount(3);
+	});
+
+	test('cancels Codex user-message paired deletion from transcript actions', async () => {
+		await openSeededCodexAiTerminal(window);
+
+		const userBlock = window.locator('[data-log-index="1"]');
+		await userBlock.hover();
+		await userBlock.getByTitle('Delete message and response').click();
+		await expect(userBlock.getByText('Delete?')).toBeVisible();
+
+		await userBlock.getByRole('button', { name: 'No' }).click();
+		await expect(userBlock.getByText('Delete?')).toBeHidden();
+		await expect(
+			window.getByText('Review README for Codex user-message action coverage')
+		).toBeVisible();
+		await expect(
+			window.getByText('Codex paired response for user-message action coverage.')
+		).toBeVisible();
+		await expect(window.locator('[data-log-index]')).toHaveCount(3);
+	});
+
+	test('deletes a Codex user message and paired response from transcript actions', async () => {
+		await openSeededCodexAiTerminal(window);
+
+		const userBlock = window.locator('[data-log-index="1"]');
+		await userBlock.hover();
+		await userBlock.getByTitle('Delete message and response').click();
+		await userBlock.getByRole('button', { name: 'Yes' }).click();
+
+		await expect(
+			window.getByText('Review README for Codex user-message action coverage')
+		).toBeHidden();
+		await expect(
+			window.getByText('Codex paired response for user-message action coverage.')
+		).toBeHidden();
+		await expect(window.getByText('Codex seeded response is visible.')).toBeVisible();
+		await expect(window.locator('[data-log-index]')).toHaveCount(1);
 	});
 
 	test('switches between AI and file tabs in the TabBar', async () => {
