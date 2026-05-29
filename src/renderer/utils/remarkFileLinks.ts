@@ -216,7 +216,7 @@ const PATH_PATTERN =
 // Supports spaces, unicode, emoji, and special characters in path segments
 // Lookahead allows: whitespace, end of string, or common punctuation (including period, backtick)
 const ABSOLUTE_PATH_PATTERN =
-	/\/(?:[^/\n]+\/)+[^/\n]+\.(?:md|txt|json|yaml|yml|toml|ts|tsx|js|jsx|py|rb|go|rs|java|c|cpp|h|hpp|css|scss|html|xml|sh|bash|zsh)(?=\s|$|[.,;:!?`'")\]}>])/g;
+	/\/(?:[^/\n]+\/)+?[^/\n]+?\.(?:md|txt|json|yaml|yml|toml|ts|tsx|js|jsx|py|rb|go|rs|java|c|cpp|h|hpp|css|scss|html|xml|sh|bash|zsh)(?=\s|$|[.,;:!?`'")\]}>])/g;
 
 /**
  * The remark plugin

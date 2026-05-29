@@ -8,7 +8,7 @@ import React, {
 	useImperativeHandle,
 } from 'react';
 import { useSettingsStore } from '../stores/settingsStore';
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
 import rehypeSlug from 'rehype-slug';
 import GithubSlugger from 'github-slugger';
@@ -65,6 +65,20 @@ const imageCache = new Map<
 // Cache cleanup interval (clear entries older than 10 minutes)
 const IMAGE_CACHE_TTL = 10 * 60 * 1000;
 const BIONIFY_BUTTON_LABEL = 'B';
+
+const markdownUrlTransform = (url: string, key: string): string => {
+	const trimmed = url.trim();
+
+	if (key === 'src' && /^data:image\//i.test(trimmed)) {
+		return url;
+	}
+
+	if (key === 'href' && /^(file:|maestro-file:)/i.test(trimmed)) {
+		return url;
+	}
+
+	return defaultUrlTransform(url);
+};
 
 // Clean up old cache entries periodically.
 export const _clearExpiredImageCacheForTesting = (now = Date.now()) => {
@@ -2445,6 +2459,7 @@ export const FilePreview = React.memo(
 							<ReactMarkdown
 								remarkPlugins={remarkPlugins}
 								rehypePlugins={rehypePlugins}
+								urlTransform={markdownUrlTransform}
 								components={markdownComponents}
 							>
 								{file.content}

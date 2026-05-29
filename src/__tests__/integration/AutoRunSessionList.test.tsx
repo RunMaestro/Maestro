@@ -14,6 +14,10 @@ import React, { useState, useCallback } from 'react';
 import { SessionList } from '../../renderer/components/SessionList';
 import { AutoRun, AutoRunHandle } from '../../renderer/components/AutoRun';
 import { LayerStackProvider } from '../../renderer/contexts/LayerStackContext';
+import { useBatchStore } from '../../renderer/stores/batchStore';
+import { useSessionStore } from '../../renderer/stores/sessionStore';
+import { useSettingsStore } from '../../renderer/stores/settingsStore';
+import { useUIStore } from '../../renderer/stores/uiStore';
 import type {
 	Session,
 	Group,
@@ -370,9 +374,41 @@ const IntegrationTestWrapper = ({
 	onSessionChange?: (sessionId: string) => void;
 	onSessionDelete?: (sessionId: string) => void;
 }) => {
-	const [sessions, setSessions] = useState<Session[]>(initialSessions);
-	const [groups, setGroups] = useState<Group[]>(initialGroups);
-	const [activeSessionId, setActiveSessionId] = useState(initialActiveSessionId);
+	const initializedRef = React.useRef(false);
+	if (!initializedRef.current) {
+		useSessionStore.setState({
+			sessions: initialSessions,
+			groups: initialGroups,
+			activeSessionId: initialActiveSessionId,
+			sessionsLoaded: true,
+			initialLoadComplete: true,
+		});
+		useUIStore.setState({
+			leftSidebarOpen: true,
+			activeFocus: 'sidebar',
+			selectedSidebarIndex: 0,
+			editingGroupId: null,
+			editingSessionId: null,
+			draggingSessionId: null,
+			bookmarksCollapsed: false,
+			groupChatsExpanded: false,
+			sessionFilterOpen: false,
+		});
+		useSettingsStore.setState({
+			leftSidebarWidth: 256,
+			shortcuts: createMockShortcuts(),
+			ungroupedCollapsed: false,
+		});
+		useBatchStore.setState({ batchRunStates: {} });
+		initializedRef.current = true;
+	}
+
+	const sessions = useSessionStore((s) => s.sessions);
+	const groups = useSessionStore((s) => s.groups);
+	const activeSessionId = useSessionStore((s) => s.activeSessionId);
+	const setSessions = useSessionStore((s) => s.setSessions);
+	const setGroups = useSessionStore((s) => s.setGroups);
+	const setActiveSessionId = useSessionStore((s) => s.setActiveSessionId);
 	const [leftSidebarOpen, setLeftSidebarOpen] = useState(true);
 	const [leftSidebarWidth, setLeftSidebarWidth] = useState(256);
 	const [activeFocus, setActiveFocus] = useState<'sidebar' | 'main' | 'right'>('sidebar');
@@ -388,13 +424,20 @@ const IntegrationTestWrapper = ({
 	} | null>(null);
 
 	const activeSession = sessions.find((s) => s.id === activeSessionId) || null;
+	const previousActiveSessionIdRef = React.useRef(activeSessionId);
+
+	React.useEffect(() => {
+		if (previousActiveSessionIdRef.current !== activeSessionId) {
+			onSessionChange?.(activeSessionId);
+			previousActiveSessionIdRef.current = activeSessionId;
+		}
+	}, [activeSessionId, onSessionChange]);
 
 	const handleSessionSelect = useCallback(
 		(id: string) => {
 			setActiveSessionId(id);
-			onSessionChange?.(id);
 		},
-		[onSessionChange]
+		[setActiveSessionId]
 	);
 
 	const handleDeleteSession = useCallback(
