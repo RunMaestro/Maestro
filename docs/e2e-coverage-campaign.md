@@ -10,10 +10,10 @@ Measured inventory:
 
 | Area                              |              Current Count |
 | --------------------------------- | -------------------------: |
-| E2E spec files after batch 21     |                          7 |
-| Declared E2E tests after batch 21 |                        209 |
+| E2E spec files after batch 22     |                          7 |
+| Declared E2E tests after batch 22 |                        212 |
 | Last pre-campaign full E2E result |      91 passed, 49 skipped |
-| Latest full E2E validation        |     160 passed, 49 skipped |
+| Latest full E2E validation        |     163 passed, 49 skipped |
 | Renderer component files          |                        236 |
 | Renderer hook files               |                        123 |
 | Renderer store files              |                         11 |
@@ -48,7 +48,7 @@ That range is high enough to cover the app surface, but low enough to avoid a br
 | Tabs and tab overlays                                          |               2 |            95 | File-tab hover actions and close/reopen; AI tab rename/reorder/close variants next     |
 | File explorer and file operations                              |               5 |           110 | Filter, dotfiles, context preview, rename, delete; refresh and empty/error states next |
 | File preview and document rendering                            |               8 |           150 | Markdown, CSV, binary handoff, image, Mermaid, large file, search, edit/preview        |
-| History panel                                                  |               0 |            70 | Filtering, details, lookback, search, empty/loading/error states                       |
+| History panel                                                  |               3 |            70 | Detail navigation, delete confirmation/execution, graph lookback; empty/loading next   |
 | Auto Run                                                       |              91 |           220 | Existing suite plus skipped batch, image, error, multi-document, persistence flows     |
 | New Agent Wizard and inline wizard                             |              16 |           140 | Setup/resume/exit, directory, conversation, phase review, generated docs               |
 | Settings                                                       |               0 |           130 | General, Display, Theme, Shortcuts, Encore, SSH remotes, env vars, persistence         |
@@ -127,3 +127,5 @@ The first implementation batch should focus on infrastructure and high-ROI exist
 - Validation: `npx playwright test app-shell.spec.ts -g "TabBar|file tab hover|closes and reopens"` passed 3/3; `npx playwright test app-shell.spec.ts` passed 55/55; `npx playwright test` passed 155 with 49 existing intentional skips. Full-suite log: `/tmp/maestro-full-e2e-tabbar-batch20.log`.
 - 2026-05-29 batch 21: added File Explorer E2E coverage for file filtering, dotfile visibility toggling, context-menu preview actions, file rename, and delete confirmation/execution.
 - Validation: `npx playwright test app-shell.spec.ts -g "File Explorer"` passed 8/8; `npx playwright test app-shell.spec.ts` passed 60/60; `npx playwright test` passed 160 with 49 existing intentional skips. Full-suite log: `/tmp/maestro-full-e2e-file-explorer-batch21-rerun.log`.
+- 2026-05-29 batch 22: added History panel E2E coverage for detail modal Prev/Next navigation, delete confirmation/execution, and activity graph lookback context-menu selection.
+- Validation: `npx playwright test app-shell.spec.ts -g "History"` passed 10/10; `npx playwright test app-shell.spec.ts` passed 63/63; `npx playwright test` passed 163 with 49 existing intentional skips. Full-suite log: `/tmp/maestro-full-e2e-history-batch22-rerun.log`.

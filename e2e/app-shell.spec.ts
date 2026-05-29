@@ -565,6 +565,59 @@ test.describe('App shell seeded workbench', () => {
 		await expect(window.getByText(/Detailed Auto Run transcript/)).toBeHidden();
 	});
 
+	test('navigates History detail entries with Prev and Next controls', async () => {
+		await helpers.openRightPanelTab(window, 'History');
+		const historyPanel = window.locator('[data-tour="history-panel"]');
+		await historyPanel.getByText('Completed Auto Run setup checklist').first().click();
+
+		await expect(window.getByText(/Detailed Auto Run transcript/)).toBeVisible();
+		await window.getByRole('button', { name: 'Prev' }).click();
+		await expect(window.getByText(/Manual detail includes NOTES.md/)).toBeVisible();
+
+		await window.getByRole('button', { name: 'Next' }).click();
+		await expect(window.getByText(/Detailed Auto Run transcript/)).toBeVisible();
+	});
+
+	test('deletes a History entry from the detail modal after confirmation', async () => {
+		await helpers.openRightPanelTab(window, 'History');
+		const historyPanel = window.locator('[data-tour="history-panel"]');
+		await historyPanel.getByText('Failed generated docs sync').first().click();
+
+		await expect(window.getByText(/Detailed failure transcript/)).toBeVisible();
+		await window.getByTitle('Delete this history entry').click();
+		const cancelConfirm = window
+			.locator('.fixed')
+			.filter({ hasText: 'Delete History Entry' })
+			.last();
+		await expect(cancelConfirm.getByText('Delete History Entry')).toBeVisible();
+
+		await cancelConfirm.getByRole('button', { name: 'Cancel' }).click();
+		await expect(window.getByText(/Detailed failure transcript/)).toBeVisible();
+
+		await window.getByTitle('Delete this history entry').click();
+		const deleteConfirm = window
+			.locator('.fixed')
+			.filter({ hasText: 'Delete History Entry' })
+			.last();
+		await deleteConfirm.getByRole('button', { name: 'Delete' }).click();
+
+		await expect(window.getByText(/Detailed failure transcript/)).toBeHidden();
+		await expect(historyPanel.getByText('Failed generated docs sync')).toBeHidden();
+	});
+
+	test('changes the History activity graph lookback from its context menu', async () => {
+		await helpers.openRightPanelTab(window, 'History');
+		const historyPanel = window.locator('[data-tour="history-panel"]');
+		const activityGraph = historyPanel.locator('[title*="All time"]').first();
+
+		await expect(activityGraph).toBeVisible();
+		await activityGraph.click({ button: 'right' });
+		await expect(window.getByText('Lookback Period')).toBeVisible();
+
+		await window.getByRole('button', { name: '24 hours' }).click();
+		await expect(historyPanel.locator('[title*="24 hours: 2 auto, 1 user"]')).toBeVisible();
+	});
+
 	test('opens and closes the History panel guide', async () => {
 		await helpers.openRightPanelTab(window, 'History');
 		const historyPanel = window.locator('[data-tour="history-panel"]');
