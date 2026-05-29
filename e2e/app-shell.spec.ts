@@ -311,6 +311,91 @@ flowchart TD
 	};
 }
 
+function appendCodexStaticSurfaceLogs(seeded: ReturnType<typeof createSeededWorkbench>) {
+	const session = seeded.sessions[0];
+	const logs = session.aiLogs;
+	const baseTimestamp = session.createdAt + 10;
+	const errorTimestamp = baseTimestamp + 4;
+	const extraLogs = [
+		{
+			id: `ai-tab-thinking-static-${baseTimestamp}`,
+			timestamp: baseTimestamp,
+			source: 'thinking' as const,
+			text: 'Codex static thinking sentinel about safe terminal coverage.',
+		},
+		{
+			id: `ai-tab-tool-running-static-${baseTimestamp}`,
+			timestamp: baseTimestamp + 1,
+			source: 'tool' as const,
+			text: 'shell',
+			metadata: {
+				toolState: {
+					status: 'running' as const,
+					input: {
+						cmd: 'npm run lint -- --watch=false',
+					},
+				},
+			},
+		},
+		{
+			id: `ai-tab-tool-completed-static-${baseTimestamp}`,
+			timestamp: baseTimestamp + 2,
+			source: 'tool' as const,
+			text: 'read',
+			metadata: {
+				toolState: {
+					status: 'completed' as const,
+					input: {
+						path: 'src/renderer/App.tsx',
+					},
+				},
+			},
+		},
+		{
+			id: `ai-tab-tool-error-static-${baseTimestamp}`,
+			timestamp: baseTimestamp + 3,
+			source: 'tool' as const,
+			text: 'apply_patch',
+			metadata: {
+				toolState: {
+					status: 'error' as const,
+					input: {
+						description: 'failed patch sentinel',
+					},
+				},
+			},
+		},
+		{
+			id: `ai-tab-error-static-${baseTimestamp}`,
+			timestamp: errorTimestamp,
+			source: 'error' as const,
+			text: 'Codex static error sentinel: command failed before retry.',
+			agentError: {
+				type: 'agent_crashed' as const,
+				message: 'Codex historical error detail sentinel',
+				recoverable: true,
+				agentId: 'codex',
+				sessionId: session.id,
+				timestamp: errorTimestamp,
+				raw: {
+					exitCode: 1,
+					stderr: 'synthetic static error stderr',
+				},
+				parsedJson: {
+					code: 'synthetic_e2e_static_error',
+					phase: 'tool-rendering',
+				},
+			},
+		},
+	];
+
+	logs.push(...extraLogs);
+	const activeTabLogs = session.aiTabs[0]?.logs;
+	if (activeTabLogs && activeTabLogs !== logs) {
+		activeTabLogs.push(...extraLogs);
+	}
+}
+
 async function openSettings(window: Page) {
 	await window.keyboard.press('Meta+,');
 	const settingsDialog = window.getByRole('dialog', { name: 'Settings' });
@@ -4306,5 +4391,67 @@ test.describe('App shell seeded workbench', () => {
 		await expect(
 			openSpecPanel.getByText('Bundled proposal prompt for {{AGENT_NAME}}.')
 		).toBeVisible();
+	});
+});
+
+test.describe('Codex AI terminal static transcript surfaces', () => {
+	let window: Page;
+	let cleanupApp: (() => Promise<void>) | undefined;
+	let seededWorkbench: ReturnType<typeof createSeededWorkbench>;
+
+	test.beforeEach(async () => {
+		seededWorkbench = createSeededWorkbench();
+		appendCodexStaticSurfaceLogs(seededWorkbench);
+		const launched = await helpers.launchAppWithState({
+			homeDir: seededWorkbench.homeDir,
+			sessions: seededWorkbench.sessions,
+		});
+		window = launched.window;
+		cleanupApp = launched.cleanup;
+	});
+
+	test.afterEach(async () => {
+		await cleanupApp?.();
+		cleanupApp = undefined;
+	});
+
+	test('renders Codex thinking and tool transcript entries with status details', async () => {
+		await openSeededCodexAiTerminal(window);
+
+		const thinkingBlock = window.locator('[data-log-index="3"]');
+		await expect(
+			thinkingBlock.getByText('Codex static thinking sentinel about safe terminal coverage.')
+		).toBeVisible();
+		await expect(thinkingBlock.getByText('thinking', { exact: true })).toBeVisible();
+
+		const runningTool = window.locator('[data-log-index="4"]');
+		await expect(runningTool.getByText('shell', { exact: true })).toBeVisible();
+		await expect(runningTool.getByText('npm run lint -- --watch=false')).toBeVisible();
+		await expect(runningTool.getByText('●')).toBeVisible();
+
+		const completedTool = window.locator('[data-log-index="5"]');
+		await expect(completedTool.getByText('read', { exact: true })).toBeVisible();
+		await expect(completedTool.getByText('src/renderer/App.tsx')).toBeVisible();
+		await expect(completedTool.getByText('✓')).toBeVisible();
+
+		const failedTool = window.locator('[data-log-index="6"]');
+		await expect(failedTool.getByText('apply_patch', { exact: true })).toBeVisible();
+		await expect(failedTool.getByText('failed patch sentinel')).toBeVisible();
+	});
+
+	test('opens Codex historical error details from the transcript', async () => {
+		await openSeededCodexAiTerminal(window);
+
+		const errorBlock = window.locator('[data-log-index="7"]');
+		await expect(
+			errorBlock.getByText('Codex static error sentinel: command failed before retry.')
+		).toBeVisible();
+		await errorBlock.getByRole('button', { name: 'View Details' }).click();
+
+		const errorModal = modalRootByHeading(window, 'Agent Error');
+		await expect(errorModal).toBeVisible();
+		await expect(errorModal.getByText('Codex historical error detail sentinel')).toBeVisible();
+		await errorModal.getByRole('button', { name: 'Error Details (JSON)' }).click();
+		await expect(errorModal.getByText('synthetic_e2e_static_error')).toBeVisible();
 	});
 });
