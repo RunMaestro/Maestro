@@ -15,6 +15,78 @@ import path from 'path';
 import fs from 'fs';
 import os from 'os';
 
+const TINY_PNG = Buffer.from(
+	'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADggGOSHzRgAAAAABJRU5ErkJggg==',
+	'base64'
+);
+
+function createEditingWorkbenchSession(
+	projectDir: string,
+	autoRunFolder: string,
+	selectedFile = 'ImageDoc'
+) {
+	const now = Date.now();
+	const idSuffix = `${now}-${Math.random().toString(36).slice(2)}`;
+	const sessionId = `session-editing-${idSuffix}`;
+	const aiTabId = `ai-tab-editing-${idSuffix}`;
+	const selectedPath = path.join(autoRunFolder, `${selectedFile}.md`);
+
+	return {
+		id: sessionId,
+		name: 'Auto Run Editing E2E',
+		toolType: 'codex',
+		state: 'idle',
+		cwd: projectDir,
+		fullPath: projectDir,
+		projectRoot: projectDir,
+		createdAt: now,
+		aiLogs: [],
+		shellLogs: [],
+		workLog: [],
+		contextUsage: 0,
+		inputMode: 'ai',
+		aiPid: 0,
+		terminalPid: 0,
+		port: 0,
+		isLive: false,
+		changedFiles: [],
+		isGitRepo: false,
+		fileTree: [],
+		fileExplorerExpanded: [],
+		fileExplorerScrollPos: 0,
+		executionQueue: [],
+		activeTimeMs: 0,
+		fileTreeAutoRefreshInterval: 180,
+		aiTabs: [
+			{
+				id: aiTabId,
+				agentSessionId: null,
+				name: 'Main',
+				starred: false,
+				logs: [],
+				inputValue: '',
+				stagedImages: [],
+				createdAt: now,
+				state: 'idle',
+			},
+		],
+		activeTabId: aiTabId,
+		closedTabHistory: [],
+		filePreviewTabs: [],
+		activeFileTabId: null,
+		unifiedTabOrder: [{ type: 'ai', id: aiTabId }],
+		unifiedClosedTabHistory: [],
+		autoRunFolderPath: autoRunFolder,
+		autoRunSelectedFile: selectedFile,
+		autoRunContent: fs.readFileSync(selectedPath, 'utf-8'),
+		autoRunContentVersion: 1,
+		autoRunMode: 'preview',
+		autoRunEditScrollPos: 0,
+		autoRunPreviewScrollPos: 0,
+		autoRunCursorPosition: 0,
+	};
+}
+
 /**
  * Test suite for Auto Run editing E2E tests
  *
@@ -57,6 +129,28 @@ Some sample content for testing.
 
 		fs.writeFileSync(path.join(testAutoRunFolder, 'Empty Document.md'), '');
 	});
+
+	async function launchImageAttachmentWorkbench() {
+		const selectedFile = 'ImageDoc';
+		const imageFilename = `${selectedFile}-seed.png`;
+		const imagesDir = path.join(testAutoRunFolder, 'images');
+		fs.mkdirSync(imagesDir, { recursive: true });
+		fs.writeFileSync(
+			path.join(testAutoRunFolder, `${selectedFile}.md`),
+			`# Image Attachment Coverage
+
+![Seed attachment](images/${imageFilename})
+
+- [ ] Verify seeded attachment rendering
+`
+		);
+		fs.writeFileSync(path.join(imagesDir, imageFilename), TINY_PNG);
+
+		return helpers.launchAppWithState({
+			homeDir: testProjectDir,
+			sessions: [createEditingWorkbenchSession(testProjectDir, testAutoRunFolder, selectedFile)],
+		});
+	}
 
 	test.afterEach(async () => {
 		// Clean up the temporary directories
@@ -339,14 +433,39 @@ Some sample content for testing.
 			// 5. Verify image is inserted into content
 		});
 
-		test.skip('should display uploaded images in attachments section', async ({ window }) => {
-			// This test verifies the attachments preview area
-			// Requires an existing image in the Auto Run folder
+		test('should display uploaded images in attachments section', async () => {
+			const launched = await launchImageAttachmentWorkbench();
+			try {
+				await helpers.openRightPanelTab(launched.window, 'Auto Run');
+				await launched.window.getByTitle('Edit document').click();
+
+				await expect(launched.window.getByText('Attached Images (1)')).toBeVisible();
+				await expect(
+					launched.window.getByRole('img', { name: 'images/ImageDoc-seed.png' })
+				).toBeVisible();
+			} finally {
+				await launched.cleanup();
+			}
 		});
 
-		test.skip('should open lightbox when clicking image in preview', async ({ window }) => {
-			// This test verifies lightbox functionality
-			// Requires an image to be present in the document
+		test('should open lightbox when clicking image in preview', async () => {
+			const launched = await launchImageAttachmentWorkbench();
+			try {
+				await helpers.openRightPanelTab(launched.window, 'Auto Run');
+				const previewImage = launched.window.getByRole('img', { name: 'Seed attachment' });
+				await expect(previewImage).toBeVisible();
+				await launched.window.getByTitle('Click to enlarge: ImageDoc-seed.png').click();
+
+				await expect(
+					launched.window.getByRole('img', { name: 'images/ImageDoc-seed.png' })
+				).toBeVisible();
+				await expect(launched.window.getByTitle('Delete image (Delete key)')).toBeVisible();
+				await expect(
+					launched.window.getByTitle('Copy markdown reference (e.g., ![alt](path))')
+				).toBeVisible();
+			} finally {
+				await launched.cleanup();
+			}
 		});
 	});
 
