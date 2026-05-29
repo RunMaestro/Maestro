@@ -890,6 +890,11 @@ async function stubTerminalRunCommand(electronApp: ElectronApplication) {
 					return sendExit(7);
 				}
 
+				if (config.command.includes('terminal setup failure sentinel')) {
+					await new Promise((resolve) => setTimeout(resolve, 100));
+					throw new Error('shell setup sentinel');
+				}
+
 				if (config.command.trim() === 'pwd') {
 					event.sender.send('process:data', config.sessionId, `${config.cwd}\n`);
 					return sendExit(0);
@@ -2354,6 +2359,23 @@ test.describe('App shell seeded workbench', () => {
 		await expect(window.getByText('terminal live stderr sentinel')).toBeVisible();
 		await expect(window.getByText('Command exited with code 7')).toBeVisible();
 		await expect(window.getByText('Executing command...')).toBeHidden();
+	});
+
+	test('shows command terminal setup failures and clears busy state', async () => {
+		await stubTerminalRunCommand(electronApp);
+		const terminalInput = await openSeededTerminalAgent(window);
+		const inputArea = window.locator('[data-tour="input-area"]');
+
+		await terminalInput.fill('trigger terminal setup failure sentinel');
+		await inputArea.getByTitle('Run command (Enter)').click();
+
+		await expect(window.getByText(/Failed to run command.*shell setup sentinel/)).toBeVisible();
+		await expect(window.getByText('Executing command...')).toBeHidden();
+		await expect(terminalInput).toHaveValue('');
+		const calls = await getStubbedTerminalRunCommandCalls(electronApp);
+		await expect(calls.map((call) => call.command)).toContain(
+			'trigger terminal setup failure sentinel'
+		);
 	});
 
 	test('clears command terminal transcript without invoking the process runner', async () => {
