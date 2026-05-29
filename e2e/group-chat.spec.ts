@@ -17,6 +17,7 @@ function createGroupChatWorkbench() {
 	const reviewerSessionId = `session-group-reviewer-${idSuffix}`;
 	const implementerSessionId = `session-group-implementer-${idSuffix}`;
 	const chatId = `coverage-room-${idSuffix}`;
+	const archivedChatId = `archived-room-${idSuffix}`;
 
 	fs.mkdirSync(projectDir, { recursive: true });
 	fs.writeFileSync(path.join(projectDir, 'README.md'), '# Group Chat Coverage\n', 'utf-8');
@@ -181,6 +182,23 @@ function createGroupChatWorkbench() {
 					},
 				],
 			},
+			{
+				id: archivedChatId,
+				name: 'Archived Room',
+				createdAt: now - 1_000,
+				updatedAt: now - 1_000,
+				moderatorAgentId: 'codex',
+				moderatorSessionId: `group-chat-archived-${idSuffix}`,
+				archived: true,
+				participants: [],
+				messages: [
+					{
+						timestamp: new Date(now - 180_000).toISOString(),
+						from: 'moderator',
+						content: 'Archived room transcript remains readable.',
+					},
+				],
+			},
 		],
 	};
 }
@@ -209,6 +227,11 @@ test.describe('Seeded Group Chat workspace', () => {
 		await expect(window.getByText('Coverage Room').first()).toBeVisible();
 		await window.getByText('Coverage Room').first().click();
 		await expect(window.getByRole('button', { name: 'Group Chat: Coverage Room' })).toBeVisible();
+	}
+
+	async function openCoverageRoomContextMenu() {
+		await expect(window.getByText('Coverage Room').first()).toBeVisible();
+		await window.getByText('Coverage Room').first().click({ button: 'right' });
 	}
 
 	test('opens a persisted group chat and renders seeded messages', async () => {
@@ -261,5 +284,82 @@ test.describe('Seeded Group Chat workspace', () => {
 		await expect(
 			window.getByRole('button', { name: 'Group Chat: Renamed Coverage Room' })
 		).toBeVisible();
+	});
+
+	test('opens the edit modal from the Left Bar context menu', async () => {
+		await openCoverageRoomContextMenu();
+		await window.getByRole('button', { name: 'Edit' }).click();
+
+		const editDialog = window.getByRole('dialog', { name: 'Edit Group Chat' });
+		await expect(editDialog).toBeVisible();
+		await expect(editDialog.getByLabel('Chat Name')).toHaveValue('Coverage Room');
+		await editDialog.getByLabel('Chat Name').fill('Edited Coverage Room');
+		await editDialog.getByRole('button', { name: 'Save' }).click();
+
+		await expect(editDialog).toBeHidden();
+		await expect(window.getByText('Edited Coverage Room').first()).toBeVisible();
+	});
+
+	test('opens delete confirmation from the Left Bar context menu without deleting on cancel', async () => {
+		await openCoverageRoomContextMenu();
+		await window.getByRole('button', { name: 'Delete' }).click();
+
+		const deleteDialog = window.getByRole('dialog', { name: 'Delete Group Chat' });
+		await expect(deleteDialog).toBeVisible();
+		await expect(deleteDialog.getByText('Coverage Room')).toBeVisible();
+		await expect(deleteDialog.getByText(/permanently delete/)).toBeVisible();
+		await deleteDialog.getByRole('button', { name: 'Cancel' }).click();
+
+		await expect(deleteDialog).toBeHidden();
+		await expect(window.getByText('Coverage Room').first()).toBeVisible();
+	});
+
+	test('archives and restores a group chat from the Left Bar context menu', async () => {
+		await expect(window.getByTitle('Show 1 archived chat')).toBeVisible();
+		await openCoverageRoomContextMenu();
+		await window.getByRole('button', { name: 'Archive' }).click();
+
+		await expect(window.getByTitle('Show 2 archived chats')).toBeVisible();
+		await window.getByTitle('Show 2 archived chats').click();
+		await expect(window.getByText('Coverage Room').first()).toBeVisible();
+		await window.getByText('Coverage Room').first().click({ button: 'right' });
+		await window.getByRole('button', { name: 'Unarchive' }).click();
+
+		await expect(window.getByTitle('Hide archived chats')).toBeVisible();
+		await window.getByTitle('Hide archived chats').click();
+		await expect(window.getByTitle('Show 1 archived chat')).toBeVisible();
+		await expect(window.getByText('Archived Room')).toBeHidden();
+	});
+
+	test('shows archived chats and opens an archived room read-only transcript', async () => {
+		await window.getByTitle('Show 1 archived chat').click();
+		await window.getByText('Archived Room').click();
+
+		await expect(window.getByRole('button', { name: 'Group Chat: Archived Room' })).toBeVisible();
+		await expect(window.getByText('Archived room transcript remains readable.')).toBeVisible();
+		await expect(window.getByText('0 participants')).toBeVisible();
+	});
+
+	test('collapses and restores the group chat right panel', async () => {
+		await openCoverageRoom();
+
+		await window.getByTitle(/Collapse Panel/).click();
+		await expect(window.getByTitle('View task history')).toBeHidden();
+		await window.getByTitle(/Show right panel/).click();
+
+		await expect(window.getByTitle('View task history')).toBeVisible();
+		await expect(window.getByText('Reviewer').first()).toBeVisible();
+	});
+
+	test('changes the history lookback from the activity graph menu', async () => {
+		await openCoverageRoom();
+		await window.getByTitle('View task history').click();
+
+		await expect(window.getByTitle('24 hours (right-click to change)')).toBeVisible();
+		await window.getByTitle('24 hours (right-click to change)').click({ button: 'right' });
+		await window.getByRole('button', { name: 'All time' }).click();
+
+		await expect(window.getByTitle('All time (right-click to change)')).toBeVisible();
+		await expect(window.getByText('Reviewed seeded group chat plan')).toBeVisible();
 	});
 });
