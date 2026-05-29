@@ -11,9 +11,9 @@ Measured inventory:
 | Area                              |              Current Count |
 | --------------------------------- | -------------------------: |
 | E2E spec files after batch 1      |                          6 |
-| Declared E2E tests after batch 2  |                        147 |
+| Declared E2E tests after batch 3  |                        150 |
 | Last pre-campaign full E2E result |      91 passed, 49 skipped |
-| Latest full E2E validation        |      98 passed, 49 skipped |
+| Latest full E2E validation        |     101 passed, 49 skipped |
 | Renderer component files          |                        236 |
 | Renderer hook files               |                        123 |
 | Renderer store files              |                         11 |
@@ -89,3 +89,5 @@ The first implementation batch should focus on infrastructure and high-ROI exist
 - Validation: `npm run test:e2e -- app-shell.spec.ts` passed 4/4; `npx playwright test app-shell.spec.ts autorun-setup.spec.ts` passed 17 with 11 existing intentional skips; `npx playwright test` passed 95 with 49 existing intentional skips.
 - 2026-05-29 batch 2: extended `e2e/app-shell.spec.ts` to cover Left Bar Codex/Terminal agent switching, TabBar AI/file tab switching, and Tab Switcher filtering/selection.
 - Validation: `npx playwright test app-shell.spec.ts` passed 7/7; `npx playwright test` passed 98 with 49 existing intentional skips.
+- 2026-05-29 batch 3: extended `e2e/app-shell.spec.ts` to cover File Explorer folder expansion/collapse, opening markdown files from the tree, and File Preview in-file search.
+- Validation: `npx playwright test app-shell.spec.ts` passed 10/10; `npx playwright test` passed 101 with 49 existing intentional skips.

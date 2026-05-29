@@ -15,6 +15,7 @@ function createSeededWorkbench() {
 	const projectDir = path.join(homeDir, 'project');
 	const autoRunDir = path.join(projectDir, 'Auto Run Docs');
 	const previewFilePath = path.join(projectDir, 'README.md');
+	const notesFilePath = path.join(projectDir, 'NOTES.md');
 	const autoRunFilePath = path.join(autoRunDir, 'Phase 1.md');
 	const now = Date.now();
 
@@ -24,6 +25,14 @@ function createSeededWorkbench() {
 		`# File Preview Surface
 
 Preview prose for app shell E2E coverage.
+`,
+		'utf-8'
+	);
+	fs.writeFileSync(
+		notesFilePath,
+		`# Notes Preview Surface
+
+Searchable note body for file explorer coverage.
 `,
 		'utf-8'
 	);
@@ -288,5 +297,37 @@ test.describe('App shell seeded workbench', () => {
 
 		await expect(switcher).toBeHidden();
 		await expect(window.getByText('File Preview Surface')).toBeVisible();
+	});
+
+	test('expands and collapses folders in the File Explorer', async () => {
+		await helpers.openRightPanelTab(window, 'Files');
+		await window.getByTitle('Expand all folders').click();
+		await expect(window.getByText('Phase 1.md')).toBeVisible();
+
+		await window.getByTitle('Collapse all folders').click();
+		await expect(window.getByText('Phase 1.md')).toBeHidden();
+	});
+
+	test('opens a markdown file from the File Explorer into preview', async () => {
+		await helpers.openRightPanelTab(window, 'Files');
+		await window.getByText('NOTES.md').dblclick();
+
+		await expect(window.getByText('Notes Preview Surface')).toBeVisible();
+		await expect(
+			window.getByText('Searchable note body for file explorer coverage.')
+		).toBeVisible();
+	});
+
+	test('searches within the active file preview and closes search with Escape', async () => {
+		await window.getByTestId('file-preview-root').press('Control+f');
+		const searchInput = window.getByPlaceholder(/Search in file/);
+		await expect(searchInput).toBeVisible();
+
+		await searchInput.fill('Preview prose');
+		await expect(window.getByText('1/1')).toBeVisible();
+		await expect(window.getByTitle('Next match (Enter)')).toBeVisible();
+
+		await searchInput.press('Escape');
+		await expect(searchInput).toBeHidden();
 	});
 });

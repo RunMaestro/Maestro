@@ -1822,6 +1822,7 @@ export const FilePreview = React.memo(
 		return (
 			<div
 				ref={containerRef}
+				data-testid="file-preview-root"
 				className="flex flex-col h-full outline-none"
 				style={{ backgroundColor: theme.colors.bgMain }}
 				tabIndex={0}
