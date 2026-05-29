@@ -579,6 +579,22 @@ test.describe('App shell seeded workbench', () => {
 		await expect(usageDashboard).toBeHidden();
 	});
 
+	test('opens Agent Sessions from Quick Actions for the active Codex agent', async () => {
+		const quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('View Agent Sessions');
+		await quickActionsDialog.getByRole('button', { name: /View Agent Sessions/ }).click();
+
+		await expect(quickActionsDialog).toBeHidden();
+		await expect(window.getByText('Agent Sessions for E2E Workbench')).toBeVisible();
+		await expect(window.getByRole('button', { name: 'New Session' })).toBeVisible();
+		await expect(window.getByPlaceholder('Search all content...')).toBeVisible();
+		await expect(window.getByRole('checkbox', { name: 'Named' })).toBeVisible();
+		await expect(window.getByRole('checkbox', { name: 'Show All' })).toBeVisible();
+		await expect(window.getByText('No agent sessions found for this project')).toBeVisible();
+	});
+
 	test('shows an empty state for unmatched Quick Actions searches', async () => {
 		const quickActionsDialog = await openQuickActions(window);
 		const commandSearch = quickActionsDialog.getByPlaceholder('Type a command or jump to agent...');
