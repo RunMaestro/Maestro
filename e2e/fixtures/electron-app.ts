@@ -29,6 +29,7 @@ interface LaunchAppWithStateOptions {
 	sessions: unknown[];
 	groups?: unknown[];
 	groupChats?: SeededGroupChat[];
+	settings?: Record<string, unknown>;
 }
 
 interface LaunchAppWithStateResult {
@@ -185,6 +186,7 @@ export const helpers = {
 		sessions,
 		groups = [],
 		groupChats = [],
+		settings,
 	}: LaunchAppWithStateOptions): Promise<LaunchAppWithStateResult> {
 		const appPath = getMainPath();
 		const userDataPath = path.join(homeDir, 'user-data');
@@ -208,6 +210,13 @@ export const helpers = {
 			JSON.stringify({ groups }, null, '\t'),
 			'utf-8'
 		);
+		if (settings) {
+			fs.writeFileSync(
+				path.join(userDataPath, 'maestro-settings.json'),
+				JSON.stringify(settings, null, '\t'),
+				'utf-8'
+			);
+		}
 		if (groupChats.length > 0) {
 			const groupChatsDir = path.join(userDataPath, 'group-chats');
 			fs.mkdirSync(groupChatsDir, { recursive: true });

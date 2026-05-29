@@ -5,7 +5,7 @@
  * AI process.
  */
 import { test, expect, helpers } from './fixtures/electron-app';
-import type { Page } from '@playwright/test';
+import type { ElectronApplication, Page } from '@playwright/test';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -229,6 +229,36 @@ async function openDocumentGraphFromPreview(window: Page) {
 	return graphDialog;
 }
 
+async function openDirectorNotesFromQuickActions(window: Page) {
+	const quickActionsDialog = await openQuickActions(window);
+	await quickActionsDialog
+		.getByPlaceholder('Type a command or jump to agent...')
+		.fill("Director's Notes");
+	await quickActionsDialog.getByRole('button', { name: /Director's Notes/ }).click();
+
+	await expect(quickActionsDialog).toBeHidden();
+	const directorNotesDialog = window.getByRole('dialog', { name: "Director's Notes" });
+	await expect(directorNotesDialog).toBeVisible();
+	return directorNotesDialog;
+}
+
+async function stubDirectorNotesSynopsis(electronApp: ElectronApplication) {
+	await electronApp.evaluate(({ ipcMain }) => {
+		ipcMain.removeHandler('director-notes:generateSynopsis');
+		ipcMain.handle('director-notes:generateSynopsis', async () => ({
+			success: true,
+			synopsis:
+				'# Seeded Director Synopsis\n\nCodex-only deterministic synopsis for seeded history entries.',
+			generatedAt: Date.now(),
+			stats: {
+				agentCount: 1,
+				entryCount: 3,
+				durationMs: 0,
+			},
+		}));
+	});
+}
+
 async function closeDocumentGraph(window: Page) {
 	await window
 		.getByRole('dialog', { name: 'Document Graph' })
@@ -311,6 +341,7 @@ async function seedHistoryEntries(window: Page, projectPath: string, sessionId: 
 
 test.describe('App shell seeded workbench', () => {
 	let window: Page;
+	let electronApp: ElectronApplication;
 	let cleanupApp: (() => Promise<void>) | undefined;
 
 	test.beforeEach(async () => {
@@ -318,9 +349,20 @@ test.describe('App shell seeded workbench', () => {
 		const launched = await helpers.launchAppWithState({
 			homeDir: seeded.homeDir,
 			sessions: seeded.sessions,
+			settings: {
+				encoreFeatures: {
+					directorNotes: true,
+				},
+				directorNotesSettings: {
+					provider: '__maestro-e2e-disabled__',
+					defaultLookbackDays: 7,
+				},
+			},
 		});
 		window = launched.window;
+		electronApp = launched.electronApp;
 		cleanupApp = launched.cleanup;
+		await stubDirectorNotesSynopsis(electronApp);
 		await seedHistoryEntries(window, seeded.sessions[0].cwd, seeded.sessions[0].id);
 	});
 
@@ -808,6 +850,9 @@ test.describe('App shell seeded workbench', () => {
 		await expect(quickActionsDialog.getByText('No actions found')).toBeVisible();
 
 		await window.keyboard.press('Escape');
+		if (await quickActionsDialog.isVisible().catch(() => false)) {
+			await window.keyboard.press('Escape');
+		}
 		await expect(quickActionsDialog).toBeHidden();
 	});
 
@@ -887,6 +932,109 @@ test.describe('App shell seeded workbench', () => {
 		await expect(graphDialog).toBeVisible({ timeout: 15000 });
 		await expect(graphDialog.getByText(/2 documents/)).toBeVisible({ timeout: 15000 });
 		await closeDocumentGraph(window);
+	});
+
+	test("toggles Director's Notes in Encore settings and updates Quick Actions", async () => {
+		let settingsDialog = await openSettings(window);
+		await settingsDialog.locator('button[title="Encore Features"]').click();
+		await expect(settingsDialog.getByText('Default Lookback Period: 7 days')).toBeVisible();
+
+		await settingsDialog.getByRole('button', { name: /Director's Notes/ }).click();
+		await expect(settingsDialog.getByText('Default Lookback Period: 7 days')).toBeHidden();
+		await window.keyboard.press('Escape');
+		await expect(settingsDialog).toBeHidden();
+
+		let quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill("Director's Notes");
+		await expect(quickActionsDialog.getByText('No actions found')).toBeVisible();
+		await window.keyboard.press('Escape');
+		if (await quickActionsDialog.isVisible().catch(() => false)) {
+			await window.keyboard.press('Escape');
+		}
+		await expect(quickActionsDialog).toBeHidden();
+
+		settingsDialog = await openSettings(window);
+		await settingsDialog.locator('button[title="Encore Features"]').click();
+		await settingsDialog.getByRole('button', { name: /Director's Notes/ }).click();
+		await expect(settingsDialog.getByText('Default Lookback Period: 7 days')).toBeVisible();
+		await window.keyboard.press('Escape');
+		await expect(settingsDialog).toBeHidden();
+
+		quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill("Director's Notes");
+		await expect(
+			quickActionsDialog.getByRole('button', { name: /Director's Notes/ })
+		).toBeVisible();
+	});
+
+	test("opens Director's Notes unified history and filters seeded entries", async () => {
+		const directorNotesDialog = await openDirectorNotesFromQuickActions(window);
+
+		await expect(
+			directorNotesDialog.getByText('Manual note captured for project review')
+		).toBeVisible();
+		await expect(directorNotesDialog.getByText('Completed Auto Run setup checklist')).toBeVisible();
+		await expect(directorNotesDialog.getByText('Failed generated docs sync')).toBeVisible();
+
+		await directorNotesDialog.getByRole('button', { name: /AUTO/ }).click();
+		await expect(directorNotesDialog.getByText('Completed Auto Run setup checklist')).toBeHidden();
+		await expect(directorNotesDialog.getByText('Failed generated docs sync')).toBeHidden();
+		await expect(
+			directorNotesDialog.getByText('Manual note captured for project review')
+		).toBeVisible();
+
+		await directorNotesDialog.getByRole('button', { name: /USER/ }).click();
+		await expect(
+			directorNotesDialog.getByText('No entries match the current filters.')
+		).toBeVisible();
+	});
+
+	test("searches Director's Notes history and opens a detail modal", async () => {
+		const directorNotesDialog = await openDirectorNotesFromQuickActions(window);
+
+		await directorNotesDialog.getByTitle('Search entries (⌘F)').click();
+		const directorSearch = directorNotesDialog.getByPlaceholder(
+			'Filter by summary or agent name...'
+		);
+		await expect(directorSearch).toBeVisible();
+
+		await directorSearch.fill('manual');
+		await expect(
+			directorNotesDialog.getByText('Manual note captured for project review')
+		).toBeVisible();
+		await expect(directorNotesDialog.getByText('Completed Auto Run setup checklist')).toBeHidden();
+
+		await directorNotesDialog.getByText('Manual note captured for project review').click();
+		await expect(
+			window.getByText('Manual detail includes NOTES.md and a follow-up checklist.')
+		).toBeVisible();
+		await expect(window.getByText('E2E Workbench').last()).toBeVisible();
+
+		await window.getByRole('button', { name: 'Close', exact: true }).click();
+		await expect(
+			window.getByText('Manual detail includes NOTES.md and a follow-up checklist.')
+		).toBeHidden();
+	});
+
+	test("opens Director's Notes help and deterministic AI overview tabs", async () => {
+		const directorNotesDialog = await openDirectorNotesFromQuickActions(window);
+
+		await directorNotesDialog.getByRole('button', { name: 'Help' }).click();
+		await expect(directorNotesDialog.getByText("What are Director's Notes?")).toBeVisible();
+		await expect(directorNotesDialog.getByText('Keyboard Shortcuts')).toBeVisible();
+
+		const aiOverviewTab = directorNotesDialog.getByRole('button', { name: 'AI Overview' });
+		await expect(aiOverviewTab).toBeEnabled({ timeout: 15000 });
+		await aiOverviewTab.click();
+		await expect(directorNotesDialog.getByText('Seeded Director Synopsis')).toBeVisible();
+		await expect(directorNotesDialog.getByText('3 history entries')).toBeVisible();
+
+		await window.keyboard.press('Escape');
+		await expect(directorNotesDialog).toBeHidden();
 	});
 
 	test('navigates core Settings tabs', async () => {

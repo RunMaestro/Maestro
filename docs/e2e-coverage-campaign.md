@@ -10,10 +10,10 @@ Measured inventory:
 
 | Area                              |              Current Count |
 | --------------------------------- | -------------------------: |
-| E2E spec files after batch 12     |                          7 |
-| Declared E2E tests after batch 14 |                        186 |
+| E2E spec files after batch 15     |                          7 |
+| Declared E2E tests after batch 15 |                        190 |
 | Last pre-campaign full E2E result |      91 passed, 49 skipped |
-| Latest full E2E validation        |     137 passed, 49 skipped |
+| Latest full E2E validation        |     141 passed, 49 skipped |
 | Renderer component files          |                        236 |
 | Renderer hook files               |                        123 |
 | Renderer store files              |                         11 |
@@ -58,7 +58,7 @@ That range is high enough to cover the app surface, but low enough to avoid a br
 | Document graph                                                 |               0 |            90 | Graph build, node selection, preview, settings, layout, persistence                  |
 | Playbooks, marketplace, Spec Kit, OpenSpec                     |               0 |            95 | Local/import/export/search flows; network paths mocked/gated                         |
 | Symphony, leaderboard, achievements                            |               0 |            90 | Static, auth/error, modal, history and CTA flows                                     |
-| Director notes and prompt composer                             |               0 |            55 | Create/edit/delete, insertion, keyboard, empty/error states                          |
+| Director notes and prompt composer                             |               4 |            55 | Director's Notes settings, launch, history, help, AI overview; prompt composer open  |
 | Debug/about/update/app info/agent error modals                 |               0 |            65 | Modal open/close, copy/report, expected error paths                                  |
 | Mobile/web bridge                                              |               0 |           130 | Web/mobile shell, session list, terminal, Auto Run, offline queue, websocket states  |
 | Accessibility smoke and destructive-action confirmations       |               0 |            90 | Keyboard paths, escape behavior, focus restore, confirmation flows                   |
@@ -113,3 +113,5 @@ The first implementation batch should focus on infrastructure and high-ROI exist
 - Validation: `npx playwright test group-chat.spec.ts` passed 9/9; `npx playwright test` passed 135 with 49 existing intentional skips.
 - 2026-05-29 batch 14: added Document Graph E2E coverage from the markdown file preview toolbar, including graph loading from linked seeded markdown, search/clear, layout switching, neighbor-depth slider, external-link mode, help panel, close confirmation, and Quick Actions re-open of the last graph.
 - Validation: `npx playwright test app-shell.spec.ts -g "Document Graph"` passed 2/2; `npx playwright test app-shell.spec.ts` passed 37/37; `npx playwright test` passed 137 with 49 existing intentional skips.
+- 2026-05-29 batch 15: added Director's Notes E2E coverage for Encore settings enable/disable behavior, Quick Actions availability, unified history rendering and filters, search/detail modal flow, help tab, and deterministic AI Overview content. Added a seeded settings hook to the Electron launch helper and stubbed only the synopsis IPC handler during these tests to avoid live non-Codex provider execution.
+- Validation: `npx playwright test app-shell.spec.ts -g "Director"` passed 4/4; `npx playwright test app-shell.spec.ts` passed 41/41; `npx playwright test` passed 141 with 49 existing intentional skips. Full-suite log: `/tmp/maestro-full-e2e-director-notes-batch15.log`.
