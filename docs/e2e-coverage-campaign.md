@@ -10,10 +10,10 @@ Measured inventory:
 
 | Area                              |              Current Count |
 | --------------------------------- | -------------------------: |
-| E2E spec files after batch 32     |                          7 |
-| Declared E2E tests after batch 32 |                        240 |
+| E2E spec files after batch 33     |                          7 |
+| Declared E2E tests after batch 33 |                        242 |
 | Last pre-campaign full E2E result |      91 passed, 49 skipped |
-| Latest full E2E validation        |     191 passed, 49 skipped |
+| Latest full E2E validation        |     193 passed, 49 skipped |
 | Renderer component files          |                        236 |
 | Renderer hook files               |                        123 |
 | Renderer store files              |                         11 |
@@ -58,7 +58,7 @@ That range is high enough to cover the app surface, but low enough to avoid a br
 | Auto Run                                                       |             90 |           260 | Existing suite plus skipped batch, image, error, multi-document, persistence flows     |
 | New Agent Wizard and inline wizard                             |             13 |           190 | Setup/resume/exit, directory, conversation, phase review, generated docs               |
 | Settings                                                       |             14 |           190 | General, Display, notifications, AI commands, global env vars, and SSH remote settings |
-| Git, worktrees, PR, diff/log, Gist                             |             11 |           160 | Local diff/log, worktree config, and stubbed file-preview Gist publish/error covered   |
+| Git, worktrees, PR, diff/log, Gist                             |             13 |           160 | Local diff/log, worktree config, Gist publish/error, repository browser covered        |
 | Group chat                                                     |             10 |           140 | Creation, participants, Codex-only routing, history, errors, deletion                  |
 | Usage dashboard and stats                                      |              4 |           125 | Overview metrics, chart sections, Activity/Auto Run tabs, keyboard navigation          |
 | Document graph                                                 |              2 |           130 | Graph build, node selection, preview, settings, layout, persistence                    |
@@ -156,3 +156,5 @@ The first implementation batch should focus on infrastructure and high-ROI exist
 - Validation: `npx playwright test app-shell.spec.ts -g "Git|worktree"` passed 9/9; `npx playwright test app-shell.spec.ts` passed 89/89; `npx playwright test` passed 189 with 49 existing intentional skips; `npm run lint` passed. Full-suite log: `/tmp/maestro-full-e2e-worktree-batch31.log`.
 - 2026-05-29 batch 32: added deterministic GitHub Gist E2E coverage for file-preview publish success, saved published-gist details, re-publish navigation, and publish-error handling through stubbed gh CLI IPC.
 - Validation: `npx playwright test app-shell.spec.ts -g "Gist"` passed 2/2; `npx playwright test app-shell.spec.ts` passed 91/91; `npx playwright test` passed 191 with 49 existing intentional skips; `npm run lint` passed. Full-suite log: `/tmp/maestro-full-e2e-gist-batch32.log`.
+- 2026-05-29 batch 33: added deterministic repository-browser E2E coverage for Open Repository in Browser no-remote error handling and configured-origin browser URL conversion through a stubbed shell openExternal IPC handler.
+- Validation: `npx playwright test app-shell.spec.ts -g "repository"` passed 2/2; `npx playwright test app-shell.spec.ts -g "configured Git remote"` passed 1/1; `npx playwright test app-shell.spec.ts` passed 93/93; `npx playwright test` passed 193 with 49 existing intentional skips; `npm run lint` passed. Full-suite log: `/tmp/maestro-full-e2e-open-repo-batch33.log`.

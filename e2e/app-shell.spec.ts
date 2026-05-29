@@ -435,6 +435,15 @@ async function openGitLogFromQuickActions(window: Page) {
 	return gitLogDialog;
 }
 
+async function openRepositoryInBrowserFromQuickActions(window: Page) {
+	const quickActionsDialog = await openQuickActions(window);
+	await quickActionsDialog
+		.getByPlaceholder('Type a command or jump to agent...')
+		.fill('Open Repository in Browser');
+	await quickActionsDialog.getByRole('button', { name: /Open Repository in Browser/ }).click();
+	await expect(quickActionsDialog).toBeHidden();
+}
+
 function modalRootByHeading(window: Page, heading: string) {
 	return window
 		.getByText(heading, { exact: true })
@@ -638,6 +647,28 @@ async function stubGistPublishing(
 	await window.reload({ waitUntil: 'domcontentloaded' });
 	await window.waitForTimeout(500);
 	await expect(window.getByText('File Preview Surface')).toBeVisible();
+}
+
+async function stubOpenExternal(electronApp: ElectronApplication) {
+	await electronApp.evaluate(({ ipcMain }) => {
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eOpenExternalUrl?: string;
+		};
+		state.__maestroE2eOpenExternalUrl = undefined;
+		ipcMain.removeHandler('shell:openExternal');
+		ipcMain.handle('shell:openExternal', async (_event, url: string) => {
+			state.__maestroE2eOpenExternalUrl = url;
+		});
+	});
+}
+
+async function getStubbedOpenExternalUrl(electronApp: ElectronApplication) {
+	return electronApp.evaluate(() => {
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eOpenExternalUrl?: string;
+		};
+		return state.__maestroE2eOpenExternalUrl ?? null;
+	});
 }
 
 async function closeQuickActions(window: Page, quickActionsDialog: Locator) {
@@ -1463,6 +1494,29 @@ test.describe('App shell seeded workbench', () => {
 
 		await gitLogDialog.getByRole('button', { name: 'Close (Esc)' }).click();
 		await expect(gitLogDialog).toBeHidden();
+	});
+
+	test('shows a Git remote error when opening a repository without origin', async () => {
+		await openRepositoryInBrowserFromQuickActions(window);
+
+		await expect(window.getByText('No Remote URL')).toBeVisible();
+		await expect(window.getByText('Could not find a remote URL for this repository')).toBeVisible();
+	});
+
+	test('opens the browser URL for a configured Git remote from Quick Actions', async () => {
+		await stubOpenExternal(electronApp);
+		runGit(seededWorkbench.sessions[0].cwd, [
+			'remote',
+			'add',
+			'origin',
+			'git@github.com:RunMaestro/Maestro.git',
+		]);
+
+		await openRepositoryInBrowserFromQuickActions(window);
+
+		await expect
+			.poll(() => getStubbedOpenExternalUrl(electronApp))
+			.toBe('https://github.com/RunMaestro/Maestro');
 	});
 
 	test('configures Git worktree directory from the Left Bar context menu', async () => {
