@@ -10,10 +10,10 @@ Measured inventory:
 
 | Area                              |              Current Count |
 | --------------------------------- | -------------------------: |
-| E2E spec files after batch 41     |                          7 |
-| Declared E2E tests after batch 41 |                        255 |
+| E2E spec files after batch 42     |                          7 |
+| Declared E2E tests after batch 42 |                        255 |
 | Last pre-campaign full E2E result |      91 passed, 49 skipped |
-| Latest full E2E validation        |     213 passed, 42 skipped |
+| Latest full E2E validation        |     216 passed, 39 skipped |
 | Renderer component files          |                        236 |
 | Renderer hook files               |                        123 |
 | Renderer store files              |                         11 |
@@ -56,7 +56,7 @@ That range is high enough to cover the app surface, but low enough to avoid a br
 | File preview and document rendering                            |              7 |           180 | Markdown, CSV, binary handoff, image, Mermaid, large file, search, edit/preview                                                              |
 | History panel                                                  |              7 |            95 | Detail navigation, delete confirmation/execution, graph lookback; empty/loading next                                                         |
 | Auto Run                                                       |             94 |           260 | Existing suite plus deterministic batch document selection, counts, and loop configuration; live-run, image, error, persistence flows remain |
-| New Agent Wizard and inline wizard                             |             16 |           190 | Setup/resume/exit, directory, conversation, phase review, generated docs                                                                     |
+| New Agent Wizard and inline wizard                             |             19 |           190 | Setup/resume/exit, directory, conversation, phase review, generated docs                                                                     |
 | Settings                                                       |             14 |           190 | General, Display, notifications, AI commands, global env vars, and SSH remote settings                                                       |
 | Git, worktrees, PR, diff/log, Gist                             |             17 |           160 | Diff/log widget, worktree config, Gist, repository browser, PR modal covered                                                                 |
 | Group chat                                                     |             10 |           140 | Creation, participants, Codex-only routing, history, errors, deletion                                                                        |
@@ -174,3 +174,5 @@ The first implementation batch should focus on infrastructure and high-ROI exist
 - Validation: `npx playwright test autorun-batch.spec.ts -g "enable loop controls|finite max loops"` passed 2/2; `npx playwright test autorun-batch.spec.ts` passed 20 with 24 existing intentional skips; `npx playwright test` passed 210 with 45 existing intentional skips; `npm run lint` passed. Full-suite log: `/tmp/maestro-full-e2e-autorun-batch-loop-batch40.log`.
 - 2026-05-29 batch 41: converted deterministic setup wizard exit/resume placeholders from skipped to active E2E coverage with Codex selected, covering exit confirmation after step 1, save-and-resume state persistence, resume prompt contents, start-fresh reset, and quit-without-saving state clearing. The new E2E coverage exposed and fixed a resume modal bug where Start Fresh cleared persisted state but reopened stale in-memory wizard state.
 - Validation: `npx playwright test autorun-setup.spec.ts -g "confirmation when exiting|Exit & Save Progress|Just Quit"` passed 3/3; `npx playwright test autorun-setup.spec.ts` passed 16 with 8 existing intentional skips; `npx playwright test` passed 213 with 42 existing intentional skips; `npm run lint` passed. Full-suite log: `/tmp/maestro-full-e2e-autorun-setup-exit-batch41-rerun.log`.
+- 2026-05-29 batch 42: converted deterministic setup wizard directory-selection placeholders from skipped to active E2E coverage with Codex selected, covering valid local path entry, invalid path validation, disabled Continue state, and Git repository detection through a temporary local repo.
+- Validation: `npx playwright test autorun-setup.spec.ts -g "entering a project directory|validate selected directory|detect git repository"` passed 3/3; `npx playwright test autorun-setup.spec.ts` passed 19 with 5 existing intentional skips; `npx playwright test` passed 216 with 39 existing intentional skips; `npm run lint` passed. Full-suite log: `/tmp/maestro-full-e2e-autorun-setup-directory-batch42.log`.

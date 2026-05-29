@@ -12,9 +12,18 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
 import { test, expect, helpers } from './fixtures/electron-app';
 import type { Page } from '@playwright/test';
+import { execFileSync } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
+
+function runGit(cwd: string, args: string[]): void {
+	execFileSync('git', args, {
+		cwd,
+		stdio: 'ignore',
+		env: process.env,
+	});
+}
 
 async function selectClaudeCodeAgent(window: Page, agentName = 'E2E Agent'): Promise<void> {
 	const claudeAgent = window.getByRole('button', { name: /^Claude Code$/ });
@@ -175,29 +184,39 @@ test.describe('Auto Run Setup Wizard', () => {
 	});
 
 	test.describe('Directory Selection Screen', () => {
-		test.skip('should allow selecting a project directory', async ({ window }) => {
-			// This test requires dialog mocking
-			// Skip until dialog mocking is implemented
-			// Steps would be:
-			// 1. Navigate to directory selection step
-			// 2. Click "Choose Directory" button
-			// 3. (Mock) Select testProjectDir
-			// 4. Verify the path is displayed
+		test('should allow entering a project directory', async ({ window }) => {
+			await advanceCodexWizardToDirectorySelection(window);
+
+			await window.locator('#directory-path').fill(testProjectDir);
+
+			await expect(window.getByText('Regular Directory')).toBeVisible();
+			await expect(window.getByText('Not a Git repository.')).toBeVisible();
+			await expect(window.getByRole('button', { name: 'Continue' })).toBeEnabled();
 		});
 
-		test.skip('should validate selected directory is valid', async ({ window }) => {
-			// This test requires dialog mocking
-			// Would verify:
-			// - Invalid paths show error
-			// - Non-existent paths show warning
-			// - Valid paths allow proceeding
+		test('should validate selected directory is valid', async ({ window }) => {
+			await advanceCodexWizardToDirectorySelection(window);
+
+			const missingPath = path.join(testProjectDir, 'missing-directory');
+			await window.locator('#directory-path').fill(missingPath);
+
+			await expect(window.locator('#directory-error')).toHaveText(
+				'Directory not found. Please check the path exists.'
+			);
+			await expect(window.getByRole('button', { name: 'Continue' })).toBeDisabled();
 		});
 
-		test.skip('should detect git repository status', async ({ window }) => {
-			// Initialize git in test directory
-			// Navigate to directory selection
-			// Select the directory
-			// Verify git status is detected and displayed
+		test('should detect git repository status', async ({ window }) => {
+			runGit(testProjectDir, ['init']);
+			await advanceCodexWizardToDirectorySelection(window);
+
+			await window.locator('#directory-path').fill(testProjectDir);
+
+			await expect(
+				window.locator('p').filter({ hasText: 'Git Repository Detected' })
+			).toBeVisible();
+			await expect(window.getByText('Version control features like branch tracking')).toBeVisible();
+			await expect(window.getByRole('button', { name: 'Continue' })).toBeEnabled();
 		});
 	});
 
