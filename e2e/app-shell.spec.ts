@@ -18,6 +18,12 @@ function createSeededWorkbench() {
 	const notesFilePath = path.join(projectDir, 'NOTES.md');
 	const autoRunFilePath = path.join(autoRunDir, 'Phase 1.md');
 	const now = Date.now();
+	const idSuffix = `${now}-${Math.random().toString(36).slice(2)}`;
+	const codexSessionId = `session-shell-codex-${idSuffix}`;
+	const terminalSessionId = `session-shell-terminal-${idSuffix}`;
+	const aiTabId = `ai-tab-shell-${idSuffix}`;
+	const fileTabId = `file-tab-shell-${idSuffix}`;
+	const terminalTabId = `terminal-tab-shell-${idSuffix}`;
 
 	fs.mkdirSync(autoRunDir, { recursive: true });
 	fs.writeFileSync(
@@ -50,7 +56,7 @@ Searchable note body for file explorer coverage.
 		homeDir,
 		sessions: [
 			{
-				id: 'session-shell-codex',
+				id: codexSessionId,
 				name: 'E2E Workbench',
 				toolType: 'codex',
 				state: 'idle',
@@ -60,7 +66,7 @@ Searchable note body for file explorer coverage.
 				createdAt: now,
 				aiLogs: [
 					{
-						id: 'ai-log-shell',
+						id: `ai-log-shell-${idSuffix}`,
 						timestamp: now,
 						source: 'stdout',
 						text: '# AI Terminal\n\nCodex seeded response is visible.',
@@ -84,13 +90,13 @@ Searchable note body for file explorer coverage.
 				fileTreeAutoRefreshInterval: 180,
 				aiTabs: [
 					{
-						id: 'ai-tab-shell',
+						id: aiTabId,
 						agentSessionId: null,
 						name: 'Main',
 						starred: false,
 						logs: [
 							{
-								id: 'ai-tab-log-shell',
+								id: `ai-tab-log-shell-${idSuffix}`,
 								timestamp: now,
 								source: 'stdout',
 								text: '# AI Terminal\n\nCodex seeded response is visible.',
@@ -102,11 +108,11 @@ Searchable note body for file explorer coverage.
 						state: 'idle',
 					},
 				],
-				activeTabId: 'ai-tab-shell',
+				activeTabId: aiTabId,
 				closedTabHistory: [],
 				filePreviewTabs: [
 					{
-						id: 'file-tab-shell',
+						id: fileTabId,
 						path: previewFilePath,
 						name: 'README',
 						extension: '.md',
@@ -118,10 +124,10 @@ Searchable note body for file explorer coverage.
 						lastModified: now,
 					},
 				],
-				activeFileTabId: 'file-tab-shell',
+				activeFileTabId: fileTabId,
 				unifiedTabOrder: [
-					{ type: 'ai', id: 'ai-tab-shell' },
-					{ type: 'file', id: 'file-tab-shell' },
+					{ type: 'ai', id: aiTabId },
+					{ type: 'file', id: fileTabId },
 				],
 				unifiedClosedTabHistory: [],
 				autoRunFolderPath: autoRunDir,
@@ -134,7 +140,7 @@ Searchable note body for file explorer coverage.
 				autoRunCursorPosition: 0,
 			},
 			{
-				id: 'session-shell-terminal',
+				id: terminalSessionId,
 				name: 'E2E Terminal',
 				toolType: 'terminal',
 				state: 'idle',
@@ -145,7 +151,7 @@ Searchable note body for file explorer coverage.
 				aiLogs: [],
 				shellLogs: [
 					{
-						id: 'shell-log-terminal',
+						id: `shell-log-terminal-${idSuffix}`,
 						timestamp: now,
 						source: 'system',
 						text: 'terminal seeded output is visible',
@@ -168,7 +174,7 @@ Searchable note body for file explorer coverage.
 				fileTreeAutoRefreshInterval: 180,
 				aiTabs: [
 					{
-						id: 'terminal-tab-shell',
+						id: terminalTabId,
 						agentSessionId: null,
 						name: 'Terminal',
 						starred: false,
@@ -179,11 +185,11 @@ Searchable note body for file explorer coverage.
 						state: 'idle',
 					},
 				],
-				activeTabId: 'terminal-tab-shell',
+				activeTabId: terminalTabId,
 				closedTabHistory: [],
 				filePreviewTabs: [],
 				activeFileTabId: null,
-				unifiedTabOrder: [{ type: 'ai', id: 'terminal-tab-shell' }],
+				unifiedTabOrder: [{ type: 'ai', id: terminalTabId }],
 				unifiedClosedTabHistory: [],
 			},
 		],
@@ -207,6 +213,74 @@ async function openQuickActions(window: Page) {
 	return quickActionsDialog;
 }
 
+async function seedHistoryEntries(window: Page, projectPath: string, sessionId: string) {
+	const now = Date.now();
+
+	await window.evaluate(
+		async ({ projectPath, sessionId, now }) => {
+			const existingEntries = await window.maestro.history.getAll(undefined, sessionId);
+			for (const entry of existingEntries) {
+				await window.maestro.history.delete(entry.id, sessionId);
+			}
+
+			const entries = [
+				{
+					id: 'history-auto-failure',
+					type: 'AUTO' as const,
+					timestamp: now - 120_000,
+					summary: 'Failed generated docs sync',
+					fullResponse:
+						'Detailed failure transcript includes a recoverable generated docs sync error.',
+					projectPath,
+					sessionId,
+					sessionName: 'E2E Workbench',
+					agentSessionId: 'codex-history-failure',
+					success: false,
+					elapsedTimeMs: 42_000,
+				},
+				{
+					id: 'history-auto-success',
+					type: 'AUTO' as const,
+					timestamp: now - 60_000,
+					summary: 'Completed Auto Run setup checklist',
+					fullResponse: 'Detailed Auto Run transcript mentions Phase 1.md and setup validation.',
+					projectPath,
+					sessionId,
+					sessionName: 'E2E Workbench',
+					agentSessionId: 'codex-history-success',
+					success: true,
+					validated: false,
+					elapsedTimeMs: 62_000,
+					usageStats: {
+						inputTokens: 1200,
+						outputTokens: 450,
+						cacheReadInputTokens: 100,
+						cacheCreationInputTokens: 50,
+						totalCostUsd: 0.03,
+						contextWindow: 128000,
+					},
+				},
+				{
+					id: 'history-user-note',
+					type: 'USER' as const,
+					timestamp: now,
+					summary: 'Manual note captured for project review',
+					fullResponse: 'Manual detail includes NOTES.md and a follow-up checklist.',
+					projectPath,
+					sessionId,
+					sessionName: 'E2E Workbench',
+					agentSessionId: 'codex-history-user',
+				},
+			];
+
+			for (const entry of entries) {
+				await window.maestro.history.add(entry);
+			}
+		},
+		{ projectPath, sessionId, now }
+	);
+}
+
 test.describe('App shell seeded workbench', () => {
 	let window: Page;
 	let cleanupApp: (() => Promise<void>) | undefined;
@@ -219,6 +293,7 @@ test.describe('App shell seeded workbench', () => {
 		});
 		window = launched.window;
 		cleanupApp = launched.cleanup;
+		await seedHistoryEntries(window, seeded.sessions[0].cwd, seeded.sessions[0].id);
 	});
 
 	test.afterEach(async () => {
@@ -254,6 +329,70 @@ test.describe('App shell seeded workbench', () => {
 
 		await helpers.openRightPanelTab(window, 'Files');
 		await expect(window.getByText('File Preview Surface')).toBeVisible();
+	});
+
+	test('renders seeded History entries and type filters', async () => {
+		await helpers.openRightPanelTab(window, 'History');
+		const historyPanel = window.locator('[data-tour="history-panel"]');
+
+		await expect(historyPanel.getByText('Manual note captured for project review')).toBeVisible();
+		await expect(historyPanel.getByText('Completed Auto Run setup checklist')).toBeVisible();
+		await expect(historyPanel.getByText('Failed generated docs sync')).toBeVisible();
+
+		await historyPanel.getByRole('button', { name: /AUTO/ }).click();
+		await expect(historyPanel.getByText('Completed Auto Run setup checklist')).toBeHidden();
+		await expect(historyPanel.getByText('Manual note captured for project review')).toBeVisible();
+
+		await historyPanel.getByRole('button', { name: /USER/ }).click();
+		await expect(historyPanel.getByText('No entries match the selected filters.')).toBeVisible();
+	});
+
+	test('searches History entries with the keyboard filter', async () => {
+		await helpers.openRightPanelTab(window, 'History');
+		const historyPanel = window.locator('[data-tour="history-panel"]');
+		await expect(historyPanel.getByText('Manual note captured for project review')).toBeVisible();
+
+		await historyPanel.locator('[tabindex="0"]').focus();
+		await window.keyboard.press('Control+f');
+		const historyFilter = historyPanel.getByPlaceholder('Filter history...');
+		await expect(historyFilter).toBeVisible();
+
+		await historyFilter.fill('manual');
+		await expect(historyPanel.getByText('1 result')).toBeVisible();
+		await expect(historyPanel.getByText('Manual note captured for project review')).toBeVisible();
+		await expect(historyPanel.getByText('Completed Auto Run setup checklist')).toBeHidden();
+
+		await historyFilter.press('Escape');
+		await expect(historyFilter).toBeHidden();
+	});
+
+	test('opens History detail and toggles validation state', async () => {
+		await helpers.openRightPanelTab(window, 'History');
+		const historyPanel = window.locator('[data-tour="history-panel"]');
+		await historyPanel.getByText('Completed Auto Run setup checklist').first().click();
+
+		await expect(window.getByText(/Detailed Auto Run transcript/)).toBeVisible();
+		await expect(window.getByTitle('Mark as human-validated')).toBeVisible();
+
+		await window.getByTitle('Mark as human-validated').click();
+		await expect(window.getByTitle('Mark as not validated')).toBeVisible();
+		await expect(window.getByText('$0.03').last()).toBeVisible();
+
+		await window.getByRole('button', { name: 'Close', exact: true }).click();
+		await expect(window.getByText(/Detailed Auto Run transcript/)).toBeHidden();
+	});
+
+	test('opens and closes the History panel guide', async () => {
+		await helpers.openRightPanelTab(window, 'History');
+		const historyPanel = window.locator('[data-tour="history-panel"]');
+
+		await historyPanel.getByTitle('History panel help').click();
+		const guideDialog = window.getByRole('dialog', { name: 'History Panel Guide' });
+		await expect(guideDialog).toBeVisible();
+		await expect(guideDialog.getByText('Entry Types')).toBeVisible();
+
+		await guideDialog.getByRole('button', { name: 'Got it' }).click();
+		await expect(guideDialog).toBeHidden();
 	});
 
 	test('opens and closes settings and Auto Run guide modals', async () => {
