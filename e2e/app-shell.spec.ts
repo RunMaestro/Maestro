@@ -515,6 +515,97 @@ test.describe('App shell seeded workbench', () => {
 		await expect(settingsDialog.locator('button[title="General"]')).toBeVisible();
 	});
 
+	test('opens targeted Settings sections from Quick Actions', async () => {
+		let quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('Change Theme');
+		await quickActionsDialog.getByRole('button', { name: /Change Theme/ }).click();
+
+		let settingsDialog = window.getByRole('dialog', { name: 'Settings' });
+		await expect(settingsDialog).toBeVisible();
+		await expect(settingsDialog.getByRole('group', { name: 'Theme picker' })).toBeVisible();
+		await window.keyboard.press('Escape');
+		await expect(settingsDialog).toBeHidden();
+
+		quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('Configure Global Environment Variables');
+		await quickActionsDialog
+			.getByRole('button', { name: /Configure Global Environment Variables/ })
+			.click();
+
+		settingsDialog = window.getByRole('dialog', { name: 'Settings' });
+		await expect(settingsDialog).toBeVisible();
+		await expect(settingsDialog.getByText('Global Environment Variables')).toBeVisible();
+		await expect(settingsDialog.getByText('System Log Level')).toBeVisible();
+	});
+
+	test('creates a group from Quick Actions', async () => {
+		const quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('Create New Group');
+		await quickActionsDialog.getByRole('button', { name: /Create New Group/ }).click();
+
+		await expect(quickActionsDialog).toBeHidden();
+		const createGroupDialog = window.getByRole('dialog', { name: 'Create New Group' });
+		await expect(createGroupDialog).toBeVisible();
+		await createGroupDialog.getByLabel('Group Name').fill('review lane');
+		await createGroupDialog.getByRole('button', { name: 'Create' }).click();
+
+		await expect(createGroupDialog).toBeHidden();
+		await expect(window.getByText('REVIEW LANE')).toBeVisible();
+	});
+
+	test('opens fuzzy file search from Quick Actions and selects a markdown file', async () => {
+		const quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('Fuzzy File Search');
+		await quickActionsDialog.getByRole('button', { name: /Fuzzy File Search/ }).click();
+
+		await expect(quickActionsDialog).toBeHidden();
+		const fileSearchDialog = window.getByRole('dialog', { name: 'Fuzzy File Search' });
+		await expect(fileSearchDialog).toBeVisible();
+		await fileSearchDialog.getByPlaceholder('Search files...').fill('notes');
+		await expect(fileSearchDialog.getByText('NOTES.md')).toBeVisible();
+		await fileSearchDialog.getByText('NOTES.md').click();
+
+		await expect(fileSearchDialog).toBeHidden();
+		await expect(window.getByText('Notes Preview Surface')).toBeVisible();
+	});
+
+	test('navigates Right Bar tabs from Quick Actions', async () => {
+		let quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('Go to Auto Run Tab');
+		await quickActionsDialog.getByRole('button', { name: /Go to Auto Run Tab/ }).click();
+
+		await expect(quickActionsDialog).toBeHidden();
+		await expect(window.getByText('Auto Run Surface')).toBeVisible();
+
+		quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('Go to History Tab');
+		await quickActionsDialog.getByRole('button', { name: /Go to History Tab/ }).click();
+
+		await expect(quickActionsDialog).toBeHidden();
+		await expect(window.locator('[data-tour="history-panel"]')).toBeVisible();
+
+		quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('Go to Files Tab');
+		await quickActionsDialog.getByRole('button', { name: /Go to Files Tab/ }).click();
+
+		await expect(quickActionsDialog).toBeHidden();
+		await expect(window.locator('[data-tour="files-panel"]')).toBeVisible();
+	});
+
 	test('opens the System Log Viewer from Quick Actions', async () => {
 		const quickActionsDialog = await openQuickActions(window);
 		await quickActionsDialog

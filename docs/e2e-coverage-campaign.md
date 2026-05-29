@@ -11,9 +11,9 @@ Measured inventory:
 | Area                              |              Current Count |
 | --------------------------------- | -------------------------: |
 | E2E spec files after batch 1      |                          6 |
-| Declared E2E tests after batch 9  |                        166 |
+| Declared E2E tests after batch 10 |                        170 |
 | Last pre-campaign full E2E result |      91 passed, 49 skipped |
-| Latest full E2E validation        |     117 passed, 49 skipped |
+| Latest full E2E validation        |     121 passed, 49 skipped |
 | Renderer component files          |                        236 |
 | Renderer hook files               |                        123 |
 | Renderer store files              |                         11 |
@@ -103,3 +103,5 @@ The first implementation batch should focus on infrastructure and high-ROI exist
 - Validation: `npx playwright test app-shell.spec.ts` passed 25/25; `npx playwright test` passed 116 with 49 existing intentional skips.
 - 2026-05-29 batch 9: extended `e2e/app-shell.spec.ts` to cover Quick Actions launch for the active Codex agent's Agent Sessions browser, including header, new-session action, search, filters, and empty state.
 - Validation: `npx playwright test app-shell.spec.ts` passed 26/26; `npx playwright test` passed 117 with 49 existing intentional skips.
+- 2026-05-29 batch 10: extended `e2e/app-shell.spec.ts` to cover Quick Actions paths for targeted Settings sections, group creation, fuzzy file search file selection, and Right Bar tab navigation.
+- Validation: `npx playwright test app-shell.spec.ts -g "creates a group from Quick Actions"` passed 1/1; `npx playwright test app-shell.spec.ts` passed 30/30; `npx playwright test` passed 121 with 49 existing intentional skips.
