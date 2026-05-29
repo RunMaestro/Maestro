@@ -5,7 +5,7 @@
  * AI process.
  */
 import { test, expect, helpers } from './fixtures/electron-app';
-import type { ElectronApplication, Page } from '@playwright/test';
+import type { ElectronApplication, Locator, Page } from '@playwright/test';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -18,6 +18,9 @@ function createSeededWorkbench() {
 	const notesFilePath = path.join(projectDir, 'NOTES.md');
 	const metricsFilePath = path.join(projectDir, 'metrics.csv');
 	const binaryFilePath = path.join(projectDir, 'artifact.bin');
+	const imageFilePath = path.join(projectDir, 'diagram.png');
+	const mermaidFilePath = path.join(projectDir, 'FLOW.md');
+	const largeFilePath = path.join(projectDir, 'large-log.txt');
 	const autoRunFilePath = path.join(autoRunDir, 'Phase 1.md');
 	const now = Date.now();
 	const idSuffix = `${now}-${Math.random().toString(36).slice(2)}`;
@@ -61,6 +64,37 @@ prompt composer,2.3,true
 		'utf-8'
 	);
 	fs.writeFileSync(binaryFilePath, Buffer.from([0x00, 0x01, 0x02, 0x03, 0xff]));
+	fs.writeFileSync(
+		imageFilePath,
+		Buffer.from(
+			'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=',
+			'base64'
+		)
+	);
+	fs.writeFileSync(
+		mermaidFilePath,
+		`# Mermaid Preview Surface
+
+\`\`\`mermaid
+flowchart TD
+    Start([Start]) --> Review{Review}
+    Review -->|pass| Finish([Finish])
+\`\`\`
+`,
+		'utf-8'
+	);
+	fs.writeFileSync(
+		largeFilePath,
+		[
+			'large file head marker',
+			...Array.from(
+				{ length: 3500 },
+				(_, index) => `line-${String(index).padStart(4, '0')} file preview truncation coverage`
+			),
+			'large file tail marker',
+		].join('\n'),
+		'utf-8'
+	);
 	fs.writeFileSync(
 		autoRunFilePath,
 		`# Auto Run Surface
@@ -230,6 +264,16 @@ async function openQuickActions(window: Page) {
 		quickActionsDialog.getByPlaceholder('Type a command or jump to agent...')
 	).toBeVisible();
 	return quickActionsDialog;
+}
+
+async function closeQuickActions(window: Page, quickActionsDialog: Locator) {
+	for (let attempt = 0; attempt < 5; attempt++) {
+		if (!(await quickActionsDialog.isVisible().catch(() => false))) return;
+		await window.keyboard.press('Escape');
+		await window.waitForTimeout(100);
+	}
+
+	await expect(quickActionsDialog).toBeHidden();
 }
 
 async function openDocumentGraphFromPreview(window: Page) {
@@ -870,11 +914,7 @@ test.describe('App shell seeded workbench', () => {
 		await commandSearch.fill('definitely missing command');
 		await expect(quickActionsDialog.getByText('No actions found')).toBeVisible();
 
-		await window.keyboard.press('Escape');
-		if (await quickActionsDialog.isVisible().catch(() => false)) {
-			await window.keyboard.press('Escape');
-		}
-		await expect(quickActionsDialog).toBeHidden();
+		await closeQuickActions(window, quickActionsDialog);
 	});
 
 	test('expands and collapses folders in the File Explorer', async () => {
@@ -940,6 +980,38 @@ test.describe('App shell seeded workbench', () => {
 		await expect(confirmDialog).toBeHidden();
 	});
 
+	test('renders image files inside the file preview tab', async () => {
+		await helpers.openRightPanelTab(window, 'Files');
+		await window.getByText('diagram.png').dblclick();
+
+		await expect(window.getByText('diagram.png').first()).toBeVisible();
+		await expect(window.getByRole('img', { name: 'diagram.png' })).toBeVisible();
+		await expect(window.getByTitle('Copy image to clipboard')).toBeVisible();
+		await expect(window.getByTitle('Copy full path to clipboard')).toBeVisible();
+	});
+
+	test('renders Mermaid diagrams from markdown file previews', async () => {
+		await helpers.openRightPanelTab(window, 'Files');
+		await window.getByText('FLOW.md').dblclick();
+
+		await expect(window.getByText('Mermaid Preview Surface')).toBeVisible();
+		await expect(window.locator('.mermaid-container svg')).toBeVisible({ timeout: 15000 });
+		await expect(window.getByText('Failed to render Mermaid diagram')).toBeHidden();
+	});
+
+	test('truncates large text previews and loads the full file on demand', async () => {
+		await helpers.openRightPanelTab(window, 'Files');
+		await window.getByText('large-log.txt').dblclick();
+
+		await expect(window.getByText('large file head marker')).toBeVisible();
+		await expect(window.getByText('Large file preview truncated.')).toBeVisible();
+		await expect(window.getByText('large file tail marker')).toBeHidden();
+
+		await window.getByRole('button', { name: 'Load full file' }).click();
+		await expect(window.getByText('Large file preview truncated.')).toBeHidden();
+		await expect(window.getByText('large file tail marker')).toBeVisible();
+	});
+
 	test('opens Document Graph from file preview and uses core graph controls', async () => {
 		const graphDialog = await openDocumentGraphFromPreview(window);
 
@@ -1000,11 +1072,7 @@ test.describe('App shell seeded workbench', () => {
 			.getByPlaceholder('Type a command or jump to agent...')
 			.fill("Director's Notes");
 		await expect(quickActionsDialog.getByText('No actions found')).toBeVisible();
-		await window.keyboard.press('Escape');
-		if (await quickActionsDialog.isVisible().catch(() => false)) {
-			await window.keyboard.press('Escape');
-		}
-		await expect(quickActionsDialog).toBeHidden();
+		await closeQuickActions(window, quickActionsDialog);
 
 		settingsDialog = await openSettings(window);
 		await settingsDialog.locator('button[title="Encore Features"]').click();
