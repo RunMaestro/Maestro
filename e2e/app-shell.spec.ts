@@ -759,8 +759,21 @@ async function stubProcessMonitorProcesses(
 
 	await electronApp.evaluate(
 		({ ipcMain }, payload) => {
-			ipcMain.removeHandler('process:getActiveProcesses');
-			ipcMain.handle('process:getActiveProcesses', async () => [
+			const state = globalThis as typeof globalThis & {
+				__maestroE2eProcessMonitorProcesses?: Array<{
+					sessionId: string;
+					toolType: string;
+					pid: number;
+					cwd: string;
+					isTerminal: boolean;
+					isBatchMode: boolean;
+					startTime: number;
+					command: string;
+					args: string[];
+				}>;
+				__maestroE2eKilledProcessIds?: string[];
+			};
+			state.__maestroE2eProcessMonitorProcesses = [
 				{
 					sessionId: `${payload.codexSessionId}-ai`,
 					toolType: 'codex',
@@ -783,10 +796,24 @@ async function stubProcessMonitorProcesses(
 					command: 'zsh',
 					args: ['-l'],
 				},
-			]);
+			];
+			state.__maestroE2eKilledProcessIds = [];
+
+			ipcMain.removeHandler('process:getActiveProcesses');
+			ipcMain.handle(
+				'process:getActiveProcesses',
+				async () => state.__maestroE2eProcessMonitorProcesses || []
+			);
 
 			ipcMain.removeHandler('process:kill');
-			ipcMain.handle('process:kill', async () => true);
+			ipcMain.handle('process:kill', async (_event, sessionId: string) => {
+				state.__maestroE2eKilledProcessIds?.push(sessionId);
+				state.__maestroE2eProcessMonitorProcesses =
+					state.__maestroE2eProcessMonitorProcesses?.filter(
+						(process) => process.sessionId !== sessionId
+					) || [];
+				return true;
+			});
 		},
 		{
 			codexSessionId: codexSession.id,
@@ -795,6 +822,15 @@ async function stubProcessMonitorProcesses(
 			terminalCwd: terminalSession.cwd,
 		}
 	);
+}
+
+async function getStubbedKilledProcessIds(electronApp: ElectronApplication) {
+	return electronApp.evaluate(() => {
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eKilledProcessIds?: string[];
+		};
+		return state.__maestroE2eKilledProcessIds || [];
+	});
 }
 
 type TerminalRunCommandCall = {
@@ -3523,6 +3559,24 @@ test.describe('App shell seeded workbench', () => {
 		await expect(window.getByText('Kill Process?')).toBeVisible();
 		await window.getByRole('button', { name: 'Cancel' }).click();
 		await expect(window.getByText('Kill Process?')).toBeHidden();
+	});
+
+	test('kills a stubbed terminal process and refreshes the Process Monitor list', async () => {
+		await stubProcessMonitorProcesses(electronApp, seededWorkbench);
+		const processMonitor = await openProcessMonitor(window);
+
+		await expect(processMonitor.getByText('2 active')).toBeVisible();
+		await processMonitor.getByTitle('Kill process').last().click({ force: true });
+		await expect(window.getByText('Kill Process?')).toBeVisible();
+		await window.getByRole('button', { name: 'Kill Process', exact: true }).click();
+
+		await expect(window.getByText('Kill Process?')).toBeHidden();
+		await expect(processMonitor.getByText('1 active')).toBeVisible();
+		await expect(processMonitor.getByText('E2E Terminal - Terminal Shell')).toBeHidden();
+		await expect(processMonitor.getByText('E2E Workbench - AI Agent (codex)')).toBeVisible();
+		await expect(await getStubbedKilledProcessIds(electronApp)).toEqual([
+			`${seededWorkbench.sessions[1].id}-terminal`,
+		]);
 	});
 
 	test('cancels Process Monitor kill with Escape without removing the process', async () => {
