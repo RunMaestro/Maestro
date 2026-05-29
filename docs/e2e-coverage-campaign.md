@@ -8,17 +8,18 @@ This campaign extends the existing coverage work from unit/integration coverage 
 
 Measured inventory:
 
-| Area                          |              Current Count |
-| ----------------------------- | -------------------------: |
-| Existing E2E spec files       |                          5 |
-| Existing declared E2E tests   |                        140 |
-| Last full E2E result          |      91 passed, 49 skipped |
-| Renderer component files      |                        236 |
-| Renderer hook files           |                        123 |
-| Renderer store files          |                         11 |
-| Web/mobile files              |                         59 |
-| IPC handler modules           |                         30 |
-| Current `npm run test` result | 28,521 passed, 106 skipped |
+| Area                              |              Current Count |
+| --------------------------------- | -------------------------: |
+| E2E spec files after batch 1      |                          6 |
+| Declared E2E tests after batch 1  |                        144 |
+| Last pre-campaign full E2E result |      91 passed, 49 skipped |
+| Latest full E2E validation        |      95 passed, 49 skipped |
+| Renderer component files          |                        236 |
+| Renderer hook files               |                        123 |
+| Renderer store files              |                         11 |
+| Web/mobile files                  |                         59 |
+| IPC handler modules               |                         30 |
+| Current `npm run test` result     | 28,521 passed, 106 skipped |
 
 The current E2E suite is mostly an Auto Run suite plus one Bionify reading-mode scenario. It is not deep app-wide coverage.
 
@@ -81,3 +82,8 @@ The first implementation batch should focus on infrastructure and high-ROI exist
 - Add shared E2E helpers for opening Right Bar tabs, opening the New Agent Wizard fresh, selecting agent tiles by accessible button name, and asserting modals.
 - Unskip or replace deterministic Auto Run tests that do not require live AI execution.
 - Add foundational app shell tests for Right Bar tab switching, Left Bar selection, TabBar actions, and File Preview toolbar behavior.
+
+## Progress Log
+
+- 2026-05-29 batch 1: added deterministic persisted-state Electron launch helper, shared right-panel tab helper, fresh wizard shortcut helper, and `e2e/app-shell.spec.ts` covering app shell regions, Right Bar tab switching, Settings, Auto Run guide, and markdown file preview edit/preview toggling.
+- Validation: `npm run test:e2e -- app-shell.spec.ts` passed 4/4; `npx playwright test app-shell.spec.ts autorun-setup.spec.ts` passed 17 with 11 existing intentional skips; `npx playwright test` passed 95 with 49 existing intentional skips.

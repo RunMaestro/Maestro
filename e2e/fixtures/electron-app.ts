@@ -8,6 +8,7 @@
 import {
 	test as base,
 	_electron as electron,
+	expect,
 	type ElectronApplication,
 	type Page,
 } from '@playwright/test';
@@ -21,6 +22,20 @@ interface ElectronTestFixtures {
 	window: Page;
 	appPath: string;
 	testDataDir: string;
+}
+
+interface LaunchAppWithStateOptions {
+	homeDir?: string;
+	sessions: unknown[];
+	groups?: unknown[];
+}
+
+interface LaunchAppWithStateResult {
+	electronApp: ElectronApplication;
+	window: Page;
+	homeDir: string;
+	userDataPath: string;
+	cleanup: () => Promise<void>;
 }
 
 /**
@@ -40,6 +55,10 @@ function createTestDataDir(): string {
 	);
 	fs.mkdirSync(testDir, { recursive: true });
 	return testDir;
+}
+
+function escapeRegExp(value: string): string {
+	return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 /**
@@ -125,12 +144,71 @@ export const test = base.extend<ElectronTestFixtures>({
 	},
 });
 
-export { expect } from '@playwright/test';
+export { expect };
 
 /**
  * Helper utilities for E2E tests
  */
 export const helpers = {
+	/**
+	 * Launch the app with deterministic persisted state.
+	 */
+	async launchAppWithState({
+		homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-e2e-home-')),
+		sessions,
+		groups = [],
+	}: LaunchAppWithStateOptions): Promise<LaunchAppWithStateResult> {
+		const appPath = getMainPath();
+		const env = {
+			...process.env,
+			HOME: homeDir,
+			ELECTRON_DISABLE_GPU: '1',
+			NODE_ENV: 'test',
+			MAESTRO_E2E_TEST: 'true',
+		};
+
+		const probeApp = await electron.launch({
+			args: [appPath],
+			env,
+			timeout: 30000,
+		});
+		await probeApp.firstWindow();
+		const userDataPath = await probeApp.evaluate(({ app }) => app.getPath('userData'));
+		await probeApp.close();
+
+		fs.mkdirSync(userDataPath, { recursive: true });
+		fs.writeFileSync(
+			path.join(userDataPath, 'maestro-sessions.json'),
+			JSON.stringify({ sessions }, null, '\t'),
+			'utf-8'
+		);
+		fs.writeFileSync(
+			path.join(userDataPath, 'maestro-groups.json'),
+			JSON.stringify({ groups }, null, '\t'),
+			'utf-8'
+		);
+
+		const electronApp = await electron.launch({
+			args: [appPath],
+			env,
+			timeout: 30000,
+		});
+		const window = await electronApp.firstWindow();
+		await window.waitForLoadState('domcontentloaded');
+		await window.waitForTimeout(500);
+
+		return {
+			electronApp,
+			window,
+			homeDir,
+			userDataPath,
+			cleanup: async () => {
+				await electronApp.close().catch(() => undefined);
+				fs.rmSync(homeDir, { recursive: true, force: true });
+			},
+		};
+	},
+
 	/**
 	 * Wait for the wizard to be visible
 	 */
@@ -146,6 +224,10 @@ export const helpers = {
 	async openWizardViaShortcut(window: Page): Promise<void> {
 		// Cmd+Shift+N opens the wizard
 		await window.keyboard.press('Meta+Shift+N');
+		const startFreshButton = window.getByRole('button', { name: /start fresh/i });
+		if (await startFreshButton.isVisible({ timeout: 1000 }).catch(() => false)) {
+			await startFreshButton.click();
+		}
 		await helpers.waitForWizard(window);
 	},
 
@@ -153,8 +235,9 @@ export const helpers = {
 	 * Select an agent in the wizard
 	 */
 	async selectAgent(window: Page, agentName: string): Promise<void> {
-		// Find and click the agent tile
-		const agentTile = window.locator(`text=${agentName}`).first();
+		const agentTile = window
+			.getByRole('button', { name: new RegExp(`^${escapeRegExp(agentName)}$`) })
+			.or(window.locator(`text=${agentName}`).first());
 		await agentTile.click();
 	},
 
@@ -229,6 +312,15 @@ export const helpers = {
 	},
 
 	/**
+	 * Open a tab in the right panel.
+	 */
+	async openRightPanelTab(window: Page, tabName: 'Files' | 'History' | 'Auto Run'): Promise<void> {
+		const panelId = tabName === 'Auto Run' ? 'autorun' : tabName.toLowerCase();
+		await window.locator(`[data-tour="${panelId}-tab"]`).click();
+		await expect(window.locator(`[data-tour="${panelId}-panel"]`)).toBeVisible();
+	},
+
+	/**
 	 * Create a temporary test directory structure
 	 */
 	createTestDirectory(basePath: string, structure: Record<string, string | null>): void {
@@ -265,9 +357,9 @@ export const helpers = {
 	 * Navigate to the Auto Run tab in the right panel
 	 */
 	async navigateToAutoRunTab(window: Page): Promise<boolean> {
-		const autoRunTab = window.locator('text=Auto Run');
+		const autoRunTab = window.locator('[data-tour="autorun-tab"]');
 		if ((await autoRunTab.count()) > 0) {
-			await autoRunTab.first().click();
+			await helpers.openRightPanelTab(window, 'Auto Run');
 			return true;
 		}
 		return false;

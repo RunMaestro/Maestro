@@ -23,17 +23,6 @@ async function selectClaudeCodeAgent(window: Page, agentName = 'E2E Agent'): Pro
 	await window.getByRole('textbox', { name: /agent name/i }).fill(agentName);
 }
 
-async function openNewAgentWizard(window: Page): Promise<void> {
-	await window.keyboard.press('Meta+Shift+N');
-
-	const startFreshButton = window.getByRole('button', { name: /start fresh/i });
-	if (await startFreshButton.isVisible({ timeout: 1000 }).catch(() => false)) {
-		await startFreshButton.click();
-	}
-
-	await expect(window.getByRole('heading', { name: 'Create a Maestro Agent' })).toBeVisible();
-}
-
 /**
  * Test suite for Auto Run setup wizard E2E tests
  *
@@ -79,18 +68,18 @@ test.describe('Auto Run Setup Wizard', () => {
 
 	test.describe('Wizard Launch', () => {
 		test('should display the wizard when triggered via keyboard shortcut', async ({ window }) => {
-			await openNewAgentWizard(window);
+			await helpers.openWizardViaShortcut(window);
 		});
 
 		test('should show agent selection as the first step', async ({ window }) => {
-			await openNewAgentWizard(window);
+			await helpers.openWizardViaShortcut(window);
 
 			// Should show available agents (use first to avoid multiple matches)
 			await expect(window.locator('text=Claude Code').first()).toBeVisible();
 		});
 
 		test('should close wizard with Escape on first step', async ({ window }) => {
-			await openNewAgentWizard(window);
+			await helpers.openWizardViaShortcut(window);
 			const wizardTitle = window.getByRole('heading', { name: 'Create a Maestro Agent' });
 
 			// Press Escape to close
@@ -104,7 +93,7 @@ test.describe('Auto Run Setup Wizard', () => {
 	test.describe('Agent Selection Screen', () => {
 		test.beforeEach(async ({ window }) => {
 			// Open wizard before each test in this group
-			await openNewAgentWizard(window);
+			await helpers.openWizardViaShortcut(window);
 		});
 
 		test('should display Claude Code as the primary supported agent', async ({ window }) => {
@@ -217,7 +206,7 @@ test.describe('Auto Run Setup Wizard', () => {
 
 	test.describe('Wizard Navigation', () => {
 		test.beforeEach(async ({ window }) => {
-			await openNewAgentWizard(window);
+			await helpers.openWizardViaShortcut(window);
 		});
 
 		test('should show step indicators', async ({ window }) => {
@@ -279,7 +268,7 @@ test.describe('Auto Run Setup Wizard', () => {
 
 	test.describe('Accessibility', () => {
 		test.beforeEach(async ({ window }) => {
-			await openNewAgentWizard(window);
+			await helpers.openWizardViaShortcut(window);
 		});
 
 		test('should support keyboard-only navigation', async ({ window }) => {
