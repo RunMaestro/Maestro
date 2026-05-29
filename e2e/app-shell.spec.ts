@@ -729,6 +729,92 @@ async function getStubbedOpenExternalUrl(electronApp: ElectronApplication) {
 	});
 }
 
+async function stubUpdateCheckForModal(
+	electronApp: ElectronApplication,
+	mode: 'available' | 'error'
+) {
+	await electronApp.evaluate(
+		({ ipcMain, BrowserWindow }, payload: { mode: 'available' | 'error' }) => {
+			const state = globalThis as typeof globalThis & {
+				__maestroE2eUpdateState?: {
+					checks: boolean[];
+					downloads: number;
+					installs: number;
+					lastAllowPrerelease?: boolean;
+				};
+			};
+			state.__maestroE2eUpdateState = { checks: [], downloads: 0, installs: 0 };
+
+			ipcMain.removeHandler('updates:check');
+			ipcMain.handle('updates:check', async (_event, includePrerelease: boolean = false) => {
+				state.__maestroE2eUpdateState!.checks.push(includePrerelease);
+				if (payload.mode === 'error') throw new Error('GitHub API unavailable for E2E');
+				return {
+					currentVersion: '0.15.3',
+					latestVersion: '0.16.0',
+					updateAvailable: true,
+					versionsBehind: 1,
+					assetsReady: true,
+					releasesUrl: 'https://github.com/RunMaestro/Maestro/releases',
+					releases: [
+						{
+							tag_name: 'v0.16.0',
+							name: 'v0.16.0 | Update Modal E2E',
+							body: '### Deterministic release notes\n\n- Adds update modal E2E coverage.',
+							html_url: 'https://github.com/RunMaestro/Maestro/releases/tag/v0.16.0',
+							published_at: '2026-05-29T12:00:00.000Z',
+						},
+					],
+				};
+			});
+			ipcMain.removeHandler('updates:download');
+			ipcMain.handle('updates:download', async () => {
+				state.__maestroE2eUpdateState!.downloads += 1;
+				const appWindow = BrowserWindow.getAllWindows()[0];
+				appWindow?.webContents.send('updates:status', {
+					status: 'downloading',
+					progress: {
+						percent: 64,
+						bytesPerSecond: 2048,
+						total: 4096,
+						transferred: 2048,
+					},
+				});
+				appWindow?.webContents.send('updates:status', {
+					status: 'downloaded',
+					info: { version: '0.16.0' },
+				});
+				return { success: true };
+			});
+			ipcMain.removeHandler('updates:install');
+			ipcMain.handle('updates:install', async () => {
+				state.__maestroE2eUpdateState!.installs += 1;
+			});
+			ipcMain.removeHandler('updates:getStatus');
+			ipcMain.handle('updates:getStatus', async () => ({ status: 'idle' }));
+			ipcMain.removeHandler('updates:setAllowPrerelease');
+			ipcMain.handle('updates:setAllowPrerelease', async (_event, allow: boolean) => {
+				state.__maestroE2eUpdateState!.lastAllowPrerelease = allow;
+			});
+		},
+		{ mode }
+	);
+}
+
+async function getStubbedUpdateState(electronApp: ElectronApplication) {
+	return electronApp.evaluate(() => {
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eUpdateState?: {
+				checks: boolean[];
+				downloads: number;
+				installs: number;
+				lastAllowPrerelease?: boolean;
+			};
+		};
+		return state.__maestroE2eUpdateState ?? null;
+	});
+}
+
 async function stubPullRequestCreation(
 	electronApp: ElectronApplication,
 	status: { installed: boolean; authenticated: boolean },
@@ -1322,6 +1408,18 @@ async function openSymphonyFromQuickActions(window: Page) {
 	await expect(symphonyDialog).toBeVisible();
 	await expect(symphonyDialog.getByText('Maestro Symphony').first()).toBeVisible();
 	return symphonyDialog;
+}
+
+async function openUpdateCheckFromQuickActions(window: Page) {
+	const quickActionsDialog = await openQuickActions(window);
+	await quickActionsDialog
+		.getByPlaceholder('Type a command or jump to agent...')
+		.fill('Check for Updates');
+	await quickActionsDialog.getByRole('button', { name: /Check for Updates/ }).click();
+	await expect(quickActionsDialog).toBeHidden();
+	const updateDialog = window.getByRole('dialog', { name: 'Check for Updates' });
+	await expect(updateDialog).toBeVisible();
+	return updateDialog;
 }
 
 async function closeQuickActions(window: Page, quickActionsDialog: Locator) {
@@ -1990,6 +2088,42 @@ test.describe('App shell seeded workbench', () => {
 		await expect(aboutDialog).toBeVisible();
 		await expect(aboutDialog.getByRole('heading', { name: 'About Maestro' })).toBeVisible();
 		await expect(aboutDialog.getByTitle('Documentation')).toBeVisible();
+	});
+
+	test('checks for updates and downloads an available release from Quick Actions', async () => {
+		await stubUpdateCheckForModal(electronApp, 'available');
+
+		const updateDialog = await openUpdateCheckFromQuickActions(window);
+		await expect(updateDialog.getByText('Update Available!')).toBeVisible();
+		await expect(updateDialog.getByText(/Current: v0\.15\.3.*Latest: v0\.16\.0/)).toBeVisible();
+		await expect(
+			updateDialog.getByRole('button', { name: /v0\.16\.0 - Update Modal E2E/ })
+		).toBeVisible();
+		await expect(updateDialog.getByText('Deterministic release notes')).toBeVisible();
+
+		const stateBeforeDownload = await getStubbedUpdateState(electronApp);
+		expect(stateBeforeDownload?.checks).toEqual([false]);
+
+		await updateDialog.getByRole('button', { name: /Download and Install Update/ }).click();
+		await expect(updateDialog.getByRole('button', { name: 'Restart to Update' })).toBeVisible();
+		await updateDialog.getByRole('button', { name: 'Restart to Update' }).click();
+
+		const stateAfterInstall = await getStubbedUpdateState(electronApp);
+		expect(stateAfterInstall?.downloads).toBe(1);
+		expect(stateAfterInstall?.installs).toBe(1);
+	});
+
+	test('shows update check errors and opens the manual releases page', async () => {
+		await stubUpdateCheckForModal(electronApp, 'error');
+		await stubOpenExternal(electronApp);
+
+		const updateDialog = await openUpdateCheckFromQuickActions(window);
+		await expect(updateDialog.getByText('GitHub API unavailable for E2E')).toBeVisible();
+		await updateDialog.getByRole('button', { name: 'Check releases manually' }).click();
+
+		await expect
+			.poll(() => getStubbedOpenExternalUrl(electronApp))
+			.toBe('https://github.com/RunMaestro/Maestro/releases');
 	});
 
 	test('opens the Tab Switcher from Quick Actions', async () => {

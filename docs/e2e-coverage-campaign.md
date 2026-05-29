@@ -10,10 +10,10 @@ Measured inventory:
 
 | Area                              |              Current Count |
 | --------------------------------- | -------------------------: |
-| E2E spec files after batch 37     |                          7 |
-| Declared E2E tests after batch 37 |                        253 |
+| E2E spec files after batch 38     |                          7 |
+| Declared E2E tests after batch 38 |                        255 |
 | Last pre-campaign full E2E result |      91 passed, 49 skipped |
-| Latest full E2E validation        |     204 passed, 49 skipped |
+| Latest full E2E validation        |     206 passed, 49 skipped |
 | Renderer component files          |                        236 |
 | Renderer hook files               |                        123 |
 | Renderer store files              |                         11 |
@@ -65,7 +65,7 @@ That range is high enough to cover the app surface, but low enough to avoid a br
 | Playbooks, marketplace, Spec Kit, OpenSpec                     |              3 |           145 | Marketplace browse/import and bundled command edit/reset covered                       |
 | Symphony, leaderboard, achievements                            |              2 |           120 | Project browse/detail, active/history/stats, achievements, and GitHub CLI preflight    |
 | Director notes and prompt composer                             |              7 |            90 | Director's Notes settings/history/help/AI overview; prompt composer open/edit/control  |
-| Debug/about/update/app info/agent error modals                 |              7 |            85 | System Log search/filter/clear and Process Monitor detail/kill confirmation            |
+| Debug/about/update/app info/agent error modals                 |              9 |            85 | System Log, Process Monitor, About, and update check success/error flows               |
 | Mobile/web bridge                                              |              0 |           190 | Web/mobile shell, session list, terminal, Auto Run, offline queue, websocket states    |
 | Accessibility smoke and destructive-action confirmations       |              0 |           130 | Keyboard paths, escape behavior, focus restore, confirmation flows                     |
 
@@ -166,3 +166,5 @@ The first implementation batch should focus on infrastructure and high-ROI exist
 - Validation: `npx playwright test app-shell.spec.ts -g "Playbook Exchange|marketplace playbook|Spec Kit and OpenSpec"` passed 3/3; `npx playwright test app-shell.spec.ts` passed 102/102; `npx playwright test` passed 202 with 49 existing intentional skips; `npm run lint` passed. Full-suite log: `/tmp/maestro-full-e2e-playbooks-speckit-batch36.log`.
 - 2026-05-29 batch 37: added deterministic Maestro Symphony E2E coverage for stubbed project registry search/detail, issue states, document preview, GitHub CLI unavailable preflight, active contribution sync/status checks, history, stats, and achievement states. Also hardened Quick Actions opening against focus misses observed during the full-suite rerun.
 - Validation: `npx playwright test app-shell.spec.ts -g "filters Quick Actions and opens Shortcuts Help|Symphony projects|Symphony active"` passed 3/3; `npx playwright test app-shell.spec.ts` passed 104/104; `npx playwright test` passed 204 with 49 existing intentional skips; `npm run lint` passed. Full-suite log: `/tmp/maestro-full-e2e-symphony-batch37-rerun.log`.
+- 2026-05-29 batch 38: added deterministic update-check modal E2E coverage from Quick Actions for available-release rendering, release notes, download-to-restart state, install IPC, update-check error rendering, and manual releases handoff through stubbed shell opening.
+- Validation: `npx playwright test app-shell.spec.ts -g "updates and downloads|update check errors"` passed 2/2; `npx playwright test app-shell.spec.ts` passed 106/106; `npx playwright test` passed 206 with 49 existing intentional skips; `npm run lint` passed. Full-suite log: `/tmp/maestro-full-e2e-updates-batch38.log`.
