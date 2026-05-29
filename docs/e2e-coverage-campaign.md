@@ -10,10 +10,10 @@ Measured inventory:
 
 | Area                              |              Current Count |
 | --------------------------------- | -------------------------: |
-| E2E spec files after batch 26     |                          7 |
-| Declared E2E tests after batch 26 |                        224 |
+| E2E spec files after batch 27     |                          7 |
+| Declared E2E tests after batch 27 |                        227 |
 | Last pre-campaign full E2E result |      91 passed, 49 skipped |
-| Latest full E2E validation        |     175 passed, 49 skipped |
+| Latest full E2E validation        |     178 passed, 49 skipped |
 | Renderer component files          |                        236 |
 | Renderer hook files               |                        123 |
 | Renderer store files              |                         11 |
@@ -57,7 +57,7 @@ That range is high enough to cover the app surface, but low enough to avoid a br
 | History panel                                                  |              7 |            95 | Detail navigation, delete confirmation/execution, graph lookback; empty/loading next   |
 | Auto Run                                                       |             90 |           260 | Existing suite plus skipped batch, image, error, multi-document, persistence flows     |
 | New Agent Wizard and inline wizard                             |             13 |           190 | Setup/resume/exit, directory, conversation, phase review, generated docs               |
-| Settings                                                       |              9 |           190 | General default persistence and Display/Bionify persistence; SSH/env/theme/error next  |
+| Settings                                                       |             12 |           190 | General, Display/Bionify, global env vars, and SSH remote CRUD/import persistence      |
 | Git, worktrees, PR, diff/log, Gist                             |              0 |           160 | Local temp repos first; GitHub/Gist account paths gated                                |
 | Group chat                                                     |             10 |           140 | Creation, participants, Codex-only routing, history, errors, deletion                  |
 | Usage dashboard and stats                                      |              4 |           125 | Overview metrics, chart sections, Activity/Auto Run tabs, keyboard navigation          |
@@ -144,3 +144,5 @@ The first implementation batch should focus on infrastructure and high-ROI exist
 - Validation: `npx playwright test app-shell.spec.ts -g "Usage Dashboard"` passed 4/4; `npx playwright test app-shell.spec.ts` passed 71/71; `npx playwright test` passed 171 with 49 existing intentional skips. Full-suite log: `/tmp/maestro-full-e2e-usage-dashboard-batch25.log`.
 - 2026-05-29 batch 26: expanded System Log Viewer and Process Monitor E2E coverage for seeded log search/filtering, structured log expansion and clear confirmation, stubbed Codex/Terminal process rendering, process details, and kill confirmation cancel behavior.
 - Validation: `npx playwright test app-shell.spec.ts -g "System Log|System Processes|Process Monitor"` passed 6/6; `npx playwright test app-shell.spec.ts` passed 75/75; `npx playwright test` passed 175 with 49 existing intentional skips. Full-suite log: `/tmp/maestro-full-e2e-debug-process-batch26.log`.
+- 2026-05-29 batch 27: expanded Settings E2E coverage for global environment variable add/update/remove persistence, SSH remote create/default/edit/delete persistence, and SSH config host import through a stubbed local IPC result.
+- Validation: `npx playwright test app-shell.spec.ts -g "environment variables|SSH remote"` passed 3/3; `npx playwright test app-shell.spec.ts` passed 78/78; `npx playwright test` passed 178 with 49 existing intentional skips. Full-suite log: `/tmp/maestro-full-e2e-settings-ssh-batch27.log`.

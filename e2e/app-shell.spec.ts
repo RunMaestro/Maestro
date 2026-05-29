@@ -281,6 +281,48 @@ async function openSettings(window: Page) {
 	return settingsDialog;
 }
 
+async function openSshSettings(window: Page) {
+	const settingsDialog = await openSettings(window);
+	await settingsDialog.locator('button[title="SSH Hosts"]').click();
+	await expect(settingsDialog.getByText('SSH Remote Hosts')).toBeVisible();
+	return settingsDialog;
+}
+
+async function scrollSettingsToText(settingsDialog: Locator, text: string) {
+	await settingsDialog
+		.locator('.scrollbar-thin')
+		.first()
+		.evaluate((scroller, targetText) => {
+			const elements = Array.from(scroller.querySelectorAll<HTMLElement>('*'));
+			const target =
+				elements.find((candidate) =>
+					Array.from(candidate.childNodes).some(
+						(node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim() === targetText
+					)
+				) ?? elements.find((candidate) => candidate.textContent?.includes(targetText));
+			if (target) scroller.scrollTop = Math.max(0, target.offsetTop - 120);
+		}, text);
+}
+
+async function openGlobalEnvironmentSettings(window: Page) {
+	const quickActionsDialog = await openQuickActions(window);
+	await quickActionsDialog
+		.getByPlaceholder('Type a command or jump to agent...')
+		.fill('Configure Global Environment Variables');
+	await quickActionsDialog
+		.getByRole('button', { name: /Configure Global Environment Variables/ })
+		.click();
+
+	await expect(quickActionsDialog).toBeHidden();
+	const settingsDialog = window.getByRole('dialog', { name: 'Settings' });
+	await settingsDialog.getByRole('button', { name: 'Shell Configuration' }).click();
+	await scrollSettingsToText(settingsDialog, 'Global Environment Variables');
+	await expect(
+		settingsDialog.locator('strong').filter({ hasText: /^Global Environment Variables$/ })
+	).toBeVisible();
+	return settingsDialog;
+}
+
 async function openQuickActions(window: Page) {
 	await window.keyboard.press('Meta+K');
 	const quickActionsDialog = window.getByRole('dialog', { name: 'Quick Actions' });
@@ -452,6 +494,30 @@ async function stubProcessMonitorProcesses(
 			terminalCwd: terminalSession.cwd,
 		}
 	);
+}
+
+async function stubSshConfigHosts(electronApp: ElectronApplication) {
+	await electronApp.evaluate(({ ipcMain }) => {
+		ipcMain.removeHandler('ssh-remote:getSshConfigHosts');
+		ipcMain.handle('ssh-remote:getSshConfigHosts', async () => ({
+			success: true,
+			hosts: [
+				{
+					host: 'e2e-prod',
+					hostName: 'prod.internal',
+					port: 2222,
+					user: 'deploy',
+				},
+				{
+					host: 'e2e-build',
+					hostName: 'build.internal',
+					port: 2200,
+					user: 'builder',
+				},
+			],
+			configPath: '/tmp/e2e-ssh-config',
+		}));
+	});
 }
 
 async function closeQuickActions(window: Page, quickActionsDialog: Locator) {
@@ -1889,5 +1955,173 @@ test.describe('App shell seeded workbench', () => {
 				});
 			})
 			.toBe('rich');
+	});
+
+	test('persists global Settings environment variables', async () => {
+		const settingsDialog = await openGlobalEnvironmentSettings(window);
+
+		await settingsDialog.getByRole('button', { name: 'Add Variable' }).click();
+		const keyInput = settingsDialog.getByPlaceholder('VARIABLE').last();
+		const valueInput = settingsDialog.getByPlaceholder('value').last();
+
+		await keyInput.fill('MAESTRO_E2E_ENV');
+		await valueInput.fill('stable');
+		await expect
+			.poll(async () => {
+				return await window.evaluate(async () => {
+					return await window.maestro.settings.get('shellEnvVars');
+				});
+			})
+			.toEqual({ MAESTRO_E2E_ENV: 'stable' });
+
+		await valueInput.fill('"stable$value"');
+		await expect
+			.poll(async () => {
+				return await window.evaluate(async () => {
+					return await window.maestro.settings.get('shellEnvVars');
+				});
+			})
+			.toEqual({ MAESTRO_E2E_ENV: '"stable$value"' });
+
+		await settingsDialog.getByTitle('Remove variable').click();
+		await expect
+			.poll(async () => {
+				return await window.evaluate(async () => {
+					return await window.maestro.settings.get('shellEnvVars');
+				});
+			})
+			.toEqual({});
+	});
+
+	test('creates defaults edits and deletes SSH remote settings', async () => {
+		const settingsDialog = await openSshSettings(window);
+		await expect(settingsDialog.getByText('No SSH remotes configured')).toBeVisible();
+
+		await settingsDialog.getByRole('button', { name: 'Add SSH Remote' }).click();
+		const sshModal = window.getByRole('dialog', { name: 'Add SSH Remote' });
+		await expect(sshModal).toBeVisible();
+		await expect(sshModal.getByRole('button', { name: 'Save' })).toBeDisabled();
+
+		await sshModal.getByLabel('Display Name').fill('E2E Remote');
+		await sshModal.getByLabel('Host', { exact: true }).fill('example.internal');
+		await sshModal.getByLabel('Port').fill('2200');
+		await sshModal.getByLabel('Username (optional)').fill('codex');
+		await sshModal.getByRole('button', { name: 'Add Variable' }).click();
+		await sshModal.getByPlaceholder('VARIABLE').fill('MAESTRO_REMOTE_MODE');
+		await sshModal.getByPlaceholder('value').fill('e2e');
+		await sshModal.getByRole('button', { name: 'Save' }).click();
+
+		await expect(sshModal).toBeHidden();
+		await expect(settingsDialog.getByText('E2E Remote')).toBeVisible();
+		await expect(settingsDialog.getByText('codex@example.internal:2200')).toBeVisible();
+		await expect
+			.poll(async () => {
+				return await window.evaluate(async () => {
+					const result = await window.maestro.sshRemote.getConfigs();
+					const config = result.configs?.[0];
+					return config
+						? {
+								name: config.name,
+								host: config.host,
+								port: config.port,
+								username: config.username,
+								privateKeyPath: config.privateKeyPath,
+								remoteEnv: config.remoteEnv,
+							}
+						: null;
+				});
+			})
+			.toEqual({
+				name: 'E2E Remote',
+				host: 'example.internal',
+				port: 2200,
+				username: 'codex',
+				privateKeyPath: '',
+				remoteEnv: { MAESTRO_REMOTE_MODE: 'e2e' },
+			});
+
+		const remoteId = await window.evaluate(async () => {
+			const result = await window.maestro.sshRemote.getConfigs();
+			return result.configs?.[0]?.id;
+		});
+		await settingsDialog.getByTitle('Set as default').click();
+		await expect(settingsDialog.locator('span').filter({ hasText: /^Default$/ })).toBeVisible();
+		await expect
+			.poll(async () => {
+				return await window.evaluate(async () => {
+					const result = await window.maestro.sshRemote.getDefaultId();
+					return result.id;
+				});
+			})
+			.toBe(remoteId);
+
+		await settingsDialog.getByTitle('Edit').click();
+		const editModal = window.getByRole('dialog', { name: 'Edit SSH Remote' });
+		await editModal.getByLabel('Display Name').fill('E2E Remote Updated');
+		await editModal.getByRole('button', { name: 'Save' }).click();
+		await expect(editModal).toBeHidden();
+		await expect(settingsDialog.getByText('E2E Remote Updated')).toBeVisible();
+
+		await settingsDialog.getByTitle('Delete').click();
+		await expect(settingsDialog.getByText('No SSH remotes configured')).toBeVisible();
+		await expect
+			.poll(async () => {
+				return await window.evaluate(async () => {
+					const result = await window.maestro.sshRemote.getConfigs();
+					return result.configs?.length ?? 0;
+				});
+			})
+			.toBe(0);
+	});
+
+	test('imports SSH remote settings from a parsed SSH config host', async () => {
+		await stubSshConfigHosts(electronApp);
+		const settingsDialog = await openSshSettings(window);
+
+		await settingsDialog.getByRole('button', { name: 'Add SSH Remote' }).click();
+		const sshModal = window.getByRole('dialog', { name: 'Add SSH Remote' });
+		await expect(sshModal.getByText('Import from SSH Config')).toBeVisible();
+		await sshModal.getByRole('button', { name: /Select a host to import/ }).click();
+		await sshModal.getByPlaceholder('Type to filter...').fill('build');
+		await sshModal.getByRole('button', { name: /e2e-build/ }).click();
+
+		await expect(sshModal.getByText('Imported from:')).toBeVisible();
+		await expect(sshModal.getByText('e2e-build')).toBeVisible();
+		await expect(sshModal.getByLabel('Display Name')).toHaveValue('e2e-build');
+		await expect(sshModal.getByLabel('Host', { exact: true })).toHaveValue('e2e-build');
+		await expect(sshModal.getByLabel('Port')).toHaveValue('2200');
+		await expect(sshModal.getByLabel('Username (optional)')).toHaveValue('builder');
+		await expect(sshModal.getByLabel('Private Key Path (optional)')).toHaveValue('');
+
+		await sshModal.getByRole('button', { name: 'Save' }).click();
+		await expect(sshModal).toBeHidden();
+		await expect(settingsDialog.getByText('builder@e2e-build:2200')).toBeVisible();
+		await expect
+			.poll(async () => {
+				return await window.evaluate(async () => {
+					const result = await window.maestro.sshRemote.getConfigs();
+					const config = result.configs?.[0];
+					return config
+						? {
+								name: config.name,
+								host: config.host,
+								port: config.port,
+								username: config.username,
+								privateKeyPath: config.privateKeyPath,
+								useSshConfig: config.useSshConfig,
+								sshConfigHost: config.sshConfigHost,
+							}
+						: null;
+				});
+			})
+			.toEqual({
+				name: 'e2e-build',
+				host: 'e2e-build',
+				port: 2200,
+				username: 'builder',
+				privateKeyPath: '',
+				useSshConfig: true,
+				sshConfigHost: 'e2e-build',
+			});
 	});
 });
