@@ -674,6 +674,72 @@ async function stubProcessMonitorProcesses(
 	);
 }
 
+type TerminalRunCommandCall = {
+	sessionId: string;
+	command: string;
+	cwd: string;
+};
+
+async function stubTerminalRunCommand(electronApp: ElectronApplication) {
+	await electronApp.evaluate(({ ipcMain }) => {
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eRunCommandCalls?: TerminalRunCommandCall[];
+		};
+		state.__maestroE2eRunCommandCalls = [];
+
+		ipcMain.removeHandler('process:runCommand');
+		ipcMain.handle(
+			'process:runCommand',
+			async (
+				event,
+				config: {
+					sessionId: string;
+					command: string;
+					cwd: string;
+				}
+			) => {
+				state.__maestroE2eRunCommandCalls?.push({
+					sessionId: config.sessionId,
+					command: config.command,
+					cwd: config.cwd,
+				});
+
+				const sendExit = (code: number) => {
+					event.sender.send('process:command-exit', config.sessionId, code);
+					return { exitCode: code };
+				};
+
+				if (config.command.includes('terminal live stdout sentinel')) {
+					await new Promise((resolve) => setTimeout(resolve, 500));
+					event.sender.send('process:data', config.sessionId, 'terminal live stdout sentinel\n');
+					return sendExit(0);
+				}
+
+				if (config.command.includes('terminal live failure sentinel')) {
+					event.sender.send('process:stderr', config.sessionId, 'terminal live stderr sentinel\n');
+					return sendExit(7);
+				}
+
+				if (config.command.trim() === 'pwd') {
+					event.sender.send('process:data', config.sessionId, `${config.cwd}\n`);
+					return sendExit(0);
+				}
+
+				return sendExit(0);
+			}
+		);
+	});
+}
+
+async function getStubbedTerminalRunCommandCalls(electronApp: ElectronApplication) {
+	return electronApp.evaluate(() => {
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eRunCommandCalls?: TerminalRunCommandCall[];
+		};
+		return state.__maestroE2eRunCommandCalls || [];
+	});
+}
+
 async function stubSshConfigHosts(electronApp: ElectronApplication) {
 	await electronApp.evaluate(({ ipcMain }) => {
 		ipcMain.removeHandler('ssh-remote:getSshConfigHosts');
@@ -2075,6 +2141,66 @@ test.describe('App shell seeded workbench', () => {
 		await historyFilter.press('Enter');
 		await expect(historyFilter).toBeHidden();
 		await expect(terminalInput).toHaveValue('git status --short');
+	});
+
+	test('runs a command terminal input through the process runner and clears busy state', async () => {
+		await stubTerminalRunCommand(electronApp);
+		const terminalInput = await openSeededTerminalAgent(window);
+		const inputArea = window.locator('[data-tour="input-area"]');
+
+		await terminalInput.fill('echo terminal live stdout sentinel');
+		await inputArea.getByTitle('Run command (Enter)').click();
+
+		await expect(window.getByText('Executing command...')).toBeVisible();
+		await expect(window.getByText('echo terminal live stdout sentinel')).toBeVisible();
+		await expect(window.getByText('terminal live stdout sentinel')).toBeVisible();
+		await expect(window.getByText('Executing command...')).toBeHidden();
+		await expect(terminalInput).toHaveValue('');
+	});
+
+	test('shows command terminal stderr and nonzero exit code', async () => {
+		await stubTerminalRunCommand(electronApp);
+		const terminalInput = await openSeededTerminalAgent(window);
+		const inputArea = window.locator('[data-tour="input-area"]');
+
+		await terminalInput.fill('run terminal live failure sentinel');
+		await inputArea.getByTitle('Run command (Enter)').click();
+
+		await expect(window.getByText('terminal live stderr sentinel')).toBeVisible();
+		await expect(window.getByText('Command exited with code 7')).toBeVisible();
+		await expect(window.getByText('Executing command...')).toBeHidden();
+	});
+
+	test('clears command terminal transcript without invoking the process runner', async () => {
+		await stubTerminalRunCommand(electronApp);
+		const terminalInput = await openSeededTerminalAgent(window);
+		const inputArea = window.locator('[data-tour="input-area"]');
+
+		await terminalInput.fill('clear');
+		await inputArea.getByTitle('Run command (Enter)').click();
+
+		await expect(window.locator('[data-log-index]')).toHaveCount(0);
+		await expect(await getStubbedTerminalRunCommandCalls(electronApp)).toEqual([]);
+	});
+
+	test('updates command terminal cwd after cd and runs follow-up commands there', async () => {
+		await stubTerminalRunCommand(electronApp);
+		const terminalInput = await openSeededTerminalAgent(window);
+		const inputArea = window.locator('[data-tour="input-area"]');
+		const expectedCwd = path.join(seededWorkbench.sessions[1].cwd, 'Auto Run Docs');
+
+		await terminalInput.fill('cd "Auto Run Docs"');
+		await inputArea.getByTitle('Run command (Enter)').click();
+		await expect(inputArea.getByText(/Auto Run Docs/)).toBeVisible();
+
+		await terminalInput.fill('pwd');
+		await inputArea.getByTitle('Run command (Enter)').click();
+
+		const pwdOutput = window.locator('[data-log-index]').last();
+		await expect(pwdOutput.getByText(expectedCwd)).toBeVisible();
+		const calls = await getStubbedTerminalRunCommandCalls(electronApp);
+		await expect(calls.map((call) => call.command)).toEqual(['cd "Auto Run Docs"', 'pwd']);
+		await expect(calls[1].cwd).toBe(expectedCwd);
 	});
 
 	test('renders seeded Codex AI terminal transcript and input controls', async () => {
