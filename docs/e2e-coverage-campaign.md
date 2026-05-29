@@ -11,9 +11,9 @@ Measured inventory:
 | Area                              |              Current Count |
 | --------------------------------- | -------------------------: |
 | E2E spec files after batch 1      |                          6 |
-| Declared E2E tests after batch 1  |                        144 |
+| Declared E2E tests after batch 2  |                        147 |
 | Last pre-campaign full E2E result |      91 passed, 49 skipped |
-| Latest full E2E validation        |      95 passed, 49 skipped |
+| Latest full E2E validation        |      98 passed, 49 skipped |
 | Renderer component files          |                        236 |
 | Renderer hook files               |                        123 |
 | Renderer store files              |                         11 |
@@ -87,3 +87,5 @@ The first implementation batch should focus on infrastructure and high-ROI exist
 
 - 2026-05-29 batch 1: added deterministic persisted-state Electron launch helper, shared right-panel tab helper, fresh wizard shortcut helper, and `e2e/app-shell.spec.ts` covering app shell regions, Right Bar tab switching, Settings, Auto Run guide, and markdown file preview edit/preview toggling.
 - Validation: `npm run test:e2e -- app-shell.spec.ts` passed 4/4; `npx playwright test app-shell.spec.ts autorun-setup.spec.ts` passed 17 with 11 existing intentional skips; `npx playwright test` passed 95 with 49 existing intentional skips.
+- 2026-05-29 batch 2: extended `e2e/app-shell.spec.ts` to cover Left Bar Codex/Terminal agent switching, TabBar AI/file tab switching, and Tab Switcher filtering/selection.
+- Validation: `npx playwright test app-shell.spec.ts` passed 7/7; `npx playwright test` passed 98 with 49 existing intentional skips.

@@ -124,6 +124,59 @@ Preview prose for app shell E2E coverage.
 				autoRunPreviewScrollPos: 0,
 				autoRunCursorPosition: 0,
 			},
+			{
+				id: 'session-shell-terminal',
+				name: 'E2E Terminal',
+				toolType: 'terminal',
+				state: 'idle',
+				cwd: projectDir,
+				fullPath: projectDir,
+				projectRoot: projectDir,
+				createdAt: now + 1,
+				aiLogs: [],
+				shellLogs: [
+					{
+						id: 'shell-log-terminal',
+						timestamp: now,
+						source: 'system',
+						text: 'terminal seeded output is visible',
+					},
+				],
+				workLog: [],
+				contextUsage: 0,
+				inputMode: 'terminal',
+				aiPid: 0,
+				terminalPid: 0,
+				port: 0,
+				isLive: false,
+				changedFiles: [],
+				isGitRepo: false,
+				fileTree: [],
+				fileExplorerExpanded: [],
+				fileExplorerScrollPos: 0,
+				executionQueue: [],
+				activeTimeMs: 0,
+				fileTreeAutoRefreshInterval: 180,
+				aiTabs: [
+					{
+						id: 'terminal-tab-shell',
+						agentSessionId: null,
+						name: 'Terminal',
+						starred: false,
+						logs: [],
+						inputValue: '',
+						stagedImages: [],
+						createdAt: now,
+						state: 'idle',
+					},
+				],
+				activeTabId: 'terminal-tab-shell',
+				closedTabHistory: [],
+				filePreviewTabs: [],
+				activeFileTabId: null,
+				unifiedTabOrder: [{ type: 'ai', id: 'terminal-tab-shell' }],
+				unifiedClosedTabHistory: [],
+			},
 		],
 	};
 }
@@ -202,5 +255,38 @@ test.describe('App shell seeded workbench', () => {
 
 		await window.locator('button[title^="Show preview"]').click();
 		await expect(window.getByText('Preview prose for app shell E2E coverage.')).toBeVisible();
+	});
+
+	test('switches between seeded Codex and Terminal agents from the Left Bar', async () => {
+		await window.getByText('E2E Terminal').click();
+		await expect(window.getByText('terminal seeded output is visible')).toBeVisible();
+
+		await window.getByText('E2E Workbench').click();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+		await expect(window.getByText('Preview prose for app shell E2E coverage.')).toBeVisible();
+	});
+
+	test('switches between AI and file tabs in the TabBar', async () => {
+		await window.getByText('Main', { exact: true }).click();
+		await expect(window.getByText('Codex seeded response is visible.')).toBeVisible();
+
+		await window.getByText('README', { exact: true }).click();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+	});
+
+	test('filters and selects a file tab from the Tab Switcher', async () => {
+		await window.getByText('Main', { exact: true }).click();
+		await expect(window.getByText('Codex seeded response is visible.')).toBeVisible();
+
+		await window.getByTitle(/Search tabs/).click();
+		const switcher = window.getByRole('dialog', { name: 'Tab Switcher' });
+		await expect(switcher).toBeVisible();
+		await expect(switcher.getByRole('button', { name: /Open Tabs \(2\)/ })).toBeVisible();
+
+		await switcher.getByPlaceholder('Search open tabs...').fill('README');
+		await switcher.getByRole('button', { name: /README/ }).click();
+
+		await expect(switcher).toBeHidden();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
 	});
 });
