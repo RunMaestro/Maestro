@@ -1996,6 +1996,70 @@ test.describe('App shell seeded workbench', () => {
 		await expect(outputBlock.getByText('terminal filter haystack')).toBeHidden();
 	});
 
+	test('shows terminal stderr badge and copies stderr output', async () => {
+		await openSeededTerminalAgent(window);
+
+		const stderrBlock = window.locator('[data-log-index="3"]');
+		await expect(stderrBlock.getByText('STDERR', { exact: true })).toBeVisible();
+		await expect(stderrBlock.getByText('terminal stderr sentinel')).toBeVisible();
+
+		await stderrBlock.hover();
+		await stderrBlock.getByTitle('Copy to clipboard').click();
+		await expect(window.getByText('Copied to Clipboard')).toBeVisible();
+	});
+
+	test('switches a command terminal output block to exclude filtering', async () => {
+		await openSeededTerminalAgent(window);
+
+		const outputBlock = window.locator('[data-log-index="2"]');
+		await outputBlock.hover();
+		await outputBlock.getByTitle('Filter this output').click();
+		await outputBlock.getByPlaceholder('Include by keyword').fill('needle');
+		await expect(outputBlock.getByText('terminal filter needle')).toBeVisible();
+		await expect(outputBlock.getByText('terminal filter haystack')).toBeHidden();
+
+		await outputBlock.getByTitle('Include matching lines').click();
+		await expect(outputBlock.getByPlaceholder('Exclude by keyword')).toBeVisible();
+		await expect(outputBlock.getByText('terminal filter needle')).toBeHidden();
+		await expect(outputBlock.getByText('terminal filter haystack')).toBeVisible();
+
+		await outputBlock.getByPlaceholder('Exclude by keyword').press('Escape');
+		await expect(outputBlock.getByText('terminal filter needle')).toBeVisible();
+		await expect(outputBlock.getByText('terminal filter haystack')).toBeVisible();
+	});
+
+	test('cancels command terminal user-command paired deletion', async () => {
+		await openSeededTerminalAgent(window);
+
+		const commandBlock = window.locator('[data-log-index="1"]');
+		const outputBlock = window.locator('[data-log-index="2"]');
+		const stderrBlock = window.locator('[data-log-index="3"]');
+		await commandBlock.hover();
+		await commandBlock.getByTitle('Delete command and output').click();
+		await expect(commandBlock.getByText('Delete?')).toBeVisible();
+
+		await commandBlock.getByRole('button', { name: 'No' }).click();
+		await expect(commandBlock.getByText('Delete?')).toBeHidden();
+		await expect(outputBlock.getByText('terminal filter needle')).toBeVisible();
+		await expect(stderrBlock.getByText('terminal stderr sentinel')).toBeVisible();
+		await expect(window.locator('[data-log-index]')).toHaveCount(4);
+	});
+
+	test('deletes command terminal user command and paired output', async () => {
+		await openSeededTerminalAgent(window);
+
+		const commandBlock = window.locator('[data-log-index="1"]');
+		await commandBlock.hover();
+		await commandBlock.getByTitle('Delete command and output').click();
+		await commandBlock.getByRole('button', { name: 'Yes' }).click();
+
+		await expect(window.getByText('printf "terminal filter needle')).toHaveCount(0);
+		await expect(window.getByText('terminal search sentinel')).toHaveCount(0);
+		await expect(window.getByText('terminal stderr sentinel')).toHaveCount(0);
+		await expect(window.getByText('terminal seeded output is visible')).toBeVisible();
+		await expect(window.locator('[data-log-index]')).toHaveCount(1);
+	});
+
 	test('selects command history entries from the terminal input', async () => {
 		const terminalInput = await openSeededTerminalAgent(window);
 

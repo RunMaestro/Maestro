@@ -10,10 +10,10 @@ Measured inventory:
 
 | Area                              |              Current Count |
 | --------------------------------- | -------------------------: |
-| E2E spec files after batch 52     |                          7 |
-| Declared E2E tests after batch 52 |                        285 |
+| E2E spec files after batch 53     |                          7 |
+| Declared E2E tests after batch 53 |                        289 |
 | Last pre-campaign full E2E result |      91 passed, 49 skipped |
-| Latest full E2E validation        |     253 passed, 32 skipped |
+| Latest full E2E validation        |     257 passed, 32 skipped |
 | Renderer component files          |                        236 |
 | Renderer hook files               |                        123 |
 | Renderer store files              |                         11 |
@@ -50,7 +50,7 @@ That range is high enough to cover the app surface, but low enough to avoid a br
 | App shell, layout, sidebars, resizing, focus, global shortcuts |              6 |           110 | Left Bar, Right Bar, Main Window, collapse/restore, focus traps, keyboard-only paths                                                                                                                                                                                                                                                                                                                                                                                                           |
 | Agent CRUD and provider setup                                  |             10 |           160 | Codex live/config, provider availability, and non-Codex static custom config flows                                                                                                                                                                                                                                                                                                                                                                                                             |
 | Codex AI terminal workflows                                    |             17 |           170 | Seeded transcript/input chrome, local draft editing, delivered user-message action visibility, user-message delete cancel/confirm, transcript filtering, formatted/plain markdown toggle, response copy/save actions, slash command autocomplete, @mention file suggestions, Enter-to-send mode, AI/terminal mode switching, thinking display cycling, history/read-only toggles, and image attachment staging/dedup/removal covered; live send/interrupt/retry/replay/tool/error flows remain |
-| Command terminal workflows                                     |              4 |            95 | Shell transcript, output search/filter, command history; resize/stop/errors next                                                                                                                                                                                                                                                                                                                                                                                                               |
+| Command terminal workflows                                     |              8 |            95 | Shell transcript/input chrome, output search, include/exclude filtering, stderr badge/copy action, command history, and user-command paired delete cancel/confirm covered; resize/stop/live process/error flows next                                                                                                                                                                                                                                                                           |
 | Tabs and tab overlays                                          |             13 |           120 | AI/file hover actions, AI rename/new/close, file close/reopen; reorder variants next                                                                                                                                                                                                                                                                                                                                                                                                           |
 | File explorer and file operations                              |              7 |           140 | Filter, dotfiles, context preview, rename, delete; refresh and empty/error states next                                                                                                                                                                                                                                                                                                                                                                                                         |
 | File preview and document rendering                            |              7 |           180 | Markdown, CSV, binary handoff, image, Mermaid, large file, search, edit/preview                                                                                                                                                                                                                                                                                                                                                                                                                |
@@ -83,11 +83,11 @@ Estimated matrix total: 3,025 active scenarios. The current-active column is pri
 
 ## Immediate Next Batch
 
-The first implementation batch should focus on infrastructure and high-ROI existing gaps:
+Continue high-ROI app-surface gaps that can be tested deterministically:
 
-- Add shared E2E helpers for opening Right Bar tabs, opening the New Agent Wizard fresh, selecting agent tiles by accessible button name, and asserting modals.
-- Unskip or replace deterministic Auto Run tests that do not require live AI execution.
-- Add foundational app shell tests for Right Bar tab switching, Left Bar selection, TabBar actions, and File Preview toolbar behavior.
+- Expand command terminal process controls: running/busy state, stop control, resize behavior, working-directory display, nonzero exit and PTY error states.
+- Expand Codex-only AI terminal safe flows: live-send guardrails, interrupt/retry/replay static states, tool/error rendering, and transcript edge states without invoking non-Codex providers.
+- Start the web/mobile bridge matrix after local Electron terminal coverage is stable.
 
 ## Progress Log
 
@@ -196,3 +196,5 @@ The first implementation batch should focus on infrastructure and high-ROI exist
 - Validation: `npx playwright test e2e/app-shell.spec.ts -g "Codex AI transcript|Codex AI response|copies a Codex|saves a Codex"` passed 4/4; `npx playwright test e2e/app-shell.spec.ts` passed 125/125; `npx playwright test` passed 250 with 32 existing intentional skips. Full-suite log: `/tmp/maestro-full-e2e-codex-transcript-actions-batch51.log`.
 - 2026-05-29 batch 52: added deterministic Codex AI user-message transcript E2E coverage by seeding a delivered user turn and paired response, covering delivered/replay/delete action visibility without live replay, delete cancellation, and confirmed user-message plus paired-response deletion. Also hardened Quick Actions Escape close to use the focused window keyboard path after a full-suite flake.
 - Validation: `npx playwright test e2e/app-shell.spec.ts -g "Codex"` passed 21/21; `npx playwright test e2e/app-shell.spec.ts` passed 128/128; `npx playwright test` passed 253 with 32 existing intentional skips after the Quick Actions fix. Full-suite log: `/tmp/maestro-full-e2e-codex-user-actions-batch52-rerun.log`.
+- 2026-05-29 batch 53: added deterministic command terminal transcript-action E2E coverage for stderr badge/copy behavior, switching a filtered output block from include to exclude mode, canceling user-command paired deletion, and confirmed user-command plus paired-output deletion.
+- Validation: `npx playwright test e2e/app-shell.spec.ts -g "command terminal|terminal stderr|terminal output block|terminal user-command|terminal user command|command history"` passed 8/8; `npx playwright test e2e/app-shell.spec.ts` passed 132/132; `npx playwright test` passed 257 with 32 existing intentional skips. Full-suite log: `/tmp/maestro-full-e2e-command-terminal-actions-batch53.log`.
