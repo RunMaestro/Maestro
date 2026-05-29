@@ -10,10 +10,10 @@ Measured inventory:
 
 | Area                              |              Current Count |
 | --------------------------------- | -------------------------: |
-| E2E spec files after batch 36     |                          7 |
-| Declared E2E tests after batch 36 |                        251 |
+| E2E spec files after batch 37     |                          7 |
+| Declared E2E tests after batch 37 |                        253 |
 | Last pre-campaign full E2E result |      91 passed, 49 skipped |
-| Latest full E2E validation        |     202 passed, 49 skipped |
+| Latest full E2E validation        |     204 passed, 49 skipped |
 | Renderer component files          |                        236 |
 | Renderer hook files               |                        123 |
 | Renderer store files              |                         11 |
@@ -63,7 +63,7 @@ That range is high enough to cover the app surface, but low enough to avoid a br
 | Usage dashboard and stats                                      |              4 |           125 | Overview metrics, chart sections, Activity/Auto Run tabs, keyboard navigation          |
 | Document graph                                                 |              2 |           130 | Graph build, node selection, preview, settings, layout, persistence                    |
 | Playbooks, marketplace, Spec Kit, OpenSpec                     |              3 |           145 | Marketplace browse/import and bundled command edit/reset covered                       |
-| Symphony, leaderboard, achievements                            |              0 |           120 | Static, auth/error, modal, history and CTA flows                                       |
+| Symphony, leaderboard, achievements                            |              2 |           120 | Project browse/detail, active/history/stats, achievements, and GitHub CLI preflight    |
 | Director notes and prompt composer                             |              7 |            90 | Director's Notes settings/history/help/AI overview; prompt composer open/edit/control  |
 | Debug/about/update/app info/agent error modals                 |              7 |            85 | System Log search/filter/clear and Process Monitor detail/kill confirmation            |
 | Mobile/web bridge                                              |              0 |           190 | Web/mobile shell, session list, terminal, Auto Run, offline queue, websocket states    |
@@ -164,3 +164,5 @@ The first implementation batch should focus on infrastructure and high-ROI exist
 - Validation: `npx playwright test app-shell.spec.ts -g "Create New Agent|static custom"` passed 3/3; `npx playwright test app-shell.spec.ts` passed 99/99; `npx playwright test` passed 199 with 49 existing intentional skips; `npm run lint` passed. Full-suite log: `/tmp/maestro-full-e2e-agent-provider-batch35.log`.
 - 2026-05-29 batch 36: added deterministic Playbook Exchange and bundled command E2E coverage for stubbed marketplace browse/search/detail/document preview, marketplace import request handling, and Spec Kit/OpenSpec command edit/save/reset flows.
 - Validation: `npx playwright test app-shell.spec.ts -g "Playbook Exchange|marketplace playbook|Spec Kit and OpenSpec"` passed 3/3; `npx playwright test app-shell.spec.ts` passed 102/102; `npx playwright test` passed 202 with 49 existing intentional skips; `npm run lint` passed. Full-suite log: `/tmp/maestro-full-e2e-playbooks-speckit-batch36.log`.
+- 2026-05-29 batch 37: added deterministic Maestro Symphony E2E coverage for stubbed project registry search/detail, issue states, document preview, GitHub CLI unavailable preflight, active contribution sync/status checks, history, stats, and achievement states. Also hardened Quick Actions opening against focus misses observed during the full-suite rerun.
+- Validation: `npx playwright test app-shell.spec.ts -g "filters Quick Actions and opens Shortcuts Help|Symphony projects|Symphony active"` passed 3/3; `npx playwright test app-shell.spec.ts` passed 104/104; `npx playwright test` passed 204 with 49 existing intentional skips; `npm run lint` passed. Full-suite log: `/tmp/maestro-full-e2e-symphony-batch37-rerun.log`.

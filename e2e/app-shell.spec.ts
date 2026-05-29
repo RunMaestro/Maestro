@@ -361,8 +361,13 @@ async function openGlobalEnvironmentSettings(window: Page) {
 }
 
 async function openQuickActions(window: Page) {
-	await window.keyboard.press('Meta+K');
 	const quickActionsDialog = window.getByRole('dialog', { name: 'Quick Actions' });
+	for (let attempt = 0; attempt < 3; attempt++) {
+		if (await quickActionsDialog.isVisible().catch(() => false)) break;
+		await window.bringToFront();
+		await window.keyboard.press('Meta+K');
+		await quickActionsDialog.waitFor({ state: 'visible', timeout: 1000 }).catch(() => undefined);
+	}
 	await expect(quickActionsDialog).toBeVisible();
 	await expect(
 		quickActionsDialog.getByPlaceholder('Type a command or jump to agent...')
@@ -1070,6 +1075,255 @@ async function stubSpecKitAndOpenSpecCommands(electronApp: ElectronApplication) 
 	});
 }
 
+async function stubSymphonyForModal(electronApp: ElectronApplication, sessionId: string) {
+	await electronApp.evaluate(
+		({ ipcMain }, payload: { sessionId: string }) => {
+			const now = new Date('2026-05-29T12:00:00.000Z').toISOString();
+			const stats = {
+				totalContributions: 2,
+				totalMerged: 1,
+				totalIssuesResolved: 1,
+				totalDocumentsProcessed: 5,
+				totalTasksCompleted: 24,
+				totalTokensUsed: 1_500_000,
+				totalTimeSpent: 7_200_000,
+				estimatedCostDonated: 12.34,
+				repositoriesContributed: ['RunMaestro/Maestro', 'RunMaestro/docs'],
+				uniqueMaintainersHelped: 2,
+				currentStreak: 2,
+				longestStreak: 7,
+				firstContributionAt: '2026-05-01T12:00:00.000Z',
+				lastContributionAt: now,
+			};
+			const registry = {
+				schemaVersion: '1.0',
+				lastUpdated: now,
+				repositories: [
+					{
+						slug: 'RunMaestro/Maestro',
+						name: 'Maestro Core',
+						description: 'Electron workspace for orchestrating coding agents.',
+						url: 'https://github.com/RunMaestro/Maestro',
+						category: 'developer-tools',
+						tags: ['electron', 'codex', 'testing'],
+						maintainer: {
+							name: 'RunMaestro',
+							url: 'https://github.com/RunMaestro',
+						},
+						isActive: true,
+						featured: true,
+						addedAt: '2026-05-01T12:00:00.000Z',
+						stars: 1234,
+					},
+					{
+						slug: 'RunMaestro/docs',
+						name: 'Documentation Hub',
+						description: 'Public documentation for Maestro.',
+						url: 'https://github.com/RunMaestro/docs',
+						category: 'documentation',
+						tags: ['docs'],
+						maintainer: { name: 'RunMaestro' },
+						isActive: true,
+						addedAt: '2026-05-02T12:00:00.000Z',
+						stars: 321,
+					},
+				],
+			};
+			const issues = {
+				'RunMaestro/Maestro': [
+					{
+						number: 42,
+						title: 'Add deterministic E2E coverage',
+						body: 'Please run the attached Auto Run document.',
+						url: 'https://api.github.com/repos/RunMaestro/Maestro/issues/42',
+						htmlUrl: 'https://github.com/RunMaestro/Maestro/issues/42',
+						author: 'maintainer',
+						createdAt: '2026-05-20T12:00:00.000Z',
+						updatedAt: now,
+						documentPaths: [
+							{
+								name: 'e2e-plan.md',
+								path: 'https://example.com/symphony/e2e-plan.md',
+								isExternal: true,
+							},
+							{
+								name: 'local-checklist.md',
+								path: 'docs/local-checklist.md',
+								isExternal: false,
+							},
+						],
+						labels: [{ name: 'good first issue', color: '0e8a16' }],
+						status: 'available',
+					},
+					{
+						number: 43,
+						title: 'Blocked dependency upgrade',
+						body: 'Wait for upstream release before working.',
+						url: 'https://api.github.com/repos/RunMaestro/Maestro/issues/43',
+						htmlUrl: 'https://github.com/RunMaestro/Maestro/issues/43',
+						author: 'maintainer',
+						createdAt: '2026-05-21T12:00:00.000Z',
+						updatedAt: now,
+						documentPaths: [
+							{
+								name: 'blocked-plan.md',
+								path: 'https://example.com/symphony/blocked-plan.md',
+								isExternal: true,
+							},
+						],
+						labels: [{ name: 'blocking', color: 'cc0000' }],
+						status: 'available',
+					},
+					{
+						number: 44,
+						title: 'Already claimed contribution',
+						body: 'Another contributor is handling this issue.',
+						url: 'https://api.github.com/repos/RunMaestro/Maestro/issues/44',
+						htmlUrl: 'https://github.com/RunMaestro/Maestro/issues/44',
+						author: 'maintainer',
+						createdAt: '2026-05-22T12:00:00.000Z',
+						updatedAt: now,
+						documentPaths: [
+							{
+								name: 'claimed-plan.md',
+								path: 'https://example.com/symphony/claimed-plan.md',
+								isExternal: true,
+							},
+						],
+						labels: [{ name: 'enhancement', color: '1d76db' }],
+						status: 'in_progress',
+						claimedByPr: {
+							number: 77,
+							url: 'https://github.com/RunMaestro/Maestro/pull/77',
+							author: 'codex-user',
+							isDraft: true,
+						},
+					},
+				],
+				'RunMaestro/docs': [],
+			};
+			const activeContribution = {
+				id: 'symphony-active-e2e',
+				repoSlug: 'RunMaestro/Maestro',
+				repoName: 'Maestro Core',
+				issueNumber: 42,
+				issueTitle: 'Add deterministic E2E coverage',
+				localPath: '/tmp/maestro-symphony-e2e',
+				branchName: 'symphony/issue-42-e2e',
+				draftPrNumber: 77,
+				draftPrUrl: 'https://github.com/RunMaestro/Maestro/pull/77',
+				startedAt: '2026-05-29T10:00:00.000Z',
+				status: 'ready_for_review',
+				progress: {
+					totalDocuments: 2,
+					completedDocuments: 2,
+					currentDocument: 'e2e-plan.md',
+					totalTasks: 6,
+					completedTasks: 6,
+				},
+				tokenUsage: {
+					inputTokens: 120_000,
+					outputTokens: 42_000,
+					estimatedCost: 3.21,
+				},
+				timeSpent: 3_600_000,
+				sessionId: payload.sessionId,
+				agentType: 'codex',
+			};
+			const completedContribution = {
+				id: 'symphony-completed-e2e',
+				repoSlug: 'RunMaestro/docs',
+				repoName: 'Documentation Hub',
+				issueNumber: 12,
+				issueTitle: 'Document mobile bridge setup',
+				startedAt: '2026-05-28T10:00:00.000Z',
+				completedAt: '2026-05-28T12:00:00.000Z',
+				prUrl: 'https://github.com/RunMaestro/docs/pull/12',
+				prNumber: 12,
+				tokenUsage: {
+					inputTokens: 300_000,
+					outputTokens: 80_000,
+					totalCost: 4.56,
+				},
+				timeSpent: 7_200_000,
+				documentsProcessed: 3,
+				tasksCompleted: 18,
+				wasMerged: true,
+				mergedAt: '2026-05-28T14:00:00.000Z',
+			};
+			const state = {
+				active: [activeContribution],
+				history: [completedContribution],
+				stats,
+			};
+
+			ipcMain.removeHandler('symphony:getRegistry');
+			ipcMain.handle('symphony:getRegistry', async () => ({
+				registry,
+				fromCache: true,
+				cacheAge: 300_000,
+			}));
+			ipcMain.removeHandler('symphony:getIssueCounts');
+			ipcMain.handle('symphony:getIssueCounts', async () => ({
+				counts: {
+					'RunMaestro/Maestro': 3,
+					'RunMaestro/docs': 0,
+				},
+				fromCache: true,
+				cacheAge: 60_000,
+			}));
+			ipcMain.removeHandler('symphony:getIssues');
+			ipcMain.handle('symphony:getIssues', async (_event, repoSlug: string) => ({
+				issues: issues[repoSlug as keyof typeof issues] ?? [],
+				fromCache: true,
+				cacheAge: 60_000,
+			}));
+			ipcMain.removeHandler('symphony:getState');
+			ipcMain.handle('symphony:getState', async () => ({ state }));
+			ipcMain.removeHandler('symphony:getActive');
+			ipcMain.handle('symphony:getActive', async () => ({ contributions: state.active }));
+			ipcMain.removeHandler('symphony:getCompleted');
+			ipcMain.handle('symphony:getCompleted', async (_event, limit?: number) => ({
+				contributions: state.history.slice(0, limit ?? state.history.length),
+			}));
+			ipcMain.removeHandler('symphony:getStats');
+			ipcMain.handle('symphony:getStats', async () => ({ stats }));
+			ipcMain.removeHandler('symphony:checkPRStatuses');
+			ipcMain.handle('symphony:checkPRStatuses', async () => ({
+				checked: 1,
+				merged: 1,
+				closed: 0,
+			}));
+			ipcMain.removeHandler('symphony:syncContribution');
+			ipcMain.handle('symphony:syncContribution', async () => ({
+				success: true,
+				message: 'Contribution status synced',
+			}));
+			ipcMain.removeHandler('symphony:fetchDocumentContent');
+			ipcMain.handle('symphony:fetchDocumentContent', async () => ({
+				success: true,
+				content: '# External Symphony Doc\n\nDocument preview body for E2E.',
+			}));
+			ipcMain.removeHandler('git:checkGhCli');
+			ipcMain.handle('git:checkGhCli', async () => ({ installed: false, authenticated: false }));
+		},
+		{ sessionId }
+	);
+}
+
+async function openSymphonyFromQuickActions(window: Page) {
+	const quickActionsDialog = await openQuickActions(window);
+	await quickActionsDialog
+		.getByPlaceholder('Type a command or jump to agent...')
+		.fill('Maestro Symphony');
+	await quickActionsDialog.getByRole('button', { name: /Maestro Symphony/ }).click();
+	await expect(quickActionsDialog).toBeHidden();
+	const symphonyDialog = window.getByRole('dialog').first();
+	await expect(symphonyDialog).toBeVisible();
+	await expect(symphonyDialog.getByText('Maestro Symphony').first()).toBeVisible();
+	return symphonyDialog;
+}
+
 async function closeQuickActions(window: Page, quickActionsDialog: Locator) {
 	for (let attempt = 0; attempt < 5; attempt++) {
 		if (!(await quickActionsDialog.isVisible().catch(() => false))) return;
@@ -1485,6 +1739,58 @@ test.describe('App shell seeded workbench', () => {
 				autoRunFolderPath: seededWorkbench.sessions[0].autoRunFolderPath,
 				sessionId: seededWorkbench.sessions[0].id,
 			});
+	});
+
+	test('browses Symphony projects issues and GitHub CLI preflight states', async () => {
+		await stubSymphonyForModal(electronApp, seededWorkbench.sessions[0].id);
+
+		const symphonyDialog = await openSymphonyFromQuickActions(window);
+		await expect(symphonyDialog.getByText(/Cached 5m ago|Cached/)).toBeVisible();
+		await symphonyDialog.getByPlaceholder('Search repositories...').fill('electron');
+		await expect(symphonyDialog.getByRole('button', { name: /Maestro Core/ })).toBeVisible();
+		await expect(symphonyDialog.getByText('Documentation Hub')).toBeHidden();
+
+		await symphonyDialog.getByRole('button', { name: /Maestro Core/ }).click();
+		await expect(symphonyDialog.getByText('Maestro Symphony: Maestro Core')).toBeVisible();
+		await expect(symphonyDialog.getByText('Available Issues (1)')).toBeVisible();
+		await expect(symphonyDialog.getByText('In Progress (1)')).toBeVisible();
+		await expect(symphonyDialog.getByText('Blocked (1)')).toBeVisible();
+
+		await symphonyDialog.getByRole('button', { name: /Add deterministic E2E coverage/ }).click();
+		await expect(symphonyDialog.getByText('Document preview body for E2E.')).toBeVisible();
+		await symphonyDialog.getByRole('button', { name: 'Start Symphony' }).click();
+		await expect(window.getByText('GitHub CLI Required')).toBeVisible();
+		await window.getByRole('button', { name: 'Close' }).last().click();
+
+		await symphonyDialog.getByRole('button', { name: /Blocked dependency upgrade/ }).click();
+		await expect(symphonyDialog.getByRole('button', { name: 'Start Symphony' })).toBeDisabled();
+	});
+
+	test('shows Symphony active history stats and achievement states', async () => {
+		await stubSymphonyForModal(electronApp, seededWorkbench.sessions[0].id);
+
+		const symphonyDialog = await openSymphonyFromQuickActions(window);
+		await symphonyDialog.getByRole('button', { name: /Active \(1\)/ }).click();
+		await expect(symphonyDialog.getByText('Add deterministic E2E coverage')).toBeVisible();
+		await expect(symphonyDialog.getByText('Ready for Review')).toBeVisible();
+		await expect(symphonyDialog.getByText('Draft PR #77')).toBeVisible();
+		await expect(symphonyDialog.getByText('2 / 2 documents')).toBeVisible();
+
+		await symphonyDialog.getByTitle('Sync status with GitHub').click();
+		await expect(symphonyDialog.getByText('Contribution status synced')).toBeVisible();
+		await symphonyDialog.getByTitle('Check for merged or closed PRs').click();
+		await expect(symphonyDialog.getByText('1 PR merged')).toBeVisible();
+
+		await symphonyDialog.getByRole('button', { name: 'History' }).click();
+		await expect(symphonyDialog.getByText('Document mobile bridge setup')).toBeVisible();
+		await expect(symphonyDialog.getByText('Merged').last()).toBeVisible();
+		await expect(symphonyDialog.getByText('PR #12')).toBeVisible();
+
+		await symphonyDialog.getByRole('button', { name: 'Stats' }).click();
+		await expect(symphonyDialog.getByText('Tokens Donated')).toBeVisible();
+		await expect(symphonyDialog.getByText('1.5M')).toBeVisible();
+		await expect(symphonyDialog.getByText('First Steps')).toBeVisible();
+		await expect(symphonyDialog.getByText('Merged Melody')).toBeVisible();
 	});
 
 	test('toggles the markdown file preview between preview and edit modes', async () => {
