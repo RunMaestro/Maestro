@@ -48,6 +48,75 @@ async function advanceCodexWizardToDirectorySelection(
 	await expect(window.getByRole('heading', { name: 'Where Should We Work?' })).toBeVisible();
 }
 
+async function openDebugPhaseReviewModal(window: Page) {
+	await expect
+		.poll(() =>
+			window.evaluate(() => {
+				const debugWindow = window as Window & {
+					__maestroDebug?: { openDebugWizard?: () => void };
+				};
+				return typeof debugWindow.__maestroDebug?.openDebugWizard;
+			})
+		)
+		.toBe('function');
+	await window.evaluate(() => {
+		const debugWindow = window as Window & {
+			__maestroDebug: { openDebugWizard: () => void };
+		};
+		debugWindow.__maestroDebug.openDebugWizard();
+	});
+
+	const dialog = window.getByRole('dialog', { name: 'Debug: Jump to Phase Review' });
+	await expect(dialog).toBeVisible();
+	return dialog;
+}
+
+function writeAutoRunDocs(
+	projectDir: string,
+	docs: Record<string, string> = {
+		'Phase 1.md': `# Phase 1: Discovery
+
+## Tasks
+
+- [ ] Confirm project structure
+- [x] Review existing docs
+
+Phase one seeded content for the debug review path.
+`,
+		'Phase 2.md': `# Phase 2: Implementation
+
+## Tasks
+
+- [ ] Add deterministic tests
+- [ ] Verify behavior
+
+Phase two seeded content for document switching.
+`,
+	}
+): string {
+	const autoRunDir = path.join(projectDir, 'Auto Run Docs');
+	fs.mkdirSync(autoRunDir, { recursive: true });
+	for (const [filename, content] of Object.entries(docs)) {
+		fs.writeFileSync(path.join(autoRunDir, filename), content, 'utf-8');
+	}
+	return autoRunDir;
+}
+
+async function jumpToPhaseReview(
+	window: Page,
+	projectDir: string,
+	agentName = 'Phase Review Agent'
+) {
+	const dialog = await openDebugPhaseReviewModal(window);
+	await dialog.locator('input').nth(0).fill(projectDir);
+	await dialog.locator('input').nth(1).fill(agentName);
+	await dialog.getByRole('button', { name: 'Jump to Phase Review' }).click();
+
+	const reviewDialog = window.getByRole('dialog', { name: 'Review Your Playbooks' });
+	await expect(reviewDialog).toBeVisible({ timeout: 10000 });
+	return reviewDialog;
+}
+
 /**
  * Test suite for Auto Run setup wizard E2E tests
  *
@@ -236,6 +305,139 @@ test.describe('Auto Run Setup Wizard', () => {
 			// - Document contains relevant project information
 			// - Tasks are populated based on conversation
 			// - Document follows markdown format
+		});
+	});
+
+	test.describe('Phase Review Debug Entry', () => {
+		test('should validate that the debug phase review entry requires Auto Run Docs', async ({
+			window,
+		}) => {
+			const dialog = await openDebugPhaseReviewModal(window);
+			await dialog.locator('input').nth(0).fill(testProjectDir);
+			await dialog.locator('input').nth(1).fill('Missing Docs Agent');
+			await dialog.getByRole('button', { name: 'Jump to Phase Review' }).click();
+
+			await expect(dialog.getByText(/No Auto Run Docs folder found/)).toBeVisible();
+		});
+
+		test('should validate that the debug phase review entry requires markdown files', async ({
+			window,
+		}) => {
+			fs.mkdirSync(path.join(testProjectDir, 'Auto Run Docs'), { recursive: true });
+
+			const dialog = await openDebugPhaseReviewModal(window);
+			await dialog.locator('input').nth(0).fill(testProjectDir);
+			await dialog.locator('input').nth(1).fill('Empty Docs Agent');
+			await dialog.getByRole('button', { name: 'Jump to Phase Review' }).click();
+
+			await expect(dialog.getByText(/No markdown files found/)).toBeVisible();
+		});
+
+		test('should load existing Auto Run documents into the phase review screen', async ({
+			window,
+		}) => {
+			writeAutoRunDocs(testProjectDir);
+
+			const reviewDialog = await jumpToPhaseReview(window, testProjectDir, 'Review Loaded Agent');
+
+			await expect(reviewDialog.getByText('Step 5 of 5')).toBeVisible();
+			await expect(reviewDialog.getByRole('button', { name: 'Phase 1.md' })).toBeVisible();
+			await expect(reviewDialog.getByText(/4 total tasks.*2 documents.*2 tasks/)).toBeVisible();
+			await expect(reviewDialog.getByRole('heading', { name: 'Phase 1: Discovery' })).toBeVisible();
+			await expect(
+				reviewDialog.getByText('Phase one seeded content for the debug review path.')
+			).toBeVisible();
+		});
+
+		test('should switch between loaded phase review documents from the selector', async ({
+			window,
+		}) => {
+			writeAutoRunDocs(testProjectDir);
+
+			const reviewDialog = await jumpToPhaseReview(window, testProjectDir, 'Review Switch Agent');
+			await reviewDialog.getByRole('button', { name: 'Phase 1.md' }).click();
+			await reviewDialog.getByRole('button', { name: 'Phase 2.md' }).click();
+
+			await expect(
+				reviewDialog.getByRole('heading', { name: 'Phase 2: Implementation' })
+			).toBeVisible();
+			await expect(
+				reviewDialog.getByText('Phase two seeded content for document switching.')
+			).toBeVisible();
+			await expect(reviewDialog.getByText(/4 total tasks.*2 documents.*2 tasks/)).toBeVisible();
+		});
+
+		test('should support phase review keyboard document cycling', async ({ window }) => {
+			writeAutoRunDocs(testProjectDir);
+
+			const reviewDialog = await jumpToPhaseReview(window, testProjectDir, 'Review Keyboard Agent');
+			await reviewDialog.click();
+			await window.keyboard.press('Meta+Shift+]');
+
+			await expect(reviewDialog.getByRole('button', { name: 'Phase 2.md' })).toBeVisible();
+			await expect(
+				reviewDialog.getByRole('heading', { name: 'Phase 2: Implementation' })
+			).toBeVisible();
+		});
+
+		test('should save phase review edits back to the Auto Run document', async ({ window }) => {
+			const autoRunDir = writeAutoRunDocs(testProjectDir);
+			const reviewDialog = await jumpToPhaseReview(window, testProjectDir, 'Review Edit Agent');
+			const editedContent = `# Phase 1: Discovery
+
+## Tasks
+
+- [ ] Confirm project structure
+- [x] Review existing docs
+- [ ] Saved from Phase Review E2E
+`;
+
+			await reviewDialog.getByRole('button', { name: 'Edit' }).click();
+			await reviewDialog.locator('textarea').fill(editedContent);
+
+			await expect
+				.poll(() => fs.readFileSync(path.join(autoRunDir, 'Phase 1.md'), 'utf-8'), {
+					timeout: 6000,
+				})
+				.toContain('Saved from Phase Review E2E');
+		});
+
+		test('should submit the debug phase review modal with Enter', async ({ window }) => {
+			writeAutoRunDocs(testProjectDir);
+
+			const dialog = await openDebugPhaseReviewModal(window);
+			await dialog.locator('input').nth(0).fill(testProjectDir);
+			await dialog.locator('input').nth(1).fill('Enter Submit Agent');
+			await dialog.locator('input').nth(1).press('Enter');
+
+			await expect(window.getByRole('dialog', { name: 'Review Your Playbooks' })).toBeVisible({
+				timeout: 10000,
+			});
+		});
+
+		test('should launch a static agent from phase review without starting a live provider', async ({
+			window,
+		}) => {
+			writeAutoRunDocs(testProjectDir, {
+				'Phase 1.md': `# Phase 1: Launch Ready
+
+This document intentionally has no task checkboxes.
+`,
+			});
+
+			const reviewDialog = await jumpToPhaseReview(
+				window,
+				testProjectDir,
+				'Launchable Wizard Agent'
+			);
+			await reviewDialog.getByRole('button', { name: "I'm Ready to Go" }).click();
+
+			await expect(reviewDialog).toBeHidden({ timeout: 10000 });
+			await expect(
+				window.locator('.header-session-name').filter({ hasText: 'Launchable Wizard Agent' })
+			).toBeVisible();
+			await helpers.openRightPanelTab(window, 'Auto Run');
+			await expect(window.getByPlaceholder(/Capture notes/)).toHaveValue(/Phase 1: Launch Ready/);
 		});
 	});
 
