@@ -750,6 +750,18 @@ async function seedSystemLogs(window: Page) {
 	});
 }
 
+type StubbedProcessMonitorProcess = {
+	sessionId: string;
+	toolType: string;
+	pid: number;
+	cwd: string;
+	isTerminal: boolean;
+	isBatchMode: boolean;
+	startTime: number;
+	command: string;
+	args: string[];
+};
+
 async function stubProcessMonitorProcesses(
 	electronApp: ElectronApplication,
 	seeded: ReturnType<typeof createSeededWorkbench>
@@ -760,18 +772,9 @@ async function stubProcessMonitorProcesses(
 	await electronApp.evaluate(
 		({ ipcMain }, payload) => {
 			const state = globalThis as typeof globalThis & {
-				__maestroE2eProcessMonitorProcesses?: Array<{
-					sessionId: string;
-					toolType: string;
-					pid: number;
-					cwd: string;
-					isTerminal: boolean;
-					isBatchMode: boolean;
-					startTime: number;
-					command: string;
-					args: string[];
-				}>;
+				__maestroE2eProcessMonitorProcesses?: StubbedProcessMonitorProcess[];
 				__maestroE2eKilledProcessIds?: string[];
+				__maestroE2eActiveProcessFetchCount?: number;
 			};
 			state.__maestroE2eProcessMonitorProcesses = [
 				{
@@ -798,12 +801,14 @@ async function stubProcessMonitorProcesses(
 				},
 			];
 			state.__maestroE2eKilledProcessIds = [];
+			state.__maestroE2eActiveProcessFetchCount = 0;
 
 			ipcMain.removeHandler('process:getActiveProcesses');
-			ipcMain.handle(
-				'process:getActiveProcesses',
-				async () => state.__maestroE2eProcessMonitorProcesses || []
-			);
+			ipcMain.handle('process:getActiveProcesses', async () => {
+				state.__maestroE2eActiveProcessFetchCount =
+					(state.__maestroE2eActiveProcessFetchCount || 0) + 1;
+				return state.__maestroE2eProcessMonitorProcesses || [];
+			});
 
 			ipcMain.removeHandler('process:kill');
 			ipcMain.handle('process:kill', async (_event, sessionId: string) => {
@@ -824,12 +829,61 @@ async function stubProcessMonitorProcesses(
 	);
 }
 
+async function stubProcessMonitorWizardProcesses(
+	electronApp: ElectronApplication,
+	seeded: ReturnType<typeof createSeededWorkbench>
+) {
+	await stubProcessMonitorProcesses(electronApp, seeded);
+	await electronApp.evaluate(
+		(_electron, payload) => {
+			const state = globalThis as typeof globalThis & {
+				__maestroE2eProcessMonitorProcesses?: StubbedProcessMonitorProcess[];
+			};
+			state.__maestroE2eProcessMonitorProcesses = [
+				...(state.__maestroE2eProcessMonitorProcesses || []),
+				{
+					sessionId: 'inline-wizard-1780097000000-e2e',
+					toolType: 'codex',
+					pid: 41003,
+					cwd: payload.cwd,
+					isTerminal: false,
+					isBatchMode: false,
+					startTime: Date.now() - 30_000,
+					command: 'codex',
+					args: ['--wizard-conversation'],
+				},
+				{
+					sessionId: 'inline-wizard-gen-1780097000000-e2e',
+					toolType: 'codex',
+					pid: 41004,
+					cwd: payload.cwd,
+					isTerminal: false,
+					isBatchMode: false,
+					startTime: Date.now() - 15_000,
+					command: 'codex',
+					args: ['--generate-playbook'],
+				},
+			];
+		},
+		{ cwd: seeded.sessions[0].cwd }
+	);
+}
+
 async function getStubbedKilledProcessIds(electronApp: ElectronApplication) {
 	return electronApp.evaluate(() => {
 		const state = globalThis as typeof globalThis & {
 			__maestroE2eKilledProcessIds?: string[];
 		};
 		return state.__maestroE2eKilledProcessIds || [];
+	});
+}
+
+async function getStubbedActiveProcessFetchCount(electronApp: ElectronApplication) {
+	return electronApp.evaluate(() => {
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eActiveProcessFetchCount?: number;
+		};
+		return state.__maestroE2eActiveProcessFetchCount || 0;
 	});
 }
 
@@ -3569,6 +3623,57 @@ test.describe('App shell seeded workbench', () => {
 
 		await details.getByTitle('Back (Esc)').click();
 		await expect(window.getByRole('dialog', { name: 'System Processes' })).toBeVisible();
+	});
+
+	test('supports Process Monitor keyboard refresh and detail navigation', async () => {
+		await stubProcessMonitorProcesses(electronApp, seededWorkbench);
+		const processMonitor = await openProcessMonitor(window);
+
+		await expect(processMonitor.getByText('E2E Workbench - AI Agent (codex)')).toBeVisible();
+		const fetchCountBeforeRefresh = await getStubbedActiveProcessFetchCount(electronApp);
+		await window.keyboard.press('R');
+		await expect
+			.poll(() => getStubbedActiveProcessFetchCount(electronApp))
+			.toBeGreaterThan(fetchCountBeforeRefresh);
+		await expect(processMonitor.getByText('2 active')).toBeVisible();
+
+		await window.keyboard.press('ArrowDown');
+		await window.keyboard.press('ArrowRight');
+		await window.keyboard.press('ArrowRight');
+		await window.keyboard.press('Enter');
+
+		const details = window.getByRole('dialog', { name: 'Process Details' });
+		await expect(details).toBeVisible();
+		await expect(details.getByText('Command Line')).toBeVisible();
+		await expect(details.getByText('codex --model gpt-5-codex')).toBeVisible();
+
+		await window.keyboard.press('Escape');
+		await expect(window.getByRole('dialog', { name: 'System Processes' })).toBeVisible();
+	});
+
+	test('renders wizard processes in the Process Monitor tree and details', async () => {
+		await stubProcessMonitorWizardProcesses(electronApp, seededWorkbench);
+		const processMonitor = await openProcessMonitor(window);
+
+		await expect(processMonitor.getByText('4 active')).toBeVisible();
+		await expect(processMonitor.getByText('WIZARD PROCESSES')).toBeVisible();
+		await expect(processMonitor.getByText('Wizard Conversation')).toBeVisible();
+		await expect(processMonitor.getByText('Playbook Generation')).toBeVisible();
+		await expect(processMonitor.getByText('WIZARD', { exact: true })).toBeVisible();
+		await expect(processMonitor.getByText('GENERATING', { exact: true })).toBeVisible();
+
+		await processMonitor.getByText('Playbook Generation').dblclick();
+		const details = window.getByRole('dialog', { name: 'Process Details' });
+		await expect(details).toBeVisible();
+		await expect(details.getByText('inline-wizard-gen-1780097000000-e2e')).toBeVisible();
+		await expect(details.getByText('Process Type')).toBeVisible();
+		await expect(
+			details
+				.locator('span')
+				.filter({ hasText: /^wizard-gen$/ })
+				.first()
+		).toBeVisible();
+		await expect(details.getByText('codex --generate-playbook')).toBeVisible();
 	});
 
 	test('opens and cancels the Process Monitor kill confirmation', async () => {
