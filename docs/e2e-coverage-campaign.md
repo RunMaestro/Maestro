@@ -11,9 +11,9 @@ Measured inventory:
 | Area                              |              Current Count |
 | --------------------------------- | -------------------------: |
 | E2E spec files after batch 1      |                          6 |
-| Declared E2E tests after batch 6  |                        162 |
+| Declared E2E tests after batch 7  |                        164 |
 | Last pre-campaign full E2E result |      91 passed, 49 skipped |
-| Latest full E2E validation        |     113 passed, 49 skipped |
+| Latest full E2E validation        |     115 passed, 49 skipped |
 | Renderer component files          |                        236 |
 | Renderer hook files               |                        123 |
 | Renderer store files              |                         11 |
@@ -97,3 +97,5 @@ The first implementation batch should focus on infrastructure and high-ROI exist
 - Validation: `npx playwright test app-shell.spec.ts` passed 18/18; `npx playwright test app-shell.spec.ts -g "expands and collapses folders" --repeat-each=3` passed 3/3 after adding a file-tree readiness guard; `npx playwright test` passed 109 with 49 existing intentional skips.
 - 2026-05-29 batch 6: extended `e2e/app-shell.spec.ts` to seed History through the preload API and cover History entry rendering, AUTO/USER filters, keyboard search, detail modal validation toggle, and the History panel guide.
 - Validation: `npx playwright test app-shell.spec.ts` passed 22/22; `npx playwright test` passed 113 with 49 existing intentional skips.
+- 2026-05-29 batch 7: extended `e2e/app-shell.spec.ts` to cover Quick Actions launch paths for System Log Viewer and System Processes, including key modal controls and close behavior.
+- Validation: `npx playwright test app-shell.spec.ts` passed 24/24; `npx playwright test` passed 115 with 49 existing intentional skips.

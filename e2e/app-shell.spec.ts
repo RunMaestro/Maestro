@@ -515,6 +515,41 @@ test.describe('App shell seeded workbench', () => {
 		await expect(settingsDialog.locator('button[title="General"]')).toBeVisible();
 	});
 
+	test('opens the System Log Viewer from Quick Actions', async () => {
+		const quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('View System Logs');
+		await quickActionsDialog.getByRole('button', { name: /View System Logs/ }).click();
+
+		await expect(quickActionsDialog).toBeHidden();
+		const logViewer = window.getByRole('dialog', { name: 'System Log Viewer' });
+		await expect(logViewer).toBeVisible();
+		await expect(logViewer.getByText('Maestro System Logs')).toBeVisible();
+		await expect(logViewer.getByRole('button', { name: 'ALL', exact: true })).toBeVisible();
+
+		await logViewer.getByTitle('Close log viewer').click();
+		await expect(logViewer).toBeHidden();
+	});
+
+	test('opens the System Processes monitor from Quick Actions', async () => {
+		const quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('View System Processes');
+		await quickActionsDialog.getByRole('button', { name: /View System Processes/ }).click();
+
+		await expect(quickActionsDialog).toBeHidden();
+		const processMonitor = window.getByRole('dialog', { name: 'System Processes' });
+		await expect(processMonitor).toBeVisible();
+		await expect(processMonitor.getByText('System Processes')).toBeVisible();
+		await expect(processMonitor.getByTitle('Refresh (R)')).toBeVisible();
+		await expect(processMonitor.getByText(/2 sessions.*0 groups/)).toBeVisible();
+
+		await processMonitor.getByTitle('Close (Esc)').click();
+		await expect(processMonitor).toBeHidden();
+	});
+
 	test('shows an empty state for unmatched Quick Actions searches', async () => {
 		const quickActionsDialog = await openQuickActions(window);
 		const commandSearch = quickActionsDialog.getByPlaceholder('Type a command or jump to agent...');
