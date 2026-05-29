@@ -209,6 +209,24 @@ flowchart TD
 						source: 'system',
 						text: 'terminal seeded output is visible',
 					},
+					{
+						id: `shell-log-user-${idSuffix}`,
+						timestamp: now + 1,
+						source: 'user',
+						text: 'printf "terminal filter needle\\nterminal filter haystack\\n"',
+					},
+					{
+						id: `shell-log-stdout-${idSuffix}`,
+						timestamp: now + 2,
+						source: 'stdout',
+						text: 'terminal filter needle\nterminal filter haystack\nterminal search sentinel',
+					},
+					{
+						id: `shell-log-stderr-${idSuffix}`,
+						timestamp: now + 3,
+						source: 'stderr',
+						text: 'terminal stderr sentinel',
+					},
 				],
 				workLog: [],
 				contextUsage: 0,
@@ -219,6 +237,11 @@ flowchart TD
 				isLive: false,
 				changedFiles: [],
 				isGitRepo: false,
+				shellCommandHistory: [
+					'git status --short',
+					'npm test -- --runInBand',
+					'echo terminal history sentinel',
+				],
 				fileTree: [],
 				fileExplorerExpanded: [],
 				fileExplorerScrollPos: 0,
@@ -274,6 +297,12 @@ async function closeQuickActions(window: Page, quickActionsDialog: Locator) {
 	}
 
 	await expect(quickActionsDialog).toBeHidden();
+}
+
+async function openSeededTerminalAgent(window: Page) {
+	await window.getByText('E2E Terminal').click();
+	await expect(window.getByLabel('Terminal output')).toBeVisible();
+	return window.getByPlaceholder('Run shell command...');
 }
 
 async function openDocumentGraphFromPreview(window: Page) {
@@ -558,12 +587,65 @@ test.describe('App shell seeded workbench', () => {
 	});
 
 	test('switches between seeded Codex and Terminal agents from the Left Bar', async () => {
-		await window.getByText('E2E Terminal').click();
+		await openSeededTerminalAgent(window);
 		await expect(window.getByText('terminal seeded output is visible')).toBeVisible();
 
 		await window.getByText('E2E Workbench').click();
 		await expect(window.getByText('File Preview Surface')).toBeVisible();
 		await expect(window.getByText('Preview prose for app shell E2E coverage.')).toBeVisible();
+	});
+
+	test('renders seeded command terminal transcript and input chrome', async () => {
+		const terminalInput = await openSeededTerminalAgent(window);
+
+		await expect(window.getByText('terminal seeded output is visible')).toBeVisible();
+		await expect(window.getByText('terminal search sentinel')).toBeVisible();
+		await expect(window.getByText('terminal stderr sentinel')).toBeVisible();
+		await expect(terminalInput).toBeVisible();
+		await expect(window.getByTitle('Run command (Enter)')).toBeVisible();
+	});
+
+	test('searches command terminal output with the output search overlay', async () => {
+		await openSeededTerminalAgent(window);
+		await window.getByLabel('Terminal output').press('Control+f');
+
+		const searchInput = window.getByPlaceholder('Search output... (Esc to close)');
+		await expect(searchInput).toBeVisible();
+		await searchInput.fill('stderr sentinel');
+		await expect(window.locator('[data-log-index="3"]').getByText(/stderr sentinel/)).toBeVisible();
+		await expect(window.getByText('terminal search sentinel')).toBeHidden();
+
+		await searchInput.press('Escape');
+		await expect(searchInput).toBeHidden();
+	});
+
+	test('filters a single command terminal output block', async () => {
+		await openSeededTerminalAgent(window);
+
+		const outputBlock = window.locator('[data-log-index="2"]');
+		await outputBlock.hover();
+		await outputBlock.getByTitle('Filter this output').click();
+		await outputBlock.getByPlaceholder('Include by keyword').fill('needle');
+
+		await expect(outputBlock.getByText('terminal filter needle')).toBeVisible();
+		await expect(outputBlock.getByText('terminal filter haystack')).toBeHidden();
+	});
+
+	test('selects command history entries from the terminal input', async () => {
+		const terminalInput = await openSeededTerminalAgent(window);
+
+		await terminalInput.focus();
+		await terminalInput.press('ArrowUp');
+		const historyFilter = window.getByPlaceholder('Filter commands...');
+		await expect(historyFilter).toBeVisible();
+		await expect(window.getByText('echo terminal history sentinel')).toBeVisible();
+
+		await historyFilter.fill('status');
+		await expect(window.getByText('git status --short')).toBeVisible();
+		await expect(window.getByText('npm test -- --runInBand')).toBeHidden();
+		await historyFilter.press('Enter');
+		await expect(historyFilter).toBeHidden();
+		await expect(terminalInput).toHaveValue('git status --short');
 	});
 
 	test('switches between AI and file tabs in the TabBar', async () => {

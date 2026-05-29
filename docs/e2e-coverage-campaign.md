@@ -10,10 +10,10 @@ Measured inventory:
 
 | Area                              |              Current Count |
 | --------------------------------- | -------------------------: |
-| E2E spec files after batch 18     |                          7 |
-| Declared E2E tests after batch 18 |                        198 |
+| E2E spec files after batch 19     |                          7 |
+| Declared E2E tests after batch 19 |                        202 |
 | Last pre-campaign full E2E result |      91 passed, 49 skipped |
-| Latest full E2E validation        |     149 passed, 49 skipped |
+| Latest full E2E validation        |     153 passed, 49 skipped |
 | Renderer component files          |                        236 |
 | Renderer hook files               |                        123 |
 | Renderer store files              |                         11 |
@@ -44,7 +44,7 @@ That range is high enough to cover the app surface, but low enough to avoid a br
 | App shell, layout, sidebars, resizing, focus, global shortcuts |               0 |            90 | Left Bar, Right Bar, Main Window, collapse/restore, focus traps, keyboard-only paths  |
 | Agent CRUD and provider setup                                  |               0 |           120 | Codex live/config flows, Terminal flows, non-Codex static and unavailable states      |
 | Codex AI terminal workflows                                    |               0 |           140 | Send, interrupt, retry, replay, copy/save, streaming, tool/thinking displays, errors  |
-| Command terminal workflows                                     |               0 |            70 | Shell mode, history, cwd, output, resize, stop, errors                                |
+| Command terminal workflows                                     |               4 |            70 | Shell transcript, output search/filter, command history; resize/stop/errors next      |
 | Tabs and tab overlays                                          |               0 |            95 | AI tabs, file tabs, rename, close variants, reorder, export, merge/send context       |
 | File explorer and file operations                              |               0 |           110 | Browse, search, refresh, rename, delete, context menu, empty/error states             |
 | File preview and document rendering                            |               8 |           150 | Markdown, CSV, binary handoff, image, Mermaid, large file, search, edit/preview       |
@@ -121,3 +121,5 @@ The first implementation batch should focus on infrastructure and high-ROI exist
 - Validation: `npx playwright test app-shell.spec.ts -g "CSV|binary"` passed 2/2; `npx playwright test app-shell.spec.ts` passed 46/46; `npx playwright test` passed 146 with 49 existing intentional skips. Full-suite log: `/tmp/maestro-full-e2e-file-preview-batch17.log`.
 - 2026-05-29 batch 18: added File Preview E2E breadth for image preview rendering, Mermaid markdown code-fence rendering, and large text truncation/load-full behavior. Also hardened Quick Actions close assertions after full-suite logging exposed stale-layer Escape flakiness.
 - Validation: `npx playwright test app-shell.spec.ts -g "image files|Mermaid|large text"` passed 3/3; `npx playwright test app-shell.spec.ts -g "unmatched Quick Actions|Director's Notes in Encore"` passed 2/2; `npx playwright test app-shell.spec.ts` passed 49/49; `npx playwright test` passed 149 with 49 existing intentional skips. Full-suite log: `/tmp/maestro-full-e2e-file-preview-batch18-rerun.log`.
+- 2026-05-29 batch 19: added Command Terminal E2E coverage for seeded terminal transcript rendering, terminal input chrome, output search, per-output filtering, and shell command history selection.
+- Validation: `npx playwright test app-shell.spec.ts -g "command terminal|seeded Codex and Terminal"` passed 4/4; `npx playwright test app-shell.spec.ts -g "command history entries"` passed 1/1; `npx playwright test app-shell.spec.ts` passed 53/53; `npx playwright test` passed 153 with 49 existing intentional skips. Full-suite log: `/tmp/maestro-full-e2e-command-terminal-batch19-rerun.log`.
