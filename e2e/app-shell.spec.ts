@@ -2162,6 +2162,71 @@ test.describe('App shell seeded workbench', () => {
 		await expect(window.getByTitle('Send message')).toBeVisible();
 	});
 
+	test('filters Codex AI transcript output from the input shortcut', async () => {
+		const promptInput = await openSeededCodexAiTerminal(window);
+
+		await promptInput.focus();
+		await promptInput.press('Control+f');
+		const outputFilter = window.getByPlaceholder('Filter output... (Esc to close)');
+		await expect(outputFilter).toBeVisible();
+
+		await outputFilter.fill('seeded response');
+		await expect(window.getByText('Codex seeded response is visible.')).toBeVisible();
+
+		await outputFilter.fill('not-present-in-transcript');
+		await expect(window.getByText('Codex seeded response is visible.')).toBeHidden();
+
+		await outputFilter.press('Escape');
+		await expect(outputFilter).toBeHidden();
+		await expect(window.getByText('Codex seeded response is visible.')).toBeVisible();
+	});
+
+	test('toggles Codex AI response between formatted and plain markdown', async () => {
+		await openSeededCodexAiTerminal(window);
+
+		const responseBlock = window.locator('[data-log-index="0"]');
+		await responseBlock.hover();
+		await responseBlock.getByTitle(/Show plain text/).click();
+		await expect(responseBlock.getByTitle(/Show formatted/)).toBeVisible();
+		await expect(responseBlock.getByText('# AI Terminal')).toBeVisible();
+
+		await responseBlock.getByTitle(/Show formatted/).click();
+		await expect(responseBlock.getByTitle(/Show plain text/)).toBeVisible();
+		await expect(responseBlock.getByText('AI Terminal')).toBeVisible();
+	});
+
+	test('copies a Codex AI response from transcript actions', async () => {
+		await openSeededCodexAiTerminal(window);
+
+		const responseBlock = window.locator('[data-log-index="0"]');
+		await responseBlock.hover();
+		await responseBlock.getByTitle('Copy to clipboard').click();
+
+		await expect(window.getByText('Copied to Clipboard')).toBeVisible();
+	});
+
+	test('saves a Codex AI response to markdown from transcript actions', async () => {
+		await openSeededCodexAiTerminal(window);
+
+		const responseBlock = window.locator('[data-log-index="0"]');
+		await responseBlock.hover();
+		await responseBlock.getByTitle('Save to file').click();
+
+		const saveDialog = window.getByRole('dialog', { name: 'Save Markdown' });
+		await expect(saveDialog).toBeVisible();
+		await expect(saveDialog.getByPlaceholder('/path/to/folder')).toHaveValue(
+			seededWorkbench.sessions[0].cwd
+		);
+
+		await saveDialog.getByPlaceholder('document.md').fill('codex-response-e2e');
+		await saveDialog.getByRole('button', { name: 'Save' }).click();
+		await expect(saveDialog).toBeHidden();
+
+		const savedPath = path.join(seededWorkbench.sessions[0].cwd, 'codex-response-e2e.md');
+		await expect.poll(() => fs.existsSync(savedPath)).toBe(true);
+		expect(fs.readFileSync(savedPath, 'utf-8')).toContain('Codex seeded response is visible.');
+	});
+
 	test('switches between AI and file tabs in the TabBar', async () => {
 		await window.getByText('Main', { exact: true }).click();
 		await expect(window.getByText('Codex seeded response is visible.')).toBeVisible();
