@@ -291,6 +291,81 @@ async function openQuickActions(window: Page) {
 	return quickActionsDialog;
 }
 
+async function openUsageDashboard(window: Page) {
+	const quickActionsDialog = await openQuickActions(window);
+	await quickActionsDialog
+		.getByPlaceholder('Type a command or jump to agent...')
+		.fill('Usage Dashboard');
+	await quickActionsDialog.getByRole('button', { name: /Usage Dashboard/ }).click();
+
+	await expect(quickActionsDialog).toBeHidden();
+	const usageDashboard = window.getByRole('dialog', { name: 'Usage Dashboard' });
+	await expect(usageDashboard).toBeVisible();
+	return usageDashboard;
+}
+
+async function seedUsageDashboardStats(window: Page) {
+	await window.evaluate(async () => {
+		const now = Date.now();
+		const projectPath = '/tmp/maestro-e2e-usage-dashboard';
+		const sessionId = 'session-shell-codex-usage-dashboard';
+
+		await window.maestro.stats.recordQuery({
+			sessionId,
+			agentType: 'codex',
+			source: 'user',
+			startTime: now - 1000 * 60 * 60 * 3,
+			duration: 120_000,
+			projectPath,
+			tabId: 'usage-main',
+			isRemote: false,
+		});
+
+		await window.maestro.stats.recordQuery({
+			sessionId,
+			agentType: 'codex',
+			source: 'auto',
+			startTime: now - 1000 * 60 * 60,
+			duration: 240_000,
+			projectPath,
+			tabId: 'usage-auto',
+			isRemote: true,
+		});
+
+		await window.maestro.stats.recordSessionCreated({
+			sessionId,
+			agentType: 'codex',
+			projectPath,
+			createdAt: now - 1000 * 60 * 60 * 4,
+			isRemote: false,
+		});
+		await window.maestro.stats.recordSessionClosed(sessionId, now - 1000 * 60 * 15);
+
+		const autoRunSessionId = await window.maestro.stats.startAutoRun({
+			sessionId,
+			agentType: 'codex',
+			documentPath: 'Auto Run Docs/Phase 1.md',
+			startTime: now - 1000 * 60 * 45,
+			tasksTotal: 5,
+			projectPath,
+		});
+
+		if (autoRunSessionId) {
+			await window.maestro.stats.recordAutoTask({
+				autoRunSessionId,
+				sessionId,
+				agentType: 'codex',
+				taskIndex: 0,
+				taskContent: 'Seed Usage Dashboard task',
+				startTime: now - 1000 * 60 * 40,
+				duration: 60_000,
+				success: true,
+			});
+			await window.maestro.stats.endAutoRun(autoRunSessionId, 600_000, 4);
+		}
+	});
+}
+
 async function closeQuickActions(window: Page, quickActionsDialog: Locator) {
 	for (let attempt = 0; attempt < 5; attempt++) {
 		if (!(await quickActionsDialog.isVisible().catch(() => false))) return;
@@ -1091,15 +1166,7 @@ test.describe('App shell seeded workbench', () => {
 	});
 
 	test('opens the Usage Dashboard from Quick Actions', async () => {
-		const quickActionsDialog = await openQuickActions(window);
-		await quickActionsDialog
-			.getByPlaceholder('Type a command or jump to agent...')
-			.fill('Usage Dashboard');
-		await quickActionsDialog.getByRole('button', { name: /Usage Dashboard/ }).click();
-
-		await expect(quickActionsDialog).toBeHidden();
-		const usageDashboard = window.getByRole('dialog', { name: 'Usage Dashboard' });
-		await expect(usageDashboard).toBeVisible();
+		const usageDashboard = await openUsageDashboard(window);
 		await expect(usageDashboard.getByRole('tab', { name: 'Overview' })).toBeVisible();
 		await expect(usageDashboard.getByRole('tab', { name: 'Agents' })).toBeVisible();
 		await expect(usageDashboard.getByRole('tab', { name: 'Activity' })).toBeVisible();
@@ -1117,6 +1184,71 @@ test.describe('App shell seeded workbench', () => {
 
 		await usageDashboard.getByTitle('Close (Esc)').click();
 		await expect(usageDashboard).toBeHidden();
+	});
+
+	test('renders populated Usage Dashboard overview metrics and chart sections', async () => {
+		await seedUsageDashboardStats(window);
+		const usageDashboard = await openUsageDashboard(window);
+
+		await expect(usageDashboard.getByTestId('usage-dashboard-content')).toBeVisible();
+		await expect(usageDashboard.getByTestId('summary-cards')).toBeVisible();
+		await expect(usageDashboard.getByText('Total Queries')).toBeVisible();
+		await expect(usageDashboard.getByText('Top Agent')).toBeVisible();
+		await expect(usageDashboard.getByTestId('summary-cards').getByText('codex')).toBeVisible();
+		await expect(usageDashboard.getByTestId('section-agent-comparison')).toBeVisible();
+		await expect(usageDashboard.getByTestId('section-source-distribution')).toBeVisible();
+		await expect(usageDashboard.getByTestId('section-location-distribution')).toBeVisible();
+		await expect(usageDashboard.getByTestId('database-size-indicator')).toBeVisible();
+		await expect(usageDashboard.getByText('Showing this week data')).toBeVisible();
+	});
+
+	test('shows Activity and Auto Run Usage Dashboard sections for seeded stats', async () => {
+		await seedUsageDashboardStats(window);
+		const usageDashboard = await openUsageDashboard(window);
+
+		await usageDashboard.getByRole('tab', { name: 'Activity' }).click();
+		await expect(usageDashboard.getByRole('tab', { name: 'Activity' })).toHaveAttribute(
+			'aria-selected',
+			'true'
+		);
+		await expect(usageDashboard.getByTestId('section-activity-heatmap')).toBeVisible();
+		await expect(usageDashboard.getByTestId('section-weekday-comparison')).toBeVisible();
+		await expect(usageDashboard.getByTestId('section-duration-trends')).toBeVisible();
+
+		await usageDashboard.getByRole('tab', { name: 'Auto Run' }).click();
+		await expect(usageDashboard.getByRole('tab', { name: 'Auto Run' })).toHaveAttribute(
+			'aria-selected',
+			'true'
+		);
+		await expect(usageDashboard.getByTestId('section-autorun-stats')).toBeVisible();
+		await expect(usageDashboard.getByTestId('autorun-stats')).toBeVisible();
+		await expect(usageDashboard.getByText('Total Sessions')).toBeVisible();
+		await expect(usageDashboard.getByText('Tasks Done')).toBeVisible();
+		await expect(usageDashboard.getByTestId('section-longest-autoruns')).toBeVisible();
+		await expect(usageDashboard.getByText(/Top \d+ Longest Auto Runs/)).toBeVisible();
+	});
+
+	test('supports keyboard navigation inside the Usage Dashboard', async () => {
+		await seedUsageDashboardStats(window);
+		const usageDashboard = await openUsageDashboard(window);
+		const tabList = usageDashboard.getByTestId('view-mode-tabs');
+
+		await tabList.focus();
+		await expect(tabList).toBeFocused();
+		await window.keyboard.press('ArrowRight');
+		await expect(usageDashboard.getByRole('tab', { name: 'Agents' })).toHaveAttribute(
+			'aria-selected',
+			'true'
+		);
+
+		await window.keyboard.press('Tab');
+		await expect(usageDashboard.getByTestId('section-session-stats')).toBeFocused();
+
+		await window.keyboard.press('ArrowDown');
+		await expect(usageDashboard.getByTestId('section-agent-efficiency')).toBeFocused();
+
+		await window.keyboard.press('End');
+		await expect(usageDashboard.getByTestId('section-agent-usage')).toBeFocused();
 	});
 
 	test('opens Agent Sessions from Quick Actions for the active Codex agent', async () => {

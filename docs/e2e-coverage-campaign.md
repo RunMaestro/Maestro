@@ -10,10 +10,10 @@ Measured inventory:
 
 | Area                              |              Current Count |
 | --------------------------------- | -------------------------: |
-| E2E spec files after batch 24     |                          7 |
-| Declared E2E tests after batch 24 |                        217 |
+| E2E spec files after batch 25     |                          7 |
+| Declared E2E tests after batch 25 |                        220 |
 | Last pre-campaign full E2E result |      91 passed, 49 skipped |
-| Latest full E2E validation        |     168 passed, 49 skipped |
+| Latest full E2E validation        |     171 passed, 49 skipped |
 | Renderer component files          |                        236 |
 | Renderer hook files               |                        123 |
 | Renderer store files              |                         11 |
@@ -60,7 +60,7 @@ That range is high enough to cover the app surface, but low enough to avoid a br
 | Settings                                                       |              9 |           190 | General default persistence and Display/Bionify persistence; SSH/env/theme/error next  |
 | Git, worktrees, PR, diff/log, Gist                             |              0 |           160 | Local temp repos first; GitHub/Gist account paths gated                                |
 | Group chat                                                     |             10 |           140 | Creation, participants, Codex-only routing, history, errors, deletion                  |
-| Usage dashboard and stats                                      |              1 |           125 | Charts, lookbacks, loading, empty, errors, detail modals                               |
+| Usage dashboard and stats                                      |              4 |           125 | Overview metrics, chart sections, Activity/Auto Run tabs, keyboard navigation          |
 | Document graph                                                 |              2 |           130 | Graph build, node selection, preview, settings, layout, persistence                    |
 | Playbooks, marketplace, Spec Kit, OpenSpec                     |              0 |           145 | Local/import/export/search flows; network paths mocked/gated                           |
 | Symphony, leaderboard, achievements                            |              0 |           120 | Static, auth/error, modal, history and CTA flows                                       |
@@ -140,3 +140,5 @@ The first implementation batch should focus on infrastructure and high-ROI exist
 - 2026-05-29 batch 24: added Settings E2E coverage for General defaults persistence across history, thinking display, and auto-scroll, plus Display/Bionify reading-mode and intensity persistence.
 - Validation: `npx playwright test app-shell.spec.ts -g "Settings"` passed 9/9; `npx playwright test app-shell.spec.ts` passed 68/68; `npx playwright test` passed 168 with 49 existing intentional skips. Full-suite log: `/tmp/maestro-full-e2e-settings-batch24.log`.
 - 2026-05-29 recalculation pass: re-audited app-wide E2E scope from source inventory and raised the estimated matrix from 2,250 active scenarios to 3,025 active scenarios, with 2,900 to 3,700 total declared scenarios expected after explicit skipped/environment-gated coverage is included.
+- 2026-05-29 batch 25: added Usage Dashboard E2E coverage using seeded stats through the preload API, covering populated overview metrics, summary/chart sections, Activity and Auto Run dashboard tabs, Auto Run stats/table rendering, and keyboard navigation between tabs and sections.
+- Validation: `npx playwright test app-shell.spec.ts -g "Usage Dashboard"` passed 4/4; `npx playwright test app-shell.spec.ts` passed 71/71; `npx playwright test` passed 171 with 49 existing intentional skips. Full-suite log: `/tmp/maestro-full-e2e-usage-dashboard-batch25.log`.
