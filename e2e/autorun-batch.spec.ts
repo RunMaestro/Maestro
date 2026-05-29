@@ -10,9 +10,105 @@
  */
 /* eslint-disable @typescript-eslint/no-unused-vars */
 import { test, expect, helpers } from './fixtures/electron-app';
+import type { Locator, Page } from '@playwright/test';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
+
+function createBatchWorkbenchSession(projectDir: string, autoRunFolder: string) {
+	const now = Date.now();
+	const idSuffix = `${now}-${Math.random().toString(36).slice(2)}`;
+	const sessionId = `session-batch-${idSuffix}`;
+	const aiTabId = `ai-tab-batch-${idSuffix}`;
+	const phaseOnePath = path.join(autoRunFolder, 'Phase 1.md');
+
+	return {
+		id: sessionId,
+		name: 'Batch Runner E2E',
+		toolType: 'codex',
+		state: 'idle',
+		cwd: projectDir,
+		fullPath: projectDir,
+		projectRoot: projectDir,
+		createdAt: now,
+		aiLogs: [],
+		shellLogs: [],
+		workLog: [],
+		contextUsage: 0,
+		inputMode: 'ai',
+		aiPid: 0,
+		terminalPid: 0,
+		port: 0,
+		isLive: false,
+		changedFiles: [],
+		isGitRepo: false,
+		fileTree: [],
+		fileExplorerExpanded: [],
+		fileExplorerScrollPos: 0,
+		executionQueue: [],
+		activeTimeMs: 0,
+		fileTreeAutoRefreshInterval: 180,
+		aiTabs: [
+			{
+				id: aiTabId,
+				agentSessionId: null,
+				name: 'Main',
+				starred: false,
+				logs: [],
+				inputValue: '',
+				stagedImages: [],
+				createdAt: now,
+				state: 'idle',
+			},
+		],
+		activeTabId: aiTabId,
+		closedTabHistory: [],
+		filePreviewTabs: [],
+		activeFileTabId: null,
+		unifiedTabOrder: [{ type: 'ai', id: aiTabId }],
+		unifiedClosedTabHistory: [],
+		autoRunFolderPath: autoRunFolder,
+		autoRunSelectedFile: 'Phase 1',
+		autoRunContent: fs.readFileSync(phaseOnePath, 'utf-8'),
+		autoRunContentVersion: 1,
+		autoRunMode: 'preview',
+		autoRunEditScrollPos: 0,
+		autoRunPreviewScrollPos: 0,
+		autoRunCursorPosition: 0,
+	};
+}
+
+async function launchBatchWorkbench() {
+	const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-batch-workbench-'));
+	const autoRunFolder = helpers.createBatchTestFolder(projectDir);
+	const launched = await helpers.launchAppWithState({
+		homeDir: projectDir,
+		sessions: [createBatchWorkbenchSession(projectDir, autoRunFolder)],
+	});
+	return launched;
+}
+
+async function openBatchRunnerModal(window: Page) {
+	await helpers.openRightPanelTab(window, 'Auto Run');
+	await expect(window.getByText('Phase 1: Setup')).toBeVisible();
+	const runButton = helpers.getRunButton(window).first();
+	await expect(runButton).toBeVisible();
+	await expect(runButton).toBeEnabled();
+	await runButton.click();
+	const dialog = window.getByRole('dialog', { name: 'Auto Run Configuration' });
+	await expect(dialog).toBeVisible();
+	return dialog;
+}
+
+async function openDocumentSelector(window: Page, batchDialog: Locator) {
+	await batchDialog.getByRole('button', { name: /Add Docs/ }).click();
+	const selectorDialog = window
+		.locator('div.fixed.inset-0')
+		.filter({ hasText: 'Select Documents' })
+		.last();
+	await expect(selectorDialog.getByText('Select Documents')).toBeVisible();
+	return selectorDialog;
+}
 
 /**
  * Test suite for Auto Run batch processing E2E tests
@@ -556,21 +652,51 @@ All tasks in this document are complete.
  */
 test.describe('Batch Processing with Multiple Documents', () => {
 	test.describe('Document Selection in Batch Modal', () => {
-		test.skip('should display all available documents in batch runner', async ({ window }) => {
-			// This test verifies document selection in batch modal
-			// Skip until batch modal infrastructure is complete
-			// Expected behavior:
-			// 1. Open batch runner modal
-			// 2. All documents from folder are listed
-			// 3. Can select/deselect documents
+		test('should display all available documents in batch runner', async () => {
+			const launched = await launchBatchWorkbench();
+			try {
+				const batchDialog = await openBatchRunnerModal(launched.window);
+				const selectorDialog = await openDocumentSelector(launched.window, batchDialog);
+
+				await expect(selectorDialog.getByText('Phase 1')).toBeVisible();
+				await expect(selectorDialog.getByText('Phase 2')).toBeVisible();
+				await expect(selectorDialog.getByText('Completed')).toBeVisible();
+				await expect(selectorDialog.getByRole('button', { name: 'Select All' })).toBeVisible();
+				await expect(selectorDialog.getByRole('button', { name: /Add 1 file/ })).toBeVisible();
+			} finally {
+				await launched.cleanup();
+			}
 		});
 
-		test.skip('should show task count per document', async ({ window }) => {
-			// This test verifies task counts in document list
-			// Skip until batch modal infrastructure is complete
-			// Expected behavior:
-			// 1. Each document shows its task count
-			// 2. Total task count updates as docs are selected
+		test('should show task count per document', async () => {
+			const launched = await launchBatchWorkbench();
+			try {
+				const batchDialog = await openBatchRunnerModal(launched.window);
+				const selectorDialog = await openDocumentSelector(launched.window, batchDialog);
+
+				await expect(
+					selectorDialog.getByRole('button').filter({ hasText: 'Phase 1' })
+				).toContainText('3 tasks');
+				await expect(
+					selectorDialog.getByRole('button').filter({ hasText: 'Phase 2' })
+				).toContainText('3 tasks');
+				await expect(
+					selectorDialog.getByRole('button').filter({ hasText: 'Completed' })
+				).toContainText('0 tasks');
+
+				await selectorDialog.getByRole('button', { name: 'Select All' }).click();
+				await expect(
+					selectorDialog.getByRole('button', { name: /Add 3 files.*6 tasks/ })
+				).toBeEnabled();
+				await selectorDialog.getByRole('button', { name: /Add 3 files/ }).click();
+
+				await expect(batchDialog.getByText('Phase 2.md')).toBeVisible();
+				await expect(batchDialog.getByText('Completed.md')).toBeVisible();
+				await expect(batchDialog.getByText('6 tasks').first()).toBeVisible();
+				await expect(batchDialog.getByRole('button', { name: /Save as Playbook/ })).toBeVisible();
+			} finally {
+				await launched.cleanup();
+			}
 		});
 
 		test.skip('should process documents in order', async ({ window }) => {
