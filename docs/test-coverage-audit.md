@@ -2,7 +2,7 @@
 
 ## Current Coverage
 
-Measured with `npm run test:coverage` on branch `codex/integration-coverage-campaign`.
+Measured with `npm run test:coverage` on branch `codex/e2e-coverage-campaign`.
 
 | Metric     | Original Baseline | After Initial Additions | Phase 1 Rerun | Latest Checkpoint |
 | ---------- | ----------------: | ----------------------: | ------------: | ----------------: |
@@ -11,16 +11,24 @@ Measured with `npm run test:coverage` on branch `codex/integration-coverage-camp
 | Functions  |            67.73% |                  67.85% |        67.86% |           100.00% |
 | Lines      |            67.81% |                  67.95% |        67.95% |           100.00% |
 
-The unit suite currently reports 100% statements, branches, functions, and lines with global 100% thresholds enabled. The integration suite also passes after updating stale integration tests for the current Zustand-backed sidebar/right-panel state model and current Auto Run UI semantics.
+The unit suite currently reports 100% statements, branches, functions, and lines with global 100% thresholds enabled. The integration suite also passes after updating stale integration tests for the current Zustand-backed sidebar/right-panel state model and current Auto Run UI semantics. The Electron E2E suite passes after refreshing stale selectors for the current Auto Run and New Agent Wizard UI.
 
 Latest checkpoint result:
 
 - Command: `npm run test:coverage`
 - Result: passed
 - Test files: 730 passed, 1 skipped
-- Tests: 28,520 passed, 106 skipped
-- Duration: 142.34s
+- Tests: 28,521 passed, 106 skipped
+- Duration: 141.60s
 - Coverage: 100% statements, 100% branches, 100% functions, 100% lines
+
+E2E checkpoint:
+
+- Command: `npm run test:e2e`
+- Result: passed
+- Tests: 91 passed, 49 skipped
+- Duration: 3.9m
+- Runner: Playwright Electron fixtures. Agent-Browser was not used for Electron because the installed CLI did not expose the documented `skills` subcommand during this checkpoint.
 
 Integration checkpoint:
 
@@ -64891,4 +64899,4 @@ Campaign outcome:
 
 - Integration coverage is complete at 100.00% for statements, branches,
   functions, and lines under `vitest.integration.config.ts`.
-- E2E coverage remains outside this campaign scope and was not run.
+- Electron E2E now passes with `npm run test:e2e`: 91 passed, 49 skipped.

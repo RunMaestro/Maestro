@@ -11,9 +11,28 @@
  */
 /* eslint-disable @typescript-eslint/no-unused-vars */
 import { test, expect, helpers } from './fixtures/electron-app';
+import type { Page } from '@playwright/test';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
+
+async function selectClaudeCodeAgent(window: Page, agentName = 'E2E Agent'): Promise<void> {
+	const claudeAgent = window.getByRole('button', { name: /^Claude Code$/ });
+	await expect(claudeAgent).toBeVisible();
+	await claudeAgent.click();
+	await window.getByRole('textbox', { name: /agent name/i }).fill(agentName);
+}
+
+async function openNewAgentWizard(window: Page): Promise<void> {
+	await window.keyboard.press('Meta+Shift+N');
+
+	const startFreshButton = window.getByRole('button', { name: /start fresh/i });
+	if (await startFreshButton.isVisible({ timeout: 1000 }).catch(() => false)) {
+		await startFreshButton.click();
+	}
+
+	await expect(window.getByRole('heading', { name: 'Create a Maestro Agent' })).toBeVisible();
+}
 
 /**
  * Test suite for Auto Run setup wizard E2E tests
@@ -60,30 +79,19 @@ test.describe('Auto Run Setup Wizard', () => {
 
 	test.describe('Wizard Launch', () => {
 		test('should display the wizard when triggered via keyboard shortcut', async ({ window }) => {
-			// Press Cmd+Shift+N to open the wizard
-			await window.keyboard.press('Meta+Shift+N');
-
-			// Wait for wizard to appear - look for the heading specifically
-			const wizardTitle = window.getByRole('heading', { name: 'Create a Maestro Agent' });
-			await expect(wizardTitle).toBeVisible({ timeout: 10000 });
+			await openNewAgentWizard(window);
 		});
 
 		test('should show agent selection as the first step', async ({ window }) => {
-			await window.keyboard.press('Meta+Shift+N');
-
-			// Verify we're on the agent selection screen (use heading specifically)
-			await expect(window.getByRole('heading', { name: 'Create a Maestro Agent' })).toBeVisible();
+			await openNewAgentWizard(window);
 
 			// Should show available agents (use first to avoid multiple matches)
 			await expect(window.locator('text=Claude Code').first()).toBeVisible();
 		});
 
 		test('should close wizard with Escape on first step', async ({ window }) => {
-			await window.keyboard.press('Meta+Shift+N');
-
-			// Verify wizard is open (use heading specifically)
+			await openNewAgentWizard(window);
 			const wizardTitle = window.getByRole('heading', { name: 'Create a Maestro Agent' });
-			await expect(wizardTitle).toBeVisible();
 
 			// Press Escape to close
 			await window.keyboard.press('Escape');
@@ -96,8 +104,7 @@ test.describe('Auto Run Setup Wizard', () => {
 	test.describe('Agent Selection Screen', () => {
 		test.beforeEach(async ({ window }) => {
 			// Open wizard before each test in this group
-			await window.keyboard.press('Meta+Shift+N');
-			await expect(window.getByRole('heading', { name: 'Create a Maestro Agent' })).toBeVisible();
+			await openNewAgentWizard(window);
 		});
 
 		test('should display Claude Code as the primary supported agent', async ({ window }) => {
@@ -106,10 +113,11 @@ test.describe('Auto Run Setup Wizard', () => {
 			await expect(claudeAgent).toBeVisible();
 		});
 
-		test('should display other agents as coming soon', async ({ window }) => {
-			// Other agents should be shown as coming soon/ghosted
-			await expect(window.locator('text=OpenAI Codex')).toBeVisible();
+		test('should display supported and coming soon agents', async ({ window }) => {
+			await expect(window.getByRole('button', { name: /^Codex$/ })).toBeVisible();
+			await expect(window.getByRole('button', { name: /^OpenCode$/ })).toBeVisible();
 			await expect(window.locator('text=Gemini CLI')).toBeVisible();
+			await expect(window.locator('text=Qwen3 Coder')).toBeVisible();
 			await expect(window.locator('text=Coming soon').first()).toBeVisible();
 		});
 
@@ -137,8 +145,7 @@ test.describe('Auto Run Setup Wizard', () => {
 		});
 
 		test('should proceed to next step when Claude Code is selected', async ({ window }) => {
-			// Click on Claude Code
-			await window.locator('text=Claude Code').first().click();
+			await selectClaudeCodeAgent(window);
 
 			// Should be able to click Next/Continue (may be automatic on selection)
 			// Note: The Continue button may be disabled until agent detection completes
@@ -210,8 +217,7 @@ test.describe('Auto Run Setup Wizard', () => {
 
 	test.describe('Wizard Navigation', () => {
 		test.beforeEach(async ({ window }) => {
-			await window.keyboard.press('Meta+Shift+N');
-			await expect(window.getByRole('heading', { name: 'Create a Maestro Agent' })).toBeVisible();
+			await openNewAgentWizard(window);
 		});
 
 		test('should show step indicators', async ({ window }) => {
@@ -232,8 +238,7 @@ test.describe('Auto Run Setup Wizard', () => {
 		});
 
 		test('should allow going back to previous steps', async ({ window }) => {
-			// Select Claude Code to enable proceeding
-			await window.locator('text=Claude Code').first().click();
+			await selectClaudeCodeAgent(window);
 
 			// Find and click Next if visible
 			const nextButton = window.locator('button').filter({ hasText: /next|continue/i });
@@ -274,8 +279,7 @@ test.describe('Auto Run Setup Wizard', () => {
 
 	test.describe('Accessibility', () => {
 		test.beforeEach(async ({ window }) => {
-			await window.keyboard.press('Meta+Shift+N');
-			await expect(window.getByRole('heading', { name: 'Create a Maestro Agent' })).toBeVisible();
+			await openNewAgentWizard(window);
 		});
 
 		test('should support keyboard-only navigation', async ({ window }) => {

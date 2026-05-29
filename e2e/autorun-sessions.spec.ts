@@ -347,11 +347,13 @@ This document has the same name across sessions but different content.
 							.filter({ hasText: 'Configure' })
 							.or(window.locator('text=/not configured|choose a folder|set up/i'))
 					);
+				const noDocumentsState = window.getByRole('heading', { name: 'No Documents Found' });
 
 				// Either we have content or we have setup prompt
 				const textarea = window.locator('textarea');
 				const hasContent = (await textarea.count()) > 0;
-				const hasSetupPrompt = (await setupButton.count()) > 0;
+				const hasSetupPrompt =
+					(await setupButton.count()) > 0 || (await noDocumentsState.count()) > 0;
 
 				// One or the other should be true
 				expect(hasContent || hasSetupPrompt).toBeTruthy();

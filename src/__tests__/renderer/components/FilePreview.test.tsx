@@ -56,10 +56,12 @@ vi.mock('react-markdown', () => ({
 		children,
 		components,
 		remarkPlugins,
+		urlTransform,
 	}: {
 		children: string;
 		components?: Record<string, React.ComponentType<any>>;
 		remarkPlugins?: unknown[];
+		urlTransform?: (url: string, key: string) => string;
 	}) => {
 		reactMarkdownMocks.lastRemarkPlugins = remarkPlugins ?? null;
 		const ImageComponent = components?.img;
@@ -70,6 +72,7 @@ vi.mock('react-markdown', () => ({
 		const linkMatches = [...children.matchAll(/(?<!!)\[([^\]]+)\]\(([^)]*)\)/g)];
 		const mermaidMatches = [...children.matchAll(/```mermaid\s*\n([\s\S]*?)```/g)];
 		const hasDetails = /<details[\s>]/.test(children);
+		const transformUrl = (url: string, key: string) => urlTransform?.(url, key) ?? url;
 
 		return (
 			<div data-testid="markdown-content">
@@ -95,20 +98,22 @@ vi.mock('react-markdown', () => ({
 							<ImageComponent
 								key={`${match[2]}-${index}`}
 								alt={alt}
-								src={match[2]}
+								src={transformUrl(match[2], 'src')}
 								data-maestro-from-tree={isFromTree ? 'true' : undefined}
 							/>
 						);
 					})}
 				{AnchorComponent &&
 					linkMatches.map((match, index) => (
-						<AnchorComponent key={`${match[2]}-${index}`} href={match[2]}>
+						<AnchorComponent key={`${match[2]}-${index}`} href={transformUrl(match[2], 'href')}>
 							{match[1]}
 						</AnchorComponent>
 					))}
 			</div>
 		);
 	},
+	defaultUrlTransform: (url: string) =>
+		/^[a-z][a-z\d+.-]*:/i.test(url) && !/^(https?:|mailto:)/i.test(url) ? '' : url,
 }));
 
 // Mock remark/rehype plugins
@@ -1969,7 +1974,7 @@ describe('FilePreview', () => {
 				/>
 			);
 
-			fireEvent.click(screen.getByRole('link', { name: 'Custom' }));
+			fireEvent.click(screen.getByText('Custom'));
 
 			expect(window.maestro.shell.openPath).not.toHaveBeenCalled();
 			expect(window.maestro.shell.openExternal).not.toHaveBeenCalled();

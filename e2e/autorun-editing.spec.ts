@@ -666,10 +666,9 @@ Some sample content for testing.
 			if ((await autoRunTab.count()) > 0) {
 				await autoRunTab.first().click();
 
-				// Look for expand button (Maximize2 icon)
-				const expandButton = window
-					.locator('button[title*="Expand"]')
-					.or(window.locator('button[title*="full screen"]'));
+				const expandButton = window.getByRole('button', {
+					name: /expand to full screen/i,
+				});
 				if ((await expandButton.count()) > 0) {
 					await expandButton.first().click();
 					// Modal should open - look for modal container or specific elements
@@ -693,9 +692,9 @@ Some sample content for testing.
 			if ((await autoRunTab.count()) > 0) {
 				await autoRunTab.first().click();
 
-				const expandButton = window
-					.locator('button[title*="Expand"]')
-					.or(window.locator('button[title*="full screen"]'));
+				const expandButton = window.getByRole('button', {
+					name: /expand to full screen/i,
+				});
 				if ((await expandButton.count()) > 0) {
 					await expandButton.first().click();
 					// Wait for modal
