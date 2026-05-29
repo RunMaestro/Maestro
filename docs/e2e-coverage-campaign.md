@@ -10,10 +10,10 @@ Measured inventory:
 
 | Area                              |              Current Count |
 | --------------------------------- | -------------------------: |
-| E2E spec files after batch 1      |                          6 |
-| Declared E2E tests after batch 11 |                        175 |
+| E2E spec files after batch 12     |                          7 |
+| Declared E2E tests after batch 12 |                        178 |
 | Last pre-campaign full E2E result |      91 passed, 49 skipped |
-| Latest full E2E validation        |     126 passed, 49 skipped |
+| Latest full E2E validation        |     129 passed, 49 skipped |
 | Renderer component files          |                        236 |
 | Renderer hook files               |                        123 |
 | Renderer store files              |                         11 |
@@ -107,3 +107,5 @@ The first implementation batch should focus on infrastructure and high-ROI exist
 - Validation: `npx playwright test app-shell.spec.ts -g "creates a group from Quick Actions"` passed 1/1; `npx playwright test app-shell.spec.ts` passed 30/30; `npx playwright test` passed 121 with 49 existing intentional skips.
 - 2026-05-29 batch 11: extended `e2e/app-shell.spec.ts` to cover Quick Actions agent-management paths for Create New Agent, Edit Agent, Rename Agent, bookmark toggling, and AI/shell mode switching.
 - Validation: `npx playwright test app-shell.spec.ts -g "Create New Agent|Edit Agent|renames the active agent|toggles bookmark|switches the active agent"` passed 5/5; `npx playwright test app-shell.spec.ts` passed 35/35; `npx playwright test` passed 126 with 49 existing intentional skips.
+- 2026-05-29 batch 12: added deterministic Group Chat E2E coverage for persisted group chat loading, seeded message rendering, participants/history right-panel navigation, and header info/rename flow. Also wired `MAESTRO_DATA_DIR` into the Electron main process so persisted-state E2E launches are isolated to per-test userData, and hardened one Auto Run no-session assertion exposed by that isolation.
+- Validation: `npx playwright test group-chat.spec.ts` passed 3/3; `npx playwright test app-shell.spec.ts` passed 35/35; `npx playwright test e2e/autorun-sessions.spec.ts:333` passed 1/1; `npx playwright test` passed 129 with 49 existing intentional skips.

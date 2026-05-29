@@ -333,7 +333,7 @@ This document has the same name across sessions but different content.
 		test('should handle session with no Auto Run configured', async ({ window }) => {
 			// When switching to a session without Auto Run, appropriate UI should show
 
-			const autoRunTab = window.locator('text=Auto Run');
+			const autoRunTab = window.locator('[data-tour="autorun-tab"]');
 			if ((await autoRunTab.count()) > 0) {
 				await autoRunTab.first().click();
 
@@ -357,6 +357,8 @@ This document has the same name across sessions but different content.
 
 				// One or the other should be true
 				expect(hasContent || hasSetupPrompt).toBeTruthy();
+			} else {
+				await expect(window.getByRole('heading', { name: 'Welcome to Maestro' })).toBeVisible();
 			}
 		});
 	});

@@ -124,13 +124,19 @@ import { WakaTimeManager } from './wakatime-manager';
 // ============================================================================
 // Store type definitions are imported from ./stores/types.ts
 const isDevelopment = process.env.NODE_ENV === 'development';
+const explicitDataPath = process.env.MAESTRO_DATA_DIR;
 
-// Capture the production data path before any modification
+if (explicitDataPath) {
+	app.setPath('userData', explicitDataPath);
+	console.log(`[DATA DIR] Using explicit data directory: ${explicitDataPath}`);
+}
+
+// Capture the production data path before any dev/demo modification
 // Used for stores that should be shared between dev and prod (e.g., agent configs)
 const productionDataPath = app.getPath('userData');
 
 // Demo mode: use a separate data directory for fresh demos
-if (DEMO_MODE) {
+if (!explicitDataPath && DEMO_MODE) {
 	app.setPath('userData', DEMO_DATA_PATH);
 	console.log(`[DEMO MODE] Using data directory: ${DEMO_DATA_PATH}`);
 }
@@ -138,11 +144,11 @@ if (DEMO_MODE) {
 // Development mode: use a separate data directory to allow running alongside production
 // This prevents database lock conflicts (e.g., Service Worker storage)
 // Set USE_PROD_DATA=1 to use the production data directory instead (requires closing production app)
-if (isDevelopment && !DEMO_MODE && !process.env.USE_PROD_DATA) {
+if (!explicitDataPath && isDevelopment && !DEMO_MODE && !process.env.USE_PROD_DATA) {
 	const devDataPath = path.join(app.getPath('userData'), '..', 'maestro-dev');
 	app.setPath('userData', devDataPath);
 	console.log(`[DEV MODE] Using data directory: ${devDataPath}`);
-} else if (isDevelopment && process.env.USE_PROD_DATA) {
+} else if (!explicitDataPath && isDevelopment && process.env.USE_PROD_DATA) {
 	console.log(`[DEV MODE] Using production data directory: ${app.getPath('userData')}`);
 }
 

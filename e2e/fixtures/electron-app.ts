@@ -28,6 +28,7 @@ interface LaunchAppWithStateOptions {
 	homeDir?: string;
 	sessions: unknown[];
 	groups?: unknown[];
+	groupChats?: SeededGroupChat[];
 }
 
 interface LaunchAppWithStateResult {
@@ -36,6 +37,28 @@ interface LaunchAppWithStateResult {
 	homeDir: string;
 	userDataPath: string;
 	cleanup: () => Promise<void>;
+}
+
+interface SeededGroupChatMessage {
+	timestamp?: string;
+	from: string;
+	content: string;
+	readOnly?: boolean;
+}
+
+interface SeededGroupChat {
+	id: string;
+	name: string;
+	createdAt?: number;
+	updatedAt?: number;
+	moderatorAgentId?: string;
+	moderatorSessionId?: string;
+	moderatorAgentSessionId?: string;
+	moderatorConfig?: unknown;
+	participants?: unknown[];
+	archived?: boolean;
+	messages?: SeededGroupChatMessage[];
+	historyEntries?: unknown[];
 }
 
 /**
@@ -59,6 +82,10 @@ function createTestDataDir(): string {
 
 function escapeRegExp(value: string): string {
 	return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function escapeGroupChatLogContent(value: string): string {
+	return value.replace(/\\/g, '\\\\').replace(/\|/g, '\\|').replace(/\n/g, '\\n');
 }
 
 /**
@@ -157,24 +184,18 @@ export const helpers = {
 		homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-e2e-home-')),
 		sessions,
 		groups = [],
+		groupChats = [],
 	}: LaunchAppWithStateOptions): Promise<LaunchAppWithStateResult> {
 		const appPath = getMainPath();
+		const userDataPath = path.join(homeDir, 'user-data');
 		const env = {
 			...process.env,
 			HOME: homeDir,
+			MAESTRO_DATA_DIR: userDataPath,
 			ELECTRON_DISABLE_GPU: '1',
 			NODE_ENV: 'test',
 			MAESTRO_E2E_TEST: 'true',
 		};
-
-		const probeApp = await electron.launch({
-			args: [appPath],
-			env,
-			timeout: 30000,
-		});
-		await probeApp.firstWindow();
-		const userDataPath = await probeApp.evaluate(({ app }) => app.getPath('userData'));
-		await probeApp.close();
 
 		fs.mkdirSync(userDataPath, { recursive: true });
 		fs.writeFileSync(
@@ -187,6 +208,68 @@ export const helpers = {
 			JSON.stringify({ groups }, null, '\t'),
 			'utf-8'
 		);
+		if (groupChats.length > 0) {
+			const groupChatsDir = path.join(userDataPath, 'group-chats');
+			fs.mkdirSync(groupChatsDir, { recursive: true });
+
+			for (const seededChat of groupChats) {
+				const {
+					messages = [],
+					historyEntries = [],
+					participants = [],
+					moderatorAgentId = 'codex',
+					moderatorSessionId = `group-chat-${seededChat.id}-moderator`,
+					createdAt = Date.now(),
+					updatedAt = createdAt,
+					...chatRest
+				} = seededChat;
+				const chatDir = path.join(groupChatsDir, seededChat.id);
+				const imagesDir = path.join(chatDir, 'images');
+				const logPath = path.join(chatDir, 'chat.log');
+
+				fs.mkdirSync(imagesDir, { recursive: true });
+				fs.writeFileSync(
+					path.join(chatDir, 'metadata.json'),
+					JSON.stringify(
+						{
+							...chatRest,
+							id: seededChat.id,
+							name: seededChat.name,
+							createdAt,
+							updatedAt,
+							moderatorAgentId,
+							moderatorSessionId,
+							participants,
+							logPath,
+							imagesDir,
+						},
+						null,
+						2
+					),
+					'utf-8'
+				);
+				fs.writeFileSync(
+					logPath,
+					messages
+						.map((message) => {
+							const timestamp = message.timestamp ?? new Date(createdAt).toISOString();
+							const content = escapeGroupChatLogContent(message.content);
+							return message.readOnly
+								? `${timestamp}|${message.from}|${content}|readOnly\n`
+								: `${timestamp}|${message.from}|${content}\n`;
+						})
+						.join(''),
+					'utf-8'
+				);
+				if (historyEntries.length > 0) {
+					fs.writeFileSync(
+						path.join(chatDir, 'history.jsonl'),
+						historyEntries.map((entry) => JSON.stringify(entry)).join('\n') + '\n',
+						'utf-8'
+					);
+				}
+			}
+		}
 
 		const electronApp = await electron.launch({
 			args: [appPath],
