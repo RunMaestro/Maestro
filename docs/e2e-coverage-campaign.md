@@ -10,10 +10,10 @@ Measured inventory:
 
 | Area                              |              Current Count |
 | --------------------------------- | -------------------------: |
-| E2E spec files after batch 23     |                          7 |
-| Declared E2E tests after batch 23 |                        215 |
+| E2E spec files after batch 24     |                          7 |
+| Declared E2E tests after batch 24 |                        217 |
 | Last pre-campaign full E2E result |      91 passed, 49 skipped |
-| Latest full E2E validation        |     166 passed, 49 skipped |
+| Latest full E2E validation        |     168 passed, 49 skipped |
 | Renderer component files          |                        236 |
 | Renderer hook files               |                        123 |
 | Renderer store files              |                         11 |
@@ -51,7 +51,7 @@ That range is high enough to cover the app surface, but low enough to avoid a br
 | History panel                                                  |               3 |            70 | Detail navigation, delete confirmation/execution, graph lookback; empty/loading next   |
 | Auto Run                                                       |              91 |           220 | Existing suite plus skipped batch, image, error, multi-document, persistence flows     |
 | New Agent Wizard and inline wizard                             |              16 |           140 | Setup/resume/exit, directory, conversation, phase review, generated docs               |
-| Settings                                                       |               0 |           130 | General, Display, Theme, Shortcuts, Encore, SSH remotes, env vars, persistence         |
+| Settings                                                       |               2 |           130 | General default persistence and Display/Bionify persistence; SSH/env/theme/error next  |
 | Git, worktrees, PR, diff/log, Gist                             |               0 |           120 | Local temp repos first; GitHub/Gist account paths gated                                |
 | Group chat                                                     |               0 |           100 | Creation, participants, Codex-only routing, history, errors, deletion                  |
 | Usage dashboard and stats                                      |               0 |            80 | Charts, lookbacks, loading, empty, errors, detail modals                               |
@@ -131,3 +131,5 @@ The first implementation batch should focus on infrastructure and high-ROI exist
 - Validation: `npx playwright test app-shell.spec.ts -g "History"` passed 10/10; `npx playwright test app-shell.spec.ts` passed 63/63; `npx playwright test` passed 163 with 49 existing intentional skips. Full-suite log: `/tmp/maestro-full-e2e-history-batch22-rerun.log`.
 - 2026-05-29 batch 23: added AI TabBar E2E coverage for session hover actions, copy/star/unread state changes, rename modal flow, and new-tab close behavior.
 - Validation: `npx playwright test app-shell.spec.ts -g "AI tab|new AI tab|TabBar|Tab Switcher"` passed 7/7; `npx playwright test app-shell.spec.ts` passed 66/66; `npx playwright test` passed 166 with 49 existing intentional skips. Full-suite log: `/tmp/maestro-full-e2e-ai-tab-batch23.log`.
+- 2026-05-29 batch 24: added Settings E2E coverage for General defaults persistence across history, thinking display, and auto-scroll, plus Display/Bionify reading-mode and intensity persistence.
+- Validation: `npx playwright test app-shell.spec.ts -g "Settings"` passed 9/9; `npx playwright test app-shell.spec.ts` passed 68/68; `npx playwright test` passed 168 with 49 existing intentional skips. Full-suite log: `/tmp/maestro-full-e2e-settings-batch24.log`.

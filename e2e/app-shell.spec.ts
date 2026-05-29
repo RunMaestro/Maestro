@@ -1534,6 +1534,56 @@ test.describe('App shell seeded workbench', () => {
 		await expect(settingsDialog.getByText(/\d+ \/ \d+/)).toBeVisible();
 	});
 
+	test('persists General Settings defaults for history, thinking, and auto-scroll', async () => {
+		const settingsDialog = await openSettings(window);
+
+		await settingsDialog.getByText('Enable "History" by default for new tabs').click();
+		await expect
+			.poll(async () => {
+				return await window.evaluate(async () => {
+					return await window.maestro.settings.get('defaultSaveToHistory');
+				});
+			})
+			.toBe(false);
+
+		await settingsDialog.getByRole('button', { name: 'Sticky' }).click();
+		await expect
+			.poll(async () => {
+				return await window.evaluate(async () => {
+					return await window.maestro.settings.get('defaultShowThinking');
+				});
+			})
+			.toBe('sticky');
+
+		await settingsDialog.getByRole('button', { name: 'Auto-scroll AI output' }).click();
+		await expect
+			.poll(async () => {
+				return await window.evaluate(async () => {
+					return await window.maestro.settings.get('autoScrollAiMode');
+				});
+			})
+			.toBe(true);
+	});
+
+	test('persists Display Settings for Bionify reading mode', async () => {
+		const settingsDialog = await openSettings(window);
+		await settingsDialog.locator('button[title="Display"]').click();
+
+		await settingsDialog.getByRole('button', { name: 'Bionify' }).click();
+		await settingsDialog.getByRole('button', { name: 'Strong' }).click();
+
+		await expect
+			.poll(async () => {
+				return await window.evaluate(async () => {
+					return {
+						readingMode: await window.maestro.settings.get('bionifyReadingMode'),
+						intensity: await window.maestro.settings.get('bionifyIntensity'),
+					};
+				});
+			})
+			.toEqual({ readingMode: true, intensity: 1.35 });
+	});
+
 	test('persists the file explorer icon theme setting from Display settings', async () => {
 		const settingsDialog = await openSettings(window);
 		await settingsDialog.locator('button[title="Display"]').click();
