@@ -11,9 +11,9 @@ Measured inventory:
 | Area                              |              Current Count |
 | --------------------------------- | -------------------------: |
 | E2E spec files after batch 12     |                          7 |
-| Declared E2E tests after batch 13 |                        184 |
+| Declared E2E tests after batch 14 |                        186 |
 | Last pre-campaign full E2E result |      91 passed, 49 skipped |
-| Latest full E2E validation        |     135 passed, 49 skipped |
+| Latest full E2E validation        |     137 passed, 49 skipped |
 | Renderer component files          |                        236 |
 | Renderer hook files               |                        123 |
 | Renderer store files              |                         11 |
@@ -111,3 +111,5 @@ The first implementation batch should focus on infrastructure and high-ROI exist
 - Validation: `npx playwright test group-chat.spec.ts` passed 3/3; `npx playwright test app-shell.spec.ts` passed 35/35; `npx playwright test e2e/autorun-sessions.spec.ts:333` passed 1/1; `npx playwright test` passed 129 with 49 existing intentional skips.
 - 2026-05-29 batch 13: expanded Group Chat E2E coverage for Left Bar context-menu edit/delete/archive/unarchive flows, archived chat visibility/opening, right-panel collapse/restore, and history activity-graph lookback selection.
 - Validation: `npx playwright test group-chat.spec.ts` passed 9/9; `npx playwright test` passed 135 with 49 existing intentional skips.
+- 2026-05-29 batch 14: added Document Graph E2E coverage from the markdown file preview toolbar, including graph loading from linked seeded markdown, search/clear, layout switching, neighbor-depth slider, external-link mode, help panel, close confirmation, and Quick Actions re-open of the last graph.
+- Validation: `npx playwright test app-shell.spec.ts -g "Document Graph"` passed 2/2; `npx playwright test app-shell.spec.ts` passed 37/37; `npx playwright test` passed 137 with 49 existing intentional skips.

@@ -31,6 +31,12 @@ function createSeededWorkbench() {
 		`# File Preview Surface
 
 Preview prose for app shell E2E coverage.
+
+See [[NOTES]] and [Phase 1](Auto Run Docs/Phase 1.md).
+External reference: https://example.com/maestro-graph
+
+- [ ] Graph task still open
+- [x] Graph task already complete
 `,
 		'utf-8'
 	);
@@ -39,6 +45,8 @@ Preview prose for app shell E2E coverage.
 		`# Notes Preview Surface
 
 Searchable note body for file explorer coverage.
+
+Backlink to [[README]] for document graph coverage.
 `,
 		'utf-8'
 	);
@@ -211,6 +219,26 @@ async function openQuickActions(window: Page) {
 		quickActionsDialog.getByPlaceholder('Type a command or jump to agent...')
 	).toBeVisible();
 	return quickActionsDialog;
+}
+
+async function openDocumentGraphFromPreview(window: Page) {
+	await window.getByTitle('View in Document Graph (⌘ ⇧ G)').click();
+	const graphDialog = window.getByRole('dialog', { name: 'Document Graph' });
+	await expect(graphDialog).toBeVisible({ timeout: 15000 });
+	await expect(graphDialog.getByText(/2 documents/)).toBeVisible({ timeout: 15000 });
+	return graphDialog;
+}
+
+async function closeDocumentGraph(window: Page) {
+	await window
+		.getByRole('dialog', { name: 'Document Graph' })
+		.getByTitle('Close (Esc)')
+		.first()
+		.click();
+	const closeDialog = window.getByRole('dialog', { name: 'Close Document Graph?' });
+	await expect(closeDialog).toBeVisible();
+	await closeDialog.getByRole('button', { name: 'Close Graph' }).click();
+	await expect(window.getByRole('dialog', { name: 'Document Graph' })).toBeHidden();
 }
 
 async function seedHistoryEntries(window: Page, projectPath: string, sessionId: string) {
@@ -787,10 +815,10 @@ test.describe('App shell seeded workbench', () => {
 		await helpers.openRightPanelTab(window, 'Files');
 		await expect(window.getByText('NOTES.md')).toBeVisible();
 		await window.getByTitle('Expand all folders').click();
-		await expect(window.getByText('Phase 1.md')).toBeVisible();
+		await expect(window.getByText('Phase 1.md', { exact: true })).toBeVisible();
 
 		await window.getByTitle('Collapse all folders').click();
-		await expect(window.getByText('Phase 1.md')).toBeHidden();
+		await expect(window.getByText('Phase 1.md', { exact: true })).toBeHidden();
 	});
 
 	test('opens a markdown file from the File Explorer into preview', async () => {
@@ -814,6 +842,51 @@ test.describe('App shell seeded workbench', () => {
 
 		await searchInput.press('Escape');
 		await expect(searchInput).toBeHidden();
+	});
+
+	test('opens Document Graph from file preview and uses core graph controls', async () => {
+		const graphDialog = await openDocumentGraphFromPreview(window);
+
+		await graphDialog.getByLabel('Search documents in graph').fill('NOTES');
+		await expect(graphDialog.getByText('1 of 2 matching')).toBeVisible();
+		await graphDialog.getByLabel('Clear search').click();
+		await expect(graphDialog.getByText(/2 documents/)).toBeVisible();
+
+		await graphDialog.getByTitle('Layout: Mind Map').click();
+		await graphDialog.getByRole('button', { name: /Radial/ }).click();
+		await expect(graphDialog.getByTitle('Layout: Radial')).toBeVisible();
+
+		await graphDialog.getByTitle('Showing 2 levels of neighbors').click();
+		await graphDialog.locator('input[type="range"][min="0"][max="5"]').fill('1');
+		await expect(graphDialog.getByTitle('Showing 1 level of neighbors')).toBeVisible();
+		await window.keyboard.press('Escape');
+		await expect(graphDialog.getByText('Neighbor Depth')).toBeHidden();
+
+		await graphDialog.getByTitle('Show external links').click();
+		await expect(graphDialog.getByTitle('Hide external links')).toBeVisible();
+
+		await graphDialog.getByTitle('Open help panel').click();
+		await expect(graphDialog.getByRole('region', { name: 'Help panel' })).toBeVisible();
+		await expect(graphDialog.getByText('Node Types')).toBeVisible();
+		await expect(graphDialog.getByText('External Link').first()).toBeVisible();
+
+		await closeDocumentGraph(window);
+	});
+
+	test('reopens the last Document Graph from Quick Actions', async () => {
+		await openDocumentGraphFromPreview(window);
+		await closeDocumentGraph(window);
+
+		const quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('Open Last Document Graph');
+		await quickActionsDialog.getByRole('button', { name: /Open Last Document Graph/ }).click();
+
+		const graphDialog = window.getByRole('dialog', { name: 'Document Graph' });
+		await expect(graphDialog).toBeVisible({ timeout: 15000 });
+		await expect(graphDialog.getByText(/2 documents/)).toBeVisible({ timeout: 15000 });
+		await closeDocumentGraph(window);
 	});
 
 	test('navigates core Settings tabs', async () => {
