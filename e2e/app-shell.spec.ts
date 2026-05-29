@@ -435,6 +435,47 @@ async function openGitLogFromQuickActions(window: Page) {
 	return gitLogDialog;
 }
 
+function modalRootByHeading(window: Page, heading: string) {
+	return window
+		.getByText(heading, { exact: true })
+		.locator('xpath=ancestor::div[contains(@class, "fixed")][1]');
+}
+
+async function openSessionContextMenu(window: Page, sessionName: string, expectedAction: string) {
+	const sessionList = window.locator('[data-tour="session-list"]');
+	await sessionList.getByText(sessionName, { exact: true }).first().click({ button: 'right' });
+	const contextMenu = window
+		.locator('.fixed')
+		.filter({
+			has: window.getByRole('button', { name: expectedAction, exact: true }),
+		})
+		.last();
+	await expect(
+		contextMenu.getByRole('button', { name: expectedAction, exact: true })
+	).toBeVisible();
+	return contextMenu;
+}
+
+async function openWorktreeConfigFromContext(window: Page) {
+	const contextMenu = await openSessionContextMenu(window, 'E2E Workbench', 'Configure Worktrees');
+	await contextMenu.getByRole('button', { name: 'Configure Worktrees', exact: true }).click();
+	const worktreeModal = modalRootByHeading(window, 'Worktree Configuration');
+	await expect(worktreeModal).toBeVisible();
+	await expect(worktreeModal.getByText('Worktree Directory')).toBeVisible();
+	return worktreeModal;
+}
+
+async function saveDefaultWorktreeConfig(
+	window: Page,
+	seeded: ReturnType<typeof createSeededWorkbench>
+) {
+	const worktreeModal = await openWorktreeConfigFromContext(window);
+	const directoryInput = worktreeModal.getByPlaceholder('/path/to/worktrees');
+	await expect(directoryInput).toHaveValue(seeded.homeDir);
+	await worktreeModal.getByRole('button', { name: 'Save Configuration' }).click();
+	await expect(worktreeModal).toBeHidden();
+}
+
 async function seedUsageDashboardStats(window: Page) {
 	await window.evaluate(async () => {
 		const now = Date.now();
@@ -1406,6 +1447,68 @@ test.describe('App shell seeded workbench', () => {
 
 		await gitLogDialog.getByRole('button', { name: 'Close (Esc)' }).click();
 		await expect(gitLogDialog).toBeHidden();
+	});
+
+	test('configures Git worktree directory from the Left Bar context menu', async () => {
+		const worktreeModal = await openWorktreeConfigFromContext(window);
+		const directoryInput = worktreeModal.getByPlaceholder('/path/to/worktrees');
+
+		await expect(directoryInput).toHaveValue(seededWorkbench.homeDir);
+		await expect(worktreeModal.getByText('Watch for new worktrees')).toBeVisible();
+		await expect(worktreeModal.getByRole('button', { name: 'Disable' })).toBeDisabled();
+
+		await worktreeModal.getByRole('button', { name: 'Save Configuration' }).click();
+		await expect(worktreeModal).toBeHidden();
+
+		const contextMenu = await openSessionContextMenu(window, 'E2E Workbench', 'Create Worktree');
+		await expect(
+			contextMenu.getByRole('button', { name: 'Configure Worktrees', exact: true })
+		).toBeVisible();
+		await window.keyboard.press('Escape');
+		await expect(contextMenu).toBeHidden();
+	});
+
+	test('validates quick Git worktree branch names before creation', async () => {
+		await saveDefaultWorktreeConfig(window, seededWorkbench);
+		const contextMenu = await openSessionContextMenu(window, 'E2E Workbench', 'Create Worktree');
+		await contextMenu.getByRole('button', { name: 'Create Worktree', exact: true }).click();
+
+		const createModal = modalRootByHeading(window, 'Create New Worktree');
+		await expect(createModal).toBeVisible();
+		await createModal.getByPlaceholder('feature-xyz').fill('bad branch name!');
+		await createModal.getByRole('button', { name: 'Create', exact: true }).click();
+
+		await expect(createModal.getByText('Invalid branch name')).toBeVisible();
+		await createModal.getByRole('button', { name: 'Cancel' }).click();
+		await expect(createModal).toBeHidden();
+	});
+
+	test('creates and removes a local Git worktree session from the Left Bar context menu', async () => {
+		const branchName = 'e2e-worktree-branch';
+		const sessionList = window.locator('[data-tour="session-list"]');
+		await saveDefaultWorktreeConfig(window, seededWorkbench);
+
+		let contextMenu = await openSessionContextMenu(window, 'E2E Workbench', 'Create Worktree');
+		await contextMenu.getByRole('button', { name: 'Create Worktree', exact: true }).click();
+
+		const createModal = modalRootByHeading(window, 'Create New Worktree');
+		await createModal.getByPlaceholder('feature-xyz').fill(branchName);
+		await createModal.getByRole('button', { name: 'Create', exact: true }).click();
+		await expect(createModal).toBeHidden({ timeout: 15000 });
+		await expect(sessionList.getByText(branchName, { exact: true })).toBeVisible({
+			timeout: 15000,
+		});
+
+		contextMenu = await openSessionContextMenu(window, branchName, 'Remove Worktree');
+		await contextMenu.getByRole('button', { name: 'Remove Worktree', exact: true }).click();
+
+		const deleteModal = modalRootByHeading(window, 'Delete Worktree');
+		await expect(deleteModal.getByText('Delete worktree session')).toBeVisible();
+		await expect(deleteModal.getByText(branchName).first()).toBeVisible();
+		await deleteModal.getByRole('button', { name: 'Remove', exact: true }).click();
+
+		await expect(deleteModal).toBeHidden();
+		await expect(sessionList.getByText(branchName, { exact: true })).toBeHidden();
 	});
 
 	test('opens the System Log Viewer from Quick Actions', async () => {

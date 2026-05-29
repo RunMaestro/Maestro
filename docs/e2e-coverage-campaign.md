@@ -10,10 +10,10 @@ Measured inventory:
 
 | Area                              |              Current Count |
 | --------------------------------- | -------------------------: |
-| E2E spec files after batch 29     |                          7 |
-| Declared E2E tests after batch 29 |                        232 |
+| E2E spec files after batch 30     |                          7 |
+| Declared E2E tests after batch 30 |                        235 |
 | Last pre-campaign full E2E result |      91 passed, 49 skipped |
-| Latest full E2E validation        |     183 passed, 49 skipped |
+| Latest full E2E validation        |     186 passed, 49 skipped |
 | Renderer component files          |                        236 |
 | Renderer hook files               |                        123 |
 | Renderer store files              |                         11 |
@@ -58,7 +58,7 @@ That range is high enough to cover the app surface, but low enough to avoid a br
 | Auto Run                                                       |             90 |           260 | Existing suite plus skipped batch, image, error, multi-document, persistence flows     |
 | New Agent Wizard and inline wizard                             |             13 |           190 | Setup/resume/exit, directory, conversation, phase review, generated docs               |
 | Settings                                                       |             14 |           190 | General, Display, notifications, AI commands, global env vars, and SSH remote settings |
-| Git, worktrees, PR, diff/log, Gist                             |              3 |           160 | Local temp repo action discovery, diff viewer, and log viewer now covered              |
+| Git, worktrees, PR, diff/log, Gist                             |              6 |           160 | Local temp repo diff/log, worktree config, validation, create/remove now covered       |
 | Group chat                                                     |             10 |           140 | Creation, participants, Codex-only routing, history, errors, deletion                  |
 | Usage dashboard and stats                                      |              4 |           125 | Overview metrics, chart sections, Activity/Auto Run tabs, keyboard navigation          |
 | Document graph                                                 |              2 |           130 | Graph build, node selection, preview, settings, layout, persistence                    |
@@ -150,3 +150,5 @@ The first implementation batch should focus on infrastructure and high-ROI exist
 - Validation: `npx playwright test app-shell.spec.ts -g "notification Settings|custom AI command"` passed 2/2; `npx playwright test app-shell.spec.ts` passed 80/80; `npx playwright test` passed 180 with 49 existing intentional skips. Full-suite log: `/tmp/maestro-full-e2e-settings-notifications-commands-batch28.log`.
 - 2026-05-29 batch 29: added deterministic local Git repository E2E coverage for Quick Actions Git command discovery, Git Diff viewer rendering across changed files, and Git Log viewer commit navigation.
 - Validation: `npx playwright test app-shell.spec.ts -g "Git"` passed 3/3; `npx playwright test app-shell.spec.ts` passed 83/83; `npx playwright test` passed 183 with 49 existing intentional skips; `npm run lint` passed. Full-suite log: `/tmp/maestro-full-e2e-git-batch29.log`.
+- 2026-05-29 batch 30: expanded local Git worktree E2E coverage for Left Bar context-menu worktree configuration, branch-name validation, and local worktree session create/remove.
+- Validation: `npx playwright test app-shell.spec.ts -g "Git|worktree"` passed 6/6; `npx playwright test app-shell.spec.ts` passed 86/86; `npx playwright test` passed 186 with 49 existing intentional skips; `npm run lint` passed. Full-suite log: `/tmp/maestro-full-e2e-worktree-batch30.log`.
