@@ -21,6 +21,7 @@ function createSeededWorkbench() {
 	const imageFilePath = path.join(projectDir, 'diagram.png');
 	const mermaidFilePath = path.join(projectDir, 'FLOW.md');
 	const largeFilePath = path.join(projectDir, 'large-log.txt');
+	const hiddenFilePath = path.join(projectDir, '.env.example');
 	const autoRunFilePath = path.join(autoRunDir, 'Phase 1.md');
 	const now = Date.now();
 	const idSuffix = `${now}-${Math.random().toString(36).slice(2)}`;
@@ -104,6 +105,7 @@ flowchart TD
 `,
 		'utf-8'
 	);
+	fs.writeFileSync(hiddenFilePath, 'MAESTRO_E2E_HIDDEN_FILE=true\n', 'utf-8');
 
 	return {
 		homeDir,
@@ -297,6 +299,23 @@ async function closeQuickActions(window: Page, quickActionsDialog: Locator) {
 	}
 
 	await expect(quickActionsDialog).toBeHidden();
+}
+
+async function getFileTreeRow(window: Page, name: string) {
+	const row = window.locator('[data-file-index]').filter({ hasText: name }).first();
+	await expect(row).toBeVisible();
+	return row;
+}
+
+async function openFileContextMenu(window: Page, name: string) {
+	await helpers.openRightPanelTab(window, 'Files');
+	const row = await getFileTreeRow(window, name);
+	await row.click({ button: 'right' });
+	const contextMenu = window.locator('.fixed').filter({
+		has: window.getByRole('button', { name: 'Copy Path' }),
+	});
+	await expect(contextMenu.getByRole('button', { name: 'Copy Path' })).toBeVisible();
+	return contextMenu;
 }
 
 async function openSeededTerminalAgent(window: Page) {
@@ -1041,6 +1060,81 @@ test.describe('App shell seeded workbench', () => {
 		await expect(
 			window.getByText('Searchable note body for file explorer coverage.')
 		).toBeVisible();
+	});
+
+	test('filters files from the File Explorer and clears the filter with Escape', async () => {
+		await helpers.openRightPanelTab(window, 'Files');
+		const readmeRow = await getFileTreeRow(window, 'README.md');
+		await readmeRow.click();
+
+		await window.keyboard.press('Control+f');
+		const filterInput = window.getByPlaceholder('Filter files...');
+		await expect(filterInput).toBeVisible();
+
+		await filterInput.fill('phase');
+		await getFileTreeRow(window, 'Phase 1.md');
+		await expect(
+			window.locator('[data-file-index]').filter({ hasText: 'metrics.csv' })
+		).toBeHidden();
+
+		await filterInput.press('Escape');
+		await expect(filterInput).toBeHidden();
+		await getFileTreeRow(window, 'metrics.csv');
+	});
+
+	test('toggles dotfiles in the File Explorer', async () => {
+		await helpers.openRightPanelTab(window, 'Files');
+		const hiddenRow = window.locator('[data-file-index]').filter({ hasText: '.env.example' });
+		await expect(hiddenRow).toBeVisible();
+
+		await window.getByTitle('Hide dotfiles').click();
+		await expect(hiddenRow).toBeHidden();
+
+		await window.getByTitle('Show dotfiles').click();
+		await expect(hiddenRow).toBeVisible();
+	});
+
+	test('previews a file from the File Explorer context menu', async () => {
+		const contextMenu = await openFileContextMenu(window, 'NOTES.md');
+		await expect(contextMenu.getByRole('button', { name: 'Preview' })).toBeVisible();
+		await expect(
+			contextMenu.getByRole('button', { name: 'Document Graph', exact: true })
+		).toBeVisible();
+		await expect(contextMenu.getByRole('button', { name: 'Open in Default App' })).toBeVisible();
+
+		await contextMenu.getByRole('button', { name: 'Preview' }).click();
+		await expect(window.getByText('Notes Preview Surface')).toBeVisible();
+	});
+
+	test('renames a file from the File Explorer context menu', async () => {
+		const contextMenu = await openFileContextMenu(window, 'NOTES.md');
+		await contextMenu.getByRole('button', { name: 'Rename' }).click();
+
+		const renameDialog = window.getByRole('dialog', { name: 'Rename File' });
+		await expect(renameDialog).toBeVisible();
+		await renameDialog.getByPlaceholder('Enter file name...').fill('GUIDE.md');
+		await renameDialog.getByRole('button', { name: 'Rename' }).click();
+
+		await expect(renameDialog).toBeHidden();
+		await getFileTreeRow(window, 'GUIDE.md');
+		await expect(window.locator('[data-file-index]').filter({ hasText: 'NOTES.md' })).toBeHidden();
+	});
+
+	test('deletes a file from the File Explorer context menu after confirmation', async () => {
+		const contextMenu = await openFileContextMenu(window, 'metrics.csv');
+		await contextMenu.getByRole('button', { name: 'Delete' }).click();
+
+		const deleteDialog = window.getByRole('dialog', { name: 'Delete File' });
+		await expect(deleteDialog).toBeVisible();
+		await expect(
+			deleteDialog.getByText('Are you sure you want to delete the file "metrics.csv"?')
+		).toBeVisible();
+		await deleteDialog.getByRole('button', { name: 'Delete' }).click();
+
+		await expect(deleteDialog).toBeHidden();
+		await expect(
+			window.locator('[data-file-index]').filter({ hasText: 'metrics.csv' })
+		).toBeHidden();
 	});
 
 	test('searches within the active file preview and closes search with Escape', async () => {

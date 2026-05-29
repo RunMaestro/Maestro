@@ -10,10 +10,10 @@ Measured inventory:
 
 | Area                              |              Current Count |
 | --------------------------------- | -------------------------: |
-| E2E spec files after batch 20     |                          7 |
-| Declared E2E tests after batch 20 |                        204 |
+| E2E spec files after batch 21     |                          7 |
+| Declared E2E tests after batch 21 |                        209 |
 | Last pre-campaign full E2E result |      91 passed, 49 skipped |
-| Latest full E2E validation        |     155 passed, 49 skipped |
+| Latest full E2E validation        |     160 passed, 49 skipped |
 | Renderer component files          |                        236 |
 | Renderer hook files               |                        123 |
 | Renderer store files              |                         11 |
@@ -39,29 +39,29 @@ That range is high enough to cover the app surface, but low enough to avoid a br
 
 ## Coverage Matrix
 
-| Surface                                                        | Existing Active | Target Active | Notes                                                                                 |
-| -------------------------------------------------------------- | --------------: | ------------: | ------------------------------------------------------------------------------------- |
-| App shell, layout, sidebars, resizing, focus, global shortcuts |               0 |            90 | Left Bar, Right Bar, Main Window, collapse/restore, focus traps, keyboard-only paths  |
-| Agent CRUD and provider setup                                  |               0 |           120 | Codex live/config flows, Terminal flows, non-Codex static and unavailable states      |
-| Codex AI terminal workflows                                    |               0 |           140 | Send, interrupt, retry, replay, copy/save, streaming, tool/thinking displays, errors  |
-| Command terminal workflows                                     |               4 |            70 | Shell transcript, output search/filter, command history; resize/stop/errors next      |
-| Tabs and tab overlays                                          |               2 |            95 | File-tab hover actions and close/reopen; AI tab rename/reorder/close variants next    |
-| File explorer and file operations                              |               0 |           110 | Browse, search, refresh, rename, delete, context menu, empty/error states             |
-| File preview and document rendering                            |               8 |           150 | Markdown, CSV, binary handoff, image, Mermaid, large file, search, edit/preview       |
-| History panel                                                  |               0 |            70 | Filtering, details, lookback, search, empty/loading/error states                      |
-| Auto Run                                                       |              91 |           220 | Existing suite plus skipped batch, image, error, multi-document, persistence flows    |
-| New Agent Wizard and inline wizard                             |              16 |           140 | Setup/resume/exit, directory, conversation, phase review, generated docs              |
-| Settings                                                       |               0 |           130 | General, Display, Theme, Shortcuts, Encore, SSH remotes, env vars, persistence        |
-| Git, worktrees, PR, diff/log, Gist                             |               0 |           120 | Local temp repos first; GitHub/Gist account paths gated                               |
-| Group chat                                                     |               0 |           100 | Creation, participants, Codex-only routing, history, errors, deletion                 |
-| Usage dashboard and stats                                      |               0 |            80 | Charts, lookbacks, loading, empty, errors, detail modals                              |
-| Document graph                                                 |               0 |            90 | Graph build, node selection, preview, settings, layout, persistence                   |
-| Playbooks, marketplace, Spec Kit, OpenSpec                     |               0 |            95 | Local/import/export/search flows; network paths mocked/gated                          |
-| Symphony, leaderboard, achievements                            |               0 |            90 | Static, auth/error, modal, history and CTA flows                                      |
-| Director notes and prompt composer                             |               7 |            55 | Director's Notes settings/history/help/AI overview; prompt composer open/edit/control |
-| Debug/about/update/app info/agent error modals                 |               0 |            65 | Modal open/close, copy/report, expected error paths                                   |
-| Mobile/web bridge                                              |               0 |           130 | Web/mobile shell, session list, terminal, Auto Run, offline queue, websocket states   |
-| Accessibility smoke and destructive-action confirmations       |               0 |            90 | Keyboard paths, escape behavior, focus restore, confirmation flows                    |
+| Surface                                                        | Existing Active | Target Active | Notes                                                                                  |
+| -------------------------------------------------------------- | --------------: | ------------: | -------------------------------------------------------------------------------------- |
+| App shell, layout, sidebars, resizing, focus, global shortcuts |               0 |            90 | Left Bar, Right Bar, Main Window, collapse/restore, focus traps, keyboard-only paths   |
+| Agent CRUD and provider setup                                  |               0 |           120 | Codex live/config flows, Terminal flows, non-Codex static and unavailable states       |
+| Codex AI terminal workflows                                    |               0 |           140 | Send, interrupt, retry, replay, copy/save, streaming, tool/thinking displays, errors   |
+| Command terminal workflows                                     |               4 |            70 | Shell transcript, output search/filter, command history; resize/stop/errors next       |
+| Tabs and tab overlays                                          |               2 |            95 | File-tab hover actions and close/reopen; AI tab rename/reorder/close variants next     |
+| File explorer and file operations                              |               5 |           110 | Filter, dotfiles, context preview, rename, delete; refresh and empty/error states next |
+| File preview and document rendering                            |               8 |           150 | Markdown, CSV, binary handoff, image, Mermaid, large file, search, edit/preview        |
+| History panel                                                  |               0 |            70 | Filtering, details, lookback, search, empty/loading/error states                       |
+| Auto Run                                                       |              91 |           220 | Existing suite plus skipped batch, image, error, multi-document, persistence flows     |
+| New Agent Wizard and inline wizard                             |              16 |           140 | Setup/resume/exit, directory, conversation, phase review, generated docs               |
+| Settings                                                       |               0 |           130 | General, Display, Theme, Shortcuts, Encore, SSH remotes, env vars, persistence         |
+| Git, worktrees, PR, diff/log, Gist                             |               0 |           120 | Local temp repos first; GitHub/Gist account paths gated                                |
+| Group chat                                                     |               0 |           100 | Creation, participants, Codex-only routing, history, errors, deletion                  |
+| Usage dashboard and stats                                      |               0 |            80 | Charts, lookbacks, loading, empty, errors, detail modals                               |
+| Document graph                                                 |               0 |            90 | Graph build, node selection, preview, settings, layout, persistence                    |
+| Playbooks, marketplace, Spec Kit, OpenSpec                     |               0 |            95 | Local/import/export/search flows; network paths mocked/gated                           |
+| Symphony, leaderboard, achievements                            |               0 |            90 | Static, auth/error, modal, history and CTA flows                                       |
+| Director notes and prompt composer                             |               7 |            55 | Director's Notes settings/history/help/AI overview; prompt composer open/edit/control  |
+| Debug/about/update/app info/agent error modals                 |               0 |            65 | Modal open/close, copy/report, expected error paths                                    |
+| Mobile/web bridge                                              |               0 |           130 | Web/mobile shell, session list, terminal, Auto Run, offline queue, websocket states    |
+| Accessibility smoke and destructive-action confirmations       |               0 |            90 | Keyboard paths, escape behavior, focus restore, confirmation flows                     |
 
 Estimated matrix total: 2,250 active scenarios. After removing provider-unavailable and account-gated scenarios, the likely executable local target is 1,350 to 1,850.
 
@@ -125,3 +125,5 @@ The first implementation batch should focus on infrastructure and high-ROI exist
 - Validation: `npx playwright test app-shell.spec.ts -g "command terminal|seeded Codex and Terminal"` passed 4/4; `npx playwright test app-shell.spec.ts -g "command history entries"` passed 1/1; `npx playwright test app-shell.spec.ts` passed 53/53; `npx playwright test` passed 153 with 49 existing intentional skips. Full-suite log: `/tmp/maestro-full-e2e-command-terminal-batch19-rerun.log`.
 - 2026-05-29 batch 20: added TabBar/file-tab overlay E2E coverage for hover actions, copying the file name, and keyboard close/reopen via Cmd+W and Cmd+Shift+T.
 - Validation: `npx playwright test app-shell.spec.ts -g "TabBar|file tab hover|closes and reopens"` passed 3/3; `npx playwright test app-shell.spec.ts` passed 55/55; `npx playwright test` passed 155 with 49 existing intentional skips. Full-suite log: `/tmp/maestro-full-e2e-tabbar-batch20.log`.
+- 2026-05-29 batch 21: added File Explorer E2E coverage for file filtering, dotfile visibility toggling, context-menu preview actions, file rename, and delete confirmation/execution.
+- Validation: `npx playwright test app-shell.spec.ts -g "File Explorer"` passed 8/8; `npx playwright test app-shell.spec.ts` passed 60/60; `npx playwright test` passed 160 with 49 existing intentional skips. Full-suite log: `/tmp/maestro-full-e2e-file-explorer-batch21-rerun.log`.
