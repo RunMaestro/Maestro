@@ -10,10 +10,10 @@ Measured inventory:
 
 | Area                              |              Current Count |
 | --------------------------------- | -------------------------: |
-| E2E spec files after batch 47     |                          7 |
-| Declared E2E tests after batch 47 |                        263 |
+| E2E spec files after batch 48     |                          7 |
+| Declared E2E tests after batch 48 |                        268 |
 | Last pre-campaign full E2E result |      91 passed, 49 skipped |
-| Latest full E2E validation        |     231 passed, 32 skipped |
+| Latest full E2E validation        |     236 passed, 32 skipped |
 | Renderer component files          |                        236 |
 | Renderer hook files               |                        123 |
 | Renderer store files              |                         11 |
@@ -67,7 +67,7 @@ That range is high enough to cover the app surface, but low enough to avoid a br
 | Director notes and prompt composer                             |              7 |            90 | Director's Notes settings/history/help/AI overview; prompt composer open/edit/control                                                                                                                                                                                                         |
 | Debug/about/update/app info/agent error modals                 |              9 |            85 | System Log, Process Monitor, About, and update check success/error flows                                                                                                                                                                                                                      |
 | Mobile/web bridge                                              |              0 |           190 | Web/mobile shell, session list, terminal, Auto Run, offline queue, websocket states                                                                                                                                                                                                           |
-| Accessibility smoke and destructive-action confirmations       |              0 |           130 | Keyboard paths, escape behavior, focus restore, confirmation flows                                                                                                                                                                                                                            |
+| Accessibility smoke and destructive-action confirmations       |              5 |           130 | Quick Actions focus/Escape, History delete Escape cancellation, System Log clear cancellation, Process Monitor kill Escape cancellation, File Explorer delete cancellation                                                                                                                    |
 
 Estimated matrix total: 3,025 active scenarios. The current-active column is primary-surface directional coverage and can overlap where one smoke test exercises multiple surfaces.
 
@@ -186,3 +186,5 @@ The first implementation batch should focus on infrastructure and high-ROI exist
 - Validation: `npx playwright test autorun-sessions.spec.ts -g "session deletion|creating new session"` passed 2/2; `npx playwright test autorun-sessions.spec.ts` passed 31/31; `npx playwright test` passed 223 with 32 existing intentional skips; `npm run lint` passed. Full-suite log: `/tmp/maestro-full-e2e-autorun-sessions-crud-batch46.log`.
 - 2026-05-29 batch 47: added deterministic setup wizard Phase Review debug-entry E2E coverage for missing-folder and empty-folder validation, loading existing Auto Run documents, selector switching, keyboard document cycling, edit persistence, Enter submit, and static no-live-provider launch into Auto Run.
 - Validation: `npx playwright test e2e/autorun-setup.spec.ts -g "Phase Review Debug Entry"` passed 8/8 after final formatting; `npx playwright test e2e/autorun-setup.spec.ts` passed 27 with 5 existing intentional skips; `npx playwright test` passed 231 with 32 existing intentional skips; `npm run format:check:all` passed; `npm run lint` passed. Full-suite log: `/tmp/maestro-full-e2e-phase-review-debug-batch47.log`.
+- 2026-05-29 batch 48: added accessibility/destructive-confirmation E2E coverage in the seeded app shell for Quick Actions input focus and Escape close, History deletion Escape cancellation, System Log clear cancellation, Process Monitor kill Escape cancellation, and File Explorer delete cancellation.
+- Validation: `npx playwright test e2e/app-shell.spec.ts -g "Quick Actions with Escape|History deletion with Escape|System Log Viewer clear confirmation|Process Monitor kill with Escape|File Explorer delete confirmation"` passed 5/5; `npx playwright test e2e/app-shell.spec.ts` passed 111/111; `npx playwright test` passed 236 with 32 existing intentional skips. Full-suite log: `/tmp/maestro-full-e2e-accessibility-destructive-batch48.log`.

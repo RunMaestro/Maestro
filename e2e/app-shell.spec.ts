@@ -1650,6 +1650,18 @@ test.describe('App shell seeded workbench', () => {
 		await expect(window.getByText('File Preview Surface')).toBeVisible();
 	});
 
+	test('closes Quick Actions with Escape after focusing the command input', async () => {
+		const quickActionsDialog = await openQuickActions(window);
+		const commandInput = quickActionsDialog.getByPlaceholder('Type a command or jump to agent...');
+
+		await expect(commandInput).toBeFocused();
+		await commandInput.fill('Settings');
+		await expect(quickActionsDialog.getByRole('button', { name: /Settings/ })).toBeVisible();
+
+		await commandInput.press('Escape');
+		await expect(quickActionsDialog).toBeHidden();
+	});
+
 	test('renders seeded History entries and type filters', async () => {
 		await helpers.openRightPanelTab(window, 'History');
 		const historyPanel = window.locator('[data-tour="history-panel"]');
@@ -1739,6 +1751,24 @@ test.describe('App shell seeded workbench', () => {
 
 		await expect(window.getByText(/Detailed failure transcript/)).toBeHidden();
 		await expect(historyPanel.getByText('Failed generated docs sync')).toBeHidden();
+	});
+
+	test('cancels History deletion with Escape without removing the entry', async () => {
+		await helpers.openRightPanelTab(window, 'History');
+		const historyPanel = window.locator('[data-tour="history-panel"]');
+		await historyPanel.getByText('Failed generated docs sync').first().click();
+
+		await expect(window.getByText(/Detailed failure transcript/)).toBeVisible();
+		await window.getByTitle('Delete this history entry').click();
+		const deleteConfirm = window
+			.locator('.fixed')
+			.filter({ hasText: 'Delete History Entry' })
+			.last();
+		await expect(deleteConfirm.getByText('Delete History Entry')).toBeVisible();
+
+		await window.keyboard.press('Escape');
+		await expect(deleteConfirm).toBeHidden();
+		await expect(historyPanel.getByText('Failed generated docs sync')).toBeVisible();
 	});
 
 	test('changes the History activity graph lookback from its context menu', async () => {
@@ -2763,6 +2793,21 @@ test.describe('App shell seeded workbench', () => {
 		await expect(logViewer.getByText('No logs yet')).toBeVisible();
 	});
 
+	test('cancels System Log Viewer clear confirmation without removing logs', async () => {
+		await seedSystemLogs(window);
+		const logViewer = await openSystemLogViewer(window);
+
+		await expect(logViewer.getByText('E2E info sentinel')).toBeVisible();
+		await logViewer.getByTitle('Clear logs').click();
+		const confirmDialog = window.getByRole('dialog', { name: 'Confirm' });
+		await expect(confirmDialog).toBeVisible();
+
+		await confirmDialog.getByRole('button', { name: 'Cancel' }).click();
+		await expect(confirmDialog).toBeHidden();
+		await expect(logViewer.getByText('E2E info sentinel')).toBeVisible();
+		await expect(logViewer.getByText('E2E error sentinel')).toBeVisible();
+	});
+
 	test('opens the System Processes monitor from Quick Actions', async () => {
 		const processMonitor = await openProcessMonitor(window);
 		await expect(processMonitor.getByText('System Processes')).toBeVisible();
@@ -2810,6 +2855,22 @@ test.describe('App shell seeded workbench', () => {
 		await expect(window.getByText('Kill Process?')).toBeVisible();
 		await window.getByRole('button', { name: 'Cancel' }).click();
 		await expect(window.getByText('Kill Process?')).toBeHidden();
+	});
+
+	test('cancels Process Monitor kill with Escape without removing the process', async () => {
+		await stubProcessMonitorProcesses(electronApp, seededWorkbench);
+		const processMonitor = await openProcessMonitor(window);
+
+		await expect(processMonitor.getByText('E2E Terminal - Terminal Shell')).toBeVisible();
+		await processMonitor.getByTitle('Kill process').first().click({ force: true });
+		await expect(window.getByText('Kill Process?')).toBeVisible();
+
+		await window.keyboard.press('Escape');
+		await expect(window.getByText('Kill Process?')).toBeHidden();
+		await expect(processMonitor).toBeHidden();
+
+		const reopenedProcessMonitor = await openProcessMonitor(window);
+		await expect(reopenedProcessMonitor.getByText('E2E Terminal - Terminal Shell')).toBeVisible();
 	});
 
 	test('opens the Usage Dashboard from Quick Actions', async () => {
@@ -3017,6 +3078,18 @@ test.describe('App shell seeded workbench', () => {
 		await expect(
 			window.locator('[data-file-index]').filter({ hasText: 'metrics.csv' })
 		).toBeHidden();
+	});
+
+	test('cancels File Explorer delete confirmation without removing the file', async () => {
+		const contextMenu = await openFileContextMenu(window, 'metrics.csv');
+		await contextMenu.getByRole('button', { name: 'Delete' }).click();
+
+		const deleteDialog = window.getByRole('dialog', { name: 'Delete File' });
+		await expect(deleteDialog).toBeVisible();
+		await deleteDialog.getByRole('button', { name: 'Cancel' }).click();
+
+		await expect(deleteDialog).toBeHidden();
+		await getFileTreeRow(window, 'metrics.csv');
 	});
 
 	test('searches within the active file preview and closes search with Escape', async () => {
