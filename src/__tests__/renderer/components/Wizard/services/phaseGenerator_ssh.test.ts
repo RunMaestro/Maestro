@@ -227,6 +227,37 @@ CONTENT:
 		});
 	});
 
+	describe('spawn argument construction', () => {
+		it('should use raw-stdin prompt delivery for Kilo local generation and rely on main-process arg builders', async () => {
+			const mockAgent = {
+				id: 'kilo',
+				available: true,
+				command: 'kilo',
+				args: [],
+				capabilities: {
+					supportsStreamJsonInput: false,
+				},
+			};
+			mockMaestro.agents.get.mockResolvedValue(mockAgent);
+
+			setupSpawnMock();
+
+			await phaseGenerator.generateDocuments({
+				agentType: 'kilo',
+				directoryPath: '/local/path',
+				projectName: 'Test Project',
+				conversationHistory: [],
+			});
+
+			expect(mockMaestro.process.spawn).toHaveBeenCalled();
+			const spawnCall = mockMaestro.process.spawn.mock.calls[0][0];
+			expect(spawnCall.toolType).toBe('kilo');
+			expect(spawnCall.args).toEqual([]);
+			expect(spawnCall.sendPromptViaStdin).toBe(false);
+			expect(spawnCall.sendPromptViaStdinRaw).toBe(true);
+		});
+	});
+
 	describe('file watcher readFile operations', () => {
 		it('should pass sshRemoteId to readFile in watcher callback when SSH is enabled', async () => {
 			const mockAgent = {

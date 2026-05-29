@@ -467,6 +467,31 @@ export class AgentDetector {
 					return userModel ? [userModel] : [];
 				}
 
+				case 'kilo': {
+					// Kilo: `kilo models` returns one model per line (same as OpenCode)
+					const result = await execFileNoThrow(command, ['models'], undefined, env);
+
+					if (result.exitCode !== 0) {
+						logger.warn(
+							`Model discovery failed for ${agentId}: exit code ${result.exitCode}`,
+							LOG_CONTEXT,
+							{ stderr: result.stderr }
+						);
+						return [];
+					}
+
+					// Parse output: one model per line (e.g., "kilo/gpt-5-nano", "ollama/gpt-oss:latest")
+					const models = result.stdout
+						.split('\n')
+						.map((line) => line.trim())
+						.filter((line) => line.length > 0);
+
+					logger.info(`Discovered ${models.length} models for ${agentId}`, LOG_CONTEXT, {
+						models,
+					});
+					return models;
+				}
+
 				default:
 					// For agents without model discovery implemented, return empty array
 					logger.debug(`No model discovery implemented for ${agentId}`, LOG_CONTEXT);

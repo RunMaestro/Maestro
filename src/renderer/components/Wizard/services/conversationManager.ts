@@ -732,15 +732,26 @@ class ConversationManager {
 			case 'copilot-cli': {
 				// Copilot: base args + JSON output format + read-only enforcement
 				const args = [...(agent.args || [])];
-
 				if (agent.jsonOutputArgs) {
 					args.push(...agent.jsonOutputArgs);
 				}
-
 				if (agent.readOnlyArgs) {
 					args.push(...agent.readOnlyArgs);
 				}
+				return args;
+			}
 
+			case 'kilo': {
+				// Kilo requires 'run' batch mode with JSON output for wizard conversations
+				const args = [];
+
+				// Add base args (if any) - batchModePrefix will be added by buildAgentArgs
+				args.push(...(agent.args || []));
+
+				// Add JSON output: '--format json'
+				if (agent.jsonOutputArgs) {
+					args.push(...agent.jsonOutputArgs);
+				}
 				return args;
 			}
 
@@ -806,8 +817,8 @@ class ConversationManager {
 		try {
 			const lines = output.split('\n');
 
-			// For OpenCode: concatenate all text parts
-			if (agentType === 'opencode') {
+			// For OpenCode / Kilo: concatenate all text parts
+			if (agentType === 'opencode' || agentType === 'kilo') {
 				const textParts: string[] = [];
 				for (const line of lines) {
 					if (!line.trim()) continue;

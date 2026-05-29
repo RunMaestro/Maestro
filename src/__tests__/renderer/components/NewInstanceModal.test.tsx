@@ -267,6 +267,31 @@ describe('NewInstanceModal', () => {
 			});
 		});
 
+		it('should treat Kilo as supported instead of coming soon', async () => {
+			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+				createAgentConfig({ id: 'claude-code', name: 'Claude Code', available: true }),
+				createAgentConfig({ id: 'kilo', name: 'Kilo', available: true }),
+			]);
+
+			render(
+				<NewInstanceModal
+					isOpen={true}
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[]}
+				/>
+			);
+
+			await waitFor(() => {
+				expect(screen.getByText('Kilo')).toBeInTheDocument();
+			});
+
+			const kiloOption = screen.getByRole('option', { name: /Kilo/i });
+			expect(kiloOption).toHaveAttribute('tabIndex', '0');
+			expect(screen.queryByText('Coming Soon')).not.toBeInTheDocument();
+		});
+
 		it('should hide hidden agents from display', async () => {
 			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
 				createAgentConfig({ id: 'claude-code', name: 'Claude Code', available: true }),

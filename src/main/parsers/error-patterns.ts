@@ -809,7 +809,7 @@ export const SSH_ERROR_PATTERNS: AgentErrorPatterns = {
 			// More specific pattern: requires path-like structure before the binary name
 			// Matches: "/usr/local/bin/claude: No such file or directory"
 			// Does NOT match: "claude: error: File 'foo.txt': No such file or directory" (normal file errors)
-			pattern: /\/[^\s:]*\/(claude|opencode|codex):\s*No such file or directory/i,
+			pattern: /\/[^\s:]*\/(claude|opencode|codex|kilo):\s*No such file or directory/i,
 			message: 'Agent binary not found at the specified path. Ensure the agent is installed.',
 			recoverable: false,
 		},
@@ -990,6 +990,7 @@ const COPILOT_ERROR_PATTERNS: AgentErrorPatterns = {
 const patternRegistry = new Map<ToolType, AgentErrorPatterns>([
 	['claude-code', CLAUDE_ERROR_PATTERNS],
 	['opencode', OPENCODE_ERROR_PATTERNS],
+	['kilo', OPENCODE_ERROR_PATTERNS],
 	['codex', CODEX_ERROR_PATTERNS],
 	['factory-droid', FACTORY_DROID_ERROR_PATTERNS],
 	['copilot-cli', COPILOT_ERROR_PATTERNS],

@@ -22,6 +22,8 @@ const BASE_SSH_PATH_DIRS = [
 	'$HOME/.local/bin',
 	'$HOME/.opencode/bin',
 	'$HOME/.claude/local',
+	'$HOME/.kilo/bin',
+	'$HOME/.claude/local',
 	'$HOME/bin',
 	'/usr/local/bin',
 	'/opt/homebrew/bin',

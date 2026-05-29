@@ -55,20 +55,12 @@ function getOpenCodeDataDir(): string {
 }
 
 /**
- * Get OpenCode JSON storage directory (pre-v1.2)
- */
-function getOpenCodeStorageDir(): string {
-	return path.join(getOpenCodeDataDir(), 'storage');
-}
-
-/**
  * Get OpenCode SQLite database path (v1.2+)
  */
 function getOpenCodeDbPath(): string {
 	return path.join(getOpenCodeDataDir(), 'opencode.db');
 }
 
-const OPENCODE_STORAGE_DIR = getOpenCodeStorageDir();
 const OPENCODE_DB_PATH = getOpenCodeDbPath();
 
 /**
@@ -242,8 +234,11 @@ function openOpenCodeDb(dbPath: string = OPENCODE_DB_PATH): Database.Database | 
  * Open the DB, run a callback, close the DB.
  * Returns null if the database file doesn't exist.
  */
-function withOpenCodeDb<T>(fn: (db: Database.Database) => T): T | null {
-	const db = openOpenCodeDb();
+function withOpenCodeDb<T>(
+	fn: (db: Database.Database) => T,
+	dbPath: string = OPENCODE_DB_PATH
+): T | null {
+	const db = openOpenCodeDb(dbPath);
 	if (!db) return null;
 	try {
 		return fn(db);
@@ -255,12 +250,12 @@ function withOpenCodeDb<T>(fn: (db: Database.Database) => T): T | null {
 /**
  * Check if a session exists in the SQLite database (lightweight check).
  */
-function sessionExistsInSqlite(sessionId: string): boolean {
+function sessionExistsInSqlite(sessionId: string, dbPath: string = OPENCODE_DB_PATH): boolean {
 	return (
 		withOpenCodeDb((db) => {
 			if (!tableExists(db, 'session')) return false;
 			return !!db.prepare('SELECT 1 FROM session WHERE id = ? LIMIT 1').get(sessionId);
-		}) ?? false
+		}, dbPath) ?? false
 	);
 }
 
@@ -372,31 +367,52 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 	readonly agentId: ToolType = 'opencode';
 
 	/**
+	 * Get the data directory for this OpenCode-compatible agent.
+	 */
+	protected getDataDir(): string {
+		return getOpenCodeDataDir();
+	}
+
+	/**
+	 * Get the JSON storage directory for this OpenCode-compatible agent.
+	 */
+	protected getStorageDir(): string {
+		return path.join(this.getDataDir(), 'storage');
+	}
+
+	/**
+	 * Get the SQLite database path for this OpenCode-compatible agent.
+	 */
+	protected getDbPath(): string {
+		return path.join(this.getDataDir(), 'opencode.db');
+	}
+
+	/**
 	 * Get the session directory for a project (local)
 	 */
-	private getSessionDir(projectId: string): string {
-		return path.join(OPENCODE_STORAGE_DIR, 'session', projectId);
+	protected getSessionDir(projectId: string): string {
+		return path.join(this.getStorageDir(), 'session', projectId);
 	}
 
 	/**
 	 * Get the message directory for a session (local)
 	 */
-	private getMessageDir(sessionId: string): string {
-		return path.join(OPENCODE_STORAGE_DIR, 'message', sessionId);
+	protected getMessageDir(sessionId: string): string {
+		return path.join(this.getStorageDir(), 'message', sessionId);
 	}
 
 	/**
 	 * Get the part directory for a message (local)
 	 */
-	private getPartDir(messageId: string): string {
-		return path.join(OPENCODE_STORAGE_DIR, 'part', messageId);
+	protected getPartDir(messageId: string): string {
+		return path.join(this.getStorageDir(), 'part', messageId);
 	}
 
 	/**
 	 * Get the OpenCode storage base directory (remote)
 	 * On remote Linux hosts, ~ expands to the user's home directory
 	 */
-	private getRemoteStorageDir(): string {
+	protected getRemoteStorageDir(): string {
 		return '~/.local/share/opencode/storage';
 	}
 
@@ -425,7 +441,7 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 	 * Find the project ID for a given path by checking existing projects
 	 */
 	private async findProjectId(projectPath: string): Promise<string | null> {
-		const projectDir = path.join(OPENCODE_STORAGE_DIR, 'project');
+		const projectDir = path.join(this.getStorageDir(), 'project');
 
 		try {
 			await fs.access(projectDir);
@@ -781,7 +797,7 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 	 * Returns null if the database doesn't exist or lacks the expected schema.
 	 */
 	private listSessionsSqlite(projectPath: string): AgentSessionInfo[] | null {
-		const db = openOpenCodeDb();
+		const db = openOpenCodeDb(this.getDbPath());
 		if (!db) return null;
 
 		try {
@@ -1074,7 +1090,7 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 		totalCost: number;
 	} | null {
 		const ownsDb = !existingDb;
-		const db = existingDb ?? openOpenCodeDb();
+		const db = existingDb ?? openOpenCodeDb(this.getDbPath());
 		if (!db) return null;
 
 		try {
@@ -1559,8 +1575,8 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 		if (sshConfig) {
 			return this.getRemoteMessageDir(sessionId);
 		}
-		if (sessionExistsInSqlite(sessionId)) {
-			return OPENCODE_DB_PATH;
+		if (sessionExistsInSqlite(sessionId, this.getDbPath())) {
+			return this.getDbPath();
 		}
 		return this.getMessageDir(sessionId);
 	}
@@ -1580,7 +1596,7 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 
 		try {
 			// Deletion not supported for SQLite sessions (DB opened read-only)
-			if (sessionExistsInSqlite(sessionId)) {
+			if (sessionExistsInSqlite(sessionId, this.getDbPath())) {
 				logger.warn(
 					'Delete message pair not supported for SQLite-backed OpenCode sessions',
 					LOG_CONTEXT

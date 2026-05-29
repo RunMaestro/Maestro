@@ -2136,5 +2136,47 @@ describe('Wizard Integration Tests', () => {
 			// Detection should NOT have been called again
 			expect(mockMaestro.agents.detect.mock.calls.length).toBe(initialCallCount);
 		});
+
+		it('should render Kilo when detection reports it as available', async () => {
+			mockMaestro.agents.detect.mockClear();
+			mockMaestro.agents.detect.mockResolvedValue([
+				{
+					id: 'claude-code',
+					name: 'Claude Code',
+					available: true,
+					hidden: false,
+					capabilities: {},
+				},
+				{
+					id: 'kilo',
+					name: 'Kilo',
+					available: true,
+					hidden: false,
+					capabilities: {},
+				},
+			]);
+
+			function TestWrapper() {
+				const { openWizard, state } = useWizard();
+
+				React.useEffect(() => {
+					if (!state.isOpen) {
+						openWizard();
+					}
+				}, [openWizard, state.isOpen]);
+
+				return state.isOpen ? <MaestroWizard theme={mockTheme} /> : null;
+			}
+
+			renderWithProviders(<TestWrapper />);
+
+			await waitFor(() => {
+				expect(screen.getByText('Create a Maestro Agent')).toBeInTheDocument();
+			});
+
+			await waitFor(() => {
+				expect(screen.getByRole('button', { name: /kilo/i })).toBeInTheDocument();
+			});
+		});
 	});
 });
