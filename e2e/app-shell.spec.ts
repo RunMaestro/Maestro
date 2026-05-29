@@ -146,7 +146,7 @@ flowchart TD
 				aiTabs: [
 					{
 						id: aiTabId,
-						agentSessionId: null,
+						agentSessionId: 'thread_e2e_tab_seed',
 						name: 'Main',
 						starred: false,
 						logs: [
@@ -750,6 +750,56 @@ test.describe('App shell seeded workbench', () => {
 		await window.keyboard.press('Meta+Shift+T');
 		await expect(window.getByText('File Preview Surface')).toBeVisible();
 		await expect(window.getByText('README', { exact: true })).toBeVisible();
+	});
+
+	test('shows AI tab hover session actions and toggles tab status', async () => {
+		const mainTab = window.locator('[data-tab-id]').filter({ hasText: 'Main' }).first();
+
+		await mainTab.hover();
+		await expect(window.getByText('Copy Session ID')).toBeVisible();
+		await expect(window.getByText('Star Session')).toBeVisible();
+		await expect(window.getByText('Rename Tab')).toBeVisible();
+		await expect(window.getByText('Mark as Unread')).toBeVisible();
+
+		await window.getByText('Copy Session ID').click();
+		await expect(window.getByText('Copied!')).toBeVisible();
+
+		await window.getByText('Star Session').click();
+		await expect(window.getByText('Unstar Session')).toBeVisible();
+
+		await window.getByText('Mark as Unread').click();
+		await expect(window.getByTitle('New messages')).toBeVisible();
+	});
+
+	test('renames an AI tab from the TabBar hover overlay', async () => {
+		const mainTab = window.locator('[data-tab-id]').filter({ hasText: 'Main' }).first();
+
+		await mainTab.hover();
+		await window.getByText('Rename Tab').click();
+
+		const renameDialog = window.getByRole('dialog', { name: 'Rename Tab' });
+		await expect(renameDialog).toBeVisible();
+		await renameDialog.locator('input').fill('Renamed Main');
+		await renameDialog.getByRole('button', { name: 'Rename' }).click();
+
+		await expect(renameDialog).toBeHidden();
+		await expect(
+			window.locator('[data-tab-id]').filter({ hasText: 'Renamed Main' }).first()
+		).toBeVisible();
+	});
+
+	test('creates and closes a new AI tab from the TabBar', async () => {
+		const tabRows = window.locator('[data-tab-id]');
+		const initialTabCount = await tabRows.count();
+
+		await window.getByTitle(/New tab/).click();
+		await expect(tabRows).toHaveCount(initialTabCount + 1);
+		await expect(
+			window.locator('[data-tab-id]').filter({ hasText: 'New Session' }).first()
+		).toBeVisible();
+
+		await window.keyboard.press('Meta+W');
+		await expect(tabRows).toHaveCount(initialTabCount);
 	});
 
 	test('filters and selects a file tab from the Tab Switcher', async () => {

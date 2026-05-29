@@ -10,10 +10,10 @@ Measured inventory:
 
 | Area                              |              Current Count |
 | --------------------------------- | -------------------------: |
-| E2E spec files after batch 22     |                          7 |
-| Declared E2E tests after batch 22 |                        212 |
+| E2E spec files after batch 23     |                          7 |
+| Declared E2E tests after batch 23 |                        215 |
 | Last pre-campaign full E2E result |      91 passed, 49 skipped |
-| Latest full E2E validation        |     163 passed, 49 skipped |
+| Latest full E2E validation        |     166 passed, 49 skipped |
 | Renderer component files          |                        236 |
 | Renderer hook files               |                        123 |
 | Renderer store files              |                         11 |
@@ -45,7 +45,7 @@ That range is high enough to cover the app surface, but low enough to avoid a br
 | Agent CRUD and provider setup                                  |               0 |           120 | Codex live/config flows, Terminal flows, non-Codex static and unavailable states       |
 | Codex AI terminal workflows                                    |               0 |           140 | Send, interrupt, retry, replay, copy/save, streaming, tool/thinking displays, errors   |
 | Command terminal workflows                                     |               4 |            70 | Shell transcript, output search/filter, command history; resize/stop/errors next       |
-| Tabs and tab overlays                                          |               2 |            95 | File-tab hover actions and close/reopen; AI tab rename/reorder/close variants next     |
+| Tabs and tab overlays                                          |               5 |            95 | AI/file hover actions, AI rename/new/close, file close/reopen; reorder variants next   |
 | File explorer and file operations                              |               5 |           110 | Filter, dotfiles, context preview, rename, delete; refresh and empty/error states next |
 | File preview and document rendering                            |               8 |           150 | Markdown, CSV, binary handoff, image, Mermaid, large file, search, edit/preview        |
 | History panel                                                  |               3 |            70 | Detail navigation, delete confirmation/execution, graph lookback; empty/loading next   |
@@ -129,3 +129,5 @@ The first implementation batch should focus on infrastructure and high-ROI exist
 - Validation: `npx playwright test app-shell.spec.ts -g "File Explorer"` passed 8/8; `npx playwright test app-shell.spec.ts` passed 60/60; `npx playwright test` passed 160 with 49 existing intentional skips. Full-suite log: `/tmp/maestro-full-e2e-file-explorer-batch21-rerun.log`.
 - 2026-05-29 batch 22: added History panel E2E coverage for detail modal Prev/Next navigation, delete confirmation/execution, and activity graph lookback context-menu selection.
 - Validation: `npx playwright test app-shell.spec.ts -g "History"` passed 10/10; `npx playwright test app-shell.spec.ts` passed 63/63; `npx playwright test` passed 163 with 49 existing intentional skips. Full-suite log: `/tmp/maestro-full-e2e-history-batch22-rerun.log`.
+- 2026-05-29 batch 23: added AI TabBar E2E coverage for session hover actions, copy/star/unread state changes, rename modal flow, and new-tab close behavior.
+- Validation: `npx playwright test app-shell.spec.ts -g "AI tab|new AI tab|TabBar|Tab Switcher"` passed 7/7; `npx playwright test app-shell.spec.ts` passed 66/66; `npx playwright test` passed 166 with 49 existing intentional skips. Full-suite log: `/tmp/maestro-full-e2e-ai-tab-batch23.log`.
