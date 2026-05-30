@@ -1192,6 +1192,7 @@ async function stubTerminalRunCommand(electronApp: ElectronApplication) {
 	await electronApp.evaluate(({ ipcMain }) => {
 		const state = globalThis as typeof globalThis & {
 			__maestroE2eRunCommandCalls?: TerminalRunCommandCall[];
+			__maestroE2eProcessMonitorProcesses?: StubbedProcessMonitorProcess[];
 		};
 		state.__maestroE2eRunCommandCalls = [];
 
@@ -1226,6 +1227,43 @@ async function stubTerminalRunCommand(electronApp: ElectronApplication) {
 				if (config.command.includes('terminal live stdout sentinel')) {
 					await new Promise((resolve) => setTimeout(resolve, 500));
 					event.sender.send('process:data', config.sessionId, 'terminal live stdout sentinel\n');
+					return sendExit(0);
+				}
+
+				if (config.command.includes('terminal monitored process sentinel')) {
+					const processSessionId = `${config.sessionId}-terminal`;
+					const originalProcess = state.__maestroE2eProcessMonitorProcesses?.find(
+						(process) => process.sessionId === processSessionId
+					);
+					state.__maestroE2eProcessMonitorProcesses = [
+						...(state.__maestroE2eProcessMonitorProcesses || []).filter(
+							(process) => process.sessionId !== processSessionId
+						),
+						{
+							sessionId: processSessionId,
+							toolType: 'terminal',
+							pid: 41005,
+							cwd: config.cwd,
+							isTerminal: true,
+							isBatchMode: false,
+							startTime: Date.now(),
+							command: 'zsh',
+							args: ['-lc', config.command],
+						},
+					];
+					event.sender.send(
+						'process:data',
+						config.sessionId,
+						'terminal monitored process started\n'
+					);
+					await new Promise((resolve) => setTimeout(resolve, 8_000));
+					state.__maestroE2eProcessMonitorProcesses = (
+						state.__maestroE2eProcessMonitorProcesses || []
+					).filter((process) => process.sessionId !== processSessionId);
+					if (originalProcess) {
+						state.__maestroE2eProcessMonitorProcesses.push(originalProcess);
+					}
+					event.sender.send('process:data', config.sessionId, 'terminal monitored process done\n');
 					return sendExit(0);
 				}
 
@@ -2895,6 +2933,35 @@ test.describe('App shell seeded workbench', () => {
 		await expect(terminalInput).toHaveValue('');
 	});
 
+	test('surfaces an executing terminal command in Process Monitor details', async () => {
+		await stubProcessMonitorProcesses(electronApp, seededWorkbench);
+		await stubTerminalRunCommand(electronApp);
+		const terminalInput = await openSeededTerminalAgent(window);
+		const inputArea = window.locator('[data-tour="input-area"]');
+
+		await terminalInput.fill('echo terminal monitored process sentinel');
+		await inputArea.getByTitle('Run command (Enter)').click();
+		await expect(window.getByText('terminal monitored process started')).toBeVisible();
+
+		const processMonitor = await openProcessMonitor(window);
+		await expect(processMonitor.getByText('2 active')).toBeVisible();
+		await processMonitor.getByText('E2E Terminal - Terminal Shell').dblclick();
+
+		const details = window.getByRole('dialog', { name: 'Process Details' });
+		await expect(details).toBeVisible();
+		await expect(details.getByText('41005')).toBeVisible();
+		await expect(details.getByText(seededWorkbench.sessions[1].cwd)).toBeVisible();
+		await expect(
+			details.getByText('zsh -lc echo terminal monitored process sentinel')
+		).toBeVisible();
+
+		await details.getByTitle('Close').click();
+		await expect(window.getByText('terminal monitored process done')).toBeVisible({
+			timeout: 10_000,
+		});
+		await expect(window.getByText('Executing command...')).toBeHidden();
+	});
+
 	test('shows command terminal stderr and nonzero exit code', async () => {
 		await stubTerminalRunCommand(electronApp);
 		const terminalInput = await openSeededTerminalAgent(window);
@@ -4118,6 +4185,28 @@ test.describe('App shell seeded workbench', () => {
 		await expect(window.getByRole('dialog', { name: 'System Processes' })).toBeVisible();
 	});
 
+	test('opens terminal Process Monitor details with cwd and command line', async () => {
+		await stubProcessMonitorProcesses(electronApp, seededWorkbench);
+		const processMonitor = await openProcessMonitor(window);
+
+		await expect(processMonitor.getByText('E2E Terminal - Terminal Shell')).toBeVisible();
+		await processMonitor.getByText('E2E Terminal - Terminal Shell').dblclick();
+
+		const details = window.getByRole('dialog', { name: 'Process Details' });
+		await expect(details).toBeVisible();
+		await expect(details.getByText('41002')).toBeVisible();
+		await expect(details.getByText('Tool Type')).toBeVisible();
+		await expect(
+			details
+				.locator('span')
+				.filter({ hasText: /^terminal$/ })
+				.first()
+		).toBeVisible();
+		await expect(details.getByText('Working Directory')).toBeVisible();
+		await expect(details.getByText(seededWorkbench.sessions[1].cwd)).toBeVisible();
+		await expect(details.getByText('zsh -l')).toBeVisible();
+	});
+
 	test('supports Process Monitor keyboard refresh and detail navigation', async () => {
 		await stubProcessMonitorProcesses(electronApp, seededWorkbench);
 		const processMonitor = await openProcessMonitor(window);
@@ -4179,6 +4268,22 @@ test.describe('App shell seeded workbench', () => {
 		await expect(window.getByText('Kill Process?')).toBeVisible();
 		await window.getByRole('button', { name: 'Cancel' }).click();
 		await expect(window.getByText('Kill Process?')).toBeHidden();
+	});
+
+	test('confirms Process Monitor kill with keyboard Enter', async () => {
+		await stubProcessMonitorProcesses(electronApp, seededWorkbench);
+		const processMonitor = await openProcessMonitor(window);
+
+		await expect(processMonitor.getByText('2 active')).toBeVisible();
+		await processMonitor.getByTitle('Kill process').last().click({ force: true });
+		await expect(window.getByText('Kill Process?')).toBeVisible();
+
+		await window.keyboard.press('Enter');
+		await expect(window.getByText('Kill Process?')).toBeHidden();
+		await expect(processMonitor.getByText('1 active')).toBeVisible();
+		await expect(await getStubbedKilledProcessIds(electronApp)).toEqual([
+			`${seededWorkbench.sessions[1].id}-terminal`,
+		]);
 	});
 
 	test('kills a stubbed terminal process and refreshes the Process Monitor list', async () => {
