@@ -5468,6 +5468,36 @@ test.describe('App shell seeded workbench', () => {
 		await expect(window.getByText(savedSentinel)).toBeVisible();
 	});
 
+	test('opens navigates and dismisses the file preview table of contents', async () => {
+		await window.getByTitle('Table of Contents').click();
+
+		await expect(window.getByText('Contents')).toBeVisible();
+		await expect(window.getByText('1 headings')).toBeVisible();
+		await expect(window.getByTestId('toc-top-button')).toBeVisible();
+		await expect(window.getByTitle('File Preview Surface')).toBeVisible();
+		await expect(window.getByTestId('toc-bottom-button')).toBeVisible();
+
+		await window.getByTestId('toc-bottom-button').click();
+		await window.keyboard.press('Escape');
+		await expect(window.getByText('Contents')).toBeHidden();
+	});
+
+	test('copies file preview content and path from toolbar controls', async () => {
+		await window.getByTitle('Copy content to clipboard').click();
+		await expect(window.getByText('Content Copied to Clipboard')).toBeVisible();
+
+		await window.getByTitle('Copy full path to clipboard').click();
+		await expect(window.getByText('File Path Copied to Clipboard')).toBeVisible();
+	});
+
+	test('toggles file preview remote-image and Bionify toolbar controls', async () => {
+		await window.getByTitle('Show remote images').click();
+		await expect(window.getByTitle('Hide remote images')).toBeVisible();
+
+		await window.getByTitle('Enable Bionify for this preview').click();
+		await expect(window.getByTitle('Disable Bionify for this preview')).toBeVisible();
+	});
+
 	test('renders CSV file preview and filters table rows through file search', async () => {
 		await helpers.openRightPanelTab(window, 'Files');
 		await window.getByText('metrics.csv').dblclick();
