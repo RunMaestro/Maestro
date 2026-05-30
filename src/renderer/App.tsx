@@ -154,7 +154,7 @@ import { InputProvider, useInputContext } from './contexts/InputContext';
 import { useGroupChatStore } from './stores/groupChatStore';
 import {
 	registerGroupChatAutoRun,
-	consumeGroupChatAutoRun,
+	consumeGroupChatAutoRunForCompletion,
 } from './utils/groupChatAutoRunRegistry';
 import { resolveGroupChatAutoRunTarget } from './utils/groupChatAutoRun';
 import { useBatchStore } from './stores/batchStore';
@@ -1519,7 +1519,7 @@ function MaestroConsoleInner() {
 								// If it's still registered, the batch hit an early return (0 tasks,
 								// session gone, etc.) and never called onComplete. Report so the
 								// moderator doesn't wait for a response that will never come.
-								const orphaned = consumeGroupChatAutoRun(session.id);
+								const orphaned = consumeGroupChatAutoRunForCompletion(session.id);
 								if (orphaned) {
 									reportFailure(
 										`Auto Run batch finished without processing any tasks. The documents may have no unchecked tasks (- [ ]).`
@@ -1527,7 +1527,7 @@ function MaestroConsoleInner() {
 								}
 							},
 							(err) => {
-								const orphaned = consumeGroupChatAutoRun(session.id);
+								const orphaned = consumeGroupChatAutoRunForCompletion(session.id);
 								if (orphaned) {
 									reportFailure(`Auto Run batch failed: ${String(err)}`);
 								}

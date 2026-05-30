@@ -14,6 +14,11 @@ interface GroupChatAutoRunEntry {
 }
 
 const registry = new Map<string, GroupChatAutoRunEntry>();
+const pendingCompletions = new Map<string, string>();
+
+function completionKey(groupChatId: string, participantName: string): string {
+	return JSON.stringify([groupChatId, participantName]);
+}
 
 /**
  * Register that a batch run (by sessionId) was triggered by group chat !autorun.
@@ -37,6 +42,52 @@ export function consumeGroupChatAutoRun(sessionId: string): GroupChatAutoRunEntr
 		registry.delete(sessionId);
 	}
 	return entry;
+}
+
+/**
+ * Consume the group chat context and retain a scoped session lookup until the
+ * groupChat:autoRunBatchComplete renderer event clears the visible batch state.
+ */
+export function consumeGroupChatAutoRunForCompletion(
+	sessionId: string
+): GroupChatAutoRunEntry | undefined {
+	const entry = consumeGroupChatAutoRun(sessionId);
+	if (entry) {
+		pendingCompletions.set(completionKey(entry.groupChatId, entry.participantName), sessionId);
+	}
+	return entry;
+}
+
+/**
+ * Resolve an in-flight autorun batch by group chat and participant.
+ * Used for timeout events that fire before the batch onComplete consumes the registry.
+ */
+export function getAutoRunSessionForGroupChatParticipant(
+	groupChatId: string,
+	participantName: string
+): string | undefined {
+	for (const [sessionId, entry] of registry) {
+		if (entry.groupChatId === groupChatId && entry.participantName === participantName) {
+			return sessionId;
+		}
+	}
+	return undefined;
+}
+
+/**
+ * Consume a completed autorun batch lookup after the renderer completion event
+ * has used it to clear the participant's visible batch progress.
+ */
+export function consumeCompletedGroupChatAutoRun(
+	groupChatId: string,
+	participantName: string
+): string | undefined {
+	const key = completionKey(groupChatId, participantName);
+	const sessionId = pendingCompletions.get(key);
+	if (sessionId) {
+		pendingCompletions.delete(key);
+	}
+	return sessionId;
 }
 
 /**

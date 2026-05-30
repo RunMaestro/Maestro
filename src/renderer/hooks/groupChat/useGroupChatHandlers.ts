@@ -21,8 +21,12 @@ import type { ToolType } from '../../../shared/types';
 import { notifyToast } from '../../stores/notificationStore';
 import { generateId } from '../../utils/ids';
 import { aiTabFocusFields } from '../../utils/tabHelpers';
-import { getAutoRunSessionsForGroupChat } from '../../utils/groupChatAutoRunRegistry';
 import { logger } from '../../utils/logger';
+import {
+	consumeCompletedGroupChatAutoRun,
+	getAutoRunSessionForGroupChatParticipant,
+	getAutoRunSessionsForGroupChat,
+} from '../../utils/groupChatAutoRunRegistry';
 import {
 	extractCanonicalAutoRunRefs,
 	type GroupChatAutoRunRef,
@@ -265,28 +269,13 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 		// on the participant timeout, so the AUTO badge and progress bar always clear.
 		const unsubBatchComplete = window.maestro.groupChat.onAutoRunBatchComplete?.(
 			(groupChatId, participantName) => {
-				// Prefer group-chat-scoped autorun registry to avoid name collisions across chats.
-				// Only complete the specific participant's session, not all sessions for the chat.
-				const autoRunSessionIds = getAutoRunSessionsForGroupChat(groupChatId);
-				if (autoRunSessionIds.length > 0) {
-					const sessions = useSessionStore.getState().sessions;
-					const matchingSessionId = autoRunSessionIds.find((sid) =>
-						sessions.some((s) => s.id === sid && s.name === participantName)
-					);
-					if (matchingSessionId) {
-						useBatchStore.getState().dispatchBatch({
-							type: 'COMPLETE_BATCH',
-							sessionId: matchingSessionId,
-						});
-						return;
-					}
-				}
-				// Fallback: resolve by participant name if registry entry was already consumed
-				const session = useSessionStore.getState().sessions.find((s) => s.name === participantName);
-				if (!session) return;
+				const sessionId =
+					getAutoRunSessionForGroupChatParticipant(groupChatId, participantName) ??
+					consumeCompletedGroupChatAutoRun(groupChatId, participantName);
+				if (!sessionId) return;
 				useBatchStore.getState().dispatchBatch({
 					type: 'COMPLETE_BATCH',
-					sessionId: session.id,
+					sessionId,
 				});
 			}
 		);
