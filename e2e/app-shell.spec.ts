@@ -6124,6 +6124,148 @@ test.describe('App shell seeded workbench', () => {
 			.toEqual({ readingMode: true, intensity: 1.35 });
 	});
 
+	test('persists Theme Settings selection and keyboard cycling', async () => {
+		const settingsDialog = await openSettings(window);
+		await settingsDialog.locator('button[title="Themes"]').click();
+		const themePicker = settingsDialog.getByRole('group', { name: 'Theme picker' });
+		await expect(themePicker).toBeVisible();
+
+		await themePicker.locator('[data-theme-id="monokai"]').click();
+		await expect
+			.poll(async () => {
+				return await window.evaluate(async () => {
+					return await window.maestro.settings.get('activeThemeId');
+				});
+			})
+			.toBe('monokai');
+
+		await themePicker.press('Tab');
+		await expect
+			.poll(async () => {
+				return await window.evaluate(async () => {
+					return await window.maestro.settings.get('activeThemeId');
+				});
+			})
+			.toBe('nord');
+	});
+
+	test('persists Display Settings sizing and message alignment controls', async () => {
+		const settingsDialog = await openSettingsTab(window, 'Display', 'Font Size');
+
+		await settingsDialog
+			.getByText('Font Size')
+			.locator('xpath=ancestor::div[1]')
+			.getByRole('button', { name: 'Large', exact: true })
+			.click();
+		await settingsDialog
+			.getByText('Terminal Width (Columns)')
+			.locator('xpath=ancestor::div[1]')
+			.getByRole('button', { name: '120' })
+			.click();
+		await settingsDialog
+			.getByText('Max Output Lines per Response')
+			.locator('xpath=ancestor::div[1]')
+			.getByRole('button', { name: '100' })
+			.click();
+		await settingsDialog
+			.getByText('User Message Alignment')
+			.locator('xpath=ancestor::div[1]')
+			.getByRole('button', { name: 'Left' })
+			.click();
+
+		await expect
+			.poll(async () => {
+				return await window.evaluate(async () => ({
+					fontSize: await window.maestro.settings.get('fontSize'),
+					terminalWidth: await window.maestro.settings.get('terminalWidth'),
+					maxOutputLines: await window.maestro.settings.get('maxOutputLines'),
+					userMessageAlignment: await window.maestro.settings.get('userMessageAlignment'),
+				}));
+			})
+			.toEqual({
+				fontSize: 16,
+				terminalWidth: 120,
+				maxOutputLines: 100,
+				userMessageAlignment: 'left',
+			});
+	});
+
+	test('persists Display Settings window chrome and graph defaults', async () => {
+		const settingsDialog = await openSettingsTab(window, 'Display', 'Font Size');
+
+		await scrollSettingsToText(settingsDialog, 'Window Chrome');
+		await settingsDialog
+			.getByText('Use native title bar')
+			.locator('xpath=ancestor::div[contains(@class, "flex")][1]')
+			.getByRole('switch')
+			.click();
+		await settingsDialog
+			.getByText('Auto-hide menu bar')
+			.locator('xpath=ancestor::div[contains(@class, "flex")][1]')
+			.getByRole('switch')
+			.click();
+
+		await scrollSettingsToText(settingsDialog, 'Document Graph');
+		await settingsDialog
+			.getByText('Show external links by default')
+			.locator('xpath=ancestor::div[contains(@class, "flex")][1]')
+			.getByRole('switch')
+			.click();
+		await settingsDialog
+			.getByText('Maximum nodes to display')
+			.locator('xpath=following::input[@type="range"][1]')
+			.focus();
+		await window.keyboard.press('ArrowRight');
+		await window.keyboard.press('ArrowRight');
+
+		await expect
+			.poll(async () => {
+				return await window.evaluate(async () => ({
+					useNativeTitleBar: await window.maestro.settings.get('useNativeTitleBar'),
+					autoHideMenuBar: await window.maestro.settings.get('autoHideMenuBar'),
+					documentGraphShowExternalLinks: await window.maestro.settings.get(
+						'documentGraphShowExternalLinks'
+					),
+					documentGraphMaxNodes: await window.maestro.settings.get('documentGraphMaxNodes'),
+				}));
+			})
+			.toEqual({
+				useNativeTitleBar: true,
+				autoHideMenuBar: true,
+				documentGraphShowExternalLinks: true,
+				documentGraphMaxNodes: 150,
+			});
+	});
+
+	test('validates and persists Display Settings Bionify algorithm input', async () => {
+		const settingsDialog = await openSettingsTab(window, 'Display', 'Font Size');
+		await scrollSettingsToText(settingsDialog, 'Bionify Algorithm');
+		const algorithmInput = settingsDialog.getByLabel('Bionify algorithm');
+
+		await algorithmInput.fill('invalid bionify algorithm');
+		await algorithmInput.press('Enter');
+		await expect(
+			settingsDialog.locator('p').filter({ hasText: 'Enter `+|- len1 len2 len3 len4 fraction`' })
+		).toBeVisible();
+		await expect
+			.poll(async () => {
+				return await window.evaluate(async () => {
+					return await window.maestro.settings.get('bionifyAlgorithm');
+				});
+			})
+			.not.toBe('invalid bionify algorithm');
+
+		await algorithmInput.fill('+ 1 1 2 2 0.5');
+		await algorithmInput.press('Enter');
+		await expect
+			.poll(async () => {
+				return await window.evaluate(async () => {
+					return await window.maestro.settings.get('bionifyAlgorithm');
+				});
+			})
+			.toBe('+ 1 1 2 2 0.5');
+	});
+
 	test('persists the file explorer icon theme setting from Display settings', async () => {
 		const settingsDialog = await openSettings(window);
 		await settingsDialog.locator('button[title="Display"]').click();
