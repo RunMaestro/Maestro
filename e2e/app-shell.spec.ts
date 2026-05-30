@@ -2426,6 +2426,12 @@ async function openDocumentGraphFromPreview(window: Page) {
 	return graphDialog;
 }
 
+async function focusDocumentGraphMindMap(graphDialog: Locator) {
+	await graphDialog.locator('canvas').evaluate((canvas) => {
+		(canvas.parentElement as HTMLElement | null)?.focus();
+	});
+}
+
 async function openDirectorNotesFromQuickActions(window: Page) {
 	const quickActionsDialog = await openQuickActions(window);
 	await quickActionsDialog
@@ -6156,6 +6162,58 @@ test.describe('App shell seeded workbench', () => {
 		await expect(graphDialog.getByRole('region', { name: 'Help panel' })).toBeVisible();
 		await expect(graphDialog.getByText('Node Types')).toBeVisible();
 		await expect(graphDialog.getByText('External Link').first()).toBeVisible();
+
+		await closeDocumentGraph(window);
+	});
+
+	test('opens Document Graph node preview and navigates preview history', async () => {
+		const graphDialog = await openDocumentGraphFromPreview(window);
+
+		await focusDocumentGraphMindMap(graphDialog);
+		await window.keyboard.press('Enter');
+		await expect(graphDialog.getByText('README.md').last()).toBeVisible();
+		await expect(graphDialog.getByText('File Preview Surface')).toBeVisible();
+		await expect(graphDialog.getByText('Graph task still open')).toBeVisible();
+
+		await graphDialog.getByRole('link', { name: 'NOTES' }).click();
+		await expect(graphDialog.getByText('Notes Preview Surface')).toBeVisible();
+		await expect(
+			graphDialog.getByText('Searchable note body for file explorer coverage.')
+		).toBeVisible();
+
+		await graphDialog.getByLabel('Go back').click();
+		await expect(graphDialog.getByText('File Preview Surface')).toBeVisible();
+		await graphDialog.getByLabel('Go forward').click();
+		await expect(graphDialog.getByText('Notes Preview Surface')).toBeVisible();
+
+		await closeDocumentGraph(window);
+	});
+
+	test('adjusts Document Graph preview character limit from the toolbar', async () => {
+		const graphDialog = await openDocumentGraphFromPreview(window);
+
+		await graphDialog.getByTitle('Preview text limit: 100 characters').click();
+		await expect(graphDialog.getByText('Preview Characters')).toBeVisible();
+		await graphDialog.locator('input[type="range"][min="50"][max="500"]').fill('250');
+		await expect(graphDialog.getByTitle('Preview text limit: 250 characters')).toBeVisible();
+		await window
+			.locator('div.fixed.inset-0.z-40')
+			.last()
+			.click({ position: { x: 10, y: 10 } });
+		await expect(graphDialog.getByText('Preview Characters')).toBeHidden();
+
+		await closeDocumentGraph(window);
+	});
+
+	test('cancels Document Graph Escape close confirmation', async () => {
+		const graphDialog = await openDocumentGraphFromPreview(window);
+
+		await window.keyboard.press('Escape');
+		const closeDialog = window.getByRole('dialog', { name: 'Close Document Graph?' });
+		await expect(closeDialog).toBeVisible();
+		await closeDialog.getByRole('button', { name: 'Cancel' }).click();
+		await expect(closeDialog).toBeHidden();
+		await expect(graphDialog).toBeVisible();
 
 		await closeDocumentGraph(window);
 	});

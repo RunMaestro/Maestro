@@ -381,6 +381,24 @@ export function DocumentGraphView({
 	}, [showDepthSlider, registerLayer, unregisterLayer]);
 
 	/**
+	 * Register preview slider dropdown with layer stack when open
+	 */
+	useEffect(() => {
+		if (showPreviewSlider) {
+			const id = registerLayer({
+				type: 'overlay',
+				priority: MODAL_PRIORITIES.DOCUMENT_GRAPH + 1,
+				blocksLowerLayers: false,
+				capturesFocus: false,
+				focusTrap: 'none',
+				allowClickOutside: true,
+				onEscape: () => setShowPreviewSlider(false),
+			});
+			return () => unregisterLayer(id);
+		}
+	}, [showPreviewSlider, registerLayer, unregisterLayer]);
+
+	/**
 	 * Register layout dropdown with layer stack when open
 	 */
 	useEffect(() => {
@@ -1529,6 +1547,12 @@ export function DocumentGraphView({
 										step="50"
 										value={previewCharLimit}
 										onChange={handlePreviewCharLimitChange}
+										onKeyDown={(e) => {
+											if (e.key === 'Escape') {
+												e.stopPropagation();
+												setShowPreviewSlider(false);
+											}
+										}}
 										className="w-full"
 										style={{ accentColor: theme.colors.accent }}
 									/>
@@ -2117,6 +2141,15 @@ export function DocumentGraphView({
 					onClick={(e) => {
 						e.stopPropagation();
 						setShowDepthSlider(false);
+					}}
+				/>
+			)}
+			{showPreviewSlider && (
+				<div
+					className="fixed inset-0 z-40"
+					onClick={(e) => {
+						e.stopPropagation();
+						setShowPreviewSlider(false);
 					}}
 				/>
 			)}
