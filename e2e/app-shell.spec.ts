@@ -544,6 +544,18 @@ async function openProcessMonitor(window: Page) {
 	return processMonitor;
 }
 
+async function openAgentSessions(window: Page) {
+	const quickActionsDialog = await openQuickActions(window);
+	await quickActionsDialog
+		.getByPlaceholder('Type a command or jump to agent...')
+		.fill('View Agent Sessions');
+	await quickActionsDialog.getByRole('button', { name: /View Agent Sessions/ }).click();
+
+	await expect(quickActionsDialog).toBeHidden();
+	await expect(window.getByText('Agent Sessions for E2E Workbench')).toBeVisible();
+	return window;
+}
+
 async function openGitDiffFromQuickActions(window: Page) {
 	const quickActionsDialog = await openQuickActions(window);
 	await quickActionsDialog
@@ -884,6 +896,230 @@ async function getStubbedActiveProcessFetchCount(electronApp: ElectronApplicatio
 			__maestroE2eActiveProcessFetchCount?: number;
 		};
 		return state.__maestroE2eActiveProcessFetchCount || 0;
+	});
+}
+
+type StubbedAgentSessionUpdate =
+	| { type: 'starred'; sessionId: string; starred: boolean }
+	| { type: 'name'; sessionId: string; name: string | null };
+
+async function stubCodexAgentSessions(
+	electronApp: ElectronApplication,
+	seeded: ReturnType<typeof createSeededWorkbench>
+) {
+	await electronApp.evaluate(
+		({ ipcMain }, payload) => {
+			const state = globalThis as typeof globalThis & {
+				__maestroE2eAgentSessionUpdates?: StubbedAgentSessionUpdate[];
+				__maestroE2eAgentSessionSearchCalls?: Array<{
+					agentId: string;
+					projectPath: string;
+					query: string;
+					mode: string;
+				}>;
+			};
+			const now = Date.now();
+			const sessions = [
+				{
+					sessionId: 'codex-review-session',
+					projectPath: payload.projectPath,
+					timestamp: new Date(now - 120_000).toISOString(),
+					modifiedAt: new Date(now - 30_000).toISOString(),
+					firstMessage: 'Review README and summarize deterministic risks',
+					messageCount: 4,
+					sizeBytes: 4096,
+					costUsd: 0.12,
+					inputTokens: 1200,
+					outputTokens: 450,
+					cacheReadTokens: 200,
+					cacheCreationTokens: 100,
+					durationSeconds: 84,
+					origin: 'user' as const,
+					sessionName: 'Review Checkpoint',
+					starred: true,
+				},
+				{
+					sessionId: 'codex-implementation-session',
+					projectPath: payload.projectPath,
+					timestamp: new Date(now - 90_000).toISOString(),
+					modifiedAt: new Date(now - 60_000).toISOString(),
+					firstMessage: 'Need final implementation details',
+					messageCount: 3,
+					sizeBytes: 2048,
+					costUsd: 0.04,
+					inputTokens: 700,
+					outputTokens: 300,
+					cacheReadTokens: 0,
+					cacheCreationTokens: 0,
+					durationSeconds: 42,
+					origin: 'auto' as const,
+					sessionName: 'Implementation Draft',
+					starred: false,
+				},
+				{
+					sessionId: 'codex-cli-session',
+					projectPath: payload.projectPath,
+					timestamp: new Date(now - 180_000).toISOString(),
+					modifiedAt: new Date(now - 150_000).toISOString(),
+					firstMessage: 'Unnamed CLI sentinel session',
+					messageCount: 2,
+					sizeBytes: 1024,
+					costUsd: 0,
+					inputTokens: 200,
+					outputTokens: 100,
+					cacheReadTokens: 0,
+					cacheCreationTokens: 0,
+					durationSeconds: 12,
+					origin: undefined,
+					sessionName: undefined,
+					starred: false,
+				},
+			];
+			const messagesBySession = {
+				'codex-review-session': [
+					{
+						type: 'user',
+						content: 'Please review deterministic risk coverage.',
+						timestamp: new Date(now - 120_000).toISOString(),
+						uuid: 'review-user-message',
+					},
+					{
+						type: 'assistant',
+						content: 'Refactor response sentinel: keep fixtures local and deterministic.',
+						timestamp: new Date(now - 110_000).toISOString(),
+						uuid: 'review-assistant-message',
+					},
+				],
+				'codex-implementation-session': [
+					{
+						type: 'user',
+						content: 'Need final implementation details.',
+						timestamp: new Date(now - 90_000).toISOString(),
+						uuid: 'implementation-user-message',
+					},
+					{
+						type: 'assistant',
+						content: 'Implementation response sentinel with scoped assertions.',
+						timestamp: new Date(now - 80_000).toISOString(),
+						uuid: 'implementation-assistant-message',
+					},
+				],
+				'codex-cli-session': [
+					{
+						type: 'user',
+						content: 'Unnamed CLI message sentinel.',
+						timestamp: new Date(now - 180_000).toISOString(),
+						uuid: 'cli-user-message',
+					},
+				],
+			};
+			const origins = {
+				'codex-review-session': {
+					origin: 'user' as const,
+					sessionName: 'Review Checkpoint',
+					starred: true,
+				},
+				'codex-implementation-session': {
+					origin: 'auto' as const,
+					sessionName: 'Implementation Draft',
+					starred: false,
+				},
+			};
+			state.__maestroE2eAgentSessionUpdates = [];
+			state.__maestroE2eAgentSessionSearchCalls = [];
+
+			ipcMain.removeHandler('agentSessions:getOrigins');
+			ipcMain.handle('agentSessions:getOrigins', async () => origins);
+
+			ipcMain.removeHandler('agentSessions:listPaginated');
+			ipcMain.handle('agentSessions:listPaginated', async () => ({
+				sessions,
+				hasMore: false,
+				totalCount: sessions.length,
+				nextCursor: null,
+			}));
+
+			ipcMain.removeHandler('agentSessions:read');
+			ipcMain.handle('agentSessions:read', async (_event, _agentId, _projectPath, sessionId) => {
+				const messages = messagesBySession[sessionId as keyof typeof messagesBySession] || [];
+				return {
+					messages,
+					total: messages.length,
+					hasMore: false,
+				};
+			});
+
+			ipcMain.removeHandler('agentSessions:search');
+			ipcMain.handle('agentSessions:search', async (_event, agentId, projectPath, query, mode) => {
+				state.__maestroE2eAgentSessionSearchCalls?.push({
+					agentId,
+					projectPath,
+					query,
+					mode,
+				});
+				if (String(query).toLowerCase().includes('refactor')) {
+					return [
+						{
+							sessionId: 'codex-review-session',
+							matchType: 'assistant',
+							matchPreview: 'Refactor response sentinel',
+							matchCount: 2,
+						},
+					];
+				}
+				return [];
+			});
+
+			ipcMain.removeHandler('agentSessions:setSessionStarred');
+			ipcMain.handle(
+				'agentSessions:setSessionStarred',
+				async (_event, _agentId, _projectPath, sessionId, starred) => {
+					state.__maestroE2eAgentSessionUpdates?.push({
+						type: 'starred',
+						sessionId,
+						starred,
+					});
+					return true;
+				}
+			);
+
+			ipcMain.removeHandler('agentSessions:setSessionName');
+			ipcMain.handle(
+				'agentSessions:setSessionName',
+				async (_event, _agentId, _projectPath, sessionId, name) => {
+					state.__maestroE2eAgentSessionUpdates?.push({
+						type: 'name',
+						sessionId,
+						name,
+					});
+					return true;
+				}
+			);
+		},
+		{ projectPath: seeded.sessions[0].projectRoot }
+	);
+}
+
+async function getStubbedAgentSessionUpdates(electronApp: ElectronApplication) {
+	return electronApp.evaluate(() => {
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eAgentSessionUpdates?: StubbedAgentSessionUpdate[];
+		};
+		return state.__maestroE2eAgentSessionUpdates || [];
+	});
+}
+
+async function getStubbedAgentSessionSearchCalls(electronApp: ElectronApplication) {
+	return electronApp.evaluate(() => {
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eAgentSessionSearchCalls?: Array<{
+				agentId: string;
+				projectPath: string;
+				query: string;
+				mode: string;
+			}>;
+		};
+		return state.__maestroE2eAgentSessionSearchCalls || [];
 	});
 }
 
@@ -3809,19 +4045,78 @@ test.describe('App shell seeded workbench', () => {
 	});
 
 	test('opens Agent Sessions from Quick Actions for the active Codex agent', async () => {
-		const quickActionsDialog = await openQuickActions(window);
-		await quickActionsDialog
-			.getByPlaceholder('Type a command or jump to agent...')
-			.fill('View Agent Sessions');
-		await quickActionsDialog.getByRole('button', { name: /View Agent Sessions/ }).click();
+		const agentSessions = await openAgentSessions(window);
 
-		await expect(quickActionsDialog).toBeHidden();
-		await expect(window.getByText('Agent Sessions for E2E Workbench')).toBeVisible();
-		await expect(window.getByRole('button', { name: 'New Session' })).toBeVisible();
-		await expect(window.getByPlaceholder('Search all content...')).toBeVisible();
-		await expect(window.getByRole('checkbox', { name: 'Named' })).toBeVisible();
-		await expect(window.getByRole('checkbox', { name: 'Show All' })).toBeVisible();
-		await expect(window.getByText('No agent sessions found for this project')).toBeVisible();
+		await expect(agentSessions.getByText('Agent Sessions for E2E Workbench')).toBeVisible();
+		await expect(agentSessions.getByRole('button', { name: 'New Session' })).toBeVisible();
+		await expect(agentSessions.getByPlaceholder('Search all content...')).toBeVisible();
+		await expect(agentSessions.getByRole('checkbox', { name: 'Named' })).toBeVisible();
+		await expect(agentSessions.getByRole('checkbox', { name: 'Show All' })).toBeVisible();
+		await expect(agentSessions.getByText('No agent sessions found for this project')).toBeVisible();
+	});
+
+	test('lists filters and opens stubbed Codex agent sessions', async () => {
+		await stubCodexAgentSessions(electronApp, seededWorkbench);
+		const agentSessions = await openAgentSessions(window);
+
+		await expect(agentSessions.getByText('3 sessions')).toBeVisible();
+		await expect(agentSessions.getByText('Review Checkpoint')).toBeVisible();
+		await expect(agentSessions.getByText('Implementation Draft')).toBeVisible();
+		await expect(agentSessions.getByText('Unnamed CLI sentinel session')).toBeVisible();
+		await expect(agentSessions.getByTitle('User-initiated through Maestro')).toBeVisible();
+		await expect(agentSessions.getByTitle('Auto-run session')).toBeVisible();
+		await expect(agentSessions.getByTitle('Claude Code CLI session')).toBeVisible();
+
+		await agentSessions.getByRole('checkbox', { name: 'Named' }).check();
+		await expect(agentSessions.getByText('Unnamed CLI sentinel session')).toBeHidden();
+		await agentSessions.getByRole('checkbox', { name: 'Named' }).uncheck();
+
+		await agentSessions.getByPlaceholder('Search all content...').fill('Implementation');
+		await expect(agentSessions.getByText('Implementation Draft')).toBeVisible();
+		await expect(agentSessions.getByText('Review Checkpoint')).toBeHidden();
+
+		await agentSessions.getByText('Implementation Draft').click();
+		await expect(agentSessions.getByText('Need final implementation details.')).toBeVisible();
+		await expect(agentSessions.getByText('Implementation response sentinel')).toBeVisible();
+		await expect(agentSessions.getByText('$0.04')).toBeVisible();
+
+		await window.keyboard.press('Escape');
+		await expect(agentSessions.getByPlaceholder('Search all content...')).toBeVisible();
+	});
+
+	test('searches stars and renames stubbed Codex agent sessions', async () => {
+		await stubCodexAgentSessions(electronApp, seededWorkbench);
+		const agentSessions = await openAgentSessions(window);
+
+		await agentSessions.getByPlaceholder('Search all content...').fill('refactor sentinel');
+		await expect(agentSessions.getByText('Refactor response sentinel')).toBeVisible();
+		await expect(agentSessions.getByText('Review Checkpoint')).toBeVisible();
+		await expect(agentSessions.getByText('Implementation Draft')).toBeHidden();
+		await expect(await getStubbedAgentSessionSearchCalls(electronApp)).toContainEqual({
+			agentId: 'codex',
+			projectPath: seededWorkbench.sessions[0].projectRoot,
+			query: 'refactor sentinel',
+			mode: 'all',
+		});
+
+		await agentSessions.getByTitle('Remove from favorites').click();
+		await agentSessions.getByTitle('Rename session').click({ force: true });
+		const renameInput = agentSessions.getByPlaceholder('Enter session name...');
+		await renameInput.fill('Renamed Review Session');
+		await renameInput.press('Enter');
+
+		await expect(agentSessions.getByText('Renamed Review Session')).toBeVisible();
+		const updates = await getStubbedAgentSessionUpdates(electronApp);
+		await expect(updates).toContainEqual({
+			type: 'starred',
+			sessionId: 'codex-review-session',
+			starred: false,
+		});
+		await expect(updates).toContainEqual({
+			type: 'name',
+			sessionId: 'codex-review-session',
+			name: 'Renamed Review Session',
+		});
 	});
 
 	test('shows an empty state for unmatched Quick Actions searches', async () => {
