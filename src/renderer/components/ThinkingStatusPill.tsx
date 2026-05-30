@@ -489,7 +489,7 @@ function ThinkingStatusPillInner({
 								backgroundColor: theme.colors.error,
 								color: 'white',
 							}}
-							title="Interrupt Claude (Ctrl+C)"
+							title="Interrupt process (Ctrl+C)"
 						>
 							<svg className="w-3 h-3" viewBox="0 0 24 24" fill="currentColor">
 								<rect x="6" y="6" width="12" height="12" rx="1" />

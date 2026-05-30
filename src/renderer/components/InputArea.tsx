@@ -303,6 +303,17 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	const isTerminalMode = session.inputMode === 'terminal';
 
 	// thinkingItems is now passed directly from App.tsx (pre-filtered) for better performance
+	const terminalThinkingItems = useMemo<ThinkingItem[]>(
+		() =>
+			isTerminalMode && session.state === 'busy' && session.busySource === 'terminal'
+				? [{ session, tab: null }]
+				: [],
+		[isTerminalMode, session]
+	);
+	const statusThinkingItems = isTerminalMode ? terminalThinkingItems : thinkingItems;
+	const showThinkingStatusPill =
+		(session.inputMode === 'ai' && (thinkingItems.length > 0 || autoRunState?.isRunning)) ||
+		terminalThinkingItems.length > 0;
 
 	// Get the appropriate command history based on current mode
 	// Fall back to legacy commandHistory for sessions created before the split
@@ -443,10 +454,10 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 			className="relative p-4 border-t"
 			style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgSidebar }}
 		>
-			{/* ThinkingStatusPill - only show in AI mode when there are thinking items or AutoRun */}
-			{session.inputMode === 'ai' && (thinkingItems.length > 0 || autoRunState?.isRunning) && (
+			{/* ThinkingStatusPill - show active AI work, Auto Run, or an interruptible terminal command */}
+			{showThinkingStatusPill && (
 				<ThinkingStatusPill
-					thinkingItems={thinkingItems}
+					thinkingItems={statusThinkingItems}
 					theme={theme}
 					onSessionClick={onSessionClick}
 					namedSessions={namedSessions}

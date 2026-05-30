@@ -407,7 +407,7 @@ describe('ThinkingStatusPill', () => {
 			render(
 				<ThinkingStatusPill thinkingItems={[item]} theme={mockTheme} onInterrupt={() => {}} />
 			);
-			expect(screen.getByTitle('Interrupt Claude (Ctrl+C)')).toBeInTheDocument();
+			expect(screen.getByTitle('Interrupt process (Ctrl+C)')).toBeInTheDocument();
 		});
 	});
 

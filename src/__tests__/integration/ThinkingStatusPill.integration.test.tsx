@@ -133,7 +133,7 @@ describe('ThinkingStatusPill integration', () => {
 		fireEvent.click(screen.getByText('Named Claude'));
 		expect(onSessionClick).toHaveBeenCalledWith('session-active', 'tab-active');
 
-		fireEvent.click(screen.getByTitle('Interrupt Claude (Ctrl+C)'));
+		fireEvent.click(screen.getByTitle('Interrupt process (Ctrl+C)'));
 		expect(onInterrupt).toHaveBeenCalledOnce();
 
 		act(() => {

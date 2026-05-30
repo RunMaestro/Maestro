@@ -904,6 +904,7 @@ async function stubProcessMonitorProcesses(
 				__maestroE2eProcessMonitorProcesses?: StubbedProcessMonitorProcess[];
 				__maestroE2eKilledProcessIds?: string[];
 				__maestroE2eActiveProcessFetchCount?: number;
+				__maestroE2eTerminalCommandResolvers?: Record<string, (code: number) => void>;
 			};
 			state.__maestroE2eProcessMonitorProcesses = [
 				{
@@ -946,6 +947,10 @@ async function stubProcessMonitorProcesses(
 					state.__maestroE2eProcessMonitorProcesses?.filter(
 						(process) => process.sessionId !== sessionId
 					) || [];
+				const commandSessionId = sessionId.endsWith('-terminal')
+					? sessionId.slice(0, -'-terminal'.length)
+					: sessionId;
+				state.__maestroE2eTerminalCommandResolvers?.[commandSessionId]?.(137);
 				return true;
 			});
 		},
@@ -1272,6 +1277,12 @@ type TerminalRunCommandCall = {
 	};
 };
 
+type ProcessResizeCall = {
+	sessionId: string;
+	cols: number;
+	rows: number;
+};
+
 type CodexProcessSpawnCall = {
 	sessionId: string;
 	toolType: string;
@@ -1323,19 +1334,30 @@ async function getStubbedCodexProcessSpawnCalls(electronApp: ElectronApplication
 	});
 }
 
-async function stubProcessInterrupt(electronApp: ElectronApplication) {
-	await electronApp.evaluate(({ ipcMain }) => {
+async function stubProcessInterrupt(
+	electronApp: ElectronApplication,
+	options: { fail?: boolean } = {}
+) {
+	await electronApp.evaluate(({ ipcMain }, { fail }) => {
 		const state = globalThis as typeof globalThis & {
 			__maestroE2eProcessInterruptCalls?: string[];
+			__maestroE2eTerminalCommandResolvers?: Record<string, (code: number) => void>;
 		};
 		state.__maestroE2eProcessInterruptCalls = [];
 
 		ipcMain.removeHandler('process:interrupt');
 		ipcMain.handle('process:interrupt', async (_event, sessionId: string) => {
 			state.__maestroE2eProcessInterruptCalls?.push(sessionId);
+			if (fail) {
+				throw new Error('terminal interrupt failure sentinel');
+			}
+			const commandSessionId = sessionId.endsWith('-terminal')
+				? sessionId.slice(0, -'-terminal'.length)
+				: sessionId;
+			state.__maestroE2eTerminalCommandResolvers?.[commandSessionId]?.(130);
 			return true;
 		});
-	});
+	}, options);
 }
 
 async function getStubbedProcessInterruptCalls(electronApp: ElectronApplication) {
@@ -1352,6 +1374,7 @@ async function stubTerminalRunCommand(electronApp: ElectronApplication) {
 		const state = globalThis as typeof globalThis & {
 			__maestroE2eRunCommandCalls?: TerminalRunCommandCall[];
 			__maestroE2eProcessMonitorProcesses?: StubbedProcessMonitorProcess[];
+			__maestroE2eTerminalCommandResolvers?: Record<string, (code: number) => void>;
 		};
 		state.__maestroE2eRunCommandCalls = [];
 
@@ -1387,6 +1410,31 @@ async function stubTerminalRunCommand(electronApp: ElectronApplication) {
 					await new Promise((resolve) => setTimeout(resolve, 500));
 					event.sender.send('process:data', config.sessionId, 'terminal live stdout sentinel\n');
 					return sendExit(0);
+				}
+
+				if (config.command.includes('terminal interrupt hold sentinel')) {
+					event.sender.send(
+						'process:data',
+						config.sessionId,
+						'terminal interrupt hold sentinel started\n'
+					);
+					return new Promise<{ exitCode: number }>((resolve) => {
+						state.__maestroE2eTerminalCommandResolvers = {
+							...(state.__maestroE2eTerminalCommandResolvers || {}),
+							[config.sessionId]: (code: number) => {
+								if (!event.sender.isDestroyed()) {
+									event.sender.send(
+										'process:data',
+										config.sessionId,
+										`terminal interrupt hold sentinel stopped ${code}\n`
+									);
+									event.sender.send('process:command-exit', config.sessionId, code);
+								}
+								delete state.__maestroE2eTerminalCommandResolvers?.[config.sessionId];
+								resolve({ exitCode: code });
+							},
+						};
+					});
 				}
 
 				if (config.command.includes('terminal monitored process sentinel')) {
@@ -1453,6 +1501,33 @@ async function getStubbedTerminalRunCommandCalls(electronApp: ElectronApplicatio
 			__maestroE2eRunCommandCalls?: TerminalRunCommandCall[];
 		};
 		return state.__maestroE2eRunCommandCalls || [];
+	});
+}
+
+async function stubProcessResize(electronApp: ElectronApplication) {
+	await electronApp.evaluate(({ ipcMain }) => {
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eProcessResizeCalls?: ProcessResizeCall[];
+		};
+		state.__maestroE2eProcessResizeCalls = [];
+
+		ipcMain.removeHandler('process:resize');
+		ipcMain.handle(
+			'process:resize',
+			async (_event, sessionId: string, cols: number, rows: number) => {
+				state.__maestroE2eProcessResizeCalls?.push({ sessionId, cols, rows });
+				return true;
+			}
+		);
+	});
+}
+
+async function getStubbedProcessResizeCalls(electronApp: ElectronApplication) {
+	return electronApp.evaluate(() => {
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eProcessResizeCalls?: ProcessResizeCall[];
+		};
+		return state.__maestroE2eProcessResizeCalls || [];
 	});
 }
 
@@ -3113,6 +3188,90 @@ test.describe('App shell seeded workbench', () => {
 		await expect(window.getByText('terminal live stdout sentinel')).toBeVisible();
 		await expect(window.getByText('Executing command...')).toBeHidden();
 		await expect(terminalInput).toHaveValue('');
+	});
+
+	test('interrupts a running command terminal process from the Stop control', async () => {
+		await stubTerminalRunCommand(electronApp);
+		await stubProcessInterrupt(electronApp);
+		const terminalInput = await openSeededTerminalAgent(window);
+		const inputArea = window.locator('[data-tour="input-area"]');
+
+		await terminalInput.fill('run terminal interrupt hold sentinel');
+		await inputArea.getByTitle('Run command (Enter)').click();
+		await expect(window.getByText('terminal interrupt hold sentinel started')).toBeVisible();
+		await expect(window.getByText('Executing command...')).toBeVisible();
+
+		await window.getByRole('button', { name: 'Stop' }).click();
+
+		const session = seededWorkbench.sessions[1]!;
+		await expect
+			.poll(async () => getStubbedProcessInterruptCalls(electronApp))
+			.toEqual([`${session.id}-terminal`]);
+		await expect(window.getByText('terminal interrupt hold sentinel stopped 130')).toBeVisible();
+		await expect(window.getByText('Command exited with code 130')).toBeVisible();
+		await expect(window.getByText('Executing command...')).toBeHidden();
+		await expect(terminalInput).toBeEnabled();
+	});
+
+	test('force kills a running command terminal process when interrupt fails', async () => {
+		await stubProcessMonitorProcesses(electronApp, seededWorkbench);
+		await stubTerminalRunCommand(electronApp);
+		await stubProcessInterrupt(electronApp, { fail: true });
+		const dialogMessages: string[] = [];
+		window.once('dialog', async (dialog) => {
+			dialogMessages.push(dialog.message());
+			await dialog.accept();
+		});
+		const terminalInput = await openSeededTerminalAgent(window);
+		const inputArea = window.locator('[data-tour="input-area"]');
+
+		await terminalInput.fill('run terminal interrupt hold sentinel');
+		await inputArea.getByTitle('Run command (Enter)').click();
+		await expect(window.getByText('terminal interrupt hold sentinel started')).toBeVisible();
+		await window.getByRole('button', { name: 'Stop' }).click();
+
+		const session = seededWorkbench.sessions[1]!;
+		await expect
+			.poll(async () => getStubbedProcessInterruptCalls(electronApp))
+			.toEqual([`${session.id}-terminal`]);
+		await expect
+			.poll(async () => getStubbedKilledProcessIds(electronApp))
+			.toEqual([`${session.id}-terminal`]);
+		expect(dialogMessages[0]).toContain('Failed to interrupt the process gracefully');
+		await expect(window.getByText('Process forcefully terminated')).toBeVisible();
+		await expect(window.getByText('Command exited with code 137')).toBeVisible();
+		await expect(window.getByText('Executing command...')).toBeHidden();
+	});
+
+	test('routes command terminal PTY resize through the preload IPC bridge', async () => {
+		await stubProcessResize(electronApp);
+		await openSeededTerminalAgent(window);
+
+		const session = seededWorkbench.sessions[1]!;
+		const resized = await window.evaluate(
+			async ({ sessionId }) => {
+				const maestroWindow = window as Window & {
+					maestro: {
+						process: {
+							resize: (sessionId: string, cols: number, rows: number) => Promise<boolean>;
+						};
+					};
+				};
+				return maestroWindow.maestro.process.resize(`${sessionId}-terminal`, 132, 43);
+			},
+			{ sessionId: session.id }
+		);
+
+		expect(resized).toBe(true);
+		await expect
+			.poll(async () => getStubbedProcessResizeCalls(electronApp))
+			.toEqual([
+				{
+					sessionId: `${session.id}-terminal`,
+					cols: 132,
+					rows: 43,
+				},
+			]);
 	});
 
 	test('surfaces an executing terminal command in Process Monitor details', async () => {
