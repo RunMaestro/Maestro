@@ -174,6 +174,23 @@ async function startStubbedBatchRun(
 	await expect(window.getByText('Auto Run Active').first()).toBeVisible({ timeout: 15_000 });
 }
 
+async function startStubbedMultiDocumentBatchRun(
+	window: Page,
+	electronApp: ElectronApplication,
+	options: { exitDelayMs?: number; loop?: boolean } = {}
+) {
+	await stubAutoRunProcessSpawn(electronApp, options);
+	const batchDialog = await openBatchRunnerModal(window);
+	await addAllDocumentsToBatch(window, batchDialog);
+	if (options.loop) {
+		await batchDialog.getByRole('button', { name: 'Loop' }).click();
+		await batchDialog.getByRole('button', { name: 'max' }).click();
+	}
+	await batchDialog.getByRole('button', { name: 'Go' }).click();
+	await expect(batchDialog).toBeHidden();
+	await expect(window.getByText('Auto Run Active').first()).toBeVisible({ timeout: 15_000 });
+}
+
 function getAutoRunStopButton(window: Page) {
 	return window.getByTitle('Stop auto-run', { exact: true });
 }
@@ -199,6 +216,25 @@ function writePhaseOneTasks(autoRunFolder: string, completedTasks: number) {
 ## Notes
 
 These are test tasks for batch processing E2E tests.
+`
+	);
+}
+
+function writePhaseTwoTasks(autoRunFolder: string, completedTasks: number) {
+	const taskStatus = (taskNumber: number) => (taskNumber <= completedTasks ? 'x' : ' ');
+	fs.writeFileSync(
+		path.join(autoRunFolder, 'Phase 2.md'),
+		`# Phase 2: Implementation
+
+## Tasks
+
+- [${taskStatus(1)}] Task 4: Build core features
+- [${taskStatus(2)}] Task 5: Add tests
+- [${taskStatus(3)}] Task 6: Implement error handling
+
+## Notes
+
+Implementation phase tasks.
 `
 	);
 }
@@ -597,13 +633,21 @@ All tasks in this document are complete.
 			}
 		});
 
-		test.skip('should reflect real-time task updates during batch run', async ({ window }) => {
-			// This test requires an active batch run with task updates
-			// Skip until full batch run infrastructure is available
-			// Expected behavior:
-			// 1. Batch run is active
-			// 2. As AI completes tasks, checkboxes toggle from [ ] to [x]
-			// 3. Task count updates: "1 of 3" -> "2 of 3" -> "3 of 3"
+		test('should reflect task updates during an active batch run', async () => {
+			const launched = await launchBatchWorkbench();
+			try {
+				await startStubbedBatchRun(launched.window, launched.electronApp, {
+					exitDelayMs: 1_500,
+				});
+				writePhaseOneTasks(launched.autoRunFolder, 1);
+
+				await expect(launched.window.getByText('Auto Run Active').first()).toBeVisible();
+				await expect(launched.window.getByText('1 of 3 tasks completed').first()).toBeVisible({
+					timeout: 10_000,
+				});
+			} finally {
+				await launched.cleanup();
+			}
 		});
 
 		test.skip('should sync content when contentVersion changes during batch run', async ({
@@ -871,13 +915,24 @@ test.describe('Batch Processing with Multiple Documents', () => {
 			}
 		});
 
-		test.skip('should process documents in order', async ({ window }) => {
-			// This test verifies document ordering
-			// Skip until batch run can be triggered in E2E
-			// Expected behavior:
-			// 1. Select multiple documents
-			// 2. Run batch
-			// 3. Documents processed in listed order
+		test('should process documents in order', async () => {
+			const launched = await launchBatchWorkbench();
+			try {
+				await startStubbedMultiDocumentBatchRun(launched.window, launched.electronApp, {
+					exitDelayMs: 1_500,
+				});
+				await expect(launched.window.getByTitle('Document 1/3: Phase 1.md')).toBeVisible();
+
+				writePhaseOneTasks(launched.autoRunFolder, 3);
+				await expect(launched.window.getByTitle('Document 3/3: Phase 2.md')).toBeVisible({
+					timeout: 10_000,
+				});
+
+				writePhaseTwoTasks(launched.autoRunFolder, 3);
+				await waitForBatchRunToFinish(launched.window);
+			} finally {
+				await launched.cleanup();
+			}
 		});
 	});
 
@@ -938,31 +993,50 @@ test.describe('Batch Processing with Multiple Documents', () => {
  * Progress display tests during batch processing
  */
 test.describe('Batch Processing Progress Display', () => {
-	test.skip('should show current document being processed', async ({ window }) => {
-		// This test verifies progress display during batch
-		// Skip until batch run can be triggered in E2E
-		// Expected behavior:
-		// 1. During batch run
-		// 2. UI shows which document is being processed
-		// 3. Progress indicator shows current position
+	test('should show current document being processed', async () => {
+		const launched = await launchBatchWorkbench();
+		try {
+			await startStubbedMultiDocumentBatchRun(launched.window, launched.electronApp);
+
+			await expect(launched.window.getByTitle('Document 1/3: Phase 1.md')).toBeVisible();
+			await expect(launched.window.getByText('Document 1/3: Phase 1')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
 	});
 
-	test.skip('should show overall progress across documents', async ({ window }) => {
-		// This test verifies multi-document progress
-		// Skip until batch run can be triggered in E2E
-		// Expected behavior:
-		// 1. Running with multiple documents
-		// 2. Shows "Document 2 of 3" or similar
-		// 3. Updates as processing moves to next document
+	test('should show overall progress across documents', async () => {
+		const launched = await launchBatchWorkbench();
+		try {
+			await startStubbedMultiDocumentBatchRun(launched.window, launched.electronApp, {
+				exitDelayMs: 1_500,
+			});
+
+			await expect(launched.window.getByText('0 of 6 tasks completed').first()).toBeVisible();
+			writePhaseOneTasks(launched.autoRunFolder, 3);
+
+			await expect(launched.window.getByTitle('Document 3/3: Phase 2.md')).toBeVisible({
+				timeout: 10_000,
+			});
+			await expect(launched.window.getByText('3 of 6 tasks completed').first()).toBeVisible({
+				timeout: 5_000,
+			});
+		} finally {
+			await launched.cleanup();
+		}
 	});
 
-	test.skip('should display loop iteration count when in loop mode', async ({ window }) => {
-		// This test verifies loop iteration display
-		// Skip until batch run can be triggered in E2E
-		// Expected behavior:
-		// 1. Loop mode enabled
-		// 2. Shows "Iteration 2 of 3" or similar
-		// 3. Updates after each complete cycle
+	test('should display loop iteration count when in loop mode', async () => {
+		const launched = await launchBatchWorkbench();
+		try {
+			await startStubbedMultiDocumentBatchRun(launched.window, launched.electronApp, {
+				loop: true,
+			});
+
+			await expect(launched.window.getByText('Loop 1 of 5')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
 	});
 });
 
