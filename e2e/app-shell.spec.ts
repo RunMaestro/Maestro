@@ -2299,6 +2299,71 @@ test.describe('App shell seeded workbench', () => {
 		await expect(window.getByText('File Preview Surface')).toBeVisible();
 	});
 
+	test('toggles shell side panels from shortcuts and panel controls', async () => {
+		await expect(window.locator('[data-tour="session-list"]')).toBeVisible();
+		await expect(window.locator('[data-tour="files-panel"]')).toBeVisible();
+
+		await window.keyboard.press('Alt+Meta+ArrowLeft');
+		await expect(window.locator('[data-tour="session-list"]')).toBeHidden();
+		await expect(window.getByTitle(/Expand Sidebar/)).toBeVisible();
+
+		await window.keyboard.press('Alt+Meta+ArrowLeft');
+		await expect(window.locator('[data-tour="session-list"]')).toBeVisible();
+
+		const rightPanelFrame = window
+			.getByRole('button', { name: 'Files' })
+			.locator('xpath=ancestor::div[contains(@class, "border-l")][1]');
+		await window.getByTitle(/Collapse Right Panel/).click();
+		await expect(window.getByTitle(/Show right panel/)).toBeVisible();
+		await expect(window.getByTitle(/Expand Right Panel/)).toBeVisible();
+		await expect(rightPanelFrame).toHaveClass(/w-0/);
+		await expect(rightPanelFrame).toHaveCSS('opacity', '0');
+
+		await window.getByTitle(/Show right panel/).click();
+		await expect(window.getByTitle(/Collapse Right Panel/)).toBeVisible();
+		await expect(window.locator('[data-tour="files-panel"]')).toBeVisible();
+	});
+
+	test('focuses the Left Bar shortcut and opens the agent filter', async () => {
+		await window.keyboard.press('Alt+Meta+ArrowLeft');
+		await expect(window.locator('[data-tour="session-list"]')).toBeHidden();
+
+		await window.keyboard.press('Meta+Shift+A');
+		await expect(window.locator('[data-tour="session-list"]')).toBeVisible();
+
+		await window.keyboard.press('Meta+f');
+		await expect(window.getByPlaceholder('Filter agents...')).toBeVisible();
+	});
+
+	test('opens shell search targets from Quick Actions', async () => {
+		let quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('Search: Agents');
+		await quickActionsDialog.getByRole('button', { name: /Search: Agents/ }).click();
+		await expect(window.getByPlaceholder('Filter agents...')).toBeVisible();
+		await window.getByPlaceholder('Filter agents...').press('Escape');
+		await window.getByText('Main', { exact: true }).click();
+
+		quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('Search: Files');
+		await quickActionsDialog.getByRole('button', { name: /Search: Files/ }).click();
+		await expect(window.locator('[data-tour="files-panel"]')).toBeVisible();
+		await expect(window.getByPlaceholder('Filter files...')).toBeVisible();
+		await window.getByPlaceholder('Filter files...').press('Escape');
+		await window.getByText('Main', { exact: true }).click();
+
+		quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('Search: History');
+		await quickActionsDialog.getByRole('button', { name: /Search: History/ }).click();
+		await expect(window.locator('[data-tour="history-panel"]')).toBeVisible();
+		await expect(window.getByPlaceholder('Filter history...')).toBeVisible();
+	});
+
 	test('closes Quick Actions with Escape after focusing the command input', async () => {
 		const quickActionsDialog = await openQuickActions(window);
 		const commandInput = quickActionsDialog.getByPlaceholder('Type a command or jump to agent...');
