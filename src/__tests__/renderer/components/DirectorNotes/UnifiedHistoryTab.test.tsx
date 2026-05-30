@@ -1,9 +1,31 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
-import { UnifiedHistoryTab } from '../../../../renderer/components/DirectorNotes/UnifiedHistoryTab';
-import type { Theme } from '../../../../renderer/types';
+import { UnifiedHistoryTab as RawUnifiedHistoryTab } from '../../../../renderer/components/DirectorNotes/UnifiedHistoryTab';
 
+import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
+
+import { mockTheme } from '../../../helpers/mockTheme';
+
+// Lookback is owned by DirectorNotesModal in real use; tests use this
+// stateful wrapper so we can keep `<UnifiedHistoryTab ... />` ergonomics.
+function UnifiedHistoryTab(
+	props: Omit<
+		React.ComponentProps<typeof RawUnifiedHistoryTab>,
+		'lookbackHours' | 'onLookbackChange'
+	>
+) {
+	const [hours, setHours] = useState<number | null>(() => {
+		const days = mockDirNotesSettings.defaultLookbackDays;
+		if (days <= 0) return null;
+		const target = days * 24;
+		for (const h of [24, 72, 168, 336, 720, 4320, 8760]) {
+			if (h >= target) return h;
+		}
+		return null;
+	});
+	return <RawUnifiedHistoryTab {...props} lookbackHours={hours} onLookbackChange={setHours} />;
+}
 // Mock useSettings hook (mutable so individual tests can override)
 const mockDirNotesSettings = vi.hoisted(() => ({
 	provider: 'claude-code' as const,
@@ -108,7 +130,7 @@ vi.mock('../../../../renderer/components/History', () => ({
 			)}
 		</div>
 	),
-	HistoryFilterToggle: ({ activeFilters, onToggleFilter }: any) => (
+	HistoryFilterToggle: ({ activeFilters, onToggleFilter, visibleTypes }: any) => (
 		<div data-testid="history-filter-toggle">
 			<button
 				data-testid="filter-auto"
@@ -124,6 +146,15 @@ vi.mock('../../../../renderer/components/History', () => ({
 			>
 				USER
 			</button>
+			{visibleTypes?.includes('CUE') && (
+				<button
+					data-testid="filter-cue"
+					data-active={activeFilters.has('CUE')}
+					onClick={() => onToggleFilter('CUE')}
+				>
+					CUE
+				</button>
+			)}
 		</div>
 	),
 	HistoryStatsBar: ({ stats }: any) => (
@@ -149,29 +180,30 @@ vi.mock('../../../../renderer/components/History', () => ({
 	],
 }));
 
-const mockTheme: Theme = {
-	id: 'dracula',
-	name: 'Dracula',
-	mode: 'dark',
-	colors: {
-		bgMain: '#282a36',
-		bgSidebar: '#21222c',
-		bgActivity: '#343746',
-		textMain: '#f8f8f2',
-		textDim: '#6272a4',
-		accent: '#bd93f9',
-		accentForeground: '#f8f8f2',
-		border: '#44475a',
-		success: '#50fa7b',
-		warning: '#ffb86c',
-		error: '#ff5555',
-		scrollbar: '#44475a',
-		scrollbarHover: '#6272a4',
-	},
-};
-
 const mockGetUnifiedHistory = vi.fn();
+const mockGetGraphData = vi.fn();
+const mockGetOffsetForTimestamp = vi.fn();
 const mockHistoryUpdate = vi.fn();
+
+/** Default graph response — all-time aggregate, decoupled from the entry list. */
+const createGraphDataResponse = () => ({
+	buckets: Array.from({ length: 24 }, () => ({ auto: 0, user: 0, cue: 0 })),
+	bucketCount: 24,
+	earliestTimestamp: Date.now() - 24 * 60 * 60 * 1000,
+	latestTimestamp: Date.now(),
+	totalCount: 0,
+	autoCount: 0,
+	userCount: 0,
+	cueCount: 0,
+	cached: false,
+	stats: {
+		agentCount: 0,
+		sessionCount: 0,
+		autoCount: 0,
+		userCount: 0,
+		totalCount: 0,
+	},
+});
 
 const createMockEntries = () => [
 	{
@@ -226,13 +258,30 @@ beforeEach(() => {
 	(window as any).maestro = {
 		directorNotes: {
 			getUnifiedHistory: mockGetUnifiedHistory,
+			getGraphData: mockGetGraphData,
+			getOffsetForTimestamp: mockGetOffsetForTimestamp,
+			onHistoryEntryAdded: vi.fn().mockReturnValue(() => {}),
 		},
 		history: {
 			update: mockHistoryUpdate,
 		},
+		// Needed by trackShortcutUsage (settings persistence + daily counter).
+		settings: {
+			set: vi.fn().mockResolvedValue(undefined),
+		},
+		stats: {
+			recordShortcutUsage: vi.fn().mockResolvedValue(null),
+		},
 	};
 	mockHistoryUpdate.mockResolvedValue(true);
 	mockGetUnifiedHistory.mockResolvedValue(createPaginatedResponse(createMockEntries()));
+	mockGetGraphData.mockResolvedValue(createGraphDataResponse());
+	mockGetOffsetForTimestamp.mockResolvedValue(0);
+
+	// Default: maestroCue disabled
+	useSettingsStore.setState({
+		encoreFeatures: { directorNotes: false, usageStats: false, symphony: false, maestroCue: false },
+	});
 });
 
 afterEach(() => {
@@ -259,6 +308,17 @@ describe('UnifiedHistoryTab', () => {
 					limit: 100,
 					offset: 0,
 				});
+			});
+		});
+
+		it('fetches graph data for the current lookback (1 week → bucketCount 28)', async () => {
+			render(<UnifiedHistoryTab theme={mockTheme} />);
+
+			// Default lookback is 7 days → 168h → "1 week" → bucketCount 28.
+			// The lookback hours are passed through so the server caches a
+			// distinct aggregate per window.
+			await waitFor(() => {
+				expect(mockGetGraphData).toHaveBeenCalledWith(28, 168);
 			});
 		});
 
@@ -395,6 +455,43 @@ describe('UnifiedHistoryTab', () => {
 			// USER entries should remain
 			expect(screen.getByText('User performed action A')).toBeInTheDocument();
 		});
+
+		it('hides CUE filter when maestroCue is disabled', async () => {
+			useSettingsStore.setState({
+				encoreFeatures: {
+					directorNotes: false,
+					usageStats: false,
+					symphony: false,
+					maestroCue: false,
+				},
+			});
+
+			render(<UnifiedHistoryTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('filter-auto')).toBeInTheDocument();
+				expect(screen.getByTestId('filter-user')).toBeInTheDocument();
+			});
+
+			expect(screen.queryByTestId('filter-cue')).not.toBeInTheDocument();
+		});
+
+		it('shows CUE filter when maestroCue is enabled', async () => {
+			useSettingsStore.setState({
+				encoreFeatures: {
+					directorNotes: false,
+					usageStats: false,
+					symphony: false,
+					maestroCue: true,
+				},
+			});
+
+			render(<UnifiedHistoryTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('filter-cue')).toBeInTheDocument();
+			});
+		});
 	});
 
 	describe('Activity Graph', () => {
@@ -406,19 +503,19 @@ describe('UnifiedHistoryTab', () => {
 			});
 		});
 
-		it('passes correct entry count to activity graph', async () => {
+		it('does not pass loaded entries to activity graph (graph is server-aggregated)', async () => {
 			render(<UnifiedHistoryTab theme={mockTheme} />);
 
 			await waitFor(() => {
-				expect(screen.getByTestId('activity-entry-count')).toHaveTextContent('3');
+				expect(screen.getByTestId('activity-entry-count')).toHaveTextContent('0');
 			});
 		});
 
-		it('passes default lookback from settings to activity graph', async () => {
+		it('renders the activity graph with the current lookback (drives both graph window and entry list)', async () => {
 			render(<UnifiedHistoryTab theme={mockTheme} />);
 
 			await waitFor(() => {
-				// 7 days → 168 hours (1 week)
+				// Default lookback: 7 days → 168 hours.
 				expect(screen.getByTestId('activity-lookback-hours')).toHaveTextContent('168');
 			});
 		});
@@ -449,28 +546,35 @@ describe('UnifiedHistoryTab', () => {
 			});
 		});
 
-		it('updates graph lookbackHours when lookback changes', async () => {
+		it('refetches graph data when the lookback changes (cache miss → fresh aggregate)', async () => {
 			render(<UnifiedHistoryTab theme={mockTheme} />);
 
 			await waitFor(() => {
-				// Default: 7 days → 168 hours
-				expect(screen.getByTestId('activity-lookback-hours')).toHaveTextContent('168');
+				expect(mockGetGraphData).toHaveBeenCalledWith(28, 168);
 			});
 
 			mockGetUnifiedHistory.mockResolvedValue(
 				createPaginatedResponse(createMockEntries().slice(0, 1))
 			);
+			mockGetGraphData.mockClear();
 
+			// Switch to "All Time" (null hours).
 			await act(async () => {
-				fireEvent.click(screen.getByTestId('lookback-change-168'));
+				fireEvent.click(screen.getByTestId('lookback-change-null'));
 			});
 
+			// New lookback fires a fresh getGraphData call so the server
+			// returns the corresponding cached (or freshly-built) aggregate.
 			await waitFor(() => {
-				expect(screen.getByTestId('activity-lookback-hours')).toHaveTextContent('168');
+				expect(mockGetGraphData).toHaveBeenCalledWith(24, null);
+			});
+			// And the graph display reflects the new selection.
+			await waitFor(() => {
+				expect(screen.getByTestId('activity-lookback-hours')).toHaveTextContent('null');
 			});
 		});
 
-		it('does not update graph entries on scroll-append loads', async () => {
+		it('does not pass loaded entries to the activity graph (server buckets are authoritative)', async () => {
 			// Initial load returns 3 entries with hasMore=true
 			mockGetUnifiedHistory.mockResolvedValueOnce(
 				createPaginatedResponse(createMockEntries(), true, 6)
@@ -478,46 +582,12 @@ describe('UnifiedHistoryTab', () => {
 
 			render(<UnifiedHistoryTab theme={mockTheme} />);
 
+			// Graph never sees the entry array — its buckets come from the
+			// cached server-side aggregate via getGraphData().
 			await waitFor(() => {
-				expect(screen.getByTestId('activity-entry-count')).toHaveTextContent('3');
+				expect(screen.getByTestId('activity-entry-count')).toHaveTextContent('0');
 			});
-
-			// Simulate scroll-triggered load returning 3 more entries
-			mockGetUnifiedHistory.mockResolvedValueOnce(
-				createPaginatedResponse(
-					[
-						{
-							id: 'entry-4',
-							type: 'AUTO',
-							timestamp: Date.now() - 4000,
-							summary: 'Action D',
-							sourceSessionId: 's1',
-							projectPath: '/test',
-						},
-						{
-							id: 'entry-5',
-							type: 'USER',
-							timestamp: Date.now() - 5000,
-							summary: 'Action E',
-							sourceSessionId: 's2',
-							projectPath: '/test',
-						},
-						{
-							id: 'entry-6',
-							type: 'AUTO',
-							timestamp: Date.now() - 6000,
-							summary: 'Action F',
-							sourceSessionId: 's1',
-							projectPath: '/test',
-						},
-					],
-					false,
-					6
-				)
-			);
-
-			// Graph should still show 3 (the initial snapshot), not 6
-			expect(screen.getByTestId('activity-entry-count')).toHaveTextContent('3');
+			expect(mockGetGraphData).toHaveBeenCalled();
 		});
 	});
 
@@ -548,6 +618,30 @@ describe('UnifiedHistoryTab', () => {
 			fireEvent.keyDown(listContainer!, { key: 'ArrowDown' });
 
 			expect(mockHandleKeyDown).toHaveBeenCalled();
+		});
+
+		it('records searchDirectorNotes shortcut usage when Cmd+F opens the search', async () => {
+			render(<UnifiedHistoryTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('User performed action A')).toBeInTheDocument();
+			});
+
+			const beforeUsed = useSettingsStore.getState().keyboardMasteryStats.usedShortcuts;
+			expect(beforeUsed).not.toContain('searchDirectorNotes');
+
+			const listContainer = screen.getByText('User performed action A').closest('[tabindex="0"]');
+			expect(listContainer).toBeTruthy();
+
+			act(() => {
+				fireEvent.keyDown(listContainer!, { key: 'f', metaKey: true });
+			});
+
+			const afterUsed = useSettingsStore.getState().keyboardMasteryStats.usedShortcuts;
+			expect(afterUsed).toContain('searchDirectorNotes');
+			expect(vi.mocked(window.maestro.stats.recordShortcutUsage)).toHaveBeenCalledWith(
+				expect.any(Number)
+			);
 		});
 
 		it('opens detail modal via onSelect callback (Enter key)', async () => {

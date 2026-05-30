@@ -17,6 +17,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { logger } from '../../../renderer/utils/logger';
 import { renderHook, act, cleanup } from '@testing-library/react';
 
 // ============================================================================
@@ -49,10 +50,8 @@ vi.mock('../../../renderer/constants/app', () => ({
 	getSlashCommandDescription: vi.fn((cmd: string) => `Description for ${cmd}`),
 }));
 
-vi.mock('../../../prompts', async () => {
-	const actual = await vi.importActual('../../../prompts');
-	return { ...actual, autorunSynopsisPrompt: 'Generate a synopsis of all work done.' };
-});
+// autorunSynopsisPrompt is now loaded via IPC (window.maestro.prompts.get)
+// and cached in the hook's module-level cache via loadWizardHandlersPrompts()
 
 vi.mock('../../../shared/synopsis', () => ({
 	parseSynopsis: vi.fn((response: string) => ({
@@ -64,10 +63,6 @@ vi.mock('../../../shared/synopsis', () => ({
 
 vi.mock('../../../shared/formatters', () => ({
 	formatRelativeTime: vi.fn(() => '5 minutes ago'),
-}));
-
-vi.mock('../../../renderer/components/Wizard', () => ({
-	AUTO_RUN_FOLDER_NAME: 'Auto Run Docs',
 }));
 
 vi.mock('../../../renderer/components/BatchRunnerModal', () => ({
@@ -85,64 +80,41 @@ import { gitService } from '../../../renderer/services/git';
 import { validateNewSession } from '../../../renderer/utils/sessionValidation';
 import { parseSynopsis } from '../../../shared/synopsis';
 import type { Session, AITab } from '../../../renderer/types';
+import { createMockAITab } from '../../helpers/mockTab';
+import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 
 // ============================================================================
 // Test Helpers
 // ============================================================================
 
-const createMockTab = (overrides: Partial<AITab> = {}): AITab => ({
-	id: 'tab-1',
-	agentSessionId: 'agent-session-1',
-	name: 'Tab 1',
-	starred: false,
-	logs: [],
-	inputValue: '',
-	stagedImages: [],
-	createdAt: Date.now() - 60000,
-	state: 'idle',
-	saveToHistory: true,
-	showThinking: 'off',
-	...overrides,
-});
+const createMockTab = (overrides: Partial<AITab> = {}): AITab =>
+	createMockAITab({
+		agentSessionId: 'agent-session-1',
+		name: 'Tab 1',
+		createdAt: Date.now() - 60000,
+		saveToHistory: true,
+		showThinking: 'off',
+		...overrides,
+	});
 
+// Thin wrapper: pre-populates an AI tab so wizard handlers have a tab
+// target.
 const createMockSession = (overrides: Partial<Session> = {}): Session =>
-	({
-		id: 'session-1',
+	baseCreateMockSession({
 		name: 'Test Agent',
-		toolType: 'claude-code',
-		state: 'idle',
 		cwd: '/projects/test',
 		fullPath: '/projects/test',
 		projectRoot: '/projects/test',
-		isGitRepo: false,
-		aiLogs: [],
-		shellLogs: [],
-		workLog: [],
-		contextUsage: 0,
-		inputMode: 'ai',
-		aiPid: 0,
-		terminalPid: 0,
 		port: 3000,
-		isLive: false,
-		changedFiles: [],
-		fileTree: [],
-		fileExplorerExpanded: [],
-		fileExplorerScrollPos: 0,
 		fileTreeAutoRefreshInterval: 180,
 		shellCwd: '/projects/test',
 		aiCommandHistory: [],
 		shellCommandHistory: [],
-		executionQueue: [],
-		activeTimeMs: 0,
 		aiTabs: [createMockTab()],
 		activeTabId: 'tab-1',
-		closedTabHistory: [],
-		filePreviewTabs: [],
-		activeFileTabId: null,
 		unifiedTabOrder: [{ type: 'ai' as const, id: 'tab-1' }],
-		unifiedClosedTabHistory: [],
 		...overrides,
-	}) as Session;
+	});
 
 const createMockDeps = (overrides: Partial<UseWizardHandlersDeps> = {}): UseWizardHandlersDeps => ({
 	inlineWizardContext: {
@@ -166,6 +138,7 @@ const createMockDeps = (overrides: Partial<UseWizardHandlersDeps> = {}): UseWiza
 		state: {} as any,
 		getStateForTab: vi.fn(() => undefined),
 		isWizardActiveForTab: vi.fn(() => false),
+		selectWizardTab: vi.fn(),
 		startWizard: vi.fn(),
 		endWizard: vi.fn().mockResolvedValue(null),
 		sendMessage: vi.fn().mockResolvedValue(undefined),
@@ -325,7 +298,10 @@ describe('useWizardHandlers', () => {
 			(window as any).maestro.claude.getCommands.mockResolvedValue([
 				{ command: '/custom-cmd', description: 'Custom command' },
 			]);
-			(window as any).maestro.agents.discoverSlashCommands.mockResolvedValue(['init', 'review']);
+			(window as any).maestro.agents.discoverSlashCommands.mockResolvedValue([
+				{ name: 'init' },
+				{ name: 'review' },
+			]);
 
 			const deps = createMockDeps();
 			renderHook(() => useWizardHandlers(deps));
@@ -339,6 +315,7 @@ describe('useWizardHandlers', () => {
 			expect((window as any).maestro.agents.discoverSlashCommands).toHaveBeenCalledWith(
 				'claude-code',
 				'/projects/test',
+				undefined,
 				undefined
 			);
 
@@ -348,6 +325,29 @@ describe('useWizardHandlers', () => {
 					{ command: '/custom-cmd', description: 'Custom command' },
 					expect.objectContaining({ command: '/init' }),
 					expect.objectContaining({ command: '/review' }),
+				])
+			);
+		});
+
+		it('preserves skill description returned from discoverSlashCommands', async () => {
+			const session = createMockSession({ agentCommands: undefined });
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			(window as any).maestro.agents.discoverSlashCommands.mockResolvedValue([
+				{ name: 'Research', description: 'Deep literature review' },
+			]);
+
+			const deps = createMockDeps();
+			renderHook(() => useWizardHandlers(deps));
+
+			await act(async () => {
+				await new Promise((r) => setTimeout(r, 50));
+			});
+
+			const updatedSession = useSessionStore.getState().sessions[0];
+			expect(updatedSession.agentCommands).toEqual(
+				expect.arrayContaining([
+					{ command: '/Research', description: 'Deep literature review', prompt: undefined },
 				])
 			);
 		});
@@ -391,7 +391,7 @@ describe('useWizardHandlers', () => {
 				new Error('Discovery failed')
 			);
 
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 			const deps = createMockDeps();
 			renderHook(() => useWizardHandlers(deps));
 
@@ -402,6 +402,69 @@ describe('useWizardHandlers', () => {
 			// Should not throw; errors are caught and logged
 			expect(consoleSpy).toHaveBeenCalled();
 			consoleSpy.mockRestore();
+		});
+
+		it('discovers agent slash commands for copilot sessions', async () => {
+			const session = createMockSession({
+				toolType: 'copilot-cli' as any,
+				agentCommands: undefined,
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			(window as any).maestro.agents.discoverSlashCommands.mockResolvedValue([
+				{ name: 'help' },
+				{ name: 'model' },
+			]);
+
+			const deps = createMockDeps();
+			renderHook(() => useWizardHandlers(deps));
+
+			await act(async () => {
+				await new Promise((r) => setTimeout(r, 50));
+			});
+
+			expect((window as any).maestro.claude.getCommands).not.toHaveBeenCalled();
+			expect((window as any).maestro.agents.discoverSlashCommands).toHaveBeenCalledWith(
+				'copilot-cli',
+				'/projects/test',
+				undefined,
+				undefined
+			);
+
+			const updatedSession = useSessionStore.getState().sessions[0];
+			expect(updatedSession.agentCommands).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({ command: '/help' }),
+					expect.objectContaining({ command: '/model' }),
+				])
+			);
+		});
+
+		it('discovers agent slash commands for opencode sessions', async () => {
+			const session = createMockSession({
+				toolType: 'opencode' as any,
+				agentCommands: undefined,
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			(window as any).maestro.agents.discoverSlashCommands.mockResolvedValue([
+				{ name: 'deploy', prompt: 'Deploy the app' },
+			]);
+
+			const deps = createMockDeps();
+			renderHook(() => useWizardHandlers(deps));
+
+			await act(async () => {
+				await new Promise((r) => setTimeout(r, 50));
+			});
+
+			expect((window as any).maestro.claude.getCommands).not.toHaveBeenCalled();
+			expect((window as any).maestro.agents.discoverSlashCommands).toHaveBeenCalledWith(
+				'opencode',
+				'/projects/test',
+				undefined,
+				undefined
+			);
 		});
 	});
 
@@ -580,7 +643,8 @@ describe('useWizardHandlers', () => {
 				expect.objectContaining({
 					onThinkingChunk: expect.any(Function),
 					onToolExecution: expect.any(Function),
-				})
+				}),
+				'tab-1'
 			);
 		});
 
@@ -1052,7 +1116,7 @@ describe('useWizardHandlers', () => {
 			const session = createMockSession();
 			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
 
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 			const deps = createMockDeps({
 				spawnBackgroundSynopsis: vi.fn().mockRejectedValue(new Error('Spawn failed')),
 			});
@@ -1200,7 +1264,7 @@ describe('useWizardHandlers', () => {
 
 			(window as any).maestro.claude.getSkills.mockRejectedValue(new Error('Skill fetch failed'));
 
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 			const deps = createMockDeps();
 			const { result } = renderHook(() => useWizardHandlers(deps));
 
@@ -1419,8 +1483,7 @@ describe('useWizardHandlers', () => {
 			const deps = createMockDeps({
 				inlineWizardContext: {
 					...createMockDeps().inlineWizardContext,
-					isWizardActive: true,
-					wizardTabId: 'tab-1',
+					isWizardActiveForTab: vi.fn((id: string) => id === 'tab-1'),
 				} as any,
 			});
 
@@ -1436,8 +1499,7 @@ describe('useWizardHandlers', () => {
 			const deps = createMockDeps({
 				inlineWizardContext: {
 					...createMockDeps().inlineWizardContext,
-					isWizardActive: true,
-					wizardTabId: 'other-tab',
+					isWizardActiveForTab: vi.fn((id: string) => id === 'other-tab'),
 				} as any,
 			});
 
@@ -1462,8 +1524,7 @@ describe('useWizardHandlers', () => {
 			const deps = createMockDeps({
 				inlineWizardContext: {
 					...createMockDeps().inlineWizardContext,
-					isWizardActive: true,
-					wizardTabId: 'tab-1',
+					isWizardActiveForTab: vi.fn(() => true),
 				} as any,
 			});
 
@@ -1812,7 +1873,7 @@ describe('useWizardHandlers', () => {
 			expect(newSession.name).toBe('My Project');
 			expect(newSession.toolType).toBe('claude-code');
 			expect(newSession.cwd).toBe('/projects/my-app');
-			expect(newSession.autoRunFolderPath).toBe('/projects/my-app/Auto Run Docs');
+			expect(newSession.autoRunFolderPath).toBe('/projects/my-app/.maestro/playbooks');
 			expect(newSession.autoRunSelectedFile).toBe('phase-1');
 
 			// Should have been set as active
@@ -1884,8 +1945,135 @@ describe('useWizardHandlers', () => {
 				expect.objectContaining({
 					documents: expect.arrayContaining([expect.objectContaining({ filename: 'phase-1' })]),
 				}),
-				expect.stringContaining('Auto Run Docs')
+				expect.stringContaining('.maestro/playbooks')
 			);
+		});
+
+		it("auto-starts batch run with all documents when autoRunMode is 'all'", async () => {
+			useSessionStore.setState({ sessions: [], activeSessionId: null });
+
+			const deps = createMockDeps({
+				wizardContext: {
+					state: {
+						currentStep: 'review' as any,
+						isOpen: true,
+						selectedAgent: 'claude-code',
+						availableAgents: [],
+						agentName: 'Test',
+						directoryPath: '/projects/test',
+						isGitRepo: false,
+						detectedAgentPath: null,
+						directoryError: null,
+						hasExistingAutoRunDocs: false,
+						existingDocsCount: 0,
+						existingDocsChoice: null,
+						conversationHistory: [],
+						confidenceLevel: 90,
+						isReadyToProceed: true,
+						isConversationLoading: false,
+						conversationError: null,
+						generatedDocuments: [
+							{ filename: 'phase-1.md', content: '# Phase 1', taskCount: 3 },
+							{ filename: 'phase-2.md', content: '# Phase 2', taskCount: 5 },
+							{ filename: 'phase-3.md', content: '# Phase 3', taskCount: 2 },
+						],
+						currentDocumentIndex: 0,
+						isGeneratingDocuments: false,
+						generationError: null,
+						editedPhase1Content: null,
+						autoRunMode: 'all',
+						wantsTour: false,
+						isComplete: false,
+						createdSessionId: null,
+					} as any,
+					completeWizard: vi.fn(),
+					clearResumeState: vi.fn(),
+				},
+			});
+
+			const { result } = renderHook(() => useWizardHandlers(deps));
+
+			await act(async () => {
+				await result.current.handleWizardLaunchSession(false);
+			});
+
+			// Wait for the setTimeout batch run
+			await act(async () => {
+				await new Promise((r) => setTimeout(r, 600));
+			});
+
+			expect(deps.startBatchRun).toHaveBeenCalledWith(
+				expect.any(String),
+				expect.objectContaining({
+					documents: expect.arrayContaining([
+						expect.objectContaining({ filename: 'phase-1' }),
+						expect.objectContaining({ filename: 'phase-2' }),
+						expect.objectContaining({ filename: 'phase-3' }),
+					]),
+				}),
+				expect.stringContaining('.maestro/playbooks')
+			);
+
+			// Should have exactly 3 documents in the batch
+			const batchConfig = deps.startBatchRun.mock.calls[0][1];
+			expect(batchConfig.documents).toHaveLength(3);
+		});
+
+		it("does not start a batch run when autoRunMode is 'none'", async () => {
+			useSessionStore.setState({ sessions: [], activeSessionId: null });
+
+			const deps = createMockDeps({
+				wizardContext: {
+					state: {
+						currentStep: 'review' as any,
+						isOpen: true,
+						selectedAgent: 'claude-code',
+						availableAgents: [],
+						agentName: 'Test',
+						directoryPath: '/projects/test',
+						isGitRepo: false,
+						detectedAgentPath: null,
+						directoryError: null,
+						hasExistingAutoRunDocs: false,
+						existingDocsCount: 0,
+						existingDocsChoice: null,
+						conversationHistory: [],
+						confidenceLevel: 90,
+						isReadyToProceed: true,
+						isConversationLoading: false,
+						conversationError: null,
+						generatedDocuments: [
+							{ filename: 'phase-1.md', content: '# Phase 1', taskCount: 3 },
+							{ filename: 'phase-2.md', content: '# Phase 2', taskCount: 5 },
+						],
+						currentDocumentIndex: 0,
+						isGeneratingDocuments: false,
+						generationError: null,
+						editedPhase1Content: null,
+						autoRunMode: 'none',
+						wantsTour: false,
+						isComplete: false,
+						createdSessionId: null,
+					} as any,
+					completeWizard: vi.fn(),
+					clearResumeState: vi.fn(),
+				},
+			});
+
+			const { result } = renderHook(() => useWizardHandlers(deps));
+
+			await act(async () => {
+				await result.current.handleWizardLaunchSession(false);
+			});
+
+			// Wait long enough for the deferred batch run that should NOT happen
+			await act(async () => {
+				await new Promise((r) => setTimeout(r, 600));
+			});
+
+			expect(deps.startBatchRun).not.toHaveBeenCalled();
+			// Right panel should not be flipped to autorun when skipping
+			expect(useUIStore.getState().activeRightTab).toBe('files');
 		});
 
 		it('starts tour when wantsTour is true', async () => {
@@ -1957,7 +2145,7 @@ describe('useWizardHandlers', () => {
 				},
 			});
 
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 			const { result } = renderHook(() => useWizardHandlers(deps));
 
 			await expect(
@@ -2010,7 +2198,7 @@ describe('useWizardHandlers', () => {
 				},
 			});
 
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 			const { result } = renderHook(() => useWizardHandlers(deps));
 
 			await expect(

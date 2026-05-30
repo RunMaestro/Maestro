@@ -3,13 +3,12 @@
  *
  * Contains: About Me, Shell, Log Level, GitHub CLI, Input Behavior,
  * History, Thinking Mode, Tab Naming, Auto-scroll, Power, Rendering,
- * Updates, Pre-release, Privacy, Stats & WakaTime, Storage Location.
+ * Updates, Pre-release, Privacy, Storage Location.
  */
 
 import { useState, useEffect, useCallback } from 'react';
 import {
 	X,
-	Key,
 	Check,
 	Terminal,
 	History,
@@ -22,27 +21,33 @@ import {
 	ChevronDown,
 	Brain,
 	FlaskConical,
-	Database,
 	Battery,
 	Monitor,
 	PartyPopper,
 	Tag,
-	Timer,
 	User,
-	ArrowDownToLine,
 	SpellCheck,
-	HelpCircle,
 	ExternalLink,
 	Keyboard,
-	Trash2,
+	AlertTriangle,
+	Clock,
 } from 'lucide-react';
 import { useSettings } from '../../../hooks';
+import { captureException } from '../../../utils/sentry';
 import type { Theme, ShellInfo } from '../../../types';
-import { formatMetaKey, formatEnterToSend } from '../../../utils/shortcutFormatter';
+import type { MaestroCliStatus } from '../../../../shared/maestro-cli';
+import {
+	formatMetaKey,
+	formatEnterToSend,
+	formatShortcutKeys,
+} from '../../../utils/shortcutFormatter';
+import { ForcedParallelWarningModal } from '../../ForcedParallelWarningModal';
 import { getOpenInLabel, isLinuxPlatform } from '../../../utils/platformUtils';
 import { ToggleButtonGroup } from '../../ToggleButtonGroup';
 import { SettingCheckbox } from '../../SettingCheckbox';
-import { EnvVarsEditor } from '../EnvVarsEditor';
+import { ToggleSwitch } from '../../ui/ToggleSwitch';
+import { KeyCaptureButton } from '../../ui/KeyCaptureButton';
+import { logger } from '../../../utils/logger';
 
 export interface GeneralTabProps {
 	theme: Theme;
@@ -50,10 +55,15 @@ export interface GeneralTabProps {
 }
 
 export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
+	const appVersion = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : 'unknown';
+
 	const {
 		// Conductor Profile
 		conductorProfile,
 		setConductorProfile,
+		// Global show-Maestro hotkey
+		globalShowHotkey,
+		setGlobalShowHotkey,
 		// Shell settings
 		defaultShell,
 		setDefaultShell,
@@ -61,8 +71,6 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 		setCustomShellPath,
 		shellArgs,
 		setShellArgs,
-		shellEnvVars,
-		setShellEnvVars,
 		ghPath,
 		setGhPath,
 		// Log level
@@ -71,20 +79,33 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 		// Input settings
 		enterToSendAI,
 		setEnterToSendAI,
-		enterToSendTerminal,
-		setEnterToSendTerminal,
+		enterToSendAIExpanded,
+		setEnterToSendAIExpanded,
 		defaultSaveToHistory,
 		setDefaultSaveToHistory,
 		defaultShowThinking,
 		setDefaultShowThinking,
-		autoScrollAiMode,
-		setAutoScrollAiMode,
 		// Spell check
 		spellCheck,
 		setSpellCheck,
-		// Tab naming
+		// Tab behavior
 		automaticTabNamingEnabled,
 		setAutomaticTabNamingEnabled,
+		newTabPlacement,
+		setNewTabPlacement,
+		newBrowserTabPlacement,
+		setNewBrowserTabPlacement,
+		newTerminalPlacement,
+		setNewTerminalPlacement,
+		openedFilePlacement,
+		setOpenedFilePlacement,
+		// Browser settings
+		useSystemBrowser,
+		setUseSystemBrowser,
+		browserHomeUrl,
+		setBrowserHomeUrl,
+		htmlDoubleClickOpensInBrowser,
+		setHtmlDoubleClickOpensInBrowser,
 		// Power management
 		preventSleepEnabled,
 		setPreventSleepEnabled,
@@ -100,18 +121,16 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 		setEnableBetaUpdates,
 		crashReportingEnabled,
 		setCrashReportingEnabled,
-		// Stats
-		statsCollectionEnabled,
-		setStatsCollectionEnabled,
-		defaultStatsTimeRange,
-		setDefaultStatsTimeRange,
-		// WakaTime
-		wakatimeEnabled,
-		setWakatimeEnabled,
-		wakatimeApiKey,
-		setWakatimeApiKey,
-		wakatimeDetailedTracking,
-		setWakatimeDetailedTracking,
+		// Forced Parallel Execution
+		forcedParallelExecution,
+		setForcedParallelExecution,
+		forcedParallelAcknowledged,
+		setForcedParallelAcknowledged,
+		// Auto Run
+		autoRunInactivityTimeoutMin,
+		setAutoRunInactivityTimeoutMin,
+		// Shortcuts
+		shortcuts,
 	} = useSettings();
 
 	// Shell state
@@ -128,86 +147,87 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 	const [syncMigrating, setSyncMigrating] = useState(false);
 	const [syncError, setSyncError] = useState<string | null>(null);
 	const [syncMigratedCount, setSyncMigratedCount] = useState<number | null>(null);
+	const [maestroCliStatus, setMaestroCliStatus] = useState<MaestroCliStatus | null>(null);
+	const [maestroCliStatusError, setMaestroCliStatusError] = useState<string | null>(null);
+	const [maestroCliChecking, setMaestroCliChecking] = useState(false);
+	const [maestroCliInstalling, setMaestroCliInstalling] = useState(false);
+	const [maestroCliInstallMessage, setMaestroCliInstallMessage] = useState<string | null>(null);
 
-	// Stats data management state
-	const [statsDbSize, setStatsDbSize] = useState<number | null>(null);
-	const [statsEarliestDate, setStatsEarliestDate] = useState<string | null>(null);
-	const [statsClearing, setStatsClearing] = useState(false);
-	const [statsClearResult, setStatsClearResult] = useState<{
-		success: boolean;
-		deletedQueryEvents: number;
-		deletedAutoRunSessions: number;
-		deletedAutoRunTasks: number;
-		error?: string;
-	} | null>(null);
+	// Forced Parallel Execution modal state
+	const [showForcedParallelWarning, setShowForcedParallelWarning] = useState(false);
 
-	// WakaTime CLI check and API key validation state
-	const [wakatimeCliStatus, setWakatimeCliStatus] = useState<{
-		available: boolean;
-		version?: string;
-	} | null>(null);
-	const [wakatimeKeyValid, setWakatimeKeyValid] = useState<boolean | null>(null);
-	const [wakatimeKeyValidating, setWakatimeKeyValidating] = useState(false);
-	const handleWakatimeApiKeyChange = useCallback(
-		(value: string) => {
-			setWakatimeApiKey(value);
-			setWakatimeKeyValid(null);
-		},
-		[setWakatimeApiKey]
-	);
+	const handleForcedParallelToggle = useCallback(() => {
+		if (!forcedParallelExecution && !forcedParallelAcknowledged) {
+			// First time enabling — show warning modal
+			setShowForcedParallelWarning(true);
+		} else {
+			// Already acknowledged or turning off
+			setForcedParallelExecution(!forcedParallelExecution);
+		}
+	}, [forcedParallelExecution, forcedParallelAcknowledged, setForcedParallelExecution]);
 
-	// Check WakaTime CLI availability when section renders or toggle is enabled
-	useEffect(() => {
-		if (!isOpen || !wakatimeEnabled) return;
-		let cancelled = false;
-		let retryTimer: ReturnType<typeof setTimeout> | null = null;
+	const handleForcedParallelConfirm = useCallback(() => {
+		setForcedParallelAcknowledged(true);
+		setForcedParallelExecution(true);
+		setShowForcedParallelWarning(false);
+	}, [setForcedParallelAcknowledged, setForcedParallelExecution]);
 
-		window.maestro.wakatime
-			.checkCli()
-			.then((status) => {
-				if (cancelled) return;
-				setWakatimeCliStatus(status);
-				if (!status.available) {
-					retryTimer = setTimeout(() => {
-						if (!cancelled) {
-							window.maestro.wakatime
-								.checkCli()
-								.then((retryStatus) => {
-									if (!cancelled) setWakatimeCliStatus(retryStatus);
-								})
-								.catch(() => {
-									if (!cancelled) setWakatimeCliStatus({ available: false });
-								});
-						}
-					}, 3000);
-				}
-			})
-			.catch(() => {
-				if (cancelled) return;
-				setWakatimeCliStatus({ available: false });
-				retryTimer = setTimeout(() => {
-					if (!cancelled) {
-						window.maestro.wakatime
-							.checkCli()
-							.then((retryStatus) => {
-								if (!cancelled) setWakatimeCliStatus(retryStatus);
-							})
-							.catch(() => {
-								if (!cancelled) setWakatimeCliStatus({ available: false });
-							});
-					}
-				}, 3000);
+	const handleForcedParallelCancel = useCallback(() => {
+		setShowForcedParallelWarning(false);
+	}, []);
+
+	const checkMaestroCliStatus = useCallback(async () => {
+		setMaestroCliChecking(true);
+		setMaestroCliStatusError(null);
+		try {
+			const status = await window.maestro.maestroCli.checkStatus();
+			setMaestroCliStatus(status);
+		} catch (err) {
+			setMaestroCliStatusError('Failed to check Maestro CLI status');
+			captureException(err instanceof Error ? err : new Error(String(err)), {
+				extra: { context: 'GeneralTab: Maestro CLI status check' },
 			});
+		} finally {
+			setMaestroCliChecking(false);
+		}
+	}, []);
 
-		return () => {
-			cancelled = true;
-			if (retryTimer) clearTimeout(retryTimer);
-		};
-	}, [isOpen, wakatimeEnabled]);
+	const installOrUpdateMaestroCli = useCallback(async () => {
+		setMaestroCliInstalling(true);
+		setMaestroCliInstallMessage(null);
+		setMaestroCliStatusError(null);
+		try {
+			const result = await window.maestro.maestroCli.installOrUpdate();
+			setMaestroCliStatus(result.status);
+			if (result.pathUpdateError) {
+				setMaestroCliStatusError(result.pathUpdateError);
+			}
+			if (result.restartRequired) {
+				setMaestroCliInstallMessage(
+					'CLI installed. Open a new terminal for PATH changes to apply.'
+				);
+			} else if (result.success && result.status.versionMatch) {
+				setMaestroCliInstallMessage('CLI is installed and matches this Maestro version.');
+			} else {
+				setMaestroCliInstallMessage(
+					'CLI was installed but version/path check still needs attention.'
+				);
+			}
+		} catch (err) {
+			setMaestroCliStatusError('Failed to install/update Maestro CLI');
+			captureException(err instanceof Error ? err : new Error(String(err)), {
+				extra: { context: 'GeneralTab: Maestro CLI install/update' },
+			});
+		} finally {
+			setMaestroCliInstalling(false);
+		}
+	}, []);
 
-	// Load sync settings and stats data when modal opens
+	// Load sync settings when modal opens
 	useEffect(() => {
 		if (!isOpen) return;
+		setMaestroCliInstallMessage(null);
+		void checkMaestroCliStatus();
 
 		// Load sync settings
 		Promise.all([
@@ -224,38 +244,15 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 				setSyncMigratedCount(null);
 			})
 			.catch((err) => {
-				console.error('Failed to load sync settings:', err);
+				logger.error('Failed to load sync settings:', undefined, err);
 				setSyncError('Failed to load storage settings');
+				// Report to Sentry so production failures surface in dashboards
+				// rather than only being visible in the user's console.
+				captureException(err instanceof Error ? err : new Error(String(err)), {
+					extra: { context: 'GeneralTab: failed to load sync/storage settings' },
+				});
 			});
-
-		// Load stats database size and earliest timestamp
-		window.maestro.stats
-			.getDatabaseSize()
-			.then((size) => {
-				setStatsDbSize(size);
-			})
-			.catch((err) => {
-				console.error('Failed to load stats database size:', err);
-			});
-
-		window.maestro.stats
-			.getEarliestTimestamp()
-			.then((timestamp) => {
-				if (timestamp) {
-					const date = new Date(timestamp);
-					const formatted = date.toISOString().split('T')[0]; // YYYY-MM-DD
-					setStatsEarliestDate(formatted);
-				} else {
-					setStatsEarliestDate(null);
-				}
-			})
-			.catch((err) => {
-				console.error('Failed to load earliest stats timestamp:', err);
-			});
-
-		// Reset stats clear state
-		setStatsClearResult(null);
-	}, [isOpen]);
+	}, [checkMaestroCliStatus, isOpen]);
 
 	const loadShells = async () => {
 		if (shellsLoaded) return;
@@ -267,7 +264,7 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 				setShellsLoaded(true);
 			}
 		} catch (error) {
-			console.error('Failed to load shells:', error);
+			logger.error('Failed to load shells:', undefined, error);
 		} finally {
 			setShellsLoading(false);
 		}
@@ -282,7 +279,7 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 	return (
 		<div className="space-y-5">
 			{/* About Me (Conductor Profile) */}
-			<div>
+			<div data-setting-id="general-conductor-profile">
 				<div className="block text-xs font-bold opacity-70 uppercase mb-1 flex items-center gap-2">
 					<User className="w-3 h-3" />
 					Conductor Profile (aka, About Me)
@@ -290,34 +287,51 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 				<p className="text-xs opacity-50 mb-2">
 					Tell us a little about yourself so that agents created under Maestro know how to work and
 					communicate with you. As the conductor, you orchestrate the symphony of AI agents.
-					(Optional, max 1000 characters)
+					(Optional, max 5000 characters)
 				</p>
-				<div className="relative">
-					<textarea
-						value={conductorProfile}
-						onChange={(e) => setConductorProfile(e.target.value)}
-						placeholder="e.g., I'm a senior developer working on a React/TypeScript project. I prefer concise explanations and clean code patterns..."
-						className="w-full p-3 rounded border bg-transparent outline-none text-sm resize-none"
-						style={{
-							borderColor: theme.colors.border,
-							color: theme.colors.textMain,
-							minHeight: '100px',
-						}}
-						maxLength={1000}
-					/>
-					<div
-						className="absolute bottom-2 right-2 text-xs"
-						style={{
-							color: conductorProfile.length > 900 ? theme.colors.warning : theme.colors.textDim,
-						}}
-					>
-						{conductorProfile.length}/1000
-					</div>
+				<textarea
+					value={conductorProfile}
+					onChange={(e) => setConductorProfile(e.target.value)}
+					placeholder="e.g., I'm a senior developer working on a React/TypeScript project. I prefer concise explanations and clean code patterns..."
+					className="w-full p-3 rounded border bg-transparent outline-none text-sm resize-y"
+					style={{
+						borderColor: theme.colors.border,
+						color: theme.colors.textMain,
+						minHeight: '100px',
+					}}
+					maxLength={5000}
+				/>
+				<div
+					className="text-xs mt-1 text-right"
+					style={{
+						color: conductorProfile.length > 4500 ? theme.colors.warning : theme.colors.textDim,
+					}}
+				>
+					{conductorProfile.length}/5000
 				</div>
 			</div>
 
+			{/* Global Show Hotkey */}
+			<div data-setting-id="general-global-show-hotkey">
+				<div className="block text-xs font-bold opacity-70 uppercase mb-1 flex items-center gap-2">
+					<Keyboard className="w-3 h-3" />
+					Global Hotkey to Show Maestro
+				</div>
+				<p className="text-xs opacity-50 mb-2">
+					System-wide shortcut that brings Maestro to the foreground from any app. Works on macOS,
+					Windows, and Linux. Leave blank to disable. (Tip: pick something with two modifiers, e.g.{' '}
+					{formatShortcutKeys(['Meta', 'Shift', 'M'])}, to avoid clashes.)
+				</p>
+				<KeyCaptureButton
+					theme={theme}
+					keys={globalShowHotkey}
+					onKeysChange={setGlobalShowHotkey}
+					emptyLabel="Click to set hotkey"
+				/>
+			</div>
+
 			{/* Default Shell */}
-			<div>
+			<div data-setting-id="general-default-shell">
 				<div className="block text-xs font-bold opacity-70 uppercase mb-1 flex items-center gap-2">
 					<Terminal className="w-3 h-3" />
 					Default Terminal Shell
@@ -466,7 +480,7 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 						className="mt-2 space-y-3 p-3 rounded border"
 						style={{
 							borderColor: theme.colors.border,
-							backgroundColor: theme.colors.bgActivity,
+							backgroundColor: theme.colors.bgMain,
 						}}
 					>
 						{/* Custom Shell Path */}
@@ -528,49 +542,12 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 								Additional CLI arguments passed to every shell session (e.g., --login, -c).
 							</p>
 						</div>
-
-						{/* Global Environment Variables */}
-						<div className="flex items-start gap-2 mb-2">
-							<div className="flex-1">
-								<p className="text-xs opacity-50">
-									<strong>Global Environment Variables</strong> apply to all terminal sessions and
-									AI agent processes. Format: KEY=VALUE (one per line). Variables with special
-									characters should be quoted. Agent-specific settings can override these values.
-									Typical use cases: API keys, proxy settings, custom tool paths.
-								</p>
-							</div>
-							<div
-								className="group relative flex-shrink-0 mt-0.5 outline-none"
-								tabIndex={0}
-								aria-describedby="env-vars-help-tooltip"
-								title="Environment variables configured here are available to all terminal sessions, all AI agent processes (Claude, OpenCode, etc.), and any spawned child processes. Agent-specific settings can override these values."
-							>
-								<HelpCircle
-									className="w-4 h-4 cursor-help"
-									style={{ color: theme.colors.textDim }}
-								/>
-								<div
-									id="env-vars-help-tooltip"
-									role="tooltip"
-									className="absolute hidden group-hover:block group-focus-visible:block bg-black/80 text-white text-xs rounded p-2 z-50 w-60 -right-2 top-5 whitespace-normal"
-								>
-									<p className="mb-1 font-semibold">Environment variables apply to:</p>
-									<ul className="list-disc list-inside space-y-0.5">
-										<li>All terminal sessions</li>
-										<li>All AI agent processes (Claude, OpenCode, etc.)</li>
-										<li>Any spawned child processes</li>
-									</ul>
-									<p className="mt-1">Agent-specific settings can override these values.</p>
-								</div>
-							</div>
-						</div>
-						<EnvVarsEditor envVars={shellEnvVars} setEnvVars={setShellEnvVars} theme={theme} />
 					</div>
 				)}
 			</div>
 
 			{/* System Log Level */}
-			<div>
+			<div data-setting-id="general-log-level">
 				<div className="block text-xs font-bold opacity-70 uppercase mb-2">System Log Level</div>
 				<ToggleButtonGroup
 					options={[
@@ -589,7 +566,7 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 			</div>
 
 			{/* GitHub CLI Path */}
-			<div>
+			<div data-setting-id="general-gh-path">
 				<div className="block text-xs font-bold opacity-70 uppercase mb-2 flex items-center gap-2">
 					<Terminal className="w-3 h-3" />
 					GitHub CLI (gh) Path
@@ -634,15 +611,126 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 				</div>
 			</div>
 
+			{/* Maestro CLI Management */}
+			<div data-setting-id="general-maestro-cli">
+				<div className="block text-xs font-bold opacity-70 uppercase mb-2 flex items-center gap-2">
+					<Terminal className="w-3 h-3" />
+					Maestro CLI
+				</div>
+				<div
+					className="p-3 rounded border space-y-2"
+					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
+				>
+					<div className="text-xs opacity-70">
+						Check whether <code>maestro-cli</code> is available in your PATH and whether its version
+						matches Maestro v{maestroCliStatus?.expectedVersion || appVersion}.
+					</div>
+
+					{maestroCliStatus && !maestroCliChecking && (
+						<div className="text-xs space-y-1">
+							<div>
+								<span style={{ color: theme.colors.textDim }}>PATH:</span>{' '}
+								<span
+									style={{
+										color:
+											maestroCliStatus.inPath || maestroCliStatus.inShellPath
+												? theme.colors.success
+												: theme.colors.warning,
+									}}
+								>
+									{maestroCliStatus.inPath
+										? 'Detected'
+										: maestroCliStatus.inShellPath
+											? 'Detected (shell PATH)'
+											: 'Not detected'}
+								</span>
+							</div>
+							<div>
+								<span style={{ color: theme.colors.textDim }}>Installed version:</span>{' '}
+								<span style={{ color: theme.colors.textMain }}>
+									{maestroCliStatus.installedVersion || 'Not installed'}
+								</span>
+							</div>
+							<div>
+								<span style={{ color: theme.colors.textDim }}>Expected version:</span>{' '}
+								<span style={{ color: theme.colors.textMain }}>
+									{maestroCliStatus.expectedVersion}
+								</span>
+							</div>
+							{maestroCliStatus.commandPath && (
+								<div className="break-all">
+									<span style={{ color: theme.colors.textDim }}>Command path:</span>{' '}
+									<code>{maestroCliStatus.commandPath}</code>
+								</div>
+							)}
+							{maestroCliStatus.needsInstallOrUpdate && (
+								<div style={{ color: theme.colors.warning }}>
+									Mismatch or missing CLI detected. Install/update to sync versions.
+								</div>
+							)}
+						</div>
+					)}
+
+					<div
+						role={maestroCliStatusError ? 'alert' : 'status'}
+						aria-live={maestroCliStatusError ? 'assertive' : 'polite'}
+						aria-atomic="true"
+						className="text-xs space-y-1"
+					>
+						{maestroCliChecking && <div className="opacity-60">Checking Maestro CLI status...</div>}
+						{maestroCliStatusError && (
+							<div style={{ color: theme.colors.warning }}>{maestroCliStatusError}</div>
+						)}
+						{maestroCliInstallMessage && (
+							<div style={{ color: theme.colors.success }}>{maestroCliInstallMessage}</div>
+						)}
+					</div>
+
+					<div className="flex gap-2">
+						<button
+							onClick={() => void checkMaestroCliStatus()}
+							disabled={maestroCliChecking || maestroCliInstalling}
+							className="px-2 py-1 rounded text-xs"
+							style={{
+								backgroundColor: theme.colors.bgActivity,
+								color: theme.colors.textMain,
+								opacity: maestroCliChecking || maestroCliInstalling ? 0.6 : 1,
+							}}
+						>
+							{maestroCliChecking ? 'Checking...' : 'Check now'}
+						</button>
+						<button
+							onClick={() => void installOrUpdateMaestroCli()}
+							disabled={maestroCliChecking || maestroCliInstalling}
+							className="px-2 py-1 rounded text-xs"
+							style={{
+								backgroundColor: theme.colors.accentDim,
+								color: theme.colors.textMain,
+								opacity: maestroCliChecking || maestroCliInstalling ? 0.6 : 1,
+							}}
+						>
+							{maestroCliInstalling
+								? 'Installing...'
+								: maestroCliStatus?.needsInstallOrUpdate
+									? 'Install / Update CLI'
+									: 'Reinstall CLI'}
+						</button>
+					</div>
+					<div className="text-[11px] opacity-50">
+						Install target: <code>{maestroCliStatus?.installDir || '~/.local/bin'}</code>
+					</div>
+				</div>
+			</div>
+
 			{/* Input Behavior Settings */}
-			<div>
+			<div data-setting-id="general-input-behavior">
 				<div className="block text-xs font-bold opacity-70 uppercase mb-2 flex items-center gap-2">
 					<Keyboard className="w-3 h-3" />
 					Input Send Behavior
 				</div>
 				<p className="text-xs opacity-50 mb-3">
-					Configure how to send messages in each mode. Choose between Enter or {formatMetaKey()}
-					+Enter for each input type.
+					Configure how to send messages. Choose between Enter or {formatMetaKey()}
+					+Enter.
 				</p>
 
 				{/* AI Mode Setting */}
@@ -669,50 +757,155 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 							? 'Press Enter to send. Use Shift+Enter for new line.'
 							: `Press ${formatMetaKey()}+Enter to send. Enter creates new line.`}
 					</p>
+					<p className="text-[11px] opacity-40 mt-1">
+						Default for new tabs. Toggling the chip in an AI tab (or running &quot;Toggle Enter to
+						Send&quot; from the command palette) overrides this for that tab only.
+					</p>
 				</div>
 
-				{/* Terminal Mode Setting */}
+				{/* Expanded AI Mode Setting (Prompt Composer) */}
 				<div
-					className="p-3 rounded border"
+					className="mb-4 p-3 rounded border"
 					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
 				>
 					<div className="flex items-center justify-between mb-2">
-						<div className="text-sm font-medium">Terminal Mode</div>
+						<div className="text-sm font-medium">Expanded AI Interaction Mode</div>
 						<button
-							onClick={() => setEnterToSendTerminal(!enterToSendTerminal)}
+							onClick={() => setEnterToSendAIExpanded(!enterToSendAIExpanded)}
 							className="px-3 py-1.5 rounded text-xs font-mono transition-all"
 							style={{
-								backgroundColor: enterToSendTerminal
+								backgroundColor: enterToSendAIExpanded
 									? theme.colors.accentDim
 									: theme.colors.bgActivity,
 								color: theme.colors.textMain,
 								border: `1px solid ${theme.colors.border}`,
 							}}
 						>
-							{formatEnterToSend(enterToSendTerminal)}
+							{formatEnterToSend(enterToSendAIExpanded)}
 						</button>
 					</div>
 					<p className="text-xs opacity-50">
-						{enterToSendTerminal
-							? 'Press Enter to send. Use Shift+Enter for new line.'
-							: `Press ${formatMetaKey()}+Enter to send. Enter creates new line.`}
+						{enterToSendAIExpanded
+							? 'In the expanded Prompt Composer, press Enter to send. Use Shift+Enter for new line.'
+							: `In the expanded Prompt Composer, press ${formatMetaKey()}+Enter to send. Enter creates new line.`}
 					</p>
 				</div>
+
+				{/* Forced Parallel Execution */}
+				<div
+					className="mt-4 p-3 rounded border"
+					style={{
+						borderColor: theme.colors.border,
+						backgroundColor: theme.colors.bgMain,
+						opacity: forcedParallelExecution ? 1 : 0.7,
+					}}
+				>
+					<div className="flex items-center justify-between mb-2">
+						<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+							Forced Parallel Execution
+						</div>
+						<div className="flex items-center gap-2">
+							<span
+								className="px-2 py-0.5 rounded text-xs font-mono"
+								style={{
+									backgroundColor: theme.colors.bgActivity,
+									color: theme.colors.textMain,
+									opacity: forcedParallelExecution ? 1 : 0.5,
+								}}
+							>
+								{shortcuts?.forcedParallelSend
+									? formatShortcutKeys(shortcuts.forcedParallelSend.keys)
+									: '⌘ ⇧ ↩'}
+							</span>
+							<button
+								onClick={handleForcedParallelToggle}
+								className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0"
+								style={{
+									backgroundColor: forcedParallelExecution
+										? theme.colors.accent
+										: theme.colors.bgActivity,
+								}}
+								role="switch"
+								aria-checked={forcedParallelExecution}
+								aria-label="Forced Parallel Execution"
+							>
+								<span
+									className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+										forcedParallelExecution ? 'translate-x-5' : 'translate-x-0.5'
+									}`}
+								/>
+							</button>
+						</div>
+					</div>
+					<div
+						className="flex items-start gap-1.5 text-xs"
+						style={{
+							color: theme.colors.warning,
+							opacity: forcedParallelExecution ? 1 : 0.5,
+						}}
+					>
+						<AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+						<span>
+							When enabled, use{' '}
+							<strong>
+								{shortcuts?.forcedParallelSend
+									? formatShortcutKeys(shortcuts.forcedParallelSend.keys)
+									: '⌘ ⇧ ↩'}
+							</strong>{' '}
+							to send messages even while the agent is busy. Parallel writes to the same files may
+							cause one to overwrite the other.
+						</span>
+					</div>
+				</div>
+
+				<ForcedParallelWarningModal
+					isOpen={showForcedParallelWarning}
+					onConfirm={handleForcedParallelConfirm}
+					onCancel={handleForcedParallelCancel}
+					theme={theme}
+				/>
+			</div>
+
+			{/* Auto Run Inactivity Timeout */}
+			<div data-setting-id="general-autorun-inactivity-timeout">
+				<div className="block text-xs font-bold opacity-70 uppercase mb-2 flex items-center gap-2">
+					<Clock className="w-3 h-3" />
+					Auto Run Inactivity Timeout
+				</div>
+				<ToggleButtonGroup
+					options={[
+						{ value: 30, label: '30 min' },
+						{ value: 60, label: '1 hr' },
+						{ value: 240, label: '4 hr' },
+						{ value: 480, label: '8 hr' },
+						{ value: 0, label: 'Unlimited' },
+					]}
+					value={autoRunInactivityTimeoutMin}
+					onChange={setAutoRunInactivityTimeoutMin}
+					theme={theme}
+				/>
+				<p className="text-xs opacity-50 mt-2">
+					Auto Run force-kills a task if the agent produces no output for this long. Increase for
+					long refactors, heavy test runs, or web-research tasks driving a browser. Choose Unlimited
+					to disable the watchdog entirely.
+				</p>
 			</div>
 
 			{/* Default History Toggle */}
-			<SettingCheckbox
-				icon={History}
-				sectionLabel="Default History Toggle"
-				title='Enable "History" by default for new tabs'
-				description='When enabled, new AI tabs will have the "History" toggle on by default, saving a synopsis after each completion'
-				checked={defaultSaveToHistory}
-				onChange={setDefaultSaveToHistory}
-				theme={theme}
-			/>
+			<div data-setting-id="general-history">
+				<SettingCheckbox
+					icon={History}
+					sectionLabel="Default History Toggle"
+					title='Enable "History" by default for new tabs'
+					description='When enabled, new AI tabs will have the "History" toggle on by default, saving a synopsis after each completion'
+					checked={defaultSaveToHistory}
+					onChange={setDefaultSaveToHistory}
+					theme={theme}
+				/>
+			</div>
 
 			{/* Default Thinking Toggle - Three states: Off, On, Sticky */}
-			<div>
+			<div data-setting-id="general-thinking-mode">
 				<div className="block text-xs font-bold opacity-70 uppercase mb-2 flex items-center gap-2">
 					<Brain className="w-3 h-3" />
 					Default Thinking Mode
@@ -742,41 +935,139 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 				</div>
 			</div>
 
-			{/* Automatic Tab Naming */}
-			<SettingCheckbox
-				icon={Tag}
-				sectionLabel="Automatic Tab Naming"
-				title="Automatically name tabs based on first message"
-				description="When you send your first message to a new tab, an AI will analyze it and generate a descriptive tab name. The naming request runs in parallel and leaves no history."
-				checked={automaticTabNamingEnabled}
-				onChange={setAutomaticTabNamingEnabled}
-				theme={theme}
-			/>
+			{/* Tab Behavior */}
+			<div data-setting-id="general-tab-behavior">
+				<div className="block text-xs font-bold opacity-70 uppercase mb-2 flex items-center gap-2">
+					<Tag className="w-3 h-3" />
+					Tab Behavior
+				</div>
+				<div
+					className="p-3 rounded border space-y-3"
+					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
+				>
+					{/* Automatic Tab Naming */}
+					<div
+						className="flex items-center justify-between cursor-pointer"
+						onClick={() => setAutomaticTabNamingEnabled(!automaticTabNamingEnabled)}
+						role="button"
+						tabIndex={0}
+						onKeyDown={(e) => {
+							if (e.key === 'Enter' || e.key === ' ') {
+								e.preventDefault();
+								setAutomaticTabNamingEnabled(!automaticTabNamingEnabled);
+							}
+						}}
+					>
+						<div className="flex-1 pr-3">
+							<div className="font-medium" style={{ color: theme.colors.textMain }}>
+								Automatically name tabs based on first message
+							</div>
+							<div className="text-xs opacity-50 mt-0.5" style={{ color: theme.colors.textDim }}>
+								When you send your first message to a new tab, an AI will analyze it and generate a
+								descriptive tab name. The naming request runs in parallel and leaves no history.
+							</div>
+						</div>
+						<ToggleSwitch
+							checked={automaticTabNamingEnabled}
+							onChange={setAutomaticTabNamingEnabled}
+							theme={theme}
+							ariaLabel="Automatically name tabs based on first message"
+						/>
+					</div>
 
-			{/* Auto-scroll AI Output */}
-			<SettingCheckbox
-				icon={ArrowDownToLine}
-				sectionLabel="Auto-scroll AI Output"
-				title="Auto-scroll AI output"
-				description="Automatically scroll to the bottom when new AI output arrives. When disabled, a floating button appears for new messages."
-				checked={autoScrollAiMode}
-				onChange={setAutoScrollAiMode}
-				theme={theme}
-			/>
+					{/* New Tab Placement */}
+					<div>
+						<div className="font-medium" style={{ color: theme.colors.textMain }}>
+							New tab placement
+						</div>
+						<div className="text-xs opacity-50 mt-0.5 mb-2" style={{ color: theme.colors.textDim }}>
+							Where new AI tabs appear in the tab bar.
+						</div>
+						<ToggleButtonGroup
+							options={[
+								{ value: 'end' as const, label: 'End of list' },
+								{ value: 'after-current' as const, label: 'After current tab' },
+							]}
+							value={newTabPlacement}
+							onChange={setNewTabPlacement}
+							theme={theme}
+						/>
+					</div>
+
+					{/* New Browser Tab Placement */}
+					<div>
+						<div className="font-medium" style={{ color: theme.colors.textMain }}>
+							New browser tab placement
+						</div>
+						<div className="text-xs opacity-50 mt-0.5 mb-2" style={{ color: theme.colors.textDim }}>
+							Where new browser tabs appear in the tab bar.
+						</div>
+						<ToggleButtonGroup
+							options={[
+								{ value: 'end' as const, label: 'End of list' },
+								{ value: 'after-current' as const, label: 'After current tab' },
+							]}
+							value={newBrowserTabPlacement}
+							onChange={setNewBrowserTabPlacement}
+							theme={theme}
+						/>
+					</div>
+
+					{/* New Terminal Placement */}
+					<div>
+						<div className="font-medium" style={{ color: theme.colors.textMain }}>
+							New terminal placement
+						</div>
+						<div className="text-xs opacity-50 mt-0.5 mb-2" style={{ color: theme.colors.textDim }}>
+							Where new terminal tabs appear in the tab bar.
+						</div>
+						<ToggleButtonGroup
+							options={[
+								{ value: 'end' as const, label: 'End of list' },
+								{ value: 'after-current' as const, label: 'After current tab' },
+							]}
+							value={newTerminalPlacement}
+							onChange={setNewTerminalPlacement}
+							theme={theme}
+						/>
+					</div>
+
+					{/* Opened File Placement */}
+					<div>
+						<div className="font-medium" style={{ color: theme.colors.textMain }}>
+							Opened file placement
+						</div>
+						<div className="text-xs opacity-50 mt-0.5 mb-2" style={{ color: theme.colors.textDim }}>
+							Where opened file preview tabs appear in the tab bar.
+						</div>
+						<ToggleButtonGroup
+							options={[
+								{ value: 'end' as const, label: 'End of list' },
+								{ value: 'after-current' as const, label: 'After current tab' },
+							]}
+							value={openedFilePlacement}
+							onChange={setOpenedFilePlacement}
+							theme={theme}
+						/>
+					</div>
+				</div>
+			</div>
 
 			{/* Spell Check */}
-			<SettingCheckbox
-				icon={SpellCheck}
-				sectionLabel="Spell Check"
-				title="Enable spell checking"
-				description="Show spell check suggestions in input areas (prompt input, group chat, file editor). Disabled by default."
-				checked={spellCheck}
-				onChange={setSpellCheck}
-				theme={theme}
-			/>
+			<div data-setting-id="general-spell-check">
+				<SettingCheckbox
+					icon={SpellCheck}
+					sectionLabel="Spell Check"
+					title="Enable spell checking"
+					description="Show spell check suggestions in input areas (prompt input, group chat, file editor). Disabled by default."
+					checked={spellCheck}
+					onChange={setSpellCheck}
+					theme={theme}
+				/>
+			</div>
 
 			{/* Sleep Prevention */}
-			<div>
+			<div data-setting-id="general-power">
 				<div className="block text-xs font-bold opacity-70 uppercase mb-2 flex items-center gap-2">
 					<Battery className="w-3 h-3" />
 					Power
@@ -802,7 +1093,8 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 								Prevent sleep while working
 							</div>
 							<div className="text-xs opacity-50 mt-0.5" style={{ color: theme.colors.textDim }}>
-								Keeps your computer awake when AI agents are busy or Auto Run is active
+								Keeps your computer awake when AI agents are busy, Auto Run is active, or Cue
+								pipelines are scheduled
 							</div>
 						</div>
 						<button
@@ -844,7 +1136,7 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 			</div>
 
 			{/* Rendering Options */}
-			<div>
+			<div data-setting-id="general-rendering">
 				<div className="block text-xs font-bold opacity-70 uppercase mb-2 flex items-center gap-2">
 					<Monitor className="w-3 h-3" />
 					Rendering Options
@@ -946,376 +1238,176 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 				</div>
 			</div>
 
-			{/* Check for Updates on Startup */}
-			<SettingCheckbox
-				icon={Download}
-				sectionLabel="Updates"
-				title="Check for updates on startup"
-				description="Automatically check for new Maestro versions when the app starts"
-				checked={checkForUpdatesOnStartup}
-				onChange={setCheckForUpdatesOnStartup}
-				theme={theme}
-			/>
-
-			{/* Beta Updates */}
-			<SettingCheckbox
-				icon={FlaskConical}
-				sectionLabel="Pre-release Channel"
-				title="Include beta and release candidate updates"
-				description="Opt-in to receive pre-release versions (e.g., v0.11.1-rc, v0.12.0-beta). These may contain experimental features and bugs."
-				checked={enableBetaUpdates}
-				onChange={setEnableBetaUpdates}
-				theme={theme}
-			/>
-
-			{/* Crash Reporting */}
-			<SettingCheckbox
-				icon={Bug}
-				sectionLabel="Privacy"
-				title="Send anonymous crash reports"
-				description="Help improve Maestro by automatically sending crash reports. No personal data is collected. Changes take effect after restart."
-				checked={crashReportingEnabled}
-				onChange={setCrashReportingEnabled}
-				theme={theme}
-			/>
-
-			{/* Stats Data Management */}
+			{/* Updates */}
 			<div>
 				<div className="block text-xs font-bold opacity-70 uppercase mb-2 flex items-center gap-2">
-					<Database className="w-3 h-3" />
-					Usage & Stats
-					<span
-						className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase"
-						style={{
-							backgroundColor: theme.colors.warning + '30',
-							color: theme.colors.warning,
-						}}
-					>
-						Beta
-					</span>
+					<Download className="w-3 h-3" />
+					Updates
 				</div>
 				<div
 					className="p-3 rounded border space-y-3"
 					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
 				>
-					{/* Enable/Disable Stats Collection */}
-					<div className="flex items-center justify-between">
-						<div>
-							<p className="text-sm" style={{ color: theme.colors.textMain }}>
-								Enable stats collection
-							</p>
-							<p className="text-xs opacity-50 mt-0.5">
-								Track queries and Auto Run sessions for the dashboard.
-							</p>
-						</div>
-						<button
-							onClick={() => setStatsCollectionEnabled(!statsCollectionEnabled)}
-							className={`relative w-10 h-5 rounded-full transition-colors ${
-								statsCollectionEnabled ? '' : ''
-							}`}
-							style={{
-								backgroundColor: statsCollectionEnabled
-									? theme.colors.accent
-									: theme.colors.bgActivity,
-							}}
-							role="switch"
-							aria-checked={statsCollectionEnabled}
-							aria-label="Enable stats collection"
-						>
-							<span
-								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-									statsCollectionEnabled ? 'translate-x-5' : 'translate-x-0.5'
-								}`}
-							/>
-						</button>
-					</div>
-
-					{/* Default Time Range */}
-					<div>
-						<div className="block text-xs opacity-60 mb-2">Default dashboard time range</div>
-						<select
-							value={defaultStatsTimeRange}
-							onChange={(e) =>
-								setDefaultStatsTimeRange(
-									e.target.value as 'day' | 'week' | 'month' | 'year' | 'all'
-								)
+					{/* Check for Updates Toggle */}
+					<div
+						data-setting-id="general-updates"
+						className="flex items-center justify-between cursor-pointer"
+						onClick={() => setCheckForUpdatesOnStartup(!checkForUpdatesOnStartup)}
+						role="button"
+						tabIndex={0}
+						onKeyDown={(e) => {
+							if (e.key === 'Enter' || e.key === ' ') {
+								e.preventDefault();
+								setCheckForUpdatesOnStartup(!checkForUpdatesOnStartup);
 							}
-							className="w-full p-2 rounded border bg-transparent outline-none text-sm"
-							style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
-						>
-							<option value="day">Last 24 hours</option>
-							<option value="week">Last 7 days</option>
-							<option value="month">Last 30 days</option>
-							<option value="year">Last 365 days</option>
-							<option value="all">All time</option>
-						</select>
-						<p className="text-xs opacity-50 mt-1">
-							Time range shown when opening the Usage Dashboard.
-						</p>
-					</div>
-
-					{/* Divider */}
-					<div className="border-t" style={{ borderColor: theme.colors.border }} />
-
-					{/* Database Size Display */}
-					<div className="flex items-center justify-between">
-						<span className="text-sm" style={{ color: theme.colors.textDim }}>
-							Database size
-						</span>
-						<span className="text-sm font-mono" style={{ color: theme.colors.textMain }}>
-							{statsDbSize !== null ? (statsDbSize / 1024 / 1024).toFixed(2) + ' MB' : 'Loading...'}
-							{statsEarliestDate && (
-								<span style={{ color: theme.colors.textDim }}> (since {statsEarliestDate})</span>
-							)}
-						</span>
-					</div>
-
-					{/* Clear Old Data Dropdown */}
-					<div>
-						<div className="block text-xs opacity-60 mb-2">Clear stats older than...</div>
-						<div className="flex items-center gap-2">
-							<select
-								id="clear-stats-period"
-								className="flex-1 p-2 rounded border bg-transparent outline-none text-sm"
-								style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
-								defaultValue=""
-								disabled={statsClearing}
-							>
-								<option value="" disabled>
-									Select a time period
-								</option>
-								<option value="7">7 days</option>
-								<option value="30">30 days</option>
-								<option value="90">90 days</option>
-								<option value="180">6 months</option>
-								<option value="365">1 year</option>
-							</select>
-							<button
-								onClick={async () => {
-									const select = document.getElementById('clear-stats-period') as HTMLSelectElement;
-									const days = parseInt(select.value, 10);
-									if (!days || isNaN(days)) {
-										return; // No selection
-									}
-									setStatsClearing(true);
-									setStatsClearResult(null);
-									try {
-										const result = await window.maestro.stats.clearOldData(days);
-										setStatsClearResult(result);
-										if (result.success) {
-											// Refresh database size
-											const newSize = await window.maestro.stats.getDatabaseSize();
-											setStatsDbSize(newSize);
-										}
-									} catch (err) {
-										console.error('Failed to clear old stats:', err);
-										setStatsClearResult({
-											success: false,
-											deletedQueryEvents: 0,
-											deletedAutoRunSessions: 0,
-											deletedAutoRunTasks: 0,
-											error: err instanceof Error ? err.message : 'Unknown error',
-										});
-									} finally {
-										setStatsClearing(false);
-									}
-								}}
-								disabled={statsClearing}
-								className="px-3 py-2 rounded text-xs font-medium transition-colors flex items-center gap-2 disabled:opacity-50"
-								style={{
-									backgroundColor: theme.colors.error + '20',
-									color: theme.colors.error,
-									border: `1px solid ${theme.colors.error}40`,
-								}}
-							>
-								<Trash2 className="w-3 h-3" />
-								{statsClearing ? 'Clearing...' : 'Clear'}
-							</button>
+						}}
+					>
+						<div className="flex-1 pr-3">
+							<div className="font-medium" style={{ color: theme.colors.textMain }}>
+								Check for updates automatically
+							</div>
+							<div className="text-xs opacity-50 mt-0.5" style={{ color: theme.colors.textDim }}>
+								Check for new Maestro versions on startup and once per day while the app is running
+							</div>
 						</div>
-						<p className="text-xs opacity-50 mt-2">
-							Remove old query events, Auto Run sessions, and tasks from the stats database.
-						</p>
+						<ToggleSwitch
+							checked={checkForUpdatesOnStartup}
+							onChange={setCheckForUpdatesOnStartup}
+							theme={theme}
+							ariaLabel="Check for updates automatically"
+						/>
 					</div>
 
-					{/* Clear Result Feedback */}
-					{statsClearResult && (
-						<div
-							className="p-2 rounded text-xs flex items-start gap-2"
-							style={{
-								backgroundColor: statsClearResult.success
-									? theme.colors.success + '20'
-									: theme.colors.error + '20',
-								color: statsClearResult.success ? theme.colors.success : theme.colors.error,
-							}}
-						>
-							{statsClearResult.success ? (
-								<>
-									<Check className="w-3 h-3 flex-shrink-0 mt-0.5" />
-									<span>
-										Cleared{' '}
-										{statsClearResult.deletedQueryEvents +
-											statsClearResult.deletedAutoRunSessions +
-											statsClearResult.deletedAutoRunTasks}{' '}
-										records ({statsClearResult.deletedQueryEvents} queries,{' '}
-										{statsClearResult.deletedAutoRunSessions} sessions,{' '}
-										{statsClearResult.deletedAutoRunTasks} tasks)
-									</span>
-								</>
-							) : (
-								<>
-									<X className="w-3 h-3 flex-shrink-0 mt-0.5" />
-									<span>{statsClearResult.error || 'Failed to clear stats data'}</span>
-								</>
-							)}
-						</div>
-					)}
-
-					{/* Divider */}
-					<div className="border-t" style={{ borderColor: theme.colors.border }} />
-
-					{/* WakaTime Integration */}
-					<div className="flex items-center justify-between">
-						<div>
-							<p
-								className="text-sm flex items-center gap-2"
+					{/* Pre-release Channel Toggle */}
+					<div
+						data-setting-id="general-beta-updates"
+						className="flex items-center justify-between cursor-pointer pt-3 border-t"
+						style={{ borderColor: theme.colors.border }}
+						onClick={() => setEnableBetaUpdates(!enableBetaUpdates)}
+						role="button"
+						tabIndex={0}
+						onKeyDown={(e) => {
+							if (e.key === 'Enter' || e.key === ' ') {
+								e.preventDefault();
+								setEnableBetaUpdates(!enableBetaUpdates);
+							}
+						}}
+					>
+						<div className="flex-1 pr-3">
+							<div
+								className="font-medium flex items-center gap-2"
 								style={{ color: theme.colors.textMain }}
 							>
-								<Timer className="w-3.5 h-3.5 opacity-60" />
-								Enable WakaTime tracking
-							</p>
-							<p className="text-xs opacity-50 mt-0.5">
-								Track coding activity in Maestro sessions via WakaTime.
-							</p>
+								<FlaskConical className="w-4 h-4" />
+								Include beta and release candidate updates
+							</div>
+							<div className="text-xs opacity-50 mt-0.5" style={{ color: theme.colors.textDim }}>
+								Opt-in to receive pre-release versions (e.g., v0.11.1-rc, v0.12.0-beta). These may
+								contain experimental features and bugs.
+							</div>
 						</div>
-						<button
-							onClick={() => setWakatimeEnabled(!wakatimeEnabled)}
-							className="relative w-10 h-5 rounded-full transition-colors"
-							style={{
-								backgroundColor: wakatimeEnabled ? theme.colors.accent : theme.colors.bgActivity,
-							}}
-							role="switch"
-							aria-checked={wakatimeEnabled}
-							aria-label="Enable WakaTime tracking"
-						>
-							<span
-								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-									wakatimeEnabled ? 'translate-x-5' : 'translate-x-0.5'
-								}`}
-							/>
-						</button>
+						<ToggleSwitch
+							checked={enableBetaUpdates}
+							onChange={setEnableBetaUpdates}
+							theme={theme}
+							ariaLabel="Include beta and release candidate updates"
+						/>
 					</div>
+				</div>
+			</div>
 
-					{/* CLI not found warning */}
-					{wakatimeEnabled && wakatimeCliStatus && !wakatimeCliStatus.available && (
-						<p className="text-xs mt-1" style={{ color: theme.colors.warning }}>
-							WakaTime CLI is being installed automatically...
-						</p>
-					)}
+			{/* Crash Reporting */}
+			<div data-setting-id="general-crash-reporting">
+				<SettingCheckbox
+					icon={Bug}
+					sectionLabel="Privacy"
+					title="Send anonymous crash reports"
+					description="Help improve Maestro by automatically sending crash reports. No personal data is collected. Changes take effect after restart."
+					checked={crashReportingEnabled}
+					onChange={setCrashReportingEnabled}
+					theme={theme}
+				/>
+			</div>
 
-					{/* Detailed file tracking toggle (only shown when enabled) */}
-					{wakatimeEnabled && (
-						<div className="flex items-center justify-between">
-							<div>
-								<p className="text-sm" style={{ color: theme.colors.textMain }}>
-									Detailed file tracking
-								</p>
-								<p className="text-xs opacity-50 mt-0.5">
-									Track per-file write activity. Sends file paths (not content) to WakaTime.
-								</p>
-							</div>
+			{/* Default Browser */}
+			<div data-setting-id="general-browser">
+				<SettingCheckbox
+					icon={ExternalLink}
+					sectionLabel="Default Browser"
+					title="Use system browser for links"
+					description="Controls the default browser for clicking links. Use Ctrl+Click on URLs to get a context menu and choose the specific browser."
+					checked={useSystemBrowser}
+					onChange={setUseSystemBrowser}
+					theme={theme}
+				/>
+				<div
+					data-setting-id="general-html-double-click"
+					className="mt-3 flex items-center justify-between p-3 rounded border cursor-pointer hover:bg-opacity-10"
+					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
+					onClick={() => setHtmlDoubleClickOpensInBrowser(!htmlDoubleClickOpensInBrowser)}
+					role="button"
+					tabIndex={0}
+					onKeyDown={(e) => {
+						if (e.key === 'Enter' || e.key === ' ') {
+							e.preventDefault();
+							setHtmlDoubleClickOpensInBrowser(!htmlDoubleClickOpensInBrowser);
+						}
+					}}
+				>
+					<div className="flex-1 pr-3">
+						<div className="font-medium" style={{ color: theme.colors.textMain }}>
+							Open HTML files in Maestro Browser on double-click
+						</div>
+						<div className="text-xs opacity-50 mt-0.5" style={{ color: theme.colors.textDim }}>
+							When enabled, double-clicking an HTML file in the file explorer opens it in the
+							Maestro browser instead of the file preview. Right-click for the full menu either way.
+						</div>
+					</div>
+					<ToggleSwitch
+						checked={htmlDoubleClickOpensInBrowser}
+						onChange={setHtmlDoubleClickOpensInBrowser}
+						theme={theme}
+						ariaLabel="Open HTML files in Maestro Browser on double-click"
+					/>
+				</div>
+				<div
+					className="mt-3 p-3 rounded border"
+					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
+				>
+					<div className="block text-xs opacity-60 mb-1">Browser Home URL</div>
+					<div className="flex gap-2">
+						<input
+							type="text"
+							value={browserHomeUrl}
+							onChange={(e) => setBrowserHomeUrl(e.target.value)}
+							placeholder="https://runmaestro.ai/#leaderboard"
+							className="flex-1 p-1.5 rounded border bg-transparent outline-none text-xs font-mono"
+							style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+						/>
+						{browserHomeUrl !== 'https://runmaestro.ai/#leaderboard' && (
 							<button
-								onClick={() => setWakatimeDetailedTracking(!wakatimeDetailedTracking)}
-								className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0 outline-none"
-								tabIndex={0}
+								onClick={() => setBrowserHomeUrl('https://runmaestro.ai/#leaderboard')}
+								className="px-2 py-1 rounded text-xs"
 								style={{
-									backgroundColor: wakatimeDetailedTracking
-										? theme.colors.accent
-										: theme.colors.bgActivity,
+									backgroundColor: theme.colors.bgActivity,
+									color: theme.colors.textDim,
 								}}
-								role="switch"
-								aria-checked={wakatimeDetailedTracking}
-								aria-label="Detailed file tracking"
 							>
-								<span
-									className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-										wakatimeDetailedTracking ? 'translate-x-5' : 'translate-x-0.5'
-									}`}
-								/>
+								Reset
 							</button>
-						</div>
-					)}
-
-					{/* API Key Input (only shown when enabled) */}
-					{wakatimeEnabled && (
-						<div>
-							<div className="block text-xs opacity-60 mb-1">API Key</div>
-							<div
-								className="flex items-center border rounded px-3 py-2"
-								style={{
-									backgroundColor: theme.colors.bgMain,
-									borderColor: theme.colors.border,
-								}}
-							>
-								<Key className="w-4 h-4 mr-2 opacity-50" />
-								<input
-									type="password"
-									value={wakatimeApiKey}
-									onChange={(e) => handleWakatimeApiKeyChange(e.target.value)}
-									onBlur={() => {
-										if (wakatimeApiKey) {
-											setWakatimeKeyValidating(true);
-											setWakatimeKeyValid(null);
-											window.maestro.wakatime
-												.validateApiKey(wakatimeApiKey)
-												.then((result) => setWakatimeKeyValid(result.valid))
-												.catch(() => setWakatimeKeyValid(false))
-												.finally(() => setWakatimeKeyValidating(false));
-										}
-									}}
-									className="bg-transparent flex-1 text-sm outline-none"
-									style={{ color: theme.colors.textMain }}
-									placeholder="waka_..."
-								/>
-								{wakatimeKeyValidating && <span className="ml-2 text-xs opacity-50">...</span>}
-								{!wakatimeKeyValidating && wakatimeKeyValid === true && (
-									<Check className="w-4 h-4 ml-2" style={{ color: theme.colors.success }} />
-								)}
-								{!wakatimeKeyValidating && wakatimeKeyValid === false && wakatimeApiKey && (
-									<X className="w-4 h-4 ml-2" style={{ color: theme.colors.error }} />
-								)}
-								{wakatimeApiKey && (
-									<button
-										onClick={() => handleWakatimeApiKeyChange('')}
-										className="ml-2 opacity-50 hover:opacity-100"
-										title="Clear API key"
-									>
-										<X className="w-3 h-3" />
-									</button>
-								)}
-							</div>
-							<p className="text-[10px] mt-1.5 opacity-50">
-								Get your API key from wakatime.com/settings/api-key. Keys are stored locally in
-								~/.maestro/settings.json.
-							</p>
-						</div>
-					)}
+						)}
+					</div>
+					<p className="text-xs opacity-40 mt-2">
+						The URL loaded when opening a new browser tab (Cmd+B).
+					</p>
 				</div>
 			</div>
 
 			{/* Settings Storage Location */}
-			<div>
+			<div data-setting-id="general-storage">
 				<div className="block text-xs font-bold opacity-70 uppercase mb-2 flex items-center gap-2">
 					<FolderSync className="w-3 h-3" />
 					Storage Location
-					<span
-						className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase"
-						style={{
-							backgroundColor: theme.colors.warning + '30',
-							color: theme.colors.warning,
-						}}
-					>
-						Beta
-					</span>
 				</div>
 				<div
 					className="p-3 rounded border space-y-3"

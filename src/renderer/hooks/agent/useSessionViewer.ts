@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback } from 'react';
+import { logger } from '../../utils/logger';
 
 /**
  * Session message from Claude session JSONL files
@@ -160,7 +161,7 @@ export function useSessionViewer({
 				setHasMoreMessages(result.hasMore);
 				setMessagesOffset(offset + result.messages.length);
 			} catch (error) {
-				console.error('Failed to load messages:', error);
+				logger.error('Failed to load messages:', undefined, error);
 			} finally {
 				setMessagesLoading(false);
 			}

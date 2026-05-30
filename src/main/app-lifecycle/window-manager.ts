@@ -3,12 +3,20 @@
  * Handles window state persistence, DevTools, crash detection, and auto-updater initialization.
  */
 
-import * as path from 'path';
-import { BrowserWindow, ipcMain } from 'electron';
+import { BrowserWindow, Menu, ipcMain } from 'electron';
 import type Store from 'electron-store';
 import type { WindowState } from '../stores/types';
 import { logger } from '../utils/logger';
 import { initAutoUpdater } from '../auto-updater';
+
+const BROWSER_TAB_PARTITION_PREFIX = 'persist:maestro-browser-session-';
+// `file:` is allowed so users can open local HTML they just generated
+// (Plotly dashboards, etc.) inside Maestro instead of bouncing to the system
+// browser. The webview is still hardened (sandbox, no node, webSecurity true)
+// and only renders content the user explicitly opens.
+const ALLOWED_BROWSER_TAB_EMBED_PROTOCOLS = new Set(['http:', 'https:', 'file:']);
+const ALLOWED_BROWSER_TAB_ABOUT_URLS = new Set(['about:blank']);
+const ALLOWED_APP_PERMISSIONS = new Set(['clipboard-read', 'clipboard-sanitized-write']);
 
 /** Sentry severity levels */
 type SentrySeverityLevel = 'fatal' | 'error' | 'warning' | 'log' | 'info' | 'debug';
@@ -23,6 +31,88 @@ interface SentryModule {
 
 /** Cached Sentry module reference */
 let sentryModule: SentryModule | null = null;
+
+type BrowserTabWebPreferences = Record<string, unknown> & {
+	partition?: string;
+	preload?: string;
+	nodeIntegration?: boolean;
+	nodeIntegrationInSubFrames?: boolean;
+	contextIsolation?: boolean;
+	sandbox?: boolean;
+	webSecurity?: boolean;
+	allowRunningInsecureContent?: boolean;
+};
+
+interface BrowserTabGuestContents {
+	getType?: () => string;
+	setWindowOpenHandler: (
+		handler: ({ url }: { url: string }) => { action: 'deny' | 'allow' }
+	) => void;
+	on(
+		event: 'will-navigate' | 'will-redirect',
+		handler: (event: { preventDefault: () => void }, url: string) => void
+	): void;
+	on(event: string, handler: (...args: any[]) => void): void;
+	executeJavaScript(code: string): Promise<unknown>;
+}
+
+function isAllowedBrowserTabUrl(rawUrl: string): boolean {
+	if (ALLOWED_BROWSER_TAB_ABOUT_URLS.has(rawUrl)) return true;
+
+	try {
+		return ALLOWED_BROWSER_TAB_EMBED_PROTOCOLS.has(new URL(rawUrl).protocol);
+	} catch {
+		return false;
+	}
+}
+
+function isAllowedBrowserTabPartition(partition: string): boolean {
+	return partition.startsWith(BROWSER_TAB_PARTITION_PREFIX);
+}
+
+function hardenBrowserTabWebPreferences(webPreferences: BrowserTabWebPreferences): void {
+	delete webPreferences.preload;
+	delete (webPreferences as Record<string, unknown>).preloadURL;
+
+	webPreferences.nodeIntegration = false;
+	webPreferences.nodeIntegrationInSubFrames = false;
+	webPreferences.contextIsolation = true;
+	webPreferences.sandbox = true;
+	webPreferences.webSecurity = true;
+	webPreferences.allowRunningInsecureContent = false;
+}
+
+function attachBrowserTabGuestSecurity(guestContents: BrowserTabGuestContents): void {
+	const denyBrowserTabNavigation = (
+		eventName: 'will-navigate' | 'will-redirect',
+		event: { preventDefault: () => void },
+		url: string
+	) => {
+		if (isAllowedBrowserTabUrl(url)) return;
+
+		event.preventDefault();
+		logger.warn(`Blocked browser-tab ${eventName}: ${url}`, 'Window', {
+			url,
+			type: guestContents.getType?.() ?? 'unknown',
+		});
+	};
+
+	guestContents.setWindowOpenHandler(({ url }) => {
+		logger.warn(`Blocked browser-tab popup: ${url}`, 'Window', {
+			url,
+			type: guestContents.getType?.() ?? 'unknown',
+		});
+		return { action: 'deny' };
+	});
+
+	guestContents.on('will-navigate', (event, url) => {
+		denyBrowserTabNavigation('will-navigate', event, url);
+	});
+
+	guestContents.on('will-redirect', (event, url) => {
+		denyBrowserTabNavigation('will-redirect', event, url);
+	});
+}
 
 /**
  * Reports a crash event to Sentry from the main process.
@@ -53,14 +143,20 @@ export interface WindowManagerDependencies {
 	isDevelopment: boolean;
 	/** Path to the preload script */
 	preloadPath: string;
-	/** Path to the renderer HTML file (production) */
-	rendererPath: string;
+	/** Custom-protocol URL used to load the production renderer. */
+	rendererProductionUrl: string;
 	/** Development server URL */
 	devServerUrl: string;
 	/** Whether to use the native OS title bar instead of custom title bar */
 	useNativeTitleBar: boolean;
 	/** Whether to auto-hide the menu bar (Linux/Windows) */
 	autoHideMenuBar: boolean;
+	/**
+	 * Lazy getter for the quit handler's confirmQuit function. Used by the
+	 * auto-updater install path to bypass the busy-agent quit confirmation
+	 * gate. Lazy because the quit handler is constructed after the window.
+	 */
+	getConfirmQuit?: () => (() => void) | null | undefined;
 }
 
 /** Window manager instance */
@@ -80,10 +176,11 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 		windowStateStore,
 		isDevelopment,
 		preloadPath,
-		rendererPath,
+		rendererProductionUrl,
 		devServerUrl,
 		useNativeTitleBar,
 		autoHideMenuBar,
+		getConfirmQuit,
 	} = deps;
 
 	return {
@@ -106,6 +203,9 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 					contextIsolation: true,
 					nodeIntegration: false,
 					sandbox: true,
+					spellcheck: true,
+					// Embedded browser tabs use Electron's guest webview surface in the renderer.
+					webviewTag: true,
 				},
 			});
 
@@ -165,7 +265,7 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 				// DevTools can be opened via Command-K menu instead of automatically on startup
 				logger.info('Loading development server', 'Window');
 			} else {
-				mainWindow.loadFile(rendererPath);
+				mainWindow.loadURL(rendererProductionUrl);
 				logger.info('Loading production build', 'Window');
 				// Open DevTools in production if DEBUG env var is set
 				if (process.env.DEBUG === 'true') {
@@ -177,42 +277,203 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 			// Navigation & Window Security Hardening
 			// ================================================================
 
+			// Restrict renderer-created webviews to the browser-tab surface only.
+			mainWindow.webContents.on('will-attach-webview', (event, webPreferences, params) => {
+				const src = typeof params.src === 'string' ? params.src : '';
+				const partition =
+					typeof webPreferences.partition === 'string' ? webPreferences.partition : '';
+
+				hardenBrowserTabWebPreferences(webPreferences as BrowserTabWebPreferences);
+
+				if (!isAllowedBrowserTabUrl(src) || !isAllowedBrowserTabPartition(partition)) {
+					event.preventDefault();
+					logger.warn(`Blocked unsafe webview attachment: ${src || '<empty src>'}`, 'Window', {
+						src,
+						partition,
+					});
+				}
+			});
+
+			mainWindow.webContents.on('did-attach-webview', (_event, guestContents) => {
+				attachBrowserTabGuestSecurity(guestContents as BrowserTabGuestContents);
+
+				// Forward app shortcuts from the webview guest process to the renderer.
+				// When a <webview> has focus, keyboard events are trapped in its guest
+				// Chromium process and never reach the renderer's window keydown handler.
+				//
+				// Strategy: inject a bubble-phase keydown listener into the guest page.
+				// After all page handlers have run, if the page did NOT call preventDefault
+				// on a Meta/Ctrl keystroke, it means the page doesn't use that shortcut —
+				// so we forward it to the app. If the page DID preventDefault, the page's
+				// shortcut takes precedence and we leave it alone.
+				const guest = guestContents as BrowserTabGuestContents;
+
+				// Intercept app shortcuts BEFORE Chromium's built-in handlers consume them.
+				// Some keys (e.g. Cmd+L for address bar focus) are handled by Chromium
+				// internally and never reach the injected JS listener below.
+				guest.on('before-input-event', (event, input) => {
+					if (!input.meta && !input.control && !input.alt) return;
+					if (input.type !== 'keyDown') return;
+					const k = input.key.toLowerCase();
+					// Let standard text-editing shortcuts pass through to the page.
+					// `f` is intentionally NOT in this list: Cmd+F must reach the
+					// renderer so the in-page find bar can open.
+					const isTextEditing =
+						(input.meta || input.control) && !input.alt && !input.shift && 'acvxz'.includes(k);
+					const isRedo = (input.meta || input.control) && !input.alt && input.shift && k === 'z';
+					if (isTextEditing || isRedo) return;
+					event.preventDefault();
+					mainWindow.webContents.send('browser-tab:shortcutKey', {
+						key: input.key,
+						code: input.code,
+						meta: input.meta,
+						control: input.control,
+						alt: input.alt,
+						shift: input.shift,
+					});
+				});
+
+				// Capture-phase listener: intercepts app shortcuts BEFORE the page
+				// can handle them.  We preventDefault+stopPropagation so the page
+				// never sees the event, then forward it to the app via console.log.
+				const shortcutInjection = `(function(){
+					if(window.__maestroShortcutListenerInstalled)return;
+					window.__maestroShortcutListenerInstalled=true;
+					document.addEventListener('keydown',function(e){
+						var hasMod=e.metaKey||e.ctrlKey;
+						var hasAlt=e.altKey;
+						if(!hasMod&&!hasAlt)return;
+						var k=e.key.toLowerCase();
+						var te=hasMod&&!hasAlt&&!e.shiftKey&&'acvxz'.indexOf(k)!==-1;
+						var re=hasMod&&!hasAlt&&e.shiftKey&&k==='z';
+						if(te||re)return;
+						e.preventDefault();
+						e.stopPropagation();
+						console.log('__MAESTRO_KEY__'+JSON.stringify({
+							key:e.key,code:e.code,
+							meta:e.metaKey,control:e.ctrlKey,
+							alt:e.altKey,shift:e.shiftKey
+						}));
+					},true);
+				})();`;
+				const injectShortcutListener = () => {
+					guest.executeJavaScript(shortcutInjection).catch(() => {});
+				};
+				guest.on('dom-ready', injectShortcutListener);
+				guest.on('did-navigate', injectShortcutListener);
+				// console-message args: (event, level, message, line, sourceId)
+				guest.on('console-message', (...args: unknown[]) => {
+					const message = typeof args[2] === 'string' ? args[2] : String(args[2] ?? '');
+					const prefix = '__MAESTRO_KEY__';
+					if (!message.startsWith(prefix)) return;
+					try {
+						const input = JSON.parse(message.slice(prefix.length));
+						mainWindow.webContents.send('browser-tab:shortcutKey', input);
+					} catch {
+						// Malformed message, ignore
+					}
+				});
+			});
+
 			// Deny all popup/new-window requests — external links use IPC shell:openExternal
 			mainWindow.webContents.setWindowOpenHandler(({ url }) => {
 				logger.warn(`Blocked window.open request: ${url}`, 'Window');
 				return { action: 'deny' };
 			});
 
-			// Restrict navigation to the app itself — prevent renderer from navigating away
+			// Restrict navigation to the app itself — prevent renderer from navigating away.
+			// Both the dev-server URL and the renderer entry's file:// URL are constants
+			// for the lifetime of this window, so compute them once at setup time rather
+			// than on every navigation event. The production guard only allows the
+			// renderer entry HTML itself: a previous "directory prefix" check let any
+			// file inside the renderer dir through, which meant a stray <a href="foo.md">
+			// in chat output could resolve relative to index.html and unload the app to
+			// a non-existent bundle file.
+			const allowedDevOrigin = isDevelopment ? new URL(devServerUrl).origin : null;
+			const allowedProdOrigin = isDevelopment ? null : new URL(rendererProductionUrl).origin;
+			const allowedProdEntryUrl = isDevelopment ? null : rendererProductionUrl;
 			mainWindow.webContents.on('will-navigate', (event, url) => {
 				const parsedUrl = new URL(url);
 				if (isDevelopment) {
-					// In dev mode, allow Vite dev server navigation
-					const devUrl = new URL(devServerUrl);
-					if (parsedUrl.origin === devUrl.origin) return;
+					if (parsedUrl.origin === allowedDevOrigin) return;
 				} else {
-					// In production, only allow file:// URLs within the app's renderer directory
-					if (
-						parsedUrl.protocol === 'file:' &&
-						url.includes(path.dirname(rendererPath).replace(/\\/g, '/'))
-					)
-						return;
+					if (parsedUrl.origin === allowedProdOrigin && url === allowedProdEntryUrl) return;
 				}
 				event.preventDefault();
 				logger.warn(`Blocked navigation to: ${url}`, 'Window');
 			});
 
 			// Deny most browser permission requests (camera, mic, geolocation, etc.)
-			// Allow clipboard access for copy-to-clipboard functionality
+			// Allow clipboard access for the app window only, never embedded browser tabs.
 			mainWindow.webContents.session.setPermissionRequestHandler(
-				(_webContents, permission, callback) => {
-					if (permission === 'clipboard-read' || permission === 'clipboard-sanitized-write') {
+				(webContents, permission, callback) => {
+					const contentsType = webContents?.getType?.();
+					const isAppWindow = contentsType === 'window';
+
+					if (isAppWindow && ALLOWED_APP_PERMISSIONS.has(permission)) {
 						callback(true);
 					} else {
+						if (contentsType === 'webview') {
+							logger.warn(`Blocked browser-tab permission request: ${permission}`, 'Window', {
+								permission,
+								type: contentsType,
+							});
+						}
 						callback(false);
 					}
 				}
 			);
+
+			// Spell check suggestions: Electron renders red squiggles automatically when
+			// `spellcheck` is true on a form element, but the right-click "Did you mean..."
+			// menu has to be wired up in the main process.
+			mainWindow.webContents.on('context-menu', (_event, params) => {
+				logger.debug('context-menu fired', 'Window', {
+					isEditable: params.isEditable,
+					misspelledWord: params.misspelledWord,
+					suggestions: params.dictionarySuggestions,
+					selectionText: params.selectionText,
+				});
+
+				if (!params.isEditable) return;
+
+				const template: Electron.MenuItemConstructorOptions[] = [];
+
+				const suggestions = params.dictionarySuggestions ?? [];
+				if (params.misspelledWord) {
+					if (suggestions.length === 0) {
+						template.push({ label: 'No suggestions', enabled: false });
+					} else {
+						for (const suggestion of suggestions) {
+							template.push({
+								label: suggestion,
+								click: () => mainWindow.webContents.replaceMisspelling(suggestion),
+							});
+						}
+					}
+					template.push(
+						{ type: 'separator' },
+						{
+							label: 'Add to Dictionary',
+							click: () =>
+								mainWindow.webContents.session.addWordToSpellCheckerDictionary(
+									params.misspelledWord
+								),
+						},
+						{ type: 'separator' }
+					);
+				}
+
+				template.push(
+					{ role: 'cut' },
+					{ role: 'copy' },
+					{ role: 'paste' },
+					{ type: 'separator' },
+					{ role: 'selectAll' }
+				);
+
+				Menu.buildFromTemplate(template).popup({ window: mainWindow });
+			});
 
 			mainWindow.on('closed', () => {
 				logger.info('Browser window closed', 'Window');
@@ -261,11 +522,9 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 				logger.info('Window became responsive again', 'Window');
 			});
 
-			// Handle page crashes (less severe than render-process-gone)
-			mainWindow.webContents.on('crashed', (_event, killed) => {
-				logger.error('WebContents crashed', 'Window', { killed });
-				reportCrashToSentry('WebContents crashed', killed ? 'warning' : 'error', { killed });
-			});
+			// Note: the legacy 'crashed' event was removed in Electron 41 and
+			// is now subsumed by 'render-process-gone' above (which reports to
+			// Sentry with full reason/exitCode detail and handles auto-reload).
 
 			// Handle page load failures (network issues, invalid URLs, etc.)
 			mainWindow.webContents.on(
@@ -332,7 +591,12 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 
 			// Initialize auto-updater (only in production)
 			if (!isDevelopment) {
-				initAutoUpdater(mainWindow);
+				initAutoUpdater(mainWindow, {
+					onBeforeQuitAndInstall: () => {
+						const confirmQuit = getConfirmQuit?.();
+						confirmQuit?.();
+					},
+				});
 				logger.info('Auto-updater initialized', 'Window');
 			} else {
 				// Register stub handlers in development mode so users get a helpful error

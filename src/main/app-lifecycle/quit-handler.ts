@@ -10,6 +10,12 @@ import type { WebServer } from '../web-server';
 import { tunnelManager as tunnelManagerInstance } from '../tunnel-manager';
 import type { HistoryManager } from '../history-manager';
 import { isWebContentsAvailable } from '../utils/safe-send';
+import { deleteCliServerInfo } from '../../shared/cli-server-discovery';
+import { stopAllCueRuns } from '../cue/cue-executor';
+import { stopAllCueShellRuns } from '../cue/cue-shell-executor';
+import { stopAllCueCliRuns } from '../cue/cue-cli-executor';
+import { flushTelemetry } from '../cue/cue-telemetry';
+import { captureException } from '../utils/sentry';
 import { powerManager as powerManagerInstance } from '../power-manager';
 
 /**
@@ -226,9 +232,35 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 			});
 		}
 
-		// Clean up all running processes
+		// Kill all active Cue processes (tracked separately from ProcessManager)
+		logger.info('Killing active Cue processes', 'Shutdown');
+		stopAllCueRuns();
+		stopAllCueShellRuns();
+		stopAllCueCliRuns();
+
+		// Flush Cue telemetry outbox before quit so events captured between the
+		// last autorun and shutdown aren't deferred to the next launch (or lost
+		// if the user uninstalls). Fire-and-forget — performCleanup is sync and
+		// the network call may not finish before quit, but unflushed rows
+		// survive in SQLite for the next session.
+		flushTelemetry({ reason: 'app-quit' }).catch((error) => {
+			// Errors already logged inside flushTelemetry; report unexpected
+			// failures to Sentry so we can spot regressions, but don't rethrow
+			// — a network failure during shutdown shouldn't crash cleanup.
+			captureException(error, {
+				context: 'quit-handler.performCleanup.flushTelemetry',
+			});
+		});
+
+		// Clean up all running processes. shutdown:true makes PTYs SIGKILL
+		// immediately (no SIGTERM grace, no escalation timer, no onExit
+		// listener) so node-pty's worker threads exit and release their
+		// N-API ThreadSafeFunctions before Electron tears down the Node
+		// environment. Otherwise CleanupHandles can finalize a TSFN whose
+		// underlying mutex is already gone, aborting the main process
+		// (Sentry MAESTRO-3B).
 		logger.info('Killing all running processes', 'Shutdown');
-		processManager?.killAll();
+		processManager?.killAll({ shutdown: true });
 
 		// Clear power save blocker AFTER killAll() to prevent late process output
 		// from re-arming the blocker via addBlockReason()
@@ -245,6 +277,10 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 		webServer?.stop().catch((err: unknown) => {
 			logger.error(`Error stopping web server: ${err}`, 'Shutdown');
 		});
+
+		// Delete CLI server discovery file so CLI knows we're gone
+		logger.info('Deleting CLI server discovery file', 'Shutdown');
+		deleteCliServerInfo();
 
 		// Close stats database
 		logger.info('Closing stats database', 'Shutdown');

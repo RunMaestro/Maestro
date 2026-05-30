@@ -8,10 +8,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ipcMain } from 'electron';
-import {
-	registerDirectorNotesHandlers,
-	sanitizeDisplayName,
-} from '../../../../main/ipc/handlers/director-notes';
+import { registerDirectorNotesHandlers } from '../../../../main/ipc/handlers/director-notes';
 import * as historyManagerModule from '../../../../main/history-manager';
 import type { HistoryManager } from '../../../../main/history-manager';
 import type { HistoryEntry } from '../../../../shared/types';
@@ -28,6 +25,9 @@ vi.mock('electron', () => ({
 vi.mock('../../../../main/history-manager', () => ({
 	getHistoryManager: vi.fn(),
 }));
+
+// Mock the shared-history-manager module (no longer imported by director-notes)
+vi.mock('../../../../main/shared-history-manager', () => ({}));
 
 // Mock the stores module
 const mockGetSessionsStore = vi.fn().mockReturnValue({
@@ -52,9 +52,12 @@ vi.mock('../../../../main/utils/context-groomer', () => ({
 	groomContext: vi.fn(),
 }));
 
-// Mock the prompts module
-vi.mock('../../../../../prompts', () => ({
-	directorNotesPrompt: 'Mock director notes prompt',
+// Mock prompt-manager so getPrompt() returns mock content without needing disk I/O
+vi.mock('../../../../main/prompt-manager', () => ({
+	getPrompt: vi.fn((id: string) => {
+		if (id === 'director-notes') return 'Mock director notes prompt';
+		return `mock prompt for ${id}`;
+	}),
 }));
 
 describe('director-notes IPC handlers', () => {
@@ -462,6 +465,79 @@ describe('director-notes IPC handlers', () => {
 			expect(result.hasMore).toBe(false);
 		});
 
+		it('should return pre-computed graphBuckets when graphBucketCount is provided', async () => {
+			const now = Date.now();
+			const oneHourAgo = now - 60 * 60 * 1000;
+			const twoHoursAgo = now - 2 * 60 * 60 * 1000;
+			const twentyThreeHoursAgo = now - 23 * 60 * 60 * 1000;
+
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
+			vi.mocked(mockHistoryManager.getEntries).mockReturnValue([
+				createMockEntry({ id: 'e1', type: 'AUTO', timestamp: oneHourAgo }),
+				createMockEntry({ id: 'e2', type: 'USER', timestamp: oneHourAgo }),
+				createMockEntry({ id: 'e3', type: 'AUTO', timestamp: twoHoursAgo }),
+				createMockEntry({ id: 'e4', type: 'CUE', timestamp: twentyThreeHoursAgo }),
+			]);
+
+			const handler = handlers.get('director-notes:getUnifiedHistory');
+			const result = await handler!({} as any, {
+				lookbackDays: 1,
+				graphBucketCount: 24,
+			});
+
+			expect(result.graphBuckets).toBeDefined();
+			expect(result.graphBuckets).toHaveLength(24);
+
+			// All buckets should sum to total entries
+			const totalInBuckets = result.graphBuckets!.reduce(
+				(sum: number, b: { auto: number; user: number; cue: number }) =>
+					sum + b.auto + b.user + b.cue,
+				0
+			);
+			expect(totalInBuckets).toBe(4);
+		});
+
+		it('should not return graphBuckets when graphBucketCount is not provided', async () => {
+			const now = Date.now();
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
+			vi.mocked(mockHistoryManager.getEntries).mockReturnValue([
+				createMockEntry({ id: 'e1', timestamp: now - 1000 }),
+			]);
+
+			const handler = handlers.get('director-notes:getUnifiedHistory');
+			const result = await handler!({} as any, { lookbackDays: 7 });
+
+			expect(result.graphBuckets).toBeUndefined();
+		});
+
+		it('should compute graphBuckets for all-time mode (lookbackDays=0)', async () => {
+			const now = Date.now();
+			const oneDayAgo = now - 24 * 60 * 60 * 1000;
+			const thirtyDaysAgo = now - 30 * 24 * 60 * 60 * 1000;
+
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
+			vi.mocked(mockHistoryManager.getEntries).mockReturnValue([
+				createMockEntry({ id: 'e1', type: 'AUTO', timestamp: oneDayAgo }),
+				createMockEntry({ id: 'e2', type: 'USER', timestamp: thirtyDaysAgo }),
+			]);
+
+			const handler = handlers.get('director-notes:getUnifiedHistory');
+			const result = await handler!({} as any, {
+				lookbackDays: 0,
+				graphBucketCount: 24,
+			});
+
+			expect(result.graphBuckets).toBeDefined();
+			expect(result.graphBuckets).toHaveLength(24);
+
+			const totalInBuckets = result.graphBuckets!.reduce(
+				(sum: number, b: { auto: number; user: number; cue: number }) =>
+					sum + b.auto + b.user + b.cue,
+				0
+			);
+			expect(totalInBuckets).toBe(2);
+		});
+
 		it('should support pagination with limit and offset', async () => {
 			const now = Date.now();
 			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
@@ -501,6 +577,13 @@ describe('director-notes IPC handlers', () => {
 	});
 
 	describe('director-notes:generateSynopsis', () => {
+		// The manifest is scoped to sessions that have entries inside the lookback
+		// window, so default getEntries to a fresh entry. Tests that exercise the
+		// empty / out-of-window paths override this explicitly.
+		beforeEach(() => {
+			vi.mocked(mockHistoryManager.getEntries).mockReturnValue([createMockEntry()]);
+		});
+
 		it('should return error when agent is not available', async () => {
 			mockAgentDetector.getAgent.mockResolvedValue({ available: false });
 
@@ -776,34 +859,39 @@ describe('director-notes IPC handlers', () => {
 			expect(promptArg).toContain('Lookback period: 14 days');
 			expect(promptArg).toContain('Timestamp cutoff:');
 		});
-	});
-});
 
-describe('sanitizeDisplayName', () => {
-	it('should strip markdown formatting characters', () => {
-		expect(sanitizeDisplayName('**bold** text')).toBe('bold text');
-		expect(sanitizeDisplayName('# heading')).toBe('heading');
-		expect(sanitizeDisplayName('`code`')).toBe('code');
-		expect(sanitizeDisplayName('~~strikethrough~~')).toBe('strikethrough');
-	});
+		it('excludes sessions with no entries inside the lookback window', async () => {
+			const { groomContext } = await import('../../../../main/utils/context-groomer');
+			vi.mocked(groomContext).mockResolvedValue({
+				response: '# Synopsis',
+				durationMs: 1000,
+				completionReason: 'process exited with code 0',
+			});
 
-	it('should strip link and image syntax', () => {
-		expect(sanitizeDisplayName('[link](url)')).toBe('linkurl');
-		expect(sanitizeDisplayName('![alt](img)')).toBe('altimg');
-	});
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue([
+				'recent-session',
+				'stale-session',
+			]);
+			vi.mocked(mockHistoryManager.getHistoryFilePath)
+				.mockReturnValueOnce('/data/history/recent-session.json')
+				.mockReturnValueOnce('/data/history/stale-session.json');
+			// stale-session only has entries far outside the 7-day window and must be
+			// left out of the manifest — otherwise the grooming agent burns its whole
+			// timeout reading out-of-range history files and emits no synopsis.
+			vi.mocked(mockHistoryManager.getEntries)
+				.mockReturnValueOnce([createMockEntry({ timestamp: Date.now() })])
+				.mockReturnValueOnce([
+					createMockEntry({ timestamp: Date.now() - 90 * 24 * 60 * 60 * 1000 }),
+				]);
 
-	it('should collapse whitespace and trim', () => {
-		expect(sanitizeDisplayName('  hello   world  ')).toBe('hello world');
-		expect(sanitizeDisplayName('line\nnewline')).toBe('line newline');
-	});
+			const handler = handlers.get('director-notes:generateSynopsis');
+			const result = await handler!({} as any, { lookbackDays: 7, provider: 'claude-code' });
 
-	it('should preserve emoji and regular text', () => {
-		expect(sanitizeDisplayName('🚧 feature-branch')).toBe('🚧 feature-branch');
-		expect(sanitizeDisplayName('my-session')).toBe('my-session');
-	});
-
-	it('should handle empty and whitespace-only strings', () => {
-		expect(sanitizeDisplayName('')).toBe('');
-		expect(sanitizeDisplayName('   ')).toBe('');
+			expect(result.success).toBe(true);
+			expect(result.stats.agentCount).toBe(1);
+			const promptArg = vi.mocked(groomContext).mock.calls[0][0].prompt;
+			expect(promptArg).toContain('/data/history/recent-session.json');
+			expect(promptArg).not.toContain('stale-session');
+		});
 	});
 });

@@ -24,7 +24,7 @@ export interface MarketplaceManifest {
 /**
  * Playbook source type - distinguishes official GitHub playbooks from local ones.
  */
-export type PlaybookSource = 'official' | 'local';
+type PlaybookSource = 'official' | 'local';
 
 /**
  * Individual playbook entry in the marketplace manifest.
@@ -66,6 +66,18 @@ export interface MarketplacePlaybook {
 	assets?: string[];
 	/** Source of the playbook - official (from GitHub) or local (from local-manifest.json) */
 	source?: PlaybookSource;
+	/**
+	 * Minimum Maestro version required to install this playbook (semver).
+	 * If the running version is older, the playbook is shown but install is blocked.
+	 * Absent or invalid → no minimum (treated as compatible with any version).
+	 */
+	minMaestroVersion?: string;
+	/**
+	 * Beta flag — soft signal that the playbook is still maturing.
+	 * Strictly checked: only the boolean literal `true` counts as beta. Any other
+	 * value (false, "yes", 1, absent) is treated as not-beta. Does not affect install.
+	 */
+	beta?: boolean;
 }
 
 /**

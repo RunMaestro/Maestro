@@ -18,6 +18,7 @@
  *   - Worktree children included when parent's worktreesExpanded !== false
  *   - Worktree children skipped when parent's worktreesExpanded === false
  *   - Position tracking via cyclePosition store field
+ *   - Unread filter restricts cycling to unread/busy agents only
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -135,11 +136,12 @@ const defaultGroupChatStoreState = {
 const defaultUIStoreState = {
 	leftSidebarOpen: true,
 	bookmarksCollapsed: false,
-	groupChatsExpanded: true,
+	showUnreadAgentsOnly: false,
 };
 
 const defaultSettingsStoreState = {
 	ungroupedCollapsed: false,
+	groupChatsExpanded: true,
 };
 
 function resetStores() {
@@ -196,7 +198,7 @@ describe('useCycleSession', () => {
 
 		it('does nothing when ungroupedCollapsed and no groups/group chats', () => {
 			useSettingsStore.setState({ ungroupedCollapsed: true } as any);
-			useUIStore.setState({ groupChatsExpanded: false } as any);
+			useSettingsStore.setState({ groupChatsExpanded: false } as any);
 
 			const sessA = makeSession({ id: 'a', name: 'Alpha' });
 			useSessionStore.setState({ sessions: [sessA], activeSessionId: 'a' } as any);
@@ -230,8 +232,8 @@ describe('useCycleSession', () => {
 			useUIStore.setState({
 				leftSidebarOpen: true,
 				bookmarksCollapsed: true,
-				groupChatsExpanded: false,
 			} as any);
+			useSettingsStore.setState({ groupChatsExpanded: false } as any);
 
 			const deps = makeDeps();
 			const { result } = renderHook(() => useCycleSession(deps));
@@ -257,8 +259,8 @@ describe('useCycleSession', () => {
 			useUIStore.setState({
 				leftSidebarOpen: true,
 				bookmarksCollapsed: true,
-				groupChatsExpanded: false,
 			} as any);
+			useSettingsStore.setState({ groupChatsExpanded: false } as any);
 
 			const deps = makeDeps();
 			const { result } = renderHook(() => useCycleSession(deps));
@@ -292,8 +294,8 @@ describe('useCycleSession', () => {
 			useUIStore.setState({
 				leftSidebarOpen: true,
 				bookmarksCollapsed: true,
-				groupChatsExpanded: false,
 			} as any);
+			useSettingsStore.setState({ groupChatsExpanded: false } as any);
 
 			const deps = makeDeps();
 			const { result } = renderHook(() => useCycleSession(deps));
@@ -319,8 +321,8 @@ describe('useCycleSession', () => {
 			useUIStore.setState({
 				leftSidebarOpen: true,
 				bookmarksCollapsed: true,
-				groupChatsExpanded: false,
 			} as any);
+			useSettingsStore.setState({ groupChatsExpanded: false } as any);
 
 			const deps = makeDeps();
 			const { result } = renderHook(() => useCycleSession(deps));
@@ -354,8 +356,8 @@ describe('useCycleSession', () => {
 			useUIStore.setState({
 				leftSidebarOpen: true,
 				bookmarksCollapsed: true,
-				groupChatsExpanded: false,
 			} as any);
+			useSettingsStore.setState({ groupChatsExpanded: false } as any);
 
 			const deps = makeDeps();
 			const { result } = renderHook(() => useCycleSession(deps));
@@ -381,8 +383,8 @@ describe('useCycleSession', () => {
 			useUIStore.setState({
 				leftSidebarOpen: true,
 				bookmarksCollapsed: true,
-				groupChatsExpanded: false,
 			} as any);
+			useSettingsStore.setState({ groupChatsExpanded: false } as any);
 
 			const deps = makeDeps();
 			const { result } = renderHook(() => useCycleSession(deps));
@@ -413,8 +415,8 @@ describe('useCycleSession', () => {
 			useUIStore.setState({
 				leftSidebarOpen: true,
 				bookmarksCollapsed: false,
-				groupChatsExpanded: false,
 			} as any);
+			useSettingsStore.setState({ groupChatsExpanded: false } as any);
 
 			const deps = makeDeps();
 			const { result } = renderHook(() => useCycleSession(deps));
@@ -444,8 +446,8 @@ describe('useCycleSession', () => {
 			useUIStore.setState({
 				leftSidebarOpen: true,
 				bookmarksCollapsed: false,
-				groupChatsExpanded: false,
 			} as any);
+			useSettingsStore.setState({ groupChatsExpanded: false } as any);
 
 			const deps = makeDeps();
 			const { result } = renderHook(() => useCycleSession(deps));
@@ -477,8 +479,8 @@ describe('useCycleSession', () => {
 			useUIStore.setState({
 				leftSidebarOpen: true,
 				bookmarksCollapsed: true,
-				groupChatsExpanded: false,
 			} as any);
+			useSettingsStore.setState({ groupChatsExpanded: false } as any);
 
 			const deps = makeDeps();
 			const { result } = renderHook(() => useCycleSession(deps));
@@ -512,8 +514,8 @@ describe('useCycleSession', () => {
 			useUIStore.setState({
 				leftSidebarOpen: true,
 				bookmarksCollapsed: true,
-				groupChatsExpanded: false,
 			} as any);
+			useSettingsStore.setState({ groupChatsExpanded: false } as any);
 			useSettingsStore.setState({ ungroupedCollapsed: true } as any);
 
 			const deps = makeDeps();
@@ -548,8 +550,8 @@ describe('useCycleSession', () => {
 			useUIStore.setState({
 				leftSidebarOpen: true,
 				bookmarksCollapsed: true,
-				groupChatsExpanded: false,
 			} as any);
+			useSettingsStore.setState({ groupChatsExpanded: false } as any);
 			useSettingsStore.setState({ ungroupedCollapsed: true } as any);
 
 			const deps = makeDeps();
@@ -585,8 +587,8 @@ describe('useCycleSession', () => {
 			useUIStore.setState({
 				leftSidebarOpen: true,
 				bookmarksCollapsed: true,
-				groupChatsExpanded: false,
 			} as any);
+			useSettingsStore.setState({ groupChatsExpanded: false } as any);
 			useSettingsStore.setState({ ungroupedCollapsed: true } as any);
 
 			const deps = makeDeps();
@@ -618,8 +620,8 @@ describe('useCycleSession', () => {
 			useUIStore.setState({
 				leftSidebarOpen: true,
 				bookmarksCollapsed: true,
-				groupChatsExpanded: false,
 			} as any);
+			useSettingsStore.setState({ groupChatsExpanded: false } as any);
 			useSettingsStore.setState({ ungroupedCollapsed: true } as any);
 
 			const deps = makeDeps();
@@ -652,8 +654,8 @@ describe('useCycleSession', () => {
 			useUIStore.setState({
 				leftSidebarOpen: true,
 				bookmarksCollapsed: true,
-				groupChatsExpanded: false,
 			} as any);
+			useSettingsStore.setState({ groupChatsExpanded: false } as any);
 			useSettingsStore.setState({ ungroupedCollapsed: true } as any);
 
 			const deps = makeDeps();
@@ -681,8 +683,8 @@ describe('useCycleSession', () => {
 			useUIStore.setState({
 				leftSidebarOpen: true,
 				bookmarksCollapsed: true,
-				groupChatsExpanded: false,
 			} as any);
+			useSettingsStore.setState({ groupChatsExpanded: false } as any);
 			useSettingsStore.setState({ ungroupedCollapsed: false } as any);
 
 			const deps = makeDeps();
@@ -716,8 +718,8 @@ describe('useCycleSession', () => {
 			useUIStore.setState({
 				leftSidebarOpen: true,
 				bookmarksCollapsed: true,
-				groupChatsExpanded: true,
 			} as any);
+			useSettingsStore.setState({ groupChatsExpanded: true } as any);
 
 			const handleOpenGroupChat = vi.fn();
 			const deps = makeDeps({ handleOpenGroupChat });
@@ -749,8 +751,8 @@ describe('useCycleSession', () => {
 			useUIStore.setState({
 				leftSidebarOpen: true,
 				bookmarksCollapsed: true,
-				groupChatsExpanded: true,
 			} as any);
+			useSettingsStore.setState({ groupChatsExpanded: true } as any);
 
 			const handleOpenGroupChat = vi.fn();
 			const deps = makeDeps({ handleOpenGroupChat });
@@ -791,8 +793,8 @@ describe('useCycleSession', () => {
 			useUIStore.setState({
 				leftSidebarOpen: true,
 				bookmarksCollapsed: true,
-				groupChatsExpanded: false,
 			} as any);
+			useSettingsStore.setState({ groupChatsExpanded: false } as any);
 
 			const handleOpenGroupChat = vi.fn();
 			const deps = makeDeps({ handleOpenGroupChat });
@@ -821,8 +823,8 @@ describe('useCycleSession', () => {
 			useUIStore.setState({
 				leftSidebarOpen: true,
 				bookmarksCollapsed: true,
-				groupChatsExpanded: true,
 			} as any);
+			useSettingsStore.setState({ groupChatsExpanded: true } as any);
 
 			const handleOpenGroupChat = vi.fn();
 			const deps = makeDeps({ handleOpenGroupChat });
@@ -853,8 +855,8 @@ describe('useCycleSession', () => {
 			useUIStore.setState({
 				leftSidebarOpen: true,
 				bookmarksCollapsed: true,
-				groupChatsExpanded: true,
 			} as any);
+			useSettingsStore.setState({ groupChatsExpanded: true } as any);
 
 			// cyclePosition=1 means we are on the group chat slot
 			useSessionStore.setState({ cyclePosition: 1 } as any);
@@ -889,8 +891,8 @@ describe('useCycleSession', () => {
 			useUIStore.setState({
 				leftSidebarOpen: true,
 				bookmarksCollapsed: true,
-				groupChatsExpanded: true,
 			} as any);
+			useSettingsStore.setState({ groupChatsExpanded: true } as any);
 
 			const handleOpenGroupChat = vi.fn();
 			const deps = makeDeps({ handleOpenGroupChat });
@@ -934,8 +936,8 @@ describe('useCycleSession', () => {
 			useUIStore.setState({
 				leftSidebarOpen: false,
 				bookmarksCollapsed: true,
-				groupChatsExpanded: true,
 			} as any);
+			useSettingsStore.setState({ groupChatsExpanded: true } as any);
 
 			// sortedSessions provided by deps in a specific custom order
 			const deps = makeDeps({ sortedSessions: [sessC, sessB, sessA] });
@@ -965,8 +967,8 @@ describe('useCycleSession', () => {
 			useUIStore.setState({
 				leftSidebarOpen: false,
 				bookmarksCollapsed: false,
-				groupChatsExpanded: true,
 			} as any);
+			useSettingsStore.setState({ groupChatsExpanded: true } as any);
 
 			const handleOpenGroupChat = vi.fn();
 			const deps = makeDeps({ sortedSessions: [sessA], handleOpenGroupChat });
@@ -1007,8 +1009,8 @@ describe('useCycleSession', () => {
 			useUIStore.setState({
 				leftSidebarOpen: true,
 				bookmarksCollapsed: true,
-				groupChatsExpanded: false,
 			} as any);
+			useSettingsStore.setState({ groupChatsExpanded: false } as any);
 			useSettingsStore.setState({ ungroupedCollapsed: true } as any);
 
 			const deps = makeDeps();
@@ -1042,8 +1044,8 @@ describe('useCycleSession', () => {
 			useUIStore.setState({
 				leftSidebarOpen: true,
 				bookmarksCollapsed: true,
-				groupChatsExpanded: true,
 			} as any);
+			useSettingsStore.setState({ groupChatsExpanded: true } as any);
 			useSettingsStore.setState({ ungroupedCollapsed: true } as any);
 
 			const handleOpenGroupChat = vi.fn();
@@ -1072,8 +1074,8 @@ describe('useCycleSession', () => {
 			useUIStore.setState({
 				leftSidebarOpen: true,
 				bookmarksCollapsed: true,
-				groupChatsExpanded: false,
 			} as any);
+			useSettingsStore.setState({ groupChatsExpanded: false } as any);
 
 			const deps = makeDeps();
 			const { result } = renderHook(() => useCycleSession(deps));
@@ -1116,8 +1118,8 @@ describe('useCycleSession', () => {
 			useUIStore.setState({
 				leftSidebarOpen: true,
 				bookmarksCollapsed: true,
-				groupChatsExpanded: false,
 			} as any);
+			useSettingsStore.setState({ groupChatsExpanded: false } as any);
 
 			const deps = makeDeps();
 			const { result } = renderHook(() => useCycleSession(deps));
@@ -1153,8 +1155,8 @@ describe('useCycleSession', () => {
 			useUIStore.setState({
 				leftSidebarOpen: true,
 				bookmarksCollapsed: true,
-				groupChatsExpanded: false,
 			} as any);
+			useSettingsStore.setState({ groupChatsExpanded: false } as any);
 
 			const deps = makeDeps();
 			const { result } = renderHook(() => useCycleSession(deps));
@@ -1183,8 +1185,8 @@ describe('useCycleSession', () => {
 			useUIStore.setState({
 				leftSidebarOpen: true,
 				bookmarksCollapsed: true,
-				groupChatsExpanded: false,
 			} as any);
+			useSettingsStore.setState({ groupChatsExpanded: false } as any);
 
 			const deps = makeDeps();
 			const { result } = renderHook(() => useCycleSession(deps));
@@ -1197,19 +1199,23 @@ describe('useCycleSession', () => {
 			expect(useSessionStore.getState().activeSessionId).toBe('b');
 		});
 
-		it('worktree children are sorted by worktreeBranch name', () => {
+		it('worktree children are sorted by display name, not branch name', () => {
+			// Cycling order must match the visible Left Bar order. SessionItem renders
+			// `session.name` as the primary label, so cycling sorts by name and ignores
+			// `worktreeBranch` (which is only a subtitle and would otherwise make Cmd+Shift+[/]
+			// bounce around relative to what the user sees).
 			const parent = makeSession({ id: 'p', name: 'Parent', worktreesExpanded: true });
 			const childZ = makeSession({
 				id: 'cz',
-				name: 'Child',
+				name: 'zebra-agent',
 				parentSessionId: 'p',
-				worktreeBranch: 'zzz-branch',
+				worktreeBranch: 'aaa-branch',
 			});
 			const childA = makeSession({
 				id: 'ca',
-				name: 'Child',
+				name: 'apple-agent',
 				parentSessionId: 'p',
-				worktreeBranch: 'aaa-branch',
+				worktreeBranch: 'zzz-branch',
 			});
 
 			useSessionStore.setState({
@@ -1220,20 +1226,20 @@ describe('useCycleSession', () => {
 			useUIStore.setState({
 				leftSidebarOpen: true,
 				bookmarksCollapsed: true,
-				groupChatsExpanded: false,
 			} as any);
+			useSettingsStore.setState({ groupChatsExpanded: false } as any);
 
 			const deps = makeDeps();
 			const { result } = renderHook(() => useCycleSession(deps));
 
-			// Visual order: [Parent, aaa-branch(ca), zzz-branch(cz)]
-			// next from Parent → ca
+			// Visual order by name: [Parent, apple-agent(ca), zebra-agent(cz)]
+			// next from Parent → ca (apple-agent comes first alphabetically by name)
 			act(() => {
 				result.current.cycleSession('next');
 			});
 			expect(useSessionStore.getState().activeSessionId).toBe('ca');
 
-			// next from ca → cz
+			// next from ca → cz (zebra-agent)
 			act(() => {
 				result.current.cycleSession('next');
 			});
@@ -1258,8 +1264,8 @@ describe('useCycleSession', () => {
 			useUIStore.setState({
 				leftSidebarOpen: true,
 				bookmarksCollapsed: true,
-				groupChatsExpanded: false,
 			} as any);
+			useSettingsStore.setState({ groupChatsExpanded: false } as any);
 
 			const deps = makeDeps();
 			const { result } = renderHook(() => useCycleSession(deps));
@@ -1291,8 +1297,8 @@ describe('useCycleSession', () => {
 			useUIStore.setState({
 				leftSidebarOpen: true,
 				bookmarksCollapsed: true,
-				groupChatsExpanded: false,
 			} as any);
+			useSettingsStore.setState({ groupChatsExpanded: false } as any);
 
 			const deps = makeDeps();
 			const { result } = renderHook(() => useCycleSession(deps));
@@ -1329,8 +1335,8 @@ describe('useCycleSession', () => {
 			useUIStore.setState({
 				leftSidebarOpen: true,
 				bookmarksCollapsed: true,
-				groupChatsExpanded: false,
 			} as any);
+			useSettingsStore.setState({ groupChatsExpanded: false } as any);
 
 			const deps = makeDeps();
 			const { result } = renderHook(() => useCycleSession(deps));
@@ -1357,8 +1363,8 @@ describe('useCycleSession', () => {
 			useUIStore.setState({
 				leftSidebarOpen: true,
 				bookmarksCollapsed: true,
-				groupChatsExpanded: false,
 			} as any);
+			useSettingsStore.setState({ groupChatsExpanded: false } as any);
 
 			const deps = makeDeps();
 			const { result } = renderHook(() => useCycleSession(deps));
@@ -1383,8 +1389,8 @@ describe('useCycleSession', () => {
 			useUIStore.setState({
 				leftSidebarOpen: true,
 				bookmarksCollapsed: true,
-				groupChatsExpanded: false,
 			} as any);
+			useSettingsStore.setState({ groupChatsExpanded: false } as any);
 
 			const deps = makeDeps();
 			const { result } = renderHook(() => useCycleSession(deps));
@@ -1410,8 +1416,8 @@ describe('useCycleSession', () => {
 			useUIStore.setState({
 				leftSidebarOpen: true,
 				bookmarksCollapsed: true,
-				groupChatsExpanded: false,
 			} as any);
+			useSettingsStore.setState({ groupChatsExpanded: false } as any);
 
 			const deps = makeDeps();
 			const { result } = renderHook(() => useCycleSession(deps));
@@ -1444,8 +1450,8 @@ describe('useCycleSession', () => {
 			useUIStore.setState({
 				leftSidebarOpen: true,
 				bookmarksCollapsed: true,
-				groupChatsExpanded: true,
 			} as any);
+			useSettingsStore.setState({ groupChatsExpanded: true } as any);
 
 			const deps = makeDeps();
 			const { result } = renderHook(() => useCycleSession(deps));
@@ -1476,8 +1482,8 @@ describe('useCycleSession', () => {
 			useUIStore.setState({
 				leftSidebarOpen: true,
 				bookmarksCollapsed: true,
-				groupChatsExpanded: false,
 			} as any);
+			useSettingsStore.setState({ groupChatsExpanded: false } as any);
 
 			const deps = makeDeps();
 			const { result } = renderHook(() => useCycleSession(deps));
@@ -1501,8 +1507,8 @@ describe('useCycleSession', () => {
 			useUIStore.setState({
 				leftSidebarOpen: true,
 				bookmarksCollapsed: true,
-				groupChatsExpanded: false,
 			} as any);
+			useSettingsStore.setState({ groupChatsExpanded: false } as any);
 
 			const deps = makeDeps();
 			const { result } = renderHook(() => useCycleSession(deps));
@@ -1513,6 +1519,185 @@ describe('useCycleSession', () => {
 
 			expect(useSessionStore.getState().activeSessionId).toBe('a');
 			expect(useSessionStore.getState().cyclePosition).toBe(0);
+		});
+	});
+
+	// =========================================================================
+	// Unread filter — showUnreadAgentsOnly restricts cycling
+	// =========================================================================
+	describe('unread agents filter', () => {
+		it('cycles only through unread sessions when filter is active', () => {
+			const sessA = makeSession({ id: 'a', name: 'Alpha', aiTabs: [{ hasUnread: true }] as any });
+			const sessB = makeSession({ id: 'b', name: 'Beta' }); // no unread
+			const sessC = makeSession({ id: 'c', name: 'Gamma', aiTabs: [{ hasUnread: true }] as any });
+
+			useSessionStore.setState({
+				sessions: [sessA, sessB, sessC],
+				activeSessionId: 'a',
+				cyclePosition: -1,
+			} as any);
+			useUIStore.setState({
+				leftSidebarOpen: true,
+				bookmarksCollapsed: true,
+				showUnreadAgentsOnly: true,
+			} as any);
+			useSettingsStore.setState({ groupChatsExpanded: false } as any);
+
+			const deps = makeDeps();
+			const { result } = renderHook(() => useCycleSession(deps));
+
+			act(() => {
+				result.current.cycleSession('next');
+			});
+
+			// Alpha → Gamma (skips Beta which has no unread)
+			expect(useSessionStore.getState().activeSessionId).toBe('c');
+		});
+
+		it('includes busy sessions even if not unread', () => {
+			const sessA = makeSession({ id: 'a', name: 'Alpha', aiTabs: [{ hasUnread: true }] as any });
+			const sessB = makeSession({ id: 'b', name: 'Beta', state: 'busy' });
+			const sessC = makeSession({ id: 'c', name: 'Gamma' }); // neither unread nor busy
+
+			useSessionStore.setState({
+				sessions: [sessA, sessB, sessC],
+				activeSessionId: 'a',
+				cyclePosition: -1,
+			} as any);
+			useUIStore.setState({
+				leftSidebarOpen: true,
+				bookmarksCollapsed: true,
+				showUnreadAgentsOnly: true,
+			} as any);
+			useSettingsStore.setState({ groupChatsExpanded: false } as any);
+
+			const deps = makeDeps();
+			const { result } = renderHook(() => useCycleSession(deps));
+
+			act(() => {
+				result.current.cycleSession('next');
+			});
+
+			// Alpha → Beta (busy counts as visible)
+			expect(useSessionStore.getState().activeSessionId).toBe('b');
+		});
+
+		it('always includes the currently active session in the cycle list', () => {
+			// Active session 'a' is not unread but should still appear in the filtered
+			// cycle list so the user can cycle away from it (rather than being stuck).
+			const sessA = makeSession({ id: 'a', name: 'Alpha' }); // not unread, but active
+			const sessB = makeSession({ id: 'b', name: 'Beta', aiTabs: [{ hasUnread: true }] as any });
+			const sessC = makeSession({ id: 'c', name: 'Gamma', aiTabs: [{ hasUnread: true }] as any });
+
+			useSessionStore.setState({
+				sessions: [sessA, sessB, sessC],
+				activeSessionId: 'a',
+				cyclePosition: -1,
+			} as any);
+			useUIStore.setState({
+				leftSidebarOpen: true,
+				bookmarksCollapsed: true,
+				showUnreadAgentsOnly: true,
+			} as any);
+			useSettingsStore.setState({ groupChatsExpanded: false } as any);
+
+			const deps = makeDeps();
+			const { result } = renderHook(() => useCycleSession(deps));
+
+			// 'a' is active (not unread) → included. Filtered list: [a, b, c]
+			act(() => {
+				result.current.cycleSession('next');
+			});
+			expect(useSessionStore.getState().activeSessionId).toBe('b');
+		});
+
+		it('wraps around within filtered sessions', () => {
+			const sessA = makeSession({ id: 'a', name: 'Alpha', aiTabs: [{ hasUnread: true }] as any });
+			const sessB = makeSession({ id: 'b', name: 'Beta' });
+			const sessC = makeSession({ id: 'c', name: 'Gamma', aiTabs: [{ hasUnread: true }] as any });
+
+			useSessionStore.setState({
+				sessions: [sessA, sessB, sessC],
+				activeSessionId: 'c',
+				cyclePosition: -1,
+			} as any);
+			useUIStore.setState({
+				leftSidebarOpen: true,
+				bookmarksCollapsed: true,
+				showUnreadAgentsOnly: true,
+			} as any);
+			useSettingsStore.setState({ groupChatsExpanded: false } as any);
+
+			const deps = makeDeps();
+			const { result } = renderHook(() => useCycleSession(deps));
+
+			act(() => {
+				result.current.cycleSession('next');
+			});
+
+			// Gamma is last unread → wraps to Alpha (active Gamma + unread Alpha + unread Gamma)
+			expect(useSessionStore.getState().activeSessionId).toBe('a');
+		});
+
+		it('includes parent when worktree child has unread', () => {
+			const parent = makeSession({ id: 'p', name: 'Parent' }); // no unread itself
+			const child = makeSession({
+				id: 'child1',
+				name: 'Child',
+				parentSessionId: 'p',
+				worktreeBranch: 'feat',
+				aiTabs: [{ hasUnread: true }] as any,
+			});
+			const other = makeSession({ id: 'o', name: 'Other', aiTabs: [{ hasUnread: true }] as any });
+
+			useSessionStore.setState({
+				sessions: [parent, child, other],
+				activeSessionId: 'o',
+				cyclePosition: -1,
+			} as any);
+			useUIStore.setState({
+				leftSidebarOpen: true,
+				bookmarksCollapsed: true,
+				showUnreadAgentsOnly: true,
+			} as any);
+			useSettingsStore.setState({ groupChatsExpanded: false } as any);
+
+			const deps = makeDeps();
+			const { result } = renderHook(() => useCycleSession(deps));
+
+			act(() => {
+				result.current.cycleSession('next');
+			});
+
+			// Other → Parent (parent included because child has unread)
+			expect(useSessionStore.getState().activeSessionId).toBe('p');
+		});
+
+		it('does not filter when showUnreadAgentsOnly is false', () => {
+			const sessA = makeSession({ id: 'a', name: 'Alpha' });
+			const sessB = makeSession({ id: 'b', name: 'Beta' });
+
+			useSessionStore.setState({
+				sessions: [sessA, sessB],
+				activeSessionId: 'a',
+				cyclePosition: -1,
+			} as any);
+			useUIStore.setState({
+				leftSidebarOpen: true,
+				bookmarksCollapsed: true,
+				showUnreadAgentsOnly: false,
+			} as any);
+			useSettingsStore.setState({ groupChatsExpanded: false } as any);
+
+			const deps = makeDeps();
+			const { result } = renderHook(() => useCycleSession(deps));
+
+			act(() => {
+				result.current.cycleSession('next');
+			});
+
+			// All sessions visible — Alpha → Beta
+			expect(useSessionStore.getState().activeSessionId).toBe('b');
 		});
 	});
 });

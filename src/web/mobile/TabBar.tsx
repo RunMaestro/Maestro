@@ -6,7 +6,7 @@
  * Long-press on a tab shows a popover with rename, star, and move actions.
  */
 
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { useThemeColors } from '../components/ThemeProvider';
 import { useLongPress } from '../hooks/useLongPress';
 import { triggerHaptic, HAPTIC_PATTERNS } from './constants';
@@ -22,6 +22,12 @@ interface TabBarProps {
 	onStarTab?: (tabId: string, starred: boolean) => void;
 	onReorderTab?: (fromIndex: number, toIndex: number) => void;
 	onOpenTabSearch?: () => void;
+	/** Current input mode — determines which tab type is visually active */
+	inputMode?: 'ai' | 'terminal';
+	/** Called when the terminal tab is selected */
+	onSelectTerminal?: () => void;
+	/** Called when the terminal tab is closed */
+	onCloseTerminal?: () => void;
 }
 
 interface TabProps {
@@ -534,6 +540,14 @@ function TabActionsPopover({
 	);
 }
 
+/**
+ * A tab is considered "unread" if hasUnread is set OR the tab is busy
+ * (mirrors the agent-level bell filter in LeftPanel).
+ */
+function tabHasUnreadActivity(tab: AITabData): boolean {
+	return Boolean(tab.hasUnread) || tab.state === 'busy';
+}
+
 export function TabBar({
 	tabs,
 	activeTabId,
@@ -544,9 +558,15 @@ export function TabBar({
 	onStarTab,
 	onReorderTab,
 	onOpenTabSearch,
+	inputMode = 'ai',
+	onSelectTerminal,
+	onCloseTerminal,
 }: TabBarProps) {
 	const colors = useThemeColors();
 	const [popoverState, setPopoverState] = useState<TabPopoverState | null>(null);
+	const [showNewTabMenu, setShowNewTabMenu] = useState(false);
+	const [showUnreadOnly, setShowUnreadOnly] = useState(false);
+	const newTabMenuRef = useRef<HTMLDivElement>(null);
 
 	const handleTabLongPress = useCallback((tab: AITabData, tabIdx: number, rect: DOMRect) => {
 		setPopoverState({ tab, tabIndex: tabIdx, anchorRect: rect });
@@ -556,10 +576,42 @@ export function TabBar({
 		setPopoverState(null);
 	}, []);
 
-	// Don't render if there's only one tab
-	if (tabs.length <= 1) {
-		return null;
-	}
+	// Close new tab menu when clicking outside
+	useEffect(() => {
+		if (!showNewTabMenu) return;
+		const handleClickOutside = (e: MouseEvent) => {
+			if (newTabMenuRef.current && !newTabMenuRef.current.contains(e.target as Node)) {
+				setShowNewTabMenu(false);
+			}
+		};
+		document.addEventListener('mousedown', handleClickOutside);
+		return () => document.removeEventListener('mousedown', handleClickOutside);
+	}, [showNewTabMenu]);
+
+	// Bell filter — derived state for whether the indicator dot should appear
+	// on the bell button and which tabs to render. The button stays clickable
+	// even when there are no unread tabs (matches the desktop Left Bar bell):
+	// toggling it on with everything quiet just narrows the bar to the active
+	// tab.
+	//
+	// Exclude the currently focused AI tab from the badge calc — its activity
+	// is already in front of the user, so flagging it as off-tab unread would
+	// be misleading and toggling the bell wouldn't reveal anything new.
+	const hasUnreadTabs = tabs.some(
+		(tab) => !(inputMode === 'ai' && tab.id === activeTabId) && tabHasUnreadActivity(tab)
+	);
+
+	const visibleTabs = showUnreadOnly
+		? tabs.filter((tab) => tab.id === activeTabId || tabHasUnreadActivity(tab))
+		: tabs;
+
+	// Pre-build an id→index map so the render loop's lookup of the original
+	// (unfiltered) tab index stays O(1) instead of O(n) per tab.
+	const tabIndexById = useMemo(() => {
+		const map = new Map<string, number>();
+		tabs.forEach((tab, index) => map.set(tab.id, index));
+		return map;
+	}, [tabs]);
 
 	const canClose = tabs.length > 1;
 
@@ -572,7 +624,7 @@ export function TabBar({
 				borderBottom: `1px solid ${colors.border}`,
 			}}
 		>
-			{/* Pinned buttons - search and new tab */}
+			{/* Pinned buttons - bell, search, and new tab */}
 			<div
 				style={{
 					flexShrink: 0,
@@ -582,6 +634,61 @@ export function TabBar({
 					gap: '6px',
 				}}
 			>
+				{/* Bell filter — narrows the bar to the active tab plus any with
+				    unread/busy activity. Always clickable so users can hide quiet
+				    tabs even when nothing is currently unread. */}
+				<button
+					onClick={() => {
+						triggerHaptic(HAPTIC_PATTERNS.tap);
+						setShowUnreadOnly((prev) => !prev);
+					}}
+					style={{
+						position: 'relative',
+						display: 'flex',
+						alignItems: 'center',
+						justifyContent: 'center',
+						width: '28px',
+						height: '28px',
+						borderRadius: '14px',
+						border: `1px solid ${showUnreadOnly ? colors.accent : colors.border}`,
+						backgroundColor: showUnreadOnly ? colors.accent : colors.bgMain,
+						color: showUnreadOnly ? '#fff' : colors.textDim,
+						cursor: 'pointer',
+						marginBottom: '4px',
+						padding: 0,
+					}}
+					aria-pressed={showUnreadOnly}
+					aria-label={showUnreadOnly ? 'Showing unread tabs only' : 'Filter unread tabs'}
+					title={showUnreadOnly ? 'Showing unread tabs only' : 'Filter unread tabs'}
+				>
+					<svg
+						width="14"
+						height="14"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						strokeWidth="2"
+						strokeLinecap="round"
+						strokeLinejoin="round"
+					>
+						<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+						<path d="M13.73 21a2 2 0 0 1-3.46 0" />
+					</svg>
+					{hasUnreadTabs && !showUnreadOnly && (
+						<span
+							style={{
+								position: 'absolute',
+								top: '2px',
+								right: '2px',
+								width: '6px',
+								height: '6px',
+								borderRadius: '50%',
+								backgroundColor: colors.accent,
+							}}
+						/>
+					)}
+				</button>
+
 				{/* Search tabs button */}
 				{onOpenTabSearch && (
 					<button
@@ -617,38 +724,130 @@ export function TabBar({
 					</button>
 				)}
 
-				{/* New tab button */}
-				<button
-					onClick={onNewTab}
-					style={{
-						display: 'flex',
-						alignItems: 'center',
-						justifyContent: 'center',
-						width: '28px',
-						height: '28px',
-						borderRadius: '14px',
-						border: `1px solid ${colors.border}`,
-						backgroundColor: colors.bgMain,
-						color: colors.textDim,
-						cursor: 'pointer',
-						marginBottom: '4px',
-					}}
-					title="New Tab"
-				>
-					<svg
-						width="14"
-						height="14"
-						viewBox="0 0 24 24"
-						fill="none"
-						stroke="currentColor"
-						strokeWidth="2"
-						strokeLinecap="round"
-						strokeLinejoin="round"
+				{/* New tab button with menu */}
+				<div ref={newTabMenuRef} style={{ position: 'relative' }}>
+					<button
+						onClick={() => setShowNewTabMenu((prev) => !prev)}
+						style={{
+							display: 'flex',
+							alignItems: 'center',
+							justifyContent: 'center',
+							width: '28px',
+							height: '28px',
+							borderRadius: '14px',
+							border: `1px solid ${colors.border}`,
+							backgroundColor: colors.bgMain,
+							color: colors.textDim,
+							cursor: 'pointer',
+							marginBottom: '4px',
+						}}
+						title="New Tab"
 					>
-						<line x1="12" y1="5" x2="12" y2="19" />
-						<line x1="5" y1="12" x2="19" y2="12" />
-					</svg>
-				</button>
+						<svg
+							width="14"
+							height="14"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							strokeWidth="2"
+							strokeLinecap="round"
+							strokeLinejoin="round"
+						>
+							<line x1="12" y1="5" x2="12" y2="19" />
+							<line x1="5" y1="12" x2="19" y2="12" />
+						</svg>
+					</button>
+					{showNewTabMenu && (
+						<div
+							style={{
+								position: 'absolute',
+								top: '100%',
+								left: '0',
+								marginTop: '4px',
+								backgroundColor: colors.bgSidebar,
+								border: `1px solid ${colors.border}`,
+								borderRadius: '8px',
+								boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+								zIndex: 100,
+								minWidth: '150px',
+								overflow: 'hidden',
+							}}
+						>
+							<button
+								onClick={() => {
+									triggerHaptic(HAPTIC_PATTERNS.tap);
+									onNewTab();
+									setShowNewTabMenu(false);
+								}}
+								style={{
+									display: 'flex',
+									alignItems: 'center',
+									gap: '8px',
+									width: '100%',
+									padding: '10px 12px',
+									border: 'none',
+									backgroundColor: 'transparent',
+									color: colors.textMain,
+									fontSize: '13px',
+									cursor: 'pointer',
+									textAlign: 'left',
+								}}
+							>
+								<svg
+									width="14"
+									height="14"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									strokeWidth="2"
+									strokeLinecap="round"
+									strokeLinejoin="round"
+								>
+									<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+								</svg>
+								New AI Chat
+							</button>
+							{onSelectTerminal && (
+								<button
+									onClick={() => {
+										triggerHaptic(HAPTIC_PATTERNS.tap);
+										onSelectTerminal();
+										setShowNewTabMenu(false);
+									}}
+									style={{
+										display: 'flex',
+										alignItems: 'center',
+										gap: '8px',
+										width: '100%',
+										padding: '10px 12px',
+										border: 'none',
+										borderTop: `1px solid ${colors.border}`,
+										backgroundColor: 'transparent',
+										color: colors.textMain,
+										fontSize: '13px',
+										cursor: 'pointer',
+										textAlign: 'left',
+									}}
+								>
+									<svg
+										width="14"
+										height="14"
+										viewBox="0 0 24 24"
+										fill="none"
+										stroke="currentColor"
+										strokeWidth="2"
+										strokeLinecap="round"
+										strokeLinejoin="round"
+									>
+										<polyline points="4 17 10 11 4 5" />
+										<line x1="12" y1="19" x2="20" y2="19" />
+									</svg>
+									New Terminal
+								</button>
+							)}
+						</div>
+					)}
+				</div>
 			</div>
 
 			{/* Scrollable tabs area */}
@@ -666,19 +865,122 @@ export function TabBar({
 				}}
 				className="hide-scrollbar"
 			>
-				{tabs.map((tab, index) => (
-					<Tab
-						key={tab.id}
-						tab={tab}
-						tabIndex={index}
-						isActive={tab.id === activeTabId}
-						canClose={canClose}
-						colors={colors}
-						onSelect={() => onSelectTab(tab.id)}
-						onClose={() => onCloseTab(tab.id)}
-						onLongPress={handleTabLongPress}
-					/>
-				))}
+				{visibleTabs.map((tab) => {
+					// Keep tabIndex aligned with the unfiltered tabs array so
+					// Move Left / Move Right reorder math stays correct.
+					const tabIndex = tabIndexById.get(tab.id) ?? -1;
+					return (
+						<Tab
+							key={tab.id}
+							tab={tab}
+							tabIndex={tabIndex}
+							isActive={inputMode === 'ai' && tab.id === activeTabId}
+							canClose={canClose}
+							colors={colors}
+							onSelect={() => onSelectTab(tab.id)}
+							onClose={() => onCloseTab(tab.id)}
+							onLongPress={handleTabLongPress}
+						/>
+					);
+				})}
+
+				{/* Terminal tab */}
+				{onSelectTerminal && (
+					<button
+						onClick={() => {
+							triggerHaptic(HAPTIC_PATTERNS.tap);
+							onSelectTerminal();
+						}}
+						style={{
+							display: 'flex',
+							alignItems: 'center',
+							gap: '6px',
+							padding: '6px 10px',
+							borderTopLeftRadius: '6px',
+							borderTopRightRadius: '6px',
+							borderTop:
+								inputMode === 'terminal' ? `1px solid ${colors.border}` : '1px solid transparent',
+							borderLeft:
+								inputMode === 'terminal' ? `1px solid ${colors.border}` : '1px solid transparent',
+							borderRight:
+								inputMode === 'terminal' ? `1px solid ${colors.border}` : '1px solid transparent',
+							borderBottom:
+								inputMode === 'terminal' ? `1px solid ${colors.bgMain}` : '1px solid transparent',
+							backgroundColor: inputMode === 'terminal' ? colors.bgMain : 'transparent',
+							color: inputMode === 'terminal' ? colors.textMain : colors.textDim,
+							fontSize: '12px',
+							fontWeight: inputMode === 'terminal' ? 600 : 400,
+							fontFamily: 'monospace',
+							cursor: 'pointer',
+							whiteSpace: 'nowrap',
+							transition: 'all 0.15s ease',
+							marginBottom: inputMode === 'terminal' ? '-1px' : '0',
+							zIndex: inputMode === 'terminal' ? 1 : 0,
+							touchAction: 'pan-x pan-y',
+							WebkitTapHighlightColor: 'transparent',
+							userSelect: 'none',
+							WebkitUserSelect: 'none',
+							flexShrink: 0,
+						}}
+					>
+						{/* Terminal icon */}
+						<svg
+							width="12"
+							height="12"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							strokeWidth="2"
+							strokeLinecap="round"
+							strokeLinejoin="round"
+						>
+							<polyline points="4 17 10 11 4 5" />
+							<line x1="12" y1="19" x2="20" y2="19" />
+						</svg>
+						Terminal
+						{onCloseTerminal && inputMode === 'terminal' && (
+							<button
+								type="button"
+								aria-label="Close terminal"
+								onClick={(e) => {
+									e.stopPropagation();
+									triggerHaptic(HAPTIC_PATTERNS.tap);
+									onCloseTerminal();
+								}}
+								style={{
+									display: 'flex',
+									alignItems: 'center',
+									justifyContent: 'center',
+									width: '16px',
+									height: '16px',
+									borderRadius: '4px',
+									marginLeft: '4px',
+									cursor: 'pointer',
+									opacity: 0.6,
+									background: 'none',
+									border: 'none',
+									padding: 0,
+									color: 'inherit',
+									font: 'inherit',
+								}}
+							>
+								<svg
+									width="10"
+									height="10"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									strokeWidth="2.5"
+									strokeLinecap="round"
+									strokeLinejoin="round"
+								>
+									<line x1="18" y1="6" x2="6" y2="18" />
+									<line x1="6" y1="6" x2="18" y2="18" />
+								</svg>
+							</button>
+						)}
+					</button>
+				)}
 			</div>
 
 			{/* Tab actions popover */}

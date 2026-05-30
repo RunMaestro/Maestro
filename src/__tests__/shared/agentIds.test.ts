@@ -24,7 +24,10 @@ describe('agentIds', () => {
 		it('should contain placeholder agents', () => {
 			expect(AGENT_IDS).toContain('gemini-cli');
 			expect(AGENT_IDS).toContain('qwen3-coder');
-			expect(AGENT_IDS).toContain('aider');
+		});
+
+		it('should contain beta agents', () => {
+			expect(AGENT_IDS).toContain('copilot-cli');
 		});
 
 		it('should have no duplicates', () => {

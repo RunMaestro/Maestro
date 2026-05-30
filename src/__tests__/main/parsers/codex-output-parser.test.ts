@@ -633,4 +633,913 @@ describe('CodexOutputParser', () => {
 			});
 		});
 	});
+
+	// ================================================================
+	// Current format tests (Codex v0.111.0+ with --json)
+	// ================================================================
+
+	describe('session_meta events', () => {
+		it('should parse session_meta as init with payload.id as sessionId', () => {
+			const line = JSON.stringify({
+				type: 'session_meta',
+				timestamp: '2026-03-08T03:10:29.069Z',
+				payload: {
+					id: '019ccb6c-c0fd-7b70-92b7-558f514099c6',
+					cwd: '/home/user/project',
+					cli_version: '0.111.0',
+					model_provider: 'openai',
+				},
+			});
+
+			const event = parser.parseJsonLine(line);
+			expect(event).not.toBeNull();
+			expect(event?.type).toBe('init');
+			expect(event?.sessionId).toBe('019ccb6c-c0fd-7b70-92b7-558f514099c6');
+		});
+
+		it('should handle session_meta without payload', () => {
+			const line = JSON.stringify({ type: 'session_meta' });
+			const event = parser.parseJsonLine(line);
+			// Without payload, falls through to default case
+			expect(event).not.toBeNull();
+			expect(event?.type).toBe('system');
+		});
+
+		it('should handle session_meta with empty payload', () => {
+			const line = JSON.stringify({ type: 'session_meta', payload: {} });
+			const event = parser.parseJsonLine(line);
+			expect(event?.type).toBe('init');
+			expect(event?.sessionId).toBeUndefined();
+		});
+	});
+
+	describe('turn_context events', () => {
+		it('should parse turn_context as system event', () => {
+			const line = JSON.stringify({
+				type: 'turn_context',
+				payload: {
+					model: 'gpt-5.2-codex-max',
+					model_context_window: 400000,
+					turn_id: 'turn-123',
+				},
+			});
+
+			const event = parser.parseJsonLine(line);
+			expect(event).not.toBeNull();
+			expect(event?.type).toBe('system');
+		});
+
+		it('should update internal model and context window from turn_context', () => {
+			const p = new CodexOutputParser();
+
+			// Parse a turn_context that sets model info
+			p.parseJsonLine(
+				JSON.stringify({
+					type: 'turn_context',
+					payload: {
+						model: 'o3',
+						model_context_window: 200000,
+					},
+				})
+			);
+
+			// Verify the context window is used in subsequent usage events
+			const usageEvent = p.parseJsonLine(
+				JSON.stringify({
+					type: 'turn.completed',
+					usage: { input_tokens: 100, output_tokens: 50 },
+				})
+			);
+			expect(usageEvent?.usage?.contextWindow).toBe(200000);
+		});
+
+		it('should handle turn_context without payload', () => {
+			const line = JSON.stringify({ type: 'turn_context' });
+			const event = parser.parseJsonLine(line);
+			expect(event?.type).toBe('system');
+		});
+	});
+
+	describe('event_msg events', () => {
+		describe('agent_message type', () => {
+			it('should parse commentary phase as partial text', () => {
+				const line = JSON.stringify({
+					type: 'event_msg',
+					payload: {
+						type: 'agent_message',
+						message: 'Looking at the code now...',
+						phase: 'commentary',
+					},
+				});
+
+				const event = parser.parseJsonLine(line);
+				expect(event).not.toBeNull();
+				expect(event?.type).toBe('text');
+				expect(event?.text).toBe('Looking at the code now...');
+				expect(event?.isPartial).toBe(true);
+			});
+
+			it('should parse non-commentary agent_message as result', () => {
+				const line = JSON.stringify({
+					type: 'event_msg',
+					payload: {
+						type: 'agent_message',
+						message: 'Here is the final answer.',
+						phase: 'final',
+					},
+				});
+
+				const event = parser.parseJsonLine(line);
+				expect(event?.type).toBe('result');
+				expect(event?.text).toBe('Here is the final answer.');
+				expect(event?.isPartial).toBe(false);
+			});
+
+			it('should parse agent_message without phase as result', () => {
+				const line = JSON.stringify({
+					type: 'event_msg',
+					payload: {
+						type: 'agent_message',
+						message: 'Done.',
+					},
+				});
+
+				const event = parser.parseJsonLine(line);
+				expect(event?.type).toBe('result');
+				expect(event?.text).toBe('Done.');
+			});
+
+			it('should handle agent_message with empty message', () => {
+				const line = JSON.stringify({
+					type: 'event_msg',
+					payload: {
+						type: 'agent_message',
+						message: '',
+					},
+				});
+
+				// Empty message falls through to system event
+				const event = parser.parseJsonLine(line);
+				expect(event?.type).toBe('system');
+			});
+		});
+
+		describe('token_count type', () => {
+			it('should parse token_count as usage event', () => {
+				const line = JSON.stringify({
+					type: 'event_msg',
+					payload: {
+						type: 'token_count',
+						info: {
+							total_token_usage: {
+								input_tokens: 5000,
+								output_tokens: 1000,
+								cached_input_tokens: 3000,
+								reasoning_output_tokens: 200,
+								total_tokens: 6200,
+							},
+							model_context_window: 400000,
+						},
+					},
+				});
+
+				const event = parser.parseJsonLine(line);
+				expect(event).not.toBeNull();
+				expect(event?.type).toBe('usage');
+				expect(event?.usage?.inputTokens).toBe(5000);
+				expect(event?.usage?.outputTokens).toBe(1200); // 1000 + 200 reasoning
+				expect(event?.usage?.cacheReadTokens).toBe(3000);
+				expect(event?.usage?.cacheCreationTokens).toBe(0);
+				expect(event?.usage?.contextWindow).toBe(400000);
+				expect(event?.usage?.reasoningTokens).toBe(200);
+			});
+
+			it('should use cached context window when model_context_window not in payload', () => {
+				const p = new CodexOutputParser();
+
+				const event = p.parseJsonLine(
+					JSON.stringify({
+						type: 'event_msg',
+						payload: {
+							type: 'token_count',
+							info: {
+								total_token_usage: {
+									input_tokens: 100,
+									output_tokens: 50,
+								},
+							},
+						},
+					})
+				);
+
+				// Should fall back to cached context window (default model)
+				expect(event?.usage?.contextWindow).toBeGreaterThan(0);
+			});
+
+			it('should handle token_count with zero values', () => {
+				const line = JSON.stringify({
+					type: 'event_msg',
+					payload: {
+						type: 'token_count',
+						info: {
+							total_token_usage: {
+								input_tokens: 0,
+								output_tokens: 0,
+								cached_input_tokens: 0,
+								reasoning_output_tokens: 0,
+							},
+						},
+					},
+				});
+
+				const event = parser.parseJsonLine(line);
+				expect(event?.usage?.inputTokens).toBe(0);
+				expect(event?.usage?.outputTokens).toBe(0);
+			});
+
+			it('should handle token_count without total_token_usage', () => {
+				const line = JSON.stringify({
+					type: 'event_msg',
+					payload: {
+						type: 'token_count',
+						info: {},
+					},
+				});
+
+				// No total_token_usage means it falls through to default system event
+				const event = parser.parseJsonLine(line);
+				expect(event?.type).toBe('system');
+			});
+		});
+
+		describe('other event_msg types', () => {
+			it('should parse task_started as system event', () => {
+				const line = JSON.stringify({
+					type: 'event_msg',
+					payload: {
+						type: 'task_started',
+						message: 'Starting task...',
+					},
+				});
+
+				const event = parser.parseJsonLine(line);
+				expect(event?.type).toBe('system');
+			});
+
+			it('should parse user_message as system event', () => {
+				const line = JSON.stringify({
+					type: 'event_msg',
+					payload: {
+						type: 'user_message',
+						message: 'User sent a message',
+					},
+				});
+
+				const event = parser.parseJsonLine(line);
+				expect(event?.type).toBe('system');
+			});
+
+			it('should handle event_msg without payload', () => {
+				const line = JSON.stringify({ type: 'event_msg' });
+				const event = parser.parseJsonLine(line);
+				expect(event?.type).toBe('system');
+			});
+		});
+	});
+
+	describe('response_item events', () => {
+		describe('message type', () => {
+			it('should parse assistant message with output_text content', () => {
+				const line = JSON.stringify({
+					type: 'response_item',
+					payload: {
+						type: 'message',
+						role: 'assistant',
+						content: [{ type: 'output_text', text: 'Hello world' }],
+					},
+				});
+
+				const event = parser.parseJsonLine(line);
+				expect(event?.type).toBe('result');
+				expect(event?.text).toBe('Hello world');
+				expect(event?.isPartial).toBe(false);
+			});
+
+			it('should parse assistant commentary as partial text', () => {
+				const line = JSON.stringify({
+					type: 'response_item',
+					payload: {
+						type: 'message',
+						role: 'assistant',
+						phase: 'commentary',
+						content: [{ type: 'output_text', text: 'Analyzing...' }],
+					},
+				});
+
+				const event = parser.parseJsonLine(line);
+				expect(event?.type).toBe('text');
+				expect(event?.text).toBe('Analyzing...');
+				expect(event?.isPartial).toBe(true);
+			});
+
+			it('should parse user message as system event', () => {
+				const line = JSON.stringify({
+					type: 'response_item',
+					payload: {
+						type: 'message',
+						role: 'user',
+						content: [{ type: 'input_text', text: 'Fix the bug' }],
+					},
+				});
+
+				const event = parser.parseJsonLine(line);
+				expect(event?.type).toBe('system');
+			});
+
+			it('should handle message with multiple content parts', () => {
+				const line = JSON.stringify({
+					type: 'response_item',
+					payload: {
+						type: 'message',
+						role: 'assistant',
+						content: [
+							{ type: 'output_text', text: 'Part one.' },
+							{ type: 'output_text', text: 'Part two.' },
+						],
+					},
+				});
+
+				const event = parser.parseJsonLine(line);
+				expect(event?.text).toBe('Part one. Part two.');
+			});
+
+			it('should handle message with empty content array', () => {
+				const line = JSON.stringify({
+					type: 'response_item',
+					payload: {
+						type: 'message',
+						role: 'assistant',
+						content: [],
+					},
+				});
+
+				const event = parser.parseJsonLine(line);
+				expect(event?.type).toBe('result');
+				expect(event?.text).toBe('');
+			});
+
+			it('should handle message without content', () => {
+				const line = JSON.stringify({
+					type: 'response_item',
+					payload: {
+						type: 'message',
+						role: 'assistant',
+					},
+				});
+
+				const event = parser.parseJsonLine(line);
+				expect(event?.text).toBe('');
+			});
+
+			it('should filter non-text content types', () => {
+				const line = JSON.stringify({
+					type: 'response_item',
+					payload: {
+						type: 'message',
+						role: 'assistant',
+						content: [
+							{ type: 'image', url: 'http://example.com/img.png' },
+							{ type: 'output_text', text: 'Visible text' },
+						],
+					},
+				});
+
+				const event = parser.parseJsonLine(line);
+				expect(event?.text).toBe('Visible text');
+			});
+
+			it('should handle input_text and text content types', () => {
+				const line = JSON.stringify({
+					type: 'response_item',
+					payload: {
+						type: 'message',
+						role: 'assistant',
+						content: [
+							{ type: 'input_text', text: 'Input content' },
+							{ type: 'text', text: 'Plain text' },
+							{ type: 'output_text', text: 'Output content' },
+						],
+					},
+				});
+
+				const event = parser.parseJsonLine(line);
+				expect(event?.text).toBe('Input content Plain text Output content');
+			});
+		});
+
+		describe('function_call type', () => {
+			it('should parse function_call as tool_use with running status', () => {
+				const line = JSON.stringify({
+					type: 'response_item',
+					payload: {
+						type: 'function_call',
+						name: 'shell_command',
+						arguments: '{"command":"ls -la"}',
+						call_id: 'call_abc123',
+					},
+				});
+
+				const event = parser.parseJsonLine(line);
+				expect(event?.type).toBe('tool_use');
+				expect(event?.toolName).toBe('shell_command');
+				expect(event?.toolState).toEqual({
+					status: 'running',
+					input: { command: 'ls -la' },
+				});
+			});
+
+			it('should handle function_call with invalid JSON arguments', () => {
+				const line = JSON.stringify({
+					type: 'response_item',
+					payload: {
+						type: 'function_call',
+						name: 'shell_command',
+						arguments: 'not valid json',
+						call_id: 'call_bad',
+					},
+				});
+
+				const event = parser.parseJsonLine(line);
+				expect(event?.type).toBe('tool_use');
+				expect(event?.toolName).toBe('shell_command');
+				// Invalid JSON falls back to the raw string
+				expect((event?.toolState as { input: unknown }).input).toBe('not valid json');
+			});
+
+			it('should handle function_call with empty arguments', () => {
+				const line = JSON.stringify({
+					type: 'response_item',
+					payload: {
+						type: 'function_call',
+						name: 'some_tool',
+						call_id: 'call_empty',
+					},
+				});
+
+				const event = parser.parseJsonLine(line);
+				expect(event?.type).toBe('tool_use');
+				expect((event?.toolState as { input: unknown }).input).toEqual({});
+			});
+
+			it('should handle function_call without name', () => {
+				const line = JSON.stringify({
+					type: 'response_item',
+					payload: {
+						type: 'function_call',
+						arguments: '{}',
+						call_id: 'call_noname',
+					},
+				});
+
+				const event = parser.parseJsonLine(line);
+				expect(event?.toolName).toBe('unknown');
+			});
+		});
+
+		describe('custom_tool_call type', () => {
+			it('should parse custom_tool_call as tool_use', () => {
+				const line = JSON.stringify({
+					type: 'response_item',
+					payload: {
+						type: 'custom_tool_call',
+						name: 'apply_patch',
+						arguments: '{"patch":"--- a/file.ts"}',
+						call_id: 'call_custom1',
+					},
+				});
+
+				const event = parser.parseJsonLine(line);
+				expect(event?.type).toBe('tool_use');
+				expect(event?.toolName).toBe('apply_patch');
+			});
+		});
+
+		describe('function_call_output type', () => {
+			it('should parse function_call_output as completed tool_use', () => {
+				const p = new CodexOutputParser();
+
+				// First emit a function_call to set the tool name
+				p.parseJsonLine(
+					JSON.stringify({
+						type: 'response_item',
+						payload: {
+							type: 'function_call',
+							name: 'shell_command',
+							arguments: '{}',
+							call_id: 'call_out1',
+						},
+					})
+				);
+
+				const event = p.parseJsonLine(
+					JSON.stringify({
+						type: 'response_item',
+						payload: {
+							type: 'function_call_output',
+							call_id: 'call_out1',
+							output: 'Command output here',
+						},
+					})
+				);
+
+				expect(event?.type).toBe('tool_use');
+				expect(event?.toolName).toBe('shell_command');
+				expect(event?.toolState).toEqual({
+					status: 'completed',
+					output: 'Command output here',
+				});
+			});
+
+			it('should clear tool name after function_call_output', () => {
+				const p = new CodexOutputParser();
+
+				p.parseJsonLine(
+					JSON.stringify({
+						type: 'response_item',
+						payload: { type: 'function_call', name: 'tool_a', arguments: '{}', call_id: 'c1' },
+					})
+				);
+				p.parseJsonLine(
+					JSON.stringify({
+						type: 'response_item',
+						payload: { type: 'function_call_output', call_id: 'c1', output: 'ok' },
+					})
+				);
+
+				// Next output should not carry over the tool name
+				const orphan = p.parseJsonLine(
+					JSON.stringify({
+						type: 'response_item',
+						payload: { type: 'function_call_output', call_id: 'c2', output: 'orphan' },
+					})
+				);
+				expect(orphan?.toolName).toBeUndefined();
+			});
+
+			it('should handle function_call_output with undefined output', () => {
+				const p = new CodexOutputParser();
+				const event = p.parseJsonLine(
+					JSON.stringify({
+						type: 'response_item',
+						payload: { type: 'function_call_output', call_id: 'c_none' },
+					})
+				);
+				expect(event?.toolState).toEqual({
+					status: 'completed',
+					output: '',
+				});
+			});
+		});
+
+		describe('custom_tool_call_output type', () => {
+			it('should parse custom_tool_call_output as completed tool_use', () => {
+				const p = new CodexOutputParser();
+
+				p.parseJsonLine(
+					JSON.stringify({
+						type: 'response_item',
+						payload: {
+							type: 'custom_tool_call',
+							name: 'apply_patch',
+							arguments: '{}',
+							call_id: 'call_custom_out',
+						},
+					})
+				);
+
+				const event = p.parseJsonLine(
+					JSON.stringify({
+						type: 'response_item',
+						payload: {
+							type: 'custom_tool_call_output',
+							call_id: 'call_custom_out',
+							output: 'Patch applied',
+						},
+					})
+				);
+
+				expect(event?.type).toBe('tool_use');
+				expect(event?.toolName).toBe('apply_patch');
+				expect(event?.toolState).toEqual({
+					status: 'completed',
+					output: 'Patch applied',
+				});
+			});
+		});
+
+		describe('reasoning type', () => {
+			it('should parse reasoning as system event', () => {
+				const line = JSON.stringify({
+					type: 'response_item',
+					payload: {
+						type: 'reasoning',
+						summary: ['step 1', 'step 2'],
+						encrypted_content: 'base64data...',
+					},
+				});
+
+				const event = parser.parseJsonLine(line);
+				expect(event?.type).toBe('system');
+			});
+		});
+
+		describe('unknown response_item type', () => {
+			it('should parse unknown payload type as system event', () => {
+				const line = JSON.stringify({
+					type: 'response_item',
+					payload: {
+						type: 'unknown_new_type',
+						data: 'something',
+					},
+				});
+
+				const event = parser.parseJsonLine(line);
+				expect(event?.type).toBe('system');
+			});
+		});
+
+		describe('response_item without payload', () => {
+			it('should fall through to default system event', () => {
+				const line = JSON.stringify({ type: 'response_item' });
+				const event = parser.parseJsonLine(line);
+				expect(event?.type).toBe('system');
+			});
+		});
+	});
+
+	describe('item.started events', () => {
+		it('should parse command_execution as running tool_use', () => {
+			const line = JSON.stringify({
+				type: 'item.started',
+				item: {
+					type: 'command_execution',
+					command: 'npm test',
+					status: 'in_progress',
+				},
+			});
+
+			const event = parser.parseJsonLine(line);
+			expect(event?.type).toBe('tool_use');
+			expect(event?.toolName).toBe('shell');
+			expect(event?.toolState).toEqual({
+				status: 'running',
+				input: { command: 'npm test' },
+			});
+		});
+
+		it('should parse unknown item.started type as system event', () => {
+			const line = JSON.stringify({
+				type: 'item.started',
+				item: {
+					type: 'unknown_type',
+				},
+			});
+
+			const event = parser.parseJsonLine(line);
+			expect(event?.type).toBe('system');
+		});
+
+		it('should handle item.started without item', () => {
+			const line = JSON.stringify({ type: 'item.started' });
+			const event = parser.parseJsonLine(line);
+			// Falls through to default handler (no item field)
+			expect(event?.type).toBe('system');
+		});
+	});
+
+	describe('item.completed - command_execution events', () => {
+		it('should parse completed command_execution with output', () => {
+			const line = JSON.stringify({
+				type: 'item.completed',
+				item: {
+					type: 'command_execution',
+					command: 'ls -la',
+					aggregated_output: 'total 64\ndrwxr-xr-x  12 user...',
+					exit_code: 0,
+					status: 'completed',
+				},
+			});
+
+			const event = parser.parseJsonLine(line);
+			expect(event?.type).toBe('tool_use');
+			expect(event?.toolName).toBe('shell');
+			expect(event?.toolState).toEqual({
+				status: 'completed',
+				input: { command: 'ls -la' },
+				output: 'total 64\ndrwxr-xr-x  12 user...',
+				exitCode: 0,
+			});
+		});
+
+		it('should parse failed command_execution', () => {
+			const line = JSON.stringify({
+				type: 'item.completed',
+				item: {
+					type: 'command_execution',
+					command: 'bad-command',
+					aggregated_output: 'command not found',
+					exit_code: 127,
+					status: 'failed',
+				},
+			});
+
+			const event = parser.parseJsonLine(line);
+			expect(event?.type).toBe('tool_use');
+			const state = event?.toolState as { status: string; exitCode: number };
+			expect(state.status).toBe('completed');
+			expect(state.exitCode).toBe(127);
+		});
+
+		it('should parse in-progress command_execution', () => {
+			const line = JSON.stringify({
+				type: 'item.completed',
+				item: {
+					type: 'command_execution',
+					command: 'long-running-task',
+					status: 'in_progress',
+				},
+			});
+
+			const event = parser.parseJsonLine(line);
+			const state = event?.toolState as { status: string };
+			expect(state.status).toBe('running');
+		});
+
+		it('should handle command_execution with null exit_code', () => {
+			const line = JSON.stringify({
+				type: 'item.completed',
+				item: {
+					type: 'command_execution',
+					command: 'still-running',
+					exit_code: null,
+					status: 'completed',
+				},
+			});
+
+			const event = parser.parseJsonLine(line);
+			const state = event?.toolState as { exitCode: number | null };
+			expect(state.exitCode).toBeNull();
+		});
+	});
+
+	describe('parseJsonObject', () => {
+		it('should parse pre-parsed objects the same as parseJsonLine', () => {
+			const obj = {
+				type: 'session_meta',
+				payload: { id: 'test-id-123' },
+			};
+
+			const fromObject = parser.parseJsonObject(obj);
+			const fromLine = parser.parseJsonLine(JSON.stringify(obj));
+
+			expect(fromObject?.type).toBe(fromLine?.type);
+			expect(fromObject?.sessionId).toBe(fromLine?.sessionId);
+		});
+
+		it('should return null for null input', () => {
+			expect(parser.parseJsonObject(null)).toBeNull();
+		});
+
+		it('should return null for non-object input', () => {
+			expect(parser.parseJsonObject('string')).toBeNull();
+			expect(parser.parseJsonObject(42)).toBeNull();
+			expect(parser.parseJsonObject(true)).toBeNull();
+		});
+	});
+
+	describe('detectErrorFromParsed', () => {
+		it('should detect errors from pre-parsed objects', () => {
+			const obj = { type: 'error', error: 'rate limit exceeded' };
+			const error = parser.detectErrorFromParsed(obj);
+			expect(error).not.toBeNull();
+			expect(error?.type).toBe('rate_limited');
+		});
+
+		it('should return null for null input', () => {
+			expect(parser.detectErrorFromParsed(null)).toBeNull();
+		});
+
+		it('should return null for non-object input', () => {
+			expect(parser.detectErrorFromParsed('string')).toBeNull();
+		});
+
+		it('should detect turn.failed from pre-parsed objects', () => {
+			const obj = {
+				type: 'turn.failed',
+				error: { message: 'Connection lost' },
+			};
+			const error = parser.detectErrorFromParsed(obj);
+			expect(error).not.toBeNull();
+			expect(error?.message).toBe('Connection lost');
+		});
+	});
+
+	describe('tool name carryover for new format', () => {
+		it('should carry tool name from function_call to function_call_output', () => {
+			const p = new CodexOutputParser();
+
+			p.parseJsonLine(
+				JSON.stringify({
+					type: 'response_item',
+					payload: {
+						type: 'function_call',
+						name: 'read_file',
+						arguments: '{"path":"main.ts"}',
+						call_id: 'call_rf1',
+					},
+				})
+			);
+
+			const result = p.parseJsonLine(
+				JSON.stringify({
+					type: 'response_item',
+					payload: {
+						type: 'function_call_output',
+						call_id: 'call_rf1',
+						output: 'file contents...',
+					},
+				})
+			);
+
+			expect(result?.toolName).toBe('read_file');
+		});
+
+		it('should carry tool name from custom_tool_call to custom_tool_call_output', () => {
+			const p = new CodexOutputParser();
+
+			p.parseJsonLine(
+				JSON.stringify({
+					type: 'response_item',
+					payload: {
+						type: 'custom_tool_call',
+						name: 'apply_patch',
+						arguments: '{}',
+						call_id: 'call_ct1',
+					},
+				})
+			);
+
+			const result = p.parseJsonLine(
+				JSON.stringify({
+					type: 'response_item',
+					payload: {
+						type: 'custom_tool_call_output',
+						call_id: 'call_ct1',
+						output: 'Patch applied',
+					},
+				})
+			);
+
+			expect(result?.toolName).toBe('apply_patch');
+		});
+	});
+
+	describe('formatReasoningText edge cases', () => {
+		it('should add line breaks before bold markdown sections', () => {
+			const event = parser.parseJsonLine(
+				JSON.stringify({
+					type: 'item.completed',
+					item: {
+						type: 'reasoning',
+						text: 'Starting **Phase 1** then **Phase 2** done',
+					},
+				})
+			);
+
+			expect(event?.text).toContain('\n\n**Phase 1**');
+			expect(event?.text).toContain('\n\n**Phase 2**');
+		});
+
+		it('should handle empty text in reasoning', () => {
+			const event = parser.parseJsonLine(
+				JSON.stringify({
+					type: 'item.completed',
+					item: { type: 'reasoning', text: '' },
+				})
+			);
+
+			expect(event?.text).toBe('');
+		});
+
+		it('should handle text without bold markers', () => {
+			const event = parser.parseJsonLine(
+				JSON.stringify({
+					type: 'item.completed',
+					item: { type: 'reasoning', text: 'Plain thinking text' },
+				})
+			);
+
+			expect(event?.text).toBe('Plain thinking text');
+		});
+	});
 });

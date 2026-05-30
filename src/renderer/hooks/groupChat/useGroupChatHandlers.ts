@@ -21,6 +21,7 @@ import type { ToolType } from '../../../shared/types';
 import { notifyToast } from '../../stores/notificationStore';
 import { generateId } from '../../utils/ids';
 import { getAutoRunSessionsForGroupChat } from '../../utils/groupChatAutoRunRegistry';
+import { logger } from '../../utils/logger';
 
 // ---------------------------------------------------------------------------
 // Return type
@@ -62,6 +63,7 @@ export interface GroupChatHandlersReturn {
 		}
 	) => Promise<void>;
 	deleteGroupChatWithConfirmation: (id: string) => void;
+	handleDeleteAllArchivedGroupChats: () => void;
 
 	// Navigation
 	handleProcessMonitorNavigateToGroupChat: (groupChatId: string) => void;
@@ -322,6 +324,7 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 				setGroupChatExecutionQueue,
 				setGroupChatState: setGCState,
 				setGroupChatStates: setGCStates,
+				setGroupChatMessages: setGCMessages,
 			} = useGroupChatStore.getState();
 
 			const [nextItem, ...remainingQueue] = groupChatExecutionQueue;
@@ -333,12 +336,31 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 				next.set(activeGroupChatId, 'moderator-thinking');
 				return next;
 			});
-			window.maestro.groupChat.sendToModerator(
-				activeGroupChatId,
-				nextItem.text || '',
-				nextItem.images,
-				nextItem.readOnlyMode
-			);
+			window.maestro.groupChat
+				.sendToModerator(
+					activeGroupChatId,
+					nextItem.text || '',
+					nextItem.images,
+					nextItem.readOnlyMode
+				)
+				.catch((err: unknown) => {
+					const msg = err instanceof Error ? err.message : String(err);
+					// Reset to idle so user can retry
+					setGCState('idle');
+					setGCStates((prev) => {
+						const next = new Map(prev);
+						next.set(activeGroupChatId, 'idle');
+						return next;
+					});
+					setGCMessages((prev) => [
+						...prev,
+						{
+							timestamp: new Date().toISOString(),
+							from: 'system',
+							content: `⚠️ Moderator is not available. Try sending your message again. (${msg})`,
+						},
+					]);
+				});
 		}
 	}, [groupChatState, groupChatExecutionQueue, activeGroupChatId]);
 
@@ -408,7 +430,7 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 					);
 				}
 			} catch (error) {
-				console.warn(`Failed to start moderator for group chat ${id}:`, error);
+				logger.warn(`Failed to start moderator for group chat ${id}:`, undefined, error);
 			}
 
 			// Focus the input after the component renders
@@ -452,7 +474,17 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 			const tab = session.aiTabs?.find((t) => t.agentSessionId === moderatorSessionId);
 			if (tab) {
 				setSessions((prev) =>
-					prev.map((s) => (s.id === session.id ? { ...s, activeTabId: tab.id } : s))
+					prev.map((s) =>
+						s.id === session.id
+							? {
+									...s,
+									activeTabId: tab.id,
+									activeFileTabId: null,
+									activeTerminalTabId: null,
+									inputMode: 'ai' as const,
+								}
+							: s
+					)
 				);
 			}
 		}
@@ -554,6 +586,30 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 	);
 
 	// =======================================================================
+	// Delete all archived group chats
+	// =======================================================================
+
+	const handleDeleteAllArchivedGroupChats = useCallback(() => {
+		const { groupChats } = useGroupChatStore.getState();
+		const archivedChats = groupChats.filter((c) => c.archived);
+		if (archivedChats.length === 0) return;
+
+		useModalStore.getState().openModal('confirm', {
+			message: `Are you sure you want to delete all ${archivedChats.length} archived group chat${archivedChats.length !== 1 ? 's' : ''}? This action cannot be undone.`,
+			onConfirm: async () => {
+				const { activeGroupChatId, setGroupChats } = useGroupChatStore.getState();
+				const archivedIds = new Set(archivedChats.map((c) => c.id));
+				// Delete all archived chats
+				await Promise.all(archivedChats.map((c) => window.maestro.groupChat.delete(c.id)));
+				setGroupChats((prev) => prev.filter((c) => !archivedIds.has(c.id)));
+				if (activeGroupChatId && archivedIds.has(activeGroupChatId)) {
+					handleCloseGroupChat();
+				}
+			},
+		});
+	}, [handleCloseGroupChat]);
+
+	// =======================================================================
 	// Delete with confirmation (keyboard shortcut / CMD+K)
 	// =======================================================================
 
@@ -616,7 +672,31 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 				next.set(activeGroupChatId, 'moderator-thinking');
 				return next;
 			});
-			await window.maestro.groupChat.sendToModerator(activeGroupChatId, content, images, readOnly);
+			try {
+				await window.maestro.groupChat.sendToModerator(
+					activeGroupChatId,
+					content,
+					images,
+					readOnly
+				);
+			} catch (err: unknown) {
+				const msg = err instanceof Error ? err.message : String(err);
+				// Reset to idle so user can retry
+				setGroupChatState('idle');
+				setGroupChatStates((prev) => {
+					const next = new Map(prev);
+					next.set(activeGroupChatId, 'idle');
+					return next;
+				});
+				useGroupChatStore.getState().setGroupChatMessages((prev) => [
+					...prev,
+					{
+						timestamp: new Date().toISOString(),
+						from: 'system',
+						content: `⚠️ Moderator is not available. Try sending your message again. (${msg})`,
+					},
+				]);
+			}
 		},
 		[]
 	);
@@ -637,7 +717,7 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 			}
 			await window.maestro.groupChat.stopAll(activeGroupChatId);
 		} catch (error) {
-			console.error('[GroupChat] Failed to stop all:', error);
+			logger.error('[GroupChat] Failed to stop all:', undefined, error);
 			notifyToast({
 				type: 'error',
 				title: 'Stop Failed',
@@ -754,6 +834,7 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 		handleRenameGroupChat,
 		handleUpdateGroupChat,
 		deleteGroupChatWithConfirmation,
+		handleDeleteAllArchivedGroupChats,
 
 		// Navigation
 		handleProcessMonitorNavigateToGroupChat,

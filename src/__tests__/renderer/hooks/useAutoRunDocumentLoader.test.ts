@@ -16,6 +16,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, waitFor, cleanup } from '@testing-library/react';
 import type { Session } from '../../../renderer/types';
+import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 
 // ============================================================================
 // Now import the hook and stores
@@ -29,13 +30,11 @@ import { useBatchStore } from '../../../renderer/stores/batchStore';
 // Helpers
 // ============================================================================
 
+// Thin wrapper: pre-populates an AI tab so the auto run doc loader has a
+// tab to hydrate.
 function createMockSession(overrides: Partial<Session> = {}): Session {
-	return {
-		id: 'session-1',
+	return baseCreateMockSession({
 		name: 'Test Agent',
-		state: 'idle',
-		busySource: undefined,
-		toolType: 'claude-code',
 		aiTabs: [
 			{
 				id: 'tab-1',
@@ -44,20 +43,11 @@ function createMockSession(overrides: Partial<Session> = {}): Session {
 				logs: [],
 				state: 'idle',
 			},
-		],
+		] as any,
 		activeTabId: 'tab-1',
-		terminalTabs: [],
-		executionQueue: [],
-		manualHistory: [],
-		historyIndex: -1,
-		cwd: '/test',
-		thinkingStartTime: null,
-		isStarred: false,
-		isUnread: false,
-		hasUnseenOutput: false,
 		createdAt: Date.now(),
 		...overrides,
-	} as unknown as Session;
+	});
 }
 
 // ============================================================================
@@ -936,16 +926,13 @@ describe('useAutoRunDocumentLoader', () => {
 			});
 
 			mockListDocs.mockResolvedValue({ success: true, files: ['active-doc'], tree: [] });
-			// Call sequence:
-			// 1. task count for 'active-doc' (initial effect)
-			// 2. selected file content for 'active-doc' (initial effect)
-			// 3. task count for 'active-doc' (file change re-load)
-			// 4. selected file content for 'active-doc' (file change re-load)
+			// The loader reads each doc once per pass — content captured during the
+			// task-count pass is reused for the selected file (no separate content fetch).
+			// 1. initial pass for 'active-doc'
+			// 2. file-change refresh for 'active-doc'
 			mockReadDoc
-				.mockResolvedValueOnce({ success: true, content: '- [x] Done' }) // 1: initial task count
-				.mockResolvedValueOnce({ success: true, content: 'initial content' }) // 2: initial selected file
-				.mockResolvedValueOnce({ success: true, content: '- [x] Done' }) // 3: file change task count
-				.mockResolvedValueOnce({ success: true, content: 'updated content' }); // 4: file change selected file
+				.mockResolvedValueOnce({ success: true, content: 'initial content - [x] Done' })
+				.mockResolvedValueOnce({ success: true, content: 'updated content - [x] Done' });
 
 			const session = createMockSession({
 				id: 'session-1',
@@ -973,7 +960,7 @@ describe('useAutoRunDocumentLoader', () => {
 			await waitFor(() => {
 				const sessions = useSessionStore.getState().sessions;
 				const updated = sessions.find((s) => s.id === 'session-1');
-				expect(updated?.autoRunContent).toBe('updated content');
+				expect(updated?.autoRunContent).toBe('updated content - [x] Done');
 			});
 		});
 
@@ -1028,7 +1015,11 @@ describe('useAutoRunDocumentLoader', () => {
 			});
 
 			mockListDocs.mockResolvedValue({ success: true, files: ['doc'], tree: [] });
-			mockReadDoc.mockResolvedValue({ success: true, content: 'new content from disk' });
+			// Different content per pass: the loader skips the version bump when
+			// the new content matches the existing content (see applySelectedContent).
+			mockReadDoc
+				.mockResolvedValueOnce({ success: true, content: 'initial content from disk' })
+				.mockResolvedValueOnce({ success: true, content: 'updated content from disk' });
 
 			const session = createMockSession({
 				id: 'session-1',

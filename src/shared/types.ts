@@ -13,11 +13,152 @@ export type ToolType = import('./agentIds').AgentId;
 
 /**
  * ThinkingMode controls how AI reasoning/thinking content is displayed.
- * - 'off': Thinking is suppressed (not shown)
- * - 'on': Thinking is shown while streaming, cleared when final response arrives
- * - 'sticky': Thinking is shown and remains visible after the final response
+ *
+ * - 'off': Thinking is suppressed (parsers do not append `source: 'thinking'`
+ *   or `source: 'tool'` log entries in the first place).
+ * - 'on' (temporary): Thinking and tool-execution cells are visible while the
+ *   agent is busy. Two clearing points apply:
+ *     1. Inline: when a new assistant `stdout`/`stderr` chunk arrives, prior
+ *        `thinking`/`tool` log entries are dropped (see
+ *        `useBatchedSessionUpdates.ts`).
+ *     2. On exit: when the agent process exits, any remaining `thinking`/
+ *        `tool` log entries are dropped (see `useAgentListeners.ts`
+ *        → `cleanupExitedTabLogs`).
+ * - 'sticky' (pinned): Thinking and tool cells persist across BOTH of the
+ *   above clearing points so the user can review reasoning indefinitely.
+ *
+ * **Provider contract:** Any agent parser that surfaces reasoning or tool
+ * activity MUST tag its renderer log entries with `source: 'thinking'` or
+ * `source: 'tool'`. The clearing logic keys off `log.source` alone, so new
+ * agent integrations inherit consistent behavior automatically.
  */
 export type ThinkingMode = 'off' | 'on' | 'sticky';
+
+/**
+ * Capability flags that determine what features are available for each agent.
+ *
+ * This is the single canonical definition. All other AgentCapabilities types
+ * across the codebase must import from here to avoid drift and type-shadowing
+ * bugs.
+ */
+export interface AgentCapabilities {
+	/** Agent supports resuming existing sessions (e.g., --resume flag) */
+	supportsResume: boolean;
+
+	/** Agent supports read-only/plan mode (e.g., --permission-mode plan) */
+	supportsReadOnlyMode: boolean;
+
+	/** Agent outputs JSON-formatted responses (for parsing) */
+	supportsJsonOutput: boolean;
+
+	/** Agent provides a session ID for conversation continuity */
+	supportsSessionId: boolean;
+
+	/** Agent can accept image inputs (screenshots, diagrams, etc.) */
+	supportsImageInput: boolean;
+
+	/** Agent can accept image inputs when resuming an existing session */
+	supportsImageInputOnResume: boolean;
+
+	/** Agent supports slash commands (e.g., /help, /compact) */
+	supportsSlashCommands: boolean;
+
+	/** Agent stores session history in a discoverable location */
+	supportsSessionStorage: boolean;
+
+	/** Agent provides cost/pricing information */
+	supportsCostTracking: boolean;
+
+	/** Agent provides token usage statistics */
+	supportsUsageStats: boolean;
+
+	/** Agent supports batch/headless mode (non-interactive) */
+	supportsBatchMode: boolean;
+
+	/** Agent requires a prompt to start (no eager spawn on session creation) */
+	requiresPromptToStart: boolean;
+
+	/** Agent streams responses in real-time */
+	supportsStreaming: boolean;
+
+	/** Agent provides distinct "result" messages when done */
+	supportsResultMessages: boolean;
+
+	/** Agent supports selecting different models (e.g., --model flag) */
+	supportsModelSelection: boolean;
+
+	/** Agent supports --input-format stream-json for image input via stdin */
+	supportsStreamJsonInput: boolean;
+
+	/** Agent emits streaming thinking/reasoning content that can be displayed */
+	supportsThinkingDisplay: boolean;
+
+	/** Agent can receive merged context from other sessions/tabs */
+	supportsContextMerge: boolean;
+
+	/** Agent can export its context for transfer to other sessions/agents */
+	supportsContextExport: boolean;
+
+	/** Agent supports inline wizard structured output conversations */
+	supportsWizard: boolean;
+
+	/** Agent can serve as a group chat moderator */
+	supportsGroupChatModeration: boolean;
+
+	/** Agent uses JSON line (JSONL) output format in CLI batch mode */
+	usesJsonLineOutput: boolean;
+
+	/** Agent uses a combined input+output context window (vs separate limits) */
+	usesCombinedContextWindow: boolean;
+
+	/** Agent supports --append-system-prompt for separate system prompt delivery */
+	supportsAppendSystemPrompt: boolean;
+
+	/**
+	 * Agent maintains a per-project persistent memory store on disk that Maestro
+	 * can browse and edit. Claude Code does this at ~/.claude/projects/<path>/memory/.
+	 */
+	supportsProjectMemory: boolean;
+
+	/**
+	 * How images should be handled on resume when -i flag is not available.
+	 * 'prompt-embed': Save images to temp files and embed file paths in the prompt text.
+	 * undefined: Use default image handling (or no special resume handling needed).
+	 */
+	imageResumeMode?: 'prompt-embed';
+}
+
+/**
+ * Default capabilities - safe defaults for unknown agents.
+ * All capabilities disabled by default (conservative approach).
+ */
+export const DEFAULT_CAPABILITIES: AgentCapabilities = {
+	supportsResume: false,
+	supportsReadOnlyMode: false,
+	supportsJsonOutput: false,
+	supportsSessionId: false,
+	supportsImageInput: false,
+	supportsImageInputOnResume: false,
+	supportsSlashCommands: false,
+	supportsSessionStorage: false,
+	supportsCostTracking: false,
+	supportsUsageStats: false,
+	supportsBatchMode: false,
+	requiresPromptToStart: false,
+	supportsStreaming: false,
+	supportsResultMessages: false,
+	supportsModelSelection: false,
+	supportsStreamJsonInput: false,
+	supportsThinkingDisplay: false,
+	supportsContextMerge: false,
+	supportsContextExport: false,
+	supportsWizard: false,
+	supportsGroupChatModeration: false,
+	usesJsonLineOutput: false,
+	usesCombinedContextWindow: false,
+	supportsAppendSystemPrompt: false,
+	supportsProjectMemory: false,
+};
 
 // Session group
 export interface Group {
@@ -25,6 +166,23 @@ export interface Group {
 	name: string;
 	emoji: string;
 	collapsed: boolean;
+}
+
+/**
+ * Cli activity attached to a Session when the CLI is running a playbook on
+ * that session. Single source of truth for both the renderer's Session type
+ * (`renderer/types/index.ts`) and the main-process persistence diff
+ * comparator (`main/ipc/handlers/persistence.ts:cliActivityChanged`).
+ *
+ * Producer: `useCliActivityMonitoring` in
+ * `renderer/hooks/remote/useCliActivityMonitoring.ts`. If a new field is added
+ * here, the comparator must compare it too — TypeScript will flag the omission
+ * because both sites depend on this exact shape.
+ */
+export interface SessionCliActivity {
+	playbookId: string;
+	playbookName: string;
+	startedAt: number;
 }
 
 // Simplified session interface for CLI (subset of full Session)
@@ -36,6 +194,16 @@ export interface SessionInfo {
 	cwd: string;
 	projectRoot: string;
 	autoRunFolderPath?: string;
+	/** Per-session model override (wins over agent-level `model` config option). */
+	customModel?: string;
+	/** Per-session effort/reasoning override (wins over agent-level config). */
+	customEffort?: string;
+	/** Per-session extra CLI args appended to the spawn. Space-separated, shell-quote aware. */
+	customArgs?: string;
+	/** Per-session env vars merged over agent-level customEnvVars and agent defaults. */
+	customEnvVars?: Record<string, string>;
+	/** Per-session SSH remote config — when enabled, CLI spawns via SSH. */
+	sessionSshRemoteConfig?: AgentSshRemoteConfig;
 }
 
 // Usage statistics from AI agent CLI (Claude Code, Codex, etc.)
@@ -55,7 +223,7 @@ export interface UsageStats {
 }
 
 // History entry types for the History panel
-export type HistoryEntryType = 'AUTO' | 'USER';
+export type HistoryEntryType = 'AUTO' | 'USER' | 'CUE';
 
 export interface HistoryEntry {
 	id: string;
@@ -72,6 +240,11 @@ export interface HistoryEntry {
 	success?: boolean;
 	elapsedTimeMs?: number;
 	validated?: boolean;
+	cueTriggerName?: string;
+	cueEventType?: string;
+	cueSourceSession?: string;
+	/** Hostname of the machine that created this entry (for shared history) */
+	hostname?: string;
 }
 
 // Document entry within a playbook
@@ -79,6 +252,11 @@ export interface PlaybookDocumentEntry {
 	filename: string;
 	resetOnCompletion: boolean;
 }
+
+// Controls whether each Auto Run agent invocation processes a single task or the
+// whole document. Resolves `{{TASK_SELECTION_BLOCK}}` inside the autorun prompt.
+// Omitted on legacy playbooks → treated as 'task' (the historical behavior).
+export type TaskSelectionMode = 'task' | 'document';
 
 // A saved Playbook configuration
 export interface Playbook {
@@ -90,6 +268,7 @@ export interface Playbook {
 	loopEnabled: boolean;
 	maxLoops?: number | null;
 	prompt: string;
+	taskSelectionMode?: TaskSelectionMode;
 	worktreeSettings?: {
 		branchNameTemplate: string;
 		createPROnCompletion: boolean;
@@ -131,21 +310,117 @@ export interface BatchRunConfig {
 	prompt: string;
 	loopEnabled: boolean;
 	maxLoops?: number | null;
+	taskSelectionMode?: TaskSelectionMode;
 	worktree?: WorktreeConfig;
 	worktreeTarget?: WorktreeRunTarget;
 }
 
-// Agent configuration
+// ============================================================================
+// Agent Capabilities
+// ============================================================================
+
+/**
+ * Capability flags that determine what features are available for each agent.
+ * Canonical definition - import from here, not from capabilities.ts or preload.
+ */
+export interface AgentCapabilities {
+	/** Agent supports resuming existing sessions (e.g., --resume flag) */
+	supportsResume: boolean;
+	/** Agent supports read-only/plan mode (e.g., --permission-mode plan) */
+	supportsReadOnlyMode: boolean;
+	/** Agent outputs JSON-formatted responses (for parsing) */
+	supportsJsonOutput: boolean;
+	/** Agent provides a session ID for conversation continuity */
+	supportsSessionId: boolean;
+	/** Agent can accept image inputs (screenshots, diagrams, etc.) */
+	supportsImageInput: boolean;
+	/** Agent can accept image inputs when resuming an existing session */
+	supportsImageInputOnResume: boolean;
+	/** Agent supports slash commands (e.g., /help, /compact) */
+	supportsSlashCommands: boolean;
+	/** Agent stores session history in a discoverable location */
+	supportsSessionStorage: boolean;
+	/** Agent provides cost/pricing information */
+	supportsCostTracking: boolean;
+	/** Agent provides token usage statistics */
+	supportsUsageStats: boolean;
+	/** Agent supports batch/headless mode (non-interactive) */
+	supportsBatchMode: boolean;
+	/** Agent requires a prompt to start (no eager spawn on session creation) */
+	requiresPromptToStart: boolean;
+	/** Agent streams responses in real-time */
+	supportsStreaming: boolean;
+	/** Agent provides distinct "result" messages when done */
+	supportsResultMessages: boolean;
+	/** Agent supports selecting different models (e.g., --model flag) */
+	supportsModelSelection: boolean;
+	/** Agent supports --input-format stream-json for image input via stdin */
+	supportsStreamJsonInput: boolean;
+	/** Agent emits streaming thinking/reasoning content that can be displayed */
+	supportsThinkingDisplay: boolean;
+	/** Agent can receive merged context from other sessions/tabs */
+	supportsContextMerge: boolean;
+	/** Agent can export its context for transfer to other sessions/agents */
+	supportsContextExport: boolean;
+	/** Agent supports inline wizard structured output conversations */
+	supportsWizard: boolean;
+	/** Agent can serve as a group chat moderator */
+	supportsGroupChatModeration: boolean;
+	/** Agent uses JSON line (JSONL) output format in CLI batch mode */
+	usesJsonLineOutput: boolean;
+	/** Agent uses a combined input+output context window (vs separate limits) */
+	usesCombinedContextWindow: boolean;
+	/** Agent supports --append-system-prompt for separate system prompt delivery */
+	supportsAppendSystemPrompt: boolean;
+	/**
+	 * Agent maintains a per-project persistent memory store on disk that Maestro
+	 * can browse and edit. Claude Code does this at ~/.claude/projects/<path>/memory/.
+	 */
+	supportsProjectMemory: boolean;
+	/** How images should be handled on resume when -i flag is not available. */
+	imageResumeMode?: 'prompt-embed';
+}
+
+// ============================================================================
+// Agent Configuration Options
+// ============================================================================
+
+/**
+ * Configuration option for agent-specific settings (checkboxes, text, number, select).
+ */
+export interface AgentConfigOption {
+	key: string;
+	type: 'checkbox' | 'text' | 'number' | 'select';
+	label: string;
+	description: string;
+	default: any;
+	options?: string[];
+	dynamic?: boolean; // If true, options are fetched at runtime via agents:getConfigOptions IPC
+}
+
+// Agent configuration (serializable subset shared across processes)
 export interface AgentConfig {
 	id: string;
 	name: string;
-	binaryName: string;
-	command: string;
-	args: string[];
+	binaryName?: string;
+	command?: string;
+	args?: string[];
 	available: boolean;
 	path?: string;
+	customPath?: string;
 	requiresPty?: boolean;
 	hidden?: boolean;
+	configOptions?: AgentConfigOption[];
+	capabilities?: AgentCapabilities;
+	yoloModeArgs?: string[];
+	readOnlyCliEnforced?: boolean;
+	/**
+	 * Latest persisted capability snapshot for this agent in the requested
+	 * environment (local or per-SSH-remote). Attached by the IPC handlers
+	 * after stripping non-serializable agent fields. May be absent on first
+	 * boot before any detection has run.
+	 */
+	snapshot?: import('./agentCapabilities').AgentCapabilitiesSnapshot;
 }
 
 // ============================================================================
@@ -164,6 +439,7 @@ export type AgentErrorType =
 	| 'agent_crashed' // Process exited unexpectedly
 	| 'permission_denied' // Agent lacks required permissions
 	| 'session_not_found' // Session was deleted or doesn't exist
+	| 'hitl_gate' // Playbook reached a human-in-the-loop review marker
 	| 'unknown'; // Unrecognized error
 
 /**
@@ -185,6 +461,14 @@ export interface AgentError {
 
 	/** The session ID where the error occurred (if applicable) */
 	sessionId?: string;
+
+	/**
+	 * Stable UUID of the SSH remote this error fired against, when the
+	 * spawning session was an SSH-backed session. Used by listeners (notably
+	 * `capabilitySnapshots.markAuthRequired`) so that per-remote status pills
+	 * flip independently of the local snapshot. Absent on local-spawn errors.
+	 */
+	sshRemoteId?: string;
 
 	/** Timestamp when the error occurred */
 	timestamp: number;
@@ -371,6 +655,42 @@ export interface AgentSshRemoteConfig {
 
 	/** Override working directory for this agent */
 	workingDirOverride?: string;
+
+	/** Sync history entries to .maestro/history/ on the remote host (opt-in, default: false) */
+	syncHistory?: boolean;
+
+	/**
+	 * Mirror every new history entry for this agent to
+	 * <projectRoot>/.maestro/history/history-<hostname>.jsonl on *this* machine's
+	 * local filesystem. Meant for agents that run here locally but are controlled
+	 * by another Maestro instance over SSH — the controller reads the project's
+	 * `.maestro/history/` dir and sees entries generated on this side.
+	 * Independent of `enabled` / `syncHistory`.
+	 */
+	shareHistoryToProjectDir?: boolean;
+}
+
+// ============================================================================
+// Deep Link Types
+// ============================================================================
+
+/**
+ * Parsed deep link from a maestro:// URL.
+ * Used by both main process (URL parsing) and renderer (navigation dispatch).
+ */
+export interface ParsedDeepLink {
+	/** The type of navigation action */
+	action: 'focus' | 'session' | 'group' | 'file';
+	/** Maestro session ID (for action: 'session' and 'file') */
+	sessionId?: string;
+	/** Tab ID within the session (for action: 'session') */
+	tabId?: string;
+	/** Group ID (for action: 'group') */
+	groupId?: string;
+	/** Absolute filesystem path (for action: 'file') */
+	filePath?: string;
+	/** 1-based line number within the file (for action: 'file', optional) */
+	line?: number;
 }
 
 // ============================================================================
@@ -409,4 +729,46 @@ export interface GlobalAgentStats {
 	isComplete: boolean;
 	/** Per-provider breakdown */
 	byProvider: Record<string, ProviderStats>;
+}
+
+// ============================================================================
+// Shell & Directory Types (shared across preload boundary)
+// ============================================================================
+
+/**
+ * Detected shell information for terminal sessions.
+ */
+export interface ShellInfo {
+	id: string;
+	name: string;
+	available: boolean;
+	path?: string;
+}
+
+/**
+ * Directory entry for filesystem browsing.
+ */
+export interface DirectoryEntry {
+	name: string;
+	isDirectory: boolean;
+	isFile: boolean;
+	isSymlink?: boolean;
+	path: string;
+}
+
+/**
+ * Update status from electron-updater (serializable subset for IPC).
+ */
+export interface UpdateStatus {
+	status:
+		| 'idle'
+		| 'checking'
+		| 'available'
+		| 'not-available'
+		| 'downloading'
+		| 'downloaded'
+		| 'error';
+	info?: { version: string };
+	progress?: { percent: number; bytesPerSecond: number; total: number; transferred: number };
+	error?: string;
 }

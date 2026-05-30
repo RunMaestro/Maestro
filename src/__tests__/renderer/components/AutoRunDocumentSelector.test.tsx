@@ -1,13 +1,19 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
+import { render as rtlRender, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {
 	AutoRunDocumentSelector,
 	DocTreeNode,
-} from '../../../renderer/components/AutoRunDocumentSelector';
-import type { Theme } from '../../../renderer/types';
+} from '../../../renderer/components/AutoRun/AutoRunDocumentSelector';
+import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 
+import { mockTheme } from '../../helpers/mockTheme';
+
+// Wrap render with LayerStackProvider so useModalLayer (used by the doc
+// selector dropdown to own Escape) has the context it expects.
+const render = (ui: React.ReactElement, options?: Parameters<typeof rtlRender>[1]) =>
+	rtlRender(<LayerStackProvider>{ui}</LayerStackProvider>, options);
 // Mock lucide-react icons
 vi.mock('lucide-react', () => ({
 	ChevronDown: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
@@ -40,28 +46,20 @@ vi.mock('lucide-react', () => ({
 			📁
 		</span>
 	),
+	Search: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<span data-testid="search-icon" className={className} style={style}>
+			🔍
+		</span>
+	),
+}));
+
+// Mock theme utils (getExplorerFileIcon returns JSX with lucide-react icons)
+vi.mock('../../../renderer/utils/theme', () => ({
+	getExplorerFileIcon: () => <span data-testid="file-icon">📄</span>,
+	getExplorerFolderIcon: () => <span data-testid="folder-icon">📁</span>,
 }));
 
 // Test theme
-const mockTheme: Theme = {
-	id: 'test-theme',
-	name: 'Test Theme',
-	mode: 'dark',
-	colors: {
-		bgMain: '#1a1a2e',
-		bgSidebar: '#16213e',
-		bgActivity: '#0f3460',
-		border: '#374151',
-		accent: '#6366f1',
-		accentForeground: '#ffffff',
-		textMain: '#e5e7eb',
-		textDim: '#9ca3af',
-		success: '#22c55e',
-		warning: '#eab308',
-		error: '#ef4444',
-		purple: '#8b5cf6',
-	},
-};
 
 const defaultProps = {
 	theme: mockTheme,
@@ -97,7 +95,8 @@ describe('AutoRunDocumentSelector', () => {
 
 		it('exports AutoRunDocumentSelector component', () => {
 			expect(AutoRunDocumentSelector).toBeDefined();
-			expect(typeof AutoRunDocumentSelector).toBe('function');
+			// forwardRef components are objects with a $$typeof tag, not plain functions
+			expect(AutoRunDocumentSelector).not.toBeNull();
 		});
 	});
 
@@ -139,24 +138,15 @@ describe('AutoRunDocumentSelector', () => {
 			expect(changeFolderButton).toBeInTheDocument();
 		});
 
-		it('renders a Bionify toggle with the same toolbar geometry as adjacent action buttons', () => {
-			render(
-				<AutoRunDocumentSelector
-					{...defaultProps}
-					selectedDocument="doc1"
-					bionifyEnabled={false}
-					onToggleBionify={vi.fn()}
-				/>
-			);
+		it('does not render a Bionify toggle (toggled globally via Cmd+K)', () => {
+			render(<AutoRunDocumentSelector {...defaultProps} selectedDocument="doc1" />);
 
-			const bionifyButton = screen.getByTitle('Enable Bionify for this document preview');
-			const createButton = screen.getByTitle('Create new document');
-
-			expect(bionifyButton.className).toContain('inline-flex');
-			expect(bionifyButton.className).toContain('justify-center');
-			expect(bionifyButton.className).toContain('min-w-10');
-			expect(bionifyButton.className).toContain('h-10');
-			expect(bionifyButton.className).toBe(createButton.className);
+			expect(
+				screen.queryByTitle('Enable Bionify for this document preview')
+			).not.toBeInTheDocument();
+			expect(
+				screen.queryByTitle('Disable Bionify for this document preview')
+			).not.toBeInTheDocument();
 		});
 
 		it('applies theme colors to dropdown button', () => {
@@ -242,17 +232,17 @@ describe('AutoRunDocumentSelector', () => {
 			const button = screen.getByRole('button', { name: /doc2\.md/i });
 			fireEvent.click(button);
 
-			// Find all elements with doc2.md text, find the one in the dropdown
-			const docElements = screen.getAllByText('doc2.md');
-			// The dropdown item is a span inside a button with hover:bg-white/5 class
-			const selectedDoc = docElements
-				.find((el) => {
-					const parent = el.closest('button');
-					return parent && parent.className.includes('hover:bg-white/5');
-				})
-				?.closest('button');
-			expect(selectedDoc).toHaveStyle({ color: mockTheme.colors.accent });
-			expect(selectedDoc).toHaveStyle({ backgroundColor: mockTheme.colors.bgActivity });
+			// In the flat list, the selected entry carries data-selected="true"
+			// and is also the initial keyboard highlight (highlightedIndex starts
+			// on the selected doc), so its background is the highlight tint.
+			const selectedEntry = document.querySelector(
+				'button[data-selected="true"][data-highlighted="true"]'
+			) as HTMLElement | null;
+			expect(selectedEntry).not.toBeNull();
+			expect(selectedEntry).toHaveStyle({ color: mockTheme.colors.accent });
+			expect(selectedEntry).toHaveStyle({
+				backgroundColor: `${mockTheme.colors.accent}25`,
+			});
 		});
 	});
 
@@ -267,139 +257,60 @@ describe('AutoRunDocumentSelector', () => {
 		});
 	});
 
-	describe('Tree Mode', () => {
-		const documentTree: DocTreeNode[] = [
-			{
-				name: 'folder1',
-				type: 'folder',
-				path: 'folder1',
-				children: [
-					{ name: 'nested-doc', type: 'file', path: 'folder1/nested-doc' },
-					{
-						name: 'subfolder',
-						type: 'folder',
-						path: 'folder1/subfolder',
-						children: [{ name: 'deep-doc', type: 'file', path: 'folder1/subfolder/deep-doc' }],
-					},
-				],
-			},
-			{ name: 'root-doc', type: 'file', path: 'root-doc' },
-		];
-
-		it('renders folder nodes with chevron icons', () => {
+	describe('Flat List Rendering (nested paths)', () => {
+		// The dropdown is now a single flat keyboard-navigable list. Nested
+		// document paths render as full path entries (e.g. "folder1/nested-doc.md")
+		// rather than as expandable folders.
+		it('renders nested documents as flat entries with full path', () => {
 			render(
 				<AutoRunDocumentSelector
 					{...defaultProps}
 					documents={['folder1/nested-doc', 'folder1/subfolder/deep-doc', 'root-doc']}
-					documentTree={documentTree}
 				/>
 			);
 
 			const button = screen.getByRole('button', { name: /select a document/i });
 			fireEvent.click(button);
 
-			// Folder should be visible with chevron
-			expect(screen.getByText('folder1')).toBeInTheDocument();
+			expect(screen.getByText('folder1/nested-doc.md')).toBeInTheDocument();
+			expect(screen.getByText('folder1/subfolder/deep-doc.md')).toBeInTheDocument();
+			expect(screen.getByText('root-doc.md')).toBeInTheDocument();
 		});
 
-		it('expands folder when clicked', () => {
+		it('selects a nested document by clicking its flat entry', () => {
 			render(
 				<AutoRunDocumentSelector
 					{...defaultProps}
 					documents={['folder1/nested-doc', 'folder1/subfolder/deep-doc', 'root-doc']}
-					documentTree={documentTree}
 				/>
 			);
 
 			const button = screen.getByRole('button', { name: /select a document/i });
 			fireEvent.click(button);
 
-			// Initially folder is collapsed, nested doc shouldn't be visible
-			expect(screen.queryByText('nested-doc.md')).not.toBeInTheDocument();
-
-			// Click folder to expand
-			const folderButton = screen.getByText('folder1');
-			fireEvent.click(folderButton);
-
-			// Now nested doc should be visible
-			expect(screen.getByText('nested-doc.md')).toBeInTheDocument();
-		});
-
-		it('collapses folder when clicked again', () => {
-			render(
-				<AutoRunDocumentSelector
-					{...defaultProps}
-					documents={['folder1/nested-doc', 'folder1/subfolder/deep-doc', 'root-doc']}
-					documentTree={documentTree}
-				/>
-			);
-
-			const button = screen.getByRole('button', { name: /select a document/i });
-			fireEvent.click(button);
-
-			// Expand folder
-			const folderButton = screen.getByText('folder1');
-			fireEvent.click(folderButton);
-			expect(screen.getByText('nested-doc.md')).toBeInTheDocument();
-
-			// Collapse folder
-			fireEvent.click(folderButton);
-			expect(screen.queryByText('nested-doc.md')).not.toBeInTheDocument();
-		});
-
-		it('renders nested folders correctly', () => {
-			render(
-				<AutoRunDocumentSelector
-					{...defaultProps}
-					documents={['folder1/nested-doc', 'folder1/subfolder/deep-doc', 'root-doc']}
-					documentTree={documentTree}
-				/>
-			);
-
-			const button = screen.getByRole('button', { name: /select a document/i });
-			fireEvent.click(button);
-
-			// Expand folder1
-			fireEvent.click(screen.getByText('folder1'));
-			expect(screen.getByText('subfolder')).toBeInTheDocument();
-
-			// Expand subfolder
-			fireEvent.click(screen.getByText('subfolder'));
-			expect(screen.getByText('deep-doc.md')).toBeInTheDocument();
-		});
-
-		it('selects file from tree', () => {
-			render(
-				<AutoRunDocumentSelector
-					{...defaultProps}
-					documents={['folder1/nested-doc', 'folder1/subfolder/deep-doc', 'root-doc']}
-					documentTree={documentTree}
-				/>
-			);
-
-			const button = screen.getByRole('button', { name: /select a document/i });
-			fireEvent.click(button);
-
-			// Expand folder and select nested doc
-			fireEvent.click(screen.getByText('folder1'));
-			fireEvent.click(screen.getByText('nested-doc.md'));
-
+			fireEvent.click(screen.getByText('folder1/nested-doc.md'));
 			expect(defaultProps.onSelectDocument).toHaveBeenCalledWith('folder1/nested-doc');
 		});
 
-		it('renders root-level file in tree', () => {
+		it('marks the selected nested document with data-selected', () => {
 			render(
 				<AutoRunDocumentSelector
 					{...defaultProps}
 					documents={['folder1/nested-doc', 'folder1/subfolder/deep-doc', 'root-doc']}
-					documentTree={documentTree}
+					selectedDocument="folder1/subfolder/deep-doc"
 				/>
 			);
 
-			const button = screen.getByRole('button', { name: /select a document/i });
+			const button = screen.getByRole('button', { name: /deep-doc\.md/i });
 			fireEvent.click(button);
 
-			expect(screen.getByText('root-doc.md')).toBeInTheDocument();
+			// Both the trigger and the dropdown row show the doc text — pick
+			// the dropdown row by its data-selected marker.
+			const selectedButton = document.querySelector(
+				'button[data-selected="true"]'
+			) as HTMLElement | null;
+			expect(selectedButton).not.toBeNull();
+			expect(selectedButton?.textContent).toContain('folder1/subfolder/deep-doc.md');
 		});
 	});
 
@@ -1094,10 +1005,13 @@ describe('AutoRunDocumentSelector', () => {
 			const button = screen.getByRole('button', { name: /select a document/i });
 			fireEvent.click(button);
 
-			// Find the dropdown menu - the doc text is in a span, inside a button, inside the menu container
+			// Find the dropdown menu - the doc text is in a span, inside a button,
+			// inside the scrollable list, inside the menu container (added when
+			// the filter input was introduced).
 			const docText = screen.getByText('doc1.md');
 			const docButton = docText.closest('button');
-			const menu = docButton?.parentElement;
+			const scrollList = docButton?.parentElement;
+			const menu = scrollList?.parentElement;
 			expect(menu).toHaveStyle({ backgroundColor: mockTheme.colors.bgSidebar });
 		});
 

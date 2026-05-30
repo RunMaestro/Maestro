@@ -1,15 +1,21 @@
 import { useState, useEffect, useRef } from 'react';
-import { X, GitBranch, Loader2, AlertTriangle } from 'lucide-react';
+import { X, GitBranch, AlertTriangle } from 'lucide-react';
+import { GhostIconButton } from './ui/GhostIconButton';
+import { Spinner } from './ui/Spinner';
 import type { Theme, Session, GhCliStatus } from '../types';
-import { useLayerStack } from '../contexts/LayerStackContext';
+import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
+import { openUrl } from '../utils/openUrl';
+import { sanitizeGitBranchName } from '../../shared/gitUtils';
+import { gitService } from '../services/git';
+import { captureException } from '../utils/sentry';
 
 interface CreateWorktreeModalProps {
 	isOpen: boolean;
 	onClose: () => void;
 	theme: Theme;
 	session: Session;
-	onCreateWorktree: (branchName: string) => Promise<void>;
+	onCreateWorktree: (branchName: string, baseBranch?: string) => Promise<void>;
 }
 
 /**
@@ -25,12 +31,19 @@ export function CreateWorktreeModal({
 	session,
 	onCreateWorktree,
 }: CreateWorktreeModalProps) {
-	const { registerLayer, unregisterLayer } = useLayerStack();
 	const onCloseRef = useRef(onClose);
 	onCloseRef.current = onClose;
 
+	useModalLayer(MODAL_PRIORITIES.CREATE_WORKTREE, undefined, () => onCloseRef.current(), {
+		focusTrap: 'lenient',
+		enabled: isOpen,
+	});
+
 	// Form state
 	const [branchName, setBranchName] = useState('');
+	const [baseBranch, setBaseBranch] = useState('');
+	const [branches, setBranches] = useState<string[]>([]);
+	const [branchLoadError, setBranchLoadError] = useState(false);
 	const [isCreating, setIsCreating] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 
@@ -40,31 +53,61 @@ export function CreateWorktreeModal({
 	// Input ref for auto-focus
 	const inputRef = useRef<HTMLInputElement>(null);
 
-	// Register with layer stack for Escape handling
-	useEffect(() => {
-		if (isOpen) {
-			const id = registerLayer({
-				type: 'modal',
-				priority: MODAL_PRIORITIES.CREATE_WORKTREE,
-				onEscape: () => onCloseRef.current(),
-				blocksLowerLayers: true,
-				capturesFocus: true,
-				focusTrap: 'lenient',
-			});
-			return () => unregisterLayer(id);
-		}
-	}, [isOpen, registerLayer, unregisterLayer]);
+	const sshRemoteId = session.sshRemoteId || session.sessionSshRemoteConfig?.remoteId || undefined;
 
 	// Check gh CLI status and reset state on open
 	useEffect(() => {
 		if (isOpen) {
 			checkGhCli();
 			setBranchName('');
+			setBaseBranch('');
+			setBranches([]);
+			setBranchLoadError(false);
 			setError(null);
 			// Auto-focus the input
 			setTimeout(() => inputRef.current?.focus(), 50);
 		}
 	}, [isOpen]);
+
+	// Fetch branches when the modal opens so the user can pick a base.
+	// Sort current branch first, then main/master, then alphabetical — same
+	// ordering as the Auto Run worktree picker so the two flows feel uniform.
+	useEffect(() => {
+		if (!isOpen) return;
+
+		let cancelled = false;
+		Promise.all([
+			gitService.getBranches(session.cwd, sshRemoteId),
+			window.maestro.git.branch(session.cwd, sshRemoteId),
+		])
+			.then(([result, branchResult]) => {
+				if (cancelled) return;
+				const currentBranch = branchResult.stdout?.trim() || '';
+				const sorted = [...result].sort((a, b) => {
+					if (a === currentBranch && b !== currentBranch) return -1;
+					if (a !== currentBranch && b === currentBranch) return 1;
+					const aIsMain = a === 'main' || a === 'master';
+					const bIsMain = b === 'main' || b === 'master';
+					if (aIsMain && !bIsMain) return -1;
+					if (!aIsMain && bIsMain) return 1;
+					return a.localeCompare(b);
+				});
+				setBranches(sorted);
+				if (sorted.length > 0) {
+					setBaseBranch(sorted[0]);
+				}
+			})
+			.catch((err) => {
+				if (cancelled) return;
+				captureException(err, { extra: { cwd: session.cwd, sshRemoteId } });
+				setBranchLoadError(true);
+				setBranches([]);
+			});
+
+		return () => {
+			cancelled = true;
+		};
+	}, [isOpen, session.cwd, sshRemoteId]);
 
 	const checkGhCli = async () => {
 		try {
@@ -76,17 +119,9 @@ export function CreateWorktreeModal({
 	};
 
 	const handleCreate = async () => {
-		const trimmedName = branchName.trim();
+		const trimmedName = sanitizeGitBranchName(branchName);
 		if (!trimmedName) {
-			setError('Please enter a branch name');
-			return;
-		}
-
-		// Basic branch name validation
-		if (!/^[\w\-./]+$/.test(trimmedName)) {
-			setError(
-				'Invalid branch name. Use only letters, numbers, hyphens, underscores, dots, and slashes.'
-			);
+			setError('Please enter a valid branch name');
 			return;
 		}
 
@@ -94,7 +129,7 @@ export function CreateWorktreeModal({
 		setError(null);
 
 		try {
-			await onCreateWorktree(trimmedName);
+			await onCreateWorktree(trimmedName, baseBranch || undefined);
 			onClose();
 		} catch (err) {
 			setError(err instanceof Error ? err.message : 'Failed to create worktree');
@@ -137,9 +172,9 @@ export function CreateWorktreeModal({
 							Create New Worktree
 						</h2>
 					</div>
-					<button onClick={onClose} className="p-1 rounded hover:bg-white/10 transition-colors">
+					<GhostIconButton onClick={onClose} ariaLabel="Close">
 						<X className="w-4 h-4" style={{ color: theme.colors.textDim }} />
-					</button>
+					</GhostIconButton>
 				</div>
 
 				{/* Content */}
@@ -165,7 +200,7 @@ export function CreateWorktreeModal({
 										type="button"
 										className="underline hover:opacity-80"
 										style={{ color: theme.colors.accent }}
-										onClick={() => window.maestro.shell.openExternal('https://cli.github.com')}
+										onClick={() => openUrl('https://cli.github.com')}
 									>
 										GitHub CLI
 									</button>{' '}
@@ -198,6 +233,41 @@ export function CreateWorktreeModal({
 						</div>
 					)}
 
+					{/* Base Branch Selector */}
+					<div>
+						<label
+							className="text-xs font-bold uppercase mb-1.5 block"
+							style={{ color: theme.colors.textDim }}
+						>
+							Base Branch
+						</label>
+						<select
+							value={baseBranch}
+							onChange={(e) => setBaseBranch(e.target.value)}
+							disabled={isCreating || branchLoadError || branches.length === 0}
+							className="w-full px-3 py-2 rounded border outline-none text-sm"
+							style={{
+								backgroundColor: theme.colors.bgMain,
+								borderColor: branchLoadError ? theme.colors.error : theme.colors.border,
+								color: theme.colors.textMain,
+							}}
+						>
+							{branches.length === 0 && !branchLoadError && (
+								<option value="">Loading branches…</option>
+							)}
+							{branches.map((b) => (
+								<option key={b} value={b}>
+									{b}
+								</option>
+							))}
+						</select>
+						{branchLoadError && (
+							<p className="text-xs mt-1" style={{ color: theme.colors.error }}>
+								Could not load branches — new branch will be created from current HEAD.
+							</p>
+						)}
+					</div>
+
 					{/* Branch Name Input */}
 					<div>
 						<label
@@ -210,7 +280,9 @@ export function CreateWorktreeModal({
 							ref={inputRef}
 							type="text"
 							value={branchName}
-							onChange={(e) => setBranchName(e.target.value)}
+							onChange={(e) =>
+								setBranchName(sanitizeGitBranchName(e.target.value, { allowIncomplete: true }))
+							}
 							onKeyDown={handleKeyDown}
 							placeholder="feature-xyz"
 							className="w-full px-3 py-2 rounded border bg-transparent outline-none text-sm"
@@ -276,7 +348,7 @@ export function CreateWorktreeModal({
 					>
 						{isCreating ? (
 							<>
-								<Loader2 className="w-4 h-4 animate-spin" />
+								<Spinner size={16} />
 								Creating...
 							</>
 						) : (

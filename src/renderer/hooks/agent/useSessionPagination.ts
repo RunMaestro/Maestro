@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import type { ClaudeSession } from './useSessionViewer';
+import { logger } from '../../utils/logger';
 
 /**
  * Dependencies for the useSessionPagination hook.
@@ -175,7 +176,7 @@ export function useSessionPagination({
 					window.maestro.claude.getProjectStats(projectPath);
 				}
 			} catch (error) {
-				console.error('Failed to load sessions:', error);
+				logger.error('Failed to load sessions:', undefined, error);
 			} finally {
 				setLoading(false);
 			}
@@ -223,7 +224,7 @@ export function useSessionPagination({
 			setHasMoreSessions(result.hasMore);
 			nextCursorRef.current = result.nextCursor;
 		} catch (error) {
-			console.error('Failed to load more sessions:', error);
+			logger.error('Failed to load more sessions:', undefined, error);
 		} finally {
 			setIsLoadingMoreSessions(false);
 		}

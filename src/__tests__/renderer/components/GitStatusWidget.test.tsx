@@ -15,6 +15,7 @@ import { GitStatusWidget } from '../../../renderer/components/GitStatusWidget';
 import type { Theme } from '../../../renderer/types';
 import type { GitStatusData, GitFileChange } from '../../../renderer/contexts/GitStatusContext';
 
+import { mockTheme } from '../../helpers/mockTheme';
 // Mock the GitStatusContext hooks (focused contexts)
 const mockGetFileCount = vi.fn<[string], number>();
 const mockGetFileDetails = vi.fn<
@@ -92,25 +93,6 @@ const mockGetStatus = {
 };
 
 // Create a mock theme
-const mockTheme: Theme = {
-	id: 'test-theme',
-	name: 'Test Theme',
-	colors: {
-		bgMain: '#1a1a2e',
-		bgSidebar: '#16213e',
-		bgInput: '#0f3460',
-		textMain: '#eaeaea',
-		textDim: '#a0a0a0',
-		border: '#2a2a4a',
-		accent: '#e94560',
-		scrollbarThumb: '#444',
-		scrollbarTrack: '#222',
-		syntax1: '#ff6b6b',
-		syntax2: '#4ecdc4',
-		syntax3: '#45b7d1',
-		syntax4: '#96ceb4',
-	},
-};
 
 describe('GitStatusWidget', () => {
 	const mockOnViewDiff = vi.fn();

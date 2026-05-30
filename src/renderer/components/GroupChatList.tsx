@@ -4,7 +4,8 @@
  * Appears below the Ungrouped Agents section in the left sidebar.
  */
 
-import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { memo, useState, useRef, useMemo, useCallback } from 'react';
+import { useEventListener } from '../hooks/utils/useEventListener';
 import {
 	MessageSquare,
 	ChevronDown,
@@ -52,15 +53,13 @@ function GroupChatContextMenu({
 	useClickOutside(menuRef, onClose);
 
 	// Close on Escape
-	useEffect(() => {
-		const handleKeyDown = (e: KeyboardEvent) => {
-			if (e.key === 'Escape') {
-				onClose();
-			}
-		};
-		document.addEventListener('keydown', handleKeyDown);
-		return () => document.removeEventListener('keydown', handleKeyDown);
-	}, [onClose]);
+	useEventListener(
+		'keydown',
+		(e) => {
+			if ((e as KeyboardEvent).key === 'Escape') onClose();
+		},
+		{ target: document }
+	);
 
 	// Measure menu and adjust position to stay within viewport
 	const { left, top, ready } = useContextMenuPosition(menuRef, x, y);
@@ -146,6 +145,7 @@ interface GroupChatListProps {
 	onRenameGroupChat: (id: string) => void;
 	onDeleteGroupChat: (id: string) => void;
 	onArchiveGroupChat?: (id: string, archived: boolean) => void;
+	onDeleteAllArchivedGroupChats?: () => void;
 	/** Controlled expanded state (lifted to parent for keyboard navigation) */
 	isExpanded?: boolean;
 	/** Callback when expanded state changes */
@@ -158,9 +158,11 @@ interface GroupChatListProps {
 	groupChatStates?: Map<string, GroupChatState>;
 	/** Participant states for ALL group chats (groupChatId -> Map<participantName, state>) */
 	allGroupChatParticipantStates?: Map<string, Map<string, 'idle' | 'working'>>;
+	/** When true, only show group chats that are busy (moderator/participant working) or the active chat */
+	showUnreadAgentsOnly?: boolean;
 }
 
-export function GroupChatList({
+function GroupChatListInner({
 	theme,
 	groupChats,
 	activeGroupChatId,
@@ -170,13 +172,15 @@ export function GroupChatList({
 	onRenameGroupChat,
 	onDeleteGroupChat,
 	onArchiveGroupChat,
+	onDeleteAllArchivedGroupChats,
 	isExpanded: controlledIsExpanded,
 	onExpandedChange,
 	groupChatState = 'idle',
 	participantStates,
 	groupChatStates,
 	allGroupChatParticipantStates,
-}: GroupChatListProps): JSX.Element {
+	showUnreadAgentsOnly = false,
+}: GroupChatListProps): JSX.Element | null {
 	// Support both controlled and uncontrolled modes
 	// If isExpanded prop is provided, use it as controlled state
 	// Otherwise, use internal state (default: expanded if there are group chats)
@@ -202,18 +206,6 @@ export function GroupChatList({
 		chatId: string;
 	} | null>(null);
 
-	// Track previous count to detect when chats are added
-	const prevCountRef = useRef(groupChats.length);
-
-	// Auto-expand when a new chat is added
-	useEffect(() => {
-		if (groupChats.length > prevCountRef.current) {
-			// A chat was added, expand the list
-			setIsExpanded(true);
-		}
-		prevCountRef.current = groupChats.length;
-	}, [groupChats.length, setIsExpanded]);
-
 	const handleContextMenu = (e: React.MouseEvent, chatId: string) => {
 		e.preventDefault();
 		setContextMenu({ x: e.clientX, y: e.clientY, chatId });
@@ -222,10 +214,43 @@ export function GroupChatList({
 	const archivedCount = useMemo(() => groupChats.filter((c) => c.archived).length, [groupChats]);
 	const activeCount = groupChats.length - archivedCount;
 
-	// Filter and sort group chats: show active chats, plus archived if toggled
+	// Determine which chats are busy (moderator thinking or any participant working).
+	// Mirrors the per-chat status logic in the render below so the unread filter
+	// matches what the user sees as a non-green status dot.
+	const isChatBusy = useCallback(
+		(chatId: string): boolean => {
+			const isActive = activeGroupChatId === chatId;
+			const chatState = isActive ? groupChatState : groupChatStates?.get(chatId) || 'idle';
+			if (chatState !== 'idle') return true;
+			const chatParticipantStates = isActive
+				? participantStates
+				: allGroupChatParticipantStates?.get(chatId);
+			if (!chatParticipantStates) return false;
+			for (const s of chatParticipantStates.values()) {
+				if (s === 'working') return true;
+			}
+			return false;
+		},
+		[
+			activeGroupChatId,
+			groupChatState,
+			groupChatStates,
+			participantStates,
+			allGroupChatParticipantStates,
+		]
+	);
+
+	// Filter and sort group chats: show active chats, plus archived if toggled.
+	// When the unread-agents filter is on, also drop idle chats (keeping the
+	// active one so the user doesn't lose their place).
 	const sortedGroupChats = useMemo(() => {
 		return [...groupChats]
 			.filter((c) => (showArchived ? true : !c.archived))
+			.filter((c) => {
+				if (!showUnreadAgentsOnly) return true;
+				if (c.id === activeGroupChatId) return true;
+				return isChatBusy(c.id);
+			})
 			.sort((a, b) => {
 				// When showing archived, group active chats first
 				if (showArchived && a.archived !== b.archived) {
@@ -233,7 +258,11 @@ export function GroupChatList({
 				}
 				return (b.updatedAt ?? b.createdAt) - (a.updatedAt ?? a.createdAt);
 			});
-	}, [groupChats, showArchived]);
+	}, [groupChats, showArchived, showUnreadAgentsOnly, activeGroupChatId, isChatBusy]);
+
+	// When the unread-agents filter hides everything, drop the section entirely
+	// rather than leaving an empty header dangling at the bottom of the sidebar.
+	if (showUnreadAgentsOnly && sortedGroupChats.length === 0) return null;
 
 	return (
 		<div className="border-t mt-4" style={{ borderColor: theme.colors.border }}>
@@ -287,6 +316,8 @@ export function GroupChatList({
 					<button
 						onClick={(e) => {
 							e.stopPropagation();
+							// Creating a chat is a deliberate action, so expand to reveal it.
+							setIsExpanded(true);
 							onNewGroupChat();
 						}}
 						className="px-2 py-0.5 rounded-full text-[10px] font-medium hover:opacity-80 transition-opacity flex items-center gap-1"
@@ -387,6 +418,20 @@ export function GroupChatList({
 							})}
 						</div>
 					)}
+					{/* Delete All Archived button */}
+					{showArchived && archivedCount > 0 && onDeleteAllArchivedGroupChats && (
+						<button
+							onClick={onDeleteAllArchivedGroupChats}
+							className="flex items-center gap-1.5 w-full px-3 py-1.5 mt-1 text-xs rounded hover:opacity-80 transition-opacity"
+							style={{
+								color: theme.colors.error,
+								backgroundColor: `${theme.colors.error}10`,
+							}}
+						>
+							<Trash2 className="w-3 h-3" />
+							<span>Delete All Archived</span>
+						</button>
+					)}
 				</div>
 			)}
 
@@ -414,3 +459,5 @@ export function GroupChatList({
 		</div>
 	);
 }
+
+export const GroupChatList = memo(GroupChatListInner);

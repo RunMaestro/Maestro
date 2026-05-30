@@ -24,6 +24,7 @@ import type {
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import { useSettingsStore, selectIsLeaderboardRegistered } from '../../stores/settingsStore';
 import { useModalStore, getModalActions } from '../../stores/modalStore';
+import { useFeedbackDraftStore } from '../../stores/feedbackDraftStore';
 import { notifyToast } from '../../stores/notificationStore';
 import { CONDUCTOR_BADGES, getBadgeForTime } from '../../constants/conductorBadges';
 import { getActiveTab } from '../../utils/tabHelpers';
@@ -34,6 +35,26 @@ import { consumeGroupChatAutoRun } from '../../utils/groupChatAutoRunRegistry';
 import type { RightPanelHandle } from '../../components/RightPanel';
 import type { AgentSpawnResult } from '../agent/useAgentExecution';
 import * as Sentry from '@sentry/electron/renderer';
+import { logger } from '../../utils/logger';
+
+/**
+ * Resolve the effective group name for a session, falling back to the parent's group
+ * for worktree children whose groupId may not be in sync.
+ */
+function resolveGroupName(
+	sessionId: string,
+	sessions: { id: string; groupId?: string; parentSessionId?: string }[],
+	groups: { id: string; name: string }[]
+): string {
+	const session = sessions.find((s) => s.id === sessionId);
+	const effectiveGroupId =
+		session?.groupId ||
+		(session?.parentSessionId
+			? sessions.find((s) => s.id === session.parentSessionId)?.groupId
+			: undefined);
+	const group = effectiveGroupId ? groups.find((g) => g.id === effectiveGroupId) : null;
+	return group?.name || 'Ungrouped';
+}
 
 /**
  * Find the session that is actually paused on error.
@@ -59,7 +80,10 @@ export interface UseBatchHandlersDeps {
 	spawnAgentForSession: (
 		sessionId: string,
 		prompt: string,
-		cwdOverride?: string
+		cwdOverride?: string,
+		options?: {
+			isAutoRun?: boolean;
+		}
 	) => Promise<AgentSpawnResult>;
 	/** Ref to RightPanel for refreshing history after batch tasks */
 	rightPanelRef: React.RefObject<RightPanelHandle | null>;
@@ -78,6 +102,8 @@ export interface UseBatchHandlersDeps {
 export interface UseBatchHandlersReturn {
 	/** Start a batch run for a session */
 	startBatchRun: (sessionId: string, config: BatchRunConfig, folderPath: string) => Promise<void>;
+	/** Stop a batch run directly (no confirmation dialog, used by web remote) */
+	stopBatchRun: (sessionId: string) => void;
 	/** Get batch state for a specific session */
 	getBatchState: (sessionId: string) => BatchRunState;
 	/** Stop batch run with confirmation dialog */
@@ -90,6 +116,12 @@ export interface UseBatchHandlersReturn {
 	handleResumeAfterError: () => void;
 	/** Abort the entire batch on unrecoverable error */
 	handleAbortBatchOnError: () => void;
+	/** Resume batch by sessionId (used by web remote) */
+	resumeAfterError: (sessionId: string) => void;
+	/** Skip current document by sessionId (used by web remote) */
+	skipCurrentDocument: (sessionId: string) => void;
+	/** Abort batch by sessionId (used by web remote) */
+	abortBatchOnError: (sessionId: string) => void;
 	/** Session IDs with active batch runs */
 	activeBatchSessionIds: string[];
 	/** Batch state for the current/active session */
@@ -181,7 +213,8 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 				.getState()
 				.setSessions((prev) => prev.map((s) => (s.id === sessionId ? { ...s, ...updates } : s)));
 		},
-		onSpawnAgent: spawnAgentForSession,
+		onSpawnAgent: (sessionId, prompt, cwdOverride) =>
+			spawnAgentForSession(sessionId, prompt, cwdOverride, { isAutoRun: true }),
 		onAddHistoryEntry: async (entry) => {
 			await window.maestro.history.add({
 				...entry,
@@ -211,12 +244,8 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 			} = settingsState;
 			const isLbRegistered = selectIsLeaderboardRegistered(settingsState);
 
-			// Find group name for the session
 			const session = currentSessions.find((s) => s.id === info.sessionId);
-			const sessionGroup = session?.groupId
-				? currentGroups.find((g) => g.id === session.groupId)
-				: null;
-			const groupName = sessionGroup?.name || 'Ungrouped';
+			const groupName = resolveGroupName(info.sessionId, currentSessions, currentGroups);
 
 			// Determine toast type and message based on completion status
 			const toastType = info.wasStopped
@@ -309,7 +338,7 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 
 					// Submit to leaderboard in background (only if we have an auth token)
 					if (!lbReg.authToken) {
-						console.warn('Leaderboard submission skipped: no auth token');
+						logger.warn('Leaderboard submission skipped: no auth token');
 					} else {
 						window.maestro.leaderboard
 							.submit({
@@ -490,7 +519,7 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 				window.maestro.groupChat
 					.reportAutoRunComplete(gcAutoRun.groupChatId, gcAutoRun.participantName, summary)
 					.catch((err) => {
-						console.error('[GroupChat] Failed to report auto run complete:', err);
+						logger.error('[GroupChat] Failed to report auto run complete:', undefined, err);
 						// Surface the failure so the user knows synthesis will not trigger automatically.
 						notifyToast({
 							type: 'error',
@@ -506,11 +535,7 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 			const currentSessions = useSessionStore.getState().sessions;
 			const currentGroups = useSessionStore.getState().groups;
 
-			const session = currentSessions.find((s) => s.id === info.sessionId);
-			const sessionGroup = session?.groupId
-				? currentGroups.find((g) => g.id === session.groupId)
-				: null;
-			const groupName = sessionGroup?.name || 'Ungrouped';
+			const groupName = resolveGroupName(info.sessionId, currentSessions, currentGroups);
 
 			if (info.success) {
 				notifyToast({
@@ -624,20 +649,20 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 				targetSessionId ??
 				activeSession?.id ??
 				(activeBatchSessionIds.length > 0 ? activeBatchSessionIds[0] : undefined);
-			console.log(
-				'[App:handleStopBatchRun] targetSessionId:',
+			logger.info('[App:handleStopBatchRun] targetSessionId:', undefined, [
 				targetSessionId,
 				'resolved sessionId:',
-				sessionId
-			);
+				sessionId,
+			]);
 			if (!sessionId) return;
 			const session = sessions.find((s) => s.id === sessionId);
 			const agentName = session?.name || 'this session';
 			useModalStore.getState().openModal('confirm', {
 				message: `Stop Auto Run for "${agentName}" after the current task completes?`,
 				onConfirm: () => {
-					console.log(
+					logger.info(
 						'[App:handleStopBatchRun] Confirmation callback executing for sessionId:',
+						undefined,
 						sessionId
 					);
 					stopBatchRun(sessionId);
@@ -649,7 +674,7 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 
 	const handleKillBatchRun = useCallback(
 		async (sessionId: string) => {
-			console.log('[App:handleKillBatchRun] Force killing sessionId:', sessionId);
+			logger.info('[App:handleKillBatchRun] Force killing sessionId:', undefined, sessionId);
 			await killBatchRun(sessionId);
 		},
 		[killBatchRun]
@@ -688,6 +713,40 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 		handleClearAgentError(sessionId);
 	}, [activeSession, abortBatchOnError, handleClearAgentError]);
 
+	// sessionId-targeted variants for use from the web remote layer. These mirror
+	// the handle* helpers above but accept an explicit sessionId instead of
+	// resolving one from the active session — the web client always knows which
+	// session the user tapped Resume/Skip/Abort for. Each wrapper also clears
+	// the session's agent error so the renderer UI drops its error banner in
+	// sync with the batch state (otherwise the banner would persist until the
+	// user interacted with the desktop app).
+	const resumeAfterErrorForSession = useCallback(
+		(sessionId: string) => {
+			if (!sessionId) return;
+			handleClearAgentError(sessionId);
+			resumeAfterError(sessionId);
+		},
+		[handleClearAgentError, resumeAfterError]
+	);
+
+	const skipCurrentDocumentForSession = useCallback(
+		(sessionId: string) => {
+			if (!sessionId) return;
+			handleClearAgentError(sessionId);
+			skipCurrentDocument(sessionId);
+		},
+		[handleClearAgentError, skipCurrentDocument]
+	);
+
+	const abortBatchOnErrorForSession = useCallback(
+		(sessionId: string) => {
+			if (!sessionId) return;
+			handleClearAgentError(sessionId);
+			abortBatchOnError(sessionId);
+		},
+		[handleClearAgentError, abortBatchOnError]
+	);
+
 	// ====================================================================
 	// Sync auto-run stats from server
 	// ====================================================================
@@ -725,7 +784,7 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 		if (!window.maestro?.app?.onQuitConfirmationRequest) {
 			return;
 		}
-		const unsubscribe = window.maestro.app.onQuitConfirmationRequest(() => {
+		const unsubscribe = window.maestro.app.onQuitConfirmationRequest(async () => {
 			// Get all busy AI sessions (agents that are actively thinking)
 			const currentSessions = useSessionStore.getState().sessions;
 			const busyAgents = currentSessions.filter(
@@ -738,10 +797,39 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 				return batchState?.isRunning;
 			});
 
-			if (busyAgents.length === 0 && !hasActiveAutoRuns) {
+			// Check for terminal processes with active child tasks (e.g., long-running builds, tests)
+			let activeTerminalTasks: string[] = [];
+			try {
+				const activeProcesses = await window.maestro.process.getActiveProcesses();
+				activeTerminalTasks = activeProcesses
+					.filter((p) => p.isTerminal && p.childProcesses && p.childProcesses.length > 0)
+					.flatMap((p) => {
+						const session = currentSessions.find((s) => p.sessionId.startsWith(s.id));
+						const agentName = session?.name ?? 'Terminal';
+						return p.childProcesses!.map((child) => {
+							const cmdBasename = child.command.split('/').pop() || child.command;
+							return `${agentName}: ${cmdBasename}`;
+						});
+					});
+			} catch {
+				// If we can't fetch processes, proceed without terminal task info
+			}
+
+			// Check for an unsent feedback draft so the user doesn't lose typed feedback
+			const hasFeedbackDraft = useFeedbackDraftStore.getState().hasDraft;
+
+			if (
+				busyAgents.length === 0 &&
+				!hasActiveAutoRuns &&
+				activeTerminalTasks.length === 0 &&
+				!hasFeedbackDraft
+			) {
 				window.maestro.app.confirmQuit();
 			} else {
-				getModalActions().setQuitConfirmModalOpen(true);
+				getModalActions().setQuitConfirmModalOpen(true, {
+					activeTerminalTasks,
+					hasFeedbackDraft,
+				});
 			}
 		});
 
@@ -750,12 +838,16 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 
 	return {
 		startBatchRun,
+		stopBatchRun,
 		getBatchState,
 		handleStopBatchRun,
 		handleKillBatchRun,
 		handleSkipCurrentDocument,
 		handleResumeAfterError,
 		handleAbortBatchOnError,
+		resumeAfterError: resumeAfterErrorForSession,
+		skipCurrentDocument: skipCurrentDocumentForSession,
+		abortBatchOnError: abortBatchOnErrorForSession,
 		activeBatchSessionIds,
 		currentSessionBatchState,
 		activeBatchRunState,

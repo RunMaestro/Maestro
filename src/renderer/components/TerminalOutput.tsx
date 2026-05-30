@@ -5,16 +5,19 @@ import {
 	Trash2,
 	Copy,
 	Check,
+	ArrowDown,
 	Eye,
 	FileText,
 	RotateCcw,
 	AlertCircle,
 	Save,
+	Share2,
+	Hammer,
+	GitFork,
 } from 'lucide-react';
-import type { Session, Theme, LogEntry, FocusArea, AgentError } from '../types';
+import type { Session, Theme, LogEntry, FocusArea, AgentError, QueuedItem } from '../types';
 import type { FileNode } from '../types/fileTree';
 import Convert from 'ansi-to-html';
-import DOMPurify from 'dompurify';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { getActiveTab } from '../utils/tabHelpers';
@@ -24,22 +27,25 @@ import {
 	filterTextByLinesHelper,
 	getCachedAnsiHtml,
 } from '../utils/textProcessing';
+import { jumpToMessageEdge, isTextInputTarget } from '../utils/messageScrollNavigation';
+import { JumpToMessageTopButton } from './JumpToMessageTopButton';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { QueuedItemsList } from './QueuedItemsList';
 import { LogFilterControls } from './LogFilterControls';
 import { SaveMarkdownModal } from './SaveMarkdownModal';
 import { generateTerminalProseStyles } from '../utils/markdownConfig';
+import { linkifyNode } from '../utils/linkify';
 import { safeClipboardWrite } from '../utils/clipboard';
+import { flashCopiedToClipboard } from '../utils/flashCopiedToClipboard';
 import { useSettingsStore } from '../stores/settingsStore';
-const BIONIFY_BUTTON_LABEL = 'B';
+import { useMessageGistStore } from '../stores/messageGistStore';
+import { useSessionStore } from '../stores/sessionStore';
+import { SessionRecoveryCard } from './SessionRecoveryCard';
 
 // ============================================================================
 // Tool display helpers (pure functions, hoisted out of render path)
 // ============================================================================
-
-/** Type-safe string extraction — returns null for non-strings */
-const safeStr = (v: unknown): string | null => (typeof v === 'string' ? v : null);
 
 /** Handle command values that may be strings or string arrays (Codex uses arrays) */
 const safeCommand = (v: unknown): string | null => {
@@ -48,13 +54,6 @@ const safeCommand = (v: unknown): string | null => {
 		return v.join(' ');
 	}
 	return null;
-};
-
-/** Truncate a value to max length with ellipsis, returns null for non-strings */
-const truncateStr = (v: unknown, max: number): string | null => {
-	const s = safeStr(v);
-	if (!s) return null;
-	return s.length > max ? s.substring(0, max) + '\u2026' : s;
 };
 
 /** Summarize TodoWrite todos array — shows in-progress task and progress count */
@@ -68,6 +67,114 @@ const summarizeTodos = (v: unknown): string | null => {
 	return `${label} (${completed}/${todos.length})`;
 };
 
+/** Structured result from summarizeToolInput for richer rendering */
+interface ToolSummary {
+	/** Human-readable description (e.g. Bash description field) */
+	description?: string;
+	/** Primary content — command text or generic summary */
+	detail: string;
+}
+
+/**
+ * Summarize tool input generically — no per-tool extractors needed.
+ * Returns structured data so the renderer can display description and command
+ * with proper visual hierarchy.
+ *
+ * Tool logs are only emitted when thinking is enabled, so we show the full
+ * command text without truncation to give complete visibility into agent actions.
+ */
+const summarizeToolInput = (input: unknown): ToolSummary | null => {
+	// Some agents (notably Copilot/Codex apply_patch) deliver the tool argument
+	// as a raw string instead of an object — Object.entries on a string would
+	// iterate it character-by-character and produce garbled, space-separated
+	// output, so surface the string as-is.
+	if (typeof input === 'string') {
+		return input ? { detail: input } : null;
+	}
+	if (!input || typeof input !== 'object' || Array.isArray(input)) {
+		return null;
+	}
+	const inputRecord = input as Record<string, unknown>;
+
+	// Special case: TodoWrite todos array
+	const todosResult = summarizeTodos(inputRecord.todos);
+	if (todosResult) return { detail: todosResult };
+
+	// Extract description field separately for structured display
+	const description =
+		typeof inputRecord.description === 'string' && inputRecord.description
+			? inputRecord.description
+			: undefined;
+
+	// Collect displayable values (skip huge blobs)
+	const parts: string[] = [];
+	for (const [key, val] of Object.entries(inputRecord)) {
+		if (val === undefined || val === null || val === '') continue;
+		// Skip description — rendered separately
+		if (key === 'description') continue;
+		// Command arrays (Codex)
+		const cmd = safeCommand(val);
+		if (cmd) {
+			parts.push(cmd);
+			continue;
+		}
+		// Arrays: show count
+		if (Array.isArray(val)) {
+			parts.push(`${key}: [${val.length}]`);
+			continue;
+		}
+		// Objects: skip (too noisy)
+		if (typeof val === 'object') continue;
+		// Booleans/numbers: show as key=value
+		if (typeof val === 'boolean' || typeof val === 'number') {
+			parts.push(`${key}=${val}`);
+			continue;
+		}
+	}
+	const detail = parts.length > 0 ? parts.join('  ') : undefined;
+	if (!detail && !description) return null;
+	return { description, detail: detail ?? '' };
+};
+
+const isHiddenProgressEntry = (log: LogEntry): boolean =>
+	log.source === 'system' && log.id.startsWith('hidden-progress:');
+
+/**
+ * Connector that reads the live tab from the session store and renders the
+ * SessionRecoveryCard. Keeps LogItem's prop surface narrow (just sessionId)
+ * instead of passing the full Session object through every log entry.
+ */
+function SessionRecoveryCardConnector(props: {
+	theme: Theme;
+	sessionId: string;
+	recoveryAction: NonNullable<LogEntry['recoveryAction']>;
+	isRecovering: boolean;
+	recoveryError: string | null;
+	onRecover: (opts: {
+		sessionId: string;
+		tabId: string;
+		lastUserPrompt: string;
+		groomContext: boolean;
+	}) => void;
+}) {
+	const tab = useSessionStore((s) => {
+		const session = s.sessions.find((sess) => sess.id === props.sessionId);
+		return session?.aiTabs.find((t) => t.id === props.recoveryAction.tabId);
+	});
+	if (!tab) return null;
+	return (
+		<SessionRecoveryCard
+			theme={props.theme}
+			sessionId={props.sessionId}
+			tab={tab}
+			lastUserPrompt={props.recoveryAction.lastUserPrompt}
+			isRecovering={props.isRecovering}
+			recoveryError={props.recoveryError}
+			onRecover={props.onRecover}
+		/>
+	);
+}
+
 // ============================================================================
 // LogItem - Memoized component for individual log entries
 // ============================================================================
@@ -80,7 +187,6 @@ interface LogItemProps {
 	theme: Theme;
 	fontFamily: string;
 	maxOutputLines: number;
-	outputSearchQuery: string;
 	lastUserCommand?: string;
 	// Expansion state
 	isExpanded: boolean;
@@ -127,12 +233,31 @@ interface LogItemProps {
 	onShowErrorDetails?: (error: AgentError) => void;
 	// Save to file callback (AI mode only, non-user messages)
 	onSaveToFile?: (text: string) => void;
+	// Publish to GitHub Gist (AI mode only, non-user messages, requires gh CLI)
+	ghCliAvailable?: boolean;
+	onPublishGist?: (text: string, messageId?: string) => void;
+	publishedGistUrl?: string;
+	// Fork conversation from this message (AI mode only, user messages and AI responses — source 'user' | 'ai' | 'stdout')
+	onForkConversation?: (logId: string) => void;
 	bionifyReadingMode: boolean;
 	bionifyIntensity: number;
 	bionifyAlgorithm: string;
-	onToggleBionifyReadingMode: () => void;
 	// Message alignment
 	userMessageAlignment: 'left' | 'right';
+	// Claude mode pill — both passed as primitives so LogItem memo equality stays cheap.
+	isClaudeCode: boolean;
+	isAdaptiveMode: boolean;
+	// Session recovery (session_not_found inline card). Only consumed when
+	// log.recoveryAction is set; otherwise these props are ignored.
+	sessionId: string;
+	onSessionRecover?: (opts: {
+		sessionId: string;
+		tabId: string;
+		lastUserPrompt: string;
+		groomContext: boolean;
+	}) => void;
+	isRecoveringSession?: boolean;
+	sessionRecoveryError?: string | null;
 }
 
 const LogItemComponent = memo(
@@ -144,7 +269,6 @@ const LogItemComponent = memo(
 		theme,
 		fontFamily,
 		maxOutputLines,
-		outputSearchQuery,
 		lastUserCommand,
 		isExpanded,
 		onToggleExpanded,
@@ -171,11 +295,20 @@ const LogItemComponent = memo(
 		onFileClick,
 		onShowErrorDetails,
 		onSaveToFile,
+		ghCliAvailable,
+		onPublishGist,
+		publishedGistUrl,
+		onForkConversation,
 		bionifyReadingMode,
 		bionifyIntensity,
 		bionifyAlgorithm,
-		onToggleBionifyReadingMode,
 		userMessageAlignment,
+		isClaudeCode,
+		isAdaptiveMode,
+		sessionId,
+		onSessionRecover,
+		isRecoveringSession,
+		sessionRecoveryError,
 	}: LogItemProps) => {
 		// Ref for the log item container - used for scroll-into-view on expand
 		const logItemRef = useRef<HTMLDivElement>(null);
@@ -208,76 +341,6 @@ const LogItemComponent = memo(
 				}, 50); // Small delay to allow React to re-render
 			}
 		}, [isExpanded, log.id, onToggleExpanded, scrollContainerRef]);
-
-		// Helper function to highlight search matches in text
-		const highlightMatches = (text: string, query: string): React.ReactNode => {
-			if (!query) return text;
-
-			const parts: React.ReactNode[] = [];
-			let lastIndex = 0;
-			const lowerText = text.toLowerCase();
-			const lowerQuery = query.toLowerCase();
-			let searchIndex = 0;
-
-			while (searchIndex < lowerText.length) {
-				const matchStart = lowerText.indexOf(lowerQuery, searchIndex);
-				if (matchStart === -1) break;
-
-				if (matchStart > lastIndex) {
-					parts.push(text.substring(lastIndex, matchStart));
-				}
-
-				parts.push(
-					<span
-						key={`match-${matchStart}`}
-						style={{
-							backgroundColor: theme.colors.warning,
-							color: theme.mode === 'light' ? '#fff' : '#000',
-							padding: '1px 2px',
-							borderRadius: '2px',
-						}}
-					>
-						{text.substring(matchStart, matchStart + query.length)}
-					</span>
-				);
-
-				lastIndex = matchStart + query.length;
-				searchIndex = lastIndex;
-			}
-
-			if (lastIndex < text.length) {
-				parts.push(text.substring(lastIndex));
-			}
-
-			return parts.length > 0 ? parts : text;
-		};
-
-		// Helper function to add search highlighting markers to text (before ANSI conversion)
-		const addHighlightMarkers = (text: string, query: string): string => {
-			if (!query) return text;
-
-			let result = '';
-			let lastIndex = 0;
-			const lowerText = text.toLowerCase();
-			const lowerQuery = query.toLowerCase();
-			let searchIndex = 0;
-
-			while (searchIndex < lowerText.length) {
-				const matchStart = lowerText.indexOf(lowerQuery, searchIndex);
-				if (matchStart === -1) break;
-
-				result += text.substring(lastIndex, matchStart);
-				result += `<mark style="background-color: ${theme.colors.warning}; color: ${theme.mode === 'light' ? '#fff' : '#000'}; padding: 1px 2px; border-radius: 2px;">`;
-				result += text.substring(matchStart, matchStart + query.length);
-				result += '</mark>';
-
-				lastIndex = matchStart + query.length;
-				searchIndex = lastIndex;
-			}
-
-			result += text.substring(lastIndex);
-			return result;
-		};
 
 		// Strip command echo from terminal output
 		let textToProcess = log.text;
@@ -332,19 +395,12 @@ const LogItemComponent = memo(
 		// For stderr entries, use stderr content; for all others, use stdout content
 		const contentToDisplay = log.source === 'stderr' ? filteredStderr : filteredStdout;
 
-		// Apply search highlighting before ANSI conversion for terminal output
-		const contentWithHighlights =
-			isTerminal && log.source !== 'user' && outputSearchQuery
-				? addHighlightMarkers(contentToDisplay, outputSearchQuery)
-				: contentToDisplay;
-
-		// PERF: Convert ANSI codes to HTML, using cache when no search highlighting is applied
-		// When search is active, highlighting markers change the text so we can't use cache
+		// PERF: Convert ANSI codes to HTML using cache.
+		// Search highlighting is now applied at the scroll-container level via CSS Custom
+		// Highlight API in TerminalOutput, so per-log markers are no longer needed.
 		const htmlContent =
 			isTerminal && log.source !== 'user'
-				? outputSearchQuery
-					? DOMPurify.sanitize(ansiConverter.toHtml(contentWithHighlights))
-					: getCachedAnsiHtml(contentToDisplay, theme.id, ansiConverter)
+				? getCachedAnsiHtml(contentToDisplay, theme.id, ansiConverter)
 				: contentToDisplay;
 
 		const filteredText = contentToDisplay;
@@ -359,25 +415,17 @@ const LogItemComponent = memo(
 				? filteredText.split('\n').slice(0, maxOutputLines).join('\n')
 				: filteredText;
 
-		// Apply highlighting to truncated text as well
-		const displayTextWithHighlights =
-			shouldCollapse && !isExpanded && isTerminal && log.source !== 'user' && outputSearchQuery
-				? addHighlightMarkers(displayText, outputSearchQuery)
-				: displayText;
-
-		// PERF: Sanitize with DOMPurify, using cache when no search highlighting
+		// PERF: Sanitize with DOMPurify, using cache for ANSI conversion.
+		// Search highlighting is handled at the scroll-container level.
 		const displayHtmlContent =
 			shouldCollapse && !isExpanded && isTerminal && log.source !== 'user'
-				? outputSearchQuery
-					? DOMPurify.sanitize(ansiConverter.toHtml(displayTextWithHighlights))
-					: getCachedAnsiHtml(displayText, theme.id, ansiConverter)
+				? getCachedAnsiHtml(displayText, theme.id, ansiConverter)
 				: htmlContent;
 
 		const isUserMessage = log.source === 'user';
 		const isReversed = isUserMessage
 			? userMessageAlignment === 'left'
 			: userMessageAlignment === 'right';
-		const showBionifyTabToggle = log.source !== 'user' && isAIMode && !markdownEditMode;
 
 		return (
 			<div
@@ -412,7 +460,7 @@ const LogItemComponent = memo(
 					})()}
 				</div>
 				<div
-					className={`flex-1 min-w-0 p-4 pb-10 ${showBionifyTabToggle ? 'pr-14' : ''} rounded-xl border ${isReversed ? 'rounded-tr-none' : 'rounded-tl-none'} relative overflow-hidden`}
+					className={`flex-1 min-w-0 p-4 pb-10 rounded-xl border ${isReversed ? 'rounded-tr-none' : 'rounded-tl-none'} relative overflow-hidden`}
 					style={{
 						backgroundColor: isUserMessage
 							? isAIMode
@@ -431,19 +479,6 @@ const LogItemComponent = memo(
 									: theme.colors.border,
 					}}
 				>
-					{showBionifyTabToggle && (
-						<button
-							onClick={onToggleBionifyReadingMode}
-							className="absolute top-2 right-2 z-10 p-1.5 rounded opacity-0 group-hover:opacity-50 hover:!opacity-100"
-							style={{ color: bionifyReadingMode ? theme.colors.accent : theme.colors.textDim }}
-							title={
-								bionifyReadingMode ? 'Disable Bionify for this tab' : 'Enable Bionify for this tab'
-							}
-							aria-pressed={bionifyReadingMode}
-						>
-							<span className="text-[12px] font-black leading-none">{BIONIFY_BUTTON_LABEL}</span>
-						</button>
-					)}
 					{/* Local filter icon for system output only */}
 					{log.source !== 'user' && isTerminal && (
 						<div className="absolute top-2 right-2 flex items-center gap-2">
@@ -514,6 +549,8 @@ const LogItemComponent = memo(
 									cwd={cwd}
 									projectRoot={projectRoot}
 									onFileClick={onFileClick}
+									chatLineBreaks
+									chatMath
 								/>
 							</div>
 							{!!log.agentError?.parsedJson && onShowErrorDetails && (
@@ -565,6 +602,8 @@ const LogItemComponent = memo(
 										cwd={cwd}
 										projectRoot={projectRoot}
 										onFileClick={onFileClick}
+										chatLineBreaks
+										chatMath
 									/>
 								) : (
 									log.text
@@ -572,30 +611,61 @@ const LogItemComponent = memo(
 							</div>
 						</div>
 					)}
+					{isHiddenProgressEntry(log) && (
+						<div
+							className="px-4 py-1.5 text-xs border-l-2"
+							style={{
+								color: theme.colors.textMain,
+								borderColor: theme.colors.accent,
+							}}
+						>
+							<div className="flex items-start gap-2">
+								<span
+									className="px-1.5 py-0.5 rounded shrink-0"
+									style={{
+										backgroundColor: `${theme.colors.accent}30`,
+										color: theme.colors.accent,
+									}}
+								>
+									{log.metadata?.hiddenProgress?.kind === 'tool'
+										? log.metadata.hiddenProgress.toolName || 'working'
+										: 'thinking'}
+								</span>
+								{log.metadata?.toolState?.status === 'completed' ? (
+									<span className="shrink-0 pt-0.5" style={{ color: theme.colors.success }}>
+										✓
+									</span>
+								) : log.metadata?.toolState?.status === 'failed' ||
+								  log.metadata?.toolState?.status === 'error' ? (
+									<span className="shrink-0 pt-0.5" style={{ color: theme.colors.error }}>
+										!
+									</span>
+								) : (
+									<span
+										className="animate-pulse shrink-0 pt-0.5"
+										style={{ color: theme.colors.warning }}
+									>
+										●
+									</span>
+								)}
+								<span
+									className="break-words whitespace-pre-wrap opacity-80"
+									style={{ color: theme.colors.textMain }}
+								>
+									{log.text}
+								</span>
+							</div>
+						</div>
+					)}
 					{/* Special rendering for tool execution events (shown alongside thinking) */}
 					{log.source === 'tool' &&
 						(() => {
 							// Extract tool input details for display
-							const toolInput = log.metadata?.toolState?.input as
-								| Record<string, unknown>
-								| undefined;
-							const toolDetail = toolInput
-								? safeCommand(toolInput.command) ||
-									safeStr(toolInput.pattern) ||
-									safeStr(toolInput.file_path) ||
-									safeStr(toolInput.filePath) || // OpenCode read tool
-									safeStr(toolInput.query) ||
-									safeStr(toolInput.description) || // Task tool
-									safeStr(toolInput.prompt) || // Task tool fallback
-									safeStr(toolInput.task_id) || // TaskOutput tool
-									summarizeTodos(toolInput.todos) || // TodoWrite tool
-									// Codex-specific tool arg patterns
-									safeStr(toolInput.path) || // Codex file operations
-									safeStr(toolInput.cmd) || // Codex shell commands
-									safeStr(toolInput.code) || // Codex code execution
-									truncateStr(toolInput.content, 100) || // Codex write operations (truncated)
-									null
-								: null;
+							const toolInput = log.metadata?.toolState?.input;
+							const toolSummary =
+								toolInput !== undefined && toolInput !== null
+									? summarizeToolInput(toolInput)
+									: null;
 
 							return (
 								<div
@@ -628,19 +698,36 @@ const LogItemComponent = memo(
 												✓
 											</span>
 										)}
-										{toolDetail && (
+										{log.metadata?.toolState?.status === 'failed' && (
+											<span className="shrink-0 pt-0.5" style={{ color: theme.colors.error }}>
+												!
+											</span>
+										)}
+										{toolSummary?.description && (
 											<span
-												className="opacity-70 break-words whitespace-pre-wrap"
+												className="opacity-50 break-words"
 												style={{ color: theme.colors.textMain }}
 											>
-												{toolDetail}
+												{toolSummary.description}
 											</span>
 										)}
 									</div>
+									{toolSummary?.detail && (
+										<div
+											className="mt-1 ml-1 pl-2 opacity-70 break-words whitespace-pre-wrap border-l"
+											style={{
+												color: theme.colors.textMain,
+												borderColor: `${theme.colors.accent}40`,
+											}}
+										>
+											{toolSummary.detail}
+										</div>
+									)}
 								</div>
 							);
 						})()}
-					{log.source !== 'error' &&
+					{!isHiddenProgressEntry(log) &&
+						log.source !== 'error' &&
 						log.source !== 'thinking' &&
 						log.source !== 'tool' &&
 						(hasNoMatches ? (
@@ -682,6 +769,8 @@ const LogItemComponent = memo(
 											cwd={cwd}
 											projectRoot={projectRoot}
 											onFileClick={onFileClick}
+											chatLineBreaks
+											chatMath
 										/>
 									) : (
 										displayText
@@ -732,7 +821,7 @@ const LogItemComponent = memo(
 									) : log.source === 'user' && isTerminal ? (
 										<div style={{ fontFamily }}>
 											<span style={{ color: theme.colors.accent }}>$ </span>
-											{highlightMatches(filteredText, outputSearchQuery)}
+											{filteredText}
 										</div>
 									) : log.aiCommand ? (
 										<div className="space-y-3">
@@ -753,7 +842,7 @@ const LogItemComponent = memo(
 													{log.aiCommand.description}
 												</span>
 											</div>
-											<div>{highlightMatches(filteredText, outputSearchQuery)}</div>
+											<div>{linkifyNode(filteredText, theme)}</div>
 										</div>
 									) : isAIMode && !markdownEditMode ? (
 										// Expanded markdown rendering
@@ -768,9 +857,11 @@ const LogItemComponent = memo(
 											cwd={cwd}
 											projectRoot={projectRoot}
 											onFileClick={onFileClick}
+											chatLineBreaks
+											chatMath
 										/>
 									) : (
-										<div>{highlightMatches(filteredText, outputSearchQuery)}</div>
+										<div>{filteredText}</div>
 									)}
 								</div>
 								<button
@@ -805,7 +896,7 @@ const LogItemComponent = memo(
 										style={{ color: theme.colors.textMain, fontFamily }}
 									>
 										<span style={{ color: theme.colors.accent }}>$ </span>
-										{highlightMatches(filteredText, outputSearchQuery)}
+										{filteredText}
 									</div>
 								) : log.aiCommand ? (
 									<div className="space-y-3">
@@ -830,7 +921,7 @@ const LogItemComponent = memo(
 											className="whitespace-pre-wrap text-sm break-words"
 											style={{ color: theme.colors.textMain }}
 										>
-											{highlightMatches(filteredText, outputSearchQuery)}
+											{linkifyNode(filteredText, theme)}
 										</div>
 									</div>
 								) : isAIMode && !markdownEditMode ? (
@@ -846,6 +937,8 @@ const LogItemComponent = memo(
 										cwd={cwd}
 										projectRoot={projectRoot}
 										onFileClick={onFileClick}
+										chatLineBreaks
+										chatMath
 									/>
 								) : (
 									// Raw markdown source mode (show original text with markdown syntax visible)
@@ -853,18 +946,64 @@ const LogItemComponent = memo(
 										className="whitespace-pre-wrap text-sm break-words"
 										style={{ color: theme.colors.textMain }}
 									>
-										{highlightMatches(filteredText, outputSearchQuery)}
+										{filteredText}
 									</div>
 								)}
 							</>
 						))}
+					{/* Session-not-found recovery card. Rendered inline directly
+					    under the system message that announced the dead session. The
+					    card reads the tab from the store so we don't have to pass the
+					    full Session through LogItem (would defeat memoization). */}
+					{log.recoveryAction && (
+						<SessionRecoveryCardConnector
+							theme={theme}
+							sessionId={sessionId}
+							recoveryAction={log.recoveryAction}
+							isRecovering={!!isRecoveringSession}
+							recoveryError={sessionRecoveryError ?? null}
+							onRecover={(opts) => onSessionRecover?.(opts)}
+						/>
+					)}
+					{/* Mode pill — shows which CLI captured this Claude turn (TUI = maestro-p,
+					    API = claude --print). "Adaptive " prefix indicates the session has
+					    Adaptive Mode enabled (auto-switching between the two). */}
+					{isClaudeCode &&
+						log.source !== 'user' &&
+						(() => {
+							const isTui = log.renderStyle === 'text-stream';
+							const label = `${isAdaptiveMode ? 'Adaptive ' : ''}${isTui ? 'TUI' : 'API'}`;
+							const title = isTui
+								? `Captured via maestro-p driving the Claude TUI${isAdaptiveMode ? ' (Adaptive Mode enabled)' : ''}`
+								: `Captured via claude --print${isAdaptiveMode ? ' (Adaptive Mode enabled — fell back to API)' : ''}`;
+							return (
+								<span
+									className="absolute bottom-2 left-1/2 -translate-x-1/2 text-[10px] px-1.5 py-0.5 rounded pointer-events-none select-none"
+									style={{
+										backgroundColor: `${theme.colors.accent}20`,
+										color: theme.colors.accent,
+										opacity: 0.7,
+									}}
+									title={title}
+								>
+									{label}
+								</span>
+							);
+						})()}
+					{/* Jump to top of this message - bottom left corner */}
+					<JumpToMessageTopButton
+						scrollContainerRef={scrollContainerRef}
+						messageRef={logItemRef}
+						theme={theme}
+					/>
 					{/* Action buttons - bottom right corner */}
 					<div
 						className="absolute bottom-2 right-2 flex items-center gap-1"
 						style={{ transition: 'opacity 0.15s ease-in-out' }}
 					>
-						{/* Markdown toggle button for AI responses */}
-						{log.source !== 'user' && isAIMode && (
+						{/* Markdown toggle button — available on both user and assistant
+						    messages in AI mode for consistent UX (#622). */}
+						{isAIMode && (
 							<button
 								onClick={onToggleMarkdownEditMode}
 								className="p-1.5 rounded opacity-0 group-hover:opacity-50 hover:!opacity-100"
@@ -907,6 +1046,38 @@ const LogItemComponent = memo(
 								title="Save to file"
 							>
 								<Save className="w-3.5 h-3.5" />
+							</button>
+						)}
+						{/* Fork conversation — user messages and AI responses (source='stdout' in AI mode, or 'ai' if ever set) */}
+						{(log.source === 'user' || log.source === 'ai' || log.source === 'stdout') &&
+							isAIMode &&
+							onForkConversation && (
+								<button
+									onClick={() => onForkConversation(log.id)}
+									className="p-1.5 rounded opacity-0 group-hover:opacity-50 hover:!opacity-100"
+									style={{ color: theme.colors.textDim }}
+									title="Fork conversation from here"
+								>
+									<GitFork className="w-3.5 h-3.5" />
+								</button>
+							)}
+						{/* Publish to GitHub Gist - only for AI responses when gh CLI available */}
+						{log.source !== 'user' && isAIMode && ghCliAvailable && onPublishGist && (
+							<button
+								onClick={() => onPublishGist(log.text, log.id)}
+								className={`p-1.5 rounded hover:!opacity-100 ${
+									publishedGistUrl ? 'opacity-100' : 'opacity-0 group-hover:opacity-50'
+								}`}
+								style={{
+									color: publishedGistUrl ? theme.colors.accent : theme.colors.textDim,
+								}}
+								title={
+									publishedGistUrl
+										? `Published as Gist: ${publishedGistUrl}`
+										: 'Publish as GitHub Gist'
+								}
+							>
+								<Share2 className="w-3.5 h-3.5" />
 							</button>
 						)}
 						{/* Delete button for user messages (both AI and terminal modes) */}
@@ -961,6 +1132,27 @@ const LogItemComponent = memo(
 									<Trash2 className="w-3.5 h-3.5" />
 								</button>
 							))}
+						{/* Read-only mode indicator for messages sent in read-only/plan mode */}
+						{isUserMessage && isAIMode && log.readOnly && (
+							<span title="Sent in read-only mode" className="flex items-center">
+								<Eye
+									className="w-3.5 h-3.5"
+									style={{ color: theme.colors.warning, opacity: 0.7 }}
+								/>
+							</span>
+						)}
+						{/* Force parallel indicator for messages sent via Cmd+Shift+Enter */}
+						{isUserMessage && isAIMode && log.forceParallel && (
+							<span
+								title="Sent via forced parallel execution (bypassed queue)"
+								className="flex items-center"
+							>
+								<Hammer
+									className="w-3.5 h-3.5"
+									style={{ color: theme.colors.warning, opacity: 0.7 }}
+								/>
+							</span>
+						)}
 						{/* Delivery checkmark for user messages in AI mode - positioned at the end */}
 						{isUserMessage && isAIMode && log.delivered && (
 							<span title="Message delivered" className="flex items-center">
@@ -983,13 +1175,16 @@ const LogItemComponent = memo(
 			prevProps.log.text === nextProps.log.text &&
 			prevProps.log.delivered === nextProps.log.delivered &&
 			prevProps.log.readOnly === nextProps.log.readOnly &&
+			prevProps.log.forceParallel === nextProps.log.forceParallel &&
+			prevProps.log.renderStyle === nextProps.log.renderStyle &&
+			prevProps.log.metadata?.hiddenProgress === nextProps.log.metadata?.hiddenProgress &&
+			prevProps.log.metadata?.toolState?.status === nextProps.log.metadata?.toolState?.status &&
 			prevProps.isExpanded === nextProps.isExpanded &&
 			prevProps.localFilterQuery === nextProps.localFilterQuery &&
 			prevProps.filterMode.mode === nextProps.filterMode.mode &&
 			prevProps.filterMode.regex === nextProps.filterMode.regex &&
 			prevProps.activeLocalFilter === nextProps.activeLocalFilter &&
 			prevProps.deleteConfirmLogId === nextProps.deleteConfirmLogId &&
-			prevProps.outputSearchQuery === nextProps.outputSearchQuery &&
 			prevProps.theme === nextProps.theme &&
 			prevProps.maxOutputLines === nextProps.maxOutputLines &&
 			prevProps.markdownEditMode === nextProps.markdownEditMode &&
@@ -997,52 +1192,15 @@ const LogItemComponent = memo(
 			prevProps.bionifyIntensity === nextProps.bionifyIntensity &&
 			prevProps.bionifyAlgorithm === nextProps.bionifyAlgorithm &&
 			prevProps.fontFamily === nextProps.fontFamily &&
-			prevProps.userMessageAlignment === nextProps.userMessageAlignment
+			prevProps.userMessageAlignment === nextProps.userMessageAlignment &&
+			prevProps.ghCliAvailable === nextProps.ghCliAvailable &&
+			prevProps.onForkConversation === nextProps.onForkConversation &&
+			prevProps.publishedGistUrl === nextProps.publishedGistUrl
 		);
 	}
 );
 
 LogItemComponent.displayName = 'LogItemComponent';
-
-// ============================================================================
-// ElapsedTimeDisplay - Separate component for elapsed time
-// ============================================================================
-
-// Separate component for elapsed time to prevent re-renders of the entire list
-const ElapsedTimeDisplay = memo(
-	({ thinkingStartTime, textColor }: { thinkingStartTime: number; textColor: string }) => {
-		const [elapsedSeconds, setElapsedSeconds] = useState(() =>
-			Math.floor((Date.now() - thinkingStartTime) / 1000)
-		);
-
-		useEffect(() => {
-			// Update every second
-			const interval = setInterval(() => {
-				setElapsedSeconds(Math.floor((Date.now() - thinkingStartTime) / 1000));
-			}, 1000);
-
-			return () => clearInterval(interval);
-		}, [thinkingStartTime]);
-
-		// Format elapsed time as mm:ss or hh:mm:ss
-		const formatElapsedTime = (seconds: number): string => {
-			const hours = Math.floor(seconds / 3600);
-			const minutes = Math.floor((seconds % 3600) / 60);
-			const secs = seconds % 60;
-
-			if (hours > 0) {
-				return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-			}
-			return `${minutes}:${secs.toString().padStart(2, '0')}`;
-		};
-
-		return (
-			<span className="text-sm font-mono" style={{ color: textColor }}>
-				{formatElapsedTime(elapsedSeconds)}
-			</span>
-		);
-	}
-);
 
 interface TerminalOutputProps {
 	session: Session;
@@ -1051,8 +1209,10 @@ interface TerminalOutputProps {
 	activeFocus: FocusArea;
 	outputSearchOpen: boolean;
 	outputSearchQuery: string;
+	outputSearchRegex: boolean;
 	setOutputSearchOpen: (open: boolean) => void;
 	setOutputSearchQuery: (query: string) => void;
+	setOutputSearchRegex: (regex: boolean) => void;
 	setActiveFocus: (focus: FocusArea) => void;
 	setLightboxImage: (
 		image: string | null,
@@ -1064,6 +1224,11 @@ interface TerminalOutputProps {
 	maxOutputLines: number;
 	onDeleteLog?: (logId: string) => number | null; // Returns the index to scroll to after deletion
 	onRemoveQueuedItem?: (itemId: string) => void; // Callback to remove a queued item from execution queue
+	onForceSendQueuedItem?: (itemId: string) => void; // Callback to Force Send a queued item (parallel execution)
+	forcedParallelEnabled?: boolean; // Whether forcedParallelExecution setting is on (gates Force Send button)
+	getForceSendContext?: (
+		item: QueuedItem
+	) => { targetTabBusy: boolean; otherBusyTabs: { id: string; displayName: string }[] } | null;
 	onInterrupt?: () => void; // Callback to interrupt the current process
 	onScrollPositionChange?: (scrollTop: number) => void; // Callback to save scroll position
 	onAtBottomChange?: (isAtBottom: boolean) => void; // Callback when user scrolls to/away from bottom
@@ -1071,20 +1236,33 @@ interface TerminalOutputProps {
 	markdownEditMode: boolean; // Whether to show raw markdown or rendered markdown for AI responses
 	setMarkdownEditMode: (value: boolean) => void; // Toggle markdown mode
 	onReplayMessage?: (text: string, images?: string[]) => void; // Replay a user message
+	onForkConversation?: (logId: string) => void; // Fork conversation from a specific message
 	fileTree?: FileNode[]; // File tree for linking file references
 	cwd?: string; // Current working directory for proximity-based matching
 	projectRoot?: string; // Project root absolute path for converting absolute paths to relative
 	onFileClick?: (path: string) => void; // Callback when a file link is clicked
 	onShowErrorDetails?: (error: AgentError) => void; // Callback to show the error modal (for error log entries)
 	onFileSaved?: () => void; // Callback when markdown content is saved to file (e.g., to refresh file list)
-	autoScrollAiMode?: boolean; // Whether to auto-scroll in AI mode (like terminal mode)
 	userMessageAlignment?: 'left' | 'right'; // User message bubble alignment (default: right)
+	ghCliAvailable?: boolean; // Whether gh CLI is available for gist publishing
+	onPublishMessageGist?: (text: string, messageId?: string) => void; // Callback to publish a single message as a gist
 	onOpenInTab?: (file: {
 		path: string;
 		name: string;
 		content: string;
 		sshRemoteId?: string;
 	}) => void; // Callback to open saved file in a tab
+	// In-place recovery from session_not_found errors. Invoked by the
+	// SessionRecoveryCard that renders inside system log entries carrying a
+	// `recoveryAction` payload.
+	onSessionRecover?: (opts: {
+		sessionId: string;
+		tabId: string;
+		lastUserPrompt: string;
+		groomContext: boolean;
+	}) => void;
+	isRecoveringSession?: boolean;
+	sessionRecoveryError?: string | null;
 }
 
 // PERFORMANCE: Wrap in React.memo to prevent re-renders when parent re-renders
@@ -1099,8 +1277,10 @@ export const TerminalOutput = memo(
 			activeFocus: _activeFocus,
 			outputSearchOpen,
 			outputSearchQuery,
+			outputSearchRegex,
 			setOutputSearchOpen,
 			setOutputSearchQuery,
+			setOutputSearchRegex,
 			setActiveFocus,
 			setLightboxImage,
 			inputRef,
@@ -1108,6 +1288,9 @@ export const TerminalOutput = memo(
 			maxOutputLines,
 			onDeleteLog,
 			onRemoveQueuedItem,
+			onForceSendQueuedItem,
+			forcedParallelEnabled,
+			getForceSendContext,
 			onInterrupt: _onInterrupt,
 			onScrollPositionChange,
 			onAtBottomChange,
@@ -1115,25 +1298,25 @@ export const TerminalOutput = memo(
 			markdownEditMode,
 			setMarkdownEditMode,
 			onReplayMessage,
+			onForkConversation,
 			fileTree,
 			cwd,
 			projectRoot,
 			onFileClick,
 			onShowErrorDetails,
 			onFileSaved,
-			autoScrollAiMode,
 			userMessageAlignment = 'right',
 			onOpenInTab,
+			ghCliAvailable,
+			onPublishMessageGist,
+			onSessionRecover,
+			isRecoveringSession,
+			sessionRecoveryError,
 		} = props;
 		const globalBionifyReadingMode = useSettingsStore((s) => s.bionifyReadingMode);
 		const globalBionifyIntensity = useSettingsStore((s) => s.bionifyIntensity);
+		const publishedGists = useMessageGistStore((s) => s.published);
 		const globalBionifyAlgorithm = useSettingsStore((s) => s.bionifyAlgorithm);
-		const [bionifyOverride, setBionifyOverride] = useState<boolean | null>(null);
-		const effectiveBionifyReadingMode = bionifyOverride ?? globalBionifyReadingMode;
-
-		useEffect(() => {
-			setBionifyOverride(null);
-		}, [session.id, session.activeTabId]);
 
 		// Use the forwarded ref if provided, otherwise create a local one
 		const localRef = useRef<HTMLDivElement>(null);
@@ -1175,14 +1358,13 @@ export const TerminalOutput = memo(
 		// Counter to force re-render when delete confirmation changes
 		const [_deleteConfirmTrigger, _setDeleteConfirmTrigger] = useState(0);
 
-		// Copy to clipboard notification state
-		const [showCopiedNotification, setShowCopiedNotification] = useState(false);
-
 		// Save markdown modal state
 		const [saveModalContent, setSaveModalContent] = useState<string | null>(null);
 
 		// New message indicator state
 		const [isAtBottom, setIsAtBottom] = useState(true);
+		const [hasNewMessages, setHasNewMessages] = useState(false);
+		const [newMessageCount, setNewMessageCount] = useState(0);
 		const lastLogCountRef = useRef(0);
 		// Track previous isAtBottom to detect changes for callback
 		const prevIsAtBottomRef = useRef(true);
@@ -1204,14 +1386,13 @@ export const TerminalOutput = memo(
 		const hasRestoredScrollRef = useRef(false);
 
 		// Get active tab ID for resetting state on tab switch
-		const activeTabId = session.inputMode === 'ai' ? session.activeTabId : null;
+		const activeTabId = session.activeTabId;
 
-		// Copy text to clipboard with notification
+		// Copy text to clipboard with center flash
 		const copyToClipboard = useCallback(async (text: string) => {
 			const ok = await safeClipboardWrite(text);
 			if (ok) {
-				setShowCopiedNotification(true);
-				setTimeout(() => setShowCopiedNotification(false), 1500);
+				flashCopiedToClipboard(text);
 			}
 		}, []);
 
@@ -1260,6 +1441,12 @@ export const TerminalOutput = memo(
 				});
 			}
 		}, [outputSearchOpen, updateLayerHandler]);
+
+		// Search match navigation state (populated by effect below after filteredLogs is defined)
+		const [currentMatchIndex, setCurrentMatchIndex] = useState(0);
+		const [totalMatches, setTotalMatches] = useState(0);
+		const [regexError, setRegexError] = useState<string | null>(null);
+		const matchRangesRef = useRef<Range[]>([]);
 
 		const toggleExpanded = useCallback((logId: string) => {
 			setExpandedLogs((prev) => {
@@ -1339,44 +1526,45 @@ export const TerminalOutput = memo(
 
 		// Create ANSI converter with theme-aware colors
 		const ansiConverter = useMemo(() => {
+			const c = theme.colors;
 			return new Convert({
-				fg: theme.colors.textMain,
-				bg: theme.colors.bgMain,
+				fg: c.textMain,
+				bg: c.bgMain,
 				newline: false,
 				escapeXML: true,
 				stream: false,
 				colors: {
-					0: theme.colors.textMain, // black -> textMain
-					1: theme.colors.error, // red -> error
-					2: theme.colors.success, // green -> success
-					3: theme.colors.warning, // yellow -> warning
-					4: theme.colors.accent, // blue -> accent
-					5: theme.colors.accentDim, // magenta -> accentDim
-					6: theme.colors.accent, // cyan -> accent
-					7: theme.colors.textDim, // white -> textDim
+					0: c.ansiBlack ?? c.textMain,
+					1: c.ansiRed ?? c.error,
+					2: c.ansiGreen ?? c.success,
+					3: c.ansiYellow ?? c.warning,
+					4: c.ansiBlue ?? c.accent,
+					5: c.ansiMagenta ?? c.accentDim,
+					6: c.ansiCyan ?? c.accent,
+					7: c.ansiWhite ?? c.textDim,
+					8: c.ansiBrightBlack ?? c.textDim,
+					9: c.ansiBrightRed ?? c.error,
+					10: c.ansiBrightGreen ?? c.success,
+					11: c.ansiBrightYellow ?? c.warning,
+					12: c.ansiBrightBlue ?? c.accent,
+					13: c.ansiBrightMagenta ?? c.accentText,
+					14: c.ansiBrightCyan ?? c.accentText,
+					15: c.ansiBrightWhite ?? c.textMain,
 				},
 			});
 		}, [theme]);
 
 		// PERF: Memoize active tab lookup to avoid O(n) .find() on every render
-		const activeTab = useMemo(
-			() => (session.inputMode === 'ai' ? getActiveTab(session) : undefined),
-			[session.inputMode, session.aiTabs, session.activeTabId]
-		);
+		const activeTab = useMemo(() => getActiveTab(session), [session.aiTabs, session.activeTabId]);
 
 		// PERF: Memoize activeLogs to provide stable reference for collapsedLogs dependency
-		const activeLogs = useMemo(
-			(): LogEntry[] => (session.inputMode === 'ai' ? (activeTab?.logs ?? []) : session.shellLogs),
-			[session.inputMode, activeTab?.logs, session.shellLogs]
-		);
+		// TerminalOutput only handles AI mode; terminal mode renders via TerminalView
+		const activeLogs = useMemo((): LogEntry[] => activeTab?.logs ?? [], [activeTab?.logs]);
 
 		// In AI mode, collapse consecutive non-user entries into single response blocks
 		// This provides a cleaner view where each user message gets one response
 		// Tool and thinking entries are kept separate (not collapsed)
 		const collapsedLogs = useMemo(() => {
-			// Only collapse in AI mode
-			if (session.inputMode !== 'ai') return activeLogs;
-
 			const result: LogEntry[] = [];
 			let currentResponseGroup: LogEntry[] = [];
 
@@ -1413,18 +1601,144 @@ export const TerminalOutput = memo(
 			flushResponseGroup();
 
 			return result;
-		}, [activeLogs, session.inputMode]);
+		}, [activeLogs]);
 
-		// PERF: Debounce search query to avoid filtering on every keystroke
+		// PERF: Debounce search query so the highlight pass doesn't run on every keystroke
 		const debouncedSearchQuery = useDebouncedValue(outputSearchQuery, 150);
 
-		// Filter logs based on search query - memoized for performance
-		// Uses debounced query to reduce CPU usage during rapid typing
-		const filteredLogs = useMemo(() => {
-			if (!debouncedSearchQuery) return collapsedLogs;
-			const lowerQuery = debouncedSearchQuery.toLowerCase();
-			return collapsedLogs.filter((log) => log.text.toLowerCase().includes(lowerQuery));
-		}, [collapsedLogs, debouncedSearchQuery]);
+		// Search no longer filters logs — all logs stay visible. Matches are highlighted and
+		// navigated inline via CSS Custom Highlight API (see highlight effect below).
+		const filteredLogs = collapsedLogs;
+
+		// ============================================================================
+		// Search match navigation (CSS Custom Highlight API)
+		// ============================================================================
+		// Pattern mirrors `useFilePreviewSearch.ts` markdown path: walks text nodes in the
+		// scroll container, builds Range objects for matches, and uses the Custom Highlight
+		// API to paint them without mutating the DOM. The "current" match gets a separate
+		// highlight with accent color; prev/next navigation just moves the index.
+		useEffect(() => {
+			const query = debouncedSearchQuery.trim();
+			const clearHighlights = () => {
+				if ('highlights' in CSS) {
+					(CSS as unknown as { highlights: Map<string, unknown> }).highlights.delete(
+						'terminal-search-all'
+					);
+					(CSS as unknown as { highlights: Map<string, unknown> }).highlights.delete(
+						'terminal-search-current'
+					);
+				}
+			};
+			if (!outputSearchOpen || !query) {
+				clearHighlights();
+				matchRangesRef.current = [];
+				setTotalMatches(0);
+				setCurrentMatchIndex(0);
+				setRegexError(null);
+				return;
+			}
+
+			const container = scrollContainerRef.current;
+			if (!container) return;
+
+			// Build the match regex — plain text is escaped; regex mode is validated.
+			let regex: RegExp;
+			try {
+				if (outputSearchRegex) {
+					regex = new RegExp(query, 'gi');
+				} else {
+					const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+					regex = new RegExp(escaped, 'gi');
+				}
+				setRegexError(null);
+			} catch (err) {
+				setRegexError(err instanceof Error ? err.message : 'Invalid regex');
+				clearHighlights();
+				matchRangesRef.current = [];
+				setTotalMatches(0);
+				return;
+			}
+
+			// Walk text nodes, collect Range objects for each match.
+			const ranges: Range[] = [];
+			const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+			let textNode: Node | null = walker.nextNode();
+			while (textNode !== null) {
+				const text = textNode.textContent || '';
+				if (text) {
+					regex.lastIndex = 0;
+					let m: RegExpExecArray | null = regex.exec(text);
+					while (m !== null) {
+						if (m[0].length === 0) {
+							regex.lastIndex++;
+						} else {
+							const range = document.createRange();
+							range.setStart(textNode, m.index);
+							range.setEnd(textNode, m.index + m[0].length);
+							ranges.push(range);
+						}
+						m = regex.exec(text);
+					}
+				}
+				textNode = walker.nextNode();
+			}
+
+			matchRangesRef.current = ranges;
+			setTotalMatches(ranges.length);
+			setCurrentMatchIndex((prev) => (ranges.length === 0 ? 0 : Math.min(prev, ranges.length - 1)));
+
+			if (!('highlights' in CSS) || ranges.length === 0) {
+				clearHighlights();
+				return;
+			}
+			const Highlight = (window as unknown as { Highlight: new (...r: Range[]) => unknown })
+				.Highlight;
+			const highlights = (CSS as unknown as { highlights: Map<string, unknown> }).highlights;
+			highlights.set('terminal-search-all', new Highlight(...ranges));
+			// Current highlight is applied by the separate effect below so navigation doesn't
+			// require re-walking the DOM.
+
+			return clearHighlights;
+		}, [debouncedSearchQuery, outputSearchRegex, outputSearchOpen, filteredLogs]);
+
+		// Update the "current" highlight and scroll it into view when index changes.
+		useEffect(() => {
+			if (!('highlights' in CSS)) return;
+			const highlights = (CSS as unknown as { highlights: Map<string, unknown> }).highlights;
+			const ranges = matchRangesRef.current;
+			if (ranges.length === 0 || currentMatchIndex < 0 || currentMatchIndex >= ranges.length) {
+				highlights.delete('terminal-search-current');
+				return;
+			}
+			const current = ranges[currentMatchIndex];
+			const Highlight = (window as unknown as { Highlight: new (...r: Range[]) => unknown })
+				.Highlight;
+			highlights.set('terminal-search-current', new Highlight(current));
+
+			// Scroll the current match into view, centered in the scroll container.
+			const scrollParent = scrollContainerRef.current;
+			const rect = current.getBoundingClientRect();
+			if (scrollParent && rect.height > 0) {
+				const parentRect = scrollParent.getBoundingClientRect();
+				const offset = rect.top - parentRect.top + scrollParent.scrollTop;
+				const targetScroll = offset - scrollParent.clientHeight / 2 + rect.height / 2;
+				scrollParent.scrollTo({ top: Math.max(0, targetScroll), behavior: 'smooth' });
+			}
+		}, [currentMatchIndex, totalMatches]);
+
+		const goToNextMatch = useCallback(() => {
+			setCurrentMatchIndex((i) => {
+				if (totalMatches === 0) return 0;
+				return (i + 1) % totalMatches;
+			});
+		}, [totalMatches]);
+
+		const goToPrevMatch = useCallback(() => {
+			setCurrentMatchIndex((i) => {
+				if (totalMatches === 0) return 0;
+				return (i - 1 + totalMatches) % totalMatches;
+			});
+		}, [totalMatches]);
 
 		// PERF: Throttle scroll handler to reduce state updates (4ms = ~240fps for smooth scrollbar)
 		// The actual logic is in handleScrollInner, wrapped with useThrottledCallback
@@ -1443,13 +1757,15 @@ export const TerminalOutput = memo(
 
 			// Clear new message indicator when user scrolls to bottom
 			if (atBottom) {
+				setHasNewMessages(false);
+				setNewMessageCount(0);
 				// Resume auto-scroll when user scrolls back to bottom
 				setAutoScrollPaused(false);
 				// Save read state for current tab
 				if (activeTabId) {
 					tabReadStateRef.current.set(activeTabId, filteredLogs.length);
 				}
-			} else if (autoScrollAiMode) {
+			} else {
 				if (isProgrammaticScrollRef.current) {
 					// This scroll event was triggered by our own scrollTo() call —
 					// consume the guard flag here inside the throttled handler to avoid
@@ -1472,13 +1788,7 @@ export const TerminalOutput = memo(
 					scrollSaveTimerRef.current = null;
 				}, 200);
 			}
-		}, [
-			activeTabId,
-			filteredLogs.length,
-			onScrollPositionChange,
-			onAtBottomChange,
-			autoScrollAiMode,
-		]);
+		}, [activeTabId, filteredLogs.length, onScrollPositionChange, onAtBottomChange]);
 
 		// PERF: Throttle at 16ms (60fps) instead of 4ms to reduce state updates during scroll
 		const handleScroll = useThrottledCallback(handleScrollInner, 16);
@@ -1486,6 +1796,9 @@ export const TerminalOutput = memo(
 		// Restore read state when switching tabs
 		useEffect(() => {
 			if (!activeTabId) {
+				// Terminal mode - just reset
+				setHasNewMessages(false);
+				setNewMessageCount(0);
 				setIsAtBottom(true);
 				lastLogCountRef.current = filteredLogs.length;
 				return;
@@ -1499,13 +1812,19 @@ export const TerminalOutput = memo(
 				// Tab was visited before - check for new messages since last read
 				const unreadCount = currentCount - savedReadCount;
 				if (unreadCount > 0) {
+					setHasNewMessages(true);
+					setNewMessageCount(unreadCount);
 					setIsAtBottom(false);
 				} else {
+					setHasNewMessages(false);
+					setNewMessageCount(0);
 					setIsAtBottom(true);
 				}
 			} else {
 				// First visit to this tab - mark all as read
 				tabReadStateRef.current.set(activeTabId, currentCount);
+				setHasNewMessages(false);
+				setNewMessageCount(0);
 				setIsAtBottom(true);
 			}
 
@@ -1529,6 +1848,9 @@ export const TerminalOutput = memo(
 				}
 
 				if (!actuallyAtBottom) {
+					const newCount = currentCount - lastLogCountRef.current;
+					setHasNewMessages(true);
+					setNewMessageCount((prev) => prev + newCount);
 					// Update isAtBottom state to match reality
 					setIsAtBottom(false);
 				} else {
@@ -1541,13 +1863,6 @@ export const TerminalOutput = memo(
 			lastLogCountRef.current = currentCount;
 		}, [filteredLogs.length, isAtBottom, activeTabId]);
 
-		// Reset auto-scroll pause when user explicitly re-enables auto-scroll (button or shortcut)
-		useEffect(() => {
-			if (autoScrollAiMode) {
-				setAutoScrollPaused(false);
-			}
-		}, [autoScrollAiMode]);
-
 		// Auto-scroll to bottom when DOM content changes in the scroll container.
 		// Uses MutationObserver to detect ALL content mutations — new nodes (log entries),
 		// text changes (thinking stream growth), and attribute changes (tool status updates).
@@ -1557,10 +1872,7 @@ export const TerminalOutput = memo(
 			const container = scrollContainerRef.current;
 			if (!container) return;
 
-			const shouldAutoScroll = () =>
-				session.inputMode === 'terminal' ||
-				(session.inputMode === 'ai' && autoScrollAiMode && !autoScrollPaused) ||
-				(session.inputMode === 'ai' && isAtBottomRef.current);
+			const shouldAutoScroll = () => !autoScrollPaused || isAtBottomRef.current;
 
 			const scrollToBottom = () => {
 				if (!scrollContainerRef.current) return;
@@ -1604,7 +1916,7 @@ export const TerminalOutput = memo(
 			});
 
 			return () => observer.disconnect();
-		}, [session.inputMode, autoScrollAiMode, autoScrollPaused]);
+		}, [autoScrollPaused]);
 
 		// Restore scroll position when component mounts or initialScrollTop changes
 		// Uses requestAnimationFrame to ensure DOM is ready
@@ -1651,9 +1963,9 @@ export const TerminalOutput = memo(
 			[filteredLogs]
 		);
 
-		// Computed values for rendering
-		const isTerminal = session.inputMode === 'terminal';
-		const isAIMode = session.inputMode === 'ai';
+		// TerminalOutput only handles AI mode; terminal mode renders via TerminalView
+		const isTerminal = false;
+		const isAIMode = true;
 
 		// Memoized prose styles - applied once at container level instead of per-log-item
 		// IMPORTANT: Scoped to .terminal-output to avoid CSS conflicts with other prose containers (e.g., AutoRun panel)
@@ -1661,6 +1973,8 @@ export const TerminalOutput = memo(
 			() => generateTerminalProseStyles(theme, '.terminal-output'),
 			[theme]
 		);
+
+		const isAutoScrollActive = !autoScrollPaused;
 
 		return (
 			<div
@@ -1670,8 +1984,7 @@ export const TerminalOutput = memo(
 				aria-label="Terminal output"
 				className="terminal-output flex-1 flex flex-col overflow-hidden transition-colors outline-none relative"
 				style={{
-					backgroundColor:
-						session.inputMode === 'ai' ? theme.colors.bgMain : theme.colors.bgActivity,
+					backgroundColor: theme.colors.bgMain,
 				}}
 				onKeyDown={(e) => {
 					// Cmd+F to open search
@@ -1690,14 +2003,45 @@ export const TerminalOutput = memo(
 						setActiveFocus('main');
 						return;
 					}
-					// Arrow key scrolling (instant, no smooth behavior)
-					// Plain arrow keys: scroll by ~100px
-					if (e.key === 'ArrowUp' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+					// Shift+Arrow: jump message-by-message. Skip when the user is typing in
+					// an input/textarea inside the region — those handle their own
+					// arrow-key cursor movement.
+					if (
+						(e.key === 'ArrowUp' || e.key === 'ArrowDown') &&
+						e.shiftKey &&
+						!e.metaKey &&
+						!e.ctrlKey &&
+						!e.altKey &&
+						!isTextInputTarget(e.target)
+					) {
+						const container = scrollContainerRef.current;
+						if (container) {
+							e.preventDefault();
+							jumpToMessageEdge(container, '[data-log-index]', e.key === 'ArrowUp' ? 'up' : 'down');
+						}
+						return;
+					}
+					// Plain Arrow keys: nudge scroll by ~100px (instant, no smooth behavior).
+					if (
+						e.key === 'ArrowUp' &&
+						!e.shiftKey &&
+						!e.metaKey &&
+						!e.ctrlKey &&
+						!e.altKey &&
+						!isTextInputTarget(e.target)
+					) {
 						e.preventDefault();
 						scrollContainerRef.current?.scrollBy({ top: -100 });
 						return;
 					}
-					if (e.key === 'ArrowDown' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+					if (
+						e.key === 'ArrowDown' &&
+						!e.shiftKey &&
+						!e.metaKey &&
+						!e.ctrlKey &&
+						!e.altKey &&
+						!isTextInputTarget(e.target)
+					) {
 						e.preventDefault();
 						scrollContainerRef.current?.scrollBy({ top: 100 });
 						return;
@@ -1733,23 +2077,123 @@ export const TerminalOutput = memo(
 					}
 				}}
 			>
+				{/* CSS for Custom Highlight API — paints matches without mutating DOM */}
+				<style>{`
+					::highlight(terminal-search-all) {
+						background-color: ${theme.colors.warning};
+						color: ${theme.mode === 'light' ? '#fff' : '#000'};
+					}
+					::highlight(terminal-search-current) {
+						background-color: ${theme.colors.accent};
+						color: #fff;
+					}
+				`}</style>
 				{/* Output Search */}
 				{outputSearchOpen && (
-					<div className="sticky top-0 z-10 pb-4">
-						<input
-							type="text"
-							value={outputSearchQuery}
-							onChange={(e) => setOutputSearchQuery(e.target.value)}
-							placeholder={
-								isAIMode ? 'Filter output... (Esc to close)' : 'Search output... (Esc to close)'
-							}
-							className="w-full px-3 py-2 rounded border bg-transparent outline-none text-sm"
-							style={{
-								borderColor: theme.colors.accent,
-								color: theme.colors.textMain,
-								backgroundColor: theme.colors.bgSidebar,
-							}}
-						/>
+					<div
+						className="sticky top-0 z-10 px-3 pt-3 pb-4"
+						style={{ backgroundColor: theme.colors.bgMain }}
+					>
+						<div className="flex items-center gap-2">
+							<div className="relative flex-1">
+								<input
+									type="text"
+									value={outputSearchQuery}
+									onChange={(e) => setOutputSearchQuery(e.target.value)}
+									onKeyDown={(e) => {
+										if (e.key === 'Enter' && !e.shiftKey) {
+											e.preventDefault();
+											goToNextMatch();
+										} else if (e.key === 'Enter' && e.shiftKey) {
+											e.preventDefault();
+											goToPrevMatch();
+										}
+									}}
+									placeholder={
+										outputSearchRegex
+											? 'Regex search... (Enter: next, Shift+Enter: prev)'
+											: 'Search output... (Enter: next, Shift+Enter: prev)'
+									}
+									className="w-full pl-3 pr-14 py-2 rounded border bg-transparent outline-none text-sm"
+									style={{
+										borderColor: regexError ? theme.colors.error : theme.colors.accent,
+										color: theme.colors.textMain,
+										backgroundColor: theme.colors.bgSidebar,
+										fontFamily: outputSearchRegex
+											? 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace'
+											: undefined,
+									}}
+									spellCheck={outputSearchRegex ? false : undefined}
+									autoFocus
+								/>
+								<div
+									className="absolute right-2 top-1/2 -translate-y-1/2 px-2 py-0.5 rounded text-xs font-bold pointer-events-none"
+									style={{
+										backgroundColor: theme.colors.bgMain,
+										color: theme.colors.textDim,
+									}}
+								>
+									ESC
+								</div>
+							</div>
+							<button
+								onClick={() => setOutputSearchRegex(!outputSearchRegex)}
+								className="flex items-center justify-center gap-1.5 pl-1 pr-2 rounded border text-xs font-medium whitespace-nowrap transition-colors self-stretch min-w-[7rem]"
+								style={{
+									borderColor: regexError ? theme.colors.error : theme.colors.accent,
+									backgroundColor: theme.colors.accent + '20',
+									color: theme.colors.accent,
+								}}
+								title={outputSearchRegex ? 'Switch to plain-text search' : 'Switch to regex search'}
+							>
+								{/* Pill marker: bg/fg inverted vs. the surrounding button */}
+								<span
+									className="px-1.5 py-0.5 rounded font-mono leading-none"
+									style={{
+										backgroundColor: theme.colors.accent,
+										color: theme.colors.accentForeground,
+									}}
+								>
+									{outputSearchRegex ? '.*' : 'Aa'}
+								</span>
+								<span>{outputSearchRegex ? 'Regex' : 'Plain Text'}</span>
+							</button>
+							{outputSearchQuery.trim() && (
+								<>
+									<span
+										className="text-xs whitespace-nowrap"
+										style={{
+											color: regexError ? theme.colors.error : theme.colors.textDim,
+										}}
+										title={regexError ?? undefined}
+									>
+										{regexError
+											? 'Invalid regex'
+											: totalMatches > 0
+												? `${currentMatchIndex + 1}/${totalMatches}`
+												: 'No matches'}
+									</span>
+									<button
+										onClick={goToPrevMatch}
+										disabled={totalMatches === 0}
+										className="p-1.5 rounded hover:bg-white/10 transition-colors disabled:opacity-30"
+										style={{ color: theme.colors.textDim }}
+										title="Previous match (Shift+Enter)"
+									>
+										<ChevronUp className="w-4 h-4" />
+									</button>
+									<button
+										onClick={goToNextMatch}
+										disabled={totalMatches === 0}
+										className="p-1.5 rounded hover:bg-white/10 transition-colors disabled:opacity-30"
+										style={{ color: theme.colors.textDim }}
+										title="Next match (Enter)"
+									>
+										<ChevronDown className="w-4 h-4" />
+									</button>
+								</>
+							)}
+						</div>
 					</div>
 				)}
 				{/* Prose styles for markdown rendering - injected once at container level for performance */}
@@ -1761,10 +2205,7 @@ export const TerminalOutput = memo(
 					ref={scrollContainerRef}
 					className="flex-1 overflow-y-auto scrollbar-thin"
 					style={{
-						overflowAnchor:
-							session.inputMode === 'ai' && (!autoScrollAiMode || autoScrollPaused)
-								? 'none'
-								: undefined,
+						overflowAnchor: session.inputMode === 'ai' && autoScrollPaused ? 'none' : undefined,
 					}}
 					onScroll={handleScroll}
 				>
@@ -1779,7 +2220,6 @@ export const TerminalOutput = memo(
 							theme={theme}
 							fontFamily={fontFamily}
 							maxOutputLines={maxOutputLines}
-							outputSearchQuery={outputSearchQuery}
 							lastUserCommand={
 								isTerminal && log.source !== 'user' ? getLastUserCommand(index) : undefined
 							}
@@ -1802,82 +2242,95 @@ export const TerminalOutput = memo(
 							markdownEditMode={markdownEditMode}
 							onToggleMarkdownEditMode={toggleMarkdownEditMode}
 							onReplayMessage={onReplayMessage}
+							onForkConversation={onForkConversation}
+							sessionId={session.id}
+							onSessionRecover={onSessionRecover}
+							isRecoveringSession={isRecoveringSession}
+							sessionRecoveryError={sessionRecoveryError}
 							fileTree={fileTree}
 							cwd={cwd}
 							projectRoot={projectRoot}
 							onFileClick={onFileClick}
 							onShowErrorDetails={onShowErrorDetails}
 							onSaveToFile={handleSaveToFile}
-							bionifyReadingMode={effectiveBionifyReadingMode}
+							ghCliAvailable={ghCliAvailable}
+							onPublishGist={onPublishMessageGist}
+							publishedGistUrl={publishedGists[log.id]?.gistUrl}
+							bionifyReadingMode={globalBionifyReadingMode}
 							bionifyIntensity={globalBionifyIntensity}
 							bionifyAlgorithm={globalBionifyAlgorithm}
-							onToggleBionifyReadingMode={() =>
-								setBionifyOverride((current) => !(current ?? globalBionifyReadingMode))
-							}
 							userMessageAlignment={userMessageAlignment}
+							isClaudeCode={session.toolType === 'claude-code'}
+							isAdaptiveMode={session.enableMaestroP === true}
 						/>
 					))}
 
-					{/* Terminal busy indicator - only show for terminal commands (AI thinking moved to ThinkingStatusPill) */}
-					{session.state === 'busy' &&
-						session.inputMode === 'terminal' &&
-						session.busySource === 'terminal' && (
-							<div
-								className="flex flex-col items-center justify-center gap-2 py-6 mx-6 my-4 rounded-xl border"
-								style={{
-									backgroundColor: theme.colors.bgActivity,
-									borderColor: theme.colors.border,
-								}}
-							>
-								<div className="flex items-center gap-3">
-									<div
-										className="w-2 h-2 rounded-full animate-pulse"
-										style={{ backgroundColor: theme.colors.warning }}
-									/>
-									<span className="text-sm" style={{ color: theme.colors.textMain }}>
-										{session.statusMessage || 'Executing command...'}
-									</span>
-									{session.thinkingStartTime && (
-										<ElapsedTimeDisplay
-											thinkingStartTime={session.thinkingStartTime}
-											textColor={theme.colors.textDim}
-										/>
-									)}
-								</div>
-							</div>
-						)}
-
-					{/* Queued items section - only show in AI mode, filtered to active tab */}
-					{session.inputMode === 'ai' &&
-						session.executionQueue &&
-						session.executionQueue.length > 0 && (
-							<QueuedItemsList
-								executionQueue={session.executionQueue}
-								theme={theme}
-								onRemoveQueuedItem={onRemoveQueuedItem}
-								activeTabId={activeTabId || undefined}
-							/>
-						)}
+					{/* Queued items section - filtered to active tab */}
+					{session.executionQueue && session.executionQueue.length > 0 && (
+						<QueuedItemsList
+							executionQueue={session.executionQueue}
+							theme={theme}
+							onRemoveQueuedItem={onRemoveQueuedItem}
+							onForceSendQueuedItem={onForceSendQueuedItem}
+							forcedParallelEnabled={forcedParallelEnabled}
+							getForceSendContext={getForceSendContext}
+							activeTabId={activeTabId || undefined}
+						/>
+					)}
 
 					{/* End ref for scrolling - always rendered so Cmd+Shift+J works even when busy */}
 					<div ref={logsEndRef} />
 				</div>
 
-				{/* Auto-scroll toggle removed — was too noisy */}
-
-				{/* Copied to Clipboard Notification */}
-				{showCopiedNotification && (
-					<div
-						className="fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 px-6 py-4 rounded-lg shadow-2xl text-base font-bold animate-in fade-in zoom-in-95 duration-200 z-50"
-						style={{
-							backgroundColor: theme.colors.accent,
-							color: theme.colors.accentForeground,
-							textShadow: '0 1px 2px rgba(0, 0, 0, 0.3)',
+				{/* Scroll-to-bottom / auto-scroll resume (AI mode only) */}
+				{session.inputMode === 'ai' && filteredLogs.length > 0 && !isAtBottom && (
+					<button
+						onClick={() => {
+							// Jump to bottom and resume auto-scroll
+							setAutoScrollPaused(false);
+							setHasNewMessages(false);
+							setNewMessageCount(0);
+							if (scrollContainerRef.current) {
+								scrollContainerRef.current.scrollTo({
+									top: scrollContainerRef.current.scrollHeight,
+									behavior: 'smooth',
+								});
+							}
 						}}
+						className={`absolute bottom-4 ${userMessageAlignment === 'right' ? 'left-6' : 'right-6'} flex items-center gap-2 px-3 py-2 rounded-full shadow-lg transition-all hover:scale-105 z-20 outline-none`}
+						style={{
+							backgroundColor: isAutoScrollActive
+								? theme.colors.accent
+								: hasNewMessages
+									? theme.colors.accent
+									: theme.colors.bgSidebar,
+							color: isAutoScrollActive
+								? theme.colors.accentForeground
+								: hasNewMessages
+									? theme.colors.accentForeground
+									: theme.colors.textDim,
+							border: `1px solid ${isAutoScrollActive || hasNewMessages ? 'transparent' : theme.colors.border}`,
+							animation:
+								hasNewMessages && !isAutoScrollActive
+									? 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite'
+									: undefined,
+						}}
+						title={
+							hasNewMessages
+								? 'New messages (click to pin to bottom)'
+								: 'Scroll to bottom (click to pin)'
+						}
 					>
-						Copied to Clipboard
-					</div>
+						<ArrowDown className="w-4 h-4" />
+						{newMessageCount > 0 && !isAutoScrollActive && (
+							<span className="text-xs font-bold">
+								{newMessageCount > 99 ? '99+' : newMessageCount}
+							</span>
+						)}
+					</button>
 				)}
+
+				{/* Copy flash now rendered globally by <CenterFlash /> */}
 
 				{/* Save Markdown Modal */}
 				{saveModalContent !== null && (

@@ -274,14 +274,7 @@ describe('Group Chat Integration Tests', () => {
 		await addParticipant(groupChat.id, 'Writer', agents.agentA, processManager);
 		await addParticipant(groupChat.id, 'Reviewer', agents.agentB, processManager);
 
-		// Verify participants have access to log path in their prompts
-		const writerSession = Array.from(processManager.spawnedSessions.entries()).find(([k]) =>
-			k.includes('Writer')
-		);
-		expect(writerSession).toBeTruthy();
-		expect(writerSession?.[1].prompt).toContain(groupChat.logPath);
-
-		// Send task
+		// Send task (sessions are spawned on-demand when the moderator routes messages)
 		await routeUserMessage(
 			groupChat.id,
 			`
@@ -291,6 +284,14 @@ describe('Group Chat Integration Tests', () => {
 			processManager,
 			agentDetector
 		);
+
+		// Verify participants have access to log path in their prompts
+		// (sessions only exist after the router spawns them during message routing)
+		const writerSession = Array.from(processManager.spawnedSessions.entries()).find(([k]) =>
+			k.includes('Writer')
+		);
+		expect(writerSession).toBeTruthy();
+		expect(writerSession?.[1].prompt).toContain(groupChat.logPath);
 
 		// Verify message logging
 		const messages = await readLog(groupChat.logPath);

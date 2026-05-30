@@ -22,6 +22,7 @@ import { useUIStore } from '../../stores/uiStore';
 import { useFileExplorerStore } from '../../stores/fileExplorerStore';
 import { useInputContext } from '../../contexts/InputContext';
 import { getActiveTab } from '../../utils/tabHelpers';
+import { setLiveDraft } from '../../utils/liveDraftStore';
 import { useDebouncedValue } from '../utils';
 import { useInputSync } from './useInputSync';
 import { useTabCompletion } from './useTabCompletion';
@@ -29,6 +30,29 @@ import type { TabCompletionSuggestion } from './useTabCompletion';
 import { useAtMentionCompletion, type AtMentionSuggestion } from './useAtMentionCompletion';
 import { useInputProcessing } from './useInputProcessing';
 import { useInputKeyDown } from './useInputKeyDown';
+import { IMAGE_EXTENSIONS } from '../../utils/fileExplorerIcons/shared';
+
+function isImagePath(path: string): boolean {
+	const ext = path.toLowerCase().split('.').pop();
+	return ext ? IMAGE_EXTENSIONS.has(ext) : false;
+}
+
+/**
+ * Convert an absolute filesystem path into the form used inside an `@` mention:
+ * if it sits inside `projectRoot`, return the relative path; otherwise return
+ * the absolute path unchanged. Forward-slash normalised so Windows drops still
+ * produce a clean mention.
+ */
+function toMentionPath(absolutePath: string, projectRoot?: string): string {
+	const norm = absolutePath.replace(/\\/g, '/');
+	if (!projectRoot) return norm;
+	const root = projectRoot.replace(/\\/g, '/').replace(/\/+$/, '');
+	if (norm === root) return '.';
+	if (norm.startsWith(root + '/')) {
+		return norm.slice(root.length + 1);
+	}
+	return norm;
+}
 
 // ============================================================================
 // Dependencies interface
@@ -44,7 +68,7 @@ export interface UseInputHandlersDeps {
 	/** Drag counter ref for image drop handling */
 	dragCounterRef: React.MutableRefObject<number>;
 	/** Set dragging image state */
-	setIsDraggingImage: (value: boolean) => void;
+	setIsDraggingFile: (value: boolean) => void;
 
 	// From useBatchHandlers
 	/** Get batch state for a specific session */
@@ -100,9 +124,11 @@ export interface UseInputHandlersReturn {
 	/** Set staged images for the current message */
 	setStagedImages: (images: string[] | ((prev: string[]) => string[])) => void;
 	/** Process and send the current input */
-	processInput: (text?: string) => void;
+	processInput: (text?: string, options?: { forceParallel?: boolean; images?: string[] }) => void;
 	/** Ref to latest processInput for use in memoized callbacks */
-	processInputRef: React.MutableRefObject<(text?: string) => void>;
+	processInputRef: React.MutableRefObject<
+		(text?: string, options?: { forceParallel?: boolean; images?: string[] }) => void
+	>;
 	/** Keyboard event handler for the input textarea */
 	handleInputKeyDown: (e: React.KeyboardEvent) => void;
 	/** Handler for input blur (persists input to session state) */
@@ -137,7 +163,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		terminalOutputRef,
 		fileTreeKeyboardNavRef,
 		dragCounterRef,
-		setIsDraggingImage,
+		setIsDraggingFile,
 		getBatchState,
 		activeBatchRunState,
 		processQueuedItemRef,
@@ -200,11 +226,24 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 	// PERF: Refs to access current input values without triggering re-renders
 	const terminalInputValueRef = useRef(terminalInputValue);
 	const aiInputValueLocalRef = useRef(aiInputValueLocal);
+	// Ref-mirror of activeTab.id so the live-draft sync below isn't re-triggered
+	// on tab-switch alone (which would briefly write the OLD tab's text into the
+	// NEW tab's slot before setAiInputValueLocal lands).
+	const activeTabIdRef = useRef<string | undefined>(activeTab?.id);
+	useEffect(() => {
+		activeTabIdRef.current = activeTab?.id;
+	}, [activeTab?.id]);
 	useEffect(() => {
 		terminalInputValueRef.current = terminalInputValue;
 	}, [terminalInputValue]);
 	useEffect(() => {
 		aiInputValueLocalRef.current = aiInputValueLocal;
+		// Mirror the live value into liveDraftStore so hasDraft() reflects what's
+		// on screen for the active tab (tab.inputValue only updates on blur/submit).
+		const currentTabId = activeTabIdRef.current;
+		if (currentTabId) {
+			setLiveDraft(currentTabId, aiInputValueLocal);
+		}
 	}, [aiInputValueLocal]);
 
 	// Derived input value
@@ -421,7 +460,9 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 	});
 
 	// processInputRef — maintained for access in memoized callbacks without stale closures
-	const processInputRef = useRef<(text?: string) => void>(() => {});
+	const processInputRef = useRef<
+		(text?: string, options?: { forceParallel?: boolean; images?: string[] }) => void
+	>(() => {});
 	useEffect(() => {
 		processInputRef.current = processInput;
 	}, [processInput]);
@@ -551,21 +592,102 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		[activeGroupChatId, activeSession, setInputValue, setStagedImages]
 	);
 
+	const appendMentionsToAiInput = useCallback(
+		(paths: string[]) => {
+			if (paths.length === 0) return;
+			const joined = paths.map((p) => `@${p}`).join(' ');
+			setInputValue((prev) => {
+				if (!prev) return joined + ' ';
+				const sep = /\s$/.test(prev) ? '' : ' ';
+				return prev + sep + joined + ' ';
+			});
+		},
+		[setInputValue]
+	);
+
+	const appendMentionsToGroupChatDraft = useCallback((paths: string[]) => {
+		if (paths.length === 0) return;
+		const joined = paths.map((p) => `@${p}`).join(' ');
+		// Reading the store via getState() (instead of subscribing) is intentional:
+		// this callback only runs on user drop events, so we always want the latest
+		// chatId / setter at fire time and don't want stale-closure invalidation to
+		// re-create the callback (and bust handleDrop's useCallback deps) on every
+		// store update.
+		const { activeGroupChatId: chatId, setGroupChats } = useGroupChatStore.getState();
+		if (!chatId) return;
+		setGroupChats((prev) =>
+			prev.map((c) => {
+				if (c.id !== chatId) return c;
+				const current = c.draftMessage ?? '';
+				const sep = current && !/\s$/.test(current) ? ' ' : '';
+				const next = current ? current + sep + joined + ' ' : joined + ' ';
+				return { ...c, draftMessage: next };
+			})
+		);
+	}, []);
+
 	const handleDrop = useCallback(
 		(e: React.DragEvent) => {
 			e.preventDefault();
 			dragCounterRef.current = 0;
-			setIsDraggingImage(false);
+			setIsDraggingFile(false);
 
 			const isGroupChatActive = !!activeGroupChatId;
 			const isDirectAIMode = activeSession && activeSession.inputMode === 'ai';
 
+			// Files-panel drag: image files are staged as image attachments;
+			// other files/folders are inserted as @<path> in the AI input.
+			// AI mode only; group chat is excluded.
+			const internalPath = e.dataTransfer.getData('application/x-maestro-file-path');
+			if (internalPath) {
+				if (isGroupChatActive || !isDirectAIMode) return;
+
+				if (isImagePath(internalPath)) {
+					// `internalPath` is built by FileExplorerPanel relative to
+					// `session.fullPath` (see TreeRow's `${session.fullPath}/${fullPath}`),
+					// so resolve against fullPath first to stay consistent with the
+					// explorer's own absolute-path construction.
+					const treeRoot = activeSession?.fullPath ?? activeSession?.projectRoot;
+					if (!treeRoot) return;
+					const absolutePath = `${treeRoot}/${internalPath}`;
+					const sshRemoteId =
+						activeSession?.sshRemoteId ??
+						activeSession?.sessionSshRemoteConfig?.remoteId ??
+						undefined;
+					void window.maestro.fs
+						.readFile(absolutePath, sshRemoteId)
+						.then((content) => {
+							if (typeof content !== 'string' || !content.startsWith('data:image/')) return;
+							setStagedImages((prev) => {
+								if (prev.includes(content)) {
+									setSuccessFlashNotification('Duplicate image ignored');
+									setTimeout(() => setSuccessFlashNotification(null), 2000);
+									return prev;
+								}
+								return [...prev, content];
+							});
+						})
+						.catch(() => {
+							setSuccessFlashNotification('Could not read image file');
+							setTimeout(() => setSuccessFlashNotification(null), 2000);
+						});
+					return;
+				}
+
+				appendMentionsToAiInput([internalPath]);
+				inputRef.current?.focus();
+				return;
+			}
+
 			if (!isGroupChatActive && !isDirectAIMode) return;
 
 			const files = e.dataTransfer.files;
+			const externalPaths: string[] = [];
+			const projectRoot = activeSession?.projectRoot ?? activeSession?.fullPath;
 
 			for (let i = 0; i < files.length; i++) {
-				if (files[i].type.startsWith('image/')) {
+				const file = files[i];
+				if (file.type.startsWith('image/')) {
 					const reader = new FileReader();
 					reader.onload = (event) => {
 						if (event.target?.result) {
@@ -591,11 +713,34 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 							}
 						}
 					};
-					reader.readAsDataURL(files[i]);
+					reader.readAsDataURL(file);
+				} else {
+					// External non-image file or folder - collect path for @-mention.
+					// `File.path` was removed in modern Electron; resolve via webUtils
+					// (bridged through the preload as `getPathForFile`).
+					const filePath = window.maestro.fs.getPathForFile(file);
+					if (filePath) {
+						externalPaths.push(toMentionPath(filePath, projectRoot));
+					}
+				}
+			}
+
+			if (externalPaths.length > 0) {
+				if (isGroupChatActive) {
+					appendMentionsToGroupChatDraft(externalPaths);
+				} else if (isDirectAIMode) {
+					appendMentionsToAiInput(externalPaths);
+					inputRef.current?.focus();
 				}
 			}
 		},
-		[activeGroupChatId, activeSession, setStagedImages]
+		[
+			activeGroupChatId,
+			activeSession,
+			setStagedImages,
+			appendMentionsToAiInput,
+			appendMentionsToGroupChatDraft,
+		]
 	);
 
 	// ====================================================================

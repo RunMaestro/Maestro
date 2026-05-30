@@ -11,7 +11,7 @@
  * globalTransferInProgress) become proper store state, making them
  * testable and resettable.
  *
- * Can be used outside React via getOperationState() / getOperationActions().
+ * Can be used outside React via useOperationStore.getState().
  */
 
 import { create } from 'zustand';
@@ -135,16 +135,6 @@ export function selectIsAnyMerging(s: OperationStoreState): boolean {
 	return false;
 }
 
-/** True if any operation (summarize, merge, or transfer) is in progress. */
-export function selectIsAnyOperationInProgress(s: OperationStoreState): boolean {
-	return (
-		selectIsAnySummarizing(s) ||
-		selectIsAnyMerging(s) ||
-		s.transferState === 'grooming' ||
-		s.transferState === 'creating'
-	);
-}
-
 // ============================================================================
 // Initial state
 // ============================================================================
@@ -262,37 +252,3 @@ export const useOperationStore = create<OperationStore>()((set) => ({
 			globalTransferInProgress: false,
 		}),
 }));
-
-// ============================================================================
-// Non-React access
-// ============================================================================
-
-/**
- * Get current operation state snapshot.
- * Use outside React (services, orchestrators, IPC handlers).
- */
-export function getOperationState() {
-	return useOperationStore.getState();
-}
-
-/**
- * Get stable operation action references outside React.
- */
-export function getOperationActions() {
-	const state = useOperationStore.getState();
-	return {
-		setSummarizeTabState: state.setSummarizeTabState,
-		updateSummarizeTabState: state.updateSummarizeTabState,
-		clearSummarizeTabState: state.clearSummarizeTabState,
-		clearAllSummarizeStates: state.clearAllSummarizeStates,
-		setMergeTabState: state.setMergeTabState,
-		updateMergeTabState: state.updateMergeTabState,
-		clearMergeTabState: state.clearMergeTabState,
-		clearAllMergeStates: state.clearAllMergeStates,
-		setGlobalMergeInProgress: state.setGlobalMergeInProgress,
-		setTransferState: state.setTransferState,
-		resetTransferState: state.resetTransferState,
-		setGlobalTransferInProgress: state.setGlobalTransferInProgress,
-		resetAll: state.resetAll,
-	};
-}

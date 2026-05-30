@@ -5,24 +5,31 @@
  * Shows messages in a scrollable container with user/AI differentiation.
  */
 
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { ArrowDown } from 'lucide-react';
 import { useThemeColors } from '../components/ThemeProvider';
 import { stripAnsiCodes } from '../../shared/stringUtils';
+import { formatTimestamp } from '../../shared/formatters';
 import { WebReadingContent } from './WebReadingContent';
-
-/** Threshold for character-based truncation */
-const CHAR_TRUNCATE_THRESHOLD = 500;
-/** Threshold for line-based truncation */
-const LINE_TRUNCATE_THRESHOLD = 8;
 
 export interface LogEntry {
 	id?: string;
 	timestamp: number;
 	text?: string;
 	content?: string;
-	source?: 'user' | 'stdout' | 'stderr' | 'system';
+	source?: 'user' | 'stdout' | 'stderr' | 'system' | 'thinking' | 'tool';
 	type?: string;
+	/** Base64 data URLs attached to a user message (e.g. pasted images).
+	 *  Rendered inline as thumbnails in the user-message bubble so the
+	 *  optimistic local chat shows the same attachments the agent receives. */
+	images?: string[];
+	metadata?: {
+		toolState?: {
+			name?: string;
+			status?: 'running' | 'completed' | 'error';
+			input?: Record<string, unknown>;
+		};
+	};
 }
 
 export interface MessageHistoryProps {
@@ -36,28 +43,50 @@ export interface MessageHistoryProps {
 	maxHeight?: string;
 	/** Callback when user taps a message */
 	onMessageTap?: (entry: LogEntry) => void;
+	/** Current thinking display mode */
+	thinkingMode?: 'off' | 'on' | 'sticky';
+	/** Session state (e.g. 'busy', 'idle') — needed for 'on' mode */
+	sessionState?: string;
 	/** Whether to apply Bionify reading mode to long-form AI output */
 	enableBionifyReadingMode?: boolean;
+	/**
+	 * Max output lines per message before collapsing — mirrors the desktop
+	 * "Max Output Lines per Response" setting. Pass `Infinity` (or omit) for
+	 * "All": no truncation regardless of length.
+	 */
+	maxOutputLines?: number;
 }
 
-/**
- * Format timestamp for display
- * Shows time only for today's messages, date + time for older messages
- */
-function formatTime(timestamp: number): string {
-	const date = new Date(timestamp);
-	const now = new Date();
-	const isToday = date.toDateString() === now.toDateString();
+const formatTime = (timestamp: number) => formatTimestamp(timestamp, 'smart');
 
-	if (isToday) {
-		return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-	} else {
-		return (
-			date.toLocaleDateString([], { month: 'short', day: 'numeric' }) +
-			' ' +
-			date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-		);
+/**
+ * Summarize tool input for display (simplified from desktop TerminalOutput)
+ */
+function summarizeToolInput(input: unknown): string {
+	// Some agents (notably Copilot/Codex apply_patch) deliver the argument as a
+	// raw string instead of an object \u2014 surface it as-is rather than walking it
+	// with Object.keys (which would expose character indices).
+	if (typeof input === 'string') {
+		return input.length > 80 ? input.substring(0, 80) + '\u2026' : input;
 	}
+	if (!input || typeof input !== 'object' || Array.isArray(input)) {
+		return '';
+	}
+	const inputRecord = input as Record<string, unknown>;
+	// File operations
+	if (typeof inputRecord.file_path === 'string') return inputRecord.file_path;
+	if (typeof inputRecord.path === 'string') return inputRecord.path;
+	// Bash commands
+	if (typeof inputRecord.command === 'string') {
+		const cmd = inputRecord.command;
+		return cmd.length > 80 ? cmd.substring(0, 80) + '\u2026' : cmd;
+	}
+	// Search operations
+	if (typeof inputRecord.pattern === 'string') return `/${inputRecord.pattern}/`;
+	// Fallback
+	const keys = Object.keys(inputRecord);
+	if (keys.length === 0) return '';
+	return keys.slice(0, 2).join(', ');
 }
 
 /**
@@ -69,7 +98,10 @@ export function MessageHistory({
 	autoScroll = true,
 	maxHeight = '300px',
 	onMessageTap,
+	thinkingMode,
+	sessionState,
 	enableBionifyReadingMode = false,
+	maxOutputLines = Infinity,
 }: MessageHistoryProps) {
 	const colors = useThemeColors();
 	const containerRef = useRef<HTMLDivElement>(null);
@@ -84,28 +116,26 @@ export function MessageHistory({
 	const [hasNewMessages, setHasNewMessages] = useState(false);
 	const [newMessageCount, setNewMessageCount] = useState(0);
 
-	/**
-	 * Check if a message should be truncated
-	 */
-	const shouldTruncate = useCallback((text: string): boolean => {
-		if (text.length > CHAR_TRUNCATE_THRESHOLD) return true;
-		const lineCount = text.split('\n').length;
-		return lineCount > LINE_TRUNCATE_THRESHOLD;
-	}, []);
+	// "All" (Infinity / unset) disables truncation entirely; a finite cap
+	// drives line-based collapse, matching desktop TerminalOutput.tsx behavior.
+	const hasLineCap = Number.isFinite(maxOutputLines);
 
-	/**
-	 * Get truncated text for display
-	 */
-	const getTruncatedText = useCallback((text: string): string => {
-		const lines = text.split('\n');
-		if (lines.length > LINE_TRUNCATE_THRESHOLD) {
-			return lines.slice(0, LINE_TRUNCATE_THRESHOLD).join('\n');
-		}
-		if (text.length > CHAR_TRUNCATE_THRESHOLD) {
-			return text.slice(0, CHAR_TRUNCATE_THRESHOLD);
-		}
-		return text;
-	}, []);
+	const shouldTruncate = useCallback(
+		(text: string): boolean => {
+			if (!hasLineCap) return false;
+			return text.split('\n').length > maxOutputLines;
+		},
+		[hasLineCap, maxOutputLines]
+	);
+
+	const getTruncatedText = useCallback(
+		(text: string): string => {
+			if (!hasLineCap) return text;
+			const lines = text.split('\n');
+			return lines.length > maxOutputLines ? lines.slice(0, maxOutputLines).join('\n') : text;
+		},
+		[hasLineCap, maxOutputLines]
+	);
 
 	/**
 	 * Toggle expansion state for a message
@@ -202,7 +232,19 @@ export function MessageHistory({
 		}
 	}, []);
 
-	if (!logs || logs.length === 0) {
+	// Filter logs based on thinking mode (tool entries follow same visibility as thinking)
+	const displayLogs = useMemo(() => {
+		if (!logs) return [];
+		const mode = thinkingMode ?? 'off';
+		if (mode === 'sticky') return logs; // Show everything
+		if (mode === 'off')
+			return logs.filter((log) => log.source !== 'thinking' && log.source !== 'tool');
+		// 'on' mode: show thinking/tool only while busy, hide after completion
+		if (sessionState === 'busy') return logs;
+		return logs.filter((log) => log.source !== 'thinking' && log.source !== 'tool');
+	}, [logs, thinkingMode, sessionState]);
+
+	if (!displayLogs || displayLogs.length === 0) {
 		return (
 			<div
 				style={{
@@ -243,14 +285,69 @@ export function MessageHistory({
 					border: `1px solid ${colors.border}`,
 				}}
 			>
-				{logs.map((entry, index) => {
+				{displayLogs.map((entry, index) => {
 					const rawText = entry.text || entry.content || '';
 					const text = stripAnsiCodes(rawText);
 					const source = entry.source || (entry.type === 'user' ? 'user' : 'stdout');
+					const messageKey = entry.id || `${entry.timestamp}-${index}`;
+
+					// Tool entries render as compact inline cards
+					if (source === 'tool') {
+						const toolInput = entry.metadata?.toolState?.input;
+						const toolDetail =
+							toolInput !== undefined && toolInput !== null ? summarizeToolInput(toolInput) : null;
+
+						return (
+							<div
+								key={messageKey}
+								style={{
+									padding: '4px 16px',
+									fontSize: '12px',
+									fontFamily: 'ui-monospace, monospace',
+									borderLeft: `2px solid ${colors.accent}`,
+									marginLeft: '12px',
+									color: colors.textMain,
+								}}
+							>
+								<div style={{ display: 'flex', alignItems: 'flex-start', gap: '6px' }}>
+									<span
+										style={{
+											color: colors.accent,
+											fontSize: '11px',
+											fontWeight: 500,
+											flexShrink: 0,
+										}}
+									>
+										{text}
+									</span>
+									{entry.metadata?.toolState?.status === 'running' && (
+										<span
+											style={{
+												color: colors.warning ?? '#f59e0b',
+												animation: 'pulse 1.5s ease-in-out infinite',
+											}}
+										>
+											&#9679;
+										</span>
+									)}
+									{entry.metadata?.toolState?.status === 'completed' && (
+										<span style={{ color: colors.success ?? '#22c55e' }}>&#10003;</span>
+									)}
+									{entry.metadata?.toolState?.status === 'error' && (
+										<span style={{ color: colors.error ?? '#ef4444' }}>&#10007;</span>
+									)}
+									{toolDetail && (
+										<span style={{ opacity: 0.7, wordBreak: 'break-word' }}>{toolDetail}</span>
+									)}
+								</div>
+							</div>
+						);
+					}
+
 					const isUser = source === 'user';
 					const isError = source === 'stderr';
 					const isSystem = source === 'system';
-					const messageKey = entry.id || `${entry.timestamp}-${index}`;
+					const isThinking = source === 'thinking';
 					const isExpanded = expandedMessages.has(messageKey);
 					const isTruncatable = shouldTruncate(text);
 					const displayText = isExpanded || !isTruncatable ? text : getTruncatedText(text);
@@ -277,10 +374,15 @@ export function MessageHistory({
 										? `${colors.error}10`
 										: isSystem
 											? `${colors.textDim}10`
-											: colors.bgSidebar,
-								border: `1px solid ${
-									isUser ? `${colors.accent}30` : isError ? `${colors.error}30` : colors.border
-								}`,
+											: isThinking
+												? `${colors.accent}08`
+												: colors.bgSidebar,
+								borderLeft: isThinking ? `2px solid ${colors.accent}` : undefined,
+								border: isThinking
+									? undefined
+									: `1px solid ${
+											isUser ? `${colors.accent}30` : isError ? `${colors.error}30` : colors.border
+										}`,
 								cursor: isTruncatable ? 'pointer' : 'default',
 								// Align user messages to the right
 								alignSelf: isUser ? 'flex-end' : 'flex-start',
@@ -302,18 +404,26 @@ export function MessageHistory({
 										fontWeight: 600,
 										textTransform: 'uppercase',
 										letterSpacing: '0.5px',
-										color: isUser ? colors.accent : isError ? colors.error : colors.textDim,
+										color: isUser
+											? colors.accent
+											: isError
+												? colors.error
+												: isThinking
+													? colors.accent
+													: colors.textDim,
 									}}
 								>
 									{isUser
 										? 'You'
 										: isError
 											? 'Error'
-											: isSystem
-												? 'System'
-												: inputMode === 'ai'
-													? 'AI'
-													: 'Output'}
+											: isThinking
+												? 'Thinking'
+												: isSystem
+													? 'System'
+													: inputMode === 'ai'
+														? 'AI'
+														: 'Output'}
 								</span>
 								<span style={{ opacity: 0.7 }}>{formatTime(entry.timestamp)}</span>
 								{/* Show expand/collapse indicator for truncatable messages */}
@@ -337,6 +447,36 @@ export function MessageHistory({
 									textAlign: 'left',
 								}}
 							>
+								{/* Pasted-image attachments — only meaningful on user messages
+								    in AI mode. Rendered inline so the optimistic local chat
+								    shows the same thumbnails the user staged before send,
+								    matching the desktop transcript. */}
+								{isUser && entry.images && entry.images.length > 0 && (
+									<div
+										style={{
+											display: 'flex',
+											flexWrap: 'wrap',
+											gap: '6px',
+											marginBottom: '6px',
+										}}
+									>
+										{entry.images.map((dataUrl, imgIdx) => (
+											<img
+												key={`${messageKey}-img-${imgIdx}`}
+												src={dataUrl}
+												alt={`Attached image ${imgIdx + 1}`}
+												style={{
+													maxWidth: '160px',
+													maxHeight: '160px',
+													objectFit: 'contain',
+													borderRadius: '6px',
+													border: `1px solid ${colors.border}`,
+													display: 'block',
+												}}
+											/>
+										))}
+									</div>
+								)}
 								{inputMode === 'terminal' || isUser ? (
 									// Terminal output and user input: render as plain monospace text
 									<div

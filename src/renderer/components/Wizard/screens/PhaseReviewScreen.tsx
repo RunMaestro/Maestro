@@ -15,13 +15,17 @@
  */
 
 import { useEffect, useCallback, useRef, useState } from 'react';
-import { Loader2, Rocket, Compass, X } from 'lucide-react';
+import { Rocket, Compass, X } from 'lucide-react';
+import { Spinner } from '../../ui/Spinner';
 import type { Theme } from '../../../types';
 import { useWizard } from '../WizardContext';
-import { AUTO_RUN_FOLDER_NAME } from '../services/phaseGenerator';
+import { PLAYBOOKS_DIR } from '../../../../shared/maestro-paths';
 import { ScreenReaderAnnouncement } from '../ScreenReaderAnnouncement';
 import { DocumentEditor } from '../shared/DocumentEditor';
+import { RadioGroup, type RadioOption } from '../../ui/RadioGroup';
+import type { WizardAutoRunMode } from '../WizardContext';
 import { formatShortcutKeys } from '../../../utils/shortcutFormatter';
+import { logger } from '../../../utils/logger';
 
 // Auto-save debounce delay in milliseconds
 const AUTO_SAVE_DELAY = 2000;
@@ -67,12 +71,18 @@ function DocumentReview({
 	) => void;
 	wizardStartTime?: number;
 }): JSX.Element {
-	const { state, setEditedPhase1Content, getPhase1Content, setWantsTour, setCurrentDocumentIndex } =
-		useWizard();
+	const {
+		state,
+		setEditedPhase1Content,
+		getPhase1Content,
+		setWantsTour,
+		setCurrentDocumentIndex,
+		setAutoRunMode,
+	} = useWizard();
 
 	const { generatedDocuments, directoryPath, currentDocumentIndex } = state;
 	const currentDoc = generatedDocuments[currentDocumentIndex] || generatedDocuments[0];
-	const folderPath = `${directoryPath}/${AUTO_RUN_FOLDER_NAME}`;
+	const folderPath = `${directoryPath}/${PLAYBOOKS_DIR}`;
 
 	// Local content state for editing - tracks current document
 	const [localContent, setLocalContent] = useState(
@@ -156,7 +166,7 @@ function DocumentReview({
 						setEditedPhase1Content(localContent);
 					}
 				} catch (err) {
-					console.error('Auto-save failed:', err);
+					logger.error('Auto-save failed:', undefined, err);
 				} finally {
 					isSavingRef.current = false;
 
@@ -180,7 +190,7 @@ function DocumentReview({
 								setEditedPhase1Content(pendingContent);
 							}
 						} catch (err) {
-							console.error('Auto-save (pending) failed:', err);
+							logger.error('Auto-save (pending) failed:', undefined, err);
 						} finally {
 							isSavingRef.current = false;
 						}
@@ -479,6 +489,39 @@ function DocumentReview({
 					backgroundColor: theme.colors.bgSidebar,
 				}}
 			>
+				{/* Auto Run launch mode selector */}
+				<div className="mb-3">
+					<RadioGroup<WizardAutoRunMode>
+						value={state.autoRunMode}
+						onChange={setAutoRunMode}
+						theme={theme}
+						ariaLabel="Auto Run launch mode"
+						options={
+							[
+								{
+									value: 'all',
+									label: 'Execute all Auto Run phases',
+									description:
+										generatedDocuments.length > 1
+											? 'Run every generated phase sequentially after launch'
+											: 'Run the generated phase after launch',
+								},
+								{
+									value: 'first',
+									label: 'Start first Auto Run phase',
+									description: 'Only run the first phase; you can launch the rest manually',
+									disabled: generatedDocuments.length < 2,
+								},
+								{
+									value: 'none',
+									label: "Don't start Auto Run",
+									description: 'Drop straight into the agent without kicking off Auto Run',
+								},
+							] as ReadonlyArray<RadioOption<WizardAutoRunMode>>
+						}
+					/>
+				</div>
+
 				<div className="flex flex-col sm:flex-row gap-3">
 					{/* Primary button - Ready to Go */}
 					<button
@@ -496,11 +539,7 @@ function DocumentReview({
 							['--tw-ring-offset-color' as any]: theme.colors.bgSidebar,
 						}}
 					>
-						{launchingButton === 'ready' ? (
-							<Loader2 className="w-5 h-5 animate-spin" />
-						) : (
-							<Rocket className="w-5 h-5" />
-						)}
+						{launchingButton === 'ready' ? <Spinner size={20} /> : <Rocket className="w-5 h-5" />}
 						{launchingButton === 'ready' ? 'Launching...' : "I'm Ready to Go"}
 					</button>
 
@@ -520,11 +559,7 @@ function DocumentReview({
 							['--tw-ring-offset-color' as any]: theme.colors.bgSidebar,
 						}}
 					>
-						{launchingButton === 'tour' ? (
-							<Loader2 className="w-5 h-5 animate-spin" />
-						) : (
-							<Compass className="w-5 h-5" />
-						)}
+						{launchingButton === 'tour' ? <Spinner size={20} /> : <Compass className="w-5 h-5" />}
 						{launchingButton === 'tour' ? 'Launching...' : 'Walk Me Through the Interface'}
 					</button>
 				</div>

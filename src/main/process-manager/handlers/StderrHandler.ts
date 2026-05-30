@@ -107,6 +107,22 @@ export class StderrHandler {
 				return;
 			}
 
+			// For JSONL agents with output parsers (copilot-cli, codex, opencode,
+			// factory-droid), suppress stderr display. These agents emit MCP server
+			// startup messages, shell profile banners, and other initialization noise
+			// to stderr that should not be shown to the user. Error detection has
+			// already happened above, so real errors are already captured.
+			if (outputParser && toolType !== 'codex') {
+				// Codex is excluded because it has its own special stderr handling below
+				// that re-emits actual response content from stderr as data.
+				logger.info('[ProcessManager] Suppressing stderr for JSONL agent', 'ProcessManager', {
+					sessionId,
+					toolType,
+					stderrPreview: cleanedStderr.substring(0, 100),
+				});
+				return;
+			}
+
 			// Codex writes both Rust tracing diagnostics and actual responses to stderr.
 			// Strip tracing lines (e.g. "2026-02-08T04:39:23Z ERROR codex_core::rollout::list: ...")
 			// and the "Reading prompt from stdin..." prefix, then re-emit any remaining
@@ -143,8 +159,22 @@ export class StderrHandler {
 
 				const remainingContent = contentLines.join('\n').trim();
 				if (remainingContent) {
-					// Emit as regular data — this is the agent's response, not an error
-					this.emitter.emit('data', sessionId, remainingContent);
+					if (managedProcess.isStreamJsonMode) {
+						// In JSON mode, structured data comes from stdout via CodexOutputParser.
+						// Suppress stderr echo to prevent raw human-readable text in the terminal.
+						logger.debug(
+							'[ProcessManager] Suppressing Codex stderr in stream-json mode',
+							'ProcessManager',
+							{
+								sessionId,
+								contentLength: remainingContent.length,
+								preview: remainingContent.substring(0, 120),
+							}
+						);
+					} else {
+						// Non-JSON mode: stderr may contain the actual response
+						this.emitter.emit('data', sessionId, remainingContent);
+					}
 				}
 				return;
 			}

@@ -13,7 +13,7 @@ import {
 	type ParseMarkdownLinksOptions,
 } from '../../utils/markdownLinkParser';
 import { computeDocumentStats, DocumentStats } from '../../utils/documentStats';
-import { getRendererPerfMetrics } from '../../utils/logger';
+import { getRendererPerfMetrics, logger } from '../../utils/logger';
 import { PERFORMANCE_THRESHOLDS } from '../../../shared/performance-metrics';
 
 // Performance metrics instance for graph data building
@@ -65,7 +65,7 @@ let reverseLinkIndexCache: CachedReverseLinkIndex | null = null;
 export function clearGraphDataCache(): void {
 	parsedFileCache.clear();
 	reverseLinkIndexCache = null;
-	console.log('[DocumentGraph] Cache cleared');
+	logger.info('[DocumentGraph] Cache cleared');
 }
 
 /**
@@ -77,7 +77,7 @@ export function invalidateCacheForFiles(filePaths: string[]): void {
 	}
 	// Invalidate reverse index since links may have changed
 	reverseLinkIndexCache = null;
-	console.log(`[DocumentGraph] Invalidated cache for ${filePaths.length} file(s)`);
+	logger.info(`[DocumentGraph] Invalidated cache for ${filePaths.length} file(s)`);
 }
 
 /**
@@ -150,6 +150,26 @@ export interface ProgressData {
 export type ProgressCallback = (progress: ProgressData) => void;
 
 /**
+ * Streaming update emitted as the BFS walks outward from the focus file.
+ *
+ * The renderer can react to these to paint the focus document immediately and
+ * fan out one ring at a time, instead of blocking on the full directory scan +
+ * BFS before showing anything (especially painful over SSH).
+ */
+export interface PartialUpdate {
+	/** New document nodes discovered in this slice */
+	newNodes: GraphNode[];
+	/** New edges (between already-visible nodes) discovered in this slice */
+	newEdges: GraphEdge[];
+	/** Total document count loaded so far (cumulative) */
+	loadedDocuments: number;
+	/** Which slice produced this update */
+	phase: 'focus' | 'depth-complete';
+	/** BFS depth completed (0 = focus, 1..N = ring depth) */
+	currentDepth: number;
+}
+
+/**
  * Options for building the graph data
  */
 export interface BuildOptions {
@@ -163,6 +183,13 @@ export interface BuildOptions {
 	maxNodes?: number;
 	/** Optional callback for progress updates during scanning and parsing */
 	onProgress?: ProgressCallback;
+	/**
+	 * Optional callback for streaming graph slices as BFS progresses. When set,
+	 * the focus node is emitted as soon as it's parsed, then each subsequent
+	 * BFS depth is emitted as it completes. Lets the UI render incrementally
+	 * instead of waiting for the full build (critical over SSH).
+	 */
+	onPartialUpdate?: (update: PartialUpdate) => void;
 	/** Optional SSH remote ID for remote file operations */
 	sshRemoteId?: string;
 }
@@ -391,7 +418,7 @@ async function scanMarkdownFiles(
 				);
 			}
 			// Log error but continue scanning other directories for non-root failures
-			console.warn(`Failed to scan directory ${currentPath}:`, error);
+			logger.warn(`Failed to scan directory ${currentPath}:`, undefined, error);
 		}
 	}
 
@@ -410,37 +437,47 @@ async function scanMarkdownFiles(
  * @returns GraphData with nodes, edges, and a startBacklinkScan function for lazy backlink loading
  */
 export async function buildGraphData(options: BuildOptions): Promise<GraphData> {
-	const { rootPath, focusFile, maxDepth = 3, maxNodes = 100, onProgress, sshRemoteId } = options;
+	const {
+		rootPath,
+		focusFile,
+		maxDepth = 3,
+		maxNodes = 100,
+		onProgress,
+		onPartialUpdate,
+		sshRemoteId,
+	} = options;
 
 	const buildStart = perfMetrics.start();
 
-	console.log('[DocumentGraph] Building graph from focus file (outgoing links only):', {
+	logger.info('[DocumentGraph] Building graph from focus file (outgoing links only):', undefined, {
 		rootPath,
 		focusFile,
 		maxDepth,
 		maxNodes,
 		sshRemoteId: !!sshRemoteId,
+		streaming: !!onPartialUpdate,
 	});
-
-	// Step 0: Scan all markdown files upfront (fast - just directory traversal, no content parsing)
-	// This enables wiki-link resolution in the preview panel for files not yet loaded in the graph
-	const allMarkdownFiles = await scanMarkdownFiles(rootPath, onProgress, sshRemoteId);
-	console.log(`[DocumentGraph] Found ${allMarkdownFiles.length} markdown files in ${rootPath}`);
-
-	// Build parse options with file tree for fallback link resolution
-	const parseOptions: ParseMarkdownLinksOptions = { allFiles: allMarkdownFiles };
 
 	// Track parsed files by path for deduplication
 	const parsedFileMap = new Map<string, ParsedFile>();
-	// BFS queue: [relativePath, depth]
-	const queue: Array<{ path: string; depth: number }> = [];
 	// Track visited paths to avoid re-processing
 	const visited = new Set<string>();
+	// Track edges already emitted so each depth update doesn't repeat them
+	const emittedEdgeIds = new Set<string>();
 
-	// Step 1: Parse the focus file first (use SSH-aware parsing)
-	const focusParsed = await parseFileWithSsh(rootPath, focusFile, sshRemoteId, parseOptions);
+	// Step 1: Parse the focus file FIRST so we can render it immediately, before
+	// the (potentially slow over SSH) directory scan completes. We pass no
+	// parseOptions here — relative-path resolution alone is enough for the
+	// initial fan-out; once the scan finishes, subsequent depths get the
+	// filename-fallback resolver.
+	const focusParsed = await parseFileWithSsh(rootPath, focusFile, sshRemoteId, undefined);
 	if (!focusParsed) {
-		console.error(`[DocumentGraph] Failed to parse focus file: ${focusFile}`);
+		logger.error(`[DocumentGraph] Failed to parse focus file: ${focusFile}`);
+		// Best-effort: still surface whatever the scan turned up so the preview
+		// panel has wiki-link targets. Don't block — this is the failure path.
+		const allMarkdownFiles = await scanMarkdownFiles(rootPath, onProgress, sshRemoteId).catch(
+			() => [] as string[]
+		);
 		return {
 			nodes: [],
 			edges: [],
@@ -461,82 +498,183 @@ export async function buildGraphData(options: BuildOptions): Promise<GraphData> 
 	parsedFileMap.set(focusFile, focusParsed);
 	visited.add(focusFile);
 
-	// Add OUTGOING linked files to queue (focus file links to these)
-	for (const link of focusParsed.internalLinks) {
+	// Emit the focus node IMMEDIATELY so the user sees a graph instead of a spinner.
+	// Broken-link annotations are deferred to the final return — they require
+	// full BFS knowledge of which paths were reachable.
+	if (onPartialUpdate) {
+		const focusNodeId = `doc-${focusFile}`;
+		onPartialUpdate({
+			newNodes: [
+				{
+					id: focusNodeId,
+					type: 'documentNode',
+					data: {
+						nodeType: 'document',
+						...focusParsed.stats,
+					},
+				},
+			],
+			newEdges: [],
+			loadedDocuments: 1,
+			phase: 'focus',
+			currentDepth: 0,
+		});
+	}
+
+	// Step 2: Kick off the directory scan in parallel with the focus emit.
+	// We must await it before BFS so the wiki-link filename fallback works for
+	// every depth, including the focus file's own outgoing links (e.g. a bare
+	// `[[vendor-report]]` reference that lives in a sibling directory).
+	let allMarkdownFiles: string[] = [];
+	const scanPromise = scanMarkdownFiles(rootPath, onProgress, sshRemoteId)
+		.then((files) => {
+			allMarkdownFiles = files;
+			return files;
+		})
+		.catch((err) => {
+			logger.warn('[DocumentGraph] Directory scan failed:', undefined, err);
+			return [] as string[];
+		});
+
+	await scanPromise;
+	const parseOptions: ParseMarkdownLinksOptions = { allFiles: allMarkdownFiles };
+
+	// Re-parse the focus file with the file-tree fallback so its links resolve
+	// correctly (cross-dir wiki refs, bare `[[name]]` lookups). The cache is
+	// keyed by mtime, not parseOptions, so we have to invalidate before the
+	// second pass or the cache hit returns the original (option-less) result.
+	parsedFileCache.delete(`${rootPath}/${focusFile}`);
+	const focusParsedFull = await parseFileWithSsh(rootPath, focusFile, sshRemoteId, parseOptions);
+	const focusForBfs = focusParsedFull ?? focusParsed;
+	parsedFileMap.set(focusFile, focusForBfs);
+
+	// Build the initial frontier from the focus file's resolved outgoing links.
+	let currentDepthFiles: string[] = [];
+	for (const link of focusForBfs.internalLinks) {
 		if (!visited.has(link)) {
-			queue.push({ path: link, depth: 1 });
+			currentDepthFiles.push(link);
 			visited.add(link);
 		}
 	}
 
-	// Report initial progress
 	if (onProgress) {
 		onProgress({
 			phase: 'parsing',
 			current: 1,
-			total: 1 + queue.length,
+			total: 1 + currentDepthFiles.length,
 			currentFile: focusFile,
-			internalLinksFound: focusParsed.internalLinks.length,
-			externalLinksFound: focusParsed.externalLinks.length,
+			internalLinksFound: focusForBfs.internalLinks.length,
+			externalLinksFound: focusForBfs.externalLinks.length,
 		});
 	}
 
-	// Step 2: BFS traversal to discover connected documents (outgoing links only - instant)
+	// Step 3: BFS depth-by-depth, parallelizing parses within a depth level.
+	// Parallel parsing is critical over SSH — every fs.stat + fs.readFile is a
+	// network round-trip, and depth N has up to (avg-fanout)^N files, all
+	// independent.
 	let filesProcessed = 1;
-	let totalInternalLinks = focusParsed.internalLinks.length;
-	let totalExternalLinks = focusParsed.externalLinks.length;
+	let totalInternalLinks = focusForBfs.internalLinks.length;
+	let totalExternalLinks = focusForBfs.externalLinks.length;
 
-	while (queue.length > 0 && parsedFileMap.size < maxNodes) {
-		const { path, depth } = queue.shift()!;
+	for (let depth = 1; depth <= maxDepth; depth++) {
+		if (currentDepthFiles.length === 0) break;
+		if (parsedFileMap.size >= maxNodes) break;
 
-		// Skip if beyond max depth
-		if (depth > maxDepth) continue;
+		const remainingSlots = Math.max(0, maxNodes - parsedFileMap.size);
+		const filesToParse = currentDepthFiles.slice(0, remainingSlots);
 
-		// Parse the file (use SSH-aware parsing)
-		const parsed = await parseFileWithSsh(rootPath, path, sshRemoteId, parseOptions);
-		if (!parsed) continue; // File doesn't exist or failed to parse
+		const parsedAtDepth = await Promise.all(
+			filesToParse.map((path) => parseFileWithSsh(rootPath, path, sshRemoteId, parseOptions))
+		);
 
-		parsedFileMap.set(path, parsed);
-		filesProcessed++;
-		totalInternalLinks += parsed.internalLinks.length;
-		totalExternalLinks += parsed.externalLinks.length;
+		const newNodesAtDepth: GraphNode[] = [];
+		const nextDepthFiles: string[] = [];
 
-		// Report progress
+		for (let i = 0; i < filesToParse.length; i++) {
+			const path = filesToParse[i];
+			const parsed = parsedAtDepth[i];
+			if (!parsed) continue;
+
+			parsedFileMap.set(path, parsed);
+			filesProcessed++;
+			totalInternalLinks += parsed.internalLinks.length;
+			totalExternalLinks += parsed.externalLinks.length;
+
+			newNodesAtDepth.push({
+				id: `doc-${path}`,
+				type: 'documentNode',
+				data: {
+					nodeType: 'document',
+					...parsed.stats,
+				},
+			});
+
+			// Queue up the next ring
+			if (depth < maxDepth) {
+				for (const link of parsed.internalLinks) {
+					if (!visited.has(link)) {
+						nextDepthFiles.push(link);
+						visited.add(link);
+					}
+				}
+			}
+		}
+
+		// Compute every internal edge that's now resolvable (both endpoints
+		// loaded) but hasn't been emitted yet. This handles edges added in
+		// either direction relative to depth: a newly-loaded node linking to
+		// an earlier one, or an earlier node linking to a newly-loaded one.
+		const newEdgesAtDepth: GraphEdge[] = [];
+		for (const [path, parsed] of parsedFileMap) {
+			const sourceId = `doc-${path}`;
+			for (const link of parsed.internalLinks) {
+				if (!parsedFileMap.has(link)) continue;
+				const targetId = `doc-${link}`;
+				const edgeId = `edge-${sourceId}-${targetId}`;
+				if (emittedEdgeIds.has(edgeId)) continue;
+				emittedEdgeIds.add(edgeId);
+				newEdgesAtDepth.push({
+					id: edgeId,
+					source: sourceId,
+					target: targetId,
+					type: 'default',
+				});
+			}
+		}
+
 		if (onProgress) {
 			onProgress({
 				phase: 'parsing',
 				current: filesProcessed,
-				total: filesProcessed + queue.length,
-				currentFile: path,
+				total: filesProcessed + nextDepthFiles.length,
 				internalLinksFound: totalInternalLinks,
 				externalLinksFound: totalExternalLinks,
 			});
 		}
 
-		// Add OUTGOING linked files to queue (if not at max depth)
-		if (depth < maxDepth) {
-			for (const link of parsed.internalLinks) {
-				if (!visited.has(link)) {
-					queue.push({ path: link, depth: depth + 1 });
-					visited.add(link);
-				}
-			}
+		if (onPartialUpdate && (newNodesAtDepth.length > 0 || newEdgesAtDepth.length > 0)) {
+			onPartialUpdate({
+				newNodes: newNodesAtDepth,
+				newEdges: newEdgesAtDepth,
+				loadedDocuments: parsedFileMap.size,
+				phase: 'depth-complete',
+				currentDepth: depth,
+			});
 		}
 
-		// Yield to event loop periodically
-		if (filesProcessed % BATCH_SIZE_BEFORE_YIELD === 0) {
-			await yieldToEventLoop();
-		}
+		await yieldToEventLoop();
+		currentDepthFiles = nextDepthFiles;
 	}
 
 	const parsedFiles = Array.from(parsedFileMap.values());
 	const loadedPaths = new Set(parsedFileMap.keys());
 
-	console.log('[DocumentGraph] BFS traversal complete (outgoing only):', {
+	logger.info('[DocumentGraph] BFS traversal complete (outgoing only):', undefined, {
 		focusFile,
 		filesLoaded: parsedFiles.length,
 		maxDepth,
-		queueRemaining: queue.length,
+		queueRemaining: currentDepthFiles.length,
+		allMarkdownFiles: allMarkdownFiles.length,
 	});
 
 	// Step 3: Build document nodes and collect external link data
@@ -626,8 +764,8 @@ export async function buildGraphData(options: BuildOptions): Promise<GraphData> 
 		totalLinkCount: totalExternalLinkCount,
 	};
 
-	// Determine if there are more documents (queue had remaining items or hit maxNodes)
-	const hasMore = queue.length > 0 || parsedFiles.length >= maxNodes;
+	// Determine if there are more documents (BFS frontier still had work or we hit maxNodes)
+	const hasMore = currentDepthFiles.length > 0 || parsedFiles.length >= maxNodes;
 
 	// Log total build time with performance threshold check
 	const totalBuildTime = perfMetrics.end(buildStart, 'buildGraphData:total', {
@@ -644,8 +782,9 @@ export async function buildGraphData(options: BuildOptions): Promise<GraphData> 
 			? PERFORMANCE_THRESHOLDS.GRAPH_BUILD_SMALL
 			: PERFORMANCE_THRESHOLDS.GRAPH_BUILD_LARGE;
 	if (totalBuildTime > threshold) {
-		console.warn(
+		logger.warn(
 			`[DocumentGraph] buildGraphData took ${totalBuildTime.toFixed(0)}ms (threshold: ${threshold}ms)`,
+			undefined,
 			{
 				totalDocuments: visited.size,
 				nodeCount: documentNodes.length,
@@ -663,15 +802,17 @@ export async function buildGraphData(options: BuildOptions): Promise<GraphData> 
 		let aborted = false;
 
 		const runScan = async () => {
-			console.log('[DocumentGraph] Starting background backlink scan...');
+			logger.info('[DocumentGraph] Starting background backlink scan...');
 			const scanStart = perfMetrics.start();
 
 			try {
-				// Scan all markdown files in the directory
-				const allFiles = await scanMarkdownFiles(rootPath, undefined, sshRemoteId);
+				// Reuse the file list gathered during build instead of re-scanning. Saves
+				// a full directory walk (especially expensive over SSH).
+				const allFiles = allMarkdownFiles;
 				const totalFiles = allFiles.length;
+				const backlinkParseOptions: ParseMarkdownLinksOptions = { allFiles };
 
-				console.log(`[DocumentGraph] Backlink scan: found ${totalFiles} markdown files to check`);
+				logger.info(`[DocumentGraph] Backlink scan: found ${totalFiles} markdown files to check`);
 
 				// Track which new nodes/edges we discover
 				const newNodes: GraphNode[] = [];
@@ -684,7 +825,7 @@ export async function buildGraphData(options: BuildOptions): Promise<GraphData> 
 
 				for (const filePath of allFiles) {
 					if (aborted) {
-						console.log('[DocumentGraph] Backlink scan aborted');
+						logger.info('[DocumentGraph] Backlink scan aborted');
 						return;
 					}
 
@@ -699,7 +840,7 @@ export async function buildGraphData(options: BuildOptions): Promise<GraphData> 
 						rootPath,
 						filePath,
 						sshRemoteId,
-						parseOptions
+						backlinkParseOptions
 					);
 					if (!entry) {
 						filesScanned++;
@@ -713,7 +854,12 @@ export async function buildGraphData(options: BuildOptions): Promise<GraphData> 
 						discoveredBacklinkFiles.add(filePath);
 
 						// Parse the full file to get stats for the node (use SSH-aware parsing)
-						const parsed = await parseFileWithSsh(rootPath, filePath, sshRemoteId, parseOptions);
+						const parsed = await parseFileWithSsh(
+							rootPath,
+							filePath,
+							sshRemoteId,
+							backlinkParseOptions
+						);
 						if (parsed) {
 							const nodeId = `doc-${filePath}`;
 
@@ -781,17 +927,21 @@ export async function buildGraphData(options: BuildOptions): Promise<GraphData> 
 					newEdgesFound: newEdges.length,
 				});
 
-				console.log(`[DocumentGraph] Backlink scan complete in ${scanTime.toFixed(0)}ms:`, {
-					filesScanned,
-					newNodesFound: newNodes.length,
-					newEdgesFound: newEdges.length,
-				});
+				logger.info(
+					`[DocumentGraph] Backlink scan complete in ${scanTime.toFixed(0)}ms:`,
+					undefined,
+					{
+						filesScanned,
+						newNodesFound: newNodes.length,
+						newEdgesFound: newEdges.length,
+					}
+				);
 
 				if (!aborted) {
 					onComplete();
 				}
 			} catch (error) {
-				console.error('[DocumentGraph] Backlink scan failed:', error);
+				logger.error('[DocumentGraph] Backlink scan failed:', undefined, error);
 				if (!aborted) {
 					onComplete();
 				}
@@ -883,7 +1033,7 @@ export interface ExpandNodeResult {
 export async function expandNode(options: ExpandNodeOptions): Promise<ExpandNodeResult> {
 	const { rootPath, filePath, loadedPaths, maxDepth = 1, sshRemoteId, allMarkdownFiles } = options;
 
-	console.log('[DocumentGraph] Expanding node:', {
+	logger.info('[DocumentGraph] Expanding node:', undefined, {
 		filePath,
 		loadedPaths: loadedPaths.size,
 		maxDepth,
@@ -906,7 +1056,7 @@ export async function expandNode(options: ExpandNodeOptions): Promise<ExpandNode
 	// Parse the source node to get its outgoing links
 	const sourceParsed = await parseFileWithSsh(rootPath, filePath, sshRemoteId, parseOptions);
 	if (!sourceParsed) {
-		console.warn('[DocumentGraph] Failed to parse source node for expansion:', filePath);
+		logger.warn('[DocumentGraph] Failed to parse source node for expansion:', undefined, filePath);
 		return {
 			newNodes,
 			newEdges,
@@ -1057,7 +1207,7 @@ export async function expandNode(options: ExpandNodeOptions): Promise<ExpandNode
 		});
 	}
 
-	console.log('[DocumentGraph] Node expansion complete:', {
+	logger.info('[DocumentGraph] Node expansion complete:', undefined, {
 		filePath,
 		newNodes: newNodes.length,
 		newEdges: newEdges.length,
@@ -1090,7 +1240,7 @@ async function parseFileWithSsh(
 		// Get file stats
 		const stat = await window.maestro.fs.stat(fullPath, sshRemoteId);
 		if (!stat) {
-			console.warn(`[DocumentGraph] parseFileWithSsh: stat returned null for ${fullPath}`);
+			logger.warn(`[DocumentGraph] parseFileWithSsh: stat returned null for ${fullPath}`);
 			return null;
 		}
 		const fileSize = stat.size ?? 0;
@@ -1108,7 +1258,7 @@ async function parseFileWithSsh(
 		// Read file content
 		const content = await window.maestro.fs.readFile(fullPath, sshRemoteId);
 		if (content === null || content === undefined) {
-			console.warn(`[DocumentGraph] parseFileWithSsh: readFile returned null for ${fullPath}`);
+			logger.warn(`[DocumentGraph] parseFileWithSsh: readFile returned null for ${fullPath}`);
 			return null;
 		}
 
@@ -1149,7 +1299,7 @@ async function parseFileWithSsh(
 
 		return parsed;
 	} catch (error) {
-		console.warn(`Failed to parse file ${fullPath}:`, error);
+		logger.warn(`Failed to parse file ${fullPath}:`, undefined, error);
 		return null;
 	}
 }

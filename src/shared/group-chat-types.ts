@@ -113,6 +113,8 @@ export interface GroupChatMessage {
 	from: string;
 	content: string;
 	readOnly?: boolean;
+	/** Base64 data URLs of images attached to this message */
+	images?: string[];
 }
 
 /**

@@ -1,62 +1,12 @@
 import { memo } from 'react';
-import { Bot, User, ExternalLink, Check, X, Clock, Award } from 'lucide-react';
-import type { Theme, HistoryEntry, HistoryEntryType } from '../../types';
+import { ExternalLink, Check, X, Clock, Award, Server } from 'lucide-react';
+import type { Theme, HistoryEntry } from '../../types';
 import { formatElapsedTime } from '../../utils/formatters';
 import { stripMarkdown } from '../../utils/textProcessing';
-import { DoubleCheck } from './historyConstants';
+import { DoubleCheck, getPillColor, getEntryIcon } from './historyConstants';
+import { formatTimestamp } from '../../../shared/formatters';
 
-// Get pill color based on entry type
-const getPillColor = (type: HistoryEntryType, theme: Theme) => {
-	switch (type) {
-		case 'AUTO':
-			return {
-				bg: theme.colors.warning + '20',
-				text: theme.colors.warning,
-				border: theme.colors.warning + '40',
-			};
-		case 'USER':
-			return {
-				bg: theme.colors.accent + '20',
-				text: theme.colors.accent,
-				border: theme.colors.accent + '40',
-			};
-		default:
-			return {
-				bg: theme.colors.bgActivity,
-				text: theme.colors.textDim,
-				border: theme.colors.border,
-			};
-	}
-};
-
-// Get icon for entry type
-const getEntryIcon = (type: HistoryEntryType) => {
-	switch (type) {
-		case 'AUTO':
-			return Bot;
-		case 'USER':
-			return User;
-		default:
-			return Bot;
-	}
-};
-
-// Format timestamp
-const formatTime = (timestamp: number) => {
-	const date = new Date(timestamp);
-	const now = new Date();
-	const isToday = date.toDateString() === now.toDateString();
-
-	if (isToday) {
-		return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-	} else {
-		return (
-			date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) +
-			' ' +
-			date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
-		);
-	}
-};
+const formatTime = (timestamp: number) => formatTimestamp(timestamp, 'smart');
 
 export interface HistoryEntryItemProps {
 	entry: HistoryEntry;
@@ -64,7 +14,7 @@ export interface HistoryEntryItemProps {
 	isSelected: boolean;
 	theme: Theme;
 	onOpenDetailModal: (entry: HistoryEntry, index: number) => void;
-	onOpenSessionAsTab?: (agentSessionId: string) => void;
+	onOpenSessionAsTab?: (agentSessionId: string, projectPath?: string) => void;
 	onOpenAboutModal?: () => void;
 	/** When true, displays the agentName field prominently in the entry header (used in unified history view) */
 	showAgentName?: boolean;
@@ -117,7 +67,7 @@ export const HistoryEntryItem = memo(function HistoryEntryItem({
 						<button
 							onClick={(e) => {
 								e.stopPropagation();
-								onOpenSessionAsTab?.(entry.agentSessionId!);
+								onOpenSessionAsTab?.(entry.agentSessionId!, entry.projectPath);
 							}}
 							className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold transition-colors hover:opacity-80 min-w-0 flex-shrink ${entry.sessionName ? '' : 'font-mono uppercase'}`}
 							style={{
@@ -134,8 +84,8 @@ export const HistoryEntryItem = memo(function HistoryEntryItem({
 						</button>
 					)}
 
-					{/* Success/Failure Indicator for AUTO entries */}
-					{entry.type === 'AUTO' && entry.success !== undefined && (
+					{/* Success/Failure Indicator for AUTO and CUE entries */}
+					{(entry.type === 'AUTO' || entry.type === 'CUE') && entry.success !== undefined && (
 						<span
 							className="flex items-center justify-center w-5 h-5 rounded-full flex-shrink-0"
 							style={{
@@ -205,10 +155,18 @@ export const HistoryEntryItem = memo(function HistoryEntryItem({
 				{entry.summary ? stripMarkdown(entry.summary) : 'No summary available'}
 			</p>
 
-			{/* Footer Row - Time, Cost, and Achievement Action */}
+			{/* CUE metadata subtitle */}
+			{entry.type === 'CUE' && entry.cueEventType && (
+				<p className="text-[10px] mt-1" style={{ color: theme.colors.textDim }}>
+					Triggered by: {entry.cueEventType}
+				</p>
+			)}
+
+			{/* Footer Row - Time, Cost, Achievement Action, and Remote Origin */}
 			{(entry.elapsedTimeMs !== undefined ||
 				(entry.usageStats && entry.usageStats.totalCostUsd > 0) ||
-				entry.achievementAction) && (
+				entry.achievementAction ||
+				entry.hostname) && (
 				<div
 					className="flex items-center gap-3 mt-2 pt-2 border-t"
 					style={{ borderColor: theme.colors.border }}
@@ -253,6 +211,21 @@ export const HistoryEntryItem = memo(function HistoryEntryItem({
 							<Award className="w-3 h-3" />
 							View Achievements
 						</button>
+					)}
+					{/* Remote hostname pill - shown for entries from other hosts */}
+					{entry.hostname && (
+						<span
+							className={`flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-mono font-bold ${entry.achievementAction ? '' : 'ml-auto'}`}
+							style={{
+								backgroundColor: theme.colors.bgActivity,
+								color: theme.colors.textDim,
+								border: `1px solid ${theme.colors.border}`,
+							}}
+							title={`Origin: ${entry.hostname}`}
+						>
+							<Server className="w-2.5 h-2.5" />
+							{entry.hostname}
+						</span>
 					)}
 				</div>
 			)}

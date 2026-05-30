@@ -13,23 +13,18 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import {
-	Music,
-	X,
-	Loader2,
-	Bot,
-	Settings,
-	FolderOpen,
-	ChevronRight,
-	RefreshCw,
-} from 'lucide-react';
+import { Music, X, Bot, Settings, FolderOpen, ChevronRight, RefreshCw } from 'lucide-react';
+import { GhostIconButton } from './ui/GhostIconButton';
+import { Spinner } from './ui/Spinner';
 import type { Theme, AgentConfig } from '../types';
 import type { RegisteredRepository, SymphonyIssue } from '../../shared/symphony-types';
-import { useLayerStack } from '../contexts/LayerStackContext';
+import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { AgentConfigPanel } from './shared/AgentConfigPanel';
 import { useAgentConfiguration } from '../hooks/agent/useAgentConfiguration';
 import { isBetaAgent } from '../../shared/agentMetadata';
+import { isAdaptiveModeDefaultOn } from '../../shared/agentConstants';
+import { logger } from '../utils/logger';
 
 // ============================================================================
 // Types
@@ -63,6 +58,10 @@ export interface AgentCreationConfig {
 	customEnvVars?: Record<string, string>;
 	/** Agent-specific configuration options */
 	agentConfig?: Record<string, any>;
+	/** Opt the session into Batch Mode (Claude Code only). */
+	enableMaestroP?: boolean;
+	/** Optional override for the maestro-p binary path. */
+	maestroPPath?: string;
 }
 
 // ============================================================================
@@ -77,9 +76,15 @@ export function AgentCreationDialog({
 	issue,
 	onCreateAgent,
 }: AgentCreationDialogProps) {
-	const { registerLayer, unregisterLayer } = useLayerStack();
 	const onCloseRef = useRef(onClose);
 	onCloseRef.current = onClose;
+
+	useModalLayer(
+		MODAL_PRIORITIES.SYMPHONY_AGENT_CREATION ?? 711,
+		'Create Agent for Symphony Contribution',
+		() => onCloseRef.current(),
+		{ enabled: isOpen }
+	);
 
 	// Filter function: only agents that support batch mode (required for Symphony)
 	const symphonyAgentFilter = useCallback((agent: AgentConfig) => {
@@ -113,9 +118,26 @@ export function AgentCreationDialog({
 	const [customAgentEnvVars, setCustomAgentEnvVars] = useState<
 		Record<string, Record<string, string>>
 	>({});
+	// Batch Mode (Claude Code only): per-agent opt-in + optional maestro-p path override.
+	const [enableMaestroPByAgent, setEnableMaestroPByAgent] = useState<Record<string, boolean>>({});
+	const [maestroPPathByAgent, setMaestroPPathByAgent] = useState<Record<string, string>>({});
+	const [detectedMaestroPPath, setDetectedMaestroPPath] = useState<string | undefined>(undefined);
 	const [agentConfigs, setAgentConfigs] = useState<Record<string, Record<string, any>>>({});
 	const [availableModels, setAvailableModels] = useState<Record<string, string[]>>({});
 	const [loadingModels, setLoadingModels] = useState<Record<string, boolean>>({});
+	const [dynamicOptions, setDynamicOptions] = useState<Record<string, Record<string, string[]>>>(
+		{}
+	);
+	const [loadingDynamicOptions, setLoadingDynamicOptions] = useState<Record<string, boolean>>({});
+
+	// Resolve the bundled maestro-p path once so the Batch Mode toggle can show
+	// it as helper text in the path-override input.
+	useEffect(() => {
+		void window.maestro.agents
+			.getMaestroPDetectedPath()
+			.then((p) => setDetectedMaestroPPath(p ?? undefined))
+			.catch(() => setDetectedMaestroPPath(undefined));
+	}, []);
 
 	// Reset all state when dialog opens
 	useEffect(() => {
@@ -167,12 +189,42 @@ export function AgentCreationDialog({
 				const models = await window.maestro.agents.getModels(agentId, force);
 				setAvailableModels((prev) => ({ ...prev, [agentId]: models || [] }));
 			} catch (err) {
-				console.error('Failed to load models for', agentId, err);
+				logger.error('Failed to load models for', undefined, [agentId, err]);
 			} finally {
 				setLoadingModels((prev) => ({ ...prev, [agentId]: false }));
 			}
 		},
 		[availableModels]
+	);
+
+	// Load dynamic config options for an agent
+	const loadDynamicOptionsForAgent = useCallback(
+		async (agentId: string) => {
+			if (dynamicOptions[agentId]) return;
+			const agent = ac.detectedAgents.find((a) => a.id === agentId);
+			const dynamicSelects = agent?.configOptions?.filter(
+				(opt: any) => opt.type === 'select' && opt.dynamic
+			);
+			if (!dynamicSelects?.length) return;
+
+			setLoadingDynamicOptions((prev) => ({ ...prev, [agentId]: true }));
+			try {
+				const results: Record<string, string[]> = {};
+				await Promise.all(
+					dynamicSelects.map(async (opt: any) => {
+						try {
+							results[opt.key] = await window.maestro.agents.getConfigOptions(agentId, opt.key);
+						} catch {
+							/* fall back to static */
+						}
+					})
+				);
+				setDynamicOptions((prev) => ({ ...prev, [agentId]: results }));
+			} finally {
+				setLoadingDynamicOptions((prev) => ({ ...prev, [agentId]: false }));
+			}
+		},
+		[dynamicOptions, ac.detectedAgents]
 	);
 
 	// Refresh single agent detection (re-detects all agents via shared hook)
@@ -182,29 +234,13 @@ export function AgentCreationDialog({
 			try {
 				await ac.refreshAgent();
 			} catch (err) {
-				console.error('Failed to refresh agent:', err);
+				logger.error('Failed to refresh agent:', undefined, err);
 			} finally {
 				setRefreshingAgent(null);
 			}
 		},
 		[ac.refreshAgent]
 	);
-
-	// Layer stack registration
-	useEffect(() => {
-		if (isOpen) {
-			const id = registerLayer({
-				type: 'modal',
-				priority: MODAL_PRIORITIES.SYMPHONY_AGENT_CREATION ?? 711,
-				blocksLowerLayers: true,
-				capturesFocus: true,
-				focusTrap: 'strict',
-				ariaLabel: 'Create Agent for Symphony Contribution',
-				onEscape: () => onCloseRef.current(),
-			});
-			return () => unregisterLayer(id);
-		}
-	}, [isOpen, registerLayer, unregisterLayer]);
 
 	// Handle folder selection
 	const handleSelectFolder = useCallback(async () => {
@@ -225,8 +261,10 @@ export function AgentCreationDialog({
 			if (agent?.capabilities?.supportsModelSelection) {
 				loadModelsForAgent(agentId);
 			}
+			// Load dynamic config options
+			loadDynamicOptionsForAgent(agentId);
 		},
-		[ac.detectedAgents, loadModelsForAgent]
+		[ac.detectedAgents, loadModelsForAgent, loadDynamicOptionsForAgent]
 	);
 
 	// Handle create
@@ -247,6 +285,10 @@ export function AgentCreationDialog({
 				customArgs: customAgentArgs[selectedAgent] || undefined,
 				customEnvVars: customAgentEnvVars[selectedAgent] || undefined,
 				agentConfig: agentConfigs[selectedAgent] || undefined,
+				enableMaestroP:
+					(enableMaestroPByAgent[selectedAgent] ?? isAdaptiveModeDefaultOn(selectedAgent)) ||
+					undefined,
+				maestroPPath: maestroPPathByAgent[selectedAgent] || undefined,
 			});
 
 			if (!result.success) {
@@ -268,6 +310,8 @@ export function AgentCreationDialog({
 		customAgentArgs,
 		customAgentEnvVars,
 		agentConfigs,
+		enableMaestroPByAgent,
+		maestroPPathByAgent,
 		onCreateAgent,
 	]);
 
@@ -283,7 +327,7 @@ export function AgentCreationDialog({
 				aria-modal="true"
 				aria-labelledby="agent-creation-dialog-title"
 				tabIndex={-1}
-				className="w-[660px] max-w-[95vw] max-h-[90vh] rounded-xl shadow-2xl border overflow-hidden flex flex-col outline-none"
+				className="modal-w-lg max-h-[90vh] rounded-xl shadow-2xl border overflow-hidden flex flex-col outline-none"
 				style={{ backgroundColor: theme.colors.bgActivity, borderColor: theme.colors.border }}
 			>
 				{/* Header */}
@@ -301,13 +345,9 @@ export function AgentCreationDialog({
 							Create Symphony Agent
 						</h2>
 					</div>
-					<button
-						onClick={onClose}
-						className="p-1.5 rounded hover:bg-white/10 transition-colors"
-						title="Close (Esc)"
-					>
+					<GhostIconButton onClick={onClose} padding="p-1.5" title="Close (Esc)">
 						<X className="w-4 h-4" style={{ color: theme.colors.textDim }} />
-					</button>
+					</GhostIconButton>
 				</div>
 
 				{/* Content - scrollable */}
@@ -341,7 +381,7 @@ export function AgentCreationDialog({
 
 						{ac.isDetecting ? (
 							<div className="flex items-center justify-center py-8">
-								<Loader2 className="w-6 h-6 animate-spin" style={{ color: theme.colors.accent }} />
+								<Spinner size={24} color={theme.colors.accent} />
 							</div>
 						) : ac.detectedAgents.length === 0 ? (
 							<div className="text-center py-4" style={{ color: theme.colors.textDim }}>
@@ -410,19 +450,18 @@ export function AgentCreationDialog({
 													>
 														Available
 													</span>
-													<button
+													<GhostIconButton
 														onClick={(e) => {
 															e.stopPropagation();
 															handleRefreshAgent(agent.id);
 														}}
-														className="p-1 rounded hover:bg-white/10 transition-colors"
 														title="Refresh detection"
-														style={{ color: theme.colors.textDim }}
+														color={theme.colors.textDim}
 													>
 														<RefreshCw
 															className={`w-3 h-3 ${refreshingAgent === agent.id ? 'animate-spin' : ''}`}
 														/>
-													</button>
+													</GhostIconButton>
 												</div>
 											</div>
 
@@ -440,25 +479,11 @@ export function AgentCreationDialog({
 															setCustomAgentPaths((prev) => ({ ...prev, [agent.id]: value }));
 														}}
 														onCustomPathBlur={() => {}}
-														onCustomPathClear={() => {
-															setCustomAgentPaths((prev) => {
-																const newPaths = { ...prev };
-																delete newPaths[agent.id];
-																return newPaths;
-															});
-														}}
 														customArgs={customAgentArgs[agent.id] || ''}
 														onCustomArgsChange={(value) => {
 															setCustomAgentArgs((prev) => ({ ...prev, [agent.id]: value }));
 														}}
 														onCustomArgsBlur={() => {}}
-														onCustomArgsClear={() => {
-															setCustomAgentArgs((prev) => {
-																const newArgs = { ...prev };
-																delete newArgs[agent.id];
-																return newArgs;
-															});
-														}}
 														customEnvVars={customAgentEnvVars[agent.id] || {}}
 														onEnvVarKeyChange={(oldKey, newKey, value) => {
 															const currentVars = { ...customAgentEnvVars[agent.id] };
@@ -525,10 +550,24 @@ export function AgentCreationDialog({
 														availableModels={availableModels[agent.id] || []}
 														loadingModels={loadingModels[agent.id] || false}
 														onRefreshModels={() => loadModelsForAgent(agent.id, true)}
+														dynamicOptions={dynamicOptions[agent.id] || {}}
+														loadingDynamicOptions={loadingDynamicOptions[agent.id] || false}
 														onRefreshAgent={() => handleRefreshAgent(agent.id)}
 														refreshingAgent={refreshingAgent === agent.id}
 														compact
 														showBuiltInEnvVars
+														enableMaestroP={
+															enableMaestroPByAgent[agent.id] ?? isAdaptiveModeDefaultOn(agent.id)
+														}
+														onEnableMaestroPChange={(value) =>
+															setEnableMaestroPByAgent((prev) => ({ ...prev, [agent.id]: value }))
+														}
+														maestroPPath={maestroPPathByAgent[agent.id] ?? ''}
+														onMaestroPPathChange={(value) =>
+															setMaestroPPathByAgent((prev) => ({ ...prev, [agent.id]: value }))
+														}
+														onMaestroPPathBlur={() => {}}
+														detectedMaestroPPath={detectedMaestroPPath}
 													/>
 												</div>
 											)}
@@ -623,7 +662,7 @@ export function AgentCreationDialog({
 					>
 						{isCreating ? (
 							<>
-								<Loader2 className="w-4 h-4 animate-spin" />
+								<Spinner size={16} />
 								Creating...
 							</>
 						) : (

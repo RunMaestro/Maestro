@@ -127,8 +127,10 @@ describe('MobileHistoryPanel', () => {
 		it('exports HistoryEntryType type', () => {
 			const autoType: HistoryEntryType = 'AUTO';
 			const userType: HistoryEntryType = 'USER';
+			const cueType: HistoryEntryType = 'CUE';
 			expect(autoType).toBe('AUTO');
 			expect(userType).toBe('USER');
+			expect(cueType).toBe('CUE');
 		});
 
 		it('exports HistoryEntry interface', () => {
@@ -912,6 +914,70 @@ describe('MobileHistoryPanel', () => {
 
 			expect(screen.getByText('In: 1,500')).toBeInTheDocument();
 			expect(screen.getByText('Out: 750')).toBeInTheDocument();
+		});
+
+		// Issue #844: on resumed Claude sessions, inputTokens carries only the
+		// uncached delta — the cache partitions must be added back so the
+		// detail view does not display single-digit values for a long session.
+		it('adds Claude cache partitions to the detail view input total', async () => {
+			const entries = [
+				createAutoEntry({
+					usageStats: {
+						inputTokens: 6,
+						outputTokens: 500,
+						cacheReadInputTokens: 45_000,
+						cacheCreationInputTokens: 3_000,
+						totalCostUsd: 0.5,
+						contextWindow: 200_000,
+					},
+				}),
+			];
+			global.fetch = vi.fn().mockResolvedValue({
+				ok: true,
+				json: () => Promise.resolve({ entries }),
+			});
+
+			render(<MobileHistoryPanel onClose={vi.fn()} toolType="claude-code" />);
+
+			await act(async () => {
+				await vi.runAllTimersAsync();
+			});
+
+			fireEvent.click(screen.getByRole('button', { name: /AUTO entry from/i }));
+
+			// 6 + 45,000 + 3,000 = 48,006
+			expect(screen.getByText('In: 48,006')).toBeInTheDocument();
+			expect(screen.getByText('Out: 500')).toBeInTheDocument();
+		});
+
+		it('does not double-count cache fields for Codex in detail view', async () => {
+			const entries = [
+				createAutoEntry({
+					usageStats: {
+						inputTokens: 10_000,
+						outputTokens: 1_000,
+						cacheReadInputTokens: 8_000,
+						cacheCreationInputTokens: 0,
+						totalCostUsd: 0.25,
+						contextWindow: 128_000,
+					},
+				}),
+			];
+			global.fetch = vi.fn().mockResolvedValue({
+				ok: true,
+				json: () => Promise.resolve({ entries }),
+			});
+
+			render(<MobileHistoryPanel onClose={vi.fn()} toolType="codex" />);
+
+			await act(async () => {
+				await vi.runAllTimersAsync();
+			});
+
+			fireEvent.click(screen.getByRole('button', { name: /AUTO entry from/i }));
+
+			// Codex: inputTokens already includes cached input; expect raw value.
+			expect(screen.getByText('In: 10,000')).toBeInTheDocument();
 		});
 
 		it('shows cost in detail view', async () => {

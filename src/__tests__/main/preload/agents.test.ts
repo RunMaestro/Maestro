@@ -91,7 +91,7 @@ describe('Agents Preload API', () => {
 
 			const result = await api.get('claude-code');
 
-			expect(mockInvoke).toHaveBeenCalledWith('agents:get', 'claude-code');
+			expect(mockInvoke).toHaveBeenCalledWith('agents:get', 'claude-code', undefined);
 			expect(result).toEqual(mockAgent);
 		});
 
@@ -101,6 +101,14 @@ describe('Agents Preload API', () => {
 			const result = await api.get('nonexistent');
 
 			expect(result).toBeNull();
+		});
+
+		it('should invoke agents:get with SSH remote ID', async () => {
+			mockInvoke.mockResolvedValue({ id: 'claude-code', available: true });
+
+			await api.get('claude-code', 'remote-1');
+
+			expect(mockInvoke).toHaveBeenCalledWith('agents:get', 'claude-code', 'remote-1');
 		});
 	});
 
@@ -350,6 +358,7 @@ describe('Agents Preload API', () => {
 				'agents:discoverSlashCommands',
 				'claude-code',
 				'/home/user/project',
+				undefined,
 				undefined
 			);
 			expect(result).toEqual(commands);
@@ -364,7 +373,22 @@ describe('Agents Preload API', () => {
 				'agents:discoverSlashCommands',
 				'claude-code',
 				'/home/user/project',
-				'/custom/claude'
+				'/custom/claude',
+				undefined
+			);
+		});
+
+		it('should invoke agents:discoverSlashCommands with sshRemoteId', async () => {
+			mockInvoke.mockResolvedValue(['review']);
+
+			await api.discoverSlashCommands('opencode', '/home/user/project', undefined, 'remote-1');
+
+			expect(mockInvoke).toHaveBeenCalledWith(
+				'agents:discoverSlashCommands',
+				'opencode',
+				'/home/user/project',
+				undefined,
+				'remote-1'
 			);
 		});
 

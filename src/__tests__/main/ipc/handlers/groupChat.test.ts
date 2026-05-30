@@ -57,6 +57,7 @@ vi.mock('../../../../main/group-chat/group-chat-moderator', () => ({
 	sendToModerator: vi.fn(),
 	killModerator: vi.fn(),
 	getModeratorSessionId: vi.fn(),
+	isModeratorActive: vi.fn().mockReturnValue(true),
 }));
 
 // Mock group-chat-agent
@@ -694,7 +695,8 @@ describe('groupChat IPC handlers', () => {
 				'Hello moderator',
 				mockProcessManager,
 				mockAgentDetector,
-				false
+				false,
+				undefined
 			);
 		});
 
@@ -709,8 +711,33 @@ describe('groupChat IPC handlers', () => {
 				'Analyze this',
 				mockProcessManager,
 				mockAgentDetector,
-				true
+				true,
+				undefined
 			);
+		});
+
+		it('should auto-restart moderator when not active', async () => {
+			vi.mocked(groupChatModerator.isModeratorActive).mockReturnValue(false);
+			vi.mocked(groupChatModerator.spawnModerator).mockResolvedValue('new-session');
+			vi.mocked(groupChatRouter.routeUserMessage).mockResolvedValue(undefined);
+			const mockChat = {
+				id: 'gc-restart',
+				name: 'Test Chat',
+				moderatorAgentId: 'claude-code' as any,
+				participants: [],
+				logPath: '/path/to/log',
+				imagesDir: '/images/restart',
+			};
+			vi.mocked(groupChatStorage.loadGroupChat).mockResolvedValue(mockChat);
+
+			const handler = handlers.get('groupChat:sendToModerator');
+			await handler!({} as any, 'gc-restart', 'Hello', undefined, false);
+
+			expect(groupChatModerator.spawnModerator).toHaveBeenCalledWith(mockChat, mockProcessManager);
+			expect(groupChatRouter.routeUserMessage).toHaveBeenCalled();
+
+			// Reset mock
+			vi.mocked(groupChatModerator.isModeratorActive).mockReturnValue(true);
 		});
 	});
 

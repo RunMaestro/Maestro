@@ -1,5 +1,6 @@
 import { useCallback, MutableRefObject } from 'react';
 import type { Session } from '../../types';
+import { navigateToUnifiedTabById } from '../../utils/tabHelpers';
 import type { NavHistoryEntry } from './useNavigationHistory';
 
 /**
@@ -82,12 +83,15 @@ export function useSessionNavigation(
 
 			if (entry.tabId) {
 				const targetTabId = entry.tabId;
+				// Legacy entries predate tabKind and only ever pointed at AI tabs.
+				const targetKind = entry.tabKind ?? 'ai';
 				setSessions((prev) =>
 					prev.map((s) => {
-						if (s.id === entry.sessionId && s.aiTabs?.some((t) => t.id === targetTabId)) {
-							return { ...s, activeTabId: targetTabId };
-						}
-						return s;
+						if (s.id !== entry.sessionId) return s;
+						// Reuse the per-kind activation logic so file/browser/terminal/ai
+						// tabs all restore with the correct active-tab fields and inputMode.
+						const result = navigateToUnifiedTabById(s, targetKind, targetTabId);
+						return result ? result.session : s;
 					})
 				);
 			}

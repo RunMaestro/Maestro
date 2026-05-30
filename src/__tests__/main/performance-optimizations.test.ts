@@ -17,38 +17,42 @@ import { describe, it, expect, beforeEach } from 'vitest';
 // pre-compiled at module level for performance. We test them here to ensure
 // they match the expected session ID formats.
 
+// Import the real patterns from constants.ts so the performance tests stay
+// in sync with production behavior. The regexes anchor groupChatId on the
+// UUID format (uuidv4) to eliminate greedy-backtrack ambiguity when
+// participant names contain sentinel substrings.
+import {
+	REGEX_MODERATOR_SESSION,
+	REGEX_MODERATOR_SESSION_TIMESTAMP,
+	REGEX_PARTICIPANT_UUID,
+	REGEX_PARTICIPANT_TIMESTAMP,
+	REGEX_PARTICIPANT_FALLBACK,
+	REGEX_AI_SUFFIX,
+	REGEX_AI_TAB_ID,
+} from '../../main/constants';
+import { parseParticipantSessionId } from '../../main/group-chat/session-parser';
+
 describe('Group Chat Session ID Patterns', () => {
-	// Moderator session patterns
-	const REGEX_MODERATOR_SESSION = /^group-chat-(.+)-moderator-/;
-	const REGEX_MODERATOR_SESSION_TIMESTAMP = /^group-chat-(.+)-moderator-\d+$/;
-
-	// Participant session patterns
-	const REGEX_PARTICIPANT_UUID =
-		/^group-chat-(.+)-participant-(.+)-([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})$/i;
-	const REGEX_PARTICIPANT_TIMESTAMP = /^group-chat-(.+)-participant-(.+)-(\d{13,})$/;
-	const REGEX_PARTICIPANT_FALLBACK = /^group-chat-(.+)-participant-([^-]+)-/;
-
-	// Web broadcast patterns
-	const REGEX_AI_SUFFIX = /-ai-.+$/;
-	const REGEX_AI_TAB_ID = /-ai-(.+)$/;
+	const GC_ID = '550e8400-e29b-41d4-a716-446655440000';
+	const GC_ID_2 = '6ba7b810-9dad-11d1-80b4-00c04fd430c8';
 
 	describe('REGEX_MODERATOR_SESSION', () => {
 		it('should match moderator session IDs', () => {
-			const sessionId = 'group-chat-test-chat-123-moderator-1705678901234';
+			const sessionId = `group-chat-${GC_ID}-moderator-1705678901234`;
 			const match = sessionId.match(REGEX_MODERATOR_SESSION);
 			expect(match).not.toBeNull();
-			expect(match![1]).toBe('test-chat-123');
+			expect(match![1]).toBe(GC_ID);
 		});
 
 		it('should match moderator synthesis session IDs', () => {
-			const sessionId = 'group-chat-my-chat-moderator-synthesis-1705678901234';
+			const sessionId = `group-chat-${GC_ID}-moderator-synthesis-1705678901234`;
 			const match = sessionId.match(REGEX_MODERATOR_SESSION);
 			expect(match).not.toBeNull();
-			expect(match![1]).toBe('my-chat');
+			expect(match![1]).toBe(GC_ID);
 		});
 
 		it('should not match participant session IDs', () => {
-			const sessionId = 'group-chat-test-chat-participant-Agent1-1705678901234';
+			const sessionId = `group-chat-${GC_ID}-participant-Agent1-1705678901234`;
 			const match = sessionId.match(REGEX_MODERATOR_SESSION);
 			expect(match).toBeNull();
 		});
@@ -62,20 +66,20 @@ describe('Group Chat Session ID Patterns', () => {
 
 	describe('REGEX_MODERATOR_SESSION_TIMESTAMP', () => {
 		it('should match moderator session IDs with timestamp suffix', () => {
-			const sessionId = 'group-chat-test-chat-moderator-1705678901234';
+			const sessionId = `group-chat-${GC_ID}-moderator-1705678901234`;
 			const match = sessionId.match(REGEX_MODERATOR_SESSION_TIMESTAMP);
 			expect(match).not.toBeNull();
-			expect(match![1]).toBe('test-chat');
+			expect(match![1]).toBe(GC_ID);
 		});
 
 		it('should not match moderator synthesis session IDs', () => {
-			const sessionId = 'group-chat-my-chat-moderator-synthesis-1705678901234';
+			const sessionId = `group-chat-${GC_ID}-moderator-synthesis-1705678901234`;
 			const match = sessionId.match(REGEX_MODERATOR_SESSION_TIMESTAMP);
 			expect(match).toBeNull();
 		});
 
 		it('should not match session IDs without timestamp', () => {
-			const sessionId = 'group-chat-test-chat-moderator-';
+			const sessionId = `group-chat-${GC_ID}-moderator-`;
 			const match = sessionId.match(REGEX_MODERATOR_SESSION_TIMESTAMP);
 			expect(match).toBeNull();
 		});
@@ -83,31 +87,28 @@ describe('Group Chat Session ID Patterns', () => {
 
 	describe('REGEX_PARTICIPANT_UUID', () => {
 		it('should match participant session IDs with UUID suffix', () => {
-			const sessionId =
-				'group-chat-test-chat-participant-Agent1-a1b2c3d4-e5f6-7890-abcd-ef1234567890';
+			const sessionId = `group-chat-${GC_ID}-participant-Agent1-${GC_ID_2}`;
 			const match = sessionId.match(REGEX_PARTICIPANT_UUID);
 			expect(match).not.toBeNull();
-			expect(match![1]).toBe('test-chat');
+			expect(match![1]).toBe(GC_ID);
 			expect(match![2]).toBe('Agent1');
-			expect(match![3]).toBe('a1b2c3d4-e5f6-7890-abcd-ef1234567890');
+			expect(match![3]).toBe(GC_ID_2);
 		});
 
 		it('should match UUID case-insensitively', () => {
-			const sessionId =
-				'group-chat-test-chat-participant-Agent1-A1B2C3D4-E5F6-7890-ABCD-EF1234567890';
+			const sessionId = `group-chat-${GC_ID}-participant-Agent1-${GC_ID_2.toUpperCase()}`;
 			const match = sessionId.match(REGEX_PARTICIPANT_UUID);
 			expect(match).not.toBeNull();
 		});
 
 		it('should not match session IDs with invalid UUID', () => {
-			const sessionId = 'group-chat-test-chat-participant-Agent1-invalid-uuid';
+			const sessionId = `group-chat-${GC_ID}-participant-Agent1-invalid-uuid`;
 			const match = sessionId.match(REGEX_PARTICIPANT_UUID);
 			expect(match).toBeNull();
 		});
 
 		it('should handle participant names with hyphens', () => {
-			const sessionId =
-				'group-chat-test-chat-participant-My-Agent-Name-a1b2c3d4-e5f6-7890-abcd-ef1234567890';
+			const sessionId = `group-chat-${GC_ID}-participant-My-Agent-Name-${GC_ID_2}`;
 			const match = sessionId.match(REGEX_PARTICIPANT_UUID);
 			expect(match).not.toBeNull();
 			expect(match![2]).toBe('My-Agent-Name');
@@ -116,28 +117,28 @@ describe('Group Chat Session ID Patterns', () => {
 
 	describe('REGEX_PARTICIPANT_TIMESTAMP', () => {
 		it('should match participant session IDs with 13-digit timestamp', () => {
-			const sessionId = 'group-chat-test-chat-participant-Agent1-1705678901234';
+			const sessionId = `group-chat-${GC_ID}-participant-Agent1-1705678901234`;
 			const match = sessionId.match(REGEX_PARTICIPANT_TIMESTAMP);
 			expect(match).not.toBeNull();
-			expect(match![1]).toBe('test-chat');
+			expect(match![1]).toBe(GC_ID);
 			expect(match![2]).toBe('Agent1');
 			expect(match![3]).toBe('1705678901234');
 		});
 
 		it('should match timestamps with more than 13 digits', () => {
-			const sessionId = 'group-chat-test-chat-participant-Agent1-17056789012345';
+			const sessionId = `group-chat-${GC_ID}-participant-Agent1-17056789012345`;
 			const match = sessionId.match(REGEX_PARTICIPANT_TIMESTAMP);
 			expect(match).not.toBeNull();
 		});
 
 		it('should not match timestamps with less than 13 digits', () => {
-			const sessionId = 'group-chat-test-chat-participant-Agent1-123456789012';
+			const sessionId = `group-chat-${GC_ID}-participant-Agent1-123456789012`;
 			const match = sessionId.match(REGEX_PARTICIPANT_TIMESTAMP);
 			expect(match).toBeNull();
 		});
 
 		it('should handle participant names with hyphens', () => {
-			const sessionId = 'group-chat-test-chat-participant-My-Agent-1705678901234';
+			const sessionId = `group-chat-${GC_ID}-participant-My-Agent-1705678901234`;
 			const match = sessionId.match(REGEX_PARTICIPANT_TIMESTAMP);
 			expect(match).not.toBeNull();
 			expect(match![2]).toBe('My-Agent');
@@ -146,15 +147,15 @@ describe('Group Chat Session ID Patterns', () => {
 
 	describe('REGEX_PARTICIPANT_FALLBACK', () => {
 		it('should match participant session IDs with simple names', () => {
-			const sessionId = 'group-chat-test-chat-participant-Agent1-anything';
+			const sessionId = `group-chat-${GC_ID}-participant-Agent1-anything`;
 			const match = sessionId.match(REGEX_PARTICIPANT_FALLBACK);
 			expect(match).not.toBeNull();
-			expect(match![1]).toBe('test-chat');
+			expect(match![1]).toBe(GC_ID);
 			expect(match![2]).toBe('Agent1');
 		});
 
 		it('should stop at hyphen for participant name', () => {
-			const sessionId = 'group-chat-test-chat-participant-Agent-1-suffix';
+			const sessionId = `group-chat-${GC_ID}-participant-Agent-1-suffix`;
 			const match = sessionId.match(REGEX_PARTICIPANT_FALLBACK);
 			expect(match).not.toBeNull();
 			expect(match![2]).toBe('Agent'); // Stops at first hyphen after participant name start
@@ -435,87 +436,76 @@ describe('Debug Logging', () => {
 // These tests verify the parseParticipantSessionId logic.
 
 describe('parseParticipantSessionId', () => {
-	// Simulate the parsing function
-	function parseParticipantSessionId(
-		sessionId: string
-	): { groupChatId: string; participantName: string } | null {
-		if (!sessionId.includes('-participant-')) {
-			return null;
-		}
-
-		const REGEX_PARTICIPANT_UUID =
-			/^group-chat-(.+)-participant-(.+)-([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})$/i;
-		const REGEX_PARTICIPANT_TIMESTAMP = /^group-chat-(.+)-participant-(.+)-(\d{13,})$/;
-		const REGEX_PARTICIPANT_FALLBACK = /^group-chat-(.+)-participant-([^-]+)-/;
-
-		const uuidMatch = sessionId.match(REGEX_PARTICIPANT_UUID);
-		if (uuidMatch) {
-			return { groupChatId: uuidMatch[1], participantName: uuidMatch[2] };
-		}
-
-		const timestampMatch = sessionId.match(REGEX_PARTICIPANT_TIMESTAMP);
-		if (timestampMatch) {
-			return { groupChatId: timestampMatch[1], participantName: timestampMatch[2] };
-		}
-
-		const fallbackMatch = sessionId.match(REGEX_PARTICIPANT_FALLBACK);
-		if (fallbackMatch) {
-			return { groupChatId: fallbackMatch[1], participantName: fallbackMatch[2] };
-		}
-
-		return null;
-	}
+	const GC_ID = '550e8400-e29b-41d4-a716-446655440000';
+	const GC_ID_2 = '6ba7b810-9dad-11d1-80b4-00c04fd430c8';
 
 	it('should return null for non-participant session IDs', () => {
 		expect(parseParticipantSessionId('session-123')).toBeNull();
-		expect(parseParticipantSessionId('group-chat-test-moderator-123')).toBeNull();
+		expect(parseParticipantSessionId(`group-chat-${GC_ID}-moderator-1705678901234`)).toBeNull();
 	});
 
 	it('should parse UUID-based participant session IDs', () => {
-		const result = parseParticipantSessionId(
-			'group-chat-my-chat-participant-Claude-a1b2c3d4-e5f6-7890-abcd-ef1234567890'
-		);
+		const result = parseParticipantSessionId(`group-chat-${GC_ID}-participant-Claude-${GC_ID_2}`);
 		expect(result).toEqual({
-			groupChatId: 'my-chat',
+			groupChatId: GC_ID,
 			participantName: 'Claude',
 		});
 	});
 
 	it('should parse timestamp-based participant session IDs', () => {
-		const result = parseParticipantSessionId('group-chat-my-chat-participant-Claude-1705678901234');
+		const result = parseParticipantSessionId(
+			`group-chat-${GC_ID}-participant-Claude-1705678901234`
+		);
 		expect(result).toEqual({
-			groupChatId: 'my-chat',
+			groupChatId: GC_ID,
 			participantName: 'Claude',
 		});
 	});
 
 	it('should handle participant names with hyphens using UUID format', () => {
 		const result = parseParticipantSessionId(
-			'group-chat-my-chat-participant-Claude-Code-a1b2c3d4-e5f6-7890-abcd-ef1234567890'
+			`group-chat-${GC_ID}-participant-Claude-Code-${GC_ID_2}`
 		);
 		expect(result).toEqual({
-			groupChatId: 'my-chat',
+			groupChatId: GC_ID,
 			participantName: 'Claude-Code',
 		});
 	});
 
-	it('should handle group chat IDs with hyphens', () => {
+	it('should resist adversarial participant name containing "-participant-"', () => {
+		// Old greedy (.+) capture would mis-parse this and route output to the
+		// wrong owner. Strict UUID anchor on groupChatId makes the split
+		// unambiguous.
 		const result = parseParticipantSessionId(
-			'group-chat-my-complex-chat-id-participant-Agent-1705678901234'
+			`group-chat-${GC_ID}-participant-evil-participant-name-1705678901234`
 		);
 		expect(result).toEqual({
-			groupChatId: 'my-complex-chat-id',
-			participantName: 'Agent',
+			groupChatId: GC_ID,
+			participantName: 'evil-participant-name',
 		});
 	});
 
+	it('should reject non-UUID groupChatIds', () => {
+		// Legacy non-UUID groupChatIds must not parse — callers rely on the
+		// strict UUID anchor for routing safety.
+		expect(
+			parseParticipantSessionId('group-chat-my-complex-chat-id-participant-Agent-1705678901234')
+		).toBeNull();
+	});
+
 	it('should prefer UUID match over timestamp match', () => {
-		// This session ID could theoretically match both patterns
-		// but UUID should be tried first
-		const result = parseParticipantSessionId(
-			'group-chat-chat-participant-Agent-a1b2c3d4-e5f6-7890-abcd-ef1234567890'
-		);
+		const result = parseParticipantSessionId(`group-chat-${GC_ID}-participant-Agent-${GC_ID_2}`);
 		expect(result).not.toBeNull();
 		expect(result?.participantName).toBe('Agent');
+	});
+
+	it('should strip -recovery suffix from participant name', () => {
+		const result = parseParticipantSessionId(
+			`group-chat-${GC_ID}-participant-Claude-recovery-1705678901234`
+		);
+		expect(result).toEqual({
+			groupChatId: GC_ID,
+			participantName: 'Claude',
+		});
 	});
 });

@@ -69,6 +69,55 @@ describe('buildAgentArgs', () => {
 		expect(result).toEqual(['--print']);
 	});
 
+	// -- forceBatchMode --
+	// Regression: when a Cue template variable like {{CUE_SOURCE_OUTPUT}}
+	// substituted to `""`, the empty-string prompt was falsy and dropped
+	// batch-mode args. For Codex specifically, that meant spawning `codex`
+	// (interactive TUI) instead of `codex exec` (batch), which died with
+	// "Error: stdin is not a terminal" since Cue provides no TTY.
+	it('adds batchModePrefix with empty prompt when forceBatchMode is true', () => {
+		const agent = makeAgent({ batchModePrefix: ['exec'] });
+		const result = buildAgentArgs(agent, {
+			baseArgs: [],
+			prompt: '',
+			forceBatchMode: true,
+		});
+		expect(result).toEqual(['exec']);
+	});
+
+	it('adds batchModeArgs with empty prompt when forceBatchMode is true', () => {
+		const agent = makeAgent({ batchModeArgs: ['--skip-git'] });
+		const result = buildAgentArgs(agent, {
+			baseArgs: ['--print'],
+			prompt: '',
+			forceBatchMode: true,
+		});
+		expect(result).toEqual(['--print', '--skip-git']);
+	});
+
+	it('adds jsonOutputArgs with empty prompt when forceBatchMode is true', () => {
+		const agent = makeAgent({ jsonOutputArgs: ['--json'] });
+		const result = buildAgentArgs(agent, {
+			baseArgs: ['--print'],
+			prompt: '',
+			forceBatchMode: true,
+		});
+		expect(result).toEqual(['--print', '--json']);
+	});
+
+	it('still skips batch args with empty prompt when forceBatchMode is false', () => {
+		const agent = makeAgent({
+			batchModePrefix: ['exec'],
+			batchModeArgs: ['--skip-git'],
+			jsonOutputArgs: ['--json'],
+		});
+		const result = buildAgentArgs(agent, {
+			baseArgs: ['--print'],
+			prompt: '',
+		});
+		expect(result).toEqual(['--print']);
+	});
+
 	// -- batchModeArgs --
 	it('adds batchModeArgs when prompt provided', () => {
 		const agent = makeAgent({ batchModeArgs: ['--skip-git'] });
@@ -86,19 +135,52 @@ describe('buildAgentArgs', () => {
 	});
 
 	// -- jsonOutputArgs --
-	it('adds jsonOutputArgs when not already present', () => {
+	it('adds jsonOutputArgs when prompt provided and not already present', () => {
 		const agent = makeAgent({ jsonOutputArgs: ['--format', 'json'] });
-		const result = buildAgentArgs(agent, { baseArgs: ['--print'] });
+		const result = buildAgentArgs(agent, { baseArgs: ['--print'], prompt: 'hello' });
 		expect(result).toEqual(['--print', '--format', 'json']);
 	});
 
-	it('does not duplicate jsonOutputArgs when already present', () => {
+	it('does not add jsonOutputArgs for interactive sessions without a prompt', () => {
+		const agent = makeAgent({ jsonOutputArgs: ['--format', 'json'] });
+		const result = buildAgentArgs(agent, { baseArgs: ['--print'] });
+		expect(result).toEqual(['--print']);
+	});
+
+	it('does not duplicate jsonOutputArgs when exact sequence already present', () => {
+		const agent = makeAgent({ jsonOutputArgs: ['--format', 'json'] });
+		const result = buildAgentArgs(agent, {
+			baseArgs: ['--print', '--format', 'json'],
+			prompt: 'hello',
+		});
+		// '--format json' exact sequence is already in baseArgs, so jsonOutputArgs should not be added
+		expect(result).toEqual(['--print', '--format', 'json']);
+	});
+
+	it('does not duplicate jsonOutputArgs when same flag key present with different value', () => {
 		const agent = makeAgent({ jsonOutputArgs: ['--format', 'json'] });
 		const result = buildAgentArgs(agent, {
 			baseArgs: ['--print', '--format', 'stream'],
+			prompt: 'hello',
 		});
-		// '--format' is already in baseArgs, so jsonOutputArgs should not be added
+		// '--format' flag key is already present, so jsonOutputArgs should not be added
 		expect(result).toEqual(['--print', '--format', 'stream']);
+	});
+
+	it('skips jsonOutputArgs when prompt is empty', () => {
+		const agent = makeAgent({ jsonOutputArgs: ['--format', 'json'] });
+		const result = buildAgentArgs(agent, { baseArgs: ['--print'], prompt: '' });
+		expect(result).toEqual(['--print']);
+	});
+
+	it('does not false-match jsonOutputArgs on bare value token', () => {
+		const agent = makeAgent({ jsonOutputArgs: ['--output-format', 'json'] });
+		const result = buildAgentArgs(agent, {
+			baseArgs: ['--print', 'json'],
+			prompt: 'hello',
+		});
+		// 'json' is a positional arg, not the '--output-format' flag, so jsonOutputArgs should be added
+		expect(result).toEqual(['--print', 'json', '--output-format', 'json']);
 	});
 
 	// -- workingDirArgs --
@@ -383,8 +465,126 @@ describe('buildAgentArgs', () => {
 	it('does not mutate the original baseArgs array', () => {
 		const baseArgs = ['--print'];
 		const agent = makeAgent({ jsonOutputArgs: ['--format', 'json'] });
-		buildAgentArgs(agent, { baseArgs });
+		buildAgentArgs(agent, { baseArgs, prompt: 'test' });
 		expect(baseArgs).toEqual(['--print']);
+	});
+
+	// -- Real agent config: readOnly mode produces correct non-interactive commands --
+	describe('readOnly mode with real agent configs', () => {
+		it('Codex: readOnlyArgs include bypass flags for non-interactive execution', () => {
+			const codexAgent = makeAgent({
+				id: 'codex',
+				batchModePrefix: ['exec'],
+				batchModeArgs: ['--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check'],
+				jsonOutputArgs: ['--json'],
+				readOnlyArgs: [
+					'--sandbox',
+					'read-only',
+					'--dangerously-bypass-approvals-and-sandbox',
+					'--skip-git-repo-check',
+				],
+				workingDirArgs: (dir: string) => ['-C', dir],
+			});
+
+			const result = buildAgentArgs(codexAgent, {
+				baseArgs: [],
+				prompt: 'generate a tab name',
+				cwd: '/project',
+				readOnlyMode: true,
+			});
+
+			// batchModeArgs skipped, but readOnlyArgs provides the needed flags
+			expect(result).toContain('exec');
+			expect(result).toContain('--sandbox');
+			expect(result).toContain('read-only');
+			expect(result).toContain('--dangerously-bypass-approvals-and-sandbox');
+			expect(result).toContain('--skip-git-repo-check');
+			expect(result).toContain('--json');
+			expect(result).toContain('-C');
+			expect(result).toContain('/project');
+		});
+
+		it('Codex: non-readOnly mode deduplicates flags from batchModeArgs and yoloModeArgs', () => {
+			const codexAgent = makeAgent({
+				id: 'codex',
+				batchModePrefix: ['exec'],
+				batchModeArgs: ['--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check'],
+				jsonOutputArgs: ['--json'],
+				readOnlyArgs: [
+					'--sandbox',
+					'read-only',
+					'--dangerously-bypass-approvals-and-sandbox',
+					'--skip-git-repo-check',
+				],
+				yoloModeArgs: ['--dangerously-bypass-approvals-and-sandbox'],
+				workingDirArgs: (dir: string) => ['-C', dir],
+			});
+
+			const result = buildAgentArgs(codexAgent, {
+				baseArgs: [],
+				prompt: 'fix a bug',
+				cwd: '/project',
+				readOnlyMode: false,
+				yoloMode: true,
+			});
+
+			// --dangerously-bypass-approvals-and-sandbox should appear only once (deduped)
+			const bypassCount = result.filter(
+				(a) => a === '--dangerously-bypass-approvals-and-sandbox'
+			).length;
+			expect(bypassCount).toBe(1);
+			// readOnlyArgs should NOT be included
+			expect(result).not.toContain('--sandbox');
+			expect(result).not.toContain('read-only');
+		});
+
+		it('Gemini CLI: readOnlyArgs include -y for non-interactive execution', () => {
+			const geminiAgent = makeAgent({
+				id: 'gemini-cli',
+				batchModeArgs: ['-y'],
+				jsonOutputArgs: ['--output-format', 'stream-json'],
+				readOnlyArgs: ['-y'],
+				readOnlyCliEnforced: false,
+				promptArgs: (prompt: string) => ['-p', prompt],
+			});
+
+			const result = buildAgentArgs(geminiAgent, {
+				baseArgs: [],
+				prompt: 'generate a tab name',
+				readOnlyMode: true,
+			});
+
+			// batchModeArgs skipped, but readOnlyArgs provides -y
+			expect(result).toContain('-y');
+			expect(result).toContain('--output-format');
+			expect(result).toContain('stream-json');
+		});
+
+		it('Factory Droid: readOnly works without extra flags (exec is read-only by default)', () => {
+			const droidAgent = makeAgent({
+				id: 'factory-droid',
+				batchModePrefix: ['exec'],
+				batchModeArgs: ['--skip-permissions-unsafe'],
+				jsonOutputArgs: ['-o', 'stream-json'],
+				readOnlyArgs: [],
+				readOnlyCliEnforced: true,
+				workingDirArgs: (dir: string) => ['--cwd', dir],
+				noPromptSeparator: true,
+			});
+
+			const result = buildAgentArgs(droidAgent, {
+				baseArgs: [],
+				prompt: 'generate a tab name',
+				cwd: '/project',
+				readOnlyMode: true,
+			});
+
+			// --skip-permissions-unsafe should NOT be present (exec is read-only by default)
+			expect(result).not.toContain('--skip-permissions-unsafe');
+			expect(result).toContain('exec');
+			expect(result).toContain('-o');
+			expect(result).toContain('stream-json');
+		});
 	});
 });
 

@@ -18,15 +18,21 @@ import { renderHook, act, waitFor } from '@testing-library/react';
 import { render, screen } from '@testing-library/react';
 import { useSettings } from '../../renderer/hooks';
 import React from 'react';
-import {
-	useSettingsStore,
-	DEFAULT_CONTEXT_MANAGEMENT_SETTINGS,
-	DEFAULT_AUTO_RUN_STATS,
-	DEFAULT_USAGE_STATS,
-	DEFAULT_KEYBOARD_MASTERY_STATS,
-	DEFAULT_ONBOARDING_STATS,
-	DEFAULT_AI_COMMANDS,
-} from '../../renderer/stores/settingsStore';
+import { useSettingsStore } from '../../renderer/stores/settingsStore';
+
+// Deep-cloned defaults captured from a fresh store so mutations in tests can't
+// leak back into the reference. The store no longer exports these defaults.
+const _INITIAL_STATE = useSettingsStore.getState();
+const DEFAULT_CONTEXT_MANAGEMENT_SETTINGS = JSON.parse(
+	JSON.stringify(_INITIAL_STATE.contextManagementSettings)
+);
+const DEFAULT_AUTO_RUN_STATS = JSON.parse(JSON.stringify(_INITIAL_STATE.autoRunStats));
+const DEFAULT_USAGE_STATS = JSON.parse(JSON.stringify(_INITIAL_STATE.usageStats));
+const DEFAULT_KEYBOARD_MASTERY_STATS = JSON.parse(
+	JSON.stringify(_INITIAL_STATE.keyboardMasteryStats)
+);
+const DEFAULT_ONBOARDING_STATS = JSON.parse(JSON.stringify(_INITIAL_STATE.onboardingStats));
+const DEFAULT_AI_COMMANDS = JSON.parse(JSON.stringify(_INITIAL_STATE.customAICommands));
 import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS } from '../../renderer/constants/shortcuts';
 import { DEFAULT_CUSTOM_THEME_COLORS } from '../../renderer/constants/themes';
 
@@ -81,7 +87,6 @@ describe('Cross-platform Fonts and Sizing', () => {
 			customThemeColors: DEFAULT_CUSTOM_THEME_COLORS,
 			customThemeBaseId: 'dracula',
 			enterToSendAI: false,
-			enterToSendTerminal: true,
 			defaultSaveToHistory: true,
 			defaultShowThinking: 'off',
 			leftSidebarWidth: 256,
@@ -89,7 +94,6 @@ describe('Cross-platform Fonts and Sizing', () => {
 			markdownEditMode: false,
 			chatRawTextMode: false,
 			showHiddenFiles: true,
-			terminalWidth: 100,
 			logLevel: 'info',
 			maxLogBuffer: 5000,
 			maxOutputLines: 25,
@@ -108,6 +112,7 @@ describe('Cross-platform Fonts and Sizing', () => {
 			autoRunStats: DEFAULT_AUTO_RUN_STATS,
 			usageStats: DEFAULT_USAGE_STATS,
 			ungroupedCollapsed: false,
+			groupChatsExpanded: true,
 			tourCompleted: false,
 			firstAutoRunCompleted: false,
 			onboardingStats: DEFAULT_ONBOARDING_STATS,

@@ -3,6 +3,7 @@ import './wdyr';
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import * as Sentry from '@sentry/electron/renderer';
+import { shouldDropSentryEvent } from '../shared/sentryFilters';
 import MaestroConsole from './App';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { LayerStackProvider } from './contexts/LayerStackContext';
@@ -29,8 +30,12 @@ const initSentry = async () => {
 				release: __APP_VERSION__,
 				// Only send errors, not performance data
 				tracesSampleRate: 0,
-				// Filter out sensitive data
+				// Filter out sensitive data + unfixable OS / Chromium / user-env noise.
+				// See src/shared/sentryFilters.ts for the full classification.
 				beforeSend(event) {
+					if (shouldDropSentryEvent(event)) {
+						return null;
+					}
 					if (event.user) {
 						delete event.user.ip_address;
 						delete event.user.email;

@@ -1,16 +1,35 @@
-import React, { memo, useMemo, useState, useEffect } from 'react';
+import React, { memo, useMemo, useState, useCallback, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
+import rehypeKatex from 'rehype-katex';
+import remarkBreaks from 'remark-breaks';
+import remarkMath from 'remark-math';
 import DOMPurify from 'dompurify';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { getSyntaxStyle } from '../utils/syntaxTheme';
-import { Clipboard, Loader2, ImageOff } from 'lucide-react';
+import 'katex/dist/katex.min.css';
+import { ImageOff } from 'lucide-react';
+import { Spinner } from './ui/Spinner';
 import type { Theme } from '../types';
 import type { FileNode } from '../types/fileTree';
+import type { PluggableList } from 'unified';
+import type { ExtraProps } from 'react-markdown';
 import { remarkFileLinks, buildFileTreeIndices } from '../utils/remarkFileLinks';
+import { extractHexColor } from '../../shared/hexColor';
 import remarkFrontmatter from 'remark-frontmatter';
 import { remarkFrontmatterTable } from '../utils/remarkFrontmatterTable';
 import { REMARK_GFM_PLUGINS, applyReadableTextTransforms } from '../utils/markdownConfig';
+import {
+	INLINE_CODE_CLICK_PROPS,
+	INLINE_CODE_CLICK_STYLE,
+	buildInlineCodeHandlers,
+} from '../utils/inlineCodeCopy';
+import { LinkContextMenu, type LinkContextMenuState } from './LinkContextMenu';
+import { FileContextMenu, type FileContextMenuState } from './FileContextMenu';
+import { CodeFence } from './CodeFence/CodeFence';
+import { getHomeDir, getHomeDirAsync } from '../utils/homeDir';
+import { openUrl } from '../utils/openUrl';
+import { openMaestroLink } from '../utils/openMaestroLink';
+import { urlTransformAllowingMaestro } from '../utils/markdownUrlTransform';
+import { remarkPromoteDisplayMath } from '../../shared/remarkPromoteDisplayMath';
 
 // ============================================================================
 // LocalImage - Loads local images via IPC
@@ -121,7 +140,7 @@ const LocalImage = memo(({ src, alt, theme, width, sshRemoteId }: LocalImageProp
 				className="inline-flex items-center gap-2 px-3 py-2 rounded"
 				style={{ backgroundColor: theme.colors.bgActivity }}
 			>
-				<Loader2 className="w-4 h-4 animate-spin" style={{ color: theme.colors.textDim }} />
+				<Spinner size={16} color={theme.colors.textDim} />
 				<span className="text-xs" style={{ color: theme.colors.textDim }}>
 					Loading image...
 				</span>
@@ -160,49 +179,67 @@ LocalImage.displayName = 'LocalImage';
 // CodeBlockWithCopy - Code block with copy button overlay
 // ============================================================================
 
-interface CodeBlockWithCopyProps {
-	language: string;
-	codeContent: string;
-	theme: Theme;
-	onCopy: (text: string) => void;
-}
+// ============================================================================
+// fixMarkdownLinkSpaces — pre-process markdown so CommonMark can parse links
+// whose URL destinations contain spaces.
+//
+// CommonMark rejects spaces in link destinations, but AI agents (e.g. Codex)
+// often emit links like [file.ts](/path/with spaces/file.ts).
+//
+// Strategy: walk the text looking for [label]( patterns, then find the
+// balanced closing ), and if the URL portion contains spaces, rewrite to
+// CommonMark's angle-bracket destination syntax: [label](<url>).
+//
+// This handles:
+//   - Nested brackets in labels:  [src/[id].tsx](path with spaces)
+//   - Balanced parens in URLs:    [file](path (copy)/file.ts)
+//   - Multiple links per line:    [a](x y) and [b](z w)
+//   - No-op for URLs without spaces
+// ============================================================================
 
-const CodeBlockWithCopy = memo(
-	({ language, codeContent, theme, onCopy }: CodeBlockWithCopyProps) => {
-		return (
-			<div className="relative group/codeblock">
-				<button
-					onClick={() => onCopy(codeContent)}
-					className="absolute bottom-2 right-2 p-1.5 rounded opacity-0 group-hover/codeblock:opacity-70 hover:!opacity-100 transition-opacity z-10"
-					style={{
-						backgroundColor: theme.colors.bgActivity,
-						color: theme.colors.textDim,
-						border: `1px solid ${theme.colors.border}`,
-					}}
-					title="Copy code"
-				>
-					<Clipboard className="w-3.5 h-3.5" />
-				</button>
-				<SyntaxHighlighter
-					language={language}
-					style={getSyntaxStyle(theme.mode)}
-					customStyle={{
-						margin: '0.5em 0',
-						padding: '1em',
-						background: theme.colors.bgSidebar,
-						fontSize: '0.9em',
-						borderRadius: '6px',
-					}}
-					PreTag="div"
-				>
-					{codeContent}
-				</SyntaxHighlighter>
-			</div>
-		);
+// Matches a markdown link label (with one level of nested brackets) followed
+// by the opening paren of the URL destination.
+const LINK_LABEL_REGEX = /\[((?:[^\[\]]|\[[^\]]*\])*)\]\(/g;
+
+function fixMarkdownLinkSpaces(text: string): string {
+	let result = '';
+	let lastEnd = 0;
+	let m;
+
+	LINK_LABEL_REGEX.lastIndex = 0;
+	while ((m = LINK_LABEL_REGEX.exec(text)) !== null) {
+		const label = m[1];
+		const urlStart = m.index + m[0].length;
+
+		// Walk forward to find the closing ) with balanced parens
+		let depth = 1;
+		let i = urlStart;
+		while (i < text.length && depth > 0) {
+			if (text[i] === '(') depth++;
+			else if (text[i] === ')') depth--;
+			i++;
+		}
+
+		if (depth !== 0) continue; // Unbalanced — skip
+
+		const url = text.slice(urlStart, i - 1); // Exclude closing )
+
+		if (url.includes(' ')) {
+			result += text.slice(lastEnd, m.index);
+			if (url.includes('<') || url.includes('>')) {
+				// Angle brackets in URL would break <url> syntax — fall back to %20
+				result += `[${label}](${url.replace(/ /g, '%20')})`;
+			} else {
+				result += `[${label}](<${url}>)`;
+			}
+			lastEnd = i;
+			LINK_LABEL_REGEX.lastIndex = i;
+		}
 	}
-);
 
-CodeBlockWithCopy.displayName = 'CodeBlockWithCopy';
+	result += text.slice(lastEnd);
+	return result;
+}
 
 // ============================================================================
 // MarkdownRenderer - Unified markdown rendering component for AI responses
@@ -235,6 +272,25 @@ interface MarkdownRendererProps {
 	bionifyIntensity?: number;
 	/** Algorithm string controlling Bionify highlight lengths */
 	bionifyAlgorithm?: string;
+	/**
+	 * Treat single newlines as hard line breaks (chat-style rendering).
+	 *
+	 * Default CommonMark collapses single `\n` between non-blank lines into a
+	 * space. That's correct for document/file preview, but wrong for chat
+	 * surfaces where users expect line structure to be preserved (#622). When
+	 * enabled, this routes content through `remark-breaks` so single newlines
+	 * render as `<br>`.
+	 */
+	chatLineBreaks?: boolean;
+	/**
+	 * Render `$...$` and `$$...$$` as math via KaTeX (chat-style rendering).
+	 *
+	 * Off by default so file/doc preview keeps treating `$` as literal text —
+	 * markdown files with currency or shell prompts shouldn't suddenly parse
+	 * as math. Enable on chat surfaces so a line-isolated `$$x+y$$` renders
+	 * as a centered block formula (#622).
+	 */
+	chatMath?: boolean;
 }
 
 /**
@@ -264,7 +320,17 @@ export const MarkdownRenderer = memo(
 		enableBionifyReadingMode = false,
 		bionifyIntensity,
 		bionifyAlgorithm,
+		chatLineBreaks = false,
+		chatMath = false,
 	}: MarkdownRendererProps) => {
+		// Resolve homeDir for tilde path expansion (module-level cache, fetched once)
+		const [homeDir, setHomeDir] = useState<string | undefined>(getHomeDir);
+		useEffect(() => {
+			if (!homeDir) {
+				getHomeDirAsync()?.then(setHomeDir);
+			}
+		}, [homeDir]);
+
 		// Memoize file tree indices to avoid O(n) traversal on every render
 		// Only rebuild when fileTree reference changes
 		const fileTreeIndices = useMemo(() => {
@@ -276,26 +342,55 @@ export const MarkdownRenderer = memo(
 
 		// Memoize remark plugins to avoid recreating on every render
 		const remarkPlugins = useMemo(() => {
-			const plugins: any[] = [...REMARK_GFM_PLUGINS, remarkFrontmatter, remarkFrontmatterTable];
+			const plugins: PluggableList = [
+				...REMARK_GFM_PLUGINS,
+				remarkFrontmatter,
+				remarkFrontmatterTable,
+			];
+			// Chat surfaces need single-newline-as-<br> semantics (#622); file/doc
+			// preview keeps default CommonMark behavior so paragraph reflow works.
+			if (chatLineBreaks) {
+				plugins.push(remarkBreaks);
+			}
+			// Chat surfaces parse `$$...$$` as math (#622). `singleDollarTextMath:
+			// false` disables single-dollar inline math so chat content with
+			// currency (`$5`), shell variables (`$HOME`), or code snippets isn't
+			// reinterpreted as broken math — see remark-math's own warning that
+			// single-dollar math "often interferes with normal dollars in text".
+			// `remarkPromoteDisplayMath` runs after `remarkMath` so a single-line
+			// `$$x+y$$` gets the centered block treatment users expect.
+			if (chatMath) {
+				plugins.push([remarkMath, { singleDollarTextMath: false }]);
+				plugins.push(remarkPromoteDisplayMath);
+			}
 			// Add remarkFileLinks if we have file tree for relative paths,
 			// OR if we have projectRoot for absolute paths (even with empty file tree)
-			if ((fileTree && fileTree.length > 0 && cwd !== undefined) || projectRoot) {
+			// OR if we have homeDir for tilde paths (even without file tree or projectRoot)
+			if ((fileTree && fileTree.length > 0 && cwd !== undefined) || projectRoot || homeDir) {
 				plugins.push([
 					remarkFileLinks,
-					{ indices: fileTreeIndices || undefined, cwd: cwd || '', projectRoot },
+					{ indices: fileTreeIndices || undefined, cwd: cwd || '', projectRoot, homeDir },
 				]);
 			}
 			return plugins;
-		}, [fileTree, fileTreeIndices, cwd, projectRoot]);
+		}, [fileTree, fileTreeIndices, cwd, projectRoot, homeDir, chatLineBreaks, chatMath]);
 
 		// Defense-in-depth: sanitize raw HTML with DOMPurify before markdown parsing
 		// to strip script tags, event handlers, and other XSS vectors
 		const sanitizedContent = useMemo(() => {
+			const processed = fixMarkdownLinkSpaces(content);
+
 			if (allowRawHtml) {
-				return DOMPurify.sanitize(content);
+				return DOMPurify.sanitize(processed);
 			}
-			return content;
+			return processed;
 		}, [content, allowRawHtml]);
+
+		// Right-click context menus for links and file references
+		const [linkMenu, setLinkMenu] = useState<LinkContextMenuState | null>(null);
+		const dismissLinkMenu = useCallback(() => setLinkMenu(null), []);
+		const [fileMenu, setFileMenu] = useState<FileContextMenuState | null>(null);
+		const dismissFileMenu = useCallback(() => setFileMenu(null), []);
 
 		const withReadableTransforms = (children: React.ReactNode) =>
 			applyReadableTextTransforms(children, {
@@ -305,6 +400,15 @@ export const MarkdownRenderer = memo(
 				bionifyAlgorithm,
 			});
 
+		// rehype-raw and rehype-katex are independent and can stack. Build the
+		// list once per render rather than reconstructing in JSX.
+		const rehypePlugins = useMemo(() => {
+			const plugins: any[] = [];
+			if (allowRawHtml) plugins.push(rehypeRaw);
+			if (chatMath) plugins.push(rehypeKatex);
+			return plugins.length > 0 ? plugins : undefined;
+		}, [allowRawHtml, chatMath]);
+
 		return (
 			<div
 				className={`prose prose-sm max-w-none text-sm ${className}`}
@@ -312,12 +416,15 @@ export const MarkdownRenderer = memo(
 			>
 				<ReactMarkdown
 					remarkPlugins={remarkPlugins}
-					rehypePlugins={allowRawHtml ? [rehypeRaw] : undefined}
+					rehypePlugins={rehypePlugins}
+					urlTransform={urlTransformAllowingMaestro}
 					components={{
 						a: ({ node: _node, href, children, ...props }) => {
 							// Check for maestro-file:// protocol OR data-maestro-file attribute
 							// (data attribute is fallback when rehype strips custom protocols)
-							const dataFilePath = (props as any)['data-maestro-file'];
+							const dataFilePath = (props as Record<string, unknown>)['data-maestro-file'] as
+								| string
+								| undefined;
 							const isMaestroFile = href?.startsWith('maestro-file://') || !!dataFilePath;
 							const filePath =
 								dataFilePath ||
@@ -332,11 +439,14 @@ export const MarkdownRenderer = memo(
 										if (isMaestroFile && filePath && onFileClick) {
 											onFileClick(filePath);
 										} else if (href) {
-											// Open http/https URLs via openExternal; file:// URLs via openPath
-											if (/^file:\/\//.test(href)) {
+											// Open http/https URLs via openUrl; file:// URLs via openPath;
+											// maestro:// URLs route through the in-app deep link handler.
+											if (href.startsWith('maestro://')) {
+												openMaestroLink(href);
+											} else if (/^file:\/\//.test(href)) {
 												window.maestro.shell.openPath(href.replace(/^file:\/\//, ''));
 											} else if (/^https?:\/\//.test(href)) {
-												window.maestro.shell.openExternal(href);
+												openUrl(href, { ctrlKey: e.ctrlKey });
 											} else {
 												// Attempt to convert non-standard URLs (e.g. git@host:user/repo)
 												try {
@@ -347,12 +457,30 @@ export const MarkdownRenderer = memo(
 																.replace(/\.git$/, '')
 														: href;
 													if (/^https?:\/\//.test(converted)) {
-														window.maestro.shell.openExternal(converted);
+														openUrl(converted, { ctrlKey: e.ctrlKey });
 													}
 												} catch {
 													// Silently ignore unparseable URLs
 												}
 											}
+										}
+									}}
+									onContextMenu={(e) => {
+										if (isMaestroFile && filePath) {
+											e.preventDefault();
+											e.stopPropagation();
+											// Resolve to absolute path for file operations
+											const absPath = filePath.startsWith('/')
+												? filePath
+												: projectRoot
+													? `${projectRoot}/${filePath}`
+													: filePath;
+											const fileName = filePath.split('/').pop() || filePath;
+											setFileMenu({ x: e.clientX, y: e.clientY, filePath: absPath, fileName });
+										} else if (href) {
+											e.preventDefault();
+											e.stopPropagation();
+											setLinkMenu({ x: e.clientX, y: e.clientY, url: href });
 										}
 									}}
 									style={{
@@ -365,36 +493,63 @@ export const MarkdownRenderer = memo(
 								</a>
 							);
 						},
-						pre: ({ children }: any) => {
+						pre: ({ children }: JSX.IntrinsicElements['pre'] & ExtraProps) => {
 							// In react-markdown v10, block code is <pre><code>...</code></pre>
 							// Extract the code element and render with SyntaxHighlighter
 							const codeElement = React.Children.toArray(children).find(
-								(child: any) => child?.type === 'code' || child?.props?.node?.tagName === 'code'
-							) as React.ReactElement<any> | undefined;
+								(child) =>
+									React.isValidElement(child) &&
+									(child.type === 'code' || child.props?.node?.tagName === 'code')
+							) as
+								| React.ReactElement<{ className?: string; children?: React.ReactNode }>
+								| undefined;
 
 							if (codeElement?.props) {
 								const { className, children: codeChildren } = codeElement.props;
-								const match = (className || '').match(/language-(\w+)/);
-								const language = match ? match[1] : 'text';
+								const match = (className || '').match(/language-([\w+\-#]+)/);
+								const language = match ? match[1] : '';
 								const codeContent = String(codeChildren).replace(/\n$/, '');
 
 								return (
-									<CodeBlockWithCopy
-										language={language}
-										codeContent={codeContent}
-										theme={theme}
-										onCopy={onCopy}
-									/>
+									<CodeFence language={language} code={codeContent} theme={theme} onCopy={onCopy} />
 								);
 							}
 
 							// Fallback: render as-is
 							return <pre>{children}</pre>;
 						},
-						code: ({ node: _node, className, children, ...props }: any) => {
+						code: ({
+							node: _node,
+							className,
+							children,
+							style,
+							...props
+						}: JSX.IntrinsicElements['code'] & ExtraProps) => {
 							// Inline code only — block code is handled by the pre component above
+							const hexColor = extractHexColor(children);
+							const handlers = buildInlineCodeHandlers(children);
 							return (
-								<code className={className} {...props}>
+								<code
+									className={className}
+									{...props}
+									{...INLINE_CODE_CLICK_PROPS}
+									{...handlers}
+									style={{ ...(style ?? {}), ...INLINE_CODE_CLICK_STYLE }}
+								>
+									{hexColor && (
+										<span
+											style={{
+												display: 'inline-block',
+												width: '0.75em',
+												height: '0.75em',
+												backgroundColor: hexColor,
+												borderRadius: '2px',
+												marginRight: '0.35em',
+												verticalAlign: 'middle',
+												border: '1px solid rgba(128, 128, 128, 0.3)',
+											}}
+										/>
+									)}
 									{children}
 								</code>
 							);
@@ -426,10 +581,17 @@ export const MarkdownRenderer = memo(
 						h6: ({ node: _node, children, ...props }: any) => (
 							<h6 {...props}>{withReadableTransforms(children)}</h6>
 						),
-						img: ({ node: _node, src, alt, ...props }: any) => {
+						img: ({
+							node: _node,
+							src,
+							alt,
+							...props
+						}: JSX.IntrinsicElements['img'] & ExtraProps) => {
 							// Use LocalImage component to handle file:// URLs via IPC
 							// Extract width from data-maestro-width attribute if present
-							const widthStr = props['data-maestro-width'];
+							const widthStr = (props as Record<string, unknown>)['data-maestro-width'] as
+								| string
+								| undefined;
 							const width = widthStr ? parseInt(widthStr, 10) : undefined;
 
 							return (
@@ -442,7 +604,11 @@ export const MarkdownRenderer = memo(
 								/>
 							);
 						},
-						table: ({ node: _node, style, ...props }: any) => (
+						table: ({
+							node: _node,
+							style,
+							...props
+						}: JSX.IntrinsicElements['table'] & ExtraProps) => (
 							<div className="overflow-x-auto scrollbar-thin" style={{ maxWidth: '100%' }}>
 								<table
 									{...props}
@@ -454,7 +620,12 @@ export const MarkdownRenderer = memo(
 								/>
 							</div>
 						),
-						th: ({ node: _node, style, children, ...props }: any) => (
+						th: ({
+							node: _node,
+							style,
+							children,
+							...props
+						}: JSX.IntrinsicElements['th'] & ExtraProps) => (
 							<th
 								{...props}
 								style={{
@@ -468,7 +639,12 @@ export const MarkdownRenderer = memo(
 								{withReadableTransforms(children)}
 							</th>
 						),
-						td: ({ node: _node, style, children, ...props }: any) => (
+						td: ({
+							node: _node,
+							style,
+							children,
+							...props
+						}: JSX.IntrinsicElements['td'] & ExtraProps) => (
 							<td
 								{...props}
 								style={{
@@ -487,13 +663,26 @@ export const MarkdownRenderer = memo(
 						// Strip event handler attributes (e.g. onToggle) that rehype-raw may
 						// pass through as strings from AI-generated HTML, which React rejects.
 						// Fixes MAESTRO-8Q
-						details: ({ node: _node, onToggle: _onToggle, ...props }: any) => (
-							<details {...props} />
-						),
+						details: ({
+							node: _node,
+							onToggle: _onToggle,
+							...props
+						}: JSX.IntrinsicElements['details'] & ExtraProps) => <details {...props} />,
 					}}
 				>
 					{sanitizedContent}
 				</ReactMarkdown>
+				{linkMenu && <LinkContextMenu menu={linkMenu} theme={theme} onDismiss={dismissLinkMenu} />}
+				{fileMenu && (
+					<FileContextMenu
+						menu={fileMenu}
+						theme={theme}
+						onDismiss={dismissFileMenu}
+						onPreview={onFileClick}
+						projectRoot={projectRoot}
+						sshRemote={!!sshRemoteId}
+					/>
+				)}
 			</div>
 		);
 	}
@@ -501,6 +690,4 @@ export const MarkdownRenderer = memo(
 
 MarkdownRenderer.displayName = 'MarkdownRenderer';
 
-// Also export CodeBlockWithCopy for cases where only the code block is needed
-export { CodeBlockWithCopy };
-export type { CodeBlockWithCopyProps, MarkdownRendererProps };
+export type { MarkdownRendererProps };

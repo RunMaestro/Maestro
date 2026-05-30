@@ -8,17 +8,9 @@
  * - SSH remote support for all operations
  */
 
-import { ipcRenderer } from 'electron';
-
-/**
- * Directory entry information
- */
-export interface DirectoryEntry {
-	name: string;
-	isDirectory: boolean;
-	isFile: boolean;
-	path: string;
-}
+import { ipcRenderer, webUtils } from 'electron';
+import type { DirectoryEntry } from '../../shared/types';
+export type { DirectoryEntry } from '../../shared/types';
 
 /**
  * File stat information
@@ -49,6 +41,26 @@ export interface ItemCountInfo {
 }
 
 /**
+ * Options for batched remote tree enumeration.
+ */
+export interface ListTreeRemoteOptions {
+	maxDepth?: number;
+	ignorePatterns?: string[];
+	excludePaths?: string[];
+	maxFiles?: number;
+}
+
+/**
+ * Result of batched remote tree enumeration. Paths are relative to the
+ * requested root, with no leading `./` or `/`.
+ */
+export interface ListTreeRemoteResult {
+	directories: string[];
+	files: string[];
+	truncated: boolean;
+}
+
+/**
  * Creates the filesystem API object for preload exposure
  */
 export function createFsApi() {
@@ -65,10 +77,36 @@ export function createFsApi() {
 			ipcRenderer.invoke('fs:readDir', dirPath, sshRemoteId),
 
 		/**
-		 * Read file contents
+		 * Enumerate a remote directory tree in a single SSH round-trip.
+		 * Returns flat lists of directory and file paths relative to `rootPath`.
+		 * SSH-only — local trees should use the renderer's recursive `loadFileTree`.
 		 */
-		readFile: (filePath: string, sshRemoteId?: string): Promise<string | null> =>
-			ipcRenderer.invoke('fs:readFile', filePath, sshRemoteId),
+		listTreeRemote: (
+			rootPath: string,
+			sshRemoteId: string,
+			options: ListTreeRemoteOptions
+		): Promise<ListTreeRemoteResult> =>
+			ipcRenderer.invoke('fs:listTreeRemote', rootPath, sshRemoteId, options),
+
+		/**
+		 * Read file contents.
+		 *
+		 * For SSH remote files, pass `requestId` to make the read cancellable —
+		 * call `cancelReadFile(requestId)` to abort the underlying ssh+cat process.
+		 * Cancelled reads resolve to null.
+		 */
+		readFile: (
+			filePath: string,
+			sshRemoteId?: string,
+			requestId?: string
+		): Promise<string | null> =>
+			ipcRenderer.invoke('fs:readFile', filePath, sshRemoteId, requestId),
+
+		/**
+		 * Cancel an in-flight remote `readFile` by requestId. No-op if unknown.
+		 */
+		cancelReadFile: (requestId: string): Promise<void> =>
+			ipcRenderer.invoke('fs:cancelReadFile', requestId),
 
 		/**
 		 * Write file contents
@@ -81,6 +119,24 @@ export function createFsApi() {
 			ipcRenderer.invoke('fs:writeFile', filePath, content, sshRemoteId),
 
 		/**
+		 * Write a base64 data URL (e.g. `data:image/png;base64,...`) to disk as
+		 * raw binary. Use this for images/binary payloads; `writeFile` encodes
+		 * content as UTF-8 and would corrupt binary data.
+		 */
+		writeImageFile: (
+			filePath: string,
+			dataUrl: string,
+			sshRemoteId?: string
+		): Promise<{ success: boolean }> =>
+			ipcRenderer.invoke('fs:writeImageFile', filePath, dataUrl, sshRemoteId),
+
+		/**
+		 * Create a directory (recursive)
+		 */
+		mkdir: (dirPath: string, sshRemoteId?: string): Promise<{ success: boolean }> =>
+			ipcRenderer.invoke('fs:mkdir', dirPath, sshRemoteId),
+
+		/**
 		 * Get file/directory stats
 		 */
 		stat: (filePath: string, sshRemoteId?: string): Promise<FileStat> =>
@@ -89,8 +145,13 @@ export function createFsApi() {
 		/**
 		 * Get directory size information
 		 */
-		directorySize: (dirPath: string, sshRemoteId?: string): Promise<DirectorySizeInfo> =>
-			ipcRenderer.invoke('fs:directorySize', dirPath, sshRemoteId),
+		directorySize: (
+			dirPath: string,
+			sshRemoteId?: string,
+			ignorePatterns?: string[],
+			honorGitignore?: boolean
+		): Promise<DirectorySizeInfo> =>
+			ipcRenderer.invoke('fs:directorySize', dirPath, sshRemoteId, ignorePatterns, honorGitignore),
 
 		/**
 		 * Fetch an image from URL and return as base64
@@ -121,6 +182,33 @@ export function createFsApi() {
 		 */
 		countItems: (dirPath: string, sshRemoteId?: string): Promise<ItemCountInfo> =>
 			ipcRenderer.invoke('fs:countItems', dirPath, sshRemoteId),
+
+		/**
+		 * Copy a file or folder from an arbitrary source path into a destination
+		 * path. Local only - used by drag-and-drop import of OS files into the
+		 * file tree. Pass `overwrite: true` to replace an existing destination.
+		 */
+		copyPath: (
+			sourcePath: string,
+			destPath: string,
+			options?: { overwrite?: boolean }
+		): Promise<{ success: boolean }> =>
+			ipcRenderer.invoke('fs:copyPath', sourcePath, destPath, options),
+
+		/**
+		 * Resolve the absolute filesystem path of a dropped/selected `File`.
+		 * Electron removed the non-standard `File.path` property; `webUtils`
+		 * is the supported replacement and must be called from the preload
+		 * context. Returns an empty string for files with no backing path
+		 * (e.g. synthesized File objects).
+		 */
+		getPathForFile: (file: File): string => {
+			try {
+				return webUtils.getPathForFile(file);
+			} catch {
+				return '';
+			}
+		},
 	};
 }
 

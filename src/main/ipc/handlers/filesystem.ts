@@ -9,6 +9,7 @@
  * - directorySize: Calculate directory size recursively (local & SSH remote)
  * - writeFile: Write content to file (local & SSH remote)
  * - rename: Rename file/directory (local & SSH remote)
+ * - copyPath: Copy a file/directory into a destination (local only; drag-import)
  * - delete: Delete file/directory (local & SSH remote)
  * - countItems: Count files and folders recursively (local & SSH remote)
  * - fetchImageAsBase64: Fetch image from URL and return as base64
@@ -23,17 +24,27 @@ import fs from 'fs/promises';
 
 import { logger } from '../../utils/logger';
 import {
+	shouldIgnore,
+	parseGitignoreContent,
+	LOCAL_IGNORE_DEFAULTS,
+} from '../../../shared/globUtils';
+import {
 	readDirRemote,
 	readFileRemote,
+	readFileRemoteAbortable,
 	writeFileRemote,
+	mkdirRemote,
 	statRemote,
 	directorySizeRemote,
 	renameRemote,
 	deleteRemote,
 	countItemsRemote,
+	listTreeRemote,
+	type ListTreeOptions,
 } from '../../utils/remote-fs';
 import { resolveDirentType } from '../../utils/dirent-utils';
 import { getSshRemoteById } from '../../stores';
+import { captureException } from '../../utils/sentry';
 
 /**
  * Supported image file extensions for base64 encoding
@@ -103,96 +114,181 @@ export function registerFilesystemHandlers(): void {
 			if (!result.success) {
 				throw new Error(result.error || 'Failed to read remote directory');
 			}
-			// Map remote entries to match local format
-			// Include full path for recursive directory scanning (e.g., document graph)
-			// Use POSIX path joining for remote paths (always forward slashes)
-			// Symlinks with isDirectory=true have already been resolved by readDirRemote
-			return result.data!.map((entry) => ({
-				name: entry.name.normalize('NFC'),
-				isDirectory: entry.isDirectory,
-				isFile: !entry.isDirectory,
-				// Preserve raw filesystem name in path for correct remote operations
-				path: dirPath.endsWith('/') ? `${dirPath}${entry.name}` : `${dirPath}/${entry.name}`,
-			}));
+			// Map remote entries to match local format.
+			// For symlinks, resolve target type via remote stat so directory/file links remain visible.
+			// Include full path for recursive directory scanning (e.g., document graph).
+			return await Promise.all(
+				result.data!.map(async (entry) => {
+					const fullPath = dirPath.endsWith('/')
+						? `${dirPath}${entry.name}`
+						: `${dirPath}/${entry.name}`;
+					let isDirectory = entry.isDirectory;
+					let isFile = !entry.isDirectory && !entry.isSymlink;
+					if (entry.isSymlink) {
+						const statResult = await statRemote(fullPath, sshConfig);
+						if (statResult.success && statResult.data) {
+							isDirectory = statResult.data.isDirectory;
+							isFile = !statResult.data.isDirectory;
+						} else {
+							// Broken symlink or inaccessible target: keep entry visible as symlink
+							isDirectory = false;
+							isFile = false;
+						}
+					}
+					return {
+						name: entry.name.normalize('NFC'),
+						isDirectory,
+						isFile,
+						...(entry.isSymlink ? { isSymlink: true } : {}),
+						// Preserve raw filesystem name in path for correct remote operations
+						path: fullPath,
+					};
+				})
+			);
 		}
 
 		// Local: use standard fs operations
 		const entries = await fs.readdir(dirPath, { withFileTypes: true });
-		// Convert Dirent objects to plain objects for IPC serialization
-		// Include full path for recursive directory scanning (e.g., document graph)
-		// Resolve symlinks via fs.stat() so symlinked dirs/files are properly classified
+		// Convert Dirent objects to plain objects for IPC serialization.
+		// Resolve symlinks via resolveDirentType so linked directories/files are not dropped.
+		// Broken symlinks are shown as files so they still appear in the browser.
+		// Include full path for recursive directory scanning (e.g., document graph).
 		return Promise.all(
 			entries.map(async (entry) => {
 				const fullPath = path.join(dirPath, entry.name);
 				const resolved = await resolveDirentType(entry, fullPath);
+				const isSymlink = entry.isSymbolicLink?.() === true;
 				return {
 					name: entry.name.normalize('NFC'),
 					isDirectory: resolved.isDirectory,
-					// Broken symlinks are shown as files so they still appear in the browser
 					isFile: resolved.isFile || resolved.isBrokenSymlink,
+					...(isSymlink ? { isSymlink: true } : {}),
+					// Preserve raw filesystem name in path for correct local operations
 					path: fullPath,
 				};
 			})
 		);
 	});
 
-	// Read file contents (supports SSH remote, with image base64 encoding)
-	ipcMain.handle('fs:readFile', async (_, filePath: string, sshRemoteId?: string) => {
-		try {
-			// SSH remote: dispatch to remote fs operations
-			if (sshRemoteId) {
-				const sshConfig = getSshRemoteById(sshRemoteId);
-				if (!sshConfig) {
-					throw new Error(`SSH remote not found: ${sshRemoteId}`);
+	// In-flight cancellable remote reads keyed by renderer-supplied requestId.
+	// Lets the renderer SIGTERM the underlying ssh+cat when the user closes
+	// the file tab mid-load (e.g. they double-clicked a huge file by mistake).
+	const inflightReads = new Map<string, AbortController>();
+
+	// Read file contents (supports SSH remote, with image base64 encoding).
+	// requestId is optional; when present, the read is cancellable via fs:cancelReadFile.
+	ipcMain.handle(
+		'fs:readFile',
+		async (_, filePath: string, sshRemoteId?: string, requestId?: string) => {
+			try {
+				// SSH remote: dispatch to remote fs operations
+				if (sshRemoteId) {
+					const sshConfig = getSshRemoteById(sshRemoteId);
+					if (!sshConfig) {
+						throw new Error(`SSH remote not found: ${sshRemoteId}`);
+					}
+					let result: Awaited<ReturnType<typeof readFileRemote>>;
+					if (requestId) {
+						const controller = new AbortController();
+						inflightReads.set(requestId, controller);
+						try {
+							result = await readFileRemoteAbortable(filePath, sshConfig, controller.signal);
+						} finally {
+							inflightReads.delete(requestId);
+						}
+						if (controller.signal.aborted) {
+							// Surface cancellation as null so the renderer can ignore
+							// the result without it being a generic error.
+							return null;
+						}
+					} else {
+						result = await readFileRemote(filePath, sshConfig);
+					}
+					if (!result.success) {
+						throw new Error(result.error || 'Failed to read remote file');
+					}
+					// For images over SSH, we'd need to base64 encode on remote and decode here
+					// For now, return raw content (text files work, binary images may have issues)
+					const ext = filePath.split('.').pop()?.toLowerCase();
+					const isImage = IMAGE_EXTENSIONS.includes(ext || '');
+					if (isImage) {
+						// The remote readFile returns raw bytes as string - convert to base64 data URL
+						const mimeType = ext === 'svg' ? 'image/svg+xml' : `image/${ext}`;
+						const base64 = Buffer.from(result.data!, 'binary').toString('base64');
+						return `data:${mimeType};base64,${base64}`;
+					}
+					return result.data!;
 				}
-				const result = await readFileRemote(filePath, sshConfig);
-				if (!result.success) {
-					throw new Error(result.error || 'Failed to read remote file');
-				}
-				// For images over SSH, we'd need to base64 encode on remote and decode here
-				// For now, return raw content (text files work, binary images may have issues)
+
+				// Local: use standard fs operations
+				// Check if file is an image
 				const ext = filePath.split('.').pop()?.toLowerCase();
 				const isImage = IMAGE_EXTENSIONS.includes(ext || '');
+
 				if (isImage) {
-					// The remote readFile returns raw bytes as string - convert to base64 data URL
+					// Read image as buffer and convert to base64 data URL
+					const buffer = await fs.readFile(filePath);
+					const base64 = buffer.toString('base64');
 					const mimeType = ext === 'svg' ? 'image/svg+xml' : `image/${ext}`;
-					const base64 = Buffer.from(result.data!, 'binary').toString('base64');
 					return `data:${mimeType};base64,${base64}`;
+				} else {
+					// Read text files as UTF-8
+					const content = await fs.readFile(filePath, 'utf-8');
+					return content;
 				}
-				return result.data!;
+			} catch (error: any) {
+				// Return null for missing files instead of throwing.
+				// Prevents noisy Electron IPC error logging when callers
+				// expect files that may not exist (e.g., .gitignore).
+				if (error?.code === 'ENOENT') {
+					return null;
+				}
+				// EISDIR happens when a caller passes a directory path (e.g., user
+				// clicks an entry that resolved to a folder). Treat like ENOENT —
+				// return null so the renderer can handle the absence cleanly instead
+				// of surfacing an unhandled IPC rejection. Fixes MAESTRO-JP.
+				if (error?.code === 'EISDIR') {
+					return null;
+				}
+				throw new Error(`Failed to read file: ${error}`);
 			}
+		}
+	);
 
-			// Local: use standard fs operations
-			// Check if file is an image
-			const ext = filePath.split('.').pop()?.toLowerCase();
-			const isImage = IMAGE_EXTENSIONS.includes(ext || '');
+	// Enumerate a remote directory tree in a single SSH round-trip.
+	// Replaces N-per-directory `ls` recursion with two batched `find` calls
+	// bundled into one SSH command. Used by the file explorer to load remote
+	// trees in 1–2 round-trips total instead of one per directory.
+	// SSH-only: local trees use direct fs recursion in the renderer.
+	ipcMain.handle(
+		'fs:listTreeRemote',
+		async (_, rootPath: string, sshRemoteId: string, options: ListTreeOptions) => {
+			const sshConfig = getSshRemoteById(sshRemoteId);
+			if (!sshConfig) {
+				throw new Error(`SSH remote not found: ${sshRemoteId}`);
+			}
+			const result = await listTreeRemote(rootPath, options, sshConfig);
+			if (!result.success) {
+				throw new Error(result.error || 'Failed to list remote tree');
+			}
+			// Normalize names to NFC to match the readDir handler's behavior
+			// (paths may contain composed/decomposed unicode on macOS remotes).
+			return {
+				directories: result.data!.directories.map((p) => p.normalize('NFC')),
+				files: result.data!.files.map((p) => p.normalize('NFC')),
+				truncated: result.data!.truncated,
+			};
+		}
+	);
 
-			if (isImage) {
-				// Read image as buffer and convert to base64 data URL
-				const buffer = await fs.readFile(filePath);
-				const base64 = buffer.toString('base64');
-				const mimeType = ext === 'svg' ? 'image/svg+xml' : `image/${ext}`;
-				return `data:${mimeType};base64,${base64}`;
-			} else {
-				// Read text files as UTF-8
-				const content = await fs.readFile(filePath, 'utf-8');
-				return content;
-			}
-		} catch (error: any) {
-			// Return null for missing files instead of throwing.
-			// Prevents noisy Electron IPC error logging when callers
-			// expect files that may not exist (e.g., .gitignore).
-			if (error?.code === 'ENOENT') {
-				return null;
-			}
-			// EISDIR happens when a caller passes a directory path (e.g., user
-			// clicks an entry that resolved to a folder). Treat like ENOENT —
-			// return null so the renderer can handle the absence cleanly instead
-			// of surfacing an unhandled IPC rejection. Fixes MAESTRO-JP.
-			if (error?.code === 'EISDIR') {
-				return null;
-			}
-			throw new Error(`Failed to read file: ${error}`);
+	// Cancel an in-flight remote file read by requestId.
+	// Aborts the SSH child process so we don't waste bandwidth on a file the
+	// user already closed. No-op if the requestId is unknown (read may have
+	// completed or never started).
+	ipcMain.handle('fs:cancelReadFile', (_, requestId: string) => {
+		const controller = inflightReads.get(requestId);
+		if (controller) {
+			controller.abort();
 		}
 	});
 
@@ -236,75 +332,98 @@ export function registerFilesystemHandlers(): void {
 	});
 
 	// Calculate total size of a directory recursively
-	// Respects the same ignore patterns as loadFileTree (node_modules, __pycache__)
-	ipcMain.handle('fs:directorySize', async (_, dirPath: string, sshRemoteId?: string) => {
-		// SSH remote: dispatch to remote fs operations
-		if (sshRemoteId) {
-			const sshConfig = getSshRemoteById(sshRemoteId);
-			if (!sshConfig) {
-				throw new Error(`SSH remote not found: ${sshRemoteId}`);
+	// Respects the same ignore patterns as loadFileTree
+	ipcMain.handle(
+		'fs:directorySize',
+		async (
+			_,
+			dirPath: string,
+			sshRemoteId?: string,
+			ignorePatterns?: string[],
+			honorGitignore?: boolean
+		) => {
+			// SSH remote: dispatch to remote fs operations
+			if (sshRemoteId) {
+				const sshConfig = getSshRemoteById(sshRemoteId);
+				if (!sshConfig) {
+					throw new Error(`SSH remote not found: ${sshRemoteId}`);
+				}
+				// Fetch size and counts in parallel for SSH remotes
+				const [sizeResult, countResult] = await Promise.all([
+					directorySizeRemote(dirPath, sshConfig),
+					countItemsRemote(dirPath, sshConfig),
+				]);
+				if (!sizeResult.success) {
+					throw new Error(sizeResult.error || 'Failed to get remote directory size');
+				}
+				return {
+					totalSize: sizeResult.data!,
+					fileCount: countResult.success ? countResult.data!.fileCount : 0,
+					folderCount: countResult.success ? countResult.data!.folderCount : 0,
+				};
 			}
-			// Fetch size and counts in parallel for SSH remotes
-			const [sizeResult, countResult] = await Promise.all([
-				directorySizeRemote(dirPath, sshConfig),
-				countItemsRemote(dirPath, sshConfig),
-			]);
-			if (!sizeResult.success) {
-				throw new Error(sizeResult.error || 'Failed to get remote directory size');
-			}
-			return {
-				totalSize: sizeResult.data!,
-				fileCount: countResult.success ? countResult.data!.fileCount : 0,
-				folderCount: countResult.success ? countResult.data!.folderCount : 0,
-			};
-		}
 
-		// Local: use standard fs operations
-		let totalSize = 0;
-		let fileCount = 0;
-		let folderCount = 0;
+			// Build effective ignore patterns (same logic as loadFileTree)
+			let effectivePatterns = ignorePatterns ?? LOCAL_IGNORE_DEFAULTS;
 
-		const calculateSize = async (currentPath: string, depth: number = 0): Promise<void> => {
-			// Limit recursion depth to match file tree loading
-			if (depth >= 10) return;
-
-			try {
-				const entries = await fs.readdir(currentPath, { withFileTypes: true });
-
-				for (const entry of entries) {
-					// Skip common ignore patterns (same as loadFileTree)
-					if (entry.name === 'node_modules' || entry.name === '__pycache__') {
-						continue;
+			if (honorGitignore) {
+				try {
+					const gitignorePath = path.join(dirPath, '.gitignore');
+					const content = await fs.readFile(gitignorePath, 'utf-8');
+					if (content) {
+						effectivePatterns = [...effectivePatterns, ...parseGitignoreContent(content)];
 					}
+				} catch {
+					// .gitignore may not exist or be readable — not an error
+				}
+			}
 
-					const fullPath = path.join(currentPath, entry.name);
+			// Local: use standard fs operations
+			let totalSize = 0;
+			let fileCount = 0;
+			let folderCount = 0;
 
-					if (entry.isDirectory()) {
-						folderCount++;
-						await calculateSize(fullPath, depth + 1);
-					} else if (entry.isFile()) {
-						fileCount++;
-						try {
-							const stats = await fs.stat(fullPath);
-							totalSize += stats.size;
-						} catch {
-							// Skip files we can't stat (permissions, etc.)
+			const calculateSize = async (currentPath: string, depth: number = 0): Promise<void> => {
+				// Limit recursion depth to match file tree loading
+				if (depth >= 10) return;
+
+				try {
+					const entries = await fs.readdir(currentPath, { withFileTypes: true });
+
+					for (const entry of entries) {
+						if (shouldIgnore(entry.name, effectivePatterns)) {
+							continue;
+						}
+
+						const fullPath = path.join(currentPath, entry.name);
+
+						if (entry.isDirectory()) {
+							folderCount++;
+							await calculateSize(fullPath, depth + 1);
+						} else if (entry.isFile()) {
+							fileCount++;
+							try {
+								const stats = await fs.stat(fullPath);
+								totalSize += stats.size;
+							} catch {
+								// Skip files we can't stat (permissions, etc.)
+							}
 						}
 					}
+				} catch {
+					// Skip directories we can't read
 				}
-			} catch {
-				// Skip directories we can't read
-			}
-		};
+			};
 
-		await calculateSize(dirPath);
+			await calculateSize(dirPath);
 
-		return {
-			totalSize,
-			fileCount,
-			folderCount,
-		};
-	});
+			return {
+				totalSize,
+				fileCount,
+				folderCount,
+			};
+		}
+	);
 
 	// Write content to file (supports SSH remote)
 	ipcMain.handle(
@@ -333,6 +452,67 @@ export function registerFilesystemHandlers(): void {
 		}
 	);
 
+	// Write a base64 data URL to disk as binary (supports SSH remote). Used by
+	// the image annotator's "save to file" flow, where the composited image is a
+	// `data:image/...;base64,...` URL that must be written as raw bytes (the
+	// plain `fs:writeFile` handler encodes content as UTF-8, which corrupts
+	// binary payloads).
+	ipcMain.handle(
+		'fs:writeImageFile',
+		async (_, filePath: string, dataUrl: string, sshRemoteId?: string) => {
+			try {
+				const commaIndex = dataUrl.indexOf(',');
+				const base64 =
+					commaIndex >= 0 && dataUrl.startsWith('data:') ? dataUrl.slice(commaIndex + 1) : dataUrl;
+				const buffer = Buffer.from(base64, 'base64');
+
+				// SSH remote: writeFileRemote accepts a Buffer and base64-encodes it
+				// for safe transfer, decoding on the remote side.
+				if (sshRemoteId) {
+					const sshConfig = getSshRemoteById(sshRemoteId);
+					if (!sshConfig) {
+						throw new Error(`SSH remote not found: ${sshRemoteId}`);
+					}
+					const result = await writeFileRemote(filePath, buffer, sshConfig);
+					if (!result.success) {
+						throw new Error(result.error || 'Failed to write remote file');
+					}
+					return { success: true };
+				}
+
+				await fs.writeFile(filePath, buffer);
+				return { success: true };
+			} catch (error) {
+				throw new Error(`Failed to write image file: ${error}`);
+			}
+		}
+	);
+
+	// Create a directory (supports SSH remote). Recursive so intermediate
+	// parents are created as needed.
+	ipcMain.handle('fs:mkdir', async (_, dirPath: string, sshRemoteId?: string) => {
+		try {
+			// SSH remote: dispatch to remote fs operations
+			if (sshRemoteId) {
+				const sshConfig = getSshRemoteById(sshRemoteId);
+				if (!sshConfig) {
+					throw new Error(`SSH remote not found: ${sshRemoteId}`);
+				}
+				const result = await mkdirRemote(dirPath, sshConfig, true);
+				if (!result.success) {
+					throw new Error(result.error || 'Failed to create remote directory');
+				}
+				return { success: true };
+			}
+
+			// Local: standard fs mkdir
+			await fs.mkdir(dirPath, { recursive: true });
+			return { success: true };
+		} catch (error) {
+			throw new Error(`Failed to create directory: ${error}`);
+		}
+	});
+
 	// Rename a file or folder (supports SSH remote)
 	ipcMain.handle('fs:rename', async (_, oldPath: string, newPath: string, sshRemoteId?: string) => {
 		try {
@@ -356,6 +536,29 @@ export function registerFilesystemHandlers(): void {
 			throw new Error(`Failed to rename: ${error}`);
 		}
 	});
+
+	// Copy a file or folder from an arbitrary source path into a destination path.
+	// Local only: used by drag-and-drop import of OS files/folders into the file
+	// tree. SSH remotes are intentionally unsupported (the source lives on the
+	// local machine, so there is nothing sensible to copy on the remote host).
+	ipcMain.handle(
+		'fs:copyPath',
+		async (_, sourcePath: string, destPath: string, options?: { overwrite?: boolean }) => {
+			try {
+				const overwrite = options?.overwrite ?? false;
+				// `recursive: true` copies folders wholesale; for plain files it is a no-op.
+				// `force`/`errorOnExist` encode the conflict decision the renderer already made.
+				await fs.cp(sourcePath, destPath, {
+					recursive: true,
+					force: overwrite,
+					errorOnExist: !overwrite,
+				});
+				return { success: true };
+			} catch (error) {
+				throw new Error(`Failed to copy: ${error}`);
+			}
+		}
+	);
 
 	// Delete a file or folder (with recursive option for folders, supports SSH remote)
 	ipcMain.handle(
@@ -470,6 +673,7 @@ export function registerFilesystemHandlers(): void {
 			const base64 = buffer.toString('base64');
 			return `data:${contentType};base64,${base64}`;
 		} catch (error) {
+			void captureException(error);
 			// Return null on failure - let caller handle gracefully
 			logger.warn(`Failed to fetch image from ${url}: ${error}`, 'fs:fetchImageAsBase64');
 			return null;

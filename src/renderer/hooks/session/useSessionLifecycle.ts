@@ -24,9 +24,34 @@ import { useGroupChatStore } from '../../stores/groupChatStore';
 import { useModalStore } from '../../stores/modalStore';
 import { useUIStore } from '../../stores/uiStore';
 import { notifyToast } from '../../stores/notificationStore';
-import { getActiveTab } from '../../utils/tabHelpers';
-import type { NavHistoryEntry } from './useNavigationHistory';
+import { getActiveTab, extractQuickTabName } from '../../utils/tabHelpers';
+import {
+	renameTerminalTab as renameTerminalTabHelper,
+	getTerminalSessionId,
+} from '../../utils/terminalTabHelpers';
+import type { NavHistoryEntry, NavTabKind } from './useNavigationHistory';
 import { captureException } from '../../utils/sentry';
+
+/**
+ * Resolve the active tab of a session into a breadcrumb descriptor (id + kind).
+ * Priority mirrors findActiveUnifiedTabIndex (terminal > file > browser > ai)
+ * so the breadcrumb tracks whichever tab the user actually sees.
+ */
+function resolveActiveNavTab(session: Session): { tabId?: string; tabKind?: NavTabKind } {
+	if (session.activeTerminalTabId) {
+		return { tabId: session.activeTerminalTabId, tabKind: 'terminal' };
+	}
+	if (session.activeFileTabId) {
+		return { tabId: session.activeFileTabId, tabKind: 'file' };
+	}
+	if (session.activeBrowserTabId) {
+		return { tabId: session.activeBrowserTabId, tabKind: 'browser' };
+	}
+	if (session.aiTabs?.length > 0) {
+		return { tabId: session.activeTabId, tabKind: 'ai' };
+	}
+	return {};
+}
 
 // ============================================================================
 // Dependencies interface
@@ -52,6 +77,7 @@ export interface SessionLifecycleReturn {
 		name: string,
 		toolType?: ToolType,
 		nudgeMessage?: string,
+		newSessionMessage?: string,
 		customPath?: string,
 		customArgs?: string,
 		customEnvVars?: Record<string, string>,
@@ -61,10 +87,16 @@ export interface SessionLifecycleReturn {
 			enabled: boolean;
 			remoteId: string | null;
 			workingDirOverride?: string;
-		}
+			syncHistory?: boolean;
+			shareHistoryToProjectDir?: boolean;
+		},
+		enableMaestroP?: boolean,
+		maestroPPath?: string
 	) => void;
 	/** Rename the currently-selected tab (persists to agent session storage + history) */
 	handleRenameTab: (newName: string) => void;
+	/** Auto-name the currently-selected tab: close modal, show spinner, generate name via agent */
+	handleAutoNameTab: () => void;
 	/** Delete a session: kill processes, clean up playbooks, optionally erase working dir */
 	performDeleteSession: (session: Session, eraseWorkingDirectory: boolean) => Promise<void>;
 	/** Show a confirmation modal with a message and callback */
@@ -112,6 +144,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 			name: string,
 			toolType?: ToolType,
 			nudgeMessage?: string,
+			newSessionMessage?: string,
 			customPath?: string,
 			customArgs?: string,
 			customEnvVars?: Record<string, string>,
@@ -121,7 +154,11 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 				enabled: boolean;
 				remoteId: string | null;
 				workingDirOverride?: string;
-			}
+				syncHistory?: boolean;
+				shareHistoryToProjectDir?: boolean;
+			},
+			enableMaestroP?: boolean,
+			maestroPPath?: string
 		) => {
 			useSessionStore.getState().setSessions((prev) =>
 				prev.map((s) => {
@@ -130,12 +167,15 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 					const updatedFields: Partial<Session> = {
 						name,
 						nudgeMessage,
+						newSessionMessage,
 						customPath,
 						customArgs,
 						customEnvVars,
 						customModel,
 						customContextWindow,
 						sessionSshRemoteConfig,
+						enableMaestroP,
+						maestroPPath,
 					};
 
 					// If provider changed, reset tabs and provider-specific config
@@ -165,6 +205,8 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 							customEnvVars: undefined,
 							customModel: undefined,
 							customContextWindow: undefined,
+							enableMaestroP: undefined,
+							maestroPPath: undefined,
 							// Reset file preview tabs and unified tab order
 							filePreviewTabs: [],
 							activeFileTabId: null,
@@ -192,6 +234,35 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 	const handleRenameTab = useCallback(
 		(newName: string) => {
 			if (!activeSession || !renameTabId) return;
+
+			// If this is a terminal tab, delegate to terminal tab rename helper
+			if (activeSession.terminalTabs?.some((t) => t.id === renameTabId)) {
+				useSessionStore
+					.getState()
+					.setSessions((prev) =>
+						prev.map((s) =>
+							s.id === activeSession.id ? renameTerminalTabHelper(s, renameTabId, newName) : s
+						)
+					);
+				return;
+			}
+
+			// If this is a browser tab, update its title directly
+			if (activeSession.browserTabs?.some((t) => t.id === renameTabId)) {
+				useSessionStore.getState().setSessions((prev) =>
+					prev.map((s) => {
+						if (s.id !== activeSession.id) return s;
+						return {
+							...s,
+							browserTabs: (s.browserTabs || []).map((t) =>
+								t.id === renameTabId ? { ...t, title: newName || t.url } : t
+							),
+						};
+					})
+				);
+				return;
+			}
+
 			useSessionStore.getState().setSessions((prev) =>
 				prev.map((s) => {
 					if (s.id !== activeSession.id) return s;
@@ -276,6 +347,115 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 		[activeSession, renameTabId]
 	);
 
+	const handleAutoNameTab = useCallback(() => {
+		if (!activeSession || !renameTabId) return;
+
+		const tab = activeSession.aiTabs.find((t) => t.id === renameTabId);
+		if (!tab || !tab.logs.length) return;
+
+		// Collect user messages (first ~2000 chars) for the naming prompt
+		const userMessages: string[] = [];
+		let totalLength = 0;
+		for (const entry of tab.logs) {
+			if (entry.source === 'user' && entry.text.trim()) {
+				const text = entry.text.trim();
+				if (totalLength + text.length > 2000) {
+					userMessages.push(text.substring(0, 2000 - totalLength));
+					break;
+				}
+				userMessages.push(text);
+				totalLength += text.length;
+			}
+		}
+		const summary = userMessages.join('\n\n');
+		if (!summary) return;
+
+		const sessionId = activeSession.id;
+		const tabId = renameTabId;
+
+		// Close the modal immediately
+		useModalStore.getState().closeModal('renameTab');
+
+		// Fast-path: try extracting a name from known patterns first
+		const quickName = extractQuickTabName(summary);
+		if (quickName) {
+			useSessionStore.getState().setSessions((prev) =>
+				prev.map((s) => {
+					if (s.id !== sessionId) return s;
+					return {
+						...s,
+						aiTabs: s.aiTabs.map((t) => (t.id === tabId ? { ...t, name: quickName } : t)),
+					};
+				})
+			);
+			return;
+		}
+
+		// Show spinner on the tab
+		useSessionStore.getState().setSessions((prev) =>
+			prev.map((s) => {
+				if (s.id !== sessionId) return s;
+				return {
+					...s,
+					aiTabs: s.aiTabs.map((t) => (t.id === tabId ? { ...t, isGeneratingName: true } : t)),
+				};
+			})
+		);
+
+		// Fire and forget — generate name via ephemeral agent
+		window.maestro.tabNaming
+			.generateTabName({
+				userMessage: summary,
+				agentType: activeSession.toolType,
+				cwd: activeSession.cwd,
+				sessionSshRemoteConfig: activeSession.sessionSshRemoteConfig,
+			})
+			.then((generatedName) => {
+				useSessionStore.getState().setSessions((prev) =>
+					prev.map((s) => {
+						if (s.id !== sessionId) return s;
+						return {
+							...s,
+							aiTabs: s.aiTabs.map((t) => {
+								if (t.id !== tabId) return t;
+								return {
+									...t,
+									isGeneratingName: false,
+									...(generatedName ? { name: generatedName } : {}),
+								};
+							}),
+						};
+					})
+				);
+
+				if (generatedName) {
+					window.maestro.logger.log(
+						'info',
+						`Auto tab named (manual): "${generatedName}"`,
+						'TabNaming',
+						{ tabId, sessionId, generatedName }
+					);
+				}
+			})
+			.catch((error) => {
+				window.maestro.logger.log('error', 'Auto tab naming (manual) failed', 'TabNaming', {
+					tabId,
+					sessionId,
+					error: String(error),
+				});
+				// Clear spinner on error
+				useSessionStore.getState().setSessions((prev) =>
+					prev.map((s) => {
+						if (s.id !== sessionId) return s;
+						return {
+							...s,
+							aiTabs: s.aiTabs.map((t) => (t.id === tabId ? { ...t, isGeneratingName: false } : t)),
+						};
+					})
+				);
+			});
+	}, [activeSession, renameTabId]);
+
 	const performDeleteSession = useCallback(
 		async (session: Session, eraseWorkingDirectory: boolean) => {
 			const id = session.id;
@@ -283,7 +463,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 			// Record session closure for Usage Dashboard (before cleanup)
 			window.maestro.stats.recordSessionClosed(id, Date.now());
 
-			// Kill both processes for this session
+			// Kill all processes for this session (AI + legacy terminal + terminal tabs)
 			try {
 				await window.maestro.process.kill(`${id}-ai`);
 			} catch (error) {
@@ -298,6 +478,17 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 				captureException(error, {
 					extra: { sessionId: id, operation: 'kill-terminal' },
 				});
+			}
+
+			// Kill terminal tab PTYs — each tab has its own PTY with ID {sessionId}-terminal-{tabId}
+			for (const tab of session.terminalTabs || []) {
+				try {
+					await window.maestro.process.kill(getTerminalSessionId(id, tab.id));
+				} catch (error) {
+					captureException(error, {
+						extra: { sessionId: id, tabId: tab.id, operation: 'kill-terminal-tab' },
+					});
+				}
 			}
 
 			// Delete associated playbooks
@@ -353,6 +544,11 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 	const toggleTabStar = useCallback(() => {
 		const session = selectActiveSession(useSessionStore.getState());
 		if (!session) return;
+		// Star toggle only applies when an AI tab is the visible view — not when a
+		// terminal, file preview, or browser tab is focused.
+		if (session.inputMode !== 'ai' || session.activeFileTabId || session.activeBrowserTabId) {
+			return;
+		}
 		const tab = getActiveTab(session);
 		if (!tab) return;
 
@@ -421,10 +617,15 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 		const { showUnreadOnly } = useUIStore.getState();
 
 		if (!showUnreadOnly) {
-			// Entering filter mode: save current active tab
-			useUIStore.getState().setPreFilterActiveTabId(session?.activeTabId || null);
+			// Entering filter mode: save current active tab (only if in AI mode —
+			// if the user is on a terminal/file tab we shouldn't force an AI restore on exit)
+			const wasAiMode =
+				session?.inputMode === 'ai' && !session?.activeTerminalTabId && !session?.activeFileTabId;
+			useUIStore
+				.getState()
+				.setPreFilterActiveTabId(wasAiMode ? session?.activeTabId || null : null);
 		} else {
-			// Exiting filter mode: restore previous active tab if it still exists
+			// Exiting filter mode: restore previous active AI tab if one was saved and still exists
 			const preFilterActiveTabId = useUIStore.getState().preFilterActiveTabId;
 			if (preFilterActiveTabId && session) {
 				const tabStillExists = session.aiTabs.some((t) => t.id === preFilterActiveTabId);
@@ -432,12 +633,18 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 					useSessionStore.getState().setSessions((prev) =>
 						prev.map((s) => {
 							if (s.id !== session.id) return s;
-							return { ...s, activeTabId: preFilterActiveTabId };
+							return {
+								...s,
+								activeTabId: preFilterActiveTabId,
+								activeFileTabId: null,
+								activeTerminalTabId: null,
+								inputMode: 'ai' as const,
+							};
 						})
 					);
 				}
-				useUIStore.getState().setPreFilterActiveTabId(null);
 			}
+			useUIStore.getState().setPreFilterActiveTabId(null);
 		}
 		useUIStore.getState().setShowUnreadOnly(!showUnreadOnly);
 	}, []);
@@ -461,17 +668,18 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 		if (activeGroupChatId) {
 			pushNavigation({ groupChatId: activeGroupChatId });
 		} else if (activeSession) {
-			pushNavigation({
-				sessionId: activeSession.id,
-				tabId:
-					activeSession.inputMode === 'ai' && activeSession.aiTabs?.length > 0
-						? activeSession.activeTabId
-						: undefined,
-			});
+			// Resolve the active tab across all kinds using the same priority as
+			// findActiveUnifiedTabIndex (terminal > file > browser > ai) so the
+			// breadcrumb tracks whichever tab the user actually sees.
+			const { tabId, tabKind } = resolveActiveNavTab(activeSession);
+			pushNavigation({ sessionId: activeSession.id, tabId, tabKind });
 		}
 	}, [
 		activeSessionId,
 		activeSession?.activeTabId,
+		activeSession?.activeFileTabId,
+		activeSession?.activeBrowserTabId,
+		activeSession?.activeTerminalTabId,
 		activeSession?.inputMode,
 		activeSession?.aiTabs?.length,
 		activeGroupChatId,
@@ -480,6 +688,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 	return {
 		handleSaveEditAgent,
 		handleRenameTab,
+		handleAutoNameTab,
 		performDeleteSession,
 		showConfirmation,
 		toggleTabStar,

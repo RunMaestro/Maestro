@@ -7,6 +7,7 @@
 import type { ProcessManager } from '../process-manager';
 import { captureException } from '../utils/sentry';
 import { GROUP_CHAT_PREFIX, type ProcessListenerDependencies } from './types';
+import { extractCopilotUsageFromDisk } from '../group-chat/copilot-usage-extractor';
 
 /**
  * Sets up the exit listener for process termination.
@@ -35,6 +36,10 @@ export function setupExitListener(
 		| 'debugLog'
 		| 'logger'
 		| 'patterns'
+		| 'getCueEngine'
+		| 'isCueEnabled'
+		| 'getSshRemoteByName'
+		| 'getAgentContextWindow'
 	>
 ): void {
 	const {
@@ -52,8 +57,49 @@ export function setupExitListener(
 		debugLog,
 		logger,
 		patterns,
+		getCueEngine,
+		isCueEnabled,
+		getSshRemoteByName,
+		getAgentContextWindow,
 	} = deps;
 	const { REGEX_MODERATOR_SESSION } = patterns;
+
+	async function refreshCopilotUsageAfterExit(
+		groupChatId: string,
+		participantName: string
+	): Promise<void> {
+		try {
+			const chat = await groupChatStorage.loadGroupChat(groupChatId);
+			const participant = chat?.participants.find((p) => p.name === participantName);
+			if (!participant || participant.agentId !== 'copilot-cli') return;
+			if (!participant.agentSessionId) return;
+
+			const sshRemote = participant.sshRemoteName
+				? (getSshRemoteByName?.(participant.sshRemoteName) ?? null)
+				: null;
+			const contextWindow = getAgentContextWindow?.(participant.agentId) ?? 0;
+			if (!contextWindow) return;
+
+			const usage = await extractCopilotUsageFromDisk(
+				participant.agentSessionId,
+				contextWindow,
+				sshRemote
+			);
+			if (!usage) return;
+
+			const updated = await groupChatStorage.updateParticipant(groupChatId, participantName, {
+				contextUsage: usage.contextUsage,
+				tokenCount: usage.tokenCount,
+			});
+			groupChatEmitters.emitParticipantsChanged?.(groupChatId, updated.participants);
+		} catch (err) {
+			logger.warn('[GroupChat] Failed to refresh copilot usage from disk', 'ProcessListener', {
+				error: String(err),
+				groupChatId,
+				participantName,
+			});
+		}
+	}
 
 	processManager.on('exit', (sessionId: string, code: number) => {
 		// Remove power block reason for this session
@@ -80,6 +126,10 @@ export function setupExitListener(
 			logger.debug(`[GroupChat] Moderator exit: groupChatId=${groupChatId}`, 'ProcessListener', {
 				sessionId,
 			});
+
+			// Clear the moderator timeout since the process has exited
+			groupChatRouter.clearModeratorResponseTimeout(groupChatId);
+
 			// Route the buffered output now that process is complete
 			const bufferedOutput = outputBuffer.getGroupChatBufferedOutput(sessionId);
 			debugLog('GroupChat:Debug', ` Buffered output length: ${bufferedOutput?.length ?? 0}`);
@@ -93,12 +143,18 @@ export function setupExitListener(
 					'ProcessListener',
 					{ groupChatId }
 				);
+				// Process the moderator output asynchronously.
+				// routeModeratorResponse handles its own state transitions:
+				// - Sets 'agent-working' if @mentions spawn participants
+				// - Sets 'idle' if no participants were spawned (final response)
+				// We only set 'idle' here for error/empty paths where routing doesn't run.
 				void (async () => {
 					// Helper to load chat with retry for transient failures
 					const loadChatWithRetry = async () => {
 						try {
 							return await groupChatStorage.loadGroupChat(groupChatId);
 						} catch (firstErr) {
+							void captureException(firstErr);
 							debugLog('GroupChat:Debug', ` First chat load failed, retrying after 100ms...`);
 							logger.warn('[GroupChat] Chat load failed, retrying once', 'ProcessListener', {
 								error: String(firstErr),
@@ -132,22 +188,14 @@ export function setupExitListener(
 							debugLog('GroupChat:Debug', ` Read-only state: ${readOnly}`);
 							const pm = getProcessManager();
 							const ad = getAgentDetector();
-							groupChatRouter
-								.routeModeratorResponse(
-									groupChatId,
-									parsedText,
-									pm ?? undefined,
-									ad ?? undefined,
-									readOnly
-								)
-								.catch((err) => {
-									debugLog('GroupChat:Debug', ` ERROR routing moderator response:`, err);
-									logger.error(
-										'[GroupChat] Failed to route moderator response',
-										'ProcessListener',
-										{ error: String(err) }
-									);
-								});
+							// Await routing — it manages state transitions internally
+							await groupChatRouter.routeModeratorResponse(
+								groupChatId,
+								parsedText,
+								pm ?? undefined,
+								ad ?? undefined,
+								readOnly
+							);
 						} else {
 							debugLog('GroupChat:Debug', ` WARNING: Parsed text is empty!`);
 							logger.warn(
@@ -155,24 +203,35 @@ export function setupExitListener(
 								'ProcessListener',
 								{ groupChatId, bufferedLength: bufferedOutput.length }
 							);
+							groupChatEmitters.emitMessage?.(groupChatId, {
+								timestamp: new Date().toISOString(),
+								from: 'system',
+								content: `⚠️ Moderator produced no visible output. You can send another message to retry.`,
+							});
+							groupChatEmitters.emitStateChange?.(groupChatId, 'idle');
+							debugLog('GroupChat:Debug', ` Emitted state change: idle (empty output)`);
 						}
 					} catch (err) {
-						debugLog('GroupChat:Debug', ` ERROR loading chat after retry:`, err);
-						// Log what we would have tried to route for debugging
+						debugLog('GroupChat:Debug', ` ERROR in moderator response processing:`, err);
 						const parsedTextForLog = outputParser.extractTextFromStreamJson(bufferedOutput);
-						logger.error(
-							'[GroupChat] Failed to load chat for moderator output parsing after retry',
-							'ProcessListener',
-							{
-								error: String(err),
-								groupChatId,
-								bufferedLength: bufferedOutput.length,
-								parsedTextPreview: parsedTextForLog.substring(0, 500),
-								parsedTextLength: parsedTextForLog.length,
-							}
-						);
-						// Do NOT attempt to route the response if chat load still fails after retry
-						// The failure indicates a persistent issue that should be investigated.
+						logger.error('[GroupChat] Failed to process moderator response', 'ProcessListener', {
+							error: String(err),
+							groupChatId,
+							bufferedLength: bufferedOutput.length,
+							parsedTextPreview: parsedTextForLog.substring(0, 500),
+							parsedTextLength: parsedTextForLog.length,
+						});
+						captureException(err, {
+							operation: 'groupChat:processModeratorExit',
+							groupChatId,
+						});
+						groupChatEmitters.emitMessage?.(groupChatId, {
+							timestamp: new Date().toISOString(),
+							from: 'system',
+							content: `⚠️ Failed to process moderator response. You can send another message to retry.`,
+						});
+						groupChatEmitters.emitStateChange?.(groupChatId, 'idle');
+						debugLog('GroupChat:Debug', ` Emitted state change: idle (error recovery)`);
 					}
 				})().finally(() => {
 					outputBuffer.clearGroupChatBuffer(sessionId);
@@ -184,9 +243,14 @@ export function setupExitListener(
 					groupChatId,
 					sessionId,
 				});
+				groupChatEmitters.emitMessage?.(groupChatId, {
+					timestamp: new Date().toISOString(),
+					from: 'system',
+					content: `⚠️ Moderator exited without producing output. You can send another message to retry.`,
+				});
+				groupChatEmitters.emitStateChange?.(groupChatId, 'idle');
+				debugLog('GroupChat:Debug', ` Emitted state change: idle`);
 			}
-			groupChatEmitters.emitStateChange?.(groupChatId, 'idle');
-			debugLog('GroupChat:Debug', ` Emitted state change: idle`);
 			debugLog('GroupChat:Debug', ` =============================================`);
 			// Don't send to regular exit handler
 			return;
@@ -215,6 +279,13 @@ export function setupExitListener(
 			groupChatEmitters.emitParticipantState?.(groupChatId, participantName, 'idle');
 			groupChatRouter.clearActiveParticipantTaskSession(groupChatId, participantName);
 			debugLog('GroupChat:Debug', ` Emitted participant state: idle`);
+
+			// Refresh on-disk usage for copilot-cli participants. Copilot in batch
+			// mode only writes the session.shutdown event (the sole carrier of
+			// per-turn token counts) to events.jsonl on disk — it never appears
+			// on stdout, so the streaming usage path can't see it. Without this,
+			// the participant's context gauge stays at 0% forever.
+			void refreshCopilotUsageAfterExit(groupChatId, participantName);
 
 			// Route the buffered output now that process is complete
 			// IMPORTANT: We must wait for the response to be logged before triggering synthesis
@@ -323,6 +394,7 @@ export function setupExitListener(
 								);
 								// Don't mark as responded yet - the recovery spawn will complete and trigger this
 							} catch (respawnErr) {
+								void captureException(respawnErr);
 								debugLog('GroupChat:Debug', ` Failed to respawn ${participantName}:`, respawnErr);
 								logger.error(
 									'[GroupChat] Failed to respawn participant for recovery',
@@ -387,6 +459,7 @@ export function setupExitListener(
 							markAndMaybeSynthesize();
 						}
 					} catch (err) {
+						void captureException(err);
 						debugLog('GroupChat:Debug', ` ERROR loading chat for participant:`, err);
 						logger.error(
 							'[GroupChat] Failed to load chat for participant output parsing',
@@ -410,6 +483,7 @@ export function setupExitListener(
 								markAndMaybeSynthesize();
 							}
 						} catch (routeErr) {
+							void captureException(routeErr);
 							debugLog('GroupChat:Debug', ` ERROR routing agent response (fallback):`, routeErr);
 							logger.error('[GroupChat] Failed to route agent response', 'ProcessListener', {
 								error: String(routeErr),
@@ -439,6 +513,27 @@ export function setupExitListener(
 			return;
 		}
 
+		// CRITICAL: group-chat domain containment. If we got here with a sessionId
+		// that starts with GROUP_CHAT_PREFIX, it means neither the moderator
+		// branch nor the participant branch recognized it (they both `return`
+		// after handling). Dropping here prevents group-chat exits from leaking
+		// into:
+		//   - the regular renderer channel via process:exit
+		//   - the web broadcast path (which would misroute to session clients)
+		//   - Cue's agent.completed subscriptions (which would fire spuriously
+		//     on every group-chat turn, since group-chat agents are driven by
+		//     the router, not the user's pipeline)
+		// We do not rely on early-return ordering of the branches above — this
+		// guard is load-bearing and must stay here.
+		if (isGroupChatSession) {
+			logger.warn(
+				'[GroupChat] Dropping unrecognized group-chat session exit (containment guard)',
+				'ProcessListener',
+				{ sessionId, exitCode: code }
+			);
+			return;
+		}
+
 		safeSend('process:exit', sessionId, code);
 
 		// Broadcast exit to web clients
@@ -452,6 +547,18 @@ export function setupExitListener(
 				exitCode: code,
 				timestamp: Date.now(),
 			});
+		}
+
+		// Notify Cue engine that this agent session has completed.
+		// This triggers agent.completed subscriptions for completion chains.
+		if (isCueEnabled?.() && getCueEngine) {
+			const cueEngine = getCueEngine();
+			if (cueEngine?.hasCompletionSubscribers(sessionId)) {
+				cueEngine.notifyAgentCompleted(sessionId, {
+					status: code === 0 ? 'completed' : 'failed',
+					exitCode: code,
+				});
+			}
 		}
 	});
 }

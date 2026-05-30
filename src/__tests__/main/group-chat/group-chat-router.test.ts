@@ -46,15 +46,26 @@ vi.mock('../../../main/utils/ssh-spawn-wrapper', () => ({
 	wrapSpawnWithSsh: (...args: unknown[]) => mockWrapSpawnWithSsh(...args),
 }));
 
-// Mock stores/getters: router reads global shellEnvVars via getSettingsStore().
-// The mock is driven by `mockedShellEnvVars` so individual tests can assert the
-// value actually flows through to processManager.spawn() and (for SSH) into
-// wrapSpawnWithSsh's customEnvVars input.
-let mockedShellEnvVars: Record<string, string> = {};
-vi.mock('../../../main/stores/getters', () => ({
-	getSettingsStore: () => ({
-		get: (key: string, defaultValue: unknown) =>
-			key === 'shellEnvVars' ? mockedShellEnvVars : defaultValue,
+const mockCaptureException = vi.fn();
+vi.mock('../../../main/utils/sentry', () => ({
+	captureException: (...args: unknown[]) => mockCaptureException(...args),
+}));
+
+vi.mock('../../../main/prompt-manager', () => ({
+	getPrompt: vi.fn((id: string) => {
+		const fs = require('fs');
+		const path = require('path');
+		const promptsDir = path.resolve(__dirname, '..', '..', '..', '..', 'src', 'prompts');
+		const filenameMap: Record<string, string> = {
+			'group-chat-participant': 'group-chat-participant.md',
+			'group-chat-participant-request': 'group-chat-participant-request.md',
+			'group-chat-participant-continuation': 'group-chat-participant-continuation.md',
+			'group-chat-moderator-system': 'group-chat-moderator-system.md',
+			'group-chat-moderator-synthesis': 'group-chat-moderator-synthesis.md',
+		};
+		const filename = filenameMap[id];
+		if (!filename) throw new Error(`Unknown prompt ID in test mock: ${id}`);
+		return fs.readFileSync(path.join(promptsDir, filename), 'utf-8');
 	}),
 }));
 
@@ -68,7 +79,7 @@ import {
 	getGroupChatReadOnlyState,
 	setGetSessionsCallback,
 	setSshStore,
-	type SessionInfo,
+	type GroupChatSessionInfo,
 } from '../../../main/group-chat/group-chat-router';
 import {
 	spawnModerator,
@@ -105,9 +116,6 @@ describe('group-chat-router', () => {
 
 		// Set the mock userData path to our test directory
 		mockUserDataPath = testDir;
-
-		// Reset the global-settings shell env mock between tests
-		mockedShellEnvVars = {};
 
 		// Create a fresh mock for each test
 		mockProcessManager = {
@@ -593,10 +601,10 @@ describe('group-chat-router', () => {
 			);
 		});
 
-		it('throws for non-existent chat', async () => {
+		it('is a no-op for non-existent chat (benign race on moderator exit)', async () => {
 			await expect(
 				routeModeratorResponse('non-existent-id', 'Hello', mockProcessManager)
-			).rejects.toThrow(/not found/i);
+			).resolves.toBeUndefined();
 		});
 
 		it('works without process manager (log only)', async () => {
@@ -858,6 +866,30 @@ describe('group-chat-router', () => {
 			);
 			expect(participantSpawns).toHaveLength(1);
 		});
+
+		it('does not report auto-add races after the moderator has stopped', async () => {
+			const chat = await createTestChatWithModerator('Auto Add Stopped Moderator Test');
+			clearAllModeratorSessions();
+			mockCaptureException.mockClear();
+			setGetSessionsCallback(() => [
+				{
+					id: 'session-client',
+					name: 'Client',
+					toolType: 'claude-code',
+					cwd: '/tmp/project',
+				},
+			]);
+
+			await routeModeratorResponse(
+				chat.id,
+				'@Client: Please create the requested file',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			expect(mockCaptureException).not.toHaveBeenCalled();
+			expect((await loadGroupChat(chat.id))?.participants).toEqual([]);
+		});
 	});
 
 	// ===========================================================================
@@ -960,7 +992,7 @@ describe('group-chat-router', () => {
 			const chat = await createTestChatWithModerator('SSH User Mention Test');
 
 			// Set up a session with SSH config that the router can discover
-			const sshSession: SessionInfo = {
+			const sshSession: GroupChatSessionInfo = {
 				id: 'ses-ssh-1',
 				name: 'RemoteAgent',
 				toolType: 'claude-code',
@@ -995,7 +1027,7 @@ describe('group-chat-router', () => {
 			const chat = await createTestChatWithModerator('SSH Moderator Mention Test');
 
 			// Set up session with SSH config
-			const sshSession: SessionInfo = {
+			const sshSession: GroupChatSessionInfo = {
 				id: 'ses-ssh-2',
 				name: 'SSHWorker',
 				toolType: 'claude-code',
@@ -1044,7 +1076,7 @@ describe('group-chat-router', () => {
 			const chat = await createTestChatWithModerator('No SSH Test');
 
 			// Session without SSH config
-			const localSession: SessionInfo = {
+			const localSession: GroupChatSessionInfo = {
 				id: 'ses-local-1',
 				name: 'LocalAgent',
 				toolType: 'claude-code',
@@ -1062,132 +1094,6 @@ describe('group-chat-router', () => {
 
 			// SSH wrapper should NOT be called for local sessions
 			expect(mockWrapSpawnWithSsh).not.toHaveBeenCalled();
-		});
-	});
-
-	// ===========================================================================
-	// Global shell env vars from Settings → Shell Configuration must flow into
-	// moderator / participant spawns for the local path, and must be merged into
-	// customEnvVars (per-agent takes precedence) for the SSH path so they reach
-	// the remote agent via the SSH stdin script.
-	// ===========================================================================
-	describe('global shell env vars forwarded to spawns', () => {
-		it('moderator spawn receives globally-configured shellEnvVars', async () => {
-			mockedShellEnvVars = { ANTHROPIC_API_KEY: 'sentinel-moderator-key' };
-			const chat = await createTestChatWithModerator('Moderator ShellEnv Test');
-
-			await routeUserMessage(chat.id, 'Hello', mockProcessManager, mockAgentDetector);
-
-			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
-				expect.objectContaining({
-					shellEnvVars: { ANTHROPIC_API_KEY: 'sentinel-moderator-key' },
-				})
-			);
-		});
-
-		it('participant spawn receives globally-configured shellEnvVars', async () => {
-			mockedShellEnvVars = { ANTHROPIC_API_KEY: 'sentinel-participant-key' };
-			const chat = await createTestChatWithModerator('Participant ShellEnv Test');
-			await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
-
-			mockProcessManager.spawn.mockClear();
-
-			await routeModeratorResponse(
-				chat.id,
-				'@Client please help',
-				mockProcessManager,
-				mockAgentDetector
-			);
-
-			const participantSpawn = mockProcessManager.spawn.mock.calls.find((call) =>
-				call[0].prompt?.includes('please help')
-			);
-			expect(participantSpawn).toBeDefined();
-			expect(participantSpawn![0]).toEqual(
-				expect.objectContaining({
-					shellEnvVars: { ANTHROPIC_API_KEY: 'sentinel-participant-key' },
-				})
-			);
-		});
-
-		it('SSH participant spawn merges shellEnvVars into customEnvVars with per-agent precedence', async () => {
-			// SSH wrapper strips customEnvVars after embedding them into the remote script,
-			// so assertions target the INPUT to wrapSpawnWithSsh — that's where globals must land.
-			mockedShellEnvVars = {
-				ANTHROPIC_API_KEY: 'sentinel-global-key',
-				GLOBAL_ONLY: 'global-value',
-			};
-
-			mockWrapSpawnWithSsh.mockResolvedValue({
-				command: 'ssh',
-				args: ['user@pedtome.local', 'claude', '--print'],
-				cwd: '/home/user/project',
-				prompt: 'test prompt',
-				customEnvVars: undefined,
-				sshRemoteUsed: { name: 'PedTome' },
-			});
-			const mockSshStore = {
-				getSshRemotes: vi
-					.fn()
-					.mockReturnValue([
-						{ id: 'remote-1', name: 'PedTome', host: 'pedtome.local', user: 'user' },
-					]),
-			};
-			const sshRemoteConfig = {
-				enabled: true,
-				remoteId: 'remote-1',
-				workingDirOverride: '/home/user/project',
-			};
-
-			const chat = await createTestChatWithModerator('SSH Participant ShellEnv Test');
-
-			// Session-level override: should win over the global sentinel for the same key.
-			const sshSession: SessionInfo = {
-				id: 'ses-ssh-shellenv',
-				name: 'SSHWorker',
-				toolType: 'claude-code',
-				cwd: '/home/user/project',
-				sshRemoteName: 'PedTome',
-				sshRemoteConfig,
-				customEnvVars: { ANTHROPIC_API_KEY: 'per-agent-override' },
-			};
-			setGetSessionsCallback(() => [sshSession]);
-			setSshStore(mockSshStore);
-
-			await addParticipant(
-				chat.id,
-				'SSHWorker',
-				'claude-code',
-				mockProcessManager,
-				'/home/user/project',
-				mockAgentDetector,
-				{},
-				undefined,
-				{ sshRemoteName: 'PedTome', sshRemoteConfig },
-				mockSshStore
-			);
-
-			mockWrapSpawnWithSsh.mockClear();
-
-			await routeModeratorResponse(
-				chat.id,
-				'@SSHWorker implement the feature',
-				mockProcessManager,
-				mockAgentDetector
-			);
-
-			expect(mockWrapSpawnWithSsh).toHaveBeenCalledWith(
-				expect.objectContaining({
-					customEnvVars: {
-						GLOBAL_ONLY: 'global-value',
-						ANTHROPIC_API_KEY: 'per-agent-override',
-					},
-				}),
-				sshRemoteConfig,
-				mockSshStore
-			);
-
-			mockWrapSpawnWithSsh.mockReset();
 		});
 	});
 });

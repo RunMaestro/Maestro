@@ -54,7 +54,7 @@ export interface UseFileExplorerEffectsDeps {
 			sshRemoteId?: string;
 			lastModified?: number;
 		},
-		options?: { openInNewTab?: boolean }
+		options?: { openInNewTab?: boolean; targetSessionId?: string }
 	) => void;
 }
 
@@ -70,6 +70,34 @@ export interface UseFileExplorerEffectsReturn {
 		relativePath: string,
 		options?: { openInNewTab?: boolean }
 	) => Promise<void>;
+}
+
+function stripLineColumnSuffix(filePath: string): string {
+	return filePath.replace(/:(\d+)(?::\d+)?$/, '');
+}
+
+function isAbsoluteFilePath(filePath: string): boolean {
+	return (
+		filePath.startsWith('/') || /^[A-Za-z]:[\\/]/.test(filePath) || filePath.startsWith('\\\\')
+	);
+}
+
+function joinFilePath(rootPath: string, relativePath: string): string {
+	const root = rootPath.replace(/[\\/]+$/, '');
+	const child = relativePath.replace(/^[\\/]+/, '');
+	return `${root}/${child}`;
+}
+
+function resolveClickedFilePath(projectRoot: string, fileReference: string): string {
+	const normalizedReference = stripLineColumnSuffix(fileReference.trim());
+	if (isAbsoluteFilePath(normalizedReference)) {
+		return normalizedReference;
+	}
+	return joinFilePath(projectRoot, normalizedReference);
+}
+
+function getFilename(filePath: string): string {
+	return filePath.split(/[\\/]/).pop() || filePath;
 }
 
 // ============================================================================
@@ -112,6 +140,11 @@ export function useFileExplorerEffects(
 		[]
 	);
 	const setFlatFileList = useMemo(() => useFileExplorerStore.getState().setFlatFileList, []);
+	const setSelectedPaths = useMemo(() => useFileExplorerStore.getState().setSelectedPaths, []);
+	const setSelectionAnchorIndex = useMemo(
+		() => useFileExplorerStore.getState().setSelectionAnchorIndex,
+		[]
+	);
 
 	const { hasOpenModal } = useLayerStack();
 
@@ -129,7 +162,8 @@ export function useFileExplorerEffects(
 		async (relativePath: string, options?: { openInNewTab?: boolean }) => {
 			const currentSession = sessionsRef.current.find((s) => s.id === activeSessionIdRef.current);
 			if (!currentSession) return;
-			const filename = relativePath.split('/').pop() || relativePath;
+			const fullPath = resolveClickedFilePath(currentSession.fullPath, relativePath);
+			const filename = getFilename(fullPath);
 
 			// Get SSH remote ID
 			const sshRemoteId =
@@ -137,13 +171,11 @@ export function useFileExplorerEffects(
 
 			// Check if file should be opened externally (PDF, etc.)
 			if (!sshRemoteId && shouldOpenExternally(filename)) {
-				const fullPath = `${currentSession.fullPath}/${relativePath}`;
 				window.maestro.shell.openPath(fullPath);
 				return;
 			}
 
 			try {
-				const fullPath = `${currentSession.fullPath}/${relativePath}`;
 				// Fetch content and stat in parallel for efficiency
 				const [content, stat] = await Promise.all([
 					window.maestro.fs.readFile(fullPath, sshRemoteId),
@@ -172,7 +204,7 @@ export function useFileExplorerEffects(
 			} catch (error) {
 				captureException(error, {
 					extra: {
-						fullPath: `${currentSession.fullPath}/${relativePath}`,
+						fullPath,
 						filename,
 						sshRemoteId,
 						operation: 'file-open',
@@ -314,35 +346,82 @@ export function useFileExplorerEffects(
 
 			const expandedFolders = new Set(activeSession?.fileExplorerExpanded || []);
 
+			// Collapse the multi-selection and re-anchor at `index`. Called by every
+			// non-extending move (plain/Cmd/Option arrows, ArrowLeft-to-parent) so the
+			// next Shift+Arrow starts a fresh range from where the cursor now sits.
+			const reanchorTo = (index: number) => {
+				setSelectionAnchorIndex(index);
+				if (useFileExplorerStore.getState().selectedPaths.size > 0) {
+					setSelectedPaths(new Set());
+				}
+			};
+
 			// Cmd+Arrow: jump to top/bottom
 			if ((e.metaKey || e.ctrlKey) && e.key === 'ArrowUp') {
 				e.preventDefault();
 				fileTreeKeyboardNavRef.current = true;
 				setSelectedFileIndex(0);
+				reanchorTo(0);
 			} else if ((e.metaKey || e.ctrlKey) && e.key === 'ArrowDown') {
 				e.preventDefault();
 				fileTreeKeyboardNavRef.current = true;
-				setSelectedFileIndex(flatFileList.length - 1);
+				const last = flatFileList.length - 1;
+				setSelectedFileIndex(last);
+				reanchorTo(last);
+			}
+			// Shift+Arrow: extend the multi-selection by one row (Finder/Explorer
+			// range select). The anchor is the row focused when the extension began;
+			// the cursor (selectedFileIndex) moves and the range [anchor, cursor] is
+			// selected. Non-extending moves above re-anchor, so each Shift run pivots
+			// from the cursor's resting position.
+			else if (e.shiftKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+				e.preventDefault();
+				fileTreeKeyboardNavRef.current = true;
+				const len = flatFileList.length;
+				const storedAnchor = useFileExplorerStore.getState().selectionAnchorIndex;
+				const anchor = storedAnchor >= 0 && storedAnchor < len ? storedAnchor : selectedFileIndex;
+				if (anchor !== storedAnchor) setSelectionAnchorIndex(anchor);
+				const cursor = Math.max(
+					0,
+					Math.min(len - 1, selectedFileIndex + (e.key === 'ArrowDown' ? 1 : -1))
+				);
+				setSelectedFileIndex(cursor);
+				const start = Math.min(anchor, cursor);
+				const end = Math.max(anchor, cursor);
+				const next = new Set<string>();
+				for (let i = start; i <= end; i++) {
+					const item = flatFileList[i];
+					if (item) next.add(item.fullPath);
+				}
+				setSelectedPaths(next);
 			}
 			// Option+Arrow: page up/down (10 items)
 			else if (e.altKey && e.key === 'ArrowUp') {
 				e.preventDefault();
 				fileTreeKeyboardNavRef.current = true;
-				setSelectedFileIndex((prev: number) => Math.max(0, prev - 10));
+				const next = Math.max(0, selectedFileIndex - 10);
+				setSelectedFileIndex(next);
+				reanchorTo(next);
 			} else if (e.altKey && e.key === 'ArrowDown') {
 				e.preventDefault();
 				fileTreeKeyboardNavRef.current = true;
-				setSelectedFileIndex((prev: number) => Math.min(flatFileList.length - 1, prev + 10));
+				const next = Math.min(flatFileList.length - 1, selectedFileIndex + 10);
+				setSelectedFileIndex(next);
+				reanchorTo(next);
 			}
 			// Regular Arrow: move one item
 			else if (e.key === 'ArrowUp') {
 				e.preventDefault();
 				fileTreeKeyboardNavRef.current = true;
-				setSelectedFileIndex((prev: number) => Math.max(0, prev - 1));
+				const next = Math.max(0, selectedFileIndex - 1);
+				setSelectedFileIndex(next);
+				reanchorTo(next);
 			} else if (e.key === 'ArrowDown') {
 				e.preventDefault();
 				fileTreeKeyboardNavRef.current = true;
-				setSelectedFileIndex((prev: number) => Math.min(flatFileList.length - 1, prev + 1));
+				const next = Math.min(flatFileList.length - 1, selectedFileIndex + 1);
+				setSelectedFileIndex(next);
+				reanchorTo(next);
 			} else if (e.key === 'ArrowLeft') {
 				e.preventDefault();
 				const selectedItem = flatFileList[selectedFileIndex];
@@ -359,6 +438,7 @@ export function useFileExplorerEffects(
 						if (parentIndex >= 0) {
 							fileTreeKeyboardNavRef.current = true;
 							setSelectedFileIndex(parentIndex);
+							reanchorTo(parentIndex);
 						}
 					}
 				}
@@ -394,6 +474,8 @@ export function useFileExplorerEffects(
 		toggleFolder,
 		handleFileClick,
 		hasOpenModal,
+		setSelectedPaths,
+		setSelectionAnchorIndex,
 	]);
 
 	// ====================================================================

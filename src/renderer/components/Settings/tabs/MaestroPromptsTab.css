@@ -1,0 +1,168 @@
+/*
+ * Prompt-tab-specific styles. The split-pane chrome, list rows, editor header,
+ * action buttons, and finder button live in DualPaneFileEditor.css. This file
+ * only contains prompts-specific bits: the custom header row, help panel,
+ * expand-toggle buttons, and the prompt-editing textarea (which carries the
+ * template autocomplete dropdown).
+ */
+
+.maestro-prompts-settings-tab {
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+	min-height: 0;
+}
+
+.prompts-tab-header {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 12px;
+	margin-bottom: 12px;
+	flex-shrink: 0;
+}
+
+.prompts-tab-header-text {
+	flex: 1;
+	min-width: 0;
+}
+
+.prompts-help-button {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 28px;
+	height: 28px;
+	flex-shrink: 0;
+	border: 1px solid;
+	border-radius: 4px;
+	background: transparent;
+	cursor: pointer;
+	transition: opacity 0.1s;
+}
+
+.prompts-help-button:hover {
+	opacity: 0.7;
+}
+
+/* Editor header action buttons (preview / help / expand) */
+.expand-toggle-button {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 28px;
+	height: 28px;
+	flex-shrink: 0;
+	border: 1px solid;
+	border-radius: 4px;
+	background: transparent;
+	cursor: pointer;
+	transition: opacity 0.1s;
+}
+
+.expand-toggle-button:hover {
+	opacity: 0.7;
+}
+
+/* Help Panel */
+.prompts-help-close-row {
+	display: flex;
+	justify-content: flex-end;
+	margin-bottom: 12px;
+}
+
+.prompts-help-panel {
+	font-size: 12px;
+	line-height: 1.6;
+}
+
+.prompts-help-section {
+	margin-bottom: 20px;
+}
+
+.prompts-help-section:last-child {
+	margin-bottom: 0;
+}
+
+.prompts-help-heading {
+	font-size: 13px;
+	font-weight: 600;
+	margin: 0 0 8px 0;
+	text-transform: uppercase;
+	letter-spacing: 0.5px;
+}
+
+.prompts-help-text {
+	margin: 0 0 6px 0;
+	font-size: 12px;
+	line-height: 1.6;
+}
+
+.prompts-help-code {
+	padding: 1px 5px;
+	border-radius: 3px;
+	font-family: Monaco, Menlo, Consolas, monospace;
+	font-size: 11px;
+}
+
+.prompts-help-category-item {
+	margin-bottom: 8px;
+	padding-left: 8px;
+}
+
+.prompts-help-category-item strong {
+	font-size: 12px;
+}
+
+.prompts-help-var-group {
+	margin-top: 12px;
+}
+
+.prompts-help-var-group-label {
+	font-size: 11px;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.5px;
+	margin-bottom: 6px;
+}
+
+.prompts-help-var-table {
+	border: 1px solid;
+	border-radius: 4px;
+	overflow: hidden;
+}
+
+.prompts-help-var-row {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 4px 8px;
+	border-bottom: 1px solid;
+}
+
+.prompts-help-var-row:last-child {
+	border-bottom: none;
+}
+
+.prompts-help-var-name {
+	font-family: Monaco, Menlo, Consolas, monospace;
+	font-size: 10px;
+	padding: 1px 4px;
+	border-radius: 3px;
+	white-space: nowrap;
+	flex-shrink: 0;
+}
+
+.prompts-help-var-desc {
+	font-size: 11px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* Wrapper in SettingsModal that makes the prompts tab fill the content area */
+.prompts-editor-wrapper {
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+}

@@ -18,6 +18,7 @@ import { getErrorPatterns, matchErrorPattern } from '../parsers/error-patterns';
 import { readLog, type GroupChatMessage } from './group-chat-log';
 import { loadGroupChat, updateParticipant, getGroupChatDir } from './group-chat-storage';
 import { logger } from '../utils/logger';
+import { captureException } from '../utils/sentry';
 
 const LOG_CONTEXT = '[SessionRecovery]';
 
@@ -190,6 +191,7 @@ export async function initiateSessionRecovery(
 
 		return true;
 	} catch (error) {
+		void captureException(error);
 		logger.error('Failed to initiate session recovery', LOG_CONTEXT, {
 			groupChatId,
 			participantName,

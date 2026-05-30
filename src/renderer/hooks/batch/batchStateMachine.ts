@@ -13,6 +13,7 @@
  */
 
 import type { AgentError } from '../../types';
+import { logger } from '../../utils/logger';
 
 /**
  * Explicit batch processing states.
@@ -187,7 +188,7 @@ export function transition(context: BatchMachineContext, event: BatchEvent): Bat
 		// IDLE -> INITIALIZING: Start a new batch
 		case 'START_BATCH': {
 			if (state !== 'IDLE') {
-				console.warn(`[BatchStateMachine] Invalid transition: ${state} + START_BATCH`);
+				logger.warn(`[BatchStateMachine] Invalid transition: ${state} + START_BATCH`);
 				return context;
 			}
 			const { payload } = event;
@@ -209,7 +210,7 @@ export function transition(context: BatchMachineContext, event: BatchEvent): Bat
 		// INITIALIZING -> RUNNING: Initialization complete, start processing
 		case 'INITIALIZATION_COMPLETE': {
 			if (state !== 'INITIALIZING') {
-				console.warn(`[BatchStateMachine] Invalid transition: ${state} + INITIALIZATION_COMPLETE`);
+				logger.warn(`[BatchStateMachine] Invalid transition: ${state} + INITIALIZATION_COMPLETE`);
 				return context;
 			}
 			return {
@@ -221,7 +222,7 @@ export function transition(context: BatchMachineContext, event: BatchEvent): Bat
 		// INITIALIZING -> IDLE: Initialization failed
 		case 'INITIALIZATION_FAILED': {
 			if (state !== 'INITIALIZING') {
-				console.warn(`[BatchStateMachine] Invalid transition: ${state} + INITIALIZATION_FAILED`);
+				logger.warn(`[BatchStateMachine] Invalid transition: ${state} + INITIALIZATION_FAILED`);
 				return context;
 			}
 			return {
@@ -232,7 +233,7 @@ export function transition(context: BatchMachineContext, event: BatchEvent): Bat
 		// RUNNING -> RUNNING: Task completed, update progress
 		case 'TASK_COMPLETED': {
 			if (state !== 'RUNNING') {
-				console.warn(`[BatchStateMachine] Invalid transition: ${state} + TASK_COMPLETED`);
+				logger.warn(`[BatchStateMachine] Invalid transition: ${state} + TASK_COMPLETED`);
 				return context;
 			}
 			const { payload } = event;
@@ -246,7 +247,7 @@ export function transition(context: BatchMachineContext, event: BatchEvent): Bat
 		// RUNNING -> RUNNING: Move to next document
 		case 'DOCUMENT_ADVANCED': {
 			if (state !== 'RUNNING') {
-				console.warn(`[BatchStateMachine] Invalid transition: ${state} + DOCUMENT_ADVANCED`);
+				logger.warn(`[BatchStateMachine] Invalid transition: ${state} + DOCUMENT_ADVANCED`);
 				return context;
 			}
 			return {
@@ -258,7 +259,7 @@ export function transition(context: BatchMachineContext, event: BatchEvent): Bat
 		// RUNNING -> RUNNING: Loop completed, start next iteration
 		case 'LOOP_COMPLETED': {
 			if (state !== 'RUNNING') {
-				console.warn(`[BatchStateMachine] Invalid transition: ${state} + LOOP_COMPLETED`);
+				logger.warn(`[BatchStateMachine] Invalid transition: ${state} + LOOP_COMPLETED`);
 				return context;
 			}
 			const { payload } = event;
@@ -273,7 +274,7 @@ export function transition(context: BatchMachineContext, event: BatchEvent): Bat
 		// RUNNING -> PAUSED_ERROR: Error occurred during processing
 		case 'ERROR_OCCURRED': {
 			if (state !== 'RUNNING') {
-				console.warn(`[BatchStateMachine] Invalid transition: ${state} + ERROR_OCCURRED`);
+				logger.warn(`[BatchStateMachine] Invalid transition: ${state} + ERROR_OCCURRED`);
 				return context;
 			}
 			const { payload } = event;
@@ -289,7 +290,7 @@ export function transition(context: BatchMachineContext, event: BatchEvent): Bat
 		// PAUSED_ERROR -> RUNNING: Error resolved, resume processing
 		case 'ERROR_RESOLVED': {
 			if (state !== 'PAUSED_ERROR') {
-				console.warn(`[BatchStateMachine] Invalid transition: ${state} + ERROR_RESOLVED`);
+				logger.warn(`[BatchStateMachine] Invalid transition: ${state} + ERROR_RESOLVED`);
 				return context;
 			}
 			return {
@@ -304,7 +305,7 @@ export function transition(context: BatchMachineContext, event: BatchEvent): Bat
 		// PAUSED_ERROR -> RUNNING: Skip the errored document, continue with next
 		case 'DOCUMENT_SKIPPED': {
 			if (state !== 'PAUSED_ERROR') {
-				console.warn(`[BatchStateMachine] Invalid transition: ${state} + DOCUMENT_SKIPPED`);
+				logger.warn(`[BatchStateMachine] Invalid transition: ${state} + DOCUMENT_SKIPPED`);
 				return context;
 			}
 			// Move to next document (caller should handle bounds checking)
@@ -321,7 +322,7 @@ export function transition(context: BatchMachineContext, event: BatchEvent): Bat
 		// RUNNING -> STOPPING: User requested stop
 		case 'STOP_REQUESTED': {
 			if (state !== 'RUNNING') {
-				console.warn(`[BatchStateMachine] Invalid transition: ${state} + STOP_REQUESTED`);
+				logger.warn(`[BatchStateMachine] Invalid transition: ${state} + STOP_REQUESTED`);
 				return context;
 			}
 			return {
@@ -333,7 +334,7 @@ export function transition(context: BatchMachineContext, event: BatchEvent): Bat
 		// PAUSED_ERROR -> STOPPING: User aborted due to error
 		case 'ABORT_REQUESTED': {
 			if (state !== 'PAUSED_ERROR') {
-				console.warn(`[BatchStateMachine] Invalid transition: ${state} + ABORT_REQUESTED`);
+				logger.warn(`[BatchStateMachine] Invalid transition: ${state} + ABORT_REQUESTED`);
 				return context;
 			}
 			return {
@@ -348,7 +349,7 @@ export function transition(context: BatchMachineContext, event: BatchEvent): Bat
 		// RUNNING -> COMPLETING: All tasks finished naturally
 		case 'ALL_TASKS_DONE': {
 			if (state !== 'RUNNING') {
-				console.warn(`[BatchStateMachine] Invalid transition: ${state} + ALL_TASKS_DONE`);
+				logger.warn(`[BatchStateMachine] Invalid transition: ${state} + ALL_TASKS_DONE`);
 				return context;
 			}
 			return {
@@ -360,7 +361,7 @@ export function transition(context: BatchMachineContext, event: BatchEvent): Bat
 		// STOPPING -> COMPLETING: Current task finished, ready for cleanup
 		case 'CURRENT_TASK_DONE': {
 			if (state !== 'STOPPING') {
-				console.warn(`[BatchStateMachine] Invalid transition: ${state} + CURRENT_TASK_DONE`);
+				logger.warn(`[BatchStateMachine] Invalid transition: ${state} + CURRENT_TASK_DONE`);
 				return context;
 			}
 			return {
@@ -372,7 +373,7 @@ export function transition(context: BatchMachineContext, event: BatchEvent): Bat
 		// COMPLETING -> IDLE: Batch fully finalized
 		case 'BATCH_FINALIZED': {
 			if (state !== 'COMPLETING') {
-				console.warn(`[BatchStateMachine] Invalid transition: ${state} + BATCH_FINALIZED`);
+				logger.warn(`[BatchStateMachine] Invalid transition: ${state} + BATCH_FINALIZED`);
 				return context;
 			}
 			return {
@@ -383,7 +384,7 @@ export function transition(context: BatchMachineContext, event: BatchEvent): Bat
 		default: {
 			// TypeScript exhaustiveness check
 			const _exhaustive: never = event;
-			console.warn(`[BatchStateMachine] Unknown event type: ${(_exhaustive as BatchEvent).type}`);
+			logger.warn(`[BatchStateMachine] Unknown event type: ${(_exhaustive as BatchEvent).type}`);
 			return context;
 		}
 	}

@@ -49,6 +49,19 @@ export const gitService = {
 	},
 
 	/**
+	 * Initialize a new git repository at the given directory.
+	 * @param cwd Working directory path
+	 * @param sshRemoteId Optional SSH remote ID for remote execution
+	 */
+	async init(cwd: string, sshRemoteId?: string): Promise<{ success: boolean; error?: string }> {
+		return createIpcMethod({
+			call: () => window.maestro.git.init(cwd, sshRemoteId),
+			errorContext: 'Git init',
+			defaultValue: { success: false, error: 'git init failed' },
+		});
+	},
+
+	/**
 	 * Get git status (porcelain format) and current branch
 	 * @param cwd Working directory path
 	 * @param sshRemoteId Optional SSH remote ID for remote execution

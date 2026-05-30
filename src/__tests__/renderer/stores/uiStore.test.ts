@@ -13,15 +13,14 @@ function resetStore() {
 		activeFocus: 'main',
 		activeRightTab: 'files',
 		bookmarksCollapsed: false,
-		groupChatsExpanded: true,
 		showUnreadOnly: false,
+		showUnreadAgentsOnly: false,
 		preFilterActiveTabId: null,
 		preTerminalFileTabId: null,
 		selectedSidebarIndex: 0,
-		flashNotification: null,
-		successFlashNotification: null,
 		outputSearchOpen: false,
 		outputSearchQuery: '',
+		outputSearchRegex: false,
 		sessionFilterOpen: false,
 		historySearchFilterOpen: false,
 		draggingSessionId: null,
@@ -44,15 +43,13 @@ describe('uiStore', () => {
 			expect(state.activeFocus).toBe('main');
 			expect(state.activeRightTab).toBe('files');
 			expect(state.bookmarksCollapsed).toBe(false);
-			expect(state.groupChatsExpanded).toBe(true);
 			expect(state.showUnreadOnly).toBe(false);
 			expect(state.preFilterActiveTabId).toBeNull();
 			expect(state.preTerminalFileTabId).toBeNull();
 			expect(state.selectedSidebarIndex).toBe(0);
-			expect(state.flashNotification).toBeNull();
-			expect(state.successFlashNotification).toBeNull();
 			expect(state.outputSearchOpen).toBe(false);
 			expect(state.outputSearchQuery).toBe('');
+			expect(state.outputSearchRegex).toBe(false);
 			expect(state.sessionFilterOpen).toBe(false);
 			expect(state.historySearchFilterOpen).toBe(false);
 			expect(state.draggingSessionId).toBeNull();
@@ -132,19 +129,6 @@ describe('uiStore', () => {
 			useUIStore.getState().toggleBookmarksCollapsed();
 			expect(useUIStore.getState().bookmarksCollapsed).toBe(false);
 		});
-
-		it('sets group chats expanded', () => {
-			useUIStore.getState().setGroupChatsExpanded(false);
-			expect(useUIStore.getState().groupChatsExpanded).toBe(false);
-		});
-
-		it('toggles group chats expanded', () => {
-			expect(useUIStore.getState().groupChatsExpanded).toBe(true);
-			useUIStore.getState().toggleGroupChatsExpanded();
-			expect(useUIStore.getState().groupChatsExpanded).toBe(false);
-			useUIStore.getState().toggleGroupChatsExpanded();
-			expect(useUIStore.getState().groupChatsExpanded).toBe(true);
-		});
 	});
 
 	describe('session list filter state', () => {
@@ -164,6 +148,19 @@ describe('uiStore', () => {
 			expect(useUIStore.getState().showUnreadOnly).toBe(true);
 			useUIStore.getState().toggleShowUnreadOnly();
 			expect(useUIStore.getState().showUnreadOnly).toBe(false);
+		});
+
+		it('sets show unread agents only', () => {
+			useUIStore.getState().setShowUnreadAgentsOnly(true);
+			expect(useUIStore.getState().showUnreadAgentsOnly).toBe(true);
+		});
+
+		it('toggles show unread agents only', () => {
+			expect(useUIStore.getState().showUnreadAgentsOnly).toBe(false);
+			useUIStore.getState().toggleShowUnreadAgentsOnly();
+			expect(useUIStore.getState().showUnreadAgentsOnly).toBe(true);
+			useUIStore.getState().toggleShowUnreadAgentsOnly();
+			expect(useUIStore.getState().showUnreadAgentsOnly).toBe(false);
 		});
 
 		it('sets pre-filter active tab id', () => {
@@ -196,21 +193,32 @@ describe('uiStore', () => {
 		});
 	});
 
-	describe('flash notification state', () => {
-		it('sets flash notification', () => {
-			useUIStore.getState().setFlashNotification('Commands disabled');
-			expect(useUIStore.getState().flashNotification).toBe('Commands disabled');
+	describe('flash notification setters (compatibility shims → centerFlashStore)', () => {
+		it('setFlashNotification fires a yellow center flash', async () => {
+			const { useCenterFlashStore } = await import('../../../renderer/stores/centerFlashStore');
+			useCenterFlashStore.getState().setActive(null);
 
+			useUIStore.getState().setFlashNotification('Commands disabled');
+			const active = useCenterFlashStore.getState().active;
+			expect(active?.message).toBe('Commands disabled');
+			expect(active?.color).toBe('yellow');
+
+			// Passing null is a no-op (auto-dismiss handles clearing)
 			useUIStore.getState().setFlashNotification(null);
-			expect(useUIStore.getState().flashNotification).toBeNull();
+			expect(useCenterFlashStore.getState().active?.message).toBe('Commands disabled');
 		});
 
-		it('sets success flash notification', () => {
+		it('setSuccessFlashNotification fires a themed center flash', async () => {
+			const { useCenterFlashStore } = await import('../../../renderer/stores/centerFlashStore');
+			useCenterFlashStore.getState().setActive(null);
+
 			useUIStore.getState().setSuccessFlashNotification('Refresh complete');
-			expect(useUIStore.getState().successFlashNotification).toBe('Refresh complete');
+			const active = useCenterFlashStore.getState().active;
+			expect(active?.message).toBe('Refresh complete');
+			expect(active?.color).toBe('theme');
 
 			useUIStore.getState().setSuccessFlashNotification(null);
-			expect(useUIStore.getState().successFlashNotification).toBeNull();
+			expect(useCenterFlashStore.getState().active?.message).toBe('Refresh complete');
 		});
 	});
 

@@ -13,29 +13,8 @@ import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { EnvVarsEditor } from '../../../../renderer/components/Settings/EnvVarsEditor';
-import type { Theme } from '../../../../renderer/types';
 
-const mockTheme: Theme = {
-	id: 'dracula',
-	name: 'Dracula',
-	mode: 'dark',
-	colors: {
-		bgMain: '#282a36',
-		bgSidebar: '#21222c',
-		bgActivity: '#343746',
-		border: '#44475a',
-		textMain: '#f8f8f2',
-		textDim: '#6272a4',
-		accent: '#bd93f9',
-		accentDim: '#bd93f920',
-		accentText: '#ff79c6',
-		accentForeground: '#ffffff',
-		success: '#50fa7b',
-		warning: '#ffb86c',
-		error: '#ff5555',
-	},
-};
-
+import { mockTheme } from '../../../helpers/mockTheme';
 describe('EnvVarsEditor', () => {
 	let mockSetEnvVars: ReturnType<typeof vi.fn>;
 
@@ -59,7 +38,7 @@ describe('EnvVarsEditor', () => {
 			/>
 		);
 
-		const keyInputs = screen.getAllByPlaceholderText('VARIABLE');
+		const keyInputs = screen.getAllByPlaceholderText('VARIABLE_NAME');
 		expect(keyInputs).toHaveLength(2);
 		expect(keyInputs[0]).toHaveValue('MY_VAR');
 		expect(keyInputs[1]).toHaveValue('OTHER_VAR');
@@ -69,7 +48,7 @@ describe('EnvVarsEditor', () => {
 		expect(valueInputs[1]).toHaveValue('world');
 	});
 
-	it('should display count of valid entries', () => {
+	it('should render with existing env vars and default description', () => {
 		render(
 			<EnvVarsEditor
 				envVars={{ EXISTING_VAR: 'value' }}
@@ -78,13 +57,9 @@ describe('EnvVarsEditor', () => {
 			/>
 		);
 
-		expect(screen.getByText(/✓ Valid.*1.*variables loaded/)).toBeInTheDocument();
-	});
-
-	it('should not display count when no env vars', () => {
-		render(<EnvVarsEditor envVars={{}} setEnvVars={mockSetEnvVars} theme={mockTheme} />);
-
-		expect(screen.queryByText(/✓ Valid/)).not.toBeInTheDocument();
+		expect(
+			screen.getByText(/Environment variables passed to all terminal sessions/)
+		).toBeInTheDocument();
 	});
 
 	it('should add a new entry when clicking Add Variable', () => {
@@ -94,7 +69,7 @@ describe('EnvVarsEditor', () => {
 		fireEvent.click(addButton);
 
 		// Should have one entry now with default key "VAR"
-		const inputs = screen.getAllByPlaceholderText('VARIABLE');
+		const inputs = screen.getAllByPlaceholderText('VARIABLE_NAME');
 		expect(inputs).toHaveLength(1);
 		expect(inputs[0]).toHaveValue('VAR');
 	});
@@ -107,7 +82,7 @@ describe('EnvVarsEditor', () => {
 		const addButton = screen.getByRole('button', { name: 'Add Variable' });
 		fireEvent.click(addButton);
 
-		const inputs = screen.getAllByPlaceholderText('VARIABLE');
+		const inputs = screen.getAllByPlaceholderText('VARIABLE_NAME');
 		// First is "VAR" (existing), second should be "VAR_1"
 		expect(inputs[1]).toHaveValue('VAR_1');
 	});
@@ -120,7 +95,7 @@ describe('EnvVarsEditor', () => {
 		fireEvent.click(addButton);
 
 		// Change key to invalid name
-		const keyInput = screen.getAllByPlaceholderText('VARIABLE')[0];
+		const keyInput = screen.getAllByPlaceholderText('VARIABLE_NAME')[0];
 		fireEvent.change(keyInput, { target: { value: 'MY-VAR' } });
 
 		expect(screen.getByText(/Invalid variable name/)).toBeInTheDocument();
@@ -132,7 +107,7 @@ describe('EnvVarsEditor', () => {
 		const addButton = screen.getByRole('button', { name: 'Add Variable' });
 		fireEvent.click(addButton);
 
-		const keyInput = screen.getAllByPlaceholderText('VARIABLE')[0];
+		const keyInput = screen.getAllByPlaceholderText('VARIABLE_NAME')[0];
 		fireEvent.change(keyInput, { target: { value: 'MY-VAR' } });
 
 		// The setEnvVars should NOT have been called with this invalid entry
@@ -149,7 +124,7 @@ describe('EnvVarsEditor', () => {
 
 		// Add first valid entry
 		fireEvent.click(addButton);
-		let inputs = screen.getAllByPlaceholderText('VARIABLE');
+		let inputs = screen.getAllByPlaceholderText('VARIABLE_NAME');
 		fireEvent.change(inputs[inputs.length - 1], { target: { value: 'VALID_VAR' } });
 
 		const valueInputs = screen.getAllByPlaceholderText('value');
@@ -157,7 +132,7 @@ describe('EnvVarsEditor', () => {
 
 		// Add second invalid entry
 		fireEvent.click(addButton);
-		inputs = screen.getAllByPlaceholderText('VARIABLE');
+		inputs = screen.getAllByPlaceholderText('VARIABLE_NAME');
 		fireEvent.change(inputs[inputs.length - 1], { target: { value: 'INVALID-VAR' } });
 
 		// Check the last call to setEnvVars
@@ -176,7 +151,7 @@ describe('EnvVarsEditor', () => {
 		const addButton = screen.getByRole('button', { name: 'Add Variable' });
 		fireEvent.click(addButton);
 
-		const keyInput = screen.getAllByPlaceholderText('VARIABLE')[0];
+		const keyInput = screen.getAllByPlaceholderText('VARIABLE_NAME')[0];
 		fireEvent.change(keyInput, { target: { value: 'MY_VAR' } });
 
 		const valueInput = screen.getAllByPlaceholderText('value')[0];
@@ -198,7 +173,7 @@ describe('EnvVarsEditor', () => {
 		const addButton = screen.getByRole('button', { name: 'Add Variable' });
 		fireEvent.click(addButton);
 
-		let inputs = screen.getAllByPlaceholderText('VARIABLE');
+		let inputs = screen.getAllByPlaceholderText('VARIABLE_NAME');
 		fireEvent.change(inputs[inputs.length - 1], { target: { value: 'INVALID-VAR' } });
 
 		// Delete the invalid entry
@@ -217,7 +192,7 @@ describe('EnvVarsEditor', () => {
 		const addButton = screen.getByRole('button', { name: 'Add Variable' });
 		fireEvent.click(addButton);
 
-		const keyInput = screen.getAllByPlaceholderText('VARIABLE')[0];
+		const keyInput = screen.getAllByPlaceholderText('VARIABLE_NAME')[0];
 		fireEvent.change(keyInput, { target: { value: '' } });
 
 		// Should not show any validation error for empty key
@@ -230,7 +205,7 @@ describe('EnvVarsEditor', () => {
 		const addButton = screen.getByRole('button', { name: 'Add Variable' });
 		fireEvent.click(addButton);
 
-		const keyInput = screen.getAllByPlaceholderText('VARIABLE')[0];
+		const keyInput = screen.getAllByPlaceholderText('VARIABLE_NAME')[0];
 		fireEvent.change(keyInput, { target: { value: 'MY_VAR' } });
 
 		const valueInput = screen.getAllByPlaceholderText('value')[0];
@@ -246,7 +221,7 @@ describe('EnvVarsEditor', () => {
 		const addButton = screen.getByRole('button', { name: 'Add Variable' });
 		fireEvent.click(addButton);
 
-		const keyInput = screen.getAllByPlaceholderText('VARIABLE')[0];
+		const keyInput = screen.getAllByPlaceholderText('VARIABLE_NAME')[0];
 		fireEvent.change(keyInput, { target: { value: 'MY_VAR' } });
 
 		const valueInput = screen.getAllByPlaceholderText('value')[0];
@@ -261,7 +236,7 @@ describe('EnvVarsEditor', () => {
 		const addButton = screen.getByRole('button', { name: 'Add Variable' });
 		fireEvent.click(addButton);
 
-		const keyInput = screen.getAllByPlaceholderText('VARIABLE')[0];
+		const keyInput = screen.getAllByPlaceholderText('VARIABLE_NAME')[0];
 		fireEvent.change(keyInput, { target: { value: '1VAR' } });
 
 		expect(screen.getByText(/Invalid variable name/)).toBeInTheDocument();
@@ -273,7 +248,7 @@ describe('EnvVarsEditor', () => {
 		const addButton = screen.getByRole('button', { name: 'Add Variable' });
 		fireEvent.click(addButton);
 
-		const keyInput = screen.getAllByPlaceholderText('VARIABLE')[0];
+		const keyInput = screen.getAllByPlaceholderText('VARIABLE_NAME')[0];
 		fireEvent.change(keyInput, { target: { value: '_MY_VAR_123' } });
 
 		expect(screen.queryByText(/Invalid variable name/)).not.toBeInTheDocument();
@@ -302,7 +277,7 @@ describe('EnvVarsEditor', () => {
 			/>
 		);
 
-		const keyInputs = screen.getAllByPlaceholderText('VARIABLE');
+		const keyInputs = screen.getAllByPlaceholderText('VARIABLE_NAME');
 		expect(keyInputs).toHaveLength(3);
 
 		const valueInputs = screen.getAllByPlaceholderText('value');
@@ -313,24 +288,21 @@ describe('EnvVarsEditor', () => {
 		expect(trashButtons).toHaveLength(3);
 	});
 
-	it('should show description text', () => {
-		render(<EnvVarsEditor envVars={{}} setEnvVars={mockSetEnvVars} theme={mockTheme} />);
-
-		expect(
-			screen.getByText(/Environment variables passed to all terminal sessions/)
-		).toBeInTheDocument();
-	});
-
-	it('should display correct count for multiple valid entries', () => {
+	it('should hide label and description when set to null', () => {
 		render(
 			<EnvVarsEditor
-				envVars={{ VAR_A: 'a', VAR_B: 'b', VAR_C: 'c' }}
+				envVars={{ VAR_A: 'a' }}
 				setEnvVars={mockSetEnvVars}
 				theme={mockTheme}
+				label={null}
+				description={null}
 			/>
 		);
 
-		expect(screen.getByText(/✓ Valid.*3.*variables loaded/)).toBeInTheDocument();
+		expect(screen.queryByText('Environment Variables (optional)')).not.toBeInTheDocument();
+		expect(
+			screen.queryByText(/Environment variables passed to all terminal sessions/)
+		).not.toBeInTheDocument();
 	});
 
 	it('should generate sequential unique names (VAR_1, VAR_2, ...)', () => {
@@ -345,7 +317,7 @@ describe('EnvVarsEditor', () => {
 		const addButton = screen.getByRole('button', { name: 'Add Variable' });
 		fireEvent.click(addButton);
 
-		const inputs = screen.getAllByPlaceholderText('VARIABLE');
+		const inputs = screen.getAllByPlaceholderText('VARIABLE_NAME');
 		// Should be VAR_2 since VAR and VAR_1 are taken
 		expect(inputs[2]).toHaveValue('VAR_2');
 	});
@@ -356,7 +328,7 @@ describe('EnvVarsEditor', () => {
 		const addButton = screen.getByRole('button', { name: 'Add Variable' });
 		fireEvent.click(addButton);
 
-		const keyInput = screen.getAllByPlaceholderText('VARIABLE')[0];
+		const keyInput = screen.getAllByPlaceholderText('VARIABLE_NAME')[0];
 		fireEvent.change(keyInput, { target: { value: 'PATH' } });
 
 		const valueInput = screen.getAllByPlaceholderText('value')[0];
@@ -383,6 +355,46 @@ describe('EnvVarsEditor', () => {
 		expect(screen.getByDisplayValue('NEW')).toBeInTheDocument();
 		expect(screen.getByDisplayValue('newval')).toBeInTheDocument();
 		expect(screen.queryByDisplayValue('OLD')).not.toBeInTheDocument();
+	});
+
+	it('rejects a relative CLAUDE_CONFIG_DIR value', () => {
+		// Guards against the real-world typo `sm/Users/pedram/.claude-smash` —
+		// a relative path silently resolved against the main-process cwd at
+		// sample time and pointed at a non-existent dir, producing a phantom
+		// "smash" tab in the Usage Dashboard.
+		render(<EnvVarsEditor envVars={{}} setEnvVars={mockSetEnvVars} theme={mockTheme} />);
+
+		const addButton = screen.getByRole('button', { name: 'Add Variable' });
+		fireEvent.click(addButton);
+
+		const keyInput = screen.getAllByPlaceholderText('VARIABLE_NAME')[0];
+		fireEvent.change(keyInput, { target: { value: 'CLAUDE_CONFIG_DIR' } });
+
+		const valueInput = screen.getAllByPlaceholderText('value')[0];
+		fireEvent.change(valueInput, { target: { value: 'sm/Users/me/.claude-smash' } });
+
+		expect(screen.getByText(/CLAUDE_CONFIG_DIR must be an absolute path/)).toBeInTheDocument();
+
+		// And the invalid entry must NOT have been committed back to the parent.
+		const lastCall = mockSetEnvVars.mock.calls[mockSetEnvVars.mock.calls.length - 1][0];
+		expect(lastCall['CLAUDE_CONFIG_DIR']).toBeUndefined();
+	});
+
+	it('accepts an absolute CLAUDE_CONFIG_DIR value', () => {
+		render(<EnvVarsEditor envVars={{}} setEnvVars={mockSetEnvVars} theme={mockTheme} />);
+
+		const addButton = screen.getByRole('button', { name: 'Add Variable' });
+		fireEvent.click(addButton);
+
+		const keyInput = screen.getAllByPlaceholderText('VARIABLE_NAME')[0];
+		fireEvent.change(keyInput, { target: { value: 'CLAUDE_CONFIG_DIR' } });
+
+		const valueInput = screen.getAllByPlaceholderText('value')[0];
+		fireEvent.change(valueInput, { target: { value: '/Users/me/.claude-smash' } });
+
+		expect(screen.queryByText(/must be an absolute path/)).not.toBeInTheDocument();
+		const lastCall = mockSetEnvVars.mock.calls[mockSetEnvVars.mock.calls.length - 1][0];
+		expect(lastCall['CLAUDE_CONFIG_DIR']).toBe('/Users/me/.claude-smash');
 	});
 
 	it('should show = separator between key and value', () => {

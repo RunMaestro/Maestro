@@ -16,30 +16,9 @@
 
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useDebouncedCallback } from '../utils/useThrottle';
-
-// Stats time range type matching the backend API
-export type StatsTimeRange = 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all';
-
-// Aggregation data shape from the stats API
-export interface StatsAggregation {
-	totalQueries: number;
-	totalDuration: number;
-	avgDuration: number;
-	byAgent: Record<string, { count: number; duration: number }>;
-	bySource: { user: number; auto: number };
-	byLocation: { local: number; remote: number };
-	byDay: Array<{ date: string; count: number; duration: number }>;
-	byHour: Array<{ hour: number; count: number; duration: number }>;
-	// Session lifecycle stats
-	totalSessions: number;
-	sessionsByAgent: Record<string, number>;
-	sessionsByDay: Array<{ date: string; count: number }>;
-	avgSessionDuration: number;
-	// Per-provider per-day breakdown for provider comparison
-	byAgentByDay: Record<string, Array<{ date: string; count: number; duration: number }>>;
-	// Per-session per-day breakdown for agent usage chart
-	bySessionByDay: Record<string, Array<{ date: string; count: number; duration: number }>>;
-}
+import { logger } from '../../utils/logger';
+import type { StatsTimeRange, StatsAggregation } from '../../../shared/stats-types';
+export type { StatsTimeRange, StatsAggregation } from '../../../shared/stats-types';
 
 // Return type for the useStats hook
 export interface UseStatsReturn {
@@ -100,7 +79,7 @@ export function useStats(range: StatsTimeRange, enabled: boolean = true): UseSta
 					setData(stats);
 				}
 			} catch (err) {
-				console.error('Failed to fetch usage stats:', err);
+				logger.error('Failed to fetch usage stats:', undefined, err);
 				if (mountedRef.current) {
 					setError(err instanceof Error ? err.message : 'Failed to load stats');
 				}

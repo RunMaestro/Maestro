@@ -11,6 +11,7 @@
 
 import { ipcMain } from 'electron';
 import Store from 'electron-store';
+import type { AgentConfigsData } from '../../stores/types';
 import { v4 as uuidv4 } from 'uuid';
 import { logger } from '../../utils/logger';
 import {
@@ -21,10 +22,12 @@ import {
 import { buildAgentArgs, applyAgentConfigOverrides } from '../../utils/agent-args';
 import { getSshRemoteConfig, createSshRemoteStoreAdapter } from '../../utils/ssh-remote-resolver';
 import { buildSshCommand } from '../../utils/ssh-command-builder';
-import { tabNamingPrompt } from '../../../prompts';
+import { getPrompt } from '../../prompt-manager';
+import { isWindows } from '../../../shared/platformDetection';
 import type { ProcessManager } from '../../process-manager';
 import type { AgentDetector } from '../../agents';
 import type { MaestroSettings } from './persistence';
+import { captureException } from '../../utils/sentry';
 
 const LOG_CONTEXT = '[TabNaming]';
 
@@ -41,12 +44,7 @@ const handlerOpts = (
 	...extra,
 });
 
-/**
- * Interface for agent configuration store data
- */
-interface AgentConfigsData {
-	configs: Record<string, Record<string, any>>;
-}
+// AgentConfigsData imported from stores/types
 
 /**
  * Dependencies required for tab naming handler registration
@@ -59,10 +57,17 @@ export interface TabNamingHandlerDependencies {
 }
 
 /**
- * Timeout for tab naming requests (30 seconds)
- * This is a short timeout since we want quick response
+ * Timeout for tab naming requests (45 seconds)
+ * Allows headroom for agent cold starts while still failing fast
  */
-const TAB_NAMING_TIMEOUT_MS = 30 * 1000;
+const TAB_NAMING_TIMEOUT_MS = 45 * 1000;
+
+/**
+ * Interval for checking partial output for a valid tab name.
+ * Allows resolving as soon as the agent outputs the name,
+ * without waiting for the full process to exit.
+ */
+const EARLY_EXTRACT_INTERVAL_MS = 2 * 1000;
 
 /**
  * Register Tab Naming IPC handlers.
@@ -113,7 +118,7 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 					}
 
 					// Build the prompt: combine the tab naming prompt with the user's message
-					const fullPrompt = `${tabNamingPrompt}\n\n---\n\nUser's message:\n\n${config.userMessage}`;
+					const fullPrompt = `${getPrompt('tab-naming')}\n\n---\n\nUser's message:\n\n${config.userMessage}`;
 
 					// Build agent arguments - read-only mode, runs in parallel
 					// Filter out --dangerously-skip-permissions from base args since tab naming
@@ -148,6 +153,7 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 					// The prompt contains special characters that break when passed through multiple layers
 					// of shell escaping (local spawn -> SSH -> remote zsh -> bash -c).
 					let shouldSendPromptViaStdin = false;
+					let promptAlreadyInArgs = false;
 					if (config.sessionSshRemoteConfig?.enabled && config.sessionSshRemoteConfig.remoteId) {
 						const sshStoreAdapter = createSshRemoteStoreAdapter(settingsStore);
 						const sshResult = getSshRemoteConfig(sshStoreAdapter, {
@@ -180,6 +186,26 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 										agentSupportsStreamJson,
 									}
 								);
+							} else {
+								// Non-stream-json agents (copilot-cli, factory-droid, etc.) need the
+								// prompt embedded inside the bash -c '<...>' wrapper. If we let
+								// ChildProcessSpawner append `-p <prompt>` after buildSshCommand wraps
+								// the agent invocation, those args land OUTSIDE the wrapper and get
+								// swallowed as positional params to the remote bash, never reaching
+								// the agent. Build the prompt into args here so it's quoted as part
+								// of the wrapped command.
+								if (agent.promptArgs) {
+									finalArgs = [...finalArgs, ...agent.promptArgs(fullPrompt)];
+								} else if (agent.noPromptSeparator) {
+									finalArgs = [...finalArgs, fullPrompt];
+								} else {
+									finalArgs = [...finalArgs, '--', fullPrompt];
+								}
+								promptAlreadyInArgs = true;
+								logger.debug('Embedded tab naming prompt inside SSH wrapper args', LOG_CONTEXT, {
+									sessionId,
+									promptLength: fullPrompt.length,
+								});
 							}
 
 							const sshCommand = await buildSshCommand(sshResult.config, {
@@ -201,15 +227,51 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 						let output = '';
 						let resolved = false;
 
+						const cleanup = () => {
+							clearTimeout(timeoutId);
+							clearInterval(earlyExtractIntervalId);
+							processManager.off('data', onData);
+							processManager.off('exit', onExit);
+						};
+
+						const resolveWith = (tabName: string | null, reason: string) => {
+							if (resolved) return;
+							resolved = true;
+							cleanup();
+							logger.info(`Tab naming ${reason}`, LOG_CONTEXT, {
+								sessionId,
+								outputLength: output.length,
+								tabName,
+							});
+							// Kill the process if it's still running (fire-and-forget)
+							try {
+								processManager.kill(sessionId);
+							} catch {
+								// Process may have already exited
+							}
+							resolve(tabName);
+						};
+
 						// Set timeout
 						const timeoutId = setTimeout(() => {
-							if (!resolved) {
-								resolved = true;
-								logger.warn('Tab naming request timed out', LOG_CONTEXT, { sessionId });
-								processManager.kill(sessionId);
-								resolve(null);
-							}
+							logger.warn('Tab naming request timed out', LOG_CONTEXT, {
+								sessionId,
+								outputLength: output.length,
+								outputSnippet: output.substring(0, 500) || '(no output received)',
+							});
+							resolveWith(null, 'timed out');
 						}, TAB_NAMING_TIMEOUT_MS);
+
+						// Periodically try to extract a tab name from partial output.
+						// This lets us resolve as soon as the agent outputs the name,
+						// without waiting for the full process to exit.
+						const earlyExtractIntervalId = setInterval(() => {
+							if (resolved || !output.trim()) return;
+							const earlyResult = extractTabName(output);
+							if (earlyResult.name) {
+								resolveWith(earlyResult.name, 'resolved early from partial output');
+							}
+						}, EARLY_EXTRACT_INTERVAL_MS);
 
 						// Listen for data from the process
 						const onData = (dataSessionId: string, data: string) => {
@@ -221,28 +283,43 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 						const onExit = (exitSessionId: string, code?: number) => {
 							if (exitSessionId !== sessionId) return;
 
-							// Clean up
-							clearTimeout(timeoutId);
-							processManager.off('data', onData);
-							processManager.off('exit', onExit);
+							if (resolved) {
+								// Already resolved by early extraction, just clean up listeners
+								processManager.off('data', onData);
+								processManager.off('exit', onExit);
+								return;
+							}
 
-							if (resolved) return;
-							resolved = true;
+							if (code !== undefined && code !== 0) {
+								logger.warn('Tab naming process exited with non-zero code', LOG_CONTEXT, {
+									sessionId,
+									exitCode: code,
+									outputLength: output.length,
+									outputSnippet: output.substring(0, 200),
+								});
+							}
 
-							// Extract the tab name from the output
-							// The agent should return just the tab name, but we clean up any extra whitespace/formatting
-							const tabName = extractTabName(output);
-							logger.info('Tab naming completed', LOG_CONTEXT, {
-								sessionId,
-								exitCode: code,
-								outputLength: output.length,
-								tabName,
-							});
-							resolve(tabName);
+							const extraction = extractTabName(output);
+							if (!extraction.name) {
+								logger.warn('Tab naming extraction failed', LOG_CONTEXT, {
+									sessionId,
+									reason: extraction.reason,
+									exitCode: code,
+									outputLength: output.length,
+									outputSnippet: output.substring(0, 500),
+								});
+							}
+							resolveWith(extraction.name, `completed (exit code ${code})`);
 						};
 
 						processManager.on('data', onData);
 						processManager.on('exit', onExit);
+
+						// On Windows (non-SSH), route the prompt via raw stdin to avoid
+						// cmd.exe's ~8KB command-line limit (ENAMETOOLONG on spawn).
+						// Tab naming concatenates a multi-KB system prompt with the user
+						// message, so a long first message easily exceeds the limit.
+						const sendPromptViaStdinRaw = isWindows() && !config.sessionSshRemoteConfig?.enabled;
 
 						// Spawn the process
 						// When using SSH with stdin, pass the flag so ChildProcessSpawner
@@ -255,10 +332,15 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 							args: finalArgs,
 							prompt: fullPrompt,
 							customEnvVars,
+							promptArgs: agent.promptArgs,
+							noPromptSeparator: agent.noPromptSeparator,
 							sendPromptViaStdin: shouldSendPromptViaStdin,
+							sendPromptViaStdinRaw,
+							promptAlreadyInArgs,
 						});
 					});
 				} catch (error) {
+					void captureException(error);
 					logger.error('Tab naming request failed', LOG_CONTEXT, {
 						sessionId,
 						error: String(error),
@@ -277,12 +359,23 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 }
 
 /**
+ * Result from extractTabName with diagnostic info for logging.
+ */
+interface TabNameExtractionResult {
+	/** The extracted tab name, or null if extraction failed */
+	name: string | null;
+	/** Human-readable reason for the outcome (useful for debugging failures) */
+	reason: string;
+}
+
+/**
  * Extract a clean tab name from agent output.
  * The output may contain ANSI codes, extra whitespace, or markdown formatting.
+ * Returns a structured result with diagnostic reason for logging.
  */
-function extractTabName(output: string): string | null {
+function extractTabName(output: string): TabNameExtractionResult {
 	if (!output || !output.trim()) {
-		return null;
+		return { name: null, reason: 'empty_output' };
 	}
 
 	// Remove ANSI escape codes
@@ -313,7 +406,10 @@ function extractTabName(output: string): string | null {
 	});
 
 	if (lines.length === 0) {
-		return null;
+		return {
+			name: null,
+			reason: `no_valid_lines_after_filtering (cleaned: ${cleaned.substring(0, 120)})`,
+		};
 	}
 
 	// Use the last meaningful line (often the actual tab name)
@@ -332,8 +428,8 @@ function extractTabName(output: string): string | null {
 
 	// If the result is empty or too short, return null
 	if (tabName.length < 2) {
-		return null;
+		return { name: null, reason: `too_short (length: ${tabName.length}, value: "${tabName}")` };
 	}
 
-	return tabName;
+	return { name: tabName, reason: 'ok' };
 }

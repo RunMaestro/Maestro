@@ -3,12 +3,12 @@
  *
  * Consolidates file explorer state previously scattered across:
  * - uiStore (selectedFileIndex, fileTreeFilter, fileTreeFilterOpen)
- * - App.tsx useState (filePreviewLoading, flatFileList, graph view state)
+ * - App.tsx useState (flatFileList, graph view state)
  *
  * Per-session file tree DATA (fileTree, fileExplorerExpanded, etc.) stays
  * in sessionStore — deeply embedded in the Session type with 200+ call sites.
  *
- * Can be used outside React via getFileExplorerState() / getFileExplorerActions().
+ * Can be used outside React via useFileExplorerStore.getState().
  */
 
 import { create } from 'zustand';
@@ -19,19 +19,20 @@ import type { FileNode } from '../types/fileTree';
 // Types
 // ============================================================================
 
-export interface FilePreviewLoading {
-	name: string;
-	path: string;
-}
-
 export interface FileExplorerStoreState {
 	// File tree UI (migrated from uiStore)
 	selectedFileIndex: number;
 	fileTreeFilter: string;
 	fileTreeFilterOpen: boolean;
 
-	// File preview loading indicator (migrated from App.tsx)
-	filePreviewLoading: FilePreviewLoading | null;
+	// Multi-selection (Cmd/Shift+click and Shift+Arrow keyboard range select).
+	// `selectedPaths` holds the *explicitly* selected relative paths; when empty,
+	// the row at `selectedFileIndex` is the implicit single selection. Lives here
+	// (not local panel state) so the window-level keyboard handler in
+	// useFileExplorerEffects and the mouse handlers in the panel share one anchor.
+	selectedPaths: Set<string>;
+	/** Anchor row for range selection. -1 = no active anchor (fall back to selectedFileIndex). */
+	selectionAnchorIndex: number;
 
 	// Filtered file tree (tree-structured, for FileExplorerPanel rendering)
 	filteredFileTree: FileNode[];
@@ -51,8 +52,9 @@ export interface FileExplorerStoreActions {
 	setFileTreeFilter: (filter: string | ((prev: string) => string)) => void;
 	setFileTreeFilterOpen: (open: boolean | ((prev: boolean) => boolean)) => void;
 
-	// File preview loading
-	setFilePreviewLoading: (loading: FilePreviewLoading | null) => void;
+	// Multi-selection
+	setSelectedPaths: (paths: Set<string> | ((prev: Set<string>) => Set<string>)) => void;
+	setSelectionAnchorIndex: (index: number) => void;
 
 	// File tree data
 	setFilteredFileTree: (tree: FileNode[]) => void;
@@ -91,7 +93,8 @@ export const useFileExplorerStore = create<FileExplorerStore>()((set, get) => ({
 	selectedFileIndex: 0,
 	fileTreeFilter: '',
 	fileTreeFilterOpen: false,
-	filePreviewLoading: null,
+	selectedPaths: new Set(),
+	selectionAnchorIndex: -1,
 	filteredFileTree: [],
 	flatFileList: [],
 	isGraphViewOpen: false,
@@ -104,7 +107,8 @@ export const useFileExplorerStore = create<FileExplorerStore>()((set, get) => ({
 	setFileTreeFilterOpen: (v) =>
 		set((s) => ({ fileTreeFilterOpen: resolve(v, s.fileTreeFilterOpen) })),
 
-	setFilePreviewLoading: (loading) => set({ filePreviewLoading: loading }),
+	setSelectedPaths: (v) => set((s) => ({ selectedPaths: resolve(v, s.selectedPaths) })),
+	setSelectionAnchorIndex: (index) => set({ selectionAnchorIndex: index }),
 
 	setFilteredFileTree: (tree) => set({ filteredFileTree: tree }),
 	setFlatFileList: (list) => set({ flatFileList: list }),
@@ -134,34 +138,3 @@ export const useFileExplorerStore = create<FileExplorerStore>()((set, get) => ({
 
 	setIsGraphViewOpen: (open) => set({ isGraphViewOpen: open }),
 }));
-
-// ============================================================================
-// Non-React access
-// ============================================================================
-
-/**
- * Get current file explorer state snapshot.
- * Use outside React (services, orchestrators, IPC handlers).
- */
-export function getFileExplorerState() {
-	return useFileExplorerStore.getState();
-}
-
-/**
- * Get stable file explorer action references outside React.
- */
-export function getFileExplorerActions() {
-	const state = useFileExplorerStore.getState();
-	return {
-		setSelectedFileIndex: state.setSelectedFileIndex,
-		setFileTreeFilter: state.setFileTreeFilter,
-		setFileTreeFilterOpen: state.setFileTreeFilterOpen,
-		setFilePreviewLoading: state.setFilePreviewLoading,
-		setFilteredFileTree: state.setFilteredFileTree,
-		setFlatFileList: state.setFlatFileList,
-		focusFileInGraph: state.focusFileInGraph,
-		openLastDocumentGraph: state.openLastDocumentGraph,
-		closeGraphView: state.closeGraphView,
-		setIsGraphViewOpen: state.setIsGraphViewOpen,
-	};
-}

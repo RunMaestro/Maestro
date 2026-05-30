@@ -4,6 +4,8 @@ import { HistoryDetailModal } from '../../../renderer/components/HistoryDetailMo
 import type { Theme, HistoryEntry } from '../../../renderer/types';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 
+import { mockTheme } from '../../helpers/mockTheme';
+import { spyOnListeners, expectAllListenersRemoved } from '../../helpers/listenerLeakAssertions';
 // Mock LayerStackContext
 const mockRegisterLayer = vi.fn(() => 'layer-id-1');
 const mockUnregisterLayer = vi.fn();
@@ -32,26 +34,6 @@ Object.defineProperty(navigator, 'clipboard', {
 });
 
 // Create a mock theme
-const mockTheme: Theme = {
-	id: 'dracula',
-	name: 'Dracula',
-	mode: 'dark',
-	colors: {
-		bgMain: '#282a36',
-		bgSidebar: '#21222c',
-		bgActivity: '#343746',
-		textMain: '#f8f8f2',
-		textDim: '#6272a4',
-		accent: '#bd93f9',
-		accentForeground: '#f8f8f2',
-		border: '#44475a',
-		success: '#50fa7b',
-		warning: '#ffb86c',
-		error: '#ff5555',
-		scrollbar: '#44475a',
-		scrollbarHover: '#6272a4',
-	},
-};
 
 // Create a base history entry for testing
 const createMockEntry = (overrides: Partial<HistoryEntry> = {}): HistoryEntry => ({
@@ -208,6 +190,74 @@ describe('HistoryDetailModal', () => {
 				'Task completed successfully and human-validated'
 			);
 			expect(validatedIndicator).toBeInTheDocument();
+		});
+
+		it('should render CUE type with correct pill and teal color', () => {
+			render(
+				<HistoryDetailModal
+					theme={mockTheme}
+					entry={createMockEntry({ type: 'CUE' })}
+					onClose={mockOnClose}
+				/>
+			);
+
+			const cuePill = screen.getByText('CUE');
+			expect(cuePill).toBeInTheDocument();
+			expect(cuePill.closest('span')).toHaveStyle({ color: '#06b6d4' });
+		});
+
+		it('should show success indicator for CUE entries with success=true', () => {
+			render(
+				<HistoryDetailModal
+					theme={mockTheme}
+					entry={createMockEntry({ type: 'CUE', success: true })}
+					onClose={mockOnClose}
+				/>
+			);
+
+			const successIndicator = screen.getByTitle('Task completed successfully');
+			expect(successIndicator).toBeInTheDocument();
+		});
+
+		it('should show failure indicator for CUE entries with success=false', () => {
+			render(
+				<HistoryDetailModal
+					theme={mockTheme}
+					entry={createMockEntry({ type: 'CUE', success: false })}
+					onClose={mockOnClose}
+				/>
+			);
+
+			const failureIndicator = screen.getByTitle('Task failed');
+			expect(failureIndicator).toBeInTheDocument();
+		});
+
+		it('should display CUE trigger metadata when available', () => {
+			render(
+				<HistoryDetailModal
+					theme={mockTheme}
+					entry={createMockEntry({
+						type: 'CUE',
+						cueTriggerName: 'lint-on-save',
+						cueEventType: 'file_change',
+					})}
+					onClose={mockOnClose}
+				/>
+			);
+
+			expect(screen.getByTitle('Trigger: lint-on-save')).toBeInTheDocument();
+		});
+
+		it('should not display CUE trigger metadata for non-CUE entries', () => {
+			render(
+				<HistoryDetailModal
+					theme={mockTheme}
+					entry={createMockEntry({ type: 'AUTO' })}
+					onClose={mockOnClose}
+				/>
+			);
+
+			expect(screen.queryByTitle(/Trigger:/)).not.toBeInTheDocument();
 		});
 	});
 
@@ -706,6 +756,12 @@ describe('HistoryDetailModal', () => {
 				<HistoryDetailModal
 					theme={mockTheme}
 					entry={createMockEntry({
+						// Accumulated multi-tool entry: raw tokens overflow the window,
+						// but the preserved per-entry contextUsage is the last known good
+						// percentage. The display must clamp at 100% rather than render
+						// 0% (issue #762: previously the overflow path silently surfaced
+						// the capacity as the used-token count).
+						contextUsage: 100,
 						usageStats: {
 							inputTokens: 150000,
 							outputTokens: 1000,
@@ -719,7 +775,6 @@ describe('HistoryDetailModal', () => {
 				/>
 			);
 
-			// Should cap at 100%
 			expect(screen.getByText('100%')).toBeInTheDocument();
 		});
 
@@ -830,6 +885,21 @@ describe('HistoryDetailModal', () => {
 			fireEvent.click(screen.getByTitle('Delete this history entry'));
 
 			expect(screen.getByText(/auto history entry/)).toBeInTheDocument();
+		});
+
+		it('should show correct type in delete confirmation for CUE entry', () => {
+			render(
+				<HistoryDetailModal
+					theme={mockTheme}
+					entry={createMockEntry({ type: 'CUE' })}
+					onClose={mockOnClose}
+					onDelete={mockOnDelete}
+				/>
+			);
+
+			fireEvent.click(screen.getByTitle('Delete this history entry'));
+
+			expect(screen.getByText(/cue history entry/)).toBeInTheDocument();
 		});
 
 		it('should cancel delete when Cancel button is clicked', () => {
@@ -1113,6 +1183,40 @@ describe('HistoryDetailModal', () => {
 			fireEvent.keyDown(window, { key: 'ArrowRight' });
 
 			expect(mockOnNavigate).not.toHaveBeenCalled();
+		});
+
+		it('should not call onNavigate after unmount', () => {
+			const { unmount } = render(
+				<HistoryDetailModal
+					theme={mockTheme}
+					entry={mockEntries[1]}
+					onClose={mockOnClose}
+					filteredEntries={mockEntries}
+					currentIndex={1}
+					onNavigate={mockOnNavigate}
+				/>
+			);
+			unmount();
+			fireEvent.keyDown(window, { key: 'ArrowLeft' });
+			fireEvent.keyDown(window, { key: 'ArrowRight' });
+			expect(mockOnNavigate).not.toHaveBeenCalled();
+		});
+
+		it('should remove its keydown listener on unmount (no leak)', () => {
+			const spies = spyOnListeners(window);
+			const { unmount } = render(
+				<HistoryDetailModal
+					theme={mockTheme}
+					entry={mockEntries[1]}
+					onClose={mockOnClose}
+					filteredEntries={mockEntries}
+					currentIndex={1}
+					onNavigate={mockOnNavigate}
+				/>
+			);
+			unmount();
+			expectAllListenersRemoved(spies.addSpy, spies.removeSpy);
+			spies.restore();
 		});
 	});
 

@@ -2,12 +2,13 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import { RightPanel, RightPanelHandle } from '../../../renderer/components/RightPanel';
 import { createRef } from 'react';
-import type { Session, Theme, Shortcut, BatchRunState } from '../../../renderer/types';
+import type { Session, Shortcut, BatchRunState } from '../../../renderer/types';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useFileExplorerStore } from '../../../renderer/stores/fileExplorerStore';
 import { useBatchStore } from '../../../renderer/stores/batchStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { mockTheme } from '../../helpers/mockTheme';
 
 // Mock child components
 vi.mock('../../../renderer/components/FileExplorerPanel', () => ({
@@ -84,30 +85,14 @@ vi.mock('lucide-react', () => ({
 			XCircle
 		</span>
 	),
+	Square: ({ className }: { className?: string }) => (
+		<span data-testid="square" className={className}>
+			Square
+		</span>
+	),
 }));
 
 describe('RightPanel', () => {
-	const mockTheme: Theme = {
-		id: 'dracula',
-		name: 'Dracula',
-		mode: 'dark',
-		colors: {
-			bgMain: '#282a36',
-			bgSidebar: '#21222c',
-			bgActivity: '#1e1f29',
-			border: '#44475a',
-			textMain: '#f8f8f2',
-			textDim: '#6272a4',
-			accent: '#bd93f9',
-			accentDim: 'rgba(189, 147, 249, 0.2)',
-			accentText: '#bd93f9',
-			accentForeground: '#f8f8f2',
-			success: '#50fa7b',
-			warning: '#f1fa8c',
-			error: '#ff5555',
-		},
-	};
-
 	const mockSession: Session = {
 		id: 'session-1',
 		name: 'Test Session',
@@ -150,11 +135,13 @@ describe('RightPanel', () => {
 		fileTreeContainerRef: { current: null } as React.RefObject<HTMLDivElement>,
 		fileTreeFilterInputRef: { current: null } as React.RefObject<HTMLInputElement>,
 		toggleFolder: vi.fn(),
+		toggleFolderRecursive: vi.fn(),
 		handleFileClick: vi.fn(),
 		expandAllFolders: vi.fn(),
 		collapseAllFolders: vi.fn(),
 		updateSessionWorkingDirectory: vi.fn(),
 		refreshFileTree: vi.fn(),
+		cancelFileTreeLoad: vi.fn(),
 		onAutoRefreshChange: vi.fn(),
 		onShowFlash: vi.fn(),
 		onAutoRunContentChange: vi.fn(),
@@ -191,6 +178,7 @@ describe('RightPanel', () => {
 			rightPanelWidth: 400,
 			shortcuts: mockShortcuts,
 			showHiddenFiles: false,
+			autoRunDisabled: false,
 		});
 		useFileExplorerStore.setState({
 			fileTreeFilter: '',
@@ -204,6 +192,7 @@ describe('RightPanel', () => {
 			documentTree: [] as any,
 			isLoadingDocuments: false,
 			documentTaskCounts: undefined as any,
+			batchRunStates: {},
 		});
 	});
 
@@ -325,6 +314,16 @@ describe('RightPanel', () => {
 			fireEvent.click(screen.getByRole('button', { name: 'Files' }));
 			expect(setActiveRightTab).toHaveBeenCalledWith('files');
 		});
+
+		it('should hide Auto Run tab when autoRunDisabled is true', () => {
+			useSettingsStore.setState({ autoRunDisabled: true });
+			const props = createDefaultProps();
+			render(<RightPanel {...props} />);
+
+			expect(screen.getByRole('button', { name: 'Files' })).toBeInTheDocument();
+			expect(screen.getByRole('button', { name: 'History' })).toBeInTheDocument();
+			expect(screen.queryByRole('button', { name: 'Auto Run' })).not.toBeInTheDocument();
+		});
 	});
 
 	describe('Tab content', () => {
@@ -393,8 +392,8 @@ describe('RightPanel', () => {
 			const { container } = render(<RightPanel {...props} />);
 
 			const panel = container.firstChild as HTMLElement;
-			expect(panel.classList.contains('ring-1')).toBe(true);
-			expect(panel.classList.contains('ring-inset')).toBe(true);
+			// Focus ring is applied via boxShadow inline style instead of ring-1/ring-inset classes
+			expect(panel.style.boxShadow).toBeTruthy();
 		});
 
 		it('should not show focus ring when activeFocus is not right', () => {
@@ -577,7 +576,7 @@ describe('RightPanel', () => {
 			expect(screen.getByText('Auto Run Active')).toBeInTheDocument();
 		});
 
-		it('should show "Stopping..." when isStopping is true', () => {
+		it('should show "Stopping" when isStopping is true', () => {
 			const currentSessionBatchState: BatchRunState = {
 				isRunning: true,
 				isStopping: true,
@@ -595,7 +594,7 @@ describe('RightPanel', () => {
 			const props = createDefaultProps({ currentSessionBatchState });
 			render(<RightPanel {...props} />);
 
-			expect(screen.getByText('Stopping...')).toBeInTheDocument();
+			expect(screen.getByText('Stopping')).toBeInTheDocument();
 			expect(screen.getByText(/waiting for current task/i)).toBeInTheDocument();
 		});
 
@@ -641,6 +640,75 @@ describe('RightPanel', () => {
 			render(<RightPanel {...props} />);
 
 			expect(screen.queryByTitle('Force kill the running process')).not.toBeInTheDocument();
+		});
+
+		it('should show Stop button when running and not stopping or error-paused', () => {
+			const currentSessionBatchState: BatchRunState = {
+				isRunning: true,
+				isStopping: false,
+				documents: ['doc1'],
+				currentDocumentIndex: 0,
+				totalTasks: 10,
+				completedTasks: 5,
+				currentDocTasksTotal: 10,
+				currentDocTasksCompleted: 5,
+				totalTasksAcrossAllDocs: 10,
+				completedTasksAcrossAllDocs: 5,
+				loopEnabled: false,
+				loopIteration: 0,
+			};
+			const props = createDefaultProps({ currentSessionBatchState });
+			render(<RightPanel {...props} />);
+
+			expect(
+				screen.getByTitle('Stop auto-run after the current task finishes')
+			).toBeInTheDocument();
+		});
+
+		it('should hide Stop button when isStopping is true', () => {
+			const currentSessionBatchState: BatchRunState = {
+				isRunning: true,
+				isStopping: true,
+				documents: ['doc1'],
+				currentDocumentIndex: 0,
+				totalTasks: 10,
+				completedTasks: 5,
+				currentDocTasksTotal: 10,
+				currentDocTasksCompleted: 5,
+				totalTasksAcrossAllDocs: 10,
+				completedTasksAcrossAllDocs: 5,
+				loopEnabled: false,
+				loopIteration: 0,
+			};
+			const props = createDefaultProps({ currentSessionBatchState });
+			render(<RightPanel {...props} />);
+
+			expect(
+				screen.queryByTitle('Stop auto-run after the current task finishes')
+			).not.toBeInTheDocument();
+		});
+
+		it('should call onStopBatchRun with session id when Stop button is clicked', () => {
+			const onStopBatchRun = vi.fn();
+			const currentSessionBatchState: BatchRunState = {
+				isRunning: true,
+				isStopping: false,
+				documents: ['doc1'],
+				currentDocumentIndex: 0,
+				totalTasks: 10,
+				completedTasks: 5,
+				currentDocTasksTotal: 10,
+				currentDocTasksCompleted: 5,
+				totalTasksAcrossAllDocs: 10,
+				completedTasksAcrossAllDocs: 5,
+				loopEnabled: false,
+				loopIteration: 0,
+			};
+			const props = createDefaultProps({ currentSessionBatchState, onStopBatchRun });
+			render(<RightPanel {...props} />);
+
+			fireEvent.click(screen.getByTitle('Stop auto-run after the current task finishes'));
+			expect(onStopBatchRun).toHaveBeenCalledWith('session-1');
 		});
 
 		it('should show confirmation modal when Kill pill is clicked', () => {
@@ -1134,6 +1202,32 @@ describe('RightPanel', () => {
 			expect(setActiveRightTab).toHaveBeenCalledWith('history');
 		});
 
+		it('should show "View history" link when on files tab during batch run', () => {
+			useUIStore.setState({ activeRightTab: 'files' });
+			const setActiveRightTab = vi.fn();
+			const currentSessionBatchState: BatchRunState = {
+				isRunning: true,
+				isStopping: false,
+				documents: ['doc1'],
+				currentDocumentIndex: 0,
+				totalTasks: 10,
+				completedTasks: 5,
+				currentDocTasksTotal: 10,
+				currentDocTasksCompleted: 5,
+				totalTasksAcrossAllDocs: 10,
+				completedTasksAcrossAllDocs: 5,
+				loopEnabled: false,
+				loopIteration: 0,
+			};
+			const props = createDefaultProps({ currentSessionBatchState, setActiveRightTab });
+			render(<RightPanel {...props} />);
+
+			const link = screen.getByText('View history');
+			expect(link).toBeInTheDocument();
+			fireEvent.click(link);
+			expect(setActiveRightTab).toHaveBeenCalledWith('history');
+		});
+
 		it('should not show "View history" link when on history tab during batch run', () => {
 			useUIStore.setState({ activeRightTab: 'history' });
 			const currentSessionBatchState: BatchRunState = {
@@ -1277,8 +1371,8 @@ describe('RightPanel', () => {
 			const { container } = render(<RightPanel {...props} />);
 
 			const panel = container.firstChild as HTMLElement;
-			// --tw-ring-color is a CSS custom property for Tailwind ring utility
-			expect(panel.style.getPropertyValue('--tw-ring-color')).toBe('#bd93f9');
+			// Focus ring is applied via boxShadow using the theme accent color
+			expect(panel.style.boxShadow).toContain('#bd93f9');
 		});
 
 		it('should apply correct width based on rightPanelWidth', () => {
@@ -1459,7 +1553,7 @@ describe('RightPanel', () => {
 
 			// Find the progress bar inner div with warning color (browser normalizes hex to rgb)
 			const progressInner = container.querySelector('.h-1\\.5 > div') as HTMLElement;
-			expect(progressInner?.style.backgroundColor).toBe('rgb(241, 250, 140)');
+			expect(progressInner?.style.backgroundColor).toBe('rgb(255, 184, 108)');
 		});
 	});
 

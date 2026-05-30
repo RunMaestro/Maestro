@@ -15,6 +15,7 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { TerminalOutput } from '../../../renderer/components/TerminalOutput';
+import { useCenterFlashStore } from '../../../renderer/stores/centerFlashStore';
 import type { Session, Theme, LogEntry } from '../../../renderer/types';
 
 // Mock dependencies
@@ -72,6 +73,20 @@ vi.mock('../../../renderer/utils/tabHelpers', () => ({
 		session.tabs?.find((t) => t.id === session.activeTabId) || session.tabs?.[0],
 }));
 
+// Track message-by-message navigation calls
+const mockJumpToMessageEdge = vi.fn().mockReturnValue(true);
+
+vi.mock('../../../renderer/utils/messageScrollNavigation', async () => {
+	const actual = await vi.importActual<
+		typeof import('../../../renderer/utils/messageScrollNavigation')
+	>('../../../renderer/utils/messageScrollNavigation');
+	return {
+		...actual,
+		jumpToMessageEdge: (...args: Parameters<typeof actual.jumpToMessageEdge>) =>
+			mockJumpToMessageEdge(...args),
+	};
+});
+
 // Default theme for testing
 const defaultTheme: Theme = {
 	id: 'test-theme' as any,
@@ -119,6 +134,8 @@ const createDefaultSession = (overrides: Partial<Session> = {}): Session => ({
 		},
 	],
 	activeTabId: 'tab-1',
+	terminalTabs: [],
+	activeTerminalTabId: null,
 	...overrides,
 });
 
@@ -141,8 +158,10 @@ const createDefaultProps = (
 	activeFocus: 'main',
 	outputSearchOpen: false,
 	outputSearchQuery: '',
+	outputSearchRegex: false,
 	setOutputSearchOpen: vi.fn(),
 	setOutputSearchQuery: vi.fn(),
+	setOutputSearchRegex: vi.fn(),
 	setActiveFocus: vi.fn(),
 	setLightboxImage: vi.fn(),
 	inputRef: { current: null } as React.RefObject<HTMLTextAreaElement>,
@@ -177,15 +196,6 @@ describe('TerminalOutput', () => {
 			expect(outputDiv).toHaveStyle({ backgroundColor: defaultTheme.colors.bgMain });
 		});
 
-		it('renders with terminal mode background color', () => {
-			const session = createDefaultSession({ inputMode: 'terminal' });
-			const props = createDefaultProps({ session });
-			const { container } = render(<TerminalOutput {...props} />);
-
-			const outputDiv = container.firstChild as HTMLElement;
-			expect(outputDiv).toHaveStyle({ backgroundColor: defaultTheme.colors.bgActivity });
-		});
-
 		it('is focusable with tabIndex 0', () => {
 			const { container } = render(<TerminalOutput {...createDefaultProps()} />);
 			const outputDiv = container.firstChild as HTMLElement;
@@ -209,23 +219,6 @@ describe('TerminalOutput', () => {
 			render(<TerminalOutput {...props} />);
 
 			expect(screen.getByText('First message')).toBeInTheDocument();
-		});
-
-		it('renders shell logs in terminal mode', () => {
-			const shellLogs: LogEntry[] = [
-				createLogEntry({ text: 'ls -la', source: 'user' }),
-				createLogEntry({ text: 'total 100', source: 'stdout' }),
-			];
-
-			const session = createDefaultSession({
-				inputMode: 'terminal',
-				shellLogs,
-			});
-
-			const props = createDefaultProps({ session });
-			render(<TerminalOutput {...props} />);
-
-			expect(screen.getByText(/total 100/)).toBeInTheDocument();
 		});
 
 		it('displays user messages with different styling', () => {
@@ -262,18 +255,34 @@ describe('TerminalOutput', () => {
 			expect(screen.getByTitle('Message delivered')).toBeInTheDocument();
 		});
 
-		it('shows STDERR label for stderr entries', () => {
-			const logs: LogEntry[] = [createLogEntry({ text: 'Error output', source: 'stderr' })];
+		it('shows read-only eye indicator for messages sent in read-only mode', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({ text: 'Read-only message', source: 'user', readOnly: true }),
+			];
 
 			const session = createDefaultSession({
-				inputMode: 'terminal',
-				shellLogs: logs,
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
 			});
 
 			const props = createDefaultProps({ session });
 			render(<TerminalOutput {...props} />);
 
-			expect(screen.getByText('STDERR')).toBeInTheDocument();
+			expect(screen.getByTitle('Sent in read-only mode')).toBeInTheDocument();
+		});
+
+		it('does not show read-only indicator for messages sent without read-only flag', () => {
+			const logs: LogEntry[] = [createLogEntry({ text: 'Regular message', source: 'user' })];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			const props = createDefaultProps({ session });
+			render(<TerminalOutput {...props} />);
+
+			expect(screen.queryByTitle('Sent in read-only mode')).not.toBeInTheDocument();
 		});
 
 		it('renders error log entries through the markdown renderer to preserve line breaks', () => {
@@ -330,7 +339,9 @@ describe('TerminalOutput', () => {
 			const props = createDefaultProps({ outputSearchOpen: true });
 			render(<TerminalOutput {...props} />);
 
-			expect(screen.getByPlaceholderText('Filter output... (Esc to close)')).toBeInTheDocument();
+			expect(
+				screen.getByPlaceholderText('Search output... (Enter: next, Shift+Enter: prev)')
+			).toBeInTheDocument();
 		});
 
 		it('calls setOutputSearchQuery when typing in search', async () => {
@@ -341,16 +352,20 @@ describe('TerminalOutput', () => {
 			});
 			render(<TerminalOutput {...props} />);
 
-			const searchInput = screen.getByPlaceholderText('Filter output... (Esc to close)');
+			const searchInput = screen.getByPlaceholderText(
+				'Search output... (Enter: next, Shift+Enter: prev)'
+			);
 			fireEvent.change(searchInput, { target: { value: 'test query' } });
 
 			expect(setOutputSearchQuery).toHaveBeenCalledWith('test query');
 		});
 
-		it('filters logs based on search query', () => {
+		it('keeps all logs visible when searching (highlight-only, no filter)', () => {
+			// NOTE: use a source that isn't collapsed into response groups (stdout/stderr
+			// are merged by `collapsedLogs`), so each log produces its own DOM item.
 			const logs: LogEntry[] = [
-				createLogEntry({ text: 'This contains hello world', source: 'stdout' }),
-				createLogEntry({ text: 'This does not match', source: 'stdout' }),
+				createLogEntry({ text: 'This contains hello world', source: 'tool' }),
+				createLogEntry({ text: 'This does not match', source: 'tool' }),
 			];
 
 			const session = createDefaultSession({
@@ -365,9 +380,9 @@ describe('TerminalOutput', () => {
 
 			const { container } = render(<TerminalOutput {...props} />);
 
-			// Only one log should match the filter
+			// All logs should remain visible; search highlights rather than filters.
 			const logItems = container.querySelectorAll('[data-log-index]');
-			expect(logItems.length).toBe(1);
+			expect(logItems.length).toBe(2);
 		});
 
 		it('opens search when Cmd+F is pressed', () => {
@@ -392,72 +407,12 @@ describe('TerminalOutput', () => {
 			expect(setOutputSearchOpen).toHaveBeenCalledWith(true);
 		});
 
-		it('filters logs case-insensitively (in terminal mode)', async () => {
-			// Use terminal mode to avoid log collapsing
-			const logs: LogEntry[] = [
-				createLogEntry({ text: 'This contains HELLO world', source: 'stdout' }),
-				createLogEntry({ text: 'This contains hello world', source: 'stdout' }),
-				createLogEntry({ text: 'This does not match', source: 'stdout' }),
-			];
-
-			const session = createDefaultSession({
-				inputMode: 'terminal',
-				shellLogs: logs,
-			});
-
-			const props = createDefaultProps({
-				session,
-				outputSearchQuery: 'hello',
-			});
-
-			const { container } = render(<TerminalOutput {...props} />);
-
-			// Wait for debounce (150ms)
-			await act(async () => {
-				vi.advanceTimersByTime(200);
-			});
-
-			// Both logs with 'hello' and 'HELLO' should match (case insensitive)
-			const logItems = container.querySelectorAll('[data-log-index]');
-			expect(logItems.length).toBe(2);
-		});
-
-		it('shows all logs when search query is empty (terminal mode)', async () => {
-			const logs: LogEntry[] = [
-				createLogEntry({ text: 'First log', source: 'stdout' }),
-				createLogEntry({ text: 'Second log', source: 'stdout' }),
-				createLogEntry({ text: 'Third log', source: 'stdout' }),
-			];
-
-			const session = createDefaultSession({
-				inputMode: 'terminal',
-				shellLogs: logs,
-			});
-
-			const props = createDefaultProps({
-				session,
-				outputSearchOpen: true,
-				outputSearchQuery: '',
-			});
-
-			const { container } = render(<TerminalOutput {...props} />);
-
-			// Wait for debounce (150ms)
-			await act(async () => {
-				vi.advanceTimersByTime(200);
-			});
-
-			// All 3 logs should be visible when query is empty
-			const logItems = container.querySelectorAll('[data-log-index]');
-			expect(logItems.length).toBe(3);
-		});
-
 		it('hides search input when outputSearchOpen is false', () => {
 			const props = createDefaultProps({ outputSearchOpen: false });
 			render(<TerminalOutput {...props} />);
 
 			expect(
-				screen.queryByPlaceholderText('Filter output... (Esc to close)')
+				screen.queryByPlaceholderText('Search output... (Enter: next, Shift+Enter: prev)')
 			).not.toBeInTheDocument();
 		});
 
@@ -470,7 +425,9 @@ describe('TerminalOutput', () => {
 			});
 			render(<TerminalOutput {...props} />);
 
-			const searchInput = screen.getByPlaceholderText('Filter output... (Esc to close)');
+			const searchInput = screen.getByPlaceholderText(
+				'Search output... (Enter: next, Shift+Enter: prev)'
+			);
 
 			// The input should show the current query value
 			expect(searchInput).toHaveValue('initial');
@@ -516,54 +473,41 @@ describe('TerminalOutput', () => {
 			expect(mockUnregisterLayer).toHaveBeenCalled();
 		});
 
-		it('matches logs containing partial words (terminal mode)', async () => {
-			const logs: LogEntry[] = [
-				createLogEntry({ text: 'authentication failed', source: 'stdout' }),
-				createLogEntry({ text: 'unauthorized access', source: 'stdout' }),
-				createLogEntry({ text: 'success', source: 'stdout' }),
-			];
+		it('shows "Plain Text" label on regex toggle when in plain mode', () => {
+			const props = createDefaultProps({ outputSearchOpen: true, outputSearchRegex: false });
+			render(<TerminalOutput {...props} />);
 
-			const session = createDefaultSession({
-				inputMode: 'terminal',
-				shellLogs: logs,
-			});
+			expect(screen.getByText('Plain Text')).toBeInTheDocument();
+			expect(screen.queryByText('Regex')).not.toBeInTheDocument();
+		});
 
-			const props = createDefaultProps({
-				session,
-				outputSearchQuery: 'auth',
-			});
+		it('shows "Regex" label on regex toggle when in regex mode', () => {
+			const props = createDefaultProps({ outputSearchOpen: true, outputSearchRegex: true });
+			render(<TerminalOutput {...props} />);
 
-			const { container } = render(<TerminalOutput {...props} />);
-
-			// Wait for debounce (150ms)
-			await act(async () => {
-				vi.advanceTimersByTime(200);
-			});
-
-			// Both 'authentication' and 'unauthorized' contain 'auth'
-			const logItems = container.querySelectorAll('[data-log-index]');
-			expect(logItems.length).toBe(2);
+			expect(screen.getByText('Regex')).toBeInTheDocument();
+			expect(screen.queryByText('Plain Text')).not.toBeInTheDocument();
 		});
 	});
 
 	describe('keyboard navigation', () => {
-		it('scrolls up on ArrowUp key', () => {
+		it('nudges scroll up on plain ArrowUp', () => {
 			const props = createDefaultProps();
 			const { container } = render(<TerminalOutput {...props} />);
 
 			const outputDiv = container.firstChild as HTMLElement;
 			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
 
-			// Mock scrollBy
 			const scrollBySpy = vi.fn();
 			scrollContainer.scrollBy = scrollBySpy;
 
 			fireEvent.keyDown(outputDiv, { key: 'ArrowUp' });
 
 			expect(scrollBySpy).toHaveBeenCalledWith({ top: -100 });
+			expect(mockJumpToMessageEdge).not.toHaveBeenCalled();
 		});
 
-		it('scrolls down on ArrowDown key', () => {
+		it('nudges scroll down on plain ArrowDown', () => {
 			const props = createDefaultProps();
 			const { container } = render(<TerminalOutput {...props} />);
 
@@ -576,6 +520,35 @@ describe('TerminalOutput', () => {
 			fireEvent.keyDown(outputDiv, { key: 'ArrowDown' });
 
 			expect(scrollBySpy).toHaveBeenCalledWith({ top: 100 });
+			expect(mockJumpToMessageEdge).not.toHaveBeenCalled();
+		});
+
+		it('jumps to previous message on Shift+ArrowUp', () => {
+			const props = createDefaultProps();
+			const { container } = render(<TerminalOutput {...props} />);
+
+			const outputDiv = container.firstChild as HTMLElement;
+			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
+
+			fireEvent.keyDown(outputDiv, { key: 'ArrowUp', shiftKey: true });
+
+			expect(mockJumpToMessageEdge).toHaveBeenCalledWith(scrollContainer, '[data-log-index]', 'up');
+		});
+
+		it('jumps to next message on Shift+ArrowDown', () => {
+			const props = createDefaultProps();
+			const { container } = render(<TerminalOutput {...props} />);
+
+			const outputDiv = container.firstChild as HTMLElement;
+			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
+
+			fireEvent.keyDown(outputDiv, { key: 'ArrowDown', shiftKey: true });
+
+			expect(mockJumpToMessageEdge).toHaveBeenCalledWith(
+				scrollContainer,
+				'[data-log-index]',
+				'down'
+			);
 		});
 
 		it('scrolls page up on Alt+ArrowUp', () => {
@@ -655,7 +628,9 @@ describe('TerminalOutput', () => {
 	});
 
 	describe('copy to clipboard', () => {
-		it('shows copied notification when copy succeeds', async () => {
+		it('fires the Copied to Clipboard center flash when copy succeeds', async () => {
+			useCenterFlashStore.getState().setActive(null);
+
 			const logs: LogEntry[] = [createLogEntry({ text: 'Copy this text', source: 'stdout' })];
 
 			const session = createDefaultSession({
@@ -666,10 +641,8 @@ describe('TerminalOutput', () => {
 			const props = createDefaultProps({ session });
 			render(<TerminalOutput {...props} />);
 
-			// Find and click the copy button
 			const copyButton = screen.getByTitle('Copy to clipboard');
 
-			// Mock clipboard
 			const writeTextMock = vi.fn().mockResolvedValue(undefined);
 			Object.assign(navigator, {
 				clipboard: { writeText: writeTextMock },
@@ -682,91 +655,11 @@ describe('TerminalOutput', () => {
 			expect(writeTextMock).toHaveBeenCalledWith('Copy this text');
 
 			await waitFor(() => {
-				expect(screen.getByText('Copied to Clipboard')).toBeInTheDocument();
+				const active = useCenterFlashStore.getState().active;
+				expect(active?.message).toBe('Copied to Clipboard');
+				expect(active?.detail).toBe('Copy this text');
+				expect(active?.color).toBe('theme');
 			});
-		});
-	});
-
-	describe('expand/collapse long messages', () => {
-		it('shows "Show all X lines" button for long messages', () => {
-			const longText = Array(100).fill('Line of text').join('\n');
-			const logs: LogEntry[] = [createLogEntry({ text: longText, source: 'stdout' })];
-
-			const session = createDefaultSession({
-				inputMode: 'terminal',
-				shellLogs: logs,
-			});
-
-			const props = createDefaultProps({
-				session,
-				maxOutputLines: 10, // Collapse after 10 lines
-			});
-
-			render(<TerminalOutput {...props} />);
-
-			expect(screen.getByText(/Show all 100 lines/)).toBeInTheDocument();
-		});
-
-		it('expands message when "Show all" button is clicked', async () => {
-			const longText = Array(100).fill('Line of text').join('\n');
-			const logs: LogEntry[] = [createLogEntry({ text: longText, source: 'stdout' })];
-
-			const session = createDefaultSession({
-				inputMode: 'terminal',
-				shellLogs: logs,
-			});
-
-			const props = createDefaultProps({
-				session,
-				maxOutputLines: 10,
-			});
-
-			const { container } = render(<TerminalOutput {...props} />);
-
-			// Mock scrollTo on scroll container before clicking expand
-			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
-			if (scrollContainer) {
-				scrollContainer.scrollTo = vi.fn();
-				scrollContainer.scrollBy = vi.fn();
-			}
-
-			const expandButton = screen.getByText(/Show all 100 lines/);
-			await act(async () => {
-				fireEvent.click(expandButton);
-				vi.advanceTimersByTime(100);
-			});
-
-			// After expanding, should show "Show less"
-			expect(screen.getByText('Show less')).toBeInTheDocument();
-		});
-	});
-
-	describe('busy state indicators', () => {
-		it('shows busy indicator for terminal mode when state is busy', () => {
-			const session = createDefaultSession({
-				inputMode: 'terminal',
-				state: 'busy',
-				busySource: 'terminal',
-				statusMessage: 'Running command...',
-			});
-
-			const props = createDefaultProps({ session });
-			render(<TerminalOutput {...props} />);
-
-			expect(screen.getByText('Running command...')).toBeInTheDocument();
-		});
-
-		it('shows default message when no statusMessage provided', () => {
-			const session = createDefaultSession({
-				inputMode: 'terminal',
-				state: 'busy',
-				busySource: 'terminal',
-			});
-
-			const props = createDefaultProps({ session });
-			render(<TerminalOutput {...props} />);
-
-			expect(screen.getByText('Executing command...')).toBeInTheDocument();
 		});
 	});
 
@@ -917,7 +810,7 @@ describe('TerminalOutput', () => {
 			expect(screen.queryByText('Remove Queued Message?')).not.toBeInTheDocument();
 		});
 
-		it('dismisses confirmation modal when Escape key is pressed', async () => {
+		it('dismisses confirmation modal when layer stack onEscape fires', async () => {
 			const session = createDefaultSession({
 				executionQueue: [{ id: 'q1', type: 'message', text: 'Queued message', tabId: 'tab-1' }],
 			});
@@ -931,22 +824,23 @@ describe('TerminalOutput', () => {
 				fireEvent.click(removeButton);
 			});
 
-			// Modal should be open
+			// Modal should be open and registered with the layer stack
 			expect(screen.getByText('Remove Queued Message?')).toBeInTheDocument();
+			expect(mockRegisterLayer).toHaveBeenCalled();
 
-			// Press Escape key on the modal overlay
-			const modalOverlay = screen
-				.getByText('Remove Queued Message?')
-				.closest('[class*="fixed inset-0"]');
+			// Pull the most recent registerLayer call's onEscape — this is what the
+			// layer stack fires when Escape is pressed on the topmost layer.
+			const layerConfig = mockRegisterLayer.mock.calls[mockRegisterLayer.mock.calls.length - 1][0];
+			expect(typeof layerConfig.onEscape).toBe('function');
+
 			await act(async () => {
-				fireEvent.keyDown(modalOverlay!, { key: 'Escape' });
+				layerConfig.onEscape();
 			});
 
-			// Modal should be closed
 			expect(screen.queryByText('Remove Queued Message?')).not.toBeInTheDocument();
 		});
 
-		it('confirms removal when Enter key is pressed on modal', async () => {
+		it('confirms removal when Enter key is pressed on the focused confirm button', async () => {
 			const onRemoveQueuedItem = vi.fn();
 			const session = createDefaultSession({
 				executionQueue: [{ id: 'q1', type: 'message', text: 'Queued message', tabId: 'tab-1' }],
@@ -961,24 +855,23 @@ describe('TerminalOutput', () => {
 				fireEvent.click(removeButton);
 			});
 
-			// Modal should be open
+			// Modal should be open. The shared ModalFooter handles Enter directly on the
+			// confirm button via its onKeyDown handler, so we dispatch keyDown there.
 			expect(screen.getByText('Remove Queued Message?')).toBeInTheDocument();
+			const confirmButton = screen.getByRole('button', { name: 'Remove' });
 
-			// Press Enter key on the modal overlay
-			const modalOverlay = screen
-				.getByText('Remove Queued Message?')
-				.closest('[class*="fixed inset-0"]');
 			await act(async () => {
-				fireEvent.keyDown(modalOverlay!, { key: 'Enter' });
+				fireEvent.keyDown(confirmButton, { key: 'Enter' });
 			});
 
-			// onRemoveQueuedItem should be called
 			expect(onRemoveQueuedItem).toHaveBeenCalledWith('q1');
-			// Modal should be closed
 			expect(screen.queryByText('Remove Queued Message?')).not.toBeInTheDocument();
 		});
 
-		it('dismisses confirmation modal when clicking overlay background', async () => {
+		it('keeps confirmation modal open when clicking the backdrop', async () => {
+			// Confirmation modals intentionally do not close on backdrop click — users
+			// must explicitly choose Cancel/Confirm or press Escape. This guards against
+			// accidental dismissal of destructive prompts.
 			const session = createDefaultSession({
 				executionQueue: [{ id: 'q1', type: 'message', text: 'Queued message', tabId: 'tab-1' }],
 			});
@@ -986,25 +879,201 @@ describe('TerminalOutput', () => {
 			const props = createDefaultProps({ session });
 			render(<TerminalOutput {...props} />);
 
-			// Click remove button to open modal
 			const removeButton = screen.getByTitle('Remove from queue');
 			await act(async () => {
 				fireEvent.click(removeButton);
 			});
 
-			// Modal should be open
 			expect(screen.getByText('Remove Queued Message?')).toBeInTheDocument();
 
-			// Click the overlay background (not the modal content)
-			const modalOverlay = screen
-				.getByText('Remove Queued Message?')
-				.closest('[class*="fixed inset-0"]');
+			// Click the modal overlay
+			const modalOverlay = screen.getByText('Remove Queued Message?').closest('[role="dialog"]');
 			await act(async () => {
 				fireEvent.click(modalOverlay!);
 			});
 
-			// Modal should be closed
-			expect(screen.queryByText('Remove Queued Message?')).not.toBeInTheDocument();
+			expect(screen.getByText('Remove Queued Message?')).toBeInTheDocument();
+		});
+
+		describe('force send button', () => {
+			const forceSendSession = () =>
+				createDefaultSession({
+					executionQueue: [{ id: 'q1', type: 'message', text: 'Queued message', tabId: 'tab-1' }],
+				});
+
+			it('does not render Force Send button when forcedParallelEnabled is false', () => {
+				const props = createDefaultProps({
+					session: forceSendSession(),
+					forcedParallelEnabled: false,
+					onForceSendQueuedItem: vi.fn(),
+					getForceSendContext: () => ({
+						targetTabBusy: false,
+						otherBusyTabs: [{ id: 'tab-2', displayName: 'Other Tab' }],
+					}),
+				});
+				render(<TerminalOutput {...props} />);
+				expect(screen.queryByRole('button', { name: /Force Send/ })).not.toBeInTheDocument();
+			});
+
+			it('does not render Force Send button when target tab is busy', () => {
+				const props = createDefaultProps({
+					session: forceSendSession(),
+					forcedParallelEnabled: true,
+					onForceSendQueuedItem: vi.fn(),
+					getForceSendContext: () => ({
+						targetTabBusy: true,
+						otherBusyTabs: [{ id: 'tab-2', displayName: 'Other Tab' }],
+					}),
+				});
+				render(<TerminalOutput {...props} />);
+				expect(screen.queryByRole('button', { name: /Force Send/ })).not.toBeInTheDocument();
+			});
+
+			it('does not render Force Send button when no other tabs are busy', () => {
+				const props = createDefaultProps({
+					session: forceSendSession(),
+					forcedParallelEnabled: true,
+					onForceSendQueuedItem: vi.fn(),
+					getForceSendContext: () => ({
+						targetTabBusy: false,
+						otherBusyTabs: [],
+					}),
+				});
+				render(<TerminalOutput {...props} />);
+				expect(screen.queryByRole('button', { name: /Force Send/ })).not.toBeInTheDocument();
+			});
+
+			it('renders Force Send button when enabled, target idle, and another tab busy', () => {
+				const props = createDefaultProps({
+					session: forceSendSession(),
+					forcedParallelEnabled: true,
+					onForceSendQueuedItem: vi.fn(),
+					getForceSendContext: () => ({
+						targetTabBusy: false,
+						otherBusyTabs: [{ id: 'tab-2', displayName: 'Other Tab' }],
+					}),
+				});
+				render(<TerminalOutput {...props} />);
+				expect(screen.getByRole('button', { name: /Force Send/ })).toBeInTheDocument();
+			});
+
+			it('shows confirmation modal listing other busy tabs', async () => {
+				const props = createDefaultProps({
+					session: forceSendSession(),
+					forcedParallelEnabled: true,
+					onForceSendQueuedItem: vi.fn(),
+					getForceSendContext: () => ({
+						targetTabBusy: false,
+						otherBusyTabs: [
+							{ id: 'tab-2', displayName: 'Refactor' },
+							{ id: 'tab-3', displayName: 'A1B2C3D4' },
+						],
+					}),
+				});
+				render(<TerminalOutput {...props} />);
+				const triggers = screen.getAllByRole('button', { name: /Force Send/ });
+				await act(async () => {
+					fireEvent.click(triggers[0]);
+				});
+				expect(screen.getByText('Force Send Message?')).toBeInTheDocument();
+				expect(screen.getByText('2 OTHER TABS WORKING')).toBeInTheDocument();
+				expect(screen.getByText('Refactor')).toBeInTheDocument();
+				expect(screen.getByText('A1B2C3D4')).toBeInTheDocument();
+			});
+
+			it('uses singular label when exactly one other tab is busy', async () => {
+				const props = createDefaultProps({
+					session: forceSendSession(),
+					forcedParallelEnabled: true,
+					onForceSendQueuedItem: vi.fn(),
+					getForceSendContext: () => ({
+						targetTabBusy: false,
+						otherBusyTabs: [{ id: 'tab-2', displayName: 'Other' }],
+					}),
+				});
+				render(<TerminalOutput {...props} />);
+				const triggers = screen.getAllByRole('button', { name: /Force Send/ });
+				await act(async () => {
+					fireEvent.click(triggers[0]);
+				});
+				expect(screen.getByText('1 OTHER TAB WORKING')).toBeInTheDocument();
+			});
+
+			it('calls onForceSendQueuedItem when confirmed', async () => {
+				const onForceSendQueuedItem = vi.fn();
+				const props = createDefaultProps({
+					session: forceSendSession(),
+					forcedParallelEnabled: true,
+					onForceSendQueuedItem,
+					getForceSendContext: () => ({
+						targetTabBusy: false,
+						otherBusyTabs: [{ id: 'tab-2', displayName: 'Other' }],
+					}),
+				});
+				render(<TerminalOutput {...props} />);
+				const triggers = screen.getAllByRole('button', { name: /Force Send/ });
+				await act(async () => {
+					fireEvent.click(triggers[0]);
+				});
+				// Now click the "Force Send" confirm button inside the modal (the second occurrence).
+				const buttons = screen.getAllByRole('button', { name: /Force Send/ });
+				await act(async () => {
+					fireEvent.click(buttons[buttons.length - 1]);
+				});
+				expect(onForceSendQueuedItem).toHaveBeenCalledWith('q1');
+			});
+
+			it('dismisses Force Send modal via layer stack onEscape without calling handler', async () => {
+				const onForceSendQueuedItem = vi.fn();
+				const props = createDefaultProps({
+					session: forceSendSession(),
+					forcedParallelEnabled: true,
+					onForceSendQueuedItem,
+					getForceSendContext: () => ({
+						targetTabBusy: false,
+						otherBusyTabs: [{ id: 'tab-2', displayName: 'Other' }],
+					}),
+				});
+				render(<TerminalOutput {...props} />);
+				const triggers = screen.getAllByRole('button', { name: /Force Send/ });
+				await act(async () => {
+					fireEvent.click(triggers[0]);
+				});
+				expect(screen.getByText('Force Send Message?')).toBeInTheDocument();
+
+				const layerConfig =
+					mockRegisterLayer.mock.calls[mockRegisterLayer.mock.calls.length - 1][0];
+				await act(async () => {
+					layerConfig.onEscape();
+				});
+
+				expect(screen.queryByText('Force Send Message?')).not.toBeInTheDocument();
+				expect(onForceSendQueuedItem).not.toHaveBeenCalled();
+			});
+
+			it('hides Force Send button when item already has forceParallel flag', () => {
+				const props = createDefaultProps({
+					session: createDefaultSession({
+						executionQueue: [
+							{
+								id: 'q1',
+								type: 'message',
+								text: 'already force-parallel',
+								tabId: 'tab-1',
+								forceParallel: true,
+							},
+						],
+					}),
+					forcedParallelEnabled: true,
+					onForceSendQueuedItem: vi.fn(),
+					getForceSendContext: () => ({
+						targetTabBusy: false,
+						otherBusyTabs: [{ id: 'tab-2', displayName: 'Other' }],
+					}),
+				});
+				render(<TerminalOutput {...props} />);
+				expect(screen.queryByRole('button', { name: /Force Send/ })).not.toBeInTheDocument();
+			});
 		});
 	});
 
@@ -1215,26 +1284,6 @@ describe('TerminalOutput', () => {
 			expect(screen.queryByTitle(/Delete command/)).not.toBeInTheDocument();
 		});
 
-		it('shows delete button with correct tooltip in terminal mode', () => {
-			const logs: LogEntry[] = [createLogEntry({ text: 'ls -la', source: 'user' })];
-
-			const session = createDefaultSession({
-				inputMode: 'terminal',
-				shellLogs: logs,
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs: [], isUnread: false }],
-				activeTabId: 'tab-1',
-			});
-
-			const props = createDefaultProps({
-				session,
-				onDeleteLog: vi.fn(),
-			});
-
-			render(<TerminalOutput {...props} />);
-
-			expect(screen.getByTitle(/Delete command and output/)).toBeInTheDocument();
-		});
-
 		it('shows delete button for each user message in a conversation', () => {
 			const logs: LogEntry[] = [
 				createLogEntry({ id: 'log-1', text: 'First user message', source: 'user' }),
@@ -1341,59 +1390,6 @@ describe('TerminalOutput', () => {
 			expect(screen.getByTitle(/Show plain text/)).toBeInTheDocument();
 		});
 
-		it('shows and toggles the Bionify button for AI responses', async () => {
-			const logs: LogEntry[] = [
-				createLogEntry({ text: '# Heading\n\nReadable information block', source: 'stdout' }),
-			];
-
-			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
-				activeTabId: 'tab-1',
-			});
-
-			render(
-				<TerminalOutput
-					{...createDefaultProps({
-						session,
-						markdownEditMode: false,
-					})}
-				/>
-			);
-
-			expect(screen.getByTitle('Enable Bionify for this tab')).toBeInTheDocument();
-
-			await act(async () => {
-				fireEvent.click(screen.getByTitle('Enable Bionify for this tab'));
-			});
-
-			expect(screen.getByTitle('Disable Bionify for this tab')).toBeInTheDocument();
-		});
-
-		it('absolutely positions the Bionify button in the top-right of AI response cards', () => {
-			const logs: LogEntry[] = [
-				createLogEntry({ text: '# Heading\n\nReadable information block', source: 'stdout' }),
-			];
-
-			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
-				activeTabId: 'tab-1',
-			});
-
-			render(
-				<TerminalOutput
-					{...createDefaultProps({
-						session,
-						markdownEditMode: false,
-					})}
-				/>
-			);
-
-			const bionifyButton = screen.getByTitle('Enable Bionify for this tab');
-			expect(bionifyButton).toHaveClass('absolute');
-			expect(bionifyButton).toHaveClass('top-2');
-			expect(bionifyButton).toHaveClass('right-2');
-		});
-
 		it('calls setMarkdownEditMode when toggle is clicked', async () => {
 			const setMarkdownEditMode = vi.fn();
 			const logs: LogEntry[] = [createLogEntry({ text: '# Heading', source: 'stdout' })];
@@ -1465,7 +1461,7 @@ describe('TerminalOutput', () => {
 			expect(setMarkdownEditMode).toHaveBeenCalledWith(false);
 		});
 
-		it('does not show markdown toggle button for user messages', () => {
+		it('shows markdown toggle button for user messages in AI mode (#622 consistency)', () => {
 			const logs: LogEntry[] = [
 				createLogEntry({ text: 'User message with **markdown**', source: 'user' }),
 			];
@@ -1482,8 +1478,10 @@ describe('TerminalOutput', () => {
 
 			render(<TerminalOutput {...props} />);
 
-			expect(screen.queryByTitle(/Show plain text/)).not.toBeInTheDocument();
-			expect(screen.queryByTitle(/Show formatted/)).not.toBeInTheDocument();
+			// Toggle is now exposed on user messages too — consistent with
+			// assistant messages so the user can flip between formatted and
+			// raw text views of their own input.
+			expect(screen.queryByTitle(/Show plain text/)).toBeInTheDocument();
 		});
 
 		it('does not show markdown toggle button in terminal mode', () => {
@@ -1847,22 +1845,6 @@ describe('TerminalOutput', () => {
 			// And markdown should be rendered
 			expect(screen.getByTestId('react-markdown')).toBeInTheDocument();
 		});
-
-		it('renders thinking logs as plain text in terminal mode', () => {
-			const logs: LogEntry[] = [createLogEntry({ text: '**bold** thinking', source: 'thinking' })];
-
-			const session = createDefaultSession({
-				inputMode: 'terminal',
-				shellLogs: logs,
-			});
-
-			const props = createDefaultProps({ session });
-			render(<TerminalOutput {...props} />);
-
-			// Terminal mode = not AI mode, so plain text
-			expect(screen.queryByTestId('react-markdown')).not.toBeInTheDocument();
-			expect(screen.getByText(/\*\*bold\*\* thinking/)).toBeInTheDocument();
-		});
 	});
 
 	describe('tool log detail extraction', () => {
@@ -1964,7 +1946,41 @@ describe('TerminalOutput', () => {
 			expect(screen.getByText('npm run test')).toBeInTheDocument();
 		});
 
-		it('renders tool with no extractable detail gracefully', () => {
+		it('renders Bash tool with description and full multi-line command', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({
+					text: 'Bash',
+					source: 'tool',
+					metadata: {
+						toolState: {
+							status: 'running',
+							input: {
+								command:
+									'echo "=== All comparison samples ==="\nls -lh ~/Downloads/output/compare_* 2>/dev/null\necho "=== Done ==="',
+								description: 'List comparison samples',
+							},
+						},
+					},
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			const props = createDefaultProps({ session });
+			render(<TerminalOutput {...props} />);
+
+			// Description shown separately
+			expect(screen.getByText('List comparison samples')).toBeInTheDocument();
+			// Full command shown without truncation — use regex since getByText struggles with newlines
+			expect(screen.getByText(/All comparison samples/)).toBeInTheDocument();
+			expect(screen.getByText(/compare_\* 2>\/dev\/null/)).toBeInTheDocument();
+			expect(screen.getByText(/Done ===/)).toBeInTheDocument();
+		});
+
+		it('renders tool with boolean input as key=value', () => {
 			const logs: LogEntry[] = [
 				createLogEntry({
 					text: 'SomeUnknownTool',
@@ -1986,95 +2002,150 @@ describe('TerminalOutput', () => {
 			const props = createDefaultProps({ session });
 			render(<TerminalOutput {...props} />);
 
-			// Tool name should still render even with no detail
+			// Tool name should render
 			expect(screen.getByText('SomeUnknownTool')).toBeInTheDocument();
+			// Generic summarizer shows boolean as key=value
+			expect(screen.getByText('someWeirdField=true')).toBeInTheDocument();
 		});
-	});
 
-	describe('local filter functionality', () => {
-		it('shows filter button for terminal output entries', () => {
-			const logs: LogEntry[] = [createLogEntry({ text: 'Terminal output', source: 'stdout' })];
+		describe('hidden progress rendering', () => {
+			it('renders hidden tool progress with the polished activity treatment', () => {
+				const logs: LogEntry[] = [
+					createLogEntry({
+						id: 'hidden-progress:tab-1',
+						text: 'Reading src/renderer/App.tsx',
+						source: 'system',
+						metadata: {
+							toolState: {
+								status: 'running',
+								input: { path: 'src/renderer/App.tsx' },
+							},
+							hiddenProgress: {
+								kind: 'tool',
+								toolName: 'view',
+							},
+						},
+					}),
+				];
+
+				const session = createDefaultSession({
+					tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+					activeTabId: 'tab-1',
+				});
+
+				render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+				expect(screen.getByText('view')).toBeInTheDocument();
+				expect(screen.getByText('Reading src/renderer/App.tsx')).toBeInTheDocument();
+				expect(screen.queryByTestId('react-markdown')).not.toBeInTheDocument();
+			});
+
+			it('uses the standard failed icon treatment for hidden progress', () => {
+				const logs: LogEntry[] = [
+					createLogEntry({
+						id: 'hidden-progress:tab-1',
+						text: 'Command failed',
+						source: 'system',
+						metadata: {
+							toolState: {
+								status: 'failed',
+							},
+							hiddenProgress: {
+								kind: 'tool',
+								toolName: 'bash',
+							},
+						},
+					}),
+				];
+
+				const session = createDefaultSession({
+					tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+					activeTabId: 'tab-1',
+				});
+
+				render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+				expect(screen.getByText('!')).toBeInTheDocument();
+				expect(screen.queryByText('×')).not.toBeInTheDocument();
+			});
+		});
+
+		it('renders any tool with string input fields generically', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({
+					text: 'Skill',
+					source: 'tool',
+					metadata: {
+						toolState: {
+							status: 'running',
+							input: { skill_name: 'commit-push-pr' },
+						},
+					},
+				}),
+			];
 
 			const session = createDefaultSession({
-				inputMode: 'terminal',
-				shellLogs: logs,
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
 			});
 
 			const props = createDefaultProps({ session });
 			render(<TerminalOutput {...props} />);
 
-			expect(screen.getByTitle('Filter this output')).toBeInTheDocument();
+			expect(screen.getByText('Skill')).toBeInTheDocument();
+			expect(screen.getByText('commit-push-pr')).toBeInTheDocument();
 		});
 
-		it('shows filter input when filter button is clicked', async () => {
-			const logs: LogEntry[] = [createLogEntry({ text: 'Terminal output', source: 'stdout' })];
+		it('renders tool with multiple input fields joined', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({
+					text: 'Grep',
+					source: 'tool',
+					metadata: {
+						toolState: {
+							status: 'completed',
+							input: { pattern: 'TODO', path: '/src', output_mode: 'content' },
+						},
+					},
+				}),
+			];
 
 			const session = createDefaultSession({
-				inputMode: 'terminal',
-				shellLogs: logs,
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
 			});
 
 			const props = createDefaultProps({ session });
 			render(<TerminalOutput {...props} />);
 
-			const filterButton = screen.getByTitle('Filter this output');
-			await act(async () => {
-				fireEvent.click(filterButton);
-			});
-
-			expect(screen.getByPlaceholderText(/Include by keyword/)).toBeInTheDocument();
+			expect(screen.getByText('Grep')).toBeInTheDocument();
+			// Generic summarizer joins all string fields
+			expect(screen.getByText('TODO /src content')).toBeInTheDocument();
 		});
 
-		it('toggles between include and exclude mode', async () => {
-			const logs: LogEntry[] = [createLogEntry({ text: 'Terminal output', source: 'stdout' })];
+		it('renders tool with empty input gracefully', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({
+					text: 'EmptyTool',
+					source: 'tool',
+					metadata: {
+						toolState: {
+							status: 'completed',
+							input: {},
+						},
+					},
+				}),
+			];
 
 			const session = createDefaultSession({
-				inputMode: 'terminal',
-				shellLogs: logs,
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
 			});
 
 			const props = createDefaultProps({ session });
 			render(<TerminalOutput {...props} />);
 
-			// Open filter
-			const filterButton = screen.getByTitle('Filter this output');
-			await act(async () => {
-				fireEvent.click(filterButton);
-			});
-
-			// Click mode toggle (should start as include)
-			const modeToggle = screen.getByTitle('Include matching lines');
-			await act(async () => {
-				fireEvent.click(modeToggle);
-			});
-
-			expect(screen.getByTitle('Exclude matching lines')).toBeInTheDocument();
-		});
-
-		it('toggles between plain text and regex mode', async () => {
-			const logs: LogEntry[] = [createLogEntry({ text: 'Terminal output', source: 'stdout' })];
-
-			const session = createDefaultSession({
-				inputMode: 'terminal',
-				shellLogs: logs,
-			});
-
-			const props = createDefaultProps({ session });
-			render(<TerminalOutput {...props} />);
-
-			// Open filter
-			const filterButton = screen.getByTitle('Filter this output');
-			await act(async () => {
-				fireEvent.click(filterButton);
-			});
-
-			// Click regex toggle (should start as plain text)
-			const regexToggle = screen.getByTitle('Using plain text');
-			await act(async () => {
-				fireEvent.click(regexToggle);
-			});
-
-			expect(screen.getByTitle('Using regex')).toBeInTheDocument();
+			expect(screen.getByText('EmptyTool')).toBeInTheDocument();
 		});
 	});
 
@@ -2152,58 +2223,40 @@ describe('TerminalOutput', () => {
 			expect(screen.getByText('/history:')).toBeInTheDocument();
 			expect(screen.getByText('Generate a history synopsis')).toBeInTheDocument();
 		});
-	});
 
-	describe('elapsed time display', () => {
-		it('shows elapsed time for busy terminal state with thinkingStartTime', () => {
+		it('renders URLs in the AI command body as clickable links', () => {
+			const url = 'https://github.com/RunMaestro/Maestro/pull/738';
+			const logs: LogEntry[] = [
+				createLogEntry({
+					text: `Review the open PR comments and respond.\n${url}`,
+					source: 'user',
+					aiCommand: {
+						command: '/pr-review',
+						description: 'Review PR Comments w/ Action',
+					},
+				}),
+			];
+
 			const session = createDefaultSession({
-				inputMode: 'terminal',
-				state: 'busy',
-				busySource: 'terminal',
-				thinkingStartTime: Date.now() - 65000, // 1 minute 5 seconds ago
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
 			});
 
 			const props = createDefaultProps({ session });
 			render(<TerminalOutput {...props} />);
 
-			// Should show elapsed time
-			expect(screen.getByText('1:05')).toBeInTheDocument();
-		});
+			const link = screen.getByText(url);
+			expect(link.tagName).toBe('A');
+			expect(link).toHaveAttribute('href', url);
 
-		it('updates elapsed time every second', async () => {
-			const session = createDefaultSession({
-				inputMode: 'terminal',
-				state: 'busy',
-				busySource: 'terminal',
-				thinkingStartTime: Date.now(),
-			});
-
-			const props = createDefaultProps({ session });
-			const { container } = render(<TerminalOutput {...props} />);
-
-			// Mock scrollTo on scroll container (needed for terminal auto-scroll)
-			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
-			if (scrollContainer) {
-				scrollContainer.scrollTo = vi.fn();
-				scrollContainer.scrollBy = vi.fn();
-			}
-
-			// Initial time
-			expect(screen.getByText('0:00')).toBeInTheDocument();
-
-			// Advance by 1 second
-			await act(async () => {
-				vi.advanceTimersByTime(1000);
-			});
-
-			expect(screen.getByText('0:01')).toBeInTheDocument();
+			fireEvent.click(link);
+			expect(window.maestro.shell.openExternal).toHaveBeenCalledWith(url);
 		});
 	});
 
 	describe('auto-scroll when at bottom', () => {
-		it('auto-scrolls to bottom when user is at bottom and new content arrives (no autoScrollAiMode)', async () => {
+		it('auto-scrolls to bottom when user is at bottom and new content arrives', async () => {
 			// isAtBottom starts as true (initial state), so auto-scroll should work
-			// even when autoScrollAiMode preference is OFF
 			const logs: LogEntry[] = [
 				createLogEntry({ id: 'user-1', text: 'Hello', source: 'user' }),
 				createLogEntry({ id: 'resp-1', text: 'Hi there', source: 'stdout' }),
@@ -2214,10 +2267,7 @@ describe('TerminalOutput', () => {
 				activeTabId: 'tab-1',
 			});
 
-			const props = createDefaultProps({
-				session,
-				autoScrollAiMode: false, // Auto-scroll preference is OFF
-			});
+			const props = createDefaultProps({ session });
 			const { container, rerender } = render(<TerminalOutput {...props} />);
 
 			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
@@ -2236,9 +2286,7 @@ describe('TerminalOutput', () => {
 				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs: newLogs, isUnread: false }],
 			};
 
-			rerender(
-				<TerminalOutput {...createDefaultProps({ session: newSession, autoScrollAiMode: false })} />
-			);
+			rerender(<TerminalOutput {...createDefaultProps({ session: newSession })} />);
 
 			// MutationObserver fires on DOM change, RAF needs time to execute
 			await act(async () => {
@@ -2249,7 +2297,7 @@ describe('TerminalOutput', () => {
 			expect(scrollToSpy).toHaveBeenCalled();
 		});
 
-		it('does NOT auto-scroll when user has scrolled up and autoScrollAiMode is off', async () => {
+		it('does NOT auto-scroll when user has scrolled up (auto-scroll paused)', async () => {
 			const logs: LogEntry[] = [
 				createLogEntry({ id: 'user-1', text: 'Hello', source: 'user' }),
 				createLogEntry({ id: 'resp-1', text: 'Response', source: 'stdout' }),
@@ -2260,10 +2308,7 @@ describe('TerminalOutput', () => {
 				activeTabId: 'tab-1',
 			});
 
-			const props = createDefaultProps({
-				session,
-				autoScrollAiMode: false,
-			});
+			const props = createDefaultProps({ session });
 			const { container, rerender } = render(<TerminalOutput {...props} />);
 
 			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
@@ -2293,19 +2338,17 @@ describe('TerminalOutput', () => {
 				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs: newLogs, isUnread: false }],
 			};
 
-			rerender(
-				<TerminalOutput {...createDefaultProps({ session: newSession, autoScrollAiMode: false })} />
-			);
+			rerender(<TerminalOutput {...createDefaultProps({ session: newSession })} />);
 
 			await act(async () => {
 				vi.advanceTimersByTime(50);
 			});
 
-			// scrollTo should NOT have been called — user scrolled up, no auto-scroll
+			// scrollTo should NOT have been called — user scrolled up, auto-scroll paused
 			expect(scrollToSpy).not.toHaveBeenCalled();
 		});
 
-		it('auto-scrolls when autoScrollAiMode is on and not paused', async () => {
+		it('auto-scrolls when at bottom and new content arrives', async () => {
 			const logs: LogEntry[] = [createLogEntry({ id: 'user-1', text: 'Hello', source: 'user' })];
 
 			const session = createDefaultSession({
@@ -2313,11 +2356,7 @@ describe('TerminalOutput', () => {
 				activeTabId: 'tab-1',
 			});
 
-			const props = createDefaultProps({
-				session,
-				autoScrollAiMode: true,
-				setAutoScrollAiMode: vi.fn(),
-			});
+			const props = createDefaultProps({ session });
 			const { container, rerender } = render(<TerminalOutput {...props} />);
 
 			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
@@ -2336,15 +2375,7 @@ describe('TerminalOutput', () => {
 				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs: newLogs, isUnread: false }],
 			};
 
-			rerender(
-				<TerminalOutput
-					{...createDefaultProps({
-						session: newSession,
-						autoScrollAiMode: true,
-						setAutoScrollAiMode: vi.fn(),
-					})}
-				/>
-			);
+			rerender(<TerminalOutput {...createDefaultProps({ session: newSession })} />);
 
 			await act(async () => {
 				vi.advanceTimersByTime(50);
@@ -2353,7 +2384,7 @@ describe('TerminalOutput', () => {
 			expect(scrollToSpy).toHaveBeenCalled();
 		});
 
-		it('always auto-scrolls in terminal mode regardless of autoScrollAiMode', async () => {
+		it('always auto-scrolls in terminal mode', async () => {
 			const logs: LogEntry[] = [createLogEntry({ id: 'cmd-1', text: 'ls', source: 'user' })];
 
 			const session = createDefaultSession({
@@ -2361,10 +2392,7 @@ describe('TerminalOutput', () => {
 				shellLogs: logs,
 			});
 
-			const props = createDefaultProps({
-				session,
-				autoScrollAiMode: false,
-			});
+			const props = createDefaultProps({ session });
 			const { container, rerender } = render(<TerminalOutput {...props} />);
 
 			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
@@ -2383,9 +2411,7 @@ describe('TerminalOutput', () => {
 				shellLogs: newLogs,
 			};
 
-			rerender(
-				<TerminalOutput {...createDefaultProps({ session: newSession, autoScrollAiMode: false })} />
-			);
+			rerender(<TerminalOutput {...createDefaultProps({ session: newSession })} />);
 
 			await act(async () => {
 				vi.advanceTimersByTime(50);
@@ -2422,22 +2448,6 @@ describe('TerminalOutput', () => {
 
 			// The scroll restoration happens via requestAnimationFrame
 			// In tests this is mocked, so we just verify the prop is used
-		});
-	});
-
-	describe('terminal mode specific behaviors', () => {
-		it('shows $ prompt for user commands in terminal mode', () => {
-			const logs: LogEntry[] = [createLogEntry({ text: 'ls -la', source: 'user' })];
-
-			const session = createDefaultSession({
-				inputMode: 'terminal',
-				shellLogs: logs,
-			});
-
-			const props = createDefaultProps({ session });
-			render(<TerminalOutput {...props} />);
-
-			expect(screen.getByText('$')).toBeInTheDocument();
 		});
 	});
 
@@ -2491,24 +2501,110 @@ describe('TerminalOutput', () => {
 
 			expect(screen.getByText(/日本語テスト.*🎉.*émojis/)).toBeInTheDocument();
 		});
+	});
 
-		it('skips empty stderr entries', () => {
+	describe('mode pill rendering', () => {
+		it('labels TUI and API turns separately when both render styles coexist', () => {
 			const logs: LogEntry[] = [
-				createLogEntry({ text: '', source: 'stderr' }),
-				createLogEntry({ text: 'Valid output', source: 'stdout' }),
+				createLogEntry({ id: 'user-1', text: 'first prompt', source: 'user' }),
+				createLogEntry({
+					id: 'api-resp',
+					text: 'response from API stream',
+					source: 'stdout',
+					renderStyle: 'structured',
+				}),
+				createLogEntry({ id: 'user-2', text: 'second prompt', source: 'user' }),
+				createLogEntry({
+					id: 'interactive-resp',
+					text: 'response captured from interactive TUI',
+					source: 'stdout',
+					renderStyle: 'text-stream',
+				}),
 			];
 
 			const session = createDefaultSession({
-				inputMode: 'terminal',
-				shellLogs: logs,
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
 			});
 
-			const props = createDefaultProps({ session });
-			const { container } = render(<TerminalOutput {...props} />);
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
 
-			// Should only render the valid output
-			const logItems = container.querySelectorAll('[data-log-index]');
-			expect(logItems.length).toBe(1);
+			expect(screen.getByText('API')).toBeInTheDocument();
+			expect(screen.getByText('TUI')).toBeInTheDocument();
+		});
+
+		it('uses the "Adaptive" prefix when the session has Adaptive Mode enabled', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'first prompt', source: 'user' }),
+				createLogEntry({
+					id: 'resp-tui',
+					text: 'tui response',
+					source: 'stdout',
+					renderStyle: 'text-stream',
+				}),
+				createLogEntry({ id: 'user-2', text: 'second prompt', source: 'user' }),
+				createLogEntry({
+					id: 'resp-api',
+					text: 'api response',
+					source: 'stdout',
+					renderStyle: 'structured',
+				}),
+			];
+
+			const session = createDefaultSession({
+				enableMaestroP: true,
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByText('Adaptive TUI')).toBeInTheDocument();
+			expect(screen.getByText('Adaptive API')).toBeInTheDocument();
+			expect(screen.queryByText('TUI')).not.toBeInTheDocument();
+			expect(screen.queryByText('API')).not.toBeInTheDocument();
+		});
+
+		it('does not render the pill on user messages even when tagged text-stream', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({
+					id: 'user-1',
+					text: 'a user prompt',
+					source: 'user',
+					renderStyle: 'text-stream',
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByText('a user prompt')).toBeInTheDocument();
+			expect(screen.queryByText('TUI')).not.toBeInTheDocument();
+			expect(screen.queryByText('API')).not.toBeInTheDocument();
+		});
+
+		it('does not render the pill on non-Claude agents', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'prompt', source: 'user' }),
+				createLogEntry({ id: 'resp-1', text: 'response', source: 'stdout' }),
+			];
+
+			const session = createDefaultSession({
+				toolType: 'codex',
+				tabs: [{ id: 'tab-1', agentSessionId: 'codex-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.queryByText('TUI')).not.toBeInTheDocument();
+			expect(screen.queryByText('API')).not.toBeInTheDocument();
+			expect(screen.queryByText('Adaptive TUI')).not.toBeInTheDocument();
+			expect(screen.queryByText('Adaptive API')).not.toBeInTheDocument();
 		});
 	});
 });
@@ -2521,170 +2617,6 @@ describe('helper function behaviors (tested via component)', () => {
 
 	afterEach(() => {
 		vi.useRealTimers();
-	});
-
-	describe('processCarriageReturns behavior', () => {
-		it('handles carriage returns in terminal output', () => {
-			// Text with carriage return - should show last segment
-			const textWithCR = 'Loading...\rDone!';
-			const logs: LogEntry[] = [createLogEntry({ text: textWithCR, source: 'stdout' })];
-
-			const session = createDefaultSession({
-				inputMode: 'terminal',
-				shellLogs: logs,
-			});
-
-			const props = createDefaultProps({ session });
-			render(<TerminalOutput {...props} />);
-
-			// Should only show "Done!" not "Loading..."
-			expect(screen.getByText('Done!')).toBeInTheDocument();
-			expect(screen.queryByText('Loading...')).not.toBeInTheDocument();
-		});
-
-		it('handles multiple carriage returns', () => {
-			const text = '10%\r20%\r30%\r100%';
-			const logs: LogEntry[] = [createLogEntry({ text, source: 'stdout' })];
-
-			const session = createDefaultSession({
-				inputMode: 'terminal',
-				shellLogs: logs,
-			});
-
-			const props = createDefaultProps({ session });
-			render(<TerminalOutput {...props} />);
-
-			// Should only show final value
-			expect(screen.getByText('100%')).toBeInTheDocument();
-		});
-	});
-
-	describe('processLogTextHelper behavior', () => {
-		it('filters out empty lines in terminal mode', () => {
-			const textWithEmptyLines = 'line1\n\n\nline2';
-			const logs: LogEntry[] = [createLogEntry({ text: textWithEmptyLines, source: 'stdout' })];
-
-			const session = createDefaultSession({
-				inputMode: 'terminal',
-				shellLogs: logs,
-			});
-
-			const props = createDefaultProps({ session });
-			render(<TerminalOutput {...props} />);
-
-			// Both lines should be present
-			expect(screen.getByText(/line1/)).toBeInTheDocument();
-		});
-
-		it('filters out bash prompts', () => {
-			const textWithPrompt = 'output\nbash-3.2$ \nmore output';
-			const logs: LogEntry[] = [createLogEntry({ text: textWithPrompt, source: 'stdout' })];
-
-			const session = createDefaultSession({
-				inputMode: 'terminal',
-				shellLogs: logs,
-			});
-
-			const props = createDefaultProps({ session });
-			render(<TerminalOutput {...props} />);
-
-			// Output should be present, prompt filtered
-			expect(screen.getByText(/output/)).toBeInTheDocument();
-		});
-	});
-
-	describe('filterTextByLinesHelper behavior', () => {
-		it('filters lines by keyword (include mode)', async () => {
-			const text = 'error: something went wrong\ninfo: all good\nerror: another issue';
-			const logs: LogEntry[] = [createLogEntry({ text, source: 'stdout' })];
-
-			const session = createDefaultSession({
-				inputMode: 'terminal',
-				shellLogs: logs,
-			});
-
-			const props = createDefaultProps({ session });
-			render(<TerminalOutput {...props} />);
-
-			// Open local filter
-			const filterButton = screen.getByTitle('Filter this output');
-			await act(async () => {
-				fireEvent.click(filterButton);
-			});
-
-			// Type filter query
-			const filterInput = screen.getByPlaceholderText(/Include by keyword/);
-			await act(async () => {
-				fireEvent.change(filterInput, { target: { value: 'error' } });
-			});
-
-			// Should filter to only error lines
-			// (exact behavior depends on component rendering)
-		});
-
-		it('filters lines by regex', async () => {
-			const text = 'user123 logged in\nuser456 logged out\nadmin logged in';
-			const logs: LogEntry[] = [createLogEntry({ text, source: 'stdout' })];
-
-			const session = createDefaultSession({
-				inputMode: 'terminal',
-				shellLogs: logs,
-			});
-
-			const props = createDefaultProps({ session });
-			render(<TerminalOutput {...props} />);
-
-			// Open local filter
-			const filterButton = screen.getByTitle('Filter this output');
-			await act(async () => {
-				fireEvent.click(filterButton);
-			});
-
-			// Enable regex mode
-			const regexToggle = screen.getByTitle('Using plain text');
-			await act(async () => {
-				fireEvent.click(regexToggle);
-			});
-
-			// Type regex pattern
-			const filterInput = screen.getByPlaceholderText(/Include by RegEx/);
-			await act(async () => {
-				fireEvent.change(filterInput, { target: { value: 'user\\d+' } });
-			});
-		});
-
-		it('handles invalid regex gracefully', async () => {
-			const text = 'some text';
-			const logs: LogEntry[] = [createLogEntry({ text, source: 'stdout' })];
-
-			const session = createDefaultSession({
-				inputMode: 'terminal',
-				shellLogs: logs,
-			});
-
-			const props = createDefaultProps({ session });
-			render(<TerminalOutput {...props} />);
-
-			// Open local filter
-			const filterButton = screen.getByTitle('Filter this output');
-			await act(async () => {
-				fireEvent.click(filterButton);
-			});
-
-			// Enable regex mode
-			const regexToggle = screen.getByTitle('Using plain text');
-			await act(async () => {
-				fireEvent.click(regexToggle);
-			});
-
-			// Type invalid regex
-			const filterInput = screen.getByPlaceholderText(/Include by RegEx/);
-			await act(async () => {
-				fireEvent.change(filterInput, { target: { value: '[invalid' } });
-			});
-
-			// Should not throw, falls back to plain text matching
-		});
 	});
 
 	describe('raw markdown source mode', () => {
@@ -2798,5 +2730,100 @@ describe('memoization behavior', () => {
 			(el as HTMLElement).style.fontFamily.includes('Monaco')
 		);
 		expect(hasNewFont).toBe(true);
+	});
+
+	describe('gist publish button', () => {
+		it('shows gist publish button for AI messages when ghCliAvailable is true', async () => {
+			const session = createDefaultSession({
+				inputMode: 'ai',
+				tabs: [
+					{
+						id: 'tab-1',
+						logs: [{ id: '1', source: 'ai', text: 'AI response text', timestamp: Date.now() }],
+					},
+				],
+				activeTabId: 'tab-1',
+			});
+
+			const onPublishMessageGist = vi.fn();
+			const props = createDefaultProps({
+				session,
+				ghCliAvailable: true,
+				onPublishMessageGist,
+			});
+			render(<TerminalOutput {...props} />);
+
+			const gistButton = screen.getByTitle('Publish as GitHub Gist');
+			expect(gistButton).toBeInTheDocument();
+		});
+
+		it('hides gist publish button when ghCliAvailable is false', async () => {
+			const session = createDefaultSession({
+				inputMode: 'ai',
+				tabs: [
+					{
+						id: 'tab-1',
+						logs: [{ id: '1', source: 'ai', text: 'AI response text', timestamp: Date.now() }],
+					},
+				],
+				activeTabId: 'tab-1',
+			});
+
+			const props = createDefaultProps({
+				session,
+				ghCliAvailable: false,
+			});
+			render(<TerminalOutput {...props} />);
+
+			expect(screen.queryByTitle('Publish as GitHub Gist')).not.toBeInTheDocument();
+		});
+
+		it('does not show gist publish button for user messages', async () => {
+			const session = createDefaultSession({
+				inputMode: 'ai',
+				tabs: [
+					{
+						id: 'tab-1',
+						logs: [{ id: '1', source: 'user', text: 'User message', timestamp: Date.now() }],
+					},
+				],
+				activeTabId: 'tab-1',
+			});
+
+			const props = createDefaultProps({
+				session,
+				ghCliAvailable: true,
+				onPublishMessageGist: vi.fn(),
+			});
+			render(<TerminalOutput {...props} />);
+
+			expect(screen.queryByTitle('Publish as GitHub Gist')).not.toBeInTheDocument();
+		});
+
+		it('calls onPublishMessageGist with message text when clicked', async () => {
+			const session = createDefaultSession({
+				inputMode: 'ai',
+				tabs: [
+					{
+						id: 'tab-1',
+						logs: [{ id: '1', source: 'ai', text: 'AI response to share', timestamp: Date.now() }],
+					},
+				],
+				activeTabId: 'tab-1',
+			});
+
+			const onPublishMessageGist = vi.fn();
+			const props = createDefaultProps({
+				session,
+				ghCliAvailable: true,
+				onPublishMessageGist,
+			});
+			render(<TerminalOutput {...props} />);
+
+			const gistButton = screen.getByTitle('Publish as GitHub Gist');
+			fireEvent.click(gistButton);
+
+			expect(onPublishMessageGist).toHaveBeenCalledWith('AI response to share', '1');
+		});
 	});
 });

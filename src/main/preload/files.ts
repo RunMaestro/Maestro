@@ -10,11 +10,38 @@
 import { ipcRenderer } from 'electron';
 
 /**
+ * Single bucket in the activity-graph aggregate.
+ */
+export interface GraphBucket {
+	auto: number;
+	user: number;
+	cue: number;
+}
+
+/**
+ * All-time graph data returned by `history:getGraphData` and
+ * `director-notes:getGraphData`. Buckets always span the full source
+ * history so the activity graph stays "all-encompassing" even when the
+ * entry list paginates a smaller window underneath.
+ */
+export interface HistoryGraphData {
+	buckets: GraphBucket[];
+	bucketCount: number;
+	earliestTimestamp: number;
+	latestTimestamp: number;
+	totalCount: number;
+	autoCount: number;
+	userCount: number;
+	cueCount: number;
+	cached: boolean;
+}
+
+/**
  * History entry
  */
 export interface HistoryEntry {
 	id: string;
-	type: 'AUTO' | 'USER';
+	type: 'AUTO' | 'USER' | 'CUE';
 	timestamp: number;
 	summary: string;
 	fullResponse?: string;
@@ -34,6 +61,7 @@ export interface HistoryEntry {
 	success?: boolean;
 	elapsedTimeMs?: number;
 	validated?: boolean;
+	hostname?: string;
 }
 
 /**
@@ -53,16 +81,22 @@ export function createTempfileApi() {
  */
 export function createHistoryApi() {
 	return {
-		getAll: (projectPath?: string, sessionId?: string) =>
-			ipcRenderer.invoke('history:getAll', projectPath, sessionId),
+		getAll: (
+			projectPath?: string,
+			sessionId?: string,
+			sharedContext?: { sshRemoteId: string; remoteCwd: string }
+		) => ipcRenderer.invoke('history:getAll', projectPath, sessionId, sharedContext),
 
 		getAllPaginated: (options?: {
 			projectPath?: string;
 			sessionId?: string;
 			pagination?: { limit?: number; offset?: number };
+			lookbackHours?: number | null;
+			sharedContext?: { sshRemoteId: string; remoteCwd: string };
 		}) => ipcRenderer.invoke('history:getAllPaginated', options),
 
-		add: (entry: HistoryEntry) => ipcRenderer.invoke('history:add', entry),
+		add: (entry: HistoryEntry, sharedContext?: { sshRemoteId: string; remoteCwd: string }) =>
+			ipcRenderer.invoke('history:add', entry, sharedContext),
 
 		clear: (projectPath?: string) => ipcRenderer.invoke('history:clear', projectPath),
 
@@ -78,6 +112,37 @@ export function createHistoryApi() {
 		getFilePath: (sessionId: string) => ipcRenderer.invoke('history:getFilePath', sessionId),
 
 		listSessions: () => ipcRenderer.invoke('history:listSessions'),
+
+		// Cached graph buckets for a single session. The lookback parameter
+		// controls the window — `null` for "all time", or hours back from
+		// "now". Each (bucketCount, lookback) pair gets its own cached
+		// aggregate keyed by source-file fingerprint.
+		getGraphData: (
+			sessionId: string,
+			bucketCount: number,
+			lookbackHours: number | null,
+			sharedContext?: { sshRemoteId: string; remoteCwd: string },
+			projectPath?: string
+		): Promise<HistoryGraphData> =>
+			ipcRenderer.invoke(
+				'history:getGraphData',
+				sessionId,
+				bucketCount,
+				lookbackHours,
+				sharedContext,
+				projectPath
+			),
+
+		// Resolve the offset (newest-first sorted, with the same lookback
+		// filter applied to the paginated list) of the first entry whose
+		// timestamp is <= the given timestamp. Powers the activity-graph's
+		// click-to-jump behavior.
+		getOffsetForTimestamp: (
+			sessionId: string,
+			timestamp: number,
+			lookbackHours?: number | null
+		): Promise<number> =>
+			ipcRenderer.invoke('history:getOffsetForTimestamp', sessionId, timestamp, lookbackHours),
 
 		onExternalChange: (handler: () => void) => {
 			const wrappedHandler = () => handler();

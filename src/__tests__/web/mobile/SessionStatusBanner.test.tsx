@@ -746,6 +746,41 @@ describe('SessionStatusBanner', () => {
 
 			expect(screen.getByText('500')).toBeInTheDocument();
 		});
+
+		// Issue #844: on resumed Claude sessions, inputTokens is only the uncached
+		// delta. The cache partitions must be added back so the displayed total
+		// reflects the real input size rather than single-digit values.
+		it('adds Claude cache partitions to displayed input for the total', () => {
+			const usageStats = createUsageStats({
+				inputTokens: 6,
+				outputTokens: 500,
+				cacheReadInputTokens: 45_000,
+				cacheCreationInputTokens: 3_000,
+			});
+			const session = createSession({ usageStats, toolType: 'claude-code' as any });
+
+			render(<SessionStatusBanner session={session} />);
+
+			// 6 + 45000 + 3000 + 500 (output) = 48,506 → '48.5K'
+			expect(screen.getByText('48.5K')).toBeInTheDocument();
+			expect(
+				screen.getByTitle(/Input: 48,006 \| Output: 500 \| Total: 48,506 tokens/)
+			).toBeInTheDocument();
+		});
+
+		it('does not add cache fields for Codex (already included in inputTokens)', () => {
+			const usageStats = createUsageStats({
+				inputTokens: 10_000,
+				outputTokens: 1_000,
+				cacheReadInputTokens: 8_000,
+			});
+			const session = createSession({ usageStats, toolType: 'codex' as any });
+
+			render(<SessionStatusBanner session={session} />);
+
+			// 10000 + 1000 = 11,000 → '11.0K' (cacheRead not double-counted)
+			expect(screen.getByText('11.0K')).toBeInTheDocument();
+		});
 	});
 
 	describe('ThinkingIndicator component', () => {

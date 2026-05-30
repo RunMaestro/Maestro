@@ -8,69 +8,31 @@
  */
 
 import { ipcRenderer } from 'electron';
+import type {
+	QueryEvent,
+	AutoRunSession,
+	AutoRunTask,
+	SessionLifecycleEvent,
+	ShortcutUsageDay,
+	StatsAggregation,
+	StatsTimeRange,
+} from '../../shared/stats-types';
+export type {
+	QueryEvent,
+	AutoRunSession,
+	AutoRunTask,
+	ShortcutUsageDay,
+	StatsAggregation,
+} from '../../shared/stats-types';
 
 /**
- * Query event for recording
+ * Session lifecycle event for recording session creation.
+ * Subset of SessionLifecycleEvent from shared/stats-types.
  */
-export interface QueryEvent {
-	sessionId: string;
-	agentType: string;
-	source: 'user' | 'auto';
-	startTime: number;
-	duration: number;
-	projectPath?: string;
-	tabId?: string;
-	isRemote?: boolean;
-}
-
-/**
- * Auto Run session for recording
- */
-export interface AutoRunSession {
-	sessionId: string;
-	agentType: string;
-	documentPath?: string;
-	startTime: number;
-	tasksTotal?: number;
-	projectPath?: string;
-}
-
-/**
- * Auto Run task for recording
- */
-export interface AutoRunTask {
-	autoRunSessionId: string;
-	sessionId: string;
-	agentType: string;
-	taskIndex: number;
-	taskContent?: string;
-	startTime: number;
-	duration: number;
-	success: boolean;
-}
-
-/**
- * Session lifecycle event
- */
-export interface SessionCreatedEvent {
-	sessionId: string;
-	agentType: string;
-	projectPath?: string;
-	createdAt: number;
-	isRemote?: boolean;
-}
-
-/**
- * Aggregation result
- */
-export interface StatsAggregation {
-	totalQueries: number;
-	totalDuration: number;
-	avgDuration: number;
-	byAgent: Record<string, { count: number; duration: number }>;
-	bySource: { user: number; auto: number };
-	byDay: Array<{ date: string; count: number; duration: number }>;
-}
+export type SessionCreatedEvent = Pick<
+	SessionLifecycleEvent,
+	'sessionId' | 'agentType' | 'projectPath' | 'createdAt' | 'isRemote' | 'isWorktree'
+>;
 
 /**
  * Creates the Stats API object for preload exposure
@@ -182,6 +144,25 @@ export function createStatsApi() {
 		// Get earliest stat timestamp (null if no entries)
 		getEarliestTimestamp: (): Promise<number | null> =>
 			ipcRenderer.invoke('stats:get-earliest-timestamp'),
+
+		// Record a keyboard shortcut firing. The main process buckets `firedAt`
+		// into a local-time day and increments that day's counter. Resolves to
+		// the YYYY-MM-DD bucket, or null when stats collection is disabled.
+		recordShortcutUsage: (firedAt: number): Promise<string | null> =>
+			ipcRenderer.invoke('stats:record-shortcut-usage', firedAt),
+
+		// Get per-day shortcut usage counts within a time range. Days with no
+		// activity are omitted; the renderer is responsible for zero-filling.
+		getShortcutUsageByDay: (range: StatsTimeRange): Promise<ShortcutUsageDay[]> =>
+			ipcRenderer.invoke('stats:get-shortcut-usage-by-day', range),
+
+		// Get the total number of shortcut firings in a time range
+		getShortcutUsageTotal: (range: StatsTimeRange): Promise<number> =>
+			ipcRenderer.invoke('stats:get-shortcut-usage-total', range),
+
+		// Record an image annotation save event
+		recordImageAnnotation: (createdAt: number): Promise<string | null> =>
+			ipcRenderer.invoke('stats:record-image-annotation', createdAt),
 
 		// Record session creation (for lifecycle tracking)
 		recordSessionCreated: (event: SessionCreatedEvent): Promise<string | null> =>

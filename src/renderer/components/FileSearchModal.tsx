@@ -1,11 +1,14 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { Search, File, FileImage, FileText } from 'lucide-react';
+import { Search, File, FileImage, FileText, FolderOpen, FileQuestion } from 'lucide-react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import type { Theme, Shortcut } from '../types';
 import type { FileNode } from '../types/fileTree';
 import { fuzzyMatchWithScore } from '../utils/search';
-import { useLayerStack } from '../contexts/LayerStackContext';
+import { useModalLayer } from '../hooks/ui/useModalLayer';
+import { useDebouncedValue } from '../hooks/utils/useThrottle';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
+import { isAbsolutePath, getBasename } from '../../shared/formatters';
 
 /** Flattened file item for the search list */
 export interface FlatFileItem {
@@ -197,8 +200,21 @@ export function flattenPreviewableFiles(
 type ViewMode = 'visible' | 'all';
 
 /**
+ * Result of probing an absolute filesystem path typed into the search box.
+ * Drives the "Open <file> in Maestro" affordance that replaces the file list.
+ */
+type AbsPathState =
+	| { status: 'checking' }
+	| { status: 'file'; name: string }
+	| { status: 'folder' }
+	| { status: 'missing' };
+
+const ROW_HEIGHT = 44; // Height of each file row in pixels
+
+/**
  * Fuzzy File Search Modal - Quick navigation to any file in the file tree.
  * Supports fuzzy search, arrow key navigation, and Cmd+1-9,0 quick select.
+ * Uses virtualized rendering to handle large file trees efficiently.
  */
 export function FileSearchModal({
 	theme,
@@ -210,60 +226,64 @@ export function FileSearchModal({
 }: FileSearchModalProps) {
 	const [search, setSearch] = useState('');
 	const [selectedIndex, setSelectedIndex] = useState(0);
-	const [firstVisibleIndex, setFirstVisibleIndex] = useState(0);
 	const [viewMode, setViewMode] = useState<ViewMode>('visible');
 	const inputRef = useRef<HTMLInputElement>(null);
-	const selectedItemRef = useRef<HTMLButtonElement>(null);
 	const scrollContainerRef = useRef<HTMLDivElement>(null);
-	const layerIdRef = useRef<string>();
 	const onCloseRef = useRef(onClose);
 
 	const handleSearchChange = useCallback((value: string) => {
 		setSearch(value);
 		setSelectedIndex(0);
-		setFirstVisibleIndex(0);
 	}, []);
 
 	const handleViewModeChange = useCallback((mode: ViewMode) => {
 		setViewMode(mode);
 		setSelectedIndex(0);
-		setFirstVisibleIndex(0);
 	}, []);
+
+	// --- Absolute-path open mode ---------------------------------------------
+	// When the query is an absolute filesystem path, the file list is replaced
+	// by a single "Open <file> in Maestro" affordance. This lets the user jump
+	// straight to any file on disk, not just files inside the project tree.
+	const trimmedSearch = search.trim();
+	const isAbsoluteQuery = isAbsolutePath(trimmedSearch);
+	const debouncedPath = useDebouncedValue(trimmedSearch, 150);
+	const [absPathState, setAbsPathState] = useState<AbsPathState>({ status: 'checking' });
+
+	useEffect(() => {
+		if (!isAbsolutePath(debouncedPath)) return;
+		let cancelled = false;
+		setAbsPathState({ status: 'checking' });
+		window.maestro.fs
+			.stat(debouncedPath)
+			.then((stat) => {
+				if (cancelled) return;
+				setAbsPathState(
+					stat.isFile ? { status: 'file', name: getBasename(debouncedPath) } : { status: 'folder' }
+				);
+			})
+			.catch(() => {
+				// stat throws for a path that doesn't exist (or is unreadable).
+				if (!cancelled) setAbsPathState({ status: 'missing' });
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [debouncedPath]);
+
+	// While the debounced value lags the input, force "checking" so a stale
+	// result from a previously-typed path is never shown for the current query.
+	const absDisplay: AbsPathState =
+		isAbsoluteQuery && debouncedPath === trimmedSearch ? absPathState : { status: 'checking' };
 
 	// Keep onClose ref up to date
 	useEffect(() => {
 		onCloseRef.current = onClose;
 	});
 
-	const { registerLayer, unregisterLayer, updateLayerHandler } = useLayerStack();
-
-	// Register layer on mount
-	useEffect(() => {
-		layerIdRef.current = registerLayer({
-			type: 'modal',
-			priority: MODAL_PRIORITIES.FUZZY_FILE_SEARCH,
-			blocksLowerLayers: true,
-			capturesFocus: true,
-			focusTrap: 'strict',
-			ariaLabel: 'Fuzzy File Search',
-			onEscape: () => onCloseRef.current(),
-		});
-
-		return () => {
-			if (layerIdRef.current) {
-				unregisterLayer(layerIdRef.current);
-			}
-		};
-	}, [registerLayer, unregisterLayer]);
-
-	// Update handler when onClose changes
-	useEffect(() => {
-		if (layerIdRef.current) {
-			updateLayerHandler(layerIdRef.current, () => {
-				onCloseRef.current();
-			});
-		}
-	}, [updateLayerHandler]);
+	useModalLayer(MODAL_PRIORITIES.FUZZY_FILE_SEARCH, 'Fuzzy File Search', () =>
+		onCloseRef.current()
+	);
 
 	// Focus input on mount
 	useEffect(() => {
@@ -314,29 +334,49 @@ export function FileSearchModal({
 			.map((r) => r.file);
 	}, [allFiles, visibleFiles, search, viewMode]);
 
+	// Virtualizer for efficient rendering
+	const virtualizer = useVirtualizer({
+		count: filteredFiles.length,
+		getScrollElement: () => scrollContainerRef.current,
+		estimateSize: () => ROW_HEIGHT,
+		overscan: 10,
+	});
+
 	const toggleViewMode = useCallback(() => {
 		handleViewModeChange(viewMode === 'visible' ? 'all' : 'visible');
 	}, [handleViewModeChange, viewMode]);
 
-	// Scroll selected item into view
+	// Scroll selected item into view via virtualizer
 	useEffect(() => {
-		selectedItemRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-	}, [selectedIndex]);
+		virtualizer.scrollToIndex(selectedIndex, { align: 'auto', behavior: 'smooth' });
+	}, [selectedIndex, virtualizer]);
 
-	// Track scroll position to determine which items are visible
-	const handleScroll = () => {
-		if (scrollContainerRef.current) {
-			const scrollTop = scrollContainerRef.current.scrollTop;
-			const itemHeight = 40; // Approximate height of each item
-			const visibleIndex = Math.floor(scrollTop / itemHeight);
-			setFirstVisibleIndex(visibleIndex);
-		}
-	};
+	// Derive first visible index from virtualizer for Cmd+1-9 badges
+	const firstVisibleIndex = useMemo(() => {
+		const items = virtualizer.getVirtualItems();
+		return items.length > 0 ? items[0].index : 0;
+	}, [virtualizer.getVirtualItems()]);
 
-	const handleItemSelect = (file: FlatFileItem) => {
-		onFileSelect(file);
+	const handleItemSelect = useCallback(
+		(file: FlatFileItem) => {
+			onFileSelect(file);
+			onClose();
+		},
+		[onFileSelect, onClose]
+	);
+
+	// Open the absolute path currently typed in the search box. No-op unless it
+	// has resolved to an existing file — folders and missing paths can't preview.
+	const handleAbsoluteOpen = useCallback(() => {
+		if (absDisplay.status !== 'file') return;
+		onFileSelect({
+			name: absDisplay.name,
+			fullPath: trimmedSearch,
+			isFolder: false,
+			depth: 0,
+		});
 		onClose();
-	};
+	}, [absDisplay, trimmedSearch, onFileSelect, onClose]);
 
 	const handleKeyDown = useCallback(
 		(e: React.KeyboardEvent) => {
@@ -352,7 +392,9 @@ export function FileSearchModal({
 			} else if (e.key === 'Enter') {
 				e.preventDefault();
 				e.stopPropagation();
-				if (filteredFiles[selectedIndex]) {
+				if (isAbsoluteQuery) {
+					handleAbsoluteOpen();
+				} else if (filteredFiles[selectedIndex]) {
 					handleItemSelect(filteredFiles[selectedIndex]);
 				}
 			} else if (e.metaKey && ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'].includes(e.key)) {
@@ -368,7 +410,15 @@ export function FileSearchModal({
 				}
 			}
 		},
-		[filteredFiles, selectedIndex, firstVisibleIndex, handleItemSelect, toggleViewMode]
+		[
+			filteredFiles,
+			selectedIndex,
+			firstVisibleIndex,
+			handleItemSelect,
+			toggleViewMode,
+			isAbsoluteQuery,
+			handleAbsoluteOpen,
+		]
 	);
 
 	// Get the directory part of a path (everything before the last /)
@@ -384,7 +434,7 @@ export function FileSearchModal({
 				aria-modal="true"
 				aria-label="Fuzzy File Search"
 				tabIndex={-1}
-				className="w-[600px] rounded-xl shadow-2xl border overflow-hidden flex flex-col max-h-[550px] outline-none"
+				className="modal-w-md rounded-xl shadow-2xl border overflow-hidden flex flex-col max-h-[550px] outline-none"
 				style={{ backgroundColor: theme.colors.bgActivity, borderColor: theme.colors.border }}
 			>
 				{/* Search Header */}
@@ -420,132 +470,228 @@ export function FileSearchModal({
 					</div>
 				</div>
 
-				{/* Mode Toggle Pills */}
-				<div
-					className="px-4 py-2 flex items-center gap-2 border-b"
-					style={{ borderColor: theme.colors.border }}
-				>
-					<button
-						onClick={() => handleViewModeChange('visible')}
-						className="px-3 py-1 rounded-full text-xs font-medium transition-colors"
-						style={{
-							backgroundColor: viewMode === 'visible' ? theme.colors.accent : theme.colors.bgMain,
-							color: viewMode === 'visible' ? theme.colors.accentForeground : theme.colors.textDim,
-						}}
+				{/* Mode Toggle Pills — hidden in absolute-path mode (no list to scope) */}
+				{!isAbsoluteQuery && (
+					<div
+						className="px-4 py-2 flex items-center gap-2 border-b"
+						style={{ borderColor: theme.colors.border }}
 					>
-						Visible Files ({fileCounts.visible})
-					</button>
-					<button
-						onClick={() => handleViewModeChange('all')}
-						className="px-3 py-1 rounded-full text-xs font-medium transition-colors"
-						style={{
-							backgroundColor: viewMode === 'all' ? theme.colors.accent : theme.colors.bgMain,
-							color: viewMode === 'all' ? theme.colors.accentForeground : theme.colors.textDim,
-						}}
-					>
-						All Files ({fileCounts.all})
-					</button>
-					<span className="text-[10px] opacity-50 ml-auto" style={{ color: theme.colors.textDim }}>
-						Tab to switch
-					</span>
-				</div>
-
-				{/* File List */}
-				<div
-					ref={scrollContainerRef}
-					onScroll={handleScroll}
-					className="overflow-y-auto py-2 scrollbar-thin flex-1"
-				>
-					{filteredFiles.map((file, i) => {
-						const isSelected = i === selectedIndex;
-
-						// Calculate dynamic number badge
-						const maxFirstIndex = Math.max(0, filteredFiles.length - 10);
-						const effectiveFirstIndex = Math.min(firstVisibleIndex, maxFirstIndex);
-						const distanceFromFirstVisible = i - effectiveFirstIndex;
-						const showNumber = distanceFromFirstVisible >= 0 && distanceFromFirstVisible < 10;
-						const numberBadge = distanceFromFirstVisible === 9 ? 0 : distanceFromFirstVisible + 1;
-
-						const directory = getDirectory(file.fullPath);
-
-						return (
-							<button
-								key={file.fullPath}
-								ref={isSelected ? selectedItemRef : null}
-								onClick={() => handleItemSelect(file)}
-								className="w-full text-left px-4 py-2 flex items-center gap-3 hover:bg-opacity-10"
-								style={{
-									backgroundColor: isSelected ? theme.colors.accent : 'transparent',
-									color: isSelected ? theme.colors.accentForeground : theme.colors.textMain,
-								}}
-							>
-								{/* Number Badge */}
-								{showNumber ? (
-									<div
-										className="flex-shrink-0 w-5 h-5 rounded flex items-center justify-center text-xs font-bold"
-										style={{ backgroundColor: theme.colors.bgMain, color: theme.colors.textDim }}
-									>
-										{numberBadge}
-									</div>
-								) : (
-									<div className="flex-shrink-0 w-5 h-5" />
-								)}
-
-								{/* File Icon based on type */}
-								{(() => {
-									const iconType = getFileIconType(file.name);
-									const iconColor = isSelected
-										? theme.colors.accentForeground
-										: theme.colors.textDim;
-									if (iconType === 'image') {
-										return (
-											<FileImage className="w-4 h-4 flex-shrink-0" style={{ color: iconColor }} />
-										);
-									} else if (iconType === 'text') {
-										return (
-											<FileText className="w-4 h-4 flex-shrink-0" style={{ color: iconColor }} />
-										);
-									} else {
-										return <File className="w-4 h-4 flex-shrink-0" style={{ color: iconColor }} />;
-									}
-								})()}
-
-								{/* File Info */}
-								<div className="flex flex-col flex-1 min-w-0">
-									<span className="font-medium truncate">{file.name}</span>
-									{directory && (
-										<span
-											className="text-[10px] truncate"
-											style={{
-												color: isSelected ? theme.colors.accentForeground : theme.colors.textDim,
-												opacity: 0.7,
-											}}
-										>
-											{directory}
-										</span>
-									)}
-								</div>
-							</button>
-						);
-					})}
-
-					{filteredFiles.length === 0 && (
-						<div
-							className="px-4 py-4 text-center opacity-50 text-sm"
+						<button
+							onClick={() => handleViewModeChange('visible')}
+							className="px-3 py-1 rounded-full text-xs font-medium transition-colors"
+							style={{
+								backgroundColor: viewMode === 'visible' ? theme.colors.accent : theme.colors.bgMain,
+								color:
+									viewMode === 'visible' ? theme.colors.accentForeground : theme.colors.textDim,
+							}}
+						>
+							Visible Files ({fileCounts.visible})
+						</button>
+						<button
+							onClick={() => handleViewModeChange('all')}
+							className="px-3 py-1 rounded-full text-xs font-medium transition-colors"
+							style={{
+								backgroundColor: viewMode === 'all' ? theme.colors.accent : theme.colors.bgMain,
+								color: viewMode === 'all' ? theme.colors.accentForeground : theme.colors.textDim,
+							}}
+						>
+							All Files ({fileCounts.all})
+						</button>
+						<span
+							className="text-[10px] opacity-50 ml-auto"
 							style={{ color: theme.colors.textDim }}
 						>
-							{search ? 'No files match your search' : 'No files to search'}
+							Tab to switch
+						</span>
+					</div>
+				)}
+
+				{/* Absolute-path open panel — replaces the file list when the query
+				    is a full filesystem path that points at an existing file. */}
+				{isAbsoluteQuery && (
+					<div className="flex-1 flex flex-col items-center justify-center px-8 py-12 text-center gap-3">
+						{absDisplay.status === 'checking' && (
+							<span className="text-sm" style={{ color: theme.colors.textDim }}>
+								Checking path…
+							</span>
+						)}
+						{absDisplay.status === 'file' &&
+							(() => {
+								const iconType = getFileIconType(absDisplay.name);
+								const Icon =
+									iconType === 'image' ? FileImage : iconType === 'text' ? FileText : File;
+								return (
+									<button
+										onClick={handleAbsoluteOpen}
+										className="flex flex-col items-center gap-3 outline-none"
+									>
+										<Icon className="w-10 h-10" style={{ color: theme.colors.accent }} />
+										<div className="text-base font-medium" style={{ color: theme.colors.textMain }}>
+											Open <span style={{ color: theme.colors.accent }}>{absDisplay.name}</span> in
+											Maestro
+										</div>
+										<span className="text-xs" style={{ color: theme.colors.textDim }}>
+											Press Enter to open in a new file preview tab
+										</span>
+									</button>
+								);
+							})()}
+						{absDisplay.status === 'folder' && (
+							<>
+								<FolderOpen className="w-10 h-10" style={{ color: theme.colors.textDim }} />
+								<div className="text-sm" style={{ color: theme.colors.textMain }}>
+									That path is a folder
+								</div>
+								<span className="text-xs" style={{ color: theme.colors.textDim }}>
+									Enter a path to a file to open it
+								</span>
+							</>
+						)}
+						{absDisplay.status === 'missing' && (
+							<>
+								<FileQuestion className="w-10 h-10" style={{ color: theme.colors.textDim }} />
+								<div className="text-sm" style={{ color: theme.colors.textMain }}>
+									No file found at that path
+								</div>
+							</>
+						)}
+					</div>
+				)}
+
+				{/* Virtualized File List */}
+				{!isAbsoluteQuery && (
+					<div ref={scrollContainerRef} className="overflow-y-auto py-2 scrollbar-thin flex-1">
+						<div
+							style={{
+								height: `${virtualizer.getTotalSize()}px`,
+								width: '100%',
+								position: 'relative',
+							}}
+						>
+							{virtualizer.getVirtualItems().map((virtualRow) => {
+								const file = filteredFiles[virtualRow.index];
+								if (!file) return null;
+								const i = virtualRow.index;
+								const isSelected = i === selectedIndex;
+
+								// Calculate dynamic number badge based on virtualizer scroll
+								const maxFirstIndex = Math.max(0, filteredFiles.length - 10);
+								const effectiveFirstIndex = Math.min(firstVisibleIndex, maxFirstIndex);
+								const distanceFromFirstVisible = i - effectiveFirstIndex;
+								const showNumber = distanceFromFirstVisible >= 0 && distanceFromFirstVisible < 10;
+								const numberBadge =
+									distanceFromFirstVisible === 9 ? 0 : distanceFromFirstVisible + 1;
+
+								const directory = getDirectory(file.fullPath);
+
+								return (
+									<button
+										key={file.fullPath}
+										ref={
+											isSelected ? (el) => el?.scrollIntoView?.({ block: 'nearest' }) : undefined
+										}
+										onClick={() => handleItemSelect(file)}
+										className="absolute top-0 left-0 w-full text-left px-4 py-2 flex items-center gap-3 hover:bg-opacity-10"
+										style={{
+											height: `${virtualRow.size}px`,
+											transform: `translateY(${virtualRow.start}px)`,
+											backgroundColor: isSelected ? theme.colors.accent : 'transparent',
+											color: isSelected ? theme.colors.accentForeground : theme.colors.textMain,
+										}}
+									>
+										{/* Number Badge */}
+										{showNumber ? (
+											<div
+												className="flex-shrink-0 w-5 h-5 rounded flex items-center justify-center text-xs font-bold"
+												style={{
+													backgroundColor: theme.colors.bgMain,
+													color: theme.colors.textDim,
+												}}
+											>
+												{numberBadge}
+											</div>
+										) : (
+											<div className="flex-shrink-0 w-5 h-5" />
+										)}
+
+										{/* File Icon based on type */}
+										{(() => {
+											const iconType = getFileIconType(file.name);
+											const iconColor = isSelected
+												? theme.colors.accentForeground
+												: theme.colors.textDim;
+											if (iconType === 'image') {
+												return (
+													<FileImage
+														className="w-4 h-4 flex-shrink-0"
+														style={{ color: iconColor }}
+													/>
+												);
+											} else if (iconType === 'text') {
+												return (
+													<FileText
+														className="w-4 h-4 flex-shrink-0"
+														style={{ color: iconColor }}
+													/>
+												);
+											} else {
+												return (
+													<File className="w-4 h-4 flex-shrink-0" style={{ color: iconColor }} />
+												);
+											}
+										})()}
+
+										{/* File Info */}
+										<div className="flex flex-col flex-1 min-w-0">
+											<span className="font-medium truncate">{file.name}</span>
+											{directory && (
+												<span
+													className="text-[10px] truncate"
+													style={{
+														color: isSelected
+															? theme.colors.accentForeground
+															: theme.colors.textDim,
+														opacity: 0.7,
+													}}
+												>
+													{directory}
+												</span>
+											)}
+										</div>
+									</button>
+								);
+							})}
 						</div>
-					)}
-				</div>
+
+						{filteredFiles.length === 0 && (
+							<div
+								className="px-4 py-4 text-center opacity-50 text-sm"
+								style={{ color: theme.colors.textDim }}
+							>
+								{search ? 'No files match your search' : 'No files to search'}
+							</div>
+						)}
+					</div>
+				)}
 
 				{/* Footer with stats */}
 				<div
 					className="px-4 py-2 border-t text-xs flex items-center justify-between"
 					style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
 				>
-					<span>{filteredFiles.length} files</span>
-					<span>{`↑↓ navigate • Enter select • ${formatShortcutKeys(['Meta'])}1-9 quick select`}</span>
+					{isAbsoluteQuery ? (
+						<>
+							<span>Absolute path</span>
+							<span>
+								{absDisplay.status === 'file' ? 'Enter to open file' : 'Type a full path to a file'}
+							</span>
+						</>
+					) : (
+						<>
+							<span>{filteredFiles.length} files</span>
+							<span>{`↑↓ navigate • Enter select • ${formatShortcutKeys(['Meta'])}1-9 quick select`}</span>
+						</>
+					)}
 				</div>
 			</div>
 		</div>

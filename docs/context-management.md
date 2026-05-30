@@ -38,7 +38,7 @@ The tab menu also provides bulk close operations for managing multiple tabs:
 | **Close Tabs to the Left**  | Close all tabs to the left of this one  |
 | **Close Tabs to the Right** | Close all tabs to the right of this one |
 
-These operations respect the **Unread Filter**: when the filter is active, only visible tabs are affected — hidden "read" tabs are preserved.
+These operations respect the **Unread Filter**: when the filter is active, only visible tabs are affected - hidden "read" tabs are preserved.
 
 **Position-aware options:** The menu intelligently hides inapplicable options:
 
@@ -49,7 +49,7 @@ These operations respect the **Unread Filter**: when the filter is active, only 
 ![Tab Close - Left Tab](./screenshots/tab-close-left.png)
 ![Tab Close - Right Tab](./screenshots/tab-close-right.png)
 
-All close operations support **undo** — press `Cmd+Shift+T` / `Ctrl+Shift+T` to reopen recently closed tabs (up to 25 tabs are remembered).
+All close operations support **undo** - press `Cmd+Shift+T` / `Ctrl+Shift+T` to reopen recently closed tabs (up to 25 tabs are remembered).
 
 These actions are also available via **Quick Actions** (`Cmd+K` / `Ctrl+K`) with keyboard shortcuts displayed:
 
@@ -65,25 +65,25 @@ Export any tab conversation as a self-contained HTML file:
 The exported HTML file includes:
 
 - **Full conversation history** with all messages
-- **Your current theme colors** — the export adopts your active Maestro theme
+- **Your current theme colors** - the export adopts your active Maestro theme
 - **Maestro branding** with links to the website and GitHub
-- **Session metadata** — agent type, working directory, timestamps, token usage
-- **Rendered markdown** — code blocks, tables, and formatting preserved
+- **Session metadata** - agent type, working directory, timestamps, token usage
+- **Rendered markdown** - code blocks, tables, and formatting preserved
 
 This is useful for sharing conversations, creating documentation, or archiving important sessions.
 
 **Alternative sharing options:**
 
-- **Context: Copy to Clipboard** — Copy the raw conversation text to clipboard (for pasting into documents or chat)
-- **Context: Publish as GitHub Gist** — Share as a public or secret GitHub Gist (requires `gh` CLI to be installed)
+- **Context: Copy to Clipboard** - Copy the raw conversation text to clipboard (for pasting into documents or chat)
+- **Context: Publish as GitHub Gist** - Share as a public or secret GitHub Gist (requires `gh` CLI to be installed)
 
 ---
 
 Context management lets you combine or transfer conversation history between sessions and agents, enabling powerful workflows where you can:
 
-- **Compact & continue** — Compress your context to stay within token limits while preserving key information
-- **Merge sessions** — Combine context from multiple conversations into one
-- **Transfer to other agents** — Send your context to a different AI agent (e.g., Claude Code → Codex)
+- **Compact & continue** - Compress your context to stay within token limits while preserving key information
+- **Merge sessions** - Combine context from multiple conversations into one
+- **Transfer to other agents** - Send your context to a different AI agent (e.g., Claude Code → Codex)
 
 ## Context Window Warnings
 
@@ -105,7 +105,7 @@ The warning banner appears below the input box showing:
 - Response quality drops as the model struggles to maintain coherence
 - You may experience more hallucinations and forgotten instructions
 
-For best results, **compact your context before reaching 60-70% usage** — don't wait for the red warning.
+For best results, **compact your context before reaching 60-70% usage** - don't wait for the red warning.
 
 ### Configuring Warnings
 
@@ -116,13 +116,13 @@ Customize warning thresholds in **Settings** (`Cmd+,` / `Ctrl+,`) → **Display*
 | Setting                               | Default | Description                                         |
 | ------------------------------------- | ------- | --------------------------------------------------- |
 | **Show context consumption warnings** | Enabled | Toggle warning banners on/off                       |
-| **Yellow warning threshold**          | 60%     | Early warning — good time to consider compacting    |
-| **Red warning threshold**             | 80%     | Critical — compact immediately to avoid degradation |
+| **Yellow warning threshold**          | 60%     | Early warning - good time to consider compacting    |
+| **Red warning threshold**             | 80%     | Critical - compact immediately to avoid degradation |
 
 **Recommended thresholds:**
 
 - Set yellow to **50-60%** if you prefer earlier warnings
-- Set red to **70-80%** — going higher risks quality degradation
+- Set red to **70-80%** - going higher risks quality degradation
 - Lower both thresholds if you frequently work on complex tasks that require the AI to remember many details
 
 ## Compact & Continue
@@ -157,7 +157,7 @@ Compaction requires any one of these conditions:
 - Estimated conversation size ≥ 2,000 tokens (~8k characters), OR
 - At least 8 meaningful messages (user and AI exchanges)
 
-Multiple fallbacks ensure compaction is available even when the context gauge resets to 0 (which can happen when context fills up) — as long as there's meaningful conversation history, you can compact it.
+Multiple fallbacks ensure compaction is available even when the context gauge resets to 0 (which can happen when context fills up) - as long as there's meaningful conversation history, you can compact it.
 
 **Single-Pass Compaction (< 50k tokens):**
 For smaller conversations, the entire context is sent to a fresh AI agent in batch mode, which returns a compressed summary.
@@ -165,10 +165,10 @@ For smaller conversations, the entire context is sent to a fresh AI agent in bat
 **Chunked Compaction (≥ 50k tokens):**
 For larger conversations that exceed 50,000 tokens:
 
-1. **Chunking** — The conversation is split into chunks of ~50k tokens each
-2. **Parallel summarization** — Each chunk is sent to a separate batch-mode agent process
-3. **Combination** — Chunk summaries are combined together
-4. **Consolidation** — If the combined result exceeds 40k tokens, additional passes reduce it further
+1. **Chunking** - The conversation is split into chunks of ~50k tokens each
+2. **Parallel summarization** - Each chunk is sent to a separate batch-mode agent process
+3. **Combination** - Chunk summaries are combined together
+4. **Consolidation** - If the combined result exceeds 40k tokens, additional passes reduce it further
 
 **Consolidation Passes:**
 When chunk summaries combine to more than 40k tokens, the system performs up to 3 consolidation passes:
@@ -182,10 +182,10 @@ This ensures that even a conversation at 95%+ context capacity (e.g., 190k token
 **Progress Indicators:**
 During compaction, you'll see status updates:
 
-- "Extracting context..." — Preparing the conversation
-- "Summarizing chunk 1/4..." — Processing large conversations in parts
-- "Consolidation pass 1/3..." — Additional reduction passes if needed
-- "Finalizing compacted context..." — Creating the new tab
+- "Extracting context..." - Preparing the conversation
+- "Summarizing chunk 1/4..." - Processing large conversations in parts
+- "Consolidation pass 1/3..." - Additional reduction passes if needed
+- "Finalizing compacted context..." - Creating the new tab
 
 ## Merging Sessions
 
@@ -201,10 +201,10 @@ Combine context from multiple sessions or tabs into one:
 
 The modal shows:
 
-- **Paste ID** tab — Enter a specific session ID directly
-- **Open Tabs** tab — Browse all open tabs across all agents
-- **Token estimate** — Shows source size and estimated size after cleaning
-- **Agent grouping** — Tabs organized by agent with tab counts
+- **Paste ID** tab - Enter a specific session ID directly
+- **Open Tabs** tab - Browse all open tabs across all agents
+- **Token estimate** - Shows source size and estimated size after cleaning
+- **Agent grouping** - Tabs organized by agent with tab counts
 
 The merged context creates a new tab in the target session with conversation history from both sources. Use this to consolidate related conversations or bring context from an older session into a current one.
 
@@ -235,8 +235,8 @@ The modal shows:
 
 - **Searchable agent list** with status indicators (Idle, Busy, etc.)
 - **Agent paths** to distinguish between agents with similar names
-- **Token estimate** — Shows source size and estimated size after cleaning
-- **Clean context option** — Remove duplicates and reduce size before transfer
+- **Token estimate** - Shows source size and estimated size after cleaning
+- **Clean context option** - Remove duplicates and reduce size before transfer
 
 **Context Cleaning:**
 When transferring between agents, the context can be automatically cleaned to:

@@ -75,6 +75,8 @@ function createMockSession(overrides: Partial<Session> = {}): Session {
 		groupId: null,
 		groupName: null,
 		groupEmoji: null,
+		terminalTabs: [],
+		activeTerminalTabId: null,
 		...overrides,
 	} as Session;
 }
@@ -297,7 +299,7 @@ describe('AllSessionsView', () => {
 		});
 
 		describe('session card interaction', () => {
-			it('calls onSelectSession and onClose when card is clicked', async () => {
+			it('calls onSelectSession and onClose when card is tapped', async () => {
 				const onSelectSession = vi.fn();
 				const onClose = vi.fn();
 				const sessions = [createMockSession({ id: 'session-1', name: 'Click Me' })];
@@ -305,7 +307,10 @@ describe('AllSessionsView', () => {
 				render(<AllSessionsView {...createDefaultProps({ sessions, onSelectSession, onClose })} />);
 
 				const sessionCard = screen.getByRole('button', { name: /Click Me/i });
-				fireEvent.click(sessionCard);
+				// JSDOM has ontouchstart in window, so the click handler is bypassed.
+				// Use touch events to simulate a tap (as the source uses handleTouchEnd for selection).
+				fireEvent.touchStart(sessionCard, { touches: [{ clientX: 0, clientY: 0 }] });
+				fireEvent.touchEnd(sessionCard);
 
 				expect(mockTriggerHaptic).toHaveBeenCalledWith([10]); // HAPTIC_PATTERNS.tap
 				expect(onSelectSession).toHaveBeenCalledWith('session-1');
@@ -955,8 +960,11 @@ describe('AllSessionsView', () => {
 			});
 
 			// 3. Select Backend
+			// JSDOM has ontouchstart in window, so the click handler is bypassed.
+			// Use touch events to simulate a tap (as the source uses handleTouchEnd for selection).
 			const backendCard = screen.getByRole('button', { name: /Backend session/i });
-			fireEvent.click(backendCard);
+			fireEvent.touchStart(backendCard, { touches: [{ clientX: 0, clientY: 0 }] });
+			fireEvent.touchEnd(backendCard);
 
 			expect(onSelectSession).toHaveBeenCalledWith('s2');
 			expect(onClose).toHaveBeenCalled();

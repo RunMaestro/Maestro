@@ -11,6 +11,7 @@ import {
 	GitPullRequest,
 	Trash2,
 	Edit3,
+	Zap,
 } from 'lucide-react';
 import type { Group, Session, Theme } from '../../types';
 import { useClickOutside, useContextMenuPosition } from '../../hooks';
@@ -34,6 +35,7 @@ interface SessionContextMenuProps {
 	onConfigureWorktrees?: () => void;
 	onDeleteWorktree?: () => void;
 	onCreateGroup?: () => void;
+	onConfigureCue?: () => void;
 }
 
 export function SessionContextMenu({
@@ -55,6 +57,7 @@ export function SessionContextMenu({
 	onConfigureWorktrees,
 	onDeleteWorktree,
 	onCreateGroup,
+	onConfigureCue,
 }: SessionContextMenuProps) {
 	const menuRef = useRef<HTMLDivElement>(null);
 	const moveToGroupRef = useRef<HTMLDivElement>(null);
@@ -136,14 +139,14 @@ export function SessionContextMenu({
 	return (
 		<div
 			ref={menuRef}
-			className="fixed z-50 py-1 rounded-md shadow-xl border"
+			className="fixed z-50 py-1 rounded-md shadow-xl border whitespace-nowrap"
 			style={{
 				left,
 				top,
 				opacity: ready ? 1 : 0,
 				backgroundColor: theme.colors.bgSidebar,
 				borderColor: theme.colors.border,
-				minWidth: '160px',
+				minWidth: '10rem',
 			}}
 		>
 			<button
@@ -233,11 +236,11 @@ export function SessionContextMenu({
 
 					{showMoveSubmenu && (
 						<div
-							className="absolute py-1 rounded-md shadow-xl border"
+							className="absolute py-1 rounded-md shadow-xl border whitespace-nowrap"
 							style={{
 								backgroundColor: theme.colors.bgSidebar,
 								borderColor: theme.colors.border,
-								minWidth: '140px',
+								minWidth: '8.75rem',
 								...(submenuPosition.vertical === 'above' ? { bottom: 0 } : { top: 0 }),
 								...(submenuPosition.horizontal === 'left'
 									? { right: '100%', marginRight: 4 }
@@ -337,6 +340,26 @@ export function SessionContextMenu({
 							Configure Worktrees
 						</button>
 					)}
+				</>
+			)}
+
+			{onConfigureCue && (
+				<>
+					{!showWorktreeParentSection && (
+						<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
+					)}
+					<button
+						type="button"
+						onClick={() => {
+							onConfigureCue();
+							onDismiss();
+						}}
+						className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+						style={{ color: '#06b6d4' }}
+					>
+						<Zap className="w-3.5 h-3.5" />
+						Configure Maestro Cue
+					</button>
 				</>
 			)}
 

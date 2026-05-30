@@ -11,7 +11,7 @@
  * 2. Error recovery actions — clearError, restart, retry, newSession, authenticate
  * 3. Agent lifecycle actions — kill, interrupt
  *
- * Can be used outside React via useAgentStore.getState() / getAgentActions().
+ * Can be used outside React via useAgentStore.getState().
  */
 
 import { create } from 'zustand';
@@ -24,15 +24,22 @@ import type {
 	CustomAICommand,
 	SpecKitCommand,
 	OpenSpecCommand,
+	BmadCommand,
 } from '../types';
+import type {
+	AgentCapabilitiesSnapshot,
+	AgentCapabilitiesSnapshotMap,
+} from '../../shared/agentCapabilities';
+import { buildSnapshotKey } from '../../shared/agentCapabilities';
 import { createTab, getActiveTab } from '../utils/tabHelpers';
+import { getStdinFlags, prepareMaestroSystemPrompt } from '../utils/spawnHelpers';
 import { generateId } from '../utils/ids';
-import { useSessionStore } from './sessionStore';
+import { useSessionStore, selectSessionById } from './sessionStore';
 import { DEFAULT_IMAGE_ONLY_PROMPT } from '../hooks/input/useInputProcessing';
-import { maestroSystemPrompt } from '../../prompts';
 import { substituteTemplateVariables } from '../utils/templateVariables';
 import { gitService } from '../services/git';
 import { filterYoloArgs } from '../utils/agentArgs';
+import { logger } from '../utils/logger';
 
 // ============================================================================
 // Store Types
@@ -43,6 +50,13 @@ export interface AgentStoreState {
 	availableAgents: AgentConfig[];
 	/** Whether agent detection has completed at least once */
 	agentsDetected: boolean;
+	/**
+	 * Persisted capability snapshots mirrored from the main process.
+	 * Key is `agentId` (local) or `agentId:remoteUuid` (SSH).
+	 */
+	capabilitySnapshots: AgentCapabilitiesSnapshotMap;
+	/** True once `loadCapabilitySnapshots()` has fetched the initial map. */
+	capabilitySnapshotsLoaded: boolean;
 }
 
 export interface AgentStoreActions {
@@ -53,6 +67,23 @@ export interface AgentStoreActions {
 
 	/** Look up a cached agent config by ID */
 	getAgentConfig: (agentId: string) => AgentConfig | undefined;
+
+	// === Capability Snapshots (status + version + last probed) ===
+
+	/** Fetch all persisted snapshots from main and start the live subscription. */
+	loadCapabilitySnapshots: () => Promise<void>;
+
+	/** Look up a snapshot by agent id (and optional SSH remote uuid). */
+	getCapabilitySnapshot: (
+		agentId: string,
+		remoteId?: string
+	) => AgentCapabilitiesSnapshot | undefined;
+
+	/** Request a fresh probe for one agent. Updates flow back via the event subscription. */
+	reprobeAgent: (
+		agentId: string,
+		sshRemoteId?: string
+	) => Promise<AgentCapabilitiesSnapshot | null>;
 
 	// === Error Recovery (extracted from App.tsx) ===
 
@@ -117,6 +148,7 @@ export interface ProcessQueuedItemDeps {
 	customAICommands: CustomAICommand[];
 	speckitCommands: SpecKitCommand[];
 	openspecCommands: OpenSpecCommand[];
+	bmadCommands?: BmadCommand[];
 }
 
 export type AgentStore = AgentStoreState & AgentStoreActions;
@@ -129,7 +161,7 @@ export type AgentStore = AgentStoreState & AgentStoreActions;
  * Find a session by ID from sessionStore.
  */
 function getSession(sessionId: string): Session | undefined {
-	return useSessionStore.getState().sessions.find((s) => s.id === sessionId);
+	return selectSessionById(sessionId)(useSessionStore.getState());
 }
 
 /**
@@ -145,10 +177,19 @@ function updateSession(sessionId: string, updater: (s: Session) => Session): voi
 // Store Implementation
 // ============================================================================
 
+/**
+ * Holds the unsubscribe handle for the snapshot-updated IPC bridge so we
+ * don't register multiple listeners if `loadCapabilitySnapshots()` runs
+ * more than once (e.g. during hot reload).
+ */
+let snapshotUnsubscribe: (() => void) | null = null;
+
 export const useAgentStore = create<AgentStore>()((set, get) => ({
 	// --- State ---
 	availableAgents: [],
 	agentsDetected: false,
+	capabilitySnapshots: {},
+	capabilitySnapshotsLoaded: false,
 
 	// --- Actions ---
 
@@ -159,6 +200,47 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 
 	getAgentConfig: (agentId) => {
 		return get().availableAgents.find((a) => a.id === agentId);
+	},
+
+	loadCapabilitySnapshots: async () => {
+		// Always flip `loaded` true so the UI never gets stuck on "Loading…"
+		// when the IPC call rejects (renderer disposal, main-process crash).
+		// Errors still bubble up so Sentry / ErrorBoundary can record them.
+		try {
+			const snapshots = await window.maestro.agents.getAllSnapshots();
+			set({ capabilitySnapshots: snapshots, capabilitySnapshotsLoaded: true });
+		} catch (err) {
+			set({ capabilitySnapshotsLoaded: true });
+			throw err;
+		}
+
+		// Wire the live update subscription exactly once. Subsequent calls
+		// (e.g. across hot reloads) reuse the existing listener; calling
+		// `removeListener` from a previous closure handles renderer reloads.
+		if (snapshotUnsubscribe) {
+			snapshotUnsubscribe();
+			snapshotUnsubscribe = null;
+		}
+		snapshotUnsubscribe = window.maestro.agents.onSnapshotUpdated((payload) => {
+			const current = get().capabilitySnapshots;
+			const next = { ...current };
+			if (payload.snapshot === null) {
+				delete next[payload.key];
+			} else {
+				next[payload.key] = payload.snapshot;
+			}
+			set({ capabilitySnapshots: next });
+		});
+	},
+
+	getCapabilitySnapshot: (agentId, remoteId) => {
+		// Delegate to the shared key builder so this never drifts from the
+		// main-process snapshot store's key format.
+		return get().capabilitySnapshots[buildSnapshotKey(agentId, remoteId)];
+	},
+
+	reprobeAgent: async (agentId, sshRemoteId) => {
+		return window.maestro.agents.reprobe(agentId, sshRemoteId);
 	},
 
 	clearAgentError: (sessionId, tabId?) => {
@@ -178,7 +260,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 		});
 		// Close the agent error modal if open
 		window.maestro.agentError.clearError(sessionId).catch((err) => {
-			console.error('Failed to clear agent error:', err);
+			logger.error('Failed to clear agent error:', undefined, err);
 		});
 	},
 
@@ -233,7 +315,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 	processQueuedItem: async (sessionId, item, deps) => {
 		const session = getSession(sessionId);
 		if (!session) {
-			console.error('[processQueuedItem] Session not found:', sessionId);
+			logger.error('[processQueuedItem] Session not found:', undefined, sessionId);
 			return;
 		}
 
@@ -242,8 +324,9 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 		const tabByItemId = session.aiTabs.find((tab) => tab.id === item.tabId);
 
 		if (!tabByItemId && item.tabId) {
-			console.warn(
+			logger.warn(
 				'[processQueuedItem] Target tab was deleted after queueing. Aborting to prevent executing on wrong tab.',
+				undefined,
 				{ sessionId, itemTabId: item.tabId }
 			);
 			// Reset session to idle since we're aborting this queued item
@@ -264,8 +347,9 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 		const targetTab = tabByItemId || getActiveTab(session);
 
 		if (!targetTab) {
-			console.error(
+			logger.error(
 				'[processQueuedItem] No target tab found — session has no aiTabs. Aborting spawn.',
+				undefined,
 				{ sessionId, itemTabId: item.tabId }
 			);
 			return;
@@ -287,7 +371,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 				? filterYoloArgs(agent.args || [], agent)
 				: [...(agent.args || [])];
 
-			const commandToUse = agent.path ?? agent.command;
+			const commandToUse = agent.path ?? agent.command ?? '';
 
 			// Check if this is a message with images but no text
 			const hasImages = item.images && item.images.length > 0;
@@ -296,38 +380,33 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 
 			if (item.type === 'message' && (hasText || isImageOnlyMessage)) {
 				// Process a message - spawn agent with the message text
-				let effectivePrompt = isImageOnlyMessage ? DEFAULT_IMAGE_ONLY_PROMPT : item.text!;
+				const effectivePrompt = isImageOnlyMessage ? DEFAULT_IMAGE_ONLY_PROMPT : item.text!;
 
-				// For NEW sessions (no agentSessionId), prepend Maestro system prompt
-				const isNewSession = !tabAgentSessionId;
-				if (isNewSession && maestroSystemPrompt) {
-					let gitBranch: string | undefined;
-					if (session.isGitRepo) {
-						try {
-							const status = await gitService.getStatus(session.cwd);
-							gitBranch = status.branch;
-						} catch {
-							// Ignore git errors
-						}
-					}
+				// NOTE: The user-visible log entry for this message is appended by the
+				// caller that dequeued the item (e.g. useAgentListeners onExit,
+				// useInterruptHandler, useQueueProcessing.dispatchQueuedItem,
+				// handleQuickActionsDebugReleaseQueuedItem) so it lands atomically with
+				// the dequeue/state-busy transition. Adding it here too would duplicate.
 
-					const substitutedSystemPrompt = substituteTemplateVariables(maestroSystemPrompt, {
-						session,
-						gitBranch,
-						conductorProfile: deps.conductorProfile,
-						readOnlyMode: isReadOnly,
-					});
+				const appendSystemPrompt = await prepareMaestroSystemPrompt({
+					session,
+					activeTabId: targetTab.id,
+				});
 
-					effectivePrompt = `${substitutedSystemPrompt}\n\n---\n\n# User Request\n\n${effectivePrompt}`;
-				}
+				const { sendPromptViaStdin, sendPromptViaStdinRaw } = getStdinFlags({
+					isSshSession: !!session.sshRemoteId || !!session.sessionSshRemoteConfig?.enabled,
+					supportsStreamJsonInput: agent.capabilities?.supportsStreamJsonInput ?? false,
+					hasImages: !!hasImages,
+				});
 
-				console.log('[processQueuedItem] Spawning agent with queued message:', {
+				logger.info('[processQueuedItem] Spawning agent with queued message:', undefined, {
 					sessionId: targetSessionId,
 					toolType: session.toolType,
 					prompt: effectivePrompt,
 					promptLength: effectivePrompt?.length,
 					hasAgentSessionId: !!tabAgentSessionId,
 					agentSessionId: tabAgentSessionId,
+					hasAppendSystemPrompt: !!appendSystemPrompt,
 					isReadOnly,
 					argsLength: spawnArgs.length,
 					args: spawnArgs,
@@ -341,21 +420,27 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					args: spawnArgs,
 					prompt: effectivePrompt,
 					images: hasImages ? item.images : undefined,
+					appendSystemPrompt,
 					agentSessionId: tabAgentSessionId ?? undefined,
 					readOnlyMode: isReadOnly,
 					sessionCustomPath: session.customPath,
 					sessionCustomArgs: session.customArgs,
 					sessionCustomEnvVars: session.customEnvVars,
-					sessionCustomModel: session.customModel,
+					sessionCustomModel: targetTab.customModel ?? session.customModel,
+					sessionCustomEffort: targetTab.customEffort ?? session.customEffort,
 					sessionCustomContextWindow: session.customContextWindow,
 					sessionSshRemoteConfig: session.sessionSshRemoteConfig,
+					sendPromptViaStdin,
+					sendPromptViaStdinRaw,
 				});
 			} else if (item.type === 'command' && item.command) {
 				// Process a slash command - find matching command
+				// Check user-defined commands first, then agent-discovered commands with prompts
 				const matchingCommand =
 					deps.customAICommands.find((cmd) => cmd.command === item.command) ||
 					deps.speckitCommands.find((cmd) => cmd.command === item.command) ||
-					deps.openspecCommands.find((cmd) => cmd.command === item.command);
+					deps.openspecCommands.find((cmd) => cmd.command === item.command) ||
+					deps.bmadCommands?.find((cmd) => cmd.command === item.command);
 
 				if (matchingCommand) {
 					let gitBranch: string | undefined;
@@ -385,21 +470,15 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					const substitutedPrompt = substituteTemplateVariables(promptWithArgs, {
 						session,
 						gitBranch,
+						groupId: session.groupId,
+						activeTabId: targetTab.id,
 						conductorProfile: deps.conductorProfile,
 					});
 
-					// For NEW sessions, prepend Maestro system prompt
-					const isNewSessionForCommand = !tabAgentSessionId;
-					let promptForAgent = substitutedPrompt;
-					if (isNewSessionForCommand && maestroSystemPrompt) {
-						const substitutedSystemPrompt = substituteTemplateVariables(maestroSystemPrompt, {
-							session,
-							gitBranch,
-							conductorProfile: deps.conductorProfile,
-							readOnlyMode: isReadOnly,
-						});
-						promptForAgent = `${substitutedSystemPrompt}\n\n---\n\n# User Request\n\n${substitutedPrompt}`;
-					}
+					const appendSystemPromptForCommand = await prepareMaestroSystemPrompt({
+						session,
+						activeTabId: targetTab.id,
+					});
 
 					// Add user log showing the command with its interpolated prompt
 					useSessionStore.getState().addLogToTab(
@@ -411,6 +490,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 								command: matchingCommand.command,
 								description: matchingCommand.description,
 							},
+							...(item.forceParallel && { forceParallel: true }),
 						},
 						item.tabId
 					);
@@ -421,6 +501,14 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 						pendingAICommandForSynopsis: matchingCommand.command,
 					}));
 
+					// Compute stdin flags for command spawn (commands never have images)
+					const { sendPromptViaStdin: cmdSendViaStdin, sendPromptViaStdinRaw: cmdSendViaStdinRaw } =
+						getStdinFlags({
+							isSshSession: !!session.sshRemoteId || !!session.sessionSshRemoteConfig?.enabled,
+							supportsStreamJsonInput: agent.capabilities?.supportsStreamJsonInput ?? false,
+							hasImages: false,
+						});
+
 					// Spawn agent with the prompt
 					await window.maestro.process.spawn({
 						sessionId: targetSessionId,
@@ -428,15 +516,19 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 						cwd: session.cwd,
 						command: commandToUse,
 						args: spawnArgs,
-						prompt: promptForAgent,
+						prompt: substitutedPrompt,
+						appendSystemPrompt: appendSystemPromptForCommand,
 						agentSessionId: tabAgentSessionId ?? undefined,
 						readOnlyMode: isReadOnly,
 						sessionCustomPath: session.customPath,
 						sessionCustomArgs: session.customArgs,
 						sessionCustomEnvVars: session.customEnvVars,
-						sessionCustomModel: session.customModel,
+						sessionCustomModel: targetTab.customModel ?? session.customModel,
+						sessionCustomEffort: targetTab.customEffort ?? session.customEffort,
 						sessionCustomContextWindow: session.customContextWindow,
 						sessionSshRemoteConfig: session.sessionSshRemoteConfig,
+						sendPromptViaStdin: cmdSendViaStdin,
+						sendPromptViaStdinRaw: cmdSendViaStdinRaw,
 					});
 				} else {
 					// Unknown command - add error log and reset to idle
@@ -468,7 +560,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 				}
 			}
 		} catch (error: any) {
-			console.error('[processQueuedItem] Failed to process queued item:', error);
+			logger.error('[processQueuedItem] Failed to process queued item:', undefined, error);
 			const errorLogEntry: LogEntry = {
 				id: generateId(),
 				timestamp: Date.now(),
@@ -494,7 +586,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 							: s.aiTabs;
 
 					if (!activeTab) {
-						console.error(
+						logger.error(
 							'[processQueuedItem error] No active tab found - session has no aiTabs, this should not happen'
 						);
 					}
@@ -528,44 +620,3 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 		}
 	},
 }));
-
-// ============================================================================
-// Selectors
-// ============================================================================
-
-/** Select the list of available (detected) agents */
-export const selectAvailableAgents = (state: AgentStore): AgentConfig[] => state.availableAgents;
-
-/** Select whether agent detection has completed */
-export const selectAgentsDetected = (state: AgentStore): boolean => state.agentsDetected;
-
-// ============================================================================
-// Non-React Access
-// ============================================================================
-
-/**
- * Get the current agent store state snapshot.
- * Use outside React (services, orchestrators, IPC handlers).
- */
-export function getAgentState() {
-	return useAgentStore.getState();
-}
-
-/**
- * Get stable agent action references outside React.
- */
-export function getAgentActions() {
-	const state = useAgentStore.getState();
-	return {
-		refreshAgents: state.refreshAgents,
-		getAgentConfig: state.getAgentConfig,
-		processQueuedItem: state.processQueuedItem,
-		clearAgentError: state.clearAgentError,
-		startNewSessionAfterError: state.startNewSessionAfterError,
-		retryAfterError: state.retryAfterError,
-		restartAgentAfterError: state.restartAgentAfterError,
-		authenticateAfterError: state.authenticateAfterError,
-		killAgent: state.killAgent,
-		interruptAgent: state.interruptAgent,
-	};
-}

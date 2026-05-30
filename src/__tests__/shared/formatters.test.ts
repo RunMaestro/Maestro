@@ -9,6 +9,7 @@ import {
 	formatTokens,
 	formatTokensCompact,
 	formatRelativeTime,
+	formatAgeShort,
 	formatActiveTime,
 	formatElapsedTime,
 	formatElapsedTimeColon,
@@ -16,6 +17,9 @@ import {
 	estimateTokenCount,
 	truncatePath,
 	truncateCommand,
+	abbreviateGroupName,
+	isAbsolutePath,
+	getBasename,
 } from '../../shared/formatters';
 
 describe('shared/formatters', () => {
@@ -58,15 +62,15 @@ describe('shared/formatters', () => {
 	// ==========================================================================
 	describe('formatNumber', () => {
 		it('should format small numbers', () => {
-			expect(formatNumber(0)).toBe('0.0');
-			expect(formatNumber(1)).toBe('1.0');
-			expect(formatNumber(999)).toBe('999.0');
+			expect(formatNumber(0)).toBe('0');
+			expect(formatNumber(1)).toBe('1');
+			expect(formatNumber(999)).toBe('999');
 		});
 
-		it('should format thousands with k suffix', () => {
-			expect(formatNumber(1000)).toBe('1.0k');
-			expect(formatNumber(1500)).toBe('1.5k');
-			expect(formatNumber(999999)).toBe('1000.0k');
+		it('should format thousands with K suffix', () => {
+			expect(formatNumber(1000)).toBe('1.0K');
+			expect(formatNumber(1500)).toBe('1.5K');
+			expect(formatNumber(999999)).toBe('1000.0K');
 		});
 
 		it('should format millions with M suffix', () => {
@@ -174,6 +178,80 @@ describe('shared/formatters', () => {
 		it('should accept ISO date strings', () => {
 			expect(formatRelativeTime(new Date(now).toISOString())).toBe('just now');
 			expect(formatRelativeTime(new Date(now - 60000).toISOString())).toBe('1m ago');
+		});
+
+		describe('includeSeconds option', () => {
+			it('should format sub-minute durations as seconds', () => {
+				expect(formatRelativeTime(now, { includeSeconds: true })).toBe('0s ago');
+				expect(formatRelativeTime(now - 1000, { includeSeconds: true })).toBe('1s ago');
+				expect(formatRelativeTime(now - 10000, { includeSeconds: true })).toBe('10s ago');
+				expect(formatRelativeTime(now - 59000, { includeSeconds: true })).toBe('59s ago');
+			});
+
+			it('should fall through to minutes/hours/days when over a minute', () => {
+				expect(formatRelativeTime(now - 60000, { includeSeconds: true })).toBe('1m ago');
+				expect(formatRelativeTime(now - 60 * 60000, { includeSeconds: true })).toBe('1h ago');
+				expect(formatRelativeTime(now - 24 * 60 * 60000, { includeSeconds: true })).toBe('1d ago');
+			});
+		});
+	});
+
+	// ==========================================================================
+	// formatAgeShort tests
+	// ==========================================================================
+	describe('formatAgeShort', () => {
+		const now = Date.now();
+		const MIN = 60_000;
+		const HOUR = 60 * MIN;
+		const DAY = 24 * HOUR;
+
+		it('returns "new" for < 1 minute', () => {
+			expect(formatAgeShort(now)).toBe('new');
+			expect(formatAgeShort(now - 30_000)).toBe('new');
+			expect(formatAgeShort(now + 10_000)).toBe('new'); // clamp future to 0
+		});
+
+		it('formats minutes (< 1 hour)', () => {
+			expect(formatAgeShort(now - 1 * MIN)).toBe('1m');
+			expect(formatAgeShort(now - 5 * MIN)).toBe('5m');
+			expect(formatAgeShort(now - 59 * MIN)).toBe('59m');
+		});
+
+		it('formats hours (< 1 day)', () => {
+			expect(formatAgeShort(now - 1 * HOUR)).toBe('1h');
+			expect(formatAgeShort(now - 5 * HOUR)).toBe('5h');
+			expect(formatAgeShort(now - 23 * HOUR)).toBe('23h');
+		});
+
+		it('formats days (< 1 week)', () => {
+			expect(formatAgeShort(now - 1 * DAY)).toBe('1d');
+			expect(formatAgeShort(now - 5 * DAY)).toBe('5d');
+			expect(formatAgeShort(now - 6 * DAY)).toBe('6d');
+		});
+
+		it('formats weeks (< 30 days)', () => {
+			expect(formatAgeShort(now - 7 * DAY)).toBe('1w');
+			expect(formatAgeShort(now - 21 * DAY)).toBe('3w');
+			expect(formatAgeShort(now - 29 * DAY)).toBe('4w');
+		});
+
+		it('formats months (< 365 days)', () => {
+			expect(formatAgeShort(now - 30 * DAY)).toBe('1mo');
+			expect(formatAgeShort(now - 6 * 30 * DAY)).toBe('6mo');
+			expect(formatAgeShort(now - 364 * DAY)).toBe('12mo');
+		});
+
+		it('formats years with one decimal under 10 years, integer otherwise', () => {
+			expect(formatAgeShort(now - 365 * DAY)).toBe('1y');
+			// ~3.5y → 3.5y (rounded to one decimal)
+			expect(formatAgeShort(now - Math.round(3.5 * 365) * DAY)).toBe('3.5y');
+			// >= 10y: floored integer
+			expect(formatAgeShort(now - 12 * 365 * DAY)).toBe('12y');
+		});
+
+		it('accepts Date objects and ISO strings', () => {
+			expect(formatAgeShort(new Date(now - 5 * MIN))).toBe('5m');
+			expect(formatAgeShort(new Date(now - 5 * MIN).toISOString())).toBe('5m');
 		});
 	});
 
@@ -419,6 +497,138 @@ describe('shared/formatters', () => {
 			expect(truncateCommand('')).toBe('');
 			expect(truncateCommand('   ')).toBe('');
 			expect(truncateCommand('\n\n')).toBe('');
+		});
+	});
+
+	// ==========================================================================
+	// abbreviateGroupName tests
+	// ==========================================================================
+	describe('abbreviateGroupName', () => {
+		it('returns short names unchanged', () => {
+			expect(abbreviateGroupName('Work')).toBe('Work');
+			expect(abbreviateGroupName('Personal')).toBe('Personal'); // 8 chars
+			expect(abbreviateGroupName('Side Gigs')).toBe('Side Gigs'); // 9 chars, under max
+			expect(abbreviateGroupName('TenChars10')).toBe('TenChars10'); // exactly max
+		});
+
+		it('preserves whitespace trimming', () => {
+			expect(abbreviateGroupName('  Work  ')).toBe('Work');
+		});
+
+		it('handles empty input', () => {
+			expect(abbreviateGroupName('')).toBe('');
+			expect(abbreviateGroupName('   ')).toBe('');
+		});
+
+		it('builds "&"-joined acronym for "X & Y" names', () => {
+			expect(abbreviateGroupName('AMINI & CONANT')).toBe('A&C');
+			expect(abbreviateGroupName('amini & conant')).toBe('A&C');
+			expect(abbreviateGroupName('Amini&Conant')).toBe('A&C');
+			expect(abbreviateGroupName('Foo & Bar & Baz')).toBe('F&B&B');
+		});
+
+		it('treats " and " as a conjunction', () => {
+			expect(abbreviateGroupName('Research and Development')).toBe('R&D');
+			expect(abbreviateGroupName('Sales AND Marketing')).toBe('S&M');
+		});
+
+		it('takes initials for multi-word names without conjunctions', () => {
+			expect(abbreviateGroupName('Acme Corporation Limited')).toBe('ACL');
+			expect(abbreviateGroupName('staging_environment_two')).toBe('SET');
+			expect(abbreviateGroupName('client-facing-team')).toBe('CFT');
+		});
+
+		it('drops leading numbering/bracket tokens from initials', () => {
+			expect(abbreviateGroupName('[1] Aleyemma/Money-Sessions')).toBe('AMS');
+			expect(abbreviateGroupName('(2) Research Operations')).toBe('RO');
+			expect(abbreviateGroupName('#3 backend-api-gateway')).toBe('BAG');
+		});
+
+		it('strips vowels from single long words, preserving the first character', () => {
+			expect(abbreviateGroupName('Engineering')).toBe('Engnrng');
+			expect(abbreviateGroupName('Documentation')).toBe('Dcmnttn');
+			expect(abbreviateGroupName('Astonishment')).toBe('Astnshmnt');
+		});
+
+		it('hard-truncates devoweled output that is still too long', () => {
+			// 23 chars, devowels to 19 → truncate at default max (10)
+			expect(abbreviateGroupName('Pneumonoultramicroscop')).toBe('Pnmnltrmcr');
+		});
+
+		it('respects custom target/max', () => {
+			expect(abbreviateGroupName('Engineering', { max: 5 })).toBe('Engnr');
+			expect(abbreviateGroupName('TenChars10', { max: 5 })).toBe('TnChr');
+		});
+
+		// Issue #1017: groups named like "[ARP] Auditoria Relatório Pessoal" used to
+		// fall into the multi-word initials path, which took just the leading "[" of
+		// the bracketed word and produced "[ARP" with the closing bracket dropped.
+		it('uses a bracketed tag prefix as the preferred short form', () => {
+			expect(abbreviateGroupName('[ARP] Auditoria Relatório Pessoal')).toBe('ARP');
+			expect(abbreviateGroupName('[CEDR] Conteúdo Educação Designer Reuniões')).toBe('CEDR');
+			expect(abbreviateGroupName('[GU] Generic User')).toBe('GU');
+			// Bracket prefix is honored even when the name is already short.
+			expect(abbreviateGroupName('[ARP]')).toBe('ARP');
+			// Tag itself is over max → fall through to initials, which skip the
+			// leading bracket entirely (no lopped "[" in the output).
+			expect(abbreviateGroupName('[VeryLongTagName] X', { max: 5 })).toBe('VX');
+			// Pure-numbering prefix is not a tag → dropped, initials of the rest win.
+			expect(abbreviateGroupName('[1] Aleyemma/Money-Sessions')).toBe('AMS');
+		});
+	});
+
+	// ==========================================================================
+	// isAbsolutePath tests
+	// ==========================================================================
+	describe('isAbsolutePath', () => {
+		it('recognizes Unix absolute paths', () => {
+			expect(isAbsolutePath('/Users/name/file.ts')).toBe(true);
+			expect(isAbsolutePath('/')).toBe(true);
+		});
+
+		it('recognizes Windows drive paths with either separator', () => {
+			expect(isAbsolutePath('C:\\Users\\name\\file.ts')).toBe(true);
+			expect(isAbsolutePath('C:/Users/name/file.ts')).toBe(true);
+			expect(isAbsolutePath('d:\\temp')).toBe(true);
+		});
+
+		it('recognizes backslash-prefixed (UNC / drive-relative) paths', () => {
+			expect(isAbsolutePath('\\\\server\\share')).toBe(true);
+			expect(isAbsolutePath('\\folder\\file')).toBe(true);
+		});
+
+		it('rejects relative paths and non-paths', () => {
+			expect(isAbsolutePath('')).toBe(false);
+			expect(isAbsolutePath('src/components/Foo.tsx')).toBe(false);
+			expect(isAbsolutePath('./file.ts')).toBe(false);
+			expect(isAbsolutePath('file.ts')).toBe(false);
+			expect(isAbsolutePath('C:file.ts')).toBe(false); // no separator after drive
+		});
+	});
+
+	// ==========================================================================
+	// getBasename tests
+	// ==========================================================================
+	describe('getBasename', () => {
+		it('extracts the final segment of a Unix path', () => {
+			expect(getBasename('/Users/name/file.ts')).toBe('file.ts');
+		});
+
+		it('extracts the final segment of a Windows path', () => {
+			expect(getBasename('C:\\Users\\name\\file.ts')).toBe('file.ts');
+		});
+
+		it('ignores a trailing separator', () => {
+			expect(getBasename('/Users/name/folder/')).toBe('folder');
+			expect(getBasename('C:\\Users\\name\\folder\\')).toBe('folder');
+		});
+
+		it('returns the input unchanged when there is no separator', () => {
+			expect(getBasename('file.ts')).toBe('file.ts');
+		});
+
+		it('handles empty input', () => {
+			expect(getBasename('')).toBe('');
 		});
 	});
 });

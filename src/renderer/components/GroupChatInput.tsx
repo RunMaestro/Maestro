@@ -14,7 +14,7 @@
 
 import React, { useState, useRef, useCallback, useMemo, useEffect } from 'react';
 import { useSettingsStore } from '../stores/settingsStore';
-import { ArrowUp, ImageIcon, Eye, Keyboard, PenLine, Users } from 'lucide-react';
+import { ArrowUp, Bell, ImageIcon, Eye, Keyboard, PenLine, Users } from 'lucide-react';
 import type {
 	Theme,
 	GroupChatParticipant,
@@ -30,7 +30,10 @@ import {
 	formatEnterToSendTooltip,
 } from '../utils/shortcutFormatter';
 import { QueuedItemsList } from './QueuedItemsList';
+import { NotificationPopover } from './NotificationPopover';
+import { useImageAnnotatorStore } from './ImageAnnotator/imageAnnotatorStore';
 import { normalizeMentionName } from '../utils/participantColors';
+import { logger } from '../utils/logger';
 
 /** Maximum image file size in bytes (10MB) */
 const MAX_IMAGE_SIZE = 10 * 1024 * 1024;
@@ -135,6 +138,8 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 	const mentionListRef = useRef<HTMLDivElement>(null);
 	const selectedMentionRef = useRef<HTMLButtonElement>(null);
 	const prevGroupChatIdRef = useRef(groupChatId);
+	const [notificationPopoverOpen, setNotificationPopoverOpen] = useState(false);
+	const notificationBtnRef = useRef<HTMLButtonElement>(null);
 
 	// Build list of mentionable items: groups first, then individual agents
 	// Groups expand into all their member @mentions when selected
@@ -402,12 +407,12 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 			files.forEach((file) => {
 				// Validate file type
 				if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
-					console.warn(`[GroupChatInput] Invalid file type rejected: ${file.type}`);
+					logger.warn(`[GroupChatInput] Invalid file type rejected: ${file.type}`);
 					return;
 				}
 				// Validate file size
 				if (file.size > MAX_IMAGE_SIZE) {
-					console.warn(
+					logger.warn(
 						`[GroupChatInput] File too large rejected: ${(file.size / 1024 / 1024).toFixed(2)}MB (max: 10MB)`
 					);
 					return;
@@ -530,6 +535,29 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 								onClick={() => onOpenLightbox?.(img, stagedImages, 'staged')}
 							/>
 							<button
+								type="button"
+								onClick={(e) => {
+									e.stopPropagation();
+									// Match by content rather than captured `idx` — index can
+									// shift if the user removes another staged image while the
+									// annotator is open.
+									useImageAnnotatorStore
+										.getState()
+										.openAnnotator(img, (newDataUrl) =>
+											setStagedImages((prev) => prev.map((s) => (s === img ? newDataUrl : s)))
+										);
+								}}
+								title="Annotate image"
+								aria-label="Annotate image"
+								className="absolute -top-1 -left-1 w-4 h-4 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity outline-none focus-visible:ring-2 focus-visible:ring-white"
+								style={{
+									backgroundColor: theme.colors.bgActivity,
+									color: theme.colors.textMain,
+								}}
+							>
+								<PenLine className="w-2.5 h-2.5" />
+							</button>
+							<button
 								onClick={() => removeImage(img)}
 								className="absolute -top-1 -right-1 w-4 h-4 rounded-full flex items-center justify-center text-xs opacity-0 group-hover:opacity-100 transition-opacity"
 								style={{
@@ -553,28 +581,30 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 						backgroundColor: readOnlyMode ? `${theme.colors.warning}15` : theme.colors.bgMain,
 					}}
 				>
-					<textarea
-						ref={inputRef}
-						value={message}
-						onChange={handleChange}
-						onKeyDown={handleKeyDown}
-						onPaste={handlePasteWrapped}
-						onDrop={(e) => {
-							e.stopPropagation();
-							handleDrop?.(e);
-						}}
-						onDragOver={(e) => e.preventDefault()}
-						placeholder={
-							isBusy ? 'Type to queue message...' : 'Type a message... (@ to mention agent)'
-						}
-						spellCheck={spellCheckEnabled}
-						rows={1}
-						className="flex-1 bg-transparent text-sm outline-none pl-3 pt-3 pr-3 resize-none min-h-[2.5rem] scrollbar-thin"
-						style={{
-							color: theme.colors.textMain,
-							maxHeight: '11rem',
-						}}
-					/>
+					<div className="flex items-start">
+						<textarea
+							ref={inputRef}
+							value={message}
+							onChange={handleChange}
+							onKeyDown={handleKeyDown}
+							onPaste={handlePasteWrapped}
+							onDrop={(e) => {
+								e.stopPropagation();
+								handleDrop?.(e);
+							}}
+							onDragOver={(e) => e.preventDefault()}
+							placeholder={
+								isBusy ? 'Type to queue message...' : 'Type a message... (@ to mention agent)'
+							}
+							spellCheck={spellCheckEnabled}
+							rows={1}
+							className="flex-1 bg-transparent text-sm outline-none pl-3 pt-3 pr-3 resize-none min-h-[2.5rem] scrollbar-thin"
+							style={{
+								color: theme.colors.textMain,
+								maxHeight: '11rem',
+							}}
+						/>
+					</div>
 
 					{/* Bottom toolbar row */}
 					<div className="flex justify-between items-center px-2 pb-2 pt-1">
@@ -640,23 +670,46 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 					</div>
 				</div>
 
-				{/* Send button - always enabled when there's text (queues if busy) */}
-				<button
-					onClick={handleSend}
-					disabled={!message.trim()}
-					className="self-end p-2.5 rounded-lg transition-colors"
-					style={{
-						backgroundColor: message.trim()
-							? isBusy
-								? theme.colors.warning
-								: theme.colors.accent
-							: theme.colors.border,
-						color: message.trim() ? '#ffffff' : theme.colors.textDim,
-					}}
-					title={isBusy ? 'Queue message' : 'Send message'}
-				>
-					<ArrowUp className="w-5 h-5" />
-				</button>
+				{/* Notifications & Send Button - Right Side */}
+				<div className="self-end flex flex-col gap-2">
+					<button
+						ref={notificationBtnRef}
+						type="button"
+						onClick={() => setNotificationPopoverOpen((prev) => !prev)}
+						className="p-2 rounded-lg border transition-all"
+						style={{
+							backgroundColor: theme.colors.bgMain,
+							borderColor: theme.colors.border,
+							color: theme.colors.textDim,
+						}}
+						title="Notification Settings"
+					>
+						<Bell className="w-4 h-4" />
+					</button>
+					{notificationPopoverOpen && (
+						<NotificationPopover
+							theme={theme}
+							anchorRef={notificationBtnRef}
+							onClose={() => setNotificationPopoverOpen(false)}
+						/>
+					)}
+					<button
+						onClick={handleSend}
+						disabled={!message.trim()}
+						className="p-2 rounded-md shadow-sm transition-all hover:opacity-90 cursor-pointer"
+						style={{
+							backgroundColor: message.trim()
+								? isBusy
+									? theme.colors.warning
+									: theme.colors.accent
+								: theme.colors.border,
+							color: message.trim() ? theme.colors.accentForeground : theme.colors.textDim,
+						}}
+						title={isBusy ? 'Queue message' : 'Send message'}
+					>
+						<ArrowUp className="w-4 h-4" />
+					</button>
+				</div>
 			</div>
 		</div>
 	);

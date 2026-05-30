@@ -18,6 +18,8 @@ export interface QueryEvent {
 	tabId?: string;
 	/** Whether this query was executed on a remote SSH session */
 	isRemote?: boolean;
+	/** Whether this query came from a worktree session (child of a parent agent) */
+	isWorktree?: boolean;
 }
 
 /**
@@ -64,6 +66,8 @@ export interface SessionLifecycleEvent {
 	duration?: number;
 	/** Whether this was a remote SSH session */
 	isRemote?: boolean;
+	/** Whether this session is a worktree (child of a parent agent) */
+	isWorktree?: boolean;
 }
 
 /**
@@ -97,6 +101,19 @@ export interface StatsAggregation {
 	byAgentByDay: Record<string, Array<{ date: string; count: number; duration: number }>>;
 	/** Queries and duration by Maestro session per day (for agent usage chart) */
 	bySessionByDay: Record<string, Array<{ date: string; count: number; duration: number }>>;
+	/** User vs auto query counts per Maestro session (for per-card auto% on the dashboard) */
+	bySessionSource: Record<string, { user: number; auto: number }>;
+	/** Count of queries originating from worktree (child) agents */
+	worktreeQueries: number;
+	/** Count of queries originating from parent (non-worktree) agents */
+	parentQueries: number;
+	/** Detailed worktree breakdown including duration totals (for activity split bar) */
+	byWorktreeStatus: {
+		worktree: { count: number; duration: number };
+		parent: { count: number; duration: number };
+	};
+	/** Number of image annotations saved in the time range */
+	imageAnnotations: number;
 }
 
 /**
@@ -110,6 +127,15 @@ export interface StatsFilters {
 }
 
 /**
+ * One day of shortcut usage. `date` is the local-time YYYY-MM-DD bucket; `count`
+ * is the total number of shortcuts fired that day across the whole app.
+ */
+export interface ShortcutUsageDay {
+	date: string;
+	count: number;
+}
+
+/**
  * Database schema version for migrations
  */
-export const STATS_DB_VERSION = 4;
+export const STATS_DB_VERSION = 7;

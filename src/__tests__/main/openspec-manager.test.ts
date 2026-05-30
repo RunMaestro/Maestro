@@ -39,6 +39,13 @@ vi.mock('../../main/utils/logger', () => ({
 	},
 }));
 
+/** Create a Node.js-style ENOENT error with .code property */
+function enoent(): NodeJS.ErrnoException {
+	const err = new Error('ENOENT: no such file or directory') as NodeJS.ErrnoException;
+	err.code = 'ENOENT';
+	return err;
+}
+
 // Import the module after mocks are set up
 import {
 	getOpenSpecMetadata,
@@ -74,12 +81,12 @@ describe('openspec-manager', () => {
 			vi.mocked(fs.readFile).mockImplementation(async (filePath) => {
 				const pathStr = filePath.toString();
 				if (pathStr.includes('openspec-customizations.json')) {
-					throw new Error('ENOENT');
+					throw enoent();
 				}
 				if (pathStr.includes('metadata.json')) {
 					return JSON.stringify(mockMetadata);
 				}
-				throw new Error('ENOENT');
+				throw enoent();
 			});
 
 			const metadata = await getOpenSpecMetadata();
@@ -103,7 +110,7 @@ describe('openspec-manager', () => {
 						prompts: {},
 					});
 				}
-				throw new Error('ENOENT');
+				throw enoent();
 			});
 
 			const metadata = await getOpenSpecMetadata();
@@ -112,7 +119,7 @@ describe('openspec-manager', () => {
 		});
 
 		it('should return default metadata when no files exist', async () => {
-			vi.mocked(fs.readFile).mockRejectedValue(new Error('ENOENT'));
+			vi.mocked(fs.readFile).mockRejectedValue(enoent());
 
 			const metadata = await getOpenSpecMetadata();
 
@@ -129,15 +136,15 @@ describe('openspec-manager', () => {
 			vi.mocked(fs.readFile).mockImplementation(async (filePath) => {
 				const pathStr = filePath.toString();
 				if (pathStr.includes('openspec-customizations.json')) {
-					throw new Error('ENOENT');
+					throw enoent();
 				}
 				if (pathStr.includes('openspec-prompts')) {
-					throw new Error('ENOENT');
+					throw enoent();
 				}
 				if (pathStr.endsWith('.md')) {
 					return mockBundledPrompt;
 				}
-				throw new Error('ENOENT');
+				throw enoent();
 			});
 
 			const commands = await getOpenSpecPrompts();
@@ -154,15 +161,15 @@ describe('openspec-manager', () => {
 			vi.mocked(fs.readFile).mockImplementation(async (filePath) => {
 				const pathStr = filePath.toString();
 				if (pathStr.includes('openspec-customizations.json')) {
-					throw new Error('ENOENT');
+					throw enoent();
 				}
 				if (pathStr.includes('openspec-prompts')) {
-					throw new Error('ENOENT');
+					throw enoent();
 				}
 				if (pathStr.endsWith('.md')) {
 					return mockBundledPrompt;
 				}
-				throw new Error('ENOENT');
+				throw enoent();
 			});
 
 			const commands = await getOpenSpecPrompts();
@@ -182,15 +189,15 @@ describe('openspec-manager', () => {
 			vi.mocked(fs.readFile).mockImplementation(async (filePath) => {
 				const pathStr = filePath.toString();
 				if (pathStr.includes('openspec-customizations.json')) {
-					throw new Error('ENOENT');
+					throw enoent();
 				}
 				if (pathStr.includes('openspec-prompts')) {
-					throw new Error('ENOENT');
+					throw enoent();
 				}
 				if (pathStr.endsWith('.md')) {
 					return mockBundledPrompt;
 				}
-				throw new Error('ENOENT');
+				throw enoent();
 			});
 
 			const commands = await getOpenSpecPrompts();
@@ -222,12 +229,12 @@ describe('openspec-manager', () => {
 					});
 				}
 				if (pathStr.includes('openspec-prompts')) {
-					throw new Error('ENOENT');
+					throw enoent();
 				}
 				if (pathStr.endsWith('.md')) {
 					return mockBundledPrompt;
 				}
-				throw new Error('ENOENT');
+				throw enoent();
 			});
 
 			const commands = await getOpenSpecPrompts();
@@ -245,12 +252,12 @@ describe('openspec-manager', () => {
 			vi.mocked(fs.readFile).mockImplementation(async (filePath) => {
 				const pathStr = filePath.toString();
 				if (pathStr.includes('openspec-customizations.json')) {
-					throw new Error('ENOENT');
+					throw enoent();
 				}
 				if (pathStr.includes('metadata.json')) {
 					return JSON.stringify(mockMetadata);
 				}
-				throw new Error('ENOENT');
+				throw enoent();
 			});
 			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
 
@@ -282,7 +289,7 @@ describe('openspec-manager', () => {
 				if (pathStr.includes('openspec-customizations.json')) {
 					return JSON.stringify(existingCustomizations);
 				}
-				throw new Error('ENOENT');
+				throw enoent();
 			});
 			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
 
@@ -314,12 +321,12 @@ describe('openspec-manager', () => {
 					return JSON.stringify(customizations);
 				}
 				if (pathStr.includes('openspec-prompts')) {
-					throw new Error('ENOENT');
+					throw enoent();
 				}
 				if (pathStr.endsWith('.md')) {
 					return mockBundledPrompt;
 				}
-				throw new Error('ENOENT');
+				throw enoent();
 			});
 			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
 
@@ -337,15 +344,15 @@ describe('openspec-manager', () => {
 			vi.mocked(fs.readFile).mockImplementation(async (filePath) => {
 				const pathStr = filePath.toString();
 				if (pathStr.includes('openspec-customizations.json')) {
-					throw new Error('ENOENT');
+					throw enoent();
 				}
 				if (pathStr.includes('openspec-prompts')) {
-					throw new Error('ENOENT');
+					throw enoent();
 				}
 				if (pathStr.endsWith('.md')) {
-					throw new Error('ENOENT');
+					throw enoent();
 				}
-				throw new Error('ENOENT');
+				throw enoent();
 			});
 
 			await expect(resetOpenSpecPrompt('nonexistent')).rejects.toThrow('Unknown openspec command');
@@ -357,15 +364,15 @@ describe('openspec-manager', () => {
 			vi.mocked(fs.readFile).mockImplementation(async (filePath) => {
 				const pathStr = filePath.toString();
 				if (pathStr.includes('openspec-customizations.json')) {
-					throw new Error('ENOENT');
+					throw enoent();
 				}
 				if (pathStr.includes('openspec-prompts')) {
-					throw new Error('ENOENT');
+					throw enoent();
 				}
 				if (pathStr.endsWith('.md')) {
 					return mockBundledPrompt;
 				}
-				throw new Error('ENOENT');
+				throw enoent();
 			});
 
 			const command = await getOpenSpecCommand('proposal');
@@ -379,15 +386,15 @@ describe('openspec-manager', () => {
 			vi.mocked(fs.readFile).mockImplementation(async (filePath) => {
 				const pathStr = filePath.toString();
 				if (pathStr.includes('openspec-customizations.json')) {
-					throw new Error('ENOENT');
+					throw enoent();
 				}
 				if (pathStr.includes('openspec-prompts')) {
-					throw new Error('ENOENT');
+					throw enoent();
 				}
 				if (pathStr.endsWith('.md')) {
 					return mockBundledPrompt;
 				}
-				throw new Error('ENOENT');
+				throw enoent();
 			});
 
 			const command = await getOpenSpecCommand('nonexistent');
@@ -401,15 +408,15 @@ describe('openspec-manager', () => {
 			vi.mocked(fs.readFile).mockImplementation(async (filePath) => {
 				const pathStr = filePath.toString();
 				if (pathStr.includes('openspec-customizations.json')) {
-					throw new Error('ENOENT');
+					throw enoent();
 				}
 				if (pathStr.includes('openspec-prompts')) {
-					throw new Error('ENOENT');
+					throw enoent();
 				}
 				if (pathStr.endsWith('.md')) {
 					return mockBundledPrompt;
 				}
-				throw new Error('ENOENT');
+				throw enoent();
 			});
 
 			const command = await getOpenSpecCommandBySlash('/openspec.proposal');
@@ -423,15 +430,15 @@ describe('openspec-manager', () => {
 			vi.mocked(fs.readFile).mockImplementation(async (filePath) => {
 				const pathStr = filePath.toString();
 				if (pathStr.includes('openspec-customizations.json')) {
-					throw new Error('ENOENT');
+					throw enoent();
 				}
 				if (pathStr.includes('openspec-prompts')) {
-					throw new Error('ENOENT');
+					throw enoent();
 				}
 				if (pathStr.endsWith('.md')) {
 					return mockBundledPrompt;
 				}
-				throw new Error('ENOENT');
+				throw enoent();
 			});
 
 			const command = await getOpenSpecCommandBySlash('/openspec.nonexistent');
@@ -447,20 +454,20 @@ describe('openspec-manager', () => {
 			vi.mocked(fs.readFile).mockImplementation(async (filePath) => {
 				const pathStr = filePath.toString();
 				if (pathStr.includes('openspec-customizations.json')) {
-					throw new Error('ENOENT');
+					throw enoent();
 				}
 				// User prompts directory (downloaded updates)
 				if (pathStr.includes('openspec-prompts') && pathStr.includes('openspec.proposal.md')) {
 					return userPromptContent;
 				}
 				if (pathStr.includes('openspec-prompts')) {
-					throw new Error('ENOENT');
+					throw enoent();
 				}
 				// Bundled prompts (fallback)
 				if (pathStr.endsWith('.md')) {
 					return mockBundledPrompt;
 				}
-				throw new Error('ENOENT');
+				throw enoent();
 			});
 
 			const commands = await getOpenSpecPrompts();
@@ -473,7 +480,7 @@ describe('openspec-manager', () => {
 			vi.mocked(fs.readFile).mockImplementation(async (filePath) => {
 				const pathStr = filePath.toString();
 				if (pathStr.includes('openspec-customizations.json')) {
-					throw new Error('ENOENT');
+					throw enoent();
 				}
 				if (pathStr.includes('openspec-prompts')) {
 					return '# Should not be used for custom commands';
@@ -481,7 +488,7 @@ describe('openspec-manager', () => {
 				if (pathStr.endsWith('.md')) {
 					return mockBundledPrompt;
 				}
-				throw new Error('ENOENT');
+				throw enoent();
 			});
 
 			const commands = await getOpenSpecPrompts();

@@ -13,9 +13,11 @@
  */
 
 import { useCallback } from 'react';
-import type { Session, UsageStats } from '../../types';
+import type { Session, TaskSelectionMode, UsageStats } from '../../types';
 import { substituteTemplateVariables, TemplateContext } from '../../utils/templateVariables';
-import { countUnfinishedTasks, countCheckedTasks } from './batchUtils';
+import { countMarkdownTasks, getTaskSelectionBlock } from './batchUtils';
+import type { AgentSpawnErrorKind } from '../agent/useAgentExecution';
+import { logger } from '../../utils/logger';
 
 /**
  * Configuration for document processing
@@ -57,6 +59,12 @@ export interface DocumentProcessorConfig {
 	customPrompt: string;
 
 	/**
+	 * Selection mode used to resolve {{TASK_SELECTION_BLOCK}} inside customPrompt.
+	 * Omitted → 'task' (legacy behavior).
+	 */
+	taskSelectionMode?: TaskSelectionMode;
+
+	/**
 	 * SSH remote ID for remote file operations (when session is SSH-enabled)
 	 */
 	sshRemoteId?: string;
@@ -80,6 +88,11 @@ export interface TaskResult {
 	 * Token usage statistics from the agent run
 	 */
 	usageStats?: UsageStats;
+
+	/**
+	 * Context usage percentage estimated from the last usage event
+	 */
+	contextUsage?: number;
 
 	/**
 	 * Time elapsed processing this task (ms)
@@ -132,6 +145,16 @@ export interface TaskResult {
 	 * This correctly accounts for both completed tasks and newly added tasks.
 	 */
 	totalTasksChange: number;
+
+	/**
+	 * Optional failure detail from the agent run.
+	 */
+	errorMessage?: string;
+
+	/**
+	 * Structured failure category from the agent run.
+	 */
+	errorKind?: AgentSpawnErrorKind;
 }
 
 /**
@@ -170,6 +193,9 @@ export interface DocumentProcessorCallbacks {
 		response?: string;
 		agentSessionId?: string;
 		usageStats?: UsageStats;
+		contextUsage?: number;
+		error?: string;
+		errorKind?: AgentSpawnErrorKind;
 	}>;
 }
 
@@ -250,11 +276,12 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 			if (!result.success || !result.content) {
 				return { content: '', taskCount: 0, checkedCount: 0 };
 			}
+			const taskCounts = countMarkdownTasks(result.content);
 
 			return {
 				content: result.content,
-				taskCount: countUnfinishedTasks(result.content),
-				checkedCount: countCheckedTasks(result.content),
+				taskCount: taskCounts.unchecked,
+				checkedCount: taskCounts.checked,
 			};
 		},
 		[]
@@ -280,6 +307,7 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 				loopIteration,
 				effectiveCwd,
 				customPrompt,
+				taskSelectionMode,
 				sshRemoteId,
 			} = config;
 
@@ -297,6 +325,8 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 				session,
 				gitBranch,
 				groupName,
+				groupId: session.groupId,
+				activeTabId: session.activeTabId,
 				autoRunFolder: folderPath,
 				loopNumber: loopIteration, // Already 1-indexed from caller
 				documentName: filename,
@@ -321,8 +351,16 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 				}
 			}
 
+			// Resolve the task-selection block placeholder before the generic template
+			// substitution pass so any variables inside the swapped-in block are also
+			// expanded. No-op if the user has removed the placeholder from their prompt.
+			const promptWithSelectionBlock = customPrompt.replace(
+				/\{\{TASK_SELECTION_BLOCK\}\}/gi,
+				getTaskSelectionBlock(taskSelectionMode)
+			);
+
 			// Substitute template variables in the prompt
-			const finalPrompt = substituteTemplateVariables(customPrompt, templateContext);
+			const finalPrompt = substituteTemplateVariables(promptWithSelectionBlock, templateContext);
 
 			// Capture start time for elapsed time tracking
 			const taskStartTime = Date.now();
@@ -343,7 +381,7 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 				window.maestro.agentSessions
 					.registerSessionOrigin(effectiveCwd, result.agentSessionId, 'auto')
 					.catch((err) =>
-						console.error('[DocumentProcessor] Failed to register session origin:', err)
+						logger.error('[DocumentProcessor] Failed to register session origin:', undefined, err)
 					);
 			}
 
@@ -410,13 +448,14 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 				}
 			} else if (!result.success) {
 				shortSummary = `[${filename}] Task failed`;
-				fullSynopsis = result.response || shortSummary;
+				fullSynopsis = result.error || result.response || shortSummary;
 			}
 
 			return {
 				success: result.success,
 				agentSessionId: result.agentSessionId,
 				usageStats: result.usageStats,
+				contextUsage: result.contextUsage,
 				elapsedTimeMs,
 				tasksCompletedThisRun,
 				newRemainingTasks,
@@ -427,6 +466,8 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 				newCheckedCount,
 				addedUncheckedTasks,
 				totalTasksChange,
+				errorMessage: result.error,
+				errorKind: result.errorKind,
 			};
 		},
 		[readDocAndCountTasks]

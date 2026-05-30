@@ -4,7 +4,7 @@ description: Optional, feature-gated capabilities that let Maestro ship fast wit
 icon: flask
 ---
 
-Encore Features are Maestro's system for shipping powerful capabilities that aren't essential for every user. They're disabled by default and completely invisible when off — no shortcuts, no menu items, no command palette entries. This keeps the core app lean while letting power users opt into advanced workflows.
+Encore Features are Maestro's system for shipping powerful capabilities that aren't essential for every user. They're disabled by default and completely invisible when off - no shortcuts, no menu items, no command palette entries. This keeps the core app lean while letting power users opt into advanced workflows.
 
 Think of them as a precursor to a full plugin marketplace: each Encore Feature adds significant functionality, but only for users who want it.
 
@@ -16,14 +16,15 @@ Open **Settings** (`Cmd+,` / `Ctrl+,`) and navigate to the **Encore Features** t
 
 ## Available Features
 
-| Feature                              | Shortcut                       | Description                                                     |
-| ------------------------------------ | ------------------------------ | --------------------------------------------------------------- |
-| [Director's Notes](./director-notes) | `Cmd+Shift+O` / `Ctrl+Shift+O` | Unified timeline of all agent activity with AI-powered synopses |
-
-More features will be added here as they ship.
+| Feature                              | Shortcut                       | Description                                                                                      |
+| ------------------------------------ | ------------------------------ | ------------------------------------------------------------------------------------------------ |
+| [Director's Notes](./director-notes) | `Cmd+Shift+O` / `Ctrl+Shift+O` | Unified timeline of all agent activity with AI-powered synopses                                  |
+| [Usage Dashboard](./usage-dashboard) | `Opt+Cmd+U` / `Alt+Ctrl+U`     | Comprehensive analytics for tracking AI usage patterns                                           |
+| [Maestro Symphony](./symphony)       | `Cmd+Shift+Y` / `Ctrl+Shift+Y` | Contribute to open source by donating AI tokens                                                  |
+| [Maestro Cue](./maestro-cue)         | `Cmd+Shift+E` / `Ctrl+Shift+E` | Event-driven automation: file changes, timers, agent chaining, GitHub polling, and task tracking |
 
 ## For Developers
 
-Want to build a new Encore Feature? The architecture is designed for easy extension — add a flag, wire up the toggle, gate the access points, and your feature ships behind a clean opt-in.
+Want to build a new Encore Feature? The architecture is designed for easy extension - add a flag, wire up the toggle, gate the access points, and your feature ships behind a clean opt-in.
 
 See the [Encore Features contributor guide](https://github.com/RunMaestro/Maestro/blob/main/CONTRIBUTING.md#encore-features-feature-gating) for the full implementation checklist, architecture details, and the canonical reference implementation (Director's Notes).

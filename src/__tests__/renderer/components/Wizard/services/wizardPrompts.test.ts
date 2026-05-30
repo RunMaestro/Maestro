@@ -5,7 +5,9 @@
  * Tests parsing strategies, fallback handling, validation, color generation, and edge cases.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll, vi } from 'vitest';
+import * as fs from 'fs';
+import * as path from 'path';
 import {
 	parseStructuredOutput,
 	generateSystemPrompt,
@@ -13,6 +15,7 @@ import {
 	isReadyToProceed,
 	getConfidenceColor,
 	getInitialQuestion,
+	loadWizardPrompts,
 	STRUCTURED_OUTPUT_SCHEMA,
 	STRUCTURED_OUTPUT_SUFFIX,
 	READY_CONFIDENCE_THRESHOLD,
@@ -22,7 +25,59 @@ import {
 } from '../../../../../renderer/components/Wizard/services/wizardPrompts';
 import { getAllInitialQuestions } from '../../../../../renderer/components/Wizard/services/fillerPhrases';
 
+// Load actual prompt files from disk so generateSystemPrompt tests work with real content.
+// Mirror the {{INCLUDE:name}} and {{REF:name}} resolution that src/main/prompt-manager.ts
+// performs in production — without it, directives in wizard-system.md remain unresolved
+// and the assertions below would never see their resolved content.
+const promptsDir = path.resolve(__dirname, '..', '..', '..', '..', '..', '..', 'src', 'prompts');
+const INCLUDE_PATTERN = /\{\{INCLUDE:([a-zA-Z0-9_-]+)\}\}/g;
+const REF_PATTERN = /\{\{REF:([a-zA-Z0-9_-]+)\}\}/g;
+function resolveRefs(content: string): string {
+	return content.replace(REF_PATTERN, (_match, name: string) =>
+		path.resolve(promptsDir, `${name}.md`)
+	);
+}
+function resolveIncludes(content: string, depth = 0): string {
+	if (depth >= 3) return content;
+	return content.replace(INCLUDE_PATTERN, (match, name: string) => {
+		try {
+			const included = fs.readFileSync(path.join(promptsDir, `${name}.md`), 'utf-8');
+			return resolveIncludes(included, depth + 1);
+		} catch {
+			return match;
+		}
+	});
+}
+function resolveDirectives(content: string): string {
+	return resolveIncludes(resolveRefs(content));
+}
+const wizardSystemContent = resolveDirectives(
+	fs.readFileSync(path.join(promptsDir, 'wizard-system.md'), 'utf-8')
+);
+const wizardContinuationContent = resolveDirectives(
+	fs.readFileSync(path.join(promptsDir, 'wizard-system-continuation.md'), 'utf-8')
+);
+
 describe('wizardPrompts', () => {
+	beforeAll(async () => {
+		// Mock window.maestro.prompts.get to return actual prompt file content
+		(window as any).maestro = {
+			...(window as any).maestro,
+			prompts: {
+				get: vi.fn((id: string) => {
+					if (id === 'wizard-system') {
+						return Promise.resolve({ success: true, content: wizardSystemContent });
+					}
+					if (id === 'wizard-system-continuation') {
+						return Promise.resolve({ success: true, content: wizardContinuationContent });
+					}
+					return Promise.resolve({ success: false, error: `Unknown prompt: ${id}` });
+				}),
+			},
+		};
+		await loadWizardPrompts(true);
+	});
+
 	describe('Constants', () => {
 		describe('READY_CONFIDENCE_THRESHOLD', () => {
 			it('should be 80', () => {
@@ -45,7 +100,11 @@ describe('wizardPrompts', () => {
 				expect(STRUCTURED_OUTPUT_SCHEMA.properties.message.type).toBe('string');
 			});
 
-			it('should require all three fields', () => {
+			it('should define projectName as an optional string', () => {
+				expect(STRUCTURED_OUTPUT_SCHEMA.properties.projectName.type).toBe('string');
+			});
+
+			it('should require confidence, ready, and message (projectName is optional)', () => {
 				expect(STRUCTURED_OUTPUT_SCHEMA.required).toEqual(['confidence', 'ready', 'message']);
 			});
 		});
@@ -56,6 +115,7 @@ describe('wizardPrompts', () => {
 				expect(STRUCTURED_OUTPUT_SUFFIX).toContain('confidence');
 				expect(STRUCTURED_OUTPUT_SUFFIX).toContain('ready');
 				expect(STRUCTURED_OUTPUT_SUFFIX).toContain('message');
+				expect(STRUCTURED_OUTPUT_SUFFIX).toContain('projectName');
 			});
 		});
 	});
@@ -107,6 +167,32 @@ describe('wizardPrompts', () => {
 				expect(result.parseSuccess).toBe(true);
 				// Confidence should be rounded
 				expect(result.structured?.confidence).toBe(76);
+			});
+
+			it('should extract optional projectName when present', () => {
+				const input =
+					'{"confidence": 90, "ready": true, "message": "Ready!", "projectName": "Dark Mode Toggle"}';
+				const result = parseStructuredOutput(input);
+
+				expect(result.parseSuccess).toBe(true);
+				expect(result.structured?.projectName).toBe('Dark Mode Toggle');
+			});
+
+			it('should leave projectName undefined when omitted', () => {
+				const input = '{"confidence": 60, "ready": false, "message": "More info please"}';
+				const result = parseStructuredOutput(input);
+
+				expect(result.parseSuccess).toBe(true);
+				expect(result.structured?.projectName).toBeUndefined();
+			});
+
+			it('should treat whitespace-only projectName as missing', () => {
+				const input =
+					'{"confidence": 90, "ready": true, "message": "Ready!", "projectName": "   "}';
+				const result = parseStructuredOutput(input);
+
+				expect(result.parseSuccess).toBe(true);
+				expect(result.structured?.projectName).toBeUndefined();
 			});
 		});
 
@@ -542,10 +628,10 @@ describe('wizardPrompts', () => {
 			};
 			const prompt = generateSystemPrompt(config);
 
-			// Check for the new file access restriction format
-			expect(prompt).toContain('WRITE ACCESS (Limited)');
-			expect(prompt).toContain('READ ACCESS (Unrestricted)');
-			expect(prompt).toContain('ONLY create or modify files in the Auto Run folder');
+			// Inline summary names the wizard write boundary; the full rules live in
+			// _file-access-wizard.md and are referenced by absolute path (REF directive).
+			expect(prompt).toContain('writes are limited to the Auto Run folder');
+			expect(prompt).toContain('_file-access-wizard.md');
 			expect(prompt).toContain('/specific/path');
 		});
 
@@ -556,8 +642,8 @@ describe('wizardPrompts', () => {
 			};
 			const prompt = generateSystemPrompt(config);
 
-			// Should contain default Auto Run folder path: agentPath/Auto Run Docs
-			expect(prompt).toContain('/Users/test/project/Auto Run Docs');
+			// Should contain default Auto Run folder path: agentPath/.maestro/playbooks
+			expect(prompt).toContain('/Users/test/project/.maestro/playbooks');
 		});
 
 		it('should use custom Auto Run folder path when provided', () => {

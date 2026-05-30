@@ -217,7 +217,8 @@ describe('Git Preload API', () => {
 				'/home/user/project',
 				'/home/user/worktree',
 				'feature-branch',
-				'remote-1'
+				'remote-1',
+				undefined // baseBranch defaults when not specified
 			);
 			expect(result.success).toBe(true);
 			expect(result.created).toBe(true);
@@ -320,6 +321,38 @@ describe('Git Preload API', () => {
 			const data = {
 				sessionId: 'session-123',
 				worktree: { path: '/home/user/worktree', name: 'feature', branch: 'feature-branch' },
+			};
+			registeredHandler!({}, data);
+
+			expect(callback).toHaveBeenCalledWith(data);
+		});
+	});
+
+	describe('onWorktreeRemoved', () => {
+		it('should register event listener and return cleanup function', () => {
+			const callback = vi.fn();
+
+			const cleanup = api.onWorktreeRemoved(callback);
+
+			expect(mockOn).toHaveBeenCalledWith('worktree:removed', expect.any(Function));
+			expect(typeof cleanup).toBe('function');
+		});
+
+		it('should call callback with removal data', () => {
+			const callback = vi.fn();
+			let registeredHandler: (event: unknown, data: unknown) => void;
+
+			mockOn.mockImplementation((channel: string, handler: typeof registeredHandler) => {
+				if (channel === 'worktree:removed') {
+					registeredHandler = handler;
+				}
+			});
+
+			api.onWorktreeRemoved(callback);
+
+			const data = {
+				sessionId: 'session-123',
+				worktreePath: '/home/user/worktrees/feature',
 			};
 			registeredHandler!({}, data);
 

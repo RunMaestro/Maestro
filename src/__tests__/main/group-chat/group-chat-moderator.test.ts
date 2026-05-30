@@ -42,6 +42,18 @@ vi.mock('electron-store', () => {
 	};
 });
 
+vi.mock('../../../main/prompt-manager', () => ({
+	getPrompt: vi.fn((id: string) => {
+		const prompts: Record<string, string> = {
+			'group-chat-moderator-system':
+				'You are a Group Chat Moderator.\n\n{{CONDUCTOR_PROFILE}}\n\nCoordinate multiple AI agents using @mentions.',
+			'group-chat-moderator-synthesis':
+				'Review the agents responses and synthesize a coherent answer.',
+		};
+		return prompts[id] ?? `mock prompt for ${id}`;
+	}),
+}));
+
 import {
 	spawnModerator,
 	sendToModerator,

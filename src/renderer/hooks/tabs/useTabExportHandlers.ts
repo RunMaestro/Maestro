@@ -12,8 +12,11 @@
 import { useCallback } from 'react';
 import type { Session, Theme, AITab } from '../../types';
 import { useTabStore } from '../../stores/tabStore';
-import { formatLogsForClipboard } from '../../utils/contextExtractor';
+import { formatLogsForClipboard, hasThinkingEntries } from '../../utils/contextExtractor';
 import { notifyToast } from '../../stores/notificationStore';
+import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
+import { logger } from '../../utils/logger';
+import { getModalActions } from '../../stores/modalStore';
 
 // ============================================================================
 // Dependencies interface
@@ -34,13 +37,27 @@ export interface UseTabExportHandlersDeps {
 // Return type
 // ============================================================================
 
+export interface CopyContextOptions {
+	/** Include reasoning/thinking blocks in the copied text. Defaults to false. */
+	includeThinking?: boolean;
+}
+
 export interface UseTabExportHandlersReturn {
-	/** Copy tab conversation to clipboard */
-	handleCopyContext: (tabId: string) => void;
+	/**
+	 * Copy tab conversation to clipboard.
+	 * Pass `{ includeThinking: true }` to include reasoning/thinking blocks.
+	 */
+	handleCopyContext: (tabId: string, options?: CopyContextOptions) => void;
 	/** Export tab as HTML file download */
 	handleExportHtml: (tabId: string) => Promise<void>;
 	/** Open Gist publish modal with tab content */
 	handlePublishTabGist: (tabId: string) => void;
+	/** Copy arbitrary text (e.g. a terminal buffer) to the clipboard with a toast. */
+	handleCopyText: (text: string, subject?: string) => void;
+	/** Queue arbitrary text for the Gist publish modal and open it. */
+	handlePublishTextAsGist: (text: string, filenameStem: string) => void;
+	/** Queue arbitrary text for transfer via the Send to Agent modal. */
+	handleSendTextToAgent: (text: string, sourceName: string) => void;
 }
 
 // ============================================================================
@@ -62,11 +79,16 @@ export function useTabExportHandlers(deps: UseTabExportHandlersDeps): UseTabExpo
 		return { session: currentSession, tab };
 	};
 
-	const handleCopyContext = useCallback((tabId: string) => {
+	const handleCopyContext = useCallback((tabId: string, options?: CopyContextOptions) => {
 		const resolved = resolveSessionAndTab(tabId);
 		if (!resolved) return;
 
-		const text = formatLogsForClipboard(resolved.tab.logs);
+		const includeThinking = options?.includeThinking ?? false;
+		// Only claim "with reasoning" when the tab actually has reasoning entries —
+		// the flag alone isn't enough, since a caller could opt in to thinking on
+		// a tab whose reasoning blocks have all been cleared.
+		const hadThinking = includeThinking && hasThinkingEntries(resolved.tab.logs);
+		const text = formatLogsForClipboard(resolved.tab.logs, { includeThinking });
 		if (!text.trim()) {
 			notifyToast({
 				type: 'warning',
@@ -79,14 +101,13 @@ export function useTabExportHandlers(deps: UseTabExportHandlersDeps): UseTabExpo
 		navigator.clipboard
 			.writeText(text)
 			.then(() => {
-				notifyToast({
-					type: 'success',
-					title: 'Context Copied',
-					message: 'Conversation copied to clipboard.',
-				});
+				flashCopiedToClipboard(
+					undefined,
+					hadThinking ? 'Conversation Copied (with reasoning)' : 'Conversation Copied'
+				);
 			})
 			.catch((err) => {
-				console.error('Failed to copy context:', err);
+				logger.error('Failed to copy context:', undefined, err);
 				notifyToast({
 					type: 'error',
 					title: 'Copy Failed',
@@ -118,7 +139,7 @@ export function useTabExportHandlers(deps: UseTabExportHandlersDeps): UseTabExpo
 				message: 'Conversation exported as HTML.',
 			});
 		} catch (err) {
-			console.error('Failed to export tab:', err);
+			logger.error('Failed to export tab:', undefined, err);
 			notifyToast({
 				type: 'error',
 				title: 'Export Failed',
@@ -147,14 +168,70 @@ export function useTabExportHandlers(deps: UseTabExportHandlersDeps): UseTabExpo
 			resolved.tab.name || (resolved.tab.agentSessionId?.slice(0, 8) ?? 'conversation');
 		const filename = `${tabName.replace(/[^a-zA-Z0-9-_]/g, '_')}_context.md`;
 
-		// Set content and open the modal
-		useTabStore.getState().setTabGistContent({ filename, content });
+		// Set content (with raw logs so the modal can re-format on toggle) and open the modal
+		useTabStore.getState().setTabGistContent({ filename, content, sourceLogs: resolved.tab.logs });
 		setGistPublishModalOpen(true);
+	}, []);
+
+	const handleCopyText = useCallback((text: string, subject = 'Buffer') => {
+		if (!text.trim()) {
+			notifyToast({
+				type: 'warning',
+				title: 'Nothing to Copy',
+				message: `${subject} is empty.`,
+			});
+			return;
+		}
+
+		navigator.clipboard
+			.writeText(text)
+			.then(() => {
+				flashCopiedToClipboard(undefined, `${subject} Copied`);
+			})
+			.catch((err) => {
+				console.error('Failed to copy text:', err);
+				notifyToast({
+					type: 'error',
+					title: 'Copy Failed',
+					message: `Failed to copy ${subject.toLowerCase()} to clipboard.`,
+				});
+			});
+	}, []);
+
+	const handlePublishTextAsGist = useCallback((text: string, filenameStem: string) => {
+		if (!text.trim()) {
+			notifyToast({
+				type: 'warning',
+				title: 'Nothing to Publish',
+				message: 'Buffer is empty.',
+			});
+			return;
+		}
+		const safeStem = filenameStem.replace(/[^a-zA-Z0-9-_]/g, '_') || 'terminal';
+		const filename = `${safeStem}_buffer.txt`;
+		useTabStore.getState().setTabGistContent({ filename, content: text });
+		setGistPublishModalOpen(true);
+	}, []);
+
+	const handleSendTextToAgent = useCallback((text: string, sourceName: string) => {
+		if (!text.trim()) {
+			notifyToast({
+				type: 'warning',
+				title: 'Nothing to Send',
+				message: 'Buffer is empty.',
+			});
+			return;
+		}
+		useTabStore.getState().setPendingTerminalBufferSend({ content: text, sourceName });
+		getModalActions().setSendToAgentModalOpen(true);
 	}, []);
 
 	return {
 		handleCopyContext,
 		handleExportHtml,
 		handlePublishTabGist,
+		handleCopyText,
+		handlePublishTextAsGist,
+		handleSendTextToAgent,
 	};
 }

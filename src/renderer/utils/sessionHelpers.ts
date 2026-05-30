@@ -10,6 +10,8 @@
 
 import type { Session, ToolType, ProcessConfig } from '../types';
 import { createMergedSession } from './tabHelpers';
+import { getStdinFlags, prepareMaestroSystemPrompt } from './spawnHelpers';
+import { logger } from './logger';
 
 /**
  * Options for creating a session for a specific agent type.
@@ -70,6 +72,8 @@ export interface BuildSpawnConfigOptions {
 	sessionCustomEnvVars?: Record<string, string>;
 	/** Per-session custom model override */
 	sessionCustomModel?: string;
+	/** Per-session custom effort/reasoning level */
+	sessionCustomEffort?: string;
 	/** Per-session custom context window */
 	sessionCustomContextWindow?: number;
 	/** Per-session SSH remote config (takes precedence over agent-level SSH config) */
@@ -78,6 +82,10 @@ export interface BuildSpawnConfigOptions {
 		remoteId: string | null;
 		workingDirOverride?: string;
 	};
+	/** Whether the prompt includes images (default: false) */
+	hasImages?: boolean;
+	/** Maestro system prompt to append (injected via --append-system-prompt) */
+	appendSystemPrompt?: string;
 }
 
 /**
@@ -117,25 +125,40 @@ export async function buildSpawnConfigForAgent(
 		sessionCustomArgs,
 		sessionCustomEnvVars,
 		sessionCustomModel,
+		sessionCustomEffort,
 		sessionCustomContextWindow,
 		sessionSshRemoteConfig,
+		hasImages = false,
+		appendSystemPrompt,
 	} = options;
 
 	// Fetch the agent configuration from main process
 	const agentConfig = await window.maestro.agents.get(toolType);
 
 	if (!agentConfig) {
-		console.error(`[sessionHelpers] Agent not found: ${toolType}`);
+		logger.error(`[sessionHelpers] Agent not found: ${toolType}`);
 		return null;
 	}
 
 	if (!agentConfig.available) {
-		console.error(`[sessionHelpers] Agent not available: ${toolType}`);
+		logger.error(`[sessionHelpers] Agent not available: ${toolType}`);
 		return null;
 	}
 
 	// Use the agent's path (resolved location) or command
 	const command = agentConfig.path || agentConfig.command;
+	if (!command) {
+		throw new Error(`${toolType} agent has no command configured`);
+	}
+
+	// Determine whether to send the prompt via stdin on Windows to avoid
+	// exceeding the command line length limit (~8KB cmd.exe).
+	const isSshSession = Boolean(sessionSshRemoteConfig?.enabled);
+	const { sendPromptViaStdin, sendPromptViaStdinRaw } = getStdinFlags({
+		isSshSession,
+		supportsStreamJsonInput: agentConfig.capabilities?.supportsStreamJsonInput ?? false,
+		hasImages,
+	});
 
 	// Build the spawn config
 	// The main process will use the agent's argument builders (resumeArgs, readOnlyArgs, etc.)
@@ -147,6 +170,7 @@ export async function buildSpawnConfigForAgent(
 		command,
 		args: agentConfig.args || [],
 		prompt,
+		appendSystemPrompt,
 		// Generic spawn options - main process builds agent-specific args
 		agentSessionId,
 		readOnlyMode,
@@ -157,9 +181,13 @@ export async function buildSpawnConfigForAgent(
 		sessionCustomArgs,
 		sessionCustomEnvVars,
 		sessionCustomModel,
+		sessionCustomEffort,
 		sessionCustomContextWindow,
 		// Per-session SSH remote config (takes precedence over agent-level SSH config)
 		sessionSshRemoteConfig,
+		// Windows stdin handling - send prompt via stdin to avoid command line length limits
+		sendPromptViaStdin,
+		sendPromptViaStdinRaw,
 	};
 
 	return spawnConfig;
@@ -208,12 +236,12 @@ export async function createSessionForAgent(
 	const agentConfig = await window.maestro.agents.get(agentType);
 
 	if (!agentConfig) {
-		console.error(`[sessionHelpers] Agent not found: ${agentType}`);
+		logger.error(`[sessionHelpers] Agent not found: ${agentType}`);
 		return null;
 	}
 
 	if (!agentConfig.available) {
-		console.error(`[sessionHelpers] Agent not available: ${agentType}`);
+		logger.error(`[sessionHelpers] Agent not available: ${agentType}`);
 		return null;
 	}
 
@@ -228,12 +256,16 @@ export async function createSessionForAgent(
 		saveToHistory,
 	});
 
+	// Prepare Maestro system prompt for new sessions
+	const appendSystemPrompt = await prepareMaestroSystemPrompt({ session });
+
 	// Build the spawn configuration
 	const spawnConfig = await buildSpawnConfigForAgent({
 		sessionId: session.id,
 		toolType: agentType,
 		cwd: projectRoot,
 		prompt: initialContext,
+		appendSystemPrompt,
 		// New session - no resume, no read-only mode by default
 		readOnlyMode: false,
 	});
@@ -296,6 +328,7 @@ export interface SessionSshInfo {
 		enabled: boolean;
 		remoteId: string | null;
 		workingDirOverride?: string;
+		syncHistory?: boolean;
 	};
 }
 
@@ -349,4 +382,34 @@ export function getSessionSshRemoteId(
 export function isSessionRemote(session: SessionSshInfo | null | undefined): boolean {
 	if (!session) return false;
 	return !!session.sshRemoteId || !!session.sessionSshRemoteConfig?.enabled;
+}
+
+/**
+ * Build shared history context for a session, if applicable.
+ *
+ * Returns the context needed for cross-host history sync when:
+ * - The session uses an SSH remote
+ * - The syncHistory setting is explicitly enabled
+ *
+ * @param session - Session with SSH remote fields and cwd
+ * @returns Shared context object, or undefined if not applicable
+ */
+export function buildSharedHistoryContext(
+	session: (SessionSshInfo & { cwd?: string }) | null | undefined
+): { sshRemoteId: string; remoteCwd: string } | undefined {
+	if (!session) return undefined;
+
+	const config = session.sessionSshRemoteConfig;
+	if (!config?.enabled || !config.remoteId) return undefined;
+
+	// Respect the syncHistory toggle (opt-in, defaults to false)
+	if (!config.syncHistory) return undefined;
+
+	const remoteCwd = session.cwd;
+	if (!remoteCwd) return undefined;
+
+	return {
+		sshRemoteId: config.remoteId,
+		remoteCwd,
+	};
 }

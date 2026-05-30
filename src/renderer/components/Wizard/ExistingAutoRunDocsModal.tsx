@@ -2,7 +2,7 @@
  * ExistingAutoRunDocsModal.tsx
  *
  * Dialog that appears when the user selects a directory that already contains
- * an "Auto Run Docs" folder. Gives users the option to:
+ * a playbooks folder (.maestro/playbooks). Gives users the option to:
  * 1. Start fresh - delete existing docs and begin new planning
  * 2. Continue planning - have the agent read existing docs and continue from there
  */
@@ -10,7 +10,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Trash2, BookOpen, FolderOpen, AlertTriangle, FileText } from 'lucide-react';
 import type { Theme } from '../../types';
-import { useLayerStack } from '../../contexts/LayerStackContext';
+import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 
 interface ExistingAutoRunDocsModalProps {
@@ -30,8 +30,6 @@ export function ExistingAutoRunDocsModal({
 	onContinuePlanning,
 	onCancel,
 }: ExistingAutoRunDocsModalProps) {
-	const { registerLayer, unregisterLayer, updateLayerHandler } = useLayerStack();
-	const layerIdRef = useRef<string>();
 	const continueButtonRef = useRef<HTMLButtonElement>(null);
 	const [focusedButton, setFocusedButton] = useState<'continue' | 'fresh'>('continue');
 	const [isDeleting, setIsDeleting] = useState(false);
@@ -41,31 +39,11 @@ export function ExistingAutoRunDocsModal({
 		continueButtonRef.current?.focus();
 	}, []);
 
-	// Register layer on mount
-	useEffect(() => {
-		const id = registerLayer({
-			type: 'modal',
-			priority: MODAL_PRIORITIES.EXISTING_AUTORUN_DOCS,
-			blocksLowerLayers: true,
-			capturesFocus: true,
-			focusTrap: 'strict',
-			ariaLabel: 'Existing Auto Run Documents Detected',
-			onEscape: onCancel,
-		});
-		layerIdRef.current = id;
-		return () => {
-			if (layerIdRef.current) {
-				unregisterLayer(layerIdRef.current);
-			}
-		};
-	}, [registerLayer, unregisterLayer]);
-
-	// Update handler when dependencies change
-	useEffect(() => {
-		if (layerIdRef.current) {
-			updateLayerHandler(layerIdRef.current, onCancel);
-		}
-	}, [onCancel, updateLayerHandler]);
+	useModalLayer(
+		MODAL_PRIORITIES.EXISTING_AUTORUN_DOCS,
+		'Existing Playbook Documents Detected',
+		onCancel
+	);
 
 	// Handle keyboard navigation between buttons
 	const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -107,12 +85,12 @@ export function ExistingAutoRunDocsModal({
 			className="fixed inset-0 modal-overlay flex items-center justify-center z-[10000] animate-in fade-in duration-200"
 			role="dialog"
 			aria-modal="true"
-			aria-label="Existing Auto Run Documents Detected"
+			aria-label="Existing Playbook Documents Detected"
 			tabIndex={-1}
 			onKeyDown={handleKeyDown}
 		>
 			<div
-				className="w-[520px] border rounded-xl shadow-2xl overflow-hidden"
+				className="modal-w-sm border rounded-xl shadow-2xl overflow-hidden"
 				style={{ backgroundColor: theme.colors.bgSidebar, borderColor: theme.colors.border }}
 			>
 				{/* Header */}
@@ -129,7 +107,7 @@ export function ExistingAutoRunDocsModal({
 								Existing Planning Documents Found
 							</h2>
 							<p className="text-sm mt-0.5" style={{ color: theme.colors.textDim }}>
-								This project already has Auto Run documents
+								This project already has playbook documents
 							</p>
 						</div>
 					</div>
@@ -173,7 +151,7 @@ export function ExistingAutoRunDocsModal({
 										className="px-1.5 py-0.5 rounded text-xs font-mono"
 										style={{ backgroundColor: theme.colors.bgMain }}
 									>
-										Auto Run Docs/
+										.maestro/playbooks/
 									</code>
 								</p>
 							</div>

@@ -5,9 +5,11 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { logger } from '../../../renderer/utils/logger';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { NewInstanceModal } from '../../../renderer/components/NewInstanceModal';
 import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import type { Theme, Session } from '../../../renderer/types';
 import type { AgentConfig } from '../../../renderer/types';
 
@@ -96,6 +98,8 @@ describe('NewInstanceModal', () => {
 
 	afterEach(() => {
 		vi.clearAllMocks();
+		// Reset groups so tests don't leak group state between cases
+		useSessionStore.setState({ groups: [] });
 	});
 
 	describe('Initial render and visibility', () => {
@@ -728,7 +732,11 @@ describe('NewInstanceModal', () => {
 				undefined,
 				undefined,
 				undefined,
-				{ enabled: false, remoteId: null },
+				undefined,
+				expect.objectContaining({ enabled: false, remoteId: null }),
+				undefined,
+				undefined,
+				true, // enableMaestroP defaults on for Claude Code (Adaptive Mode)
 				undefined
 			);
 		});
@@ -775,7 +783,11 @@ describe('NewInstanceModal', () => {
 				undefined,
 				undefined,
 				undefined,
-				{ enabled: false, remoteId: null },
+				undefined,
+				expect.objectContaining({ enabled: false, remoteId: null }),
+				undefined,
+				undefined,
+				true, // enableMaestroP defaults on for Claude Code (Adaptive Mode)
 				undefined
 			);
 		});
@@ -822,7 +834,11 @@ describe('NewInstanceModal', () => {
 				undefined,
 				undefined,
 				undefined,
-				{ enabled: false, remoteId: null },
+				undefined,
+				expect.objectContaining({ enabled: false, remoteId: null }),
+				undefined,
+				undefined,
+				true, // enableMaestroP defaults on for Claude Code (Adaptive Mode)
 				undefined
 			);
 		});
@@ -870,7 +886,11 @@ describe('NewInstanceModal', () => {
 				undefined,
 				undefined,
 				undefined,
-				{ enabled: false, remoteId: null },
+				undefined,
+				expect.objectContaining({ enabled: false, remoteId: null }),
+				undefined,
+				undefined,
+				true, // enableMaestroP defaults on for Claude Code (Adaptive Mode)
 				undefined
 			);
 			expect(onClose).toHaveBeenCalled();
@@ -1283,7 +1303,18 @@ describe('NewInstanceModal', () => {
 				/>
 			);
 
-			expect(mockUpdateLayerHandler).toHaveBeenCalledWith('layer-new-instance-123', newOnClose);
+			// useModalLayer wraps onEscape in a stable closure (`() => onEscapeRef.current()`)
+			// to avoid re-registering the layer on every render. The handler still routes to
+			// the latest onClose via ref - we just verify update was called with our layer id.
+			expect(mockUpdateLayerHandler).toHaveBeenCalledWith(
+				'layer-new-instance-123',
+				expect.any(Function)
+			);
+			// Trigger the latest registered escape handler and verify it calls the new onClose
+			const lastCall =
+				mockUpdateLayerHandler.mock.calls[mockUpdateLayerHandler.mock.calls.length - 1];
+			(lastCall[1] as () => void)();
+			expect(newOnClose).toHaveBeenCalledTimes(1);
 		});
 	});
 
@@ -1364,13 +1395,17 @@ describe('NewInstanceModal', () => {
 				'/my/project',
 				'My Session',
 				undefined,
+				undefined,
 				'/custom/path/to/claude',
 				undefined,
 				undefined,
 				undefined,
 				undefined,
 				undefined,
-				{ enabled: false, remoteId: null },
+				expect.objectContaining({ enabled: false, remoteId: null }),
+				undefined,
+				undefined,
+				true, // enableMaestroP defaults on for Claude Code (Adaptive Mode)
 				undefined
 			);
 		});
@@ -1511,74 +1546,26 @@ describe('NewInstanceModal', () => {
 				'/my/project',
 				'Custom Path Agent',
 				undefined,
+				undefined,
 				'/custom/bin/claude',
 				undefined,
 				undefined,
 				undefined,
 				undefined,
 				undefined,
-				{ enabled: false, remoteId: null },
+				expect.objectContaining({ enabled: false, remoteId: null }),
+				undefined,
+				undefined,
+				true, // enableMaestroP defaults on for Claude Code (Adaptive Mode)
 				undefined
 			);
-		});
-
-		it('should reset custom path to detected path when Reset button is clicked', async () => {
-			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
-				createAgentConfig({
-					id: 'claude-code',
-					name: 'Claude Code',
-					available: true,
-					path: '/detected/bin/claude',
-				}),
-			]);
-
-			render(
-				<NewInstanceModal
-					isOpen={true}
-					onClose={onClose}
-					onCreate={onCreate}
-					theme={theme}
-					existingSessions={[]}
-				/>
-			);
-
-			// Wait for agents to load, then click to expand
-			await waitFor(() => {
-				expect(screen.getByText('Claude Code')).toBeInTheDocument();
-			});
-			fireEvent.click(screen.getByText('Claude Code'));
-
-			// Path input should be pre-filled with detected path
-			await waitFor(() => {
-				expect(screen.getByDisplayValue('/detected/bin/claude')).toBeInTheDocument();
-			});
-
-			// Set a different custom path
-			const customPathInput = screen.getByDisplayValue('/detected/bin/claude');
-			fireEvent.change(customPathInput, { target: { value: '/custom/path' } });
-
-			await waitFor(() => {
-				expect(customPathInput).toHaveValue('/custom/path');
-			});
-
-			// Reset button should appear when custom path differs from detected path
-			await waitFor(() => {
-				expect(screen.getByText('Reset')).toBeInTheDocument();
-			});
-
-			await act(async () => {
-				fireEvent.click(screen.getByText('Reset'));
-			});
-
-			// Path should be reset to detected path
-			expect(customPathInput).toHaveValue('/detected/bin/claude');
 		});
 	});
 
 	describe('Error handling', () => {
 		it('should handle agent detection failure gracefully', async () => {
 			vi.mocked(window.maestro.agents.detect).mockRejectedValue(new Error('Detection failed'));
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 
 			render(
 				<NewInstanceModal
@@ -1591,7 +1578,11 @@ describe('NewInstanceModal', () => {
 			);
 
 			await waitFor(() => {
-				expect(consoleSpy).toHaveBeenCalledWith('Failed to load agents:', expect.any(Error));
+				expect(consoleSpy).toHaveBeenCalledWith(
+					'Failed to load agents:',
+					undefined,
+					expect.any(Error)
+				);
 			});
 
 			consoleSpy.mockRestore();
@@ -1602,7 +1593,7 @@ describe('NewInstanceModal', () => {
 				createAgentConfig({ id: 'claude-code', name: 'Claude Code', available: true }),
 			]);
 			vi.mocked(window.maestro.agents.refresh).mockRejectedValue(new Error('Refresh failed'));
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 
 			render(
 				<NewInstanceModal
@@ -1624,7 +1615,11 @@ describe('NewInstanceModal', () => {
 			});
 
 			await waitFor(() => {
-				expect(consoleSpy).toHaveBeenCalledWith('Failed to refresh agent:', expect.any(Error));
+				expect(consoleSpy).toHaveBeenCalledWith(
+					'Failed to refresh agent:',
+					undefined,
+					expect.any(Error)
+				);
 			});
 
 			consoleSpy.mockRestore();
@@ -2340,6 +2335,220 @@ describe('NewInstanceModal', () => {
 			expect(sourceSession.customArgs).toBe('--model=opus --verbose');
 		});
 
+		it('forwards source.customEffort through to onCreate when duplicating a Codex agent', async () => {
+			// Positive coverage for the customEffort plumbing (#755) and the
+			// duplicate-flow merge fix (CodeRabbit review): the picked effort must
+			// flow through as the trailing customEffort arg, not just `undefined`.
+			const sourceSession: Session = {
+				id: 'session-codex',
+				name: 'Codex Agent',
+				toolType: 'codex',
+				cwd: '/home/testuser/proj',
+				projectRoot: '/home/testuser/proj',
+				fullPath: '/home/testuser/proj',
+				state: 'idle',
+				inputMode: 'ai',
+				aiPid: 0,
+				terminalPid: 0,
+				port: 3000,
+				aiTabs: [],
+				activeTabId: 'tab-1',
+				closedTabHistory: [],
+				shellLogs: [],
+				executionQueue: [],
+				contextUsage: 0,
+				workLog: [],
+				isGitRepo: false,
+				changedFiles: [],
+				fileTree: [],
+				fileExplorerExpanded: [],
+				fileExplorerScrollPos: 0,
+				isLive: false,
+				customEffort: 'xhigh',
+			} as Session;
+
+			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+				createAgentConfig({
+					id: 'codex',
+					name: 'OpenAI Codex',
+					available: true,
+					configOptions: [
+						{
+							key: 'reasoningEffort',
+							type: 'select',
+							label: 'Reasoning Effort',
+							default: '',
+							options: ['', 'minimal', 'low', 'medium', 'high', 'xhigh'],
+						},
+					],
+				}),
+			]);
+
+			render(
+				<NewInstanceModal
+					isOpen={true}
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[]}
+					sourceSession={sourceSession}
+				/>
+			);
+
+			await waitFor(() => {
+				const nameInput = screen.getByLabelText('Agent Name') as HTMLInputElement;
+				expect(nameInput.value).toBe('Codex Agent (Copy)');
+			});
+
+			await act(async () => {
+				fireEvent.click(screen.getByText('Create Agent'));
+			});
+
+			// 13th positional arg is customEffort. assert it's 'xhigh', not undefined.
+			expect(onCreate).toHaveBeenCalled();
+			const args = onCreate.mock.calls[0];
+			expect(args[12]).toBe('xhigh');
+		});
+
+		it('forwards source.groupId through to onCreate so duplicates inherit the group (issue #827)', async () => {
+			const sourceSession: Session = {
+				id: 'session-grouped',
+				name: 'Grouped Agent',
+				toolType: 'claude-code',
+				cwd: '/test/project',
+				projectRoot: '/test/project',
+				fullPath: '/test/project',
+				state: 'idle',
+				inputMode: 'ai',
+				aiPid: 0,
+				terminalPid: 0,
+				port: 3000,
+				aiTabs: [],
+				activeTabId: 'tab-1',
+				closedTabHistory: [],
+				shellLogs: [],
+				executionQueue: [],
+				contextUsage: 0,
+				workLog: [],
+				isGitRepo: false,
+				changedFiles: [],
+				fileTree: [],
+				fileExplorerExpanded: [],
+				fileExplorerScrollPos: 0,
+				isLive: false,
+				groupId: 'group-abc',
+			} as Session;
+
+			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+				createAgentConfig({ id: 'claude-code', name: 'Claude Code', available: true }),
+			]);
+
+			render(
+				<NewInstanceModal
+					isOpen={true}
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[]}
+					sourceSession={sourceSession}
+				/>
+			);
+
+			await waitFor(() => {
+				const nameInput = screen.getByLabelText('Agent Name') as HTMLInputElement;
+				expect(nameInput.value).toBe('Grouped Agent (Copy)');
+			});
+
+			await act(async () => {
+				fireEvent.click(screen.getByText('Create Agent'));
+			});
+
+			// 14th positional arg (index 13) is groupId; must equal source.groupId so
+			// the duplicate lands in the same group as the original.
+			expect(onCreate).toHaveBeenCalled();
+			const args = onCreate.mock.calls[0];
+			expect(args[13]).toBe('group-abc');
+		});
+
+		it('does not clobber the user-typed name when sourceSession reference changes (issue #827)', async () => {
+			// Regression: AppModals derives sourceSession from a useMemo over the
+			// sessions array. Any unrelated sessions update produces a new object
+			// reference. The pre-fill effect must depend on sourceSession?.id, not
+			// the full object, otherwise it re-runs and overwrites whatever the
+			// user has typed in the name field.
+			const baseSession: Session = {
+				id: 'session-1',
+				name: 'Original Agent',
+				toolType: 'claude-code',
+				cwd: '/test/project',
+				projectRoot: '/test/project',
+				fullPath: '/test/project',
+				state: 'idle',
+				inputMode: 'ai',
+				aiPid: 0,
+				terminalPid: 0,
+				port: 3000,
+				aiTabs: [],
+				activeTabId: 'tab-1',
+				closedTabHistory: [],
+				shellLogs: [],
+				executionQueue: [],
+				contextUsage: 0,
+				workLog: [],
+				isGitRepo: false,
+				changedFiles: [],
+				fileTree: [],
+				fileExplorerExpanded: [],
+				fileExplorerScrollPos: 0,
+				isLive: false,
+			} as Session;
+
+			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+				createAgentConfig({ id: 'claude-code', name: 'Claude Code', available: true }),
+			]);
+
+			const { rerender } = render(
+				<NewInstanceModal
+					isOpen={true}
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[]}
+					sourceSession={baseSession}
+				/>
+			);
+
+			await waitFor(() => {
+				const nameInput = screen.getByLabelText('Agent Name') as HTMLInputElement;
+				expect(nameInput.value).toBe('Original Agent (Copy)');
+			});
+
+			// User edits the pre-filled name.
+			const nameInput = screen.getByLabelText('Agent Name') as HTMLInputElement;
+			await act(async () => {
+				fireEvent.change(nameInput, { target: { value: 'My New Agent' } });
+			});
+			expect(nameInput.value).toBe('My New Agent');
+
+			// Parent re-renders with a NEW object reference for the same source
+			// session (simulating the upstream useMemo recomputing when the
+			// sessions array updates). The user-typed value must be preserved.
+			await act(async () => {
+				rerender(
+					<NewInstanceModal
+						isOpen={true}
+						onClose={onClose}
+						onCreate={onCreate}
+						theme={theme}
+						existingSessions={[]}
+						sourceSession={{ ...baseSession }}
+					/>
+				);
+			});
+
+			expect((screen.getByLabelText('Agent Name') as HTMLInputElement).value).toBe('My New Agent');
+		});
+
 		it('should display SSH selector even when no agent is selected', async () => {
 			// This tests the bug where SSH section was hidden when no agents were available
 			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
@@ -2470,7 +2679,7 @@ describe('NewInstanceModal', () => {
 			// This validates the path exists on the remote and enables the Create button
 			await waitFor(
 				() => {
-					expect(screen.getByText('Remote directory found')).toBeInTheDocument();
+					expect(screen.getByText('Directory found on test.example.com')).toBeInTheDocument();
 				},
 				{ timeout: 3000 }
 			);
@@ -2482,7 +2691,9 @@ describe('NewInstanceModal', () => {
 			});
 
 			// Should have passed the SSH config that was selected while agent was not yet selected
-			// This proves the _pending_ config was transferred to the agent on selection
+			// This proves the _pending_ config was transferred to the agent on selection.
+			// workingDirOverride should be the working directory path since SSH is enabled
+			// (the Working Directory field contains a remote path when SSH is on).
 			expect(onCreate).toHaveBeenCalledWith(
 				'opencode',
 				'/test/path',
@@ -2494,7 +2705,16 @@ describe('NewInstanceModal', () => {
 				undefined,
 				undefined,
 				undefined,
-				{ enabled: true, remoteId: 'remote-1' },
+				undefined,
+				expect.objectContaining({
+					enabled: true,
+					remoteId: 'remote-1',
+					syncHistory: false,
+					workingDirOverride: '/test/path',
+				}),
+				undefined,
+				undefined,
+				undefined,
 				undefined
 			);
 		});
@@ -2623,6 +2843,224 @@ describe('NewInstanceModal', () => {
 			});
 		});
 
+		it('should set workingDirOverride to the remote path when creating SSH agent (regression: SSH terminal cwd)', async () => {
+			// Regression test: when SSH is enabled the "Working Directory" field contains a remote
+			// path. This path MUST flow into sessionSshRemoteConfig.workingDirOverride so that
+			// SSH terminals `cd` to the correct directory on the remote host. Without this,
+			// terminals would drop into the remote home directory instead.
+			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+				createAgentConfig({ id: 'claude-code', name: 'Claude Code', available: true }),
+			]);
+			vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValue({
+				success: true,
+				configs: [
+					{
+						id: 'remote-1',
+						name: 'Dev Server',
+						host: 'dev.example.com',
+						port: 22,
+						username: 'devuser',
+						privateKeyPath: '/path/to/key',
+						enabled: true,
+					},
+				],
+			});
+			vi.mocked(window.maestro.fs.stat).mockResolvedValue({
+				size: 4096,
+				createdAt: '2024-01-01T00:00:00.000Z',
+				modifiedAt: '2024-01-15T12:30:00.000Z',
+				isDirectory: true,
+				isFile: false,
+			});
+
+			render(
+				<NewInstanceModal
+					isOpen={true}
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[]}
+				/>
+			);
+
+			// Wait for agents and SSH selector to load
+			await waitFor(() => {
+				expect(screen.getByText('SSH Remote Execution')).toBeInTheDocument();
+			});
+
+			// Select SSH remote
+			const dropdown = screen.getByRole('combobox');
+			fireEvent.change(dropdown, { target: { value: 'remote-1' } });
+
+			// Select agent
+			await waitFor(() => {
+				expect(screen.getByText('Claude Code')).toBeInTheDocument();
+			});
+			const agentOption = screen.getByRole('option', { name: /Claude Code/i });
+			await act(async () => {
+				fireEvent.click(agentOption);
+			});
+
+			// Fill in name and remote working directory
+			fireEvent.change(screen.getByLabelText('Agent Name'), {
+				target: { value: 'Remote Agent' },
+			});
+			fireEvent.change(screen.getByLabelText('Working Directory'), {
+				target: { value: '/home/devuser/my-project' },
+			});
+
+			// Wait for remote path validation
+			await waitFor(
+				() => {
+					expect(screen.getByText('Directory found on dev.example.com')).toBeInTheDocument();
+				},
+				{ timeout: 3000 }
+			);
+
+			// Create the agent
+			await act(async () => {
+				fireEvent.click(screen.getByText('Create Agent'));
+			});
+
+			// The critical assertion: workingDirOverride MUST match the remote path
+			expect(onCreate).toHaveBeenCalledWith(
+				'claude-code',
+				'/home/devuser/my-project',
+				'Remote Agent',
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				expect.objectContaining({
+					enabled: true,
+					remoteId: 'remote-1',
+					workingDirOverride: '/home/devuser/my-project',
+				}),
+				undefined,
+				undefined,
+				true, // enableMaestroP defaults on for Claude Code (Adaptive Mode)
+				undefined
+			);
+		});
+
+		it('should preserve explicit workingDirOverride over working directory when duplicating SSH agent', async () => {
+			// When duplicating a session that already has an explicit workingDirOverride,
+			// the explicit value should take precedence over the working directory field.
+			const sourceSession: Session = {
+				id: 'session-1',
+				name: 'SSH Agent',
+				toolType: 'claude-code',
+				cwd: '/home/devuser/project',
+				projectRoot: '/home/devuser/project',
+				fullPath: '/home/devuser/project',
+				state: 'idle',
+				inputMode: 'ai',
+				aiPid: 12345,
+				terminalPid: 12346,
+				port: 3000,
+				aiTabs: [],
+				activeTabId: 'tab-1',
+				closedTabHistory: [],
+				shellLogs: [],
+				executionQueue: [],
+				contextUsage: 0,
+				workLog: [],
+				isGitRepo: false,
+				changedFiles: [],
+				fileTree: [],
+				fileExplorerExpanded: [],
+				fileExplorerScrollPos: 0,
+				isLive: false,
+				sessionSshRemoteConfig: {
+					enabled: true,
+					remoteId: 'remote-1',
+					workingDirOverride: '/explicit/override/path',
+				},
+			} as Session;
+
+			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+				createAgentConfig({ id: 'claude-code', name: 'Claude Code', available: true }),
+			]);
+			vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValue({
+				success: true,
+				configs: [
+					{
+						id: 'remote-1',
+						name: 'Dev Server',
+						host: 'dev.example.com',
+						port: 22,
+						username: 'devuser',
+						privateKeyPath: '/path/to/key',
+						enabled: true,
+					},
+				],
+			});
+			vi.mocked(window.maestro.fs.stat).mockResolvedValue({
+				size: 4096,
+				createdAt: '2024-01-01T00:00:00.000Z',
+				modifiedAt: '2024-01-15T12:30:00.000Z',
+				isDirectory: true,
+				isFile: false,
+			});
+
+			render(
+				<NewInstanceModal
+					isOpen={true}
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[]}
+					sourceSession={sourceSession}
+				/>
+			);
+
+			await waitFor(() => {
+				const nameInput = screen.getByLabelText('Agent Name') as HTMLInputElement;
+				expect(nameInput.value).toBe('SSH Agent (Copy)');
+			});
+
+			// Wait for remote path validation
+			await waitFor(
+				() => {
+					expect(screen.getByText(/Directory found/)).toBeInTheDocument();
+				},
+				{ timeout: 3000 }
+			);
+
+			// Create the duplicate
+			await act(async () => {
+				fireEvent.click(screen.getByText('Create Agent'));
+			});
+
+			// The explicit workingDirOverride from the source session should be preserved
+			expect(onCreate).toHaveBeenCalledWith(
+				expect.any(String),
+				expect.any(String),
+				expect.any(String),
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				expect.objectContaining({
+					enabled: true,
+					remoteId: 'remote-1',
+					workingDirOverride: '/explicit/override/path',
+				}),
+				undefined,
+				undefined,
+				true, // enableMaestroP defaults on for Claude Code (Adaptive Mode)
+				undefined
+			);
+		});
+
 		it('should show connection error when SSH remote is unreachable', async () => {
 			// Mock detection to return agents with errors when SSH remote is used
 			vi.mocked(window.maestro.agents.detect).mockImplementation(async (sshRemoteId?: string) => {
@@ -2691,6 +3129,97 @@ describe('NewInstanceModal', () => {
 
 			// Agent list should not be visible
 			expect(screen.queryByText('Claude Code')).not.toBeInTheDocument();
+		});
+	});
+
+	describe('Agent Group selector', () => {
+		it('hides the Agent Group control when no groups exist', async () => {
+			useSessionStore.setState({ groups: [] });
+
+			render(
+				<NewInstanceModal
+					isOpen={true}
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[]}
+				/>
+			);
+
+			await waitFor(() => {
+				expect(screen.getByText('Create New Agent')).toBeInTheDocument();
+			});
+			expect(screen.queryByLabelText('Agent Group')).not.toBeInTheDocument();
+		});
+
+		it('renders the dropdown and forwards the picked group through onCreate', async () => {
+			useSessionStore.setState({
+				groups: [
+					{ id: 'group-alpha', name: 'Alpha', emoji: '🅰️', collapsed: false },
+					{ id: 'group-beta', name: 'Beta', emoji: '🅱️', collapsed: false },
+				],
+			});
+
+			render(
+				<NewInstanceModal
+					isOpen={true}
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[]}
+				/>
+			);
+
+			// Dropdown is present and defaults to "No Group (Ungrouped)"
+			const trigger = await screen.findByLabelText('Agent Group');
+			expect(trigger).toHaveTextContent('No Group (Ungrouped)');
+
+			// Pick "Beta"
+			fireEvent.click(trigger);
+			fireEvent.click(await screen.findByRole('option', { name: /Beta/ }));
+
+			// Fill required fields and submit
+			fireEvent.change(screen.getByLabelText('Agent Name'), {
+				target: { value: 'My Agent' },
+			});
+			fireEvent.change(screen.getByLabelText('Working Directory'), {
+				target: { value: '/tmp/work' },
+			});
+
+			await waitFor(() => {
+				const btn = screen.getByRole('button', { name: 'Create Agent' });
+				expect(btn).not.toBeDisabled();
+			});
+
+			await act(async () => {
+				fireEvent.click(screen.getByRole('button', { name: 'Create Agent' }));
+			});
+
+			expect(onCreate).toHaveBeenCalled();
+			// 14th positional arg (index 13) is groupId.
+			expect(onCreate.mock.calls[0][13]).toBe('group-beta');
+		});
+
+		it('seeds the dropdown from presetGroupId so the caller-supplied group is preselected', async () => {
+			useSessionStore.setState({
+				groups: [{ id: 'group-preset', name: 'Preset', emoji: '📦', collapsed: false }],
+			});
+
+			render(
+				<NewInstanceModal
+					isOpen={true}
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[]}
+					presetGroupId="group-preset"
+				/>
+			);
+
+			const trigger = await screen.findByLabelText('Agent Group');
+			await waitFor(() => {
+				expect(trigger).toHaveTextContent(/Preset/);
+			});
 		});
 	});
 });

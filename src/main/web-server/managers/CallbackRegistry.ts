@@ -21,10 +21,93 @@ import type {
 	StarTabCallback,
 	ReorderTabCallback,
 	ToggleBookmarkCallback,
+	OpenFileTabCallback,
+	RefreshFileTreeCallback,
+	OpenBrowserTabCallback,
+	OpenTerminalTabCallback,
+	OpenTerminalTabConfig,
+	NewAITabWithPromptCallback,
+	RefreshAutoRunDocsCallback,
+	ConfigureAutoRunCallback,
+	SetSessionAutoRunFolderCallback,
 	GetThemeCallback,
 	GetBionifyReadingModeCallback,
 	GetCustomCommandsCallback,
 	GetHistoryCallback,
+	GetAutoRunDocsCallback,
+	GetAutoRunDocContentCallback,
+	SaveAutoRunDocCallback,
+	StopAutoRunCallback,
+	ResetAutoRunDocTasksCallback,
+	ResumeAutoRunErrorCallback,
+	SkipAutoRunDocumentCallback,
+	AbortAutoRunErrorCallback,
+	ListPlaybooksCallback,
+	CreatePlaybookCallback,
+	UpdatePlaybookCallback,
+	DeletePlaybookCallback,
+	WebPlaybook,
+	WebPlaybookDocument,
+	GetSettingsCallback,
+	SetSettingCallback,
+	GetGroupsCallback,
+	CreateGroupCallback,
+	RenameGroupCallback,
+	DeleteGroupCallback,
+	MoveSessionToGroupCallback,
+	CreateSessionCallback,
+	CreateSessionConfig,
+	DeleteSessionCallback,
+	RenameSessionCallback,
+	UpdateSessionCwdCallback,
+	WebSettings,
+	SettingValue,
+	GroupData,
+	GetGitStatusCallback,
+	GetGitDiffCallback,
+	GetGitBranchesForSessionCallback,
+	ListWorktreesForSessionCallback,
+	GitStatusResult,
+	GitDiffResult,
+	GitBranchesResult,
+	ListWorktreesResult,
+	GetGroupChatsCallback,
+	StartGroupChatCallback,
+	GetGroupChatStateCallback,
+	StopGroupChatCallback,
+	SendGroupChatMessageCallback,
+	GroupChatState,
+	MergeContextCallback,
+	TransferContextCallback,
+	SummarizeContextCallback,
+	CreateGistCallback,
+	GetCueSubscriptionsCallback,
+	ToggleCueSubscriptionCallback,
+	GetCueActivityCallback,
+	TriggerCueSubscriptionCallback,
+	CueSubscriptionInfo,
+	CueActivityEntry,
+	GetUsageDashboardCallback,
+	GetAchievementsCallback,
+	UsageDashboardData,
+	AchievementData,
+	GenerateDirectorNotesSynopsisCallback,
+	DirectorNotesSynopsisResult,
+	NotifyToastCallback,
+	NotifyCenterFlashCallback,
+	NotifyToastParams,
+	NotifyCenterFlashParams,
+	GetMarketplaceManifestCallback,
+	GetMarketplaceDocumentCallback,
+	GetMarketplaceReadmeCallback,
+	ImportMarketplacePlaybookCallback,
+	MarketplaceManifestResult,
+	MarketplaceImportResult,
+	ListDesktopSessionsCallback,
+	GetSessionHistoryCallback,
+	GetSessionHistoryOptions,
+	DesktopSessionEntry,
+	SessionHistoryResult,
 } from '../types';
 
 const LOG_CONTEXT = 'CallbackRegistry';
@@ -50,7 +133,66 @@ export interface WebServerCallbacks {
 	starTab: StarTabCallback | null;
 	reorderTab: ReorderTabCallback | null;
 	toggleBookmark: ToggleBookmarkCallback | null;
+	openFileTab: OpenFileTabCallback | null;
+	refreshFileTree: RefreshFileTreeCallback | null;
+	openBrowserTab: OpenBrowserTabCallback | null;
+	openTerminalTab: OpenTerminalTabCallback | null;
+	newAITabWithPrompt: NewAITabWithPromptCallback | null;
+	refreshAutoRunDocs: RefreshAutoRunDocsCallback | null;
+	configureAutoRun: ConfigureAutoRunCallback | null;
+	setSessionAutoRunFolder: SetSessionAutoRunFolderCallback | null;
 	getHistory: GetHistoryCallback | null;
+	getAutoRunDocs: GetAutoRunDocsCallback | null;
+	getAutoRunDocContent: GetAutoRunDocContentCallback | null;
+	saveAutoRunDoc: SaveAutoRunDocCallback | null;
+	stopAutoRun: StopAutoRunCallback | null;
+	resetAutoRunDocTasks: ResetAutoRunDocTasksCallback | null;
+	resumeAutoRunError: ResumeAutoRunErrorCallback | null;
+	skipAutoRunDocument: SkipAutoRunDocumentCallback | null;
+	abortAutoRunError: AbortAutoRunErrorCallback | null;
+	listPlaybooks: ListPlaybooksCallback | null;
+	createPlaybook: CreatePlaybookCallback | null;
+	updatePlaybook: UpdatePlaybookCallback | null;
+	deletePlaybook: DeletePlaybookCallback | null;
+	getSettings: GetSettingsCallback | null;
+	setSetting: SetSettingCallback | null;
+	getGroups: GetGroupsCallback | null;
+	createGroup: CreateGroupCallback | null;
+	renameGroup: RenameGroupCallback | null;
+	deleteGroup: DeleteGroupCallback | null;
+	moveSessionToGroup: MoveSessionToGroupCallback | null;
+	createSession: CreateSessionCallback | null;
+	deleteSession: DeleteSessionCallback | null;
+	renameSession: RenameSessionCallback | null;
+	updateSessionCwd: UpdateSessionCwdCallback | null;
+	getGitStatus: GetGitStatusCallback | null;
+	getGitDiff: GetGitDiffCallback | null;
+	getGitBranchesForSession: GetGitBranchesForSessionCallback | null;
+	listWorktreesForSession: ListWorktreesForSessionCallback | null;
+	getGroupChats: GetGroupChatsCallback | null;
+	startGroupChat: StartGroupChatCallback | null;
+	getGroupChatState: GetGroupChatStateCallback | null;
+	stopGroupChat: StopGroupChatCallback | null;
+	sendGroupChatMessage: SendGroupChatMessageCallback | null;
+	mergeContext: MergeContextCallback | null;
+	transferContext: TransferContextCallback | null;
+	summarizeContext: SummarizeContextCallback | null;
+	createGist: CreateGistCallback | null;
+	getCueSubscriptions: GetCueSubscriptionsCallback | null;
+	toggleCueSubscription: ToggleCueSubscriptionCallback | null;
+	getCueActivity: GetCueActivityCallback | null;
+	triggerCueSubscription: TriggerCueSubscriptionCallback | null;
+	getUsageDashboard: GetUsageDashboardCallback | null;
+	getAchievements: GetAchievementsCallback | null;
+	generateDirectorNotesSynopsis: GenerateDirectorNotesSynopsisCallback | null;
+	notifyToast: NotifyToastCallback | null;
+	notifyCenterFlash: NotifyCenterFlashCallback | null;
+	getMarketplaceManifest: GetMarketplaceManifestCallback | null;
+	getMarketplaceDocument: GetMarketplaceDocumentCallback | null;
+	getMarketplaceReadme: GetMarketplaceReadmeCallback | null;
+	importMarketplacePlaybook: ImportMarketplacePlaybookCallback | null;
+	listDesktopSessions: ListDesktopSessionsCallback | null;
+	getSessionHistory: GetSessionHistoryCallback | null;
 }
 
 export class CallbackRegistry {
@@ -72,7 +214,66 @@ export class CallbackRegistry {
 		starTab: null,
 		reorderTab: null,
 		toggleBookmark: null,
+		openFileTab: null,
+		refreshFileTree: null,
+		openBrowserTab: null,
+		openTerminalTab: null,
+		newAITabWithPrompt: null,
+		refreshAutoRunDocs: null,
+		configureAutoRun: null,
+		setSessionAutoRunFolder: null,
 		getHistory: null,
+		getAutoRunDocs: null,
+		getAutoRunDocContent: null,
+		saveAutoRunDoc: null,
+		stopAutoRun: null,
+		resetAutoRunDocTasks: null,
+		resumeAutoRunError: null,
+		skipAutoRunDocument: null,
+		abortAutoRunError: null,
+		listPlaybooks: null,
+		createPlaybook: null,
+		updatePlaybook: null,
+		deletePlaybook: null,
+		getSettings: null,
+		setSetting: null,
+		getGroups: null,
+		createGroup: null,
+		renameGroup: null,
+		deleteGroup: null,
+		moveSessionToGroup: null,
+		createSession: null,
+		deleteSession: null,
+		renameSession: null,
+		updateSessionCwd: null,
+		getGitStatus: null,
+		getGitDiff: null,
+		getGitBranchesForSession: null,
+		listWorktreesForSession: null,
+		getGroupChats: null,
+		startGroupChat: null,
+		getGroupChatState: null,
+		stopGroupChat: null,
+		sendGroupChatMessage: null,
+		mergeContext: null,
+		transferContext: null,
+		summarizeContext: null,
+		createGist: null,
+		getCueSubscriptions: null,
+		toggleCueSubscription: null,
+		getCueActivity: null,
+		triggerCueSubscription: null,
+		getUsageDashboard: null,
+		getAchievements: null,
+		generateDirectorNotesSynopsis: null,
+		notifyToast: null,
+		notifyCenterFlash: null,
+		getMarketplaceManifest: null,
+		getMarketplaceDocument: null,
+		getMarketplaceReadme: null,
+		importMarketplacePlaybook: null,
+		listDesktopSessions: null,
+		getSessionHistory: null,
 	};
 
 	// ============ Getter Methods ============
@@ -104,10 +305,13 @@ export class CallbackRegistry {
 	async executeCommand(
 		sessionId: string,
 		command: string,
-		inputMode?: 'ai' | 'terminal'
+		inputMode?: 'ai' | 'terminal',
+		tabId?: string,
+		force?: boolean,
+		images?: string[]
 	): Promise<boolean> {
 		if (!this.callbacks.executeCommand) return false;
-		return this.callbacks.executeCommand(sessionId, command, inputMode);
+		return this.callbacks.executeCommand(sessionId, command, inputMode, tabId, force, images);
 	}
 
 	async interruptSession(sessionId: string): Promise<boolean> {
@@ -119,9 +323,9 @@ export class CallbackRegistry {
 		return this.callbacks.switchMode(sessionId, mode);
 	}
 
-	async selectSession(sessionId: string, tabId?: string): Promise<boolean> {
+	async selectSession(sessionId: string, tabId?: string, focus?: boolean): Promise<boolean> {
 		if (!this.callbacks.selectSession) return false;
-		return this.callbacks.selectSession(sessionId, tabId);
+		return this.callbacks.selectSession(sessionId, tabId, focus);
 	}
 
 	async selectTab(sessionId: string, tabId: string): Promise<boolean> {
@@ -159,8 +363,410 @@ export class CallbackRegistry {
 		return this.callbacks.toggleBookmark(sessionId);
 	}
 
+	async openFileTab(sessionId: string, filePath: string, switchToAgent: boolean): Promise<boolean> {
+		if (!this.callbacks.openFileTab) return false;
+		return this.callbacks.openFileTab(sessionId, filePath, switchToAgent);
+	}
+
+	async refreshFileTree(sessionId: string): Promise<boolean> {
+		if (!this.callbacks.refreshFileTree) return false;
+		return this.callbacks.refreshFileTree(sessionId);
+	}
+
+	async openBrowserTab(sessionId: string, url: string): Promise<boolean> {
+		if (!this.callbacks.openBrowserTab) return false;
+		return this.callbacks.openBrowserTab(sessionId, url);
+	}
+
+	async openTerminalTab(sessionId: string, config: OpenTerminalTabConfig): Promise<boolean> {
+		if (!this.callbacks.openTerminalTab) return false;
+		return this.callbacks.openTerminalTab(sessionId, config);
+	}
+
+	async newAITabWithPrompt(
+		sessionId: string,
+		prompt: string
+	): Promise<{ success: boolean; tabId?: string }> {
+		if (!this.callbacks.newAITabWithPrompt) return { success: false };
+		return this.callbacks.newAITabWithPrompt(sessionId, prompt);
+	}
+
+	async refreshAutoRunDocs(sessionId: string): Promise<boolean> {
+		if (!this.callbacks.refreshAutoRunDocs) return false;
+		return this.callbacks.refreshAutoRunDocs(sessionId);
+	}
+
+	async configureAutoRun(
+		sessionId: string,
+		config: {
+			documents: Array<{ filename: string; resetOnCompletion?: boolean }>;
+			prompt?: string;
+			loopEnabled?: boolean;
+			maxLoops?: number;
+			saveAsPlaybook?: string;
+			launch?: boolean;
+			worktree?: {
+				enabled: boolean;
+				path: string;
+				branchName: string;
+				createPROnCompletion: boolean;
+				prTargetBranch: string;
+			};
+		}
+	): Promise<{ success: boolean; playbookId?: string; error?: string }> {
+		if (!this.callbacks.configureAutoRun) return { success: false, error: 'Not configured' };
+		return this.callbacks.configureAutoRun(sessionId, config);
+	}
+
+	async setSessionAutoRunFolder(
+		sessionId: string,
+		folderPath: string
+	): Promise<{ success: boolean; error?: string }> {
+		if (!this.callbacks.setSessionAutoRunFolder) return { success: false, error: 'Not configured' };
+		return this.callbacks.setSessionAutoRunFolder(sessionId, folderPath);
+	}
+
 	getHistory(projectPath?: string, sessionId?: string): ReturnType<GetHistoryCallback> | [] {
 		return this.callbacks.getHistory?.(projectPath, sessionId) ?? [];
+	}
+
+	async getAutoRunDocs(sessionId: string): Promise<import('../types').AutoRunDocument[]> {
+		if (!this.callbacks.getAutoRunDocs) return [];
+		return this.callbacks.getAutoRunDocs(sessionId);
+	}
+
+	async getAutoRunDocContent(sessionId: string, filename: string): Promise<string> {
+		if (!this.callbacks.getAutoRunDocContent) return '';
+		return this.callbacks.getAutoRunDocContent(sessionId, filename);
+	}
+
+	async saveAutoRunDoc(sessionId: string, filename: string, content: string): Promise<boolean> {
+		if (!this.callbacks.saveAutoRunDoc) return false;
+		return this.callbacks.saveAutoRunDoc(sessionId, filename, content);
+	}
+
+	async stopAutoRun(sessionId: string): Promise<boolean> {
+		if (!this.callbacks.stopAutoRun) return false;
+		return this.callbacks.stopAutoRun(sessionId);
+	}
+
+	async resetAutoRunDocTasks(sessionId: string, filename: string): Promise<boolean> {
+		if (!this.callbacks.resetAutoRunDocTasks) return false;
+		return this.callbacks.resetAutoRunDocTasks(sessionId, filename);
+	}
+
+	async resumeAutoRunError(sessionId: string): Promise<boolean> {
+		if (!this.callbacks.resumeAutoRunError) return false;
+		return this.callbacks.resumeAutoRunError(sessionId);
+	}
+
+	async skipAutoRunDocument(sessionId: string): Promise<boolean> {
+		if (!this.callbacks.skipAutoRunDocument) return false;
+		return this.callbacks.skipAutoRunDocument(sessionId);
+	}
+
+	async abortAutoRunError(sessionId: string): Promise<boolean> {
+		if (!this.callbacks.abortAutoRunError) return false;
+		return this.callbacks.abortAutoRunError(sessionId);
+	}
+
+	async listPlaybooks(sessionId: string): Promise<WebPlaybook[]> {
+		if (!this.callbacks.listPlaybooks) return [];
+		return this.callbacks.listPlaybooks(sessionId);
+	}
+
+	async createPlaybook(
+		sessionId: string,
+		playbook: {
+			name: string;
+			documents: WebPlaybookDocument[];
+			loopEnabled: boolean;
+			maxLoops?: number | null;
+			prompt: string;
+		}
+	): Promise<WebPlaybook | null> {
+		if (!this.callbacks.createPlaybook) return null;
+		return this.callbacks.createPlaybook(sessionId, playbook);
+	}
+
+	async updatePlaybook(
+		sessionId: string,
+		playbookId: string,
+		updates: Partial<{
+			name: string;
+			documents: WebPlaybookDocument[];
+			loopEnabled: boolean;
+			maxLoops?: number | null;
+			prompt: string;
+		}>
+	): Promise<WebPlaybook | null> {
+		if (!this.callbacks.updatePlaybook) return null;
+		return this.callbacks.updatePlaybook(sessionId, playbookId, updates);
+	}
+
+	async deletePlaybook(sessionId: string, playbookId: string): Promise<boolean> {
+		if (!this.callbacks.deletePlaybook) return false;
+		return this.callbacks.deletePlaybook(sessionId, playbookId);
+	}
+
+	getSettings(): WebSettings {
+		if (this.callbacks.getSettings) {
+			return this.callbacks.getSettings();
+		}
+		return {
+			theme: 'dracula',
+			fontSize: 14,
+			enterToSendAI: false,
+			defaultSaveToHistory: true,
+			defaultShowThinking: 'off',
+			autoScroll: true,
+			notificationsEnabled: true,
+			audioFeedbackEnabled: false,
+			colorBlindMode: 'none',
+			conductorProfile: '',
+			maxOutputLines: null,
+			shortcuts: {},
+		};
+	}
+
+	async setSetting(key: string, value: SettingValue): Promise<boolean> {
+		if (!this.callbacks.setSetting) return false;
+		return this.callbacks.setSetting(key, value);
+	}
+
+	getGroups(): GroupData[] {
+		return this.callbacks.getGroups?.() ?? [];
+	}
+
+	async createGroup(name: string, emoji?: string): Promise<{ id: string } | null> {
+		if (!this.callbacks.createGroup) return null;
+		return this.callbacks.createGroup(name, emoji);
+	}
+
+	async renameGroup(groupId: string, name: string): Promise<boolean> {
+		if (!this.callbacks.renameGroup) return false;
+		return this.callbacks.renameGroup(groupId, name);
+	}
+
+	async deleteGroup(groupId: string): Promise<boolean> {
+		if (!this.callbacks.deleteGroup) return false;
+		return this.callbacks.deleteGroup(groupId);
+	}
+
+	async moveSessionToGroup(sessionId: string, groupId: string | null): Promise<boolean> {
+		if (!this.callbacks.moveSessionToGroup) return false;
+		return this.callbacks.moveSessionToGroup(sessionId, groupId);
+	}
+
+	async createSession(
+		name: string,
+		toolType: string,
+		cwd: string,
+		groupId?: string,
+		config?: CreateSessionConfig
+	): Promise<{ sessionId: string } | null> {
+		if (!this.callbacks.createSession) return null;
+		return this.callbacks.createSession(name, toolType, cwd, groupId, config);
+	}
+
+	async deleteSession(sessionId: string): Promise<boolean> {
+		if (!this.callbacks.deleteSession) return false;
+		return this.callbacks.deleteSession(sessionId);
+	}
+
+	async renameSession(sessionId: string, newName: string): Promise<boolean> {
+		if (!this.callbacks.renameSession) return false;
+		return this.callbacks.renameSession(sessionId, newName);
+	}
+
+	async updateSessionCwd(
+		sessionId: string,
+		newCwd: string
+	): Promise<{ success: boolean; error?: string }> {
+		if (!this.callbacks.updateSessionCwd) {
+			return { success: false, error: 'Session cwd updates not configured' };
+		}
+		return this.callbacks.updateSessionCwd(sessionId, newCwd);
+	}
+
+	async getGitStatus(sessionId: string): Promise<GitStatusResult> {
+		if (!this.callbacks.getGitStatus) return { branch: '', files: [], ahead: 0, behind: 0 };
+		return this.callbacks.getGitStatus(sessionId);
+	}
+
+	async getGitDiff(sessionId: string, filePath?: string): Promise<GitDiffResult> {
+		if (!this.callbacks.getGitDiff) return { diff: '', files: [] };
+		return this.callbacks.getGitDiff(sessionId, filePath);
+	}
+
+	async getGitBranchesForSession(sessionId: string): Promise<GitBranchesResult> {
+		if (!this.callbacks.getGitBranchesForSession) return { branches: [] };
+		return this.callbacks.getGitBranchesForSession(sessionId);
+	}
+
+	async listWorktreesForSession(sessionId: string): Promise<ListWorktreesResult> {
+		if (!this.callbacks.listWorktreesForSession) return { worktrees: [] };
+		return this.callbacks.listWorktreesForSession(sessionId);
+	}
+
+	async getGroupChats(): Promise<GroupChatState[]> {
+		if (!this.callbacks.getGroupChats) return [];
+		return this.callbacks.getGroupChats();
+	}
+
+	async startGroupChat(
+		topic: string,
+		participantIds: string[]
+	): Promise<{ chatId: string } | null> {
+		if (!this.callbacks.startGroupChat) return null;
+		return this.callbacks.startGroupChat(topic, participantIds);
+	}
+
+	async getGroupChatState(chatId: string): Promise<GroupChatState | null> {
+		if (!this.callbacks.getGroupChatState) return null;
+		return this.callbacks.getGroupChatState(chatId);
+	}
+
+	async stopGroupChat(chatId: string): Promise<boolean> {
+		if (!this.callbacks.stopGroupChat) return false;
+		return this.callbacks.stopGroupChat(chatId);
+	}
+
+	async sendGroupChatMessage(chatId: string, message: string): Promise<boolean> {
+		if (!this.callbacks.sendGroupChatMessage) return false;
+		return this.callbacks.sendGroupChatMessage(chatId, message);
+	}
+
+	async mergeContext(sourceSessionId: string, targetSessionId: string): Promise<boolean> {
+		if (!this.callbacks.mergeContext) return false;
+		return this.callbacks.mergeContext(sourceSessionId, targetSessionId);
+	}
+
+	async transferContext(sourceSessionId: string, targetSessionId: string): Promise<boolean> {
+		if (!this.callbacks.transferContext) return false;
+		return this.callbacks.transferContext(sourceSessionId, targetSessionId);
+	}
+
+	async summarizeContext(sessionId: string): Promise<boolean> {
+		if (!this.callbacks.summarizeContext) return false;
+		return this.callbacks.summarizeContext(sessionId);
+	}
+
+	async createGist(
+		sessionId: string,
+		description: string,
+		isPublic: boolean
+	): Promise<{ success: boolean; gistUrl?: string; error?: string }> {
+		if (!this.callbacks.createGist) {
+			return { success: false, error: 'Gist creation not configured' };
+		}
+		return this.callbacks.createGist(sessionId, description, isPublic);
+	}
+
+	async getCueSubscriptions(sessionId?: string): Promise<CueSubscriptionInfo[]> {
+		if (!this.callbacks.getCueSubscriptions) return [];
+		return this.callbacks.getCueSubscriptions(sessionId);
+	}
+
+	async toggleCueSubscription(subscriptionId: string, enabled: boolean): Promise<boolean> {
+		if (!this.callbacks.toggleCueSubscription) return false;
+		return this.callbacks.toggleCueSubscription(subscriptionId, enabled);
+	}
+
+	async getCueActivity(sessionId?: string, limit?: number): Promise<CueActivityEntry[]> {
+		if (!this.callbacks.getCueActivity) return [];
+		return this.callbacks.getCueActivity(sessionId, limit);
+	}
+
+	async triggerCueSubscription(
+		subscriptionName: string,
+		prompt?: string,
+		sourceAgentId?: string
+	): Promise<boolean> {
+		if (!this.callbacks.triggerCueSubscription) return false;
+		return this.callbacks.triggerCueSubscription(subscriptionName, prompt, sourceAgentId);
+	}
+
+	async getUsageDashboard(
+		timeRange: 'day' | 'week' | 'month' | 'all'
+	): Promise<UsageDashboardData> {
+		if (!this.callbacks.getUsageDashboard) {
+			return {
+				totalTokensIn: 0,
+				totalTokensOut: 0,
+				totalCost: 0,
+				sessionBreakdown: [],
+				dailyUsage: [],
+			};
+		}
+		return this.callbacks.getUsageDashboard(timeRange);
+	}
+
+	async getAchievements(): Promise<AchievementData[]> {
+		if (!this.callbacks.getAchievements) return [];
+		return this.callbacks.getAchievements();
+	}
+
+	async generateDirectorNotesSynopsis(
+		lookbackDays: number,
+		provider: string
+	): Promise<DirectorNotesSynopsisResult> {
+		if (!this.callbacks.generateDirectorNotesSynopsis) {
+			return { success: false, synopsis: '', error: "Director's Notes synopsis not available" };
+		}
+		return this.callbacks.generateDirectorNotesSynopsis(lookbackDays, provider);
+	}
+
+	async notifyToast(params: NotifyToastParams): Promise<boolean> {
+		if (!this.callbacks.notifyToast) return false;
+		return this.callbacks.notifyToast(params);
+	}
+
+	async notifyCenterFlash(params: NotifyCenterFlashParams): Promise<boolean> {
+		if (!this.callbacks.notifyCenterFlash) return false;
+		return this.callbacks.notifyCenterFlash(params);
+	}
+
+	async getMarketplaceManifest(options?: {
+		refresh?: boolean;
+	}): Promise<MarketplaceManifestResult | null> {
+		if (!this.callbacks.getMarketplaceManifest) return null;
+		return this.callbacks.getMarketplaceManifest(options);
+	}
+
+	async getMarketplaceDocument(
+		playbookPath: string,
+		filename: string
+	): Promise<{ content: string } | null> {
+		if (!this.callbacks.getMarketplaceDocument) return null;
+		return this.callbacks.getMarketplaceDocument(playbookPath, filename);
+	}
+
+	async getMarketplaceReadme(playbookPath: string): Promise<{ content: string | null } | null> {
+		if (!this.callbacks.getMarketplaceReadme) return null;
+		return this.callbacks.getMarketplaceReadme(playbookPath);
+	}
+
+	async importMarketplacePlaybook(
+		sessionId: string,
+		playbookId: string,
+		targetFolderName: string
+	): Promise<MarketplaceImportResult> {
+		if (!this.callbacks.importMarketplacePlaybook) {
+			return { success: false, error: 'Marketplace import not configured' };
+		}
+		return this.callbacks.importMarketplacePlaybook(sessionId, playbookId, targetFolderName);
+	}
+
+	listDesktopSessions(): DesktopSessionEntry[] {
+		return this.callbacks.listDesktopSessions?.() ?? [];
+	}
+
+	getSessionHistory(
+		tabId: string,
+		options?: GetSessionHistoryOptions
+	): SessionHistoryResult | null {
+		return this.callbacks.getSessionHistory?.(tabId, options) ?? null;
 	}
 
 	// ============ Setter Methods ============
@@ -239,8 +845,244 @@ export class CallbackRegistry {
 		this.callbacks.toggleBookmark = callback;
 	}
 
+	setOpenFileTabCallback(callback: OpenFileTabCallback): void {
+		this.callbacks.openFileTab = callback;
+	}
+
+	setRefreshFileTreeCallback(callback: RefreshFileTreeCallback): void {
+		this.callbacks.refreshFileTree = callback;
+	}
+
+	setOpenBrowserTabCallback(callback: OpenBrowserTabCallback): void {
+		this.callbacks.openBrowserTab = callback;
+	}
+
+	setOpenTerminalTabCallback(callback: OpenTerminalTabCallback): void {
+		this.callbacks.openTerminalTab = callback;
+	}
+
+	setNewAITabWithPromptCallback(callback: NewAITabWithPromptCallback): void {
+		this.callbacks.newAITabWithPrompt = callback;
+	}
+
+	setRefreshAutoRunDocsCallback(callback: RefreshAutoRunDocsCallback): void {
+		this.callbacks.refreshAutoRunDocs = callback;
+	}
+
+	setConfigureAutoRunCallback(callback: ConfigureAutoRunCallback): void {
+		this.callbacks.configureAutoRun = callback;
+	}
+
+	setSessionAutoRunFolderCallback(callback: SetSessionAutoRunFolderCallback): void {
+		this.callbacks.setSessionAutoRunFolder = callback;
+	}
+
 	setGetHistoryCallback(callback: GetHistoryCallback): void {
 		this.callbacks.getHistory = callback;
+	}
+
+	setGetAutoRunDocsCallback(callback: GetAutoRunDocsCallback): void {
+		this.callbacks.getAutoRunDocs = callback;
+	}
+
+	setGetAutoRunDocContentCallback(callback: GetAutoRunDocContentCallback): void {
+		this.callbacks.getAutoRunDocContent = callback;
+	}
+
+	setSaveAutoRunDocCallback(callback: SaveAutoRunDocCallback): void {
+		this.callbacks.saveAutoRunDoc = callback;
+	}
+
+	setStopAutoRunCallback(callback: StopAutoRunCallback): void {
+		this.callbacks.stopAutoRun = callback;
+	}
+
+	setResetAutoRunDocTasksCallback(callback: ResetAutoRunDocTasksCallback): void {
+		this.callbacks.resetAutoRunDocTasks = callback;
+	}
+
+	setResumeAutoRunErrorCallback(callback: ResumeAutoRunErrorCallback): void {
+		this.callbacks.resumeAutoRunError = callback;
+	}
+
+	setSkipAutoRunDocumentCallback(callback: SkipAutoRunDocumentCallback): void {
+		this.callbacks.skipAutoRunDocument = callback;
+	}
+
+	setAbortAutoRunErrorCallback(callback: AbortAutoRunErrorCallback): void {
+		this.callbacks.abortAutoRunError = callback;
+	}
+
+	setListPlaybooksCallback(callback: ListPlaybooksCallback): void {
+		this.callbacks.listPlaybooks = callback;
+	}
+
+	setCreatePlaybookCallback(callback: CreatePlaybookCallback): void {
+		this.callbacks.createPlaybook = callback;
+	}
+
+	setUpdatePlaybookCallback(callback: UpdatePlaybookCallback): void {
+		this.callbacks.updatePlaybook = callback;
+	}
+
+	setDeletePlaybookCallback(callback: DeletePlaybookCallback): void {
+		this.callbacks.deletePlaybook = callback;
+	}
+
+	setGetSettingsCallback(callback: GetSettingsCallback): void {
+		this.callbacks.getSettings = callback;
+	}
+
+	setSetSettingCallback(callback: SetSettingCallback): void {
+		this.callbacks.setSetting = callback;
+	}
+
+	setGetGroupsCallback(callback: GetGroupsCallback): void {
+		this.callbacks.getGroups = callback;
+	}
+
+	setCreateGroupCallback(callback: CreateGroupCallback): void {
+		this.callbacks.createGroup = callback;
+	}
+
+	setRenameGroupCallback(callback: RenameGroupCallback): void {
+		this.callbacks.renameGroup = callback;
+	}
+
+	setDeleteGroupCallback(callback: DeleteGroupCallback): void {
+		this.callbacks.deleteGroup = callback;
+	}
+
+	setMoveSessionToGroupCallback(callback: MoveSessionToGroupCallback): void {
+		this.callbacks.moveSessionToGroup = callback;
+	}
+
+	setCreateSessionCallback(callback: CreateSessionCallback): void {
+		this.callbacks.createSession = callback;
+	}
+
+	setDeleteSessionCallback(callback: DeleteSessionCallback): void {
+		this.callbacks.deleteSession = callback;
+	}
+
+	setRenameSessionCallback(callback: RenameSessionCallback): void {
+		this.callbacks.renameSession = callback;
+	}
+
+	setUpdateSessionCwdCallback(callback: UpdateSessionCwdCallback): void {
+		this.callbacks.updateSessionCwd = callback;
+	}
+
+	setGetGitStatusCallback(callback: GetGitStatusCallback): void {
+		this.callbacks.getGitStatus = callback;
+	}
+
+	setGetGitDiffCallback(callback: GetGitDiffCallback): void {
+		this.callbacks.getGitDiff = callback;
+	}
+
+	setGetGitBranchesForSessionCallback(callback: GetGitBranchesForSessionCallback): void {
+		this.callbacks.getGitBranchesForSession = callback;
+	}
+
+	setListWorktreesForSessionCallback(callback: ListWorktreesForSessionCallback): void {
+		this.callbacks.listWorktreesForSession = callback;
+	}
+
+	setGetGroupChatsCallback(callback: GetGroupChatsCallback): void {
+		this.callbacks.getGroupChats = callback;
+	}
+
+	setStartGroupChatCallback(callback: StartGroupChatCallback): void {
+		this.callbacks.startGroupChat = callback;
+	}
+
+	setGetGroupChatStateCallback(callback: GetGroupChatStateCallback): void {
+		this.callbacks.getGroupChatState = callback;
+	}
+
+	setStopGroupChatCallback(callback: StopGroupChatCallback): void {
+		this.callbacks.stopGroupChat = callback;
+	}
+
+	setSendGroupChatMessageCallback(callback: SendGroupChatMessageCallback): void {
+		this.callbacks.sendGroupChatMessage = callback;
+	}
+
+	setMergeContextCallback(callback: MergeContextCallback): void {
+		this.callbacks.mergeContext = callback;
+	}
+
+	setTransferContextCallback(callback: TransferContextCallback): void {
+		this.callbacks.transferContext = callback;
+	}
+
+	setSummarizeContextCallback(callback: SummarizeContextCallback): void {
+		this.callbacks.summarizeContext = callback;
+	}
+
+	setCreateGistCallback(callback: CreateGistCallback): void {
+		this.callbacks.createGist = callback;
+	}
+
+	setGetCueSubscriptionsCallback(callback: GetCueSubscriptionsCallback): void {
+		this.callbacks.getCueSubscriptions = callback;
+	}
+
+	setToggleCueSubscriptionCallback(callback: ToggleCueSubscriptionCallback): void {
+		this.callbacks.toggleCueSubscription = callback;
+	}
+
+	setGetCueActivityCallback(callback: GetCueActivityCallback): void {
+		this.callbacks.getCueActivity = callback;
+	}
+
+	setTriggerCueSubscriptionCallback(callback: TriggerCueSubscriptionCallback): void {
+		this.callbacks.triggerCueSubscription = callback;
+	}
+
+	setGetUsageDashboardCallback(callback: GetUsageDashboardCallback): void {
+		this.callbacks.getUsageDashboard = callback;
+	}
+
+	setGetAchievementsCallback(callback: GetAchievementsCallback): void {
+		this.callbacks.getAchievements = callback;
+	}
+
+	setGenerateDirectorNotesSynopsisCallback(callback: GenerateDirectorNotesSynopsisCallback): void {
+		this.callbacks.generateDirectorNotesSynopsis = callback;
+	}
+
+	setNotifyToastCallback(callback: NotifyToastCallback): void {
+		this.callbacks.notifyToast = callback;
+	}
+
+	setNotifyCenterFlashCallback(callback: NotifyCenterFlashCallback): void {
+		this.callbacks.notifyCenterFlash = callback;
+	}
+
+	setGetMarketplaceManifestCallback(callback: GetMarketplaceManifestCallback): void {
+		this.callbacks.getMarketplaceManifest = callback;
+	}
+
+	setGetMarketplaceDocumentCallback(callback: GetMarketplaceDocumentCallback): void {
+		this.callbacks.getMarketplaceDocument = callback;
+	}
+
+	setGetMarketplaceReadmeCallback(callback: GetMarketplaceReadmeCallback): void {
+		this.callbacks.getMarketplaceReadme = callback;
+	}
+
+	setImportMarketplacePlaybookCallback(callback: ImportMarketplacePlaybookCallback): void {
+		this.callbacks.importMarketplacePlaybook = callback;
+	}
+
+	setListDesktopSessionsCallback(callback: ListDesktopSessionsCallback): void {
+		this.callbacks.listDesktopSessions = callback;
+	}
+
+	setGetSessionHistoryCallback(callback: GetSessionHistoryCallback): void {
+		this.callbacks.getSessionHistory = callback;
 	}
 
 	// ============ Check Methods ============

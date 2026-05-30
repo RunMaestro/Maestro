@@ -6,17 +6,73 @@ Essential guidance for working with this codebase. For detailed architecture, se
 
 This guide has been split into focused sub-documents for progressive disclosure:
 
-| Document                             | Description                                                                                                 |
-| ------------------------------------ | ----------------------------------------------------------------------------------------------------------- |
-| [[CLAUDE-PATTERNS.md]]               | Core implementation patterns (process management, settings, modals, themes, Auto Run, SSH, Encore Features) |
-| [[CLAUDE-IPC.md]]                    | IPC API surface (`window.maestro.*` namespaces)                                                             |
-| [[CLAUDE-PERFORMANCE.md]]            | Performance best practices (React optimization, debouncing, batching)                                       |
-| [[CLAUDE-WIZARD.md]]                 | Onboarding Wizard, Inline Wizard, and Tour System                                                           |
-| [[CLAUDE-FEATURES.md]]               | Usage Dashboard and Document Graph features                                                                 |
-| [[CLAUDE-AGENTS.md]]                 | Supported agents and capabilities                                                                           |
-| [[CLAUDE-SESSION.md]]                | Session interface (agent data model) and code conventions                                                   |
-| [[CLAUDE-PLATFORM.md]]               | Cross-platform concerns (Windows, Linux, macOS, SSH remote)                                                 |
-| [AGENT_SUPPORT.md](AGENT_SUPPORT.md) | Detailed agent integration guide                                                                            |
+| Document                             | Description                                                                                                  |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------ |
+| [[CLAUDE-PATTERNS.md]]               | Core implementation patterns (process management, settings, modals, themes, Auto Run, SSH, Encore Features)  |
+| [[CLAUDE-IPC.md]]                    | IPC API surface (`window.maestro.*` namespaces)                                                              |
+| [[CLAUDE-PERFORMANCE.md]]            | Performance best practices (React optimization, debouncing, batching)                                        |
+| [[CLAUDE-WIZARD.md]]                 | Onboarding Wizard, Inline Wizard, and Tour System                                                            |
+| [[CLAUDE-FEATURES.md]]               | Usage Dashboard and Document Graph features                                                                  |
+| [[CLAUDE-AGENTS.md]]                 | Supported agents and capabilities                                                                            |
+| [[CLAUDE-SESSION.md]]                | Session interface (agent data model) and code conventions                                                    |
+| [[CLAUDE-PLATFORM.md]]               | Cross-platform concerns (Windows, Linux, macOS, SSH remote)                                                  |
+| [[CLAUDE-CUE.md]]                    | Cue automation engine: architecture, dispatch flow, lifecycle, gotchas (read before editing `src/main/cue/`) |
+| [AGENT_SUPPORT.md](AGENT_SUPPORT.md) | Detailed agent integration guide                                                                             |
+
+---
+
+## Before Writing New Code - Check Existing Utilities
+
+**MANDATORY:** Before creating any new utility function, helper, hook, component, type, or constant, check the guide docs in `docs/agent-guides/` to see if it already exists. Duplicated code is the #1 source of maintenance burden in this codebase - there are already grep-verified instances of 20+ duplicate format helpers, 60+ ad-hoc mock factories, and 500+ manual modal-layer registrations. Don't add to the pile.
+
+| Before creating...                                 | Check this guide first                                         |
+| -------------------------------------------------- | -------------------------------------------------------------- |
+| Utility function (formatting, IDs, paths, strings) | [SHARED-UTILS.md](docs/agent-guides/SHARED-UTILS.md)           |
+| IPC handler or preload bridge                      | [IPC-PATTERNS.md](docs/agent-guides/IPC-PATTERNS.md)           |
+| Store action, selector, or hook                    | [STATE-PATTERNS.md](docs/agent-guides/STATE-PATTERNS.md)       |
+| Agent parser, storage, or error pattern            | [AGENT-INFRA.md](docs/agent-guides/AGENT-INFRA.md)             |
+| UI component, modal, or theme usage                | [UI-PATTERNS.md](docs/agent-guides/UI-PATTERNS.md)             |
+| Test mock, factory, or setup pattern               | [TEST-PATTERNS.md](docs/agent-guides/TEST-PATTERNS.md)         |
+| Renderer service or constant                       | [RENDERER-SERVICES.md](docs/agent-guides/RENDERER-SERVICES.md) |
+| Process spawning or listener                       | [PROCESS-SYSTEM.md](docs/agent-guides/PROCESS-SYSTEM.md)       |
+| Web/mobile hook or component                       | [WEB-MOBILE.md](docs/agent-guides/WEB-MOBILE.md)               |
+| CLI command or playbook feature                    | [CLI-PLAYBOOKS.md](docs/agent-guides/CLI-PLAYBOOKS.md)         |
+| Group chat or Symphony feature                     | [GROUP-CHAT.md](docs/agent-guides/GROUP-CHAT.md)               |
+| Stats, analytics, or dashboard                     | [STATS-ANALYTICS.md](docs/agent-guides/STATS-ANALYTICS.md)     |
+| Prompt template or SpecKit/OpenSpec                | [PROMPTS-SPECS.md](docs/agent-guides/PROMPTS-SPECS.md)         |
+| Cue pipeline feature                               | [CUE-PIPELINE.md](docs/agent-guides/CUE-PIPELINE.md)           |
+| App lifecycle, updater, or power mgmt              | [MAIN-LIFECYCLE.md](docs/agent-guides/MAIN-LIFECYCLE.md)       |
+
+### Commonly-reimplemented functions (do NOT add new copies)
+
+Grep-verified 2026-04-10. Import from these canonical locations:
+
+- **ID generation:** `generateId()` in `src/renderer/utils/ids.ts`, `generateUUID()` in `src/shared/uuid.ts`
+- **Format file size:** `formatSize()` in `src/shared/formatters.ts`
+- **Format numbers:** `formatNumber()` in `src/shared/formatters.ts`
+- **Format tokens:** `formatTokens()`, `formatTokensCompact()`, `estimateTokenCount()` in `src/shared/formatters.ts`
+- **Format elapsed time:** `formatElapsedTime()`, `formatElapsedTimeColon()` in `src/shared/formatters.ts`
+- **Format duration (ms):** `formatDuration()` in `src/shared/performance-metrics.ts` (NOT formatters.ts - common mistake)
+- **Format relative time:** `formatRelativeTime()` in `src/shared/formatters.ts`
+- **Format cost:** `formatCost()` in `src/shared/formatters.ts`
+- **Path utilities:** `truncatePath()`, `getParentDir()`, `truncateCommand()`, `isAbsolutePath()`, `getBasename()` in `src/shared/formatters.ts`
+- **Strip ANSI:** `stripAnsiCodes()` in `src/shared/stringUtils.ts`
+- **Shell escape:** `shellEscape()`, `shellEscapeArgs()`, `shellEscapeForDoubleQuotes()` in `src/main/utils/shell-escape.ts`
+- **Platform detection:** `isWindows()`, `isMacOS()`, `isLinux()` in `src/shared/platformDetection.ts`
+- **Agent display name:** `getAgentDisplayName()` in `src/shared/agentMetadata.ts`
+- **SSH remote lookup:** `getSshRemoteById()` in `src/main/stores/getters.ts`
+- **Toast notifications:** `notifyToast({ color, title, message, dismissible? })` in `src/renderer/stores/notificationStore.ts`. Use for async results, errors, and persistent/dismissable messages. Same five-color design language as Center Flash: `green | yellow | orange | red | theme` (default `theme`). Set `dismissible: true` (or pass `--dismissible` from `maestro-cli notify toast`) when the user MUST acknowledge - disables auto-dismiss, requires click to close, and emphasizes the X button. Cannot combine `dismissible` with `duration`/`--timeout`. External CLI cap: 60 seconds (use `--dismissible` for sticky). **Click actions** (data-driven, survive the IPC bridge): pass `clickAction: { kind: 'jump-session', sessionId, tabId? } | { kind: 'open-file', sessionId, path } | { kind: 'open-url', url }` for what should happen when the toast body is clicked, or use the legacy `sessionId`/`tabId` fields for plain agent jump. From the CLI: `--agent` (+ optional `--tab`), `--open-file <path>` (requires `--agent`), `--open-url <url>` (mutually exclusive with `--open-file`). `--action-url` / `--action-label` render an inline link button beneath the message and are independent of the body click. Do NOT pass renderer-only callbacks across the bridge - use `clickAction` instead.
+- **Center flash (rapid acks):** `notifyCenterFlash({ message, color, detail?, duration? })` in `src/renderer/stores/centerFlashStore.ts`; clipboard helper `flashCopiedToClipboard()` in `src/renderer/utils/flashCopiedToClipboard.ts`. Use for momentary "I did the thing" confirmations of user-initiated actions. Five-color design language: `green | yellow | orange | red | theme` - default `theme` matches the active Maestro theme. External integrations can fire flashes via `maestro-cli notify flash <message> --color <color>`. Do NOT roll your own center-screen overlay, useState+setTimeout flash, add a sixth color, or use a Toast for clipboard acks. Single visible flash at a time, themed frosted-glass card mounted once in `App.tsx`. Full decision rules, color palette, and design language: [UI-PATTERNS.md → Center Flash System](docs/agent-guides/UI-PATTERNS.md#center-flash-system-rapid-temporary-notifications).
+- **Session lookup:** `selectActiveSession()`, `selectSessionById()` in `src/renderer/stores/sessionStore.ts`; `useActiveSession()` hook in `src/renderer/hooks/session/useActiveSession.ts`
+- **Session mutation:** `updateSessionWith(sessionId, updater)` in `src/renderer/stores/sessionStore.ts` (do NOT hand-roll `setSessions(prev => prev.map(...))`)
+- **Modal layer:** `useModalLayer()` in `src/renderer/hooks/ui/useModalLayer.ts` (do NOT use manual `registerLayer()` boilerplate)
+- **Focus after render:** `useFocusAfterRender()` in `src/renderer/hooks/utils/useFocusAfterRender.ts` (do NOT use `useEffect + setTimeout(() => ref.focus())`)
+- **Event listeners:** `useEventListener()` in `src/renderer/hooks/utils/useEventListener.ts` (do NOT pair raw `addEventListener`/`removeEventListener` inside useEffect)
+- **Debounce/throttle:** `useDebouncedValue()`, `useDebouncedCallback()`, `useThrottledCallback()` in `src/renderer/hooks/utils/useThrottle.ts` (filename is misleading - all three live here)
+
+If your use case does NOT match an existing utility, prefer extending the canonical file over creating a new one. If you genuinely need something new, add it to the relevant guide in `docs/agent-guides/` so the next person can find it.
+
+The tracker at [DEDUP-TRACKER.md](docs/agent-guides/DEDUP-TRACKER.md) lists all known duplication findings.
 
 ---
 
@@ -26,11 +82,11 @@ Core behaviors for effective collaboration. Failures here cause the most rework.
 
 ### Surface Assumptions Early
 
-Before implementing non-trivial work, explicitly state assumptions. Never silently fill in ambiguous requirements—the most common failure mode is guessing wrong and running with it. Format: "Assumptions: 1) X, 2) Y. Correct me now or I proceed."
+Before implementing non-trivial work, explicitly state assumptions. Never silently fill in ambiguous requirements - the most common failure mode is guessing wrong and running with it. Format: "Assumptions: 1) X, 2) Y. Correct me now or I proceed."
 
 ### Manage Confusion Actively
 
-When encountering inconsistencies, conflicting requirements, or unclear specs: **STOP**. Name the specific confusion, present the tradeoff, and wait for resolution. Bad: silently picking one interpretation. Good: "I see X in file A but Y in file B—which takes precedence?"
+When encountering inconsistencies, conflicting requirements, or unclear specs: **STOP**. Name the specific confusion, present the tradeoff, and wait for resolution. Bad: silently picking one interpretation. Good: "I see X in file A but Y in file B - which takes precedence?"
 
 ### Push Back When Warranted
 
@@ -38,7 +94,7 @@ Not a yes-machine. When an approach has clear problems: point out the issue dire
 
 ### Enforce Simplicity
 
-Natural tendency is to overcomplicate—actively resist. Before finishing: Can this be fewer lines? Are abstractions earning their complexity? Would a senior dev say "why didn't you just..."? Prefer the boring, obvious solution.
+Natural tendency is to overcomplicate - actively resist. Before finishing: Can this be fewer lines? Are abstractions earning their complexity? Would a senior dev say "why didn't you just..."? Prefer the boring, obvious solution.
 
 ### Maintain Scope Discipline
 
@@ -76,6 +132,11 @@ Use "agent" in user-facing language. Reserve "session" for provider-level conver
   - **Command Terminal** - Main window in terminal/shell mode
   - **System Log Viewer** - Special view for system logs (`LogViewer.tsx`)
 
+### Automation
+
+- **Cue** - Event-driven automation system (Maestro Cue), gated as an Encore Feature. Watches for file changes, time intervals, agent completions, GitHub PRs/issues, and pending markdown tasks to trigger automated prompts. Configured via `.maestro/cue.yaml` per project.
+- **Cue Modal** - Dashboard for managing Cue subscriptions and viewing activity (`CueModal.tsx`)
+
 ### Agent States (color-coded)
 
 - **Green** - Ready/idle
@@ -88,6 +149,23 @@ Use "agent" in user-facing language. Reserve "session" for provider-level conver
 ## Code Style
 
 This codebase uses **tabs for indentation**, not spaces. Always match existing file indentation when editing.
+
+### Writing Style: No Em-Dashes or En-Dashes
+
+**NEVER use em-dashes (`—`, U+2014) or en-dashes (`–`, U+2013) anywhere.** This applies to everything you write: user docs (`docs/`), in-app documentation, system prompts (`src/prompts/`), UI copy, code comments, commit messages, PR descriptions, and your own responses. Em-dashes are a tell-tale sign of bot-authored text; humans almost never type them. Use one of these instead, whichever fits the sentence:
+
+- A spaced hyphen (`-`) for an aside or appositive.
+- A comma, colon, or parentheses to set off a clause.
+- Two separate sentences when the clauses stand on their own.
+- A plain hyphen (`-`) for numeric ranges (e.g. `10-20`, not `10–20`).
+
+This is non-negotiable. If you catch an em-dash or en-dash in anything you produce or edit, replace it.
+
+---
+
+## Do Not Edit: `docs/releases.md`
+
+`docs/releases.md` is generated/updated automatically during release pressing. **Never modify it manually** - even when shipping user-facing changes that would seem to warrant a release note entry. The release tooling handles it.
 
 ---
 
@@ -103,6 +181,7 @@ Maestro is an Electron desktop app for managing multiple AI coding assistants si
 | `codex`         | OpenAI Codex  | **Active** |
 | `opencode`      | OpenCode      | **Active** |
 | `factory-droid` | Factory Droid | **Active** |
+| `copilot-cli`   | Copilot-CLI   | **Beta**   |
 | `terminal`      | Terminal      | Internal   |
 
 See [[CLAUDE-AGENTS.md]] for capabilities and integration details.
@@ -135,9 +214,10 @@ src/
 │   ├── preload.ts          # Secure IPC bridge
 │   ├── process-manager.ts  # Process spawning (PTY + child_process)
 │   ├── agent-*.ts          # Agent detection, capabilities, session storage
+│   ├── cue/               # Maestro Cue event-driven automation engine
 │   ├── parsers/            # Per-agent output parsers + error patterns
 │   ├── storage/            # Per-agent session storage implementations
-│   ├── ipc/handlers/       # IPC handler modules (stats, git, playbooks, etc.)
+│   ├── ipc/handlers/       # IPC handler modules (stats, git, playbooks, cue, etc.)
 │   └── utils/              # Utilities (execFile, ssh-spawn-wrapper, etc.)
 │
 ├── renderer/               # React frontend (desktop)
@@ -167,50 +247,63 @@ src/
 
 ## Key Files for Common Tasks
 
-| Task                         | Primary Files                                                                                                                                                           |
-| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Add IPC handler              | `src/main/index.ts`, `src/main/preload.ts`                                                                                                                              |
-| Add UI component             | `src/renderer/components/`                                                                                                                                              |
-| Add web/mobile component     | `src/web/components/`, `src/web/mobile/`                                                                                                                                |
-| Add keyboard shortcut        | `src/renderer/constants/shortcuts.ts`, `App.tsx`                                                                                                                        |
-| Add theme                    | `src/renderer/constants/themes.ts`                                                                                                                                      |
-| Add modal                    | Component + `src/renderer/constants/modalPriorities.ts`                                                                                                                 |
-| Add tab overlay menu         | See Tab Hover Overlay Menu pattern in [[CLAUDE-PATTERNS.md]]                                                                                                            |
-| Add setting                  | `src/shared/settingsMetadata.ts` (metadata), `src/renderer/stores/settingsStore.ts`, `src/main/stores/defaults.ts`                                                      |
-| Add template variable        | `src/shared/templateVariables.ts`, `src/renderer/utils/templateVariables.ts`                                                                                            |
-| Modify system prompts        | `src/prompts/*.md` (wizard, Auto Run, etc.)                                                                                                                             |
-| Add Spec-Kit command         | `src/prompts/speckit/`, `src/main/speckit-manager.ts`                                                                                                                   |
-| Add OpenSpec command         | `src/prompts/openspec/`, `src/main/openspec-manager.ts`                                                                                                                 |
-| Add CLI command              | `src/cli/commands/`, `src/cli/index.ts`                                                                                                                                 |
-| Add new agent                | `src/shared/agentIds.ts`, `src/main/agents/definitions.ts`, `src/main/agents/capabilities.ts`, `src/shared/agentMetadata.ts` — see [AGENT_SUPPORT.md](AGENT_SUPPORT.md) |
-| Add agent output parser      | `src/main/parsers/`, `src/main/parsers/index.ts`                                                                                                                        |
-| Add agent session storage    | `src/main/storage/` (extend `BaseSessionStorage`), `src/main/storage/index.ts`                                                                                          |
-| Add agent error patterns     | `src/main/parsers/error-patterns.ts`                                                                                                                                    |
-| Add agent context window     | `src/shared/agentConstants.ts` (`DEFAULT_CONTEXT_WINDOWS`, `FALLBACK_CONTEXT_WINDOW`)                                                                                   |
-| Add playbook feature         | `src/cli/services/playbooks.ts`                                                                                                                                         |
-| Add marketplace playbook     | `src/main/ipc/handlers/marketplace.ts` (import from GitHub)                                                                                                             |
-| Playbook import/export       | `src/main/ipc/handlers/playbooks.ts` (ZIP handling with assets)                                                                                                         |
-| Modify wizard flow           | `src/renderer/components/Wizard/` (see [[CLAUDE-WIZARD.md]])                                                                                                            |
-| Add tour step                | `src/renderer/components/Wizard/tour/tourSteps.ts`                                                                                                                      |
-| Modify file linking          | `src/renderer/utils/remarkFileLinks.ts` (remark plugin for `[[wiki]]` and path links)                                                                                   |
-| Add documentation page       | `docs/*.md`, `docs/docs.json` (navigation)                                                                                                                              |
-| Add documentation screenshot | `docs/screenshots/` (PNG, kebab-case naming)                                                                                                                            |
-| MCP server integration       | See [MCP Server docs](https://docs.runmaestro.ai/mcp-server)                                                                                                            |
-| Add stats/analytics feature  | `src/main/stats-db.ts`, `src/main/ipc/handlers/stats.ts`                                                                                                                |
-| Add Usage Dashboard chart    | `src/renderer/components/UsageDashboard/`                                                                                                                               |
-| Add Document Graph feature   | `src/renderer/components/DocumentGraph/`, `src/main/ipc/handlers/documentGraph.ts`                                                                                      |
-| Add colorblind palette       | `src/renderer/constants/colorblindPalettes.ts`                                                                                                                          |
-| Add performance metrics      | `src/shared/performance-metrics.ts`                                                                                                                                     |
-| Add power management         | `src/main/power-manager.ts`, `src/main/ipc/handlers/system.ts`                                                                                                          |
-| Spawn agent with SSH support | `src/main/utils/ssh-spawn-wrapper.ts` (required for SSH remote execution)                                                                                               |
-| Modify file preview tabs     | `TabBar.tsx`, `FilePreview.tsx`, `MainPanel.tsx` (see ARCHITECTURE.md → File Preview Tab System)                                                                        |
-| Add Director's Notes feature | `src/renderer/components/DirectorNotes/`, `src/main/ipc/handlers/director-notes.ts`                                                                                     |
-| Add Encore Feature           | `src/renderer/types/index.ts` (flag), `useSettings.ts` (state), `SettingsModal.tsx` (toggle UI), gate in `App.tsx` + keyboard handler                                   |
-| Modify history components    | `src/renderer/components/History/`                                                                                                                                      |
+| Task                          | Primary Files                                                                                                                                                                                                                                                    |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Add IPC handler               | `src/main/index.ts`, `src/main/preload.ts`                                                                                                                                                                                                                       |
+| Add UI component              | `src/renderer/components/`                                                                                                                                                                                                                                       |
+| Add web/mobile component      | `src/web/components/`, `src/web/mobile/`                                                                                                                                                                                                                         |
+| Add keyboard shortcut         | `src/renderer/constants/shortcuts.ts`, `App.tsx`                                                                                                                                                                                                                 |
+| Add theme                     | `src/renderer/constants/themes.ts`                                                                                                                                                                                                                               |
+| Add modal                     | Component + `src/renderer/constants/modalPriorities.ts`                                                                                                                                                                                                          |
+| Add tab overlay menu          | See Tab Hover Overlay Menu pattern in [[CLAUDE-PATTERNS.md]]                                                                                                                                                                                                     |
+| Add setting                   | `src/shared/settingsMetadata.ts` (metadata), `src/renderer/stores/settingsStore.ts`, `src/main/stores/defaults.ts`, AND `src/renderer/components/Settings/searchableSettings.ts` + `data-setting-id` wrapper on rendered control (see [[CLAUDE-PATTERNS.md]] §3) |
+| Add template variable         | `src/shared/templateVariables.ts`, `src/renderer/utils/templateVariables.ts`                                                                                                                                                                                     |
+| Modify system prompts         | `src/prompts/*.md` (wizard, Auto Run, etc.) or edit via **Maestro Prompts** tab in Settings                                                                                                                                                                      |
+| Customize prompts             | Use **Maestro Prompts** tab in Settings, or edit `userData/core-prompts-customizations.json`                                                                                                                                                                     |
+| Add new prompt                | `src/prompts/*.md`, `src/shared/promptDefinitions.ts` (add to `CORE_PROMPTS` array and `PROMPT_IDS`)                                                                                                                                                             |
+| Add Spec-Kit command          | `src/prompts/speckit/`, `src/main/speckit-manager.ts`                                                                                                                                                                                                            |
+| Add OpenSpec command          | `src/prompts/openspec/`, `src/main/openspec-manager.ts`                                                                                                                                                                                                          |
+| Add CLI command               | `src/cli/commands/`, `src/cli/index.ts`                                                                                                                                                                                                                          |
+| Add new agent                 | `src/shared/agentIds.ts`, `src/main/agents/definitions.ts`, `src/main/agents/capabilities.ts`, `src/shared/agentMetadata.ts` - see [AGENT_SUPPORT.md](AGENT_SUPPORT.md)                                                                                          |
+| Add agent output parser       | `src/main/parsers/`, `src/main/parsers/index.ts`                                                                                                                                                                                                                 |
+| Add agent session storage     | `src/main/storage/` (extend `BaseSessionStorage`), `src/main/storage/index.ts`                                                                                                                                                                                   |
+| Add agent error patterns      | `src/main/parsers/error-patterns.ts`                                                                                                                                                                                                                             |
+| Add agent context window      | `src/shared/agentConstants.ts` (`DEFAULT_CONTEXT_WINDOWS`, `FALLBACK_CONTEXT_WINDOW`)                                                                                                                                                                            |
+| Add playbook feature          | `src/cli/services/playbooks.ts`                                                                                                                                                                                                                                  |
+| Add marketplace playbook      | `src/main/ipc/handlers/marketplace.ts` (import from GitHub)                                                                                                                                                                                                      |
+| Playbook import/export        | `src/main/ipc/handlers/playbooks.ts` (ZIP handling with assets)                                                                                                                                                                                                  |
+| Modify wizard flow            | `src/renderer/components/Wizard/` (see [[CLAUDE-WIZARD.md]])                                                                                                                                                                                                     |
+| Add tour step                 | `src/renderer/components/Wizard/tour/tourSteps.ts`                                                                                                                                                                                                               |
+| Modify file linking           | `src/renderer/utils/remarkFileLinks.ts` (remark plugin for `[[wiki]]` and path links)                                                                                                                                                                            |
+| Add documentation page        | `docs/*.md`, `docs/docs.json` (navigation)                                                                                                                                                                                                                       |
+| Add documentation screenshot  | `docs/screenshots/` (PNG, kebab-case naming)                                                                                                                                                                                                                     |
+| MCP server integration        | See [MCP Server docs](https://docs.runmaestro.ai/mcp-server)                                                                                                                                                                                                     |
+| Add stats/analytics feature   | `src/main/stats-db.ts`, `src/main/ipc/handlers/stats.ts`                                                                                                                                                                                                         |
+| Add Usage Dashboard chart     | `src/renderer/components/UsageDashboard/`                                                                                                                                                                                                                        |
+| Add Document Graph feature    | `src/renderer/components/DocumentGraph/`, `src/main/ipc/handlers/documentGraph.ts`                                                                                                                                                                               |
+| Add colorblind palette        | `src/renderer/constants/colorblindPalettes.ts`                                                                                                                                                                                                                   |
+| Add performance metrics       | `src/shared/performance-metrics.ts`                                                                                                                                                                                                                              |
+| Add power management          | `src/main/power-manager.ts`, `src/main/ipc/handlers/system.ts`                                                                                                                                                                                                   |
+| Spawn agent with SSH support  | `src/main/utils/ssh-spawn-wrapper.ts` (required for SSH remote execution)                                                                                                                                                                                        |
+| Modify file preview tabs      | `TabBar.tsx`, `FilePreview.tsx`, `MainPanel.tsx` (see ARCHITECTURE.md → File Preview Tab System)                                                                                                                                                                 |
+| Add Director's Notes feature  | `src/renderer/components/DirectorNotes/`, `src/main/ipc/handlers/director-notes.ts`                                                                                                                                                                              |
+| Add Encore Feature            | `src/renderer/types/index.ts` (flag), `useSettings.ts` (state), `SettingsModal.tsx` (toggle UI), gate in `App.tsx` + keyboard handler                                                                                                                            |
+| Modify history components     | `src/renderer/components/History/`                                                                                                                                                                                                                               |
+| Modify history activity graph | `src/renderer/components/History/ActivityGraph.tsx`, `src/main/utils/history-bucket-cache.ts` (disk-cached aggregates), `src/main/utils/history-bucket-builder.ts`                                                                                               |
+| Add Cue event type            | `src/main/cue/cue-types.ts`, `src/main/cue/cue-engine.ts`                                                                                                                                                                                                        |
+| Add Cue template variable     | `src/shared/templateVariables.ts`, `src/main/cue/cue-executor.ts`                                                                                                                                                                                                |
+| Modify Cue modal              | `src/renderer/components/CueModal.tsx`                                                                                                                                                                                                                           |
+| Configure Cue engine          | `src/main/cue/cue-engine.ts`, `src/main/ipc/handlers/cue.ts`                                                                                                                                                                                                     |
+| Add terminal feature          | `src/renderer/components/XTerminal.tsx`, `src/renderer/components/TerminalView.tsx`                                                                                                                                                                              |
+| Modify terminal tabs          | `src/renderer/utils/terminalTabHelpers.ts`, `src/renderer/stores/tabStore.ts`                                                                                                                                                                                    |
 
 ---
 
 ## Critical Implementation Guidelines
+
+### Click-Driven Modals: Disable Text Selection
+
+If a modal's primary purpose is _clicking_ (buttons, tabs, list rows, cards, graph nodes, filter chips, toggles), put `select-none` on its root container. Native browser drag-to-select highlighting fires accidentally during normal interactions and looks broken. Inputs and textareas keep working - Chromium preserves form-control selection regardless of ancestor `user-select: none`. For any nested subtree that's content-driven (detail views, code editors, log entry bodies, file paths, AI output, error messages), apply `select-text` on its root to opt back in. Skip the rule entirely on modals whose main purpose is reading or editing text (`CueYamlEditor`, `CueHelpModal`, wizard chat shell, System Log Viewer, confirmation dialogs). Decide click- vs content-driven when adding a new modal - retrofitting later means hunting down every nested view that needs `select-text`. Full rationale in [UI-PATTERNS.md → Text Selection in Modals](docs/agent-guides/UI-PATTERNS.md#text-selection-in-modals).
 
 ### Error Handling & Sentry
 
@@ -289,6 +382,18 @@ if (sshStore && session.sshRemoteConfig?.enabled) {
 - The correct agent type is used (don't hardcode `claude-code`)
 - Custom agent configuration (customPath, customArgs, customEnvVars) is passed through
 - Agent's `binaryName` is used for remote execution (not local paths)
+- When the user enabled SSH but the configured remote can't be resolved, **fail
+  loudly** instead of silently running locally - the user explicitly opted into
+  SSH and their prompt shouldn't leak to the local machine (see
+  `sshUnresolvedFailure()` in `src/cli/services/agent-spawner.ts` for the CLI's
+  version of this).
+
+**CLI parity:** The CLI (`src/cli/services/agent-spawner.ts`) spawns agent
+processes for batch/playbook automation and honors the same SSH wrapping and
+agent-config overrides as the desktop app. When adding new CLI spawn sites,
+thread `sessionSshRemoteConfig`, `customArgs`, `customEnvVars`, `customModel`,
+`customEffort` through to `spawnAgent(...)`. The CLI loads `ssh-spawn-wrapper`
+via dynamic `import()` so the SSH chain stays out of the local hot path.
 
 See [[CLAUDE-PATTERNS.md]] for detailed SSH patterns.
 

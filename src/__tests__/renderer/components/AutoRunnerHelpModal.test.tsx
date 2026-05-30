@@ -8,10 +8,11 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup } from '@testing-library/react';
-import { AutoRunnerHelpModal } from '../../../renderer/components/AutoRunnerHelpModal';
+import { AutoRunnerHelpModal } from '../../../renderer/components/AutoRun/AutoRunnerHelpModal';
 import type { Theme } from '../../../renderer/types';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 
+import { mockTheme } from '../../helpers/mockTheme';
 // Mock the layer stack context
 const mockRegisterLayer = vi.fn(() => 'layer-123');
 const mockUnregisterLayer = vi.fn();
@@ -42,26 +43,6 @@ vi.mock('../../../renderer/utils/shortcutFormatter', () => ({
 }));
 
 // Sample theme for testing
-const mockTheme: Theme = {
-	id: 'test-dark',
-	name: 'Test Dark',
-	mode: 'dark',
-	colors: {
-		bgMain: '#1a1a1a',
-		bgSidebar: '#252525',
-		bgActivity: '#2d2d2d',
-		border: '#444444',
-		textMain: '#ffffff',
-		textDim: '#888888',
-		accent: '#007acc',
-		error: '#ff4444',
-		success: '#44ff44',
-		warning: '#ffaa00',
-		cursor: '#ffffff',
-		selection: '#264f78',
-		terminalBackground: '#000000',
-	},
-};
 
 describe('AutoRunnerHelpModal', () => {
 	const mockOnClose = vi.fn();
@@ -169,11 +150,34 @@ describe('AutoRunnerHelpModal', () => {
 			expect(screen.getByText(/continuously cycle through the document queue/)).toBeInTheDocument();
 		});
 
-		it('should render Playbooks section', () => {
+		it('should render Playbooks overview section', () => {
 			// Use getAllByText since "Playbooks" appears multiple times (heading + reference)
 			const playbooksElements = screen.getAllByText(/Playbooks/);
 			expect(playbooksElements.length).toBeGreaterThan(0);
-			expect(screen.getByText(/Save your batch run configurations/)).toBeInTheDocument();
+			expect(screen.getByText(/A single Auto Run document handles one phase/)).toBeInTheDocument();
+		});
+
+		it('should render Creating Playbooks section', () => {
+			expect(screen.getByText('Creating Playbooks')).toBeInTheDocument();
+			expect(screen.getByText(/There are several ways to create playbooks/)).toBeInTheDocument();
+		});
+
+		it('should render playbook creation methods', () => {
+			// Wizard
+			expect(
+				screen.getByText(/guided conversation that discovers your project/)
+			).toBeInTheDocument();
+			// Slash commands
+			expect(screen.getByText('/speckit')).toBeInTheDocument();
+			expect(screen.getByText('/openspec')).toBeInTheDocument();
+			expect(screen.getByText('/bmad')).toBeInTheDocument();
+			// Manual
+			expect(screen.getByText(/Write markdown documents directly/)).toBeInTheDocument();
+		});
+
+		it('should render Saving & Sharing Playbooks section', () => {
+			expect(screen.getByText('Saving & Sharing Playbooks')).toBeInTheDocument();
+			expect(screen.getByText(/Save your current batch configuration/)).toBeInTheDocument();
 		});
 
 		it('should render History & Tracking section', () => {
@@ -198,6 +202,12 @@ describe('AutoRunnerHelpModal', () => {
 		it('should render Stopping Auto Run section', () => {
 			expect(screen.getByText('Stopping Auto Run')).toBeInTheDocument();
 			expect(screen.getByText(/to gracefully stop/)).toBeInTheDocument();
+		});
+
+		it('should render Halt Marker section', () => {
+			expect(screen.getByText('Halt Marker (Agent Early Exit)')).toBeInTheDocument();
+			expect(screen.getByText('<!-- maestro:halt: brief reason here -->')).toBeInTheDocument();
+			expect(screen.getByText(/A stale halt marker left in a document/)).toBeInTheDocument();
 		});
 
 		it('should render Keyboard Shortcuts section', () => {

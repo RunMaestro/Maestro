@@ -10,27 +10,7 @@ import { RenameTabModal } from '../../../renderer/components/RenameTabModal';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 import type { Theme } from '../../../renderer/types';
 
-// Create a mock theme for testing
-const createMockTheme = (): Theme => ({
-	id: 'test-theme',
-	name: 'Test Theme',
-	mode: 'dark',
-	colors: {
-		bgMain: '#1a1a1a',
-		bgPanel: '#252525',
-		bgSidebar: '#202020',
-		bgActivity: '#2d2d2d',
-		textMain: '#ffffff',
-		textDim: '#888888',
-		accent: '#0066ff',
-		accentForeground: '#ffffff',
-		border: '#333333',
-		highlight: '#0066ff33',
-		success: '#00aa00',
-		warning: '#ffaa00',
-		error: '#ff0000',
-	},
-});
+import { createMockTheme } from '../../helpers/mockTheme';
 
 // Wrapper component to provide LayerStackContext
 const TestWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => (
@@ -562,6 +542,183 @@ describe('RenameTabModal', () => {
 			fireEvent.keyDown(input, { key: 'a' });
 
 			expect(mockOnRename).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('Auto Button', () => {
+		it('does not render Auto button when onAutoName is not provided', () => {
+			render(
+				<TestWrapper>
+					<RenameTabModal
+						theme={mockTheme}
+						initialName="My Tab"
+						onClose={mockOnClose}
+						onRename={mockOnRename}
+					/>
+				</TestWrapper>
+			);
+
+			expect(screen.queryByText('Auto')).not.toBeInTheDocument();
+		});
+
+		it('does not render Auto button when hasLogs is false', () => {
+			render(
+				<TestWrapper>
+					<RenameTabModal
+						theme={mockTheme}
+						initialName="My Tab"
+						onClose={mockOnClose}
+						onRename={mockOnRename}
+						onAutoName={vi.fn()}
+						hasLogs={false}
+					/>
+				</TestWrapper>
+			);
+
+			expect(screen.queryByText('Auto')).not.toBeInTheDocument();
+		});
+
+		it('renders Auto button when onAutoName and hasLogs are provided', () => {
+			render(
+				<TestWrapper>
+					<RenameTabModal
+						theme={mockTheme}
+						initialName="My Tab"
+						onClose={mockOnClose}
+						onRename={mockOnRename}
+						onAutoName={vi.fn()}
+						hasLogs={true}
+					/>
+				</TestWrapper>
+			);
+
+			expect(screen.getByText('Auto')).toBeInTheDocument();
+		});
+
+		it('renders Auto button tooltip with renderer-safe shortcut formatting', () => {
+			render(
+				<TestWrapper>
+					<RenameTabModal
+						theme={mockTheme}
+						initialName="My Tab"
+						onClose={mockOnClose}
+						onRename={mockOnRename}
+						onAutoName={vi.fn()}
+						hasLogs={true}
+					/>
+				</TestWrapper>
+			);
+
+			expect(screen.getByRole('button', { name: 'Auto' })).toHaveAttribute(
+				'title',
+				'Auto-rename (Ctrl+Shift+Enter)'
+			);
+		});
+
+		it('calls onAutoName when Auto button is clicked', () => {
+			const mockOnAutoName = vi.fn();
+
+			render(
+				<TestWrapper>
+					<RenameTabModal
+						theme={mockTheme}
+						initialName="My Tab"
+						onClose={mockOnClose}
+						onRename={mockOnRename}
+						onAutoName={mockOnAutoName}
+						hasLogs={true}
+					/>
+				</TestWrapper>
+			);
+
+			fireEvent.click(screen.getByText('Auto'));
+			expect(mockOnAutoName).toHaveBeenCalledTimes(1);
+		});
+
+		it('triggers onAutoName on Cmd+Shift+Enter when Auto button is shown', () => {
+			const mockOnAutoName = vi.fn();
+
+			render(
+				<TestWrapper>
+					<RenameTabModal
+						theme={mockTheme}
+						initialName="My Tab"
+						onClose={mockOnClose}
+						onRename={mockOnRename}
+						onAutoName={mockOnAutoName}
+						hasLogs={true}
+					/>
+				</TestWrapper>
+			);
+
+			const input = screen.getByRole('textbox');
+			fireEvent.keyDown(input, { key: 'Enter', shiftKey: true, metaKey: true });
+
+			expect(mockOnAutoName).toHaveBeenCalledTimes(1);
+			expect(mockOnRename).not.toHaveBeenCalled();
+		});
+
+		it('triggers onAutoName on Ctrl+Shift+Enter when Auto button is shown', () => {
+			const mockOnAutoName = vi.fn();
+
+			render(
+				<TestWrapper>
+					<RenameTabModal
+						theme={mockTheme}
+						initialName="My Tab"
+						onClose={mockOnClose}
+						onRename={mockOnRename}
+						onAutoName={mockOnAutoName}
+						hasLogs={true}
+					/>
+				</TestWrapper>
+			);
+
+			const input = screen.getByRole('textbox');
+			fireEvent.keyDown(input, { key: 'Enter', shiftKey: true, ctrlKey: true });
+
+			expect(mockOnAutoName).toHaveBeenCalledTimes(1);
+			expect(mockOnRename).not.toHaveBeenCalled();
+		});
+
+		it('does not trigger onAutoName via Cmd+Shift+Enter when Auto button is hidden', () => {
+			const mockOnAutoName = vi.fn();
+
+			render(
+				<TestWrapper>
+					<RenameTabModal
+						theme={mockTheme}
+						initialName="My Tab"
+						onClose={mockOnClose}
+						onRename={mockOnRename}
+						onAutoName={mockOnAutoName}
+						hasLogs={false}
+					/>
+				</TestWrapper>
+			);
+
+			const input = screen.getByRole('textbox');
+			fireEvent.keyDown(input, { key: 'Enter', shiftKey: true, metaKey: true });
+
+			expect(mockOnAutoName).not.toHaveBeenCalled();
+		});
+
+		it('Auto button is styled with accent color', () => {
+			render(
+				<TestWrapper>
+					<RenameTabModal
+						theme={mockTheme}
+						initialName="My Tab"
+						onClose={mockOnClose}
+						onRename={mockOnRename}
+						onAutoName={vi.fn()}
+						hasLogs={true}
+					/>
+				</TestWrapper>
+			);
+
+			const autoButton = screen.getByText('Auto');
+			expect(autoButton).toHaveStyle({ color: mockTheme.colors.accent });
 		});
 	});
 });

@@ -20,8 +20,8 @@
 // Pre-compiled Regex Patterns (module-level for performance)
 // ============================================================================
 
-/** Match AI tab session IDs: `{sessionId}-ai-{tabId}` */
-export const REGEX_AI_TAB = /^(.+)-ai-(.+)$/;
+/** Match AI tab session IDs: `{sessionId}-ai-{tabId}` (strips optional `-fp-{timestamp}` suffix from forced parallel) */
+export const REGEX_AI_TAB = /^(.+)-ai-(.+?)(?:-fp-\d+)?$/;
 
 /** Match synopsis session IDs: `{sessionId}-synopsis-{timestamp}` */
 export const REGEX_SYNOPSIS = /^(.+)-synopsis-\d+$/;

@@ -133,16 +133,205 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: false,
 		category: 'appearance',
 	},
+	showAgentName: {
+		description: 'Show the agent name in the main header.',
+		type: 'boolean',
+		default: true,
+		category: 'appearance',
+	},
+	showSessionIdPill: {
+		description:
+			'Show the provider session ID pill (short hash, e.g. "B778BF42") in the main header.',
+		type: 'boolean',
+		default: false,
+		category: 'appearance',
+	},
+	showSessionCostPill: {
+		description: 'Show the per-session running cost pill (e.g. "$21.33") in the main header.',
+		type: 'boolean',
+		default: true,
+		category: 'appearance',
+	},
+	showWorktreePill: {
+		description: 'Show the WORKTREE badge next to worktree child agents in the left panel.',
+		type: 'boolean',
+		default: false,
+		category: 'appearance',
+	},
+	showWorktreeBranchName: {
+		description: 'Show the branch name beneath worktree child agents in the left panel.',
+		type: 'boolean',
+		default: false,
+		category: 'appearance',
+	},
+	showStarredSessionsSection: {
+		description:
+			'Show a "Starred Sessions" section at the top of the left side bar listing every starred AI tab across all agents.',
+		type: 'boolean',
+		default: true,
+		category: 'appearance',
+	},
+	showLeftPanelGroupMemberCount: {
+		description:
+			'Show a member count in parentheses after each group name in the left side bar (e.g. "UNGROUPED AGENTS (24)").',
+		type: 'boolean',
+		default: false,
+		category: 'appearance',
+	},
+	leftPanelCollapsedPillsPerRow: {
+		description:
+			'Maximum number of collapsed-group activity pills per row in the left side bar before wrapping to a new row. Range: 5-50.',
+		type: 'number',
+		default: 20,
+		category: 'appearance',
+	},
+	showLeftPanelLocationPills: {
+		description:
+			'Show the REMOTE / LOCAL / GIT location pills next to agents in the left side bar.',
+		type: 'boolean',
+		default: true,
+		category: 'appearance',
+	},
+	showLeftPanelGitIndicator: {
+		description:
+			'Show the git change indicator (branch icon + dirty file count) next to agents in the left side bar.',
+		type: 'boolean',
+		default: true,
+		category: 'appearance',
+	},
+	showLeftPanelCueIndicator: {
+		description:
+			'Show the Maestro Cue activity indicator (lightning bolt) next to agents with active Cue subscriptions in the left side bar. Hidden when the Maestro Cue Encore Feature is disabled.',
+		type: 'boolean',
+		default: true,
+		category: 'appearance',
+	},
+	showLeftPanelStartupCommandIndicator: {
+		description:
+			'Show the terminal prompt glyph (>_) next to agents that have at least one terminal tab with a saved startup command.',
+		type: 'boolean',
+		default: true,
+		category: 'appearance',
+	},
+	fileEditWordWrap: {
+		description:
+			'Wrap long lines in the file editor at whitespace boundaries instead of scrolling horizontally.',
+		type: 'boolean',
+		default: true,
+		category: 'appearance',
+	},
+	fileEditShowLineNumbers: {
+		description: 'Show the line-number gutter in the file editor.',
+		type: 'boolean',
+		default: true,
+		category: 'appearance',
+	},
+	filePreviewToolbarVisibility: {
+		description:
+			'Per-button visibility map for the file preview / edit toolbar. Keys: save, wordWrap, remoteImages, htmlRender, previewTier, editToggle, copyContent, publishGist, documentGraph, openInBrowser, openInDefault, copyPath.',
+		type: 'object',
+		default: {
+			save: true,
+			wordWrap: true,
+			remoteImages: true,
+			htmlRender: true,
+			previewTier: true,
+			editToggle: true,
+			copyContent: true,
+			publishGist: true,
+			documentGraph: true,
+			openInBrowser: true,
+			openInDefault: true,
+			copyPath: true,
+		},
+		category: 'appearance',
+	},
 	fileExplorerIconTheme: {
 		description: 'Icon theme for the file explorer sidebar. Options: default, material, or none.',
 		type: 'string',
 		default: 'default',
 		category: 'appearance',
 	},
+	toastWidth: {
+		description: 'Width of toast notifications. Options: small (default), medium, large.',
+		type: 'string',
+		default: 'small',
+		category: 'appearance',
+	},
 	disableConfetti: {
 		description: 'Disable confetti animations for badge unlocks and achievements.',
 		type: 'boolean',
 		default: false,
+		category: 'appearance',
+	},
+	annotatorPenColor: {
+		description:
+			'Default pen color (hex string) for the image annotator. Seeds from theme accent on first run; user-selected color persists thereafter.',
+		type: 'string',
+		default: '#9146FF',
+		category: 'appearance',
+	},
+	annotatorPenSize: {
+		description: 'Default pen size (in pixels) for the image annotator stroke.',
+		type: 'number',
+		default: 10,
+		category: 'appearance',
+	},
+	annotatorThinning: {
+		description:
+			'Image annotator stroke thinning (0–1). Controls how much pressure affects stroke width.',
+		type: 'number',
+		default: 0.5,
+		category: 'appearance',
+	},
+	annotatorSmoothing: {
+		description: 'Image annotator stroke smoothing (0–1). Higher values produce smoother curves.',
+		type: 'number',
+		default: 0.5,
+		category: 'appearance',
+	},
+	annotatorStreamline: {
+		description:
+			'Image annotator stroke streamline (0–1). Higher values dampen pointer jitter for steadier lines.',
+		type: 'number',
+		default: 0.5,
+		category: 'appearance',
+	},
+	annotatorTaperStart: {
+		description: 'Image annotator taper distance at the start of a stroke (in pixels).',
+		type: 'number',
+		default: 0,
+		category: 'appearance',
+	},
+	annotatorTaperEnd: {
+		description: 'Image annotator taper distance at the end of a stroke (in pixels).',
+		type: 'number',
+		default: 0,
+		category: 'appearance',
+	},
+	annotatorTextColor: {
+		description: 'Default text color (hex string) for image annotator text labels.',
+		type: 'string',
+		default: '#9146FF',
+		category: 'appearance',
+	},
+	annotatorTextSize: {
+		description: 'Default text size (in pixels) for image annotator text labels.',
+		type: 'number',
+		default: 24,
+		category: 'appearance',
+	},
+	annotatorTextFont: {
+		description: 'Default font family for image annotator text labels (CSS font-family string).',
+		type: 'string',
+		default: 'sans-serif',
+		category: 'appearance',
+	},
+	annotatorTextBgColor: {
+		description:
+			'Default background color (hex string) behind image annotator text labels. Empty string means no background.',
+		type: 'string',
+		default: '',
 		category: 'appearance',
 	},
 
@@ -159,17 +348,25 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: '',
 		category: 'editor',
 	},
+	globalShowHotkey: {
+		description:
+			'System-wide hotkey to summon (show + focus) the Maestro window from any app. Empty array disables it. Stored as a key array (e.g. ["Meta","Shift","M"]); Meta maps to Cmd on macOS / Win on Windows.',
+		type: 'array',
+		default: [],
+		category: 'accessibility',
+	},
 	enterToSendAI: {
 		description:
 			'When true, pressing Enter sends messages in AI mode. When false, Ctrl+Enter sends.',
 		type: 'boolean',
-		default: false,
+		default: true,
 		category: 'editor',
 	},
-	enterToSendTerminal: {
-		description: 'When true, pressing Enter sends commands in terminal mode.',
+	enterToSendAIExpanded: {
+		description:
+			'When true, pressing Enter sends messages in the expanded Prompt Composer. When false, Ctrl+Enter sends.',
 		type: 'boolean',
-		default: true,
+		default: false,
 		category: 'editor',
 	},
 	defaultSaveToHistory: {
@@ -241,16 +438,38 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: 100,
 		category: 'editor',
 	},
-	autoScrollAiMode: {
-		description: 'Automatically scroll to the bottom when new AI output arrives.',
-		type: 'boolean',
-		default: false,
-		category: 'editor',
-	},
 	automaticTabNamingEnabled: {
 		description: 'Automatically name tabs based on the first message or task.',
 		type: 'boolean',
 		default: true,
+		category: 'editor',
+	},
+	newTabPlacement: {
+		description:
+			'Where new AI tabs are inserted in the tab bar. "end" appends to the rightmost spot; "after-current" inserts directly to the right of the active tab.',
+		type: 'string',
+		default: 'end',
+		category: 'editor',
+	},
+	newBrowserTabPlacement: {
+		description:
+			'Where new browser tabs are inserted in the tab bar. "end" appends to the rightmost spot; "after-current" inserts directly to the right of the active tab.',
+		type: 'string',
+		default: 'after-current',
+		category: 'editor',
+	},
+	newTerminalPlacement: {
+		description:
+			'Where new terminal tabs are inserted in the tab bar. "end" appends to the rightmost spot; "after-current" inserts directly to the right of the active tab.',
+		type: 'string',
+		default: 'after-current',
+		category: 'editor',
+	},
+	openedFilePlacement: {
+		description:
+			'Where opened file preview tabs are inserted in the tab bar. "end" appends to the rightmost spot; "after-current" inserts directly to the right of the active tab.',
+		type: 'string',
+		default: 'after-current',
 		category: 'editor',
 	},
 	shortcuts: {
@@ -290,6 +509,13 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		type: 'string',
 		default: '',
 		sensitive: true,
+		category: 'advanced',
+	},
+	allowConcurrentSend: {
+		description:
+			'Allow `maestro-cli send --live --force` to dispatch prompts to an agent whose active tab is already busy. Enables concurrent writes to a single agent; off by default because it can interleave responses.',
+		type: 'boolean',
+		default: false,
 		category: 'advanced',
 	},
 
@@ -343,7 +569,7 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 	maxOutputLines: {
 		description: 'Maximum lines of agent output displayed per message before truncation.',
 		type: 'number',
-		default: 25,
+		default: Infinity,
 		category: 'logging',
 	},
 	logViewerSelectedLevels: {
@@ -378,10 +604,25 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: 20,
 		category: 'notifications',
 	},
+	idleNotificationEnabled: {
+		description:
+			'Run a custom command when all agents and Auto Runs finish and Maestro becomes idle.',
+		type: 'boolean',
+		default: false,
+		category: 'notifications',
+	},
+	idleNotificationCommand: {
+		description:
+			'Shell command to execute when Maestro becomes idle (no agents or Auto Runs running).',
+		type: 'string',
+		default: 'say Maestro is idle',
+		category: 'notifications',
+	},
 
 	// --- Updates & Crash Reporting ---
 	checkForUpdatesOnStartup: {
-		description: 'Automatically check for Maestro updates on launch.',
+		description:
+			'Automatically check for Maestro updates on launch and once per day while running.',
 		type: 'boolean',
 		default: true,
 		category: 'updates',
@@ -478,6 +719,52 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		category: 'file-indexing',
 	},
 
+	// --- Auto Run ---
+	autoRunDisabled: {
+		description:
+			'Globally disable Auto Run. When true, prevents all Auto Run operations from starting.',
+		type: 'boolean',
+		default: false,
+		category: 'advanced',
+	},
+	dotfilesToggleHidden: {
+		description:
+			'Hide the ".files" (show/hide dotfiles) button in the file explorer toolbar. Intended for corporate/managed installs where dotfiles should remain hidden.',
+		type: 'boolean',
+		default: false,
+		category: 'advanced',
+	},
+	autoRunInactivityTimeoutMin: {
+		description:
+			'Minutes of no agent output before the Auto Run watchdog considers a task stalled and force-kills it. Set to 0 to disable the watchdog (unlimited).',
+		type: 'number',
+		default: 240,
+		category: 'advanced',
+	},
+
+	// --- Built-in AI Command Bundles ---
+	speckitEnabled: {
+		description:
+			'Show bundled Spec Kit slash commands in the AI command autocomplete. Disable to remove them from the slash command picker.',
+		type: 'boolean',
+		default: true,
+		category: 'integrations',
+	},
+	openspecEnabled: {
+		description:
+			'Show bundled OpenSpec slash commands in the AI command autocomplete. Disable to remove them from the slash command picker.',
+		type: 'boolean',
+		default: true,
+		category: 'integrations',
+	},
+	bmadEnabled: {
+		description:
+			'Show bundled BMAD slash commands in the AI command autocomplete. Disable to remove them from the slash command picker.',
+		type: 'boolean',
+		default: true,
+		category: 'integrations',
+	},
+
 	// --- Stats & Tracking ---
 	statsCollectionEnabled: {
 		description: 'Enable collection of usage statistics shown in the Usage Dashboard.',
@@ -556,9 +843,10 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		category: 'document-graph',
 	},
 	documentGraphLayoutType: {
-		description: 'Layout algorithm for the document graph. Values: mindmap, radial, force.',
+		description:
+			'Layout algorithm for the document graph. Values: mindmap, radial, hierarchical, force.',
 		type: 'string',
-		default: 'mindmap',
+		default: 'hierarchical',
 		category: 'document-graph',
 	},
 
@@ -595,6 +883,12 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: false,
 		category: 'onboarding',
 	},
+	groupChatsExpanded: {
+		description: 'Whether the "Group Chats" section in the left bar is expanded.',
+		type: 'boolean',
+		default: true,
+		category: 'onboarding',
+	},
 
 	// --- Integrations ---
 	wakatimeEnabled: {
@@ -617,11 +911,33 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		category: 'integrations',
 	},
 
+	// --- Browser ---
+	useSystemBrowser: {
+		description:
+			'Controls the default browser for clicking links. Ctrl+click shows a context menu to choose the browser.',
+		type: 'boolean',
+		default: false,
+		category: 'editor',
+	},
+	browserHomeUrl: {
+		description: 'The default URL loaded when opening a new browser tab.',
+		type: 'string',
+		default: 'https://runmaestro.ai/#leaderboard',
+		category: 'editor',
+	},
+	htmlDoubleClickOpensInBrowser: {
+		description:
+			'When enabled, double-clicking an HTML file in the file explorer opens it in the Maestro browser instead of the file preview.',
+		type: 'boolean',
+		default: false,
+		category: 'editor',
+	},
+
 	// --- Encore Features (experimental) ---
 	encoreFeatures: {
 		description: 'Feature flags for experimental/encore features. Object with boolean flags.',
 		type: 'object',
-		default: { directorNotes: false },
+		default: { directorNotes: false, usageStats: true, symphony: true, maestroCue: false },
 		category: 'advanced',
 	},
 	directorNotesSettings: {
@@ -642,6 +958,13 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		description: 'Suppress the Windows experimental support warning dialog.',
 		type: 'boolean',
 		default: false,
+		category: 'internal',
+	},
+	lastSelectedPromptId: {
+		description:
+			'ID of the prompt most recently edited in Settings → Maestro Prompts. Restored on reopen.',
+		type: 'string',
+		default: null,
 		category: 'internal',
 	},
 };

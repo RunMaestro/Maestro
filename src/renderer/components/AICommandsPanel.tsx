@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 import type { Theme, CustomAICommand } from '../types';
 import { TEMPLATE_VARIABLES_GENERAL } from '../utils/templateVariables';
-import { useTemplateAutocomplete } from '../hooks';
+import { useSaveShortcut, useTemplateAutocomplete } from '../hooks';
 import { TemplateAutocompleteDropdown } from './TemplateAutocompleteDropdown';
 
 interface AICommandsPanelProps {
@@ -154,6 +154,15 @@ export function AICommandsPanel({
 		setIsCreating(false);
 	};
 
+	const isCreateValid = Boolean(newCommand.command && newCommand.description && newCommand.prompt);
+	useSaveShortcut(
+		() => {
+			if (editingCommand) handleSaveEdit();
+			else if (isCreating && isCreateValid) handleCreate();
+		},
+		Boolean(editingCommand) || (isCreating && isCreateValid)
+	);
+
 	return (
 		<div className="space-y-4">
 			<div>
@@ -162,8 +171,8 @@ export function AICommandsPanel({
 					Custom AI Commands
 				</label>
 				<p className="text-xs opacity-50" style={{ color: theme.colors.textDim }}>
-					Slash commands available in AI terminal mode. Built-in commands can be edited but not
-					deleted.
+					Slash commands are available in 1-1 AI chats. Built-in commands can be edited but not
+					deleted. Template variables are available.
 				</p>
 			</div>
 

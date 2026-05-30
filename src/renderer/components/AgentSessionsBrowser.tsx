@@ -25,12 +25,15 @@ import {
 	ArrowUpFromLine,
 	Edit3,
 } from 'lucide-react';
+import { GhostIconButton } from './ui/GhostIconButton';
+import { Spinner } from './ui/Spinner';
+import { EmptyStatePlaceholder } from './ui/EmptyStatePlaceholder';
 import type { Theme, Session, LogEntry, UsageStats } from '../types';
-import { useLayerStack } from '../contexts/LayerStackContext';
+import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { SessionActivityGraph, type ActivityEntry } from './SessionActivityGraph';
 import { SessionListItem } from './SessionListItem';
-import { ToolCallCard, getToolName } from './ToolCallCard';
+import { ToolCallCard } from './ToolCallCard';
 import { formatSize, formatNumber, formatTokens, formatRelativeTime } from '../utils/formatters';
 import {
 	useSessionViewer,
@@ -40,6 +43,7 @@ import {
 	type ClaudeSession,
 } from '../hooks';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
+import { logger } from '../utils/logger';
 
 type SearchMode = 'title' | 'user' | 'assistant' | 'all';
 
@@ -176,14 +180,11 @@ export function AgentSessionsBrowser({
 	const selectedItemRef = useRef<HTMLButtonElement>(null);
 	const searchModeDropdownRef = useRef<HTMLDivElement>(null);
 	const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-	const layerIdRef = useRef<string>();
 	const onCloseRef = useRef(onClose);
 	onCloseRef.current = onClose;
 	const viewingSessionRef = useRef(viewingSession);
 	viewingSessionRef.current = viewingSession;
 	const autoJumpedRef = useRef<string | null>(null); // Track which session we've auto-jumped to
-
-	const { registerLayer, unregisterLayer, updateLayerHandler } = useLayerStack();
 
 	const handleSearchChange = useCallback((value: string) => {
 		setSearch(value);
@@ -196,43 +197,19 @@ export function AgentSessionsBrowser({
 	}, [clearViewingSession]);
 
 	// Register layer on mount for Escape key handling
-	useEffect(() => {
-		layerIdRef.current = registerLayer({
-			type: 'modal',
-			priority: MODAL_PRIORITIES.AGENT_SESSIONS,
-			blocksLowerLayers: true,
-			capturesFocus: true,
-			focusTrap: 'lenient',
-			ariaLabel: 'Agent Sessions Browser',
-			onEscape: () => {
-				// If viewing a session detail, go back to list; otherwise close the panel
-				if (viewingSessionRef.current) {
-					clearViewingSession();
-				} else {
-					onCloseRef.current();
-				}
-			},
-		});
-
-		return () => {
-			if (layerIdRef.current) {
-				unregisterLayer(layerIdRef.current);
+	useModalLayer(
+		MODAL_PRIORITIES.AGENT_SESSIONS,
+		'Agent Sessions Browser',
+		() => {
+			// If viewing a session detail, go back to list; otherwise close the panel
+			if (viewingSessionRef.current) {
+				clearViewingSession();
+			} else {
+				onCloseRef.current();
 			}
-		};
-	}, [registerLayer, unregisterLayer, clearViewingSession]);
-
-	// Update handler when viewingSession changes
-	useEffect(() => {
-		if (layerIdRef.current) {
-			updateLayerHandler(layerIdRef.current, () => {
-				if (viewingSessionRef.current) {
-					clearViewingSession();
-				} else {
-					onCloseRef.current();
-				}
-			});
-		}
-	}, [viewingSession, updateLayerHandler, clearViewingSession]);
+		},
+		{ focusTrap: 'lenient' }
+	);
 
 	// Restore focus and scroll position when returning from detail view to list view
 	const prevViewingSessionRef = useRef<ClaudeSession | null>(null);
@@ -418,7 +395,7 @@ export function AgentSessionsBrowser({
 				// Update the tab if this session is open as a tab
 				onUpdateTab?.(sessionId, { name: trimmedName || null });
 			} catch (error) {
-				console.error('Failed to rename session:', error);
+				logger.error('Failed to rename session:', undefined, error);
 			}
 
 			cancelRename();
@@ -506,7 +483,7 @@ export function AgentSessionsBrowser({
 				);
 				setSearchResults(results);
 			} catch (error) {
-				console.error('Search failed:', error);
+				logger.error('Search failed:', undefined, error);
 				setSearchResults([]);
 			} finally {
 				setIsSearching(false);
@@ -606,12 +583,16 @@ export function AgentSessionsBrowser({
 	const handleResume = useCallback(() => {
 		if (viewingSession) {
 			// Convert messages to LogEntry format for AI terminal
-			const logEntries: LogEntry[] = messages.map((msg, idx) => ({
-				id: msg.uuid || `${viewingSession.sessionId}-${idx}`,
-				timestamp: new Date(msg.timestamp).getTime(),
-				source: msg.type === 'user' ? ('user' as const) : ('stdout' as const),
-				text: msg.content || (msg.toolUse ? `[Tool: ${getToolName(msg.toolUse)}]` : '[No content]'),
-			}));
+			// Skip tool call messages — matching live session behavior where tool entries
+			// are only added to logs when showThinking is on (restored tabs start with it off)
+			const logEntries: LogEntry[] = messages
+				.filter((msg) => !(msg.toolUse && Array.isArray(msg.toolUse) && msg.toolUse.length > 0))
+				.map((msg, idx) => ({
+					id: msg.uuid || `${viewingSession.sessionId}-${idx}`,
+					timestamp: new Date(msg.timestamp).getTime(),
+					source: msg.type === 'user' ? ('user' as const) : ('stdout' as const),
+					text: msg.content || '[No content]',
+				}));
 			// Pass session name and starred status for the new tab
 			const isStarred = starredSessions.has(viewingSession.sessionId);
 			// Build usageStats from session metadata so restored tabs show context/cost
@@ -722,17 +703,18 @@ export function AgentSessionsBrowser({
 				<div className="flex items-center gap-4">
 					{viewingSession ? (
 						<>
-							<button
+							<GhostIconButton
 								onClick={clearViewingSession}
-								className="p-1.5 rounded hover:bg-white/10 transition-colors"
-								style={{ color: theme.colors.textDim }}
+								padding="p-1.5"
+								color={theme.colors.textDim}
+								ariaLabel="Go back"
 							>
 								<ChevronLeft className="w-5 h-5" />
-							</button>
+							</GhostIconButton>
 							{/* Star button for detail view */}
-							<button
+							<GhostIconButton
 								onClick={(e) => toggleStar(viewingSession.sessionId, e)}
-								className="p-1.5 rounded hover:bg-white/10 transition-colors"
+								padding="p-1.5"
 								title={
 									starredSessions.has(viewingSession.sessionId)
 										? 'Remove from favorites'
@@ -750,7 +732,7 @@ export function AgentSessionsBrowser({
 											: 'transparent',
 									}}
 								/>
-							</button>
+							</GhostIconButton>
 							<div className="flex flex-col min-w-0">
 								{/* Session name with edit button */}
 								{renamingSessionId === viewingSession.sessionId ? (
@@ -788,18 +770,18 @@ export function AgentSessionsBrowser({
 										>
 											{viewingSession.sessionName}
 										</span>
-										<button
+										<GhostIconButton
 											onClick={(e) => {
 												e.stopPropagation();
 												setRenamingSessionId(viewingSession.sessionId);
 												setRenameValue(viewingSession.sessionName || '');
 												setTimeout(() => renameInputRef.current?.focus(), 50);
 											}}
-											className="p-0.5 rounded hover:bg-white/10 transition-colors"
+											padding="p-0.5"
 											title="Rename session"
 										>
 											<Edit3 className="w-3 h-3" style={{ color: theme.colors.accent }} />
-										</button>
+										</GhostIconButton>
 									</div>
 								) : (
 									<div className="flex items-center gap-1.5">
@@ -810,18 +792,18 @@ export function AgentSessionsBrowser({
 										>
 											{viewingSession.sessionId.toUpperCase()}
 										</span>
-										<button
+										<GhostIconButton
 											onClick={(e) => {
 												e.stopPropagation();
 												setRenamingSessionId(viewingSession.sessionId);
 												setRenameValue('');
 												setTimeout(() => renameInputRef.current?.focus(), 50);
 											}}
-											className="p-0.5 rounded hover:bg-white/10 transition-colors"
+											padding="p-0.5"
 											title="Add session name"
 										>
 											<Edit3 className="w-3 h-3" style={{ color: theme.colors.textDim }} />
-										</button>
+										</GhostIconButton>
 									</div>
 								)}
 								{/* Show UUID underneath the custom name */}
@@ -1177,7 +1159,7 @@ export function AgentSessionsBrowser({
 
 						{messagesLoading && messages.length === 0 && (
 							<div className="flex items-center justify-center py-8">
-								<Loader2 className="w-6 h-6 animate-spin" style={{ color: theme.colors.textDim }} />
+								<Spinner size={24} color={theme.colors.textDim} />
 							</div>
 						)}
 					</div>
@@ -1320,12 +1302,7 @@ export function AgentSessionsBrowser({
 												}
 											}}
 										/>
-										{isSearching && (
-											<Loader2
-												className="w-4 h-4 animate-spin"
-												style={{ color: theme.colors.textDim }}
-											/>
-										)}
+										{isSearching && <Spinner size={16} color={theme.colors.textDim} />}
 										{search && !isSearching && (
 											<button
 												onClick={() => handleSearchChange('')}
@@ -1469,20 +1446,18 @@ export function AgentSessionsBrowser({
 					>
 						{loading ? (
 							<div className="flex items-center justify-center py-12">
-								<Loader2 className="w-6 h-6 animate-spin" style={{ color: theme.colors.textDim }} />
+								<Spinner size={24} color={theme.colors.textDim} />
 							</div>
 						) : filteredSessions.length === 0 ? (
-							<div className="flex flex-col items-center justify-center py-12 px-4">
-								<List
-									className="w-12 h-12 mb-4 opacity-30"
-									style={{ color: theme.colors.textDim }}
-								/>
-								<p className="text-sm text-center" style={{ color: theme.colors.textDim }}>
-									{sessions.length === 0
+							<EmptyStatePlaceholder
+								theme={theme}
+								icon={<List className="w-12 h-12" />}
+								title={
+									sessions.length === 0
 										? `No ${agentId === 'claude-code' ? 'Claude' : 'agent'} sessions found for this project`
-										: 'No sessions match your search'}
-								</p>
-							</div>
+										: 'No sessions match your search'
+								}
+							/>
 						) : (
 							<div className="py-2">
 								{filteredSessions.map((session, i) => (
@@ -1496,6 +1471,7 @@ export function AgentSessionsBrowser({
 										renamingSessionId={renamingSessionId}
 										renameValue={renameValue}
 										searchMode={searchMode}
+										searchQuery={search}
 										searchResultInfo={getSearchResultInfo(session.sessionId)}
 										theme={theme}
 										selectedItemRef={selectedItemRef}
@@ -1514,10 +1490,7 @@ export function AgentSessionsBrowser({
 									<div className="py-4 flex justify-center items-center">
 										{isLoadingMoreSessions ? (
 											<div className="flex items-center gap-2">
-												<Loader2
-													className="w-4 h-4 animate-spin"
-													style={{ color: theme.colors.accent }}
-												/>
+												<Spinner size={16} color={theme.colors.accent} />
 												<span className="text-xs" style={{ color: theme.colors.textDim }}>
 													Loading more sessions...
 												</span>

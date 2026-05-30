@@ -19,8 +19,8 @@ import { useSessionStore } from '../../stores/sessionStore';
 export interface UseQueueHandlersReturn {
 	/** Remove a queued item from a session's execution queue */
 	handleRemoveQueueItem: (sessionId: string, itemId: string) => void;
-	/** Switch active session to the given session */
-	handleSwitchQueueSession: (sessionId: string) => void;
+	/** Switch active session to the given session and optionally activate a specific tab */
+	handleSwitchQueueSession: (sessionId: string, tabId?: string) => void;
 	/** Reorder queued items within a session (move item from fromIndex to toIndex) */
 	handleReorderQueueItems: (sessionId: string, fromIndex: number, toIndex: number) => void;
 }
@@ -45,8 +45,24 @@ export function useQueueHandlers(): UseQueueHandlersReturn {
 		);
 	}, []);
 
-	const handleSwitchQueueSession = useCallback((sessionId: string) => {
+	const handleSwitchQueueSession = useCallback((sessionId: string, tabId?: string) => {
 		setActiveSessionId(sessionId);
+		if (tabId) {
+			setSessions((prev) =>
+				prev.map((s) => {
+					if (s.id === sessionId && s.aiTabs?.some((t) => t.id === tabId)) {
+						return {
+							...s,
+							activeTabId: tabId,
+							activeFileTabId: null,
+							activeTerminalTabId: null,
+							inputMode: 'ai' as const,
+						};
+					}
+					return s;
+				})
+			);
+		}
 	}, []);
 
 	const handleReorderQueueItems = useCallback(

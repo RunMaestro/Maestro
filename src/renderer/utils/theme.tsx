@@ -67,11 +67,12 @@ export const getExplorerFileIcon = (
 	fileName: string,
 	theme: Theme,
 	type?: FileChangeType,
-	iconTheme: FileExplorerIconTheme = 'default'
+	iconTheme: FileExplorerIconTheme = 'default',
+	colorBlindMode: boolean = false
 ): JSX.Element => {
 	return iconTheme === 'rich'
 		? getRichExplorerFileIcon(fileName, theme, type)
-		: getDefaultExplorerFileIcon(fileName, theme, type);
+		: getDefaultExplorerFileIcon(fileName, theme, type, colorBlindMode);
 };
 
 export const getExplorerFolderIcon = (

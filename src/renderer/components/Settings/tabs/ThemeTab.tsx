@@ -91,6 +91,7 @@ export function ThemeTab({
 
 	return (
 		<div
+			data-setting-id="theme-picker"
 			ref={themePickerRef}
 			className="space-y-6 outline-none"
 			tabIndex={0}

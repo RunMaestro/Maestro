@@ -34,6 +34,7 @@ vi.mock('../../main/utils/logger', () => ({
 
 // Mock network utils to return localhost
 vi.mock('../../main/utils/networkUtils', () => ({
+	getLocalIpAddress: () => Promise.resolve('localhost'),
 	getLocalIpAddressSync: () => 'localhost',
 }));
 
@@ -299,7 +300,7 @@ describe.skipIf(!runTests)('Remote Control Integration Tests', () => {
 
 			const response = await responsePromise;
 
-			expect(desktopCallback).toHaveBeenCalledWith('session-2', undefined);
+			expect(desktopCallback).toHaveBeenCalledWith('session-2', undefined, undefined);
 			expect(response.success).toBe(true);
 
 			client.close();

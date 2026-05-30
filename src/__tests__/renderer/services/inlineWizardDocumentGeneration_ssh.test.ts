@@ -114,7 +114,7 @@ CONTENT:
 				projectName: 'Test Project',
 				conversationHistory: [],
 				mode: 'new',
-				autoRunFolderPath: '/remote/path/Auto Run Docs',
+				autoRunFolderPath: '/remote/path/.maestro/playbooks',
 				sessionSshRemoteConfig: {
 					enabled: true,
 					remoteId: 'test-remote-id',
@@ -123,7 +123,7 @@ CONTENT:
 
 			// Verify writeDoc was called with sshRemoteId
 			expect(mockMaestro.autorun.writeDoc).toHaveBeenCalledWith(
-				expect.stringContaining('/remote/path/Auto Run Docs'), // folder path
+				expect.stringContaining('/remote/path/.maestro/playbooks'), // folder path
 				'Phase-01-Test.md', // filename
 				expect.stringContaining('# Test Phase'), // content
 				'test-remote-id' // sshRemoteId (CRITICAL CHECK)
@@ -155,7 +155,7 @@ CONTENT:
 				projectName: 'Test Project',
 				conversationHistory: [],
 				mode: 'new',
-				autoRunFolderPath: '/local/path/Auto Run Docs',
+				autoRunFolderPath: '/local/path/.maestro/playbooks',
 			});
 
 			// Verify writeDoc was called WITHOUT sshRemoteId (undefined)
@@ -194,7 +194,7 @@ CONTENT:
 				projectName: 'Test Project',
 				conversationHistory: [],
 				mode: 'new',
-				autoRunFolderPath: '/remote/path/Auto Run Docs',
+				autoRunFolderPath: '/remote/path/.maestro/playbooks',
 				sessionSshRemoteConfig: {
 					enabled: true,
 					remoteId: 'test-remote-id',
@@ -203,7 +203,7 @@ CONTENT:
 
 			// Verify watchFolder was called with sshRemoteId
 			expect(mockMaestro.autorun.watchFolder).toHaveBeenCalledWith(
-				expect.stringContaining('/remote/path/Auto Run Docs'),
+				expect.stringContaining('/remote/path/.maestro/playbooks'),
 				'test-remote-id' // sshRemoteId
 			);
 		});
@@ -233,7 +233,7 @@ CONTENT:
 				projectName: 'Test Project',
 				conversationHistory: [],
 				mode: 'new',
-				autoRunFolderPath: '/local/path/Auto Run Docs',
+				autoRunFolderPath: '/local/path/.maestro/playbooks',
 			});
 
 			// Verify watchFolder was called with undefined
@@ -273,7 +273,7 @@ CONTENT:
 				projectName: 'Test Project',
 				conversationHistory: [],
 				mode: 'new',
-				autoRunFolderPath: '/remote/path/Auto Run Docs',
+				autoRunFolderPath: '/remote/path/.maestro/playbooks',
 				sessionSshRemoteConfig: {
 					enabled: true,
 					remoteId: 'test-remote-id',
@@ -336,7 +336,7 @@ CONTENT:
 				projectName: 'Test Project',
 				conversationHistory: [],
 				mode: 'new',
-				autoRunFolderPath: '/remote/path/Auto Run Docs',
+				autoRunFolderPath: '/remote/path/.maestro/playbooks',
 				sessionSshRemoteConfig: {
 					enabled: true,
 					remoteId: 'test-remote-id',
@@ -348,7 +348,7 @@ CONTENT:
 
 			// Verify listDocs was called with sshRemoteId
 			expect(mockMaestro.autorun.listDocs).toHaveBeenCalledWith(
-				expect.stringContaining('/remote/path/Auto Run Docs'),
+				expect.stringContaining('/remote/path/.maestro/playbooks'),
 				'test-remote-id' // sshRemoteId
 			);
 		});
@@ -365,6 +365,12 @@ CONTENT:
 			// Empty output to trigger disk fallback
 			const mockOutput = '';
 			setupSpawnMock(mockOutput);
+
+			// Force the new emitter's pre-read path to come up empty so we fall
+			// through to the legacy readDoc-based disk fallback. (vi.clearAllMocks
+			// only resets call history, not implementations, so the previous test's
+			// successful readFile mock would otherwise leak in here.)
+			mockMaestro.fs.readFile.mockResolvedValue('');
 
 			// Setup listDocs to return files
 			mockMaestro.autorun.listDocs.mockResolvedValue({
@@ -384,7 +390,7 @@ CONTENT:
 				projectName: 'Test Project',
 				conversationHistory: [],
 				mode: 'new',
-				autoRunFolderPath: '/remote/path/Auto Run Docs',
+				autoRunFolderPath: '/remote/path/.maestro/playbooks',
 				sessionSshRemoteConfig: {
 					enabled: true,
 					remoteId: 'test-remote-id',
@@ -396,7 +402,7 @@ CONTENT:
 
 			// Verify readDoc was called with sshRemoteId
 			expect(mockMaestro.autorun.readDoc).toHaveBeenCalledWith(
-				expect.stringContaining('/remote/path/Auto Run Docs'),
+				expect.stringContaining('/remote/path/.maestro/playbooks'),
 				'Phase-01-Test',
 				'test-remote-id' // sshRemoteId
 			);

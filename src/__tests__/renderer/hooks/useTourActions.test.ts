@@ -6,6 +6,7 @@
  *   - setRightTab event: ignores invalid tab values
  *   - openRightPanel event: calls setRightPanelOpen(true)
  *   - closeRightPanel event: calls setRightPanelOpen(false)
+ *   - ensureAiTab event: switches to AI tab when on terminal/browser tab
  *   - unknown type: no store action called
  *   - missing detail: no store action called
  *   - cleanup on unmount: listener is removed
@@ -15,6 +16,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, cleanup } from '@testing-library/react';
 import { useTourActions } from '../../../renderer/hooks/ui/useTourActions';
 import { useUIStore } from '../../../renderer/stores/uiStore';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { useTabStore } from '../../../renderer/stores/tabStore';
 
 // ============================================================================
 // Setup / Teardown
@@ -153,6 +156,97 @@ describe('useTourActions', () => {
 			dispatchTourAction({ type: 'closeRightPanel' });
 
 			expect(useUIStore.getState().rightPanelOpen).toBe(false);
+		});
+	});
+
+	// ==========================================================================
+	// ensureAiTab
+	// ==========================================================================
+	describe('ensureAiTab event', () => {
+		it('switches to AI tab when session is on a terminal tab', () => {
+			const selectTabSpy = vi.spyOn(useTabStore.getState(), 'selectTab');
+			useSessionStore.setState({
+				sessions: [
+					{
+						id: 'session-1',
+						inputMode: 'terminal',
+						activeTabId: 'ai-tab-1',
+						activeBrowserTabId: null,
+						activeTerminalTabId: 'term-1',
+						aiTabs: [{ id: 'ai-tab-1' }],
+					} as any,
+				],
+				activeSessionId: 'session-1',
+			});
+
+			renderHook(() => useTourActions());
+
+			dispatchTourAction({ type: 'ensureAiTab' });
+
+			expect(selectTabSpy).toHaveBeenCalledWith('ai-tab-1');
+			selectTabSpy.mockRestore();
+		});
+
+		it('switches to AI tab when session has an active browser tab', () => {
+			const selectTabSpy = vi.spyOn(useTabStore.getState(), 'selectTab');
+			useSessionStore.setState({
+				sessions: [
+					{
+						id: 'session-1',
+						inputMode: 'ai',
+						activeTabId: 'ai-tab-1',
+						activeBrowserTabId: 'browser-1',
+						activeTerminalTabId: null,
+						aiTabs: [{ id: 'ai-tab-1' }],
+					} as any,
+				],
+				activeSessionId: 'session-1',
+			});
+
+			renderHook(() => useTourActions());
+
+			dispatchTourAction({ type: 'ensureAiTab' });
+
+			expect(selectTabSpy).toHaveBeenCalledWith('ai-tab-1');
+			selectTabSpy.mockRestore();
+		});
+
+		it('does nothing when already on an AI tab', () => {
+			const selectTabSpy = vi.spyOn(useTabStore.getState(), 'selectTab');
+			useSessionStore.setState({
+				sessions: [
+					{
+						id: 'session-1',
+						inputMode: 'ai',
+						activeTabId: 'ai-tab-1',
+						activeBrowserTabId: null,
+						activeTerminalTabId: null,
+						aiTabs: [{ id: 'ai-tab-1' }],
+					} as any,
+				],
+				activeSessionId: 'session-1',
+			});
+
+			renderHook(() => useTourActions());
+
+			dispatchTourAction({ type: 'ensureAiTab' });
+
+			expect(selectTabSpy).not.toHaveBeenCalled();
+			selectTabSpy.mockRestore();
+		});
+
+		it('does nothing when there is no active session', () => {
+			const selectTabSpy = vi.spyOn(useTabStore.getState(), 'selectTab');
+			useSessionStore.setState({
+				sessions: [],
+				activeSessionId: '',
+			});
+
+			renderHook(() => useTourActions());
+
+			expect(() => dispatchTourAction({ type: 'ensureAiTab' })).not.toThrow();
+			expect(selectTabSpy).not.toHaveBeenCalled();
+			selectTabSpy.mockRestore();
 		});
 	});
 

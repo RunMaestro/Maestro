@@ -56,3 +56,32 @@ export async function safeClipboardWriteImage(dataUrl: string): Promise<boolean>
 		return false;
 	}
 }
+
+/**
+ * Read an image from the system clipboard.
+ * Returns a PNG data URL when the clipboard holds an image, or null when it
+ * doesn't (or the read fails). Prefers Electron's native clipboard via IPC and
+ * falls back to the browser Clipboard API when running outside Electron.
+ */
+export async function safeClipboardReadImage(): Promise<string | null> {
+	try {
+		if (window.maestro?.shell?.readImageFromClipboard) {
+			return await window.maestro.shell.readImageFromClipboard();
+		}
+		const items = await navigator.clipboard.read();
+		for (const item of items) {
+			const imageType = item.types.find((t) => t.startsWith('image/'));
+			if (!imageType) continue;
+			const blob = await item.getType(imageType);
+			return await new Promise<string>((resolve, reject) => {
+				const reader = new FileReader();
+				reader.onload = () => resolve(reader.result as string);
+				reader.onerror = () => reject(reader.error);
+				reader.readAsDataURL(blob);
+			});
+		}
+		return null;
+	} catch {
+		return null;
+	}
+}

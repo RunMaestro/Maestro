@@ -13,7 +13,6 @@ import {
 	RefreshCw,
 	X,
 	Search,
-	Loader2,
 	Package,
 	ArrowLeft,
 	ChevronDown,
@@ -23,17 +22,25 @@ import {
 	HelpCircle,
 	Github,
 } from 'lucide-react';
+import { GhostIconButton } from './ui/GhostIconButton';
+import { Spinner } from './ui/Spinner';
 import type { Theme } from '../types';
 import type { MarketplacePlaybook } from '../../shared/marketplace-types';
-import { useLayerStack } from '../contexts/LayerStackContext';
+import { isCompatible, isBeta } from '../../shared/marketplace-compatibility';
+import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { useMarketplace } from '../hooks/batch/useMarketplace';
+import { useEventListener } from '../hooks/utils/useEventListener';
 import {
 	REMARK_GFM_PLUGINS,
 	generateProseStyles,
 	createMarkdownComponents,
 } from '../utils/markdownConfig';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
+import { openUrl } from '../utils/openUrl';
+import { buildMaestroUrl } from '../utils/buildMaestroUrl';
+import { logger } from '../utils/logger';
+import { notifyToast } from '../stores/notificationStore';
 
 // ============================================================================
 // Types
@@ -52,10 +59,16 @@ export interface MarketplaceModalProps {
 
 const LOADING_TILE_IDS = ['tile-1', 'tile-2', 'tile-3', 'tile-4', 'tile-5', 'tile-6'];
 
+// Badge colors — fixed independent of theme so they remain recognizable.
+const BETA_BADGE_BG = '#F59E0B'; // amber
+const INCOMPAT_BADGE_BG = '#EF4444'; // red — actively gating
+const BADGE_FG = '#ffffff';
+
 interface PlaybookTileProps {
 	playbook: MarketplacePlaybook;
 	theme: Theme;
 	isSelected: boolean;
+	runningVersion: string;
 	onSelect: () => void;
 }
 
@@ -70,6 +83,7 @@ interface PlaybookDetailViewProps {
 	isImporting: boolean;
 	/** Whether this is a remote SSH session (disables local folder browsing) */
 	isRemoteSession: boolean;
+	runningVersion: string;
 	onBack: () => void;
 	onSelectDocument: (filename: string) => void;
 	onTargetFolderChange: (name: string) => void;
@@ -135,7 +149,13 @@ function PlaybookTileSkeleton({ theme }: { theme: Theme }) {
 // PlaybookTile Sub-component
 // ============================================================================
 
-function PlaybookTile({ playbook, theme, isSelected, onSelect }: PlaybookTileProps) {
+function PlaybookTile({
+	playbook,
+	theme,
+	isSelected,
+	runningVersion,
+	onSelect,
+}: PlaybookTileProps) {
 	const tileRef = useRef<HTMLButtonElement>(null);
 
 	// Scroll into view when selected
@@ -145,13 +165,20 @@ function PlaybookTile({ playbook, theme, isSelected, onSelect }: PlaybookTilePro
 		}
 	}, [isSelected]);
 
+	const compatible = isCompatible(playbook, runningVersion);
+	const beta = isBeta(playbook);
+
+	// Body opacity dims the tile when incompatible; badges stay full-opacity for legibility.
+	const bodyOpacity = compatible ? 1 : 0.4;
+	const iconFilter = compatible ? undefined : 'grayscale(100%)';
+
 	return (
 		<button
 			ref={tileRef}
 			onClick={onSelect}
-			className={`p-4 rounded-lg border text-left transition-all hover:scale-[1.02] ${
-				isSelected ? 'ring-2' : ''
-			}`}
+			className={`relative p-4 rounded-lg border text-left transition-all ${
+				compatible ? 'hover:scale-[1.02]' : ''
+			} ${isSelected ? 'ring-2' : ''}`}
 			style={{
 				backgroundColor: theme.colors.bgActivity,
 				borderColor: isSelected ? theme.colors.accent : theme.colors.border,
@@ -162,57 +189,91 @@ function PlaybookTile({ playbook, theme, isSelected, onSelect }: PlaybookTilePro
 				}),
 			}}
 		>
-			{/* Category and source badges */}
-			<div className="flex items-center gap-2 mb-2 flex-wrap">
-				<span
-					className="px-2 py-0.5 rounded text-xs"
-					style={{
-						backgroundColor: `${theme.colors.accent}20`,
-						color: theme.colors.accent,
-					}}
-				>
-					{playbook.category}
-				</span>
-				{playbook.subcategory && (
-					<span className="text-xs" style={{ color: theme.colors.textDim }}>
-						/ {playbook.subcategory}
-					</span>
-				)}
-				{playbook.source === 'local' && (
+			{/* Status badges — top-right corner, full opacity. When both present,
+			    incompatibility sits at the far right (most important) with BETA
+			    to its left so they share the same row. */}
+			{(beta || !compatible) && (
+				<div className="absolute top-2 right-2 flex items-center gap-1.5 z-10">
+					{beta && (
+						<span
+							className="px-2 py-0.5 rounded text-[11px] font-semibold uppercase tracking-wide"
+							style={{
+								backgroundColor: BETA_BADGE_BG,
+								color: BADGE_FG,
+							}}
+							title="This playbook is still maturing. Expect rough edges and possible breaking changes between releases."
+						>
+							BETA
+						</span>
+					)}
+					{!compatible && (
+						<span
+							className="px-2 py-0.5 rounded text-[11px] font-semibold"
+							style={{
+								backgroundColor: INCOMPAT_BADGE_BG,
+								color: BADGE_FG,
+							}}
+							title={`This playbook needs Maestro ${playbook.minMaestroVersion} or newer. You're running ${runningVersion}. Update Maestro to install this playbook.`}
+						>
+							Requires Maestro {playbook.minMaestroVersion}+
+						</span>
+					)}
+				</div>
+			)}
+
+			<div style={{ opacity: bodyOpacity, filter: iconFilter }}>
+				{/* Category and source badges */}
+				<div className="flex items-center gap-2 mb-2 flex-wrap">
 					<span
-						className="px-2 py-0.5 rounded text-xs font-medium"
+						className="px-2 py-0.5 rounded text-xs"
 						style={{
-							backgroundColor: '#3b82f620',
-							color: '#3b82f6',
+							backgroundColor: `${theme.colors.accent}20`,
+							color: theme.colors.accent,
 						}}
-						title="Custom local playbook"
 					>
-						Local
+						{playbook.category}
 					</span>
-				)}
-			</div>
+					{playbook.subcategory && (
+						<span className="text-xs" style={{ color: theme.colors.textDim }}>
+							/ {playbook.subcategory}
+						</span>
+					)}
+					{playbook.source === 'local' && (
+						<span
+							className="px-2 py-0.5 rounded text-xs font-medium"
+							style={{
+								backgroundColor: '#3b82f620',
+								color: '#3b82f6',
+							}}
+							title="Custom local playbook"
+						>
+							Local
+						</span>
+					)}
+				</div>
 
-			{/* Title - with tooltip for truncated text */}
-			<h3
-				className="font-semibold mb-1 line-clamp-1"
-				style={{ color: theme.colors.textMain }}
-				title={playbook.title}
-			>
-				{playbook.title}
-			</h3>
+				{/* Title - with tooltip for truncated text */}
+				<h3
+					className="font-semibold mb-1 line-clamp-1"
+					style={{ color: theme.colors.textMain }}
+					title={playbook.title}
+				>
+					{playbook.title}
+				</h3>
 
-			{/* Description */}
-			<p className="text-sm line-clamp-2 mb-3" style={{ color: theme.colors.textDim }}>
-				{playbook.description}
-			</p>
+				{/* Description */}
+				<p className="text-sm line-clamp-2 mb-3" style={{ color: theme.colors.textDim }}>
+					{playbook.description}
+				</p>
 
-			{/* Footer: author + doc count */}
-			<div
-				className="flex items-center justify-between text-xs"
-				style={{ color: theme.colors.textDim }}
-			>
-				<span>{playbook.author}</span>
-				<span>{playbook.documents.length} docs</span>
+				{/* Footer: author + doc count */}
+				<div
+					className="flex items-center justify-between text-xs"
+					style={{ color: theme.colors.textDim }}
+				>
+					<span>{playbook.author}</span>
+					<span>{playbook.documents.length} docs</span>
+				</div>
 			</div>
 		</button>
 	);
@@ -232,55 +293,54 @@ function PlaybookDetailView({
 	targetFolderName,
 	isImporting,
 	isRemoteSession,
+	runningVersion,
 	onBack,
 	onSelectDocument,
 	onTargetFolderChange,
 	onBrowseFolder,
 	onImport,
 }: PlaybookDetailViewProps) {
+	const compatible = isCompatible(playbook, runningVersion);
+	const beta = isBeta(playbook);
 	const [showDocDropdown, setShowDocDropdown] = useState(false);
 	const dropdownRef = useRef<HTMLDivElement>(null);
 	const previewScrollRef = useRef<HTMLDivElement>(null);
 
 	// Keyboard shortcuts for scrolling the document preview
 	// OPT+Up/Down: page up/down, CMD+Up/Down: home/end
-	useEffect(() => {
-		const handleKeyDown = (e: KeyboardEvent) => {
-			const scrollContainer = previewScrollRef.current;
-			if (!scrollContainer) return;
+	useEventListener('keydown', (event: Event) => {
+		const e = event as KeyboardEvent;
+		const scrollContainer = previewScrollRef.current;
+		if (!scrollContainer) return;
 
-			// Don't handle if typing in an input
-			if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
-				return;
+		// Don't handle if typing in an input
+		if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+			return;
+		}
+
+		const pageHeight = scrollContainer.clientHeight * 0.9; // 90% of visible height
+
+		// CMD+Up/Down: Home/End
+		if (e.metaKey && !e.altKey && !e.shiftKey) {
+			if (e.key === 'ArrowUp') {
+				e.preventDefault();
+				scrollContainer.scrollTo({ top: 0, behavior: 'smooth' });
+			} else if (e.key === 'ArrowDown') {
+				e.preventDefault();
+				scrollContainer.scrollTo({ top: scrollContainer.scrollHeight, behavior: 'smooth' });
 			}
-
-			const pageHeight = scrollContainer.clientHeight * 0.9; // 90% of visible height
-
-			// CMD+Up/Down: Home/End
-			if (e.metaKey && !e.altKey && !e.shiftKey) {
-				if (e.key === 'ArrowUp') {
-					e.preventDefault();
-					scrollContainer.scrollTo({ top: 0, behavior: 'smooth' });
-				} else if (e.key === 'ArrowDown') {
-					e.preventDefault();
-					scrollContainer.scrollTo({ top: scrollContainer.scrollHeight, behavior: 'smooth' });
-				}
+		}
+		// OPT+Up/Down: Page up/down
+		else if (e.altKey && !e.metaKey && !e.shiftKey) {
+			if (e.key === 'ArrowUp') {
+				e.preventDefault();
+				scrollContainer.scrollBy({ top: -pageHeight, behavior: 'smooth' });
+			} else if (e.key === 'ArrowDown') {
+				e.preventDefault();
+				scrollContainer.scrollBy({ top: pageHeight, behavior: 'smooth' });
 			}
-			// OPT+Up/Down: Page up/down
-			else if (e.altKey && !e.metaKey && !e.shiftKey) {
-				if (e.key === 'ArrowUp') {
-					e.preventDefault();
-					scrollContainer.scrollBy({ top: -pageHeight, behavior: 'smooth' });
-				} else if (e.key === 'ArrowDown') {
-					e.preventDefault();
-					scrollContainer.scrollBy({ top: pageHeight, behavior: 'smooth' });
-				}
-			}
-		};
-
-		window.addEventListener('keydown', handleKeyDown);
-		return () => window.removeEventListener('keydown', handleKeyDown);
-	}, []);
+		}
+	});
 
 	// Generate prose styles scoped to marketplace panel
 	const proseStyles = useMemo(
@@ -300,11 +360,7 @@ function PlaybookDetailView({
 		() =>
 			createMarkdownComponents({
 				theme,
-				onExternalLinkClick: (href) => {
-					if (/^https?:\/\/|^mailto:/.test(href)) {
-						void window.maestro.shell.openExternal(href);
-					}
-				},
+				onExternalLinkClick: (href, opts) => openUrl(href, opts),
 			}),
 		[theme]
 	);
@@ -340,13 +396,9 @@ function PlaybookDetailView({
 				style={{ borderColor: theme.colors.border }}
 			>
 				{/* Back button */}
-				<button
-					onClick={onBack}
-					className="p-1.5 rounded hover:bg-white/10 transition-colors"
-					title="Back to list (Esc)"
-				>
+				<GhostIconButton onClick={onBack} padding="p-1.5" title="Back to list (Esc)">
 					<ArrowLeft className="w-5 h-5" style={{ color: theme.colors.textDim }} />
-				</button>
+				</GhostIconButton>
 
 				{/* Playbook title and category */}
 				<div className="flex-1 min-w-0">
@@ -374,12 +426,79 @@ function PlaybookDetailView({
 								Local
 							</span>
 						)}
+						{beta && (
+							<span
+								className="px-2 py-0.5 rounded text-xs font-semibold uppercase tracking-wide"
+								style={{
+									backgroundColor: BETA_BADGE_BG,
+									color: BADGE_FG,
+								}}
+								title="This playbook is still maturing. Expect rough edges and possible breaking changes between releases."
+							>
+								BETA
+							</span>
+						)}
+						{!compatible && (
+							<span
+								className="px-2 py-0.5 rounded text-xs font-semibold"
+								style={{
+									backgroundColor: INCOMPAT_BADGE_BG,
+									color: BADGE_FG,
+								}}
+								title={`This playbook needs Maestro ${playbook.minMaestroVersion} or newer. You're running ${runningVersion}.`}
+							>
+								Requires Maestro {playbook.minMaestroVersion}+
+							</span>
+						)}
 					</div>
 					<h2 className="text-lg font-semibold truncate" style={{ color: theme.colors.textMain }}>
 						{playbook.title}
 					</h2>
 				</div>
 			</div>
+
+			{/* Compatibility banner — prominent, only shown when incompatible */}
+			{!compatible && (
+				<div
+					className="px-4 py-3 border-b shrink-0 flex items-center gap-3"
+					style={{
+						backgroundColor: `${INCOMPAT_BADGE_BG}15`,
+						borderColor: theme.colors.border,
+					}}
+				>
+					<span aria-hidden="true" style={{ color: INCOMPAT_BADGE_BG, fontSize: '1.1rem' }}>
+						⚠
+					</span>
+					<div className="flex-1 text-sm" style={{ color: theme.colors.textMain }}>
+						This playbook requires Maestro <strong>{playbook.minMaestroVersion}</strong> or newer.
+						You're running <strong>{runningVersion}</strong>.
+					</div>
+					<button
+						onClick={() => openUrl('https://github.com/RunMaestro/Maestro/releases')}
+						className="px-3 py-1.5 rounded text-xs font-semibold transition-opacity hover:opacity-90"
+						style={{ backgroundColor: INCOMPAT_BADGE_BG, color: BADGE_FG }}
+					>
+						Update Maestro
+					</button>
+				</div>
+			)}
+
+			{/* Beta banner — informational, only shown when beta */}
+			{beta && (
+				<div
+					className="px-4 py-2 border-b shrink-0 flex items-center gap-2 text-xs"
+					style={{
+						backgroundColor: `${BETA_BADGE_BG}15`,
+						borderColor: theme.colors.border,
+						color: theme.colors.textMain,
+					}}
+				>
+					<span aria-hidden="true" style={{ color: BETA_BADGE_BG }}>
+						ℹ
+					</span>
+					<span>This playbook is in beta. Expect rough edges and possible breaking changes.</span>
+				</div>
+			)}
 
 			{/* Main content area with sidebar and document preview */}
 			<div className="flex-1 flex min-h-0 overflow-hidden">
@@ -397,19 +516,19 @@ function PlaybookDetailView({
 							Description
 						</h4>
 						<p className="text-sm" style={{ color: theme.colors.textMain }}>
-							{playbook.description}{' '}
-							<button
-								onClick={() => onSelectDocument('')}
-								className="hover:opacity-80 transition-colors px-1 rounded"
-								style={{
-									color: theme.colors.accent,
-									backgroundColor: !selectedDocFilename
-										? `${theme.colors.accent}20`
-										: 'transparent',
-								}}
-							>
-								Read more...
-							</button>
+							{playbook.description}
+							{selectedDocFilename ? (
+								<>
+									{' '}
+									<button
+										onClick={() => onSelectDocument('')}
+										className="hover:opacity-80 transition-colors px-1 rounded"
+										style={{ color: theme.colors.accent }}
+									>
+										Read more...
+									</button>
+								</>
+							) : null}
 						</p>
 					</div>
 
@@ -423,7 +542,7 @@ function PlaybookDetailView({
 						</h4>
 						{playbook.authorLink ? (
 							<button
-								onClick={() => window.maestro.shell.openExternal(playbook.authorLink!)}
+								onClick={() => openUrl(playbook.authorLink!)}
 								tabIndex={0}
 								className="text-sm hover:underline inline-flex items-center gap-1 outline-none"
 								style={{ color: theme.colors.accent }}
@@ -630,7 +749,7 @@ function PlaybookDetailView({
 						<style>{proseStyles}</style>
 						{isLoadingDocument ? (
 							<div className="flex items-center justify-center h-32">
-								<Loader2 className="w-6 h-6 animate-spin" style={{ color: theme.colors.accent }} />
+								<Spinner size={24} color={theme.colors.accent} />
 							</div>
 						) : (
 							<div className="prose prose-sm max-w-none" style={{ color: theme.colors.textMain }}>
@@ -658,7 +777,7 @@ function PlaybookDetailView({
 							className="block text-xs mb-1"
 							style={{ color: theme.colors.textDim }}
 						>
-							Import to folder (relative to Auto Run folder or absolute path)
+							Import to folder (single name inside the Auto Run folder)
 						</label>
 						<div className="flex items-center gap-2">
 							<input
@@ -672,7 +791,7 @@ function PlaybookDetailView({
 									color: theme.colors.textMain,
 									backgroundColor: theme.colors.bgActivity,
 								}}
-								placeholder="folder-name or /absolute/path"
+								placeholder="folder-name"
 							/>
 							<button
 								onClick={onBrowseFolder}
@@ -695,17 +814,27 @@ function PlaybookDetailView({
 					{/* Import button */}
 					<button
 						onClick={onImport}
-						disabled={isImporting || !targetFolderName.trim()}
+						disabled={isImporting || !targetFolderName.trim() || !compatible}
 						className="px-4 py-2 rounded font-semibold text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed mt-5"
 						style={{
 							backgroundColor: theme.colors.accent,
 							color: theme.colors.accentForeground,
 						}}
+						title={
+							!compatible
+								? `Update Maestro to ${playbook.minMaestroVersion} or newer to install this playbook.`
+								: undefined
+						}
 					>
 						{isImporting ? (
 							<span className="flex items-center gap-2">
-								<Loader2 className="w-4 h-4 animate-spin" />
+								<Spinner size={16} />
 								Importing...
+							</span>
+						) : !compatible ? (
+							<span className="flex items-center gap-2">
+								<Download className="w-4 h-4" />
+								Update Maestro to install
 							</span>
 						) : (
 							<span className="flex items-center gap-2">
@@ -734,12 +863,17 @@ export function MarketplaceModal({
 	onImportComplete,
 }: MarketplaceModalProps) {
 	// Layer stack for escape handling
-	const { registerLayer, unregisterLayer } = useLayerStack();
 	const onCloseRef = useRef(onClose);
 	onCloseRef.current = onClose;
 
 	// SSH remote awareness - local folder browsing is not available for remote sessions
 	const isRemoteSession = !!sshRemoteId;
+
+	// Running Maestro version, captured once per mount for stable comparisons.
+	const runningVersion = useMemo(
+		() => (typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : 'unknown'),
+		[]
+	);
 
 	// Marketplace hook for data and operations
 	const {
@@ -761,6 +895,27 @@ export function MarketplaceModal({
 		fetchReadme,
 		fetchDocument,
 	} = useMarketplace();
+
+	// Split filtered playbooks into compatible-first / incompatible groups so the
+	// grid can render an "incompatible" section divider below the compatible tiles.
+	// `orderedPlaybooks` is the flat sequence used by keyboard navigation; the
+	// divider is purely visual and does not affect arrow-key indexing.
+	const { compatiblePlaybooks, incompatiblePlaybooks, orderedPlaybooks } = useMemo(() => {
+		const compatibleList: MarketplacePlaybook[] = [];
+		const incompatibleList: MarketplacePlaybook[] = [];
+		for (const p of filteredPlaybooks) {
+			if (isCompatible(p, runningVersion)) {
+				compatibleList.push(p);
+			} else {
+				incompatibleList.push(p);
+			}
+		}
+		return {
+			compatiblePlaybooks: compatibleList,
+			incompatiblePlaybooks: incompatibleList,
+			orderedPlaybooks: [...compatibleList, ...incompatibleList],
+		};
+	}, [filteredPlaybooks, runningVersion]);
 
 	// Tile selection state
 	const [selectedTileIndex, setSelectedTileIndex] = useState(0);
@@ -823,28 +978,20 @@ export function MarketplaceModal({
 	handleBackToListRef.current = handleBackToList;
 
 	// Register with layer stack for escape handling
-	useEffect(() => {
-		if (isOpen) {
-			const id = registerLayer({
-				type: 'modal',
-				priority: MODAL_PRIORITIES.MARKETPLACE,
-				blocksLowerLayers: true,
-				capturesFocus: true,
-				focusTrap: 'strict',
-				ariaLabel: 'Playbook Exchange',
-				onEscape: () => {
-					if (showHelpRef.current) {
-						setShowHelp(false);
-					} else if (showDetailViewRef.current) {
-						handleBackToListRef.current();
-					} else {
-						onCloseRef.current();
-					}
-				},
-			});
-			return () => unregisterLayer(id);
-		}
-	}, [isOpen, registerLayer, unregisterLayer]);
+	useModalLayer(
+		MODAL_PRIORITIES.MARKETPLACE,
+		'Playbook Exchange',
+		() => {
+			if (showHelpRef.current) {
+				setShowHelp(false);
+			} else if (showDetailViewRef.current) {
+				handleBackToListRef.current();
+			} else {
+				onCloseRef.current();
+			}
+		},
+		{ enabled: isOpen }
+	);
 
 	// Focus search input when modal opens
 	useEffect(() => {
@@ -862,10 +1009,15 @@ export function MarketplaceModal({
 			setSelectedDocFilename(null);
 			setDocumentContent(null);
 
-			// Generate default folder name: category/title slug
-			const slug = `${playbook.category}/${playbook.title}`
+			// Generate default folder name: single-segment slug from the title.
+			// The main-process `assertSafeTargetFolderName` guard rejects any
+			// value containing path separators, `..`, `~`, or absolute paths
+			// (defense against path traversal from untrusted WS clients), so a
+			// `category/title` slug would fail validation and the import would
+			// silently no-op. Mirrors the mobile fix in PR #947.
+			const slug = playbook.title
 				.toLowerCase()
-				.replace(/[^a-z0-9/]+/g, '-')
+				.replace(/[^a-z0-9]+/g, '-')
 				.replace(/-+/g, '-')
 				.replace(/^-|-$/g, '');
 			setTargetFolderName(slug);
@@ -916,8 +1068,18 @@ export function MarketplaceModal({
 			onImportComplete(targetFolderName);
 			onClose();
 		} else {
-			// Could show an error toast here in future enhancement
-			console.error('Import failed:', result.error);
+			// Surface the failure to the user. Without this the user sees the
+			// modal stay open with no feedback — the original "Import does
+			// nothing" bug report. The main-process validator rejects values
+			// with path separators / absolute paths, so most user-typed paths
+			// land here.
+			logger.error('Import failed:', undefined, result.error);
+			notifyToast({
+				color: 'red',
+				title: 'Import failed',
+				message: result.error || 'Unknown error',
+				dismissible: true,
+			});
 		}
 	}, [
 		selectedPlaybook,
@@ -1029,7 +1191,7 @@ export function MarketplaceModal({
 			// Only handle in list view, not detail view
 			if (showDetailView) return;
 
-			const total = filteredPlaybooks.length;
+			const total = orderedPlaybooks.length;
 			if (total === 0) return;
 
 			// Handle input elements specially
@@ -1069,8 +1231,8 @@ export function MarketplaceModal({
 					break;
 				case 'Enter':
 					e.preventDefault();
-					if (filteredPlaybooks[selectedTileIndex]) {
-						handleSelectPlaybook(filteredPlaybooks[selectedTileIndex]);
+					if (orderedPlaybooks[selectedTileIndex]) {
+						handleSelectPlaybook(orderedPlaybooks[selectedTileIndex]);
 					}
 					break;
 			}
@@ -1083,7 +1245,7 @@ export function MarketplaceModal({
 	}, [
 		isOpen,
 		showDetailView,
-		filteredPlaybooks,
+		orderedPlaybooks,
 		selectedTileIndex,
 		gridColumns,
 		handleSelectPlaybook,
@@ -1102,7 +1264,7 @@ export function MarketplaceModal({
 				aria-modal="true"
 				aria-labelledby="marketplace-title"
 				tabIndex={-1}
-				className="w-[1200px] max-w-[95vw] rounded-xl shadow-2xl border overflow-hidden flex flex-col max-h-[85vh] outline-none"
+				className="modal-w-2xl rounded-xl shadow-2xl border overflow-hidden flex flex-col max-h-[85vh] outline-none select-none"
 				style={{
 					backgroundColor: theme.colors.bgActivity,
 					borderColor: theme.colors.border,
@@ -1120,6 +1282,7 @@ export function MarketplaceModal({
 						targetFolderName={targetFolderName}
 						isImporting={isImporting}
 						isRemoteSession={isRemoteSession}
+						runningVersion={runningVersion}
 						onBack={handleBackToList}
 						onSelectDocument={handleSelectDocument}
 						onTargetFolderChange={setTargetFolderName}
@@ -1185,15 +1348,23 @@ export function MarketplaceModal({
 											</p>
 											<button
 												onClick={() => {
-													window.maestro.shell.openExternal(
-														'https://github.com/RunMaestro/Maestro-Playbooks'
-													);
+													openUrl('https://github.com/RunMaestro/Maestro-Playbooks');
 													setShowHelp(false);
 												}}
 												className="text-xs hover:opacity-80 transition-colors"
 												style={{ color: theme.colors.accent }}
 											>
 												github.com/RunMaestro/Maestro-Playbooks
+											</button>
+											<button
+												onClick={() => {
+													openUrl(buildMaestroUrl('https://docs.runmaestro.ai/playbook-exchange'));
+													setShowHelp(false);
+												}}
+												className="text-xs hover:opacity-80 transition-colors mt-2 block"
+												style={{ color: theme.colors.accent }}
+											>
+												Read more at docs.runmaestro.ai/playbook-exchange
 											</button>
 											<div
 												className="mt-3 pt-3 border-t"
@@ -1213,9 +1384,7 @@ export function MarketplaceModal({
 								{/* GitHub submit button */}
 								<button
 									onClick={() => {
-										window.maestro.shell.openExternal(
-											'https://github.com/RunMaestro/Maestro-Playbooks'
-										);
+										openUrl('https://github.com/RunMaestro/Maestro-Playbooks');
 									}}
 									className="px-2 py-1 rounded hover:bg-white/10 transition-colors flex items-center gap-1.5 text-xs"
 									title="Submit your playbook to the community"
@@ -1245,14 +1414,14 @@ export function MarketplaceModal({
 									/>
 								</button>
 								{/* Close button */}
-								<button
+								<GhostIconButton
 									onClick={onClose}
-									className="p-1.5 rounded hover:bg-white/10 transition-colors"
+									padding="p-1.5"
 									title="Close (Esc)"
-									aria-label="Close marketplace"
+									ariaLabel="Close marketplace"
 								>
 									<X className="w-5 h-5" style={{ color: theme.colors.textDim }} />
-								</button>
+								</GhostIconButton>
 							</div>
 						</div>
 
@@ -1393,17 +1562,58 @@ export function MarketplaceModal({
 									)}
 								</div>
 							) : (
-								<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-									{filteredPlaybooks.map((playbook, index) => (
-										<PlaybookTile
-											key={playbook.id}
-											playbook={playbook}
-											theme={theme}
-											isSelected={selectedTileIndex === index}
-											onSelect={() => handleSelectPlaybook(playbook)}
-										/>
-									))}
-								</div>
+								<>
+									{compatiblePlaybooks.length > 0 && (
+										<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+											{compatiblePlaybooks.map((playbook, index) => (
+												<PlaybookTile
+													key={playbook.id}
+													playbook={playbook}
+													theme={theme}
+													isSelected={selectedTileIndex === index}
+													runningVersion={runningVersion}
+													onSelect={() => handleSelectPlaybook(playbook)}
+												/>
+											))}
+										</div>
+									)}
+
+									{incompatiblePlaybooks.length > 0 && (
+										<>
+											<div
+												className="flex items-center gap-3 mt-6 mb-3"
+												aria-label="Incompatible playbooks section"
+											>
+												<div
+													className="flex-1 h-px"
+													style={{ backgroundColor: theme.colors.border }}
+												/>
+												<span
+													className="text-xs uppercase tracking-wide font-semibold"
+													style={{ color: theme.colors.textDim }}
+												>
+													Requires a newer Maestro
+												</span>
+												<div
+													className="flex-1 h-px"
+													style={{ backgroundColor: theme.colors.border }}
+												/>
+											</div>
+											<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+												{incompatiblePlaybooks.map((playbook, index) => (
+													<PlaybookTile
+														key={playbook.id}
+														playbook={playbook}
+														theme={theme}
+														isSelected={selectedTileIndex === compatiblePlaybooks.length + index}
+														runningVersion={runningVersion}
+														onSelect={() => handleSelectPlaybook(playbook)}
+													/>
+												))}
+											</div>
+										</>
+									)}
+								</>
 							)}
 						</div>
 

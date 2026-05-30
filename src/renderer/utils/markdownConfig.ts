@@ -21,8 +21,18 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { getSyntaxStyle } from './syntaxTheme';
 import React from 'react';
 import type { Theme } from '../types';
+import { SyntaxHighlightBoundary } from '../components/SyntaxHighlightBoundary';
 import { REMARK_GFM_PLUGINS } from '../../shared/markdownPlugins';
+import { extractHexColor } from '../../shared/hexColor';
+import { openUrl } from './openUrl';
+import { openMaestroLink } from './openMaestroLink';
 import { BionifyText, getBionifyReadingModeStyles } from './bionifyReadingMode';
+import {
+	INLINE_CODE_CLICK_PROPS,
+	INLINE_CODE_CLICK_STYLE,
+	buildInlineCodeHandlers,
+} from './inlineCodeCopy';
+import { COLORBLIND_DIFF_COLORS } from '../constants/colorblindPalettes';
 
 // ============================================================================
 // Types
@@ -51,7 +61,7 @@ export interface MarkdownComponentsOptions {
 	/** Callback when internal file link is clicked (maestro-file:// protocol) */
 	onFileClick?: (filePath: string, options?: { openInNewTab?: boolean }) => void;
 	/** Callback when external link is clicked - if not provided, uses default browser behavior */
-	onExternalLinkClick?: (href: string) => void;
+	onExternalLinkClick?: (href: string, options?: { ctrlKey?: boolean }) => void;
 	/** Callback when anchor link is clicked (same-page #section links) */
 	onAnchorClick?: (anchorId: string) => void;
 	/** Container ref for scrolling to anchors - if not provided, uses document.getElementById */
@@ -156,7 +166,7 @@ export function generateProseStyles(options: ProseStylesOptions): string {
     ${s} li::marker { color: ${colors.textMain}; }
     ${s} ol li::marker { font-variant-numeric: tabular-nums; font-weight: 400; }
     ${s} li:has(> input[type="checkbox"]) { list-style: none; margin-left: -1.5em; }
-    ${s} code { background-color: ${colors.bgActivity}; color: ${colors.textMain}; padding: 0.2em 0.4em; border-radius: 3px; font-size: 0.9em; }
+    ${s} code { background-color: ${colors.bgActivity}; color: ${colors.textMain}; padding: 0.2em 0.4em; border-radius: 3px; font-size: 0.9em; overflow-wrap: anywhere; }
     ${s} pre { background-color: ${colors.bgActivity}; color: ${colors.textMain}; padding: 1em; border-radius: 6px; overflow-x: auto; ${compactSpacing ? 'margin: 0.35em 0 !important;' : ''} }
     ${s} pre code { background: none; padding: 0; }
     ${s} blockquote { border-left: ${compactSpacing ? '3px' : '4px'} solid ${colors.border}; padding-left: ${compactSpacing ? '0.75em' : '1em'}; margin: ${compactSpacing ? '0.25em 0' : '0.5em 0'} !important; color: ${colors.textDim}; }
@@ -396,13 +406,20 @@ export function createMarkdownComponents(options: MarkdownComponentsOptions): Pa
 		// Override paragraph to apply search highlighting
 		p: ({ children }: any) => React.createElement('p', null, withReadableTransforms(children)),
 
-		// Override headings to apply search highlighting
-		h1: ({ children }: any) => React.createElement('h1', null, withReadableTransforms(children)),
-		h2: ({ children }: any) => React.createElement('h2', null, withReadableTransforms(children)),
-		h3: ({ children }: any) => React.createElement('h3', null, withReadableTransforms(children)),
-		h4: ({ children }: any) => React.createElement('h4', null, withReadableTransforms(children)),
-		h5: ({ children }: any) => React.createElement('h5', null, withReadableTransforms(children)),
-		h6: ({ children }: any) => React.createElement('h6', null, withReadableTransforms(children)),
+		// Override headings to apply readable transforms (search highlighting + Bionify)
+		// Forward id/props for rehype-slug anchors (rc) while piping through withReadableTransforms (main/Bionify)
+		h1: ({ children, node: _node, ...props }: any) =>
+			React.createElement('h1', props, withReadableTransforms(children)),
+		h2: ({ children, node: _node, ...props }: any) =>
+			React.createElement('h2', props, withReadableTransforms(children)),
+		h3: ({ children, node: _node, ...props }: any) =>
+			React.createElement('h3', props, withReadableTransforms(children)),
+		h4: ({ children, node: _node, ...props }: any) =>
+			React.createElement('h4', props, withReadableTransforms(children)),
+		h5: ({ children, node: _node, ...props }: any) =>
+			React.createElement('h5', props, withReadableTransforms(children)),
+		h6: ({ children, node: _node, ...props }: any) =>
+			React.createElement('h6', props, withReadableTransforms(children)),
 
 		// Override list items to apply search highlighting
 		li: ({ children }: any) => React.createElement('li', null, withReadableTransforms(children)),
@@ -454,27 +471,60 @@ export function createMarkdownComponents(options: MarkdownComponentsOptions): Pa
 						color: theme.colors.textMain,
 					},
 				};
-				return React.createElement(SyntaxHighlighter, {
-					language,
-					style: themedStyle,
-					customStyle: {
-						margin: codeBlockStyle?.margin ?? '0.5em 0',
-						padding: codeBlockStyle?.padding ?? '1em',
-						background: codeBlockStyle?.backgroundColor ?? theme.colors.bgActivity,
-						fontSize: codeBlockStyle?.fontSize ?? '0.9em',
-						borderRadius: codeBlockStyle?.borderRadius ?? '6px',
-					},
-					PreTag: 'div',
-					children: codeContent,
+				return React.createElement(SyntaxHighlightBoundary, {
+					code: codeContent,
+					theme,
+					children: React.createElement(SyntaxHighlighter, {
+						language,
+						style: themedStyle,
+						customStyle: {
+							margin: codeBlockStyle?.margin ?? '0.5em 0',
+							padding: codeBlockStyle?.padding ?? '1em',
+							background: codeBlockStyle?.backgroundColor ?? theme.colors.bgActivity,
+							fontSize: codeBlockStyle?.fontSize ?? '0.9em',
+							borderRadius: codeBlockStyle?.borderRadius ?? '6px',
+						},
+						PreTag: 'div',
+						translate: 'no',
+						children: codeContent,
+					}),
 				});
 			}
 
 			// Fallback: render as-is
-			return React.createElement('pre', null, children);
+			return React.createElement('pre', { translate: 'no' }, children);
 		},
 		// Inline code only — block code is handled by the pre component above
 		code: ({ node: _node, className, children, ...props }: any) => {
-			return React.createElement('code', { className, ...props }, children);
+			const hexColor = extractHexColor(children);
+			const handlers = buildInlineCodeHandlers(children);
+			const codeProps = {
+				className,
+				...props,
+				...INLINE_CODE_CLICK_PROPS,
+				...handlers,
+				style: { ...(props.style ?? {}), ...INLINE_CODE_CLICK_STYLE },
+			};
+			if (hexColor) {
+				return React.createElement(
+					'code',
+					codeProps,
+					React.createElement('span', {
+						style: {
+							display: 'inline-block',
+							width: '0.75em',
+							height: '0.75em',
+							backgroundColor: hexColor,
+							borderRadius: '2px',
+							marginRight: '0.35em',
+							verticalAlign: 'middle',
+							border: '1px solid rgba(128, 128, 128, 0.3)',
+						},
+					}),
+					children
+				);
+			}
+			return React.createElement('code', codeProps, children);
 		},
 	};
 
@@ -509,6 +559,9 @@ export function createMarkdownComponents(options: MarkdownComponentsOptions): Pa
 						e.preventDefault();
 						if (isMaestroFile && filePath && onFileClick) {
 							onFileClick(filePath, { openInNewTab: e.metaKey || e.ctrlKey });
+						} else if (href && href.startsWith('maestro://')) {
+							// Route in-app deep links through the renderer's deep link handler.
+							openMaestroLink(href);
 						} else if (isAnchorLink && anchorId) {
 							// Handle anchor links - scroll to the target element
 							if (onAnchorClick) {
@@ -523,7 +576,7 @@ export function createMarkdownComponents(options: MarkdownComponentsOptions): Pa
 								}
 							}
 						} else if (href && onExternalLinkClick && /^https?:\/\/|^mailto:/.test(href)) {
-							onExternalLinkClick(href);
+							onExternalLinkClick(href, { ctrlKey: e.ctrlKey });
 						} else if (
 							href &&
 							onFileClick &&
@@ -659,16 +712,34 @@ export function createWizardBubbleMarkdownComponents(theme: Theme): Partial<Comp
 		em: ({ children }: any) => React.createElement('em', { className: 'italic' }, children),
 		code: ({ children, className }: any) => {
 			const isInline = !className;
-			return isInline
-				? React.createElement(
-						'code',
-						{
-							className: 'px-1 py-0.5 rounded text-xs font-mono',
-							style: { backgroundColor: `${theme.colors.bgMain}80` },
-						},
-						children
-					)
-				: React.createElement('code', { className }, children);
+			if (isInline) {
+				const hexColor = extractHexColor(children);
+				return React.createElement(
+					'code',
+					{
+						className: 'px-1 py-0.5 rounded text-xs font-mono',
+						style: { backgroundColor: `${theme.colors.bgMain}80`, ...INLINE_CODE_CLICK_STYLE },
+						...INLINE_CODE_CLICK_PROPS,
+						...buildInlineCodeHandlers(children),
+					},
+					hexColor
+						? React.createElement('span', {
+								style: {
+									display: 'inline-block',
+									width: '0.75em',
+									height: '0.75em',
+									backgroundColor: hexColor,
+									borderRadius: '2px',
+									marginRight: '0.35em',
+									verticalAlign: 'middle',
+									border: '1px solid rgba(128, 128, 128, 0.3)',
+								},
+							})
+						: null,
+					children
+				);
+			}
+			return React.createElement('code', { className }, children);
 		},
 		pre: ({ children }: any) =>
 			React.createElement(
@@ -686,9 +757,9 @@ export function createWizardBubbleMarkdownComponents(theme: Theme): Partial<Comp
 					type: 'button',
 					className: 'underline',
 					style: { color: theme.colors.accent },
-					onClick: () => {
+					onClick: (e: React.MouseEvent) => {
 						if (href && /^https?:\/\/|^mailto:/.test(href)) {
-							window.maestro.shell.openExternal(href);
+							openUrl(href, { ctrlKey: e.ctrlKey });
 						}
 					},
 				},
@@ -768,18 +839,37 @@ export function createReleaseNotesMarkdownComponents(theme: Theme): Partial<Comp
 			),
 		li: ({ children }: any) =>
 			React.createElement('li', { style: { color: theme.colors.textDim } }, children),
-		code: ({ children }: any) =>
-			React.createElement(
+		code: ({ children }: any) => {
+			const hexColor = extractHexColor(children);
+			return React.createElement(
 				'code',
 				{
 					className: 'px-1 py-0.5 rounded font-mono text-xs',
 					style: {
 						backgroundColor: theme.colors.bgMain,
 						color: theme.colors.accent,
+						...INLINE_CODE_CLICK_STYLE,
 					},
+					...INLINE_CODE_CLICK_PROPS,
+					...buildInlineCodeHandlers(children),
 				},
+				hexColor
+					? React.createElement('span', {
+							style: {
+								display: 'inline-block',
+								width: '0.75em',
+								height: '0.75em',
+								backgroundColor: hexColor,
+								borderRadius: '2px',
+								marginRight: '0.35em',
+								verticalAlign: 'middle',
+								border: '1px solid rgba(128, 128, 128, 0.3)',
+							},
+						})
+					: null,
 				children
-			),
+			);
+		},
 		a: ({ href, children }: any) =>
 			React.createElement(
 				'a',
@@ -788,7 +878,7 @@ export function createReleaseNotesMarkdownComponents(theme: Theme): Partial<Comp
 					onClick: (e: React.MouseEvent) => {
 						e.preventDefault();
 						if (href && /^https?:\/\/|^mailto:/.test(href)) {
-							window.maestro.shell.openExternal(href);
+							openUrl(href, { ctrlKey: e.ctrlKey });
 						}
 					},
 					className: 'hover:underline cursor-pointer',
@@ -875,8 +965,19 @@ export function generateTerminalProseStyles(theme: Theme, scopeSelector: string)
  * @param theme Theme object with color values
  * @returns CSS string to be injected via <style> tag
  */
-export function generateDiffViewStyles(theme: Theme): string {
+export function generateDiffViewStyles(theme: Theme, colorBlindMode: boolean = false): string {
 	const c = theme.colors;
+
+	const insertGutter = colorBlindMode
+		? COLORBLIND_DIFF_COLORS.insertGutter
+		: 'rgba(34, 197, 94, 0.1)';
+	const insertCode = colorBlindMode ? COLORBLIND_DIFF_COLORS.insertCode : 'rgba(34, 197, 94, 0.15)';
+	const insertEdit = colorBlindMode ? 'rgba(0, 153, 136, 0.4)' : 'rgba(34, 197, 94, 0.3)';
+	const deleteGutter = colorBlindMode
+		? COLORBLIND_DIFF_COLORS.deleteGutter
+		: 'rgba(239, 68, 68, 0.1)';
+	const deleteCode = colorBlindMode ? COLORBLIND_DIFF_COLORS.deleteCode : 'rgba(239, 68, 68, 0.15)';
+	const deleteEdit = colorBlindMode ? 'rgba(204, 51, 17, 0.4)' : 'rgba(239, 68, 68, 0.3)';
 
 	return `
     .diff-gutter {
@@ -889,24 +990,24 @@ export function generateDiffViewStyles(theme: Theme): string {
       color: ${c.textMain} !important;
     }
     .diff-gutter-insert {
-      background-color: rgba(34, 197, 94, 0.1) !important;
+      background-color: ${insertGutter} !important;
     }
     .diff-code-insert {
-      background-color: rgba(34, 197, 94, 0.15) !important;
+      background-color: ${insertCode} !important;
       color: ${c.textMain} !important;
     }
     .diff-gutter-delete {
-      background-color: rgba(239, 68, 68, 0.1) !important;
+      background-color: ${deleteGutter} !important;
     }
     .diff-code-delete {
-      background-color: rgba(239, 68, 68, 0.15) !important;
+      background-color: ${deleteCode} !important;
       color: ${c.textMain} !important;
     }
     .diff-code-insert .diff-code-edit {
-      background-color: rgba(34, 197, 94, 0.3) !important;
+      background-color: ${insertEdit} !important;
     }
     .diff-code-delete .diff-code-edit {
-      background-color: rgba(239, 68, 68, 0.3) !important;
+      background-color: ${deleteEdit} !important;
     }
     .diff-hunk-header {
       background-color: ${c.bgActivity} !important;

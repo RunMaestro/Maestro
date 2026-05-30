@@ -363,6 +363,7 @@ export class FactoryDroidSessionStorage extends BaseSessionStorage {
 					durationSeconds,
 				});
 			} catch (e) {
+				void captureException(e);
 				logger.warn(`Error reading remote Factory Droid session ${sessionId}`, LOG_CONTEXT, {
 					error: e,
 				});
@@ -464,6 +465,7 @@ export class FactoryDroidSessionStorage extends BaseSessionStorage {
 					// Factory Droid doesn't provide cost in settings.json
 				});
 			} catch (e) {
+				void captureException(e);
 				logger.warn(`Error reading Factory Droid session ${sessionId}`, LOG_CONTEXT, { error: e });
 			}
 		}

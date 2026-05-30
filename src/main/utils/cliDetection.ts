@@ -81,14 +81,6 @@ export async function isGhInstalled(): Promise<boolean> {
 }
 
 /**
- * Get the cached path to the gh CLI binary.
- * Returns null if gh is not installed or detection hasn't run yet.
- */
-export function getGhPath(): string | null {
-	return ghPathCache;
-}
-
-/**
  * Get the gh CLI path, auto-detecting if not already cached.
  * Allows override with a custom path.
  * @param customPath Optional custom path to gh binary
@@ -104,13 +96,6 @@ export async function resolveGhPath(customPath?: string): Promise<string> {
 
 	// Return cached path or fallback to 'gh'
 	return ghPathCache || 'gh';
-}
-
-export function clearGhCache(): void {
-	ghInstalledCache = null;
-	ghPathCache = null;
-	ghAuthenticatedCache = null;
-	ghStatusCacheTime = null;
 }
 
 /**
@@ -198,20 +183,4 @@ export async function detectSshPath(): Promise<string | null> {
 export async function resolveSshPath(): Promise<string> {
 	await detectSshPath();
 	return sshPathCache || 'ssh';
-}
-
-/**
- * Get the cached SSH path synchronously (returns null if detection hasn't run).
- * Use resolveSshPath() for async detection with fallback.
- */
-export function getSshPath(): string | null {
-	return sshPathCache;
-}
-
-/**
- * Clear SSH path cache (for testing or re-detection).
- */
-export function clearSshCache(): void {
-	sshPathCache = null;
-	sshDetectionDone = false;
 }

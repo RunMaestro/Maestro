@@ -20,6 +20,53 @@ vi.mock('../../../main/utils/logger', () => ({
 	},
 }));
 
+vi.mock('../../../main/agents/opencode-config', async () => {
+	const actual = await vi.importActual<typeof import('../../../main/agents/opencode-config')>(
+		'../../../main/agents/opencode-config'
+	);
+	return {
+		...actual,
+		discoverModelsFromLocalConfigs: vi.fn().mockResolvedValue([]),
+	};
+});
+
+// Make readFileSync mockable for ESM - vi.spyOn on ESM namespace fails
+// Also mock fs.promises.access to prevent real filesystem probing
+const { _readFileSync, _fsAccess } = vi.hoisted(() => ({
+	_readFileSync: vi.fn(),
+	_fsAccess: vi.fn().mockRejectedValue(new Error('ENOENT: no such file or directory')),
+}));
+vi.mock('fs', async () => {
+	// Import the real fs module directly (not via importOriginal which returns a proxy)
+	const actual = await import('node:fs');
+	// Copy all exports into a plain object so vitest can enumerate them
+	const mod: Record<string, unknown> = {};
+	for (const key of Reflect.ownKeys(actual) as string[]) {
+		if (key === 'readFileSync') continue;
+		if (key === 'promises') continue;
+		try {
+			mod[key] = (actual as any)[key];
+		} catch {
+			// skip
+		}
+	}
+	mod.readFileSync = _readFileSync;
+	// Clone promises with overridden access
+	const promMod: Record<string, unknown> = {};
+	for (const key of Reflect.ownKeys(actual.promises) as string[]) {
+		if (key === 'access') continue;
+		try {
+			promMod[key] = (actual.promises as any)[key];
+		} catch {
+			// skip
+		}
+	}
+	promMod.access = _fsAccess;
+	mod.promises = promMod;
+	mod.default = actual;
+	return mod;
+});
+
 // Get mocked modules
 import { execFileNoThrow } from '../../../main/utils/execFile';
 import { logger } from '../../../main/utils/logger';
@@ -34,12 +81,9 @@ describe('agent-detector', () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks();
-		// Mock fs.promises.access to always fail, simulating no direct path probing results.
+		// Reset fs.promises.access mock to always fail (set up via vi.mock above).
 		// This ensures tests rely on 'which'/'where' command mocking instead of actual filesystem.
-		// The probeUnixPaths/probeWindowsPaths methods check paths directly before falling back to 'which'.
-		vi.spyOn(fs.promises, 'access').mockRejectedValue(
-			new Error('ENOENT: no such file or directory')
-		);
+		_fsAccess.mockRejectedValue(new Error('ENOENT: no such file or directory'));
 		detector = new AgentDetector();
 		// Default: no binaries found
 		mockExecFileNoThrow.mockResolvedValue({ stdout: '', stderr: '', exitCode: 1 });
@@ -278,7 +322,7 @@ describe('agent-detector', () => {
 
 			const agents = await detector.detectAgents();
 
-			// Should have all 8 agents (terminal, claude-code, codex, gemini-cli, qwen3-coder, opencode, factory-droid, aider)
+			// Should have all 8 agents (terminal, claude-code, codex, gemini-cli, qwen3-coder, opencode, factory-droid, copilot-cli)
 			expect(agents.length).toBe(8);
 
 			const agentIds = agents.map((a) => a.id);
@@ -289,7 +333,7 @@ describe('agent-detector', () => {
 			expect(agentIds).toContain('qwen3-coder');
 			expect(agentIds).toContain('opencode');
 			expect(agentIds).toContain('factory-droid');
-			expect(agentIds).toContain('aider');
+			expect(agentIds).toContain('copilot-cli');
 		});
 
 		it('should mark agents as available when binary is found', async () => {
@@ -924,7 +968,7 @@ describe('agent-detector', () => {
 
 			const result = await detectPromise;
 			expect(result).toBeDefined();
-			// Should have all 8 agents (terminal, claude-code, codex, gemini-cli, qwen3-coder, opencode, factory-droid, aider)
+			// Should have all 8 agents (terminal, claude-code, codex, gemini-cli, qwen3-coder, opencode, factory-droid, copilot-cli)
 			expect(result.length).toBe(8);
 		});
 
@@ -1006,8 +1050,8 @@ describe('agent-detector', () => {
 			await detector.detectAgents();
 		});
 
-		it('should return empty array for agents that do not support model selection', async () => {
-			// Setup: claude-code is available but does not support model selection
+		it('should discover models for Claude Code from stats-cache.json', async () => {
+			// Setup: claude-code is available
 			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
 				const binaryName = args[0];
 				if (binaryName === 'claude') {
@@ -1019,15 +1063,126 @@ describe('agent-detector', () => {
 				return { stdout: '', stderr: 'not found', exitCode: 1 };
 			});
 
+			// Mock fs.readFileSync to return stats-cache.json with model usage
+			const statsData = JSON.stringify({
+				modelUsage: {
+					'claude-opus-4-6': { inputTokens: 100 },
+					'claude-sonnet-4-6': { inputTokens: 200 },
+				},
+			});
+			_readFileSync.mockImplementation((filePath: fs.PathOrFileDescriptor) => {
+				if (typeof filePath === 'string' && filePath.includes('stats-cache.json')) {
+					return statsData;
+				}
+				throw new Error('ENOENT');
+			});
+
 			detector.clearCache();
 			await detector.detectAgents();
 
 			const models = await detector.discoverModels('claude-code');
-			expect(models).toEqual([]);
-			expect(logger.debug).toHaveBeenCalledWith(
-				expect.stringContaining('does not support model selection'),
-				'AgentDetector'
+			// Should include aliases + [1m] variants + historical models
+			expect(models).toContain('sonnet');
+			expect(models).toContain('opus');
+			expect(models).toContain('haiku');
+			expect(models).toContain('opus[1m]');
+			expect(models).toContain('sonnet[1m]');
+			expect(models).toContain('claude-opus-4-6');
+			expect(models).toContain('claude-sonnet-4-6');
+			expect(logger.info).toHaveBeenCalledWith(
+				expect.stringContaining('Discovered 7 models'),
+				'AgentDetector',
+				expect.any(Object)
 			);
+		});
+
+		it('should return aliases when Claude stats-cache.json is missing', async () => {
+			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
+				const binaryName = args[0];
+				if (binaryName === 'claude') {
+					return { stdout: '/usr/bin/claude\n', stderr: '', exitCode: 0 };
+				}
+				if (binaryName === 'bash') {
+					return { stdout: '/bin/bash\n', stderr: '', exitCode: 0 };
+				}
+				return { stdout: '', stderr: 'not found', exitCode: 1 };
+			});
+
+			_readFileSync.mockImplementation(() => {
+				throw new Error('ENOENT');
+			});
+
+			detector.clearCache();
+			await detector.detectAgents();
+
+			const models = await detector.discoverModels('claude-code');
+			expect(models).toEqual(['sonnet', 'opus', 'haiku', 'opus[1m]', 'sonnet[1m]']);
+		});
+
+		it('should discover models for Codex from models_cache.json', async () => {
+			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
+				const binaryName = args[0];
+				if (binaryName === 'codex') {
+					return { stdout: '/usr/bin/codex\n', stderr: '', exitCode: 0 };
+				}
+				if (binaryName === 'bash') {
+					return { stdout: '/bin/bash\n', stderr: '', exitCode: 0 };
+				}
+				return { stdout: '', stderr: 'not found', exitCode: 1 };
+			});
+
+			const cacheData = JSON.stringify({
+				models: [
+					{ slug: 'gpt-5.4', visibility: 'list' },
+					{ slug: 'gpt-5.3-codex', visibility: 'list' },
+					{ slug: 'gpt-5.1-codex', visibility: 'hide' },
+					{ slug: 'o4-mini', visibility: 'list' },
+				],
+			});
+			_readFileSync.mockImplementation((filePath: fs.PathOrFileDescriptor) => {
+				if (typeof filePath === 'string' && filePath.includes('models_cache.json')) {
+					return cacheData;
+				}
+				throw new Error('ENOENT');
+			});
+
+			detector.clearCache();
+			await detector.detectAgents();
+
+			const models = await detector.discoverModels('codex');
+			// Should include visible models, exclude hidden ones
+			expect(models).toContain('gpt-5.4');
+			expect(models).toContain('gpt-5.3-codex');
+			expect(models).toContain('o4-mini');
+			expect(models).not.toContain('gpt-5.1-codex'); // hidden
+			expect(logger.info).toHaveBeenCalledWith(
+				expect.stringContaining('Discovered 3 models'),
+				'AgentDetector',
+				expect.any(Object)
+			);
+		});
+
+		it('should return empty array when Codex models_cache.json is missing', async () => {
+			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
+				const binaryName = args[0];
+				if (binaryName === 'codex') {
+					return { stdout: '/usr/bin/codex\n', stderr: '', exitCode: 0 };
+				}
+				if (binaryName === 'bash') {
+					return { stdout: '/bin/bash\n', stderr: '', exitCode: 0 };
+				}
+				return { stdout: '', stderr: 'not found', exitCode: 1 };
+			});
+
+			_readFileSync.mockImplementation(() => {
+				throw new Error('ENOENT');
+			});
+
+			detector.clearCache();
+			await detector.detectAgents();
+
+			const models = await detector.discoverModels('codex');
+			expect(models).toEqual([]);
 		});
 
 		it('should return empty array for unavailable agents', async () => {
@@ -1127,7 +1282,7 @@ describe('agent-detector', () => {
 
 			expect(models).toEqual([]);
 			expect(logger.warn).toHaveBeenCalledWith(
-				expect.stringContaining('Model discovery failed'),
+				expect.stringContaining('CLI model discovery failed'),
 				'AgentDetector',
 				expect.any(Object)
 			);
@@ -1378,6 +1533,203 @@ describe('agent-detector', () => {
 
 			expect(models).toEqual(['refreshed-model']);
 			expect(mockExecFileNoThrow).toHaveBeenCalled();
+		});
+	});
+
+	describe('discoverConfigOptions', () => {
+		it('should discover effort levels for Claude Code from --help output', async () => {
+			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
+				const binaryName = args[0];
+				if (binaryName === 'claude') {
+					return { stdout: '/usr/bin/claude\n', stderr: '', exitCode: 0 };
+				}
+				if (binaryName === 'bash') {
+					return { stdout: '/bin/bash\n', stderr: '', exitCode: 0 };
+				}
+				// Claude --help output
+				if (cmd === '/usr/bin/claude' && args[0] === '--help') {
+					return {
+						stdout:
+							'  --effort <level>                                  Effort level for the current session (low, medium, high, max)\n',
+						stderr: '',
+						exitCode: 0,
+					};
+				}
+				return { stdout: '', stderr: 'not found', exitCode: 1 };
+			});
+
+			detector.clearCache();
+			await detector.detectAgents();
+
+			const options = await detector.discoverConfigOptions('claude-code', 'effort');
+			expect(options).toEqual(['', 'low', 'medium', 'high', 'max']);
+		});
+
+		it('should discover reasoning levels for Codex from models_cache.json', async () => {
+			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
+				const binaryName = args[0];
+				if (binaryName === 'codex') {
+					return { stdout: '/usr/bin/codex\n', stderr: '', exitCode: 0 };
+				}
+				if (binaryName === 'bash') {
+					return { stdout: '/bin/bash\n', stderr: '', exitCode: 0 };
+				}
+				return { stdout: '', stderr: 'not found', exitCode: 1 };
+			});
+
+			const cacheData = JSON.stringify({
+				models: [
+					{
+						slug: 'gpt-5.4',
+						visibility: 'list',
+						supported_reasoning_levels: [
+							{ effort: 'low' },
+							{ effort: 'medium' },
+							{ effort: 'high' },
+							{ effort: 'xhigh' },
+						],
+					},
+					{
+						slug: 'gpt-5.1-codex-mini',
+						visibility: 'list',
+						supported_reasoning_levels: [
+							{ effort: 'minimal' },
+							{ effort: 'low' },
+							{ effort: 'medium' },
+						],
+					},
+					{
+						slug: 'gpt-5.1-codex',
+						visibility: 'hide',
+						supported_reasoning_levels: [{ effort: 'low' }, { effort: 'medium' }],
+					},
+				],
+			});
+			_readFileSync.mockImplementation((filePath: fs.PathOrFileDescriptor) => {
+				if (typeof filePath === 'string' && filePath.includes('models_cache.json')) {
+					return cacheData;
+				}
+				throw new Error('ENOENT');
+			});
+
+			detector.clearCache();
+			await detector.detectAgents();
+
+			const options = await detector.discoverConfigOptions('codex', 'reasoningEffort');
+			// Should include union of visible models' reasoning levels, sorted by severity
+			expect(options).toEqual(['', 'minimal', 'low', 'medium', 'high', 'xhigh']);
+			// Hidden model's levels should not be excluded (they share the same platform levels)
+		});
+
+		it('falls back to static Codex reasoning levels when models_cache.json is missing', async () => {
+			mockExecFileNoThrow.mockImplementation(async (_cmd, args) => {
+				const binaryName = args[0];
+				if (binaryName === 'codex') {
+					return { stdout: '/usr/bin/codex\n', stderr: '', exitCode: 0 };
+				}
+				if (binaryName === 'bash') {
+					return { stdout: '/bin/bash\n', stderr: '', exitCode: 0 };
+				}
+				return { stdout: '', stderr: 'not found', exitCode: 1 };
+			});
+			_readFileSync.mockImplementation(() => {
+				const error = new Error('ENOENT: no such file or directory') as NodeJS.ErrnoException;
+				error.code = 'ENOENT';
+				throw error;
+			});
+
+			detector.clearCache();
+			await detector.detectAgents();
+
+			const options = await detector.discoverConfigOptions('codex', 'reasoningEffort');
+			expect(options).toEqual(['', 'minimal', 'low', 'medium', 'high', 'xhigh']);
+			expect(logger.debug).toHaveBeenCalledWith(
+				'Could not read Codex models_cache.json for config option discovery',
+				'AgentDetector'
+			);
+		});
+
+		it('should fall back to static options for select config options without dynamic discovery', async () => {
+			// Copilot-CLI's reasoningEffort is declared with a static `options` array
+			// and no dynamic discovery branch. Without the static fallback the
+			// effort dropdown in the UI would stay empty and hidden.
+			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
+				const binaryName = args[0];
+				if (binaryName === 'copilot') {
+					return { stdout: '/usr/bin/copilot\n', stderr: '', exitCode: 0 };
+				}
+				if (binaryName === 'bash') {
+					return { stdout: '/bin/bash\n', stderr: '', exitCode: 0 };
+				}
+				return { stdout: '', stderr: 'not found', exitCode: 1 };
+			});
+
+			detector.clearCache();
+			await detector.detectAgents();
+
+			const options = await detector.discoverConfigOptions('copilot-cli', 'reasoningEffort');
+			expect(options).toEqual(['', 'low', 'medium', 'high', 'xhigh']);
+		});
+
+		it('should return empty array for unsupported option keys', async () => {
+			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
+				const binaryName = args[0];
+				if (binaryName === 'claude') {
+					return { stdout: '/usr/bin/claude\n', stderr: '', exitCode: 0 };
+				}
+				if (binaryName === 'bash') {
+					return { stdout: '/bin/bash\n', stderr: '', exitCode: 0 };
+				}
+				return { stdout: '', stderr: 'not found', exitCode: 1 };
+			});
+
+			detector.clearCache();
+			await detector.detectAgents();
+
+			const options = await detector.discoverConfigOptions('claude-code', 'nonexistent');
+			expect(options).toEqual([]);
+		});
+
+		it('should return empty for unavailable agents', async () => {
+			const options = await detector.discoverConfigOptions('nonexistent-agent', 'effort');
+			expect(options).toEqual([]);
+		});
+
+		it('should cache config option results', async () => {
+			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
+				const binaryName = args[0];
+				if (binaryName === 'claude') {
+					return { stdout: '/usr/bin/claude\n', stderr: '', exitCode: 0 };
+				}
+				if (binaryName === 'bash') {
+					return { stdout: '/bin/bash\n', stderr: '', exitCode: 0 };
+				}
+				if (cmd === '/usr/bin/claude' && args[0] === '--help') {
+					return {
+						stdout:
+							'  --effort <level>                                  Effort level for the current session (low, medium, high, max)\n',
+						stderr: '',
+						exitCode: 0,
+					};
+				}
+				return { stdout: '', stderr: 'not found', exitCode: 1 };
+			});
+
+			detector.clearCache();
+			await detector.detectAgents();
+
+			const options1 = await detector.discoverConfigOptions('claude-code', 'effort');
+			mockExecFileNoThrow.mockClear();
+
+			const options2 = await detector.discoverConfigOptions('claude-code', 'effort');
+			expect(options1).toEqual(options2);
+			// Should not have called --help again (cached)
+			expect(mockExecFileNoThrow).not.toHaveBeenCalledWith(
+				'/usr/bin/claude',
+				['--help'],
+				undefined,
+				expect.any(Object)
+			);
 		});
 	});
 });

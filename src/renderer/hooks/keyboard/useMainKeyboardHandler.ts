@@ -3,6 +3,7 @@ import type { Session, AITab, ThinkingMode } from '../../types';
 import { getInitialRenameValue } from '../../utils/tabHelpers';
 import { useModalStore } from '../../stores/modalStore';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { editClipboardImage } from '../../components/ImageAnnotator/editClipboardImage';
 
 // Font size keyboard shortcut constants
 const FONT_SIZE_STEP = 2;
@@ -70,6 +71,17 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 	// Main keyboard handler effect
 	useEffect(() => {
 		const handleKeyDown = (e: KeyboardEvent) => {
+			const target = e.target;
+			const activeElement = document.activeElement;
+			const isXtermElement = (el: EventTarget | null) =>
+				el instanceof Element &&
+				(el.classList.contains('xterm-helper-textarea') || !!el.closest('.xterm'));
+			const isXtermTarget = isXtermElement(target) || isXtermElement(activeElement);
+			const isEditableTarget =
+				target instanceof HTMLInputElement ||
+				target instanceof HTMLTextAreaElement ||
+				(target instanceof HTMLElement && target.isContentEditable);
+
 			// Block browser refresh (Cmd+R / Ctrl+R / Cmd+Shift+R / Ctrl+Shift+R) globally
 			// We override these shortcuts for other purposes, but even in views where that
 			// doesn't apply (e.g., file preview), we never want the app to refresh
@@ -81,6 +93,110 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 			// accessing current state values
 			const ctx = keyboardHandlerRef.current;
 			if (!ctx) return;
+
+			// Terminal focus recovery: if a key event reaches this window handler while in
+			// terminal mode, xterm's textarea likely lost focus. Recover early (before any
+			// global shortcut/navigation logic) so arrow keys and editor escape paths still
+			// work in interactive TUIs like vi/vim/nano.
+			const isTerminalRecoveryContext =
+				ctx.activeSession?.inputMode === 'terminal' &&
+				!ctx.activeGroupChatId &&
+				!ctx.hasOpenLayers() &&
+				!e.defaultPrevented &&
+				!isXtermTarget &&
+				!isEditableTarget;
+			if (isTerminalRecoveryContext) {
+				// Preserve explicit app shortcuts that are intentionally global.
+				const isExplicitAppShortcut =
+					e.metaKey || e.altKey || (e.ctrlKey && e.shiftKey && e.code === 'Backquote');
+				if (!isExplicitAppShortcut) {
+					const tabId = ctx.activeSession.activeTerminalTabId;
+					if (tabId) {
+						const termSid = `${ctx.activeSession.id}-terminal-${tabId}`;
+						let data: string | null = null;
+						const isNavigationKey =
+							e.key === 'ArrowUp' ||
+							e.key === 'ArrowDown' ||
+							e.key === 'ArrowRight' ||
+							e.key === 'ArrowLeft' ||
+							e.key === 'Home' ||
+							e.key === 'End' ||
+							e.key === 'Delete' ||
+							e.key === 'PageUp' ||
+							e.key === 'PageDown';
+
+						if (!e.ctrlKey && e.key.length === 1) {
+							data = e.key;
+						} else if (e.key === 'Enter') {
+							data = '\r';
+						} else if (e.key === 'Backspace') {
+							data = '\x7f';
+						} else if (e.key === 'Escape') {
+							data = '\x1b';
+						} else if (e.key === 'Tab') {
+							data = '\t';
+						} else if (e.ctrlKey && e.key.length === 1) {
+							// Keep Ctrl+F available for terminal search routing when xterm
+							// is not focused (Windows/Linux app-level shortcut behavior).
+							if (e.key.toLowerCase() !== 'f') {
+								// Ctrl+A..Z -> send control character
+								const code = e.key.toUpperCase().charCodeAt(0);
+								if (code >= 65 && code <= 90) {
+									data = String.fromCharCode(code - 64);
+								}
+							}
+						}
+
+						if (data !== null) {
+							ctx.mainPanelRef?.current?.focusActiveTerminal?.();
+							e.preventDefault();
+							window.maestro?.process?.write(termSid, data);
+							return;
+						}
+						if (isNavigationKey) {
+							// Avoid synthesizing arrow/home/end escapes on focus recovery:
+							// xterm is authoritative for these and manual sequences can
+							// corrupt insert mode in editors (vi/vim).
+							ctx.mainPanelRef?.current?.focusActiveTerminal?.();
+							e.preventDefault();
+							return;
+						}
+					}
+				}
+			}
+
+			// CRITICAL: When in terminal mode, let xterm.js handle Ctrl+[A-Z] control sequences.
+			// These include Ctrl+C (SIGINT), Ctrl+D (EOF), Ctrl+Z (suspend), Ctrl+\ (quit), etc.
+			// On macOS, Ctrl is used for terminal control sequences; Cmd (Meta) is for Maestro shortcuts.
+			// On Windows/Linux, Ctrl doubles as the modifier for Maestro shortcuts (Ctrl+F, Ctrl+W, etc.)
+			// so we only bypass for macOS to avoid breaking cross-platform app shortcuts.
+			// Exception: Ctrl+Shift+` always creates a new terminal tab regardless of mode/platform.
+			const isMac = navigator.platform.toUpperCase().includes('MAC');
+			if (
+				isMac &&
+				ctx.activeSession?.inputMode === 'terminal' &&
+				!ctx.activeGroupChatId &&
+				!isXtermTarget &&
+				e.ctrlKey &&
+				!e.metaKey &&
+				!e.altKey &&
+				!(e.shiftKey && e.code === 'Backquote') // Allow Ctrl+Shift+` for new terminal tab
+			) {
+				// If the event reached this window handler, xterm's textarea may have lost focus
+				// (xterm normally stopPropagation's handled Ctrl events). Re-focus and forward
+				// the control character so Ctrl+C/D/Z still work in vim/vi/nano.
+				ctx.mainPanelRef?.current?.focusActiveTerminal?.();
+				const tabId = ctx.activeSession.activeTerminalTabId;
+				if (tabId && e.key.length === 1) {
+					const code = e.key.toUpperCase().charCodeAt(0);
+					if (code >= 65 && code <= 90) {
+						e.preventDefault();
+						const termSid = `${ctx.activeSession.id}-terminal-${tabId}`;
+						window.maestro?.process?.write(termSid, String.fromCharCode(code - 64));
+					}
+				}
+				return;
+			}
 
 			// When layers (modals/overlays) are open, we need nuanced shortcut handling:
 			// - Escape: handled by LayerStackContext in capture phase
@@ -102,17 +218,20 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					(e.metaKey || e.ctrlKey) &&
 					e.shiftKey &&
 					(e.key === '[' || e.key === ']' || e.key === '{' || e.key === '}');
-				// Allow sidebar toggle shortcuts (Alt+Cmd+Arrow) even when modals are open
+				// Allow sidebar toggle shortcuts (Alt+Cmd+Arrow) and next-unread (Alt+Cmd+ArrowDown) even when modals are open
 				const isLayoutShortcut =
-					e.altKey && (e.metaKey || e.ctrlKey) && (e.key === 'ArrowLeft' || e.key === 'ArrowRight');
+					e.altKey &&
+					(e.metaKey || e.ctrlKey) &&
+					(e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'ArrowDown');
 				// Allow right panel tab shortcuts (Cmd+Shift+F/H/S) even when overlays are open
 				const keyLower = e.key.toLowerCase();
 				const isRightPanelShortcut =
 					(e.metaKey || e.ctrlKey) &&
 					e.shiftKey &&
 					(keyLower === 'f' || keyLower === 'h' || keyLower === 's');
-				// Allow jumpToBottom (Cmd+Shift+J) from anywhere - always scroll main panel to bottom
-				const isJumpToBottomShortcut = (e.metaKey || e.ctrlKey) && e.shiftKey && keyLower === 'j';
+				// Allow jumpToBottom and jumpToTerminal from anywhere - benign navigation actions
+				const isJumpToBottomShortcut = ctx.isShortcut(e, 'jumpToBottom');
+				const isJumpToTerminalShortcut = ctx.isShortcut(e, 'jumpToTerminal');
 				// Allow markdown toggle (Cmd+E) for chat history, even when overlays are open
 				// (e.g., when output search is open, user should still be able to toggle markdown mode)
 				const isMarkdownToggleShortcut =
@@ -147,29 +266,72 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					e.altKey && (e.metaKey || e.ctrlKey) && !e.shiftKey && codeKeyLower === 't';
 				// Allow toggleMode (Cmd+J) to switch to terminal view from file preview
 				const isToggleModeShortcut = ctx.isShortcut(e, 'toggleMode');
+				// Allow focusBrowserAddress (Cmd+L) to focus address bar when browser tab is active overlay
+				const isBrowserAddressShortcut =
+					ctx.isTabShortcut(e, 'focusBrowserAddress') && !!ctx.activeSession?.activeBrowserTabId;
+				// Allow browser-tab Cmd+F (in-page find) to reach its handler even when
+				// modals/overlays are open. The find bar is locally-scoped to the
+				// browser tab; the overlay-guard's broader "block app shortcuts"
+				// behavior would otherwise eat it.
+				const isBrowserFindShortcut =
+					(e.metaKey || e.ctrlKey) &&
+					!e.altKey &&
+					!e.shiftKey &&
+					e.key.toLowerCase() === 'f' &&
+					!!ctx.activeSession?.activeBrowserTabId;
+				// Allow Cmd+Left / Cmd+Right (browser history back/forward) to fall
+				// through when a browser tab is active. The address/find bar inputs
+				// still preserve macOS line navigation via the target check below.
+				const isBrowserNavShortcut =
+					(e.metaKey || e.ctrlKey) &&
+					!e.altKey &&
+					!e.shiftKey &&
+					(e.key === 'ArrowLeft' || e.key === 'ArrowRight') &&
+					!!ctx.activeSession?.activeBrowserTabId;
+				// Allow Cmd+F to fall through and re-focus the file-tree filter input
+				// when the filter is already open and the files panel is focused. The
+				// open filter registers an overlay layer, so without this exception the
+				// overlay-guard below returns early and the re-focus branch never runs.
+				const isFileFilterRefocusShortcut =
+					(e.metaKey || e.ctrlKey) &&
+					!e.altKey &&
+					!e.shiftKey &&
+					keyLower === 'f' &&
+					ctx.activeFocus === 'right' &&
+					ctx.activeRightTab === 'files' &&
+					ctx.fileTreeFilterOpen;
 				// Allow font size shortcuts (Cmd+=/+, Cmd+-, Cmd+0) even when modals/overlays are open
 				const isFontSizeShortcut =
 					(e.metaKey || e.ctrlKey) &&
 					!e.altKey &&
 					!e.shiftKey &&
 					(e.key === '=' || e.key === '+' || e.key === '-' || e.key === '0');
+				// Allow the openPromptComposer shortcut to fall through while the Prompt
+				// Composer is the open modal, so pressing it again cycles windowed ->
+				// full screen -> windowed (cyclePromptComposer) instead of being eaten
+				// by the modal guard below.
+				const isPromptComposerCycleShortcut =
+					ctx.isShortcut(e, 'openPromptComposer') &&
+					useModalStore.getState().modals.get('promptComposer')?.open === true;
 
 				if (ctx.hasOpenModal()) {
 					// TRUE MODAL is open - block most shortcuts from App.tsx
 					// The modal's own handler will handle Cmd+Shift+[] if it supports it
 					// BUT allow layout shortcuts (sidebar toggles), system utility shortcuts, session jump,
-					// jumpToBottom, markdown toggle, and font size to work (these are benign viewing preferences)
+					// jumpToBottom, jumpToTerminal, markdown toggle, and font size to work (these are benign navigation/viewing preferences)
 					if (
 						!isLayoutShortcut &&
 						!isSystemUtilShortcut &&
 						!isSessionJumpShortcut &&
 						!isJumpToBottomShortcut &&
+						!isJumpToTerminalShortcut &&
 						!isMarkdownToggleShortcut &&
-						!isFontSizeShortcut
+						!isFontSizeShortcut &&
+						!isPromptComposerCycleShortcut
 					) {
 						return;
 					}
-					// Fall through to handle layout/system utility/session jump/jumpToBottom/markdown toggle/font size shortcuts below
+					// Fall through to handle layout/system utility/session jump/jumpToBottom/jumpToTerminal/markdown toggle/font size shortcuts below
 				} else {
 					// Only OVERLAYS are open (file tabs, LogViewer, etc.)
 					// Allow Cmd+Shift+[] to fall through to App.tsx handler
@@ -183,10 +345,15 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 						!isSystemUtilShortcut &&
 						!isSessionJumpShortcut &&
 						!isJumpToBottomShortcut &&
+						!isJumpToTerminalShortcut &&
 						!isMarkdownToggleShortcut &&
 						!isTabManagementShortcut &&
 						!isTabSwitcherShortcut &&
 						!isToggleModeShortcut &&
+						!isBrowserAddressShortcut &&
+						!isBrowserFindShortcut &&
+						!isBrowserNavShortcut &&
+						!isFileFilterRefocusShortcut &&
 						!isFontSizeShortcut
 					) {
 						return;
@@ -214,6 +381,9 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 			if (ctx.handleEscapeInMain(e)) return;
 
 			// Helper to track shortcut usage for keyboard mastery gamification
+			// AND for the daily-usage time series shown on the Usage Dashboard.
+			// Mastery is short-circuited on second+ firings of the same shortcut
+			// (it's a unique-set), but the daily counter increments every time.
 			const trackShortcut = (shortcutId: string) => {
 				if (ctx.recordShortcutUsage) {
 					const result = ctx.recordShortcutUsage(shortcutId);
@@ -221,6 +391,9 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 						ctx.onKeyboardMasteryLevelUp(result.newLevel);
 					}
 				}
+				// Fire-and-forget. A failed IPC must never block a shortcut from
+				// taking effect; the daily counter is best-effort telemetry.
+				void window.maestro?.stats?.recordShortcutUsage?.(Date.now());
 			};
 
 			// General shortcuts
@@ -235,7 +408,8 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				trackShortcut('toggleRightPanel');
 			} else if (ctx.isShortcut(e, 'newInstance')) {
 				e.preventDefault();
-				ctx.addNewSession();
+				// Cmd+N goes directly to manual agent creation, bypassing the choice modal
+				useModalStore.getState().openModal('newInstance', { duplicatingSessionId: null });
 				trackShortcut('newInstance');
 			} else if (ctx.isShortcut(e, 'newGroupChat')) {
 				e.preventDefault();
@@ -252,8 +426,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				}
 			} else if (ctx.isShortcut(e, 'moveToGroup')) {
 				if (ctx.activeSession) {
-					ctx.setQuickActionInitialMode('move-to-group');
-					ctx.setQuickActionOpen(true);
+					ctx.setQuickActionOpen(true, 'move-to-group');
 					trackShortcut('moveToGroup');
 				}
 			} else if (ctx.isShortcut(e, 'cyclePrev')) {
@@ -277,25 +450,39 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				ctx.handleNavForward();
 				trackShortcut('navForward');
 			} else if (ctx.isShortcut(e, 'toggleMode')) {
-				// Disable mode toggle for wizard tabs - they have a unique input that doesn't support CLI switchover
-				const activeTab = ctx.activeSession?.aiTabs?.find(
-					(t: AITab) => t.id === ctx.activeSession?.activeTabId
-				);
-				if (activeTab?.wizardState?.isActive) return;
 				e.preventDefault();
-				ctx.toggleInputMode();
-				// Auto-focus the input so user can start typing immediately
-				ctx.setActiveFocus('main');
-				setTimeout(() => ctx.inputRef.current?.focus(), FOCUS_AFTER_RENDER_DELAY_MS);
+				if (ctx.activeSessionId) {
+					// Cmd+J always opens a new terminal tab (analogous to Cmd+T for AI tabs).
+					// handleOpenTerminalTab creates the tab and sets inputMode:'terminal' automatically.
+					// Safe in wizard tabs — it creates a new tab rather than disrupting wizard state.
+					ctx.handleOpenTerminalTab();
+					setTimeout(() => ctx.mainPanelRef?.current?.focusActiveTerminal(), 100);
+				} else {
+					// Auto-focus the input so user can start typing immediately
+					ctx.setActiveFocus('main');
+					setTimeout(() => ctx.inputRef.current?.focus(), FOCUS_AFTER_RENDER_DELAY_MS);
+				}
 				trackShortcut('toggleMode');
+			} else if (ctx.isShortcut(e, 'agentSwitcher')) {
+				e.preventDefault();
+				if (ctx.sessions.length > 0) {
+					ctx.setQuickActionOpen(true, 'agents');
+					trackShortcut('agentSwitcher');
+				}
 			} else if (ctx.isShortcut(e, 'quickAction')) {
 				e.preventDefault();
-				// Only open quick actions if there are agents
 				if (ctx.sessions.length > 0) {
-					ctx.setQuickActionInitialMode('main');
-					ctx.setQuickActionOpen(true);
+					ctx.setQuickActionOpen(true, 'main');
 					trackShortcut('quickAction');
 				}
+			} else if (
+				ctx.isShortcut(e, 'clearTerminal') &&
+				ctx.activeSession?.inputMode === 'terminal'
+			) {
+				// Clears the active xterm buffer in terminal mode
+				e.preventDefault();
+				ctx.mainPanelRef?.current?.clearActiveTerminal();
+				trackShortcut('clearTerminal');
 			} else if (ctx.isShortcut(e, 'help')) {
 				e.preventDefault();
 				ctx.setShortcutsHelpOpen(true);
@@ -303,7 +490,6 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 			} else if (ctx.isShortcut(e, 'settings')) {
 				e.preventDefault();
 				ctx.setSettingsModalOpen(true);
-				ctx.setSettingsTab('general');
 				trackShortcut('settings');
 			} else if (ctx.isShortcut(e, 'agentSettings')) {
 				// Open agent settings for the current session
@@ -335,6 +521,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				trackShortcut('goToHistory');
 			} else if (ctx.isShortcut(e, 'goToAutoRun')) {
 				e.preventDefault();
+				if (useSettingsStore.getState().autoRunDisabled) return;
 				ctx.setRightPanelOpen(true);
 				ctx.handleSetActiveRightTab('autorun');
 				ctx.setActiveFocus('right');
@@ -359,15 +546,21 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					ctx.handleSetLightboxImage(images[0], images, 'staged');
 					trackShortcut('openImageCarousel');
 				}
+			} else if (ctx.isShortcut(e, 'editClipboardImage')) {
+				e.preventDefault();
+				void editClipboardImage();
+				trackShortcut('editClipboardImage');
 			} else if (ctx.isShortcut(e, 'toggleTabStar')) {
 				e.preventDefault();
 				ctx.toggleTabStar();
 				trackShortcut('toggleTabStar');
 			} else if (ctx.isShortcut(e, 'openPromptComposer')) {
 				e.preventDefault();
-				// Only open in AI mode
+				// Only act in AI mode — the composer is AI-only. While it's already
+				// open, the hotkey cycles between windowed and full-screen instead of
+				// being a no-op.
 				if (ctx.activeSession?.inputMode === 'ai') {
-					ctx.setPromptComposerOpen(true);
+					useModalStore.getState().cyclePromptComposer();
 					trackShortcut('openPromptComposer');
 				}
 			} else if (ctx.isShortcut(e, 'openWizard')) {
@@ -376,17 +569,23 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				trackShortcut('openWizard');
 			} else if (ctx.isShortcut(e, 'focusInput')) {
 				e.preventDefault();
-				// Use group chat input ref when group chat is active
-				const targetInputRef = ctx.activeGroupChatId ? ctx.groupChatInputRef : ctx.inputRef;
-				// Toggle between input and main panel output for keyboard scrolling
-				if (document.activeElement === targetInputRef?.current) {
-					// Input is focused - blur and focus main panel output
-					targetInputRef?.current?.blur();
-					ctx.terminalOutputRef.current?.focus();
-				} else {
-					// Main panel output (or elsewhere) - focus input
+				// In terminal mode, Cmd+. focuses the active xterm instance so the user
+				// can resume typing shell commands — mirrors AI mode's input focus toggle.
+				if (ctx.activeSession?.inputMode === 'terminal') {
 					ctx.setActiveFocus('main');
-					setTimeout(() => targetInputRef?.current?.focus(), 0);
+					ctx.mainPanelRef?.current?.focusActiveTerminal();
+				} else {
+					// AI mode: toggle between input textarea and main panel output
+					const targetInputRef = ctx.activeGroupChatId ? ctx.groupChatInputRef : ctx.inputRef;
+					if (document.activeElement === targetInputRef?.current) {
+						// Input is focused - blur and focus main panel output
+						targetInputRef?.current?.blur();
+						ctx.terminalOutputRef.current?.focus();
+					} else {
+						// Main panel output (or elsewhere) - focus input
+						ctx.setActiveFocus('main');
+						setTimeout(() => targetInputRef?.current?.focus(), 0);
+					}
 				}
 				trackShortcut('focusInput');
 			} else if (ctx.isShortcut(e, 'focusSidebar')) {
@@ -399,6 +598,10 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				ctx.setActiveFocus('sidebar');
 				setTimeout(() => ctx.sidebarContainerRef?.current?.focus(), 0);
 				trackShortcut('focusSidebar');
+			} else if (ctx.isShortcut(e, 'focusActiveTab')) {
+				e.preventDefault();
+				ctx.mainPanelRef?.current?.focusActiveTab();
+				trackShortcut('focusActiveTab');
 			} else if (ctx.isShortcut(e, 'viewGitDiff') && !ctx.activeGroupChatId) {
 				e.preventDefault();
 				ctx.handleViewGitDiff();
@@ -417,6 +620,12 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					ctx.setAgentSessionsOpen(true);
 					trackShortcut('agentSessions');
 				}
+			} else if (ctx.isShortcut(e, 'openMemoryViewer')) {
+				e.preventDefault();
+				if (ctx.hasActiveSessionCapability('supportsProjectMemory')) {
+					ctx.setMemoryViewerOpen(true);
+					trackShortcut('openMemoryViewer');
+				}
 			} else if (ctx.isShortcut(e, 'systemLogs')) {
 				e.preventDefault();
 				ctx.setLogViewerOpen(true);
@@ -425,22 +634,34 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				ctx.setProcessMonitorOpen(true);
 				trackShortcut('processMonitor');
-			} else if (ctx.isShortcut(e, 'usageDashboard')) {
+			} else if (ctx.isShortcut(e, 'usageDashboard') && ctx.encoreFeatures?.usageStats) {
 				e.preventDefault();
 				ctx.setUsageDashboardOpen(true);
 				trackShortcut('usageDashboard');
-			} else if (ctx.isShortcut(e, 'openSymphony')) {
+			} else if (ctx.isShortcut(e, 'executionQueue')) {
+				e.preventDefault();
+				ctx.handleOpenQueueBrowser();
+				trackShortcut('executionQueue');
+			} else if (ctx.isShortcut(e, 'openSymphony') && ctx.encoreFeatures?.symphony) {
 				e.preventDefault();
 				ctx.setSymphonyModalOpen(true);
 				trackShortcut('openSymphony');
-			} else if (ctx.isShortcut(e, 'toggleAutoScroll')) {
-				e.preventDefault();
-				ctx.setAutoScrollAiMode(!ctx.autoScrollAiMode);
-				trackShortcut('toggleAutoScroll');
 			} else if (ctx.isShortcut(e, 'directorNotes') && ctx.encoreFeatures?.directorNotes) {
 				e.preventDefault();
 				ctx.setDirectorNotesOpen?.(true);
 				trackShortcut('directorNotes');
+			} else if (ctx.isShortcut(e, 'openCue') && ctx.encoreFeatures?.maestroCue) {
+				e.preventDefault();
+				ctx.setCueModalOpen?.(true);
+				trackShortcut('openCue');
+			} else if (ctx.isShortcut(e, 'nextUnreadTab')) {
+				e.preventDefault();
+				ctx.goToNextUnreadTab();
+				trackShortcut('nextUnreadTab');
+			} else if (ctx.isShortcut(e, 'filterUnreadAgents')) {
+				e.preventDefault();
+				ctx.toggleShowUnreadAgentsOnly();
+				trackShortcut('filterUnreadAgents');
 			} else if (ctx.isShortcut(e, 'jumpToBottom')) {
 				e.preventDefault();
 				// Jump to the bottom of the current main panel output (AI logs or terminal output)
@@ -471,11 +692,48 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					ctx.setChatRawTextMode(!ctx.chatRawTextMode);
 					trackShortcut('toggleMarkdownMode');
 				}
-			} else if (ctx.isShortcut(e, 'toggleAutoRunExpanded')) {
-				// Toggle Auto Run expanded/contracted view
+			} else if (ctx.isShortcut(e, 'openBatchRunner')) {
+				// Open the Auto Run run modal (BatchRunnerModal) - works from anywhere
 				e.preventDefault();
+				if (useSettingsStore.getState().autoRunDisabled) return;
+				if (ctx.activeSession) {
+					ctx.handleOpenBatchRunner();
+					trackShortcut('openBatchRunner');
+				}
+			} else if (ctx.isShortcut(e, 'toggleAutoRunExpanded')) {
+				// Toggle Auto Run expanded/contracted view. Works from anywhere so it
+				// doubles as a quick scratch-pad surface (mirrors the command palette entry).
+				e.preventDefault();
+				if (useSettingsStore.getState().autoRunDisabled) return;
 				ctx.rightPanelRef?.current?.toggleAutoRunExpanded();
 				trackShortcut('toggleAutoRunExpanded');
+			} else if (ctx.isShortcut(e, 'jumpToTerminal')) {
+				e.preventDefault();
+				if (ctx.activeSession && !ctx.activeGroupChatId) {
+					const result = ctx.navigateToClosestTerminalTab(ctx.activeSession);
+					if (result) {
+						ctx.setSessions((prev: Session[]) =>
+							prev.map((s: Session) => (s.id === ctx.activeSession!.id ? result.session : s))
+						);
+						// Focus the terminal after switching
+						setTimeout(() => ctx.mainPanelRef?.current?.focusActiveTerminal(), 100);
+					} else if (ctx.activeSessionId) {
+						// No terminal tabs exist — create one (same as Cmd+J / toggleMode)
+						ctx.handleOpenTerminalTab();
+						setTimeout(() => ctx.mainPanelRef?.current?.focusActiveTerminal(), 100);
+					}
+					trackShortcut('jumpToTerminal');
+				}
+			}
+
+			// Ctrl+Shift+` — Create a new terminal tab (works regardless of inputMode)
+			// Use e.code to reliably detect the backtick key (Shift+` produces ~ via e.key on US layout)
+			if (e.ctrlKey && e.shiftKey && !e.metaKey && !e.altKey && e.code === 'Backquote') {
+				e.preventDefault();
+				if (ctx.activeSessionId) {
+					// handleOpenTerminalTab creates the tab and sets inputMode:'terminal' automatically
+					ctx.handleOpenTerminalTab();
+				}
 			}
 
 			// Opt+Cmd+NUMBER: Jump to visible session by number (1-9, 0=10th)
@@ -525,18 +783,18 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				return;
 			}
 
-			// Tab shortcuts (AI mode only, requires an explicitly selected session, disabled in group chat view)
-			if (
-				ctx.activeSessionId &&
-				ctx.activeSession?.inputMode === 'ai' &&
-				ctx.activeSession?.aiTabs &&
-				!ctx.activeGroupChatId
-			) {
+			// Unified tab shortcuts — works across ALL tab types (AI, file preview, terminal).
+			// Terminal tabs are part of unifiedTabOrder and the navigation functions
+			// (navigateToNextUnifiedTab, etc.) handle inputMode switching automatically.
+			// Some shortcuts only apply in AI mode (e.g., newTab, toggleReadOnly) — those
+			// are individually gated below. Navigation shortcuts work in ALL modes.
+			if (ctx.activeSessionId && ctx.activeSession && !ctx.activeGroupChatId) {
 				if (ctx.isTabShortcut(e, 'tabSwitcher')) {
 					e.preventDefault();
 					ctx.setTabSwitcherOpen(true);
 					trackShortcut('tabSwitcher');
 				}
+				// Cmd+T: New AI tab (works in any mode including terminal)
 				if (ctx.isTabShortcut(e, 'newTab')) {
 					e.preventDefault();
 					const result = ctx.createTab(ctx.activeSession, {
@@ -544,8 +802,9 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 						showThinking: ctx.defaultShowThinking,
 					});
 					if (result) {
+						const newSession = { ...result.session, inputMode: 'ai' as const };
 						ctx.setSessions((prev: Session[]) =>
-							prev.map((s: Session) => (s.id === ctx.activeSession!.id ? result.session : s))
+							prev.map((s: Session) => (s.id === ctx.activeSession!.id ? newSession : s))
 						);
 						// Auto-focus the input so user can start typing immediately
 						ctx.setActiveFocus('main');
@@ -553,18 +812,72 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 						trackShortcut('newTab');
 					}
 				}
+				// Alt+N: New file tab (works in any mode)
+				if (ctx.isTabShortcut(e, 'newFileTab')) {
+					e.preventDefault();
+					ctx.handleNewFileTab();
+					trackShortcut('newFileTab');
+				}
+				// Cmd+B: New browser tab (works in any mode)
+				if (ctx.isTabShortcut(e, 'newBrowserTab')) {
+					e.preventDefault();
+					ctx.handleNewBrowserTab();
+					trackShortcut('newBrowserTab');
+				}
+				// Cmd+L: Focus browser address bar (only when a browser tab is active)
+				if (ctx.isTabShortcut(e, 'focusBrowserAddress') && ctx.activeSession?.activeBrowserTabId) {
+					e.preventDefault();
+					ctx.mainPanelRef?.current?.focusBrowserAddressBar();
+					trackShortcut('focusBrowserAddress');
+				}
+				// Cmd+Left / Cmd+Right: Browser history back/forward when a browser
+				// tab is active. We deliberately skip when focus is inside an
+				// editable element (URL bar, find bar, any other text input) so
+				// macOS line-navigation (Cmd+Left = beginning-of-line) keeps
+				// working there. File preview's own keydown handler runs first
+				// with stopPropagation when the preview is the active surface, so
+				// this never collides with filePreviewBack/Forward.
+				if (
+					(e.metaKey || e.ctrlKey) &&
+					!e.altKey &&
+					!e.shiftKey &&
+					(e.key === 'ArrowLeft' || e.key === 'ArrowRight') &&
+					ctx.activeSession?.activeBrowserTabId &&
+					!isEditableTarget
+				) {
+					e.preventDefault();
+					if (e.key === 'ArrowLeft') {
+						ctx.mainPanelRef?.current?.browserBack();
+					} else {
+						ctx.mainPanelRef?.current?.browserForward();
+					}
+					trackShortcut(e.key === 'ArrowLeft' ? 'navBack' : 'navForward');
+					return;
+				}
+				// Cmd+R: Reload active browser tab (when a browser tab is active)
+				if (
+					ctx.isTabShortcut(e, 'toggleReadOnlyMode') &&
+					ctx.activeSession?.activeBrowserTabId &&
+					!e.shiftKey
+				) {
+					e.preventDefault();
+					ctx.mainPanelRef?.current?.reloadBrowserTab();
+					return;
+				}
+				// Cmd+W: Close the active tab (AI, file, browser, or terminal) via unified handler
 				if (ctx.isTabShortcut(e, 'closeTab')) {
 					e.preventDefault();
-					// Use handleCloseCurrentTab to close the active tab (file or AI)
-					// This handles both file preview tabs and AI tabs with unified tab system
 					const closeResult = ctx.handleCloseCurrentTab();
 
 					if (closeResult.type === 'file') {
-						// File tab was already closed by handleCloseCurrentTab
+						trackShortcut('closeTab');
+					} else if (closeResult.type === 'browser') {
+						trackShortcut('closeTab');
+					} else if (closeResult.type === 'terminal' && closeResult.tabId) {
+						ctx.handleCloseTerminalTab(closeResult.tabId);
 						trackShortcut('closeTab');
 					} else if (closeResult.type === 'ai' && closeResult.tabId) {
-						// AI tab - need to handle wizard, draft, or regular confirmation
-						if (closeResult.isWizardTab) {
+						if (closeResult.hasWizardUserInteraction) {
 							useModalStore.getState().openModal('confirm', {
 								message: 'Close this wizard? Your progress will be lost and cannot be restored.',
 								onConfirm: () => {
@@ -572,6 +885,10 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 									trackShortcut('closeTab');
 								},
 							});
+						} else if (closeResult.isWizardTab) {
+							// Wizard active but no user interaction - close without confirmation
+							ctx.performTabClose(closeResult.tabId);
+							trackShortcut('closeTab');
 						} else if (closeResult.hasDraft) {
 							useModalStore.getState().openModal('confirm', {
 								message: 'This tab has an unsent draft. Are you sure you want to close it?',
@@ -581,52 +898,49 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 								},
 							});
 						} else {
-							// Regular AI tab - close it using performTabClose
-							// This ensures the tab is added to unifiedClosedTabHistory for Cmd+Shift+T
 							ctx.performTabClose(closeResult.tabId);
 							trackShortcut('closeTab');
 						}
 					}
-					// 'prevented' or 'none' - do nothing (can't close last AI tab)
+					// 'prevented' or 'none' - do nothing
 				}
-				if (ctx.isTabShortcut(e, 'closeAllTabs')) {
-					e.preventDefault();
-					ctx.handleCloseAllTabs();
-					trackShortcut('closeAllTabs');
-				}
-				if (ctx.isTabShortcut(e, 'closeOtherTabs')) {
-					e.preventDefault();
-					// Only execute if there are multiple tabs
-					if (ctx.activeSession.aiTabs.length > 1) {
-						ctx.handleCloseOtherTabs();
-						trackShortcut('closeOtherTabs');
+				// Bulk close shortcuts (AI mode only — terminal tabs don't have bulk close)
+				if (ctx.activeSession.inputMode === 'ai') {
+					if (ctx.isTabShortcut(e, 'closeAllTabs')) {
+						e.preventDefault();
+						ctx.handleCloseAllTabs();
+						trackShortcut('closeAllTabs');
 					}
-				}
-				if (ctx.isTabShortcut(e, 'closeTabsLeft')) {
-					e.preventDefault();
-					const activeTabIndex = ctx.activeSession.aiTabs.findIndex(
-						(t: AITab) => t.id === ctx.activeSession.activeTabId
-					);
-					// Only execute if not first tab
-					if (activeTabIndex > 0) {
-						ctx.handleCloseTabsLeft();
-						trackShortcut('closeTabsLeft');
+					if (ctx.isTabShortcut(e, 'closeOtherTabs')) {
+						e.preventDefault();
+						if (ctx.activeSession.aiTabs.length > 1) {
+							ctx.handleCloseOtherTabs();
+							trackShortcut('closeOtherTabs');
+						}
 					}
-				}
-				if (ctx.isTabShortcut(e, 'closeTabsRight')) {
-					e.preventDefault();
-					const activeTabIndex = ctx.activeSession.aiTabs.findIndex(
-						(t: AITab) => t.id === ctx.activeSession.activeTabId
-					);
-					// Only execute if not last tab
-					if (activeTabIndex < ctx.activeSession.aiTabs.length - 1) {
-						ctx.handleCloseTabsRight();
-						trackShortcut('closeTabsRight');
+					if (ctx.isTabShortcut(e, 'closeTabsLeft')) {
+						e.preventDefault();
+						const activeTabIndex = ctx.activeSession.aiTabs.findIndex(
+							(t: AITab) => t.id === ctx.activeSession.activeTabId
+						);
+						if (activeTabIndex > 0) {
+							ctx.handleCloseTabsLeft();
+							trackShortcut('closeTabsLeft');
+						}
+					}
+					if (ctx.isTabShortcut(e, 'closeTabsRight')) {
+						e.preventDefault();
+						const activeTabIndex = ctx.activeSession.aiTabs.findIndex(
+							(t: AITab) => t.id === ctx.activeSession.activeTabId
+						);
+						if (activeTabIndex < ctx.activeSession.aiTabs.length - 1) {
+							ctx.handleCloseTabsRight();
+							trackShortcut('closeTabsRight');
+						}
 					}
 				}
 				if (ctx.isTabShortcut(e, 'reopenClosedTab')) {
 					e.preventDefault();
-					// Reopen the most recently closed tab (AI or file), or switch to existing if duplicate
 					const result = ctx.reopenUnifiedClosedTab(ctx.activeSession);
 					if (result) {
 						ctx.setSessions((prev: Session[]) =>
@@ -637,91 +951,123 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				}
 				if (ctx.isTabShortcut(e, 'renameTab')) {
 					e.preventDefault();
-					const activeTab = ctx.getActiveTab(ctx.activeSession);
-					// Only allow rename if tab has an active Claude session
-					if (activeTab?.agentSessionId) {
-						ctx.setRenameTabId(activeTab.id);
-						ctx.setRenameTabInitialName(getInitialRenameValue(activeTab));
-						ctx.setRenameTabModalOpen(true);
-						trackShortcut('renameTab');
+					if (ctx.activeSession.inputMode === 'terminal') {
+						const activeTerminalTabId = ctx.activeSession.activeTerminalTabId;
+						const terminalTab = ctx.activeSession.terminalTabs?.find(
+							(t: { id: string }) => t.id === activeTerminalTabId
+						);
+						if (activeTerminalTabId && terminalTab) {
+							ctx.setRenameTabId(activeTerminalTabId);
+							ctx.setRenameTabInitialName(terminalTab.name ?? '');
+							ctx.setRenameTabModalOpen(true);
+							trackShortcut('renameTab');
+						}
+					} else if (ctx.activeSession.activeBrowserTabId) {
+						const browserTab = ctx.activeSession.browserTabs?.find(
+							(t: { id: string }) => t.id === ctx.activeSession.activeBrowserTabId
+						);
+						if (browserTab) {
+							ctx.setRenameTabId(browserTab.id);
+							ctx.setRenameTabInitialName(browserTab.title ?? '');
+							ctx.setRenameTabModalOpen(true);
+							trackShortcut('renameTab');
+						}
+					} else {
+						const activeTab = ctx.getActiveTab(ctx.activeSession);
+						if (activeTab) {
+							ctx.setRenameTabId(activeTab.id);
+							ctx.setRenameTabInitialName(getInitialRenameValue(activeTab));
+							ctx.setRenameTabModalOpen(true);
+							trackShortcut('renameTab');
+						}
 					}
 				}
-				if (ctx.isTabShortcut(e, 'toggleReadOnlyMode')) {
-					e.preventDefault();
-					ctx.setSessions((prev: Session[]) =>
-						prev.map((s: Session) => {
-							if (s.id !== ctx.activeSession!.id) return s;
-							return {
-								...s,
-								aiTabs: s.aiTabs.map((tab: AITab) =>
-									tab.id === s.activeTabId ? { ...tab, readOnlyMode: !tab.readOnlyMode } : tab
-								),
-							};
-						})
-					);
-					trackShortcut('toggleReadOnlyMode');
+				// AI-tab-specific metadata toggles (read-only, save-to-history,
+				// show-thinking). These only make sense when an AI chat tab is the
+				// active tab. inputMode alone is insufficient: file and browser tabs
+				// keep inputMode 'ai' (only terminal flips it), so without also
+				// excluding active file/browser tabs these shortcuts would silently
+				// mutate the last-visited AI tab while the user is looking at a file.
+				const isAiChatTabActive =
+					ctx.activeSession.inputMode === 'ai' &&
+					!ctx.activeSession.activeFileTabId &&
+					!ctx.activeSession.activeBrowserTabId;
+				if (isAiChatTabActive) {
+					if (ctx.isTabShortcut(e, 'toggleReadOnlyMode')) {
+						e.preventDefault();
+						ctx.setSessions((prev: Session[]) =>
+							prev.map((s: Session) => {
+								if (s.id !== ctx.activeSession!.id) return s;
+								return {
+									...s,
+									aiTabs: s.aiTabs.map((tab: AITab) =>
+										tab.id === s.activeTabId ? { ...tab, readOnlyMode: !tab.readOnlyMode } : tab
+									),
+								};
+							})
+						);
+						trackShortcut('toggleReadOnlyMode');
+					}
+					if (ctx.isTabShortcut(e, 'toggleSaveToHistory')) {
+						e.preventDefault();
+						ctx.setSessions((prev: Session[]) =>
+							prev.map((s: Session) => {
+								if (s.id !== ctx.activeSession!.id) return s;
+								return {
+									...s,
+									aiTabs: s.aiTabs.map((tab: AITab) =>
+										tab.id === s.activeTabId ? { ...tab, saveToHistory: !tab.saveToHistory } : tab
+									),
+								};
+							})
+						);
+						trackShortcut('toggleSaveToHistory');
+					}
+					if (ctx.isTabShortcut(e, 'toggleShowThinking')) {
+						e.preventDefault();
+						const cycleThinkingMode = (current: ThinkingMode | undefined): ThinkingMode => {
+							if (!current || current === 'off') return 'on';
+							if (current === 'on') return 'sticky';
+							return 'off';
+						};
+						ctx.setSessions((prev: Session[]) =>
+							prev.map((s: Session) => {
+								if (s.id !== ctx.activeSession!.id) return s;
+								return {
+									...s,
+									aiTabs: s.aiTabs.map((tab: AITab) => {
+										if (tab.id !== s.activeTabId) return tab;
+										if (tab.wizardState?.isActive) {
+											return {
+												...tab,
+												wizardState: {
+													...tab.wizardState,
+													showWizardThinking: !tab.wizardState.showWizardThinking,
+													thinkingContent: !tab.wizardState.showWizardThinking
+														? ''
+														: tab.wizardState.thinkingContent,
+												},
+											};
+										}
+										const newMode = cycleThinkingMode(tab.showThinking);
+										if (newMode === 'off') {
+											return {
+												...tab,
+												showThinking: 'off',
+												logs: tab.logs.filter(
+													(l) => l.source !== 'thinking' && l.source !== 'tool'
+												),
+											};
+										}
+										return { ...tab, showThinking: newMode };
+									}),
+								};
+							})
+						);
+						trackShortcut('toggleShowThinking');
+					}
 				}
-				if (ctx.isTabShortcut(e, 'toggleSaveToHistory')) {
-					e.preventDefault();
-					ctx.setSessions((prev: Session[]) =>
-						prev.map((s: Session) => {
-							if (s.id !== ctx.activeSession!.id) return s;
-							return {
-								...s,
-								aiTabs: s.aiTabs.map((tab: AITab) =>
-									tab.id === s.activeTabId ? { ...tab, saveToHistory: !tab.saveToHistory } : tab
-								),
-							};
-						})
-					);
-					trackShortcut('toggleSaveToHistory');
-				}
-				if (ctx.isTabShortcut(e, 'toggleShowThinking')) {
-					e.preventDefault();
-					// Helper to cycle through thinking modes: off -> on -> sticky -> off
-					const cycleThinkingMode = (current: ThinkingMode | undefined): ThinkingMode => {
-						if (!current || current === 'off') return 'on';
-						if (current === 'on') return 'sticky';
-						return 'off'; // sticky -> off
-					};
-					ctx.setSessions((prev: Session[]) =>
-						prev.map((s: Session) => {
-							if (s.id !== ctx.activeSession!.id) return s;
-							return {
-								...s,
-								aiTabs: s.aiTabs.map((tab: AITab) => {
-									if (tab.id !== s.activeTabId) return tab;
-									// Check if wizard is active on this tab - toggle wizard thinking instead
-									if (tab.wizardState?.isActive) {
-										return {
-											...tab,
-											wizardState: {
-												...tab.wizardState,
-												showWizardThinking: !tab.wizardState.showWizardThinking,
-												// Clear thinking content when turning off
-												thinkingContent: !tab.wizardState.showWizardThinking
-													? ''
-													: tab.wizardState.thinkingContent,
-											},
-										};
-									}
-									// Regular tab: cycle showThinking through three states
-									const newMode = cycleThinkingMode(tab.showThinking);
-									// When turning OFF, also clear any existing thinking/tool logs
-									if (newMode === 'off') {
-										return {
-											...tab,
-											showThinking: 'off',
-											logs: tab.logs.filter((l) => l.source !== 'thinking' && l.source !== 'tool'),
-										};
-									}
-									return { ...tab, showThinking: newMode };
-								}),
-							};
-						})
-					);
-					trackShortcut('toggleShowThinking');
-				}
+				// Unread filter/toggle — works across ALL tab types (AI, file, terminal)
 				if (ctx.isTabShortcut(e, 'filterUnreadTabs')) {
 					e.preventDefault();
 					ctx.toggleUnreadFilter();
@@ -732,8 +1078,8 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					ctx.toggleTabUnread();
 					trackShortcut('toggleTabUnread');
 				}
-				// Cmd+Shift+] - Navigate to next tab in unified tab order
-				// Cycles through both AI tabs and file preview tabs
+				// Cmd+Shift+] / Cmd+Shift+[ — Navigate tabs in unified order
+				// Cycles through ALL tab types (AI, file, terminal) via unifiedTabOrder
 				if (ctx.isTabShortcut(e, 'nextTab')) {
 					e.preventDefault();
 					ctx.setSessions((prev: Session[]) => {
@@ -745,8 +1091,6 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					});
 					trackShortcut('nextTab');
 				}
-				// Cmd+Shift+[ - Navigate to previous tab in unified tab order
-				// Cycles through both AI tabs and file preview tabs
 				if (ctx.isTabShortcut(e, 'prevTab')) {
 					e.preventDefault();
 					ctx.setSessions((prev: Session[]) => {
@@ -758,44 +1102,67 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					});
 					trackShortcut('prevTab');
 				}
-				// Cmd+1 through Cmd+9: Jump to specific tab by index in unified tab order
-				// Works with both AI tabs and file preview tabs
-				// Disabled in unread-only mode (unread filter only applies to AI tabs)
-				if (!ctx.showUnreadOnly) {
-					for (let i = 1; i <= 9; i++) {
-						if (ctx.isTabShortcut(e, `goToTab${i}`)) {
-							e.preventDefault();
-							ctx.setSessions((prev: Session[]) => {
-								const current = prev.find((s: Session) => s.id === ctx.activeSessionId);
-								if (!current) return prev;
-								const result = ctx.navigateToUnifiedTabByIndex(current, i - 1);
-								if (!result) return prev;
-								return prev.map((s: Session) => (s.id === current.id ? result.session : s));
-							});
-							trackShortcut(`goToTab${i}`);
-							break;
-						}
-					}
-					// Cmd+0: Jump to last tab in unified tab order
-					if (ctx.isTabShortcut(e, 'goToLastTab')) {
+				// Cmd+1-9, Cmd+0 — Jump to tab by index in unified order.
+				// In unread-only mode, index into the filtered/visible tabs so Cmd+N matches
+				// the Nth tab currently shown in the tab bar (not the Nth tab overall).
+				// When useCmd0AsLastTab is off, fall back to browser-style mapping:
+				// Cmd+1-8 jump to tabs 1-8, Cmd+9 jumps to the last tab, Cmd+0 is unused.
+				const useCmd0AsLastTab = useSettingsStore.getState().useCmd0AsLastTab;
+				const maxNumberedTab = useCmd0AsLastTab ? 9 : 8;
+				for (let i = 1; i <= maxNumberedTab; i++) {
+					if (ctx.isTabShortcut(e, `goToTab${i}`)) {
 						e.preventDefault();
 						ctx.setSessions((prev: Session[]) => {
 							const current = prev.find((s: Session) => s.id === ctx.activeSessionId);
 							if (!current) return prev;
-							const result = ctx.navigateToLastUnifiedTab(current);
+							const result = ctx.navigateToUnifiedTabByIndex(current, i - 1, ctx.showUnreadOnly);
 							if (!result) return prev;
 							return prev.map((s: Session) => (s.id === current.id ? result.session : s));
 						});
-						trackShortcut('goToLastTab');
+						trackShortcut(`goToTab${i}`);
+						break;
 					}
+				}
+				const lastTabActionId = useCmd0AsLastTab ? 'goToLastTab' : 'goToTab9';
+				if (ctx.isTabShortcut(e, lastTabActionId)) {
+					e.preventDefault();
+					ctx.setSessions((prev: Session[]) => {
+						const current = prev.find((s: Session) => s.id === ctx.activeSessionId);
+						if (!current) return prev;
+						const result = ctx.navigateToLastUnifiedTab(current, ctx.showUnreadOnly);
+						if (!result) return prev;
+						return prev.map((s: Session) => (s.id === current.id ? result.session : s));
+					});
+					trackShortcut('goToLastTab');
 				}
 			}
 
-			// Cmd+F contextual shortcuts - track based on current focus/context
+			// Cmd+F contextual shortcuts - prioritize explicit focus over input mode
 			if (e.key === 'f' && (e.metaKey || e.ctrlKey) && !e.shiftKey) {
+				// Browser-tab in-page find takes precedence whenever a browser tab is
+				// the active tab. Routed both here (when webview isn't focused) and via
+				// `onBrowserTabShortcutKey` (when it is).
+				if (ctx.activeSession?.activeBrowserTabId && !e.altKey) {
+					e.preventDefault();
+					ctx.mainPanelRef?.current?.openBrowserFind();
+					trackShortcut('searchOutput');
+					return;
+				}
 				if (ctx.activeFocus === 'right' && ctx.activeRightTab === 'files') {
 					e.preventDefault();
-					ctx.setFileTreeFilterOpen(true);
+					if (!ctx.fileTreeFilterOpen) {
+						ctx.setFileTreeFilterOpen(true);
+					}
+					// Re-focus the filter input (and put the caret at the end of any
+					// existing query) so Cmd+F while the filter is already open but
+					// focus has moved into the file list pulls focus back here.
+					setTimeout(() => {
+						const input = ctx.fileTreeFilterInputRef?.current;
+						if (!input) return;
+						input.focus();
+						const len = input.value.length;
+						input.setSelectionRange(len, len);
+					}, 0);
 					trackShortcut('filterFiles');
 				} else if (ctx.activeFocus === 'sidebar') {
 					// Sidebar filter - handled by SessionList component, just track here
@@ -803,6 +1170,13 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				} else if (ctx.activeFocus === 'right' && ctx.activeRightTab === 'history') {
 					// History filter - handled by HistoryPanel component, just track here
 					trackShortcut('filterHistory');
+				} else if (ctx.activeSession?.inputMode === 'terminal') {
+					// Terminal search — works whether xterm is focused or not. xterm forwards
+					// Cmd+F via attachCustomKeyEventHandler (re-dispatching a synthetic event on
+					// window) so this branch handles both the direct and forwarded cases.
+					e.preventDefault();
+					ctx.mainPanelRef?.current?.openTerminalSearch();
+					trackShortcut('searchTerminal');
 				} else if (ctx.activeFocus === 'main') {
 					// Main panel search - handled by TerminalOutput component, just track here
 					trackShortcut('searchOutput');
@@ -812,6 +1186,93 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 		window.addEventListener('keydown', handleKeyDown);
 		return () => window.removeEventListener('keydown', handleKeyDown);
 	}, []); // Empty dependencies - handler reads from ref
+
+	// Browser tab shortcut forwarding: the main process intercepts shortcuts
+	// via before-input-event on webview guest contents and sends them here
+	// over IPC.  We blur the webview and re-dispatch so the main keyboard
+	// handler (above) processes them like any other shortcut.
+	useEffect(() => {
+		if (!window.maestro?.app?.onBrowserTabShortcutKey) return;
+		return window.maestro.app.onBrowserTabShortcutKey((input) => {
+			if (document.activeElement?.tagName === 'WEBVIEW') {
+				(document.activeElement as HTMLElement).blur();
+			}
+
+			// Handle browser address bar focus directly: build a synthetic event
+			// for isTabShortcut matching, then focus the address bar without
+			// re-dispatching through the main handler (which may be blocked
+			// by the overlay/modal shortcut guard).
+			const ctx = keyboardHandlerRef.current;
+			if (ctx?.activeSession?.activeBrowserTabId) {
+				const probe = new KeyboardEvent('keydown', {
+					key: input.key,
+					code: input.code,
+					metaKey: input.meta,
+					ctrlKey: input.control,
+					altKey: input.alt,
+					shiftKey: input.shift,
+				});
+				if (ctx.isTabShortcut(probe, 'focusBrowserAddress')) {
+					ctx.mainPanelRef?.current?.focusBrowserAddressBar();
+					return;
+				}
+				// Cmd+F arrives here when forwarded from the webview guest. Open the
+				// in-page find bar directly instead of re-dispatching through the
+				// window keydown handler (which would land in the activeFocus-gated
+				// Cmd+F switch below and miss the browser-tab case).
+				if (
+					(input.meta || input.control) &&
+					!input.alt &&
+					!input.shift &&
+					(input.key === 'f' || input.key === 'F')
+				) {
+					ctx.mainPanelRef?.current?.openBrowserFind();
+					return;
+				}
+				// Cmd+Left / Cmd+Right forwarded from the webview guest → browser
+				// history back/forward. Routed directly so the overlay-guard /
+				// re-dispatch path never sees it.
+				if (
+					(input.meta || input.control) &&
+					!input.alt &&
+					!input.shift &&
+					(input.key === 'ArrowLeft' || input.key === 'ArrowRight')
+				) {
+					if (input.key === 'ArrowLeft') {
+						ctx.mainPanelRef?.current?.browserBack();
+					} else {
+						ctx.mainPanelRef?.current?.browserForward();
+					}
+					return;
+				}
+				// Cmd+Shift+, / Cmd+Shift+. forwarded from the webview guest →
+				// breadcrumb back/forward through visited tabs. Handled directly
+				// because a synthetic window event from a focused webview doesn't
+				// reliably reach the navBack/navForward branch of the window handler.
+				if (ctx.isShortcut(probe, 'navBack')) {
+					ctx.handleNavBack();
+					return;
+				}
+				if (ctx.isShortcut(probe, 'navForward')) {
+					ctx.handleNavForward();
+					return;
+				}
+			}
+
+			window.dispatchEvent(
+				new KeyboardEvent('keydown', {
+					key: input.key,
+					code: input.code,
+					metaKey: input.meta,
+					ctrlKey: input.control,
+					altKey: input.alt,
+					shiftKey: input.shift,
+					bubbles: true,
+					cancelable: true,
+				})
+			);
+		});
+	}, []);
 
 	// Track Opt+Cmd modifier keys to show session jump number badges
 	// Uses ref to read current state without adding it to deps (avoids re-registering

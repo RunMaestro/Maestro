@@ -9,29 +9,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import React from 'react';
 import { FormInput } from '../../../../renderer/components/ui/FormInput';
-import type { Theme } from '../../../../renderer/types';
 
+import { mockTheme } from '../../../helpers/mockTheme';
 // Mock theme for testing
-const mockTheme: Theme = {
-	id: 'test-theme',
-	name: 'Test Theme',
-	mode: 'dark',
-	colors: {
-		bgMain: '#1a1a1a',
-		bgSidebar: '#242424',
-		bgActivity: '#2a2a2a',
-		textMain: '#ffffff',
-		textDim: '#888888',
-		accent: '#3b82f6',
-		accentForeground: '#ffffff',
-		border: '#333333',
-		error: '#ef4444',
-		success: '#22c55e',
-		warning: '#f59e0b',
-		cursor: '#ffffff',
-		terminalBg: '#1a1a1a',
-	},
-};
 
 describe('FormInput', () => {
 	beforeEach(() => {

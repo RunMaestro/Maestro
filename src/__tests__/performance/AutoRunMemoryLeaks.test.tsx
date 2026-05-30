@@ -16,7 +16,9 @@ import { AutoRun } from '../../renderer/components/AutoRun';
 import { LayerStackProvider } from '../../renderer/contexts/LayerStackContext';
 import { imageCache, useAutoRunImageHandling } from '../../renderer/hooks/useAutoRunImageHandling';
 import { useAutoRunUndo } from '../../renderer/hooks/useAutoRunUndo';
-import type { Theme, BatchRunState, SessionState } from '../../renderer/types';
+import type { BatchRunState, SessionState } from '../../renderer/types';
+
+import { createMockTheme } from '../helpers/mockTheme';
 
 // Helper to render with LayerStackProvider (required by AutoRunSearchBar)
 const renderWithProvider = (ui: React.ReactElement) => {
@@ -127,25 +129,6 @@ vi.mock('../../renderer/components/TemplateAutocompleteDropdown', () => ({
 }));
 
 // Helper to create mock theme
-const createMockTheme = (): Theme => ({
-	id: 'test-theme',
-	name: 'Test Theme',
-	mode: 'dark',
-	colors: {
-		bgMain: '#1a1a1a',
-		bgPanel: '#252525',
-		bgActivity: '#2d2d2d',
-		textMain: '#ffffff',
-		textDim: '#888888',
-		accent: '#0066ff',
-		accentForeground: '#ffffff',
-		border: '#333333',
-		highlight: '#0066ff33',
-		success: '#00aa00',
-		warning: '#ffaa00',
-		error: '#ff0000',
-	},
-});
 
 // Setup window.maestro mock
 const setupMaestroMock = () => {
@@ -882,7 +865,7 @@ describe('AutoRun Memory Leak Detection', () => {
 				for (const sessionId of sessions) {
 					const props = createDefaultProps({
 						sessionId,
-						folderPath: `/projects/${sessionId}/Auto Run Docs`,
+						folderPath: `/projects/${sessionId}/.maestro/playbooks`,
 						content: `# ${sessionId} Content cycle ${cycle}`,
 					});
 
@@ -894,7 +877,7 @@ describe('AutoRun Memory Leak Detection', () => {
 
 					// Add some cache entries
 					imageCache.set(
-						`/projects/${sessionId}/Auto Run Docs:images/img${cycle}.png`,
+						`/projects/${sessionId}/.maestro/playbooks:images/img${cycle}.png`,
 						`data${cycle}`
 					);
 

@@ -20,11 +20,13 @@ import { useWizard } from '../WizardContext';
 import {
 	phaseGenerator,
 	wizardDebugLogger,
+	deriveSshRemoteId,
 	type CreatedFileInfo,
 } from '../services/phaseGenerator';
 import { ScreenReaderAnnouncement } from '../ScreenReaderAnnouncement';
 import { getNextAustinFact, parseFactWithLinks, type FactSegment } from '../services/austinFacts';
 import { formatSize, formatElapsedTime } from '../../../../shared/formatters';
+import { logger } from '../../../utils/logger';
 
 interface PreparingPlanScreenProps {
 	theme: Theme;
@@ -750,7 +752,7 @@ export function PreparingPlanScreen({ theme }: PreparingPlanScreenProps): JSX.El
 						if (genResult.success && genResult.documents) {
 							// If documents were already on disk, skip saving
 							if (genResult.documentsFromDisk) {
-								console.log('[PreparingPlanScreen] Documents already on disk, skipping save');
+								logger.info('[PreparingPlanScreen] Documents already on disk, skipping save');
 								setGeneratedDocuments(genResult.documents);
 								setGeneratingDocuments(false);
 
@@ -768,9 +770,7 @@ export function PreparingPlanScreen({ theme }: PreparingPlanScreenProps): JSX.El
 
 							// Save documents to disk in "Initiation" subfolder
 							setProgressMessage('Saving documents...');
-							const sshRemoteId = state.sessionSshRemoteConfig?.enabled
-								? (state.sessionSshRemoteConfig.remoteId ?? undefined)
-								: undefined;
+							const sshRemoteId = deriveSshRemoteId(state.sessionSshRemoteConfig);
 							const saveResult = await phaseGenerator.saveDocuments(
 								state.directoryPath,
 								genResult.documents,

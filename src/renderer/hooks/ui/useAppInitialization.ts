@@ -12,7 +12,7 @@
  *   - Beta updates setting sync
  *   - Update check on startup
  *   - Leaderboard stats sync from server
- *   - SpecKit + OpenSpec command loading
+ *   - SpecKit + OpenSpec + BMAD command loading
  *   - SSH remote configs loading
  *   - Stats DB corruption check
  *   - Notification settings sync to notificationStore
@@ -20,7 +20,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { SpecKitCommand, OpenSpecCommand } from '../../types';
+import type { SpecKitCommand, OpenSpecCommand, BmadCommand } from '../../types';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { getModalActions } from '../../stores/modalStore';
@@ -28,8 +28,11 @@ import { useTabStore } from '../../stores/tabStore';
 import { useNotificationStore, notifyToast } from '../../stores/notificationStore';
 import { getSpeckitCommands } from '../../services/speckit';
 import { getOpenSpecCommands } from '../../services/openspec';
+import { getBmadCommands } from '../../services/bmad';
+import { captureException } from '../../utils/sentry';
 import { exposeWindowsWarningModalDebug } from '../../components/WindowsWarningModal';
 import type { GistInfo } from '../../components/GistPublishModal';
+import { logger } from '../../utils/logger';
 
 // ============================================================================
 // Return type
@@ -44,6 +47,8 @@ export interface AppInitializationReturn {
 	speckitCommands: SpecKitCommand[];
 	/** Loaded OpenSpec commands */
 	openspecCommands: OpenSpecCommand[];
+	/** Loaded BMAD commands */
+	bmadCommands: BmadCommand[];
 	/** Save a gist URL for a file path (persisted to settings) */
 	saveFileGistUrl: (filePath: string, gistInfo: GistInfo) => void;
 }
@@ -56,6 +61,7 @@ export function useAppInitialization(): AppInitializationReturn {
 	// --- Store selectors ---
 	const settingsLoaded = useSettingsStore((s) => s.settingsLoaded);
 	const sessionsLoaded = useSessionStore((s) => s.sessionsLoaded);
+	const initialFileTreeReady = useSessionStore((s) => s.initialFileTreeReady);
 	const suppressWindowsWarning = useSettingsStore((s) => s.suppressWindowsWarning);
 	const enableBetaUpdates = useSettingsStore((s) => s.enableBetaUpdates);
 	const checkForUpdatesOnStartup = useSettingsStore((s) => s.checkForUpdatesOnStartup);
@@ -64,21 +70,49 @@ export function useAppInitialization(): AppInitializationReturn {
 	const audioFeedbackEnabled = useSettingsStore((s) => s.audioFeedbackEnabled);
 	const audioFeedbackCommand = useSettingsStore((s) => s.audioFeedbackCommand);
 	const osNotificationsEnabled = useSettingsStore((s) => s.osNotificationsEnabled);
+	const idleNotificationEnabled = useSettingsStore((s) => s.idleNotificationEnabled);
+	const idleNotificationCommand = useSettingsStore((s) => s.idleNotificationCommand);
+	const speckitEnabled = useSettingsStore((s) => s.speckitEnabled);
+	const openspecEnabled = useSettingsStore((s) => s.openspecEnabled);
+	const bmadEnabled = useSettingsStore((s) => s.bmadEnabled);
 
 	// --- Local state ---
 	const [ghCliAvailable, setGhCliAvailable] = useState(false);
 	const [sshRemoteConfigs, setSshRemoteConfigs] = useState<Array<{ id: string; name: string }>>([]);
 	const [speckitCommands, setSpeckitCommands] = useState<SpecKitCommand[]>([]);
 	const [openspecCommands, setOpenspecCommands] = useState<OpenSpecCommand[]>([]);
+	const [bmadCommands, setBmadCommands] = useState<BmadCommand[]>([]);
 
 	// --- Splash screen coordination ---
+	// Progress stages: 0-40% React bootstrap (splash.js), 40-60% settings,
+	// 60-80% sessions, 80-90% file tree, 90-95% UI rendering, 95-100% ready.
+	// We wait for settings, sessions, AND the initial file tree load before
+	// dismissing, so the user doesn't see "Loading files..." or an unresponsive UI.
 	useEffect(() => {
-		if (settingsLoaded && sessionsLoaded) {
-			if (typeof window.__hideSplash === 'function') {
-				window.__hideSplash();
-			}
+		if (settingsLoaded && !sessionsLoaded) {
+			window.__updateSplash?.(60, 'Warming up the ensemble...');
 		}
-	}, [settingsLoaded, sessionsLoaded]);
+		if (!settingsLoaded && sessionsLoaded) {
+			window.__updateSplash?.(60, 'Warming up the ensemble...');
+		}
+		if (settingsLoaded && sessionsLoaded && !initialFileTreeReady) {
+			window.__updateSplash?.(80, 'Indexing the score...');
+		}
+		if (settingsLoaded && sessionsLoaded && initialFileTreeReady) {
+			window.__updateSplash?.(90, 'The concertmaster rises...');
+			// Wait for React to render the UI with loaded data before hiding splash.
+			// Double rAF ensures at least one full paint cycle has completed,
+			// then a short delay lets the file tree and heavy components settle.
+			requestAnimationFrame(() => {
+				requestAnimationFrame(() => {
+					window.__updateSplash?.(95, 'Maestro takes the podium...');
+					setTimeout(() => {
+						window.__hideSplash?.();
+					}, 150);
+				});
+			});
+		}
+	}, [settingsLoaded, sessionsLoaded, initialFileTreeReady]);
 
 	// --- GitHub CLI availability check ---
 	useEffect(() => {
@@ -111,7 +145,7 @@ export function useAppInitialization(): AppInitializationReturn {
 				}
 			})
 			.catch((error) => {
-				console.error('[App] Failed to detect platform for Windows warning:', error);
+				logger.error('[App] Failed to detect platform for Windows warning:', undefined, error);
 			});
 	}, [settingsLoaded, suppressWindowsWarning]);
 
@@ -125,7 +159,7 @@ export function useAppInitialization(): AppInitializationReturn {
 				}
 			})
 			.catch((error) => {
-				console.debug('[useAppInitialization] Failed to load fileGistUrls:', error);
+				logger.debug('[useAppInitialization] Failed to load fileGistUrls:', undefined, error);
 			});
 	}, []);
 
@@ -144,21 +178,31 @@ export function useAppInitialization(): AppInitializationReturn {
 		}
 	}, [settingsLoaded, enableBetaUpdates]);
 
-	// --- Check for updates on startup ---
+	// --- Check for updates on startup, then daily for long-running sessions ---
 	useEffect(() => {
-		if (settingsLoaded && checkForUpdatesOnStartup) {
-			const timer = setTimeout(async () => {
-				try {
-					const result = await window.maestro.updates.check(enableBetaUpdates);
-					if (result.updateAvailable && !result.error) {
-						getModalActions().setUpdateCheckModalOpen(true);
-					}
-				} catch (error) {
-					console.error('Failed to check for updates on startup:', error);
+		if (!settingsLoaded || !checkForUpdatesOnStartup) return;
+
+		const runCheck = async () => {
+			try {
+				const result = await window.maestro.updates.check(enableBetaUpdates);
+				if (result.updateAvailable && !result.error) {
+					getModalActions().setUpdateCheckModalOpen(true);
 				}
-			}, 2000);
-			return () => clearTimeout(timer);
-		}
+			} catch (error) {
+				logger.error('Failed to check for updates:', undefined, error);
+			}
+		};
+
+		let intervalId: ReturnType<typeof setInterval> | undefined;
+		const timer = setTimeout(() => {
+			void runCheck();
+			intervalId = setInterval(runCheck, 24 * 60 * 60 * 1000);
+		}, 2000);
+
+		return () => {
+			clearTimeout(timer);
+			if (intervalId) clearInterval(intervalId);
+		};
 	}, [settingsLoaded, checkForUpdatesOnStartup, enableBetaUpdates]);
 
 	// --- Leaderboard startup sync ---
@@ -194,7 +238,7 @@ export function useAppInitialization(): AppInitializationReturn {
 					}
 				}
 			} catch (error) {
-				console.debug('[Leaderboard] Startup sync failed (non-critical):', error);
+				logger.debug('[Leaderboard] Startup sync failed (non-critical):', undefined, error);
 			}
 		}, 3000);
 
@@ -202,28 +246,62 @@ export function useAppInitialization(): AppInitializationReturn {
 	}, [settingsLoaded, leaderboardAuthToken]);
 
 	// --- SpecKit commands loading ---
+	// Wait for settings so we know whether the user has disabled this bundle.
+	// When disabled, skip the IPC fetch and clear any previously loaded commands
+	// so they disappear from slash-command autocomplete immediately.
 	useEffect(() => {
+		if (!settingsLoaded) return;
+		if (!speckitEnabled) {
+			setSpeckitCommands([]);
+			return;
+		}
 		(async () => {
 			try {
 				const commands = await getSpeckitCommands();
 				setSpeckitCommands(commands);
 			} catch (error) {
-				console.error('[SpecKit] Failed to load commands:', error);
+				logger.error('[SpecKit] Failed to load commands:', undefined, error);
 			}
 		})();
-	}, []);
+	}, [settingsLoaded, speckitEnabled]);
 
 	// --- OpenSpec commands loading ---
 	useEffect(() => {
+		if (!settingsLoaded) return;
+		if (!openspecEnabled) {
+			setOpenspecCommands([]);
+			return;
+		}
 		(async () => {
 			try {
 				const commands = await getOpenSpecCommands();
 				setOpenspecCommands(commands);
 			} catch (error) {
-				console.error('[OpenSpec] Failed to load commands:', error);
+				logger.error('[OpenSpec] Failed to load commands:', undefined, error);
 			}
 		})();
-	}, []);
+	}, [settingsLoaded, openspecEnabled]);
+
+	// --- BMAD commands loading ---
+	useEffect(() => {
+		if (!settingsLoaded) return;
+		if (!bmadEnabled) {
+			setBmadCommands([]);
+			return;
+		}
+		(async () => {
+			try {
+				const commands = await getBmadCommands();
+				setBmadCommands(commands);
+			} catch (error) {
+				captureException(error, {
+					extra: {
+						context: 'useAppInitialization - BMAD load',
+					},
+				});
+			}
+		})();
+	}, [settingsLoaded, bmadEnabled]);
 
 	// --- SSH remote configs loading ---
 	// Non-critical: SSH may not be configured. Failures are logged but not
@@ -242,7 +320,7 @@ export function useAppInitialization(): AppInitializationReturn {
 				}
 			})
 			.catch((error) => {
-				console.warn('[useAppInitialization] Failed to load SSH remote configs:', error);
+				logger.warn('[useAppInitialization] Failed to load SSH remote configs:', undefined, error);
 			});
 	}, []);
 
@@ -277,6 +355,12 @@ export function useAppInitialization(): AppInitializationReturn {
 		useNotificationStore.getState().setOsNotifications(osNotificationsEnabled);
 	}, [osNotificationsEnabled]);
 
+	useEffect(() => {
+		useNotificationStore
+			.getState()
+			.setIdleNotification(idleNotificationEnabled, idleNotificationCommand);
+	}, [idleNotificationEnabled, idleNotificationCommand]);
+
 	// --- Playground debug function ---
 	useEffect(() => {
 		(window as unknown as { playground: () => void }).playground = () => {
@@ -292,6 +376,7 @@ export function useAppInitialization(): AppInitializationReturn {
 		sshRemoteConfigs,
 		speckitCommands,
 		openspecCommands,
+		bmadCommands,
 		saveFileGistUrl,
 	};
 }

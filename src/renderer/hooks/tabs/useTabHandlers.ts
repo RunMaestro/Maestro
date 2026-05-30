@@ -2,6 +2,7 @@ import { useMemo, useCallback } from 'react';
 import type {
 	Session,
 	AITab,
+	BrowserTab,
 	FilePreviewTab,
 	UnifiedTab,
 	UnifiedTabRef,
@@ -12,28 +13,69 @@ import {
 	setActiveTab,
 	createTab,
 	closeTab,
+	closeBrowserTab as closeBrowserTabHelper,
 	closeFileTab as closeFileTabHelper,
 	addAiTabToUnifiedHistory,
 	getActiveTab,
 	getInitialRenameValue,
 	hasActiveWizard,
+	hasWizardInteraction,
 	hasDraft,
 	buildUnifiedTabs,
 	ensureInUnifiedTabOrder,
+	restoreOrphanedTab,
 } from '../../utils/tabHelpers';
+import {
+	closeTerminalTab as closeTerminalTabHelper,
+	getTerminalSessionId,
+} from '../../utils/terminalTabHelpers';
+import { insertAfterActiveInUnifiedTabOrder } from '../../utils/unifiedTabOrderUtils';
+import {
+	DEFAULT_BROWSER_TAB_TITLE,
+	DEFAULT_BROWSER_TAB_URL,
+	getBrowserTabPartition,
+	getBrowserTabTitle,
+	normalizeBrowserTabUrl,
+} from '../../utils/browserTabPersistence';
 import { generateId } from '../../utils/ids';
-import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
+import { clearLiveDraft } from '../../utils/liveDraftStore';
+import { useSessionStore, selectActiveSession, updateAiTab } from '../../stores/sessionStore';
 import { useModalStore } from '../../stores/modalStore';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { useTabStore } from '../../stores/tabStore';
+import { useInlineWizardContext } from '../../contexts/InlineWizardContext';
+import { logger } from '../../utils/logger';
+
+// ============================================================================
+// Helpers
+// ============================================================================
+
+/** Resolve the active tab's unified ref, accounting for terminal, file, and AI tabs. */
+function getActiveUnifiedRef(s: Session): { type: UnifiedTabRef['type']; id: string } | null {
+	if (s.inputMode === 'terminal' && s.activeTerminalTabId) {
+		return { type: 'terminal', id: s.activeTerminalTabId };
+	}
+	if (s.activeFileTabId) {
+		return { type: 'file', id: s.activeFileTabId };
+	}
+	if (s.activeBrowserTabId) {
+		return { type: 'browser', id: s.activeBrowserTabId };
+	}
+	if (s.activeTabId) {
+		return { type: 'ai', id: s.activeTabId };
+	}
+	return null;
+}
 
 // ============================================================================
 // Types
 // ============================================================================
 
 export interface CloseCurrentTabResult {
-	type: 'file' | 'ai' | 'prevented' | 'none';
+	type: 'file' | 'browser' | 'ai' | 'terminal' | 'prevented' | 'none';
 	tabId?: string;
 	isWizardTab?: boolean;
+	hasWizardUserInteraction?: boolean;
 	hasDraft?: boolean;
 }
 
@@ -43,6 +85,13 @@ interface FileTabOpenParams {
 	content: string;
 	sshRemoteId?: string;
 	lastModified?: number;
+	/** Open the tab in loading state (no content yet). Used for slow remote reads. */
+	isLoading?: boolean;
+	/** While isLoading, the in-flight fs:readFile requestId — cancelled if the tab is closed mid-load. */
+	loadRequestId?: string;
+	/** If set, FilePreview flips to edit mode and scrolls the editor to this
+	 *  1-based line on next render. Set by maestro://file/...#L<n> deep links. */
+	pendingScrollToLine?: number;
 }
 
 export interface TabHandlersReturn {
@@ -50,6 +99,7 @@ export interface TabHandlersReturn {
 	activeTab: AITab | undefined;
 	unifiedTabs: UnifiedTab[];
 	activeFileTab: FilePreviewTab | null;
+	activeBrowserTab: BrowserTab | null;
 	isResumingSession: boolean;
 	fileTabBackHistory: FilePreviewHistoryEntry[];
 	fileTabForwardHistory: FilePreviewHistoryEntry[];
@@ -82,9 +132,13 @@ export interface TabHandlersReturn {
 	handleToggleTabReadOnlyMode: () => void;
 	handleToggleTabSaveToHistory: () => void;
 	handleToggleTabShowThinking: () => void;
+	handleToggleTabEnterToSend: () => void;
 
 	// File Tab handlers
-	handleOpenFileTab: (file: FileTabOpenParams, options?: { openInNewTab?: boolean }) => void;
+	handleOpenFileTab: (
+		file: FileTabOpenParams,
+		options?: { openInNewTab?: boolean; targetSessionId?: string }
+	) => void;
 	handleSelectFileTab: (tabId: string) => Promise<void>;
 	handleCloseFileTab: (tabId: string) => void;
 	handleFileTabEditModeChange: (tabId: string, editMode: boolean) => void;
@@ -100,6 +154,14 @@ export interface TabHandlersReturn {
 	handleFileTabNavigateForward: () => Promise<void>;
 	handleFileTabNavigateToIndex: (index: number) => Promise<void>;
 	handleClearFilePreviewHistory: () => void;
+	handleNewFileTab: () => void;
+
+	// Browser Tab handlers
+	handleNewBrowserTab: () => void;
+	handleOpenBrowserTabAt: (url: string, options?: { title?: string }) => void;
+	handleSelectBrowserTab: (tabId: string) => void;
+	handleCloseBrowserTab: (tabId: string) => void;
+	handleUpdateBrowserTab: (sessionId: string, tabId: string, updates: Partial<BrowserTab>) => void;
 
 	// Scroll/log handlers
 	handleScrollPositionChange: (scrollTop: number) => void;
@@ -114,6 +176,11 @@ export interface TabHandlersReturn {
 export function useTabHandlers(): TabHandlersReturn {
 	// --- Reactive subscriptions for derived state ---
 	const activeSession = useSessionStore(selectActiveSession);
+
+	// Inline-wizard context: needed so closing a wizard tab evicts its entry from the hook's
+	// in-memory tabStates map. Without this, `wizardActiveSessions` retains a stale entry and the
+	// Left Bar wand indicator stays on for an agent that no longer has any wizard tab.
+	const { endWizard: endInlineWizard } = useInlineWizardContext();
 
 	// --- Derived state (useMemo) ---
 
@@ -154,7 +221,13 @@ export function useTabHandlers(): TabHandlersReturn {
 	const unifiedTabs = useMemo((): UnifiedTab[] => {
 		if (!activeSession) return [];
 		return buildUnifiedTabs(activeSession);
-	}, [activeSession?.aiTabs, activeSession?.filePreviewTabs, activeSession?.unifiedTabOrder]);
+	}, [
+		activeSession?.aiTabs,
+		activeSession?.filePreviewTabs,
+		activeSession?.terminalTabs,
+		activeSession?.browserTabs,
+		activeSession?.unifiedTabOrder,
+	]);
 
 	// Get the active file preview tab (if a file tab is active)
 	const activeFileTab = useMemo((): FilePreviewTab | null => {
@@ -163,6 +236,13 @@ export function useTabHandlers(): TabHandlersReturn {
 			activeSession.filePreviewTabs.find((tab) => tab.id === activeSession.activeFileTabId) ?? null
 		);
 	}, [activeSession?.activeFileTabId, activeSession?.filePreviewTabs]);
+
+	const activeBrowserTab = useMemo((): BrowserTab | null => {
+		if (!activeSession?.activeBrowserTabId) return null;
+		return (
+			activeSession.browserTabs?.find((tab) => tab.id === activeSession.activeBrowserTabId) ?? null
+		);
+	}, [activeSession?.activeBrowserTabId, activeSession?.browserTabs]);
 
 	const isResumingSession = !!activeTab?.agentSessionId;
 
@@ -183,11 +263,14 @@ export function useTabHandlers(): TabHandlersReturn {
 			options?: {
 				/** If true, create new tab adjacent to current file tab. If false, replace current file tab content. Default: true (create new tab) */
 				openInNewTab?: boolean;
+				/** Override which session the tab is created in (defaults to current active session) */
+				targetSessionId?: string;
 			}
 		) => {
 			const openInNewTab = options?.openInNewTab ?? true;
 			const { setSessions } = useSessionStore.getState();
-			const activeSessionId = useSessionStore.getState().activeSessionId;
+			const activeSessionId =
+				options?.targetSessionId || useSessionStore.getState().activeSessionId;
 
 			setSessions((prev: Session[]) =>
 				prev.map((s) => {
@@ -196,14 +279,24 @@ export function useTabHandlers(): TabHandlersReturn {
 					// Check if a tab with this path already exists
 					const existingTab = s.filePreviewTabs.find((tab) => tab.path === file.path);
 					if (existingTab) {
-						// Tab exists - update content and lastModified if provided and select it
+						// Tab exists - update content and lastModified if provided and select it.
+						// If the caller is opening in a still-loading state (eager creation),
+						// preserve isLoading=true and the loadRequestId; otherwise the read
+						// has completed and we flip isLoading off.
 						const updatedTabs = s.filePreviewTabs.map((tab) =>
 							tab.id === existingTab.id
 								? {
 										...tab,
 										content: file.content,
 										lastModified: file.lastModified ?? tab.lastModified,
-										isLoading: false,
+										isLoading: file.isLoading ?? false,
+										loadRequestId: file.isLoading ? file.loadRequestId : undefined,
+										// Only overwrite when the caller is explicitly requesting
+										// a jump; otherwise keep whatever was there.
+										pendingScrollToLine:
+											file.pendingScrollToLine !== undefined
+												? file.pendingScrollToLine
+												: tab.pendingScrollToLine,
 									}
 								: tab
 						);
@@ -211,6 +304,8 @@ export function useTabHandlers(): TabHandlersReturn {
 							...s,
 							filePreviewTabs: updatedTabs,
 							activeFileTabId: existingTab.id,
+							activeTerminalTabId: null,
+							inputMode: 'ai' as const,
 							activeTabId: s.activeTabId,
 							unifiedTabOrder: ensureInUnifiedTabOrder(s.unifiedTabOrder, 'file', existingTab.id),
 						};
@@ -280,9 +375,11 @@ export function useTabHandlers(): TabHandlersReturn {
 								editContent: undefined,
 								lastModified: file.lastModified ?? Date.now(),
 								sshRemoteId: file.sshRemoteId,
-								isLoading: false,
+								isLoading: file.isLoading ?? false,
+								loadRequestId: file.isLoading ? file.loadRequestId : undefined,
 								navigationHistory: finalHistory,
 								navigationIndex: finalHistory.length - 1,
+								pendingScrollToLine: file.pendingScrollToLine,
 							};
 						});
 						return {
@@ -311,38 +408,26 @@ export function useTabHandlers(): TabHandlersReturn {
 						createdAt: Date.now(),
 						lastModified: file.lastModified ?? Date.now(),
 						sshRemoteId: file.sshRemoteId,
-						isLoading: false,
+						isLoading: file.isLoading ?? false,
+						loadRequestId: file.isLoading ? file.loadRequestId : undefined,
 						navigationHistory: [{ path: file.path, name: nameWithoutExtension, scrollTop: 0 }],
 						navigationIndex: 0,
+						pendingScrollToLine: file.pendingScrollToLine,
 					};
 
-					// Create the unified tab reference
+					// Create the unified tab reference. Insert directly to the right of the
+					// currently active tab (any type) so the new file tab lands next to where
+					// the user was, not at the end of the bar.
 					const newTabRef: UnifiedTabRef = { type: 'file', id: newTabId };
-
-					// If opening in new tab and there's an active file tab, insert adjacent to it
-					let updatedUnifiedTabOrder: UnifiedTabRef[];
-					if (openInNewTab && s.activeFileTabId) {
-						const currentIndex = s.unifiedTabOrder.findIndex(
-							(ref) => ref.type === 'file' && ref.id === s.activeFileTabId
-						);
-						if (currentIndex !== -1) {
-							updatedUnifiedTabOrder = [
-								...s.unifiedTabOrder.slice(0, currentIndex + 1),
-								newTabRef,
-								...s.unifiedTabOrder.slice(currentIndex + 1),
-							];
-						} else {
-							updatedUnifiedTabOrder = [...s.unifiedTabOrder, newTabRef];
-						}
-					} else {
-						updatedUnifiedTabOrder = [...s.unifiedTabOrder, newTabRef];
-					}
+					const updatedUnifiedTabOrder = insertAfterActiveInUnifiedTabOrder(s, newTabRef);
 
 					return {
 						...s,
 						filePreviewTabs: [...s.filePreviewTabs, newFileTab],
 						unifiedTabOrder: updatedUnifiedTabOrder,
 						activeFileTabId: newTabId,
+						activeTerminalTabId: null,
+						inputMode: 'ai' as const,
 					};
 				})
 			);
@@ -380,6 +465,13 @@ export function useTabHandlers(): TabHandlersReturn {
 		setSessions((prev: Session[]) =>
 			prev.map((s) => {
 				if (s.id !== activeSessionId) return s;
+				// If the requested tab is an orphan (closed while still thinking),
+				// restore it back into aiTabs first so the tab bar shows it and
+				// streaming output resumes routing to the visible tab.
+				if (s.orphanedThinkingTabs?.some((t) => t.id === tabId)) {
+					const restored = restoreOrphanedTab(s, tabId);
+					if (restored) return restored.session;
+				}
 				const result = setActiveTab(s, tabId);
 				return result ? result.session : s;
 			})
@@ -395,6 +487,19 @@ export function useTabHandlers(): TabHandlersReturn {
 	 */
 	const forceCloseFileTab = useCallback((tabId: string) => {
 		const { setSessions, activeSessionId } = useSessionStore.getState();
+
+		// If the tab is still mid-load (e.g. user mistakenly opened a huge
+		// remote file), cancel the underlying SSH read so we don't waste
+		// bandwidth fetching content nobody will see. We snapshot from state
+		// before the close mutation since the tab will be gone after.
+		const activeSession = useSessionStore
+			.getState()
+			.sessions.find((s: Session) => s.id === activeSessionId);
+		const closingTab = activeSession?.filePreviewTabs.find((t) => t.id === tabId);
+		if (closingTab?.isLoading && closingTab.loadRequestId) {
+			void window.maestro.fs.cancelReadFile(closingTab.loadRequestId);
+		}
+
 		setSessions((prev: Session[]) =>
 			prev.map((s) => {
 				if (s.id !== activeSessionId) return s;
@@ -410,8 +515,7 @@ export function useTabHandlers(): TabHandlersReturn {
 	 */
 	const handleCloseFileTab = useCallback(
 		(tabId: string) => {
-			const { sessions, activeSessionId } = useSessionStore.getState();
-			const currentSession = sessions.find((s) => s.id === activeSessionId);
+			const currentSession = selectActiveSession(useSessionStore.getState());
 			if (!currentSession) {
 				forceCloseFileTab(tabId);
 				return;
@@ -510,8 +614,7 @@ export function useTabHandlers(): TabHandlersReturn {
 	}, []);
 
 	const handleReloadFileTab = useCallback(async (tabId: string) => {
-		const { sessions, activeSessionId } = useSessionStore.getState();
-		const currentSession = sessions.find((s) => s.id === activeSessionId);
+		const currentSession = selectActiveSession(useSessionStore.getState());
 		if (!currentSession) return;
 
 		const fileTab = currentSession.filePreviewTabs.find((tab) => tab.id === tabId);
@@ -544,7 +647,7 @@ export function useTabHandlers(): TabHandlersReturn {
 				})
 			);
 		} catch (error) {
-			console.debug('[handleReloadFileTab] Failed to reload:', error);
+			logger.debug('[handleReloadFileTab] Failed to reload:', undefined, error);
 		}
 	}, []);
 
@@ -552,18 +655,25 @@ export function useTabHandlers(): TabHandlersReturn {
 	 * Select a file preview tab. If fileTabAutoRefreshEnabled, checks if file changed on disk.
 	 */
 	const handleSelectFileTab = useCallback(async (tabId: string) => {
-		const { sessions, activeSessionId, setSessions } = useSessionStore.getState();
-		const currentSession = sessions.find((s) => s.id === activeSessionId);
+		const { setSessions } = useSessionStore.getState();
+		const currentSession = selectActiveSession(useSessionStore.getState());
 		if (!currentSession) return;
 
 		const fileTab = currentSession.filePreviewTabs.find((tab) => tab.id === tabId);
 		if (!fileTab) return;
 
-		// Set the tab as active immediately
+		// Set the tab as active immediately, and reset inputMode/activeTerminalTabId in case
+		// we're switching away from terminal mode (clicking a file tab while terminal is active).
 		setSessions((prev: Session[]) =>
 			prev.map((s) => {
-				if (s.id !== activeSessionId) return s;
-				return { ...s, activeFileTabId: tabId };
+				if (s.id !== currentSession.id) return s;
+				return {
+					...s,
+					activeFileTabId: tabId,
+					activeBrowserTabId: null,
+					activeTerminalTabId: null,
+					inputMode: 'ai',
+				};
 			})
 		);
 
@@ -592,16 +702,202 @@ export function useTabHandlers(): TabHandlersReturn {
 					);
 				}
 			} catch (error) {
-				console.debug('[handleSelectFileTab] Auto-refresh failed:', error);
+				logger.debug('[handleSelectFileTab] Auto-refresh failed:', undefined, error);
 			}
 		}
 	}, []);
+
+	const handleNewFileTab = useCallback(() => {
+		const { setSessions, activeSessionId } = useSessionStore.getState();
+		setSessions((prev: Session[]) =>
+			prev.map((s) => {
+				if (s.id !== activeSessionId) return s;
+
+				const newTabId = generateId();
+				const newFileTab: FilePreviewTab = {
+					id: newTabId,
+					path: '',
+					name: 'Untitled',
+					extension: '',
+					content: '',
+					scrollTop: 0,
+					searchQuery: '',
+					editMode: true,
+					editContent: '',
+					createdAt: Date.now(),
+					lastModified: Date.now(),
+					isLoading: false,
+					navigationHistory: [],
+					navigationIndex: -1,
+				};
+
+				const newTabRef: UnifiedTabRef = { type: 'file', id: newTabId };
+
+				// Insert directly to the right of whatever tab is currently active
+				// (any type) so a "new file" lands next to where the user was.
+				const updatedUnifiedTabOrder = insertAfterActiveInUnifiedTabOrder(s, newTabRef);
+
+				return {
+					...s,
+					filePreviewTabs: [...s.filePreviewTabs, newFileTab],
+					unifiedTabOrder: updatedUnifiedTabOrder,
+					activeFileTabId: newTabId,
+					activeBrowserTabId: null,
+					activeTerminalTabId: null,
+					inputMode: 'ai' as const,
+				};
+			})
+		);
+	}, []);
+
+	const handleNewBrowserTab = useCallback(() => {
+		const { setSessions, activeSessionId } = useSessionStore.getState();
+		const homeUrl = useSettingsStore.getState().browserHomeUrl || DEFAULT_BROWSER_TAB_URL;
+		setSessions((prev: Session[]) =>
+			prev.map((s) => {
+				if (s.id !== activeSessionId) return s;
+
+				const url = homeUrl;
+				const newBrowserTab: BrowserTab = {
+					id: generateId(),
+					url,
+					title: url === DEFAULT_BROWSER_TAB_URL ? DEFAULT_BROWSER_TAB_TITLE : url,
+					createdAt: Date.now(),
+					partition: getBrowserTabPartition(s.id),
+					canGoBack: false,
+					canGoForward: false,
+					isLoading: url !== DEFAULT_BROWSER_TAB_URL,
+					favicon: null,
+				};
+
+				return {
+					...s,
+					browserTabs: [...(s.browserTabs || []), newBrowserTab],
+					activeFileTabId: null,
+					activeBrowserTabId: newBrowserTab.id,
+					activeTerminalTabId: null,
+					inputMode: 'ai',
+					unifiedTabOrder: insertAfterActiveInUnifiedTabOrder(s, {
+						type: 'browser',
+						id: newBrowserTab.id,
+					}),
+				};
+			})
+		);
+	}, []);
+
+	// Open a new browser tab pointed at a specific URL. Used by file-tree
+	// "Open in Maestro Browser" so JS-heavy local HTML (Plotly dashboards, etc.)
+	// renders in the full Electron webview instead of the sandboxed file preview
+	// iframe.
+	const handleOpenBrowserTabAt = useCallback((url: string, options?: { title?: string }) => {
+		if (!url) return;
+		const { setSessions, activeSessionId } = useSessionStore.getState();
+		setSessions((prev: Session[]) =>
+			prev.map((s) => {
+				if (s.id !== activeSessionId) return s;
+
+				const newBrowserTab: BrowserTab = {
+					id: generateId(),
+					url,
+					title: options?.title ?? url,
+					createdAt: Date.now(),
+					partition: getBrowserTabPartition(s.id),
+					canGoBack: false,
+					canGoForward: false,
+					isLoading: true,
+					favicon: null,
+				};
+
+				return {
+					...s,
+					browserTabs: [...(s.browserTabs || []), newBrowserTab],
+					activeFileTabId: null,
+					activeBrowserTabId: newBrowserTab.id,
+					activeTerminalTabId: null,
+					inputMode: 'ai',
+					unifiedTabOrder: insertAfterActiveInUnifiedTabOrder(s, {
+						type: 'browser',
+						id: newBrowserTab.id,
+					}),
+				};
+			})
+		);
+	}, []);
+
+	const handleSelectBrowserTab = useCallback((tabId: string) => {
+		const { setSessions, activeSessionId } = useSessionStore.getState();
+		setSessions((prev: Session[]) =>
+			prev.map((s) => {
+				if (s.id !== activeSessionId) return s;
+				if (!(s.browserTabs || []).some((tab) => tab.id === tabId)) return s;
+				return {
+					...s,
+					activeFileTabId: null,
+					activeBrowserTabId: tabId,
+					activeTerminalTabId: null,
+					inputMode: 'ai',
+					unifiedTabOrder: ensureInUnifiedTabOrder(s.unifiedTabOrder || [], 'browser', tabId),
+				};
+			})
+		);
+	}, []);
+
+	const forceCloseBrowserTab = useCallback((tabId: string) => {
+		const { setSessions, activeSessionId } = useSessionStore.getState();
+		setSessions((prev: Session[]) =>
+			prev.map((s) => {
+				if (s.id !== activeSessionId) return s;
+				const result = closeBrowserTabHelper(s, tabId);
+				return result ? result.session : s;
+			})
+		);
+	}, []);
+
+	const handleCloseBrowserTab = useCallback(
+		(tabId: string) => {
+			forceCloseBrowserTab(tabId);
+		},
+		[forceCloseBrowserTab]
+	);
+
+	const handleUpdateBrowserTab = useCallback(
+		(sessionId: string, tabId: string, updates: Partial<BrowserTab>) => {
+			const { setSessions } = useSessionStore.getState();
+			setSessions((prev: Session[]) =>
+				prev.map((s) => {
+					if (s.id !== sessionId) return s;
+					return {
+						...s,
+						browserTabs: (s.browserTabs || []).map((tab) => {
+							if (tab.id !== tabId) return tab;
+							const nextUrl =
+								typeof updates.url === 'string' ? normalizeBrowserTabUrl(updates.url) : tab.url;
+							return {
+								...tab,
+								...updates,
+								url: nextUrl,
+								title: getBrowserTabTitle(nextUrl, updates.title ?? tab.title),
+							};
+						}),
+					};
+				})
+			);
+		},
+		[]
+	);
 
 	const handleUnifiedTabReorder = useCallback((fromIndex: number, toIndex: number) => {
 		const { setSessions, activeSessionId } = useSessionStore.getState();
 		setSessions((prev: Session[]) =>
 			prev.map((s) => {
 				if (s.id !== activeSessionId) return s;
+				logger.debug('[useTabHandlers] handleUnifiedTabReorder', undefined, {
+					fromIndex,
+					toIndex,
+					orderLength: s.unifiedTabOrder.length,
+					order: s.unifiedTabOrder.map((r) => `${r.type}:${r.id.slice(0, 8)}`),
+				});
 				if (
 					fromIndex < 0 ||
 					fromIndex >= s.unifiedTabOrder.length ||
@@ -609,11 +905,18 @@ export function useTabHandlers(): TabHandlersReturn {
 					toIndex >= s.unifiedTabOrder.length ||
 					fromIndex === toIndex
 				) {
+					logger.debug(
+						'[useTabHandlers] handleUnifiedTabReorder: bounds check failed, returning unchanged'
+					);
 					return s;
 				}
 				const newOrder = [...s.unifiedTabOrder];
 				const [movedRef] = newOrder.splice(fromIndex, 1);
 				newOrder.splice(toIndex, 0, movedRef);
+				logger.debug('[useTabHandlers] handleUnifiedTabReorder: reordered', undefined, {
+					movedRef,
+					newOrder: newOrder.map((r) => `${r.type}:${r.id.slice(0, 8)}`),
+				});
 				return { ...s, unifiedTabOrder: newOrder };
 			})
 		);
@@ -626,37 +929,58 @@ export function useTabHandlers(): TabHandlersReturn {
 	/**
 	 * Internal tab close handler that performs the actual close.
 	 */
-	const performTabClose = useCallback((tabId: string) => {
-		const { setSessions, activeSessionId } = useSessionStore.getState();
-		setSessions((prev: Session[]) =>
-			prev.map((s) => {
-				if (s.id !== activeSessionId) return s;
-				const tab = s.aiTabs.find((t) => t.id === tabId);
-				const isWizardTab = tab && hasActiveWizard(tab);
-				const unifiedIndex = s.unifiedTabOrder.findIndex(
-					(ref) => ref.type === 'ai' && ref.id === tabId
+	const performTabClose = useCallback(
+		(tabId: string) => {
+			const { setSessions, activeSessionId } = useSessionStore.getState();
+			const sessionBeforeClose = useSessionStore
+				.getState()
+				.sessions.find((s) => s.id === activeSessionId);
+			const tabBeforeClose = sessionBeforeClose?.aiTabs.find((t) => t.id === tabId);
+			const wasWizardTab = !!tabBeforeClose && hasActiveWizard(tabBeforeClose);
+
+			clearLiveDraft(tabId);
+			setSessions((prev: Session[]) =>
+				prev.map((s) => {
+					if (s.id !== activeSessionId) return s;
+					const tab = s.aiTabs.find((t) => t.id === tabId);
+					const isWizardTab = tab && hasActiveWizard(tab);
+					const unifiedIndex = s.unifiedTabOrder.findIndex(
+						(ref) => ref.type === 'ai' && ref.id === tabId
+					);
+					const result = closeTab(s, tabId, false, { skipHistory: isWizardTab });
+					if (!result) return s;
+					if (!isWizardTab && tab) {
+						return addAiTabToUnifiedHistory(result.session, tab, unifiedIndex);
+					}
+					return result.session;
+				})
+			);
+
+			// Evict the wizard's in-memory tabStates entry so the Left Bar wand indicator clears.
+			// closeTab only removes the tab from session.aiTabs — the inline-wizard hook owns its own
+			// per-tab Map and never sees the close otherwise.
+			if (wasWizardTab) {
+				endInlineWizard(tabId).catch((error) =>
+					logger.warn('[useTabHandlers] Failed to end wizard on tab close:', undefined, error)
 				);
-				const result = closeTab(s, tabId, false, { skipHistory: isWizardTab });
-				if (!result) return s;
-				if (!isWizardTab && tab) {
-					return addAiTabToUnifiedHistory(result.session, tab, unifiedIndex);
-				}
-				return result.session;
-			})
-		);
-	}, []);
+			}
+		},
+		[endInlineWizard]
+	);
 
 	const handleTabClose = useCallback(
 		(tabId: string) => {
-			const { sessions, activeSessionId } = useSessionStore.getState();
-			const session = sessions.find((s) => s.id === activeSessionId);
+			const session = selectActiveSession(useSessionStore.getState());
 			const tab = session?.aiTabs.find((t) => t.id === tabId);
 
-			if (tab && hasActiveWizard(tab)) {
+			if (tab && hasWizardInteraction(tab)) {
 				useModalStore.getState().openModal('confirm', {
 					message: 'Close this wizard? Your progress will be lost and cannot be restored.',
 					onConfirm: () => performTabClose(tabId),
 				});
+			} else if (tab && hasActiveWizard(tab)) {
+				// Wizard is active but no user interaction yet - close without confirmation
+				performTabClose(tabId);
 			} else if (tab && hasDraft(tab)) {
 				useModalStore.getState().openModal('confirm', {
 					message: 'This tab has an unsent draft. Are you sure you want to close it?',
@@ -686,7 +1010,16 @@ export function useTabHandlers(): TabHandlersReturn {
 	}, []);
 
 	const performCloseAllTabs = useCallback(() => {
-		const { setSessions, activeSessionId } = useSessionStore.getState();
+		const { setSessions, activeSessionId, sessions } = useSessionStore.getState();
+		const activeSession = sessions.find((s) => s.id === activeSessionId);
+		activeSession?.aiTabs.forEach((t) => clearLiveDraft(t.id));
+
+		// Snapshot wizard tab ids before mutation — we need to evict them from the inline-wizard
+		// hook's tabStates after closeTab strips them from session.aiTabs.
+		const wizardTabIds = (activeSession?.aiTabs ?? [])
+			.filter((t) => hasActiveWizard(t))
+			.map((t) => t.id);
+
 		setSessions((prev: Session[]) =>
 			prev.map((s) => {
 				if (s.id !== activeSessionId) return s;
@@ -704,11 +1037,16 @@ export function useTabHandlers(): TabHandlersReturn {
 				return updatedSession;
 			})
 		);
-	}, []);
+
+		for (const tabId of wizardTabIds) {
+			endInlineWizard(tabId).catch((error) =>
+				logger.warn('[useTabHandlers] Failed to end wizard on close-all:', undefined, error)
+			);
+		}
+	}, [endInlineWizard]);
 
 	const handleCloseAllTabs = useCallback(() => {
-		const { sessions, activeSessionId } = useSessionStore.getState();
-		const session = sessions.find((s) => s.id === activeSessionId);
+		const session = selectActiveSession(useSessionStore.getState());
 		if (!session) return;
 
 		const hasAnyDraft = session.aiTabs.some((tab) => hasDraft(tab));
@@ -723,17 +1061,29 @@ export function useTabHandlers(): TabHandlersReturn {
 	}, [performCloseAllTabs]);
 
 	const performCloseOtherTabs = useCallback(() => {
-		const { setSessions, activeSessionId } = useSessionStore.getState();
+		const { sessions, setSessions, activeSessionId } = useSessionStore.getState();
+		const session = sessions.find((s) => s.id === activeSessionId);
+		if (!session) return;
+
+		const activeRef = getActiveUnifiedRef(session);
+		if (!activeRef) return;
+
+		const tabsToClose = session.unifiedTabOrder.filter(
+			(ref) => !(ref.type === activeRef.type && ref.id === activeRef.id)
+		);
+		const terminalTabIds = tabsToClose.filter((r) => r.type === 'terminal').map((r) => r.id);
+		tabsToClose.filter((r) => r.type === 'ai').forEach((r) => clearLiveDraft(r.id));
+
+		// Snapshot wizard tab ids before mutation so we can evict them from the inline-wizard hook.
+		const wizardTabIds = tabsToClose
+			.filter((ref) => ref.type === 'ai')
+			.map((ref) => session.aiTabs.find((t) => t.id === ref.id))
+			.filter((t): t is AITab => !!t && hasActiveWizard(t))
+			.map((t) => t.id);
+
 		setSessions((prev: Session[]) =>
 			prev.map((s) => {
 				if (s.id !== activeSessionId) return s;
-
-				const activeUnifiedId = s.activeFileTabId ?? s.activeTabId;
-				const activeUnifiedType = s.activeFileTabId ? 'file' : 'ai';
-
-				const tabsToClose = s.unifiedTabOrder.filter(
-					(ref) => !(ref.type === activeUnifiedType && ref.id === activeUnifiedId)
-				);
 
 				let updatedSession = s;
 
@@ -747,6 +1097,13 @@ export function useTabHandlers(): TabHandlersReturn {
 							if (result) {
 								updatedSession = result.session;
 							}
+						}
+					} else if (tabRef.type === 'terminal') {
+						updatedSession = closeTerminalTabHelper(updatedSession, tabRef.id);
+					} else if (tabRef.type === 'browser') {
+						const result = closeBrowserTabHelper(updatedSession, tabRef.id);
+						if (result) {
+							updatedSession = result.session;
 						}
 					} else {
 						updatedSession = {
@@ -762,11 +1119,20 @@ export function useTabHandlers(): TabHandlersReturn {
 				return updatedSession;
 			})
 		);
-	}, []);
+
+		for (const tabId of terminalTabIds) {
+			window.maestro.process.kill(getTerminalSessionId(session.id, tabId));
+		}
+
+		for (const tabId of wizardTabIds) {
+			endInlineWizard(tabId).catch((error) =>
+				logger.warn('[useTabHandlers] Failed to end wizard on close-others:', undefined, error)
+			);
+		}
+	}, [endInlineWizard]);
 
 	const handleCloseOtherTabs = useCallback(() => {
-		const { sessions, activeSessionId } = useSessionStore.getState();
-		const session = sessions.find((s) => s.id === activeSessionId);
+		const session = selectActiveSession(useSessionStore.getState());
 		if (!session) return;
 
 		const activeTabId = session.activeFileTabId ?? session.activeTabId;
@@ -783,20 +1149,31 @@ export function useTabHandlers(): TabHandlersReturn {
 	}, [performCloseOtherTabs]);
 
 	const performCloseTabsLeft = useCallback(() => {
-		const { setSessions, activeSessionId } = useSessionStore.getState();
+		const { sessions, setSessions, activeSessionId } = useSessionStore.getState();
+		const session = sessions.find((s) => s.id === activeSessionId);
+		if (!session) return;
+
+		const activeRef = getActiveUnifiedRef(session);
+		if (!activeRef) return;
+
+		const activeIndex = session.unifiedTabOrder.findIndex(
+			(ref) => ref.type === activeRef.type && ref.id === activeRef.id
+		);
+		if (activeIndex <= 0) return;
+
+		const tabsToClose = session.unifiedTabOrder.slice(0, activeIndex);
+		const terminalTabIds = tabsToClose.filter((r) => r.type === 'terminal').map((r) => r.id);
+		tabsToClose.filter((r) => r.type === 'ai').forEach((r) => clearLiveDraft(r.id));
+
+		const wizardTabIds = tabsToClose
+			.filter((ref) => ref.type === 'ai')
+			.map((ref) => session.aiTabs.find((t) => t.id === ref.id))
+			.filter((t): t is AITab => !!t && hasActiveWizard(t))
+			.map((t) => t.id);
+
 		setSessions((prev: Session[]) =>
 			prev.map((s) => {
 				if (s.id !== activeSessionId) return s;
-
-				const activeUnifiedId = s.activeFileTabId ?? s.activeTabId;
-				const activeUnifiedType = s.activeFileTabId ? 'file' : 'ai';
-
-				const activeIndex = s.unifiedTabOrder.findIndex(
-					(ref) => ref.type === activeUnifiedType && ref.id === activeUnifiedId
-				);
-				if (activeIndex <= 0) return s;
-
-				const tabsToClose = s.unifiedTabOrder.slice(0, activeIndex);
 
 				let updatedSession = s;
 
@@ -810,6 +1187,13 @@ export function useTabHandlers(): TabHandlersReturn {
 							if (result) {
 								updatedSession = result.session;
 							}
+						}
+					} else if (tabRef.type === 'terminal') {
+						updatedSession = closeTerminalTabHelper(updatedSession, tabRef.id);
+					} else if (tabRef.type === 'browser') {
+						const result = closeBrowserTabHelper(updatedSession, tabRef.id);
+						if (result) {
+							updatedSession = result.session;
 						}
 					} else {
 						updatedSession = {
@@ -825,17 +1209,26 @@ export function useTabHandlers(): TabHandlersReturn {
 				return updatedSession;
 			})
 		);
-	}, []);
+
+		for (const tabId of terminalTabIds) {
+			window.maestro.process.kill(getTerminalSessionId(session.id, tabId));
+		}
+
+		for (const tabId of wizardTabIds) {
+			endInlineWizard(tabId).catch((error) =>
+				logger.warn('[useTabHandlers] Failed to end wizard on close-left:', undefined, error)
+			);
+		}
+	}, [endInlineWizard]);
 
 	const handleCloseTabsLeft = useCallback(() => {
-		const { sessions, activeSessionId } = useSessionStore.getState();
-		const session = sessions.find((s) => s.id === activeSessionId);
+		const session = selectActiveSession(useSessionStore.getState());
 		if (!session) return;
 
-		const activeUnifiedId = session.activeFileTabId ?? session.activeTabId;
-		const activeUnifiedType = session.activeFileTabId ? 'file' : 'ai';
+		const activeRef = getActiveUnifiedRef(session);
+		if (!activeRef) return;
 		const activeIndex = session.unifiedTabOrder.findIndex(
-			(ref) => ref.type === activeUnifiedType && ref.id === activeUnifiedId
+			(ref) => ref.type === activeRef.type && ref.id === activeRef.id
 		);
 		if (activeIndex <= 0) return;
 
@@ -855,20 +1248,31 @@ export function useTabHandlers(): TabHandlersReturn {
 	}, [performCloseTabsLeft]);
 
 	const performCloseTabsRight = useCallback(() => {
-		const { setSessions, activeSessionId } = useSessionStore.getState();
+		const { sessions, setSessions, activeSessionId } = useSessionStore.getState();
+		const session = sessions.find((s) => s.id === activeSessionId);
+		if (!session) return;
+
+		const activeRef = getActiveUnifiedRef(session);
+		if (!activeRef) return;
+
+		const activeIndex = session.unifiedTabOrder.findIndex(
+			(ref) => ref.type === activeRef.type && ref.id === activeRef.id
+		);
+		if (activeIndex < 0 || activeIndex >= session.unifiedTabOrder.length - 1) return;
+
+		const tabsToClose = session.unifiedTabOrder.slice(activeIndex + 1);
+		const terminalTabIds = tabsToClose.filter((r) => r.type === 'terminal').map((r) => r.id);
+		tabsToClose.filter((r) => r.type === 'ai').forEach((r) => clearLiveDraft(r.id));
+
+		const wizardTabIds = tabsToClose
+			.filter((ref) => ref.type === 'ai')
+			.map((ref) => session.aiTabs.find((t) => t.id === ref.id))
+			.filter((t): t is AITab => !!t && hasActiveWizard(t))
+			.map((t) => t.id);
+
 		setSessions((prev: Session[]) =>
 			prev.map((s) => {
 				if (s.id !== activeSessionId) return s;
-
-				const activeUnifiedId = s.activeFileTabId ?? s.activeTabId;
-				const activeUnifiedType = s.activeFileTabId ? 'file' : 'ai';
-
-				const activeIndex = s.unifiedTabOrder.findIndex(
-					(ref) => ref.type === activeUnifiedType && ref.id === activeUnifiedId
-				);
-				if (activeIndex < 0 || activeIndex >= s.unifiedTabOrder.length - 1) return s;
-
-				const tabsToClose = s.unifiedTabOrder.slice(activeIndex + 1);
 
 				let updatedSession = s;
 
@@ -882,6 +1286,13 @@ export function useTabHandlers(): TabHandlersReturn {
 							if (result) {
 								updatedSession = result.session;
 							}
+						}
+					} else if (tabRef.type === 'terminal') {
+						updatedSession = closeTerminalTabHelper(updatedSession, tabRef.id);
+					} else if (tabRef.type === 'browser') {
+						const result = closeBrowserTabHelper(updatedSession, tabRef.id);
+						if (result) {
+							updatedSession = result.session;
 						}
 					} else {
 						updatedSession = {
@@ -897,17 +1308,26 @@ export function useTabHandlers(): TabHandlersReturn {
 				return updatedSession;
 			})
 		);
-	}, []);
+
+		for (const tabId of terminalTabIds) {
+			window.maestro.process.kill(getTerminalSessionId(session.id, tabId));
+		}
+
+		for (const tabId of wizardTabIds) {
+			endInlineWizard(tabId).catch((error) =>
+				logger.warn('[useTabHandlers] Failed to end wizard on close-right:', undefined, error)
+			);
+		}
+	}, [endInlineWizard]);
 
 	const handleCloseTabsRight = useCallback(() => {
-		const { sessions, activeSessionId } = useSessionStore.getState();
-		const session = sessions.find((s) => s.id === activeSessionId);
+		const session = selectActiveSession(useSessionStore.getState());
 		if (!session) return;
 
-		const activeUnifiedId = session.activeFileTabId ?? session.activeTabId;
-		const activeUnifiedType = session.activeFileTabId ? 'file' : 'ai';
+		const activeRef = getActiveUnifiedRef(session);
+		if (!activeRef) return;
 		const activeIndex = session.unifiedTabOrder.findIndex(
-			(ref) => ref.type === activeUnifiedType && ref.id === activeUnifiedId
+			(ref) => ref.type === activeRef.type && ref.id === activeRef.id
 		);
 		if (activeIndex < 0 || activeIndex >= session.unifiedTabOrder.length - 1) return;
 
@@ -927,48 +1347,67 @@ export function useTabHandlers(): TabHandlersReturn {
 	}, [performCloseTabsRight]);
 
 	const handleCloseCurrentTab = useCallback((): CloseCurrentTabResult => {
-		const { sessions, activeSessionId, setSessions } = useSessionStore.getState();
-		const session = sessions.find((s) => s.id === activeSessionId);
+		const { setSessions } = useSessionStore.getState();
+		const session = selectActiveSession(useSessionStore.getState());
 		if (!session) return { type: 'none' };
 
-		// Check if a file tab is active first
+		// Terminal tab is active — close it (unless it's the only tab of any type)
+		if (session.inputMode === 'terminal' && session.activeTerminalTabId) {
+			const tabId = session.activeTerminalTabId;
+			// Allow closing terminal tabs as long as there are other tabs to fall back to.
+			// closeTerminalTabHelper handles selecting the adjacent tab (which may be AI or file).
+			const totalTabs =
+				(session.aiTabs?.length || 0) +
+				(session.filePreviewTabs?.length || 0) +
+				(session.browserTabs?.length || 0) +
+				(session.terminalTabs?.length || 0);
+			if (totalTabs <= 1) {
+				return { type: 'prevented' };
+			}
+			return { type: 'terminal', tabId };
+		}
+
+		// Check if a file tab is active — delegate to handleCloseFileTab
+		// which shows an unsaved-changes confirmation modal when needed
 		if (session.activeFileTabId) {
 			const tabId = session.activeFileTabId;
+			handleCloseFileTab(tabId);
+			return { type: 'file', tabId };
+		}
+
+		if (session.activeBrowserTabId) {
+			const tabId = session.activeBrowserTabId;
 			setSessions((prev: Session[]) =>
 				prev.map((s) => {
-					if (s.id !== activeSessionId) return s;
-					const result = closeFileTabHelper(s, tabId);
-					if (!result) return s;
-					return result.session;
+					if (s.id !== session.id) return s;
+					const result = closeBrowserTabHelper(s, tabId);
+					return result ? result.session : s;
 				})
 			);
-			return { type: 'file', tabId };
+			return { type: 'browser', tabId };
 		}
 
 		// AI tab is active
 		if (session.activeTabId) {
-			if (session.aiTabs.length <= 1) {
-				return { type: 'prevented' };
-			}
-
 			const tabId = session.activeTabId;
 			const tab = session.aiTabs.find((t) => t.id === tabId);
 			const isWizardTab = tab ? hasActiveWizard(tab) : false;
+			const hasWizardUserInteraction = tab ? hasWizardInteraction(tab) : false;
 			const tabHasDraft = tab ? hasDraft(tab) : false;
 
-			return { type: 'ai', tabId, isWizardTab, hasDraft: tabHasDraft };
+			return { type: 'ai', tabId, isWizardTab, hasWizardUserInteraction, hasDraft: tabHasDraft };
 		}
 
 		return { type: 'none' };
-	}, []);
+	}, [handleCloseFileTab]);
 
 	// ========================================================================
 	// Log Deletion
 	// ========================================================================
 
 	const handleDeleteLog = useCallback((logId: string): number | null => {
-		const { sessions, activeSessionId, setSessions } = useSessionStore.getState();
-		const currentSession = sessions.find((s) => s.id === activeSessionId);
+		const { setSessions } = useSessionStore.getState();
+		const currentSession = selectActiveSession(useSessionStore.getState());
 		if (!currentSession) return null;
 
 		const isAIMode = currentSession.inputMode === 'ai';
@@ -1014,11 +1453,15 @@ export function useTabHandlers(): TabHandlersReturn {
 					.deleteMessagePair(currentSession.cwd, agentSessionId, logId, log.text)
 					.then((result) => {
 						if (!result.success) {
-							console.warn('[handleDeleteLog] Failed to delete from Claude session:', result.error);
+							logger.warn(
+								'[handleDeleteLog] Failed to delete from Claude session:',
+								undefined,
+								result.error
+							);
 						}
 					})
 					.catch((err) => {
-						console.error('[handleDeleteLog] Error deleting from Claude session:', err);
+						logger.error('[handleDeleteLog] Error deleting from Claude session:', undefined, err);
 					});
 			}
 
@@ -1065,15 +1508,26 @@ export function useTabHandlers(): TabHandlersReturn {
 	// ========================================================================
 
 	const handleRequestTabRename = useCallback((tabId: string) => {
-		const { sessions, activeSessionId, setSessions } = useSessionStore.getState();
-		const session = sessions.find((s) => s.id === activeSessionId);
-		if (!session) return;
+		logger.info('[DEBUG renameTab] handleRequestTabRename called', undefined, { tabId });
+		const { setSessions } = useSessionStore.getState();
+		const session = selectActiveSession(useSessionStore.getState());
+		if (!session) {
+			logger.info('[DEBUG renameTab] no session found');
+			return;
+		}
 		const tab = session.aiTabs?.find((t) => t.id === tabId);
+		logger.info('[DEBUG renameTab] tab found:', undefined, [
+			!!tab,
+			{
+				aiTabCount: session.aiTabs?.length,
+				tabId,
+			},
+		]);
 		if (tab) {
 			if (tab.isGeneratingName) {
 				setSessions((prev: Session[]) =>
 					prev.map((s) => {
-						if (s.id !== activeSessionId) return s;
+						if (s.id !== session.id) return s;
 						return {
 							...s,
 							aiTabs: s.aiTabs.map((t) => (t.id === tabId ? { ...t, isGeneratingName: false } : t)),
@@ -1128,26 +1582,26 @@ export function useTabHandlers(): TabHandlersReturn {
 	);
 
 	const handleTabStar = useCallback((tabId: string, starred: boolean) => {
-		const { sessions, activeSessionId, setSessions } = useSessionStore.getState();
-		const session = sessions.find((s) => s.id === activeSessionId);
+		const { setSessions } = useSessionStore.getState();
+		const session = selectActiveSession(useSessionStore.getState());
 		if (!session) return;
 		const tabToStar = session.aiTabs.find((t) => t.id === tabId);
 		if (!tabToStar?.agentSessionId) return;
 
 		setSessions((prev: Session[]) =>
 			prev.map((s) => {
-				if (s.id !== activeSessionId) return s;
+				if (s.id !== session.id) return s;
 				const tab = s.aiTabs.find((t) => t.id === tabId);
 				if (tab?.agentSessionId) {
 					const agentId = s.toolType || 'claude-code';
 					if (agentId === 'claude-code') {
 						window.maestro.claude
 							.updateSessionStarred(s.projectRoot, tab.agentSessionId, starred)
-							.catch((err) => console.error('Failed to persist tab starred:', err));
+							.catch((err) => logger.error('Failed to persist tab starred:', undefined, err));
 					} else {
 						window.maestro.agentSessions
 							.setSessionStarred(agentId, s.projectRoot, tab.agentSessionId, starred)
-							.catch((err) => console.error('Failed to persist tab starred:', err));
+							.catch((err) => logger.error('Failed to persist tab starred:', undefined, err));
 					}
 				}
 				return {
@@ -1172,46 +1626,29 @@ export function useTabHandlers(): TabHandlersReturn {
 	}, []);
 
 	const handleToggleTabReadOnlyMode = useCallback(() => {
-		const { sessions, activeSessionId, setSessions } = useSessionStore.getState();
-		const session = sessions.find((s) => s.id === activeSessionId);
+		const session = selectActiveSession(useSessionStore.getState());
 		if (!session) return;
 		const currentActiveTab = getActiveTab(session);
 		if (!currentActiveTab) return;
-		setSessions((prev: Session[]) =>
-			prev.map((s) => {
-				if (s.id !== activeSessionId) return s;
-				return {
-					...s,
-					aiTabs: s.aiTabs.map((tab) =>
-						tab.id === currentActiveTab.id ? { ...tab, readOnlyMode: !tab.readOnlyMode } : tab
-					),
-				};
-			})
-		);
+		updateAiTab(session.id, currentActiveTab.id, (tab) => ({
+			...tab,
+			readOnlyMode: !tab.readOnlyMode,
+		}));
 	}, []);
 
 	const handleToggleTabSaveToHistory = useCallback(() => {
-		const { sessions, activeSessionId, setSessions } = useSessionStore.getState();
-		const session = sessions.find((s) => s.id === activeSessionId);
+		const session = selectActiveSession(useSessionStore.getState());
 		if (!session) return;
 		const currentActiveTab = getActiveTab(session);
 		if (!currentActiveTab) return;
-		setSessions((prev: Session[]) =>
-			prev.map((s) => {
-				if (s.id !== activeSessionId) return s;
-				return {
-					...s,
-					aiTabs: s.aiTabs.map((tab) =>
-						tab.id === currentActiveTab.id ? { ...tab, saveToHistory: !tab.saveToHistory } : tab
-					),
-				};
-			})
-		);
+		updateAiTab(session.id, currentActiveTab.id, (tab) => ({
+			...tab,
+			saveToHistory: !tab.saveToHistory,
+		}));
 	}, []);
 
 	const handleToggleTabShowThinking = useCallback(() => {
-		const { sessions, activeSessionId, setSessions } = useSessionStore.getState();
-		const session = sessions.find((s) => s.id === activeSessionId);
+		const session = selectActiveSession(useSessionStore.getState());
 		if (!session) return;
 		const currentActiveTab = getActiveTab(session);
 		if (!currentActiveTab) return;
@@ -1222,26 +1659,36 @@ export function useTabHandlers(): TabHandlersReturn {
 			return 'off';
 		};
 
-		setSessions((prev: Session[]) =>
-			prev.map((s) => {
-				if (s.id !== activeSessionId) return s;
+		updateAiTab(session.id, currentActiveTab.id, (tab) => {
+			const newMode = cycleThinkingMode(tab.showThinking);
+			if (newMode === 'off') {
+				// ThinkingMode contract — manual toggle to 'off' wipes any
+				// transient thinking/tool entries currently visible. The
+				// inline ('on') and exit-time clear points live in
+				// useBatchedSessionUpdates and useAgentListeners respectively.
 				return {
-					...s,
-					aiTabs: s.aiTabs.map((tab) => {
-						if (tab.id !== currentActiveTab.id) return tab;
-						const newMode = cycleThinkingMode(tab.showThinking);
-						if (newMode === 'off') {
-							return {
-								...tab,
-								showThinking: 'off',
-								logs: tab.logs.filter((l) => l.source !== 'thinking' && l.source !== 'tool'),
-							};
-						}
-						return { ...tab, showThinking: newMode };
-					}),
+					...tab,
+					showThinking: 'off',
+					logs: tab.logs.filter((l) => l.source !== 'thinking' && l.source !== 'tool'),
 				};
-			})
-		);
+			}
+			return { ...tab, showThinking: newMode };
+		});
+	}, []);
+
+	const handleToggleTabEnterToSend = useCallback(() => {
+		const session = selectActiveSession(useSessionStore.getState());
+		if (!session) return;
+		const currentActiveTab = getActiveTab(session);
+		if (!currentActiveTab) return;
+		const globalDefault = useSettingsStore.getState().enterToSendAI;
+		updateAiTab(session.id, currentActiveTab.id, (tab) => ({
+			...tab,
+			// Flip the *effective* value (override if set, otherwise global default).
+			// Result becomes a sticky per-tab override; future tabs still follow the
+			// global default until they're toggled themselves.
+			enterToSend: !(tab.enterToSend ?? globalDefault),
+		}));
 	}, []);
 
 	// ========================================================================
@@ -1249,54 +1696,28 @@ export function useTabHandlers(): TabHandlersReturn {
 	// ========================================================================
 
 	const handleScrollPositionChange = useCallback((scrollTop: number) => {
-		const { sessions, activeSessionId, setSessions } = useSessionStore.getState();
-		const session = sessions.find((s) => s.id === activeSessionId);
+		const session = selectActiveSession(useSessionStore.getState());
 		if (!session) return;
 		if (session.inputMode === 'ai') {
 			const currentActiveTab = getActiveTab(session);
 			if (!currentActiveTab) return;
-			setSessions((prev: Session[]) =>
-				prev.map((s) => {
-					if (s.id !== activeSessionId) return s;
-					return {
-						...s,
-						aiTabs: s.aiTabs.map((tab) =>
-							tab.id === currentActiveTab.id ? { ...tab, scrollTop } : tab
-						),
-					};
-				})
-			);
+			updateAiTab(session.id, currentActiveTab.id, (tab) => ({ ...tab, scrollTop }));
 		} else {
-			setSessions((prev: Session[]) =>
-				prev.map((s) => (s.id === activeSessionId ? { ...s, terminalScrollTop: scrollTop } : s))
-			);
+			useSessionStore.getState().updateSession(session.id, { terminalScrollTop: scrollTop });
 		}
 	}, []);
 
 	const handleAtBottomChange = useCallback((isAtBottom: boolean) => {
-		const { sessions, activeSessionId, setSessions } = useSessionStore.getState();
-		const session = sessions.find((s) => s.id === activeSessionId);
+		const session = selectActiveSession(useSessionStore.getState());
 		if (!session) return;
 		if (session.inputMode === 'ai') {
 			const currentActiveTab = getActiveTab(session);
 			if (!currentActiveTab) return;
-			setSessions((prev: Session[]) =>
-				prev.map((s) => {
-					if (s.id !== activeSessionId) return s;
-					return {
-						...s,
-						aiTabs: s.aiTabs.map((tab) =>
-							tab.id === currentActiveTab.id
-								? {
-										...tab,
-										isAtBottom,
-										hasUnread: isAtBottom ? false : tab.hasUnread,
-									}
-								: tab
-						),
-					};
-				})
-			);
+			updateAiTab(session.id, currentActiveTab.id, (tab) => ({
+				...tab,
+				isAtBottom,
+				hasUnread: isAtBottom ? false : tab.hasUnread,
+			}));
 		}
 	}, []);
 
@@ -1305,21 +1726,16 @@ export function useTabHandlers(): TabHandlersReturn {
 	// ========================================================================
 
 	const handleClearFilePreviewHistory = useCallback(() => {
-		const { sessions, activeSessionId, setSessions } = useSessionStore.getState();
-		const currentSession = sessions.find((s) => s.id === activeSessionId);
+		const currentSession = selectActiveSession(useSessionStore.getState());
 		if (!currentSession) return;
-		setSessions((prev: Session[]) =>
-			prev.map((s) =>
-				s.id === currentSession.id
-					? { ...s, filePreviewHistory: [], filePreviewHistoryIndex: -1 }
-					: s
-			)
-		);
+		useSessionStore
+			.getState()
+			.updateSession(currentSession.id, { filePreviewHistory: [], filePreviewHistoryIndex: -1 });
 	}, []);
 
 	const handleFileTabNavigateBack = useCallback(async () => {
-		const { sessions, activeSessionId, setSessions } = useSessionStore.getState();
-		const currentSession = sessions.find((s) => s.id === activeSessionId);
+		const { setSessions } = useSessionStore.getState();
+		const currentSession = selectActiveSession(useSessionStore.getState());
 		if (!currentSession?.activeFileTabId) return;
 
 		const currentTab = currentSession.filePreviewTabs.find(
@@ -1360,14 +1776,14 @@ export function useTabHandlers(): TabHandlersReturn {
 					})
 				);
 			} catch (error) {
-				console.error('Failed to navigate back:', error);
+				logger.error('Failed to navigate back:', undefined, error);
 			}
 		}
 	}, []);
 
 	const handleFileTabNavigateForward = useCallback(async () => {
-		const { sessions, activeSessionId, setSessions } = useSessionStore.getState();
-		const currentSession = sessions.find((s) => s.id === activeSessionId);
+		const { setSessions } = useSessionStore.getState();
+		const currentSession = selectActiveSession(useSessionStore.getState());
 		if (!currentSession?.activeFileTabId) return;
 
 		const currentTab = currentSession.filePreviewTabs.find(
@@ -1408,14 +1824,14 @@ export function useTabHandlers(): TabHandlersReturn {
 					})
 				);
 			} catch (error) {
-				console.error('Failed to navigate forward:', error);
+				logger.error('Failed to navigate forward:', undefined, error);
 			}
 		}
 	}, []);
 
 	const handleFileTabNavigateToIndex = useCallback(async (index: number) => {
-		const { sessions, activeSessionId, setSessions } = useSessionStore.getState();
-		const currentSession = sessions.find((s) => s.id === activeSessionId);
+		const { setSessions } = useSessionStore.getState();
+		const currentSession = selectActiveSession(useSessionStore.getState());
 		if (!currentSession?.activeFileTabId) return;
 
 		const currentTab = currentSession.filePreviewTabs.find(
@@ -1454,7 +1870,7 @@ export function useTabHandlers(): TabHandlersReturn {
 					})
 				);
 			} catch (error) {
-				console.error('Failed to navigate to index:', error);
+				logger.error('Failed to navigate to index:', undefined, error);
 			}
 		}
 	}, []);
@@ -1468,6 +1884,7 @@ export function useTabHandlers(): TabHandlersReturn {
 		activeTab,
 		unifiedTabs,
 		activeFileTab,
+		activeBrowserTab,
 		isResumingSession,
 		fileTabBackHistory,
 		fileTabForwardHistory,
@@ -1497,6 +1914,7 @@ export function useTabHandlers(): TabHandlersReturn {
 		handleToggleTabReadOnlyMode,
 		handleToggleTabSaveToHistory,
 		handleToggleTabShowThinking,
+		handleToggleTabEnterToSend,
 
 		// File Tab handlers
 		handleOpenFileTab,
@@ -1511,10 +1929,93 @@ export function useTabHandlers(): TabHandlersReturn {
 		handleFileTabNavigateForward,
 		handleFileTabNavigateToIndex,
 		handleClearFilePreviewHistory,
+		handleNewFileTab,
+
+		// Browser Tab handlers
+		handleNewBrowserTab,
+		handleOpenBrowserTabAt,
+		handleSelectBrowserTab,
+		handleCloseBrowserTab,
+		handleUpdateBrowserTab,
 
 		// Scroll/log handlers
 		handleScrollPositionChange,
 		handleAtBottomChange,
 		handleDeleteLog,
+	};
+}
+
+// ============================================================================
+// Terminal Tab Handlers
+// ============================================================================
+
+export interface TerminalTabHandlersReturn {
+	handleOpenTerminalTab: (options?: { shell?: string; cwd?: string; name?: string | null }) => void;
+	handleCloseTerminalTab: (tabId: string) => void;
+	handleSelectTerminalTab: (tabId: string) => void;
+	handleRenameTerminalTab: (tabId: string, name: string) => void;
+}
+
+/**
+ * Thin wrapper hook exposing terminal tab operations via the tabStore.
+ * Components call this hook to manipulate terminal tabs without directly
+ * importing the store.
+ */
+export function useTerminalTabHandlers(): TerminalTabHandlersReturn {
+	const { createTerminalTab, closeTerminalTab, selectTerminalTab, renameTerminalTab } =
+		useTabStore();
+
+	const handleOpenTerminalTab = useCallback(
+		(options?: { shell?: string; cwd?: string; name?: string | null }) => {
+			createTerminalTab(options);
+		},
+		[createTerminalTab]
+	);
+
+	const handleCloseTerminalTab = useCallback(
+		(tabId: string) => {
+			const session = selectActiveSession(useSessionStore.getState());
+			if (!session) {
+				closeTerminalTab(tabId);
+				return;
+			}
+			const ptySessionId = getTerminalSessionId(session.id, tabId);
+			window.maestro.process
+				.isTerminalBusy(ptySessionId)
+				.then((busy) => {
+					if (busy) {
+						useModalStore.getState().openModal('confirm', {
+							message: 'This terminal is running a command. Close it and stop the command?',
+							onConfirm: () => closeTerminalTab(tabId),
+							destructive: true,
+						});
+					} else {
+						closeTerminalTab(tabId);
+					}
+				})
+				.catch(() => closeTerminalTab(tabId));
+		},
+		[closeTerminalTab]
+	);
+
+	const handleSelectTerminalTab = useCallback(
+		(tabId: string) => {
+			selectTerminalTab(tabId);
+		},
+		[selectTerminalTab]
+	);
+
+	const handleRenameTerminalTab = useCallback(
+		(tabId: string, name: string) => {
+			renameTerminalTab(tabId, name);
+		},
+		[renameTerminalTab]
+	);
+
+	return {
+		handleOpenTerminalTab,
+		handleCloseTerminalTab,
+		handleSelectTerminalTab,
+		handleRenameTerminalTab,
 	};
 }

@@ -15,23 +15,10 @@
 import React, { memo, useState, useEffect, useMemo, useCallback } from 'react';
 import { Play, CheckSquare, ListChecks, Target, Clock, Timer } from 'lucide-react';
 import type { Theme } from '../../types';
-import type { StatsTimeRange } from '../../hooks/stats/useStats';
+import type { StatsTimeRange, AutoRunSession } from '../../../shared/stats-types';
 import { captureException } from '../../utils/sentry';
-
-/**
- * Auto Run session data shape from the API
- */
-interface AutoRunSession {
-	id: string;
-	sessionId: string;
-	agentType: string;
-	documentPath?: string;
-	startTime: number;
-	duration: number;
-	tasksTotal?: number;
-	tasksCompleted?: number;
-	projectPath?: string;
-}
+import { formatDurationHuman as formatDuration, formatNumber } from '../../../shared/formatters';
+import { ChartTooltip } from './ChartTooltip';
 
 interface AutoRunStatsProps {
 	/** Current time range for filtering */
@@ -40,41 +27,6 @@ interface AutoRunStatsProps {
 	theme: Theme;
 	/** Number of columns for responsive layout (default: 6) */
 	columns?: number;
-}
-
-/**
- * Format duration in milliseconds to human-readable string
- * Examples: "12h 34m", "5m 30s", "45s"
- */
-function formatDuration(ms: number): string {
-	if (ms === 0) return '0s';
-
-	const totalSeconds = Math.floor(ms / 1000);
-	const hours = Math.floor(totalSeconds / 3600);
-	const minutes = Math.floor((totalSeconds % 3600) / 60);
-	const seconds = totalSeconds % 60;
-
-	if (hours > 0) {
-		return `${hours}h ${minutes}m`;
-	}
-	if (minutes > 0) {
-		return `${minutes}m ${seconds}s`;
-	}
-	return `${seconds}s`;
-}
-
-/**
- * Format large numbers with K/M suffixes for readability
- * Examples: "1.2K", "3.5M", "42"
- */
-function formatNumber(num: number): string {
-	if (num >= 1000000) {
-		return `${(num / 1000000).toFixed(1)}M`;
-	}
-	if (num >= 1000) {
-		return `${(num / 1000).toFixed(1)}K`;
-	}
-	return num.toString();
 }
 
 /**
@@ -131,9 +83,13 @@ function MetricCard({ icon, label, value, subValue, theme }: MetricCardProps) {
 }
 
 /**
- * Group sessions by local date and sum tasksCompleted for the bar chart.
- * Uses session-level tasksCompleted (actual checkboxes) rather than task records
- * (agent invocations), which can batch multiple checkboxes per invocation.
+ * Group sessions by local date for the "Tasks Completed Over Time" chart.
+ *
+ * `count` here is **attempted** task total (kept for the tooltip's "%
+ * successful" math) and `successCount` is the actual number of completed
+ * checkboxes. We drop a day only when *both* are zero — earlier we filtered
+ * on `count > 0`, which silently hid recent days where `tasksTotal` was 0/
+ * null (e.g. ad-hoc autoruns added mid-session) even when work was completed.
  */
 function groupSessionsByDate(
 	sessions: AutoRunSession[]
@@ -153,7 +109,7 @@ function groupSessionsByDate(
 
 	return Object.entries(grouped)
 		.map(([date, stats]) => ({ date, ...stats }))
-		.filter((entry) => entry.count > 0)
+		.filter((entry) => entry.count > 0 || entry.successCount > 0)
 		.sort((a, b) => a.date.localeCompare(b.date));
 }
 
@@ -238,27 +194,30 @@ export const AutoRunStats = memo(function AutoRunStats({
 		return groupSessionsByDate(sessions);
 	}, [sessions]);
 
-	// Max count for bar height calculation
+	// Max for bar height calculation — driven by tasks completed (the chart's
+	// titular metric), not tasks attempted, so days where `tasksTotal` is 0
+	// but real completions exist still scale correctly.
 	const maxCount = useMemo(() => {
 		if (tasksByDate.length === 0) return 0;
-		return Math.max(...tasksByDate.map((d) => d.count));
+		return Math.max(...tasksByDate.map((d) => Math.max(d.successCount, d.count)));
 	}, [tasksByDate]);
 
-	// Handle mouse events for tooltip
+	// Handle mouse events for tooltip. Anchor to the cursor (not the bar's
+	// bounding rect) so the tooltip stays close to the user's pointer — short
+	// bars used to leave the tooltip stranded near the chart's bottom edge.
 	const handleMouseEnter = useCallback(
 		(
 			data: { date: string; count: number; successCount: number },
 			event: React.MouseEvent<HTMLDivElement>
 		) => {
 			setHoveredBar(data);
-			const rect = event.currentTarget.getBoundingClientRect();
-			setTooltipPos({
-				x: rect.left + rect.width / 2,
-				y: rect.top - 8,
-			});
+			setTooltipPos({ x: event.clientX, y: event.clientY });
 		},
 		[]
 	);
+	const handleMouseMove = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+		setTooltipPos({ x: event.clientX, y: event.clientY });
+	}, []);
 
 	const handleMouseLeave = useCallback(() => {
 		setHoveredBar(null);
@@ -399,7 +358,10 @@ export const AutoRunStats = memo(function AutoRunStats({
 				role="figure"
 				aria-label={`Tasks completed over time chart. ${tasksByDate.length} days of data.`}
 			>
-				<h3 className="text-sm font-medium mb-4" style={{ color: theme.colors.textMain }}>
+				<h3
+					className="text-sm font-medium mb-4"
+					style={{ color: theme.colors.textMain, animation: 'card-enter 0.4s ease both' }}
+				>
 					Tasks Completed Over Time
 				</h3>
 
@@ -411,20 +373,25 @@ export const AutoRunStats = memo(function AutoRunStats({
 							aria-label="Tasks completed by date"
 						>
 							{tasksByDate.map((day) => {
-								const height = maxCount > 0 ? (day.count / maxCount) * 100 : 0;
+								// Bar height tracks the tasks-completed value the chart claims to
+								// show. Fall back to attempted when no completion data exists so
+								// runs that errored out still surface a bar.
+								const barValue = day.successCount > 0 ? day.successCount : day.count;
+								const height = maxCount > 0 ? (barValue / maxCount) * 100 : 0;
 								const successRatio = day.count > 0 ? day.successCount / day.count : 0;
 								const isHovered = hoveredBar?.date === day.date;
 
 								return (
 									<div
 										key={day.date}
-										className="flex-1 min-w-[16px] max-w-[40px] rounded-t cursor-pointer transition-all duration-200"
+										className="flex-1 min-w-[16px] rounded-t cursor-pointer transition-all duration-200"
 										style={{
 											height: `${Math.max(height, 4)}%`,
 											backgroundColor: theme.colors.accent,
 											opacity: isHovered ? 1 : 0.7 + successRatio * 0.3,
 										}}
 										onMouseEnter={(e) => handleMouseEnter(day, e)}
+										onMouseMove={handleMouseMove}
 										onMouseLeave={handleMouseLeave}
 										onKeyDown={(e) => {
 											if (e.key === 'Enter' || e.key === ' ') {
@@ -445,49 +412,54 @@ export const AutoRunStats = memo(function AutoRunStats({
 							})}
 						</div>
 
-						{/* X-axis labels (show first, middle, last) */}
+						{/* X-axis labels — must mirror the bar grid (flex-1 +
+						    gap-1) so each label slot lines up with its bar. We previously
+						    used `flex justify-between` across the full container width,
+						    which floated the middle/last labels into the empty space on
+						    the right. */}
 						<div
-							className="flex justify-between mt-2 text-xs"
+							className="flex gap-1 mt-2 text-xs"
 							style={{ color: theme.colors.textDim }}
+							aria-hidden="true"
 						>
-							{tasksByDate.length > 0 && (
-								<>
-									<span>{formatDateLabel(tasksByDate[0].date)}</span>
-									{tasksByDate.length > 2 && (
-										<span>
-											{formatDateLabel(tasksByDate[Math.floor(tasksByDate.length / 2)].date)}
-										</span>
-									)}
-									{tasksByDate.length > 1 && (
-										<span>{formatDateLabel(tasksByDate[tasksByDate.length - 1].date)}</span>
-									)}
-								</>
-							)}
+							{tasksByDate.map((day, i) => {
+								const isFirst = i === 0;
+								const isLast = i === tasksByDate.length - 1;
+								const isMiddle = tasksByDate.length > 2 && i === Math.floor(tasksByDate.length / 2);
+								const showLabel = isFirst || isLast || isMiddle;
+								// Anchor first/last labels to their bar's outer edge so the
+								// label text doesn't drift past the bar; middle stays centered.
+								const textAlign = isFirst ? 'left' : isLast ? 'right' : 'center';
+								return (
+									<div
+										key={day.date}
+										className="flex-1 min-w-[16px]"
+										style={{
+											textAlign,
+											overflow: 'visible',
+											whiteSpace: 'nowrap',
+										}}
+									>
+										{showLabel ? formatDateLabel(day.date) : ''}
+									</div>
+								);
+							})}
 						</div>
 
-						{/* Tooltip */}
-						{hoveredBar && tooltipPos && (
-							<div
-								className="fixed z-50 px-3 py-2 rounded text-xs whitespace-nowrap pointer-events-none shadow-lg"
-								style={{
-									left: tooltipPos.x,
-									top: tooltipPos.y,
-									transform: 'translate(-50%, -100%)',
-									backgroundColor: theme.colors.bgActivity,
-									color: theme.colors.textMain,
-									border: `1px solid ${theme.colors.border}`,
-								}}
-								data-testid="task-bar-tooltip"
-							>
+						{hoveredBar && (
+							<ChartTooltip anchor={tooltipPos} theme={theme} testId="task-bar-tooltip">
 								<div className="font-medium mb-1">{formatFullDate(hoveredBar.date)}</div>
 								<div style={{ color: theme.colors.textDim }}>
-									<div>{hoveredBar.count} tasks completed</div>
+									<div>{hoveredBar.count} tasks attempted</div>
 									<div>
 										{hoveredBar.successCount} successful (
-										{Math.round((hoveredBar.successCount / hoveredBar.count) * 100)}%)
+										{hoveredBar.count > 0
+											? Math.round((hoveredBar.successCount / hoveredBar.count) * 100)
+											: 0}
+										%)
 									</div>
 								</div>
-							</div>
+							</ChartTooltip>
 						)}
 					</div>
 				) : (

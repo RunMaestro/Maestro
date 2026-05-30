@@ -18,13 +18,23 @@ import type { Session, LeaderboardRegistration, AgentError } from '../../types';
 import type { RecoveryAction } from '../../components/AgentErrorModal';
 import { getModalActions, useModalStore } from '../../stores/modalStore';
 import { useSettingsStore } from '../../stores/settingsStore';
-import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
+import {
+	useSessionStore,
+	selectActiveSession,
+	selectSessionById,
+	updateSessionWith,
+} from '../../stores/sessionStore';
+import { useTabStore } from '../../stores/tabStore';
 import { useGroupChatStore } from '../../stores/groupChatStore';
 import { useAgentStore } from '../../stores/agentStore';
+import { useFeedbackDraftStore } from '../../stores/feedbackDraftStore';
 import { useAgentErrorRecovery } from '../agent/useAgentErrorRecovery';
 import { getInitialRenameValue } from '../../utils/tabHelpers';
 import { CONDUCTOR_BADGES } from '../../constants/conductorBadges';
 import { gitService } from '../../services/git';
+import { cueService } from '../../services/cue';
+import { notifyCenterFlash } from '../../stores/centerFlashStore';
+import { useGitDetail } from '../../contexts/GitStatusContext';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -36,6 +46,12 @@ export interface ModalHandlersReturn {
 	/** The error to display — live session error or historical from chat log */
 	effectiveAgentError: AgentError | null;
 	recoveryActions: RecoveryAction[];
+	/**
+	 * When defined, jumps the Left Bar to the failing agent and activates the
+	 * failing AI tab. Undefined when not applicable (historical error, or the
+	 * user is already viewing the failing tab).
+	 */
+	handleJumpToFailingAgent?: () => void;
 
 	// Simple close handlers
 	handleCloseGitDiff: () => void;
@@ -45,6 +61,7 @@ export interface ModalHandlersReturn {
 	handleCloseShortcutsHelp: () => void;
 	handleCloseAboutModal: () => void;
 	handleCloseUpdateCheckModal: () => void;
+	handleCloseFeedbackModal: () => void;
 	handleCloseProcessMonitor: () => void;
 	handleCloseLogViewer: () => void;
 	handleCloseConfirmModal: () => void;
@@ -89,12 +106,14 @@ export interface ModalHandlersReturn {
 	handleOpenFuzzySearch: () => void;
 	handleOpenCreatePR: () => void;
 	handleOpenAboutModal: () => void;
+	handleOpenFeedbackModal: () => void;
 	handleOpenBatchRunner: () => void;
 	handleOpenMarketplace: () => void;
 
 	// Session list openers
 	handleEditAgent: (session: Session) => void;
 	handleOpenCreatePRSession: (session: Session) => void;
+	handleConfigureCue: (session: Session) => void;
 
 	// Tour
 	handleStartTour: () => void;
@@ -108,6 +127,7 @@ export interface ModalHandlersReturn {
 	handleCloseLightbox: () => void;
 	handleNavigateLightbox: (img: string) => void;
 	handleDeleteLightboxImage: (img: string) => void;
+	handleUpdateLightboxImage: (oldImg: string, newDataUrl: string) => void;
 
 	// Utility close handlers
 	handleCloseAutoRunSetup: () => void;
@@ -163,7 +183,6 @@ export function useModalHandlers(
 	// --- Reactive subscriptions (for derived state & effects) ---
 	const agentErrorModalSessionId = useModalStore(selectAgentErrorSessionId);
 	const historicalAgentError = useModalStore(selectAgentErrorHistorical);
-	const sessions = useSessionStore((s) => s.sessions);
 	const logViewerOpen = useModalStore(selectLogViewerOpen);
 	const shortcutsHelpOpen = useModalStore(selectShortcutsHelpOpen);
 	const settingsLoaded = useSettingsStore((s) => s.settingsLoaded);
@@ -173,13 +192,12 @@ export function useModalHandlers(
 	// Derived State
 	// ====================================================================
 
-	const errorSession = useMemo(
+	const errorSessionSelector = useMemo(
 		() =>
-			agentErrorModalSessionId
-				? (sessions.find((s) => s.id === agentErrorModalSessionId) ?? null)
-				: null,
-		[agentErrorModalSessionId, sessions]
+			agentErrorModalSessionId ? selectSessionById(agentErrorModalSessionId) : () => undefined,
+		[agentErrorModalSessionId]
 	);
+	const errorSession = useSessionStore(errorSessionSelector) ?? null;
 
 	// ====================================================================
 	// Group A: Simple Close Handlers
@@ -207,6 +225,10 @@ export function useModalHandlers(
 
 	const handleCloseAboutModal = useCallback(() => {
 		getModalActions().setAboutModalOpen(false);
+	}, []);
+
+	const handleCloseFeedbackModal = useCallback(() => {
+		getModalActions().setFeedbackModalOpen(false);
 	}, []);
 
 	const handleCloseUpdateCheckModal = useCallback(() => {
@@ -304,6 +326,9 @@ export function useModalHandlers(
 			if (result.newLevel !== null) {
 				onKeyboardMasteryLevelUp(result.newLevel);
 			}
+			// Also bump the daily-firings counter so the Usage Dashboard bar
+			// chart includes shortcuts handled inside the System Log Viewer.
+			void window.maestro?.stats?.recordShortcutUsage?.(Date.now());
 		},
 		[onKeyboardMasteryLevelUp]
 	);
@@ -461,6 +486,17 @@ export function useModalHandlers(
 		getModalActions().setAboutModalOpen(true);
 	}, []);
 
+	const handleOpenFeedbackModal = useCallback(() => {
+		// If the modal is minimized to the sidebar Feedback button, restore it
+		// instead of opening a fresh one (preserves the in-flight draft).
+		const draft = useFeedbackDraftStore.getState();
+		if (draft.isMinimized) {
+			draft.setMinimized(false);
+			return;
+		}
+		getModalActions().setFeedbackModalOpen(true);
+	}, []);
+
 	const handleOpenBatchRunner = useCallback(() => {
 		getModalActions().setBatchRunnerModalOpen(true);
 	}, []);
@@ -479,6 +515,22 @@ export function useModalHandlers(
 
 	const handleOpenCreatePRSession = useCallback((session: Session) => {
 		getModalActions().setCreatePRSession(session);
+	}, []);
+
+	const handleConfigureCue = useCallback(async (_session: Session) => {
+		// Pick the initial tab based on whether *any* Cue config already exists:
+		// returning users land on the Dashboard, first-time users land in the
+		// Pipeline Editor where they can build their first pipeline. Falls back
+		// to 'pipeline' if the status query fails — first-run is the safer
+		// landing for a user who has nothing configured yet.
+		let initialTab: 'dashboard' | 'pipeline' = 'pipeline';
+		try {
+			const sessions = await cueService.getStatus();
+			if (sessions.length > 0) initialTab = 'dashboard';
+		} catch {
+			initialTab = 'pipeline';
+		}
+		getModalActions().openCueModalWithTab(initialTab);
 	}, []);
 
 	// ====================================================================
@@ -559,6 +611,42 @@ export function useModalHandlers(
 		getModalActions().setLightboxImages(currentImages.filter((i) => i !== img));
 	}, []);
 
+	const handleUpdateLightboxImage = useCallback((oldImg: string, newDataUrl: string) => {
+		const lightboxData = useModalStore.getState().getData('lightbox');
+		const isGroupChat = lightboxData?.isGroupChat ?? false;
+
+		if (isGroupChat) {
+			useGroupChatStore
+				.getState()
+				.setGroupChatStagedImages((prev) => prev.map((i) => (i === oldImg ? newDataUrl : i)));
+		} else {
+			const { sessions: currentSessions, activeSessionId } = useSessionStore.getState();
+			const session = currentSessions.find((s) => s.id === activeSessionId);
+			if (session) {
+				useSessionStore.getState().setSessions((prev) =>
+					prev.map((s) => {
+						if (s.id !== session.id) return s;
+						return {
+							...s,
+							aiTabs: s.aiTabs.map((tab) => {
+								if (tab.id !== s.activeTabId) return tab;
+								return {
+									...tab,
+									stagedImages: (tab.stagedImages || []).map((i) =>
+										i === oldImg ? newDataUrl : i
+									),
+								};
+							}),
+						};
+					})
+				);
+			}
+		}
+
+		const currentImages = lightboxData?.images ?? [];
+		getModalActions().setLightboxImages(currentImages.map((i) => (i === oldImg ? newDataUrl : i)));
+	}, []);
+
 	// ====================================================================
 	// Group K: Utility Close Handlers
 	// ====================================================================
@@ -591,6 +679,8 @@ export function useModalHandlers(
 
 	const handleCloseSendToAgent = useCallback(() => {
 		getModalActions().setSendToAgentModalOpen(false);
+		// Drop any queued terminal-buffer send so it doesn't bleed into the next open
+		useTabStore.getState().setPendingTerminalBufferSend(null);
 	}, []);
 
 	const handleCloseQueueBrowser = useCallback(() => {
@@ -608,10 +698,22 @@ export function useModalHandlers(
 	const handleQuickActionsRenameTab = useCallback(() => {
 		const { sessions: currentSessions, activeSessionId } = useSessionStore.getState();
 		const currentSession = currentSessions.find((s) => s.id === activeSessionId);
-		if (currentSession?.inputMode === 'ai' && currentSession.activeTabId) {
+		if (!currentSession) return;
+
+		const actions = getModalActions();
+
+		if (currentSession.inputMode === 'terminal' && currentSession.activeTerminalTabId) {
+			const termTab = currentSession.terminalTabs?.find(
+				(t) => t.id === currentSession.activeTerminalTabId
+			);
+			if (termTab) {
+				actions.setRenameTabId(termTab.id);
+				actions.setRenameTabInitialName(termTab.name || '');
+				actions.setRenameTabModalOpen(true);
+			}
+		} else if (currentSession.inputMode === 'ai' && currentSession.activeTabId) {
 			const activeTab = currentSession.aiTabs?.find((t) => t.id === currentSession.activeTabId);
-			if (activeTab?.agentSessionId) {
-				const actions = getModalActions();
+			if (activeTab) {
 				actions.setRenameTabId(activeTab.id);
 				actions.setRenameTabInitialName(getInitialRenameValue(activeTab));
 				actions.setRenameTabModalOpen(true);
@@ -622,7 +724,7 @@ export function useModalHandlers(
 	const handleQuickActionsOpenTabSwitcher = useCallback(() => {
 		const { sessions: currentSessions, activeSessionId } = useSessionStore.getState();
 		const currentSession = currentSessions.find((s) => s.id === activeSessionId);
-		if (currentSession?.inputMode === 'ai' && currentSession.aiTabs) {
+		if (currentSession?.aiTabs) {
 			getModalActions().setTabSwitcherOpen(true);
 		}
 	}, []);
@@ -788,10 +890,50 @@ export function useModalHandlers(
 	}, [settingsLoaded, sessionsLoaded]);
 
 	// ====================================================================
-	// Git Diff Opener (Tier 3C)
+	// Active Session Subscription (used by Git Diff, Director's Notes, and
+	// the Agent Error "Jump to failing tab" affordance)
 	// ====================================================================
 
 	const activeSession = useSessionStore(selectActiveSession);
+
+	// ====================================================================
+	// Agent Error: Jump to Failing Tab
+	// ====================================================================
+
+	// Only offer "Jump to failing tab" for live errors (not historical, since
+	// the user already navigated to view the historical entry) and only when
+	// the user isn't already focused on the failing tab. The failing tab id
+	// is recorded on the session as `agentErrorTabId`.
+	const failingTabId = !isHistorical ? errorSession?.agentErrorTabId : undefined;
+	const isAlreadyOnFailingTab =
+		errorSession != null &&
+		failingTabId != null &&
+		activeSession?.id === errorSession.id &&
+		activeSession.activeTabId === failingTabId &&
+		activeSession.inputMode === 'ai';
+
+	const handleJumpToFailingAgent = useMemo(() => {
+		if (!errorSession || !failingTabId || isAlreadyOnFailingTab) return undefined;
+		return () => {
+			useSessionStore.getState().setActiveSessionId(errorSession.id);
+			updateSessionWith(errorSession.id, (s) =>
+				s.aiTabs?.some((t) => t.id === failingTabId)
+					? {
+							...s,
+							activeTabId: failingTabId,
+							activeFileTabId: null,
+							inputMode: 'ai' as const,
+						}
+					: { ...s, activeFileTabId: null, inputMode: 'ai' as const }
+			);
+		};
+	}, [errorSession, failingTabId, isAlreadyOnFailingTab]);
+
+	// ====================================================================
+	// Git Diff Opener (Tier 3C)
+	// ====================================================================
+
+	const { refreshGitStatus } = useGitDetail();
 
 	const handleViewGitDiff = useCallback(async () => {
 		if (!activeSession || !activeSession.isGitRepo) return;
@@ -810,8 +952,14 @@ export function useModalHandlers(
 
 		if (diff.diff) {
 			getModalActions().setGitDiffPreview(diff.diff);
+		} else {
+			notifyCenterFlash({ message: 'No diff to examine', color: 'theme' });
+			// Polling cache said there were changes but `git diff` is empty —
+			// repo state changed since the last poll. Re-sync so the widget
+			// stops advertising stale stats.
+			void refreshGitStatus();
 		}
-	}, [activeSession]);
+	}, [activeSession, refreshGitStatus]);
 
 	// ====================================================================
 	// Director's Notes Session Navigation (Tier 3C)
@@ -858,6 +1006,7 @@ export function useModalHandlers(
 		errorSession,
 		effectiveAgentError: effectiveError ?? null,
 		recoveryActions,
+		handleJumpToFailingAgent,
 
 		// Simple close handlers
 		handleCloseGitDiff,
@@ -866,6 +1015,7 @@ export function useModalHandlers(
 		handleCloseDebugPackage,
 		handleCloseShortcutsHelp,
 		handleCloseAboutModal,
+		handleCloseFeedbackModal,
 		handleCloseUpdateCheckModal,
 		handleCloseProcessMonitor,
 		handleCloseLogViewer,
@@ -911,12 +1061,14 @@ export function useModalHandlers(
 		handleOpenFuzzySearch,
 		handleOpenCreatePR,
 		handleOpenAboutModal,
+		handleOpenFeedbackModal,
 		handleOpenBatchRunner,
 		handleOpenMarketplace,
 
 		// Session list openers
 		handleEditAgent,
 		handleOpenCreatePRSession,
+		handleConfigureCue,
 
 		// Tour
 		handleStartTour,
@@ -926,6 +1078,7 @@ export function useModalHandlers(
 		handleCloseLightbox,
 		handleNavigateLightbox,
 		handleDeleteLightboxImage,
+		handleUpdateLightboxImage,
 
 		// Utility close handlers
 		handleCloseAutoRunSetup,

@@ -6,7 +6,7 @@
  *
  * Animation types tested:
  * - View mode transition animations (dashboard-content-enter)
- * - Staggered card entrance animations (dashboard-card-enter)
+ * - Staggered card entrance animations (card-enter)
  * - Chart section enter animations (dashboard-section-enter)
  * - Reduced motion accessibility handling
  */
@@ -18,6 +18,7 @@ import '@testing-library/jest-dom';
 import { UsageDashboardModal } from '../../../../renderer/components/UsageDashboard/UsageDashboardModal';
 import { SummaryCards } from '../../../../renderer/components/UsageDashboard/SummaryCards';
 
+import { mockTheme } from '../../../helpers/mockTheme';
 // Mock lucide-react icons
 vi.mock('lucide-react', () => {
 	const createIcon = (name: string, emoji: string) => {
@@ -53,6 +54,16 @@ vi.mock('lucide-react', () => {
 		Zap: createIcon('zap', '⚡'),
 		PanelTop: createIcon('panel-top', '🔲'),
 		Trophy: createIcon('trophy', '🏆'),
+		Briefcase: createIcon('briefcase', '💼'),
+		Coffee: createIcon('coffee', '☕'),
+		Filter: createIcon('filter', '🔍'),
+		Cpu: createIcon('cpu', '🖥️'),
+		DollarSign: createIcon('dollar', '💲'),
+		Activity: createIcon('activity', '📈'),
+		// New SummaryCards momentum-row icons
+		Flame: createIcon('flame', '🔥'),
+		CalendarCheck: createIcon('calendar-check', '📆'),
+		PenLine: createIcon('pen-line', '✏️'),
 	};
 });
 
@@ -61,6 +72,7 @@ vi.mock('../../../../renderer/contexts/LayerStackContext', () => ({
 	useLayerStack: () => ({
 		registerLayer: vi.fn(() => 'layer-123'),
 		unregisterLayer: vi.fn(),
+		updateLayerHandler: vi.fn(),
 	}),
 }));
 
@@ -136,6 +148,12 @@ beforeEach(() => {
 		stats: mockStats,
 		dialog: mockDialog,
 		fs: mockFs,
+		// Minimum surface needed by `useGlobalAgentStats` (called from the
+		// dashboard's Achievement share image flow).
+		agentSessions: {
+			getGlobalStats: vi.fn().mockResolvedValue(null),
+			onGlobalStatsUpdate: vi.fn().mockReturnValue(() => {}),
+		},
 	};
 
 	// Reset mocks with default data
@@ -166,6 +184,7 @@ beforeEach(() => {
 		avgSessionDuration: 180000,
 		byAgentByDay: {},
 		bySessionByDay: {},
+		bySessionSource: {},
 	});
 	mockStats.getDatabaseSize.mockResolvedValue(1024 * 1024); // 1 MB
 });
@@ -175,25 +194,6 @@ afterEach(() => {
 });
 
 // Mock theme
-const mockTheme = {
-	id: 'dark',
-	name: 'Dark',
-	colors: {
-		bgMain: '#1a1a2e',
-		bgActivity: '#16213e',
-		textMain: '#ffffff',
-		textDim: '#a0a0a0',
-		accent: '#6366f1',
-		border: '#2a2a4a',
-		success: '#10b981',
-		warning: '#f59e0b',
-		error: '#ef4444',
-		bgInput: '#1e1e3f',
-		textPlaceholder: '#6b6b8f',
-		bgSecondary: '#121212',
-		textSecondary: '#888888',
-	},
-};
 
 describe('Usage Dashboard State Transition Animations', () => {
 	describe('CSS Animation Keyframes', () => {
@@ -208,12 +208,12 @@ describe('Usage Dashboard State Transition Animations', () => {
 			expect(expectedKeyframe.to.opacity).toBe(1);
 		});
 
-		it('defines dashboard-card-enter keyframe animation', () => {
+		it('defines card-enter keyframe animation', () => {
 			const expectedKeyframe = {
-				from: { opacity: 0, transform: 'translateY(12px) scale(0.98)' },
+				from: { opacity: 0, transform: 'translateY(12px) scale(0.96)' },
 				to: { opacity: 1, transform: 'translateY(0) scale(1)' },
 			};
-			expect(expectedKeyframe.from.transform).toContain('scale(0.98)');
+			expect(expectedKeyframe.from.transform).toContain('scale(0.96)');
 			expect(expectedKeyframe.to.transform).toContain('scale(1)');
 		});
 
@@ -288,14 +288,15 @@ describe('Usage Dashboard State Transition Animations', () => {
 			avgSessionDuration: 240000,
 			byAgentByDay: {},
 			bySessionByDay: {},
+			bySessionSource: {},
 		};
 
-		it('applies dashboard-card-enter class to metric cards', () => {
+		it('applies card-enter class to metric cards', () => {
 			render(<SummaryCards data={mockData} theme={mockTheme} />);
 
 			const cards = screen.getAllByTestId('metric-card');
 			cards.forEach((card) => {
-				expect(card).toHaveClass('dashboard-card-enter');
+				expect(card).toHaveClass('card-enter');
 			});
 		});
 
@@ -303,11 +304,11 @@ describe('Usage Dashboard State Transition Animations', () => {
 			render(<SummaryCards data={mockData} theme={mockTheme} />);
 
 			const cards = screen.getAllByTestId('metric-card');
-			expect(cards.length).toBe(10); // 10 metric cards
+			expect(cards.length).toBe(12); // 12 metric cards (was 10)
 
 			// Verify each card has incrementing animation delay
 			cards.forEach((card, index) => {
-				const expectedDelay = `${index * 50}ms`;
+				const expectedDelay = `${index * 80}ms`;
 				expect(card).toHaveStyle({ animationDelay: expectedDelay });
 			});
 		});
@@ -319,11 +320,11 @@ describe('Usage Dashboard State Transition Animations', () => {
 			expect(cards[0]).toHaveStyle({ animationDelay: '0ms' });
 		});
 
-		it('last card has 450ms delay (9 * 50ms)', () => {
+		it('last card has 880ms delay (11 * 80ms)', () => {
 			render(<SummaryCards data={mockData} theme={mockTheme} />);
 
 			const cards = screen.getAllByTestId('metric-card');
-			expect(cards[9]).toHaveStyle({ animationDelay: '450ms' });
+			expect(cards[11]).toHaveStyle({ animationDelay: '880ms' });
 		});
 	});
 
@@ -340,42 +341,42 @@ describe('Usage Dashboard State Transition Animations', () => {
 		it('applies staggered delays to overview sections', async () => {
 			render(<UsageDashboardModal isOpen={true} onClose={() => {}} theme={mockTheme} />);
 
+			// Overview no longer contains activity-heatmap or duration-trends
+			// (they moved to the Activity tab). Verify the staggered animation
+			// runs on the sections that ARE in overview.
 			await waitFor(() => {
-				// Summary cards: 0ms
 				const summaryCards = screen.getByTestId('section-summary-cards');
 				expect(summaryCards).toHaveStyle({ animationDelay: '0ms' });
 
-				// Activity heatmap: 200ms
-				const heatmap = screen.getByTestId('section-activity-heatmap');
-				expect(heatmap).toHaveStyle({ animationDelay: '200ms' });
-
-				// Duration trends: 300ms
-				const trends = screen.getByTestId('section-duration-trends');
-				expect(trends).toHaveStyle({ animationDelay: '300ms' });
+				const agentComparison = screen.getByTestId('section-agent-comparison');
+				expect(agentComparison).toHaveStyle({ animationDelay: '100ms' });
 			});
 		});
 
-		it('applies section animation to agents view', async () => {
+		it('applies section animation to agent-overview view', async () => {
+			// The previous "Agents" tab content (session-stats / agent-comparison
+			// charts) moved to a new "Agent Overview" tab. The "Agents" tab now
+			// renders only the AgentOverviewCards section.
 			render(<UsageDashboardModal isOpen={true} onClose={() => {}} theme={mockTheme} />);
 
 			await waitFor(() => {
 				expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
 			});
 
-			// Switch to agents view
-			const agentsTab = screen.getByRole('tab', { name: /agents/i });
-			fireEvent.click(agentsTab);
+			// Switch to Agent Overview tab. Look up by exact name to avoid
+			// the substring match for "Agents" picking up the wrong tab.
+			fireEvent.click(screen.getByRole('tab', { name: 'Agent Overview' }));
 
 			await waitFor(() => {
-				// Session stats is now the first section in agents view
+				// Session stats is the first section in agent-overview view
 				const sessionStatsSection = screen.getByTestId('section-session-stats');
 				expect(sessionStatsSection).toHaveClass('dashboard-section-enter');
 				expect(sessionStatsSection).toHaveStyle({ animationDelay: '0ms' });
 
-				// Agent comparison is now second with 100ms delay
-				const agentSection = screen.getByTestId('section-agent-comparison');
-				expect(agentSection).toHaveClass('dashboard-section-enter');
-				expect(agentSection).toHaveStyle({ animationDelay: '100ms' });
+				// Agent efficiency is second with 50ms delay
+				const efficiencySection = screen.getByTestId('section-agent-efficiency');
+				expect(efficiencySection).toHaveClass('dashboard-section-enter');
+				expect(efficiencySection).toHaveStyle({ animationDelay: '50ms' });
 			});
 		});
 
@@ -442,9 +443,9 @@ describe('Usage Dashboard State Transition Animations', () => {
 			expect(expectedDuration).toBe('0.35s');
 		});
 
-		it('card stagger interval is 50ms', () => {
-			const expectedInterval = 50;
-			expect(expectedInterval).toBe(50);
+		it('card stagger interval is 80ms', () => {
+			const expectedInterval = 80;
+			expect(expectedInterval).toBe(80);
 		});
 
 		it('section stagger interval is 100ms', () => {
@@ -458,7 +459,7 @@ describe('Usage Dashboard State Transition Animations', () => {
 			// CSS media query in index.css disables animations:
 			// @media (prefers-reduced-motion: reduce) {
 			//   .dashboard-content-enter,
-			//   .dashboard-card-enter,
+			//   .card-enter,
 			//   .dashboard-section-enter {
 			//     animation: none !important;
 			//     opacity: 1 !important;
@@ -495,7 +496,7 @@ describe('Usage Dashboard State Transition Animations', () => {
 
 		it('card and section animations start with opacity 0', () => {
 			// Initial state before animation plays
-			const cssDefinition = '.dashboard-card-enter { opacity: 0; }';
+			const cssDefinition = '.card-enter { opacity: 0; }';
 			expect(cssDefinition).toContain('opacity: 0');
 		});
 	});
@@ -516,8 +517,11 @@ describe('Usage Dashboard State Transition Animations', () => {
 			fireEvent.keyDown(tabs, { key: 'ArrowRight' });
 
 			await waitFor(() => {
-				const agentsTab = screen.getByRole('tab', { name: /agents/i });
-				expect(agentsTab).toHaveAttribute('aria-selected', 'true');
+				// ArrowRight from Overview now lands on "Agent Overview" (it
+				// was inserted between Overview and Agents). Look up by exact
+				// name — `/agents/i` matches both tabs.
+				const nextTab = screen.getByRole('tab', { name: 'Agent Overview' });
+				expect(nextTab).toHaveAttribute('aria-selected', 'true');
 			});
 		});
 

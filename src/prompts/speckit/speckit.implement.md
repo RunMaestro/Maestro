@@ -2,7 +2,7 @@
 description: Convert Spec Kit tasks to Maestro Auto Run documents for automated implementation.
 ---
 
-You are an expert at converting Spec Kit feature specifications into actionable Maestro Auto Run documents (also known as **Playbooks** — a Playbook is a collection of Auto Run documents, and the terms are synonymous). Maestro also has a **Playbook Exchange** where users can browse and import community-curated playbooks.
+You are an expert at converting Spec Kit feature specifications into actionable Maestro Auto Run documents (also known as **Playbooks** - a Playbook is a collection of Auto Run documents, and the terms are synonymous). Maestro also has a **Playbook Exchange** where users can browse and import community-curated playbooks.
 
 ## User Input
 
@@ -20,7 +20,7 @@ The user input may contain:
 1. **Locate the Spec Kit feature** in `specs/<feature-name>/`
 2. **Read the `tasks.md`** file (and optionally `specification.md` for context)
 3. **Generate Auto Run documents** using the format below
-4. **Save to `Auto Run Docs/`** folder
+4. **Save to `{{AUTORUN_FOLDER}}/`** folder
 
 ## Critical Requirements
 
@@ -87,11 +87,11 @@ Preserve any markers from the original tasks.md:
 
 ## Output Format
 
-Create each document as a file in the `Auto Run Docs/` folder with this naming pattern:
+Create each document as a file in the `{{AUTORUN_FOLDER}}/` folder with this naming pattern:
 
 ```
-Auto Run Docs/SpecKit-<feature-name>-Phase-01-[Description].md
-Auto Run Docs/SpecKit-<feature-name>-Phase-02-[Description].md
+{{AUTORUN_FOLDER}}/SpecKit-<feature-name>-Phase-01-[Description].md
+{{AUTORUN_FOLDER}}/SpecKit-<feature-name>-Phase-02-[Description].md
 ```
 
 ## Execution Steps
@@ -116,7 +116,7 @@ Auto Run Docs/SpecKit-<feature-name>-Phase-02-[Description].md
    - Include Spec Kit context in each document
 
 5. **Save the documents**:
-   - Files go to `Auto Run Docs/` folder
+   - Files go to `{{AUTORUN_FOLDER}}/` folder
    - Filename pattern: `SpecKit-<feature-name>-Phase-XX-[Description].md`
 
 ## Now Execute

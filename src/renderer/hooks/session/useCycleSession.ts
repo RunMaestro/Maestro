@@ -54,7 +54,7 @@ export function useCycleSession(deps: UseCycleSessionDeps): UseCycleSessionRetur
 	const activeGroupChatId = useGroupChatStore((s) => s.activeGroupChatId);
 	const leftSidebarOpen = useUIStore((s) => s.leftSidebarOpen);
 	const bookmarksCollapsed = useUIStore((s) => s.bookmarksCollapsed);
-	const groupChatsExpanded = useUIStore((s) => s.groupChatsExpanded);
+	const showUnreadAgentsOnly = useUIStore((s) => s.showUnreadAgentsOnly);
 
 	// --- Store actions (stable via getState) ---
 	const { setActiveSessionIdInternal, setCyclePosition } = useSessionStore.getState();
@@ -62,6 +62,7 @@ export function useCycleSession(deps: UseCycleSessionDeps): UseCycleSessionRetur
 
 	// --- Settings ---
 	const ungroupedCollapsed = useSettingsStore((s) => s.ungroupedCollapsed);
+	const groupChatsExpanded = useSettingsStore((s) => s.groupChatsExpanded);
 
 	const cycleSession = useCallback(
 		(dir: 'next' | 'prev') => {
@@ -84,13 +85,15 @@ export function useCycleSession(deps: UseCycleSessionDeps): UseCycleSessionRetur
 
 			const visualOrder: VisualOrderItem[] = [];
 
-			// Helper to get worktree children for a session
+			// Helper to get worktree children for a session.
+			// Sort by `name` to match the agent name shown in the Left Bar (SessionItem
+			// renders `session.name` as the primary label; `worktreeBranch` is only a subtitle).
+			// Sorting by branch name would make Cmd+Shift+[/] cycling bounce around relative
+			// to the visible alphabetical order.
 			const getWorktreeChildren = (parentId: string) =>
 				sessions
 					.filter((s) => s.parentSessionId === parentId)
-					.sort((a, b) =>
-						compareNamesIgnoringEmojis(a.worktreeBranch || a.name, b.worktreeBranch || b.name)
-					);
+					.sort((a, b) => compareNamesIgnoringEmojis(a.name, b.name));
 
 			// Helper to add session with its worktree children to visual order
 			const addSessionWithWorktrees = (session: Session) => {
@@ -110,7 +113,7 @@ export function useCycleSession(deps: UseCycleSessionDeps): UseCycleSessionRetur
 						...children.map((s) => ({
 							type: 'session' as const,
 							id: s.id,
-							name: s.worktreeBranch || s.name,
+							name: s.name,
 						}))
 					);
 				}
@@ -167,6 +170,34 @@ export function useCycleSession(deps: UseCycleSessionDeps): UseCycleSessionRetur
 						name: s.name,
 					}))
 				);
+			}
+
+			// When unread filter is active, restrict cycling to unread/busy agents only
+			// (plus the currently active agent so you don't get lost)
+			if (showUnreadAgentsOnly) {
+				const currentActiveId = activeGroupChatId || activeSessionId;
+				const filteredOrder = visualOrder.filter((item) => {
+					// Always keep the currently active item
+					if (item.id === currentActiveId) return true;
+					// Group chats pass through (they have their own unread badges)
+					if (item.type === 'groupChat') return true;
+					// Check if session is unread or busy
+					const session = sessions.find((s) => s.id === item.id);
+					if (!session) return false;
+					if (session.aiTabs?.some((tab) => tab.hasUnread)) return true;
+					if (session.state === 'busy') return true;
+					// Check worktree children for unread/busy
+					const children = sessions.filter((s) => s.parentSessionId === session.id);
+					if (
+						children.some(
+							(child) => child.aiTabs?.some((tab) => tab.hasUnread) || child.state === 'busy'
+						)
+					)
+						return true;
+					return false;
+				});
+				visualOrder.length = 0;
+				visualOrder.push(...filteredOrder);
 			}
 
 			if (visualOrder.length === 0) return;
@@ -233,6 +264,7 @@ export function useCycleSession(deps: UseCycleSessionDeps): UseCycleSessionRetur
 			bookmarksCollapsed,
 			groupChatsExpanded,
 			ungroupedCollapsed,
+			showUnreadAgentsOnly,
 			groupChats,
 			sortedSessions,
 			handleOpenGroupChat,

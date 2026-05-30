@@ -30,6 +30,7 @@ const createMockParentSession = (overrides: Partial<Session> = {}): Session =>
 		customModel: 'opus',
 		customContextWindow: 200000,
 		nudgeMessage: 'Keep going',
+		newSessionMessage: 'Init context',
 		autoRunFolderPath: '/autorun/docs',
 		sessionSshRemoteConfig: undefined,
 		...overrides,
@@ -71,6 +72,7 @@ describe('buildWorktreeSession', () => {
 		expect(session.customModel).toBe('opus');
 		expect(session.customContextWindow).toBe(200000);
 		expect(session.nudgeMessage).toBe('Keep going');
+		expect(session.newSessionMessage).toBe('Init context');
 		expect(session.autoRunFolderPath).toBe('/autorun/docs');
 	});
 
@@ -92,6 +94,7 @@ describe('buildWorktreeSession', () => {
 		expect(session.inputMode).toBe('terminal'); // inherited directly
 		expect(session.customContextWindow).toBeUndefined();
 		expect(session.nudgeMessage).toBeUndefined();
+		expect(session.newSessionMessage).toBeUndefined();
 		expect(session.autoRunFolderPath).toBeUndefined();
 	});
 
@@ -155,5 +158,21 @@ describe('buildWorktreeSession', () => {
 		expect(tab.showThinking).toBe('sticky');
 		expect(tab.state).toBe('idle');
 		expect(tab.logs).toEqual([]);
+	});
+
+	it('should not auto-create terminal tabs', () => {
+		const parent = createMockParentSession();
+		const session = buildWorktreeSession({
+			parentSession: parent,
+			path: '/worktrees/no-term',
+			name: 'no-term',
+			defaultSaveToHistory: true,
+			defaultShowThinking: 'off',
+		});
+
+		expect(session.terminalTabs).toEqual([]);
+		expect(session.activeTerminalTabId).toBeNull();
+		expect(session.unifiedTabOrder).toHaveLength(1);
+		expect(session.unifiedTabOrder[0].type).toBe('ai');
 	});
 });

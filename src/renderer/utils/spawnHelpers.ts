@@ -1,4 +1,71 @@
 import { isWindowsPlatform } from './platformUtils';
+import { substituteTemplateVariables } from './templateVariables';
+import { gitService } from '../services/git';
+import { useSettingsStore } from '../stores/settingsStore';
+
+/**
+ * Prepare the Maestro system prompt for an agent spawn.
+ *
+ * Loads the prompt template, resolves git branch, history file path,
+ * and conductor profile, then substitutes all template variables.
+ *
+ * Must be called on every spawn (fresh AND resume): agents like Claude Code
+ * deliver system prompts via a per-invocation flag (`--append-system-prompt`)
+ * that is NOT persisted into the session transcript, so resuming with
+ * `--resume` does not carry the prompt forward. Skipping on resume silently
+ * drops all Maestro system-prompt content from turn 2 onward.
+ *
+ * Returns undefined only if the prompt template cannot be loaded.
+ *
+ * Every spawn site that creates or resumes an interactive or batch session
+ * MUST call this and pass the result as `appendSystemPrompt`.
+ */
+export async function prepareMaestroSystemPrompt(opts: {
+	session: Record<string, any> & {
+		id: string;
+		cwd: string;
+		isGitRepo?: boolean;
+		groupId?: string;
+		sshRemoteId?: string;
+		sessionSshRemoteConfig?: { enabled: boolean } | null;
+	};
+	activeTabId?: string;
+}): Promise<string | undefined> {
+	const result = await window.maestro.prompts.get('maestro-system-prompt');
+	if (!result.success || !result.content) return undefined;
+
+	let gitBranch: string | undefined;
+	if (opts.session.isGitRepo) {
+		try {
+			const status = await gitService.getStatus(opts.session.cwd);
+			gitBranch = status.branch;
+		} catch {
+			// Ignore git errors
+		}
+	}
+
+	// History file path for task recall — skip for SSH (path is local-only)
+	let historyFilePath: string | undefined;
+	const isSSH = opts.session.sshRemoteId || opts.session.sessionSshRemoteConfig?.enabled;
+	if (!isSSH) {
+		try {
+			historyFilePath = (await window.maestro.history.getFilePath(opts.session.id)) || undefined;
+		} catch {
+			// Ignore history errors
+		}
+	}
+
+	const conductorProfile = useSettingsStore.getState().conductorProfile;
+
+	return substituteTemplateVariables(result.content, {
+		session: opts.session as any,
+		gitBranch,
+		groupId: opts.session.groupId,
+		activeTabId: opts.activeTabId,
+		historyFilePath,
+		conductorProfile,
+	});
+}
 
 /**
  * Compute stdin transport flags for spawning agents on Windows.
@@ -7,10 +74,18 @@ import { isWindowsPlatform } from './platformUtils';
  * characters cause escaping issues.  Sending the prompt via stdin
  * side-steps both problems.
  *
- * SSH sessions must NOT use these flags — they have a dedicated
+ * SSH sessions must NOT use these flags - they have a dedicated
  * stdin-script path handled by ChildProcessSpawner.
+ *
+ * Stream-json stdin is only used when images are present AND the agent
+ * supports it. Text-only messages use raw stdin for efficiency (avoids
+ * wrapping in API format JSON).
  */
-export function getStdinFlags(opts: { isSshSession: boolean; supportsStreamJsonInput: boolean }): {
+export function getStdinFlags(opts: {
+	isSshSession: boolean;
+	supportsStreamJsonInput: boolean;
+	hasImages: boolean;
+}): {
 	sendPromptViaStdin: boolean;
 	sendPromptViaStdinRaw: boolean;
 } {
@@ -18,7 +93,9 @@ export function getStdinFlags(opts: { isSshSession: boolean; supportsStreamJsonI
 	const useStdin = isWindows && !opts.isSshSession;
 
 	return {
-		sendPromptViaStdin: useStdin && opts.supportsStreamJsonInput,
-		sendPromptViaStdinRaw: useStdin && !opts.supportsStreamJsonInput,
+		// Only use stream-json stdin when there are images AND agent supports it
+		sendPromptViaStdin: useStdin && opts.supportsStreamJsonInput && !!opts.hasImages,
+		// Use raw stdin for text-only messages (or for agents that don't support stream-json)
+		sendPromptViaStdinRaw: useStdin && (!opts.supportsStreamJsonInput || !opts.hasImages),
 	};
 }

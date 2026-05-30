@@ -22,7 +22,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 
-export interface CliActivityStatus {
+interface CliActivityStatus {
 	sessionId: string;
 	playbookId: string;
 	playbookName: string;
@@ -32,7 +32,7 @@ export interface CliActivityStatus {
 	currentDocument?: string;
 }
 
-export interface CliActivityFile {
+interface CliActivityFile {
 	activities: CliActivityStatus[];
 }
 
@@ -60,7 +60,7 @@ function getActivityFilePath(): string {
 /**
  * Read all CLI activities
  */
-export function readCliActivities(): CliActivityStatus[] {
+function readCliActivities(): CliActivityStatus[] {
 	try {
 		const filePath = getActivityFilePath();
 		const content = fs.readFileSync(filePath, 'utf-8');
@@ -99,18 +99,6 @@ export function registerCliActivity(status: CliActivityStatus): void {
 }
 
 /**
- * Update CLI activity (e.g., current task)
- */
-export function updateCliActivity(sessionId: string, updates: Partial<CliActivityStatus>): void {
-	const activities = readCliActivities();
-	const index = activities.findIndex((a) => a.sessionId === sessionId);
-	if (index >= 0) {
-		activities[index] = { ...activities[index], ...updates };
-		writeCliActivities(activities);
-	}
-}
-
-/**
  * Unregister CLI activity for a session (called when playbook ends)
  */
 export function unregisterCliActivity(sessionId: string): void {
@@ -142,24 +130,5 @@ export function isSessionBusyWithCli(sessionId: string): boolean {
 		// Process not running, clean up stale entry
 		unregisterCliActivity(sessionId);
 		return false;
-	}
-}
-
-/**
- * Clean up stale activities (processes that are no longer running)
- */
-export function cleanupStaleActivities(): void {
-	const activities = readCliActivities();
-	const stillRunning = activities.filter((activity) => {
-		try {
-			process.kill(activity.pid, 0);
-			return true;
-		} catch {
-			return false;
-		}
-	});
-
-	if (stillRunning.length !== activities.length) {
-		writeCliActivities(stillRunning);
 	}
 }

@@ -13,7 +13,7 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
-import { AutoRunSetupModal } from '../../../renderer/components/AutoRunSetupModal';
+import { AutoRunSetupModal } from '../../../renderer/components/AutoRun/AutoRunSetupModal';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 import type { Theme } from '../../../renderer/types';
 import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';

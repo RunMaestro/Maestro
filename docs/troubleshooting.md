@@ -8,11 +8,11 @@ icon: life-ring
 
 **Do my MCP tools, skills, and permissions work in Maestro?**
 
-Yes. Maestro is a pass-through—it calls your provider (Claude Code, Codex, OpenCode) in batch mode rather than interactive mode. Whatever works when you run the provider directly will work in Maestro. Your MCP servers, custom skills, authentication, and tool permissions all carry over automatically.
+Yes. Maestro is a pass-through - it calls your provider (Claude Code, Codex, OpenCode) in batch mode rather than interactive mode. Whatever works when you run the provider directly will work in Maestro. Your MCP servers, custom skills, authentication, and tool permissions all carry over automatically.
 
 **What's the difference between running the provider directly vs. through Maestro?**
 
-The only difference is execution mode. When you run Claude Code directly, it's interactive—you send a message, watch it work, and respond in real-time. Maestro runs in batch mode: it sends a prompt, the provider processes it fully, and returns the response. This enables unattended automation via Auto Run and parallel agent management. Everything else—your tools, permissions, context—remains identical.
+The only difference is execution mode. When you run Claude Code directly, it's interactive - you send a message, watch it work, and respond in real-time. Maestro runs in batch mode: it sends a prompt, the provider processes it fully, and returns the response. This enables unattended automation via Auto Run and parallel agent management. Everything else - your tools, permissions, context - remains identical.
 
 ---
 
@@ -31,7 +31,7 @@ The **System Log Viewer** shows:
 - Real-time updates as new logs are generated
 - Detail view with full message content and source module
 
-**Log levels** can be configured in **Settings** → **General** → **System Log Level**. Higher levels show fewer logs — Debug shows all logs, Error shows only errors.
+**Log levels** can be configured in **Settings** → **General** → **System Log Level**. Higher levels show fewer logs - Debug shows all logs, Error shows only errors.
 
 ## Process Monitor
 
@@ -43,11 +43,11 @@ Monitor all running processes spawned by Maestro:
 
 The **Process Monitor** displays a hierarchical tree view:
 
-- **Groups** — Session groups containing their member sessions
-- **Sessions** — Each session shows its AI agent and terminal processes
-- **Process details** — PID, runtime, working directory, Claude session ID (for AI processes)
-- **Group Chat processes** — Moderator and participant processes for active group chats
-- **Wizard processes** — Active wizard conversations and playbook generation
+- **Groups** - Session groups containing their member sessions
+- **Sessions** - Each session shows its AI agent and terminal processes
+- **Process details** - PID, runtime, working directory, Claude session ID (for AI processes)
+- **Group Chat processes** - Moderator and participant processes for active group chats
+- **Wizard processes** - Active wizard conversations and playbook generation
 
 **Process types shown:**
 | Type | Description |
@@ -94,7 +94,7 @@ Each error modal shows:
 
 ## Debug Package
 
-If you encounter deep-seated issues that are difficult to diagnose, Maestro can generate a **Debug Package** — a compressed bundle of diagnostic information that you can safely share when reporting bugs.
+If you encounter deep-seated issues that are difficult to diagnose, Maestro can generate a **Debug Package** - a compressed bundle of diagnostic information that you can safely share when reporting bugs.
 
 **To create a Debug Package:**
 
@@ -105,7 +105,7 @@ If you encounter deep-seated issues that are difficult to diagnose, Maestro can 
 
 ### What's Included
 
-The debug package collects metadata and configuration — never your conversations or sensitive data:
+The debug package collects metadata and configuration - never your conversations or sensitive data:
 
 **Always included:**
 
@@ -125,24 +125,24 @@ The debug package collects metadata and configuration — never your conversatio
 
 | File               | Contents                                                        |
 | ------------------ | --------------------------------------------------------------- |
-| `sessions.json`    | Session metadata (names, states, tab counts — no conversations) |
+| `sessions.json`    | Session metadata (names, states, tab counts - no conversations) |
 | `logs.json`        | Recent system log entries                                       |
 | `errors.json`      | Current error states and recent error events                    |
-| `group-chats.json` | Group chat metadata (participant lists, routing — no messages)  |
+| `group-chats.json` | Group chat metadata (participant lists, routing - no messages)  |
 | `batch-state.json` | Auto Run state and document queue                               |
 
 ### Privacy Protections
 
 The debug package is designed to be **safe to share publicly**:
 
-- **API keys and tokens** — Replaced with `[REDACTED]`
-- **Passwords and secrets** — Never included
-- **Conversation content** — Excluded entirely (no AI responses, no user messages)
-- **File contents** — Not included from your projects
-- **Custom prompts** — Not included (may contain sensitive context)
-- **File paths** — Sanitized to replace your username with `~`
-- **Environment variables** — Only counts shown, not values (may contain secrets)
-- **Custom agent arguments** — Only `[SET]` or `[NOT SET]` shown, not actual values
+- **API keys and tokens** - Replaced with `[REDACTED]`
+- **Passwords and secrets** - Never included
+- **Conversation content** - Excluded entirely (no AI responses, no user messages)
+- **File contents** - Not included from your projects
+- **Custom prompts** - Not included (may contain sensitive context)
+- **File paths** - Sanitized to replace your username with `~`
+- **Environment variables** - Only counts shown, not values (may contain secrets)
+- **Custom agent arguments** - Only `[SET]` or `[NOT SET]` shown, not actual values
 
 **Example path sanitization:**
 

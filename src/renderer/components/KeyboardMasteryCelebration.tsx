@@ -10,7 +10,8 @@ import { useEffect, useRef, useCallback, useState, useMemo } from 'react';
 import { Keyboard, Trophy, Sparkles } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import type { Theme, Shortcut } from '../types';
-import { useLayerStack } from '../contexts/LayerStackContext';
+import { useEventListener } from '../hooks/utils/useEventListener';
+import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { KEYBOARD_MASTERY_LEVELS } from '../constants/keyboardMastery';
 import { DEFAULT_SHORTCUTS } from '../constants/shortcuts';
@@ -67,8 +68,6 @@ export function KeyboardMasteryCelebration({
 	disableConfetti = false,
 }: KeyboardMasteryCelebrationProps): JSX.Element {
 	const containerRef = useRef<HTMLDivElement>(null);
-	const { registerLayer, unregisterLayer, updateLayerHandler } = useLayerStack();
-	const layerIdRef = useRef<string>();
 	const onCloseRef = useRef(onClose);
 	onCloseRef.current = onClose;
 
@@ -166,47 +165,25 @@ export function KeyboardMasteryCelebration({
 	const handleCloseRef = useRef(handleClose);
 	handleCloseRef.current = handleClose;
 
-	// Handle keyboard events - use ref to avoid stale closure
-	useEffect(() => {
-		const handleKeyDown = (e: KeyboardEvent) => {
-			if (e.key === 'Enter' || e.key === 'Escape') {
-				e.preventDefault();
-				handleCloseRef.current();
-			}
-		};
-
-		window.addEventListener('keydown', handleKeyDown);
-		return () => window.removeEventListener('keydown', handleKeyDown);
-	}, []); // Empty deps - handler reads from ref
+	// Handle keyboard events. The hook's internal ref keeps the handler stable
+	// without re-subscribing.
+	useEventListener('keydown', (e) => {
+		const ke = e as KeyboardEvent;
+		if (ke.key === 'Enter' || ke.key === 'Escape') {
+			ke.preventDefault();
+			handleCloseRef.current();
+		}
+	});
 
 	// Register with layer stack
-	useEffect(() => {
-		const id = registerLayer({
-			type: 'modal',
-			priority: MODAL_PRIORITIES.KEYBOARD_MASTERY,
-			blocksLowerLayers: true,
-			capturesFocus: true,
-			focusTrap: 'strict',
-			ariaLabel: 'Keyboard Mastery Level Up Celebration',
-			onEscape: () => handleCloseRef.current(),
-		});
-		layerIdRef.current = id;
+	useModalLayer(MODAL_PRIORITIES.KEYBOARD_MASTERY, 'Keyboard Mastery Level Up Celebration', () =>
+		handleCloseRef.current()
+	);
 
+	// Focus container on mount
+	useEffect(() => {
 		containerRef.current?.focus();
-
-		return () => {
-			if (layerIdRef.current) {
-				unregisterLayer(layerIdRef.current);
-			}
-		};
-	}, [registerLayer, unregisterLayer]);
-
-	// Update escape handler when handleClose changes
-	useEffect(() => {
-		if (layerIdRef.current) {
-			updateLayerHandler(layerIdRef.current, handleClose);
-		}
-	}, [updateLayerHandler, handleClose]);
+	}, []);
 
 	// Get next level info for encouragement message
 	const nextLevel =

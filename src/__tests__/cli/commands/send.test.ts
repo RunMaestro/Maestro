@@ -13,10 +13,20 @@
 import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
 import type { SessionInfo } from '../../../shared/types';
 
+// Mock maestro-client
+vi.mock('../../../cli/services/maestro-client', () => ({
+	withMaestroClient: vi.fn(),
+}));
+
 // Mock agent-spawner
 vi.mock('../../../cli/services/agent-spawner', () => ({
 	spawnAgent: vi.fn(),
 	detectAgent: vi.fn(),
+}));
+
+// Mock system-prompt so we can assert it gets called (or skipped on --no-system-prompt)
+vi.mock('../../../cli/services/system-prompt', () => ({
+	prepareMaestroSystemPromptCli: vi.fn(),
 }));
 
 // Mock storage
@@ -44,9 +54,11 @@ vi.mock('../../../main/agents/definitions', () => ({
 }));
 
 import { send } from '../../../cli/commands/send';
+import { withMaestroClient } from '../../../cli/services/maestro-client';
 import { spawnAgent, detectAgent } from '../../../cli/services/agent-spawner';
 import { resolveAgentId, getSessionById } from '../../../cli/services/storage';
 import { estimateContextUsage } from '../../../main/parsers/usage-aggregator';
+import { prepareMaestroSystemPromptCli } from '../../../cli/services/system-prompt';
 
 describe('send command', () => {
 	let consoleSpy: MockInstance;
@@ -65,6 +77,10 @@ describe('send command', () => {
 		vi.clearAllMocks();
 		consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 		processExitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+		// Default: system-prompt builder returns undefined so existing assertions
+		// that don't include `appendSystemPrompt` keep passing (vitest treats
+		// undefined-valued object keys as absent in `toHaveBeenCalledWith`).
+		vi.mocked(prepareMaestroSystemPromptCli).mockResolvedValue(undefined);
 	});
 
 	it('should query an agent and return JSON response for new session', async () => {
@@ -93,7 +109,8 @@ describe('send command', () => {
 			'claude-code',
 			'/path/to/project',
 			'Hello world',
-			undefined
+			undefined,
+			{ readOnlyMode: undefined }
 		);
 
 		const output = JSON.parse(consoleSpy.mock.calls[0][0]);
@@ -141,7 +158,8 @@ describe('send command', () => {
 			'claude-code',
 			'/path/to/project',
 			'Continue from before',
-			'session-xyz-789'
+			'session-xyz-789',
+			{ readOnlyMode: undefined }
 		);
 
 		const output = JSON.parse(consoleSpy.mock.calls[0][0]);
@@ -166,7 +184,8 @@ describe('send command', () => {
 			'claude-code',
 			'/custom/project/path',
 			'Do something',
-			undefined
+			undefined,
+			{ readOnlyMode: undefined }
 		);
 	});
 
@@ -185,7 +204,30 @@ describe('send command', () => {
 		await send('agent-codex', 'Use codex', {});
 
 		expect(detectAgent).toHaveBeenCalledWith('codex');
-		expect(spawnAgent).toHaveBeenCalledWith('codex', expect.any(String), 'Use codex', undefined);
+		expect(spawnAgent).toHaveBeenCalledWith('codex', expect.any(String), 'Use codex', undefined, {
+			readOnlyMode: undefined,
+		});
+	});
+
+	it('should pass readOnlyMode when --read-only flag is set', async () => {
+		vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+		vi.mocked(getSessionById).mockReturnValue(mockAgent());
+		vi.mocked(detectAgent).mockResolvedValue({ available: true, path: '/usr/bin/claude' });
+		vi.mocked(spawnAgent).mockResolvedValue({
+			success: true,
+			response: 'Read-only response',
+			agentSessionId: 'session-ro',
+		});
+
+		await send('agent-abc', 'Analyze this code', { readOnly: true });
+
+		expect(spawnAgent).toHaveBeenCalledWith(
+			'claude-code',
+			'/path/to/project',
+			'Analyze this code',
+			undefined,
+			{ readOnlyMode: true }
+		);
 	});
 
 	it('should exit with error when agent ID is not found', async () => {
@@ -257,6 +299,98 @@ describe('send command', () => {
 		expect(output.response).toBeNull();
 		expect(output.usage).not.toBeNull();
 		expect(processExitSpy).toHaveBeenCalledWith(1);
+	});
+
+	it('builds and passes the Maestro system prompt by default', async () => {
+		vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+		const agent = mockAgent();
+		vi.mocked(getSessionById).mockReturnValue(agent);
+		vi.mocked(detectAgent).mockResolvedValue({ available: true, path: '/usr/bin/claude' });
+		vi.mocked(prepareMaestroSystemPromptCli).mockResolvedValue('the maestro context');
+		vi.mocked(spawnAgent).mockResolvedValue({
+			success: true,
+			response: 'ok',
+			agentSessionId: 'session-1',
+		});
+
+		await send('agent-abc', 'hello', {});
+
+		expect(prepareMaestroSystemPromptCli).toHaveBeenCalledWith(agent);
+		expect(spawnAgent).toHaveBeenCalledWith(
+			'claude-code',
+			'/path/to/project',
+			'hello',
+			undefined,
+			expect.objectContaining({ appendSystemPrompt: 'the maestro context' })
+		);
+	});
+
+	it('skips building the Maestro system prompt when --no-system-prompt is set', async () => {
+		vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+		vi.mocked(getSessionById).mockReturnValue(mockAgent());
+		vi.mocked(detectAgent).mockResolvedValue({ available: true, path: '/usr/bin/claude' });
+		vi.mocked(spawnAgent).mockResolvedValue({
+			success: true,
+			response: 'ok',
+			agentSessionId: 'session-1',
+		});
+
+		// Commander negates `--no-system-prompt` to `systemPrompt: false`
+		await send('agent-abc', 'hello', { systemPrompt: false });
+
+		expect(prepareMaestroSystemPromptCli).not.toHaveBeenCalled();
+		expect(spawnAgent).toHaveBeenCalledWith(
+			'claude-code',
+			'/path/to/project',
+			'hello',
+			undefined,
+			expect.objectContaining({ appendSystemPrompt: undefined })
+		);
+	});
+
+	it('still injects the system prompt on resume (parity with desktop)', async () => {
+		vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+		vi.mocked(getSessionById).mockReturnValue(mockAgent());
+		vi.mocked(detectAgent).mockResolvedValue({ available: true, path: '/usr/bin/claude' });
+		vi.mocked(prepareMaestroSystemPromptCli).mockResolvedValue('still here on resume');
+		vi.mocked(spawnAgent).mockResolvedValue({
+			success: true,
+			response: 'ok',
+			agentSessionId: 'session-xyz',
+		});
+
+		await send('agent-abc', 'follow-up', { session: 'session-xyz' });
+
+		expect(prepareMaestroSystemPromptCli).toHaveBeenCalled();
+		expect(spawnAgent).toHaveBeenCalledWith(
+			'claude-code',
+			'/path/to/project',
+			'follow-up',
+			'session-xyz',
+			expect.objectContaining({ appendSystemPrompt: 'still here on resume' })
+		);
+	});
+
+	it('continues without the system prompt when prepareMaestroSystemPromptCli returns undefined (non-fatal)', async () => {
+		vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+		vi.mocked(getSessionById).mockReturnValue(mockAgent());
+		vi.mocked(detectAgent).mockResolvedValue({ available: true, path: '/usr/bin/claude' });
+		vi.mocked(prepareMaestroSystemPromptCli).mockResolvedValue(undefined);
+		vi.mocked(spawnAgent).mockResolvedValue({
+			success: true,
+			response: 'ok',
+			agentSessionId: 'session-1',
+		});
+
+		await send('agent-abc', 'hello', {});
+
+		expect(prepareMaestroSystemPromptCli).toHaveBeenCalled();
+		expect(spawnAgent).toHaveBeenCalled();
+		const callArgs = vi.mocked(spawnAgent).mock.calls[0];
+		expect(callArgs[4]?.appendSystemPrompt).toBeUndefined();
+		// And the send must still succeed end-to-end
+		const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+		expect(output.success).toBe(true);
 	});
 
 	it('should handle null usage stats gracefully', async () => {

@@ -695,4 +695,482 @@ describe('Logger', () => {
 			]);
 		});
 	});
+
+	describe('Log File Path', () => {
+		it('should return a dated log file path with local date', async () => {
+			const logPath = logger.getLogFilePath();
+			const now = new Date();
+			const year = now.getFullYear();
+			const month = String(now.getMonth() + 1).padStart(2, '0');
+			const day = String(now.getDate()).padStart(2, '0');
+			const expectedDateStr = `${year}-${month}-${day}`;
+
+			expect(logPath).toContain(`maestro-debug-${expectedDateStr}.log`);
+		});
+
+		it('should include logs directory in the path', async () => {
+			const logPath = logger.getLogFilePath();
+			// Path should end with /logs/maestro-debug-YYYY-MM-DD.log
+			expect(logPath).toMatch(/[/\\]logs[/\\]maestro-debug-\d{4}-\d{2}-\d{2}\.log$/);
+		});
+
+		it('should include Maestro in the path', async () => {
+			const logPath = logger.getLogFilePath();
+			expect(logPath).toContain('Maestro');
+		});
+	});
+
+	describe('Log Rotation', () => {
+		it('should have rotation state fields initialized', async () => {
+			// The logger should have a valid current log date
+			const logPath = logger.getLogFilePath();
+			// Path should contain today's date
+			const now = new Date();
+			const year = now.getFullYear();
+			const month = String(now.getMonth() + 1).padStart(2, '0');
+			const day = String(now.getDate()).padStart(2, '0');
+			const expectedDateStr = `${year}-${month}-${day}`;
+			expect(logPath).toContain(`maestro-debug-${expectedDateStr}.log`);
+		});
+
+		it('should not rotate when date has not changed', async () => {
+			// Enable file logging to activate rotation checks
+			logger.enableFileLogging();
+
+			const initialPath = logger.getLogFilePath();
+
+			// Log a message - should not cause rotation since date hasn't changed
+			logger.info('test message');
+
+			expect(logger.getLogFilePath()).toBe(initialPath);
+
+			logger.disableFileLogging();
+		});
+
+		it('should rotate log file when date changes', async () => {
+			// Enable file logging
+			logger.enableFileLogging();
+
+			const initialPath = logger.getLogFilePath();
+
+			// Mock Date to return tomorrow
+			const tomorrow = new Date();
+			tomorrow.setDate(tomorrow.getDate() + 1);
+			const originalDate = globalThis.Date;
+			const mockDate = class extends originalDate {
+				constructor(...args: ConstructorParameters<typeof Date>) {
+					if (args.length === 0) {
+						super(tomorrow.getTime());
+					} else {
+						// @ts-expect-error - spread constructor args
+						super(...args);
+					}
+				}
+				static now() {
+					return tomorrow.getTime();
+				}
+			};
+			// @ts-expect-error - replacing Date globally
+			globalThis.Date = mockDate;
+
+			try {
+				// Log a message - should trigger rotation
+				logger.info('message after date change');
+
+				const newPath = logger.getLogFilePath();
+				expect(newPath).not.toBe(initialPath);
+
+				// New path should contain tomorrow's date
+				const year = tomorrow.getFullYear();
+				const month = String(tomorrow.getMonth() + 1).padStart(2, '0');
+				const day = String(tomorrow.getDate()).padStart(2, '0');
+				const expectedDateStr = `${year}-${month}-${day}`;
+				expect(newPath).toContain(`maestro-debug-${expectedDateStr}.log`);
+			} finally {
+				globalThis.Date = originalDate;
+				logger.disableFileLogging();
+			}
+		});
+	});
+
+	describe('Legacy Log Migration', () => {
+		beforeEach(() => {
+			logger.disableFileLogging();
+		});
+
+		it('should migrate legacy maestro-debug.log on enableFileLogging', async () => {
+			const fs = await import('fs');
+			const path = await import('path');
+			const os = await import('os');
+
+			const platform = process.platform;
+			let appDataDir: string;
+			if (platform === 'win32') {
+				appDataDir = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
+			} else if (platform === 'darwin') {
+				appDataDir = path.join(os.homedir(), 'Library', 'Application Support');
+			} else {
+				appDataDir = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
+			}
+			const logsDir = path.join(appDataDir, 'Maestro', 'logs');
+
+			if (!fs.existsSync(logsDir)) {
+				fs.mkdirSync(logsDir, { recursive: true });
+			}
+
+			// Create a legacy log file
+			const legacyPath = path.join(logsDir, 'maestro-debug.log');
+			fs.writeFileSync(legacyPath, 'legacy log content');
+
+			// Use a recent past date (3 days ago) so it won't be cleaned up by cleanOldLogs
+			const pastDate = new Date();
+			pastDate.setDate(pastDate.getDate() - 3);
+			fs.utimesSync(legacyPath, pastDate, pastDate);
+
+			const year = pastDate.getFullYear();
+			const month = String(pastDate.getMonth() + 1).padStart(2, '0');
+			const day = String(pastDate.getDate()).padStart(2, '0');
+			const expectedDateStr = `${year}-${month}-${day}`;
+			const expectedTarget = path.join(logsDir, `maestro-debug-${expectedDateStr}.log`);
+
+			// Make sure target doesn't exist yet
+			try {
+				fs.unlinkSync(expectedTarget);
+			} catch {
+				/* ignore */
+			}
+
+			try {
+				logger.enableFileLogging();
+
+				// Legacy file should be gone (renamed)
+				expect(fs.existsSync(legacyPath)).toBe(false);
+
+				// Target dated file should exist
+				expect(fs.existsSync(expectedTarget)).toBe(true);
+
+				// Console should log the migration
+				expect(consoleLogSpy).toHaveBeenCalledWith(
+					expect.stringContaining(
+						`[Logger] Migrated legacy log file to maestro-debug-${expectedDateStr}.log`
+					)
+				);
+
+				logger.disableFileLogging();
+			} finally {
+				// Cleanup
+				for (const f of [legacyPath, expectedTarget]) {
+					try {
+						if (fs.existsSync(f)) fs.unlinkSync(f);
+					} catch {
+						// ignore
+					}
+				}
+			}
+		});
+
+		it('should delete legacy file if target dated file already exists', async () => {
+			const fs = await import('fs');
+			const path = await import('path');
+			const os = await import('os');
+
+			const platform = process.platform;
+			let appDataDir: string;
+			if (platform === 'win32') {
+				appDataDir = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
+			} else if (platform === 'darwin') {
+				appDataDir = path.join(os.homedir(), 'Library', 'Application Support');
+			} else {
+				appDataDir = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
+			}
+			const logsDir = path.join(appDataDir, 'Maestro', 'logs');
+
+			if (!fs.existsSync(logsDir)) {
+				fs.mkdirSync(logsDir, { recursive: true });
+			}
+
+			// Create a legacy log file with a recent past mtime (3 days ago)
+			const legacyPath = path.join(logsDir, 'maestro-debug.log');
+			fs.writeFileSync(legacyPath, 'legacy log content');
+			const pastDate = new Date();
+			pastDate.setDate(pastDate.getDate() - 3);
+			fs.utimesSync(legacyPath, pastDate, pastDate);
+
+			const year = pastDate.getFullYear();
+			const month = String(pastDate.getMonth() + 1).padStart(2, '0');
+			const day = String(pastDate.getDate()).padStart(2, '0');
+			const targetPath = path.join(logsDir, `maestro-debug-${year}-${month}-${day}.log`);
+
+			// Pre-create the target file
+			fs.writeFileSync(targetPath, 'existing dated content');
+
+			try {
+				logger.enableFileLogging();
+
+				// Legacy file should be deleted to prevent orphans
+				expect(fs.existsSync(legacyPath)).toBe(false);
+
+				// Target file should still have original content (not overwritten)
+				expect(fs.readFileSync(targetPath, 'utf-8')).toBe('existing dated content');
+
+				logger.disableFileLogging();
+			} finally {
+				for (const f of [legacyPath, targetPath]) {
+					try {
+						if (fs.existsSync(f)) fs.unlinkSync(f);
+					} catch {
+						// ignore
+					}
+				}
+			}
+		});
+
+		it('should not fail if no legacy log file exists', async () => {
+			// Just enable and disable - should not throw
+			logger.enableFileLogging();
+			logger.disableFileLogging();
+		});
+	});
+
+	describe('Enable/Disable File Logging Integration', () => {
+		beforeEach(() => {
+			// Ensure logger starts disabled so enable path is actually tested
+			logger.disableFileLogging();
+		});
+
+		it('should set currentLogDate and logFilePath when enabling file logging', async () => {
+			const now = new Date();
+			const year = now.getFullYear();
+			const month = String(now.getMonth() + 1).padStart(2, '0');
+			const day = String(now.getDate()).padStart(2, '0');
+			const expectedDateStr = `${year}-${month}-${day}`;
+
+			logger.enableFileLogging();
+
+			expect(logger.getLogFilePath()).toContain(`maestro-debug-${expectedDateStr}.log`);
+
+			logger.disableFileLogging();
+		});
+
+		it('should call cleanOldLogs during enableFileLogging', async () => {
+			const fs = await import('fs');
+			const path = await import('path');
+			const os = await import('os');
+
+			const platform = process.platform;
+			let appDataDir: string;
+			if (platform === 'win32') {
+				appDataDir = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
+			} else if (platform === 'darwin') {
+				appDataDir = path.join(os.homedir(), 'Library', 'Application Support');
+			} else {
+				appDataDir = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
+			}
+			const logsDir = path.join(appDataDir, 'Maestro', 'logs');
+
+			if (!fs.existsSync(logsDir)) {
+				fs.mkdirSync(logsDir, { recursive: true });
+			}
+
+			// Create an old log file that should be cleaned up
+			const oldFile = 'maestro-debug-2020-01-01.log';
+			const oldFilePath = path.join(logsDir, oldFile);
+			fs.writeFileSync(oldFilePath, 'old content');
+
+			try {
+				logger.enableFileLogging();
+
+				// Old file should have been deleted by cleanOldLogs called during enable
+				expect(fs.existsSync(oldFilePath)).toBe(false);
+
+				logger.disableFileLogging();
+			} finally {
+				try {
+					if (fs.existsSync(oldFilePath)) fs.unlinkSync(oldFilePath);
+				} catch {
+					/* ignore */
+				}
+			}
+		});
+	});
+
+	describe('Log Cleanup (cleanOldLogs)', () => {
+		beforeEach(() => {
+			logger.disableFileLogging();
+		});
+
+		it('should delete log files older than 7 days during rotation', async () => {
+			const fs = await import('fs');
+			const path = await import('path');
+			const os = await import('os');
+
+			// Determine the logs directory the logger uses
+			const platform = process.platform;
+			let appDataDir: string;
+			if (platform === 'win32') {
+				appDataDir = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
+			} else if (platform === 'darwin') {
+				appDataDir = path.join(os.homedir(), 'Library', 'Application Support');
+			} else {
+				appDataDir = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
+			}
+			const logsDir = path.join(appDataDir, 'Maestro', 'logs');
+
+			// Create the logs directory
+			if (!fs.existsSync(logsDir)) {
+				fs.mkdirSync(logsDir, { recursive: true });
+			}
+
+			// Create some old log files (10 days ago) and a recent one (2 days ago)
+			const oldFile = 'maestro-debug-2020-01-01.log';
+			const recentDate = new Date();
+			recentDate.setDate(recentDate.getDate() - 2);
+			const recentYear = recentDate.getFullYear();
+			const recentMonth = String(recentDate.getMonth() + 1).padStart(2, '0');
+			const recentDay = String(recentDate.getDate()).padStart(2, '0');
+			const recentFile = `maestro-debug-${recentYear}-${recentMonth}-${recentDay}.log`;
+			const nonMatchingFile = 'other-file.log';
+
+			const oldFilePath = path.join(logsDir, oldFile);
+			const recentFilePath = path.join(logsDir, recentFile);
+			const nonMatchingPath = path.join(logsDir, nonMatchingFile);
+
+			// Write dummy content
+			fs.writeFileSync(oldFilePath, 'old log content');
+			fs.writeFileSync(recentFilePath, 'recent log content');
+			fs.writeFileSync(nonMatchingPath, 'non-matching content');
+
+			try {
+				// Enable file logging
+				logger.enableFileLogging();
+
+				// Mock Date to simulate tomorrow (triggers rotation which calls cleanOldLogs)
+				const tomorrow = new Date();
+				tomorrow.setDate(tomorrow.getDate() + 1);
+				const originalDate = globalThis.Date;
+				const mockDate = class extends originalDate {
+					constructor(...args: ConstructorParameters<typeof Date>) {
+						if (args.length === 0) {
+							super(tomorrow.getTime());
+						} else {
+							// @ts-expect-error - spread constructor args
+							super(...args);
+						}
+					}
+					static now() {
+						return tomorrow.getTime();
+					}
+				};
+				// @ts-expect-error - replacing Date globally
+				globalThis.Date = mockDate;
+
+				try {
+					// Trigger rotation (which calls cleanOldLogs)
+					logger.info('trigger rotation');
+
+					// Old file should be deleted
+					expect(fs.existsSync(oldFilePath)).toBe(false);
+
+					// Recent file should still exist
+					expect(fs.existsSync(recentFilePath)).toBe(true);
+
+					// Non-matching file should still exist
+					expect(fs.existsSync(nonMatchingPath)).toBe(true);
+				} finally {
+					globalThis.Date = originalDate;
+					logger.disableFileLogging();
+				}
+			} finally {
+				// Cleanup test files
+				for (const f of [oldFilePath, recentFilePath, nonMatchingPath]) {
+					try {
+						if (fs.existsSync(f)) fs.unlinkSync(f);
+					} catch {
+						// ignore cleanup errors
+					}
+				}
+			}
+		});
+
+		it('should not delete log files that are exactly 7 days old', async () => {
+			const fs = await import('fs');
+			const path = await import('path');
+			const os = await import('os');
+
+			const platform = process.platform;
+			let appDataDir: string;
+			if (platform === 'win32') {
+				appDataDir = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
+			} else if (platform === 'darwin') {
+				appDataDir = path.join(os.homedir(), 'Library', 'Application Support');
+			} else {
+				appDataDir = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
+			}
+			const logsDir = path.join(appDataDir, 'Maestro', 'logs');
+
+			if (!fs.existsSync(logsDir)) {
+				fs.mkdirSync(logsDir, { recursive: true });
+			}
+
+			// Create a file exactly 7 days old from tomorrow's perspective (since rotation runs "tomorrow")
+			const sevenDaysAgo = new Date();
+			sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
+			const year = sevenDaysAgo.getFullYear();
+			const month = String(sevenDaysAgo.getMonth() + 1).padStart(2, '0');
+			const day = String(sevenDaysAgo.getDate()).padStart(2, '0');
+			const borderlineFile = `maestro-debug-${year}-${month}-${day}.log`;
+			const borderlineFilePath = path.join(logsDir, borderlineFile);
+
+			fs.writeFileSync(borderlineFilePath, 'borderline log content');
+
+			try {
+				logger.enableFileLogging();
+
+				const tomorrow = new Date();
+				tomorrow.setDate(tomorrow.getDate() + 1);
+				const originalDate = globalThis.Date;
+				const mockDate = class extends originalDate {
+					constructor(...args: ConstructorParameters<typeof Date>) {
+						if (args.length === 0) {
+							super(tomorrow.getTime());
+						} else {
+							// @ts-expect-error - spread constructor args
+							super(...args);
+						}
+					}
+					static now() {
+						return tomorrow.getTime();
+					}
+				};
+				// @ts-expect-error - replacing Date globally
+				globalThis.Date = mockDate;
+
+				try {
+					logger.info('trigger rotation');
+
+					// File exactly 7 days old should NOT be deleted (only > 7)
+					expect(fs.existsSync(borderlineFilePath)).toBe(true);
+				} finally {
+					globalThis.Date = originalDate;
+					logger.disableFileLogging();
+				}
+			} finally {
+				try {
+					if (fs.existsSync(borderlineFilePath)) fs.unlinkSync(borderlineFilePath);
+				} catch {
+					// ignore
+				}
+			}
+		});
+
+		it('should handle missing logs directory gracefully', async () => {
+			// This tests that cleanOldLogs doesn't throw when the directory doesn't exist
+			// Since cleanOldLogs is called during rotation, and rotation creates the directory,
+			// we just verify no errors are thrown during normal operation
+			logger.enableFileLogging();
+			logger.info('test message');
+			logger.disableFileLogging();
+			// If we got here without errors, the test passes
+		});
+	});
 });

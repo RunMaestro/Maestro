@@ -12,10 +12,11 @@
  * - Scrollable list for many commands
  */
 
-import React, { useEffect, useRef, useCallback } from 'react';
+import React, { useEffect, useRef, useCallback, useMemo } from 'react';
 import { useThemeColors } from '../components/ThemeProvider';
 import type { InputMode } from './CommandInputBar';
 import { MIN_TOUCH_TARGET } from './constants';
+import { filterSlashCommands, highlightSlashCommand } from '../../renderer/utils/search';
 
 /**
  * Slash command definition
@@ -92,22 +93,17 @@ export function SlashCommandAutocomplete({
 	const colors = useThemeColors();
 	const containerRef = useRef<HTMLDivElement>(null);
 
-	// Filter commands based on input and mode
-	const filteredCommands = commands.filter((cmd) => {
-		// Check if command is only available in terminal mode
-		if (cmd.terminalOnly && inputMode !== 'terminal') return false;
-		// Check if command is only available in AI mode
-		if (cmd.aiOnly && inputMode === 'terminal') return false;
-		// If input is empty or doesn't start with /, show all commands (opened via button)
-		if (!inputValue || !inputValue.startsWith('/')) return true;
-		// Check if command matches input (case insensitive)
-		return cmd.command.toLowerCase().startsWith(inputValue.toLowerCase());
-	});
+	// Filter commands based on input and mode (fuzzy matching)
+	const filteredCommands = useMemo(() => {
+		const shouldFuzzyFilter = inputValue && inputValue.startsWith('/');
+		const query = shouldFuzzyFilter ? (inputValue || '').toLowerCase().replace(/^\//, '') : '';
+		return filterSlashCommands(commands, query, inputMode === 'terminal');
+	}, [commands, inputMode, inputValue]);
 
 	// Clamp selectedIndex to valid range when filtered list changes
 	useEffect(() => {
 		if (filteredCommands.length > 0 && selectedIndex >= filteredCommands.length) {
-			onSelectedIndexChange?.(0);
+			onSelectedIndexChange?.(filteredCommands.length - 1);
 		}
 	}, [filteredCommands.length, selectedIndex, onSelectedIndexChange]);
 
@@ -291,7 +287,12 @@ export function SlashCommandAutocomplete({
 								fontWeight: 500,
 							}}
 						>
-							{cmd.command}
+							{highlightSlashCommand(
+								cmd.command,
+								inputValue && inputValue.startsWith('/')
+									? (inputValue || '').toLowerCase().replace(/^\//, '')
+									: ''
+							)}
 						</div>
 						{/* Command description */}
 						<div

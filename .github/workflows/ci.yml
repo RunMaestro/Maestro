@@ -2,7 +2,7 @@ name: CI
 
 on:
   pull_request:
-    branches: [main, rc]
+    branches: [main, rc, '*-RC']
   push:
     branches: [main, rc]
 
@@ -16,7 +16,6 @@ jobs:
           node-version: '22'
           cache: 'npm'
       - run: npm ci
-      - run: npm run build:prompts
       - run: npx prettier --check .
       - run: npx eslint src/
       - run: npm run lint # TypeScript type checking
@@ -30,5 +29,4 @@ jobs:
           node-version: '22'
           cache: 'npm'
       - run: npm ci
-      - run: npm run build:prompts
       - run: npm run test

@@ -7,11 +7,7 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import {
-	useGroupChatStore,
-	getGroupChatState,
-	getGroupChatActions,
-} from '../../../renderer/stores/groupChatStore';
+import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
 import type {
 	GroupChatRightTab,
 	GroupChatErrorState,
@@ -480,43 +476,42 @@ describe('groupChatStore', () => {
 	// ==========================================================================
 
 	describe('non-React access', () => {
-		it('getGroupChatState returns current state', () => {
+		it('useGroupChatStore.getState() returns current state', () => {
 			useGroupChatStore.getState().setActiveGroupChatId('gc-99');
-			const state = getGroupChatState();
+			const state = useGroupChatStore.getState();
 			expect(state.activeGroupChatId).toBe('gc-99');
 		});
 
-		it('getGroupChatActions returns all actions', () => {
-			const actions = getGroupChatActions();
-			expect(typeof actions.setGroupChats).toBe('function');
-			expect(typeof actions.setActiveGroupChatId).toBe('function');
-			expect(typeof actions.setGroupChatMessages).toBe('function');
-			expect(typeof actions.setGroupChatState).toBe('function');
-			expect(typeof actions.setParticipantStates).toBe('function');
-			expect(typeof actions.setModeratorUsage).toBe('function');
-			expect(typeof actions.setGroupChatStates).toBe('function');
-			expect(typeof actions.setAllGroupChatParticipantStates).toBe('function');
-			expect(typeof actions.setGroupChatExecutionQueue).toBe('function');
-			expect(typeof actions.setGroupChatReadOnlyMode).toBe('function');
-			expect(typeof actions.setGroupChatRightTab).toBe('function');
-			expect(typeof actions.setGroupChatParticipantColors).toBe('function');
-			expect(typeof actions.setGroupChatStagedImages).toBe('function');
-			expect(typeof actions.setGroupChatError).toBe('function');
-			expect(typeof actions.clearGroupChatError).toBe('function');
-			expect(typeof actions.resetGroupChatState).toBe('function');
+		it('useGroupChatStore.getState() exposes all actions', () => {
+			const state = useGroupChatStore.getState();
+			expect(typeof state.setGroupChats).toBe('function');
+			expect(typeof state.setActiveGroupChatId).toBe('function');
+			expect(typeof state.setGroupChatMessages).toBe('function');
+			expect(typeof state.setGroupChatState).toBe('function');
+			expect(typeof state.setParticipantStates).toBe('function');
+			expect(typeof state.setModeratorUsage).toBe('function');
+			expect(typeof state.setGroupChatStates).toBe('function');
+			expect(typeof state.setAllGroupChatParticipantStates).toBe('function');
+			expect(typeof state.setGroupChatExecutionQueue).toBe('function');
+			expect(typeof state.setGroupChatReadOnlyMode).toBe('function');
+			expect(typeof state.setGroupChatRightTab).toBe('function');
+			expect(typeof state.setGroupChatParticipantColors).toBe('function');
+			expect(typeof state.setGroupChatStagedImages).toBe('function');
+			expect(typeof state.setGroupChatError).toBe('function');
+			expect(typeof state.clearGroupChatError).toBe('function');
+			expect(typeof state.resetGroupChatState).toBe('function');
 		});
 
-		it('getGroupChatActions returns stable references', () => {
-			const actions1 = getGroupChatActions();
+		it('action references are stable across state changes', () => {
+			const actions1 = useGroupChatStore.getState();
 			useGroupChatStore.getState().setGroupChatState('agent-working');
-			const actions2 = getGroupChatActions();
+			const actions2 = useGroupChatStore.getState();
 			expect(actions1.setGroupChats).toBe(actions2.setGroupChats);
 			expect(actions1.clearGroupChatError).toBe(actions2.clearGroupChatError);
 		});
 
-		it('actions from getGroupChatActions mutate state correctly', () => {
-			const actions = getGroupChatActions();
-			actions.setActiveGroupChatId('gc-from-actions');
+		it('actions from useGroupChatStore.getState() mutate state correctly', () => {
+			useGroupChatStore.getState().setActiveGroupChatId('gc-from-actions');
 			expect(useGroupChatStore.getState().activeGroupChatId).toBe('gc-from-actions');
 		});
 	});
