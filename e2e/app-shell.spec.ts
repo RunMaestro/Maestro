@@ -311,6 +311,38 @@ flowchart TD
 	};
 }
 
+function createFileExplorerStateWorkbench(variant: 'empty' | 'error') {
+	const seeded = createSeededWorkbench();
+	const rootDir = path.join(
+		seeded.homeDir,
+		variant === 'empty' ? 'empty-project' : 'missing-project'
+	);
+	if (variant === 'empty') {
+		fs.mkdirSync(rootDir, { recursive: true });
+	}
+	const baseSession = seeded.sessions[0];
+
+	return {
+		homeDir: seeded.homeDir,
+		sessions: [
+			{
+				...baseSession,
+				cwd: rootDir,
+				fullPath: rootDir,
+				projectRoot: rootDir,
+				isGitRepo: false,
+				fileTree: [],
+				fileTreeError: variant === 'error' ? 'E2E file tree error sentinel' : undefined,
+				fileTreeLoading: false,
+				fileTreeRetryAt: undefined,
+				filePreviewTabs: [],
+				activeFileTabId: null,
+				unifiedTabOrder: [{ type: 'ai', id: baseSession.activeTabId }],
+			},
+		],
+	};
+}
+
 function appendCodexStaticSurfaceLogs(seeded: ReturnType<typeof createSeededWorkbench>) {
 	const session = seeded.sessions[0];
 	const logs = session.aiLogs;
@@ -5091,6 +5123,44 @@ test.describe('App shell seeded workbench', () => {
 		await expect(
 			openSpecPanel.getByText('Bundled proposal prompt for {{AGENT_NAME}}.')
 		).toBeVisible();
+	});
+});
+
+test.describe('File Explorer state variants', () => {
+	let window: Page;
+	let cleanupApp: (() => Promise<void>) | undefined;
+
+	test.afterEach(async () => {
+		await cleanupApp?.();
+		cleanupApp = undefined;
+	});
+
+	test('shows an empty File Explorer state for an empty project root', async () => {
+		const seeded = createFileExplorerStateWorkbench('empty');
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+		window = launched.window;
+		cleanupApp = launched.cleanup;
+
+		await helpers.openRightPanelTab(window, 'Files');
+		await expect(window.getByText('No files found')).toBeVisible();
+		await expect(window.getByTitle(/Refresh file tree|Auto-refresh every/)).toBeVisible();
+	});
+
+	test('shows a File Explorer error state with retry affordance', async () => {
+		const seeded = createFileExplorerStateWorkbench('error');
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+		window = launched.window;
+		cleanupApp = launched.cleanup;
+
+		await helpers.openRightPanelTab(window, 'Files');
+		await expect(window.getByText('E2E file tree error sentinel')).toBeVisible();
+		await expect(window.getByRole('button', { name: 'Retry Connection' })).toBeVisible();
 	});
 });
 
