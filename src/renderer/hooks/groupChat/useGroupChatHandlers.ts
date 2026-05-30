@@ -750,13 +750,23 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 	// on every keystroke. The input component keeps its own local state for immediate
 	// responsiveness; this only persists for cross-session draft recovery.
 	const draftTimerRef = useRef<ReturnType<typeof setTimeout>>();
+	useEffect(() => {
+		return () => {
+			if (draftTimerRef.current) {
+				clearTimeout(draftTimerRef.current);
+			}
+		};
+	}, []);
+
 	const handleGroupChatDraftChange = useCallback((draft: string) => {
+		const { activeGroupChatId: draftGroupChatId } = useGroupChatStore.getState();
+		if (!draftGroupChatId) return;
+
 		if (draftTimerRef.current) clearTimeout(draftTimerRef.current);
 		draftTimerRef.current = setTimeout(() => {
-			const { activeGroupChatId, setGroupChats } = useGroupChatStore.getState();
-			if (!activeGroupChatId) return;
+			const { setGroupChats } = useGroupChatStore.getState();
 			setGroupChats((prev) =>
-				prev.map((c) => (c.id === activeGroupChatId ? { ...c, draftMessage: draft } : c))
+				prev.map((c) => (c.id === draftGroupChatId ? { ...c, draftMessage: draft } : c))
 			);
 		}, 300);
 	}, []);

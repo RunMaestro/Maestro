@@ -662,13 +662,50 @@ describe('useGroupChatHandlers', () => {
 			vi.useRealTimers();
 		});
 
+		it('persists the draft to the chat that was active when the debounce started', () => {
+			vi.useFakeTimers();
+			useGroupChatStore.setState({
+				activeGroupChatId: 'gc-1',
+				groupChats: [
+					{ id: 'gc-1', name: 'Chat', draftMessage: '' } as any,
+					{ id: 'gc-2', name: 'Other Chat', draftMessage: 'keep me' } as any,
+				],
+			});
+
+			const { result } = renderHook(() => useGroupChatHandlers());
+			act(() => result.current.handleGroupChatDraftChange('gc-1 draft'));
+			act(() => useGroupChatStore.setState({ activeGroupChatId: 'gc-2' }));
+			act(() => vi.advanceTimersByTime(300));
+
+			expect(useGroupChatStore.getState().groupChats[0].draftMessage).toBe('gc-1 draft');
+			expect(useGroupChatStore.getState().groupChats[1].draftMessage).toBe('keep me');
+		});
+
+		it('clears a pending draft timer on unmount', () => {
+			vi.useFakeTimers();
+			useGroupChatStore.setState({
+				activeGroupChatId: 'gc-1',
+				groupChats: [{ id: 'gc-1', name: 'Chat', draftMessage: '' } as any],
+			});
+
+			const { result, unmount } = renderHook(() => useGroupChatHandlers());
+			act(() => result.current.handleGroupChatDraftChange('pending draft'));
+
+			unmount();
+			act(() => vi.advanceTimersByTime(300));
+
+			expect(useGroupChatStore.getState().groupChats[0].draftMessage).toBe('');
+		});
+
 		it('does nothing when no active group chat', () => {
+			vi.useFakeTimers();
 			useGroupChatStore.setState({
 				groupChats: [{ id: 'gc-1', name: 'Chat', draftMessage: '' } as any],
 			});
 
 			const { result } = renderHook(() => useGroupChatHandlers());
 			act(() => result.current.handleGroupChatDraftChange('test'));
+			act(() => vi.advanceTimersByTime(300));
 
 			expect(useGroupChatStore.getState().groupChats[0].draftMessage).toBe('');
 		});
