@@ -331,8 +331,15 @@ async function listRemoteAutoRunDocs(
 	relativePath: string = ''
 ): Promise<string[]> {
 	const result = await readDirRemote(folderPath, sshRemoteConfig);
-	if (!result.success || !result.data) {
-		return [];
+	if (!result.success) {
+		throw new Error(
+			`Failed to list remote Auto Run docs at "${folderPath}" for SSH remote "${sshRemoteConfig.id}" (${sshRemoteConfig.host}): ${result.error || 'unknown remote listing error'}`
+		);
+	}
+	if (!Array.isArray(result.data)) {
+		throw new Error(
+			`Failed to list remote Auto Run docs at "${folderPath}" for SSH remote "${sshRemoteConfig.id}" (${sshRemoteConfig.host}): readDirRemote returned no directory data`
+		);
 	}
 
 	const files: string[] = [];
