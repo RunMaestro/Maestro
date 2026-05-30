@@ -1288,6 +1288,38 @@ async function getStubbedOpenExternalUrl(electronApp: ElectronApplication) {
 	});
 }
 
+type StubbedShellPathCall = {
+	type: 'openPath' | 'showItemInFolder';
+	itemPath: string;
+};
+
+async function stubShellPathHandlers(electronApp: ElectronApplication) {
+	await electronApp.evaluate(({ ipcMain }) => {
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eShellPathCalls?: StubbedShellPathCall[];
+		};
+		state.__maestroE2eShellPathCalls = [];
+		ipcMain.removeHandler('shell:openPath');
+		ipcMain.handle('shell:openPath', async (_event, itemPath: string) => {
+			state.__maestroE2eShellPathCalls?.push({ type: 'openPath', itemPath });
+			return '';
+		});
+		ipcMain.removeHandler('shell:showItemInFolder');
+		ipcMain.handle('shell:showItemInFolder', async (_event, itemPath: string) => {
+			state.__maestroE2eShellPathCalls?.push({ type: 'showItemInFolder', itemPath });
+		});
+	});
+}
+
+async function getStubbedShellPathCalls(electronApp: ElectronApplication) {
+	return electronApp.evaluate(() => {
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eShellPathCalls?: StubbedShellPathCall[];
+		};
+		return state.__maestroE2eShellPathCalls ?? [];
+	});
+}
+
 async function stubUpdateCheckForModal(
 	electronApp: ElectronApplication,
 	mode: 'available' | 'error'
@@ -4285,6 +4317,43 @@ test.describe('App shell seeded workbench', () => {
 
 		await window.getByTitle('Show dotfiles').click();
 		await expect(hiddenRow).toBeVisible();
+	});
+
+	test('changes File Explorer auto-refresh from the refresh toolbar menu', async () => {
+		await helpers.openRightPanelTab(window, 'Files');
+
+		await window.getByTitle('Auto-refresh every 180s').hover();
+		await expect(window.getByText('Auto-refresh', { exact: true })).toBeVisible();
+		await window.getByRole('button', { name: 'Every 20 seconds' }).click();
+		await expect(window.getByTitle('Auto-refresh every 20s')).toBeVisible();
+
+		await window.getByTitle('Auto-refresh every 20s').hover();
+		await expect(window.getByRole('button', { name: 'Disable auto-refresh' })).toBeVisible();
+		await window.getByRole('button', { name: 'Disable auto-refresh' }).click();
+		await expect(window.getByTitle('Refresh file tree')).toBeVisible();
+	});
+
+	test('routes File Explorer context menu external actions through shell IPC', async () => {
+		await stubShellPathHandlers(electronApp);
+		const expectedNotesPath = path.join(seededWorkbench.sessions[0].fullPath, 'NOTES.md');
+
+		let contextMenu = await openFileContextMenu(window, 'NOTES.md');
+		await contextMenu.getByRole('button', { name: 'Open in Default App' }).click();
+
+		contextMenu = await openFileContextMenu(window, 'NOTES.md');
+		await contextMenu
+			.getByRole('button', { name: /Reveal in Finder|Show in Folder|Show in Explorer/ })
+			.click();
+
+		const shellPathCalls = await getStubbedShellPathCalls(electronApp);
+		await expect(shellPathCalls).toContainEqual({
+			type: 'openPath',
+			itemPath: expectedNotesPath,
+		});
+		await expect(shellPathCalls).toContainEqual({
+			type: 'showItemInFolder',
+			itemPath: expectedNotesPath,
+		});
 	});
 
 	test('previews a file from the File Explorer context menu', async () => {
