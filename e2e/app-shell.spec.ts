@@ -372,6 +372,45 @@ function createQueuedCodexWorkbench() {
 	return seeded;
 }
 
+function createCodexNetworkAgentError(sessionId: string) {
+	return {
+		type: 'network_error' as const,
+		message: 'Codex active recoverable network error sentinel',
+		recoverable: true,
+		agentId: 'codex',
+		sessionId,
+		timestamp: Date.now(),
+		raw: {
+			exitCode: 7,
+			stderr: 'synthetic active network stderr',
+		},
+		parsedJson: {
+			code: 'codex_active_network_e2e',
+			retryable: true,
+		},
+	};
+}
+
+function createActiveCodexErrorWorkbench(
+	options: { message?: string; recoverable?: boolean } = {}
+) {
+	const seeded = createSeededWorkbench();
+	const session = seeded.sessions[0]!;
+	const activeTab = session.aiTabs[0]!;
+	const agentError = {
+		...createCodexNetworkAgentError(session.id),
+		...options,
+	};
+
+	session.state = 'error';
+	session.agentError = agentError;
+	session.agentErrorTabId = activeTab.id;
+	session.agentErrorPaused = true;
+	activeTab.agentError = agentError;
+
+	return seeded;
+}
+
 function appendCodexStaticSurfaceLogs(seeded: ReturnType<typeof createSeededWorkbench>) {
 	const session = seeded.sessions[0];
 	const logs = session.aiLogs;
@@ -5605,6 +5644,65 @@ test.describe('App shell seeded workbench', () => {
 		await expect(
 			openSpecPanel.getByText('Bundled proposal prompt for {{AGENT_NAME}}.')
 		).toBeVisible();
+	});
+});
+
+test.describe('Codex AI terminal active error recovery', () => {
+	let window: Page;
+	let cleanupApp: (() => Promise<void>) | undefined;
+
+	test.afterEach(async () => {
+		await cleanupApp?.();
+		cleanupApp = undefined;
+	});
+
+	async function launchActiveErrorWorkbench() {
+		const seeded = createActiveCodexErrorWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+		window = launched.window;
+		cleanupApp = launched.cleanup;
+		return seeded;
+	}
+
+	test('shows recoverable active Codex error banner controls', async () => {
+		await launchActiveErrorWorkbench();
+		await openSeededCodexAiTerminal(window);
+
+		await expect(window.getByText('Codex active recoverable network error sentinel')).toBeVisible();
+		await expect(window.getByRole('button', { name: 'View Details' })).toBeVisible();
+		await expect(window.getByTitle('Dismiss error')).toBeVisible();
+	});
+
+	test('dismisses an active Codex error banner from the main panel', async () => {
+		await launchActiveErrorWorkbench();
+		await openSeededCodexAiTerminal(window);
+
+		await expect(window.getByText('Codex active recoverable network error sentinel')).toBeVisible();
+		await window.getByTitle('Dismiss error').click();
+
+		await expect(window.getByText('Codex active recoverable network error sentinel')).toBeHidden();
+		await expect(window.getByTitle('Dismiss error')).toHaveCount(0);
+	});
+
+	test('shows non-recoverable active Codex error without dismiss control', async () => {
+		const seeded = createActiveCodexErrorWorkbench({
+			message: 'Codex non-recoverable permission error sentinel',
+			recoverable: false,
+		});
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+		window = launched.window;
+		cleanupApp = launched.cleanup;
+
+		await openSeededCodexAiTerminal(window);
+		await expect(window.getByText('Codex non-recoverable permission error sentinel')).toBeVisible();
+		await expect(window.getByRole('button', { name: 'View Details' })).toBeVisible();
+		await expect(window.getByTitle('Dismiss error')).toHaveCount(0);
 	});
 });
 
