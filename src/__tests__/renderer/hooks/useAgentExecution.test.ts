@@ -1,7 +1,17 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
+
+const { mockCaptureException } = vi.hoisted(() => ({
+	mockCaptureException: vi.fn(),
+}));
+
+vi.mock('../../../renderer/utils/sentry', () => ({
+	captureException: mockCaptureException,
+	captureMessage: vi.fn(),
+}));
+
 import { useAgentExecution } from '../../../renderer/hooks';
-import type { Session, AITab, UsageStats, QueuedItem } from '../../../renderer/types';
+import type { Session, AITab, UsageStats, QueuedItem, AgentError } from '../../../renderer/types';
 import { createMockAITab } from '../../helpers/mockTab';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 
@@ -33,6 +43,20 @@ const baseUsage: UsageStats = {
 	contextWindow: 200000,
 };
 
+const createMockAgentError = (overrides: Partial<AgentError> = {}): AgentError => ({
+	type: 'agent_crashed',
+	message: 'Agent crashed during batch run',
+	recoverable: false,
+	agentId: 'claude-code',
+	sessionId: 'provider-session-1',
+	timestamp: 1700000001000,
+	raw: {
+		exitCode: 1,
+		stderr: 'fatal error',
+	},
+	...overrides,
+});
+
 describe('useAgentExecution', () => {
 	const originalMaestro = { ...window.maestro };
 	const mockProcess = {
@@ -48,7 +72,8 @@ describe('useAgentExecution', () => {
 	let onDataHandler: ((sid: string, data: string) => void) | undefined;
 	let onSessionIdHandler: ((sid: string, sessionId: string) => void) | undefined;
 	let onUsageHandler: ((sid: string, usage: UsageStats) => void) | undefined;
-	let onExitHandler: ((sid: string) => void) | undefined;
+	let onAgentErrorHandler: ((sid: string, error: AgentError) => void) | undefined;
+	let onExitHandler: ((sid: string, code?: number | null) => void) | undefined;
 
 	beforeEach(() => {
 		vi.clearAllMocks();
@@ -56,7 +81,9 @@ describe('useAgentExecution', () => {
 		onDataHandler = undefined;
 		onSessionIdHandler = undefined;
 		onUsageHandler = undefined;
+		onAgentErrorHandler = undefined;
 		onExitHandler = undefined;
+		mockCaptureException.mockReset();
 
 		mockProcess.spawn.mockResolvedValue(undefined);
 		mockProcess.onData.mockImplementation((handler: (sid: string, data: string) => void) => {
@@ -73,13 +100,18 @@ describe('useAgentExecution', () => {
 			onUsageHandler = handler;
 			return () => {};
 		});
-		mockProcess.onAgentError.mockImplementation(() => {
-			return () => {};
-		});
-		mockProcess.onExit.mockImplementation((handler: (sid: string) => void) => {
-			onExitHandler = handler;
-			return () => {};
-		});
+		mockProcess.onAgentError.mockImplementation(
+			(handler: (sid: string, error: AgentError) => void) => {
+				onAgentErrorHandler = handler;
+				return () => {};
+			}
+		);
+		mockProcess.onExit.mockImplementation(
+			(handler: (sid: string, code?: number | null) => void) => {
+				onExitHandler = handler;
+				return () => {};
+			}
+		);
 
 		window.maestro = {
 			...window.maestro,
@@ -174,6 +206,104 @@ describe('useAgentExecution', () => {
 		expect(updatedSession.aiTabs[0].state).toBe('idle');
 	});
 
+	it('returns false and reports to Sentry when an agent error arrives before exit', async () => {
+		const session = createMockSession();
+		const sessionsRef = { current: [session] };
+
+		const { result } = renderHook(() =>
+			useAgentExecution({
+				activeSession: session,
+				sessionsRef,
+				setSessions: vi.fn(),
+				processQueuedItemRef: { current: null },
+				setFlashNotification: vi.fn(),
+				setSuccessFlashNotification: vi.fn(),
+			})
+		);
+
+		const spawnPromise = result.current.spawnAgentForSession(session.id, 'Prompt');
+
+		await waitFor(() => {
+			expect(mockProcess.spawn).toHaveBeenCalledTimes(1);
+		});
+
+		const spawnConfig = mockProcess.spawn.mock.calls[0][0];
+		const targetSessionId = spawnConfig.sessionId as string;
+		const agentError = createMockAgentError();
+
+		vi.useFakeTimers();
+		act(() => {
+			onAgentErrorHandler?.(targetSessionId, agentError);
+			onExitHandler?.(targetSessionId, 0);
+			vi.advanceTimersByTime(25);
+		});
+
+		const resultData = await spawnPromise;
+
+		expect(resultData.success).toBe(false);
+		expect(mockCaptureException).toHaveBeenCalledWith(expect.any(Error), {
+			extra: expect.objectContaining({
+				operation: 'agentExecution:spawnAgentForSession',
+				sessionId: session.id,
+				targetSessionId,
+				agentType: session.toolType,
+				agentId: agentError.agentId,
+				errorType: agentError.type,
+			}),
+		});
+	});
+
+	it('keeps the agent error listener through the exit grace window', async () => {
+		const cleanupAgentError = vi.fn();
+		mockProcess.onAgentError.mockImplementationOnce(
+			(handler: (sid: string, error: AgentError) => void) => {
+				onAgentErrorHandler = handler;
+				return cleanupAgentError;
+			}
+		);
+
+		const session = createMockSession();
+		const sessionsRef = { current: [session] };
+
+		const { result } = renderHook(() =>
+			useAgentExecution({
+				activeSession: session,
+				sessionsRef,
+				setSessions: vi.fn(),
+				processQueuedItemRef: { current: null },
+				setFlashNotification: vi.fn(),
+				setSuccessFlashNotification: vi.fn(),
+			})
+		);
+
+		const spawnPromise = result.current.spawnAgentForSession(session.id, 'Prompt');
+
+		await waitFor(() => {
+			expect(mockProcess.spawn).toHaveBeenCalledTimes(1);
+		});
+
+		const spawnConfig = mockProcess.spawn.mock.calls[0][0];
+		const targetSessionId = spawnConfig.sessionId as string;
+
+		vi.useFakeTimers();
+		act(() => {
+			onExitHandler?.(targetSessionId, 0);
+		});
+
+		expect(cleanupAgentError).not.toHaveBeenCalled();
+
+		act(() => {
+			onAgentErrorHandler?.(targetSessionId, createMockAgentError({ message: 'Late crash' }));
+			vi.advanceTimersByTime(25);
+		});
+
+		const resultData = await spawnPromise;
+
+		expect(resultData.success).toBe(false);
+		expect(cleanupAgentError).toHaveBeenCalledOnce();
+		expect(mockCaptureException).toHaveBeenCalledOnce();
+	});
+
 	it('includes appendSystemPrompt in batch spawns', async () => {
 		const session = createMockSession({
 			state: 'busy',
@@ -208,7 +338,7 @@ describe('useAgentExecution', () => {
 		// Clean up
 		const targetSessionId = spawnConfig.sessionId as string;
 		act(() => {
-			onExitHandler?.(targetSessionId);
+			onExitHandler?.(targetSessionId, 0);
 		});
 		await spawnPromise;
 	});
@@ -251,7 +381,7 @@ describe('useAgentExecution', () => {
 
 		const targetSessionId = spawnConfig.sessionId as string;
 		act(() => {
-			onExitHandler?.(targetSessionId);
+			onExitHandler?.(targetSessionId, 0);
 		});
 		await spawnPromise;
 		(window as any).maestro.platform = originalPlatform;
@@ -297,7 +427,7 @@ describe('useAgentExecution', () => {
 
 		const targetSessionId = spawnConfig.sessionId as string;
 		act(() => {
-			onExitHandler?.(targetSessionId);
+			onExitHandler?.(targetSessionId, 0);
 		});
 		await spawnPromise;
 		platformSpy.mockRestore();
@@ -344,11 +474,11 @@ describe('useAgentExecution', () => {
 
 		vi.useFakeTimers();
 		act(() => {
-			onExitHandler?.(targetSessionId);
+			onExitHandler?.(targetSessionId, 0);
+			vi.runAllTimers();
 		});
 
 		await spawnPromise;
-		vi.runAllTimers();
 
 		const updateFn = setSessions.mock.calls[0][0];
 		const [updatedSession] = updateFn([session]);
@@ -404,7 +534,7 @@ describe('useAgentExecution', () => {
 				outputTokens: 1,
 				totalCostUsd: 0.04,
 			});
-			onExitHandler?.(targetSessionId);
+			onExitHandler?.(targetSessionId, 0);
 		});
 
 		const resultData = await spawnPromise;
@@ -504,7 +634,7 @@ describe('useAgentExecution', () => {
 		const spawnConfig = mockProcess.spawn.mock.calls[0][0];
 		const targetSessionId = spawnConfig.sessionId as string;
 		act(() => {
-			onExitHandler?.(targetSessionId);
+			onExitHandler?.(targetSessionId, 0);
 		});
 
 		await spawnPromise;

@@ -5,6 +5,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useGroupChatHandlers } from '../../../renderer/hooks/groupChat/useGroupChatHandlers';
 import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
+import { useBatchStore } from '../../../renderer/stores/batchStore';
 import { useModalStore } from '../../../renderer/stores/modalStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
@@ -40,8 +41,12 @@ const mockGroupChat = {
 	onParticipantsChanged: vi.fn().mockReturnValue(() => {}),
 	onModeratorUsage: vi.fn().mockReturnValue(() => {}),
 	onParticipantState: vi.fn().mockReturnValue(() => {}),
+	onParticipantLiveOutput: vi.fn().mockReturnValue(() => {}),
+	onAutoRunBatchComplete: vi.fn().mockReturnValue(() => {}),
 	onModeratorSessionIdChanged: vi.fn().mockReturnValue(() => {}),
 };
+
+const originalDispatchBatch = useBatchStore.getState().dispatchBatch;
 
 // ---------------------------------------------------------------------------
 // Store reset helper
