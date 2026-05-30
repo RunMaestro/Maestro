@@ -372,6 +372,23 @@ function createQueuedCodexWorkbench() {
 	return seeded;
 }
 
+function createScrollableTerminalWorkbench() {
+	const seeded = createSeededWorkbench();
+	const terminalSession = seeded.sessions[1]!;
+	const timestamp = Date.now();
+	terminalSession.shellLogs.push({
+		id: `shell-log-scroll-${timestamp}`,
+		timestamp,
+		source: 'stdout',
+		text: Array.from(
+			{ length: 140 },
+			(_, index) =>
+				`terminal scroll line ${String(index + 1).padStart(3, '0')} e2e output navigation sentinel`
+		).join('\n'),
+	});
+	return seeded;
+}
+
 function createCodexNetworkAgentError(sessionId: string) {
 	return {
 		type: 'network_error' as const,
@@ -2257,6 +2274,29 @@ async function openSeededTerminalAgent(window: Page) {
 	await window.getByText('E2E Terminal').click();
 	await expect(window.getByLabel('Terminal output')).toBeVisible();
 	return window.getByPlaceholder('Run shell command...');
+}
+
+async function getTerminalOutputScrollState(window: Page) {
+	return window.getByLabel('Terminal output').evaluate((region) => {
+		const scroller = Array.from(region.querySelectorAll<HTMLElement>('div')).find((element) => {
+			const style = window.getComputedStyle(element);
+			return style.overflowY === 'auto' && element.scrollHeight > element.clientHeight;
+		});
+		if (!scroller) {
+			return {
+				scrollTop: 0,
+				scrollHeight: 0,
+				clientHeight: 0,
+				maxScrollTop: 0,
+			};
+		}
+		return {
+			scrollTop: scroller.scrollTop,
+			scrollHeight: scroller.scrollHeight,
+			clientHeight: scroller.clientHeight,
+			maxScrollTop: Math.max(0, scroller.scrollHeight - scroller.clientHeight),
+		};
+	});
 }
 
 async function openSeededCodexAiTerminal(window: Page) {
@@ -5851,6 +5891,90 @@ test.describe('Codex AI terminal static transcript surfaces', () => {
 		await expect(errorModal.getByText('Codex historical error detail sentinel')).toBeVisible();
 		await errorModal.getByRole('button', { name: 'Error Details (JSON)' }).click();
 		await expect(errorModal.getByText('synthetic_e2e_static_error')).toBeVisible();
+	});
+});
+
+test.describe('Command terminal output controls', () => {
+	let window: Page;
+	let cleanupApp: (() => Promise<void>) | undefined;
+
+	test.beforeEach(async () => {
+		const seeded = createScrollableTerminalWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+		window = launched.window;
+		cleanupApp = launched.cleanup;
+	});
+
+	test.afterEach(async () => {
+		await cleanupApp?.();
+		cleanupApp = undefined;
+	});
+
+	test('scrolls terminal output with keyboard navigation shortcuts', async () => {
+		await openSeededTerminalAgent(window);
+		const terminalOutput = window.getByLabel('Terminal output');
+		const scrollState = await getTerminalOutputScrollState(window);
+		expect(scrollState.maxScrollTop).toBeGreaterThan(100);
+
+		await terminalOutput.focus();
+		await terminalOutput.press('Meta+ArrowUp');
+		await expect.poll(async () => (await getTerminalOutputScrollState(window)).scrollTop).toBe(0);
+
+		await terminalOutput.press('ArrowDown');
+		await expect
+			.poll(async () => (await getTerminalOutputScrollState(window)).scrollTop)
+			.toBeGreaterThan(0);
+		const lineScrollTop = (await getTerminalOutputScrollState(window)).scrollTop;
+
+		await terminalOutput.press('Alt+ArrowDown');
+		await expect
+			.poll(async () => (await getTerminalOutputScrollState(window)).scrollTop)
+			.toBeGreaterThan(lineScrollTop);
+
+		await terminalOutput.press('Meta+ArrowDown');
+		await expect
+			.poll(async () => {
+				const current = await getTerminalOutputScrollState(window);
+				return current.maxScrollTop - current.scrollTop <= 2;
+			})
+			.toBe(true);
+		const bottomScrollTop = (await getTerminalOutputScrollState(window)).scrollTop;
+
+		await terminalOutput.press('Alt+ArrowUp');
+		await expect
+			.poll(async () => (await getTerminalOutputScrollState(window)).scrollTop)
+			.toBeLessThan(bottomScrollTop);
+	});
+
+	test('returns focus to the terminal input when Escape is pressed from output', async () => {
+		const terminalInput = await openSeededTerminalAgent(window);
+		const terminalOutput = window.getByLabel('Terminal output');
+
+		await terminalOutput.focus();
+		await expect(terminalOutput).toBeFocused();
+		await terminalOutput.press('Escape');
+
+		await expect(terminalInput).toBeFocused();
+	});
+
+	test('clears command terminal history from Quick Actions', async () => {
+		await openSeededTerminalAgent(window);
+		await expect(window.getByText('terminal seeded output is visible')).toBeVisible();
+		await expect(window.getByRole('button', { name: 'Show all 140 lines' })).toBeVisible();
+
+		const quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('Clear Terminal History');
+		await quickActionsDialog.getByRole('button', { name: /Clear Terminal History/ }).click();
+
+		await expect(quickActionsDialog).toBeHidden();
+		await expect(window.getByText('terminal seeded output is visible')).toHaveCount(0);
+		await expect(window.getByRole('button', { name: 'Show all 140 lines' })).toHaveCount(0);
+		await expect(window.getByLabel('Terminal output')).toBeVisible();
 	});
 });
 
