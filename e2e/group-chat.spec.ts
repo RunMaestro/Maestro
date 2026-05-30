@@ -4,6 +4,7 @@
  * These tests exercise persisted Group Chat UI without launching live AI agents.
  */
 import { test, expect, helpers } from './fixtures/electron-app';
+import type { ElectronApplication, Page } from '@playwright/test';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -203,18 +204,126 @@ function createGroupChatWorkbench() {
 	};
 }
 
+async function openQuickActions(window: Page) {
+	const quickActionsDialog = window.getByRole('dialog', { name: 'Quick Actions' });
+	for (let attempt = 0; attempt < 3; attempt++) {
+		if (await quickActionsDialog.isVisible().catch(() => false)) break;
+		await window.bringToFront();
+		await window.keyboard.press('Meta+K');
+		await quickActionsDialog.waitFor({ state: 'visible', timeout: 1000 }).catch(() => undefined);
+	}
+	await expect(quickActionsDialog).toBeVisible();
+	await expect(
+		quickActionsDialog.getByPlaceholder('Type a command or jump to agent...')
+	).toBeVisible();
+	return quickActionsDialog;
+}
+
+async function openProcessMonitor(window: Page) {
+	const quickActionsDialog = await openQuickActions(window);
+	await quickActionsDialog
+		.getByPlaceholder('Type a command or jump to agent...')
+		.fill('View System Processes');
+	await quickActionsDialog.getByRole('button', { name: /View System Processes/ }).click();
+
+	await expect(quickActionsDialog).toBeHidden();
+	const processMonitor = window.getByRole('dialog', { name: 'System Processes' });
+	await expect(processMonitor).toBeVisible();
+	return processMonitor;
+}
+
+async function stubGroupChatProcessMonitor(
+	electronApp: ElectronApplication,
+	seeded: ReturnType<typeof createGroupChatWorkbench>
+) {
+	await electronApp.evaluate(
+		({ ipcMain }, payload) => {
+			const state = globalThis as typeof globalThis & {
+				__maestroE2eGroupChatProcesses?: Array<{
+					sessionId: string;
+					toolType: string;
+					pid: number;
+					cwd: string;
+					isTerminal: boolean;
+					isBatchMode: boolean;
+					startTime: number;
+					command: string;
+					args: string[];
+				}>;
+			};
+			state.__maestroE2eGroupChatProcesses = [
+				{
+					sessionId: `group-chat-${payload.chatId}-moderator-${payload.suffix}`,
+					toolType: 'codex',
+					pid: 42001,
+					cwd: payload.cwd,
+					isTerminal: false,
+					isBatchMode: false,
+					startTime: Date.now() - 60_000,
+					command: 'codex',
+					args: ['--group-moderator'],
+				},
+				{
+					sessionId: `group-chat-${payload.chatId}-moderator-synthesis-${payload.suffix}`,
+					toolType: 'codex',
+					pid: 42002,
+					cwd: payload.cwd,
+					isTerminal: false,
+					isBatchMode: false,
+					startTime: Date.now() - 45_000,
+					command: 'codex',
+					args: ['--group-synthesis'],
+				},
+				{
+					sessionId: `group-chat-${payload.chatId}-participant-Reviewer-${payload.suffix}`,
+					toolType: 'codex',
+					pid: 42003,
+					cwd: payload.cwd,
+					isTerminal: false,
+					isBatchMode: false,
+					startTime: Date.now() - 30_000,
+					command: 'codex',
+					args: ['--group-participant', 'Reviewer'],
+				},
+			];
+
+			ipcMain.removeHandler('process:getActiveProcesses');
+			ipcMain.handle('process:getActiveProcesses', async () => {
+				return state.__maestroE2eGroupChatProcesses || [];
+			});
+
+			ipcMain.removeHandler('process:kill');
+			ipcMain.handle('process:kill', async (_event, sessionId: string) => {
+				state.__maestroE2eGroupChatProcesses =
+					state.__maestroE2eGroupChatProcesses?.filter(
+						(process) => process.sessionId !== sessionId
+					) || [];
+				return true;
+			});
+		},
+		{
+			chatId: seeded.groupChats[0].id,
+			cwd: seeded.sessions[0].cwd,
+			suffix: 'a11ce001',
+		}
+	);
+}
+
 test.describe('Seeded Group Chat workspace', () => {
 	let window: Awaited<ReturnType<typeof helpers.launchAppWithState>>['window'];
+	let electronApp: ElectronApplication;
 	let cleanupApp: (() => Promise<void>) | undefined;
+	let seededWorkbench: ReturnType<typeof createGroupChatWorkbench>;
 
 	test.beforeEach(async () => {
-		const seeded = createGroupChatWorkbench();
+		seededWorkbench = createGroupChatWorkbench();
 		const launched = await helpers.launchAppWithState({
-			homeDir: seeded.homeDir,
-			sessions: seeded.sessions,
-			groupChats: seeded.groupChats,
+			homeDir: seededWorkbench.homeDir,
+			sessions: seededWorkbench.sessions,
+			groupChats: seededWorkbench.groupChats,
 		});
 		window = launched.window;
+		electronApp = launched.electronApp;
 		cleanupApp = launched.cleanup;
 	});
 
@@ -361,5 +470,36 @@ test.describe('Seeded Group Chat workspace', () => {
 
 		await expect(window.getByTitle('All time (right-click to change)')).toBeVisible();
 		await expect(window.getByText('Reviewed seeded group chat plan')).toBeVisible();
+	});
+
+	test('renders group chat moderator and participant processes in Process Monitor', async () => {
+		await stubGroupChatProcessMonitor(electronApp, seededWorkbench);
+		const processMonitor = await openProcessMonitor(window);
+
+		await expect(processMonitor.getByText('3 active')).toBeVisible();
+		await expect(processMonitor.getByText('GROUP CHATS')).toBeVisible();
+		await expect(processMonitor.getByText('Coverage Room')).toBeVisible();
+		await expect(processMonitor.getByText('Moderator', { exact: true })).toBeVisible();
+		await expect(processMonitor.getByText('Moderator (Synthesis)')).toBeVisible();
+		await expect(processMonitor.getByText('Reviewer', { exact: true })).toBeVisible();
+		await expect(processMonitor.getByText('MODERATOR', { exact: true })).toHaveCount(2);
+		await expect(processMonitor.getByText('PARTICIPANT', { exact: true })).toBeVisible();
+
+		await processMonitor.getByText('Reviewer', { exact: true }).dblclick();
+		const details = window.getByRole('dialog', { name: 'Process Details' });
+		await expect(details).toBeVisible();
+		await expect(
+			details.getByText(
+				`group-chat-${seededWorkbench.groupChats[0].id}-participant-Reviewer-a11ce001`
+			)
+		).toBeVisible();
+		await expect(details.getByText('Process Type')).toBeVisible();
+		await expect(
+			details
+				.locator('span')
+				.filter({ hasText: /^participant$/ })
+				.first()
+		).toBeVisible();
+		await expect(details.getByText('codex --group-participant Reviewer')).toBeVisible();
 	});
 });
