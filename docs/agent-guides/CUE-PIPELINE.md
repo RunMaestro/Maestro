@@ -321,6 +321,16 @@ Visual pipeline editor using React Flow for drag-and-drop pipeline construction.
 | `panels/`                 | Node and edge configuration panels               |
 | `utils/`                  | Pipeline-to-YAML and YAML-to-pipeline conversion |
 
+#### Layout buttons (Tidy and Arrange)
+
+Two top-right canvas buttons (in `PipelineCanvas.tsx`, props `onTidy` / `onArrange`) drive `handleArrange(mode)` in `CuePipelineEditor.tsx`, where `mode` is `'tidy' | 'untangle'`. Both branch on the active view:
+
+- **Single pipeline, Tidy** - `arrangePipelineNodes` (in `utils/pipelineAutoArrange.ts`) lays nodes out left-to-right by flow depth (rank = longest path from a root) and stacks them within each column. Order within a column follows current vertical position, so the existing arrangement is aligned, not reshuffled; crossing edges are left intact.
+- **Single pipeline, Arrange** - `untanglePipelineNodes` uses the same flow-depth columns but reorders nodes within each column to minimize edge crossings (Sugiyama ordering: barycenter sweeps + adjacent-swap transpose refinement, keeping the best of several passes). It is seeded by current vertical order, so it untangles rather than scrambles.
+- **All Pipelines view** - `arrangePipelineGroups` packs the per-pipeline group cards into a balanced grid via `viewOffset`, leaving node positions untouched. No edges cross between cards, so the Tidy button is hidden here and both modes route through this path.
+
+Pressing either opens a `ConfirmModal` (`arrangeConfirmMode` drives its title/label/copy), then `handleArrange` mutates canonical state (flips dirty, undoable via Discard), persists, and re-fits the view. The layout helpers are pure and unit-tested in `pipelineAutoArrange.test.ts`; the crossing-minimizer is verified with a true segment-intersection count, independent of the layout's internal ordering.
+
 #### Visual node identity round-trip (`target_node_key` / `fan_out_node_keys`)
 
 Every agent and command node dropped onto the canvas gets a stable

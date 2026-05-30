@@ -1457,6 +1457,7 @@ function MaestroConsoleInner() {
 		retryLastMessage: retryInlineWizardMessage,
 		generateDocuments: generateInlineWizardDocuments,
 		endWizard: endInlineWizard,
+		isWizardActiveForTab,
 	} = inlineWizardContext;
 
 	// --- WIZARD HANDLERS (extracted hook) ---
@@ -1796,7 +1797,10 @@ function MaestroConsoleInner() {
 	// goToNextUnreadTab — jump to the next agent with unread tabs, clearing current agent's unreads
 	const goToNextUnreadTab = useCallback(() => {
 		const currentActiveId = useSessionStore.getState().activeSessionId;
-		const result = findNextUnreadSession(sortedSessions, currentActiveId);
+		// Treat a tab with an active inline wizard as a draft target: an unfinished
+		// wizard is meant to be completed into an Auto Run doc, so the navigation
+		// should stop on it just like any other draft.
+		const result = findNextUnreadSession(sortedSessions, currentActiveId, isWizardActiveForTab);
 
 		// Clear current agent's unread tabs
 		if (result.clearedCurrent) {
@@ -1825,7 +1829,7 @@ function MaestroConsoleInner() {
 		} else {
 			showSuccessFlash('No unread or draft tabs');
 		}
-	}, [sortedSessions, setSessions, setActiveSessionId, showSuccessFlash]);
+	}, [sortedSessions, setSessions, setActiveSessionId, showSuccessFlash, isWizardActiveForTab]);
 
 	// showConfirmation, performDeleteSession — provided by useSessionLifecycle hook (Phase 2H)
 	// deleteSession, deleteWorktreeGroup — provided by useSessionCrud hook
@@ -2924,6 +2928,12 @@ function MaestroConsoleInner() {
 					onPublishGist={() => setGistPublishModalOpen(true)}
 					lastGraphFocusFile={lastGraphFocusFilePath}
 					onOpenLastDocumentGraph={handleOpenLastDocumentGraph}
+					currentGraphFile={
+						activeFileTab && /\.(md|markdown)$/i.test(activeFileTab.name)
+							? activeFileTab.name
+							: undefined
+					}
+					onOpenCurrentFileInGraph={mainPanelProps.onOpenInGraph}
 					lightboxImage={lightboxImage}
 					lightboxImages={lightboxImages}
 					stagedImages={stagedImages}

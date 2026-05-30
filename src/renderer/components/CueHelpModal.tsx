@@ -1247,6 +1247,11 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 									['Right-click on a node', 'Open the node context menu'],
 									['Click a node or edge', 'Open its config panel'],
 									['Lock toggle', 'Disables drag, select, and connect'],
+									['Tidy', 'Align nodes into flow columns, keeping their current order'],
+									[
+										'Arrange',
+										'Lay out into flow columns and reorder within each column to untangle crossing edges',
+									],
 								] as const
 							).map(([action, behavior], i) => (
 								<tr key={i}>

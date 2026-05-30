@@ -5,6 +5,8 @@
  * and the renderer dashboard component that consumes the IPC payload.
  */
 
+import type { DurationPercentiles } from './percentiles';
+
 export type CueStatsTimeRange = 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all';
 
 export interface CueStatsTotals {
@@ -77,6 +79,13 @@ export interface CueStatsAggregation {
 	windowStartMs: number;
 	windowEndMs: number;
 	totals: CueStatsTotals;
+	/**
+	 * Run duration distribution (p50/p75/p90/p95/p99/max) across every completed
+	 * run in the window. Durations come from `completed_at - created_at`;
+	 * in-flight runs (no `completed_at`) are excluded, so `count` may be lower
+	 * than `totals.occurrences`.
+	 */
+	durationPercentiles: DurationPercentiles;
 	byPipeline: CueStatsByGroup[];
 	byAgent: CueStatsByGroup[];
 	bySubscription: CueStatsByGroup[];

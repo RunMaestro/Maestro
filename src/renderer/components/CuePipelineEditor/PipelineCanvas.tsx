@@ -33,7 +33,7 @@ import type {
 	IncomingAgentEdgeInfo,
 } from '../../../shared/cue-pipeline-types';
 import { CUE_COLOR } from '../../../shared/cue-pipeline-types';
-import { Hand, MousePointer2, LayoutGrid } from 'lucide-react';
+import { Hand, MousePointer2, LayoutGrid, Wand2 } from 'lucide-react';
 import { TriggerNode, type TriggerNodeDataProps } from './nodes/TriggerNode';
 import { AgentNode, type AgentNodeDataProps } from './nodes/AgentNode';
 import { CommandNode, type CommandNodeDataProps } from './nodes/CommandNode';
@@ -185,9 +185,13 @@ export interface PipelineCanvasProps {
 	/** True when the canvas is locked for editing (drag/select/connect disabled). */
 	isLocked: boolean;
 	setIsLocked: React.Dispatch<React.SetStateAction<boolean>>;
-	/** Open the auto-arrange confirmation. Button hidden when there's nothing
-	 *  to arrange (no nodes) or while pipelines are still loading. */
-	onAutoArrange: () => void;
+	/** Open the "Tidy" confirmation: align into columns without reshuffling.
+	 *  Buttons are hidden when there's nothing to arrange (no nodes) or while
+	 *  pipelines are still loading. */
+	onTidy: () => void;
+	/** Open the "Arrange" confirmation: align into columns AND reorder within
+	 *  each column to minimize edge crossings. */
+	onArrange: () => void;
 }
 
 export const PipelineCanvas = React.memo(function PipelineCanvas({
@@ -247,7 +251,8 @@ export const PipelineCanvas = React.memo(function PipelineCanvas({
 	setInteractionMode,
 	isLocked,
 	setIsLocked,
-	onAutoArrange,
+	onTidy,
+	onArrange,
 }: PipelineCanvasProps) {
 	// `isLocked` is lifted to the parent (CuePipelineEditor) so the L keyboard
 	// shortcut can toggle it. We still need to own the bridge to ReactFlow's
@@ -273,6 +278,39 @@ export const PipelineCanvas = React.memo(function PipelineCanvas({
 			transition: 'left 200ms ease',
 		}),
 		[theme.colors.bgActivity, theme.colors.border, triggerDrawerOpen]
+	);
+	// Shared base style for the top-right layout buttons (Tidy / Arrange).
+	const layoutButtonStyle = React.useMemo(
+		() => ({
+			display: 'flex',
+			alignItems: 'center',
+			gap: 5,
+			padding: '5px 9px',
+			backgroundColor: `${theme.colors.bgActivity}f5`,
+			color: theme.colors.textDim,
+			border: `1px solid ${theme.colors.border}`,
+			borderRadius: 6,
+			fontSize: 12,
+			fontWeight: 500,
+			cursor: 'pointer',
+			transition: 'color 0.15s, border-color 0.15s',
+		}),
+		[theme.colors.bgActivity, theme.colors.textDim, theme.colors.border]
+	);
+	// Hover handlers shared by the layout buttons: accent on enter, dim on leave.
+	const onLayoutButtonEnter = React.useCallback(
+		(e: React.MouseEvent<HTMLButtonElement>) => {
+			e.currentTarget.style.color = theme.colors.accent;
+			e.currentTarget.style.borderColor = theme.colors.accent;
+		},
+		[theme.colors.accent]
+	);
+	const onLayoutButtonLeave = React.useCallback(
+		(e: React.MouseEvent<HTMLButtonElement>) => {
+			e.currentTarget.style.color = theme.colors.textDim;
+			e.currentTarget.style.borderColor = theme.colors.border;
+		},
+		[theme.colors.textDim, theme.colors.border]
 	);
 	// Bottom-right minimap: shift left past the agent drawer (240px wide)
 	// so the minimap stays visible when the drawer is open. Overrides
@@ -492,14 +530,15 @@ export const PipelineCanvas = React.memo(function PipelineCanvas({
 				})}
 			</div>
 
-			{/* Auto-arrange — top-right corner. Tidies the current layout into an
-			    even grid (group cards in All-Pipelines view, flow columns in a
-			    single pipeline). Shifts left past the agent drawer when it's open.
-			    Hidden when there's nothing to arrange or pipelines are loading. */}
+			{/* Layout buttons — top-right corner. "Tidy" aligns the current layout
+			    into flow columns without reshuffling; "Arrange" also reorders nodes
+			    within each column to minimize crossing edges. In All-Pipelines view
+			    there are no edges between cards to cross, so only "Arrange" shows and
+			    it packs the group cards into a tidy grid. Shifts left past the agent
+			    drawer when it's open. Hidden when there's nothing to arrange or while
+			    pipelines are loading. */}
 			{!isLoading && nodes.length > 0 && (
-				<button
-					onClick={onAutoArrange}
-					title="Auto-arrange layout into a tidy grid"
+				<div
 					style={{
 						position: 'absolute',
 						top: 8,
@@ -507,29 +546,37 @@ export const PipelineCanvas = React.memo(function PipelineCanvas({
 						zIndex: 21,
 						display: 'flex',
 						alignItems: 'center',
-						gap: 5,
-						padding: '5px 9px',
-						backgroundColor: `${theme.colors.bgActivity}f5`,
-						color: theme.colors.textDim,
-						border: `1px solid ${theme.colors.border}`,
-						borderRadius: 6,
-						fontSize: 12,
-						fontWeight: 500,
-						cursor: 'pointer',
-						transition: 'right 200ms ease, color 0.15s, border-color 0.15s',
-					}}
-					onMouseEnter={(e) => {
-						e.currentTarget.style.color = theme.colors.accent;
-						e.currentTarget.style.borderColor = theme.colors.accent;
-					}}
-					onMouseLeave={(e) => {
-						e.currentTarget.style.color = theme.colors.textDim;
-						e.currentTarget.style.borderColor = theme.colors.border;
+						gap: 6,
+						transition: 'right 200ms ease',
 					}}
 				>
-					<LayoutGrid size={14} />
-					Arrange
-				</button>
+					{selectedPipelineId !== null && (
+						<button
+							onClick={onTidy}
+							title="Align nodes into columns, keeping their current order"
+							style={layoutButtonStyle}
+							onMouseEnter={onLayoutButtonEnter}
+							onMouseLeave={onLayoutButtonLeave}
+						>
+							<LayoutGrid size={14} />
+							Tidy
+						</button>
+					)}
+					<button
+						onClick={onArrange}
+						title={
+							selectedPipelineId !== null
+								? 'Align into columns and reorder to minimize crossing edges'
+								: 'Pack pipelines into a tidy grid'
+						}
+						style={layoutButtonStyle}
+						onMouseEnter={onLayoutButtonEnter}
+						onMouseLeave={onLayoutButtonLeave}
+					>
+						<Wand2 size={14} />
+						Arrange
+					</button>
+				</div>
 			)}
 
 			{/* Config panels — suppressed in read-only (All Pipelines) view so

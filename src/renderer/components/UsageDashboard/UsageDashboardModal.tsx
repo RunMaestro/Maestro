@@ -40,6 +40,8 @@ import { DashboardSkeleton } from './ChartSkeletons';
 import { ChartErrorBoundary } from './ChartErrorBoundary';
 import { CueStats } from './CueStats';
 import { KeyboardStats } from './KeyboardStats';
+import { PercentilesCard } from './PercentilesCard';
+import { getAgentDisplayName } from '../../../shared/agentMetadata';
 import type {
 	Theme,
 	Session,
@@ -62,6 +64,7 @@ import { PERFORMANCE_THRESHOLDS } from '../../../shared/performance-metrics';
 const OVERVIEW_SECTIONS = [
 	'year-in-pixels',
 	'summary-cards',
+	'query-percentiles',
 	'agent-comparison',
 	'provider-trends',
 	'source-distribution',
@@ -72,7 +75,12 @@ const OVERVIEW_SECTIONS = [
 const AGENTS_SECTIONS = ['agent-overview-cards'] as const;
 const AGENT_OVERVIEW_SECTIONS = ['session-stats', 'agent-efficiency', 'agent-usage'] as const;
 const ACTIVITY_SECTIONS = ['activity-heatmap', 'weekday-comparison', 'duration-trends'] as const;
-const AUTORUN_SECTIONS = ['autorun-stats', 'tasks-by-hour', 'longest-autoruns'] as const;
+const AUTORUN_SECTIONS = [
+	'autorun-stats',
+	'autorun-task-percentiles',
+	'tasks-by-hour',
+	'longest-autoruns',
+] as const;
 
 type SectionId =
 	| (typeof OVERVIEW_SECTIONS)[number]
@@ -422,6 +430,8 @@ export function UsageDashboardModal({
 		const labels: Record<SectionId, string> = {
 			'year-in-pixels': 'Past Year Activity Strip',
 			'summary-cards': 'Summary Cards',
+			'query-percentiles': 'Query Duration Percentiles',
+			'autorun-task-percentiles': 'Auto Run Task Duration Percentiles',
 			'agent-overview-cards': 'Active Agents Overview',
 			'session-stats': 'Agent Statistics',
 			'agent-efficiency': 'Agent Efficiency Chart',
@@ -873,6 +883,39 @@ export function UsageDashboardModal({
 										</ChartErrorBoundary>
 									</div>
 
+									{/* Query Duration Percentiles - long-tail view an average hides */}
+									<div
+										ref={setSectionRef('query-percentiles')}
+										tabIndex={0}
+										role="region"
+										aria-label={getSectionLabel('query-percentiles')}
+										onKeyDown={(e) => handleSectionKeyDown(e, 'query-percentiles')}
+										className="outline-none rounded-lg transition-shadow dashboard-section-enter"
+										style={{
+											boxShadow:
+												focusedSection === 'query-percentiles'
+													? `0 0 0 2px ${theme.colors.accent}`
+													: 'none',
+											animationDelay: '50ms',
+										}}
+										data-testid="section-query-percentiles"
+									>
+										<ChartErrorBoundary theme={theme} chartName="Query Duration Percentiles">
+											<PercentilesCard
+												theme={theme}
+												title="Query Duration Percentiles"
+												unitLabel="queries"
+												distribution={data.queryDurationPercentiles}
+												breakdown={Object.entries(data.queryDurationPercentilesByAgent).map(
+													([agentType, distribution]) => ({
+														label: getAgentDisplayName(agentType),
+														distribution,
+													})
+												)}
+											/>
+										</ChartErrorBoundary>
+									</div>
+
 									{/* Provider Comparison Chart - Full width bar chart */}
 									<div
 										ref={setSectionRef('agent-comparison')}
@@ -1313,6 +1356,36 @@ export function UsageDashboardModal({
 												timeRange={timeRange}
 												theme={theme}
 												columns={layout.autoRunStatsCols}
+											/>
+										</ChartErrorBoundary>
+									</div>
+
+									{/* Auto Run Task Duration Percentiles - per-task long-tail */}
+									<div
+										ref={setSectionRef('autorun-task-percentiles')}
+										tabIndex={0}
+										role="region"
+										aria-label={getSectionLabel('autorun-task-percentiles')}
+										onKeyDown={(e) => handleSectionKeyDown(e, 'autorun-task-percentiles')}
+										className="outline-none rounded-lg transition-shadow dashboard-section-enter"
+										style={{
+											boxShadow:
+												focusedSection === 'autorun-task-percentiles'
+													? `0 0 0 2px ${theme.colors.accent}`
+													: 'none',
+											animationDelay: '50ms',
+										}}
+										data-testid="section-autorun-task-percentiles"
+									>
+										<ChartErrorBoundary
+											theme={theme}
+											chartName="Auto Run Task Duration Percentiles"
+										>
+											<PercentilesCard
+												theme={theme}
+												title="Task Duration Percentiles"
+												unitLabel="tasks"
+												distribution={data.autoRunTaskDurationPercentiles}
 											/>
 										</ChartErrorBoundary>
 									</div>

@@ -153,6 +153,18 @@ const createSampleData = () => ({
 	totalQueries: 150,
 	totalDuration: 3600000, // 1 hour in ms
 	avgDuration: 24000, // 24 seconds
+	queryDurationPercentiles: { count: 0, min: 0, p50: 0, p75: 0, p90: 0, p95: 0, p99: 0, max: 0 },
+	queryDurationPercentilesByAgent: {},
+	autoRunTaskDurationPercentiles: {
+		count: 0,
+		min: 0,
+		p50: 0,
+		p75: 0,
+		p90: 0,
+		p95: 0,
+		p99: 0,
+		max: 0,
+	},
 	byAgent: {
 		'claude-code': { count: 100, duration: 2400000 },
 		terminal: { count: 50, duration: 1200000 },
@@ -354,6 +366,27 @@ describe('UsageDashboardModal', () => {
 				totalQueries: 0,
 				totalDuration: 0,
 				avgDuration: 0,
+				queryDurationPercentiles: {
+					count: 0,
+					min: 0,
+					p50: 0,
+					p75: 0,
+					p90: 0,
+					p95: 0,
+					p99: 0,
+					max: 0,
+				},
+				queryDurationPercentilesByAgent: {},
+				autoRunTaskDurationPercentiles: {
+					count: 0,
+					min: 0,
+					p50: 0,
+					p75: 0,
+					p90: 0,
+					p95: 0,
+					p99: 0,
+					max: 0,
+				},
 				byAgent: {},
 				bySource: { user: 0, auto: 0 },
 				byDay: [],
@@ -1758,9 +1791,10 @@ describe('UsageDashboardModal', () => {
 			summarySection.focus();
 			fireEvent.keyDown(summarySection, { key: 'ArrowDown' });
 
-			// Should focus agent comparison (next section)
+			// Should focus Query Duration Percentiles (next section, inserted
+			// between summary cards and provider comparison).
 			await waitFor(() => {
-				expect(document.activeElement).toBe(screen.getByTestId('section-agent-comparison'));
+				expect(document.activeElement).toBe(screen.getByTestId('section-query-percentiles'));
 			});
 		});
 
@@ -1771,11 +1805,11 @@ describe('UsageDashboardModal', () => {
 				expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
 			});
 
-			const agentSection = screen.getByTestId('section-agent-comparison');
+			const percentilesSection = screen.getByTestId('section-query-percentiles');
 
-			// Focus agent comparison and press ArrowUp
-			agentSection.focus();
-			fireEvent.keyDown(agentSection, { key: 'ArrowUp' });
+			// Focus Query Duration Percentiles and press ArrowUp
+			percentilesSection.focus();
+			fireEvent.keyDown(percentilesSection, { key: 'ArrowUp' });
 
 			// Should focus summary cards (previous section)
 			await waitFor(() => {
@@ -1975,7 +2009,7 @@ describe('UsageDashboardModal', () => {
 			fireEvent.keyDown(summarySection, { key: 'ArrowDown' });
 
 			await waitFor(() => {
-				expect(document.activeElement).toBe(screen.getByTestId('section-agent-comparison'));
+				expect(document.activeElement).toBe(screen.getByTestId('section-query-percentiles'));
 			});
 
 			// Switch to Agents view by name (its index drifted when "Agent

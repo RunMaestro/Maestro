@@ -152,6 +152,7 @@ type GroupChatData = {
 import type { CueGraphSession, CueRunResult, CueSessionStatus, CueSettings } from '../shared/cue';
 import type { CueLogPayload } from '../shared/cue-log-types';
 import type { CueStatsAggregation, CueStatsTimeRange } from '../shared/cue-stats-types';
+import type { DurationPercentiles } from '../shared/percentiles';
 import type { MaestroCliStatus, MaestroCliInstallResult } from '../shared/maestro-cli';
 import type { GitWorktreeSetupResult, GitWorktreeCheckoutResult } from '../main/preload/git';
 
@@ -2702,6 +2703,9 @@ interface MaestroAPI {
 			totalQueries: number;
 			totalDuration: number;
 			avgDuration: number;
+			queryDurationPercentiles: DurationPercentiles;
+			queryDurationPercentilesByAgent: Record<string, DurationPercentiles>;
+			autoRunTaskDurationPercentiles: DurationPercentiles;
 			byAgent: Record<string, { count: number; duration: number }>;
 			bySource: { user: number; auto: number };
 			byLocation: { local: number; remote: number };

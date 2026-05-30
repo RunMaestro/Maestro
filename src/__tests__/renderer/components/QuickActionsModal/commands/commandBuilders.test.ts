@@ -298,6 +298,49 @@ describe('QuickActions command builders', () => {
 			}).map((a) => a.id)
 		).toContain('maestro-cue');
 
+		// "View in Document Graph" appears only when an active markdown file is open,
+		// and its action focuses the graph on that file then closes the palette.
+		const onOpenCurrentFileInGraph = vi.fn();
+		const graphCommands = buildFeatureCommands({
+			activeSession: session,
+			currentGraphFile: 'NOTES.md',
+			onOpenCurrentFileInGraph,
+			setQuickActionOpen: close,
+			setSuccessFlashNotification: vi.fn(),
+			setAgentSessionsOpen: vi.fn(),
+			setActiveAgentSessionId: vi.fn(),
+			bionifyReadingMode: false,
+			setBionifyReadingMode: vi.fn(),
+			audioFeedbackEnabled: false,
+			setAudioFeedbackEnabled: vi.fn(),
+			idleNotificationEnabled: false,
+			setIdleNotificationEnabled: vi.fn(),
+			shortcuts: {},
+		});
+		const viewInGraph = graphCommands.find((a) => a.id === 'viewInDocumentGraph');
+		expect(viewInGraph).toBeDefined();
+		viewInGraph!.action();
+		expect(onOpenCurrentFileInGraph).toHaveBeenCalled();
+
+		// Hidden when no markdown file is active.
+		expect(
+			buildFeatureCommands({
+				activeSession: session,
+				onOpenCurrentFileInGraph,
+				setQuickActionOpen: close,
+				setSuccessFlashNotification: vi.fn(),
+				setAgentSessionsOpen: vi.fn(),
+				setActiveAgentSessionId: vi.fn(),
+				bionifyReadingMode: false,
+				setBionifyReadingMode: vi.fn(),
+				audioFeedbackEnabled: false,
+				setAudioFeedbackEnabled: vi.fn(),
+				idleNotificationEnabled: false,
+				setIdleNotificationEnabled: vi.fn(),
+				shortcuts: {},
+			}).map((a) => a.id)
+		).not.toContain('viewInDocumentGraph');
+
 		const supportIds = buildSupportCommands({
 			setQuickActionOpen: close,
 			setSettingsModalOpen: vi.fn(),

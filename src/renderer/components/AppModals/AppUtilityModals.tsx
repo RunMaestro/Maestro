@@ -153,6 +153,9 @@ export interface AppUtilityModalsProps {
 	// Document Graph - quick re-open last graph
 	lastGraphFocusFile?: string;
 	onOpenLastDocumentGraph?: () => void;
+	// Document Graph - view the active markdown file
+	currentGraphFile?: string;
+	onOpenCurrentFileInGraph?: () => void;
 
 	// Symphony
 	onOpenSymphony?: () => void;
@@ -385,6 +388,9 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 	// Document Graph - quick re-open last graph
 	lastGraphFocusFile,
 	onOpenLastDocumentGraph,
+	// Document Graph - view the active markdown file
+	currentGraphFile,
+	onOpenCurrentFileInGraph,
 	// Symphony
 	onOpenSymphony,
 	// Director's Notes
@@ -577,6 +583,8 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 					onOpenPlaybookExchange={onOpenMarketplace}
 					lastGraphFocusFile={lastGraphFocusFile}
 					onOpenLastDocumentGraph={onOpenLastDocumentGraph}
+					currentGraphFile={currentGraphFile}
+					onOpenCurrentFileInGraph={onOpenCurrentFileInGraph}
 					onOpenSymphony={onOpenSymphony}
 					onOpenDirectorNotes={onOpenDirectorNotes}
 					onOpenMaestroCue={onOpenMaestroCue}

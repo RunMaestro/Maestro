@@ -3950,6 +3950,57 @@ describe('tabHelpers', () => {
 			expect(result.jumped).toBe(true);
 			expect(result.targetSessionId).toBe('c');
 		});
+
+		it('treats a tab with an active wizard as actionable and jumps to it', () => {
+			const sessions = [
+				createMockSession({
+					id: 'a',
+					aiTabs: [createMockTab({ id: 'tab-a', hasUnread: false })],
+					activeTabId: 'tab-a',
+				}),
+				createMockSession({
+					id: 'b',
+					aiTabs: [createMockTab({ id: 'tab-b', hasUnread: false })],
+					activeTabId: 'tab-b',
+				}),
+			];
+			const isWizardActive = (tabId: string) => tabId === 'tab-b';
+			const result = findNextUnreadSession(sessions, 'a', isWizardActive);
+			expect(result.jumped).toBe(true);
+			expect(result.targetSessionId).toBe('b');
+		});
+
+		it('jumps within the current session to a non-active wizard tab', () => {
+			const sessions = [
+				createMockSession({
+					id: 'a',
+					aiTabs: [
+						createMockTab({ id: 'tab-a1', hasUnread: false }),
+						createMockTab({ id: 'tab-a2', hasUnread: false }),
+					],
+					activeTabId: 'tab-a1',
+				}),
+			];
+			const isWizardActive = (tabId: string) => tabId === 'tab-a2';
+			const result = findNextUnreadSession(sessions, 'a', isWizardActive);
+			expect(result.jumped).toBe(true);
+			expect(result.targetSessionId).toBe('a');
+			expect(result.targetTabId).toBe('tab-a2');
+		});
+
+		it('does not jump when the only wizard tab is the active one', () => {
+			const sessions = [
+				createMockSession({
+					id: 'a',
+					aiTabs: [createMockTab({ id: 'tab-a', hasUnread: false })],
+					activeTabId: 'tab-a',
+				}),
+			];
+			const isWizardActive = (tabId: string) => tabId === 'tab-a';
+			const result = findNextUnreadSession(sessions, 'a', isWizardActive);
+			expect(result.jumped).toBe(false);
+			expect(result.clearedCurrent).toBe(false);
+		});
 	});
 
 	describe('browser tabs', () => {

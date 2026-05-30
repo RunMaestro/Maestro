@@ -267,6 +267,9 @@ export interface AppModalsProps {
 	// Document Graph - quick re-open last graph
 	lastGraphFocusFile?: string;
 	onOpenLastDocumentGraph?: () => void;
+	// Document Graph - view the active markdown file
+	currentGraphFile?: string;
+	onOpenCurrentFileInGraph?: () => void;
 	lightboxImage: string | null;
 	lightboxImages: string[];
 	stagedImages: string[];
@@ -691,6 +694,9 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		// Document Graph - quick re-open last graph
 		lastGraphFocusFile,
 		onOpenLastDocumentGraph,
+		// Document Graph - view the active markdown file
+		currentGraphFile,
+		onOpenCurrentFileInGraph,
 		lightboxImage,
 		lightboxImages,
 		stagedImages,
@@ -1034,6 +1040,8 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				onPublishGist={onPublishGist}
 				lastGraphFocusFile={lastGraphFocusFile}
 				onOpenLastDocumentGraph={onOpenLastDocumentGraph}
+				currentGraphFile={currentGraphFile}
+				onOpenCurrentFileInGraph={onOpenCurrentFileInGraph}
 				onOpenSymphony={onOpenSymphony}
 				onOpenDirectorNotes={onOpenDirectorNotes}
 				onOpenMaestroCue={onOpenMaestroCue}

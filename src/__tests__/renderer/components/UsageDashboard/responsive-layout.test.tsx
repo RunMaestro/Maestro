@@ -206,6 +206,18 @@ const createSampleData = () => ({
 	totalQueries: 150,
 	totalDuration: 3600000,
 	avgDuration: 24000,
+	queryDurationPercentiles: { count: 0, min: 0, p50: 0, p75: 0, p90: 0, p95: 0, p99: 0, max: 0 },
+	queryDurationPercentilesByAgent: {},
+	autoRunTaskDurationPercentiles: {
+		count: 0,
+		min: 0,
+		p50: 0,
+		p75: 0,
+		p90: 0,
+		p95: 0,
+		p99: 0,
+		max: 0,
+	},
 	byAgent: {
 		'claude-code': { count: 100, duration: 2400000 },
 		terminal: { count: 50, duration: 1200000 },

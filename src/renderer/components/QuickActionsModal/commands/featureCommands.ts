@@ -10,6 +10,8 @@ interface BuildFeatureCommandsArgs {
 	isFilePreviewOpen?: boolean;
 	ghCliAvailable?: boolean;
 	lastGraphFocusFile?: string;
+	/** Name of the active markdown file, set only when one is open in the preview. */
+	currentGraphFile?: string;
 	hasActiveSessionCapability?: (
 		capability:
 			| 'supportsSessionStorage'
@@ -34,6 +36,7 @@ interface BuildFeatureCommandsArgs {
 	onOpenMaestroCue?: () => void;
 	onConfigureCue?: (session: Session) => void;
 	onOpenLastDocumentGraph?: () => void;
+	onOpenCurrentFileInGraph?: () => void;
 	onPublishGist?: () => void;
 	bionifyReadingMode: boolean;
 	setBionifyReadingMode: (enabled: boolean) => void;
@@ -72,6 +75,7 @@ export function buildFeatureCommands({
 	isFilePreviewOpen,
 	ghCliAvailable,
 	lastGraphFocusFile,
+	currentGraphFile,
 	hasActiveSessionCapability,
 	setQuickActionOpen,
 	setSuccessFlashNotification,
@@ -90,6 +94,7 @@ export function buildFeatureCommands({
 	onOpenMaestroCue,
 	onConfigureCue,
 	onOpenLastDocumentGraph,
+	onOpenCurrentFileInGraph,
 	onPublishGist,
 	bionifyReadingMode,
 	setBionifyReadingMode,
@@ -304,6 +309,23 @@ export function buildFeatureCommands({
 			subtext: 'Open YAML editor for event-driven automation',
 			action: () => {
 				onConfigureCue(activeSession);
+				setQuickActionOpen(false);
+			},
+		});
+	}
+
+	if (currentGraphFile && onOpenCurrentFileInGraph) {
+		commands.push({
+			id: 'viewInDocumentGraph',
+			label: 'View in Document Graph',
+			subtext: `Focus the graph on ${currentGraphFile}`,
+			shortcut: {
+				id: 'viewInDocumentGraph',
+				label: 'View in Document Graph',
+				keys: ['Meta', 'Shift', 'g'],
+			},
+			action: () => {
+				onOpenCurrentFileInGraph();
 				setQuickActionOpen(false);
 			},
 		});

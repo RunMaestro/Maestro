@@ -1,26 +1,33 @@
 /**
- * pipelineAutoArrange — pure layout helpers for the "Auto-arrange" button.
+ * pipelineAutoArrange — pure layout helpers for the canvas layout buttons.
  *
- * Two layouts, one button (the editor picks based on the active view):
+ * Single-pipeline view exposes two buttons that differ only in how they order
+ * nodes WITHIN each flow-depth column:
  *
- *  1. arrangePipelineNodes(pipeline)
- *     Single-pipeline view. Lays a pipeline's nodes out left→right in columns
- *     by data-flow depth (rank = longest path from a root), stacking nodes
- *     within a column. Columns are centered on a shared vertical midline so
- *     edges read cleanly. A pipeline with no edges (a bag of disconnected
- *     nodes) is packed into a balanced grid instead of a single tall column.
+ *  1. arrangePipelineNodes(pipeline) — "Tidy"
+ *     Lays nodes out left→right in columns by data-flow depth (rank = longest
+ *     path from a root), stacking nodes within a column. Within a column nodes
+ *     keep their CURRENT top-to-bottom order — it aligns the existing layout
+ *     onto an even grid without reshuffling. Edge crossings are left as-is.
  *
- *  2. arrangePipelineGroups(pipelines, currentOffsets)
+ *  2. untanglePipelineNodes(pipeline) — "Arrange"
+ *     Same column assignment and centering, but reorders nodes within each
+ *     column to MINIMIZE edge crossings (the Sugiyama ordering phase:
+ *     barycenter sweeps + adjacent-swap transpose refinement). Seeded by the
+ *     current vertical order so, where reordering isn't needed to remove a
+ *     crossing, the user's arrangement is preserved.
+ *
+ *  3. arrangePipelineGroups(pipelines, currentOffsets)
  *     All-Pipelines view. Packs each pipeline's group card into a balanced
  *     grid by returning a `viewOffset` per pipeline. Internal node positions
- *     are left untouched — only the cards move.
+ *     are left untouched — only the cards move. There are no edges between
+ *     cards to cross, so Tidy and Arrange both route here.
  *
- * Ordering invariant (the "just align them up, don't reshuffle" requirement):
- * neither layout invents a new ordering from the graph. Within a rank, nodes
- * keep their CURRENT top-to-bottom order; group cards keep their CURRENT
- * reading order (top-to-bottom, then left-to-right). We only snap that
- * existing order onto an even grid, so pressing the button again after the
- * user nudges things tidies the alignment without scrambling placement.
+ * Both single-pipeline layouts center each column on a shared vertical midline
+ * so edges read cleanly, and a pipeline with no edges (a bag of disconnected
+ * nodes) is packed into a balanced grid instead of a single tall column.
+ * Group cards keep their CURRENT reading order (top-to-bottom, then
+ * left-to-right) so packing tidies without scrambling placement.
  */
 
 import type { CuePipeline, PipelineNode } from '../../../../shared/cue-pipeline-types';
@@ -93,11 +100,150 @@ function gridArrangeNodes(nodes: PipelineNode[]): PipelineNode[] {
 }
 
 /**
- * Lay out one pipeline's nodes. Returns a NEW nodes array (same nodes, new
- * positions); the input is not mutated. Order within a column follows current
- * vertical position so the user's arrangement is tidied, not reshuffled.
+ * Reorder nodes within each rank column to minimize edge crossings. This is the
+ * Sugiyama ordering phase: alternate barycenter sweeps (order each column by the
+ * average vertical position of its neighbors in the adjacent column) with a
+ * greedy adjacent-swap "transpose" pass that swaps neighbors whenever doing so
+ * lowers the total crossing count, keeping the best ordering seen.
+ *
+ * `byRank` is mutated in place (each column array is reordered). The seed order
+ * is the current vertical position, so where reordering isn't needed to remove a
+ * crossing the user's existing arrangement is preserved.
+ *
+ * Crossings are compared by centered rank rather than raw row index: columns
+ * hold different node counts and are each centered on y = 0, so row 0 is the TOP
+ * of a tall column but the CENTER of a single-node column. Comparing centered
+ * ranks aligns nodes by their actual on-screen vertical position.
  */
-export function arrangePipelineNodes(pipeline: CuePipeline): PipelineNode[] {
+function minimizeCrossingsWithinColumns(
+	byRank: Map<number, PipelineNode[]>,
+	edges: CuePipeline['edges']
+): void {
+	const columnIndices = Array.from(byRank.keys()).sort((a, b) => a - b);
+	// Seed each column by current vertical position (tidy-friendly tiebreak).
+	for (const col of columnIndices) byRank.get(col)?.sort(byCurrentPosition);
+
+	const column = new Map<string, number>();
+	for (const col of columnIndices) {
+		for (const node of byRank.get(col) ?? []) column.set(node.id, col);
+	}
+
+	// adjacency: source → targets; reverse: target → sources. Only edges whose
+	// endpoints are both placed participate.
+	const adjacency = new Map<string, string[]>();
+	const reverse = new Map<string, string[]>();
+	for (const id of column.keys()) {
+		adjacency.set(id, []);
+		reverse.set(id, []);
+	}
+	for (const edge of edges) {
+		if (!column.has(edge.source) || !column.has(edge.target)) continue;
+		adjacency.get(edge.source)?.push(edge.target);
+		reverse.get(edge.target)?.push(edge.source);
+	}
+
+	const rowOf = new Map<string, number>();
+	const computeRows = () => {
+		for (const col of columnIndices) {
+			(byRank.get(col) ?? []).forEach((node, idx) => rowOf.set(node.id, idx));
+		}
+	};
+	computeRows();
+
+	const centeredRank = (id: string): number => {
+		const col = column.get(id) ?? 0;
+		const size = (byRank.get(col) ?? []).length;
+		return (rowOf.get(id) ?? 0) - (size - 1) / 2;
+	};
+
+	// Count crossings between edges that share the same column pair. Two such
+	// edges cross iff their endpoints are in opposite vertical order.
+	const countCrossings = (): number => {
+		let crossings = 0;
+		for (let i = 0; i < edges.length; i++) {
+			const a = edges[i];
+			if (!column.has(a.source) || !column.has(a.target)) continue;
+			for (let j = i + 1; j < edges.length; j++) {
+				const b = edges[j];
+				if (!column.has(b.source) || !column.has(b.target)) continue;
+				if (column.get(a.source) !== column.get(b.source)) continue;
+				if (column.get(a.target) !== column.get(b.target)) continue;
+				const aSrc = rowOf.get(a.source) ?? 0;
+				const aTgt = rowOf.get(a.target) ?? 0;
+				const bSrc = rowOf.get(b.source) ?? 0;
+				const bTgt = rowOf.get(b.target) ?? 0;
+				if ((aSrc - bSrc) * (aTgt - bTgt) < 0) crossings++;
+			}
+		}
+		return crossings;
+	};
+
+	const barycenterSweep = (goingForward: boolean) => {
+		const cols = goingForward ? columnIndices : [...columnIndices].reverse();
+		for (const col of cols) {
+			const ids = byRank.get(col) ?? [];
+			const neighborsFn = goingForward ? reverse : adjacency;
+			const bary = new Map<string, number>();
+			for (const node of ids) {
+				const neighbors = neighborsFn.get(node.id) ?? [];
+				bary.set(
+					node.id,
+					neighbors.length === 0
+						? centeredRank(node.id)
+						: neighbors.reduce((sum, n) => sum + centeredRank(n), 0) / neighbors.length
+				);
+			}
+			ids.sort((a, b) => (bary.get(a.id) ?? 0) - (bary.get(b.id) ?? 0));
+			computeRows();
+		}
+	};
+
+	const transpose = () => {
+		let improved = true;
+		let guard = 0;
+		while (improved && guard++ < 50) {
+			improved = false;
+			for (const col of columnIndices) {
+				const ids = byRank.get(col) ?? [];
+				for (let i = 0; i < ids.length - 1; i++) {
+					const before = countCrossings();
+					[ids[i], ids[i + 1]] = [ids[i + 1], ids[i]];
+					computeRows();
+					if (countCrossings() < before) {
+						improved = true;
+					} else {
+						[ids[i], ids[i + 1]] = [ids[i + 1], ids[i]];
+						computeRows();
+					}
+				}
+			}
+		}
+	};
+
+	const snapshot = (): Map<number, PipelineNode[]> =>
+		new Map(columnIndices.map((col) => [col, [...(byRank.get(col) ?? [])]]));
+	let bestOrder = snapshot();
+	let bestCrossings = countCrossings();
+	const PASSES = 12;
+	for (let pass = 0; pass < PASSES; pass++) {
+		barycenterSweep(pass % 2 === 0);
+		transpose();
+		const crossings = countCrossings();
+		if (crossings < bestCrossings) {
+			bestCrossings = crossings;
+			bestOrder = snapshot();
+		}
+	}
+	for (const [col, ids] of bestOrder) byRank.set(col, ids);
+}
+
+/**
+ * Shared column layout for both single-pipeline buttons. Assigns flow-depth
+ * columns, orders nodes within each column (current-order for Tidy, crossing
+ * minimization for Arrange via `untangle`), then centers each column on y = 0.
+ * Returns a NEW nodes array; the input is not mutated.
+ */
+function arrangeByColumns(pipeline: CuePipeline, untangle: boolean): PipelineNode[] {
 	if (pipeline.nodes.length <= 1) return pipeline.nodes;
 
 	const ranks = computeNodeRanks(pipeline);
@@ -115,9 +261,15 @@ export function arrangePipelineNodes(pipeline: CuePipeline): PipelineNode[] {
 		else byRank.set(r, [node]);
 	}
 
+	if (untangle) {
+		minimizeCrossingsWithinColumns(byRank, pipeline.edges);
+	} else {
+		// Tidy: keep the current top-to-bottom order within each column.
+		for (const group of byRank.values()) group.sort(byCurrentPosition);
+	}
+
 	const arranged: PipelineNode[] = [];
 	for (const [r, group] of byRank) {
-		group.sort(byCurrentPosition);
 		// Center each column on y = 0 so the pipeline reads as a balanced fan.
 		const startY = -((group.length - 1) * NODE_ROW_SPACING) / 2;
 		group.forEach((node, i) => {
@@ -128,6 +280,23 @@ export function arrangePipelineNodes(pipeline: CuePipeline): PipelineNode[] {
 		});
 	}
 	return arranged;
+}
+
+/**
+ * "Tidy" layout. Aligns the current arrangement into flow-depth columns without
+ * reshuffling node order within a column, so edge crossings are left intact.
+ */
+export function arrangePipelineNodes(pipeline: CuePipeline): PipelineNode[] {
+	return arrangeByColumns(pipeline, false);
+}
+
+/**
+ * "Arrange" layout. Same columns as Tidy, but reorders nodes within each column
+ * to minimize edge crossings (seeded by current order so it untangles rather
+ * than scrambles).
+ */
+export function untanglePipelineNodes(pipeline: CuePipeline): PipelineNode[] {
+	return arrangeByColumns(pipeline, true);
 }
 
 interface GroupInfo {

@@ -2434,15 +2434,21 @@ export interface GoToNextUnreadResult {
  * tab in the current session (tab-level jump, no session change); otherwise
  * searches forward through other sessions in the ordered list, wrapping around.
  *
+ * A tab with an active inline wizard counts as actionable: an unfinished wizard
+ * is effectively a draft (it's meant to be completed into an Auto Run doc), so
+ * the navigation should stop on it. Pass `isWizardActive` to opt into that.
+ *
  * Does NOT mutate state — the caller applies the result via setSessions/setActiveSessionId.
  */
 export function findNextUnreadSession(
 	orderedSessions: Session[],
-	activeSessionId: string
+	activeSessionId: string,
+	isWizardActive?: (tabId: string) => boolean
 ): GoToNextUnreadResult {
 	const currentIndex = orderedSessions.findIndex((s) => s.id === activeSessionId);
 	const currentSession = orderedSessions.find((s) => s.id === activeSessionId);
-	const isActionable = (tab: AITab) => tab.hasUnread || hasDraft(tab);
+	const isActionable = (tab: AITab) =>
+		tab.hasUnread || hasDraft(tab) || (isWizardActive?.(tab.id) ?? false);
 
 	// 1) Tab-level jump within the current session: if there's an unread/draft
 	//    tab here that isn't already active, switch to it without changing
