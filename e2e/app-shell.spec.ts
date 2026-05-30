@@ -3243,6 +3243,36 @@ test.describe('App shell seeded workbench', () => {
 		await expect(window.getByText('Executing command...')).toBeHidden();
 	});
 
+	test('preserves terminal drafts while blocking duplicate runs during an active command', async () => {
+		await stubTerminalRunCommand(electronApp);
+		await stubProcessInterrupt(electronApp);
+		const terminalInput = await openSeededTerminalAgent(window);
+		const inputArea = window.locator('[data-tour="input-area"]');
+
+		await terminalInput.fill('run terminal interrupt hold sentinel');
+		await inputArea.getByTitle('Run command (Enter)').click();
+		await expect(window.getByText('terminal interrupt hold sentinel started')).toBeVisible();
+		await expect(inputArea.getByTitle('Command already running')).toBeDisabled();
+
+		await terminalInput.fill('echo terminal live stdout sentinel');
+		await terminalInput.press('Enter');
+		await window.waitForTimeout(300);
+		await expect(terminalInput).toHaveValue('echo terminal live stdout sentinel');
+		await expect(
+			(await getStubbedTerminalRunCommandCalls(electronApp)).map((call) => call.command)
+		).toEqual(['run terminal interrupt hold sentinel']);
+
+		await window.getByRole('button', { name: 'Stop' }).click();
+		await expect(window.getByText('terminal interrupt hold sentinel stopped 130')).toBeVisible();
+		await expect(inputArea.getByTitle('Run command (Enter)')).toBeEnabled();
+
+		await inputArea.getByTitle('Run command (Enter)').click();
+		await expect(window.getByText('terminal live stdout sentinel')).toBeVisible();
+		await expect(
+			(await getStubbedTerminalRunCommandCalls(electronApp)).map((call) => call.command)
+		).toEqual(['run terminal interrupt hold sentinel', 'echo terminal live stdout sentinel']);
+	});
+
 	test('routes command terminal PTY resize through the preload IPC bridge', async () => {
 		await stubProcessResize(electronApp);
 		await openSeededTerminalAgent(window);

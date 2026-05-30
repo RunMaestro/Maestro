@@ -153,6 +153,14 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				return;
 			}
 
+			if (
+				activeSession.inputMode === 'terminal' &&
+				activeSession.state === 'busy' &&
+				activeSession.busySource === 'terminal'
+			) {
+				return;
+			}
+
 			// Handle slash commands
 			// Note: slash commands are queued like regular messages when agent is busy
 			if (effectiveInputValue.trim().startsWith('/')) {

@@ -906,6 +906,9 @@ All tasks in this document are complete.
 				await startStubbedBatchRun(launched.window, launched.electronApp, {
 					exitDelayMs: 1_500,
 				});
+				await expect(
+					launched.window.getByTitle('Editing disabled while Auto Run active')
+				).toBeDisabled();
 				await getAutoRunImageInput(launched.window).setInputFiles(uploadPath);
 
 				await expect

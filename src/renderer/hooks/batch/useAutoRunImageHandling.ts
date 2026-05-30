@@ -145,6 +145,8 @@ export function useAutoRunImageHandling({
 
 	// File input ref
 	const fileInputRef = useRef<HTMLInputElement>(null);
+	const isLockedRef = useRef(isLocked);
+	isLockedRef.current = isLocked;
 
 	// Load existing images for the current document from the Auto Run folder
 	useEffect(() => {
@@ -209,7 +211,7 @@ export function useAutoRunImageHandling({
 	// Handle paste (images and text with whitespace trimming)
 	const handlePaste = useCallback(
 		async (e: React.ClipboardEvent) => {
-			if (isLocked) {
+			if (isLockedRef.current) {
 				return;
 			}
 
@@ -337,7 +339,6 @@ export function useAutoRunImageHandling({
 		},
 		[
 			localContent,
-			isLocked,
 			handleContentChange,
 			folderPath,
 			selectedFile,
@@ -353,10 +354,11 @@ export function useAutoRunImageHandling({
 	const handleFileSelect = useCallback(
 		async (e: React.ChangeEvent<HTMLInputElement>) => {
 			const file = e.target.files?.[0];
-			if (isLocked || !file || !folderPath || !selectedFile) return;
+			if (isLockedRef.current || !file || !folderPath || !selectedFile) return;
 
 			const reader = new FileReader();
 			reader.onload = async (event) => {
+				if (isLockedRef.current) return;
 				const base64Data = event.target?.result as string;
 				if (!base64Data) return;
 

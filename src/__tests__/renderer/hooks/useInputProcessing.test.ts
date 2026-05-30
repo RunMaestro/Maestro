@@ -1108,6 +1108,28 @@ describe('useInputProcessing', () => {
 			expect(mockSetSessions).toHaveBeenCalled();
 		});
 
+		it('blocks duplicate terminal dispatches while a command is running', async () => {
+			const session = createMockSession({
+				inputMode: 'terminal',
+				state: 'busy',
+				busySource: 'terminal',
+			});
+			const deps = createDeps({
+				activeSession: session,
+				inputValue: 'pwd',
+				isAiMode: false,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(window.maestro.process.runCommand).not.toHaveBeenCalled();
+			expect(mockSetSessions).not.toHaveBeenCalled();
+			expect(mockSyncTerminalInputToSession).not.toHaveBeenCalled();
+		});
+
 		it('clears terminal logs locally for clear without running a shell command', async () => {
 			const session = createMockSession({
 				inputMode: 'terminal',

@@ -301,14 +301,13 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 
 	// Filter slash commands based on input and current mode
 	const isTerminalMode = session.inputMode === 'terminal';
+	const isTerminalCommandRunning =
+		isTerminalMode && session.state === 'busy' && session.busySource === 'terminal';
 
 	// thinkingItems is now passed directly from App.tsx (pre-filtered) for better performance
 	const terminalThinkingItems = useMemo<ThinkingItem[]>(
-		() =>
-			isTerminalMode && session.state === 'busy' && session.busySource === 'terminal'
-				? [{ session, tab: null }]
-				: [],
-		[isTerminalMode, session]
+		() => (isTerminalCommandRunning ? [{ session, tab: null }] : []),
+		[isTerminalCommandRunning, session]
 	);
 	const statusThinkingItems = isTerminalMode ? terminalThinkingItems : thinkingItems;
 	const showThinkingStatusPill =
@@ -1172,12 +1171,23 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 					<button
 						type="button"
 						onClick={() => processInput()}
-						className="p-2 rounded-md shadow-sm transition-all hover:opacity-90 cursor-pointer"
+						disabled={isTerminalCommandRunning}
+						className={`p-2 rounded-md shadow-sm transition-all ${
+							isTerminalCommandRunning
+								? 'opacity-50 cursor-not-allowed'
+								: 'hover:opacity-90 cursor-pointer'
+						}`}
 						style={{
 							backgroundColor: theme.colors.accent,
 							color: theme.colors.accentForeground,
 						}}
-						title={session.inputMode === 'terminal' ? 'Run command (Enter)' : 'Send message'}
+						title={
+							isTerminalCommandRunning
+								? 'Command already running'
+								: session.inputMode === 'terminal'
+									? 'Run command (Enter)'
+									: 'Send message'
+						}
 					>
 						<ArrowUp className="w-4 h-4" />
 					</button>
