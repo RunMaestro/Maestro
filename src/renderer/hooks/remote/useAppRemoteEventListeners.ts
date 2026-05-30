@@ -1077,6 +1077,17 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			}
 			return filtered;
 		});
+
+		// Flush the removal to disk synchronously: useDebouncedPersistence
+		// runs on a 2s timer, so a CLI consumer that hits the disk-backed
+		// session store between this event and the next debounce window
+		// would otherwise read the pre-removal state. setMany is incremental
+		// and idempotent with the subsequent debounced flush.
+		try {
+			await window.maestro.sessions.setMany([], [sessionId]);
+		} catch (persistErr) {
+			logger.error('[Remote] Failed to persist session removal:', undefined, persistErr);
+		}
 	});
 
 	// Handle remote update session cwd from CLI/web. Mutates the UI-facing
@@ -1110,7 +1121,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 	});
 
 	// Handle remote rename session from web interface
-	useEventListener('maestro:remoteRenameSession', (e: Event) => {
+	useEventListener('maestro:remoteRenameSession', async (e: Event) => {
 		const { sessionId, newName, responseChannel } = (e as CustomEvent).detail;
 		const session = sessionsRef.current.find((s) => s.id === sessionId);
 		if (!session) {
@@ -1140,6 +1151,16 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			}
 			return updated;
 		});
+
+		// Flush the rename to disk before signaling success: the renderer's
+		// 2s debounced persistence path would otherwise let a follow-up CLI
+		// read see the stale name. setMany merges incrementally so the next
+		// debounced flush is idempotent.
+		try {
+			await window.maestro.sessions.setMany([{ ...session, name: newName } as any], []);
+		} catch (persistErr) {
+			logger.error('[Remote] Failed to persist session rename:', undefined, persistErr);
+		}
 
 		window.maestro.process.sendRemoteRenameSessionResponse(responseChannel, true);
 	});
