@@ -2416,6 +2416,45 @@ test.describe('App shell seeded workbench', () => {
 		await expect(historyPanel.getByText('Completed Auto Run setup checklist')).toBeVisible();
 	});
 
+	test('opens a filtered History result from keyboard search navigation', async () => {
+		await helpers.openRightPanelTab(window, 'History');
+		const historyPanel = window.locator('[data-tour="history-panel"]');
+
+		await historyPanel.locator('[tabindex="0"]').focus();
+		await window.keyboard.press('Control+f');
+		const historyFilter = historyPanel.getByPlaceholder('Filter history...');
+		await historyFilter.fill('Auto Run');
+
+		await historyFilter.press('ArrowDown');
+		await window.keyboard.press('Enter');
+
+		await expect(window.getByText(/Detailed Auto Run transcript/)).toBeVisible();
+		await expect(window.getByRole('button', { name: 'Prev' })).toBeVisible();
+		await expect(window.getByRole('button', { name: 'Next' })).toBeVisible();
+	});
+
+	test('navigates History detail entries with keyboard arrows', async () => {
+		await helpers.openRightPanelTab(window, 'History');
+		const historyPanel = window.locator('[data-tour="history-panel"]');
+		await historyPanel.getByText('Completed Auto Run setup checklist').first().click();
+
+		await expect(window.getByText(/Detailed Auto Run transcript/)).toBeVisible();
+		await window.keyboard.press('ArrowLeft');
+		await expect(window.getByText(/Manual detail includes NOTES.md/)).toBeVisible();
+
+		await window.keyboard.press('ArrowRight');
+		await expect(window.getByText(/Detailed Auto Run transcript/)).toBeVisible();
+	});
+
+	test('shows History detail session controls for resumable entries', async () => {
+		await helpers.openRightPanelTab(window, 'History');
+		const historyPanel = window.locator('[data-tour="history-panel"]');
+		await historyPanel.getByText('Manual note captured for project review').first().click();
+
+		await expect(window.getByTitle('Copy session ID: codex-history-user')).toBeVisible();
+		await expect(window.getByTitle('Resume session codex-history-user')).toBeVisible();
+	});
+
 	test('opens History detail and toggles validation state', async () => {
 		await helpers.openRightPanelTab(window, 'History');
 		const historyPanel = window.locator('[data-tour="history-panel"]');
