@@ -6213,6 +6213,30 @@ test.describe('App shell seeded workbench', () => {
 		await closeDocumentGraph(window);
 	});
 
+	test('searches Document Graph external link nodes when they are visible', async () => {
+		const readmePath = path.join(seededWorkbench.sessions[0].fullPath, 'README.md');
+
+		fs.appendFileSync(
+			readmePath,
+			'\n[Example Graph Link](https://example.com/graph-target)\n',
+			'utf-8'
+		);
+		setFutureMtime(readmePath);
+
+		const graphDialog = await openDocumentGraphFromPreview(window);
+		const searchInput = graphDialog.getByLabel('Search documents in graph');
+
+		await graphDialog.getByTitle('Show external links').click();
+		await expect(graphDialog.getByText(/2 documents, 1 external domain/)).toBeVisible();
+
+		await searchInput.fill('example.com');
+		await expect(graphDialog.getByText('1 of 3 matching')).toBeVisible();
+		await graphDialog.getByLabel('Clear search').click();
+		await expect(graphDialog.getByText(/2 documents, 1 external domain/)).toBeVisible();
+
+		await closeDocumentGraph(window);
+	});
+
 	test('adjusts Document Graph preview character limit from the toolbar', async () => {
 		const graphDialog = await openDocumentGraphFromPreview(window);
 
@@ -6229,6 +6253,50 @@ test.describe('App shell seeded workbench', () => {
 		await closeDocumentGraph(window);
 	});
 
+	test('refreshes Document Graph after a markdown document is added', async () => {
+		const graphDialog = await openDocumentGraphFromPreview(window);
+		const refreshPath = path.join(seededWorkbench.sessions[0].fullPath, 'GRAPH-REFRESH.md');
+
+		fs.writeFileSync(
+			refreshPath,
+			`# Graph Refresh Surface
+
+Refresh-added document with a link back to [[README]].
+`,
+			'utf-8'
+		);
+		setFutureMtime(refreshPath);
+
+		await graphDialog.getByTitle('Refresh graph').click();
+		await expect(graphDialog.getByText(/3 documents/)).toBeVisible({ timeout: 15000 });
+
+		await closeDocumentGraph(window);
+	});
+
+	test('resets Document Graph node positions after a drag', async () => {
+		const graphDialog = await openDocumentGraphFromPreview(window);
+		const canvas = graphDialog.locator('canvas');
+		const box = await canvas.boundingBox();
+
+		if (!box) {
+			throw new Error('Document Graph canvas is not visible');
+		}
+
+		await window.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+		await window.mouse.down();
+		await window.mouse.move(box.x + box.width / 2 + 80, box.y + box.height / 2 + 40);
+		await window.mouse.up();
+
+		const resetLayoutButton = graphDialog.getByTitle(
+			'Reset all node positions to algorithmic layout'
+		);
+		await expect(resetLayoutButton).toBeVisible();
+		await resetLayoutButton.click();
+		await expect(resetLayoutButton).toBeHidden();
+
+		await closeDocumentGraph(window);
+	});
+
 	test('closes the Document Graph help panel from its header control', async () => {
 		const graphDialog = await openDocumentGraphFromPreview(window);
 
@@ -6241,6 +6309,20 @@ test.describe('App shell seeded workbench', () => {
 		await expect(helpPanel).toBeHidden();
 
 		await closeDocumentGraph(window);
+	});
+
+	test('opens a Document Graph preview document in the main file preview', async () => {
+		const graphDialog = await openDocumentGraphFromPreview(window);
+
+		await focusDocumentGraphMindMap(graphDialog);
+		await window.keyboard.press('Enter');
+		await expect(graphDialog.getByText('File Preview Surface')).toBeVisible();
+		await graphDialog.getByRole('link', { name: 'NOTES' }).click();
+		await expect(graphDialog.getByText('Notes Preview Surface')).toBeVisible();
+
+		await graphDialog.getByTitle('Open in file preview').click();
+		await expect(graphDialog).toBeHidden();
+		await expect(window.getByRole('heading', { name: 'Notes Preview Surface' })).toBeVisible();
 	});
 
 	test('cancels Document Graph Escape close confirmation', async () => {
