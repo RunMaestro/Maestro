@@ -6105,6 +6105,138 @@ test.describe('App shell seeded workbench', () => {
 			.toBe(true);
 	});
 
+	test('persists General Settings profile shell and command paths', async () => {
+		const settingsDialog = await openSettingsTab(window, 'General', 'Conductor Profile');
+
+		await settingsDialog
+			.getByPlaceholder(/senior developer working on a React\/TypeScript project/)
+			.fill('E2E conductor profile prefers terse deterministic test coverage.');
+		await settingsDialog.getByRole('button', { name: 'Shell Configuration' }).click();
+		await settingsDialog.getByPlaceholder('/path/to/shell').fill('/usr/local/bin/fish-e2e');
+		await settingsDialog.getByPlaceholder('--flag value').fill('--login --e2e');
+
+		await scrollSettingsToText(settingsDialog, 'GitHub CLI (gh) Path');
+		await settingsDialog.getByPlaceholder('/opt/homebrew/bin/gh').fill('/usr/local/bin/gh-e2e');
+
+		await expect
+			.poll(async () => {
+				return await window.evaluate(async () => ({
+					conductorProfile: await window.maestro.settings.get('conductorProfile'),
+					customShellPath: await window.maestro.settings.get('customShellPath'),
+					shellArgs: await window.maestro.settings.get('shellArgs'),
+					ghPath: await window.maestro.settings.get('ghPath'),
+				}));
+			})
+			.toEqual({
+				conductorProfile: 'E2E conductor profile prefers terse deterministic test coverage.',
+				customShellPath: '/usr/local/bin/fish-e2e',
+				shellArgs: '--login --e2e',
+				ghPath: '/usr/local/bin/gh-e2e',
+			});
+	});
+
+	test('persists General Settings input behavior and local editing switches', async () => {
+		const settingsDialog = await openSettingsTab(window, 'General', 'Conductor Profile');
+
+		await scrollSettingsToText(settingsDialog, 'Input Send Behavior');
+		await settingsDialog
+			.getByText('AI Interaction Mode')
+			.locator('xpath=ancestor::div[contains(@class, "border")][1]')
+			.getByRole('button')
+			.click();
+		await settingsDialog
+			.getByText('Terminal Mode')
+			.locator('xpath=ancestor::div[contains(@class, "border")][1]')
+			.getByRole('button')
+			.click();
+
+		await scrollSettingsToText(settingsDialog, 'Automatic Tab Naming');
+		await settingsDialog.getByText('Automatically name tabs based on first message').click();
+		await scrollSettingsToText(settingsDialog, 'Spell Check');
+		await settingsDialog.getByText('Enable spell checking').click();
+
+		await expect
+			.poll(async () => {
+				return await window.evaluate(async () => ({
+					enterToSendAI: await window.maestro.settings.get('enterToSendAI'),
+					enterToSendTerminal: await window.maestro.settings.get('enterToSendTerminal'),
+					automaticTabNamingEnabled: await window.maestro.settings.get('automaticTabNamingEnabled'),
+					spellCheck: await window.maestro.settings.get('spellCheck'),
+				}));
+			})
+			.toEqual({
+				enterToSendAI: true,
+				enterToSendTerminal: false,
+				automaticTabNamingEnabled: false,
+				spellCheck: true,
+			});
+	});
+
+	test('persists General Settings system update privacy and stats controls', async () => {
+		const settingsDialog = await openSettingsTab(window, 'General', 'Conductor Profile');
+
+		await scrollSettingsToText(settingsDialog, 'System Log Level');
+		await settingsDialog.getByRole('button', { name: 'Warn' }).click();
+		await scrollSettingsToText(settingsDialog, 'Power');
+		await settingsDialog.getByRole('switch', { name: 'Prevent sleep while working' }).click();
+		await scrollSettingsToText(settingsDialog, 'Rendering Options');
+		await settingsDialog.getByRole('switch', { name: 'Disable GPU acceleration' }).click();
+		await settingsDialog.getByRole('switch', { name: 'Disable confetti animations' }).click();
+
+		await scrollSettingsToText(settingsDialog, 'Updates');
+		await settingsDialog.getByText('Check for updates on startup').click();
+		await settingsDialog.getByText('Include beta and release candidate updates').click();
+		await settingsDialog.getByText('Send anonymous crash reports').click();
+
+		await scrollSettingsToText(settingsDialog, 'Usage & Stats');
+		await settingsDialog.getByRole('switch', { name: 'Enable stats collection' }).click();
+		await settingsDialog
+			.getByText('Default dashboard time range')
+			.locator('xpath=following::select[1]')
+			.selectOption('all');
+
+		await expect
+			.poll(async () => {
+				return await window.evaluate(async () => ({
+					logLevel: await window.maestro.settings.get('logLevel'),
+					preventSleepEnabled: await window.maestro.settings.get('preventSleepEnabled'),
+					disableGpuAcceleration: await window.maestro.settings.get('disableGpuAcceleration'),
+					disableConfetti: await window.maestro.settings.get('disableConfetti'),
+					checkForUpdatesOnStartup: await window.maestro.settings.get('checkForUpdatesOnStartup'),
+					enableBetaUpdates: await window.maestro.settings.get('enableBetaUpdates'),
+					crashReportingEnabled: await window.maestro.settings.get('crashReportingEnabled'),
+					statsCollectionEnabled: await window.maestro.settings.get('statsCollectionEnabled'),
+					defaultStatsTimeRange: await window.maestro.settings.get('defaultStatsTimeRange'),
+				}));
+			})
+			.toEqual({
+				logLevel: 'warn',
+				preventSleepEnabled: true,
+				disableGpuAcceleration: true,
+				disableConfetti: true,
+				checkForUpdatesOnStartup: false,
+				enableBetaUpdates: true,
+				crashReportingEnabled: false,
+				statsCollectionEnabled: false,
+				defaultStatsTimeRange: 'all',
+			});
+	});
+
+	test('renders General Settings storage location controls', async () => {
+		const settingsDialog = await openSettingsTab(window, 'General', 'Conductor Profile');
+
+		await scrollSettingsToText(settingsDialog, 'Storage Location');
+		await expect(settingsDialog.getByText('Settings folder')).toBeVisible();
+		await expect(settingsDialog.getByText('Default Location')).toBeVisible();
+		await expect(settingsDialog.getByText(/maestro-e2e-shell.*user-data/)).toBeVisible();
+		await expect(settingsDialog.getByRole('button', { name: 'Choose Folder...' })).toBeVisible();
+		await expect(
+			settingsDialog.getByRole('button', {
+				name: /Open in Finder|Open in Explorer|Open in File Manager/,
+			})
+		).toBeEnabled();
+	});
+
 	test('persists Display Settings for Bionify reading mode', async () => {
 		const settingsDialog = await openSettings(window);
 		await settingsDialog.locator('button[title="Display"]').click();
