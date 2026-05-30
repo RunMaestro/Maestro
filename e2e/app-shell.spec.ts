@@ -5164,6 +5164,15 @@ test.describe('App shell seeded workbench', () => {
 		await expect(usageDashboard.getByText('Showing today data')).toBeVisible();
 	});
 
+	test('shows remaining Usage Dashboard overview chart sections for seeded stats', async () => {
+		await seedUsageDashboardStats(window);
+		const usageDashboard = await openUsageDashboard(window);
+
+		await expect(usageDashboard.getByTestId('section-peak-hours')).toBeVisible();
+		await expect(usageDashboard.getByTestId('section-activity-heatmap')).toBeVisible();
+		await expect(usageDashboard.getByTestId('section-duration-trends')).toBeVisible();
+	});
+
 	test('exports seeded Usage Dashboard query data to CSV', async () => {
 		await seedUsageDashboardStats(window);
 		const exportPath = path.join(seededWorkbench.homeDir, 'usage-dashboard-export.csv');
@@ -5179,6 +5188,48 @@ test.describe('App shell seeded workbench', () => {
 		expect(csv).toContain('session-shell-codex-usage-dashboard');
 		expect(csv).toContain('codex');
 		expect(csv).toContain('/tmp/maestro-e2e-usage-dashboard');
+	});
+
+	test('cycles Usage Dashboard views with global tab shortcuts', async () => {
+		await seedUsageDashboardStats(window);
+		const usageDashboard = await openUsageDashboard(window);
+
+		await window.keyboard.press('Meta+Shift+]');
+		await expect(usageDashboard.getByRole('tab', { name: 'Agents' })).toHaveAttribute(
+			'aria-selected',
+			'true'
+		);
+		await window.keyboard.press('Meta+Shift+]');
+		await expect(usageDashboard.getByRole('tab', { name: 'Activity' })).toHaveAttribute(
+			'aria-selected',
+			'true'
+		);
+		await window.keyboard.press('Meta+Shift+[');
+		await expect(usageDashboard.getByRole('tab', { name: 'Agents' })).toHaveAttribute(
+			'aria-selected',
+			'true'
+		);
+	});
+
+	test('shows the Usage Dashboard real-time update indicator after new stats arrive', async () => {
+		await seedUsageDashboardStats(window);
+		const usageDashboard = await openUsageDashboard(window);
+
+		await window.evaluate(async () => {
+			await window.maestro.stats.recordQuery({
+				sessionId: 'session-shell-codex-usage-dashboard',
+				agentType: 'codex',
+				source: 'user',
+				startTime: Date.now(),
+				duration: 30_000,
+				projectPath: '/tmp/maestro-e2e-usage-dashboard',
+				tabId: 'usage-live-update',
+				isRemote: false,
+			});
+		});
+
+		await expect(usageDashboard.getByTestId('new-data-indicator')).toBeVisible({ timeout: 5000 });
+		await expect(usageDashboard.getByText('Updated')).toBeVisible();
 	});
 
 	test('shows Activity and Auto Run Usage Dashboard sections for seeded stats', async () => {
