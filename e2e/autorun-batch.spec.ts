@@ -650,15 +650,21 @@ All tasks in this document are complete.
 			}
 		});
 
-		test.skip('should sync content when contentVersion changes during batch run', async ({
-			window,
-		}) => {
-			// This test verifies external content updates are reflected
-			// Skip until infrastructure supports contentVersion testing
-			// Expected behavior:
-			// 1. Batch run modifies document
-			// 2. contentVersion increments
-			// 3. AutoRun component syncs to show updated content
+		test('should sync content when contentVersion changes during batch run', async () => {
+			const launched = await launchBatchWorkbench();
+			try {
+				await startStubbedBatchRun(launched.window, launched.electronApp, {
+					exitDelayMs: 1_500,
+				});
+				writePhaseOneTasks(launched.autoRunFolder, 2);
+
+				await expect(launched.window.getByText('2 of 3 tasks completed').first()).toBeVisible({
+					timeout: 10_000,
+				});
+				await expect(launched.window.getByText('Auto Run Active').first()).toBeVisible();
+			} finally {
+				await launched.cleanup();
+			}
 		});
 	});
 
@@ -775,21 +781,44 @@ All tasks in this document are complete.
 			}
 		});
 
-		test.skip('should disable keyboard shortcuts during batch run', async ({ window }) => {
-			// This test verifies editing shortcuts are blocked
-			// Skip until batch run can be triggered in E2E
-			// Expected behavior:
-			// 1. Cmd+L (insert checkbox) does nothing
-			// 2. Cmd+S (save) does nothing (content can't be modified anyway)
-			// 3. Typing in textarea has no effect
+		test('should keep editing keyboard shortcuts blocked during batch run', async () => {
+			const launched = await launchBatchWorkbench();
+			try {
+				await helpers.openRightPanelTab(launched.window, 'Auto Run');
+				await launched.window.getByTitle('Edit document').click();
+				await expect(getAutoRunEditor(launched.window)).toBeEditable();
+
+				await startStubbedBatchRun(launched.window, launched.electronApp);
+				await launched.window.keyboard.press('Meta+L');
+				await launched.window.keyboard.press('Meta+S');
+				await launched.window.keyboard.type('typing should not reach the locked editor');
+
+				await expect(getAutoRunEditor(launched.window)).toHaveCount(0);
+				await expect(launched.window.getByTitle('Preview document')).toHaveAttribute(
+					'aria-pressed',
+					'true'
+				);
+			} finally {
+				await launched.cleanup();
+			}
 		});
 
-		test.skip('should show warning border on textarea during batch run', async ({ window }) => {
-			// This test verifies visual feedback during batch
-			// Skip until batch run can be triggered in E2E
-			// Expected behavior:
-			// 1. Textarea has warning-colored border
-			// 2. Visual indication that editing is locked
+		test('should show locked edit affordance during batch run', async () => {
+			const launched = await launchBatchWorkbench();
+			try {
+				await helpers.openRightPanelTab(launched.window, 'Auto Run');
+				await startStubbedBatchRun(launched.window, launched.electronApp);
+
+				const editButton = launched.window.getByTitle('Editing disabled while Auto Run active');
+				await expect(editButton).toBeVisible();
+				await expect(editButton).toBeDisabled();
+				await expect(launched.window.getByTitle('Preview document')).toHaveAttribute(
+					'aria-pressed',
+					'true'
+				);
+			} finally {
+				await launched.cleanup();
+			}
 		});
 	});
 
@@ -832,13 +861,24 @@ All tasks in this document are complete.
 			}
 		});
 
-		test.skip('should allow Cmd+E to toggle mode even during batch run', async ({ window }) => {
-			// Cmd+E should still work during batch run
-			// Skip until batch run can be triggered in E2E
-			// Expected behavior:
-			// 1. During batch run
-			// 2. Press Cmd+E
-			// 3. Mode toggles (but textarea stays locked)
+		test('should keep Cmd+E from reopening edit mode during batch run', async () => {
+			const launched = await launchBatchWorkbench();
+			try {
+				await helpers.openRightPanelTab(launched.window, 'Auto Run');
+				await launched.window.getByTitle('Edit document').click();
+				await expect(getAutoRunEditor(launched.window)).toBeEditable();
+
+				await startStubbedBatchRun(launched.window, launched.electronApp);
+				await launched.window.keyboard.press('Meta+E');
+
+				await expect(getAutoRunEditor(launched.window)).toHaveCount(0);
+				await expect(launched.window.getByTitle('Preview document')).toHaveAttribute(
+					'aria-pressed',
+					'true'
+				);
+			} finally {
+				await launched.cleanup();
+			}
 		});
 	});
 

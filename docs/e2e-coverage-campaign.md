@@ -10,10 +10,10 @@ Measured inventory:
 
 | Area                              |              Current Count |
 | --------------------------------- | -------------------------: |
-| E2E spec files after batch 77     |                          7 |
-| Declared E2E tests after batch 77 |                        338 |
+| E2E spec files after batch 78     |                          7 |
+| Declared E2E tests after batch 78 |                        338 |
 | Last pre-campaign full E2E result |      91 passed, 49 skipped |
-| Latest full E2E validation        |     321 passed, 17 skipped |
+| Latest full E2E validation        |     325 passed, 13 skipped |
 | Renderer component files          |                        236 |
 | Renderer hook files               |                        123 |
 | Renderer store files              |                         11 |
@@ -85,7 +85,7 @@ Estimated matrix total: 3,025 active scenarios. The current-active column is pri
 
 Continue high-ROI app-surface gaps that can be tested deterministically:
 
-- Convert remaining deterministic Auto Run active-run placeholders: contentVersion sync, stale locked-editor expectations, and locally mockable error recovery.
+- Resolve remaining Auto Run placeholders: stale hidden image-upload expectations, locally mockable error recovery, and wizard completion/resume flows.
 - Expand remaining command terminal edges: PTY lifecycle/resize behavior and terminal resize-state variants.
 - Expand Codex-only AI terminal safe flows: live retry/recovery modal edge states and transcript edge states without invoking non-Codex providers.
 - Start the web/mobile bridge matrix after local Electron terminal coverage is stable.
@@ -247,3 +247,5 @@ Continue high-ROI app-surface gaps that can be tested deterministically:
 - Validation: `npx playwright test e2e/autorun-batch.spec.ts -g "idle state|trigger stop|restore Run button|auto-switch to preview|restore previous mode"` passed 5/5; `npx playwright test e2e/autorun-batch.spec.ts` passed 30 with 14 existing intentional skips; `npx playwright test` passed 316 with 22 existing intentional skips. Full-suite log: `/tmp/maestro-e2e-batch76-full.log`.
 - 2026-05-30 batch 77: converted deterministic Auto Run progress and multi-document placeholders to active E2E coverage for task progress updates during an active run, multi-document processing order with zero-task document skip behavior, current-document display, overall cross-document progress, and loop-iteration indicator display.
 - Validation: `npx playwright test e2e/autorun-batch.spec.ts -g "task updates|process documents in order|current document|overall progress|loop iteration"` passed 5/5; `npx playwright test e2e/autorun-batch.spec.ts` passed 35 with 9 existing intentional skips; `npx playwright test` passed 321 with 17 existing intentional skips. Full-suite log: `/tmp/maestro-e2e-batch77-full.log`.
+- 2026-05-30 batch 78: converted deterministic Auto Run locked-edit/content-sync placeholders to active E2E coverage for contentVersion reconciliation after a stubbed task exit, blocked edit keyboard shortcuts, locked edit affordance, and Cmd+E staying blocked during active runs.
+- Validation: `npx playwright test e2e/autorun-batch.spec.ts -g "contentVersion|keyboard shortcuts|locked edit affordance|Cmd\+E"` passed 4/4; `npx playwright test e2e/autorun-batch.spec.ts` passed 39 with 5 existing intentional skips; `npx playwright test` passed 325 with 13 existing intentional skips. Full-suite log: `/tmp/maestro-e2e-batch78-full.log`.
