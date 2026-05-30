@@ -22,6 +22,11 @@ function runGit(cwd: string, args: string[], env: Record<string, string> = {}) {
 	});
 }
 
+function setFutureMtime(filePath: string) {
+	const future = new Date(Date.now() + 10_000);
+	fs.utimesSync(filePath, future, future);
+}
+
 function createSeededWorkbench() {
 	const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-e2e-shell-'));
 	const projectDir = path.join(homeDir, 'project');
@@ -5418,6 +5423,30 @@ test.describe('App shell seeded workbench', () => {
 		await expect(searchInput).toBeHidden();
 	});
 
+	test('navigates file preview search matches with Enter and Shift+Enter', async () => {
+		await window.getByTestId('file-preview-root').press('Control+f');
+		const searchInput = window.getByPlaceholder(/Search in file/);
+
+		await searchInput.fill('Graph');
+		await expect(window.getByText('1/3')).toBeVisible();
+
+		await searchInput.press('Enter');
+		await expect(window.getByText('2/3')).toBeVisible();
+
+		await searchInput.press('Shift+Enter');
+		await expect(window.getByText('1/3')).toBeVisible();
+	});
+
+	test('shows no-match state and disables file preview search navigation', async () => {
+		await window.getByTestId('file-preview-root').press('Control+f');
+		const searchInput = window.getByPlaceholder(/Search in file/);
+
+		await searchInput.fill('missing-preview-search-term');
+		await expect(window.getByText('No matches')).toBeVisible();
+		await expect(window.getByTitle('Previous match (Shift+Enter)')).toBeDisabled();
+		await expect(window.getByTitle('Next match (Enter)')).toBeDisabled();
+	});
+
 	test('opens wiki-style internal markdown links from the active file preview', async () => {
 		await window.getByRole('link', { name: 'NOTES' }).click();
 		await expect(window.getByText('Notes Preview Surface')).toBeVisible();
@@ -5490,6 +5519,41 @@ test.describe('App shell seeded workbench', () => {
 
 		await window.getByTitle(/Show preview/).click();
 		await expect(window.getByText(savedSentinel)).toBeVisible();
+	});
+
+	test('reloads externally changed file content from the file preview banner', async () => {
+		const readmePath = path.join(seededWorkbench.sessions[0].fullPath, 'README.md');
+		const externalSentinel = 'External reload sentinel.';
+		fs.appendFileSync(readmePath, `\n${externalSentinel}\n`, 'utf-8');
+		setFutureMtime(readmePath);
+
+		await expect(window.getByText('File changed on disk.')).toBeVisible({ timeout: 6000 });
+		await window.getByRole('button', { name: 'Reload' }).click();
+
+		await expect(window.getByText('File changed on disk.')).toBeHidden();
+		await expect(window.getByText(externalSentinel)).toBeVisible();
+	});
+
+	test('dismisses externally changed file banner while preserving unsaved preview edits', async () => {
+		const readmePath = path.join(seededWorkbench.sessions[0].fullPath, 'README.md');
+		const unsavedSentinel = 'Unsaved preview edit sentinel.';
+		const externalSentinel = 'External conflict sentinel.';
+
+		await window.getByTitle(/Edit file/).click();
+		const editor = window.locator('textarea').first();
+		await editor.fill(`${fs.readFileSync(readmePath, 'utf-8')}\n${unsavedSentinel}\n`);
+
+		fs.appendFileSync(readmePath, `\n${externalSentinel}\n`, 'utf-8');
+		setFutureMtime(readmePath);
+
+		await expect(window.getByText(/File changed on disk\. You have unsaved edits/)).toBeVisible({
+			timeout: 6000,
+		});
+		await window.getByTitle('Dismiss').click();
+
+		await expect(window.getByText(/File changed on disk/)).toBeHidden();
+		await expect(editor).toHaveValue(new RegExp(unsavedSentinel));
+		await expect(editor).not.toHaveValue(new RegExp(externalSentinel));
 	});
 
 	test('opens navigates and dismisses the file preview table of contents', async () => {
