@@ -1057,7 +1057,28 @@ async function stubCodexAgentSessions(
 					query,
 					mode,
 				});
-				if (String(query).toLowerCase().includes('refactor')) {
+				const normalizedQuery = String(query).toLowerCase();
+				if (mode === 'user' && normalizedQuery.includes('review')) {
+					return [
+						{
+							sessionId: 'codex-review-session',
+							matchType: 'user',
+							matchPreview: 'Please review deterministic risk coverage',
+							matchCount: 1,
+						},
+					];
+				}
+				if (mode === 'assistant' && normalizedQuery.includes('implementation')) {
+					return [
+						{
+							sessionId: 'codex-implementation-session',
+							matchType: 'assistant',
+							matchPreview: 'Implementation response sentinel',
+							matchCount: 1,
+						},
+					];
+				}
+				if (normalizedQuery.includes('refactor')) {
 					return [
 						{
 							sessionId: 'codex-review-session',
@@ -4117,6 +4138,91 @@ test.describe('App shell seeded workbench', () => {
 			sessionId: 'codex-review-session',
 			name: 'Renamed Review Session',
 		});
+	});
+
+	test('switches Agent Sessions search modes and scopes content searches', async () => {
+		await stubCodexAgentSessions(electronApp, seededWorkbench);
+		const agentSessions = await openAgentSessions(window);
+
+		await agentSessions.getByRole('button', { name: /^All$/ }).click();
+		await agentSessions.getByRole('button', { name: 'My Messages' }).click();
+		await expect(agentSessions.getByPlaceholder('Search your messages...')).toBeVisible();
+		await agentSessions.getByPlaceholder('Search your messages...').fill('review coverage');
+		await expect(
+			agentSessions.getByText('Please review deterministic risk coverage')
+		).toBeVisible();
+
+		await agentSessions.getByRole('button', { name: /^user$/i }).click();
+		await agentSessions.getByRole('button', { name: 'AI Responses' }).click();
+		await expect(agentSessions.getByPlaceholder('Search AI responses...')).toBeVisible();
+		await agentSessions.getByPlaceholder('Search AI responses...').fill('implementation sentinel');
+		await expect(agentSessions.getByText('Implementation response sentinel')).toBeVisible();
+
+		await agentSessions.getByRole('button', { name: /^assistant$/i }).click();
+		await agentSessions.getByRole('button', { name: 'Title Only' }).click();
+		await expect(agentSessions.getByPlaceholder('Search titles...')).toBeVisible();
+		await agentSessions.getByPlaceholder('Search titles...').fill('Implementation');
+		await expect(agentSessions.getByText('Implementation Draft')).toBeVisible();
+		await expect(agentSessions.getByText('Review Checkpoint')).toBeHidden();
+
+		const searchCalls = await getStubbedAgentSessionSearchCalls(electronApp);
+		await expect(searchCalls).toContainEqual({
+			agentId: 'codex',
+			projectPath: seededWorkbench.sessions[0].projectRoot,
+			query: 'review coverage',
+			mode: 'user',
+		});
+		await expect(searchCalls).toContainEqual({
+			agentId: 'codex',
+			projectPath: seededWorkbench.sessions[0].projectRoot,
+			query: 'implementation sentinel',
+			mode: 'assistant',
+		});
+		await expect(searchCalls).not.toContainEqual(
+			expect.objectContaining({
+				mode: 'title',
+			})
+		);
+	});
+
+	test('toggles Agent Sessions activity graph lookback and returns to search', async () => {
+		await stubCodexAgentSessions(electronApp, seededWorkbench);
+		const agentSessions = await openAgentSessions(window);
+
+		await agentSessions.getByTitle('Show activity graph').click();
+		await expect(agentSessions.getByPlaceholder('Search all content...')).toBeHidden();
+		const allTimeGraph = agentSessions.getByTitle(/All time: 3 sessions/);
+		await expect(allTimeGraph).toBeVisible();
+
+		await allTimeGraph.click({ button: 'right' });
+		await expect(agentSessions.getByText('Lookback Period')).toBeVisible();
+		await agentSessions.getByRole('button', { name: '24 hours' }).click();
+		await expect(agentSessions.getByTitle(/24 hours: 3 sessions/)).toBeVisible();
+
+		await agentSessions.getByTitle(/Search sessions/).click();
+		await expect(agentSessions.getByPlaceholder('Search all content...')).toBeVisible();
+	});
+
+	test('quick resumes a stubbed Codex agent session into an AI tab', async () => {
+		await stubCodexAgentSessions(electronApp, seededWorkbench);
+		const agentSessions = await openAgentSessions(window);
+		const reviewRow = agentSessions
+			.locator('div.cursor-pointer')
+			.filter({ hasText: 'Review Checkpoint' })
+			.first();
+
+		await expect(reviewRow).toBeVisible();
+		await reviewRow.hover();
+		await reviewRow.getByTitle('Resume session in new tab').click();
+
+		await expect(agentSessions.getByText('Agent Sessions for E2E Workbench')).toBeHidden();
+		await expect(
+			window.locator('[data-tab-id]').filter({ hasText: 'Review Checkpoint' }).first()
+		).toBeVisible();
+		await expect(window.getByText('Please review deterministic risk coverage.')).toBeVisible();
+		await expect(
+			window.getByText('Refactor response sentinel: keep fixtures local and deterministic.')
+		).toBeVisible();
 	});
 
 	test('shows an empty state for unmatched Quick Actions searches', async () => {
