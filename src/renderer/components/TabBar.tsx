@@ -60,12 +60,12 @@ interface TabBarProps {
 	onOpenTabSearch?: () => void;
 	/** Handler to close all tabs */
 	onCloseAllTabs?: () => void;
-	/** Handler to close all tabs except active */
-	onCloseOtherTabs?: () => void;
-	/** Handler to close tabs to the left of active tab */
-	onCloseTabsLeft?: () => void;
-	/** Handler to close tabs to the right of active tab */
-	onCloseTabsRight?: () => void;
+	/** Handler to close all tabs except the target tab, or active tab when omitted */
+	onCloseOtherTabs?: (targetTabId?: string) => void;
+	/** Handler to close tabs to the left of the target tab, or active tab when omitted */
+	onCloseTabsLeft?: (targetTabId?: string) => void;
+	/** Handler to close tabs to the right of the target tab, or active tab when omitted */
+	onCloseTabsRight?: (targetTabId?: string) => void;
 
 	// === Unified Tab System Props (Phase 3) ===
 	/** Merged ordered list of AI and file preview tabs for unified rendering */
@@ -1791,25 +1791,25 @@ function TabBarInner({
 	);
 
 	const handleTabCloseOther = useCallback(
-		(_tabId: string) => {
+		(tabId: string) => {
 			// Close all tabs except the one with this tabId
-			onCloseOtherTabs?.();
+			onCloseOtherTabs?.(tabId);
 		},
 		[onCloseOtherTabs]
 	);
 
 	const handleTabCloseLeft = useCallback(
-		(_tabId: string) => {
+		(tabId: string) => {
 			// Close all tabs to the left of this tabId
-			onCloseTabsLeft?.();
+			onCloseTabsLeft?.(tabId);
 		},
 		[onCloseTabsLeft]
 	);
 
 	const handleTabCloseRight = useCallback(
-		(_tabId: string) => {
+		(tabId: string) => {
 			// Close all tabs to the right of this tabId
-			onCloseTabsRight?.();
+			onCloseTabsRight?.(tabId);
 		},
 		[onCloseTabsRight]
 	);

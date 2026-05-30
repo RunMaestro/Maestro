@@ -37,12 +37,56 @@ export interface CloseCurrentTabResult {
 	hasDraft?: boolean;
 }
 
+type CloseTabsTarget = UnifiedTabRef | null;
+
 interface FileTabOpenParams {
 	path: string;
 	name: string;
 	content: string;
 	sshRemoteId?: string;
 	lastModified?: number;
+}
+
+function getActiveUnifiedTabRef(session: Session): CloseTabsTarget {
+	if (session.activeFileTabId) return { type: 'file', id: session.activeFileTabId };
+	if (session.activeTabId) return { type: 'ai', id: session.activeTabId };
+	return null;
+}
+
+function getUnifiedTabRef(session: Session, tabId?: string): CloseTabsTarget {
+	if (!tabId) return getActiveUnifiedTabRef(session);
+
+	const orderedRef = session.unifiedTabOrder.find((ref) => ref.id === tabId);
+	if (orderedRef) return orderedRef;
+
+	if (session.aiTabs.some((tab) => tab.id === tabId)) return { type: 'ai', id: tabId };
+	if (session.filePreviewTabs.some((tab) => tab.id === tabId)) return { type: 'file', id: tabId };
+	return null;
+}
+
+function getUnifiedTabIndex(session: Session, target: CloseTabsTarget): number {
+	if (!target) return -1;
+	return session.unifiedTabOrder.findIndex(
+		(ref) => ref.type === target.type && ref.id === target.id
+	);
+}
+
+function tabRefsContain(refs: UnifiedTabRef[], type: UnifiedTabRef['type'], id?: string | null) {
+	return !!id && refs.some((ref) => ref.type === type && ref.id === id);
+}
+
+function selectTargetIfActiveWasClosed(
+	session: Session,
+	target: UnifiedTabRef,
+	closedRefs: UnifiedTabRef[]
+): Session {
+	const closedActiveFile = tabRefsContain(closedRefs, 'file', session.activeFileTabId);
+	const closedActiveAi = tabRefsContain(closedRefs, 'ai', session.activeTabId);
+	if (!closedActiveFile && !closedActiveAi) return session;
+
+	return target.type === 'file'
+		? { ...session, activeFileTabId: target.id }
+		: { ...session, activeFileTabId: null, activeTabId: target.id };
 }
 
 export interface TabHandlersReturn {
@@ -68,9 +112,9 @@ export interface TabHandlersReturn {
 	handleTabReorder: (fromIndex: number, toIndex: number) => void;
 	handleUnifiedTabReorder: (fromIndex: number, toIndex: number) => void;
 	handleCloseAllTabs: () => void;
-	handleCloseOtherTabs: () => void;
-	handleCloseTabsLeft: () => void;
-	handleCloseTabsRight: () => void;
+	handleCloseOtherTabs: (targetTabId?: string) => void;
+	handleCloseTabsLeft: (targetTabId?: string) => void;
+	handleCloseTabsRight: (targetTabId?: string) => void;
 	handleCloseCurrentTab: () => CloseCurrentTabResult;
 	handleRequestTabRename: (tabId: string) => void;
 	handleUpdateTabByClaudeSessionId: (
@@ -718,17 +762,17 @@ export function useTabHandlers(): TabHandlersReturn {
 		}
 	}, [performCloseAllTabs]);
 
-	const performCloseOtherTabs = useCallback(() => {
+	const performCloseOtherTabs = useCallback((targetTabId?: string) => {
 		const { setSessions, activeSessionId } = useSessionStore.getState();
 		setSessions((prev: Session[]) =>
 			prev.map((s) => {
 				if (s.id !== activeSessionId) return s;
 
-				const activeUnifiedId = s.activeFileTabId ?? s.activeTabId;
-				const activeUnifiedType = s.activeFileTabId ? 'file' : 'ai';
+				const target = getUnifiedTabRef(s, targetTabId);
+				if (!target) return s;
 
 				const tabsToClose = s.unifiedTabOrder.filter(
-					(ref) => !(ref.type === activeUnifiedType && ref.id === activeUnifiedId)
+					(ref) => !(ref.type === target.type && ref.id === target.id)
 				);
 
 				let updatedSession = s;
@@ -752,41 +796,43 @@ export function useTabHandlers(): TabHandlersReturn {
 					}
 				}
 
-				return updatedSession;
+				return selectTargetIfActiveWasClosed(updatedSession, target, tabsToClose);
 			})
 		);
 	}, []);
 
-	const handleCloseOtherTabs = useCallback(() => {
-		const { sessions, activeSessionId } = useSessionStore.getState();
-		const session = sessions.find((s) => s.id === activeSessionId);
-		if (!session) return;
+	const handleCloseOtherTabs = useCallback(
+		(targetTabId?: string) => {
+			const { sessions, activeSessionId } = useSessionStore.getState();
+			const session = sessions.find((s) => s.id === activeSessionId);
+			if (!session) return;
 
-		const activeTabId = session.activeFileTabId ?? session.activeTabId;
-		const otherAiTabs = session.aiTabs.filter((t) => t.id !== activeTabId);
-		const hasAnyDraft = otherAiTabs.some((tab) => hasDraft(tab));
-		if (hasAnyDraft) {
-			useModalStore.getState().openModal('confirm', {
-				message: 'Some tabs have unsent drafts. Are you sure you want to close them?',
-				onConfirm: performCloseOtherTabs,
-			});
-		} else {
-			performCloseOtherTabs();
-		}
-	}, [performCloseOtherTabs]);
+			const target = getUnifiedTabRef(session, targetTabId);
+			if (!target) return;
 
-	const performCloseTabsLeft = useCallback(() => {
+			const otherAiTabs = session.aiTabs.filter(
+				(tab) => !(target.type === 'ai' && tab.id === target.id)
+			);
+			const hasAnyDraft = otherAiTabs.some((tab) => hasDraft(tab));
+			if (hasAnyDraft) {
+				useModalStore.getState().openModal('confirm', {
+					message: 'Some tabs have unsent drafts. Are you sure you want to close them?',
+					onConfirm: () => performCloseOtherTabs(targetTabId),
+				});
+			} else {
+				performCloseOtherTabs(targetTabId);
+			}
+		},
+		[performCloseOtherTabs]
+	);
+
+	const performCloseTabsLeft = useCallback((targetTabId?: string) => {
 		const { setSessions, activeSessionId } = useSessionStore.getState();
 		setSessions((prev: Session[]) =>
 			prev.map((s) => {
 				if (s.id !== activeSessionId) return s;
 
-				const activeUnifiedId = s.activeFileTabId ?? s.activeTabId;
-				const activeUnifiedType = s.activeFileTabId ? 'file' : 'ai';
-
-				const activeIndex = s.unifiedTabOrder.findIndex(
-					(ref) => ref.type === activeUnifiedType && ref.id === activeUnifiedId
-				);
+				const activeIndex = getUnifiedTabIndex(s, getUnifiedTabRef(s, targetTabId));
 				if (activeIndex <= 0) return s;
 
 				const tabsToClose = s.unifiedTabOrder.slice(0, activeIndex);
@@ -812,50 +858,47 @@ export function useTabHandlers(): TabHandlersReturn {
 					}
 				}
 
-				return updatedSession;
+				const target = getUnifiedTabRef(updatedSession, targetTabId);
+				return target
+					? selectTargetIfActiveWasClosed(updatedSession, target, tabsToClose)
+					: updatedSession;
 			})
 		);
 	}, []);
 
-	const handleCloseTabsLeft = useCallback(() => {
-		const { sessions, activeSessionId } = useSessionStore.getState();
-		const session = sessions.find((s) => s.id === activeSessionId);
-		if (!session) return;
+	const handleCloseTabsLeft = useCallback(
+		(targetTabId?: string) => {
+			const { sessions, activeSessionId } = useSessionStore.getState();
+			const session = sessions.find((s) => s.id === activeSessionId);
+			if (!session) return;
 
-		const activeUnifiedId = session.activeFileTabId ?? session.activeTabId;
-		const activeUnifiedType = session.activeFileTabId ? 'file' : 'ai';
-		const activeIndex = session.unifiedTabOrder.findIndex(
-			(ref) => ref.type === activeUnifiedType && ref.id === activeUnifiedId
-		);
-		if (activeIndex <= 0) return;
+			const activeIndex = getUnifiedTabIndex(session, getUnifiedTabRef(session, targetTabId));
+			if (activeIndex <= 0) return;
 
-		const tabRefsToClose = session.unifiedTabOrder.slice(0, activeIndex);
-		const aiTabIds = new Set(tabRefsToClose.filter((r) => r.type === 'ai').map((r) => r.id));
-		const hasAnyDraft = session.aiTabs
-			.filter((t) => aiTabIds.has(t.id))
-			.some((tab) => hasDraft(tab));
-		if (hasAnyDraft) {
-			useModalStore.getState().openModal('confirm', {
-				message: 'Some tabs have unsent drafts. Are you sure you want to close them?',
-				onConfirm: performCloseTabsLeft,
-			});
-		} else {
-			performCloseTabsLeft();
-		}
-	}, [performCloseTabsLeft]);
+			const tabRefsToClose = session.unifiedTabOrder.slice(0, activeIndex);
+			const aiTabIds = new Set(tabRefsToClose.filter((r) => r.type === 'ai').map((r) => r.id));
+			const hasAnyDraft = session.aiTabs
+				.filter((t) => aiTabIds.has(t.id))
+				.some((tab) => hasDraft(tab));
+			if (hasAnyDraft) {
+				useModalStore.getState().openModal('confirm', {
+					message: 'Some tabs have unsent drafts. Are you sure you want to close them?',
+					onConfirm: () => performCloseTabsLeft(targetTabId),
+				});
+			} else {
+				performCloseTabsLeft(targetTabId);
+			}
+		},
+		[performCloseTabsLeft]
+	);
 
-	const performCloseTabsRight = useCallback(() => {
+	const performCloseTabsRight = useCallback((targetTabId?: string) => {
 		const { setSessions, activeSessionId } = useSessionStore.getState();
 		setSessions((prev: Session[]) =>
 			prev.map((s) => {
 				if (s.id !== activeSessionId) return s;
 
-				const activeUnifiedId = s.activeFileTabId ?? s.activeTabId;
-				const activeUnifiedType = s.activeFileTabId ? 'file' : 'ai';
-
-				const activeIndex = s.unifiedTabOrder.findIndex(
-					(ref) => ref.type === activeUnifiedType && ref.id === activeUnifiedId
-				);
+				const activeIndex = getUnifiedTabIndex(s, getUnifiedTabRef(s, targetTabId));
 				if (activeIndex < 0 || activeIndex >= s.unifiedTabOrder.length - 1) return s;
 
 				const tabsToClose = s.unifiedTabOrder.slice(activeIndex + 1);
@@ -881,37 +924,39 @@ export function useTabHandlers(): TabHandlersReturn {
 					}
 				}
 
-				return updatedSession;
+				const target = getUnifiedTabRef(updatedSession, targetTabId);
+				return target
+					? selectTargetIfActiveWasClosed(updatedSession, target, tabsToClose)
+					: updatedSession;
 			})
 		);
 	}, []);
 
-	const handleCloseTabsRight = useCallback(() => {
-		const { sessions, activeSessionId } = useSessionStore.getState();
-		const session = sessions.find((s) => s.id === activeSessionId);
-		if (!session) return;
+	const handleCloseTabsRight = useCallback(
+		(targetTabId?: string) => {
+			const { sessions, activeSessionId } = useSessionStore.getState();
+			const session = sessions.find((s) => s.id === activeSessionId);
+			if (!session) return;
 
-		const activeUnifiedId = session.activeFileTabId ?? session.activeTabId;
-		const activeUnifiedType = session.activeFileTabId ? 'file' : 'ai';
-		const activeIndex = session.unifiedTabOrder.findIndex(
-			(ref) => ref.type === activeUnifiedType && ref.id === activeUnifiedId
-		);
-		if (activeIndex < 0 || activeIndex >= session.unifiedTabOrder.length - 1) return;
+			const activeIndex = getUnifiedTabIndex(session, getUnifiedTabRef(session, targetTabId));
+			if (activeIndex < 0 || activeIndex >= session.unifiedTabOrder.length - 1) return;
 
-		const tabRefsToClose = session.unifiedTabOrder.slice(activeIndex + 1);
-		const aiTabIds = new Set(tabRefsToClose.filter((r) => r.type === 'ai').map((r) => r.id));
-		const hasAnyDraft = session.aiTabs
-			.filter((t) => aiTabIds.has(t.id))
-			.some((tab) => hasDraft(tab));
-		if (hasAnyDraft) {
-			useModalStore.getState().openModal('confirm', {
-				message: 'Some tabs have unsent drafts. Are you sure you want to close them?',
-				onConfirm: performCloseTabsRight,
-			});
-		} else {
-			performCloseTabsRight();
-		}
-	}, [performCloseTabsRight]);
+			const tabRefsToClose = session.unifiedTabOrder.slice(activeIndex + 1);
+			const aiTabIds = new Set(tabRefsToClose.filter((r) => r.type === 'ai').map((r) => r.id));
+			const hasAnyDraft = session.aiTabs
+				.filter((t) => aiTabIds.has(t.id))
+				.some((tab) => hasDraft(tab));
+			if (hasAnyDraft) {
+				useModalStore.getState().openModal('confirm', {
+					message: 'Some tabs have unsent drafts. Are you sure you want to close them?',
+					onConfirm: () => performCloseTabsRight(targetTabId),
+				});
+			} else {
+				performCloseTabsRight(targetTabId);
+			}
+		},
+		[performCloseTabsRight]
+	);
 
 	const handleCloseCurrentTab = useCallback((): CloseCurrentTabResult => {
 		const { sessions, activeSessionId, setSessions } = useSessionStore.getState();

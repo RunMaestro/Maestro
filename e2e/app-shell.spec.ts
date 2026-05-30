@@ -3867,6 +3867,51 @@ test.describe('App shell seeded workbench', () => {
 		await expect(window.getByText('README', { exact: true })).toBeVisible();
 	});
 
+	test('moves file tabs from the TabBar hover overlay', async () => {
+		const tabs = window.locator('[data-tab-id]');
+		await expect(tabs.nth(0)).toContainText('Main');
+		await expect(tabs.nth(1)).toContainText('README');
+
+		const readmeTab = tabs.filter({ hasText: 'README' }).first();
+		await readmeTab.hover();
+		await window.getByRole('button', { name: 'Move to First Position' }).click();
+		await expect(tabs.nth(0)).toContainText('README');
+		await expect(tabs.nth(1)).toContainText('Main');
+
+		await readmeTab.hover();
+		await window.getByRole('button', { name: 'Move to Last Position' }).click();
+		await expect(tabs.nth(0)).toContainText('Main');
+		await expect(tabs.nth(1)).toContainText('README');
+	});
+
+	test('closes tabs to the left from the TabBar hover overlay', async () => {
+		const tabs = window.locator('[data-tab-id]');
+		await expect(tabs).toHaveCount(2);
+
+		await tabs.filter({ hasText: 'README' }).first().hover();
+		await window.getByRole('button', { name: 'Close Tabs to Left' }).click();
+
+		await expect(tabs).toHaveCount(2);
+		await expect(tabs.first()).toContainText('README');
+		await expect(tabs.nth(1)).toContainText('New Session');
+		await expect(window.getByText('Main', { exact: true })).toBeHidden();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+	});
+
+	test('closes tabs to the right from the TabBar hover overlay', async () => {
+		const tabs = window.locator('[data-tab-id]');
+		await expect(tabs).toHaveCount(2);
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+
+		await tabs.filter({ hasText: 'Main' }).first().hover();
+		await window.getByRole('button', { name: 'Close Tabs to Right' }).click();
+
+		await expect(tabs).toHaveCount(1);
+		await expect(tabs.first()).toContainText('Main');
+		await expect(window.getByText('README', { exact: true })).toBeHidden();
+		await expect(window.getByText('Codex seeded response is visible.')).toBeVisible();
+	});
+
 	test('shows AI tab hover session actions and toggles tab status', async () => {
 		const mainTab = window.locator('[data-tab-id]').filter({ hasText: 'Main' }).first();
 
