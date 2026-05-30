@@ -5232,6 +5232,34 @@ test.describe('App shell seeded workbench', () => {
 		await expect(usageDashboard.getByText('Updated')).toBeVisible();
 	});
 
+	test('renders Usage Dashboard agent statistics and toggles agent usage metrics', async () => {
+		await seedUsageDashboardStats(window);
+		const usageDashboard = await openUsageDashboard(window);
+
+		await usageDashboard.getByRole('tab', { name: 'Agents' }).click();
+		await expect(usageDashboard.getByRole('tab', { name: 'Agents' })).toHaveAttribute(
+			'aria-selected',
+			'true'
+		);
+		await expect(usageDashboard.getByTestId('section-session-stats')).toBeVisible();
+		await expect(usageDashboard.getByText('Agent Statistics')).toBeVisible();
+		await expect(usageDashboard.getByText('Total Agents')).toBeVisible();
+		await expect(usageDashboard.getByText('Git Repositories')).toBeVisible();
+		const agentEfficiencyChart = usageDashboard.getByTestId('agent-efficiency-chart');
+		await expect(agentEfficiencyChart).toBeVisible();
+		await expect(agentEfficiencyChart.getByText('Agent Efficiency')).toBeVisible();
+		await expect(agentEfficiencyChart.getByText('2 queries')).toBeVisible();
+
+		const agentUsageSection = usageDashboard.getByTestId('section-agent-usage');
+		await expect(
+			agentUsageSection.getByRole('figure', { name: /query counts over time/i })
+		).toBeVisible();
+		await agentUsageSection.getByRole('button', { name: 'Time' }).click();
+		await expect(
+			agentUsageSection.getByRole('figure', { name: /duration over time/i })
+		).toBeVisible();
+	});
+
 	test('shows Activity and Auto Run Usage Dashboard sections for seeded stats', async () => {
 		await seedUsageDashboardStats(window);
 		const usageDashboard = await openUsageDashboard(window);
@@ -5256,6 +5284,66 @@ test.describe('App shell seeded workbench', () => {
 		await expect(usageDashboard.getByText('Tasks Done')).toBeVisible();
 		await expect(usageDashboard.getByTestId('section-longest-autoruns')).toBeVisible();
 		await expect(usageDashboard.getByText(/Top \d+ Longest Auto Runs/)).toBeVisible();
+	});
+
+	test('renders Usage Dashboard Auto Run task timing chart and longest-run table details', async () => {
+		await seedUsageDashboardStats(window);
+		const usageDashboard = await openUsageDashboard(window);
+
+		await usageDashboard.getByRole('tab', { name: 'Auto Run' }).click();
+		await expect(usageDashboard.getByTestId('autorun-metrics')).toBeVisible();
+		await expect(usageDashboard.getByText('Success Rate')).toBeVisible();
+		await expect(usageDashboard.getByText('80%')).toBeVisible();
+		await expect(usageDashboard.getByTestId('autorun-tasks-chart')).toBeVisible();
+		await expect(usageDashboard.getByTestId('tasks-by-hour-chart')).toBeVisible();
+		await expect(usageDashboard.getByText(/Peak hours:/)).toBeVisible();
+
+		const longestRuns = usageDashboard.getByTestId('longest-autoruns-table');
+		await expect(longestRuns).toBeVisible();
+		await expect(longestRuns.getByText('Phase 1.md')).toBeVisible();
+		await expect(longestRuns.getByText('4 / 5')).toBeVisible();
+		await expect(longestRuns.getByText('usage-dashboard')).toBeVisible();
+	});
+
+	test('recovers the Usage Dashboard after a stats aggregation retry', async () => {
+		await electronApp.evaluate(({ ipcMain }) => {
+			let attempts = 0;
+			ipcMain.removeHandler('stats:get-aggregation');
+			ipcMain.handle('stats:get-aggregation', async () => {
+				attempts += 1;
+				if (attempts === 1) {
+					throw new Error('E2E stats aggregation unavailable');
+				}
+				const date = new Date().toISOString().slice(0, 10);
+				return {
+					totalQueries: 1,
+					totalDuration: 60_000,
+					avgDuration: 60_000,
+					byAgent: { codex: { count: 1, duration: 60_000 } },
+					bySource: { user: 1, auto: 0 },
+					byLocation: { local: 1, remote: 0 },
+					byDay: [{ date, count: 1, duration: 60_000 }],
+					byHour: [{ hour: 10, count: 1, duration: 60_000 }],
+					totalSessions: 0,
+					sessionsByAgent: {},
+					sessionsByDay: [],
+					avgSessionDuration: 0,
+					byAgentByDay: {
+						codex: [{ date, count: 1, duration: 60_000 }],
+					},
+					bySessionByDay: {
+						'session-shell-codex-usage-dashboard': [{ date, count: 1, duration: 60_000 }],
+					},
+				};
+			});
+		});
+
+		const usageDashboard = await openUsageDashboard(window);
+		await expect(usageDashboard.getByText('Failed to load usage data')).toBeVisible();
+
+		await usageDashboard.getByRole('button', { name: 'Retry' }).click();
+		await expect(usageDashboard.getByTestId('usage-dashboard-content')).toBeVisible();
+		await expect(usageDashboard.getByTestId('summary-cards')).toBeVisible();
 	});
 
 	test('supports keyboard navigation inside the Usage Dashboard', async () => {
