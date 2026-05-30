@@ -3284,6 +3284,106 @@ test.describe('App shell seeded workbench', () => {
 			});
 	});
 
+	test('switches Playbook Exchange preview documents from the dropdown', async () => {
+		await stubMarketplaceForPlaybookExchange(electronApp);
+
+		await helpers.openRightPanelTab(window, 'Auto Run');
+		await window.getByTitle('Browse PlayBooks - discover and share community playbooks').click();
+		const marketplaceDialog = window.getByRole('dialog').first();
+		await marketplaceDialog.getByRole('button', { name: /Issue Triage/ }).click();
+		await expect(marketplaceDialog.getByText('README for issue triage')).toBeVisible();
+
+		await marketplaceDialog.getByRole('button', { name: 'README.md' }).click();
+		await marketplaceDialog
+			.getByRole('button', { name: 'response-checklist.md', exact: true })
+			.click();
+		await expect(marketplaceDialog.getByText('Response checklist body.')).toBeVisible();
+
+		await marketplaceDialog
+			.getByRole('button', { name: 'response-checklist.md', exact: true })
+			.click();
+		await marketplaceDialog.getByRole('button', { name: 'README.md' }).click();
+		await expect(marketplaceDialog.getByText('README for issue triage')).toBeVisible();
+	});
+
+	test('navigates Playbook Exchange preview documents from the keyboard', async () => {
+		await stubMarketplaceForPlaybookExchange(electronApp);
+
+		await helpers.openRightPanelTab(window, 'Auto Run');
+		await window.getByTitle('Browse PlayBooks - discover and share community playbooks').click();
+		const marketplaceDialog = window.getByRole('dialog').first();
+		await marketplaceDialog.getByRole('button', { name: /Issue Triage/ }).click();
+		await expect(marketplaceDialog.getByText('README for issue triage')).toBeVisible();
+
+		await window.keyboard.press('Meta+Shift+]');
+		await expect(marketplaceDialog.getByText('Triage plan body for E2E.')).toBeVisible();
+		await window.keyboard.press('Meta+Shift+]');
+		await expect(marketplaceDialog.getByText('Response checklist body.')).toBeVisible();
+		await window.keyboard.press('Meta+Shift+]');
+		await expect(marketplaceDialog.getByText('README for issue triage')).toBeVisible();
+	});
+
+	test('validates and imports a marketplace playbook with a custom target folder', async () => {
+		await stubMarketplaceForPlaybookExchange(electronApp);
+
+		await helpers.openRightPanelTab(window, 'Auto Run');
+		await window.getByTitle('Browse PlayBooks - discover and share community playbooks').click();
+		const marketplaceDialog = window.getByRole('dialog').first();
+		await marketplaceDialog.getByRole('button', { name: /Issue Triage/ }).click();
+		const targetFolderInput = marketplaceDialog.getByLabel(
+			'Import to folder (relative to Auto Run folder or absolute path)'
+		);
+		await expect(targetFolderInput).toHaveValue('security/issue-triage');
+
+		await targetFolderInput.fill('');
+		await expect(marketplaceDialog.getByRole('button', { name: 'Import Playbook' })).toBeDisabled();
+		await targetFolderInput.fill('custom/security-review');
+		await marketplaceDialog.getByRole('button', { name: 'Import Playbook' }).click();
+
+		await expect
+			.poll(async () => getStubbedMarketplaceImportRequest(electronApp))
+			.toMatchObject({
+				playbookId: 'issue-triage',
+				targetFolderName: 'custom/security-review',
+				autoRunFolderPath: seededWorkbench.sessions[0].autoRunFolderPath,
+				sessionId: seededWorkbench.sessions[0].id,
+			});
+	});
+
+	test('routes the Playbook Exchange submit link through shell IPC', async () => {
+		await stubMarketplaceForPlaybookExchange(electronApp);
+		await stubOpenExternal(electronApp);
+
+		await helpers.openRightPanelTab(window, 'Auto Run');
+		await window.getByTitle('Browse PlayBooks - discover and share community playbooks').click();
+		const marketplaceDialog = window.getByRole('dialog').first();
+		await marketplaceDialog.getByRole('button', { name: 'Submit Playbook via GitHub' }).click();
+
+		await expect
+			.poll(() => getStubbedOpenExternalUrl(electronApp))
+			.toBe('https://github.com/RunMaestro/Maestro-Playbooks');
+	});
+
+	test('sets a marketplace import target from the browse folder control', async () => {
+		await stubMarketplaceForPlaybookExchange(electronApp);
+		const selectedImportFolder = '/tmp/maestro-e2e-marketplace-import';
+		await electronApp.evaluate(({ ipcMain }, folderPath: string) => {
+			ipcMain.removeHandler('dialog:selectFolder');
+			ipcMain.handle('dialog:selectFolder', async () => folderPath);
+		}, selectedImportFolder);
+
+		await helpers.openRightPanelTab(window, 'Auto Run');
+		await window.getByTitle('Browse PlayBooks - discover and share community playbooks').click();
+		const marketplaceDialog = window.getByRole('dialog').first();
+		await marketplaceDialog.getByRole('button', { name: /Issue Triage/ }).click();
+		await marketplaceDialog.getByTitle('Browse for folder').click();
+		await expect(
+			marketplaceDialog.getByLabel(
+				'Import to folder (relative to Auto Run folder or absolute path)'
+			)
+		).toHaveValue(selectedImportFolder);
+	});
+
 	test('browses Symphony projects issues and GitHub CLI preflight states', async () => {
 		await stubSymphonyForModal(electronApp, seededWorkbench.sessions[0].id);
 
