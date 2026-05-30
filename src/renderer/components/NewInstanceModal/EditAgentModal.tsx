@@ -658,6 +658,7 @@ export function EditAgentModal({
 							isSshEnabled={isSshEnabled}
 							enableMaestroP={enableMaestroP}
 							onEnableMaestroPChange={setEnableMaestroP}
+							claudeInteractive={session?.claudeInteractive}
 							maestroPPath={maestroPPath}
 							onMaestroPPathChange={setMaestroPPath}
 							onMaestroPPathBlur={() => {

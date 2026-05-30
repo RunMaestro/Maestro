@@ -63,7 +63,7 @@ describe('useSettings', () => {
 			terminalWidth: 100,
 			logLevel: 'info',
 			maxLogBuffer: 5000,
-			maxOutputLines: 25,
+			maxOutputLines: Infinity,
 			osNotificationsEnabled: true,
 			audioFeedbackEnabled: false,
 			audioFeedbackCommand: 'say',
