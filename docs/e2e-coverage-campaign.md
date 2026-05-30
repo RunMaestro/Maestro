@@ -8,24 +8,24 @@ This campaign extends the existing coverage work from unit/integration coverage 
 
 Measured inventory:
 
-| Area                              |              Current Count |
-| --------------------------------- | -------------------------: |
-| E2E spec files after batch 99     |                          7 |
-| Declared E2E tests after batch 99 |                        402 |
-| Last pre-campaign full E2E result |      91 passed, 49 skipped |
-| Latest full E2E validation        |      402 passed, 0 skipped |
-| Renderer component files          |                        236 |
-| Renderer hook files               |                        123 |
-| Renderer store files              |                         11 |
-| Web/mobile files                  |                         59 |
-| IPC handler modules               |                         30 |
-| Approx. main IPC registrations    |                        303 |
-| Preload namespaces                |                         24 |
-| Approx. preload IPC calls         |                        422 |
-| Settings metadata keys            |                         88 |
-| Keyboard shortcut IDs             |                         77 |
-| High-signal surface files         |                        573 |
-| Current `npm run test` result     | 28,521 passed, 106 skipped |
+| Area                               |              Current Count |
+| ---------------------------------- | -------------------------: |
+| E2E spec files after batch 100     |                          7 |
+| Declared E2E tests after batch 100 |                        405 |
+| Last pre-campaign full E2E result  |      91 passed, 49 skipped |
+| Latest full E2E validation         |      405 passed, 0 skipped |
+| Renderer component files           |                        236 |
+| Renderer hook files                |                        123 |
+| Renderer store files               |                         11 |
+| Web/mobile files                   |                         59 |
+| IPC handler modules                |                         30 |
+| Approx. main IPC registrations     |                        303 |
+| Preload namespaces                 |                         24 |
+| Approx. preload IPC calls          |                        422 |
+| Settings metadata keys             |                         88 |
+| Keyboard shortcut IDs              |                         77 |
+| High-signal surface files          |                        573 |
+| Current `npm run test` result      | 28,521 passed, 106 skipped |
 
 The current E2E suite now covers a meaningful Electron shell slice, but it is still far from deep app-wide coverage.
 
@@ -60,7 +60,7 @@ That range is high enough to cover the app surface, but low enough to avoid a br
 | Settings                                                       |             36 |           190 | General profile/shell/input/system/update/privacy/stats/storage controls, shortcut recording/application/cancel behavior, theme selection/keyboard cycling/custom-theme init/edit/reset/import validation, Display sizing/alignment/window chrome/Document Graph defaults/Bionify validation, notifications, AI commands, global env vars, SSH remote settings/ignore patterns, Group Chat standing instructions, and Encore/Director's Notes provider configuration                                                                                                                                                                                                                                                                                                                                                                         |
 | Git, worktrees, PR, diff/log, Gist                             |             17 |           160 | Diff/log widget, worktree config, Gist, repository browser, PR modal covered                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | Group chat                                                     |             11 |           140 | Creation, participants, Codex-only routing, history, group-chat moderator/synthesis/participant process visibility, errors, deletion                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| Usage dashboard and stats                                      |              4 |           125 | Overview metrics, chart sections, Activity/Auto Run tabs, keyboard navigation                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| Usage dashboard and stats                                      |              7 |           125 | Overview metrics, chart sections, empty state, time-range footer updates, CSV export, Activity/Auto Run tabs, keyboard navigation                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | Document graph                                                 |              2 |           130 | Graph build, node selection, preview, settings, layout, persistence                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | Playbooks, marketplace, Spec Kit, OpenSpec                     |              3 |           145 | Marketplace browse/import and bundled command edit/reset covered                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | Symphony, leaderboard, achievements                            |              2 |           120 | Project browse/detail, active/history/stats, achievements, and GitHub CLI preflight                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
@@ -291,3 +291,5 @@ Continue high-ROI app-surface gaps that can be tested deterministically:
 - Validation: `npx playwright test e2e/app-shell.spec.ts -g "Director's Notes|Director Notes"` passed 9/9; `npx playwright test` passed 399/399 with 0 skipped. Full-suite log: `/tmp/maestro-e2e-batch98-full.log`.
 - 2026-05-30 batch 99: added deterministic Settings E2E coverage for SSH remote ignore-pattern add/duplicate/remove/reset behavior, restoring `.gitignore` honoring on reset, and Group Chat moderator standing-instruction persistence.
 - Validation: `npx playwright test e2e/app-shell.spec.ts -g "SSH remote ignore|Group Chat moderator"` passed 3/3; `npx playwright test` passed 402/402 with 0 skipped. Full-suite log: `/tmp/maestro-e2e-batch99-full.log`.
+- 2026-05-30 batch 100: added deterministic Usage Dashboard E2E coverage for the empty state before query usage, seeded time-range footer updates, and CSV export through a stubbed save dialog plus real filesystem write.
+- Validation: `npx playwright test e2e/app-shell.spec.ts -g "Usage Dashboard"` passed 7/7; `npx playwright test` passed 405/405 with 0 skipped. Full-suite log: `/tmp/maestro-e2e-batch100-full.log`.

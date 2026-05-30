@@ -888,6 +888,13 @@ async function seedUsageDashboardStats(window: Page) {
 	});
 }
 
+async function stubUsageDashboardCsvSave(electronApp: ElectronApplication, filePath: string) {
+	await electronApp.evaluate(({ ipcMain }, exportPath) => {
+		ipcMain.removeHandler('dialog:saveFile');
+		ipcMain.handle('dialog:saveFile', async () => exportPath);
+	}, filePath);
+}
+
 async function seedSystemLogs(window: Page) {
 	await window.evaluate(async () => {
 		await window.maestro.logger.clearLogs();
@@ -5120,6 +5127,15 @@ test.describe('App shell seeded workbench', () => {
 		await expect(usageDashboard).toBeHidden();
 	});
 
+	test('shows the Usage Dashboard empty state before usage is recorded', async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await expect(usageDashboard.getByTestId('usage-dashboard-empty')).toBeVisible();
+		await expect(usageDashboard.getByText('No usage data yet')).toBeVisible();
+		await expect(usageDashboard.getByText('Start using Maestro to see your stats!')).toBeVisible();
+		await expect(usageDashboard.getByText('No data for selected time range')).toBeVisible();
+	});
+
 	test('renders populated Usage Dashboard overview metrics and chart sections', async () => {
 		await seedUsageDashboardStats(window);
 		const usageDashboard = await openUsageDashboard(window);
@@ -5134,6 +5150,35 @@ test.describe('App shell seeded workbench', () => {
 		await expect(usageDashboard.getByTestId('section-location-distribution')).toBeVisible();
 		await expect(usageDashboard.getByTestId('database-size-indicator')).toBeVisible();
 		await expect(usageDashboard.getByText('Showing this week data')).toBeVisible();
+	});
+
+	test('updates Usage Dashboard time range footer for seeded stats', async () => {
+		await seedUsageDashboardStats(window);
+		const usageDashboard = await openUsageDashboard(window);
+		const timeRange = usageDashboard.locator('select').first();
+
+		await timeRange.selectOption('all');
+		await expect(usageDashboard.getByText('Showing all time data')).toBeVisible();
+
+		await timeRange.selectOption('day');
+		await expect(usageDashboard.getByText('Showing today data')).toBeVisible();
+	});
+
+	test('exports seeded Usage Dashboard query data to CSV', async () => {
+		await seedUsageDashboardStats(window);
+		const exportPath = path.join(seededWorkbench.homeDir, 'usage-dashboard-export.csv');
+		await stubUsageDashboardCsvSave(electronApp, exportPath);
+		const usageDashboard = await openUsageDashboard(window);
+
+		await usageDashboard.locator('select').first().selectOption('all');
+		await usageDashboard.getByRole('button', { name: /Export CSV/ }).click();
+
+		await expect.poll(() => fs.existsSync(exportPath)).toBe(true);
+		const csv = fs.readFileSync(exportPath, 'utf-8');
+		expect(csv).toContain('sessionId,agentType,source,startTime,duration');
+		expect(csv).toContain('session-shell-codex-usage-dashboard');
+		expect(csv).toContain('codex');
+		expect(csv).toContain('/tmp/maestro-e2e-usage-dashboard');
 	});
 
 	test('shows Activity and Auto Run Usage Dashboard sections for seeded stats', async () => {
