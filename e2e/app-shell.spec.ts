@@ -2151,16 +2151,28 @@ async function closeDocumentGraph(window: Page) {
 	await expect(window.getByRole('dialog', { name: 'Document Graph' })).toBeHidden();
 }
 
-async function seedHistoryEntries(window: Page, projectPath: string, sessionId: string) {
-	const now = Date.now();
-
+async function clearHistoryEntries(window: Page, sessionId: string) {
 	await window.evaluate(
-		async ({ projectPath, sessionId, now }) => {
+		async ({ sessionId }) => {
 			const existingEntries = await window.maestro.history.getAll(undefined, sessionId);
 			for (const entry of existingEntries) {
 				await window.maestro.history.delete(entry.id, sessionId);
 			}
+		},
+		{ sessionId }
+	);
+}
 
+async function seedHistoryEntries(
+	window: Page,
+	projectPath: string,
+	sessionId: string,
+	now = Date.now()
+) {
+	await clearHistoryEntries(window, sessionId);
+
+	await window.evaluate(
+		async ({ projectPath, sessionId, now }) => {
 			const entries = [
 				{
 					id: 'history-auto-failure',
@@ -2347,6 +2359,61 @@ test.describe('App shell seeded workbench', () => {
 
 		await historyFilter.press('Escape');
 		await expect(historyFilter).toBeHidden();
+	});
+
+	test('shows the History no-match state for an unmatched search', async () => {
+		await helpers.openRightPanelTab(window, 'History');
+		const historyPanel = window.locator('[data-tour="history-panel"]');
+		await expect(historyPanel.getByText('Manual note captured for project review')).toBeVisible();
+
+		await historyPanel.locator('[tabindex="0"]').focus();
+		await window.keyboard.press('Control+f');
+		const historyFilter = historyPanel.getByPlaceholder('Filter history...');
+		await historyFilter.fill('missing-history-sentinel');
+
+		await expect(historyPanel.getByText('0 results')).toBeVisible();
+		await expect(
+			historyPanel.getByText('No entries match "missing-history-sentinel"')
+		).toBeVisible();
+
+		await historyFilter.press('Escape');
+		await expect(historyPanel.getByText('Manual note captured for project review')).toBeVisible();
+	});
+
+	test('shows the empty History state when no entries exist', async () => {
+		await clearHistoryEntries(window, seededWorkbench.sessions[0].id);
+		await helpers.openRightPanelTab(window, 'History');
+		const historyPanel = window.locator('[data-tour="history-panel"]');
+
+		await expect(
+			historyPanel.getByText('No history yet. Run batch tasks or use /history to add entries.')
+		).toBeVisible();
+		await expect(historyPanel.getByTitle('History panel help')).toBeVisible();
+	});
+
+	test('recovers from an empty History lookback filter by showing all time', async () => {
+		const oldBaseTime = Date.now() - 4 * 24 * 60 * 60 * 1000;
+		await seedHistoryEntries(
+			window,
+			seededWorkbench.sessions[0].cwd,
+			seededWorkbench.sessions[0].id,
+			oldBaseTime
+		);
+		await helpers.openRightPanelTab(window, 'History');
+		const historyPanel = window.locator('[data-tour="history-panel"]');
+		const activityGraph = historyPanel.locator('[title*="All time"]').first();
+
+		await activityGraph.click({ button: 'right' });
+		await window.getByRole('button', { name: '24 hours' }).click();
+
+		await expect(historyPanel.getByText('No entries in the last')).toBeVisible();
+		await expect(
+			historyPanel.getByRole('button', { name: 'Show all time (3 entries)' })
+		).toBeVisible();
+
+		await historyPanel.getByRole('button', { name: 'Show all time (3 entries)' }).click();
+		await expect(historyPanel.getByText('Manual note captured for project review')).toBeVisible();
+		await expect(historyPanel.getByText('Completed Auto Run setup checklist')).toBeVisible();
 	});
 
 	test('opens History detail and toggles validation state', async () => {
