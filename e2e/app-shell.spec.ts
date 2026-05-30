@@ -585,6 +585,17 @@ function settingsShortcutButton(settingsDialog: Locator, label: string) {
 		.first();
 }
 
+async function openThemeSettings(window: Page) {
+	const settingsDialog = await openSettings(window);
+	await settingsDialog.locator('button[title="Themes"]').click();
+	await expect(settingsDialog.getByRole('group', { name: 'Theme picker' })).toBeVisible();
+	return settingsDialog;
+}
+
+function customThemeBuilder(settingsDialog: Locator) {
+	return settingsDialog.locator('[data-theme-id="custom"]');
+}
+
 async function scrollSettingsToText(settingsDialog: Locator, text: string) {
 	await settingsDialog
 		.locator('.scrollbar-thin')
@@ -6349,10 +6360,8 @@ test.describe('App shell seeded workbench', () => {
 	});
 
 	test('persists Theme Settings selection and keyboard cycling', async () => {
-		const settingsDialog = await openSettings(window);
-		await settingsDialog.locator('button[title="Themes"]').click();
+		const settingsDialog = await openThemeSettings(window);
 		const themePicker = settingsDialog.getByRole('group', { name: 'Theme picker' });
-		await expect(themePicker).toBeVisible();
 
 		await themePicker.locator('[data-theme-id="monokai"]').click();
 		await expect
@@ -6371,6 +6380,136 @@ test.describe('App shell seeded workbench', () => {
 				});
 			})
 			.toBe('nord');
+	});
+
+	test('persists custom Theme initialization from a base theme', async () => {
+		const settingsDialog = await openThemeSettings(window);
+		const customBuilder = customThemeBuilder(settingsDialog);
+		await customBuilder
+			.getByRole('button', { name: /Custom/ })
+			.first()
+			.click();
+		await customBuilder.getByRole('button', { name: /Initialize/ }).click();
+		await customBuilder.getByRole('button', { name: /Nord/ }).click();
+
+		await expect
+			.poll(async () => {
+				return await window.evaluate(async () => {
+					const colors = await window.maestro.settings.get('customThemeColors');
+					return {
+						activeThemeId: await window.maestro.settings.get('activeThemeId'),
+						baseId: await window.maestro.settings.get('customThemeBaseId'),
+						bgMain: colors.bgMain,
+						accent: colors.accent,
+					};
+				});
+			})
+			.toEqual({
+				activeThemeId: 'custom',
+				baseId: 'nord',
+				bgMain: '#2e3440',
+				accent: '#88c0d0',
+			});
+	});
+
+	test('persists custom Theme color edits and reset controls', async () => {
+		const settingsDialog = await openThemeSettings(window);
+		const customBuilder = customThemeBuilder(settingsDialog);
+		await customBuilder
+			.getByRole('button', { name: /Custom/ })
+			.first()
+			.click();
+
+		const accentRow = customBuilder
+			.getByText('Accent', { exact: true })
+			.locator('xpath=ancestor::div[contains(@class, "flex items-center gap-2")][1]');
+		await accentRow.locator('button').last().click();
+		const accentInput = accentRow.locator('input[type="text"]');
+		await accentInput.fill('#123456');
+		await accentInput.press('Enter');
+
+		await expect
+			.poll(async () => {
+				return await window.evaluate(async () => {
+					const colors = await window.maestro.settings.get('customThemeColors');
+					return colors.accent;
+				});
+			})
+			.toBe('#123456');
+
+		await customBuilder.getByTitle('Reset to default').click();
+		await expect
+			.poll(async () => {
+				return await window.evaluate(async () => {
+					const colors = await window.maestro.settings.get('customThemeColors');
+					return {
+						baseId: await window.maestro.settings.get('customThemeBaseId'),
+						accent: colors.accent,
+					};
+				});
+			})
+			.toEqual({ baseId: 'dracula', accent: '#bd93f9' });
+	});
+
+	test('imports valid custom Theme JSON and ignores invalid imports', async () => {
+		const settingsDialog = await openThemeSettings(window);
+		const customBuilder = customThemeBuilder(settingsDialog);
+		const validColors = {
+			bgMain: '#101820',
+			bgSidebar: '#17212b',
+			bgActivity: '#22303c',
+			border: '#334455',
+			textMain: '#f5f7fa',
+			textDim: '#9aa6b2',
+			accent: '#33aaff',
+			accentDim: 'rgba(51, 170, 255, 0.24)',
+			accentText: '#77ddff',
+			accentForeground: '#07131f',
+			success: '#44cc88',
+			warning: '#ffcc66',
+			error: '#ff6677',
+		};
+		const validThemePath = path.join(seededWorkbench.homeDir, 'valid-custom-theme.json');
+		const invalidThemePath = path.join(seededWorkbench.homeDir, 'invalid-custom-theme.json');
+		fs.writeFileSync(
+			validThemePath,
+			JSON.stringify({
+				name: 'E2E Custom Theme',
+				baseTheme: 'nord',
+				colors: validColors,
+			})
+		);
+		fs.writeFileSync(invalidThemePath, JSON.stringify({ colors: { accent: 'not-a-color' } }));
+
+		await customBuilder.locator('input[type="file"]').setInputFiles(validThemePath);
+		await expect
+			.poll(async () => {
+				return await window.evaluate(async () => {
+					const colors = await window.maestro.settings.get('customThemeColors');
+					return {
+						baseId: await window.maestro.settings.get('customThemeBaseId'),
+						bgMain: colors.bgMain,
+						accent: colors.accent,
+						accentDim: colors.accentDim,
+					};
+				});
+			})
+			.toEqual({
+				baseId: 'nord',
+				bgMain: validColors.bgMain,
+				accent: validColors.accent,
+				accentDim: validColors.accentDim,
+			});
+
+		await customBuilder.locator('input[type="file"]').setInputFiles(invalidThemePath);
+		await expect
+			.poll(async () => {
+				return await window.evaluate(async () => {
+					const colors = await window.maestro.settings.get('customThemeColors');
+					return colors.accent;
+				});
+			})
+			.toBe(validColors.accent);
 	});
 
 	test('persists Display Settings sizing and message alignment controls', async () => {
