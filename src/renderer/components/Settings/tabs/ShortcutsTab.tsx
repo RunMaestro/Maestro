@@ -14,7 +14,7 @@ import type { Theme, Shortcut } from '../../../types';
 export interface ShortcutsTabProps {
 	theme: Theme;
 	hasNoAgents?: boolean;
-	onRecordingChange?: (isRecording: boolean) => void;
+	onRecordingChange?: (isRecording: boolean, cancelRecording?: () => void) => void;
 }
 
 export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: ShortcutsTabProps) {
@@ -26,7 +26,11 @@ export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: Shortcut
 
 	// Notify parent of recording state changes (for escape handler coordination)
 	useEffect(() => {
-		onRecordingChange?.(!!recordingId);
+		onRecordingChange?.(!!recordingId, recordingId ? () => setRecordingId(null) : undefined);
+
+		return () => {
+			if (recordingId) onRecordingChange?.(false);
+		};
 	}, [recordingId, onRecordingChange]);
 
 	// Auto-focus filter input on mount
@@ -111,6 +115,7 @@ export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: Shortcut
 			</span>
 			<button
 				onClick={(e) => {
+					onRecordingChange?.(true, () => setRecordingId(null));
 					setRecordingId(sc.id);
 					e.currentTarget.focus();
 				}}

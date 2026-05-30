@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, memo } from 'react';
+import { useState, useEffect, useRef, useCallback, memo } from 'react';
 import {
 	X,
 	Key,
@@ -249,6 +249,14 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 	// Layer stack integration
 	const { registerLayer, unregisterLayer } = useLayerStack();
 	const isRecordingShortcutRef = useRef(false);
+	const cancelShortcutRecordingRef = useRef<(() => void) | null>(null);
+	const handleShortcutRecordingChange = useCallback(
+		(isRecording: boolean, cancelRecording?: () => void) => {
+			isRecordingShortcutRef.current = isRecording;
+			cancelShortcutRecordingRef.current = cancelRecording ?? null;
+		},
+		[]
+	);
 
 	useEffect(() => {
 		if (isOpen) {
@@ -273,8 +281,10 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 			focusTrap: 'strict',
 			ariaLabel: 'Settings',
 			onEscape: () => {
-				// If recording a shortcut, ShortcutsTab handles its own escape via onKeyDownCapture
-				if (isRecordingShortcutRef.current) return;
+				if (isRecordingShortcutRef.current) {
+					cancelShortcutRecordingRef.current?.();
+					return;
+				}
 				onCloseRef.current();
 			},
 		});
@@ -560,9 +570,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 						<ShortcutsTab
 							theme={theme}
 							hasNoAgents={hasNoAgents}
-							onRecordingChange={(isRecording) => {
-								isRecordingShortcutRef.current = isRecording;
-							}}
+							onRecordingChange={handleShortcutRecordingChange}
 						/>
 					)}
 

@@ -577,6 +577,14 @@ async function openSettingsTab(window: Page, tabTitle: string, expectedText: str
 	return settingsDialog;
 }
 
+function settingsShortcutButton(settingsDialog: Locator, label: string) {
+	return settingsDialog
+		.getByText(label, { exact: true })
+		.locator('xpath=ancestor::div[contains(@class, "border")][1]')
+		.getByRole('button')
+		.first();
+}
+
 async function scrollSettingsToText(settingsDialog: Locator, text: string) {
 	await settingsDialog
 		.locator('.scrollbar-thin')
@@ -6072,6 +6080,90 @@ test.describe('App shell seeded workbench', () => {
 
 		await expect(settingsDialog.getByText('AI Tab')).toBeVisible();
 		await expect(settingsDialog.getByText(/\d+ \/ \d+/)).toBeVisible();
+	});
+
+	test('records a custom global shortcut and applies it in the app shell', async () => {
+		const settingsDialog = await openSettingsTab(
+			window,
+			'Shortcuts',
+			'Not all shortcuts can be modified'
+		);
+		const shortcutFilter = settingsDialog.getByPlaceholder('Filter shortcuts...');
+		await shortcutFilter.fill('Quick Actions');
+
+		const quickActionShortcut = settingsShortcutButton(settingsDialog, 'Quick Actions');
+		await quickActionShortcut.click();
+		await expect(quickActionShortcut).toHaveText('Press keys...');
+		await quickActionShortcut.press('Control+Shift+F8');
+
+		await expect
+			.poll(async () => {
+				return await window.evaluate(async () => {
+					const shortcuts = await window.maestro.settings.get('shortcuts');
+					return shortcuts.quickAction.keys.map((key: string) => key.toLowerCase());
+				});
+			})
+			.toEqual(['ctrl', 'shift', 'f8']);
+
+		await window.keyboard.press('Escape');
+		await expect(settingsDialog).toBeHidden();
+
+		await window.keyboard.press('Control+Shift+F8');
+		await expect(window.getByRole('dialog', { name: 'Quick Actions' })).toBeVisible();
+	});
+
+	test('records a custom AI tab shortcut inside Settings', async () => {
+		const settingsDialog = await openSettingsTab(
+			window,
+			'Shortcuts',
+			'Not all shortcuts can be modified'
+		);
+		const shortcutFilter = settingsDialog.getByPlaceholder('Filter shortcuts...');
+		await shortcutFilter.fill('Close Tab');
+
+		const closeTabShortcut = settingsShortcutButton(settingsDialog, 'Close Tab');
+		await closeTabShortcut.click();
+		await expect(closeTabShortcut).toHaveText('Press keys...');
+		await closeTabShortcut.press('Control+Shift+F7');
+
+		await expect
+			.poll(async () => {
+				return await window.evaluate(async () => {
+					const tabShortcuts = await window.maestro.settings.get('tabShortcuts');
+					return tabShortcuts.closeTab.keys.map((key: string) => key.toLowerCase());
+				});
+			})
+			.toEqual(['ctrl', 'shift', 'f7']);
+	});
+
+	test('cancels shortcut recording with Escape without closing Settings', async () => {
+		const settingsDialog = await openSettingsTab(
+			window,
+			'Shortcuts',
+			'Not all shortcuts can be modified'
+		);
+		const originalOpenSettingsKeys = await window.evaluate(async () => {
+			const shortcuts = await window.maestro.settings.get('shortcuts');
+			return shortcuts.settings?.keys?.map((key: string) => key.toLowerCase()) ?? null;
+		});
+		const shortcutFilter = settingsDialog.getByPlaceholder('Filter shortcuts...');
+		await shortcutFilter.fill('Open Settings');
+
+		const openSettingsShortcut = settingsShortcutButton(settingsDialog, 'Open Settings');
+		await openSettingsShortcut.click();
+		await expect(openSettingsShortcut).toHaveText('Press keys...');
+		await window.keyboard.press('Escape');
+
+		await expect(settingsDialog).toBeVisible();
+		await expect(openSettingsShortcut).not.toHaveText('Press keys...');
+		await expect
+			.poll(async () => {
+				return await window.evaluate(async () => {
+					const shortcuts = await window.maestro.settings.get('shortcuts');
+					return shortcuts.settings?.keys?.map((key: string) => key.toLowerCase()) ?? null;
+				});
+			})
+			.toEqual(originalOpenSettingsKeys);
 	});
 
 	test('persists General Settings defaults for history, thinking, and auto-scroll', async () => {
