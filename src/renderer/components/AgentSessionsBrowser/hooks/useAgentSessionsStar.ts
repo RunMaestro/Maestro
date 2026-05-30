@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react';
+import { captureException } from '../../../utils/sentry';
 import type { Session } from '../../../types';
 
 interface UseAgentSessionsStarArgs {
@@ -25,35 +26,56 @@ export function useAgentSessionsStar({
 		async (sessionId: string, e: React.MouseEvent) => {
 			e.stopPropagation();
 
-			const newStarred = new Set(starredSessions);
-			const isNowStarred = !newStarred.has(sessionId);
-			if (isNowStarred) {
-				newStarred.add(sessionId);
-			} else {
-				newStarred.delete(sessionId);
-			}
-			setStarredSessions(newStarred);
+			// Functional updater avoids stale-closure race on rapid toggles
+			let isNowStarred = false;
+			setStarredSessions((prev) => {
+				const updated = new Set(prev);
+				isNowStarred = !updated.has(sessionId);
+				if (isNowStarred) {
+					updated.add(sessionId);
+				} else {
+					updated.delete(sessionId);
+				}
+				return updated;
+			});
 
 			if (activeSession?.projectRoot) {
-				if (agentId === 'claude-code') {
-					await window.maestro.claude.updateSessionStarred(
-						activeSession.projectRoot,
-						sessionId,
-						isNowStarred
-					);
-				} else {
-					await window.maestro.agentSessions.setSessionStarred(
-						agentId,
-						activeSession.projectRoot,
-						sessionId,
-						isNowStarred
-					);
+				try {
+					if (agentId === 'claude-code') {
+						await window.maestro.claude.updateSessionStarred(
+							activeSession.projectRoot,
+							sessionId,
+							isNowStarred
+						);
+					} else {
+						await window.maestro.agentSessions.setSessionStarred(
+							agentId,
+							activeSession.projectRoot,
+							sessionId,
+							isNowStarred
+						);
+					}
+				} catch (error) {
+					// Revert optimistic update on IPC failure
+					setStarredSessions((prev) => {
+						const reverted = new Set(prev);
+						if (isNowStarred) {
+							reverted.delete(sessionId);
+						} else {
+							reverted.add(sessionId);
+						}
+						return reverted;
+					});
+					captureException(error, {
+						extra: { fn: 'useAgentSessionsStar', agentId, sessionId },
+					});
+					return;
 				}
 			}
 
 			onUpdateTab?.(sessionId, { starred: isNowStarred });
 		},
-		[starredSessions, activeSession?.projectRoot, agentId, onUpdateTab]
+		[activeSession?.projectRoot, agentId, onUpdateTab]
 	);
 
 	return { starredSessions, setStarredSessions, toggleStar };

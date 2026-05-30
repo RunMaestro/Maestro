@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useAgentSessionsRename } from '../../../../../renderer/components/AgentSessionsBrowser/hooks/useAgentSessionsRename';
 import type { AgentSession } from '../../../../../renderer/hooks/agent/useSessionViewer';

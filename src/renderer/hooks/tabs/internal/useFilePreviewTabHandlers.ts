@@ -414,7 +414,7 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 			try {
 				const sshRemoteId = currentTab.sshRemoteId;
 				const content = await window.maestro.fs.readFile(historyEntry.path, sshRemoteId);
-				if (!content) return;
+				if (content === null) return;
 
 				setSessions((prev: Session[]) =>
 					prev.map((s) => {
@@ -462,7 +462,7 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 			try {
 				const sshRemoteId = currentTab.sshRemoteId;
 				const content = await window.maestro.fs.readFile(historyEntry.path, sshRemoteId);
-				if (!content) return;
+				if (content === null) return;
 
 				setSessions((prev: Session[]) =>
 					prev.map((s) => {
@@ -508,7 +508,7 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 			try {
 				const sshRemoteId = currentTab.sshRemoteId;
 				const content = await window.maestro.fs.readFile(historyEntry.path, sshRemoteId);
-				if (!content) return;
+				if (content === null) return;
 
 				setSessions((prev: Session[]) =>
 					prev.map((s) => {

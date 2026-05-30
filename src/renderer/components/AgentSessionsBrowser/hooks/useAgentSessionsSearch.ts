@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { logger } from '../../../utils/logger';
+import { captureException } from '../../../utils/sentry';
 import type { SearchMode, SearchResult } from '../types';
 
 interface UseAgentSessionsSearchArgs {
@@ -55,6 +56,9 @@ export function useAgentSessionsSearch({
 				setSearchResults(results);
 			} catch (error) {
 				logger.error('Search failed:', undefined, error);
+				captureException(error, {
+					extra: { fn: 'useAgentSessionsSearch', agentId, projectPathForSessions },
+				});
 				setSearchResults([]);
 			} finally {
 				setIsSearching(false);

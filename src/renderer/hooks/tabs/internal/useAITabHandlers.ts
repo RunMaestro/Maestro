@@ -186,21 +186,10 @@ export function useAITabHandlers(): AITabHandlersReturn {
 	}, [performCloseAllTabs]);
 
 	const handleRequestTabRename = useCallback((tabId: string) => {
-		logger.info('[DEBUG renameTab] handleRequestTabRename called', undefined, { tabId });
 		const { setSessions } = useSessionStore.getState();
 		const session = selectActiveSession(useSessionStore.getState());
-		if (!session) {
-			logger.info('[DEBUG renameTab] no session found');
-			return;
-		}
+		if (!session) return;
 		const tab = session.aiTabs?.find((t) => t.id === tabId);
-		logger.info('[DEBUG renameTab] tab found:', undefined, [
-			!!tab,
-			{
-				aiTabCount: session.aiTabs?.length,
-				tabId,
-			},
-		]);
 		if (tab) {
 			if (tab.isGeneratingName) {
 				setSessions((prev: Session[]) =>

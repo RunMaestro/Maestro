@@ -129,7 +129,7 @@ export const SessionDetailHeader = React.memo(function SessionDetailHeader({
 						<span>•</span>
 						<span
 							className="relative group cursor-default"
-							title={new Date(viewingSession.timestamp).toLocaleString()}
+							title={new Date(viewingSession.modifiedAt).toLocaleString()}
 						>
 							{formatRelativeTime(viewingSession.modifiedAt)}
 							<span
@@ -139,7 +139,7 @@ export const SessionDetailHeader = React.memo(function SessionDetailHeader({
 									color: theme.colors.textMain,
 								}}
 							>
-								{new Date(viewingSession.timestamp).toLocaleString()}
+								{new Date(viewingSession.modifiedAt).toLocaleString()}
 							</span>
 						</span>
 					</div>

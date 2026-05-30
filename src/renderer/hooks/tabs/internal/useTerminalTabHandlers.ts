@@ -3,6 +3,7 @@ import { useModalStore } from '../../../stores/modalStore';
 import { selectActiveSession, useSessionStore } from '../../../stores/sessionStore';
 import { useTabStore } from '../../../stores/tabStore';
 import { getTerminalSessionId } from '../../../utils/terminalTabHelpers';
+import { captureMessage } from '../../../utils/sentry';
 import type { TerminalTabHandlersReturn } from './types';
 
 export function useTerminalTabHandlers(): TerminalTabHandlersReturn {
@@ -37,7 +38,13 @@ export function useTerminalTabHandlers(): TerminalTabHandlersReturn {
 						closeTerminalTab(tabId);
 					}
 				})
-				.catch(() => closeTerminalTab(tabId));
+				.catch((err) => {
+					captureMessage('isTerminalBusy IPC failed, closing tab without prompt', {
+						level: 'warning',
+						extra: { ptySessionId, tabId, err: String(err) },
+					});
+					closeTerminalTab(tabId);
+				});
 		},
 		[closeTerminalTab]
 	);

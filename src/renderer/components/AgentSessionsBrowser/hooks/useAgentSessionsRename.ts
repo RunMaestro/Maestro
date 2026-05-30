@@ -1,5 +1,6 @@
 import { useState, useCallback, RefObject } from 'react';
 import { logger } from '../../../utils/logger';
+import { captureException } from '../../../utils/sentry';
 import type { Session } from '../../../types';
 import type { AgentSession } from '../../../hooks/agent/useSessionViewer';
 
@@ -83,6 +84,9 @@ export function useAgentSessionsRename({
 				onUpdateTab?.(sessionId, { name: trimmedName || null });
 			} catch (error) {
 				logger.error('Failed to rename session:', undefined, error);
+				captureException(error, {
+					extra: { agentId, sessionId, projectPath: activeSession?.projectRoot },
+				});
 			}
 
 			cancelRename();

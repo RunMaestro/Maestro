@@ -30,16 +30,7 @@ const MODES = [
 ] as const;
 
 function getModeIcon(mode: SearchMode) {
-	switch (mode) {
-		case 'title':
-			return Search;
-		case 'user':
-			return User;
-		case 'assistant':
-			return Bot;
-		default:
-			return MessageSquare;
-	}
+	return MODES.find((m) => m.mode === mode)?.icon ?? MessageSquare;
 }
 
 export const SearchModeDropdown = React.memo(function SearchModeDropdown({

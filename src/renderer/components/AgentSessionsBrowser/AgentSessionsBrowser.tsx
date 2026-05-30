@@ -251,19 +251,13 @@ export function AgentSessionsBrowser({
 
 	const handleKeyDown = (e: React.KeyboardEvent) => {
 		if (viewingSession) {
-			if (e.key === 'Escape') {
-				e.preventDefault();
-				clearViewingSession();
-			} else if (e.key === 'Enter') {
+			if (e.key === 'Enter') {
 				e.preventDefault();
 				handleResume();
 			}
 			return;
 		}
-		if (e.key === 'Escape') {
-			e.preventDefault();
-			onClose();
-		} else if (e.key === 'ArrowDown') {
+		if (e.key === 'ArrowDown') {
 			e.preventDefault();
 			setSelectedIndex((prev) => Math.min(prev + 1, filteredSessions.length - 1));
 		} else if (e.key === 'ArrowUp') {
