@@ -558,6 +558,19 @@ export function abbreviateGroupName(
 	const max = options?.max ?? 10;
 	const trimmed = name.trim();
 	if (!trimmed) return trimmed;
+
+	// Bracketed tag prefix wins: "[ARP] Auditoria Relatório Pessoal" → "ARP".
+	// Users put their preferred short form in brackets. Without this rule the
+	// initials path below would fold the bracketed acronym into the following
+	// words ("[ARP] Auditoria Relatório Pessoal" → "AARP"), so honor the tag
+	// verbatim (issue #1017). Require a letter so pure-numbering prefixes like
+	// "[1]" fall through to the initials path, which drops them ("[1] A/B" → "AB").
+	const tagMatch = trimmed.match(/^\[([^\]]+)\]/);
+	if (tagMatch) {
+		const tag = tagMatch[1].trim();
+		if (tag && /[a-z]/i.test(tag) && tag.length <= max) return tag;
+	}
+
 	if (trimmed.length <= max) return trimmed;
 
 	// First letter of a word, skipping any leading non-letters so numbering or

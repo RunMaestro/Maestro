@@ -559,6 +559,22 @@ describe('shared/formatters', () => {
 			expect(abbreviateGroupName('Engineering', { max: 5 })).toBe('Engnr');
 			expect(abbreviateGroupName('TenChars10', { max: 5 })).toBe('TnChr');
 		});
+
+		// Issue #1017: groups named like "[ARP] Auditoria Relatório Pessoal" used to
+		// fall into the multi-word initials path, which took just the leading "[" of
+		// the bracketed word and produced "[ARP" with the closing bracket dropped.
+		it('uses a bracketed tag prefix as the preferred short form', () => {
+			expect(abbreviateGroupName('[ARP] Auditoria Relatório Pessoal')).toBe('ARP');
+			expect(abbreviateGroupName('[CEDR] Conteúdo Educação Designer Reuniões')).toBe('CEDR');
+			expect(abbreviateGroupName('[GU] Generic User')).toBe('GU');
+			// Bracket prefix is honored even when the name is already short.
+			expect(abbreviateGroupName('[ARP]')).toBe('ARP');
+			// Tag itself is over max → fall through to initials, which skip the
+			// leading bracket entirely (no lopped "[" in the output).
+			expect(abbreviateGroupName('[VeryLongTagName] X', { max: 5 })).toBe('VX');
+			// Pure-numbering prefix is not a tag → dropped, initials of the rest win.
+			expect(abbreviateGroupName('[1] Aleyemma/Money-Sessions')).toBe('AMS');
+		});
 	});
 
 	// ==========================================================================
