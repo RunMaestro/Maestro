@@ -6189,6 +6189,30 @@ test.describe('App shell seeded workbench', () => {
 		await closeDocumentGraph(window);
 	});
 
+	test('shows Document Graph selected document metadata and task counts', async () => {
+		const graphDialog = await openDocumentGraphFromPreview(window);
+
+		await expect(graphDialog.getByText('README.md').first()).toBeVisible();
+		await expect(graphDialog.getByTitle('Markdown tasks')).toBeVisible({ timeout: 5000 });
+		await expect(graphDialog.getByText('1 of 2 tasks')).toBeVisible();
+		await expect(graphDialog.getByTitle('Created date')).toBeVisible();
+		await expect(graphDialog.getByTitle('Modified date')).toBeVisible();
+
+		await closeDocumentGraph(window);
+	});
+
+	test('shows Document Graph unmatched search state and clears it', async () => {
+		const graphDialog = await openDocumentGraphFromPreview(window);
+		const searchInput = graphDialog.getByLabel('Search documents in graph');
+
+		await searchInput.fill('missing-graph-search');
+		await expect(graphDialog.getByText('0 of 2 matching')).toBeVisible();
+		await graphDialog.getByLabel('Clear search').click();
+		await expect(graphDialog.getByText(/2 documents/)).toBeVisible();
+
+		await closeDocumentGraph(window);
+	});
+
 	test('adjusts Document Graph preview character limit from the toolbar', async () => {
 		const graphDialog = await openDocumentGraphFromPreview(window);
 
@@ -6201,6 +6225,20 @@ test.describe('App shell seeded workbench', () => {
 			.last()
 			.click({ position: { x: 10, y: 10 } });
 		await expect(graphDialog.getByText('Preview Characters')).toBeHidden();
+
+		await closeDocumentGraph(window);
+	});
+
+	test('closes the Document Graph help panel from its header control', async () => {
+		const graphDialog = await openDocumentGraphFromPreview(window);
+
+		await graphDialog.getByTitle('Open help panel').click();
+		const helpPanel = graphDialog.getByRole('region', { name: 'Help panel' });
+		await expect(helpPanel).toBeVisible();
+		await expect(helpPanel.getByText('Keyboard Shortcuts')).toBeVisible();
+
+		await helpPanel.getByTitle('Close (Esc)').click();
+		await expect(helpPanel).toBeHidden();
 
 		await closeDocumentGraph(window);
 	});
