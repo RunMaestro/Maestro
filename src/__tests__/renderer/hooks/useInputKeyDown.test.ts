@@ -566,6 +566,22 @@ describe('Slash command autocomplete', () => {
 		expect(deps.setInputValue).not.toHaveBeenCalled();
 	});
 
+	it('falls through to terminal Enter handling when slash autocomplete has no matches', () => {
+		setActiveSession({ inputMode: 'terminal' });
+		useSettingsStore.setState({ enterToSendTerminal: true } as any);
+		const deps = createMockDeps({ inputValue: '/r', allSlashCommands: commands });
+		const { result } = renderHook(() => useInputKeyDown(deps));
+		const e = createKeyEvent('Enter');
+
+		act(() => {
+			result.current.handleInputKeyDown(e);
+		});
+
+		expect(mockInputContext.setSlashCommandOpen).toHaveBeenCalledWith(false);
+		expect(deps.setInputValue).not.toHaveBeenCalled();
+		expect(deps.processInput).toHaveBeenCalled();
+	});
+
 	it('filters out terminalOnly commands in AI mode', () => {
 		setActiveSession({ inputMode: 'ai' });
 		const terminalCommand = [{ command: '/shell', description: 'Shell', terminalOnly: true }];

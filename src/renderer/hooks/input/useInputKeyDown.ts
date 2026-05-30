@@ -211,24 +211,28 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 					return cmd.command.toLowerCase().startsWith(inputValue.toLowerCase());
 				});
 
-				if (e.key === 'ArrowDown') {
-					e.preventDefault();
-					setSelectedSlashCommandIndex((prev) => Math.min(prev + 1, filteredCommands.length - 1));
-				} else if (e.key === 'ArrowUp') {
-					e.preventDefault();
-					setSelectedSlashCommandIndex((prev) => Math.max(prev - 1, 0));
-				} else if (e.key === 'Tab' || e.key === 'Enter') {
-					e.preventDefault();
-					if (filteredCommands[selectedSlashCommandIndex]) {
-						setInputValue(filteredCommands[selectedSlashCommandIndex].command);
-						setSlashCommandOpen(false);
-						inputRef.current?.focus();
-					}
-				} else if (e.key === 'Escape') {
-					e.preventDefault();
+				if (filteredCommands.length === 0) {
 					setSlashCommandOpen(false);
+				} else {
+					if (e.key === 'ArrowDown') {
+						e.preventDefault();
+						setSelectedSlashCommandIndex((prev) => Math.min(prev + 1, filteredCommands.length - 1));
+					} else if (e.key === 'ArrowUp') {
+						e.preventDefault();
+						setSelectedSlashCommandIndex((prev) => Math.max(prev - 1, 0));
+					} else if (e.key === 'Tab' || e.key === 'Enter') {
+						e.preventDefault();
+						if (filteredCommands[selectedSlashCommandIndex]) {
+							setInputValue(filteredCommands[selectedSlashCommandIndex].command);
+							setSlashCommandOpen(false);
+							inputRef.current?.focus();
+						}
+					} else if (e.key === 'Escape') {
+						e.preventDefault();
+						setSlashCommandOpen(false);
+					}
+					return;
 				}
-				return;
 			}
 
 			// Read enter-to-send settings at call time (not closure)

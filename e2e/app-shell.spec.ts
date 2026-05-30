@@ -3190,6 +3190,47 @@ test.describe('App shell seeded workbench', () => {
 		await expect(terminalInput).toHaveValue('');
 	});
 
+	test('runs a command terminal input with Enter when idle', async () => {
+		await stubTerminalRunCommand(electronApp);
+		const terminalInput = await openSeededTerminalAgent(window);
+
+		await terminalInput.fill('echo terminal live stdout sentinel');
+		await terminalInput.press('Enter');
+
+		await expect(window.getByText('terminal live stdout sentinel')).toBeVisible();
+		await expect(terminalInput).toHaveValue('');
+		await expect(
+			(await getStubbedTerminalRunCommandCalls(electronApp)).map((call) => call.command)
+		).toEqual(['echo terminal live stdout sentinel']);
+	});
+
+	test('ignores blank command terminal submissions without changing the draft', async () => {
+		await stubTerminalRunCommand(electronApp);
+		const terminalInput = await openSeededTerminalAgent(window);
+		const inputArea = window.locator('[data-tour="input-area"]');
+
+		await terminalInput.fill('   ');
+		await inputArea.getByTitle('Run command (Enter)').click();
+		await terminalInput.press('Enter');
+		await window.waitForTimeout(300);
+
+		await expect(terminalInput).toHaveValue('   ');
+		await expect(await getStubbedTerminalRunCommandCalls(electronApp)).toEqual([]);
+	});
+
+	test('passes terminal slash commands through to the shell runner', async () => {
+		await stubTerminalRunCommand(electronApp);
+		const terminalInput = await openSeededTerminalAgent(window);
+
+		await terminalInput.fill('/clear');
+		await terminalInput.press('Enter');
+
+		await expect(window.getByText('/clear')).toBeVisible();
+		await expect(
+			(await getStubbedTerminalRunCommandCalls(electronApp)).map((call) => call.command)
+		).toEqual(['/clear']);
+	});
+
 	test('interrupts a running command terminal process from the Stop control', async () => {
 		await stubTerminalRunCommand(electronApp);
 		await stubProcessInterrupt(electronApp);
