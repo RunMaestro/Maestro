@@ -311,7 +311,7 @@ flowchart TD
 	};
 }
 
-function createFileExplorerStateWorkbench(variant: 'empty' | 'error') {
+function createFileExplorerStateWorkbench(variant: 'empty' | 'error' | 'retry') {
 	const seeded = createSeededWorkbench();
 	const rootDir = path.join(
 		seeded.homeDir,
@@ -332,9 +332,10 @@ function createFileExplorerStateWorkbench(variant: 'empty' | 'error') {
 				projectRoot: rootDir,
 				isGitRepo: false,
 				fileTree: [],
-				fileTreeError: variant === 'error' ? 'E2E file tree error sentinel' : undefined,
+				fileTreeError:
+					variant === 'error' || variant === 'retry' ? 'E2E file tree error sentinel' : undefined,
 				fileTreeLoading: false,
-				fileTreeRetryAt: undefined,
+				fileTreeRetryAt: variant === 'retry' ? Date.now() + 60_000 : undefined,
 				filePreviewTabs: [],
 				activeFileTabId: null,
 				unifiedTabOrder: [{ type: 'ai', id: baseSession.activeTabId }],
@@ -4471,6 +4472,17 @@ test.describe('App shell seeded workbench', () => {
 		await expect(window.getByTitle('Refresh file tree')).toBeVisible();
 	});
 
+	test('refreshes the File Explorer after filesystem changes', async () => {
+		await helpers.openRightPanelTab(window, 'Files');
+		await getFileTreeRow(window, 'NOTES.md');
+		const refreshedPath = path.join(seededWorkbench.sessions[0].fullPath, 'REFRESHED.md');
+
+		fs.writeFileSync(refreshedPath, '# Refreshed File\n\nRefresh sentinel body.\n', 'utf-8');
+		await window.getByTitle(/Auto-refresh every|Refresh file tree/).click();
+
+		await getFileTreeRow(window, 'REFRESHED.md');
+	});
+
 	test('routes File Explorer context menu external actions through shell IPC', async () => {
 		await stubShellPathHandlers(electronApp);
 		const expectedNotesPath = path.join(seededWorkbench.sessions[0].fullPath, 'NOTES.md');
@@ -5266,6 +5278,22 @@ test.describe('File Explorer state variants', () => {
 
 		await helpers.openRightPanelTab(window, 'Files');
 		await expect(window.getByText('E2E file tree error sentinel')).toBeVisible();
+		await expect(window.getByRole('button', { name: 'Retry Connection' })).toBeVisible();
+	});
+
+	test('shows File Explorer retry countdown and manual retry handoff', async () => {
+		const seeded = createFileExplorerStateWorkbench('retry');
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+		window = launched.window;
+		cleanupApp = launched.cleanup;
+
+		await helpers.openRightPanelTab(window, 'Files');
+		await expect(window.getByText('E2E file tree error sentinel')).toBeVisible();
+		await expect(window.getByText(/Retrying in \d+s/)).toBeVisible();
+		await window.getByRole('button', { name: 'Retry Now' }).click();
 		await expect(window.getByRole('button', { name: 'Retry Connection' })).toBeVisible();
 	});
 });
