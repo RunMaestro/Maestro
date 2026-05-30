@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { SshRemoteConfig, SshRemoteTestResult } from '../../../shared/types';
 import { ipcCache } from '../../services/ipcWrapper';
+import { logger } from '../../utils/logger';
 
 /**
  * Return type for the useSshRemotes hook
@@ -91,7 +92,7 @@ export function useSshRemotes(): UseSshRemotesReturn {
 				setError(result.error || 'Failed to load SSH remote configurations');
 			}
 		} catch (err) {
-			console.error('[useSshRemotes] Failed to load configs:', err);
+			logger.error('[useSshRemotes] Failed to load configs:', undefined, err);
 			setError(err instanceof Error ? err.message : 'Failed to load SSH remote configurations');
 		}
 	}, []);
@@ -105,10 +106,10 @@ export function useSshRemotes(): UseSshRemotesReturn {
 			if (result.success) {
 				setDefaultIdState(result.id ?? null);
 			} else {
-				console.error('[useSshRemotes] Failed to load default ID:', result.error);
+				logger.error('[useSshRemotes] Failed to load default ID:', undefined, result.error);
 			}
 		} catch (err) {
-			console.error('[useSshRemotes] Failed to load default ID:', err);
+			logger.error('[useSshRemotes] Failed to load default ID:', undefined, err);
 		}
 	}, []);
 
@@ -162,7 +163,7 @@ export function useSshRemotes(): UseSshRemotesReturn {
 					return { success: false, error: errorMsg };
 				}
 			} catch (err) {
-				console.error('[useSshRemotes] Failed to save config:', err);
+				logger.error('[useSshRemotes] Failed to save config:', undefined, err);
 				const errorMsg =
 					err instanceof Error ? err.message : 'Failed to save SSH remote configuration';
 				setError(errorMsg);
@@ -196,7 +197,7 @@ export function useSshRemotes(): UseSshRemotesReturn {
 					return { success: false, error: errorMsg };
 				}
 			} catch (err) {
-				console.error('[useSshRemotes] Failed to delete config:', err);
+				logger.error('[useSshRemotes] Failed to delete config:', undefined, err);
 				const errorMsg =
 					err instanceof Error ? err.message : 'Failed to delete SSH remote configuration';
 				setError(errorMsg);
@@ -223,7 +224,7 @@ export function useSshRemotes(): UseSshRemotesReturn {
 					return { success: false, error: errorMsg };
 				}
 			} catch (err) {
-				console.error('[useSshRemotes] Failed to set default ID:', err);
+				logger.error('[useSshRemotes] Failed to set default ID:', undefined, err);
 				const errorMsg = err instanceof Error ? err.message : 'Failed to set default SSH remote';
 				setError(errorMsg);
 				return { success: false, error: errorMsg };
@@ -254,7 +255,7 @@ export function useSshRemotes(): UseSshRemotesReturn {
 					return { success: false, error: result.error || 'Connection test failed' };
 				}
 			} catch (err) {
-				console.error('[useSshRemotes] Failed to test connection:', err);
+				logger.error('[useSshRemotes] Failed to test connection:', undefined, err);
 				setTestingConfigId(null);
 				const errorMsg = err instanceof Error ? err.message : 'Connection test failed';
 				return { success: false, error: errorMsg };

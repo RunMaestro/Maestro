@@ -28,6 +28,29 @@ Use markdown checkboxes in your documents:
 
 **Tip**: Press `Cmd+L` (Mac) or `Ctrl+L` (Windows/Linux) to quickly insert a new checkbox at your cursor position.
 
+### Task Granularity: Two Approaches
+
+There are two viable ways to structure work across Auto Run documents. Pick the one that fits your project - they can also coexist.
+
+**1. Many tasks per document (classic approach)**
+
+One document holds a long list of checkboxes; the runner walks through them serially, each in a fresh session.
+
+- Good when tasks are small, independent, and share a common framing that's cheap to restate in the document body.
+- Each task gets a clean context, so the agent doesn't drift across them.
+- Tradeoff: the agent has to re-derive shared context for every task from whatever lives in the document.
+
+**2. One task (or a few) per document (recommended for richer work)**
+
+Each document is a focused brief - heavy on context, light on checkboxes. Often just a single `- [ ]` "execute the plan" task at the bottom.
+
+- Good when each unit of work needs substantial setup, references, constraints, or prior decisions to do well.
+- Modern agents have large context windows, so loading a richer document per task is cheap and usually produces better results than splintering it into many small checkboxes that each lose the shared framing.
+- Compose multi-step workflows by chaining several of these focused documents inside a Playbook instead of stuffing them into one file.
+- Tradeoff: more files to manage; the dropdown list grows.
+
+**Rule of thumb:** if you find yourself repeating the same context paragraph above several checkboxes in one document, that's a signal to split into multiple focused documents and let the Playbook handle ordering.
+
 ## Running Single Documents
 
 1. Select a document from the dropdown
@@ -42,10 +65,29 @@ Auto Run supports running multiple documents in sequence:
 2. Click **+ Add Docs** to add more documents to the queue
 3. Drag to reorder documents as needed
 4. Configure options per document:
-   - **Reset on Completion** - Creates a working copy in `Runs/` subfolder instead of modifying the original. The original document is never touched, and working copies (e.g., `TASK-1735192800000-loop-1.md`) serve as audit logs.
+   - **Reset on Completion** - Creates a working copy in `runs/` subfolder instead of modifying the original. The original document is never touched, and working copies (e.g., `TASK-1735192800000-loop-1.md`) serve as audit logs.
    - **Duplicate** - Add the same document multiple times
 5. Enable **Loop Mode** to cycle back to the first document after completing the last
 6. Click **Go** to start running documents
+
+## Fresh Context: Task vs Document
+
+The run configuration modal has a **Fresh context per** toggle that controls how context is scoped as the runner works through a document. This is distinct from [task granularity](#task-granularity-two-approaches) above - granularity is how you _structure_ a document, while this is how Maestro _executes_ it.
+
+**Task** - A new agent is spawned for each unchecked task, with a clean context every time.
+
+- Maximum isolation; the agent never drifts across tasks.
+- Each task must be fully self-contained, since the agent sees nothing from previous tasks except what's written in the document.
+- The right choice for most agents.
+
+**Document** - A single agent walks every unchecked task in the document in one continuous session, carrying context forward between tasks.
+
+- Best for agents with very large context windows, and for work where later tasks build on earlier ones.
+- Requires enough context window to hold a whole document's worth of work in one session.
+
+**Auto-selection:** Maestro picks the mode by combining the running agent's context window with the average task count across the documents you've selected. The tasks-per-doc threshold scales with the window - **5** at 256K or less, **10** at 512K, **20** at 1M - and below the threshold Maestro recommends **Document**, at/above it **Task**. Selecting different documents recomputes the recommendation. If you toggle to the non-recommended mode, the modal surfaces a small note explaining what it would have picked and why, but respects your choice. A loaded Playbook's saved mode always takes precedence, and once you've manually toggled, future document-selection changes don't yank the mode back.
+
+> **Tip:** Author tasks to be self-contained regardless of mode. Document mode is an optimization, not a license to write tasks that depend on chat memory.
 
 ## Playbooks
 
@@ -95,6 +137,8 @@ Each task executes in a completely fresh AI session with its own unique session 
 
 This isolation is critical for playbooks with `Reset on Completion` documents that loop indefinitely. Each loop creates a fresh working copy from the original document, and the AI approaches it without memory of previous iterations.
 
+> **Note:** [Nudge messages](./general-usage#creating-agents) configured on an agent do not apply to Auto Run tasks. Nudge messages are only appended to interactive AI messages typed by the user. If you need persistent instructions for Auto Run tasks, include them directly in your task document or use environment variables.
+
 ## Environment Variables
 
 Maestro sets environment variables that your agent hooks can use to customize behavior:
@@ -132,24 +176,27 @@ Each completed task is logged to the History panel with:
 
 ## Expanded Editor View
 
-For editing complex Auto Run documents, use the **Expanded Editor** — a fullscreen modal that provides more screen real-estate.
+For editing complex Auto Run documents, use the **Expanded Editor** - a fullscreen modal that provides more screen real-estate.
 
 **To open the Expanded Editor:**
 
 - Click the **expand icon** (↗️) in the top-right corner of the Auto Run panel
-- Or press `Cmd+Shift+E` (Mac) / `Ctrl+Shift+E` (Windows/Linux) to toggle
+- Or press `Cmd+Shift+E` (Mac) / `Ctrl+Shift+E` (Windows/Linux) to toggle - works from anywhere in the interface, even when the Auto Run panel is closed
+- Or open the Command Palette (`Cmd+K`) and pick **Auto Run Expanded Preview**
 
 ![Expanded Auto Run Editor](./screenshots/autorun-expanded.png)
 
 The Expanded Editor provides:
 
-- **Edit/Preview toggle** — Switch between editing markdown and previewing rendered output
-- **Document selector** — Switch between documents without closing the modal
-- **Run controls** — Start, stop, and monitor Auto Run progress from the expanded view
-- **Task progress** — See "X of Y tasks completed" and token count at the bottom
-- **Full toolbar** — Create new documents, refresh, and open folder
+- **Edit/Preview toggle** - Switch between editing markdown and previewing rendered output
+- **Document selector** - Switch between documents without closing the modal
+- **Run controls** - Start, stop, and monitor Auto Run progress from the expanded view
+- **Task progress** - See "X of Y tasks completed" and token count at the bottom
+- **Full toolbar** - Create new documents, refresh, and open folder
 
 Click **Collapse** or press `Esc` to return to the sidebar panel view.
+
+> **Maestro Pro Tip - a scratch pad from anywhere:** Because `Cmd+Shift+E` and the Command Palette open the Expanded Editor from anywhere (the Auto Run panel doesn't need to be open), it doubles as an always-available scratch pad. Keep a throwaway document in your Auto Run folder and, as ideas surface mid-session, pop open the editor and jot down tasks you want to kick off later. When you wrap up your interactive work, run that document to dispatch the whole batch at once.
 
 ## Saving Documents
 
@@ -169,9 +216,30 @@ Click the **Stop** button at any time. The runner will:
 - Preserve all completed work
 - Allow you to resume later by clicking Run again
 
+## Halt Marker (Agent Early Exit)
+
+Sometimes the agent itself discovers that the rest of the playbook cannot meaningfully proceed - a missing dependency, a broken precondition, an ambiguous spec it cannot resolve, or a destructive change it refuses to make. In that case the agent can abort the entire run by writing a halt marker into the current document:
+
+```html
+<!-- maestro:halt: brief reason here -->
+```
+
+When the engine re-reads the document after the task and finds this marker, it stops dispatch immediately:
+
+- No further tasks in the current document
+- No further documents in the playbook
+- The reason text is recorded in the History panel
+- A `halt` event is emitted to the JSONL stream, followed by a `complete` event with `success: false` and the same reason
+
+The bare form `<!-- maestro:halt -->` works without a reason, but agents are instructed to always include one. The agent should leave the unfinishable task **unchecked** so you can see exactly where execution stopped.
+
+This is distinct from clicking **Stop** (a manual user action) or a single task simply failing (which by default does **not** halt the playbook - Auto Run is designed to run independent tasks, so one failure doesn't invalidate the rest).
+
+A stale halt marker left in a document will block re-runs with an error - Auto Run refuses to start so previously-halted work isn't silently replayed. Remove the marker before launching the playbook again.
+
 ## Parallel Auto Runs
 
-Auto Run can execute in parallel across different agents without conflicts — each agent works in its own project directory, so there's no risk of clobbering each other's work.
+Auto Run can execute in parallel across different agents without conflicts - each agent works in its own project directory, so there's no risk of clobbering each other's work.
 
 **Same project, parallel work:** To run multiple Auto Runs in the same repository simultaneously, create worktree sub-agents from the git branch menu (see [Git Worktrees](./git-worktrees)). Each worktree operates in an isolated directory with its own branch, enabling true parallel task execution on the same codebase.
 
@@ -186,7 +254,7 @@ You can dispatch an Auto Run directly into a new git worktree from the run confi
 | **Dispatch to a separate worktree** | Toggle to enable worktree isolation for this run                                           |
 | **Worktree selection**              | Create a new worktree or select an existing one                                            |
 | **Base Branch**                     | The branch to base the new worktree on (e.g., `main`)                                      |
-| **Worktree Branch Name**            | Name for the new branch — also used as the worktree directory name                         |
+| **Worktree Branch Name**            | Name for the new branch - also used as the worktree directory name                         |
 | **Automatically create PR**         | When checked, Maestro opens a pull request from the worktree branch when the run completes |
 
-This is the recommended workflow for longer Auto Runs — your main branch stays untouched, all changes land on a dedicated branch, and you get a PR at the end ready for review.
+This is the recommended workflow for longer Auto Runs - your main branch stays untouched, all changes land on a dedicated branch, and you get a PR at the end ready for review.

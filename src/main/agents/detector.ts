@@ -13,6 +13,8 @@
  * - Cache can be manually cleared or bypassed with forceRefresh flag
  */
 
+import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import { execFileNoThrow } from '../utils/execFile';
 import { logger } from '../utils/logger';
@@ -20,9 +22,62 @@ import { captureException } from '../utils/sentry';
 import { getAgentCapabilities } from './capabilities';
 import { checkBinaryExists, checkCustomPath, getExpandedEnv } from './path-prober';
 import { AGENT_DEFINITIONS, type AgentConfig } from './definitions';
+import { discoverModelsFromLocalConfigs } from './opencode-config';
 import { isWindows } from '../../shared/platformDetection';
+import { parseJsonWithBom } from '../../shared/jsonUtils';
+import { capabilitySnapshots } from './capability-snapshot';
 
 const LOG_CONTEXT = 'AgentDetector';
+
+const MODELS_DEV_API_URL = 'https://models.dev/api.json';
+const MODELS_DEV_FETCH_TIMEOUT_MS = 3000;
+
+/** Read the user's configured Copilot CLI model from ~/.copilot/config.json (if present). */
+function readCopilotConfiguredModel(): string | null {
+	try {
+		const configPath = path.join(os.homedir(), '.copilot', 'config.json');
+		const configContent = fs.readFileSync(configPath, 'utf8');
+		const config = JSON.parse(configContent);
+		if (typeof config?.model === 'string' && config.model.length > 0) {
+			return config.model;
+		}
+	} catch {
+		// Config may not exist or be malformed — fall through to null.
+	}
+	return null;
+}
+
+/**
+ * Fetch the list of Copilot CLI models from the models.dev catalog.
+ * Returns null when the request fails or the schema doesn't match; callers
+ * should fall back to the user-configured model in that case.
+ */
+async function fetchCopilotModelsFromApi(): Promise<string[] | null> {
+	const controller = new AbortController();
+	const timeout = setTimeout(() => controller.abort(), MODELS_DEV_FETCH_TIMEOUT_MS);
+	try {
+		const response = await fetch(MODELS_DEV_API_URL, { signal: controller.signal });
+		if (!response.ok) {
+			return null;
+		}
+		const data = (await response.json()) as Record<string, unknown>;
+		const copilotProvider = data?.['github-copilot'] as
+			| { models?: Record<string, unknown> }
+			| undefined;
+		const models = copilotProvider?.models;
+		if (models && typeof models === 'object') {
+			return Object.keys(models).sort();
+		}
+		return null;
+	} catch (err) {
+		logger.warn('Failed to fetch models from models.dev for copilot-cli', LOG_CONTEXT, {
+			error: String(err),
+		});
+		return null;
+	} finally {
+		clearTimeout(timeout);
+	}
+}
 
 // ============ Agent Detector Class ============
 
@@ -35,6 +90,8 @@ export class AgentDetector {
 	private customPaths: Record<string, string> = {};
 	// Cache for model discovery results: agentId -> { models, timestamp }
 	private modelCache: Map<string, { models: string[]; timestamp: number }> = new Map();
+	// Cache for config option discovery: "agentId:optionKey" -> { options, timestamp }
+	private configOptionCache: Map<string, { options: string[]; timestamp: number }> = new Map();
 	// Configurable cache TTL (useful for testing or different environments)
 	private readonly modelCacheTtlMs: number;
 
@@ -139,6 +196,30 @@ export class AgentDetector {
 				customPath: customPath || undefined,
 				capabilities: getAgentCapabilities(agentDef.id),
 			});
+
+			// Mirror detection into the capability snapshot store so the
+			// renderer has a persisted readiness pill for every agent. Skip
+			// the internal `terminal` agent — it isn't user-facing.
+			//
+			// Each agent is only written when its observed state actually
+			// changed (status differs, or the detected path differs). This
+			// keeps full-detection runs (incl. reprobe-driven ones) from
+			// firing `snapshot-updated` broadcasts for every unchanged agent.
+			if (agentDef.id !== 'terminal') {
+				const existing = capabilitySnapshots.get(agentDef.id);
+				if (detection.exists) {
+					// Preserve any reactive auth_required state set by a recent
+					// spawn failure — detection alone shouldn't clear it. The
+					// next successful spawn (or explicit re-probe) flips it back.
+					if (existing?.status === 'auth_required') {
+						// no-op: leave reactive state intact
+					} else if (existing?.status !== 'ok' || existing.path !== detection.path) {
+						capabilitySnapshots.markOk(agentDef.id, { path: detection.path });
+					}
+				} else if (existing?.status !== 'not_installed') {
+					capabilitySnapshots.markNotInstalled(agentDef.id);
+				}
+			}
 		}
 
 		const availableAgents = agents.filter((a) => a.available);
@@ -192,8 +273,15 @@ export class AgentDetector {
 	clearModelCache(agentId?: string): void {
 		if (agentId) {
 			this.modelCache.delete(agentId);
+			// Also clear config option caches for this agent
+			for (const key of this.configOptionCache.keys()) {
+				if (key.startsWith(`${agentId}:`)) {
+					this.configOptionCache.delete(key);
+				}
+			}
 		} else {
 			this.modelCache.clear();
+			this.configOptionCache.clear();
 		}
 	}
 
@@ -251,29 +339,132 @@ export class AgentDetector {
 		try {
 			// Agent-specific model discovery commands
 			switch (agentId) {
-				case 'opencode': {
-					// OpenCode: `opencode models` returns one model per line
-					const result = await execFileNoThrow(command, ['models'], undefined, env);
+				case 'claude-code': {
+					// Claude Code: no CLI listing command.
+					// Discover models dynamically from two sources:
+					// 1. Well-known aliases (always valid, resolve to latest in each tier)
+					//    Includes [1m] variants for 1M extended context window
+					//    (requires extra usage enabled at claude.ai/settings/usage)
+					// 2. Historical model usage from ~/.claude/stats-cache.json
+					const models: string[] = ['sonnet', 'opus', 'haiku', 'opus[1m]', 'sonnet[1m]'];
+					try {
+						const statsPath = path.join(os.homedir(), '.claude', 'stats-cache.json');
+						const statsContent = fs.readFileSync(statsPath, 'utf8');
+						const stats = JSON.parse(statsContent);
+						// modelUsage keys are full model IDs the user has used
+						if (stats.modelUsage && typeof stats.modelUsage === 'object') {
+							for (const modelId of Object.keys(stats.modelUsage)) {
+								if (!models.includes(modelId)) {
+									models.push(modelId);
+								}
+							}
+						}
+					} catch {
+						// stats-cache.json may not exist yet (fresh install)
+						logger.debug('Could not read Claude stats-cache.json for model discovery', LOG_CONTEXT);
+					}
+					logger.info(`Discovered ${models.length} models for ${agentId}`, LOG_CONTEXT, { models });
+					return models;
+				}
 
-					if (result.exitCode !== 0) {
+				case 'codex': {
+					// Codex: read ~/.codex/models_cache.json maintained by the Codex CLI.
+					// Contains the full list of available models with metadata.
+					try {
+						const codexHome = process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
+						const cachePath = path.join(codexHome, 'models_cache.json');
+						const cacheContent = fs.readFileSync(cachePath, 'utf8');
+						const cache = parseJsonWithBom<{
+							models?: Array<{ slug?: string; visibility?: string }>;
+						}>(cacheContent);
+						if (Array.isArray(cache.models)) {
+							const models = cache.models
+								.filter(
+									(m: {
+										slug?: string;
+										visibility?: string;
+									}): m is { slug: string; visibility?: string } =>
+										typeof m.slug === 'string' && m.visibility !== 'hide'
+								)
+								.map((m) => m.slug);
+							logger.info(
+								`Discovered ${models.length} models for ${agentId} from models_cache.json`,
+								LOG_CONTEXT,
+								{ models }
+							);
+							return models;
+						}
+					} catch {
+						logger.debug('Could not read Codex models_cache.json for model discovery', LOG_CONTEXT);
+					}
+					return [];
+				}
+
+				case 'opencode': {
+					// OpenCode: merge models from two sources:
+					// 1. `opencode models` CLI command (runtime-available models)
+					// 2. opencode.json config files (provider-defined models that may
+					//    not appear in `opencode models` output, e.g. cloud providers)
+					const seen = new Set<string>();
+					const models: string[] = [];
+
+					// Source 1: CLI discovery
+					const result = await execFileNoThrow(command, ['models'], undefined, env);
+					if (result.exitCode === 0) {
+						const cliModels = result.stdout
+							.split('\n')
+							.map((line) => line.trim())
+							.filter((line) => line.length > 0);
+						for (const m of cliModels) {
+							if (!seen.has(m)) {
+								seen.add(m);
+								models.push(m);
+							}
+						}
+					} else {
 						logger.warn(
-							`Model discovery failed for ${agentId}: exit code ${result.exitCode}`,
+							`CLI model discovery failed for ${agentId}: exit code ${result.exitCode}`,
 							LOG_CONTEXT,
 							{ stderr: result.stderr }
 						);
-						return [];
 					}
 
-					// Parse output: one model per line (e.g., "opencode/gpt-5-nano", "ollama/gpt-oss:latest")
-					const models = result.stdout
-						.split('\n')
-						.map((line) => line.trim())
-						.filter((line) => line.length > 0);
+					// Source 2: opencode.json config files
+					const configModels = await discoverModelsFromLocalConfigs();
+					for (const m of configModels) {
+						if (!seen.has(m)) {
+							seen.add(m);
+							models.push(m);
+						}
+					}
 
 					logger.info(`Discovered ${models.length} models for ${agentId}`, LOG_CONTEXT, {
 						models,
 					});
 					return models;
+				}
+
+				case 'copilot-cli': {
+					// Copilot CLI: fetch available models from models.dev API (github-copilot
+					// provider) and merge with the user's configured model from
+					// ~/.copilot/config.json. Falls back to just the configured model if the
+					// API is unavailable.
+					const userModel = readCopilotConfiguredModel();
+					const apiModels = await fetchCopilotModelsFromApi();
+
+					if (apiModels !== null) {
+						const models = [...apiModels];
+						if (userModel && !models.includes(userModel)) {
+							models.unshift(userModel);
+						}
+						logger.info(
+							`Discovered ${models.length} models for ${agentId} from models.dev`,
+							LOG_CONTEXT
+						);
+						return models;
+					}
+
+					return userModel ? [userModel] : [];
 				}
 
 				default:
@@ -286,5 +477,142 @@ export class AgentDetector {
 			captureException(error, { operation: 'agent:modelDiscovery', agentId });
 			return [];
 		}
+	}
+
+	/**
+	 * Discover available values for a dynamic select config option.
+	 * Returns an array of option values, or empty array if discovery is not supported.
+	 *
+	 * @param agentId - Agent identifier
+	 * @param optionKey - The config option key (e.g., 'effort', 'reasoningEffort')
+	 * @param forceRefresh - If true, bypass cache
+	 */
+	async discoverConfigOptions(
+		agentId: string,
+		optionKey: string,
+		forceRefresh = false
+	): Promise<string[]> {
+		const agent = await this.getAgent(agentId);
+
+		if (!agent || !agent.available) {
+			return [];
+		}
+
+		// Check cache
+		const cacheKey = `${agentId}:${optionKey}`;
+		if (!forceRefresh) {
+			const cached = this.configOptionCache.get(cacheKey);
+			if (cached && Date.now() - cached.timestamp < this.modelCacheTtlMs) {
+				return cached.options;
+			}
+		}
+
+		const options = await this.runConfigOptionDiscovery(agentId, optionKey);
+		this.configOptionCache.set(cacheKey, { options, timestamp: Date.now() });
+		return options;
+	}
+
+	/**
+	 * Run agent-specific discovery for a config option's available values.
+	 */
+	private async runConfigOptionDiscovery(agentId: string, optionKey: string): Promise<string[]> {
+		try {
+			switch (agentId) {
+				case 'claude-code': {
+					if (optionKey === 'effort') {
+						// Claude Code: parse --help output to extract effort levels
+						const command =
+							(await this.getAgent(agentId))?.path ||
+							(await this.getAgent(agentId))?.command ||
+							'claude';
+						const env = getExpandedEnv();
+						const result = await execFileNoThrow(command, ['--help'], undefined, env);
+						if (result.exitCode === 0) {
+							// Match: --effort <level>  Effort level ... (low, medium, high, max)
+							const match = result.stdout.match(/--effort\s+<\w+>\s+.*?\(([^)]+)\)/);
+							if (match) {
+								const levels = match[1]
+									.split(',')
+									.map((s) => s.trim())
+									.filter((s) => s.length > 0);
+								logger.info(
+									`Discovered ${levels.length} effort levels for ${agentId} from --help`,
+									LOG_CONTEXT,
+									{ levels }
+								);
+								return ['', ...levels]; // Empty string = use default
+							}
+						}
+						logger.debug('Could not parse effort levels from Claude --help output', LOG_CONTEXT);
+						return [];
+					}
+					break;
+				}
+
+				case 'codex': {
+					if (optionKey === 'reasoningEffort') {
+						// Codex: read reasoning levels from ~/.codex/models_cache.json
+						try {
+							const codexHome = process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
+							const cachePath = path.join(codexHome, 'models_cache.json');
+							const cacheContent = fs.readFileSync(cachePath, 'utf8');
+							const cache = parseJsonWithBom<{
+								models?: Array<{
+									visibility?: string;
+									supported_reasoning_levels?: Array<{ effort?: string }>;
+								}>;
+							}>(cacheContent);
+							if (Array.isArray(cache.models)) {
+								// Collect union of all reasoning levels across visible models
+								const levelSet = new Set<string>();
+								for (const model of cache.models) {
+									if (model.visibility === 'hide') continue;
+									for (const rl of model.supported_reasoning_levels || []) {
+										if (rl.effort) levelSet.add(rl.effort);
+									}
+								}
+								const levels = Array.from(levelSet);
+								// Sort by severity: minimal < low < medium < high < xhigh
+								const order = ['minimal', 'low', 'medium', 'high', 'xhigh'];
+								levels.sort(
+									(a, b) =>
+										(order.indexOf(a) === -1 ? 99 : order.indexOf(a)) -
+										(order.indexOf(b) === -1 ? 99 : order.indexOf(b))
+								);
+								logger.info(
+									`Discovered ${levels.length} reasoning levels for ${agentId} from models_cache.json`,
+									LOG_CONTEXT,
+									{ levels }
+								);
+								return ['', ...levels]; // Empty string = use default
+							}
+						} catch {
+							// Fresh Codex installs may not have populated the cache yet.
+							logger.debug(
+								'Could not read Codex models_cache.json for config option discovery',
+								LOG_CONTEXT
+							);
+						}
+					}
+					break;
+				}
+			}
+		} catch (error) {
+			void captureException(error);
+			logger.debug(`Config option discovery failed for ${agentId}:${optionKey}`, LOG_CONTEXT, {
+				error,
+			});
+		}
+
+		// Fallback: return the static options declared on the agent's select config option.
+		// This handles agents whose options are hardcoded in the definition (e.g. Copilot-CLI,
+		// Factory Droid reasoning effort) rather than discovered at runtime.
+		const definition = AGENT_DEFINITIONS.find((d) => d.id === agentId);
+		const option = definition?.configOptions?.find((o) => o.key === optionKey);
+		if (option && option.type === 'select' && option.options && option.options.length > 0) {
+			return option.options;
+		}
+
+		return [];
 	}
 }

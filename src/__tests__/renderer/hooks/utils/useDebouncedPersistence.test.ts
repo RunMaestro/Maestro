@@ -10,6 +10,8 @@ import type {
 	LogEntry,
 	FilePreviewTab,
 	UnifiedTabRef,
+	TerminalTab,
+	BrowserTab,
 } from '../../../../renderer/types';
 
 // ---------------------------------------------------------------------------
@@ -53,6 +55,20 @@ const makeTab = (overrides: Partial<AITab> = {}): AITab => ({
 	createdAt: Date.now(),
 	state: 'idle',
 	...overrides,
+});
+
+/** Create a minimal BrowserTab with sensible defaults */
+const makeBrowserTab = (overrides: Partial<BrowserTab> = {}): BrowserTab => ({
+	id: overrides.id ?? `browser-${Math.random().toString(36).slice(2, 8)}`,
+	url: overrides.url ?? 'https://example.com/docs',
+	title: overrides.title ?? 'Example Docs',
+	createdAt: overrides.createdAt ?? Date.now(),
+	partition: overrides.partition,
+	canGoBack: overrides.canGoBack ?? false,
+	canGoForward: overrides.canGoForward ?? false,
+	isLoading: overrides.isLoading ?? false,
+	favicon: overrides.favicon ?? null,
+	webContentsId: overrides.webContentsId,
 });
 
 /** Create a minimal Session with sensible defaults */
@@ -257,6 +273,131 @@ describe('useDebouncedPersistence', () => {
 				expect(persisted[0].aiTabs[0].state).toBe('idle');
 				expect(persisted[0].aiTabs[0].inputValue).toBe('');
 				expect(persisted[0].aiTabs[0].starred).toBe(false);
+			});
+		});
+
+		describe('browser tab persistence', () => {
+			it('preserves browser tab order, active selection, URL, title, and safe partition', () => {
+				const browserTab = makeBrowserTab({
+					id: 'browser-1',
+					url: 'localhost:5173/docs',
+					title: 'Local Docs',
+					partition: 'persist:maestro-browser-session-session-browser',
+					canGoBack: true,
+					canGoForward: true,
+					isLoading: true,
+					webContentsId: 77,
+				});
+				const session = makeSession({
+					id: 'session-browser',
+					browserTabs: [browserTab],
+					activeBrowserTabId: 'browser-1',
+					unifiedTabOrder: [
+						{ type: 'ai', id: 'default-tab' },
+						{ type: 'browser', id: 'browser-1' },
+					],
+				});
+
+				const initialLoadRef = makeInitialLoadRef(true);
+				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+
+				act(() => {
+					result.current.flushNow();
+				});
+
+				const persisted = vi
+					.mocked(window.maestro.sessions.setAll)
+					.mock.calls.at(-1)?.[0] as Session[];
+				expect(persisted[0].browserTabs).toHaveLength(1);
+				expect(persisted[0].browserTabs[0]).toMatchObject({
+					id: 'browser-1',
+					url: 'http://localhost:5173/docs',
+					title: 'Local Docs',
+					partition: 'persist:maestro-browser-session-session-browser',
+					canGoBack: false,
+					canGoForward: false,
+					isLoading: false,
+					favicon: null,
+				});
+				expect(persisted[0].browserTabs[0].webContentsId).toBeUndefined();
+				expect(persisted[0].activeBrowserTabId).toBe('browser-1');
+				expect(persisted[0].unifiedTabOrder).toEqual([
+					{ type: 'ai', id: 'default-tab' },
+					{ type: 'browser', id: 'browser-1' },
+				]);
+			});
+
+			it('repairs unsafe persisted browser partitions and stale active browser ids', () => {
+				const browserTab = makeBrowserTab({
+					id: 'browser-1',
+					url: 'javascript:alert(1)',
+					title: '',
+					partition: 'persist:evil',
+					webContentsId: 12,
+				});
+				const session = makeSession({
+					id: 'session-safe',
+					browserTabs: [browserTab],
+					activeBrowserTabId: 'missing-browser',
+					unifiedTabOrder: [
+						{ type: 'ai', id: 'default-tab' },
+						{ type: 'browser', id: 'browser-1' },
+					],
+				});
+
+				const initialLoadRef = makeInitialLoadRef(true);
+				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+
+				act(() => {
+					result.current.flushNow();
+				});
+
+				const persisted = vi
+					.mocked(window.maestro.sessions.setAll)
+					.mock.calls.at(-1)?.[0] as Session[];
+				expect(persisted[0].browserTabs[0]).toMatchObject({
+					url: 'about:blank',
+					title: 'New Tab',
+					partition: 'persist:maestro-browser-session-session-safe',
+				});
+				expect(persisted[0].activeBrowserTabId).toBeNull();
+			});
+
+			it('persists legacy browser tabs with safe defaults while preserving valid active selection', () => {
+				const browserTab = makeBrowserTab({
+					id: 'browser-legacy',
+					url: '',
+					title: '',
+					partition: undefined,
+					favicon: undefined,
+				});
+				const session = makeSession({
+					id: 'session legacy/browser',
+					browserTabs: [browserTab],
+					activeBrowserTabId: 'browser-legacy',
+					unifiedTabOrder: [
+						{ type: 'ai', id: 'default-tab' },
+						{ type: 'browser', id: 'browser-legacy' },
+					],
+				});
+
+				const initialLoadRef = makeInitialLoadRef(true);
+				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+
+				act(() => {
+					result.current.flushNow();
+				});
+
+				const persisted = vi
+					.mocked(window.maestro.sessions.setAll)
+					.mock.calls.at(-1)?.[0] as Session[];
+				expect(persisted[0].browserTabs[0]).toMatchObject({
+					url: 'about:blank',
+					title: 'New Tab',
+					partition: 'persist:maestro-browser-session-session-legacy-browser',
+					favicon: null,
+				});
+				expect(persisted[0].activeBrowserTabId).toBe('browser-legacy');
 			});
 		});
 
@@ -569,6 +710,29 @@ describe('useDebouncedPersistence', () => {
 				expect(persisted[0].fileTreeLoading).toBeUndefined();
 				expect(persisted[0].fileTreeLastScanTime).toBeUndefined();
 			});
+
+			it('should remove fileTreeError and fileTreeRetryAt', () => {
+				// Regression: persisting fileTreeError resurfaced a stale error
+				// on next app launch, and the `hasLoadedOnce` gate in
+				// useFileTreeManagement blocked auto-retry, so the panel
+				// displayed an out-of-date error from a prior code path even
+				// after the underlying bug was fixed.
+				const session = makeSession({
+					fileTreeError: 'Cannot access directory: /remote/path\nCommand failed: ssh …',
+					fileTreeRetryAt: Date.now() + 20000,
+				});
+
+				const initialLoadRef = makeInitialLoadRef(true);
+				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+
+				act(() => {
+					result.current.flushNow();
+				});
+
+				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
+				expect(persisted[0].fileTreeError).toBeUndefined();
+				expect(persisted[0].fileTreeRetryAt).toBeUndefined();
+			});
 		});
 
 		describe('session runtime state reset', () => {
@@ -791,7 +955,7 @@ describe('useDebouncedPersistence', () => {
 		});
 
 		describe('session with no aiTabs', () => {
-			it('should return session as-is when aiTabs is empty', () => {
+			it('should still strip runtime-only fields when aiTabs is empty', () => {
 				const session = makeSession({
 					aiTabs: [],
 					activeTabId: '',
@@ -807,9 +971,11 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
-				// When aiTabs is empty, the session is returned as-is
+				// aiTabs stays empty, but runtime state is reset so a stuck
+				// busy state can't survive a restart with no process backing it.
 				expect(persisted[0].aiTabs).toEqual([]);
-				expect(persisted[0].state).toBe('busy');
+				expect(persisted[0].state).toBe('idle');
+				expect(persisted[0].busySource).toBeUndefined();
 			});
 		});
 
@@ -1114,7 +1280,7 @@ describe('useDebouncedPersistence', () => {
 				expect(result.current.isPending).toBe(true);
 			});
 
-			it('should become false after debounce timer fires', () => {
+			it('should become false after debounce timer fires', async () => {
 				const sessions = [makeSession()];
 				const initialLoadRef = makeInitialLoadRef(true);
 
@@ -1125,14 +1291,16 @@ describe('useDebouncedPersistence', () => {
 
 				expect(result.current.isPending).toBe(true);
 
-				act(() => {
-					vi.advanceTimersByTime(2000);
+				// Async because persistInternal awaits the IPC; isPending is
+				// only flipped after the awaited promise resolves.
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(2000);
 				});
 
 				expect(result.current.isPending).toBe(false);
 			});
 
-			it('should become false after flushNow', () => {
+			it('should become false after flushNow', async () => {
 				const sessions = [makeSession()];
 				const initialLoadRef = makeInitialLoadRef(true);
 
@@ -1143,8 +1311,11 @@ describe('useDebouncedPersistence', () => {
 
 				expect(result.current.isPending).toBe(true);
 
-				act(() => {
+				await act(async () => {
 					result.current.flushNow();
+					// Flush microtasks so the awaited persistInternal resolves
+					// and isPending is updated.
+					await vi.advanceTimersByTimeAsync(0);
 				});
 
 				expect(result.current.isPending).toBe(false);
@@ -1467,6 +1638,562 @@ describe('useDebouncedPersistence', () => {
 				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
 				expect(persisted[0].filePreviewTabs![0].scrollTop).toBe(150000);
 			});
+		});
+	});
+	// -----------------------------------------------------------------------
+	// Terminal tab persistence
+	// -----------------------------------------------------------------------
+	describe('terminal tab persistence', () => {
+		const makeTerminalTab = (overrides: Partial<TerminalTab> = {}): TerminalTab => ({
+			id: overrides.id ?? `term-${Math.random().toString(36).slice(2, 8)}`,
+			name: overrides.name ?? null,
+			shellType: overrides.shellType ?? 'zsh',
+			pid: overrides.pid ?? 0,
+			cwd: overrides.cwd ?? '/home/user',
+			createdAt: overrides.createdAt ?? Date.now(),
+			state: overrides.state ?? 'idle',
+			exitCode: overrides.exitCode,
+			scrollTop: overrides.scrollTop,
+			searchQuery: overrides.searchQuery,
+		});
+
+		it('should reset terminal tab runtime state (pid, state, exitCode) on persist', () => {
+			const session = makeSession({
+				terminalTabs: [
+					makeTerminalTab({
+						id: 'term-1',
+						name: 'My Terminal',
+						pid: 12345,
+						state: 'busy',
+						exitCode: 1,
+					}),
+				],
+				activeTerminalTabId: 'term-1',
+			});
+
+			const initialLoadRef = makeInitialLoadRef(true);
+			const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+
+			act(() => {
+				result.current.flushNow();
+			});
+
+			const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
+			const persistedTab = persisted[0].terminalTabs![0];
+			expect(persistedTab.pid).toBe(0);
+			expect(persistedTab.state).toBe('idle');
+			expect(persistedTab.exitCode).toBeUndefined();
+		});
+
+		it('should preserve terminal tab metadata (name, shellType, cwd, createdAt)', () => {
+			const createdAt = 1700000000000;
+			const session = makeSession({
+				terminalTabs: [
+					makeTerminalTab({
+						id: 'term-1',
+						name: 'My Terminal',
+						shellType: 'bash',
+						pid: 999,
+						cwd: '/projects/myapp',
+						createdAt,
+						state: 'idle',
+					}),
+				],
+				activeTerminalTabId: 'term-1',
+			});
+
+			const initialLoadRef = makeInitialLoadRef(true);
+			const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+
+			act(() => {
+				result.current.flushNow();
+			});
+
+			const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
+			const persistedTab = persisted[0].terminalTabs![0];
+			expect(persistedTab.id).toBe('term-1');
+			expect(persistedTab.name).toBe('My Terminal');
+			expect(persistedTab.shellType).toBe('bash');
+			expect(persistedTab.cwd).toBe('/projects/myapp');
+			expect(persistedTab.createdAt).toBe(createdAt);
+		});
+
+		it('should preserve terminal tab scrollTop and searchQuery', () => {
+			const session = makeSession({
+				terminalTabs: [
+					makeTerminalTab({
+						id: 'term-1',
+						scrollTop: 5000,
+						searchQuery: 'error',
+					}),
+				],
+			});
+
+			const initialLoadRef = makeInitialLoadRef(true);
+			const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+
+			act(() => {
+				result.current.flushNow();
+			});
+
+			const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
+			const persistedTab = persisted[0].terminalTabs![0];
+			expect(persistedTab.scrollTop).toBe(5000);
+			expect(persistedTab.searchQuery).toBe('error');
+		});
+
+		it('should handle empty terminalTabs array', () => {
+			const session = makeSession({
+				terminalTabs: [],
+			});
+
+			const initialLoadRef = makeInitialLoadRef(true);
+			const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+
+			act(() => {
+				result.current.flushNow();
+			});
+
+			const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
+			expect(persisted[0].terminalTabs).toEqual([]);
+		});
+
+		it('should handle undefined terminalTabs gracefully', () => {
+			const session = makeSession();
+			delete (session as Partial<Session>).terminalTabs;
+
+			const initialLoadRef = makeInitialLoadRef(true);
+			const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+
+			act(() => {
+				result.current.flushNow();
+			});
+
+			const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
+			expect(persisted[0].terminalTabs).toEqual([]);
+		});
+
+		it('should preserve valid activeTerminalTabId on persist', () => {
+			const session = makeSession({
+				terminalTabs: [makeTerminalTab({ id: 'term-1' }), makeTerminalTab({ id: 'term-2' })],
+				activeTerminalTabId: 'term-2',
+			});
+
+			const initialLoadRef = makeInitialLoadRef(true);
+			const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+
+			act(() => {
+				result.current.flushNow();
+			});
+
+			const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
+			expect(persisted[0].activeTerminalTabId).toBe('term-2');
+		});
+
+		it('should normalize stale activeTerminalTabId to first tab on persist', () => {
+			const session = makeSession({
+				terminalTabs: [makeTerminalTab({ id: 'term-1' }), makeTerminalTab({ id: 'term-2' })],
+				activeTerminalTabId: 'term-stale-999',
+			});
+
+			const initialLoadRef = makeInitialLoadRef(true);
+			const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+
+			act(() => {
+				result.current.flushNow();
+			});
+
+			const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
+			expect(persisted[0].activeTerminalTabId).toBe('term-1');
+		});
+
+		it('should set activeTerminalTabId to null when terminalTabs is empty', () => {
+			const session = makeSession({
+				terminalTabs: [],
+				activeTerminalTabId: 'term-orphan',
+			});
+
+			const initialLoadRef = makeInitialLoadRef(true);
+			const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+
+			act(() => {
+				result.current.flushNow();
+			});
+
+			const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
+			expect(persisted[0].activeTerminalTabId).toBeNull();
+		});
+
+		it('should reset runtime state for multiple terminal tabs while preserving metadata', () => {
+			const session = makeSession({
+				terminalTabs: [
+					makeTerminalTab({ id: 'term-1', pid: 100, state: 'busy', name: 'Tab 1' }),
+					makeTerminalTab({ id: 'term-2', pid: 200, state: 'exited', exitCode: 1, name: 'Tab 2' }),
+				],
+				activeTerminalTabId: 'term-1',
+			});
+
+			const initialLoadRef = makeInitialLoadRef(true);
+			const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+
+			act(() => {
+				result.current.flushNow();
+			});
+
+			const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
+			const tab1 = persisted[0].terminalTabs![0];
+			const tab2 = persisted[0].terminalTabs![1];
+
+			expect(tab1.pid).toBe(0);
+			expect(tab1.state).toBe('idle');
+			expect(tab1.name).toBe('Tab 1'); // Metadata preserved
+
+			expect(tab2.pid).toBe(0);
+			expect(tab2.state).toBe('idle');
+			expect(tab2.exitCode).toBeUndefined();
+			expect(tab2.name).toBe('Tab 2'); // Metadata preserved
+		});
+	});
+
+	// -----------------------------------------------------------------------
+	// PR-A 1.1: dirty-only flushes via setMany after first flush
+	//
+	// First flush after load uses setAll to seed main process and capture a
+	// diff baseline. Subsequent flushes diff sessions by reference and ship
+	// only the changed subset (and tombstone ids) via setMany.
+	// -----------------------------------------------------------------------
+	describe('dirty-only flushes (PR-A 1.1)', () => {
+		it('first flush after load uses setAll to seed the baseline', () => {
+			const s1 = makeSession({ id: 's1', name: 'One' });
+			const initialLoadRef = makeInitialLoadRef(true);
+
+			renderHook(() => useDebouncedPersistence([s1], initialLoadRef));
+			act(() => {
+				vi.advanceTimersByTime(2000);
+			});
+
+			expect(window.maestro.sessions.setAll).toHaveBeenCalledTimes(1);
+			expect(window.maestro.sessions.setMany).not.toHaveBeenCalled();
+		});
+
+		it('second flush with one mutated session ships only that session via setMany', async () => {
+			const s1 = makeSession({ id: 's1', name: 'One' });
+			const s2 = makeSession({ id: 's2', name: 'Two' });
+			const initialLoadRef = makeInitialLoadRef(true);
+
+			const { rerender } = renderHook(
+				({ sessions }) => useDebouncedPersistence(sessions, initialLoadRef),
+				{ initialProps: { sessions: [s1, s2] } }
+			);
+			// First flush — establishes baseline via setAll. Async because
+			// persistInternal awaits the IPC; the baseline is only captured
+			// after the mock's resolved promise flushes through microtasks.
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(2000);
+			});
+			expect(window.maestro.sessions.setAll).toHaveBeenCalledTimes(1);
+
+			// Mutate s1 only — Zustand pattern produces a new session object
+			const s1Updated = { ...s1, name: 'One Updated' };
+			rerender({ sessions: [s1Updated, s2] });
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(2000);
+			});
+
+			expect(window.maestro.sessions.setMany).toHaveBeenCalledTimes(1);
+			const [updates, removeIds] = vi.mocked(window.maestro.sessions.setMany).mock.calls[0] as [
+				Session[],
+				string[],
+			];
+			expect(updates).toHaveLength(1);
+			expect(updates[0].id).toBe('s1');
+			expect(updates[0].name).toBe('One Updated');
+			expect(removeIds).toEqual([]);
+		});
+
+		it('second flush with no changes is a no-op (no IPC call)', async () => {
+			const s1 = makeSession({ id: 's1', name: 'One' });
+			const initialLoadRef = makeInitialLoadRef(true);
+
+			const { rerender } = renderHook(
+				({ sessions }) => useDebouncedPersistence(sessions, initialLoadRef),
+				{ initialProps: { sessions: [s1] } }
+			);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(2000);
+			});
+			vi.mocked(window.maestro.sessions.setAll).mockClear();
+			vi.mocked(window.maestro.sessions.setMany).mockClear();
+
+			// Same array reference — re-render forces effect to re-run but the
+			// diff finds nothing changed.
+			rerender({ sessions: [s1] });
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(2000);
+			});
+
+			expect(window.maestro.sessions.setAll).not.toHaveBeenCalled();
+			expect(window.maestro.sessions.setMany).not.toHaveBeenCalled();
+		});
+
+		it('second flush with one removed session ships empty updates + tombstone id', async () => {
+			const s1 = makeSession({ id: 's1' });
+			const s2 = makeSession({ id: 's2' });
+			const initialLoadRef = makeInitialLoadRef(true);
+
+			const { rerender } = renderHook(
+				({ sessions }) => useDebouncedPersistence(sessions, initialLoadRef),
+				{ initialProps: { sessions: [s1, s2] } }
+			);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(2000);
+			});
+			vi.mocked(window.maestro.sessions.setMany).mockClear();
+
+			rerender({ sessions: [s1] });
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(2000);
+			});
+
+			expect(window.maestro.sessions.setMany).toHaveBeenCalledTimes(1);
+			const [updates, removeIds] = vi.mocked(window.maestro.sessions.setMany).mock.calls[0] as [
+				Session[],
+				string[],
+			];
+			expect(updates).toEqual([]);
+			expect(removeIds).toEqual(['s2']);
+		});
+
+		it('second flush with one new session ships it as an update (no tombstones)', async () => {
+			const s1 = makeSession({ id: 's1' });
+			const s2 = makeSession({ id: 's2' });
+			const initialLoadRef = makeInitialLoadRef(true);
+
+			const { rerender } = renderHook(
+				({ sessions }) => useDebouncedPersistence(sessions, initialLoadRef),
+				{ initialProps: { sessions: [s1] } }
+			);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(2000);
+			});
+			vi.mocked(window.maestro.sessions.setMany).mockClear();
+
+			rerender({ sessions: [s1, s2] });
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(2000);
+			});
+
+			const [updates, removeIds] = vi.mocked(window.maestro.sessions.setMany).mock.calls[0] as [
+				Session[],
+				string[],
+			];
+			expect(updates).toHaveLength(1);
+			expect(updates[0].id).toBe('s2');
+			expect(removeIds).toEqual([]);
+		});
+
+		it('second flush handles mixed update + add + remove in one call', async () => {
+			const s1 = makeSession({ id: 's1', name: 'Keep' });
+			const s2 = makeSession({ id: 's2', name: 'Mutate' });
+			const s3 = makeSession({ id: 's3', name: 'Drop' });
+			const initialLoadRef = makeInitialLoadRef(true);
+
+			const { rerender } = renderHook(
+				({ sessions }) => useDebouncedPersistence(sessions, initialLoadRef),
+				{ initialProps: { sessions: [s1, s2, s3] } }
+			);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(2000);
+			});
+			vi.mocked(window.maestro.sessions.setMany).mockClear();
+
+			const s2Updated = { ...s2, name: 'Mutated' };
+			const s4 = makeSession({ id: 's4', name: 'New' });
+			rerender({ sessions: [s1, s2Updated, s4] });
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(2000);
+			});
+
+			const [updates, removeIds] = vi.mocked(window.maestro.sessions.setMany).mock.calls[0] as [
+				Session[],
+				string[],
+			];
+			expect(updates.map((s) => s.id).sort()).toEqual(['s2', 's4']);
+			expect(removeIds).toEqual(['s3']);
+		});
+
+		it('rapid mutations within one debounce window collapse into one setMany', async () => {
+			const s1 = makeSession({ id: 's1', name: 'A' });
+			const initialLoadRef = makeInitialLoadRef(true);
+
+			const { rerender } = renderHook(
+				({ sessions }) => useDebouncedPersistence(sessions, initialLoadRef),
+				{ initialProps: { sessions: [s1] } }
+			);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(2000);
+			});
+			vi.mocked(window.maestro.sessions.setMany).mockClear();
+
+			// Three rapid mutations within the debounce window
+			rerender({ sessions: [{ ...s1, name: 'B' }] });
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(500);
+			});
+			rerender({ sessions: [{ ...s1, name: 'C' }] });
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(500);
+			});
+			rerender({ sessions: [{ ...s1, name: 'D' }] });
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(2000);
+			});
+
+			expect(window.maestro.sessions.setMany).toHaveBeenCalledTimes(1);
+			const [updates] = vi.mocked(window.maestro.sessions.setMany).mock.calls[0] as [
+				Session[],
+				string[],
+			];
+			expect(updates[0].name).toBe('D'); // Final value wins
+		});
+
+		it('flushNow() after first flush uses setMany for dirty changes', async () => {
+			const s1 = makeSession({ id: 's1', name: 'A' });
+			const initialLoadRef = makeInitialLoadRef(true);
+
+			const { result, rerender } = renderHook(
+				({ sessions }) => useDebouncedPersistence(sessions, initialLoadRef),
+				{ initialProps: { sessions: [s1] } }
+			);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(2000);
+			});
+			vi.mocked(window.maestro.sessions.setMany).mockClear();
+
+			rerender({ sessions: [{ ...s1, name: 'B' }] });
+			await act(async () => {
+				result.current.flushNow();
+				await vi.advanceTimersByTimeAsync(0);
+			});
+
+			expect(window.maestro.sessions.setMany).toHaveBeenCalledTimes(1);
+		});
+
+		it('unmount after first flush uses setMany when dirty', async () => {
+			const s1 = makeSession({ id: 's1', name: 'A' });
+			const initialLoadRef = makeInitialLoadRef(true);
+
+			const { rerender, unmount } = renderHook(
+				({ sessions }) => useDebouncedPersistence(sessions, initialLoadRef),
+				{ initialProps: { sessions: [s1] } }
+			);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(2000);
+			});
+			vi.mocked(window.maestro.sessions.setAll).mockClear();
+			vi.mocked(window.maestro.sessions.setMany).mockClear();
+
+			rerender({ sessions: [{ ...s1, name: 'B' }] });
+			unmount();
+
+			expect(window.maestro.sessions.setMany).toHaveBeenCalledTimes(1);
+			expect(window.maestro.sessions.setAll).not.toHaveBeenCalled();
+		});
+
+		// Retry contract: when the IPC reports a recoverable failure, the
+		// baseline must NOT advance and isPending must NOT clear — otherwise
+		// beforeunload (which gates on isPending) would have no chance to
+		// retry, and the next debounce flush would diff against a baseline
+		// that doesn't reflect what's actually on disk.
+		it('keeps isPending true and does not advance baseline when setMany returns false', async () => {
+			const s1 = makeSession({ id: 's1', name: 'One' });
+			const initialLoadRef = makeInitialLoadRef(true);
+
+			const { result, rerender } = renderHook(
+				({ sessions }) => useDebouncedPersistence(sessions, initialLoadRef),
+				{ initialProps: { sessions: [s1] } }
+			);
+			// First flush succeeds (mock returns undefined, treated as truthy).
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(2000);
+			});
+			vi.mocked(window.maestro.sessions.setMany).mockClear();
+			expect(result.current.isPending).toBe(false);
+
+			// Next flush hits a recoverable disk error.
+			vi.mocked(window.maestro.sessions.setMany).mockResolvedValueOnce(false);
+			rerender({ sessions: [{ ...s1, name: 'Two' }] });
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(2000);
+			});
+
+			// setMany was called and returned false. isPending stays true so
+			// the next mutation OR beforeunload will retry.
+			expect(window.maestro.sessions.setMany).toHaveBeenCalledTimes(1);
+			expect(result.current.isPending).toBe(true);
+
+			// Recovery: next flush should re-ship the same dirty session
+			// because the baseline didn't advance on the previous failure.
+			vi.mocked(window.maestro.sessions.setMany).mockClear();
+			rerender({ sessions: [{ ...s1, name: 'Two' }] });
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(2000);
+			});
+			// The same session is dirty again because previouslyPersistedRef
+			// was preserved at the pre-failure baseline.
+			const [updates] = vi.mocked(window.maestro.sessions.setMany).mock.calls[0] as [
+				Session[],
+				string[],
+			];
+			expect(updates).toHaveLength(1);
+			expect(updates[0].id).toBe('s1');
+			expect(updates[0].name).toBe('Two');
+		});
+
+		it('keeps isPending true when persistInternal rejects (unexpected exception)', async () => {
+			const s1 = makeSession({ id: 's1', name: 'One' });
+			const initialLoadRef = makeInitialLoadRef(true);
+
+			const { result, rerender } = renderHook(
+				({ sessions }) => useDebouncedPersistence(sessions, initialLoadRef),
+				{ initialProps: { sessions: [s1] } }
+			);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(2000);
+			});
+			vi.mocked(window.maestro.sessions.setMany).mockClear();
+
+			vi.mocked(window.maestro.sessions.setMany).mockRejectedValueOnce(
+				new Error('IPC channel closed')
+			);
+			rerender({ sessions: [{ ...s1, name: 'Two' }] });
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(2000);
+			});
+
+			expect(result.current.isPending).toBe(true);
+		});
+
+		it('reference-equal session prop on rerender is treated as unchanged', () => {
+			const s1 = makeSession({ id: 's1' });
+			const initialLoadRef = makeInitialLoadRef(true);
+
+			const { rerender } = renderHook(
+				({ sessions }) => useDebouncedPersistence(sessions, initialLoadRef),
+				{ initialProps: { sessions: [s1] } }
+			);
+			act(() => {
+				vi.advanceTimersByTime(2000);
+			});
+			vi.mocked(window.maestro.sessions.setMany).mockClear();
+
+			// Same s1 reference inside a new array — the diff sees no per-session change
+			rerender({ sessions: [s1] });
+			act(() => {
+				vi.advanceTimersByTime(2000);
+			});
+
+			expect(window.maestro.sessions.setMany).not.toHaveBeenCalled();
 		});
 	});
 });

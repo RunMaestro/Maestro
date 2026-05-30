@@ -15,7 +15,10 @@
 
 import { useState, useRef, useMemo, useEffect } from 'react';
 import { RefreshCw, Plus, Trash2, HelpCircle, ChevronDown } from 'lucide-react';
+import { GhostIconButton } from '../ui/GhostIconButton';
+import { ToggleSwitch } from '../ui/ToggleSwitch';
 import type { Theme, AgentConfig, AgentConfigOption } from '../../types';
+import { logger } from '../../utils/logger';
 
 // Counter for generating stable IDs for env vars
 let envVarIdCounter = 0;
@@ -138,7 +141,7 @@ function ModelTextInput({
 								if (isFiltering) {
 									// If user was filtering but didn't select, keep the filter text as the value
 									// (they might have typed a custom model name)
-									if (filterText && filterText !== committedValueRef.current) {
+									if (filterText !== committedValueRef.current) {
 										onChange(filterText);
 										committedValueRef.current = filterText;
 										setIsFiltering(false);
@@ -210,6 +213,25 @@ function ModelTextInput({
 						</div>
 					)}
 				</div>
+				{isModelField && value && (
+					<button
+						onClick={(e) => {
+							e.stopPropagation();
+							selectionMadeRef.current = true;
+							onChange('');
+							committedValueRef.current = '';
+							setShowDropdown(false);
+							setFilterText('');
+							setIsFiltering(false);
+							onBlur('');
+						}}
+						className="px-2 py-1.5 rounded text-xs whitespace-nowrap"
+						style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
+						title="Reset to default model"
+					>
+						Clear
+					</button>
+				)}
 				{isModelField && onRefreshModels && (
 					<button
 						onClick={(e) => {
@@ -245,12 +267,10 @@ export interface AgentConfigPanelProps {
 	customPath: string;
 	onCustomPathChange: (value: string) => void;
 	onCustomPathBlur: () => void;
-	onCustomPathClear: () => void;
 	// Custom arguments
 	customArgs: string;
 	onCustomArgsChange: (value: string) => void;
 	onCustomArgsBlur: () => void;
-	onCustomArgsClear: () => void;
 	// Environment variables
 	customEnvVars: Record<string, string>;
 	onEnvVarKeyChange: (oldKey: string, newKey: string, value: string) => void;
@@ -267,6 +287,9 @@ export interface AgentConfigPanelProps {
 	availableModels?: string[];
 	loadingModels?: boolean;
 	onRefreshModels?: () => void;
+	// Dynamic config options (for select fields with dynamic: true)
+	dynamicOptions?: Record<string, string[]>;
+	loadingDynamicOptions?: boolean;
 	// Agent refresh
 	onRefreshAgent?: () => void;
 	refreshingAgent?: boolean;
@@ -276,6 +299,23 @@ export interface AgentConfigPanelProps {
 	showBuiltInEnvVars?: boolean;
 	// SSH remote execution enabled for this session
 	isSshEnabled?: boolean;
+	// === Claude Code Batch Mode (claude-code agent only) ===
+	// When true, the spawner auto-switches between maestro-p (Time Limits) and
+	// `claude --print` (API Limits) based on the latest usage snapshot. Off by default.
+	enableMaestroP?: boolean;
+	onEnableMaestroPChange?: (value: boolean) => void;
+	maestroPPath?: string;
+	onMaestroPPathChange?: (value: string) => void;
+	onMaestroPPathBlur?: () => void;
+	/** Auto-detected maestro-p path shown as helper text when `maestroPPath` is empty. */
+	detectedMaestroPPath?: string;
+	/** Last resolved Claude headless-mode state for this session. When provided and Adaptive Mode is on,
+	 *  the panel renders a small pill next to the toggle so the user can see whether the spawner is
+	 *  currently on Time Limits (Max plan) or has fallen back to API Limits. */
+	claudeInteractive?: {
+		mode: 'interactive' | 'api';
+		modeReason: 'auto' | 'limit';
+	};
 }
 
 export function AgentConfigPanel({
@@ -284,11 +324,9 @@ export function AgentConfigPanel({
 	customPath,
 	onCustomPathChange,
 	onCustomPathBlur,
-	onCustomPathClear,
 	customArgs,
 	onCustomArgsChange,
 	onCustomArgsBlur,
-	onCustomArgsClear,
 	customEnvVars,
 	onEnvVarKeyChange,
 	onEnvVarValueChange,
@@ -301,17 +339,26 @@ export function AgentConfigPanel({
 	availableModels = [],
 	loadingModels = false,
 	onRefreshModels,
+	dynamicOptions = {},
+	loadingDynamicOptions = false,
 	onRefreshAgent,
 	refreshingAgent = false,
 	compact = false,
 	showBuiltInEnvVars = false,
 	isSshEnabled = false,
+	enableMaestroP = false,
+	onEnableMaestroPChange,
+	maestroPPath = '',
+	onMaestroPPathChange,
+	onMaestroPPathBlur,
+	detectedMaestroPPath,
+	claudeInteractive,
 }: AgentConfigPanelProps): JSX.Element {
 	const callOnConfigBlurSafely = (key: string, committedValue: any) => {
 		const maybePromise = onConfigBlur(key, committedValue);
 		if (maybePromise && typeof (maybePromise as Promise<void>).catch === 'function') {
 			void (maybePromise as Promise<void>).catch((error: unknown) => {
-				console.error(`Failed to persist config field "${key}":`, error);
+				logger.error(`Failed to persist config field "${key}":`, undefined, error);
 			});
 		}
 	};
@@ -417,19 +464,6 @@ export function AgentConfigPanel({
 							opacity: isSshEnabled && !customPath ? 0.7 : 1,
 						}}
 					/>
-					{customPath && (
-						<button
-							onClick={(e) => {
-								e.stopPropagation();
-								onCustomPathClear();
-							}}
-							className="px-2 py-1.5 rounded text-xs"
-							style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
-							title={isSshEnabled ? 'Reset to remote binary name' : 'Reset to detected path'}
-						>
-							Reset
-						</button>
-					)}
 				</div>
 				<p className="text-xs opacity-50 mt-2">
 					{isSshEnabled
@@ -437,6 +471,78 @@ export function AgentConfigPanel({
 						: `Path to the ${agent.binaryName} binary. Edit to override the auto-detected path.`}
 				</p>
 			</div>
+
+			{/* Adaptive Mode toggle — Claude Code only. When enabled, the spawner uses
+			    maestro-p to drive the Claude TUI against your Max plan ("Time Limits")
+			    and falls back to `claude --print` ("API Limits") when the 5-hour or
+			    weekly window is near exhaustion (>=99%). Holds the fallback until
+			    BOTH windows have reset, then snaps back to Time Limits. Hidden over
+			    SSH — the wrapper needs the real claude binary on the local machine. */}
+			{agent.id === 'claude-code' && !isSshEnabled && onEnableMaestroPChange && (
+				<div
+					className={`${padding} rounded border`}
+					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
+				>
+					<div className="flex items-center justify-between mb-2">
+						<div className="flex items-center gap-2 min-w-0">
+							<span className="text-xs font-medium" style={{ color: theme.colors.textDim }}>
+								Adaptive Mode
+							</span>
+							{enableMaestroP && claudeInteractive && (
+								<span
+									className="text-[10px] font-mono px-1.5 py-0.5 rounded whitespace-nowrap"
+									style={{
+										backgroundColor: theme.colors.bgActivity,
+										color:
+											claudeInteractive.mode === 'interactive'
+												? theme.colors.accent
+												: (theme.colors.warning ?? theme.colors.accent),
+									}}
+									title={
+										claudeInteractive.modeReason === 'limit'
+											? 'Forced fallback: Max plan 5-hour or weekly quota is exhausted.'
+											: 'Selected automatically based on current usage.'
+									}
+								>
+									{claudeInteractive.mode === 'interactive' ? 'Time Limits' : 'API Limits'}
+								</span>
+							)}
+						</div>
+						<ToggleSwitch
+							checked={enableMaestroP}
+							onChange={onEnableMaestroPChange}
+							theme={theme}
+							ariaLabel="Adaptive Mode"
+						/>
+					</div>
+					<p className="text-xs opacity-50">Automatically Manage Claude Token Source</p>
+					{enableMaestroP && (
+						<div className="mt-3">
+							<label
+								className="block text-xs font-medium mb-2"
+								style={{ color: theme.colors.textDim }}
+							>
+								Maestro-P Path (optional)
+							</label>
+							<input
+								type="text"
+								value={maestroPPath}
+								onChange={(e) => onMaestroPPathChange?.(e.target.value)}
+								onBlur={onMaestroPPathBlur}
+								onClick={(e) => e.stopPropagation()}
+								placeholder={detectedMaestroPPath ?? '/path/to/maestro-p'}
+								className="w-full p-2 rounded border bg-transparent outline-none text-xs font-mono"
+								style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+							/>
+							<p className="text-xs opacity-50 mt-2">
+								{detectedMaestroPPath
+									? `Auto-detected: ${detectedMaestroPPath}. Override only if you want a different build.`
+									: 'No bundled maestro-p found. Point this at a built copy or rebuild Maestro.'}
+							</p>
+						</div>
+					)}
+				</div>
+			)}
 
 			{/* Custom CLI arguments input */}
 			<div
@@ -457,18 +563,6 @@ export function AgentConfigPanel({
 						className="flex-1 p-2 rounded border bg-transparent outline-none text-xs font-mono"
 						style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
 					/>
-					{customArgs && (
-						<button
-							onClick={(e) => {
-								e.stopPropagation();
-								onCustomArgsClear();
-							}}
-							className="px-2 py-1.5 rounded text-xs"
-							style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
-						>
-							Clear
-						</button>
-					)}
 				</div>
 				<p className="text-xs opacity-50 mt-2">
 					Additional CLI arguments appended to all calls to this agent
@@ -564,17 +658,17 @@ export function AgentConfigPanel({
 								className="flex-[2] p-2 rounded border bg-transparent outline-none text-xs font-mono"
 								style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
 							/>
-							<button
+							<GhostIconButton
 								onClick={(e) => {
 									e.stopPropagation();
 									onEnvVarRemove(key);
 								}}
-								className="p-2 rounded hover:bg-white/10 transition-colors"
+								padding="p-2"
 								title="Remove variable"
-								style={{ color: theme.colors.textDim }}
+								color={theme.colors.textDim}
 							>
 								<Trash2 className="w-3 h-3" />
-							</button>
+							</GhostIconButton>
 						</div>
 					))}
 					{/* Add new env var button */}
@@ -667,28 +761,50 @@ export function AgentConfigPanel({
 								</span>
 							</label>
 						)}
-						{option.type === 'select' && option.options && (
-							<select
-								value={agentConfig[option.key] ?? option.default ?? ''}
-								onChange={(e) => {
-									onConfigChange(option.key, e.target.value);
-									callOnConfigBlurSafely(option.key, e.target.value);
-								}}
-								onClick={(e) => e.stopPropagation()}
-								className="w-full p-2 rounded border bg-transparent outline-none text-xs cursor-pointer"
-								style={{
-									borderColor: theme.colors.border,
-									color: theme.colors.textMain,
-									backgroundColor: theme.colors.bgMain,
-								}}
-							>
-								{option.options.map((opt) => (
-									<option key={opt} value={opt} style={{ backgroundColor: theme.colors.bgMain }}>
-										{opt}
-									</option>
-								))}
-							</select>
-						)}
+						{option.type === 'select' &&
+							(() => {
+								// Dynamic selects get their options from IPC discovery
+								const opts =
+									option.dynamic && dynamicOptions[option.key]?.length
+										? dynamicOptions[option.key]
+										: option.options;
+								if (!opts || opts.length === 0) {
+									if (option.dynamic && loadingDynamicOptions) {
+										return (
+											<p className="text-xs" style={{ color: theme.colors.textDim }}>
+												Loading options...
+											</p>
+										);
+									}
+									return null;
+								}
+								return (
+									<select
+										value={agentConfig[option.key] ?? option.default ?? ''}
+										onChange={(e) => {
+											onConfigChange(option.key, e.target.value);
+											callOnConfigBlurSafely(option.key, e.target.value);
+										}}
+										onClick={(e) => e.stopPropagation()}
+										className="w-full p-2 rounded border bg-transparent outline-none text-xs cursor-pointer"
+										style={{
+											borderColor: theme.colors.border,
+											color: theme.colors.textMain,
+											backgroundColor: theme.colors.bgMain,
+										}}
+									>
+										{opts.map((opt) => (
+											<option
+												key={opt}
+												value={opt}
+												style={{ backgroundColor: theme.colors.bgMain }}
+											>
+												{opt || '(default)'}
+											</option>
+										))}
+									</select>
+								);
+							})()}
 						<p className="text-xs opacity-50 mt-2">{option.description}</p>
 					</div>
 				))}

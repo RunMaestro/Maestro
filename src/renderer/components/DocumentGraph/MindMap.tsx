@@ -27,6 +27,7 @@ import {
 	EXTERNAL_NODE_WIDTH,
 	EXTERNAL_NODE_HEIGHT,
 } from './mindMapLayouts';
+import { logger } from '../../utils/logger';
 
 // ============================================================================
 // Types
@@ -119,6 +120,8 @@ export interface MindMapProps {
 	previewCharLimit?: number;
 	/** Layout algorithm to use for node positioning */
 	layoutType?: MindMapLayoutType;
+	/** Multiplier applied to per-layout spacing constants (1 = default density). */
+	spacingScale?: number;
 	/** Custom position overrides for nodes (from user drag operations) */
 	nodePositions?: Map<string, NodePositionOverride>;
 	/** Callback when a node position is changed via drag */
@@ -574,7 +577,8 @@ export function MindMap({
 	onOpenFile,
 	searchQuery,
 	previewCharLimit = 100,
-	layoutType = 'mindmap',
+	layoutType = 'hierarchical',
+	spacingScale = 1,
 	nodePositions,
 	onNodePositionChange,
 	containerRef: externalContainerRef,
@@ -618,7 +622,8 @@ export function MindMap({
 			width,
 			height,
 			showExternalLinks,
-			previewCharLimit
+			previewCharLimit,
+			spacingScale
 		);
 	}, [
 		layoutType,
@@ -631,6 +636,7 @@ export function MindMap({
 		height,
 		showExternalLinks,
 		previewCharLimit,
+		spacingScale,
 	]);
 
 	// Set initial focus to center node when center file changes
@@ -1282,7 +1288,7 @@ export function convertToMindMapData(
 	graphNodes.forEach((node) => {
 		// Skip if we've already processed this node ID
 		if (nodeMap.has(node.id)) {
-			console.warn(`[MindMap] Skipping duplicate node: ${node.id}`);
+			logger.warn(`[MindMap] Skipping duplicate node: ${node.id}`);
 			return;
 		}
 

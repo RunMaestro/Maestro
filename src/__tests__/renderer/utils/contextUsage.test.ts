@@ -7,6 +7,7 @@ import {
 	estimateContextUsage,
 	calculateContextTokens,
 	calculateContextDisplay,
+	calculateDisplayInputTokens,
 	estimateAccumulatedGrowth,
 	DEFAULT_CONTEXT_WINDOWS,
 } from '../../../renderer/utils/contextUsage';
@@ -360,6 +361,7 @@ describe('calculateContextDisplay', () => {
 		expect(result.tokens).toBe(100000);
 		expect(result.percentage).toBe(50);
 		expect(result.contextWindow).toBe(200000);
+		expect(result.trustworthy).toBe(true);
 	});
 
 	it('should fall back to fallbackPercentage when tokens exceed context window', () => {
@@ -376,16 +378,21 @@ describe('calculateContextDisplay', () => {
 		// Raw = 1008000 > 200000, so falls back: tokens = round(75/100 * 200000) = 150000
 		expect(result.tokens).toBe(150000);
 		expect(result.percentage).toBe(75);
+		expect(result.trustworthy).toBe(true);
 	});
 
-	it('should cap percentage at 100 when tokens are close to window', () => {
+	it('should cap percentage at 100 when fallback tokens fill the entire window', () => {
+		// Raw overflow with a fallback percentage at the window cap derives tokens
+		// equal to the full window — percentage must clamp to 100 (not 100.x).
 		const result = calculateContextDisplay(
 			{ inputTokens: 190000, cacheReadInputTokens: 15000, cacheCreationInputTokens: 0 },
 			200000,
-			'claude-code'
+			'claude-code',
+			100
 		);
-		// (190000 + 15000) / 200000 = 102.5% -> capped at 100%
+		expect(result.tokens).toBe(200000);
 		expect(result.percentage).toBe(100);
+		expect(result.trustworthy).toBe(true);
 	});
 
 	it('should return zeros when context window is 0', () => {
@@ -393,9 +400,13 @@ describe('calculateContextDisplay', () => {
 		expect(result.tokens).toBe(0);
 		expect(result.percentage).toBe(0);
 		expect(result.contextWindow).toBe(0);
+		expect(result.trustworthy).toBe(false);
 	});
 
-	it('should clamp tokens to the window when accumulated values exceed it without a fallback', () => {
+	it('should return untrustworthy zeros when accumulated values overflow without a fallback', () => {
+		// Issue #762: previously this branch returned tokens=contextWindow, surfacing
+		// the capacity (e.g. 700,000) as if it were the used token count. Now it
+		// returns zeros + trustworthy:false so the caller can preserve last-known-good.
 		const result = calculateContextDisplay(
 			{
 				inputTokens: 50000,
@@ -406,9 +417,10 @@ describe('calculateContextDisplay', () => {
 			'claude-code'
 			// no fallback
 		);
-		// Raw = 1008000 > 200000, but no fallback, so clamp to the configured window
-		expect(result.tokens).toBe(200000);
-		expect(result.percentage).toBe(100);
+		expect(result.tokens).toBe(0);
+		expect(result.percentage).toBe(0);
+		expect(result.contextWindow).toBe(200000);
+		expect(result.trustworthy).toBe(false);
 	});
 
 	it('should clamp fallback percentages above 100 before deriving tokens', () => {
@@ -424,6 +436,7 @@ describe('calculateContextDisplay', () => {
 		);
 		expect(result.tokens).toBe(200000);
 		expect(result.percentage).toBe(100);
+		expect(result.trustworthy).toBe(true);
 	});
 
 	it('should use Codex semantics (includes output tokens)', () => {
@@ -466,5 +479,63 @@ describe('DEFAULT_CONTEXT_WINDOWS', () => {
 		expect(DEFAULT_CONTEXT_WINDOWS['opencode']).toBe(128000);
 		expect(DEFAULT_CONTEXT_WINDOWS['factory-droid']).toBe(200000);
 		expect(DEFAULT_CONTEXT_WINDOWS['terminal']).toBe(0);
+	});
+});
+
+describe('calculateDisplayInputTokens', () => {
+	// Reproduces the issue #844 scenario: a Claude Code entry whose usage comes
+	// from a resumed session. The new `input_tokens` delta is tiny, but the
+	// conversation actually lives in `cache_read_input_tokens`.
+	it('adds cache tokens back for Claude so resumed conversations do not look empty', () => {
+		const stats: Partial<UsageStats> = {
+			inputTokens: 5,
+			cacheReadInputTokens: 47_382,
+			cacheCreationInputTokens: 1_204,
+		};
+		// Before the fix this displayed as 5 — see issue #844.
+		expect(calculateDisplayInputTokens(stats, 'claude-code')).toBe(48_591);
+	});
+
+	it('treats missing cache fields as zero (older history entries)', () => {
+		expect(calculateDisplayInputTokens({ inputTokens: 1_000 }, 'claude-code')).toBe(1_000);
+	});
+
+	it('defaults to the Claude formula when agentId is omitted', () => {
+		// Safe default: Claude Code is the most common provider, and the fallback
+		// over-counts rather than under-counts if we guess wrong.
+		const stats: Partial<UsageStats> = {
+			inputTokens: 10,
+			cacheReadInputTokens: 500,
+			cacheCreationInputTokens: 100,
+		};
+		expect(calculateDisplayInputTokens(stats)).toBe(610);
+	});
+
+	it('returns inputTokens as-is for Codex (cached tokens already included)', () => {
+		// Per codex-output-parser.ts: cached_input_tokens is a SUBSET of input_tokens.
+		// Adding cacheReadInputTokens would double-count.
+		const stats: Partial<UsageStats> = {
+			inputTokens: 12_000,
+			cacheReadInputTokens: 8_000, // reported for display only; already in inputTokens
+			cacheCreationInputTokens: 0,
+		};
+		expect(calculateDisplayInputTokens(stats, 'codex')).toBe(12_000);
+	});
+
+	it('handles all-zero / empty stats without throwing', () => {
+		expect(calculateDisplayInputTokens({}, 'claude-code')).toBe(0);
+		expect(calculateDisplayInputTokens({}, 'codex')).toBe(0);
+	});
+
+	it('treats unknown agent types as Claude-family', () => {
+		// If a new agent is added and this helper isn't updated, the Claude formula
+		// is the safer default — the worst case is an over-count on a single entry,
+		// not an "abnormally low" under-count that regresses issue #844.
+		const stats: Partial<UsageStats> = {
+			inputTokens: 3,
+			cacheReadInputTokens: 2_000,
+			cacheCreationInputTokens: 50,
+		};
+		expect(calculateDisplayInputTokens(stats, 'brand-new-agent')).toBe(2_053);
 	});
 });

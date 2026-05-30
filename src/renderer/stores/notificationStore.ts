@@ -8,24 +8,81 @@
  * Side effects (logging, audio TTS, OS notifications, auto-dismiss timers)
  * live in the notifyToast() wrapper function, not in the store itself.
  *
- * Can be used outside React via getNotificationState() / getNotificationActions().
+ * Can be used outside React via useNotificationStore.getState().
  * notifyToast() is callable from anywhere (React components, services, orchestrators).
  */
 
 import { create } from 'zustand';
+import { logger } from '../utils/logger';
 
 // ============================================================================
 // Types
 // ============================================================================
 
+/**
+ * Five canonical Toast colors — same design language as Center Flash.
+ * `theme` adapts to the active Maestro theme.
+ *
+ *   green  - succeeded
+ *   yellow - heads-up / soft warning
+ *   orange - more emphatic warning
+ *   red    - failed / blocked
+ *   theme  - default; matches the active theme's accent color (no semantic)
+ */
+export type ToastColor = 'green' | 'yellow' | 'orange' | 'red' | 'theme';
+
+/**
+ * @deprecated Legacy semantic alias. Prefer `ToastColor` via `color`.
+ *   success → green, info → theme, warning → yellow, error → red
+ */
+export type ToastType = 'success' | 'info' | 'warning' | 'error';
+
+const TOAST_TYPE_TO_COLOR: Record<ToastType, ToastColor> = {
+	success: 'green',
+	info: 'theme',
+	warning: 'yellow',
+	error: 'red',
+};
+
+/**
+ * Discriminated union for what happens when the toast body is clicked.
+ *
+ * Externally-fired toasts (e.g. via `maestro-cli notify toast`) cannot pass a
+ * function callback over the IPC bridge, so we describe the click intent as
+ * data instead. The renderer dispatches based on `kind`:
+ *   - jump-session: switch to the agent (and optionally a specific AI tab)
+ *   - open-file: switch to the agent and open a file in its File Preview pane
+ *   - open-url: open an external URL in the system browser
+ */
+export type ToastClickAction =
+	| { kind: 'jump-session'; sessionId: string; tabId?: string }
+	| { kind: 'open-file'; sessionId: string; path: string }
+	| { kind: 'open-url'; url: string };
+
 export interface Toast {
 	id: string;
-	type: 'success' | 'info' | 'warning' | 'error';
+	/** Resolved color used for icon, accent, and progress bar. */
+	color: ToastColor;
+	/**
+	 * @deprecated kept on the rendered Toast for back-compat with consumers
+	 * (e.g. ToastContainer renders both fields). New code should read `color`.
+	 */
+	type: ToastType;
 	title: string;
 	message: string;
 	group?: string; // Maestro group name
 	project?: string; // Maestro session name (the agent name in Left Bar)
+	/**
+	 * Auto-dismiss in ms. 0 = no auto-dismiss (sticky). Ignored when
+	 * `dismissible: true`, which forces no auto-dismiss.
+	 */
 	duration?: number;
+	/**
+	 * Sticky toast — no auto-dismiss timer, requires the user to click the
+	 * close button (or the toast itself, if it has session navigation) to
+	 * dismiss. Use for critical messages the user must see.
+	 */
+	dismissible?: boolean;
 	taskDuration?: number; // How long the task took in ms
 	agentSessionId?: string; // Claude Code session UUID for traceability
 	tabName?: string; // Tab name or short UUID for display
@@ -38,6 +95,20 @@ export interface Toast {
 	actionLabel?: string; // Label for the action link (defaults to URL)
 	// Skip custom notification command for this toast (used for synopsis messages)
 	skipCustomNotification?: boolean;
+	// Generic click handler — if set, clicking the toast invokes this callback.
+	// Renderer-only — not serializable across the CLI/web bridge.
+	onClick?: () => void;
+	// Data-driven click intent — preferred for externally-fired toasts since it
+	// crosses the IPC boundary. If both `onClick` and `clickAction` are set,
+	// `onClick` wins (it can do anything; `clickAction` is the limited subset
+	// that survives serialization).
+	clickAction?: ToastClickAction;
+}
+
+export function resolveToastColor(opts: { color?: ToastColor; type?: ToastType }): ToastColor {
+	if (opts.color) return opts.color;
+	if (opts.type) return TOAST_TYPE_TO_COLOR[opts.type];
+	return 'theme';
 }
 
 export interface NotificationConfig {
@@ -46,6 +117,8 @@ export interface NotificationConfig {
 	audioFeedbackEnabled: boolean;
 	audioFeedbackCommand: string;
 	osNotificationsEnabled: boolean;
+	idleNotificationEnabled: boolean;
+	idleNotificationCommand: string;
 }
 
 // ============================================================================
@@ -70,6 +143,8 @@ export interface NotificationStoreActions {
 	setAudioFeedback: (enabled: boolean, command: string) => void;
 	/** Configure OS desktop notifications. */
 	setOsNotifications: (enabled: boolean) => void;
+	/** Configure idle notification (fires when all agents/batches stop). */
+	setIdleNotification: (enabled: boolean, command: string) => void;
 }
 
 export type NotificationStore = NotificationStoreState & NotificationStoreActions;
@@ -77,14 +152,6 @@ export type NotificationStore = NotificationStoreState & NotificationStoreAction
 // ============================================================================
 // Selectors
 // ============================================================================
-
-export function selectToasts(s: NotificationStoreState): Toast[] {
-	return s.toasts;
-}
-
-export function selectToastCount(s: NotificationStoreState): number {
-	return s.toasts.length;
-}
 
 export function selectConfig(s: NotificationStoreState): NotificationConfig {
 	return s.config;
@@ -102,6 +169,8 @@ export const useNotificationStore = create<NotificationStore>()((set) => ({
 		audioFeedbackEnabled: false,
 		audioFeedbackCommand: '',
 		osNotificationsEnabled: true,
+		idleNotificationEnabled: false,
+		idleNotificationCommand: '',
 	},
 
 	// --- Toast CRUD ---
@@ -135,6 +204,11 @@ export const useNotificationStore = create<NotificationStore>()((set) => ({
 
 	setOsNotifications: (enabled) =>
 		set((s) => ({ config: { ...s.config, osNotificationsEnabled: enabled } })),
+
+	setIdleNotification: (enabled, command) =>
+		set((s) => ({
+			config: { ...s.config, idleNotificationEnabled: enabled, idleNotificationCommand: command },
+		})),
 }));
 
 // ============================================================================
@@ -146,35 +220,56 @@ let toastIdCounter = 0;
 /** Active auto-dismiss timers keyed by toast ID. Cleared on manual removal. */
 const autoDismissTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
-/** Reset the toast ID counter (for tests). */
-export function resetToastIdCounter(): void {
-	toastIdCounter = 0;
-}
+/**
+ * Public input shape for `notifyToast()`. `color` is preferred over the
+ * legacy `type` (kept for back-compat). `dismissible: true` overrides any
+ * `duration` and forces the toast to stay until clicked.
+ */
+export type NotifyToastInput = Omit<Toast, 'id' | 'timestamp' | 'color' | 'type'> & {
+	color?: ToastColor;
+	/** @deprecated Use `color`. */
+	type?: ToastType;
+};
 
 /**
  * Fire a toast notification. Handles:
  * 1. ID generation
- * 2. Duration calculation (seconds → ms)
- * 3. Adding to visible queue (unless toasts disabled)
- * 4. Logging via window.maestro.logger.toast
- * 5. Audio feedback via window.maestro.notification.speak
- * 6. OS notifications via window.maestro.notification.show
- * 7. Auto-dismiss timer
+ * 2. Color resolution (color > legacy type > 'theme')
+ * 3. Duration calculation (seconds → ms; sticky when dismissible)
+ * 4. Adding to visible queue (unless toasts disabled)
+ * 5. Logging via window.maestro.logger.toast
+ * 6. Audio feedback via window.maestro.notification.speak
+ * 7. OS notifications via window.maestro.notification.show
+ * 8. Auto-dismiss timer (skipped when dismissible or duration=0)
  *
  * Callable from React components and non-React code alike.
  *
  * @returns The generated toast ID
  */
-export function notifyToast(toast: Omit<Toast, 'id' | 'timestamp'>): string {
+export function notifyToast(toast: NotifyToastInput): string {
 	const store = useNotificationStore.getState();
 	const { config } = store;
 
 	const id = `toast-${Date.now()}-${toastIdCounter++}`;
 	const toastsDisabled = config.defaultDuration === -1;
 
-	// Convert seconds to ms; use 0 for "never dismiss"
-	const durationMs =
-		toast.duration !== undefined
+	const color = resolveToastColor(toast);
+	// Legacy `type` field — derive from color for callers that still read it.
+	const legacyType: ToastType =
+		toast.type ??
+		(color === 'green'
+			? 'success'
+			: color === 'yellow'
+				? 'warning'
+				: color === 'red'
+					? 'error'
+					: 'info');
+
+	// Dismissible toasts have no auto-dismiss — duration is forced to 0.
+	// Otherwise: explicit duration wins, then config default, then 0.
+	const durationMs = toast.dismissible
+		? 0
+		: toast.duration !== undefined
 			? toast.duration
 			: config.defaultDuration > 0
 				? config.defaultDuration * 1000
@@ -183,6 +278,8 @@ export function notifyToast(toast: Omit<Toast, 'id' | 'timestamp'>): string {
 	const newToast: Toast = {
 		...toast,
 		id,
+		color,
+		type: legacyType,
 		timestamp: Date.now(),
 		duration: durationMs,
 	};
@@ -211,6 +308,8 @@ export function notifyToast(toast: Omit<Toast, 'id' | 'timestamp'>): string {
 			taskDuration: toast.taskDuration,
 			agentSessionId: toast.agentSessionId,
 			tabName: toast.tabName,
+			sessionId: toast.sessionId,
+			tabId: toast.tabId,
 			audioNotification: willTriggerCustomNotification
 				? {
 						enabled: true,
@@ -235,7 +334,7 @@ export function notifyToast(toast: Omit<Toast, 'id' | 'timestamp'>): string {
 	if (willTriggerCustomNotification) {
 		if (typeof window !== 'undefined' && window.maestro?.notification?.speak) {
 			window.maestro.notification.speak(toast.message, config.audioFeedbackCommand).catch((err) => {
-				console.error('[notificationStore] Custom notification failed:', err);
+				logger.error('[notificationStore] Custom notification failed:', undefined, err);
 			});
 		}
 	}
@@ -265,9 +364,11 @@ export function notifyToast(toast: Omit<Toast, 'id' | 'timestamp'>): string {
 			const prefix = bodyParts.length > 0 ? `${bodyParts.join(' > ')}: ` : '';
 			const notifBody = prefix + firstSentence;
 
-			window.maestro.notification.show(notifTitle, notifBody).catch((err) => {
-				console.error('[notificationStore] Failed to show OS notification:', err);
-			});
+			window.maestro.notification
+				.show(notifTitle, notifBody, toast.sessionId, toast.tabId)
+				.catch((err) => {
+					logger.error('[notificationStore] Failed to show OS notification:', undefined, err);
+				});
 		}
 	}
 
@@ -281,31 +382,4 @@ export function notifyToast(toast: Omit<Toast, 'id' | 'timestamp'>): string {
 	}
 
 	return id;
-}
-
-// ============================================================================
-// Non-React access
-// ============================================================================
-
-/**
- * Get current notification state snapshot.
- * Use outside React (services, orchestrators, IPC handlers).
- */
-export function getNotificationState() {
-	return useNotificationStore.getState();
-}
-
-/**
- * Get stable notification action references outside React.
- */
-export function getNotificationActions() {
-	const state = useNotificationStore.getState();
-	return {
-		addToast: state.addToast,
-		removeToast: state.removeToast,
-		clearToasts: state.clearToasts,
-		setDefaultDuration: state.setDefaultDuration,
-		setAudioFeedback: state.setAudioFeedback,
-		setOsNotifications: state.setOsNotifications,
-	};
 }

@@ -62,7 +62,7 @@ When adding a new remote, Maestro automatically detects hosts defined in your SS
 When using SSH config mode:
 
 - **Host** becomes the SSH config Host pattern (e.g., `dev-server` instead of `192.168.1.100`)
-- **Username** and **Private Key Path** become optional—SSH inherits them from your config
+- **Username** and **Private Key Path** become optional - SSH inherits them from your config
 - **Port** defaults to your config's value (only sent to SSH if overriding a non-default port)
 - You can still override any field to customize the connection
 
@@ -93,8 +93,8 @@ With the above config, you can:
 
 When using SSH config mode, field labels indicate which values are optional:
 
-- **Username (optional)** — leave empty to use SSH config's `User`
-- **Private Key Path (optional)** — leave empty to use SSH config's `IdentityFile`
+- **Username (optional)** - leave empty to use SSH config's `User`
+- **Private Key Path (optional)** - leave empty to use SSH config's `IdentityFile`
 
 #### Clearing SSH Config Mode
 
@@ -118,7 +118,7 @@ Click the checkmark icon next to any remote to set it as the **global default**.
 
 - The "Default" badge appears next to the remote name
 - The default remote is highlighted in selection dropdowns
-- New sessions still require explicit selection — the default serves as a visual indicator of your preferred remote
+- New sessions still require explicit selection - the default serves as a visual indicator of your preferred remote
 
 Click the checkmark again to clear the default.
 
@@ -157,9 +157,9 @@ When a session is running via SSH remote, you can easily identify it:
 
 ![SSH Agent Status](./screenshots/ssh-agents-status.png)
 
-- **REMOTE pill** — Appears in the Left Bar next to the session, indicating it's configured for remote execution
-- **Host name badge** — Displayed in the Main Panel header showing which SSH host the agent is running on (e.g., "PEDTOME")
-- **Agent type indicator** — Shows "claude-code (SSH)" to clarify the execution mode
+- **REMOTE pill** - Appears in the Left Bar next to the session, indicating it's configured for remote execution
+- **Host name badge** - Displayed in the Main Panel header showing which SSH host the agent is running on (e.g., "PEDTOME")
+- **Agent type indicator** - Shows "claude-code (SSH)" to clarify the execution mode
 - Connection state reflects SSH connectivity
 - Errors are detected and displayed with SSH-specific context
 
@@ -216,6 +216,65 @@ This is especially useful for:
 - Coordinating changes that span multiple servers
 - Getting perspectives from agents with access to different resources
 
+## Collaborating over SSH
+
+When multiple people (or the same person from multiple machines) work on a shared project via SSH, Maestro can synchronize history entries across all participants. This gives everyone visibility into what work has been done - regardless of which machine initiated it.
+
+### How Shared History Works
+
+Each Maestro instance writes a per-hostname history file to the project's `.maestro/history/` directory on the remote host:
+
+```
+project/
+  .maestro/
+    history/
+      history-pedbook.jsonl       # entries from pedbook
+      history-pedopswat.jsonl     # entries from pedopswat
+      history-stephan.jsonl       # entries from stephan
+```
+
+- Each machine writes **only its own file** - no conflicts between writers
+- When loading history, Maestro merges entries from all other hosts' files
+- Entries are deduplicated by ID and sorted by timestamp
+- Remote entries appear with a **☁ Remote** pill and the originating **hostname** in the History panel
+
+### Enabling Shared History
+
+Shared history is enabled per-session via the **Sync history to remote** toggle, which appears in the SSH Remote Execution dropdown when an SSH host is selected:
+
+1. Create or edit an agent session
+2. Select an SSH remote from the dropdown
+3. The **Sync history to remote** checkbox appears below the status indicator (disabled by default)
+4. When enabled, every history entry is written to both your local Maestro store and the remote project's `.maestro/history/` directory
+
+### Use Case: Same User, Multiple Machines
+
+You have Maestro on your laptop (`pedbook`) and desktop (`pedopswat`). Both machines have an agent pointed at the same project on `pedopswat`:
+
+- **pedopswat** runs the agent locally - history writes to its local store and `.maestro/history/history-pedopswat.jsonl`
+- **pedbook** runs the agent via SSH to pedopswat - history writes to its local store and `.maestro/history/history-pedbook.jsonl` on pedopswat
+- Both machines see each other's entries when loading the History panel
+
+### Use Case: Team Collaboration on a Shared Server
+
+Multiple team members (`pedbook`, `stephan`, `mattj`) each have Maestro installed locally and SSH into a shared VPS where the project lives. No Maestro is installed on the VPS - just the agent CLI:
+
+- Each person's Maestro writes to their own `history-<hostname>.jsonl` on the VPS
+- Each person sees entries from all other team members
+- Entries display the originating hostname so you can tell who did what
+
+### Entry Limits
+
+Shared history files respect the **Maximum Log Buffer** setting (Settings → Display). Each hostname's file retains up to this many entries (default: 5,000). When reading another host's file, Maestro reads only the most recent entries up to your own buffer limit.
+
+### Notes
+
+- Shared history files use JSONL format (one JSON object per line) for safe concurrent appending
+- Malformed lines are skipped gracefully - a partial write won't corrupt the file
+- If the SSH connection is unavailable when reading, local history is shown without remote entries (no error displayed)
+- The `.maestro/history/` directory is created automatically on first write
+- Consider adding `.maestro/history/` to your `.gitignore` - history is operational data, not source code
+
 ## Troubleshooting
 
 ### Authentication Errors
@@ -244,10 +303,10 @@ This is especially useful for:
 
 ### Tips
 
-- **Import from SSH config** — Use the dropdown when adding remotes to import from `~/.ssh/config`; saves time and keeps configuration consistent
-- **Bastion hosts** — Use `ProxyJump` in your SSH config for multi-hop connections; Maestro inherits this automatically
-- **Key management** — Use `ssh-agent` to avoid passphrase prompts
-- **Connection multiplexing** — Maestro respects `ControlMaster`, `ControlPath`, and `ControlPersist` from your `~/.ssh/config`. This is highly recommended if you use hardware security keys (e.g., YubiKey) to avoid repeated touches per connection. Example config:
+- **Import from SSH config** - Use the dropdown when adding remotes to import from `~/.ssh/config`; saves time and keeps configuration consistent
+- **Bastion hosts** - Use `ProxyJump` in your SSH config for multi-hop connections; Maestro inherits this automatically
+- **Key management** - Use `ssh-agent` to avoid passphrase prompts
+- **Connection multiplexing** - Maestro respects `ControlMaster`, `ControlPath`, and `ControlPersist` from your `~/.ssh/config`. This is highly recommended if you use hardware security keys (e.g., YubiKey) to avoid repeated touches per connection. Example config:
   ```
   Host dev-server
       ControlMaster auto
@@ -255,8 +314,8 @@ This is especially useful for:
       ControlPersist 600
   ```
   Make sure the socket directory exists (`mkdir -p ~/.ssh/sockets`). Use `%h`, `%p`, and `%r` tokens in `ControlPath` to keep sockets unique per host/port/user.
-- **Keep-alive** — Configure `ServerAliveInterval` in SSH config for long sessions
-- **Test manually first** — Verify `ssh host 'claude --version'` works before configuring in Maestro
+- **Keep-alive** - Configure `ServerAliveInterval` in SSH config for long sessions
+- **Test manually first** - Verify `ssh host 'claude --version'` works before configuring in Maestro
 
 ## Security Considerations
 
@@ -269,4 +328,4 @@ This is especially useful for:
 
 - Network latency affects perceived responsiveness
 - The remote host must have the agent CLI installed and configured
-- Some shell initialization files (`.bashrc`, `.zshrc`) may not be fully sourced — agent commands use `$SHELL -lc` to ensure PATH availability from login profiles
+- Some shell initialization files (`.bashrc`, `.zshrc`) may not be fully sourced - agent commands use `$SHELL -lc` to ensure PATH availability from login profiles

@@ -67,10 +67,10 @@ The toolbar at the top of the Document Graph provides several options:
 
 Adjust the **Depth** slider to control how many levels of connections are shown from the focused document:
 
-- **Depth: 0 (All)** — Show all connected documents regardless of distance
-- **Depth: 1** — Show only direct connections
-- **Depth: 2** — Show connections and their connections (default)
-- **Depth: 3-5** — Show deeper relationship chains
+- **Depth: 0 (All)** - Show all connected documents regardless of distance
+- **Depth: 1** - Show only direct connections
+- **Depth: 2** - Show connections and their connections (default)
+- **Depth: 3-5** - Show deeper relationship chains
 
 Lower depth values keep the graph focused and improve performance; higher values reveal more of the document ecosystem. The depth can be adjusted from 0 (All) to 5.
 
@@ -78,8 +78,8 @@ Lower depth values keep the graph focused and improve performance; higher values
 
 Toggle **External** to show or hide external URL links found in your documents:
 
-- **Enabled** — External links appear as separate domain nodes (e.g., "github.com", "docs.example.com")
-- **Disabled** — Only internal document relationships are shown
+- **Enabled** - External links appear as separate domain nodes (e.g., "github.com", "docs.example.com")
+- **Disabled** - Only internal document relationships are shown
 
 External link nodes help you see which external resources your documentation references.
 
@@ -91,25 +91,25 @@ Use the search box to filter documents by name. Matching documents are highlight
 
 ### Node Types
 
-- **Document nodes** — Your markdown files, showing the filename and a preview of content
-- **External link nodes** — Domains of external URLs referenced in your documents
-- **Focused node** — The currently selected document (highlighted with a different border)
+- **Document nodes** - Your markdown files, showing the filename and a preview of content
+- **External link nodes** - Domains of external URLs referenced in your documents
+- **Focused node** - The currently selected document (highlighted with a different border)
 
 ### Edge Types
 
 Lines between nodes represent different types of connections:
 
-- **Wiki-links** — `[[document-name]]` style links
-- **Markdown links** — `[text](path/to/file.md)` style links
-- **External links** — Links to URLs outside your project
+- **Wiki-links** - `[[document-name]]` style links
+- **Markdown links** - `[text](path/to/file.md)` style links
+- **External links** - Links to URLs outside your project
 
 ### Node Information
 
 Each document node displays:
 
-- **Filename** — The document name
-- **Folder indicator** — Shows the parent directory (e.g., "docs")
-- **Content preview** — A snippet of the document's content
+- **Filename** - The document name
+- **Folder indicator** - Shows the parent directory (e.g., "docs")
+- **Content preview** - A snippet of the document's content
 
 ## Tips for Effective Use
 
@@ -128,16 +128,16 @@ For projects with many markdown files:
 - Start with **Depth: 1** to see immediate connections
 - Increase depth gradually to explore relationships
 - Use **Search** to find specific documents quickly
-- Drag nodes to organize the view — positions persist
+- Drag nodes to organize the view - positions persist
 
 ### Understanding Documentation Structure
 
 The Document Graph is especially useful for:
 
-- **Auditing links** — Find orphaned documents with no incoming links
-- **Understanding navigation** — See how documents connect for readers
-- **Planning restructuring** — Visualize the impact of moving or renaming files
-- **Onboarding** — Help new team members understand documentation architecture
+- **Auditing links** - Find orphaned documents with no incoming links
+- **Understanding navigation** - See how documents connect for readers
+- **Planning restructuring** - Visualize the impact of moving or renaming files
+- **Onboarding** - Help new team members understand documentation architecture
 
 ## Keyboard Shortcut Summary
 

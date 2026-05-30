@@ -6,6 +6,8 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import type { ContributorStats, CompletedContribution } from '../../../shared/symphony-types';
+import { formatDurationCompact as formatDuration } from '../../../shared/formatters';
+import { logger } from '../../utils/logger';
 
 // ============================================================================
 // Types
@@ -144,15 +146,6 @@ function formatCost(cost: number): string {
 	return `$${cost.toFixed(2)}`;
 }
 
-function formatDuration(ms: number): string {
-	const hours = Math.floor(ms / (1000 * 60 * 60));
-	const minutes = Math.floor((ms % (1000 * 60 * 60)) / (1000 * 60));
-	if (hours > 0) {
-		return `${hours}h ${minutes}m`;
-	}
-	return `${minutes}m`;
-}
-
 // ============================================================================
 // Hook Implementation
 // ============================================================================
@@ -177,7 +170,7 @@ export function useContributorStats(): UseContributorStatsReturn {
 				setRecentContributions(completedResponse.contributions as CompletedContribution[]);
 			}
 		} catch (err) {
-			console.error('Failed to fetch contributor stats:', err);
+			logger.error('Failed to fetch contributor stats:', undefined, err);
 		} finally {
 			setIsLoading(false);
 		}

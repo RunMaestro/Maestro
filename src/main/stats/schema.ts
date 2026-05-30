@@ -128,6 +128,32 @@ export const CREATE_SESSION_LIFECYCLE_INDEXES_SQL = `
 `;
 
 // ============================================================================
+// Image Annotations (Migration v6)
+// ============================================================================
+
+export const CREATE_IMAGE_ANNOTATIONS_SQL = `
+  CREATE TABLE IF NOT EXISTS image_annotations (
+    id TEXT PRIMARY KEY,
+    created_at INTEGER NOT NULL
+  )
+`;
+
+export const CREATE_IMAGE_ANNOTATIONS_INDEXES_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_image_annotations_created_at ON image_annotations(created_at)
+`;
+
+// ============================================================================
+// Shortcut Usage Daily (Migration v7)
+// ============================================================================
+
+export const CREATE_SHORTCUT_USAGE_DAILY_SQL = `
+  CREATE TABLE IF NOT EXISTS shortcut_usage_daily (
+    date TEXT PRIMARY KEY,
+    count INTEGER NOT NULL
+  )
+`;
+
+// ============================================================================
 // Compound Indexes (Migration v4)
 // ============================================================================
 

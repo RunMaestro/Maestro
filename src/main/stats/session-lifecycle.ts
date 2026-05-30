@@ -15,8 +15,8 @@ import { logger } from '../utils/logger';
 const stmtCache = new StatementCache();
 
 const INSERT_SQL = `
-  INSERT INTO session_lifecycle (id, session_id, agent_type, project_path, created_at, is_remote)
-  VALUES (?, ?, ?, ?, ?, ?)
+  INSERT INTO session_lifecycle (id, session_id, agent_type, project_path, created_at, is_remote, is_worktree)
+  VALUES (?, ?, ?, ?, ?, ?, ?)
 `;
 
 /**
@@ -35,7 +35,8 @@ export function recordSessionCreated(
 		event.agentType,
 		normalizePath(event.projectPath),
 		event.createdAt,
-		event.isRemote !== undefined ? (event.isRemote ? 1 : 0) : null
+		event.isRemote !== undefined ? (event.isRemote ? 1 : 0) : null,
+		event.isWorktree !== undefined ? (event.isWorktree ? 1 : 0) : null
 	);
 
 	logger.debug(`Recorded session created: ${event.sessionId}`, LOG_CONTEXT);

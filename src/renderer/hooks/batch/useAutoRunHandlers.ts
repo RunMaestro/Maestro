@@ -1,15 +1,10 @@
 import { useCallback } from 'react';
 import type { Session, BatchRunConfig } from '../../types';
-import { useSessionStore } from '../../stores/sessionStore';
-import { useSettingsStore } from '../../stores/settingsStore';
-import { gitService } from '../../services/git';
+import { useSessionStore, selectSessionById } from '../../stores/sessionStore';
 import { notifyToast } from '../../stores/notificationStore';
-import { buildWorktreeSession } from '../../utils/worktreeSession';
-import {
-	markWorktreePathAsRecentlyCreated,
-	clearRecentlyCreatedWorktreePath,
-} from '../../utils/worktreeDedup';
-import { captureException } from '../../utils/sentry';
+import { spawnWorktreeAgentAndDispatch } from '../../utils/worktreeSpawn';
+import { countMarkdownTasks } from './batchUtils';
+import { logger } from '../../utils/logger';
 
 /**
  * Tree node structure for Auto Run document tree
@@ -85,110 +80,6 @@ export interface UseAutoRunHandlersReturn {
 function getSshRemoteId(session: Session | null): string | undefined {
 	if (!session) return undefined;
 	return session.sshRemoteId || session.sessionSshRemoteConfig?.remoteId || undefined;
-}
-
-/**
- * Spawn a worktree agent session and prepare config for dispatch.
- * Handles both 'create-new' (creates worktree on disk first) and
- * 'existing-closed' (worktree already on disk, just needs a session).
- *
- * Returns the new session ID, or null if an error occurred (toast shown).
- */
-async function spawnWorktreeAgentAndDispatch(
-	parentSession: Session,
-	config: BatchRunConfig
-): Promise<string | null> {
-	const sshRemoteId = getSshRemoteId(parentSession);
-	const target = config.worktreeTarget!;
-	let worktreePath: string;
-	let branchName: string;
-
-	if (target.mode === 'create-new') {
-		// Step 1: Resolve worktree path
-		const basePath =
-			parentSession.worktreeConfig?.basePath ||
-			parentSession.cwd.replace(/\/[^/]+$/, '') + '/worktrees';
-		worktreePath = basePath + '/' + target.newBranchName;
-		branchName = target.newBranchName!;
-
-		// Mark path BEFORE creating on disk so the file watcher in useWorktreeHandlers
-		// skips this path and doesn't create a duplicate session.
-		markWorktreePathAsRecentlyCreated(worktreePath);
-
-		// Step 2: Create worktree on disk
-		let result;
-		try {
-			result = await window.maestro.git.worktreeSetup(
-				parentSession.cwd,
-				worktreePath,
-				branchName,
-				sshRemoteId
-			);
-		} catch (error) {
-			clearRecentlyCreatedWorktreePath(worktreePath);
-			throw error;
-		}
-		if (!result.success) {
-			clearRecentlyCreatedWorktreePath(worktreePath);
-			notifyToast({
-				type: 'error',
-				title: 'Failed to Create Worktree',
-				message: result.error || 'Unknown error',
-			});
-			return null;
-		}
-	} else {
-		// existing-closed: worktree already on disk
-		worktreePath = target.worktreePath!;
-		branchName = worktreePath.split('/').pop() || 'worktree';
-	}
-
-	// Step 3: Fetch git info for the worktree
-	let gitBranches: string[] | undefined;
-	try {
-		gitBranches = await gitService.getBranches(worktreePath, sshRemoteId);
-	} catch (err) {
-		// Non-fatal — git info is nice-to-have
-		captureException(err, { extra: { worktreePath, sshRemoteId } });
-	}
-
-	// Determine current branch from fetched branches or fallback
-	if (!branchName && gitBranches && gitBranches.length > 0) {
-		branchName = gitBranches[0];
-	}
-
-	// Step 4: Build the session
-	const { defaultSaveToHistory, defaultShowThinking } = useSettingsStore.getState();
-	const newSession = buildWorktreeSession({
-		parentSession,
-		path: worktreePath,
-		branch: branchName,
-		name: branchName,
-		gitBranches,
-		defaultSaveToHistory,
-		defaultShowThinking,
-	});
-
-	// Step 5: Add session to store and expand parent's worktrees
-	useSessionStore
-		.getState()
-		.setSessions((prev) => [
-			...prev.map((s) => (s.id === parentSession.id ? { ...s, worktreesExpanded: true } : s)),
-			newSession,
-		]);
-
-	// Step 6: Populate config.worktree for PR creation if requested
-	if (target.createPROnCompletion) {
-		config.worktree = {
-			enabled: true,
-			path: worktreePath,
-			branchName,
-			createPROnCompletion: true,
-			prTargetBranch: target.baseBranch || 'main',
-		};
-	}
-
-	return newSession.id;
 }
 
 /**
@@ -324,9 +215,9 @@ export function useAutoRunHandlers(
 			let targetSessionId = activeSession.id;
 			if (config.worktreeTarget?.mode === 'existing-open' && config.worktreeTarget.sessionId) {
 				// Verify the target session still exists (could have been removed while modal was open)
-				const targetSession = useSessionStore
-					.getState()
-					.sessions.find((s) => s.id === config.worktreeTarget!.sessionId);
+				const targetSession = selectSessionById(config.worktreeTarget!.sessionId)(
+					useSessionStore.getState()
+				);
 				if (!targetSession) {
 					window.maestro.logger.log(
 						'warn',
@@ -375,9 +266,18 @@ export function useAutoRunHandlers(
 				config.worktreeTarget?.mode === 'create-new' ||
 				config.worktreeTarget?.mode === 'existing-closed'
 			) {
+				// If the active session is itself a worktree child, resolve to its parent so
+				// basePath/cwd used for worktree creation come from the main repo, not the child.
+				let parentForSpawn = activeSession;
+				if (activeSession.parentSessionId) {
+					const parent = selectSessionById(activeSession.parentSessionId)(
+						useSessionStore.getState()
+					);
+					if (parent) parentForSpawn = parent;
+				}
 				// Spawn a worktree agent and dispatch to it
 				try {
-					const newSessionId = await spawnWorktreeAgentAndDispatch(activeSession, config);
+					const newSessionId = await spawnWorktreeAgentAndDispatch(parentForSpawn, config);
 					if (!newSessionId) return; // Error already shown via toast
 					targetSessionId = newSessionId;
 				} catch (err) {
@@ -418,9 +318,7 @@ export function useAutoRunHandlers(
 				sshRemoteId
 			);
 			if (!result.success || !result.content) return 0;
-			// Count unchecked tasks: - [ ] pattern
-			const matches = result.content.match(/^[\s]*-\s*\[\s*\]\s*.+$/gm);
-			return matches ? matches.length : 0;
+			return countMarkdownTasks(result.content).unchecked;
 			// Note: Use primitive values (remoteId) not object refs (sessionSshRemoteConfig) to avoid infinite re-render loops
 		},
 		[
@@ -630,7 +528,7 @@ export function useAutoRunHandlers(
 				}
 				return false;
 			} catch (error) {
-				console.error('Failed to create document:', error);
+				logger.error('Failed to create document:', undefined, error);
 				return false;
 			}
 		},

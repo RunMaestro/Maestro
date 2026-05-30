@@ -23,6 +23,7 @@ import { useThemeColors } from '../components/ThemeProvider';
 import type { LastResponsePreview } from '../hooks/useSessions';
 import { triggerHaptic, HAPTIC_PATTERNS } from './constants';
 import { stripAnsiCodes } from '../../shared/stringUtils';
+import { formatTimestamp } from '../../shared/formatters';
 import { WebReadingContent } from './WebReadingContent';
 
 /**
@@ -61,19 +62,6 @@ export interface ResponseViewerProps {
 	sessionName?: string;
 	/** Whether to apply Bionify reading mode to plain-text response segments */
 	enableBionifyReadingMode?: boolean;
-}
-
-/**
- * Format timestamp to human-readable string
- */
-function formatTimestamp(timestamp: number): string {
-	const date = new Date(timestamp);
-	return date.toLocaleString('en-US', {
-		month: 'short',
-		day: 'numeric',
-		hour: '2-digit',
-		minute: '2-digit',
-	});
 }
 
 /**
@@ -526,7 +514,9 @@ export function ResponseViewer({
 								{activeSessionName}
 							</span>
 						)}
-						<span style={{ opacity: 0.7 }}>{formatTimestamp(displayResponse.timestamp)}</span>
+						<span style={{ opacity: 0.7 }}>
+							{formatTimestamp(displayResponse.timestamp, 'datetime')}
+						</span>
 					</div>
 				</div>
 

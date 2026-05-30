@@ -24,7 +24,6 @@ vi.mock('../../../main/process-manager/utils/shellEscape', () => ({
 import {
 	getWindowsSpawnConfig,
 	setGetCustomShellPathCallback,
-	getCustomShellPath,
 	type SpawnSshConfig,
 } from '../../../main/group-chat/group-chat-config';
 import { getAgentCapabilities } from '../../../main/agents';
@@ -44,18 +43,6 @@ describe('group-chat-config', () => {
 		Object.defineProperty(process, 'platform', { value: originalPlatform });
 		// Clear the callback
 		setGetCustomShellPathCallback(() => undefined);
-	});
-
-	describe('getCustomShellPath', () => {
-		it('should return undefined when no callback is registered', () => {
-			setGetCustomShellPathCallback(() => undefined);
-			expect(getCustomShellPath()).toBeUndefined();
-		});
-
-		it('should return the value from the registered callback', () => {
-			setGetCustomShellPathCallback(() => 'C:\\Custom\\PowerShell.exe');
-			expect(getCustomShellPath()).toBe('C:\\Custom\\PowerShell.exe');
-		});
 	});
 
 	describe('getWindowsSpawnConfig', () => {

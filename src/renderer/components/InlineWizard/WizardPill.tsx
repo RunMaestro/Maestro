@@ -6,7 +6,8 @@
  * while the wizard is active. Shows a spinner when thinking.
  */
 
-import { Wand2, Loader2 } from 'lucide-react';
+import { Wand2 } from 'lucide-react';
+import { Spinner } from '../ui/Spinner';
 import type { Theme } from '../../types';
 
 interface WizardPillProps {
@@ -15,6 +16,8 @@ interface WizardPillProps {
 	onClick?: () => void;
 	/** Whether the wizard is currently thinking/waiting for a response */
 	isThinking?: boolean;
+	/** Whether the wizard is performing first-load initialization */
+	isInitializing?: boolean;
 }
 
 /**
@@ -27,21 +30,38 @@ interface WizardPillProps {
  * - Accent background with white text
  * - Subtle pulse animation while active (paused when thinking)
  */
-export function WizardPill({ theme, onClick, isThinking = false }: WizardPillProps): JSX.Element {
+export function WizardPill({
+	theme,
+	onClick,
+	isThinking = false,
+	isInitializing = false,
+}: WizardPillProps): JSX.Element {
+	// Initialization takes priority over the generic "thinking" state so the
+	// first-load phase reads as "Initializing..." rather than a misleading
+	// "Thinking..." before the user has sent anything.
+	const busy = isInitializing || isThinking;
+	const label = isInitializing ? 'Initializing...' : isThinking ? 'Thinking...' : 'Wizard';
+
 	return (
 		<button
 			type="button"
 			onClick={onClick}
-			className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full font-medium text-sm transition-all ${isThinking ? '' : 'animate-wizard-pulse'}`}
+			className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full font-medium text-sm transition-all ${busy ? '' : 'animate-wizard-pulse'}`}
 			style={{
 				backgroundColor: theme.colors.accent,
 				color: theme.colors.accentForeground,
 				cursor: onClick ? 'pointer' : 'default',
 			}}
-			title={isThinking ? 'Wizard is thinking...' : 'Wizard mode active - click to exit'}
+			title={
+				isInitializing
+					? 'Wizard is initializing...'
+					: isThinking
+						? 'Wizard is thinking...'
+						: 'Wizard mode active - click to exit'
+			}
 		>
-			{isThinking ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4" />}
-			<span>{isThinking ? 'Thinking...' : 'Wizard'}</span>
+			{busy ? <Spinner size={16} /> : <Wand2 className="w-4 h-4" />}
+			<span>{label}</span>
 
 			{/* Pulse animation styles */}
 			<style>{`

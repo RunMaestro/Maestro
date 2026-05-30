@@ -1,12 +1,13 @@
 import { useState, useMemo, useEffect, useRef, useCallback, memo } from 'react';
 import { GitCommit, GitBranch, Tag } from 'lucide-react';
 import type { Theme } from '../types';
-import { useLayerStack } from '../contexts/LayerStackContext';
+import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Diff, Hunk } from 'react-diff-view';
 import { parseGitDiff } from '../utils/gitDiffParser';
 import { useListNavigation } from '../hooks';
 import { generateDiffViewStyles } from '../utils/markdownConfig';
+import { useSettingsStore } from '../stores/settingsStore';
 import 'react-diff-view/style/index.css';
 
 interface GitLogEntry {
@@ -42,6 +43,7 @@ export const GitLogViewer = memo(function GitLogViewer({
 
 	const listRef = useRef<HTMLDivElement>(null);
 	const itemRefs = useRef<(HTMLDivElement | null)[]>([]);
+	const colorBlindMode = useSettingsStore((s) => s.colorBlindMode);
 
 	// Keyboard navigation via shared hook
 	const { selectedIndex, setSelectedIndex, handleKeyDown } = useListNavigation({
@@ -51,9 +53,6 @@ export const GitLogViewer = memo(function GitLogViewer({
 		enablePageNavigation: true,
 		pageSize: 10,
 	});
-
-	const { registerLayer, unregisterLayer, updateLayerHandler } = useLayerStack();
-	const layerIdRef = useRef<string>();
 
 	const onCloseRef = useRef(onClose);
 	onCloseRef.current = onClose;
@@ -111,31 +110,9 @@ export const GitLogViewer = memo(function GitLogViewer({
 		}
 	}, [selectedIndex, entries, loadCommitDiff]);
 
-	// Register with layer stack
-	useEffect(() => {
-		layerIdRef.current = registerLayer({
-			type: 'modal',
-			priority: MODAL_PRIORITIES.GIT_LOG,
-			blocksLowerLayers: true,
-			capturesFocus: true,
-			focusTrap: 'lenient',
-			ariaLabel: 'Git Log Viewer',
-			onEscape: () => onCloseRef.current(),
-		});
-
-		return () => {
-			if (layerIdRef.current) {
-				unregisterLayer(layerIdRef.current);
-			}
-		};
-	}, [registerLayer, unregisterLayer]);
-
-	// Update handler when dependencies change
-	useEffect(() => {
-		if (layerIdRef.current) {
-			updateLayerHandler(layerIdRef.current, () => onCloseRef.current());
-		}
-	}, [updateLayerHandler]);
+	useModalLayer(MODAL_PRIORITIES.GIT_LOG, 'Git Log Viewer', () => onCloseRef.current(), {
+		focusTrap: 'lenient',
+	});
 
 	// Scroll selected item into view
 	useEffect(() => {
@@ -511,7 +488,7 @@ export const GitLogViewer = memo(function GitLogViewer({
 									</div>
 								) : parsedDiff && parsedDiff.length > 0 ? (
 									<div className="font-mono text-sm">
-										<style>{generateDiffViewStyles(theme)}</style>
+										<style>{generateDiffViewStyles(theme, colorBlindMode)}</style>
 										{parsedDiff.map((file, fileIndex) => (
 											<div key={fileIndex} className="mb-6">
 												{/* File header */}

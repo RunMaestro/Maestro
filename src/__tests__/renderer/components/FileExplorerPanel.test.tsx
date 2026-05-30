@@ -1,9 +1,13 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { logger } from '../../../renderer/utils/logger';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { FileExplorerPanel } from '../../../renderer/components/FileExplorerPanel';
 import type { Session, Theme } from '../../../renderer/types';
+import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 
+import { mockTheme } from '../../helpers/mockTheme';
+import { spyOnListeners, expectAllListenersRemoved } from '../../helpers/listenerLeakAssertions';
 // Mock lucide-react
 vi.mock('lucide-react', () => ({
 	ChevronRight: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
@@ -66,6 +70,11 @@ vi.mock('lucide-react', () => ({
 			🔗
 		</span>
 	),
+	FolderOpen: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<span data-testid="folder-open-icon" className={className} style={style}>
+			📂
+		</span>
+	),
 	FileText: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
 		<span data-testid="filetext-icon" className={className} style={style}>
 			📄
@@ -96,6 +105,11 @@ vi.mock('lucide-react', () => ({
 			✏️
 		</span>
 	),
+	Globe: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<span data-testid="globe-icon" className={className} style={style}>
+			🌐
+		</span>
+	),
 	Trash2: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
 		<span data-testid="trash2-icon" className={className} style={style}>
 			🗑️
@@ -116,6 +130,26 @@ vi.mock('lucide-react', () => ({
 			⏳
 		</span>
 	),
+	Search: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<span data-testid="search-icon" className={className} style={style}>
+			🔍
+		</span>
+	),
+	FilePlus: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<span data-testid="file-plus-icon" className={className} style={style}>
+			➕
+		</span>
+	),
+	FolderPlus: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<span data-testid="folder-plus-icon" className={className} style={style}>
+			📁
+		</span>
+	),
+	Files: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<span data-testid="files-icon" className={className} style={style}>
+			🗂️
+		</span>
+	),
 }));
 
 // Mock @tanstack/react-virtual for virtualization
@@ -129,6 +163,9 @@ vi.mock('@tanstack/react-virtual', () => ({
 				key: i,
 			})),
 		getTotalSize: () => count * 28,
+		measure: vi.fn(),
+		scrollToOffset: vi.fn(),
+		scrollToIndex: vi.fn(),
 	}),
 }));
 
@@ -205,50 +242,40 @@ vi.mock('../../../renderer/hooks/ui/useClickOutside', () => ({
 	},
 }));
 
-// Create mock theme
-const mockTheme: Theme = {
-	id: 'test-theme',
-	name: 'Test Theme',
-	mode: 'dark',
-	colors: {
-		bgMain: '#1a1a1a',
-		bgSidebar: '#2d2d2d',
-		bgActivity: '#3d3d3d',
-		bgInput: '#404040',
-		textMain: '#ffffff',
-		textDim: '#888888',
-		accent: '#4a9eff',
-		border: '#404040',
-		success: '#4caf50',
-		warning: '#ff9800',
-		error: '#f44336',
-		info: '#2196f3',
-		scrollbarThumb: '#666666',
-	},
-};
+// Mock GitStatusContext so we can inject fileChanges for the active session
+// (FileExplorerPanel reads from useGitDetail for #611 git change indicators).
+let mockFileChanges: { path: string; status: string }[] = [];
+vi.mock('../../../renderer/contexts/GitStatusContext', () => ({
+	useGitDetail: () => ({
+		getFileDetails: () => ({
+			fileChanges: mockFileChanges.map((c) => ({
+				path: c.path,
+				status: c.status,
+				additions: 0,
+				deletions: 0,
+				modified: c.status.includes('M'),
+			})),
+			totalAdditions: 0,
+			totalDeletions: 0,
+			modifiedCount: 0,
+		}),
+		refreshGitStatus: vi.fn().mockResolvedValue(undefined),
+	}),
+}));
 
-// Create mock session
-const createMockSession = (overrides: Partial<Session> = {}): Session => ({
-	id: 'session-1',
-	name: 'Test Session',
-	toolType: 'claude-code',
-	state: 'idle',
-	inputMode: 'ai',
-	cwd: '/Users/test/project',
-	projectRoot: '/Users/test/project',
-	fullPath: '/Users/test/project',
-	aiPid: 1234,
-	terminalPid: 5678,
-	aiLogs: [],
-	shellLogs: [],
-	isGitRepo: true,
-	fileTree: [],
-	fileExplorerExpanded: [],
-	messageQueue: [],
-	changedFiles: [],
-	fileTreeAutoRefreshInterval: 0,
-	...overrides,
-});
+// Create mock theme
+
+const createMockSession = (overrides: Partial<Session> = {}): Session =>
+	baseCreateMockSession({
+		cwd: '/Users/test/project',
+		fullPath: '/Users/test/project',
+		projectRoot: '/Users/test/project',
+		aiPid: 1234,
+		terminalPid: 5678,
+		isGitRepo: true,
+		fileTreeAutoRefreshInterval: 0,
+		...overrides,
+	});
 
 // Create mock file tree
 const mockFileTree = [
@@ -280,14 +307,25 @@ const mockFileTree = [
 		name: 'README.md',
 		type: 'file' as const,
 	},
+	{
+		name: 'index.html',
+		type: 'file' as const,
+	},
 ];
 
 describe('FileExplorerPanel', () => {
 	let defaultProps: React.ComponentProps<typeof FileExplorerPanel>;
 
-	beforeEach(() => {
+	beforeEach(async () => {
 		vi.clearAllMocks();
 		vi.useFakeTimers();
+		mockFileChanges = [];
+
+		// Force non-compact toolbar so RefreshCw icon renders. Default
+		// rightPanelWidth (384) is below RIGHT_PANEL_COMPACT_THRESHOLD (420),
+		// which would hide the icon and break tests that assert on it.
+		const { useSettingsStore } = await import('../../../renderer/stores/settingsStore');
+		useSettingsStore.setState({ rightPanelWidth: 500 });
 
 		defaultProps = {
 			session: createMockSession(),
@@ -305,6 +343,7 @@ describe('FileExplorerPanel', () => {
 			fileTreeContainerRef: React.createRef<HTMLDivElement>(),
 			fileTreeFilterInputRef: React.createRef<HTMLInputElement>(),
 			toggleFolder: vi.fn(),
+			toggleFolderRecursive: vi.fn(),
 			handleFileClick: vi.fn().mockResolvedValue(undefined),
 			expandAllFolders: vi.fn(),
 			collapseAllFolders: vi.fn(),
@@ -473,6 +512,98 @@ describe('FileExplorerPanel', () => {
 				'session-1',
 				expect.any(Function)
 			);
+		});
+	});
+
+	describe('Find Button (#759)', () => {
+		it('opens the filter input when clicked while closed', () => {
+			render(<FileExplorerPanel {...defaultProps} fileTreeFilterOpen={false} />);
+			fireEvent.click(screen.getByText('Find'));
+			expect(defaultProps.setFileTreeFilterOpen).toHaveBeenCalledWith(true);
+		});
+
+		it('closes the filter input when clicked while open and empty', () => {
+			render(<FileExplorerPanel {...defaultProps} fileTreeFilterOpen={true} fileTreeFilter="" />);
+			fireEvent.click(screen.getByText('Find'));
+			expect(defaultProps.setFileTreeFilterOpen).toHaveBeenCalledWith(false);
+		});
+
+		it('does not close the filter input when it has a query', () => {
+			render(
+				<FileExplorerPanel {...defaultProps} fileTreeFilterOpen={true} fileTreeFilter="src" />
+			);
+			fireEvent.click(screen.getByText('Find'));
+			expect(defaultProps.setFileTreeFilterOpen).not.toHaveBeenCalledWith(false);
+		});
+	});
+
+	describe('Dotfiles Toggle (#757)', () => {
+		it('keeps .maestro visible when showHiddenFiles is false (other dotfiles still hidden)', () => {
+			// Invariant: `.maestro` is the project's Maestro workspace and must
+			// never be hidden by the dotfiles toggle. Other dotfiles (e.g. `.git`)
+			// are still filtered out. See FileExplorerPanel.filterHiddenFiles.
+			const treeWithMaestro = [
+				{ name: '.maestro', type: 'folder' as const, children: [] },
+				{ name: '.git', type: 'folder' as const, children: [] },
+				{ name: 'src', type: 'folder' as const, children: [] },
+			];
+			render(
+				<FileExplorerPanel
+					{...defaultProps}
+					showHiddenFiles={false}
+					filteredFileTree={treeWithMaestro}
+				/>
+			);
+			expect(screen.getByText('.maestro')).toBeInTheDocument();
+			expect(screen.queryByText('.git')).not.toBeInTheDocument();
+			expect(screen.getByText('src')).toBeInTheDocument();
+		});
+
+		it('shows .maestro when showHiddenFiles is true', () => {
+			const treeWithMaestro = [
+				{ name: '.maestro', type: 'folder' as const, children: [] },
+				{ name: 'src', type: 'folder' as const, children: [] },
+			];
+			render(
+				<FileExplorerPanel
+					{...defaultProps}
+					showHiddenFiles={true}
+					filteredFileTree={treeWithMaestro}
+				/>
+			);
+			expect(screen.getByText('.maestro')).toBeInTheDocument();
+			expect(screen.getByText('src')).toBeInTheDocument();
+		});
+
+		it('renders the toggle button labeled ".files"', () => {
+			render(<FileExplorerPanel {...defaultProps} showHiddenFiles={false} />);
+			expect(screen.getByText('.files')).toBeInTheDocument();
+			expect(screen.getByTitle('Show dotfiles')).toBeInTheDocument();
+		});
+
+		it('exposes a "Hide dotfiles" tooltip while dotfiles are shown', () => {
+			render(<FileExplorerPanel {...defaultProps} showHiddenFiles={true} />);
+			expect(screen.getByText('.files')).toBeInTheDocument();
+			expect(screen.getByTitle('Hide dotfiles')).toBeInTheDocument();
+		});
+
+		it('toggles showHiddenFiles when clicked', () => {
+			render(<FileExplorerPanel {...defaultProps} showHiddenFiles={false} />);
+			fireEvent.click(screen.getByText('.files'));
+			expect(defaultProps.setShowHiddenFiles).toHaveBeenCalledWith(true);
+		});
+
+		it('hides the .files toggle when dotfilesToggleHidden setting is true', async () => {
+			const { useSettingsStore } = await import('../../../renderer/stores/settingsStore');
+			const prev = useSettingsStore.getState().dotfilesToggleHidden;
+			useSettingsStore.setState({ dotfilesToggleHidden: true });
+			try {
+				render(<FileExplorerPanel {...defaultProps} showHiddenFiles={false} />);
+				expect(screen.queryByText('.files')).not.toBeInTheDocument();
+				expect(screen.queryByTitle('Show dotfiles')).not.toBeInTheDocument();
+			} finally {
+				useSettingsStore.setState({ dotfilesToggleHidden: prev });
+			}
 		});
 	});
 
@@ -844,7 +975,7 @@ describe('FileExplorerPanel', () => {
 		});
 
 		it('handles auto-refresh errors gracefully', async () => {
-			const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const errorSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 			const failingRefresh = vi.fn().mockRejectedValue(new Error('network failure'));
 			const session = createMockSession({ fileTreeAutoRefreshInterval: 5 });
 			render(
@@ -858,6 +989,7 @@ describe('FileExplorerPanel', () => {
 			expect(failingRefresh).toHaveBeenCalledTimes(1);
 			expect(errorSpy).toHaveBeenCalledWith(
 				'[FileExplorer] Auto-refresh failed:',
+				undefined,
 				expect.any(Error)
 			);
 
@@ -952,13 +1084,12 @@ describe('FileExplorerPanel', () => {
 		it('applies indentation to nested items via paddingLeft', () => {
 			const session = createMockSession({ fileExplorerExpanded: ['src'] });
 			const { container } = render(<FileExplorerPanel {...defaultProps} session={session} />);
-			// Virtualized tree uses paddingLeft for indentation
-			// index.ts is a file at depth 1, so paddingLeft = 8 + max(0, 1-1)*16 = 8px
-			// (files use depth-1 to align icons with parent folder icons)
+			// Virtualized tree uses paddingLeft for indentation: 8 + depth * 20
+			// index.ts is at depth 1, so paddingLeft = 8 + 1*20 = 28px
 			const nestedItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
 				el.textContent?.includes('index.ts')
 			);
-			expect(nestedItem).toHaveStyle({ paddingLeft: '8px' });
+			expect(nestedItem).toHaveStyle({ paddingLeft: '28px' });
 		});
 
 		it('displays file name with truncate class', () => {
@@ -1006,6 +1137,20 @@ describe('FileExplorerPanel', () => {
 				'session-1',
 				expect.any(Function)
 			);
+			expect(defaultProps.toggleFolderRecursive).not.toHaveBeenCalled();
+		});
+
+		it('calls toggleFolderRecursive on Alt+click of a folder', () => {
+			render(<FileExplorerPanel {...defaultProps} />);
+			const srcFolder = screen.getByText('src');
+			fireEvent.click(srcFolder, { altKey: true });
+
+			expect(defaultProps.toggleFolderRecursive).toHaveBeenCalledWith(
+				'src',
+				'session-1',
+				expect.any(Function)
+			);
+			expect(defaultProps.toggleFolder).not.toHaveBeenCalled();
 		});
 
 		it('sets selectedFileIndex and activeFocus when clicking a file', () => {
@@ -1015,6 +1160,25 @@ describe('FileExplorerPanel', () => {
 
 			expect(defaultProps.setSelectedFileIndex).toHaveBeenCalled();
 			expect(defaultProps.setActiveFocus).toHaveBeenCalledWith('right');
+		});
+
+		it('sets selectedFileIndex and activeFocus when clicking a folder (#768)', () => {
+			render(<FileExplorerPanel {...defaultProps} />);
+			const folder = screen.getByText('src');
+			fireEvent.click(folder);
+
+			expect(defaultProps.setSelectedFileIndex).toHaveBeenCalled();
+			expect(defaultProps.setActiveFocus).toHaveBeenCalledWith('right');
+			expect(defaultProps.toggleFolder).toHaveBeenCalled();
+		});
+
+		it('does not change focus when clicking a folder while filtering', () => {
+			render(<FileExplorerPanel {...defaultProps} fileTreeFilter="src" />);
+			const folder = screen.getByText('src');
+			fireEvent.click(folder);
+
+			expect(defaultProps.setSelectedFileIndex).toHaveBeenCalled();
+			expect(defaultProps.setActiveFocus).not.toHaveBeenCalled();
 		});
 
 		it('calls handleFileClick on double-click of file', async () => {
@@ -1112,84 +1276,122 @@ describe('FileExplorerPanel', () => {
 	});
 
 	describe('Changed Files Display', () => {
-		it('displays change badge for modified files', () => {
-			const session = createMockSession({
-				changedFiles: [{ path: '/Users/test/project/package.json', type: 'modified' }],
-			});
-			render(<FileExplorerPanel {...defaultProps} session={session} />);
+		const findRowFor = (container: HTMLElement, label: string) =>
+			Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+				el.textContent?.includes(label)
+			) as HTMLElement | undefined;
+		const findIndicator = (row: HTMLElement | undefined) =>
+			row?.querySelector('[data-testid="git-change-indicator"]') as HTMLElement | undefined;
 
-			expect(screen.getByText('modified')).toBeInTheDocument();
+		it('renders a change indicator for modified files (trimmed porcelain "M")', () => {
+			// `useGitStatusPolling` stores trimmed status codes, so production
+			// values look like `"M"` rather than `" M"`. We match that here.
+			mockFileChanges = [{ path: 'package.json', status: 'M' }];
+			const { container } = render(<FileExplorerPanel {...defaultProps} />);
+
+			const indicator = findIndicator(findRowFor(container, 'package.json'));
+			expect(indicator).toBeDefined();
+			expect(indicator).toHaveAttribute('data-change-type', 'modified');
+			expect(indicator).toHaveStyle({ backgroundColor: mockTheme.colors.warning });
 		});
 
-		it('displays change badge for added files', () => {
-			const session = createMockSession({
-				changedFiles: [{ path: '/Users/test/project/package.json', type: 'added' }],
-			});
-			render(<FileExplorerPanel {...defaultProps} session={session} />);
+		it('renders a change indicator for added files (untracked "??")', () => {
+			mockFileChanges = [{ path: 'package.json', status: '??' }];
+			const { container } = render(<FileExplorerPanel {...defaultProps} />);
 
-			expect(screen.getByText('added')).toBeInTheDocument();
+			const indicator = findIndicator(findRowFor(container, 'package.json'));
+			expect(indicator).toHaveAttribute('data-change-type', 'added');
+			expect(indicator).toHaveStyle({ backgroundColor: mockTheme.colors.success });
 		});
 
-		it('displays change badge for deleted files', () => {
-			const session = createMockSession({
-				changedFiles: [{ path: '/Users/test/project/package.json', type: 'deleted' }],
-			});
-			render(<FileExplorerPanel {...defaultProps} session={session} />);
+		it('renders a change indicator for deleted files (trimmed porcelain "D")', () => {
+			mockFileChanges = [{ path: 'package.json', status: 'D' }];
+			const { container } = render(<FileExplorerPanel {...defaultProps} />);
 
-			expect(screen.getByText('deleted')).toBeInTheDocument();
+			const indicator = findIndicator(findRowFor(container, 'package.json'));
+			expect(indicator).toHaveAttribute('data-change-type', 'deleted');
+			expect(indicator).toHaveStyle({ backgroundColor: mockTheme.colors.error });
 		});
 
-		it('applies success color to added badge', () => {
-			const session = createMockSession({
-				changedFiles: [{ path: '/Users/test/project/package.json', type: 'added' }],
-			});
-			render(<FileExplorerPanel {...defaultProps} session={session} />);
+		it('matches the full relative path, not a substring of the file name (#611)', () => {
+			// File "package.json" should NOT light up when a different file under
+			// src/ happens to contain "package" in its full path.
+			mockFileChanges = [{ path: 'src/package-loader.ts', status: 'M' }];
+			const { container } = render(<FileExplorerPanel {...defaultProps} />);
 
-			const badge = screen.getByText('added');
-			expect(badge).toHaveStyle({ color: mockTheme.colors.success });
+			expect(findIndicator(findRowFor(container, 'package.json'))).toBeNull();
 		});
 
-		it('applies warning color to modified badge', () => {
-			const session = createMockSession({
-				changedFiles: [{ path: '/Users/test/project/package.json', type: 'modified' }],
+		it('highlights ancestor folders containing changed descendants', () => {
+			// Need to expand src/ so its descendants render; otherwise only the
+			// folder row appears.
+			const expandedSession = createMockSession({
+				fileExplorerExpanded: ['src', 'src/utils'],
 			});
-			render(<FileExplorerPanel {...defaultProps} session={session} />);
+			mockFileChanges = [{ path: 'src/utils/helpers.ts', status: 'M' }];
+			const { container } = render(
+				<FileExplorerPanel {...defaultProps} session={expandedSession} />
+			);
 
-			const badge = screen.getByText('modified');
-			expect(badge).toHaveStyle({ color: mockTheme.colors.warning });
+			// The src/ folder row shows the descendant-style indicator
+			const srcIndicator = findIndicator(findRowFor(container, 'src'));
+			expect(srcIndicator).toBeDefined();
+			expect(srcIndicator).toHaveAttribute('data-change-type', 'descendant');
+
+			// The leaf file itself shows the modified-type indicator
+			const helpersIndicator = findIndicator(findRowFor(container, 'helpers.ts'));
+			expect(helpersIndicator).toHaveAttribute('data-change-type', 'modified');
 		});
 
-		it('applies error color to deleted badge', () => {
-			const session = createMockSession({
-				changedFiles: [{ path: '/Users/test/project/package.json', type: 'deleted' }],
-			});
-			render(<FileExplorerPanel {...defaultProps} session={session} />);
+		it('does not tint the file icon (icons stay consistent regardless of state)', () => {
+			// Per #611 follow-up, the icon should not change for added/modified/deleted.
+			mockFileChanges = [{ path: 'package.json', status: 'M' }];
+			const { container } = render(<FileExplorerPanel {...defaultProps} />);
 
-			const badge = screen.getByText('deleted');
-			expect(badge).toHaveStyle({ color: mockTheme.colors.error });
+			// The mocked icon distinguishes types via test ids ('added-icon',
+			// 'modified-icon', 'deleted-icon'); the plain 'file-icon' is the
+			// untinted form. Asserting on it pins down that we no longer pass
+			// the change type into getExplorerFileIcon.
+			expect(container.querySelector('[data-testid="modified-icon"]')).toBeNull();
+			expect(container.querySelector('[data-testid="file-icon"]')).not.toBeNull();
 		});
 
 		it('applies bold font to changed file names', () => {
-			const session = createMockSession({
-				changedFiles: [{ path: '/Users/test/project/package.json', type: 'modified' }],
-			});
-			const { container } = render(<FileExplorerPanel {...defaultProps} session={session} />);
+			mockFileChanges = [{ path: 'package.json', status: 'M' }];
+			const { container } = render(<FileExplorerPanel {...defaultProps} />);
 
 			const boldItems = container.querySelectorAll('.font-medium');
 			expect(boldItems.length).toBeGreaterThan(0);
 		});
 
-		it('applies textMain color to changed file names', () => {
-			const session = createMockSession({
-				changedFiles: [{ path: '/Users/test/project/package.json', type: 'modified' }],
-			});
-			const { container } = render(<FileExplorerPanel {...defaultProps} session={session} />);
+		it('applies textMain color to changed file rows', () => {
+			mockFileChanges = [{ path: 'package.json', status: 'M' }];
+			const { container } = render(<FileExplorerPanel {...defaultProps} />);
 
-			// Find item with package.json
-			const fileItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
-				el.textContent?.includes('package.json')
-			);
-			expect(fileItem).toHaveStyle({ color: mockTheme.colors.textMain });
+			const row = findRowFor(container, 'package.json');
+			expect(row).toHaveStyle({ color: mockTheme.colors.textMain });
+		});
+
+		it('uses the colorblind-safe palette when colorBlindMode is enabled', async () => {
+			const { useSettingsStore } = await import('../../../renderer/stores/settingsStore');
+			useSettingsStore.setState({ rightPanelWidth: 500, colorBlindMode: true });
+
+			mockFileChanges = [
+				{ path: 'package.json', status: 'M' },
+				{ path: 'README.md', status: '??' },
+			];
+			const { container } = render(<FileExplorerPanel {...defaultProps} />);
+
+			// Modified → orange (#EE7733), Added → teal (#009988)
+			expect(findIndicator(findRowFor(container, 'package.json'))).toHaveStyle({
+				backgroundColor: '#EE7733',
+			});
+			expect(findIndicator(findRowFor(container, 'README.md'))).toHaveStyle({
+				backgroundColor: '#009988',
+			});
+
+			// Restore default for subsequent tests.
+			useSettingsStore.setState({ colorBlindMode: false });
 		});
 	});
 
@@ -1251,6 +1453,48 @@ describe('FileExplorerPanel', () => {
 			render(<FileExplorerPanel {...defaultProps} session={session} filteredFileTree={[]} />);
 
 			expect(screen.getByText('Loading files...')).toBeInTheDocument();
+		});
+
+		it('hides Stop loading when cancelFileTreeLoad is not provided', () => {
+			const session = createMockSession({ fileTree: [], fileTreeLoading: true });
+			render(<FileExplorerPanel {...defaultProps} session={session} filteredFileTree={[]} />);
+
+			expect(screen.queryByText('Stop loading')).not.toBeInTheDocument();
+		});
+
+		it('hides Stop loading for local sessions even when cancelFileTreeLoad is provided', () => {
+			const session = createMockSession({ fileTree: [], fileTreeLoading: true });
+			render(
+				<FileExplorerPanel
+					{...defaultProps}
+					session={session}
+					filteredFileTree={[]}
+					cancelFileTreeLoad={vi.fn()}
+				/>
+			);
+
+			expect(screen.queryByText('Stop loading')).not.toBeInTheDocument();
+		});
+
+		it('invokes cancelFileTreeLoad with session id when Stop loading clicked on SSH session', () => {
+			const session = createMockSession({
+				id: 'session-xyz',
+				fileTree: [],
+				fileTreeLoading: true,
+				sshRemoteId: 'remote-1',
+			});
+			const cancelFileTreeLoad = vi.fn();
+			render(
+				<FileExplorerPanel
+					{...defaultProps}
+					session={session}
+					filteredFileTree={[]}
+					cancelFileTreeLoad={cancelFileTreeLoad}
+				/>
+			);
+
+			fireEvent.click(screen.getByText('Stop loading'));
+			expect(cancelFileTreeLoad).toHaveBeenCalledWith('session-xyz');
 		});
 
 		it('shows no files found when fileTree is empty and not loading', () => {
@@ -1405,6 +1649,119 @@ describe('FileExplorerPanel', () => {
 		});
 	});
 
+	// LOCKED VISUAL INVARIANTS — DO NOT RELAX WITHOUT EXPLICIT REQUEST.
+	// Alignment rules (see FileExplorerPanel.tsx TreeRow):
+	//   BASE_PAD = 8, INDENT_STEP = 20 (= chevron width 12 + flex gap 8)
+	//   Row padding-left:  BASE_PAD + depth * INDENT_STEP
+	//   Indent guide left: 12 + i * INDENT_STEP   for i in [0, depth)
+	// Derived alignment guarantees:
+	//   1. Root files (depth 0) align with root folder chevrons at X = 8.
+	//   2. File icon at depth N+1 aligns with parent folder icon at depth N,
+	//      because folder_icon_X(N) = pad(N) + chevron(12) + gap(8) = pad(N+1).
+	//   3. Sibling rows at the same depth share identical padding-left.
+	describe('Indent Alignment (locked invariants)', () => {
+		const BASE_PAD = 8;
+		const INDENT_STEP = 20;
+		const CHEVRON_PLUS_GAP = 20; // w-3 (12) + gap-2 (8) — must equal INDENT_STEP
+		const expectedPad = (depth: number) => `${BASE_PAD + depth * INDENT_STEP}px`;
+
+		const getRowByText = (container: HTMLElement, text: string) =>
+			Array.from(container.querySelectorAll<HTMLElement>('[data-file-index]')).find((el) =>
+				el.textContent?.includes(text)
+			);
+
+		it('root folder row has padding-left = 8px', () => {
+			const { container } = render(<FileExplorerPanel {...defaultProps} />);
+			const row = getRowByText(container, 'src');
+			expect(row).toHaveStyle({ paddingLeft: expectedPad(0) });
+			expect(row).toHaveStyle({ paddingLeft: '8px' });
+		});
+
+		it('root file row has padding-left = 8px (aligned with root folder chevron)', () => {
+			const { container } = render(<FileExplorerPanel {...defaultProps} />);
+			const row = getRowByText(container, 'package.json');
+			expect(row).toHaveStyle({ paddingLeft: expectedPad(0) });
+			expect(row).toHaveStyle({ paddingLeft: '8px' });
+		});
+
+		it('depth-1 folder row has padding-left = 28px', () => {
+			const session = createMockSession({ fileExplorerExpanded: ['src'] });
+			const { container } = render(<FileExplorerPanel {...defaultProps} session={session} />);
+			const row = getRowByText(container, 'utils');
+			expect(row).toHaveStyle({ paddingLeft: expectedPad(1) });
+			expect(row).toHaveStyle({ paddingLeft: '28px' });
+		});
+
+		it('depth-1 file row has padding-left = 28px (same column as sibling folder)', () => {
+			const session = createMockSession({ fileExplorerExpanded: ['src'] });
+			const { container } = render(<FileExplorerPanel {...defaultProps} session={session} />);
+			const row = getRowByText(container, 'index.ts');
+			expect(row).toHaveStyle({ paddingLeft: expectedPad(1) });
+			expect(row).toHaveStyle({ paddingLeft: '28px' });
+		});
+
+		it('depth-2 file row has padding-left = 48px', () => {
+			const session = createMockSession({ fileExplorerExpanded: ['src', 'src/utils'] });
+			const { container } = render(<FileExplorerPanel {...defaultProps} session={session} />);
+			const row = getRowByText(container, 'helpers.ts');
+			expect(row).toHaveStyle({ paddingLeft: expectedPad(2) });
+			expect(row).toHaveStyle({ paddingLeft: '48px' });
+		});
+
+		it('file icon at depth N+1 aligns with parent folder icon at depth N', () => {
+			// Core parent-child alignment invariant.
+			// folder_icon_X(N) = pad(N) + chevron_width + gap
+			//                 = 8 + 20N + 20 = 28 + 20N
+			// file_pad(N+1)   = 8 + 20(N+1) = 28 + 20N  ✓
+			const session = createMockSession({ fileExplorerExpanded: ['src', 'src/utils'] });
+			const { container } = render(<FileExplorerPanel {...defaultProps} session={session} />);
+
+			const parentFolder = getRowByText(container, 'utils'); // depth 1
+			const childFile = getRowByText(container, 'helpers.ts'); // depth 2
+
+			const parentPad = parseFloat(parentFolder!.style.paddingLeft);
+			const childPad = parseFloat(childFile!.style.paddingLeft);
+
+			// Parent folder's icon column == parent pad + chevron + gap
+			// Child file's icon column == child pad
+			// These must be equal.
+			expect(childPad).toBe(parentPad + CHEVRON_PLUS_GAP);
+		});
+
+		it('indent step equals chevron width + gap (required for parent-child alignment)', () => {
+			// If this fails, the parent-child alignment invariant above breaks.
+			expect(INDENT_STEP).toBe(CHEVRON_PLUS_GAP);
+		});
+
+		it('renders one indent guide per depth level, spaced by INDENT_STEP', () => {
+			const session = createMockSession({ fileExplorerExpanded: ['src', 'src/utils'] });
+			const { container } = render(<FileExplorerPanel {...defaultProps} session={session} />);
+
+			// helpers.ts at depth 2 should have 2 guides at left = 12 and 12 + 20 = 32
+			const row = getRowByText(container, 'helpers.ts');
+			const guides = row!.querySelectorAll<HTMLElement>('div.absolute.w-px');
+			expect(guides).toHaveLength(2);
+			expect(guides[0]).toHaveStyle({ left: '12px' });
+			expect(guides[1]).toHaveStyle({ left: `${12 + INDENT_STEP}px` });
+			expect(guides[1]).toHaveStyle({ left: '32px' });
+		});
+
+		it('root rows render zero indent guides', () => {
+			const { container } = render(<FileExplorerPanel {...defaultProps} />);
+			const row = getRowByText(container, 'package.json');
+			const guides = row!.querySelectorAll('div.absolute.w-px');
+			expect(guides).toHaveLength(0);
+		});
+
+		it('sibling folder and file at same depth share identical padding-left', () => {
+			const session = createMockSession({ fileExplorerExpanded: ['src'] });
+			const { container } = render(<FileExplorerPanel {...defaultProps} session={session} />);
+			const folder = getRowByText(container, 'utils'); // depth 1 folder
+			const file = getRowByText(container, 'index.ts'); // depth 1 file
+			expect(folder!.style.paddingLeft).toBe(file!.style.paddingLeft);
+		});
+	});
+
 	describe('Folder Toggle Path Building', () => {
 		it('builds correct path for root-level folders', () => {
 			render(<FileExplorerPanel {...defaultProps} />);
@@ -1442,11 +1799,13 @@ describe('FileExplorerPanel', () => {
 			expect(screen.getByText('src')).toBeInTheDocument();
 		});
 
-		it('handles undefined changedFiles', () => {
-			const session = createMockSession({ changedFiles: undefined as any });
+		it('handles missing fileChanges from git context', () => {
+			mockFileChanges = [];
+			const session = createMockSession();
 			const { container } = render(<FileExplorerPanel {...defaultProps} session={session} />);
 
-			// Should render without crashing (fixed with optional chaining at line 201)
+			// No indicators should render when there are no changes.
+			expect(container.querySelector('[data-testid="git-change-indicator"]')).toBeNull();
 			expect(container).toBeTruthy();
 		});
 
@@ -1604,6 +1963,822 @@ describe('FileExplorerPanel', () => {
 			items.forEach((item) => {
 				expect(item).toHaveStyle({ height: '28px' });
 			});
+		});
+	});
+
+	describe('Drag-to-move', () => {
+		// Builds a real DataTransfer-like object so we can read what the source set
+		// during onDragStart and inject what we want for onDragOver / onDrop.
+		function makeDataTransfer(initial: Record<string, string> = {}) {
+			const data: Record<string, string> = { ...initial };
+			return {
+				data,
+				setData: vi.fn((type: string, value: string) => {
+					data[type] = value;
+				}),
+				getData: vi.fn((type: string) => data[type] ?? ''),
+				get types() {
+					return Object.keys(data);
+				},
+				dropEffect: 'none',
+				effectAllowed: 'none',
+				files: { length: 0 } as unknown as FileList,
+			};
+		}
+
+		// Render the panel with a fileTree where 'src' is expanded so the inner
+		// 'utils' folder is mounted as a drop target.
+		function renderWithExpanded(overrides: Partial<Session> = {}) {
+			const props = {
+				...defaultProps,
+				session: createMockSession({
+					fileExplorerExpanded: ['src'],
+					fileTree: mockFileTree,
+					...overrides,
+				}),
+				filteredFileTree: mockFileTree,
+			};
+			return render(<FileExplorerPanel {...props} />);
+		}
+
+		function getRow(container: HTMLElement, name: string): HTMLElement {
+			const row = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+				el.textContent?.includes(name)
+			) as HTMLElement | undefined;
+			if (!row) throw new Error(`row not found: ${name}`);
+			return row;
+		}
+
+		it('writes the relative path under the custom MIME type on drag start', () => {
+			const { container } = renderWithExpanded();
+			const row = getRow(container, 'package.json');
+			const dt = makeDataTransfer();
+			fireEvent.dragStart(row, { dataTransfer: dt });
+			expect(dt.data['application/x-maestro-file-path']).toBe('package.json');
+			expect(dt.effectAllowed).toBe('copyMove');
+		});
+
+		it('moves a root file into a folder via fs.rename with absolute paths', async () => {
+			const rename = vi.fn().mockResolvedValue({ success: true });
+			(window as any).maestro = { fs: { rename } };
+
+			const refreshFileTree = vi.fn().mockResolvedValue({ totalChanges: 1 });
+			const onShowFlash = vi.fn();
+			const { container } = render(
+				<FileExplorerPanel
+					{...defaultProps}
+					session={createMockSession({ fileExplorerExpanded: ['src'], fileTree: mockFileTree })}
+					filteredFileTree={mockFileTree}
+					refreshFileTree={refreshFileTree}
+					onShowFlash={onShowFlash}
+				/>
+			);
+
+			const srcRow = getRow(container, 'src');
+			const dt = makeDataTransfer({ 'application/x-maestro-file-path': 'package.json' });
+
+			await act(async () => {
+				fireEvent.drop(srcRow, { dataTransfer: dt });
+				await Promise.resolve();
+				await Promise.resolve();
+			});
+
+			expect(rename).toHaveBeenCalledWith(
+				'/Users/test/project/package.json',
+				'/Users/test/project/src/package.json',
+				undefined
+			);
+			expect(refreshFileTree).toHaveBeenCalled();
+			expect(onShowFlash).toHaveBeenCalledWith('Moved "package.json"');
+		});
+
+		it('expands the destination folder after a successful move', async () => {
+			const rename = vi.fn().mockResolvedValue({ success: true });
+			(window as any).maestro = { fs: { rename } };
+			const setSessions = vi.fn();
+
+			const { container } = render(
+				<FileExplorerPanel
+					{...defaultProps}
+					setSessions={setSessions}
+					session={createMockSession({ fileExplorerExpanded: ['src'], fileTree: mockFileTree })}
+					filteredFileTree={mockFileTree}
+				/>
+			);
+
+			const srcRow = getRow(container, 'src');
+			const dt = makeDataTransfer({ 'application/x-maestro-file-path': 'package.json' });
+
+			await act(async () => {
+				fireEvent.drop(srcRow, { dataTransfer: dt });
+				await Promise.resolve();
+				await Promise.resolve();
+			});
+
+			// One of the setSessions calls should be the expander adding 'src'.
+			const updaters = setSessions.mock.calls
+				.map((c) => c[0])
+				.filter((fn) => typeof fn === 'function');
+			const expanded = updaters.some((fn) => {
+				const result = fn([{ id: defaultProps.session.id, fileExplorerExpanded: [] } as Session]);
+				return (result[0].fileExplorerExpanded ?? []).includes('src');
+			});
+			expect(expanded).toBe(true);
+		});
+
+		it('passes sshRemoteId through to fs.rename for remote sessions', async () => {
+			const rename = vi.fn().mockResolvedValue({ success: true });
+			(window as any).maestro = { fs: { rename } };
+
+			const { container } = render(
+				<FileExplorerPanel
+					{...defaultProps}
+					session={createMockSession({
+						fileExplorerExpanded: ['src'],
+						fileTree: mockFileTree,
+						sshRemoteId: 'remote-42',
+					})}
+					filteredFileTree={mockFileTree}
+				/>
+			);
+
+			const srcRow = getRow(container, 'src');
+			const dt = makeDataTransfer({ 'application/x-maestro-file-path': 'README.md' });
+			await act(async () => {
+				fireEvent.drop(srcRow, { dataTransfer: dt });
+				await Promise.resolve();
+			});
+
+			expect(rename).toHaveBeenCalledWith(
+				'/Users/test/project/README.md',
+				'/Users/test/project/src/README.md',
+				'remote-42'
+			);
+		});
+
+		it('rejects dropping a folder into itself', async () => {
+			const rename = vi.fn().mockResolvedValue({ success: true });
+			(window as any).maestro = { fs: { rename } };
+
+			const { container } = renderWithExpanded();
+			const srcRow = getRow(container, 'src');
+			const dt = makeDataTransfer({ 'application/x-maestro-file-path': 'src' });
+
+			await act(async () => {
+				fireEvent.drop(srcRow, { dataTransfer: dt });
+				await Promise.resolve();
+			});
+
+			expect(rename).not.toHaveBeenCalled();
+		});
+
+		it('rejects dropping a folder into one of its own descendants', async () => {
+			const rename = vi.fn().mockResolvedValue({ success: true });
+			(window as any).maestro = { fs: { rename } };
+
+			const { container } = renderWithExpanded();
+			const utilsRow = getRow(container, 'utils');
+			const dt = makeDataTransfer({ 'application/x-maestro-file-path': 'src' });
+
+			await act(async () => {
+				fireEvent.drop(utilsRow, { dataTransfer: dt });
+				await Promise.resolve();
+			});
+
+			expect(rename).not.toHaveBeenCalled();
+		});
+
+		it('skips moves where source already lives directly in the destination folder', async () => {
+			const rename = vi.fn().mockResolvedValue({ success: true });
+			(window as any).maestro = { fs: { rename } };
+
+			const { container } = renderWithExpanded();
+			const srcRow = getRow(container, 'src');
+			// index.ts is already inside src/, dropping it onto src/ is a no-op.
+			const dt = makeDataTransfer({ 'application/x-maestro-file-path': 'src/index.ts' });
+
+			await act(async () => {
+				fireEvent.drop(srcRow, { dataTransfer: dt });
+				await Promise.resolve();
+			});
+
+			expect(rename).not.toHaveBeenCalled();
+		});
+
+		it('opens the name-conflict modal when the destination already has the file', async () => {
+			const rename = vi.fn().mockResolvedValue({ success: true });
+			(window as any).maestro = { fs: { rename } };
+
+			// Tree where both root and src/ contain index.ts so a move triggers conflict.
+			const conflictTree = [
+				{ name: 'index.ts', type: 'file' as const },
+				{
+					name: 'src',
+					type: 'folder' as const,
+					children: [{ name: 'index.ts', type: 'file' as const }],
+				},
+			];
+			const { container } = render(
+				<FileExplorerPanel
+					{...defaultProps}
+					session={createMockSession({
+						fileExplorerExpanded: ['src'],
+						fileTree: conflictTree,
+					})}
+					filteredFileTree={conflictTree}
+				/>
+			);
+
+			const srcRow = getRow(container, 'src');
+			const dt = makeDataTransfer({ 'application/x-maestro-file-path': 'index.ts' });
+
+			await act(async () => {
+				fireEvent.drop(srcRow, { dataTransfer: dt });
+				await Promise.resolve();
+			});
+
+			expect(rename).not.toHaveBeenCalled();
+			expect(screen.getByText('Name conflict')).toBeInTheDocument();
+			// Auto-rename preview shows the next free name ("index (2).ts").
+			expect(screen.getByText(/Rename to "index \(2\)\.ts"/)).toBeInTheDocument();
+		});
+
+		it('auto-rename move uses the suffixed name', async () => {
+			const rename = vi.fn().mockResolvedValue({ success: true });
+			(window as any).maestro = { fs: { rename } };
+			const onShowFlash = vi.fn();
+
+			const conflictTree = [
+				{ name: 'index.ts', type: 'file' as const },
+				{
+					name: 'src',
+					type: 'folder' as const,
+					children: [{ name: 'index.ts', type: 'file' as const }],
+				},
+			];
+			const { container } = render(
+				<FileExplorerPanel
+					{...defaultProps}
+					session={createMockSession({
+						fileExplorerExpanded: ['src'],
+						fileTree: conflictTree,
+					})}
+					filteredFileTree={conflictTree}
+					onShowFlash={onShowFlash}
+				/>
+			);
+
+			const srcRow = getRow(container, 'src');
+			const dt = makeDataTransfer({ 'application/x-maestro-file-path': 'index.ts' });
+
+			await act(async () => {
+				fireEvent.drop(srcRow, { dataTransfer: dt });
+				await Promise.resolve();
+			});
+
+			const autoRenameButton = screen
+				.getByText(/Rename to "index \(2\)\.ts"/)
+				.closest('button') as HTMLButtonElement;
+			await act(async () => {
+				fireEvent.click(autoRenameButton);
+				await Promise.resolve();
+				await Promise.resolve();
+			});
+
+			expect(rename).toHaveBeenCalledWith(
+				'/Users/test/project/index.ts',
+				'/Users/test/project/src/index (2).ts',
+				undefined
+			);
+			expect(onShowFlash).toHaveBeenCalledWith('Moved "index (2).ts"');
+		});
+
+		it('overwrite deletes the existing destination before renaming', async () => {
+			const rename = vi.fn().mockResolvedValue({ success: true });
+			const deleteFn = vi.fn().mockResolvedValue({ success: true });
+			(window as any).maestro = { fs: { rename, delete: deleteFn } };
+
+			const conflictTree = [
+				{ name: 'index.ts', type: 'file' as const },
+				{
+					name: 'src',
+					type: 'folder' as const,
+					children: [{ name: 'index.ts', type: 'file' as const }],
+				},
+			];
+			const { container } = render(
+				<FileExplorerPanel
+					{...defaultProps}
+					session={createMockSession({
+						fileExplorerExpanded: ['src'],
+						fileTree: conflictTree,
+					})}
+					filteredFileTree={conflictTree}
+				/>
+			);
+
+			const srcRow = getRow(container, 'src');
+			const dt = makeDataTransfer({ 'application/x-maestro-file-path': 'index.ts' });
+
+			await act(async () => {
+				fireEvent.drop(srcRow, { dataTransfer: dt });
+				await Promise.resolve();
+			});
+
+			const overwriteButton = screen.getByText('Overwrite existing').closest('button')!;
+			await act(async () => {
+				fireEvent.click(overwriteButton);
+				await Promise.resolve();
+				await Promise.resolve();
+			});
+
+			expect(deleteFn).toHaveBeenCalledWith(
+				'/Users/test/project/src/index.ts',
+				expect.objectContaining({ recursive: true })
+			);
+			expect(rename).toHaveBeenCalledWith(
+				'/Users/test/project/index.ts',
+				'/Users/test/project/src/index.ts',
+				undefined
+			);
+		});
+
+		it('cancel closes the conflict modal without calling fs', async () => {
+			const rename = vi.fn();
+			const deleteFn = vi.fn();
+			(window as any).maestro = { fs: { rename, delete: deleteFn } };
+
+			const conflictTree = [
+				{ name: 'index.ts', type: 'file' as const },
+				{
+					name: 'src',
+					type: 'folder' as const,
+					children: [{ name: 'index.ts', type: 'file' as const }],
+				},
+			];
+			const { container } = render(
+				<FileExplorerPanel
+					{...defaultProps}
+					session={createMockSession({
+						fileExplorerExpanded: ['src'],
+						fileTree: conflictTree,
+					})}
+					filteredFileTree={conflictTree}
+				/>
+			);
+
+			const srcRow = getRow(container, 'src');
+			const dt = makeDataTransfer({ 'application/x-maestro-file-path': 'index.ts' });
+
+			await act(async () => {
+				fireEvent.drop(srcRow, { dataTransfer: dt });
+				await Promise.resolve();
+			});
+
+			expect(screen.getByText('Name conflict')).toBeInTheDocument();
+			// The conflict modal has its own Cancel option (matching button label).
+			const cancelButtons = screen.getAllByText('Cancel');
+			fireEvent.click(cancelButtons[cancelButtons.length - 1]);
+
+			expect(screen.queryByText('Name conflict')).not.toBeInTheDocument();
+			expect(rename).not.toHaveBeenCalled();
+			expect(deleteFn).not.toHaveBeenCalled();
+		});
+
+		it('does not register drop handlers on file rows', () => {
+			const rename = vi.fn();
+			(window as any).maestro = { fs: { rename } };
+			const { container } = renderWithExpanded();
+			const fileRow = getRow(container, 'package.json');
+			const dt = makeDataTransfer({ 'application/x-maestro-file-path': 'README.md' });
+			fireEvent.drop(fileRow, { dataTransfer: dt });
+			expect(rename).not.toHaveBeenCalled();
+		});
+
+		it('drags a single path when no multi-selection is active', () => {
+			const { container } = renderWithExpanded();
+			const row = getRow(container, 'package.json');
+			const dt = makeDataTransfer();
+			fireEvent.dragStart(row, { dataTransfer: dt });
+			expect(dt.data['application/x-maestro-file-path']).toBe('package.json');
+			expect(dt.data['application/x-maestro-file-paths']).toBeUndefined();
+		});
+
+		it('drags all selected paths when the dragged row is in the multi-selection', () => {
+			// Use a controlled wrapper so setSelectedFileIndex actually moves the
+			// anchor between clicks — the default vi.fn() prop doesn't propagate.
+			const Controlled = () => {
+				const [idx, setIdx] = React.useState(0);
+				return (
+					<FileExplorerPanel
+						{...defaultProps}
+						session={createMockSession({ fileExplorerExpanded: ['src'], fileTree: mockFileTree })}
+						filteredFileTree={mockFileTree}
+						selectedFileIndex={idx}
+						setSelectedFileIndex={(v) =>
+							setIdx((prev) => (typeof v === 'function' ? (v as (p: number) => number)(prev) : v))
+						}
+					/>
+				);
+			};
+			const { container } = render(<Controlled />);
+			const pkgRow = getRow(container, 'package.json');
+			const readmeRow = getRow(container, 'README.md');
+
+			// Build a 2-row selection via plain-click then Cmd+click.
+			fireEvent.click(pkgRow);
+			fireEvent.click(readmeRow, { metaKey: true });
+
+			const dt = makeDataTransfer();
+			fireEvent.dragStart(readmeRow, { dataTransfer: dt });
+
+			expect(dt.data['application/x-maestro-file-path']).toBe('README.md');
+			const multi = JSON.parse(dt.data['application/x-maestro-file-paths']);
+			expect(multi).toEqual(expect.arrayContaining(['package.json', 'README.md']));
+			expect(multi).toHaveLength(2);
+		});
+
+		it('dragging an unselected row clears the multi-selection and drags only that row', () => {
+			const Controlled = () => {
+				const [idx, setIdx] = React.useState(0);
+				return (
+					<FileExplorerPanel
+						{...defaultProps}
+						session={createMockSession({ fileExplorerExpanded: ['src'], fileTree: mockFileTree })}
+						filteredFileTree={mockFileTree}
+						selectedFileIndex={idx}
+						setSelectedFileIndex={(v) =>
+							setIdx((prev) => (typeof v === 'function' ? (v as (p: number) => number)(prev) : v))
+						}
+					/>
+				);
+			};
+			const { container } = render(<Controlled />);
+			const pkgRow = getRow(container, 'package.json');
+			const readmeRow = getRow(container, 'README.md');
+			const htmlRow = getRow(container, 'index.html');
+
+			fireEvent.click(pkgRow);
+			fireEvent.click(readmeRow, { metaKey: true });
+
+			// Drag an unselected row — should not pull in the multi-selection.
+			const dt = makeDataTransfer();
+			fireEvent.dragStart(htmlRow, { dataTransfer: dt });
+			expect(dt.data['application/x-maestro-file-path']).toBe('index.html');
+			expect(dt.data['application/x-maestro-file-paths']).toBeUndefined();
+		});
+
+		it('moves every path in a multi-source drop', async () => {
+			const rename = vi.fn().mockResolvedValue({ success: true });
+			(window as any).maestro = { fs: { rename } };
+
+			const { container } = render(
+				<FileExplorerPanel
+					{...defaultProps}
+					session={createMockSession({ fileExplorerExpanded: ['src'], fileTree: mockFileTree })}
+					filteredFileTree={mockFileTree}
+				/>
+			);
+
+			const srcRow = getRow(container, 'src');
+			const dt = makeDataTransfer({
+				'application/x-maestro-file-paths': JSON.stringify(['package.json', 'README.md']),
+				'application/x-maestro-file-path': 'package.json',
+			});
+
+			await act(async () => {
+				fireEvent.drop(srcRow, { dataTransfer: dt });
+				await Promise.resolve();
+				await Promise.resolve();
+			});
+
+			expect(rename).toHaveBeenCalledTimes(2);
+			expect(rename).toHaveBeenCalledWith(
+				'/Users/test/project/package.json',
+				'/Users/test/project/src/package.json',
+				undefined
+			);
+			expect(rename).toHaveBeenCalledWith(
+				'/Users/test/project/README.md',
+				'/Users/test/project/src/README.md',
+				undefined
+			);
+		});
+
+		it('multi-source drop opens the batched conflict modal when some destinations exist', async () => {
+			const rename = vi.fn().mockResolvedValue({ success: true });
+			(window as any).maestro = { fs: { rename } };
+
+			// Tree where src/ already contains README.md so dropping [package.json,
+			// README.md] onto src/ conflicts on README.md only.
+			const tree = [
+				{
+					name: 'src',
+					type: 'folder' as const,
+					children: [{ name: 'README.md', type: 'file' as const }],
+				},
+				{ name: 'package.json', type: 'file' as const },
+				{ name: 'README.md', type: 'file' as const },
+			];
+			const { container } = render(
+				<FileExplorerPanel
+					{...defaultProps}
+					session={createMockSession({ fileExplorerExpanded: ['src'], fileTree: tree })}
+					filteredFileTree={tree}
+				/>
+			);
+
+			const srcRow = getRow(container, 'src');
+			const dt = makeDataTransfer({
+				'application/x-maestro-file-paths': JSON.stringify(['package.json', 'README.md']),
+				'application/x-maestro-file-path': 'package.json',
+			});
+
+			await act(async () => {
+				fireEvent.drop(srcRow, { dataTransfer: dt });
+				await Promise.resolve();
+			});
+
+			expect(rename).not.toHaveBeenCalled();
+			// Multi-conflict title includes the count.
+			expect(screen.getByText(/Name conflicts \(1\)/)).toBeInTheDocument();
+			// "Skip conflicts" option is available when there are non-conflicting moves.
+			expect(screen.getByText(/Skip conflicts, move 1 other/)).toBeInTheDocument();
+		});
+
+		it('batched auto-rename moves both conflicting and non-conflicting items', async () => {
+			const rename = vi.fn().mockResolvedValue({ success: true });
+			(window as any).maestro = { fs: { rename } };
+
+			const tree = [
+				{
+					name: 'src',
+					type: 'folder' as const,
+					children: [{ name: 'README.md', type: 'file' as const }],
+				},
+				{ name: 'package.json', type: 'file' as const },
+				{ name: 'README.md', type: 'file' as const },
+			];
+			const { container } = render(
+				<FileExplorerPanel
+					{...defaultProps}
+					session={createMockSession({ fileExplorerExpanded: ['src'], fileTree: tree })}
+					filteredFileTree={tree}
+				/>
+			);
+
+			const srcRow = getRow(container, 'src');
+			const dt = makeDataTransfer({
+				'application/x-maestro-file-paths': JSON.stringify(['package.json', 'README.md']),
+				'application/x-maestro-file-path': 'package.json',
+			});
+
+			await act(async () => {
+				fireEvent.drop(srcRow, { dataTransfer: dt });
+				await Promise.resolve();
+			});
+
+			const autoRenameButton = screen
+				.getByText(/Auto-rename 1 conflicting item/)
+				.closest('button') as HTMLButtonElement;
+			await act(async () => {
+				fireEvent.click(autoRenameButton);
+				await Promise.resolve();
+				await Promise.resolve();
+			});
+
+			expect(rename).toHaveBeenCalledWith(
+				'/Users/test/project/package.json',
+				'/Users/test/project/src/package.json',
+				undefined
+			);
+			expect(rename).toHaveBeenCalledWith(
+				'/Users/test/project/README.md',
+				'/Users/test/project/src/README (2).md',
+				undefined
+			);
+		});
+
+		it('batched skip-conflicts moves only the non-conflicting items', async () => {
+			const rename = vi.fn().mockResolvedValue({ success: true });
+			const deleteFn = vi.fn();
+			(window as any).maestro = { fs: { rename, delete: deleteFn } };
+
+			const tree = [
+				{
+					name: 'src',
+					type: 'folder' as const,
+					children: [{ name: 'README.md', type: 'file' as const }],
+				},
+				{ name: 'package.json', type: 'file' as const },
+				{ name: 'README.md', type: 'file' as const },
+			];
+			const { container } = render(
+				<FileExplorerPanel
+					{...defaultProps}
+					session={createMockSession({ fileExplorerExpanded: ['src'], fileTree: tree })}
+					filteredFileTree={tree}
+				/>
+			);
+
+			const srcRow = getRow(container, 'src');
+			const dt = makeDataTransfer({
+				'application/x-maestro-file-paths': JSON.stringify(['package.json', 'README.md']),
+				'application/x-maestro-file-path': 'package.json',
+			});
+
+			await act(async () => {
+				fireEvent.drop(srcRow, { dataTransfer: dt });
+				await Promise.resolve();
+			});
+
+			const skipButton = screen
+				.getByText(/Skip conflicts, move 1 other/)
+				.closest('button') as HTMLButtonElement;
+			await act(async () => {
+				fireEvent.click(skipButton);
+				await Promise.resolve();
+				await Promise.resolve();
+			});
+
+			expect(rename).toHaveBeenCalledTimes(1);
+			expect(rename).toHaveBeenCalledWith(
+				'/Users/test/project/package.json',
+				'/Users/test/project/src/package.json',
+				undefined
+			);
+			expect(deleteFn).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('Multi-selection', () => {
+		function getRowByLabel(container: HTMLElement, name: string): HTMLElement {
+			const row = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+				el.textContent?.includes(name)
+			) as HTMLElement | undefined;
+			if (!row) throw new Error(`row not found: ${name}`);
+			return row;
+		}
+
+		it('Cmd+click on a folder toggles selection without expanding the folder', () => {
+			const setSelectedFileIndex = vi.fn();
+			const toggleFolder = vi.fn();
+			const { container } = render(
+				<FileExplorerPanel
+					{...defaultProps}
+					setSelectedFileIndex={setSelectedFileIndex}
+					toggleFolder={toggleFolder}
+				/>
+			);
+
+			const srcRow = getRowByLabel(container, 'src');
+			fireEvent.click(srcRow, { metaKey: true });
+
+			expect(setSelectedFileIndex).toHaveBeenCalled();
+			expect(toggleFolder).not.toHaveBeenCalled();
+		});
+
+		it('Shift+click selects the range from the anchor to the clicked row', () => {
+			// selectedFileIndex prop is the keyboard-nav anchor used by shift-click.
+			// Anchor at index 0 (src), shift-click on index 3 (index.html) should
+			// select all four rows so a subsequent drag carries all of them.
+			const { container } = render(<FileExplorerPanel {...defaultProps} selectedFileIndex={0} />);
+
+			const htmlRow = getRowByLabel(container, 'index.html');
+			fireEvent.click(htmlRow, { shiftKey: true });
+
+			// Drag from an end of the range — payload should include the full range.
+			const dt = (function makeDt() {
+				const data: Record<string, string> = {};
+				return {
+					data,
+					setData: (k: string, v: string) => {
+						data[k] = v;
+					},
+					getData: (k: string) => data[k] ?? '',
+					get types() {
+						return Object.keys(data);
+					},
+					dropEffect: 'none',
+					effectAllowed: 'none',
+					files: { length: 0 } as unknown as FileList,
+				};
+			})();
+			fireEvent.dragStart(htmlRow, { dataTransfer: dt });
+			const multi = JSON.parse(dt.data['application/x-maestro-file-paths']);
+			// Selection should include the rows from index 0..3 (src, package.json,
+			// README.md, index.html) — the actual order isn't significant, only the
+			// set membership.
+			expect(multi).toEqual(
+				expect.arrayContaining(['src', 'package.json', 'README.md', 'index.html'])
+			);
+			expect(multi).toHaveLength(4);
+		});
+
+		it('successive shift-clicks pivot from the original anchor (Finder semantics)', () => {
+			// Plain-click A, then shift-click J (range A..J), then shift-click F.
+			// Finder: second shift-click shrinks to A..F because the anchor stays
+			// at A; it does NOT pivot from J.
+			const Controlled = () => {
+				const [idx, setIdx] = React.useState(0);
+				return (
+					<FileExplorerPanel
+						{...defaultProps}
+						session={createMockSession({ fileExplorerExpanded: ['src'], fileTree: mockFileTree })}
+						filteredFileTree={mockFileTree}
+						selectedFileIndex={idx}
+						setSelectedFileIndex={(v) =>
+							setIdx((prev) => (typeof v === 'function' ? (v as (p: number) => number)(prev) : v))
+						}
+					/>
+				);
+			};
+			const { container } = render(<Controlled />);
+			// mockFileTree with only 'src' expanded ('utils' collapsed) flattens to:
+			//   0: src   1: src/index.ts   2: src/utils
+			//   3: package.json   4: README.md   5: index.html
+			const srcRow = getRowByLabel(container, 'src');
+			const htmlRow = getRowByLabel(container, 'index.html');
+			const pkgRow = getRowByLabel(container, 'package.json');
+
+			fireEvent.click(srcRow); // anchor = 0
+			fireEvent.click(htmlRow, { shiftKey: true }); // range 0..5
+			fireEvent.click(pkgRow, { shiftKey: true }); // should be 0..3, not 3..5
+
+			// Drag from pkgRow — payload should reflect 0..3 (4 rows).
+			const dt = (function makeDt() {
+				const data: Record<string, string> = {};
+				return {
+					data,
+					setData: (k: string, v: string) => {
+						data[k] = v;
+					},
+					getData: (k: string) => data[k] ?? '',
+					get types() {
+						return Object.keys(data);
+					},
+					dropEffect: 'none',
+					effectAllowed: 'none',
+					files: { length: 0 } as unknown as FileList,
+				};
+			})();
+			fireEvent.dragStart(pkgRow, { dataTransfer: dt });
+			const multi = JSON.parse(dt.data['application/x-maestro-file-paths']);
+			expect(multi).toEqual(
+				expect.arrayContaining(['src', 'src/index.ts', 'src/utils', 'package.json'])
+			);
+			expect(multi).toHaveLength(4);
+			// index.html and README.md should NOT be in the selection any more —
+			// they would be if the anchor had moved to htmlRow on the first
+			// shift-click.
+			expect(multi).not.toContain('index.html');
+			expect(multi).not.toContain('README.md');
+		});
+
+		it('plain click collapses an active multi-selection back to a single row', () => {
+			const Controlled = () => {
+				const [idx, setIdx] = React.useState(0);
+				return (
+					<FileExplorerPanel
+						{...defaultProps}
+						session={createMockSession({ fileExplorerExpanded: ['src'], fileTree: mockFileTree })}
+						filteredFileTree={mockFileTree}
+						selectedFileIndex={idx}
+						setSelectedFileIndex={(v) =>
+							setIdx((prev) => (typeof v === 'function' ? (v as (p: number) => number)(prev) : v))
+						}
+					/>
+				);
+			};
+			const { container } = render(<Controlled />);
+			const pkgRow = getRowByLabel(container, 'package.json');
+			const readmeRow = getRowByLabel(container, 'README.md');
+			const htmlRow = getRowByLabel(container, 'index.html');
+
+			fireEvent.click(pkgRow);
+			fireEvent.click(readmeRow, { metaKey: true });
+			// Plain click on a third row — multi-selection should be cleared.
+			fireEvent.click(htmlRow);
+
+			// A drag from package.json should now carry only package.json (no multi).
+			const dt = (function makeDt() {
+				const data: Record<string, string> = {};
+				return {
+					data,
+					setData: (k: string, v: string) => {
+						data[k] = v;
+					},
+					getData: (k: string) => data[k] ?? '',
+					get types() {
+						return Object.keys(data);
+					},
+					dropEffect: 'none',
+					effectAllowed: 'none',
+					files: { length: 0 } as unknown as FileList,
+				};
+			})();
+			fireEvent.dragStart(pkgRow, { dataTransfer: dt });
+			expect(dt.data['application/x-maestro-file-paths']).toBeUndefined();
 		});
 	});
 
@@ -1815,6 +2990,225 @@ describe('FileExplorerPanel', () => {
 			expect(screen.queryByText('Rename File')).not.toBeInTheDocument();
 		});
 
+		it('shows "New File" option on folder context menu', () => {
+			const { container } = render(<FileExplorerPanel {...defaultProps} />);
+			const folderItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+				el.textContent?.includes('src')
+			);
+			fireEvent.contextMenu(folderItem!, { clientX: 100, clientY: 200 });
+			expect(screen.getByText('New File')).toBeInTheDocument();
+		});
+
+		it('does not show "New File" option on file context menu', () => {
+			const { container } = render(<FileExplorerPanel {...defaultProps} />);
+			const fileItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+				el.textContent?.includes('package.json')
+			);
+			fireEvent.contextMenu(fileItem!, { clientX: 100, clientY: 200 });
+			expect(screen.queryByText('New File')).not.toBeInTheDocument();
+		});
+
+		it('shows "Preview All Files in Folder" option on folder context menu', () => {
+			const { container } = render(<FileExplorerPanel {...defaultProps} />);
+			const folderItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+				el.textContent?.includes('src')
+			);
+			fireEvent.contextMenu(folderItem!, { clientX: 100, clientY: 200 });
+			expect(screen.getByText('Preview All Files in Folder')).toBeInTheDocument();
+		});
+
+		it('does not show "Preview All Files in Folder" option on file context menu', () => {
+			const { container } = render(<FileExplorerPanel {...defaultProps} />);
+			const fileItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+				el.textContent?.includes('package.json')
+			);
+			fireEvent.contextMenu(fileItem!, { clientX: 100, clientY: 200 });
+			expect(screen.queryByText('Preview All Files in Folder')).not.toBeInTheDocument();
+		});
+
+		it('opens every previewable file under a folder recursively when clicked', async () => {
+			const handleFileClick = vi.fn().mockResolvedValue(undefined);
+			const onShowFlash = vi.fn();
+			const { container } = render(
+				<FileExplorerPanel
+					{...defaultProps}
+					handleFileClick={handleFileClick}
+					onShowFlash={onShowFlash}
+				/>
+			);
+			const folderItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+				el.textContent?.includes('src')
+			);
+			fireEvent.contextMenu(folderItem!, { clientX: 100, clientY: 200 });
+
+			await act(async () => {
+				fireEvent.click(screen.getByText('Preview All Files in Folder'));
+				await Promise.resolve();
+				await Promise.resolve();
+				await Promise.resolve();
+				await Promise.resolve();
+			});
+
+			// Recurses into subfolders: src/index.ts and src/utils/helpers.ts
+			expect(handleFileClick).toHaveBeenCalledTimes(2);
+			const paths = handleFileClick.mock.calls.map((c) => c[1]);
+			expect(paths).toContain('src/index.ts');
+			expect(paths).toContain('src/utils/helpers.ts');
+			expect(onShowFlash).toHaveBeenCalledWith('Opened 2 files from "src"');
+		});
+
+		it('creates a new file inside the right-clicked folder', async () => {
+			const writeFile = vi.fn().mockResolvedValue({ success: true });
+			(window as any).maestro = { fs: { writeFile } };
+			const refreshFileTree = vi.fn().mockResolvedValue({ totalChanges: 1 });
+			const onShowFlash = vi.fn();
+
+			const { container } = render(
+				<FileExplorerPanel
+					{...defaultProps}
+					refreshFileTree={refreshFileTree}
+					onShowFlash={onShowFlash}
+				/>
+			);
+			const folderItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+				el.textContent?.includes('src')
+			);
+			fireEvent.contextMenu(folderItem!, { clientX: 100, clientY: 200 });
+			fireEvent.click(screen.getByText('New File'));
+
+			const input = screen.getByPlaceholderText('Enter file name...') as HTMLInputElement;
+			fireEvent.change(input, { target: { value: 'newthing.ts' } });
+
+			await act(async () => {
+				fireEvent.click(screen.getByText('Create'));
+				await Promise.resolve();
+				await Promise.resolve();
+			});
+
+			expect(writeFile).toHaveBeenCalledWith('/Users/test/project/src/newthing.ts', '', undefined);
+			expect(refreshFileTree).toHaveBeenCalled();
+			expect(onShowFlash).toHaveBeenCalledWith('Created "newthing.ts"');
+		});
+
+		it('expands the parent folder after creating a new file in it', async () => {
+			const writeFile = vi.fn().mockResolvedValue({ success: true });
+			(window as any).maestro = { fs: { writeFile } };
+			const setSessions = vi.fn();
+
+			const { container } = render(
+				<FileExplorerPanel
+					{...defaultProps}
+					setSessions={setSessions}
+					session={createMockSession({ fileExplorerExpanded: [] })}
+				/>
+			);
+			const folderItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+				el.textContent?.includes('src')
+			);
+			fireEvent.contextMenu(folderItem!, { clientX: 100, clientY: 200 });
+			fireEvent.click(screen.getByText('New File'));
+
+			const input = screen.getByPlaceholderText('Enter file name...') as HTMLInputElement;
+			fireEvent.change(input, { target: { value: 'newthing.ts' } });
+
+			await act(async () => {
+				fireEvent.click(screen.getByText('Create'));
+				await Promise.resolve();
+				await Promise.resolve();
+			});
+
+			// setSessions is called with an updater that adds 'src' to expanded list.
+			const updater = setSessions.mock.calls
+				.map((c) => c[0])
+				.find((fn) => typeof fn === 'function');
+			expect(updater).toBeDefined();
+			const result = updater([
+				{ id: defaultProps.session.id, fileExplorerExpanded: [] } as Session,
+			]);
+			expect(result[0].fileExplorerExpanded).toContain('src');
+		});
+
+		it('rejects new file name with slashes', async () => {
+			const writeFile = vi.fn().mockResolvedValue({ success: true });
+			(window as any).maestro = { fs: { writeFile } };
+
+			const { container } = render(<FileExplorerPanel {...defaultProps} />);
+			const folderItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+				el.textContent?.includes('src')
+			);
+			fireEvent.contextMenu(folderItem!, { clientX: 100, clientY: 200 });
+			fireEvent.click(screen.getByText('New File'));
+
+			const input = screen.getByPlaceholderText('Enter file name...') as HTMLInputElement;
+			fireEvent.change(input, { target: { value: 'nested/foo.ts' } });
+
+			await act(async () => {
+				fireEvent.click(screen.getByText('Create'));
+				await Promise.resolve();
+			});
+
+			expect(writeFile).not.toHaveBeenCalled();
+			expect(screen.getByText('Name cannot contain slashes')).toBeInTheDocument();
+		});
+
+		it('rejects new file name that already exists in the folder', async () => {
+			const writeFile = vi.fn().mockResolvedValue({ success: true });
+			(window as any).maestro = { fs: { writeFile } };
+
+			// session.fileTree is the source of truth for the duplicate check, not
+			// filteredFileTree — pass it in explicitly so src/index.ts is known.
+			const { container } = render(
+				<FileExplorerPanel
+					{...defaultProps}
+					session={createMockSession({ fileTree: mockFileTree })}
+				/>
+			);
+			const folderItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+				el.textContent?.includes('src')
+			);
+			fireEvent.contextMenu(folderItem!, { clientX: 100, clientY: 200 });
+			fireEvent.click(screen.getByText('New File'));
+
+			const input = screen.getByPlaceholderText('Enter file name...') as HTMLInputElement;
+			fireEvent.change(input, { target: { value: 'index.ts' } });
+
+			await act(async () => {
+				fireEvent.click(screen.getByText('Create'));
+				await Promise.resolve();
+			});
+
+			expect(writeFile).not.toHaveBeenCalled();
+			expect(screen.getByText('"index.ts" already exists in this folder')).toBeInTheDocument();
+		});
+
+		it('passes sshRemoteId to writeFile for remote sessions', async () => {
+			const writeFile = vi.fn().mockResolvedValue({ success: true });
+			(window as any).maestro = { fs: { writeFile } };
+
+			const { container } = render(
+				<FileExplorerPanel
+					{...defaultProps}
+					session={createMockSession({ sshRemoteId: 'remote-42' })}
+				/>
+			);
+			const folderItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+				el.textContent?.includes('src')
+			);
+			fireEvent.contextMenu(folderItem!, { clientX: 100, clientY: 200 });
+			fireEvent.click(screen.getByText('New File'));
+
+			const input = screen.getByPlaceholderText('Enter file name...') as HTMLInputElement;
+			fireEvent.change(input, { target: { value: 'foo.ts' } });
+
+			await act(async () => {
+				fireEvent.click(screen.getByText('Create'));
+				await Promise.resolve();
+				await Promise.resolve();
+			});
+
+			expect(writeFile).toHaveBeenCalledWith('/Users/test/project/src/foo.ts', '', 'remote-42');
+		});
+
 		it('shows Open in Default App option for files', () => {
 			const { container } = render(<FileExplorerPanel {...defaultProps} />);
 			const fileItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
@@ -1883,6 +3277,79 @@ describe('FileExplorerPanel', () => {
 			expect(mockShell.openPath).toHaveBeenCalledWith('/Users/test/project/package.json');
 		});
 
+		it('shows Open in Maestro Browser option for HTML files when onOpenBrowserTabAt is provided', () => {
+			const onOpenBrowserTabAt = vi.fn();
+			const { container } = render(
+				<FileExplorerPanel {...defaultProps} onOpenBrowserTabAt={onOpenBrowserTabAt} />
+			);
+			const fileItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+				el.textContent?.includes('index.html')
+			);
+			fireEvent.contextMenu(fileItem!, { clientX: 100, clientY: 200 });
+
+			expect(screen.getByText('Open in Maestro Browser')).toBeInTheDocument();
+		});
+
+		it('does not show Open in Maestro Browser option for non-HTML files', () => {
+			const onOpenBrowserTabAt = vi.fn();
+			const { container } = render(
+				<FileExplorerPanel {...defaultProps} onOpenBrowserTabAt={onOpenBrowserTabAt} />
+			);
+			const fileItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+				el.textContent?.includes('package.json')
+			);
+			fireEvent.contextMenu(fileItem!, { clientX: 100, clientY: 200 });
+
+			expect(screen.queryByText('Open in Maestro Browser')).not.toBeInTheDocument();
+		});
+
+		it('does not show Open in Maestro Browser option when handler is missing', () => {
+			const { container } = render(<FileExplorerPanel {...defaultProps} />);
+			const fileItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+				el.textContent?.includes('index.html')
+			);
+			fireEvent.contextMenu(fileItem!, { clientX: 100, clientY: 200 });
+
+			expect(screen.queryByText('Open in Maestro Browser')).not.toBeInTheDocument();
+		});
+
+		it('calls onOpenBrowserTabAt with a file:// URL when Open in Maestro Browser is clicked', () => {
+			const onOpenBrowserTabAt = vi.fn();
+			const { container } = render(
+				<FileExplorerPanel {...defaultProps} onOpenBrowserTabAt={onOpenBrowserTabAt} />
+			);
+			const fileItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+				el.textContent?.includes('index.html')
+			);
+			fireEvent.contextMenu(fileItem!, { clientX: 100, clientY: 200 });
+
+			fireEvent.click(screen.getByText('Open in Maestro Browser'));
+
+			expect(onOpenBrowserTabAt).toHaveBeenCalledWith('file:///Users/test/project/index.html', {
+				title: 'index.html',
+			});
+		});
+
+		it('does not show Open in Maestro Browser option for SSH sessions', () => {
+			const sshSession = createMockSession({
+				sshRemoteId: 'ssh-remote-123',
+			});
+			const onOpenBrowserTabAt = vi.fn();
+			const { container } = render(
+				<FileExplorerPanel
+					{...defaultProps}
+					session={sshSession}
+					onOpenBrowserTabAt={onOpenBrowserTabAt}
+				/>
+			);
+			const fileItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+				el.textContent?.includes('index.html')
+			);
+			fireEvent.contextMenu(fileItem!, { clientX: 100, clientY: 200 });
+
+			expect(screen.queryByText('Open in Maestro Browser')).not.toBeInTheDocument();
+		});
+
 		it('does not show Open in Default App option for SSH sessions', () => {
 			const sshSession = createMockSession({
 				sshRemoteId: 'ssh-remote-123',
@@ -1907,6 +3374,32 @@ describe('FileExplorerPanel', () => {
 			fireEvent.contextMenu(fileItem!, { clientX: 100, clientY: 200 });
 
 			expect(screen.queryByText('Open in Default App')).not.toBeInTheDocument();
+		});
+
+		it('does not show Reveal in Finder option for SSH sessions', () => {
+			const sshSession = createMockSession({
+				sshRemoteId: 'ssh-remote-123',
+			});
+			const { container } = render(<FileExplorerPanel {...defaultProps} session={sshSession} />);
+			const fileItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+				el.textContent?.includes('package.json')
+			);
+			fireEvent.contextMenu(fileItem!, { clientX: 100, clientY: 200 });
+
+			expect(screen.queryByText('Reveal in Finder')).not.toBeInTheDocument();
+		});
+
+		it('does not show Reveal in Finder option for sessions with SSH remote config', () => {
+			const sshSession = createMockSession({
+				sessionSshRemoteConfig: { remoteId: 'ssh-config-456', enabled: true },
+			});
+			const { container } = render(<FileExplorerPanel {...defaultProps} session={sshSession} />);
+			const fileItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+				el.textContent?.includes('package.json')
+			);
+			fireEvent.contextMenu(fileItem!, { clientX: 100, clientY: 200 });
+
+			expect(screen.queryByText('Reveal in Finder')).not.toBeInTheDocument();
 		});
 
 		it('shows folder delete warning with item count', async () => {
@@ -1954,6 +3447,50 @@ describe('FileExplorerPanel', () => {
 			// Focus behavior with requestAnimationFrame is tested elsewhere
 			const cancelButton = screen.getByText('Cancel');
 			expect(cancelButton).toBeInTheDocument();
+		});
+
+		it('does not attach a window keydown listener until the menu is opened', () => {
+			const spies = spyOnListeners(window);
+			render(<FileExplorerPanel {...defaultProps} />);
+			const keydownAdds = spies.addSpy.mock.calls.filter(([t]) => t === 'keydown');
+			expect(keydownAdds).toHaveLength(0);
+			spies.restore();
+		});
+
+		it('closes the context menu on Escape', () => {
+			const { container } = render(<FileExplorerPanel {...defaultProps} />);
+			const fileItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+				el.textContent?.includes('package.json')
+			);
+			fireEvent.contextMenu(fileItem!, { clientX: 100, clientY: 200 });
+			expect(screen.getByText('Copy Path')).toBeInTheDocument();
+
+			fireEvent.keyDown(window, { key: 'Escape' });
+			expect(screen.queryByText('Copy Path')).not.toBeInTheDocument();
+		});
+
+		it('removes its keydown listener after the menu closes (no leak)', () => {
+			const spies = spyOnListeners(window);
+			const { container } = render(<FileExplorerPanel {...defaultProps} />);
+			const fileItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+				el.textContent?.includes('package.json')
+			);
+			fireEvent.contextMenu(fileItem!, { clientX: 100, clientY: 200 });
+			fireEvent.keyDown(window, { key: 'Escape' });
+			expectAllListenersRemoved(spies.addSpy, spies.removeSpy);
+			spies.restore();
+		});
+
+		it('removes its keydown listener on unmount with menu open (no leak)', () => {
+			const spies = spyOnListeners(window);
+			const { container, unmount } = render(<FileExplorerPanel {...defaultProps} />);
+			const fileItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+				el.textContent?.includes('package.json')
+			);
+			fireEvent.contextMenu(fileItem!, { clientX: 100, clientY: 200 });
+			unmount();
+			expectAllListenersRemoved(spies.addSpy, spies.removeSpy);
+			spies.restore();
 		});
 	});
 });

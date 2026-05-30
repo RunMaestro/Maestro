@@ -9,7 +9,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { GroupChatModal } from '../../../renderer/components/GroupChatModal';
-import type { Theme, GroupChat, AgentConfig } from '../../../renderer/types';
+import type { GroupChat, AgentConfig } from '../../../renderer/types';
+
+import { createMockTheme } from '../../helpers/mockTheme';
 
 // Mock lucide-react icons
 vi.mock('lucide-react', () => ({
@@ -81,28 +83,6 @@ vi.mock('../../../renderer/contexts/LayerStackContext', () => ({
 // =============================================================================
 // TEST HELPERS
 // =============================================================================
-
-function createMockTheme(): Theme {
-	return {
-		id: 'test-theme',
-		name: 'Test Theme',
-		colors: {
-			bgMain: '#1a1a1a',
-			bgSidebar: '#252525',
-			bgActivity: '#333333',
-			textMain: '#ffffff',
-			textDim: '#888888',
-			accent: '#6366f1',
-			border: '#333333',
-			success: '#22c55e',
-			error: '#ef4444',
-			warning: '#f59e0b',
-			contextFree: '#22c55e',
-			contextMedium: '#f59e0b',
-			contextHigh: '#ef4444',
-		},
-	};
-}
 
 function createMockAgent(overrides: Partial<AgentConfig> = {}): AgentConfig {
 	return {

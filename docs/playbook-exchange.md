@@ -10,18 +10,18 @@ The Playbook Exchange is a curated collection of community-contributed playbooks
 
 Open the Playbook Exchange using:
 
-- **Quick Actions** — `Cmd+K` / `Ctrl+K` → search "Playbook Exchange"
-- **Auto Run panel** — Click the **Exchange** button (grid icon)
+- **Quick Actions** - `Cmd+K` / `Ctrl+K` → search "Playbook Exchange"
+- **Auto Run panel** - Click the **Exchange** button (grid icon)
 
 ## Browsing Playbooks
 
 The exchange displays playbooks in a searchable grid organized by category:
 
-- **Category tabs** — Filter playbooks by type (Development, Security, DevOps, etc.)
-- **Search** — Filters by title, description, and tags
-- **Arrow keys** — Navigate between tiles
-- **Enter** — Open the detail view for the selected playbook
-- **`Cmd+F` / `Ctrl+F`** — Focus the search input
+- **Category tabs** - Filter playbooks by type (Development, Security, DevOps, etc.)
+- **Search** - Filters by title, description, and tags
+- **Arrow keys** - Navigate between tiles
+- **Enter** - Open the detail view for the selected playbook
+- **`Cmd+F` / `Ctrl+F`** - Focus the search input
 
 Use `Cmd+Shift+[` / `Cmd+Shift+]` (`Ctrl+Shift+[/]` on Windows/Linux) to quickly switch between category tabs.
 
@@ -33,18 +33,18 @@ Use `Cmd+Shift+[` / `Cmd+Shift+]` (`Ctrl+Shift+[/]` on Windows/Linux) to quickly
 
 Clicking a playbook tile (or pressing `Enter`) opens the detail view where you can:
 
-- **Read the README** — Full documentation for the playbook
-- **Preview documents** — Browse individual task documents before importing; use the dropdown or click document names in the sidebar
-- **View metadata** — Author (with link if available), tags, loop settings, last updated date, and document list
-- **Set import folder** — Customize the target folder name (relative to Auto Run folder or absolute path)
-- **Browse for folder** — Click the folder icon to select a custom location (local sessions only)
+- **Read the README** - Full documentation for the playbook
+- **Preview documents** - Browse individual task documents before importing; use the dropdown or click document names in the sidebar
+- **View metadata** - Author (with link if available), tags, loop settings, last updated date, and document list
+- **Set import folder** - Customize the target folder name (relative to Auto Run folder or absolute path)
+- **Browse for folder** - Click the folder icon to select a custom location (local sessions only)
 
 ### Detail View Navigation
 
-- **`Cmd+Shift+[/]`** — Navigate to previous/next document (wraps around, includes README)
-- **`Opt+Up/Down`** — Page up/down in the document preview
-- **`Cmd+Up/Down`** — Scroll to top/bottom of document preview
-- **`Esc`** — Return to the playbook grid
+- **`Cmd+Shift+[/]`** - Navigate to previous/next document (wraps around, includes README)
+- **`Opt+Up/Down`** - Page up/down in the document preview
+- **`Cmd+Up/Down`** - Scroll to top/bottom of document preview
+- **`Esc`** - Return to the playbook grid
 
 <Frame>
   <img src="./screenshots/playbook-exchange-details.png" alt="Playbook Exchange detail view" />
@@ -66,22 +66,22 @@ The import creates:
 After import, the playbook is immediately available in your **Load Playbook** dropdown in the Auto Run panel.
 
 <Note>
-For SSH remote sessions, playbooks can be imported directly to the remote host. The folder browse button is disabled for remote sessions—enter the target path manually instead.
+For SSH remote sessions, playbooks can be imported directly to the remote host. The folder browse button is disabled for remote sessions - enter the target path manually instead.
 </Note>
 
 ## Exchange Data
 
 Playbooks are fetched from the [Maestro-Playbooks](https://github.com/RunMaestro/Maestro-Playbooks) GitHub repository. The manifest is cached locally for 6 hours to minimize API calls.
 
-- **Cache indicator** — Shows whether data is from cache and how old it is (e.g., "Cached 2h ago" or "Live")
-- **Refresh button** — Forces a fresh fetch from GitHub, bypassing the cache
+- **Cache indicator** - Shows whether data is from cache and how old it is (e.g., "Cached 2h ago" or "Live")
+- **Refresh button** - Forces a fresh fetch from GitHub, bypassing the cache
 
 ## Contributing Playbooks
 
 Want to share your playbooks with the community? You can contribute in two ways:
 
-1. **From the Exchange** — Click the "Submit Playbook via GitHub" link in the header
-2. **Directly on GitHub** — Submit a pull request to the [Maestro-Playbooks repository](https://github.com/RunMaestro/Maestro-Playbooks)
+1. **From the Exchange** - Click the "Submit Playbook via GitHub" link in the header
+2. **Directly on GitHub** - Submit a pull request to the [Maestro-Playbooks repository](https://github.com/RunMaestro/Maestro-Playbooks)
 
 Click the **?** help button in the Exchange header for more information about contributing.
 

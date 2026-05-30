@@ -4,13 +4,14 @@ Agent support documentation for the Maestro codebase. For the main guide, see [[
 
 ## Supported Agents
 
-| ID              | Name          | Status     | Notes                                                            |
-| --------------- | ------------- | ---------- | ---------------------------------------------------------------- |
-| `claude-code`   | Claude Code   | **Active** | Primary agent, `--print --verbose --output-format stream-json`   |
-| `codex`         | Codex         | **Active** | Full support, `--json`, YOLO mode default                        |
-| `opencode`      | OpenCode      | **Active** | Multi-provider support (75+ LLMs), stub provider session storage |
-| `factory-droid` | Factory Droid | **Active** | Factory's AI coding assistant, `-o stream-json`                  |
-| `terminal`      | Terminal      | Internal   | Hidden from UI, used for shell sessions                          |
+| ID              | Name          | Status     | Notes                                                                                                                               |
+| --------------- | ------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `claude-code`   | Claude Code   | **Active** | Primary agent, `--print --verbose --output-format stream-json`                                                                      |
+| `codex`         | Codex         | **Active** | Full support, `--json`, YOLO mode default                                                                                           |
+| `opencode`      | OpenCode      | **Active** | Multi-provider support (75+ LLMs), stub provider session storage                                                                    |
+| `factory-droid` | Factory Droid | **Active** | Factory's AI coding assistant, `-o stream-json`                                                                                     |
+| `copilot-cli`   | Copilot-CLI   | **Beta**   | `-p/--prompt`, `--output-format json`, `--resume`, `@image` mentions, permission filters, reasoning stream, models.dev model picker |
+| `terminal`      | Terminal      | Internal   | Hidden from UI, used for shell sessions                                                                                             |
 
 ## Agent Capabilities
 
@@ -57,8 +58,8 @@ Centralized in `src/shared/agentMetadata.ts` (importable from any process):
 
 - `getAgentDisplayName(agentId)` — human-readable name with fallback
 - `isBetaAgent(agentId)` — beta badge check
-- `AGENT_DISPLAY_NAMES` — full `Record<AgentId, string>` map
-- `BETA_AGENTS` — `ReadonlySet<AgentId>`
+
+The backing data (`AGENT_DISPLAY_NAMES` record, `BETA_AGENTS` set) is module-private. Use the functions above to access it.
 
 ## Agent-Specific Details
 
@@ -90,6 +91,21 @@ Centralized in `src/shared/agentMetadata.ts` (importable from any process):
 - **YOLO Mode:** Auto-enabled in batch mode (no flag needed)
 - **Multi-Provider:** Supports 75+ LLMs including Ollama, LM Studio, llama.cpp
 
+### Copilot-CLI
+
+- **Agent ID:** `copilot-cli`
+- **Binary:** `copilot`
+- **JSON Output:** `--output-format json`
+- **Batch Mode:** `-p, --prompt <text>`
+- **Resume:** `--continue`, `--resume[=session-id]`
+- **Read-only:** CLI-enforced via `--allow-tool=read,url`, `--deny-tool=write,shell,memory,github`, `--no-ask-user`
+- **Thinking Display:** Streams `assistant.reasoning_delta` / `assistant.reasoning` into Maestro's thinking panel
+- **Images:** Prompt-embedded `@/tmp/...` mentions (maps Maestro uploads to Copilot file/image mentions)
+- **Session Storage:** `~/.copilot/session-state/<session-id>/` (local and SSH-remote)
+- **Model Discovery:** Fetches available models from [models.dev](https://models.dev) (github-copilot provider) with a 3s timeout, falling back to the user's configured model in `~/.copilot/config.json`. See `readCopilotConfiguredModel` / `fetchCopilotModelsFromApi` in `src/main/agents/detector.ts`.
+- **Known Limitations:**
+  - **SSH interactive mode:** PTY-based interactive Copilot sessions do not go through `wrapSpawnWithSsh()`, so interactive Copilot over SSH remote is not supported. Batch mode (`-p`) over SSH works correctly via the standard child-process spawner.
+
 ## Adding New Agents
 
 To add support for a new agent:
@@ -97,7 +113,7 @@ To add support for a new agent:
 1. Add agent ID to `src/shared/agentIds.ts` → `AGENT_IDS` tuple
 2. Add agent definition to `src/main/agents/definitions.ts` → `AGENT_DEFINITIONS`
 3. Define capabilities in `src/main/agents/capabilities.ts` → `AGENT_CAPABILITIES` (23 boolean flags)
-4. Add display name and beta status to `src/shared/agentMetadata.ts` → `AGENT_DISPLAY_NAMES`, `BETA_AGENTS`
+4. Add display name and beta status to `src/shared/agentMetadata.ts` (internal maps, accessed via `getAgentDisplayName()` / `isBetaAgent()`)
 5. Add context window default to `src/shared/agentConstants.ts` → `DEFAULT_CONTEXT_WINDOWS`
 6. Sync `AgentCapabilities` interface in renderer: `useAgentCapabilities.ts`, `types/index.ts`, `global.d.ts`
 7. (If `supportsJsonOutput`) Create output parser in `src/main/parsers/{agent}-output-parser.ts`, register in `src/main/parsers/index.ts`

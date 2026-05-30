@@ -9,7 +9,6 @@ import * as path from 'path';
 import {
 	parseSshConfig,
 	parseConfigContent,
-	findSshConfigHost,
 	getSshConfigHostSummary,
 	SshConfigHost,
 	SshConfigParserDeps,
@@ -282,64 +281,6 @@ Host dev
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('Permission denied');
 			expect(result.hosts).toHaveLength(0);
-		});
-	});
-
-	describe('findSshConfigHost', () => {
-		it('should find a host by name', () => {
-			const mockContent = `
-Host dev-server
-    HostName 192.168.1.100
-    User admin
-
-Host prod-server
-    HostName 10.0.0.1
-    User root
-`;
-			const deps: Partial<SshConfigParserDeps> = {
-				fileExists: () => true,
-				readFile: () => mockContent,
-				homeDir: '/home/user',
-			};
-
-			const host = findSshConfigHost('dev-server', deps);
-
-			expect(host).toBeDefined();
-			expect(host?.host).toBe('dev-server');
-			expect(host?.hostName).toBe('192.168.1.100');
-		});
-
-		it('should return undefined for non-existent host', () => {
-			const mockContent = `
-Host dev-server
-    HostName 192.168.1.100
-`;
-			const deps: Partial<SshConfigParserDeps> = {
-				fileExists: () => true,
-				readFile: () => mockContent,
-				homeDir: '/home/user',
-			};
-
-			const host = findSshConfigHost('unknown-server', deps);
-
-			expect(host).toBeUndefined();
-		});
-
-		it('should perform case-insensitive host matching', () => {
-			const mockContent = `
-Host Dev-Server
-    HostName 192.168.1.100
-`;
-			const deps: Partial<SshConfigParserDeps> = {
-				fileExists: () => true,
-				readFile: () => mockContent,
-				homeDir: '/home/user',
-			};
-
-			const host = findSshConfigHost('dev-server', deps);
-
-			expect(host).toBeDefined();
-			expect(host?.host).toBe('Dev-Server');
 		});
 	});
 

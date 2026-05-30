@@ -13,28 +13,9 @@ import { ActivityHeatmap } from '../../../../renderer/components/UsageDashboard/
 import { DurationTrendsChart } from '../../../../renderer/components/UsageDashboard/DurationTrendsChart';
 import { SummaryCards } from '../../../../renderer/components/UsageDashboard/SummaryCards';
 import type { StatsAggregation } from '../../../../renderer/hooks/stats/useStats';
-import type { Theme } from '../../../../renderer/types';
 
+import { mockTheme } from '../../../helpers/mockTheme';
 // Mock theme for testing
-const mockTheme: Theme = {
-	id: 'test-dark',
-	name: 'Test Dark',
-	colors: {
-		bgMain: '#1a1a1a',
-		bgSecondary: '#2a2a2a',
-		bgActivity: '#3a3a3a',
-		textMain: '#ffffff',
-		textDim: '#888888',
-		border: '#444444',
-		accent: '#3b82f6',
-		green: '#10b981',
-		yellow: '#f59e0b',
-		red: '#ef4444',
-		orange: '#f97316',
-		scrollbarThumb: '#555555',
-		scrollbarTrack: '#222222',
-	},
-};
 
 // Mock data for testing
 const mockStatsData: StatsAggregation = {
@@ -70,6 +51,7 @@ const mockStatsData: StatsAggregation = {
 	avgSessionDuration: 288000,
 	byAgentByDay: {},
 	bySessionByDay: {},
+	bySessionSource: {},
 };
 
 describe('Chart Accessibility - AgentComparisonChart', () => {
@@ -315,14 +297,20 @@ describe('Chart Accessibility - SummaryCards', () => {
 
 	it('each metric card has role="group"', () => {
 		render(<SummaryCards data={mockStatsData} theme={mockTheme} />);
-		const groups = screen.getAllByRole('group');
-		expect(groups).toHaveLength(10); // 10 metric cards
+		const metricCards = screen.getAllByTestId('metric-card');
+		expect(metricCards).toHaveLength(12); // 12 metric cards
+		metricCards.forEach((card) => {
+			expect(card).toHaveAttribute('role', 'group');
+		});
 	});
 
 	it('metric cards have descriptive aria-labels', () => {
 		render(<SummaryCards data={mockStatsData} theme={mockTheme} />);
-		const groups = screen.getAllByRole('group');
+		const metricCards = screen.getAllByTestId('metric-card');
 
+		// Card list updated: Interactive % / Local % were replaced with the
+		// streak-momentum row (Current Streak / Best Day / Active Days /
+		// Image Annotations).
 		const expectedLabels = [
 			/Agents/i,
 			/Open Tabs/i,
@@ -332,23 +320,25 @@ describe('Chart Accessibility - SummaryCards', () => {
 			/Avg Duration/i,
 			/Peak Hour/i,
 			/Top Agent/i,
-			/Interactive %/i,
-			/Local %/i,
+			/Current Streak/i,
+			/Best Day/i,
+			/Active Days/i,
+			/Image Annotations/i,
 		];
 
-		groups.forEach((group, index) => {
-			expect(group).toHaveAttribute('aria-label');
-			const label = group.getAttribute('aria-label') || '';
+		metricCards.forEach((card, index) => {
+			expect(card).toHaveAttribute('aria-label');
+			const label = card.getAttribute('aria-label') || '';
 			expect(label).toMatch(expectedLabels[index]);
 		});
 	});
 
 	it('metric cards include values in aria-labels', () => {
 		render(<SummaryCards data={mockStatsData} theme={mockTheme} />);
-		const groups = screen.getAllByRole('group');
+		const metricCards = screen.getAllByTestId('metric-card');
 
-		groups.forEach((group) => {
-			const label = group.getAttribute('aria-label') || '';
+		metricCards.forEach((card) => {
+			const label = card.getAttribute('aria-label') || '';
 			// Should contain a value (number, time, or percentage)
 			expect(label).toMatch(/: .+/); // Has colon followed by value
 		});
@@ -415,6 +405,7 @@ describe('Chart Accessibility - General ARIA Patterns', () => {
 			avgSessionDuration: 0,
 			byAgentByDay: {},
 			bySessionByDay: {},
+			bySessionSource: {},
 		};
 
 		render(<AgentComparisonChart data={emptyData} theme={mockTheme} />);

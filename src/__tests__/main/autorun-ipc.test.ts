@@ -8,7 +8,7 @@
  * - autorun:listImages - list images for a document
  * - autorun:saveImage - save image with timestamp naming
  * - autorun:deleteImage - delete image file
- * - autorun:deleteFolder - delete Auto Run Docs folder
+ * - autorun:deleteFolder - delete .maestro/playbooks folder
  * - autorun:createBackup - create backup copy of document for reset-on-completion
  * - autorun:restoreBackup - restore document from backup and delete backup file
  * - autorun:deleteBackups - delete all backup files in folder recursively
@@ -961,12 +961,12 @@ describe('Auto Run IPC Handlers', () => {
 
 	describe('autorun:deleteFolder', () => {
 		describe('successful operations', () => {
-			it('should delete Auto Run Docs folder recursively', async () => {
+			it('should delete .maestro/playbooks folder recursively', async () => {
 				mockStat.mockResolvedValue({ isDirectory: () => true });
 				mockRm.mockResolvedValue(undefined);
 
 				const projectPath = '/test/project';
-				const autoRunFolder = path.join(projectPath, 'Auto Run Docs');
+				const autoRunFolder = path.join(projectPath, '.maestro/playbooks');
 
 				await mockStat(autoRunFolder);
 				await mockRm(autoRunFolder, { recursive: true, force: true });
@@ -984,12 +984,13 @@ describe('Auto Run IPC Handlers', () => {
 		});
 
 		describe('path validation', () => {
-			it('should only delete Auto Run Docs folder', () => {
+			it('should only delete playbooks folder', () => {
+				const ALLOWED_FOLDER_NAMES = new Set(['playbooks', 'Auto Run Docs']);
 				const validateFolderName = (folderPath: string): boolean => {
-					return path.basename(folderPath) === 'Auto Run Docs';
+					return ALLOWED_FOLDER_NAMES.has(path.basename(folderPath));
 				};
 
-				expect(validateFolderName('/project/Auto Run Docs')).toBe(true);
+				expect(validateFolderName('/project/.maestro/playbooks')).toBe(true);
 				expect(validateFolderName('/project/Documents')).toBe(false);
 				expect(validateFolderName('/project/node_modules')).toBe(false);
 			});
@@ -1011,8 +1012,8 @@ describe('Auto Run IPC Handlers', () => {
 			it('should return error for non-directory path', async () => {
 				mockStat.mockResolvedValue({ isDirectory: () => false });
 
-				const result = { success: false, error: 'Auto Run Docs path is not a directory' };
-				expect(result.error).toBe('Auto Run Docs path is not a directory');
+				const result = { success: false, error: '.maestro/playbooks path is not a directory' };
+				expect(result.error).toBe('.maestro/playbooks path is not a directory');
 			});
 
 			it('should return error for rm failure', async () => {
@@ -1020,19 +1021,20 @@ describe('Auto Run IPC Handlers', () => {
 				mockRm.mockRejectedValue(new Error('EACCES: permission denied'));
 
 				await expect(
-					mockRm('/protected/Auto Run Docs', { recursive: true, force: true })
+					mockRm('/protected/.maestro/playbooks', { recursive: true, force: true })
 				).rejects.toThrow('EACCES');
 			});
 
 			it('should fail safety check for wrong folder name', () => {
+				const ALLOWED_FOLDER_NAMES = new Set(['playbooks', 'Auto Run Docs']);
 				const folderName = path.basename('/project/WrongFolder');
 
-				if (folderName !== 'Auto Run Docs') {
+				if (!ALLOWED_FOLDER_NAMES.has(folderName)) {
 					const result = {
 						success: false,
-						error: 'Safety check failed: not an Auto Run Docs folder',
+						error: 'Safety check failed: not a playbooks folder',
 					};
-					expect(result.error).toBe('Safety check failed: not an Auto Run Docs folder');
+					expect(result.error).toBe('Safety check failed: not a playbooks folder');
 				}
 			});
 		});

@@ -145,7 +145,7 @@ Testing the application.
 2. Phase-02-Features.md - Implements core features
 3. Phase-03-Testing.md - Adds comprehensive testing
 
-All files have been saved to the Auto Run Docs folder.`;
+All files have been saved to the .maestro/playbooks folder.`;
 
 			const docs = splitIntoPhases(statusOutput);
 

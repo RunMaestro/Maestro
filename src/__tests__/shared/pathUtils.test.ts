@@ -18,7 +18,6 @@ import * as fs from 'fs';
 import * as path from 'path';
 import {
 	expandTilde,
-	parseVersion,
 	compareVersions,
 	buildExpandedPath,
 	buildExpandedEnv,
@@ -82,34 +81,6 @@ describe('expandTilde', () => {
 			expect(result).toContain('testuser');
 			expect(result).toContain('.config');
 		});
-	});
-});
-
-describe('parseVersion', () => {
-	it('should parse version with v prefix', () => {
-		expect(parseVersion('v22.10.0')).toEqual([22, 10, 0]);
-	});
-
-	it('should parse version without v prefix', () => {
-		expect(parseVersion('0.14.0')).toEqual([0, 14, 0]);
-	});
-
-	it('should handle single digit versions', () => {
-		expect(parseVersion('v8.0.0')).toEqual([8, 0, 0]);
-	});
-
-	it('should handle versions with more than 3 parts', () => {
-		expect(parseVersion('1.2.3.4')).toEqual([1, 2, 3, 4]);
-	});
-
-	it('should handle non-numeric parts as 0', () => {
-		expect(parseVersion('1.beta.3')).toEqual([1, 0, 3]);
-	});
-
-	it('should strip pre-release suffixes before parsing', () => {
-		expect(parseVersion('0.15.0-rc.1')).toEqual([0, 15, 0]);
-		expect(parseVersion('v1.2.0-beta.3')).toEqual([1, 2, 0]);
-		expect(parseVersion('0.15.0-alpha')).toEqual([0, 15, 0]);
 	});
 });
 

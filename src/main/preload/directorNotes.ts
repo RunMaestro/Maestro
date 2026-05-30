@@ -7,7 +7,7 @@
  */
 
 import { ipcRenderer } from 'electron';
-import type { ToolType } from '../../shared/types';
+import type { ToolType, HistoryEntry } from '../../shared/types';
 
 /** Aggregate stats returned alongside unified history */
 export interface UnifiedHistoryStats {
@@ -16,6 +16,13 @@ export interface UnifiedHistoryStats {
 	autoCount: number; // Total AUTO entries
 	userCount: number; // Total USER entries
 	totalCount: number; // Total entries (autoCount + userCount)
+}
+
+/** Pre-computed activity graph bucket for a time slice */
+export interface GraphBucket {
+	auto: number;
+	user: number;
+	cue: number;
 }
 
 /**
@@ -28,6 +35,7 @@ export interface PaginatedUnifiedHistoryResult {
 	offset: number;
 	hasMore: boolean;
 	stats: UnifiedHistoryStats;
+	graphBuckets?: GraphBucket[];
 }
 
 /**
@@ -35,11 +43,13 @@ export interface PaginatedUnifiedHistoryResult {
  */
 export interface UnifiedHistoryOptions {
 	lookbackDays: number;
-	filter?: 'AUTO' | 'USER' | null; // null = both
+	filter?: 'AUTO' | 'USER' | 'CUE' | null; // null = both
 	/** Number of entries to return per page (default: 100) */
 	limit?: number;
 	/** Number of entries to skip for pagination (default: 0) */
 	offset?: number;
+	/** Number of buckets for the activity graph (passed from frontend lookback config) */
+	graphBucketCount?: number;
 }
 
 /**
@@ -47,7 +57,7 @@ export interface UnifiedHistoryOptions {
  */
 export interface UnifiedHistoryEntry {
 	id: string;
-	type: 'AUTO' | 'USER';
+	type: 'AUTO' | 'USER' | 'CUE';
 	timestamp: number;
 	summary: string;
 	fullResponse?: string;
@@ -95,6 +105,22 @@ export interface SynopsisResult {
 }
 
 /**
+ * All-time activity graph data aggregated across every session.
+ */
+export interface UnifiedGraphData {
+	buckets: GraphBucket[];
+	bucketCount: number;
+	earliestTimestamp: number;
+	latestTimestamp: number;
+	totalCount: number;
+	autoCount: number;
+	userCount: number;
+	cueCount: number;
+	cached: boolean;
+	stats: UnifiedHistoryStats;
+}
+
+/**
  * Creates the Director's Notes API object for preload exposure
  */
 export function createDirectorNotesApi() {
@@ -103,9 +129,60 @@ export function createDirectorNotesApi() {
 		getUnifiedHistory: (options: UnifiedHistoryOptions): Promise<PaginatedUnifiedHistoryResult> =>
 			ipcRenderer.invoke('director-notes:getUnifiedHistory', options),
 
+		// Cached graph buckets aggregated across every session. The
+		// lookback parameter controls the window — `null` for "all time",
+		// or hours back from "now". Each (bucketCount, lookback) pair gets
+		// its own cached aggregate keyed by composite source fingerprint.
+		getGraphData: (bucketCount: number, lookbackHours: number | null): Promise<UnifiedGraphData> =>
+			ipcRenderer.invoke('director-notes:getGraphData', bucketCount, lookbackHours),
+
+		// Resolve the offset (newest-first sorted across all sessions) of
+		// the first entry whose timestamp is <= the given timestamp. Powers
+		// the activity graph's click-to-jump behavior in the unified view.
+		getOffsetForTimestamp: (
+			timestamp: number,
+			options?: { lookbackDays?: number; filter?: 'AUTO' | 'USER' | 'CUE' | null }
+		): Promise<number> =>
+			ipcRenderer.invoke('director-notes:getOffsetForTimestamp', timestamp, options),
+
 		// Generate AI synopsis
 		generateSynopsis: (options: SynopsisOptions): Promise<SynopsisResult> =>
 			ipcRenderer.invoke('director-notes:generateSynopsis', options),
+
+		/**
+		 * Subscribe to synopsis generation progress updates.
+		 * Returns a cleanup function to unsubscribe.
+		 */
+		onSynopsisProgress: (
+			callback: (update: { chunkCount: number; bytesReceived: number; elapsedMs: number }) => void
+		): (() => void) => {
+			const handler = (
+				_event: unknown,
+				update: { chunkCount: number; bytesReceived: number; elapsedMs: number }
+			) => {
+				callback(update);
+			};
+			ipcRenderer.on('director-notes:synopsisProgress', handler);
+			return () => {
+				ipcRenderer.removeListener('director-notes:synopsisProgress', handler);
+			};
+		},
+
+		/**
+		 * Subscribe to new history entries as they are added in real-time.
+		 * Returns a cleanup function to unsubscribe.
+		 */
+		onHistoryEntryAdded: (
+			callback: (entry: HistoryEntry, sourceSessionId: string) => void
+		): (() => void) => {
+			const handler = (_event: unknown, entry: HistoryEntry, sessionId: string) => {
+				callback(entry, sessionId);
+			};
+			ipcRenderer.on('history:entryAdded', handler);
+			return () => {
+				ipcRenderer.removeListener('history:entryAdded', handler);
+			};
+		},
 	};
 }
 

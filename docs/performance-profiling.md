@@ -4,13 +4,13 @@ description: Capture a React DevTools performance profile to help diagnose UI sl
 icon: gauge-high
 ---
 
-If you're experiencing UI lag or sluggishness, a React performance profile helps us pinpoint exactly which components are causing slowdowns. The process takes about 5 minutes and captures render timing data — no conversation content, API keys, or personal data.
+If you're experiencing UI lag or sluggishness, a React performance profile helps us pinpoint exactly which components are causing slowdowns. The process takes about 5 minutes and captures render timing data - no conversation content, API keys, or personal data.
 
 ## Prerequisites
 
 - [Node.js](https://nodejs.org/) and npm installed
 - Maestro cloned from source (`git clone https://github.com/RunMaestro/Maestro.git`) with dependencies installed (`npm install`)
-- **Close the production Maestro app** before starting — dev mode with production data shares the same data directory
+- **Close the production Maestro app** before starting - dev mode with production data shares the same data directory
 
 ## Step 1: Launch React Developer Tools
 
@@ -20,7 +20,7 @@ Maestro is an Electron app, so the browser extension won't work. Install the sta
 npx react-devtools
 ```
 
-This opens React DevTools in its own window. **Leave it running** — Maestro connects to it automatically in dev mode.
+This opens React DevTools in its own window. **Leave it running** - Maestro connects to it automatically in dev mode.
 
 ## Step 2: Start Maestro with Your Production Data
 
@@ -30,7 +30,7 @@ In a separate terminal, from the Maestro repo:
 npm run dev:prod-data
 ```
 
-This launches Maestro in development mode but uses your real data directory — same agents, sessions, groups, and configuration you use day-to-day. You should see all your existing agents populate in the Left Bar.
+This launches Maestro in development mode but uses your real data directory - same agents, sessions, groups, and configuration you use day-to-day. You should see all your existing agents populate in the Left Bar.
 
 <Warning>
 Make sure the production Maestro app is fully closed first. Running both simultaneously against the same data directory can cause conflicts.
@@ -59,7 +59,7 @@ With profiling active, perform the actions that trigger lag. For example:
 - Typing in the input area
 - Whatever feels slow in your normal workflow
 
-**Keep it focused** — reproduce the slow behavior 2–3 times, then stop. A short, targeted profile is far more useful than a 10-minute recording of everything.
+**Keep it focused** - reproduce the slow behavior 2-3 times, then stop. A short, targeted profile is far more useful than a 10-minute recording of everything.
 
 ## Step 5: Stop Profiling
 

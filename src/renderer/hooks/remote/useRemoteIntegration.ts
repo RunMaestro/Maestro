@@ -1,6 +1,14 @@
 import { useEffect, useRef } from 'react';
+import { flushSync } from 'react-dom';
 import type { Session, SessionState, ThinkingMode } from '../../types';
+import { cueService } from '../../services/cue';
+import { captureException } from '../../utils/sentry';
 import { createTab, closeTab } from '../../utils/tabHelpers';
+import { logger } from '../../utils/logger';
+import { formatLogsForClipboard } from '../../utils/contextExtractor';
+import { notifyToast } from '../../stores/notificationStore';
+import { notifyCenterFlash } from '../../stores/centerFlashStore';
+import { useSessionStore } from '../../stores/sessionStore';
 
 /**
  * Dependencies for the useRemoteIntegration hook.
@@ -72,37 +80,62 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 	// Handle remote commands from web interface
 	// This allows web commands to go through the exact same code path as desktop commands
 	useEffect(() => {
-		console.log('[useRemoteIntegration] Setting up onRemoteCommand listener');
+		logger.info('[useRemoteIntegration] Setting up onRemoteCommand listener');
 		const unsubscribeRemote = window.maestro.process.onRemoteCommand(
-			(sessionId: string, command: string, inputMode?: 'ai' | 'terminal') => {
-				console.log('[useRemoteIntegration] onRemoteCommand callback invoked:', {
+			(
+				sessionId: string,
+				command: string,
+				inputMode?: 'ai' | 'terminal',
+				tabId?: string,
+				force?: boolean,
+				images?: string[]
+			) => {
+				// Log metadata only at info level — remote commands can carry
+				// secrets, proprietary code, or PII. Mirror the redaction the
+				// main process applies in web-server-factory; the truncated
+				// preview moves to debug, which only opted-in users enable.
+				logger.info('[useRemoteIntegration] onRemoteCommand callback invoked:', undefined, {
 					sessionId,
-					command: command?.substring(0, 50),
+					commandLength: command?.length ?? 0,
 					inputMode,
+					tabId,
+					force,
+					imageCount: images?.length ?? 0,
+				});
+				logger.debug('[useRemoteIntegration] onRemoteCommand preview:', undefined, {
+					sessionId,
+					commandPreview: command?.substring(0, 50),
 				});
 
 				// Verify the session exists
 				const targetSession = sessionsRef.current.find((s) => s.id === sessionId);
-				console.log('[useRemoteIntegration] Target session lookup:', {
+				logger.info('[useRemoteIntegration] Target session lookup:', undefined, {
 					found: !!targetSession,
 					sessionCount: sessionsRef.current.length,
 					availableIds: sessionsRef.current.map((s) => s.id),
 				});
 
 				if (!targetSession) {
-					console.warn('[useRemoteIntegration] Session not found, dropping command');
+					logger.warn('[useRemoteIntegration] Session not found, dropping command');
 					return;
 				}
 
-				// Check if session is busy (should have been checked by web server, but double-check)
-				if (targetSession.state === 'busy') {
-					console.warn(
+				// Check if session is busy (should have been checked by web server,
+				// but double-check). `force: true` (from `dispatch --force`) opts
+				// out of the guard so a queued follow-up can land on a busy tab.
+				if (targetSession.state === 'busy' && !force) {
+					logger.warn(
 						'[useRemoteIntegration] Session is busy, dropping command. State:',
+						undefined,
 						targetSession.state
 					);
 					return;
 				}
-				console.log('[useRemoteIntegration] Session state check passed:', targetSession.state);
+				logger.info(
+					'[useRemoteIntegration] Session state check passed:',
+					undefined,
+					targetSession.state
+				);
 
 				// If web provided an inputMode, sync the session state before executing
 				// This ensures the renderer uses the same mode the web intended
@@ -122,22 +155,30 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 
 				// Switch to the target session (for visual feedback)
 				setActiveSessionId(sessionId);
-				console.log('[useRemoteIntegration] Switched active session to:', sessionId);
+				logger.info('[useRemoteIntegration] Switched active session to:', undefined, sessionId);
 
 				// Dispatch event directly - handleRemoteCommand handles all the logic
 				// Don't set inputValue - we don't want command text to appear in the input bar
 				// Pass the inputMode from web so handleRemoteCommand uses it
-				console.log('[useRemoteIntegration] Dispatching maestro:remoteCommand event:', {
+				logger.info('[useRemoteIntegration] Dispatching maestro:remoteCommand event:', undefined, {
 					sessionId,
-					command: command?.substring(0, 50),
+					commandLength: command?.length ?? 0,
 					inputMode,
+					tabId,
+					force,
+					imageCount: images?.length ?? 0,
 				});
+				logger.debug(
+					'[useRemoteIntegration] Dispatching maestro:remoteCommand preview:',
+					undefined,
+					{ sessionId, commandPreview: command?.substring(0, 50) }
+				);
 				window.dispatchEvent(
 					new CustomEvent('maestro:remoteCommand', {
-						detail: { sessionId, command, inputMode },
+						detail: { sessionId, command, inputMode, tabId, force, images },
 					})
 				);
-				console.log('[useRemoteIntegration] Event dispatched successfully');
+				logger.info('[useRemoteIntegration] Event dispatched successfully');
 			}
 		);
 
@@ -215,7 +256,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						})
 					);
 				} catch (error) {
-					console.error('[Remote] Failed to interrupt session:', error);
+					logger.error('[Remote] Failed to interrupt session:', undefined, error);
 				}
 			}
 		);
@@ -249,7 +290,13 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 							if (!s.aiTabs.some((t) => t.id === tabId)) {
 								return s;
 							}
-							return { ...s, activeTabId: tabId };
+							return {
+								...s,
+								activeTabId: tabId,
+								activeFileTabId: null,
+								activeTerminalTabId: null,
+								inputMode: 'ai' as const,
+							};
 						})
 					);
 				}
@@ -274,7 +321,13 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						if (!s.aiTabs.some((t) => t.id === tabId)) {
 							return s;
 						}
-						return { ...s, activeTabId: tabId };
+						return {
+							...s,
+							activeTabId: tabId,
+							activeFileTabId: null,
+							activeTerminalTabId: null,
+							inputMode: 'ai' as const,
+						};
 					})
 				);
 			}
@@ -306,6 +359,77 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				} else {
 					window.maestro.process.sendRemoteNewTabResponse(responseChannel, null);
 				}
+			}
+		);
+
+		// Handle remote "new AI tab with prompt" from CLI (send --live --new-tab).
+		// Atomically creates a fresh AI tab, makes it active, and dispatches the
+		// prompt through the same maestro:remoteCommand event path that --live
+		// uses — so downstream spawn/history/state flows are identical.
+		// flushSync forces React to commit the new tab as active before we fire
+		// the event; without it the downstream handler reads stale activeTabId
+		// and writes the prompt into the previously-active tab.
+		// Ack the renderer result on responseChannel so the CLI only reports
+		// success when a tab was actually created.
+		const unsubscribeNewTabWithPrompt = window.maestro.process.onRemoteNewAITabWithPrompt(
+			(sessionId: string, prompt: string, responseChannel: string) => {
+				// Guard: the downstream maestro:remoteCommand handler drops commands
+				// for missing or busy sessions. Check here so we don't create an
+				// orphan tab and falsely ack success.
+				const targetSession = sessionsRef.current.find((s) => s.id === sessionId);
+				if (!targetSession) {
+					logger.warn(
+						'[useRemoteIntegration] onRemoteNewAITabWithPrompt: session not found, dropping prompt'
+					);
+					window.maestro.process.sendRemoteNewAITabWithPromptResponse(responseChannel, false);
+					return;
+				}
+				if (targetSession.state === 'busy') {
+					logger.warn(
+						'[useRemoteIntegration] onRemoteNewAITabWithPrompt: session is busy, dropping prompt'
+					);
+					window.maestro.process.sendRemoteNewAITabWithPromptResponse(responseChannel, false);
+					return;
+				}
+				let createdTabId: string | undefined;
+				flushSync(() => {
+					setSessions((prev) =>
+						prev.map((s) => {
+							if (s.id !== sessionId) return s;
+							const result = createTab(s, {
+								saveToHistory: defaultSaveToHistory,
+								showThinking: defaultShowThinking,
+							});
+							if (!result) return s;
+							createdTabId = result.tab.id;
+							return result.session;
+						})
+					);
+					if (createdTabId) {
+						setActiveSessionId(sessionId);
+					}
+				});
+				if (!createdTabId) {
+					logger.warn(
+						'[useRemoteIntegration] onRemoteNewAITabWithPrompt: createTab failed, dropping prompt'
+					);
+					window.maestro.process.sendRemoteNewAITabWithPromptResponse(responseChannel, false);
+					return;
+				}
+				// Pass the new tab id explicitly so the renderer writes into the tab
+				// we just created — without it, useRemoteHandlers would fall back to
+				// activeTabId, which is correct here but would race in any future
+				// caller that doesn't atomically setActiveSessionId.
+				window.dispatchEvent(
+					new CustomEvent('maestro:remoteCommand', {
+						detail: { sessionId, command: prompt, inputMode: 'ai', tabId: createdTabId },
+					})
+				);
+				window.maestro.process.sendRemoteNewAITabWithPromptResponse(
+					responseChannel,
+					true,
+					createdTabId
+				);
 			}
 		);
 
@@ -344,16 +468,18 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 							if (agentId === 'claude-code') {
 								window.maestro.claude
 									.updateSessionName(s.projectRoot, tab.agentSessionId, newName || '')
-									.catch((err) => console.error('Failed to persist tab name:', err));
+									.catch((err) => logger.error('Failed to persist tab name:', undefined, err));
 							} else {
 								window.maestro.agentSessions
 									.setSessionName(agentId, s.projectRoot, tab.agentSessionId, newName || null)
-									.catch((err) => console.error('Failed to persist tab name:', err));
+									.catch((err) => logger.error('Failed to persist tab name:', undefined, err));
 							}
 							// Also update past history entries with this agentSessionId
 							window.maestro.history
 								.updateSessionName(tab.agentSessionId, newName || '')
-								.catch((err) => console.error('Failed to update history session names:', err));
+								.catch((err) =>
+									logger.error('Failed to update history session names:', undefined, err)
+								);
 						}
 
 						return {
@@ -380,11 +506,11 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						if (agentId === 'claude-code') {
 							window.maestro.claude
 								.updateSessionStarred(s.projectRoot, tab.agentSessionId, starred)
-								.catch((err) => console.error('Failed to persist tab starred:', err));
+								.catch((err) => logger.error('Failed to persist tab starred:', undefined, err));
 						} else {
 							window.maestro.agentSessions
 								.setSessionStarred(agentId, s.projectRoot, tab.agentSessionId, starred)
-								.catch((err) => console.error('Failed to persist tab starred:', err));
+								.catch((err) => logger.error('Failed to persist tab starred:', undefined, err));
 						}
 
 						return {
@@ -427,13 +553,610 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			unsubscribeSelectSession();
 			unsubscribeSelectTab();
 			unsubscribeNewTab();
+			unsubscribeNewTabWithPrompt();
 			unsubscribeCloseTab();
 			unsubscribeRenameTab();
 			unsubscribeStarTab();
 			unsubscribeReorderTab();
 			unsubscribeToggleBookmark();
 		};
-	}, [sessionsRef, activeSessionIdRef, setSessions, setActiveSessionId, defaultSaveToHistory]);
+	}, [
+		sessionsRef,
+		activeSessionIdRef,
+		setSessions,
+		setActiveSessionId,
+		defaultSaveToHistory,
+		defaultShowThinking,
+	]);
+
+	// Handle remote open file tab from web/CLI interface
+	// Dispatches a CustomEvent for App.tsx to handle (avoids hook ordering issues)
+	useEffect(() => {
+		const unsubscribe = window.maestro.process.onRemoteOpenFileTab(
+			(sessionId: string, filePath: string, switchToAgent: boolean) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:openFileTab', {
+						detail: { sessionId, filePath, switchToAgent },
+					})
+				);
+			}
+		);
+		return () => {
+			unsubscribe();
+		};
+	}, []);
+
+	// Handle remote refresh file tree from web/CLI interface
+	useEffect(() => {
+		const unsubscribe = window.maestro.process.onRemoteRefreshFileTree((sessionId: string) => {
+			window.dispatchEvent(
+				new CustomEvent('maestro:refreshFileTree', {
+					detail: { sessionId },
+				})
+			);
+		});
+		return () => {
+			unsubscribe();
+		};
+	}, []);
+
+	// Handle remote toast notifications from CLI/web interface.
+	// Resolves the agent (if provided) so the toast carries project/tab metadata,
+	// enabling click-to-jump behavior.
+	useEffect(() => {
+		const unsubscribe = window.maestro.process.onRemoteNotifyToast((params) => {
+			const {
+				title,
+				message,
+				color,
+				duration,
+				dismissible,
+				sessionId,
+				tabId: explicitTabId,
+				actionUrl,
+				actionLabel,
+				clickAction,
+			} = params;
+			// Resolve agent metadata for the header strip. Only stamp a tab on
+			// the toast when the caller explicitly passed one — otherwise the
+			// agent's currently-focused tab would leak onto every agent-scoped
+			// toast (e.g. cron-fired notifications), which is misleading.
+			let project: string | undefined;
+			let tabId: string | undefined = explicitTabId;
+			let tabName: string | undefined;
+			if (sessionId) {
+				const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
+				project = session?.name;
+				if (explicitTabId) {
+					const targetTab = session?.aiTabs?.find((t) => t.id === explicitTabId);
+					if (targetTab) {
+						tabId = targetTab.id;
+						tabName = targetTab.name ?? undefined;
+					}
+				}
+			}
+			notifyToast({
+				color,
+				title,
+				message,
+				duration: duration !== undefined ? duration * 1000 : undefined,
+				dismissible,
+				sessionId,
+				tabId,
+				tabName,
+				project,
+				actionUrl,
+				actionLabel,
+				clickAction,
+			});
+		});
+		return () => {
+			unsubscribe();
+		};
+	}, []);
+
+	// Handle remote center-flash notifications from CLI/web interface.
+	useEffect(() => {
+		const unsubscribe = window.maestro.process.onRemoteNotifyCenterFlash((params) => {
+			notifyCenterFlash({
+				message: params.message,
+				detail: params.detail,
+				color: params.color,
+				duration: params.duration,
+			});
+		});
+		return () => {
+			unsubscribe();
+		};
+	}, []);
+
+	// Handle remote open browser tab from CLI/web interface.
+	// responseChannel is forwarded so the App-level listener can ack the
+	// CLI once the browser tab actually exists.
+	useEffect(() => {
+		const unsubscribe = window.maestro.process.onRemoteOpenBrowserTab(
+			(sessionId: string, url: string, responseChannel: string) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:openBrowserTab', {
+						detail: { sessionId, url, responseChannel },
+					})
+				);
+			}
+		);
+		return () => {
+			unsubscribe();
+		};
+	}, []);
+
+	// Handle remote open terminal tab from CLI/web interface.
+	// responseChannel is forwarded so the App-level listener can ack the
+	// CLI once the terminal tab actually exists.
+	useEffect(() => {
+		const unsubscribe = window.maestro.process.onRemoteOpenTerminalTab(
+			(
+				sessionId: string,
+				config: { cwd?: string; shell?: string; name?: string | null },
+				responseChannel: string
+			) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:openTerminalTab', {
+						detail: { sessionId, config, responseChannel },
+					})
+				);
+			}
+		);
+		return () => {
+			unsubscribe();
+		};
+	}, []);
+
+	// Handle remote refresh auto-run docs from web/CLI interface
+	useEffect(() => {
+		const unsubscribe = window.maestro.process.onRemoteRefreshAutoRunDocs((sessionId: string) => {
+			window.dispatchEvent(
+				new CustomEvent('maestro:refreshAutoRunDocs', {
+					detail: { sessionId },
+				})
+			);
+		});
+		return () => {
+			unsubscribe();
+		};
+	}, []);
+
+	// Handle remote configure auto-run from CLI/web interface
+	useEffect(() => {
+		const unsubscribe = window.maestro.process.onRemoteConfigureAutoRun(
+			(sessionId: string, config: any, responseChannel: string) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:configureAutoRun', {
+						detail: { sessionId, config, responseChannel },
+					})
+				);
+			}
+		);
+		return () => {
+			unsubscribe();
+		};
+	}, []);
+
+	// Handle remote set Auto Run folder from web interface — repoints a session
+	// at a different `.maestro/` folder, mirroring desktop's `dialog.selectFolder`
+	// + `handleAutoRunFolderSelected` flow.
+	useEffect(() => {
+		const unsubscribe = window.maestro.process.onRemoteSetAutoRunFolder(
+			(sessionId: string, folderPath: string, responseChannel: string) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:setAutoRunFolder', {
+						detail: { sessionId, folderPath, responseChannel },
+					})
+				);
+			}
+		);
+		return () => {
+			unsubscribe();
+		};
+	}, []);
+
+	// Handle remote get auto-run docs from web interface
+	useEffect(() => {
+		const unsubscribe = window.maestro.process.onRemoteGetAutoRunDocs(
+			(sessionId: string, responseChannel: string) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:getAutoRunDocs', {
+						detail: { sessionId, responseChannel },
+					})
+				);
+			}
+		);
+		return () => {
+			unsubscribe();
+		};
+	}, []);
+
+	// Handle remote get auto-run doc content from web interface
+	useEffect(() => {
+		const unsubscribe = window.maestro.process.onRemoteGetAutoRunDocContent(
+			(sessionId: string, filename: string, responseChannel: string) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:getAutoRunDocContent', {
+						detail: { sessionId, filename, responseChannel },
+					})
+				);
+			}
+		);
+		return () => {
+			unsubscribe();
+		};
+	}, []);
+
+	// Handle remote save auto-run doc from web interface
+	useEffect(() => {
+		const unsubscribe = window.maestro.process.onRemoteSaveAutoRunDoc(
+			(sessionId: string, filename: string, content: string, responseChannel: string) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:saveAutoRunDoc', {
+						detail: { sessionId, filename, content, responseChannel },
+					})
+				);
+			}
+		);
+		return () => {
+			unsubscribe();
+		};
+	}, []);
+
+	// Handle remote stop auto-run from web interface
+	useEffect(() => {
+		const unsubscribe = window.maestro.process.onRemoteStopAutoRun((sessionId: string) => {
+			window.dispatchEvent(
+				new CustomEvent('maestro:stopAutoRun', {
+					detail: { sessionId },
+				})
+			);
+		});
+		return () => {
+			unsubscribe();
+		};
+	}, []);
+
+	// Handle remote reset-tasks from web interface
+	useEffect(() => {
+		const unsubscribe = window.maestro.process.onRemoteResetAutoRunDocTasks(
+			(sessionId: string, filename: string, responseChannel: string) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:resetAutoRunDocTasks', {
+						detail: { sessionId, filename, responseChannel },
+					})
+				);
+			}
+		);
+		return () => {
+			unsubscribe();
+		};
+	}, []);
+
+	// Handle remote auto-run error-recovery actions (resume / skip / abort) from web
+	useEffect(() => {
+		const unsubResume = window.maestro.process.onRemoteResumeAutoRunError(
+			(sessionId: string, responseChannel: string) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:resumeAutoRunError', {
+						detail: { sessionId, responseChannel },
+					})
+				);
+			}
+		);
+		const unsubSkip = window.maestro.process.onRemoteSkipAutoRunDocument(
+			(sessionId: string, responseChannel: string) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:skipAutoRunDocument', {
+						detail: { sessionId, responseChannel },
+					})
+				);
+			}
+		);
+		const unsubAbort = window.maestro.process.onRemoteAbortAutoRunError(
+			(sessionId: string, responseChannel: string) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:abortAutoRunError', {
+						detail: { sessionId, responseChannel },
+					})
+				);
+			}
+		);
+		return () => {
+			unsubResume();
+			unsubSkip();
+			unsubAbort();
+		};
+	}, []);
+
+	// Handle remote playbook CRUD from web interface (request-response)
+	useEffect(() => {
+		const unsubList = window.maestro.process.onRemoteListPlaybooks(
+			(sessionId: string, responseChannel: string) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:listPlaybooks', {
+						detail: { sessionId, responseChannel },
+					})
+				);
+			}
+		);
+		const unsubCreate = window.maestro.process.onRemoteCreatePlaybook(
+			(sessionId: string, playbook: unknown, responseChannel: string) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:createPlaybook', {
+						detail: { sessionId, playbook, responseChannel },
+					})
+				);
+			}
+		);
+		const unsubUpdate = window.maestro.process.onRemoteUpdatePlaybook(
+			(sessionId: string, playbookId: string, updates: unknown, responseChannel: string) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:updatePlaybook', {
+						detail: { sessionId, playbookId, updates, responseChannel },
+					})
+				);
+			}
+		);
+		const unsubDelete = window.maestro.process.onRemoteDeletePlaybook(
+			(sessionId: string, playbookId: string, responseChannel: string) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:deletePlaybook', {
+						detail: { sessionId, playbookId, responseChannel },
+					})
+				);
+			}
+		);
+		return () => {
+			unsubList();
+			unsubCreate();
+			unsubUpdate();
+			unsubDelete();
+		};
+	}, []);
+
+	// Handle remote set setting from web interface
+	// Uses the existing settings infrastructure via window.maestro.settings.set()
+	useEffect(() => {
+		const unsubscribe = window.maestro.process.onRemoteSetSetting(
+			async (key: string, value: unknown, responseChannel: string) => {
+				try {
+					await window.maestro.settings.set(key, value);
+					window.maestro.process.sendRemoteSetSettingResponse(responseChannel, true);
+				} catch {
+					window.maestro.process.sendRemoteSetSettingResponse(responseChannel, false);
+				}
+			}
+		);
+		return () => {
+			unsubscribe();
+		};
+	}, []);
+
+	// Handle remote get git status from web interface
+	// Uses existing git IPC infrastructure (window.maestro.git.status + window.maestro.git.branch)
+	useEffect(() => {
+		const unsubscribe = window.maestro.process.onRemoteGetGitStatus(
+			async (sessionId: string, responseChannel: string) => {
+				try {
+					// Look up the session's cwd
+					const session = sessionsRef.current.find((s) => s.id === sessionId);
+					if (!session) {
+						window.maestro.process.sendRemoteGetGitStatusResponse(responseChannel, {
+							branch: '',
+							files: [],
+							ahead: 0,
+							behind: 0,
+						});
+						return;
+					}
+
+					const cwd = session.cwd;
+
+					// Run git status --porcelain and git branch in parallel
+					const [statusResult, branchResult] = await Promise.all([
+						window.maestro.git.status(cwd),
+						window.maestro.git.branch(cwd),
+					]);
+
+					// Parse status output
+					const statusLines = (statusResult.stdout || '')
+						.replace(/\s+$/, '')
+						.split('\n')
+						.filter((line: string) => line.length > 0);
+
+					const files = statusLines.map((line: string) => {
+						const status = line.substring(0, 2);
+						const pathField = line.substring(3);
+						const renameParts = pathField.split(' -> ');
+						const filePath = renameParts[renameParts.length - 1] || pathField;
+						// Staged if index column (first char) is not space or ?
+						const staged = status[0] !== ' ' && status[0] !== '?';
+						return { path: filePath, status: status.trim(), staged };
+					});
+
+					const branch = (branchResult.stdout || '').trim();
+
+					// Get ahead/behind info
+					let ahead = 0;
+					let behind = 0;
+					try {
+						const infoResult = await window.maestro.git.info(cwd);
+						ahead = infoResult.ahead || 0;
+						behind = infoResult.behind || 0;
+					} catch {
+						// ahead/behind not available, that's fine
+					}
+
+					window.maestro.process.sendRemoteGetGitStatusResponse(responseChannel, {
+						branch,
+						files,
+						ahead,
+						behind,
+					});
+				} catch {
+					window.maestro.process.sendRemoteGetGitStatusResponse(responseChannel, {
+						branch: '',
+						files: [],
+						ahead: 0,
+						behind: 0,
+					});
+				}
+			}
+		);
+		return () => {
+			unsubscribe();
+		};
+	}, []);
+
+	// Handle remote get git diff from web interface
+	// Uses existing git IPC infrastructure (window.maestro.git.diff)
+	useEffect(() => {
+		const unsubscribe = window.maestro.process.onRemoteGetGitDiff(
+			async (sessionId: string, filePath: string | undefined, responseChannel: string) => {
+				try {
+					// Look up the session's cwd
+					const session = sessionsRef.current.find((s) => s.id === sessionId);
+					if (!session) {
+						window.maestro.process.sendRemoteGetGitDiffResponse(responseChannel, {
+							diff: '',
+							files: [],
+						});
+						return;
+					}
+
+					const cwd = session.cwd;
+					const diffResult = await window.maestro.git.diff(cwd, filePath);
+					const diff = diffResult.stdout || '';
+
+					// Extract changed file paths from diff output
+					const fileMatches = diff.match(/^diff --git a\/.+ b\/(.+)$/gm) || [];
+					const files = fileMatches
+						.map((line: string) => {
+							const match = line.match(/^diff --git a\/.+ b\/(.+)$/);
+							return match ? match[1] : '';
+						})
+						.filter(Boolean);
+
+					window.maestro.process.sendRemoteGetGitDiffResponse(responseChannel, {
+						diff,
+						files,
+					});
+				} catch {
+					window.maestro.process.sendRemoteGetGitDiffResponse(responseChannel, {
+						diff: '',
+						files: [],
+					});
+				}
+			}
+		);
+		return () => {
+			unsubscribe();
+		};
+	}, []);
+
+	// Handle remote session/group management from web interface
+	// These dispatch CustomEvents for App.tsx to handle via existing session/group management hooks
+	useEffect(() => {
+		const unsubscribeCreateSession = window.maestro.process.onRemoteCreateSession(
+			(
+				name: string,
+				toolType: string,
+				cwd: string,
+				groupId: string | undefined,
+				config: Record<string, unknown> | undefined,
+				responseChannel: string
+			) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:remoteCreateSession', {
+						detail: { name, toolType, cwd, groupId, config, responseChannel },
+					})
+				);
+			}
+		);
+
+		const unsubscribeDeleteSession = window.maestro.process.onRemoteDeleteSession(
+			(sessionId: string) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:remoteDeleteSession', {
+						detail: { sessionId },
+					})
+				);
+			}
+		);
+
+		const unsubscribeRenameSession = window.maestro.process.onRemoteRenameSession(
+			(sessionId: string, newName: string, responseChannel: string) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:remoteRenameSession', {
+						detail: { sessionId, newName, responseChannel },
+					})
+				);
+			}
+		);
+
+		const unsubscribeUpdateSessionCwd = window.maestro.process.onRemoteUpdateSessionCwd(
+			(sessionId: string, newCwd: string, responseChannel: string) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:remoteUpdateSessionCwd', {
+						detail: { sessionId, newCwd, responseChannel },
+					})
+				);
+			}
+		);
+
+		const unsubscribeCreateGroup = window.maestro.process.onRemoteCreateGroup(
+			(name: string, emoji: string | undefined, responseChannel: string) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:remoteCreateGroup', {
+						detail: { name, emoji, responseChannel },
+					})
+				);
+			}
+		);
+
+		const unsubscribeRenameGroup = window.maestro.process.onRemoteRenameGroup(
+			(groupId: string, name: string, responseChannel: string) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:remoteRenameGroup', {
+						detail: { groupId, name, responseChannel },
+					})
+				);
+			}
+		);
+
+		const unsubscribeDeleteGroup = window.maestro.process.onRemoteDeleteGroup((groupId: string) => {
+			window.dispatchEvent(
+				new CustomEvent('maestro:remoteDeleteGroup', {
+					detail: { groupId },
+				})
+			);
+		});
+
+		const unsubscribeMoveSessionToGroup = window.maestro.process.onRemoteMoveSessionToGroup(
+			(sessionId: string, groupId: string | null, responseChannel: string) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:remoteMoveSessionToGroup', {
+						detail: { sessionId, groupId, responseChannel },
+					})
+				);
+			}
+		);
+
+		return () => {
+			unsubscribeCreateSession();
+			unsubscribeDeleteSession();
+			unsubscribeRenameSession();
+			unsubscribeUpdateSessionCwd();
+			unsubscribeCreateGroup();
+			unsubscribeRenameGroup();
+			unsubscribeDeleteGroup();
+			unsubscribeMoveSessionToGroup();
+		};
+	}, []);
 
 	// Broadcast tab changes to web clients when tabs, activeTabId, or tab properties change
 	// PERFORMANCE FIX: This effect was previously missing its dependency array, causing it to
@@ -477,7 +1200,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 
 				// Create a hash of tab properties that should trigger a broadcast when changed
 				const tabsHash = session.aiTabs
-					.map((t) => `${t.id}:${t.name || ''}:${t.starred}:${t.state}`)
+					.map((t) => `${t.id}:${t.name || ''}:${t.starred}:${t.state}:${t.hasUnread ?? false}`)
 					.join('|');
 
 				const prev = prevTabsRef.current.get(session.id);
@@ -504,6 +1227,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						createdAt: tab.createdAt,
 						state: tab.state,
 						thinkingStartTime: tab.thinkingStartTime,
+						hasUnread: tab.hasUnread,
 					}));
 
 					window.maestro.web.broadcastTabsChange(session.id, tabsForBroadcast, current.activeTabId);
@@ -515,6 +1239,120 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 
 		return () => clearInterval(intervalId);
 	}, [isLiveMode, sessionsRef]);
+
+	// Handle remote trigger Cue subscription requests (from web/CLI clients)
+	useEffect(() => {
+		const unsubscribe = window.maestro.process.onRemoteTriggerCueSubscription(
+			async (
+				subscriptionName: string,
+				prompt: string | undefined,
+				responseChannel: string,
+				sourceAgentId?: string
+			) => {
+				try {
+					const result = await cueService.triggerSubscription(
+						subscriptionName,
+						prompt,
+						sourceAgentId
+					);
+					window.maestro.process.sendRemoteTriggerCueSubscriptionResponse(responseChannel, result);
+				} catch (error) {
+					console.error('[Remote Cue Trigger] Failed:', subscriptionName, error);
+					logger.error('[Remote Cue Trigger] Failed:', undefined, [subscriptionName, error]);
+					// Never send the raw prompt to telemetry — remote-triggered
+					// Cue prompts can carry user-authored content with PII or
+					// secrets. Send length/presence so we can correlate failures
+					// against payload size without leaking the body.
+					captureException(error, {
+						extra: {
+							context: 'remoteTriggerCueSubscription',
+							subscriptionName,
+							responseChannel,
+							promptLength: prompt?.length ?? 0,
+							promptProvided: prompt !== undefined,
+						},
+					});
+					window.maestro.process.sendRemoteTriggerCueSubscriptionResponse(responseChannel, false);
+				}
+			}
+		);
+		return unsubscribe;
+	}, []);
+
+	// Handle remote create-gist requests (from CLI / web clients).
+	// Gathers every AI tab's transcript for the session, formats it the same
+	// way the desktop "Publish Gist" flow does, and shells out to `gh gist
+	// create` via the existing git IPC handler.
+	useEffect(() => {
+		const unsubscribe = window.maestro.process.onRemoteCreateGist(
+			async (
+				sessionId: string,
+				description: string,
+				isPublic: boolean,
+				responseChannel: string
+			) => {
+				try {
+					const session = sessionsRef.current.find((s) => s.id === sessionId);
+					if (!session) {
+						window.maestro.process.sendRemoteCreateGistResponse(responseChannel, {
+							success: false,
+							error: `Session not found: ${sessionId}`,
+						});
+						return;
+					}
+
+					const sections: string[] = [];
+					for (const tab of session.aiTabs) {
+						const body = formatLogsForClipboard(tab.logs);
+						if (!body) continue;
+						const header = tab.name || tab.id.slice(0, 8);
+						sections.push(`## Tab: ${header}\n\n${body}`);
+					}
+
+					if (sections.length === 0) {
+						window.maestro.process.sendRemoteCreateGistResponse(responseChannel, {
+							success: false,
+							error: 'Session has no conversation history to publish',
+						});
+						return;
+					}
+
+					const content = `# ${session.name}\n\n${sections.join('\n\n---\n\n')}\n`;
+					const safeName =
+						(session.name || 'session').replace(/[^a-zA-Z0-9]/g, '_').slice(0, 60) || 'session';
+					const filename = `${safeName}_context.md`;
+
+					const result = await window.maestro.git.createGist(
+						filename,
+						content,
+						description,
+						isPublic
+					);
+					window.maestro.process.sendRemoteCreateGistResponse(responseChannel, result);
+				} catch (error) {
+					const message = error instanceof Error ? error.message : String(error);
+					// Known recoverable modes (session missing, empty history, `gh`
+					// not installed/authenticated) already returned above as
+					// structured results. Anything that lands here is unexpected —
+					// report to Sentry without the transcript/description/filename,
+					// which can carry PII/secrets.
+					captureException(error, {
+						extra: {
+							context: 'remoteCreateGist',
+							sessionId,
+							isPublic,
+							descriptionProvided: Boolean(description),
+						},
+					});
+					window.maestro.process.sendRemoteCreateGistResponse(responseChannel, {
+						success: false,
+						error: message,
+					});
+				}
+			}
+		);
+		return unsubscribe;
+	}, [sessionsRef]);
 
 	return {};
 }

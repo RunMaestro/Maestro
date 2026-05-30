@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { Session } from '../../types';
+import { logger } from '../../utils/logger';
 
 /**
  * Dependencies for the useCliActivityMonitoring hook.
@@ -78,7 +79,7 @@ export function useCliActivityMonitoring(
 					})
 				);
 			} catch (error) {
-				console.error('[CLI Activity] Error checking activity:', error);
+				logger.error('[CLI Activity] Error checking activity:', undefined, error);
 			}
 		};
 

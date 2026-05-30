@@ -13,23 +13,8 @@
 
 import { memo, useState, useEffect, useMemo, useCallback } from 'react';
 import type { Theme } from '../../types';
-import type { StatsTimeRange } from '../../hooks/stats/useStats';
+import type { StatsTimeRange, AutoRunTask } from '../../../shared/stats-types';
 import { captureException } from '../../utils/sentry';
-
-/**
- * Auto Run task data shape from the API
- */
-interface AutoRunTask {
-	id: string;
-	autoRunSessionId: string;
-	sessionId: string;
-	agentType: string;
-	taskIndex: number;
-	taskContent?: string;
-	startTime: number;
-	duration: number;
-	success: boolean;
-}
 
 interface TasksByHourChartProps {
 	/** Current time range for filtering */
@@ -140,7 +125,10 @@ export const TasksByHourChart = memo(function TasksByHourChart({
 	if (loading) {
 		return (
 			<div className="p-4 rounded-lg" style={{ backgroundColor: theme.colors.bgMain }}>
-				<h3 className="text-sm font-medium mb-4" style={{ color: theme.colors.textMain }}>
+				<h3
+					className="text-sm font-medium mb-4"
+					style={{ color: theme.colors.textMain, animation: 'card-enter 0.4s ease both' }}
+				>
 					Tasks by Time of Day
 				</h3>
 				<div
@@ -156,7 +144,10 @@ export const TasksByHourChart = memo(function TasksByHourChart({
 	if (error) {
 		return (
 			<div className="p-4 rounded-lg" style={{ backgroundColor: theme.colors.bgMain }}>
-				<h3 className="text-sm font-medium mb-4" style={{ color: theme.colors.textMain }}>
+				<h3
+					className="text-sm font-medium mb-4"
+					style={{ color: theme.colors.textMain, animation: 'card-enter 0.4s ease both' }}
+				>
 					Tasks by Time of Day
 				</h3>
 				<div
@@ -182,7 +173,10 @@ export const TasksByHourChart = memo(function TasksByHourChart({
 	if (totalTasks === 0) {
 		return (
 			<div className="p-4 rounded-lg" style={{ backgroundColor: theme.colors.bgMain }}>
-				<h3 className="text-sm font-medium mb-4" style={{ color: theme.colors.textMain }}>
+				<h3
+					className="text-sm font-medium mb-4"
+					style={{ color: theme.colors.textMain, animation: 'card-enter 0.4s ease both' }}
+				>
 					Tasks by Time of Day
 				</h3>
 				<div

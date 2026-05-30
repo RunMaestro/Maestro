@@ -5,33 +5,8 @@
  */
 
 import { ipcRenderer } from 'electron';
-
-/**
- * Shell information
- */
-export interface ShellInfo {
-	id: string;
-	name: string;
-	available: boolean;
-	path?: string;
-}
-
-/**
- * Update status from electron-updater
- */
-export interface UpdateStatus {
-	status:
-		| 'idle'
-		| 'checking'
-		| 'available'
-		| 'not-available'
-		| 'downloading'
-		| 'downloaded'
-		| 'error';
-	info?: { version: string };
-	progress?: { percent: number; bytesPerSecond: number; total: number; transferred: number };
-	error?: string;
-}
+import type { ParsedDeepLink, ShellInfo, UpdateStatus } from '../../shared/types';
+export type { ShellInfo, UpdateStatus } from '../../shared/types';
 
 /**
  * Creates the dialog API object for preload exposure
@@ -75,6 +50,7 @@ export function createShellApi() {
 		trashItem: (itemPath: string) => ipcRenderer.invoke('shell:trashItem', itemPath),
 		showItemInFolder: (itemPath: string) => ipcRenderer.invoke('shell:showItemInFolder', itemPath),
 		copyImageToClipboard: (dataUrl: string) => ipcRenderer.invoke('clipboard:writeImage', dataUrl),
+		readImageFromClipboard: (): Promise<string | null> => ipcRenderer.invoke('clipboard:readImage'),
 	};
 }
 
@@ -202,6 +178,45 @@ export function createAppApi() {
 			const handler = () => callback();
 			ipcRenderer.on('app:systemResume', handler);
 			return () => ipcRenderer.removeListener('app:systemResume', handler);
+		},
+		/**
+		 * Listen for deep link navigation events (maestro:// URLs)
+		 * Fired when the app is activated via a deep link from OS notification clicks,
+		 * external apps, or CLI commands.
+		 */
+		/**
+		 * Listen for keyboard shortcuts forwarded from browser tab webviews.
+		 * When a webview has focus, keystrokes don't reach the renderer's window
+		 * event listener, so the main process intercepts them and forwards here.
+		 */
+		onBrowserTabShortcutKey: (
+			callback: (input: {
+				key: string;
+				code: string;
+				meta: boolean;
+				control: boolean;
+				alt: boolean;
+				shift: boolean;
+			}) => void
+		): (() => void) => {
+			const handler = (_: unknown, input: Parameters<typeof callback>[0]) => callback(input);
+			ipcRenderer.on('browser-tab:shortcutKey', handler);
+			return () => ipcRenderer.removeListener('browser-tab:shortcutKey', handler);
+		},
+		onDeepLink: (callback: (deepLink: ParsedDeepLink) => void): (() => void) => {
+			const handler = (_: unknown, deepLink: ParsedDeepLink) => callback(deepLink);
+			ipcRenderer.on('app:deepLink', handler);
+			return () => ipcRenderer.removeListener('app:deepLink', handler);
+		},
+		/**
+		 * Listen for global hotkey registration failures (e.g. another app already
+		 * owns the combo). Renderer should surface this to the user so they pick a
+		 * different key.
+		 */
+		onGlobalHotkeyRegistrationFailed: (callback: (keys: string[]) => void): (() => void) => {
+			const handler = (_: unknown, keys: string[]) => callback(keys);
+			ipcRenderer.on('globalHotkey:registrationFailed', handler);
+			return () => ipcRenderer.removeListener('globalHotkey:registrationFailed', handler);
 		},
 	};
 }

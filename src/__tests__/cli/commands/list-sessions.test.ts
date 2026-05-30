@@ -17,6 +17,7 @@ import type { SessionInfo } from '../../../shared/types';
 vi.mock('../../../cli/services/storage', () => ({
 	resolveAgentId: vi.fn(),
 	getSessionById: vi.fn(),
+	readSessions: vi.fn().mockReturnValue([]),
 }));
 
 // Mock agent-sessions
@@ -25,7 +26,7 @@ vi.mock('../../../cli/services/agent-sessions', () => ({
 }));
 
 import { listSessions } from '../../../cli/commands/list-sessions';
-import { resolveAgentId, getSessionById } from '../../../cli/services/storage';
+import { resolveAgentId, getSessionById, readSessions } from '../../../cli/services/storage';
 import { listClaudeSessions } from '../../../cli/services/agent-sessions';
 
 describe('list sessions command', () => {
@@ -205,30 +206,49 @@ describe('list sessions command', () => {
 		expect(processExitSpy).toHaveBeenCalledWith(1);
 	});
 
-	it('should exit with error for unsupported agent type', () => {
+	it('should list empty sessions for non-Claude agent type', () => {
 		vi.mocked(resolveAgentId).mockReturnValue('agent-term-1');
 		vi.mocked(getSessionById).mockReturnValue(
 			mockAgent({ id: 'agent-term-1', toolType: 'terminal' })
 		);
+		vi.mocked(readSessions).mockReturnValue([
+			{
+				id: 'agent-term-1',
+				name: 'Terminal',
+				toolType: 'terminal' as any,
+				cwd: '/test',
+				projectRoot: '/test',
+			},
+		]);
 
 		listSessions('agent-term', {});
 
-		expect(consoleErrorSpy).toHaveBeenCalled();
-		expect(processExitSpy).toHaveBeenCalledWith(1);
+		// Non-Claude agents use tab-based listing; no tabs = empty output
+		expect(consoleSpy).toHaveBeenCalled();
+		expect(processExitSpy).not.toHaveBeenCalled();
 	});
 
-	it('should exit with error for unsupported agent type in JSON mode', () => {
-		vi.mocked(resolveAgentId).mockReturnValue('agent-term-1');
+	it('should list empty sessions for non-Claude agent types in JSON mode', () => {
+		vi.mocked(resolveAgentId).mockReturnValue('agent-codex-1');
 		vi.mocked(getSessionById).mockReturnValue(
-			mockAgent({ id: 'agent-term-1', toolType: 'terminal' })
+			mockAgent({ id: 'agent-codex-1', toolType: 'codex' })
 		);
+		vi.mocked(readSessions).mockReturnValue([
+			{
+				id: 'agent-codex-1',
+				name: 'Test Codex',
+				toolType: 'codex' as any,
+				cwd: '/test',
+				projectRoot: '/test',
+			},
+		]);
 
-		listSessions('agent-term', { json: true });
+		listSessions('agent-codex', { json: true });
 
 		const output = JSON.parse(consoleSpy.mock.calls[0][0]);
-		expect(output.success).toBe(false);
-		expect(output.code).toBe('AGENT_UNSUPPORTED');
-		expect(processExitSpy).toHaveBeenCalledWith(1);
+		expect(output.success).toBe(true);
+		expect(output.sessions).toEqual([]);
+		expect(output.totalCount).toBe(0);
 	});
 
 	it('should exit with error for invalid limit', () => {

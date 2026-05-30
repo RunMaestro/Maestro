@@ -11,8 +11,9 @@ import { render, screen } from '@testing-library/react';
 import { AppOverlays } from '../../../renderer/components/AppOverlays';
 import { useModalStore } from '../../../renderer/stores/modalStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
-import type { Theme, Shortcut } from '../../../renderer/types';
+import type { Shortcut } from '../../../renderer/types';
 
+import { mockTheme } from '../../helpers/mockTheme';
 // Mock the three overlay sub-components
 vi.mock('../../../renderer/components/StandingOvationOverlay', () => ({
 	StandingOvationOverlay: (props: Record<string, unknown>) => (
@@ -52,27 +53,6 @@ vi.mock('../../../renderer/components/KeyboardMasteryCelebration', () => ({
 		</div>
 	),
 }));
-
-const mockTheme: Theme = {
-	id: 'dracula',
-	name: 'Dracula',
-	mode: 'dark',
-	colors: {
-		bgMain: '#282a36',
-		bgSidebar: '#21222c',
-		bgActivity: '#343746',
-		border: '#44475a',
-		textMain: '#f8f8f2',
-		textDim: '#6272a4',
-		accent: '#bd93f9',
-		accentDim: '#bd93f920',
-		accentText: '#ff79c6',
-		accentForeground: '#ffffff',
-		success: '#50fa7b',
-		warning: '#ffb86c',
-		error: '#ff5555',
-	},
-};
 
 const mockShortcuts: Record<string, Shortcut> = {
 	'new-session': { id: 'new-session', label: 'New Session', keys: ['Meta', 'n'] },

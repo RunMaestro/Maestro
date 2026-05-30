@@ -144,6 +144,28 @@ describe('useNavigationHistory', () => {
 			expect(result.current.canGoBack()).toBe(true);
 		});
 
+		it('should not ignore entry with same sessionId and tabId but different tabKind', () => {
+			const { result } = renderHook(() => useNavigationHistory());
+
+			act(() => {
+				result.current.pushNavigation({ sessionId: 'session1', tabId: 'tab1', tabKind: 'ai' });
+				result.current.pushNavigation({ sessionId: 'session1', tabId: 'tab1', tabKind: 'file' });
+			});
+
+			expect(result.current.canGoBack()).toBe(true);
+		});
+
+		it('should ignore duplicate entry with same sessionId, tabId, and tabKind', () => {
+			const { result } = renderHook(() => useNavigationHistory());
+
+			act(() => {
+				result.current.pushNavigation({ sessionId: 'session1', tabId: 'b1', tabKind: 'browser' });
+				result.current.pushNavigation({ sessionId: 'session1', tabId: 'b1', tabKind: 'browser' });
+			});
+
+			expect(result.current.canGoBack()).toBe(false);
+		});
+
 		it('should clear forward stack on new push', () => {
 			const { result } = renderHook(() => useNavigationHistory());
 

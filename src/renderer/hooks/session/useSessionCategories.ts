@@ -1,6 +1,8 @@
 import { useCallback, useMemo } from 'react';
+import { useStoreWithEqualityFn } from 'zustand/traditional';
 import type { Session, Group } from '../../types';
 import { useSessionStore } from '../../stores/sessionStore';
+import { sidebarSessionEquality } from '../../stores/sessionEquality';
 import { compareNamesIgnoringEmojis as compareSessionNames } from '../../../shared/emojiUtils';
 
 export interface SessionCategories {
@@ -22,43 +24,62 @@ export interface SessionCategories {
 
 export function useSessionCategories(
 	sessionFilter: string,
-	sortedSessions: Session[]
+	sortedSessions: Session[],
+	showUnreadAgentsOnly = false,
+	activeSessionId?: string | null
 ): SessionCategories {
-	const sessions = useSessionStore((s) => s.sessions);
+	// PERF: Match SessionList's sidebar-only equality so categorization doesn't
+	// recompute on every streaming flush — only when a sidebar-relevant field
+	// (state, name, group/bookmark/parent membership, AI tab unread/state) shifts.
+	const sessions = useStoreWithEqualityFn(
+		useSessionStore,
+		(s) => s.sessions,
+		sidebarSessionEquality
+	);
 	const groups = useSessionStore((s) => s.groups);
 
-	const worktreeChildrenByParentId = useMemo(() => {
-		const map = new Map<string, Session[]>();
-		sessions.forEach((session) => {
-			if (!session.parentSessionId) return;
-			const siblings = map.get(session.parentSessionId);
-			if (siblings) {
-				siblings.push(session);
-			} else {
-				map.set(session.parentSessionId, [session]);
+	// PR-A 1.3: collapse what used to be four chained `useMemo`s
+	// (worktreeChildrenByParentId → sortedWorktreeChildrenByParentId →
+	// sortedSessionIndexById → getWorktreeChildren) into a single pass.
+	// All four invalidate together when either `sessions` or `sortedSessions`
+	// changes, so chaining gave us four cascading recomputations on every
+	// session mutation. Computing them in one memo with a shared loop drops
+	// the per-mutation render cost roughly in proportion to the number of
+	// chained memos eliminated.
+	//
+	// See CLAUDE-PERFORMANCE.md§"Consolidate chained `useMemo` calls".
+	const { worktreeChildrenByParentId, sortedWorktreeChildrenByParentId, sortedSessionIndexById } =
+		useMemo(() => {
+			const childMap = new Map<string, Session[]>();
+			for (const session of sessions) {
+				if (!session.parentSessionId) continue;
+				const siblings = childMap.get(session.parentSessionId);
+				if (siblings) {
+					siblings.push(session);
+				} else {
+					childMap.set(session.parentSessionId, [session]);
+				}
 			}
-		});
-		return map;
-	}, [sessions]);
 
-	const sortedWorktreeChildrenByParentId = useMemo(() => {
-		const map = new Map<string, Session[]>();
-		worktreeChildrenByParentId.forEach((children, parentId) => {
-			map.set(
-				parentId,
-				[...children].sort((a, b) => compareSessionNames(a.name, b.name))
-			);
-		});
-		return map;
-	}, [worktreeChildrenByParentId]);
+			const sortedChildMap = new Map<string, Session[]>();
+			for (const [parentId, children] of childMap) {
+				sortedChildMap.set(
+					parentId,
+					[...children].sort((a, b) => compareSessionNames(a.name, b.name))
+				);
+			}
 
-	const sortedSessionIndexById = useMemo(() => {
-		const map = new Map<string, number>();
-		sortedSessions.forEach((session, index) => {
-			map.set(session.id, index);
-		});
-		return map;
-	}, [sortedSessions]);
+			const indexMap = new Map<string, number>();
+			for (let i = 0; i < sortedSessions.length; i++) {
+				indexMap.set(sortedSessions[i].id, i);
+			}
+
+			return {
+				worktreeChildrenByParentId: childMap,
+				sortedWorktreeChildrenByParentId: sortedChildMap,
+				sortedSessionIndexById: indexMap,
+			};
+		}, [sessions, sortedSessions]);
 
 	const getWorktreeChildren = useCallback(
 		(parentId: string): Session[] => worktreeChildrenByParentId.get(parentId) || [],
@@ -66,14 +87,32 @@ export function useSessionCategories(
 	);
 
 	// Consolidated session categorization and sorting - computed in a single pass
+	const groupIds = useMemo(() => new Set(groups.map((g) => g.id)), [groups]);
+
 	const sessionCategories = useMemo(() => {
-		// Step 1: Filter sessions based on search query
+		// Step 1: Filter sessions based on search query and unread filter
 		const query = sessionFilter?.toLowerCase() ?? '';
 		const filtered: Session[] = [];
 
 		for (const s of sessions) {
 			// Exclude worktree children from main list (they appear under parent)
 			if (s.parentSessionId) continue;
+
+			// Apply unread agents filter (also keep busy/working agents visible)
+			// Always keep the active session (or its parent) visible so user doesn't lose their place
+			const isActiveOrParentOfActive =
+				s.id === activeSessionId ||
+				worktreeChildrenByParentId.get(s.id)?.some((child) => child.id === activeSessionId);
+			if (showUnreadAgentsOnly && !isActiveOrParentOfActive) {
+				const hasUnread = s.aiTabs?.some((tab) => tab.hasUnread);
+				const isBusy = s.state === 'busy';
+				// Also check if any worktree children have unread or are busy
+				const children = worktreeChildrenByParentId.get(s.id);
+				const hasUnreadChildren = children?.some(
+					(child) => child.aiTabs?.some((tab) => tab.hasUnread) || child.state === 'busy'
+				);
+				if (!hasUnread && !isBusy && !hasUnreadChildren) continue;
+			}
 
 			if (!query) {
 				filtered.push(s);
@@ -111,7 +150,7 @@ export function useSessionCategories(
 			if (s.bookmarked) {
 				bookmarked.push(s);
 			}
-			if (s.groupId) {
+			if (s.groupId && groupIds.has(s.groupId)) {
 				const list = groupedMap.get(s.groupId);
 				if (list) {
 					list.push(s);
@@ -150,7 +189,14 @@ export function useSessionCategories(
 			sortedUngroupedParent,
 			sortedGrouped,
 		};
-	}, [sessionFilter, sessions, worktreeChildrenByParentId]);
+	}, [
+		sessionFilter,
+		showUnreadAgentsOnly,
+		activeSessionId,
+		sessions,
+		worktreeChildrenByParentId,
+		groupIds,
+	]);
 
 	const sortedGroups = useMemo(
 		() => [...groups].sort((a, b) => compareSessionNames(a.name, b.name)),

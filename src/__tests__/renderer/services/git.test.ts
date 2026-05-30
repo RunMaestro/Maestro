@@ -5,6 +5,7 @@
 
 import { describe, test, expect, vi, beforeEach } from 'vitest';
 import { gitService } from '../../../renderer/services/git';
+import { logger } from '../../../renderer/utils/logger';
 
 // Mock the window.maestro.git object
 const mockGit = {
@@ -28,8 +29,8 @@ beforeEach(() => {
 		git: mockGit,
 	};
 
-	// Mock console.error to prevent noise in test output
-	vi.spyOn(console, 'error').mockImplementation(() => {});
+	// Mock logger.error to prevent noise and allow assertions
+	vi.spyOn(logger, 'error').mockImplementation(() => {});
 });
 
 describe('gitService', () => {
@@ -67,7 +68,7 @@ describe('gitService', () => {
 			const result = await gitService.isRepo('/path/to/repo');
 
 			expect(result).toBe(false);
-			expect(console.error).toHaveBeenCalledWith('Git isRepo error:', expect.any(Error));
+			expect(logger.error).toHaveBeenCalledWith('Git isRepo error:', undefined, expect.any(Error));
 		});
 	});
 
@@ -147,7 +148,7 @@ D  deleted.ts
 			const result = await gitService.getStatus('/path/to/repo');
 
 			expect(result.files).toEqual([]);
-			expect(console.error).toHaveBeenCalledWith('Git status error:', expect.any(Error));
+			expect(logger.error).toHaveBeenCalledWith('Git status error:', undefined, expect.any(Error));
 		});
 
 		test('handles porcelain status codes correctly', async () => {
@@ -221,7 +222,7 @@ UU both-changed-in-merge.ts`;
 			const result = await gitService.getDiff('/path/to/repo');
 
 			expect(result.diff).toBe('');
-			expect(console.error).toHaveBeenCalledWith('Git diff error:', expect.any(Error));
+			expect(logger.error).toHaveBeenCalledWith('Git diff error:', undefined, expect.any(Error));
 		});
 	});
 
@@ -266,7 +267,7 @@ UU both-changed-in-merge.ts`;
 			const result = await gitService.getNumstat('/path/to/repo');
 
 			expect(result.files).toEqual([]);
-			expect(console.error).toHaveBeenCalledWith('Git numstat error:', expect.any(Error));
+			expect(logger.error).toHaveBeenCalledWith('Git numstat error:', undefined, expect.any(Error));
 		});
 
 		test('skips lines with fewer than 3 parts', async () => {
@@ -343,7 +344,7 @@ invalid_line`;
 			const result = await gitService.getRemoteBrowserUrl('/path/to/repo');
 
 			expect(result).toBeNull();
-			expect(console.error).toHaveBeenCalledWith('Git remote error:', expect.any(Error));
+			expect(logger.error).toHaveBeenCalledWith('Git remote error:', undefined, expect.any(Error));
 		});
 
 		test('returns null for unparseable URL formats', async () => {
@@ -420,7 +421,11 @@ invalid_line`;
 			const result = await gitService.getBranches('/path/to/repo');
 
 			expect(result).toEqual([]);
-			expect(console.error).toHaveBeenCalledWith('Git branches error:', expect.any(Error));
+			expect(logger.error).toHaveBeenCalledWith(
+				'Git branches error:',
+				undefined,
+				expect.any(Error)
+			);
 		});
 	});
 
@@ -457,7 +462,7 @@ invalid_line`;
 			const result = await gitService.getTags('/path/to/repo');
 
 			expect(result).toEqual([]);
-			expect(console.error).toHaveBeenCalledWith('Git tags error:', expect.any(Error));
+			expect(logger.error).toHaveBeenCalledWith('Git tags error:', undefined, expect.any(Error));
 		});
 	});
 });

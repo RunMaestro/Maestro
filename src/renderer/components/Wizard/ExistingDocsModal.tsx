@@ -1,7 +1,7 @@
 /**
  * ExistingDocsModal.tsx
  *
- * Modal displayed when the wizard detects existing Auto Run documents
+ * Modal displayed when the wizard detects existing playbook documents
  * in the selected project directory. Offers the user two choices:
  * 1. Delete the existing docs and start fresh
  * 2. Continue building on the existing planning documents
@@ -10,8 +10,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { FileText, Trash2, ArrowRight } from 'lucide-react';
 import type { Theme } from '../../types';
-import { useLayerStack } from '../../contexts/LayerStackContext';
+import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
+import { logger } from '../../utils/logger';
 
 interface ExistingDocsModalProps {
 	theme: Theme;
@@ -28,7 +29,7 @@ interface ExistingDocsModalProps {
 }
 
 /**
- * ExistingDocsModal - Choice dialog for existing Auto Run documents
+ * ExistingDocsModal - Choice dialog for existing playbook documents
  */
 export function ExistingDocsModal({
 	theme,
@@ -38,8 +39,6 @@ export function ExistingDocsModal({
 	onContinue,
 	onCancel,
 }: ExistingDocsModalProps): JSX.Element {
-	const { registerLayer, unregisterLayer, updateLayerHandler } = useLayerStack();
-	const layerIdRef = useRef<string>();
 	const continueButtonRef = useRef<HTMLButtonElement>(null);
 	const onCancelRef = useRef(onCancel);
 	onCancelRef.current = onCancel;
@@ -52,36 +51,14 @@ export function ExistingDocsModal({
 		continueButtonRef.current?.focus();
 	}, []);
 
-	// Register with layer stack
-	useEffect(() => {
-		const id = registerLayer({
-			type: 'modal',
-			priority: MODAL_PRIORITIES.EXISTING_AUTORUN_DOCS,
-			blocksLowerLayers: true,
-			capturesFocus: true,
-			focusTrap: 'strict',
-			ariaLabel: 'Existing Auto Run Documents Found',
-			onEscape: () => onCancelRef.current(),
-		});
-		layerIdRef.current = id;
-		return () => {
-			if (layerIdRef.current) {
-				unregisterLayer(layerIdRef.current);
-			}
-		};
-	}, [registerLayer, unregisterLayer]);
-
-	// Update escape handler when onCancel changes
-	useEffect(() => {
-		if (layerIdRef.current) {
-			updateLayerHandler(layerIdRef.current, () => onCancelRef.current());
-		}
-	}, [onCancel, updateLayerHandler]);
+	useModalLayer(MODAL_PRIORITIES.EXISTING_AUTORUN_DOCS, 'Existing Playbook Documents Found', () =>
+		onCancelRef.current()
+	);
 
 	// Handle keyboard navigation
 	const handleKeyDown = (e: React.KeyboardEvent) => {
-		if (e.key === 'Tab') {
-			// Let natural tab flow work
+		if (e.key === 'Tab' || e.key === 'Escape') {
+			// Let Tab flow naturally, let Escape reach the layer stack
 			return;
 		}
 		e.stopPropagation();
@@ -95,16 +72,16 @@ export function ExistingDocsModal({
 		setDeleteError(null);
 
 		try {
-			// Delete the entire Auto Run Docs folder
+			// Delete the playbooks folder
 			const deleteResult = await window.maestro.autorun.deleteFolder(directoryPath);
 			if (!deleteResult.success) {
-				throw new Error(deleteResult.error || 'Failed to delete Auto Run Docs folder');
+				throw new Error(deleteResult.error || 'Failed to delete playbooks folder');
 			}
 
 			// Success - notify parent
 			onStartFresh();
 		} catch (error) {
-			console.error('Failed to delete existing docs:', error);
+			logger.error('Failed to delete existing docs:', undefined, error);
 			setDeleteError(
 				error instanceof Error ? error.message : 'Failed to delete existing documents'
 			);
@@ -123,7 +100,7 @@ export function ExistingDocsModal({
 			onKeyDown={handleKeyDown}
 		>
 			<div
-				className="w-[520px] border rounded-xl shadow-2xl overflow-hidden"
+				className="modal-w-sm border rounded-xl shadow-2xl overflow-hidden"
 				style={{
 					backgroundColor: theme.colors.bgSidebar,
 					borderColor: theme.colors.border,
@@ -155,7 +132,7 @@ export function ExistingDocsModal({
 					>
 						This project already has{' '}
 						<span className="font-semibold" style={{ color: theme.colors.accent }}>
-							{documentCount} Auto Run document{documentCount !== 1 ? 's' : ''}
+							{documentCount} playbook document{documentCount !== 1 ? 's' : ''}
 						</span>{' '}
 						from a previous planning session.
 					</p>
@@ -249,7 +226,7 @@ export function ExistingDocsModal({
 										{isDeleting ? 'Deleting Documents...' : 'Delete & Start Fresh'}
 									</div>
 									<div className="text-xs mt-1" style={{ color: theme.colors.textDim }}>
-										Remove all existing Auto Run documents and start the planning process from
+										Remove all existing playbook documents and start the planning process from
 										scratch.
 									</div>
 								</div>

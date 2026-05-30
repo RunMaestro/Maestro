@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { fuzzyMatch, fuzzyMatchWithScore, FuzzyMatchResult } from '../../../renderer/utils/search';
+import {
+	fuzzyMatch,
+	fuzzyMatchWithScore,
+	fuzzyMatchWithIndices,
+	filterSlashCommands,
+	FuzzyMatchResult,
+} from '../../../renderer/utils/search';
 
 describe('search utils', () => {
 	describe('fuzzyMatch', () => {
@@ -490,6 +496,88 @@ describe('search utils', () => {
 				// handleUserInput should match
 				expect(results.some((r) => r.symbol === 'handleUserInput')).toBe(true);
 			});
+		});
+	});
+
+	describe('fuzzyMatchWithIndices', () => {
+		it('returns empty array for empty query', () => {
+			expect(fuzzyMatchWithIndices('anything', '')).toEqual([]);
+		});
+
+		it('returns empty array for non-match', () => {
+			expect(fuzzyMatchWithIndices('history', 'xyz')).toEqual([]);
+		});
+
+		it('returns correct indices for prefix match', () => {
+			expect(fuzzyMatchWithIndices('history', 'hist')).toEqual([0, 1, 2, 3]);
+		});
+
+		it('returns correct indices for fuzzy match across dot boundary', () => {
+			// With '.' as extra boundary, "splan" should match s(0) then p(7) at ".plan" boundary
+			const indices = fuzzyMatchWithIndices('speckit.plan', 'splan', '.');
+			expect(indices).toHaveLength(5);
+			expect(indices[0]).toBe(0); // s
+			expect(indices[1]).toBe(8); // p (after dot, not index 1)
+		});
+
+		it('falls back to greedy when no boundary match exists', () => {
+			const indices = fuzzyMatchWithIndices('abcdef', 'ace');
+			expect(indices).toEqual([0, 2, 4]);
+		});
+
+		it('returns empty array when query is longer than text', () => {
+			expect(fuzzyMatchWithIndices('hi', 'history')).toEqual([]);
+		});
+
+		it('falls back to greedy when boundary choice would prevent remaining match', () => {
+			// "aa" in "ab.a": boundary 'a' is at index 3 (after '.'), but picking it
+			// for qi=0 leaves no chars for qi=1. Should fall back to index 0.
+			const indices = fuzzyMatchWithIndices('ab.a', 'aa', '.');
+			expect(indices).toEqual([0, 3]);
+		});
+	});
+
+	describe('slash command fuzzy matching', () => {
+		it('matches boundary-anchored abbreviation (splan → speckit.plan)', () => {
+			expect(fuzzyMatchWithScore('speckit.plan', 'splan', '.').matches).toBe(true);
+		});
+
+		it('ranks prefix match above fuzzy match', () => {
+			const prefix = fuzzyMatchWithScore('speckit.plan', 'spec', '.');
+			const fuzzy = fuzzyMatchWithScore('speckit.plan', 'splan', '.');
+			expect(prefix.score).toBeGreaterThan(fuzzy.score);
+		});
+
+		it('matches across dot boundaries', () => {
+			expect(fuzzyMatchWithScore('openspec.plan', 'oplan', '.').matches).toBe(true);
+			expect(fuzzyMatchWithScore('speckit.list', 'slist', '.').matches).toBe(true);
+		});
+
+		it('gives dot boundary bonus only when opted in', () => {
+			const withDot = fuzzyMatchWithScore('hello.world', 'w', '.');
+			const withoutDot = fuzzyMatchWithScore('hello.world', 'w');
+			expect(withDot.score).toBeGreaterThan(withoutDot.score);
+		});
+	});
+
+	describe('filterSlashCommands', () => {
+		it('ranks prefix match above fuzzy matches when typing /npm', () => {
+			const commands = [
+				{ command: '/openspec.implement' },
+				{ command: '/fewer-permission-prompts' },
+				{ command: '/npm-test' },
+			];
+			const result = filterSlashCommands(commands, 'npm', false);
+			expect(result[0].command).toBe('/npm-test');
+		});
+
+		it('keeps direct prefix match on top even when fuzzy matches share many characters', () => {
+			const commands = [
+				{ command: '/manage-permissions' }, // fuzzy: m-a-n
+				{ command: '/man-page' }, // prefix
+			];
+			const result = filterSlashCommands(commands, 'man', false);
+			expect(result[0].command).toBe('/man-page');
 		});
 	});
 });

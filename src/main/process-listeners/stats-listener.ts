@@ -6,6 +6,7 @@
 import type { ProcessManager } from '../process-manager';
 import type { QueryCompleteData } from '../process-manager/types';
 import type { ProcessListenerDependencies } from './types';
+import { captureException } from '../utils/sentry';
 
 /**
  * Maximum number of retry attempts for transient database failures.
@@ -39,6 +40,7 @@ async function insertQueryEventWithRetry(
 			});
 			return id;
 		} catch (error) {
+			void captureException(error);
 			const isLastAttempt = attempt === MAX_RETRY_ATTEMPTS;
 
 			if (isLastAttempt) {

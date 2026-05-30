@@ -51,7 +51,6 @@ import {
 	removeParticipantFromChat,
 	getParticipant,
 	updateParticipant,
-	getGroupChatsDir,
 	addGroupChatHistoryEntry,
 	getGroupChatHistory,
 	deleteGroupChatHistoryEntry,

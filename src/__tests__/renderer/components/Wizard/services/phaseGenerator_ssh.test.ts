@@ -195,7 +195,7 @@ CONTENT:
 
 			// Verify watchFolder was called with sshRemoteId
 			expect(mockMaestro.autorun.watchFolder).toHaveBeenCalledWith(
-				expect.stringContaining('/remote/path/Auto Run Docs'),
+				expect.stringContaining('/remote/path/.maestro/playbooks'),
 				'test-remote-id' // sshRemoteId
 			);
 		});
@@ -319,7 +319,7 @@ CONTENT:
 
 			// Verify listDocs was called with sshRemoteId
 			expect(mockMaestro.autorun.listDocs).toHaveBeenCalledWith(
-				expect.stringContaining('/remote/path/Auto Run Docs'),
+				expect.stringContaining('/remote/path/.maestro/playbooks'),
 				'test-remote-id' // sshRemoteId
 			);
 		});
@@ -364,7 +364,7 @@ CONTENT:
 
 			// Verify readDoc was called with sshRemoteId
 			expect(mockMaestro.autorun.readDoc).toHaveBeenCalledWith(
-				expect.stringContaining('/remote/path/Auto Run Docs'),
+				expect.stringContaining('/remote/path/.maestro/playbooks'),
 				'Phase-01-Test',
 				'test-remote-id' // sshRemoteId
 			);

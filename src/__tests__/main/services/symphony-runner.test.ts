@@ -38,6 +38,11 @@ vi.mock('../../../main/utils/symphony-fork', () => ({
 	ensureForkSetup: vi.fn(),
 }));
 
+// Mock cliDetection — resolveGhPath returns 'gh' so existing assertions still match
+vi.mock('../../../main/utils/cliDetection', () => ({
+	resolveGhPath: vi.fn().mockResolvedValue('gh'),
+}));
+
 // Mock global fetch
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
@@ -708,7 +713,7 @@ describe('Symphony Runner Service', () => {
 
 			expect(mockFetch).toHaveBeenCalledWith('https://example.com/doc.md');
 			expect(fs.writeFile).toHaveBeenCalledWith(
-				'/tmp/test-repo/Auto Run Docs/doc.md',
+				'/tmp/test-repo/.maestro/playbooks/doc.md',
 				expect.any(Buffer)
 			);
 		});
@@ -789,11 +794,11 @@ describe('Symphony Runner Service', () => {
 	});
 
 	// ============================================================================
-	// Setup Auto Run Docs Tests
+	// Setup .maestro/playbooks Tests
 	// ============================================================================
 
 	describe('setupAutoRunDocs', () => {
-		it('creates Auto Run Docs directory', async () => {
+		it('creates .maestro/playbooks directory', async () => {
 			mockSuccessfulWorkflow();
 
 			await startContribution({
@@ -807,7 +812,9 @@ describe('Symphony Runner Service', () => {
 				branchName: 'symphony/test-branch',
 			});
 
-			expect(fs.mkdir).toHaveBeenCalledWith('/tmp/test-repo/Auto Run Docs', { recursive: true });
+			expect(fs.mkdir).toHaveBeenCalledWith('/tmp/test-repo/.maestro/playbooks', {
+				recursive: true,
+			});
 		});
 
 		it('downloads external documents (isExternal: true)', async () => {
@@ -856,7 +863,7 @@ describe('Symphony Runner Service', () => {
 
 			expect(fs.copyFile).toHaveBeenCalledWith(
 				'/tmp/test-repo/docs/internal.md',
-				'/tmp/test-repo/Auto Run Docs/internal.md'
+				'/tmp/test-repo/.maestro/playbooks/internal.md'
 			);
 		});
 
@@ -910,7 +917,7 @@ describe('Symphony Runner Service', () => {
 			);
 		});
 
-		it('returns path to Auto Run Docs directory', async () => {
+		it('returns path to .maestro/playbooks directory', async () => {
 			mockSuccessfulWorkflow();
 
 			const result = await startContribution({
@@ -924,7 +931,7 @@ describe('Symphony Runner Service', () => {
 				branchName: 'symphony/test-branch',
 			});
 
-			expect(result.autoRunPath).toBe('/tmp/test-repo/Auto Run Docs');
+			expect(result.autoRunPath).toBe('/tmp/test-repo/.maestro/playbooks');
 		});
 	});
 
@@ -1110,7 +1117,7 @@ describe('Symphony Runner Service', () => {
 			expect(result.success).toBe(true);
 			expect(result.draftPrUrl).toBe('https://github.com/owner/repo/pull/42');
 			expect(result.draftPrNumber).toBe(42);
-			expect(result.autoRunPath).toBe('/tmp/test-repo/Auto Run Docs');
+			expect(result.autoRunPath).toBe('/tmp/test-repo/.maestro/playbooks');
 		});
 
 		it('handles unexpected errors gracefully', async () => {

@@ -1,6 +1,7 @@
 import { execFileNoThrow } from './execFile';
 import { logger } from './logger';
 import { getExpandedEnv } from '../agents/path-prober';
+import { resolveGhPath } from './cliDetection';
 
 const LOG_CONTEXT = '[SymphonyFork]';
 
@@ -20,10 +21,16 @@ export async function ensureForkSetup(
 	repoSlug: string
 ): Promise<ForkSetupResult> {
 	const env = getExpandedEnv();
+	const ghCommand = await resolveGhPath();
 
 	// 1. Get authenticated GitHub user
 	logger.info('Checking GitHub authentication', LOG_CONTEXT);
-	const userResult = await execFileNoThrow('gh', ['api', 'user', '--jq', '.login'], undefined, env);
+	const userResult = await execFileNoThrow(
+		ghCommand,
+		['api', 'user', '--jq', '.login'],
+		undefined,
+		env
+	);
 	if (userResult.exitCode !== 0) {
 		logger.error('GitHub CLI not authenticated', LOG_CONTEXT, { stderr: userResult.stderr });
 		return { isFork: false, error: 'GitHub CLI not authenticated' };
@@ -40,7 +47,7 @@ export async function ensureForkSetup(
 	// 3. Check push access
 	logger.info(`Checking push access to ${repoSlug}`, LOG_CONTEXT);
 	const accessResult = await execFileNoThrow(
-		'gh',
+		ghCommand,
 		['api', `repos/${repoSlug}`, '--jq', '.permissions.push'],
 		undefined,
 		env
@@ -53,7 +60,7 @@ export async function ensureForkSetup(
 	// 4. Fork the repo (idempotent)
 	logger.info(`Forking ${repoSlug}`, LOG_CONTEXT);
 	const forkResult = await execFileNoThrow(
-		'gh',
+		ghCommand,
 		['repo', 'fork', repoSlug, '--clone=false'],
 		undefined,
 		env
@@ -72,7 +79,7 @@ export async function ensureForkSetup(
 	const forkSlug = `${ghUser}/${repoName}`;
 	logger.info(`Getting clone URL for ${forkSlug}`, LOG_CONTEXT);
 	const urlResult = await execFileNoThrow(
-		'gh',
+		ghCommand,
 		['api', `repos/${forkSlug}`, '--jq', '.clone_url'],
 		undefined,
 		env

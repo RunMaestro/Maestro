@@ -18,9 +18,15 @@ export const DEFAULT_SHORTCUTS: Record<string, Shortcut> = {
 	newInstance: { id: 'newInstance', label: 'New Agent', keys: ['Meta', 'n'] },
 	newGroupChat: { id: 'newGroupChat', label: 'New Group Chat', keys: ['Alt', 'Meta', 'c'] },
 	killInstance: { id: 'killInstance', label: 'Remove', keys: ['Meta', 'Shift', 'Backspace'] },
-	moveToGroup: { id: 'moveToGroup', label: 'Move Session to Group', keys: ['Meta', 'Shift', 'm'] },
+	moveToGroup: { id: 'moveToGroup', label: 'Move Session to Group', keys: ['Alt', 'Meta', 'm'] },
+	openMemoryViewer: {
+		id: 'openMemoryViewer',
+		label: 'Open Memory Viewer',
+		keys: ['Meta', 'Shift', 'm'],
+	},
 	toggleMode: { id: 'toggleMode', label: 'Switch AI/Shell Mode', keys: ['Meta', 'j'] },
 	quickAction: { id: 'quickAction', label: 'Quick Actions', keys: ['Meta', 'k'] },
+	agentSwitcher: { id: 'agentSwitcher', label: 'Switch Agent', keys: ['Meta', 'o'] },
 	help: { id: 'help', label: 'Show Shortcuts', keys: ['Meta', '/'] },
 	settings: { id: 'settings', label: 'Open Settings', keys: ['Meta', ','] },
 	agentSettings: { id: 'agentSettings', label: 'Open Agent Settings', keys: ['Alt', 'Meta', ','] },
@@ -28,6 +34,11 @@ export const DEFAULT_SHORTCUTS: Record<string, Shortcut> = {
 	goToHistory: { id: 'goToHistory', label: 'Go to History Tab', keys: ['Meta', 'Shift', 'h'] },
 	goToAutoRun: { id: 'goToAutoRun', label: 'Go to Auto Run Tab', keys: ['Meta', 'Shift', '1'] },
 	copyFilePath: { id: 'copyFilePath', label: 'Copy File Path (in Preview)', keys: ['Meta', 'p'] },
+	toggleFilePreviewToc: {
+		id: 'toggleFilePreviewToc',
+		label: 'Toggle Table of Contents (Markdown Preview)',
+		keys: ['Meta', '\\'],
+	},
 	toggleMarkdownMode: {
 		id: 'toggleMarkdownMode',
 		label: 'Toggle Edit/Preview',
@@ -35,8 +46,13 @@ export const DEFAULT_SHORTCUTS: Record<string, Shortcut> = {
 	},
 	toggleAutoRunExpanded: {
 		id: 'toggleAutoRunExpanded',
-		label: 'Toggle Auto Run Expanded',
+		label: 'Auto Run Expanded Preview',
 		keys: ['Meta', 'Shift', 'e'],
+	},
+	openBatchRunner: {
+		id: 'openBatchRunner',
+		label: 'Run Auto Run',
+		keys: ['Meta', 'Shift', '2'],
 	},
 	focusInput: { id: 'focusInput', label: 'Toggle Input/Output Focus', keys: ['Meta', '.'] },
 	focusSidebar: { id: 'focusSidebar', label: 'Focus Left Panel', keys: ['Meta', 'Shift', 'a'] },
@@ -54,7 +70,12 @@ export const DEFAULT_SHORTCUTS: Record<string, Shortcut> = {
 		keys: ['Alt', 'Meta', 'p'],
 	},
 	usageDashboard: { id: 'usageDashboard', label: 'Usage Dashboard', keys: ['Alt', 'Meta', 'u'] },
-	jumpToBottom: { id: 'jumpToBottom', label: 'Jump to Bottom', keys: ['Meta', 'Shift', 'j'] },
+	executionQueue: {
+		id: 'executionQueue',
+		label: 'View Execution Queue',
+		keys: ['Meta', 'Shift', 'x'],
+	},
+	jumpToBottom: { id: 'jumpToBottom', label: 'Jump to Bottom', keys: ['Alt', 'j'] },
 	prevTab: { id: 'prevTab', label: 'Previous Tab', keys: ['Meta', 'Shift', '['] },
 	nextTab: { id: 'nextTab', label: 'Next Tab', keys: ['Meta', 'Shift', ']'] },
 	openImageCarousel: { id: 'openImageCarousel', label: 'Open Image Carousel', keys: ['Meta', 'y'] },
@@ -68,20 +89,55 @@ export const DEFAULT_SHORTCUTS: Record<string, Shortcut> = {
 	fuzzyFileSearch: { id: 'fuzzyFileSearch', label: 'Fuzzy File Search', keys: ['Meta', 'g'] },
 	toggleBookmark: { id: 'toggleBookmark', label: 'Toggle Bookmark', keys: ['Meta', 'Shift', 'b'] },
 	openSymphony: { id: 'openSymphony', label: 'Maestro Symphony', keys: ['Meta', 'Shift', 'y'] },
-	toggleAutoScroll: {
-		id: 'toggleAutoScroll',
-		label: 'Toggle Auto-Scroll AI Output',
-		keys: ['Alt', 'Meta', 's'],
-	},
 	directorNotes: {
 		id: 'directorNotes',
 		label: "Director's Notes",
 		keys: ['Meta', 'Shift', 'o'],
 	},
+	openCue: {
+		id: 'openCue',
+		label: 'Maestro Cue',
+		keys: ['Alt', 'q'],
+	},
+	filterUnreadAgents: {
+		id: 'filterUnreadAgents',
+		label: 'Filter Unread Agents',
+		keys: ['Alt', 'u'],
+	},
+	nextUnreadTab: {
+		id: 'nextUnreadTab',
+		label: 'Next Unread / Draft Tab',
+		keys: ['Alt', 'Meta', 'ArrowDown'],
+	},
+	jumpToTerminal: {
+		id: 'jumpToTerminal',
+		label: 'Jump to Nearest Terminal',
+		keys: ['Alt', 'Meta', 'j'],
+	},
 	fontSizeReset: {
 		id: 'fontSizeReset',
 		label: 'Reset Font Size',
 		keys: ['Meta', 'Shift', '0'],
+	},
+	forcedParallelSend: {
+		id: 'forcedParallelSend',
+		label: 'Forced Parallel Send',
+		keys: ['Meta', 'Shift', 'Enter'],
+	},
+	clearTerminal: {
+		id: 'clearTerminal',
+		label: 'Clear Terminal',
+		keys: ['Meta', 'Shift', 'k'],
+	},
+	focusActiveTab: {
+		id: 'focusActiveTab',
+		label: 'Focus Active Tab',
+		keys: ['Alt', 'Meta', 'f'],
+	},
+	editClipboardImage: {
+		id: 'editClipboardImage',
+		label: 'Edit Image from Clipboard',
+		keys: ['Alt', 'Meta', 'e'],
 	},
 };
 
@@ -140,6 +196,13 @@ export const FIXED_SHORTCUTS: Record<string, Shortcut> = {
 export const TAB_SHORTCUTS: Record<string, Shortcut> = {
 	tabSwitcher: { id: 'tabSwitcher', label: 'Tab Switcher', keys: ['Alt', 'Meta', 't'] },
 	newTab: { id: 'newTab', label: 'New Tab', keys: ['Meta', 't'] },
+	newBrowserTab: { id: 'newBrowserTab', label: 'New Browser', keys: ['Meta', 'b'] },
+	newFileTab: { id: 'newFileTab', label: 'New File', keys: ['Alt', 'n'] },
+	focusBrowserAddress: {
+		id: 'focusBrowserAddress',
+		label: 'Focus Browser Address Bar',
+		keys: ['Meta', 'l'],
+	},
 	closeTab: { id: 'closeTab', label: 'Close Tab', keys: ['Meta', 'w'] },
 	closeAllTabs: { id: 'closeAllTabs', label: 'Close All Tabs', keys: ['Meta', 'Shift', 'w'] },
 	closeOtherTabs: { id: 'closeOtherTabs', label: 'Close Other Tabs', keys: ['Alt', 'Meta', 'w'] },

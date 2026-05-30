@@ -1,0 +1,349 @@
+import type { Session } from '../../../types';
+import type { QuickAction } from '../types';
+import { editClipboardImage } from '../../ImageAnnotator/editClipboardImage';
+
+interface BuildFeatureCommandsArgs {
+	activeSession: Session | undefined;
+	isAiMode?: boolean;
+	canSummarizeActiveTab?: boolean;
+	markdownEditMode?: boolean;
+	isFilePreviewOpen?: boolean;
+	ghCliAvailable?: boolean;
+	lastGraphFocusFile?: string;
+	hasActiveSessionCapability?: (
+		capability:
+			| 'supportsSessionStorage'
+			| 'supportsSlashCommands'
+			| 'supportsContextMerge'
+			| 'supportsProjectMemory'
+	) => boolean;
+	setQuickActionOpen: (open: boolean) => void;
+	setSuccessFlashNotification: (message: string | null) => void;
+	setAgentSessionsOpen: (open: boolean) => void;
+	setActiveAgentSessionId: (id: string | null) => void;
+	setMemoryViewerOpen?: (open: boolean) => void;
+	setFuzzyFileSearchOpen?: (open: boolean) => void;
+	setUsageDashboardOpen?: (open: boolean) => void;
+	onSummarizeAndContinue?: () => void;
+	onOpenMergeSession?: () => void;
+	onOpenSendToAgent?: () => void;
+	onOpenQueueBrowser?: () => void;
+	onOpenPlaybookExchange?: () => void;
+	onOpenSymphony?: () => void;
+	onOpenDirectorNotes?: () => void;
+	onOpenMaestroCue?: () => void;
+	onConfigureCue?: (session: Session) => void;
+	onOpenLastDocumentGraph?: () => void;
+	onPublishGist?: () => void;
+	bionifyReadingMode: boolean;
+	setBionifyReadingMode: (enabled: boolean) => void;
+	audioFeedbackEnabled: boolean;
+	setAudioFeedbackEnabled: (enabled: boolean) => void;
+	idleNotificationEnabled: boolean;
+	setIdleNotificationEnabled: (enabled: boolean) => void;
+	shortcuts: {
+		usageDashboard?: QuickAction['shortcut'];
+		agentSessions?: QuickAction['shortcut'];
+		openMemoryViewer?: QuickAction['shortcut'];
+		mergeSession?: QuickAction['shortcut'];
+		sendToAgent?: QuickAction['shortcut'];
+		openSymphony?: QuickAction['shortcut'];
+		directorNotes?: QuickAction['shortcut'];
+		maestroCue?: QuickAction['shortcut'];
+		fuzzyFileSearch?: QuickAction['shortcut'];
+		editClipboardImage?: QuickAction['shortcut'];
+	};
+	tabShortcuts?: Record<string, QuickAction['shortcut']>;
+}
+
+function flash(
+	setSuccessFlashNotification: (message: string | null) => void,
+	message: string
+): void {
+	setSuccessFlashNotification(message);
+	setTimeout(() => setSuccessFlashNotification(null), 2000);
+}
+
+export function buildFeatureCommands({
+	activeSession,
+	isAiMode,
+	canSummarizeActiveTab,
+	markdownEditMode,
+	isFilePreviewOpen,
+	ghCliAvailable,
+	lastGraphFocusFile,
+	hasActiveSessionCapability,
+	setQuickActionOpen,
+	setSuccessFlashNotification,
+	setAgentSessionsOpen,
+	setActiveAgentSessionId,
+	setMemoryViewerOpen,
+	setFuzzyFileSearchOpen,
+	setUsageDashboardOpen,
+	onSummarizeAndContinue,
+	onOpenMergeSession,
+	onOpenSendToAgent,
+	onOpenQueueBrowser,
+	onOpenPlaybookExchange,
+	onOpenSymphony,
+	onOpenDirectorNotes,
+	onOpenMaestroCue,
+	onConfigureCue,
+	onOpenLastDocumentGraph,
+	onPublishGist,
+	bionifyReadingMode,
+	setBionifyReadingMode,
+	audioFeedbackEnabled,
+	setAudioFeedbackEnabled,
+	idleNotificationEnabled,
+	setIdleNotificationEnabled,
+	shortcuts,
+	tabShortcuts,
+}: BuildFeatureCommandsArgs): QuickAction[] {
+	const commands: QuickAction[] = [
+		{
+			id: 'editClipboardImage',
+			label: 'Edit Image from Clipboard',
+			subtext: 'Open the image annotator on the current clipboard image',
+			shortcut: shortcuts.editClipboardImage,
+			action: () => {
+				setQuickActionOpen(false);
+				void editClipboardImage();
+			},
+		},
+		{
+			id: 'toggleBionifyReadingMode',
+			label: bionifyReadingMode ? 'Turn Off Bionify Emphasis' : 'Turn On Bionify Emphasis',
+			subtext: `Bionify emphasis: ${bionifyReadingMode ? 'enabled' : 'disabled'}`,
+			action: () => {
+				const newState = !bionifyReadingMode;
+				setBionifyReadingMode(newState);
+				flash(setSuccessFlashNotification, newState ? 'Bionify: ON' : 'Bionify: OFF');
+				setQuickActionOpen(false);
+			},
+		},
+		{
+			id: 'toggleCustomNotification',
+			label: audioFeedbackEnabled
+				? 'Turn Off Custom Notifications'
+				: 'Turn On Custom Notifications',
+			subtext: `Custom notifications: ${audioFeedbackEnabled ? 'enabled' : 'disabled'}`,
+			action: () => {
+				const newState = !audioFeedbackEnabled;
+				setAudioFeedbackEnabled(newState);
+				flash(
+					setSuccessFlashNotification,
+					newState ? 'Custom Notifications: ON' : 'Custom Notifications: OFF'
+				);
+				setQuickActionOpen(false);
+			},
+		},
+		{
+			id: 'toggleIdleNotification',
+			label: idleNotificationEnabled ? 'Turn Off Idle Notifications' : 'Turn On Idle Notifications',
+			subtext: `Idle notifications: ${idleNotificationEnabled ? 'enabled' : 'disabled'}`,
+			action: () => {
+				const newState = !idleNotificationEnabled;
+				setIdleNotificationEnabled(newState);
+				flash(
+					setSuccessFlashNotification,
+					newState ? 'Idle Notifications: ON' : 'Idle Notifications: OFF'
+				);
+				setQuickActionOpen(false);
+			},
+		},
+	];
+
+	if (onOpenQueueBrowser) {
+		commands.push({
+			id: 'executionQueue',
+			label: 'View Execution Queue',
+			subtext: 'Browse and manage queued prompts across agents',
+			action: () => {
+				onOpenQueueBrowser();
+				setQuickActionOpen(false);
+			},
+		});
+	}
+
+	if (setUsageDashboardOpen) {
+		commands.push({
+			id: 'usageDashboard',
+			label: 'Usage Dashboard',
+			shortcut: shortcuts.usageDashboard,
+			action: () => {
+				setUsageDashboardOpen(true);
+				setQuickActionOpen(false);
+			},
+		});
+	}
+
+	if (activeSession && hasActiveSessionCapability?.('supportsSessionStorage')) {
+		commands.push({
+			id: 'agentSessions',
+			label: `View Agent Sessions for ${activeSession.name}`,
+			shortcut: shortcuts.agentSessions,
+			action: () => {
+				setActiveAgentSessionId(null);
+				setAgentSessionsOpen(true);
+				setQuickActionOpen(false);
+			},
+		});
+	}
+
+	if (
+		activeSession &&
+		setMemoryViewerOpen &&
+		hasActiveSessionCapability?.('supportsProjectMemory')
+	) {
+		commands.push({
+			id: 'openMemoryViewer',
+			label: `View Agent Memories for ${activeSession.name}`,
+			shortcut: shortcuts.openMemoryViewer,
+			action: () => {
+				setMemoryViewerOpen(true);
+				setQuickActionOpen(false);
+			},
+		});
+	}
+
+	if (isAiMode && canSummarizeActiveTab && onSummarizeAndContinue) {
+		commands.push({
+			id: 'summarizeAndContinue',
+			label: 'Context: Compact',
+			shortcut: tabShortcuts?.summarizeAndContinue,
+			subtext: 'Compact context into a fresh tab',
+			action: () => {
+				onSummarizeAndContinue();
+				setQuickActionOpen(false);
+			},
+		});
+	}
+
+	if (activeSession && hasActiveSessionCapability?.('supportsContextMerge') && onOpenMergeSession) {
+		commands.push({
+			id: 'mergeSession',
+			label: 'Context: Merge Into',
+			shortcut: shortcuts.mergeSession,
+			subtext: 'Merge current context into another session',
+			action: () => {
+				onOpenMergeSession();
+				setQuickActionOpen(false);
+			},
+		});
+	}
+
+	if (activeSession && hasActiveSessionCapability?.('supportsContextMerge') && onOpenSendToAgent) {
+		commands.push({
+			id: 'sendToAgent',
+			label: 'Context: Send to Agent',
+			shortcut: shortcuts.sendToAgent,
+			subtext: 'Transfer context to a different AI agent',
+			action: () => {
+				onOpenSendToAgent();
+				setQuickActionOpen(false);
+			},
+		});
+	}
+
+	if (onOpenPlaybookExchange) {
+		commands.push({
+			id: 'openPlaybookExchange',
+			label: 'Playbook Exchange',
+			subtext: 'Browse and import community playbooks',
+			action: () => {
+				onOpenPlaybookExchange();
+				setQuickActionOpen(false);
+			},
+		});
+	}
+
+	if (onOpenSymphony) {
+		commands.push({
+			id: 'openSymphony',
+			label: 'Maestro Symphony',
+			shortcut: shortcuts.openSymphony,
+			subtext: 'Contribute to open source projects',
+			action: () => {
+				onOpenSymphony();
+				setQuickActionOpen(false);
+			},
+		});
+	}
+
+	if (onOpenDirectorNotes) {
+		commands.push({
+			id: 'directorNotes',
+			label: "Director's Notes",
+			shortcut: shortcuts.directorNotes,
+			subtext: 'View unified history and AI synopsis across all sessions',
+			action: () => {
+				onOpenDirectorNotes();
+				setQuickActionOpen(false);
+			},
+		});
+	}
+
+	if (onOpenMaestroCue) {
+		commands.push({
+			id: 'maestro-cue',
+			label: 'Maestro Cue',
+			shortcut: shortcuts.maestroCue,
+			subtext: 'Event-driven automation dashboard',
+			action: () => {
+				onOpenMaestroCue();
+				setQuickActionOpen(false);
+			},
+		});
+	}
+
+	if (onConfigureCue && activeSession) {
+		commands.push({
+			id: 'configure-cue',
+			label: `Configure Maestro Cue: ${activeSession.name}`,
+			subtext: 'Open YAML editor for event-driven automation',
+			action: () => {
+				onConfigureCue(activeSession);
+				setQuickActionOpen(false);
+			},
+		});
+	}
+
+	if (lastGraphFocusFile && onOpenLastDocumentGraph) {
+		commands.push({
+			id: 'lastDocumentGraph',
+			label: 'Open Last Document Graph',
+			subtext: `Re-open: ${lastGraphFocusFile}`,
+			action: () => {
+				onOpenLastDocumentGraph();
+				setQuickActionOpen(false);
+			},
+		});
+	}
+
+	if (setFuzzyFileSearchOpen) {
+		commands.push({
+			id: 'fuzzyFileSearch',
+			label: 'Fuzzy File Search',
+			shortcut: shortcuts.fuzzyFileSearch,
+			action: () => {
+				setFuzzyFileSearchOpen(true);
+				setQuickActionOpen(false);
+			},
+		});
+	}
+
+	if (isFilePreviewOpen && ghCliAvailable && onPublishGist && !markdownEditMode) {
+		commands.push({
+			id: 'publishGist',
+			label: 'Publish Document as GitHub Gist',
+			subtext: 'Share current file as a public or secret gist',
+			action: () => {
+				onPublishGist();
+				setQuickActionOpen(false);
+			},
+		});
+	}
+
+	return commands;
+}

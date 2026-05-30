@@ -1,6 +1,8 @@
 // Human-readable output formatter for CLI
 // Provides beautiful, colored terminal output
 
+import { formatDurationDecimal } from '../../shared/formatters';
+
 // ANSI color codes
 const colors = {
 	reset: '\x1b[0m',
@@ -469,18 +471,7 @@ function formatTokens(count: number): string {
 	return count.toString();
 }
 
-/**
- * Format duration for CLI display (decimal format with ms/s/m/h suffixes).
- * Note: This differs from shared/formatters.ts formatElapsedTime which
- * shows combined units like "5m 12s". This version uses single decimals
- * like "5.2m" for compact CLI output.
- */
-function formatDuration(ms: number): string {
-	if (ms < 1000) return `${ms}ms`;
-	if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
-	if (ms < 3600_000) return `${(ms / 60_000).toFixed(1)}m`;
-	return `${(ms / 3600_000).toFixed(1)}h`;
-}
+const formatDuration = formatDurationDecimal;
 
 export function formatAgentDetail(agent: AgentDetailDisplay): string {
 	const lines: string[] = [];
@@ -717,6 +708,128 @@ export function formatSettingDetail(setting: SettingDisplay): string {
 		lines.push('');
 		lines.push(`  ${dim(setting.description)}`);
 	}
+	return lines.join('\n');
+}
+
+// SSH Remote formatting
+export interface SshRemoteDisplay {
+	id: string;
+	name: string;
+	host: string;
+	port: number;
+	username: string;
+	enabled: boolean;
+	useSshConfig?: boolean;
+	isDefault?: boolean;
+}
+
+export function formatSshRemotes(remotes: SshRemoteDisplay[]): string {
+	if (remotes.length === 0) {
+		return dim('No SSH remotes configured.');
+	}
+
+	const lines: string[] = [];
+	lines.push(bold(c('cyan', 'SSH REMOTES')) + dim(` (${remotes.length})`));
+	lines.push('');
+
+	for (const remote of remotes) {
+		const name = c('white', remote.name);
+		const status = remote.enabled ? c('green', 'enabled') : c('red', 'disabled');
+		const defaultTag = remote.isDefault ? c('yellow', ' [default]') : '';
+		const sshConfig = remote.useSshConfig ? c('blue', ' [ssh-config]') : '';
+		const hostInfo = remote.username ? `${remote.username}@${remote.host}` : remote.host;
+		const portInfo = remote.port !== 22 ? `:${remote.port}` : '';
+		const id = dim(remote.id);
+
+		lines.push(`  ${name} ${status}${defaultTag}${sshConfig}`);
+		lines.push(`      ${dim(hostInfo + portInfo)}`);
+		lines.push(`      ${id}`);
+	}
+
+	return lines.join('\n');
+}
+
+// Director's Notes History formatting
+export interface DirectorNotesHistoryDisplay {
+	stats: {
+		agentCount: number;
+		autoCount: number;
+		userCount: number;
+		cueCount: number;
+		totalCount: number;
+		lookbackDays: number;
+	};
+	total: number;
+	showing: number;
+	entries: Array<{
+		id: string;
+		type: string;
+		timestamp: number;
+		summary: string;
+		agentName?: string;
+		sourceSessionId: string;
+		success?: boolean;
+		elapsedTimeMs?: number;
+		usageStats?: { totalCostUsd?: number };
+	}>;
+}
+
+export function formatDirectorNotesHistory(
+	data: DirectorNotesHistoryDisplay,
+	lookbackDays: number
+): string {
+	const lines: string[] = [];
+
+	// Header
+	const period =
+		lookbackDays > 0 ? `last ${lookbackDays} day${lookbackDays !== 1 ? 's' : ''}` : 'all time';
+	lines.push(bold(c('cyan', "DIRECTOR'S NOTES — HISTORY")) + dim(` (${period})`));
+	lines.push('');
+
+	// Stats
+	const { stats } = data;
+	lines.push(
+		`  ${c('white', 'Agents:')}   ${stats.agentCount}    ${c('white', 'Entries:')} ${stats.totalCount} ${dim(`(${stats.autoCount} auto, ${stats.userCount} user, ${stats.cueCount} cue)`)}`
+	);
+	lines.push(`  ${c('white', 'Showing:')}  ${data.showing} of ${data.total}`);
+	lines.push('');
+
+	if (data.entries.length === 0) {
+		lines.push(dim('  No entries found for the specified period.'));
+		return lines.join('\n');
+	}
+
+	for (const entry of data.entries) {
+		const date = new Date(entry.timestamp);
+		const dateStr = date.toLocaleDateString();
+		const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+		const icon =
+			entry.success === true
+				? c('green', '✓')
+				: entry.success === false
+					? c('red', '✗')
+					: c('gray', '•');
+		const typeLabel =
+			entry.type === 'AUTO'
+				? c('blue', '[AUTO]')
+				: entry.type === 'CUE'
+					? c('magenta', '[CUE]')
+					: c('yellow', '[USER]');
+		const agent = entry.agentName
+			? c('white', truncate(entry.agentName, 20))
+			: dim(entry.sourceSessionId.slice(0, 8));
+		const summary = truncate(entry.summary || '', 50);
+		const costStr =
+			entry.usageStats?.totalCostUsd !== undefined
+				? dim(` $${entry.usageStats.totalCostUsd.toFixed(4)}`)
+				: '';
+		const timeElapsed = entry.elapsedTimeMs ? dim(` ${formatDuration(entry.elapsedTimeMs)}`) : '';
+
+		lines.push(
+			`  ${icon} ${dim(`${dateStr} ${timeStr}`)} ${typeLabel} ${agent}  ${summary}${costStr}${timeElapsed}`
+		);
+	}
+
 	return lines.join('\n');
 }
 

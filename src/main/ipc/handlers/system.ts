@@ -28,17 +28,11 @@ import { setAllowPrerelease } from '../../auto-updater';
 import { WebServer } from '../../web-server';
 import { powerManager } from '../../power-manager';
 import { MaestroSettings } from './persistence';
+import { captureException } from '../../utils/sentry';
+import type { BootstrapSettings } from '../../stores/types';
 
 // Type for tunnel manager instance
 type TunnelManagerType = typeof tunnelManagerInstance;
-
-/**
- * Interface for bootstrap settings (custom storage location)
- */
-interface BootstrapSettings {
-	customSyncPath?: string;
-	iCloudSyncEnabled?: boolean; // Legacy - kept for backwards compatibility
-}
 
 /**
  * Dependencies required for system handlers
@@ -80,6 +74,7 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 
 			return result.filePaths[0];
 		} catch (error) {
+			void captureException(error);
 			// Log the error but return null to ensure IPC reply is sent
 			logger.error('dialog:selectFolder failed', 'Dialog', { error });
 			return null;
@@ -147,7 +142,8 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 				'JetBrains Mono',
 			];
 		} catch (error) {
-			console.error('Font detection error:', error);
+			void captureException(error);
+			logger.error('Font detection error:', undefined, error);
 			// Return common monospace fonts as fallback
 			return [
 				'Monaco',
@@ -177,6 +173,7 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 			);
 			return shells;
 		} catch (error) {
+			void captureException(error);
 			logger.error('Shell detection error', 'ShellDetector', error);
 			// Return default shell list with all marked as unavailable
 			return [
@@ -322,6 +319,14 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 		clipboard.writeImage(img);
 	});
 
+	// Read image from system clipboard. Returns a PNG data URL, or null when
+	// the clipboard does not currently hold an image.
+	ipcMain.handle('clipboard:readImage', async (): Promise<string | null> => {
+		const img = clipboard.readImage();
+		if (img.isEmpty()) return null;
+		return img.toDataURL();
+	});
+
 	// ============ Tunnel Handlers (Cloudflare) ============
 
 	ipcMain.handle('tunnel:isCloudflaredInstalled', async () => {
@@ -359,7 +364,25 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 	});
 
 	ipcMain.handle('tunnel:getStatus', async () => {
-		return tunnelManager.getStatus();
+		const status = tunnelManager.getStatus();
+		if (!status.isRunning || !status.url) return status;
+
+		// Append the web server's token path so the URL stays usable.
+		// tunnelManager itself is token-agnostic — composition happens here,
+		// matching tunnel:start above.
+		const webServer = getWebServer();
+		const serverUrl = webServer?.getSecureUrl();
+		if (!serverUrl) return status;
+
+		try {
+			const tokenPath = new URL(serverUrl).pathname;
+			if (tokenPath && tokenPath !== '/' && !status.url.endsWith(tokenPath)) {
+				return { ...status, url: status.url + tokenPath };
+			}
+		} catch {
+			// Malformed server URL — fall back to bare tunnel URL
+		}
+		return status;
 	});
 
 	// ============ DevTools Handlers ============
@@ -670,13 +693,37 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 }
 
 /**
+ * How long to coalesce log entries before forwarding them to the renderer.
+ * Each `webContents.send` carries fixed serialization overhead, so buffering
+ * burst output (debug mode, noisy components) materially reduces IPC pressure.
+ */
+const LOGGER_FORWARD_FLUSH_INTERVAL_MS = 50;
+/** Hard cap on buffered entries — flush early if we exceed this size. */
+const LOGGER_FORWARD_FLUSH_SIZE = 100;
+
+/**
  * Setup logger event forwarding to renderer.
  * This should be called after the main window is created.
+ *
+ * Entries are buffered and dispatched in batches via `logger:newLogBatch`
+ * to amortize IPC serialization overhead. The preload layer fans batches
+ * out to per-entry consumers so the public API stays single-entry.
  */
 export function setupLoggerEventForwarding(getMainWindow: () => BrowserWindow | null): void {
-	logger.on('newLog', (entry) => {
+	let buffer: unknown[] = [];
+	let flushTimer: ReturnType<typeof setTimeout> | null = null;
+
+	const flush = () => {
+		if (flushTimer) {
+			clearTimeout(flushTimer);
+			flushTimer = null;
+		}
+		if (buffer.length === 0) return;
+
+		const batch = buffer;
+		buffer = [];
+
 		const mainWindow = getMainWindow();
-		// Safely send - handle cases where renderer is disposed (GPU crash, window closing)
 		try {
 			if (
 				mainWindow &&
@@ -684,10 +731,23 @@ export function setupLoggerEventForwarding(getMainWindow: () => BrowserWindow | 
 				mainWindow.webContents &&
 				!mainWindow.webContents.isDestroyed()
 			) {
-				mainWindow.webContents.send('logger:newLog', entry);
+				mainWindow.webContents.send('logger:newLogBatch', batch);
 			}
 		} catch {
 			// Silently ignore - renderer not available
+		}
+	};
+
+	logger.on('newLog', (entry) => {
+		buffer.push(entry);
+
+		if (buffer.length >= LOGGER_FORWARD_FLUSH_SIZE) {
+			flush();
+			return;
+		}
+
+		if (!flushTimer) {
+			flushTimer = setTimeout(flush, LOGGER_FORWARD_FLUSH_INTERVAL_MS);
 		}
 	});
 }

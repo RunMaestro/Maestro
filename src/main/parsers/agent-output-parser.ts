@@ -38,7 +38,7 @@ export type { AgentError, AgentErrorType } from '../../shared/types';
  * @param id - The string to check
  * @returns True if the string is a valid ToolType
  */
-export function isValidToolType(id: string): id is ToolType {
+function isValidToolType(id: string): id is ToolType {
 	return isValidAgentId(id);
 }
 
@@ -75,6 +75,11 @@ export interface ParsedEvent {
 	toolName?: string;
 
 	/**
+	 * Tool call identifier (for agents that provide stable tool call IDs)
+	 */
+	toolCallId?: string;
+
+	/**
 	 * Tool execution state (for 'tool_use' type)
 	 * Format varies by agent, preserved for UI rendering
 	 */
@@ -109,6 +114,14 @@ export interface ParsedEvent {
 	 * If true, more content may follow for this message
 	 */
 	isPartial?: boolean;
+
+	/**
+	 * Is this reasoning/thinking content?
+	 * If true, this is internal agent reasoning that should not be included
+	 * in the final response text (streamedText). Used by agents like Copilot
+	 * where reasoning and answer deltas share the same event type.
+	 */
+	isReasoning?: boolean;
 
 	/**
 	 * Tool use blocks extracted from the message (for agents with mixed content)

@@ -99,6 +99,9 @@ export type {
 	UseMergeTransferHandlersReturn,
 } from './useMergeTransferHandlers';
 
+// Fork conversation (create new session from conversation history)
+export { useForkConversation } from './useForkConversation';
+
 // Agent IPC listeners (process event routing)
 export { useAgentListeners, getErrorTitleForType } from './useAgentListeners';
 export type { UseAgentListenersDeps } from './useAgentListeners';
@@ -121,3 +124,7 @@ export type {
 	UseAgentConfigurationOptions,
 	UseAgentConfigurationReturn,
 } from './useAgentConfiguration';
+
+// Remote path validation (debounced SSH path checks)
+export { useRemotePathValidation } from './useRemotePathValidation';
+export type { UseRemotePathValidationOptions } from './useRemotePathValidation';

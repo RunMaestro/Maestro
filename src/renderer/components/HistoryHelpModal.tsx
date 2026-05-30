@@ -10,10 +10,15 @@ import {
 	User,
 	Eye,
 	Layers,
+	Zap,
+	ExternalLink,
 } from 'lucide-react';
 import type { Theme } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Modal } from './ui/Modal';
+import { useSettingsStore } from '../stores/settingsStore';
+import { openUrl } from '../utils/openUrl';
+import { buildMaestroUrl } from '../utils/buildMaestroUrl';
 
 interface HistoryHelpModalProps {
 	theme: Theme;
@@ -24,6 +29,8 @@ export const HistoryHelpModal = memo(function HistoryHelpModal({
 	theme,
 	onClose,
 }: HistoryHelpModalProps) {
+	const maestroCueEnabled = useSettingsStore((s) => s.encoreFeatures.maestroCue);
+
 	return (
 		<Modal
 			theme={theme}
@@ -108,6 +115,26 @@ export const HistoryHelpModal = memo(function HistoryHelpModal({
 								include success/failure indicators and human validation status.
 							</p>
 						</div>
+						{maestroCueEnabled && (
+							<div className="flex items-start gap-3">
+								<span
+									className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase shrink-0"
+									style={{
+										backgroundColor: '#06b6d420',
+										color: '#06b6d4',
+										border: '1px solid #06b6d440',
+									}}
+								>
+									<Zap className="w-2.5 h-2.5" />
+									CUE
+								</span>
+								<p>
+									Entries created by Maestro Cue automations. These are triggered by events such as
+									file changes, time intervals, agent completions, GitHub activity, or pending
+									tasks. Each entry records the trigger name and event type.
+								</p>
+							</div>
+						)}
 					</div>
 				</section>
 
@@ -235,7 +262,7 @@ export const HistoryHelpModal = memo(function HistoryHelpModal({
 					<div className="text-sm space-y-2 pl-7" style={{ color: theme.colors.textDim }}>
 						<p>
 							The bar graph in the header visualizes your activity over a configurable time period.
-							Changing the lookback period filters both the graph and the entry list below it—only
+							Changing the lookback period filters both the graph and the entry list below it - only
 							entries within the selected window are shown.
 						</p>
 						<p className="mt-2">
@@ -295,7 +322,7 @@ export const HistoryHelpModal = memo(function HistoryHelpModal({
 						</p>
 						<p>
 							Each session's history is stored as a JSON file that agents can read to understand
-							completed tasks, decisions made, and work patterns—even from other tabs.
+							completed tasks, decisions made, and work patterns - even from other tabs.
 						</p>
 						<p>
 							<strong style={{ color: theme.colors.warning }}>Note:</strong> Cross-session memory is
@@ -304,6 +331,21 @@ export const HistoryHelpModal = memo(function HistoryHelpModal({
 						</p>
 					</div>
 				</section>
+
+				{/* Read more link */}
+				<div
+					className="mt-4 pt-3 border-t flex items-center gap-1.5"
+					style={{ borderColor: theme.colors.border }}
+				>
+					<ExternalLink className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+					<button
+						onClick={() => openUrl(buildMaestroUrl('https://docs.runmaestro.ai/history'))}
+						className="text-xs hover:opacity-80 transition-colors"
+						style={{ color: theme.colors.accent }}
+					>
+						Read more at docs.runmaestro.ai/history
+					</button>
+				</div>
 			</div>
 		</Modal>
 	);

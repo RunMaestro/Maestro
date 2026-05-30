@@ -4,7 +4,7 @@ description: Track all agent activity with searchable, filterable history includ
 icon: clock
 ---
 
-The History panel provides a timestamped log of all agent activity — both automated (Auto Run) and manual (user interactions). Use it to review past work, resume sessions, and validate completed tasks.
+The History panel provides a timestamped log of all agent activity - both automated (Auto Run) and manual (user interactions). Use it to review past work, resume sessions, and validate completed tasks.
 
 ![History Panel](./screenshots/history-1.png)
 
@@ -30,11 +30,11 @@ Auto entries are created automatically when Auto Run completes a task. Each entr
 
 User entries are created in three ways:
 
-1. **History Toggle** — Enable the **History** pill in the AI input box. Every prompt-response cycle automatically creates a user history entry.
+1. **History Toggle** - Enable the **History** pill in the AI input box. Every prompt-response cycle automatically creates a user history entry.
 
-2. **`/history` Command** — Run `/history` to create a synopsis entry covering all activity since the last time you ran the command. This is useful for periodic summaries without logging every single interaction.
+2. **`/history` Command** - Run `/history` to create a synopsis entry covering all activity since the last time you ran the command. This is useful for periodic summaries without logging every single interaction.
 
-3. **`/clear` Command** — Running `/clear` automatically creates a history entry before clearing the conversation, preserving a synopsis of your work.
+3. **`/clear` Command** - Running `/clear` automatically creates a history entry before clearing the conversation, preserving a synopsis of your work.
 
 **Toggle the default History behavior** in Settings → General → "Enable 'History' by default for new tabs".
 
@@ -69,7 +69,7 @@ The **Graph View** at the top shows activity distribution over time. **Right-cli
 - 1 year
 - All time
 
-The graph bars are clickable — click a time period to jump to entries from that window. Hover over any bar to see the exact count and time range.
+The graph bars are clickable - click a time period to jump to entries from that window. Hover over any bar to see the exact count and time range.
 
 ## Entry Details
 
@@ -80,11 +80,11 @@ Click any history entry to open the **Detail View**:
 The detail view shows:
 
 - **Full entry header** with type badge, session ID, timestamp, and validation status
-- **Context usage** — tokens consumed and context window percentage
-- **Token breakdown** — input tokens, output tokens
+- **Context usage** - tokens consumed and context window percentage
+- **Token breakdown** - input tokens, output tokens
 - **Duration** and **cost**
 - **Full summary text** of what was accomplished
-- **RESUME button** — Jump directly to the AI session to continue from where Maestro left off
+- **RESUME button** - Jump directly to the AI session to continue from where Maestro left off
 
 ### Navigation
 
@@ -125,7 +125,7 @@ Every history entry with a Session ID has a **RESUME** button. Clicking it:
 2. Loads the exact session where the work was done
 3. Positions you to continue the conversation
 
-This is especially powerful for Auto Run tasks — you can pick up exactly where the agent left off, with full conversation context preserved.
+This is especially powerful for Auto Run tasks - you can pick up exactly where the agent left off, with full conversation context preserved.
 
 ## Keyboard Navigation
 
@@ -145,6 +145,17 @@ This is especially powerful for Auto Run tasks — you can pick up exactly where
 | `←` / `→` | Navigate to previous/next entry   |
 | `Esc`     | Close detail view, return to list |
 
+## Cross-Host Shared History
+
+When working with [SSH Remote Execution](/ssh-remote-execution), history entries can be synchronized across machines. Remote entries appear with a **☁ Remote** pill and a hostname badge showing their origin.
+
+This enables:
+
+- **Same user, multiple machines** - see your work from any machine you use
+- **Team collaboration** - see what teammates have done on a shared project
+
+Enable this per-session via the **Sync history to remote** toggle in the SSH Remote Execution dropdown. See [Collaborating over SSH](/ssh-remote-execution#collaborating-over-ssh) for full details.
+
 ## Storage
 
 History is stored per-session in JSON files within the `history/` subdirectory of your Maestro data folder:
@@ -153,7 +164,7 @@ History is stored per-session in JSON files within the `history/` subdirectory o
 - **Windows**: `%APPDATA%/maestro/history/<sessionId>.json`
 - **Linux**: `~/.config/maestro/history/<sessionId>.json`
 
-Each session maintains up to **5,000 entries**. History files can be passed to AI agents as context for understanding past work patterns.
+The maximum number of entries per session is controlled by the **Maximum Log Buffer** setting in Settings → Display (default: 5,000). History files can be passed to AI agents as context for understanding past work patterns.
 
 ## Help Panel
 

@@ -1,8 +1,20 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { X, MessageSquare, Command, Trash2, Clock, Folder, FolderOpen } from 'lucide-react';
-import { useLayerStack } from '../contexts/LayerStackContext';
+import {
+	X,
+	MessageSquare,
+	Command,
+	Trash2,
+	Clock,
+	Folder,
+	FolderOpen,
+	Copy,
+	Check,
+} from 'lucide-react';
+import { useModalLayer } from '../hooks/ui/useModalLayer';
+import { useEventListener } from '../hooks/utils/useEventListener';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import type { Session, Theme, QueuedItem } from '../types';
+import { safeClipboardWrite } from '../utils/clipboard';
 
 interface ExecutionQueueBrowserProps {
 	isOpen: boolean;
@@ -11,7 +23,7 @@ interface ExecutionQueueBrowserProps {
 	activeSessionId: string | null;
 	theme: Theme;
 	onRemoveItem: (sessionId: string, itemId: string) => void;
-	onSwitchSession: (sessionId: string) => void;
+	onSwitchSession: (sessionId: string, tabId?: string) => void;
 	onReorderItems?: (sessionId: string, fromIndex: number, toIndex: number) => void;
 }
 
@@ -43,9 +55,30 @@ export function ExecutionQueueBrowser({
 	const [viewMode, setViewMode] = useState<'current' | 'global'>('current');
 	const [dragState, setDragState] = useState<DragState | null>(null);
 	const [dropIndicator, setDropIndicator] = useState<DropIndicator | null>(null);
-	const { registerLayer, unregisterLayer } = useLayerStack();
 	const onCloseRef = useRef(onClose);
 	onCloseRef.current = onClose;
+
+	useModalLayer(
+		MODAL_PRIORITIES.EXECUTION_QUEUE_BROWSER || 50,
+		undefined,
+		() => onCloseRef.current(),
+		{ enabled: isOpen }
+	);
+
+	// Cmd/Ctrl+Shift+[ / ] cycles between the Current Agent / All Agents tabs
+	// (matches the app-wide prev/next-tab shortcut). Use e.code so it works
+	// regardless of the brace characters Shift produces on macOS.
+	useEventListener(
+		'keydown',
+		(e) => {
+			const ke = e as KeyboardEvent;
+			if (!(ke.metaKey || ke.ctrlKey) || !ke.shiftKey) return;
+			if (ke.code !== 'BracketLeft' && ke.code !== 'BracketRight') return;
+			ke.preventDefault();
+			setViewMode((prev) => (prev === 'current' ? 'global' : 'current'));
+		},
+		{ enabled: isOpen }
+	);
 
 	// Drag handlers
 	const handleDragStart = (sessionId: string, itemId: string, index: number) => {
@@ -79,21 +112,6 @@ export function ExecutionQueueBrowser({
 		setDragState(null);
 		setDropIndicator(null);
 	};
-
-	// Register with layer stack for proper escape handling
-	useEffect(() => {
-		if (isOpen) {
-			const id = registerLayer({
-				type: 'modal',
-				priority: MODAL_PRIORITIES.EXECUTION_QUEUE_BROWSER || 50,
-				blocksLowerLayers: true,
-				capturesFocus: true,
-				focusTrap: 'strict',
-				onEscape: () => onCloseRef.current(),
-			});
-			return () => unregisterLayer(id);
-		}
-	}, [isOpen, registerLayer, unregisterLayer]);
 
 	if (!isOpen) return null;
 
@@ -245,7 +263,7 @@ export function ExecutionQueueBrowser({
 												theme={theme}
 												onRemove={() => onRemoveItem(session.id, item.id)}
 												onSwitchToSession={() => {
-													onSwitchSession(session.id);
+													onSwitchSession(session.id, item.tabId);
 													onClose();
 												}}
 												isDragging={dragState?.itemId === item.id}
@@ -340,7 +358,9 @@ function QueueItemRow({
 }: QueueItemRowProps) {
 	const [isPressed, setIsPressed] = useState(false);
 	const [isHovered, setIsHovered] = useState(false);
+	const [copied, setCopied] = useState(false);
 	const pressTimerRef = useRef<NodeJS.Timeout | null>(null);
+	const copyResetTimerRef = useRef<NodeJS.Timeout | null>(null);
 	const isDraggingRef = useRef(false);
 	const rowRef = useRef<HTMLDivElement>(null);
 
@@ -414,28 +434,26 @@ function QueueItemRow({
 			if (pressTimerRef.current) {
 				clearTimeout(pressTimerRef.current);
 			}
+			if (copyResetTimerRef.current) {
+				clearTimeout(copyResetTimerRef.current);
+			}
 		};
 	}, []);
 
-	// Handle escape key to cancel drag
-	useEffect(() => {
-		const handleKeyDown = (e: KeyboardEvent) => {
-			if (e.key === 'Escape' && isDragging) {
+	// Handle escape key + global mouseup to cancel/complete drag (only attached
+	// while a drag is in progress).
+	useEventListener(
+		'keydown',
+		(e) => {
+			if ((e as KeyboardEvent).key === 'Escape') {
 				onDragCancel?.();
 				isDraggingRef.current = false;
 				setIsPressed(false);
 			}
-		};
-
-		if (isDragging) {
-			window.addEventListener('keydown', handleKeyDown);
-			window.addEventListener('mouseup', handleMouseUp);
-			return () => {
-				window.removeEventListener('keydown', handleKeyDown);
-				window.removeEventListener('mouseup', handleMouseUp);
-			};
-		}
-	}, [isDragging, onDragCancel]);
+		},
+		{ enabled: !!isDragging }
+	);
+	useEventListener('mouseup', () => handleMouseUp(), { enabled: !!isDragging });
 
 	// Visual states
 	const showDragReady = canDrag && isHovered && !isDragging && !isAnyDragging;
@@ -594,18 +612,41 @@ function QueueItemRow({
 					)}
 				</div>
 
-				{/* Remove button */}
-				<button
-					onClick={(e) => {
-						e.stopPropagation();
-						onRemove();
-					}}
-					className="p-1.5 rounded opacity-0 group-hover:opacity-100 hover:bg-red-500/20 transition-all"
-					style={{ color: theme.colors.error }}
-					title="Remove from queue"
-				>
-					<Trash2 className="w-4 h-4" />
-				</button>
+				{/* Action buttons */}
+				<div className="flex flex-col items-center gap-1 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-all">
+					<button
+						onClick={(e) => {
+							e.stopPropagation();
+							onRemove();
+						}}
+						className="p-1.5 rounded hover:bg-red-500/20 transition-all"
+						style={{ color: theme.colors.error }}
+						title="Remove from queue"
+					>
+						<Trash2 className="w-4 h-4" />
+					</button>
+					<button
+						onClick={(e) => {
+							e.stopPropagation();
+							const text =
+								item.type === 'command'
+									? [item.command, item.commandArgs].filter(Boolean).join(' ')
+									: (item.text ?? '');
+							safeClipboardWrite(text).then((ok) => {
+								if (ok) {
+									setCopied(true);
+									if (copyResetTimerRef.current) clearTimeout(copyResetTimerRef.current);
+									copyResetTimerRef.current = setTimeout(() => setCopied(false), 1500);
+								}
+							});
+						}}
+						className="p-1.5 rounded hover:bg-black/20 transition-all"
+						style={{ color: copied ? theme.colors.success : theme.colors.textDim }}
+						title="Copy to clipboard"
+					>
+						{copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+					</button>
+				</div>
 			</div>
 
 			{/* Shimmer effect when grabbed */}

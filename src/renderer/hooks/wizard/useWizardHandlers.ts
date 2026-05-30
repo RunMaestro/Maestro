@@ -26,7 +26,7 @@ import type {
 	WizardMode,
 	SessionWizardState,
 } from '../../types';
-import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
+import { useSessionStore, selectActiveSession, selectSessionById } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useUIStore } from '../../stores/uiStore';
 import { getModalActions, useModalStore } from '../../stores/modalStore';
@@ -35,16 +35,38 @@ import { getActiveTab, createTab } from '../../utils/tabHelpers';
 import { generateId } from '../../utils/ids';
 import { getSlashCommandDescription } from '../../constants/app';
 import { validateNewSession } from '../../utils/sessionValidation';
-import { autorunSynopsisPrompt } from '../../../prompts';
 import { parseSynopsis } from '../../../shared/synopsis';
+
+let cachedAutorunSynopsisPrompt: string | null = null;
+let wizardHandlersPromptsLoaded = false;
+
+export async function loadWizardHandlersPrompts(force = false): Promise<void> {
+	if (wizardHandlersPromptsLoaded && !force) return;
+
+	const result = await window.maestro.prompts.get('autorun-synopsis');
+	if (!result.success) {
+		throw new Error(`Failed to load autorun-synopsis prompt: ${result.error}`);
+	}
+	cachedAutorunSynopsisPrompt = result.content!;
+	wizardHandlersPromptsLoaded = true;
+}
+
+function getAutorunSynopsisPrompt(): string {
+	if (!wizardHandlersPromptsLoaded || cachedAutorunSynopsisPrompt === null) {
+		return '';
+	}
+	return cachedAutorunSynopsisPrompt;
+}
 import { formatRelativeTime } from '../../../shared/formatters';
 import { gitService } from '../../services/git';
-import { AUTO_RUN_FOLDER_NAME } from '../../components/Wizard';
+import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
+import { isAdaptiveModeDefaultOn } from '../../../shared/agentConstants';
 import { DEFAULT_BATCH_PROMPT } from '../../components/BatchRunnerModal';
 import type { PreviousUIState, UseInlineWizardReturn } from '../batch/useInlineWizard';
 import type { WizardState } from '../../components/Wizard/WizardContext';
 import type { HistoryEntryInput } from '../agent/useAgentSessionManagement';
 import type { AgentSpawnResult } from '../agent/useAgentExecution';
+import { logger } from '../../utils/logger';
 
 // ============================================================================
 // Dependencies interface
@@ -118,6 +140,8 @@ export interface UseWizardHandlersReturn {
 	isWizardActiveForCurrentTab: boolean;
 	/** Converts wizard tab to normal session with context */
 	handleWizardComplete: () => void;
+	/** Converts wizard tab to normal session AND opens the Batch Runner for the generated docs */
+	handleWizardCompleteAndStartAutoRun: () => void;
 	/** Generates documents for active tab */
 	handleWizardLetsGo: () => void;
 	/** Toggles thinking display on wizard tab */
@@ -164,9 +188,9 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 		endWizard: endInlineWizard,
 		generateDocuments: generateInlineWizardDocuments,
 		sendMessage: sendInlineWizardMessage,
-		isWizardActive: inlineWizardActive,
-		wizardTabId: inlineWizardTabId,
 		getStateForTab: getInlineWizardStateForTab,
+		isWizardActiveForTab: isInlineWizardActiveForTab,
+		selectWizardTab: selectInlineWizardTab,
 	} = inlineWizardContext;
 
 	// --- Onboarding wizard context ---
@@ -176,11 +200,14 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 	// Slash command discovery effect
 	// ========================================================================
 	useEffect(() => {
-		const currentSession = useSessionStore
-			.getState()
-			.sessions.find((s) => s.id === activeSession?.id);
+		const currentSession = selectActiveSession(useSessionStore.getState());
 		if (!currentSession) return;
-		if (currentSession.toolType !== 'claude-code') return;
+		if (
+			currentSession.toolType !== 'claude-code' &&
+			currentSession.toolType !== 'opencode' &&
+			currentSession.toolType !== 'copilot-cli'
+		)
+			return;
 		if (currentSession.agentCommands && currentSession.agentCommands.length > 0) return;
 
 		const sessionId = currentSession.id;
@@ -188,8 +215,8 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 		let cancelled = false;
 
 		const mergeCommands = (
-			existing: { command: string; description: string }[],
-			newCmds: { command: string; description: string }[]
+			existing: { command: string; description: string; prompt?: string }[],
+			newCmds: { command: string; description: string; prompt?: string }[]
 		) => {
 			const merged = [...existing];
 			for (const cmd of newCmds) {
@@ -226,23 +253,30 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 				}
 			} catch (error) {
 				if (!cancelled) {
-					console.error('[SlashCommandDiscovery] Failed to fetch custom commands:', error);
+					logger.error(
+						'[SlashCommandDiscovery] Failed to fetch custom commands:',
+						undefined,
+						error
+					);
 				}
 			}
 		};
 
 		const discoverAgentCommands = async () => {
 			try {
-				const agentSlashCommands = await (window as any).maestro.agents.discoverSlashCommands(
+				const agentSlashCommands = await window.maestro.agents.discoverSlashCommands(
 					currentSession.toolType,
 					currentSession.cwd,
-					currentSession.customPath
+					currentSession.customPath,
+					currentSession.sshRemote?.id
 				);
 				if (cancelled) return;
 
-				const agentCommandObjects = ((agentSlashCommands || []) as string[]).map((cmd) => ({
-					command: cmd.startsWith('/') ? cmd : `/${cmd}`,
-					description: getSlashCommandDescription(cmd),
+				const agentCommandObjects = (agentSlashCommands ?? []).map((cmd) => ({
+					command: cmd.name.startsWith('/') ? cmd.name : `/${cmd.name}`,
+					description:
+						cmd.description ?? getSlashCommandDescription(cmd.name, currentSession.toolType),
+					prompt: cmd.prompt,
 				}));
 
 				if (agentCommandObjects.length > 0) {
@@ -259,12 +293,18 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 				}
 			} catch (error) {
 				if (!cancelled) {
-					console.error('[SlashCommandDiscovery] Failed to discover agent commands:', error);
+					logger.error(
+						'[SlashCommandDiscovery] Failed to discover agent commands:',
+						undefined,
+						error
+					);
 				}
 			}
 		};
 
-		fetchCustomCommands();
+		if (currentSession.toolType === 'claude-code') {
+			fetchCustomCommands();
+		}
 		discoverAgentCommands();
 
 		return () => {
@@ -325,6 +365,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 
 				const newWizardState: SessionWizardState = {
 					isActive: tabWizardState.isActive,
+					isInitializing: tabWizardState.isInitializing,
 					isWaiting: tabWizardState.isWaiting,
 					mode: (tabWizardState.mode === 'ask' ? 'new' : tabWizardState.mode) as WizardMode,
 					goal: tabWizardState.goal ?? undefined,
@@ -346,6 +387,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 					},
 					error: tabWizardState.error,
 					isGeneratingDocs: tabWizardState.isGeneratingDocs,
+					docGenerationStartedAt: tabWizardState.docGenerationStartedAt,
 					generatedDocuments: tabWizardState.generatedDocuments.map((doc) => ({
 						filename: doc.filename,
 						content: doc.content,
@@ -381,9 +423,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 	// ========================================================================
 	const sendWizardMessageWithThinking = useCallback(
 		async (content: string, images?: string[]) => {
-			const currentSession = useSessionStore
-				.getState()
-				.sessions.find((s) => s.id === activeSession?.id);
+			const currentSession = selectActiveSession(useSessionStore.getState());
 			if (!currentSession) return;
 
 			const activeTab = getActiveTab(currentSession);
@@ -413,74 +453,82 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 			const sessionId = currentSession.id;
 			const tabId = activeTab?.id;
 
-			await sendInlineWizardMessage(content, images, {
-				onThinkingChunk: (chunk) => {
-					if (!sessionId || !tabId) return;
+			// Pass the active tab id explicitly so the message lands on the wizard the user is
+			// looking at — useInlineWizard's currentTabId fallback can point at a stale tab when
+			// multiple wizards (e.g. council seats) are open concurrently.
+			await sendInlineWizardMessage(
+				content,
+				images,
+				{
+					onThinkingChunk: (chunk) => {
+						if (!sessionId || !tabId) return;
 
-					const trimmed = chunk.trim();
-					if (
-						trimmed.startsWith('{"') &&
-						(trimmed.includes('"confidence"') || trimmed.includes('"message"'))
-					) {
-						return;
-					}
+						const trimmed = chunk.trim();
+						if (
+							trimmed.startsWith('{"') &&
+							(trimmed.includes('"confidence"') || trimmed.includes('"message"'))
+						) {
+							return;
+						}
 
-					setSessions((prev) =>
-						prev.map((s) => {
-							if (s.id !== sessionId) return s;
-							const tab = s.aiTabs.find((t) => t.id === tabId);
+						setSessions((prev) =>
+							prev.map((s) => {
+								if (s.id !== sessionId) return s;
+								const tab = s.aiTabs.find((t) => t.id === tabId);
 
-							if (!tab?.wizardState?.showWizardThinking) {
-								return s;
-							}
+								if (!tab?.wizardState?.showWizardThinking) {
+									return s;
+								}
 
-							return {
-								...s,
-								aiTabs: s.aiTabs.map((t) => {
-									if (t.id !== tabId) return t;
-									if (!t.wizardState) return t;
-									return {
-										...t,
-										wizardState: {
-											...t.wizardState,
-											thinkingContent: (t.wizardState.thinkingContent || '') + chunk,
-										},
-									};
-								}),
-							};
-						})
-					);
+								return {
+									...s,
+									aiTabs: s.aiTabs.map((t) => {
+										if (t.id !== tabId) return t;
+										if (!t.wizardState) return t;
+										return {
+											...t,
+											wizardState: {
+												...t.wizardState,
+												thinkingContent: (t.wizardState.thinkingContent || '') + chunk,
+											},
+										};
+									}),
+								};
+							})
+						);
+					},
+					onToolExecution: (toolEvent) => {
+						if (!sessionId || !tabId) return;
+
+						setSessions((prev) =>
+							prev.map((s) => {
+								if (s.id !== sessionId) return s;
+								const tab = s.aiTabs.find((t) => t.id === tabId);
+
+								if (!tab?.wizardState?.showWizardThinking) {
+									return s;
+								}
+
+								return {
+									...s,
+									aiTabs: s.aiTabs.map((t) => {
+										if (t.id !== tabId) return t;
+										if (!t.wizardState) return t;
+										return {
+											...t,
+											wizardState: {
+												...t.wizardState,
+												toolExecutions: [...(t.wizardState.toolExecutions || []), toolEvent],
+											},
+										};
+									}),
+								};
+							})
+						);
+					},
 				},
-				onToolExecution: (toolEvent) => {
-					if (!sessionId || !tabId) return;
-
-					setSessions((prev) =>
-						prev.map((s) => {
-							if (s.id !== sessionId) return s;
-							const tab = s.aiTabs.find((t) => t.id === tabId);
-
-							if (!tab?.wizardState?.showWizardThinking) {
-								return s;
-							}
-
-							return {
-								...s,
-								aiTabs: s.aiTabs.map((t) => {
-									if (t.id !== tabId) return t;
-									if (!t.wizardState) return t;
-									return {
-										...t,
-										wizardState: {
-											...t.wizardState,
-											toolExecutions: [...(t.wizardState.toolExecutions || []), toolEvent],
-										},
-									};
-								}),
-							};
-						})
-					);
-				},
-			});
+				tabId
+			);
 		},
 		[activeSession?.id, sendInlineWizardMessage, setSessions]
 	);
@@ -489,11 +537,9 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 	// handleHistoryCommand — /history slash command
 	// ========================================================================
 	const handleHistoryCommand = useCallback(async () => {
-		const currentSession = useSessionStore
-			.getState()
-			.sessions.find((s) => s.id === activeSession?.id);
+		const currentSession = selectActiveSession(useSessionStore.getState());
 		if (!currentSession) {
-			console.warn('[handleHistoryCommand] No active session');
+			logger.warn('[handleHistoryCommand] No active session');
 			return;
 		}
 
@@ -524,9 +570,9 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 			let synopsisPrompt: string;
 			if (activeTab.lastSynopsisTime) {
 				const timeAgo = formatRelativeTime(activeTab.lastSynopsisTime);
-				synopsisPrompt = `${autorunSynopsisPrompt}\n\nIMPORTANT: Only synopsize work done since the last synopsis (${timeAgo}). Do not repeat previous work.`;
+				synopsisPrompt = `${getAutorunSynopsisPrompt()}\n\nIMPORTANT: Only synopsize work done since the last synopsis (${timeAgo}). Do not repeat previous work.`;
 			} else {
-				synopsisPrompt = autorunSynopsisPrompt;
+				synopsisPrompt = getAutorunSynopsisPrompt();
 			}
 			const synopsisTime = Date.now();
 
@@ -573,7 +619,15 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 				}
 
 				const currentGroups = useSessionStore.getState().groups;
-				const group = currentGroups.find((g) => g.id === currentSession.groupId);
+				// Worktree children inherit group from parent
+				const effectiveGroupId =
+					currentSession.groupId ||
+					(currentSession.parentSessionId
+						? selectSessionById(currentSession.parentSessionId)(useSessionStore.getState())?.groupId
+						: undefined);
+				const group = effectiveGroupId
+					? currentGroups.find((g) => g.id === effectiveGroupId)
+					: null;
 				const groupName = group?.name || 'Ungrouped';
 
 				const elapsedTimeMs = activeTab.lastSynopsisTime
@@ -589,6 +643,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 					projectPath: currentSession.cwd,
 					sessionName: activeTab.name || undefined,
 					usageStats: result.usageStats,
+					contextUsage: result.contextUsage,
 					elapsedTimeMs,
 				});
 
@@ -645,7 +700,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 				);
 			}
 		} catch (error) {
-			console.error('[handleHistoryCommand] Error:', error);
+			logger.error('[handleHistoryCommand] Error:', undefined, error);
 			setSessions((prev) =>
 				prev.map((s) => {
 					if (s.id !== currentSession.id) return s;
@@ -672,22 +727,20 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 	// handleSkillsCommand — /skills slash command
 	// ========================================================================
 	const handleSkillsCommand = useCallback(async () => {
-		const currentSession = useSessionStore
-			.getState()
-			.sessions.find((s) => s.id === activeSession?.id);
+		const currentSession = selectActiveSession(useSessionStore.getState());
 		if (!currentSession) {
-			console.warn('[handleSkillsCommand] No active session');
+			logger.warn('[handleSkillsCommand] No active session');
 			return;
 		}
 
 		if (currentSession.toolType !== 'claude-code') {
-			console.warn('[handleSkillsCommand] Skills command only available for Claude Code');
+			logger.warn('[handleSkillsCommand] Skills command only available for Claude Code');
 			return;
 		}
 
 		const activeTab = getActiveTab(currentSession);
 		if (!activeTab) {
-			console.warn('[handleSkillsCommand] No active tab');
+			logger.warn('[handleSkillsCommand] No active tab');
 			return;
 		}
 
@@ -707,7 +760,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 			let skillsMessage: string;
 			if (skills.length === 0) {
 				skillsMessage =
-					'## Skills\n\nNo Claude Code skills were found in this project.\n\nTo add skills, create `.claude/skills/<skill-name>/skill.md` files in your project.';
+					'## Skills\n\nNo Claude Code skills were found in this project.\n\nTo add skills, create `.claude/skills/<skill-name>/SKILL.md` files in your project.';
 			} else {
 				const formatTokenCount = (tokens: number): string => {
 					if (tokens >= 1000) {
@@ -762,7 +815,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 			};
 			addLogToTab(currentSession.id, skillsLog);
 		} catch (error) {
-			console.error('[handleSkillsCommand] Error:', error);
+			logger.error('[handleSkillsCommand] Error:', undefined, error);
 			const errorLog: LogEntry = {
 				id: generateId(),
 				timestamp: Date.now(),
@@ -778,17 +831,15 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 	// ========================================================================
 	const handleWizardCommand = useCallback(
 		(args: string) => {
-			const currentSession = useSessionStore
-				.getState()
-				.sessions.find((s) => s.id === activeSession?.id);
+			const currentSession = selectActiveSession(useSessionStore.getState());
 			if (!currentSession) {
-				console.warn('[handleWizardCommand] No active session');
+				logger.warn('[handleWizardCommand] No active session');
 				return;
 			}
 
 			const activeTab = getActiveTab(currentSession);
 			if (!activeTab) {
-				console.warn('[handleWizardCommand] No active tab');
+				logger.warn('[handleWizardCommand] No active tab');
 				return;
 			}
 
@@ -848,11 +899,9 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 	// handleLaunchWizardTab — launches wizard in a new tab
 	// ========================================================================
 	const handleLaunchWizardTab = useCallback(() => {
-		const currentSession = useSessionStore
-			.getState()
-			.sessions.find((s) => s.id === activeSession?.id);
+		const currentSession = selectActiveSession(useSessionStore.getState());
 		if (!currentSession) {
-			console.warn('[handleLaunchWizardTab] No active session');
+			logger.warn('[handleLaunchWizardTab] No active session');
 			return;
 		}
 
@@ -863,7 +912,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 			showThinking: currentDefaults.defaultShowThinking,
 		});
 		if (!result) {
-			console.warn('[handleLaunchWizardTab] Failed to create new tab');
+			logger.warn('[handleLaunchWizardTab] Failed to create new tab');
 			return;
 		}
 
@@ -921,88 +970,148 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 	// isWizardActiveForCurrentTab — derived value
 	// ========================================================================
 	const isWizardActiveForCurrentTab = useMemo(() => {
-		if (!activeSession || !inlineWizardActive) return false;
+		if (!activeSession) return false;
 		const activeTab = getActiveTab(activeSession);
-		return activeTab?.id === inlineWizardTabId;
-	}, [activeSession, activeSession?.activeTabId, inlineWizardActive, inlineWizardTabId]);
+		if (!activeTab) return false;
+		// Use the per-tab primitive instead of the hook's singleton currentTabId — the latter only
+		// tracks the last-touched wizard and is wrong when concurrent wizards run on multiple tabs.
+		return isInlineWizardActiveForTab(activeTab.id);
+	}, [activeSession, activeSession?.activeTabId, isInlineWizardActiveForTab]);
+
+	// Keep useInlineWizard's internal currentTabId pointed at whatever tab the user is currently on,
+	// so that sendMessage/setMode/setGoal/etc. (which fall back to currentTabId) route to the right
+	// wizard when multiple are active concurrently.
+	useEffect(() => {
+		if (!activeSession) return;
+		const activeTab = getActiveTab(activeSession);
+		if (!activeTab) return;
+		if (isInlineWizardActiveForTab(activeTab.id)) {
+			selectInlineWizardTab(activeTab.id);
+		}
+	}, [
+		activeSession,
+		activeSession?.activeTabId,
+		isInlineWizardActiveForTab,
+		selectInlineWizardTab,
+	]);
 
 	// ========================================================================
-	// handleWizardComplete — converts wizard tab to normal session
+	// completeWizardImpl — shared logic for wizard completion
+	// Converts the wizard tab to a normal session. When `startAutoRun` is true,
+	// also points the session's Auto Run folder at the freshly generated
+	// subfolder and opens the Batch Runner modal so the user can kick off the
+	// generated playbook in one click.
 	// ========================================================================
-	const handleWizardComplete = useCallback(() => {
-		const currentSession = useSessionStore
-			.getState()
-			.sessions.find((s) => s.id === activeSession?.id);
-		if (!currentSession) return;
-		const activeTabLocal = getActiveTab(currentSession);
-		const wizState = activeTabLocal?.wizardState;
-		if (!wizState) return;
+	const completeWizardImpl = useCallback(
+		(opts: { startAutoRun: boolean }) => {
+			const currentSession = selectActiveSession(useSessionStore.getState());
+			if (!currentSession) return;
+			const activeTabLocal = getActiveTab(currentSession);
+			const wizState = activeTabLocal?.wizardState;
+			if (!wizState) return;
 
-		const wizardLogEntries: LogEntry[] = wizState.conversationHistory.map((msg) => ({
-			id: `wizard-${msg.id}`,
-			timestamp: msg.timestamp,
-			source: msg.role === 'user' ? 'user' : 'ai',
-			text: msg.content,
-			images: msg.images,
-			delivered: true,
-		}));
+			const wizardLogEntries: LogEntry[] = wizState.conversationHistory.map((msg) => ({
+				id: `wizard-${msg.id}`,
+				timestamp: msg.timestamp,
+				source: msg.role === 'user' ? 'user' : 'ai',
+				text: msg.content,
+				images: msg.images,
+				delivered: true,
+			}));
 
-		const generatedDocs = wizState.generatedDocuments || [];
-		const totalTasks = generatedDocs.reduce((sum, doc) => sum + doc.taskCount, 0);
-		const docNames = generatedDocs.map((d) => d.filename).join(', ');
+			const generatedDocs = wizState.generatedDocuments || [];
+			const totalTasks = generatedDocs.reduce((sum, doc) => sum + doc.taskCount, 0);
+			const docNames = generatedDocs.map((d) => d.filename).join(', ');
 
-		const summaryMessage: LogEntry = {
-			id: `wizard-summary-${Date.now()}`,
-			timestamp: Date.now(),
-			source: 'ai',
-			text:
-				`## Wizard Complete\n\n` +
-				`Created ${generatedDocs.length} document${
-					generatedDocs.length !== 1 ? 's' : ''
-				} with ${totalTasks} task${totalTasks !== 1 ? 's' : ''}:\n` +
-				`${docNames}\n\n` +
-				`**Next steps:**\n` +
-				`1. Open the **Auto Run** tab in the right panel to view your playbook\n` +
-				`2. Review and edit tasks as needed\n` +
-				`3. Click **Run** to start executing tasks automatically\n\n` +
-				`You can continue chatting to iterate on your playbook - the AI has full context of what was created.`,
-			delivered: true,
-		};
+			const summaryMessage: LogEntry = {
+				id: `wizard-summary-${Date.now()}`,
+				timestamp: Date.now(),
+				source: 'ai',
+				text:
+					`## Wizard Complete\n\n` +
+					`Created ${generatedDocs.length} document${
+						generatedDocs.length !== 1 ? 's' : ''
+					} with ${totalTasks} task${totalTasks !== 1 ? 's' : ''}:\n` +
+					`${docNames}\n\n` +
+					`**Next steps:**\n` +
+					`1. Open the **Auto Run** tab in the right panel to view your playbook\n` +
+					`2. Review and edit tasks as needed\n` +
+					`3. Click **Run** to start executing tasks automatically\n\n` +
+					`You can continue chatting to iterate on your playbook - the AI has full context of what was created.`,
+				delivered: true,
+			};
 
-		const subfolderName = wizState.subfolderName || '';
-		const tabName = subfolderName || 'Wizard';
-		const wizardAgentSessionId = wizState.agentSessionId;
-		const activeTabId = activeTabLocal.id;
+			const subfolderName = wizState.subfolderName || '';
+			const tabName = subfolderName || 'Wizard';
+			const wizardAgentSessionId = wizState.agentSessionId;
+			const activeTabId = activeTabLocal.id;
 
-		setSessions((prev) =>
-			prev.map((s) => {
-				if (s.id !== currentSession.id) return s;
-				const updatedTabs = s.aiTabs.map((tab) => {
-					if (tab.id !== activeTabId) return tab;
+			// When starting Auto Run, point the session at the generated subfolder
+			// so the Batch Runner modal lists the freshly created docs.
+			const subfolderPath = wizState.subfolderPath;
+			const shouldPointAutoRun = opts.startAutoRun && !!subfolderPath;
+			const firstDocBase = generatedDocs[0]?.filename.replace(/\.md$/i, '');
+
+			setSessions((prev) =>
+				prev.map((s) => {
+					if (s.id !== currentSession.id) return s;
+					const updatedTabs = s.aiTabs.map((tab) => {
+						if (tab.id !== activeTabId) return tab;
+						return {
+							...tab,
+							logs: [...tab.logs, ...wizardLogEntries, summaryMessage],
+							agentSessionId: wizardAgentSessionId || tab.agentSessionId,
+							name: tabName,
+							wizardState: undefined,
+						};
+					});
 					return {
-						...tab,
-						logs: [...tab.logs, ...wizardLogEntries, summaryMessage],
-						agentSessionId: wizardAgentSessionId || tab.agentSessionId,
-						name: tabName,
-						wizardState: undefined,
+						...s,
+						aiTabs: updatedTabs,
+						...(shouldPointAutoRun
+							? {
+									autoRunFolderPath: subfolderPath!,
+									autoRunSelectedFile: firstDocBase,
+									autoRunContentVersion: (s.autoRunContentVersion || 0) + 1,
+								}
+							: {}),
 					};
-				});
-				return { ...s, aiTabs: updatedTabs };
-			})
-		);
+				})
+			);
 
-		endInlineWizard();
-		handleAutoRunRefreshRef.current?.();
-		setInputValueRef.current?.('');
-	}, [activeSession?.id, setSessions, endInlineWizard, handleAutoRunRefreshRef, setInputValueRef]);
+			endInlineWizard();
+			handleAutoRunRefreshRef.current?.();
+			setInputValueRef.current?.('');
+
+			if (opts.startAutoRun) {
+				// Pre-seed the Batch Runner with EVERY generated doc (filenames
+				// without `.md`) so the user doesn't have to add them by hand.
+				// Defer one tick so the session update commits before the modal
+				// reads activeSession.autoRunFolderPath.
+				const presetDocuments = generatedDocs.map((d) => d.filename.replace(/\.md$/i, ''));
+				setTimeout(() => {
+					getModalActions().openBatchRunnerWithPresets(presetDocuments);
+				}, 0);
+			}
+		},
+		[activeSession?.id, setSessions, endInlineWizard, handleAutoRunRefreshRef, setInputValueRef]
+	);
+
+	const handleWizardComplete = useCallback(
+		() => completeWizardImpl({ startAutoRun: false }),
+		[completeWizardImpl]
+	);
+
+	const handleWizardCompleteAndStartAutoRun = useCallback(
+		() => completeWizardImpl({ startAutoRun: true }),
+		[completeWizardImpl]
+	);
 
 	// ========================================================================
 	// handleWizardLetsGo — generates documents for active tab
 	// ========================================================================
 	const handleWizardLetsGo = useCallback(() => {
-		const currentSession = useSessionStore
-			.getState()
-			.sessions.find((s) => s.id === activeSession?.id);
+		const currentSession = selectActiveSession(useSessionStore.getState());
 		const activeTabLocal = currentSession ? getActiveTab(currentSession) : null;
 		if (activeTabLocal) {
 			generateInlineWizardDocuments(undefined, activeTabLocal.id);
@@ -1013,9 +1122,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 	// handleToggleWizardShowThinking
 	// ========================================================================
 	const handleToggleWizardShowThinking = useCallback(() => {
-		const currentSession = useSessionStore
-			.getState()
-			.sessions.find((s) => s.id === activeSession?.id);
+		const currentSession = selectActiveSession(useSessionStore.getState());
 		if (!currentSession) return;
 		const activeTabLocal = getActiveTab(currentSession);
 		if (!activeTabLocal?.wizardState) return;
@@ -1057,10 +1164,11 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 				customArgs,
 				customEnvVars,
 				sessionSshRemoteConfig,
+				autoRunMode,
 			} = wizardState;
 
 			if (!selectedAgent || !directoryPath) {
-				console.error('Wizard launch failed: missing agent or directory');
+				logger.error('Wizard launch failed: missing agent or directory');
 				throw new Error('Missing required wizard data');
 			}
 
@@ -1076,7 +1184,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 				currentSessions
 			);
 			if (!validation.valid) {
-				console.error(`Wizard session validation failed: ${validation.error}`);
+				logger.error(`Wizard session validation failed: ${validation.error}`);
 				notifyToast({
 					type: 'error',
 					title: 'Agent Creation Failed',
@@ -1120,7 +1228,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 				showThinking: currentDefaults.defaultShowThinking,
 			};
 
-			const autoRunFolderPath = `${directoryPath}/${AUTO_RUN_FOLDER_NAME}`;
+			const autoRunFolderPath = `${directoryPath}/${PLAYBOOKS_DIR}`;
 			const firstDoc = generatedDocuments[0];
 			const autoRunSelectedFile = firstDoc ? firstDoc.filename.replace(/\.md$/, '') : undefined;
 
@@ -1168,6 +1276,10 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 				closedTabHistory: [],
 				filePreviewTabs: [],
 				activeFileTabId: null,
+				browserTabs: [],
+				activeBrowserTabId: null,
+				terminalTabs: [],
+				activeTerminalTabId: null,
 				unifiedTabOrder: [{ type: 'ai' as const, id: initialTabId }],
 				unifiedClosedTabHistory: [],
 				autoRunFolderPath,
@@ -1176,6 +1288,11 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 				customArgs,
 				customEnvVars,
 				sessionSshRemoteConfig,
+				// New agents default Adaptive Mode on for Claude Code (the wizard has no
+				// toggle, so this is purely the default).
+				enableMaestroP: isAdaptiveModeDefaultOn(selectedAgent) || undefined,
+				claudeInteractive:
+					selectedAgent === 'claude-code' ? { mode: 'api', modeReason: 'auto' } : undefined,
 			};
 
 			setSessions((prev) => [...prev, newSession]);
@@ -1186,11 +1303,14 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 				projectPath: directoryPath,
 				createdAt: Date.now(),
 				isRemote: !!sessionSshRemoteConfig?.enabled,
+				isWorktree: false,
 			});
 
 			clearResumeState();
 			completeWizard(newId);
-			setActiveRightTab('autorun');
+			if (autoRunMode !== 'none') {
+				setActiveRightTab('autorun');
+			}
 
 			if (wantsTour) {
 				setTimeout(() => {
@@ -1202,25 +1322,25 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 			setActiveFocus('main');
 			setTimeout(() => inputRef.current?.focus(), 100);
 
-			const firstDocWithTasks = generatedDocuments.find((doc) => doc.taskCount > 0);
-			if (firstDocWithTasks && autoRunFolderPath) {
+			const docsWithTasks = generatedDocuments.filter((doc) => doc.taskCount > 0);
+			if (autoRunMode !== 'none' && docsWithTasks.length > 0 && autoRunFolderPath) {
+				const docsToRun = autoRunMode === 'all' ? docsWithTasks : [docsWithTasks[0]];
 				const batchConfig: BatchRunConfig = {
-					documents: [
-						{
-							id: generateId(),
-							filename: firstDocWithTasks.filename.replace(/\.md$/, ''),
-							resetOnCompletion: false,
-							isDuplicate: false,
-						},
-					],
+					documents: docsToRun.map((doc) => ({
+						id: generateId(),
+						filename: doc.filename.replace(/\.md$/, ''),
+						resetOnCompletion: false,
+						isDuplicate: false,
+					})),
 					prompt: DEFAULT_BATCH_PROMPT,
 					loopEnabled: false,
 				};
 
 				setTimeout(() => {
-					console.log(
-						'[Wizard] Auto-starting batch run with first document:',
-						firstDocWithTasks.filename
+					logger.info(
+						`[Wizard] Auto-starting batch run with ${docsToRun.length} document(s):`,
+						undefined,
+						docsToRun.map((d) => d.filename).join(', ')
 					);
 					startBatchRun(newId, batchConfig, autoRunFolderPath);
 				}, 500);
@@ -1315,6 +1435,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 		handleLaunchWizardTab,
 		isWizardActiveForCurrentTab,
 		handleWizardComplete,
+		handleWizardCompleteAndStartAutoRun,
 		handleWizardLetsGo,
 		handleToggleWizardShowThinking,
 		handleWizardLaunchSession,

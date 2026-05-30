@@ -8,6 +8,7 @@ import {
 	useMobileKeyboardHandler,
 	type MobileKeyboardSession,
 } from '../../../web/hooks/useMobileKeyboardHandler';
+import { WEB_DEFAULT_SHORTCUTS } from '../../../web/constants/webShortcuts';
 import type { AITabData } from '../../../web/hooks/useWebSocket';
 
 function createTabs(): AITabData[] {
@@ -51,17 +52,15 @@ describe('useMobileKeyboardHandler', () => {
 		vi.restoreAllMocks();
 	});
 
-	it('toggles input mode with Cmd+J', () => {
-		const handleModeToggle = vi.fn();
-		const handleSelectTab = vi.fn();
+	it('dispatches toggleMode on the configured shortcut (Cmd+J)', () => {
+		const toggleMode = vi.fn();
 		const activeSession: MobileKeyboardSession = { inputMode: 'ai' };
 
 		renderHook(() =>
 			useMobileKeyboardHandler({
-				activeSessionId: 'session-1',
+				shortcuts: WEB_DEFAULT_SHORTCUTS,
 				activeSession,
-				handleModeToggle,
-				handleSelectTab,
+				actions: { toggleMode },
 			})
 		);
 
@@ -71,64 +70,225 @@ describe('useMobileKeyboardHandler', () => {
 			document.dispatchEvent(event);
 		});
 
-		expect(handleModeToggle).toHaveBeenCalledTimes(1);
-		expect(handleModeToggle).toHaveBeenCalledWith('terminal');
+		expect(toggleMode).toHaveBeenCalledTimes(1);
 	});
 
-	it('cycles to previous and next tabs with Cmd+[ and Cmd+]', () => {
-		const handleModeToggle = vi.fn();
-		const handleSelectTab = vi.fn();
-		const tabs = createTabs();
+	it('dispatches prevTab/nextTab on Cmd+Shift+[ and Cmd+Shift+]', () => {
+		const prevTab = vi.fn();
+		const nextTab = vi.fn();
 		const activeSession: MobileKeyboardSession = {
 			inputMode: 'ai',
-			aiTabs: tabs,
+			aiTabs: createTabs(),
 			activeTabId: 'tab-2',
 		};
 
 		renderHook(() =>
 			useMobileKeyboardHandler({
-				activeSessionId: 'session-1',
+				shortcuts: WEB_DEFAULT_SHORTCUTS,
 				activeSession,
-				handleModeToggle,
-				handleSelectTab,
+				actions: { prevTab, nextTab },
 			})
 		);
 
-		const prevEvent = new KeyboardEvent('keydown', { key: '[', metaKey: true, cancelable: true });
-		const nextEvent = new KeyboardEvent('keydown', { key: ']', metaKey: true, cancelable: true });
+		act(() => {
+			document.dispatchEvent(
+				new KeyboardEvent('keydown', {
+					key: '[',
+					metaKey: true,
+					shiftKey: true,
+					cancelable: true,
+				})
+			);
+		});
+		expect(prevTab).toHaveBeenCalledTimes(1);
 
 		act(() => {
-			document.dispatchEvent(prevEvent);
+			document.dispatchEvent(
+				new KeyboardEvent('keydown', {
+					key: ']',
+					metaKey: true,
+					shiftKey: true,
+					cancelable: true,
+				})
+			);
 		});
-
-		expect(handleSelectTab).toHaveBeenCalledWith('tab-1');
-
-		act(() => {
-			document.dispatchEvent(nextEvent);
-		});
-
-		expect(handleSelectTab).toHaveBeenCalledWith('tab-3');
+		expect(nextTab).toHaveBeenCalledTimes(1);
 	});
 
-	it('does not handle shortcuts when there is no active session', () => {
-		const handleModeToggle = vi.fn();
-		const handleSelectTab = vi.fn();
+	it('dispatches cyclePrev/cycleNext on Cmd+[ and Cmd+]', () => {
+		const cyclePrev = vi.fn();
+		const cycleNext = vi.fn();
 
 		renderHook(() =>
 			useMobileKeyboardHandler({
-				activeSessionId: null,
-				activeSession: null,
-				handleModeToggle,
-				handleSelectTab,
+				shortcuts: WEB_DEFAULT_SHORTCUTS,
+				activeSession: { inputMode: 'ai' },
+				actions: { cyclePrev, cycleNext },
 			})
 		);
 
-		const event = new KeyboardEvent('keydown', { key: 'j', metaKey: true, cancelable: true });
+		act(() => {
+			document.dispatchEvent(
+				new KeyboardEvent('keydown', { key: '[', metaKey: true, cancelable: true })
+			);
+		});
+		expect(cyclePrev).toHaveBeenCalledTimes(1);
 
 		act(() => {
-			document.dispatchEvent(event);
+			document.dispatchEvent(
+				new KeyboardEvent('keydown', { key: ']', metaKey: true, cancelable: true })
+			);
+		});
+		expect(cycleNext).toHaveBeenCalledTimes(1);
+	});
+
+	it('closes the command palette on Escape when open', () => {
+		const onCloseCommandPalette = vi.fn();
+
+		renderHook(() =>
+			useMobileKeyboardHandler({
+				shortcuts: WEB_DEFAULT_SHORTCUTS,
+				activeSession: null,
+				isCommandPaletteOpen: true,
+				onCloseCommandPalette,
+				actions: {},
+			})
+		);
+
+		act(() => {
+			document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true }));
 		});
 
-		expect(handleModeToggle).not.toHaveBeenCalled();
+		expect(onCloseCommandPalette).toHaveBeenCalledTimes(1);
+	});
+
+	it('does not steal shortcuts from xterm when terminal is focused', () => {
+		const toggleMode = vi.fn();
+
+		renderHook(() =>
+			useMobileKeyboardHandler({
+				shortcuts: WEB_DEFAULT_SHORTCUTS,
+				activeSession: { inputMode: 'terminal' },
+				actions: { toggleMode },
+			})
+		);
+
+		const xtermInput = document.createElement('textarea');
+		xtermInput.className = 'xterm-helper-textarea';
+		document.body.appendChild(xtermInput);
+
+		const event = new KeyboardEvent('keydown', {
+			key: 'j',
+			metaKey: true,
+			bubbles: true,
+			cancelable: true,
+		});
+
+		act(() => {
+			xtermInput.dispatchEvent(event);
+		});
+
+		expect(toggleMode).not.toHaveBeenCalled();
+		xtermInput.remove();
+	});
+
+	it('ignores events when no handler is registered for the matched shortcut', () => {
+		const quickAction = vi.fn();
+
+		renderHook(() =>
+			useMobileKeyboardHandler({
+				shortcuts: WEB_DEFAULT_SHORTCUTS,
+				activeSession: null,
+				actions: { quickAction },
+			})
+		);
+
+		// Cmd+J (toggleMode) should be a no-op since only quickAction is registered.
+		act(() => {
+			document.dispatchEvent(
+				new KeyboardEvent('keydown', { key: 'j', metaKey: true, cancelable: true })
+			);
+		});
+
+		expect(quickAction).not.toHaveBeenCalled();
+	});
+
+	it('skips plain typing inside an input field', () => {
+		const newInstance = vi.fn();
+		// Simulate a user-customized shortcut bound to a single bare key.
+		const shortcuts = {
+			...WEB_DEFAULT_SHORTCUTS,
+			newInstance: { id: 'newInstance', label: 'New Agent', keys: ['n'] },
+		};
+
+		const input = document.createElement('input');
+		document.body.appendChild(input);
+		input.focus();
+
+		renderHook(() =>
+			useMobileKeyboardHandler({
+				shortcuts,
+				activeSession: null,
+				actions: { newInstance },
+			})
+		);
+
+		const event = new KeyboardEvent('keydown', { key: 'n', cancelable: true, bubbles: true });
+		act(() => {
+			input.dispatchEvent(event);
+		});
+
+		expect(newInstance).not.toHaveBeenCalled();
+		input.remove();
+	});
+
+	it('still fires modifier shortcuts while an input field is focused', () => {
+		const quickAction = vi.fn();
+
+		const input = document.createElement('input');
+		document.body.appendChild(input);
+		input.focus();
+
+		renderHook(() =>
+			useMobileKeyboardHandler({
+				shortcuts: WEB_DEFAULT_SHORTCUTS,
+				activeSession: null,
+				actions: { quickAction },
+			})
+		);
+
+		const event = new KeyboardEvent('keydown', {
+			key: 'k',
+			metaKey: true,
+			cancelable: true,
+			bubbles: true,
+		});
+		act(() => {
+			input.dispatchEvent(event);
+		});
+
+		expect(quickAction).toHaveBeenCalledTimes(1);
+		input.remove();
+	});
+
+	it('does not match an empty or modifier-only shortcut definition', () => {
+		const newInstance = vi.fn();
+		const shortcuts = {
+			newInstance: { id: 'newInstance', label: 'New Agent', keys: [] },
+		};
+
+		renderHook(() =>
+			useMobileKeyboardHandler({
+				shortcuts,
+				activeSession: null,
+				actions: { newInstance },
+			})
+		);
+
+		act(() => {
+			document.dispatchEvent(new KeyboardEvent('keydown', { key: 'n', cancelable: true }));
+		});
+
+		expect(newInstance).not.toHaveBeenCalled();
 	});
 });

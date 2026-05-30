@@ -3,6 +3,7 @@ import type { Theme, Session } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Modal, ModalFooter } from './ui/Modal';
 import { FormInput } from './ui/FormInput';
+import { logger } from '../utils/logger';
 
 interface RenameSessionModalProps {
 	theme: Theme;
@@ -53,7 +54,7 @@ export function RenameSessionModal(props: RenameSessionModalProps) {
 				if (agentId === 'claude-code') {
 					window.maestro.claude
 						.updateSessionName(targetSession.projectRoot, targetSession.agentSessionId, trimmedName)
-						.catch((err) => console.error('Failed to update agent session name:', err));
+						.catch((err) => logger.error('Failed to update agent session name:', undefined, err));
 				} else {
 					window.maestro.agentSessions
 						.setSessionName(
@@ -62,7 +63,7 @@ export function RenameSessionModal(props: RenameSessionModalProps) {
 							targetSession.agentSessionId,
 							trimmedName
 						)
-						.catch((err) => console.error('Failed to update agent session name:', err));
+						.catch((err) => logger.error('Failed to update agent session name:', undefined, err));
 				}
 			}
 

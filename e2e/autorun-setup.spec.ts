@@ -190,11 +190,11 @@ test.describe('Auto Run Setup Wizard', () => {
 	});
 
 	test.describe('Document Creation Flow', () => {
-		test.skip('should create Auto Run Docs folder in project', async ({ window }) => {
+		test.skip('should create .maestro/playbooks folder in project', async ({ window }) => {
 			// This test requires completing the wizard flow
 			// Would verify:
 			// 1. Complete all wizard steps
-			// 2. 'Auto Run Docs' folder is created in project
+			// 2. '.maestro/playbooks' folder is created in project
 			// 3. Initial documents are created
 		});
 

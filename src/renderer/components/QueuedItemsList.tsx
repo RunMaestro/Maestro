@@ -1,10 +1,19 @@
 import React, { useState, useCallback, useRef, memo } from 'react';
-import { X, ChevronDown, ChevronUp, GripVertical } from 'lucide-react';
+import { X, ChevronDown, ChevronUp, GripVertical, Copy, Check, Hammer } from 'lucide-react';
 import type { Theme, QueuedItem } from '../types';
+import { safeClipboardWrite } from '../utils/clipboard';
+import { Modal, ModalFooter } from './ui/Modal';
+import { MODAL_PRIORITIES } from '../constants/modalPriorities';
+import { useEventListener } from '../hooks/utils/useEventListener';
 
 // ============================================================================
 // QueuedItemsList - Displays queued execution items with expand/collapse
 // ============================================================================
+
+export interface BusyTabSummary {
+	id: string;
+	displayName: string;
+}
 
 interface QueuedItemsListProps {
 	executionQueue: QueuedItem[];
@@ -12,6 +21,17 @@ interface QueuedItemsListProps {
 	onRemoveQueuedItem?: (itemId: string) => void;
 	onReorderItems?: (fromIndex: number, toIndex: number) => void;
 	activeTabId?: string; // If provided, only show queued items for this tab
+	// Force Send support: when forcedParallelExecution is enabled, allow the user
+	// to bypass the cross-tab queue wait for an individual queued item.
+	forcedParallelEnabled?: boolean;
+	onForceSendQueuedItem?: (itemId: string) => void;
+	// Lookup for tab state/name used by the Force Send button + confirm modal.
+	// Returns the tab's current busy state, the other tabs currently busy in the
+	// same agent, and the item's own target tab display name.
+	getForceSendContext?: (item: QueuedItem) => {
+		targetTabBusy: boolean;
+		otherBusyTabs: BusyTabSummary[];
+	} | null;
 }
 
 /**
@@ -22,6 +42,7 @@ interface QueuedItemsListProps {
  * - Image attachment indicators
  * - Remove button with confirmation modal
  * - Drag-and-drop reordering
+ * - Force Send button (when forcedParallelExecution is enabled)
  */
 export const QueuedItemsList = memo(
 	({
@@ -30,6 +51,9 @@ export const QueuedItemsList = memo(
 		onRemoveQueuedItem,
 		onReorderItems,
 		activeTabId,
+		forcedParallelEnabled = false,
+		onForceSendQueuedItem,
+		getForceSendContext,
 	}: QueuedItemsListProps) => {
 		// Filter to only show items for the active tab if activeTabId is provided
 		const filteredQueue = activeTabId
@@ -37,6 +61,9 @@ export const QueuedItemsList = memo(
 			: executionQueue;
 		// Queue removal confirmation state
 		const [queueRemoveConfirmId, setQueueRemoveConfirmId] = useState<string | null>(null);
+
+		// Force Send confirmation state
+		const [forceSendConfirmId, setForceSendConfirmId] = useState<string | null>(null);
 
 		// Track which queued messages are expanded (for viewing full content)
 		const [expandedQueuedMessages, setExpandedQueuedMessages] = useState<Set<string>>(new Set());
@@ -46,8 +73,30 @@ export const QueuedItemsList = memo(
 		const [dropIndex, setDropIndex] = useState<number | null>(null);
 		const dragItemRef = useRef<number | null>(null);
 
+		// Refs for confirm-button focus management in confirmation modals
+		const removeConfirmButtonRef = useRef<HTMLButtonElement>(null);
+		const forceSendConfirmButtonRef = useRef<HTMLButtonElement>(null);
+
 		// Can only drag if we have reorder handler and more than 1 item
 		const canDrag = !!onReorderItems && filteredQueue.length > 1;
+
+		// Copy feedback state
+		const [copiedItemId, setCopiedItemId] = useState<string | null>(null);
+		const copyResetTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+		const handleCopy = useCallback((item: QueuedItem) => {
+			const text =
+				item.type === 'command'
+					? [item.command, item.commandArgs].filter(Boolean).join(' ')
+					: (item.text ?? '');
+			safeClipboardWrite(text).then((ok) => {
+				if (ok) {
+					setCopiedItemId(item.id);
+					if (copyResetTimerRef.current) clearTimeout(copyResetTimerRef.current);
+					copyResetTimerRef.current = setTimeout(() => setCopiedItemId(null), 1500);
+				}
+			});
+		}, []);
 
 		// Toggle expanded state for a queued message
 		const toggleExpanded = useCallback((itemId: string) => {
@@ -62,23 +111,6 @@ export const QueuedItemsList = memo(
 			});
 		}, []);
 
-		// Handle keyboard events on confirmation modal
-		const handleModalKeyDown = useCallback(
-			(e: React.KeyboardEvent) => {
-				if (e.key === 'Enter') {
-					e.preventDefault();
-					if (onRemoveQueuedItem && queueRemoveConfirmId) {
-						onRemoveQueuedItem(queueRemoveConfirmId);
-					}
-					setQueueRemoveConfirmId(null);
-				} else if (e.key === 'Escape') {
-					e.preventDefault();
-					setQueueRemoveConfirmId(null);
-				}
-			},
-			[onRemoveQueuedItem, queueRemoveConfirmId]
-		);
-
 		// Handle confirm removal
 		const handleConfirmRemove = useCallback(() => {
 			if (onRemoveQueuedItem && queueRemoveConfirmId) {
@@ -86,6 +118,13 @@ export const QueuedItemsList = memo(
 			}
 			setQueueRemoveConfirmId(null);
 		}, [onRemoveQueuedItem, queueRemoveConfirmId]);
+
+		const handleConfirmForceSend = useCallback(() => {
+			if (onForceSendQueuedItem && forceSendConfirmId) {
+				onForceSendQueuedItem(forceSendConfirmId);
+			}
+			setForceSendConfirmId(null);
+		}, [onForceSendQueuedItem, forceSendConfirmId]);
 
 		// Drag handlers
 		const handleDragStart = useCallback((index: number) => {
@@ -113,9 +152,44 @@ export const QueuedItemsList = memo(
 			setDropIndex(null);
 		}, []);
 
+		// Keyboard shortcut bridge: when the user hits the Forced Parallel shortcut
+		// with an empty input, useInputKeyDown dispatches this event. We find the
+		// most recent eligible queued item (matching the same visibility rules as
+		// the per-item Force Send button) and open the confirmation modal — the
+		// keyboard equivalent of clicking the button.
+		useEventListener('maestro:triggerForceSendQueued', () => {
+			if (
+				!forcedParallelEnabled ||
+				!onForceSendQueuedItem ||
+				!getForceSendContext ||
+				filteredQueue.length === 0
+			) {
+				return;
+			}
+			for (let i = filteredQueue.length - 1; i >= 0; i--) {
+				const item = filteredQueue[i];
+				if (item.forceParallel) continue;
+				const ctx = getForceSendContext(item);
+				if (!ctx || ctx.targetTabBusy || ctx.otherBusyTabs.length === 0) continue;
+				setForceSendConfirmId(item.id);
+				return;
+			}
+		});
+
 		if (!filteredQueue || filteredQueue.length === 0) {
 			return null;
 		}
+
+		// Snapshot of busy-tab context for the item awaiting Force Send confirmation.
+		// Computed at render time so tab state stays live while the modal is open.
+		const forceSendConfirmItem =
+			forceSendConfirmId != null
+				? filteredQueue.find((item) => item.id === forceSendConfirmId)
+				: undefined;
+		const forceSendConfirmContext =
+			forceSendConfirmItem && getForceSendContext
+				? getForceSendContext(forceSendConfirmItem)
+				: null;
 
 		return (
 			<>
@@ -139,6 +213,22 @@ export const QueuedItemsList = memo(
 					const isDragging = dragIndex === index;
 					const isDropTarget = dropIndex === index;
 
+					// Force Send visibility: setting enabled, item not already forceParallel,
+					// a handler is wired, the target tab is idle (force-parallel only helps
+					// when *this* tab can dispatch), and at least one other tab is busy
+					// (otherwise nothing to bypass).
+					const forceSendContext =
+						forcedParallelEnabled &&
+						onForceSendQueuedItem &&
+						getForceSendContext &&
+						!item.forceParallel
+							? getForceSendContext(item)
+							: null;
+					const showForceSendButton =
+						!!forceSendContext &&
+						!forceSendContext.targetTabBusy &&
+						forceSendContext.otherBusyTabs.length > 0;
+
 					return (
 						<div
 							key={item.id}
@@ -147,8 +237,14 @@ export const QueuedItemsList = memo(
 							onDragOver={(e) => handleDragOver(e, index)}
 							onDragEnd={handleDragEnd}
 							onDragLeave={handleDragLeave}
-							className="mx-6 mb-2 p-3 rounded-lg relative group transition-all"
+							className="mx-6 mb-2 p-3 rounded-lg relative group transition-all flex flex-col"
 							style={{
+								// Reserve enough vertical room for the stacked top-right
+								// Remove (X) and Copy buttons, plus the bottom-right Force
+								// Send button when shown, without overlap.
+								// X+Copy stack: 8 + 24 + 4 + 22 = 58px from top.
+								// Force Send (pushed to bottom via mt-auto): ~28px button.
+								minHeight: showForceSendButton ? '7rem' : '4.25rem',
 								backgroundColor:
 									item.type === 'command'
 										? theme.colors.success + '20'
@@ -170,14 +266,30 @@ export const QueuedItemsList = memo(
 								</div>
 							)}
 
-							{/* Remove button */}
+							{/* Top-right: Remove button */}
 							<button
 								onClick={() => setQueueRemoveConfirmId(item.id)}
-								className="absolute top-2 right-2 p-1 rounded hover:bg-black/20 transition-colors"
+								className="absolute top-2 right-2 p-1 rounded hover:bg-black/20 transition-colors opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
 								style={{ color: theme.colors.textDim }}
 								title="Remove from queue"
 							>
 								<X className="w-4 h-4" />
+							</button>
+
+							{/* Copy button - directly under the Remove (X) button */}
+							<button
+								onClick={() => handleCopy(item)}
+								className="absolute top-9 right-2 p-1 rounded hover:bg-black/20 transition-colors opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
+								style={{
+									color: copiedItemId === item.id ? theme.colors.success : theme.colors.textDim,
+								}}
+								title="Copy to clipboard"
+							>
+								{copiedItemId === item.id ? (
+									<Check className="w-3.5 h-3.5" />
+								) : (
+									<Copy className="w-3.5 h-3.5" />
+								)}
 							</button>
 
 							{/* Item content */}
@@ -186,8 +298,21 @@ export const QueuedItemsList = memo(
 								style={{ color: theme.colors.textMain }}
 							>
 								{item.type === 'command' && (
-									<span style={{ color: theme.colors.success, fontWeight: 600 }}>
-										{item.command}
+									<span className="flex items-baseline gap-1 overflow-hidden">
+										<span
+											className="shrink-0"
+											style={{ color: theme.colors.success, fontWeight: 600 }}
+										>
+											{item.command}
+										</span>
+										<span
+											className="truncate min-w-0"
+											style={{
+												color: item.commandArgs ? theme.colors.textMain : theme.colors.textDim,
+											}}
+										>
+											{item.commandArgs || item.commandDescription}
+										</span>
 									</span>
 								)}
 								{item.type === 'message' &&
@@ -226,50 +351,104 @@ export const QueuedItemsList = memo(
 									{item.images.length} image{item.images.length > 1 ? 's' : ''} attached
 								</div>
 							)}
+
+							{/* Bottom-right: Force Send button (mt-auto pushes to bottom of flex column) */}
+							{showForceSendButton && (
+								<div className="mt-auto pt-2 flex justify-end">
+									<button
+										onClick={() => setForceSendConfirmId(item.id)}
+										className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium hover:opacity-80 transition-opacity"
+										style={{
+											backgroundColor: theme.colors.warning + '33',
+											color: theme.colors.warning,
+										}}
+										title="Force send this message now (skips cross-tab wait)"
+									>
+										<Hammer className="w-3.5 h-3.5" />
+										Force Send
+									</button>
+								</div>
+							)}
 						</div>
 					);
 				})}
 
 				{/* Queue removal confirmation modal */}
 				{queueRemoveConfirmId && (
-					<div
-						className="fixed inset-0 flex items-center justify-center z-50"
-						style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}
-						onClick={() => setQueueRemoveConfirmId(null)}
-						onKeyDown={handleModalKeyDown}
+					<Modal
+						theme={theme}
+						title="Remove Queued Message?"
+						priority={MODAL_PRIORITIES.CONFIRM}
+						onClose={() => setQueueRemoveConfirmId(null)}
+						width={448}
+						initialFocusRef={removeConfirmButtonRef}
+						footer={
+							<ModalFooter
+								theme={theme}
+								onCancel={() => setQueueRemoveConfirmId(null)}
+								onConfirm={handleConfirmRemove}
+								confirmLabel="Remove"
+								destructive
+								confirmButtonRef={removeConfirmButtonRef}
+							/>
+						}
 					>
-						<div
-							className="p-4 rounded-lg shadow-xl max-w-md mx-4"
-							style={{ backgroundColor: theme.colors.bgMain }}
-							onClick={(e) => e.stopPropagation()}
-							tabIndex={-1}
-							ref={(el) => el?.focus()}
-						>
-							<h3 className="text-lg font-semibold mb-2" style={{ color: theme.colors.textMain }}>
-								Remove Queued Message?
-							</h3>
-							<p className="text-sm mb-4" style={{ color: theme.colors.textDim }}>
-								This message will be removed from the queue and will not be sent.
-							</p>
-							<div className="flex gap-2 justify-end">
-								<button
-									onClick={() => setQueueRemoveConfirmId(null)}
-									className="px-3 py-1.5 rounded text-sm"
-									style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textMain }}
+						<p className="text-sm" style={{ color: theme.colors.textDim }}>
+							This message will be removed from the queue and will not be sent.
+						</p>
+					</Modal>
+				)}
+
+				{/* Force Send confirmation modal */}
+				{forceSendConfirmId && forceSendConfirmItem && (
+					<Modal
+						theme={theme}
+						title="Force Send Message?"
+						headerIcon={<Hammer className="w-5 h-5" style={{ color: theme.colors.warning }} />}
+						priority={MODAL_PRIORITIES.CONFIRM}
+						onClose={() => setForceSendConfirmId(null)}
+						width={448}
+						initialFocusRef={forceSendConfirmButtonRef}
+						footer={
+							<ModalFooter
+								theme={theme}
+								onCancel={() => setForceSendConfirmId(null)}
+								onConfirm={handleConfirmForceSend}
+								confirmLabel="Force Send"
+								confirmButtonRef={forceSendConfirmButtonRef}
+							/>
+						}
+					>
+						<p className="text-sm mb-3" style={{ color: theme.colors.textDim }}>
+							This will send the queued message immediately, running in parallel with the other tab
+							{forceSendConfirmContext && forceSendConfirmContext.otherBusyTabs.length === 1
+								? ''
+								: 's'}{' '}
+							currently working in this agent.
+						</p>
+						{forceSendConfirmContext && forceSendConfirmContext.otherBusyTabs.length > 0 && (
+							<div className="p-3 rounded" style={{ backgroundColor: theme.colors.bgActivity }}>
+								<div
+									className="text-xs font-bold tracking-wider mb-2"
+									style={{ color: theme.colors.warning }}
 								>
-									Cancel
-								</button>
-								<button
-									onClick={handleConfirmRemove}
-									className="px-3 py-1.5 rounded text-sm"
-									style={{ backgroundColor: theme.colors.error, color: 'white' }}
-									autoFocus
-								>
-									Remove
-								</button>
+									{forceSendConfirmContext.otherBusyTabs.length} OTHER TAB
+									{forceSendConfirmContext.otherBusyTabs.length === 1 ? '' : 'S'} WORKING
+								</div>
+								<ul className="text-sm space-y-1" style={{ color: theme.colors.textMain }}>
+									{forceSendConfirmContext.otherBusyTabs.map((tab) => (
+										<li key={tab.id} className="flex items-center gap-2">
+											<span
+												className="inline-block w-2 h-2 rounded-full"
+												style={{ backgroundColor: theme.colors.warning }}
+											/>
+											<span className="font-mono">{tab.displayName}</span>
+										</li>
+									))}
+								</ul>
 							</div>
-						</div>
-					</div>
+						)}
+					</Modal>
 				)}
 			</>
 		);

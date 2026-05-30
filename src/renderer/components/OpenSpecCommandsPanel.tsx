@@ -11,11 +11,15 @@ import {
 	GitBranch,
 } from 'lucide-react';
 import type { Theme, OpenSpecCommand, OpenSpecMetadata } from '../types';
-import { useTemplateAutocomplete } from '../hooks';
+import { useSaveShortcut, useTemplateAutocomplete } from '../hooks';
 import { TemplateAutocompleteDropdown } from './TemplateAutocompleteDropdown';
+import { openUrl } from '../utils/openUrl';
+import { logger } from '../utils/logger';
 
 interface OpenSpecCommandsPanelProps {
 	theme: Theme;
+	enabled: boolean;
+	onEnabledChange: (value: boolean) => void;
 }
 
 interface EditingCommand {
@@ -23,7 +27,11 @@ interface EditingCommand {
 	prompt: string;
 }
 
-export function OpenSpecCommandsPanel({ theme }: OpenSpecCommandsPanelProps) {
+export function OpenSpecCommandsPanel({
+	theme,
+	enabled,
+	onEnabledChange,
+}: OpenSpecCommandsPanelProps) {
 	const [commands, setCommands] = useState<OpenSpecCommand[]>([]);
 	const [metadata, setMetadata] = useState<OpenSpecMetadata | null>(null);
 	const [editingCommand, setEditingCommand] = useState<EditingCommand | null>(null);
@@ -63,7 +71,7 @@ export function OpenSpecCommandsPanel({ theme }: OpenSpecCommandsPanelProps) {
 					setMetadata(metadataResult.metadata);
 				}
 			} catch (error) {
-				console.error('Failed to load openspec commands:', error);
+				logger.error('Failed to load openspec commands:', undefined, error);
 			} finally {
 				setIsLoading(false);
 			}
@@ -91,9 +99,11 @@ export function OpenSpecCommandsPanel({ theme }: OpenSpecCommandsPanelProps) {
 				setEditingCommand(null);
 			}
 		} catch (error) {
-			console.error('Failed to save prompt:', error);
+			logger.error('Failed to save prompt:', undefined, error);
 		}
 	};
+
+	useSaveShortcut(handleSaveEdit, Boolean(editingCommand));
 
 	const handleReset = async (id: string) => {
 		try {
@@ -106,7 +116,7 @@ export function OpenSpecCommandsPanel({ theme }: OpenSpecCommandsPanelProps) {
 				);
 			}
 		} catch (error) {
-			console.error('Failed to reset prompt:', error);
+			logger.error('Failed to reset prompt:', undefined, error);
 		}
 	};
 
@@ -123,7 +133,7 @@ export function OpenSpecCommandsPanel({ theme }: OpenSpecCommandsPanelProps) {
 				}
 			}
 		} catch (error) {
-			console.error('Failed to refresh openspec prompts:', error);
+			logger.error('Failed to refresh openspec prompts:', undefined, error);
 		} finally {
 			setIsRefreshing(false);
 		}
@@ -155,14 +165,39 @@ export function OpenSpecCommandsPanel({ theme }: OpenSpecCommandsPanelProps) {
 		}
 	};
 
+	const enabledToggle = (
+		<button
+			onClick={() => onEnabledChange(!enabled)}
+			className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0"
+			style={{
+				backgroundColor: enabled ? theme.colors.accent : theme.colors.bgActivity,
+			}}
+			role="switch"
+			aria-checked={enabled}
+			aria-label="Show OpenSpec commands in slash command autocomplete"
+			title={
+				enabled ? 'Hide from slash command autocomplete' : 'Show in slash command autocomplete'
+			}
+		>
+			<span
+				className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+					enabled ? 'translate-x-5' : 'translate-x-0.5'
+				}`}
+			/>
+		</button>
+	);
+
 	if (isLoading) {
 		return (
 			<div className="space-y-4">
 				<div>
-					<label className="block text-xs font-bold opacity-70 uppercase mb-1 flex items-center gap-2">
-						<GitBranch className="w-3 h-3" />
-						OpenSpec Commands
-					</label>
+					<div className="flex items-start justify-between gap-3 mb-1">
+						<label className="text-xs font-bold opacity-70 uppercase flex items-center gap-2">
+							<GitBranch className="w-3 h-3" />
+							OpenSpec Commands
+						</label>
+						{enabledToggle}
+					</div>
 					<p className="text-xs opacity-50" style={{ color: theme.colors.textDim }}>
 						Loading OpenSpec commands...
 					</p>
@@ -174,16 +209,17 @@ export function OpenSpecCommandsPanel({ theme }: OpenSpecCommandsPanelProps) {
 	return (
 		<div className="space-y-4">
 			<div>
-				<label className="block text-xs font-bold opacity-70 uppercase mb-1 flex items-center gap-2">
-					<GitBranch className="w-3 h-3" />
-					OpenSpec Commands
-				</label>
+				<div className="flex items-start justify-between gap-3 mb-1">
+					<label className="text-xs font-bold opacity-70 uppercase flex items-center gap-2">
+						<GitBranch className="w-3 h-3" />
+						OpenSpec Commands
+					</label>
+					{enabledToggle}
+				</div>
 				<p className="text-xs opacity-50" style={{ color: theme.colors.textDim }}>
 					Change management commands from{' '}
 					<button
-						onClick={() =>
-							window.maestro.shell.openExternal('https://github.com/Fission-AI/OpenSpec')
-						}
+						onClick={() => openUrl('https://github.com/Fission-AI/OpenSpec')}
 						className="underline hover:opacity-80 inline-flex items-center gap-1"
 						style={{
 							color: theme.colors.accent,
@@ -196,7 +232,12 @@ export function OpenSpecCommandsPanel({ theme }: OpenSpecCommandsPanelProps) {
 						Fission-AI/OpenSpec
 						<ExternalLink className="w-2.5 h-2.5" />
 					</button>{' '}
-					for structured change proposals.
+					for structured change proposals.{' '}
+					{!enabled && (
+						<span style={{ color: theme.colors.warning }}>
+							Hidden from slash command autocomplete.
+						</span>
+					)}
 				</p>
 			</div>
 

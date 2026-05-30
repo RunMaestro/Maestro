@@ -1,12 +1,16 @@
-import React, { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback, lazy, Suspense } from 'react';
 import { createPortal } from 'react-dom';
-import { X, History, Sparkles, Loader2, Clapperboard, HelpCircle } from 'lucide-react';
+import { X, History, Sparkles, Clapperboard, HelpCircle } from 'lucide-react';
+import { GhostIconButton } from '../ui/GhostIconButton';
+import { Spinner } from '../ui/Spinner';
 import type { Theme } from '../../types';
-import { useLayerStack } from '../../contexts/LayerStackContext';
+import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { OverviewTab, type TabFocusHandle } from './OverviewTab';
 import { hasCachedSynopsis } from './AIOverviewTab';
 import { useSettings } from '../../hooks';
+import { useModalStore, selectModalData } from '../../stores/modalStore';
+import { daysToLookbackHours, formatLookbackSinceDate } from './lookback';
 
 // Lazy load tab components
 const UnifiedHistoryTab = lazy(() =>
@@ -41,15 +45,25 @@ export function DirectorNotesModal({
 	fileTree,
 	onFileClick,
 }: DirectorNotesModalProps) {
-	const { directorNotesSettings: _directorNotesSettings, shortcuts } = useSettings();
+	const { directorNotesSettings, shortcuts } = useSettings();
+	const directorNotesData = useModalStore(selectModalData('directorNotes'));
 	const cached = hasCachedSynopsis();
-	const [activeTab, setActiveTab] = useState<TabId>('history');
+	const [activeTab, setActiveTab] = useState<TabId>(directorNotesData?.initialTab ?? 'history');
 	const [overviewReady, setOverviewReady] = useState(cached);
 	const [overviewGenerating, setOverviewGenerating] = useState(false);
+	const [lookbackHours, setLookbackHours] = useState<number | null>(() =>
+		daysToLookbackHours(directorNotesSettings.defaultLookbackDays)
+	);
+
+	// "Director's Notes Since Friday May 8th" — updates live when the
+	// user changes the lookback period in the activity graph. "All time"
+	// suppresses the suffix.
+	const titleText = useMemo(() => {
+		const since = formatLookbackSinceDate(lookbackHours);
+		return since ? `Director's Notes Since ${since}` : "Director's Notes";
+	}, [lookbackHours]);
 
 	// Layer stack registration for Escape handling
-	const { registerLayer, unregisterLayer } = useLayerStack();
-	const layerIdRef = useRef<string>();
 	const modalRef = useRef<HTMLDivElement>(null);
 
 	// Tab content refs for focus management
@@ -80,29 +94,22 @@ export function DirectorNotesModal({
 	activeTabRef.current = activeTab;
 
 	// Register modal layer
-	useEffect(() => {
-		layerIdRef.current = registerLayer({
-			type: 'modal',
-			priority: MODAL_PRIORITIES.DIRECTOR_NOTES,
-			blocksLowerLayers: true,
-			capturesFocus: true,
-			focusTrap: 'lenient',
-			onEscape: () => {
-				// Delegate Escape to the active tab first (e.g. to close search)
-				const tabRef =
-					activeTabRef.current === 'history'
-						? historyTabRef
-						: activeTabRef.current === 'overview'
-							? overviewTabRef
-							: null;
-				if (tabRef?.current?.onEscape?.()) return;
-				onCloseRef.current();
-			},
-		});
-		return () => {
-			if (layerIdRef.current) unregisterLayer(layerIdRef.current);
-		};
-	}, [registerLayer, unregisterLayer]);
+	useModalLayer(
+		MODAL_PRIORITIES.DIRECTOR_NOTES,
+		undefined,
+		() => {
+			// Delegate Escape to the active tab first (e.g. to close search)
+			const tabRef =
+				activeTabRef.current === 'history'
+					? historyTabRef
+					: activeTabRef.current === 'overview'
+						? overviewTabRef
+						: null;
+			if (tabRef?.current?.onEscape?.()) return;
+			onCloseRef.current();
+		},
+		{ focusTrap: 'lenient' }
+	);
 
 	// Focus the active tab content when tab changes (including initial mount)
 	useEffect(() => {
@@ -123,6 +130,7 @@ export function DirectorNotesModal({
 	}, []);
 
 	// Check if a tab can be navigated to
+	// AI Overview is only clickable once generation is complete
 	const isTabEnabled = useCallback(
 		(tabId: TabId) => {
 			if (tabId === 'ai-overview') return overviewReady;
@@ -180,8 +188,12 @@ export function DirectorNotesModal({
 				aria-modal="true"
 				aria-labelledby="director-notes-title"
 				tabIndex={-1}
-				className="w-[1200px] max-w-[95vw] h-[85vh] rounded-xl shadow-2xl border overflow-hidden flex flex-col outline-none"
+				className="rounded-xl shadow-2xl border overflow-hidden flex flex-col outline-none select-none"
 				style={{
+					width: '80vw',
+					maxWidth: 1400,
+					height: '85vh',
+					maxHeight: 900,
 					backgroundColor: theme.colors.bgActivity,
 					borderColor: theme.colors.border,
 				}}
@@ -198,14 +210,14 @@ export function DirectorNotesModal({
 							className="text-lg font-semibold"
 							style={{ color: theme.colors.textMain }}
 						>
-							Director's Notes
+							{titleText}
 						</h2>
 					</div>
 
 					{/* Close button */}
-					<button onClick={onClose} className="p-1 rounded hover:bg-white/10 transition-colors">
+					<GhostIconButton onClick={onClose} ariaLabel="Close">
 						<X className="w-4 h-4" style={{ color: theme.colors.textDim }} />
-					</button>
+					</GhostIconButton>
 				</div>
 
 				{/* Tab navigation */}
@@ -232,13 +244,9 @@ export function DirectorNotesModal({
 									cursor: isDisabled ? 'default' : 'pointer',
 								}}
 							>
-								{showGenerating ? (
-									<Loader2 className="w-4 h-4 animate-spin" />
-								) : (
-									<Icon className="w-4 h-4" />
-								)}
+								{showGenerating ? <Spinner size={16} /> : <Icon className="w-4 h-4" />}
 								{tab.label}
-								{showGenerating && <span className="text-[10px] font-normal">(generating...)</span>}
+								{showGenerating && <span className="text-[10px] font-normal">generating…</span>}
 							</button>
 						);
 					})}
@@ -252,7 +260,7 @@ export function DirectorNotesModal({
 					<Suspense
 						fallback={
 							<div className="flex items-center justify-center h-full">
-								<Loader2 className="w-8 h-8 animate-spin" style={{ color: theme.colors.textDim }} />
+								<Spinner size={32} color={theme.colors.textDim} />
 							</div>
 						}
 					>
@@ -266,6 +274,8 @@ export function DirectorNotesModal({
 								onResumeSession={onResumeSession}
 								fileTree={fileTree}
 								onFileClick={onFileClick}
+								lookbackHours={lookbackHours}
+								onLookbackChange={setLookbackHours}
 							/>
 						</div>
 						<div

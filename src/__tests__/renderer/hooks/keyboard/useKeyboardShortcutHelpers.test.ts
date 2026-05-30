@@ -575,6 +575,61 @@ describe('useKeyboardShortcutHelpers', () => {
 		});
 	});
 
+	describe('Shortcuts with Shift+comma/period (navigation breadcrumbs)', () => {
+		const shortcuts: Record<string, Shortcut> = {
+			navBack: { id: 'navBack', label: 'Navigate Back', keys: ['Meta', 'Shift', ','] },
+			navForward: { id: 'navForward', label: 'Navigate Forward', keys: ['Meta', 'Shift', '.'] },
+		};
+
+		it('should match Cmd+Shift+, on macOS (even when Shift produces <)', () => {
+			const { result } = renderHook(() =>
+				useKeyboardShortcutHelpers({ shortcuts, tabShortcuts: {} })
+			);
+
+			const event = createKeyboardEvent({ key: '<', metaKey: true, shiftKey: true });
+			expect(result.current.isShortcut(event, 'navBack')).toBe(true);
+		});
+
+		it('should match Ctrl+Shift+, on Windows/Linux (even when Shift produces <)', () => {
+			const { result } = renderHook(() =>
+				useKeyboardShortcutHelpers({ shortcuts, tabShortcuts: {} })
+			);
+
+			const event = createKeyboardEvent({ key: '<', ctrlKey: true, shiftKey: true });
+			expect(result.current.isShortcut(event, 'navBack')).toBe(true);
+		});
+
+		it('should match Cmd+Shift+. on macOS (even when Shift produces >)', () => {
+			const { result } = renderHook(() =>
+				useKeyboardShortcutHelpers({ shortcuts, tabShortcuts: {} })
+			);
+
+			const event = createKeyboardEvent({ key: '>', metaKey: true, shiftKey: true });
+			expect(result.current.isShortcut(event, 'navForward')).toBe(true);
+		});
+
+		it('should match Ctrl+Shift+. on Windows/Linux (even when Shift produces >)', () => {
+			const { result } = renderHook(() =>
+				useKeyboardShortcutHelpers({ shortcuts, tabShortcuts: {} })
+			);
+
+			const event = createKeyboardEvent({ key: '>', ctrlKey: true, shiftKey: true });
+			expect(result.current.isShortcut(event, 'navForward')).toBe(true);
+		});
+
+		it('should still match when key reports the base character', () => {
+			const { result } = renderHook(() =>
+				useKeyboardShortcutHelpers({ shortcuts, tabShortcuts: {} })
+			);
+
+			const eventComma = createKeyboardEvent({ key: ',', metaKey: true, shiftKey: true });
+			expect(result.current.isShortcut(eventComma, 'navBack')).toBe(true);
+
+			const eventPeriod = createKeyboardEvent({ key: '.', metaKey: true, shiftKey: true });
+			expect(result.current.isShortcut(eventPeriod, 'navForward')).toBe(true);
+		});
+	});
+
 	describe('Slash key shortcut (help)', () => {
 		const shortcuts: Record<string, Shortcut> = {
 			help: { id: 'help', label: 'Show Shortcuts', keys: ['Meta', '/'] },

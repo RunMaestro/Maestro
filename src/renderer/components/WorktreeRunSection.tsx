@@ -4,6 +4,7 @@ import type { Theme, Session, WorktreeRunTarget } from '../types';
 import { gitService } from '../services/git';
 import { getStatusColor } from '../utils/theme';
 import { captureException } from '../utils/sentry';
+import { sanitizeGitBranchName } from '../../shared/gitUtils';
 
 interface WorktreeRunSectionProps {
 	theme: Theme;
@@ -419,7 +420,11 @@ export function WorktreeRunSection({
 									<input
 										type="text"
 										value={newBranchName}
-										onChange={(e) => setNewBranchName(e.target.value)}
+										onChange={(e) =>
+											setNewBranchName(
+												sanitizeGitBranchName(e.target.value, { allowIncomplete: true })
+											)
+										}
 										className="w-full rounded-lg border px-3 py-1.5 text-sm outline-none"
 										style={{
 											backgroundColor: theme.colors.bgMain,

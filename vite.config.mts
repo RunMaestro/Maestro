@@ -54,28 +54,97 @@ export default defineConfig(({ mode }) => ({
 					: path.join(__dirname, 'src/renderer/wdyr.ts'),
 		},
 	},
-	esbuild: {
-		// Strip console.* and debugger in production builds
+	// Vite 8 with Rolldown uses oxc; the older esbuild config is silently
+	// ignored in this path. Express the same drop intent via oxc. JSX Fast
+	// Refresh is handled by @vitejs/plugin-react above (`fastRefresh` option),
+	// so an oxc-level toggle here would be redundant and could double-inject.
+	oxc: {
 		drop: mode === 'production' ? ['console', 'debugger'] : [],
 	},
 	build: {
 		outDir: path.join(__dirname, 'dist/renderer'),
 		emptyOutDir: true,
+		// TODO(vite-css): revisit this pin once one of these is true:
+		//   1) lightningcss tolerates xterm's malformed selectors (see
+		//      `[-:\s|]`-style class on or near style.css line ~2801)
+		//   2) xterm.js fixes its CSS upstream
+		//   3) we pre-process xterm's CSS through a tolerant pass before vite
+		// Vite 8 flipped the default CSS minifier to lightningcss, which is
+		// strict about malformed CSS that esbuild's minifier silently passed
+		// through. esbuild here matches prior (Vite 5-7) behavior.
+		cssMinify: 'esbuild',
+		// Disable modulepreload polyfill — Electron loads from local filesystem
+		modulePreload: false,
 		rollupOptions: {
 			// Prevent esbuild from re-minifying xterm's pre-minified code.
 			// Double-minification corrupts variable scoping in requestMode(),
-			// causing "ReferenceError: e is not defined" at runtime.
-			plugins: [
-				{
-					name: 'skip-xterm-minify',
-					renderChunk(code, chunk) {
-						if (chunk.name === 'vendor-xterm') {
-							return { code, map: null };
-						}
-						return null;
+			// causing a "ReferenceError: <letter> is not defined" throw inside
+			// xterm.js's CSI parser when a TUI sends a DECRQM query (CSI ? N $ p).
+			// The throw poisons the parser state, so all subsequent output and
+			// user keystrokes are dropped — the terminal tab appears frozen
+			// (seen with OpenCode on Linux and vim on macOS).
+			//
+			// Vite's esbuild-transpile minifier runs as an `enforce: 'post'`
+			// renderChunk hook, so a plain renderChunk returning the input
+			// unchanged is a no-op. Capture the pre-minify chunk code at
+			// regular renderChunk order, then overwrite the final chunk in
+			// generateBundle (which fires after every renderChunk hook,
+			// including the minifier).
+			//
+			// Rolldown caveat: Vite 8 swaps Rollup for Rolldown, which defers
+			// cross-chunk filename placeholder substitution (`name-!~{NNN}~.ext`)
+			// to a finalization pass that runs AFTER renderChunk. The cached
+			// pre-minify code therefore still contains literal `!~{NNN}~`
+			// placeholders. The minified `asset.code` in generateBundle has the
+			// resolved filenames — so we use it as a lookup table to substitute
+			// placeholders in the cached code before writing back. Without this
+			// step the app hangs on splash with `ENOENT rolldown-runtime-!~{001}~.js`.
+			plugins: (() => {
+				const xtermPreMinifyCache = new Map<string, string>();
+				const placeholderRe = /([\w./-]+)-!~\{\d+\}~\.([a-z]+)/g;
+				return [
+					{
+						name: 'skip-xterm-minify',
+						renderChunk(code, chunk) {
+							if (chunk.name === 'vendor-xterm') {
+								xtermPreMinifyCache.set(chunk.name, code);
+							}
+							return null;
+						},
+						generateBundle(_options, bundle) {
+							for (const asset of Object.values(bundle)) {
+								if (asset.type !== 'chunk' || !xtermPreMinifyCache.has(asset.name)) {
+									continue;
+								}
+								const preMinified = xtermPreMinifyCache.get(asset.name)!;
+								const resolvedSource = asset.code;
+								let fixed = preMinified;
+								const seen = new Set<string>();
+								for (const match of preMinified.matchAll(placeholderRe)) {
+									const placeholder = match[0];
+									if (seen.has(placeholder)) continue;
+									seen.add(placeholder);
+									const prefix = match[1];
+									const ext = match[2];
+									const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+									const resolvedMatch = resolvedSource.match(
+										new RegExp(`${escapedPrefix}-([\\w-]+)\\.${ext}`)
+									);
+									if (!resolvedMatch) {
+										throw new Error(
+											`skip-xterm-minify: could not resolve placeholder ${placeholder} ` +
+												`in ${asset.fileName} — Rolldown internals may have changed.`
+										);
+									}
+									fixed = fixed.split(placeholder).join(`${prefix}-${resolvedMatch[1]}.${ext}`);
+								}
+								asset.code = fixed;
+							}
+							xtermPreMinifyCache.clear();
+						},
 					},
-				},
-			],
+				];
+			})(),
 			output: {
 				// Manual chunking for better caching and code splitting
 				manualChunks: (id) => {
@@ -125,9 +194,12 @@ export default defineConfig(({ mode }) => ({
 					if (id.includes('node_modules/recharts') || id.includes('node_modules/d3-')) {
 						return 'vendor-charts';
 					}
-					if (id.includes('node_modules/reactflow') || id.includes('node_modules/@reactflow')) {
-						return 'vendor-flow';
-					}
+					// NOTE: reactflow / @reactflow intentionally omitted from manualChunks.
+					// They are only used by lazy-loaded components (CueModal, DocumentGraphView).
+					// Forcing them into a dedicated chunk causes Rollup to place shared CJS
+					// interop helpers there, which then forces the main entry to eagerly import
+					// the chunk — crashing at startup with "Cannot read properties of undefined
+					// (reading 'useState')" because React hooks run before React is initialised.
 
 					// Diff viewer
 					if (id.includes('node_modules/react-diff-view') || id.includes('node_modules/diff')) {
@@ -142,6 +214,7 @@ export default defineConfig(({ mode }) => ({
 	},
 	server: {
 		port: process.env.VITE_PORT ? parseInt(process.env.VITE_PORT, 10) : 5173,
+		strictPort: true,
 		hmr: !disableHmr,
 		// Disable file watching entirely when HMR is disabled to prevent any reloads
 		watch: disableHmr ? null : undefined,

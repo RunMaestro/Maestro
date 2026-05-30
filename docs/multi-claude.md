@@ -8,11 +8,11 @@ Use two or more Claude Code Max subscriptions (e.g., personal and work accounts)
 
 ## How It Works
 
-Claude Code stores its configuration and auth credentials in `~/.claude` by default. The `CLAUDE_CONFIG_DIR` environment variable overrides this location. By creating a separate config directory per account — each with its own OAuth credentials — and symlinking shared resources back to a canonical source, you get:
+Claude Code stores its configuration and auth credentials in `~/.claude` by default. The `CLAUDE_CONFIG_DIR` environment variable overrides this location. By creating a separate config directory per account - each with its own OAuth credentials - and symlinking shared resources back to a canonical source, you get:
 
 - **Separate billing/authentication** per account
-- **Shared sessions** — resume any session from either account
-- **Shared settings, plugins, commands, and plans** — configure once, use everywhere
+- **Shared sessions** - resume any session from either account
+- **Shared settings, plugins, commands, plans, and skills** - configure once, use everywhere
 
 ## One-Time Setup
 
@@ -61,7 +61,7 @@ mv $CONFIG_DIR/todos       $CONFIG_DIR/todos-pre
 mv $CONFIG_DIR/session-env $CONFIG_DIR/session-env-pre
 
 # Remove files/dirs that will become symlinks
-rm -rf $CONFIG_DIR/commands $CONFIG_DIR/ide $CONFIG_DIR/plans $CONFIG_DIR/plugins
+rm -rf $CONFIG_DIR/commands $CONFIG_DIR/ide $CONFIG_DIR/plans $CONFIG_DIR/plugins $CONFIG_DIR/skills
 rm -f  $CONFIG_DIR/settings.json $CONFIG_DIR/CLAUDE.md
 
 # Create symlinks
@@ -69,6 +69,7 @@ ln -s ~/.claude/commands      $CONFIG_DIR/commands
 ln -s ~/.claude/ide           $CONFIG_DIR/ide
 ln -s ~/.claude/plans         $CONFIG_DIR/plans
 ln -s ~/.claude/plugins       $CONFIG_DIR/plugins
+ln -s ~/.claude/skills        $CONFIG_DIR/skills
 ln -s ~/.claude/settings.json $CONFIG_DIR/settings.json
 ln -s ~/.claude/CLAUDE.md     $CONFIG_DIR/CLAUDE.md
 ln -s ~/.claude/todos         $CONFIG_DIR/todos
@@ -78,13 +79,13 @@ ln -s ../.claude/projects     $CONFIG_DIR/projects
 
 ### What's Shared vs. Account-Specific
 
-| Resource                                           | Shared?     | Notes                                     |
-| -------------------------------------------------- | ----------- | ----------------------------------------- |
-| `projects/` (sessions)                             | Shared      | Enables cross-account session resume      |
-| `settings.json`, `plugins/`, `commands/`, `plans/` | Shared      | Configure once, use everywhere            |
-| `CLAUDE.md`                                        | Shared      | Global instructions apply to all accounts |
-| `.claude.json`                                     | Per-account | OAuth tokens and account identity         |
-| `history.jsonl`                                    | Per-account | Recent session list differs per account   |
+| Resource                                                      | Shared?     | Notes                                     |
+| ------------------------------------------------------------- | ----------- | ----------------------------------------- |
+| `projects/` (sessions)                                        | Shared      | Enables cross-account session resume      |
+| `settings.json`, `plugins/`, `commands/`, `plans/`, `skills/` | Shared      | Configure once, use everywhere            |
+| `CLAUDE.md`                                                   | Shared      | Global instructions apply to all accounts |
+| `.claude.json`                                                | Per-account | OAuth tokens and account identity         |
+| `history.jsonl`                                               | Per-account | Recent session list differs per account   |
 
 ## Configuring Agents in Maestro
 
@@ -121,6 +122,6 @@ This way you can see at a glance which account's quota you're using. When one ac
 
 ## Tips
 
-- **Session resume works cross-account** — because `projects/` is symlinked, you can start a session on one account and resume it on another.
-- **Don't run both on the same project simultaneously** — two Claude instances writing to the same session files can cause contention. Use one at a time per project.
-- **Symlinks may break after Claude Code updates** — if an update recreates a directory, re-run the symlink commands from step 2.
+- **Session resume works cross-account** - because `projects/` is symlinked, you can start a session on one account and resume it on another.
+- **Don't run both on the same project simultaneously** - two Claude instances writing to the same session files can cause contention. Use one at a time per project.
+- **Symlinks may break after Claude Code updates** - if an update recreates a directory, re-run the symlink commands from step 2.

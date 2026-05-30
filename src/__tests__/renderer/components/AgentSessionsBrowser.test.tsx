@@ -12,6 +12,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { logger } from '../../../renderer/utils/logger';
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
 import { AgentSessionsBrowser } from '../../../renderer/components/AgentSessionsBrowser';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
@@ -319,7 +320,7 @@ describe('AgentSessionsBrowser', () => {
 			});
 
 			// Total tokens = 500 + 200 = 700
-			expect(screen.getByText('700.0')).toBeInTheDocument();
+			expect(screen.getByText('700')).toBeInTheDocument();
 		});
 
 		it('formats thousands with k suffix', async () => {
@@ -348,8 +349,8 @@ describe('AgentSessionsBrowser', () => {
 				await vi.runAllTimersAsync();
 			});
 
-			// Total = 8000, should be 8.0k
-			expect(screen.getByText('8.0k')).toBeInTheDocument();
+			// Total = 8000, should be 8.0K
+			expect(screen.getByText('8.0K')).toBeInTheDocument();
 		});
 
 		it('formats millions with M suffix', async () => {
@@ -593,7 +594,7 @@ describe('AgentSessionsBrowser', () => {
 		});
 
 		it('handles API error gracefully', async () => {
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 			vi.mocked(window.maestro.agentSessions.listPaginated).mockRejectedValue(
 				new Error('API Error')
 			);
@@ -603,7 +604,11 @@ describe('AgentSessionsBrowser', () => {
 				await vi.runAllTimersAsync();
 			});
 
-			expect(consoleSpy).toHaveBeenCalledWith('Failed to load sessions:', expect.any(Error));
+			expect(consoleSpy).toHaveBeenCalledWith(
+				'Failed to load sessions:',
+				undefined,
+				expect.any(Error)
+			);
 			consoleSpy.mockRestore();
 		});
 
@@ -1863,7 +1868,7 @@ describe('AgentSessionsBrowser', () => {
 
 			expect(screen.getByText('$1.23')).toBeInTheDocument();
 			expect(screen.getByText('3m 5s')).toBeInTheDocument();
-			expect(screen.getByText('8.0k')).toBeInTheDocument(); // 5000 + 3000
+			expect(screen.getByText('8.0K')).toBeInTheDocument(); // 5000 + 3000
 			expect(screen.getByText('15')).toBeInTheDocument();
 		});
 

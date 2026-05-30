@@ -31,6 +31,8 @@ import {
 	formatEnterToSend,
 	formatEnterToSendTooltip,
 } from '../../utils/shortcutFormatter';
+import { useSessionStore } from '../../stores/sessionStore';
+import { closeTab } from '../../utils/tabHelpers';
 
 interface WizardInputPanelProps {
 	/** Current session with wizard state */
@@ -63,6 +65,8 @@ interface WizardInputPanelProps {
 	canAttachImages: boolean;
 	/** Whether the session is busy (disable mode toggle during generation) */
 	isBusy: boolean;
+	/** Whether the wizard is performing first-load initialization */
+	isInitializing?: boolean;
 	/** Handler for exiting wizard mode */
 	onExitWizard: () => void;
 	/** Enter to send setting */
@@ -114,6 +118,7 @@ export const WizardInputPanel = React.memo(function WizardInputPanel({
 	confidence,
 	canAttachImages,
 	isBusy,
+	isInitializing = false,
 	onExitWizard,
 	enterToSend,
 	setEnterToSend,
@@ -144,19 +149,48 @@ export const WizardInputPanel = React.memo(function WizardInputPanel({
 		return () => cancelAnimationFrame(rafId);
 	}, [inputRef]);
 
-	// Handle Escape key to show exit confirmation
+	// Handle Escape key to show exit confirmation (only if user has interacted)
 	const handleEscapeKey = useCallback(
 		(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
 			if (e.key === 'Escape') {
 				e.preventDefault();
 				e.stopPropagation();
-				setShowExitConfirm(true);
+				const hasUserMessages = session.wizardState?.conversationHistory?.some(
+					(m) => m.role === 'user'
+				);
+				const hasInput = inputValue.trim() !== '';
+				const hasImages = stagedImages.length > 0;
+				if (hasUserMessages || hasInput || hasImages) {
+					setShowExitConfirm(true);
+				} else {
+					// No interaction — close the tab if safe, otherwise just exit wizard
+					const { setSessions } = useSessionStore.getState();
+					const activeTabId = session.activeTabId;
+					if (activeTabId && session.aiTabs.length > 1) {
+						setSessions((prev) =>
+							prev.map((s) => {
+								if (s.id !== session.id) return s;
+								const result = closeTab(s, activeTabId, false, { skipHistory: true });
+								return result ? result.session : s;
+							})
+						);
+					} else {
+						onExitWizard();
+					}
+				}
+				return;
+			}
+			// Block Enter (any modifier combo) from triggering send while the wizard is
+			// busy — otherwise the message gets eaten by processInput's clear and the
+			// user's draft is lost. Shift+Enter is allowed so newlines still work.
+			if (isBusy && e.key === 'Enter' && !e.shiftKey) {
+				e.preventDefault();
 				return;
 			}
 			// Forward other key events to the parent handler
 			handleInputKeyDown(e);
 		},
-		[handleInputKeyDown]
+		[handleInputKeyDown, session, inputValue, stagedImages, onExitWizard, isBusy]
 	);
 
 	// Handle exit confirmation
@@ -232,6 +266,7 @@ export const WizardInputPanel = React.memo(function WizardInputPanel({
 								theme={theme}
 								onClick={() => setShowExitConfirm(true)}
 								isThinking={isBusy}
+								isInitializing={isInitializing}
 							/>
 							<WizardConfidenceGauge confidence={confidence} theme={theme} />
 						</div>
@@ -372,12 +407,13 @@ export const WizardInputPanel = React.memo(function WizardInputPanel({
 					<button
 						type="button"
 						onClick={() => processInput()}
-						className="p-2 rounded-md shadow-sm transition-all hover:opacity-90 cursor-pointer"
+						disabled={isBusy}
+						className="p-2 rounded-md shadow-sm transition-all hover:opacity-90 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:opacity-50"
 						style={{
 							backgroundColor: theme.colors.accent,
 							color: theme.colors.accentForeground,
 						}}
-						title="Send message"
+						title={isBusy ? 'Wizard is thinking…' : 'Send message'}
 					>
 						<ArrowUp className="w-4 h-4" />
 					</button>

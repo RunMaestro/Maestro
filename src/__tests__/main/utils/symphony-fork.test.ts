@@ -20,6 +20,10 @@ vi.mock('../../../main/agents/path-prober', () => ({
 	getExpandedEnv: () => ({ PATH: '/usr/bin' }),
 }));
 
+vi.mock('../../../main/utils/cliDetection', () => ({
+	resolveGhPath: vi.fn().mockResolvedValue('gh'),
+}));
+
 import { ensureForkSetup } from '../../../main/utils/symphony-fork';
 
 function ok(stdout: string): ExecResult {

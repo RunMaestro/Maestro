@@ -2,7 +2,7 @@
  * TODO: These tests need to be updated to match the current service implementation.
  * The IPC API changed from window.maestro.context.* to a different approach.
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, beforeAll } from 'vitest';
 import {
 	ContextGroomingService,
 	contextGroomingService,
@@ -10,6 +10,7 @@ import {
 	AGENT_TARGET_NOTES,
 	getAgentDisplayName,
 	buildContextTransferPrompt,
+	loadContextGroomerPrompts,
 } from '../../../renderer/services/contextGroomer';
 import type {
 	MergeRequest,
@@ -30,6 +31,25 @@ vi.stubGlobal('window', {
 			createGroomingSession: mockCreateGroomingSession,
 			sendGroomingPrompt: mockSendGroomingPrompt,
 			cleanupGroomingSession: mockCleanupGroomingSession,
+		},
+		prompts: {
+			get: vi.fn((id: string) => {
+				const fs = require('fs');
+				const path = require('path');
+				const promptsDir = path.resolve(__dirname, '..', '..', '..', '..', 'src', 'prompts');
+				const filenameMap: Record<string, string> = {
+					'context-grooming': 'context-grooming.md',
+					'context-transfer': 'context-transfer.md',
+				};
+				const filename = filenameMap[id];
+				if (!filename) return Promise.resolve({ success: false, error: `Unknown prompt: ${id}` });
+				try {
+					const content = fs.readFileSync(path.join(promptsDir, filename), 'utf-8');
+					return Promise.resolve({ success: true, content });
+				} catch (e: any) {
+					return Promise.resolve({ success: false, error: e.message });
+				}
+			}),
 		},
 	},
 });
@@ -561,6 +581,10 @@ describe('getAgentDisplayName', () => {
 });
 
 describe('buildContextTransferPrompt', () => {
+	beforeAll(async () => {
+		await loadContextGroomerPrompts(true);
+	});
+
 	it('should include source and target agent names', () => {
 		const prompt = buildContextTransferPrompt('claude-code', 'opencode');
 

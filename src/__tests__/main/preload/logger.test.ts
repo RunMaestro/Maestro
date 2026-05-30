@@ -206,39 +206,46 @@ describe('Logger Preload API', () => {
 	});
 
 	describe('onNewLog', () => {
-		it('should register event listener and return cleanup function', () => {
+		it('should register batch event listener and return cleanup function', () => {
 			const callback = vi.fn();
 
 			const cleanup = api.onNewLog(callback);
 
-			expect(mockOn).toHaveBeenCalledWith('logger:newLog', expect.any(Function));
+			// Main batches log entries via `logger:newLogBatch`; the preload
+			// fans them out per-entry so callers retain the single-entry API.
+			expect(mockOn).toHaveBeenCalledWith('logger:newLogBatch', expect.any(Function));
 			expect(typeof cleanup).toBe('function');
 		});
 
-		it('should call callback when event is received', () => {
+		it('should fan out batched entries to the per-entry callback', () => {
 			const callback = vi.fn();
-			let registeredHandler: (event: unknown, log: unknown) => void;
+			let registeredHandler: (event: unknown, batch: unknown) => void;
 
 			mockOn.mockImplementation(
-				(_channel: string, handler: (event: unknown, log: unknown) => void) => {
+				(_channel: string, handler: (event: unknown, batch: unknown) => void) => {
 					registeredHandler = handler;
 				}
 			);
 
 			api.onNewLog(callback);
 
-			const logEntry = { level: 'info', message: 'Test', timestamp: Date.now() };
-			registeredHandler!({}, logEntry);
+			const entries = [
+				{ level: 'info', message: 'first', timestamp: 1 },
+				{ level: 'warn', message: 'second', timestamp: 2 },
+			];
+			registeredHandler!({}, entries);
 
-			expect(callback).toHaveBeenCalledWith(logEntry);
+			expect(callback).toHaveBeenCalledTimes(2);
+			expect(callback).toHaveBeenNthCalledWith(1, entries[0]);
+			expect(callback).toHaveBeenNthCalledWith(2, entries[1]);
 		});
 
-		it('should remove listener when cleanup is called', () => {
+		it('should remove batch listener when cleanup is called', () => {
 			const callback = vi.fn();
-			let registeredHandler: (event: unknown, log: unknown) => void;
+			let registeredHandler: (event: unknown, batch: unknown) => void;
 
 			mockOn.mockImplementation(
-				(_channel: string, handler: (event: unknown, log: unknown) => void) => {
+				(_channel: string, handler: (event: unknown, batch: unknown) => void) => {
 					registeredHandler = handler;
 				}
 			);
@@ -246,7 +253,7 @@ describe('Logger Preload API', () => {
 			const cleanup = api.onNewLog(callback);
 			cleanup();
 
-			expect(mockRemoveListener).toHaveBeenCalledWith('logger:newLog', registeredHandler!);
+			expect(mockRemoveListener).toHaveBeenCalledWith('logger:newLogBatch', registeredHandler!);
 		});
 	});
 

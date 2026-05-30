@@ -2,14 +2,16 @@ import { useCallback, useRef } from 'react';
 import type { Session, LogEntry, UsageStats, ThinkingMode } from '../../types';
 import { createTab, getActiveTab } from '../../utils/tabHelpers';
 import { generateId } from '../../utils/ids';
+import { buildSharedHistoryContext } from '../../utils/sessionHelpers';
 import type { RightPanelHandle } from '../../components/RightPanel';
 import { FALLBACK_CONTEXT_WINDOW } from '../../../shared/agentConstants';
+import { logger } from '../../utils/logger';
 
 /**
  * History entry for the addHistoryEntry function.
  */
 export interface HistoryEntryInput {
-	type: 'AUTO' | 'USER';
+	type: 'AUTO' | 'USER' | 'CUE';
 	summary: string;
 	fullResponse?: string;
 	agentSessionId?: string;
@@ -24,6 +26,8 @@ export interface HistoryEntryInput {
 	success?: boolean;
 	/** Task execution time in milliseconds */
 	elapsedTimeMs?: number;
+	/** Context usage percentage from the agent run (used when activeSession context isn't available) */
+	contextUsage?: number;
 }
 
 /**
@@ -44,6 +48,8 @@ export interface UseAgentSessionManagementDeps {
 	defaultSaveToHistory: boolean;
 	/** Default value for showThinking on new tabs */
 	defaultShowThinking: ThinkingMode;
+	/** Flash notification callback for user feedback */
+	showFlash?: (message: string) => void;
 }
 
 /**
@@ -62,7 +68,8 @@ export interface UseAgentSessionManagementReturn {
 		providedMessages?: LogEntry[],
 		sessionName?: string,
 		starred?: boolean,
-		usageStats?: UsageStats
+		usageStats?: UsageStats,
+		projectPath?: string
 	) => Promise<void>;
 }
 
@@ -88,6 +95,7 @@ export function useAgentSessionManagement(
 		rightPanelRef,
 		defaultSaveToHistory,
 		defaultShowThinking,
+		showFlash,
 	} = deps;
 
 	// Refs for functions that need to be accessed from other callbacks
@@ -114,25 +122,34 @@ export function useAgentSessionManagement(
 
 			const shouldIncludeContextUsage = !entry.sessionId || entry.sessionId === activeSession?.id;
 
-			await window.maestro.history.add({
-				id: generateId(),
-				type: entry.type,
-				timestamp: Date.now(),
-				summary: entry.summary,
-				fullResponse: entry.fullResponse,
-				agentSessionId: entry.agentSessionId,
-				sessionId: targetSessionId,
-				sessionName: sessionName,
-				projectPath: targetProjectPath,
-				...(shouldIncludeContextUsage ? { contextUsage: activeSession?.contextUsage } : {}),
-				// Only include usageStats if explicitly provided (per-task tracking)
-				// Never use cumulative session stats - they're lifetime totals
-				usageStats: entry.usageStats,
-				// Pass through success field for error/failure tracking
-				success: entry.success,
-				// Pass through task execution time
-				elapsedTimeMs: entry.elapsedTimeMs,
-			});
+			await window.maestro.history.add(
+				{
+					id: generateId(),
+					type: entry.type,
+					timestamp: Date.now(),
+					summary: entry.summary,
+					fullResponse: entry.fullResponse,
+					agentSessionId: entry.agentSessionId,
+					sessionId: targetSessionId,
+					sessionName: sessionName,
+					projectPath: targetProjectPath,
+					// Prefer active session's live context percentage; fall back to entry's own estimate
+					...(() => {
+						const ctx = shouldIncludeContextUsage
+							? (activeSession?.contextUsage ?? entry.contextUsage)
+							: entry.contextUsage;
+						return ctx != null ? { contextUsage: ctx } : {};
+					})(),
+					// Only include usageStats if explicitly provided (per-task tracking)
+					// Never use cumulative session stats - they're lifetime totals
+					usageStats: entry.usageStats,
+					// Pass through success field for error/failure tracking
+					success: entry.success,
+					// Pass through task execution time
+					elapsedTimeMs: entry.elapsedTimeMs,
+				},
+				buildSharedHistoryContext(activeSession)
+			);
 
 			// Refresh history panel to show the new entry
 			rightPanelRef.current?.refreshHistoryPanel();
@@ -165,21 +182,38 @@ export function useAgentSessionManagement(
 			providedMessages?: LogEntry[],
 			sessionName?: string,
 			starred?: boolean,
-			usageStats?: UsageStats
+			usageStats?: UsageStats,
+			projectPath?: string
 		) => {
-			// Use projectRoot (not cwd) for consistent session storage access
-			if (!activeSession?.projectRoot) return;
+			// Need an active session for tab management
+			if (!activeSession) return;
+			// Use provided projectPath (e.g. from history entry) or fall back to activeSession.projectRoot
+			const resolvedProjectRoot = projectPath || activeSession.projectRoot;
+			if (!resolvedProjectRoot) {
+				logger.warn('[handleResumeSession] No projectRoot on activeSession', undefined, {
+					sessionId: activeSession?.id,
+					cwd: activeSession?.cwd,
+				});
+				showFlash?.('Cannot resume session: no project root set');
+				return;
+			}
 
 			// Check if a tab with this agentSessionId already exists
 			const existingTab = activeSession.aiTabs?.find(
 				(tab) => tab.agentSessionId === agentSessionId
 			);
-			if (existingTab) {
+			if (existingTab && existingTab.logs && existingTab.logs.length > 0) {
 				// Switch to the existing tab instead of creating a duplicate
 				setSessions((prev) =>
 					prev.map((s) =>
 						s.id === activeSession.id
-							? { ...s, activeTabId: existingTab.id, activeFileTabId: null, inputMode: 'ai' }
+							? {
+									...s,
+									activeTabId: existingTab.id,
+									activeFileTabId: null,
+									activeTerminalTabId: null,
+									inputMode: 'ai',
+								}
 							: s
 					)
 				);
@@ -195,23 +229,32 @@ export function useAgentSessionManagement(
 				} else {
 					// Load the session messages using the generic agentSessions API
 					// Use projectRoot (not cwd) for consistent session storage access
+					// Pass sshRemoteId so SSH-remote sessions read from the correct host
 					const agentId = activeSession.toolType || 'claude-code';
 					const result = await window.maestro.agentSessions.read(
 						agentId,
-						activeSession.projectRoot,
+						resolvedProjectRoot,
 						agentSessionId,
-						{ offset: 0, limit: 100 }
+						{ offset: 0, limit: 500 },
+						activeSession.sshRemoteId
 					);
 
-					// Convert to log entries
-					messages = result.messages.map(
-						(msg: { type: string; content: string; timestamp: string; uuid: string }) => ({
+					// Convert to log entries, keeping only messages with actual text content.
+					// Tool-use-only messages (empty text) are skipped — restored tabs start
+					// with thinking off so there's nothing useful to render for those entries.
+					messages = result.messages
+						.filter((msg: { content: string }) => msg.content && msg.content.trim().length > 0)
+						.map((msg: { type: string; content: string; timestamp: string; uuid: string }) => ({
 							id: msg.uuid || generateId(),
 							timestamp: new Date(msg.timestamp).getTime(),
 							source: msg.type === 'user' ? ('user' as const) : ('stdout' as const),
-							text: msg.content || '',
-						})
-					);
+							text: msg.content,
+						}));
+				}
+
+				if (messages.length === 0) {
+					showFlash?.('Session has no displayable messages');
+					return;
 				}
 
 				// Look up starred status, session name, and context usage from stores if not provided
@@ -225,10 +268,7 @@ export function useAgentSessionManagement(
 					try {
 						// Look up session metadata from session origins (name, starred, contextUsage)
 						// Note: getSessionOrigins is still Claude-specific until we add generic origin tracking
-						// Use projectRoot (not cwd) for consistent session storage access
-						const origins = await window.maestro.claude.getSessionOrigins(
-							activeSession.projectRoot
-						);
+						const origins = await window.maestro.claude.getSessionOrigins(resolvedProjectRoot);
 						const originData = origins[agentSessionId];
 						if (originData && typeof originData === 'object') {
 							if (sessionName === undefined && originData.sessionName) {
@@ -242,7 +282,11 @@ export function useAgentSessionManagement(
 							}
 						}
 					} catch (error) {
-						console.warn('[handleResumeSession] Failed to lookup session metadata:', error);
+						logger.warn(
+							'[handleResumeSession] Failed to lookup session metadata:',
+							undefined,
+							error
+						);
 					}
 				}
 
@@ -268,6 +312,29 @@ export function useAgentSessionManagement(
 					prev.map((s) => {
 						if (s.id !== activeSession.id) return s;
 
+						// If an existing tab was found with empty logs, repopulate it instead of creating a new one
+						if (existingTab) {
+							const updatedTabs = s.aiTabs.map((tab) =>
+								tab.id === existingTab.id
+									? {
+											...tab,
+											logs: messages,
+											name: name ?? tab.name,
+											starred: isStarred || tab.starred,
+											usageStats: finalUsageStats ?? tab.usageStats,
+										}
+									: tab
+							);
+							return {
+								...s,
+								aiTabs: updatedTabs,
+								activeTabId: existingTab.id,
+								activeFileTabId: null,
+								activeTerminalTabId: null,
+								inputMode: 'ai' as const,
+							};
+						}
+
 						// Create tab from the CURRENT session state (not stale closure value)
 						const result = createTab(s, {
 							agentSessionId,
@@ -285,7 +352,12 @@ export function useAgentSessionManagement(
 				);
 				setActiveAgentSessionId(agentSessionId);
 			} catch (error) {
-				console.error('Failed to resume session:', error);
+				logger.error('Failed to resume session:', undefined, error);
+				const msg =
+					error instanceof Error && error.message.includes('ENOENT')
+						? 'Session file not found on disk'
+						: 'Failed to load session';
+				showFlash?.(msg);
 			}
 		},
 		[
@@ -297,6 +369,7 @@ export function useAgentSessionManagement(
 			setActiveAgentSessionId,
 			defaultSaveToHistory,
 			defaultShowThinking,
+			showFlash,
 		]
 	);
 

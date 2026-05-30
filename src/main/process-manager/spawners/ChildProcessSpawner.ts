@@ -5,18 +5,19 @@ import { EventEmitter } from 'events';
 import * as path from 'path';
 import * as fs from 'fs';
 import { logger } from '../../utils/logger';
-import { getOutputParser } from '../../parsers';
+import { createOutputParser } from '../../parsers';
 import { getAgentCapabilities } from '../../agents';
 import type { ProcessConfig, ManagedProcess, SpawnResult } from '../types';
 import type { DataBufferManager } from '../handlers/DataBufferManager';
 import { StdoutHandler } from '../handlers/StdoutHandler';
 import { StderrHandler } from '../handlers/StderrHandler';
 import { ExitHandler } from '../handlers/ExitHandler';
-import { buildChildProcessEnv } from '../utils/envBuilder';
+import { buildChildProcessEnv, collectMaestroEnvVars } from '../utils/envBuilder';
 import { saveImageToTempFile, buildImagePromptPrefix } from '../utils/imageUtils';
 import { buildStreamJsonMessage } from '../utils/streamJsonBuilder';
 import { escapeArgsForShell, isPowerShellShell } from '../utils/shellEscape';
 import { isWindows } from '../../../shared/platformDetection';
+import { captureException } from '../../utils/sentry';
 
 /**
  * Handles spawning of child processes (non-PTY).
@@ -61,6 +62,7 @@ export class ChildProcessSpawner {
 			prompt,
 			images,
 			imageArgs,
+			imagePromptBuilder,
 			promptArgs,
 			contextWindow,
 			customEnvVars,
@@ -95,7 +97,9 @@ export class ChildProcessSpawner {
 		let tempImageFiles: string[] = [];
 		// effectivePrompt may be modified (e.g., image path prefix prepended for resume mode)
 		let effectivePrompt = prompt;
-		let promptAddedToArgs = false;
+		// If the caller pre-embedded the prompt in args (e.g., SSH tab naming wraps it
+		// inside bash -c), skip the appending paths below and treat it as already-added.
+		let promptAddedToArgs = !!config.promptAlreadyInArgs;
 
 		if (hasImages && prompt && capabilities.supportsStreamJsonInput) {
 			// For agents that support stream-json input (like Claude Code)
@@ -107,8 +111,9 @@ export class ChildProcessSpawner {
 				: [];
 			finalArgs = [...args, ...needsInputFormat];
 			// Prompt will be sent via stdin as stream-json with embedded images (not in CLI args)
-		} else if (hasImages && prompt && imageArgs) {
-			// For agents that use file-based image args (like Codex, OpenCode)
+		} else if (hasImages && prompt && (imageArgs || imagePromptBuilder)) {
+			// For agents that use file-based image args (like Codex, OpenCode) or
+			// prompt-embedded image mentions (like Copilot's @path syntax)
 			finalArgs = [...args];
 			tempImageFiles = [];
 			for (let i = 0; i < images.length; i++) {
@@ -120,10 +125,14 @@ export class ChildProcessSpawner {
 
 			const isResumeWithPromptEmbed =
 				capabilities.imageResumeMode === 'prompt-embed' && args.some((a) => a === 'resume');
+			const shouldEmbedImagesInPrompt = !!imagePromptBuilder || isResumeWithPromptEmbed;
 
-			if (isResumeWithPromptEmbed) {
-				// Resume mode: embed file paths in prompt text, don't use -i flag
-				const imagePrefix = buildImagePromptPrefix(tempImageFiles);
+			if (shouldEmbedImagesInPrompt) {
+				// Some agents consume images by mentioning temp file paths inside the prompt
+				// instead of accepting a dedicated CLI image flag.
+				const imagePrefix = imagePromptBuilder
+					? imagePromptBuilder(tempImageFiles)
+					: buildImagePromptPrefix(tempImageFiles);
 				effectivePrompt = imagePrefix + prompt;
 				if (!promptViaStdin) {
 					if (promptArgs) {
@@ -135,19 +144,19 @@ export class ChildProcessSpawner {
 					}
 					promptAddedToArgs = true;
 				}
-				logger.debug(
-					'[ProcessManager] Resume mode: embedded image paths in prompt',
-					'ProcessManager',
-					{
-						sessionId,
-						imageCount: images.length,
-						tempFiles: tempImageFiles,
-						promptViaStdin,
-					}
-				);
+				logger.debug('[ProcessManager] Embedded image paths in prompt', 'ProcessManager', {
+					sessionId,
+					imageCount: images.length,
+					tempFiles: tempImageFiles,
+					embedMode: imagePromptBuilder ? 'prompt-builder' : 'resume-prompt-embed',
+					promptViaStdin,
+				});
 			} else {
 				// Initial spawn: use -i flag as before
 				for (const tempPath of tempImageFiles) {
+					if (!imageArgs) {
+						continue;
+					}
 					finalArgs = [...finalArgs, ...imageArgs(tempPath)];
 				}
 				if (!promptViaStdin) {
@@ -167,9 +176,10 @@ export class ChildProcessSpawner {
 					promptViaStdin,
 				});
 			}
-		} else if (prompt && !promptViaStdin) {
+		} else if (prompt && !promptViaStdin && !promptAddedToArgs) {
 			// Regular batch mode - prompt as CLI arg
-			// SKIP this when prompt is sent via stdin to avoid shell escaping issues
+			// SKIP this when prompt is sent via stdin to avoid shell escaping issues,
+			// or when the caller already embedded the prompt in args (promptAlreadyInArgs).
 			if (promptArgs) {
 				finalArgs = [...args, ...promptArgs(prompt)];
 			} else if (noPromptSeparator) {
@@ -208,8 +218,15 @@ export class ChildProcessSpawner {
 
 		try {
 			// Build environment
-			const isResuming = finalArgs.includes('--resume') || finalArgs.includes('--session');
-			const env = buildChildProcessEnv(customEnvVars, isResuming, shellEnvVars);
+			const isResuming =
+				args.some((arg) => arg === '--resume' || arg.startsWith('--resume=')) ||
+				args.includes('--session');
+			const env = buildChildProcessEnv(
+				customEnvVars,
+				isResuming,
+				shellEnvVars,
+				config.extraPathDirs
+			);
 
 			// Log environment variable application for troubleshooting
 			if (shellEnvVars && Object.keys(shellEnvVars).length > 0) {
@@ -232,7 +249,7 @@ export class ChildProcessSpawner {
 			});
 
 			// Handle Windows shell requirements
-			const spawnCommand = command;
+			let spawnCommand = command;
 			let spawnArgs = finalArgs;
 			// Respect explicit request from caller, but also be defensive: if caller
 			// did not set runInShell and we're on Windows with a bare .exe basename,
@@ -248,6 +265,20 @@ export class ChildProcessSpawner {
 				useShell = true;
 				logger.info(
 					'[ProcessManager] Auto-enabling shell for Windows to allow PATH resolution of basename exe',
+					'ProcessManager',
+					{ command: spawnCommand }
+				);
+			}
+
+			// Auto-enable shell for Windows when command is a batch file (.cmd/.bat).
+			// Node.js refuses to spawn .cmd/.bat directly (throws "spawn EINVAL") after
+			// the CVE-2024-27980 fix — they must be launched through a shell. npm-installed
+			// agent CLIs resolve to shims like claude.cmd / codex.cmd / opencode.cmd, which
+			// is exactly what tab naming spawns on Windows. Fixes MAESTRO-Q8.
+			if (isWindows() && !useShell && (commandExt === '.cmd' || commandExt === '.bat')) {
+				useShell = true;
+				logger.info(
+					'[ProcessManager] Auto-enabling shell for Windows to spawn batch-file command',
 					'ProcessManager',
 					{ command: spawnCommand }
 				);
@@ -300,6 +331,22 @@ export class ChildProcessSpawner {
 				spawnShell = config.shell.trim();
 			}
 
+			// When spawning through the default Windows shell (cmd.exe via ComSpec),
+			// Node concatenates the command and args into a single command line without
+			// quoting the command itself. A command path that contains spaces — e.g. an
+			// npm shim under "C:\Users\First Last\AppData\Roaming\npm\claude.cmd" — would
+			// be split by cmd.exe and fail. Quote it defensively. We only do this for the
+			// boolean (cmd.exe) shell path; an explicit shell string carries its own
+			// quoting rules and is the caller's responsibility.
+			if (
+				isWindows() &&
+				spawnShell === true &&
+				/\s/.test(spawnCommand) &&
+				!spawnCommand.startsWith('"')
+			) {
+				spawnCommand = `"${spawnCommand}"`;
+			}
+
 			// Log spawn details
 			const spawnLogFn = isWindows() ? logger.info.bind(logger) : logger.debug.bind(logger);
 			spawnLogFn('[ProcessManager] About to spawn with shell option', 'ProcessManager', {
@@ -336,17 +383,29 @@ export class ChildProcessSpawner {
 			// because the SSH command wraps the actual agent command. Without this, the output
 			// parser won't process JSON output from remote agents, causing raw JSON to display.
 			// NOTE: sendPromptViaStdinRaw sends RAW text (not JSON), so it should NOT set isStreamJsonMode
-			const argsContain = (pattern: string) => finalArgs.some((arg) => arg.includes(pattern));
+			// Use the pre-prompt args for detection to avoid false positives from prompt content
+			// (e.g., a prompt like "Explain --json" should not flip isStreamJsonMode)
+			const cliArgs = promptAddedToArgs ? args : finalArgs;
+			const argsContain = (pattern: string) => cliArgs.some((arg) => arg.includes(pattern));
+			const argsHaveFlagValue = (flag: string, value: string) =>
+				cliArgs.some(
+					(arg, index) =>
+						arg === `${flag}=${value}` || (arg === flag && cliArgs[index + 1] === value)
+				);
+
+			// Create a fresh output parser instance for this process (not the shared singleton)
+			// to isolate mutable state like tool name tracking across concurrent sessions
+			const outputParser = createOutputParser(toolType) || undefined;
+
 			const isStreamJsonMode =
 				argsContain('stream-json') ||
 				argsContain('--json') ||
-				(argsContain('--format') && argsContain('json')) ||
+				argsHaveFlagValue('--format', 'json') ||
+				argsHaveFlagValue('--output-format', 'json') ||
 				(hasImages && !!prompt) ||
 				!!config.sendPromptViaStdin ||
-				!!config.sshStdinScript;
-
-			// Get the output parser for this agent type
-			const outputParser = getOutputParser(toolType) || undefined;
+				!!config.sshStdinScript ||
+				!!outputParser; // Agents with output parsers use streaming JSONL, not batch JSON
 
 			logger.debug('[ProcessManager] Output parser lookup', 'ProcessManager', {
 				sessionId,
@@ -385,6 +444,7 @@ export class ChildProcessSpawner {
 				projectPath: config.projectPath,
 				sshRemoteId: config.sshRemoteId,
 				sshRemoteHost: config.sshRemoteHost,
+				maestroEnvVars: collectMaestroEnvVars(shellEnvVars, customEnvVars, isResuming),
 			};
 
 			this.processes.set(sessionId, managedProcess);
@@ -434,6 +494,7 @@ export class ChildProcessSpawner {
 					try {
 						this.emitter.emit('raw-stdout', sessionId, output);
 					} catch (err) {
+						void captureException(err);
 						logger.error('[ProcessManager] raw-stdout listener error', 'ProcessManager', {
 							sessionId,
 							error: String(err),
@@ -471,7 +532,12 @@ export class ChildProcessSpawner {
 			// emitted near the end of stdout (e.g., tab-naming, batch operations).
 			// The 'close' event guarantees all stdio streams are closed first.
 			childProcess.on('close', (code) => {
-				this.exitHandler.handleExit(sessionId, code || 0);
+				void this.exitHandler.handleExit(sessionId, code || 0).catch((err) => {
+					logger.error('[ProcessManager] handleExit threw', 'ProcessManager', {
+						sessionId,
+						error: String(err),
+					});
+				});
 			});
 
 			// Handle errors
@@ -523,6 +589,7 @@ export class ChildProcessSpawner {
 
 			return { pid: childProcess.pid || -1, success: true };
 		} catch (error) {
+			void captureException(error);
 			logger.error('[ProcessManager] Failed to spawn process', 'ProcessManager', {
 				error: String(error),
 			});

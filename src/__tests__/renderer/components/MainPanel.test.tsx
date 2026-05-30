@@ -11,13 +11,49 @@ import type {
 } from '../../../renderer/types';
 import { gitService } from '../../../renderer/services/git';
 import { useUIStore } from '../../../renderer/stores/uiStore';
+import { useCenterFlashStore } from '../../../renderer/stores/centerFlashStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import {
 	clearCapabilitiesCache,
 	setCapabilitiesCache,
 } from '../../../renderer/hooks/agent/useAgentCapabilities';
 
 // Mock child components to simplify testing - must be before MainPanel import
+
+// TerminalView: forwardRef stub that records render calls per session so we can
+// assert persistence (kept mounted) vs destruction (unmounted) across sessions.
+const terminalViewSessions: string[] = [];
+vi.mock('../../../renderer/components/TerminalView', () => {
+	const React = require('react');
+	const TerminalView = React.forwardRef(
+		(props: { session: { id: string }; isVisible: boolean }, ref: React.Ref<unknown>) => {
+			React.useImperativeHandle(ref, () => ({
+				clearActiveTerminal: vi.fn(),
+				focusActiveTerminal: vi.fn(),
+			}));
+			// Track which session IDs have been mounted
+			React.useEffect(() => {
+				terminalViewSessions.push(props.session.id);
+				return () => {
+					const idx = terminalViewSessions.lastIndexOf(props.session.id);
+					if (idx !== -1) terminalViewSessions.splice(idx, 1);
+				};
+			}, [props.session.id]);
+			return React.createElement('div', {
+				'data-testid': `terminal-view-${props.session.id}`,
+				'data-visible': String(props.isVisible),
+			});
+		}
+	);
+	TerminalView.displayName = 'TerminalView';
+	return {
+		TerminalView,
+		createTabStateChangeHandler: vi.fn(() => vi.fn()),
+		createTabPidChangeHandler: vi.fn(() => vi.fn()),
+	};
+});
+
 vi.mock('../../../renderer/components/LogViewer', () => ({
 	LogViewer: (props: { onClose: () => void }) => {
 		return React.createElement(
@@ -43,10 +79,17 @@ vi.mock('../../../renderer/components/TerminalOutput', () => ({
 }));
 
 vi.mock('../../../renderer/components/InputArea', () => ({
-	InputArea: (props: { session: { name: string }; onInputFocus: () => void }) => {
+	InputArea: (props: {
+		session: { name: string };
+		onInputFocus: () => void;
+		availableModels?: string[];
+	}) => {
 		return React.createElement(
 			'div',
-			{ 'data-testid': 'input-area' },
+			{
+				'data-testid': 'input-area',
+				'data-available-models': JSON.stringify(props.availableModels ?? []),
+			},
 			React.createElement('input', { 'data-testid': 'input-field', onFocus: props.onInputFocus }),
 			`Input for ${props.session?.name}`
 		);
@@ -329,6 +372,13 @@ describe('MainPanel', () => {
 			},
 		],
 		activeTabId: 'tab-1',
+		filePreviewTabs: [],
+		activeFileTabId: null,
+		terminalTabs: [],
+		activeTerminalTabId: null,
+		unifiedTabOrder: [{ type: 'ai' as const, id: 'tab-1' }],
+		unifiedClosedTabHistory: [],
+		closedTabHistory: [],
 		...overrides,
 	});
 
@@ -336,6 +386,7 @@ describe('MainPanel', () => {
 		// State
 		logViewerOpen: false,
 		agentSessionsOpen: false,
+		memoryViewerOpen: false,
 		activeAgentSessionId: null,
 		activeSession: createSession(),
 		thinkingItems: [] as ThinkingItem[],
@@ -357,6 +408,7 @@ describe('MainPanel', () => {
 		setGitDiffPreview: vi.fn(),
 		setLogViewerOpen: vi.fn(),
 		setAgentSessionsOpen: vi.fn(),
+		setMemoryViewerOpen: vi.fn(),
 		setActiveAgentSessionId: vi.fn(),
 		onResumeAgentSession: vi.fn(),
 		onNewAgentSession: vi.fn(),
@@ -414,9 +466,7 @@ describe('MainPanel', () => {
 		useSettingsStore.setState({
 			fontFamily: 'monospace',
 			enterToSendAI: true,
-			enterToSendTerminal: false,
 			chatRawTextMode: false,
-			autoScrollAiMode: false,
 			userMessageAlignment: 'right',
 			maxOutputLines: 1000,
 			logLevel: 'info',
@@ -427,6 +477,11 @@ describe('MainPanel', () => {
 				contextWarningYellowThreshold: 60,
 				contextWarningRedThreshold: 80,
 			},
+			// Header pills are now opt-in via Settings → Display. Tests below
+			// exercise the pill behaviors, so enable them explicitly. Defaults
+			// in the store are showSessionIdPill: false, showSessionCostPill: true.
+			showSessionIdPill: true,
+			showSessionCostPill: true,
 		});
 
 		// Clear capabilities cache and pre-populate with Claude Code capabilities (default test agent)
@@ -555,6 +610,20 @@ describe('MainPanel', () => {
 
 			// Header should not be visible
 			expect(screen.queryByText('Test Session')).not.toBeInTheDocument();
+		});
+
+		it('should show bookmark indicator when session is bookmarked', () => {
+			const session = createSession({ bookmarked: true });
+			render(<MainPanel {...defaultProps} activeSession={session} />);
+
+			expect(screen.getByTestId('bookmark-icon')).toBeInTheDocument();
+		});
+
+		it('should not show bookmark indicator when session is not bookmarked', () => {
+			const session = createSession({ bookmarked: false });
+			render(<MainPanel {...defaultProps} activeSession={session} />);
+
+			expect(screen.queryByTestId('bookmark-icon')).not.toBeInTheDocument();
 		});
 
 		it('should show Agent Sessions button in header', () => {
@@ -738,12 +807,13 @@ describe('MainPanel', () => {
 			expect(screen.getByTestId('tab-tab-2')).toBeInTheDocument();
 		});
 
-		it('should not render TabBar in terminal mode', () => {
+		it('should render TabBar in terminal mode (unified tab system shows tabs in all modes)', () => {
 			const session = createSession({ inputMode: 'terminal' });
 
 			render(<MainPanel {...defaultProps} activeSession={session} />);
 
-			expect(screen.queryByTestId('tab-bar')).not.toBeInTheDocument();
+			// TabBar renders in both AI and terminal modes when aiTabs exist
+			expect(screen.queryByTestId('tab-bar')).toBeInTheDocument();
 		});
 
 		it('should call onTabSelect when tab is clicked', () => {
@@ -833,6 +903,31 @@ describe('MainPanel', () => {
 						createdAt: Date.now(),
 					},
 				],
+			});
+
+			render(<MainPanel {...defaultProps} activeSession={session} />);
+
+			expect(screen.queryByText('ABC12345')).not.toBeInTheDocument();
+		});
+
+		it('should not show UUID pill when showSessionIdPill setting is disabled', () => {
+			// The pill is opt-in via Settings → Display (defaults to false in
+			// the store). Even when every other gating condition is satisfied,
+			// the pill must stay hidden until the user enables the setting.
+			useSettingsStore.setState({ showSessionIdPill: false });
+
+			const session = createSession({
+				inputMode: 'ai',
+				aiTabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: 'abc12345-def6-7890-ghij-klmnopqrstuv',
+						name: 'Tab 1',
+						isUnread: false,
+						createdAt: Date.now(),
+					},
+				],
+				activeTabId: 'tab-1',
 			});
 
 			render(<MainPanel {...defaultProps} activeSession={session} />);
@@ -1823,7 +1918,12 @@ describe('MainPanel', () => {
 
 			await waitFor(() => {
 				expect(screen.getByText('Input Tokens')).toBeInTheDocument();
-				expect(screen.getByText('1,500')).toBeInTheDocument();
+				// Claude reports inputTokens as the uncached delta only, so the
+				// displayed "Input Tokens" value is inputTokens + cacheRead + cacheCreation
+				// = 1500 + 200 + 100 = 1800. See issue #844 / calculateDisplayInputTokens.
+				// Same number also appears in the "Context Tokens" row (which sums the
+				// same three fields), so we expect two matches.
+				expect(screen.getAllByText('1,800')).toHaveLength(2);
 				expect(screen.getByText('Output Tokens')).toBeInTheDocument();
 				expect(screen.getByText('750')).toBeInTheDocument();
 				expect(screen.getByText('Cache Read')).toBeInTheDocument();
@@ -1918,9 +2018,10 @@ describe('MainPanel', () => {
 	});
 
 	describe('Copy notification', () => {
-		it('should show copy notification when text is copied', async () => {
+		it('fires a Session ID center flash when the UUID pill is clicked', async () => {
 			const writeText = vi.fn().mockResolvedValue(undefined);
 			Object.assign(navigator, { clipboard: { writeText } });
+			useCenterFlashStore.getState().setActive(null);
 
 			const session = createSession({
 				inputMode: 'ai',
@@ -1941,13 +2042,17 @@ describe('MainPanel', () => {
 			fireEvent.click(screen.getByText('ABC12345'));
 
 			await waitFor(() => {
-				expect(screen.getByText('Session ID Copied to Clipboard')).toBeInTheDocument();
+				const active = useCenterFlashStore.getState().active;
+				expect(active?.message).toBe('Session ID Copied');
+				expect(active?.detail).toBe('abc12345-def6-7890');
+				expect(active?.color).toBe('theme');
 			});
 		});
 
-		it('should hide copy notification after 2 seconds', async () => {
+		it('center flash auto-dismisses after its duration elapses', async () => {
 			const writeText = vi.fn().mockResolvedValue(undefined);
 			Object.assign(navigator, { clipboard: { writeText } });
+			useCenterFlashStore.getState().setActive(null);
 
 			const session = createSession({
 				inputMode: 'ai',
@@ -1968,17 +2073,15 @@ describe('MainPanel', () => {
 			fireEvent.click(screen.getByText('ABC12345'));
 
 			await waitFor(() => {
-				expect(screen.getByText('Session ID Copied to Clipboard')).toBeInTheDocument();
+				expect(useCenterFlashStore.getState().active?.message).toBe('Session ID Copied');
 			});
 
-			// Advance timers by 2 seconds
+			// Advance well past the default center-flash duration
 			await act(async () => {
-				vi.advanceTimersByTime(2000);
+				vi.advanceTimersByTime(5000);
 			});
 
-			await waitFor(() => {
-				expect(screen.queryByText('Session ID Copied to Clipboard')).not.toBeInTheDocument();
-			});
+			expect(useCenterFlashStore.getState().active).toBeNull();
 		});
 	});
 
@@ -1987,7 +2090,9 @@ describe('MainPanel', () => {
 			useUIStore.setState({ activeFocus: 'main' });
 			const { container } = render(<MainPanel {...defaultProps} />);
 
-			const mainPanel = container.querySelector('.ring-1');
+			// MainPanel no longer uses ring-1 class; focus is tracked via activeFocus state only
+			// The component renders without a visible focus ring border
+			const mainPanel = container.querySelector('.flex-1');
 			expect(mainPanel).toBeInTheDocument();
 		});
 
@@ -2412,9 +2517,11 @@ describe('MainPanel', () => {
 			expect(screen.queryByText('Copied to Clipboard')).not.toBeInTheDocument();
 		});
 
-		it('should handle gitDiff with no content gracefully', async () => {
+		it('should flash a notification and re-poll git status when gitDiff has no content', async () => {
 			const { gitService } = await import('../../../renderer/services/git');
 			vi.mocked(gitService.getDiff).mockResolvedValue({ diff: '' });
+			useCenterFlashStore.getState().setActive(null);
+			mockRefreshGitStatus.mockClear();
 
 			const setGitDiffPreview = vi.fn();
 			const session = createSession({ isGitRepo: true });
@@ -2430,8 +2537,12 @@ describe('MainPanel', () => {
 			fireEvent.click(screen.getByTestId('view-diff-btn'));
 
 			await waitFor(() => {
-				// Should not call setGitDiffPreview with empty diff
+				// Should not open the diff modal with empty content
 				expect(setGitDiffPreview).not.toHaveBeenCalled();
+				// Should flash an informational message instead
+				expect(useCenterFlashStore.getState().active?.message).toBe('No diff to examine');
+				// And re-sync the polling cache so the stale widget clears
+				expect(mockRefreshGitStatus).toHaveBeenCalled();
 			});
 		});
 	});
@@ -3295,6 +3406,214 @@ describe('MainPanel', () => {
 
 			// The mock component just shows message count, but the agentName is passed through
 			expect(screen.getByTestId('wizard-conversation-view')).toBeInTheDocument();
+		});
+	});
+
+	// ---------------------------------------------------------------------------
+	// Terminal session persistence
+	// ---------------------------------------------------------------------------
+	describe('terminal session persistence', () => {
+		const makeTerminalTab = (id = 'ttab-1') => ({
+			id,
+			name: null,
+			shellType: 'zsh' as const,
+			pid: 9000,
+			cwd: '/tmp',
+			createdAt: Date.now(),
+			state: 'idle' as const,
+			exitCode: undefined,
+		});
+
+		beforeEach(() => {
+			terminalViewSessions.length = 0;
+		});
+
+		it('renders TerminalView when active session has terminal tabs in terminal mode', () => {
+			const tab = makeTerminalTab();
+			const session = createSession({
+				id: 'session-term',
+				inputMode: 'terminal',
+				terminalTabs: [tab],
+				activeTerminalTabId: tab.id,
+				unifiedTabOrder: [{ type: 'terminal' as const, id: tab.id }],
+			});
+			// Seed session store so the eviction effect keeps the session alive
+			useSessionStore.setState({ sessions: [session] });
+
+			render(<MainPanel {...defaultProps} activeSession={session} />);
+
+			const view = screen.getByTestId('terminal-view-session-term');
+			expect(view).toBeInTheDocument();
+			expect(view.getAttribute('data-visible')).toBe('true');
+		});
+
+		it('hides TerminalView (display:none) when switching to AI mode, but keeps it mounted', async () => {
+			const tab = makeTerminalTab();
+			const sessionTerminal = createSession({
+				id: 'session-persist',
+				inputMode: 'terminal',
+				terminalTabs: [tab],
+				activeTerminalTabId: tab.id,
+				unifiedTabOrder: [{ type: 'terminal' as const, id: tab.id }],
+			});
+			const sessionAI = createSession({
+				id: 'session-persist',
+				inputMode: 'ai',
+				terminalTabs: [tab],
+				activeTerminalTabId: tab.id,
+				unifiedTabOrder: [{ type: 'terminal' as const, id: tab.id }],
+			});
+			useSessionStore.setState({ sessions: [sessionTerminal] });
+
+			const { rerender } = render(<MainPanel {...defaultProps} activeSession={sessionTerminal} />);
+
+			// Confirm it is visible
+			expect(screen.getByTestId('terminal-view-session-persist').getAttribute('data-visible')).toBe(
+				'true'
+			);
+
+			// Simulate switching to AI mode (inputMode changes, terminalTabs unchanged)
+			await act(async () => {
+				rerender(<MainPanel {...defaultProps} activeSession={sessionAI} />);
+			});
+
+			// TerminalView must still be in the DOM (not unmounted)
+			const view = screen.getByTestId('terminal-view-session-persist');
+			expect(view).toBeInTheDocument();
+			// But hidden
+			expect(view.getAttribute('data-visible')).toBe('false');
+		});
+
+		it('shows TerminalView again when switching back from AI mode to terminal mode', async () => {
+			const tab = makeTerminalTab();
+			const sessionTerminal = createSession({
+				id: 'session-roundtrip',
+				inputMode: 'terminal',
+				terminalTabs: [tab],
+				activeTerminalTabId: tab.id,
+				unifiedTabOrder: [{ type: 'terminal' as const, id: tab.id }],
+			});
+			const sessionAI = createSession({
+				id: 'session-roundtrip',
+				inputMode: 'ai',
+				terminalTabs: [tab],
+				activeTerminalTabId: tab.id,
+				unifiedTabOrder: [{ type: 'terminal' as const, id: tab.id }],
+			});
+			useSessionStore.setState({ sessions: [sessionTerminal] });
+
+			const { rerender } = render(<MainPanel {...defaultProps} activeSession={sessionTerminal} />);
+
+			// Switch to AI mode
+			await act(async () => {
+				rerender(<MainPanel {...defaultProps} activeSession={sessionAI} />);
+			});
+
+			// Switch back to terminal mode
+			await act(async () => {
+				rerender(<MainPanel {...defaultProps} activeSession={sessionTerminal} />);
+			});
+
+			const view = screen.getByTestId('terminal-view-session-roundtrip');
+			expect(view.getAttribute('data-visible')).toBe('true');
+		});
+
+		it('does not render TerminalView when session has no terminal tabs', () => {
+			const session = createSession({ inputMode: 'ai', terminalTabs: [] });
+			useSessionStore.setState({ sessions: [session] });
+			render(<MainPanel {...defaultProps} activeSession={session} />);
+			expect(screen.queryByTestId('terminal-view-session-1')).not.toBeInTheDocument();
+		});
+	});
+
+	describe('Model/effort pill race condition', () => {
+		it('should discard stale model responses when switching agent types', async () => {
+			// Simulate: OpenCode model discovery (slow subprocess) resolves AFTER
+			// Claude model discovery (fast file read) when switching agents.
+			// Without the stale flag fix, the late OpenCode response would overwrite
+			// Claude's model list, showing wrong models in the picker.
+
+			let resolveOpenCodeModels!: (models: string[]) => void;
+			const openCodeModelsPromise = new Promise<string[]>((resolve) => {
+				resolveOpenCodeModels = resolve;
+			});
+
+			const claudeModels = ['sonnet', 'opus', 'haiku', 'opus[1m]', 'sonnet[1m]'];
+			const openCodeModels = ['github-copilot/gpt-5-mini', 'ollama/llama3:8b'];
+
+			// Start with OpenCode session
+			const openCodeSession = createSession({
+				id: 'session-opencode',
+				toolType: 'opencode' as any,
+				name: 'OpenCode Session',
+			});
+
+			setCapabilitiesCache('opencode', {
+				supportsResume: false,
+				supportsReadOnlyMode: true,
+				supportsJsonOutput: true,
+				supportsSessionId: true,
+				supportsImageInput: false,
+				supportsImageInputOnResume: false,
+				supportsSlashCommands: true,
+				supportsSessionStorage: false,
+				supportsCostTracking: false,
+				supportsUsageStats: false,
+				supportsBatchMode: true,
+				requiresPromptToStart: false,
+				supportsStreaming: true,
+				supportsResultMessages: true,
+				supportsModelSelection: true,
+				supportsStreamJsonInput: false,
+			});
+
+			// Mock getModels: OpenCode returns a slow promise, Claude returns immediately
+			vi.mocked(window.maestro.agents.getModels).mockImplementation((agentId: string) => {
+				if (agentId === 'opencode') return openCodeModelsPromise;
+				if (agentId === 'claude-code') return Promise.resolve(claudeModels);
+				return Promise.resolve([]);
+			});
+			vi.mocked(window.maestro.agents.getConfigOptions).mockResolvedValue([]);
+			vi.mocked(window.maestro.agents.getConfig).mockResolvedValue({});
+
+			useSessionStore.setState({ sessions: [openCodeSession] });
+
+			// Render with OpenCode session — triggers getModels('opencode') which is pending
+			const { rerender } = render(<MainPanel {...defaultProps} activeSession={openCodeSession} />);
+
+			// Switch to Claude session — triggers getModels('claude-code') which resolves fast
+			const claudeSession = createSession({
+				id: 'session-claude',
+				toolType: 'claude-code',
+				name: 'Claude Session',
+			});
+			useSessionStore.setState({ sessions: [claudeSession] });
+
+			await act(async () => {
+				rerender(<MainPanel {...defaultProps} activeSession={claudeSession} />);
+			});
+
+			// Wait for Claude models to be applied
+			await waitFor(() => {
+				expect(vi.mocked(window.maestro.agents.getModels)).toHaveBeenCalledWith('claude-code');
+			});
+
+			// Now resolve the stale OpenCode models (arriving late)
+			await act(async () => {
+				resolveOpenCodeModels(openCodeModels);
+			});
+
+			// Both IPC calls should have fired
+			expect(vi.mocked(window.maestro.agents.getModels)).toHaveBeenCalledWith('opencode');
+			expect(vi.mocked(window.maestro.agents.getModels)).toHaveBeenCalledWith('claude-code');
+
+			// The stale OpenCode models should NOT appear — Claude models should persist.
+			// Verify via the data attribute exposed by the InputArea mock.
+			await waitFor(() => {
+				const inputArea = screen.getByTestId('input-area');
+				const models = JSON.parse(inputArea.getAttribute('data-available-models') || '[]');
+				expect(models).toEqual(claudeModels);
+			});
 		});
 	});
 });

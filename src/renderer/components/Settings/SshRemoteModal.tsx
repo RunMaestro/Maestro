@@ -23,21 +23,15 @@
  */
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import {
-	Server,
-	Plus,
-	Trash2,
-	CheckCircle,
-	XCircle,
-	Loader2,
-	FileCode,
-	ChevronDown,
-} from 'lucide-react';
+import { Server, Plus, Trash2, CheckCircle, XCircle, FileCode, ChevronDown } from 'lucide-react';
+import { GhostIconButton } from '../ui/GhostIconButton';
+import { Spinner } from '../ui/Spinner';
 import type { Theme } from '../../types';
 import type { SshRemoteConfig, SshRemoteTestResult } from '../../../shared/types';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { Modal, ModalFooter } from '../ui/Modal';
 import { FormInput } from '../ui/FormInput';
+import { useSaveShortcut } from '../../hooks';
 
 /**
  * SSH config host entry from ~/.ssh/config
@@ -434,6 +428,8 @@ export function SshRemoteModal({
 		setEnvVars((prev) => prev.filter((entry) => entry.id !== id));
 	};
 
+	useSaveShortcut(handleSave, isOpen && !saving);
+
 	if (!isOpen) return null;
 
 	const modalTitle = title || (initialConfig ? 'Edit SSH Remote' : 'Add SSH Remote');
@@ -465,7 +461,7 @@ export function SshRemoteModal({
 						>
 							{testing ? (
 								<>
-									<Loader2 className="w-4 h-4 animate-spin" />
+									<Spinner size={16} />
 									Testing...
 								</>
 							) : (
@@ -559,7 +555,7 @@ export function SshRemoteModal({
 							>
 								{sshConfigLoading ? (
 									<span className="flex items-center gap-2">
-										<Loader2 className="w-3 h-3 animate-spin" />
+										<Spinner size={12} />
 										Loading...
 									</span>
 								) : (
@@ -768,15 +764,15 @@ export function SshRemoteModal({
 											color: theme.colors.textMain,
 										}}
 									/>
-									<button
-										type="button"
+									<GhostIconButton
 										onClick={() => removeEnvVar(entry.id)}
-										className="p-2 rounded hover:bg-white/10 transition-colors"
+										padding="p-2"
 										title="Remove variable"
-										style={{ color: theme.colors.textDim }}
+										ariaLabel="Remove variable"
+										color={theme.colors.textDim}
 									>
 										<Trash2 className="w-3 h-3" />
-									</button>
+									</GhostIconButton>
 								</div>
 							))}
 						</div>

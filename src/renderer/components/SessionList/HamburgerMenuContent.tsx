@@ -14,11 +14,14 @@ import {
 	BarChart3,
 	Music,
 	Command,
+	Zap,
 } from 'lucide-react';
 import type { Theme } from '../../types';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { getModalActions } from '../../stores/modalStore';
+import { buildMaestroUrl } from '../../utils/buildMaestroUrl';
+import { openUrl } from '../../utils/openUrl';
 
 interface HamburgerMenuContentProps {
 	theme: Theme;
@@ -36,16 +39,16 @@ export function HamburgerMenuContent({
 	setMenuOpen,
 }: HamburgerMenuContentProps) {
 	const shortcuts = useSettingsStore((s) => s.shortcuts);
-	const directorNotesEnabled = useSettingsStore((s) => s.encoreFeatures.directorNotes);
+	const encoreFeatures = useSettingsStore((s) => s.encoreFeatures);
 	const {
 		setShortcutsHelpOpen,
 		setSettingsModalOpen,
-		setSettingsTab,
 		setLogViewerOpen,
 		setProcessMonitorOpen,
 		setUsageDashboardOpen,
 		setSymphonyModalOpen,
 		setDirectorNotesOpen,
+		setCueModalOpen,
 		setUpdateCheckModalOpen,
 		setAboutModalOpen,
 		setQuickActionOpen,
@@ -172,7 +175,6 @@ export function HamburgerMenuContent({
 			<button
 				onClick={() => {
 					setSettingsModalOpen(true);
-					setSettingsTab('general');
 					setMenuOpen(false);
 				}}
 				className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
@@ -239,53 +241,32 @@ export function HamburgerMenuContent({
 					{formatShortcutKeys(shortcuts.processMonitor.keys)}
 				</span>
 			</button>
-			<button
-				onClick={() => {
-					setUsageDashboardOpen(true);
-					setMenuOpen(false);
-				}}
-				className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
-			>
-				<BarChart3 className="w-5 h-5" style={{ color: theme.colors.accent }} />
-				<div className="flex-1">
-					<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
-						Usage Dashboard
-					</div>
-					<div className="text-xs" style={{ color: theme.colors.textDim }}>
-						View usage analytics
-					</div>
-				</div>
-				<span
-					className="text-xs font-mono px-1.5 py-0.5 rounded"
-					style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
+			{encoreFeatures.usageStats && (
+				<button
+					onClick={() => {
+						setUsageDashboardOpen(true);
+						setMenuOpen(false);
+					}}
+					className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
 				>
-					{formatShortcutKeys(shortcuts.usageDashboard.keys)}
-				</span>
-			</button>
-			<button
-				onClick={() => {
-					setSymphonyModalOpen(true);
-					setMenuOpen(false);
-				}}
-				className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
-			>
-				<Music className="w-5 h-5" style={{ color: theme.colors.accent }} />
-				<div className="flex-1">
-					<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
-						Maestro Symphony
+					<BarChart3 className="w-5 h-5" style={{ color: theme.colors.accent }} />
+					<div className="flex-1">
+						<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+							Usage Dashboard
+						</div>
+						<div className="text-xs" style={{ color: theme.colors.textDim }}>
+							View usage analytics
+						</div>
 					</div>
-					<div className="text-xs" style={{ color: theme.colors.textDim }}>
-						Contribute to open source
-					</div>
-				</div>
-				<span
-					className="text-xs font-mono px-1.5 py-0.5 rounded"
-					style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
-				>
-					{shortcuts.openSymphony ? formatShortcutKeys(shortcuts.openSymphony.keys) : '⇧⌘Y'}
-				</span>
-			</button>
-			{directorNotesEnabled && (
+					<span
+						className="text-xs font-mono px-1.5 py-0.5 rounded"
+						style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
+					>
+						{formatShortcutKeys(shortcuts.usageDashboard.keys)}
+					</span>
+				</button>
+			)}
+			{encoreFeatures.directorNotes && (
 				<button
 					onClick={() => {
 						setDirectorNotesOpen(true);
@@ -312,10 +293,62 @@ export function HamburgerMenuContent({
 					)}
 				</button>
 			)}
+			{encoreFeatures.symphony && (
+				<button
+					onClick={() => {
+						setSymphonyModalOpen(true);
+						setMenuOpen(false);
+					}}
+					className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
+				>
+					<Music className="w-5 h-5" style={{ color: theme.colors.accent }} />
+					<div className="flex-1">
+						<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+							Maestro Symphony
+						</div>
+						<div className="text-xs" style={{ color: theme.colors.textDim }}>
+							Contribute to open source
+						</div>
+					</div>
+					<span
+						className="text-xs font-mono px-1.5 py-0.5 rounded"
+						style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
+					>
+						{shortcuts.openSymphony ? formatShortcutKeys(shortcuts.openSymphony.keys) : '⇧⌘Y'}
+					</span>
+				</button>
+			)}
+			{encoreFeatures.maestroCue && (
+				<button
+					onClick={() => {
+						setCueModalOpen(true);
+						setMenuOpen(false);
+					}}
+					className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
+				>
+					<Zap className="w-5 h-5" style={{ color: theme.colors.accent }} />
+					<div className="flex-1">
+						<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+							Maestro Cue
+						</div>
+						<div className="text-xs" style={{ color: theme.colors.textDim }}>
+							Event-driven automation
+						</div>
+					</div>
+					{shortcuts.openCue && (
+						<span
+							className="text-xs font-mono px-1.5 py-0.5 rounded"
+							style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
+						>
+							{formatShortcutKeys(shortcuts.openCue.keys)}
+						</span>
+					)}
+				</button>
+			)}
 			<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
 			<button
 				onClick={() => {
-					window.maestro.shell.openExternal('https://runmaestro.ai');
+					openUrl(buildMaestroUrl('https://runmaestro.ai'));
 					setMenuOpen(false);
 				}}
 				className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
@@ -333,7 +366,7 @@ export function HamburgerMenuContent({
 			</button>
 			<button
 				onClick={() => {
-					window.maestro.shell.openExternal('https://docs.runmaestro.ai');
+					openUrl(buildMaestroUrl('https://docs.runmaestro.ai'));
 					setMenuOpen(false);
 				}}
 				className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"

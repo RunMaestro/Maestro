@@ -10,6 +10,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/react';
 import { ExecutionQueueBrowser } from '../../../renderer/components/ExecutionQueueBrowser';
 import type { Session, Theme, QueuedItem } from '../../../renderer/types';
+import { spyOnListeners, expectAllListenersRemoved } from '../../helpers/listenerLeakAssertions';
 
 // Mock the LayerStackContext
 const mockRegisterLayer = vi.fn().mockReturnValue('layer-1');
@@ -19,6 +20,7 @@ vi.mock('../../../renderer/contexts/LayerStackContext', () => ({
 	useLayerStack: () => ({
 		registerLayer: mockRegisterLayer,
 		unregisterLayer: mockUnregisterLayer,
+		updateLayerHandler: vi.fn(),
 	}),
 }));
 
@@ -416,6 +418,34 @@ describe('ExecutionQueueBrowser', () => {
 
 			const allButton = screen.getByText('All Agents').closest('button');
 			expect(allButton).toHaveTextContent('(3)');
+		});
+
+		it('should toggle view mode with Cmd+Shift+] / Cmd+Shift+[', () => {
+			const session = createSession({
+				executionQueue: [createQueuedItem()],
+			});
+			render(
+				<ExecutionQueueBrowser
+					isOpen={true}
+					onClose={mockOnClose}
+					sessions={[session]}
+					activeSessionId="other-session"
+					theme={theme}
+					onRemoveItem={mockOnRemoveItem}
+					onSwitchSession={mockOnSwitchSession}
+				/>
+			);
+
+			const allButton = screen.getByText('All Agents').closest('button');
+			const currentButton = screen.getByText('Current Agent').closest('button');
+
+			// Cmd+Shift+] -> global view
+			fireEvent.keyDown(window, { key: ']', code: 'BracketRight', metaKey: true, shiftKey: true });
+			expect(allButton).toHaveStyle({ backgroundColor: theme.colors.accent });
+
+			// Cmd+Shift+[ -> back to current view
+			fireEvent.keyDown(window, { key: '[', code: 'BracketLeft', metaKey: true, shiftKey: true });
+			expect(currentButton).toHaveStyle({ backgroundColor: theme.colors.accent });
 		});
 
 		it('should not show count for current agent when 0 items', () => {
@@ -971,7 +1001,7 @@ describe('ExecutionQueueBrowser', () => {
 			const tabButton = screen.getByText('My Tab');
 			fireEvent.click(tabButton);
 
-			expect(mockOnSwitchSession).toHaveBeenCalledWith('session-1');
+			expect(mockOnSwitchSession).toHaveBeenCalledWith('session-1', 'tab-1');
 			expect(mockOnClose).toHaveBeenCalled();
 		});
 
@@ -1882,6 +1912,57 @@ describe('ExecutionQueueBrowser', () => {
 			// The outer wrapper divs (with onMouseMove for drop targeting) should exist
 			const wrappers = container.querySelectorAll('.relative.my-1');
 			expect(wrappers.length).toBe(2);
+		});
+
+		it('does not attach per-row drag keydown/mouseup listeners while idle', () => {
+			const spies = spyOnListeners(window);
+			const session = createSession({
+				id: 'active-session',
+				executionQueue: [createQueuedItem({ id: 'item-1' }), createQueuedItem({ id: 'item-2' })],
+			});
+			render(
+				<ExecutionQueueBrowser
+					isOpen={true}
+					onClose={mockOnClose}
+					sessions={[session]}
+					activeSessionId="active-session"
+					theme={theme}
+					onRemoveItem={mockOnRemoveItem}
+					onSwitchSession={mockOnSwitchSession}
+					onReorderItems={mockOnReorderItems}
+				/>
+			);
+			const keydownAdds = spies.addSpy.mock.calls.filter(([t]) => t === 'keydown');
+			const mouseupAdds = spies.addSpy.mock.calls.filter(([t]) => t === 'mouseup');
+			// Exactly one keydown listener — the modal-level Cmd+Shift+[/] tab-cycle
+			// handler. The per-row drag listeners (Escape-to-cancel keydown + mouseup)
+			// stay detached until a drag is actually in progress.
+			expect(keydownAdds).toHaveLength(1);
+			expect(mouseupAdds).toHaveLength(0);
+			spies.restore();
+		});
+
+		it('does not leak listeners when unmounted while idle', () => {
+			const spies = spyOnListeners(window);
+			const session = createSession({
+				id: 'active-session',
+				executionQueue: [createQueuedItem({ id: 'item-1' }), createQueuedItem({ id: 'item-2' })],
+			});
+			const { unmount } = render(
+				<ExecutionQueueBrowser
+					isOpen={true}
+					onClose={mockOnClose}
+					sessions={[session]}
+					activeSessionId="active-session"
+					theme={theme}
+					onRemoveItem={mockOnRemoveItem}
+					onSwitchSession={mockOnSwitchSession}
+					onReorderItems={mockOnReorderItems}
+				/>
+			);
+			unmount();
+			expectAllListenersRemoved(spies.addSpy, spies.removeSpy);
+			spies.restore();
 		});
 	});
 });

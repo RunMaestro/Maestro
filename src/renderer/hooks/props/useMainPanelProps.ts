@@ -10,6 +10,7 @@
  */
 
 import { useMemo } from 'react';
+import { useTabStore } from '../../stores/tabStore';
 import type {
 	Session,
 	Theme,
@@ -21,6 +22,7 @@ import type {
 	FilePreviewTab,
 	ThinkingItem,
 	AgentError,
+	QueuedItem,
 } from '../../types';
 import type { FileTreeChanges } from '../../utils/fileExplorer';
 import type { TabCompletionSuggestion, TabCompletionFilter } from '../input/useTabCompletion';
@@ -41,6 +43,7 @@ export interface UseMainPanelPropsDeps {
 	// Core state (primitives for memoization)
 	logViewerOpen: boolean;
 	agentSessionsOpen: boolean;
+	memoryViewerOpen: boolean;
 	activeAgentSessionId: string | null;
 	activeSession: Session | null;
 	thinkingItems: ThinkingItem[];
@@ -54,7 +57,6 @@ export interface UseMainPanelPropsDeps {
 	slashCommandOpen: boolean;
 	slashCommands: Array<{ command: string; description: string }>;
 	selectedSlashCommandIndex: number;
-	filePreviewLoading: { name: string; path: string } | null;
 
 	// Tab completion state
 	tabCompletionOpen: boolean;
@@ -116,6 +118,7 @@ export interface UseMainPanelPropsDeps {
 	setGitDiffPreview: (preview: string | null) => void;
 	setLogViewerOpen: (open: boolean) => void;
 	setAgentSessionsOpen: (open: boolean) => void;
+	setMemoryViewerOpen: (open: boolean) => void;
 	setActiveAgentSessionId: (id: string | null) => void;
 	setInputValue: (value: string) => void;
 	setStagedImages: React.Dispatch<React.SetStateAction<string[]>>;
@@ -158,6 +161,11 @@ export interface UseMainPanelPropsDeps {
 	handleStopBatchRun: (sessionId?: string) => void;
 	handleDeleteLog: (logId: string) => number | null;
 	handleRemoveQueuedItem: (itemId: string) => void;
+	handleForceSendQueuedItem: (itemId: string) => void;
+	forcedParallelEnabled: boolean;
+	getForceSendContext: (
+		item: QueuedItem
+	) => { targetTabBusy: boolean; otherBusyTabs: { id: string; displayName: string }[] } | null;
 	handleOpenQueueBrowser: () => void;
 
 	// Tab management handlers
@@ -176,8 +184,10 @@ export interface UseMainPanelPropsDeps {
 	handleToggleTabReadOnlyMode: () => void;
 	handleToggleTabSaveToHistory: () => void;
 	handleToggleTabShowThinking: () => void;
+	handleToggleTabEnterToSend: () => void;
 	toggleUnreadFilter: () => void;
 	handleOpenTabSearch: () => void;
+	handleOpenOutputSearch: () => void;
 	handleCloseAllTabs: () => void;
 	handleCloseOtherTabs: () => void;
 	handleCloseTabsLeft: () => void;
@@ -187,8 +197,26 @@ export interface UseMainPanelPropsDeps {
 	unifiedTabs: UnifiedTab[];
 	activeFileTabId: string | null;
 	activeFileTab: FilePreviewTab | null;
+	activeBrowserTabId: string | null;
+	activeBrowserTab: import('../../types').BrowserTab | null;
 	handleFileTabSelect: (tabId: string) => void;
 	handleFileTabClose: (tabId: string) => void;
+	handleNewFileTab: () => void;
+	handleNewBrowserTab: () => void;
+	handleBrowserTabSelect: (tabId: string) => void;
+	handleBrowserTabClose: (tabId: string) => void;
+	handleBrowserTabUpdate: (
+		sessionId: string,
+		tabId: string,
+		updates: Partial<import('../../types').BrowserTab>
+	) => void;
+
+	// Terminal tab callbacks (Phase 8)
+	handleOpenTerminalTab: (options?: { shell?: string; cwd?: string; name?: string | null }) => void;
+	handleTerminalTabSelect: (tabId: string) => void;
+	handleTerminalTabClose: (tabId: string) => void;
+	handleTerminalTabRename: (tabId: string) => void;
+	handleTerminalTabConfigureStartupCommand: (tabId: string) => void;
 	handleFileTabEditModeChange: (tabId: string, editMode: boolean) => void;
 	handleFileTabEditContentChange: (
 		tabId: string,
@@ -204,6 +232,15 @@ export interface UseMainPanelPropsDeps {
 	handleMainPanelInputBlur: () => void;
 	handleOpenPromptComposer: () => void;
 	handleReplayMessage: (text: string, images?: string[]) => void;
+	handleForkConversation: (logId: string) => void;
+	handleSessionRecover: (opts: {
+		sessionId: string;
+		tabId: string;
+		lastUserPrompt: string;
+		groomContext: boolean;
+	}) => void;
+	isRecoveringSession: boolean;
+	sessionRecoveryError: string | null;
 	handleMainPanelFileClick: (relativePath: string) => void;
 	handleNavigateBack: () => void;
 	handleNavigateForward: () => void;
@@ -221,6 +258,12 @@ export interface UseMainPanelPropsDeps {
 	handleCopyContext: (tabId: string) => void;
 	handleExportHtml: (tabId: string) => void;
 	handlePublishTabGist: (tabId: string) => void;
+	/** Copy arbitrary text to the clipboard (used by terminal buffer actions) */
+	handleCopyText: (text: string, subject?: string) => void;
+	/** Queue arbitrary text for the Gist publish modal (used by terminal buffer actions) */
+	handlePublishTextAsGist: (text: string, filenameStem: string) => void;
+	/** Queue arbitrary text for Send to Agent transfer (used by terminal buffer actions) */
+	handleSendTextToAgent: (text: string, sourceName: string) => void;
 	cancelTab: (tabId: string) => void;
 	cancelMergeTab: (tabId: string) => void;
 	recordShortcutUsage: (shortcutId: string) => { newLevel: number | null };
@@ -238,6 +281,9 @@ export interface UseMainPanelPropsDeps {
 	setGraphFocusFilePath: (path: string) => void;
 	setLastGraphFocusFilePath: (path: string) => void;
 	setIsGraphViewOpen: (open: boolean) => void;
+
+	// Open the active file preview in a new Maestro browser tab
+	handleOpenBrowserTabAt: (url: string, options?: { title?: string }) => void;
 
 	// Wizard callbacks
 	generateInlineWizardDocuments: (
@@ -262,6 +308,7 @@ export interface UseMainPanelPropsDeps {
 
 	// Complex wizard handlers (passed through from App.tsx)
 	onWizardComplete?: () => void;
+	onWizardCompleteAndStartAutoRun?: () => void;
 	onWizardLetsGo?: () => void;
 	onWizardRetry?: () => void;
 	onWizardClearError?: () => void;
@@ -283,6 +330,7 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			// State props
 			logViewerOpen: deps.logViewerOpen,
 			agentSessionsOpen: deps.agentSessionsOpen,
+			memoryViewerOpen: deps.memoryViewerOpen,
 			activeAgentSessionId: deps.activeAgentSessionId,
 			activeSession: deps.activeSession,
 			thinkingItems: deps.thinkingItems,
@@ -296,10 +344,10 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			slashCommandOpen: deps.slashCommandOpen,
 			slashCommands: deps.slashCommands,
 			selectedSlashCommandIndex: deps.selectedSlashCommandIndex,
-			filePreviewLoading: deps.filePreviewLoading,
 			setGitDiffPreview: deps.setGitDiffPreview,
 			setLogViewerOpen: deps.setLogViewerOpen,
 			setAgentSessionsOpen: deps.setAgentSessionsOpen,
+			setMemoryViewerOpen: deps.setMemoryViewerOpen,
 			setActiveAgentSessionId: deps.setActiveAgentSessionId,
 			onResumeAgentSession: deps.handleResumeSession,
 			onNewAgentSession: deps.handleNewAgentSession,
@@ -343,6 +391,9 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			onStopBatchRun: deps.handleStopBatchRun,
 			onDeleteLog: deps.handleDeleteLog,
 			onRemoveQueuedItem: deps.handleRemoveQueuedItem,
+			onForceSendQueuedItem: deps.handleForceSendQueuedItem,
+			forcedParallelEnabled: deps.forcedParallelEnabled,
+			getForceSendContext: deps.getForceSendContext,
 			onOpenQueueBrowser: deps.handleOpenQueueBrowser,
 			// Tab management handlers
 			onTabSelect: deps.handleTabSelect,
@@ -357,6 +408,7 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			onToggleTabReadOnlyMode: deps.handleToggleTabReadOnlyMode,
 			onToggleUnreadFilter: deps.toggleUnreadFilter,
 			onOpenTabSearch: deps.handleOpenTabSearch,
+			onOpenOutputSearch: deps.handleOpenOutputSearch,
 			onCloseAllTabs: deps.handleCloseAllTabs,
 			onCloseOtherTabs: deps.handleCloseOtherTabs,
 			onCloseTabsLeft: deps.handleCloseTabsLeft,
@@ -365,8 +417,21 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			unifiedTabs: deps.unifiedTabs,
 			activeFileTabId: deps.activeFileTabId,
 			activeFileTab: deps.activeFileTab,
+			activeBrowserTabId: deps.activeBrowserTabId,
+			activeBrowserTab: deps.activeBrowserTab,
 			onFileTabSelect: deps.handleFileTabSelect,
 			onFileTabClose: deps.handleFileTabClose,
+			onNewFileTab: deps.handleNewFileTab,
+			onNewBrowserTab: deps.handleNewBrowserTab,
+			onBrowserTabSelect: deps.handleBrowserTabSelect,
+			onBrowserTabClose: deps.handleBrowserTabClose,
+			onBrowserTabUpdate: deps.handleBrowserTabUpdate,
+			// Terminal tab callbacks (Phase 8)
+			onNewTerminalTab: deps.handleOpenTerminalTab,
+			onTerminalTabSelect: deps.handleTerminalTabSelect,
+			onTerminalTabClose: deps.handleTerminalTabClose,
+			onTerminalTabRename: deps.handleTerminalTabRename,
+			onTerminalTabConfigureStartupCommand: deps.handleTerminalTabConfigureStartupCommand,
 			onFileTabEditModeChange: deps.handleFileTabEditModeChange,
 			onFileTabEditContentChange: deps.handleFileTabEditContentChange,
 			onFileTabScrollPositionChange: deps.handleFileTabScrollPositionChange,
@@ -374,11 +439,16 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			onReloadFileTab: deps.handleReloadFileTab,
 			onToggleTabSaveToHistory: deps.handleToggleTabSaveToHistory,
 			onToggleTabShowThinking: deps.handleToggleTabShowThinking,
+			onToggleTabEnterToSend: deps.handleToggleTabEnterToSend,
 			onScrollPositionChange: deps.handleScrollPositionChange,
 			onAtBottomChange: deps.handleAtBottomChange,
 			onInputBlur: deps.handleMainPanelInputBlur,
 			onOpenPromptComposer: deps.handleOpenPromptComposer,
 			onReplayMessage: deps.handleReplayMessage,
+			onForkConversation: deps.handleForkConversation,
+			onSessionRecover: deps.handleSessionRecover,
+			isRecoveringSession: deps.isRecoveringSession,
+			sessionRecoveryError: deps.sessionRecoveryError,
 			fileTree: deps.fileTree,
 			onFileClick: deps.handleMainPanelFileClick,
 			canGoBack: deps.canGoBack,
@@ -405,6 +475,9 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			onCopyContext: deps.handleCopyContext,
 			onExportHtml: deps.handleExportHtml,
 			onPublishTabGist: deps.handlePublishTabGist,
+			onCopyText: deps.handleCopyText,
+			onPublishTextAsGist: deps.handlePublishTextAsGist,
+			onSendTextToAgent: deps.handleSendTextToAgent,
 			// Summarization progress props
 			summarizeProgress: deps.summarizeProgress,
 			summarizeResult: deps.summarizeResult,
@@ -428,9 +501,19 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 				if (result.newLevel !== null) {
 					deps.onKeyboardMasteryLevelUp(result.newLevel);
 				}
+				// Also bump the daily-firings counter so the Usage Dashboard bar
+				// chart reflects shortcuts handled inside subcomponents (not just
+				// the ones routed through useMainKeyboardHandler).
+				void window.maestro?.stats?.recordShortcutUsage?.(Date.now());
 			},
 			ghCliAvailable: deps.ghCliAvailable,
 			onPublishGist: () => deps.setGistPublishModalOpen(true),
+			onPublishMessageGist: (text: string, messageId?: string) => {
+				if (!text.trim()) return;
+				const filename = `ai_response_${Date.now()}.md`;
+				useTabStore.getState().setTabGistContent({ filename, content: text, messageId });
+				deps.setGistPublishModalOpen(true);
+			},
 			hasGist: deps.hasGist,
 			onOpenInGraph: () => {
 				if (deps.activeFileTab && deps.activeSession) {
@@ -445,11 +528,23 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 					deps.setIsGraphViewOpen(true);
 				}
 			},
+			// Open the active file preview in a new Maestro browser tab. Encodes
+			// each path segment so spaces and reserved chars survive the file:// URL.
+			onOpenInBrowser: () => {
+				if (!deps.activeFileTab) return;
+				const encodedPath = deps.activeFileTab.path
+					.split('/')
+					.map((seg) => encodeURIComponent(seg))
+					.join('/');
+				const url = `file://${encodedPath}`;
+				deps.handleOpenBrowserTabAt(url, { title: deps.activeFileTab.name });
+			},
 			// Inline wizard callbacks handled inline to maintain closure access
 			onExitWizard: deps.endInlineWizard,
 			onWizardCancelGeneration: deps.endInlineWizard,
 			// Complex wizard handlers (passed through from App.tsx)
 			onWizardComplete: deps.onWizardComplete,
+			onWizardCompleteAndStartAutoRun: deps.onWizardCompleteAndStartAutoRun,
 			onWizardLetsGo: deps.onWizardLetsGo,
 			onWizardRetry: deps.onWizardRetry,
 			onWizardClearError: deps.onWizardClearError,
@@ -463,6 +558,7 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			// Primitive dependencies for minimal re-computation
 			deps.logViewerOpen,
 			deps.agentSessionsOpen,
+			deps.memoryViewerOpen,
 			deps.activeAgentSessionId,
 			deps.activeSession?.id, // Use ID instead of full object
 			deps.activeSession?.activeTabId,
@@ -480,7 +576,6 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			deps.slashCommandOpen,
 			deps.slashCommands,
 			deps.selectedSlashCommandIndex,
-			deps.filePreviewLoading,
 			deps.tabCompletionOpen,
 			deps.tabCompletionSuggestions,
 			deps.selectedTabCompletionIndex,
@@ -514,6 +609,7 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			deps.setGitDiffPreview,
 			deps.setLogViewerOpen,
 			deps.setAgentSessionsOpen,
+			deps.setMemoryViewerOpen,
 			deps.setActiveAgentSessionId,
 			deps.handleResumeSession,
 			deps.handleNewAgentSession,
@@ -544,6 +640,9 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			deps.handleStopBatchRun,
 			deps.handleDeleteLog,
 			deps.handleRemoveQueuedItem,
+			deps.handleForceSendQueuedItem,
+			deps.forcedParallelEnabled,
+			deps.getForceSendContext,
 			deps.handleOpenQueueBrowser,
 			deps.handleTabSelect,
 			deps.handleTabClose,
@@ -557,8 +656,10 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			deps.handleToggleTabReadOnlyMode,
 			deps.handleToggleTabSaveToHistory,
 			deps.handleToggleTabShowThinking,
+			deps.handleToggleTabEnterToSend,
 			deps.toggleUnreadFilter,
 			deps.handleOpenTabSearch,
+			deps.handleOpenOutputSearch,
 			deps.handleCloseAllTabs,
 			deps.handleCloseOtherTabs,
 			deps.handleCloseTabsLeft,
@@ -567,8 +668,21 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			deps.unifiedTabs,
 			deps.activeFileTabId,
 			deps.activeFileTab,
+			deps.activeBrowserTabId,
+			deps.activeBrowserTab,
 			deps.handleFileTabSelect,
 			deps.handleFileTabClose,
+			deps.handleNewFileTab,
+			deps.handleNewBrowserTab,
+			deps.handleBrowserTabSelect,
+			deps.handleBrowserTabClose,
+			deps.handleBrowserTabUpdate,
+			// Terminal tab (Phase 8)
+			deps.handleOpenTerminalTab,
+			deps.handleTerminalTabSelect,
+			deps.handleTerminalTabClose,
+			deps.handleTerminalTabRename,
+			deps.handleTerminalTabConfigureStartupCommand,
 			deps.handleFileTabEditModeChange,
 			deps.handleFileTabEditContentChange,
 			deps.handleFileTabScrollPositionChange,
@@ -579,6 +693,10 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			deps.handleMainPanelInputBlur,
 			deps.handleOpenPromptComposer,
 			deps.handleReplayMessage,
+			deps.handleForkConversation,
+			deps.handleSessionRecover,
+			deps.isRecoveringSession,
+			deps.sessionRecoveryError,
 			deps.handleMainPanelFileClick,
 			deps.handleNavigateBack,
 			deps.handleNavigateForward,
@@ -604,9 +722,11 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			deps.setGraphFocusFilePath,
 			deps.setLastGraphFocusFilePath,
 			deps.setIsGraphViewOpen,
+			deps.handleOpenBrowserTabAt,
 			deps.endInlineWizard,
 			// Complex wizard handlers
 			deps.onWizardComplete,
+			deps.onWizardCompleteAndStartAutoRun,
 			deps.onWizardLetsGo,
 			deps.onWizardRetry,
 			deps.onWizardClearError,

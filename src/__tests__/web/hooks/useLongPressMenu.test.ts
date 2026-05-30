@@ -31,24 +31,15 @@ describe('useLongPressMenu', () => {
 		vi.restoreAllMocks();
 	});
 
-	it('opens the menu after long press', () => {
+	it('triggers onOpenCommandPalette after long press', () => {
+		const onOpenCommandPalette = vi.fn();
 		const button = document.createElement('button');
-		button.getBoundingClientRect = vi.fn(() => ({
-			left: 10,
-			top: 20,
-			width: 30,
-			height: 40,
-			right: 40,
-			bottom: 60,
-			x: 10,
-			y: 20,
-			toJSON: () => {},
-		})) as unknown as () => DOMRect;
 
 		const { result } = renderHook(() =>
 			useLongPressMenu({
 				inputMode: 'ai',
 				value: 'hello',
+				onOpenCommandPalette,
 			})
 		);
 
@@ -61,28 +52,18 @@ describe('useLongPressMenu', () => {
 			vi.advanceTimersByTime(500);
 		});
 
-		expect(result.current.isMenuOpen).toBe(true);
-		expect(result.current.menuAnchor).toEqual({ x: 25, y: 20 });
+		expect(onOpenCommandPalette).toHaveBeenCalledTimes(1);
 	});
 
 	it('cancels long press on touch move', () => {
+		const onOpenCommandPalette = vi.fn();
 		const button = document.createElement('button');
-		button.getBoundingClientRect = vi.fn(() => ({
-			left: 0,
-			top: 0,
-			width: 10,
-			height: 10,
-			right: 10,
-			bottom: 10,
-			x: 0,
-			y: 0,
-			toJSON: () => {},
-		})) as unknown as () => DOMRect;
 
 		const { result } = renderHook(() =>
 			useLongPressMenu({
 				inputMode: 'ai',
 				value: 'hello',
+				onOpenCommandPalette,
 			})
 		);
 
@@ -96,44 +77,18 @@ describe('useLongPressMenu', () => {
 			vi.advanceTimersByTime(500);
 		});
 
-		expect(result.current.isMenuOpen).toBe(false);
+		expect(onOpenCommandPalette).not.toHaveBeenCalled();
 	});
 
-	it('handles quick action selection', () => {
-		const onModeToggle = vi.fn();
-		const { result } = renderHook(() =>
-			useLongPressMenu({
-				inputMode: 'ai',
-				onModeToggle,
-				value: 'hello',
-			})
-		);
-
-		act(() => {
-			result.current.handleQuickAction('switch_mode');
-		});
-
-		expect(onModeToggle).toHaveBeenCalledWith('terminal');
-	});
-
-	it('closes the menu when requested', () => {
+	it('does not trigger onOpenCommandPalette when touch ends before duration', () => {
+		const onOpenCommandPalette = vi.fn();
 		const button = document.createElement('button');
-		button.getBoundingClientRect = vi.fn(() => ({
-			left: 0,
-			top: 0,
-			width: 10,
-			height: 10,
-			right: 10,
-			bottom: 10,
-			x: 0,
-			y: 0,
-			toJSON: () => {},
-		})) as unknown as () => DOMRect;
 
 		const { result } = renderHook(() =>
 			useLongPressMenu({
 				inputMode: 'ai',
 				value: 'hello',
+				onOpenCommandPalette,
 			})
 		);
 
@@ -143,15 +98,24 @@ describe('useLongPressMenu', () => {
 
 		act(() => {
 			result.current.handleTouchStart(createTouchEvent(button));
+			result.current.handleTouchEnd(createTouchEvent(button));
 			vi.advanceTimersByTime(500);
 		});
 
-		expect(result.current.isMenuOpen).toBe(true);
+		expect(onOpenCommandPalette).not.toHaveBeenCalled();
+	});
 
-		act(() => {
-			result.current.closeMenu();
-		});
+	it('returns expected handler functions', () => {
+		const { result } = renderHook(() =>
+			useLongPressMenu({
+				inputMode: 'ai',
+				value: 'hello',
+			})
+		);
 
-		expect(result.current.isMenuOpen).toBe(false);
+		expect(typeof result.current.handleTouchStart).toBe('function');
+		expect(typeof result.current.handleTouchEnd).toBe('function');
+		expect(typeof result.current.handleTouchMove).toBe('function');
+		expect(result.current.sendButtonRef).toBeDefined();
 	});
 });

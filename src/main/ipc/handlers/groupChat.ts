@@ -10,6 +10,8 @@
  */
 
 import * as os from 'os';
+import * as path from 'path';
+import * as fs from 'fs/promises';
 import { ipcMain, BrowserWindow } from 'electron';
 import { withIpcErrorLogging, CreateHandlerOptions } from '../../utils/ipcHandler';
 import { logger } from '../../utils/logger';
@@ -45,6 +47,7 @@ import {
 	sendToModerator as _sendToModerator,
 	killModerator,
 	getModeratorSessionId,
+	isModeratorActive,
 	type IProcessManager as _IProcessManager,
 } from '../../group-chat/group-chat-moderator';
 
@@ -73,6 +76,7 @@ import {
 import { AgentDetector } from '../../agents';
 import { groomContext } from '../../utils/context-groomer';
 import { v4 as uuidv4 } from 'uuid';
+import { captureException } from '../../utils/sentry';
 
 const LOG_CONTEXT = '[GroupChat]';
 
@@ -383,6 +387,27 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 					throw new Error(`Group chat not found: ${id}`);
 				}
 				const messages = await readLog(chat.logPath);
+
+				// Convert stored image filenames to base64 data URLs for display
+				for (const msg of messages) {
+					if (msg.images && msg.images.length > 0) {
+						const dataUrls: string[] = [];
+						for (const filename of msg.images) {
+							try {
+								const filePath = path.join(chat.imagesDir, filename);
+								const buffer = await fs.readFile(filePath);
+								const ext = path.extname(filename).slice(1).toLowerCase();
+								const mimeType = ext === 'jpg' ? 'image/jpeg' : `image/${ext}`;
+								dataUrls.push(`data:${mimeType};base64,${buffer.toString('base64')}`);
+							} catch {
+								// Skip images that can't be read (deleted, etc.)
+								logger.warn(`Failed to read image ${filename} for group chat ${id}`, LOG_CONTEXT);
+							}
+						}
+						msg.images = dataUrls.length > 0 ? dataUrls : undefined;
+					}
+				}
+
 				logger.debug(`Read ${messages.length} messages from ${id}`, LOG_CONTEXT);
 				return messages;
 			}
@@ -436,19 +461,30 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 		withIpcErrorLogging(
 			handlerOpts('sendToModerator'),
 			async (id: string, message: string, images?: string[], readOnly?: boolean): Promise<void> => {
-				console.log(`[GroupChat:Debug] ========== USER MESSAGE RECEIVED ==========`);
-				console.log(`[GroupChat:Debug] Group Chat ID: ${id}`);
-				console.log(
+				logger.info(`[GroupChat:Debug] ========== USER MESSAGE RECEIVED ==========`);
+				logger.info(`[GroupChat:Debug] Group Chat ID: ${id}`);
+				logger.info(
 					`[GroupChat:Debug] Message: "${message.substring(0, 200)}${message.length > 200 ? '...' : ''}"`
 				);
-				console.log(`[GroupChat:Debug] Read-only: ${readOnly ?? false}`);
-				console.log(`[GroupChat:Debug] Images: ${images?.length ?? 0}`);
+				logger.info(`[GroupChat:Debug] Read-only: ${readOnly ?? false}`);
+				logger.info(`[GroupChat:Debug] Images: ${images?.length ?? 0}`);
 
 				const processManager = getProcessManager();
 				const agentDetector = getAgentDetector();
 
-				console.log(`[GroupChat:Debug] Process manager available: ${!!processManager}`);
-				console.log(`[GroupChat:Debug] Agent detector available: ${!!agentDetector}`);
+				logger.info(`[GroupChat:Debug] Process manager available: ${!!processManager}`);
+				logger.info(`[GroupChat:Debug] Agent detector available: ${!!agentDetector}`);
+
+				// Auto-restart moderator if it exited (e.g., after completing a turn)
+				if (!isModeratorActive(id) && processManager) {
+					logger.info(`[GroupChat:Debug] Moderator not active, auto-restarting...`);
+					const chat = await loadGroupChat(id);
+					if (!chat) {
+						throw new Error(`Group chat not found: ${id}`);
+					}
+					await spawnModerator(chat, processManager);
+					logger.info(`[GroupChat:Debug] Moderator auto-restarted`);
+				}
 
 				// Route through the user message router which handles logging and forwarding
 				await routeUserMessage(
@@ -456,11 +492,12 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 					message,
 					processManager ?? undefined,
 					agentDetector ?? undefined,
-					readOnly
+					readOnly,
+					images
 				);
 
-				console.log(`[GroupChat:Debug] User message routed to moderator`);
-				console.log(`[GroupChat:Debug] ===========================================`);
+				logger.info(`[GroupChat:Debug] User message routed to moderator`);
+				logger.info(`[GroupChat:Debug] ===========================================`);
 
 				logger.debug(`Sent message to moderator in ${id}`, LOG_CONTEXT, {
 					messageLength: message.length,
@@ -717,6 +754,7 @@ Respond with ONLY the summary text, no additional commentary.`;
 						durationMs: result.durationMs,
 					});
 				} catch (error) {
+					void captureException(error);
 					logger.warn(`Summary generation failed for ${participantName}: ${error}`, LOG_CONTEXT);
 					summaryResponse = 'No summary available - starting fresh session.';
 				}
@@ -937,7 +975,7 @@ Respond with ONLY the summary text, no additional commentary.`;
 		participantName: string,
 		state: ParticipantState
 	): void => {
-		console.log(
+		logger.info(
 			`[GroupChat:IPC] emitParticipantState: chatId=${groupChatId}, participant=${participantName}, state=${state}`
 		);
 		const mainWindow = getMainWindow();
@@ -948,9 +986,9 @@ Respond with ONLY the summary text, no additional commentary.`;
 				participantName,
 				state
 			);
-			console.log(`[GroupChat:IPC] Sent 'groupChat:participantState' event`);
+			logger.info(`[GroupChat:IPC] Sent 'groupChat:participantState' event`);
 		} else {
-			console.warn(
+			logger.warn(
 				`[GroupChat:IPC] WARNING: mainWindow not available, cannot send participant state`
 			);
 		}

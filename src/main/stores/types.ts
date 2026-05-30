@@ -6,6 +6,7 @@
  */
 
 import type { SshRemoteConfig, Group } from '../../shared/types';
+import type { AgentCapabilitiesSnapshotMap } from '../../shared/agentCapabilities';
 
 // ============================================================================
 // Stored Session Type (minimal interface for main process storage)
@@ -77,8 +78,14 @@ export interface MaestroSettings {
 	wakatimeDetailedTracking: boolean;
 	// Standalone hands-on time tracker (migrated from globalStats.totalActiveTimeMs)
 	totalActiveTimeMs: number;
+	// Last prompt edited in Settings → Maestro Prompts (restored on reopen)
+	lastSelectedPromptId: string | null;
 	// Spell check in input areas
 	spellCheck: boolean;
+	// System-wide hotkey to summon the Maestro window (key array, e.g. ['Meta','Shift','M']).
+	// Empty array disables it. Stored in the same format as `shortcuts` so the UI can reuse
+	// the existing capture helpers; converted to an Electron Accelerator at registration time.
+	globalShowHotkey: string[];
 	// Allow dynamic settings keys (electron-store is a key-value store
 	// with many settings not explicitly declared above)
 	[key: string]: any;
@@ -90,6 +97,7 @@ export interface MaestroSettings {
 
 export interface SessionsData {
 	sessions: StoredSession[];
+	activeSessionId?: string;
 }
 
 // ============================================================================
@@ -106,6 +114,15 @@ export interface GroupsData {
 
 export interface AgentConfigsData {
 	configs: Record<string, Record<string, any>>; // agentId -> config key-value pairs
+}
+
+// ============================================================================
+// Agent Capabilities Store (per-device snapshot of detected agent state)
+// ============================================================================
+
+export interface AgentCapabilitiesData {
+	/** Map of snapshot key -> snapshot. Key is `agentId` or `agentId:remoteUuid`. */
+	snapshots: AgentCapabilitiesSnapshotMap;
 }
 
 // ============================================================================

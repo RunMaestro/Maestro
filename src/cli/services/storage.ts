@@ -4,7 +4,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import type { Group, SessionInfo, HistoryEntry } from '../../shared/types';
+import type { Group, SessionInfo, HistoryEntry, SshRemoteConfig } from '../../shared/types';
 import {
 	HISTORY_VERSION,
 	MAX_ENTRIES_PER_SESSION,
@@ -18,6 +18,10 @@ import {
 
 // Get the Maestro config directory path
 function getConfigDir(): string {
+	// Allow overriding the data directory (e.g. for dev mode: maestro-dev)
+	if (process.env.MAESTRO_USER_DATA) {
+		return path.resolve(process.env.MAESTRO_USER_DATA);
+	}
 	const platform = os.platform();
 	const home = os.homedir();
 
@@ -470,6 +474,19 @@ export function resolveGroupId(partialId: string): string {
 }
 
 /**
+ * Returns the mtime (ms since epoch) of a session's history file as a cheap
+ * recency proxy. Returns 0 when the file doesn't exist or can't be stat'd, so
+ * sessions that have never been used sort below ones that have.
+ */
+export function getSessionHistoryMtimeMs(sessionId: string): number {
+	try {
+		return fs.statSync(getSessionHistoryPath(sessionId)).mtimeMs;
+	} catch {
+		return 0;
+	}
+}
+
+/**
  * Get a session by ID (supports partial IDs)
  */
 export function getSessionById(sessionId: string): SessionInfo | undefined {
@@ -589,4 +606,49 @@ export function addHistoryEntry(entry: HistoryEntry): void {
 			`[WARNING] Failed to write history entry: ${error instanceof Error ? error.message : String(error)}`
 		);
 	}
+}
+
+// ============================================================================
+// SSH Remote Helpers
+// ============================================================================
+
+/**
+ * Read all SSH remote configurations from settings
+ */
+export function readSshRemotes(): SshRemoteConfig[] {
+	const settings = readSettings();
+	return (settings.sshRemotes as SshRemoteConfig[]) || [];
+}
+
+/**
+ * Write SSH remotes array back to settings
+ */
+export function writeSshRemotes(remotes: SshRemoteConfig[]): void {
+	writeSettingValue('sshRemotes', remotes);
+}
+
+/**
+ * Resolve an SSH remote ID (partial or full)
+ * Throws if ambiguous or not found
+ */
+export function resolveSshRemoteId(partialId: string): string {
+	const remotes = readSshRemotes();
+	const allIds = remotes.map((r) => r.id);
+	const resolution = resolveId(partialId, allIds);
+
+	if (resolution.ambiguous) {
+		const matchList = resolution.matches
+			.map((id) => {
+				const remote = remotes.find((r) => r.id === id);
+				return `  ${id.slice(0, 8)}  ${remote?.name || 'Unknown'}`;
+			})
+			.join('\n');
+		throw new Error(`Ambiguous SSH remote ID '${partialId}'. Matches:\n${matchList}`);
+	}
+
+	if (!resolution.id) {
+		throw new Error(`SSH remote not found: ${partialId}`);
+	}
+
+	return resolution.id;
 }

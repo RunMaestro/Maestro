@@ -3,6 +3,7 @@ import * as fsPromises from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
 import { logger } from '../../utils/logger';
+import { captureException } from '../../utils/sentry';
 
 /**
  * Parse a data URL and extract base64 data and media type
@@ -40,6 +41,7 @@ export function saveImageToTempFile(dataUrl: string, index: number): string | nu
 		});
 		return tempPath;
 	} catch (error) {
+		void captureException(error);
 		logger.error('[ProcessManager] Failed to save image to temp file', 'ProcessManager', {
 			error: String(error),
 		});

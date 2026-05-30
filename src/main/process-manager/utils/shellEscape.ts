@@ -1,3 +1,4 @@
+import { logger } from '../../utils/logger';
 /**
  * Shell argument escaping utilities for Windows cmd.exe and PowerShell.
  *
@@ -254,7 +255,7 @@ export function getWindowsShellForAgentExecution(
 	// Last resort: fall back to ComSpec (cmd.exe)
 	// This may cause command line length issues, but at least it will work
 	const comSpec = process.env.ComSpec || 'cmd.exe';
-	console.warn(
+	logger.warn(
 		`[shellEscape] PowerShell not found, falling back to ${comSpec}. ` +
 			`Long commands may fail due to cmd.exe's ~8191 character limit.`
 	);

@@ -23,7 +23,7 @@ The first two tenets address these modes directly. The remaining tenets apply to
 
 ---
 
-## The Six Tenets
+## The Seven Tenets
 
 ### 1. Unattended Excellence _(Solo Mode)_
 
@@ -117,6 +117,21 @@ Power users deserve depth. New users deserve simplicity. Both get what they need
 **The Iceberg Principle:**
 90% of Maestro's power should be invisible until needed. The surface is calm and simple; the depth is available to those who dive.
 
+### 7. Agent Omniscience
+
+Everything the conductor can see, the agents can see. Everything the conductor can do, the agents can do. The interface is not a wall between human and machine—it's a shared control surface.
+
+**What this means in practice:**
+
+- Every setting, state, and action reachable through the GUI is equally reachable by agents through CLI and filesystem
+- Agents read, write, peek, and poke the application directly—no human hands required
+- History, configuration, playbooks, and agent state are all accessible artifacts, not locked-away internals
+- Inter-agent communication is a first-class operation, not a workaround
+- The user should never leave the conversation to manipulate Maestro
+
+**The Shared Podium Principle:**
+The conductor and the orchestra share the same stage. An agent that can write code but can't change its own theme, inspect a peer's history, or launch a playbook is an agent working with one hand tied behind its back. Full access means full agency—the interface serves the agent as readily as it serves the conductor.
+
 ---
 
 ## Design Principles
@@ -165,6 +180,7 @@ Before shipping any feature, ask:
 4. **Is it fast?**
 5. **Is the complexity justified?**
 6. **Will users smile?**
+7. **Can an agent do this without human hands?**
 
 If the answer to any of these is "no," reconsider.
 

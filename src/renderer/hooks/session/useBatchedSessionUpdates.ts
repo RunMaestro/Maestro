@@ -3,10 +3,10 @@
  *
  * A hook that batches session state updates to reduce React re-renders.
  * During AI streaming, IPC handlers can trigger 100+ state updates per second.
- * This hook accumulates updates in a ref and flushes them every 150ms.
+ * This hook accumulates updates in a ref and flushes them on a fixed cadence.
  *
  * Features:
- * - Configurable flush interval (default 150ms)
+ * - Configurable flush interval (default 200ms)
  * - Support for multiple update types: appendLog, setStatus, updateUsage, etc.
  * - Proper ordering of updates within each flush
  * - Immediate flush capability for critical moments (user input, session switch)
@@ -16,9 +16,14 @@
 import { useRef, useCallback, useEffect, useMemo } from 'react';
 import type { Session, SessionState, UsageStats, LogEntry } from '../../types';
 import { useSessionStore } from '../../stores/sessionStore';
+import { logger } from '../../utils/logger';
 
-// Default flush interval in milliseconds (imperceptible to users)
-export const DEFAULT_BATCH_FLUSH_INTERVAL = 150;
+// Default flush interval in milliseconds. 200ms is the sweet spot we landed on:
+// - 150ms collided with high-throughput streams (jitter from setInterval drift
+//   produced visible micro-stutters during peak agent output)
+// - 250ms is perceptibly laggy for users typing in the input area
+// - 200ms keeps streaming smooth without measurable input latency
+export const DEFAULT_BATCH_FLUSH_INTERVAL = 200;
 
 /**
  * Accumulated log data for efficient string concatenation
@@ -202,17 +207,25 @@ export function useBatchedSessionUpdates(
 
 					// Apply AI tab logs
 					if (aiTabLogs.size > 0 && updatedSession.aiTabs) {
+						// When the session's resolved Claude mode is interactive, tag
+						// non-stderr entries with renderStyle: 'text-stream' so the
+						// "Captured via interactive TUI" footer pill renders on them.
+						// stderr stays untagged — error frames aren't interactive output.
+						const isInteractive = updatedSession.claudeInteractive?.mode === 'interactive';
+
 						updatedSession = {
 							...updatedSession,
 							aiTabs: updatedSession.aiTabs.map((tab) => {
 								const logData = aiTabLogs.get(tab.id);
 								if (!logData) return tab;
 
-								// Clear thinking/tool entries when new AI output arrives (final result replaces thinking)
-								// BUT: if showThinking is 'sticky', preserve both thinking and tool logs
+								// ThinkingMode contract — inline clear point.
+								// When new assistant text arrives, drop transient thinking/tool entries
+								// from prior reasoning so the final answer replaces them. The matching
+								// exit-time clear lives in useAgentListeners → cleanupExitedTabLogs.
+								// Sticky mode opts out of BOTH clear points.
 								const existingLogs = tab.logs.filter((log) => {
 									if (log.source === 'thinking' || log.source === 'tool') {
-										// Only preserve thinking/tool logs in sticky mode
 										return tab.showThinking === 'sticky';
 									}
 									return true;
@@ -222,11 +235,29 @@ export function useBatchedSessionUpdates(
 								// Determine the source based on stderr flag
 								const logSource = logData.isStderr ? 'stderr' : 'stdout';
 
+								// Defensive: never coalesce streamed output into a non-stream entry
+								// (error/system/tool/user/thinking). The source-equality check below already
+								// excludes these in theory, but a UI bug exists where assistant text gets
+								// concatenated into an error bubble's text. Belt-and-suspenders allowlist
+								// + a warn lets us catch the upstream cause if it ever fires.
+								const isCoalescableSource =
+									lastLog?.source === 'stdout' || lastLog?.source === 'stderr';
+								if (lastLog && !isCoalescableSource && lastLog.source === logSource) {
+									logger.warn(
+										'[useBatchedSessionUpdates] Refusing to coalesce streamed output into non-stream log entry',
+										undefined,
+										{ tabId: tab.id, lastLogSource: lastLog.source, logSource }
+									);
+								}
+
 								// Time-based grouping for AI output (500ms window) - only group same source types
 								const shouldGroup =
 									lastLog &&
+									isCoalescableSource &&
 									lastLog.source === logSource &&
 									logData.timestamp - lastLog.timestamp < 500;
+
+								const shouldTagInteractive = isInteractive && !logData.isStderr;
 
 								let updatedLogs: LogEntry[];
 								if (shouldGroup) {
@@ -234,6 +265,7 @@ export function useBatchedSessionUpdates(
 									updatedLogs[updatedLogs.length - 1] = {
 										...lastLog,
 										text: lastLog.text + logData.data,
+										...(shouldTagInteractive ? { renderStyle: 'text-stream' } : {}),
 									};
 								} else {
 									const newLog: LogEntry = {
@@ -241,6 +273,7 @@ export function useBatchedSessionUpdates(
 										timestamp: logData.timestamp,
 										source: logSource,
 										text: logData.data,
+										...(shouldTagInteractive ? { renderStyle: 'text-stream' } : {}),
 									};
 									updatedLogs = [...existingLogs, newLog];
 								}
@@ -250,8 +283,9 @@ export function useBatchedSessionUpdates(
 						};
 					}
 
-					// Apply shell logs
-					if (shellStdout || shellStderr) {
+					// Apply shell logs (legacy fallback — only when no terminal tabs present)
+					// TODO: Remove shellLogs once terminal tabs migration is complete
+					if ((shellStdout || shellStderr) && !updatedSession.terminalTabs?.length) {
 						const shellLogs = [...updatedSession.shellLogs];
 
 						if (shellStdout) {

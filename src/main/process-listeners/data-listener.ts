@@ -111,6 +111,23 @@ export function setupDataListener(
 			return; // Don't send to regular process:data handler
 		}
 
+		// CRITICAL: group-chat domain containment. If we got here with a sessionId
+		// that starts with GROUP_CHAT_PREFIX but neither the moderator regex nor
+		// parseParticipantSessionId matched, it means something produced a
+		// group-chat-shaped sessionId we don't recognize. We MUST NOT fall through
+		// to safeSend('process:data', ...) or the web broadcast path below, or the
+		// group-chat output bytes will leak into the regular renderer channel
+		// (and, transitively, into anything that subscribes to process:data —
+		// including the session's stdout history that the UI displays). Drop the
+		// data and log loudly so the unknown shape can be investigated.
+		if (isGroupChatSession) {
+			debugLog(
+				'GroupChat:Debug',
+				`WARNING: unrecognized group-chat sessionId shape — dropping ${data.length} bytes to prevent cross-domain leak: ${sessionId}`
+			);
+			return;
+		}
+
 		safeSend('process:data', sessionId, data);
 
 		// Broadcast to web clients - extract base session ID (remove -ai or -terminal suffix)
@@ -118,9 +135,19 @@ export function setupDataListener(
 		// Web interface terminal commands use runCommand() which emits with plain session IDs.
 		const webServer = getWebServer();
 		if (webServer) {
-			// Don't broadcast raw PTY terminal output to web clients
+			// Broadcast raw PTY terminal output as terminal_data (for xterm.js in web client)
 			if (sessionId.endsWith('-terminal')) {
-				debugLog('WebBroadcast', `SKIPPING PTY terminal output for web: session=${sessionId}`);
+				const baseSessionId = sessionId.replace(/-terminal$/, '');
+				debugLog(
+					'WebBroadcast',
+					`Broadcasting terminal_data: session=${baseSessionId}, dataLen=${data.length}`
+				);
+				webServer.broadcastToSessionClients(baseSessionId, {
+					type: 'terminal_data',
+					sessionId: baseSessionId,
+					data,
+					timestamp: Date.now(),
+				});
 				return;
 			}
 

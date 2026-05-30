@@ -53,9 +53,8 @@ vi.mock('fs/promises', () => ({
 
 // Mock remote-fs utilities
 vi.mock('../../../main/utils/remote-fs', () => ({
-	readDirRemote: vi.fn(),
 	readFileRemote: vi.fn(),
-	statRemote: vi.fn(),
+	listDirWithStatsRemote: vi.fn(),
 }));
 
 // Mock statsCache

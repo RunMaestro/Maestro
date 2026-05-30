@@ -15,6 +15,7 @@ import {
 	Settings,
 } from 'lucide-react';
 import type { Theme, FileChangeType } from '../../types';
+import { COLORBLIND_STATUS_COLORS } from '../../constants/colorblindPalettes';
 import {
 	ARCHIVE_EXTENSIONS,
 	ASSET_FOLDER_NAMES,
@@ -47,13 +48,18 @@ const defaultFileIconProps = (
 	iconKey: string,
 	theme: Theme,
 	type: FileChangeType | undefined,
-	fallbackColor: string
+	fallbackColor: string,
+	colorBlindMode: boolean = false
 ) => ({
 	className: 'w-3.5 h-3.5',
 	style: {
-		'--maestro-success-color': theme.colors.success,
-		'--maestro-error-color': theme.colors.error,
-		'--maestro-warning-color': theme.colors.warning,
+		'--maestro-success-color': colorBlindMode
+			? COLORBLIND_STATUS_COLORS.success
+			: theme.colors.success,
+		'--maestro-error-color': colorBlindMode ? COLORBLIND_STATUS_COLORS.error : theme.colors.error,
+		'--maestro-warning-color': colorBlindMode
+			? COLORBLIND_STATUS_COLORS.warning
+			: theme.colors.warning,
 		color: fileTypeColor(type, fallbackColor),
 	},
 	'data-file-explorer-icon-theme': 'default',
@@ -70,36 +76,39 @@ const defaultFolderIconProps = (iconKey: string, color: string) => ({
 export const getDefaultExplorerFileIcon = (
 	fileName: string,
 	theme: Theme,
-	type?: FileChangeType
+	type?: FileChangeType,
+	colorBlindMode: boolean = false
 ): JSX.Element => {
 	const normalized = normalizeExplorerName(fileName);
 	const ext = getExplorerFileExtension(fileName);
+	const props = (key: string) =>
+		defaultFileIconProps(key, theme, type, theme.colors.accent, colorBlindMode);
 
 	if (LOCK_FILE_NAMES.has(normalized)) {
-		return <Lock {...defaultFileIconProps('lock', theme, type, theme.colors.accent)} />;
+		return <Lock {...props('lock')} />;
 	}
 	if (CONFIG_FILE_NAMES.has(normalized) || CONFIG_EXTENSIONS.has(ext)) {
-		return <Settings {...defaultFileIconProps('settings', theme, type, theme.colors.accent)} />;
+		return <Settings {...props('settings')} />;
 	}
 	if (IMAGE_EXTENSIONS.has(ext)) {
-		return <FileImage {...defaultFileIconProps('image', theme, type, theme.colors.accent)} />;
+		return <FileImage {...props('image')} />;
 	}
 	if (DOC_EXTENSIONS.has(ext)) {
-		return <BookOpen {...defaultFileIconProps('docs', theme, type, theme.colors.accent)} />;
+		return <BookOpen {...props('docs')} />;
 	}
 	if (ARCHIVE_EXTENSIONS.has(ext)) {
-		return <Package {...defaultFileIconProps('archive', theme, type, theme.colors.accent)} />;
+		return <Package {...props('archive')} />;
 	}
 	if (isExplorerTestFile(fileName)) {
-		return <FlaskConical {...defaultFileIconProps('test', theme, type, theme.colors.accent)} />;
+		return <FlaskConical {...props('test')} />;
 	}
 	if (CODE_EXTENSIONS.has(ext)) {
-		return <FileCode {...defaultFileIconProps('code', theme, type, theme.colors.accent)} />;
+		return <FileCode {...props('code')} />;
 	}
 	if (ext === 'csv' || ext === 'tsv') {
-		return <Database {...defaultFileIconProps('database', theme, type, theme.colors.accent)} />;
+		return <Database {...props('database')} />;
 	}
-	return <File {...defaultFileIconProps('file', theme, type, theme.colors.accent)} />;
+	return <File {...props('file')} />;
 };
 
 export const getDefaultExplorerFolderIcon = (

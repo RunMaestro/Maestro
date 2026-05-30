@@ -55,3 +55,10 @@ export type { UseSessionCrudDeps, UseSessionCrudReturn } from './useSessionCrud'
 // Session cycling (Cmd+Shift+[/])
 export { useCycleSession } from './useCycleSession';
 export type { UseCycleSessionDeps, UseCycleSessionReturn } from './useCycleSession';
+
+// Session switching callbacks (navigate to session/tab from various UI surfaces)
+export { useSessionSwitchCallbacks } from './useSessionSwitchCallbacks';
+export type {
+	UseSessionSwitchCallbacksDeps,
+	UseSessionSwitchCallbacksReturn,
+} from './useSessionSwitchCallbacks';

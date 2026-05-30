@@ -127,6 +127,15 @@ export interface UseSessionsReturn {
 	/** Refresh the sessions list from the server */
 	refreshSessions: () => void;
 
+	/**
+	 * Optimistically update a session's local `state` field without waiting for
+	 * a server broadcast. Used to give the launching agent immediate visual
+	 * feedback (e.g., flipping to "connecting" while an Auto Run launch is in
+	 * flight). Subsequent `session_state_change` broadcasts from the server
+	 * overwrite the optimistic value.
+	 */
+	setLocalSessionState: (sessionId: string, state: SessionState) => void;
+
 	/** The underlying WebSocket hook return (for advanced use) */
 	ws: UseWebSocketReturn;
 }
@@ -557,6 +566,23 @@ export function useSessions(options: UseSessionsOptions = {}): UseSessionsReturn
 		ws.send({ type: 'get_sessions' });
 	}, [ws]);
 
+	/**
+	 * Optimistically set the local `state` for a single session. Mirrors the
+	 * private `handleSessionStateChange` updater so callers can give the
+	 * launching agent immediate visual feedback (busy/connecting) before any
+	 * server broadcast arrives.
+	 */
+	const setLocalSessionState = useCallback((sessionId: string, state: SessionState) => {
+		setSessions((prev) => {
+			const index = prev.findIndex((s) => s.id === sessionId);
+			if (index === -1) return prev;
+			if (prev[index].state === state) return prev;
+			const updated = [...prev];
+			updated[index] = { ...updated[index], state };
+			return updated;
+		});
+	}, []);
+
 	return {
 		// Session data
 		sessions,
@@ -589,6 +615,7 @@ export function useSessions(options: UseSessionsOptions = {}): UseSessionsReturn
 		closeTab,
 
 		refreshSessions,
+		setLocalSessionState,
 
 		// Underlying WebSocket hook
 		ws,

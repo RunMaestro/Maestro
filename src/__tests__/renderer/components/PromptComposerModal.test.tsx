@@ -2,9 +2,18 @@ import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { PromptComposerModal } from '../../../renderer/components/PromptComposerModal';
+import { useModalStore } from '../../../renderer/stores/modalStore';
 import { formatEnterToSend } from '../../../renderer/utils/shortcutFormatter';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 import type { Theme, Session, Group } from '../../../renderer/types';
+import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
+
+import { mockTheme } from '../../helpers/mockTheme';
+// Mock useAtMentionCompletion hook
+const mockGetSuggestions = vi.fn().mockReturnValue([]);
+vi.mock('../../../renderer/hooks/input/useAtMentionCompletion', () => ({
+	useAtMentionCompletion: () => ({ getSuggestions: mockGetSuggestions }),
+}));
 
 // Mock Lucide icons
 vi.mock('lucide-react', () => ({
@@ -38,29 +47,21 @@ vi.mock('lucide-react', () => ({
 	Pin: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
 		<svg data-testid="pin-icon" className={className} style={style} />
 	),
+	File: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<svg data-testid="file-icon" className={className} style={style} />
+	),
+	Folder: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<svg data-testid="folder-icon" className={className} style={style} />
+	),
+	Maximize2: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<svg data-testid="maximize-icon" className={className} style={style} />
+	),
+	Minimize2: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<svg data-testid="minimize-icon" className={className} style={style} />
+	),
 }));
 
 // Mock theme
-const mockTheme: Theme = {
-	id: 'test-dark',
-	name: 'Test Dark',
-	mode: 'dark',
-	colors: {
-		bgMain: '#1a1a1a',
-		bgSidebar: '#252525',
-		border: '#333333',
-		textMain: '#ffffff',
-		textDim: '#888888',
-		textFaint: '#555555',
-		accent: '#4a9eff',
-		accentForeground: '#ffffff',
-		buttonBg: '#333333',
-		buttonHover: '#444444',
-		headerBg: '#202020',
-		scrollbarTrack: '#1a1a1a',
-		scrollbarThumb: '#444444',
-	},
-};
 
 const lightTheme: Theme = {
 	id: 'test-light',
@@ -88,6 +89,28 @@ const renderWithProvider = (ui: React.ReactElement) => {
 	return render(<LayerStackProvider>{ui}</LayerStackProvider>);
 };
 
+// jsdom in this vitest setup does not provide a working localStorage, so install
+// a minimal in-memory implementation for tests that exercise persisted preferences.
+const createMockLocalStorage = (): Storage => {
+	const store = new Map<string, string>();
+	return {
+		getItem: (key: string) => (store.has(key) ? store.get(key)! : null),
+		setItem: (key: string, value: string) => {
+			store.set(key, String(value));
+		},
+		removeItem: (key: string) => {
+			store.delete(key);
+		},
+		clear: () => {
+			store.clear();
+		},
+		key: (index: number) => Array.from(store.keys())[index] ?? null,
+		get length() {
+			return store.size;
+		},
+	} as Storage;
+};
+
 describe('PromptComposerModal', () => {
 	let onClose: ReturnType<typeof vi.fn>;
 	let onSubmit: ReturnType<typeof vi.fn>;
@@ -97,6 +120,15 @@ describe('PromptComposerModal', () => {
 		onClose = vi.fn();
 		onSubmit = vi.fn();
 		onSend = vi.fn();
+		mockGetSuggestions.mockReturnValue([]);
+		Object.defineProperty(window, 'localStorage', {
+			value: createMockLocalStorage(),
+			configurable: true,
+			writable: true,
+		});
+		// Full-screen state now lives in the modal store (a module singleton), so
+		// reset it between tests to keep them isolated.
+		useModalStore.setState({ promptComposerFullscreen: false });
 	});
 
 	afterEach(() => {
@@ -232,6 +264,59 @@ describe('PromptComposerModal', () => {
 			expect(screen.getByTestId('x-icon')).toBeInTheDocument();
 		});
 
+		it('should render expand button defaulting to windowed mode', () => {
+			renderWithProvider(
+				<PromptComposerModal
+					isOpen={true}
+					onClose={onClose}
+					theme={mockTheme}
+					initialValue=""
+					onSubmit={onSubmit}
+					onSend={onSend}
+				/>
+			);
+
+			expect(screen.getByTitle('Expand to full screen')).toBeInTheDocument();
+			expect(screen.getByTestId('maximize-icon')).toBeInTheDocument();
+		});
+
+		it('should toggle to full screen and persist the preference', () => {
+			window.localStorage.removeItem('maestro.promptComposer.fullscreen');
+			const { unmount } = renderWithProvider(
+				<PromptComposerModal
+					isOpen={true}
+					onClose={onClose}
+					theme={mockTheme}
+					initialValue=""
+					onSubmit={onSubmit}
+					onSend={onSend}
+				/>
+			);
+
+			fireEvent.click(screen.getByTitle('Expand to full screen'));
+
+			expect(screen.getByTitle('Collapse')).toBeInTheDocument();
+			expect(screen.getByTestId('minimize-icon')).toBeInTheDocument();
+			expect(window.localStorage.getItem('maestro.promptComposer.fullscreen')).toBe('true');
+
+			unmount();
+
+			// Reopening should default to the last-used (full screen) state
+			renderWithProvider(
+				<PromptComposerModal
+					isOpen={true}
+					onClose={onClose}
+					theme={mockTheme}
+					initialValue=""
+					onSubmit={onSubmit}
+					onSend={onSend}
+				/>
+			);
+
+			expect(screen.getByTitle('Collapse')).toBeInTheDocument();
+			window.localStorage.removeItem('maestro.promptComposer.fullscreen');
+		});
+
 		it('should render textarea with placeholder', () => {
 			renderWithProvider(
 				<PromptComposerModal
@@ -244,7 +329,9 @@ describe('PromptComposerModal', () => {
 				/>
 			);
 
-			expect(screen.getByPlaceholderText('Write your prompt here...')).toBeInTheDocument();
+			expect(
+				screen.getByPlaceholderText('Write your prompt here... (@ to reference files)')
+			).toBeInTheDocument();
 		});
 
 		it('should render textarea with initial value', () => {
@@ -260,7 +347,7 @@ describe('PromptComposerModal', () => {
 			);
 
 			const textarea = screen.getByPlaceholderText(
-				'Write your prompt here...'
+				'Write your prompt here... (@ to reference files)'
 			) as HTMLTextAreaElement;
 			expect(textarea.value).toBe('Initial prompt text');
 		});
@@ -455,7 +542,9 @@ describe('PromptComposerModal', () => {
 				/>
 			);
 
-			const textarea = screen.getByPlaceholderText('Write your prompt here...');
+			const textarea = screen.getByPlaceholderText(
+				'Write your prompt here... (@ to reference files)'
+			);
 			fireEvent.change(textarea, { target: { value: 'Hello' } });
 
 			expect(screen.getByText('5 characters')).toBeInTheDocument();
@@ -476,7 +565,9 @@ describe('PromptComposerModal', () => {
 				/>
 			);
 
-			const textarea = screen.getByPlaceholderText('Write your prompt here...');
+			const textarea = screen.getByPlaceholderText(
+				'Write your prompt here... (@ to reference files)'
+			);
 			expect(document.activeElement).toBe(textarea);
 		});
 
@@ -493,7 +584,7 @@ describe('PromptComposerModal', () => {
 			);
 
 			const textarea = screen.getByPlaceholderText(
-				'Write your prompt here...'
+				'Write your prompt here... (@ to reference files)'
 			) as HTMLTextAreaElement;
 			expect(textarea.selectionStart).toBe(11);
 			expect(textarea.selectionEnd).toBe(11);
@@ -528,12 +619,12 @@ describe('PromptComposerModal', () => {
 			);
 
 			const textarea = screen.getByPlaceholderText(
-				'Write your prompt here...'
+				'Write your prompt here... (@ to reference files)'
 			) as HTMLTextAreaElement;
 			expect(textarea.value).toBe('New value');
 		});
 
-		it('should update value when initialValue changes while open', () => {
+		it('should not overwrite user edits when initialValue changes while open', () => {
 			const { rerender } = renderWithProvider(
 				<PromptComposerModal
 					isOpen={true}
@@ -545,23 +636,25 @@ describe('PromptComposerModal', () => {
 				/>
 			);
 
+			const textarea = screen.getByPlaceholderText(
+				'Write your prompt here... (@ to reference files)'
+			) as HTMLTextAreaElement;
+			fireEvent.change(textarea, { target: { value: 'User typing' } });
+
 			rerender(
 				<LayerStackProvider>
 					<PromptComposerModal
 						isOpen={true}
 						onClose={onClose}
 						theme={mockTheme}
-						initialValue="Second"
+						initialValue="Stale deferred value"
 						onSubmit={onSubmit}
 						onSend={onSend}
 					/>
 				</LayerStackProvider>
 			);
 
-			const textarea = screen.getByPlaceholderText(
-				'Write your prompt here...'
-			) as HTMLTextAreaElement;
-			expect(textarea.value).toBe('Second');
+			expect(textarea.value).toBe('User typing');
 		});
 	});
 
@@ -665,7 +758,9 @@ describe('PromptComposerModal', () => {
 				/>
 			);
 
-			const textarea = screen.getByPlaceholderText('Write your prompt here...');
+			const textarea = screen.getByPlaceholderText(
+				'Write your prompt here... (@ to reference files)'
+			);
 			fireEvent.keyDown(textarea, { key: 'Enter', metaKey: true });
 
 			expect(onSend).toHaveBeenCalledWith('Test message');
@@ -684,7 +779,9 @@ describe('PromptComposerModal', () => {
 				/>
 			);
 
-			const textarea = screen.getByPlaceholderText('Write your prompt here...');
+			const textarea = screen.getByPlaceholderText(
+				'Write your prompt here... (@ to reference files)'
+			);
 			fireEvent.keyDown(textarea, { key: 'Enter', ctrlKey: true });
 
 			expect(onSend).toHaveBeenCalledWith('Test message');
@@ -703,7 +800,9 @@ describe('PromptComposerModal', () => {
 				/>
 			);
 
-			const textarea = screen.getByPlaceholderText('Write your prompt here...');
+			const textarea = screen.getByPlaceholderText(
+				'Write your prompt here... (@ to reference files)'
+			);
 			fireEvent.keyDown(textarea, { key: 'Enter' });
 
 			expect(onSend).not.toHaveBeenCalled();
@@ -721,7 +820,9 @@ describe('PromptComposerModal', () => {
 				/>
 			);
 
-			const textarea = screen.getByPlaceholderText('Write your prompt here...');
+			const textarea = screen.getByPlaceholderText(
+				'Write your prompt here... (@ to reference files)'
+			);
 			fireEvent.keyDown(textarea, { key: 'Enter', metaKey: true });
 
 			expect(onSend).not.toHaveBeenCalled();
@@ -739,10 +840,59 @@ describe('PromptComposerModal', () => {
 				/>
 			);
 
-			const textarea = screen.getByPlaceholderText('Write your prompt here...');
+			const textarea = screen.getByPlaceholderText(
+				'Write your prompt here... (@ to reference files)'
+			);
 			fireEvent.keyDown(textarea, { key: 'Enter', metaKey: true });
 
 			expect(onSend).not.toHaveBeenCalled();
+		});
+
+		// When enterToSend=true (Expanded AI Interaction Mode "Enter sends"): plain Enter
+		// sends, Shift+Enter inserts a newline, Cmd/Ctrl+Enter falls through (no-op).
+		describe('when enterToSend is true', () => {
+			it('sends on plain Enter', () => {
+				renderWithProvider(
+					<PromptComposerModal
+						isOpen={true}
+						onClose={onClose}
+						theme={mockTheme}
+						initialValue="Test message"
+						onSubmit={onSubmit}
+						onSend={onSend}
+						enterToSend={true}
+					/>
+				);
+
+				const textarea = screen.getByPlaceholderText(
+					'Write your prompt here... (@ to reference files)'
+				);
+				fireEvent.keyDown(textarea, { key: 'Enter' });
+
+				expect(onSend).toHaveBeenCalledWith('Test message');
+				expect(onClose).toHaveBeenCalled();
+			});
+
+			it('does not send on Shift + Enter (allows newline)', () => {
+				renderWithProvider(
+					<PromptComposerModal
+						isOpen={true}
+						onClose={onClose}
+						theme={mockTheme}
+						initialValue="Test message"
+						onSubmit={onSubmit}
+						onSend={onSend}
+						enterToSend={true}
+					/>
+				);
+
+				const textarea = screen.getByPlaceholderText(
+					'Write your prompt here... (@ to reference files)'
+				);
+				fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: true });
+
+				expect(onSend).not.toHaveBeenCalled();
+			});
 		});
 	});
 
@@ -778,7 +928,9 @@ describe('PromptComposerModal', () => {
 				/>
 			);
 
-			const textarea = screen.getByPlaceholderText('Write your prompt here...');
+			const textarea = screen.getByPlaceholderText(
+				'Write your prompt here... (@ to reference files)'
+			);
 			fireEvent.change(textarea, { target: { value: 'Edited text' } });
 
 			const closeButton = screen.getByTitle('Close (Escape)');
@@ -824,7 +976,9 @@ describe('PromptComposerModal', () => {
 				/>
 			);
 
-			const textarea = screen.getByPlaceholderText('Write your prompt here...');
+			const textarea = screen.getByPlaceholderText(
+				'Write your prompt here... (@ to reference files)'
+			);
 			fireEvent.click(textarea);
 
 			expect(onClose).not.toHaveBeenCalled();
@@ -865,7 +1019,9 @@ describe('PromptComposerModal', () => {
 				/>
 			);
 
-			const textarea = screen.getByPlaceholderText('Write your prompt here...');
+			const textarea = screen.getByPlaceholderText(
+				'Write your prompt here... (@ to reference files)'
+			);
 			fireEvent.change(textarea, { target: { value: 'Modified' } });
 
 			fireEvent.keyDown(document, { key: 'Escape' });
@@ -873,6 +1029,35 @@ describe('PromptComposerModal', () => {
 			await waitFor(() => {
 				expect(onSubmit).toHaveBeenCalledWith('Modified');
 			});
+		});
+	});
+
+	describe('Keystroke sync', () => {
+		it('should call onSubmit on every keystroke to sync with parent', () => {
+			renderWithProvider(
+				<PromptComposerModal
+					isOpen={true}
+					onClose={onClose}
+					theme={mockTheme}
+					initialValue=""
+					onSubmit={onSubmit}
+					onSend={onSend}
+				/>
+			);
+
+			const textarea = screen.getByPlaceholderText(
+				'Write your prompt here... (@ to reference files)'
+			);
+			fireEvent.change(textarea, { target: { value: 'H' } });
+			expect(onSubmit).toHaveBeenCalledWith('H');
+
+			fireEvent.change(textarea, { target: { value: 'He' } });
+			expect(onSubmit).toHaveBeenCalledWith('He');
+
+			fireEvent.change(textarea, { target: { value: 'Hel' } });
+			expect(onSubmit).toHaveBeenCalledWith('Hel');
+
+			expect(onSubmit).toHaveBeenCalledTimes(3);
 		});
 	});
 
@@ -889,7 +1074,9 @@ describe('PromptComposerModal', () => {
 				/>
 			);
 
-			const textarea = screen.getByPlaceholderText('Write your prompt here...');
+			const textarea = screen.getByPlaceholderText(
+				'Write your prompt here... (@ to reference files)'
+			);
 			fireEvent.change(textarea, { target: { value: 'New content' } });
 
 			expect((textarea as HTMLTextAreaElement).value).toBe('New content');
@@ -907,7 +1094,9 @@ describe('PromptComposerModal', () => {
 				/>
 			);
 
-			const textarea = screen.getByPlaceholderText('Write your prompt here...');
+			const textarea = screen.getByPlaceholderText(
+				'Write your prompt here... (@ to reference files)'
+			);
 			expect(textarea).toHaveStyle({ color: mockTheme.colors.textMain });
 		});
 	});
@@ -960,7 +1149,7 @@ describe('PromptComposerModal', () => {
 
 			// Unicode chars are still counted as characters
 			const textarea = screen.getByPlaceholderText(
-				'Write your prompt here...'
+				'Write your prompt here... (@ to reference files)'
 			) as HTMLTextAreaElement;
 			expect(textarea.value).toBe('Hello 世界 🌍');
 		});
@@ -1083,7 +1272,9 @@ describe('PromptComposerModal', () => {
 				/>
 			);
 
-			const textarea = screen.getByPlaceholderText('Write your prompt here...');
+			const textarea = screen.getByPlaceholderText(
+				'Write your prompt here... (@ to reference files)'
+			);
 			expect(textarea.tagName).toBe('TEXTAREA');
 		});
 
@@ -1122,39 +1313,13 @@ describe('PromptComposerModal', () => {
 	});
 
 	describe('@mention autocomplete (group chat mode)', () => {
+		// Thin wrapper: positional signature preserved. Delegates to shared factory.
 		function createMockSession(
 			id: string,
 			name: string,
 			toolType: string = 'claude-code'
 		): Session {
-			return {
-				id,
-				name,
-				toolType,
-				state: 'idle',
-				cwd: '/test',
-				fullPath: '/test',
-				projectRoot: '/test',
-				aiLogs: [],
-				shellLogs: [],
-				workLog: [],
-				contextUsage: 0,
-				inputMode: 'ai',
-				aiPid: 0,
-				terminalPid: 0,
-				port: 0,
-				isLive: false,
-				changedFiles: [],
-				isGitRepo: false,
-				fileTree: [],
-				fileExplorerExpanded: [],
-				fileExplorerScrollPos: 0,
-				executionQueue: [],
-				activeTimeMs: 0,
-				aiTabs: [],
-				activeTabId: '',
-				closedTabHistory: [],
-			};
+			return baseCreateMockSession({ id, name, toolType: toolType as any });
 		}
 
 		function createMockGroup(id: string, name: string, emoji: string = '📁'): Group {
@@ -1176,7 +1341,7 @@ describe('PromptComposerModal', () => {
 			);
 
 			expect(
-				screen.getByPlaceholderText('Write your prompt here... (@ to mention agent)')
+				screen.getByPlaceholderText('Write your prompt here... (@ to mention agents)')
 			).toBeInTheDocument();
 		});
 
@@ -1195,7 +1360,7 @@ describe('PromptComposerModal', () => {
 			);
 
 			const textarea = screen.getByPlaceholderText(
-				'Write your prompt here... (@ to mention agent)'
+				'Write your prompt here... (@ to mention agents)'
 			);
 			fireEvent.change(textarea, { target: { value: '@' } });
 
@@ -1218,7 +1383,7 @@ describe('PromptComposerModal', () => {
 			);
 
 			const textarea = screen.getByPlaceholderText(
-				'Write your prompt here... (@ to mention agent)'
+				'Write your prompt here... (@ to mention agents)'
 			);
 			fireEvent.change(textarea, { target: { value: '@Age' } });
 
@@ -1241,7 +1406,7 @@ describe('PromptComposerModal', () => {
 			);
 
 			const textarea = screen.getByPlaceholderText(
-				'Write your prompt here... (@ to mention agent)'
+				'Write your prompt here... (@ to mention agents)'
 			) as HTMLTextAreaElement;
 			fireEvent.change(textarea, { target: { value: '@' } });
 			fireEvent.click(screen.getByText('@Agent1'));
@@ -1264,7 +1429,7 @@ describe('PromptComposerModal', () => {
 			);
 
 			const textarea = screen.getByPlaceholderText(
-				'Write your prompt here... (@ to mention agent)'
+				'Write your prompt here... (@ to mention agents)'
 			) as HTMLTextAreaElement;
 			fireEvent.change(textarea, { target: { value: '@' } });
 			fireEvent.keyDown(textarea, { key: 'Tab' });
@@ -1287,7 +1452,7 @@ describe('PromptComposerModal', () => {
 			);
 
 			const textarea = screen.getByPlaceholderText(
-				'Write your prompt here... (@ to mention agent)'
+				'Write your prompt here... (@ to mention agents)'
 			) as HTMLTextAreaElement;
 			fireEvent.change(textarea, { target: { value: '@' } });
 			fireEvent.keyDown(textarea, { key: 'ArrowDown' });
@@ -1311,7 +1476,7 @@ describe('PromptComposerModal', () => {
 			);
 
 			const textarea = screen.getByPlaceholderText(
-				'Write your prompt here... (@ to mention agent)'
+				'Write your prompt here... (@ to mention agents)'
 			);
 			fireEvent.change(textarea, { target: { value: '@' } });
 			expect(screen.getByText('@Agent1')).toBeInTheDocument();
@@ -1338,7 +1503,7 @@ describe('PromptComposerModal', () => {
 			);
 
 			const textarea = screen.getByPlaceholderText(
-				'Write your prompt here... (@ to mention agent)'
+				'Write your prompt here... (@ to mention agents)'
 			);
 			fireEvent.change(textarea, { target: { value: '@' } });
 
@@ -1366,7 +1531,7 @@ describe('PromptComposerModal', () => {
 			);
 
 			const textarea = screen.getByPlaceholderText(
-				'Write your prompt here... (@ to mention agent)'
+				'Write your prompt here... (@ to mention agents)'
 			) as HTMLTextAreaElement;
 			fireEvent.change(textarea, { target: { value: '@' } });
 			fireEvent.click(screen.getByText('@TEAM'));
@@ -1374,7 +1539,17 @@ describe('PromptComposerModal', () => {
 			expect(textarea.value).toBe('@Agent1 @Agent2 ');
 		});
 
-		it('should not show mention dropdown without sessions prop', () => {
+		it('should show file suggestions from useAtMentionCompletion', () => {
+			mockGetSuggestions.mockReturnValue([
+				{
+					value: 'src/index.ts',
+					type: 'file',
+					displayText: 'index.ts',
+					fullPath: 'src/index.ts',
+					score: 100,
+					source: 'project',
+				},
+			]);
 			renderWithProvider(
 				<PromptComposerModal
 					isOpen={true}
@@ -1386,13 +1561,72 @@ describe('PromptComposerModal', () => {
 				/>
 			);
 
-			const textarea = screen.getByPlaceholderText('Write your prompt here...');
+			const textarea = screen.getByPlaceholderText(
+				'Write your prompt here... (@ to reference files)'
+			);
+			fireEvent.change(textarea, { target: { value: '@ind' } });
+
+			expect(mockGetSuggestions).toHaveBeenCalledWith('ind');
+			expect(screen.getByText('src/index.ts')).toBeInTheDocument();
+		});
+
+		it('should insert file path on file suggestion click', () => {
+			mockGetSuggestions.mockReturnValue([
+				{
+					value: 'src/utils.ts',
+					type: 'file',
+					displayText: 'utils.ts',
+					fullPath: 'src/utils.ts',
+					score: 100,
+					source: 'project',
+				},
+			]);
+			renderWithProvider(
+				<PromptComposerModal
+					isOpen={true}
+					onClose={onClose}
+					theme={mockTheme}
+					initialValue=""
+					onSubmit={onSubmit}
+					onSend={onSend}
+				/>
+			);
+
+			const textarea = screen.getByPlaceholderText(
+				'Write your prompt here... (@ to reference files)'
+			) as HTMLTextAreaElement;
+			fireEvent.change(textarea, { target: { value: '@util' } });
+			fireEvent.click(screen.getByText('src/utils.ts'));
+
+			expect(textarea.value).toBe('@src/utils.ts ');
+		});
+
+		it('should not show agent mention dropdown without sessions prop', () => {
+			renderWithProvider(
+				<PromptComposerModal
+					isOpen={true}
+					onClose={onClose}
+					theme={mockTheme}
+					initialValue=""
+					onSubmit={onSubmit}
+					onSend={onSend}
+				/>
+			);
+
+			const textarea = screen.getByPlaceholderText(
+				'Write your prompt here... (@ to reference files)'
+			);
 			fireEvent.change(textarea, { target: { value: '@' } });
 
-			// No mention dropdown should appear
+			// No agent mention buttons should appear (file mentions may appear if mocked)
 			const buttons = screen.queryAllByRole('button');
-			const mentionButtons = buttons.filter((btn) => btn.textContent?.startsWith('@'));
-			expect(mentionButtons).toHaveLength(0);
+			const agentMentionButtons = buttons.filter(
+				(btn) =>
+					btn.textContent?.startsWith('@') &&
+					!btn.querySelector('[data-testid="file-icon"]') &&
+					!btn.querySelector('[data-testid="folder-icon"]')
+			);
+			expect(agentMentionButtons).toHaveLength(0);
 		});
 	});
 });

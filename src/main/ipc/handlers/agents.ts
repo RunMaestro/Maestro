@@ -1,7 +1,20 @@
 import { ipcMain } from 'electron';
 import Store from 'electron-store';
 import * as fs from 'fs';
-import { AgentDetector, AGENT_DEFINITIONS, getAgentCapabilities } from '../../agents';
+import * as os from 'os';
+import * as path from 'path';
+import type { AgentConfigsData, SessionsData } from '../../stores/types';
+import {
+	AgentDetector,
+	AGENT_DEFINITIONS,
+	getAgentCapabilities,
+	parseOpenCodeConfig,
+	extractModelsFromConfig,
+	getOpenCodeConfigPaths,
+	getOpenCodeCommandDirs,
+} from '../../agents';
+import { capabilitySnapshots } from '../../agents/capability-snapshot';
+import type { AgentCapabilitiesSnapshotMap } from '../../../shared/agentCapabilities';
 import { execFileNoThrow } from '../../utils/execFile';
 import { logger } from '../../utils/logger';
 import { getWhichCommand } from '../../../shared/platformDetection';
@@ -14,6 +27,10 @@ import { buildSshCommand, RemoteCommandOptions } from '../../utils/ssh-command-b
 import { stripAnsi } from '../../utils/stripAnsi';
 import { SshRemoteConfig } from '../../../shared/types';
 import { MaestroSettings } from './persistence';
+import { captureException } from '../../utils/sentry';
+import { getAllSnapshots as getAllClaudeUsageSnapshots } from '../../stores/claudeUsageStore';
+import type { UsageSnapshot } from '../../agents/claude-mode-selector';
+import { runStartupUsageSampling, getMaestroPBinPath } from '../../agents/claude-usage-startup';
 
 const LOG_CONTEXT = '[AgentDetector]';
 const CONFIG_LOG_CONTEXT = '[AgentConfig]';
@@ -27,11 +44,214 @@ const handlerOpts = (
 	operation,
 });
 
+// Copilot CLI built-in slash commands (always available in interactive mode)
+const COPILOT_BUILTIN_COMMANDS = [
+	'help',
+	'clear',
+	'compact',
+	'context',
+	'model',
+	'usage',
+	'session',
+	'share',
+	'mcp',
+	'fleet',
+	'tasks',
+	'delegate',
+	'review',
+];
+
 /**
- * Interface for agent configuration store data
+ * Discover GitHub Copilot CLI slash commands.
+ *
+ * Unlike Claude Code (which emits commands via its init JSON event), Copilot
+ * commands are interactive-only and cannot be discovered by spawning the CLI
+ * in batch mode.  We return a static list of well-documented built-in commands.
  */
-interface AgentConfigsData {
-	configs: Record<string, Record<string, any>>;
+function discoverCopilotSlashCommands(): { name: string; description: string }[] {
+	logger.info(`Discovered ${COPILOT_BUILTIN_COMMANDS.length} Copilot slash commands`, LOG_CONTEXT);
+	return COPILOT_BUILTIN_COMMANDS.map((cmd) => ({ name: cmd, description: '' }));
+}
+
+/**
+ * Discover OpenCode slash commands by reading from disk.
+ *
+ * OpenCode commands come from these sources (checked in priority order):
+ * 1. Project-local custom commands: .opencode/commands/*.md
+ * 2. User-global custom commands: ~/.opencode/commands/*.md
+ * 3. XDG custom commands: $XDG_CONFIG_HOME/opencode/commands/*.md
+ * 4. Config-based commands from opencode.json "command" property, resolved
+ *    platform-aware: OPENCODE_CONFIG env var (if set), then project-local,
+ *    then platform-specific locations (POSIX: ~/.opencode/, ~/.config/opencode/;
+ *    Windows: %LOCALAPPDATA%/opencode/)
+ *
+ * Built-in commands (init, review, undo, redo, share, help, models) are excluded
+ * because they only work in OpenCode's interactive TUI mode — they have no prompt
+ * .md file and cannot be executed via batch mode (`opencode run`).
+ *
+ * Unlike Claude Code (which emits commands via init event), OpenCode commands
+ * are statically defined on disk and can be discovered without spawning the agent.
+ */
+interface DiscoveredCommand {
+	name: string;
+	prompt?: string; // .md file content for custom commands; absent for built-ins
+	description?: string; // frontmatter description for Claude Code skills; absent otherwise
+}
+
+/**
+ * Read descriptions for Claude Code skills from disk.
+ *
+ * Claude Code emits skill names via its init message but without descriptions,
+ * so we read the frontmatter from each skill's SKILL.md (with skill.md fallback
+ * for legacy layouts). Project-local skills take precedence over user-level skills.
+ *
+ * Returns a map of skill directory name → description. Names with no description
+ * frontmatter are omitted rather than returned as empty strings, so the renderer
+ * can fall back to its built-in description table.
+ */
+async function readClaudeSkillDescriptions(cwd: string): Promise<Map<string, string>> {
+	const descriptions = new Map<string, string>();
+	const homeDir = os.homedir();
+	const skillDirs = [
+		path.join(cwd, '.claude', 'skills'), // project-local (wins)
+		path.join(homeDir, '.claude', 'skills'), // user-level
+	];
+
+	// Extract the YAML frontmatter block from a file so we don't pick up a
+	// body line that happens to start with "description:". Matches the
+	// bounded parser used by scanSkillsDir in claude.ts.
+	const extractFrontmatter = (content: string): string | null => {
+		const trimmed = content.trimStart();
+		if (!trimmed.startsWith('---')) return null;
+		const endIndex = trimmed.indexOf('\n---', 3);
+		if (endIndex === -1) return null;
+		return trimmed.slice(3, endIndex);
+	};
+
+	for (const dir of skillDirs) {
+		let entries: fs.Dirent[];
+		try {
+			entries = await fs.promises.readdir(dir, { withFileTypes: true });
+		} catch (error) {
+			// Missing skills directory is the norm — skip. Anything else
+			// (permission errors, IO errors) should surface to Sentry.
+			if (isMissingEntryError(error)) continue;
+			throw error;
+		}
+		if (!Array.isArray(entries)) continue;
+		for (const entry of entries) {
+			if (!entry.isDirectory()) continue;
+			if (descriptions.has(entry.name)) continue; // project-local already set
+			for (const candidate of ['SKILL.md', 'skill.md']) {
+				let content: string;
+				try {
+					content = await fs.promises.readFile(path.join(dir, entry.name, candidate), 'utf-8');
+				} catch (error) {
+					if (isMissingEntryError(error)) continue;
+					throw error;
+				}
+				const frontmatter = extractFrontmatter(content);
+				if (frontmatter) {
+					const match = frontmatter.match(/^description:\s*(.+)$/m);
+					if (match) {
+						descriptions.set(entry.name, match[1].trim().replace(/^["']|["']$/g, ''));
+					}
+				}
+				break;
+			}
+		}
+	}
+
+	return descriptions;
+}
+
+function isMissingEntryError(error: unknown): boolean {
+	const code = (error as NodeJS.ErrnoException | undefined)?.code;
+	return code === 'ENOENT' || code === 'ENOTDIR';
+}
+
+async function discoverOpenCodeSlashCommands(cwd: string): Promise<DiscoveredCommand[]> {
+	const commands = new Map<string, DiscoveredCommand>();
+
+	// Strip YAML frontmatter (---\n...\n---) from command file content,
+	// returning only the body text that serves as the prompt.
+	const stripFrontmatter = (content: string): string => {
+		const trimmed = content.trimStart();
+		if (!trimmed.startsWith('---')) return content;
+		const endIndex = trimmed.indexOf('\n---', 3);
+		if (endIndex === -1) return content;
+		return trimmed.slice(endIndex + 4).trim();
+	};
+
+	// Helper: read .md files from a commands directory (name + content)
+	const addCommandsFromDir = async (dir: string) => {
+		let files: string[];
+		try {
+			files = await fs.promises.readdir(dir);
+		} catch (error: any) {
+			if (error?.code === 'ENOENT') {
+				logger.debug(`OpenCode commands directory not found: ${dir}`, LOG_CONTEXT);
+				return;
+			}
+			throw error;
+		}
+		for (const file of files) {
+			if (!file.endsWith('.md')) continue;
+			const name = file.replace(/\.md$/, '');
+			if (commands.has(name)) continue; // project-local wins over global
+			try {
+				const raw = await fs.promises.readFile(path.join(dir, file), 'utf-8');
+				const prompt = stripFrontmatter(raw);
+				commands.set(name, { name, prompt: prompt || undefined });
+			} catch (error: any) {
+				if (error?.code !== 'ENOENT') throw error;
+			}
+		}
+	};
+
+	// Helper: read command definitions from an opencode.json config file
+	const addCommandsFromConfig = async (configPath: string) => {
+		let content: string;
+		try {
+			content = await fs.promises.readFile(configPath, 'utf-8');
+		} catch (error: any) {
+			if (error?.code === 'ENOENT') {
+				logger.debug(`OpenCode config not found: ${configPath}`, LOG_CONTEXT);
+				return;
+			}
+			throw error;
+		}
+		const config = parseOpenCodeConfig(content);
+		if (!config) {
+			logger.warn(`OpenCode config has invalid JSON, skipping: ${configPath}`, LOG_CONTEXT);
+			return;
+		}
+		if (config.command && typeof config.command === 'object' && !Array.isArray(config.command)) {
+			for (const [name, value] of Object.entries(config.command)) {
+				if (commands.has(name)) continue;
+				const prompt =
+					typeof value === 'string'
+						? value
+						: typeof (value as any)?.prompt === 'string'
+							? (value as any).prompt
+							: undefined;
+				commands.set(name, { name, prompt });
+			}
+		}
+	};
+
+	// Probe command directories and config files using shared path resolution
+	for (const dir of getOpenCodeCommandDirs(cwd)) {
+		await addCommandsFromDir(dir);
+	}
+
+	for (const configPath of getOpenCodeConfigPaths(cwd)) {
+		await addCommandsFromConfig(configPath);
+	}
+
+	const commandList = Array.from(commands.values());
+	logger.info(`Discovered ${commandList.length} OpenCode slash commands`, LOG_CONTEXT);
+	return commandList;
 }
 
 /**
@@ -42,6 +262,13 @@ export interface AgentsHandlerDependencies {
 	agentConfigsStore: Store<AgentConfigsData>;
 	/** The settings store (MaestroSettings) - required for SSH remote lookup */
 	settingsStore?: Store<MaestroSettings>;
+	/**
+	 * Sessions store — required for handlers that need to read or persist
+	 * per-session state (e.g. resolving the Batch Mode usage snapshot for a
+	 * specific tab). Optional so registration doesn't break for legacy boot
+	 * paths that wire only the read-only handlers.
+	 */
+	sessionsStore?: Store<SessionsData>;
 }
 
 /**
@@ -73,9 +300,13 @@ function getSshRemoteById(
  * Helper to strip non-serializable functions from agent configs.
  * Agent configs can have function properties that cannot be sent over IPC:
  * - argBuilder in configOptions
- * - resumeArgs, modelArgs, workingDirArgs, imageArgs, promptArgs on the agent config
+ * - resumeArgs, modelArgs, workingDirArgs, imageArgs, imagePromptBuilder, promptArgs on the agent config
+ *
+ * Also attaches the current capability snapshot (if any) for the requested
+ * environment so renderer code can render status pills directly from the
+ * detect result.
  */
-function stripAgentFunctions(agent: any) {
+function stripAgentFunctions(agent: any, sshRemoteId?: string) {
 	if (!agent) return null;
 
 	// Destructure to remove function properties from agent config
@@ -84,9 +315,12 @@ function stripAgentFunctions(agent: any) {
 		modelArgs: _modelArgs,
 		workingDirArgs: _workingDirArgs,
 		imageArgs: _imageArgs,
+		imagePromptBuilder: _imagePromptBuilder,
 		promptArgs: _promptArgs,
 		...serializableAgent
 	} = agent;
+
+	const snapshot = agent.id ? capabilitySnapshots.get(agent.id, sshRemoteId) : undefined;
 
 	return {
 		...serializableAgent,
@@ -94,12 +328,13 @@ function stripAgentFunctions(agent: any) {
 			const { argBuilder: _argBuilder, ...serializableOpt } = opt;
 			return serializableOpt;
 		}),
+		...(snapshot ? { snapshot } : {}),
 	};
 }
 
 /**
  * Detect agents on a remote SSH host.
- * Uses 'which' command over SSH to check for agent binaries.
+ * Uses POSIX 'command -v' over SSH to check for agent binaries.
  * Includes a timeout to handle unreachable hosts gracefully.
  */
 async function detectAgentsRemote(sshRemote: SshRemoteConfig): Promise<any[]> {
@@ -111,10 +346,13 @@ async function detectAgentsRemote(sshRemote: SshRemoteConfig): Promise<any[]> {
 	let connectionError: string | undefined;
 
 	for (const agentDef of AGENT_DEFINITIONS) {
-		// Build SSH command to check for the binary using 'which'
+		// Build SSH command to check for the binary using POSIX 'command -v'.
+		// Preferred over 'which' because it's a shell builtin (no PATH lookup needed),
+		// avoids /usr/bin/which on hosts without it, and behaves consistently across
+		// bash/dash/zsh. The command runs inside /bin/bash via buildSshCommand().
 		const remoteOptions: RemoteCommandOptions = {
-			command: 'which',
-			args: [agentDef.binaryName],
+			command: 'command',
+			args: ['-v', agentDef.binaryName],
 		};
 
 		try {
@@ -167,6 +405,30 @@ async function detectAgentsRemote(sshRemote: SshRemoteConfig): Promise<any[]> {
 				capabilities: getAgentCapabilities(agentDef.id),
 				error: connectionError,
 			});
+
+			// Mirror remote detection into the snapshot store, keyed by the
+			// stable SSH remote UUID so each host has its own readiness pill.
+			// Skip when the observed state matches the existing snapshot —
+			// otherwise an `agents:reprobe` for a single agent would emit
+			// snapshot-updated broadcasts for every other agent on the host.
+			if (agentDef.id !== 'terminal') {
+				const existing = capabilitySnapshots.get(agentDef.id, sshRemote.id);
+				if (available) {
+					if (existing?.status === 'auth_required') {
+						// no-op: reactive auth_required state stays intact
+					} else if (existing?.status !== 'ok' || existing.path !== path) {
+						capabilitySnapshots.markOk(agentDef.id, { path }, sshRemote.id);
+					}
+				} else if (!connectionError && existing?.status !== 'not_installed') {
+					capabilitySnapshots.markNotInstalled(agentDef.id, sshRemote.id);
+				} else if (connectionError && existing?.status !== 'failed') {
+					// In-band SSH connection failure: stderr matched a connection
+					// error without throwing, so the catch below never runs. Resolve
+					// a pending `probing` snapshot (from an `agents:reprobe`) to
+					// `failed` instead of leaving the status pill spinning forever.
+					capabilitySnapshots.markFailed(agentDef.id, connectionError, sshRemote.id);
+				}
+			}
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : String(error);
 			connectionError = errorMessage;
@@ -180,6 +442,9 @@ async function detectAgentsRemote(sshRemote: SshRemoteConfig): Promise<any[]> {
 				capabilities: getAgentCapabilities(agentDef.id),
 				error: `Failed to connect: ${errorMessage}`,
 			});
+			if (agentDef.id !== 'terminal') {
+				capabilitySnapshots.markFailed(agentDef.id, errorMessage, sshRemote.id);
+			}
 		}
 	}
 
@@ -200,8 +465,99 @@ const REMOTE_MODEL_CACHE_TTL_MS = 5 * 60 * 1000;
 const SSH_MODEL_TIMEOUT_MS = 10000;
 
 /**
+ * Read OpenCode config files from a remote SSH host and extract model IDs.
+ *
+ * Probes the same config paths OpenCode uses on POSIX systems:
+ *   ~/.opencode/opencode.json, ~/.opencode.json, ~/.config/opencode/opencode.json
+ *
+ * Uses a single SSH command with a shell script that cats each file, avoiding
+ * multiple round-trips. Returns unique model IDs in provider/model format.
+ */
+async function discoverModelsFromRemoteConfigs(sshRemote: SshRemoteConfig): Promise<string[]> {
+	// Shell script that probes each config path and prints its content with delimiters.
+	// We use a delimiter so we can split multiple config files from a single stdout.
+	const configPaths = [
+		'~/.opencode/opencode.json',
+		'~/.opencode.json',
+		'${XDG_CONFIG_HOME:-$HOME/.config}/opencode/opencode.json',
+	];
+
+	// Build a script that cats each config file if it exists
+	const catScript = configPaths
+		.map(
+			(p) =>
+				`if [ -f ${p} ]; then echo "___OPENCODE_CONFIG_START___"; cat ${p}; echo "___OPENCODE_CONFIG_END___"; fi`
+		)
+		.join('; ');
+
+	const remoteOptions: RemoteCommandOptions = {
+		command: 'sh',
+		args: ['-c', catScript],
+		env: sshRemote.remoteEnv,
+	};
+
+	try {
+		const sshCommand = await buildSshCommand(sshRemote, remoteOptions);
+		const resultPromise = execFileNoThrow(sshCommand.command, sshCommand.args);
+		const timeoutPromise = new Promise<{ exitCode: number; stdout: string; stderr: string }>(
+			(_, reject) => {
+				setTimeout(() => reject(new Error('SSH config read timed out')), SSH_MODEL_TIMEOUT_MS);
+			}
+		);
+
+		const result = await Promise.race([resultPromise, timeoutPromise]);
+
+		if (result.exitCode !== 0 || !result.stdout.includes('___OPENCODE_CONFIG_START___')) {
+			return [];
+		}
+
+		// Parse delimited config blocks from stdout
+		const seen = new Set<string>();
+		const models: string[] = [];
+		const blocks = result.stdout.split('___OPENCODE_CONFIG_START___').slice(1);
+
+		for (const block of blocks) {
+			const endIdx = block.indexOf('___OPENCODE_CONFIG_END___');
+			const jsonStr = endIdx >= 0 ? block.slice(0, endIdx).trim() : block.trim();
+			if (!jsonStr) continue;
+
+			const config = parseOpenCodeConfig(jsonStr);
+			if (!config) continue;
+
+			for (const modelId of extractModelsFromConfig(config)) {
+				if (!seen.has(modelId)) {
+					seen.add(modelId);
+					models.push(modelId);
+				}
+			}
+		}
+
+		if (models.length > 0) {
+			logger.info(
+				`Extracted ${models.length} models from remote OpenCode configs on ${sshRemote.host}`,
+				LOG_CONTEXT,
+				{ models }
+			);
+		}
+
+		return models;
+	} catch (error) {
+		if (error instanceof Error && error.message.includes('timed out')) {
+			logger.warn(`Timed out reading remote OpenCode configs on ${sshRemote.host}`, LOG_CONTEXT);
+			return [];
+		}
+		// Non-fatal: config reading failure shouldn't block CLI-based discovery
+		logger.warn(`Failed to read remote OpenCode configs on ${sshRemote.host}`, LOG_CONTEXT, {
+			error,
+		});
+		return [];
+	}
+}
+
+/**
  * Discover available models for an agent on a remote SSH host.
- * Uses the agent's `models` subcommand over SSH.
+ * Uses the agent's `models` subcommand over SSH, supplemented by models
+ * from remote opencode.json config files for OpenCode agents.
  * Returns an empty array on timeout, non-zero exit, or unknown agent.
  * Throws on unexpected errors (e.g., SSH config issues, parsing bugs).
  */
@@ -266,10 +622,31 @@ async function discoverModelsRemote(
 			return [];
 		}
 
-		const models = stripAnsi(result.stdout)
+		const seen = new Set<string>();
+		const models: string[] = [];
+
+		// Source 1: CLI-discovered models
+		const cliModels = stripAnsi(result.stdout)
 			.split('\n')
 			.map((l) => l.trim())
 			.filter((l) => l.length > 0);
+		for (const m of cliModels) {
+			if (!seen.has(m)) {
+				seen.add(m);
+				models.push(m);
+			}
+		}
+
+		// Source 2: Remote opencode.json config files (OpenCode only)
+		if (agentId === 'opencode') {
+			const configModels = await discoverModelsFromRemoteConfigs(sshRemote);
+			for (const m of configModels) {
+				if (!seen.has(m)) {
+					seen.add(m);
+					models.push(m);
+				}
+			}
+		}
 
 		logger.info(
 			`Discovered ${models.length} models for "${agentDef.name}" on remote ${sshRemote.host}`,
@@ -302,8 +679,137 @@ async function discoverModelsRemote(
  * - Configuration: getConfig, setConfig, getConfigValue, setConfigValue
  * - Custom paths: setCustomPath, getCustomPath, getAllCustomPaths
  */
+/**
+ * Discover OpenCode slash commands from a remote SSH host.
+ *
+ * Reads .opencode/commands/*.md files and opencode.json command definitions
+ * from the remote host using a single SSH invocation with execFileNoThrow.
+ */
+async function discoverOpenCodeSlashCommandsRemote(
+	sshRemote: SshRemoteConfig,
+	cwd: string
+): Promise<DiscoveredCommand[]> {
+	// Shell script probes command directories and config files on the remote host.
+	// All paths are static (no user-controlled interpolation).
+	const commandDirs = [
+		`${cwd}/.opencode/commands`,
+		'~/.opencode/commands',
+		'${XDG_CONFIG_HOME:-$HOME/.config}/opencode/commands',
+	];
+	const configPaths = [
+		`${cwd}/opencode.json`,
+		'~/.opencode/opencode.json',
+		'~/.opencode.json',
+		'${XDG_CONFIG_HOME:-$HOME/.config}/opencode/opencode.json',
+	];
+
+	const dirScript = commandDirs
+		.map(
+			(dir) =>
+				`if [ -d ${dir} ]; then for f in ${dir}/*.md; do [ -f "$f" ] && echo "___CMD_FILE_START___ $(basename "$f")" && cat "$f" && echo "___CMD_FILE_END___"; done; fi`
+		)
+		.join('; ');
+
+	const configScript = configPaths
+		.map(
+			(p) =>
+				`if [ -f ${p} ]; then echo "___OPENCODE_CONFIG_START___"; cat ${p}; echo "___OPENCODE_CONFIG_END___"; fi`
+		)
+		.join('; ');
+
+	const fullScript = `${dirScript}; ${configScript}`;
+
+	const remoteOptions: RemoteCommandOptions = {
+		command: 'sh',
+		args: ['-c', fullScript],
+		env: sshRemote.remoteEnv,
+	};
+
+	try {
+		const sshCommand = await buildSshCommand(sshRemote, remoteOptions);
+		const resultPromise = execFileNoThrow(sshCommand.command, sshCommand.args);
+		const timeoutPromise = new Promise<{ exitCode: number; stdout: string; stderr: string }>(
+			(_, reject) => {
+				setTimeout(
+					() => reject(new Error('SSH slash command discovery timed out')),
+					SSH_MODEL_TIMEOUT_MS
+				);
+			}
+		);
+
+		const result = await Promise.race([resultPromise, timeoutPromise]);
+		if (result.exitCode !== 0 && !result.stdout) {
+			logger.warn(`Remote slash command discovery failed on ${sshRemote.host}`, LOG_CONTEXT, {
+				exitCode: result.exitCode,
+				stderr: result.stderr?.substring(0, 500),
+			});
+			return [];
+		}
+
+		const commands = new Map<string, DiscoveredCommand>();
+		const output = result.stdout;
+
+		// Parse .md command files
+		const cmdFileRegex = /___CMD_FILE_START___ (.+?)\n([\s\S]*?)___CMD_FILE_END___/g;
+		let match: RegExpExecArray | null;
+		while ((match = cmdFileRegex.exec(output)) !== null) {
+			const filename = match[1].trim();
+			const content = match[2].trim();
+			const name = filename.replace(/\.md$/, '');
+			if (!commands.has(name)) {
+				// Strip YAML frontmatter
+				let prompt = content;
+				const trimmed = prompt.trimStart();
+				if (trimmed.startsWith('---')) {
+					const endIndex = trimmed.indexOf('\n---', 3);
+					if (endIndex !== -1) {
+						prompt = trimmed.slice(endIndex + 4).trim();
+					}
+				}
+				commands.set(name, { name, prompt: prompt || undefined });
+			}
+		}
+
+		// Parse config file command definitions
+		const configBlocks = output.split('___OPENCODE_CONFIG_START___').slice(1);
+		for (const block of configBlocks) {
+			const endIdx = block.indexOf('___OPENCODE_CONFIG_END___');
+			const jsonStr = endIdx >= 0 ? block.slice(0, endIdx).trim() : block.trim();
+			if (!jsonStr) continue;
+
+			const config = parseOpenCodeConfig(jsonStr);
+			if (!config?.command || typeof config.command !== 'object') continue;
+
+			for (const [name, value] of Object.entries(config.command)) {
+				if (commands.has(name)) continue;
+				const prompt =
+					typeof value === 'string'
+						? value
+						: typeof (value as any)?.prompt === 'string'
+							? (value as any).prompt
+							: undefined;
+				commands.set(name, { name, prompt });
+			}
+		}
+
+		const commandList = Array.from(commands.values());
+		logger.info(
+			`Discovered ${commandList.length} OpenCode slash commands on remote ${sshRemote.host}`,
+			LOG_CONTEXT
+		);
+		return commandList;
+	} catch (error) {
+		if (error instanceof Error && error.message.includes('timed out')) {
+			logger.warn(`Timed out discovering slash commands on ${sshRemote.host}`, LOG_CONTEXT);
+			return [];
+		}
+		logger.warn(`Failed to discover slash commands on ${sshRemote.host}`, LOG_CONTEXT, { error });
+		return [];
+	}
+}
+
 export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
-	const { getAgentDetector, agentConfigsStore, settingsStore } = deps;
+	const { getAgentDetector, agentConfigsStore, settingsStore, sessionsStore } = deps;
 
 	// Detect all available agents (supports SSH remote detection via optional sshRemoteId)
 	ipcMain.handle(
@@ -319,13 +825,16 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 						LOG_CONTEXT
 					);
 					return AGENT_DEFINITIONS.map((agentDef) =>
-						stripAgentFunctions({
-							...agentDef,
-							available: false,
-							path: undefined,
-							capabilities: getAgentCapabilities(agentDef.id),
-							error: `SSH remote configuration not found: ${sshRemoteId}`,
-						})
+						stripAgentFunctions(
+							{
+								...agentDef,
+								available: false,
+								path: undefined,
+								capabilities: getAgentCapabilities(agentDef.id),
+								error: `SSH remote configuration not found: ${sshRemoteId}`,
+							},
+							sshRemoteId
+						)
 					);
 				}
 				logger.info(`Detecting agents on remote host: ${sshConfig.host}`, LOG_CONTEXT);
@@ -337,7 +846,7 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 						agents: agents.map((a: any) => a.id),
 					}
 				);
-				return agents.map(stripAgentFunctions);
+				return agents.map((a) => stripAgentFunctions(a, sshConfig.id));
 			}
 
 			// Local detection
@@ -348,7 +857,7 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 				agents: agents.map((a) => a.id),
 			});
 			// Strip argBuilder functions before sending over IPC
-			return agents.map(stripAgentFunctions);
+			return agents.map((a) => stripAgentFunctions(a));
 		})
 	);
 
@@ -396,13 +905,13 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 				}
 
 				logger.info(`Agent refresh debug info for ${agentId}`, LOG_CONTEXT, debugInfo);
-				return { agents: agents.map(stripAgentFunctions), debugInfo };
+				return { agents: agents.map((a) => stripAgentFunctions(a)), debugInfo };
 			}
 
 			logger.info(`Refreshed agent detection`, LOG_CONTEXT, {
 				agents: agents.map((a) => ({ id: a.id, available: a.available, path: a.path })),
 			});
-			return { agents: agents.map(stripAgentFunctions), debugInfo: null };
+			return { agents: agents.map((a) => stripAgentFunctions(a)), debugInfo: null };
 		})
 	);
 
@@ -422,13 +931,16 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 					if (!agentDef) {
 						throw new Error(`Unknown agent: ${agentId}`);
 					}
-					return stripAgentFunctions({
-						...agentDef,
-						available: false,
-						path: undefined,
-						capabilities: getAgentCapabilities(agentDef.id),
-						error: `SSH remote configuration not found: ${sshRemoteId}`,
-					});
+					return stripAgentFunctions(
+						{
+							...agentDef,
+							available: false,
+							path: undefined,
+							capabilities: getAgentCapabilities(agentDef.id),
+							error: `SSH remote configuration not found: ${sshRemoteId}`,
+						},
+						sshRemoteId
+					);
 				}
 
 				logger.info(`Getting agent ${agentId} on remote host: ${sshConfig.host}`, LOG_CONTEXT);
@@ -439,10 +951,11 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 					throw new Error(`Unknown agent: ${agentId}`);
 				}
 
-				// Build SSH command to check for the binary using 'which'
+				// Build SSH command to check for the binary using POSIX 'command -v'.
+				// See detectAgentsRemote() for rationale.
 				const remoteOptions: RemoteCommandOptions = {
-					command: 'which',
-					args: [agentDef.binaryName],
+					command: 'command',
+					args: ['-v', agentDef.binaryName],
 				};
 
 				try {
@@ -500,25 +1013,45 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 						logger.debug(`Agent "${agentDef.name}" not found on remote`, LOG_CONTEXT);
 					}
 
-					return stripAgentFunctions({
-						...agentDef,
-						available,
-						path,
-						capabilities: getAgentCapabilities(agentDef.id),
-						error: connectionError,
-					});
+					if (agentDef.id !== 'terminal') {
+						if (available) {
+							const existing = capabilitySnapshots.get(agentDef.id, sshConfig.id);
+							if (existing?.status !== 'auth_required') {
+								capabilitySnapshots.markOk(agentDef.id, { path }, sshConfig.id);
+							}
+						} else if (!connectionError) {
+							capabilitySnapshots.markNotInstalled(agentDef.id, sshConfig.id);
+						}
+					}
+
+					return stripAgentFunctions(
+						{
+							...agentDef,
+							available,
+							path,
+							capabilities: getAgentCapabilities(agentDef.id),
+							error: connectionError,
+						},
+						sshConfig.id
+					);
 				} catch (error) {
 					const errorMessage = error instanceof Error ? error.message : String(error);
 					logger.warn(
 						`Failed to check agent "${agentDef.name}" on remote: ${errorMessage}`,
 						LOG_CONTEXT
 					);
-					return stripAgentFunctions({
-						...agentDef,
-						available: false,
-						capabilities: getAgentCapabilities(agentDef.id),
-						error: `Failed to connect: ${errorMessage}`,
-					});
+					if (agentDef.id !== 'terminal') {
+						capabilitySnapshots.markFailed(agentDef.id, errorMessage, sshConfig.id);
+					}
+					return stripAgentFunctions(
+						{
+							...agentDef,
+							available: false,
+							capabilities: getAgentCapabilities(agentDef.id),
+							error: `Failed to connect: ${errorMessage}`,
+						},
+						sshConfig.id
+					);
 				}
 			}
 
@@ -834,20 +1367,54 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 		)
 	);
 
+	// Discover available values for a dynamic select config option
+	ipcMain.handle(
+		'agents:getConfigOptions',
+		withIpcErrorLogging(
+			handlerOpts('getConfigOptions'),
+			async (agentId: string, optionKey: string, forceRefresh?: boolean) => {
+				const agentDetector = requireDependency(getAgentDetector, 'Agent detector');
+				return agentDetector.discoverConfigOptions(agentId, optionKey, forceRefresh ?? false);
+			}
+		)
+	);
+
 	// Discover available slash commands for an agent by spawning it briefly
 	// This allows the UI to show available commands before the user sends their first message
 	ipcMain.handle(
 		'agents:discoverSlashCommands',
 		withIpcErrorLogging(
 			handlerOpts('discoverSlashCommands'),
-			async (agentId: string, cwd: string, customPath?: string) => {
+			async (agentId: string, cwd: string, customPath?: string, sshRemoteId?: string) => {
 				const agentDetector = requireDependency(getAgentDetector, 'Agent detector');
 				logger.info(`Discovering slash commands for agent: ${agentId} in ${cwd}`, LOG_CONTEXT);
+
+				// SSH remote: discover OpenCode commands from remote host
+				if (agentId === 'opencode' && sshRemoteId) {
+					const sshRemote = getSshRemoteById(settingsStore, sshRemoteId);
+					if (!sshRemote) {
+						logger.warn(
+							`SSH remote ${sshRemoteId} not found for slash command discovery`,
+							LOG_CONTEXT
+						);
+						return null;
+					}
+					return discoverOpenCodeSlashCommandsRemote(sshRemote, cwd);
+				}
 
 				const agent = await agentDetector.getAgent(agentId);
 				if (!agent?.available) {
 					logger.warn(`Agent ${agentId} not available for slash command discovery`, LOG_CONTEXT);
 					return null;
+				}
+
+				// Agent-specific discovery paths
+				if (agentId === 'opencode') {
+					return discoverOpenCodeSlashCommands(cwd);
+				}
+
+				if (agentId === 'copilot-cli') {
+					return discoverCopilotSlashCommands();
 				}
 
 				// Only Claude Code supports slash command discovery via init message
@@ -910,7 +1477,26 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 									`Discovered ${msg.slash_commands.length} slash commands for ${agentId}`,
 									LOG_CONTEXT
 								);
-								return msg.slash_commands as string[];
+								// Description enrichment is best-effort: a permission/IO
+								// error on the skills dir shouldn't lose the user's
+								// entire slash-command list. Capture the exception for
+								// Sentry and fall back to names-only.
+								let skillDescriptions = new Map<string, string>();
+								try {
+									skillDescriptions = await readClaudeSkillDescriptions(cwd);
+								} catch (err) {
+									void captureException(err);
+									logger.warn(
+										`Skill description enrichment failed; returning slash commands without descriptions`,
+										LOG_CONTEXT,
+										{ error: String(err) }
+									);
+								}
+								return (msg.slash_commands as string[]).map((name: string) => {
+									const lookupKey = name.startsWith('/') ? name.slice(1) : name;
+									const description = skillDescriptions.get(lookupKey);
+									return description ? { name, description } : { name };
+								});
 							}
 						} catch {
 							// Not valid JSON, skip
@@ -920,11 +1506,152 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 					logger.warn(`No init message found in slash command discovery output`, LOG_CONTEXT);
 					return null;
 				} catch (error) {
+					void captureException(error);
 					logger.error(`Error discovering slash commands for ${agentId}`, LOG_CONTEXT, {
 						error: String(error),
 					});
 					return null;
 				}
+			}
+		)
+	);
+
+	// Get the persisted capability snapshot for a single agent in a given
+	// environment (local or per-SSH-remote). Returns null when no snapshot
+	// has been written yet — callers should fall back to detection.
+	ipcMain.handle(
+		'agents:getSnapshot',
+		withIpcErrorLogging(
+			handlerOpts('getSnapshot'),
+			async (agentId: string, sshRemoteId?: string) => {
+				return capabilitySnapshots.get(agentId, sshRemoteId) ?? null;
+			}
+		)
+	);
+
+	// Auto-detected maestro-p binary path (bundled with the app). The renderer's
+	// AgentConfigPanel shows this as helper text for the Batch Mode path override.
+	// Returns null when no bundled script can be located — usually means the user
+	// is running a dev build without `npm run build` having produced
+	// `dist/cli/maestro-p.js`.
+	ipcMain.handle(
+		'agents:getMaestroPDetectedPath',
+		withIpcErrorLogging(
+			handlerOpts('getMaestroPDetectedPath'),
+			async (): Promise<string | null> => {
+				return getMaestroPBinPath();
+			}
+		)
+	);
+
+	// Get every persisted snapshot — used by the renderer at startup to
+	// hydrate the agents store before the first live detection completes.
+	ipcMain.handle(
+		'agents:getAllSnapshots',
+		withIpcErrorLogging(
+			handlerOpts('getAllSnapshots'),
+			async (): Promise<AgentCapabilitiesSnapshotMap> => capabilitySnapshots.getAll()
+		)
+	);
+
+	// Re-probe a single agent: clear its snapshot, then run detection so a
+	// fresh status emits via the snapshot-updated event channel. The
+	// returned snapshot reflects the post-detection state.
+	ipcMain.handle(
+		'agents:reprobe',
+		withIpcErrorLogging(handlerOpts('reprobe'), async (agentId: string, sshRemoteId?: string) => {
+			// `terminal` is internal — detection paths intentionally skip it,
+			// so a probe call would leave the snapshot stuck at `probing` forever.
+			if (agentId === 'terminal') {
+				return null;
+			}
+
+			capabilitySnapshots.clear(agentId, sshRemoteId);
+
+			if (sshRemoteId) {
+				const sshConfig = getSshRemoteById(settingsStore, sshRemoteId);
+				if (!sshConfig) {
+					capabilitySnapshots.markFailed(
+						agentId,
+						`SSH remote not found: ${sshRemoteId}`,
+						sshRemoteId
+					);
+					return capabilitySnapshots.get(agentId, sshRemoteId) ?? null;
+				}
+				capabilitySnapshots.markProbing(agentId, sshRemoteId);
+				// `detectAgentsRemote` enumerates every agent on the remote in
+				// one SSH round-trip per binary. Other agents' snapshots only
+				// flip when their detected state actually changes (see
+				// `markOk` + detector's change-suppression logic) so the
+				// requested agent is the dominant signal.
+				await detectAgentsRemote(sshConfig);
+				return capabilitySnapshots.get(agentId, sshRemoteId) ?? null;
+			}
+
+			const agentDetector = requireDependency(getAgentDetector, 'Agent detector');
+			capabilitySnapshots.markProbing(agentId);
+			agentDetector.clearCache();
+			agentDetector.clearModelCache(agentId);
+			await agentDetector.detectAgents();
+			return capabilitySnapshots.get(agentId) ?? null;
+		})
+	);
+
+	// Snapshot mirror for the renderer: returns every non-expired Claude Max-plan
+	// usage snapshot keyed by canonical CLAUDE_CONFIG_DIR. The renderer's
+	// claudeUsageStore lazily fetches via this handler on first read and re-fetches
+	// whenever `process:claude-mode-resolved` arrives (the only signal that
+	// `sampleUsage()` may have refreshed the on-disk map).
+	ipcMain.handle(
+		'agents:getClaudeUsageSnapshots',
+		withIpcErrorLogging(
+			handlerOpts('getClaudeUsageSnapshots'),
+			async (): Promise<Record<string, UsageSnapshot>> => {
+				return getAllClaudeUsageSnapshots();
+			}
+		)
+	);
+
+	// On-demand re-sampler. Delegates to the same `runStartupUsageSampling()`
+	// the boot path calls, so the dashboard / settings refresh button takes the
+	// exact same code path that populated the store on launch. Returns a count
+	// of how many account snapshots are now in the store after sampling — the
+	// renderer surfaces this in the optimistic spinner state.
+	//
+	// Reports `{ refreshed: 0 }` (rather than throwing) when a required dep is
+	// missing on this boot path — keeps the renderer's optimistic refresh flow
+	// from blowing up in dev/test contexts where the agents handler was wired
+	// without the full main dependency set.
+	ipcMain.handle(
+		'claude:usage:refresh-all',
+		withIpcErrorLogging(
+			handlerOpts('refreshClaudeUsage'),
+			async (): Promise<{ refreshed: number }> => {
+				const agentDetector = getAgentDetector();
+				if (!agentDetector || !sessionsStore || !settingsStore) {
+					logger.warn(
+						'Skipping claude:usage:refresh-all — agents handler missing required deps',
+						LOG_CONTEXT,
+						{
+							hasDetector: !!agentDetector,
+							hasSessionsStore: !!sessionsStore,
+							hasSettingsStore: !!settingsStore,
+						}
+					);
+					return { refreshed: 0 };
+				}
+
+				await runStartupUsageSampling({
+					sessionsStore: sessionsStore as unknown as Store<{ sessions: any[] }>,
+					agentConfigsStore,
+					settingsStore: settingsStore as unknown as Store<MaestroSettings>,
+					agentDetector,
+					mode: 'manual',
+				});
+
+				const refreshed = Object.keys(getAllClaudeUsageSnapshots()).length;
+				logger.info(`Refreshed Claude usage snapshots`, LOG_CONTEXT, { refreshed });
+				return { refreshed };
 			}
 		)
 	);

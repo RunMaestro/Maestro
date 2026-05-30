@@ -6,11 +6,50 @@
  */
 
 import { getRandomInitialQuestion } from './fillerPhrases';
-import { wizardSystemPrompt, wizardSystemContinuationPrompt } from '../../../../prompts';
 import {
 	substituteTemplateVariables,
 	type TemplateContext,
 } from '../../../utils/templateVariables';
+import { PLAYBOOKS_DIR } from '../../../../shared/maestro-paths';
+
+let cachedWizardSystemPrompt: string | null = null;
+let cachedWizardSystemContinuationPrompt: string | null = null;
+let wizardPromptsLoaded = false;
+
+export async function loadWizardPrompts(force = false): Promise<void> {
+	if (wizardPromptsLoaded && !force) return;
+
+	const [systemResult, continuationResult] = await Promise.all([
+		window.maestro.prompts.get('wizard-system'),
+		window.maestro.prompts.get('wizard-system-continuation'),
+	]);
+
+	if (!systemResult.success) {
+		throw new Error(`Failed to load wizard-system prompt: ${systemResult.error}`);
+	}
+	if (!continuationResult.success) {
+		throw new Error(
+			`Failed to load wizard-system-continuation prompt: ${continuationResult.error}`
+		);
+	}
+	cachedWizardSystemPrompt = systemResult.content!;
+	cachedWizardSystemContinuationPrompt = continuationResult.content!;
+	wizardPromptsLoaded = true;
+}
+
+export function getWizardSystemPrompt(): string {
+	if (!wizardPromptsLoaded || cachedWizardSystemPrompt === null) {
+		return '';
+	}
+	return cachedWizardSystemPrompt;
+}
+
+export function getWizardSystemContinuationPrompt(): string {
+	if (!wizardPromptsLoaded || cachedWizardSystemContinuationPrompt === null) {
+		return '';
+	}
+	return cachedWizardSystemContinuationPrompt;
+}
 
 /**
  * Structured response format expected from the agent
@@ -22,6 +61,13 @@ export interface StructuredAgentResponse {
 	ready: boolean;
 	/** The agent's message to display to the user */
 	message: string;
+	/**
+	 * Short human-readable name for the playbook/project, derived from the
+	 * conversation (e.g. "HTML Chat Interface"). Used to name the dated
+	 * subfolder created under Auto Run Docs. Optional — when absent, the
+	 * caller falls back to the session name.
+	 */
+	projectName?: string;
 }
 
 /**
@@ -87,6 +133,11 @@ export const STRUCTURED_OUTPUT_SCHEMA = {
 			type: 'string',
 			description: 'Your response message to the user (questions, clarifications, or confirmation)',
 		},
+		projectName: {
+			type: 'string',
+			description:
+				'Short human-readable name for the playbook (3-6 words, e.g. "HTML Chat Interface"). Update as your understanding sharpens. Used to name the playbook folder.',
+		},
 	},
 	required: ['confidence', 'ready', 'message'],
 } as const;
@@ -97,7 +148,7 @@ export const STRUCTURED_OUTPUT_SCHEMA = {
 export const STRUCTURED_OUTPUT_SUFFIX = `
 
 IMPORTANT: Remember to respond ONLY with valid JSON in this exact format:
-{"confidence": <0-100>, "ready": <true/false>, "message": "<your response>"}`;
+{"confidence": <0-100>, "ready": <true/false>, "message": "<your response>", "projectName": "<short playbook name>"}`;
 
 /**
  * Default confidence level when parsing fails
@@ -127,7 +178,7 @@ export function generateSystemPrompt(config: SystemPromptConfig): string {
 	const projectName = agentName || 'this project';
 
 	// Default Auto Run folder to standard location under working directory
-	const defaultAutoRunFolder = `${agentPath}/Auto Run Docs`;
+	const defaultAutoRunFolder = `${agentPath}/${PLAYBOOKS_DIR}`;
 	const effectiveAutoRunFolder = autoRunFolderPath || defaultAutoRunFolder;
 
 	// Build existing docs section if continuing from previous session
@@ -136,7 +187,10 @@ export function generateSystemPrompt(config: SystemPromptConfig): string {
 		const docsContent = existingDocs
 			.map((doc) => `### ${doc.filename}\n\n${doc.content}\n`)
 			.join('\n---\n\n');
-		existingDocsSection = wizardSystemContinuationPrompt.replace('{{EXISTING_DOCS}}', docsContent);
+		existingDocsSection = getWizardSystemContinuationPrompt().replace(
+			'{{EXISTING_DOCS}}',
+			docsContent
+		);
 	}
 
 	// First, handle wizard-specific variables that have different semantics
@@ -145,7 +199,7 @@ export function generateSystemPrompt(config: SystemPromptConfig): string {
 	// - PROJECT_NAME: wizard uses user-provided agentName (or "this project"),
 	//   not the path-derived name from the central system
 	// - READY_CONFIDENCE_THRESHOLD: wizard-specific constant
-	let prompt = wizardSystemPrompt
+	let prompt = getWizardSystemPrompt()
 		.replace(/\{\{PROJECT_NAME\}\}/gi, projectName)
 		.replace(/\{\{READY_CONFIDENCE_THRESHOLD\}\}/gi, String(READY_CONFIDENCE_THRESHOLD));
 
@@ -275,10 +329,15 @@ function isValidStructuredResponse(obj: unknown): obj is StructuredAgentResponse
  * Normalize a response to ensure valid ranges and types
  */
 function normalizeResponse(response: StructuredAgentResponse): StructuredAgentResponse {
+	const projectName =
+		typeof response.projectName === 'string' && response.projectName.trim().length > 0
+			? response.projectName.trim()
+			: undefined;
 	return {
 		confidence: Math.max(0, Math.min(100, Math.round(response.confidence))),
 		ready: response.ready && response.confidence >= READY_CONFIDENCE_THRESHOLD,
 		message: response.message.trim(),
+		projectName,
 	};
 }
 

@@ -19,6 +19,7 @@ export interface ProcessConfig {
 	shellEnvVars?: Record<string, string>;
 	images?: string[];
 	imageArgs?: (imagePath: string) => string[];
+	imagePromptBuilder?: (imagePaths: string[]) => string;
 	promptArgs?: (prompt: string) => string[];
 	contextWindow?: number;
 	customEnvVars?: Record<string, string>;
@@ -34,8 +35,23 @@ export interface ProcessConfig {
 	sendPromptViaStdin?: boolean;
 	/** If true, send the prompt via stdin as raw text instead of command line */
 	sendPromptViaStdinRaw?: boolean;
+	/** If true, the prompt is already embedded in `args` by the caller. The spawner
+	 *  must not append it again. Used by SSH tab naming for non-stream-json agents:
+	 *  the prompt has to live inside the `bash -c '<cmd>'` wrapper, otherwise it
+	 *  ends up as a positional arg to the remote bash and never reaches the agent. */
+	promptAlreadyInArgs?: boolean;
 	/** Script to send via stdin for SSH execution (bypasses shell escaping) */
 	sshStdinScript?: string;
+	/** PTY terminal width in columns (default 80) */
+	cols?: number;
+	/** PTY terminal height in rows (default 24) */
+	rows?: number;
+	/** Extra directories to prepend to the spawn-time PATH. Typically the
+	 *  parent directory of the detected agent binary, so co-located runtimes
+	 *  (e.g. the `node` next to an npm-installed `codex`) resolve via the
+	 *  script's `#!/usr/bin/env node` shebang. Local spawn only — SSH builds
+	 *  its remote PATH separately. */
+	extraPathDirs?: string[];
 }
 
 /**
@@ -52,8 +68,15 @@ export interface ManagedProcess {
 	isBatchMode?: boolean;
 	isStreamJsonMode?: boolean;
 	jsonBuffer?: string;
+	/** When true, the JSON buffer was force-cleared after exceeding size limits.
+	 *  Subsequent chunks are discarded until a clean top-level `{` resync point. */
+	jsonBufferCorrupted?: boolean;
 	lastCommand?: string;
 	sessionIdEmitted?: boolean;
+	/** Agent-reported session id once extracted from the output stream.
+	 *  Currently only populated for agents whose post-exit lifecycle we
+	 *  need to inspect on disk (Copilot CLI events.jsonl). */
+	agentSessionId?: string;
 	resultEmitted?: boolean;
 	errorEmitted?: boolean;
 	startTime: number;
@@ -67,6 +90,7 @@ export interface ManagedProcess {
 	args?: string[];
 	lastUsageTotals?: UsageTotals;
 	usageIsCumulative?: boolean;
+	emittedToolCallIds?: Set<string>;
 	querySource?: 'user' | 'auto';
 	tabId?: string;
 	projectPath?: string;
@@ -74,6 +98,11 @@ export interface ManagedProcess {
 	sshRemoteHost?: string;
 	dataBuffer?: string;
 	dataBufferTimeout?: NodeJS.Timeout;
+	/** Env vars Maestro explicitly set on this process (global + agent + session overrides),
+	 *  with `~/` paths expanded and MAESTRO_SESSION_RESUMED included when applicable.
+	 *  Inherited system env is NOT included — this is the actionable set shown in the
+	 *  Process Details modal. */
+	maestroEnvVars?: Record<string, string>;
 }
 
 export interface UsageTotals {
@@ -84,15 +113,9 @@ export interface UsageTotals {
 	reasoningTokens: number;
 }
 
-export interface UsageStats {
-	inputTokens: number;
-	outputTokens: number;
-	cacheReadInputTokens: number;
-	cacheCreationInputTokens: number;
-	totalCostUsd: number;
-	contextWindow: number;
-	reasoningTokens?: number;
-}
+// Import and re-export UsageStats from canonical location
+import type { UsageStats } from '../../shared/types';
+export type { UsageStats } from '../../shared/types';
 
 export interface SpawnResult {
 	pid: number;
@@ -124,6 +147,10 @@ export interface ToolExecution {
 	toolName: string;
 	state: unknown;
 	timestamp: number;
+	/** Stable correlation id from the agent. When present, renderers
+	 *  merge `running` and `completed`/`failed` events into a single
+	 *  log entry keyed by this id instead of appending two bubbles. */
+	toolCallId?: string;
 }
 
 export interface QueryCompleteData {

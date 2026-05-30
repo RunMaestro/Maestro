@@ -22,7 +22,42 @@ import {
 	estimateTokenCount,
 	calculateTotalTokens,
 } from '../utils/contextExtractor';
-import { contextGroomingPrompt, contextTransferPrompt } from '../../prompts';
+let cachedContextGroomingPrompt: string | null = null;
+let cachedContextTransferPrompt: string | null = null;
+let contextGroomerPromptsLoaded = false;
+
+export async function loadContextGroomerPrompts(force = false): Promise<void> {
+	if (contextGroomerPromptsLoaded && !force) return;
+
+	const [groomingResult, transferResult] = await Promise.all([
+		window.maestro.prompts.get('context-grooming'),
+		window.maestro.prompts.get('context-transfer'),
+	]);
+
+	if (!groomingResult.success) {
+		throw new Error(`Failed to load context-grooming prompt: ${groomingResult.error}`);
+	}
+	if (!transferResult.success) {
+		throw new Error(`Failed to load context-transfer prompt: ${transferResult.error}`);
+	}
+	cachedContextGroomingPrompt = groomingResult.content!;
+	cachedContextTransferPrompt = transferResult.content!;
+	contextGroomerPromptsLoaded = true;
+}
+
+function getContextGroomingPrompt(): string {
+	if (!contextGroomerPromptsLoaded || cachedContextGroomingPrompt === null) {
+		return '';
+	}
+	return cachedContextGroomingPrompt;
+}
+
+function getContextTransferPrompt(): string {
+	if (!contextGroomerPromptsLoaded || cachedContextTransferPrompt === null) {
+		return '';
+	}
+	return cachedContextTransferPrompt;
+}
 
 /**
  * Agent-specific artifacts that should be removed when transferring context.
@@ -165,7 +200,7 @@ export function buildContextTransferPrompt(sourceAgent: ToolType, targetAgent: T
 			: '- No specific artifacts to remove';
 
 	// Replace template variables in the transfer prompt
-	return contextTransferPrompt
+	return getContextTransferPrompt()
 		.replace('{{sourceAgent}}', getAgentDisplayName(sourceAgent))
 		.replace('{{targetAgent}}', getAgentDisplayName(targetAgent))
 		.replace('{{sourceAgentArtifacts}}', artifactList)
@@ -234,7 +269,7 @@ export class ContextGroomingService {
 	 *     targetAgent: 'claude-code',
 	 *     targetProjectRoot: '/my/project',
 	 *   },
-	 *   (progress) => console.log(`${progress.progress}%: ${progress.message}`)
+	 *   (progress) => logger.info(`${progress.progress}%: ${progress.message}`)
 	 * );
 	 */
 	async groomContexts(
@@ -360,7 +395,7 @@ ${formatLogsForGrooming(source.logs)}
 	 * @returns Complete prompt to send to the grooming agent
 	 */
 	private buildGroomingPrompt(formattedContexts: string, customPrompt?: string): string {
-		const systemPrompt = customPrompt || contextGroomingPrompt;
+		const systemPrompt = customPrompt || getContextGroomingPrompt();
 
 		return `${systemPrompt}
 

@@ -27,14 +27,16 @@ import {
 	Check,
 	CheckCircle,
 	XCircle,
-	Loader2,
 	Wifi,
 	WifiOff,
 } from 'lucide-react';
+import { GhostIconButton } from '../ui/GhostIconButton';
+import { Spinner } from '../ui/Spinner';
 import type { Theme } from '../../types';
 import type { SshRemoteConfig } from '../../../shared/types';
 import { useSshRemotes } from '../../hooks';
 import { SshRemoteModal } from './SshRemoteModal';
+import { logger } from '../../utils/logger';
 
 export interface SshRemotesSectionProps {
 	/** Theme object for styling */
@@ -80,7 +82,7 @@ export function SshRemotesSection({ theme }: SshRemotesSectionProps) {
 		setDeletingId(id);
 		const result = await deleteConfig(id);
 		if (!result.success) {
-			console.error('Failed to delete SSH remote:', result.error);
+			logger.error('Failed to delete SSH remote:', undefined, result.error);
 		}
 		setDeletingId(null);
 		// Clear test result for deleted config
@@ -105,7 +107,7 @@ export function SshRemotesSection({ theme }: SshRemotesSectionProps) {
 			[config.id]: {
 				success: result.success,
 				message: result.success
-					? `Connected to ${result.result?.remoteInfo?.hostname || config.host}`
+					? `Connected to ${config.name || config.host}`
 					: result.error || 'Connection failed',
 			},
 		}));
@@ -132,7 +134,7 @@ export function SshRemotesSection({ theme }: SshRemotesSectionProps) {
 				className="flex items-center gap-3 p-4 rounded-xl border"
 				style={{ backgroundColor: theme.colors.bgMain, borderColor: theme.colors.border }}
 			>
-				<Loader2 className="w-5 h-5 animate-spin" style={{ color: theme.colors.accent }} />
+				<Spinner size={20} color={theme.colors.accent} />
 				<span className="text-sm" style={{ color: theme.colors.textDim }}>
 					Loading SSH remotes...
 				</span>
@@ -270,7 +272,7 @@ export function SshRemotesSection({ theme }: SshRemotesSectionProps) {
 													title="Test connection"
 												>
 													{isTesting ? (
-														<Loader2 className="w-4 h-4 animate-spin" />
+														<Spinner size={16} />
 													) : config.enabled ? (
 														<Wifi className="w-4 h-4" />
 													) : (
@@ -295,15 +297,14 @@ export function SshRemotesSection({ theme }: SshRemotesSectionProps) {
 												</button>
 
 												{/* Edit */}
-												<button
-													type="button"
+												<GhostIconButton
 													onClick={() => handleEdit(config)}
-													className="p-1.5 rounded hover:bg-white/10 transition-colors"
-													style={{ color: theme.colors.textDim }}
+													padding="p-1.5"
 													title="Edit"
+													color={theme.colors.textDim}
 												>
 													<Edit2 className="w-4 h-4" />
-												</button>
+												</GhostIconButton>
 
 												{/* Delete */}
 												<button
@@ -314,11 +315,7 @@ export function SshRemotesSection({ theme }: SshRemotesSectionProps) {
 													style={{ color: theme.colors.error }}
 													title="Delete"
 												>
-													{isDeleting ? (
-														<Loader2 className="w-4 h-4 animate-spin" />
-													) : (
-														<Trash2 className="w-4 h-4" />
-													)}
+													{isDeleting ? <Spinner size={16} /> : <Trash2 className="w-4 h-4" />}
 												</button>
 											</div>
 										</div>

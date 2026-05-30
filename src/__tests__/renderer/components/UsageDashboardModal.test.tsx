@@ -5,6 +5,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { logger } from '../../../renderer/utils/logger';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { UsageDashboardModal } from '../../../renderer/components/UsageDashboard/UsageDashboardModal';
 import type { Theme } from '../../../renderer/types';
@@ -28,6 +29,7 @@ vi.mock('lucide-react', () => {
 		RefreshCw: createIcon('refresh', '🔄'),
 		Database: createIcon('database', '💾'),
 		// SummaryCards icons
+		Filter: createIcon('filter', '🔍'),
 		MessageSquare: createIcon('message-square', '💬'),
 		Clock: createIcon('clock', '🕐'),
 		Timer: createIcon('timer', '⏱️'),
@@ -44,8 +46,12 @@ vi.mock('lucide-react', () => {
 		Target: createIcon('target', '🎯'),
 		// SummaryCards - Open Tabs
 		PanelTop: createIcon('panel-top', '🔲'),
-		// LongestAutoRunsTable icons
+		// LongestAutoRunsTable + SummaryCards (Best Day) icons
 		Trophy: createIcon('trophy', '🏆'),
+		// SummaryCards streak/best/active/image-annotations icons
+		Flame: createIcon('flame', '🔥'),
+		CalendarCheck: createIcon('calendar-check', '📆'),
+		PenLine: createIcon('pen-line', '✏️'),
 		// ChartErrorBoundary icons
 		AlertTriangle: createIcon('alert-triangle', '⚠️'),
 		ChevronDown: createIcon('chevron-down', '▼'),
@@ -53,6 +59,13 @@ vi.mock('lucide-react', () => {
 		// WeekdayComparisonChart icons
 		Briefcase: createIcon('briefcase', '💼'),
 		Coffee: createIcon('coffee', '☕'),
+		// RealtimeMetricsCard icons
+		Cpu: createIcon('cpu', '🖥️'),
+		DollarSign: createIcon('dollar', '💲'),
+		Activity: createIcon('activity', '📈'),
+		// KeyboardStats icons
+		Keyboard: createIcon('keyboard', '⌨️'),
+		Sparkles: createIcon('sparkles', '✨'),
 	};
 });
 
@@ -64,6 +77,7 @@ vi.mock('../../../renderer/contexts/LayerStackContext', () => ({
 	useLayerStack: () => ({
 		registerLayer: mockRegisterLayer,
 		unregisterLayer: mockUnregisterLayer,
+		updateLayerHandler: vi.fn(),
 	}),
 }));
 
@@ -79,6 +93,9 @@ const mockGetDatabaseSize = vi.fn();
 const mockSaveFile = vi.fn();
 const mockWriteFile = vi.fn();
 
+const mockGetShortcutUsageByDay = vi.fn(() => Promise.resolve([]));
+const mockGetShortcutUsageTotal = vi.fn(() => Promise.resolve(0));
+
 const mockMaestro = {
 	stats: {
 		getAggregation: mockGetAggregation,
@@ -87,12 +104,20 @@ const mockMaestro = {
 		getAutoRunSessions: mockGetAutoRunSessions,
 		getAutoRunTasks: mockGetAutoRunTasks,
 		getDatabaseSize: mockGetDatabaseSize,
+		getShortcutUsageByDay: mockGetShortcutUsageByDay,
+		getShortcutUsageTotal: mockGetShortcutUsageTotal,
 	},
 	dialog: {
 		saveFile: mockSaveFile,
 	},
 	fs: {
 		writeFile: mockWriteFile,
+	},
+	// Minimum surface needed by `useGlobalAgentStats` (called from the
+	// dashboard's Achievement share image flow).
+	agentSessions: {
+		getGlobalStats: vi.fn().mockResolvedValue(null),
+		onGlobalStatsUpdate: vi.fn().mockReturnValue(() => {}),
 	},
 };
 
@@ -157,6 +182,7 @@ const createSampleData = () => ({
 	avgSessionDuration: 144000,
 	byAgentByDay: {},
 	bySessionByDay: {},
+	bySessionSource: {},
 });
 
 describe('UsageDashboardModal', () => {
@@ -216,11 +242,12 @@ describe('UsageDashboardModal', () => {
 			await waitFor(() => {
 				// Use getAllByRole('tab') to find tabs - there may be multiple elements with text 'Agents'
 				const tabs = screen.getAllByRole('tab');
-				expect(tabs).toHaveLength(4);
+				expect(tabs).toHaveLength(6);
 				expect(tabs[0]).toHaveTextContent('Overview');
-				expect(tabs[1]).toHaveTextContent('Agents');
-				expect(tabs[2]).toHaveTextContent('Activity');
-				expect(tabs[3]).toHaveTextContent('Auto Run');
+				expect(tabs[1]).toHaveTextContent('Agent Overview');
+				expect(tabs[2]).toHaveTextContent('Agents');
+				expect(tabs[3]).toHaveTextContent('Activity');
+				expect(tabs[4]).toHaveTextContent('Auto Run');
 			});
 		});
 
@@ -385,6 +412,9 @@ describe('UsageDashboardModal', () => {
 		});
 	});
 
+	// The drill-down filter feature was removed — the dashboard no longer
+	// renders a filter bar or a clickable filter affordance on chart rows.
+
 	describe('View Mode Tabs', () => {
 		it('switches view mode when tab is clicked', async () => {
 			render(<UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />);
@@ -511,7 +541,7 @@ describe('UsageDashboardModal', () => {
 			mockSaveFile.mockResolvedValue(testFilePath);
 			mockExportCsv.mockRejectedValue(new Error('Export failed'));
 
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 
 			render(<UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />);
 
@@ -522,7 +552,11 @@ describe('UsageDashboardModal', () => {
 			fireEvent.click(screen.getByText('Export CSV'));
 
 			await waitFor(() => {
-				expect(consoleSpy).toHaveBeenCalledWith('Failed to export CSV:', expect.any(Error));
+				expect(consoleSpy).toHaveBeenCalledWith(
+					'Failed to export CSV:',
+					undefined,
+					expect.any(Error)
+				);
 			});
 
 			consoleSpy.mockRestore();
@@ -577,14 +611,8 @@ describe('UsageDashboardModal', () => {
 			});
 		});
 
-		it('displays interactive percentage', async () => {
-			render(<UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />);
-
-			await waitFor(() => {
-				expect(screen.getByText('Interactive %')).toBeInTheDocument();
-				expect(screen.getByText('67%')).toBeInTheDocument(); // 100/150 = 66.67%
-			});
-		});
+		// Interactive % card was removed in favor of streak/best-day/active-days/
+		// worktree % cards (see SummaryCards.tsx).
 	});
 
 	describe('Debounced Refresh - No Flickering', () => {
@@ -1136,7 +1164,9 @@ describe('UsageDashboardModal', () => {
 		});
 
 		it('stats updates during an Auto Run session update dashboard correctly', async () => {
-			// This simulates the Auto Run flow where stats are recorded for each task
+			// This simulates the Auto Run flow where stats are recorded for each task.
+			// Interactive % was removed from SummaryCards, so we assert on totalQueries
+			// (the Total Queries metric is the most stable cross-version signal).
 			const initialData = createSampleData();
 			const afterAutoRunData = {
 				...createSampleData(),
@@ -1158,8 +1188,11 @@ describe('UsageDashboardModal', () => {
 				expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
 			});
 
-			// Initial state shows 67% interactive (100/150)
-			expect(screen.getByText('67%')).toBeInTheDocument();
+			// Initial state shows totalQueries = 150.
+			// Wrapped in waitFor because the value count-up animation runs over 600ms.
+			await waitFor(() => {
+				expect(screen.getAllByText('150').length).toBeGreaterThan(0);
+			});
 
 			mockGetAggregation.mockResolvedValueOnce(afterAutoRunData);
 
@@ -1177,9 +1210,9 @@ describe('UsageDashboardModal', () => {
 				expect(mockGetAggregation).toHaveBeenCalledTimes(2);
 			});
 
-			// Interactive percentage should update (100/160 = 62.5%, rounded to 63%)
+			// Total queries should update from 150 to 160
 			await waitFor(() => {
-				expect(screen.getByText('63%')).toBeInTheDocument();
+				expect(screen.getAllByText('160').length).toBeGreaterThan(0);
 			});
 		});
 
@@ -1541,7 +1574,7 @@ describe('UsageDashboardModal', () => {
 
 			await waitFor(() => {
 				const tabs = screen.getAllByRole('tab');
-				expect(tabs).toHaveLength(4);
+				expect(tabs).toHaveLength(6);
 
 				// First tab (Overview) should be selected
 				expect(tabs[0]).toHaveAttribute('aria-selected', 'true');
@@ -1552,6 +1585,7 @@ describe('UsageDashboardModal', () => {
 				expect(tabs[1]).toHaveAttribute('aria-selected', 'false');
 				expect(tabs[2]).toHaveAttribute('aria-selected', 'false');
 				expect(tabs[3]).toHaveAttribute('aria-selected', 'false');
+				expect(tabs[4]).toHaveAttribute('aria-selected', 'false');
 			});
 		});
 
@@ -1610,12 +1644,12 @@ describe('UsageDashboardModal', () => {
 
 			const tablist = screen.getByTestId('view-mode-tabs');
 
-			// Press ArrowLeft while on first tab - should wrap to last tab (Auto Run)
+			// Press ArrowLeft while on first tab - should wrap to last tab (Shortcuts, index 5)
 			fireEvent.keyDown(tablist, { key: 'ArrowLeft' });
 
 			await waitFor(() => {
 				const tabs = screen.getAllByRole('tab');
-				expect(tabs[3]).toHaveAttribute('aria-selected', 'true'); // Auto Run tab
+				expect(tabs[5]).toHaveAttribute('aria-selected', 'true'); // Shortcuts tab
 				expect(tabs[0]).toHaveAttribute('aria-selected', 'false');
 			});
 		});
@@ -1629,11 +1663,11 @@ describe('UsageDashboardModal', () => {
 
 			const tablist = screen.getByTestId('view-mode-tabs');
 
-			// Navigate to last tab (Auto Run)
+			// Navigate to last tab (Shortcuts, index 5)
 			fireEvent.keyDown(tablist, { key: 'ArrowLeft' }); // Wraps to last
 
 			await waitFor(() => {
-				expect(screen.getAllByRole('tab')[3]).toHaveAttribute('aria-selected', 'true');
+				expect(screen.getAllByRole('tab')[5]).toHaveAttribute('aria-selected', 'true');
 			});
 
 			// Press ArrowRight - should wrap to first tab (Overview)
@@ -1642,7 +1676,7 @@ describe('UsageDashboardModal', () => {
 			await waitFor(() => {
 				const tabs = screen.getAllByRole('tab');
 				expect(tabs[0]).toHaveAttribute('aria-selected', 'true');
-				expect(tabs[3]).toHaveAttribute('aria-selected', 'false');
+				expect(tabs[5]).toHaveAttribute('aria-selected', 'false');
 			});
 		});
 
@@ -1653,7 +1687,9 @@ describe('UsageDashboardModal', () => {
 				expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
 			});
 
-			// Check for focusable chart sections
+			// Overview retains summary cards, provider comparison, the two
+			// distribution donuts, the radial activity chart, and the activity
+			// heatmap. Duration trends moved to the Activity tab.
 			expect(screen.getByTestId('section-summary-cards')).toHaveAttribute('tabIndex', '0');
 			expect(screen.getByTestId('section-summary-cards')).toHaveAttribute('role', 'region');
 			expect(screen.getByTestId('section-summary-cards')).toHaveAttribute(
@@ -1678,12 +1714,6 @@ describe('UsageDashboardModal', () => {
 				'aria-label',
 				'Activity Heatmap'
 			);
-
-			expect(screen.getByTestId('section-duration-trends')).toHaveAttribute('tabIndex', '0');
-			expect(screen.getByTestId('section-duration-trends')).toHaveAttribute(
-				'aria-label',
-				'Duration Trends Chart'
-			);
 		});
 
 		it('renders tabpanel with proper ARIA attributes', async () => {
@@ -1704,9 +1734,9 @@ describe('UsageDashboardModal', () => {
 				expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
 			});
 
-			// Click on Agents tab - use getAllByRole('tab') to avoid "multiple elements" error
-			const tabs = screen.getAllByRole('tab');
-			fireEvent.click(tabs[1]); // Agents is the 2nd tab (index 1)
+			// Click on the "Agents" tab by name — its index drifted when
+			// "Agent Overview" was inserted above it, so look up by label.
+			fireEvent.click(screen.getByRole('tab', { name: 'Agents' }));
 
 			await waitFor(() => {
 				const tabpanel = screen.getByRole('tabpanel');
@@ -1760,15 +1790,17 @@ describe('UsageDashboardModal', () => {
 				expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
 			});
 
-			const durationSection = screen.getByTestId('section-duration-trends');
+			// Use the Activity Heatmap — last section in overview view (after
+			// duration trends moved to the Activity tab).
+			const heatmapSection = screen.getByTestId('section-activity-heatmap');
 
 			// Focus last section and press Home
-			durationSection.focus();
-			fireEvent.keyDown(durationSection, { key: 'Home' });
+			heatmapSection.focus();
+			fireEvent.keyDown(heatmapSection, { key: 'Home' });
 
-			// Should focus first section (summary cards)
+			// Should focus first section (year-in-pixels — added as the new hero strip)
 			await waitFor(() => {
-				expect(document.activeElement).toBe(screen.getByTestId('section-summary-cards'));
+				expect(document.activeElement).toBe(screen.getByTestId('section-year-in-pixels'));
 			});
 		});
 
@@ -1781,13 +1813,13 @@ describe('UsageDashboardModal', () => {
 
 			const summarySection = screen.getByTestId('section-summary-cards');
 
-			// Focus first section and press End
+			// Focus first section and press End. Last section in overview is
+			// the Activity Heatmap (duration-trends moved to the Activity tab).
 			summarySection.focus();
 			fireEvent.keyDown(summarySection, { key: 'End' });
 
-			// Should focus last section (duration trends)
 			await waitFor(() => {
-				expect(document.activeElement).toBe(screen.getByTestId('section-duration-trends'));
+				expect(document.activeElement).toBe(screen.getByTestId('section-activity-heatmap'));
 			});
 		});
 
@@ -1800,13 +1832,13 @@ describe('UsageDashboardModal', () => {
 
 			const tablist = screen.getByTestId('view-mode-tabs');
 
-			// Tab from tablist to first section
+			// Tab from tablist to first section (now year-in-pixels)
 			fireEvent.keyDown(tablist, { key: 'Tab' });
 
 			await waitFor(() => {
-				const summarySection = screen.getByTestId('section-summary-cards');
+				const firstSection = screen.getByTestId('section-year-in-pixels');
 				// Check for focus ring style
-				expect(summarySection).toHaveStyle({ boxShadow: `0 0 0 2px ${theme.colors.accent}` });
+				expect(firstSection).toHaveStyle({ boxShadow: `0 0 0 2px ${theme.colors.accent}` });
 			});
 		});
 
@@ -1817,13 +1849,15 @@ describe('UsageDashboardModal', () => {
 				expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
 			});
 
-			// Switch to Agents view - use getAllByRole('tab') to avoid "multiple elements" error
-			const tabs = screen.getAllByRole('tab');
-			fireEvent.click(tabs[1]); // Agents is the 2nd tab (index 1)
+			// Switch to the "Agents" tab by name — index-based clicks broke
+			// when "Agent Overview" was inserted above it.
+			fireEvent.click(screen.getByRole('tab', { name: 'Agents' }));
 
+			// Agents tab now contains a single AgentOverviewCards section. The
+			// previous agent-comparison/session-stats charts moved to the new
+			// "Agent Overview" tab.
 			await waitFor(() => {
-				expect(screen.getByTestId('section-agent-comparison')).toBeInTheDocument();
-				// Only one section in agents view
+				expect(screen.getByTestId('section-agent-overview-cards')).toBeInTheDocument();
 				expect(screen.queryByTestId('section-summary-cards')).not.toBeInTheDocument();
 				expect(screen.queryByTestId('section-source-distribution')).not.toBeInTheDocument();
 			});
@@ -1857,7 +1891,7 @@ describe('UsageDashboardModal', () => {
 
 			// Switch to Auto Run view - use the tab button specifically
 			const tabs = screen.getAllByRole('tab');
-			fireEvent.click(tabs[3]); // Auto Run is the 4th tab
+			fireEvent.click(tabs[4]); // Auto Run is the 5th tab now (index 4)
 
 			await waitFor(() => {
 				expect(screen.getByTestId('section-autorun-stats')).toBeInTheDocument();
@@ -1875,12 +1909,13 @@ describe('UsageDashboardModal', () => {
 				expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
 			});
 
-			const summarySection = screen.getByTestId('section-summary-cards');
+			// First section is now year-in-pixels (the new hero strip)
+			const firstSection = screen.getByTestId('section-year-in-pixels');
 			const tablist = screen.getByTestId('view-mode-tabs');
 
 			// Focus first section and press ArrowUp (or Shift+Tab)
-			summarySection.focus();
-			fireEvent.keyDown(summarySection, { key: 'ArrowUp' });
+			firstSection.focus();
+			fireEvent.keyDown(firstSection, { key: 'ArrowUp' });
 
 			// Focus should return to tabs
 			await waitFor(() => {
@@ -1895,12 +1930,12 @@ describe('UsageDashboardModal', () => {
 				expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
 			});
 
-			const summarySection = screen.getByTestId('section-summary-cards');
+			const firstSection = screen.getByTestId('section-year-in-pixels');
 			const tablist = screen.getByTestId('view-mode-tabs');
 
 			// Focus first section and press Shift+Tab
-			summarySection.focus();
-			fireEvent.keyDown(summarySection, { key: 'Tab', shiftKey: true });
+			firstSection.focus();
+			fireEvent.keyDown(firstSection, { key: 'Tab', shiftKey: true });
 
 			// Focus should return to tabs
 			await waitFor(() => {
@@ -1921,9 +1956,9 @@ describe('UsageDashboardModal', () => {
 			tablist.focus();
 			fireEvent.keyDown(tablist, { key: 'Tab' });
 
-			// Should focus first section
+			// Should focus first section (year-in-pixels)
 			await waitFor(() => {
-				expect(document.activeElement).toBe(screen.getByTestId('section-summary-cards'));
+				expect(document.activeElement).toBe(screen.getByTestId('section-year-in-pixels'));
 			});
 		});
 
@@ -1934,7 +1969,7 @@ describe('UsageDashboardModal', () => {
 				expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
 			});
 
-			// Focus a section in overview
+			// Focus a section in overview, then move down one
 			const summarySection = screen.getByTestId('section-summary-cards');
 			summarySection.focus();
 			fireEvent.keyDown(summarySection, { key: 'ArrowDown' });
@@ -1943,13 +1978,14 @@ describe('UsageDashboardModal', () => {
 				expect(document.activeElement).toBe(screen.getByTestId('section-agent-comparison'));
 			});
 
-			// Switch to Agents view - use getAllByRole('tab') to avoid "multiple elements" error
-			const tabs = screen.getAllByRole('tab');
-			fireEvent.click(tabs[1]); // Agents is the 2nd tab (index 1)
+			// Switch to Agents view by name (its index drifted when "Agent
+			// Overview" was inserted above it).
+			fireEvent.click(screen.getByRole('tab', { name: 'Agents' }));
 
 			await waitFor(() => {
-				// The section in the new view should not have focus ring initially
-				const agentSection = screen.getByTestId('section-agent-comparison');
+				// Agents view's only section is agent-overview-cards. It should not
+				// have a focus ring just from the view-mode change.
+				const agentSection = screen.getByTestId('section-agent-overview-cards');
 				expect(agentSection).not.toHaveStyle({ boxShadow: `0 0 0 2px ${theme.colors.accent}` });
 			});
 		});

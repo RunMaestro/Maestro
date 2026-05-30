@@ -38,7 +38,7 @@ export interface TreeNode {
 /**
  * Options for walkTree function
  */
-export interface WalkTreeOptions<T, N extends TreeNode = TreeNode> {
+interface WalkTreeOptions<T, N extends TreeNode = TreeNode> {
 	/**
 	 * Called for each file node. Return a value to include in results, or undefined to skip.
 	 */
@@ -90,7 +90,7 @@ export interface WalkTreeOptions<T, N extends TreeNode = TreeNode> {
  * });
  * ```
  */
-export function walkTree<T, N extends TreeNode = TreeNode>(
+function walkTree<T, N extends TreeNode = TreeNode>(
 	nodes: N[],
 	options: WalkTreeOptions<T, N>
 ): T[] {
@@ -129,7 +129,7 @@ export function walkTree<T, N extends TreeNode = TreeNode>(
 /**
  * Result of walkTreePartitioned - files and folders collected separately
  */
-export interface PartitionedPaths {
+interface PartitionedPaths {
 	files: Set<string>;
 	folders: Set<string>;
 }

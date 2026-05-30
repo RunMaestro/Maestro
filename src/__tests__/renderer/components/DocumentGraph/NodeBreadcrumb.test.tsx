@@ -14,32 +14,13 @@ import {
 	type NodeBreadcrumbProps,
 } from '../../../../renderer/components/DocumentGraph/NodeBreadcrumb';
 import type { Theme } from '../../../../renderer/types';
+import { mockTheme } from '../../../helpers/mockTheme';
 import type {
 	DocumentNodeData,
 	ExternalLinkNodeData,
 } from '../../../../renderer/components/DocumentGraph/graphDataBuilder';
 
 // Mock theme for testing
-const mockTheme: Theme = {
-	id: 'dracula',
-	name: 'Dracula',
-	mode: 'dark',
-	colors: {
-		bgMain: '#282a36',
-		bgSidebar: '#21222c',
-		bgActivity: '#343746',
-		border: '#44475a',
-		textMain: '#f8f8f2',
-		textDim: '#6272a4',
-		accent: '#bd93f9',
-		accentDim: 'rgba(189, 147, 249, 0.2)',
-		accentText: '#ff79c6',
-		accentForeground: '#282a36',
-		success: '#50fa7b',
-		warning: '#ffb86c',
-		error: '#ff5555',
-	},
-};
 
 // Light theme for theme testing
 const lightTheme: Theme = {

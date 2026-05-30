@@ -10,8 +10,61 @@
  * - Persist permission request state to avoid repeated prompts
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { webLogger } from '../utils/logger';
+
+/**
+ * Notification event types from the server
+ */
+export interface NotificationEvent {
+	eventType:
+		| 'agent_complete'
+		| 'agent_error'
+		| 'autorun_complete'
+		| 'autorun_task_complete'
+		| 'context_warning';
+	sessionId: string;
+	sessionName: string;
+	message: string;
+	severity: 'info' | 'warning' | 'error';
+}
+
+/**
+ * Notification preferences configuration
+ */
+export interface NotificationPreferences {
+	agentComplete: boolean;
+	agentError: boolean;
+	autoRunComplete: boolean;
+	autoRunTaskComplete: boolean;
+	contextWarning: boolean;
+	soundEnabled: boolean;
+}
+
+/**
+ * Map from event type to preference key
+ */
+const EVENT_TYPE_TO_PREF: Record<
+	NotificationEvent['eventType'],
+	keyof Omit<NotificationPreferences, 'soundEnabled'>
+> = {
+	agent_complete: 'agentComplete',
+	agent_error: 'agentError',
+	autorun_complete: 'autoRunComplete',
+	autorun_task_complete: 'autoRunTaskComplete',
+	context_warning: 'contextWarning',
+};
+
+const DEFAULT_PREFERENCES: NotificationPreferences = {
+	agentComplete: true,
+	agentError: true,
+	autoRunComplete: true,
+	autoRunTaskComplete: true,
+	contextWarning: true,
+	soundEnabled: false,
+};
+
+const NOTIFICATION_PREFS_KEY = 'maestro-notification-prefs';
 
 /**
  * Notification permission states
@@ -64,6 +117,12 @@ export interface UseNotificationsReturn {
 	resetPromptState: () => void;
 	/** Show a notification (if permission granted) */
 	showNotification: (title: string, options?: NotificationOptions) => Notification | null;
+	/** Current notification preferences */
+	preferences: NotificationPreferences;
+	/** Update notification preferences (partial merge) */
+	setPreferences: (prefs: Partial<NotificationPreferences>) => void;
+	/** Handle an incoming notification event from the server */
+	handleNotificationEvent: (event: NotificationEvent) => void;
 }
 
 /**
@@ -220,6 +279,105 @@ export function useNotifications(options: UseNotificationsOptions = {}): UseNoti
 		requestPermission,
 	]);
 
+	// Notification preferences state — persisted to localStorage
+	const [preferences, setPreferencesState] = useState<NotificationPreferences>(() => {
+		if (typeof localStorage === 'undefined') return DEFAULT_PREFERENCES;
+		try {
+			const stored = localStorage.getItem(NOTIFICATION_PREFS_KEY);
+			if (stored) {
+				return { ...DEFAULT_PREFERENCES, ...JSON.parse(stored) };
+			}
+		} catch {
+			// Ignore parse errors
+		}
+		return DEFAULT_PREFERENCES;
+	});
+
+	const setPreferences = useCallback((prefs: Partial<NotificationPreferences>) => {
+		setPreferencesState((prev) => {
+			const merged = { ...prev, ...prefs };
+			try {
+				localStorage.setItem(NOTIFICATION_PREFS_KEY, JSON.stringify(merged));
+			} catch {
+				// Ignore storage errors
+			}
+			return merged;
+		});
+	}, []);
+
+	// Keep a ref to preferences so handleNotificationEvent always has current values
+	const preferencesRef = useRef(preferences);
+	preferencesRef.current = preferences;
+
+	// Keep a ref to showNotification so handleNotificationEvent doesn't need it as a dep
+	const showNotificationRef = useRef(showNotification);
+	showNotificationRef.current = showNotification;
+
+	/**
+	 * Play a short notification beep using Web Audio API
+	 */
+	const playNotificationSound = useCallback(() => {
+		try {
+			const ctx = new AudioContext();
+			const oscillator = ctx.createOscillator();
+			const gainNode = ctx.createGain();
+
+			oscillator.connect(gainNode);
+			gainNode.connect(ctx.destination);
+
+			oscillator.type = 'sine';
+			oscillator.frequency.setValueAtTime(800, ctx.currentTime);
+			gainNode.gain.setValueAtTime(0.3, ctx.currentTime);
+			gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.2);
+
+			oscillator.start(ctx.currentTime);
+			oscillator.stop(ctx.currentTime + 0.2);
+
+			// Clean up after sound completes
+			oscillator.onended = () => ctx.close();
+		} catch {
+			// Audio not available
+		}
+	}, []);
+
+	/**
+	 * Handle an incoming notification event from the server
+	 */
+	const handleNotificationEvent = useCallback(
+		(event: NotificationEvent) => {
+			const prefs = preferencesRef.current;
+			const prefKey = EVENT_TYPE_TO_PREF[event.eventType];
+
+			// Check if this event type is enabled
+			if (!prefKey || !prefs[prefKey]) return;
+
+			// Check if we have permission
+			if (getNotificationPermission() !== 'granted') return;
+
+			const notification = showNotificationRef.current(event.sessionName, {
+				body: event.message,
+				tag: `maestro-${event.eventType}-${event.sessionId}`,
+				icon: '/icon-192.png',
+			});
+
+			if (notification) {
+				notification.onclick = () => {
+					window.focus();
+					window.dispatchEvent(
+						new CustomEvent('maestro-notification-click', {
+							detail: { sessionId: event.sessionId },
+						})
+					);
+				};
+			}
+
+			if (prefs.soundEnabled) {
+				playNotificationSound();
+			}
+		},
+		[playNotificationSound]
+	);
+
 	// Listen for permission changes (e.g., user changes in browser settings)
 	useEffect(() => {
 		if (!isSupported) return;
@@ -253,6 +411,9 @@ export function useNotifications(options: UseNotificationsOptions = {}): UseNoti
 		declineNotifications,
 		resetPromptState,
 		showNotification,
+		preferences,
+		setPreferences,
+		handleNotificationEvent,
 	};
 }
 

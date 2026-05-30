@@ -23,6 +23,11 @@ const mockSettingsState: Record<string, unknown> = {
 	audioFeedbackEnabled: false,
 	audioFeedbackCommand: '',
 	osNotificationsEnabled: false,
+	idleNotificationEnabled: false,
+	idleNotificationCommand: '',
+	speckitEnabled: true,
+	openspecEnabled: true,
+	bmadEnabled: true,
 	autoRunStats: {
 		cumulativeTimeMs: 0,
 		totalRuns: 0,
@@ -48,6 +53,7 @@ vi.mock('../../../renderer/stores/settingsStore', () => ({
 
 const mockSessionState: Record<string, unknown> = {
 	sessionsLoaded: false,
+	initialFileTreeReady: false,
 };
 
 vi.mock('../../../renderer/stores/sessionStore', () => ({
@@ -93,6 +99,7 @@ vi.mock('../../../renderer/stores/tabStore', () => ({
 const mockSetDefaultDuration = vi.fn();
 const mockSetAudioFeedback = vi.fn();
 const mockSetOsNotifications = vi.fn();
+const mockSetIdleNotification = vi.fn();
 
 vi.mock('../../../renderer/stores/notificationStore', () => ({
 	useNotificationStore: Object.assign(vi.fn(), {
@@ -100,6 +107,7 @@ vi.mock('../../../renderer/stores/notificationStore', () => ({
 			setDefaultDuration: mockSetDefaultDuration,
 			setAudioFeedback: mockSetAudioFeedback,
 			setOsNotifications: mockSetOsNotifications,
+			setIdleNotification: mockSetIdleNotification,
 		}),
 		setState: vi.fn(),
 		subscribe: vi.fn(() => vi.fn()),
@@ -165,6 +173,7 @@ beforeAll(() => {
 		},
 	};
 	(window as any).__hideSplash = vi.fn();
+	(window as any).__updateSplash = vi.fn();
 });
 
 // ============================================================================
@@ -181,6 +190,11 @@ function resetStores() {
 	mockSettingsState.audioFeedbackEnabled = false;
 	mockSettingsState.audioFeedbackCommand = '';
 	mockSettingsState.osNotificationsEnabled = false;
+	mockSettingsState.idleNotificationEnabled = false;
+	mockSettingsState.idleNotificationCommand = '';
+	mockSettingsState.speckitEnabled = true;
+	mockSettingsState.openspecEnabled = true;
+	mockSettingsState.bmadEnabled = true;
 	mockSettingsState.autoRunStats = {
 		cumulativeTimeMs: 0,
 		totalRuns: 0,
@@ -192,6 +206,7 @@ function resetStores() {
 	};
 
 	mockSessionState.sessionsLoaded = false;
+	mockSessionState.initialFileTreeReady = false;
 	mockTabStoreState.fileGistUrls = {};
 }
 
@@ -244,18 +259,63 @@ describe('useAppInitialization', () => {
 			expect((window as any).__hideSplash).not.toHaveBeenCalled();
 		});
 
-		it('should not call __hideSplash when sessions are not loaded', () => {
+		it('should call __updateSplash with progress when only sessions loaded', () => {
+			mockSettingsState.settingsLoaded = false;
+			mockSessionState.sessionsLoaded = true;
+			renderHook(() => useAppInitialization());
+
+			expect((window as any).__updateSplash).toHaveBeenCalledWith(60, 'Warming up the ensemble...');
+			expect((window as any).__hideSplash).not.toHaveBeenCalled();
+		});
+
+		it('should call __updateSplash with progress when only settings loaded', () => {
 			mockSettingsState.settingsLoaded = true;
 			mockSessionState.sessionsLoaded = false;
 			renderHook(() => useAppInitialization());
 
+			expect((window as any).__updateSplash).toHaveBeenCalledWith(60, 'Warming up the ensemble...');
 			expect((window as any).__hideSplash).not.toHaveBeenCalled();
 		});
 
-		it('should call __hideSplash when both settings and sessions are loaded', () => {
+		it('should show file tree loading progress when sessions loaded but file tree not ready', () => {
 			mockSettingsState.settingsLoaded = true;
 			mockSessionState.sessionsLoaded = true;
+			mockSessionState.initialFileTreeReady = false;
 			renderHook(() => useAppInitialization());
+
+			expect((window as any).__updateSplash).toHaveBeenCalledWith(80, 'Indexing the score...');
+			expect((window as any).__hideSplash).not.toHaveBeenCalled();
+		});
+
+		it('should call __hideSplash after rAF + delay when all three gates pass', async () => {
+			vi.useFakeTimers();
+			mockSettingsState.settingsLoaded = true;
+			mockSessionState.sessionsLoaded = true;
+			mockSessionState.initialFileTreeReady = true;
+			renderHook(() => useAppInitialization());
+
+			// Should update to 90% first
+			expect((window as any).__updateSplash).toHaveBeenCalledWith(90, 'The concertmaster rises...');
+
+			// __hideSplash not called yet (waiting for rAF + timeout)
+			expect((window as any).__hideSplash).not.toHaveBeenCalled();
+
+			// Advance time to flush double rAF (fake timers mock requestAnimationFrame)
+			// Each rAF fires at ~16ms intervals, so 50ms covers the double rAF
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			// Should update to 95%
+			expect((window as any).__updateSplash).toHaveBeenCalledWith(
+				95,
+				'Maestro takes the podium...'
+			);
+
+			// Advance past the 150ms delay
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(200);
+			});
 
 			expect((window as any).__hideSplash).toHaveBeenCalledTimes(1);
 		});
@@ -480,6 +540,51 @@ describe('useAppInitialization', () => {
 
 			expect(mockSetUpdateCheckModalOpen).not.toHaveBeenCalled();
 		});
+
+		it('should re-check daily for long-running sessions', async () => {
+			vi.useFakeTimers();
+			mockSettingsState.settingsLoaded = true;
+			mockSettingsState.checkForUpdatesOnStartup = true;
+			mockUpdatesCheck.mockResolvedValue({ updateAvailable: false });
+
+			renderHook(() => useAppInitialization());
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(2500);
+			});
+			expect(mockUpdatesCheck).toHaveBeenCalledTimes(1);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(24 * 60 * 60 * 1000);
+			});
+			expect(mockUpdatesCheck).toHaveBeenCalledTimes(2);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(24 * 60 * 60 * 1000);
+			});
+			expect(mockUpdatesCheck).toHaveBeenCalledTimes(3);
+		});
+
+		it('should clear daily interval on unmount', async () => {
+			vi.useFakeTimers();
+			mockSettingsState.settingsLoaded = true;
+			mockSettingsState.checkForUpdatesOnStartup = true;
+			mockUpdatesCheck.mockResolvedValue({ updateAvailable: false });
+
+			const { unmount } = renderHook(() => useAppInitialization());
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(2500);
+			});
+			expect(mockUpdatesCheck).toHaveBeenCalledTimes(1);
+
+			unmount();
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(24 * 60 * 60 * 1000);
+			});
+			expect(mockUpdatesCheck).toHaveBeenCalledTimes(1);
+		});
 	});
 
 	// --- Leaderboard startup sync ---
@@ -597,6 +702,7 @@ describe('useAppInitialization', () => {
 	// --- SpecKit commands ---
 	describe('SpecKit commands loading', () => {
 		it('should load SpecKit commands on mount', async () => {
+			mockSettingsState.settingsLoaded = true;
 			const { result } = renderHook(() => useAppInitialization());
 			await act(flushPromises);
 
@@ -604,6 +710,7 @@ describe('useAppInitialization', () => {
 		});
 
 		it('should handle SpecKit loading error gracefully', async () => {
+			mockSettingsState.settingsLoaded = true;
 			const { getSpeckitCommands } = await import('../../../renderer/services/speckit');
 			(getSpeckitCommands as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
 				new Error('load failed')
@@ -619,6 +726,7 @@ describe('useAppInitialization', () => {
 	// --- OpenSpec commands ---
 	describe('OpenSpec commands loading', () => {
 		it('should load OpenSpec commands on mount', async () => {
+			mockSettingsState.settingsLoaded = true;
 			const { result } = renderHook(() => useAppInitialization());
 			await act(flushPromises);
 
@@ -626,6 +734,7 @@ describe('useAppInitialization', () => {
 		});
 
 		it('should handle OpenSpec loading error gracefully', async () => {
+			mockSettingsState.settingsLoaded = true;
 			const { getOpenSpecCommands } = await import('../../../renderer/services/openspec');
 			(getOpenSpecCommands as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
 				new Error('load failed')
@@ -730,6 +839,15 @@ describe('useAppInitialization', () => {
 			await act(flushPromises);
 
 			expect(mockSetOsNotifications).toHaveBeenCalledWith(true);
+		});
+
+		it('should sync idle notification settings', async () => {
+			mockSettingsState.idleNotificationEnabled = true;
+			mockSettingsState.idleNotificationCommand = 'say Maestro is idle';
+			renderHook(() => useAppInitialization());
+			await act(flushPromises);
+
+			expect(mockSetIdleNotification).toHaveBeenCalledWith(true, 'say Maestro is idle');
 		});
 	});
 

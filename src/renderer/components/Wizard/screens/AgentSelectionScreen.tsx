@@ -13,13 +13,14 @@
  */
 
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { Check, X, Settings, ArrowLeft, AlertTriangle, Info, Wand2 } from 'lucide-react';
+import { Check, X, Settings, ArrowLeft, AlertTriangle } from 'lucide-react';
 import type { Theme, AgentConfig } from '../../../types';
 import type { SshRemoteConfig, AgentSshRemoteConfig } from '../../../../shared/types';
 import { useWizard } from '../WizardContext';
 import { ScreenReaderAnnouncement } from '../ScreenReaderAnnouncement';
 import { AgentConfigPanel } from '../../shared/AgentConfigPanel';
 import { isBetaAgent } from '../../../../shared/agentMetadata';
+import { logger } from '../../../utils/logger';
 
 interface AgentSelectionScreenProps {
 	theme: Theme;
@@ -38,7 +39,7 @@ export interface AgentTile {
 
 /**
  * Define the agents to display in the grid
- * Supported agents: Claude Code, Codex, OpenCode (shown first)
+ * Supported agents: Claude Code, Codex, OpenCode, Factory Droid, Copilot (shown first)
  * Unsupported agents: shown ghosted with "Coming soon" (at bottom)
  */
 export const AGENT_TILES: AgentTile[] = [
@@ -71,26 +72,29 @@ export const AGENT_TILES: AgentTile[] = [
 		description: "Factory's AI coding assistant",
 		brandColor: '#3B82F6', // Factory blue
 	},
-	// Coming soon agents at the bottom
 	{
-		id: 'gemini-cli',
-		name: 'Gemini CLI',
-		supported: false,
-		description: 'Coming soon',
-		brandColor: '#4285F4', // Google blue
-	},
-	{
-		id: 'qwen3-coder',
-		name: 'Qwen3 Coder',
-		supported: false,
-		description: 'Coming soon',
-		brandColor: '#6366F1', // Indigo/purple
+		id: 'copilot-cli',
+		name: 'Copilot-CLI',
+		supported: true,
+		description: "GitHub's AI coding assistant",
+		brandColor: '#24292F', // GitHub dark gray
 	},
 ];
 
-// Grid dimensions for keyboard navigation (3 cols for 6 items)
+// Grid dimensions for keyboard navigation
 const GRID_COLS = 3;
-const GRID_ROWS = 2;
+const GRID_ROWS = Math.ceil(AGENT_TILES.length / GRID_COLS);
+
+// Centering for a partial last row. The grid renders on a 6-track layout where
+// each tile spans 2 tracks (visually 3 columns). When the final row isn't full,
+// the leftover tiles are nudged inward so they sit centered under the full rows.
+// Tailwind needs literal class names (no string interpolation) for JIT, so the
+// col-start values are mapped explicitly.
+const TILES_IN_LAST_ROW = AGENT_TILES.length % GRID_COLS; // 0 means the last row is full
+const LAST_ROW_START_INDEX = TILES_IN_LAST_ROW === 0 ? -1 : AGENT_TILES.length - TILES_IN_LAST_ROW;
+// 1 tile  -> centered in tracks 3-4 (col-start-3); 2 tiles -> tracks 2-5 (col-start-2).
+const LAST_ROW_COL_START_CLASS =
+	TILES_IN_LAST_ROW === 1 ? 'col-start-3' : TILES_IN_LAST_ROW === 2 ? 'col-start-2' : '';
 
 /**
  * Get SVG logo for an agent with brand colors
@@ -149,24 +153,6 @@ export function AgentLogo({
 				</svg>
 			);
 
-		case 'gemini-cli':
-			// Gemini - Google's sparkle/star logo
-			return (
-				<svg
-					className="w-12 h-12"
-					viewBox="0 0 48 48"
-					fill="none"
-					xmlns="http://www.w3.org/2000/svg"
-					style={{ opacity }}
-				>
-					{/* Gemini sparkle logo */}
-					<path
-						d="M24 4C24 4 24 20 24 24C24 28 4 24 4 24C4 24 20 24 24 24C28 24 24 44 24 44C24 44 24 28 24 24C24 20 44 24 44 24C44 24 28 24 24 24"
-						fill={color}
-					/>
-				</svg>
-			);
-
 		case 'opencode':
 			// OpenCode - terminal/code brackets
 			return (
@@ -190,29 +176,6 @@ export function AgentLogo({
 					/>
 					<path
 						d="M12 20l6 4-6 4M22 28h10"
-						stroke={color}
-						strokeWidth="2"
-						strokeLinecap="round"
-						strokeLinejoin="round"
-					/>
-				</svg>
-			);
-
-		case 'qwen3-coder':
-			// Qwen - Alibaba cloud inspired
-			return (
-				<svg
-					className="w-12 h-12"
-					viewBox="0 0 48 48"
-					fill="none"
-					xmlns="http://www.w3.org/2000/svg"
-					style={{ opacity }}
-				>
-					{/* Qwen - Q with code element */}
-					<circle cx="24" cy="22" r="14" stroke={color} strokeWidth="2.5" fill="none" />
-					<path d="M30 30l8 10" stroke={color} strokeWidth="2.5" strokeLinecap="round" />
-					<path
-						d="M18 22l4 4 6-8"
 						stroke={color}
 						strokeWidth="2"
 						strokeLinecap="round"
@@ -275,6 +238,27 @@ export function AgentLogo({
 				</svg>
 			);
 
+		case 'copilot-cli':
+			return (
+				<svg
+					className="w-12 h-12"
+					viewBox="0 0 48 48"
+					fill="none"
+					xmlns="http://www.w3.org/2000/svg"
+					style={{ opacity }}
+				>
+					<path
+						d="M24 9c-7.2 0-13 5.4-13 12 0 4.5 2.3 8 6.4 10.3V37l6.6-3.4L30.6 37v-5.7C34.7 29 37 25.5 37 21c0-6.6-5.8-12-13-12Z"
+						stroke={color}
+						strokeWidth="2"
+						fill="none"
+					/>
+					<circle cx="19" cy="21" r="2.5" fill={color} />
+					<circle cx="29" cy="21" r="2.5" fill={color} />
+					<path d="M18 27.5h12" stroke={color} strokeWidth="2" strokeLinecap="round" />
+				</svg>
+			);
+
 		default:
 			return (
 				<div className="w-12 h-12 rounded-full border-2" style={{ borderColor: color, opacity }} />
@@ -327,9 +311,6 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 	const [availableModels, setAvailableModels] = useState<string[]>([]);
 	const [loadingModels, setLoadingModels] = useState(false);
 	const [refreshingAgent, setRefreshingAgent] = useState(false);
-
-	// Track if user has existing agents (to show/hide the note about in-tab wizard)
-	const [hasExistingAgents, setHasExistingAgents] = useState(false);
 
 	// SSH Remote configuration state
 	// Initialize from wizard context if already set (e.g., when SSH was configured before opening wizard)
@@ -451,7 +432,7 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 					setIsDetecting(false);
 				}
 			} catch (error) {
-				console.error('Failed to detect agents:', error);
+				logger.error('Failed to detect agents:', undefined, error);
 				if (mounted) {
 					if (sshRemoteConfig?.enabled) {
 						setSshConnectionError(
@@ -487,31 +468,10 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 					setSshRemotes(configsResult.configs);
 				}
 			} catch (error) {
-				console.error('Failed to load SSH remotes:', error);
+				logger.error('Failed to load SSH remotes:', undefined, error);
 			}
 		}
 		loadSshRemotes();
-
-		return () => {
-			mounted = false;
-		};
-	}, []);
-
-	// Check if user has existing agents on mount
-	useEffect(() => {
-		let mounted = true;
-
-		async function checkExistingAgents() {
-			try {
-				const sessions = await window.maestro.sessions.getAll();
-				if (mounted) {
-					setHasExistingAgents(sessions.length > 0);
-				}
-			} catch (error) {
-				console.error('Failed to check existing agents:', error);
-			}
-		}
-		checkExistingAgents();
 
 		return () => {
 			mounted = false;
@@ -720,7 +680,7 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 					const models = await window.maestro.agents.getModels(agentId, false, sshRemoteId);
 					setAvailableModels(models);
 				} catch (err) {
-					console.error('Failed to load models:', err);
+					logger.error('Failed to load models:', undefined, err);
 				} finally {
 					setLoadingModels(false);
 				}
@@ -814,7 +774,7 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 			const models = await window.maestro.agents.getModels(configuringAgentId, true, sshRemoteId);
 			setAvailableModels(models);
 		} catch (err) {
-			console.error('Failed to refresh models:', err);
+			logger.error('Failed to refresh models:', undefined, err);
 		} finally {
 			setLoadingModels(false);
 		}
@@ -972,21 +932,10 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 								}
 								await refreshAgentDetection();
 							}}
-							onCustomPathClear={async () => {
-								setCustomPath('');
-								// Clear custom path in agent detector before refreshing
-								if (configuringAgentId) {
-									await window.maestro.agents.setCustomPath(configuringAgentId, null);
-								}
-								await refreshAgentDetection();
-							}}
 							customArgs={customArgs}
 							onCustomArgsChange={setCustomArgs}
 							onCustomArgsBlur={() => {
 								// Wizard state is already updated via setCustomArgs - no provider-level save
-							}}
-							onCustomArgsClear={() => {
-								setCustomArgs('');
 							}}
 							customEnvVars={customEnvVars}
 							onEnvVarKeyChange={(oldKey, newKey, value) => {
@@ -1151,39 +1100,7 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 				</div>
 			</div>
 
-			{/* Section 2: Note box - only shown if user has existing agents */}
-			{hasExistingAgents && (
-				<div className="flex justify-center">
-					<div
-						className="flex items-start gap-2.5 px-4 py-3 rounded-lg max-w-3xl w-full text-xs"
-						style={{
-							backgroundColor: theme.colors.accent + '15',
-							border: `1px solid ${theme.colors.accent}30`,
-						}}
-					>
-						<Info className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: theme.colors.accent }} />
-						<span style={{ color: theme.colors.textDim }}>
-							<strong style={{ color: theme.colors.textMain }}>Note:</strong> The new agent wizard
-							captures application inputs until complete. For a lighter touch, create a new agent
-							then run{' '}
-							<code
-								className="px-1 py-0.5 rounded text-[11px]"
-								style={{ backgroundColor: theme.colors.border }}
-							>
-								/wizard
-							</code>{' '}
-							or click the{' '}
-							<Wand2
-								className="inline w-3.5 h-3.5 align-text-bottom"
-								style={{ color: theme.colors.accent }}
-							/>{' '}
-							button in the Auto Run panel. The in-tab wizard runs alongside your other work.
-						</span>
-					</div>
-				</div>
-			)}
-
-			{/* Section 3: Agent Grid or Connection Error */}
+			{/* Section 2: Agent Grid or Connection Error */}
 			{sshConnectionError ? (
 				/* SSH Connection Error State */
 				<div className="flex flex-col items-center gap-4">
@@ -1215,9 +1132,15 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 					<p className="text-sm" style={{ color: theme.colors.textDim }}>
 						Select the provider that will power your agent.
 					</p>
-					<div className="grid grid-cols-3 gap-4 max-w-3xl">
+					<div className="grid grid-cols-6 gap-4 max-w-3xl">
 						{AGENT_TILES.map((tile, index) => {
 							const isDetected = isAgentAvailable(tile.id);
+							// Each tile spans 2 of 6 tracks (= 3 visual columns); the first tile of a
+							// partial last row gets a col-start offset so the row is centered.
+							const colSpanClass =
+								index === LAST_ROW_START_INDEX
+									? `col-span-2 ${LAST_ROW_COL_START_CLASS}`
+									: 'col-span-2';
 							const isSupported = tile.supported;
 							const canSelect = isSupported && isDetected;
 							const isSelected = state.selectedAgent === tile.id;
@@ -1238,6 +1161,7 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 									className={`
                     relative flex flex-col items-center justify-center pt-6 px-6 pb-10 rounded-xl
                     border-2 transition-all duration-200 outline-none min-w-[160px]
+                    ${colSpanClass}
                     ${canSelect ? 'cursor-pointer' : 'cursor-not-allowed'}
                   `}
 									style={{

@@ -15,6 +15,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import { logger } from './logger';
 import { buildAgentArgs, applyAgentConfigOverrides } from './agent-args';
+import { isWindows } from '../../shared/platformDetection';
 import type { AgentDetector } from '../agents';
 
 const LOG_CONTEXT = '[ContextGroomer]';
@@ -33,6 +34,10 @@ export interface GroomingProcessManager {
 		prompt?: string;
 		promptArgs?: (prompt: string) => string[];
 		noPromptSeparator?: boolean;
+		// Send prompt as stream-json via stdin (for agents supporting it, e.g. with images)
+		sendPromptViaStdin?: boolean;
+		// Send prompt as raw text via stdin (used on Windows to avoid command-line length limits)
+		sendPromptViaStdinRaw?: boolean;
 		// SSH remote config for running on a remote host
 		sessionSshRemoteConfig?: {
 			enabled: boolean;
@@ -104,6 +109,18 @@ export interface GroomingSshRemoteConfig {
 }
 
 /**
+ * Progress update emitted during grooming operations
+ */
+export interface GroomProgressUpdate {
+	/** Number of data chunks received so far */
+	chunkCount: number;
+	/** Total bytes of response collected so far */
+	bytesReceived: number;
+	/** Elapsed time in ms since grooming started */
+	elapsedMs: number;
+}
+
+/**
  * Options for grooming context
  */
 export interface GroomContextOptions {
@@ -129,6 +146,8 @@ export interface GroomContextOptions {
 	sessionCustomEnvVars?: Record<string, string>;
 	/** Agent-level config values (from agent config store) for override resolution */
 	agentConfigValues?: Record<string, any>;
+	/** Optional callback for progress updates during grooming */
+	onProgress?: (update: GroomProgressUpdate) => void;
 }
 
 /**
@@ -171,6 +190,7 @@ export async function groomContext(
 		sessionCustomArgs,
 		sessionCustomEnvVars,
 		agentConfigValues,
+		onProgress,
 	} = options;
 
 	const groomerSessionId = `groomer-${uuidv4()}`;
@@ -296,6 +316,15 @@ export async function groomContext(
 					totalLength: responseBuffer.length,
 				});
 			}
+
+			// Emit progress update if callback provided
+			if (onProgress) {
+				onProgress({
+					chunkCount,
+					bytesReceived: responseBuffer.length,
+					elapsedMs: Date.now() - startTime,
+				});
+			}
 		};
 
 		const onExit = (...args: unknown[]) => {
@@ -318,7 +347,15 @@ export async function groomContext(
 			cleanup();
 			if (!resolved) {
 				resolved = true;
-				const errorMsg = error instanceof Error ? error.message : String(error);
+				// `agent-error` emits an AgentError plain object (sessionId, type,
+				// message, ...), not a real Error — `String(error)` would yield
+				// "[object Object]". Pull `.message` out when present.
+				const errorMsg =
+					error instanceof Error
+						? error.message
+						: typeof error === 'object' && error !== null && 'message' in error
+							? String((error as { message: unknown }).message)
+							: String(error);
 				logger.error('Grooming error', LOG_CONTEXT, { groomerSessionId, error: errorMsg });
 				reject(new Error(`Grooming error: ${errorMsg}`));
 			}
@@ -328,6 +365,11 @@ export async function groomContext(
 		processManager.on('data', onData);
 		processManager.on('exit', onExit);
 		processManager.on('agent-error', onError);
+
+		// On Windows, grooming prompts often exceed cmd.exe's ~8KB command-line
+		// limit (ENAMETOOLONG on spawn). Route the prompt via stdin instead.
+		// SSH sessions have their own stdin handling (ssh-spawn-wrapper), so skip.
+		const useStdinForPrompt = isWindows() && !sessionSshRemoteConfig?.enabled;
 
 		// Spawn the process in batch mode
 		const spawnResult = processManager.spawn({
@@ -339,6 +381,7 @@ export async function groomContext(
 			prompt: prompt, // Triggers batch mode (no PTY)
 			promptArgs: agent.promptArgs, // For agents using flag-based prompt (e.g., OpenCode -p)
 			noPromptSeparator: agent.noPromptSeparator,
+			sendPromptViaStdinRaw: useStdinForPrompt,
 			// Pass SSH config for remote execution support
 			sessionSshRemoteConfig,
 			// Pass resolved env vars (merged from agent defaults + agent config + session overrides)

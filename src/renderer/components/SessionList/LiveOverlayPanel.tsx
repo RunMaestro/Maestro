@@ -5,6 +5,7 @@ import type { Theme } from '../../types';
 import { safeClipboardWrite } from '../../utils/clipboard';
 
 import type { TunnelStatus } from '../../hooks/remote/useLiveOverlay';
+import { openUrl } from '../../utils/openUrl';
 
 interface LiveOverlayPanelProps {
 	theme: Theme;
@@ -28,6 +29,7 @@ interface LiveOverlayPanelProps {
 	toggleGlobalLive: () => Promise<void>;
 	setLiveOverlayOpen: (open: boolean) => void;
 	restartWebServer: () => Promise<string | null>;
+	restartTunnel: () => Promise<void>;
 }
 
 export const LiveOverlayPanel = memo(function LiveOverlayPanel({
@@ -52,12 +54,30 @@ export const LiveOverlayPanel = memo(function LiveOverlayPanel({
 	toggleGlobalLive,
 	setLiveOverlayOpen,
 	restartWebServer,
+	restartTunnel,
 }: LiveOverlayPanelProps) {
 	const containerRef = useRef<HTMLDivElement>(null);
 	const [isPersistPending, setIsPersistPending] = useState(false);
+	const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
+
 	useEffect(() => {
-		containerRef.current?.focus();
+		const el = containerRef.current;
+		if (!el) return;
+		// Position below the parent (LIVE button wrapper) using fixed positioning
+		const parent = el.parentElement;
+		if (parent) {
+			const rect = parent.getBoundingClientRect();
+			setPosition({ top: rect.bottom, left: rect.left });
+		}
+		el.focus();
 	}, []);
+
+	// Restart web server and tunnel together so URL/QR stay in sync
+	const handleServerRestart = useCallback(async () => {
+		if (!isLiveMode) return;
+		await restartWebServer();
+		await restartTunnel();
+	}, [isLiveMode, restartWebServer, restartTunnel]);
 
 	const handlePersistToggle = useCallback(async () => {
 		setIsPersistPending(true);
@@ -71,8 +91,14 @@ export const LiveOverlayPanel = memo(function LiveOverlayPanel({
 	return (
 		<div
 			ref={containerRef}
-			className="absolute top-full left-0 pt-2 z-50 outline-none"
-			style={{ width: '280px', maxHeight: 'calc(100vh - 120px)' }}
+			className="fixed pt-2 z-50 outline-none"
+			style={{
+				width: '320px',
+				maxHeight: 'calc(100vh - 120px)',
+				top: position ? `${position.top}px` : 0,
+				left: position ? `${position.left}px` : 0,
+				visibility: position ? 'visible' : 'hidden',
+			}}
 			tabIndex={-1}
 			onKeyDown={(e) => {
 				if (tunnelStatus === 'connected') {
@@ -120,8 +146,24 @@ export const LiveOverlayPanel = memo(function LiveOverlayPanel({
 							>
 								Remote Control
 							</div>
+							<div
+								className="text-[9px] mt-0.5"
+								style={{ color: theme.colors.textDim, opacity: 0.7 }}
+							>
+								Uses Cloudflare tunnel for access outside your network
+							</div>
 							{cloudflaredInstalled === false && (
 								<div className="text-[9px] text-yellow-500 mt-1">Install cloudflared to enable</div>
+							)}
+							{tunnelStatus === 'starting' && (
+								<div
+									className="flex items-center gap-1.5 text-[9px] text-green-400 mt-1"
+									role="status"
+									aria-live="polite"
+								>
+									<div className="w-2 h-2 border border-green-400 border-t-transparent rounded-full animate-spin" />
+									<span>Starting tunnel… (can take up to 30s)</span>
+								</div>
 							)}
 						</div>
 
@@ -130,25 +172,30 @@ export const LiveOverlayPanel = memo(function LiveOverlayPanel({
 							type="button"
 							onClick={handleTunnelToggle}
 							disabled={!cloudflaredInstalled || tunnelStatus === 'starting'}
+							aria-busy={tunnelStatus === 'starting'}
 							className={`relative w-10 h-5 rounded-full transition-colors ${
 								tunnelStatus === 'connected'
 									? 'bg-green-500'
-									: cloudflaredInstalled
-										? 'bg-gray-600 hover:bg-gray-500'
-										: 'bg-gray-700 opacity-50 cursor-not-allowed'
+									: tunnelStatus === 'starting'
+										? 'bg-green-500/40 cursor-wait animate-pulse'
+										: cloudflaredInstalled
+											? 'bg-gray-600 hover:bg-gray-500'
+											: 'bg-gray-700 opacity-50 cursor-not-allowed'
 							}`}
 							title={
 								!cloudflaredInstalled
 									? 'cloudflared not installed'
-									: tunnelStatus === 'connected'
-										? 'Disable remote control'
-										: 'Enable remote control'
+									: tunnelStatus === 'starting'
+										? 'Starting tunnel…'
+										: tunnelStatus === 'connected'
+											? 'Disable remote control'
+											: 'Enable remote control'
 							}
 						>
 							<div
 								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
 									tunnelStatus === 'connected' ? 'translate-x-5' : 'translate-x-0.5'
-								}`}
+								} ${tunnelStatus === 'starting' ? 'opacity-0' : ''}`}
 							/>
 							{tunnelStatus === 'starting' && (
 								<div className="absolute inset-0 flex items-center justify-center">
@@ -174,7 +221,7 @@ export const LiveOverlayPanel = memo(function LiveOverlayPanel({
 							<button
 								type="button"
 								onClick={() =>
-									window.maestro.shell.openExternal(
+									openUrl(
 										'https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/'
 									)
 								}
@@ -251,7 +298,7 @@ export const LiveOverlayPanel = memo(function LiveOverlayPanel({
 							onClick={() => {
 								setWebInterfaceUseCustomPort(!webInterfaceUseCustomPort);
 								if (isLiveMode) {
-									setTimeout(() => void restartWebServer(), 100);
+									setTimeout(() => void handleServerRestart(), 100);
 								}
 							}}
 							className={`relative w-10 h-5 rounded-full transition-colors ${
@@ -293,7 +340,7 @@ export const LiveOverlayPanel = memo(function LiveOverlayPanel({
 											setWebInterfaceCustomPort(clampedPort);
 										}
 										if (isLiveMode) {
-											void restartWebServer();
+											void handleServerRestart();
 										}
 									}}
 									onKeyDown={(e) => {
@@ -303,7 +350,7 @@ export const LiveOverlayPanel = memo(function LiveOverlayPanel({
 												setWebInterfaceCustomPort(clampedPort);
 											}
 											if (isLiveMode) {
-												void restartWebServer();
+												void handleServerRestart();
 											}
 											(e.target as HTMLInputElement).blur();
 										}
@@ -362,7 +409,7 @@ export const LiveOverlayPanel = memo(function LiveOverlayPanel({
 							type="button"
 							onClick={() => {
 								const url = activeUrlTab === 'local' ? webInterfaceUrl : tunnelUrl;
-								if (url) window.maestro.shell.openExternal(url);
+								if (url) openUrl(url);
 							}}
 							className="p-1.5 rounded hover:bg-white/10 transition-colors shrink-0"
 							title="Open in Browser"
@@ -470,7 +517,7 @@ export const LiveOverlayPanel = memo(function LiveOverlayPanel({
 						type="button"
 						onClick={() => {
 							const url = activeUrlTab === 'local' ? webInterfaceUrl : tunnelUrl;
-							if (url) window.maestro.shell.openExternal(url);
+							if (url) openUrl(url);
 						}}
 						className="w-full py-1.5 rounded text-[10px] font-medium transition-colors hover:bg-white/10 border"
 						style={{

@@ -15,6 +15,7 @@
  * - theme: Theme updates
  * - custom_commands: Custom AI commands updates
  * - autorun_state: Auto Run batch processing state
+ * - autorun_docs_changed: Auto Run document list changes
  * - user_input: User input from desktop (for web client sync)
  * - session_output: Session output data
  */
@@ -28,7 +29,15 @@ import type {
 	AITabData,
 	SessionBroadcastData,
 	AutoRunState,
+	AutoRunDocument,
 	CliActivity,
+	NotificationEvent,
+	WebSettings,
+	GroupData,
+	GroupChatMessage,
+	GroupChatState,
+	CueActivityEntry,
+	CueSubscriptionInfo,
 } from '../types';
 
 // Re-export types for backwards compatibility
@@ -61,6 +70,8 @@ export type GetWebClientsCallback = () => Map<string, WebClientInfo>;
  */
 export class BroadcastService {
 	private getWebClients: GetWebClientsCallback | null = null;
+	private previousAutoRunStates: Map<string, { running: boolean; completedTasks: number }> =
+		new Map();
 
 	/**
 	 * Set the callback for getting web clients
@@ -101,6 +112,17 @@ export class BroadcastService {
 	}
 
 	/**
+	 * Broadcast a notification event to all connected web clients
+	 */
+	broadcastNotificationEvent(event: NotificationEvent): void {
+		this.broadcastToAll({
+			type: 'notification_event',
+			...event,
+			timestamp: Date.now(),
+		});
+	}
+
+	/**
 	 * Broadcast a session state change to all connected web clients
 	 * Called when any session's state changes (idle, busy, error, connecting)
 	 */
@@ -122,6 +144,25 @@ export class BroadcastService {
 			...additionalData,
 			timestamp: Date.now(),
 		});
+
+		// Trigger notification events on state transitions
+		if (state === 'idle') {
+			this.broadcastNotificationEvent({
+				eventType: 'agent_complete',
+				sessionId,
+				sessionName: additionalData?.name ?? sessionId,
+				message: 'Agent finished processing',
+				severity: 'info',
+			});
+		} else if (state === 'error') {
+			this.broadcastNotificationEvent({
+				eventType: 'agent_error',
+				sessionId,
+				sessionName: additionalData?.name ?? sessionId,
+				message: 'Agent encountered an error',
+				severity: 'error',
+			});
+		}
 	}
 
 	/**
@@ -221,6 +262,30 @@ export class BroadcastService {
 	}
 
 	/**
+	 * Broadcast settings change to all connected web clients
+	 * Called when a setting is modified (from web or desktop)
+	 */
+	broadcastSettingsChanged(settings: WebSettings): void {
+		this.broadcastToAll({
+			type: 'settings_changed',
+			settings,
+			timestamp: Date.now(),
+		});
+	}
+
+	/**
+	 * Broadcast groups change to all connected web clients
+	 * Called when groups are created, renamed, deleted, or sessions are moved
+	 */
+	broadcastGroupsChanged(groups: GroupData[]): void {
+		this.broadcastToAll({
+			type: 'groups_changed',
+			groups,
+			timestamp: Date.now(),
+		});
+	}
+
+	/**
 	 * Broadcast AutoRun state to all connected web clients
 	 * Called when batch processing starts, progresses, or stops
 	 */
@@ -233,6 +298,54 @@ export class BroadcastService {
 			type: 'autorun_state',
 			sessionId,
 			state,
+			timestamp: Date.now(),
+		});
+
+		// Detect transitions for notification events
+		const previous = this.previousAutoRunStates.get(sessionId);
+		if (state) {
+			// Detect autorun_complete: running → not running
+			if (previous?.running && !state.isRunning) {
+				this.broadcastNotificationEvent({
+					eventType: 'autorun_complete',
+					sessionId,
+					sessionName: sessionId,
+					message: `Auto Run finished (${state.completedTasks}/${state.totalTasks} tasks)`,
+					severity: 'info',
+				});
+			}
+
+			// Detect autorun_task_complete: completedTasks increased
+			if (previous && state.completedTasks > previous.completedTasks) {
+				this.broadcastNotificationEvent({
+					eventType: 'autorun_task_complete',
+					sessionId,
+					sessionName: sessionId,
+					message: `Task ${state.completedTasks}/${state.totalTasks} completed`,
+					severity: 'info',
+				});
+			}
+
+			// Update previous state
+			this.previousAutoRunStates.set(sessionId, {
+				running: state.isRunning,
+				completedTasks: state.completedTasks,
+			});
+		} else {
+			// State cleared — remove tracking
+			this.previousAutoRunStates.delete(sessionId);
+		}
+	}
+
+	/**
+	 * Broadcast Auto Run documents changed to all connected web clients
+	 * Called when Auto Run documents are added, removed, or modified
+	 */
+	broadcastAutoRunDocsChanged(sessionId: string, documents: AutoRunDocument[]): void {
+		this.broadcastToAll({
+			type: 'autorun_docs_changed',
+			sessionId,
+			documents,
 			timestamp: Date.now(),
 		});
 	}
@@ -272,6 +385,117 @@ export class BroadcastService {
 		this.broadcastToAll({
 			type: 'session_offline',
 			sessionId,
+			timestamp: Date.now(),
+		});
+	}
+
+	/**
+	 * Broadcast a group chat message to all connected web clients
+	 */
+	broadcastGroupChatMessage(chatId: string, message: GroupChatMessage): void {
+		this.broadcastToAll({
+			type: 'group_chat_message',
+			chatId,
+			message,
+			timestamp: Date.now(),
+		});
+	}
+
+	/**
+	 * Broadcast a group chat state change to all connected web clients
+	 */
+	broadcastGroupChatStateChange(chatId: string, state: Partial<GroupChatState>): void {
+		this.broadcastToAll({
+			type: 'group_chat_state_change',
+			chatId,
+			...state,
+			timestamp: Date.now(),
+		});
+	}
+
+	/**
+	 * Broadcast context operation progress to all connected web clients
+	 */
+	broadcastContextOperationProgress(sessionId: string, operation: string, progress: number): void {
+		this.broadcastToAll({
+			type: 'context_operation_progress',
+			sessionId,
+			operation,
+			progress,
+			timestamp: Date.now(),
+		});
+	}
+
+	/**
+	 * Broadcast context operation completion to all connected web clients
+	 */
+	broadcastContextOperationComplete(sessionId: string, operation: string, success: boolean): void {
+		this.broadcastToAll({
+			type: 'context_operation_complete',
+			sessionId,
+			operation,
+			success,
+			timestamp: Date.now(),
+		});
+	}
+
+	/**
+	 * Broadcast a Cue activity event to all connected web clients
+	 */
+	broadcastCueActivity(entry: CueActivityEntry): void {
+		this.broadcastToAll({
+			type: 'cue_activity_event',
+			entry,
+			timestamp: Date.now(),
+		});
+	}
+
+	/**
+	 * Broadcast a tool execution event for the thinking stream
+	 */
+	broadcastToolEvent(
+		sessionId: string,
+		tabId: string,
+		toolLog: {
+			id: string;
+			timestamp: number;
+			source: 'tool';
+			text: string;
+			metadata?: {
+				toolState?: {
+					name: string;
+					status: 'running' | 'completed' | 'error';
+					input?: Record<string, unknown>;
+				};
+			};
+		}
+	): void {
+		// Only send tool events to clients explicitly subscribed to this session.
+		// Unlike broadcastToSession, this excludes unsubscribed clients (e.g., dashboard/overview)
+		// to avoid unnecessary fan-out of high-volume, potentially sensitive tool data.
+		if (!this.getWebClients) return;
+
+		const data = JSON.stringify({
+			type: 'tool_event',
+			sessionId,
+			tabId,
+			toolLog,
+			timestamp: Date.now(),
+		});
+		for (const client of this.getWebClients().values()) {
+			if (client.socket.readyState === WebSocket.OPEN && client.subscribedSessionId === sessionId) {
+				client.socket.send(data);
+			}
+		}
+	}
+
+	/**
+	 * Broadcast Cue subscriptions changed to all connected web clients
+	 */
+	broadcastCueSubscriptionsChanged(subscriptions: CueSubscriptionInfo[]): void {
+		this.broadcastToAll({
+			type: 'cue_subscriptions_changed',
+			subscriptions,
 			timestamp: Date.now(),
 		});
 	}

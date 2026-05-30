@@ -10,6 +10,10 @@ import type { Session, Group, FocusArea } from '../../types';
 export interface UseKeyboardNavigationDeps {
 	/** All sessions sorted in visual display order */
 	sortedSessions: Session[];
+	/** Sessions in visual navigation order (bookmarks first, then groups, then ungrouped) */
+	navSessions: Session[];
+	/** Number of items in the bookmarks section of navSessions */
+	bookmarkNavSize: number;
 	/** Current selected sidebar index */
 	selectedSidebarIndex: number;
 	/** Setter for selected sidebar index */
@@ -67,6 +71,8 @@ export function useKeyboardNavigation(
 ): UseKeyboardNavigationReturn {
 	const {
 		sortedSessions,
+		navSessions,
+		bookmarkNavSize,
 		selectedSidebarIndex,
 		setSelectedSidebarIndex,
 		activeSessionId,
@@ -84,6 +90,12 @@ export function useKeyboardNavigation(
 	// Use refs for values that change frequently to avoid stale closures
 	const sortedSessionsRef = useRef(sortedSessions);
 	sortedSessionsRef.current = sortedSessions;
+
+	const navSessionsRef = useRef(navSessions);
+	navSessionsRef.current = navSessions;
+
+	const bookmarkNavSizeRef = useRef(bookmarkNavSize);
+	bookmarkNavSizeRef.current = bookmarkNavSize;
 
 	const selectedSidebarIndexRef = useRef(selectedSidebarIndex);
 	selectedSidebarIndexRef.current = selectedSidebarIndex;
@@ -104,10 +116,12 @@ export function useKeyboardNavigation(
 	 */
 	const handleSidebarNavigation = useCallback(
 		(e: KeyboardEvent): boolean => {
-			const sessions = sortedSessionsRef.current;
+			// Use navSessions for navigation — matches visual order (bookmarks first, then groups, then ungrouped)
+			const sessions = navSessionsRef.current;
 			const currentGroups = groupsRef.current;
 			const currentIndex = selectedSidebarIndexRef.current;
 			const isBookmarksCollapsed = bookmarksCollapsedRef.current;
+			const bmNavSize = bookmarkNavSizeRef.current;
 			const focus = activeFocusRef.current;
 
 			// Only handle when sidebar has focus
@@ -137,17 +151,19 @@ export function useKeyboardNavigation(
 			if (sessions.length === 0) return true;
 
 			const currentSession = sessions[currentIndex];
+			// Whether current position is in the bookmarks section of navSessions
+			const inBookmarksSection = currentIndex < bmNavSize;
 
 			// ArrowLeft: Collapse the current group or bookmarks section
 			if (e.key === 'ArrowLeft' && currentSession) {
-				// Check if session is bookmarked and bookmarks section is expanded
-				if (currentSession.bookmarked && !isBookmarksCollapsed) {
+				// Only collapse bookmarks if we're actually in the bookmarks section
+				if (inBookmarksSection && currentSession.bookmarked && !isBookmarksCollapsed) {
 					setBookmarksCollapsed(true);
 					return true;
 				}
 
-				// Check if session is in a group
-				if (currentSession.groupId) {
+				// Check if session is in a group (only when in group section, not bookmarks)
+				if (!inBookmarksSection && currentSession.groupId) {
 					const currentGroup = currentGroups.find((g) => g.id === currentSession.groupId);
 					if (currentGroup && !currentGroup.collapsed) {
 						setGroups((prev) =>
@@ -161,14 +177,14 @@ export function useKeyboardNavigation(
 
 			// ArrowRight: Expand the current group or bookmarks section (if collapsed)
 			if (e.key === 'ArrowRight' && currentSession) {
-				// Check if session is bookmarked and bookmarks section is collapsed
-				if (currentSession.bookmarked && isBookmarksCollapsed) {
+				// Only expand bookmarks if we're in the bookmarks section
+				if (inBookmarksSection && currentSession.bookmarked && isBookmarksCollapsed) {
 					setBookmarksCollapsed(false);
 					return true;
 				}
 
-				// Check if session is in a collapsed group
-				if (currentSession.groupId) {
+				// Check if session is in a collapsed group (only when in group section)
+				if (!inBookmarksSection && currentSession.groupId) {
 					const currentGroup = currentGroups.find((g) => g.id === currentSession.groupId);
 					if (currentGroup && currentGroup.collapsed) {
 						setGroups((prev) =>
@@ -181,7 +197,8 @@ export function useKeyboardNavigation(
 			}
 
 			// Space: Close the current group and jump to nearest visible session
-			if (e.key === ' ' && currentSession?.groupId) {
+			// Only applies when in the group section (not bookmarks)
+			if (e.key === ' ' && !inBookmarksSection && currentSession?.groupId) {
 				const currentGroup = currentGroups.find((g) => g.id === currentSession.groupId);
 				if (currentGroup && !currentGroup.collapsed) {
 					// Collapse the group
@@ -190,39 +207,37 @@ export function useKeyboardNavigation(
 					);
 
 					// Helper to check if a session will be visible after collapse
-					const willBeVisible = (s: Session) => {
+					const willBeVisible = (idx: number, s: Session) => {
+						// Items in bookmarks section: visible if bookmarks expanded
+						if (idx < bmNavSize) return !isBookmarksCollapsed;
 						if (s.groupId === currentGroup.id) return false; // In the group being collapsed
 						if (!s.groupId) return true; // Ungrouped sessions are always visible
 						const g = currentGroups.find((grp) => grp.id === s.groupId);
 						return g && !g.collapsed; // In an expanded group
 					};
 
-					// Find current position in sortedSessions
-					const sessionIndex = sessions.findIndex((s) => s.id === currentSession.id);
-
 					// First, look BELOW (after) the current position
-					let nextVisible: Session | undefined;
-					for (let i = sessionIndex + 1; i < sessions.length; i++) {
-						if (willBeVisible(sessions[i])) {
-							nextVisible = sessions[i];
+					let nextVisible: { session: Session; index: number } | undefined;
+					for (let i = currentIndex + 1; i < sessions.length; i++) {
+						if (willBeVisible(i, sessions[i])) {
+							nextVisible = { session: sessions[i], index: i };
 							break;
 						}
 					}
 
 					// If nothing below, look ABOVE (before) the current position
 					if (!nextVisible) {
-						for (let i = sessionIndex - 1; i >= 0; i--) {
-							if (willBeVisible(sessions[i])) {
-								nextVisible = sessions[i];
+						for (let i = currentIndex - 1; i >= 0; i--) {
+							if (willBeVisible(i, sessions[i])) {
+								nextVisible = { session: sessions[i], index: i };
 								break;
 							}
 						}
 					}
 
 					if (nextVisible) {
-						const newIndex = sessions.findIndex((s) => s.id === nextVisible!.id);
-						setSelectedSidebarIndex(newIndex);
-						setActiveSessionId(nextVisible.id);
+						setSelectedSidebarIndex(nextVisible.index);
+						setActiveSessionId(nextVisible.session.id);
 					}
 					return true;
 				}
@@ -232,45 +247,61 @@ export function useKeyboardNavigation(
 			if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
 				const totalSessions = sessions.length;
 
-				// Helper to get all sessions in a group
+				// Helper to get all sessions in a group (within navSessions, after bookmarks section)
 				const getGroupSessions = (groupId: string) => {
-					return sessions.filter((s) => s.groupId === groupId);
+					return sessions
+						.map((s, i) => ({ session: s, index: i }))
+						.filter((item) => item.index >= bmNavSize && item.session.groupId === groupId);
 				};
 
-				// Find the next session, skipping visible sessions in collapsed groups
-				// but stopping when we hit a NEW collapsed group (to expand it)
+				// Find the next session, skipping collapsed sections
 				let nextIndex = currentIndex;
 				let foundCollapsedGroup: string | null = null;
+				let foundCollapsedBookmarks = false;
 
 				if (e.key === 'ArrowDown') {
-					// Moving down
 					for (let i = 1; i <= totalSessions; i++) {
 						const candidateIndex = (currentIndex + i) % totalSessions;
 						const candidate = sessions[candidateIndex];
 
+						// Check if candidate is in bookmarks section
+						if (candidateIndex < bmNavSize) {
+							if (!isBookmarksCollapsed) {
+								// Bookmarks expanded — can navigate to it
+								nextIndex = candidateIndex;
+								break;
+							}
+							// Bookmarks collapsed — auto-expand if coming from outside bookmarks
+							if (currentIndex >= bmNavSize) {
+								foundCollapsedBookmarks = true;
+								nextIndex = candidateIndex;
+								break;
+							}
+							// Inside collapsed bookmarks — skip
+							continue;
+						}
+
 						if (!candidate.groupId) {
-							// Ungrouped session - can navigate to it
 							nextIndex = candidateIndex;
 							break;
 						}
 
 						const candidateGroup = currentGroups.find((g) => g.id === candidate.groupId);
 						if (!candidateGroup?.collapsed) {
-							// Session in expanded group - can navigate to it
 							nextIndex = candidateIndex;
 							break;
 						}
 
-						// Session is in a collapsed group
-						// Check if this is a different group than we're currently in
-						if (candidate.groupId !== currentSession?.groupId) {
-							// We've hit a collapsed group - expand it and go to FIRST item
+						// Session is in a collapsed group — different group than current?
+						if (candidate.groupId !== currentSession?.groupId || inBookmarksSection) {
 							foundCollapsedGroup = candidate.groupId;
 							const groupSessions = getGroupSessions(candidate.groupId);
-							nextIndex = sessions.findIndex((s) => s.id === groupSessions[0]?.id);
+							if (groupSessions.length > 0) {
+								nextIndex = groupSessions[0].index;
+							}
 							break;
 						}
-						// Same collapsed group, keep looking (shouldn't happen if current is visible)
+						// Same collapsed group, keep looking
 					}
 				} else {
 					// Moving up
@@ -278,35 +309,48 @@ export function useKeyboardNavigation(
 						const candidateIndex = (currentIndex - i + totalSessions) % totalSessions;
 						const candidate = sessions[candidateIndex];
 
+						// Check if candidate is in bookmarks section
+						if (candidateIndex < bmNavSize) {
+							if (!isBookmarksCollapsed) {
+								nextIndex = candidateIndex;
+								break;
+							}
+							if (currentIndex >= bmNavSize) {
+								foundCollapsedBookmarks = true;
+								// Go to last bookmark when moving up
+								nextIndex = bmNavSize - 1;
+								break;
+							}
+							continue;
+						}
+
 						if (!candidate.groupId) {
-							// Ungrouped session - can navigate to it
 							nextIndex = candidateIndex;
 							break;
 						}
 
 						const candidateGroup = currentGroups.find((g) => g.id === candidate.groupId);
 						if (!candidateGroup?.collapsed) {
-							// Session in expanded group - can navigate to it
 							nextIndex = candidateIndex;
 							break;
 						}
 
-						// Session is in a collapsed group
-						// Check if this is a different group than we're currently in
-						if (candidate.groupId !== currentSession?.groupId) {
-							// We've hit a collapsed group - expand it and go to LAST item
+						if (candidate.groupId !== currentSession?.groupId || inBookmarksSection) {
 							foundCollapsedGroup = candidate.groupId;
 							const groupSessions = getGroupSessions(candidate.groupId);
-							nextIndex = sessions.findIndex(
-								(s) => s.id === groupSessions[groupSessions.length - 1]?.id
-							);
+							if (groupSessions.length > 0) {
+								nextIndex = groupSessions[groupSessions.length - 1].index;
+							}
 							break;
 						}
 						// Same collapsed group, keep looking
 					}
 				}
 
-				// If we found a collapsed group, expand it
+				// Expand collapsed sections we navigated into
+				if (foundCollapsedBookmarks) {
+					setBookmarksCollapsed(false);
+				}
 				if (foundCollapsedGroup) {
 					setGroups((prev) =>
 						prev.map((g) => (g.id === foundCollapsedGroup ? { ...g, collapsed: false } : g))
@@ -382,7 +426,7 @@ export function useKeyboardNavigation(
 			}
 
 			e.preventDefault();
-			const sessions = sortedSessionsRef.current;
+			const sessions = navSessionsRef.current;
 			const currentIndex = selectedSidebarIndexRef.current;
 
 			if (sessions[currentIndex]) {
@@ -412,15 +456,16 @@ export function useKeyboardNavigation(
 	);
 
 	// Sync selectedSidebarIndex with activeSessionId
-	// IMPORTANT: Only sync when activeSessionId changes, NOT when sortedSessions changes
+	// IMPORTANT: Only sync when activeSessionId changes, NOT when navSessions changes
 	// This allows keyboard navigation to move the selector independently of the active session
 	// The sync happens when user clicks a session or presses Enter to activate
+	// Uses navSessions so the index matches the visual navigation order (bookmarks first)
 	useEffect(() => {
-		const currentIndex = sortedSessions.findIndex((s) => s.id === activeSessionId);
+		const currentIndex = navSessions.findIndex((s) => s.id === activeSessionId);
 		if (currentIndex !== -1) {
 			setSelectedSidebarIndex(currentIndex);
 		}
-	}, [activeSessionId]); // Intentionally excluding sortedSessions - see comment above
+	}, [activeSessionId]); // Intentionally excluding navSessions - see comment above
 
 	return {
 		handleSidebarNavigation,

@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
 	extractTabContext,
 	formatLogsForGrooming,
+	formatLogsForClipboard,
+	hasThinkingEntries,
 	parseGroomedOutput,
 	estimateTokenCount,
 	estimateTextTokenCount,
@@ -11,6 +13,13 @@ import {
 } from '../../../renderer/utils/contextExtractor';
 import type { AITab, LogEntry, Session } from '../../../renderer/types';
 import type { ContextSource } from '../../../renderer/types/contextMerge';
+import { createMockAITab } from '../../helpers/mockTab';
+import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
+
+// Thin wrapper: context extraction tests assert against the default id
+// 'session-123', so preserve that default via the shared factory.
+const createMockSession = (overrides: Partial<Session> = {}): Session =>
+	baseCreateMockSession({ id: 'session-123', ...overrides });
 
 // Mock window.maestro for extractStoredSessionContext tests
 const mockAgentSessionsRead = vi.fn();
@@ -22,53 +31,14 @@ vi.stubGlobal('window', {
 	},
 });
 
-// Helper to create a mock session
-function createMockSession(overrides: Partial<Session> = {}): Session {
-	return {
-		id: 'session-123',
-		name: 'Test Session',
-		toolType: 'claude-code',
-		state: 'idle',
-		cwd: '/test/project',
-		fullPath: '/test/project',
-		projectRoot: '/test/project',
-		aiLogs: [],
-		shellLogs: [],
-		workLog: [],
-		contextUsage: 0,
-		inputMode: 'ai',
-		aiPid: 0,
-		terminalPid: 0,
-		port: 0,
-		isLive: false,
-		changedFiles: [],
-		isGitRepo: true,
-		fileTree: [],
-		fileExplorerExpanded: [],
-		fileExplorerScrollPos: 0,
-		executionQueue: [],
-		activeTimeMs: 0,
-		aiTabs: [],
-		activeTabId: '',
-		closedTabHistory: [],
-		...overrides,
-	} as Session;
-}
-
 // Helper to create a mock tab
 function createMockTab(overrides: Partial<AITab> = {}): AITab {
-	return {
+	return createMockAITab({
 		id: 'tab-123',
 		agentSessionId: 'agent-session-456',
 		name: 'Test Tab',
-		starred: false,
-		logs: [],
-		inputValue: '',
-		stagedImages: [],
-		createdAt: Date.now(),
-		state: 'idle',
 		...overrides,
-	};
+	});
 }
 
 // Helper to create a mock log entry
@@ -149,6 +119,118 @@ describe('extractTabContext', () => {
 		context.logs.push(createMockLog({ text: 'Added' }));
 		expect(originalLogs).toHaveLength(1);
 		expect(context.logs).toHaveLength(2);
+	});
+});
+
+describe('formatLogsForClipboard', () => {
+	it('includes user and assistant entries only by default', () => {
+		const logs: LogEntry[] = [
+			createMockLog({ source: 'user', text: 'How do I implement X?' }),
+			createMockLog({ source: 'thinking', text: 'The user wants...' }),
+			createMockLog({ source: 'ai', text: 'Use the foo helper.' }),
+			createMockLog({ source: 'tool', text: 'Reading file...' }),
+			createMockLog({ source: 'system', text: 'system prompt' }),
+		];
+
+		const result = formatLogsForClipboard(logs);
+
+		expect(result).toBe('USER:\nHow do I implement X?\n\nASSISTANT:\nUse the foo helper.');
+		expect(result).not.toContain('THINKING');
+		expect(result).not.toContain('The user wants');
+	});
+
+	it('treats ai and stdout sources as ASSISTANT entries', () => {
+		const logs: LogEntry[] = [
+			createMockLog({ source: 'ai', text: 'first response' }),
+			createMockLog({ source: 'stdout', text: 'second response' }),
+		];
+
+		const result = formatLogsForClipboard(logs);
+
+		expect(result).toBe('ASSISTANT:\nfirst response\n\nASSISTANT:\nsecond response');
+	});
+
+	it('includes THINKING entries when includeThinking is true', () => {
+		const logs: LogEntry[] = [
+			createMockLog({ source: 'user', text: 'Why?' }),
+			createMockLog({ source: 'thinking', text: 'Considering the options...' }),
+			createMockLog({ source: 'ai', text: 'Because Y.' }),
+		];
+
+		const result = formatLogsForClipboard(logs, { includeThinking: true });
+
+		expect(result).toBe(
+			'USER:\nWhy?\n\nTHINKING:\nConsidering the options...\n\nASSISTANT:\nBecause Y.'
+		);
+	});
+
+	it('still excludes tool/system/stderr entries when includeThinking is true', () => {
+		const logs: LogEntry[] = [
+			createMockLog({ source: 'user', text: 'hi' }),
+			createMockLog({ source: 'thinking', text: 'reasoning' }),
+			createMockLog({ source: 'tool', text: 'tool call' }),
+			createMockLog({ source: 'stderr', text: 'stderr noise' }),
+			createMockLog({ source: 'system', text: 'system note' }),
+			createMockLog({ source: 'error', text: 'failure' }),
+			createMockLog({ source: 'ai', text: 'response' }),
+		];
+
+		const result = formatLogsForClipboard(logs, { includeThinking: true });
+
+		expect(result).toBe('USER:\nhi\n\nTHINKING:\nreasoning\n\nASSISTANT:\nresponse');
+	});
+
+	it('skips empty entries even when their source is included', () => {
+		const logs: LogEntry[] = [
+			createMockLog({ source: 'user', text: 'real message' }),
+			createMockLog({ source: 'thinking', text: '   ' }),
+			createMockLog({ source: 'thinking', text: '' }),
+			createMockLog({ source: 'ai', text: 'reply' }),
+		];
+
+		const result = formatLogsForClipboard(logs, { includeThinking: true });
+
+		expect(result).toBe('USER:\nreal message\n\nASSISTANT:\nreply');
+	});
+
+	it('returns an empty string when no entries qualify', () => {
+		const logs: LogEntry[] = [
+			createMockLog({ source: 'system', text: 'noise' }),
+			createMockLog({ source: 'tool', text: 'tool call' }),
+		];
+
+		expect(formatLogsForClipboard(logs)).toBe('');
+	});
+});
+
+describe('hasThinkingEntries', () => {
+	it('returns true when any entry has source "thinking" and non-empty text', () => {
+		const logs: LogEntry[] = [
+			createMockLog({ source: 'user', text: 'hi' }),
+			createMockLog({ source: 'thinking', text: 'reasoning' }),
+		];
+		expect(hasThinkingEntries(logs)).toBe(true);
+	});
+
+	it('returns false when no thinking entries exist', () => {
+		const logs: LogEntry[] = [
+			createMockLog({ source: 'user', text: 'hi' }),
+			createMockLog({ source: 'ai', text: 'hi back' }),
+		];
+		expect(hasThinkingEntries(logs)).toBe(false);
+	});
+
+	it('returns false when thinking entries are blank', () => {
+		const logs: LogEntry[] = [
+			createMockLog({ source: 'thinking', text: '' }),
+			createMockLog({ source: 'thinking', text: '   ' }),
+		];
+		expect(hasThinkingEntries(logs)).toBe(false);
+	});
+
+	it('returns false for undefined and null inputs', () => {
+		expect(hasThinkingEntries(undefined)).toBe(false);
+		expect(hasThinkingEntries(null)).toBe(false);
 	});
 });
 

@@ -9,20 +9,20 @@ import {
 	useModalActions,
 	selectModalOpen,
 	selectModalData,
-	selectModal,
 	getModalActions,
 	type ModalId,
 	type SettingsModalData,
 	type ConfirmModalData,
 	type RenameInstanceModalData,
 	type LightboxData,
+	type CueYamlEditorData,
 } from '../../../renderer/stores/modalStore';
 import type { Session } from '../../../renderer/types';
 
 describe('modalStore', () => {
 	beforeEach(() => {
 		// Reset store to initial state before each test
-		useModalStore.setState({ modals: new Map() });
+		useModalStore.setState({ modals: new Map(), promptComposerFullscreen: false });
 	});
 
 	describe('initial state', () => {
@@ -299,8 +299,8 @@ describe('modalStore', () => {
 			expect(result.current).toEqual({ tab: 'theme' });
 		});
 
-		it('provides full entry via selectModal', () => {
-			const { result } = renderHook(() => useModalStore(selectModal('settings')));
+		it('provides full entry via modals map', () => {
+			const { result } = renderHook(() => useModalStore((s) => s.modals.get('settings')));
 
 			expect(result.current).toBeUndefined();
 
@@ -410,6 +410,7 @@ describe('modalStore', () => {
 				'renameTab',
 				'renameGroup',
 				'agentSessions',
+				'memoryViewer',
 				'queueBrowser',
 				'batchRunner',
 				'autoRunSetup',
@@ -447,6 +448,8 @@ describe('modalStore', () => {
 				'symphony',
 				'updateCheck',
 				'windowsWarning',
+				'cueModal',
+				'cueYamlEditor',
 			];
 
 			// Open and close each to verify they all work
@@ -1069,7 +1072,10 @@ describe('modalStore', () => {
 			});
 
 			expect(result.current.settingsModalOpen).toBe(false);
-			expect(result.current.settingsTab).toBe('general'); // Falls back to default
+			// settingsTab is undefined when no explicit tab was requested —
+			// SettingsModal restores the last in-session tab and only falls
+			// back to 'general' on first open.
+			expect(result.current.settingsTab).toBeUndefined();
 		});
 
 		it('provides all action methods from getModalActions()', () => {
@@ -1118,6 +1124,95 @@ describe('modalStore', () => {
 			});
 
 			expect(result.current.quitConfirmModalOpen).toBe(false);
+		});
+	});
+
+	describe('integration: cue YAML editor modal flow', () => {
+		it('openCueYamlEditor opens modal with session data', () => {
+			const actions = getModalActions();
+
+			actions.openCueYamlEditor('sess-123', '/projects/my-app');
+
+			const state = useModalStore.getState();
+			expect(state.isOpen('cueYamlEditor')).toBe(true);
+
+			const data = state.getData('cueYamlEditor') as CueYamlEditorData;
+			expect(data.sessionId).toBe('sess-123');
+			expect(data.projectRoot).toBe('/projects/my-app');
+		});
+
+		it('closeCueYamlEditor closes modal and clears data', () => {
+			const actions = getModalActions();
+
+			actions.openCueYamlEditor('sess-123', '/projects/my-app');
+			actions.closeCueYamlEditor();
+
+			const state = useModalStore.getState();
+			expect(state.isOpen('cueYamlEditor')).toBe(false);
+			expect(state.getData('cueYamlEditor')).toBeUndefined();
+		});
+
+		it('useModalActions exposes cueYamlEditor reactive state', () => {
+			const { result } = renderHook(() => useModalActions());
+
+			expect(result.current.cueYamlEditorOpen).toBe(false);
+			expect(result.current.cueYamlEditorSessionId).toBeNull();
+			expect(result.current.cueYamlEditorProjectRoot).toBeNull();
+
+			act(() => {
+				result.current.openCueYamlEditor('sess-456', '/projects/other');
+			});
+
+			expect(result.current.cueYamlEditorOpen).toBe(true);
+			expect(result.current.cueYamlEditorSessionId).toBe('sess-456');
+			expect(result.current.cueYamlEditorProjectRoot).toBe('/projects/other');
+
+			act(() => {
+				result.current.closeCueYamlEditor();
+			});
+
+			expect(result.current.cueYamlEditorOpen).toBe(false);
+			expect(result.current.cueYamlEditorSessionId).toBeNull();
+			expect(result.current.cueYamlEditorProjectRoot).toBeNull();
+		});
+	});
+
+	describe('Prompt Composer full-screen cycle', () => {
+		it('togglePromptComposerFullscreen flips the persisted flag', () => {
+			const store = useModalStore.getState();
+			expect(store.promptComposerFullscreen).toBe(false);
+
+			store.togglePromptComposerFullscreen();
+			expect(useModalStore.getState().promptComposerFullscreen).toBe(true);
+
+			useModalStore.getState().togglePromptComposerFullscreen();
+			expect(useModalStore.getState().promptComposerFullscreen).toBe(false);
+		});
+
+		it('cyclePromptComposer opens the composer (windowed) when it is closed', () => {
+			const store = useModalStore.getState();
+			expect(store.isOpen('promptComposer')).toBe(false);
+
+			store.cyclePromptComposer();
+
+			expect(useModalStore.getState().isOpen('promptComposer')).toBe(true);
+			// Opening must not change the size — it stays in its last-used mode.
+			expect(useModalStore.getState().promptComposerFullscreen).toBe(false);
+		});
+
+		it('cyclePromptComposer toggles size while the composer stays open', () => {
+			const store = useModalStore.getState();
+			store.openModal('promptComposer');
+
+			// First press while open → full-screen ("expanded-expanded").
+			useModalStore.getState().cyclePromptComposer();
+			expect(useModalStore.getState().isOpen('promptComposer')).toBe(true);
+			expect(useModalStore.getState().promptComposerFullscreen).toBe(true);
+
+			// Next press → back to windowed ("contracted-expanded"), still open.
+			useModalStore.getState().cyclePromptComposer();
+			expect(useModalStore.getState().isOpen('promptComposer')).toBe(true);
+			expect(useModalStore.getState().promptComposerFullscreen).toBe(false);
 		});
 	});
 });

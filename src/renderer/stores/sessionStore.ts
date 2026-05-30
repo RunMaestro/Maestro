@@ -14,9 +14,10 @@
  */
 
 import { create } from 'zustand';
-import type { Session, Group, LogEntry } from '../types';
+import type { Session, Group, LogEntry, AITab } from '../types';
 import { generateId } from '../utils/ids';
 import { getActiveTab } from '../utils/tabHelpers';
+import { logger } from '../utils/logger';
 
 // ============================================================================
 // Store Types
@@ -33,6 +34,7 @@ export interface SessionStoreState {
 	// Initialization
 	sessionsLoaded: boolean;
 	initialLoadComplete: boolean;
+	initialFileTreeReady: boolean;
 
 	// Worktree tracking (prevents re-discovery of manually removed worktrees)
 	removedWorktreePaths: Set<string>;
@@ -71,6 +73,12 @@ export interface SessionStoreActions {
 	setActiveSessionId: (id: string) => void;
 
 	/**
+	 * Set the active session ID from persisted state on startup.
+	 * Updates local state only — does not write back to disk.
+	 */
+	hydrateActiveSessionId: (id: string) => void;
+
+	/**
 	 * Set the active session ID without resetting cycle position.
 	 * Used internally by session cycling (Cmd+J/K).
 	 */
@@ -99,6 +107,7 @@ export interface SessionStoreActions {
 
 	setSessionsLoaded: (loaded: boolean | ((prev: boolean) => boolean)) => void;
 	setInitialLoadComplete: (complete: boolean | ((prev: boolean) => boolean)) => void;
+	setInitialFileTreeReady: (ready: boolean | ((prev: boolean) => boolean)) => void;
 
 	// === Bookmarks ===
 
@@ -155,6 +164,7 @@ export const useSessionStore = create<SessionStore>()((set) => ({
 	activeSessionId: '',
 	sessionsLoaded: false,
 	initialLoadComplete: false,
+	initialFileTreeReady: false,
 	removedWorktreePaths: new Set(),
 	cyclePosition: -1,
 
@@ -195,7 +205,16 @@ export const useSessionStore = create<SessionStore>()((set) => ({
 		}),
 
 	// Active session
-	setActiveSessionId: (id) => set({ activeSessionId: id, cyclePosition: -1 }),
+	setActiveSessionId: (id) => {
+		set({ activeSessionId: id, cyclePosition: -1 });
+		// Fire-and-forget: persist to disk for restore on next launch.
+		// Not awaited — UI state must update synchronously; if the write
+		// fails the only consequence is the session won't be pre-selected
+		// on next launch (falls back to first session).
+		window.maestro?.sessions?.setActiveSessionId(id);
+	},
+
+	hydrateActiveSessionId: (id) => set({ activeSessionId: id, cyclePosition: -1 }),
 
 	setActiveSessionIdInternal: (v) =>
 		set((s) => ({ activeSessionId: resolve(v, s.activeSessionId) })),
@@ -240,6 +259,8 @@ export const useSessionStore = create<SessionStore>()((set) => ({
 	setSessionsLoaded: (v) => set((s) => ({ sessionsLoaded: resolve(v, s.sessionsLoaded) })),
 	setInitialLoadComplete: (v) =>
 		set((s) => ({ initialLoadComplete: resolve(v, s.initialLoadComplete) })),
+	setInitialFileTreeReady: (v) =>
+		set((s) => ({ initialFileTreeReady: resolve(v, s.initialFileTreeReady) })),
 
 	// Bookmarks
 	toggleBookmark: (sessionId) =>
@@ -287,7 +308,7 @@ export const useSessionStore = create<SessionStore>()((set) => ({
 					: getActiveTab(session);
 
 				if (!targetTab) {
-					console.error(
+					logger.error(
 						'[addLogToTab] No target tab found - session has no aiTabs, this should not happen'
 					);
 					return session;
@@ -330,69 +351,6 @@ export const selectSessionById =
 	(state: SessionStore): Session | undefined =>
 		state.sessions.find((s) => s.id === id);
 
-/**
- * Select all bookmarked sessions.
- *
- * @example
- * const bookmarked = useSessionStore(selectBookmarkedSessions);
- */
-export const selectBookmarkedSessions = (state: SessionStore): Session[] =>
-	state.sessions.filter((s) => s.bookmarked);
-
-/**
- * Select sessions belonging to a specific group.
- *
- * @example
- * const groupSessions = useSessionStore(selectSessionsByGroup('group-1'));
- */
-export const selectSessionsByGroup =
-	(groupId: string) =>
-	(state: SessionStore): Session[] =>
-		state.sessions.filter((s) => s.groupId === groupId);
-
-/**
- * Select ungrouped sessions (no groupId set).
- *
- * @example
- * const ungrouped = useSessionStore(selectUngroupedSessions);
- */
-export const selectUngroupedSessions = (state: SessionStore): Session[] =>
-	state.sessions.filter((s) => !s.groupId && !s.parentSessionId);
-
-/**
- * Select a group by ID.
- *
- * @example
- * const group = useSessionStore(selectGroupById('group-1'));
- */
-export const selectGroupById =
-	(id: string) =>
-	(state: SessionStore): Group | undefined =>
-		state.groups.find((g) => g.id === id);
-
-/**
- * Select session count.
- *
- * @example
- * const count = useSessionStore(selectSessionCount);
- */
-export const selectSessionCount = (state: SessionStore): number => state.sessions.length;
-
-/**
- * Select whether initial load is complete (sessions loaded from disk).
- *
- * @example
- * const ready = useSessionStore(selectIsReady);
- */
-export const selectIsReady = (state: SessionStore): boolean =>
-	state.sessionsLoaded && state.initialLoadComplete;
-
-/**
- * Select whether any session is currently busy (agent actively processing).
- *
- * @example
- * const anyBusy = useSessionStore(selectIsAnySessionBusy);
- */
 export const selectIsAnySessionBusy = (state: SessionStore): boolean =>
 	state.sessions.some((s) => s.state === 'busy');
 
@@ -401,44 +359,42 @@ export const selectIsAnySessionBusy = (state: SessionStore): boolean =>
 // ============================================================================
 
 /**
- * Get current session store state outside React.
- * Replaces sessionsRef.current, groupsRef.current, activeSessionIdRef.current.
+ * Update a session by ID using a mapper function.
+ * Convenience helper for call sites that need a full session → session transform
+ * rather than just a Partial<Session> update.
+ *
+ * Operates directly on the store outside of React — safe to call from callbacks.
  *
  * @example
- * const { sessions, activeSessionId } = getSessionState();
+ * updateSessionWith(activeSession.id, (s) => ({ ...s, batchRunnerPrompt: prompt }));
  */
-export function getSessionState() {
-	return useSessionStore.getState();
+export function updateSessionWith(sessionId: string, updater: (session: Session) => Session): void {
+	useSessionStore
+		.getState()
+		.setSessions((prev: Session[]) => prev.map((s) => (s.id === sessionId ? updater(s) : s)));
 }
 
 /**
- * Get stable action references outside React.
- * These never change, so they're safe to call from anywhere.
+ * Update a specific AI tab within a session using a mapper function.
+ * Convenience helper for tab-level updates that need a full tab → tab transform.
+ *
+ * Operates directly on the store outside of React — safe to call from callbacks.
  *
  * @example
- * const { setSessions, setActiveSessionId } = getSessionActions();
+ * updateAiTab(sessionId, tabId, (tab) => ({ ...tab, autoSendOnActivate: false }));
  */
-export function getSessionActions() {
-	const state = useSessionStore.getState();
-	return {
-		setSessions: state.setSessions,
-		addSession: state.addSession,
-		removeSession: state.removeSession,
-		updateSession: state.updateSession,
-		setActiveSessionId: state.setActiveSessionId,
-		setActiveSessionIdInternal: state.setActiveSessionIdInternal,
-		setGroups: state.setGroups,
-		addGroup: state.addGroup,
-		removeGroup: state.removeGroup,
-		updateGroup: state.updateGroup,
-		toggleGroupCollapsed: state.toggleGroupCollapsed,
-		setSessionsLoaded: state.setSessionsLoaded,
-		setInitialLoadComplete: state.setInitialLoadComplete,
-		toggleBookmark: state.toggleBookmark,
-		addRemovedWorktreePath: state.addRemovedWorktreePath,
-		setRemovedWorktreePaths: state.setRemovedWorktreePaths,
-		setCyclePosition: state.setCyclePosition,
-		resetCyclePosition: state.resetCyclePosition,
-		addLogToTab: state.addLogToTab,
-	};
+export function updateAiTab(
+	sessionId: string,
+	tabId: string,
+	updater: (tab: AITab) => AITab
+): void {
+	useSessionStore.getState().setSessions((prev: Session[]) =>
+		prev.map((s) => {
+			if (s.id !== sessionId) return s;
+			return {
+				...s,
+				aiTabs: s.aiTabs.map((t) => (t.id === tabId ? updater(t) : t)),
+			};
+		})
+	);
 }

@@ -6,14 +6,18 @@
  * and allow parsers to use it without importing node-pty dependencies.
  */
 
-import type { ToolType } from '../../shared/types';
+import type { ToolType, UsageStats } from '../../shared/types';
+export type { UsageStats } from '../../shared/types';
 import {
-	DEFAULT_CONTEXT_WINDOWS,
 	COMBINED_CONTEXT_AGENTS,
 	FALLBACK_CONTEXT_WINDOW,
+	getContextWindowForAgent,
 } from '../../shared/agentConstants';
+import { capabilitySnapshots } from '../agents/capability-snapshot';
 
-// Re-export for consumers that import from this module
+// Re-export for consumers that import from this module. The local import
+// was dropped on migration to `getContextWindowForAgent` — the re-export
+// resolves directly from the source module without needing a binding.
 export { DEFAULT_CONTEXT_WINDOWS } from '../../shared/agentConstants';
 
 /**
@@ -27,23 +31,7 @@ export interface ModelStats {
 	contextWindow?: number;
 }
 
-/**
- * Usage statistics extracted from model usage data
- */
-export interface UsageStats {
-	inputTokens: number;
-	outputTokens: number;
-	cacheReadInputTokens: number;
-	cacheCreationInputTokens: number;
-	totalCostUsd: number;
-	contextWindow: number;
-	/**
-	 * Reasoning/thinking tokens (separate from outputTokens)
-	 * Some models like OpenAI o3/o4-mini report reasoning tokens separately.
-	 * These are already included in outputTokens but tracked separately for UI display.
-	 */
-	reasoningTokens?: number;
-}
+// UsageStats imported and re-exported from shared/types above
 
 /**
  * Calculate total context tokens based on agent-specific semantics.
@@ -110,17 +98,27 @@ export function estimateContextUsage(
 		| 'cacheCreationInputTokens'
 		| 'contextWindow'
 	>,
-	agentId?: ToolType
+	agentId?: ToolType,
+	/**
+	 * SSH remote UUID when the session is running against a remote host.
+	 * Lets the snapshot lookup hit the `agentId:remoteId` key — otherwise
+	 * remote sessions fall back to the local snapshot and then the static
+	 * table, which can mis-size the context window when the remote runs
+	 * a different model.
+	 */
+	sshRemoteId?: string
 ): number | null {
 	// Calculate total context using agent-specific semantics
 	const totalContextTokens = calculateContextTokens(stats, agentId);
 
-	// Determine effective context window
+	// Determine effective context window: runtime-reported stats win, then
+	// the agent's persisted capability snapshot for this environment
+	// (local OR specific remote), then the static table.
 	const effectiveContextWindow =
 		stats.contextWindow && stats.contextWindow > 0
 			? stats.contextWindow
 			: agentId && agentId !== 'terminal'
-				? (DEFAULT_CONTEXT_WINDOWS[agentId] ?? 0)
+				? getContextWindowForAgent(agentId, capabilitySnapshots.get(agentId, sshRemoteId))
 				: 0;
 
 	if (!effectiveContextWindow || effectiveContextWindow <= 0) {
