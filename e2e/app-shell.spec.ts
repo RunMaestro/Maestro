@@ -5426,6 +5426,30 @@ test.describe('App shell seeded workbench', () => {
 		).toBeVisible();
 	});
 
+	test('navigates file preview history with toolbar back and forward controls', async () => {
+		await window.getByRole('link', { name: 'NOTES' }).click();
+		await expect(window.getByText('Notes Preview Surface')).toBeVisible();
+
+		await window.getByTitle(/Go back/).click();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+
+		await window.getByTitle(/Go forward/).click();
+		await expect(window.getByText('Notes Preview Surface')).toBeVisible();
+	});
+
+	test('navigates file preview history with keyboard shortcuts', async () => {
+		await window.getByRole('link', { name: 'NOTES' }).click();
+		await expect(window.getByText('Notes Preview Surface')).toBeVisible();
+
+		await window.getByTestId('file-preview-root').focus();
+		await window.keyboard.press('Meta+ArrowLeft');
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+
+		await window.getByTestId('file-preview-root').focus();
+		await window.keyboard.press('Meta+ArrowRight');
+		await expect(window.getByText('Notes Preview Surface')).toBeVisible();
+	});
+
 	test('routes external markdown links from the file preview through shell IPC', async () => {
 		await stubOpenExternal(electronApp);
 
