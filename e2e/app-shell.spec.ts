@@ -5418,6 +5418,56 @@ test.describe('App shell seeded workbench', () => {
 		await expect(searchInput).toBeHidden();
 	});
 
+	test('opens wiki-style internal markdown links from the active file preview', async () => {
+		await window.getByRole('link', { name: 'NOTES' }).click();
+		await expect(window.getByText('Notes Preview Surface')).toBeVisible();
+		await expect(
+			window.getByText('Searchable note body for file explorer coverage.')
+		).toBeVisible();
+	});
+
+	test('routes external markdown links from the file preview through shell IPC', async () => {
+		await stubOpenExternal(electronApp);
+
+		await window.getByRole('link', { name: 'https://example.com/maestro-graph' }).click();
+
+		await expect
+			.poll(() => getStubbedOpenExternalUrl(electronApp))
+			.toBe('https://example.com/maestro-graph');
+	});
+
+	test('routes the file preview toolbar default-app action through shell IPC', async () => {
+		await stubShellPathHandlers(electronApp);
+		const expectedReadmePath = path.join(seededWorkbench.sessions[0].fullPath, 'README.md');
+
+		await window.getByTitle('Open in Default App').click();
+
+		await expect
+			.poll(async () => getStubbedShellPathCalls(electronApp))
+			.toContainEqual({
+				type: 'openPath',
+				itemPath: expectedReadmePath,
+			});
+	});
+
+	test('saves markdown file preview edits to disk and renders the saved content', async () => {
+		const readmePath = path.join(seededWorkbench.sessions[0].fullPath, 'README.md');
+		const savedSentinel = 'Saved preview edit sentinel.';
+		const editedContent = `${fs.readFileSync(readmePath, 'utf-8')}\n${savedSentinel}\n`;
+
+		await window.getByTitle(/Edit file/).click();
+		const editor = window.locator('textarea').first();
+		await expect(editor).toBeVisible();
+		await editor.fill(editedContent);
+		await window.getByRole('button', { name: 'Save' }).click();
+
+		await expect(window.getByText('File Saved')).toBeVisible();
+		await expect(fs.readFileSync(readmePath, 'utf-8')).toContain(savedSentinel);
+
+		await window.getByTitle(/Show preview/).click();
+		await expect(window.getByText(savedSentinel)).toBeVisible();
+	});
+
 	test('renders CSV file preview and filters table rows through file search', async () => {
 		await helpers.openRightPanelTab(window, 'Files');
 		await window.getByText('metrics.csv').dblclick();
