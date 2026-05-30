@@ -5324,6 +5324,87 @@ test.describe('App shell seeded workbench', () => {
 		await getFileTreeRow(window, 'metrics.csv');
 	});
 
+	test('renames a folder from the File Explorer context menu', async () => {
+		const contextMenu = await openFileContextMenu(window, 'Auto Run Docs');
+		await contextMenu.getByRole('button', { name: 'Rename' }).click();
+
+		const renameDialog = window.getByRole('dialog', { name: 'Rename Folder' });
+		await expect(renameDialog).toBeVisible();
+		await renameDialog.getByPlaceholder('Enter folder name...').fill('Plans');
+		await renameDialog.getByRole('button', { name: 'Rename' }).click();
+
+		await expect(renameDialog).toBeHidden();
+		const renamedFolder = await getFileTreeRow(window, 'Plans');
+		await expect(
+			window.locator('[data-file-index]').filter({ hasText: 'Auto Run Docs' })
+		).toBeHidden();
+
+		await renamedFolder.click();
+		await getFileTreeRow(window, 'Phase 1.md');
+	});
+
+	test('deletes a folder from the File Explorer context menu after confirmation', async () => {
+		const folderPath = path.join(seededWorkbench.sessions[0].fullPath, 'Auto Run Docs');
+		const contextMenu = await openFileContextMenu(window, 'Auto Run Docs');
+		await contextMenu.getByRole('button', { name: 'Delete' }).click();
+
+		const deleteDialog = window.getByRole('dialog', { name: 'Delete Folder' });
+		await expect(deleteDialog).toBeVisible();
+		await expect(
+			deleteDialog.getByText('Are you sure you want to delete the folder "Auto Run Docs"?')
+		).toBeVisible();
+		await expect(deleteDialog.getByText('This folder contains 1 file.')).toBeVisible();
+		await deleteDialog.getByRole('button', { name: 'Delete' }).click();
+
+		await expect(deleteDialog).toBeHidden();
+		await expect(
+			window.locator('[data-file-index]').filter({ hasText: 'Auto Run Docs' })
+		).toBeHidden();
+		await expect(
+			window.locator('[data-file-index]').filter({ hasText: 'Phase 1.md' })
+		).toBeHidden();
+		await expect(fs.existsSync(folderPath)).toBe(false);
+	});
+
+	test('opens a file from the File Explorer using arrow-key selection and Enter', async () => {
+		await helpers.openRightPanelTab(window, 'Files');
+		const readmeRow = await getFileTreeRow(window, 'README.md');
+		const notesRow = await getFileTreeRow(window, 'NOTES.md');
+		const readmeIndex = Number(await readmeRow.getAttribute('data-file-index'));
+		const notesIndex = Number(await notesRow.getAttribute('data-file-index'));
+		const key = notesIndex > readmeIndex ? 'ArrowDown' : 'ArrowUp';
+
+		await readmeRow.click();
+		for (let step = 0; step < Math.abs(notesIndex - readmeIndex); step++) {
+			await window.keyboard.press(key);
+		}
+		await window.keyboard.press('Enter');
+
+		await expect(window.getByText('Notes Preview Surface')).toBeVisible();
+		await expect(
+			window.getByText('Searchable note body for file explorer coverage.')
+		).toBeVisible();
+	});
+
+	test('expands and collapses File Explorer folders from keyboard selection', async () => {
+		await helpers.openRightPanelTab(window, 'Files');
+		const notesRow = await getFileTreeRow(window, 'NOTES.md');
+		const folderRow = await getFileTreeRow(window, 'Auto Run Docs');
+
+		await notesRow.click();
+		await folderRow.click({ button: 'right' });
+		await expect(window.getByRole('button', { name: 'Copy Path' })).toBeVisible();
+		await window.keyboard.press('Escape');
+
+		await window.keyboard.press('ArrowRight');
+		await getFileTreeRow(window, 'Phase 1.md');
+
+		await window.keyboard.press('ArrowLeft');
+		await expect(
+			window.locator('[data-file-index]').filter({ hasText: 'Phase 1.md' })
+		).toBeHidden();
+	});
+
 	test('searches within the active file preview and closes search with Escape', async () => {
 		await window.getByTestId('file-preview-root').press('Control+f');
 		const searchInput = window.getByPlaceholder(/Search in file/);
