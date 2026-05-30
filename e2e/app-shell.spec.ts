@@ -3884,6 +3884,23 @@ test.describe('App shell seeded workbench', () => {
 		await expect(tabs.nth(1)).toContainText('README');
 	});
 
+	test('moves AI tabs from the TabBar hover overlay', async () => {
+		const tabs = window.locator('[data-tab-id]');
+		await expect(tabs.nth(0)).toContainText('Main');
+		await expect(tabs.nth(1)).toContainText('README');
+
+		const mainTab = tabs.filter({ hasText: 'Main' }).first();
+		await mainTab.hover();
+		await window.getByRole('button', { name: 'Move to Last Position' }).click();
+		await expect(tabs.nth(0)).toContainText('README');
+		await expect(tabs.nth(1)).toContainText('Main');
+
+		await mainTab.hover();
+		await window.getByRole('button', { name: 'Move to First Position' }).click();
+		await expect(tabs.nth(0)).toContainText('Main');
+		await expect(tabs.nth(1)).toContainText('README');
+	});
+
 	test('closes tabs to the left from the TabBar hover overlay', async () => {
 		const tabs = window.locator('[data-tab-id]');
 		await expect(tabs).toHaveCount(2);
@@ -3910,6 +3927,34 @@ test.describe('App shell seeded workbench', () => {
 		await expect(tabs.first()).toContainText('Main');
 		await expect(window.getByText('README', { exact: true })).toBeHidden();
 		await expect(window.getByText('Codex seeded response is visible.')).toBeVisible();
+	});
+
+	test('closes other tabs from an inactive AI TabBar hover overlay', async () => {
+		const tabs = window.locator('[data-tab-id]');
+		await expect(tabs).toHaveCount(2);
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+
+		await tabs.filter({ hasText: 'Main' }).first().hover();
+		await window.getByRole('button', { name: 'Close Other Tabs' }).click();
+
+		await expect(tabs).toHaveCount(1);
+		await expect(tabs.first()).toContainText('Main');
+		await expect(window.getByText('README', { exact: true })).toBeHidden();
+		await expect(window.getByText('Codex seeded response is visible.')).toBeVisible();
+	});
+
+	test('closes other tabs from the file TabBar hover overlay', async () => {
+		const tabs = window.locator('[data-tab-id]');
+		await expect(tabs).toHaveCount(2);
+
+		await tabs.filter({ hasText: 'README' }).first().hover();
+		await window.getByRole('button', { name: 'Close Other Tabs' }).click();
+
+		await expect(tabs).toHaveCount(2);
+		await expect(tabs.first()).toContainText('README');
+		await expect(tabs.nth(1)).toContainText('New Session');
+		await expect(window.getByText('Main', { exact: true })).toBeHidden();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
 	});
 
 	test('shows AI tab hover session actions and toggles tab status', async () => {
