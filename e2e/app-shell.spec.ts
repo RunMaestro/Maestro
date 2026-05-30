@@ -2459,6 +2459,79 @@ async function stubDirectorNotesSynopsis(electronApp: ElectronApplication) {
 	});
 }
 
+async function stubEncoreCodexAgent(
+	electronApp: ElectronApplication,
+	initialConfig: Record<string, unknown> = {}
+) {
+	await electronApp.evaluate(({ ipcMain }, config) => {
+		const configs: Record<string, Record<string, unknown>> = {
+			codex: { ...config },
+		};
+		const codexAgent = {
+			id: 'codex',
+			name: 'Codex',
+			binaryName: 'codex',
+			command: 'codex',
+			args: [],
+			available: true,
+			hidden: false,
+			path: '/usr/local/bin/codex',
+			capabilities: {
+				supportsBatchMode: true,
+				supportsModelSelection: true,
+			},
+			configOptions: [
+				{
+					key: 'model',
+					type: 'text',
+					label: 'Model',
+					description: 'Model override for E2E coverage.',
+					default: '',
+				},
+				{
+					key: 'contextWindow',
+					type: 'number',
+					label: 'Context Window Size',
+					description: 'Maximum context window size in tokens.',
+					default: 400000,
+				},
+			],
+		};
+
+		ipcMain.removeHandler('agents:detect');
+		ipcMain.handle('agents:detect', async () => [codexAgent]);
+		ipcMain.removeHandler('agents:refresh');
+		ipcMain.handle('agents:refresh', async () => codexAgent);
+		ipcMain.removeHandler('agents:getConfig');
+		ipcMain.handle('agents:getConfig', async (_event, agentId: string) => configs[agentId] || {});
+		ipcMain.removeHandler('agents:setConfig');
+		ipcMain.handle(
+			'agents:setConfig',
+			async (_event, agentId: string, nextConfig: Record<string, unknown>) => {
+				configs[agentId] = { ...nextConfig };
+				return true;
+			}
+		);
+		ipcMain.removeHandler('agents:getModels');
+		ipcMain.handle('agents:getModels', async () => ['gpt-5.3-codex', 'o3']);
+	}, initialConfig);
+}
+
+async function stubNoEncoreAgents(electronApp: ElectronApplication) {
+	await electronApp.evaluate(({ ipcMain }) => {
+		ipcMain.removeHandler('agents:detect');
+		ipcMain.handle('agents:detect', async () => []);
+		ipcMain.removeHandler('agents:refresh');
+		ipcMain.handle('agents:refresh', async () => undefined);
+		ipcMain.removeHandler('agents:getConfig');
+		ipcMain.handle('agents:getConfig', async () => ({}));
+		ipcMain.removeHandler('agents:setConfig');
+		ipcMain.handle('agents:setConfig', async () => true);
+		ipcMain.removeHandler('agents:getModels');
+		ipcMain.handle('agents:getModels', async () => []);
+	});
+}
+
 async function closeDocumentGraph(window: Page) {
 	await window
 		.getByRole('dialog', { name: 'Document Graph' })
@@ -2567,7 +2640,7 @@ test.describe('App shell seeded workbench', () => {
 					directorNotes: true,
 				},
 				directorNotesSettings: {
-					provider: '__maestro-e2e-disabled__',
+					provider: 'codex',
 					defaultLookbackDays: 7,
 				},
 			},
@@ -5950,6 +6023,147 @@ test.describe('App shell seeded workbench', () => {
 		await expect(
 			quickActionsDialog.getByRole('button', { name: /Director's Notes/ })
 		).toBeVisible();
+	});
+
+	test("persists Director's Notes default lookback period changes", async () => {
+		const settingsDialog = await openSettings(window);
+		await settingsDialog.locator('button[title="Encore Features"]').click();
+
+		const lookbackSlider = settingsDialog.locator('input[type="range"]').first();
+		await lookbackSlider.evaluate((node) => {
+			const input = node as HTMLInputElement;
+			const valueSetter = Object.getOwnPropertyDescriptor(
+				window.HTMLInputElement.prototype,
+				'value'
+			)?.set;
+			valueSetter?.call(input, '30');
+			input.dispatchEvent(new Event('input', { bubbles: true }));
+			input.dispatchEvent(new Event('change', { bubbles: true }));
+		});
+
+		await expect(settingsDialog.getByText('Default Lookback Period: 30 days')).toBeVisible();
+		await expect
+			.poll(async () => {
+				return await window.evaluate(async () => {
+					const settings = await window.maestro.settings.get('directorNotesSettings');
+					return settings.defaultLookbackDays;
+				});
+			})
+			.toBe(30);
+	});
+
+	test('lists detected Codex as the Director Notes synopsis provider', async () => {
+		await stubEncoreCodexAgent(electronApp);
+
+		const settingsDialog = await openSettings(window);
+		await settingsDialog.locator('button[title="Encore Features"]').click();
+
+		const providerSelect = settingsDialog.getByLabel('Select synopsis provider agent');
+		await expect(providerSelect).toBeVisible();
+		await expect(providerSelect).toHaveValue('codex');
+		await expect(providerSelect.locator('option')).toHaveCount(1);
+		await expect(settingsDialog.getByTitle('Customize provider settings')).toBeVisible();
+	});
+
+	test('shows install guidance when no Director Notes provider is detected', async () => {
+		await stubNoEncoreAgents(electronApp);
+
+		const settingsDialog = await openSettings(window);
+		await settingsDialog.locator('button[title="Encore Features"]').click();
+
+		await expect(
+			settingsDialog.getByText(
+				'No agents available. Please install Claude Code, OpenCode, Codex, or Factory Droid.'
+			)
+		).toBeVisible();
+		await expect(settingsDialog.getByLabel('Select synopsis provider agent')).toBeHidden();
+	});
+
+	test("persists Director's Notes provider path args and environment overrides", async () => {
+		await stubEncoreCodexAgent(electronApp);
+
+		const settingsDialog = await openSettings(window);
+		await settingsDialog.locator('button[title="Encore Features"]').click();
+		await settingsDialog.getByTitle('Customize provider settings').click();
+		await expect(settingsDialog.getByText('Codex Configuration')).toBeVisible();
+
+		await settingsDialog.getByPlaceholder('/path/to/codex').fill('/tmp/e2e-codex');
+		await settingsDialog.getByPlaceholder('/path/to/codex').blur();
+		await settingsDialog
+			.getByPlaceholder('--flag value --another-flag')
+			.fill('--sandbox read-only --model e2e');
+		await settingsDialog.getByPlaceholder('--flag value --another-flag').blur();
+
+		await settingsDialog.getByRole('button', { name: 'Add Variable' }).click();
+		await settingsDialog.getByPlaceholder('VARIABLE_NAME').fill('E2E_DIRECTOR_NOTES');
+		await settingsDialog.getByPlaceholder('VARIABLE_NAME').blur();
+		await settingsDialog.getByPlaceholder('value', { exact: true }).fill('enabled');
+		await settingsDialog.getByPlaceholder('value', { exact: true }).blur();
+
+		await expect(settingsDialog.getByText('Customized')).toBeVisible();
+		await expect
+			.poll(async () => {
+				return await window.evaluate(async () => {
+					const settings = await window.maestro.settings.get('directorNotesSettings');
+					return {
+						customArgs: settings.customArgs,
+						customEnvVars: settings.customEnvVars,
+						customPath: settings.customPath,
+					};
+				});
+			})
+			.toEqual({
+				customArgs: '--sandbox read-only --model e2e',
+				customEnvVars: { E2E_DIRECTOR_NOTES: 'enabled' },
+				customPath: '/tmp/e2e-codex',
+			});
+	});
+
+	test("saves Director's Notes Codex model and context window settings", async () => {
+		await stubEncoreCodexAgent(electronApp, {
+			contextWindow: 400000,
+			model: 'gpt-5.2-codex',
+		});
+
+		const settingsDialog = await openSettings(window);
+		await settingsDialog.locator('button[title="Encore Features"]').click();
+		await settingsDialog.getByTitle('Customize provider settings').click();
+		await expect(settingsDialog.getByText('2 models available')).toBeVisible();
+
+		const fieldPanel = (label: string): Locator =>
+			settingsDialog
+				.getByText(label, { exact: true })
+				.locator('xpath=ancestor::div[contains(@class, "rounded border")][1]');
+		const modelInput = fieldPanel('Model').locator('input[type="text"]').first();
+		const contextWindowInput = fieldPanel('Context Window Size')
+			.locator('input[type="number"]')
+			.first();
+
+		await expect(modelInput).toHaveValue('gpt-5.2-codex');
+		await modelInput.fill('gpt-5.3-codex');
+		await modelInput.blur();
+		await expect
+			.poll(async () => {
+				return await window.evaluate(async () => {
+					const config = await window.maestro.agents.getConfig('codex');
+					return config.model;
+				});
+			})
+			.toBe('gpt-5.3-codex');
+		await contextWindowInput.fill('128000');
+		await expect(contextWindowInput).toHaveValue('128000');
+		await contextWindowInput.blur();
+
+		await expect
+			.poll(async () => {
+				return await window.evaluate(async () => {
+					return await window.maestro.agents.getConfig('codex');
+				});
+			})
+			.toEqual({
+				contextWindow: 128000,
+				model: 'gpt-5.3-codex',
+			});
 	});
 
 	test("opens Director's Notes unified history and filters seeded entries", async () => {
