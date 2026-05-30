@@ -1188,6 +1188,51 @@ type TerminalRunCommandCall = {
 	};
 };
 
+type CodexProcessSpawnCall = {
+	sessionId: string;
+	toolType: string;
+	cwd: string;
+	command: string;
+	args: string[];
+	prompt?: string;
+	images?: string[];
+	agentSessionId?: string;
+	readOnlyMode?: boolean;
+	sendPromptViaStdin?: boolean;
+	sendPromptViaStdinRaw?: boolean;
+};
+
+async function stubCodexProcessSpawn(electronApp: ElectronApplication) {
+	await electronApp.evaluate(({ ipcMain }) => {
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eCodexSpawnCalls?: CodexProcessSpawnCall[];
+		};
+		state.__maestroE2eCodexSpawnCalls = [];
+
+		ipcMain.removeHandler('process:spawn');
+		ipcMain.handle('process:spawn', async (event, config: CodexProcessSpawnCall) => {
+			state.__maestroE2eCodexSpawnCalls?.push(config);
+			event.sender.send(
+				'process:data',
+				config.sessionId,
+				'Codex stubbed spawn response sentinel\n'
+			);
+			await new Promise((resolve) => setTimeout(resolve, 150));
+			event.sender.send('process:exit', config.sessionId, 0);
+			return { pid: 41006, success: true };
+		});
+	});
+}
+
+async function getStubbedCodexProcessSpawnCalls(electronApp: ElectronApplication) {
+	return electronApp.evaluate(() => {
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eCodexSpawnCalls?: CodexProcessSpawnCall[];
+		};
+		return state.__maestroE2eCodexSpawnCalls || [];
+	});
+}
+
 async function stubTerminalRunCommand(electronApp: ElectronApplication) {
 	await electronApp.evaluate(({ ipcMain }) => {
 		const state = globalThis as typeof globalThis & {
@@ -3087,6 +3132,57 @@ test.describe('App shell seeded workbench', () => {
 		);
 		await expect(window.getByText('Codex seeded response is visible.')).toBeVisible();
 		await expect(window.locator('[data-log-index]')).toHaveCount(3);
+	});
+
+	test('does not dispatch empty Codex prompts to the process layer', async () => {
+		await stubCodexProcessSpawn(electronApp);
+		const promptInput = await openSeededCodexAiTerminal(window);
+
+		await expect(promptInput).toHaveValue('');
+		await window.getByTitle('Send message').click();
+
+		await expect(promptInput).toHaveValue('');
+		await expect(window.locator('[data-log-index]')).toHaveCount(3);
+		await expect
+			.poll(async () => (await getStubbedCodexProcessSpawnCalls(electronApp)).length)
+			.toBe(0);
+	});
+
+	test('dispatches a Codex prompt through the stubbed spawn path', async () => {
+		await stubCodexProcessSpawn(electronApp);
+		const promptInput = await openSeededCodexAiTerminal(window);
+
+		await promptInput.fill('Codex stubbed safe send sentinel');
+		await window.getByTitle('Send message').click();
+
+		await expect(window.getByText('Codex stubbed safe send sentinel')).toBeVisible();
+		await expect(promptInput).toHaveValue('');
+		await expect
+			.poll(async () => (await getStubbedCodexProcessSpawnCalls(electronApp)).length)
+			.toBe(1);
+		const calls = await getStubbedCodexProcessSpawnCalls(electronApp);
+		await expect(calls).toHaveLength(1);
+		await expect(calls[0].toolType).toBe('codex');
+		await expect(calls[0].prompt).toContain('Codex stubbed safe send sentinel');
+	});
+
+	test('passes Codex read-only mode through the stubbed spawn path', async () => {
+		await stubCodexProcessSpawn(electronApp);
+		const promptInput = await openSeededCodexAiTerminal(window);
+
+		await window.getByTitle("Toggle Read-Only mode (agent won't modify files)").click();
+		await promptInput.fill('Codex read-only spawn sentinel');
+		await window.getByTitle('Send message').click();
+
+		await expect(promptInput).toHaveValue('');
+		await expect
+			.poll(async () => (await getStubbedCodexProcessSpawnCalls(electronApp)).length)
+			.toBe(1);
+		const calls = await getStubbedCodexProcessSpawnCalls(electronApp);
+		await expect(calls).toHaveLength(1);
+		await expect(calls[0].toolType).toBe('codex');
+		await expect(calls[0].readOnlyMode).toBe(true);
+		await expect(calls[0].prompt).toContain('Codex read-only spawn sentinel');
 	});
 
 	test('cycles Codex thinking display toggle states without sending', async () => {
