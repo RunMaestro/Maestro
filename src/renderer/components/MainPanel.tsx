@@ -218,6 +218,8 @@ interface MainPanelProps {
 	onOpenPromptComposer?: () => void;
 	// Replay a user message (AI mode)
 	onReplayMessage?: (text: string, images?: string[]) => void;
+	// Fork the conversation from a specific message into a new tab (AI mode)
+	onForkFromMessage?: (logId: string) => void;
 	// File tree for linking file references in AI responses
 	fileTree?: import('../types/fileTree').FileNode[];
 	// Callback when a file link is clicked in AI response
@@ -1678,6 +1680,7 @@ export const MainPanel = React.memo(
 											markdownEditMode={chatRawTextMode}
 											setMarkdownEditMode={useSettingsStore.getState().setChatRawTextMode}
 											onReplayMessage={props.onReplayMessage}
+											onForkFromMessage={props.onForkFromMessage}
 											fileTree={props.fileTree}
 											cwd={
 												activeSession.cwd?.startsWith(activeSession.fullPath)

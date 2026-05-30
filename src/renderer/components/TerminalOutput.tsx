@@ -10,6 +10,7 @@ import {
 	RotateCcw,
 	AlertCircle,
 	Save,
+	GitFork,
 } from 'lucide-react';
 import type { Session, Theme, LogEntry, FocusArea, AgentError } from '../types';
 import type { FileNode } from '../types/fileTree';
@@ -166,6 +167,8 @@ interface LogItemProps {
 	onToggleMarkdownEditMode: () => void;
 	// Replay message callback (AI mode only)
 	onReplayMessage?: (text: string, images?: string[]) => void;
+	// Fork conversation from this message callback (AI mode only)
+	onForkFromMessage?: (logId: string) => void;
 	// File linking support
 	fileTree?: FileNode[];
 	cwd?: string;
@@ -213,6 +216,7 @@ const LogItemComponent = memo(
 		markdownEditMode,
 		onToggleMarkdownEditMode,
 		onReplayMessage,
+		onForkFromMessage,
 		fileTree,
 		cwd,
 		projectRoot,
@@ -940,6 +944,17 @@ const LogItemComponent = memo(
 								<Save className="w-3.5 h-3.5" />
 							</button>
 						)}
+						{/* Fork conversation Button - only for AI responses */}
+						{log.source !== 'user' && isAIMode && onForkFromMessage && (
+							<button
+								onClick={() => onForkFromMessage(log.id)}
+								className="p-1.5 rounded opacity-0 group-hover:opacity-50 hover:!opacity-100"
+								style={{ color: theme.colors.textDim }}
+								title="Fork conversation from here"
+							>
+								<GitFork className="w-3.5 h-3.5" />
+							</button>
+						)}
 						{/* Delete button for user messages (both AI and terminal modes) */}
 						{log.source === 'user' &&
 							onDeleteLog &&
@@ -1102,6 +1117,7 @@ interface TerminalOutputProps {
 	markdownEditMode: boolean; // Whether to show raw markdown or rendered markdown for AI responses
 	setMarkdownEditMode: (value: boolean) => void; // Toggle markdown mode
 	onReplayMessage?: (text: string, images?: string[]) => void; // Replay a user message
+	onForkFromMessage?: (logId: string) => void; // Fork the conversation from a message into a new tab
 	fileTree?: FileNode[]; // File tree for linking file references
 	cwd?: string; // Current working directory for proximity-based matching
 	projectRoot?: string; // Project root absolute path for converting absolute paths to relative
@@ -1146,6 +1162,7 @@ export const TerminalOutput = memo(
 			markdownEditMode,
 			setMarkdownEditMode,
 			onReplayMessage,
+			onForkFromMessage,
 			fileTree,
 			cwd,
 			projectRoot,
@@ -1819,6 +1836,7 @@ export const TerminalOutput = memo(
 							markdownEditMode={markdownEditMode}
 							onToggleMarkdownEditMode={toggleMarkdownEditMode}
 							onReplayMessage={onReplayMessage}
+							onForkFromMessage={onForkFromMessage}
 							fileTree={fileTree}
 							cwd={cwd}
 							projectRoot={projectRoot}

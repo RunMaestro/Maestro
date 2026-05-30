@@ -345,6 +345,61 @@ describe('useTabHandlers', () => {
 
 			expect(getSession()).toBe(originalSession);
 		});
+
+		it('handleForkFromMessage copies history up to and including the message into a new active tab', () => {
+			const logs = [
+				{ id: 'log-1', timestamp: 1, source: 'user' as const, text: 'hello' },
+				{ id: 'log-2', timestamp: 2, source: 'ai' as const, text: 'response 1' },
+				{ id: 'log-3', timestamp: 3, source: 'user' as const, text: 'world' },
+				{ id: 'log-4', timestamp: 4, source: 'ai' as const, text: 'response 2' },
+			];
+			const tab = createMockAITab({ id: 'tab-1', agentSessionId: 'agent-123', logs });
+			const { result } = renderWithSession([tab]);
+
+			act(() => {
+				result.current.handleForkFromMessage('log-2');
+			});
+
+			const session = getSession();
+			expect(session.aiTabs.length).toBe(2);
+
+			const forkedTab = session.aiTabs[1];
+			// New tab is active and starts a fresh provider session
+			expect(session.activeTabId).toBe(forkedTab.id);
+			expect(forkedTab.agentSessionId).toBeNull();
+			expect(forkedTab.name).toBe('Forked: Test Session');
+			// Only history up to and including the forked message is copied
+			expect(forkedTab.logs.map((l) => l.text)).toEqual(['hello', 'response 1']);
+			// Copied logs are independent (regenerated ids)
+			expect(forkedTab.logs.map((l) => l.id)).not.toContain('log-1');
+			expect(forkedTab.logs.map((l) => l.id)).not.toContain('log-2');
+			// Prior conversation is injected so the forked agent retains context
+			expect(forkedTab.pendingMergedContext).toContain('User: hello');
+			expect(forkedTab.pendingMergedContext).toContain('Assistant: response 1');
+			expect(forkedTab.pendingMergedContext).not.toContain('world');
+			// Original tab is untouched
+			expect(session.aiTabs[0].logs.map((l) => l.text)).toEqual([
+				'hello',
+				'response 1',
+				'world',
+				'response 2',
+			]);
+		});
+
+		it('handleForkFromMessage preserves the session when the log id is missing', () => {
+			const logs = [{ id: 'log-1', timestamp: 1, source: 'ai' as const, text: 'response' }];
+			const tab = createMockAITab({ id: 'tab-1', logs });
+			setupSessionWithTabs([tab]);
+			const originalSession = getSession();
+
+			const { result } = renderHook(() => useTabHandlers());
+			act(() => {
+				result.current.handleForkFromMessage('missing-log');
+			});
+
+			expect(getSession()).toBe(originalSession);
+			expect(getSession().aiTabs.length).toBe(1);
+		});
 	});
 
 	// ========================================================================

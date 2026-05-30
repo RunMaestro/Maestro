@@ -2,6 +2,7 @@ import { useMemo, useCallback } from 'react';
 import type {
 	Session,
 	AITab,
+	LogEntry,
 	FilePreviewTab,
 	UnifiedTab,
 	UnifiedTabRef,
@@ -65,6 +66,7 @@ export interface TabHandlersReturn {
 	handleTabSelect: (tabId: string) => void;
 	handleTabClose: (tabId: string) => void;
 	handleNewTab: () => void;
+	handleForkFromMessage: (logId: string) => void;
 	handleTabReorder: (fromIndex: number, toIndex: number) => void;
 	handleUnifiedTabReorder: (fromIndex: number, toIndex: number) => void;
 	handleCloseAllTabs: () => void;
@@ -679,6 +681,70 @@ export function useTabHandlers(): TabHandlersReturn {
 					showThinking: defaultShowThinking,
 				});
 				return result!.session;
+			})
+		);
+	}, []);
+
+	/**
+	 * Fork the active conversation from a specific message into a new tab.
+	 *
+	 * Copies the conversation history up to and including the given message into a
+	 * brand-new AI tab (named "Forked: <agent>"), starting a fresh provider session.
+	 * The copied conversation is also injected into the next message via
+	 * pendingMergedContext (mirroring the merge-session flow) so the forked agent
+	 * continues with knowledge of the prior conversation rather than starting blind.
+	 */
+	const handleForkFromMessage = useCallback((logId: string) => {
+		const { setSessions, activeSessionId } = useSessionStore.getState();
+		const { defaultSaveToHistory, defaultShowThinking } = useSettingsStore.getState();
+
+		setSessions((prev: Session[]) =>
+			prev.map((s) => {
+				if (s.id !== activeSessionId) return s;
+
+				const sourceTab = getActiveTab(s);
+				if (!sourceTab) return s;
+
+				const forkIndex = sourceTab.logs.findIndex((log) => log.id === logId);
+				if (forkIndex === -1) return s;
+
+				// Copy history up to and including the selected message. Regenerate log
+				// ids so the forked tab is a completely independent copy.
+				const forkedLogs: LogEntry[] = sourceTab.logs
+					.slice(0, forkIndex + 1)
+					.map((log) => ({ ...log, id: generateId() }));
+
+				// Format the copied conversation for injection into the first message so
+				// the agent actually has the prior context (system messages excluded).
+				const forkContext = forkedLogs
+					.filter((log) => log.text && log.text.trim() && log.source !== 'system')
+					.map((log) => {
+						const role = log.source === 'user' ? 'User' : 'Assistant';
+						return `${role}: ${log.text}`;
+					})
+					.join('\n\n');
+
+				const sourceName = s.name || s.projectRoot.split('/').pop() || 'Unnamed Session';
+				const pendingMergedContext = forkContext
+					? `Forked conversation history from "${sourceName}":\n\n${forkContext}`
+					: undefined;
+
+				const result = createTab(s, {
+					logs: forkedLogs,
+					name: `Forked: ${sourceName}`,
+					saveToHistory: defaultSaveToHistory,
+					showThinking: defaultShowThinking,
+				});
+				if (!result) return s;
+
+				// createTab appends the new tab and marks it active; attach the
+				// forked context so it is sent with the user's next message.
+				return {
+					...result.session,
+					aiTabs: result.session.aiTabs.map((tab) =>
+						tab.id === result.tab.id ? { ...tab, pendingMergedContext } : tab
+					),
+				};
 			})
 		);
 	}, []);
@@ -1467,6 +1533,7 @@ export function useTabHandlers(): TabHandlersReturn {
 		handleTabSelect,
 		handleTabClose,
 		handleNewTab,
+		handleForkFromMessage,
 		handleTabReorder,
 		handleUnifiedTabReorder,
 		handleCloseAllTabs,

@@ -146,6 +146,7 @@ function makeDeps(overrides: Partial<UseMainPanelPropsDeps> = {}): UseMainPanelP
 		handleMainPanelInputBlur: noop,
 		handleOpenPromptComposer: noop,
 		handleReplayMessage: noop,
+		handleForkFromMessage: noop,
 		handleMainPanelFileClick: noop,
 		handleNavigateBack: noop,
 		handleNavigateForward: noop,

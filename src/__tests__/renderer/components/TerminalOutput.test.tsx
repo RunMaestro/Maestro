@@ -1048,6 +1048,40 @@ describe('TerminalOutput', () => {
 			]);
 		});
 
+		it('forks the conversation from an AI message with the message id', async () => {
+			const onForkFromMessage = vi.fn();
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'fork-log', text: 'AI response to fork from', source: 'ai' }),
+			];
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session, onForkFromMessage })} />);
+
+			await act(async () => {
+				fireEvent.click(screen.getByTitle('Fork conversation from here'));
+			});
+
+			expect(onForkFromMessage).toHaveBeenCalledWith('fork-log');
+		});
+
+		it('does not render a fork action on user messages', () => {
+			const onForkFromMessage = vi.fn();
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-log', text: 'a user prompt', source: 'user' }),
+			];
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session, onForkFromMessage })} />);
+
+			expect(screen.queryByTitle('Fork conversation from here')).not.toBeInTheDocument();
+		});
+
 		it('saves AI responses through the save markdown modal', async () => {
 			const originalWriteFile = window.maestro.fs.writeFile;
 			const writeFile = vi.fn().mockResolvedValue({ success: true });
