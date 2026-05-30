@@ -1791,7 +1791,7 @@ export const FilePreview = React.memo(
 					onShortcutUsed?.('filePreviewForward');
 				}
 			} else if (
-				e.key === 'g' &&
+				e.key.toLowerCase() === 'g' &&
 				(e.metaKey || e.ctrlKey) &&
 				e.shiftKey &&
 				isMarkdown &&

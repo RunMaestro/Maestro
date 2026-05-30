@@ -5521,6 +5521,21 @@ test.describe('App shell seeded workbench', () => {
 		await expect(window.getByText(savedSentinel)).toBeVisible();
 	});
 
+	test('saves markdown file preview edits with the keyboard shortcut', async () => {
+		const readmePath = path.join(seededWorkbench.sessions[0].fullPath, 'README.md');
+		const savedSentinel = 'Keyboard saved preview edit sentinel.';
+		const editedContent = `${fs.readFileSync(readmePath, 'utf-8')}\n${savedSentinel}\n`;
+
+		await window.getByTitle(/Edit file/).click();
+		const editor = window.locator('textarea').first();
+		await expect(editor).toBeVisible();
+		await editor.fill(editedContent);
+		await editor.press('Meta+s');
+
+		await expect(window.getByText('File Saved')).toBeVisible();
+		await expect(fs.readFileSync(readmePath, 'utf-8')).toContain(savedSentinel);
+	});
+
 	test('reloads externally changed file content from the file preview banner', async () => {
 		const readmePath = path.join(seededWorkbench.sessions[0].fullPath, 'README.md');
 		const externalSentinel = 'External reload sentinel.';
@@ -5578,6 +5593,37 @@ test.describe('App shell seeded workbench', () => {
 		await expect(window.getByText('File Path Copied to Clipboard')).toBeVisible();
 	});
 
+	test('copies file preview path from the keyboard shortcut', async () => {
+		await window.getByTestId('file-preview-root').focus();
+		await window.keyboard.press('Meta+p');
+
+		await expect(window.getByText('File Path Copied to Clipboard')).toBeVisible();
+	});
+
+	test('opens fuzzy file search from the file preview keyboard shortcut', async () => {
+		await window.getByTestId('file-preview-root').focus();
+		await window.keyboard.press('Meta+g');
+
+		const fileSearchDialog = window.getByRole('dialog', { name: 'Fuzzy File Search' });
+		await expect(fileSearchDialog).toBeVisible();
+		await fileSearchDialog.getByPlaceholder('Search files...').fill('notes');
+		await fileSearchDialog.getByText('NOTES.md').click();
+
+		await expect(fileSearchDialog).toBeHidden();
+		await expect(window.getByText('Notes Preview Surface')).toBeVisible();
+	});
+
+	test('opens Document Graph from the file preview keyboard shortcut', async () => {
+		await window.getByTestId('file-preview-root').focus();
+		await window.keyboard.press('Meta+Shift+g');
+
+		const graphDialog = window.getByRole('dialog', { name: 'Document Graph' });
+		await expect(graphDialog).toBeVisible({ timeout: 15000 });
+		await expect(graphDialog.getByText(/2 documents/)).toBeVisible({ timeout: 15000 });
+
+		await closeDocumentGraph(window);
+	});
+
 	test('toggles file preview remote-image and Bionify toolbar controls', async () => {
 		await window.getByTitle('Show remote images').click();
 		await expect(window.getByTitle('Hide remote images')).toBeVisible();
@@ -5614,6 +5660,26 @@ test.describe('App shell seeded workbench', () => {
 		).toBeVisible();
 		await confirmDialog.getByRole('button', { name: 'Cancel' }).click();
 		await expect(confirmDialog).toBeHidden();
+	});
+
+	test('confirms binary file external open through shell IPC', async () => {
+		await stubShellPathHandlers(electronApp);
+		const expectedBinaryPath = path.join(seededWorkbench.sessions[0].fullPath, 'artifact.bin');
+
+		await helpers.openRightPanelTab(window, 'Files');
+		await window.getByText('artifact.bin').dblclick();
+
+		const confirmDialog = window.getByRole('dialog', { name: 'Confirm' });
+		await expect(confirmDialog).toBeVisible();
+		await confirmDialog.getByRole('button', { name: 'Confirm' }).click();
+		await expect(confirmDialog).toBeHidden();
+
+		await expect
+			.poll(async () => getStubbedShellPathCalls(electronApp))
+			.toContainEqual({
+				type: 'openPath',
+				itemPath: expectedBinaryPath,
+			});
 	});
 
 	test('renders image files inside the file preview tab', async () => {
