@@ -2432,6 +2432,24 @@ async function focusDocumentGraphMindMap(graphDialog: Locator) {
 	});
 }
 
+async function openDocumentGraphCenterNodeContextMenu(window: Page, graphDialog: Locator) {
+	const canvas = graphDialog.locator('canvas');
+	const box = await canvas.boundingBox();
+
+	if (!box) {
+		throw new Error('Document Graph canvas is not visible');
+	}
+
+	await window.mouse.click(box.x + box.width / 2, box.y + box.height / 2, { button: 'right' });
+	const contextMenu = window.locator('.fixed').filter({
+		has: window.getByRole('button', { name: 'Copy Path' }),
+	});
+	await expect(contextMenu.getByRole('button', { name: 'Open' })).toBeVisible();
+	await expect(contextMenu.getByRole('button', { name: 'Copy Path' })).toBeVisible();
+	await expect(contextMenu.getByRole('button', { name: 'Focus' })).toBeVisible();
+	return contextMenu;
+}
+
 async function openDirectorNotesFromQuickActions(window: Page) {
 	const quickActionsDialog = await openQuickActions(window);
 	await quickActionsDialog
@@ -6295,6 +6313,45 @@ Refresh-added document with a link back to [[README]].
 		await expect(resetLayoutButton).toBeHidden();
 
 		await closeDocumentGraph(window);
+	});
+
+	test('copies a Document Graph node path from the context menu', async () => {
+		const graphDialog = await openDocumentGraphFromPreview(window);
+		const contextMenu = await openDocumentGraphCenterNodeContextMenu(window, graphDialog);
+		const expectedCopiedPath = path.relative(
+			seededWorkbench.sessions[0].cwd,
+			seededWorkbench.sessions[0].filePreviewTabs[0].path
+		);
+		await electronApp.evaluate(({ clipboard }) =>
+			clipboard.writeText('before document graph copy')
+		);
+
+		await contextMenu.getByRole('button', { name: 'Copy Path' }).click();
+		await expect(contextMenu).toBeHidden();
+		await expect(graphDialog).toBeVisible();
+		await expect
+			.poll(() => electronApp.evaluate(({ clipboard }) => clipboard.readText()))
+			.toBe(expectedCopiedPath);
+
+		await closeDocumentGraph(window);
+	});
+
+	test('opens a Document Graph node from the context menu in the main file preview', async () => {
+		const graphDialog = await openDocumentGraphFromPreview(window);
+		const contextMenu = await openDocumentGraphCenterNodeContextMenu(window, graphDialog);
+
+		await contextMenu.getByRole('button', { name: 'Open' }).click();
+		await expect(graphDialog).toBeHidden();
+		await expect(window.getByRole('heading', { name: 'File Preview Surface' })).toBeVisible();
+	});
+
+	test('opens the focused Document Graph node in the main file preview from the keyboard', async () => {
+		const graphDialog = await openDocumentGraphFromPreview(window);
+
+		await focusDocumentGraphMindMap(graphDialog);
+		await window.keyboard.press('o');
+		await expect(graphDialog).toBeHidden();
+		await expect(window.getByRole('heading', { name: 'File Preview Surface' })).toBeVisible();
 	});
 
 	test('closes the Document Graph help panel from its header control', async () => {
