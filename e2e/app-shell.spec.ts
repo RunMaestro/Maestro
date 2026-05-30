@@ -344,6 +344,34 @@ function createFileExplorerStateWorkbench(variant: 'empty' | 'error' | 'retry') 
 	};
 }
 
+function createQueuedCodexWorkbench() {
+	const seeded = createSeededWorkbench();
+	const session = seeded.sessions[0]!;
+	const activeTab = session.aiTabs[0]!;
+	session.executionQueue = [
+		{
+			id: 'e2e-queued-codex-message',
+			timestamp: Date.now() - 1_000,
+			tabId: activeTab.id,
+			type: 'message',
+			text: 'Queued Codex prompt sentinel',
+			tabName: activeTab.name || 'Main',
+			readOnlyMode: true,
+		},
+		{
+			id: 'e2e-queued-codex-command',
+			timestamp: Date.now() - 500,
+			tabId: activeTab.id,
+			type: 'command',
+			command: '/commit queued command sentinel',
+			commandDescription: 'Queued commit command sentinel',
+			tabName: activeTab.name || 'Main',
+		},
+	];
+
+	return seeded;
+}
+
 function appendCodexStaticSurfaceLogs(seeded: ReturnType<typeof createSeededWorkbench>) {
 	const session = seeded.sessions[0];
 	const logs = session.aiLogs;
@@ -1202,8 +1230,11 @@ type CodexProcessSpawnCall = {
 	sendPromptViaStdinRaw?: boolean;
 };
 
-async function stubCodexProcessSpawn(electronApp: ElectronApplication) {
-	await electronApp.evaluate(({ ipcMain }) => {
+async function stubCodexProcessSpawn(
+	electronApp: ElectronApplication,
+	options: { exitDelayMs?: number } = {}
+) {
+	await electronApp.evaluate(({ ipcMain }, { exitDelayMs }) => {
 		const state = globalThis as typeof globalThis & {
 			__maestroE2eCodexSpawnCalls?: CodexProcessSpawnCall[];
 		};
@@ -1217,11 +1248,14 @@ async function stubCodexProcessSpawn(electronApp: ElectronApplication) {
 				config.sessionId,
 				'Codex stubbed spawn response sentinel\n'
 			);
-			await new Promise((resolve) => setTimeout(resolve, 150));
-			event.sender.send('process:exit', config.sessionId, 0);
+			setTimeout(() => {
+				if (!event.sender.isDestroyed()) {
+					event.sender.send('process:exit', config.sessionId, 0);
+				}
+			}, exitDelayMs ?? 150);
 			return { pid: 41006, success: true };
 		});
-	});
+	}, options);
 }
 
 async function getStubbedCodexProcessSpawnCalls(electronApp: ElectronApplication) {
@@ -1230,6 +1264,30 @@ async function getStubbedCodexProcessSpawnCalls(electronApp: ElectronApplication
 			__maestroE2eCodexSpawnCalls?: CodexProcessSpawnCall[];
 		};
 		return state.__maestroE2eCodexSpawnCalls || [];
+	});
+}
+
+async function stubProcessInterrupt(electronApp: ElectronApplication) {
+	await electronApp.evaluate(({ ipcMain }) => {
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eProcessInterruptCalls?: string[];
+		};
+		state.__maestroE2eProcessInterruptCalls = [];
+
+		ipcMain.removeHandler('process:interrupt');
+		ipcMain.handle('process:interrupt', async (_event, sessionId: string) => {
+			state.__maestroE2eProcessInterruptCalls?.push(sessionId);
+			return true;
+		});
+	});
+}
+
+async function getStubbedProcessInterruptCalls(electronApp: ElectronApplication) {
+	return electronApp.evaluate(() => {
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eProcessInterruptCalls?: string[];
+		};
+		return state.__maestroE2eProcessInterruptCalls || [];
 	});
 }
 
@@ -3185,6 +3243,27 @@ test.describe('App shell seeded workbench', () => {
 		await expect(calls[0].prompt).toContain('Codex read-only spawn sentinel');
 	});
 
+	test('interrupts an in-flight Codex prompt through the Stop control', async () => {
+		await stubCodexProcessSpawn(electronApp, { exitDelayMs: 10_000 });
+		await stubProcessInterrupt(electronApp);
+		const promptInput = await openSeededCodexAiTerminal(window);
+
+		await promptInput.fill('Codex interrupt in-flight sentinel');
+		await window.getByTitle('Send message').click();
+		await expect
+			.poll(async () => (await getStubbedCodexProcessSpawnCalls(electronApp)).length)
+			.toBe(1);
+
+		await window.getByRole('button', { name: 'Stop' }).click();
+
+		const session = seededWorkbench.sessions[0]!;
+		const activeTab = session.aiTabs[0]!;
+		await expect
+			.poll(async () => getStubbedProcessInterruptCalls(electronApp))
+			.toEqual([`${session.id}-ai-${activeTab.id}`]);
+		await expect(window.getByText('Canceled by user')).toBeVisible();
+	});
+
 	test('cycles Codex thinking display toggle states without sending', async () => {
 		await openSeededCodexAiTerminal(window);
 
@@ -3389,6 +3468,25 @@ test.describe('App shell seeded workbench', () => {
 		await expect(userBlock.getByTitle('Replay message')).toBeVisible();
 		await expect(userBlock.getByTitle('Delete message and response')).toBeVisible();
 		await expect(window.locator('[data-log-index]')).toHaveCount(3);
+	});
+
+	test('replays a delivered Codex message through the stubbed spawn path', async () => {
+		await stubCodexProcessSpawn(electronApp);
+		const promptInput = await openSeededCodexAiTerminal(window);
+		await promptInput.fill('Preserve draft while replaying sentinel');
+
+		const userBlock = window.locator('[data-log-index="1"]');
+		await userBlock.hover();
+		await userBlock.getByTitle('Replay message').click();
+
+		await expect
+			.poll(async () => (await getStubbedCodexProcessSpawnCalls(electronApp)).length)
+			.toBe(1);
+		const calls = await getStubbedCodexProcessSpawnCalls(electronApp);
+		await expect(calls).toHaveLength(1);
+		await expect(calls[0].toolType).toBe('codex');
+		await expect(calls[0].prompt).toContain('Review README for Codex user-message action coverage');
+		await expect(promptInput).toHaveValue('Preserve draft while replaying sentinel');
 	});
 
 	test('cancels Codex user-message paired deletion from transcript actions', async () => {
@@ -5507,6 +5605,38 @@ test.describe('App shell seeded workbench', () => {
 		await expect(
 			openSpecPanel.getByText('Bundled proposal prompt for {{AGENT_NAME}}.')
 		).toBeVisible();
+	});
+});
+
+test.describe('Codex AI terminal queue controls', () => {
+	let window: Page;
+	let cleanupApp: (() => Promise<void>) | undefined;
+
+	test.afterEach(async () => {
+		await cleanupApp?.();
+		cleanupApp = undefined;
+	});
+
+	test('opens the Codex execution queue browser from the input indicator', async () => {
+		const seeded = createQueuedCodexWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+		window = launched.window;
+		cleanupApp = launched.cleanup;
+
+		await openSeededCodexAiTerminal(window);
+		const queueIndicator = window.getByRole('button', { name: /2 items queued/ });
+		await expect(queueIndicator).toBeVisible();
+		await expect(queueIndicator.getByText('Main (2)')).toBeVisible();
+
+		await queueIndicator.click();
+		await expect(window.getByText('Execution Queue')).toBeVisible();
+		await expect(window.getByText('2 total')).toBeVisible();
+		await expect(window.getByText('Current Agent')).toBeVisible();
+		await expect(window.getByText('Queued Codex prompt sentinel').first()).toBeVisible();
+		await expect(window.getByText('/commit queued command sentinel').first()).toBeVisible();
 	});
 });
 
