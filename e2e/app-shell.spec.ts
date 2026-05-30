@@ -6207,6 +6207,28 @@ test.describe('App shell seeded workbench', () => {
 		await closeDocumentGraph(window);
 	});
 
+	test('opens a Document Graph preview from the P keyboard shortcut', async () => {
+		const graphDialog = await openDocumentGraphFromPreview(window);
+
+		await focusDocumentGraphMindMap(graphDialog);
+		await window.keyboard.press('p');
+		await expect(graphDialog.getByText('File Preview Surface')).toBeVisible();
+		await expect(graphDialog.getByText('Graph task still open')).toBeVisible();
+
+		await closeDocumentGraph(window);
+	});
+
+	test('shows disabled Document Graph preview history controls before navigation', async () => {
+		const graphDialog = await openDocumentGraphFromPreview(window);
+
+		await focusDocumentGraphMindMap(graphDialog);
+		await window.keyboard.press('Enter');
+		await expect(graphDialog.getByTitle('No previous document')).toBeVisible();
+		await expect(graphDialog.getByTitle('No next document')).toBeVisible();
+
+		await closeDocumentGraph(window);
+	});
+
 	test('closes a Document Graph preview with toolbar and Escape controls', async () => {
 		const graphDialog = await openDocumentGraphFromPreview(window);
 
@@ -6274,6 +6296,29 @@ test.describe('App shell seeded workbench', () => {
 		await expect(graphDialog.getByText('1 of 3 matching')).toBeVisible();
 		await graphDialog.getByLabel('Clear search').click();
 		await expect(graphDialog.getByText(/2 documents, 1 external domain/)).toBeVisible();
+
+		await closeDocumentGraph(window);
+	});
+
+	test('hides Document Graph external link nodes after showing them', async () => {
+		const readmePath = path.join(seededWorkbench.sessions[0].fullPath, 'README.md');
+
+		fs.appendFileSync(
+			readmePath,
+			'\n[Toggle Graph Link](https://example.org/toggle-target)\n',
+			'utf-8'
+		);
+		setFutureMtime(readmePath);
+
+		const graphDialog = await openDocumentGraphFromPreview(window);
+
+		await graphDialog.getByTitle('Show external links').click();
+		await expect(graphDialog.getByText(/2 documents, 1 external domain/)).toBeVisible();
+
+		await graphDialog.getByTitle('Hide external links').click();
+		await expect(graphDialog.getByTitle('Show external links')).toBeVisible();
+		await expect(graphDialog.getByText(/1 external domain/)).toBeHidden();
+		await expect(graphDialog.getByText(/2 documents/)).toBeVisible();
 
 		await closeDocumentGraph(window);
 	});
@@ -6438,6 +6483,27 @@ Refresh-added document with a link back to [[README]].
 		await closeDocumentGraph(window);
 	});
 
+	test('shows Document Graph legend keyboard and mouse guidance and closes it with Escape', async () => {
+		const graphDialog = await openDocumentGraphFromPreview(window);
+
+		await graphDialog.getByTitle('Open help panel').click();
+		const helpPanel = graphDialog.getByRole('region', { name: 'Help panel' });
+		await expect(helpPanel).toBeVisible();
+		await expect(helpPanel.getByText('Keyboard Shortcuts')).toBeVisible();
+		await expect(helpPanel.getByText('Navigate between nodes')).toBeVisible();
+		await expect(helpPanel.getByText('Preview document in-graph')).toBeVisible();
+		await expect(helpPanel.getByText('Open in main preview')).toBeVisible();
+		await expect(helpPanel.getByText('Right-click')).toBeVisible();
+		await expect(helpPanel.getByText('Context menu')).toBeVisible();
+		await expect(helpPanel.getByText('Zoom in/out')).toBeVisible();
+
+		await window.keyboard.press('Escape');
+		await expect(helpPanel).toBeHidden();
+		await expect(graphDialog).toBeVisible();
+
+		await closeDocumentGraph(window);
+	});
+
 	test('opens a Document Graph preview document in the main file preview', async () => {
 		const graphDialog = await openDocumentGraphFromPreview(window);
 
@@ -6456,6 +6522,19 @@ Refresh-added document with a link back to [[README]].
 		const graphDialog = await openDocumentGraphFromPreview(window);
 
 		await window.keyboard.press('Escape');
+		const closeDialog = window.getByRole('dialog', { name: 'Close Document Graph?' });
+		await expect(closeDialog).toBeVisible();
+		await closeDialog.getByRole('button', { name: 'Cancel' }).click();
+		await expect(closeDialog).toBeHidden();
+		await expect(graphDialog).toBeVisible();
+
+		await closeDocumentGraph(window);
+	});
+
+	test('cancels Document Graph toolbar close confirmation from the Cancel button', async () => {
+		const graphDialog = await openDocumentGraphFromPreview(window);
+
+		await graphDialog.getByTitle('Close (Esc)').click();
 		const closeDialog = window.getByRole('dialog', { name: 'Close Document Graph?' });
 		await expect(closeDialog).toBeVisible();
 		await closeDialog.getByRole('button', { name: 'Cancel' }).click();
