@@ -5536,6 +5536,58 @@ test.describe('App shell seeded workbench', () => {
 		await expect(fs.readFileSync(readmePath, 'utf-8')).toContain(savedSentinel);
 	});
 
+	test('toggles markdown file preview edit mode with the keyboard shortcut', async () => {
+		await window.getByTestId('file-preview-root').focus();
+		await window.keyboard.press('Meta+e');
+
+		const editor = window.locator('textarea').first();
+		await expect(editor).toHaveValue(/Preview prose for app shell E2E/);
+
+		await editor.press('Escape');
+		await expect(editor).toBeHidden();
+		await expect(window.getByText('Preview prose for app shell E2E coverage.')).toBeVisible();
+	});
+
+	test('exits markdown file preview edit mode without saving from Escape', async () => {
+		const readmePath = path.join(seededWorkbench.sessions[0].fullPath, 'README.md');
+		const discardSentinel = 'Discarded preview edit sentinel.';
+		const originalContent = fs.readFileSync(readmePath, 'utf-8');
+
+		await window.getByTitle(/Edit file/).click();
+		const editor = window.locator('textarea').first();
+		await editor.fill(`${originalContent}\n${discardSentinel}\n`);
+		await editor.press('Escape');
+
+		await expect(editor).toBeHidden();
+		await expect(window.getByText(discardSentinel)).toBeHidden();
+		await expect(fs.readFileSync(readmePath, 'utf-8')).not.toContain(discardSentinel);
+	});
+
+	test('searches markdown file preview edit content from the keyboard shortcut', async () => {
+		await window.getByTitle(/Edit file/).click();
+		const editor = window.locator('textarea').first();
+		await editor.press('Meta+f');
+
+		const searchInput = window.getByPlaceholder(/Search in file/);
+		await searchInput.fill('Graph');
+		await expect(window.getByText('1/3')).toBeVisible();
+
+		await searchInput.press('Enter');
+		await expect(window.getByText('2/3')).toBeVisible();
+	});
+
+	test('keeps fuzzy file search disabled while the file preview editor is active', async () => {
+		await window.getByTitle(/Edit file/).click();
+		const editor = window.getByTestId('file-preview-root').locator('textarea');
+		await expect(editor).toBeVisible();
+		await editor.focus();
+		await expect(editor).toBeFocused();
+		await window.keyboard.press('Meta+g');
+
+		await expect(window.getByRole('dialog', { name: 'Fuzzy File Search' })).toBeHidden();
+		await expect(editor).toBeVisible();
+	});
+
 	test('reloads externally changed file content from the file preview banner', async () => {
 		const readmePath = path.join(seededWorkbench.sessions[0].fullPath, 'README.md');
 		const externalSentinel = 'External reload sentinel.';

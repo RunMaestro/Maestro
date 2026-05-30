@@ -1692,6 +1692,14 @@ export const FilePreview = React.memo(
 			return modifiersMatch && keyMatches;
 		};
 
+		const handleEditModeKeyDownCapture = (e: React.KeyboardEvent) => {
+			if (!isEditableText || !markdownEditMode) return;
+			if (e.key.toLowerCase() === 'g' && (e.metaKey || e.ctrlKey)) {
+				e.preventDefault();
+				e.stopPropagation();
+			}
+		};
+
 		// Handle keyboard events
 		const handleKeyDown = (e: React.KeyboardEvent) => {
 			// Handle Escape key - dismiss overlays in priority order
@@ -1804,7 +1812,11 @@ export const FilePreview = React.memo(
 				onOpenInGraph();
 			} else if (isShortcut(e, 'fuzzyFileSearch') && onOpenFuzzySearch) {
 				// Cmd+G: Open fuzzy file search (only in preview mode, not edit mode)
-				if (isEditableText && markdownEditMode) return;
+				if (isEditableText && markdownEditMode) {
+					e.preventDefault();
+					e.stopPropagation();
+					return;
+				}
 				e.preventDefault();
 				e.stopPropagation();
 				onOpenFuzzySearch();
@@ -1826,6 +1838,7 @@ export const FilePreview = React.memo(
 				className="flex flex-col h-full outline-none"
 				style={{ backgroundColor: theme.colors.bgMain }}
 				tabIndex={0}
+				onKeyDownCapture={handleEditModeKeyDownCapture}
 				onKeyDown={handleKeyDown}
 			>
 				{/* CSS for Custom Highlight API */}
@@ -2326,6 +2339,11 @@ export const FilePreview = React.memo(
 									e.preventDefault();
 									e.stopPropagation();
 									handleSave();
+								}
+								// Keep Cmd+G owned by the editor; global fuzzy search is preview-only here.
+								else if (e.key.toLowerCase() === 'g' && (e.metaKey || e.ctrlKey)) {
+									e.preventDefault();
+									e.stopPropagation();
 								}
 								// Handle Escape to exit edit mode (without save)
 								else if (e.key === 'Escape') {

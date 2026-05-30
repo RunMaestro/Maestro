@@ -223,6 +223,16 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				}
 			};
 
+			const isEditableShortcutTarget = (target: EventTarget | null) => {
+				if (!(target instanceof HTMLElement)) return false;
+				return (
+					target instanceof HTMLInputElement ||
+					target instanceof HTMLTextAreaElement ||
+					target instanceof HTMLSelectElement ||
+					target.isContentEditable
+				);
+			};
+
 			// General shortcuts
 			// Only allow collapsing left sidebar when there are sessions (prevent collapse on empty state)
 			if (ctx.isShortcut(e, 'toggleSidebar')) {
@@ -340,6 +350,13 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				ctx.setActiveFocus('right');
 				trackShortcut('goToAutoRun');
 			} else if (ctx.isShortcut(e, 'fuzzyFileSearch')) {
+				if (
+					isEditableShortcutTarget(e.target) ||
+					isEditableShortcutTarget(document.activeElement)
+				) {
+					e.preventDefault();
+					return;
+				}
 				e.preventDefault();
 				if (ctx.activeSession) {
 					ctx.setFuzzyFileSearchOpen(true);
