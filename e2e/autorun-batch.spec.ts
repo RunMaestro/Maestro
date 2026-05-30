@@ -25,6 +25,11 @@ type AutoRunProcessSpawnCall = {
 	readOnlyMode?: boolean;
 };
 
+const TINY_PNG = Buffer.from(
+	'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADggGOSHzRgAAAAABJRU5ErkJggg==',
+	'base64'
+);
+
 function createBatchWorkbenchSession(projectDir: string, autoRunFolder: string) {
 	const now = Date.now();
 	const idSuffix = `${now}-${Math.random().toString(36).slice(2)}`;
@@ -131,9 +136,9 @@ async function addAllDocumentsToBatch(window: Page, batchDialog: Locator) {
 
 async function stubAutoRunProcessSpawn(
 	electronApp: ElectronApplication,
-	options: { exitDelayMs?: number } = {}
+	options: { exitDelayMs?: number; exitCode?: number; output?: string } = {}
 ) {
-	await electronApp.evaluate(({ ipcMain }, { exitDelayMs }) => {
+	await electronApp.evaluate(({ ipcMain }, { exitDelayMs, exitCode, output }) => {
 		const state = globalThis as typeof globalThis & {
 			__maestroE2eAutoRunSpawnCalls?: AutoRunProcessSpawnCall[];
 		};
@@ -150,11 +155,11 @@ async function stubAutoRunProcessSpawn(
 			event.sender.send(
 				'process:data',
 				config.sessionId,
-				'Summary: Auto Run batch E2E stub response.\n'
+				output ?? 'Summary: Auto Run batch E2E stub response.\n'
 			);
 			setTimeout(() => {
 				if (!event.sender.isDestroyed()) {
-					event.sender.send('process:exit', config.sessionId, 0);
+					event.sender.send('process:exit', config.sessionId, exitCode ?? 0);
 				}
 			}, exitDelayMs ?? 20_000);
 			return { pid: 42075, success: true };
@@ -199,6 +204,10 @@ function getAutoRunEditor(window: Page) {
 	return window.getByRole('textbox', {
 		name: /Capture notes, images, and tasks in Markdown/,
 	});
+}
+
+function getAutoRunImageInput(window: Page) {
+	return window.locator('input[type="file"][accept="image/*"]').last();
 }
 
 function writePhaseOneTasks(autoRunFolder: string, completedTasks: number) {
@@ -883,22 +892,61 @@ All tasks in this document are complete.
 	});
 
 	test.describe('Image Upload During Batch Run', () => {
-		test.skip('should disable image upload button during batch run', async ({ window }) => {
-			// This test verifies image upload is blocked during batch
-			// Skip until batch run can be triggered in E2E
-			// Expected behavior:
-			// 1. During batch run
-			// 2. Image upload button is disabled
-			// 3. Tooltip explains why
+		test('should ignore image input changes during batch run', async () => {
+			const launched = await launchBatchWorkbench();
+			const uploadPath = path.join(launched.projectDir, 'batch-locked.png');
+			fs.writeFileSync(uploadPath, TINY_PNG);
+			try {
+				await helpers.openRightPanelTab(launched.window, 'Auto Run');
+				const originalContent = fs.readFileSync(
+					path.join(launched.autoRunFolder, 'Phase 1.md'),
+					'utf-8'
+				);
+
+				await startStubbedBatchRun(launched.window, launched.electronApp, {
+					exitDelayMs: 1_500,
+				});
+				await getAutoRunImageInput(launched.window).setInputFiles(uploadPath);
+
+				await expect
+					.poll(() => fs.existsSync(path.join(launched.autoRunFolder, 'images')), {
+						timeout: 1000,
+					})
+					.toBe(false);
+				await expect
+					.poll(() => fs.readFileSync(path.join(launched.autoRunFolder, 'Phase 1.md'), 'utf-8'))
+					.toBe(originalContent);
+				await waitForBatchRunToFinish(launched.window);
+			} finally {
+				await launched.cleanup();
+			}
 		});
 
-		test.skip('should re-enable image upload after batch ends', async ({ window }) => {
-			// This test verifies image upload is restored after batch
-			// Skip until batch run can be triggered in E2E
-			// Expected behavior:
-			// 1. Batch run completes
-			// 2. Image upload button is enabled
-			// 3. Can add images normally
+		test('should accept image input changes after batch ends', async () => {
+			const launched = await launchBatchWorkbench();
+			const uploadPath = path.join(launched.projectDir, 'batch-complete.png');
+			fs.writeFileSync(uploadPath, TINY_PNG);
+			try {
+				await helpers.openRightPanelTab(launched.window, 'Auto Run');
+				await startStubbedBatchRun(launched.window, launched.electronApp, {
+					exitDelayMs: 250,
+				});
+				await waitForBatchRunToFinish(launched.window);
+				await launched.window.getByTitle('Edit document').click();
+				await getAutoRunImageInput(launched.window).setInputFiles(uploadPath);
+
+				await expect
+					.poll(() => {
+						const imagesDir = path.join(launched.autoRunFolder, 'images');
+						return fs.existsSync(imagesDir) ? fs.readdirSync(imagesDir) : [];
+					})
+					.toHaveLength(1);
+				await expect(getAutoRunEditor(launched.window)).toHaveValue(
+					/!\[Phase 1-\d+\.png\]\(images\/Phase%201-\d+\.png\)/
+				);
+			} finally {
+				await launched.cleanup();
+			}
 		});
 	});
 });
@@ -1123,34 +1171,78 @@ test.describe('Batch Processing Accessibility', () => {
  * Error handling tests for batch processing
  */
 test.describe('Batch Processing Error Handling', () => {
-	test.skip('should handle agent disconnection during batch run', async ({ window }) => {
-		// This test verifies graceful error handling
-		// Skip until error simulation is available
-		// Expected behavior:
-		// 1. Batch run active
-		// 2. Agent disconnects
-		// 3. Batch stops gracefully
-		// 4. Error message displayed
-		// 5. UI returns to idle state
+	test('should return to idle when the agent process exits with failure', async () => {
+		const launched = await launchBatchWorkbench();
+		try {
+			await helpers.openRightPanelTab(launched.window, 'Auto Run');
+			await startStubbedBatchRun(launched.window, launched.electronApp, {
+				exitCode: 1,
+				exitDelayMs: 250,
+				output: 'Agent disconnected before completing the Auto Run task.\n',
+			});
+
+			await waitForBatchRunToFinish(launched.window);
+			await expect(helpers.getRunButton(launched.window).first()).toBeEnabled();
+			await expect(launched.window.getByText('Auto Run Active').first()).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
 	});
 
-	test.skip('should handle file system errors during batch run', async ({ window }) => {
-		// This test verifies file error handling
-		// Skip until error simulation is available
-		// Expected behavior:
-		// 1. Batch run active
-		// 2. File write fails
-		// 3. Error shown to user
-		// 4. Can retry or stop
+	test('should return to idle when a selected document disappears before processing', async () => {
+		const launched = await launchBatchWorkbench();
+		try {
+			await stubAutoRunProcessSpawn(launched.electronApp, { exitDelayMs: 250 });
+			const batchDialog = await openBatchRunnerModal(launched.window);
+			fs.rmSync(path.join(launched.autoRunFolder, 'Phase 1.md'), { force: true });
+			await batchDialog.getByRole('button', { name: 'Go' }).click();
+			await expect(batchDialog).toBeHidden();
+
+			await expect(launched.window.getByText('Auto Run Active').first()).toBeHidden({
+				timeout: 20_000,
+			});
+			await expect(helpers.getRunButton(launched.window).first()).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
 	});
 
-	test.skip('should recover state after app crash during batch run', async ({ window }) => {
-		// This test verifies crash recovery
-		// Skip until crash simulation is available
-		// Expected behavior:
-		// 1. Batch run active
-		// 2. App crashes/restarts
-		// 3. State recovered from last known point
-		// 4. Can resume or start fresh
+	test('should start clean after restart while a batch was active', async () => {
+		const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-batch-restart-'));
+		const autoRunFolder = helpers.createBatchTestFolder(projectDir);
+		const session = createBatchWorkbenchSession(projectDir, autoRunFolder);
+		const launched = await helpers.launchAppWithState({
+			homeDir: projectDir,
+			sessions: [session],
+		});
+
+		try {
+			await helpers.openRightPanelTab(launched.window, 'Auto Run');
+			await startStubbedBatchRun(launched.window, launched.electronApp, {
+				exitDelayMs: 20_000,
+			});
+			await expect(launched.window.getByText('Auto Run Active').first()).toBeVisible();
+			await launched.cleanup();
+
+			const relaunched = await helpers.launchAppWithState({
+				homeDir: projectDir,
+				sessions: [session],
+			});
+			try {
+				await helpers.openRightPanelTab(relaunched.window, 'Auto Run');
+				await expect(relaunched.window.getByText('Auto Run Active').first()).toBeHidden();
+				await expect(helpers.getRunButton(relaunched.window).first()).toBeVisible();
+				await expect(helpers.getRunButton(relaunched.window).first()).toBeEnabled();
+			} finally {
+				await relaunched.cleanup();
+			}
+		} finally {
+			try {
+				await launched.cleanup();
+			} catch {
+				// App may already be closed by the restart simulation.
+			}
+			fs.rmSync(projectDir, { recursive: true, force: true });
+		}
 	});
 });

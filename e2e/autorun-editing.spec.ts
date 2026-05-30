@@ -11,6 +11,7 @@
  */
 /* eslint-disable @typescript-eslint/no-unused-vars */
 import { test, expect, helpers } from './fixtures/electron-app';
+import type { Page } from '@playwright/test';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
@@ -19,6 +20,10 @@ const TINY_PNG = Buffer.from(
 	'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADggGOSHzRgAAAAABJRU5ErkJggg==',
 	'base64'
 );
+
+function getAutoRunImageInput(window: Page) {
+	return window.locator('input[type="file"][accept="image/*"]').last();
+}
 
 function createEditingWorkbenchSession(
 	projectDir: string,
@@ -405,46 +410,90 @@ Some sample content for testing.
 	});
 
 	test.describe('Image Paste and Attachment', () => {
-		test.skip('should show image upload button when in edit mode', async ({ window }) => {
-			// Test requires configured Auto Run folder
-			const autoRunTab = window.locator('text=Auto Run');
-			if ((await autoRunTab.count()) > 0) {
-				await autoRunTab.first().click();
+		test('should keep the manual image upload button hidden in edit mode', async () => {
+			const launched = await launchImageAttachmentWorkbench();
+			try {
+				await helpers.openRightPanelTab(launched.window, 'Auto Run');
+				await launched.window.getByTitle('Edit document').click();
 
-				const editButton = window.locator('button').filter({ hasText: 'Edit' });
-				if ((await editButton.count()) > 0 && (await editButton.isVisible())) {
-					await editButton.first().click();
-
-					// Look for image upload button (has Image icon)
-					const imageButton = window
-						.locator('button[title*="image"]')
-						.or(window.locator('button[title*="Image"]'));
-					await expect(imageButton).toBeVisible();
-				}
+				await expect(launched.window.getByTitle('Add image (or paste from clipboard)')).toHaveCount(
+					0
+				);
+				await expect(getAutoRunImageInput(launched.window)).toBeHidden();
+			} finally {
+				await launched.cleanup();
 			}
 		});
 
-		test.skip('should handle image paste from clipboard', async ({ window }) => {
-			// This test requires clipboard mocking with image data
-			// Skip until clipboard mocking is implemented
-			// Steps would be:
-			// 1. Configure Auto Run folder
-			// 2. Switch to edit mode
-			// 3. Mock clipboard with image data
-			// 4. Press Cmd+V
-			// 5. Verify image is inserted into content
-			// 6. Verify image file is saved to images/ folder
+		test('should handle image paste from clipboard', async () => {
+			const selectedFile = 'PasteDoc';
+			const launched = await launchEditingDocumentWorkbench(
+				testProjectDir,
+				testAutoRunFolder,
+				selectedFile,
+				'# Paste Image Coverage\n'
+			);
+			try {
+				await helpers.openRightPanelTab(launched.window, 'Auto Run');
+				await launched.window.getByTitle('Edit document').click();
+				const editor = launched.window.getByPlaceholder(/Capture notes/);
+				await expect(editor).toBeEditable();
+
+				await editor.evaluate((textarea, pngBase64) => {
+					const bytes = Uint8Array.from(atob(pngBase64), (char) => char.charCodeAt(0));
+					const file = new File([bytes], 'pasted.png', { type: 'image/png' });
+					const dataTransfer = new DataTransfer();
+					dataTransfer.items.add(file);
+					(textarea as HTMLTextAreaElement).setSelectionRange(
+						(textarea as HTMLTextAreaElement).value.length,
+						(textarea as HTMLTextAreaElement).value.length
+					);
+					textarea.dispatchEvent(
+						new ClipboardEvent('paste', {
+							clipboardData: dataTransfer,
+							bubbles: true,
+							cancelable: true,
+						})
+					);
+				}, TINY_PNG.toString('base64'));
+
+				await expect.poll(() => fs.existsSync(path.join(testAutoRunFolder, 'images'))).toBe(true);
+				await expect
+					.poll(() => fs.readdirSync(path.join(testAutoRunFolder, 'images')))
+					.toHaveLength(1);
+				await expect(editor).toHaveValue(/!\[PasteDoc-\d+\.png\]\(images\/PasteDoc-\d+\.png\)/);
+				await expect(launched.window.getByText('Attached Images (1)')).toBeVisible();
+			} finally {
+				await launched.cleanup();
+			}
 		});
 
-		test.skip('should handle image file upload via button', async ({ window }) => {
-			// This test requires file input mocking
-			// Skip until file input mocking is implemented
-			// Steps would be:
-			// 1. Configure Auto Run folder
-			// 2. Switch to edit mode
-			// 3. Mock file input selection
-			// 4. Click upload button
-			// 5. Verify image is inserted into content
+		test('should handle image file upload through the hidden input', async () => {
+			const selectedFile = 'UploadDoc';
+			const uploadPath = path.join(testProjectDir, 'upload.png');
+			fs.writeFileSync(uploadPath, TINY_PNG);
+			const launched = await launchEditingDocumentWorkbench(
+				testProjectDir,
+				testAutoRunFolder,
+				selectedFile,
+				'# Upload Image Coverage\n'
+			);
+			try {
+				await helpers.openRightPanelTab(launched.window, 'Auto Run');
+				await launched.window.getByTitle('Edit document').click();
+				await getAutoRunImageInput(launched.window).setInputFiles(uploadPath);
+
+				await expect.poll(() => fs.existsSync(path.join(testAutoRunFolder, 'images'))).toBe(true);
+				await expect
+					.poll(() => fs.readdirSync(path.join(testAutoRunFolder, 'images')))
+					.toHaveLength(1);
+				await expect(launched.window.getByPlaceholder(/Capture notes/)).toHaveValue(
+					/!\[UploadDoc-\d+\.png\]\(images\/UploadDoc-\d+\.png\)/
+				);
+				await expect(launched.window.getByText('Attached Images (1)')).toBeVisible();
+			} finally {
+				await launched.cleanup();
+			}
 		});
 
 		test('should display uploaded images in attachments section', async () => {

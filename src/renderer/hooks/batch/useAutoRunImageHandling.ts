@@ -353,7 +353,7 @@ export function useAutoRunImageHandling({
 	const handleFileSelect = useCallback(
 		async (e: React.ChangeEvent<HTMLInputElement>) => {
 			const file = e.target.files?.[0];
-			if (!file || !folderPath || !selectedFile) return;
+			if (isLocked || !file || !folderPath || !selectedFile) return;
 
 			const reader = new FileReader();
 			reader.onload = async (event) => {
