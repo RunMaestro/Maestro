@@ -1699,7 +1699,23 @@ export async function routeAgentResponse(
 		`[GroupChat:Debug] Participant verified: ${participantName} (agent: ${participant.agentId})`
 	);
 
-	const autoRunRefs = await resolveParticipantAutoRunRefs(participantName, message);
+	let autoRunRefs: GroupChatAutoRunRef[] = [];
+	try {
+		autoRunRefs = await resolveParticipantAutoRunRefs(participantName, message);
+	} catch (error) {
+		logger.error(`Failed to resolve Auto Run refs for ${participantName}`, LOG_CONTEXT, {
+			error,
+			groupChatId,
+			participantName,
+			messageLength: message.length,
+		});
+		captureException(error, {
+			operation: 'groupChat:resolveParticipantAutoRunRefs',
+			groupChatId,
+			participantName,
+			messageLength: message.length,
+		});
+	}
 	const enrichedMessage =
 		autoRunRefs.length > 0 ? appendCanonicalAutoRunRefs(message, autoRunRefs) : message;
 
