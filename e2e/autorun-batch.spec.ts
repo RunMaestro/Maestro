@@ -95,7 +95,7 @@ async function launchBatchWorkbench() {
 		homeDir: projectDir,
 		sessions: [createBatchWorkbenchSession(projectDir, autoRunFolder)],
 	});
-	return launched;
+	return { ...launched, projectDir, autoRunFolder };
 }
 
 async function openBatchRunnerModal(window: Page) {
@@ -182,6 +182,31 @@ function getAutoRunEditor(window: Page) {
 	return window.getByRole('textbox', {
 		name: /Capture notes, images, and tasks in Markdown/,
 	});
+}
+
+function writePhaseOneTasks(autoRunFolder: string, completedTasks: number) {
+	const taskStatus = (taskNumber: number) => (taskNumber <= completedTasks ? 'x' : ' ');
+	fs.writeFileSync(
+		path.join(autoRunFolder, 'Phase 1.md'),
+		`# Phase 1: Setup
+
+## Tasks
+
+- [${taskStatus(1)}] Task 1: Initialize project structure
+- [${taskStatus(2)}] Task 2: Set up configuration files
+- [${taskStatus(3)}] Task 3: Create initial documentation
+
+## Notes
+
+These are test tasks for batch processing E2E tests.
+`
+	);
+}
+
+async function waitForBatchRunToFinish(window: Page) {
+	await expect(window.getByText('Auto Run Active').first()).toBeHidden({ timeout: 20_000 });
+	await expect(getAutoRunStopButton(window)).toHaveCount(0);
+	await expect(helpers.getRunButton(window).first()).toBeVisible();
 }
 
 /**
@@ -496,14 +521,19 @@ All tasks in this document are complete.
 			}
 		});
 
-		test.skip('should transition UI back to idle state when batch ends', async ({ window }) => {
-			// This test requires completing a batch run
-			// Skip until full batch run infrastructure is available
-			// Expected behavior:
-			// 1. Run button reappears
-			// 2. Textarea becomes editable
-			// 3. Edit button becomes enabled
-			// 4. Mode restores to previous setting
+		test('should transition UI back to idle state when batch ends', async () => {
+			const launched = await launchBatchWorkbench();
+			try {
+				await startStubbedBatchRun(launched.window, launched.electronApp, {
+					exitDelayMs: 1_500,
+				});
+				writePhaseOneTasks(launched.autoRunFolder, 3);
+
+				await waitForBatchRunToFinish(launched.window);
+				await expect(launched.window.getByText('3 of 3 tasks completed').first()).toBeVisible();
+			} finally {
+				await launched.cleanup();
+			}
 		});
 	});
 
@@ -602,14 +632,24 @@ All tasks in this document are complete.
 			}
 		});
 
-		test.skip('should trigger stop when Stop button is clicked', async ({ window }) => {
-			// This test requires an active batch run
-			// Skip until batch run can be triggered in E2E
-			// Expected behavior:
-			// 1. Click Stop button
-			// 2. Button shows "Stopping..." state
-			// 3. Batch run halts after current operation
-			// 4. UI transitions back to idle state
+		test('should trigger stop when Stop button is clicked', async () => {
+			const launched = await launchBatchWorkbench();
+			try {
+				await helpers.openRightPanelTab(launched.window, 'Auto Run');
+				await startStubbedBatchRun(launched.window, launched.electronApp, {
+					exitDelayMs: 1_500,
+				});
+
+				await getAutoRunStopButton(launched.window).click();
+				const confirmDialog = launched.window.getByRole('dialog', { name: 'Confirm' });
+				await confirmDialog.getByRole('button', { name: 'Confirm' }).click();
+				writePhaseOneTasks(launched.autoRunFolder, 1);
+
+				await waitForBatchRunToFinish(launched.window);
+				await expect(launched.window.getByText('1 of 3 tasks completed').first()).toBeVisible();
+			} finally {
+				await launched.cleanup();
+			}
 		});
 
 		test('should show Stopping state during graceful shutdown', async () => {
@@ -632,14 +672,24 @@ All tasks in this document are complete.
 			}
 		});
 
-		test.skip('should restore Run button after batch is stopped', async ({ window }) => {
-			// This test verifies state restoration after stop
-			// Skip until batch run can be triggered in E2E
-			// Expected behavior:
-			// 1. After stop completes
-			// 2. Run button reappears
-			// 3. Stop button is hidden
-			// 4. Edit button is re-enabled
+		test('should restore Run button after batch is stopped', async () => {
+			const launched = await launchBatchWorkbench();
+			try {
+				await helpers.openRightPanelTab(launched.window, 'Auto Run');
+				await startStubbedBatchRun(launched.window, launched.electronApp, {
+					exitDelayMs: 1_500,
+				});
+
+				await getAutoRunStopButton(launched.window).click();
+				const confirmDialog = launched.window.getByRole('dialog', { name: 'Confirm' });
+				await confirmDialog.getByRole('button', { name: 'Confirm' }).click();
+				writePhaseOneTasks(launched.autoRunFolder, 1);
+
+				await waitForBatchRunToFinish(launched.window);
+				await expect(helpers.getRunButton(launched.window).first()).toBeEnabled();
+			} finally {
+				await launched.cleanup();
+			}
 		});
 	});
 
@@ -700,22 +750,42 @@ All tasks in this document are complete.
 	});
 
 	test.describe('Mode Management During Batch Run', () => {
-		test.skip('should auto-switch to preview mode when batch starts', async ({ window }) => {
-			// This test verifies mode transition on batch start
-			// Skip until batch run can be triggered in E2E
-			// Expected behavior:
-			// 1. Start in edit mode
-			// 2. Begin batch run
-			// 3. Mode switches to preview automatically
+		test('should auto-switch to preview mode when batch starts', async () => {
+			const launched = await launchBatchWorkbench();
+			try {
+				await helpers.openRightPanelTab(launched.window, 'Auto Run');
+				await launched.window.getByTitle('Edit document').click();
+				await expect(getAutoRunEditor(launched.window)).toBeVisible();
+
+				await startStubbedBatchRun(launched.window, launched.electronApp);
+
+				await expect(getAutoRunEditor(launched.window)).toHaveCount(0);
+				await expect(launched.window.getByTitle('Preview document')).toHaveAttribute(
+					'aria-pressed',
+					'true'
+				);
+			} finally {
+				await launched.cleanup();
+			}
 		});
 
-		test.skip('should restore previous mode when batch ends', async ({ window }) => {
-			// This test verifies mode restoration after batch
-			// Skip until batch run can be triggered in E2E
-			// Expected behavior:
-			// 1. Was in edit mode before batch
-			// 2. Batch run completes
-			// 3. Mode returns to edit
+		test('should restore previous mode when batch ends', async () => {
+			const launched = await launchBatchWorkbench();
+			try {
+				await helpers.openRightPanelTab(launched.window, 'Auto Run');
+				await launched.window.getByTitle('Edit document').click();
+				await expect(getAutoRunEditor(launched.window)).toBeEditable();
+
+				await startStubbedBatchRun(launched.window, launched.electronApp, {
+					exitDelayMs: 1_500,
+				});
+				writePhaseOneTasks(launched.autoRunFolder, 3);
+
+				await waitForBatchRunToFinish(launched.window);
+				await expect(getAutoRunEditor(launched.window)).toBeEditable();
+			} finally {
+				await launched.cleanup();
+			}
 		});
 
 		test.skip('should allow Cmd+E to toggle mode even during batch run', async ({ window }) => {
