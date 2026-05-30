@@ -3205,6 +3205,85 @@ test.describe('App shell seeded workbench', () => {
 			});
 	});
 
+	test('filters Playbook Exchange to release playbooks and previews release docs', async () => {
+		await stubMarketplaceForPlaybookExchange(electronApp);
+
+		await helpers.openRightPanelTab(window, 'Auto Run');
+		await window.getByTitle('Browse PlayBooks - discover and share community playbooks').click();
+		const marketplaceDialog = window.getByRole('dialog').first();
+		await expect(marketplaceDialog.getByText('Playbook Exchange')).toBeVisible();
+
+		await marketplaceDialog.getByRole('button', { name: 'Release(1)' }).click();
+		await expect(
+			marketplaceDialog.getByRole('button', { name: /Release Checklist/ })
+		).toBeVisible();
+		await expect(marketplaceDialog.getByText('Issue Triage')).toBeHidden();
+
+		await marketplaceDialog.getByRole('button', { name: /Release Checklist/ }).click();
+		await expect(
+			marketplaceDialog.getByRole('heading', { name: 'Release Checklist', exact: true })
+		).toBeVisible();
+		await expect(
+			marketplaceDialog.getByRole('heading', { name: 'Release checklist', exact: true })
+		).toBeVisible();
+		await expect(marketplaceDialog.getByText('Loop: No')).toBeVisible();
+
+		await marketplaceDialog.getByRole('button', { name: /release-plan\.md/ }).click();
+		await expect(marketplaceDialog.getByText('Release plan body.')).toBeVisible();
+		await marketplaceDialog.getByTitle('Back to list (Esc)').click();
+		await expect(marketplaceDialog.getByPlaceholder('Search playbooks...')).toBeVisible();
+	});
+
+	test('shows Playbook Exchange help, refreshes cached data, and handles empty search', async () => {
+		await stubMarketplaceForPlaybookExchange(electronApp);
+
+		await helpers.openRightPanelTab(window, 'Auto Run');
+		await window.getByTitle('Browse PlayBooks - discover and share community playbooks').click();
+		const marketplaceDialog = window.getByRole('dialog').first();
+		await expect(marketplaceDialog.getByText(/Cached 2m ago|Cached/)).toBeVisible();
+
+		await marketplaceDialog.getByLabel('Help').click();
+		await expect(marketplaceDialog.getByText('About the Playbook Exchange')).toBeVisible();
+		await expect(marketplaceDialog.getByText('Submit Your Playbook')).toBeVisible();
+		await marketplaceDialog.getByRole('button', { name: 'Close', exact: true }).click();
+		await expect(marketplaceDialog.getByText('Submit Your Playbook')).toBeHidden();
+
+		await marketplaceDialog.getByLabel('Refresh marketplace').click();
+		await expect(marketplaceDialog.getByText('Live')).toBeVisible();
+
+		await marketplaceDialog.getByPlaceholder('Search playbooks...').fill('not-a-playbook');
+		await expect(marketplaceDialog.getByText('No results found')).toBeVisible();
+		await expect(
+			marketplaceDialog.getByText('Try adjusting your search or browse a different category')
+		).toBeVisible();
+	});
+
+	test('imports a release marketplace playbook with the generated target folder', async () => {
+		await stubMarketplaceForPlaybookExchange(electronApp);
+
+		await helpers.openRightPanelTab(window, 'Auto Run');
+		await window.getByTitle('Browse PlayBooks - discover and share community playbooks').click();
+		const marketplaceDialog = window.getByRole('dialog').first();
+		await expect(marketplaceDialog.getByText('Playbook Exchange')).toBeVisible();
+		await marketplaceDialog.getByRole('button', { name: /Release Checklist/ }).click();
+		await expect(
+			marketplaceDialog.getByRole('heading', { name: 'Release checklist', exact: true })
+		).toBeVisible();
+
+		await marketplaceDialog.getByRole('button', { name: 'Import Playbook' }).click();
+		await expect(marketplaceDialog).toBeHidden();
+		await expect(window.getByText('Playbook Imported')).toBeVisible();
+
+		await expect
+			.poll(async () => getStubbedMarketplaceImportRequest(electronApp))
+			.toMatchObject({
+				playbookId: 'release-checklist',
+				targetFolderName: 'release/release-checklist',
+				autoRunFolderPath: seededWorkbench.sessions[0].autoRunFolderPath,
+				sessionId: seededWorkbench.sessions[0].id,
+			});
+	});
+
 	test('browses Symphony projects issues and GitHub CLI preflight states', async () => {
 		await stubSymphonyForModal(electronApp, seededWorkbench.sessions[0].id);
 
@@ -7854,6 +7933,39 @@ Refresh-added document with a link back to [[README]].
 		await expect(
 			openSpecPanel.getByText('Bundled proposal prompt for {{AGENT_NAME}}.')
 		).toBeVisible();
+	});
+
+	test('refreshes bundled Spec Kit and OpenSpec command metadata in Settings', async () => {
+		await stubSpecKitAndOpenSpecCommands(electronApp);
+		const settingsDialog = await openSettingsTab(window, 'AI Commands', 'Custom AI Commands');
+
+		await expect(settingsDialog.getByText('v1.2.3')).toBeVisible();
+		await expect(settingsDialog.getByText('v2.0.1')).toBeVisible();
+
+		await settingsDialog.getByRole('button', { name: 'Check for Updates' }).nth(0).click();
+		await expect(settingsDialog.getByText('v1.2.4')).toBeVisible();
+		await expect(settingsDialog.getByText('v2.0.1')).toBeVisible();
+
+		await settingsDialog.getByRole('button', { name: 'Check for Updates' }).nth(1).click();
+		await expect(settingsDialog.getByText('v2.0.2')).toBeVisible();
+	});
+
+	test('cancels bundled command prompt edits without saving them', async () => {
+		await stubSpecKitAndOpenSpecCommands(electronApp);
+		const settingsDialog = await openSettingsTab(window, 'AI Commands', 'Custom AI Commands');
+
+		await settingsDialog.getByRole('button', { name: /\/speckit\.specify/ }).click();
+		const specKitPanel = settingsDialog
+			.getByText('/speckit.specify')
+			.first()
+			.locator('xpath=ancestor::div[contains(@class, "rounded-lg")][1]');
+		await expect(specKitPanel.getByText('Bundled specify prompt for {{CWD}}.')).toBeVisible();
+
+		await specKitPanel.getByTitle('Edit prompt').click();
+		await specKitPanel.locator('textarea').fill('Unsaved Spec Kit prompt.');
+		await specKitPanel.getByRole('button', { name: 'Cancel' }).click();
+		await expect(specKitPanel.getByText('Bundled specify prompt for {{CWD}}.')).toBeVisible();
+		await expect(specKitPanel.getByText('Unsaved Spec Kit prompt.')).toBeHidden();
 	});
 });
 

@@ -11,7 +11,7 @@
  */
 /* eslint-disable @typescript-eslint/no-unused-vars */
 import { test, expect, helpers } from './fixtures/electron-app';
-import type { Page } from '@playwright/test';
+import type { ElectronApplication, Page } from '@playwright/test';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
@@ -23,6 +23,26 @@ const TINY_PNG = Buffer.from(
 
 function getAutoRunImageInput(window: Page) {
 	return window.locator('input[type="file"][accept="image/*"]').last();
+}
+
+async function emitAutoRunFileChanged(
+	electronApp: ElectronApplication,
+	folderPath: string,
+	filename: string
+) {
+	await electronApp.evaluate(
+		({ BrowserWindow }, payload: { folderPath: string; filename: string }) => {
+			for (const win of BrowserWindow.getAllWindows()) {
+				if (!win.isDestroyed()) {
+					win.webContents.send('autorun:fileChanged', {
+						...payload,
+						eventType: 'change',
+					});
+				}
+			}
+		},
+		{ folderPath, filename }
+	);
 }
 
 function createEditingWorkbenchSession(
@@ -994,6 +1014,7 @@ External editor wrote this content.
 				updatedContent,
 				'utf-8'
 			);
+			await emitAutoRunFileChanged(launched.electronApp, integrationAutoRunFolder, selectedFile);
 
 			await expect(textarea).toHaveValue(updatedContent, { timeout: 10000 });
 			await expect(launched.window.getByText(/1\s+of\s+2\s+tasks/i)).toBeVisible();
@@ -1054,6 +1075,7 @@ External update replaced the shared draft.
 				externalContent,
 				'utf-8'
 			);
+			await emitAutoRunFileChanged(launched.electronApp, integrationAutoRunFolder, selectedFile);
 
 			await expect(modalTextarea).toHaveValue(externalContent, { timeout: 10000 });
 			await expect(panelTextarea).toHaveValue(externalContent);
