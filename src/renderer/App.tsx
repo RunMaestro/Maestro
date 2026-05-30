@@ -1513,26 +1513,39 @@ function MaestroConsoleInner() {
 						};
 						// Register AFTER validating docs exist so no stale entry on failure
 						registerGroupChatAutoRun(session.id, groupChatId, participantName);
-						startBatchRunRef.current(session.id, config, session.autoRunFolderPath!).then(
-							() => {
-								// startBatchRun resolved — check if onComplete consumed the registry.
-								// If it's still registered, the batch hit an early return (0 tasks,
-								// session gone, etc.) and never called onComplete. Report so the
-								// moderator doesn't wait for a response that will never come.
-								const orphaned = consumeGroupChatAutoRunForCompletion(session.id);
-								if (orphaned) {
-									reportFailure(
-										`Auto Run batch finished without processing any tasks. The documents may have no unchecked tasks (- [ ]).`
-									);
-								}
+						const startFailureContext = {
+							extra: {
+								operation: 'groupChat:autoRun:startBatchRun',
+								groupChatId,
+								participantName,
+								sessionId: session.id,
+								session: { id: session.id },
+								requestedFilenames: files,
 							},
-							(err) => {
-								const orphaned = consumeGroupChatAutoRunForCompletion(session.id);
-								if (orphaned) {
-									reportFailure(`Auto Run batch failed: ${String(err)}`);
+						};
+						Promise.resolve()
+							.then(() => startBatchRunRef.current(session.id, config, session.autoRunFolderPath!))
+							.then(
+								() => {
+									// startBatchRun resolved — check if onComplete consumed the registry.
+									// If it's still registered, the batch hit an early return (0 tasks,
+									// session gone, etc.) and never called onComplete. Report so the
+									// moderator doesn't wait for a response that will never come.
+									const orphaned = consumeGroupChatAutoRunForCompletion(session.id);
+									if (orphaned) {
+										reportFailure(
+											`Auto Run batch finished without processing any tasks. The documents may have no unchecked tasks (- [ ]).`
+										);
+									}
+								},
+								(err) => {
+									captureException(err, startFailureContext);
+									const orphaned = consumeGroupChatAutoRunForCompletion(session.id);
+									if (orphaned) {
+										reportFailure(`Auto Run batch failed: ${String(err)}`);
+									}
 								}
-							}
-						);
+							);
 					})
 					.catch((err) => {
 						reportFailure(`Failed to read Auto Run folder: ${String(err)}`);
