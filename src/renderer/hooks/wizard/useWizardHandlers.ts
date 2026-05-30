@@ -46,6 +46,12 @@ import type { WizardState } from '../../components/Wizard/WizardContext';
 import type { HistoryEntryInput } from '../agent/useAgentSessionManagement';
 import type { AgentSpawnResult } from '../agent/useAgentExecution';
 
+function getDirectoryFromSavedPath(savedPath?: string): string | undefined {
+	if (!savedPath) return undefined;
+	const lastSeparatorIndex = Math.max(savedPath.lastIndexOf('/'), savedPath.lastIndexOf('\\'));
+	return lastSeparatorIndex > 0 ? savedPath.slice(0, lastSeparatorIndex) : undefined;
+}
+
 // ============================================================================
 // Dependencies interface
 // ============================================================================
@@ -1119,8 +1125,10 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 				showThinking: currentDefaults.defaultShowThinking,
 			};
 
-			const autoRunFolderPath = `${directoryPath}/${AUTO_RUN_FOLDER_NAME}`;
 			const firstDoc = generatedDocuments[0];
+			const autoRunFolderPath =
+				getDirectoryFromSavedPath(firstDoc?.savedPath) ??
+				`${directoryPath}/${AUTO_RUN_FOLDER_NAME}`;
 			const autoRunSelectedFile = firstDoc ? firstDoc.filename.replace(/\.md$/, '') : undefined;
 
 			const newSession: Session = {

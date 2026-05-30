@@ -131,7 +131,6 @@ export function MaestroWizard({
 	const [displayedStep, setDisplayedStep] = useState<WizardStep>(state.currentStep);
 	// isTransitioning tracks whether we're in a fade-out/fade-in animation
 	const [isTransitioning, setIsTransitioning] = useState(false);
-	const isTransitioningRef = useRef(false);
 	// transitionDirection indicates whether we're moving forward or backward
 	const [transitionDirection, setTransitionDirection] = useState<'forward' | 'backward'>('forward');
 
@@ -151,7 +150,6 @@ export function MaestroWizard({
 	clearResumeStateRef.current = clearResumeState;
 	const resetWizardRef = useRef(resetWizard);
 	resetWizardRef.current = resetWizard;
-	isTransitioningRef.current = isTransitioning;
 
 	/**
 	 * Handle wizard close request
@@ -205,8 +203,9 @@ export function MaestroWizard({
 
 	// Handle step transitions with fade animation
 	useEffect(() => {
-		// Only animate if step has actually changed and we're not already transitioning
-		if (state.currentStep !== displayedStep && !isTransitioningRef.current) {
+		// Step changes can happen while a prior transition is still fading out.
+		// Always reschedule the fade target so the rendered screen reaches the latest step.
+		if (state.currentStep !== displayedStep) {
 			// Determine direction based on step indices
 			const currentIndex = STEP_INDEX[state.currentStep];
 			const displayedIndex = STEP_INDEX[displayedStep];

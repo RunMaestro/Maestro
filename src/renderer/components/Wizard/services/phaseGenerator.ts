@@ -766,7 +766,9 @@ class PhaseGenerator {
 
 			// Convert to GeneratedDocument format
 			// If read from disk, set savedPath since they're already saved
-			const autoRunPath = `${config.directoryPath}/${AUTO_RUN_FOLDER_NAME}`;
+			const autoRunPath = config.subfolder
+				? `${config.directoryPath}/${AUTO_RUN_FOLDER_NAME}/${config.subfolder}`
+				: `${config.directoryPath}/${AUTO_RUN_FOLDER_NAME}`;
 			const generatedDocs: GeneratedDocument[] = documents.map((doc) => ({
 				filename: doc.filename,
 				content: doc.content,
