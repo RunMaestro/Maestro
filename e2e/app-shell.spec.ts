@@ -7025,6 +7025,93 @@ test.describe('App shell seeded workbench', () => {
 			});
 	});
 
+	test('persists SSH remote ignore patterns and duplicate validation', async () => {
+		const settingsDialog = await openSshSettings(window);
+		await scrollSettingsToText(settingsDialog, 'Remote Ignore Patterns');
+		const ignoreSection = settingsDialog
+			.getByText('Remote Ignore Patterns', { exact: true })
+			.locator('xpath=ancestor::div[contains(@class, "flex items-start")][1]');
+		const patternInput = ignoreSection.getByPlaceholder(
+			'Enter glob pattern (e.g., node_modules, *.log)'
+		);
+		const initialPatterns = await window.evaluate(async () => {
+			return await window.maestro.settings.get('sshRemoteIgnorePatterns');
+		});
+
+		await patternInput.fill('e2e-cache');
+		await patternInput.press('Enter');
+		await expect(ignoreSection.getByText('e2e-cache')).toBeVisible();
+		await expect
+			.poll(async () => {
+				return await window.evaluate(async () => {
+					return await window.maestro.settings.get('sshRemoteIgnorePatterns');
+				});
+			})
+			.toEqual([...initialPatterns, 'e2e-cache']);
+
+		await patternInput.fill('e2e-cache');
+		await ignoreSection.getByRole('button', { name: 'Add' }).click();
+		await expect(ignoreSection.getByText('Pattern already exists')).toBeVisible();
+
+		await ignoreSection
+			.getByText('e2e-cache', { exact: true })
+			.locator('xpath=ancestor::div[contains(@class, "flex items-center gap-1")][1]')
+			.getByTitle('Remove pattern')
+			.click();
+		await expect(ignoreSection.getByText('e2e-cache')).toBeHidden();
+		await expect
+			.poll(async () => {
+				return await window.evaluate(async () => {
+					return await window.maestro.settings.get('sshRemoteIgnorePatterns');
+				});
+			})
+			.toEqual(initialPatterns);
+	});
+
+	test('resets SSH remote ignore patterns and restores gitignore honoring', async () => {
+		const settingsDialog = await openSshSettings(window);
+		await scrollSettingsToText(settingsDialog, 'Remote Ignore Patterns');
+		const ignoreSection = settingsDialog
+			.getByText('Remote Ignore Patterns', { exact: true })
+			.locator('xpath=ancestor::div[contains(@class, "flex items-start")][1]');
+		const honorGitignore = ignoreSection.getByRole('checkbox', { name: 'Honor .gitignore' });
+		const initialPatterns = await window.evaluate(async () => {
+			return await window.maestro.settings.get('sshRemoteIgnorePatterns');
+		});
+
+		if ((await honorGitignore.getAttribute('aria-checked')) === 'true') {
+			await honorGitignore.click();
+		}
+		await ignoreSection
+			.getByPlaceholder('Enter glob pattern (e.g., node_modules, *.log)')
+			.fill('tmp-build');
+		await ignoreSection.getByRole('button', { name: 'Add' }).click();
+		await expect
+			.poll(async () => {
+				return await window.evaluate(async () => ({
+					honorGitignore: await window.maestro.settings.get('sshRemoteHonorGitignore'),
+					patterns: await window.maestro.settings.get('sshRemoteIgnorePatterns'),
+				}));
+			})
+			.toEqual({
+				honorGitignore: false,
+				patterns: [...initialPatterns, 'tmp-build'],
+			});
+
+		await ignoreSection.getByRole('button', { name: /Reset to defaults/ }).click();
+		await expect
+			.poll(async () => {
+				return await window.evaluate(async () => ({
+					honorGitignore: await window.maestro.settings.get('sshRemoteHonorGitignore'),
+					patterns: await window.maestro.settings.get('sshRemoteIgnorePatterns'),
+				}));
+			})
+			.toEqual({
+				honorGitignore: true,
+				patterns: ['.git', '*cache*'],
+			});
+	});
+
 	test('persists notification Settings toggles command and toast duration', async () => {
 		const settingsDialog = await openSettingsTab(
 			window,
@@ -7061,6 +7148,26 @@ test.describe('App shell seeded workbench', () => {
 				});
 			})
 			.toBe(0);
+	});
+
+	test('persists Group Chat moderator standing instructions', async () => {
+		const settingsDialog = await openSettingsTab(
+			window,
+			'Group Chat',
+			'Moderator Standing Instructions'
+		);
+		const instructions =
+			'Always keep delegated agents on feature branches.\nAsk for deterministic tests before synthesis.';
+
+		await settingsDialog.getByPlaceholder(/Always instruct agents/).fill(instructions);
+		await expect(settingsDialog.getByText(`${instructions.length} / 2000`)).toBeVisible();
+		await expect
+			.poll(async () => {
+				return await window.evaluate(async () => {
+					return await window.maestro.settings.get('moderatorStandingInstructions');
+				});
+			})
+			.toBe(instructions);
 	});
 
 	test('creates edits and deletes custom AI command settings', async () => {
