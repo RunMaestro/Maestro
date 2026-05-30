@@ -6207,6 +6207,29 @@ test.describe('App shell seeded workbench', () => {
 		await closeDocumentGraph(window);
 	});
 
+	test('closes a Document Graph preview with toolbar and Escape controls', async () => {
+		const graphDialog = await openDocumentGraphFromPreview(window);
+
+		await focusDocumentGraphMindMap(graphDialog);
+		await window.keyboard.press('Enter');
+		await expect(graphDialog.getByText('Graph task still open')).toBeVisible();
+
+		await graphDialog.getByTitle('Close preview (Esc)').click();
+		await expect(graphDialog.getByTitle('Close preview (Esc)')).toBeHidden();
+		await expect(graphDialog.getByText('Graph task still open')).toBeHidden();
+
+		await focusDocumentGraphMindMap(graphDialog);
+		await window.keyboard.press('Enter');
+		const previewContent = graphDialog.locator('.graph-preview');
+		await expect(previewContent).toBeVisible();
+		await previewContent.focus();
+		await window.keyboard.press('Escape');
+		await expect(graphDialog.getByTitle('Close preview (Esc)')).toBeHidden();
+		await expect(graphDialog).toBeVisible();
+
+		await closeDocumentGraph(window);
+	});
+
 	test('shows Document Graph selected document metadata and task counts', async () => {
 		const graphDialog = await openDocumentGraphFromPreview(window);
 
@@ -6255,6 +6278,39 @@ test.describe('App shell seeded workbench', () => {
 		await closeDocumentGraph(window);
 	});
 
+	test('selects the Force Document Graph layout and dismisses the layout menu with Escape', async () => {
+		const graphDialog = await openDocumentGraphFromPreview(window);
+
+		await graphDialog.getByTitle('Layout: Mind Map').click();
+		await expect(graphDialog.getByRole('button', { name: /Force/ })).toBeVisible();
+		await window.keyboard.press('Escape');
+		await expect(graphDialog.getByRole('button', { name: /Force/ })).toBeHidden();
+
+		await graphDialog.getByTitle('Layout: Mind Map').click();
+		await graphDialog.getByRole('button', { name: /Force/ }).click();
+		await expect(graphDialog.getByTitle('Layout: Force')).toBeVisible();
+
+		await closeDocumentGraph(window);
+	});
+
+	test('sets Document Graph neighbor depth to all and maximum values', async () => {
+		const graphDialog = await openDocumentGraphFromPreview(window);
+
+		await graphDialog.getByTitle('Showing 2 levels of neighbors').click();
+		const depthSlider = graphDialog.locator('input[type="range"][min="0"][max="5"]');
+		await depthSlider.fill('0');
+		await expect(graphDialog.getByTitle('Show all nodes')).toBeVisible();
+		await expect(graphDialog.getByText('Showing all documents')).toBeVisible();
+
+		await depthSlider.fill('5');
+		await expect(graphDialog.getByTitle('Showing 5 levels of neighbors')).toBeVisible();
+		await expect(graphDialog.getByText('Showing documents within 5 links of focus')).toBeVisible();
+		await window.keyboard.press('Escape');
+		await expect(graphDialog.getByText('Neighbor Depth')).toBeHidden();
+
+		await closeDocumentGraph(window);
+	});
+
 	test('adjusts Document Graph preview character limit from the toolbar', async () => {
 		const graphDialog = await openDocumentGraphFromPreview(window);
 
@@ -6267,6 +6323,20 @@ test.describe('App shell seeded workbench', () => {
 			.last()
 			.click({ position: { x: 10, y: 10 } });
 		await expect(graphDialog.getByText('Preview Characters')).toBeHidden();
+
+		await closeDocumentGraph(window);
+	});
+
+	test('closes the Document Graph preview character slider with Escape', async () => {
+		const graphDialog = await openDocumentGraphFromPreview(window);
+
+		await graphDialog.getByTitle('Preview text limit: 100 characters').click();
+		await expect(graphDialog.getByText('Preview Characters')).toBeVisible();
+		const previewSlider = graphDialog.locator('input[type="range"][min="50"][max="500"]');
+		await previewSlider.focus();
+		await window.keyboard.press('Escape');
+		await expect(graphDialog.getByText('Preview Characters')).toBeHidden();
+		await expect(graphDialog).toBeVisible();
 
 		await closeDocumentGraph(window);
 	});
