@@ -2921,6 +2921,95 @@ test.describe('App shell seeded workbench', () => {
 		await expect(guideDialog).toBeHidden();
 	});
 
+	test('shows History loading state until delayed entries resolve', async () => {
+		await electronApp.evaluate(({ ipcMain }) => {
+			ipcMain.removeHandler('history:getAll');
+			ipcMain.handle('history:getAll', async (_event, projectPath: string, sessionId: string) => {
+				await new Promise((resolve) => setTimeout(resolve, 750));
+				return [
+					{
+						id: 'history-delayed-load',
+						type: 'USER',
+						timestamp: Date.now(),
+						summary: 'Delayed history loaded from IPC',
+						fullResponse: 'Delayed history load detail.',
+						projectPath,
+						sessionId,
+						sessionName: 'E2E Workbench',
+						agentSessionId: 'codex-history-delayed',
+					},
+				];
+			});
+		});
+
+		await helpers.openRightPanelTab(window, 'Files');
+		await helpers.openRightPanelTab(window, 'History');
+		const historyPanel = window.locator('[data-tour="history-panel"]');
+		await expect(historyPanel.getByText('Loading history...')).toBeVisible();
+		await expect(historyPanel.getByText('Delayed history loaded from IPC')).toBeVisible();
+		await expect(historyPanel.getByText('Loading history...')).toBeHidden();
+	});
+
+	test('reloads History entries after switching away and back', async () => {
+		await helpers.openRightPanelTab(window, 'History');
+		await expect(window.getByText('Manual note captured for project review')).toBeVisible();
+
+		await helpers.openRightPanelTab(window, 'Files');
+		await window.evaluate(
+			async ({ projectPath, sessionId }) => {
+				await window.maestro.history.add({
+					id: 'history-remount-refresh',
+					type: 'USER',
+					timestamp: Date.now(),
+					summary: 'History remount refresh note',
+					fullResponse: 'History remount detail is loaded after switching tabs.',
+					projectPath,
+					sessionId,
+					sessionName: 'E2E Workbench',
+					agentSessionId: 'codex-history-remount',
+				});
+			},
+			{
+				projectPath: seededWorkbench.sessions[0].cwd,
+				sessionId: seededWorkbench.sessions[0].id,
+			}
+		);
+
+		await helpers.openRightPanelTab(window, 'History');
+		await expect(window.getByText('History remount refresh note')).toBeVisible();
+	});
+
+	test('refreshes visible History panel after pull request creation', async () => {
+		const branchName = 'feat-e2e-pr-history';
+		await stubPullRequestCreation(
+			electronApp,
+			{ installed: true, authenticated: true },
+			{ success: true, prUrl: 'https://github.com/RunMaestro/Maestro/pull/73' }
+		);
+		await createLocalWorktreeSession(window, seededWorkbench, branchName);
+		await window
+			.locator('[data-tour="session-list"]')
+			.getByText(branchName, { exact: true })
+			.click();
+		await helpers.openRightPanelTab(window, 'History');
+
+		const historyPanel = window.locator('[data-tour="history-panel"]');
+		await expect(historyPanel.getByText('No history yet')).toBeVisible();
+
+		const contextMenu = await openSessionContextMenu(window, branchName, 'Create Pull Request');
+		await contextMenu.getByRole('button', { name: 'Create Pull Request', exact: true }).click();
+
+		const prModal = modalRootByHeading(window, 'Create Pull Request');
+		await expect(prModal.getByRole('button', { name: 'Create PR' })).toBeEnabled({
+			timeout: 5000,
+		});
+		await prModal.getByPlaceholder('PR title...').fill('E2E History Refresh PR');
+		await prModal.getByRole('button', { name: 'Create PR' }).click();
+		await expect(prModal).toBeHidden({ timeout: 5000 });
+
+		await expect(historyPanel.getByText('Created PR: E2E History Refresh PR')).toBeVisible();
+	});
+
 	test('opens and closes settings and Auto Run guide modals', async () => {
 		await window.keyboard.press('Meta+,');
 		const settingsDialog = window.getByRole('dialog', { name: 'Settings' });
