@@ -1584,6 +1584,62 @@ test.describe('Web Mobile Bridge', () => {
 		}
 	});
 
+	test('opens the dashboard route and selects a session from the pill bar', async ({ page }) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			const dashboardUrl = await startWebServer(appWindow);
+			await toggleLive(appWindow, workbench.primarySessionId);
+			await page.setViewportSize({ width: 430, height: 820 });
+			await page.goto(dashboardUrl);
+			await reconnectMobileIfNeeded(page);
+
+			await expect(page).toHaveURL(new RegExp(`/session/${workbench.primarySessionId}`));
+			await expect(page.getByText('Mobile Primary alpha response line one')).toBeVisible();
+			await reconnectMobileIfNeeded(page);
+			await page
+				.getByRole('button', { name: /Ungrouped group with 2 sessions/i })
+				.first()
+				.click();
+			await page
+				.getByRole('button', { name: /Mobile Secondary session, idle, terminal mode/i })
+				.first()
+				.click();
+			await expect(page).toHaveURL(new RegExp(`/session/${workbench.secondarySessionId}`));
+			await expect(
+				page.getByText('Mobile Secondary shell output for mobile bridge coverage.')
+			).toBeVisible();
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
+	test('navigates through the dashboard header route and restores the active session', async ({
+		page,
+	}) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			const dashboardUrl = await startWebServer(appWindow);
+			const sessionUrl = await toggleLive(appWindow, workbench.primarySessionId);
+			await page.setViewportSize({ width: 430, height: 820 });
+			await page.goto(sessionUrl);
+			await expect(page.getByText('Mobile Primary alpha response line one')).toBeVisible();
+
+			await page.locator('[title="Go to dashboard"]').click();
+			await expect(page).toHaveURL(dashboardUrl);
+			await reconnectMobileIfNeeded(page);
+			await expect(page).toHaveURL(new RegExp(`/session/${workbench.primarySessionId}`));
+			await expect(page.getByText('Mobile Primary alpha response line one')).toBeVisible();
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
 	test('syncs tab additions and removals from desktop broadcasts into the mobile tab bar', async ({
 		page,
 	}) => {
@@ -1690,6 +1746,101 @@ test.describe('Web Mobile Bridge', () => {
 				timeout: 10000,
 			});
 			await expect(page.getByRole('button', { name: /Broadcast New/ })).toBeHidden();
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
+	test('syncs desktop-added sessions into All Agents and removes them', async ({ page }) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+		const addedSessionId = `${workbench.primarySessionId}-ui-added`;
+
+		try {
+			await startWebServer(appWindow);
+			const sessionUrl = await toggleLive(appWindow, workbench.primarySessionId);
+			await page.setViewportSize({ width: 430, height: 820 });
+			await page.goto(sessionUrl);
+			await expect(page.getByText('Mobile Primary alpha response line one')).toBeVisible();
+			await reconnectMobileIfNeeded(page);
+
+			await page.getByRole('button', { name: /Search 3 sessions/i }).click();
+			await expect(page.getByRole('heading', { name: 'All Agents' })).toBeVisible();
+
+			await appWindow.evaluate(async (sessionId) => {
+				const maestro = (window as MaestroE2EWindow).maestro;
+				const sessions = await maestro.sessions.getAll();
+				const base = sessions[0];
+				await maestro.sessions.setAll([
+					...sessions,
+					{
+						...base,
+						id: sessionId,
+						name: 'Mobile Added UI',
+						agentSessionId: `${sessionId}-agent-session`,
+						activeTabId: null,
+						aiTabs: [],
+						aiLogs: [],
+						shellLogs: [],
+						bookmarked: false,
+						groupId: null,
+						createdAt: Date.now(),
+					},
+				]);
+			}, addedSessionId);
+			await page.getByPlaceholder('Search agents...').fill('Mobile Added');
+			await expect(page.getByRole('button', { name: /Mobile Added UI session/i })).toBeVisible();
+
+			await appWindow.evaluate(async (sessionId) => {
+				const maestro = (window as MaestroE2EWindow).maestro;
+				const sessions = await maestro.sessions.getAll();
+				await maestro.sessions.setAll(sessions.filter((session) => session.id !== sessionId));
+			}, addedSessionId);
+			await expect(page.getByRole('button', { name: /Mobile Added UI session/i })).toBeHidden();
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
+	test('clears the active mobile view when the active desktop session is removed', async ({
+		page,
+	}) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+		const removedSessionId = `${workbench.primarySessionId}-removed-active`;
+
+		try {
+			await startWebServer(appWindow);
+			const sessionUrl = await toggleLive(appWindow, workbench.primarySessionId);
+			await page.setViewportSize({ width: 430, height: 820 });
+			await page.goto(sessionUrl);
+			await expect(page.getByText('Mobile Primary alpha response line one')).toBeVisible();
+
+			await appWindow.evaluate(async (sessionId) => {
+				const maestro = (window as MaestroE2EWindow).maestro;
+				const sessions = await maestro.sessions.getAll();
+				const base = sessions[0];
+				await maestro.sessions.setAll([
+					...sessions,
+					{
+						...base,
+						id: sessionId,
+						name: 'Mobile Removed Active',
+						agentSessionId: `${sessionId}-agent-session`,
+						createdAt: Date.now(),
+					},
+				]);
+				await maestro.live.broadcastActiveSession(sessionId);
+				const sessionsWithAddition = await maestro.sessions.getAll();
+				await maestro.sessions.setAll(
+					sessionsWithAddition.filter((session) => session.id !== sessionId)
+				);
+			}, removedSessionId);
+
+			await expect(page.getByText('Select a session above to get started')).toBeVisible();
+			await expect(page.getByText('Mobile Removed Active').first()).toBeHidden();
 		} finally {
 			await stopWebServer(appWindow).catch(() => {});
 			await electronApp.close();
