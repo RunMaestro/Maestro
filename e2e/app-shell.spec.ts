@@ -1776,6 +1776,67 @@ async function stubStorageSyncHandlers(electronApp: ElectronApplication, selecte
 	);
 }
 
+async function stubNotificationHandlers(
+	electronApp: ElectronApplication,
+	mode: 'success' | 'error' = 'success'
+) {
+	await electronApp.evaluate(
+		({ ipcMain }, payload: { mode: 'success' | 'error' }) => {
+			const state = globalThis as typeof globalThis & {
+				__maestroE2eNotificationCalls?: {
+					shows: Array<{ title: string; body: string }>;
+					speaks: Array<{ text: string; command: string }>;
+					stops: number[];
+				};
+			};
+			state.__maestroE2eNotificationCalls = { shows: [], speaks: [], stops: [] };
+
+			ipcMain.removeHandler('notification:show');
+			ipcMain.handle('notification:show', async (_event, title: string, body: string) => {
+				state.__maestroE2eNotificationCalls!.shows.push({ title, body });
+				return { success: true };
+			});
+			ipcMain.removeHandler('notification:speak');
+			ipcMain.handle('notification:speak', async (_event, text: string, command: string) => {
+				state.__maestroE2eNotificationCalls!.speaks.push({ text, command });
+				if (payload.mode === 'error') {
+					return { success: false, error: 'E2E notification command failed' };
+				}
+				return { success: true, notificationId: 7001 };
+			});
+			ipcMain.removeHandler('notification:stopSpeak');
+			ipcMain.handle('notification:stopSpeak', async (_event, notificationId: number) => {
+				state.__maestroE2eNotificationCalls!.stops.push(notificationId);
+				return { success: true };
+			});
+		},
+		{ mode }
+	);
+}
+
+async function getStubbedNotificationCalls(electronApp: ElectronApplication) {
+	return await electronApp.evaluate(() => {
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eNotificationCalls?: {
+				shows: Array<{ title: string; body: string }>;
+				speaks: Array<{ text: string; command: string }>;
+				stops: number[];
+			};
+		};
+		return state.__maestroE2eNotificationCalls ?? { shows: [], speaks: [], stops: [] };
+	});
+}
+
+async function emitNotificationCommandCompleted(
+	electronApp: ElectronApplication,
+	notificationId: number
+) {
+	await electronApp.evaluate(({ BrowserWindow }, completedId: number) => {
+		const appWindow = BrowserWindow.getAllWindows()[0];
+		appWindow?.webContents.send('notification:commandCompleted', completedId);
+	}, notificationId);
+}
+
 async function stubUpdateCheckForModal(
 	electronApp: ElectronApplication,
 	mode: 'available' | 'error'
@@ -8334,6 +8395,80 @@ Refresh-added document with a link back to [[README]].
 				});
 			})
 			.toBe(0);
+	});
+
+	test('routes the Notifications settings OS test notification through IPC', async () => {
+		await stubNotificationHandlers(electronApp);
+		const settingsDialog = await openSettingsTab(
+			window,
+			'Notifications',
+			'Operating System Notifications'
+		);
+
+		await settingsDialog.getByRole('button', { name: 'Test Notification' }).click();
+		await expect
+			.poll(() => getStubbedNotificationCalls(electronApp))
+			.toMatchObject({
+				shows: [
+					{
+						title: 'Maestro',
+						body: 'Test notification - notifications are working!',
+					},
+				],
+			});
+	});
+
+	test('runs custom notification test command and handles completion', async () => {
+		await stubNotificationHandlers(electronApp);
+		const settingsDialog = await openSettingsTab(window, 'Notifications', 'Command Chain');
+
+		await settingsDialog.getByPlaceholder('say').fill('printf notify-e2e');
+		await settingsDialog.getByRole('button', { name: 'Test', exact: true }).click();
+		await expect(settingsDialog.getByRole('button', { name: /Stop/ })).toBeVisible();
+		await expect
+			.poll(() => getStubbedNotificationCalls(electronApp))
+			.toMatchObject({
+				speaks: [
+					{
+						command: 'printf notify-e2e',
+					},
+				],
+			});
+
+		await emitNotificationCommandCompleted(electronApp, 7001);
+		await expect(settingsDialog.getByRole('button', { name: /Success/ })).toBeVisible();
+	});
+
+	test('stops a running custom notification test command', async () => {
+		await stubNotificationHandlers(electronApp);
+		const settingsDialog = await openSettingsTab(window, 'Notifications', 'Command Chain');
+
+		await settingsDialog.getByPlaceholder('say').fill('printf stop-e2e');
+		await settingsDialog.getByRole('button', { name: 'Test', exact: true }).click();
+		await settingsDialog.getByRole('button', { name: /Stop/ }).click();
+		await expect
+			.poll(() => getStubbedNotificationCalls(electronApp))
+			.toMatchObject({ stops: [7001] });
+		await expect(settingsDialog.getByRole('button', { name: 'Test', exact: true })).toBeVisible();
+	});
+
+	test('shows custom notification command errors from Settings test action', async () => {
+		await stubNotificationHandlers(electronApp, 'error');
+		const settingsDialog = await openSettingsTab(window, 'Notifications', 'Command Chain');
+
+		await settingsDialog.getByPlaceholder('say').fill('bad-notify-e2e');
+		await settingsDialog.getByRole('button', { name: 'Test', exact: true }).click();
+		await expect(settingsDialog.getByRole('button', { name: /Failed/ })).toBeVisible();
+		await expect(settingsDialog.getByText('E2E notification command failed')).toBeVisible();
+		await expect
+			.poll(() => getStubbedNotificationCalls(electronApp))
+			.toMatchObject({
+				speaks: [
+					{
+						command: 'bad-notify-e2e',
+					},
+				],
+			});
 	});
 
 	test('persists Group Chat moderator standing instructions', async () => {
