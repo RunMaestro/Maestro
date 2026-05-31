@@ -1216,6 +1216,124 @@ test.describe('Seeded Group Chat workspace', () => {
 		await expect(liveHistoryEntry.getByText('$0.04')).toBeVisible();
 	});
 
+	test('jumps from a Group Chat history entry to the nearest transcript message', async () => {
+		await openCoverageRoom();
+		await window.getByTitle('View task history').click();
+
+		const reviewerMessage = groupChatMessage('Reviewed README.md and found no blocker.');
+		await expect(reviewerMessage).toBeVisible();
+		await window
+			.locator('[data-entry-id]')
+			.filter({ hasText: 'Reviewed seeded group chat plan' })
+			.click();
+
+		await expect
+			.poll(() =>
+				reviewerMessage.evaluate((element) => (element as HTMLElement).style.backgroundColor)
+			)
+			.toBe('rgba(255, 255, 255, 0.1)');
+	});
+
+	test('filters Group Chat history by participant and full response text', async () => {
+		await openCoverageRoom();
+		await window.getByTitle('View task history').click();
+
+		await emitGroupChatHistoryEntry(electronApp, {
+			groupChatId: seededWorkbench.groupChats[0].id,
+			entry: {
+				id: 'history-search-e2e',
+				timestamp: Date.now(),
+				summary: 'Implemented live search coverage',
+				participantName: 'Implementer',
+				participantColor: '#059669',
+				type: 'response',
+				fullResponse: 'Full response marker from emitted Group Chat history.',
+			},
+		});
+
+		const historyPanel = window
+			.locator('div[tabindex="0"]')
+			.filter({ hasText: 'Implemented live search coverage' })
+			.last();
+		await historyPanel.focus();
+		await historyPanel.press('Control+f');
+
+		const searchInput = window.getByPlaceholder('Filter group chat history...');
+		await searchInput.fill('Implementer');
+		await expect(window.getByText('1 result')).toBeVisible();
+		await expect(window.getByText('Implemented live search coverage')).toBeVisible();
+		await expect(window.getByText('Reviewed seeded group chat plan')).toBeHidden();
+
+		await searchInput.fill('Full response marker');
+		await expect(window.getByText('1 result')).toBeVisible();
+		await expect(window.getByText('Implemented live search coverage')).toBeVisible();
+	});
+
+	test('toggles emitted Group Chat history type filters', async () => {
+		await openCoverageRoom();
+		await window.getByTitle('View task history').click();
+
+		await emitGroupChatHistoryEntry(electronApp, {
+			groupChatId: seededWorkbench.groupChats[0].id,
+			entry: {
+				id: 'history-delegation-e2e',
+				timestamp: Date.now(),
+				summary: 'Delegated branch work to Reviewer',
+				participantName: 'Moderator',
+				type: 'delegation',
+			},
+		});
+		await emitGroupChatHistoryEntry(electronApp, {
+			groupChatId: seededWorkbench.groupChats[0].id,
+			entry: {
+				id: 'history-synthesis-e2e',
+				timestamp: Date.now() + 1,
+				summary: 'Synthesized group chat result',
+				participantName: 'Moderator',
+				type: 'synthesis',
+			},
+		});
+		await emitGroupChatHistoryEntry(electronApp, {
+			groupChatId: seededWorkbench.groupChats[0].id,
+			entry: {
+				id: 'history-error-e2e',
+				timestamp: Date.now() + 2,
+				summary: 'Reported group chat failure',
+				participantName: 'Reviewer',
+				type: 'error',
+			},
+		});
+
+		await expect(window.getByText('Delegated branch work to Reviewer')).toBeVisible();
+		await expect(window.getByText('Synthesized group chat result')).toBeVisible();
+		await expect(window.getByText('Reported group chat failure')).toBeVisible();
+
+		await window.getByRole('button', { name: 'Delegation' }).click();
+		await expect(window.getByText('Delegated branch work to Reviewer')).toBeHidden();
+		await expect(window.getByText('Synthesized group chat result')).toBeVisible();
+
+		await window.getByRole('button', { name: 'Error' }).click();
+		await expect(window.getByText('Reported group chat failure')).toBeHidden();
+		await expect(window.getByText('Synthesized group chat result')).toBeVisible();
+
+		await window.getByRole('button', { name: 'Delegation' }).click();
+		await expect(window.getByText('Delegated branch work to Reviewer')).toBeVisible();
+	});
+
+	test('persists the Group Chat history lookback preference after tab remount', async () => {
+		await openCoverageRoom();
+		await window.getByTitle('View task history').click();
+
+		await window.getByTitle('24 hours (right-click to change)').click({ button: 'right' });
+		await window.getByRole('button', { name: '1 week' }).click();
+		await expect(window.getByTitle('1 week (right-click to change)')).toBeVisible();
+
+		await window.getByTitle('View participants').click();
+		await window.getByTitle('View task history').click();
+
+		await expect(window.getByTitle('1 week (right-click to change)')).toBeVisible();
+	});
+
 	test('opens Group Chat info and renames the chat from the header', async () => {
 		await openCoverageRoom();
 
