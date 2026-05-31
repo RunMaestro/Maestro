@@ -29,6 +29,15 @@ type GroupChatCreateCall = {
 	moderatorConfig?: Record<string, unknown>;
 };
 
+type GroupChatUpdateCall = {
+	id: string;
+	updates: {
+		name?: string;
+		moderatorAgentId?: string;
+		moderatorConfig?: Record<string, unknown>;
+	};
+};
+
 type GroupChatAgentConfigCall = {
 	agentId: string;
 	config: Record<string, unknown>;
@@ -755,48 +764,59 @@ async function getGroupChatExportCapture(window: Page) {
 	});
 }
 
-async function stubGroupChatModalAgents(electronApp: ElectronApplication, hasAgents = true) {
-	await electronApp.evaluate(({ ipcMain }, agentsAvailable) => {
-		const state = globalThis as typeof globalThis & {
-			__maestroE2eGroupChatAgentConfigCalls?: GroupChatAgentConfigCall[];
-		};
-		state.__maestroE2eGroupChatAgentConfigCalls = [];
+async function stubGroupChatModalAgents(
+	electronApp: ElectronApplication,
+	hasAgents = true,
+	sshRemotes: Array<Record<string, unknown>> = []
+) {
+	await electronApp.evaluate(
+		({ ipcMain }, options) => {
+			const state = globalThis as typeof globalThis & {
+				__maestroE2eGroupChatAgentConfigCalls?: GroupChatAgentConfigCall[];
+			};
+			state.__maestroE2eGroupChatAgentConfigCalls = [];
+			const { agentsAvailable, remoteConfigs } = options;
 
-		const codexAgent = {
-			id: 'codex',
-			name: 'Codex',
-			binaryName: 'codex',
-			command: 'codex',
-			args: [],
-			available: true,
-			hidden: false,
-			path: '/usr/local/bin/codex',
-			capabilities: {
-				supportsBatchMode: true,
-				supportsModelSelection: false,
-			},
-			configOptions: [],
-		};
+			const codexAgent = {
+				id: 'codex',
+				name: 'Codex',
+				binaryName: 'codex',
+				command: 'codex',
+				args: [],
+				available: true,
+				hidden: false,
+				path: '/usr/local/bin/codex',
+				capabilities: {
+					supportsBatchMode: true,
+					supportsModelSelection: false,
+				},
+				configOptions: [],
+			};
 
-		ipcMain.removeHandler('agents:detect');
-		ipcMain.handle('agents:detect', async () => (agentsAvailable ? [codexAgent] : []));
-		ipcMain.removeHandler('agents:refresh');
-		ipcMain.handle('agents:refresh', async () => (agentsAvailable ? codexAgent : undefined));
-		ipcMain.removeHandler('agents:getConfig');
-		ipcMain.handle('agents:getConfig', async () => ({}));
-		ipcMain.removeHandler('agents:setConfig');
-		ipcMain.handle(
-			'agents:setConfig',
-			async (_event, agentId: string, config: Record<string, unknown>) => {
-				state.__maestroE2eGroupChatAgentConfigCalls?.push({ agentId, config });
-				return true;
-			}
-		);
-		ipcMain.removeHandler('agents:getModels');
-		ipcMain.handle('agents:getModels', async () => []);
-		ipcMain.removeHandler('ssh-remote:getConfigs');
-		ipcMain.handle('ssh-remote:getConfigs', async () => ({ success: true, configs: [] }));
-	}, hasAgents);
+			ipcMain.removeHandler('agents:detect');
+			ipcMain.handle('agents:detect', async () => (agentsAvailable ? [codexAgent] : []));
+			ipcMain.removeHandler('agents:refresh');
+			ipcMain.handle('agents:refresh', async () => (agentsAvailable ? codexAgent : undefined));
+			ipcMain.removeHandler('agents:getConfig');
+			ipcMain.handle('agents:getConfig', async () => ({}));
+			ipcMain.removeHandler('agents:setConfig');
+			ipcMain.handle(
+				'agents:setConfig',
+				async (_event, agentId: string, config: Record<string, unknown>) => {
+					state.__maestroE2eGroupChatAgentConfigCalls?.push({ agentId, config });
+					return true;
+				}
+			);
+			ipcMain.removeHandler('agents:getModels');
+			ipcMain.handle('agents:getModels', async () => []);
+			ipcMain.removeHandler('ssh-remote:getConfigs');
+			ipcMain.handle('ssh-remote:getConfigs', async () => ({
+				success: true,
+				configs: remoteConfigs,
+			}));
+		},
+		{ agentsAvailable: hasAgents, remoteConfigs: sshRemotes }
+	);
 }
 
 async function stubGroupChatCreationHandlers(
@@ -864,6 +884,52 @@ async function stubGroupChatCreationHandlers(
 	);
 }
 
+async function stubGroupChatUpdateHandler(
+	electronApp: ElectronApplication,
+	seeded: ReturnType<typeof createGroupChatWorkbench>
+) {
+	await electronApp.evaluate(
+		({ ipcMain }, payload) => {
+			const state = globalThis as typeof globalThis & {
+				__maestroE2eGroupChatUpdateCalls?: GroupChatUpdateCall[];
+			};
+			state.__maestroE2eGroupChatUpdateCalls = [];
+
+			ipcMain.removeHandler('groupChat:update');
+			ipcMain.handle(
+				'groupChat:update',
+				async (
+					_event,
+					id: string,
+					updates: {
+						name?: string;
+						moderatorAgentId?: string;
+						moderatorConfig?: Record<string, unknown>;
+					}
+				) => {
+					state.__maestroE2eGroupChatUpdateCalls?.push({ id, updates });
+					return {
+						...payload.chat,
+						...updates,
+						updatedAt: Date.now(),
+					};
+				}
+			);
+		},
+		{ chat: seeded.groupChats[0] }
+	);
+}
+
+async function getStubbedGroupChatUpdateCalls(electronApp: ElectronApplication) {
+	return electronApp.evaluate(() => {
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eGroupChatUpdateCalls?: GroupChatUpdateCall[];
+		};
+
+		return state.__maestroE2eGroupChatUpdateCalls || [];
+	});
+}
+
 async function getStubbedGroupChatModalActions(electronApp: ElectronApplication) {
 	return electronApp.evaluate(() => {
 		const state = globalThis as typeof globalThis & {
@@ -926,6 +992,18 @@ test.describe('Seeded Group Chat workspace', () => {
 		return window
 			.getByText('Prompt Composer')
 			.locator('xpath=ancestor::div[contains(@class, "z-10")][1]');
+	}
+
+	function groupChatSshRemote() {
+		return {
+			id: 'remote-group-chat-e2e',
+			name: 'E2E Build Host',
+			host: 'build.example.local',
+			port: 22,
+			username: 'maestro',
+			privateKeyPath: '~/.ssh/id_ed25519',
+			enabled: true,
+		};
 	}
 
 	async function openCoverageRoom() {
@@ -1424,6 +1502,70 @@ test.describe('Seeded Group Chat workspace', () => {
 		await expect(window.getByText('Edited Coverage Room').first()).toBeVisible();
 	});
 
+	test('keeps unchanged Group Chat edits disabled and cancels without update IPC', async () => {
+		await stubGroupChatModalAgents(electronApp);
+		await stubGroupChatUpdateHandler(electronApp, seededWorkbench);
+		await openCoverageRoomContextMenu();
+		await window.getByRole('button', { name: 'Edit' }).click();
+
+		const editDialog = window.getByRole('dialog', { name: 'Edit Group Chat' });
+		await expect(editDialog).toBeVisible();
+		await expect(editDialog.getByRole('button', { name: 'Save' })).toBeDisabled();
+		await editDialog.getByLabel('Chat Name').fill('Canceled Edit Coverage Room');
+		await expect(editDialog.getByRole('button', { name: 'Save' })).toBeEnabled();
+		await editDialog.getByRole('button', { name: 'Cancel' }).click();
+
+		await expect(editDialog).toBeHidden();
+		expect(await getStubbedGroupChatUpdateCalls(electronApp)).toEqual([]);
+		await expect(groupChatListItem('Coverage Room')).toBeVisible();
+	});
+
+	test('saves edited Group Chat moderator configuration through update IPC', async () => {
+		const remote = groupChatSshRemote();
+		await stubGroupChatModalAgents(electronApp, true, [remote]);
+		await stubGroupChatUpdateHandler(electronApp, seededWorkbench);
+		await openCoverageRoomContextMenu();
+		await window.getByRole('button', { name: 'Edit' }).click();
+
+		const editDialog = window.getByRole('dialog', { name: 'Edit Group Chat' });
+		await expect(editDialog).toBeVisible();
+		await editDialog.getByLabel('Chat Name').fill('  Configured Edit Room  ');
+		await expect(editDialog.getByText('SSH Remote Execution')).toBeVisible();
+		await editDialog.locator('select').nth(1).selectOption(remote.id);
+		await expect(editDialog.getByText('Agent will run on')).toBeVisible();
+		await editDialog.getByTitle('Customize moderator settings').click();
+		await editDialog.getByPlaceholder('/path/to/codex').fill('/opt/maestro/bin/codex');
+		await editDialog
+			.getByPlaceholder('--flag value --another-flag')
+			.fill('--model gpt-5-codex --sandbox read-only');
+		await editDialog.getByRole('button', { name: 'Add Variable' }).click();
+		await editDialog.getByPlaceholder('VARIABLE_NAME').fill('GROUP_CHAT_EDIT_E2E');
+		await editDialog.getByPlaceholder('value', { exact: true }).fill('enabled');
+		await editDialog.getByRole('button', { name: 'Save' }).click();
+
+		await expect(editDialog).toBeHidden();
+		expect(await getStubbedGroupChatUpdateCalls(electronApp)).toEqual([
+			{
+				id: seededWorkbench.groupChats[0].id,
+				updates: {
+					name: 'Configured Edit Room',
+					moderatorAgentId: 'codex',
+					moderatorConfig: {
+						customPath: '/opt/maestro/bin/codex',
+						customArgs: '--model gpt-5-codex --sandbox read-only',
+						customEnvVars: {
+							GROUP_CHAT_EDIT_E2E: 'enabled',
+						},
+						sshRemoteConfig: {
+							enabled: true,
+							remoteId: remote.id,
+						},
+					},
+				},
+			},
+		]);
+	});
+
 	test('opens delete confirmation from the Left Bar context menu without deleting on cancel', async () => {
 		await openCoverageRoomContextMenu();
 		await window.getByRole('button', { name: 'Delete' }).click();
@@ -1891,6 +2033,34 @@ test.describe('Seeded Group Chat workspace', () => {
 				name: 'Modal Coverage Room',
 				moderatorAgentId: 'codex',
 				moderatorConfig: undefined,
+			},
+		]);
+		expect(calls.startModerator).toEqual(['created-group-chat-1']);
+	});
+
+	test('creates a group chat with SSH remote moderator execution', async () => {
+		const remote = groupChatSshRemote();
+		await stubGroupChatModalAgents(electronApp, true, [remote]);
+		await stubGroupChatCreationHandlers(electronApp, seededWorkbench);
+		const dialog = await openNewGroupChatModal();
+
+		await expect(dialog.getByText('SSH Remote Execution')).toBeVisible();
+		await dialog.locator('select').nth(1).selectOption(remote.id);
+		await expect(dialog.getByText('Agent will run on')).toBeVisible();
+		await dialog.getByLabel('Chat Name').fill('Remote Coverage Room');
+		await dialog.getByRole('button', { name: 'Create' }).click();
+
+		const calls = await getStubbedGroupChatModalActions(electronApp);
+		expect(calls.create).toEqual([
+			{
+				name: 'Remote Coverage Room',
+				moderatorAgentId: 'codex',
+				moderatorConfig: {
+					sshRemoteConfig: {
+						enabled: true,
+						remoteId: remote.id,
+					},
+				},
 			},
 		]);
 		expect(calls.startModerator).toEqual(['created-group-chat-1']);
