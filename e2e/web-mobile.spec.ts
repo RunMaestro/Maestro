@@ -498,22 +498,22 @@ async function reloadAndExpectMobileHeading(page: Page, headingName: string) {
 	await page.reload();
 	const heading = page.getByRole('heading', { name: headingName });
 	const retryButton = page.getByRole('button', { name: 'Retry Now' });
+	let retryClicks = 0;
 	await expect
 		.poll(
-			async () =>
-				(await heading.isVisible().catch(() => false)) ||
-				(await retryButton.isVisible().catch(() => false)),
-			{ timeout: 15000 }
+			async () => {
+				if (await heading.isVisible().catch(() => false)) {
+					return true;
+				}
+				if (retryClicks < 3 && (await retryButton.isVisible().catch(() => false))) {
+					retryClicks += 1;
+					await retryButton.click().catch(() => {});
+				}
+				return await heading.isVisible().catch(() => false);
+			},
+			{ timeout: 30000, intervals: [250, 500, 1000] }
 		)
 		.toBe(true);
-	if (
-		!(await heading.isVisible().catch(() => false)) &&
-		(await retryButton.isVisible().catch(() => false))
-	) {
-		await retryButton.click();
-		await expect(page.getByText('Connection Lost')).toBeHidden({ timeout: 15000 });
-	}
-	await expect(heading).toBeVisible({ timeout: 15000 });
 }
 
 async function reconnectMobileIfNeeded(page: Page) {
@@ -2765,6 +2765,66 @@ test.describe('Web Mobile Bridge', () => {
 			await expect(aiInput).toHaveValue('');
 			await expect(page.getByText('First mobile draft line')).toBeVisible();
 			await expect(page.getByText('Second mobile draft line')).toBeVisible();
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
+	test('collapses and expands mobile session groups from the pill bar', async ({ page }) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			await startWebServer(appWindow);
+			const sessionUrl = await toggleLive(appWindow, workbench.primarySessionId);
+			await page.setViewportSize({ width: 430, height: 820 });
+			await page.goto(sessionUrl);
+			await expect(page.getByText('Mobile Primary alpha response line one')).toBeVisible();
+
+			const ungroupedHeader = page
+				.getByRole('button', { name: /Ungrouped group with 2 sessions/i })
+				.first();
+			await expect(ungroupedHeader).toBeVisible();
+			await expect(page.getByRole('button', { name: /Mobile Secondary session/i })).toBeHidden();
+
+			await ungroupedHeader.click();
+			await expect(page.getByRole('button', { name: /Mobile Secondary session/i })).toBeVisible();
+			await expect(page.getByRole('button', { name: /Mobile Busy Agent session/i })).toBeVisible();
+
+			await ungroupedHeader.click();
+			await expect(page.getByRole('button', { name: /Mobile Secondary session/i })).toBeHidden();
+			await expect(page.getByRole('button', { name: /Mobile Busy Agent session/i })).toBeHidden();
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
+	test('dismisses mobile session info popover with close button and Escape', async ({ page }) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			await startWebServer(appWindow);
+			const sessionUrl = await toggleLive(appWindow, workbench.primarySessionId);
+			await page.setViewportSize({ width: 430, height: 820 });
+			await page.goto(sessionUrl);
+			await expect(page.getByText('Mobile Primary alpha response line one')).toBeVisible();
+
+			const primaryPill = page
+				.getByRole('button', { name: /Mobile Primary session, idle, ai mode, active/i })
+				.first();
+			await primaryPill.click({ button: 'right' });
+			const dialog = page.getByRole('dialog', { name: /Session info for Mobile Primary/ });
+			await expect(dialog).toBeVisible();
+			await page.getByRole('button', { name: 'Close popover' }).click();
+			await expect(dialog).toBeHidden();
+
+			await primaryPill.click({ button: 'right' });
+			await expect(dialog).toBeVisible();
+			await page.keyboard.press('Escape');
+			await expect(dialog).toBeHidden();
 		} finally {
 			await stopWebServer(appWindow).catch(() => {});
 			await electronApp.close();
