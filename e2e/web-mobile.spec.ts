@@ -2256,6 +2256,68 @@ test.describe('Web Mobile Bridge', () => {
 		}
 	});
 
+	test('transcribes mocked voice input into the mobile AI composer', async ({ page }) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			await page.addInitScript(() => {
+				class FakeSpeechRecognition {
+					continuous = false;
+					interimResults = false;
+					lang = 'en-US';
+					maxAlternatives = 1;
+					onstart: (() => void) | null = null;
+					onresult:
+						| ((event: {
+								resultIndex: number;
+								results: Array<Array<{ transcript: string }> & { isFinal: boolean }>;
+						  }) => void)
+						| null = null;
+					onend: (() => void) | null = null;
+
+					start() {
+						this.onstart?.();
+						window.setTimeout(() => {
+							const result = [{ transcript: 'voice dictated mobile command' }] as Array<{
+								transcript: string;
+							}> & { isFinal: boolean };
+							result.isFinal = true;
+							this.onresult?.({ resultIndex: 0, results: [result] });
+							this.onend?.();
+						}, 250);
+					}
+
+					stop() {
+						this.onend?.();
+					}
+				}
+
+				const speechWindow = window as unknown as {
+					SpeechRecognition: typeof FakeSpeechRecognition;
+					webkitSpeechRecognition: typeof FakeSpeechRecognition;
+				};
+				speechWindow.SpeechRecognition = FakeSpeechRecognition;
+				speechWindow.webkitSpeechRecognition = FakeSpeechRecognition;
+			});
+			await startWebServer(appWindow);
+			const sessionUrl = await toggleLive(appWindow, workbench.primarySessionId);
+			await page.setViewportSize({ width: 768, height: 820 });
+			await page.goto(sessionUrl);
+			await expect(page.getByText('Mobile Primary alpha response line one')).toBeVisible();
+
+			const aiInput = page.getByLabel(/AI message input/i).first();
+			await expect(page.getByRole('button', { name: 'Start voice input' })).toBeVisible();
+			await page.getByRole('button', { name: 'Start voice input' }).click();
+			await expect(page.getByRole('button', { name: 'Stop voice input' })).toBeVisible();
+			await expect(aiInput).toHaveValue('voice dictated mobile command');
+			await expect(page.getByRole('button', { name: 'Start voice input' })).toBeVisible();
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
 	test('sends a custom slash command from the mobile command picker', async ({ page }) => {
 		const workbench = createWebMobileWorkbench();
 		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
@@ -2452,6 +2514,69 @@ test.describe('Web Mobile Bridge', () => {
 			await page.getByRole('button', { name: 'Close detail view' }).click();
 			await page.getByRole('button', { name: 'Close history' }).click();
 			await expect(page.getByRole('heading', { name: 'History' })).toBeHidden();
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
+	test('shows offline fallback and restores the active mobile session when online', async ({
+		page,
+	}) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			await startWebServer(appWindow);
+			const sessionUrl = await toggleLive(appWindow, workbench.primarySessionId);
+			await page.setViewportSize({ width: 430, height: 820 });
+			await page.goto(sessionUrl);
+			await expect(page.getByText('Mobile Primary alpha response line one')).toBeVisible();
+
+			await setMobileOnlineState(page, false);
+			await expect(page.getByRole('heading', { name: "You're Offline" })).toBeVisible();
+			await expect(page.getByLabel(/AI message input/i).first()).toHaveAttribute(
+				'placeholder',
+				'Offline...'
+			);
+
+			await setMobileOnlineState(page, true);
+			await expect(page.getByRole('heading', { name: "You're Offline" })).toBeHidden();
+			await reconnectMobileIfNeeded(page);
+			await expect(page.getByText('Mobile Primary alpha response line one')).toBeVisible();
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
+	test('uses mobile keyboard shortcuts to cycle tabs and toggle input mode', async ({ page }) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			await startWebServer(appWindow);
+			const sessionUrl = await toggleLive(appWindow, workbench.primarySessionId);
+			await page.setViewportSize({ width: 768, height: 820 });
+			await page.goto(sessionUrl);
+			await expect(page.getByText('Mobile Primary alpha response line one')).toBeVisible();
+
+			await page.keyboard.press('Meta+]');
+			await expect(page.getByText('Mobile Primary review tab response only visible')).toBeVisible();
+			await expect(page).toHaveURL(new RegExp(`tabId=${workbench.primaryReviewTabId}`));
+
+			await page.keyboard.press('Meta+[');
+			await expect(page.getByText('Mobile Primary alpha response line one')).toBeVisible();
+			await expect(page).toHaveURL(new RegExp(`tabId=${workbench.primaryPlanTabId}`));
+
+			await page.evaluate(() => {
+				document.dispatchEvent(new KeyboardEvent('keydown', { key: 'j', ctrlKey: true }));
+			});
+			await expect(page.getByLabel('Shell command input')).toBeVisible();
+			await page.evaluate(() => {
+				document.dispatchEvent(new KeyboardEvent('keydown', { key: 'j', ctrlKey: true }));
+			});
+			await expect(page.getByLabel(/AI message input/i).first()).toBeVisible();
 		} finally {
 			await stopWebServer(appWindow).catch(() => {});
 			await electronApp.close();
