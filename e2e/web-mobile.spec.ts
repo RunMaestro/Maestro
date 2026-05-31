@@ -66,6 +66,17 @@ type LiveToggleResult = { live: boolean; url: string };
 type LiveStatusResult = { live: boolean; url: string | null };
 type LiveDisableResult = { success: boolean; count: number };
 type LiveSessionSummary = { sessionId: string };
+type StoredSession = ReturnType<typeof createSeededSession>;
+type E2ESocketMessage = {
+	type: string;
+	theme?: { id?: string };
+	enabled?: boolean;
+	commands?: Array<{ command?: string }>;
+};
+type E2ESocketWindow = Window & {
+	__maestroE2eSocketMessages?: E2ESocketMessage[];
+	__maestroE2eSocket?: WebSocket;
+};
 type MaestroE2EWindow = Window & {
 	maestro: {
 		web: {
@@ -124,6 +135,14 @@ type MaestroE2EWindow = Window & {
 			disableAll: () => Promise<LiveDisableResult>;
 			persistCurrentToken: () => Promise<{ success: boolean; message?: string }>;
 			clearPersistentToken: () => Promise<{ success: boolean; message?: string }>;
+			broadcastActiveSession: (sessionId: string) => Promise<void>;
+		};
+		settings: {
+			set: (key: string, value: unknown) => Promise<boolean>;
+		};
+		sessions: {
+			getAll: () => Promise<StoredSession[]>;
+			setAll: (sessions: StoredSession[]) => Promise<boolean>;
 		};
 		webserver: {
 			getConnectedClients: () => Promise<number>;
@@ -543,6 +562,38 @@ test.describe('Web Mobile Bridge', () => {
 		}
 	});
 
+	test('serves tokenized PWA shell, manifest, service worker, and built assets', async ({
+		page,
+	}) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			const dashboardUrl = await startWebServer(appWindow);
+			const tokenPath = new URL(dashboardUrl).pathname.replace(/\/$/, '');
+			const shellResponse = await page.request.get(dashboardUrl);
+			expect(shellResponse.ok()).toBe(true);
+			const shellHtml = await shellResponse.text();
+			expect(shellHtml).toContain(`${tokenPath}/manifest.json`);
+			expect(shellHtml).toContain(`${tokenPath}/assets/`);
+
+			const manifestResponse = await page.request.get(`${dashboardUrl}/manifest.json`);
+			expect(manifestResponse.ok()).toBe(true);
+			expect(manifestResponse.headers()['content-type']).toContain('application/json');
+			await expect(manifestResponse.json()).resolves.toMatchObject({
+				name: expect.stringContaining('Maestro'),
+			});
+
+			const serviceWorkerResponse = await page.request.get(`${dashboardUrl}/sw.js`);
+			expect(serviceWorkerResponse.ok()).toBe(true);
+			expect(serviceWorkerResponse.headers()['content-type']).toContain('javascript');
+			expect(await serviceWorkerResponse.text()).toContain('Maestro');
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
 	test('exposes web-safe session summaries with response previews and tab metadata', async ({
 		page,
 	}) => {
@@ -665,6 +716,76 @@ test.describe('Web Mobile Bridge', () => {
 			);
 			expect(readingMode).toMatchObject({ enabled: true });
 		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
+	test('broadcasts desktop setting changes to mobile clients and slash commands', async ({
+		page,
+	}) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			const dashboardUrl = await startWebServer(appWindow);
+			await page.evaluate((socketUrl) => {
+				const e2eWindow = window as E2ESocketWindow;
+				e2eWindow.__maestroE2eSocketMessages = [];
+				e2eWindow.__maestroE2eSocket = new WebSocket(socketUrl);
+				e2eWindow.__maestroE2eSocket.onmessage = (event: MessageEvent) => {
+					e2eWindow.__maestroE2eSocketMessages?.push(JSON.parse(event.data));
+				};
+			}, webSocketUrl(dashboardUrl));
+
+			await expect
+				.poll(async () =>
+					page.evaluate(() =>
+						(window as E2ESocketWindow).__maestroE2eSocketMessages?.some(
+							(message) => message.type === 'connected'
+						)
+					)
+				)
+				.toBe(true);
+
+			await appWindow.evaluate(async () => {
+				const maestro = (window as MaestroE2EWindow).maestro;
+				await maestro.settings.set('activeThemeId', 'github-light');
+				await maestro.settings.set('bionifyReadingMode', false);
+				await maestro.settings.set('customAICommands', [
+					{
+						id: 'mobile-broadcast-command',
+						command: '/audit',
+						description: 'Audit mobile bridge',
+						prompt: 'Audit the mobile web bridge.',
+					},
+				]);
+			});
+
+			await expect
+				.poll(async () =>
+					page.evaluate(() => {
+						const messages = (window as E2ESocketWindow).__maestroE2eSocketMessages || [];
+						return {
+							theme: messages.some(
+								(message) => message.type === 'theme' && message.theme?.id === 'github-light'
+							),
+							bionify: messages.some(
+								(message) => message.type === 'bionify_reading_mode' && message.enabled === false
+							),
+							command: messages.some(
+								(message) =>
+									message.type === 'custom_commands' &&
+									message.commands?.some((command) => command.command === '/audit')
+							),
+						};
+					})
+				)
+				.toEqual({ theme: true, bionify: true, command: true });
+		} finally {
+			await page
+				.evaluate(() => (window as E2ESocketWindow).__maestroE2eSocket?.close())
+				.catch(() => {});
 			await stopWebServer(appWindow).catch(() => {});
 			await electronApp.close();
 		}
@@ -956,6 +1077,94 @@ test.describe('Web Mobile Bridge', () => {
 		}
 	});
 
+	test('emits desktop session addition, active session, and removal broadcasts', async ({
+		page,
+	}) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+		const addedSessionId = `${workbench.primarySessionId}-desktop-added`;
+
+		try {
+			const dashboardUrl = await startWebServer(appWindow);
+			await page.evaluate((socketUrl) => {
+				const e2eWindow = window as E2ESocketWindow;
+				e2eWindow.__maestroE2eSocketMessages = [];
+				e2eWindow.__maestroE2eSocket = new WebSocket(socketUrl);
+				e2eWindow.__maestroE2eSocket.onmessage = (event: MessageEvent) => {
+					e2eWindow.__maestroE2eSocketMessages?.push(JSON.parse(event.data));
+				};
+			}, webSocketUrl(dashboardUrl));
+
+			await expect
+				.poll(async () =>
+					page.evaluate(() =>
+						(window as E2ESocketWindow).__maestroE2eSocketMessages?.some(
+							(message) => message.type === 'connected'
+						)
+					)
+				)
+				.toBe(true);
+
+			await appWindow.evaluate(async (sessionId) => {
+				const maestro = (window as MaestroE2EWindow).maestro;
+				const sessions = await maestro.sessions.getAll();
+				const base = sessions[0];
+				await maestro.sessions.setAll([
+					...sessions,
+					{
+						...base,
+						id: sessionId,
+						name: 'Mobile Added Desktop',
+						agentSessionId: `${sessionId}-agent-session`,
+						activeTabId: null,
+						aiTabs: [],
+						aiLogs: [],
+						shellLogs: [],
+						bookmarked: false,
+						createdAt: Date.now(),
+					},
+				]);
+				await maestro.live.broadcastActiveSession(sessionId);
+				const sessionsWithAddition = await maestro.sessions.getAll();
+				await maestro.sessions.setAll(
+					sessionsWithAddition.filter((session) => session.id !== sessionId)
+				);
+			}, addedSessionId);
+
+			await expect
+				.poll(async () =>
+					page.evaluate((sessionId) => {
+						const messages = (window as E2ESocketWindow).__maestroE2eSocketMessages || [];
+						return {
+							added: messages.some(
+								(message) =>
+									message.type === 'session_added' &&
+									(message as E2ESocketMessage & { session?: { id?: string } }).session?.id ===
+										sessionId
+							),
+							active: messages.some(
+								(message) =>
+									message.type === 'active_session_changed' &&
+									(message as E2ESocketMessage & { sessionId?: string }).sessionId === sessionId
+							),
+							removed: messages.some(
+								(message) =>
+									message.type === 'session_removed' &&
+									(message as E2ESocketMessage & { sessionId?: string }).sessionId === sessionId
+							),
+						};
+					}, addedSessionId)
+				)
+				.toEqual({ added: true, active: true, removed: true });
+		} finally {
+			await page
+				.evaluate(() => (window as E2ESocketWindow).__maestroE2eSocket?.close())
+				.catch(() => {});
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
 	test('syncs desktop broadcasts into the mobile session shell', async ({ page }) => {
 		const workbench = createWebMobileWorkbench();
 		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
@@ -1235,6 +1444,42 @@ test.describe('Web Mobile Bridge', () => {
 		}
 	});
 
+	test('opens quick actions from send long-press and switches input modes', async ({ page }) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			await startWebServer(appWindow);
+			const sessionUrl = await toggleLive(appWindow, workbench.primarySessionId);
+			await page.setViewportSize({ width: 768, height: 820 });
+			await page.goto(sessionUrl);
+			await expect(page.getByText('Mobile Primary alpha response line one')).toBeVisible();
+
+			await page
+				.getByLabel(/AI message input/i)
+				.first()
+				.fill('Switch mode from quick actions');
+			const sendButton = page.getByRole('button', {
+				name: 'Send command (long press for quick actions)',
+			});
+			await sendButton.dispatchEvent('touchstart');
+			await page.waitForTimeout(650);
+			await expect(page.getByRole('menu', { name: 'Quick actions' })).toBeVisible();
+			await page.getByRole('menuitem', { name: 'Switch to Terminal' }).click();
+			await expect(page.getByLabel('Shell command input')).toBeVisible();
+
+			await page.getByLabel('Shell command input').fill('echo quick actions');
+			await sendButton.dispatchEvent('touchstart');
+			await page.waitForTimeout(650);
+			await expect(page.getByRole('menu', { name: 'Quick actions' })).toBeVisible();
+			await page.getByRole('menuitem', { name: 'Switch to AI' }).click();
+			await expect(page.getByLabel(/AI message input/i).first()).toBeVisible();
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
 	test('switches mobile tabs and reloads the selected tab transcript', async ({ page }) => {
 		const workbench = createWebMobileWorkbench();
 		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
@@ -1404,6 +1649,43 @@ test.describe('Web Mobile Bridge', () => {
 			).toBeHidden();
 			await primaryPill.click({ button: 'right' });
 			await expect(page.getByRole('button', { name: /Remove Bookmark/ })).toBeVisible();
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
+	test('persists mobile All Agents and history search state across reloads', async ({ page }) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			await startWebServer(appWindow);
+			const sessionUrl = await toggleLive(appWindow, workbench.primarySessionId);
+			await page.setViewportSize({ width: 430, height: 820 });
+			await page.goto(sessionUrl);
+			await expect(page.getByText('Mobile Primary alpha response line one')).toBeVisible();
+
+			await page.getByRole('button', { name: /Search 3 sessions/i }).click();
+			await expect(page.getByRole('heading', { name: 'All Agents' })).toBeVisible();
+			await page.waitForTimeout(450);
+			await page.reload();
+			await expect(page.getByRole('heading', { name: 'All Agents' })).toBeVisible();
+			await page.getByRole('button', { name: 'Close All Agents view' }).click();
+			await expect(page.getByRole('heading', { name: 'All Agents' })).toBeHidden();
+			await page.waitForTimeout(700);
+
+			await page.getByRole('button', { name: 'View history' }).click();
+			await expect(page.getByRole('heading', { name: 'History' })).toBeVisible();
+			await page.getByRole('button', { name: 'Search history' }).click();
+			await page.getByPlaceholder('Search history...').fill('release');
+			await page.getByRole('button', { name: 'AUTO 1' }).click();
+			await page.waitForTimeout(700);
+			await page.reload();
+			await expect(page.getByRole('heading', { name: 'History' })).toBeVisible();
+			await expect(page.getByPlaceholder('Search history...')).toHaveValue('release');
+			await expect(page.getByText('Auto Run finished the mobile bridge checklist')).toBeVisible();
+			await expect(page.getByText('User requested a mobile bridge release summary')).toBeHidden();
 		} finally {
 			await stopWebServer(appWindow).catch(() => {});
 			await electronApp.close();
