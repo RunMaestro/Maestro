@@ -22,6 +22,17 @@ type GroupChatResetCall = {
 	cwd?: string;
 };
 
+type GroupChatCreateCall = {
+	name: string;
+	moderatorAgentId: string;
+	moderatorConfig?: Record<string, unknown>;
+};
+
+type GroupChatAgentConfigCall = {
+	agentId: string;
+	config: Record<string, unknown>;
+};
+
 function createGroupChatWorkbench() {
 	const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-e2e-group-chat-'));
 	const projectDir = path.join(homeDir, 'project');
@@ -413,6 +424,131 @@ async function emitGroupChatLiveOutput(
 	}, payload);
 }
 
+async function stubGroupChatModalAgents(electronApp: ElectronApplication, hasAgents = true) {
+	await electronApp.evaluate(({ ipcMain }, agentsAvailable) => {
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eGroupChatAgentConfigCalls?: GroupChatAgentConfigCall[];
+		};
+		state.__maestroE2eGroupChatAgentConfigCalls = [];
+
+		const codexAgent = {
+			id: 'codex',
+			name: 'Codex',
+			binaryName: 'codex',
+			command: 'codex',
+			args: [],
+			available: true,
+			hidden: false,
+			path: '/usr/local/bin/codex',
+			capabilities: {
+				supportsBatchMode: true,
+				supportsModelSelection: false,
+			},
+			configOptions: [],
+		};
+
+		ipcMain.removeHandler('agents:detect');
+		ipcMain.handle('agents:detect', async () => (agentsAvailable ? [codexAgent] : []));
+		ipcMain.removeHandler('agents:refresh');
+		ipcMain.handle('agents:refresh', async () => (agentsAvailable ? codexAgent : undefined));
+		ipcMain.removeHandler('agents:getConfig');
+		ipcMain.handle('agents:getConfig', async () => ({}));
+		ipcMain.removeHandler('agents:setConfig');
+		ipcMain.handle(
+			'agents:setConfig',
+			async (_event, agentId: string, config: Record<string, unknown>) => {
+				state.__maestroE2eGroupChatAgentConfigCalls?.push({ agentId, config });
+				return true;
+			}
+		);
+		ipcMain.removeHandler('agents:getModels');
+		ipcMain.handle('agents:getModels', async () => []);
+		ipcMain.removeHandler('ssh-remote:getConfigs');
+		ipcMain.handle('ssh-remote:getConfigs', async () => ({ success: true, configs: [] }));
+	}, hasAgents);
+}
+
+async function stubGroupChatCreationHandlers(
+	electronApp: ElectronApplication,
+	seeded: ReturnType<typeof createGroupChatWorkbench>
+) {
+	await electronApp.evaluate(
+		({ ipcMain }, payload) => {
+			const state = globalThis as typeof globalThis & {
+				__maestroE2eGroupChatCreateCalls?: GroupChatCreateCall[];
+				__maestroE2eGroupChatStartCalls?: string[];
+				__maestroE2eCreatedGroupChats?: Record<string, Record<string, unknown>>;
+			};
+			state.__maestroE2eGroupChatCreateCalls = [];
+			state.__maestroE2eGroupChatStartCalls = [];
+			state.__maestroE2eCreatedGroupChats = {};
+
+			ipcMain.removeHandler('groupChat:create');
+			ipcMain.handle(
+				'groupChat:create',
+				async (
+					_event,
+					name: string,
+					moderatorAgentId: string,
+					moderatorConfig?: Record<string, unknown>
+				) => {
+					state.__maestroE2eGroupChatCreateCalls?.push({
+						name,
+						moderatorAgentId,
+						moderatorConfig,
+					});
+					const id = `created-group-chat-${state.__maestroE2eGroupChatCreateCalls?.length || 1}`;
+					const chat = {
+						id,
+						name,
+						createdAt: Date.now(),
+						updatedAt: Date.now(),
+						moderatorAgentId,
+						moderatorSessionId: `group-chat-${id}-moderator`,
+						moderatorConfig,
+						participants: [],
+						logPath: `${payload.cwd}/${id}.log`,
+						imagesDir: `${payload.cwd}/${id}-images`,
+					};
+					state.__maestroE2eCreatedGroupChats![id] = chat;
+					return chat;
+				}
+			);
+
+			ipcMain.removeHandler('groupChat:load');
+			ipcMain.handle('groupChat:load', async (_event, id: string) => {
+				return state.__maestroE2eCreatedGroupChats?.[id] || null;
+			});
+
+			ipcMain.removeHandler('groupChat:getMessages');
+			ipcMain.handle('groupChat:getMessages', async () => []);
+
+			ipcMain.removeHandler('groupChat:startModerator');
+			ipcMain.handle('groupChat:startModerator', async (_event, id: string) => {
+				state.__maestroE2eGroupChatStartCalls?.push(id);
+				return `started-${id}-moderator`;
+			});
+		},
+		{ cwd: seeded.sessions[0].cwd }
+	);
+}
+
+async function getStubbedGroupChatModalActions(electronApp: ElectronApplication) {
+	return electronApp.evaluate(() => {
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eGroupChatCreateCalls?: GroupChatCreateCall[];
+			__maestroE2eGroupChatStartCalls?: string[];
+			__maestroE2eGroupChatAgentConfigCalls?: GroupChatAgentConfigCall[];
+		};
+
+		return {
+			create: state.__maestroE2eGroupChatCreateCalls || [],
+			startModerator: state.__maestroE2eGroupChatStartCalls || [],
+			setConfig: state.__maestroE2eGroupChatAgentConfigCalls || [],
+		};
+	});
+}
+
 test.describe('Seeded Group Chat workspace', () => {
 	let window: Awaited<ReturnType<typeof helpers.launchAppWithState>>['window'];
 	let electronApp: ElectronApplication;
@@ -445,6 +581,13 @@ test.describe('Seeded Group Chat workspace', () => {
 	async function openCoverageRoomContextMenu() {
 		await expect(window.getByText('Coverage Room').first()).toBeVisible();
 		await window.getByText('Coverage Room').first().click({ button: 'right' });
+	}
+
+	async function openNewGroupChatModal() {
+		await window.getByTitle('New Group Chat').click();
+		const dialog = window.getByRole('dialog', { name: 'New Group Chat' });
+		await expect(dialog).toBeVisible();
+		return dialog;
 	}
 
 	test('opens a persisted group chat and renders seeded messages', async () => {
@@ -727,5 +870,86 @@ test.describe('Seeded Group Chat workspace', () => {
 
 		await expect(reviewerCard.getByText('Running deterministic review...')).toBeVisible();
 		await expect(reviewerCard.getByText('No blocker found.')).toBeVisible();
+	});
+
+	test('shows the New Group Chat no-agent state without enabling creation', async () => {
+		await stubGroupChatModalAgents(electronApp, false);
+		const dialog = await openNewGroupChatModal();
+
+		await expect(
+			dialog.getByText(
+				'No agents available. Please install Claude Code, OpenCode, Codex, or Factory Droid.'
+			)
+		).toBeVisible();
+		await expect(dialog.getByRole('button', { name: 'Create' })).toBeDisabled();
+	});
+
+	test('cancels New Group Chat creation without invoking IPC', async () => {
+		await stubGroupChatModalAgents(electronApp);
+		await stubGroupChatCreationHandlers(electronApp, seededWorkbench);
+		const dialog = await openNewGroupChatModal();
+
+		await dialog.getByLabel('Chat Name').fill('Canceled Coverage Room');
+		await dialog.getByRole('button', { name: 'Cancel' }).click();
+
+		await expect(dialog).toBeHidden();
+		const calls = await getStubbedGroupChatModalActions(electronApp);
+		expect(calls.create).toEqual([]);
+	});
+
+	test('creates a trimmed Codex group chat from the New Group Chat modal', async () => {
+		await stubGroupChatModalAgents(electronApp);
+		await stubGroupChatCreationHandlers(electronApp, seededWorkbench);
+		const dialog = await openNewGroupChatModal();
+
+		await expect(dialog.getByLabel('Select moderator agent')).toHaveValue('codex');
+		await expect(dialog.getByRole('button', { name: 'Create' })).toBeDisabled();
+		await dialog.getByLabel('Chat Name').fill('  Modal Coverage Room  ');
+		await dialog.getByRole('button', { name: 'Create' }).click();
+
+		await expect(
+			window.getByRole('button', { name: 'Group Chat: Modal Coverage Room' })
+		).toBeVisible();
+		const calls = await getStubbedGroupChatModalActions(electronApp);
+		expect(calls.create).toEqual([
+			{
+				name: 'Modal Coverage Room',
+				moderatorAgentId: 'codex',
+				moderatorConfig: undefined,
+			},
+		]);
+		expect(calls.startModerator).toEqual(['created-group-chat-1']);
+	});
+
+	test('creates a group chat with custom moderator path args and environment', async () => {
+		await stubGroupChatModalAgents(electronApp);
+		await stubGroupChatCreationHandlers(electronApp, seededWorkbench);
+		const dialog = await openNewGroupChatModal();
+
+		await dialog.getByTitle('Customize moderator settings').click();
+		await dialog.getByPlaceholder('/path/to/codex').fill('/opt/maestro/bin/codex');
+		await dialog
+			.getByPlaceholder('--flag value --another-flag')
+			.fill('--model gpt-5-codex --sandbox read-only');
+		await dialog.getByRole('button', { name: 'Add Variable' }).click();
+		await dialog.getByPlaceholder('VARIABLE_NAME').fill('MAESTRO_E2E_MODE');
+		await dialog.getByPlaceholder('value', { exact: true }).fill('group-chat');
+		await dialog.getByLabel('Chat Name').fill('Configured Coverage Room');
+		await dialog.getByRole('button', { name: 'Create' }).click();
+
+		const calls = await getStubbedGroupChatModalActions(electronApp);
+		expect(calls.create).toEqual([
+			{
+				name: 'Configured Coverage Room',
+				moderatorAgentId: 'codex',
+				moderatorConfig: {
+					customPath: '/opt/maestro/bin/codex',
+					customArgs: '--model gpt-5-codex --sandbox read-only',
+					customEnvVars: {
+						MAESTRO_E2E_MODE: 'group-chat',
+					},
+				},
+			},
+		]);
 	});
 });
