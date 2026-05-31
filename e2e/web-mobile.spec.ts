@@ -2465,6 +2465,93 @@ test.describe('Web Mobile Bridge', () => {
 		}
 	});
 
+	test('filters and clears typed mobile AI slash commands', async ({ page }) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			await startWebServer(appWindow);
+			const sessionUrl = await toggleLive(appWindow, workbench.primarySessionId);
+			await page.setViewportSize({ width: 768, height: 820 });
+			await page.goto(sessionUrl);
+			await expect(page.getByText('Mobile Primary alpha response line one')).toBeVisible();
+
+			const aiInput = page.getByLabel(/AI message input/i).first();
+			await aiInput.fill('/h');
+			await expect(page.getByText('Commands')).toBeVisible();
+			await expect(page.getByText('/history', { exact: true })).toBeVisible();
+			await expect(page.getByText('/clear', { exact: true })).toBeHidden();
+			await expect(page.getByText('/jump', { exact: true })).toBeHidden();
+
+			await page.keyboard.press('Escape');
+			await expect(page.getByText('Commands')).toBeHidden();
+			await expect(aiInput).toHaveValue('');
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
+	test('submits terminal-only slash commands from the mobile terminal autocomplete', async ({
+		page,
+	}) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			await startWebServer(appWindow);
+			const sessionUrl = await toggleLive(appWindow, workbench.primarySessionId);
+			await page.setViewportSize({ width: 768, height: 820 });
+			await page.goto(sessionUrl);
+			await expect(page.getByText('Mobile Primary alpha response line one')).toBeVisible();
+
+			await page.getByRole('button', { name: /Switch to terminal mode/i }).click();
+			const shellInput = page.getByLabel('Shell command input');
+			await shellInput.fill('/j');
+			await expect(page.getByText('Commands')).toBeVisible();
+			await expect(page.getByText('/jump', { exact: true })).toBeVisible();
+			await expect(page.getByText('/history', { exact: true })).toBeHidden();
+
+			await page.getByText('/jump', { exact: true }).click();
+			await expect(page.getByText('Commands')).toBeHidden();
+			await expect(shellInput).toHaveValue('');
+			await expect(page.getByText('/jump', { exact: true })).toBeVisible();
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
+	test('submits mobile AI drafts with Cmd+Enter while plain Enter adds a newline', async ({
+		page,
+	}) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			await startWebServer(appWindow);
+			const sessionUrl = await toggleLive(appWindow, workbench.primarySessionId);
+			await page.setViewportSize({ width: 768, height: 820 });
+			await page.goto(sessionUrl);
+			await expect(page.getByText('Mobile Primary alpha response line one')).toBeVisible();
+
+			const aiInput = page.getByLabel(/AI message input/i).first();
+			await aiInput.fill('First mobile draft line');
+			await page.keyboard.press('Enter');
+			await expect(aiInput).toHaveValue('First mobile draft line\n');
+			await page.keyboard.type('Second mobile draft line');
+			await expect(aiInput).toHaveValue('First mobile draft line\nSecond mobile draft line');
+
+			await page.keyboard.press('Meta+Enter');
+			await expect(aiInput).toHaveValue('');
+			await expect(page.getByText('First mobile draft line')).toBeVisible();
+			await expect(page.getByText('Second mobile draft line')).toBeVisible();
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
 	test('shows All Agents grouping, empty search, clear search, and close states', async ({
 		page,
 	}) => {
