@@ -577,6 +577,24 @@ async function openSettingsTab(window: Page, tabTitle: string, expectedText: str
 	return settingsDialog;
 }
 
+async function getCustomAICommand(window: Page, commandName: string) {
+	return await window.evaluate(async (targetCommand) => {
+		const commands = await window.maestro.settings.get('customAICommands');
+		return Array.isArray(commands)
+			? (commands.find((command) => command.command === targetCommand) ?? null)
+			: null;
+	}, commandName);
+}
+
+async function getCustomAICommandCount(window: Page, commandName: string) {
+	return await window.evaluate(async (targetCommand) => {
+		const commands = await window.maestro.settings.get('customAICommands');
+		return Array.isArray(commands)
+			? commands.filter((command) => command.command === targetCommand).length
+			: 0;
+	}, commandName);
+}
+
 function settingsShortcutButton(settingsDialog: Locator, label: string) {
 	return settingsDialog
 		.getByText(label, { exact: true })
@@ -8013,6 +8031,129 @@ Refresh-added document with a link back to [[README]].
 				});
 			})
 			.toBe(false);
+	});
+
+	test('cancels new custom AI command creation without persisting the draft', async () => {
+		const settingsDialog = await openSettingsTab(window, 'AI Commands', 'Custom AI Commands');
+
+		await settingsDialog.getByRole('button', { name: 'Add Command' }).click();
+		await settingsDialog.getByPlaceholder('/mycommand').fill('/e2e-cancel-command');
+		await settingsDialog
+			.getByPlaceholder('Short description for autocomplete')
+			.fill('Draft command description');
+		await settingsDialog
+			.getByPlaceholder(/The actual prompt sent to the AI agent/)
+			.fill('Draft prompt that should not persist.');
+		await settingsDialog.getByRole('button', { name: 'Cancel' }).first().click();
+
+		await expect(settingsDialog.getByText('/e2e-cancel-command')).toBeHidden();
+		await expect(settingsDialog.getByRole('button', { name: 'Add Command' })).toBeVisible();
+		await expect.poll(() => getCustomAICommand(window, '/e2e-cancel-command')).toBeNull();
+	});
+
+	test('auto-prefixes new custom AI commands and inserts template variables from autocomplete', async () => {
+		const settingsDialog = await openSettingsTab(window, 'AI Commands', 'Custom AI Commands');
+
+		await settingsDialog.getByRole('button', { name: 'Add Command' }).click();
+		await settingsDialog.getByPlaceholder('/mycommand').fill('e2e-noslash');
+		await settingsDialog
+			.getByPlaceholder('Short description for autocomplete')
+			.fill('No slash command description');
+		const promptTextarea = settingsDialog.getByPlaceholder(
+			/The actual prompt sent to the AI agent/
+		);
+		await promptTextarea.focus();
+		await promptTextarea.type('Summarize {{CW');
+		await expect(
+			settingsDialog.locator('code').filter({ hasText: '{{CWD}}' }).first()
+		).toBeVisible();
+		await promptTextarea.press('Enter');
+		await expect(promptTextarea).toHaveValue('Summarize {{CWD}}');
+
+		await settingsDialog.getByRole('button', { name: 'Create' }).first().click();
+		await expect(settingsDialog.getByRole('button', { name: /\/e2e-noslash/ })).toBeVisible();
+		await expect
+			.poll(() => getCustomAICommand(window, '/e2e-noslash'))
+			.toMatchObject({
+				command: '/e2e-noslash',
+				description: 'No slash command description',
+				prompt: 'Summarize {{CWD}}',
+				isBuiltIn: false,
+			});
+	});
+
+	test('blocks duplicate custom AI command names without adding a second command', async () => {
+		const settingsDialog = await openSettingsTab(window, 'AI Commands', 'Custom AI Commands');
+
+		for (const description of ['First duplicate command', 'Second duplicate command']) {
+			await settingsDialog.getByRole('button', { name: 'Add Command' }).click();
+			await settingsDialog.getByPlaceholder('/mycommand').fill('/e2e-dupe');
+			await settingsDialog.getByPlaceholder('Short description for autocomplete').fill(description);
+			await settingsDialog
+				.getByPlaceholder(/The actual prompt sent to the AI agent/)
+				.fill(`${description} prompt.`);
+			await settingsDialog.getByRole('button', { name: 'Create' }).first().click();
+		}
+
+		await expect.poll(() => getCustomAICommandCount(window, '/e2e-dupe')).toBe(1);
+		await expect(settingsDialog.getByText('Second duplicate command prompt.')).toBeVisible();
+	});
+
+	test('cancels built-in custom AI command edits and keeps delete unavailable', async () => {
+		const settingsDialog = await openSettingsTab(window, 'AI Commands', 'Custom AI Commands');
+
+		await settingsDialog.getByRole('button', { name: /\/commit/ }).click();
+		const commitPanel = settingsDialog
+			.getByText('/commit')
+			.first()
+			.locator('xpath=ancestor::div[contains(@class, "rounded-lg")][1]');
+		await expect(commitPanel.getByText('Built-in')).toBeVisible();
+		await expect(commitPanel.getByTitle('Delete command')).toHaveCount(0);
+
+		await commitPanel.getByTitle('Edit command').click();
+		await commitPanel.locator('textarea').fill('Unsaved built-in command prompt.');
+		await commitPanel.getByRole('button', { name: 'Cancel' }).click();
+
+		await expect(commitPanel.getByText('Built-in')).toBeVisible();
+		await expect(commitPanel.getByText('Unsaved built-in command prompt.')).toBeHidden();
+		await expect
+			.poll(async () => {
+				const command = await getCustomAICommand(window, '/commit');
+				return command?.prompt ?? '';
+			})
+			.not.toBe('Unsaved built-in command prompt.');
+	});
+
+	test('edits built-in custom AI commands while preserving built-in status', async () => {
+		const settingsDialog = await openSettingsTab(window, 'AI Commands', 'Custom AI Commands');
+
+		await settingsDialog.getByRole('button', { name: /\/commit/ }).click();
+		const commitPanel = settingsDialog
+			.getByText('/commit')
+			.first()
+			.locator('xpath=ancestor::div[contains(@class, "rounded-lg")][1]');
+		await commitPanel.getByTitle('Edit command').click();
+		await commitPanel.locator('input').first().fill('commit-e2e');
+		await commitPanel.locator('input').nth(1).fill('Commit command updated by E2E');
+		await commitPanel
+			.locator('textarea')
+			.fill('Run the deterministic E2E commit flow for {{CWD}}.');
+		await commitPanel.getByRole('button', { name: 'Save' }).click();
+
+		await expect(settingsDialog.getByRole('button', { name: /\/commit-e2e/ })).toBeVisible();
+		const updatedCommitPanel = settingsDialog
+			.getByText('/commit-e2e')
+			.first()
+			.locator('xpath=ancestor::div[contains(@class, "rounded-lg")][1]');
+		await expect(updatedCommitPanel.getByText('Built-in')).toBeVisible();
+		await expect
+			.poll(() => getCustomAICommand(window, '/commit-e2e'))
+			.toMatchObject({
+				command: '/commit-e2e',
+				description: 'Commit command updated by E2E',
+				prompt: 'Run the deterministic E2E commit flow for {{CWD}}.',
+				isBuiltIn: true,
+			});
 	});
 
 	test('edits and resets bundled Spec Kit and OpenSpec command prompts in Settings', async () => {
