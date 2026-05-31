@@ -99,6 +99,12 @@ type GroupChatMessagePayload = {
 
 type GroupChatStatePayload = 'idle' | 'moderator-thinking' | 'agent-working';
 
+type GroupChatAutoRunCompleteCall = {
+	groupChatId: string;
+	participantName: string;
+	summary: string;
+};
+
 function createGroupChatWorkbench() {
 	const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-e2e-group-chat-'));
 	const projectDir = path.join(homeDir, 'project');
@@ -640,6 +646,69 @@ async function emitGroupChatStateChange(
 	}, payload);
 }
 
+async function emitGroupChatModeratorSessionIdChanged(
+	electronApp: ElectronApplication,
+	payload: { groupChatId: string; sessionId: string }
+) {
+	await electronApp.evaluate(({ BrowserWindow }, eventPayload) => {
+		BrowserWindow.getAllWindows()[0]?.webContents.send(
+			'groupChat:moderatorSessionIdChanged',
+			eventPayload.groupChatId,
+			eventPayload.sessionId
+		);
+	}, payload);
+}
+
+async function emitGroupChatAutoRunTriggered(
+	electronApp: ElectronApplication,
+	payload: { groupChatId: string; participantName: string; targetFilename?: string }
+) {
+	await electronApp.evaluate(({ BrowserWindow }, eventPayload) => {
+		BrowserWindow.getAllWindows()[0]?.webContents.send(
+			'groupChat:autoRunTriggered',
+			eventPayload.groupChatId,
+			eventPayload.participantName,
+			eventPayload.targetFilename
+		);
+	}, payload);
+}
+
+async function stubGroupChatAutoRunReport(electronApp: ElectronApplication) {
+	await electronApp.evaluate(({ ipcMain }) => {
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eGroupChatAutoRunReports?: GroupChatAutoRunCompleteCall[];
+		};
+
+		state.__maestroE2eGroupChatAutoRunReports = [];
+
+		ipcMain.removeHandler('groupChat:reportAutoRunComplete');
+		ipcMain.handle(
+			'groupChat:reportAutoRunComplete',
+			async (_event, groupChatId: string, participantName: string, summary: string) => {
+				state.__maestroE2eGroupChatAutoRunReports?.push({
+					groupChatId,
+					participantName,
+					summary,
+				});
+				return true;
+			}
+		);
+
+		ipcMain.removeHandler('autorun:listDocs');
+		ipcMain.handle('autorun:listDocs', async () => ({ files: [], tree: [] }));
+	});
+}
+
+async function getStubbedGroupChatAutoRunReports(electronApp: ElectronApplication) {
+	return electronApp.evaluate(() => {
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eGroupChatAutoRunReports?: GroupChatAutoRunCompleteCall[];
+		};
+
+		return state.__maestroE2eGroupChatAutoRunReports || [];
+	});
+}
+
 async function installGroupChatExportCapture(window: Page) {
 	await window.evaluate(() => {
 		const state = window as typeof window & {
@@ -973,6 +1042,55 @@ test.describe('Seeded Group Chat workspace', () => {
 		await expect(moderatorCard.getByText('55%')).toBeVisible();
 		await expect(moderatorCard.getByText('0.07')).toBeVisible();
 		await expect(window.getByTitle('Total accumulated cost')).toContainText('0.16');
+	});
+
+	test('updates the moderator session id from IPC and copies it', async () => {
+		await openCoverageRoom();
+		await electronApp.evaluate(({ clipboard }) => clipboard.writeText(''));
+
+		const moderatorCard = participantCard('Moderator');
+		await expect(moderatorCard.getByText('pending')).toBeVisible();
+
+		const sessionId = 'abc12345-moderator-session-e2e';
+		await emitGroupChatModeratorSessionIdChanged(electronApp, {
+			groupChatId: seededWorkbench.groupChats[0].id,
+			sessionId,
+		});
+
+		await expect(moderatorCard.getByText('ABC12345')).toBeVisible();
+		await moderatorCard.locator(`button[title*="${sessionId}"]`).click();
+		await expect
+			.poll(() => electronApp.evaluate(({ clipboard }) => clipboard.readText()))
+			.toBe(sessionId);
+	});
+
+	test('copies a live participant session id from the right panel', async () => {
+		await openCoverageRoom();
+		await electronApp.evaluate(({ clipboard }) => clipboard.writeText(''));
+
+		const sessionId = 'agent9876-architect-session-e2e';
+		await emitGroupChatParticipantsChanged(electronApp, {
+			groupChatId: seededWorkbench.groupChats[0].id,
+			participants: [
+				...seededWorkbench.groupChats[0].participants,
+				{
+					name: 'Architect',
+					agentId: 'codex',
+					sessionId: 'session-group-architect-copy-e2e',
+					agentSessionId: sessionId,
+					addedAt: Date.now(),
+					contextUsage: 22,
+					messageCount: 1,
+				},
+			],
+		});
+
+		const architectCard = participantCard('Architect');
+		await expect(architectCard.getByText('AGENT987')).toBeVisible();
+		await architectCard.locator(`button[title*="${sessionId}"]`).click();
+		await expect
+			.poll(() => electronApp.evaluate(({ clipboard }) => clipboard.readText()))
+			.toBe(sessionId);
 	});
 
 	test('appends live Group Chat messages and toggles long-message expansion', async () => {
@@ -1514,6 +1632,21 @@ test.describe('Seeded Group Chat workspace', () => {
 		]);
 	});
 
+	test('cancels participant removal without invoking IPC', async () => {
+		await stubGroupChatIpcActions(electronApp);
+		await openCoverageRoom();
+
+		const reviewerCard = participantCard('Reviewer');
+		await reviewerCard.getByRole('button', { name: 'Remove' }).click();
+		await expect(reviewerCard.getByRole('button', { name: 'Confirm' })).toBeVisible();
+		await reviewerCard.getByRole('button', { name: 'Cancel' }).click();
+
+		await expect(reviewerCard.getByRole('button', { name: 'Confirm' })).toBeHidden();
+		await expect(reviewerCard.getByRole('button', { name: 'Remove' })).toBeVisible();
+		const calls = await getStubbedGroupChatIpcActions(electronApp);
+		expect(calls.removeParticipant).toEqual([]);
+	});
+
 	test('shows streamed participant output in the Peek panel', async () => {
 		await openCoverageRoom();
 		await emitGroupChatLiveOutput(electronApp, {
@@ -1559,6 +1692,41 @@ test.describe('Seeded Group Chat workspace', () => {
 		await dialog.getByRole('button', { name: 'Try Again' }).click();
 
 		await expect(dialog).toBeHidden();
+	});
+
+	test('reports Group Chat Auto Run trigger failures to the moderator', async () => {
+		await stubGroupChatAutoRunReport(electronApp);
+		await openCoverageRoom();
+
+		await emitGroupChatAutoRunTriggered(electronApp, {
+			groupChatId: seededWorkbench.groupChats[0].id,
+			participantName: 'Missing Agent',
+			targetFilename: 'Phase 1.md',
+		});
+
+		await expect.poll(() => getStubbedGroupChatAutoRunReports(electronApp)).toHaveLength(1);
+		let reports = await getStubbedGroupChatAutoRunReports(electronApp);
+		expect(reports[0]).toMatchObject({
+			groupChatId: seededWorkbench.groupChats[0].id,
+			participantName: 'Missing Agent',
+		});
+		expect(reports[0].summary).toContain(
+			'No Maestro agent named "Missing Agent" found. Make sure the agent exists and is open.'
+		);
+
+		await emitGroupChatAutoRunTriggered(electronApp, {
+			groupChatId: seededWorkbench.groupChats[0].id,
+			participantName: 'Reviewer',
+		});
+
+		await expect.poll(() => getStubbedGroupChatAutoRunReports(electronApp)).toHaveLength(2);
+		reports = await getStubbedGroupChatAutoRunReports(electronApp);
+		expect(reports[1]).toMatchObject({
+			groupChatId: seededWorkbench.groupChats[0].id,
+			participantName: 'Reviewer',
+		});
+		expect(reports[1].summary).toContain('No Auto Run documents found in');
+		expect(reports[1].summary).toContain('Create a document in the Auto Run tab first.');
 	});
 
 	test('shows the New Group Chat no-agent state without enabling creation', async () => {
