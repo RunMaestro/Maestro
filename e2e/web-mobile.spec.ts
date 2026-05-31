@@ -418,6 +418,37 @@ function createWebMobileWorkbench() {
 	};
 }
 
+function addMobileWorktreeSession(
+	workbench: WebWorkbench,
+	{
+		suffix,
+		branch,
+		useParentLink = true,
+	}: {
+		suffix: string;
+		branch: string;
+		useParentLink?: boolean;
+	}
+) {
+	const safeBranch = branch.replace(/[^a-z0-9-]+/gi, '-');
+	const worktreeDir = path.join(workbench.homeDir, 'project-WorkTrees', safeBranch);
+	const sessionId = `${workbench.primarySessionId}-${suffix}`;
+
+	fs.mkdirSync(worktreeDir, { recursive: true });
+	workbench.sessions.push({
+		...createSeededSession({
+			id: sessionId,
+			name: branch,
+			projectDir: worktreeDir,
+			createdAt: Date.now() + 30,
+		}),
+		parentSessionId: useParentLink ? workbench.primarySessionId : null,
+		worktreeBranch: branch,
+	} as StoredSession);
+
+	return { sessionId, worktreeDir };
+}
+
 function toLoopbackUrl(value: string): string {
 	const url = new URL(value);
 	url.hostname = '127.0.0.1';
@@ -2894,6 +2925,81 @@ test.describe('Web Mobile Bridge', () => {
 				page.getByText('Mobile Secondary shell output for mobile bridge coverage.')
 			).toBeVisible();
 			await expect(page).toHaveURL(new RegExp(`/session/${workbench.secondarySessionId}`));
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
+	test('shows parent-linked worktree children under inherited All Agents groups', async ({
+		page,
+	}) => {
+		const workbench = createWebMobileWorkbench();
+		const { sessionId: worktreeSessionId } = addMobileWorktreeSession(workbench, {
+			suffix: 'worktree-child',
+			branch: 'feature/mobile-web',
+		});
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			await startWebServer(appWindow);
+			const sessionUrl = await toggleLive(appWindow, workbench.primarySessionId);
+			await page.setViewportSize({ width: 430, height: 820 });
+			await page.goto(sessionUrl);
+			await expect(page.getByText('Mobile Primary alpha response line one')).toBeVisible();
+
+			await page.getByRole('button', { name: /Search 4 sessions/i }).click();
+			await expect(page.getByRole('heading', { name: 'All Agents' })).toBeVisible();
+			await expect(
+				page.getByRole('button', { name: /Mobile Ops group with 2 sessions/i }).last()
+			).toBeVisible();
+
+			await page.getByPlaceholder('Search agents...').fill('feature/mobile-web');
+			const worktreeCard = page.getByRole('button', {
+				name: /Mobile Primary: feature\/mobile-web session, Ready, ai mode/i,
+			});
+			await expect(worktreeCard).toBeVisible();
+			await worktreeCard.click();
+
+			await expect(page).toHaveURL(new RegExp(`/session/${worktreeSessionId}`));
+			await expect(page.getByText('feature/mobile-web alpha response line one')).toBeVisible();
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
+	test('infers legacy mobile worktree parents from cwd in All Agents', async ({ page }) => {
+		const workbench = createWebMobileWorkbench();
+		const { sessionId: legacyWorktreeSessionId } = addMobileWorktreeSession(workbench, {
+			suffix: 'legacy-worktree-child',
+			branch: 'legacy-fix',
+			useParentLink: false,
+		});
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			await startWebServer(appWindow);
+			const sessionUrl = await toggleLive(appWindow, workbench.primarySessionId);
+			await page.setViewportSize({ width: 430, height: 820 });
+			await page.goto(sessionUrl);
+			await expect(page.getByText('Mobile Primary alpha response line one')).toBeVisible();
+
+			await page.getByRole('button', { name: /Search 4 sessions/i }).click();
+			await expect(page.getByRole('heading', { name: 'All Agents' })).toBeVisible();
+			await expect(
+				page.getByRole('button', { name: /Mobile Ops group with 2 sessions/i }).last()
+			).toBeVisible();
+
+			await page.getByPlaceholder('Search agents...').fill('legacy-fix');
+			const legacyWorktreeCard = page.getByRole('button', {
+				name: /Mobile Primary: legacy-fix session, Ready, ai mode/i,
+			});
+			await expect(legacyWorktreeCard).toBeVisible();
+			await legacyWorktreeCard.click();
+
+			await expect(page).toHaveURL(new RegExp(`/session/${legacyWorktreeSessionId}`));
+			await expect(page.getByText('legacy-fix alpha response line one')).toBeVisible();
 		} finally {
 			await stopWebServer(appWindow).catch(() => {});
 			await electronApp.close();
