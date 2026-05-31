@@ -12,6 +12,27 @@ import os from 'os';
 import path from 'path';
 
 type WebWorkbench = ReturnType<typeof createWebMobileWorkbench>;
+type SeededHistoryEntry = {
+	id: string;
+	type: 'AUTO' | 'USER';
+	timestamp: number;
+	summary: string;
+	fullResponse: string;
+	agentSessionId: string;
+	sessionName: string;
+	projectPath: string;
+	sessionId: string;
+	contextUsage?: number;
+	usageStats?: {
+		inputTokens?: number;
+		outputTokens?: number;
+		totalCostUsd?: number;
+		contextWindow?: number;
+	};
+	success?: boolean;
+	elapsedTimeMs?: number;
+	validated?: boolean;
+};
 type LiveServerResult = { success: boolean; url: string };
 type LiveToggleResult = { live: boolean; url: string };
 type LiveStatusResult = { live: boolean; url: string | null };
@@ -294,6 +315,50 @@ function createWebMobileWorkbench() {
 				},
 			],
 		},
+		historyEntries: [
+			{
+				id: `web-mobile-history-auto-${now}`,
+				type: 'AUTO' as const,
+				timestamp: now + 300,
+				summary: 'Auto Run finished the mobile bridge checklist',
+				fullResponse: 'Auto Run detailed mobile bridge release notes and validation output.',
+				agentSessionId: `${primarySessionId}-agent-plan`,
+				sessionName: 'Mobile Primary',
+				projectPath: projectDir,
+				sessionId: primarySessionId,
+				contextUsage: 42,
+				usageStats: {
+					inputTokens: 2100,
+					outputTokens: 950,
+					totalCostUsd: 0.12,
+					contextWindow: 16000,
+				},
+				success: true,
+				elapsedTimeMs: 125000,
+				validated: true,
+			},
+			{
+				id: `web-mobile-history-user-${now}`,
+				type: 'USER' as const,
+				timestamp: now + 200,
+				summary: 'User requested a mobile bridge release summary',
+				fullResponse: 'User-facing mobile bridge release summary with follow-up context.',
+				agentSessionId: `${primarySessionId}-agent-review`,
+				sessionName: 'Mobile Primary',
+				projectPath: projectDir,
+				sessionId: primarySessionId,
+				contextUsage: 21,
+				usageStats: {
+					inputTokens: 800,
+					outputTokens: 320,
+					totalCostUsd: 0.04,
+					contextWindow: 8000,
+				},
+				success: true,
+				elapsedTimeMs: 45000,
+				validated: false,
+			},
+		],
 	};
 }
 
@@ -320,7 +385,28 @@ async function launchWebWorkbench(workbench: WebWorkbench) {
 		groups: workbench.groups,
 		settings: workbench.settings,
 	});
+	seedHistory(
+		launched.userDataPath,
+		workbench.primarySessionId,
+		workbench.projectDir,
+		workbench.historyEntries
+	);
 	return launched;
+}
+
+function seedHistory(
+	userDataPath: string,
+	sessionId: string,
+	projectPath: string,
+	entries: SeededHistoryEntry[]
+) {
+	const historyDir = path.join(userDataPath, 'history');
+	fs.mkdirSync(historyDir, { recursive: true });
+	fs.writeFileSync(
+		path.join(historyDir, `${sessionId.replace(/[^a-zA-Z0-9_-]/g, '_')}.json`),
+		JSON.stringify({ version: 1, sessionId, projectPath, entries }, null, '\t'),
+		'utf-8'
+	);
 }
 
 async function startWebServer(appWindow: Page): Promise<string> {
@@ -727,6 +813,38 @@ test.describe('Web Mobile Bridge', () => {
 		}
 	});
 
+	test('serves seeded mobile history through session and project token APIs', async ({ page }) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			const dashboardUrl = await startWebServer(appWindow);
+			const sessionHistory = await getJson(
+				page,
+				`${dashboardUrl}/api/history?sessionId=${workbench.primarySessionId}`
+			);
+			expect(sessionHistory.count).toBe(2);
+			expect(sessionHistory.entries[0]).toMatchObject({
+				type: 'AUTO',
+				summary: 'Auto Run finished the mobile bridge checklist',
+				sessionId: workbench.primarySessionId,
+			});
+
+			const projectHistory = await getJson(
+				page,
+				`${dashboardUrl}/api/history?projectPath=${encodeURIComponent(workbench.projectDir)}`
+			);
+			expect(projectHistory.entries).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({ summary: 'User requested a mobile bridge release summary' }),
+				])
+			);
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
 	test('syncs desktop broadcasts into the mobile session shell', async ({ page }) => {
 		const workbench = createWebMobileWorkbench();
 		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
@@ -935,6 +1053,110 @@ test.describe('Web Mobile Bridge', () => {
 				page.getByText('Mobile Secondary shell output for mobile bridge coverage.')
 			).toBeVisible();
 			await expect(page).toHaveURL(new RegExp(`/session/${workbench.secondarySessionId}`));
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
+	test('opens mobile history, filters, searches, and opens entry details', async ({ page }) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			await startWebServer(appWindow);
+			const sessionUrl = await toggleLive(appWindow, workbench.primarySessionId);
+			await page.setViewportSize({ width: 430, height: 820 });
+			await page.goto(sessionUrl);
+
+			await page.getByRole('button', { name: 'View history' }).click();
+			await expect(page.getByRole('heading', { name: 'History' })).toBeVisible();
+			await expect(page.getByText('Auto Run finished the mobile bridge checklist')).toBeVisible();
+			await expect(page.getByText('User requested a mobile bridge release summary')).toBeVisible();
+
+			await page.getByRole('button', { name: /AUTO\s+1/ }).click();
+			await expect(page.getByText('Auto Run finished the mobile bridge checklist')).toBeVisible();
+			await expect(page.getByText('User requested a mobile bridge release summary')).toBeHidden();
+
+			await page.getByRole('button', { name: 'Search history' }).click();
+			await page.getByPlaceholder('Search history...').fill('release notes');
+			await expect(page.getByText('1 found')).toBeVisible();
+			await page.getByText('Auto Run finished the mobile bridge checklist').click();
+			await expect(
+				page.getByText('Auto Run detailed mobile bridge release notes and validation output.')
+			).toBeVisible();
+			await page.getByRole('button', { name: 'Close detail view' }).click();
+			await page.getByRole('button', { name: 'Close history' }).click();
+			await expect(page.getByRole('heading', { name: 'History' })).toBeHidden();
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
+	test('shows connection lost fallback when the server stops', async ({ page }) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			await startWebServer(appWindow);
+			const sessionUrl = await toggleLive(appWindow, workbench.primarySessionId);
+			await page.setViewportSize({ width: 430, height: 820 });
+			await page.goto(sessionUrl);
+			await expect(page.getByText('Mobile Primary alpha response line one')).toBeVisible();
+
+			await stopWebServer(appWindow);
+			await expect(page.getByText('Connection Lost')).toBeVisible({ timeout: 15000 });
+			await expect(page.getByLabel(/AI message input/i).first()).toHaveAttribute(
+				'placeholder',
+				'Connecting...'
+			);
+			await expect(page.getByRole('button', { name: /Send command|Send message/i })).toBeDisabled();
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
+	test('expands offline queued commands and removes a queued command', async ({ page }) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			await startWebServer(appWindow);
+			const sessionUrl = await toggleLive(appWindow, workbench.primarySessionId);
+			await page.setViewportSize({ width: 430, height: 820 });
+			await page.goto(sessionUrl);
+			await expect(page.getByText('Mobile Primary alpha response line one')).toBeVisible();
+
+			await page.evaluate(() => {
+				const onlineState = { value: false };
+				(window as MaestroE2EWindow).__maestroE2eOnlineState = onlineState;
+				Object.defineProperty(window.navigator, 'onLine', {
+					configurable: true,
+					get: () => onlineState.value,
+				});
+				window.dispatchEvent(new Event('offline'));
+			});
+			await page
+				.getByLabel(/AI message input/i)
+				.first()
+				.fill('Queued command to inspect and remove');
+			await page.getByRole('button', { name: /Send command|Send message/i }).click();
+			await expect(page.getByText('1 command queued')).toBeVisible();
+			await page.getByText('1 command queued').click();
+			await expect(page.getByText('Queued command to inspect and remove')).toBeVisible();
+
+			await page.getByRole('button', { name: 'Remove command' }).click();
+			await expect(page.getByText('1 command queued')).toBeHidden();
+			await expect
+				.poll(() =>
+					page.evaluate(() => {
+						const stored = window.localStorage.getItem('maestro-offline-queue');
+						return stored ? JSON.parse(stored).length : 0;
+					})
+				)
+				.toBe(0);
 		} finally {
 			await stopWebServer(appWindow).catch(() => {});
 			await electronApp.close();
