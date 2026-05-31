@@ -2088,6 +2088,32 @@ async function stubSpecKitAndOpenSpecCommands(electronApp: ElectronApplication) 
 	});
 }
 
+async function stubEmptySpecKitAndOpenSpecCommands(electronApp: ElectronApplication) {
+	await electronApp.evaluate(({ ipcMain }) => {
+		const makeMetadata = (sourceVersion: string, sourceUrl: string) => ({
+			lastRefreshed: '2026-05-29T12:00:00.000Z',
+			commitSha: sourceVersion,
+			sourceVersion,
+			sourceUrl,
+		});
+
+		ipcMain.removeHandler('speckit:getMetadata');
+		ipcMain.handle('speckit:getMetadata', async () => ({
+			success: true,
+			metadata: makeMetadata('empty-spec-kit', 'https://github.com/github/spec-kit'),
+		}));
+		ipcMain.removeHandler('speckit:getPrompts');
+		ipcMain.handle('speckit:getPrompts', async () => ({ success: true, commands: [] }));
+		ipcMain.removeHandler('openspec:getMetadata');
+		ipcMain.handle('openspec:getMetadata', async () => ({
+			success: true,
+			metadata: makeMetadata('empty-openspec', 'https://github.com/Fission-AI/OpenSpec'),
+		}));
+		ipcMain.removeHandler('openspec:getPrompts');
+		ipcMain.handle('openspec:getPrompts', async () => ({ success: true, commands: [] }));
+	});
+}
+
 async function stubSymphonyForModal(electronApp: ElectronApplication, sessionId: string) {
 	await electronApp.evaluate(
 		({ ipcMain }, payload: { sessionId: string }) => {
@@ -8066,6 +8092,33 @@ Refresh-added document with a link back to [[README]].
 		await specKitPanel.getByRole('button', { name: 'Cancel' }).click();
 		await expect(specKitPanel.getByText('Bundled specify prompt for {{CWD}}.')).toBeVisible();
 		await expect(specKitPanel.getByText('Unsaved Spec Kit prompt.')).toBeHidden();
+	});
+
+	test('opens bundled Spec Kit and OpenSpec source links through shell IPC', async () => {
+		await stubSpecKitAndOpenSpecCommands(electronApp);
+		await stubOpenExternal(electronApp);
+		const settingsDialog = await openSettingsTab(window, 'AI Commands', 'Custom AI Commands');
+
+		await settingsDialog.getByRole('button', { name: /github\/spec-kit/ }).click();
+		await expect
+			.poll(() => getStubbedOpenExternalUrl(electronApp))
+			.toBe('https://github.com/github/spec-kit');
+
+		await stubOpenExternal(electronApp);
+		await settingsDialog.getByRole('button', { name: /Fission-AI\/OpenSpec/ }).click();
+		await expect
+			.poll(() => getStubbedOpenExternalUrl(electronApp))
+			.toBe('https://github.com/Fission-AI/OpenSpec');
+	});
+
+	test('shows empty bundled Spec Kit and OpenSpec command states in Settings', async () => {
+		await stubEmptySpecKitAndOpenSpecCommands(electronApp);
+		const settingsDialog = await openSettingsTab(window, 'AI Commands', 'Custom AI Commands');
+
+		await expect(settingsDialog.getByText('empty-spec-kit')).toBeVisible();
+		await expect(settingsDialog.getByText('empty-openspec')).toBeVisible();
+		await expect(settingsDialog.getByText('No spec-kit commands loaded')).toBeVisible();
+		await expect(settingsDialog.getByText('No OpenSpec commands loaded')).toBeVisible();
 	});
 });
 
