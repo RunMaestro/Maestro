@@ -102,6 +102,7 @@ type GroupChatStatePayload = 'idle' | 'moderator-thinking' | 'agent-working';
 function createGroupChatWorkbench() {
 	const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-e2e-group-chat-'));
 	const projectDir = path.join(homeDir, 'project');
+	const imageFilePath = path.join(projectDir, 'group-chat-image.png');
 	const now = Date.now();
 	const idSuffix = `${now}-${Math.random().toString(36).slice(2)}`;
 	const chatId = crypto.randomUUID();
@@ -112,6 +113,13 @@ function createGroupChatWorkbench() {
 
 	fs.mkdirSync(projectDir, { recursive: true });
 	fs.writeFileSync(path.join(projectDir, 'README.md'), '# Group Chat Coverage\n', 'utf-8');
+	fs.writeFileSync(
+		imageFilePath,
+		Buffer.from(
+			'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=',
+			'base64'
+		)
+	);
 
 	return {
 		homeDir,
@@ -841,6 +849,16 @@ test.describe('Seeded Group Chat workspace', () => {
 		return window.locator('[data-message-timestamp]').filter({ hasText: text }).first();
 	}
 
+	function groupChatImagePath() {
+		return path.join(seededWorkbench.sessions[0].cwd, 'group-chat-image.png');
+	}
+
+	function promptComposerDialog() {
+		return window
+			.getByText('Prompt Composer')
+			.locator('xpath=ancestor::div[contains(@class, "z-10")][1]');
+	}
+
 	async function openCoverageRoom() {
 		const listItem = groupChatListItem('Coverage Room');
 		await expect(listItem).toBeVisible();
@@ -1311,6 +1329,117 @@ test.describe('Seeded Group Chat workspace', () => {
 				content: 'Please summarize the risk.',
 				images: undefined,
 				readOnly: true,
+			},
+		]);
+	});
+
+	test('trims pasted Group Chat text and sends with Enter mode', async () => {
+		await stubGroupChatIpcActions(electronApp);
+		await openCoverageRoom();
+
+		const input = window.locator('textarea').first();
+		await input.fill('Prefix: ');
+		await input.evaluate((textarea) => {
+			const target = textarea as HTMLTextAreaElement;
+			target.setSelectionRange(target.value.length, target.value.length);
+			const dataTransfer = new DataTransfer();
+			dataTransfer.setData('text/plain', '  pasted group chat text  \n\n');
+			target.dispatchEvent(
+				new ClipboardEvent('paste', {
+					clipboardData: dataTransfer,
+					bubbles: true,
+					cancelable: true,
+				})
+			);
+		});
+		await expect(input).toHaveValue('Prefix: pasted group chat text');
+
+		await window.getByTitle('Switch to Enter to send').click();
+		await input.press('Enter');
+
+		const calls = await getStubbedGroupChatIpcActions(electronApp);
+		expect(calls.sendToModerator).toEqual([
+			{
+				groupChatId: seededWorkbench.groupChats[0].id,
+				content: 'Prefix: pasted group chat text',
+				images: undefined,
+				readOnly: false,
+			},
+		]);
+	});
+
+	test('stages deduplicates lightboxes and removes Group Chat image attachments', async () => {
+		await openCoverageRoom();
+
+		const imageInput = window.locator('#group-chat-image-input');
+		await imageInput.setInputFiles(groupChatImagePath());
+		const stagedImage = window.getByAltText('Staged image');
+		await expect(stagedImage).toBeVisible();
+
+		await imageInput.setInputFiles(groupChatImagePath());
+		await expect(stagedImage).toHaveCount(1);
+		await expect(window.getByText('Duplicate image ignored')).toBeVisible();
+
+		const input = window.locator('textarea').first();
+		await input.focus();
+		await input.press('Meta+Y');
+		const lightbox = window.getByRole('dialog', { name: 'Image Lightbox' });
+		await expect(lightbox).toBeVisible();
+		await expect(lightbox.getByRole('img', { name: 'Expanded image preview' })).toBeVisible();
+
+		await lightbox.getByTitle('Delete image (Delete key)').click();
+		await window
+			.getByRole('dialog', { name: 'Confirm' })
+			.getByRole('button', { name: 'Confirm' })
+			.click();
+		await expect(lightbox).toBeHidden();
+		await expect(stagedImage).toBeHidden();
+	});
+
+	test('sends Group Chat image attachments through moderator IPC', async () => {
+		await stubGroupChatIpcActions(electronApp);
+		await openCoverageRoom();
+
+		await window.locator('#group-chat-image-input').setInputFiles(groupChatImagePath());
+		await expect(window.getByAltText('Staged image')).toBeVisible();
+
+		const input = window.locator('textarea').first();
+		await input.fill('Please inspect the attached image.');
+		await window.getByTitle('Send message').click();
+
+		await expect(input).toHaveValue('');
+		await expect(window.getByAltText('Staged image')).toBeHidden();
+		const calls = await getStubbedGroupChatIpcActions(electronApp);
+		expect(calls.sendToModerator).toHaveLength(1);
+		expect(calls.sendToModerator[0]).toMatchObject({
+			groupChatId: seededWorkbench.groupChats[0].id,
+			content: 'Please inspect the attached image.',
+			readOnly: false,
+		});
+		expect(calls.sendToModerator[0].images).toHaveLength(1);
+		expect(calls.sendToModerator[0].images?.[0]).toMatch(/^data:image\/png;base64,/);
+	});
+
+	test('sends Group Chat Prompt Composer drafts through moderator IPC', async () => {
+		await stubGroupChatIpcActions(electronApp);
+		await openCoverageRoom();
+
+		await window.getByTitle(/Open Prompt Composer/).click();
+		const composerDialog = promptComposerDialog();
+		await expect(composerDialog).toBeVisible();
+		await composerDialog
+			.getByPlaceholder(/Write your prompt here/)
+			.fill('Prompt Composer group chat dispatch.');
+		await composerDialog.getByRole('button', { name: 'Send' }).click();
+
+		await expect(composerDialog).toBeHidden();
+		const calls = await getStubbedGroupChatIpcActions(electronApp);
+		expect(calls.sendToModerator).toEqual([
+			{
+				groupChatId: seededWorkbench.groupChats[0].id,
+				content: 'Prompt Composer group chat dispatch.',
+				images: undefined,
+				readOnly: false,
 			},
 		]);
 	});
