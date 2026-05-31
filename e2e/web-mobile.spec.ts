@@ -2220,6 +2220,72 @@ test.describe('Web Mobile Bridge', () => {
 		}
 	});
 
+	test('shows the empty mobile session state when every desktop session is removed', async ({
+		page,
+	}) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			await startWebServer(appWindow);
+			const sessionUrl = await toggleLive(appWindow, workbench.primarySessionId);
+			await page.setViewportSize({ width: 430, height: 820 });
+			await page.goto(sessionUrl);
+			await expect(page.getByText('Mobile Primary alpha response line one')).toBeVisible();
+
+			await appWindow.evaluate(async () => {
+				await (window as MaestroE2EWindow).maestro.sessions.setAll([]);
+			});
+
+			await expect(page.getByText('Select a session above to get started')).toBeVisible();
+			await expect(page.getByRole('button', { name: /Search \d+ sessions/i })).toBeHidden();
+			await expect(page.getByPlaceholder('Select a session first...')).toBeDisabled();
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
+	test('restores the mobile session picker after sessions return from empty state', async ({
+		page,
+	}) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			await startWebServer(appWindow);
+			const sessionUrl = await toggleLive(appWindow, workbench.primarySessionId);
+			await page.setViewportSize({ width: 430, height: 820 });
+			await page.goto(sessionUrl);
+			await expect(page.getByText('Mobile Primary alpha response line one')).toBeVisible();
+
+			const originalSessions = await appWindow.evaluate(async () => {
+				const maestro = (window as MaestroE2EWindow).maestro;
+				const sessions = await maestro.sessions.getAll();
+				await maestro.sessions.setAll([]);
+				return sessions;
+			});
+			await expect(page.getByText('Select a session above to get started')).toBeVisible();
+
+			await appWindow.evaluate(
+				async ({ sessions, activeSessionId }) => {
+					const maestro = (window as MaestroE2EWindow).maestro;
+					await maestro.sessions.setAll(sessions);
+					await maestro.live.broadcastActiveSession(activeSessionId);
+				},
+				{ sessions: originalSessions, activeSessionId: workbench.primarySessionId }
+			);
+			await reconnectMobileIfNeeded(page);
+
+			await expect(page.getByRole('button', { name: /Search 3 sessions/i })).toBeVisible();
+			await expect(page.getByText('Mobile Primary alpha response line one')).toBeVisible();
+			await expect(page.getByLabel(/AI message input/i).first()).toBeEnabled();
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
 	test('renames, stars, and reorders tabs from the mobile tab actions popover', async ({
 		page,
 	}) => {
