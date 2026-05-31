@@ -2680,6 +2680,12 @@ async function openPromptComposer(window: Page) {
 	return composerInput;
 }
 
+function promptComposerDialog(window: Page) {
+	return window
+		.getByText('Prompt Composer')
+		.locator('xpath=ancestor::div[contains(@class, "z-10")][1]');
+}
+
 async function stubDirectorNotesSynopsis(electronApp: ElectronApplication) {
 	await electronApp.evaluate(({ ipcMain }) => {
 		ipcMain.removeHandler('director-notes:generateSynopsis');
@@ -7213,9 +7219,7 @@ Refresh-added document with a link back to [[README]].
 
 	test('shows Prompt Composer controls without sending a live prompt', async () => {
 		const composerInput = await openPromptComposer(window);
-		const composerDialog = window
-			.getByText('Prompt Composer')
-			.locator('xpath=ancestor::div[contains(@class, "z-10")][1]');
+		const composerDialog = promptComposerDialog(window);
 
 		const historyToggle = composerDialog.getByTitle(/Save to History/);
 		await expect(historyToggle).toBeVisible();
@@ -7229,6 +7233,84 @@ Refresh-added document with a link back to [[README]].
 		await expect(composerDialog.getByRole('button', { name: 'Send' })).toBeDisabled();
 		await composerInput.fill('Prepared prompt that is not sent');
 		await expect(composerDialog.getByRole('button', { name: 'Send' })).toBeEnabled();
+
+		await window.keyboard.press('Escape');
+		await expect(window.getByText('Prompt Composer')).toBeHidden();
+	});
+
+	test('trims whitespace when pasting text into Prompt Composer', async () => {
+		const composerInput = await openPromptComposer(window);
+
+		await composerInput.fill('Prefix: ');
+		await composerInput.evaluate((textarea) => {
+			const input = textarea as HTMLTextAreaElement;
+			input.setSelectionRange(input.value.length, input.value.length);
+			const dataTransfer = new DataTransfer();
+			dataTransfer.setData('text/plain', '  pasted composer text  \n\n');
+			input.dispatchEvent(
+				new ClipboardEvent('paste', {
+					clipboardData: dataTransfer,
+					bubbles: true,
+					cancelable: true,
+				})
+			);
+		});
+
+		await expect(composerInput).toHaveValue('Prefix: pasted composer text');
+		await window.keyboard.press('Escape');
+		await expect(window.getByText('Prompt Composer')).toBeHidden();
+	});
+
+	test('keeps Prompt Composer @ text literal outside group-chat mention context', async () => {
+		const composerInput = await openPromptComposer(window);
+		const composerDialog = promptComposerDialog(window);
+
+		await composerInput.fill('@E2E');
+		await expect(composerDialog.getByRole('button', { name: /@E2E-Workbench/ })).toHaveCount(0);
+		await expect(composerInput).toHaveValue('@E2E');
+
+		await window.keyboard.press('Escape');
+		await expect(window.getByText('Prompt Composer')).toBeHidden();
+	});
+
+	test('uploads a Prompt Composer image and opens it in the lightbox', async () => {
+		await openPromptComposer(window);
+		const composerDialog = promptComposerDialog(window);
+		const imagePath = path.join(seededWorkbench.sessions[0].cwd, 'diagram.png');
+
+		await composerDialog.locator('input[type="file"]').setInputFiles(imagePath);
+		const stagedImage = composerDialog.getByRole('button', {
+			name: 'Prompt composer staged image 1',
+		});
+		await expect(stagedImage).toBeVisible();
+
+		await stagedImage.click();
+		const lightbox = window.getByRole('dialog', { name: 'Image Lightbox' });
+		await expect(lightbox).toBeVisible();
+		await expect(lightbox.getByRole('img', { name: 'Expanded image preview' })).toBeVisible();
+
+		await lightbox.click({ position: { x: 10, y: 10 } });
+		await expect(lightbox).toBeHidden();
+		await window.keyboard.press('Escape');
+		await expect(window.getByText('Prompt Composer')).toBeHidden();
+	});
+
+	test('removes a staged image from Prompt Composer without sending', async () => {
+		await openPromptComposer(window);
+		const composerDialog = promptComposerDialog(window);
+		const imagePath = path.join(seededWorkbench.sessions[0].cwd, 'diagram.png');
+
+		await composerDialog.locator('input[type="file"]').setInputFiles(imagePath);
+		const stagedImage = composerDialog.getByRole('button', {
+			name: 'Prompt composer staged image 1',
+		});
+		await expect(stagedImage).toBeVisible();
+
+		await stagedImage
+			.locator('xpath=ancestor::div[contains(@class, "relative")][1]')
+			.locator('button')
+			.click();
+		await expect(stagedImage).toBeHidden();
 
 		await window.keyboard.press('Escape');
 		await expect(window.getByText('Prompt Composer')).toBeHidden();
