@@ -1674,6 +1674,101 @@ async function getStubbedShellPathCalls(electronApp: ElectronApplication) {
 	});
 }
 
+async function stubShellDetection(electronApp: ElectronApplication) {
+	await electronApp.evaluate(({ ipcMain }) => {
+		ipcMain.removeHandler('shells:detect');
+		ipcMain.handle('shells:detect', async () => [
+			{ id: 'zsh', name: 'Zsh', path: '/bin/zsh', available: true },
+			{ id: 'fish', name: 'Fish', path: '/opt/e2e/fish', available: true },
+			{ id: 'nu', name: 'Nushell', available: false },
+		]);
+	});
+}
+
+async function stubWakaTimeHandlers(electronApp: ElectronApplication) {
+	await electronApp.evaluate(({ ipcMain }) => {
+		ipcMain.removeHandler('wakatime:checkCli');
+		ipcMain.handle('wakatime:checkCli', async () => ({
+			available: true,
+			version: 'wakatime-cli 99.0.0-e2e',
+		}));
+		ipcMain.removeHandler('wakatime:validateApiKey');
+		ipcMain.handle('wakatime:validateApiKey', async (_event, key: string) => ({
+			valid: key.startsWith('waka_'),
+		}));
+	});
+}
+
+async function stubStatsDataManagement(electronApp: ElectronApplication) {
+	await electronApp.evaluate(({ ipcMain }) => {
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eStatsClearDays?: number[];
+			__maestroE2eStatsDbSize?: number;
+		};
+		state.__maestroE2eStatsClearDays = [];
+		state.__maestroE2eStatsDbSize = 2 * 1024 * 1024;
+
+		ipcMain.removeHandler('stats:get-database-size');
+		ipcMain.handle('stats:get-database-size', async () => state.__maestroE2eStatsDbSize);
+		ipcMain.removeHandler('stats:get-earliest-timestamp');
+		ipcMain.handle('stats:get-earliest-timestamp', async () => Date.UTC(2026, 0, 2));
+		ipcMain.removeHandler('stats:clear-old-data');
+		ipcMain.handle('stats:clear-old-data', async (_event, olderThanDays: number) => {
+			state.__maestroE2eStatsClearDays?.push(olderThanDays);
+			state.__maestroE2eStatsDbSize = 1024 * 1024;
+			return {
+				success: true,
+				deletedQueryEvents: 2,
+				deletedAutoRunSessions: 1,
+				deletedAutoRunTasks: 3,
+			};
+		});
+	});
+}
+
+async function getStubbedStatsClearDays(electronApp: ElectronApplication) {
+	return electronApp.evaluate(() => {
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eStatsClearDays?: number[];
+		};
+		return state.__maestroE2eStatsClearDays ?? [];
+	});
+}
+
+async function stubStorageSyncHandlers(electronApp: ElectronApplication, selectedFolder: string) {
+	await electronApp.evaluate(
+		({ ipcMain }, payload: { selectedFolder: string; defaultPath: string }) => {
+			const state = globalThis as typeof globalThis & {
+				__maestroE2eCustomSyncPath?: string;
+			};
+			state.__maestroE2eCustomSyncPath = undefined;
+
+			ipcMain.removeHandler('sync:getDefaultPath');
+			ipcMain.handle('sync:getDefaultPath', async () => payload.defaultPath);
+			ipcMain.removeHandler('sync:getSettings');
+			ipcMain.handle('sync:getSettings', async () => ({
+				customSyncPath: state.__maestroE2eCustomSyncPath,
+			}));
+			ipcMain.removeHandler('sync:getCurrentStoragePath');
+			ipcMain.handle(
+				'sync:getCurrentStoragePath',
+				async () => state.__maestroE2eCustomSyncPath ?? payload.defaultPath
+			);
+			ipcMain.removeHandler('sync:selectSyncFolder');
+			ipcMain.handle('sync:selectSyncFolder', async () => payload.selectedFolder);
+			ipcMain.removeHandler('sync:setCustomPath');
+			ipcMain.handle('sync:setCustomPath', async (_event, customPath: string | null) => {
+				state.__maestroE2eCustomSyncPath = customPath ?? undefined;
+				return { success: true, migrated: customPath ? 3 : 2 };
+			});
+		},
+		{
+			selectedFolder,
+			defaultPath: '/tmp/maestro-e2e-default-storage',
+		}
+	);
+}
+
 async function stubUpdateCheckForModal(
 	electronApp: ElectronApplication,
 	mode: 'available' | 'error'
@@ -7343,6 +7438,148 @@ Refresh-added document with a link back to [[README]].
 				name: /Open in Finder|Open in Explorer|Open in File Manager/,
 			})
 		).toBeEnabled();
+	});
+
+	test('detects available terminal shells and persists the selected default shell', async () => {
+		await stubShellDetection(electronApp);
+		const settingsDialog = await openSettingsTab(window, 'General', 'Default Terminal Shell');
+
+		await settingsDialog.getByRole('button', { name: /Detect other available shells/ }).click();
+		const fishButton = settingsDialog.getByRole('button', { name: /Fish/ });
+		await expect(fishButton).toBeVisible();
+		await expect(settingsDialog.getByText('/opt/e2e/fish')).toBeVisible();
+		await expect(settingsDialog.getByText('Available')).toBeVisible();
+
+		await fishButton.click();
+		await expect
+			.poll(async () => {
+				return await window.evaluate(async () => {
+					return await window.maestro.settings.get('defaultShell');
+				});
+			})
+			.toBe('fish');
+	});
+
+	test('expands missing shell configuration and clears shell overrides', async () => {
+		await stubShellDetection(electronApp);
+		const settingsDialog = await openSettingsTab(window, 'General', 'Default Terminal Shell');
+
+		await settingsDialog.getByRole('button', { name: /Detect other available shells/ }).click();
+		await settingsDialog.getByRole('button', { name: /Nushell/ }).click();
+		await expect(settingsDialog.getByText('Custom Path Required')).toBeVisible();
+
+		const customPathInput = settingsDialog.getByPlaceholder('/path/to/shell');
+		const shellArgsInput = settingsDialog.getByPlaceholder('--flag value');
+		await expect(customPathInput).toBeVisible();
+		await customPathInput.fill('/opt/e2e/nu');
+		await shellArgsInput.fill('--login --interactive');
+		await settingsDialog.getByRole('button', { name: 'Clear' }).first().click();
+		await settingsDialog.getByRole('button', { name: 'Clear' }).first().click();
+
+		await expect(customPathInput).toHaveValue('');
+		await expect(shellArgsInput).toHaveValue('');
+		await expect
+			.poll(async () => {
+				return await window.evaluate(async () => ({
+					defaultShell: await window.maestro.settings.get('defaultShell'),
+					customShellPath: await window.maestro.settings.get('customShellPath'),
+					shellArgs: await window.maestro.settings.get('shellArgs'),
+				}));
+			})
+			.toEqual({
+				defaultShell: 'nu',
+				customShellPath: '',
+				shellArgs: '',
+			});
+	});
+
+	test('clears old stats data from General Settings with deterministic counts', async () => {
+		await stubStatsDataManagement(electronApp);
+		const settingsDialog = await openSettingsTab(window, 'General', 'Conductor Profile');
+
+		await scrollSettingsToText(settingsDialog, 'Usage & Stats');
+		await expect(settingsDialog.getByText(/2\.00 MB.*2026-01-02/)).toBeVisible();
+		await settingsDialog.locator('#clear-stats-period').selectOption('30');
+		const statsSection = settingsDialog
+			.getByText('Clear stats older than...')
+			.locator('xpath=ancestor::div[contains(@class, "p-3")][1]');
+		await statsSection.getByRole('button', { name: 'Clear' }).click();
+
+		await expect(settingsDialog.getByText(/Cleared\s+6\s+records/)).toBeVisible();
+		await expect(settingsDialog.getByText(/2 queries,\s+1 sessions,\s+3 tasks/)).toBeVisible();
+		await expect(settingsDialog.getByText(/1\.00 MB.*2026-01-02/)).toBeVisible();
+		await expect.poll(() => getStubbedStatsClearDays(electronApp)).toEqual([30]);
+	});
+
+	test('persists WakaTime tracking settings and validates then clears the API key', async () => {
+		await stubWakaTimeHandlers(electronApp);
+		const settingsDialog = await openSettingsTab(window, 'General', 'Conductor Profile');
+
+		await scrollSettingsToText(settingsDialog, 'Usage & Stats');
+		await settingsDialog.getByRole('switch', { name: 'Enable WakaTime tracking' }).click();
+		await expect(
+			settingsDialog.getByRole('switch', { name: 'Detailed file tracking' })
+		).toBeVisible();
+		await settingsDialog.getByRole('switch', { name: 'Detailed file tracking' }).click();
+		const apiKeyInput = settingsDialog.getByPlaceholder('waka_...');
+		await apiKeyInput.fill('waka_e2e_valid_key');
+		await apiKeyInput.blur();
+		await expect(settingsDialog.getByTitle('Clear API key')).toBeVisible();
+		await expect
+			.poll(async () => {
+				return await window.evaluate(async () => ({
+					wakatimeEnabled: await window.maestro.settings.get('wakatimeEnabled'),
+					wakatimeDetailedTracking: await window.maestro.settings.get('wakatimeDetailedTracking'),
+					wakatimeApiKey: await window.maestro.settings.get('wakatimeApiKey'),
+				}));
+			})
+			.toEqual({
+				wakatimeEnabled: true,
+				wakatimeDetailedTracking: true,
+				wakatimeApiKey: 'waka_e2e_valid_key',
+			});
+
+		await settingsDialog.getByTitle('Clear API key').click();
+		await expect(apiKeyInput).toHaveValue('');
+		await expect
+			.poll(async () => {
+				return await window.evaluate(async () => {
+					return await window.maestro.settings.get('wakatimeApiKey');
+				});
+			})
+			.toBe('');
+	});
+
+	test('changes Settings storage location and routes the open-folder action', async () => {
+		const selectedFolder = path.join(seededWorkbench.homeDir, 'synced-settings');
+		await stubStorageSyncHandlers(electronApp, selectedFolder);
+		await stubShellPathHandlers(electronApp);
+		const settingsDialog = await openSettingsTab(window, 'General', 'Conductor Profile');
+
+		await scrollSettingsToText(settingsDialog, 'Storage Location');
+		await settingsDialog.getByRole('button', { name: 'Choose Folder...' }).click();
+		await expect(settingsDialog.getByText('Current Location (Custom)')).toBeVisible();
+		await expect(settingsDialog.getByText(selectedFolder)).toBeVisible();
+		await expect(settingsDialog.getByText('Migrated 3 settings files')).toBeVisible();
+		await expect(
+			settingsDialog.getByText('Restart Maestro for changes to take effect')
+		).toBeVisible();
+
+		await settingsDialog
+			.getByRole('button', {
+				name: /Open in Finder|Open in Explorer|Open in File Manager/,
+			})
+			.click();
+		await expect
+			.poll(() => getStubbedShellPathCalls(electronApp))
+			.toContainEqual({
+				type: 'openPath',
+				itemPath: selectedFolder,
+			});
+
+		await settingsDialog.getByRole('button', { name: 'Use Default' }).click();
+		await expect(settingsDialog.getByText('Migrated 2 settings files')).toBeVisible();
+		await expect(settingsDialog.getByText('Current Location (Custom)')).toBeHidden();
 	});
 
 	test('persists Display Settings for Bionify reading mode', async () => {
