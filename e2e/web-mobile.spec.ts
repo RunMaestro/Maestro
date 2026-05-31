@@ -69,9 +69,13 @@ type LiveSessionSummary = { sessionId: string };
 type StoredSession = ReturnType<typeof createSeededSession>;
 type E2ESocketMessage = {
 	type: string;
+	message?: string;
+	sessionId?: string;
 	theme?: { id?: string };
 	enabled?: boolean;
 	commands?: Array<{ command?: string }>;
+	session?: { id?: string };
+	sessions?: Array<{ id?: string; name?: string; state?: string; inputMode?: string }>;
 };
 type E2ESocketWindow = Window & {
 	__maestroE2eSocketMessages?: E2ESocketMessage[];
@@ -485,6 +489,36 @@ async function getJson(page: Page, url: string) {
 	return response.json();
 }
 
+async function reloadAndExpectMobileHeading(page: Page, headingName: string) {
+	await page.reload();
+	const heading = page.getByRole('heading', { name: headingName });
+	const retryButton = page.getByRole('button', { name: 'Retry Now' });
+	await expect
+		.poll(
+			async () =>
+				(await heading.isVisible().catch(() => false)) ||
+				(await retryButton.isVisible().catch(() => false)),
+			{ timeout: 15000 }
+		)
+		.toBe(true);
+	if (
+		!(await heading.isVisible().catch(() => false)) &&
+		(await retryButton.isVisible().catch(() => false))
+	) {
+		await retryButton.click();
+		await expect(page.getByText('Connection Lost')).toBeHidden({ timeout: 15000 });
+	}
+	await expect(heading).toBeVisible({ timeout: 15000 });
+}
+
+async function reconnectMobileIfNeeded(page: Page) {
+	const retryButton = page.getByRole('button', { name: 'Retry Now' });
+	if (await retryButton.isVisible().catch(() => false)) {
+		await retryButton.click();
+		await expect(page.getByText('Connection Lost')).toBeHidden({ timeout: 15000 });
+	}
+}
+
 async function waitForWebSocketMessages(
 	page: Page,
 	url: string,
@@ -588,6 +622,63 @@ test.describe('Web Mobile Bridge', () => {
 			expect(serviceWorkerResponse.ok()).toBe(true);
 			expect(serviceWorkerResponse.headers()['content-type']).toContain('javascript');
 			expect(await serviceWorkerResponse.text()).toContain('Maestro');
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
+	test('serves health and redirects untokened or invalid-token routes', async ({ page }) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			const dashboardUrl = await startWebServer(appWindow);
+			const origin = new URL(dashboardUrl).origin;
+
+			const healthResponse = await page.request.get(`${origin}/health`);
+			expect(healthResponse.ok()).toBe(true);
+			await expect(healthResponse.json()).resolves.toMatchObject({ status: 'ok' });
+
+			const rootResponse = await page.request.get(`${origin}/`, { maxRedirects: 0 });
+			expect(rootResponse.status()).toBe(302);
+			expect(rootResponse.headers().location).toContain('runmaestro.ai');
+
+			const invalidTokenResponse = await page.request.get(`${origin}/not-the-mobile-token`, {
+				maxRedirects: 0,
+			});
+			expect(invalidTokenResponse.status()).toBe(302);
+			expect(invalidTokenResponse.headers().location).toContain('runmaestro.ai');
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
+	test('injects tokenized deep-link config and sanitizes unsafe tab ids', async ({ page }) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			const dashboardUrl = await startWebServer(appWindow);
+			const validDeepLink = await page.request.get(
+				`${dashboardUrl}/session/${workbench.primarySessionId}?tabId=${workbench.primaryReviewTabId}`
+			);
+			expect(validDeepLink.ok()).toBe(true);
+			const validHtml = await validDeepLink.text();
+			expect(validHtml).toContain(`sessionId: "${workbench.primarySessionId}"`);
+			expect(validHtml).toContain(`tabId: "${workbench.primaryReviewTabId}"`);
+			expect(validHtml).toContain('apiBase:');
+			expect(validHtml).toContain('wsUrl:');
+
+			const unsafeDeepLink = await page.request.get(
+				`${dashboardUrl}/session/${workbench.primarySessionId}?tabId=${encodeURIComponent(`${workbench.primaryReviewTabId}<script>alert(1)</script>`)}`
+			);
+			expect(unsafeDeepLink.ok()).toBe(true);
+			const unsafeHtml = await unsafeDeepLink.text();
+			expect(unsafeHtml).toContain(`sessionId: "${workbench.primarySessionId}"`);
+			expect(unsafeHtml).toContain('tabId: null');
+			expect(unsafeHtml).not.toContain('<script>alert(1)</script>');
 		} finally {
 			await stopWebServer(appWindow).catch(() => {});
 			await electronApp.close();
@@ -1041,6 +1132,39 @@ test.describe('Web Mobile Bridge', () => {
 		}
 	});
 
+	test('returns direct token API send failure without a running process and rejects non-string payloads', async ({
+		page,
+	}) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			const dashboardUrl = await startWebServer(appWindow);
+			const sendResponse = await page.request.post(
+				`${dashboardUrl}/api/session/${workbench.primarySessionId}/send`,
+				{ data: { command: 'Mobile direct API command' } }
+			);
+			expect(sendResponse.status()).toBe(500);
+			await expect(sendResponse.json()).resolves.toMatchObject({
+				error: 'Internal Server Error',
+				message: 'Failed to send command to session',
+			});
+
+			const badPayloadResponse = await page.request.post(
+				`${dashboardUrl}/api/session/${workbench.primarySessionId}/send`,
+				{ data: { command: 42 } }
+			);
+			expect(badPayloadResponse.status()).toBe(400);
+			await expect(badPayloadResponse.json()).resolves.toMatchObject({
+				error: 'Bad Request',
+				message: 'Command is required and must be a string',
+			});
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
 	test('handles token API interrupt and error responses', async ({ page }) => {
 		const workbench = createWebMobileWorkbench();
 		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
@@ -1071,6 +1195,31 @@ test.describe('Web Mobile Bridge', () => {
 			);
 			expect(missingSessionResponse.status()).toBe(404);
 			expect(await missingSessionResponse.json()).toMatchObject({ error: 'Not Found' });
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
+	test('returns empty token API history for unmatched session and project filters', async ({
+		page,
+	}) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			const dashboardUrl = await startWebServer(appWindow);
+			const sessionHistory = await getJson(
+				page,
+				`${dashboardUrl}/api/history?sessionId=mobile-history-missing`
+			);
+			expect(sessionHistory).toMatchObject({ count: 0, entries: [] });
+
+			const projectHistory = await getJson(
+				page,
+				`${dashboardUrl}/api/history?projectPath=${encodeURIComponent(path.join(workbench.homeDir, 'missing-project'))}`
+			);
+			expect(projectHistory).toMatchObject({ count: 0, entries: [] });
 		} finally {
 			await stopWebServer(appWindow).catch(() => {});
 			await electronApp.close();
@@ -1156,6 +1305,136 @@ test.describe('Web Mobile Bridge', () => {
 					}, addedSessionId)
 				)
 				.toEqual({ added: true, active: true, removed: true });
+		} finally {
+			await page
+				.evaluate(() => (window as E2ESocketWindow).__maestroE2eSocket?.close())
+				.catch(() => {});
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
+	test('returns WebSocket validation errors for incomplete client messages', async ({ page }) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			const dashboardUrl = await startWebServer(appWindow);
+			const messages = await page.evaluate(
+				async ({ socketUrl, sessionId }) => {
+					return new Promise<E2ESocketMessage[]>((resolve, reject) => {
+						const collected: E2ESocketMessage[] = [];
+						const socket = new WebSocket(socketUrl);
+						const timeout = window.setTimeout(() => {
+							socket.close();
+							reject(new Error('Timed out waiting for WebSocket validation errors'));
+						}, 10000);
+						socket.addEventListener('open', () => {
+							socket.send(JSON.stringify({ type: 'send_command', sessionId, command: '' }));
+							socket.send(
+								JSON.stringify({
+									type: 'send_command',
+									sessionId: 'missing-mobile-session',
+									command: 'hello',
+								})
+							);
+							socket.send(JSON.stringify({ type: 'switch_mode', sessionId }));
+						});
+						socket.addEventListener('message', (event) => {
+							const message = JSON.parse(event.data) as E2ESocketMessage;
+							collected.push(message);
+							const errors = collected.filter((entry) => entry.type === 'error');
+							if (errors.length >= 3) {
+								window.clearTimeout(timeout);
+								socket.close();
+								resolve(collected);
+							}
+						});
+						socket.addEventListener('error', () => {
+							window.clearTimeout(timeout);
+							reject(new Error('WebSocket connection failed'));
+						});
+					});
+				},
+				{
+					socketUrl: webSocketUrl(dashboardUrl),
+					sessionId: workbench.primarySessionId,
+				}
+			);
+			const errors = messages
+				.filter((message) => message.type === 'error')
+				.map((message) => message.message);
+			expect(errors).toEqual(
+				expect.arrayContaining([
+					'Missing sessionId or command',
+					'Session not found',
+					'Missing sessionId or mode',
+				])
+			);
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
+	test('refreshes WebSocket sessions list after desktop session updates', async ({ page }) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			const dashboardUrl = await startWebServer(appWindow);
+			await page.evaluate((socketUrl) => {
+				const e2eWindow = window as E2ESocketWindow;
+				e2eWindow.__maestroE2eSocketMessages = [];
+				e2eWindow.__maestroE2eSocket = new WebSocket(socketUrl);
+				e2eWindow.__maestroE2eSocket.onmessage = (event: MessageEvent) => {
+					e2eWindow.__maestroE2eSocketMessages?.push(JSON.parse(event.data));
+				};
+			}, webSocketUrl(dashboardUrl));
+			await expect
+				.poll(async () =>
+					page.evaluate(() =>
+						(window as E2ESocketWindow).__maestroE2eSocketMessages?.some(
+							(message) => message.type === 'connected'
+						)
+					)
+				)
+				.toBe(true);
+
+			await appWindow.evaluate(async (sessionId) => {
+				const maestro = (window as MaestroE2EWindow).maestro;
+				const sessions = await maestro.sessions.getAll();
+				await maestro.sessions.setAll(
+					sessions.map((session) =>
+						session.id === sessionId
+							? { ...session, name: 'Mobile Primary Updated', inputMode: 'terminal' }
+							: session
+					)
+				);
+			}, workbench.primarySessionId);
+			await page.evaluate(() => {
+				(window as E2ESocketWindow).__maestroE2eSocket?.send(
+					JSON.stringify({ type: 'get_sessions' })
+				);
+			});
+
+			await expect
+				.poll(async () =>
+					page.evaluate((sessionId) => {
+						const messages = (window as E2ESocketWindow).__maestroE2eSocketMessages || [];
+						return messages.some(
+							(message) =>
+								message.type === 'sessions_list' &&
+								message.sessions?.some(
+									(session) =>
+										session.id === sessionId &&
+										session.name === 'Mobile Primary Updated' &&
+										session.inputMode === 'terminal'
+								)
+						);
+					}, workbench.primarySessionId)
+				)
+				.toBe(true);
 		} finally {
 			await page
 				.evaluate(() => (window as E2ESocketWindow).__maestroE2eSocket?.close())
@@ -1669,10 +1948,10 @@ test.describe('Web Mobile Bridge', () => {
 			await page.getByRole('button', { name: /Search 3 sessions/i }).click();
 			await expect(page.getByRole('heading', { name: 'All Agents' })).toBeVisible();
 			await page.waitForTimeout(450);
-			await page.reload();
-			await expect(page.getByRole('heading', { name: 'All Agents' })).toBeVisible();
+			await reloadAndExpectMobileHeading(page, 'All Agents');
 			await page.getByRole('button', { name: 'Close All Agents view' }).click();
 			await expect(page.getByRole('heading', { name: 'All Agents' })).toBeHidden();
+			await reconnectMobileIfNeeded(page);
 			await page.waitForTimeout(700);
 
 			await page.getByRole('button', { name: 'View history' }).click();
@@ -1681,8 +1960,7 @@ test.describe('Web Mobile Bridge', () => {
 			await page.getByPlaceholder('Search history...').fill('release');
 			await page.getByRole('button', { name: 'AUTO 1' }).click();
 			await page.waitForTimeout(700);
-			await page.reload();
-			await expect(page.getByRole('heading', { name: 'History' })).toBeVisible();
+			await reloadAndExpectMobileHeading(page, 'History');
 			await expect(page.getByPlaceholder('Search history...')).toHaveValue('release');
 			await expect(page.getByText('Auto Run finished the mobile bridge checklist')).toBeVisible();
 			await expect(page.getByText('User requested a mobile bridge release summary')).toBeHidden();
