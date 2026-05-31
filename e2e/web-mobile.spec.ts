@@ -3181,6 +3181,79 @@ test.describe('Web Mobile Bridge', () => {
 		}
 	});
 
+	test('filters mobile history to user entries', async ({ page }) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			await startWebServer(appWindow);
+			const sessionUrl = await toggleLive(appWindow, workbench.primarySessionId);
+			await page.setViewportSize({ width: 430, height: 820 });
+			await page.goto(sessionUrl);
+
+			await page.getByRole('button', { name: 'View history' }).click();
+			await expect(page.getByRole('heading', { name: 'History' })).toBeVisible();
+			const userFilter = page.getByRole('button', { name: /USER\s+1/ });
+			await userFilter.click();
+			await expect(userFilter).toHaveAttribute('aria-pressed', 'true');
+			await expect(page.getByText('User requested a mobile bridge release summary')).toBeVisible();
+			await expect(page.getByText('Auto Run finished the mobile bridge checklist')).toBeHidden();
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
+	test('shows failed Auto Run history indicators and detail stats', async ({ page }) => {
+		const workbench = createWebMobileWorkbench();
+		workbench.historyEntries.unshift({
+			id: `${workbench.primarySessionId}-history-auto-failed`,
+			type: 'AUTO' as const,
+			timestamp: workbench.historyEntries[0].timestamp + 100,
+			summary: 'Auto Run failed the mobile bridge deployment',
+			fullResponse: 'Auto Run stopped after mobile bridge smoke checks failed.',
+			agentSessionId: `${workbench.primarySessionId}-agent-failed`,
+			sessionName: 'Mobile Primary',
+			projectPath: workbench.projectDir,
+			sessionId: workbench.primarySessionId,
+			contextUsage: 93,
+			usageStats: {
+				inputTokens: 1400,
+				outputTokens: 120,
+				totalCostUsd: 0.03,
+				contextWindow: 8000,
+			},
+			success: false,
+			elapsedTimeMs: 120000,
+			validated: false,
+		});
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			await startWebServer(appWindow);
+			const sessionUrl = await toggleLive(appWindow, workbench.primarySessionId);
+			await page.setViewportSize({ width: 430, height: 820 });
+			await page.goto(sessionUrl);
+
+			await page.getByRole('button', { name: 'View history' }).click();
+			await expect(page.getByRole('heading', { name: 'History' })).toBeVisible();
+			await expect(page.getByRole('button', { name: /AUTO\s+2/ })).toBeVisible();
+			await expect(page.locator('[title="Task failed"]')).toBeVisible();
+			await page.getByText('Auto Run failed the mobile bridge deployment').click();
+			await expect(
+				page.getByText('Auto Run stopped after mobile bridge smoke checks failed.')
+			).toBeVisible();
+			await expect(page.getByText('93%')).toBeVisible();
+			await expect(page.getByText('2m 0s').last()).toBeVisible();
+			await expect(page.getByText('In: 1,400')).toBeVisible();
+			await expect(page.getByText('Out: 120')).toBeVisible();
+			await expect(page.getByText('$0.03').last()).toBeVisible();
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
 	test('navigates mobile history detail entries with controls and keyboard', async ({ page }) => {
 		const workbench = createWebMobileWorkbench();
 		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
