@@ -2102,6 +2102,106 @@ test.describe('Web Mobile Bridge', () => {
 		}
 	});
 
+	test('truncates long mobile AI output and strips terminal escape codes', async ({ page }) => {
+		const workbench = createWebMobileWorkbench();
+		const longMobileOutput = [
+			'\u001b[31mMobile truncation line 1 keeps ANSI text readable\u001b[0m',
+			'Mobile truncation line 2',
+			'Mobile truncation line 3',
+			'Mobile truncation line 4',
+			'Mobile truncation line 5',
+			'Mobile truncation line 6',
+			'Mobile truncation line 7',
+			'Mobile truncation line 8',
+			'Mobile truncation line 9 appears after expansion',
+			'Mobile truncation line 10 appears after expansion',
+		].join('\n');
+		workbench.sessions[0].aiTabs[0].logs.push({
+			id: `${workbench.primarySessionId}-long-output`,
+			timestamp: Date.now() + 50,
+			source: 'stdout',
+			text: longMobileOutput,
+		});
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			await startWebServer(appWindow);
+			const sessionUrl = await toggleLive(appWindow, workbench.primarySessionId);
+			await page.setViewportSize({ width: 430, height: 820 });
+			await page.goto(sessionUrl);
+
+			await expect(
+				page.getByText('Mobile truncation line 1 keeps ANSI text readable')
+			).toBeVisible();
+			const longMessage = page
+				.locator('div[style*="cursor: pointer"]')
+				.filter({ hasText: 'Mobile truncation line 1 keeps ANSI text readable' });
+			await expect(page.getByText('\u001b[31m')).toBeHidden();
+			await expect(page.getByText('Mobile truncation line 9 appears after expansion')).toBeHidden();
+			await expect(page.getByText('... (tap to expand)')).toBeVisible();
+
+			await longMessage.evaluate((element) => (element as HTMLElement).click());
+			await expect(
+				page.getByText('Mobile truncation line 9 appears after expansion')
+			).toBeVisible();
+			await expect(page.getByText('▼ collapse')).toBeVisible();
+
+			await longMessage.evaluate((element) => (element as HTMLElement).click());
+			await expect(page.getByText('Mobile truncation line 9 appears after expansion')).toBeHidden();
+			await expect(page.getByText('▶ expand')).toBeVisible();
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
+	test('keeps busy mobile AI drafts while showing interrupt state', async ({ page }) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			await startWebServer(appWindow);
+			const sessionUrl = await toggleLive(appWindow, workbench.primarySessionId);
+			await page.setViewportSize({ width: 768, height: 820 });
+			await page.goto(sessionUrl);
+			await expect(page.getByText('Mobile Primary alpha response line one')).toBeVisible();
+
+			await appWindow.evaluate(async (sessionId) => {
+				await (window as MaestroE2EWindow).maestro.live.broadcastActiveSession(sessionId);
+			}, workbench.busySessionId);
+
+			const busyInput = page.getByLabel(/AI message input/i).first();
+			await expect(page.getByText('Mobile Busy Agent alpha response line one')).toBeVisible();
+			await expect(busyInput).toHaveAttribute(
+				'placeholder',
+				'AI thinking... (type your next message)'
+			);
+			await expect(
+				page.getByRole('button', { name: 'Cancel running command or AI query' })
+			).toBeVisible();
+			await busyInput.fill('Draft written while the mobile AI session is busy');
+
+			await appWindow.evaluate(async (sessionId) => {
+				await (window as MaestroE2EWindow).maestro.web.broadcastSessionState(sessionId, 'idle');
+			}, workbench.busySessionId);
+
+			await expect(
+				page.getByRole('button', { name: 'Send command (long press for quick actions)' })
+			).toBeVisible();
+			await expect(busyInput).toHaveValue('Draft written while the mobile AI session is busy');
+			await page
+				.getByRole('button', { name: 'Send command (long press for quick actions)' })
+				.click();
+			await expect(
+				page.getByText('Draft written while the mobile AI session is busy')
+			).toBeVisible();
+			await expect(busyInput).toHaveValue('');
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
 	test('opens tab search, filters tabs, and selects the matching tab', async ({ page }) => {
 		const workbench = createWebMobileWorkbench();
 		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
@@ -2120,6 +2220,36 @@ test.describe('Web Mobile Bridge', () => {
 
 			await expect(page.getByText('Mobile Primary review tab response only visible')).toBeVisible();
 			await expect(page).toHaveURL(new RegExp(`tabId=${workbench.primaryReviewTabId}`));
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
+	test('shows tab search empty, clear, and Escape close states', async ({ page }) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			await startWebServer(appWindow);
+			const sessionUrl = await toggleLive(appWindow, workbench.primarySessionId);
+			await page.setViewportSize({ width: 430, height: 820 });
+			await page.goto(sessionUrl);
+			await expect(page.getByText('Mobile Primary alpha response line one')).toBeVisible();
+
+			await page.locator('button[title="Search 2 tabs"]').click();
+			const tabSearch = page.getByPlaceholder('Search 2 tabs...');
+			await expect(tabSearch).toBeVisible();
+			await tabSearch.fill('missing mobile tab');
+			await expect(page.getByText('No tabs match your search')).toBeVisible();
+
+			await page.getByRole('button', { name: '×' }).click();
+			await expect(tabSearch).toHaveValue('');
+			await expect(page.getByText('No tabs match your search')).toBeHidden();
+
+			await page.keyboard.press('Escape');
+			await expect(tabSearch).toBeHidden();
+			await expect(page.getByText('Mobile Primary alpha response line one')).toBeVisible();
 		} finally {
 			await stopWebServer(appWindow).catch(() => {});
 			await electronApp.close();
