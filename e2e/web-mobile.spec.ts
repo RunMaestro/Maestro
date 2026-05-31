@@ -71,6 +71,9 @@ type E2ESocketMessage = {
 	type: string;
 	message?: string;
 	sessionId?: string;
+	agentSessionId?: string;
+	command?: string;
+	inputMode?: string;
 	theme?: { id?: string };
 	enabled?: boolean;
 	commands?: Array<{ command?: string }>;
@@ -79,7 +82,9 @@ type E2ESocketMessage = {
 };
 type E2ESocketWindow = Window & {
 	__maestroE2eSocketMessages?: E2ESocketMessage[];
+	__maestroE2eSocketMessagesByName?: Record<string, E2ESocketMessage[]>;
 	__maestroE2eSocket?: WebSocket;
+	__maestroE2eSockets?: Record<string, WebSocket>;
 };
 type MaestroE2EWindow = Window & {
 	maestro: {
@@ -706,6 +711,37 @@ test.describe('Web Mobile Bridge', () => {
 		}
 	});
 
+	test('serves trailing token routes and sanitizes unsafe mobile session ids', async ({ page }) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			const dashboardUrl = await startWebServer(appWindow);
+			const trailingDashboard = await page.request.get(`${dashboardUrl}/`);
+			expect(trailingDashboard.ok()).toBe(true);
+			expect(await trailingDashboard.text()).toContain(
+				`apiBase: "${new URL(dashboardUrl).pathname.replace(/\/$/, '')}/api"`
+			);
+
+			const safeSession = await page.request.get(
+				`${dashboardUrl}/session/${workbench.primarySessionId}`
+			);
+			expect(safeSession.ok()).toBe(true);
+			expect(await safeSession.text()).toContain(`sessionId: "${workbench.primarySessionId}"`);
+
+			const unsafeSession = await page.request.get(
+				`${dashboardUrl}/session/${encodeURIComponent('bad<script>alert(1)')}`
+			);
+			expect(unsafeSession.ok()).toBe(true);
+			const unsafeHtml = await unsafeSession.text();
+			expect(unsafeHtml).toContain('sessionId: null');
+			expect(unsafeHtml).not.toContain('bad<script>alert(1)');
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
 	test('exposes web-safe session summaries with response previews and tab metadata', async ({
 		page,
 	}) => {
@@ -833,6 +869,77 @@ test.describe('Web Mobile Bridge', () => {
 		}
 	});
 
+	test('broadcasts mobile live and offline toggles over WebSocket', async ({ page }) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			const dashboardUrl = await startWebServer(appWindow);
+			await page.evaluate((socketUrl) => {
+				const e2eWindow = window as E2ESocketWindow;
+				e2eWindow.__maestroE2eSocketMessages = [];
+				e2eWindow.__maestroE2eSocket = new WebSocket(socketUrl);
+				e2eWindow.__maestroE2eSocket.onmessage = (event: MessageEvent) => {
+					e2eWindow.__maestroE2eSocketMessages?.push(JSON.parse(event.data));
+				};
+			}, webSocketUrl(dashboardUrl));
+
+			await expect
+				.poll(async () =>
+					page.evaluate(() =>
+						(window as E2ESocketWindow).__maestroE2eSocketMessages?.some(
+							(message) => message.type === 'connected'
+						)
+					)
+				)
+				.toBe(true);
+
+			await appWindow.evaluate(async (sessionId) => {
+				return (window as MaestroE2EWindow).maestro.live.toggle(
+					sessionId,
+					`${sessionId}-agent-session`
+				);
+			}, workbench.primarySessionId);
+			await expect
+				.poll(async () =>
+					page.evaluate((sessionId) => {
+						const messages = (window as E2ESocketWindow).__maestroE2eSocketMessages || [];
+						return messages.some(
+							(message) =>
+								message.type === 'session_live' &&
+								message.sessionId === sessionId &&
+								message.agentSessionId === `${sessionId}-agent-session`
+						);
+					}, workbench.primarySessionId)
+				)
+				.toBe(true);
+
+			const offlineResult = await appWindow.evaluate(async (sessionId) => {
+				return (window as MaestroE2EWindow).maestro.live.toggle(
+					sessionId,
+					`${sessionId}-agent-session`
+				);
+			}, workbench.primarySessionId);
+			expect(offlineResult).toMatchObject({ live: false, url: null });
+			await expect
+				.poll(async () =>
+					page.evaluate((sessionId) => {
+						const messages = (window as E2ESocketWindow).__maestroE2eSocketMessages || [];
+						return messages.some(
+							(message) => message.type === 'session_offline' && message.sessionId === sessionId
+						);
+					}, workbench.primarySessionId)
+				)
+				.toBe(true);
+		} finally {
+			await page
+				.evaluate(() => (window as E2ESocketWindow).__maestroE2eSocket?.close())
+				.catch(() => {});
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
 	test('broadcasts desktop setting changes to mobile clients and slash commands', async ({
 		page,
 	}) => {
@@ -897,6 +1004,118 @@ test.describe('Web Mobile Bridge', () => {
 		} finally {
 			await page
 				.evaluate(() => (window as E2ESocketWindow).__maestroE2eSocket?.close())
+				.catch(() => {});
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
+	test('scopes mobile user-input broadcasts to subscribed WebSocket clients', async ({ page }) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			const dashboardUrl = await startWebServer(appWindow);
+			await page.evaluate(
+				({ dashboardSocketUrl, primarySocketUrl }) => {
+					const e2eWindow = window as E2ESocketWindow;
+					e2eWindow.__maestroE2eSocketMessagesByName = { dashboard: [], primary: [] };
+					e2eWindow.__maestroE2eSockets = {
+						dashboard: new WebSocket(dashboardSocketUrl),
+						primary: new WebSocket(primarySocketUrl),
+					};
+					for (const [name, socket] of Object.entries(e2eWindow.__maestroE2eSockets)) {
+						socket.onmessage = (event: MessageEvent) => {
+							e2eWindow.__maestroE2eSocketMessagesByName?.[name]?.push(JSON.parse(event.data));
+						};
+					}
+				},
+				{
+					dashboardSocketUrl: webSocketUrl(dashboardUrl),
+					primarySocketUrl: webSocketUrl(dashboardUrl, workbench.primarySessionId),
+				}
+			);
+
+			await expect
+				.poll(async () =>
+					page.evaluate(() => {
+						const messages = (window as E2ESocketWindow).__maestroE2eSocketMessagesByName || {};
+						return {
+							dashboard: messages.dashboard?.some((message) => message.type === 'connected'),
+							primary: messages.primary?.some((message) => message.type === 'connected'),
+						};
+					})
+				)
+				.toEqual({ dashboard: true, primary: true });
+
+			await appWindow.evaluate(
+				async ({ primarySessionId, secondarySessionId }) => {
+					const maestro = (window as MaestroE2EWindow).maestro;
+					await maestro.web.broadcastUserInput(
+						secondarySessionId,
+						'Secondary scoped broadcast',
+						'terminal'
+					);
+					await maestro.web.broadcastUserInput(primarySessionId, 'Primary scoped broadcast', 'ai');
+				},
+				{
+					primarySessionId: workbench.primarySessionId,
+					secondarySessionId: workbench.secondarySessionId,
+				}
+			);
+
+			await expect
+				.poll(async () =>
+					page.evaluate(
+						({ primarySessionId, secondarySessionId }) => {
+							const messages = (window as E2ESocketWindow).__maestroE2eSocketMessagesByName || {};
+							const dashboard = messages.dashboard || [];
+							const primary = messages.primary || [];
+							return {
+								dashboardSecondary: dashboard.some(
+									(message) =>
+										message.type === 'user_input' &&
+										message.sessionId === secondarySessionId &&
+										message.command === 'Secondary scoped broadcast'
+								),
+								dashboardPrimary: dashboard.some(
+									(message) =>
+										message.type === 'user_input' &&
+										message.sessionId === primarySessionId &&
+										message.command === 'Primary scoped broadcast'
+								),
+								primarySecondary: primary.some(
+									(message) =>
+										message.type === 'user_input' &&
+										message.sessionId === secondarySessionId &&
+										message.command === 'Secondary scoped broadcast'
+								),
+								primaryPrimary: primary.some(
+									(message) =>
+										message.type === 'user_input' &&
+										message.sessionId === primarySessionId &&
+										message.command === 'Primary scoped broadcast'
+								),
+							};
+						},
+						{
+							primarySessionId: workbench.primarySessionId,
+							secondarySessionId: workbench.secondarySessionId,
+						}
+					)
+				)
+				.toEqual({
+					dashboardSecondary: true,
+					dashboardPrimary: true,
+					primarySecondary: false,
+					primaryPrimary: true,
+				});
+		} finally {
+			await page
+				.evaluate(() => {
+					const sockets = (window as E2ESocketWindow).__maestroE2eSockets || {};
+					Object.values(sockets).forEach((socket) => socket.close());
+				})
 				.catch(() => {});
 			await stopWebServer(appWindow).catch(() => {});
 			await electronApp.close();
