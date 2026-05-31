@@ -519,6 +519,27 @@ async function reconnectMobileIfNeeded(page: Page) {
 	}
 }
 
+async function setMobileOnlineState(page: Page, isOnline: boolean) {
+	await page.evaluate((online) => {
+		const e2eWindow = window as MaestroE2EWindow;
+		const onlineState = e2eWindow.__maestroE2eOnlineState || { value: online };
+		onlineState.value = online;
+		e2eWindow.__maestroE2eOnlineState = onlineState;
+		Object.defineProperty(window.navigator, 'onLine', {
+			configurable: true,
+			get: () => onlineState.value,
+		});
+		window.dispatchEvent(new Event(online ? 'online' : 'offline'));
+	}, isOnline);
+}
+
+async function getOfflineQueueLength(page: Page): Promise<number> {
+	return page.evaluate(() => {
+		const stored = window.localStorage.getItem('maestro-offline-queue');
+		return stored ? JSON.parse(stored).length : 0;
+	});
+}
+
 async function waitForWebSocketMessages(
 	page: Page,
 	url: string,
@@ -1759,6 +1780,157 @@ test.describe('Web Mobile Bridge', () => {
 		}
 	});
 
+	test('keeps AI and terminal drafts separate while sending terminal commands', async ({
+		page,
+	}) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			await startWebServer(appWindow);
+			const sessionUrl = await toggleLive(appWindow, workbench.primarySessionId);
+			await page.setViewportSize({ width: 768, height: 820 });
+			await page.goto(sessionUrl);
+			await expect(page.getByText('Mobile Primary alpha response line one')).toBeVisible();
+
+			await page
+				.getByLabel(/AI message input/i)
+				.first()
+				.fill('Draft stays in AI mode');
+			await page.getByRole('button', { name: /Switch to terminal mode/i }).click();
+			await expect(page.getByLabel('Shell command input')).toBeVisible();
+			await page.getByLabel('Shell command input').fill('pwd from mobile terminal');
+
+			await page.getByRole('button', { name: /Switch to AI mode/i }).click();
+			await expect(page.getByLabel(/AI message input/i).first()).toHaveValue(
+				'Draft stays in AI mode'
+			);
+			await page.getByRole('button', { name: /Switch to terminal mode/i }).click();
+			await expect(page.getByLabel('Shell command input')).toHaveValue('pwd from mobile terminal');
+
+			await page
+				.getByRole('button', { name: 'Send command (long press for quick actions)' })
+				.click();
+			await expect(page.getByText('pwd from mobile terminal')).toBeVisible();
+			await expect(page.getByLabel('Shell command input')).toHaveValue('');
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
+	test('syncs terminal mode desktop broadcasts into the mobile shell', async ({ page }) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			await startWebServer(appWindow);
+			const sessionUrl = await toggleLive(appWindow, workbench.primarySessionId);
+			await page.setViewportSize({ width: 430, height: 820 });
+			await page.goto(sessionUrl);
+			await expect(page.getByText('Mobile Primary alpha response line one')).toBeVisible();
+
+			await appWindow.evaluate(async (sessionId) => {
+				const maestro = (window as MaestroE2EWindow).maestro;
+				await maestro.web.broadcastSessionState(sessionId, 'idle', {
+					name: 'Mobile Primary Terminal',
+					inputMode: 'terminal',
+					cwd: '/tmp/mobile-terminal-cwd',
+				});
+				await maestro.web.broadcastUserInput(
+					sessionId,
+					'desktop terminal command from broadcast',
+					'terminal'
+				);
+			}, workbench.primarySessionId);
+
+			await expect(page.getByText('Mobile Primary Terminal').first()).toBeVisible();
+			await expect(page.getByLabel('Shell command input')).toBeVisible();
+			await expect(
+				page.getByText('Mobile Primary shell output for mobile bridge coverage.')
+			).toBeVisible();
+			await expect(page.getByText('desktop terminal command from broadcast')).toBeVisible();
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
+	test('shows Auto Run stopping state and clears the mobile indicator', async ({ page }) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			await startWebServer(appWindow);
+			const sessionUrl = await toggleLive(appWindow, workbench.primarySessionId);
+			await page.setViewportSize({ width: 430, height: 820 });
+			await page.goto(sessionUrl);
+			await expect(page.getByText('Mobile Primary alpha response line one')).toBeVisible();
+
+			await appWindow.evaluate(async (sessionId) => {
+				await (window as MaestroE2EWindow).maestro.web.broadcastAutoRunState(sessionId, {
+					isRunning: true,
+					totalTasks: 5,
+					completedTasks: 4,
+					currentTaskIndex: 4,
+					isStopping: true,
+				});
+			}, workbench.primarySessionId);
+
+			await expect(page.getByText('Stopping...')).toBeVisible();
+			await expect(page.getByText('Task 5 of 5 (4 done)')).toBeVisible();
+			await expect(page.getByText('80%')).toBeVisible();
+
+			await appWindow.evaluate(async (sessionId) => {
+				await (window as MaestroE2EWindow).maestro.web.broadcastAutoRunState(sessionId, null);
+			}, workbench.primarySessionId);
+			await expect(page.getByText('Stopping...')).toBeHidden();
+			await expect(page.getByText('AutoRun Active')).toBeHidden();
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
+	test('shows Auto Run only for the active mobile session', async ({ page }) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			await startWebServer(appWindow);
+			const sessionUrl = await toggleLive(appWindow, workbench.primarySessionId);
+			await page.setViewportSize({ width: 430, height: 820 });
+			await page.goto(sessionUrl);
+			await expect(page.getByText('Mobile Primary alpha response line one')).toBeVisible();
+
+			await appWindow.evaluate(async (sessionId) => {
+				await (window as MaestroE2EWindow).maestro.web.broadcastAutoRunState(sessionId, {
+					isRunning: true,
+					totalTasks: 3,
+					completedTasks: 1,
+					currentTaskIndex: 1,
+				});
+			}, workbench.secondarySessionId);
+			await expect(page.getByText('AutoRun Active')).toBeHidden();
+
+			await appWindow.evaluate(async (sessionId) => {
+				await (window as MaestroE2EWindow).maestro.live.broadcastActiveSession(sessionId);
+			}, workbench.secondarySessionId);
+			await expect(page.getByLabel('Shell command input')).toBeVisible();
+			await expect(page.getByText('AutoRun Active')).toBeVisible();
+			await expect(page.getByText('Mobile Secondary - Task 2 of 3 (1 done)')).toBeVisible();
+			await expect(page.getByText('33%')).toBeVisible();
+
+			await appWindow.evaluate(async (sessionId) => {
+				await (window as MaestroE2EWindow).maestro.web.broadcastAutoRunState(sessionId, null);
+			}, workbench.secondarySessionId);
+			await expect(page.getByText('AutoRun Active')).toBeHidden();
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
 	test('switches mobile tabs and reloads the selected tab transcript', async ({ page }) => {
 		const workbench = createWebMobileWorkbench();
 		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
@@ -2040,15 +2212,7 @@ test.describe('Web Mobile Bridge', () => {
 			await page.goto(sessionUrl);
 			await expect(page.getByText('Mobile Primary alpha response line one')).toBeVisible();
 
-			await page.evaluate(() => {
-				const onlineState = { value: false };
-				(window as MaestroE2EWindow).__maestroE2eOnlineState = onlineState;
-				Object.defineProperty(window.navigator, 'onLine', {
-					configurable: true,
-					get: () => onlineState.value,
-				});
-				window.dispatchEvent(new Event('offline'));
-			});
+			await setMobileOnlineState(page, false);
 			await page
 				.getByLabel(/AI message input/i)
 				.first()
@@ -2060,14 +2224,7 @@ test.describe('Web Mobile Bridge', () => {
 
 			await page.getByRole('button', { name: 'Remove command' }).click();
 			await expect(page.getByText('1 command queued')).toBeHidden();
-			await expect
-				.poll(() =>
-					page.evaluate(() => {
-						const stored = window.localStorage.getItem('maestro-offline-queue');
-						return stored ? JSON.parse(stored).length : 0;
-					})
-				)
-				.toBe(0);
+			await expect.poll(() => getOfflineQueueLength(page)).toBe(0);
 		} finally {
 			await stopWebServer(appWindow).catch(() => {});
 			await electronApp.close();
@@ -2087,48 +2244,102 @@ test.describe('Web Mobile Bridge', () => {
 			await page.goto(sessionUrl);
 			await expect(page.getByText('Mobile Primary alpha response line one')).toBeVisible();
 
-			await page.evaluate(() => {
-				const onlineState = { value: false };
-				(window as MaestroE2EWindow).__maestroE2eOnlineState = onlineState;
-				Object.defineProperty(window.navigator, 'onLine', {
-					configurable: true,
-					get: () => onlineState.value,
-				});
-				window.dispatchEvent(new Event('offline'));
-			});
+			await setMobileOnlineState(page, false);
 			await page
 				.getByLabel(/AI message input/i)
 				.first()
 				.fill('Queued while mobile offline');
 			await page.getByRole('button', { name: /Send command|Send message/i }).click();
 			await expect(page.getByText('Commands will be sent when you reconnect.')).toBeVisible();
-			expect(
-				await page.evaluate(() => {
-					const stored = window.localStorage.getItem('maestro-offline-queue');
-					return stored ? JSON.parse(stored).length : 0;
-				})
-			).toBe(1);
+			expect(await getOfflineQueueLength(page)).toBe(1);
 
-			await page.evaluate(() => {
-				const onlineState = (window as MaestroE2EWindow).__maestroE2eOnlineState;
-				if (onlineState) {
-					onlineState.value = true;
-				}
-				window.dispatchEvent(new Event('online'));
-			});
+			await setMobileOnlineState(page, true);
 			await expect(page.getByText('Commands will be sent when you reconnect.')).toBeHidden({
 				timeout: 10000,
 			});
-			await expect
-				.poll(
-					() =>
-						page.evaluate(() => {
-							const stored = window.localStorage.getItem('maestro-offline-queue');
-							return stored ? JSON.parse(stored).length : 0;
-						}),
-					{ timeout: 10000 }
-				)
-				.toBe(0);
+			await expect.poll(() => getOfflineQueueLength(page), { timeout: 10000 }).toBe(0);
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
+	test('queues mixed AI and terminal commands offline and clears the queue', async ({ page }) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			await startWebServer(appWindow);
+			const sessionUrl = await toggleLive(appWindow, workbench.primarySessionId);
+			await page.setViewportSize({ width: 430, height: 820 });
+			await page.goto(sessionUrl);
+			await expect(page.getByText('Mobile Primary alpha response line one')).toBeVisible();
+
+			await setMobileOnlineState(page, false);
+			await page
+				.getByLabel(/AI message input/i)
+				.first()
+				.fill('Queued AI offline command');
+			await page.getByRole('button', { name: /Send command|Send message/i }).click();
+			await expect(page.getByText('1 command queued')).toBeVisible();
+
+			await appWindow.evaluate(async (sessionId) => {
+				await (window as MaestroE2EWindow).maestro.web.broadcastSessionState(sessionId, 'idle', {
+					inputMode: 'terminal',
+				});
+			}, workbench.primarySessionId);
+			await expect(page.getByLabel('Shell command input')).toBeVisible();
+			await page.getByLabel('Shell command input').fill('queued terminal offline command');
+			await page.getByRole('button', { name: /Send command|Send message/i }).click();
+			await expect(page.getByText('2 commands queued')).toBeVisible();
+
+			await page.getByText('2 commands queued').click();
+			await expect(page.getByText('Queued AI offline command')).toBeVisible();
+			await expect(page.getByText('queued terminal offline command')).toBeVisible();
+			await expect(page.getByText('AI').last()).toBeVisible();
+			await expect(page.getByText('CLI').last()).toBeVisible();
+			expect(await getOfflineQueueLength(page)).toBe(2);
+
+			await page.getByRole('button', { name: 'Clear' }).click();
+			await expect(page.getByText('2 commands queued')).toBeHidden();
+			await expect.poll(() => getOfflineQueueLength(page)).toBe(0);
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
+	test('persists offline queued commands across a mobile reload', async ({ page }) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			await startWebServer(appWindow);
+			const sessionUrl = await toggleLive(appWindow, workbench.primarySessionId);
+			await page.setViewportSize({ width: 430, height: 820 });
+			await page.goto(sessionUrl);
+			await expect(page.getByText('Mobile Primary alpha response line one')).toBeVisible();
+
+			await setMobileOnlineState(page, false);
+			await page
+				.getByLabel(/AI message input/i)
+				.first()
+				.fill('Persisted offline queue command');
+			await page.getByRole('button', { name: /Send command|Send message/i }).click();
+			await expect(page.getByText('1 command queued')).toBeVisible();
+			expect(await getOfflineQueueLength(page)).toBe(1);
+
+			await page.addInitScript(() => {
+				Object.defineProperty(window.navigator, 'onLine', {
+					configurable: true,
+					get: () => false,
+				});
+			});
+			await page.reload();
+			await expect(page.getByText('1 command queued')).toBeVisible();
+			await page.getByText('1 command queued').click();
+			await expect(page.getByText('Persisted offline queue command')).toBeVisible();
+			expect(await getOfflineQueueLength(page)).toBe(1);
 		} finally {
 			await stopWebServer(appWindow).catch(() => {});
 			await electronApp.close();
