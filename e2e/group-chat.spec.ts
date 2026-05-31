@@ -90,6 +90,15 @@ type GroupChatModeratorUsagePayload = {
 	tokenCount: number;
 };
 
+type GroupChatMessagePayload = {
+	timestamp: string;
+	from: string;
+	content: string;
+	images?: string[];
+};
+
+type GroupChatStatePayload = 'idle' | 'moderator-thinking' | 'agent-working';
+
 function createGroupChatWorkbench() {
 	const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-e2e-group-chat-'));
 	const projectDir = path.join(homeDir, 'project');
@@ -597,6 +606,32 @@ async function emitGroupChatModeratorUsage(
 	}, payload);
 }
 
+async function emitGroupChatMessage(
+	electronApp: ElectronApplication,
+	payload: { groupChatId: string; message: GroupChatMessagePayload }
+) {
+	await electronApp.evaluate(({ BrowserWindow }, eventPayload) => {
+		BrowserWindow.getAllWindows()[0]?.webContents.send(
+			'groupChat:message',
+			eventPayload.groupChatId,
+			eventPayload.message
+		);
+	}, payload);
+}
+
+async function emitGroupChatStateChange(
+	electronApp: ElectronApplication,
+	payload: { groupChatId: string; state: GroupChatStatePayload }
+) {
+	await electronApp.evaluate(({ BrowserWindow }, eventPayload) => {
+		BrowserWindow.getAllWindows()[0]?.webContents.send(
+			'groupChat:stateChange',
+			eventPayload.groupChatId,
+			eventPayload.state
+		);
+	}, payload);
+}
+
 async function installGroupChatExportCapture(window: Page) {
 	await window.evaluate(() => {
 		const state = window as typeof window & {
@@ -802,6 +837,10 @@ test.describe('Seeded Group Chat workspace', () => {
 			.first();
 	}
 
+	function groupChatMessage(text: string) {
+		return window.locator('[data-message-timestamp]').filter({ hasText: text }).first();
+	}
+
 	async function openCoverageRoom() {
 		const listItem = groupChatListItem('Coverage Room');
 		await expect(listItem).toBeVisible();
@@ -916,6 +955,77 @@ test.describe('Seeded Group Chat workspace', () => {
 		await expect(moderatorCard.getByText('55%')).toBeVisible();
 		await expect(moderatorCard.getByText('0.07')).toBeVisible();
 		await expect(window.getByTitle('Total accumulated cost')).toContainText('0.16');
+	});
+
+	test('appends live Group Chat messages and toggles long-message expansion', async () => {
+		await openCoverageRoom();
+
+		const longMessage = Array.from(
+			{ length: 35 },
+			(_, index) => `Live message line ${index + 1}`
+		).join('\n');
+		await emitGroupChatMessage(electronApp, {
+			groupChatId: seededWorkbench.groupChats[0].id,
+			message: {
+				timestamp: new Date().toISOString(),
+				from: 'Implementer',
+				content: longMessage,
+			},
+		});
+
+		const message = groupChatMessage('Live message line 1');
+		await expect(message.getByText('Implementer')).toBeVisible();
+		await expect(message.getByText('Live message line 1')).toBeVisible();
+		await expect(message.getByText('Live message line 35')).toBeHidden();
+
+		await message.getByRole('button', { name: 'Show all 35 lines' }).click();
+		await expect(message.getByText('Live message line 35')).toBeVisible();
+
+		await message.getByRole('button', { name: 'Show less' }).click();
+		await expect(message.getByRole('button', { name: 'Show all 35 lines' })).toBeVisible();
+		await expect(message.getByText('Live message line 35')).toBeHidden();
+	});
+
+	test('shows Group Chat state typing indicators from IPC events', async () => {
+		await openCoverageRoom();
+
+		await emitGroupChatStateChange(electronApp, {
+			groupChatId: seededWorkbench.groupChats[0].id,
+			state: 'moderator-thinking',
+		});
+		await expect(window.getByText('Moderator is thinking...')).toBeVisible();
+
+		await emitGroupChatStateChange(electronApp, {
+			groupChatId: seededWorkbench.groupChats[0].id,
+			state: 'agent-working',
+		});
+		await expect(window.getByText('Agent is working...')).toBeVisible();
+
+		await emitGroupChatStateChange(electronApp, {
+			groupChatId: seededWorkbench.groupChats[0].id,
+			state: 'idle',
+		});
+		await expect(window.getByText('Agent is working...')).toBeHidden();
+		await expect(window.getByText('Moderator is thinking...')).toBeHidden();
+	});
+
+	test('toggles Group Chat message plain text and copies transcript text', async () => {
+		await openCoverageRoom();
+		await electronApp.evaluate(({ clipboard }) => clipboard.writeText(''));
+
+		const moderatorMessage = groupChatMessage('Moderator routed the work to @Reviewer.');
+		await moderatorMessage.hover();
+		await moderatorMessage.getByTitle(/Show plain text/).click();
+		await expect(moderatorMessage.getByTitle(/Show formatted/)).toBeVisible();
+
+		await moderatorMessage.hover();
+		await moderatorMessage.getByTitle('Copy to clipboard').click();
+		await expect
+			.poll(() => electronApp.evaluate(({ clipboard }) => clipboard.readText()))
+			.toBe('Moderator routed the work to @Reviewer.');
+
+		await moderatorMessage.getByTitle(/Show formatted/).click();
+		await expect(moderatorMessage.getByTitle(/Show plain text/)).toBeVisible();
 	});
 
 	test('filters Group Chat history with search and Escape restores entries', async () => {
