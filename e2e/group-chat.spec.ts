@@ -5,6 +5,7 @@
  */
 import { test, expect, helpers } from './fixtures/electron-app';
 import type { ElectronApplication, Page } from '@playwright/test';
+import crypto from 'crypto';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -33,16 +34,29 @@ type GroupChatAgentConfigCall = {
 	config: Record<string, unknown>;
 };
 
+type GroupChatAgentErrorPayload = {
+	sessionId: string;
+	error: {
+		type: string;
+		message: string;
+		recoverable: boolean;
+		agentId: string;
+		sessionId: string;
+		timestamp: number;
+		raw?: Record<string, unknown>;
+	};
+};
+
 function createGroupChatWorkbench() {
 	const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-e2e-group-chat-'));
 	const projectDir = path.join(homeDir, 'project');
 	const now = Date.now();
 	const idSuffix = `${now}-${Math.random().toString(36).slice(2)}`;
-	const moderatorSessionId = `group-chat-coverage-${idSuffix}`;
+	const chatId = crypto.randomUUID();
+	const archivedChatId = crypto.randomUUID();
+	const moderatorSessionId = `group-chat-${chatId}-moderator-${now}`;
 	const reviewerSessionId = `session-group-reviewer-${idSuffix}`;
 	const implementerSessionId = `session-group-implementer-${idSuffix}`;
-	const chatId = `coverage-room-${idSuffix}`;
-	const archivedChatId = `archived-room-${idSuffix}`;
 
 	fs.mkdirSync(projectDir, { recursive: true });
 	fs.writeFileSync(path.join(projectDir, 'README.md'), '# Group Chat Coverage\n', 'utf-8');
@@ -410,6 +424,31 @@ async function getStubbedGroupChatIpcActions(electronApp: ElectronApplication) {
 	});
 }
 
+async function stubGroupChatDeletion(electronApp: ElectronApplication) {
+	await electronApp.evaluate(({ ipcMain }) => {
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eGroupChatDeleteCalls?: string[];
+		};
+		state.__maestroE2eGroupChatDeleteCalls = [];
+
+		ipcMain.removeHandler('groupChat:delete');
+		ipcMain.handle('groupChat:delete', async (_event, groupChatId: string) => {
+			state.__maestroE2eGroupChatDeleteCalls?.push(groupChatId);
+			return true;
+		});
+	});
+}
+
+async function getStubbedGroupChatDeletionCalls(electronApp: ElectronApplication) {
+	return electronApp.evaluate(() => {
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eGroupChatDeleteCalls?: string[];
+		};
+
+		return state.__maestroE2eGroupChatDeleteCalls || [];
+	});
+}
+
 async function emitGroupChatLiveOutput(
 	electronApp: ElectronApplication,
 	payload: { groupChatId: string; participantName: string; chunk: string }
@@ -420,6 +459,19 @@ async function emitGroupChatLiveOutput(
 			eventPayload.groupChatId,
 			eventPayload.participantName,
 			eventPayload.chunk
+		);
+	}, payload);
+}
+
+async function emitGroupChatAgentError(
+	electronApp: ElectronApplication,
+	payload: GroupChatAgentErrorPayload
+) {
+	await electronApp.evaluate(({ BrowserWindow }, eventPayload) => {
+		BrowserWindow.getAllWindows()[0]?.webContents.send(
+			'agent:error',
+			eventPayload.sessionId,
+			eventPayload.error
 		);
 	}, payload);
 }
@@ -572,15 +624,21 @@ test.describe('Seeded Group Chat workspace', () => {
 		cleanupApp = undefined;
 	});
 
+	function groupChatListItem(name: string) {
+		return window.locator('div.cursor-pointer').filter({ hasText: name }).first();
+	}
+
 	async function openCoverageRoom() {
-		await expect(window.getByText('Coverage Room').first()).toBeVisible();
-		await window.getByText('Coverage Room').first().click();
+		const listItem = groupChatListItem('Coverage Room');
+		await expect(listItem).toBeVisible();
+		await listItem.click();
 		await expect(window.getByRole('button', { name: 'Group Chat: Coverage Room' })).toBeVisible();
 	}
 
 	async function openCoverageRoomContextMenu() {
-		await expect(window.getByText('Coverage Room').first()).toBeVisible();
-		await window.getByText('Coverage Room').first().click({ button: 'right' });
+		const listItem = groupChatListItem('Coverage Room');
+		await expect(listItem).toBeVisible();
+		await listItem.click({ button: 'right' });
 	}
 
 	async function openNewGroupChatModal() {
@@ -668,6 +726,23 @@ test.describe('Seeded Group Chat workspace', () => {
 
 		await expect(deleteDialog).toBeHidden();
 		await expect(window.getByText('Coverage Room').first()).toBeVisible();
+	});
+
+	test('confirms deletion from the Left Bar context menu and clears the active group chat', async () => {
+		await stubGroupChatDeletion(electronApp);
+		await openCoverageRoom();
+		await openCoverageRoomContextMenu();
+		await window.getByRole('button', { name: 'Delete' }).click();
+
+		const deleteDialog = window.getByRole('dialog', { name: 'Delete Group Chat' });
+		await expect(deleteDialog).toBeVisible();
+		await deleteDialog.getByRole('button', { name: 'Delete' }).click();
+
+		await expect(deleteDialog).toBeHidden();
+		await expect(window.getByRole('button', { name: 'Group Chat: Coverage Room' })).toBeHidden();
+		await expect(window.getByText('Coverage Room').first()).toBeHidden();
+		const calls = await getStubbedGroupChatDeletionCalls(electronApp);
+		expect(calls).toEqual([seededWorkbench.groupChats[0].id]);
 	});
 
 	test('archives and restores a group chat from the Left Bar context menu', async () => {
@@ -870,6 +945,35 @@ test.describe('Seeded Group Chat workspace', () => {
 
 		await expect(reviewerCard.getByText('Running deterministic review...')).toBeVisible();
 		await expect(reviewerCard.getByText('No blocker found.')).toBeVisible();
+	});
+
+	test('surfaces recoverable participant errors in the group chat Agent Error modal', async () => {
+		await openCoverageRoom();
+		const sessionId = `group-chat-${seededWorkbench.groupChats[0].id}-Reviewer-${Date.now()}`;
+
+		await emitGroupChatAgentError(electronApp, {
+			sessionId,
+			error: {
+				type: 'rate_limited',
+				message: 'Reviewer hit deterministic rate limit.',
+				recoverable: true,
+				agentId: 'codex',
+				sessionId,
+				timestamp: Date.now(),
+				raw: { stderr: 'rate limited' },
+			},
+		});
+
+		const dialog = window.getByRole('dialog', { name: 'Rate Limit Exceeded' });
+		await expect(dialog).toBeVisible();
+		await expect(dialog.getByText('Reviewer • Coverage Room')).toBeVisible();
+		await expect(dialog.getByText('Reviewer hit deterministic rate limit.')).toBeVisible();
+		await expect(
+			window.getByText('Reviewer error: Reviewer hit deterministic rate limit.')
+		).toBeVisible();
+		await dialog.getByRole('button', { name: 'Try Again' }).click();
+
+		await expect(dialog).toBeHidden();
 	});
 
 	test('shows the New Group Chat no-agent state without enabling creation', async () => {
