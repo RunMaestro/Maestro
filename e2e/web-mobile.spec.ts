@@ -3204,6 +3204,54 @@ test.describe('Web Mobile Bridge', () => {
 		}
 	});
 
+	test('shows empty mobile history when no entries exist', async ({ page }) => {
+		const workbench = createWebMobileWorkbench();
+		workbench.historyEntries.splice(0, workbench.historyEntries.length);
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			await startWebServer(appWindow);
+			const sessionUrl = await toggleLive(appWindow, workbench.primarySessionId);
+			await page.setViewportSize({ width: 430, height: 820 });
+			await page.goto(sessionUrl);
+
+			await page.getByRole('button', { name: 'View history' }).click();
+			await expect(page.getByRole('heading', { name: 'History' })).toBeVisible();
+			await expect(page.getByRole('button', { name: /All\s+0/ })).toBeVisible();
+			await expect(page.getByText('No history entries')).toBeVisible();
+			await expect(page.getByText('Run batch tasks or use /history to add entries.')).toBeVisible();
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
+	test('shows type-specific empty mobile history after filtering', async ({ page }) => {
+		const workbench = createWebMobileWorkbench();
+		workbench.historyEntries = workbench.historyEntries.filter((entry) => entry.type === 'AUTO');
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			await startWebServer(appWindow);
+			const sessionUrl = await toggleLive(appWindow, workbench.primarySessionId);
+			await page.setViewportSize({ width: 430, height: 820 });
+			await page.goto(sessionUrl);
+
+			await page.getByRole('button', { name: 'View history' }).click();
+			await expect(page.getByRole('heading', { name: 'History' })).toBeVisible();
+			await expect(page.getByText('Auto Run finished the mobile bridge checklist')).toBeVisible();
+			const userFilter = page.getByRole('button', { name: /USER\s+0/ });
+			await userFilter.click();
+			await expect(userFilter).toHaveAttribute('aria-pressed', 'true');
+			await expect(page.getByText('No history entries')).toBeVisible();
+			await expect(page.getByText('No USER entries found. Try changing the filter.')).toBeVisible();
+			await expect(page.getByText('Auto Run finished the mobile bridge checklist')).toBeHidden();
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
 	test('shows failed Auto Run history indicators and detail stats', async ({ page }) => {
 		const workbench = createWebMobileWorkbench();
 		workbench.historyEntries.unshift({
