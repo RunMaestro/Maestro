@@ -1685,6 +1685,13 @@ async function stubShellDetection(electronApp: ElectronApplication) {
 	});
 }
 
+async function stubFontDetection(electronApp: ElectronApplication) {
+	await electronApp.evaluate(({ ipcMain }) => {
+		ipcMain.removeHandler('fonts:detect');
+		ipcMain.handle('fonts:detect', async () => ['Menlo', 'JetBrains Mono', 'E2E System Mono']);
+	});
+}
+
 async function stubWakaTimeHandlers(electronApp: ElectronApplication) {
 	await electronApp.evaluate(({ ipcMain }) => {
 		ipcMain.removeHandler('wakatime:checkCli');
@@ -7193,6 +7200,24 @@ Refresh-added document with a link back to [[README]].
 		await expect(settingsDialog.getByText(/\d+ \/ \d+/)).toBeVisible();
 	});
 
+	test('shows and recovers from an unmatched shortcut filter', async () => {
+		const settingsDialog = await openSettingsTab(
+			window,
+			'Shortcuts',
+			'Not all shortcuts can be modified'
+		);
+		const shortcutFilter = settingsDialog.getByPlaceholder('Filter shortcuts...');
+
+		await shortcutFilter.fill('definitely-no-shortcut-match');
+		await expect(settingsDialog.getByText(/^0 \/ \d+$/)).toBeVisible();
+		await expect(settingsDialog.locator('h3').filter({ hasText: /^General$/ })).toBeHidden();
+		await expect(settingsDialog.locator('h3').filter({ hasText: /^AI Tab$/ })).toBeHidden();
+
+		await shortcutFilter.fill('Quick Actions');
+		await expect(settingsDialog.locator('h3').filter({ hasText: /^General$/ })).toBeVisible();
+		await expect(settingsShortcutButton(settingsDialog, 'Quick Actions')).toBeVisible();
+	});
+
 	test('records a custom global shortcut and applies it in the app shell', async () => {
 		const settingsDialog = await openSettingsTab(
 			window,
@@ -7221,6 +7246,30 @@ Refresh-added document with a link back to [[README]].
 
 		await window.keyboard.press('Control+Shift+F8');
 		await expect(window.getByRole('dialog', { name: 'Quick Actions' })).toBeVisible();
+	});
+
+	test('records Alt-key shortcuts using the physical key code', async () => {
+		const settingsDialog = await openSettingsTab(
+			window,
+			'Shortcuts',
+			'Not all shortcuts can be modified'
+		);
+		const shortcutFilter = settingsDialog.getByPlaceholder('Filter shortcuts...');
+		await shortcutFilter.fill('Open Settings');
+
+		const openSettingsShortcut = settingsShortcutButton(settingsDialog, 'Open Settings');
+		await openSettingsShortcut.click();
+		await expect(openSettingsShortcut).toHaveText('Press keys...');
+		await openSettingsShortcut.press('Alt+P');
+
+		await expect
+			.poll(async () => {
+				return await window.evaluate(async () => {
+					const shortcuts = await window.maestro.settings.get('shortcuts');
+					return shortcuts.settings?.keys?.map((key: string) => key.toLowerCase()) ?? null;
+				});
+			})
+			.toEqual(['alt', 'p']);
 	});
 
 	test('records a custom AI tab shortcut inside Settings', async () => {
@@ -7601,6 +7650,65 @@ Refresh-added document with a link back to [[README]].
 			.toEqual({ readingMode: true, intensity: 1.35 });
 	});
 
+	test('adds selects and removes a custom interface font in Display settings', async () => {
+		await stubFontDetection(electronApp);
+		const settingsDialog = await openSettingsTab(window, 'Display', 'Interface Font');
+		const fontSelect = settingsDialog.locator('select').first();
+
+		await fontSelect.focus();
+		await fontSelect.selectOption('JetBrains Mono');
+		await expect
+			.poll(async () => {
+				return await window.evaluate(async () => {
+					return await window.maestro.settings.get('fontFamily');
+				});
+			})
+			.toBe('JetBrains Mono');
+
+		const customFontInput = settingsDialog.getByPlaceholder('Add custom font name...');
+		await customFontInput.fill('E2E Mono Font');
+		await customFontInput.press('Enter');
+		const customFontChip = settingsDialog
+			.locator('span')
+			.filter({ hasText: /^E2E Mono Font$/ })
+			.locator('xpath=ancestor::div[contains(@class, "flex items-center")][1]');
+		await expect(customFontChip).toBeVisible();
+		await fontSelect.selectOption('E2E Mono Font');
+		await expect
+			.poll(async () => {
+				return await window.evaluate(async () => ({
+					fontFamily: await window.maestro.settings.get('fontFamily'),
+					customFonts: await window.maestro.settings.get('customFonts'),
+				}));
+			})
+			.toEqual({
+				fontFamily: 'E2E Mono Font',
+				customFonts: ['E2E Mono Font'],
+			});
+
+		await customFontChip.getByRole('button').click();
+		await expect
+			.poll(async () => {
+				return await window.evaluate(async () => {
+					return await window.maestro.settings.get('customFonts');
+				});
+			})
+			.toEqual([]);
+	});
+
+	test('opens and closes the Bionify algorithm reference from Display settings', async () => {
+		const settingsDialog = await openSettingsTab(window, 'Display', 'Font Size');
+
+		await scrollSettingsToText(settingsDialog, 'Bionify Algorithm');
+		await settingsDialog.getByTitle('Bionify algorithm info').click();
+		const infoDialog = window.getByRole('dialog', { name: 'Bionify Algorithm Reference' });
+		await expect(infoDialog).toBeVisible();
+		await expect(infoDialog.getByText('Current default: `- 0 1 1 2 0.4`')).toBeVisible();
+
+		await window.keyboard.press('Escape');
+		await expect(infoDialog).toBeHidden();
+	});
+
 	test('persists Theme Settings selection and keyboard cycling', async () => {
 		const settingsDialog = await openThemeSettings(window);
 		const themePicker = settingsDialog.getByRole('group', { name: 'Theme picker' });
@@ -7883,6 +7991,56 @@ Refresh-added document with a link back to [[README]].
 				});
 			})
 			.toBe('rich');
+	});
+
+	test('persists local file indexing ignore patterns and reset behavior', async () => {
+		await window.evaluate(async () => {
+			await window.maestro.settings.set('localIgnorePatterns', []);
+			await window.maestro.settings.set('localHonorGitignore', false);
+		});
+		const settingsDialog = await openSettingsTab(window, 'Display', 'Font Size');
+		await scrollSettingsToText(settingsDialog, 'Local Ignore Patterns');
+		const ignoreSection = settingsDialog
+			.getByText('Local Ignore Patterns', { exact: true })
+			.locator('xpath=ancestor::div[contains(@class, "flex items-start")][1]');
+		const honorGitignore = ignoreSection.getByRole('checkbox', { name: 'Honor .gitignore' });
+		const patternInput = ignoreSection.getByPlaceholder(
+			'Enter glob pattern (e.g., node_modules, *.log)'
+		);
+
+		await expect(honorGitignore).toHaveAttribute('aria-checked', 'false');
+		await honorGitignore.click();
+		await expect(honorGitignore).toHaveAttribute('aria-checked', 'true');
+		await patternInput.fill('dist-e2e');
+		await patternInput.press('Enter');
+		await expect(ignoreSection.getByText('dist-e2e')).toBeVisible();
+		await patternInput.fill('dist-e2e');
+		await ignoreSection.getByRole('button', { name: 'Add' }).click();
+		await expect(ignoreSection.getByText('Pattern already exists')).toBeVisible();
+		await expect
+			.poll(async () => {
+				return await window.evaluate(async () => ({
+					honorGitignore: await window.maestro.settings.get('localHonorGitignore'),
+					patterns: await window.maestro.settings.get('localIgnorePatterns'),
+				}));
+			})
+			.toEqual({
+				honorGitignore: true,
+				patterns: ['dist-e2e'],
+			});
+
+		await ignoreSection.getByRole('button', { name: /Reset to defaults/ }).click();
+		await expect
+			.poll(async () => {
+				return await window.evaluate(async () => ({
+					honorGitignore: await window.maestro.settings.get('localHonorGitignore'),
+					patterns: await window.maestro.settings.get('localIgnorePatterns'),
+				}));
+			})
+			.toEqual({
+				honorGitignore: true,
+				patterns: ['.git', 'node_modules', '__pycache__'],
+			});
 	});
 
 	test('persists global Settings environment variables', async () => {
