@@ -9,6 +9,19 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
+type GroupChatModeratorCall = {
+	groupChatId: string;
+	content: string;
+	images?: string[];
+	readOnly?: boolean;
+};
+
+type GroupChatResetCall = {
+	groupChatId: string;
+	participantName: string;
+	cwd?: string;
+};
+
 function createGroupChatWorkbench() {
 	const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-e2e-group-chat-'));
 	const projectDir = path.join(homeDir, 'project');
@@ -309,6 +322,97 @@ async function stubGroupChatProcessMonitor(
 	);
 }
 
+async function stubGroupChatIpcActions(electronApp: ElectronApplication) {
+	await electronApp.evaluate(({ ipcMain }) => {
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eGroupChatModeratorCalls?: GroupChatModeratorCall[];
+			__maestroE2eGroupChatStopAllCalls?: string[];
+			__maestroE2eGroupChatResetCalls?: GroupChatResetCall[];
+			__maestroE2eGroupChatRemoveCalls?: Array<{ groupChatId: string; participantName: string }>;
+		};
+
+		state.__maestroE2eGroupChatModeratorCalls = [];
+		state.__maestroE2eGroupChatStopAllCalls = [];
+		state.__maestroE2eGroupChatResetCalls = [];
+		state.__maestroE2eGroupChatRemoveCalls = [];
+
+		ipcMain.removeHandler('groupChat:sendToModerator');
+		ipcMain.handle(
+			'groupChat:sendToModerator',
+			async (
+				_event,
+				groupChatId: string,
+				content: string,
+				images?: string[],
+				readOnly?: boolean
+			) => {
+				state.__maestroE2eGroupChatModeratorCalls?.push({
+					groupChatId,
+					content,
+					images,
+					readOnly,
+				});
+				return true;
+			}
+		);
+
+		ipcMain.removeHandler('groupChat:stopAll');
+		ipcMain.handle('groupChat:stopAll', async (_event, groupChatId: string) => {
+			state.__maestroE2eGroupChatStopAllCalls?.push(groupChatId);
+			return true;
+		});
+
+		ipcMain.removeHandler('groupChat:resetParticipantContext');
+		ipcMain.handle(
+			'groupChat:resetParticipantContext',
+			async (_event, groupChatId: string, participantName: string, cwd?: string) => {
+				state.__maestroE2eGroupChatResetCalls?.push({ groupChatId, participantName, cwd });
+				return { newAgentSessionId: `reset-${participantName}` };
+			}
+		);
+
+		ipcMain.removeHandler('groupChat:removeParticipant');
+		ipcMain.handle(
+			'groupChat:removeParticipant',
+			async (_event, groupChatId: string, participantName: string) => {
+				state.__maestroE2eGroupChatRemoveCalls?.push({ groupChatId, participantName });
+			}
+		);
+	});
+}
+
+async function getStubbedGroupChatIpcActions(electronApp: ElectronApplication) {
+	return electronApp.evaluate(() => {
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eGroupChatModeratorCalls?: GroupChatModeratorCall[];
+			__maestroE2eGroupChatStopAllCalls?: string[];
+			__maestroE2eGroupChatResetCalls?: GroupChatResetCall[];
+			__maestroE2eGroupChatRemoveCalls?: Array<{ groupChatId: string; participantName: string }>;
+		};
+
+		return {
+			sendToModerator: state.__maestroE2eGroupChatModeratorCalls || [],
+			stopAll: state.__maestroE2eGroupChatStopAllCalls || [],
+			resetParticipantContext: state.__maestroE2eGroupChatResetCalls || [],
+			removeParticipant: state.__maestroE2eGroupChatRemoveCalls || [],
+		};
+	});
+}
+
+async function emitGroupChatLiveOutput(
+	electronApp: ElectronApplication,
+	payload: { groupChatId: string; participantName: string; chunk: string }
+) {
+	await electronApp.evaluate(({ BrowserWindow }, eventPayload) => {
+		BrowserWindow.getAllWindows()[0]?.webContents.send(
+			'groupChat:participantLiveOutput',
+			eventPayload.groupChatId,
+			eventPayload.participantName,
+			eventPayload.chunk
+		);
+	}, payload);
+}
+
 test.describe('Seeded Group Chat workspace', () => {
 	let window: Awaited<ReturnType<typeof helpers.launchAppWithState>>['window'];
 	let electronApp: ElectronApplication;
@@ -501,5 +605,127 @@ test.describe('Seeded Group Chat workspace', () => {
 				.first()
 		).toBeVisible();
 		await expect(details.getByText('codex --group-participant Reviewer')).toBeVisible();
+	});
+
+	test('filters mention suggestions and inserts a selected participant', async () => {
+		await openCoverageRoom();
+
+		const input = window.locator('textarea').first();
+		await input.fill('@Imp');
+
+		await expect(window.getByRole('button', { name: /@Implementer/ })).toBeVisible();
+		await expect(window.getByRole('button', { name: /@Reviewer/ })).toHaveCount(0);
+		await input.press('Enter');
+
+		await expect(input).toHaveValue('@Implementer ');
+	});
+
+	test('sends a trimmed read-only moderator message through IPC', async () => {
+		await stubGroupChatIpcActions(electronApp);
+		await openCoverageRoom();
+
+		const input = window.locator('textarea').first();
+		await window.getByTitle("Toggle Read-Only mode (agents won't modify files)").click();
+		await input.fill('  Please summarize the risk.  ');
+		await window.getByTitle('Send message').click();
+
+		await expect(input).toHaveValue('');
+		const calls = await getStubbedGroupChatIpcActions(electronApp);
+		expect(calls.sendToModerator).toEqual([
+			{
+				groupChatId: seededWorkbench.groupChats[0].id,
+				content: 'Please summarize the risk.',
+				images: undefined,
+				readOnly: true,
+			},
+		]);
+	});
+
+	test('queues a second message while moderator is busy and removes it after confirmation', async () => {
+		await stubGroupChatIpcActions(electronApp);
+		await openCoverageRoom();
+
+		await window
+			.getByPlaceholder('Type a message... (@ to mention agent)')
+			.fill('Start the review pass.');
+		await window.getByTitle('Send message').click();
+		await expect(window.getByPlaceholder('Type to queue message...')).toBeVisible();
+
+		await window.getByPlaceholder('Type to queue message...').fill('Queue follow-up context.');
+		await window.getByTitle('Queue message').click();
+
+		await expect(window.getByText('QUEUED (1)')).toBeVisible();
+		await expect(window.getByText('Queue follow-up context.')).toBeVisible();
+		await window.getByTitle('Remove from queue').click();
+		await expect(window.getByText('Remove Queued Message?')).toBeVisible();
+		await window
+			.getByText('Remove Queued Message?')
+			.locator('xpath=ancestor::div[contains(@class, "shadow-xl")][1]')
+			.getByRole('button', { name: 'Remove' })
+			.click();
+
+		await expect(window.getByText('QUEUED (1)')).toBeHidden();
+		const calls = await getStubbedGroupChatIpcActions(electronApp);
+		expect(calls.sendToModerator).toHaveLength(1);
+	});
+
+	test('routes Stop All for an active group chat', async () => {
+		await stubGroupChatIpcActions(electronApp);
+		await openCoverageRoom();
+
+		await window
+			.getByPlaceholder('Type a message... (@ to mention agent)')
+			.fill('Start then stop all group activity.');
+		await window.getByTitle('Send message').click();
+		await window.getByTitle('Stop all moderator and participant activity').click();
+
+		const calls = await getStubbedGroupChatIpcActions(electronApp);
+		expect(calls.stopAll).toEqual([seededWorkbench.groupChats[0].id]);
+	});
+
+	test('routes participant reset and removal controls from the right panel', async () => {
+		await stubGroupChatIpcActions(electronApp);
+		await openCoverageRoom();
+
+		const reviewerCard = window
+			.locator('.rounded-lg.border.p-3')
+			.filter({ has: window.getByText('Reviewer', { exact: true }) })
+			.first();
+		await reviewerCard.getByRole('button', { name: 'Reset' }).click();
+		await reviewerCard.getByRole('button', { name: 'Remove' }).click();
+		await reviewerCard.getByRole('button', { name: 'Confirm' }).click();
+
+		const calls = await getStubbedGroupChatIpcActions(electronApp);
+		expect(calls.resetParticipantContext).toEqual([
+			{
+				groupChatId: seededWorkbench.groupChats[0].id,
+				participantName: 'Reviewer',
+				cwd: undefined,
+			},
+		]);
+		expect(calls.removeParticipant).toEqual([
+			{
+				groupChatId: seededWorkbench.groupChats[0].id,
+				participantName: 'Reviewer',
+			},
+		]);
+	});
+
+	test('shows streamed participant output in the Peek panel', async () => {
+		await openCoverageRoom();
+		await emitGroupChatLiveOutput(electronApp, {
+			groupChatId: seededWorkbench.groupChats[0].id,
+			participantName: 'Reviewer',
+			chunk: 'Running deterministic review...\nNo blocker found.',
+		});
+
+		const reviewerCard = window
+			.locator('.rounded-lg.border.p-3')
+			.filter({ has: window.getByText('Reviewer', { exact: true }) })
+			.first();
+		await reviewerCard.getByRole('button', { name: 'Peek' }).click();
+
+		await expect(reviewerCard.getByText('Running deterministic review...')).toBeVisible();
+		await expect(reviewerCard.getByText('No blocker found.')).toBeVisible();
 	});
 });
