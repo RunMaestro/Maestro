@@ -1398,6 +1398,67 @@ test.describe('Web Mobile Bridge', () => {
 		}
 	});
 
+	test('reports malformed WebSocket messages and missing tab lifecycle fields', async ({
+		page,
+	}) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			const dashboardUrl = await startWebServer(appWindow);
+			const messages = await page.evaluate(async (socketUrl) => {
+				return new Promise<E2ESocketMessage[]>((resolve, reject) => {
+					const collected: E2ESocketMessage[] = [];
+					const socket = new WebSocket(socketUrl);
+					const timeout = window.setTimeout(() => {
+						socket.close();
+						reject(new Error('Timed out waiting for WebSocket validation responses'));
+					}, 10000);
+
+					socket.addEventListener('open', () => {
+						socket.send('not-json');
+						socket.send(JSON.stringify({ type: 'select_session' }));
+						socket.send(JSON.stringify({ type: 'select_tab', sessionId: 'missing-tab-id' }));
+						socket.send(JSON.stringify({ type: 'new_tab' }));
+						socket.send(JSON.stringify({ type: 'close_tab', sessionId: 'missing-tab-id' }));
+						socket.send(JSON.stringify({ type: 'rename_tab', sessionId: 'missing-tab-id' }));
+						socket.send(JSON.stringify({ type: 'star_tab', sessionId: 'missing-tab-id' }));
+						socket.send(JSON.stringify({ type: 'reorder_tab' }));
+						socket.send(JSON.stringify({ type: 'toggle_bookmark' }));
+					});
+					socket.addEventListener('message', (event) => {
+						const message = JSON.parse(event.data) as E2ESocketMessage;
+						collected.push(message);
+						if (collected.filter((entry) => entry.type === 'error').length >= 9) {
+							window.clearTimeout(timeout);
+							socket.close();
+							resolve(collected);
+						}
+					});
+					socket.addEventListener('error', () => {
+						window.clearTimeout(timeout);
+						reject(new Error('WebSocket connection failed'));
+					});
+				});
+			}, webSocketUrl(dashboardUrl));
+			const errors = messages
+				.filter((message) => message.type === 'error')
+				.map((message) => message.message);
+			expect(errors).toEqual(
+				expect.arrayContaining([
+					'Invalid message format',
+					'Missing sessionId',
+					'Missing sessionId or tabId',
+					'Missing sessionId, fromIndex, or toIndex',
+				])
+			);
+			expect(errors.filter((message) => message === 'Missing sessionId or tabId')).toHaveLength(4);
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
 	test('refreshes WebSocket sessions list after desktop session updates', async ({ page }) => {
 		const workbench = createWebMobileWorkbench();
 		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
@@ -1634,6 +1695,68 @@ test.describe('Web Mobile Bridge', () => {
 			await reconnectMobileIfNeeded(page);
 			await expect(page).toHaveURL(new RegExp(`/session/${workbench.primarySessionId}`));
 			await expect(page.getByText('Mobile Primary alpha response line one')).toBeVisible();
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
+	test('opens a missing mobile session deep link and recovers from All Agents', async ({
+		page,
+	}) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			const dashboardUrl = await startWebServer(appWindow);
+			await toggleLive(appWindow, workbench.primarySessionId);
+			await page.setViewportSize({ width: 430, height: 820 });
+			await page.goto(`${dashboardUrl}/session/not-a-real-mobile-session`);
+			await reconnectMobileIfNeeded(page);
+
+			await expect(page.getByText('Select a session above to get started')).toBeVisible();
+			await page.getByRole('button', { name: /Search 3 sessions/i }).click();
+			await expect(page.getByRole('heading', { name: 'All Agents' })).toBeVisible();
+			await page.getByPlaceholder('Search agents...').fill('primary');
+			await expect(
+				page.getByRole('button', { name: /Mobile Primary session/i }).last()
+			).toBeVisible();
+			await page
+				.getByRole('button', { name: /Mobile Primary session/i })
+				.last()
+				.click();
+			await expect(page).toHaveURL(new RegExp(`/session/${workbench.primarySessionId}`));
+			await expect(page.getByText('Mobile Primary alpha response line one')).toBeVisible();
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
+	test('shows mobile history unmatched search and clear states', async ({ page }) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			await startWebServer(appWindow);
+			const sessionUrl = await toggleLive(appWindow, workbench.primarySessionId);
+			await page.setViewportSize({ width: 430, height: 820 });
+			await page.goto(sessionUrl);
+			await expect(page.getByText('Mobile Primary alpha response line one')).toBeVisible();
+
+			await page.getByRole('button', { name: 'View history' }).click();
+			await expect(page.getByRole('heading', { name: 'History' })).toBeVisible();
+			await page.getByRole('button', { name: 'Search history' }).click();
+			await page.getByPlaceholder('Search history...').fill('missing mobile history entry');
+			await expect(page.getByText('0 found')).toBeVisible();
+			await expect(page.getByText('No matching entries')).toBeVisible();
+			await expect(
+				page.getByText('No entries found matching "missing mobile history entry".')
+			).toBeVisible();
+
+			await page.getByRole('button', { name: 'Clear search' }).click();
+			await expect(page.getByPlaceholder('Search history...')).toHaveValue('');
+			await expect(page.getByText('Auto Run finished the mobile bridge checklist')).toBeVisible();
 		} finally {
 			await stopWebServer(appWindow).catch(() => {});
 			await electronApp.close();
