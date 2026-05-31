@@ -353,8 +353,17 @@ export function useMobileSessionManagement(
 		(tabId: string, newName: string) => {
 			if (!activeSessionId) return;
 			sendRef.current?.({ type: 'rename_tab', sessionId: activeSessionId, tabId, newName });
+			setSessions((prev) =>
+				prev.map((s) => {
+					if (s.id !== activeSessionId) return s;
+					return {
+						...s,
+						aiTabs: s.aiTabs?.map((t: any) => (t.id === tabId ? { ...t, name: newName } : t)),
+					};
+				})
+			);
 		},
-		[activeSessionId, sendRef]
+		[activeSessionId, sendRef, setSessions]
 	);
 
 	// Handle starring/unstarring a tab

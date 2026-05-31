@@ -12,6 +12,34 @@ import os from 'os';
 import path from 'path';
 
 type WebWorkbench = ReturnType<typeof createWebMobileWorkbench>;
+type WebSessionSummary = {
+	id: string;
+	name: string;
+	usageStats?: {
+		inputTokens?: number;
+		outputTokens?: number;
+		totalCostUsd?: number;
+		contextWindow?: number;
+	} | null;
+	lastResponse?: {
+		text: string;
+		timestamp: number;
+		source: string;
+		fullLength: number;
+	} | null;
+	aiTabs?: Array<{
+		id: string;
+		name: string | null;
+		starred: boolean;
+		usageStats?: {
+			inputTokens?: number;
+			outputTokens?: number;
+			totalCostUsd?: number;
+			contextWindow?: number;
+		} | null;
+		logs?: unknown;
+	}>;
+};
 type SeededHistoryEntry = {
 	id: string;
 	type: 'AUTO' | 'USER';
@@ -515,6 +543,53 @@ test.describe('Web Mobile Bridge', () => {
 		}
 	});
 
+	test('exposes web-safe session summaries with response previews and tab metadata', async ({
+		page,
+	}) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			const dashboardUrl = await startWebServer(appWindow);
+			const sessionsPayload = await getJson(page, `${dashboardUrl}/api/sessions`);
+			const primary = sessionsPayload.sessions.find(
+				(session: WebSessionSummary) => session.id === workbench.primarySessionId
+			) as WebSessionSummary | undefined;
+
+			expect(primary).toBeDefined();
+			expect(primary?.usageStats).toMatchObject({
+				inputTokens: 1200,
+				outputTokens: 800,
+				totalCostUsd: 0.042,
+				contextWindow: 8000,
+			});
+			expect(primary?.lastResponse).toMatchObject({
+				source: 'stdout',
+				fullLength: expect.any(Number),
+			});
+			expect(primary?.lastResponse?.text).toContain('Mobile Primary alpha response line one');
+			expect(primary?.aiTabs).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({
+						id: workbench.primaryPlanTabId,
+						name: 'Plan',
+						starred: true,
+						usageStats: expect.objectContaining({ inputTokens: 400, outputTokens: 250 }),
+					}),
+					expect.objectContaining({
+						id: workbench.primaryReviewTabId,
+						name: 'Review',
+						starred: false,
+					}),
+				])
+			);
+			expect(primary?.aiTabs?.[0]).not.toHaveProperty('logs');
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
 	test('returns tab-specific mobile details without thinking or tool transcript rows', async ({
 		page,
 	}) => {
@@ -845,6 +920,42 @@ test.describe('Web Mobile Bridge', () => {
 		}
 	});
 
+	test('handles token API interrupt and error responses', async ({ page }) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			const dashboardUrl = await startWebServer(appWindow);
+			const interruptResponse = await page.request.post(
+				`${dashboardUrl}/api/session/${workbench.primarySessionId}/interrupt`
+			);
+			expect(interruptResponse.ok()).toBe(true);
+			expect(await interruptResponse.json()).toMatchObject({
+				success: true,
+				sessionId: workbench.primarySessionId,
+			});
+
+			const badCommandResponse = await page.request.post(
+				`${dashboardUrl}/api/session/${workbench.primarySessionId}/send`,
+				{ data: { command: '' } }
+			);
+			expect(badCommandResponse.status()).toBe(400);
+			expect(await badCommandResponse.json()).toMatchObject({
+				error: 'Bad Request',
+				message: 'Command is required and must be a string',
+			});
+
+			const missingSessionResponse = await page.request.get(
+				`${dashboardUrl}/api/session/not-a-real-mobile-session`
+			);
+			expect(missingSessionResponse.status()).toBe(404);
+			expect(await missingSessionResponse.json()).toMatchObject({ error: 'Not Found' });
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
 	test('syncs desktop broadcasts into the mobile session shell', async ({ page }) => {
 		const workbench = createWebMobileWorkbench();
 		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
@@ -964,6 +1075,166 @@ test.describe('Web Mobile Bridge', () => {
 		}
 	});
 
+	test('syncs tab additions and removals from desktop broadcasts into the mobile tab bar', async ({
+		page,
+	}) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			await startWebServer(appWindow);
+			const sessionUrl = await toggleLive(appWindow, workbench.primarySessionId);
+			await page.setViewportSize({ width: 430, height: 820 });
+			await page.goto(sessionUrl);
+			await expect(page.getByText('Mobile Primary alpha response line one')).toBeVisible();
+			await expect(page.locator('button[title="Search 2 tabs"]')).toBeVisible();
+
+			await appWindow.evaluate(
+				async ({ sessionId, planTabId, reviewTabId }) => {
+					await (window as MaestroE2EWindow).maestro.web.broadcastTabsChange(
+						sessionId,
+						[
+							{
+								id: planTabId,
+								agentSessionId: `${sessionId}-agent-plan`,
+								name: 'Plan',
+								starred: true,
+								inputValue: '',
+								usageStats: null,
+								createdAt: Date.now(),
+								state: 'idle',
+								thinkingStartTime: null,
+							},
+							{
+								id: reviewTabId,
+								agentSessionId: `${sessionId}-agent-review`,
+								name: 'Review',
+								starred: false,
+								inputValue: '',
+								usageStats: null,
+								createdAt: Date.now() + 1,
+								state: 'idle',
+								thinkingStartTime: null,
+							},
+							{
+								id: `${sessionId}-broadcast-new-tab`,
+								agentSessionId: null,
+								name: 'Broadcast New',
+								starred: false,
+								inputValue: '',
+								usageStats: null,
+								createdAt: Date.now() + 2,
+								state: 'idle',
+								thinkingStartTime: null,
+							},
+						],
+						`${sessionId}-broadcast-new-tab`
+					);
+				},
+				{
+					sessionId: workbench.primarySessionId,
+					planTabId: workbench.primaryPlanTabId,
+					reviewTabId: workbench.primaryReviewTabId,
+				}
+			);
+			await expect(page.locator('button[title="Search 3 tabs"]')).toBeVisible();
+			await expect(page.getByRole('button', { name: /Broadcast New/ })).toBeVisible();
+
+			await appWindow.evaluate(
+				async ({ sessionId, planTabId, reviewTabId }) => {
+					await (window as MaestroE2EWindow).maestro.web.broadcastTabsChange(
+						sessionId,
+						[
+							{
+								id: planTabId,
+								agentSessionId: `${sessionId}-agent-plan`,
+								name: 'Plan',
+								starred: true,
+								inputValue: '',
+								usageStats: null,
+								createdAt: Date.now(),
+								state: 'idle',
+								thinkingStartTime: null,
+							},
+							{
+								id: reviewTabId,
+								agentSessionId: `${sessionId}-agent-review`,
+								name: 'Review',
+								starred: false,
+								inputValue: '',
+								usageStats: null,
+								createdAt: Date.now() + 1,
+								state: 'idle',
+								thinkingStartTime: null,
+							},
+						],
+						planTabId
+					);
+				},
+				{
+					sessionId: workbench.primarySessionId,
+					planTabId: workbench.primaryPlanTabId,
+					reviewTabId: workbench.primaryReviewTabId,
+				}
+			);
+			await expect(page.locator('button[title="Search 2 tabs"]')).toBeVisible({
+				timeout: 10000,
+			});
+			await expect(page.getByRole('button', { name: /Broadcast New/ })).toBeHidden();
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
+	test('renames, stars, and reorders tabs from the mobile tab actions popover', async ({
+		page,
+	}) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			await startWebServer(appWindow);
+			const sessionUrl = await toggleLive(appWindow, workbench.primarySessionId);
+			await page.setViewportSize({ width: 430, height: 820 });
+			await page.goto(sessionUrl);
+			await expect(page.getByText('Mobile Primary alpha response line one')).toBeVisible();
+			await expect(page.getByRole('button', { name: /Review/ })).toBeVisible();
+
+			await page.getByRole('button', { name: /Review/ }).click({ button: 'right' });
+			const reviewDialog = page.getByRole('dialog', { name: /Actions for tab Review/ });
+			await expect(reviewDialog).toBeVisible();
+			await reviewDialog.getByRole('button', { name: /Star$/ }).click();
+			await expect(
+				page.locator('button').filter({ hasText: '★' }).filter({ hasText: 'Review' })
+			).toBeVisible();
+
+			await page.getByRole('button', { name: /Review/ }).click({ button: 'right' });
+			await page.getByRole('button', { name: /Rename/ }).click();
+			await page.getByPlaceholder('Tab name').fill('QA Review');
+			await page.getByRole('button', { name: 'Save' }).click();
+			await expect(page.getByRole('button', { name: /QA Review/ })).toBeVisible({
+				timeout: 10000,
+			});
+
+			await page.getByRole('button', { name: /QA Review/ }).click({ button: 'right' });
+			await page.getByRole('button', { name: 'Move Left' }).click();
+			await expect
+				.poll(() =>
+					page.locator('button').evaluateAll((buttons) =>
+						buttons
+							.map((button) => button.textContent?.replace('★', '').trim() || '')
+							.filter((text) => text === 'Plan' || text === 'QA Review')
+							.join('|')
+					)
+				)
+				.toBe('QA Review|Plan');
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
 	test('switches mobile tabs and reloads the selected tab transcript', async ({ page }) => {
 		const workbench = createWebMobileWorkbench();
 		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
@@ -1032,6 +1303,48 @@ test.describe('Web Mobile Bridge', () => {
 		}
 	});
 
+	test('shows All Agents grouping, empty search, clear search, and close states', async ({
+		page,
+	}) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			await startWebServer(appWindow);
+			const sessionUrl = await toggleLive(appWindow, workbench.primarySessionId);
+			await page.setViewportSize({ width: 430, height: 820 });
+			await page.goto(sessionUrl);
+			await expect(page.getByText('Mobile Primary alpha response line one')).toBeVisible();
+
+			await page.getByRole('button', { name: /Search 3 sessions/i }).click();
+			await expect(page.getByRole('heading', { name: 'All Agents' })).toBeVisible();
+			await expect(
+				page.getByRole('button', { name: /Bookmarks group with 1 sessions/i }).last()
+			).toBeVisible();
+			await expect(
+				page.getByRole('button', { name: /Mobile Ops group with 1 sessions/i }).last()
+			).toBeVisible();
+			await page
+				.getByRole('button', { name: /Mobile Ops group with 1 sessions/i })
+				.last()
+				.click();
+			await expect(
+				page.getByRole('button', { name: /Mobile Primary session, Ready, ai mode, active/i }).last()
+			).toBeVisible();
+
+			await page.getByPlaceholder('Search agents...').fill('missing mobile agent');
+			await expect(page.getByText('No sessions found')).toBeVisible();
+			await expect(page.getByText('No sessions match "missing mobile agent"')).toBeVisible();
+			await page.getByRole('button', { name: 'Clear search' }).click();
+			await expect(page.getByPlaceholder('Search agents...')).toHaveValue('');
+			await page.getByRole('button', { name: 'Close All Agents view' }).click();
+			await expect(page.getByRole('heading', { name: 'All Agents' })).toBeHidden();
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
 	test('opens All Agents, filters sessions, and selects a terminal session', async ({ page }) => {
 		const workbench = createWebMobileWorkbench();
 		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
@@ -1053,6 +1366,44 @@ test.describe('Web Mobile Bridge', () => {
 				page.getByText('Mobile Secondary shell output for mobile bridge coverage.')
 			).toBeVisible();
 			await expect(page).toHaveURL(new RegExp(`/session/${workbench.secondarySessionId}`));
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
+	test('opens session info from the pill bar and toggles bookmarks', async ({ page }) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			await startWebServer(appWindow);
+			const sessionUrl = await toggleLive(appWindow, workbench.primarySessionId);
+			await page.setViewportSize({ width: 430, height: 820 });
+			await page.goto(sessionUrl);
+			await expect(page.getByText('Mobile Primary alpha response line one')).toBeVisible();
+
+			const primaryPill = page
+				.getByRole('button', { name: /Mobile Primary session, idle, ai mode, active/i })
+				.first();
+			await primaryPill.click({ button: 'right' });
+			await expect(
+				page.getByRole('dialog', { name: /Session info for Mobile Primary/ })
+			).toBeVisible();
+			await expect(page.getByText('Working Directory')).toBeVisible();
+			await page.getByRole('button', { name: /Remove Bookmark/ }).click();
+			await expect(
+				page.getByRole('dialog', { name: /Session info for Mobile Primary/ })
+			).toBeHidden();
+
+			await primaryPill.click({ button: 'right' });
+			await expect(page.getByRole('button', { name: /Bookmark$/ })).toBeVisible();
+			await page.getByRole('button', { name: /Bookmark$/ }).click();
+			await expect(
+				page.getByRole('dialog', { name: /Session info for Mobile Primary/ })
+			).toBeHidden();
+			await primaryPill.click({ button: 'right' });
+			await expect(page.getByRole('button', { name: /Remove Bookmark/ })).toBeVisible();
 		} finally {
 			await stopWebServer(appWindow).catch(() => {});
 			await electronApp.close();
