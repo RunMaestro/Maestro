@@ -58,6 +58,19 @@ type GroupChatExportCapture = {
 	html?: string;
 };
 
+type GroupChatHistoryEntryPayload = {
+	id: string;
+	timestamp: number;
+	summary: string;
+	participantName: string;
+	participantColor?: string;
+	type: 'delegation' | 'response' | 'synthesis' | 'error';
+	elapsedTimeMs?: number;
+	tokenCount?: number;
+	cost?: number;
+	fullResponse?: string;
+};
+
 function createGroupChatWorkbench() {
 	const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-e2e-group-chat-'));
 	const projectDir = path.join(homeDir, 'project');
@@ -512,6 +525,19 @@ async function emitGroupChatAgentError(
 	}, payload);
 }
 
+async function emitGroupChatHistoryEntry(
+	electronApp: ElectronApplication,
+	payload: { groupChatId: string; entry: GroupChatHistoryEntryPayload }
+) {
+	await electronApp.evaluate(({ BrowserWindow }, eventPayload) => {
+		BrowserWindow.getAllWindows()[0]?.webContents.send(
+			'groupChat:historyEntry',
+			eventPayload.groupChatId,
+			eventPayload.entry
+		);
+	}, payload);
+}
+
 async function installGroupChatExportCapture(window: Page) {
 	await window.evaluate(() => {
 		const state = window as typeof window & {
@@ -757,6 +783,58 @@ test.describe('Seeded Group Chat workspace', () => {
 		await expect(window.getByText('No entries match the selected filters.')).toBeVisible();
 		await window.getByRole('button', { name: 'Response' }).click();
 		await expect(window.getByText('Reviewed seeded group chat plan')).toBeVisible();
+	});
+
+	test('filters Group Chat history with search and Escape restores entries', async () => {
+		await openCoverageRoom();
+		await window.getByTitle('View task history').click();
+
+		const historyPanel = window
+			.locator('div[tabindex="0"]')
+			.filter({ hasText: 'Reviewed seeded group chat plan' })
+			.last();
+		await historyPanel.focus();
+		await expect(historyPanel).toBeFocused();
+		await historyPanel.press('Control+f');
+
+		const searchInput = window.getByPlaceholder('Filter group chat history...');
+		await expect(searchInput).toBeVisible();
+		await searchInput.fill('seeded group chat plan');
+		await expect(window.getByText('1 result')).toBeVisible();
+		await expect(window.getByText('Reviewed seeded group chat plan')).toBeVisible();
+
+		await searchInput.fill('missing-history-entry');
+		await expect(window.getByText('No entries match "missing-history-entry"')).toBeVisible();
+
+		await searchInput.press('Escape');
+		await expect(searchInput).toBeHidden();
+		await expect(window.getByText('Reviewed seeded group chat plan')).toBeVisible();
+	});
+
+	test('prepends live Group Chat history entries from IPC', async () => {
+		await openCoverageRoom();
+		await window.getByTitle('View task history').click();
+
+		await emitGroupChatHistoryEntry(electronApp, {
+			groupChatId: seededWorkbench.groupChats[0].id,
+			entry: {
+				id: 'history-live-e2e',
+				timestamp: Date.now(),
+				summary: 'Live emitted history entry',
+				participantName: 'Implementer',
+				participantColor: '#059669',
+				type: 'response',
+				elapsedTimeMs: 2400,
+				tokenCount: 900,
+				cost: 0.04,
+				fullResponse: 'Live history response body from IPC.',
+			},
+		});
+
+		const liveHistoryEntry = window.locator('[data-entry-id="history-live-e2e"]');
+		await expect(liveHistoryEntry.getByText('Live emitted history entry')).toBeVisible();
+		await expect(liveHistoryEntry.getByText('Implementer')).toBeVisible();
+		await expect(liveHistoryEntry.getByText('$0.04')).toBeVisible();
 	});
 
 	test('opens Group Chat info and renames the chat from the header', async () => {
