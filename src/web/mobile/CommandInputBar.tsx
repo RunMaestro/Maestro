@@ -192,11 +192,8 @@ export function CommandInputBar({
 	const [internalValue, setInternalValue] = useState('');
 	const value = controlledValue !== undefined ? controlledValue : internalValue;
 
-	// Determine if input should be disabled (must be before hooks that use it)
-	// In AI mode: NEVER disable the input - user can always prep next message
-	// The send button will show X (interrupt) when AI is busy
-	// For terminal mode: do NOT disable when session is busy - terminal commands use a different pathway
-	const isDisabled = externalDisabled || isOffline || !isConnected;
+	// Keep the composer usable while disconnected so commands can enter the offline queue.
+	const isDisabled = externalDisabled === true;
 
 	// Slash command autocomplete hook
 	const {
