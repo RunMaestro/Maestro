@@ -47,6 +47,17 @@ type GroupChatAgentErrorPayload = {
 	};
 };
 
+type ShellPathCall = {
+	type: 'openPath';
+	itemPath: string;
+};
+
+type GroupChatExportCapture = {
+	download?: string;
+	href?: string;
+	html?: string;
+};
+
 function createGroupChatWorkbench() {
 	const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-e2e-group-chat-'));
 	const projectDir = path.join(homeDir, 'project');
@@ -449,6 +460,31 @@ async function getStubbedGroupChatDeletionCalls(electronApp: ElectronApplication
 	});
 }
 
+async function stubGroupChatShellPath(electronApp: ElectronApplication) {
+	await electronApp.evaluate(({ ipcMain }) => {
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eGroupChatShellPathCalls?: ShellPathCall[];
+		};
+		state.__maestroE2eGroupChatShellPathCalls = [];
+
+		ipcMain.removeHandler('shell:openPath');
+		ipcMain.handle('shell:openPath', async (_event, itemPath: string) => {
+			state.__maestroE2eGroupChatShellPathCalls?.push({ type: 'openPath', itemPath });
+			return '';
+		});
+	});
+}
+
+async function getStubbedGroupChatShellPathCalls(electronApp: ElectronApplication) {
+	return electronApp.evaluate(() => {
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eGroupChatShellPathCalls?: ShellPathCall[];
+		};
+
+		return state.__maestroE2eGroupChatShellPathCalls || [];
+	});
+}
+
 async function emitGroupChatLiveOutput(
 	electronApp: ElectronApplication,
 	payload: { groupChatId: string; participantName: string; chunk: string }
@@ -474,6 +510,52 @@ async function emitGroupChatAgentError(
 			eventPayload.error
 		);
 	}, payload);
+}
+
+async function installGroupChatExportCapture(window: Page) {
+	await window.evaluate(() => {
+		const state = window as typeof window & {
+			__maestroE2eGroupChatExport?: GroupChatExportCapture;
+		};
+		state.__maestroE2eGroupChatExport = {};
+
+		URL.createObjectURL = (blob: Blob) => {
+			void blob.text().then((html) => {
+				state.__maestroE2eGroupChatExport = {
+					...state.__maestroE2eGroupChatExport,
+					html,
+				};
+			});
+			return 'blob:maestro-e2e-group-chat-export';
+		};
+		URL.revokeObjectURL = () => {};
+
+		const createElement = document.createElement.bind(document);
+		document.createElement = ((tagName: string, options?: ElementCreationOptions) => {
+			const element = createElement(tagName, options);
+			if (tagName.toLowerCase() === 'a') {
+				const anchor = element as HTMLAnchorElement;
+				anchor.click = () => {
+					state.__maestroE2eGroupChatExport = {
+						...state.__maestroE2eGroupChatExport,
+						download: anchor.download,
+						href: anchor.href,
+					};
+				};
+			}
+			return element;
+		}) as typeof document.createElement;
+	});
+}
+
+async function getGroupChatExportCapture(window: Page) {
+	return window.evaluate(() => {
+		const state = window as typeof window & {
+			__maestroE2eGroupChatExport?: GroupChatExportCapture;
+		};
+
+		return state.__maestroE2eGroupChatExport || {};
+	});
 }
 
 async function stubGroupChatModalAgents(electronApp: ElectronApplication, hasAgents = true) {
@@ -698,6 +780,59 @@ test.describe('Seeded Group Chat workspace', () => {
 		await expect(
 			window.getByRole('button', { name: 'Group Chat: Renamed Coverage Room' })
 		).toBeVisible();
+	});
+
+	test('copies Group Chat info metadata and opens the chat folder', async () => {
+		await stubGroupChatShellPath(electronApp);
+		await electronApp.evaluate(({ clipboard }) => clipboard.writeText(''));
+		await openCoverageRoom();
+		await window.getByTitle('Info').click();
+
+		const infoDialog = window.getByRole('dialog', { name: 'Group Chat Info' });
+		await expect(infoDialog).toBeVisible();
+		const idRow = infoDialog
+			.getByText('Group Chat ID')
+			.locator('xpath=ancestor::div[contains(@class, "py-2")][1]');
+		await idRow.getByTitle('Copy to clipboard').click();
+		await expect
+			.poll(() => electronApp.evaluate(({ clipboard }) => clipboard.readText()))
+			.toBe(seededWorkbench.groupChats[0].id);
+
+		const logRow = infoDialog
+			.getByText('Chat Log')
+			.locator('xpath=ancestor::div[contains(@class, "py-2")][1]');
+		await logRow.getByTitle('Copy to clipboard').click();
+		await expect
+			.poll(() => electronApp.evaluate(({ clipboard }) => clipboard.readText()))
+			.toContain(`/group-chats/${seededWorkbench.groupChats[0].id}/chat.log`);
+
+		await infoDialog.getByRole('button', { name: 'Open in Finder' }).click();
+		const shellCalls = await getStubbedGroupChatShellPathCalls(electronApp);
+		expect(shellCalls).toEqual([
+			{
+				type: 'openPath',
+				itemPath: expect.stringContaining(`/group-chats/${seededWorkbench.groupChats[0].id}`),
+			},
+		]);
+	});
+
+	test('exports the Group Chat info overlay transcript as an HTML download', async () => {
+		await installGroupChatExportCapture(window);
+		await openCoverageRoom();
+		await window.getByTitle('Info').click();
+
+		const infoDialog = window.getByRole('dialog', { name: 'Group Chat Info' });
+		await expect(infoDialog).toBeVisible();
+		await infoDialog.getByRole('button', { name: 'Export HTML' }).click();
+
+		await expect
+			.poll(async () => (await getGroupChatExportCapture(window)).html || '')
+			.toContain('Coverage Room - Maestro Group Chat Export');
+		const exportCapture = await getGroupChatExportCapture(window);
+		expect(exportCapture.download).toBe('coverage-room-export.html');
+		expect(exportCapture.href).toBe('blob:maestro-e2e-group-chat-export');
+		expect(exportCapture.html).toContain('Reviewed README.md and found no blocker.');
+		expect(exportCapture.html).toContain('Reviewer');
 	});
 
 	test('opens the edit modal from the Left Bar context menu', async () => {
