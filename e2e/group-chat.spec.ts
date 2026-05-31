@@ -1677,6 +1677,22 @@ test.describe('Seeded Group Chat workspace', () => {
 		await expect(details.getByText('codex --group-participant Reviewer')).toBeVisible();
 	});
 
+	test('opens the active group chat from Process Monitor', async () => {
+		await stubGroupChatProcessMonitor(electronApp, seededWorkbench);
+		const processMonitor = await openProcessMonitor(window);
+
+		const groupChatRow = processMonitor
+			.getByRole('treeitem')
+			.filter({ hasText: 'Coverage Room' })
+			.first();
+		await expect(groupChatRow).toBeVisible();
+		await groupChatRow.getByRole('button', { name: 'Open' }).click();
+
+		await expect(processMonitor).toBeHidden();
+		await expect(window.getByRole('button', { name: 'Group Chat: Coverage Room' })).toBeVisible();
+		await expect(window.getByText('Reviewed README.md and found no blocker.')).toBeVisible();
+	});
+
 	test('filters mention suggestions and inserts a selected participant', async () => {
 		await openCoverageRoom();
 
@@ -1848,6 +1864,53 @@ test.describe('Seeded Group Chat workspace', () => {
 		await expect(window.getByText('QUEUED (1)')).toBeHidden();
 		const calls = await getStubbedGroupChatIpcActions(electronApp);
 		expect(calls.sendToModerator).toHaveLength(1);
+	});
+
+	test('expands and collapses a long queued Group Chat message', async () => {
+		await stubGroupChatIpcActions(electronApp);
+		await openCoverageRoom();
+
+		await window
+			.getByPlaceholder('Type a message... (@ to mention agent)')
+			.fill('Start the long queue coverage pass.');
+		await window.getByTitle('Send message').click();
+
+		const longQueuedMessage = [
+			'Queue line 1: summarize the pending architecture decision.',
+			'Queue line 2: verify the renderer state transition.',
+			'Queue line 3: confirm that the moderator sees the full follow-up.',
+			'Queue line 4: preserve this final marker for expansion coverage.',
+		].join('\n');
+		await window.getByPlaceholder('Type to queue message...').fill(longQueuedMessage);
+		await window.getByTitle('Queue message').click();
+
+		await expect(window.getByText('QUEUED (1)')).toBeVisible();
+		await expect(window.getByText('Queue line 4: preserve this final marker')).toBeHidden();
+		await window.getByRole('button', { name: /Show all/ }).click();
+		await expect(window.getByText('Queue line 4: preserve this final marker')).toBeVisible();
+		await window.getByRole('button', { name: 'Show less' }).click();
+		await expect(window.getByText('Queue line 4: preserve this final marker')).toBeHidden();
+	});
+
+	test('shows image attachment counts for queued Group Chat messages', async () => {
+		await stubGroupChatIpcActions(electronApp);
+		await openCoverageRoom();
+
+		await window
+			.getByPlaceholder('Type a message... (@ to mention agent)')
+			.fill('Start image queue coverage.');
+		await window.getByTitle('Send message').click();
+		await expect(window.getByPlaceholder('Type to queue message...')).toBeVisible();
+
+		await window.locator('#group-chat-image-input').setInputFiles(groupChatImagePath());
+		await expect(window.getByAltText('Staged image')).toBeVisible();
+		await window.getByPlaceholder('Type to queue message...').fill('Queue the attached image.');
+		await window.getByTitle('Queue message').click();
+
+		await expect(window.getByText('QUEUED (1)')).toBeVisible();
+		await expect(window.getByText('Queue the attached image.')).toBeVisible();
+		await expect(window.getByText('1 image attached')).toBeVisible();
+		await expect(window.getByAltText('Staged image')).toBeHidden();
 	});
 
 	test('routes Stop All for an active group chat', async () => {

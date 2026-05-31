@@ -343,25 +343,6 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 	}, [groupChatState, groupChatExecutionQueue, activeGroupChatId]);
 
 	// =======================================================================
-	// Navigate to group chat from ProcessMonitor
-	// =======================================================================
-
-	const handleProcessMonitorNavigateToGroupChat = useCallback((groupChatId: string) => {
-		const {
-			setActiveGroupChatId,
-			setGroupChatState,
-			setParticipantStates,
-			groupChatStates,
-			allGroupChatParticipantStates,
-		} = useGroupChatStore.getState();
-		const { closeModal } = useModalStore.getState();
-		setActiveGroupChatId(groupChatId);
-		setGroupChatState(groupChatStates.get(groupChatId) ?? 'idle');
-		setParticipantStates(allGroupChatParticipantStates.get(groupChatId) ?? new Map());
-		closeModal('processMonitor');
-	}, []);
-
-	// =======================================================================
 	// Core group chat handlers
 	// =======================================================================
 
@@ -418,6 +399,19 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 			}, 100);
 		}
 	}, []);
+
+	// =======================================================================
+	// Navigate to group chat from ProcessMonitor
+	// =======================================================================
+
+	const handleProcessMonitorNavigateToGroupChat = useCallback(
+		(groupChatId: string) => {
+			const { closeModal } = useModalStore.getState();
+			closeModal('processMonitor');
+			void handleOpenGroupChat(groupChatId);
+		},
+		[handleOpenGroupChat]
+	);
 
 	const handleCloseGroupChat = useCallback(() => {
 		resetGroupChatUI();
