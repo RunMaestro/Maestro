@@ -71,6 +71,25 @@ type GroupChatHistoryEntryPayload = {
 	fullResponse?: string;
 };
 
+type GroupChatParticipantPayload = {
+	name: string;
+	agentId: string;
+	sessionId: string;
+	addedAt: number;
+	agentSessionId?: string;
+	contextUsage?: number;
+	tokenCount?: number;
+	messageCount?: number;
+	totalCost?: number;
+	sshRemoteName?: string;
+};
+
+type GroupChatModeratorUsagePayload = {
+	contextUsage: number;
+	totalCost: number;
+	tokenCount: number;
+};
+
 function createGroupChatWorkbench() {
 	const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-e2e-group-chat-'));
 	const projectDir = path.join(homeDir, 'project');
@@ -538,6 +557,46 @@ async function emitGroupChatHistoryEntry(
 	}, payload);
 }
 
+async function emitGroupChatParticipantState(
+	electronApp: ElectronApplication,
+	payload: { groupChatId: string; participantName: string; state: 'idle' | 'working' }
+) {
+	await electronApp.evaluate(({ BrowserWindow }, eventPayload) => {
+		BrowserWindow.getAllWindows()[0]?.webContents.send(
+			'groupChat:participantState',
+			eventPayload.groupChatId,
+			eventPayload.participantName,
+			eventPayload.state
+		);
+	}, payload);
+}
+
+async function emitGroupChatParticipantsChanged(
+	electronApp: ElectronApplication,
+	payload: { groupChatId: string; participants: GroupChatParticipantPayload[] }
+) {
+	await electronApp.evaluate(({ BrowserWindow }, eventPayload) => {
+		BrowserWindow.getAllWindows()[0]?.webContents.send(
+			'groupChat:participantsChanged',
+			eventPayload.groupChatId,
+			eventPayload.participants
+		);
+	}, payload);
+}
+
+async function emitGroupChatModeratorUsage(
+	electronApp: ElectronApplication,
+	payload: { groupChatId: string; usage: GroupChatModeratorUsagePayload }
+) {
+	await electronApp.evaluate(({ BrowserWindow }, eventPayload) => {
+		BrowserWindow.getAllWindows()[0]?.webContents.send(
+			'groupChat:moderatorUsage',
+			eventPayload.groupChatId,
+			eventPayload.usage
+		);
+	}, payload);
+}
+
 async function installGroupChatExportCapture(window: Page) {
 	await window.evaluate(() => {
 		const state = window as typeof window & {
@@ -736,6 +795,13 @@ test.describe('Seeded Group Chat workspace', () => {
 		return window.locator('div.cursor-pointer').filter({ hasText: name }).first();
 	}
 
+	function participantCard(name: string) {
+		return window
+			.locator('.rounded-lg.border.p-3')
+			.filter({ has: window.getByText(name, { exact: true }) })
+			.first();
+	}
+
 	async function openCoverageRoom() {
 		const listItem = groupChatListItem('Coverage Room');
 		await expect(listItem).toBeVisible();
@@ -783,6 +849,73 @@ test.describe('Seeded Group Chat workspace', () => {
 		await expect(window.getByText('No entries match the selected filters.')).toBeVisible();
 		await window.getByRole('button', { name: 'Response' }).click();
 		await expect(window.getByText('Reviewed seeded group chat plan')).toBeVisible();
+	});
+
+	test('updates participant working state and clears peek output when idle', async () => {
+		await openCoverageRoom();
+
+		const implementerCard = participantCard('Implementer');
+		await emitGroupChatLiveOutput(electronApp, {
+			groupChatId: seededWorkbench.groupChats[0].id,
+			participantName: 'Implementer',
+			chunk: 'Implementer is drafting live output.',
+		});
+		await implementerCard.getByRole('button', { name: 'Peek' }).click();
+		await expect(implementerCard.getByText('Implementer is drafting live output.')).toBeVisible();
+
+		await emitGroupChatParticipantState(electronApp, {
+			groupChatId: seededWorkbench.groupChats[0].id,
+			participantName: 'Implementer',
+			state: 'working',
+		});
+		await expect(implementerCard.getByTitle('Working')).toBeVisible();
+
+		await emitGroupChatParticipantState(electronApp, {
+			groupChatId: seededWorkbench.groupChats[0].id,
+			participantName: 'Implementer',
+			state: 'idle',
+		});
+		await expect(implementerCard.getByTitle('Idle')).toBeVisible();
+		await expect(implementerCard.getByText('(no live output yet)')).toBeVisible();
+	});
+
+	test('updates participants and moderator usage from Group Chat IPC events', async () => {
+		await openCoverageRoom();
+
+		await emitGroupChatParticipantsChanged(electronApp, {
+			groupChatId: seededWorkbench.groupChats[0].id,
+			participants: [
+				...seededWorkbench.groupChats[0].participants,
+				{
+					name: 'Architect',
+					agentId: 'codex',
+					sessionId: 'session-group-architect-e2e',
+					agentSessionId: 'architect-agent-session-e2e',
+					addedAt: Date.now(),
+					contextUsage: 31,
+					tokenCount: 2200,
+					messageCount: 2,
+					totalCost: 0.06,
+					sshRemoteName: 'builder',
+				},
+			],
+		});
+
+		const architectCard = participantCard('Architect');
+		await expect(architectCard).toBeVisible();
+		await expect(architectCard.getByText('BUILDER')).toBeVisible();
+		await expect(architectCard.getByText('31%')).toBeVisible();
+		await expect(architectCard.getByText('0.06')).toBeVisible();
+
+		await emitGroupChatModeratorUsage(electronApp, {
+			groupChatId: seededWorkbench.groupChats[0].id,
+			usage: { contextUsage: 55, totalCost: 0.07, tokenCount: 7700 },
+		});
+
+		const moderatorCard = participantCard('Moderator');
+		await expect(moderatorCard.getByText('55%')).toBeVisible();
+		await expect(moderatorCard.getByText('0.07')).toBeVisible();
+		await expect(window.getByTitle('Total accumulated cost')).toContainText('0.16');
 	});
 
 	test('filters Group Chat history with search and Escape restores entries', async () => {
