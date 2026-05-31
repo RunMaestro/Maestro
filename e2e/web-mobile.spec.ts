@@ -2949,6 +2949,93 @@ test.describe('Web Mobile Bridge', () => {
 		}
 	});
 
+	test('navigates mobile history detail entries with controls and keyboard', async ({ page }) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			await startWebServer(appWindow);
+			const sessionUrl = await toggleLive(appWindow, workbench.primarySessionId);
+			await page.setViewportSize({ width: 430, height: 820 });
+			await page.goto(sessionUrl);
+
+			await page.getByRole('button', { name: 'View history' }).click();
+			await expect(page.getByRole('heading', { name: 'History' })).toBeVisible();
+			await page.getByText('Auto Run finished the mobile bridge checklist').click();
+			await expect(
+				page.getByText('Auto Run detailed mobile bridge release notes and validation output.')
+			).toBeVisible();
+			await expect(page.getByText('1 / 2')).toBeVisible();
+			await expect(page.getByText('42%')).toBeVisible();
+			await expect(page.getByText('In: 2,100')).toBeVisible();
+			await expect(page.getByText('Out: 950')).toBeVisible();
+			await expect(page.getByText('$0.12').last()).toBeVisible();
+			await expect(page.getByRole('button', { name: 'Previous entry' })).toBeDisabled();
+
+			await page.getByRole('button', { name: 'Next entry' }).click();
+			await expect(
+				page.getByText('User-facing mobile bridge release summary with follow-up context.')
+			).toBeVisible();
+			await expect(page.getByText('2 / 2')).toBeVisible();
+			await expect(page.getByRole('button', { name: 'Next entry' })).toBeDisabled();
+
+			await page.keyboard.press('ArrowLeft');
+			await expect(
+				page.getByText('Auto Run detailed mobile bridge release notes and validation output.')
+			).toBeVisible();
+			await page.keyboard.press('Escape');
+			await expect(page.getByText('Auto Run detailed mobile bridge release notes')).toBeHidden();
+			await expect(page.getByRole('heading', { name: 'History' })).toBeVisible();
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
+	test('shows mobile history API errors inside the history panel', async ({ page }) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			await startWebServer(appWindow);
+			const sessionUrl = await toggleLive(appWindow, workbench.primarySessionId);
+			await page.setViewportSize({ width: 430, height: 820 });
+			await page.goto(sessionUrl);
+			await expect(page.getByText('Mobile Primary alpha response line one')).toBeVisible();
+			await page.evaluate(() => {
+				const originalFetch = window.fetch.bind(window);
+				window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+					const url =
+						typeof input === 'string'
+							? input
+							: input instanceof Request
+								? input.url
+								: input.toString();
+					if (url.includes('/api/history')) {
+						return Promise.resolve(
+							new Response(JSON.stringify({ error: 'history unavailable during E2E' }), {
+								status: 503,
+								statusText: 'Service Unavailable',
+								headers: { 'content-type': 'application/json' },
+							})
+						);
+					}
+					return originalFetch(input, init);
+				}) as typeof window.fetch;
+			});
+
+			await page.getByRole('button', { name: 'View history' }).click();
+			await expect(page.getByRole('heading', { name: 'History' })).toBeVisible();
+			await expect(page.getByText(/Failed to fetch history/)).toBeVisible();
+			await expect(page.getByText('Make sure the desktop app is running')).toBeVisible();
+			await page.getByRole('button', { name: 'Close history' }).click();
+			await expect(page.getByRole('heading', { name: 'History' })).toBeHidden();
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
 	test('shows offline fallback and restores the active mobile session when online', async ({
 		page,
 	}) => {
