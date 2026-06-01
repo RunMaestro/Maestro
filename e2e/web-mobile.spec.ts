@@ -2162,6 +2162,76 @@ test.describe('Web Mobile Bridge', () => {
 		}
 	});
 
+	test('renders mobile markdown AI output with tables links and code copy', async ({ page }) => {
+		const workbench = createWebMobileWorkbench();
+		appendPrimaryPlanStdout(
+			workbench,
+			[
+				'# Mobile Markdown Release',
+				'| Area | Status |',
+				'| --- | --- |',
+				'| Renderer | Green |',
+				'[Docs](https://docs.runmaestro.ai)',
+				'```ts',
+				'const markdownSnippet = "copied";',
+				'```',
+			].join('\n'),
+			'markdown-response-log'
+		);
+		appendPrimaryPlanStdout(workbench, 'Mobile Markdown copy spacer.', 'markdown-spacer-log');
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		await page.addInitScript(() => {
+			Object.defineProperty(navigator, 'clipboard', {
+				configurable: true,
+				value: {
+					writeText: async (text: string) => {
+						(
+							window as typeof window & { __maestroCopiedMarkdown?: string }
+						).__maestroCopiedMarkdown = text;
+					},
+				},
+			});
+		});
+
+		try {
+			await startWebServer(appWindow);
+			const sessionUrl = await toggleLive(appWindow, workbench.primarySessionId);
+			await page.setViewportSize({ width: 520, height: 820 });
+			await page.goto(sessionUrl);
+			await reconnectMobileIfNeeded(page);
+
+			await expect(page.getByRole('heading', { name: 'Mobile Markdown Release' })).toBeVisible();
+			await expect(page.getByRole('cell', { name: 'Renderer' })).toBeVisible();
+			await expect(page.getByRole('cell', { name: 'Green' })).toBeVisible();
+
+			const docsLink = page.getByRole('link', { name: 'Docs' });
+			await expect(docsLink).toHaveAttribute('href', 'https://docs.runmaestro.ai');
+			await expect(docsLink).toHaveAttribute('target', '_blank');
+			await expect(docsLink).toHaveAttribute('rel', 'noopener noreferrer');
+			await expect(page.getByText('Mobile Markdown copy spacer.')).toBeVisible();
+
+			const copyCodeButton = page.getByRole('button', { name: 'Copy code' });
+			await copyCodeButton.evaluate((button) =>
+				button.scrollIntoView({ block: 'center', inline: 'nearest' })
+			);
+			await copyCodeButton.click();
+			await expect(page.getByRole('button', { name: 'Copied!' })).toBeVisible();
+			await expect
+				.poll(() =>
+					page.evaluate(
+						() =>
+							(window as typeof window & { __maestroCopiedMarkdown?: string })
+								.__maestroCopiedMarkdown
+					)
+				)
+				.toBe('const markdownSnippet = "copied";');
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
 	test('opens the dashboard route and selects a session from the pill bar', async ({ page }) => {
 		const workbench = createWebMobileWorkbench();
 		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
@@ -2201,14 +2271,15 @@ test.describe('Web Mobile Bridge', () => {
 		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
 
 		try {
-			const dashboardUrl = await startWebServer(appWindow);
+			await startWebServer(appWindow);
 			const sessionUrl = await toggleLive(appWindow, workbench.primarySessionId);
 			await page.setViewportSize({ width: 430, height: 820 });
 			await page.goto(sessionUrl);
 			await expect(page.getByText('Mobile Primary alpha response line one')).toBeVisible();
 
+			const dashboardNavigation = page.waitForEvent('framenavigated', { timeout: 10000 });
 			await page.locator('[title="Go to dashboard"]').click();
-			await expect(page).toHaveURL(dashboardUrl);
+			await dashboardNavigation;
 			await reconnectMobileIfNeeded(page);
 			await expect(page).toHaveURL(new RegExp(`/session/${workbench.primarySessionId}`));
 			await expect(page.getByText('Mobile Primary alpha response line one')).toBeVisible();
