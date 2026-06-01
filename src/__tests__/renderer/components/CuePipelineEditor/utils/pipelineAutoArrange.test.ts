@@ -13,6 +13,11 @@ import {
 	untanglePipelineNodes,
 	arrangePipelineGroups,
 } from '../../../../../renderer/components/CuePipelineEditor/utils/pipelineAutoArrange';
+import {
+	NODE_BG_WIDTH,
+	NODE_BG_HEIGHT,
+	PIPELINE_GROUP_PADDING,
+} from '../../../../../renderer/components/CuePipelineEditor/utils/pipelineGraph';
 import type { CuePipeline, PipelineNode } from '../../../../../shared/cue-pipeline-types';
 
 function agentNode(id: string, x: number, y: number): PipelineNode {
@@ -307,5 +312,97 @@ describe('arrangePipelineGroups', () => {
 
 	it('returns an empty map when there is nothing to arrange', () => {
 		expect(arrangePipelineGroups([], new Map()).size).toBe(0);
+	});
+
+	// ── Masonry packing (tight, no whitespace blow-out) ──────────────────────
+	// Reconstruct each card's on-screen rect from the returned viewOffset using
+	// the SAME footprint math as groupInfo, so we can assert geometric packing
+	// properties the old uniform-grid layout violated.
+	function cardRect(p: CuePipeline, offset: { x: number; y: number }) {
+		const minX = Math.min(...p.nodes.map((n) => n.position.x));
+		const minY = Math.min(...p.nodes.map((n) => n.position.y));
+		const maxX = Math.max(...p.nodes.map((n) => n.position.x + NODE_BG_WIDTH));
+		const maxY = Math.max(...p.nodes.map((n) => n.position.y + NODE_BG_HEIGHT));
+		const width = maxX - minX + 2 * PIPELINE_GROUP_PADDING;
+		const height = maxY - minY + 2 * PIPELINE_GROUP_PADDING;
+		// Card renders at (minX + offset - PADDING); offset is what arrange returns.
+		const left = minX + offset.x - PIPELINE_GROUP_PADDING;
+		const top = minY + offset.y - PIPELINE_GROUP_PADDING;
+		return { left, top, right: left + width, bottom: top + height };
+	}
+
+	function rectsOverlap(a: ReturnType<typeof cardRect>, b: ReturnType<typeof cardRect>): boolean {
+		return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+	}
+
+	/** A tall pipeline (stacked nodes) and N single-node pipelines. */
+	function tallPipeline(id: string, rows: number): CuePipeline {
+		return pipeline({
+			id,
+			name: id,
+			nodes: Array.from({ length: rows }, (_, i) => agentNode(`${id}-a${i}`, 0, i * 200)),
+		});
+	}
+	function smallPipeline(id: string, currentY: number): CuePipeline {
+		return pipeline({
+			id,
+			name: id,
+			nodes: [agentNode(`${id}-a`, 0, 0)],
+			viewOffset: { x: 0, y: currentY },
+		});
+	}
+
+	it('packs cards without overlap (varied sizes)', () => {
+		const pipelines = [
+			tallPipeline('giant', 10),
+			smallPipeline('s1', 100),
+			smallPipeline('s2', 200),
+			smallPipeline('s3', 300),
+			smallPipeline('s4', 400),
+			smallPipeline('s5', 500),
+		];
+		const result = arrangePipelineGroups(pipelines, new Map());
+		const rects = pipelines.map((p) => cardRect(p, result.get(p.id)!));
+		for (let i = 0; i < rects.length; i++) {
+			for (let j = i + 1; j < rects.length; j++) {
+				expect(rectsOverlap(rects[i], rects[j])).toBe(false);
+			}
+		}
+	});
+
+	it('a tall pipeline does not strand short ones in dead space below it', () => {
+		// Old uniform grid forced every card in the giant's ROW to inherit its
+		// height, stacking later rows far below and leaving big gaps. Masonry
+		// drops short cards into other columns beside the giant, so the total
+		// vertical extent stays close to the giant's own height rather than
+		// growing by every short card's row.
+		const giant = tallPipeline('giant', 12);
+		const smalls = Array.from({ length: 5 }, (_, i) => smallPipeline(`s${i}`, (i + 1) * 100));
+		const pipelines = [giant, ...smalls];
+		const result = arrangePipelineGroups(pipelines, new Map());
+
+		const giantRect = cardRect(giant, result.get('giant')!);
+		const giantHeight = giantRect.bottom - giantRect.top;
+		const totalHeight =
+			Math.max(...pipelines.map((p) => cardRect(p, result.get(p.id)!).bottom)) -
+			Math.min(...pipelines.map((p) => cardRect(p, result.get(p.id)!).top));
+
+		// Masonry keeps the layout no taller than the giant (the short cards fit
+		// beside it in other columns). The old uniform grid stacked the short
+		// cards into extra ROWS below the giant, making the layout giant + several
+		// short rows tall — this asserts that dead space is gone.
+		const smallHeight = (() => {
+			const r = cardRect(smalls[0], result.get('s0')!);
+			return r.bottom - r.top;
+		})();
+		expect(totalHeight).toBeLessThanOrEqual(giantHeight + smallHeight);
+
+		// And at least one short card sits beside the giant (its top is above the
+		// giant's bottom while occupying a different column).
+		const beside = smalls.some((p) => {
+			const r = cardRect(p, result.get(p.id)!);
+			return r.top < giantRect.bottom && (r.right <= giantRect.left || r.left >= giantRect.right);
+		});
+		expect(beside).toBe(true);
 	});
 });

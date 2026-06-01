@@ -142,6 +142,15 @@ const mockStats = {
 	exportCsv: vi.fn(),
 };
 
+// When both Encore flags are on, the dashboard fetches Cue run totals alongside
+// the main aggregation (for the Overview "Activity Source" donut). The renderer
+// reads cueAgg.totals.{occurrences,totalDurationMs}; resolving to null is a
+// valid "no Cue data" response that the component handles, while still keeping
+// the bridge defined so the fetch doesn't throw a TypeError.
+const mockCueStats = {
+	getAggregation: vi.fn(),
+};
+
 const mockDialog = { saveFile: vi.fn() };
 const mockFs = { writeFile: vi.fn() };
 const mockAgents = {
@@ -205,8 +214,10 @@ beforeEach(() => {
 	mockAgents.getCodexUsageSnapshots.mockResolvedValue({});
 	mockAgents.refreshClaudeUsageSnapshots.mockResolvedValue({ refreshed: 1 });
 	mockAgents.refreshCodexUsageSnapshots.mockResolvedValue({ refreshed: 1 });
+	mockCueStats.getAggregation.mockResolvedValue(null);
 	(window as unknown as { maestro: Record<string, unknown> }).maestro = {
 		stats: mockStats,
+		cueStats: mockCueStats,
 		dialog: mockDialog,
 		fs: mockFs,
 		agents: mockAgents,

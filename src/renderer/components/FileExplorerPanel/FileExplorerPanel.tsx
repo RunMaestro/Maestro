@@ -11,7 +11,10 @@ import {
 	FolderOpen,
 	Server,
 	Copy,
+	FolderInput,
+	FolderUp,
 } from 'lucide-react';
+import { getBasename } from '../../../shared/formatters';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useGitDetail } from '../../contexts/GitStatusContext';
 import { buildChangedAncestors, buildFileChangeMap } from '../../utils/gitChangeMap';
@@ -268,6 +271,8 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 
 	const {
 		dragOverFolder,
+		isExternalDrag,
+		internalDragActive,
 		moveConflict,
 		isMoving,
 		handleFolderDrop,
@@ -278,6 +283,8 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 		handleMoveAutoRenameAll,
 		handleMoveSkipConflicts,
 		closeMoveConflict,
+		handleInternalDragStart,
+		handleInternalDragEnd,
 	} = useDragToMove({
 		session,
 		sshRemoteId,
@@ -374,10 +381,11 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 			handleFolderDrop(e, '');
 		}
 	};
-	// `dragOverFolder === ''` is only ever set by an OS-file drag hovering the
-	// panel background (folder rows set their own relative path), so it uniquely
-	// flags "drop into the tree root".
-	const isRootDropTarget = dragOverFolder === '';
+	// `dragOverFolder === ''` flags "drop into the tree root". It's set both by an
+	// OS-file drag over the panel background and by an in-tree drag hovering the
+	// "move to root" receptacle - gate on isExternalDrag so the whole-panel import
+	// outline fires only for the former; the receptacle highlights itself.
+	const isRootDropTarget = dragOverFolder === '' && isExternalDrag;
 
 	return (
 		<div
@@ -596,6 +604,33 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 				</div>
 			</div>
 
+			{/* Move-to-root receptacle — appears only while an in-tree row is being
+			    dragged, giving items buried in subfolders a target to land back at
+			    the workspace root. Mirrors the Left Bar's "Drop here to ungroup"
+			    zone for UI consistency. Items already at root are rejected by the
+			    drag-over handler (it sets dropEffect 'none'), so the highlight only
+			    lights up for drops that would actually move something. */}
+			{internalDragActive && (
+				<div
+					className="mb-2 px-3 py-2 rounded border-2 border-dashed text-center text-xs flex items-center justify-center gap-1.5 transition-colors"
+					onDragEnter={(e) => handleFolderDragEnter(e, '')}
+					onDragOver={(e) => handleFolderDragOver(e, '')}
+					onDragLeave={handleFolderDragLeave}
+					onDrop={(e) => handleFolderDrop(e, '')}
+					style={{
+						borderColor: theme.colors.accent,
+						color: theme.colors.textDim,
+						backgroundColor:
+							dragOverFolder === '' && !isExternalDrag
+								? `${theme.colors.accent}25`
+								: `${theme.colors.accent}10`,
+					}}
+				>
+					<FolderUp className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+					Drop here to move to root
+				</div>
+			)}
+
 			{/* File tree content */}
 			{session.fileTreeError ? (
 				<div className="flex flex-col items-center justify-center gap-3 py-8">
@@ -728,6 +763,8 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 											handleFolderDragOver={handleFolderDragOver}
 											handleFolderDragLeave={handleFolderDragLeave}
 											handleFolderDrop={handleFolderDrop}
+											onInternalDragStart={handleInternalDragStart}
+											onInternalDragEnd={handleInternalDragEnd}
 											toggleFolder={toggleFolder}
 											toggleFolderRecursive={toggleFolderRecursive}
 											setSessions={setSessions}
@@ -896,6 +933,37 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 					onAutoRenameAll={handleMoveAutoRenameAll}
 					onSkipConflicts={handleMoveSkipConflicts}
 				/>
+			)}
+
+			{/* OS-file import overlay — explains what dropping a Finder/Explorer file
+			    does, mirroring the main panel's chat-drop hint. Shown only for
+			    external drags (isExternalDrag); in-tree moves get row highlighting
+			    instead. `pointer-events-none` lets dragover/drop pass through to the
+			    folder rows underneath so the target still resolves. */}
+			{isExternalDrag && dragOverFolder !== null && (
+				<div
+					className="absolute inset-0 z-50 flex items-center justify-center pointer-events-none"
+					style={{ backgroundColor: `${theme.colors.accent}20` }}
+				>
+					<div
+						className="rounded-xl border-2 border-dashed p-6 flex flex-col items-center gap-2 mx-4 text-center"
+						style={{
+							borderColor: theme.colors.accent,
+							backgroundColor: `${theme.colors.bgMain}ee`,
+						}}
+					>
+						<FolderInput className="w-12 h-12" style={{ color: theme.colors.accent }} />
+						<span className="text-base font-medium" style={{ color: theme.colors.textMain }}>
+							Drop to import
+						</span>
+						<span className="text-sm" style={{ color: theme.colors.textDim }}>
+							{dragOverFolder
+								? `Copies into "${getBasename(dragOverFolder)}".`
+								: 'Copies into this workspace.'}{' '}
+							Originals stay where they are.
+						</span>
+					</div>
+				</div>
 			)}
 		</div>
 	);

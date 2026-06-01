@@ -128,6 +128,12 @@ export function useGroupManagement(deps: UseGroupManagementDeps): UseGroupManage
 	 */
 	const handleDropOnGroup = useCallback(
 		(groupId: string) => {
+			console.log(
+				'[DND-DEBUG] handleDropOnGroup fired — groupId=',
+				groupId,
+				'draggingSessionId=',
+				draggingSessionId
+			);
 			if (draggingSessionId) {
 				setSessions((prev) =>
 					prev.map((s) => {
@@ -147,6 +153,7 @@ export function useGroupManagement(deps: UseGroupManagementDeps): UseGroupManage
 	 * Drop a session on ungrouped area
 	 */
 	const handleDropOnUngrouped = useCallback(() => {
+		console.log('[DND-DEBUG] handleDropOnUngrouped fired — draggingSessionId=', draggingSessionId);
 		if (draggingSessionId) {
 			setSessions((prev) =>
 				prev.map((s) => {

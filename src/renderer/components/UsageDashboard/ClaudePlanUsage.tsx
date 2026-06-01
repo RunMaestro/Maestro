@@ -196,24 +196,28 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 					theme={theme}
 				/>
 			);
-			// pr-8 reserves a gutter for the absolutely-positioned toggle so it never
-			// overlaps the account header text or the first bar's reset caption.
+			// Toggle sits inline to the left of the account pill (items-start keeps
+			// it aligned with the header row, not centered against the full row).
+			// Only the body dims when hidden so the toggle stays clearly clickable.
 			return (
 				<div
 					key={configDirKey}
-					className="relative pr-8"
+					className="flex items-start gap-2"
 					data-testid={`${TEST_ID_PREFIX}-account-${shortName}${isHidden ? '-hidden' : ''}`}
 				>
-					<div className="absolute top-0 right-0 z-10">
-						<QuotaVisibilityToggle
-							theme={theme}
-							hidden={isHidden}
-							shortName={shortName}
-							testIdPrefix={TEST_ID_PREFIX}
-							onToggle={() => toggleHidden(PROVIDER_ID, configDirKey)}
-						/>
+					<QuotaVisibilityToggle
+						theme={theme}
+						hidden={isHidden}
+						shortName={shortName}
+						testIdPrefix={TEST_ID_PREFIX}
+						onToggle={() => toggleHidden(PROVIDER_ID, configDirKey)}
+					/>
+					<div
+						className="flex-1 min-w-0"
+						style={{ opacity: isHidden ? 0.45 : 1, transition: 'opacity 0.2s' }}
+					>
+						{body}
 					</div>
-					<div style={{ opacity: isHidden ? 0.45 : 1, transition: 'opacity 0.2s' }}>{body}</div>
 				</div>
 			);
 		},

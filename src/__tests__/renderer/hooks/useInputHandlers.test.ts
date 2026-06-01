@@ -1635,6 +1635,32 @@ describe('useInputHandlers', () => {
 			expect(result.current.inputValue).toBe('@src/main/index.ts ');
 		});
 
+		it('inserts one @<path> per file when a multi-selection Files-panel drag is dropped', () => {
+			const deps = createMockDeps();
+			const { result } = renderHook(() => useInputHandlers(deps));
+
+			const paths = ['src/a.ts', 'src/b.ts', 'src/c.ts'];
+			const dropEvent = {
+				preventDefault: vi.fn(),
+				dataTransfer: {
+					getData: (type: string) => {
+						if (type === 'application/x-maestro-file-paths') return JSON.stringify(paths);
+						// Drag start also packs the grabbed row in the single MIME; the
+						// multi MIME must take precedence so every selected path lands.
+						if (type === 'application/x-maestro-file-path') return 'src/a.ts';
+						return '';
+					},
+					files: { length: 0 } as any,
+				},
+			} as unknown as React.DragEvent;
+
+			act(() => {
+				result.current.handleDrop(dropEvent);
+			});
+
+			expect(result.current.inputValue).toBe('@src/a.ts @src/b.ts @src/c.ts ');
+		});
+
 		it('appends @<path> with a separating space when input already has content', () => {
 			const deps = createMockDeps();
 			const { result } = renderHook(() => useInputHandlers(deps));

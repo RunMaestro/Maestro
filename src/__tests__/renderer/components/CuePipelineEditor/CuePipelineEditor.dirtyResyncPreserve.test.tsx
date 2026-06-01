@@ -189,6 +189,18 @@ function makePipelines() {
 	];
 }
 
+/** A pipeline-group "band" backdrop node — only present in the All-Pipelines view. */
+function makeBandNode(pipelineId: string) {
+	return {
+		id: `pipeline-group:${pipelineId}`,
+		type: 'pipeline-group',
+		position: { x: -28, y: 682 },
+		data: { pipelineName: 'Pipeline 1', color: '#06b6d4', width: 376, height: 156 },
+		selectable: false,
+		draggable: true,
+	};
+}
+
 describe('CuePipelineEditor — resync preserves live positions when pipelineState is unchanged', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
@@ -400,5 +412,74 @@ describe('CuePipelineEditor — resync preserves live positions when pipelineSta
 		expect(capturedNodes.map((n) => n.id).sort()).toEqual(['p1:agent-1', 'p1:agent-2']);
 		const newNode = capturedNodes.find((n) => n.id === 'p1:agent-2');
 		expect(newNode!.position).toEqual({ x: 500, y: 500 });
+	});
+
+	it('band appears on a later fire (selection-change lag): content takes fresh All-view geometry, not stranded single-view positions', () => {
+		// Real-world repro of the "nodes outside the block on first open" bug.
+		// Switching single → All flips `selectedPipelineId` AND recomputes
+		// `computedNodes` (which gains the pipeline-group "band" backdrop and
+		// applies the per-pipeline `viewOffset` to content). When those land in
+		// SEPARATE effect fires, the `selectionChanged` ref is consumed on the
+		// first fire — while displayNodes still holds single-view geometry and no
+		// band — so the second fire (band now present) sees selectionChanged=false
+		// and the bare `pipelinesChanged || selectionChanged` guard would PRESERVE
+		// stale single-view content positions while the freshly-added band lands at
+		// its All-view spot, stranding every node above/outside its band.
+		// The band-presence guard (`hadBands !== hasBands`) forces a full fresh
+		// sync on that second fire.
+
+		// Mount: single view, content at (0,0), no band.
+		const pipelines = makePipelines();
+		mockUsePipelineState.mockReturnValue(buildStateHookReturn(pipelines));
+		mockConvertToReactFlowNodes.mockReturnValue([makeNode('p1:agent-1', 0, 0)]);
+		const { rerender } = renderEditor();
+
+		// Fire 1: selection flips to null but computedNodes still lacks the band
+		// (single-view geometry lags a render). selectionChanged is consumed here,
+		// so displayNodes resyncs to single-view content with no band.
+		mockUsePipelineState.mockReturnValue(
+			buildStateHookReturn(pipelines, {
+				pipelineState: { pipelines, selectedPipelineId: null },
+				isAllPipelinesView: true,
+			})
+		);
+		mockConvertToReactFlowNodes.mockReturnValue([makeNode('p1:agent-1', 0, 0)]);
+		rerender(
+			<CuePipelineEditor
+				sessions={[]}
+				graphSessions={[]}
+				onSwitchToSession={vi.fn()}
+				onClose={vi.fn()}
+				theme={mockTheme}
+			/>
+		);
+
+		// Fire 2: same pipelines ref + same (null) selection, but computedNodes now
+		// includes the band and the viewOffset-shifted content position.
+		mockUsePipelineState.mockReturnValue(
+			buildStateHookReturn(pipelines, {
+				pipelineState: { pipelines, selectedPipelineId: null },
+				isAllPipelinesView: true,
+			})
+		);
+		mockConvertToReactFlowNodes.mockReturnValue([
+			makeBandNode('p1'),
+			makeNode('p1:agent-1', 0, 710),
+		]);
+		rerender(
+			<CuePipelineEditor
+				sessions={[]}
+				graphSessions={[]}
+				onSwitchToSession={vi.fn()}
+				onClose={vi.fn()}
+				theme={mockTheme}
+			/>
+		);
+
+		// Band must be present, and content must take the fresh All-view position
+		// (0, 710) — NOT the stale single-view (0, 0) that left it above the band.
+		expect(capturedNodes.some((n) => n.id === 'pipeline-group:p1')).toBe(true);
+		const node = capturedNodes.find((n) => n.id === 'p1:agent-1');
+		expect(node!.position).toEqual({ x: 0, y: 710 });
 	});
 });

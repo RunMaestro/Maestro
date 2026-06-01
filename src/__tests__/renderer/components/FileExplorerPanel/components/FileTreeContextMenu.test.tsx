@@ -28,7 +28,15 @@ const theme = {
 const contextMenuPos = { top: 100, left: 200, ready: true };
 
 const fileNode: FileNode = { name: 'App.tsx', type: 'file' };
-const folderNode: FileNode = { name: 'src', type: 'folder' };
+const folderNode: FileNode = {
+	name: 'src',
+	type: 'folder',
+	children: [
+		{ name: 'index.ts', type: 'file' },
+		{ name: 'utils', type: 'folder', children: [{ name: 'helpers.ts', type: 'file' }] },
+	],
+};
+const emptyFolderNode: FileNode = { name: 'empty', type: 'folder', children: [] };
 const htmlNode: FileNode = { name: 'index.html', type: 'file' };
 const mdNode: FileNode = { name: 'README.MD', type: 'file' };
 
@@ -88,9 +96,30 @@ describe('FileTreeContextMenu', () => {
 		render(<FileTreeContextMenu {...defaultProps} contextMenu={makeContextMenu(folderNode)} />);
 		expect(screen.getByText('New File')).toBeTruthy();
 		expect(screen.getByText('New Folder')).toBeTruthy();
-		expect(screen.getByText('Preview All Files in Folder')).toBeTruthy();
+		// Count is recursive (index.ts + utils/helpers.ts) and pluralized.
+		expect(screen.getByText('Preview All 2 Files in Folder')).toBeTruthy();
 		expect(screen.getByText('Copy Path')).toBeTruthy();
 		expect(screen.queryByText('Preview')).toBeNull();
+	});
+
+	it('pluralizes the preview-all label to singular for one previewable file', () => {
+		const singleFileFolder: FileNode = {
+			name: 'docs',
+			type: 'folder',
+			children: [{ name: 'readme.md', type: 'file' }],
+		};
+		render(
+			<FileTreeContextMenu {...defaultProps} contextMenu={makeContextMenu(singleFileFolder)} />
+		);
+		expect(screen.getByText('Preview All 1 File in Folder')).toBeTruthy();
+	});
+
+	it('hides the preview-all option for a folder with no previewable files', () => {
+		render(
+			<FileTreeContextMenu {...defaultProps} contextMenu={makeContextMenu(emptyFolderNode)} />
+		);
+		expect(screen.getByText('New File')).toBeTruthy();
+		expect(screen.queryByText(/Preview All .* in Folder/)).toBeNull();
 	});
 
 	it('shows "Open in Maestro Browser" for HTML files (local only)', () => {

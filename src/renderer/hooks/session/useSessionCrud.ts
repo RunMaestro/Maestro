@@ -463,6 +463,7 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 	// ========================================================================
 	const handleDragStart = useCallback(
 		(sessionId: string) => {
+			console.log('[DND-DEBUG] dragStart — sessionId=', sessionId);
 			setDraggingSessionId(sessionId);
 		},
 		[setDraggingSessionId]
@@ -470,6 +471,7 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 
 	const handleDragOver = useCallback((e: React.DragEvent) => {
 		e.preventDefault();
+		if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
 	}, []);
 
 	// ========================================================================

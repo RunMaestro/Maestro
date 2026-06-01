@@ -44,6 +44,7 @@ import {
 
 // Step between successive node top-left corners. Tight enough to read as one
 // pipeline, loose enough that nodes and their edge labels never touch.
+// (All-Pipelines card packing uses a shortest-column masonry; see arrangePipelineGroups.)
 const NODE_COL_SPACING = 300; // horizontal distance between rank columns
 const NODE_ROW_SPACING = 130; // vertical distance between nodes in a column
 
@@ -420,13 +421,24 @@ function groupInfo(
 }
 
 /**
- * Pack pipeline group cards into a balanced grid. Returns a map of pipeline id
+ * Pack pipeline group cards into a tight masonry. Returns a map of pipeline id
  * → new `viewOffset`. Pipelines are visited in their current reading order
- * (top-to-bottom, then left-to-right) so the grid keeps roughly the same
- * sequence the user already sees — it just removes the gaps and ragged edges.
+ * (top-to-bottom, then left-to-right) and dealt into columns, so the layout
+ * keeps roughly the sequence the user already sees while removing gaps.
  *
- * Columns share a uniform width (the widest card) so left edges line up; each
- * row's height is the tallest card in that row, so rows pack without overlap.
+ * Why masonry instead of a uniform grid: a rigid grid sizes every column to the
+ * widest card and every row to its tallest card. With one large pipeline (e.g. a
+ * 27-node graph that's ~1600px wide and ~3000px tall), that blows out EVERY cell
+ * — narrow two-node pipelines inherit the giant's column width and the giant's
+ * row inherits its height, stranding small cards in a sea of whitespace (the
+ * "Arrange didn't straighten anything" complaint). Masonry sidesteps both:
+ *
+ *   - Each card drops into the currently-SHORTEST column, so a single tall
+ *     pipeline occupies one column while the rest fill the others. No card
+ *     inherits another's height.
+ *   - Each column is only as wide as ITS widest card, so a column of small
+ *     pipelines stays narrow next to the giant's column. No card inherits
+ *     another's width.
  *
  * @param currentOffsets auto-stack Y-offsets (from computePipelineYOffsets) so
  *   pipelines that have never been dragged still report a sensible current
@@ -448,22 +460,39 @@ export function arrangePipelineGroups(
 	infos.sort((a, b) => a.currentY - b.currentY || a.currentX - b.currentX);
 
 	const cols = Math.max(1, Math.round(Math.sqrt(infos.length)));
-	const colWidth = Math.max(...infos.map((i) => i.width));
 
-	let rowTop = 0;
-	for (let start = 0; start < infos.length; start += cols) {
-		const rowItems = infos.slice(start, start + cols);
-		const rowHeight = Math.max(...rowItems.map((i) => i.height));
-		rowItems.forEach((info, col) => {
-			const cellX = col * (colWidth + GROUP_GAP);
-			// Place the card's padded top-left corner at (cellX, rowTop). The card
+	// Deal each card into the shortest column (running height includes the gap).
+	const colCards: GroupInfo[][] = Array.from({ length: cols }, () => []);
+	const colHeights = new Array<number>(cols).fill(0);
+	for (const info of infos) {
+		let shortest = 0;
+		for (let c = 1; c < cols; c++) {
+			if (colHeights[c] < colHeights[shortest]) shortest = c;
+		}
+		colCards[shortest].push(info);
+		colHeights[shortest] += info.height + GROUP_GAP;
+	}
+
+	// Column x-origins from per-column widths so left edges line up snugly.
+	const colWidths = colCards.map((cards) =>
+		cards.length === 0 ? 0 : Math.max(...cards.map((i) => i.width))
+	);
+	const colX = new Array<number>(cols).fill(0);
+	for (let c = 1; c < cols; c++) {
+		colX[c] = colX[c - 1] + colWidths[c - 1] + GROUP_GAP;
+	}
+
+	for (let c = 0; c < cols; c++) {
+		let top = 0;
+		for (const info of colCards[c]) {
+			// Place the card's padded top-left corner at (colX, top). The card
 			// renders at (minX + offset - PADDING), so solve offset for that origin.
 			result.set(info.id, {
-				x: cellX - (info.minX - PIPELINE_GROUP_PADDING),
-				y: rowTop - (info.minY - PIPELINE_GROUP_PADDING),
+				x: colX[c] - (info.minX - PIPELINE_GROUP_PADDING),
+				y: top - (info.minY - PIPELINE_GROUP_PADDING),
 			});
-		});
-		rowTop += rowHeight + GROUP_GAP;
+			top += info.height + GROUP_GAP;
+		}
 	}
 	return result;
 }

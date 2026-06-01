@@ -493,4 +493,73 @@ describe('SourceDistributionChart', () => {
 			expect(firstPath.style.transition).toContain('opacity');
 		});
 	});
+
+	describe('Cue slice (3-way breakdown)', () => {
+		it('renders only Interactive and Auto Run when cueTotals is omitted', () => {
+			render(<SourceDistributionChart data={mockData} theme={theme} />);
+
+			expect(screen.getByText('Session Type')).toBeInTheDocument();
+			expect(screen.getByText('Interactive')).toBeInTheDocument();
+			expect(screen.getByText('Auto Run')).toBeInTheDocument();
+			expect(screen.queryByText('Cue')).not.toBeInTheDocument();
+		});
+
+		it('adds a Cue slice and relabels the chart when cueTotals is provided', () => {
+			render(
+				<SourceDistributionChart
+					data={mockData}
+					theme={theme}
+					cueTotals={{ occurrences: 15, totalDurationMs: 600000 }}
+				/>
+			);
+
+			// Title switches from "Session Type" to the broader "Activity Source"
+			expect(screen.getByText('Activity Source')).toBeInTheDocument();
+			expect(screen.queryByText('Session Type')).not.toBeInTheDocument();
+			expect(screen.getByText('Cue')).toBeInTheDocument();
+		});
+
+		it('hides the Cue slice (and keeps the Session Type title) when Cue is idle in range', () => {
+			render(
+				<SourceDistributionChart
+					data={mockData}
+					theme={theme}
+					cueTotals={{ occurrences: 0, totalDurationMs: 0 }}
+				/>
+			);
+
+			// Cue enabled but zero usage: zero-value slices are hidden, matching
+			// the original two-way donut, so the chart looks unchanged.
+			expect(screen.getByText('Session Type')).toBeInTheDocument();
+			expect(screen.queryByText('Cue')).not.toBeInTheDocument();
+		});
+
+		it('includes Cue occurrences in the count total and percentages', () => {
+			// user 35 + auto 15 + cue 50 = 100 total; Cue should read 50.0%
+			render(
+				<SourceDistributionChart
+					data={mockData}
+					theme={theme}
+					cueTotals={{ occurrences: 50, totalDurationMs: 600000 }}
+				/>
+			);
+
+			expect(screen.getByText('100')).toBeInTheDocument();
+			expect(screen.getByText(/50\.0%/)).toBeInTheDocument();
+		});
+
+		it('treats an all-zero range with Cue enabled as having data', () => {
+			render(
+				<SourceDistributionChart
+					data={emptyData}
+					theme={theme}
+					cueTotals={{ occurrences: 4, totalDurationMs: 120000 }}
+				/>
+			);
+
+			// With Cue occurrences present, the empty-state message must not show.
+			expect(screen.queryByText('No source data available')).not.toBeInTheDocument();
+			expect(screen.getByText('Cue')).toBeInTheDocument();
+		});
+	});
 });

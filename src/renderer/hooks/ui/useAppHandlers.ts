@@ -257,6 +257,10 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 		};
 
 		const handleDocumentDrop = (e: DragEvent) => {
+			console.log(
+				'[DND-DEBUG] document drop (capture) — clearing draggingSessionId; current=',
+				useUIStore.getState().draggingSessionId
+			);
 			e.preventDefault();
 			handleDragEnd();
 		};
@@ -283,6 +287,14 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 		// call handleDragEnd() mid-drag, clear draggingSessionId, and silently
 		// break drag-to-group / drag-to-ungroup before the drop ever lands.
 		const handleDocumentDragLeave = (e: DragEvent) => {
+			console.log(
+				'[DND-DEBUG] document dragleave — counter=',
+				dragCounterRef.current,
+				'relatedTarget=',
+				e.relatedTarget,
+				'dragging=',
+				useUIStore.getState().draggingSessionId
+			);
 			if (dragCounterRef.current === 0) return;
 			const leftWindow =
 				e.relatedTarget === null ||
@@ -301,6 +313,10 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 		// on mouseup so a row can never stay faded once the mouse is up.
 		const handleMouseUp = () => {
 			if (useUIStore.getState().draggingSessionId !== null) {
+				console.log(
+					'[DND-DEBUG] mouseup — clearing draggingSessionId=',
+					useUIStore.getState().draggingSessionId
+				);
 				useUIStore.getState().setDraggingSessionId(null);
 			}
 		};

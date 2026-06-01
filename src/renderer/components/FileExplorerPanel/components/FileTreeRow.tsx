@@ -46,6 +46,8 @@ interface FileTreeRowProps {
 	handleFolderDragOver: (e: React.DragEvent, destFolderRelative: string) => void;
 	handleFolderDragLeave: (e: React.DragEvent) => void;
 	handleFolderDrop: (e: React.DragEvent, destFolderRelative: string) => void;
+	onInternalDragStart: () => void;
+	onInternalDragEnd: () => void;
 	toggleFolder: (
 		path: string,
 		activeSessionId: string,
@@ -88,6 +90,8 @@ export const FileTreeRow = memo(function FileTreeRow({
 	handleFolderDragOver,
 	handleFolderDragLeave,
 	handleFolderDrop,
+	onInternalDragStart,
+	onInternalDragEnd,
 	toggleFolder,
 	toggleFolderRecursive,
 	setSessions,
@@ -178,6 +182,8 @@ export const FileTreeRow = memo(function FileTreeRow({
 			}}
 			draggable
 			onDragStart={(e) => {
+				// Reveal the "move to root" receptacle for the duration of the drag.
+				onInternalDragStart();
 				// If this row is part of an active multi-selection, drag the whole
 				// group; otherwise drag just this row (and collapse selection so
 				// it visually matches what's being dragged).
@@ -198,6 +204,7 @@ export const FileTreeRow = memo(function FileTreeRow({
 				// (insert @mention without moving the source file).
 				e.dataTransfer.effectAllowed = 'copyMove';
 			}}
+			onDragEnd={onInternalDragEnd}
 			onDragEnter={isFolder ? (e) => handleFolderDragEnter(e, fullPath) : undefined}
 			onDragOver={isFolder ? (e) => handleFolderDragOver(e, fullPath) : undefined}
 			onDragLeave={isFolder ? handleFolderDragLeave : undefined}

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import {
 	Copy,
@@ -13,6 +13,7 @@ import {
 	Files,
 } from 'lucide-react';
 import { getRevealLabel } from '../../../utils/platformUtils';
+import { collectPreviewableFiles } from '../utils/pathHelpers';
 import type { Theme } from '../../../types';
 import type { ContextMenuState } from '../types';
 
@@ -70,6 +71,13 @@ export function FileTreeContextMenu({
 	const isFolder = contextMenu.node.type === 'folder';
 	const isFile = contextMenu.node.type === 'file';
 	const nodeName = contextMenu.node.name.toLowerCase();
+	// Count previewable files under this folder (recursively, excluding ones that
+	// open externally). Drives the dynamic label and lets us hide the option when
+	// there's nothing to preview. Reuses the same collector the action runs.
+	const previewableCount = useMemo(
+		() => (isFolder ? collectPreviewableFiles(contextMenu.node, contextMenu.path).length : 0),
+		[isFolder, contextMenu.node, contextMenu.path]
+	);
 	const platform = window.maestro?.platform ?? 'unknown';
 	const isHtml = isFile && (nodeName.endsWith('.html') || nodeName.endsWith('.htm'));
 	const isMarkdown = isFile && (nodeName.endsWith('.md') || nodeName.endsWith('.markdown'));
@@ -139,14 +147,19 @@ export function FileTreeContextMenu({
 									<FolderPlus className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
 									<span>New Folder</span>
 								</button>
-								<button
-									onClick={onPreviewAllInFolder}
-									className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
-									style={{ color: theme.colors.textMain }}
-								>
-									<Files className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
-									<span>Preview All Files in Folder</span>
-								</button>
+								{previewableCount > 0 && (
+									<button
+										onClick={onPreviewAllInFolder}
+										className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+										style={{ color: theme.colors.textMain }}
+									>
+										<Files className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+										<span>
+											Preview All {previewableCount} {previewableCount === 1 ? 'File' : 'Files'} in
+											Folder
+										</span>
+									</button>
+								)}
 								<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
 							</>
 						)}

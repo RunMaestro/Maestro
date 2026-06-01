@@ -422,6 +422,26 @@ export function convertToReactFlowNodes(
 				? resolvePipelineOffset(pipeline, pipelineYOffsets)
 				: { x: 0, y: 0 };
 
+		// In All-Pipelines view a pipeline moves as ONE unit by dragging its group
+		// card. Content nodes paint on top of that card, so without this a drag is
+		// only grabbable on the card's empty margins — and dense/small cards (a
+		// two-node pipeline like "BJJ Sensei") have almost none, making them feel
+		// un-draggable. Give content nodes `pointer-events: none` so a drag
+		// anywhere on the pipeline (including over its nodes) falls through to the
+		// draggable group card beneath (zIndex -1) and moves the whole pipeline.
+		// ReactFlow spreads a node's `style` AFTER its own computed `pointerEvents`
+		// on the wrapper, so this reliably wins. Also opt them out of selection/drag
+		// so a stray pointer can't pick up a single node in a view that can't edit
+		// one anyway.
+		const contentNodeExtras =
+			selectedPipelineId === null
+				? {
+						selectable: false,
+						draggable: false,
+						style: { pointerEvents: 'none' as const },
+					}
+				: {};
+
 		for (const pNode of pipeline.nodes) {
 			const compositeId = `${pipeline.id}:${pNode.id}`;
 
@@ -470,6 +490,7 @@ export function convertToReactFlowNodes(
 					},
 					data: nodeData,
 					dragHandle: '.drag-handle',
+					...contentNodeExtras,
 				});
 			} else if (pNode.type === 'agent') {
 				const agentData = pNode.data as AgentNodeData;
@@ -514,6 +535,7 @@ export function convertToReactFlowNodes(
 					},
 					data: nodeData,
 					dragHandle: '.drag-handle',
+					...contentNodeExtras,
 				});
 			} else if (pNode.type === 'command') {
 				const cmdData = pNode.data as CommandNodeData;
@@ -538,6 +560,7 @@ export function convertToReactFlowNodes(
 					},
 					data: nodeData,
 					dragHandle: '.drag-handle',
+					...contentNodeExtras,
 				});
 			} else if (pNode.type === 'error') {
 				const errData = pNode.data as ErrorNodeData;
@@ -559,6 +582,7 @@ export function convertToReactFlowNodes(
 					data: nodeData,
 					dragHandle: '.drag-handle',
 					selectable: false,
+					...contentNodeExtras,
 				});
 			}
 		}
