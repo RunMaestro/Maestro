@@ -1402,6 +1402,39 @@ test.describe('Web Mobile Bridge', () => {
 		}
 	});
 
+	test('reuses persisted mobile web token after server restart', async ({ page }) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			const firstDashboardUrl = await startWebServer(appWindow);
+			await expect(
+				appWindow.evaluate(async () => {
+					return (window as MaestroE2EWindow).maestro.live.persistCurrentToken();
+				})
+			).resolves.toMatchObject({ success: true });
+
+			await stopWebServer(appWindow);
+			const restartedDashboardUrl = await startWebServer(appWindow);
+			expect(new URL(restartedDashboardUrl).pathname).toBe(new URL(firstDashboardUrl).pathname);
+
+			const sessionsPayload = await getJson(page, `${restartedDashboardUrl}/api/sessions`);
+			expect(sessionsPayload.sessions).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({ id: workbench.primarySessionId, name: 'Mobile Primary' }),
+				])
+			);
+		} finally {
+			await appWindow
+				.evaluate(async () => {
+					return (window as MaestroE2EWindow).maestro.live.clearPersistentToken();
+				})
+				.catch(() => {});
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
 	test('serves theme data and session-detail errors through token APIs', async ({ page }) => {
 		const workbench = createWebMobileWorkbench();
 		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
