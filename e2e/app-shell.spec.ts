@@ -4850,6 +4850,43 @@ test.describe('App shell seeded workbench', () => {
 		await expect(createAgentDialog.getByText('MAESTRO_SESSION_RESUMED').first()).toBeVisible();
 	});
 
+	test('blocks duplicate agent names and requires directory reuse acknowledgment', async () => {
+		await stubAgentDetectionForNewAgent(electronApp);
+		const createAgentDialog = await openCreateNewAgentFromQuickActions(window);
+		const createButton = createAgentDialog.getByRole('button', { name: 'Create Agent' });
+
+		await createAgentDialog.getByRole('option', { name: /Codex/ }).click();
+		await createAgentDialog.getByLabel('Agent Name').fill('E2E Workbench');
+		await createAgentDialog
+			.getByLabel('Working Directory')
+			.fill(path.join(seededWorkbench.homeDir, 'duplicate-name-project'));
+
+		await expect(
+			createAgentDialog.getByText('An agent named "E2E Workbench" already exists')
+		).toBeVisible();
+		await expect(createButton).toBeDisabled();
+
+		await createAgentDialog.getByLabel('Agent Name').fill('Directory Reuse Agent');
+		await createAgentDialog.getByLabel('Working Directory').fill(seededWorkbench.sessions[0].cwd);
+
+		await expect(createAgentDialog.getByText(/This directory is already used by/)).toBeVisible();
+		await expect(
+			createAgentDialog.getByLabel('I understand the risk and want to proceed')
+		).toBeVisible();
+		await expect(createButton).toBeDisabled();
+
+		await createAgentDialog.getByLabel('I understand the risk and want to proceed').check();
+		await expect(createButton).toBeEnabled();
+		await createButton.click();
+
+		await expect(createAgentDialog).toBeHidden();
+		await expect(
+			window.locator('[data-tour="session-list"]').getByText('Directory Reuse Agent', {
+				exact: true,
+			})
+		).toBeVisible();
+	});
+
 	test('creates an unavailable non-Codex agent using static custom configuration', async () => {
 		const staticProjectDir = path.join(seededWorkbench.homeDir, 'opencode-static-project');
 		fs.mkdirSync(staticProjectDir, { recursive: true });
