@@ -567,10 +567,45 @@ async function reloadAndExpectMobileHeading(page: Page, headingName: string) {
 
 async function reconnectMobileIfNeeded(page: Page) {
 	const retryButton = page.getByRole('button', { name: 'Retry Now' });
-	if (await retryButton.isVisible().catch(() => false)) {
-		await retryButton.click().catch(() => {});
-		await expect(page.getByText('Connection Lost')).toBeHidden({ timeout: 15000 });
-	}
+	const connectionLost = page.getByText('Connection Lost');
+	let retryClicks = 0;
+	await expect
+		.poll(
+			async () => {
+				if (await connectionLost.isHidden().catch(() => true)) {
+					return true;
+				}
+				if (retryClicks < 4 && (await retryButton.isVisible().catch(() => false))) {
+					retryClicks += 1;
+					await retryButton.click().catch(() => {});
+				}
+				return await connectionLost.isHidden().catch(() => true);
+			},
+			{ timeout: 15000, intervals: [250, 500, 1000] }
+		)
+		.toBe(true);
+}
+
+async function collapseMobileComposer(page: Page) {
+	await reconnectMobileIfNeeded(page);
+	const composer = page.getByTestId('mobile-command-input-bar');
+	const history = page.getByTestId('mobile-message-history-scroll');
+	await expect(composer).toBeVisible();
+	await expect(history).toBeVisible();
+	await page
+		.getByRole('textbox', { name: 'AI message input. Press the send button to submit.' })
+		.evaluate((input) => (input as HTMLTextAreaElement).blur())
+		.catch(() => {});
+	await history.click({ position: { x: 10, y: 10 }, force: true });
+	await expect
+		.poll(
+			async () => {
+				const box = await composer.boundingBox();
+				return box?.height ?? 0;
+			},
+			{ timeout: 10000 }
+		)
+		.toBeLessThan(160);
 }
 
 async function setMobileOnlineState(page: Page, isOnline: boolean) {
@@ -2273,22 +2308,12 @@ test.describe('Web Mobile Bridge', () => {
 			await expect(page.getByRole('heading', { name: 'Phone Composer Clearance' })).toBeVisible();
 			await reconnectMobileIfNeeded(page);
 			await expect(page.getByText('Connection Lost')).toBeHidden({ timeout: 15000 });
-			const composer = page.getByTestId('mobile-command-input-bar');
-			await expect(composer).toBeVisible();
-			await page
-				.getByRole('textbox', { name: 'AI message input. Press the send button to submit.' })
-				.evaluate((input) => (input as HTMLTextAreaElement).blur());
-			await expect
-				.poll(async () => {
-					const box = await composer.boundingBox();
-					return box?.height ?? 0;
-				})
-				.toBeLessThan(160);
+			await collapseMobileComposer(page);
 
 			const copyCodeButton = page.getByRole('button', { name: 'Copy code' });
 
 			const copyBox = await copyCodeButton.boundingBox();
-			const composerBox = await composer.boundingBox();
+			const composerBox = await page.getByTestId('mobile-command-input-bar').boundingBox();
 			if (!copyBox || !composerBox) {
 				throw new Error('Expected transcript copy control and mobile composer boxes to exist');
 			}
@@ -2339,17 +2364,7 @@ test.describe('Web Mobile Bridge', () => {
 					)
 				)
 				.toBeGreaterThanOrEqual(1);
-			const composer = page.getByTestId('mobile-command-input-bar');
-			await expect(composer).toBeVisible();
-			await page
-				.getByRole('textbox', { name: 'AI message input. Press the send button to submit.' })
-				.evaluate((input) => (input as HTMLTextAreaElement).blur());
-			await expect
-				.poll(async () => {
-					const box = await composer.boundingBox();
-					return box?.height ?? 0;
-				})
-				.toBeLessThan(160);
+			await collapseMobileComposer(page);
 
 			await expect(page.getByText('Scroll seed response 20')).toBeVisible();
 			const history = page.getByTestId('mobile-message-history-scroll');
@@ -2408,17 +2423,7 @@ test.describe('Web Mobile Bridge', () => {
 					)
 				)
 				.toBeGreaterThanOrEqual(1);
-			const composer = page.getByTestId('mobile-command-input-bar');
-			await expect(composer).toBeVisible();
-			await page
-				.getByRole('textbox', { name: 'AI message input. Press the send button to submit.' })
-				.evaluate((input) => (input as HTMLTextAreaElement).blur());
-			await expect
-				.poll(async () => {
-					const box = await composer.boundingBox();
-					return box?.height ?? 0;
-				})
-				.toBeLessThan(160);
+			await collapseMobileComposer(page);
 
 			await expect(page.getByText('Queued scroll seed response 22')).toBeVisible();
 			const history = page.getByTestId('mobile-message-history-scroll');
@@ -2464,6 +2469,75 @@ test.describe('Web Mobile Bridge', () => {
 				page.getByText('Desktop queued update two while mobile is scrolled away')
 			).toBeVisible();
 			await expect(indicator).toBeHidden();
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
+	test('auto-scrolls mobile transcript without a badge when desktop input arrives at bottom', async ({
+		page,
+	}) => {
+		const workbench = createWebMobileWorkbench();
+		for (let index = 1; index <= 18; index += 1) {
+			const paddedIndex = String(index).padStart(2, '0');
+			appendPrimaryPlanStdout(
+				workbench,
+				`Bottom scroll seed response ${paddedIndex} keeps the transcript scrollable.`,
+				`bottom-new-message-scroll-seed-${paddedIndex}`
+			);
+		}
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			await startWebServer(appWindow);
+			const sessionUrl = await toggleLive(appWindow, workbench.primarySessionId);
+			await page.setViewportSize({ width: 430, height: 820 });
+			await page.goto(sessionUrl);
+			await reconnectMobileIfNeeded(page);
+			await expect(page.getByText('Connection Lost')).toBeHidden({ timeout: 15000 });
+			await expect
+				.poll(async () =>
+					appWindow.evaluate(async () =>
+						(window as MaestroE2EWindow).maestro.webserver.getConnectedClients()
+					)
+				)
+				.toBeGreaterThanOrEqual(1);
+			await collapseMobileComposer(page);
+
+			await expect(page.getByText('Bottom scroll seed response 18')).toBeVisible();
+			const history = page.getByTestId('mobile-message-history-scroll');
+			await history.evaluate((container) => {
+				container.scrollTop = container.scrollHeight;
+				container.dispatchEvent(new Event('scroll', { bubbles: true }));
+			});
+			await expect
+				.poll(() =>
+					history.evaluate(
+						(container) => container.scrollHeight - container.scrollTop - container.clientHeight
+					)
+				)
+				.toBeLessThan(50);
+
+			await appWindow.evaluate(async (sessionId) => {
+				await (window as MaestroE2EWindow).maestro.web.broadcastUserInput(
+					sessionId,
+					'Desktop auto-scroll update while mobile stays at bottom',
+					'ai'
+				);
+			}, workbench.primarySessionId);
+
+			await expect(
+				page.getByText('Desktop auto-scroll update while mobile stays at bottom')
+			).toBeVisible();
+			await expect(page.getByRole('button', { name: 'Scroll to new messages' })).toBeHidden();
+			await expect
+				.poll(() =>
+					history.evaluate(
+						(container) => container.scrollHeight - container.scrollTop - container.clientHeight
+					)
+				)
+				.toBeLessThan(50);
 		} finally {
 			await stopWebServer(appWindow).catch(() => {});
 			await electronApp.close();
