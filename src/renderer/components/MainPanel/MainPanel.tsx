@@ -188,7 +188,6 @@ export const MainPanel = React.memo(
 			activeFileTabId,
 			activeFileTab,
 			activeBrowserTabId,
-			activeBrowserTab,
 			onFileTabSelect,
 			onFileTabClose,
 			onNewFileTab,
@@ -866,7 +865,6 @@ export const MainPanel = React.memo(
 							activeFileTabId={activeFileTabId}
 							activeFileTab={activeFileTab}
 							activeBrowserTabId={activeBrowserTabId}
-							activeBrowserTab={activeBrowserTab}
 							memoizedFilePreviewFile={memoizedFilePreviewFile}
 							filePreviewCwd={filePreviewCwd}
 							filePreviewSshRemoteId={filePreviewSshRemoteId}

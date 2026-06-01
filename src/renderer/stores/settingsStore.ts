@@ -389,6 +389,8 @@ export interface SettingsStoreState {
 	useSystemBrowser: boolean;
 	browserHomeUrl: string;
 	htmlDoubleClickOpensInBrowser: boolean;
+	browserTabKeepAlive: 'off' | 'recent' | 'all';
+	browserTabKeepAliveLimit: number;
 	automaticTabNamingEnabled: boolean;
 	newTabPlacement: 'end' | 'after-current';
 	newBrowserTabPlacement: 'end' | 'after-current';
@@ -524,6 +526,8 @@ export interface SettingsStoreActions {
 	setUseSystemBrowser: (value: boolean) => void;
 	setBrowserHomeUrl: (value: string) => void;
 	setHtmlDoubleClickOpensInBrowser: (value: boolean) => void;
+	setBrowserTabKeepAlive: (value: 'off' | 'recent' | 'all') => void;
+	setBrowserTabKeepAliveLimit: (value: number) => void;
 	setAutomaticTabNamingEnabled: (value: boolean) => void;
 	setNewTabPlacement: (value: 'end' | 'after-current') => void;
 	setNewBrowserTabPlacement: (value: 'end' | 'after-current') => void;
@@ -738,6 +742,8 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		useSystemBrowser: false,
 		browserHomeUrl: 'https://runmaestro.ai/#leaderboard',
 		htmlDoubleClickOpensInBrowser: false,
+		browserTabKeepAlive: 'off',
+		browserTabKeepAliveLimit: 10,
 		automaticTabNamingEnabled: true,
 		newTabPlacement: 'end',
 		newBrowserTabPlacement: 'after-current',
@@ -1283,6 +1289,17 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setHtmlDoubleClickOpensInBrowser: (value) => {
 			set({ htmlDoubleClickOpensInBrowser: value });
 			window.maestro.settings.set('htmlDoubleClickOpensInBrowser', value);
+		},
+
+		setBrowserTabKeepAlive: (value) => {
+			set({ browserTabKeepAlive: value });
+			window.maestro.settings.set('browserTabKeepAlive', value);
+		},
+
+		setBrowserTabKeepAliveLimit: (value) => {
+			const clamped = Math.max(1, Math.floor(value) || 1);
+			set({ browserTabKeepAliveLimit: clamped });
+			window.maestro.settings.set('browserTabKeepAliveLimit', clamped);
 		},
 
 		setAutomaticTabNamingEnabled: (value) => {
@@ -2584,6 +2601,12 @@ export async function loadAllSettings(): Promise<void> {
 
 		if (allSettings['htmlDoubleClickOpensInBrowser'] !== undefined)
 			patch.htmlDoubleClickOpensInBrowser = allSettings['htmlDoubleClickOpensInBrowser'] as boolean;
+
+		if (allSettings['browserTabKeepAlive'] !== undefined)
+			patch.browserTabKeepAlive = allSettings['browserTabKeepAlive'] as 'off' | 'recent' | 'all';
+
+		if (allSettings['browserTabKeepAliveLimit'] !== undefined)
+			patch.browserTabKeepAliveLimit = allSettings['browserTabKeepAliveLimit'] as number;
 
 		if (allSettings['automaticTabNamingEnabled'] !== undefined)
 			patch.automaticTabNamingEnabled = allSettings['automaticTabNamingEnabled'] as boolean;

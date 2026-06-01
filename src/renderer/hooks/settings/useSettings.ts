@@ -324,6 +324,10 @@ export interface UseSettingsReturn {
 	setBrowserHomeUrl: (value: string) => void;
 	htmlDoubleClickOpensInBrowser: boolean;
 	setHtmlDoubleClickOpensInBrowser: (value: boolean) => void;
+	browserTabKeepAlive: 'off' | 'recent' | 'all';
+	setBrowserTabKeepAlive: (value: 'off' | 'recent' | 'all') => void;
+	browserTabKeepAliveLimit: number;
+	setBrowserTabKeepAliveLimit: (value: number) => void;
 
 	// Automatic tab naming settings
 	automaticTabNamingEnabled: boolean;

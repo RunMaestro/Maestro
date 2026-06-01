@@ -18,6 +18,8 @@ vi.mock('../../../../renderer/stores/settingsStore', () => ({
 				userMessageAlignment: 'right',
 				shortcuts: {},
 				maxOutputLines: 5000,
+				browserTabKeepAlive: 'off',
+				browserTabKeepAliveLimit: 10,
 			})
 		),
 		{ getState: () => ({ setChatRawTextMode: vi.fn(), setEnterToSendAI: vi.fn() }) }
@@ -108,7 +110,6 @@ function makeDefaultProps() {
 		activeFileTabId: null as string | null | undefined,
 		activeFileTab: null as FilePreviewTab | null | undefined,
 		activeBrowserTabId: null as string | null | undefined,
-		activeBrowserTab: null as any,
 		memoizedFilePreviewFile: null,
 		filePreviewCwd: '',
 		filePreviewSshRemoteId: undefined,
@@ -229,9 +230,7 @@ describe('MainPanelContent', () => {
 	});
 
 	it('renders BrowserTabView when browser tab is active', () => {
-		const props = makeDefaultProps();
-		props.activeBrowserTabId = 'browser-1';
-		props.activeBrowserTab = {
+		const browserTab = {
 			id: 'browser-1',
 			url: 'https://example.com/',
 			title: 'Example',
@@ -240,6 +239,14 @@ describe('MainPanelContent', () => {
 			canGoForward: false,
 			isLoading: false,
 		};
+		// Browser tabs live on the session; the keep-alive mount hook reads them from there.
+		const session = makeSession({
+			browserTabs: [browserTab],
+			activeBrowserTabId: 'browser-1',
+		});
+		const props = makeDefaultProps();
+		props.activeSession = session;
+		props.activeBrowserTabId = 'browser-1';
 		render(<MainPanelContent {...props} />);
 		expect(screen.getByTestId('browser-tab-view')).toBeInTheDocument();
 		expect(screen.queryByTestId('input-area')).not.toBeInTheDocument();

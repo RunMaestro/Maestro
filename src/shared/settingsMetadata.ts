@@ -944,6 +944,19 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: false,
 		category: 'editor',
 	},
+	browserTabKeepAlive: {
+		description:
+			"How background browser tabs are handled when inactive. 'off' unloads them (lowest memory, page reloads on return); 'recent' keeps the N most-recently-used tabs alive; 'all' keeps every browser tab in the agent alive.",
+		type: 'string',
+		default: 'off',
+		category: 'editor',
+	},
+	browserTabKeepAliveLimit: {
+		description: "How many recent browser tabs to keep alive when browserTabKeepAlive is 'recent'.",
+		type: 'number',
+		default: 10,
+		category: 'editor',
+	},
 
 	// --- Encore Features (experimental) ---
 	encoreFeatures: {

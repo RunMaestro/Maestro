@@ -605,6 +605,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				duration,
 				dismissible,
 				sessionId,
+				sourceAgent,
 				tabId: explicitTabId,
 				actionUrl,
 				actionLabel,
@@ -614,12 +615,15 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			// the toast when the caller explicitly passed one — otherwise the
 			// agent's currently-focused tab would leak onto every agent-scoped
 			// toast (e.g. cron-fired notifications), which is misleading.
-			let project: string | undefined;
+			// An explicit `sourceAgent` label wins over the store-resolved name:
+			// it's store-independent, so cron/watchdog toasts always show who
+			// fired them even when that agent isn't loaded in the Left Bar.
+			let project: string | undefined = sourceAgent;
 			let tabId: string | undefined = explicitTabId;
 			let tabName: string | undefined;
 			if (sessionId) {
 				const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
-				project = session?.name;
+				if (!project) project = session?.name;
 				if (explicitTabId) {
 					const targetTab = session?.aiTabs?.find((t) => t.id === explicitTabId);
 					if (targetTab) {

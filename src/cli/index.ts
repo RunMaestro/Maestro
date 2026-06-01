@@ -570,6 +570,10 @@ notify
 	)
 	.option('-a, --agent <id>', 'Associate with an agent so clicking jumps to it')
 	.option(
+		'--source-agent <label>',
+		'Label shown in the toast header identifying which agent/pipeline fired it. Store-independent, so it shows even for cron/watchdog toasts. Wins over the name resolved from --agent; pair with --agent to also get click-to-jump'
+	)
+	.option(
 		'--tab <id>',
 		'AI tab ID within the agent — clicking jumps to that tab (requires --agent)'
 	)

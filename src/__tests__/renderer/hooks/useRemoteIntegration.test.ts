@@ -949,6 +949,54 @@ describe('useRemoteIntegration', () => {
 			expect(toasts[0]?.tabId).toBeUndefined();
 			expect(toasts[0]?.tabName).toBeUndefined();
 		});
+
+		it('shows an explicit sourceAgent label in the header without any sessionId', () => {
+			useSessionStore.setState({ sessions: [] });
+			const deps = createDeps({ sessions: [] });
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteNotifyToastHandler?.({
+					title: 'Watchdog',
+					message: 'Discover broken',
+					color: 'red',
+					sourceAgent: 'Maestro Marketing · Twitter Watchdog',
+				});
+			});
+
+			const toasts = useNotificationStore.getState().toasts;
+			expect(toasts).toHaveLength(1);
+			expect(toasts[0]?.project).toBe('Maestro Marketing · Twitter Watchdog');
+			expect(toasts[0]?.sessionId).toBeUndefined();
+		});
+
+		it('prefers an explicit sourceAgent label over the store-resolved session name', () => {
+			const session = createMockSession({
+				id: 'session-1',
+				name: 'Maestro Marketing',
+				aiTabs: [],
+			});
+			useSessionStore.setState({ sessions: [session] });
+			const deps = createDeps({ sessions: [session] });
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteNotifyToastHandler?.({
+					title: 'Post stalled',
+					message: 'Approved drafts not posting',
+					color: 'orange',
+					sessionId: 'session-1',
+					sourceAgent: 'Twitter Post',
+				});
+			});
+
+			const toasts = useNotificationStore.getState().toasts;
+			// Label wins for display; sessionId still rides along for click-to-jump.
+			expect(toasts[0]?.project).toBe('Twitter Post');
+			expect(toasts[0]?.sessionId).toBe('session-1');
+		});
 	});
 
 	describe('tab change broadcasting', () => {

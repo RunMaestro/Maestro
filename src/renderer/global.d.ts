@@ -335,6 +335,7 @@ interface MaestroAPI {
 				duration?: number;
 				dismissible?: boolean;
 				sessionId?: string;
+				sourceAgent?: string;
 				tabId?: string;
 				actionUrl?: string;
 				actionLabel?: string;
