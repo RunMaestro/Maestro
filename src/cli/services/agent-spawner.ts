@@ -808,8 +808,16 @@ async function spawnJsonLineAgent(
 		const processEvent = (event: ReturnType<typeof parser.parseJsonLine>) => {
 			if (!event) return;
 
-			if (event.type === 'init' && event.sessionId && !sessionId) {
-				sessionId = event.sessionId;
+			// Route through parser.extractSessionId() rather than only checking
+			// init events. Some agents (e.g. copilot-cli batch mode) never emit
+			// a session.start on stdout — the sessionId arrives only on the
+			// final `result` event. extractSessionId() encapsulates each
+			// adapter's event shape, and the !sessionId guard keeps
+			// "first-wins" semantics for adapters (codex, opencode) that
+			// already populate sessionId on multiple event types.
+			if (!sessionId) {
+				const extracted = parser.extractSessionId(event);
+				if (extracted) sessionId = extracted;
 			}
 
 			if (event.type === 'result' && event.text) {
