@@ -762,6 +762,13 @@ async function openCreateNewAgentFromQuickActions(window: Page) {
 	return createAgentDialog;
 }
 
+async function stubSelectFolderDialog(electronApp: ElectronApplication, folderPath: string) {
+	await electronApp.evaluate(({ ipcMain }, selectedFolder: string) => {
+		ipcMain.removeHandler('dialog:selectFolder');
+		ipcMain.handle('dialog:selectFolder', async () => selectedFolder);
+	}, folderPath);
+}
+
 async function getHeaderGitStatusButton(window: Page) {
 	const gitStatusButton = window
 		.locator('button[title^="+"]')
@@ -4882,6 +4889,43 @@ test.describe('App shell seeded workbench', () => {
 		await expect(createAgentDialog).toBeHidden();
 		await expect(
 			window.locator('[data-tour="session-list"]').getByText('Directory Reuse Agent', {
+				exact: true,
+			})
+		).toBeVisible();
+	});
+
+	test('duplicates an agent from the context menu with folder picker creation', async () => {
+		const duplicateDir = path.join(seededWorkbench.homeDir, 'duplicate-agent-copy-project');
+		fs.mkdirSync(duplicateDir, { recursive: true });
+		await stubAgentDetectionForNewAgent(electronApp);
+		await stubSelectFolderDialog(electronApp, duplicateDir);
+
+		const contextMenu = await openSessionContextMenu(window, 'E2E Workbench', 'Duplicate...');
+		await contextMenu.getByRole('button', { name: 'Duplicate...', exact: true }).click();
+
+		const createAgentDialog = window.getByRole('dialog', { name: 'Create New Agent' });
+		await expect(createAgentDialog).toBeVisible();
+		await expect(createAgentDialog.getByRole('option', { name: /Codex/ })).toHaveAttribute(
+			'aria-selected',
+			'true'
+		);
+		await expect(createAgentDialog.getByLabel('Agent Name')).toHaveValue('E2E Workbench (Copy)');
+		await expect(createAgentDialog.getByLabel('Working Directory')).toHaveValue(
+			seededWorkbench.sessions[0].cwd
+		);
+		await expect(createAgentDialog.getByText(/This directory is already used by/)).toBeVisible();
+
+		await createAgentDialog.getByLabel('Agent Name').fill('Duplicated Workbench');
+		await createAgentDialog.getByRole('button', { name: /Browse folders/ }).click();
+		await expect(createAgentDialog.getByLabel('Working Directory')).toHaveValue(duplicateDir);
+		await expect(createAgentDialog.getByText(/This directory is already used by/)).toBeHidden();
+
+		await expect(createAgentDialog.getByRole('button', { name: 'Create Agent' })).toBeEnabled();
+		await createAgentDialog.getByRole('button', { name: 'Create Agent' }).click();
+
+		await expect(createAgentDialog).toBeHidden();
+		await expect(
+			window.locator('[data-tour="session-list"]').getByText('Duplicated Workbench', {
 				exact: true,
 			})
 		).toBeVisible();
