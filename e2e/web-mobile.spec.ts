@@ -555,7 +555,7 @@ async function reloadAndExpectMobileHeading(page: Page, headingName: string) {
 async function reconnectMobileIfNeeded(page: Page) {
 	const retryButton = page.getByRole('button', { name: 'Retry Now' });
 	if (await retryButton.isVisible().catch(() => false)) {
-		await retryButton.click();
+		await retryButton.click().catch(() => {});
 		await expect(page.getByText('Connection Lost')).toBeHidden({ timeout: 15000 });
 	}
 }
@@ -1935,6 +1935,54 @@ test.describe('Web Mobile Bridge', () => {
 
 			await page.keyboard.press('Escape');
 			await expect(responseDialog).toBeHidden();
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
+	test('copies and collapses the mobile last response preview from the status banner', async ({
+		page,
+	}) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		await page.addInitScript(() => {
+			Object.defineProperty(navigator, 'clipboard', {
+				configurable: true,
+				value: {
+					writeText: async (text: string) => {
+						(window as typeof window & { __maestroCopiedText?: string }).__maestroCopiedText = text;
+					},
+				},
+			});
+		});
+
+		try {
+			await startWebServer(appWindow);
+			const sessionUrl = await toggleLive(appWindow, workbench.primarySessionId);
+			await page.setViewportSize({ width: 430, height: 820 });
+			await page.goto(sessionUrl);
+			await reconnectMobileIfNeeded(page);
+			await expect(page.getByText('Mobile Primary alpha response line one')).toBeVisible();
+
+			await page.getByRole('button', { name: 'Copy response to clipboard' }).click();
+			await expect(page.getByRole('button', { name: 'Copied to clipboard' })).toBeVisible();
+			await expect
+				.poll(() =>
+					page.evaluate(
+						() => (window as typeof window & { __maestroCopiedText?: string }).__maestroCopiedText
+					)
+				)
+				.toContain('Mobile Primary alpha response line one');
+
+			await page.getByRole('button', { name: 'Expand last response' }).click();
+			const fullResponseButton = page.getByRole('button', { name: 'Tap to view full response' });
+			await expect(fullResponseButton).toBeVisible();
+			await expect(fullResponseButton).toContainText('Mobile Primary alpha response line one');
+
+			await page.getByRole('button', { name: 'Collapse last response' }).click();
+			await expect(fullResponseButton).toBeHidden();
 		} finally {
 			await stopWebServer(appWindow).catch(() => {});
 			await electronApp.close();
