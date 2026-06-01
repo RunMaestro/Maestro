@@ -3076,6 +3076,49 @@ test.describe('Web Mobile Bridge', () => {
 		}
 	});
 
+	test('closes the active mobile tab and shows the remaining tab transcript', async ({ page }) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			await startWebServer(appWindow);
+			const sessionUrl = await toggleLive(appWindow, workbench.primarySessionId);
+			await page.setViewportSize({ width: 430, height: 820 });
+			await page.goto(sessionUrl);
+			await expect(page.getByText('Mobile Primary alpha response line one')).toBeVisible();
+			await expect(page.getByRole('button', { name: /Plan/ })).toBeVisible();
+			await expect(page.getByRole('button', { name: /Review/ })).toBeVisible();
+			await page.getByRole('button', { name: /Review/ }).click();
+			await expect(page.getByText('Mobile Primary review tab response only visible')).toBeVisible();
+
+			await page.getByRole('button', { name: 'Close tab' }).click();
+
+			await expect(page.getByText('Mobile Primary alpha response line one')).toBeVisible({
+				timeout: 10000,
+			});
+			await expect(page.getByText('Mobile Primary review tab response only visible')).toBeHidden();
+			await expect(page.locator('button[title="Search 2 tabs"]')).toBeHidden();
+			await expect
+				.poll(async () => {
+					return appWindow.evaluate(async (sessionId) => {
+						const sessions = await (window as MaestroE2EWindow).maestro.sessions.getAll();
+						const session = sessions.find((item) => item.id === sessionId);
+						return {
+							activeTabId: session?.activeTabId ?? null,
+							tabIds: session?.aiTabs.map((tab) => tab.id) ?? [],
+						};
+					}, workbench.primarySessionId);
+				})
+				.toEqual({
+					activeTabId: workbench.primaryPlanTabId,
+					tabIds: [workbench.primaryPlanTabId],
+				});
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
 	test('opens quick actions from send long-press and switches input modes', async ({ page }) => {
 		const workbench = createWebMobileWorkbench();
 		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);

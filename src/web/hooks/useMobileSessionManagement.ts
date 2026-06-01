@@ -344,8 +344,32 @@ export function useMobileSessionManagement(
 			triggerHaptic(hapticTapPattern);
 			// Notify desktop to close this tab
 			sendRef.current?.({ type: 'close_tab', sessionId: activeSessionId, tabId });
+
+			const tabs = activeSession?.aiTabs || [];
+			const closingIndex = tabs.findIndex((tab) => tab.id === tabId);
+			const remainingTabs = tabs.filter((tab) => tab.id !== tabId);
+			if (closingIndex === -1 || remainingTabs.length === 0) return;
+
+			const currentActiveTabId = activeSession?.activeTabId || activeTabIdRef.current || undefined;
+			const nextActiveTabId =
+				currentActiveTabId === tabId
+					? remainingTabs[Math.max(0, closingIndex - 1)]?.id
+					: currentActiveTabId;
+
+			if (currentActiveTabId === tabId && nextActiveTabId) {
+				activeTabIdRef.current = nextActiveTabId;
+				setActiveTabId(nextActiveTabId);
+			}
+
+			setSessions((prev) =>
+				prev.map((session) =>
+					session.id === activeSessionId
+						? { ...session, aiTabs: remainingTabs, activeTabId: nextActiveTabId || undefined }
+						: session
+				)
+			);
 		},
-		[activeSessionId, sendRef, triggerHaptic, hapticTapPattern]
+		[activeSession, activeSessionId, sendRef, triggerHaptic, hapticTapPattern]
 	);
 
 	// Handle renaming a tab
