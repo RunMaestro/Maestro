@@ -2475,6 +2475,65 @@ test.describe('Web Mobile Bridge', () => {
 		}
 	});
 
+	test('caps queued mobile new-message badge at 99 plus while scrolled away', async ({ page }) => {
+		const workbench = createWebMobileWorkbench();
+		for (let index = 1; index <= 22; index += 1) {
+			const paddedIndex = String(index).padStart(2, '0');
+			appendPrimaryPlanStdout(
+				workbench,
+				`Overflow badge seed response ${paddedIndex} keeps the transcript scrollable.`,
+				`overflow-new-message-scroll-seed-${paddedIndex}`
+			);
+		}
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			await startWebServer(appWindow);
+			const sessionUrl = await toggleLive(appWindow, workbench.primarySessionId);
+			await page.setViewportSize({ width: 430, height: 820 });
+			await page.goto(sessionUrl);
+			await reconnectMobileIfNeeded(page);
+			await expect(page.getByText('Connection Lost')).toBeHidden({ timeout: 15000 });
+			await expect
+				.poll(async () =>
+					appWindow.evaluate(async () =>
+						(window as MaestroE2EWindow).maestro.webserver.getConnectedClients()
+					)
+				)
+				.toBeGreaterThanOrEqual(1);
+			await collapseMobileComposer(page);
+
+			await expect(page.getByText('Overflow badge seed response 22')).toBeVisible();
+			const history = page.getByTestId('mobile-message-history-scroll');
+			await history.evaluate((container) => {
+				container.scrollTop = 0;
+				container.dispatchEvent(new Event('scroll', { bubbles: true }));
+			});
+			await expect.poll(() => history.evaluate((container) => container.scrollTop)).toBe(0);
+			await expect(page.getByText('Overflow badge seed response 01')).toBeVisible();
+
+			await appWindow.evaluate(async (sessionId) => {
+				for (let index = 1; index <= 105; index += 1) {
+					await (window as MaestroE2EWindow).maestro.web.broadcastUserInput(
+						sessionId,
+						`Desktop overflow badge update ${String(index).padStart(3, '0')}`,
+						'ai'
+					);
+				}
+			}, workbench.primarySessionId);
+
+			const indicator = page.getByRole('button', { name: 'Scroll to new messages' });
+			await expect(indicator).toBeVisible();
+			await expect(indicator).toContainText('99+');
+			await indicator.click();
+			await expect(page.getByText('Desktop overflow badge update 105')).toBeVisible();
+			await expect(indicator).toBeHidden();
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
 	test('auto-scrolls mobile transcript without a badge when desktop input arrives at bottom', async ({
 		page,
 	}) => {
