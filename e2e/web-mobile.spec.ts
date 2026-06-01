@@ -418,6 +418,19 @@ function createWebMobileWorkbench() {
 	};
 }
 
+function appendPrimaryPlanStdout(workbench: WebWorkbench, text: string, suffix: string) {
+	const primaryTab = workbench.sessions[0].aiTabs?.find(
+		(tab) => tab.id === workbench.primaryPlanTabId
+	);
+	expect(primaryTab).toBeTruthy();
+	primaryTab!.logs.push({
+		id: `${workbench.primarySessionId}-${suffix}`,
+		timestamp: Date.now() + 40,
+		source: 'stdout',
+		text,
+	});
+}
+
 function addMobileWorktreeSession(
 	workbench: WebWorkbench,
 	{
@@ -2024,6 +2037,125 @@ test.describe('Web Mobile Bridge', () => {
 
 			await page.getByRole('button', { name: 'Collapse last response' }).click();
 			await expect(fullResponseButton).toBeHidden();
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
+	test('shows status-banner copy failure when mobile clipboard write fails', async ({ page }) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		await page.addInitScript(() => {
+			Object.defineProperty(navigator, 'clipboard', {
+				configurable: true,
+				value: {
+					writeText: async () => {
+						throw new Error('Clipboard denied by E2E stub');
+					},
+				},
+			});
+		});
+
+		try {
+			await startWebServer(appWindow);
+			const sessionUrl = await toggleLive(appWindow, workbench.primarySessionId);
+			await page.setViewportSize({ width: 430, height: 820 });
+			await page.goto(sessionUrl);
+			await reconnectMobileIfNeeded(page);
+			await expect(page.getByText('Mobile Primary alpha response line one')).toBeVisible();
+
+			await page.getByRole('button', { name: 'Copy response to clipboard' }).click();
+			await expect(page.getByRole('button', { name: 'Failed to copy' })).toBeVisible();
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
+	test('shows the mobile response viewer preview truncation notice', async ({ page }) => {
+		const workbench = createWebMobileWorkbench();
+		appendPrimaryPlanStdout(
+			workbench,
+			[
+				'Mobile Primary long response first preview line.',
+				'Mobile Primary long response second preview line.',
+				'Mobile Primary long response third preview line.',
+				'Mobile Primary hidden fourth line beyond the preview.',
+			].join('\n'),
+			'long-response-log'
+		);
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			await startWebServer(appWindow);
+			const sessionUrl = await toggleLive(appWindow, workbench.primarySessionId);
+			await page.setViewportSize({ width: 430, height: 820 });
+			await page.goto(sessionUrl);
+			await reconnectMobileIfNeeded(page);
+			await expect(
+				page.getByText('Mobile Primary long response first preview line.')
+			).toBeVisible();
+
+			await page.getByRole('button', { name: 'Expand last response' }).click();
+			await page.getByRole('button', { name: 'Tap to view full response' }).click();
+
+			const responseDialog = page.getByRole('dialog', { name: 'Full response viewer' });
+			await expect(responseDialog).toBeVisible();
+			await expect(
+				responseDialog.getByText(/Showing preview \(\d+ of \d+ characters\)\./)
+			).toBeVisible();
+			await expect(responseDialog.getByText('Full response loading not available.')).toBeVisible();
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
+	test('copies code blocks rendered in the mobile response viewer', async ({ page }) => {
+		const workbench = createWebMobileWorkbench();
+		appendPrimaryPlanStdout(
+			workbench,
+			['```ts', 'const copiedSnippet = "mobile";', '```'].join('\n'),
+			'code-response-log'
+		);
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		await page.addInitScript(() => {
+			Object.defineProperty(navigator, 'clipboard', {
+				configurable: true,
+				value: {
+					writeText: async (text: string) => {
+						(window as typeof window & { __maestroCopiedCode?: string }).__maestroCopiedCode = text;
+					},
+				},
+			});
+		});
+
+		try {
+			await startWebServer(appWindow);
+			const sessionUrl = await toggleLive(appWindow, workbench.primarySessionId);
+			await page.setViewportSize({ width: 430, height: 820 });
+			await page.goto(sessionUrl);
+			await reconnectMobileIfNeeded(page);
+			await expect(page.getByText('const copiedSnippet')).toBeVisible();
+
+			await page.getByRole('button', { name: 'Expand last response' }).click();
+			await page.getByRole('button', { name: 'Tap to view full response' }).click();
+
+			const responseDialog = page.getByRole('dialog', { name: 'Full response viewer' });
+			await expect(responseDialog).toBeVisible();
+			await expect(responseDialog.getByText('typescript')).toBeVisible();
+			await responseDialog.getByRole('button', { name: 'Copy code' }).click();
+			await expect(responseDialog.getByRole('button', { name: 'Copied!' })).toBeVisible();
+			await expect
+				.poll(() =>
+					page.evaluate(
+						() => (window as typeof window & { __maestroCopiedCode?: string }).__maestroCopiedCode
+					)
+				)
+				.toBe('const copiedSnippet = "mobile";');
 		} finally {
 			await stopWebServer(appWindow).catch(() => {});
 			await electronApp.close();
