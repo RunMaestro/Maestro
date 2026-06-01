@@ -2232,6 +2232,85 @@ test.describe('Web Mobile Bridge', () => {
 		}
 	});
 
+	test('keeps bottom mobile transcript code actions above the phone composer', async ({ page }) => {
+		const workbench = createWebMobileWorkbench();
+		for (let index = 1; index <= 8; index += 1) {
+			appendPrimaryPlanStdout(
+				workbench,
+				`Phone transcript filler ${index} keeps the final code action near the bottom.`,
+				`phone-clearance-filler-${index}`
+			);
+		}
+		appendPrimaryPlanStdout(
+			workbench,
+			['# Phone Composer Clearance', '```ts', 'const phoneComposerCopy = "visible";', '```'].join(
+				'\n'
+			),
+			'phone-clearance-code-log'
+		);
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		await page.addInitScript(() => {
+			Object.defineProperty(navigator, 'clipboard', {
+				configurable: true,
+				value: {
+					writeText: async (text: string) => {
+						(
+							window as typeof window & { __maestroPhoneComposerCopy?: string }
+						).__maestroPhoneComposerCopy = text;
+					},
+				},
+			});
+		});
+
+		try {
+			await startWebServer(appWindow);
+			const sessionUrl = await toggleLive(appWindow, workbench.primarySessionId);
+			await page.setViewportSize({ width: 430, height: 820 });
+			await page.goto(sessionUrl);
+			await reconnectMobileIfNeeded(page);
+
+			await expect(page.getByRole('heading', { name: 'Phone Composer Clearance' })).toBeVisible();
+			await reconnectMobileIfNeeded(page);
+			await expect(page.getByText('Connection Lost')).toBeHidden({ timeout: 15000 });
+			const composer = page.getByTestId('mobile-command-input-bar');
+			await expect(composer).toBeVisible();
+			await page
+				.getByRole('textbox', { name: 'AI message input. Press the send button to submit.' })
+				.evaluate((input) => (input as HTMLTextAreaElement).blur());
+			await expect
+				.poll(async () => {
+					const box = await composer.boundingBox();
+					return box?.height ?? 0;
+				})
+				.toBeLessThan(160);
+
+			const copyCodeButton = page.getByRole('button', { name: 'Copy code' });
+
+			const copyBox = await copyCodeButton.boundingBox();
+			const composerBox = await composer.boundingBox();
+			if (!copyBox || !composerBox) {
+				throw new Error('Expected transcript copy control and mobile composer boxes to exist');
+			}
+			expect(copyBox.y + copyBox.height).toBeLessThan(composerBox.y - 8);
+
+			await copyCodeButton.click();
+			await expect(page.getByRole('button', { name: 'Copied!' })).toBeVisible();
+			await expect
+				.poll(() =>
+					page.evaluate(
+						() =>
+							(window as typeof window & { __maestroPhoneComposerCopy?: string })
+								.__maestroPhoneComposerCopy
+					)
+				)
+				.toBe('const phoneComposerCopy = "visible";');
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
 	test('opens the dashboard route and selects a session from the pill bar', async ({ page }) => {
 		const workbench = createWebMobileWorkbench();
 		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);

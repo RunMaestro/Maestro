@@ -480,6 +480,7 @@ export function CommandInputBar({
 	return (
 		<div
 			ref={containerRef}
+			data-testid="mobile-command-input-bar"
 			{...swipeUpHandlers}
 			style={{
 				position: 'fixed',

@@ -15,6 +15,8 @@ import { WebReadingContent } from './WebReadingContent';
 const CHAR_TRUNCATE_THRESHOLD = 500;
 /** Threshold for line-based truncation */
 const LINE_TRUNCATE_THRESHOLD = 8;
+/** Clearance for the fixed mobile composer when history fills the viewport. */
+const FULL_HEIGHT_BOTTOM_CLEARANCE = 96;
 
 export interface LogEntry {
 	id?: string;
@@ -365,7 +367,10 @@ export function MessageHistory({
 					);
 				})}
 				{/* Bottom ref with padding to ensure last message is fully visible */}
-				<div ref={bottomRef} style={{ minHeight: '8px' }} />
+				<div
+					ref={bottomRef}
+					style={{ minHeight: maxHeight === 'none' ? FULL_HEIGHT_BOTTOM_CLEARANCE : 8 }}
+				/>
 			</div>
 
 			{/* New Message Indicator - floating arrow button */}
