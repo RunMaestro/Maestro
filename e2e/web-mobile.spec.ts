@@ -1900,6 +1900,47 @@ test.describe('Web Mobile Bridge', () => {
 		}
 	});
 
+	test('opens the mobile full response viewer from the last response preview', async ({ page }) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			await startWebServer(appWindow);
+			const sessionUrl = await toggleLive(appWindow, workbench.primarySessionId);
+			await page.setViewportSize({ width: 430, height: 820 });
+			await page.goto(sessionUrl);
+			await reconnectMobileIfNeeded(page);
+			await expect(page.getByText('Mobile Primary alpha response line one')).toBeVisible();
+
+			await expect(
+				page.getByRole('status', {
+					name: /Current session: Mobile Primary, status: idle/i,
+				})
+			).toBeVisible();
+			await page.getByRole('button', { name: 'Expand last response' }).click();
+			await page.getByRole('button', { name: 'Tap to view full response' }).click();
+
+			const responseDialog = page.getByRole('dialog', { name: 'Full response viewer' });
+			await expect(responseDialog).toBeVisible();
+			await expect(
+				responseDialog.getByText('Mobile Primary alpha response line one')
+			).toBeVisible();
+			await expect(responseDialog.locator('[aria-label="Response 3 of 3"]')).toBeVisible();
+
+			await page.keyboard.press('ArrowLeft');
+			await expect(
+				responseDialog.getByText('Mobile Secondary alpha response line one')
+			).toBeVisible();
+			await expect(responseDialog.locator('[aria-label="Response 2 of 3"]')).toBeVisible();
+
+			await page.keyboard.press('Escape');
+			await expect(responseDialog).toBeHidden();
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
 	test('opens the dashboard route and selects a session from the pill bar', async ({ page }) => {
 		const workbench = createWebMobileWorkbench();
 		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);

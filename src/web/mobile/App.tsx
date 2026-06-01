@@ -27,6 +27,7 @@ import { estimateContextUsage } from '../../renderer/utils/contextUsage';
 import { triggerHaptic, HAPTIC_PATTERNS } from './constants';
 import { webLogger } from '../utils/logger';
 import { SessionPillBar } from './SessionPillBar';
+import { SessionStatusBanner } from './SessionStatusBanner';
 import { AllSessionsView } from './AllSessionsView';
 import { MobileHistoryPanel } from './MobileHistoryPanel';
 import { CommandInputBar, type InputMode } from './CommandInputBar';
@@ -923,6 +924,23 @@ export default function MobileApp() {
 		);
 	}, [sessions]);
 
+	const handleExpandResponse = useCallback(
+		(lastResponse: LastResponsePreview) => {
+			const nextIndex = allResponses.findIndex(
+				({ response }) =>
+					response === lastResponse ||
+					(response.timestamp === lastResponse.timestamp &&
+						response.text === lastResponse.text &&
+						response.source === lastResponse.source)
+			);
+
+			setResponseIndex(nextIndex >= 0 ? nextIndex : 0);
+			setSelectedResponse(nextIndex >= 0 ? allResponses[nextIndex].response : lastResponse);
+			setShowResponseViewer(true);
+		},
+		[allResponses]
+	);
+
 	// Handle navigating between responses in the viewer
 	const handleNavigateResponse = useCallback(
 		(index: number) => {
@@ -1167,6 +1185,14 @@ export default function MobileApp() {
 						onReorderTab={handleReorderTab}
 					/>
 				)}
+
+			{activeSession && isActuallyConnected && (
+				<SessionStatusBanner
+					session={activeSession}
+					onExpandResponse={handleExpandResponse}
+					style={{ flexShrink: 0 }}
+				/>
+			)}
 
 			{/* AutoRun indicator - shown when batch processing is active on desktop */}
 			{activeSessionId && autoRunStates[activeSessionId] && (
