@@ -72,6 +72,8 @@ export interface ModalProps {
 	layerOptions?: Omit<UseModalLayerOptions, 'onEscape'>;
 	/** Ref to the element that should receive initial focus */
 	initialFocusRef?: React.RefObject<HTMLElement>;
+	/** Optional modal-scoped key handler, called before blocking propagation to the app shell */
+	onKeyDown?: (e: React.KeyboardEvent<HTMLDivElement>) => void;
 	/** Test ID for the modal container */
 	testId?: string;
 }
@@ -96,6 +98,7 @@ export function Modal({
 	showCloseButton = true,
 	layerOptions,
 	initialFocusRef,
+	onKeyDown,
 	testId,
 }: ModalProps) {
 	const containerRef = useRef<HTMLDivElement>(null);
@@ -132,7 +135,10 @@ export function Modal({
 			aria-label={title}
 			tabIndex={-1}
 			onClick={handleBackdropClick}
-			onKeyDown={(e) => e.stopPropagation()}
+			onKeyDown={(e) => {
+				onKeyDown?.(e);
+				e.stopPropagation();
+			}}
 			data-testid={testId}
 		>
 			<div

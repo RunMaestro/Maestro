@@ -4833,6 +4833,31 @@ test.describe('App shell seeded workbench', () => {
 		await expect(createAgentDialog.getByRole('button', { name: 'Create Agent' })).toBeDisabled();
 	});
 
+	test('uses Create New Agent keyboard shortcuts for folder picker and create submit', async () => {
+		const keyboardDir = path.join(seededWorkbench.homeDir, 'keyboard-created-agent-project');
+		fs.mkdirSync(keyboardDir, { recursive: true });
+		await stubAgentDetectionForNewAgent(electronApp);
+		await stubSelectFolderDialog(electronApp, keyboardDir);
+
+		const createAgentDialog = await openCreateNewAgentFromQuickActions(window);
+		await createAgentDialog.getByRole('option', { name: /Codex/ }).click();
+		await createAgentDialog.getByLabel('Agent Name').fill('Keyboard Shortcut Agent');
+		await expect(createAgentDialog.getByRole('button', { name: 'Create Agent' })).toBeDisabled();
+
+		await createAgentDialog.getByLabel('Agent Name').press('Control+O');
+		await expect(createAgentDialog.getByLabel('Working Directory')).toHaveValue(keyboardDir);
+		await expect(createAgentDialog.getByRole('button', { name: 'Create Agent' })).toBeEnabled();
+
+		await createAgentDialog.getByLabel('Agent Name').press('Control+Enter');
+
+		await expect(createAgentDialog).toBeHidden();
+		await expect(
+			window.locator('[data-tour="session-list"]').getByText('Keyboard Shortcut Agent', {
+				exact: true,
+			})
+		).toBeVisible();
+	});
+
 	test('shows available unavailable and coming-soon providers in Create New Agent', async () => {
 		await stubAgentDetectionForNewAgent(electronApp);
 
