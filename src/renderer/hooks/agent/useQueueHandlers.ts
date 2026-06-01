@@ -23,6 +23,8 @@ export interface UseQueueHandlersReturn {
 	handleSwitchQueueSession: (sessionId: string, tabId?: string) => void;
 	/** Reorder queued items within a session (move item from fromIndex to toIndex) */
 	handleReorderQueueItems: (sessionId: string, fromIndex: number, toIndex: number) => void;
+	/** Toggle the held/paused state of a queued item (held items are skipped by dispatch) */
+	handleTogglePauseQueueItem: (sessionId: string, itemId: string) => void;
 }
 
 // ============================================================================
@@ -89,9 +91,24 @@ export function useQueueHandlers(): UseQueueHandlersReturn {
 		[]
 	);
 
+	const handleTogglePauseQueueItem = useCallback((sessionId: string, itemId: string) => {
+		setSessions((prev) =>
+			prev.map((s) => {
+				if (s.id !== sessionId) return s;
+				return {
+					...s,
+					executionQueue: s.executionQueue.map((item) =>
+						item.id === itemId ? { ...item, paused: !item.paused } : item
+					),
+				};
+			})
+		);
+	}, []);
+
 	return {
 		handleRemoveQueueItem,
 		handleSwitchQueueSession,
 		handleReorderQueueItems,
+		handleTogglePauseQueueItem,
 	};
 }

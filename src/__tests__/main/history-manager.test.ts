@@ -26,6 +26,11 @@ vi.mock('../../main/utils/logger', () => ({
 	},
 }));
 
+// Mock Sentry so we can assert which failures are (and are not) reported.
+vi.mock('../../main/utils/sentry', () => ({
+	captureException: vi.fn(),
+}));
+
 // Mock fs module. PR-C 1.6 — history-manager now uses fs/promises, but the
 // existing assertions are written against the sync mocks. We bridge the
 // async API to the sync mocks below so the test surface stays compact:
@@ -82,6 +87,7 @@ import { logger } from '../../main/utils/logger';
 import { HistoryManager, getHistoryManager } from '../../main/history-manager';
 import { HISTORY_VERSION, MAX_ENTRIES_PER_SESSION, sanitizeSessionId } from '../../shared/history';
 import type { HistoryEntry } from '../../shared/types';
+import { captureException } from '../../main/utils/sentry';
 
 // Type the mocked fs functions
 const mockExistsSync = vi.mocked(fs.existsSync);
@@ -540,6 +546,11 @@ describe('HistoryManager', () => {
 			const result = await manager.getEntries('session-1');
 			expect(result).toEqual([]);
 			expect(vi.mocked(logger.warn)).toHaveBeenCalled();
+			// A non-JSON read failure is unexpected and should still be reported.
+			expect(vi.mocked(captureException)).toHaveBeenCalledWith(
+				expect.any(Error),
+				expect.objectContaining({ operation: 'history:read', sessionId: 'session-1' })
+			);
 		});
 
 		it('should return empty array when file contains malformed JSON', async () => {
@@ -553,6 +564,26 @@ describe('HistoryManager', () => {
 
 			const result = await manager.getEntries('session-1');
 			expect(result).toEqual([]);
+		});
+
+		it('does not report corrupt/truncated history JSON to Sentry (MAESTRO-QA)', async () => {
+			const filePath = path.join(
+				'/mock/userData',
+				'history',
+				`${sanitizeSessionId('session-1')}.json`
+			);
+			mockExistsSync.mockImplementation((p: fs.PathLike) => p.toString() === filePath);
+			// Simulate a write truncated mid-string (e.g. crash/power loss): the JSON
+			// object is opened but never terminated.
+			mockReadFileSync.mockReturnValue('{"version":1,"entries":[{"id":"e1","prompt":"hel');
+
+			const result = await manager.getEntries('session-1');
+			expect(result).toEqual([]);
+			expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+				expect.stringContaining('corrupt JSON'),
+				expect.any(String)
+			);
+			expect(vi.mocked(captureException)).not.toHaveBeenCalled();
 		});
 	});
 

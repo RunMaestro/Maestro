@@ -164,6 +164,13 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: false,
 		category: 'appearance',
 	},
+	showStarredSessionsSection: {
+		description:
+			'Show a "Starred Sessions" section at the top of the left side bar listing every starred AI tab across all agents.',
+		type: 'boolean',
+		default: true,
+		category: 'appearance',
+	},
 	showLeftPanelGroupMemberCount: {
 		description:
 			'Show a member count in parentheses after each group name in the left side bar (e.g. "UNGROUPED AGENTS (24)").',
@@ -562,7 +569,7 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 	maxOutputLines: {
 		description: 'Maximum lines of agent output displayed per message before truncation.',
 		type: 'number',
-		default: 25,
+		default: Infinity,
 		category: 'logging',
 	},
 	logViewerSelectedLevels: {
@@ -880,6 +887,18 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		description: 'Whether the "Group Chats" section in the left bar is expanded.',
 		type: 'boolean',
 		default: true,
+		category: 'onboarding',
+	},
+	starredSessionsCollapsed: {
+		description: 'Whether the "Starred Sessions" section in the left bar is collapsed.',
+		type: 'boolean',
+		default: false,
+		category: 'onboarding',
+	},
+	bookmarksCollapsed: {
+		description: 'Whether the "Bookmarks" section in the left bar is collapsed.',
+		type: 'boolean',
+		default: false,
 		category: 'onboarding',
 	},
 

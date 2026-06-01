@@ -29,6 +29,16 @@ function makeDeps() {
 		addHistoryEntryRef: { current: null },
 		spawnBackgroundSynopsisRef: { current: null },
 		rightPanelRef: { current: null },
+		batchedUpdater: {
+			appendLog: vi.fn(),
+			markDelivered: vi.fn(),
+			markUnread: vi.fn(),
+			updateUsage: vi.fn(),
+			updateContextUsage: vi.fn(),
+			updateCycleBytes: vi.fn(),
+			updateCycleTokens: vi.fn(),
+			flushNow: vi.fn(),
+		},
 		activeHiddenToolRef: makeRef(),
 	};
 }

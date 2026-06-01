@@ -15,6 +15,8 @@ interface BuildSupportCommandsArgs {
 	setSettingsTab: (tab: SettingsTab) => void;
 	setShortcutsHelpOpen: (open: boolean) => void;
 	setAboutModalOpen: (open: boolean) => void;
+	onOpenLeaderboardRegistration: () => void;
+	isLeaderboardRegistered: boolean;
 	setFeedbackModalOpen: (open: boolean) => void;
 	setLogViewerOpen: (open: boolean) => void;
 	setProcessMonitorOpen: (open: boolean) => void;
@@ -40,6 +42,8 @@ export function buildSupportCommands({
 	setSettingsTab,
 	setShortcutsHelpOpen,
 	setAboutModalOpen,
+	onOpenLeaderboardRegistration,
+	isLeaderboardRegistered,
 	setFeedbackModalOpen,
 	setLogViewerOpen,
 	setProcessMonitorOpen,
@@ -121,6 +125,17 @@ export function buildSupportCommands({
 			label: 'About Maestro',
 			action: () => {
 				setAboutModalOpen(true);
+				setQuickActionOpen(false);
+			},
+		},
+		{
+			id: 'leaderboard',
+			label: isLeaderboardRegistered ? 'Leaderboard Registration' : 'Join Leaderboard',
+			subtext: isLeaderboardRegistered
+				? 'Update your global runmaestro.ai leaderboard profile'
+				: 'Register for the global runmaestro.ai leaderboard',
+			action: () => {
+				onOpenLeaderboardRegistration();
 				setQuickActionOpen(false);
 			},
 		},

@@ -9,6 +9,8 @@ import {
 	FolderOpen,
 	Copy,
 	Check,
+	Pause,
+	Play,
 } from 'lucide-react';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { useEventListener } from '../hooks/utils/useEventListener';
@@ -25,6 +27,7 @@ interface ExecutionQueueBrowserProps {
 	onRemoveItem: (sessionId: string, itemId: string) => void;
 	onSwitchSession: (sessionId: string, tabId?: string) => void;
 	onReorderItems?: (sessionId: string, fromIndex: number, toIndex: number) => void;
+	onToggleItemPause?: (sessionId: string, itemId: string) => void;
 }
 
 interface DragState {
@@ -51,6 +54,7 @@ export function ExecutionQueueBrowser({
 	onRemoveItem,
 	onSwitchSession,
 	onReorderItems,
+	onToggleItemPause,
 }: ExecutionQueueBrowserProps) {
 	const [viewMode, setViewMode] = useState<'current' | 'global'>('current');
 	const [dragState, setDragState] = useState<DragState | null>(null);
@@ -262,6 +266,12 @@ export function ExecutionQueueBrowser({
 												index={index}
 												theme={theme}
 												onRemove={() => onRemoveItem(session.id, item.id)}
+												isPaused={!!item.paused}
+												onTogglePause={
+													onToggleItemPause
+														? () => onToggleItemPause(session.id, item.id)
+														: undefined
+												}
 												onSwitchToSession={() => {
 													onSwitchSession(session.id, item.tabId);
 													onClose();
@@ -332,6 +342,8 @@ interface QueueItemRowProps {
 	index: number;
 	theme: Theme;
 	onRemove: () => void;
+	isPaused?: boolean;
+	onTogglePause?: () => void;
 	onSwitchToSession: () => void;
 	isDragging?: boolean;
 	canDrag?: boolean;
@@ -347,6 +359,8 @@ function QueueItemRow({
 	index,
 	theme,
 	onRemove,
+	isPaused,
+	onTogglePause,
 	onSwitchToSession,
 	isDragging,
 	canDrag,
@@ -490,7 +504,7 @@ function QueueItemRow({
 							? `0 4px 16px ${theme.colors.accent}20`
 							: 'none',
 					transition: isDragging ? 'none' : 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
-					opacity: isDragging ? 0.95 : isDimmed ? 0.5 : 1,
+					opacity: isDragging ? 0.95 : isPaused ? 0.45 : isDimmed ? 0.5 : 1,
 				}}
 				onMouseDown={handleMouseDown}
 				onMouseUp={handleMouseUp}
@@ -590,6 +604,17 @@ function QueueItemRow({
 							<Clock className="w-3 h-3" />
 							{timeDisplay}
 						</span>
+						{isPaused && (
+							<span
+								className="text-[10px] font-bold tracking-wider px-1.5 py-0.5 rounded"
+								style={{
+									backgroundColor: theme.colors.warning + '33',
+									color: theme.colors.warning,
+								}}
+							>
+								HELD
+							</span>
+						)}
 					</div>
 					<div
 						className={`mt-1 text-sm ${isCommand ? 'font-mono' : ''}`}
@@ -614,6 +639,19 @@ function QueueItemRow({
 
 				{/* Action buttons */}
 				<div className="flex flex-col items-center gap-1 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-all">
+					{onTogglePause && (
+						<button
+							onClick={(e) => {
+								e.stopPropagation();
+								onTogglePause();
+							}}
+							className="p-1.5 rounded hover:bg-black/20 transition-all"
+							style={{ color: isPaused ? theme.colors.warning : theme.colors.textDim }}
+							title={isPaused ? 'Resume this message' : 'Hold this message (skip until resumed)'}
+						>
+							{isPaused ? <Play className="w-4 h-4" /> : <Pause className="w-4 h-4" />}
+						</button>
+					)}
 					<button
 						onClick={(e) => {
 							e.stopPropagation();

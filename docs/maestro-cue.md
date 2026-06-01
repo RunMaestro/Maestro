@@ -105,6 +105,13 @@ The Triggers drawer lists all event types with their configurations (filter patt
 
 Use the **Switch to Agent** link to jump directly to that agent's workspace.
 
+Two layout buttons in the top-right corner clean up a messy canvas. Both snap nodes onto left-to-right columns by data-flow depth:
+
+- **Tidy** keeps each column's current top-to-bottom order, so it only aligns what you already have and leaves any crossing edges as-is.
+- **Arrange** additionally reorders nodes within each column to untangle crossing edges. Reach for it after importing a pipeline or whenever the wiring looks tangled.
+
+In the **All Pipelines** view there are no edges between pipeline cards to cross, so only **Arrange** appears there and it packs the cards into a balanced grid. Either button previews as a confirmation first, and the result can be undone with **Discard** before you save.
+
 ## Activity Log
 
 The Activity Log tab is a chronological record of every completed, failed, timed-out, or stopped run. The header offers a search box and an **Expand all / Collapse all** toggle.

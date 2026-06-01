@@ -861,6 +861,14 @@ export class CueEngine {
 	 * this state by inspecting the returned `writtenRoots` array.
 	 */
 	saveSettings(settings: import('./cue-types').CueSettings): { writtenRoots: string[] } {
+		// Strip `owner_agent_id` — it is a PER-ROOT field (it pins ownership to an
+		// agent that lives at one specific projectRoot) and must never propagate
+		// across roots. Merging it into every cue.yaml here is exactly how every
+		// single-agent project ended up with a bogus
+		// "settings.owner_agent_id ... does not match any agent" warning: one
+		// root's owner leaked through getSettings() and got broadcast to all.
+		// Each file keeps its OWN existing owner_agent_id via the merge below.
+		const { owner_agent_id: _perRootOwner, ...globalSettings } = settings;
 		// Dedupe by config root so two sessions sharing the same cue.yaml don't
 		// cause a double-write race. Prefer `configRoot` (config-from-ancestor
 		// case) over the session's own projectRoot.
@@ -880,7 +888,7 @@ export class CueEngine {
 				if (!file) continue;
 				const parsed = (yaml.load(file.raw) ?? {}) as Record<string, unknown>;
 				const existingSettings = (parsed.settings ?? {}) as Record<string, unknown>;
-				parsed.settings = { ...existingSettings, ...settings };
+				parsed.settings = { ...existingSettings, ...globalSettings };
 				const dumped = yaml.dump(parsed, {
 					indent: 2,
 					lineWidth: 120,
@@ -901,7 +909,7 @@ export class CueEngine {
 		// Mirror the new settings into in-memory state so getSettings() returns
 		// the updated values immediately (without waiting for a YAML re-read).
 		for (const state of states.values()) {
-			state.config.settings = { ...state.config.settings, ...settings };
+			state.config.settings = { ...state.config.settings, ...globalSettings };
 		}
 
 		return { writtenRoots };

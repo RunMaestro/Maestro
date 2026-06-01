@@ -90,6 +90,13 @@ vi.mock('../../../../main/process-manager/utils/shellEscape', () => ({
 	isPowerShellShell: vi.fn(() => false),
 }));
 
+// Default to non-Windows; individual tests opt into Windows via mockReturnValue(true).
+vi.mock('../../../../shared/platformDetection', () => ({
+	isWindows: vi.fn(() => false),
+	isMacOS: vi.fn(() => false),
+	isLinux: vi.fn(() => false),
+}));
+
 // ── Imports (after mocks) ──────────────────────────────────────────────────
 
 import { ChildProcessSpawner } from '../../../../main/process-manager/spawners/ChildProcessSpawner';
@@ -99,6 +106,7 @@ import { buildChildProcessEnv } from '../../../../main/process-manager/utils/env
 import { buildStreamJsonMessage } from '../../../../main/process-manager/utils/streamJsonBuilder';
 import { saveImageToTempFile } from '../../../../main/process-manager/utils/imageUtils';
 import { createOutputParser } from '../../../../main/parsers';
+import { isWindows } from '../../../../shared/platformDetection';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -795,6 +803,74 @@ describe('ChildProcessSpawner', () => {
 			// Should have -f flag (uses default file-based args)
 			expect(spawnArgs).toContain('-f');
 			expect(spawnArgs).toContain('/tmp/maestro-image-0.png');
+		});
+	});
+
+	// ----------------------------------------------------------------
+	// Windows batch-file spawning (MAESTRO-Q8)
+	//
+	// Node.js throws "spawn EINVAL" when asked to spawn a .cmd/.bat file
+	// without a shell. npm-installed agent CLIs resolve to such shims on
+	// Windows, so the spawner must auto-enable shell for them.
+	// ----------------------------------------------------------------
+	describe('Windows batch-file handling (MAESTRO-Q8)', () => {
+		beforeEach(() => {
+			vi.mocked(isWindows).mockReturnValue(true);
+		});
+		afterEach(() => {
+			vi.mocked(isWindows).mockReturnValue(false);
+		});
+
+		it('auto-enables shell for a .cmd command on Windows', () => {
+			const { spawner } = createTestContext();
+
+			spawner.spawn(createBaseConfig({ command: 'claude.cmd' }));
+
+			const options = mockSpawn.mock.calls[0][2] as { shell?: boolean | string };
+			expect(options.shell).toBe(true);
+		});
+
+		it('auto-enables shell for a .bat command on Windows', () => {
+			const { spawner } = createTestContext();
+
+			spawner.spawn(createBaseConfig({ command: 'agent.bat' }));
+
+			const options = mockSpawn.mock.calls[0][2] as { shell?: boolean | string };
+			expect(options.shell).toBe(true);
+		});
+
+		it('quotes a batch-file command path that contains spaces', () => {
+			const { spawner } = createTestContext();
+			const cmdPath = 'C:\\Users\\First Last\\AppData\\Roaming\\npm\\claude.cmd';
+
+			spawner.spawn(createBaseConfig({ command: cmdPath }));
+
+			const spawnCommand = mockSpawn.mock.calls[0][0] as string;
+			const options = mockSpawn.mock.calls[0][2] as { shell?: boolean | string };
+			expect(options.shell).toBe(true);
+			expect(spawnCommand).toBe(`"${cmdPath}"`);
+		});
+
+		it('does not quote a batch-file command path without spaces', () => {
+			const { spawner } = createTestContext();
+			const cmdPath = 'C:\\npm\\claude.cmd';
+
+			spawner.spawn(createBaseConfig({ command: cmdPath }));
+
+			const spawnCommand = mockSpawn.mock.calls[0][0] as string;
+			const options = mockSpawn.mock.calls[0][2] as { shell?: boolean | string };
+			expect(options.shell).toBe(true);
+			expect(spawnCommand).toBe(cmdPath);
+		});
+
+		it('does not auto-enable shell for a .cmd command off Windows', () => {
+			vi.mocked(isWindows).mockReturnValue(false);
+			const { spawner } = createTestContext();
+
+			spawner.spawn(createBaseConfig({ command: 'claude.cmd' }));
+
+			const options = mockSpawn.mock.calls[0][2] as { shell?: boolean | string };
+			expect(options.shell).toBe(false);
 		});
 	});
 });

@@ -206,7 +206,7 @@ export interface KeyboardMasteryData {
 
 /** Batch Runner modal data — used to pre-seed the doc list when opened programmatically (e.g. from the inline wizard's "Start Auto Run" button). */
 export interface BatchRunnerModalData {
-	/** Document filenames (without `.md`) to pre-populate the run list with. When set, overrides the default `[currentDocument]` initialization. */
+	/** Document filenames (without `.md`) to pre-populate the run list with. When omitted, the run list opens empty. */
 	presetDocuments?: string[];
 }
 

@@ -17,7 +17,7 @@ import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { useCue } from '../../hooks/useCue';
 import type { CueSessionStatus } from '../../hooks/useCue';
-import { CueHelpContent } from '../CueHelpModal';
+import { CueHelpModal } from '../CueHelpModal';
 import { CuePipelineEditor } from '../CuePipelineEditor';
 import { generateId } from '../../utils/ids';
 import { useSessionStore } from '../../stores/sessionStore';
@@ -99,10 +99,8 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 	activitySearchQueryRef.current = activitySearchQuery;
 
 	useModalLayer(MODAL_PRIORITIES.CUE_MODAL, undefined, () => {
-		if (showHelpRef.current) {
-			setShowHelp(false);
-			return;
-		}
+		// The help guide registers its own layer above this one (CUE_HELP), so
+		// Escape while the guide is open is handled there - it never reaches here.
 		// If Activity Log search is focused with text, clear it instead of closing.
 		// First Escape clears, second Escape (now with empty input) closes the modal.
 		if (
@@ -300,20 +298,12 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 							isEnabled={isEnabled}
 							toggling={toggling}
 							handleToggle={handleToggle}
-							showHelp={showHelp}
 							onOpenHelp={handleOpenHelp}
-							onCloseHelp={handleCloseHelp}
 							onClose={handleCloseWithConfirm}
 						/>
 
 						{/* Body */}
-						{showHelp ? (
-							<div className="flex-1 overflow-y-auto p-6 scrollbar-thin">
-								<div className="max-w-3xl mx-auto">
-									<CueHelpContent theme={theme} cueShortcutKeys={cueShortcutKeys} />
-								</div>
-							</div>
-						) : activeTab === 'dashboard' ? (
+						{activeTab === 'dashboard' ? (
 							<div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
 								<CueDashboard
 									theme={theme}
@@ -372,6 +362,10 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 					</div>
 				</div>,
 				document.body
+			)}
+
+			{showHelp && (
+				<CueHelpModal theme={theme} onClose={handleCloseHelp} cueShortcutKeys={cueShortcutKeys} />
 			)}
 		</>
 	);

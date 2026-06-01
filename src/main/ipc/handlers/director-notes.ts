@@ -126,7 +126,8 @@ export interface UnifiedHistoryStats {
 	sessionCount: number; // Distinct provider sessions across all agents
 	autoCount: number; // Total AUTO entries
 	userCount: number; // Total USER entries
-	totalCount: number; // Total entries (autoCount + userCount)
+	cueCount: number; // Total CUE entries
+	totalCount: number; // Total entries (autoCount + userCount + cueCount)
 }
 
 export interface SynopsisOptions {
@@ -192,6 +193,7 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 				const uniqueAgentSessions = new Set<string>(); // track unique provider sessions
 				let autoCount = 0;
 				let userCount = 0;
+				let cueCount = 0;
 
 				// Pre-compute graph bucketing parameters if requested
 				// For "all time" (cutoffTime=0), we do a two-pass: first find earliest, then bucket
@@ -218,6 +220,7 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 						agentsWithEntries.add(sessionId);
 						if (entry.type === 'AUTO') autoCount++;
 						else if (entry.type === 'USER') userCount++;
+						else if (entry.type === 'CUE') cueCount++;
 						if (entry.agentSessionId) uniqueAgentSessions.add(entry.agentSessionId);
 
 						// Track earliest for "all time" bucketing
@@ -283,7 +286,8 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 					sessionCount: uniqueAgentSessions.size,
 					autoCount,
 					userCount,
-					totalCount: autoCount + userCount,
+					cueCount,
+					totalCount: autoCount + userCount + cueCount,
 				};
 
 				logger.debug(
@@ -350,7 +354,8 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 							sessionCount,
 							autoCount: hit.autoCount,
 							userCount: hit.userCount,
-							totalCount: hit.autoCount + hit.userCount,
+							cueCount: hit.cueCount,
+							totalCount: hit.autoCount + hit.userCount + hit.cueCount,
 						},
 					};
 				}
@@ -407,7 +412,8 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 						sessionCount: providerSessionSet.size,
 						autoCount: agg.autoCount,
 						userCount: agg.userCount,
-						totalCount: agg.autoCount + agg.userCount,
+						cueCount: agg.cueCount,
+						totalCount: agg.autoCount + agg.userCount + agg.cueCount,
 					},
 				};
 			}

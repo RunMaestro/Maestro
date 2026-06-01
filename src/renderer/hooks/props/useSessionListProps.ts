@@ -54,6 +54,13 @@ export interface UseSessionListPropsDeps {
 	handleDeleteWorktreeSession: (session: Session) => void;
 	handleToggleWorktreeExpanded: (sessionId: string) => void;
 	handleConfigureCue: (session: Session) => void;
+	handleJumpToStarredSession: (
+		agentId: string,
+		projectPath: string,
+		agentSessionId: string,
+		sessionName: string,
+		parentSessionId: string
+	) => Promise<boolean>;
 	openWizardModal: () => void;
 	handleOpenFeedbackModal: () => void;
 	handleStartTour: () => void;
@@ -115,6 +122,7 @@ export function useSessionListProps(deps: UseSessionListPropsDeps) {
 			onOpenWorktreeConfig: deps.handleOpenWorktreeConfigSession,
 			onDeleteWorktree: deps.handleDeleteWorktreeSession,
 			onConfigureCue: deps.handleConfigureCue,
+			onJumpToStarredSession: deps.handleJumpToStarredSession,
 			openWizard: deps.openWizardModal,
 			openFeedback: deps.handleOpenFeedbackModal,
 			startTour: deps.handleStartTour,
@@ -161,6 +169,7 @@ export function useSessionListProps(deps: UseSessionListPropsDeps) {
 			deps.handleOpenWorktreeConfigSession,
 			deps.handleDeleteWorktreeSession,
 			deps.handleConfigureCue,
+			deps.handleJumpToStarredSession,
 			deps.handleToggleWorktreeExpanded,
 			deps.openWizardModal,
 			deps.handleOpenFeedbackModal,

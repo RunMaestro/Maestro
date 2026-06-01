@@ -32,6 +32,7 @@ function PipelineLegendInner({
 	if (selectedPipelineId !== null || pipelines.length === 0) return null;
 	return (
 		<div
+			className="no-scrollbar"
 			style={{
 				position: 'absolute',
 				top: 8,
@@ -45,6 +46,14 @@ function PipelineLegendInner({
 				backgroundColor: `${theme.colors.bgActivity}f5`,
 				border: `1px solid ${theme.colors.border}`,
 				borderRadius: 6,
+				// Stay clear of the interaction-mode toggle (left) and the
+				// Arrange button (right). Reserve a symmetric margin on each side
+				// (it's centered) and scroll horizontally when there are more
+				// pipelines than fit. `overscrollBehavior` keeps wheel scrolling
+				// from bubbling out to the canvas.
+				maxWidth: 'calc(100% - 240px)',
+				overflowX: 'auto',
+				overscrollBehavior: 'contain',
 			}}
 		>
 			{sortedPipelines.map((p) => (
@@ -63,6 +72,9 @@ function PipelineLegendInner({
 						padding: '2px 4px',
 						borderRadius: 4,
 						transition: 'background-color 0.15s',
+						// Don't let chips shrink or wrap — scroll the row instead.
+						flexShrink: 0,
+						whiteSpace: 'nowrap',
 					}}
 					onMouseEnter={(e) => {
 						e.currentTarget.style.backgroundColor = `${theme.colors.accent}15`;

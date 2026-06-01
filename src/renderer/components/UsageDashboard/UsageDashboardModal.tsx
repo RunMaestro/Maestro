@@ -30,6 +30,8 @@ import { DurationTrendsChart } from './DurationTrendsChart';
 import { AgentUsageChart } from './AgentUsageChart';
 import { AutoRunStats } from './AutoRunStats';
 import { SessionStats } from './SessionStats';
+import { ClaudePlanUsage } from './ClaudePlanUsage';
+import { CodexPlanUsage } from './CodexPlanUsage';
 import { WorktreeAnalytics } from './WorktreeAnalytics';
 import { AgentEfficiencyChart } from './AgentEfficiencyChart';
 import { WeekdayComparisonChart } from './WeekdayComparisonChart';
@@ -40,12 +42,15 @@ import { DashboardSkeleton } from './ChartSkeletons';
 import { ChartErrorBoundary } from './ChartErrorBoundary';
 import { CueStats } from './CueStats';
 import { KeyboardStats } from './KeyboardStats';
+import { PercentilesCard } from './PercentilesCard';
+import { getAgentDisplayName } from '../../../shared/agentMetadata';
 import type {
 	Theme,
 	Session,
 	AutoRunStats as AutoRunStatsType,
 	MaestroUsageStats,
 	LeaderboardRegistration,
+	UsageDashboardViewMode as ViewMode,
 } from '../../types';
 import {
 	AchievementShareButton,
@@ -54,6 +59,9 @@ import {
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { useUIStore } from '../../stores/uiStore';
+import { useClaudeUsageStore, type ClaudeUsageSnapshot } from '../../stores/claudeUsageStore';
+import { useCodexUsageStore, type CodexUsageSnapshot } from '../../stores/codexUsageStore';
 import { useGlobalAgentStats } from '../../hooks/stats/useGlobalAgentStats';
 import { getRendererPerfMetrics, logger } from '../../utils/logger';
 import { PERFORMANCE_THRESHOLDS } from '../../../shared/performance-metrics';
@@ -62,6 +70,7 @@ import { PERFORMANCE_THRESHOLDS } from '../../../shared/performance-metrics';
 const OVERVIEW_SECTIONS = [
 	'year-in-pixels',
 	'summary-cards',
+	'query-percentiles',
 	'agent-comparison',
 	'provider-trends',
 	'source-distribution',
@@ -72,14 +81,23 @@ const OVERVIEW_SECTIONS = [
 const AGENTS_SECTIONS = ['agent-overview-cards'] as const;
 const AGENT_OVERVIEW_SECTIONS = ['session-stats', 'agent-efficiency', 'agent-usage'] as const;
 const ACTIVITY_SECTIONS = ['activity-heatmap', 'weekday-comparison', 'duration-trends'] as const;
-const AUTORUN_SECTIONS = ['autorun-stats', 'tasks-by-hour', 'longest-autoruns'] as const;
+const AUTORUN_SECTIONS = [
+	'autorun-stats',
+	'autorun-task-percentiles',
+	'tasks-by-hour',
+	'longest-autoruns',
+] as const;
+const ANTHROPIC_USAGE_SECTIONS = ['anthropic-usage'] as const;
+const CODEX_USAGE_SECTIONS = ['codex-usage'] as const;
 
 type SectionId =
 	| (typeof OVERVIEW_SECTIONS)[number]
 	| (typeof AGENTS_SECTIONS)[number]
 	| (typeof AGENT_OVERVIEW_SECTIONS)[number]
 	| (typeof ACTIVITY_SECTIONS)[number]
-	| (typeof AUTORUN_SECTIONS)[number];
+	| (typeof AUTORUN_SECTIONS)[number]
+	| (typeof ANTHROPIC_USAGE_SECTIONS)[number]
+	| (typeof CODEX_USAGE_SECTIONS)[number];
 
 // Performance metrics instance for dashboard
 const perfMetrics = getRendererPerfMetrics('UsageDashboard');
@@ -87,15 +105,6 @@ const perfMetrics = getRendererPerfMetrics('UsageDashboard');
 // StatsTimeRange and StatsAggregation imported from shared/stats-types above
 
 // View mode options for the dashboard
-type ViewMode =
-	| 'overview'
-	| 'agents'
-	| 'agent-overview'
-	| 'activity'
-	| 'autorun'
-	| 'cue'
-	| 'shortcuts';
-
 interface UsageDashboardModalProps {
 	isOpen: boolean;
 	onClose: () => void;
@@ -157,6 +166,31 @@ const BASE_VIEW_MODE_TABS: { value: ViewMode; label: string }[] = [
 
 const EMPTY_SESSIONS: Session[] = [];
 
+function hasValidQuotaWindow(window: { percent: number; resetsAt?: string } | undefined): boolean {
+	if (!window) return false;
+	if (!Number.isFinite(window.percent)) return false;
+	if (window.percent < 0) return false;
+	return typeof window.resetsAt === 'string' && window.resetsAt.length > 0;
+}
+
+function hasUsefulAnthropicQuotaDetails(snapshot: ClaudeUsageSnapshot): boolean {
+	if (snapshot.authState === 'unauthenticated') return false;
+	return (
+		hasValidQuotaWindow(snapshot.session) ||
+		hasValidQuotaWindow(snapshot.weekAllModels) ||
+		hasValidQuotaWindow(snapshot.weekSonnetOnly)
+	);
+}
+
+function hasUsefulCodexQuotaDetails(snapshot: CodexUsageSnapshot): boolean {
+	if (snapshot.authState !== 'authenticated') return false;
+	return (
+		hasValidQuotaWindow(snapshot.session) ||
+		hasValidQuotaWindow(snapshot.weekly) ||
+		(snapshot.additionalLimits ?? []).some(hasValidQuotaWindow)
+	);
+}
+
 export function UsageDashboardModal({
 	isOpen,
 	onClose,
@@ -180,17 +214,43 @@ export function UsageDashboardModal({
 	// Tab visibility must match the IPC handler's gating: both Encore flags
 	// have to be on, otherwise the renderer hits a generic error/retry state
 	// instead of the friendly disabled note.
+	const usageStatsTabEnabled = useSettingsStore((s) => s.encoreFeatures.usageStats);
 	const cueTabEnabled = useSettingsStore(
 		(s) => s.encoreFeatures.maestroCue && s.encoreFeatures.usageStats
 	);
+	const claudeUsageSnapshots = useClaudeUsageStore((s) => s.snapshots);
+	const codexUsageSnapshots = useCodexUsageStore((s) => s.snapshots);
+	const hasAnthropicUsageDetails =
+		usageStatsTabEnabled &&
+		Object.values(claudeUsageSnapshots).some(hasUsefulAnthropicQuotaDetails);
+	const hasCodexUsageDetails =
+		usageStatsTabEnabled && Object.values(codexUsageSnapshots).some(hasUsefulCodexQuotaDetails);
 	const VIEW_MODE_TABS = useMemo<{ value: ViewMode; label: string }[]>(() => {
-		return cueTabEnabled
-			? [...BASE_VIEW_MODE_TABS, { value: 'cue', label: 'Cue' }]
-			: BASE_VIEW_MODE_TABS;
-	}, [cueTabEnabled]);
+		const tabs: { value: ViewMode; label: string }[] = [];
+		for (const tab of BASE_VIEW_MODE_TABS) {
+			tabs.push(tab);
+			// Cue sits immediately after Auto Run, before Shortcuts.
+			if (tab.value === 'autorun' && cueTabEnabled) {
+				tabs.push({ value: 'cue', label: 'Cue' });
+			}
+		}
+		if (hasAnthropicUsageDetails) {
+			tabs.push({ value: 'anthropic-usage', label: 'Anthropic Usage' });
+		}
+		if (hasCodexUsageDetails) {
+			tabs.push({ value: 'codex-usage', label: 'OpenAI Usage' });
+		}
+		return tabs;
+	}, [cueTabEnabled, hasAnthropicUsageDetails, hasCodexUsageDetails]);
 
 	const [timeRange, setTimeRange] = useState<StatsTimeRange>(defaultTimeRange);
-	const [viewMode, setViewMode] = useState<ViewMode>('overview');
+	// Restore the tab the user last left off on. The store is in-memory, so this
+	// survives closing and reopening the dashboard but resets to 'overview' on
+	// app restart. Persist every switch back to the store via setUsageDashboardViewMode.
+	const setUsageDashboardViewMode = useUIStore((s) => s.setUsageDashboardViewMode);
+	const [viewMode, setViewMode] = useState<ViewMode>(
+		() => useUIStore.getState().usageDashboardViewMode
+	);
 	const [data, setData] = useState<StatsAggregation | null>(null);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
@@ -281,6 +341,64 @@ export function UsageDashboardModal({
 		[timeRange]
 	);
 
+	// Populate the quota provider tabs when the dashboard opens. We always
+	// mirror cached main-process state first (cheap), then - only for a provider
+	// that still has no useful cached snapshot - trigger one sampling pass so the
+	// tab can appear at all. Without this, the tabs are a closed loop: the tab
+	// only renders once a snapshot exists, but the sampler that would create the
+	// first snapshot never runs (boot sampling uses a strict recent-session
+	// filter and the panels mount with autoRefresh={false}). Sampling is gated
+	// to once per open and skipped entirely when data is already present, so the
+	// expensive paths (Claude's maestro-p spawn, Codex's quota HTTP request) only
+	// fire when there is genuinely nothing to show.
+	const quotaSampledForOpenRef = useRef(false);
+	useEffect(() => {
+		if (!isOpen) {
+			quotaSampledForOpenRef.current = false;
+			return;
+		}
+		if (!usageStatsTabEnabled) return;
+		if (quotaSampledForOpenRef.current) return;
+		quotaSampledForOpenRef.current = true;
+
+		void (async () => {
+			// Mirror first so we don't re-sample a provider that already has data.
+			await Promise.all([
+				useClaudeUsageStore.getState().refresh(),
+				useCodexUsageStore.getState().refresh(),
+			]);
+
+			const claudeHasData = Object.values(useClaudeUsageStore.getState().snapshots).some(
+				hasUsefulAnthropicQuotaDetails
+			);
+			const codexHasData = Object.values(useCodexUsageStore.getState().snapshots).some(
+				hasUsefulCodexQuotaDetails
+			);
+
+			const jobs: Promise<unknown>[] = [];
+			if (!claudeHasData) {
+				jobs.push(
+					window.maestro.agents
+						.refreshClaudeUsageSnapshots()
+						.then(() => useClaudeUsageStore.getState().refresh())
+						.catch(() => {
+							// Sampler failures surface in main logs; the tab simply
+							// stays hidden rather than blocking the dashboard.
+						})
+				);
+			}
+			if (!codexHasData) {
+				jobs.push(
+					window.maestro.agents
+						.refreshCodexUsageSnapshots()
+						.then(() => useCodexUsageStore.getState().refresh())
+						.catch(() => {})
+				);
+			}
+			await Promise.all(jobs);
+		})();
+	}, [isOpen, usageStatsTabEnabled]);
+
 	// Initial fetch and real-time updates subscription
 	useEffect(() => {
 		if (!isOpen) return;
@@ -309,10 +427,21 @@ export function UsageDashboardModal({
 		}
 	}, [isOpen]);
 
-	const switchViewMode = useCallback((mode: ViewMode) => {
-		setViewMode(mode);
-		setFocusedSection(null);
-	}, []);
+	const switchViewMode = useCallback(
+		(mode: ViewMode) => {
+			setViewMode(mode);
+			// Remember the selection so reopening the dashboard returns here.
+			setUsageDashboardViewMode(mode);
+			setFocusedSection(null);
+			// Anchor the newly selected tab to the top. The scroll container
+			// (contentRef) persists across tab switches, so without this the new
+			// tab would inherit the previous tab's scroll position.
+			if (contentRef.current) {
+				contentRef.current.scrollTop = 0;
+			}
+		},
+		[setUsageDashboardViewMode]
+	);
 
 	// Handle Cmd+Shift+[ and Cmd+Shift+] for tab navigation
 	useEffect(() => {
@@ -382,7 +511,7 @@ export function UsageDashboardModal({
 		};
 	}, [containerWidth]);
 
-	// Get sections for current view mode
+	// Get sections for current view mode.
 	const currentSections = useMemo((): readonly SectionId[] => {
 		switch (viewMode) {
 			case 'overview':
@@ -395,6 +524,10 @@ export function UsageDashboardModal({
 				return ACTIVITY_SECTIONS;
 			case 'autorun':
 				return AUTORUN_SECTIONS;
+			case 'anthropic-usage':
+				return ANTHROPIC_USAGE_SECTIONS;
+			case 'codex-usage':
+				return CODEX_USAGE_SECTIONS;
 			case 'cue':
 				return [];
 			case 'shortcuts':
@@ -404,20 +537,24 @@ export function UsageDashboardModal({
 		}
 	}, [viewMode]);
 
-	// Fall back to 'overview' if either Encore flag flips off while the Cue tab is active
+	// Fall back to 'overview' if a dynamic provider/Cue tab disappears.
 	useEffect(() => {
-		if (!cueTabEnabled && viewMode === 'cue') {
+		if (!VIEW_MODE_TABS.some((tab) => tab.value === viewMode)) {
 			switchViewMode('overview');
 		}
-	}, [cueTabEnabled, viewMode, switchViewMode]);
+	}, [VIEW_MODE_TABS, viewMode, switchViewMode]);
 
 	// Get section label for accessibility
 	const getSectionLabel = useCallback((sectionId: SectionId): string => {
 		const labels: Record<SectionId, string> = {
 			'year-in-pixels': 'Past Year Activity Strip',
 			'summary-cards': 'Summary Cards',
+			'query-percentiles': 'Query Duration Percentiles',
+			'autorun-task-percentiles': 'Auto Run Task Duration Percentiles',
 			'agent-overview-cards': 'Active Agents Overview',
 			'session-stats': 'Agent Statistics',
+			'anthropic-usage': 'Anthropic Usage',
+			'codex-usage': 'OpenAI Usage',
 			'agent-efficiency': 'Agent Efficiency Chart',
 			'agent-comparison': 'Provider Comparison Chart',
 			'provider-trends': 'Provider Trends Over Time',
@@ -756,7 +893,11 @@ export function UsageDashboardModal({
 						<DashboardSkeleton
 							theme={theme}
 							viewMode={
-								viewMode === 'cue' || viewMode === 'agent-overview' || viewMode === 'shortcuts'
+								viewMode === 'cue' ||
+								viewMode === 'agent-overview' ||
+								viewMode === 'shortcuts' ||
+								viewMode === 'anthropic-usage' ||
+								viewMode === 'codex-usage'
 									? 'overview'
 									: viewMode
 							}
@@ -794,6 +935,66 @@ export function UsageDashboardModal({
 							aria-labelledby={`tab-${viewMode}`}
 						>
 							<KeyboardStats timeRange={timeRange} theme={theme} />
+						</div>
+					) : viewMode === 'anthropic-usage' ? (
+						// Quota snapshots come from provider-specific samplers, not stats.db.
+						// Keep this tab visible even when the analytics database has no AI-query rows.
+						<div
+							key={viewMode}
+							className="space-y-6 dashboard-content-enter"
+							data-testid="usage-dashboard-content"
+							role="tabpanel"
+							id={`tabpanel-${viewMode}`}
+							aria-labelledby={`tab-${viewMode}`}
+						>
+							<div
+								ref={setSectionRef('anthropic-usage')}
+								tabIndex={0}
+								role="region"
+								aria-label={getSectionLabel('anthropic-usage')}
+								onKeyDown={(e) => handleSectionKeyDown(e, 'anthropic-usage')}
+								className="outline-none rounded-lg transition-shadow dashboard-section-enter"
+								style={{
+									boxShadow:
+										focusedSection === 'anthropic-usage'
+											? `0 0 0 2px ${theme.colors.accent}`
+											: 'none',
+								}}
+								data-testid="section-anthropic-usage"
+							>
+								<ChartErrorBoundary theme={theme} chartName="Anthropic Usage">
+									<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />
+								</ChartErrorBoundary>
+							</div>
+						</div>
+					) : viewMode === 'codex-usage' ? (
+						// Quota snapshots come from provider-specific samplers, not stats.db.
+						// Keep this tab visible even when the analytics database has no AI-query rows.
+						<div
+							key={viewMode}
+							className="space-y-6 dashboard-content-enter"
+							data-testid="usage-dashboard-content"
+							role="tabpanel"
+							id={`tabpanel-${viewMode}`}
+							aria-labelledby={`tab-${viewMode}`}
+						>
+							<div
+								ref={setSectionRef('codex-usage')}
+								tabIndex={0}
+								role="region"
+								aria-label={getSectionLabel('codex-usage')}
+								onKeyDown={(e) => handleSectionKeyDown(e, 'codex-usage')}
+								className="outline-none rounded-lg transition-shadow dashboard-section-enter"
+								style={{
+									boxShadow:
+										focusedSection === 'codex-usage' ? `0 0 0 2px ${theme.colors.accent}` : 'none',
+								}}
+								data-testid="section-codex-usage"
+							>
+								<ChartErrorBoundary theme={theme} chartName="OpenAI Usage">
+									<CodexPlanUsage theme={theme} showAllAccounts autoRefresh={false} />
+								</ChartErrorBoundary>
+							</div>
 						</div>
 					) : !data ||
 					  (data.totalQueries === 0 && data.bySource.user === 0 && data.bySource.auto === 0) ? (
@@ -863,6 +1064,39 @@ export function UsageDashboardModal({
 												theme={theme}
 												columns={layout.summaryCardsCols}
 												sessions={sessions}
+											/>
+										</ChartErrorBoundary>
+									</div>
+
+									{/* Query Duration Percentiles - long-tail view an average hides */}
+									<div
+										ref={setSectionRef('query-percentiles')}
+										tabIndex={0}
+										role="region"
+										aria-label={getSectionLabel('query-percentiles')}
+										onKeyDown={(e) => handleSectionKeyDown(e, 'query-percentiles')}
+										className="outline-none rounded-lg transition-shadow dashboard-section-enter"
+										style={{
+											boxShadow:
+												focusedSection === 'query-percentiles'
+													? `0 0 0 2px ${theme.colors.accent}`
+													: 'none',
+											animationDelay: '50ms',
+										}}
+										data-testid="section-query-percentiles"
+									>
+										<ChartErrorBoundary theme={theme} chartName="Query Duration Percentiles">
+											<PercentilesCard
+												theme={theme}
+												title="Query Duration Percentiles"
+												unitLabel="queries"
+												distribution={data.queryDurationPercentiles}
+												breakdown={Object.entries(data.queryDurationPercentilesByAgent).map(
+													([agentType, distribution]) => ({
+														label: getAgentDisplayName(agentType),
+														distribution,
+													})
+												)}
 											/>
 										</ChartErrorBoundary>
 									</div>
@@ -1307,6 +1541,36 @@ export function UsageDashboardModal({
 												timeRange={timeRange}
 												theme={theme}
 												columns={layout.autoRunStatsCols}
+											/>
+										</ChartErrorBoundary>
+									</div>
+
+									{/* Auto Run Task Duration Percentiles - per-task long-tail */}
+									<div
+										ref={setSectionRef('autorun-task-percentiles')}
+										tabIndex={0}
+										role="region"
+										aria-label={getSectionLabel('autorun-task-percentiles')}
+										onKeyDown={(e) => handleSectionKeyDown(e, 'autorun-task-percentiles')}
+										className="outline-none rounded-lg transition-shadow dashboard-section-enter"
+										style={{
+											boxShadow:
+												focusedSection === 'autorun-task-percentiles'
+													? `0 0 0 2px ${theme.colors.accent}`
+													: 'none',
+											animationDelay: '50ms',
+										}}
+										data-testid="section-autorun-task-percentiles"
+									>
+										<ChartErrorBoundary
+											theme={theme}
+											chartName="Auto Run Task Duration Percentiles"
+										>
+											<PercentilesCard
+												theme={theme}
+												title="Task Duration Percentiles"
+												unitLabel="tasks"
+												distribution={data.autoRunTaskDurationPercentiles}
 											/>
 										</ChartErrorBoundary>
 									</div>

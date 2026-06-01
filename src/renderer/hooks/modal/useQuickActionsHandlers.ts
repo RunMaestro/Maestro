@@ -15,6 +15,7 @@
 
 import { useCallback } from 'react';
 import { generateId } from '../../utils/ids';
+import { takeNextRunnableQueueItem } from '../../utils/executionQueue';
 import type { Session, ThinkingMode, UnifiedTabRef } from '../../types';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
@@ -217,8 +218,11 @@ export function useQuickActionsHandlers(
 	}, [activeSessionId, refreshGitFileState, refreshWorktreeState]);
 
 	const handleQuickActionsDebugReleaseQueuedItem = useCallback(() => {
-		if (!activeSession || activeSession.executionQueue.length === 0) return;
-		const [nextItem, ...remainingQueue] = activeSession.executionQueue;
+		if (!activeSession) return;
+		const { item: nextItem, remaining: remainingQueue } = takeNextRunnableQueueItem(
+			activeSession.executionQueue
+		);
+		if (!nextItem) return;
 		// Update state to remove item from queue and surface the user log entry
 		// for message items (mirrors what useAgentListeners onExit / useInterruptHandler
 		// do for their dequeue paths). processQueuedItem itself does not add the log.

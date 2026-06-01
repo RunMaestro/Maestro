@@ -20,6 +20,7 @@ import {
 	Trophy,
 	Trash2,
 	Bot,
+	Star,
 } from 'lucide-react';
 import { GhostIconButton } from '../ui/GhostIconButton';
 import type { Session, Group, Theme } from '../../types';
@@ -51,6 +52,12 @@ import { useSessionFilterMode } from '../../hooks/session/useSessionFilterMode';
 import { cueService } from '../../services/cue';
 import { captureException } from '../../utils/sentry';
 import { useEventListener } from '../../hooks/utils/useEventListener';
+import { getTabDisplayName } from '../../utils/tabHelpers';
+import {
+	notifyStarredSessionsChanged,
+	onStarredSessionsChanged,
+} from '../../utils/starredSessions';
+import { updateSessionWith } from '../../stores/sessionStore';
 
 // ============================================================================
 // SessionContextMenu - Right-click context menu for session items
@@ -111,6 +118,16 @@ interface SessionListProps {
 	// Maestro Cue
 	onConfigureCue?: (session: Session) => void;
 
+	// Starred sessions cross-agent jump. Resolves to `false` when the session can
+	// no longer be loaded (aged out), so the click handler can offer to unstar it.
+	onJumpToStarredSession?: (
+		agentId: string,
+		projectPath: string,
+		agentSessionId: string,
+		sessionName: string,
+		parentSessionId: string
+	) => Promise<boolean>;
+
 	// Group Chat handlers
 	onOpenGroupChat?: (id: string) => void;
 	onNewGroupChat?: () => void;
@@ -148,6 +165,8 @@ function SessionListInner(props: SessionListProps) {
 	const webInterfaceUseCustomPort = useSettingsStore((s) => s.webInterfaceUseCustomPort);
 	const webInterfaceCustomPort = useSettingsStore((s) => s.webInterfaceCustomPort);
 	const ungroupedCollapsed = useSettingsStore((s) => s.ungroupedCollapsed);
+	const starredSectionCollapsed = useSettingsStore((s) => s.starredSessionsCollapsed);
+	const showStarredSessionsSection = useSettingsStore((s) => s.showStarredSessionsSection);
 	const showLeftPanelGroupMemberCount = useSettingsStore((s) => s.showLeftPanelGroupMemberCount);
 	const leftPanelCollapsedPillsPerRow = useSettingsStore((s) => s.leftPanelCollapsedPillsPerRow);
 	const autoRunStats = useSettingsStore((s) => s.autoRunStats);
@@ -254,6 +273,175 @@ function SessionListInner(props: SessionListProps) {
 		};
 		// Re-fetch when sessions change so newly added agents show their Cue indicator
 	}, [sessions.length]);
+	// Starred named sessions across all providers, used for the Left Bar
+	// "Starred Sessions" section. We load lazily when the section is enabled
+	// and refresh when the list of agents changes, so newly starred or closed
+	// sessions surface without a reload.
+	const [starredNamedSessions, setStarredNamedSessions] = useState<
+		Array<{
+			agentId: string;
+			agentSessionId: string;
+			projectPath: string;
+			sessionName: string;
+			lastActivityAt?: number;
+		}>
+	>([]);
+	const setStarredSectionCollapsed = useSettingsStore.getState().setStarredSessionsCollapsed;
+	const loadStarredNamedSessions = useCallback(async () => {
+		if (!showStarredSessionsSection) return;
+		try {
+			const all = await window.maestro.agentSessions.getAllNamedSessions();
+			setStarredNamedSessions(
+				all
+					.filter((s) => s.starred === true)
+					.map((s) => ({
+						agentId: s.agentId,
+						agentSessionId: s.agentSessionId,
+						projectPath: s.projectPath,
+						sessionName: s.sessionName,
+						lastActivityAt: s.lastActivityAt,
+					}))
+			);
+		} catch (err) {
+			captureException(err, { extra: { context: 'SessionList.loadStarredNamedSessions' } });
+		}
+	}, [showStarredSessionsSection]);
+
+	// Refresh the closed/named starred cache when the agent count changes (a new
+	// session may have been starred) and whenever any star toggles anywhere in the
+	// app (so unstarring removes the row immediately instead of leaving a stale
+	// closed twin behind).
+	useEffect(() => {
+		void loadStarredNamedSessions();
+	}, [loadStarredNamedSessions, sessions.length]);
+	useEffect(
+		() => onStarredSessionsChanged(() => void loadStarredNamedSessions()),
+		[loadStarredNamedSessions]
+	);
+
+	// Combine open starred AI tabs with closed starred named sessions into the
+	// flat list rendered by the "Starred Sessions" Left Bar section.
+	type StarredItem =
+		| {
+				kind: 'open';
+				key: string;
+				displayName: string;
+				agentName: string;
+				parentSessionId: string;
+				tabId: string;
+		  }
+		| {
+				kind: 'closed';
+				key: string;
+				displayName: string;
+				agentName: string;
+				parentSessionId: string;
+				agentId: string;
+				agentSessionId: string;
+				projectPath: string;
+				sessionName: string;
+		  };
+	const starredItems = useMemo<StarredItem[]>(() => {
+		if (!showStarredSessionsSection) return [];
+		const items: StarredItem[] = [];
+		// Suppress a closed/named row whenever its conversation is already open as a
+		// tab, regardless of that tab's star state. Tracking every open tab's
+		// agentSessionId (not just starred ones) prevents a restored session from
+		// rendering twice - once as the open tab and once as its lingering closed
+		// twin - which is the duplication seen when restoring an aged-out star.
+		const openAgentSessionIds = new Set<string>();
+		for (const s of sessions) {
+			if (!s.aiTabs) continue;
+			for (const t of s.aiTabs) {
+				if (t.agentSessionId) openAgentSessionIds.add(t.agentSessionId);
+				if (!t.starred) continue;
+				items.push({
+					kind: 'open',
+					key: `open:${s.id}:${t.id}`,
+					displayName: getTabDisplayName(t),
+					agentName: s.name,
+					parentSessionId: s.id,
+					tabId: t.id,
+				});
+			}
+		}
+		const norm = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '');
+		for (const closed of starredNamedSessions) {
+			if (openAgentSessionIds.has(closed.agentSessionId)) continue;
+			const parent = sessions.find(
+				(s) => s.toolType === closed.agentId && norm(s.projectRoot) === norm(closed.projectPath)
+			);
+			if (!parent) continue;
+			items.push({
+				kind: 'closed',
+				key: `closed:${parent.id}:${closed.agentSessionId}`,
+				displayName: closed.sessionName,
+				agentName: parent.name,
+				parentSessionId: parent.id,
+				agentId: closed.agentId,
+				agentSessionId: closed.agentSessionId,
+				projectPath: closed.projectPath,
+				sessionName: closed.sessionName,
+			});
+		}
+		items.sort((a, b) => a.displayName.localeCompare(b.displayName));
+		return items;
+	}, [showStarredSessionsSection, sessions, starredNamedSessions]);
+
+	const handleStarredItemClick = useCallback(
+		async (item: StarredItem) => {
+			useSessionStore.getState().setActiveSessionId(item.parentSessionId);
+			if (item.kind === 'open') {
+				updateSessionWith(item.parentSessionId, (s) => ({
+					...s,
+					activeTabId: item.tabId,
+					activeFileTabId: null,
+					activeTerminalTabId: null,
+					activeBrowserTabId: null,
+					inputMode: 'ai',
+				}));
+				return;
+			}
+			// Closed session: ask the owning agent to resume it. If it can't be
+			// loaded the conversation has aged out (no longer on disk), so offer to
+			// remove the now-dangling star instead of silently doing nothing.
+			const opened = await props.onJumpToStarredSession?.(
+				item.agentId,
+				item.projectPath,
+				item.agentSessionId,
+				item.sessionName,
+				item.parentSessionId
+			);
+			if (opened === false) {
+				props.showConfirmation?.(
+					`"${item.sessionName}" is no longer available. It has aged out and its conversation could not be loaded. Remove the star?`,
+					async () => {
+						await window.maestro.agentSessions.setSessionStarred(
+							item.agentId,
+							item.projectPath,
+							item.agentSessionId,
+							false
+						);
+						// Drop it from the local list so the section updates immediately,
+						// and broadcast so any other starred views refresh too.
+						setStarredNamedSessions((prev) =>
+							prev.filter(
+								(s) =>
+									!(
+										s.agentId === item.agentId &&
+										s.agentSessionId === item.agentSessionId &&
+										s.projectPath === item.projectPath
+									)
+							)
+						);
+						notifyStarredSessionsChanged();
+					}
+				);
+			}
+		},
+		[props]
+	);
+
 	const groupChats = useGroupChatStore((s) => s.groupChats);
 	const activeGroupChatId = useGroupChatStore((s) => s.activeGroupChatId);
 	const groupChatState = useGroupChatStore((s) => s.groupChatState);
@@ -1038,6 +1226,73 @@ function SessionListInner(props: SessionListProps) {
 						</div>
 					)}
 
+					{/* STARRED SESSIONS SECTION - hidden when filtering by unread agents.
+					    Lists every starred AI tab (open) plus every starred closed session
+					    aggregated from agentSessions.getAllNamedSessions, across all agents.
+					    Click switches to the owning agent and either jumps to the open tab
+					    or resumes the closed session. */}
+					{showStarredSessionsSection && !showUnreadAgentsOnly && starredItems.length > 0 && (
+						<div className="mb-1">
+							<button
+								type="button"
+								className="w-full px-3 py-1.5 flex items-center justify-between cursor-pointer hover:bg-opacity-50 group"
+								onClick={() => setStarredSectionCollapsed(!starredSectionCollapsed)}
+								aria-expanded={!starredSectionCollapsed}
+							>
+								<div
+									className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider flex-1"
+									style={{ color: theme.colors.accent }}
+								>
+									{starredSectionCollapsed ? (
+										<ChevronRight className="w-3 h-3" />
+									) : (
+										<ChevronDown className="w-3 h-3" />
+									)}
+									<Star className="w-3.5 h-3.5" fill={theme.colors.accent} />
+									<span>
+										Starred Sessions
+										{showLeftPanelGroupMemberCount && (
+											<span className="ml-1 opacity-60">({starredItems.length})</span>
+										)}
+									</span>
+								</div>
+							</button>
+
+							{!starredSectionCollapsed && (
+								<div
+									className="flex flex-col border-l ml-4"
+									style={{ borderColor: theme.colors.accent }}
+								>
+									{starredItems.map((item) => (
+										<button
+											key={item.key}
+											type="button"
+											onClick={() => void handleStarredItemClick(item)}
+											className="px-3 py-1.5 flex flex-col text-left hover:bg-white/5 transition-colors"
+											style={{ color: theme.colors.textMain }}
+											title={`${item.displayName} - ${item.agentName}`}
+										>
+											<span className="flex items-center gap-1.5 text-sm truncate">
+												<Star
+													className="w-3 h-3 flex-shrink-0"
+													fill={theme.colors.accent}
+													stroke={theme.colors.accent}
+												/>
+												<span className="truncate">{item.displayName}</span>
+											</span>
+											<span
+												className="text-xs opacity-60 truncate ml-[1.125rem]"
+												style={{ color: theme.colors.textDim }}
+											>
+												{item.agentName}
+											</span>
+										</button>
+									))}
+								</div>
+							)}
+						</div>
+					)}
+
 					{/* BOOKMARKS SECTION - hidden when filtering by unread agents */}
 					{bookmarkedSessions.length > 0 && !showUnreadAgentsOnly && (
 						<div className="mb-1">
@@ -1512,6 +1767,14 @@ function SessionListInner(props: SessionListProps) {
 						modalActions.setRenameGroupEmoji(groupContextMenuGroup.emoji);
 						modalActions.setRenameGroupModalOpen(true);
 					}}
+					onChangeEmoji={() => {
+						// Reuses the rename modal, which includes the emoji picker.
+						const modalActions = getModalActions();
+						modalActions.setRenameGroupId(groupContextMenuGroup.id);
+						modalActions.setRenameGroupValue(groupContextMenuGroup.name);
+						modalActions.setRenameGroupEmoji(groupContextMenuGroup.emoji);
+						modalActions.setRenameGroupModalOpen(true);
+					}}
 					onNewAgent={() => {
 						// Expand the group so the new agent is visible when it lands here.
 						if (groupContextMenuGroup.collapsed) {
@@ -1524,7 +1787,6 @@ function SessionListInner(props: SessionListProps) {
 					}}
 					onDelete={
 						// Worktree groups always cascade-delete (handler removes agents).
-						// Non-worktree groups can only be deleted when empty.
 						groupContextMenuGroup.emoji === '🌳' && onDeleteWorktreeGroup
 							? () => onDeleteWorktreeGroup(groupContextMenuGroup.id)
 							: groupContextMenuMemberCount === 0
@@ -1535,7 +1797,21 @@ function SessionListInner(props: SessionListProps) {
 												setGroups((prev) => prev.filter((g) => g.id !== groupContextMenuGroup.id));
 											}
 										)
-								: undefined
+								: () =>
+										showConfirmation(
+											`Delete the group "${groupContextMenuGroup.name}"? Its ${groupContextMenuMemberCount} agent${groupContextMenuMemberCount === 1 ? '' : 's'} will be moved out of the group, not deleted.`,
+											() => {
+												const gid = groupContextMenuGroup.id;
+												// Ungroup members (and their synced worktree children) first.
+												setSessions((prev) =>
+													prev.map((s) => (s.groupId === gid ? { ...s, groupId: undefined } : s))
+												);
+												setGroups((prev) => prev.filter((g) => g.id !== gid));
+											}
+										)
+					}
+					deleteLabel={
+						groupContextMenuGroup.emoji === '🌳' ? 'Remove Group and Agents' : 'Delete Group'
 					}
 					onDismiss={() => setGroupContextMenu(null)}
 				/>

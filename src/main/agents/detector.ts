@@ -520,16 +520,17 @@ export class AgentDetector {
 			switch (agentId) {
 				case 'claude-code': {
 					if (optionKey === 'effort') {
-						// Claude Code: parse --help output to extract effort levels
 						const command =
 							(await this.getAgent(agentId))?.path ||
 							(await this.getAgent(agentId))?.command ||
 							'claude';
 						const env = getExpandedEnv();
-						const result = await execFileNoThrow(command, ['--help'], undefined, env);
-						if (result.exitCode === 0) {
-							// Match: --effort <level>  Effort level ... (low, medium, high, max)
-							const match = result.stdout.match(/--effort\s+<\w+>\s+.*?\(([^)]+)\)/);
+
+						// Primary: parse --help output. Older CLI builds list the levels
+						// inline, e.g. `--effort <level>  Effort level ... (low, medium, high, max)`.
+						const help = await execFileNoThrow(command, ['--help'], undefined, env);
+						if (help.exitCode === 0) {
+							const match = help.stdout.match(/--effort\s+<\w+>\s+.*?\(([^)]+)\)/);
 							if (match) {
 								const levels = match[1]
 									.split(',')
@@ -543,7 +544,35 @@ export class AgentDetector {
 								return ['', ...levels]; // Empty string = use default
 							}
 						}
-						logger.debug('Could not parse effort levels from Claude --help output', LOG_CONTEXT);
+
+						// Fallback: newer CLI builds dropped the parenthetical from --help but
+						// still validate the flag. Probe with an invalid value; commander rejects
+						// it during argument parsing (before any API call) and names the valid set:
+						// `error: option '--effort <level>' argument 'x' is invalid. It must be one of: low, medium, high, xhigh, max`
+						const probe = await execFileNoThrow(
+							command,
+							['--effort', '__maestro_probe__', '--version'],
+							undefined,
+							env
+						);
+						const probeOutput = `${probe.stderr}\n${probe.stdout}`;
+						const probeMatch = probeOutput.match(/--effort\b[^\n]*?must be one of:\s*([^\n]+)/i);
+						if (probeMatch) {
+							const levels = probeMatch[1]
+								.split(',')
+								.map((s) => s.trim().replace(/[.\s]+$/, ''))
+								.filter((s) => s.length > 0);
+							if (levels.length > 0) {
+								logger.info(
+									`Discovered ${levels.length} effort levels for ${agentId} from validation probe`,
+									LOG_CONTEXT,
+									{ levels }
+								);
+								return ['', ...levels]; // Empty string = use default
+							}
+						}
+
+						logger.debug('Could not discover effort levels for Claude Code', LOG_CONTEXT);
 						return [];
 					}
 					break;

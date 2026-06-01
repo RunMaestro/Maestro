@@ -161,6 +161,7 @@ export interface UseMainPanelPropsDeps {
 	handleStopBatchRun: (sessionId?: string) => void;
 	handleDeleteLog: (logId: string) => number | null;
 	handleRemoveQueuedItem: (itemId: string) => void;
+	handleToggleQueuedItemPause: (itemId: string) => void;
 	handleForceSendQueuedItem: (itemId: string) => void;
 	forcedParallelEnabled: boolean;
 	getForceSendContext: (
@@ -391,6 +392,7 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			onStopBatchRun: deps.handleStopBatchRun,
 			onDeleteLog: deps.handleDeleteLog,
 			onRemoveQueuedItem: deps.handleRemoveQueuedItem,
+			onTogglePauseQueuedItem: deps.handleToggleQueuedItemPause,
 			onForceSendQueuedItem: deps.handleForceSendQueuedItem,
 			forcedParallelEnabled: deps.forcedParallelEnabled,
 			getForceSendContext: deps.getForceSendContext,
@@ -640,6 +642,7 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			deps.handleStopBatchRun,
 			deps.handleDeleteLog,
 			deps.handleRemoveQueuedItem,
+			deps.handleToggleQueuedItemPause,
 			deps.handleForceSendQueuedItem,
 			deps.forcedParallelEnabled,
 			deps.getForceSendContext,

@@ -16,6 +16,7 @@ import type { Session, LogEntry, QueuedItem, SessionState } from '../../types';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import { generateId } from '../../utils/ids';
 import { getActiveTab } from '../../utils/tabHelpers';
+import { nextRunnableQueueItem, takeNextRunnableQueueItem } from '../../utils/executionQueue';
 import { logger } from '../../utils/logger';
 
 // ============================================================================
@@ -112,10 +113,13 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 				item: QueuedItem;
 			} | null = null;
 
-			if (currentSession && currentSession.executionQueue.length > 0) {
+			const nextRunnableOnInterrupt = currentSession
+				? nextRunnableQueueItem(currentSession.executionQueue)
+				: undefined;
+			if (nextRunnableOnInterrupt) {
 				queuedItemToProcess = {
 					sessionId: activeSession.id,
-					item: currentSession.executionQueue[0],
+					item: nextRunnableOnInterrupt,
 				};
 			}
 
@@ -135,9 +139,11 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 				prev.map((s) => {
 					if (s.id !== activeSession.id) return s;
 
-					// If there are queued items, start processing the next one
-					if (s.executionQueue.length > 0) {
-						const [nextItem, ...remainingQueue] = s.executionQueue;
+					// If there are runnable (non-held) queued items, start the next one
+					const { item: nextItem, remaining: remainingQueue } = takeNextRunnableQueueItem(
+						s.executionQueue
+					);
+					if (nextItem) {
 						const targetTab = s.aiTabs.find((tab) => tab.id === nextItem.tabId) || getActiveTab(s);
 
 						if (!targetTab) {
@@ -294,10 +300,13 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 						item: QueuedItem;
 					} | null = null;
 
-					if (currentSessionForKill && currentSessionForKill.executionQueue.length > 0) {
+					const nextRunnableAfterKill = currentSessionForKill
+						? nextRunnableQueueItem(currentSessionForKill.executionQueue)
+						: undefined;
+					if (nextRunnableAfterKill) {
 						queuedItemAfterKill = {
 							sessionId: activeSession.id,
-							item: currentSessionForKill.executionQueue[0],
+							item: nextRunnableAfterKill,
 						};
 					}
 
@@ -330,9 +339,11 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 								}
 							}
 
-							// If there are queued items, start processing the next one
-							if (s.executionQueue.length > 0) {
-								const [nextItem, ...remainingQueue] = s.executionQueue;
+							// If there are runnable (non-held) queued items, start the next one
+							const { item: nextItem, remaining: remainingQueue } = takeNextRunnableQueueItem(
+								s.executionQueue
+							);
+							if (nextItem) {
 								const targetTab =
 									s.aiTabs.find((tab) => tab.id === nextItem.tabId) || getActiveTab(s);
 

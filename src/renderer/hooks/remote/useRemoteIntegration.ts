@@ -5,6 +5,7 @@ import { cueService } from '../../services/cue';
 import { captureException } from '../../utils/sentry';
 import { createTab, closeTab } from '../../utils/tabHelpers';
 import { logger } from '../../utils/logger';
+import { persistTabStarred } from '../../utils/starredSessions';
 import { formatLogsForClipboard } from '../../utils/contextExtractor';
 import { notifyToast } from '../../stores/notificationStore';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
@@ -501,17 +502,9 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						const tab = s.aiTabs.find((t) => t.id === tabId);
 						if (!tab?.agentSessionId) return s;
 
-						// Persist starred state (same logic as desktop handleTabStar)
-						const agentId = s.toolType || 'claude-code';
-						if (agentId === 'claude-code') {
-							window.maestro.claude
-								.updateSessionStarred(s.projectRoot, tab.agentSessionId, starred)
-								.catch((err) => logger.error('Failed to persist tab starred:', undefined, err));
-						} else {
-							window.maestro.agentSessions
-								.setSessionStarred(agentId, s.projectRoot, tab.agentSessionId, starred)
-								.catch((err) => logger.error('Failed to persist tab starred:', undefined, err));
-						}
+						// Persist starred state and broadcast the change (same logic as
+						// desktop handleTabStar) so the Left Bar's starred cache refreshes.
+						persistTabStarred(s, tab, starred);
 
 						return {
 							...s,

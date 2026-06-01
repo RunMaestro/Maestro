@@ -52,6 +52,7 @@ import { promptsGet, promptsList } from './commands/prompts-get';
 import { gistCreate } from './commands/gist';
 import { notifyToast } from './commands/notify-toast';
 import { notifyFlash } from './commands/notify-flash';
+import { stats, statsQuery } from './commands/stats';
 
 // Injected at build time by scripts/build-cli.mjs via esbuild `define`.
 // The typeof guard keeps non-esbuild execution paths (ts-node, plain tsc output) from
@@ -596,6 +597,27 @@ notify
 	.option('-t, --timeout <seconds>', 'Auto-dismiss after N seconds (range: (0, 5]; default 1.5)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(notifyFlash);
+
+// Stats commands - introspect the Usage Dashboard's SQLite store (requires the
+// running Maestro desktop app, which owns the open database).
+program
+	.command('stats')
+	.description('Show aggregated Usage Dashboard metrics for a time range')
+	.option('-r, --range <range>', 'Time range: day, week, month, quarter, year, all (default: week)')
+	.option('--json', 'Output the full aggregation object as JSON')
+	.action(stats);
+
+program
+	.command('stats-query <sql>')
+	.description('Run a read-only SQL query against the stats database (SELECT / read PRAGMA only)')
+	.option(
+		'-p, --param <value>',
+		'Bind a value to a positional ? placeholder (repeatable, in order)',
+		(value: string, prev: string[]) => [...prev, value],
+		[] as string[]
+	)
+	.option('--json', 'Output rows as JSON instead of a tab-separated table')
+	.action(statsQuery);
 
 // Commander auto-switches to from: 'electron' when process.versions.electron is
 // set, which is still true under ELECTRON_RUN_AS_NODE=1. In that mode Commander

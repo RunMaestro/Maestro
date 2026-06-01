@@ -277,6 +277,19 @@ export class HistoryManager {
 		} catch (error) {
 			const code = (error as NodeJS.ErrnoException).code;
 			if (code === 'ENOENT') return []; // Cold-cache miss is expected
+			// A malformed/truncated history file (e.g. a write interrupted by a crash
+			// or power loss) surfaces as a JSON SyntaxError once recovery fails. That's
+			// an expected, recoverable on-disk condition — not a code bug — so we degrade
+			// gracefully to an empty history rather than reporting it to Sentry, where it
+			// only piled up as non-actionable noise (MAESTRO-QA). Genuinely unexpected
+			// read failures (permissions, I/O, etc.) are still captured below.
+			if (error instanceof SyntaxError) {
+				logger.warn(
+					`Discarding unreadable history for session ${sessionId} (corrupt JSON): ${error}`,
+					LOG_CONTEXT
+				);
+				return [];
+			}
 			logger.warn(`Failed to read history for session ${sessionId}: ${error}`, LOG_CONTEXT);
 			captureException(error, { operation: 'history:read', sessionId });
 			return [];

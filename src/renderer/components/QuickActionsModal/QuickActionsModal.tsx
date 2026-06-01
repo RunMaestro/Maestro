@@ -15,7 +15,7 @@ import { safeClipboardWrite } from '../../utils/clipboard';
 import { getOpenInLabel } from '../../utils/platformUtils';
 import { useListNavigation } from '../../hooks';
 import { useUIStore } from '../../stores/uiStore';
-import { useSettingsStore } from '../../stores/settingsStore';
+import { useSettingsStore, selectIsLeaderboardRegistered } from '../../stores/settingsStore';
 import { useBatchStore, selectActiveBatchSessionIds } from '../../stores/batchStore';
 import { useFileExplorerStore } from '../../stores/fileExplorerStore';
 import { useFeedbackDraftStore } from '../../stores/feedbackDraftStore';
@@ -140,6 +140,8 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		onOpenPlaybookExchange,
 		lastGraphFocusFile,
 		onOpenLastDocumentGraph,
+		currentGraphFile,
+		onOpenCurrentFileInGraph,
 		onOpenSymphony,
 		onOpenDirectorNotes,
 		onOpenMaestroCue,
@@ -175,6 +177,8 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const setIdleNotificationEnabled = useSettingsStore((s) => s.setIdleNotificationEnabled);
 	const bionifyReadingMode = useSettingsStore((s) => s.bionifyReadingMode);
 	const setBionifyReadingMode = useSettingsStore((s) => s.setBionifyReadingMode);
+	const showStarredSessionsSection = useSettingsStore((s) => s.showStarredSessionsSection);
+	const setShowStarredSessionsSection = useSettingsStore((s) => s.setShowStarredSessionsSection);
 	const enterToSendAI = useSettingsStore((s) => s.enterToSendAI);
 	const storeSetHistorySearchFilterOpen = useUIStore((s) => s.setHistorySearchFilterOpen);
 	const setSuccessFlashNotification = useUIStore((s) => s.setSuccessFlashNotification);
@@ -184,6 +188,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const setUngroupedCollapsed = useSettingsStore((s) => s.setUngroupedCollapsed);
 	const groupChatsExpanded = useSettingsStore((s) => s.groupChatsExpanded);
 	const setGroupChatsExpanded = useSettingsStore((s) => s.setGroupChatsExpanded);
+	const isLeaderboardRegistered = useSettingsStore(selectIsLeaderboardRegistered);
 	const activeBatchSessionIds = useBatchStore(useShallow(selectActiveBatchSessionIds));
 
 	const [search, setSearch] = useState('');
@@ -434,6 +439,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			isFilePreviewOpen,
 			ghCliAvailable,
 			lastGraphFocusFile,
+			currentGraphFile,
 			hasActiveSessionCapability,
 			setQuickActionOpen,
 			setSuccessFlashNotification,
@@ -452,6 +458,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			onOpenMaestroCue,
 			onConfigureCue,
 			onOpenLastDocumentGraph,
+			onOpenCurrentFileInGraph,
 			onPublishGist,
 			bionifyReadingMode,
 			setBionifyReadingMode,
@@ -459,6 +466,8 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			setAudioFeedbackEnabled,
 			idleNotificationEnabled,
 			setIdleNotificationEnabled,
+			showStarredSessionsSection,
+			setShowStarredSessionsSection,
 			shortcuts: {
 				usageDashboard: shortcuts.usageDashboard,
 				agentSessions: shortcuts.agentSessions,
@@ -494,6 +503,8 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			setSettingsTab,
 			setShortcutsHelpOpen,
 			setAboutModalOpen,
+			onOpenLeaderboardRegistration: () => openModal('leaderboard'),
+			isLeaderboardRegistered,
 			setFeedbackModalOpen,
 			setLogViewerOpen,
 			setProcessMonitorOpen,

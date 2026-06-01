@@ -1,5 +1,5 @@
 /**
- * claudeUsageStore — renderer-side mirror of the main-process Claude Max-plan
+ * claudeUsageStore — renderer-side mirror of the main-process Claude plan
  * usage snapshot map.
  *
  * Snapshots live on disk (electron-store namespace `claude-usage-snapshots`,

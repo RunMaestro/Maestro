@@ -7,6 +7,7 @@ import { selectActiveSession, updateAiTab, useSessionStore } from '../../../stor
 import type { Session } from '../../../types';
 import { clearLiveDraft } from '../../../utils/liveDraftStore';
 import { logger } from '../../../utils/logger';
+import { persistTabStarred } from '../../../utils/starredSessions';
 import {
 	addAiTabToUnifiedHistory,
 	closeTab,
@@ -259,17 +260,8 @@ export function useAITabHandlers(): AITabHandlersReturn {
 			prev.map((s) => {
 				if (s.id !== session.id) return s;
 				const tab = s.aiTabs.find((t) => t.id === tabId);
-				if (tab?.agentSessionId) {
-					const agentId = s.toolType || 'claude-code';
-					if (agentId === 'claude-code') {
-						window.maestro.claude
-							.updateSessionStarred(s.projectRoot, tab.agentSessionId, starred)
-							.catch((err) => logger.error('Failed to persist tab starred:', undefined, err));
-					} else {
-						window.maestro.agentSessions
-							.setSessionStarred(agentId, s.projectRoot, tab.agentSessionId, starred)
-							.catch((err) => logger.error('Failed to persist tab starred:', undefined, err));
-					}
+				if (tab) {
+					persistTabStarred(s, tab, starred);
 				}
 				return {
 					...s,

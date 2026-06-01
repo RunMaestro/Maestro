@@ -64,6 +64,27 @@ When you open a file, a **breadcrumb trail** appears showing your navigation his
 
 Files can be edited directly in the preview. Press `Cmd+S` / `Ctrl+S` to save changes. If you navigate away or close the preview with unsaved changes, a confirmation dialog will ask whether to discard them.
 
+### Drag and Drop Files Into the Tree
+
+Drag files or folders from your OS file manager (Finder on macOS, Explorer on Windows, your file manager on Linux) straight into the **Files tab** to copy them into the project:
+
+- **Drop onto a folder row** to copy the items inside that folder. The folder highlights as you hover it.
+- **Drop on empty space or a file row** to copy into the project root. The panel border highlights to show the root is the target.
+- **Folders are copied recursively**, with all of their contents.
+- If a name already exists at the destination, a prompt lets you **Overwrite**, **Auto-rename** (adds a numeric suffix), or **Skip** the conflicting items.
+
+Where you drop decides what happens:
+
+| Drop target                                      | Result                                                                                              |
+| ------------------------------------------------ | --------------------------------------------------------------------------------------------------- |
+| **Main panel** (the AI conversation)             | Attaches the file to your message - images become thumbnails, anything else becomes an `@reference` |
+| **Files tab**                                    | Copies the file or folder into the tree, at the folder or root you dropped on                       |
+| **Left bar**, or the **History / Auto Run** tabs | Nothing - those regions ignore dropped files                                                        |
+
+<Note>
+Importing into the tree copies from your local machine, so it is not available for agents running on an SSH remote. Attaching files to the chat still works on remotes.
+</Note>
+
 ### Publish as GitHub Gist
 
 Share files directly as GitHub Gists from the File Preview:

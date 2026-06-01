@@ -715,8 +715,10 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 					};
 					reader.readAsDataURL(file);
 				} else {
-					// External non-image file or folder — collect path for @-mention.
-					const filePath = (file as File & { path?: string }).path;
+					// External non-image file or folder - collect path for @-mention.
+					// `File.path` was removed in modern Electron; resolve via webUtils
+					// (bridged through the preload as `getPathForFile`).
+					const filePath = window.maestro.fs.getPathForFile(file);
 					if (filePath) {
 						externalPaths.push(toMentionPath(filePath, projectRoot));
 					}

@@ -10,6 +10,7 @@ import type { Theme } from '../../../../types';
 import type { PipelineNode, TriggerNodeData } from '../../../../../shared/cue-pipeline-types';
 import { CUE_COLOR } from '../../../../../shared/cue-pipeline-types';
 import { useDebouncedCallback } from '../../../../hooks/utils';
+import { registerPendingEdit } from '../../../../hooks/cue/pendingEditsRegistry';
 import { getInputStyle, getLabelStyle } from './triggerConfigStyles';
 import { CueSelect } from '../CueSelect';
 
@@ -43,15 +44,39 @@ export function TriggerConfig({ node, theme, onUpdateNode }: TriggerConfigProps)
 		setLocalCustomLabel(data.customLabel ?? '');
 	}, [data.customLabel]);
 
-	const { debouncedCallback: debouncedUpdate } = useDebouncedCallback((...args: unknown[]) => {
-		const config = args[0] as TriggerNodeData['config'];
-		onUpdateNode(node.id, { config } as Partial<TriggerNodeData>);
-	}, 300);
+	const { debouncedCallback: debouncedUpdate, flush: flushConfig } = useDebouncedCallback(
+		(...args: unknown[]) => {
+			const config = args[0] as TriggerNodeData['config'];
+			onUpdateNode(node.id, { config } as Partial<TriggerNodeData>);
+		},
+		300
+	);
 
-	const { debouncedCallback: debouncedUpdateLabel } = useDebouncedCallback((...args: unknown[]) => {
-		const customLabel = (args[0] as string) || undefined;
-		onUpdateNode(node.id, { customLabel } as Partial<TriggerNodeData>);
-	}, 300);
+	const { debouncedCallback: debouncedUpdateLabel, flush: flushLabel } = useDebouncedCallback(
+		(...args: unknown[]) => {
+			const customLabel = (args[0] as string) || undefined;
+			onUpdateNode(node.id, { customLabel } as Partial<TriggerNodeData>);
+		},
+		300
+	);
+
+	// Flush pending debounced edits on unmount AND register with the
+	// pending-edits registry so `handleSave` can flush before reading
+	// pipelineState. Without this, toggling a checkbox (or editing the
+	// custom label) and immediately closing the panel or saving inside
+	// the 300ms window silently drops the edit — the user-visible
+	// "re-trigger toggle won't stick across restarts" symptom.
+	useEffect(() => {
+		const unregister = registerPendingEdit(() => {
+			flushConfig();
+			flushLabel();
+		});
+		return () => {
+			flushConfig();
+			flushLabel();
+			unregister();
+		};
+	}, [flushConfig, flushLabel]);
 
 	const handleCustomLabelChange = useCallback(
 		(e: React.ChangeEvent<HTMLInputElement>) => {

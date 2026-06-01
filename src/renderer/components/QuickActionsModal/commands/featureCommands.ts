@@ -10,6 +10,8 @@ interface BuildFeatureCommandsArgs {
 	isFilePreviewOpen?: boolean;
 	ghCliAvailable?: boolean;
 	lastGraphFocusFile?: string;
+	/** Name of the active markdown file, set only when one is open in the preview. */
+	currentGraphFile?: string;
 	hasActiveSessionCapability?: (
 		capability:
 			| 'supportsSessionStorage'
@@ -34,6 +36,7 @@ interface BuildFeatureCommandsArgs {
 	onOpenMaestroCue?: () => void;
 	onConfigureCue?: (session: Session) => void;
 	onOpenLastDocumentGraph?: () => void;
+	onOpenCurrentFileInGraph?: () => void;
 	onPublishGist?: () => void;
 	bionifyReadingMode: boolean;
 	setBionifyReadingMode: (enabled: boolean) => void;
@@ -41,6 +44,8 @@ interface BuildFeatureCommandsArgs {
 	setAudioFeedbackEnabled: (enabled: boolean) => void;
 	idleNotificationEnabled: boolean;
 	setIdleNotificationEnabled: (enabled: boolean) => void;
+	showStarredSessionsSection: boolean;
+	setShowStarredSessionsSection: (enabled: boolean) => void;
 	shortcuts: {
 		usageDashboard?: QuickAction['shortcut'];
 		agentSessions?: QuickAction['shortcut'];
@@ -72,6 +77,7 @@ export function buildFeatureCommands({
 	isFilePreviewOpen,
 	ghCliAvailable,
 	lastGraphFocusFile,
+	currentGraphFile,
 	hasActiveSessionCapability,
 	setQuickActionOpen,
 	setSuccessFlashNotification,
@@ -90,6 +96,7 @@ export function buildFeatureCommands({
 	onOpenMaestroCue,
 	onConfigureCue,
 	onOpenLastDocumentGraph,
+	onOpenCurrentFileInGraph,
 	onPublishGist,
 	bionifyReadingMode,
 	setBionifyReadingMode,
@@ -97,6 +104,8 @@ export function buildFeatureCommands({
 	setAudioFeedbackEnabled,
 	idleNotificationEnabled,
 	setIdleNotificationEnabled,
+	showStarredSessionsSection,
+	setShowStarredSessionsSection,
 	shortcuts,
 	tabShortcuts,
 }: BuildFeatureCommandsArgs): QuickAction[] {
@@ -148,6 +157,22 @@ export function buildFeatureCommands({
 				flash(
 					setSuccessFlashNotification,
 					newState ? 'Idle Notifications: ON' : 'Idle Notifications: OFF'
+				);
+				setQuickActionOpen(false);
+			},
+		},
+		{
+			id: 'toggleStarredSessionsSection',
+			label: showStarredSessionsSection
+				? 'Hide Starred Sessions Section'
+				: 'Show Starred Sessions Section',
+			subtext: `Starred Sessions section: ${showStarredSessionsSection ? 'visible' : 'hidden'}`,
+			action: () => {
+				const newState = !showStarredSessionsSection;
+				setShowStarredSessionsSection(newState);
+				flash(
+					setSuccessFlashNotification,
+					newState ? 'Starred Sessions: SHOWN' : 'Starred Sessions: HIDDEN'
 				);
 				setQuickActionOpen(false);
 			},
@@ -304,6 +329,23 @@ export function buildFeatureCommands({
 			subtext: 'Open YAML editor for event-driven automation',
 			action: () => {
 				onConfigureCue(activeSession);
+				setQuickActionOpen(false);
+			},
+		});
+	}
+
+	if (currentGraphFile && onOpenCurrentFileInGraph) {
+		commands.push({
+			id: 'viewInDocumentGraph',
+			label: 'View in Document Graph',
+			subtext: `Focus the graph on ${currentGraphFile}`,
+			shortcut: {
+				id: 'viewInDocumentGraph',
+				label: 'View in Document Graph',
+				keys: ['Meta', 'Shift', 'g'],
+			},
+			action: () => {
+				onOpenCurrentFileInGraph();
 				setQuickActionOpen(false);
 			},
 		});

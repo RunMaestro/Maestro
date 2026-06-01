@@ -28,6 +28,7 @@ import { useSshRemoteName } from '../../hooks/mainPanel/useSshRemoteName';
 import { useContextWindow } from '../../hooks/mainPanel/useContextWindow';
 import { useFilePreviewHandlers } from '../../hooks/mainPanel/useFilePreviewHandlers';
 import { useGitInfo } from '../../hooks/mainPanel/useGitInfo';
+import { useChatFileDropZone } from '../../hooks/ui/useChatFileDropZone';
 import { MainPanelHeader } from './MainPanelHeader';
 import { MainPanelContent } from './MainPanelContent';
 import { AgentErrorBanner } from './AgentErrorBanner';
@@ -99,6 +100,7 @@ export const MainPanel = React.memo(
 			currentSessionBatchState,
 			onStopBatchRun,
 			onRemoveQueuedItem,
+			onTogglePauseQueuedItem,
 			onForceSendQueuedItem,
 			forcedParallelEnabled,
 			getForceSendContext,
@@ -650,6 +652,12 @@ export const MainPanel = React.memo(
 			refreshGitStatus,
 		]);
 
+		// Chat-attach drop zone, scoped to the main panel. Dropping an OS file (or
+		// a Files-panel row) anywhere over the main panel attaches it to the chat;
+		// other regions (left bar, Files/History/Auto Run) stay inert because they
+		// don't mount this zone.
+		const chatDropZone = useChatFileDropZone(theme, handleDrop);
+
 		// Show log viewer
 		if (logViewerOpen) {
 			return (
@@ -734,7 +742,9 @@ export const MainPanel = React.memo(
 							backgroundColor: theme.colors.bgMain,
 						}}
 						onClick={() => useUIStore.getState().setActiveFocus('main')}
+						{...chatDropZone.dragHandlers}
 					>
+						{chatDropZone.overlay}
 						{/* Top Bar (hidden in mobile landscape for focused reading) */}
 						{!isMobileLandscape && (
 							<MainPanelHeader
@@ -934,6 +944,7 @@ export const MainPanel = React.memo(
 							thinkingItems={thinkingItems}
 							onStopBatchRun={onStopBatchRun}
 							onRemoveQueuedItem={onRemoveQueuedItem}
+							onTogglePauseQueuedItem={onTogglePauseQueuedItem}
 							onForceSendQueuedItem={onForceSendQueuedItem}
 							forcedParallelEnabled={forcedParallelEnabled}
 							getForceSendContext={getForceSendContext}

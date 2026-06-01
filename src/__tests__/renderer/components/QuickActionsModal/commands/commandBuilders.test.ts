@@ -294,30 +294,81 @@ describe('QuickActions command builders', () => {
 				setAudioFeedbackEnabled: vi.fn(),
 				idleNotificationEnabled: false,
 				setIdleNotificationEnabled: vi.fn(),
+				showStarredSessionsSection: true,
+				setShowStarredSessionsSection: vi.fn(),
 				shortcuts: {},
 			}).map((a) => a.id)
 		).toContain('maestro-cue');
 
+		// "View in Document Graph" appears only when an active markdown file is open,
+		// and its action focuses the graph on that file then closes the palette.
+		const onOpenCurrentFileInGraph = vi.fn();
+		const graphCommands = buildFeatureCommands({
+			activeSession: session,
+			currentGraphFile: 'NOTES.md',
+			onOpenCurrentFileInGraph,
+			setQuickActionOpen: close,
+			setSuccessFlashNotification: vi.fn(),
+			setAgentSessionsOpen: vi.fn(),
+			setActiveAgentSessionId: vi.fn(),
+			bionifyReadingMode: false,
+			setBionifyReadingMode: vi.fn(),
+			audioFeedbackEnabled: false,
+			setAudioFeedbackEnabled: vi.fn(),
+			idleNotificationEnabled: false,
+			setIdleNotificationEnabled: vi.fn(),
+			showStarredSessionsSection: true,
+			setShowStarredSessionsSection: vi.fn(),
+			shortcuts: {},
+		});
+		const viewInGraph = graphCommands.find((a) => a.id === 'viewInDocumentGraph');
+		expect(viewInGraph).toBeDefined();
+		viewInGraph!.action();
+		expect(onOpenCurrentFileInGraph).toHaveBeenCalled();
+
+		// Hidden when no markdown file is active.
 		expect(
-			buildSupportCommands({
+			buildFeatureCommands({
+				activeSession: session,
+				onOpenCurrentFileInGraph,
 				setQuickActionOpen: close,
-				setSettingsModalOpen: vi.fn(),
-				setSettingsTab: vi.fn(),
-				setShortcutsHelpOpen: vi.fn(),
-				setAboutModalOpen: vi.fn(),
-				setFeedbackModalOpen: vi.fn(),
-				setLogViewerOpen: vi.fn(),
-				setProcessMonitorOpen: vi.fn(),
-				setUpdateCheckModalOpen: vi.fn(),
-				setDebugPackageModalOpen: vi.fn(),
-				getFeedbackDraft: () => ({ isMinimized: false, setMinimized: vi.fn() }),
-				createDebugPackage: vi.fn(),
-				notifyToast: vi.fn(),
-				openUrl: vi.fn(),
-				toggleDevtools: vi.fn(),
+				setSuccessFlashNotification: vi.fn(),
+				setAgentSessionsOpen: vi.fn(),
+				setActiveAgentSessionId: vi.fn(),
+				bionifyReadingMode: false,
+				setBionifyReadingMode: vi.fn(),
+				audioFeedbackEnabled: false,
+				setAudioFeedbackEnabled: vi.fn(),
+				idleNotificationEnabled: false,
+				setIdleNotificationEnabled: vi.fn(),
+				showStarredSessionsSection: true,
+				setShowStarredSessionsSection: vi.fn(),
 				shortcuts: {},
 			}).map((a) => a.id)
-		).toContain('createDebugPackage');
+		).not.toContain('viewInDocumentGraph');
+
+		const supportIds = buildSupportCommands({
+			setQuickActionOpen: close,
+			setSettingsModalOpen: vi.fn(),
+			setSettingsTab: vi.fn(),
+			setShortcutsHelpOpen: vi.fn(),
+			setAboutModalOpen: vi.fn(),
+			onOpenLeaderboardRegistration: vi.fn(),
+			isLeaderboardRegistered: false,
+			setFeedbackModalOpen: vi.fn(),
+			setLogViewerOpen: vi.fn(),
+			setProcessMonitorOpen: vi.fn(),
+			setUpdateCheckModalOpen: vi.fn(),
+			setDebugPackageModalOpen: vi.fn(),
+			getFeedbackDraft: () => ({ isMinimized: false, setMinimized: vi.fn() }),
+			createDebugPackage: vi.fn(),
+			notifyToast: vi.fn(),
+			openUrl: vi.fn(),
+			toggleDevtools: vi.fn(),
+			shortcuts: {},
+		}).map((a) => a.id);
+		expect(supportIds).toContain('createDebugPackage');
+		expect(supportIds).toContain('leaderboard');
 
 		const debugCommandIds = buildDebugCommands({
 			activeSession: createMockSession({

@@ -121,4 +121,18 @@ describe('MoveConflictModal', () => {
 		const buttons = screen.getAllByRole('button');
 		buttons.forEach((btn) => expect((btn as HTMLButtonElement).disabled).toBe(true));
 	});
+
+	it('uses "import" verbs when operation is copy', () => {
+		render(
+			<MoveConflictModal
+				{...defaultProps}
+				operation="copy"
+				conflicts={[makePendingMove('a.ts'), makePendingMove('b.ts')]}
+				nonConflictingCount={3}
+			/>
+		);
+		// Body and skip button switch the verb from "move" to "import".
+		expect(screen.getByText(/3 others can import without conflict/)).toBeTruthy();
+		expect(screen.getByText(/Skip conflicts, import 3/)).toBeTruthy();
+	});
 });

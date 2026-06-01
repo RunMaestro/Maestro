@@ -17,6 +17,7 @@ import {
 	type SnapshotUpdatedPayload,
 } from '../../shared/agentCapabilities';
 import type { UsageSnapshot } from '../agents/claude-mode-selector';
+import type { CodexUsageSnapshot } from '../stores/codexUsageStore';
 
 // Re-export for consumers that import from preload. `AgentStatus` is
 // re-exported only (no local usage in this file); TypeScript's
@@ -31,6 +32,7 @@ export type {
 	SnapshotUpdatedPayload,
 } from '../../shared/agentCapabilities';
 export type { UsageSnapshot } from '../agents/claude-mode-selector';
+export type { CodexUsageSnapshot } from '../stores/codexUsageStore';
 
 /**
  * Agent refresh result
@@ -224,12 +226,31 @@ export function createAgentsApi() {
 			ipcRenderer.invoke('agents:getMaestroPDetectedPath'),
 
 		/**
-		 * Fetch the live Claude Max-plan usage snapshot map keyed by canonical
+		 * Fetch the live Claude plan usage snapshot map keyed by canonical
 		 * `CLAUDE_CONFIG_DIR`. Used by the renderer-side claudeUsageStore to
 		 * mirror main-process state for the mode badge and Usage Dashboard.
 		 */
 		getClaudeUsageSnapshots: (): Promise<Record<string, UsageSnapshot>> =>
 			ipcRenderer.invoke('agents:getClaudeUsageSnapshots'),
+
+		/**
+		 * Discover local Claude account keys that can be sampled for quota status.
+		 */
+		getClaudeUsageAccountKeys: (): Promise<string[]> =>
+			ipcRenderer.invoke('agents:getClaudeUsageAccountKeys'),
+
+		/**
+		 * Fetch sanitized Codex quota snapshots keyed by canonical CODEX_HOME.
+		 * Main owns auth.json reads and quota endpoint calls.
+		 */
+		getCodexUsageSnapshots: (): Promise<Record<string, CodexUsageSnapshot>> =>
+			ipcRenderer.invoke('agents:getCodexUsageSnapshots'),
+
+		/**
+		 * Discover local CODEX_HOME account keys that can be sampled for quota status.
+		 */
+		getCodexUsageAccountKeys: (): Promise<string[]> =>
+			ipcRenderer.invoke('agents:getCodexUsageAccountKeys'),
 
 		/**
 		 * Trigger a fresh `runStartupUsageSampling()` pass on main so every known
@@ -240,6 +261,13 @@ export function createAgentsApi() {
 		 */
 		refreshClaudeUsageSnapshots: (): Promise<{ refreshed: number }> =>
 			ipcRenderer.invoke('claude:usage:refresh-all'),
+
+		/**
+		 * Trigger a fresh Codex quota sampling pass on main, then let renderer
+		 * stores pull the sanitized snapshot map.
+		 */
+		refreshCodexUsageSnapshots: (): Promise<{ refreshed: number }> =>
+			ipcRenderer.invoke('codex:usage:refresh-all'),
 	};
 }
 

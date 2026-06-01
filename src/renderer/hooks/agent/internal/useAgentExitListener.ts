@@ -27,6 +27,7 @@ import { generateId } from '../../../utils/ids';
 import { logger } from '../../../utils/logger';
 import { cleanupExitedTabLogs } from './helpers/exitTabCleanup';
 import { chooseNextQueuedItem } from './helpers/exitDequeue';
+import { takeNextRunnableQueueItem } from '../../../utils/executionQueue';
 import { refreshGitRefsAfterTerminalExit } from './helpers/exitGitRefresh';
 import {
 	runExitSynopsis,
@@ -43,6 +44,7 @@ export interface UseAgentExitListenerDeps {
 	addHistoryEntryRef: UseAgentListenersDeps['addHistoryEntryRef'];
 	spawnBackgroundSynopsisRef: UseAgentListenersDeps['spawnBackgroundSynopsisRef'];
 	rightPanelRef: UseAgentListenersDeps['rightPanelRef'];
+	batchedUpdater: UseAgentListenersDeps['batchedUpdater'];
 	activeHiddenToolRef: React.RefObject<
 		Map<string, { toolName: string; toolState?: ToolProgressState }>
 	>;
@@ -322,9 +324,12 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 							};
 						}
 
-						if (s.executionQueue.length > 0) {
-							const nextItem = s.executionQueue[0];
-
+						// Skip paused items: run the first runnable one, holding the rest
+						// (including any paused items ahead of it) in place.
+						const { item: nextItem, remaining: remainingQueue } = takeNextRunnableQueueItem(
+							s.executionQueue
+						);
+						if (nextItem) {
 							// Guard: non-forceParallel, non-readOnly items must wait
 							// until ALL other tabs are idle to prevent write conflicts
 							const otherTabsBusy = s.aiTabs?.some(
@@ -351,8 +356,6 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 									aiTabs: updatedAiTabs,
 								};
 							}
-
-							const [, ...remainingQueue] = s.executionQueue;
 
 							const targetTab =
 								s.aiTabs.find((tab) => tab.id === nextItem.tabId) || getActiveTab(s);
@@ -548,6 +551,11 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 			}
 
 			if (queuedItemToProcess) {
+				// Flush any pending batched stdout/stderr chunks before the queued
+				// message is dispatched. Otherwise the new user log entry is appended
+				// ahead of the trailing chunks from the response that just finished,
+				// and those chunks merge into the next response's bubble (issue #1022).
+				deps.batchedUpdater.flushNow();
 				setTimeout(() => {
 					deps.processQueuedItemRef.current?.(
 						queuedItemToProcess!.sessionId,

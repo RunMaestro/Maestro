@@ -383,7 +383,8 @@ textarea::placeholder {
 	}
 }
 
-.claude-plan-refresh-sweep {
+.claude-plan-refresh-sweep,
+.codex-plan-refresh-sweep {
 	animation: claude-plan-refresh-sweep 1.2s ease-in-out infinite;
 }
 

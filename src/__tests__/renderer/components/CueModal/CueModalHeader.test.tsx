@@ -23,9 +23,7 @@ function makeProps(overrides: Partial<React.ComponentProps<typeof CueModalHeader
 		isEnabled: false,
 		toggling: false,
 		handleToggle: vi.fn(),
-		showHelp: false,
 		onOpenHelp: vi.fn(),
-		onCloseHelp: vi.fn(),
 		onClose: vi.fn(),
 		...overrides,
 	};
@@ -85,32 +83,6 @@ describe('CueModalHeader', () => {
 		const props = makeProps();
 		render(<CueModalHeader {...props} />);
 		fireEvent.click(screen.getByTitle('Close'));
-		expect(props.onClose).toHaveBeenCalled();
-	});
-
-	it('showHelp=true hides tabs and toggle; shows back arrow', () => {
-		const props = makeProps({ showHelp: true });
-		render(<CueModalHeader {...props} />);
-		expect(screen.queryByText('Dashboard')).not.toBeInTheDocument();
-		expect(screen.queryByText('Pipeline Editor')).not.toBeInTheDocument();
-		expect(screen.queryByText('Backup')).not.toBeInTheDocument();
-		expect(screen.queryByText('Disabled')).not.toBeInTheDocument();
-		expect(screen.getByText('Maestro Cue Guide')).toBeInTheDocument();
-		expect(screen.getByTitle('Back to dashboard')).toBeInTheDocument();
-	});
-
-	it('back arrow fires onCloseHelp', () => {
-		const props = makeProps({ showHelp: true });
-		render(<CueModalHeader {...props} />);
-		fireEvent.click(screen.getByTitle('Back to dashboard'));
-		expect(props.onCloseHelp).toHaveBeenCalled();
-	});
-
-	it('close button visible in help view too', () => {
-		const props = makeProps({ showHelp: true });
-		const { container } = render(<CueModalHeader {...props} />);
-		const buttons = container.querySelectorAll('button');
-		fireEvent.click(buttons[buttons.length - 1]);
 		expect(props.onClose).toHaveBeenCalled();
 	});
 });

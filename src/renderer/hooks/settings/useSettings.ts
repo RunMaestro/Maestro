@@ -201,6 +201,8 @@ export interface UseSettingsReturn {
 	setUngroupedCollapsed: (value: boolean) => void;
 	groupChatsExpanded: boolean;
 	setGroupChatsExpanded: (value: boolean) => void;
+	starredSessionsCollapsed: boolean;
+	setStarredSessionsCollapsed: (value: boolean) => void;
 
 	// Onboarding settings
 	tourCompleted: boolean;
@@ -396,6 +398,8 @@ export interface UseSettingsReturn {
 	setShowWorktreeBranchName: (value: boolean) => void;
 
 	// Left side panel
+	showStarredSessionsSection: boolean;
+	setShowStarredSessionsSection: (value: boolean) => void;
 	showLeftPanelGroupMemberCount: boolean;
 	setShowLeftPanelGroupMemberCount: (value: boolean) => void;
 	leftPanelCollapsedPillsPerRow: number;

@@ -274,7 +274,16 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 		// any subsequent ESC/drop happens outside our event scope. Detect this
 		// via a `dragleave` whose relatedTarget is null OR whose coordinates are
 		// at/past the viewport edge, and reset the overlay state proactively.
+		//
+		// This heuristic exists solely for the FILE-drag overlay, so gate it on
+		// an active file drag (dragCounterRef > 0), matching the ESC handler
+		// above. Internal session drags never touch dragCounterRef, and Chromium
+		// fires `dragleave` with a null relatedTarget for ordinary element-to-
+		// element transitions inside the window - without this guard those would
+		// call handleDragEnd() mid-drag, clear draggingSessionId, and silently
+		// break drag-to-group / drag-to-ungroup before the drop ever lands.
 		const handleDocumentDragLeave = (e: DragEvent) => {
+			if (dragCounterRef.current === 0) return;
 			const leftWindow =
 				e.relatedTarget === null ||
 				e.clientX <= 0 ||

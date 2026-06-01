@@ -28,9 +28,19 @@ import { stripAnsi } from '../../utils/stripAnsi';
 import { SshRemoteConfig } from '../../../shared/types';
 import { MaestroSettings } from './persistence';
 import { captureException } from '../../utils/sentry';
-import { getAllSnapshots as getAllClaudeUsageSnapshots } from '../../stores/claudeUsageStore';
+import {
+	getAllSnapshots as getAllClaudeUsageSnapshots,
+	resolveConfigDirKey,
+} from '../../stores/claudeUsageStore';
+import { getAllCodexUsageSnapshots, resolveCodexHomeKey } from '../../stores/codexUsageStore';
 import type { UsageSnapshot } from '../../agents/claude-mode-selector';
-import { runStartupUsageSampling, getMaestroPBinPath } from '../../agents/claude-usage-startup';
+import type { CodexUsageSnapshot } from '../../stores/codexUsageStore';
+import {
+	runStartupUsageSampling,
+	getMaestroPBinPath,
+	discoverClaudeConfigDirs,
+} from '../../agents/claude-usage-startup';
+import { runCodexUsageSampling, discoverCodexHomes } from '../../agents/codex-usage-startup';
 
 const LOG_CONTEXT = '[AgentDetector]';
 const CONFIG_LOG_CONTEXT = '[AgentConfig]';
@@ -1597,7 +1607,7 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 		})
 	);
 
-	// Snapshot mirror for the renderer: returns every non-expired Claude Max-plan
+	// Snapshot mirror for the renderer: returns every non-expired Claude plan
 	// usage snapshot keyed by canonical CLAUDE_CONFIG_DIR. The renderer's
 	// claudeUsageStore lazily fetches via this handler on first read and re-fetches
 	// whenever `process:claude-mode-resolved` arrives (the only signal that
@@ -1610,6 +1620,14 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 				return getAllClaudeUsageSnapshots();
 			}
 		)
+	);
+
+	ipcMain.handle(
+		'agents:getClaudeUsageAccountKeys',
+		withIpcErrorLogging(handlerOpts('getClaudeUsageAccountKeys'), async (): Promise<string[]> => {
+			const configDirs = await discoverClaudeConfigDirs();
+			return configDirs.map((configDir) => resolveConfigDirKey({ CLAUDE_CONFIG_DIR: configDir }));
+		})
 	);
 
 	// On-demand re-sampler. Delegates to the same `runStartupUsageSampling()`
@@ -1642,7 +1660,7 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 				}
 
 				await runStartupUsageSampling({
-					sessionsStore: sessionsStore as unknown as Store<{ sessions: any[] }>,
+					sessionsStore,
 					agentConfigsStore,
 					settingsStore: settingsStore as unknown as Store<MaestroSettings>,
 					agentDetector,
@@ -1651,6 +1669,58 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 
 				const refreshed = Object.keys(getAllClaudeUsageSnapshots()).length;
 				logger.info(`Refreshed Claude usage snapshots`, LOG_CONTEXT, { refreshed });
+				return { refreshed };
+			}
+		)
+	);
+
+	// Snapshot mirror for the renderer: returns every non-expired Codex quota
+	// usage snapshot keyed by canonical CODEX_HOME. The auth-sensitive auth.json
+	// read and ChatGPT metadata request stay in the main process.
+	ipcMain.handle(
+		'agents:getCodexUsageSnapshots',
+		withIpcErrorLogging(
+			handlerOpts('getCodexUsageSnapshots'),
+			async (): Promise<Record<string, CodexUsageSnapshot>> => {
+				return getAllCodexUsageSnapshots();
+			}
+		)
+	);
+
+	ipcMain.handle(
+		'agents:getCodexUsageAccountKeys',
+		withIpcErrorLogging(handlerOpts('getCodexUsageAccountKeys'), async (): Promise<string[]> => {
+			const codexHomes = await discoverCodexHomes();
+			return codexHomes.map((codexHome) => resolveCodexHomeKey({ CODEX_HOME: codexHome }));
+		})
+	);
+
+	ipcMain.handle(
+		'codex:usage:refresh-all',
+		withIpcErrorLogging(
+			handlerOpts('refreshCodexUsage'),
+			async (): Promise<{ refreshed: number }> => {
+				const agentDetector = getAgentDetector();
+				if (!agentDetector || !sessionsStore) {
+					logger.warn(
+						'Skipping codex:usage:refresh-all — agents handler missing required deps',
+						LOG_CONTEXT,
+						{
+							hasDetector: !!agentDetector,
+							hasSessionsStore: !!sessionsStore,
+						}
+					);
+					return { refreshed: 0 };
+				}
+
+				await runCodexUsageSampling({
+					sessionsStore,
+					agentConfigsStore,
+					agentDetector,
+				});
+
+				const refreshed = Object.keys(getAllCodexUsageSnapshots()).length;
+				logger.info(`Refreshed Codex usage snapshots`, LOG_CONTEXT, { refreshed });
 				return { refreshed };
 			}
 		)

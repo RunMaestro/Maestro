@@ -49,6 +49,12 @@ export interface MoveConflictState {
 	destFolderAbsolutePath: string;
 	conflicts: PendingMove[];
 	nonConflicting: PendingMove[];
+	/**
+	 * Whether the pending transfer moves rows within the tree (`move`, the
+	 * default) or copies OS files dragged in from Finder/Explorer (`copy`). Only
+	 * affects the conflict modal's verbs and the executor's filesystem call.
+	 */
+	operation: 'move' | 'copy';
 }
 
 export interface RenameModalState {

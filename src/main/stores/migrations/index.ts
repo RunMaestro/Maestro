@@ -15,6 +15,7 @@ import type Store from 'electron-store';
 import { logger } from '../../utils/logger';
 import type { MaestroSettings } from '../types';
 import { migrateAdaptiveModeDefault } from './adaptive-mode-default';
+import { migratePlaybooksFolder } from './playbooks-folder';
 
 /**
  * Run all registered settings-store migrations once. Safe to call on every
@@ -28,5 +29,11 @@ export function runSettingsMigrations(store: Store<MaestroSettings>): void {
 		migrateAdaptiveModeDefault(store);
 	} catch (error) {
 		logger.error('Adaptive Mode default migration failed', 'Migration', error);
+	}
+
+	try {
+		migratePlaybooksFolder(store);
+	} catch (error) {
+		logger.error('Playbooks folder migration failed', 'Migration', error);
 	}
 }

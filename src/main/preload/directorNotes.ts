@@ -15,7 +15,8 @@ export interface UnifiedHistoryStats {
 	sessionCount: number; // Distinct provider sessions across all agents
 	autoCount: number; // Total AUTO entries
 	userCount: number; // Total USER entries
-	totalCount: number; // Total entries (autoCount + userCount)
+	cueCount: number; // Total CUE entries
+	totalCount: number; // Total entries (autoCount + userCount + cueCount)
 }
 
 /** Pre-computed activity graph bucket for a time slice */

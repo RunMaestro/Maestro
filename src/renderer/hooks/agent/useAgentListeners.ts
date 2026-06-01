@@ -73,6 +73,7 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 		addHistoryEntryRef: deps.addHistoryEntryRef,
 		spawnBackgroundSynopsisRef: deps.spawnBackgroundSynopsisRef,
 		rightPanelRef: deps.rightPanelRef,
+		batchedUpdater: deps.batchedUpdater,
 		activeHiddenToolRef,
 	});
 	useAgentSessionIdListener({ batchedUpdater: deps.batchedUpdater });

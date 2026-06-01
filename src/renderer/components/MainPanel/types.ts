@@ -135,6 +135,7 @@ export interface MainPanelProps {
 	setActiveSessionId: (id: string) => void;
 	onDeleteLog?: (logId: string) => number | null;
 	onRemoveQueuedItem?: (itemId: string) => void;
+	onTogglePauseQueuedItem?: (itemId: string) => void;
 	onForceSendQueuedItem?: (itemId: string) => void;
 	forcedParallelEnabled?: boolean;
 	getForceSendContext?: (

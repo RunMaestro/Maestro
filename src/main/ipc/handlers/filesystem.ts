@@ -9,6 +9,7 @@
  * - directorySize: Calculate directory size recursively (local & SSH remote)
  * - writeFile: Write content to file (local & SSH remote)
  * - rename: Rename file/directory (local & SSH remote)
+ * - copyPath: Copy a file/directory into a destination (local only; drag-import)
  * - delete: Delete file/directory (local & SSH remote)
  * - countItems: Count files and folders recursively (local & SSH remote)
  * - fetchImageAsBase64: Fetch image from URL and return as base64
@@ -535,6 +536,29 @@ export function registerFilesystemHandlers(): void {
 			throw new Error(`Failed to rename: ${error}`);
 		}
 	});
+
+	// Copy a file or folder from an arbitrary source path into a destination path.
+	// Local only: used by drag-and-drop import of OS files/folders into the file
+	// tree. SSH remotes are intentionally unsupported (the source lives on the
+	// local machine, so there is nothing sensible to copy on the remote host).
+	ipcMain.handle(
+		'fs:copyPath',
+		async (_, sourcePath: string, destPath: string, options?: { overwrite?: boolean }) => {
+			try {
+				const overwrite = options?.overwrite ?? false;
+				// `recursive: true` copies folders wholesale; for plain files it is a no-op.
+				// `force`/`errorOnExist` encode the conflict decision the renderer already made.
+				await fs.cp(sourcePath, destPath, {
+					recursive: true,
+					force: overwrite,
+					errorOnExist: !overwrite,
+				});
+				return { success: true };
+			} catch (error) {
+				throw new Error(`Failed to copy: ${error}`);
+			}
+		}
+	);
 
 	// Delete a file or folder (with recursive option for folders, supports SSH remote)
 	ipcMain.handle(

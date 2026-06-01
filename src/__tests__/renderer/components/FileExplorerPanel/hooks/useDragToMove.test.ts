@@ -31,6 +31,9 @@ const mockMaestro = {
 	fs: {
 		rename: vi.fn().mockResolvedValue(undefined),
 		delete: vi.fn().mockResolvedValue(undefined),
+		copyPath: vi.fn().mockResolvedValue(undefined),
+		// Mirrors the preload bridge: resolve a dropped File's absolute path.
+		getPathForFile: vi.fn((file: { path?: string }) => file.path ?? ''),
 	},
 };
 (window as any).maestro = mockMaestro;
@@ -44,18 +47,32 @@ const defaultArgs = {
 	setSelectedPaths: vi.fn(),
 };
 
-function makeDragEvent(types: string[], data: Record<string, string> = {}): React.DragEvent {
+function makeDragEvent(
+	types: string[],
+	data: Record<string, string> = {},
+	files: Array<{ path: string }> = []
+): React.DragEvent {
 	return {
 		dataTransfer: {
 			types,
 			getData: (key: string) => data[key] ?? '',
 			dropEffect: 'none',
+			files,
 		},
 		preventDefault: vi.fn(),
 		stopPropagation: vi.fn(),
 		relatedTarget: null,
 		currentTarget: null,
 	} as unknown as React.DragEvent;
+}
+
+/** OS-file drag carries the 'Files' type and a backing file list. */
+function makeOsDragEvent(paths: string[]): React.DragEvent {
+	return makeDragEvent(
+		['Files'],
+		{},
+		paths.map((path) => ({ path }))
+	);
 }
 
 const SINGLE = 'application/x-maestro-file-path';
@@ -284,5 +301,80 @@ describe('useDragToMove', () => {
 		// Both files should be queued — rename called once after performMoves resolves
 		await act(async () => {});
 		expect(mockMaestro.fs.rename).toHaveBeenCalledTimes(2);
+	});
+
+	describe('external OS file import', () => {
+		it('copies a dropped OS file into the target folder', async () => {
+			const { result } = renderHook(() => useDragToMove(defaultArgs));
+			const e = makeOsDragEvent(['/external/photo.png']);
+			act(() => {
+				result.current.handleFolderDrop(e, 'dest');
+			});
+			await act(async () => {});
+			expect(mockMaestro.fs.copyPath).toHaveBeenCalledWith(
+				'/external/photo.png',
+				'/project/dest/photo.png',
+				{ overwrite: false }
+			);
+			expect(mockMaestro.fs.rename).not.toHaveBeenCalled();
+		});
+
+		it('copies into the tree root when dropped on the root (empty dest path)', async () => {
+			const { result } = renderHook(() => useDragToMove(defaultArgs));
+			const e = makeOsDragEvent(['/external/notes.md']);
+			act(() => {
+				result.current.handleFolderDrop(e, '');
+			});
+			await act(async () => {});
+			expect(mockMaestro.fs.copyPath).toHaveBeenCalledWith(
+				'/external/notes.md',
+				'/project/notes.md',
+				{ overwrite: false }
+			);
+		});
+
+		it('opens the conflict modal with operation "copy" on a name clash', () => {
+			const { result } = renderHook(() => useDragToMove(defaultArgs));
+			// 'existing.ts' already lives in 'dest'
+			const e = makeOsDragEvent(['/external/existing.ts']);
+			act(() => {
+				result.current.handleFolderDrop(e, 'dest');
+			});
+			expect(result.current.moveConflict).not.toBeNull();
+			expect(result.current.moveConflict?.operation).toBe('copy');
+			expect(result.current.moveConflict?.conflicts[0].sourceName).toBe('existing.ts');
+			expect(mockMaestro.fs.copyPath).not.toHaveBeenCalled();
+		});
+
+		it('flashes "Imported" for a copy operation', async () => {
+			const onShowFlash = vi.fn();
+			const { result } = renderHook(() => useDragToMove({ ...defaultArgs, onShowFlash }));
+			await act(async () => {
+				await result.current.performMoves(
+					[
+						{
+							sourceName: 'photo.png',
+							sourceAbsolutePath: '/external/photo.png',
+							destAbsolutePath: '/project/dest/photo.png',
+						},
+					],
+					'dest',
+					'copy'
+				);
+			});
+			expect(mockMaestro.fs.copyPath).toHaveBeenCalled();
+			expect(onShowFlash).toHaveBeenCalledWith('Imported "photo.png"');
+		});
+
+		it('ignores OS file drops on SSH remote sessions', () => {
+			const { result } = renderHook(() =>
+				useDragToMove({ ...defaultArgs, sshRemoteId: 'remote-1' })
+			);
+			const e = makeOsDragEvent(['/external/photo.png']);
+			act(() => {
+				result.current.handleFolderDrop(e, 'dest');
+			});
+			expect(mockMaestro.fs.copyPath).not.toHaveBeenCalled();
+		});
 	});
 });

@@ -152,6 +152,7 @@ type GroupChatData = {
 import type { CueGraphSession, CueRunResult, CueSessionStatus, CueSettings } from '../shared/cue';
 import type { CueLogPayload } from '../shared/cue-log-types';
 import type { CueStatsAggregation, CueStatsTimeRange } from '../shared/cue-stats-types';
+import type { DurationPercentiles } from '../shared/percentiles';
 import type { MaestroCliStatus, MaestroCliInstallResult } from '../shared/maestro-cli';
 import type { GitWorktreeSetupResult, GitWorktreeCheckoutResult } from '../main/preload/git';
 
@@ -943,6 +944,12 @@ interface MaestroAPI {
 			dirPath: string,
 			sshRemoteId?: string
 		) => Promise<{ fileCount: number; folderCount: number }>;
+		copyPath: (
+			sourcePath: string,
+			destPath: string,
+			options?: { overwrite?: boolean }
+		) => Promise<{ success: boolean }>;
+		getPathForFile: (file: File) => string;
 	};
 	webserver: {
 		getUrl: () => Promise<string>;
@@ -1037,13 +1044,34 @@ interface MaestroAPI {
 				{
 					sampledAt: string;
 					configDirKey: string;
+					authState?: 'authenticated' | 'unauthenticated';
 					session: { percent: number; resetsAt: string };
 					weekAllModels: { percent: number; resetsAt: string };
 					weekSonnetOnly: { percent: number; resetsAt: string };
 				}
 			>
 		>;
+		getClaudeUsageAccountKeys: () => Promise<string[]>;
+		getCodexUsageSnapshots: () => Promise<
+			Record<
+				string,
+				{
+					sampledAt: string;
+					codexHomeKey: string;
+					authState: 'authenticated' | 'missing_auth' | 'unauthenticated' | 'error';
+					label?: string;
+					email?: string;
+					planType?: string;
+					session?: { percent: number; resetsAt: string };
+					weekly?: { percent: number; resetsAt: string };
+					additionalLimits?: Array<{ name: string; percent: number; resetsAt?: string }>;
+					error?: string;
+				}
+			>
+		>;
+		getCodexUsageAccountKeys: () => Promise<string[]>;
 		refreshClaudeUsageSnapshots: () => Promise<{ refreshed: number }>;
+		refreshCodexUsageSnapshots: () => Promise<{ refreshed: number }>;
 	};
 	// Agent Sessions API - all methods accept optional sshRemoteId for SSH remote session storage access
 	agentSessions: {
@@ -2696,6 +2724,9 @@ interface MaestroAPI {
 			totalQueries: number;
 			totalDuration: number;
 			avgDuration: number;
+			queryDurationPercentiles: DurationPercentiles;
+			queryDurationPercentilesByAgent: Record<string, DurationPercentiles>;
+			autoRunTaskDurationPercentiles: DurationPercentiles;
 			byAgent: Record<string, { count: number; duration: number }>;
 			bySource: { user: number; auto: number };
 			byLocation: { local: number; remote: number };
@@ -3200,6 +3231,7 @@ interface MaestroAPI {
 				sessionCount: number;
 				autoCount: number;
 				userCount: number;
+				cueCount: number;
 				totalCount: number;
 			};
 			graphBuckets?: Array<{ auto: number; user: number; cue: number }>;
@@ -3222,6 +3254,7 @@ interface MaestroAPI {
 				sessionCount: number;
 				autoCount: number;
 				userCount: number;
+				cueCount: number;
 				totalCount: number;
 			};
 		}>;

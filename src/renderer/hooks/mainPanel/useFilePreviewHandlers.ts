@@ -88,13 +88,33 @@ export function useFilePreviewHandlers({
 				});
 				if (!chosen) return false; // User cancelled
 				savePath = chosen;
+			} else {
+				// Existing file: the cached path may be stale if the file was moved,
+				// renamed, or deleted on disk since it was opened. A blind writeFile
+				// would silently recreate a ghost at the old location. Stat first; if
+				// it's gone, prompt for a destination instead of resurrecting it.
+				let stillExists = true;
+				try {
+					await window.maestro.fs.stat(path, filePreviewSshRemoteId);
+				} catch {
+					stillExists = false;
+				}
+				if (!stillExists) {
+					const chosen = await window.maestro.dialog.saveFile({
+						title: 'File moved or deleted on disk - choose where to save',
+						defaultPath: path,
+					});
+					if (!chosen) return false; // User cancelled
+					savePath = chosen;
+				}
 			}
 
 			await window.maestro.fs.writeFile(savePath, content, filePreviewSshRemoteId);
 
 			if (activeFileTabId) {
-				if (!path) {
-					// Update tab metadata with the real path
+				// Path changed (untitled save, or redirect after a move/delete): refresh
+				// the tab's metadata so it now tracks the real on-disk location.
+				if (savePath !== path) {
 					const fileName = savePath.split('/').pop() || 'Untitled';
 					const ext = fileName.includes('.') ? '.' + fileName.split('.').pop() : '';
 					const nameWithoutExt = ext ? fileName.slice(0, -ext.length) : fileName;

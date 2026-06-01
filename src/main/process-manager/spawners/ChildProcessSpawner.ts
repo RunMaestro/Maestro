@@ -249,7 +249,7 @@ export class ChildProcessSpawner {
 			});
 
 			// Handle Windows shell requirements
-			const spawnCommand = command;
+			let spawnCommand = command;
 			let spawnArgs = finalArgs;
 			// Respect explicit request from caller, but also be defensive: if caller
 			// did not set runInShell and we're on Windows with a bare .exe basename,
@@ -265,6 +265,20 @@ export class ChildProcessSpawner {
 				useShell = true;
 				logger.info(
 					'[ProcessManager] Auto-enabling shell for Windows to allow PATH resolution of basename exe',
+					'ProcessManager',
+					{ command: spawnCommand }
+				);
+			}
+
+			// Auto-enable shell for Windows when command is a batch file (.cmd/.bat).
+			// Node.js refuses to spawn .cmd/.bat directly (throws "spawn EINVAL") after
+			// the CVE-2024-27980 fix — they must be launched through a shell. npm-installed
+			// agent CLIs resolve to shims like claude.cmd / codex.cmd / opencode.cmd, which
+			// is exactly what tab naming spawns on Windows. Fixes MAESTRO-Q8.
+			if (isWindows() && !useShell && (commandExt === '.cmd' || commandExt === '.bat')) {
+				useShell = true;
+				logger.info(
+					'[ProcessManager] Auto-enabling shell for Windows to spawn batch-file command',
 					'ProcessManager',
 					{ command: spawnCommand }
 				);
@@ -315,6 +329,22 @@ export class ChildProcessSpawner {
 			let spawnShell: boolean | string = !!useShell;
 			if (useShell && typeof config.shell === 'string' && config.shell.trim()) {
 				spawnShell = config.shell.trim();
+			}
+
+			// When spawning through the default Windows shell (cmd.exe via ComSpec),
+			// Node concatenates the command and args into a single command line without
+			// quoting the command itself. A command path that contains spaces — e.g. an
+			// npm shim under "C:\Users\First Last\AppData\Roaming\npm\claude.cmd" — would
+			// be split by cmd.exe and fail. Quote it defensively. We only do this for the
+			// boolean (cmd.exe) shell path; an explicit shell string carries its own
+			// quoting rules and is the caller's responsibility.
+			if (
+				isWindows() &&
+				spawnShell === true &&
+				/\s/.test(spawnCommand) &&
+				!spawnCommand.startsWith('"')
+			) {
+				spawnCommand = `"${spawnCommand}"`;
 			}
 
 			// Log spawn details

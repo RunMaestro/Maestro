@@ -18,6 +18,7 @@ import {
 	ProcessHandlerDependencies,
 } from '../../../../main/ipc/handlers/process';
 import { getDefaultShell } from '../../../../main/stores/defaults';
+import { stripThinkingFromTranscript } from '../../../../main/agents/claude-transcript-sanitizer';
 
 // Mock electron's ipcMain
 vi.mock('electron', () => ({
@@ -218,6 +219,17 @@ vi.mock('fs/promises', () => ({
 vi.mock('../../../../main/utils/sentry', () => ({
 	captureException: vi.fn(),
 	addBreadcrumb: vi.fn(),
+}));
+
+// Mock the transcript sanitizer so the API-resume gate can be asserted without
+// touching a real Claude Code transcript on disk.
+vi.mock('../../../../main/agents/claude-transcript-sanitizer', () => ({
+	stripThinkingFromTranscript: vi.fn(() => ({
+		sanitized: false,
+		droppedRows: 0,
+		strippedBlocks: 0,
+		backupPath: null,
+	})),
 }));
 
 describe('process IPC handlers', () => {
@@ -824,6 +836,112 @@ describe('process IPC handlers', () => {
 				);
 				expect(resolveCalls.length).toBeGreaterThan(0);
 				expect(resolveCalls[0][2].mode).toBe('api');
+			});
+
+			// Once a conversation has run interactive, its transcript can hold
+			// subscription-account thinking blocks. Resuming it in API mode must
+			// strip them first, or Anthropic returns the "thinking blocks cannot be
+			// modified" 400 and the conversation stays permanently stuck.
+			it('sanitizes the transcript before an API-mode resume of a previously-interactive session', async () => {
+				mockAgentDetector.getAgent.mockResolvedValue(claudeCodeAgent);
+				mockProcessManager.spawn.mockReturnValue({ pid: 4247, success: true });
+
+				// Stage a prior interactive run so the cleanup branch sets the config-dir key.
+				mockSessionsStore.get.mockImplementation((key: string, defaultValue: unknown) => {
+					if (key === 'sessions') {
+						return [
+							{
+								id: 'session-resume',
+								claudeInteractive: { mode: 'interactive', modeReason: 'auto' },
+							},
+						];
+					}
+					return defaultValue;
+				});
+
+				const handler = handlers.get('process:spawn');
+				await handler!({} as any, {
+					sessionId: 'session-resume',
+					toolType: 'claude-code',
+					cwd: '/test',
+					command: 'claude',
+					args: claudeCodeAgent.args,
+					agentSessionId: 'prior-session-uuid', // Resume signal
+					prompt: 'continue',
+				});
+
+				expect(stripThinkingFromTranscript).toHaveBeenCalledTimes(1);
+				const calledPath = vi.mocked(stripThinkingFromTranscript).mock.calls[0][0];
+				expect(calledPath).toContain('prior-session-uuid.jsonl');
+			});
+
+			it('does not sanitize a fresh pure-API spawn (no resume, nothing on disk to touch)', async () => {
+				mockAgentDetector.getAgent.mockResolvedValue(claudeCodeAgent);
+				mockProcessManager.spawn.mockReturnValue({ pid: 4248, success: true });
+
+				const handler = handlers.get('process:spawn');
+				await handler!({} as any, {
+					sessionId: 'session-fresh',
+					toolType: 'claude-code',
+					cwd: '/test',
+					command: 'claude',
+					args: claudeCodeAgent.args,
+					prompt: 'hi',
+				});
+
+				expect(stripThinkingFromTranscript).not.toHaveBeenCalled();
+			});
+
+			// The original gate skipped sanitization when no `resolvedConfigDirKey`
+			// was set, which left transcripts poisoned for sessions where Batch Mode
+			// had since been toggled off (or where the persisted mode flipped to
+			// `'api'` via sticky-limit). The narrowed sanitizer (empty-shell only)
+			// is safe to run on any resume, so the gate now only requires an
+			// `agentSessionId` and Claude Code in API mode.
+			it('sanitizes any API-mode resume of a Claude Code session, even without persisted interactive history', async () => {
+				mockAgentDetector.getAgent.mockResolvedValue(claudeCodeAgent);
+				mockProcessManager.spawn.mockReturnValue({ pid: 4249, success: true });
+
+				// No prior interactive run persisted - this used to skip the sanitize
+				// because resolvedConfigDirKey stayed undefined.
+				mockSessionsStore.get.mockImplementation((key: string, defaultValue: unknown) => {
+					if (key === 'sessions') return [];
+					return defaultValue;
+				});
+
+				const handler = handlers.get('process:spawn');
+				await handler!({} as any, {
+					sessionId: 'session-resume-no-history',
+					toolType: 'claude-code',
+					cwd: '/test',
+					command: 'claude',
+					args: claudeCodeAgent.args,
+					agentSessionId: 'orphaned-transcript-uuid',
+					prompt: 'continue',
+				});
+
+				expect(stripThinkingFromTranscript).toHaveBeenCalledTimes(1);
+				const calledPath = vi.mocked(stripThinkingFromTranscript).mock.calls[0][0];
+				expect(calledPath).toContain('orphaned-transcript-uuid.jsonl');
+			});
+
+			it('does not sanitize SSH-enabled spawns (transcript lives on remote, not local disk)', async () => {
+				mockAgentDetector.getAgent.mockResolvedValue(claudeCodeAgent);
+				mockProcessManager.spawn.mockReturnValue({ pid: 4250, success: true });
+
+				const handler = handlers.get('process:spawn');
+				await handler!({} as any, {
+					sessionId: 'session-ssh',
+					toolType: 'claude-code',
+					cwd: '/test',
+					command: 'claude',
+					args: claudeCodeAgent.args,
+					agentSessionId: 'remote-session-uuid',
+					prompt: 'continue',
+					sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+				});
+
+				expect(stripThinkingFromTranscript).not.toHaveBeenCalled();
 			});
 		});
 	});

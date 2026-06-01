@@ -19,6 +19,7 @@ import { logger } from '../../../../utils/logger';
 import { notifyToast } from '../../../../stores/notificationStore';
 import { formatRelativeTime } from '../../../../../shared/formatters';
 import { parseSynopsis } from '../../../../../shared/synopsis';
+import { hasRunnableQueueItem } from '../../../../utils/executionQueue';
 import type { ToolType, Session } from '../../../../types';
 import type { UseAgentListenersDeps } from '../types';
 import type { RightPanelHandle } from '../../../../components/RightPanel';
@@ -215,7 +216,9 @@ export function shouldRunSynopsisOnExit(
 		  }
 		| undefined
 ): boolean {
-	if (session.executionQueue.length !== 0) return false;
+	// Paused items won't auto-run, so a queue with only held items still counts
+	// as "done" for synopsis purposes.
+	if (hasRunnableQueueItem(session.executionQueue)) return false;
 	const hasAgentSessionId = !!(completedTab?.agentSessionId || session.agentSessionId);
 	if (!hasAgentSessionId) return false;
 	const optedIn = !!(completedTab?.saveToHistory || session.pendingAICommandForSynopsis);

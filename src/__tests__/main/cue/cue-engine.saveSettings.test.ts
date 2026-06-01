@@ -214,6 +214,49 @@ describe('CueEngine.saveSettings', () => {
 		expect(reparsed.no_ancestor_fallback).toBe(true);
 	});
 
+	it('never propagates owner_agent_id and preserves each root’s existing one', () => {
+		// Regression: owner_agent_id is per-root. Broadcasting an incoming
+		// owner_agent_id into every cue.yaml flagged unrelated single-agent
+		// projects with a bogus "does not match any agent" warning. saveSettings
+		// must strip it from the incoming settings and leave each file's own
+		// owner_agent_id untouched via the merge.
+		const cfg = createMockConfig();
+		const engine = startEngineWithSessions([{ id: 's1', projectRoot: '/proj', config: cfg }]);
+
+		const existingYaml = yaml.dump({
+			settings: {
+				timeout_minutes: 30,
+				max_concurrent: 1,
+				queue_size: 10,
+				timeout_on_fail: 'break',
+				owner_agent_id: 'this-roots-own-owner',
+			},
+			subscriptions: [
+				{ name: 'keep-me', event: 'time.heartbeat', prompt: 'x', interval_minutes: 5 },
+			],
+		});
+		mockReadCueConfigFile.mockReturnValue({
+			filePath: '/proj/.maestro/cue.yaml',
+			raw: existingYaml,
+		});
+
+		engine.saveSettings({
+			timeout_minutes: 60,
+			timeout_on_fail: 'continue',
+			max_concurrent: 3,
+			queue_size: 99,
+			// A foreign owner that must NOT be written into this root.
+			owner_agent_id: 'some-other-agent-uuid',
+		});
+
+		const writtenContent = mockWriteCueConfigFile.mock.calls[0][1];
+		const reparsed = yaml.load(writtenContent) as { settings: Record<string, unknown> };
+		// Global fields updated...
+		expect(reparsed.settings.timeout_minutes).toBe(60);
+		// ...but the root keeps its OWN owner, not the foreign one we passed in.
+		expect(reparsed.settings.owner_agent_id).toBe('this-roots-own-owner');
+	});
+
 	it('mirrors new settings into in-memory state so getSettings() returns them immediately', () => {
 		const cfg = createMockConfig({
 			settings: {

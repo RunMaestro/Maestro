@@ -147,7 +147,7 @@ function createDefaultProps() {
 		onSave: vi.fn(),
 		showConfirmation: vi.fn((message: string, onConfirm: () => void) => onConfirm()),
 		folderPath: '/path/to/folder',
-		currentDocument: 'test-doc',
+		presetDocuments: ['test-doc'],
 		allDocuments: ['test-doc', 'doc1', 'doc2', 'doc3'],
 		getDocumentTaskCount: vi.fn().mockResolvedValue(5),
 		onRefreshDocuments: vi.fn().mockResolvedValue(undefined),
@@ -415,7 +415,7 @@ describe('BatchRunnerModal', () => {
 
 		it('shows empty state when no documents are selected', async () => {
 			const props = createDefaultProps();
-			props.currentDocument = '';
+			props.presetDocuments = [];
 			render(<BatchRunnerModal {...props} />);
 
 			expect(screen.getByText('No documents selected')).toBeInTheDocument();
@@ -1005,7 +1005,7 @@ describe('BatchRunnerModal', () => {
 
 		it('disables Go button when no documents', async () => {
 			const props = createDefaultProps();
-			props.currentDocument = '';
+			props.presetDocuments = [];
 			render(<BatchRunnerModal {...props} />);
 
 			const goButton = screen.getByRole('button', { name: /Go/ });
@@ -1079,7 +1079,7 @@ describe('BatchRunnerModal', () => {
 		it('handles empty allDocuments gracefully', async () => {
 			const props = createDefaultProps();
 			props.allDocuments = [];
-			props.currentDocument = '';
+			props.presetDocuments = [];
 			render(<BatchRunnerModal {...props} />);
 
 			fireEvent.click(screen.getByRole('button', { name: 'Add Docs' }));
@@ -1131,7 +1131,7 @@ describe('BatchRunnerModal', () => {
 		it('handles special characters in document names', async () => {
 			const props = createDefaultProps();
 			props.allDocuments = ['doc<script>', "doc'quote", 'doc"double'];
-			props.currentDocument = 'doc<script>';
+			props.presetDocuments = ['doc<script>'];
 			render(<BatchRunnerModal {...props} />);
 
 			expect(screen.getByText('doc<script>.md')).toBeInTheDocument();
@@ -1140,7 +1140,7 @@ describe('BatchRunnerModal', () => {
 		it('handles unicode in document names', async () => {
 			const props = createDefaultProps();
 			props.allDocuments = ['文档', 'документ', '📄doc'];
-			props.currentDocument = '文档';
+			props.presetDocuments = ['文档'];
 			render(<BatchRunnerModal {...props} />);
 
 			expect(screen.getByText('文档.md')).toBeInTheDocument();
@@ -1276,7 +1276,7 @@ describe('Agent Prompt Validation in UI', () => {
 	it('disables Go button when prompt is empty', async () => {
 		const props = createDefaultProps();
 		props.initialPrompt = '';
-		// Override currentDocument to have tasks (so it's not disabled for other reasons)
+		// Default preset seeds a document with tasks (so it's not disabled for other reasons)
 		render(<BatchRunnerModal {...props} />);
 
 		// Clear the prompt textarea
@@ -2764,9 +2764,9 @@ describe('Auto Run Fresh-Context Mode Auto-Selection', () => {
 	it('hides the Fresh context per section until documents are selected', async () => {
 		await setupSessionWithContextWindow(1_000_000);
 
-		// No currentDocument and no preset → the run list starts empty.
+		// No preset documents → the run list starts empty.
 		const props = createDefaultProps();
-		props.currentDocument = '';
+		props.presetDocuments = [];
 
 		render(<BatchRunnerModal {...props} />);
 

@@ -201,6 +201,12 @@ describe('director-notes IPC handlers', () => {
 						timestamp: now - 2000,
 						agentSessionId: 'as-1',
 					}),
+					createMockEntry({
+						id: 'e5',
+						type: 'CUE',
+						timestamp: now - 2500,
+						agentSessionId: 'as-1',
+					}),
 				])
 				.mockReturnValueOnce([
 					createMockEntry({
@@ -225,7 +231,8 @@ describe('director-notes IPC handlers', () => {
 			expect(result.stats.sessionCount).toBe(3); // 3 unique provider sessions (as-1, as-2, as-3)
 			expect(result.stats.autoCount).toBe(2);
 			expect(result.stats.userCount).toBe(2);
-			expect(result.stats.totalCount).toBe(4);
+			expect(result.stats.cueCount).toBe(1);
+			expect(result.stats.totalCount).toBe(5);
 		});
 
 		it('should compute stats from unfiltered data when type filter is applied', async () => {

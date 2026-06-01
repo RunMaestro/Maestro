@@ -278,6 +278,9 @@ const mockMaestro = {
 	fs: {
 		readDir: vi.fn().mockResolvedValue([]),
 		readFile: vi.fn().mockResolvedValue(''),
+		// Mirrors the preload webUtils bridge: returns the dropped file's absolute
+		// path. Test fixtures set `.path` on their fake File objects.
+		getPathForFile: vi.fn((file?: { path?: string }) => file?.path ?? ''),
 		writeFile: vi.fn().mockResolvedValue({ success: true }),
 		writeImageFile: vi.fn().mockResolvedValue({ success: true }),
 		stat: vi.fn().mockResolvedValue({
@@ -335,7 +338,11 @@ const mockMaestro = {
 		}),
 		getMaestroPDetectedPath: vi.fn().mockResolvedValue(null),
 		getClaudeUsageSnapshots: vi.fn().mockResolvedValue({}),
+		getClaudeUsageAccountKeys: vi.fn().mockResolvedValue([]),
+		getCodexUsageSnapshots: vi.fn().mockResolvedValue({}),
+		getCodexUsageAccountKeys: vi.fn().mockResolvedValue([]),
 		refreshClaudeUsageSnapshots: vi.fn().mockResolvedValue({ refreshed: 0 }),
+		refreshCodexUsageSnapshots: vi.fn().mockResolvedValue({ refreshed: 0 }),
 	},
 	fonts: {
 		detect: vi.fn().mockResolvedValue([]),

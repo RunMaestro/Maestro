@@ -519,6 +519,18 @@ const CODEX_ERROR_PATTERNS: AgentErrorPatterns = {
 
 	session_not_found: [
 		{
+			// `codex exec resume <id>` when the rollout file backing the thread is
+			// gone (e.g. pruned, or written by a different/older Codex version).
+			// The CLI exits 1 with stderr like:
+			//   "thread/resume: thread/resume failed: no rollout found for thread id <uuid>"
+			// Without this pattern it fell through to a dead-end "Agent exited with
+			// code 1" crash instead of Maestro's in-place fresh-session recovery
+			// (which re-seeds the prior conversation from the tab transcript). See #1042.
+			pattern: /no rollout found|rollout not found/i,
+			message: 'Previous Codex session could not be found. Starting fresh conversation.',
+			recoverable: true,
+		},
+		{
 			pattern: /session.*not found/i,
 			message: 'Session not found. Starting fresh conversation.',
 			recoverable: true,

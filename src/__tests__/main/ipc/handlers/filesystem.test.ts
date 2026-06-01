@@ -31,6 +31,7 @@ vi.mock('fs/promises', () => ({
 		mkdir: vi.fn(),
 		rm: vi.fn(),
 		unlink: vi.fn(),
+		cp: vi.fn(),
 	},
 }));
 
@@ -98,6 +99,7 @@ describe('filesystem handlers', () => {
 			expect(ipcMain.handle).toHaveBeenCalledWith('fs:writeFile', expect.any(Function));
 			expect(ipcMain.handle).toHaveBeenCalledWith('fs:writeImageFile', expect.any(Function));
 			expect(ipcMain.handle).toHaveBeenCalledWith('fs:rename', expect.any(Function));
+			expect(ipcMain.handle).toHaveBeenCalledWith('fs:copyPath', expect.any(Function));
 			expect(ipcMain.handle).toHaveBeenCalledWith('fs:mkdir', expect.any(Function));
 			expect(ipcMain.handle).toHaveBeenCalledWith('fs:delete', expect.any(Function));
 			expect(ipcMain.handle).toHaveBeenCalledWith('fs:countItems', expect.any(Function));
@@ -496,6 +498,44 @@ describe('filesystem handlers', () => {
 
 			expect(renameRemote).toHaveBeenCalledWith('/old/path.txt', '/new/path.txt', mockSshConfig);
 			expect(result).toEqual({ success: true });
+		});
+	});
+
+	describe('fs:copyPath', () => {
+		it('should copy a path recursively without overwriting by default', async () => {
+			vi.mocked(fs.cp).mockResolvedValue(undefined);
+
+			const handler = registeredHandlers.get('fs:copyPath');
+			const result = await handler!({}, '/external/photo.png', '/project/photo.png');
+
+			expect(fs.cp).toHaveBeenCalledWith('/external/photo.png', '/project/photo.png', {
+				recursive: true,
+				force: false,
+				errorOnExist: true,
+			});
+			expect(result).toEqual({ success: true });
+		});
+
+		it('should force overwrite when overwrite is true', async () => {
+			vi.mocked(fs.cp).mockResolvedValue(undefined);
+
+			const handler = registeredHandlers.get('fs:copyPath');
+			const result = await handler!({}, '/external/dir', '/project/dir', { overwrite: true });
+
+			expect(fs.cp).toHaveBeenCalledWith('/external/dir', '/project/dir', {
+				recursive: true,
+				force: true,
+				errorOnExist: false,
+			});
+			expect(result).toEqual({ success: true });
+		});
+
+		it('should throw when the copy fails (e.g. existing destination)', async () => {
+			vi.mocked(fs.cp).mockRejectedValue(new Error('EEXIST'));
+
+			const handler = registeredHandlers.get('fs:copyPath');
+
+			await expect(handler!({}, '/external/x', '/project/x')).rejects.toThrow('Failed to copy');
 		});
 	});
 

@@ -31,6 +31,7 @@ import {
 } from '../../utils/terminalTabHelpers';
 import type { NavHistoryEntry, NavTabKind } from './useNavigationHistory';
 import { captureException } from '../../utils/sentry';
+import { persistTabStarred } from '../../utils/starredSessions';
 
 /**
  * Resolve the active tab of a session into a breadcrumb descriptor (id + kind).
@@ -556,37 +557,10 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 		useSessionStore.getState().setSessions((prev) =>
 			prev.map((s) => {
 				if (s.id !== session.id) return s;
-				// Persist starred status to session metadata (async, fire and forget)
-				// Use projectRoot (not cwd) for consistent session storage access
-				if (tab.agentSessionId) {
-					const agentId = s.toolType || 'claude-code';
-					if (agentId === 'claude-code') {
-						window.maestro.claude
-							.updateSessionStarred(s.projectRoot, tab.agentSessionId, newStarred)
-							.catch((err) => {
-								captureException(err, {
-									extra: {
-										sessionId: s.id,
-										agentSessionId: tab.agentSessionId,
-										operation: 'persist-starred-claude',
-									},
-								});
-							});
-					} else {
-						window.maestro.agentSessions
-							.setSessionStarred(agentId, s.projectRoot, tab.agentSessionId, newStarred)
-							.catch((err) => {
-								captureException(err, {
-									extra: {
-										sessionId: s.id,
-										agentSessionId: tab.agentSessionId,
-										agentType: agentId,
-										operation: 'persist-starred-agent',
-									},
-								});
-							});
-					}
-				}
+				// Persist starred status to session metadata (async) and broadcast the
+				// change so the Left Bar's starred-sessions cache refreshes. Uses
+				// projectRoot (not cwd) for consistent session storage access.
+				persistTabStarred(s, tab, newStarred);
 				return {
 					...s,
 					aiTabs: s.aiTabs.map((t) => (t.id === tab.id ? { ...t, starred: newStarred } : t)),

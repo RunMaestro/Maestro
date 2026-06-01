@@ -198,21 +198,24 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 				// actually lands (it only lands when the window is at top).
 				let newAuto = 0;
 				let newUser = 0;
+				let newCue = 0;
 				let prepended = 0;
 				for (const entry of uniqueBatch) {
 					if (entry.type === 'AUTO') newAuto++;
 					else if (entry.type === 'USER') newUser++;
+					else if (entry.type === 'CUE') newCue++;
 					if (prependLiveEntry(entry)) prepended++;
 				}
 
-				if (newAuto > 0 || newUser > 0) {
+				if (newAuto > 0 || newUser > 0 || newCue > 0) {
 					setHistoryStats((prevStats) => {
 						if (!prevStats) return prevStats;
 						return {
 							...prevStats,
 							autoCount: prevStats.autoCount + newAuto,
 							userCount: prevStats.userCount + newUser,
-							totalCount: prevStats.totalCount + newAuto + newUser,
+							cueCount: (prevStats.cueCount ?? 0) + newCue,
+							totalCount: prevStats.totalCount + newAuto + newUser + newCue,
 						};
 					});
 				}

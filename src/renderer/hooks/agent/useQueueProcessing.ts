@@ -22,6 +22,11 @@ import { useSessionStore } from '../../stores/sessionStore';
 import { useAgentStore } from '../../stores/agentStore';
 import { getActiveTab } from '../../utils/tabHelpers';
 import { generateId } from '../../utils/ids';
+import {
+	hasRunnableQueueItem,
+	nextRunnableQueueItem,
+	takeNextRunnableQueueItem,
+} from '../../utils/executionQueue';
 import { logger } from '../../utils/logger';
 
 // ============================================================================
@@ -100,16 +105,22 @@ export function useQueueProcessing(deps: UseQueueProcessingDeps): UseQueueProces
 	// Shared by startup recovery and runtime queue recovery.
 	const dispatchQueuedItem = useCallback(
 		(session: { id: string; executionQueue: QueuedItem[] }) => {
-			const firstItem = session.executionQueue[0];
+			// Skip paused items: dispatch the first runnable one. If all items are
+			// held, there's nothing to do.
+			const firstItem = nextRunnableQueueItem(session.executionQueue);
+			if (!firstItem) return;
 
 			// Set session to busy and remove item from queue
 			setSessions((prev) =>
 				prev.map((s) => {
 					if (s.id !== session.id) return s;
 					// Guard: re-check state to prevent double-dispatch from concurrent triggers
-					if (s.state !== 'idle' || !s.executionQueue?.length) return s;
+					if (s.state !== 'idle') return s;
 
-					const [, ...remainingQueue] = s.executionQueue;
+					const { item: runnable, remaining: remainingQueue } = takeNextRunnableQueueItem(
+						s.executionQueue
+					);
+					if (!runnable) return s;
 					const targetTab = s.aiTabs.find((tab) => tab.id === firstItem.tabId) || getActiveTab(s);
 
 					// Append the user log entry atomically with the dequeue/state-busy
@@ -192,7 +203,7 @@ export function useQueueProcessing(deps: UseQueueProcessingDeps): UseQueueProces
 		startupRecoveryRan.current = true;
 
 		const sessionsWithQueuedItems = sessions.filter(
-			(s) => s.state === 'idle' && s.executionQueue && s.executionQueue.length > 0
+			(s) => s.state === 'idle' && hasRunnableQueueItem(s.executionQueue ?? [])
 		);
 
 		if (sessionsWithQueuedItems.length > 0) {
@@ -207,8 +218,8 @@ export function useQueueProcessing(deps: UseQueueProcessingDeps): UseQueueProces
 						`[QueueProcessing] Startup recovery for session ${session.id.substring(0, 8)}:`,
 						undefined,
 						{
-							id: session.executionQueue[0].id,
-							tabId: session.executionQueue[0].tabId,
+							id: nextRunnableQueueItem(session.executionQueue)?.id,
+							tabId: nextRunnableQueueItem(session.executionQueue)?.tabId,
 							queueLength: session.executionQueue.length,
 						}
 					);
@@ -231,7 +242,7 @@ export function useQueueProcessing(deps: UseQueueProcessingDeps): UseQueueProces
 		if (!sessionsLoaded || !startupRecoveryComplete.current) return;
 
 		for (const session of sessions) {
-			if (session.state === 'idle' && session.executionQueue?.length > 0) {
+			if (session.state === 'idle' && hasRunnableQueueItem(session.executionQueue ?? [])) {
 				console.log(
 					`[QueueProcessing] Runtime recovery — dispatching stuck item for session ${session.id.substring(0, 8)}, queue depth: ${session.executionQueue.length}`
 				);

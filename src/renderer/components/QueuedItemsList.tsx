@@ -1,5 +1,15 @@
 import React, { useState, useCallback, useRef, memo } from 'react';
-import { X, ChevronDown, ChevronUp, GripVertical, Copy, Check, Hammer } from 'lucide-react';
+import {
+	X,
+	ChevronDown,
+	ChevronUp,
+	GripVertical,
+	Copy,
+	Check,
+	Hammer,
+	Pause,
+	Play,
+} from 'lucide-react';
 import type { Theme, QueuedItem } from '../types';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { Modal, ModalFooter } from './ui/Modal';
@@ -19,6 +29,7 @@ interface QueuedItemsListProps {
 	executionQueue: QueuedItem[];
 	theme: Theme;
 	onRemoveQueuedItem?: (itemId: string) => void;
+	onTogglePauseQueuedItem?: (itemId: string) => void;
 	onReorderItems?: (fromIndex: number, toIndex: number) => void;
 	activeTabId?: string; // If provided, only show queued items for this tab
 	// Force Send support: when forcedParallelExecution is enabled, allow the user
@@ -49,6 +60,7 @@ export const QueuedItemsList = memo(
 		executionQueue,
 		theme,
 		onRemoveQueuedItem,
+		onTogglePauseQueuedItem,
 		onReorderItems,
 		activeTabId,
 		forcedParallelEnabled = false,
@@ -212,6 +224,7 @@ export const QueuedItemsList = memo(
 					const isQueuedExpanded = expandedQueuedMessages.has(item.id);
 					const isDragging = dragIndex === index;
 					const isDropTarget = dropIndex === index;
+					const isPaused = !!item.paused;
 
 					// Force Send visibility: setting enabled, item not already forceParallel,
 					// a handler is wired, the target tab is idle (force-parallel only helps
@@ -244,13 +257,17 @@ export const QueuedItemsList = memo(
 								// Send button when shown, without overlap.
 								// X+Copy stack: 8 + 24 + 4 + 22 = 58px from top.
 								// Force Send (pushed to bottom via mt-auto): ~28px button.
-								minHeight: showForceSendButton ? '7rem' : '4.25rem',
+								minHeight: showForceSendButton
+									? '7rem'
+									: onTogglePauseQueuedItem
+										? '5.5rem'
+										: '4.25rem',
 								backgroundColor:
 									item.type === 'command'
 										? theme.colors.success + '20'
 										: theme.colors.accent + '20',
 								borderLeft: `3px solid ${item.type === 'command' ? theme.colors.success : theme.colors.accent}`,
-								opacity: isDragging ? 0.4 : 0.6,
+								opacity: isDragging ? 0.4 : isPaused ? 0.35 : 0.6,
 								transform: isDropTarget ? 'translateY(4px)' : 'none',
 								boxShadow: isDropTarget ? `0 -2px 0 0 ${theme.colors.accent}` : 'none',
 								cursor: canDrag ? 'grab' : 'default',
@@ -291,6 +308,37 @@ export const QueuedItemsList = memo(
 									<Copy className="w-3.5 h-3.5" />
 								)}
 							</button>
+
+							{/* Hold/Resume button - stacked under the Copy button */}
+							{onTogglePauseQueuedItem && (
+								<button
+									onClick={() => onTogglePauseQueuedItem(item.id)}
+									className={`absolute top-16 right-2 p-1 rounded hover:bg-black/20 transition-colors group-hover:opacity-100 group-focus-within:opacity-100 ${isPaused ? 'opacity-100' : 'opacity-0'}`}
+									style={{ color: isPaused ? theme.colors.warning : theme.colors.textDim }}
+									title={
+										isPaused
+											? 'Resume this message (let it run when its turn comes)'
+											: 'Hold this message (skip it until you resume)'
+									}
+								>
+									{isPaused ? <Play className="w-3.5 h-3.5" /> : <Pause className="w-3.5 h-3.5" />}
+								</button>
+							)}
+
+							{/* HELD badge for paused items */}
+							{isPaused && (
+								<div className={canDrag ? 'pl-4 mb-1.5' : 'mb-1.5'}>
+									<span
+										className="px-1.5 py-0.5 rounded text-[10px] font-bold tracking-wider"
+										style={{
+											backgroundColor: theme.colors.warning + '33',
+											color: theme.colors.warning,
+										}}
+									>
+										HELD
+									</span>
+								</div>
+							)}
 
 							{/* Item content */}
 							<div

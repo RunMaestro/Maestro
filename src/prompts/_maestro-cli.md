@@ -275,6 +275,27 @@ Prefer toast for anything the user should be able to act on after the fact; pref
 {{MAESTRO_CLI_PATH}} status
 ```
 
+### Usage Stats (introspect the Usage Dashboard)
+
+Read the same data the Usage Dashboard renders, straight from its SQLite store, so you can answer ad-hoc questions about usage and generate your own charts. Both commands route through the running desktop app (which owns the open database), so the app must be running. Gated by `encoreFeatures.usageStats` - if it's off, no data has been collected yet (see the gating workflow above).
+
+```bash
+# Aggregated metrics for a time range (query counts, durations, by-agent / day / hour, sessions)
+{{MAESTRO_CLI_PATH}} stats [-r, --range day|week|month|quarter|year|all] [--json]
+
+# Arbitrary read-only SQL against the stats database (SELECT / WITH / PRAGMA / EXPLAIN / VALUES only)
+{{MAESTRO_CLI_PATH}} stats-query "<sql>" [-p, --param <value>]... [--json]
+```
+
+`stats --json` returns the full aggregation object. `stats-query` runs a single read-only statement (writes, multi-statement input, and ATTACH are rejected) and returns rows; bind `?` placeholders with repeated `--param` flags in order. Use `--json` for machine-readable rows you can post-process into a chart.
+
+Core tables: `query_events` (one row per AI message -> response: `agent_type`, `source` user|auto, `start_time` epoch-ms, `duration` ms, `project_path`, `is_remote`, `is_worktree`), `auto_run_sessions` / `auto_run_tasks`, `session_lifecycle` (`created_at`, `closed_at`, `duration`), `image_annotations`, `shortcut_usage_daily`. Discover the live schema with `stats-query "SELECT name FROM sqlite_master WHERE type='table'"` and `stats-query "PRAGMA table_info(query_events)"`.
+
+```bash
+# Example: busiest project this month
+{{MAESTRO_CLI_PATH}} stats-query "SELECT project_path, COUNT(*) n FROM query_events WHERE start_time > ? GROUP BY project_path ORDER BY n DESC LIMIT 10" --param 1746000000000 --json
+```
+
 ### Agents and SSH Remotes
 
 Lifecycle management of Maestro agents and remote-execution targets.

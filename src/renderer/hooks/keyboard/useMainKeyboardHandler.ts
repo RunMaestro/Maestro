@@ -701,14 +701,12 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					trackShortcut('openBatchRunner');
 				}
 			} else if (ctx.isShortcut(e, 'toggleAutoRunExpanded')) {
-				// Toggle Auto Run expanded/contracted view - only when the Auto Run
-				// side panel is open (right panel open with the autorun tab active).
+				// Toggle Auto Run expanded/contracted view. Works from anywhere so it
+				// doubles as a quick scratch-pad surface (mirrors the command palette entry).
 				e.preventDefault();
 				if (useSettingsStore.getState().autoRunDisabled) return;
-				if (ctx.rightPanelOpen && ctx.activeRightTab === 'autorun') {
-					ctx.rightPanelRef?.current?.toggleAutoRunExpanded();
-					trackShortcut('toggleAutoRunExpanded');
-				}
+				ctx.rightPanelRef?.current?.toggleAutoRunExpanded();
+				trackShortcut('toggleAutoRunExpanded');
 			} else if (ctx.isShortcut(e, 'jumpToTerminal')) {
 				e.preventDefault();
 				if (ctx.activeSession && !ctx.activeGroupChatId) {

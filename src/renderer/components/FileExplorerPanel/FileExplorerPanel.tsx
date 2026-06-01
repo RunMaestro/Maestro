@@ -20,6 +20,7 @@ import { getOpenInLabel } from '../../utils/platformUtils';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
+import { dragHasOsFiles } from '../../utils/osFileDrop';
 
 import type { FileExplorerPanelProps } from './types';
 import { FILE_TREE_SINGLE_MIME, FILE_TREE_MULTI_MIME } from './types';
@@ -344,11 +345,57 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 
 	// ── Render ────────────────────────────────────────────────────────────────
 
+	// Panel-root drop zone: OS files dropped on empty space or a file row (i.e.
+	// not on a folder row, which stops propagation) import into the tree root.
+	// Internal tree drags fall through to the existing bubble-suppression so we
+	// don't accidentally add a move-to-root path. Remotes have no local source.
+	const externalImportEnabled = !sshRemoteId;
+	const handleRootDragEnter = (e: React.DragEvent) => {
+		if (externalImportEnabled && dragHasOsFiles(e.dataTransfer)) {
+			handleFolderDragEnter(e, '');
+			return;
+		}
+		handleInternalDragBubble(e);
+	};
+	const handleRootDragOver = (e: React.DragEvent) => {
+		if (externalImportEnabled && dragHasOsFiles(e.dataTransfer)) {
+			handleFolderDragOver(e, '');
+		}
+	};
+	const handleRootDragLeave = (e: React.DragEvent) => {
+		if (dragHasOsFiles(e.dataTransfer)) {
+			handleFolderDragLeave(e);
+			return;
+		}
+		handleInternalDragBubble(e);
+	};
+	const handleRootDrop = (e: React.DragEvent) => {
+		if (externalImportEnabled && dragHasOsFiles(e.dataTransfer)) {
+			handleFolderDrop(e, '');
+		}
+	};
+	// `dragOverFolder === ''` is only ever set by an OS-file drag hovering the
+	// panel background (folder rows set their own relative path), so it uniquely
+	// flags "drop into the tree root".
+	const isRootDropTarget = dragOverFolder === '';
+
 	return (
 		<div
 			className="flex flex-col h-full relative"
-			onDragEnter={handleInternalDragBubble}
-			onDragLeave={handleInternalDragBubble}
+			onDragEnter={handleRootDragEnter}
+			onDragOver={handleRootDragOver}
+			onDragLeave={handleRootDragLeave}
+			onDrop={handleRootDrop}
+			style={
+				isRootDropTarget
+					? {
+							outline: `2px dashed ${theme.colors.accent}`,
+							outlineOffset: '-4px',
+							borderRadius: '6px',
+							backgroundColor: `${theme.colors.accent}0d`,
+						}
+					: undefined
+			}
 		>
 			{/* File Tree Filter */}
 			{fileTreeFilterOpen && (
@@ -843,6 +890,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 					conflicts={moveConflict.conflicts}
 					nonConflictingCount={moveConflict.nonConflicting.length}
 					isMoving={isMoving}
+					operation={moveConflict.operation}
 					onCancel={closeMoveConflict}
 					onOverwriteAll={handleMoveOverwriteAll}
 					onAutoRenameAll={handleMoveAutoRenameAll}

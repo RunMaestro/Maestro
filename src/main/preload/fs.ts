@@ -8,7 +8,7 @@
  * - SSH remote support for all operations
  */
 
-import { ipcRenderer } from 'electron';
+import { ipcRenderer, webUtils } from 'electron';
 import type { DirectoryEntry } from '../../shared/types';
 export type { DirectoryEntry } from '../../shared/types';
 
@@ -182,6 +182,33 @@ export function createFsApi() {
 		 */
 		countItems: (dirPath: string, sshRemoteId?: string): Promise<ItemCountInfo> =>
 			ipcRenderer.invoke('fs:countItems', dirPath, sshRemoteId),
+
+		/**
+		 * Copy a file or folder from an arbitrary source path into a destination
+		 * path. Local only - used by drag-and-drop import of OS files into the
+		 * file tree. Pass `overwrite: true` to replace an existing destination.
+		 */
+		copyPath: (
+			sourcePath: string,
+			destPath: string,
+			options?: { overwrite?: boolean }
+		): Promise<{ success: boolean }> =>
+			ipcRenderer.invoke('fs:copyPath', sourcePath, destPath, options),
+
+		/**
+		 * Resolve the absolute filesystem path of a dropped/selected `File`.
+		 * Electron removed the non-standard `File.path` property; `webUtils`
+		 * is the supported replacement and must be called from the preload
+		 * context. Returns an empty string for files with no backing path
+		 * (e.g. synthesized File objects).
+		 */
+		getPathForFile: (file: File): string => {
+			try {
+				return webUtils.getPathForFile(file);
+			} catch {
+				return '';
+			}
+		},
 	};
 }
 

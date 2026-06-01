@@ -151,6 +151,7 @@ export interface MainPanelContentProps {
 	thinkingItems: ThinkingItem[];
 	onStopBatchRun?: (sessionId?: string) => void;
 	onRemoveQueuedItem?: (itemId: string) => void;
+	onTogglePauseQueuedItem?: (itemId: string) => void;
 	onForceSendQueuedItem?: (itemId: string) => void;
 	forcedParallelEnabled?: boolean;
 	getForceSendContext?: (
@@ -333,6 +334,7 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 		thinkingItems,
 		onStopBatchRun,
 		onRemoveQueuedItem,
+		onTogglePauseQueuedItem,
 		onForceSendQueuedItem,
 		forcedParallelEnabled,
 		getForceSendContext,
@@ -601,6 +603,7 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 								maxOutputLines={maxOutputLines}
 								onDeleteLog={onDeleteLog}
 								onRemoveQueuedItem={onRemoveQueuedItem}
+								onTogglePauseQueuedItem={onTogglePauseQueuedItem}
 								onForceSendQueuedItem={onForceSendQueuedItem}
 								forcedParallelEnabled={forcedParallelEnabled}
 								getForceSendContext={getForceSendContext}

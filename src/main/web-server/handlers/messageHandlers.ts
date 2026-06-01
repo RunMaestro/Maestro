@@ -37,6 +37,9 @@ import fs from 'fs/promises';
 import { WebSocket } from 'ws';
 import { logger } from '../../utils/logger';
 import { captureException } from '../../utils/sentry';
+import { getStatsDB } from '../../stats/singleton';
+import { runReadonlyStatsQuery } from '../../stats/readonly-query';
+import type { StatsTimeRange } from '../../../shared/stats-types';
 import type {
 	AutoRunDocument,
 	AutoRunState,
@@ -696,6 +699,14 @@ export class WebSocketMessageHandler {
 
 			case 'get_achievements':
 				this.handleGetAchievements(client, message);
+				break;
+
+			case 'get_stats_aggregation':
+				this.handleGetStatsAggregation(client, message);
+				break;
+
+			case 'stats_query':
+				this.handleStatsQuery(client, message);
 				break;
 
 			case 'generate_director_notes_synopsis':
@@ -3881,6 +3892,70 @@ export class WebSocketMessageHandler {
 			.catch((error) => {
 				this.sendError(client, `Failed to get usage dashboard: ${error.message}`);
 			});
+	}
+
+	/**
+	 * Handle get_stats_aggregation message - return the Usage Dashboard's
+	 * aggregated stats (query counts, durations, per-agent/day/hour breakdowns)
+	 * for a time range. Reads the main-process stats singleton directly.
+	 */
+	private handleGetStatsAggregation(client: WebClient, message: WebClientMessage): void {
+		const range = (message.range as string) || 'week';
+		const validRanges = new Set(['day', 'week', 'month', 'quarter', 'year', 'all']);
+
+		if (!validRanges.has(range)) {
+			this.sendError(client, 'Invalid range. Must be one of: day, week, month, quarter, year, all');
+			return;
+		}
+
+		try {
+			const data = getStatsDB().getAggregatedStats(range as StatsTimeRange);
+			this.send(client, {
+				type: 'stats_aggregation',
+				data,
+				requestId: message.requestId,
+				timestamp: Date.now(),
+			});
+		} catch (error) {
+			this.sendError(
+				client,
+				`Failed to get stats aggregation: ${error instanceof Error ? error.message : String(error)}`
+			);
+		}
+	}
+
+	/**
+	 * Handle stats_query message - run a single read-only SQL statement against
+	 * the stats database and return the rows. Read-only enforcement lives in
+	 * runReadonlyStatsQuery (dedicated readonly connection + single-statement +
+	 * stmt.readonly assertion).
+	 */
+	private handleStatsQuery(client: WebClient, message: WebClientMessage): void {
+		const sql = message.sql as string | undefined;
+		const params = Array.isArray(message.params) ? (message.params as unknown[]) : [];
+
+		if (!sql || typeof sql !== 'string') {
+			this.sendError(client, 'Missing required "sql" string for stats_query');
+			return;
+		}
+
+		try {
+			const result = runReadonlyStatsQuery(sql, params);
+			this.send(client, {
+				type: 'stats_query_result',
+				columns: result.columns,
+				rows: result.rows,
+				rowCount: result.rowCount,
+				truncated: result.truncated,
+				requestId: message.requestId,
+				timestamp: Date.now(),
+			});
+		} catch (error) {
+			this.sendError(
+				client,
+				`Stats query failed: ${error instanceof Error ? error.message : String(error)}`
+			);
+		}
 	}
 
 	/**

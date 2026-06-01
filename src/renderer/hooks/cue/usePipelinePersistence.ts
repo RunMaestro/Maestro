@@ -20,7 +20,10 @@ import type {
 	PipelineNode,
 } from '../../../shared/cue-pipeline-types';
 import { graphSessionsToPipelines } from '../../components/CuePipelineEditor/utils/yamlToPipeline';
-import { pipelinesToYamlByOwnerCwd } from '../../components/CuePipelineEditor/utils/pipelineToYaml';
+import {
+	pipelinesToYamlByOwnerCwd,
+	readOwnerAgentIdFromYaml,
+} from '../../components/CuePipelineEditor/utils/pipelineToYaml';
 import { validatePipelines } from '../../components/CuePipelineEditor/utils/pipelineValidation';
 import {
 	resolveNodeWriteRoot,
@@ -302,10 +305,44 @@ export function usePipelinePersistence({
 			for (const [id, s] of sessionsById) {
 				sessionsByIdForEmit.set(id, { projectRoot: s.projectRoot });
 			}
+			// Mirror resolveNodeWriteRoot's id→name fallback so a node bound by
+			// name only (empty/stale sessionId on a legacy pipeline) still emits
+			// a live agent_id instead of failing the save with <missing>. The
+			// validation gate above already accepts these nodes by name; without
+			// this the emitter would reject them — the exact asymmetry behind the
+			// "Unresolvable agent_id" save failure.
+			const resolveOwnerId = (
+				id: string | undefined,
+				name: string | undefined
+			): string | undefined => {
+				if (id && sessionsById.has(id)) return id;
+				if (name) {
+					const byName = sessionsByName.get(name);
+					if (byName) return byName.id;
+				}
+				return id;
+			};
+			// Preserve each target root's existing per-root owner_agent_id. The
+			// editor doesn't manage ownership (it's set via Edit YAML for shared
+			// roots), and the global cueSettings intentionally no longer carries
+			// owner_agent_id — so without re-reading it here a full-overwrite save
+			// would drop a shared root's owner and revert it to fragile
+			// "first agent wins" ownership.
+			const ownerAgentIdByCwd = new Map<string, string>();
+			await Promise.all(
+				[...currentRoots].map(async (cwd) => {
+					const existing = await cueService.readYaml(cwd);
+					if (!existing) return;
+					const owner = readOwnerAgentIdFromYaml(existing);
+					if (owner) ownerAgentIdByCwd.set(cwd, owner);
+				})
+			);
 			const { byCwd, unresolved } = pipelinesToYamlByOwnerCwd(
 				writablePipelines,
 				cueSettings,
-				sessionsByIdForEmit
+				sessionsByIdForEmit,
+				resolveOwnerId,
+				ownerAgentIdByCwd
 			);
 			if (unresolved.length > 0) {
 				// Defense-in-depth: validation above should have caught these.

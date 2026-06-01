@@ -1,4 +1,5 @@
 import {
+	X,
 	Zap,
 	FileText,
 	Radio,
@@ -15,15 +16,90 @@ import {
 	Keyboard,
 	MousePointer2,
 } from 'lucide-react';
+import { createPortal } from 'react-dom';
 import type { Theme } from '../types';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { DEFAULT_SHORTCUTS } from '../constants/shortcuts';
 import { openUrl } from '../utils/openUrl';
 import { buildMaestroUrl } from '../utils/buildMaestroUrl';
+import { useModalLayer } from '../hooks/ui/useModalLayer';
+import { MODAL_PRIORITIES } from '../constants/modalPriorities';
+import { CUE_COLOR } from '../../shared/cue-pipeline-types';
 
 interface CueHelpContentProps {
 	theme: Theme;
 	cueShortcutKeys?: string[];
+}
+
+export interface CueHelpModalProps {
+	theme: Theme;
+	onClose: () => void;
+	cueShortcutKeys?: string[];
+}
+
+/**
+ * Maestro Cue Guide, rendered as its own narrow modal layered on top of the
+ * Cue modal. Sitting at CUE_HELP (above CUE_MODAL) means Escape closes the
+ * guide first and returns to whatever Cue tab was open underneath - the
+ * narrower width leaves the Cue modal visible on either side so the layering
+ * reads clearly. Width is sized to the text column, not the host modal.
+ */
+export function CueHelpModal({ theme, onClose, cueShortcutKeys }: CueHelpModalProps) {
+	useModalLayer(MODAL_PRIORITIES.CUE_HELP, 'Maestro Cue Guide', onClose);
+
+	return createPortal(
+		<div
+			className="fixed inset-0 flex items-center justify-center"
+			style={{ zIndex: MODAL_PRIORITIES.CUE_HELP }}
+			onClick={(e) => {
+				if (e.target === e.currentTarget) onClose();
+			}}
+		>
+			{/* Lighter backdrop than the host modal so the Cue dashboard stays
+			    visible behind the guide, reinforcing the layered look. */}
+			<div className="absolute inset-0 bg-black/30" />
+
+			<div
+				className="relative rounded-xl shadow-2xl flex flex-col"
+				style={{
+					width: '90vw',
+					maxWidth: 820,
+					height: '85vh',
+					maxHeight: 900,
+					backgroundColor: theme.colors.bgMain,
+					border: `1px solid ${theme.colors.border}`,
+				}}
+			>
+				{/* Header */}
+				<div
+					className="shrink-0 flex items-center justify-between px-5 py-4 border-b"
+					style={{ borderColor: theme.colors.border }}
+				>
+					<div className="flex items-center gap-2">
+						<Zap className="w-5 h-5" style={{ color: CUE_COLOR }} />
+						<h2 className="text-base font-bold" style={{ color: theme.colors.textMain }}>
+							Maestro Cue Guide
+						</h2>
+					</div>
+					<button
+						onClick={onClose}
+						className="p-1.5 rounded-md hover:bg-white/10 transition-colors"
+						style={{ color: theme.colors.textDim }}
+						aria-label="Close"
+						title="Close"
+					>
+						<X className="w-4 h-4" />
+					</button>
+				</div>
+
+				{/* Body */}
+				<div className="flex-1 overflow-y-auto p-6 scrollbar-thin">
+					<CueHelpContent theme={theme} cueShortcutKeys={cueShortcutKeys} />
+				</div>
+			</div>
+		</div>,
+		document.body
+	);
 }
 
 /**
@@ -1171,6 +1247,11 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 									['Right-click on a node', 'Open the node context menu'],
 									['Click a node or edge', 'Open its config panel'],
 									['Lock toggle', 'Disables drag, select, and connect'],
+									['Tidy', 'Align nodes into flow columns, keeping their current order'],
+									[
+										'Arrange',
+										'Lay out into flow columns and reorder within each column to untangle crossing edges',
+									],
 								] as const
 							).map(([action, behavior], i) => (
 								<tr key={i}>

@@ -326,6 +326,49 @@ describe('CuePipelineEditor — resync preserves live positions when pipelineSta
 		expect(node!.position).toEqual({ x: 0, y: 0 });
 	});
 
+	it('selection change (single → All, same pipelines ref): takes fresh computedNodes geometry', () => {
+		// Switching the pipeline selector changes `selectedPipelineId` WITHOUT
+		// changing the `pipelines` reference. All-Pipelines view applies a
+		// per-pipeline auto-stack yOffset that single-pipeline view does not, so
+		// the same composite-id node resolves to a different position. The resync
+		// must take the fresh All-view geometry rather than forcing the stale
+		// single-view position back on (which made rearrangements appear undone
+		// when switching to the All view).
+		const pipelines = makePipelines();
+		mockUsePipelineState.mockReturnValue(buildStateHookReturn(pipelines));
+		mockConvertToReactFlowNodes.mockReturnValue([makeNode('p1:agent-1', 0, 0)]);
+
+		const { rerender } = renderEditor();
+
+		// User drags the node in single view; live displayNodes now holds (350,100).
+		capturedSetDisplayNodes!([
+			{ type: 'position', id: 'p1:agent-1', position: { x: 350, y: 100 }, dragging: false },
+		]);
+
+		// Switch to All Pipelines view: same `pipelines` ref, selection → null,
+		// and computedNodes now reports the auto-stacked position for that node.
+		mockUsePipelineState.mockReturnValue(
+			buildStateHookReturn(pipelines, {
+				pipelineState: { pipelines, selectedPipelineId: null },
+				isAllPipelinesView: true,
+			})
+		);
+		mockConvertToReactFlowNodes.mockReturnValue([makeNode('p1:agent-1', 0, 220)]);
+
+		rerender(
+			<CuePipelineEditor
+				sessions={[]}
+				graphSessions={[]}
+				onSwitchToSession={vi.fn()}
+				onClose={vi.fn()}
+				theme={mockTheme}
+			/>
+		);
+
+		const node = capturedNodes.find((n) => n.id === 'p1:agent-1');
+		expect(node!.position).toEqual({ x: 0, y: 220 });
+	});
+
 	it('polling with new node added (same pipelines ref): edge case — new nodes still appear', () => {
 		// Even though `pipelines` ref is unchanged in this contrived scenario,
 		// the merge path picks up new ids from computedNodes. Guards against a

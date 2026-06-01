@@ -9,6 +9,7 @@ import { describe, it, expect } from 'vitest';
 import {
 	pipelineToYamlSubscriptions,
 	pipelinesToYaml,
+	pipelinesToYamlByOwnerCwd,
 	ensureSourceOutputVariable,
 } from '../../../../../renderer/components/CuePipelineEditor/utils/pipelineToYaml';
 import type { CuePipeline } from '../../../../../shared/cue-pipeline-types';
@@ -2212,5 +2213,219 @@ describe('source_sub emission on agent chain subs', () => {
 		expect(subs[1].event).toBe('agent.completed');
 		expect(subs[1].source_session).toBe('A');
 		expect(subs[1].source_sub).toBe('Pipeline 1');
+	});
+});
+
+describe('pipelinesToYamlByOwnerCwd — owner id resolution', () => {
+	// Regression: an agent node bound by NAME only (empty/stale sessionId, e.g.
+	// a legacy pipeline or an agent deleted-and-recreated under the same name)
+	// passed the save-time root validation (which falls back to name) but failed
+	// emission, which read sessionId directly and produced agent_id=<missing>.
+	// The "Unresolvable agent_id" save failure. The resolver closes that gap.
+	const makeNameOnlyPipeline = (): CuePipeline =>
+		makePipeline({
+			name: 'Pedsidian',
+			nodes: [
+				{
+					id: 't1',
+					type: 'trigger',
+					position: { x: 0, y: 0 },
+					data: {
+						eventType: 'time.scheduled',
+						label: 'S',
+						config: { schedule_times: ['06:30'] },
+					},
+				},
+				{
+					id: 'a1',
+					type: 'agent',
+					position: { x: 300, y: 0 },
+					data: {
+						sessionId: '',
+						sessionName: 'Pedsidian',
+						toolType: 'claude-code',
+						inputPrompt: 'go',
+					},
+				},
+			],
+			edges: [{ id: 'e1', source: 't1', target: 'a1', mode: 'pass' }],
+		});
+
+	const sessionsById = new Map([['live-id-123', { projectRoot: '/Users/pedram' }]]);
+
+	it('reports unresolved without a resolver (the pre-fix behavior)', () => {
+		const { unresolved } = pipelinesToYamlByOwnerCwd(
+			[makeNameOnlyPipeline()],
+			undefined,
+			sessionsById
+		);
+		expect(unresolved).toEqual([{ subName: 'Pedsidian', agentId: '' }]);
+	});
+
+	it('resolves a name-only node to the live agent_id via the resolver', () => {
+		const resolveOwnerId = (id?: string, name?: string): string | undefined => {
+			if (id && sessionsById.has(id)) return id;
+			if (name === 'Pedsidian') return 'live-id-123';
+			return id;
+		};
+		const { byCwd, unresolved } = pipelinesToYamlByOwnerCwd(
+			[makeNameOnlyPipeline()],
+			undefined,
+			sessionsById,
+			resolveOwnerId
+		);
+		expect(unresolved).toEqual([]);
+		expect([...byCwd.keys()]).toEqual(['/Users/pedram']);
+		expect(byCwd.get('/Users/pedram')?.yaml).toContain('agent_id: live-id-123');
+	});
+});
+
+describe('pipelinesToYamlByOwnerCwd — command-name / chain-name collision', () => {
+	// Regression for the "Unresolvable agent_id ... (agent_id=<missing>)" save
+	// failure. agent_id used to be recovered via a SECOND name-keyed graph
+	// traversal (buildSubAgentIdMap). When a command node was named exactly like
+	// the `<pipeline>-chain-N` auto-naming scheme, that name-keyed map collapsed
+	// the colliding entry, its `Map.size`-driven chain counter drifted out of
+	// sync with the emitter, and a LATER subscription was looked up under a name
+	// the map never held — yielding no agent_id. Owners are now stamped per-sub
+	// at emission time (by object identity), so the collision is harmless.
+	const makeCollidingPipeline = (): CuePipeline =>
+		makePipeline({
+			name: 'P',
+			nodes: [
+				{
+					id: 't0',
+					type: 'trigger',
+					position: { x: 0, y: 0 },
+					data: { eventType: 'time.scheduled', label: 'S0', config: { schedule_times: ['01:00'] } },
+				},
+				{
+					// Command node named exactly like the auto-generated chain name.
+					id: 'cmd',
+					type: 'command',
+					position: { x: 300, y: 0 },
+					data: {
+						name: 'P-chain-1',
+						mode: 'shell',
+						shell: 'echo hi',
+						owningSessionId: 's1',
+						owningSessionName: 'Worker',
+					},
+				},
+				{
+					id: 't1',
+					type: 'trigger',
+					position: { x: 0, y: 150 },
+					data: { eventType: 'time.scheduled', label: 'S1', config: { schedule_times: ['02:00'] } },
+				},
+				{
+					id: 'a1',
+					type: 'agent',
+					position: { x: 300, y: 150 },
+					data: {
+						sessionId: 's1',
+						sessionName: 'Worker',
+						toolType: 'claude-code',
+						inputPrompt: 'a',
+					},
+				},
+				{
+					id: 't2',
+					type: 'trigger',
+					position: { x: 0, y: 300 },
+					data: { eventType: 'time.scheduled', label: 'S2', config: { schedule_times: ['03:00'] } },
+				},
+				{
+					id: 'a2',
+					type: 'agent',
+					position: { x: 300, y: 300 },
+					data: {
+						sessionId: 's1',
+						sessionName: 'Worker',
+						toolType: 'claude-code',
+						inputPrompt: 'b',
+					},
+				},
+			],
+			edges: [
+				{ id: 'e0', source: 't0', target: 'cmd', mode: 'pass' },
+				{ id: 'e1', source: 't1', target: 'a1', mode: 'pass' },
+				{ id: 'e2', source: 't2', target: 'a2', mode: 'pass' },
+			],
+		});
+
+	it('emits agent_id for every sub despite the colliding command name', () => {
+		const pipeline = makeCollidingPipeline();
+		const sessionsById = new Map([['s1', { projectRoot: '/r1' }]]);
+		const { byCwd, unresolved } = pipelinesToYamlByOwnerCwd([pipeline], undefined, sessionsById);
+		// Nothing dropped — the whole point of the fix.
+		expect(unresolved).toEqual([]);
+		// All work lands in the single owning root, every sub bound to s1.
+		expect([...byCwd.keys()]).toEqual(['/r1']);
+		const yaml = byCwd.get('/r1')!.yaml;
+		const agentIdLines = yaml.split('\n').filter((l) => l.includes('agent_id:'));
+		expect(agentIdLines).toHaveLength(3);
+		expect(agentIdLines.every((l) => l.includes('s1'))).toBe(true);
+	});
+});
+
+describe('pipelinesToYamlByOwnerCwd — owner_agent_id preservation', () => {
+	// Regression: owner_agent_id is a PER-ROOT field (set via Edit YAML for a
+	// shared root). The editor doesn't manage it, but the save fully overwrites
+	// each cue.yaml. Without re-injecting the existing owner, a save would strip
+	// it and revert a shared root to fragile "first agent wins" ownership.
+	const makePipelineForRoot = (): CuePipeline =>
+		makePipeline({
+			name: 'Shared',
+			nodes: [
+				{
+					id: 't1',
+					type: 'trigger',
+					position: { x: 0, y: 0 },
+					data: { eventType: 'time.scheduled', label: 'S', config: { schedule_times: ['09:00'] } },
+				},
+				{
+					id: 'a1',
+					type: 'agent',
+					position: { x: 300, y: 0 },
+					data: {
+						sessionId: 's1',
+						sessionName: 'Owner',
+						toolType: 'claude-code',
+						inputPrompt: 'go',
+					},
+				},
+			],
+			edges: [{ id: 'e1', source: 't1', target: 'a1', mode: 'pass' }],
+		});
+
+	const sessionsById = new Map([['s1', { projectRoot: '/shared' }]]);
+	const globalSettings = {
+		timeout_minutes: 60,
+		timeout_on_fail: 'continue' as const,
+		max_concurrent: 1,
+	};
+
+	it('re-attaches a preserved owner_agent_id into the cwd settings block', () => {
+		const ownerByCwd = new Map([['/shared', 'owner-agent-uuid']]);
+		const { byCwd } = pipelinesToYamlByOwnerCwd(
+			[makePipelineForRoot()],
+			globalSettings,
+			sessionsById,
+			undefined,
+			ownerByCwd
+		);
+		expect(byCwd.get('/shared')?.yaml).toContain('owner_agent_id: owner-agent-uuid');
+	});
+
+	it('omits owner_agent_id when the root had none', () => {
+		const { byCwd } = pipelinesToYamlByOwnerCwd(
+			[makePipelineForRoot()],
+			globalSettings,
+			sessionsById,
+			undefined,
+			new Map()
+		);
+		expect(byCwd.get('/shared')?.yaml).not.toContain('owner_agent_id');
 	});
 });

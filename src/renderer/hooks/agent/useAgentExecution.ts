@@ -10,6 +10,11 @@ import type {
 import { getActiveTab } from '../../utils/tabHelpers';
 import { getStdinFlags, prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
 import { generateId } from '../../utils/ids';
+import {
+	hasRunnableQueueItem,
+	nextRunnableQueueItem,
+	takeNextRunnableQueueItem,
+} from '../../utils/executionQueue';
 import { estimateContextUsage } from '../../utils/contextUsage';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { logger } from '../../utils/logger';
@@ -339,12 +344,16 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 								// Check for queued items BEFORE updating state (using sessionsRef for latest state)
 								const currentSession = sessionsRef.current.find((s) => s.id === sessionId);
 								let queuedItemToProcess: { sessionId: string; item: QueuedItem } | null = null;
-								const hasQueuedItems = currentSession && currentSession.executionQueue.length > 0;
+								// Skip paused items: only a runnable (non-held) item triggers dispatch.
+								const nextRunnable = currentSession
+									? nextRunnableQueueItem(currentSession.executionQueue)
+									: undefined;
+								const hasQueuedItems = !!nextRunnable;
 
-								if (hasQueuedItems) {
+								if (nextRunnable) {
 									queuedItemToProcess = {
 										sessionId: sessionId,
-										item: currentSession!.executionQueue[0],
+										item: nextRunnable,
 									};
 								}
 
@@ -353,8 +362,10 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 									prev.map((s) => {
 										if (s.id !== sessionId) return s;
 
-										if (s.executionQueue.length > 0) {
-											const [nextItem, ...remainingQueue] = s.executionQueue;
+										const { item: nextItem, remaining: remainingQueue } = takeNextRunnableQueueItem(
+											s.executionQueue
+										);
+										if (nextItem) {
 											const targetTab =
 												s.aiTabs.find((tab) => tab.id === nextItem.tabId) || getActiveTab(s);
 
@@ -447,9 +458,9 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 										if (
 											!checkSession ||
 											checkSession.state === 'idle' ||
-											checkSession.executionQueue.length === 0
+											!hasRunnableQueueItem(checkSession.executionQueue)
 										) {
-											// Queue drained or session idle - safe to continue batch
+											// Queue drained (or only held items left) or session idle - safe to continue batch
 											resolveOnce({
 												success: didExitCleanly,
 												response: responseText,

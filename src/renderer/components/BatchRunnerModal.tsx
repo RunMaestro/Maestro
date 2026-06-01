@@ -75,13 +75,11 @@ interface BatchRunnerModalProps {
 	showConfirmation: (message: string, onConfirm: () => void) => void;
 	// Multi-document support
 	folderPath: string;
-	currentDocument: string;
 	/**
 	 * Optional pre-seeded list of documents (without `.md`) to populate the run
-	 * list with on first mount. When provided and non-empty, it overrides the
-	 * default `[currentDocument]` initialization. Used by the inline wizard's
-	 * "Start Auto Run" button to launch the modal with every freshly generated
-	 * doc already selected.
+	 * list with on first mount. When omitted, the run list starts empty. Used by
+	 * the inline wizard's "Start Auto Run" button to launch the modal with every
+	 * freshly generated doc already selected.
 	 */
 	presetDocuments?: string[];
 	allDocuments: string[]; // All available docs in folder (without .md)
@@ -127,7 +125,6 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 		lastModifiedAt,
 		showConfirmation,
 		folderPath,
-		currentDocument,
 		presetDocuments,
 		allDocuments,
 		documentTree,
@@ -171,10 +168,9 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 		getModalActions().setWorktreeConfigModalOpen(true);
 	}, []);
 
-	// Document list state
+	// Document list state. Opens empty unless the inline wizard's "Start Auto
+	// Run" pre-seeded it with freshly generated docs via `presetDocuments`.
 	const [documents, setDocuments] = useState<BatchDocumentEntry[]>(() => {
-		// Pre-seeded list (e.g. wizard's "Start Auto Run") wins over single
-		// currentDocument so every freshly generated doc lands in the run list.
 		if (presetDocuments && presetDocuments.length > 0) {
 			return presetDocuments.map((filename) => ({
 				id: generateId(),
@@ -183,25 +179,13 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 				isDuplicate: false,
 			}));
 		}
-		if (currentDocument) {
-			return [
-				{
-					id: generateId(),
-					filename: currentDocument,
-					resetOnCompletion: false,
-					isDuplicate: false,
-				},
-			];
-		}
 		return [];
 	});
 
 	// Track initial document state for dirty checking. Mirrors the run-list
 	// initialization above so dirty detection is correct for preset opens too.
 	const initialDocumentsRef = useRef<string[]>(
-		presetDocuments && presetDocuments.length > 0
-			? [...presetDocuments]
-			: [currentDocument].filter(Boolean)
+		presetDocuments && presetDocuments.length > 0 ? [...presetDocuments] : []
 	);
 
 	// Task counts per document (keyed by filename, value = unchecked task count).

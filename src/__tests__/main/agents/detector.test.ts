@@ -1565,6 +1565,44 @@ describe('agent-detector', () => {
 			expect(options).toEqual(['', 'low', 'medium', 'high', 'max']);
 		});
 
+		it('should discover Claude effort levels from the validation probe when --help drops the parenthetical', async () => {
+			// Newer Claude CLI builds print `--effort <level>  Effort level for the current session`
+			// with no inline `(low, medium, ...)` list, so the --help regex no longer matches and
+			// the effort dropdown renders empty. Fall back to probing the flag's validation error.
+			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
+				const binaryName = args[0];
+				if (binaryName === 'claude') {
+					return { stdout: '/usr/bin/claude\n', stderr: '', exitCode: 0 };
+				}
+				if (binaryName === 'bash') {
+					return { stdout: '/bin/bash\n', stderr: '', exitCode: 0 };
+				}
+				if (cmd === '/usr/bin/claude' && args[0] === '--help') {
+					return {
+						stdout:
+							'  --effort <level>                                  Effort level for the current session\n',
+						stderr: '',
+						exitCode: 0,
+					};
+				}
+				if (cmd === '/usr/bin/claude' && args[0] === '--effort') {
+					return {
+						stdout: '',
+						stderr:
+							"error: option '--effort <level>' argument '__maestro_probe__' is invalid. It must be one of: low, medium, high, xhigh, max\n",
+						exitCode: 1,
+					};
+				}
+				return { stdout: '', stderr: 'not found', exitCode: 1 };
+			});
+
+			detector.clearCache();
+			await detector.detectAgents();
+
+			const options = await detector.discoverConfigOptions('claude-code', 'effort');
+			expect(options).toEqual(['', 'low', 'medium', 'high', 'xhigh', 'max']);
+		});
+
 		it('should discover reasoning levels for Codex from models_cache.json', async () => {
 			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
 				const binaryName = args[0];

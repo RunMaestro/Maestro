@@ -63,7 +63,7 @@ describe('useSettings', () => {
 			terminalWidth: 100,
 			logLevel: 'info',
 			maxLogBuffer: 5000,
-			maxOutputLines: 25,
+			maxOutputLines: Infinity,
 			osNotificationsEnabled: true,
 			audioFeedbackEnabled: false,
 			audioFeedbackCommand: 'say',
@@ -181,7 +181,7 @@ describe('useSettings', () => {
 			const { result } = renderHook(() => useSettings());
 			await waitForSettingsLoaded(result);
 
-			expect(result.current.maxOutputLines).toBe(25);
+			expect(result.current.maxOutputLines).toBe(Infinity);
 		});
 
 		it('should have correct default values for notification settings', async () => {
@@ -698,13 +698,13 @@ describe('useSettings', () => {
 			expect(result.current.maxOutputLines).toBe(Infinity);
 		});
 
-		it('should keep default (25) when maxOutputLines is undefined', async () => {
+		it('should keep default (Infinity) when maxOutputLines is undefined', async () => {
 			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({});
 
 			const { result } = renderHook(() => useSettings());
 			await waitForSettingsLoaded(result);
 
-			expect(result.current.maxOutputLines).toBe(25);
+			expect(result.current.maxOutputLines).toBe(Infinity);
 		});
 	});
 

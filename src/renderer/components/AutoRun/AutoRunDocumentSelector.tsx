@@ -472,7 +472,7 @@ export const AutoRunDocumentSelector = forwardRef<
 							style={{
 								backgroundColor: theme.colors.bgSidebar,
 								border: `1px solid ${theme.colors.border}`,
-								maxHeight: '450px',
+								maxHeight: '562px',
 								minWidth: '100%',
 								width: 'calc(100% + 120px)', // Extend under the +, refresh, and folder buttons
 							}}

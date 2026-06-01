@@ -29,6 +29,7 @@ import { notifyToast } from '../../stores/notificationStore';
 import { CONDUCTOR_BADGES, getBadgeForTime } from '../../constants/conductorBadges';
 import { getActiveTab } from '../../utils/tabHelpers';
 import { generateId } from '../../utils/ids';
+import { takeNextRunnableQueueItem } from '../../utils/executionQueue';
 import { useBatchProcessor } from './useBatchProcessor';
 import { useBatchStore } from '../../stores/batchStore';
 import { consumeGroupChatAutoRun } from '../../utils/groupChatAutoRunRegistry';
@@ -560,9 +561,10 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 		onProcessQueueAfterCompletion: (sessionId) => {
 			const currentSessions = useSessionStore.getState().sessions;
 			const session = currentSessions.find((s) => s.id === sessionId);
-			if (session && session.executionQueue.length > 0 && processQueuedItemRef.current) {
-				const [nextItem, ...remainingQueue] = session.executionQueue;
-
+			const { item: nextItem, remaining: remainingQueue } = session
+				? takeNextRunnableQueueItem(session.executionQueue)
+				: { item: null, remaining: [] };
+			if (session && nextItem && processQueuedItemRef.current) {
 				useSessionStore.getState().setSessions((prev) =>
 					prev.map((s) => {
 						if (s.id !== sessionId) return s;

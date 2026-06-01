@@ -11,6 +11,8 @@ interface MoveConflictModalProps {
 	conflicts: PendingMove[];
 	nonConflictingCount: number;
 	isMoving: boolean;
+	/** 'move' (in-tree drag) or 'copy' (OS file import). Controls the verbs. */
+	operation?: 'move' | 'copy';
 	onCancel: () => void;
 	onOverwriteAll: () => void;
 	onAutoRenameAll: () => void;
@@ -23,6 +25,7 @@ export function MoveConflictModal({
 	conflicts,
 	nonConflictingCount,
 	isMoving,
+	operation = 'move',
 	onCancel,
 	onOverwriteAll,
 	onAutoRenameAll,
@@ -31,6 +34,9 @@ export function MoveConflictModal({
 	const cancelButtonRef = useRef<HTMLButtonElement>(null);
 	const isSingle = conflicts.length === 1 && nonConflictingCount === 0;
 	const conflictCount = conflicts.length;
+	// Verb varies with the operation: rows moved within the tree vs. OS files
+	// imported (copied) in from Finder/Explorer.
+	const verb = operation === 'copy' ? 'import' : 'move';
 
 	let title: string;
 	let bodyText: React.ReactNode;
@@ -49,7 +55,7 @@ export function MoveConflictModal({
 		);
 		autoRenameLabel = <>Rename to "{only.autoRenameName}"</>;
 		overwriteLabel = <>Overwrite existing</>;
-		autoRenameDescription = 'Move the file with an auto-suffixed name so nothing is overwritten.';
+		autoRenameDescription = `${verb === 'import' ? 'Import' : 'Move'} the file with an auto-suffixed name so nothing is overwritten.`;
 		overwriteDescription = 'Replace the file already at the destination. Cannot be undone.';
 	} else {
 		title = `Name conflicts (${conflictCount})`;
@@ -60,7 +66,7 @@ export function MoveConflictModal({
 				{nonConflictingCount > 0 && (
 					<>
 						{' '}
-						({nonConflictingCount} other{nonConflictingCount === 1 ? '' : 's'} can move without
+						({nonConflictingCount} other{nonConflictingCount === 1 ? '' : 's'} can {verb} without
 						conflict)
 					</>
 				)}
@@ -77,8 +83,7 @@ export function MoveConflictModal({
 				Overwrite all {conflictCount} existing item{conflictCount === 1 ? '' : 's'}
 			</>
 		);
-		autoRenameDescription =
-			'Move conflicting items with auto-suffixed names so nothing is overwritten.';
+		autoRenameDescription = `${verb === 'import' ? 'Import' : 'Move'} conflicting items with auto-suffixed names so nothing is overwritten.`;
 		overwriteDescription = 'Replace the existing items at the destination. Cannot be undone.';
 	}
 
@@ -152,11 +157,11 @@ export function MoveConflictModal({
 							}}
 						>
 							<div className="font-medium">
-								Skip conflicts, move {nonConflictingCount} other
+								Skip conflicts, {verb} {nonConflictingCount} other
 								{nonConflictingCount === 1 ? '' : 's'}
 							</div>
 							<div className="text-xs mt-0.5" style={{ color: theme.colors.textDim }}>
-								Leave the existing items alone and only move the non-conflicting selection.
+								Leave the existing items alone and only {verb} the non-conflicting selection.
 							</div>
 						</button>
 					)}

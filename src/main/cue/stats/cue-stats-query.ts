@@ -17,6 +17,7 @@
 import { getRecentCueEvents } from '../cue-db';
 import type { CueEventRecord } from '../cue-db';
 import { getTimeRangeStart } from '../../stats/utils';
+import { computePercentiles } from '../../../shared/percentiles';
 import { getAgentDisplayName } from '../../../shared/agentMetadata';
 import {
 	getAgentTypesForSessions,
@@ -461,9 +462,14 @@ export async function getCueStatsAggregation(
 	const bySubscription = new Map<string, GroupAccumulator>();
 	const byTriggerType = new Map<string, GroupAccumulator>();
 
+	// Per-run durations for the percentile distribution. Only completed runs have
+	// a duration; in-flight events contribute nothing here.
+	const runDurations: number[] = [];
+
 	for (const event of events) {
 		const { isSuccess, isFailure } = classifyStatus(event.status);
 		const durationMs = computeDuration(event);
+		if (durationMs != null) runDurations.push(durationMs);
 		const tokens = tokensForEvent(event, tokensByProvider);
 		const contrib: EventContribution = { durationMs, tokens, isSuccess, isFailure };
 
@@ -501,6 +507,7 @@ export async function getCueStatsAggregation(
 		windowStartMs,
 		windowEndMs,
 		totals: freezeTotals(totals),
+		durationPercentiles: computePercentiles(runDurations),
 		byPipeline: freezeGroups(byPipeline),
 		byAgent: freezeGroups(byAgent),
 		bySubscription: freezeGroups(bySubscription),

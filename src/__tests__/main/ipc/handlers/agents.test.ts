@@ -74,6 +74,9 @@ vi.mock('../../../../main/utils/execFile', () => ({
 // Mock fs
 vi.mock('fs', () => ({
 	existsSync: vi.fn(),
+	readdirSync: vi.fn(),
+	accessSync: vi.fn(),
+	constants: { R_OK: 4 },
 	promises: {
 		readdir: vi.fn(),
 		readFile: vi.fn(),
@@ -113,6 +116,8 @@ describe('agents IPC handlers', () => {
 	beforeEach(() => {
 		// Clear mocks
 		vi.clearAllMocks();
+		vi.mocked(fs.readdirSync).mockReturnValue([] as any);
+		vi.mocked(fs.accessSync).mockImplementation(() => undefined);
 
 		// Create mock agent detector
 		mockAgentDetector = {
@@ -178,7 +183,11 @@ describe('agents IPC handlers', () => {
 				'agents:reprobe',
 				'agents:getMaestroPDetectedPath',
 				'agents:getClaudeUsageSnapshots',
+				'agents:getClaudeUsageAccountKeys',
 				'claude:usage:refresh-all',
+				'agents:getCodexUsageSnapshots',
+				'agents:getCodexUsageAccountKeys',
+				'codex:usage:refresh-all',
 			];
 
 			for (const channel of expectedChannels) {

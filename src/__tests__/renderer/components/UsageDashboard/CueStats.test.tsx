@@ -48,6 +48,7 @@ const emptyAggregation: CueStatsAggregation = {
 	windowStartMs: 0,
 	windowEndMs: 0,
 	totals: zeroTotals,
+	durationPercentiles: { count: 0, min: 0, p50: 0, p75: 0, p90: 0, p95: 0, p99: 0, max: 0 },
 	byPipeline: [],
 	byAgent: [],
 	bySubscription: [],
@@ -72,6 +73,16 @@ const populatedAggregation: CueStatsAggregation = {
 		totalOutputTokens: 3_000,
 		totalCostUsd: 0.42,
 	}),
+	durationPercentiles: {
+		count: 12,
+		min: 5_000,
+		p50: 40_000,
+		p75: 60_000,
+		p90: 90_000,
+		p95: 120_000,
+		p99: 180_000,
+		max: 240_000,
+	},
 	byPipeline: [
 		{
 			key: 'pipeline-alpha',

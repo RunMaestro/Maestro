@@ -28,7 +28,11 @@ import { usePipelineContextMenu } from '../../hooks/cue/usePipelineContextMenu';
 import { PipelineToolbar } from './PipelineToolbar';
 import { PipelineCanvas, type CanvasInteractionMode } from './PipelineCanvas';
 import { PipelineContextMenu } from './PipelineContextMenu';
-import { arrangePipelineNodes, arrangePipelineGroups } from './utils/pipelineAutoArrange';
+import {
+	arrangePipelineNodes,
+	untanglePipelineNodes,
+	arrangePipelineGroups,
+} from './utils/pipelineAutoArrange';
 import { ConfirmModal } from '../ConfirmModal';
 import { LayoutGrid } from 'lucide-react';
 import type { TriggerNodeData } from '../../../shared/cue-pipeline-types';
@@ -88,10 +92,12 @@ function CuePipelineEditorInner({
 	// still work). Lifted here so the L keyboard shortcut can toggle it.
 	const [isLocked, setIsLocked] = useState(false);
 
-	// Auto-arrange confirmation gate. The button opens this; confirming runs
-	// handleAutoArrange. Kept here (not in PipelineCanvas) so the layout
-	// mutation has access to setPipelineState / persistLayout / offsets.
-	const [arrangeConfirmOpen, setArrangeConfirmOpen] = useState(false);
+	// Layout confirmation gate. The Tidy/Arrange buttons open this; confirming
+	// runs handleArrange with the chosen mode. Kept here (not in PipelineCanvas)
+	// so the layout mutation has access to setPipelineState / persistLayout /
+	// offsets. 'tidy' aligns without reshuffling; 'untangle' reorders to minimize
+	// edge crossings; null = closed.
+	const [arrangeConfirmMode, setArrangeConfirmMode] = useState<'tidy' | 'untangle' | null>(null);
 
 	// Selection bridge: usePipelineState needs selection IDs for its mutation
 	// callbacks, but usePipelineSelection needs pipelineState. We resolve the
@@ -326,18 +332,32 @@ function CuePipelineEditorInner({
 	// recomputed because a non-positional dep changed" (activeRuns polling
 	// produced a fresh `runningPipelineIds` Set, theme change, etc.).
 	const lastSyncedPipelinesRef = useRef(pipelineState.pipelines);
+	// Tracks the selected pipeline the resync last observed. A selection change
+	// (single ↔ All Pipelines, or between pipelines) leaves the `pipelines`
+	// reference untouched but changes the view geometry: All-Pipelines view
+	// applies per-pipeline auto-stack `yOffset`s that single-pipeline view does
+	// not. Because node ids are composite (`${pipeline.id}:${node.id}`) and
+	// therefore identical across both views, the position-preservation branch
+	// below would otherwise force the stale view's coordinates back onto every
+	// node — making a freshly switched All view render the pipeline at its
+	// single-view positions (rearrangement appears undone). Treat a selection
+	// change as a real geometry change and take fresh `computedNodes`.
+	const lastSyncedSelectedIdRef = useRef(pipelineState.selectedPipelineId);
 	useEffect(() => {
 		setDisplayNodes((prev) => {
-			// If pipelineState.pipelines is unchanged since the last resync, this
-			// fire is poll-driven (or theme/selection/running-state-driven), NOT a
-			// real position update. Preserve ReactFlow's live positions on prev so
-			// a just-dragged node isn't snapped back when activeRuns polls a few
-			// seconds later. Tracking by reference rather than gating on isDirty
-			// because the dirty flag flips AFTER its own effect runs and isn't
-			// load-bearing for "did the source-of-truth positions change."
+			// If pipelineState.pipelines AND the selection are unchanged since the
+			// last resync, this fire is poll-driven (or theme/running-state-driven),
+			// NOT a real position or geometry update. Preserve ReactFlow's live
+			// positions on prev so a just-dragged node isn't snapped back when
+			// activeRuns polls a few seconds later. Tracking by reference rather
+			// than gating on isDirty because the dirty flag flips AFTER its own
+			// effect runs and isn't load-bearing for "did the source-of-truth
+			// positions change."
 			const pipelinesChanged = lastSyncedPipelinesRef.current !== pipelineState.pipelines;
+			const selectionChanged = lastSyncedSelectedIdRef.current !== pipelineState.selectedPipelineId;
 			lastSyncedPipelinesRef.current = pipelineState.pipelines;
-			if (pipelinesChanged) return computedNodes;
+			lastSyncedSelectedIdRef.current = pipelineState.selectedPipelineId;
+			if (pipelinesChanged || selectionChanged) return computedNodes;
 			const prevById = new Map(prev.map((n) => [n.id, n]));
 			return computedNodes.map((cn) => {
 				const existing = prevById.get(cn.id);
@@ -345,7 +365,7 @@ function CuePipelineEditorInner({
 				return { ...cn, position: existing.position };
 			});
 		});
-	}, [computedNodes, pipelineState.pipelines]);
+	}, [computedNodes, pipelineState.pipelines, pipelineState.selectedPipelineId]);
 
 	const nodes = displayNodes;
 
@@ -375,41 +395,56 @@ function CuePipelineEditorInner({
 	// flow-depth columns. Either way: mutate canonical state (flips dirty,
 	// undoable via Discard), persist like a drag, then re-fit so the result
 	// is centered in view.
-	const handleAutoArrange = useCallback(() => {
-		setPipelineState((prev) => {
-			if (prev.selectedPipelineId === null) {
-				const offsets = arrangePipelineGroups(prev.pipelines, stableYOffsetsRef.current);
-				if (offsets.size === 0) return prev;
+	const handleArrange = useCallback(
+		(mode: 'tidy' | 'untangle') => {
+			setPipelineState((prev) => {
+				if (prev.selectedPipelineId === null) {
+					// All-Pipelines view: no edges between cards to cross, so both
+					// modes just pack the group cards into a tidy grid.
+					const offsets = arrangePipelineGroups(prev.pipelines, stableYOffsetsRef.current);
+					if (offsets.size === 0) return prev;
+					return {
+						...prev,
+						pipelines: prev.pipelines.map((p) => {
+							const next = offsets.get(p.id);
+							return next ? { ...p, viewOffset: next } : p;
+						}),
+					};
+				}
+				const layout = mode === 'untangle' ? untanglePipelineNodes : arrangePipelineNodes;
 				return {
 					...prev,
-					pipelines: prev.pipelines.map((p) => {
-						const next = offsets.get(p.id);
-						return next ? { ...p, viewOffset: next } : p;
-					}),
+					pipelines: prev.pipelines.map((p) =>
+						p.id === prev.selectedPipelineId ? { ...p, nodes: layout(p) } : p
+					),
 				};
-			}
-			return {
-				...prev,
-				pipelines: prev.pipelines.map((p) =>
-					p.id === prev.selectedPipelineId ? { ...p, nodes: arrangePipelineNodes(p) } : p
-				),
-			};
-		});
-		persistLayout();
-		// Wait for React → ReactFlow to re-measure the moved nodes before fitting.
-		setTimeout(() => reactFlowInstance.fitView({ padding: 0.2, duration: 300 }), 180);
-	}, [setPipelineState, persistLayout, stableYOffsetsRef, reactFlowInstance]);
+			});
+			persistLayout();
+			// Wait for React → ReactFlow to re-measure the moved nodes before fitting.
+			setTimeout(() => reactFlowInstance.fitView({ padding: 0.2, duration: 300 }), 180);
+		},
+		[setPipelineState, persistLayout, stableYOffsetsRef, reactFlowInstance]
+	);
 
 	const arrangeConfirmMessage = useMemo(() => {
 		if (isAllPipelinesView) {
 			const count = pipelineState.pipelines.filter((p) => p.nodes.length > 0).length;
-			return `Auto-arrange will reposition all ${count} pipeline${count === 1 ? '' : 's'} into a tidy grid. Your current placement is preserved as ordering, just aligned. You can undo with Discard before saving.`;
+			return `This will reposition all ${count} pipeline${count === 1 ? '' : 's'} into a tidy grid. Your current placement is preserved as ordering, just aligned. You can undo with Discard before saving.`;
 		}
 		const name = pipelineState.pipelines.find(
 			(p) => p.id === pipelineState.selectedPipelineId
 		)?.name;
-		return `Auto-arrange will reposition the nodes in "${name ?? 'this pipeline'}" into a clean left-to-right layout. You can undo with Discard before saving.`;
-	}, [isAllPipelinesView, pipelineState.pipelines, pipelineState.selectedPipelineId]);
+		const target = `"${name ?? 'this pipeline'}"`;
+		if (arrangeConfirmMode === 'untangle') {
+			return `Arrange will reposition the nodes in ${target} into a clean left-to-right layout and reorder them within each column to minimize crossing edges. You can undo with Discard before saving.`;
+		}
+		return `Tidy will align the nodes in ${target} into clean left-to-right columns, keeping their current top-to-bottom order. You can undo with Discard before saving.`;
+	}, [
+		isAllPipelinesView,
+		arrangeConfirmMode,
+		pipelineState.pipelines,
+		pipelineState.selectedPipelineId,
+	]);
 
 	// ─── Canvas callbacks ──────────────────────────────────────────────────
 	const canvasCallbacks = usePipelineCanvasCallbacks({
@@ -569,20 +604,21 @@ function CuePipelineEditorInner({
 				setInteractionMode={setInteractionMode}
 				isLocked={isLocked}
 				setIsLocked={setIsLocked}
-				onAutoArrange={() => setArrangeConfirmOpen(true)}
+				onTidy={() => setArrangeConfirmMode('tidy')}
+				onArrange={() => setArrangeConfirmMode('untangle')}
 			/>
 
-			{arrangeConfirmOpen && (
+			{arrangeConfirmMode !== null && (
 				<ConfirmModal
 					theme={theme}
-					title="Auto-arrange layout"
+					title={arrangeConfirmMode === 'untangle' ? 'Arrange layout' : 'Tidy layout'}
 					message={arrangeConfirmMessage}
 					destructive={false}
-					confirmLabel="Arrange"
+					confirmLabel={arrangeConfirmMode === 'untangle' ? 'Arrange' : 'Tidy'}
 					headerIcon={<LayoutGrid className="w-4 h-4" style={{ color: theme.colors.accent }} />}
 					icon={<LayoutGrid className="w-5 h-5" style={{ color: theme.colors.warning }} />}
-					onConfirm={handleAutoArrange}
-					onClose={() => setArrangeConfirmOpen(false)}
+					onConfirm={() => handleArrange(arrangeConfirmMode)}
+					onClose={() => setArrangeConfirmMode(null)}
 				/>
 			)}
 

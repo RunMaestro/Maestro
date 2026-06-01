@@ -44,6 +44,7 @@ import {
 	SummaryCardsSkeleton,
 } from './ChartSkeletons';
 import { MetricCard } from './SummaryCards';
+import { PercentilesCard } from './PercentilesCard';
 
 interface CueStatsProps {
 	timeRange: StatsTimeRange;
@@ -1264,6 +1265,15 @@ export const CueStats = memo(function CueStats({
 					timeSeries={aggregation.timeSeries}
 					theme={theme}
 					hasTokenData={hasTokenData}
+				/>
+			</ChartErrorBoundary>
+
+			<ChartErrorBoundary theme={theme} chartName="Cue Run Duration Percentiles">
+				<PercentilesCard
+					theme={theme}
+					title="Run Duration Percentiles"
+					unitLabel="runs"
+					distribution={aggregation.durationPercentiles}
 				/>
 			</ChartErrorBoundary>
 

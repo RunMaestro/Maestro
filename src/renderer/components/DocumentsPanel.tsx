@@ -882,7 +882,9 @@ export function DocumentsPanel({
 					{documents.length === 0 ? (
 						<div className="p-4 text-center" style={{ color: theme.colors.textDim }}>
 							<p className="text-sm">No documents selected</p>
-							<p className="text-xs mt-1">Click "+ Add Docs" to select documents to run</p>
+							<p className="text-xs mt-1">
+								Load a playbook or click "+ Add Docs" to select documents to run
+							</p>
 						</div>
 					) : (
 						<div

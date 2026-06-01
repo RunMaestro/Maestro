@@ -39,14 +39,20 @@ function updateSession(sessionId: string, updater: (s: Session) => Session): voi
 export interface UseSessionSwitchCallbacksDeps {
 	/** setActiveSessionId wrapper that also dismisses active group chat */
 	setActiveSessionId: (id: string) => void;
-	/** Resume a provider session, opening as a new tab or switching to existing */
+	/**
+	 * Resume a provider session, opening as a new tab or switching to existing.
+	 * Resolves to `true` when opened/switched, `false` when the session could not
+	 * be loaded (e.g. aged out).
+	 */
 	handleResumeSession: (
 		agentSessionId: string,
 		providedMessages?: LogEntry[],
 		sessionName?: string,
 		starred?: boolean,
-		usageStats?: UsageStats
-	) => Promise<void>;
+		usageStats?: UsageStats,
+		projectPath?: string,
+		opts?: { targetSessionId?: string; suppressUnavailableFlash?: boolean }
+	) => Promise<boolean>;
 	/** Ref to main input textarea (for auto-focus after navigation) */
 	inputRef: React.RefObject<HTMLTextAreaElement | null>;
 }
@@ -71,6 +77,18 @@ export interface UseSessionSwitchCallbacksReturn {
 		sessionName: string,
 		starred?: boolean
 	) => void;
+	/**
+	 * Jump to a starred session from the Left Bar, switching to its owning agent
+	 * and resuming the conversation. Resolves to `false` when the session can no
+	 * longer be loaded (aged out) so the caller can offer to remove the star.
+	 */
+	handleJumpToStarredSession: (
+		agentId: string,
+		projectPath: string,
+		agentSessionId: string,
+		sessionName: string,
+		parentSessionId: string
+	) => Promise<boolean>;
 	/** Switch to an AI tab from utility modals (tab switcher, queue browser, etc.) */
 	handleUtilityTabSelect: (tabId: string) => void;
 	/** Switch to a file tab from utility modals */
@@ -228,6 +246,38 @@ export function useSessionSwitchCallbacks(
 		[handleResumeSession, setActiveFocus, inputRef]
 	);
 
+	// Jump to a starred session from the Left Bar. Unlike handleNamedSessionSelect,
+	// this can cross agents, so it first switches to the owning agent and resumes
+	// against that explicit target (the active-session closure is stale at this
+	// point). Returns whether the session was actually loaded so the caller can
+	// offer to remove a stale star when it has aged out.
+	const handleJumpToStarredSession = useCallback(
+		async (
+			_agentId: string,
+			projectPath: string,
+			agentSessionId: string,
+			sessionName: string,
+			parentSessionId: string
+		): Promise<boolean> => {
+			setActiveSessionId(parentSessionId);
+			const opened = await handleResumeSession(
+				agentSessionId,
+				[],
+				sessionName,
+				true,
+				undefined,
+				projectPath,
+				{ targetSessionId: parentSessionId, suppressUnavailableFlash: true }
+			);
+			if (opened) {
+				setActiveFocus('main');
+				setTimeout(() => inputRef.current?.focus(), 50);
+			}
+			return opened;
+		},
+		[setActiveSessionId, handleResumeSession, setActiveFocus, inputRef]
+	);
+
 	// Switch to an AI tab from utility modals (tab switcher, queue browser, etc.)
 	const handleUtilityTabSelect = useCallback(
 		(tabId: string) => {
@@ -265,6 +315,7 @@ export function useSessionSwitchCallbacks(
 		handleProcessMonitorNavigateToSession,
 		handleToastSessionClick,
 		handleNamedSessionSelect,
+		handleJumpToStarredSession,
 		handleUtilityTabSelect,
 		handleUtilityFileTabSelect,
 	};

@@ -56,6 +56,9 @@ vi.mock('../../../../renderer/components/CuePipelineEditor/utils/pipelineToYaml'
 			return { byCwd, unresolved: [] as Array<{ subName: string; agentId: string }> };
 		}
 	),
+	// Owner-preservation pre-read; tests here don't exercise shared-root
+	// ownership, so report no existing owner.
+	readOwnerAgentIdFromYaml: vi.fn(() => undefined),
 }));
 
 vi.mock('../../../../renderer/components/CuePipelineEditor/utils/yamlToPipeline', () => ({

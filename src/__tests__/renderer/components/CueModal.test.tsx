@@ -34,6 +34,7 @@ vi.mock('../../../renderer/constants/modalPriorities', () => ({
 	MODAL_PRIORITIES: {
 		CUE_MODAL: 460,
 		CUE_YAML_EDITOR: 463,
+		CUE_HELP: 465,
 	},
 }));
 
@@ -711,55 +712,61 @@ describe('CueModal', () => {
 		});
 	});
 
-	describe('help view escape behavior', () => {
-		it('should navigate to help view when help button is clicked', () => {
+	describe('help guide layered modal', () => {
+		// The guide registers its own layer (CUE_HELP) above the Cue modal layer.
+		// Its onEscape is the most recent registerLayer call after opening help.
+		const helpLayerEscape = () => {
+			const call = mockRegisterLayer.mock.calls.at(-1);
+			return call?.[0].onEscape as () => void;
+		};
+
+		it('should open the guide as a layered modal when help button is clicked', () => {
 			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
 
 			// Click help button
 			const helpButton = screen.getByTitle('About Maestro Cue');
 			fireEvent.click(helpButton);
 
+			// Guide is layered on top - both its title and the Cue header are present
 			expect(screen.getByText('Maestro Cue Guide')).toBeInTheDocument();
-		});
-
-		it('should go back from help view when escape is pressed (not close modal)', () => {
-			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
-
-			// Click help button to enter help view
-			const helpButton = screen.getByTitle('About Maestro Cue');
-			fireEvent.click(helpButton);
-			expect(screen.getByText('Maestro Cue Guide')).toBeInTheDocument();
-
-			// Trigger the onEscape callback from the registered layer
-			const layerConfig = mockRegisterLayer.mock.calls[0][0];
-			act(() => {
-				layerConfig.onEscape();
-			});
-
-			// Should go back to main view, not close the modal
-			expect(mockOnClose).not.toHaveBeenCalled();
-			// Help view should be gone, main header should be back
 			expect(screen.getByText('Maestro Cue')).toBeInTheDocument();
 		});
 
-		it('should go back from help view via back arrow button', () => {
+		it('should close only the guide on escape, leaving the Cue modal open', () => {
 			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
 
-			// Click help button
 			fireEvent.click(screen.getByTitle('About Maestro Cue'));
 			expect(screen.getByText('Maestro Cue Guide')).toBeInTheDocument();
 
-			// Click the back arrow
-			fireEvent.click(screen.getByTitle('Back to dashboard'));
+			// Escape on the guide's own layer
+			act(() => {
+				helpLayerEscape()();
+			});
 
-			// Should be back to main view
+			// Guide is gone, Cue modal stays open
+			expect(screen.queryByText('Maestro Cue Guide')).not.toBeInTheDocument();
+			expect(mockOnClose).not.toHaveBeenCalled();
 			expect(screen.getByText('Maestro Cue')).toBeInTheDocument();
 		});
 
-		it('should close modal on escape when not in help view', () => {
+		it('should close the guide via its close button', () => {
 			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
 
-			// Trigger the onEscape callback
+			fireEvent.click(screen.getByTitle('About Maestro Cue'));
+			expect(screen.getByText('Maestro Cue Guide')).toBeInTheDocument();
+
+			// The guide's close button is the last "Close"-titled button in the DOM
+			const closeButtons = screen.getAllByTitle('Close');
+			fireEvent.click(closeButtons[closeButtons.length - 1]);
+
+			expect(screen.queryByText('Maestro Cue Guide')).not.toBeInTheDocument();
+			expect(mockOnClose).not.toHaveBeenCalled();
+		});
+
+		it('should close modal on escape when the guide is not open', () => {
+			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
+
+			// Trigger the Cue modal layer's onEscape
 			const layerConfig = mockRegisterLayer.mock.calls[0][0];
 			layerConfig.onEscape();
 
@@ -782,7 +789,7 @@ describe('CueModal', () => {
 			expect(mockOnClose).not.toHaveBeenCalled();
 		});
 
-		it('should not show confirmation on escape from help view even with unsaved changes', () => {
+		it('should not show confirmation when closing the guide even with unsaved changes', () => {
 			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
 
 			// Make pipeline dirty
@@ -790,19 +797,18 @@ describe('CueModal', () => {
 				useCueDirtyStore.getState().setPipelineDirty(true);
 			});
 
-			// Enter help view
+			// Open the guide
 			fireEvent.click(screen.getByTitle('About Maestro Cue'));
 			expect(screen.getByText('Maestro Cue Guide')).toBeInTheDocument();
 
-			// Press escape — should go back from help, not trigger confirmation
-			const layerConfig = mockRegisterLayer.mock.calls[0][0];
+			// Escape on the guide layer just closes the guide - no discard prompt
 			act(() => {
-				layerConfig.onEscape();
+				helpLayerEscape()();
 			});
 
 			expect(mockShowConfirmation).not.toHaveBeenCalled();
 			expect(mockOnClose).not.toHaveBeenCalled();
-			expect(screen.getByText('Maestro Cue')).toBeInTheDocument();
+			expect(screen.queryByText('Maestro Cue Guide')).not.toBeInTheDocument();
 		});
 	});
 });

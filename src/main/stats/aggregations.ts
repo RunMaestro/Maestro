@@ -7,6 +7,11 @@
 
 import type Database from 'better-sqlite3';
 import type { StatsTimeRange, StatsAggregation } from '../../shared/stats-types';
+import {
+	percentilesFromSorted,
+	emptyPercentiles,
+	type DurationPercentiles,
+} from '../../shared/percentiles';
 import { PERFORMANCE_THRESHOLDS } from '../../shared/performance-metrics';
 import { getTimeRangeStart, perfMetrics, LOG_CONTEXT } from './utils';
 import { countImageAnnotationsSince } from './image-annotations';
@@ -378,6 +383,79 @@ function queryBySessionSource(
 	return result;
 }
 
+/**
+ * Query duration distribution overall and per agent type.
+ *
+ * SQLite (better-sqlite3) has no `PERCENTILE_CONT`, so we pull the `duration`
+ * column sorted ascending and slice in JS. One ordered scan feeds both the
+ * overall distribution and every per-agent distribution (rows arrive grouped by
+ * agent because the sort is `agent_type, duration`), so each group's slice is
+ * already sorted.
+ */
+function queryDurationPercentiles(
+	db: Database.Database,
+	startTime: number
+): {
+	overall: DurationPercentiles;
+	byAgent: Record<string, DurationPercentiles>;
+} {
+	const perfStart = perfMetrics.start();
+	const rows = db
+		.prepare(
+			`
+      SELECT agent_type, duration
+      FROM query_events
+      WHERE start_time >= ?
+      ORDER BY duration ASC
+    `
+		)
+		.all(startTime) as Array<{ agent_type: string; duration: number }>;
+
+	// Overall: rows are globally sorted by duration already.
+	const overall = percentilesFromSorted(rows.map((r) => r.duration));
+
+	// Per agent: collect each agent's durations preserving ascending order.
+	const perAgentSorted: Record<string, number[]> = {};
+	for (const row of rows) {
+		(perAgentSorted[row.agent_type] ??= []).push(row.duration);
+	}
+	const byAgent: Record<string, DurationPercentiles> = {};
+	for (const [agent, durations] of Object.entries(perAgentSorted)) {
+		byAgent[agent] = percentilesFromSorted(durations);
+	}
+
+	perfMetrics.end(perfStart, 'getAggregatedStats:durationPercentiles', {
+		sampleCount: rows.length,
+	});
+	return { overall, byAgent };
+}
+
+/**
+ * Auto Run task duration distribution (per individual task, which is the
+ * closest analog to a single "run" and yields far more samples than the
+ * batch-level `auto_run_sessions`).
+ */
+function queryAutoRunTaskPercentiles(
+	db: Database.Database,
+	startTime: number
+): DurationPercentiles {
+	const perfStart = perfMetrics.start();
+	const rows = db
+		.prepare(
+			`
+      SELECT duration
+      FROM auto_run_tasks
+      WHERE start_time >= ?
+      ORDER BY duration ASC
+    `
+		)
+		.all(startTime) as Array<{ duration: number }>;
+	perfMetrics.end(perfStart, 'getAggregatedStats:autoRunTaskPercentiles', {
+		sampleCount: rows.length,
+	});
+	return rows.length > 0 ? percentilesFromSorted(rows.map((r) => r.duration)) : emptyPercentiles();
+}
+
 // ============================================================================
 // Orchestrator
 // ============================================================================
@@ -403,6 +481,8 @@ export function getAggregatedStats(db: Database.Database, range: StatsTimeRange)
 	const bySessionByDay = queryBySessionByDay(db, startTime);
 	const bySessionSource = queryBySessionSource(db, startTime);
 	const worktreeStatus = queryByWorktreeStatus(db, startTime);
+	const durationPercentiles = queryDurationPercentiles(db, startTime);
+	const autoRunTaskDurationPercentiles = queryAutoRunTaskPercentiles(db, startTime);
 	const imageAnnotations = countImageAnnotationsSince(db, startTime);
 
 	const totalDuration = perfMetrics.end(perfStart, 'getAggregatedStats:total', {
@@ -423,6 +503,9 @@ export function getAggregatedStats(db: Database.Database, range: StatsTimeRange)
 		totalQueries: totals.count,
 		totalDuration: totals.total_duration,
 		avgDuration: totals.count > 0 ? Math.round(totals.total_duration / totals.count) : 0,
+		queryDurationPercentiles: durationPercentiles.overall,
+		queryDurationPercentilesByAgent: durationPercentiles.byAgent,
+		autoRunTaskDurationPercentiles,
 		byAgent,
 		bySource,
 		byDay,

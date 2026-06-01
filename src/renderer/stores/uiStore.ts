@@ -11,7 +11,7 @@
  */
 
 import { create } from 'zustand';
-import type { FocusArea, RightPanelTab } from '../types';
+import type { FocusArea, RightPanelTab, UsageDashboardViewMode } from '../types';
 import { notifyCenterFlash } from './centerFlashStore';
 
 export interface UIStoreState {
@@ -58,6 +58,16 @@ export interface UIStoreState {
 
 	// Auto-follow active task during batch runs
 	autoFollowEnabled: boolean;
+
+	// Last-selected Usage Dashboard tab. In-memory only: survives closing and
+	// reopening the dashboard within a session, resets to 'overview' on restart.
+	usageDashboardViewMode: UsageDashboardViewMode;
+
+	// Accounts the user hid in the Usage Dashboard provider quota panels, keyed
+	// by provider id ('claude-code' | 'codex'); values are canonical account
+	// keys. Persisted via settings write-through (mirrors bookmarksCollapsed) and
+	// hydrated by loadAllSettings on startup.
+	hiddenQuotaAccounts: Record<string, string[]>;
 }
 
 export interface UIStoreActions {
@@ -125,6 +135,14 @@ export interface UIStoreActions {
 
 	// Auto-follow
 	setAutoFollowEnabled: (enabled: boolean | ((prev: boolean) => boolean)) => void;
+
+	// Usage Dashboard last-selected tab
+	setUsageDashboardViewMode: (
+		mode: UsageDashboardViewMode | ((prev: UsageDashboardViewMode) => UsageDashboardViewMode)
+	) => void;
+
+	// Toggle a provider quota account between hidden and visible.
+	toggleHiddenQuotaAccount: (providerId: string, accountKey: string) => void;
 }
 
 export type UIStore = UIStoreState & UIStoreActions;
@@ -134,6 +152,25 @@ export type UIStore = UIStoreState & UIStoreActions;
  */
 function resolve<T>(valOrFn: T | ((prev: T) => T), prev: T): T {
 	return typeof valOrFn === 'function' ? (valOrFn as (prev: T) => T)(prev) : valOrFn;
+}
+
+/**
+ * Persist the Bookmarks section collapse state so it survives app restarts.
+ * The runtime value lives here (filter mode transiently toggles it), so this
+ * write-through is the single persistence point; the saved value is hydrated
+ * back into this store on startup by `loadAllSettings` in settingsStore.
+ */
+function persistBookmarksCollapsed(value: boolean): void {
+	window.maestro?.settings?.set('bookmarksCollapsed', value);
+}
+
+/**
+ * Persist the per-provider hidden quota accounts map so the user's hide choices
+ * survive app restarts. Hydrated back into this store on startup by
+ * `loadAllSettings` in settingsStore.
+ */
+function persistHiddenQuotaAccounts(value: Record<string, string[]>): void {
+	window.maestro?.settings?.set('hiddenQuotaAccounts', value);
 }
 
 export const useUIStore = create<UIStore>()((set) => ({
@@ -158,6 +195,8 @@ export const useUIStore = create<UIStore>()((set) => ({
 	editingGroupId: null,
 	editingSessionId: null,
 	autoFollowEnabled: false,
+	usageDashboardViewMode: 'overview',
+	hiddenQuotaAccounts: {},
 
 	// --- Actions ---
 	setLeftSidebarOpen: (v) => set((s) => ({ leftSidebarOpen: resolve(v, s.leftSidebarOpen) })),
@@ -169,8 +208,17 @@ export const useUIStore = create<UIStore>()((set) => ({
 	setActiveRightTab: (v) => set((s) => ({ activeRightTab: resolve(v, s.activeRightTab) })),
 
 	setBookmarksCollapsed: (v) =>
-		set((s) => ({ bookmarksCollapsed: resolve(v, s.bookmarksCollapsed) })),
-	toggleBookmarksCollapsed: () => set((s) => ({ bookmarksCollapsed: !s.bookmarksCollapsed })),
+		set((s) => {
+			const next = resolve(v, s.bookmarksCollapsed);
+			persistBookmarksCollapsed(next);
+			return { bookmarksCollapsed: next };
+		}),
+	toggleBookmarksCollapsed: () =>
+		set((s) => {
+			const next = !s.bookmarksCollapsed;
+			persistBookmarksCollapsed(next);
+			return { bookmarksCollapsed: next };
+		}),
 
 	setShowUnreadOnly: (v) => set((s) => ({ showUnreadOnly: resolve(v, s.showUnreadOnly) })),
 	toggleShowUnreadOnly: () => set((s) => ({ showUnreadOnly: !s.showUnreadOnly })),
@@ -213,4 +261,18 @@ export const useUIStore = create<UIStore>()((set) => ({
 	setEditingSessionId: (v) => set((s) => ({ editingSessionId: resolve(v, s.editingSessionId) })),
 
 	setAutoFollowEnabled: (v) => set((s) => ({ autoFollowEnabled: resolve(v, s.autoFollowEnabled) })),
+
+	setUsageDashboardViewMode: (v) =>
+		set((s) => ({ usageDashboardViewMode: resolve(v, s.usageDashboardViewMode) })),
+
+	toggleHiddenQuotaAccount: (providerId, accountKey) =>
+		set((s) => {
+			const current = s.hiddenQuotaAccounts[providerId] ?? [];
+			const next = current.includes(accountKey)
+				? current.filter((k) => k !== accountKey)
+				: [...current, accountKey];
+			const nextMap = { ...s.hiddenQuotaAccounts, [providerId]: next };
+			persistHiddenQuotaAccounts(nextMap);
+			return { hiddenQuotaAccounts: nextMap };
+		}),
 }));

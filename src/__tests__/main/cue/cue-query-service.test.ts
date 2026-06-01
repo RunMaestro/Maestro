@@ -315,4 +315,28 @@ describe('getSettings', () => {
 
 		expect(settings).toEqual(DEFAULT_CUE_SETTINGS);
 	});
+
+	it('strips per-root owner_agent_id so it is never exposed as a global setting', () => {
+		// Regression: owner_agent_id is per-root (it names an agent that must live
+		// at that cue.yaml's root). When getSettings surfaced the first session's
+		// owner_agent_id, the Settings modal read it and saveSettings broadcast it
+		// into every cue.yaml — flagging unrelated single-agent projects with a
+		// bogus "owner_agent_id does not match any agent" warning.
+		const state = makeState(
+			makeConfig([], {
+				timeout_minutes: 60,
+				timeout_on_fail: 'continue',
+				max_concurrent: 1,
+				queue_size: 50,
+				owner_agent_id: 'pedsidian-uuid',
+			})
+		);
+		const deps = makeDeps({ getSessionStates: () => new Map([['s1', state]]) });
+		const settings = createCueQueryService(deps).getSettings();
+
+		expect(settings.owner_agent_id).toBeUndefined();
+		// Non-ownership global fields still flow through.
+		expect(settings.timeout_minutes).toBe(60);
+		expect(settings.max_concurrent).toBe(1);
+	});
 });
