@@ -450,10 +450,10 @@ export function useMobileSessionManagement(
 					previousSessionStatesRef.current.set(s.id, s.state);
 				});
 
-				setSessions(newSessions);
 				// Auto-select first session if none selected, and sync activeTabId
 				// Update refs synchronously to avoid race conditions with WebSocket messages
 				const currentActiveId = activeSessionIdRef.current;
+				let nextSessions = newSessions;
 				if (!currentActiveId && newSessions.length > 0) {
 					const firstSession = newSessions[0];
 					activeSessionIdRef.current = firstSession.id;
@@ -464,10 +464,29 @@ export function useMobileSessionManagement(
 					// Sync activeTabId for current session
 					const currentSession = newSessions.find((s) => s.id === currentActiveId);
 					if (currentSession) {
-						activeTabIdRef.current = currentSession.activeTabId || null;
-						setActiveTabId(currentSession.activeTabId || null);
+						const requestedActiveTabId = activeTabIdRef.current;
+						let nextActiveTabId = currentSession.activeTabId || null;
+
+						if (
+							requestedActiveTabId &&
+							currentSession.aiTabs?.some((tab) => tab.id === requestedActiveTabId)
+						) {
+							nextActiveTabId = requestedActiveTabId;
+
+							if (currentSession.activeTabId !== requestedActiveTabId) {
+								nextSessions = newSessions.map((session) =>
+									session.id === currentActiveId
+										? { ...session, activeTabId: requestedActiveTabId }
+										: session
+								);
+							}
+						}
+
+						activeTabIdRef.current = nextActiveTabId;
+						setActiveTabId(nextActiveTabId);
 					}
 				}
+				setSessions(nextSessions);
 			},
 			onSessionStateChange: (
 				sessionId: string,

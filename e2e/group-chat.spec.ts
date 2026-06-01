@@ -1256,11 +1256,15 @@ test.describe('Seeded Group Chat workspace', () => {
 
 		const searchInput = window.getByPlaceholder('Filter group chat history...');
 		await expect(searchInput).toBeVisible();
+		await searchInput.click();
 		await searchInput.fill('seeded group chat plan');
+		await expect(searchInput).toHaveValue('seeded group chat plan');
 		await expect(window.getByText('1 result')).toBeVisible();
 		await expect(window.getByText('Reviewed seeded group chat plan')).toBeVisible();
 
+		await searchInput.click();
 		await searchInput.fill('missing-history-entry');
+		await expect(searchInput).toHaveValue('missing-history-entry');
 		await expect(window.getByText('No entries match "missing-history-entry"')).toBeVisible();
 
 		await searchInput.press('Escape');
