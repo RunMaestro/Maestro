@@ -131,19 +131,6 @@ export function MessageHistory({
 		}
 	}, [logs, hasInitiallyScrolled]);
 
-	// Auto-scroll to bottom when new messages arrive (after initial load)
-	useEffect(() => {
-		if (
-			hasInitiallyScrolled &&
-			autoScroll &&
-			bottomRef.current &&
-			logs.length > prevLogsLengthRef.current
-		) {
-			bottomRef.current.scrollIntoView({ behavior: 'smooth' });
-			prevLogsLengthRef.current = logs.length;
-		}
-	}, [logs, autoScroll, hasInitiallyScrolled]);
-
 	// Reset scroll state when logs are cleared (e.g., session change)
 	useEffect(() => {
 		if (logs.length === 0) {
@@ -169,17 +156,15 @@ export function MessageHistory({
 		}
 	}, []);
 
-	// Detect new messages when user is not at bottom
+	// Handle new messages after initial load.
 	useEffect(() => {
 		const currentCount = logs.length;
 		if (currentCount > prevLogsLengthRef.current && hasInitiallyScrolled) {
-			// Check actual scroll position
-			const container = containerRef.current!;
-			let actuallyAtBottom = isAtBottom;
-			const { scrollTop, scrollHeight, clientHeight } = container;
-			actuallyAtBottom = scrollHeight - scrollTop - clientHeight < 50;
-
-			if (!actuallyAtBottom) {
+			if (isAtBottom && autoScroll && bottomRef.current) {
+				bottomRef.current.scrollIntoView({ behavior: 'smooth' });
+				setHasNewMessages(false);
+				setNewMessageCount(0);
+			} else {
 				const newCount = currentCount - prevLogsLengthRef.current;
 				setHasNewMessages(true);
 				setNewMessageCount((prev) => prev + newCount);
@@ -187,7 +172,7 @@ export function MessageHistory({
 			}
 		}
 		prevLogsLengthRef.current = currentCount;
-	}, [logs.length, isAtBottom, hasInitiallyScrolled]);
+	}, [logs.length, isAtBottom, autoScroll, hasInitiallyScrolled]);
 
 	// Scroll to bottom function
 	const scrollToBottom = useCallback(() => {
@@ -222,6 +207,7 @@ export function MessageHistory({
 		>
 			<div
 				ref={containerRef}
+				data-testid="mobile-message-history-scroll"
 				onScroll={handleScroll}
 				style={{
 					display: 'flex',
@@ -377,9 +363,10 @@ export function MessageHistory({
 			{hasNewMessages && !isAtBottom && (
 				<button
 					onClick={scrollToBottom}
+					aria-label="Scroll to new messages"
 					style={{
 						position: 'absolute',
-						bottom: '16px',
+						bottom: maxHeight === 'none' ? FULL_HEIGHT_BOTTOM_CLEARANCE + 16 : 16,
 						right: '24px',
 						display: 'flex',
 						alignItems: 'center',

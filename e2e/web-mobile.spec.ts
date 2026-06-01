@@ -2311,6 +2311,75 @@ test.describe('Web Mobile Bridge', () => {
 		}
 	});
 
+	test('shows mobile new-message indicator when desktop input arrives while scrolled away', async ({
+		page,
+	}) => {
+		const workbench = createWebMobileWorkbench();
+		for (let index = 1; index <= 20; index += 1) {
+			const paddedIndex = String(index).padStart(2, '0');
+			appendPrimaryPlanStdout(
+				workbench,
+				`Scroll seed response ${paddedIndex} keeps the mobile transcript scrollable.`,
+				`new-message-scroll-seed-${paddedIndex}`
+			);
+		}
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			await startWebServer(appWindow);
+			const sessionUrl = await toggleLive(appWindow, workbench.primarySessionId);
+			await page.setViewportSize({ width: 430, height: 820 });
+			await page.goto(sessionUrl);
+			await reconnectMobileIfNeeded(page);
+			await expect(page.getByText('Connection Lost')).toBeHidden({ timeout: 15000 });
+			await expect
+				.poll(async () =>
+					appWindow.evaluate(async () =>
+						(window as MaestroE2EWindow).maestro.webserver.getConnectedClients()
+					)
+				)
+				.toBeGreaterThanOrEqual(1);
+			const composer = page.getByTestId('mobile-command-input-bar');
+			await expect(composer).toBeVisible();
+			await page
+				.getByRole('textbox', { name: 'AI message input. Press the send button to submit.' })
+				.evaluate((input) => (input as HTMLTextAreaElement).blur());
+			await expect
+				.poll(async () => {
+					const box = await composer.boundingBox();
+					return box?.height ?? 0;
+				})
+				.toBeLessThan(160);
+
+			await expect(page.getByText('Scroll seed response 20')).toBeVisible();
+			const history = page.getByTestId('mobile-message-history-scroll');
+			await history.evaluate((container) => {
+				container.scrollTop = 0;
+				container.dispatchEvent(new Event('scroll', { bubbles: true }));
+			});
+			await expect.poll(() => history.evaluate((container) => container.scrollTop)).toBe(0);
+			await expect(page.getByText('Scroll seed response 01')).toBeVisible();
+
+			await appWindow.evaluate(async (sessionId) => {
+				await (window as MaestroE2EWindow).maestro.web.broadcastUserInput(
+					sessionId,
+					'Desktop follow-up while mobile is scrolled away',
+					'ai'
+				);
+			}, workbench.primarySessionId);
+
+			const indicator = page.getByRole('button', { name: 'Scroll to new messages' });
+			await expect(indicator).toBeVisible();
+			await expect(indicator).toContainText('1');
+			await indicator.click();
+			await expect(page.getByText('Desktop follow-up while mobile is scrolled away')).toBeVisible();
+			await expect(indicator).toBeHidden();
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
 	test('opens the dashboard route and selects a session from the pill bar', async ({ page }) => {
 		const workbench = createWebMobileWorkbench();
 		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
