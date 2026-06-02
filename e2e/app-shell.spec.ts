@@ -1090,7 +1090,7 @@ type StubbedAgentSessionReadCall = {
 async function stubCodexAgentSessions(
 	electronApp: ElectronApplication,
 	seeded: ReturnType<typeof createSeededWorkbench>,
-	options: { paginatedReviewMessages?: boolean } = {}
+	options: { includeHiddenAgentSession?: boolean; paginatedReviewMessages?: boolean } = {}
 ) {
 	await electronApp.evaluate(
 		({ ipcMain }, payload) => {
@@ -1161,6 +1161,26 @@ async function stubCodexAgentSessions(
 					starred: false,
 				},
 			];
+			if (payload.includeHiddenAgentSession) {
+				sessions.push({
+					sessionId: 'agent-codex-hidden-session',
+					projectPath: payload.projectPath,
+					timestamp: new Date(now - 240_000).toISOString(),
+					modifiedAt: new Date(now - 210_000).toISOString(),
+					firstMessage: 'Hidden automation sentinel session',
+					messageCount: 1,
+					sizeBytes: 512,
+					costUsd: 0.01,
+					inputTokens: 100,
+					outputTokens: 40,
+					cacheReadTokens: 0,
+					cacheCreationTokens: 0,
+					durationSeconds: 8,
+					origin: 'auto' as const,
+					sessionName: 'Hidden Agent Run',
+					starred: false,
+				});
+			}
 			const messagesBySession = {
 				'codex-review-session': [
 					{
@@ -6332,6 +6352,25 @@ test.describe('App shell seeded workbench', () => {
 
 		await window.keyboard.press('Escape');
 		await expect(agentSessions.getByPlaceholder('Search all content...')).toBeVisible();
+	});
+
+	test('reveals hidden agent-prefixed sessions with the Agent Sessions Show All filter', async () => {
+		await stubCodexAgentSessions(electronApp, seededWorkbench, {
+			includeHiddenAgentSession: true,
+		});
+		const agentSessions = await openAgentSessions(window);
+
+		const hiddenSession = agentSessions.getByText('Hidden Agent Run');
+		await expect(hiddenSession).toBeHidden();
+		await expect(agentSessions.getByText('Review Checkpoint')).toBeVisible();
+
+		await agentSessions.getByRole('checkbox', { name: 'Show All' }).check();
+		await expect(hiddenSession).toBeVisible();
+		await expect(agentSessions.getByText('Hidden automation sentinel session')).toBeVisible();
+
+		await agentSessions.getByRole('checkbox', { name: 'Show All' }).uncheck();
+		await expect(hiddenSession).toBeHidden();
+		await expect(agentSessions.getByText('Review Checkpoint')).toBeVisible();
 	});
 
 	test('loads earlier messages in a stubbed Codex agent session detail view', async () => {
