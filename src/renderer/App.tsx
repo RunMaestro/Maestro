@@ -207,6 +207,7 @@ function MaestroConsoleInner() {
 		newInstanceModalOpen,
 		duplicatingSessionId,
 		// Edit Agent Modal
+		editAgentModalOpen,
 		setEditAgentModalOpen,
 		editAgentSession,
 		setEditAgentSession,
@@ -1005,11 +1006,11 @@ function MaestroConsoleInner() {
 		[activeSession?.inputMode, activeSession?.shellCwd, activeSession?.cwd]
 	);
 
-	// PERF: Memoize sessions for NewInstanceModal validation (only recompute when modal is open)
+	// PERF: Memoize sessions for agent modal validation (only recompute when a validator needs it)
 	// This prevents re-renders of the modal's validation logic on every session state change
 	const sessionsForValidation = useMemo(
-		() => (newInstanceModalOpen ? sessions : []),
-		[newInstanceModalOpen, sessions]
+		() => (newInstanceModalOpen || editAgentModalOpen ? sessions : []),
+		[newInstanceModalOpen, editAgentModalOpen, sessions]
 	);
 
 	// PERF: Memoize hasNoAgents check for SettingsModal (only depends on session count)

@@ -5039,6 +5039,31 @@ test.describe('App shell seeded workbench', () => {
 		await expect(sessionList.getByText('Unsaved Edit Workbench', { exact: true })).toBeHidden();
 	});
 
+	test('blocks duplicate names while editing an agent', async () => {
+		const quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('Edit Agent');
+		await quickActionsDialog.getByRole('button', { name: /Edit Agent: E2E Workbench/ }).click();
+
+		const editAgentDialog = window.getByRole('dialog', { name: 'Edit Agent: E2E Workbench' });
+		await expect(editAgentDialog).toBeVisible();
+
+		await editAgentDialog.getByLabel('Agent Name').fill('E2E Terminal');
+		await expect(
+			editAgentDialog.getByText('An agent named "E2E Terminal" already exists')
+		).toBeVisible();
+		await expect(editAgentDialog.getByRole('button', { name: 'Save Changes' })).toBeDisabled();
+
+		await editAgentDialog.getByLabel('Agent Name').fill('E2E Workbench');
+		await expect(
+			editAgentDialog.getByText('An agent named "E2E Terminal" already exists')
+		).toBeHidden();
+		await expect(editAgentDialog.getByRole('button', { name: 'Save Changes' })).toBeEnabled();
+		await editAgentDialog.getByRole('button', { name: 'Cancel' }).click();
+		await expect(editAgentDialog).toBeHidden();
+	});
+
 	test('renames the active agent from Quick Actions', async () => {
 		const quickActionsDialog = await openQuickActions(window);
 		await quickActionsDialog
