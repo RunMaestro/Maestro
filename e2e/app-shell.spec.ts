@@ -4956,6 +4956,43 @@ test.describe('App shell seeded workbench', () => {
 		).toBeVisible();
 	});
 
+	test('cancels and confirms Remove Agent from the context menu without erasing the directory', async () => {
+		const sessionList = window.locator('[data-tour="session-list"]');
+		const terminalSession = seededWorkbench.sessions[1];
+		await expect(sessionList.getByText('E2E Terminal', { exact: true })).toBeVisible();
+
+		let contextMenu = await openSessionContextMenu(window, 'E2E Terminal', 'Remove Agent');
+		await contextMenu.getByRole('button', { name: 'Remove Agent', exact: true }).click();
+
+		let confirmDialog = window.getByRole('dialog', { name: 'Confirm Delete' });
+		await expect(confirmDialog.getByText('the agent "E2E Terminal"')).toBeVisible();
+		await expect(confirmDialog.getByText(terminalSession.cwd)).toBeVisible();
+		const eraseButton = confirmDialog.getByRole('button', {
+			name: 'Agent + Working Directory',
+		});
+		await expect(eraseButton).toBeDisabled();
+		await confirmDialog.getByLabel('Confirm agent name').fill('E2E Terminal');
+		await expect(eraseButton).toBeEnabled();
+		await confirmDialog.getByRole('button', { name: 'Cancel' }).click();
+
+		await expect(confirmDialog).toBeHidden();
+		await expect(sessionList.getByText('E2E Terminal', { exact: true })).toBeVisible();
+
+		contextMenu = await openSessionContextMenu(window, 'E2E Terminal', 'Remove Agent');
+		await contextMenu.getByRole('button', { name: 'Remove Agent', exact: true }).click();
+
+		confirmDialog = window.getByRole('dialog', { name: 'Confirm Delete' });
+		await expect(
+			confirmDialog.getByRole('button', { name: 'Agent + Working Directory' })
+		).toBeDisabled();
+		await confirmDialog.getByRole('button', { name: 'Agent Only' }).click();
+
+		await expect(confirmDialog).toBeHidden();
+		await expect(sessionList.getByText('E2E Terminal', { exact: true })).toHaveCount(0);
+		await expect(sessionList.getByText('E2E Workbench', { exact: true })).toBeVisible();
+		expect(fs.existsSync(terminalSession.cwd)).toBe(true);
+	});
+
 	test('creates an unavailable non-Codex agent using static custom configuration', async () => {
 		const staticProjectDir = path.join(seededWorkbench.homeDir, 'opencode-static-project');
 		fs.mkdirSync(staticProjectDir, { recursive: true });

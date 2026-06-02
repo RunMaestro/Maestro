@@ -2094,15 +2094,18 @@ test.describe('Seeded Group Chat workspace', () => {
 		await expect(
 			window.getByRole('button', { name: 'Group Chat: Modal Coverage Room' })
 		).toBeVisible();
-		const calls = await getStubbedGroupChatModalActions(electronApp);
-		expect(calls.create).toEqual([
-			{
-				name: 'Modal Coverage Room',
-				moderatorAgentId: 'codex',
-				moderatorConfig: undefined,
-			},
-		]);
-		expect(calls.startModerator).toEqual(['created-group-chat-1']);
+		await expect
+			.poll(async () => (await getStubbedGroupChatModalActions(electronApp)).create)
+			.toEqual([
+				{
+					name: 'Modal Coverage Room',
+					moderatorAgentId: 'codex',
+					moderatorConfig: undefined,
+				},
+			]);
+		await expect
+			.poll(async () => (await getStubbedGroupChatModalActions(electronApp)).startModerator)
+			.toEqual(['created-group-chat-1']);
 	});
 
 	test('creates a group chat with SSH remote moderator execution', async () => {
@@ -2117,20 +2120,23 @@ test.describe('Seeded Group Chat workspace', () => {
 		await dialog.getByLabel('Chat Name').fill('Remote Coverage Room');
 		await dialog.getByRole('button', { name: 'Create' }).click();
 
-		const calls = await getStubbedGroupChatModalActions(electronApp);
-		expect(calls.create).toEqual([
-			{
-				name: 'Remote Coverage Room',
-				moderatorAgentId: 'codex',
-				moderatorConfig: {
-					sshRemoteConfig: {
-						enabled: true,
-						remoteId: remote.id,
+		await expect
+			.poll(async () => (await getStubbedGroupChatModalActions(electronApp)).create)
+			.toEqual([
+				{
+					name: 'Remote Coverage Room',
+					moderatorAgentId: 'codex',
+					moderatorConfig: {
+						sshRemoteConfig: {
+							enabled: true,
+							remoteId: remote.id,
+						},
 					},
 				},
-			},
-		]);
-		expect(calls.startModerator).toEqual(['created-group-chat-1']);
+			]);
+		await expect
+			.poll(async () => (await getStubbedGroupChatModalActions(electronApp)).startModerator)
+			.toEqual(['created-group-chat-1']);
 	});
 
 	test('creates a group chat with custom moderator path args and environment', async () => {
