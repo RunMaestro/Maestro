@@ -5125,6 +5125,74 @@ test.describe('App shell seeded workbench', () => {
 		await expect(editAgentDialog).toBeHidden();
 	});
 
+	test('clears Edit Agent custom path arguments and environment overrides', async () => {
+		await stubAgentDetectionForNewAgent(electronApp);
+		const openEditAgentDialog = async (): Promise<Locator> => {
+			const quickActionsDialog = await openQuickActions(window);
+			await quickActionsDialog
+				.getByPlaceholder('Type a command or jump to agent...')
+				.fill('Edit Agent');
+			await quickActionsDialog.getByRole('button', { name: /Edit Agent: E2E Workbench/ }).click();
+			const dialog = window.getByRole('dialog', { name: 'Edit Agent: E2E Workbench' });
+			await expect(dialog).toBeVisible();
+			return dialog;
+		};
+		const fieldPanel = (dialog: Locator, label: string): Locator =>
+			dialog
+				.getByText(label, { exact: true })
+				.locator('xpath=ancestor::div[contains(@class, "rounded border")][1]');
+
+		let editAgentDialog = await openEditAgentDialog();
+		await editAgentDialog.getByPlaceholder('/path/to/codex').fill('/opt/e2e/custom-codex');
+		await editAgentDialog
+			.getByPlaceholder('--flag value --another-flag')
+			.fill('--approval-mode never --sandbox danger-full-access');
+		await editAgentDialog.getByRole('button', { name: 'Add Variable' }).click();
+		await editAgentDialog.getByPlaceholder('VARIABLE_NAME').fill('EDIT_AGENT_CLEAR_ME');
+		await editAgentDialog.getByPlaceholder('VARIABLE_NAME').blur();
+		await editAgentDialog.getByPlaceholder('value', { exact: true }).fill('before-clear');
+		await editAgentDialog.getByPlaceholder('value', { exact: true }).blur();
+		await editAgentDialog.getByRole('button', { name: 'Save Changes' }).click();
+		await expect(editAgentDialog).toBeHidden();
+
+		editAgentDialog = await openEditAgentDialog();
+		await expect(editAgentDialog.getByPlaceholder('/path/to/codex')).toHaveValue(
+			'/opt/e2e/custom-codex'
+		);
+		await expect(editAgentDialog.getByPlaceholder('--flag value --another-flag')).toHaveValue(
+			'--approval-mode never --sandbox danger-full-access'
+		);
+		await expect(editAgentDialog.getByPlaceholder('VARIABLE_NAME')).toHaveValue(
+			'EDIT_AGENT_CLEAR_ME'
+		);
+		await expect(editAgentDialog.getByPlaceholder('value', { exact: true })).toHaveValue(
+			'before-clear'
+		);
+
+		await fieldPanel(editAgentDialog, 'Path').getByRole('button', { name: 'Reset' }).click();
+		await fieldPanel(editAgentDialog, 'Custom Arguments (optional)')
+			.getByRole('button', { name: 'Clear' })
+			.click();
+		await fieldPanel(editAgentDialog, 'Environment Variables (optional)')
+			.getByTitle('Remove variable')
+			.click();
+		await editAgentDialog.getByRole('button', { name: 'Save Changes' }).click();
+		await expect(editAgentDialog).toBeHidden();
+
+		editAgentDialog = await openEditAgentDialog();
+		await expect(editAgentDialog.getByPlaceholder('/path/to/codex')).toHaveValue(
+			'/usr/local/bin/codex'
+		);
+		await expect(
+			fieldPanel(editAgentDialog, 'Path').getByRole('button', { name: 'Reset' })
+		).toBeHidden();
+		await expect(editAgentDialog.getByPlaceholder('--flag value --another-flag')).toHaveValue('');
+		await expect(editAgentDialog.getByPlaceholder('VARIABLE_NAME')).toBeHidden();
+		await expect(editAgentDialog.getByText('EDIT_AGENT_CLEAR_ME')).toBeHidden();
+		await editAgentDialog.getByRole('button', { name: 'Cancel' }).click();
+		await expect(editAgentDialog).toBeHidden();
+	});
+
 	test('warns and persists Edit Agent provider switch configuration', async () => {
 		await stubAgentDetectionForNewAgent(electronApp);
 
