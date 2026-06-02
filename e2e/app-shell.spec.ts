@@ -6407,6 +6407,35 @@ test.describe('App shell seeded workbench', () => {
 		});
 	});
 
+	test('adds an Agent Sessions detail name and resumes with the keyboard', async () => {
+		await stubCodexAgentSessions(electronApp, seededWorkbench);
+		const agentSessions = await openAgentSessions(window);
+
+		await agentSessions.getByText('Unnamed CLI sentinel session').click();
+		await expect(agentSessions.getByText('Unnamed CLI message sentinel.')).toBeVisible();
+		await agentSessions.getByTitle('Add session name').click();
+		const renameInput = agentSessions.getByPlaceholder('Enter session name...');
+		await renameInput.fill('Named CLI Session');
+		await renameInput.press('Enter');
+
+		await expect(agentSessions.getByText('Named CLI Session')).toBeVisible();
+		const messagesRegion = agentSessions.getByRole('region', { name: 'Session messages' });
+		await messagesRegion.focus();
+		await expect(messagesRegion).toBeFocused();
+		await messagesRegion.press('Enter');
+
+		await expect(agentSessions.getByText('Agent Sessions for E2E Workbench')).toBeHidden();
+		await expect(
+			window.locator('[data-tab-id]').filter({ hasText: 'Named CLI Session' }).first()
+		).toBeVisible();
+		await expect(window.getByText('Unnamed CLI message sentinel.')).toBeVisible();
+		await expect(await getStubbedAgentSessionUpdates(electronApp)).toContainEqual({
+			type: 'name',
+			sessionId: 'codex-cli-session',
+			name: 'Named CLI Session',
+		});
+	});
+
 	test('searches stars and renames stubbed Codex agent sessions', async () => {
 		await stubCodexAgentSessions(electronApp, seededWorkbench);
 		const agentSessions = await openAgentSessions(window);
