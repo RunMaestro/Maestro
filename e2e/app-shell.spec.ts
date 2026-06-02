@@ -5001,6 +5001,26 @@ test.describe('App shell seeded workbench', () => {
 		await expect(editAgentDialog.getByText('Working Directory')).toBeVisible();
 	});
 
+	test('saves Edit Agent changes with the keyboard shortcut', async () => {
+		const quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('Edit Agent');
+		await quickActionsDialog.getByRole('button', { name: /Edit Agent: E2E Workbench/ }).click();
+
+		const editAgentDialog = window.getByRole('dialog', { name: 'Edit Agent: E2E Workbench' });
+		await expect(editAgentDialog).toBeVisible();
+		await editAgentDialog.getByLabel('Agent Name').fill('Shortcut Edited Workbench');
+		await editAgentDialog.getByLabel('Agent Name').press('Control+Enter');
+
+		await expect(editAgentDialog).toBeHidden();
+		await expect(
+			window
+				.locator('[data-tour="session-list"]')
+				.getByText('Shortcut Edited Workbench', { exact: true })
+		).toBeVisible();
+	});
+
 	test('renames the active agent from Quick Actions', async () => {
 		const quickActionsDialog = await openQuickActions(window);
 		await quickActionsDialog

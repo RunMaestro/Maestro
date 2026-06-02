@@ -4351,6 +4351,7 @@ test.describe('Web Mobile Bridge', () => {
 			expect(await getOfflineQueueLength(page)).toBe(1);
 
 			await setMobileOnlineState(page, true);
+			await reconnectMobileIfNeeded(page);
 			await expect(page.getByText('Commands will be sent when you reconnect.')).toBeHidden({
 				timeout: 10000,
 			});
