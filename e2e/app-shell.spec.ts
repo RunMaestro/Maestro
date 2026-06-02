@@ -5021,6 +5021,24 @@ test.describe('App shell seeded workbench', () => {
 		).toBeVisible();
 	});
 
+	test('cancels Edit Agent changes without renaming the agent', async () => {
+		const quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('Edit Agent');
+		await quickActionsDialog.getByRole('button', { name: /Edit Agent: E2E Workbench/ }).click();
+
+		const editAgentDialog = window.getByRole('dialog', { name: 'Edit Agent: E2E Workbench' });
+		await expect(editAgentDialog).toBeVisible();
+		await editAgentDialog.getByLabel('Agent Name').fill('Unsaved Edit Workbench');
+		await editAgentDialog.getByRole('button', { name: 'Cancel' }).click();
+
+		await expect(editAgentDialog).toBeHidden();
+		const sessionList = window.locator('[data-tour="session-list"]');
+		await expect(sessionList.getByText('E2E Workbench', { exact: true })).toBeVisible();
+		await expect(sessionList.getByText('Unsaved Edit Workbench', { exact: true })).toBeHidden();
+	});
+
 	test('renames the active agent from Quick Actions', async () => {
 		const quickActionsDialog = await openQuickActions(window);
 		await quickActionsDialog
