@@ -6367,6 +6367,46 @@ test.describe('App shell seeded workbench', () => {
 		]);
 	});
 
+	test('uses Agent Sessions detail controls to favorite rename and resume history', async () => {
+		await stubCodexAgentSessions(electronApp, seededWorkbench);
+		const agentSessions = await openAgentSessions(window);
+
+		await agentSessions.getByText('Review Checkpoint').click();
+		await expect(
+			agentSessions.getByText('Please review deterministic risk coverage.')
+		).toBeVisible();
+
+		await agentSessions.getByTitle('Remove from favorites').click();
+		await expect(agentSessions.getByTitle('Add to favorites')).toBeVisible();
+		await agentSessions.getByTitle('Rename session').click();
+		const renameInput = agentSessions.getByPlaceholder('Enter session name...');
+		await renameInput.fill('Detail Review Session');
+		await renameInput.press('Enter');
+
+		await expect(agentSessions.getByText('Detail Review Session')).toBeVisible();
+		await agentSessions.getByRole('button', { name: 'Resume' }).click();
+
+		await expect(agentSessions.getByText('Agent Sessions for E2E Workbench')).toBeHidden();
+		await expect(
+			window.locator('[data-tab-id]').filter({ hasText: 'Detail Review Session' }).first()
+		).toBeVisible();
+		await expect(window.getByText('Please review deterministic risk coverage.')).toBeVisible();
+		await expect(
+			window.getByText('Refactor response sentinel: keep fixtures local and deterministic.')
+		).toBeVisible();
+		const updates = await getStubbedAgentSessionUpdates(electronApp);
+		await expect(updates).toContainEqual({
+			type: 'starred',
+			sessionId: 'codex-review-session',
+			starred: false,
+		});
+		await expect(updates).toContainEqual({
+			type: 'name',
+			sessionId: 'codex-review-session',
+			name: 'Detail Review Session',
+		});
+	});
+
 	test('searches stars and renames stubbed Codex agent sessions', async () => {
 		await stubCodexAgentSessions(electronApp, seededWorkbench);
 		const agentSessions = await openAgentSessions(window);

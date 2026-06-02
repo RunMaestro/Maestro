@@ -4,7 +4,7 @@
  * These tests exercise persisted Group Chat UI without launching live AI agents.
  */
 import { test, expect, helpers } from './fixtures/electron-app';
-import type { ElectronApplication, Page } from '@playwright/test';
+import type { ElectronApplication, Locator, Page } from '@playwright/test';
 import crypto from 'crypto';
 import fs from 'fs';
 import os from 'os';
@@ -984,6 +984,19 @@ test.describe('Seeded Group Chat workspace', () => {
 		return window.locator('[data-message-timestamp]').filter({ hasText: text }).first();
 	}
 
+	async function openGroupChatHistorySearch(historyPanel: Locator) {
+		await historyPanel.focus();
+		await expect(historyPanel).toBeFocused();
+		await historyPanel.press('Control+f');
+
+		const searchInput = window.getByPlaceholder('Filter group chat history...');
+		if (!(await searchInput.isVisible({ timeout: 1000 }).catch(() => false))) {
+			await historyPanel.press('Meta+f');
+		}
+		await expect(searchInput).toBeVisible();
+		return searchInput;
+	}
+
 	function groupChatImagePath() {
 		return path.join(seededWorkbench.sessions[0].cwd, 'group-chat-image.png');
 	}
@@ -1250,12 +1263,7 @@ test.describe('Seeded Group Chat workspace', () => {
 			.locator('div[tabindex="0"]')
 			.filter({ hasText: 'Reviewed seeded group chat plan' })
 			.last();
-		await historyPanel.focus();
-		await expect(historyPanel).toBeFocused();
-		await historyPanel.press('Control+f');
-
-		const searchInput = window.getByPlaceholder('Filter group chat history...');
-		await expect(searchInput).toBeVisible();
+		const searchInput = await openGroupChatHistorySearch(historyPanel);
 		await searchInput.click();
 		await searchInput.fill('seeded group chat plan');
 		await expect(searchInput).toHaveValue('seeded group chat plan');
@@ -1337,10 +1345,7 @@ test.describe('Seeded Group Chat workspace', () => {
 			.locator('div[tabindex="0"]')
 			.filter({ hasText: 'Implemented live search coverage' })
 			.last();
-		await historyPanel.focus();
-		await historyPanel.press('Control+f');
-
-		const searchInput = window.getByPlaceholder('Filter group chat history...');
+		const searchInput = await openGroupChatHistorySearch(historyPanel);
 		await searchInput.fill('Implementer');
 		await expect(window.getByText('1 result')).toBeVisible();
 		await expect(window.getByText('Implemented live search coverage')).toBeVisible();
