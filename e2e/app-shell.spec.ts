@@ -5064,6 +5064,67 @@ test.describe('App shell seeded workbench', () => {
 		await expect(editAgentDialog).toBeHidden();
 	});
 
+	test('persists Edit Agent Codex configuration changes', async () => {
+		const openEditAgentDialog = async (): Promise<Locator> => {
+			const quickActionsDialog = await openQuickActions(window);
+			await quickActionsDialog
+				.getByPlaceholder('Type a command or jump to agent...')
+				.fill('Edit Agent');
+			await quickActionsDialog.getByRole('button', { name: /Edit Agent: E2E Workbench/ }).click();
+			const dialog = window.getByRole('dialog', { name: 'Edit Agent: E2E Workbench' });
+			await expect(dialog).toBeVisible();
+			return dialog;
+		};
+		const fieldPanel = (dialog: Locator, label: string): Locator =>
+			dialog
+				.getByText(label, { exact: true })
+				.locator('xpath=ancestor::div[contains(@class, "rounded border")][1]');
+
+		let editAgentDialog = await openEditAgentDialog();
+		await editAgentDialog
+			.getByPlaceholder('Instructions appended to every message you send...')
+			.fill('Keep answers short for E2E.');
+		await editAgentDialog
+			.getByPlaceholder('--flag value --another-flag')
+			.fill('--sandbox read-only --model e2e-edit');
+
+		await editAgentDialog.getByRole('button', { name: 'Add Variable' }).click();
+		await editAgentDialog.getByPlaceholder('VARIABLE_NAME').fill('EDIT_AGENT_E2E');
+		await editAgentDialog.getByPlaceholder('VARIABLE_NAME').blur();
+		await editAgentDialog.getByPlaceholder('value', { exact: true }).fill('enabled');
+		await editAgentDialog.getByPlaceholder('value', { exact: true }).blur();
+
+		const modelInput = fieldPanel(editAgentDialog, 'Model').locator('input[type="text"]').first();
+		const contextWindowInput = fieldPanel(editAgentDialog, 'Context Window Size')
+			.locator('input[type="number"]')
+			.first();
+		await modelInput.fill('gpt-5.3-codex');
+		await modelInput.blur();
+		await contextWindowInput.fill('128000');
+		await contextWindowInput.blur();
+
+		await editAgentDialog.getByRole('button', { name: 'Save Changes' }).click();
+		await expect(editAgentDialog).toBeHidden();
+
+		editAgentDialog = await openEditAgentDialog();
+		await expect(
+			editAgentDialog.getByPlaceholder('Instructions appended to every message you send...')
+		).toHaveValue('Keep answers short for E2E.');
+		await expect(editAgentDialog.getByPlaceholder('--flag value --another-flag')).toHaveValue(
+			'--sandbox read-only --model e2e-edit'
+		);
+		await expect(editAgentDialog.getByPlaceholder('VARIABLE_NAME')).toHaveValue('EDIT_AGENT_E2E');
+		await expect(editAgentDialog.getByPlaceholder('value', { exact: true })).toHaveValue('enabled');
+		await expect(
+			fieldPanel(editAgentDialog, 'Model').locator('input[type="text"]').first()
+		).toHaveValue('gpt-5.3-codex');
+		await expect(
+			fieldPanel(editAgentDialog, 'Context Window Size').locator('input[type="number"]').first()
+		).toHaveValue('128000');
+		await editAgentDialog.getByRole('button', { name: 'Cancel' }).click();
+		await expect(editAgentDialog).toBeHidden();
+	});
+
 	test('renames the active agent from Quick Actions', async () => {
 		const quickActionsDialog = await openQuickActions(window);
 		await quickActionsDialog
