@@ -51,6 +51,12 @@ export interface QuitHandlerDependencies {
 	powerManager: typeof powerManagerInstance;
 	/** Function to stop group chat moderator cleanup interval */
 	stopSessionCleanup?: () => void;
+	/**
+	 * Function to stop the external session coordinator (file watchers for
+	 * sessions Maestro didn't spawn). Optional — may not be constructed if the
+	 * ProcessManager wasn't ready at boot.
+	 */
+	stopExternalSessionCoordinator?: () => Promise<void> | void;
 }
 
 /** Quit handler state */
@@ -100,6 +106,7 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 		stopSettingsWatcher,
 		powerManager,
 		stopSessionCleanup,
+		stopExternalSessionCoordinator,
 	} = deps;
 
 	const state: QuitHandlerState = {
@@ -219,6 +226,15 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 		// Stop group chat moderator cleanup interval
 		if (stopSessionCleanup) {
 			stopSessionCleanup();
+		}
+
+		// Stop external session file watchers (Remote Agent Visibility). Fire and
+		// forget — performCleanup is synchronous (before-quit needs preventDefault
+		// to work), and chokidar teardown shouldn't block quit.
+		if (stopExternalSessionCoordinator) {
+			Promise.resolve(stopExternalSessionCoordinator()).catch((err) => {
+				logger.error(`Error stopping external session coordinator: ${err}`, 'Shutdown');
+			});
 		}
 
 		// Clean up active grooming sessions (context merge/transfer operations)

@@ -54,6 +54,15 @@ export interface ProcessConfig {
 export interface ManagedProcess {
 	sessionId: string;
 	toolType: string;
+	/**
+	 * The agent-native session id (e.g. Claude's `session_id`), mirrored from the
+	 * `'session-id'` event once the agent reports it. Distinct from `sessionId`,
+	 * which is Maestro's internal tab/session key. Used by
+	 * {@link ProcessManager.findByAgentSessionId} so the
+	 * ExternalSessionCoordinator can de-dup file-watcher activity against
+	 * sessions Maestro itself spawned.
+	 */
+	agentSessionId?: string;
 	ptyProcess?: IPty;
 	childProcess?: ChildProcess;
 	cwd: string;

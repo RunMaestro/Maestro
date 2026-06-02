@@ -8,7 +8,7 @@ import { readFile } from 'fs/promises';
 // which causes "Cannot read properties of undefined (reading 'getAppPath')" errors
 import { ProcessManager } from './process-manager';
 import { WebServer } from './web-server';
-import { AgentDetector } from './agents';
+import { AgentDetector, getAllSessionStorages } from './agents';
 import { getAgentDefinition } from './agents/definitions';
 import { DEFAULT_CONTEXT_WINDOWS, FALLBACK_CONTEXT_WINDOW } from '../shared/agentConstants';
 import { shouldDropSentryEvent } from '../shared/sentryFilters';
@@ -108,7 +108,8 @@ import { stopSessionCleanup } from './group-chat/group-chat-moderator';
 import { needsSessionRecovery, initiateSessionRecovery } from './group-chat/session-recovery';
 import { initializePrompts, getPrompt, savePrompt } from './prompt-manager';
 import { captureException } from './utils/sentry';
-import { initializeSessionStorages } from './storage';
+import { initializeSessionStorages, ExternalSessionCoordinator } from './storage';
+import { registerExternalSessionsHandlers } from './ipc/handlers/external-sessions';
 import { initializeOutputParsers } from './parsers';
 import { calculateContextTokens } from './parsers/usage-aggregator';
 import {
@@ -330,6 +331,10 @@ let processManager: ProcessManager | null = null;
 let webServer: WebServer | null = null;
 let agentDetector: AgentDetector | null = null;
 let cueEngine: CueEngine | null = null;
+// Watches on-disk agent session files for activity Maestro didn't spawn
+// (Remote Agent Visibility, Phase 4). Constructed in setupIpcHandlers() once
+// the storage registry is populated; null if the ProcessManager wasn't ready.
+let externalSessionCoordinator: ExternalSessionCoordinator | null = null;
 
 // Create safeSend with dependency injection (Phase 2 refactoring)
 const safeSend = createSafeSend(() => mainWindow);
@@ -1054,6 +1059,7 @@ quitHandler = createQuitHandler({
 	stopSettingsWatcher: () => settingsWatcher.stop(),
 	powerManager,
 	stopSessionCleanup,
+	stopExternalSessionCoordinator: () => externalSessionCoordinator?.stop(),
 });
 quitHandler.setup();
 
@@ -1191,6 +1197,36 @@ function setupIpcHandlers() {
 	// Pass the shared claudeSessionOriginsStore so session names/stars are consistent
 	initializeSessionStorages({ claudeSessionOriginsStore });
 	registerAgentSessionsHandlers({ getMainWindow: () => mainWindow, agentSessionOriginsStore });
+
+	// Remote Agent Visibility (Phase 4): watch agent session files for activity
+	// Maestro didn't spawn. Constructed here, after initializeSessionStorages(),
+	// so getAllSessionStorages() returns a fully-populated registry. Requires the
+	// ProcessManager for local-vs-external de-dup; if it isn't ready the
+	// coordinator stays null and the IPC handler degrades to an empty snapshot.
+	if (processManager) {
+		const storageRegistry = Object.fromEntries(
+			getAllSessionStorages().map((storage) => [storage.agentId, storage])
+		);
+		externalSessionCoordinator = new ExternalSessionCoordinator({
+			processManager,
+			storageRegistry,
+		});
+		// Fire-and-forget: per-watcher start failures are non-fatal (logged by the
+		// coordinator). A single .catch() guards against an unexpected synchronous
+		// throw from start() itself.
+		externalSessionCoordinator.start().catch((err) => {
+			logger.error(`Failed to start ExternalSessionCoordinator: ${err}`, 'Startup');
+		});
+	} else {
+		logger.warn(
+			'ProcessManager unavailable; skipping ExternalSessionCoordinator startup',
+			'Startup'
+		);
+	}
+	registerExternalSessionsHandlers({
+		getCoordinator: () => externalSessionCoordinator,
+		getMainWindow: () => mainWindow,
+	});
 
 	// Register Group Chat handlers
 	registerGroupChatHandlers({

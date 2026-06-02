@@ -106,6 +106,20 @@ interface SessionMessagesResult {
 	hasMore: boolean;
 }
 
+/**
+ * Activity on an agent session file (Remote Agent Visibility). Mirrors
+ * `SessionActivityEvent` in `shared/sessionActivity.ts`. `agentId` is widened to
+ * `string` here per this file's prevailing ambient-declaration convention.
+ */
+interface SessionActivityEvent {
+	agentId: string;
+	sessionId: string;
+	projectPath: string;
+	lastActivityAt: number;
+	source: 'local' | 'external';
+	sizeBytes: number;
+}
+
 /** Shared return shape for group chat methods (mirrors GroupChat from shared/group-chat-types.ts) */
 type GroupChatData = {
 	id: string;
@@ -206,6 +220,14 @@ interface MaestroAPI {
 		setMany: (updates: any[], removeIds?: string[]) => Promise<boolean>;
 		getActiveSessionId: () => Promise<string>;
 		setActiveSessionId: (id: string) => Promise<void>;
+	};
+	// Session storage observability (Remote Agent Visibility) — activity from
+	// agent sessions Maestro itself did not spawn.
+	storage: {
+		/** One-shot snapshot of currently-tracked external/local session activity. */
+		listExternalSessions: () => Promise<SessionActivityEvent[]>;
+		/** Live subscription; returns an unsubscribe function. */
+		onExternalActivity: (callback: (events: SessionActivityEvent[]) => void) => () => void;
 	};
 	groups: {
 		getAll: () => Promise<any[]>;

@@ -597,6 +597,12 @@ const mockMaestro = {
 		getPath: vi.fn().mockResolvedValue({ success: true, path: '/mock/prompts/core' }),
 		listFiles: vi.fn().mockResolvedValue({ success: true, files: [] }),
 	},
+	// Session storage observability (Remote Agent Visibility) — external
+	// session activity from agents Maestro didn't spawn.
+	storage: {
+		listExternalSessions: vi.fn().mockResolvedValue([]),
+		onExternalActivity: vi.fn().mockReturnValue(() => {}),
+	},
 	// Synchronous platform string (replaces async os.getPlatform IPC)
 	platform: 'darwin',
 };

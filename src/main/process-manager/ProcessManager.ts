@@ -48,6 +48,17 @@ export class ProcessManager extends EventEmitter {
 		this.childProcessSpawner = new ChildProcessSpawner(this.processes, this, this.bufferManager);
 		this.localCommandRunner = new LocalCommandRunner(this);
 		this.sshCommandRunner = new SshCommandRunner(this);
+
+		// Mirror the agent-native session id onto the managed process as soon as
+		// the agent reports it. The handlers (StdoutHandler/ExitHandler) already
+		// emit `'session-id'` on this emitter; subscribing here keeps that flow
+		// untouched while giving findByAgentSessionId() something to match on.
+		this.on('session-id', (sessionId: string, agentSessionId: string) => {
+			const proc = this.processes.get(sessionId);
+			if (proc) {
+				proc.agentSessionId = agentSessionId;
+			}
+		});
 	}
 
 	/**
@@ -380,6 +391,25 @@ export class ProcessManager extends EventEmitter {
 	 */
 	get(sessionId: string): ManagedProcess | undefined {
 		return this.processes.get(sessionId);
+	}
+
+	/**
+	 * Find a live managed process by its agent-native session id (e.g. Claude's
+	 * `session_id`), as opposed to Maestro's internal `sessionId` key.
+	 *
+	 * Returns the first match, or `undefined` if no managed process has reported
+	 * that agent session id yet. Used by the ExternalSessionCoordinator to
+	 * decide whether on-disk activity belongs to a Maestro-spawned session
+	 * (`source: 'local'`) or one started outside Maestro (`source: 'external'`).
+	 */
+	findByAgentSessionId(agentSessionId: string): ManagedProcess | undefined {
+		if (!agentSessionId) return undefined;
+		for (const proc of this.processes.values()) {
+			if (proc.agentSessionId === agentSessionId) {
+				return proc;
+			}
+		}
+		return undefined;
 	}
 
 	/**

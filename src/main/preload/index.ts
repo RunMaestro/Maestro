@@ -57,6 +57,7 @@ import { createWakatimeApi } from './wakatime';
 import { createMaestroCliApi } from './maestroCli';
 import { createPromptsApi } from './prompts';
 import { createMemoryApi } from './memory';
+import { createStorageApi } from './storage';
 
 // Expose protected methods that allow the renderer process to use
 // the ipcRenderer without exposing the entire object
@@ -218,6 +219,10 @@ contextBridge.exposeInMainWorld('maestro', {
 	prompts: createPromptsApi(),
 	// Per-project Memory API (Claude Code memory viewer)
 	memory: createMemoryApi(),
+
+	// Session storage observability API (Remote Agent Visibility — external
+	// session activity from agents Maestro didn't spawn)
+	storage: createStorageApi(),
 });
 
 // Re-export factory functions for external consumers (e.g., tests)
@@ -306,6 +311,8 @@ export {
 	createPromptsApi,
 	// Memory Viewer
 	createMemoryApi,
+	// Session storage observability
+	createStorageApi,
 };
 
 // Re-export types for TypeScript consumers
@@ -545,3 +552,8 @@ export type {
 	PromptsApi,
 	CorePromptData,
 } from './prompts';
+export type {
+	// From storage (Remote Agent Visibility)
+	StorageApi,
+	SessionActivityEvent,
+} from './storage';

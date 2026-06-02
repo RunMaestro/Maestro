@@ -37,6 +37,9 @@ export type { UseBatchedSessionUpdatesReturn, BatchedUpdater } from './useBatche
 export { useActivityTracker } from './useActivityTracker';
 export type { UseActivityTrackerReturn } from './useActivityTracker';
 
+// External session activity (Remote Agent Visibility — sessions Maestro didn't spawn)
+export { useExternalSessionActivity } from './useExternalSessionActivity';
+
 // Global hands-on time tracking (persists to settings)
 export { useHandsOnTimeTracker } from './useHandsOnTimeTracker';
 

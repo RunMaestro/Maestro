@@ -124,6 +124,8 @@ import {
 	useLiveMode,
 	// Session switching callbacks (navigate to session/tab from various UI surfaces)
 	useSessionSwitchCallbacks,
+	// External session activity (Remote Agent Visibility — sessions Maestro didn't spawn)
+	useExternalSessionActivity,
 } from './hooks';
 import { useMainPanelProps, useSessionListProps, useRightPanelProps } from './hooks/props';
 import { useAgentListeners } from './hooks/agent/useAgentListeners';
@@ -160,6 +162,9 @@ import { CenterFlash } from './components/CenterFlash';
 // Import types and constants
 // Note: GroupChat, GroupChatState are imported from types (re-exported from shared)
 import type { RightPanelTab, Session, QueuedItem, CustomAICommand, ThinkingItem } from './types';
+// Remote Agent Visibility: timestamp-based "is this external session active?" check.
+// Aliased to avoid shadowing other isActive-style helpers in this file.
+import { isActive as isExternalSessionActive } from '../shared/sessionActivity';
 import { THEMES } from './constants/themes';
 import { generateId } from './utils/ids';
 import { getContextColor } from './utils/theme';
@@ -1264,6 +1269,10 @@ function MaestroConsoleInner() {
 		onNavigateToGroupChat: handleOpenGroupChat,
 	});
 
+	// Remote Agent Visibility: activity from agent sessions Maestro did NOT spawn
+	// (e.g. the same user running the CLI directly, or over SSH on this host).
+	const externalSessionActivity = useExternalSessionActivity();
+
 	// PERF: Memoize thinkingItems at App level to avoid passing full sessions array to children.
 	// This prevents InputArea from re-rendering on unrelated session updates (e.g., terminal output).
 	// Flat list of (session, tab) pairs — one entry per busy tab across all sessions.
@@ -1283,8 +1292,42 @@ function MaestroConsoleInner() {
 				items.push({ session, tab: null });
 			}
 		}
+
+		// Append externally-driven sessions. De-dup by the agent-native session id
+		// against the local items already pushed above — a session Maestro spawned
+		// (and is showing locally) must not also appear as an "external" pill.
+		const seenSessionIds = new Set<string>();
+		for (const item of items) {
+			const sid = item.tab?.agentSessionId || item.session.agentSessionId;
+			if (sid) seenSessionIds.add(sid);
+		}
+		// v1: external sessions rendered identically to local. To distinguish, branch here on event.source.
+		for (const event of externalSessionActivity) {
+			if (!isExternalSessionActive(event)) continue;
+			if (seenSessionIds.has(event.sessionId)) continue;
+			seenSessionIds.add(event.sessionId);
+			// The pill consumes only a handful of Session fields (id, name,
+			// agentSessionId, thinkingStartTime, currentCycleTokens). Synthesize a
+			// minimal stand-in so external sessions render identically to local
+			// ones; `tab` stays null (the legacy-session path). The display name is
+			// the trailing path segment of the project dir (split on both
+			// separators so Windows paths render), falling back to the id octet.
+			const segments = event.projectPath.split(/[/\\]/).filter(Boolean);
+			const displayName =
+				segments.length > 0
+					? segments[segments.length - 1]
+					: event.sessionId.substring(0, 8).toUpperCase();
+			const externalSession = {
+				id: `external:${event.agentId}:${event.sessionId}`,
+				name: displayName,
+				agentSessionId: event.sessionId,
+				thinkingStartTime: event.lastActivityAt,
+				currentCycleTokens: 0,
+			} as unknown as Session;
+			items.push({ session: externalSession, tab: null, event });
+		}
 		return items;
-	}, [sessions]);
+	}, [sessions, externalSessionActivity]);
 
 	// addLogToTab/addLogToActiveTab now used directly via store in useWizardHandlers
 

@@ -7,6 +7,11 @@ export * from './contextMerge';
 export type { Theme, ThemeId, ThemeMode, ThemeColors } from '../../shared/theme-types';
 export { isValidThemeId } from '../../shared/theme-types';
 
+// Session activity types (Remote Agent Visibility). Imported for local use in
+// ThinkingItem and re-exported for renderer consumers.
+import type { SessionActivityEvent, SessionActivitySource } from '../../shared/sessionActivity';
+export type { SessionActivityEvent, SessionActivitySource };
+
 // Re-export types from shared location
 export type {
 	AgentError,
@@ -452,6 +457,11 @@ export interface AITab {
 export interface ThinkingItem {
 	session: Session;
 	tab: AITab | null; // null for legacy sessions without tab-level tracking
+	// Set only for items synthesized from external (non-Maestro-spawned) session
+	// activity. Local items leave this undefined. Carried so a future iteration
+	// can branch on `event.source` to distinguish external sessions in the UI
+	// without re-plumbing the data flow.
+	event?: SessionActivityEvent;
 }
 
 // Closed tab entry for undo functionality (Cmd+Shift+T)

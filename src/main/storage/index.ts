@@ -10,6 +10,13 @@ export { OpenCodeSessionStorage } from './opencode-session-storage';
 export { CodexSessionStorage } from './codex-session-storage';
 export { FactoryDroidSessionStorage } from './factory-droid-session-storage';
 export { CopilotSessionStorage } from './copilot-session-storage';
+export {
+	ExternalSessionCoordinator,
+	STATE_CHANGED_EVENT,
+	type ExternalSessionStateChange,
+	type ExternalSessionCoordinatorDeps,
+	type WatchableStorage,
+} from './external-session-coordinator';
 
 import Store from 'electron-store';
 import { registerSessionStorage } from '../agents';
