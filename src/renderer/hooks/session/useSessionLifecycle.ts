@@ -138,7 +138,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 						sessionSshRemoteConfig,
 					};
 
-					// If provider changed, reset tabs and provider-specific config
+					// If provider changed, reset tabs while keeping any newly submitted provider config.
 					if (toolType && toolType !== s.toolType) {
 						const newTabId = generateId();
 						const freshTab: AITab = {
@@ -159,12 +159,6 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 							aiTabs: [freshTab],
 							activeTabId: newTabId,
 							closedTabHistory: [],
-							// Clear provider-specific overrides
-							customPath: undefined,
-							customArgs: undefined,
-							customEnvVars: undefined,
-							customModel: undefined,
-							customContextWindow: undefined,
 							// Reset file preview tabs and unified tab order
 							filePreviewTabs: [],
 							activeFileTabId: null,

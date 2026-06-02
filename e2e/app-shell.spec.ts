@@ -5125,6 +5125,69 @@ test.describe('App shell seeded workbench', () => {
 		await expect(editAgentDialog).toBeHidden();
 	});
 
+	test('warns and persists Edit Agent provider switch configuration', async () => {
+		await stubAgentDetectionForNewAgent(electronApp);
+
+		const quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('Edit Agent');
+		await quickActionsDialog.getByRole('button', { name: /Edit Agent: E2E Workbench/ }).click();
+
+		let editAgentDialog = window.getByRole('dialog', { name: 'Edit Agent: E2E Workbench' });
+		await expect(editAgentDialog).toBeVisible();
+		await editAgentDialog.getByRole('combobox').selectOption('opencode');
+		await expect(
+			editAgentDialog.getByText(/Changing the provider will clear your session list/)
+		).toBeVisible();
+		await expect(editAgentDialog.getByText('OpenCode Settings')).toBeVisible();
+		await editAgentDialog.getByLabel('Agent Name').fill('OpenCode Edited Workbench');
+		await editAgentDialog.getByPlaceholder('/path/to/opencode').fill('/usr/local/bin/opencode-e2e');
+		await editAgentDialog
+			.getByPlaceholder('--flag value --another-flag')
+			.fill('--model opencode-e2e');
+		await editAgentDialog.getByRole('button', { name: 'Add Variable' }).click();
+		await editAgentDialog.getByPlaceholder('VARIABLE_NAME').fill('OPENCODE_EDIT_E2E');
+		await editAgentDialog.getByPlaceholder('value', { exact: true }).fill('static');
+		await editAgentDialog.getByRole('button', { name: 'Save Changes' }).click();
+		await expect(editAgentDialog).toBeHidden();
+		await expect(
+			window
+				.locator('[data-tour="session-list"]')
+				.getByText('OpenCode Edited Workbench', { exact: true })
+		).toBeVisible();
+
+		const reopenedQuickActionsDialog = await openQuickActions(window);
+		await reopenedQuickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('Edit Agent');
+		await reopenedQuickActionsDialog
+			.getByRole('button', { name: /Edit Agent: OpenCode Edited Workbench/ })
+			.click();
+
+		editAgentDialog = window.getByRole('dialog', {
+			name: 'Edit Agent: OpenCode Edited Workbench',
+		});
+		await expect(editAgentDialog).toBeVisible();
+		await expect(editAgentDialog.getByRole('combobox')).toHaveValue('opencode');
+		await expect(
+			editAgentDialog.getByText(/Changing the provider will clear your session list/)
+		).toBeHidden();
+		await expect(editAgentDialog.getByText('OpenCode Settings')).toBeVisible();
+		await expect(editAgentDialog.getByPlaceholder('/path/to/opencode')).toHaveValue(
+			'/usr/local/bin/opencode-e2e'
+		);
+		await expect(editAgentDialog.getByPlaceholder('--flag value --another-flag')).toHaveValue(
+			'--model opencode-e2e'
+		);
+		await expect(editAgentDialog.getByPlaceholder('VARIABLE_NAME')).toHaveValue(
+			'OPENCODE_EDIT_E2E'
+		);
+		await expect(editAgentDialog.getByPlaceholder('value', { exact: true })).toHaveValue('static');
+		await editAgentDialog.getByRole('button', { name: 'Cancel' }).click();
+		await expect(editAgentDialog).toBeHidden();
+	});
+
 	test('renames the active agent from Quick Actions', async () => {
 		const quickActionsDialog = await openQuickActions(window);
 		await quickActionsDialog
