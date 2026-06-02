@@ -5188,6 +5188,51 @@ test.describe('App shell seeded workbench', () => {
 		await expect(editAgentDialog).toBeHidden();
 	});
 
+	test('cancels Edit Agent provider switch without changing the agent', async () => {
+		await stubAgentDetectionForNewAgent(electronApp);
+
+		const quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('Edit Agent');
+		await quickActionsDialog.getByRole('button', { name: /Edit Agent: E2E Workbench/ }).click();
+
+		let editAgentDialog = window.getByRole('dialog', { name: 'Edit Agent: E2E Workbench' });
+		await expect(editAgentDialog).toBeVisible();
+		await editAgentDialog.getByRole('combobox').selectOption('opencode');
+		await expect(
+			editAgentDialog.getByText(/Changing the provider will clear your session list/)
+		).toBeVisible();
+		await editAgentDialog.getByLabel('Agent Name').fill('Canceled Provider Switch');
+		await editAgentDialog
+			.getByPlaceholder('/path/to/opencode')
+			.fill('/usr/local/bin/opencode-cancelled');
+		await editAgentDialog.getByRole('button', { name: 'Cancel' }).click();
+
+		await expect(editAgentDialog).toBeHidden();
+		const sessionList = window.locator('[data-tour="session-list"]');
+		await expect(sessionList.getByText('E2E Workbench', { exact: true })).toBeVisible();
+		await expect(sessionList.getByText('Canceled Provider Switch', { exact: true })).toBeHidden();
+
+		const reopenedQuickActionsDialog = await openQuickActions(window);
+		await reopenedQuickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('Edit Agent');
+		await reopenedQuickActionsDialog
+			.getByRole('button', { name: /Edit Agent: E2E Workbench/ })
+			.click();
+
+		editAgentDialog = window.getByRole('dialog', { name: 'Edit Agent: E2E Workbench' });
+		await expect(editAgentDialog).toBeVisible();
+		await expect(editAgentDialog.getByRole('combobox')).toHaveValue('codex');
+		await expect(
+			editAgentDialog.getByText(/Changing the provider will clear your session list/)
+		).toBeHidden();
+		await expect(editAgentDialog.getByPlaceholder('/path/to/opencode')).toBeHidden();
+		await editAgentDialog.getByRole('button', { name: 'Cancel' }).click();
+		await expect(editAgentDialog).toBeHidden();
+	});
+
 	test('renames the active agent from Quick Actions', async () => {
 		const quickActionsDialog = await openQuickActions(window);
 		await quickActionsDialog

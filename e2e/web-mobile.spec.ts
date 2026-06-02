@@ -1280,11 +1280,16 @@ test.describe('Web Mobile Bridge', () => {
 
 		try {
 			const dashboardUrl = await startWebServer(appWindow);
-			const messages = await waitForWebSocketMessages(
+			const newTabMessages = await waitForWebSocketMessages(
+				page,
+				webSocketUrl(dashboardUrl),
+				[{ type: 'new_tab', sessionId: workbench.primarySessionId }],
+				['connected', 'new_tab_result']
+			);
+			const lifecycleMessages = await waitForWebSocketMessages(
 				page,
 				webSocketUrl(dashboardUrl),
 				[
-					{ type: 'new_tab', sessionId: workbench.primarySessionId },
 					{
 						type: 'rename_tab',
 						sessionId: workbench.primarySessionId,
@@ -1308,7 +1313,6 @@ test.describe('Web Mobile Bridge', () => {
 				],
 				[
 					'connected',
-					'new_tab_result',
 					'rename_tab_result',
 					'star_tab_result',
 					'reorder_tab_result',
@@ -1317,6 +1321,7 @@ test.describe('Web Mobile Bridge', () => {
 					'echo',
 				]
 			);
+			const messages = [...newTabMessages, ...lifecycleMessages];
 
 			expect(messages.find((message) => message.type === 'new_tab_result')).toMatchObject({
 				success: true,
@@ -3206,17 +3211,11 @@ test.describe('Web Mobile Bridge', () => {
 			await expect(page.getByText('Mobile Primary alpha response line one')).toBeVisible();
 
 			await appWindow.evaluate(async (sessionId) => {
-				const maestro = (window as MaestroE2EWindow).maestro;
-				await maestro.web.broadcastSessionState(sessionId, 'idle', {
+				await (window as MaestroE2EWindow).maestro.web.broadcastSessionState(sessionId, 'idle', {
 					name: 'Mobile Primary Terminal',
 					inputMode: 'terminal',
 					cwd: '/tmp/mobile-terminal-cwd',
 				});
-				await maestro.web.broadcastUserInput(
-					sessionId,
-					'desktop terminal command from broadcast',
-					'terminal'
-				);
 			}, workbench.primarySessionId);
 
 			await expect(page.getByText('Mobile Primary Terminal').first()).toBeVisible();
@@ -3224,6 +3223,13 @@ test.describe('Web Mobile Bridge', () => {
 			await expect(
 				page.getByText('Mobile Primary shell output for mobile bridge coverage.')
 			).toBeVisible();
+			await appWindow.evaluate(async (sessionId) => {
+				await (window as MaestroE2EWindow).maestro.web.broadcastUserInput(
+					sessionId,
+					'desktop terminal command from broadcast',
+					'terminal'
+				);
+			}, workbench.primarySessionId);
 			await expect(page.getByText('desktop terminal command from broadcast')).toBeVisible();
 		} finally {
 			await stopWebServer(appWindow).catch(() => {});
