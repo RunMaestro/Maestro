@@ -1081,14 +1081,22 @@ type StubbedAgentSessionUpdate =
 	| { type: 'starred'; sessionId: string; starred: boolean }
 	| { type: 'name'; sessionId: string; name: string | null };
 
+type StubbedAgentSessionReadCall = {
+	sessionId: string;
+	offset: number;
+	limit?: number;
+};
+
 async function stubCodexAgentSessions(
 	electronApp: ElectronApplication,
-	seeded: ReturnType<typeof createSeededWorkbench>
+	seeded: ReturnType<typeof createSeededWorkbench>,
+	options: { paginatedReviewMessages?: boolean } = {}
 ) {
 	await electronApp.evaluate(
 		({ ipcMain }, payload) => {
 			const state = globalThis as typeof globalThis & {
 				__maestroE2eAgentSessionUpdates?: StubbedAgentSessionUpdate[];
+				__maestroE2eAgentSessionReadCalls?: StubbedAgentSessionReadCall[];
 				__maestroE2eAgentSessionSearchCalls?: Array<{
 					agentId: string;
 					projectPath: string;
@@ -1204,6 +1212,7 @@ async function stubCodexAgentSessions(
 				},
 			};
 			state.__maestroE2eAgentSessionUpdates = [];
+			state.__maestroE2eAgentSessionReadCalls = [];
 			state.__maestroE2eAgentSessionSearchCalls = [];
 
 			ipcMain.removeHandler('agentSessions:getOrigins');
@@ -1218,14 +1227,45 @@ async function stubCodexAgentSessions(
 			}));
 
 			ipcMain.removeHandler('agentSessions:read');
-			ipcMain.handle('agentSessions:read', async (_event, _agentId, _projectPath, sessionId) => {
-				const messages = messagesBySession[sessionId as keyof typeof messagesBySession] || [];
-				return {
-					messages,
-					total: messages.length,
-					hasMore: false,
-				};
-			});
+			ipcMain.handle(
+				'agentSessions:read',
+				async (_event, _agentId, _projectPath, sessionId, readOptions) => {
+					const offset = Number(readOptions?.offset ?? 0);
+					const limit = Number(readOptions?.limit ?? 20);
+					state.__maestroE2eAgentSessionReadCalls?.push({ sessionId, offset, limit });
+
+					if (payload.paginatedReviewMessages && sessionId === 'codex-review-session') {
+						const paginatedMessages = [
+							{
+								type: 'user',
+								content: 'Earlier planning sentinel before the visible page.',
+								timestamp: new Date(now - 140_000).toISOString(),
+								uuid: 'review-earlier-user-message',
+							},
+							{
+								type: 'assistant',
+								content: 'Earlier assistant sentinel before the visible page.',
+								timestamp: new Date(now - 130_000).toISOString(),
+								uuid: 'review-earlier-assistant-message',
+							},
+							...messagesBySession['codex-review-session'],
+						];
+						const page = offset === 0 ? paginatedMessages.slice(2) : paginatedMessages.slice(0, 2);
+						return {
+							messages: page,
+							total: paginatedMessages.length,
+							hasMore: offset + page.length < paginatedMessages.length,
+						};
+					}
+
+					const messages = messagesBySession[sessionId as keyof typeof messagesBySession] || [];
+					return {
+						messages,
+						total: messages.length,
+						hasMore: false,
+					};
+				}
+			);
 
 			ipcMain.removeHandler('agentSessions:search');
 			ipcMain.handle('agentSessions:search', async (_event, agentId, projectPath, query, mode) => {
@@ -1295,7 +1335,7 @@ async function stubCodexAgentSessions(
 				}
 			);
 		},
-		{ projectPath: seeded.sessions[0].projectRoot }
+		{ projectPath: seeded.sessions[0].projectRoot, ...options }
 	);
 }
 
@@ -1305,6 +1345,15 @@ async function getStubbedAgentSessionUpdates(electronApp: ElectronApplication) {
 			__maestroE2eAgentSessionUpdates?: StubbedAgentSessionUpdate[];
 		};
 		return state.__maestroE2eAgentSessionUpdates || [];
+	});
+}
+
+async function getStubbedAgentSessionReadCalls(electronApp: ElectronApplication) {
+	return electronApp.evaluate(() => {
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eAgentSessionReadCalls?: StubbedAgentSessionReadCall[];
+		};
+		return state.__maestroE2eAgentSessionReadCalls || [];
 	});
 }
 
@@ -6266,6 +6315,39 @@ test.describe('App shell seeded workbench', () => {
 
 		await window.keyboard.press('Escape');
 		await expect(agentSessions.getByPlaceholder('Search all content...')).toBeVisible();
+	});
+
+	test('loads earlier messages in a stubbed Codex agent session detail view', async () => {
+		await stubCodexAgentSessions(electronApp, seededWorkbench, {
+			paginatedReviewMessages: true,
+		});
+		const agentSessions = await openAgentSessions(window);
+
+		await agentSessions.getByText('Review Checkpoint').click();
+		const messagesRegion = agentSessions.getByRole('region', { name: 'Session messages' });
+		await expect(
+			messagesRegion.getByText('Please review deterministic risk coverage.')
+		).toBeVisible();
+		await expect(
+			messagesRegion.getByText('Earlier planning sentinel before the visible page.')
+		).toBeHidden();
+		await expect(agentSessions.getByText('4 messages')).toBeVisible();
+
+		await agentSessions.getByRole('button', { name: 'Load earlier messages...' }).click();
+
+		await expect(
+			messagesRegion.getByText('Earlier planning sentinel before the visible page.')
+		).toBeVisible();
+		await expect(
+			messagesRegion.getByText('Earlier assistant sentinel before the visible page.')
+		).toBeVisible();
+		await expect(
+			agentSessions.getByRole('button', { name: 'Load earlier messages...' })
+		).toBeHidden();
+		await expect(await getStubbedAgentSessionReadCalls(electronApp)).toEqual([
+			{ sessionId: 'codex-review-session', offset: 0, limit: 20 },
+			{ sessionId: 'codex-review-session', offset: 2, limit: 20 },
+		]);
 	});
 
 	test('searches stars and renames stubbed Codex agent sessions', async () => {
