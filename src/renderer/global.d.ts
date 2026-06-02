@@ -634,6 +634,11 @@ interface MaestroAPI {
 				errorRecoverable?: boolean;
 				errorDocumentIndex?: number;
 				errorTaskDescription?: string;
+				// Goal-Driven mode fields — surfaced so web/mobile show goal percent + iteration
+				goalMode?: boolean;
+				goalProgress?: number;
+				goalRationale?: string;
+				goalIteration?: number;
 			} | null
 		) => Promise<void>;
 		broadcastTabsChange: (

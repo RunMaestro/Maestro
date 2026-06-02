@@ -3,6 +3,7 @@ import {
 	useRef,
 	useEffect,
 	useCallback,
+	useMemo,
 	memo,
 	forwardRef,
 	useImperativeHandle,
@@ -535,6 +536,26 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 			bionifyAlgorithm,
 		});
 
+	// Goal-Driven progress slice for the bottom panel. Present only while a goal
+	// run is active; replaces the "X of Y tasks" readout with the agent's
+	// self-reported percent + iteration + rationale.
+	const goalInfo = useMemo(
+		() =>
+			batchRunState?.goalMode
+				? {
+						progress: batchRunState.goalProgress ?? 0,
+						iteration: batchRunState.goalIteration ?? 0,
+						rationale: batchRunState.goalRationale,
+					}
+				: null,
+		[
+			batchRunState?.goalMode,
+			batchRunState?.goalProgress,
+			batchRunState?.goalIteration,
+			batchRunState?.goalRationale,
+		]
+	);
+
 	// Keep the document selector badge in sync with the bottom-panel counter.
 	// The file watcher's refresh path can be stale (debounced/missed events, SSH poll lag),
 	// but savedContent for the selected doc is always authoritative — mirror it into the store.
@@ -823,19 +844,22 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 				</div>
 			)}
 
-			{/* Bottom Panel - shown when folder selected AND (there are tasks, unsaved changes, or content with token count) */}
-			{folderPath && (taskCounts.total > 0 || (isDirty && !isLocked) || tokenCount !== null) && (
-				<AutoRunBottomPanel
-					theme={theme}
-					taskCounts={taskCounts}
-					tokenCount={tokenCount}
-					isDirty={isDirty}
-					isLocked={isLocked}
-					onSave={handleSave}
-					onRevert={handleRevert}
-					onOpenResetTasksModal={() => setResetTasksModalOpen(true)}
-				/>
-			)}
+			{/* Bottom Panel - shown when folder selected AND (there are tasks, an active
+			    goal run, unsaved changes, or content with token count) */}
+			{folderPath &&
+				(taskCounts.total > 0 || goalInfo || (isDirty && !isLocked) || tokenCount !== null) && (
+					<AutoRunBottomPanel
+						theme={theme}
+						taskCounts={taskCounts}
+						tokenCount={tokenCount}
+						isDirty={isDirty}
+						isLocked={isLocked}
+						goal={goalInfo}
+						onSave={handleSave}
+						onRevert={handleRevert}
+						onOpenResetTasksModal={() => setResetTasksModalOpen(true)}
+					/>
+				)}
 
 			{/* Help Modal */}
 			{helpModalOpen && (
@@ -887,6 +911,11 @@ export const AutoRun = memo(AutoRunInner, (prevProps, nextProps) => {
 		prevProps.batchRunState?.isStopping === nextProps.batchRunState?.isStopping &&
 		prevProps.batchRunState?.currentTaskIndex === nextProps.batchRunState?.currentTaskIndex &&
 		prevProps.batchRunState?.totalTasks === nextProps.batchRunState?.totalTasks &&
+		// Goal-Driven progress fields drive the bottom-panel goal readout
+		prevProps.batchRunState?.goalMode === nextProps.batchRunState?.goalMode &&
+		prevProps.batchRunState?.goalProgress === nextProps.batchRunState?.goalProgress &&
+		prevProps.batchRunState?.goalIteration === nextProps.batchRunState?.goalIteration &&
+		prevProps.batchRunState?.goalRationale === nextProps.batchRunState?.goalRationale &&
 		// Error state is read directly from Zustand store (not props), so no comparison needed here.
 		// Session state affects UI (busy disables Run button)
 		prevProps.sessionState === nextProps.sessionState &&

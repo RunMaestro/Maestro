@@ -26,6 +26,8 @@ import { buildSessionDeepLink, buildGroupDeepLink } from './deep-link-urls';
  *   {{DOCUMENT_NAME}}     - Current Auto Run document name (without .md)
  *   {{DOCUMENT_PATH}}     - Full path to current Auto Run document
  *   {{LOOP_NUMBER}}       - Current loop iteration (5-digit padded, e.g., 00001)
+ *   {{GOAL}}              - Goal-Driven Auto Run: the free-text objective the agent pursues
+ *   {{GOAL_EXIT_CRITERIA}} - Goal-Driven Auto Run: free-text description of what "done" looks like
  *
  * Date/Time Variables:
  *   {{DATE}}              - Current date (YYYY-MM-DD)
@@ -160,6 +162,9 @@ export interface TemplateContext {
 	// Auto Run document context
 	documentName?: string;
 	documentPath?: string;
+	// Goal-Driven Auto Run context (only set for goal-driven runs)
+	goal?: string;
+	goalExitCriteria?: string;
 	// History file path for task recall
 	historyFilePath?: string;
 	// Conductor profile (user's About Me from settings)
@@ -343,6 +348,16 @@ export const TEMPLATE_VARIABLES = [
 	{ variable: '{{DOCUMENT_NAME}}', description: 'Current document name', autoRunOnly: true },
 	{ variable: '{{DOCUMENT_PATH}}', description: 'Current document path', autoRunOnly: true },
 	{ variable: '{{GIT_BRANCH}}', description: 'Git branch name' },
+	{
+		variable: '{{GOAL}}',
+		description: 'Goal-Driven Auto Run objective',
+		autoRunOnly: true,
+	},
+	{
+		variable: '{{GOAL_EXIT_CRITERIA}}',
+		description: 'Goal-Driven Auto Run exit criteria',
+		autoRunOnly: true,
+	},
 	{ variable: '{{GROUP_DEEP_LINK}}', description: 'Deep link to agent group (maestro://)' },
 	{ variable: '{{IS_GIT_REPO}}', description: 'Is git repo (true/false)' },
 	{ variable: '{{MAESTRO_CLI_PATH}}', description: 'Path to maestro-cli' },
@@ -381,6 +396,8 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 		loopNumber,
 		documentName,
 		documentPath,
+		goal,
+		goalExitCriteria,
 		historyFilePath,
 		conductorProfile,
 	} = context;
@@ -421,6 +438,10 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 		// Document variables (for Auto Run)
 		DOCUMENT_NAME: documentName || '',
 		DOCUMENT_PATH: documentPath || '',
+
+		// Goal-Driven Auto Run variables
+		GOAL: goal || '',
+		GOAL_EXIT_CRITERIA: goalExitCriteria || '',
 
 		// Loop tracking (1-indexed, defaults to 1 if not in loop mode, 5-digit padded)
 		LOOP_NUMBER: String(loopNumber ?? 1).padStart(5, '0'),

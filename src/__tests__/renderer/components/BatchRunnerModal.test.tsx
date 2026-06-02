@@ -265,7 +265,7 @@ describe('BatchRunnerModal', () => {
 
 			expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
 			expect(screen.getByRole('button', { name: /Save/ })).toBeInTheDocument();
-			expect(screen.getByRole('button', { name: /Go/ })).toBeInTheDocument();
+			expect(screen.getByRole('button', { name: 'Go' })).toBeInTheDocument();
 		});
 	});
 
@@ -973,7 +973,7 @@ describe('BatchRunnerModal', () => {
 				expect(screen.getByText('tasks')).toBeInTheDocument();
 			});
 
-			fireEvent.click(screen.getByRole('button', { name: /Go/ }));
+			fireEvent.click(screen.getByRole('button', { name: 'Go' }));
 
 			expect(props.onGo).toHaveBeenCalledWith(
 				expect.objectContaining({
@@ -999,7 +999,7 @@ describe('BatchRunnerModal', () => {
 				expect(screen.getByText('0')).toBeInTheDocument();
 			});
 
-			const goButton = screen.getByRole('button', { name: /Go/ });
+			const goButton = screen.getByRole('button', { name: 'Go' });
 			expect(goButton).toBeDisabled();
 		});
 
@@ -1008,10 +1008,161 @@ describe('BatchRunnerModal', () => {
 			props.presetDocuments = [];
 			render(<BatchRunnerModal {...props} />);
 
-			const goButton = screen.getByRole('button', { name: /Go/ });
+			const goButton = screen.getByRole('button', { name: 'Go' });
 			expect(goButton).toBeDisabled();
 		});
 		// NOTE: 'includes worktree config when worktree is enabled' test removed - worktree is now in WorktreeConfigModal
+	});
+
+	describe('Goal-Driven Mode', () => {
+		// Goal textarea is identified by its placeholder (stable, user-facing copy).
+		const GOAL_PLACEHOLDER = /Migrate the settings store/;
+		const EXIT_PLACEHOLDER = /Done when no Redux imports remain/;
+
+		it('renders the header as "Maestro Auto Run", not "Auto Run Configuration"', async () => {
+			render(<BatchRunnerModal {...createDefaultProps()} />);
+
+			expect(screen.getByRole('heading', { name: 'Maestro Auto Run' })).toBeInTheDocument();
+			expect(screen.queryByText('Auto Run Configuration')).not.toBeInTheDocument();
+		});
+
+		it('shows Spec-Driven / Goal-Driven tabs', async () => {
+			render(<BatchRunnerModal {...createDefaultProps()} />);
+
+			expect(screen.getByRole('button', { name: 'Spec-Driven' })).toBeInTheDocument();
+			expect(screen.getByRole('button', { name: 'Goal-Driven' })).toBeInTheDocument();
+		});
+
+		it('hides the documents panel and shows goal inputs when Goal-Driven is selected', async () => {
+			render(<BatchRunnerModal {...createDefaultProps()} />);
+
+			// Spec mode by default — documents panel is visible.
+			expect(screen.getByText('test-doc.md')).toBeInTheDocument();
+			expect(screen.getByRole('button', { name: 'Add Docs' })).toBeInTheDocument();
+
+			// Switch to Goal-Driven.
+			fireEvent.click(screen.getByRole('button', { name: 'Goal-Driven' }));
+
+			// Documents panel gone; goal inputs present.
+			await waitFor(() => {
+				expect(screen.queryByText('test-doc.md')).not.toBeInTheDocument();
+			});
+			expect(screen.queryByRole('button', { name: 'Add Docs' })).not.toBeInTheDocument();
+			expect(screen.getByPlaceholderText(GOAL_PLACEHOLDER)).toBeInTheDocument();
+			expect(screen.getByPlaceholderText(EXIT_PLACEHOLDER)).toBeInTheDocument();
+			expect(screen.getByText('Iteration Limit')).toBeInTheDocument();
+		});
+
+		it('restores the documents panel when switching back to Spec-Driven', async () => {
+			render(<BatchRunnerModal {...createDefaultProps()} />);
+
+			fireEvent.click(screen.getByRole('button', { name: 'Goal-Driven' }));
+			await waitFor(() => {
+				expect(screen.getByPlaceholderText(GOAL_PLACEHOLDER)).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getByRole('button', { name: 'Spec-Driven' }));
+			await waitFor(() => {
+				expect(screen.getByText('test-doc.md')).toBeInTheDocument();
+			});
+			expect(screen.queryByPlaceholderText(GOAL_PLACEHOLDER)).not.toBeInTheDocument();
+		});
+
+		it('disables Go with an empty goal and enables it once a goal is typed', async () => {
+			render(<BatchRunnerModal {...createDefaultProps()} />);
+
+			fireEvent.click(screen.getByRole('button', { name: 'Goal-Driven' }));
+
+			const goButton = screen.getByRole('button', { name: 'Go' });
+			expect(goButton).toBeDisabled();
+
+			const goalInput = screen.getByPlaceholderText(GOAL_PLACEHOLDER);
+			fireEvent.change(goalInput, { target: { value: 'Refactor the auth module' } });
+
+			await waitFor(() => {
+				expect(screen.getByRole('button', { name: 'Go' })).not.toBeDisabled();
+			});
+		});
+
+		it('calls onGo with a goalConfig (not the spec-mode document config) when Go is clicked', async () => {
+			const props = createDefaultProps();
+			render(<BatchRunnerModal {...props} />);
+
+			fireEvent.click(screen.getByRole('button', { name: 'Goal-Driven' }));
+
+			fireEvent.change(screen.getByPlaceholderText(GOAL_PLACEHOLDER), {
+				target: { value: 'Refactor the auth module' },
+			});
+			fireEvent.change(screen.getByPlaceholderText(EXIT_PLACEHOLDER), {
+				target: { value: 'Done when all auth tests pass' },
+			});
+
+			fireEvent.click(screen.getByRole('button', { name: 'Go' }));
+
+			expect(props.onGo).toHaveBeenCalledWith(
+				expect.objectContaining({
+					documents: [],
+					goalConfig: {
+						goal: 'Refactor the auth module',
+						exitCriteria: 'Done when all auth tests pass',
+						maxIterations: null,
+					},
+				})
+			);
+			// Goal mode must NOT carry the spec-mode task-selection field.
+			const config = (props.onGo as ReturnType<typeof vi.fn>).mock.calls[0][0];
+			expect(config.taskSelectionMode).toBeUndefined();
+			expect(props.onClose).toHaveBeenCalled();
+		});
+
+		it('Infinite toggle sets maxIterations to null in the launched config', async () => {
+			const props = createDefaultProps();
+			render(<BatchRunnerModal {...props} />);
+
+			fireEvent.click(screen.getByRole('button', { name: 'Goal-Driven' }));
+			fireEvent.change(screen.getByPlaceholderText(GOAL_PLACEHOLDER), {
+				target: { value: 'Some goal' },
+			});
+
+			// Switch to a finite limit (numeric input appears), then back to Infinite.
+			fireEvent.click(screen.getByRole('button', { name: 'Limit' }));
+			expect(screen.getByLabelText('Maximum iterations')).toBeInTheDocument();
+
+			fireEvent.click(screen.getByRole('button', { name: 'Infinite' }));
+			await waitFor(() => {
+				expect(screen.queryByLabelText('Maximum iterations')).not.toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getByRole('button', { name: 'Go' }));
+
+			expect(props.onGo).toHaveBeenCalledWith(
+				expect.objectContaining({
+					goalConfig: expect.objectContaining({ maxIterations: null }),
+				})
+			);
+		});
+
+		it('carries a finite maxIterations through to the launched config', async () => {
+			const props = createDefaultProps();
+			render(<BatchRunnerModal {...props} />);
+
+			fireEvent.click(screen.getByRole('button', { name: 'Goal-Driven' }));
+			fireEvent.change(screen.getByPlaceholderText(GOAL_PLACEHOLDER), {
+				target: { value: 'Some goal' },
+			});
+
+			fireEvent.click(screen.getByRole('button', { name: 'Limit' }));
+			const iterInput = screen.getByLabelText('Maximum iterations');
+			fireEvent.change(iterInput, { target: { value: '7' } });
+
+			fireEvent.click(screen.getByRole('button', { name: 'Go' }));
+
+			expect(props.onGo).toHaveBeenCalledWith(
+				expect.objectContaining({
+					goalConfig: expect.objectContaining({ maxIterations: 7 }),
+				})
+			);
+		});
 	});
 
 	describe('Save Functionality', () => {
@@ -1284,7 +1435,7 @@ describe('Agent Prompt Validation in UI', () => {
 		fireEvent.change(textarea, { target: { value: '' } });
 
 		await waitFor(() => {
-			const goButton = screen.getByRole('button', { name: /Go/ });
+			const goButton = screen.getByRole('button', { name: 'Go' });
 			expect(goButton).toBeDisabled();
 		});
 	});
@@ -1298,7 +1449,7 @@ describe('Agent Prompt Validation in UI', () => {
 		fireEvent.change(textarea, { target: { value: 'Just do some coding please.' } });
 
 		await waitFor(() => {
-			const goButton = screen.getByRole('button', { name: /Go/ });
+			const goButton = screen.getByRole('button', { name: 'Go' });
 			expect(goButton).toBeDisabled();
 		});
 	});
@@ -1337,7 +1488,7 @@ describe('Agent Prompt Validation in UI', () => {
 		});
 
 		// Default prompt should be valid — Go should be enabled
-		const goButton = screen.getByRole('button', { name: /Go/ });
+		const goButton = screen.getByRole('button', { name: 'Go' });
 		expect(goButton).not.toBeDisabled();
 	});
 });
@@ -1426,7 +1577,7 @@ describe('Loop Mode Additional Controls', () => {
 
 		// Wait for task counts to load (total shows combined count: 10 tasks from 2 docs)
 		await waitFor(() => expect(screen.getByText('10')).toBeInTheDocument());
-		fireEvent.click(screen.getByRole('button', { name: /Go/ }));
+		fireEvent.click(screen.getByRole('button', { name: 'Go' }));
 
 		expect(props.onGo).toHaveBeenCalledWith(
 			expect.objectContaining({
@@ -1451,7 +1602,7 @@ describe('Loop Mode Additional Controls', () => {
 
 		// Wait for task counts to load (total shows combined count: 10 tasks from 2 docs)
 		await waitFor(() => expect(screen.getByText('10')).toBeInTheDocument());
-		fireEvent.click(screen.getByRole('button', { name: /Go/ }));
+		fireEvent.click(screen.getByRole('button', { name: 'Go' }));
 
 		expect(props.onGo).toHaveBeenCalledWith(
 			expect.objectContaining({
@@ -2553,7 +2704,7 @@ describe('Worktree Loading State', () => {
 		});
 
 		// Click Go — should show "Preparing Worktree..." since mode is create-new
-		const goButton = screen.getByRole('button', { name: /Go/ });
+		const goButton = screen.getByRole('button', { name: 'Go' });
 		await act(async () => {
 			fireEvent.click(goButton);
 		});
@@ -2587,7 +2738,7 @@ describe('Worktree Loading State', () => {
 		});
 
 		// Click Go without worktree enabled — should call onGo and onClose immediately
-		fireEvent.click(screen.getByRole('button', { name: /Go/ }));
+		fireEvent.click(screen.getByRole('button', { name: 'Go' }));
 
 		expect(props.onGo).toHaveBeenCalled();
 		expect(props.onClose).toHaveBeenCalled();

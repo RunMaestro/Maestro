@@ -674,6 +674,73 @@ describe('AutoRunIndicator', () => {
 		});
 	});
 
+	describe('goal-driven mode', () => {
+		const createGoalState = (overrides: Partial<AutoRunState> = {}): AutoRunState => ({
+			isRunning: true,
+			totalTasks: 100,
+			completedTasks: 0,
+			currentTaskIndex: 0,
+			isStopping: false,
+			goalMode: true,
+			goalProgress: 65,
+			goalIteration: 4,
+			goalRationale: 'Improved the parser coverage',
+			...overrides,
+		});
+
+		it('shows the goal percent from goalProgress, not the task ratio', () => {
+			// Task ratio would be 2/10 = 20%; goal mode must show goalProgress (65%).
+			const state = createGoalState({
+				totalTasks: 10,
+				completedTasks: 2,
+				goalProgress: 65,
+			});
+			render(<AutoRunIndicator state={state} />);
+			expect(screen.getByText('65%')).toBeInTheDocument();
+			expect(screen.queryByText('20%')).toBeNull();
+		});
+
+		it('shows "Goal" + iteration instead of "Task X of Y"', () => {
+			const state = createGoalState();
+			render(<AutoRunIndicator state={state} />);
+			expect(screen.getByText(/Goal/)).toBeInTheDocument();
+			expect(screen.getByText(/iteration 4/)).toBeInTheDocument();
+			expect(screen.queryByText(/Task \d+ of \d+/)).toBeNull();
+		});
+
+		it('shows the rationale in the subtitle', () => {
+			const state = createGoalState({ goalRationale: 'Refactored the exit evaluator' });
+			render(<AutoRunIndicator state={state} />);
+			expect(screen.getByText(/Refactored the exit evaluator/)).toBeInTheDocument();
+		});
+
+		it('omits the iteration label before the first report (iteration 0)', () => {
+			const state = createGoalState({ goalIteration: 0 });
+			render(<AutoRunIndicator state={state} />);
+			expect(screen.queryByText(/iteration/)).toBeNull();
+		});
+
+		it('clamps goal progress into 0–100 for the badge', () => {
+			const state = createGoalState({ goalProgress: 140 });
+			render(<AutoRunIndicator state={state} />);
+			expect(screen.getByText('100%')).toBeInTheDocument();
+		});
+
+		it('drives the progress bar width from goalProgress', () => {
+			const state = createGoalState({ goalProgress: 65 });
+			const { container } = render(<AutoRunIndicator state={state} />);
+			expect(container.querySelector('[style*="width: 65%"]')).not.toBeNull();
+		});
+
+		it('still renders the session name prefix in goal mode', () => {
+			const state = createGoalState();
+			const { container } = render(<AutoRunIndicator state={state} sessionName="My Goal Run" />);
+			const span = container.querySelector('span');
+			expect(span?.textContent).toContain('My Goal Run');
+			expect(span?.textContent).toContain(' - ');
+		});
+	});
+
 	describe('keyboard activation', () => {
 		// Review feedback: the banner exposes button semantics (role=button,
 		// tabIndex=0) but the original implementation only fired onTap on mouse

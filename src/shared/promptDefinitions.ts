@@ -74,6 +74,12 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 		category: 'autorun',
 	},
 	{
+		id: 'autorun-goal',
+		filename: 'autorun-goal.md',
+		description: 'Goal-Driven Auto Run behavior prompt',
+		category: 'autorun',
+	},
+	{
 		id: 'autorun-synopsis',
 		filename: 'autorun-synopsis.md',
 		description: 'Auto Run synopsis generation prompt',
@@ -264,6 +270,7 @@ export const PROMPT_IDS = {
 	WIZARD_INLINE_ITERATE_GENERATION: 'wizard-inline-iterate-generation',
 	// AutoRun
 	AUTORUN_DEFAULT: 'autorun-default',
+	AUTORUN_GOAL: 'autorun-goal',
 	AUTORUN_SYNOPSIS: 'autorun-synopsis',
 	AUTORUN_PER_TASK: 'autorun-per-task',
 	AUTORUN_PER_DOCUMENT: 'autorun-per-document',

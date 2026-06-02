@@ -4,12 +4,28 @@ import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { formatTokenCount } from '../../utils/tokenCounter';
 import type { Theme } from '../../types';
 
+/**
+ * Goal-Driven progress slice. When present, the panel renders the agent's
+ * self-reported goal readout (percentage + iteration + rationale) instead of
+ * the "X of Y tasks" text. Undefined/null for ordinary document/task runs.
+ */
+export interface GoalPanelInfo {
+	/** Latest self-reported progress toward the goal (0–100). */
+	progress: number;
+	/** 1-based iteration number the goal loop is on (0 before the first report). */
+	iteration: number;
+	/** One-line rationale accompanying the latest progress report, if any. */
+	rationale?: string | null;
+}
+
 export interface AutoRunBottomPanelProps {
 	theme: Theme;
 	taskCounts: { completed: number; total: number };
 	tokenCount: number | null;
 	isDirty: boolean;
 	isLocked: boolean;
+	/** Goal-Driven progress; when set, replaces the task-count readout. */
+	goal?: GoalPanelInfo | null;
 	onSave: () => void;
 	onRevert: () => void;
 	onOpenResetTasksModal: () => void;
@@ -21,6 +37,7 @@ export const AutoRunBottomPanel = memo(function AutoRunBottomPanel({
 	tokenCount,
 	isDirty,
 	isLocked,
+	goal,
 	onSave,
 	onRevert,
 	onOpenResetTasksModal,
@@ -72,10 +89,10 @@ export const AutoRunBottomPanel = memo(function AutoRunBottomPanel({
 				<div />
 			)}
 
-			{/* Center info: Reset button, Task count, and/or Token count */}
+			{/* Center info: Reset button, Goal/Task progress, and/or Token count */}
 			<div className="flex items-center gap-3">
-				{/* Reset button - only show when there are completed tasks */}
-				{taskCounts.completed > 0 && !isLocked && (
+				{/* Reset button - only show when there are completed tasks (never in goal mode) */}
+				{!goal && taskCounts.completed > 0 && !isLocked && (
 					<button
 						onClick={onOpenResetTasksModal}
 						className="p-0.5 rounded transition-colors hover:bg-white/10"
@@ -85,22 +102,53 @@ export const AutoRunBottomPanel = memo(function AutoRunBottomPanel({
 						<RotateCcw className="w-3.5 h-3.5" />
 					</button>
 				)}
-				{taskCounts.total > 0 && (
-					<span style={{ color: theme.colors.textDim }}>
+				{goal ? (
+					<span className="flex items-center gap-2 min-w-0" style={{ color: theme.colors.textDim }}>
+						{/* Goal percent — accent until complete, then success (mirrors task readout) */}
 						<span
+							className="shrink-0 font-medium"
 							style={{
-								color:
-									taskCounts.completed === taskCounts.total
-										? theme.colors.success
-										: theme.colors.accent,
+								color: goal.progress >= 100 ? theme.colors.success : theme.colors.accent,
 							}}
 						>
-							{taskCounts.completed}
-						</span>{' '}
-						of <span style={{ color: theme.colors.accent }}>{taskCounts.total}</span> task
-						{taskCounts.total !== 1 ? 's' : ''}
-						{!isCompact && ' completed'}
+							Goal: {goal.progress}%
+						</span>
+						{goal.iteration > 0 && (
+							<span className="shrink-0 opacity-60">iteration {goal.iteration}</span>
+						)}
+						{/* Latest rationale — secondary dim text, truncates gracefully (tighter in compact) */}
+						{goal.rationale && (
+							<span
+								className="truncate"
+								style={{
+									color: theme.colors.textDim,
+									opacity: 0.7,
+									maxWidth: isCompact ? '120px' : '260px',
+								}}
+								title={goal.rationale}
+							>
+								{goal.rationale}
+							</span>
+						)}
 					</span>
+				) : (
+					taskCounts.total > 0 && (
+						<span style={{ color: theme.colors.textDim }}>
+							<span
+								style={{
+									color:
+										taskCounts.completed === taskCounts.total
+											? theme.colors.success
+											: theme.colors.accent,
+								}}
+							>
+								{taskCounts.completed}
+							</span>{' '}
+							of <span style={{ color: theme.colors.accent }}>{taskCounts.total}</span> task
+							{taskCounts.total !== 1 ? 's' : ''}
+							{!isCompact && ' completed'}
+						</span>
+					)
 				)}
 				{tokenCount !== null && (
 					<span style={{ color: theme.colors.textDim }}>
@@ -108,7 +156,7 @@ export const AutoRunBottomPanel = memo(function AutoRunBottomPanel({
 						<span style={{ color: theme.colors.accent }}>{formatTokenCount(tokenCount)}</span>
 					</span>
 				)}
-				{taskCounts.total === 0 && tokenCount === null && isDirty && !isLocked && (
+				{!goal && taskCounts.total === 0 && tokenCount === null && isDirty && !isLocked && (
 					<span style={{ color: theme.colors.textDim }}>Unsaved changes</span>
 				)}
 			</div>

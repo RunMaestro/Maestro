@@ -333,6 +333,10 @@ export interface BatchRunConfig {
 	taskSelectionMode?: TaskSelectionMode; // 'task' (default) or 'document' — controls {{TASK_SELECTION_BLOCK}}
 	worktree?: WorktreeConfig; // Optional worktree configuration
 	worktreeTarget?: WorktreeRunTarget; // Optional target for dispatching to a worktree agent
+	// Goal-Driven mode. Its presence is the discriminator that selects goal mode
+	// over the document/task-driven spec mode. When set, the run pursues a free-text
+	// goal instead of checking off `- [ ]` tasks. See src/shared/goalDriven/types.ts.
+	goalConfig?: import('../../shared/goalDriven/types').GoalRunConfig;
 }
 
 // Import BatchProcessingState for state machine integration
@@ -393,6 +397,15 @@ export interface BatchRunState {
 	errorPaused?: boolean; // True if batch is paused waiting for error resolution
 	errorDocumentIndex?: number; // Which document had the error (for skip functionality)
 	errorTaskDescription?: string; // Description of the task that failed (for UI display)
+
+	// Goal-Driven mode (Goal-Driven Auto Run). The following fields are only
+	// meaningful when `goalMode` is true; in document/task mode they stay at their
+	// defaults and are ignored. See src/shared/goalDriven/types.ts.
+	goalMode?: boolean; // True when this run is pursuing a free-text goal (not documents)
+	goalProgress?: number; // Latest self-reported progress toward the goal (0–100)
+	goalRationale?: string; // One-line rationale accompanying the latest progress report
+	goalIteration?: number; // 1-based iteration number the goal loop is on
+	goalExitReason?: import('../../shared/goalDriven/types').GoalExitReason; // Why the goal run stopped
 }
 
 // Badge unlock record for history tracking
@@ -730,6 +743,13 @@ export interface Session {
 	batchRunnerPrompt?: string;
 	// Timestamp when the batch runner prompt was last modified
 	batchRunnerPromptModifiedAt?: number;
+	// Goal-Driven Auto Run: which Auto Run tab the user last used and the goal
+	// config they entered, persisted so the modal reopens in the same mode with
+	// the same inputs (NOT a playbook .md file). See src/shared/goalDriven/types.ts.
+	// NOTE: named `autoRunDriveMode` (not `autoRunMode`) because `autoRunMode`
+	// already exists above for the document editor's edit/preview state.
+	autoRunDriveMode?: 'spec' | 'goal';
+	autoRunGoalConfig?: import('../../shared/goalDriven/types').GoalRunConfig;
 	// CLI activity - present when CLI is running a playbook on this session.
 	// Shape lives in shared/types.ts (SessionCliActivity) so the persistence
 	// diff comparator stays in lock-step with this producer's contract.
