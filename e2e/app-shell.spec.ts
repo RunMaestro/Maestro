@@ -6534,6 +6534,29 @@ test.describe('App shell seeded workbench', () => {
 		await expect(agentSessions.getByPlaceholder('Search all content...')).toBeVisible();
 	});
 
+	test('opens Agent Sessions search from the activity graph shortcut and clears empty results', async () => {
+		await stubCodexAgentSessions(electronApp, seededWorkbench);
+		const agentSessions = await openAgentSessions(window);
+
+		await agentSessions.getByTitle('Show activity graph').click();
+		await expect(agentSessions.getByTitle(/All time: 3 sessions/)).toBeVisible();
+		await expect(agentSessions.getByPlaceholder('Search all content...')).toBeHidden();
+
+		await window.keyboard.press('Control+f');
+		const searchInput = agentSessions.getByPlaceholder('Search all content...');
+		await expect(searchInput).toBeVisible();
+		await expect(searchInput).toBeFocused();
+
+		await searchInput.fill('missing agent session sentinel');
+		await expect(agentSessions.getByText('No sessions match your search')).toBeVisible();
+		await expect(agentSessions.getByText('Review Checkpoint')).toBeHidden();
+
+		await agentSessions.locator('input[placeholder="Search all content..."] + button').click();
+		await expect(searchInput).toHaveValue('');
+		await expect(agentSessions.getByText('Review Checkpoint')).toBeVisible();
+		await expect(agentSessions.getByText('Implementation Draft')).toBeVisible();
+	});
+
 	test('quick resumes a stubbed Codex agent session into an AI tab', async () => {
 		await stubCodexAgentSessions(electronApp, seededWorkbench);
 		const agentSessions = await openAgentSessions(window);
