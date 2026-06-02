@@ -252,6 +252,10 @@ processManager.on('stderr', (sessionId, data) => { ... });
 processManager.on('command-exit', (sessionId, code) => { ... });
 ```
 
+### Owned vs. Observed Sessions
+
+`ProcessManager` governs **owned sessions** — processes Maestro itself spawned. For these, Maestro holds the PTY/child-process handle and has full control: it can write to stdin, interrupt, resize, and kill the process, and it receives the structured event stream above. Separately, Maestro tracks **observed sessions** — agent sessions started _outside_ Maestro by the same user on the same host (e.g., the agent CLI run directly, or launched over SSH onto this machine). These are discovered by file-watching each agent's session-storage directory (`ExternalSessionCoordinator`, `src/main/storage/external-session-coordinator.ts`) rather than by owning a process. Observation is strictly **read-only**: Maestro can light up the thinking pill from on-disk activity but has no process handle, so it **cannot send input to, interrupt, or kill** an externally-spawned agent. See [CLAUDE-AGENTS.md → External Activity Tracking](CLAUDE-AGENTS.md) and [AGENT-INFRA.md → External Activity Watching](docs/agent-guides/AGENT-INFRA.md).
+
 ---
 
 ## Layer Stack System

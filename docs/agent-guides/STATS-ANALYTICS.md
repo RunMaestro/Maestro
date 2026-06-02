@@ -24,6 +24,23 @@ Renderer (Usage Dashboard)        Main Process
                                     +-----------+
 ```
 
+## Ingestion Paths
+
+Query events reach the stats DB through exactly one path today:
+
+- **Process-driven** (`src/main/process-listeners/stats-listener.ts`): the path for sessions **Maestro spawned**. `ProcessManager` emits a `query-complete` event carrying `QueryCompleteData` (`src/main/process-manager/types.ts`) when a batch query finishes; the listener calls `db.insertQueryEvent(...)` (with retry/backoff) and broadcasts `stats:updated`.
+
+> **Not yet wired — file-driven ingestion.** Remote Agent Visibility (Phases 1–4) added the ability to _observe_ externally-spawned agent sessions via `ExternalSessionCoordinator` + per-agent storage watchers, but those observed sessions currently feed **only the thinking pill** (over `window.maestro.storage.onExternalActivity`). They are **not** ingested into the stats DB, so they do not appear in the Usage Dashboard. A future "file-driven" ingester (e.g. `external-stats-ingester.ts`) would subscribe to the coordinator and `insertQueryEvent` for observed sessions; it does not exist yet. See [AGENT-INFRA.md](AGENT-INFRA.md#externalsessioncoordinator-boot-contract) for the coordinator contract.
+
+### The `source` field
+
+`QueryEvent.source` / `QueryCompleteData.source` is `'user' | 'auto'` and records **who initiated the query**, not which ingestion path produced it:
+
+- `'user'` — an interactive query the user typed.
+- `'auto'` — an Auto Run / playbook task.
+
+Filter by it via `StatsFilters.source` (`src/shared/stats-types.ts`), which the aggregation layer honors and the dashboard exposes as the user-vs-automation breakdown (`StatsAggregation.bySource`). Note: because external observed sessions are not ingested, there is currently no `source` value distinguishing "owned" from "observed" usage — that distinction lives only in the live `SessionActivityEvent.source` (`'local' | 'external'`) used by the thinking pill, not in the stats schema.
+
 ## SQLite Database
 
 ### Location

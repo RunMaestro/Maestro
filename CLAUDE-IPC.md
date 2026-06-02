@@ -54,6 +54,24 @@ The `window.maestro` API exposes the following namespaces:
 - `documentGraph` - File watching: watchFolder, unwatchFolder
 - `documentGraph` - Real-time updates via `documentGraph:filesChanged` event
 
+## Storage Observability (External Sessions)
+
+- `storage` - Observe agent sessions Maestro did not spawn (Remote Agent Visibility). Backed by `ExternalSessionCoordinator` in the main process; see [CLAUDE-AGENTS.md](CLAUDE-AGENTS.md) → External Activity Tracking.
+
+```typescript
+window.maestro.storage = {
+  // One-shot hydration: snapshot of every session the coordinator is
+  // currently tracking. Resolves to [] when the coordinator is unavailable
+  // (older builds, web renderer, ProcessManager not ready at boot).
+  listExternalSessions: () => Promise<SessionActivityEvent[]>,
+  // Live subscription: callback fires with the full tracked-session array on
+  // each coalesced transition. Returns an unsubscribe function — call on unmount.
+  onExternalActivity: (callback: (events: SessionActivityEvent[]) => void) => () => void,
+};
+```
+
+**Events:** `storage:externalActivity` is pushed from the main process whenever the coordinator's debounced `state-changed` snapshot fires. `SessionActivityEvent` is defined in `src/shared/sessionActivity.ts` and carries `source: 'local' | 'external'` so consumers can tell owned sessions apart from observed ones.
+
 ## History API
 
 Per-agent history storage with 5,000 entries per agent (up from 1,000 global). Each agent's history is stored as a JSON file in `~/Library/Application Support/Maestro/history/{sessionId}.json`.

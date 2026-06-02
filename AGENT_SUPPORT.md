@@ -8,15 +8,16 @@ This guide explains how to add support for a new AI coding agent (provider) in M
 
 The multi-provider refactoring has established the pluggable architecture for supporting multiple AI agents:
 
-| Component           | Status      | Description                                                        |
-| ------------------- | ----------- | ------------------------------------------------------------------ |
-| Capability System   | ✅ Complete | `AgentCapabilities` interface, capability gating in UI             |
-| Generic Identifiers | ✅ Complete | `claudeSessionId` → `agentSessionId` across 47+ files              |
-| Session Storage     | ✅ Complete | `AgentSessionStorage` interface, Claude + OpenCode implementations |
-| Output Parsers      | ✅ Complete | `AgentOutputParser` interface, Claude + OpenCode parsers           |
-| Error Handling      | ✅ Complete | `AgentError` types, detection patterns, recovery UI                |
-| IPC API             | ✅ Complete | `window.maestro.agentSessions.*` replaces `claude.*`               |
-| UI Capability Gates | ✅ Complete | Features hidden/shown based on agent capabilities                  |
+| Component                  | Status      | Description                                                                                                                                                                                                                                                                           |
+| -------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Capability System          | ✅ Complete | `AgentCapabilities` interface, capability gating in UI                                                                                                                                                                                                                                |
+| Generic Identifiers        | ✅ Complete | `claudeSessionId` → `agentSessionId` across 47+ files                                                                                                                                                                                                                                 |
+| Session Storage            | ✅ Complete | `AgentSessionStorage` interface, Claude + OpenCode implementations                                                                                                                                                                                                                    |
+| Output Parsers             | ✅ Complete | `AgentOutputParser` interface, Claude + OpenCode parsers                                                                                                                                                                                                                              |
+| Error Handling             | ✅ Complete | `AgentError` types, detection patterns, recovery UI                                                                                                                                                                                                                                   |
+| IPC API                    | ✅ Complete | `window.maestro.agentSessions.*` replaces `claude.*`                                                                                                                                                                                                                                  |
+| UI Capability Gates        | ✅ Complete | Features hidden/shown based on agent capabilities                                                                                                                                                                                                                                     |
+| External Activity Tracking | ✅ Complete | Observes externally-spawned sessions via per-agent `getStorageWatchSpec()` watchers, surfaced in the thinking pill. Supported: Claude Code, Codex, Copilot CLI, Factory Droid, OpenCode. N/A: `terminal` (no session storage). Stats-DB ingestion of observed sessions not yet wired. |
 
 ### Adding a New Agent
 

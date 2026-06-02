@@ -576,6 +576,55 @@ interface AgentSessionInfo {
 }
 ```
 
+### External Activity Watching (`getStorageWatchSpec()`)
+
+Beyond reading historical sessions, a storage class can opt into **live observation** of sessions Maestro did not spawn (Remote Agent Visibility, Phases 1–4). `BaseSessionStorage.getStorageWatchSpec()` returns `null` by default — meaning "this agent exposes no observable session files." Override it to return a `StorageWatchSpec`:
+
+```typescript
+interface StorageWatchSpec {
+	// Absolute directory the watcher observes recursively. A missing or
+	// unreadable directory is tolerated (the agent may be uninstalled here).
+	rootDir: string;
+	// Pure, synchronous map from a path relative to rootDir to a session
+	// match, or null for paths that aren't tracked session files (sidecars,
+	// wrong depth, junk). Called on every chokidar event — MUST NOT do I/O.
+	fileMatcher: (relPath: string) => { sessionId: string; projectPath: string } | null;
+	// Which filesystem signal counts as "new activity":
+	//  'append' (default) — one growing JSONL file per session (Claude, Codex,
+	//                       Copilot, Factory Droid). Activity = the file grew.
+	//  'create'           — one file per message in a per-session dir
+	//                       (OpenCode). Activity = a new file appeared.
+	activityEvent?: 'append' | 'create';
+}
+```
+
+The matcher is the load-bearing part: it runs on every filesystem event under `rootDir`, so it must be pure, synchronous, and tolerant of unrelated paths. Example (Claude, two-segment `<encoded-project>/<id>.jsonl` layout):
+
+```typescript
+getStorageWatchSpec(): StorageWatchSpec {
+	return {
+		rootDir: this.getProjectsDir(),
+		activityEvent: 'append',
+		fileMatcher: (relPath) => {
+			const segments = relPath.split(path.sep);
+			if (segments.length !== 2) return null;
+			const [encodedProject, filename] = segments;
+			if (!encodedProject || !filename.endsWith('.jsonl')) return null;
+			const sessionId = filename.slice(0, -'.jsonl'.length);
+			return sessionId ? { sessionId, projectPath: encodedProject } : null;
+		},
+	};
+}
+```
+
+### `ExternalSessionCoordinator` Boot Contract
+
+`ExternalSessionCoordinator` (`src/main/storage/external-session-coordinator.ts`) is the hub that turns watch specs into renderer-visible activity:
+
+- **When it starts:** constructed in `setupIpcHandlers()` in `src/main/index.ts`, _after_ `initializeSessionStorages()` so `getAllSessionStorages()` returns a fully-populated registry. It requires the `ProcessManager` (used to classify each observed session as `local` vs `external` by matching the agent-native session id against live Maestro-spawned processes). If the ProcessManager isn't ready, the coordinator stays `null` and the feature degrades to "no external activity."
+- **What it does:** `start()` iterates the storage registry, calls `getStorageWatchSpec()` on each storage, and spins up one `SessionFileWatcher` per non-null spec. Per-watcher start failures are logged, not fatal. It coalesces watcher `'append'`/`'create'`/`'idle'` events into a single tracked-session map and emits a debounced `'state-changed'` snapshot. It is stopped on quit via `stopExternalSessionCoordinator()` (wired through the quit handler).
+- **How it bridges to the renderer:** `src/main/ipc/handlers/external-sessions.ts` forwards the coordinator's `'state-changed'` event over the `storage:externalActivity` channel and answers `storage:list-external-sessions` for one-shot hydration. The preload (`src/main/preload/storage.ts`) exposes these as `window.maestro.storage.onExternalActivity(callback)` and `window.maestro.storage.listExternalSessions()`. See [IPC-PATTERNS.md](IPC-PATTERNS.md) for the subscribe-returns-unsubscribe pattern these follow, and [CLAUDE-IPC.md](../../CLAUDE-IPC.md) for the bridge method signatures.
+
 ---
 
 ## Adding a New Agent (Checklist)

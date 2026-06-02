@@ -106,6 +106,23 @@ The backing data (`AGENT_DISPLAY_NAMES` record, `BETA_AGENTS` set) is module-pri
 - **Known Limitations:**
   - **SSH interactive mode:** PTY-based interactive Copilot sessions do not go through `wrapSpawnWithSsh()`, so interactive Copilot over SSH remote is not supported. Batch mode (`-p`) over SSH works correctly via the standard child-process spawner.
 
+## External Activity Tracking
+
+Maestro observes agent sessions it did **not** spawn by watching each agent's on-disk session-storage directory (Remote Agent Visibility, Phases 1–4). Each storage class advertises what to watch via `getStorageWatchSpec()`; the `ExternalSessionCoordinator` starts one watcher per participating agent and surfaces live activity in the thinking pill.
+
+| Agent         | Storage Path                                   | File Model         | Participates? |
+| ------------- | ---------------------------------------------- | ------------------ | ------------- |
+| Claude Code   | `~/.claude/projects/<encoded>/<id>.jsonl`      | JSONL append       | Yes           |
+| Codex         | `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` | JSONL append       | Yes           |
+| Copilot CLI   | `~/.copilot/session-state/<id>/events.jsonl`   | JSONL append       | Yes           |
+| Factory Droid | `~/.factory/sessions/<encoded>/<uuid>.jsonl`   | JSONL append       | Yes           |
+| OpenCode      | `~/.local/share/opencode/.../<msg>.json`       | Per-message create | Yes           |
+| Terminal      | (no storage)                                   | —                  | No            |
+
+**Same-user limitation.** Watching relies on local filesystem permissions, so it only sees sessions started by the _same_ OS user on the _same_ host (including agents launched over SSH onto this machine). Cross-user observation and true remote watching are out of scope.
+
+**v1 visual decision.** Externally-observed sessions render **identically** to local sessions in the thinking pill — there is intentionally no separate badge or styling distinguishing "observed" from "owned" in this first version. (The underlying `SessionActivityEvent` does carry a `source: 'local' | 'external'` field, so a future visual distinction is cheap to add.)
+
 ## Adding New Agents
 
 To add support for a new agent:
