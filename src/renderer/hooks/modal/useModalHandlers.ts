@@ -28,6 +28,7 @@ import { useTabStore } from '../../stores/tabStore';
 import { useGroupChatStore } from '../../stores/groupChatStore';
 import { useAgentStore } from '../../stores/agentStore';
 import { useFeedbackDraftStore } from '../../stores/feedbackDraftStore';
+import { useQuitWhenIdleStore } from '../../stores/quitWhenIdleStore';
 import { useAgentErrorRecovery } from '../agent/useAgentErrorRecovery';
 import { getInitialRenameValue } from '../../utils/tabHelpers';
 import { CONDUCTOR_BADGES } from '../../constants/conductorBadges';
@@ -76,6 +77,7 @@ export interface ModalHandlersReturn {
 	// Quit handlers
 	handleConfirmQuit: () => void;
 	handleCancelQuit: () => void;
+	handleQuitWhenIdle: () => void;
 
 	// Celebration handlers
 	onKeyboardMasteryLevelUp: (level: number) => void;
@@ -289,6 +291,15 @@ export function useModalHandlers(
 
 	const handleCancelQuit = useCallback(() => {
 		getModalActions().setQuitConfirmModalOpen(false);
+		window.maestro.app.cancelQuit();
+	}, []);
+
+	// Defer the quit: close the modal, release this quit attempt so the app keeps
+	// running, and arm the idle watcher (useQuitWhenIdle) to quit once everything
+	// finishes.
+	const handleQuitWhenIdle = useCallback(() => {
+		getModalActions().setQuitConfirmModalOpen(false);
+		useQuitWhenIdleStore.getState().arm();
 		window.maestro.app.cancelQuit();
 	}, []);
 
@@ -1031,6 +1042,7 @@ export function useModalHandlers(
 		// Quit handlers
 		handleConfirmQuit,
 		handleCancelQuit,
+		handleQuitWhenIdle,
 
 		// Celebration handlers
 		onKeyboardMasteryLevelUp,

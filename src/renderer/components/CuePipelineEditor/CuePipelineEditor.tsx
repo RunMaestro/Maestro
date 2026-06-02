@@ -430,6 +430,19 @@ function CuePipelineEditorInner({
 	// is centered in view.
 	const handleArrange = useCallback(
 		(mode: 'tidy' | 'untangle') => {
+			// Snapshot the CURRENTLY rendered node widths before mutating state.
+			// Nodes render at `width: max-content`, so the layout can only space
+			// columns correctly if it knows each node's real width - ReactFlow has
+			// already measured them. Keyed by canonical node id (strip the
+			// `${pipelineId}:` composite prefix). Heights are fixed per type, so
+			// only width needs measuring.
+			const measuredWidths = new Map<string, number>();
+			for (const n of reactFlowInstance.getNodes()) {
+				if (typeof n.width !== 'number' || n.width <= 0) continue;
+				const sep = n.id.indexOf(':');
+				measuredWidths.set(sep === -1 ? n.id : n.id.slice(sep + 1), n.width);
+			}
+
 			setPipelineState((prev) => {
 				if (prev.selectedPipelineId === null) {
 					// All-Pipelines view: no edges between cards to cross, so both
@@ -448,7 +461,7 @@ function CuePipelineEditorInner({
 				return {
 					...prev,
 					pipelines: prev.pipelines.map((p) =>
-						p.id === prev.selectedPipelineId ? { ...p, nodes: layout(p) } : p
+						p.id === prev.selectedPipelineId ? { ...p, nodes: layout(p, measuredWidths) } : p
 					),
 				};
 			});

@@ -16,6 +16,8 @@ import type { SshRemoteSettingsStore } from '../utils/ssh-remote-resolver';
 import { getWindowsSpawnConfig } from './group-chat-config';
 import type { AgentConfig } from '../agents/definitions';
 import type { AgentSshRemoteConfig } from '../../shared/types';
+import { resolveClaudeSpawnMode, applyClaudeSpawnDecision } from '../agents/resolveClaudeSpawnMode';
+import type { ClaudeTokenMode } from '../../shared/claudeTokenMode';
 
 export interface SpawnGroupChatAgentConfig {
 	/** Stable session id for the process manager */
@@ -40,6 +42,14 @@ export interface SpawnGroupChatAgentConfig {
 	sshRemoteConfig?: AgentSshRemoteConfig | null;
 	/** SSH settings store (required when sshRemoteConfig is active) */
 	sshStore?: SshRemoteSettingsStore | null;
+	/**
+	 * Claude token source for this agent (Claude Code only). Drives the
+	 * maestro-p TUI vs `claude --print` choice. Ignored for non-Claude agents
+	 * and SSH spawns (the TUI wrapper needs the local claude binary).
+	 */
+	tokenMode?: ClaudeTokenMode;
+	/** Optional per-agent maestro-p script override. */
+	maestroPPath?: string;
 	/** Process manager to invoke */
 	processManager: IProcessManager;
 	/** Whether the spawned process is read-only (moderator / synthesis = true) */
@@ -92,6 +102,39 @@ export async function spawnGroupChatAgent(
 	let spawnPrompt: string | undefined = prompt;
 	let spawnEnvVars = customEnvVars;
 	let spawnSshStdinScript: string | undefined;
+
+	// Resolve the Claude token source (maestro-p TUI vs `claude --print`) and,
+	// for the interactive/dynamic case, rewrite the spawn to run maestro-p via
+	// process.execPath. The resolver returns API for non-Claude agents and SSH
+	// spawns, so this is a no-op outside the local Claude Code interactive path.
+	// maestro-p reads the prompt the same way claude does (positional after the
+	// args processManager appends), so prompt delivery is unchanged.
+	const claudeDecision = resolveClaudeSpawnMode({
+		agent,
+		tokenMode: config.tokenMode ?? 'api',
+		sshEnabled: !!sshRemoteConfig?.enabled,
+		command: baseCommand,
+		sessionCustomEnvVars: customEnvVars,
+		maestroPPath: config.maestroPPath,
+		now: new Date(),
+	});
+	if (claudeDecision.mode === 'interactive' && claudeDecision.maestroPBinPath) {
+		const applied = applyClaudeSpawnDecision({
+			decision: claudeDecision,
+			interactiveModeArgs: agent.interactiveModeArgs,
+			command: baseCommand,
+			args,
+			customEnvVars,
+		});
+		spawnCommand = applied.command;
+		spawnArgs = applied.args;
+		spawnEnvVars = applied.customEnvVars;
+		if (debugLabel) {
+			console.log(
+				`[GroupChat:Debug] ${debugLabel} resolved to maestro-p (tokenMode=${config.tokenMode})`
+			);
+		}
+	}
 
 	// Apply SSH wrapping if configured
 	if (sshRemoteConfig?.enabled && !sshStore) {

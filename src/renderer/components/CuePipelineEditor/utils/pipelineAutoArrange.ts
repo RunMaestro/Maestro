@@ -48,13 +48,32 @@ import {
 // whole graph snaps onto a clean grid where every gap (and every straight edge)
 // reads as the same 25px. Bump this to widen the grid.
 const NODE_GAP = 25;
-// Step between successive node top-left corners = footprint + gap. Using the
-// canonical node footprint (NODE_BG_WIDTH/HEIGHT, the box that always encloses a
-// rendered node) guarantees at least NODE_GAP of clear space between every node,
-// so columns never overlap and rows line up on a single grid.
+
+// Real rendered node heights by type (the wrapper height each node component
+// sets). The connection handle on every node sits at its VERTICAL CENTER
+// (ReactFlow's default `top: 50%`), so to make an edge between two nodes a
+// single straight horizontal segment their CENTERS must share a y - aligning
+// top-left corners is NOT enough when the heights differ (a 60px trigger feeding
+// an 80px agent would otherwise jog 10px, the jagged line out of every trigger).
+// Keep these in sync with the `height:` in each node component under nodes/.
+const TRIGGER_HEIGHT = 60;
+const DEFAULT_NODE_HEIGHT = 80; // agent, command, error
+const ROW_HEIGHT = DEFAULT_NODE_HEIGHT; // tallest node drives the uniform row slot
+
+function nodeHeight(node: PipelineNode): number {
+	return node.type === 'trigger' ? TRIGGER_HEIGHT : DEFAULT_NODE_HEIGHT;
+}
+
+// Horizontal step between rank columns = footprint + gap. The canonical node
+// footprint (NODE_BG_WIDTH, the box that always encloses a rendered node)
+// guarantees at least NODE_GAP of clear space between columns so they never
+// overlap and read as distinct vertical bands.
 // (All-Pipelines card packing uses a shortest-column masonry; see arrangePipelineGroups.)
-const NODE_COL_SPACING = NODE_BG_WIDTH + NODE_GAP; // horizontal distance between rank columns
-const NODE_ROW_SPACING = NODE_BG_HEIGHT + NODE_GAP; // vertical distance between nodes in a column
+const NODE_COL_SPACING = NODE_BG_WIDTH + NODE_GAP;
+// Vertical step between rows = real node height + gap. Using the REAL height
+// (not the 100px footprint) gives a true 25px of visible space between stacked
+// nodes instead of ~45px of phantom padding, tightening the grid vertically.
+const NODE_ROW_SPACING = ROW_HEIGHT + NODE_GAP;
 
 // Visible breathing room between adjacent group cards in the All-Pipelines grid.
 const GROUP_GAP = 64;
@@ -289,9 +308,11 @@ function weaklyConnectedComponents(pipeline: CuePipeline): PipelineNode[][] {
 	);
 }
 
-// Vertical gap between two stacked component bands. One full row pitch keeps
-// every band's top on the same global grid as the rows inside it.
-const BAND_GAP = NODE_ROW_SPACING;
+// Vertical gap between two stacked component bands. Zero so independent chains
+// sit on ONE continuous uniform grid: the last row of a band and the first row
+// of the next are exactly one row pitch (ROW_HEIGHT + NODE_GAP) apart, the same
+// rhythm as rows within a column. No special inter-band whitespace.
+const BAND_GAP = 0;
 
 /**
  * Shared layout for both single-pipeline buttons. Lays each weakly-connected
@@ -305,16 +326,30 @@ const BAND_GAP = NODE_ROW_SPACING;
  * single nodes are packed into a grid band beneath the chains rather than
  * forming a tall thin column. Returns a NEW nodes array; the input is not mutated.
  */
-function arrangeByColumns(pipeline: CuePipeline, untangle: boolean): PipelineNode[] {
+function arrangeByColumns(
+	pipeline: CuePipeline,
+	untangle: boolean,
+	nodeWidths?: Map<string, number>
+): PipelineNode[] {
 	if (pipeline.nodes.length <= 1) return pipeline.nodes;
 
 	const components = weaklyConnectedComponents(pipeline);
 	const linked = components.filter((c) => c.length > 1);
 	const isolated = components.filter((c) => c.length === 1).map((c) => c[0]);
 
-	const arranged: PipelineNode[] = [];
-	let bandTop = 0;
+	// Nodes render at `width: max-content`, so a command node with a long path or
+	// a long agent name is far wider than the canonical NODE_BG_WIDTH footprint.
+	// A fixed column pitch would let those wide nodes overrun the next column
+	// (the "3-node chain crammed into 2 columns" bug). Use the REAL measured
+	// width when available so each column clears the previous one. Fallback to
+	// the footprint when unmeasured (e.g. unit tests, first paint).
+	const widthOf = (node: PipelineNode): number => nodeWidths?.get(node.id) ?? NODE_BG_WIDTH;
 
+	// Pass 1: rank + order each linked component, and record the WIDEST node at
+	// each GLOBAL rank across all components so every component shares one column
+	// grid (triggers all in column 0, their targets all in column 1, ...).
+	const banded: Array<{ byRank: Map<number, PipelineNode[]> }> = [];
+	const maxWidthByRank = new Map<number, number>();
 	for (const comp of linked) {
 		const compIds = new Set(comp.map((n) => n.id));
 		const compEdges = pipeline.edges.filter((e) => compIds.has(e.source) && compIds.has(e.target));
@@ -335,18 +370,50 @@ function arrangeByColumns(pipeline: CuePipeline, untangle: boolean): PipelineNod
 			for (const group of byRank.values()) group.sort(byCurrentPosition);
 		}
 
+		for (const [r, group] of byRank) {
+			const widest = Math.max(...group.map(widthOf));
+			maxWidthByRank.set(r, Math.max(maxWidthByRank.get(r) ?? 0, widest));
+		}
+		banded.push({ byRank });
+	}
+
+	// Column x-origins: cumulative left edges. Each column starts NODE_GAP past
+	// the right edge of the widest node in the previous column, so there is ALWAYS
+	// at least 25px of clear space between columns no matter how wide a node is.
+	// A chain of N ranks therefore yields N distinct, non-overlapping columns.
+	const columnX = new Map<number, number>();
+	let x = 0;
+	for (const r of [...maxWidthByRank.keys()].sort((a, b) => a - b)) {
+		columnX.set(r, x);
+		x += (maxWidthByRank.get(r) ?? NODE_BG_WIDTH) + NODE_GAP;
+	}
+
+	const arranged: PipelineNode[] = [];
+	let bandTop = 0;
+
+	// Pass 2: place each node at its column's left edge (nodes are LEFT-aligned
+	// within a column per the user's spec) and centered in its row slot.
+	for (const { byRank } of banded) {
 		// Band height is driven by the tallest column. Every column is TOP-aligned
-		// to the band so rows line up across columns on one grid (no per-column
-		// centering, which would knock nodes off the shared row lines and bend the
-		// edges). The tallest column sizes the band so the next one never overlaps.
+		// to the band so row 0 of each column shares one horizontal line, row 1 the
+		// next, and so on (no per-column centering, which would knock nodes off the
+		// shared row lines). The tallest column sizes the band so the next one
+		// never overlaps.
 		const tallestColumn = Math.max(1, ...[...byRank.values()].map((g) => g.length));
 		const bandHeight = tallestColumn * NODE_ROW_SPACING;
 
 		for (const [r, group] of byRank) {
 			group.forEach((node, i) => {
+				// Center each node within its ROW_HEIGHT slot so its handle (at the
+				// node's vertical center) lands on the row's shared center line. A
+				// short trigger and a tall agent in the same row then have aligned
+				// handles, so the edge between them is a single straight horizontal
+				// segment instead of a jog. Equivalent to: slotTop + (ROW_HEIGHT - h)/2.
+				const slotTop = bandTop + i * NODE_ROW_SPACING;
+				const y = slotTop + (ROW_HEIGHT - nodeHeight(node)) / 2;
 				arranged.push({
 					...node,
-					position: { x: r * NODE_COL_SPACING, y: bandTop + i * NODE_ROW_SPACING },
+					position: { x: columnX.get(r) ?? 0, y },
 				});
 			});
 		}
@@ -369,18 +436,31 @@ function arrangeByColumns(pipeline: CuePipeline, untangle: boolean): PipelineNod
 /**
  * "Tidy" layout. Aligns the current arrangement into flow-depth columns without
  * reshuffling node order within a column, so edge crossings are left intact.
+ *
+ * @param nodeWidths optional map of node id → measured rendered width. Columns
+ *   are spaced from these so wide `max-content` nodes never overrun the next
+ *   column. Falls back to the canonical footprint width per node when absent.
  */
-export function arrangePipelineNodes(pipeline: CuePipeline): PipelineNode[] {
-	return arrangeByColumns(pipeline, false);
+export function arrangePipelineNodes(
+	pipeline: CuePipeline,
+	nodeWidths?: Map<string, number>
+): PipelineNode[] {
+	return arrangeByColumns(pipeline, false, nodeWidths);
 }
 
 /**
  * "Arrange" layout. Same columns as Tidy, but reorders nodes within each column
  * to minimize edge crossings (seeded by current order so it untangles rather
  * than scrambles).
+ *
+ * @param nodeWidths optional map of node id → measured rendered width (see
+ *   arrangePipelineNodes).
  */
-export function untanglePipelineNodes(pipeline: CuePipeline): PipelineNode[] {
-	return arrangeByColumns(pipeline, true);
+export function untanglePipelineNodes(
+	pipeline: CuePipeline,
+	nodeWidths?: Map<string, number>
+): PipelineNode[] {
+	return arrangeByColumns(pipeline, true, nodeWidths);
 }
 
 interface GroupInfo {

@@ -224,6 +224,11 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 					state: s.state,
 					inputMode: s.inputMode,
 					cwd: s.cwd,
+					// Claude token-source selection, so web-initiated group chat
+					// participants honor the maestro-p TUI / API / dynamic choice.
+					enableMaestroP: s.enableMaestroP,
+					maestroPMode: s.maestroPMode,
+					maestroPPath: s.maestroPPath,
 					groupId: s.groupId || null,
 					groupName: group?.name || null,
 					groupEmoji: group?.emoji || null,

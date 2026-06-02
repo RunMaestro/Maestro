@@ -84,6 +84,7 @@ export interface AppModalsProps {
 	onCloseConfirmModal: () => void;
 	onConfirmQuit: () => void;
 	onCancelQuit: () => void;
+	onQuitWhenIdle: () => void;
 	/** Session IDs with active auto-runs (batch processing) */
 	activeBatchSessionIds?: string[];
 
@@ -460,6 +461,8 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		confirmModalOpen,
 		quitConfirmModalOpen,
 		activeTerminalTasks,
+		activeCueRunCount,
+		activeGroupChatCount,
 		hasFeedbackDraft,
 		newInstanceModalOpen,
 		editAgentModalOpen,
@@ -494,13 +497,45 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 			quitConfirmModalOpen: s.modals.get('quitConfirm')?.open ?? false,
 			activeTerminalTasks: (
 				s.modals.get('quitConfirm')?.data as
-					| { activeTerminalTasks?: string[]; hasFeedbackDraft?: boolean }
+					| {
+							activeTerminalTasks?: string[];
+							activeCueRunCount?: number;
+							activeGroupChatCount?: number;
+							hasFeedbackDraft?: boolean;
+					  }
 					| undefined
 			)?.activeTerminalTasks,
+			activeCueRunCount:
+				(
+					s.modals.get('quitConfirm')?.data as
+						| {
+								activeTerminalTasks?: string[];
+								activeCueRunCount?: number;
+								activeGroupChatCount?: number;
+								hasFeedbackDraft?: boolean;
+						  }
+						| undefined
+				)?.activeCueRunCount ?? 0,
+			activeGroupChatCount:
+				(
+					s.modals.get('quitConfirm')?.data as
+						| {
+								activeTerminalTasks?: string[];
+								activeCueRunCount?: number;
+								activeGroupChatCount?: number;
+								hasFeedbackDraft?: boolean;
+						  }
+						| undefined
+				)?.activeGroupChatCount ?? 0,
 			hasFeedbackDraft:
 				(
 					s.modals.get('quitConfirm')?.data as
-						| { activeTerminalTasks?: string[]; hasFeedbackDraft?: boolean }
+						| {
+								activeTerminalTasks?: string[];
+								activeCueRunCount?: number;
+								activeGroupChatCount?: number;
+								hasFeedbackDraft?: boolean;
+						  }
 						| undefined
 				)?.hasFeedbackDraft ?? false,
 			newInstanceModalOpen: s.modals.get('newInstance')?.open ?? false,
@@ -562,6 +597,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		onCloseConfirmModal,
 		onConfirmQuit,
 		onCancelQuit,
+		onQuitWhenIdle,
 		activeBatchSessionIds,
 		// Session modals
 		onCloseNewInstanceModal,
@@ -862,8 +898,11 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				quitConfirmModalOpen={quitConfirmModalOpen}
 				onConfirmQuit={onConfirmQuit}
 				onCancelQuit={onCancelQuit}
+				onQuitWhenIdle={onQuitWhenIdle}
 				activeBatchSessionIds={activeBatchSessionIds}
 				activeTerminalTasks={activeTerminalTasks ?? []}
+				activeCueRunCount={activeCueRunCount}
+				activeGroupChatCount={activeGroupChatCount}
 				hasFeedbackDraft={hasFeedbackDraft}
 			/>
 

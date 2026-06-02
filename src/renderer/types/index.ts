@@ -852,10 +852,16 @@ export interface Session {
 	// Symphony contribution metadata (only set for Symphony sessions)
 	symphonyMetadata?: SymphonySessionMetadata;
 
-	// Per-session Batch Mode opt-in (Claude Code only). When true, the spawner
-	// auto-switches between maestro-p (Time Limits / Max plan) and `claude
-	// --print` (API Limits / per-token) based on the latest usage snapshot.
+	// Per-session token-source opt-in (Claude Code only). When true, the spawner
+	// runs through maestro-p (Time Limits / Max plan) instead of `claude --print`
+	// (API Limits / per-token). The exact behavior is refined by `maestroPMode`.
 	enableMaestroP?: boolean;
+	// Refines `enableMaestroP`: 'interactive' always drives the maestro-p TUI,
+	// 'dynamic' (default when absent) auto-switches between maestro-p and `claude
+	// --print` based on the latest usage snapshot. Together the pair encodes the
+	// three user-facing modes: API (enableMaestroP off), TUI (on + interactive),
+	// Dynamic (on + dynamic). See `getClaudeTokenMode` in shared/claudeTokenMode.
+	maestroPMode?: 'interactive' | 'dynamic';
 	// Optional override for the maestro-p binary path. When empty/undefined,
 	// the spawner uses the bundled script (`process.resourcesPath/maestro-p.js`
 	// in packaged builds, `dist/cli/maestro-p.js` in dev).

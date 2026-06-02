@@ -1432,6 +1432,11 @@ function setupIpcHandlers() {
 				customArgs: s.customArgs,
 				customEnvVars: s.customEnvVars,
 				customModel: s.customModel,
+				// Claude token-source selection, so group chat participants honor
+				// the same maestro-p TUI / API / dynamic choice as their agent.
+				enableMaestroP: s.enableMaestroP,
+				maestroPMode: s.maestroPMode,
+				maestroPPath: s.maestroPPath,
 				sshRemoteName,
 				// Pass full SSH config for remote execution support
 				sshRemoteConfig: s.sessionSshRemoteConfig,

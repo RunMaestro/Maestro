@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo } from 'react';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { ThinkingStatusPill } from '../ThinkingStatusPill';
+import { QuitWhenIdleIndicator } from '../QuitWhenIdleIndicator';
 import { MergeProgressOverlay } from '../MergeProgressOverlay';
 import { ExecutionQueueIndicator } from '../ExecutionQueueIndicator';
 import { ContextWarningSash } from '../ContextWarningSash';
@@ -314,6 +315,9 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 			className="relative p-4 border-t"
 			style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgSidebar }}
 		>
+			{/* QuitWhenIdleIndicator - sits above the thinking pill while a deferred quit is armed */}
+			<QuitWhenIdleIndicator theme={theme} />
+
 			{/* ThinkingStatusPill - only show in AI mode when there are thinking items or AutoRun */}
 			{session.inputMode === 'ai' && (thinkingItems.length > 0 || autoRunState?.isRunning) && (
 				<ThinkingStatusPill

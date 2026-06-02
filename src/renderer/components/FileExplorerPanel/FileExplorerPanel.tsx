@@ -558,8 +558,26 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 						</div>
 					</button>
 				</div>
-				{/* Path row */}
-				<div className="flex items-center gap-1.5 min-w-0 overflow-hidden justify-center">
+				{/* Path row — doubles as a drop target for the workspace root. The path
+				    points at the root working directory, so dropping a tree item (or an
+				    OS file) here moves/imports it to the root, same as the bottom
+				    receptacle. Uses '' as the destination, mirroring handleFolderDrop. */}
+				<div
+					className="flex items-center gap-1.5 min-w-0 overflow-hidden justify-center rounded transition-colors"
+					onDragEnter={(e) => handleFolderDragEnter(e, '')}
+					onDragOver={(e) => handleFolderDragOver(e, '')}
+					onDragLeave={handleFolderDragLeave}
+					onDrop={(e) => handleFolderDrop(e, '')}
+					style={
+						dragOverFolder === '' && !isExternalDrag
+							? {
+									outline: `1px dashed ${theme.colors.accent}`,
+									outlineOffset: '-2px',
+									backgroundColor: `${theme.colors.accent}20`,
+								}
+							: undefined
+					}
+				>
 					{session.sshRemote && (
 						<span
 							className="flex-shrink-0"
@@ -603,33 +621,6 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 					</span>
 				</div>
 			</div>
-
-			{/* Move-to-root receptacle — appears only while an in-tree row is being
-			    dragged, giving items buried in subfolders a target to land back at
-			    the workspace root. Mirrors the Left Bar's "Drop here to ungroup"
-			    zone for UI consistency. Items already at root are rejected by the
-			    drag-over handler (it sets dropEffect 'none'), so the highlight only
-			    lights up for drops that would actually move something. */}
-			{internalDragActive && (
-				<div
-					className="mb-2 px-3 py-2 rounded border-2 border-dashed text-center text-xs flex items-center justify-center gap-1.5 transition-colors"
-					onDragEnter={(e) => handleFolderDragEnter(e, '')}
-					onDragOver={(e) => handleFolderDragOver(e, '')}
-					onDragLeave={handleFolderDragLeave}
-					onDrop={(e) => handleFolderDrop(e, '')}
-					style={{
-						borderColor: theme.colors.accent,
-						color: theme.colors.textDim,
-						backgroundColor:
-							dragOverFolder === '' && !isExternalDrag
-								? `${theme.colors.accent}25`
-								: `${theme.colors.accent}10`,
-					}}
-				>
-					<FolderUp className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
-					Drop here to move to root
-				</div>
-			)}
 
 			{/* File tree content */}
 			{session.fileTreeError ? (
@@ -794,6 +785,33 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 					onMouseEnter={handleOverlayMouseEnter}
 					onMouseLeave={handleOverlayMouseLeave}
 				/>
+			)}
+
+			{/* Move-to-root receptacle — appears only while an in-tree row is being
+			    dragged, giving items buried in subfolders a target to land back at
+			    the workspace root. Sits at the bottom of the panel, just above the
+			    stats bar. Mirrors the Left Bar's "Drop here to ungroup" zone for UI
+			    consistency. Items already at root never trigger it (the dragstart
+			    handler suppresses it when every dragged item is already at root). */}
+			{internalDragActive && (
+				<div
+					className="flex-shrink-0 mt-2 px-3 py-2 rounded border-2 border-dashed text-center text-xs flex items-center justify-center gap-1.5 transition-colors"
+					onDragEnter={(e) => handleFolderDragEnter(e, '')}
+					onDragOver={(e) => handleFolderDragOver(e, '')}
+					onDragLeave={handleFolderDragLeave}
+					onDrop={(e) => handleFolderDrop(e, '')}
+					style={{
+						borderColor: theme.colors.accent,
+						color: theme.colors.textDim,
+						backgroundColor:
+							dragOverFolder === '' && !isExternalDrag
+								? `${theme.colors.accent}25`
+								: `${theme.colors.accent}10`,
+					}}
+				>
+					<FolderUp className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+					Drop here to move to root
+				</div>
 			)}
 
 			{/* Status bar */}

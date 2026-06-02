@@ -533,9 +533,9 @@ export const AITab = memo(function AITab({
 				aria-hidden="true"
 			/>
 
-			{/* Tab name - show full name for active tab, truncate inactive tabs */}
+			{/* Tab name - always show the full name; the bar scrolls when crowded */}
 			<span
-				className={`text-xs font-medium ${isActive ? 'whitespace-nowrap' : 'truncate max-w-[120px]'}`}
+				className="text-xs font-medium whitespace-nowrap"
 				style={{ color: isActive ? theme.colors.textMain : theme.colors.textDim }}
 			>
 				{displayName}

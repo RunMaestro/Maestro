@@ -164,6 +164,7 @@ import { useActiveSession } from './hooks/session/useActiveSession';
 import { InlineWizardProvider, useInlineWizardContext } from './contexts/InlineWizardContext';
 import { ToastContainer } from './components/Toast';
 import { CenterFlash } from './components/CenterFlash';
+import { useQuitWhenIdle } from './hooks/useQuitWhenIdle';
 
 // Import services
 // gitService — now used in useModalHandlers (Tier 3C)
@@ -965,6 +966,7 @@ function MaestroConsoleInner() {
 		handleCloseRenameTabModal,
 		handleConfirmQuit,
 		handleCancelQuit,
+		handleQuitWhenIdle,
 		onKeyboardMasteryLevelUp,
 		handleKeyboardMasteryCelebrationClose,
 		handleStandingOvationClose,
@@ -1632,6 +1634,9 @@ function MaestroConsoleInner() {
 
 	// Auto Run achievement tracking (progress intervals, peak usage stats)
 	useAutoRunAchievements({ activeBatchSessionIds });
+
+	// "Quit when idle" watcher - quits the app once all operations finish once armed
+	useQuitWhenIdle();
 
 	// Handler for switching to autorun tab - shows setup modal if no folder configured
 	const handleSetActiveRightTab = useCallback(
@@ -2795,6 +2800,7 @@ function MaestroConsoleInner() {
 					onCloseConfirmModal={handleCloseConfirmModal}
 					onConfirmQuit={handleConfirmQuit}
 					onCancelQuit={handleCancelQuit}
+					onQuitWhenIdle={handleQuitWhenIdle}
 					activeBatchSessionIds={activeBatchSessionIds}
 					// AppSessionModals props
 					onCloseNewInstanceModal={handleCloseNewInstanceModal}

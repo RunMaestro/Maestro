@@ -2085,6 +2085,56 @@ describe('FileExplorerPanel', () => {
 			expect(onShowFlash).toHaveBeenCalledWith('Moved "index.ts"');
 		});
 
+		it('suppresses the move-to-root receptacle when dragging a file already at root', () => {
+			const { container, queryByText } = renderWithExpanded();
+			// package.json lives at the workspace root, so there's nowhere to move
+			// it - the receptacle must not appear even after the deferred tick.
+			const rootRow = getRow(container, 'package.json');
+			act(() => {
+				fireEvent.dragStart(rootRow, { dataTransfer: makeDataTransfer() });
+				vi.advanceTimersByTime(0);
+			});
+			expect(queryByText('Drop here to move to root')).toBeNull();
+		});
+
+		it('moves a nested file to the root by dropping on the path row', async () => {
+			const rename = vi.fn().mockResolvedValue({ success: true });
+			(window as any).maestro = { fs: { rename } };
+			const onShowFlash = vi.fn();
+
+			const { container, getByText } = render(
+				<FileExplorerPanel
+					{...defaultProps}
+					session={createMockSession({ fileExplorerExpanded: ['src'], fileTree: mockFileTree })}
+					filteredFileTree={mockFileTree}
+					refreshFileTree={vi.fn().mockResolvedValue({ totalChanges: 1 })}
+					onShowFlash={onShowFlash}
+				/>
+			);
+
+			// Drag the nested src/index.ts, then drop onto the path display (which
+			// points at the root working directory).
+			const nestedRow = getRow(container, 'index.ts');
+			act(() => {
+				fireEvent.dragStart(nestedRow, { dataTransfer: makeDataTransfer() });
+			});
+
+			const pathTarget = getByText('/Users/test/project');
+			const dt = makeDataTransfer({ 'application/x-maestro-file-path': 'src/index.ts' });
+			await act(async () => {
+				fireEvent.drop(pathTarget, { dataTransfer: dt });
+				await Promise.resolve();
+				await Promise.resolve();
+			});
+
+			expect(rename).toHaveBeenCalledWith(
+				'/Users/test/project/src/index.ts',
+				'/Users/test/project/index.ts',
+				undefined
+			);
+			expect(onShowFlash).toHaveBeenCalledWith('Moved "index.ts"');
+		});
+
 		it('moves a root file into a folder via fs.rename with absolute paths', async () => {
 			const rename = vi.fn().mockResolvedValue({ success: true });
 			(window as any).maestro = { fs: { rename } };

@@ -331,7 +331,7 @@ export const BrowserTabItem = memo(function BrowserTabItem({
 			)}
 
 			<span
-				className={`text-xs font-medium truncate ${isActive ? 'max-w-[180px]' : 'max-w-[140px]'}`}
+				className="text-xs font-medium whitespace-nowrap"
 				style={{ color: isActive ? theme.colors.textMain : theme.colors.textDim }}
 			>
 				{label}

@@ -65,7 +65,7 @@ interface UseDragToMoveResult {
 	handleMoveAutoRenameAll: () => void;
 	handleMoveSkipConflicts: () => void;
 	closeMoveConflict: () => void;
-	handleInternalDragStart: () => void;
+	handleInternalDragStart: (showRootReceptacle: boolean) => void;
 	handleInternalDragEnd: () => void;
 }
 
@@ -493,8 +493,12 @@ export function useDragToMove({
 	// receptacle reflows the panel, and Chromium ABORTS an in-flight drag if the
 	// layout mutates synchronously inside the dragstart handler. Letting dragstart
 	// finish first (drag image captured) before the DOM grows keeps the drag alive.
-	const handleInternalDragStart = useCallback(() => {
+	const handleInternalDragStart = useCallback((showRootReceptacle: boolean) => {
 		dragActiveRef.current = true;
+		// Skip mounting the receptacle when every dragged item already sits at the
+		// workspace root - there's nothing to move there. dragActiveRef still flips
+		// so dragend cleanup stays symmetric.
+		if (!showRootReceptacle) return;
 		setTimeout(() => {
 			if (dragActiveRef.current) setInternalDragActive(true);
 		}, 0);

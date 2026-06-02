@@ -37,27 +37,26 @@ export const TOAST_WIDTH_DIMENSIONS: Record<
 /**
  * Distance (px) the toast stack is inset from the window's right edge - it sits
  * at `right-4` (1rem). The Right Bar is flush to the window edge, so a 'dynamic'
- * toast set to the full panel width would have its left edge spill this far past
- * the panel's left boundary. Subtract the gutter from the dynamic width so the
- * toast's left edge lines up with the column instead of overflowing it.
+ * toast needs this gutter mirrored on both sides: one to clear the window edge
+ * on the right, one to leave a matching gap before the panel's left boundary.
  */
 export const TOAST_VIEWPORT_GUTTER = 16;
 
 /**
  * Resolve the min/max width for a toast. Fixed presets return their static
- * dimensions; 'dynamic' pins both bounds to the current Right Bar width (less
- * the corner gutter, see {@link TOAST_VIEWPORT_GUTTER}) so the toast's left edge
- * aligns with the panel column rather than spilling past it. The stored Right
- * Bar width is its expanded size even while the panel is collapsed, so the toast
- * still matches what the column would be when opened, and it re-resolves
- * whenever the user drags the panel's resize handle.
+ * dimensions; 'dynamic' pins both bounds to the current Right Bar width less a
+ * gutter on each side ({@link TOAST_VIEWPORT_GUTTER}) so the toast sits centered
+ * in the column with even left/right padding instead of spilling past it. The
+ * stored Right Bar width is its expanded size even while the panel is collapsed,
+ * so the toast still matches what the column would be when opened, and it
+ * re-resolves whenever the user drags the panel's resize handle.
  */
 export const getToastWidthDimensions = (
 	width: ToastWidth,
 	rightPanelWidth: number
 ): { minWidth: number; maxWidth: number } => {
 	if (width === 'dynamic') {
-		const dynamicWidth = Math.max(0, rightPanelWidth - TOAST_VIEWPORT_GUTTER);
+		const dynamicWidth = Math.max(0, rightPanelWidth - 2 * TOAST_VIEWPORT_GUTTER);
 		return { minWidth: dynamicWidth, maxWidth: dynamicWidth };
 	}
 	return TOAST_WIDTH_DIMENSIONS[width];

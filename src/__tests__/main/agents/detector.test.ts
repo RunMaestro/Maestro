@@ -1603,6 +1603,47 @@ describe('agent-detector', () => {
 			expect(options).toEqual(['', 'low', 'medium', 'high', 'xhigh', 'max']);
 		});
 
+		it('should discover Claude effort levels from the probe warning (exit 0, no parenthetical in --help)', async () => {
+			// Regression guard: a later Claude CLI build no longer rejects an invalid
+			// --effort value. It prints a soft warning on stderr, exits 0, and still runs
+			// --version. The warning names the valid set as `Valid values: ...` (not the
+			// commander `It must be one of: ...`). Both --help and the old probe regex miss
+			// this, so the effort dropdown/pill silently vanishes unless we parse it. See
+			// the discoverConfigOptions probe fallback in detector.ts.
+			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
+				const binaryName = args[0];
+				if (binaryName === 'claude') {
+					return { stdout: '/usr/bin/claude\n', stderr: '', exitCode: 0 };
+				}
+				if (binaryName === 'bash') {
+					return { stdout: '/bin/bash\n', stderr: '', exitCode: 0 };
+				}
+				if (cmd === '/usr/bin/claude' && args[0] === '--help') {
+					return {
+						stdout:
+							'  --effort <level>                                  Effort level for the current session\n',
+						stderr: '',
+						exitCode: 0,
+					};
+				}
+				if (cmd === '/usr/bin/claude' && args[0] === '--effort') {
+					return {
+						stdout: 'claude-code/2.0.0\n',
+						stderr:
+							"Warning: Unknown --effort value '__maestro_probe__' - ignoring it and using the default effort. Valid values: low, medium, high, xhigh, max.\n",
+						exitCode: 0,
+					};
+				}
+				return { stdout: '', stderr: 'not found', exitCode: 1 };
+			});
+
+			detector.clearCache();
+			await detector.detectAgents();
+
+			const options = await detector.discoverConfigOptions('claude-code', 'effort');
+			expect(options).toEqual(['', 'low', 'medium', 'high', 'xhigh', 'max']);
+		});
+
 		it('should discover reasoning levels for Codex from models_cache.json', async () => {
 			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
 				const binaryName = args[0];

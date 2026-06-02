@@ -546,9 +546,12 @@ export class AgentDetector {
 						}
 
 						// Fallback: newer CLI builds dropped the parenthetical from --help but
-						// still validate the flag. Probe with an invalid value; commander rejects
-						// it during argument parsing (before any API call) and names the valid set:
-						// `error: option '--effort <level>' argument 'x' is invalid. It must be one of: low, medium, high, xhigh, max`
+						// still validate the flag. Probe with an invalid value and read back the
+						// valid set the CLI names. Two known phrasings, depending on the build:
+						//   - commander rejection (non-zero exit):
+						//     `error: option '--effort <level>' argument 'x' is invalid. It must be one of: low, medium, high, xhigh, max`
+						//   - soft warning (exit 0, still runs --version):
+						//     `Warning: Unknown --effort value 'x' - ignoring it and using the default effort. Valid values: low, medium, high, xhigh, max.`
 						const probe = await execFileNoThrow(
 							command,
 							['--effort', '__maestro_probe__', '--version'],
@@ -556,7 +559,9 @@ export class AgentDetector {
 							env
 						);
 						const probeOutput = `${probe.stderr}\n${probe.stdout}`;
-						const probeMatch = probeOutput.match(/--effort\b[^\n]*?must be one of:\s*([^\n]+)/i);
+						const probeMatch = probeOutput.match(
+							/--effort\b[^\n]*?(?:must be one of|valid values):\s*([^\n]+)/i
+						);
 						if (probeMatch) {
 							const levels = probeMatch[1]
 								.split(',')
