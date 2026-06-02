@@ -139,7 +139,7 @@ export function createFsApi() {
 		/**
 		 * Get file/directory stats
 		 */
-		stat: (filePath: string, sshRemoteId?: string): Promise<FileStat> =>
+		stat: (filePath: string, sshRemoteId?: string): Promise<FileStat | null> =>
 			ipcRenderer.invoke('fs:stat', filePath, sshRemoteId),
 
 		/**

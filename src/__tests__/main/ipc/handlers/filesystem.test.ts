@@ -375,6 +375,36 @@ describe('filesystem handlers', () => {
 			expect(result.size).toBe(2048);
 			expect(result.isFile).toBe(true);
 		});
+
+		it('should return null for a missing path (ENOENT) instead of throwing', async () => {
+			// Unresolved targets (e.g. the Document Graph following a [[wiki]] link
+			// to a note that does not exist) must resolve cleanly to null, mirroring
+			// the fs:readFile ENOENT contract.
+			vi.mocked(fs.stat).mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+
+			const handler = registeredHandlers.get('fs:stat');
+			const result = await handler!({}, '/test/missing (Segment).md');
+
+			expect(result).toBeNull();
+		});
+
+		it('should return null when a path component is not a directory (ENOTDIR)', async () => {
+			vi.mocked(fs.stat).mockRejectedValue(
+				Object.assign(new Error('ENOTDIR'), { code: 'ENOTDIR' })
+			);
+
+			const handler = registeredHandlers.get('fs:stat');
+			const result = await handler!({}, '/test/file.md/phantom-sub');
+
+			expect(result).toBeNull();
+		});
+
+		it('should still throw for genuine stat errors (e.g. EACCES)', async () => {
+			vi.mocked(fs.stat).mockRejectedValue(Object.assign(new Error('EACCES'), { code: 'EACCES' }));
+
+			const handler = registeredHandlers.get('fs:stat');
+			await expect(handler!({}, '/test/forbidden.txt')).rejects.toThrow('Failed to get file stats');
+		});
 	});
 
 	describe('fs:writeFile', () => {

@@ -95,7 +95,10 @@ export function useFilePreviewHandlers({
 				// it's gone, prompt for a destination instead of resurrecting it.
 				let stillExists = true;
 				try {
-					await window.maestro.fs.stat(path, filePreviewSshRemoteId);
+					// stat returns null for a missing path (ENOENT) and throws only on
+					// genuine errors; treat both as "gone" so we never resurrect a ghost.
+					const st = await window.maestro.fs.stat(path, filePreviewSshRemoteId);
+					if (!st) stillExists = false;
 				} catch {
 					stillExists = false;
 				}

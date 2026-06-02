@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+	TOAST_VIEWPORT_GUTTER,
 	TOAST_WIDTHS,
 	TOAST_WIDTH_DIMENSIONS,
 	getToastWidthDimensions,
@@ -69,18 +70,32 @@ describe('toastWidth', () => {
 			}
 		});
 
-		it('pins both bounds to the right-panel width for "dynamic"', () => {
-			expect(getToastWidthDimensions('dynamic', 384)).toEqual({ minWidth: 384, maxWidth: 384 });
+		it('pins both bounds to the right-panel width less the corner gutter for "dynamic"', () => {
+			const expected = 384 - TOAST_VIEWPORT_GUTTER;
+			expect(getToastWidthDimensions('dynamic', 384)).toEqual({
+				minWidth: expected,
+				maxWidth: expected,
+			});
 		});
 
 		it('tracks a resized right panel for "dynamic"', () => {
-			expect(getToastWidthDimensions('dynamic', 360).minWidth).toBe(360);
-			expect(getToastWidthDimensions('dynamic', 640).maxWidth).toBe(640);
+			expect(getToastWidthDimensions('dynamic', 360).minWidth).toBe(360 - TOAST_VIEWPORT_GUTTER);
+			expect(getToastWidthDimensions('dynamic', 640).maxWidth).toBe(640 - TOAST_VIEWPORT_GUTTER);
+		});
+
+		it('insets the dynamic width so the left edge does not overflow the panel column', () => {
+			// Full panel width would push the left edge past the column by the
+			// corner gutter; subtracting it keeps the toast inside the column.
+			expect(getToastWidthDimensions('dynamic', 400).maxWidth).toBeLessThan(400);
 		});
 
 		it('produces an exact (non-flexible) width for "dynamic" so the toast fills the column', () => {
 			const dims = getToastWidthDimensions('dynamic', 512);
 			expect(dims.minWidth).toBe(dims.maxWidth);
+		});
+
+		it('never returns a negative width for an absurdly narrow panel', () => {
+			expect(getToastWidthDimensions('dynamic', 8).minWidth).toBe(0);
 		});
 	});
 

@@ -14,7 +14,7 @@
  * - Frontmatter parsing (not needed for AI responses)
  */
 
-import React, { memo, useCallback, useState } from 'react';
+import React, { memo, useCallback, useMemo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import rehypeKatex from 'rehype-katex';
 import remarkBreaks from 'remark-breaks';
@@ -26,6 +26,7 @@ import { triggerHaptic, HAPTIC_PATTERNS } from './constants';
 import { REMARK_GFM_PLUGINS } from '../../shared/markdownPlugins';
 import { extractHexColor } from '../../shared/hexColor';
 import { remarkPromoteDisplayMath } from '../../shared/remarkPromoteDisplayMath';
+import { normalizeChatDisplayMath } from '../../shared/normalizeChatDisplayMath';
 import { BionifyText, getBionifyReadingModeStyles } from '../../renderer/utils/bionifyReadingMode';
 import 'katex/dist/katex.min.css';
 
@@ -306,6 +307,11 @@ export const MobileMarkdownRenderer = memo(
 		const colors = useThemeColors();
 		const { isDark } = useTheme();
 		const syntaxStyle = isDark ? vscDarkPlus : vs;
+
+		// Rewrite multi-line `$$...$$` so delimiters sit on their own lines before
+		// remark-math parses (otherwise the block fence breaks and swallows the
+		// rest of the message). See #622.
+		const normalizedContent = useMemo(() => normalizeChatDisplayMath(content), [content]);
 
 		return (
 			<div
@@ -609,7 +615,7 @@ export const MobileMarkdownRenderer = memo(
 						),
 					}}
 				>
-					{content}
+					{normalizedContent}
 				</ReactMarkdown>
 			</div>
 		);
