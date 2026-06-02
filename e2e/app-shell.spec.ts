@@ -4660,6 +4660,7 @@ test.describe('App shell seeded workbench', () => {
 
 	test('creates and closes a new AI tab from the TabBar', async () => {
 		const tabRows = window.locator('[data-tab-id]');
+		await expect(tabRows.first()).toBeVisible();
 		const initialTabCount = await tabRows.count();
 
 		await window.getByTitle(/New tab/).click();
@@ -6286,6 +6287,22 @@ test.describe('App shell seeded workbench', () => {
 		await expect(agentSessions.getByRole('checkbox', { name: 'Named' })).toBeVisible();
 		await expect(agentSessions.getByRole('checkbox', { name: 'Show All' })).toBeVisible();
 		await expect(agentSessions.getByText('No agent sessions found for this project')).toBeVisible();
+	});
+
+	test('creates a fresh AI tab from the Agent Sessions New Session action', async () => {
+		const tabRows = window.locator('[data-tab-id]');
+		await expect(tabRows.first()).toBeVisible();
+		const initialTabCount = await tabRows.count();
+		const agentSessions = await openAgentSessions(window);
+
+		await agentSessions.getByRole('button', { name: 'New Session' }).click();
+
+		await expect(agentSessions.getByText('Agent Sessions for E2E Workbench')).toBeHidden();
+		await expect(tabRows).toHaveCount(initialTabCount + 1);
+		await expect(
+			window.locator('[data-tab-id]').filter({ hasText: 'New Session' }).first()
+		).toBeVisible();
+		await expect(window.getByTitle('Send message')).toBeVisible();
 	});
 
 	test('lists filters and opens stubbed Codex agent sessions', async () => {
