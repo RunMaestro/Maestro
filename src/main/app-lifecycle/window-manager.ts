@@ -3,7 +3,7 @@
  * Handles window state persistence, DevTools, crash detection, and auto-updater initialization.
  */
 
-import { BrowserWindow, Menu, ipcMain } from 'electron';
+import { BrowserWindow, Menu, ipcMain, screen } from 'electron';
 import type Store from 'electron-store';
 import type { WindowState } from '../stores/types';
 import { logger } from '../utils/logger';
@@ -135,6 +135,39 @@ async function reportCrashToSentry(
 	}
 }
 
+/**
+ * Resolves the window position to use, dropping saved coordinates that would
+ * place the window off every visible display. Windows reports bounds of
+ * (-32000, -32000) for a minimized window, and unplugging a monitor leaves
+ * stale coordinates pointing at a display that no longer exists. In both cases
+ * the restored window is invisible. When the saved position is unusable we
+ * return undefined x/y so Electron centers the window on the primary display.
+ */
+function resolveVisibleWindowPosition(state: WindowState): { x?: number; y?: number } {
+	if (typeof state.x !== 'number' || typeof state.y !== 'number') {
+		return {};
+	}
+
+	// The window is reachable if the center of its title bar lands inside the
+	// work area of some display, with a bottom margin so the title bar can't sit
+	// below the screen edge where it can't be grabbed.
+	const BOTTOM_MARGIN = 80;
+	const TITLE_BAR_SAMPLE_Y = 16; // approximate title-bar height (px)
+	const titleBar = { x: state.x + state.width / 2, y: state.y + TITLE_BAR_SAMPLE_Y };
+
+	const isOnScreen = screen.getAllDisplays().some((display) => {
+		const { x, y, width, height } = display.workArea;
+		return (
+			titleBar.x >= x &&
+			titleBar.x <= x + width &&
+			titleBar.y >= y &&
+			titleBar.y <= y + height - BOTTOM_MARGIN
+		);
+	});
+
+	return isOnScreen ? { x: state.x, y: state.y } : {};
+}
+
 /** Dependencies for window manager */
 export interface WindowManagerDependencies {
 	/** Store for window state persistence */
@@ -185,12 +218,15 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 
 	return {
 		createWindow: (): BrowserWindow => {
-			// Restore saved window state
+			// Restore saved window state, discarding off-screen coordinates so the
+			// window can never spawn invisible (saved while minimized -> -32000 on
+			// Windows, or on an unplugged monitor); fall back to a centered window.
 			const savedState = windowStateStore.store;
+			const position = resolveVisibleWindowPosition(savedState);
 
 			const mainWindow = new BrowserWindow({
-				x: savedState.x,
-				y: savedState.y,
+				x: position.x,
+				y: position.y,
 				width: savedState.width,
 				height: savedState.height,
 				minWidth: 1000,
@@ -228,10 +264,13 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 				try {
 					const isMaximized = mainWindow.isMaximized();
 					const isFullScreen = mainWindow.isFullScreen();
+					const isMinimized = mainWindow.isMinimized();
 					const bounds = mainWindow.getBounds();
 
-					// Only save bounds if not maximized/fullscreen (to restore proper size later)
-					if (!isMaximized && !isFullScreen) {
+					// Only save bounds when the window is in its normal state. While
+					// minimized, Windows reports bounds of (-32000, -32000), which would
+					// otherwise persist and make the window spawn off-screen next launch.
+					if (!isMaximized && !isFullScreen && !isMinimized) {
 						windowStateStore.set('x', bounds.x);
 						windowStateStore.set('y', bounds.y);
 						windowStateStore.set('width', bounds.width);

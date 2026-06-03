@@ -45,6 +45,7 @@ const mockWindowInstance = {
 	setFullScreen: vi.fn(),
 	isMaximized: vi.fn().mockReturnValue(false),
 	isFullScreen: vi.fn().mockReturnValue(false),
+	isMinimized: vi.fn().mockReturnValue(false),
 	getBounds: vi.fn().mockReturnValue({ x: 100, y: 100, width: 1200, height: 800 }),
 	webContents: mockWebContents,
 	on: vi.fn((event: string, handler: () => void) => {
@@ -63,6 +64,7 @@ class MockBrowserWindow {
 	setFullScreen = mockWindowInstance.setFullScreen;
 	isMaximized = mockWindowInstance.isMaximized;
 	isFullScreen = mockWindowInstance.isFullScreen;
+	isMinimized = mockWindowInstance.isMinimized;
 	getBounds = mockWindowInstance.getBounds;
 	webContents = mockWindowInstance.webContents;
 	on = mockWindowInstance.on;
@@ -79,6 +81,12 @@ vi.mock('electron', () => ({
 	BrowserWindow: MockBrowserWindow,
 	ipcMain: {
 		handle: (...args: unknown[]) => mockHandle(...args),
+	},
+	Menu: {
+		buildFromTemplate: vi.fn(() => ({ popup: vi.fn() })),
+	},
+	screen: {
+		getAllDisplays: () => [{ workArea: { x: 0, y: 0, width: 1920, height: 1080 } }],
 	},
 }));
 
@@ -142,6 +150,7 @@ describe('app-lifecycle/window-manager', () => {
 		// Reset mock implementations
 		mockWindowInstance.isMaximized.mockReturnValue(false);
 		mockWindowInstance.isFullScreen.mockReturnValue(false);
+		mockWindowInstance.isMinimized.mockReturnValue(false);
 		mockWindowInstance.getBounds.mockReturnValue({ x: 100, y: 100, width: 1200, height: 800 });
 		mockWebContents.getType.mockReturnValue('window');
 		mockGuestWebContents.getType.mockReturnValue('webview');
@@ -216,6 +225,94 @@ describe('app-lifecycle/window-manager', () => {
 				sandbox: true,
 				webviewTag: true,
 			});
+		});
+
+		it('restores on-screen saved coordinates as-is', async () => {
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+
+			const windowManager = createWindowManager({
+				windowStateStore: mockWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['windowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/path/to/preload.js',
+				rendererProductionUrl: 'app://app/index.html',
+				devServerUrl: 'http://localhost:5173',
+				useNativeTitleBar: false,
+				autoHideMenuBar: false,
+			});
+
+			windowManager.createWindow();
+
+			expect(lastBrowserWindowOptions?.x).toBe(50);
+			expect(lastBrowserWindowOptions?.y).toBe(50);
+		});
+
+		it('drops off-screen saved coordinates so the window spawns centered', async () => {
+			// -32000,-32000 is what Windows reports for a minimized window. If it
+			// ever lands in the store it must not be restored verbatim.
+			mockWindowStateStore.store = {
+				x: -32000,
+				y: -32000,
+				width: 1000,
+				height: 600,
+				isMaximized: false,
+				isFullScreen: false,
+			};
+
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+
+			const windowManager = createWindowManager({
+				windowStateStore: mockWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['windowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/path/to/preload.js',
+				rendererProductionUrl: 'app://app/index.html',
+				devServerUrl: 'http://localhost:5173',
+				useNativeTitleBar: false,
+				autoHideMenuBar: false,
+			});
+
+			windowManager.createWindow();
+
+			expect(lastBrowserWindowOptions?.x).toBeUndefined();
+			expect(lastBrowserWindowOptions?.y).toBeUndefined();
+		});
+
+		it('does not persist bounds while the window is minimized', async () => {
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+
+			const windowManager = createWindowManager({
+				windowStateStore: mockWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['windowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/path/to/preload.js',
+				rendererProductionUrl: 'app://app/index.html',
+				devServerUrl: 'http://localhost:5173',
+				useNativeTitleBar: false,
+				autoHideMenuBar: false,
+			});
+
+			windowManager.createWindow();
+
+			mockWindowInstance.isMinimized.mockReturnValue(true);
+			mockWindowInstance.getBounds.mockReturnValue({
+				x: -32000,
+				y: -32000,
+				width: 1000,
+				height: 600,
+			});
+
+			windowCloseHandler?.();
+
+			const setKeys = mockWindowStateStore.set.mock.calls.map((call: unknown[]) => call[0]);
+			expect(setKeys).not.toContain('x');
+			expect(setKeys).not.toContain('y');
+			expect(setKeys).not.toContain('width');
+			expect(setKeys).not.toContain('height');
+			expect(setKeys).toContain('isMaximized');
 		});
 
 		it('blocks unsafe webview attachments that use disallowed partitions or URLs', async () => {
