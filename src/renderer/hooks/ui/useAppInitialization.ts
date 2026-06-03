@@ -116,9 +116,9 @@ export function useAppInitialization(): AppInitializationReturn {
 
 	// --- GitHub CLI availability check ---
 	useEffect(() => {
-		window.maestro.git
-			.checkGhCli()
-			.then((status) => {
+		window.maestro?.git
+			?.checkGhCli()
+			?.then((status) => {
 				setGhCliAvailable(status.installed && status.authenticated);
 			})
 			.catch(() => {
@@ -136,9 +136,9 @@ export function useAppInitialization(): AppInitializationReturn {
 		if (suppressWindowsWarning) return;
 		if (windowsWarningShownRef.current) return;
 
-		window.maestro.power
-			.getStatus()
-			.then((status) => {
+		window.maestro?.power
+			?.getStatus()
+			?.then((status) => {
 				if (status.platform === 'win32') {
 					windowsWarningShownRef.current = true;
 					setWindowsWarningModalOpen(true);
@@ -151,9 +151,9 @@ export function useAppInitialization(): AppInitializationReturn {
 
 	// --- Load file gist URLs from settings ---
 	useEffect(() => {
-		window.maestro.settings
-			.get('fileGistUrls')
-			.then((savedUrls) => {
+		window.maestro?.settings
+			?.get('fileGistUrls')
+			?.then((savedUrls) => {
 				if (savedUrls && typeof savedUrls === 'object') {
 					useTabStore.getState().setFileGistUrls(savedUrls as Record<string, GistInfo>);
 				}
@@ -168,13 +168,13 @@ export function useAppInitialization(): AppInitializationReturn {
 		const { fileGistUrls: current } = useTabStore.getState();
 		const updated = { ...current, [filePath]: gistInfo };
 		useTabStore.getState().setFileGistUrls(updated);
-		window.maestro.settings.set('fileGistUrls', updated);
+		window.maestro?.settings?.set?.('fileGistUrls', updated);
 	}, []);
 
 	// --- Sync beta updates setting to electron-updater ---
 	useEffect(() => {
 		if (settingsLoaded) {
-			window.maestro.updates.setAllowPrerelease(enableBetaUpdates);
+			window.maestro?.updates?.setAllowPrerelease?.(enableBetaUpdates);
 		}
 	}, [settingsLoaded, enableBetaUpdates]);
 
@@ -184,6 +184,7 @@ export function useAppInitialization(): AppInitializationReturn {
 
 		const runCheck = async () => {
 			try {
+				if (!window.maestro?.updates?.check) return;
 				const result = await window.maestro.updates.check(enableBetaUpdates);
 				if (result.updateAvailable && !result.error) {
 					getModalActions().setUpdateCheckModalOpen(true);
@@ -215,6 +216,7 @@ export function useAppInitialization(): AppInitializationReturn {
 
 		const timer = setTimeout(async () => {
 			try {
+				if (!window.maestro?.leaderboard?.sync) return;
 				const result = await window.maestro.leaderboard.sync({ email, authToken });
 
 				if (result.success && result.found && result.data) {
