@@ -14,6 +14,7 @@ import {
 	UsageStats,
 	ToolType,
 	ThinkingMode,
+	QueuedItem,
 } from '../types';
 import { generateId } from './ids';
 import { getAutoRunFolderPath } from './existingDocsDetector';
@@ -774,10 +775,45 @@ export function closeTab(
 				}
 			: sessionWithOrphans;
 
+	// Re-target any queued items that pointed at the just-closed tab. A queued
+	// message belongs to the session, not to a single tab — closing the tab must
+	// not orphan or drop it. We route orphaned items to a surviving AI tab (the
+	// active one if it's still alive, otherwise the first remaining tab, which
+	// always exists since closing the last tab spawns a fresh one). Without this,
+	// the dequeue paths fall back to whatever tab happens to be active and
+	// processQueuedItem aborts on the dead tabId — that abort drives the session
+	// idle, which the runtime queue-recovery effect treats as "stuck," so it
+	// re-dispatches the next item and drains the whole queue in one cascade.
+	const sessionWithRetargetedQueue = retargetQueuedItemsFromClosedTab(finalSession, tabId);
+
 	return {
 		closedTab,
-		session: finalSession,
+		session: sessionWithRetargetedQueue,
 	};
+}
+
+/**
+ * After a tab is removed from `session.aiTabs`, reassign any `executionQueue`
+ * items still pointing at the closed tab to a surviving AI tab so they remain
+ * deliverable. Returns the session unchanged when nothing needs re-targeting.
+ */
+function retargetQueuedItemsFromClosedTab(session: Session, closedTabId: string): Session {
+	const queue = session.executionQueue ?? [];
+	if (!queue.some((item) => item.tabId === closedTabId)) {
+		return session;
+	}
+	// Prefer the still-active AI tab; fall back to the first remaining tab. In the
+	// terminal/file-fallback close branches activeTabId can still point at the
+	// closed tab, so the find() guards against handing back a dead id.
+	const survivingTabId =
+		session.aiTabs.find((tab) => tab.id === session.activeTabId)?.id ?? session.aiTabs[0]?.id;
+	if (!survivingTabId) {
+		return session;
+	}
+	const retargeted: QueuedItem[] = queue.map((item) =>
+		item.tabId === closedTabId ? { ...item, tabId: survivingTabId } : item
+	);
+	return { ...session, executionQueue: retargeted };
 }
 
 /**

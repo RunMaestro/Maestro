@@ -1375,6 +1375,11 @@ export const TerminalOutput = memo(
 		isAtBottomRef.current = isAtBottom;
 		// Track whether auto-scroll is paused because user scrolled up (state so button re-renders)
 		const [autoScrollPaused, setAutoScrollPaused] = useState(false);
+		// Ref mirror of autoScrollPaused for the MutationObserver closure so a freshly
+		// restored scroll position can suppress auto-scroll synchronously, before the
+		// state-driven re-render re-runs the observer effect (avoids a one-frame yank).
+		const autoScrollPausedRef = useRef(false);
+		autoScrollPausedRef.current = autoScrollPaused;
 		// Guard flag: prevents the scroll handler from pausing auto-scroll
 		// during programmatic scrollTo() calls from the MutationObserver effect.
 		const isProgrammaticScrollRef = useRef(false);
@@ -1874,7 +1879,7 @@ export const TerminalOutput = memo(
 			const container = scrollContainerRef.current;
 			if (!container) return;
 
-			const shouldAutoScroll = () => !autoScrollPaused || isAtBottomRef.current;
+			const shouldAutoScroll = () => !autoScrollPausedRef.current || isAtBottomRef.current;
 
 			const scrollToBottom = () => {
 				if (!scrollContainerRef.current) return;
@@ -1932,6 +1937,17 @@ export const TerminalOutput = memo(
 						// Clamp to max scrollable area
 						const maxScroll = Math.max(0, scrollHeight - clientHeight);
 						const targetScroll = Math.min(initialScrollTop, maxScroll);
+						// If the saved position is not at the bottom, pause auto-scroll so the
+						// MutationObserver doesn't immediately yank the view back down (uses the
+						// same 50px bottom threshold as handleScrollInner). Flip the refs first
+						// so the observer's live shouldAutoScroll() sees the pause this frame,
+						// before the state update re-renders.
+						if (targetScroll < maxScroll - 50) {
+							autoScrollPausedRef.current = true;
+							isAtBottomRef.current = false;
+							setAutoScrollPaused(true);
+							setIsAtBottom(false);
+						}
 						scrollContainerRef.current.scrollTop = targetScroll;
 					}
 				});

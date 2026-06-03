@@ -68,6 +68,14 @@ export interface UIStoreState {
 	// keys. Persisted via settings write-through (mirrors bookmarksCollapsed) and
 	// hydrated by loadAllSettings on startup.
 	hiddenQuotaAccounts: Record<string, string[]>;
+
+	// Auto-refresh cadence for the Usage Dashboard provider quota panels, keyed
+	// by provider id ('claude-code' | 'codex'); value is the interval in ms
+	// (0 = off). Persisted via settings write-through (same as hiddenQuotaAccounts)
+	// and hydrated by loadAllSettings on startup. The main-process background
+	// scheduler (usage-refresh-scheduler.ts) reads the same persisted map and is
+	// the sole driver of background sampling on this cadence.
+	usageRefreshIntervals: Record<string, number>;
 }
 
 export interface UIStoreActions {
@@ -143,6 +151,9 @@ export interface UIStoreActions {
 
 	// Toggle a provider quota account between hidden and visible.
 	toggleHiddenQuotaAccount: (providerId: string, accountKey: string) => void;
+
+	// Set the auto-refresh interval (ms; 0 = off) for a provider quota panel.
+	setUsageRefreshInterval: (providerId: string, ms: number) => void;
 }
 
 export type UIStore = UIStoreState & UIStoreActions;
@@ -173,6 +184,15 @@ function persistHiddenQuotaAccounts(value: Record<string, string[]>): void {
 	window.maestro?.settings?.set('hiddenQuotaAccounts', value);
 }
 
+/**
+ * Persist the per-provider quota auto-refresh intervals so the dropdown survives
+ * app restarts and the main-process background scheduler can read the cadence.
+ * Hydrated back into this store on startup by `loadAllSettings` in settingsStore.
+ */
+function persistUsageRefreshIntervals(value: Record<string, number>): void {
+	window.maestro?.settings?.set('usageRefreshIntervals', value);
+}
+
 export const useUIStore = create<UIStore>()((set) => ({
 	// --- State ---
 	leftSidebarOpen: true,
@@ -197,6 +217,7 @@ export const useUIStore = create<UIStore>()((set) => ({
 	autoFollowEnabled: false,
 	usageDashboardViewMode: 'overview',
 	hiddenQuotaAccounts: {},
+	usageRefreshIntervals: {},
 
 	// --- Actions ---
 	setLeftSidebarOpen: (v) => set((s) => ({ leftSidebarOpen: resolve(v, s.leftSidebarOpen) })),
@@ -274,5 +295,12 @@ export const useUIStore = create<UIStore>()((set) => ({
 			const nextMap = { ...s.hiddenQuotaAccounts, [providerId]: next };
 			persistHiddenQuotaAccounts(nextMap);
 			return { hiddenQuotaAccounts: nextMap };
+		}),
+
+	setUsageRefreshInterval: (providerId, ms) =>
+		set((s) => {
+			const nextMap = { ...s.usageRefreshIntervals, [providerId]: ms };
+			persistUsageRefreshIntervals(nextMap);
+			return { usageRefreshIntervals: nextMap };
 		}),
 }));

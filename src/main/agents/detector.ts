@@ -577,8 +577,14 @@ export class AgentDetector {
 							}
 						}
 
-						logger.debug('Could not discover effort levels for Claude Code', LOG_CONTEXT);
-						return [];
+						logger.debug(
+							'Could not discover effort levels for Claude Code; using static fallback',
+							LOG_CONTEXT
+						);
+						// Fall through to the static-options fallback below rather than
+						// returning [] - that keeps the effort pill/dropdown populated even
+						// when the CLI reworded its --help/validation output yet again.
+						break;
 					}
 					break;
 				}

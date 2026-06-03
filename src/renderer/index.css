@@ -1140,7 +1140,12 @@ svg.wand-sparkle-active path:nth-child(8) {
  * inline colors via the `<code>` element. */
 .shiki-host pre.shiki {
 	margin: 0;
-	padding: 1em;
+	/* Extra top/bottom padding reserves room for the language badge (top-right)
+	 * and copy button (bottom-right) overlaid by CodeFence so the first/last
+	 * lines never render underneath them, and short blocks stay tall enough that
+	 * the two buttons can't overlap. Kept in sync with the plain-<pre> fallback
+	 * (fallbackPreStyle in CodeFence.tsx). */
+	padding: 2.75em 1em;
 	border-radius: 0;
 	overflow-x: auto;
 	white-space: pre;

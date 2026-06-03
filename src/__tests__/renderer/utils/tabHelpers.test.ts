@@ -66,6 +66,7 @@ import type {
 	ClosedTab,
 	ClosedTabEntry,
 	FilePreviewTab,
+	QueuedItem,
 } from '../../../renderer/types';
 import { createMockAITab as createMockTab, createMockFileTab } from '../../helpers/mockTab';
 import { createMockSession } from '../../helpers/mockSession';
@@ -666,6 +667,86 @@ describe('tabHelpers', () => {
 			expect(result!.session.thinkingStartTime).toBe(thinkingStartTime);
 			expect(result!.session.orphanedThinkingTabs).toHaveLength(1);
 			expect(result!.session.orphanedThinkingTabs![0].id).toBe('tab-only');
+		});
+
+		describe('execution queue re-targeting', () => {
+			const makeQueuedItem = (tabId: string, text: string): QueuedItem => ({
+				id: `q-${text}`,
+				timestamp: Date.now(),
+				tabId,
+				type: 'message',
+				text,
+			});
+
+			it('re-targets queued items from a closed background tab to the active tab', () => {
+				const tab1 = createMockTab({ id: 'tab-1' });
+				const tab2 = createMockTab({ id: 'tab-2' });
+				const session = createMockSession({
+					aiTabs: [tab1, tab2],
+					activeTabId: 'tab-1',
+					executionQueue: [makeQueuedItem('tab-2', 'build api')],
+				});
+
+				const result = closeTab(session, 'tab-2');
+
+				// The queued message belongs to the session, not the closed tab — it
+				// must survive the close and point at a live tab (the active one).
+				expect(result!.session.executionQueue).toHaveLength(1);
+				expect(result!.session.executionQueue[0].tabId).toBe('tab-1');
+				expect(result!.session.executionQueue[0].text).toBe('build api');
+			});
+
+			it('re-targets queued items to the surviving fresh tab when the only tab is closed', () => {
+				const tab = createMockTab({ id: 'tab-1' });
+				const session = createMockSession({
+					aiTabs: [tab],
+					activeTabId: 'tab-1',
+					executionQueue: [makeQueuedItem('tab-1', 'deploy')],
+				});
+
+				const result = closeTab(session, 'tab-1');
+
+				// A fresh tab replaces the closed one; the queued item follows it.
+				const freshTabId = result!.session.aiTabs[0].id;
+				expect(result!.session.executionQueue).toHaveLength(1);
+				expect(result!.session.executionQueue[0].tabId).toBe(freshTabId);
+			});
+
+			it('re-targets items from multiple closed tabs onto a single surviving tab', () => {
+				const tab1 = createMockTab({ id: 'tab-1' });
+				const tab2 = createMockTab({ id: 'tab-2' });
+				const tab3 = createMockTab({ id: 'tab-3' });
+				let session = createMockSession({
+					aiTabs: [tab1, tab2, tab3],
+					activeTabId: 'tab-1',
+					executionQueue: [makeQueuedItem('tab-2', 'msg-b'), makeQueuedItem('tab-3', 'msg-c')],
+				});
+
+				session = closeTab(session, 'tab-2')!.session;
+				const result = closeTab(session, 'tab-3')!;
+
+				// Both orphaned messages now route to the still-active tab-1 and run
+				// sequentially from there rather than being dropped.
+				expect(result.session.executionQueue).toHaveLength(2);
+				expect(result.session.executionQueue.every((q) => q.tabId === 'tab-1')).toBe(true);
+				expect(result.session.executionQueue.map((q) => q.text)).toEqual(['msg-b', 'msg-c']);
+			});
+
+			it('leaves queued items untouched when the closed tab has none', () => {
+				const tab1 = createMockTab({ id: 'tab-1' });
+				const tab2 = createMockTab({ id: 'tab-2' });
+				const queue = [makeQueuedItem('tab-1', 'keep me')];
+				const session = createMockSession({
+					aiTabs: [tab1, tab2],
+					activeTabId: 'tab-1',
+					executionQueue: queue,
+				});
+
+				const result = closeTab(session, 'tab-2');
+
+				expect(result!.session.executionQueue).toHaveLength(1);
+				expect(result!.session.executionQueue[0].tabId).toBe('tab-1');
+			});
 		});
 	});
 

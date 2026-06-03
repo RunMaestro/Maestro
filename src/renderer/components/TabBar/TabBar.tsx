@@ -291,17 +291,20 @@ function TabBarInner({
 		[tabs, onTabReorder, unifiedTabs, onUnifiedTabReorder]
 	);
 
-	// Close wrappers — adapt (tabId: string) => () signature for TabBar's parameterless close handlers
+	// Close wrappers — forward the clicked tab id as the pivot so the operation
+	// closes relative to the tab whose menu was used, not whatever happens to be
+	// the active tab. Dropping the id here was the cause of catastrophic
+	// wrong-set closes (e.g. "close tabs to right" closing every other tab).
 	const handleTabCloseOther = useCallback(
-		(_tabId: string) => onCloseOtherTabs?.(),
+		(tabId: string) => onCloseOtherTabs?.(tabId),
 		[onCloseOtherTabs]
 	);
 	const handleTabCloseLeft = useCallback(
-		(_tabId: string) => onCloseTabsLeft?.(),
+		(tabId: string) => onCloseTabsLeft?.(tabId),
 		[onCloseTabsLeft]
 	);
 	const handleTabCloseRight = useCallback(
-		(_tabId: string) => onCloseTabsRight?.(),
+		(tabId: string) => onCloseTabsRight?.(tabId),
 		[onCloseTabsRight]
 	);
 

@@ -514,7 +514,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 									/>
 									<div
 										className={`absolute top-full right-0 pt-2 z-50 pointer-events-auto ${
-											showBatchUsage && batchUsageSnapshot ? 'w-[32rem]' : 'w-64'
+											showBatchUsage && batchUsageSnapshot ? 'w-72' : 'w-64'
 										}`}
 										{...contextTooltip.contentHandlers}
 									>

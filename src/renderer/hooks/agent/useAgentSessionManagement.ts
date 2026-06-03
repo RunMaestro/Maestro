@@ -160,9 +160,11 @@ export function useAgentSessionManagement(
 			// the ENTRY, not the agent: a Dynamic-mode agent flips between TUI and API
 			// across turns, so we snapshot the resolved mode at write time. An explicit
 			// override from the caller (background/Auto Run/Cue) always wins; otherwise
-			// read the resolved session's live `claudeInteractive`, but only for Claude
-			// Code sessions that actually have it (omit the fields entirely otherwise so
-			// non-Claude and pre-existing entries stay clean).
+			// read the resolved session's live `claudeInteractive`. For Claude Code we
+			// always emit a token source: when `claudeInteractive` is absent the turn
+			// ran the default `claude --print` (API) path - the adaptive/maestro-p
+			// machinery only writes that field when it engages, so absence means API.
+			// Non-Claude agents get no field at all.
 			const tokenSourceFields = (() => {
 				if (entry.tokenSource) {
 					return {
@@ -173,11 +175,11 @@ export function useAgentSessionManagement(
 				const tokenSession = entry.sessionId
 					? selectSessionById(entry.sessionId)(useSessionStore.getState())
 					: activeSession;
-				if (tokenSession?.toolType === 'claude-code' && tokenSession.claudeInteractive) {
-					const { mode, modeReason } = tokenSession.claudeInteractive;
+				if (tokenSession?.toolType === 'claude-code') {
+					const ci = tokenSession.claudeInteractive;
 					return {
-						tokenSource: mode,
-						...(modeReason ? { tokenSourceReason: modeReason } : {}),
+						tokenSource: ci?.mode ?? 'api',
+						...(ci?.modeReason ? { tokenSourceReason: ci.modeReason } : {}),
 					};
 				}
 				return {};
@@ -312,17 +314,31 @@ export function useAgentSessionManagement(
 						targetSession.sshRemoteId
 					);
 
-					// Convert to log entries, keeping only messages with actual text content.
-					// Tool-use-only messages (empty text) are skipped — restored tabs start
-					// with thinking off so there's nothing useful to render for those entries.
+					// Convert to log entries, keeping messages with actual text content or
+					// reconstructed images. Tool-use-only messages (empty text, no images)
+					// are skipped — restored tabs start with thinking off so there's nothing
+					// useful to render for those entries.
 					messages = result.messages
-						.filter((msg: { content: string }) => msg.content && msg.content.trim().length > 0)
-						.map((msg: { type: string; content: string; timestamp: string; uuid: string }) => ({
-							id: msg.uuid || generateId(),
-							timestamp: new Date(msg.timestamp).getTime(),
-							source: msg.type === 'user' ? ('user' as const) : ('stdout' as const),
-							text: msg.content,
-						}));
+						.filter(
+							(msg: { content: string; images?: string[] }) =>
+								(msg.content && msg.content.trim().length > 0) ||
+								(msg.images != null && msg.images.length > 0)
+						)
+						.map(
+							(msg: {
+								type: string;
+								content: string;
+								timestamp: string;
+								uuid: string;
+								images?: string[];
+							}) => ({
+								id: msg.uuid || generateId(),
+								timestamp: new Date(msg.timestamp).getTime(),
+								source: msg.type === 'user' ? ('user' as const) : ('stdout' as const),
+								text: msg.content,
+								...(msg.images && msg.images.length > 0 && { images: msg.images }),
+							})
+						);
 				}
 
 				if (messages.length === 0) {

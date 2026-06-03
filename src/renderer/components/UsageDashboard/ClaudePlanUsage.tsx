@@ -172,9 +172,9 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 	}, []);
 
 	const { isBusy, refreshIntervalMs, setRefreshIntervalMs, handleRefresh } = useQuotaRefresh({
+		providerId: PROVIDER_ID,
 		refreshing,
 		autoRefresh,
-		showRefreshButton,
 		accountCount: configuredAccountKeys.length,
 		snapshotCount,
 		doRefresh,

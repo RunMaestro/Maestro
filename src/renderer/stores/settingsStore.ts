@@ -2428,6 +2428,17 @@ export async function loadAllSettings(): Promise<void> {
 				hiddenQuotaAccounts: allSettings['hiddenQuotaAccounts'] as Record<string, string[]>,
 			});
 
+		// Usage Dashboard auto-refresh intervals live in uiStore alongside the
+		// hidden-account map (both are provider-panel state), so the persisted map
+		// hydrates directly there too.
+		if (
+			allSettings['usageRefreshIntervals'] !== undefined &&
+			typeof allSettings['usageRefreshIntervals'] === 'object'
+		)
+			useUIStore.setState({
+				usageRefreshIntervals: allSettings['usageRefreshIntervals'] as Record<string, number>,
+			});
+
 		if (allSettings['tourCompleted'] !== undefined)
 			patch.tourCompleted = allSettings['tourCompleted'] as boolean;
 

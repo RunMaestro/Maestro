@@ -154,6 +154,18 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 					});
 					finalArgs = configResolution.args;
 
+					// Disable all tools for tab naming. A tab name is a pure text transform
+					// of the user's first message - the agent must NOT investigate the
+					// codebase. Without this, a task-like first message (e.g. "investigate
+					// the ingestion lag and propose fixes") makes the model run a full
+					// agentic session (Bash/Read/Grep) instead of emitting a name: it never
+					// returns a result inside the timeout, so extraction fails with
+					// empty_output. `noToolsArgs` (claude: `--tools ""`) forces a one-shot
+					// text reply. Agents without the field are left untouched.
+					if (agent.noToolsArgs?.length) {
+						finalArgs = [...finalArgs, ...agent.noToolsArgs];
+					}
+
 					// Determine command and working directory
 					let command = agent.path || agent.command;
 					let cwd = config.cwd;

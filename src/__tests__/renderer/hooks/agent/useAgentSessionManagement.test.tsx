@@ -61,7 +61,7 @@ describe('useAgentSessionManagement - history token source capture', () => {
 		expect(entry.tokenSourceReason).toBe('auto');
 	});
 
-	it('omits tokenSource when the Claude session has no claudeInteractive', async () => {
+	it('defaults a Claude session with no claudeInteractive to API (the default `claude --print` path)', async () => {
 		const activeSession = createMockSession({
 			id: 'sess-no-mode',
 			toolType: 'claude-code',
@@ -74,7 +74,10 @@ describe('useAgentSessionManagement - history token source capture', () => {
 		});
 
 		const entry = lastAddedEntry();
-		expect(entry).not.toHaveProperty('tokenSource');
+		// Absent claudeInteractive means the adaptive/maestro-p machinery never
+		// engaged, so the turn ran plain `claude --print` (API). Every Claude turn
+		// gets a token-source pill; only the reason is omitted when unknown.
+		expect(entry.tokenSource).toBe('api');
 		expect(entry).not.toHaveProperty('tokenSourceReason');
 	});
 

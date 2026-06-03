@@ -261,16 +261,16 @@ export const AnnotatorToolbar = memo(function AnnotatorToolbar({
 			onPointerDown={(e) => e.stopPropagation()}
 			onWheel={(e) => e.stopPropagation()}
 		>
-			{renderToolButton('pen', PenLine, 'Pen')}
-			{renderToolButton('eraser', Eraser, 'Eraser')}
-			{renderToolButton('pan', Move, 'Pan (or hold Shift / Space)')}
+			{renderToolButton('pen', PenLine, 'Pen (D)')}
+			{renderToolButton('eraser', Eraser, 'Eraser (E)')}
+			{renderToolButton('pan', Move, 'Pan (P, or hold Shift / Space)')}
 
 			{divider}
 
-			{renderToolButton('rect', Square, 'Rectangle')}
-			{renderToolButton('ellipse', Circle, 'Ellipse')}
-			{renderToolButton('arrow', ArrowUpRight, 'Arrow')}
-			{renderToolButton('text', Type, 'Text (Aa)')}
+			{renderToolButton('rect', Square, 'Rectangle (S)')}
+			{renderToolButton('ellipse', Circle, 'Ellipse (C)')}
+			{renderToolButton('arrow', ArrowUpRight, 'Arrow (A)')}
+			{renderToolButton('text', Type, 'Text (T)')}
 
 			{divider}
 

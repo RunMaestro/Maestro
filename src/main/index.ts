@@ -165,6 +165,7 @@ import {
 import { sampleUsage as sampleClaudeUsage } from './agents/claude-usage-sampler';
 import { setSnapshot as setClaudeUsageSnapshot } from './stores/claudeUsageStore';
 import { getMaestroPBinPath, runStartupUsageSampling } from './agents/claude-usage-startup';
+import { UsageRefreshScheduler } from './agents/usage-refresh-scheduler';
 import type { ProcessConfig as ProcessSpawnConfig } from './process-manager/types';
 import type { TemplateContext } from '../shared/templateVariables';
 
@@ -352,6 +353,7 @@ let processManager: ProcessManager | null = null;
 let webServer: WebServer | null = null;
 let agentDetector: AgentDetector | null = null;
 let cueEngine: CueEngine | null = null;
+let usageRefreshScheduler: UsageRefreshScheduler | null = null;
 let interactiveReplayController: InteractiveReplayController<ProcessSpawnConfig> | null = null;
 
 // Create safeSend with dependency injection (Phase 2 refactoring)
@@ -718,6 +720,19 @@ app
 				error: err instanceof Error ? err.message : String(err),
 			});
 		});
+
+		// Background quota refresh: drives the Usage Dashboard's per-provider
+		// "Auto refresh" cadence from the main process so it keeps sampling even
+		// when the dashboard is closed (the old renderer setInterval died on
+		// unmount). Reads the persisted `usageRefreshIntervals` map and re-arms on
+		// change. Idempotent; arms nothing until the user picks an interval.
+		usageRefreshScheduler = new UsageRefreshScheduler({
+			sessionsStore,
+			agentConfigsStore,
+			settingsStore: store,
+			agentDetector,
+		});
+		usageRefreshScheduler.start();
 
 		// Initialize Cue Engine for event-driven automation
 		cueEngine = new CueEngine({
@@ -1200,6 +1215,8 @@ quitHandler = createQuitHandler({
 		if (cueEngine?.isEnabled()) {
 			cueEngine.stop();
 		}
+		// Tear down the background quota refresh timers.
+		usageRefreshScheduler?.stop();
 	},
 	stopSettingsWatcher: () => settingsWatcher.stop(),
 	powerManager,
