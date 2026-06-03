@@ -875,6 +875,12 @@ app
 					customEnvVars: storedSession.customEnvVars,
 					customModel: storedSession.customModel,
 					customEffort: storedSession.customEffort,
+					// Claude token-source selection (TUI / API / dynamic), read from
+					// the same persisted session record that supplies customModel
+					// above, so Cue runs honor the triggering agent's choice.
+					enableMaestroP: storedSession.enableMaestroP,
+					maestroPMode: storedSession.maestroPMode,
+					maestroPPath: storedSession.maestroPPath,
 					onLog: (level, message) => {
 						if (level === 'error') {
 							logger.error(message, 'Cue');

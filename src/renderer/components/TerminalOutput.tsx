@@ -42,6 +42,7 @@ import { useSettingsStore } from '../stores/settingsStore';
 import { useMessageGistStore } from '../stores/messageGistStore';
 import { useSessionStore } from '../stores/sessionStore';
 import { SessionRecoveryCard } from './SessionRecoveryCard';
+import { getTokenSourcePill } from '../../shared/claudeTokenModeLabel';
 
 // ============================================================================
 // Tool display helpers (pure functions, hoisted out of render path)
@@ -971,11 +972,10 @@ const LogItemComponent = memo(
 					{isClaudeCode &&
 						log.source !== 'user' &&
 						(() => {
-							const isTui = log.renderStyle === 'text-stream';
-							const label = `${isAdaptiveMode ? 'Adaptive ' : ''}${isTui ? 'TUI' : 'API'}`;
-							const title = isTui
-								? `Captured via maestro-p driving the Claude TUI${isAdaptiveMode ? ' (Adaptive Mode enabled)' : ''}`
-								: `Captured via claude --print${isAdaptiveMode ? ' (Adaptive Mode enabled — fell back to API)' : ''}`;
+							const { label, title } = getTokenSourcePill({
+								mode: log.renderStyle === 'text-stream' ? 'interactive' : 'api',
+								adaptive: isAdaptiveMode,
+							});
 							return (
 								<span
 									className="absolute bottom-2 left-1/2 -translate-x-1/2 text-[10px] px-1.5 py-0.5 rounded pointer-events-none select-none"

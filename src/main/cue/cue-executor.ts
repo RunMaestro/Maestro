@@ -51,6 +51,12 @@ export interface CueExecutionConfig {
 	customEnvVars?: Record<string, string>;
 	customModel?: string;
 	customEffort?: string;
+	/** Legacy Adaptive Mode opt-in (maestro-p TUI). Off/absent means pure API. */
+	enableMaestroP?: boolean;
+	/** Refinement of the opt-in. Absent defaults to `dynamic` (legacy behavior). */
+	maestroPMode?: 'interactive' | 'dynamic';
+	/** Per-session maestro-p script override. Empty falls back to the bundled script. */
+	maestroPPath?: string;
 	onLog: (level: string, message: string) => void;
 	/** Optional SSH settings store for SSH remote execution */
 	sshStore?: SshRemoteSettingsStore;

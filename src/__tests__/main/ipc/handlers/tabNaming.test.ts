@@ -72,6 +72,18 @@ vi.mock('../../../../shared/platformDetection', () => ({
 	isLinux: vi.fn(() => false),
 }));
 
+// Mock fs.existsSync so the shared Claude spawn-mode resolver's maestro-p binary
+// existence check passes. resolveClaudeSpawnMode reads fs.existsSync via its
+// default `fileExists` dependency, and the tab-naming handler calls the resolver
+// with default deps (no injection point at the IPC layer).
+vi.mock('fs', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('fs')>();
+	return {
+		...actual,
+		existsSync: vi.fn(() => true),
+	};
+});
+
 // Capture registered handlers
 const registeredHandlers: Map<string, (...args: unknown[]) => Promise<unknown>> = new Map();
 
@@ -908,6 +920,103 @@ describe('Tab Naming IPC Handlers', () => {
 					cwd: '/test',
 				})
 			).rejects.toThrow('Process manager');
+		});
+	});
+
+	describe('Claude token-source resolution', () => {
+		// A realistic claude-code agent that supports the maestro-p interactive
+		// wrapper (interactiveCommand + interactiveModeArgs present), so the shared
+		// resolver can pick the TUI path.
+		const interactiveClaudeAgent: AgentConfig = {
+			id: 'claude-code',
+			name: 'Claude Code',
+			command: 'claude',
+			path: '/usr/local/bin/claude',
+			args: [
+				'--print',
+				'--verbose',
+				'--output-format',
+				'stream-json',
+				'--dangerously-skip-permissions',
+			],
+			interactiveCommand: 'maestro-p',
+			interactiveModeArgs: ['--dangerously-skip-permissions'],
+		};
+
+		// Wire process events so we can drive the spawn to completion and resolve
+		// the handler's promise after asserting on the spawn call. Returns a
+		// `finish()` that simulates output + a clean exit.
+		function wireProcessEvents(): () => void {
+			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
+			let onExitCallback: ((sessionId: string, code?: number) => void) | undefined;
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
+			return () => {
+				onDataCallback?.('tab-naming-mock-uuid-1234', 'Generated Tab Name');
+				onExitCallback?.('tab-naming-mock-uuid-1234', 0);
+			};
+		}
+
+		it('wraps the spawn with maestro-p when the agent selected interactive (TUI) mode', async () => {
+			mockAgentDetector.getAgent.mockResolvedValue(interactiveClaudeAgent);
+			const finish = wireProcessEvents();
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Help me implement a login form',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+				enableMaestroP: true,
+				maestroPMode: 'interactive',
+				// Explicit override so the resolver doesn't depend on the bundled
+				// lookup; fs.existsSync is mocked to true so the binary "exists".
+				maestroPPath: '/bundled/maestro-p.js',
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalled();
+			});
+
+			const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
+			// Interactive mode runs maestro-p (a Node script) via process.execPath,
+			// with the maestro-p script as the first positional arg.
+			expect(spawnCall.command).toBe(process.execPath);
+			expect(spawnCall.args[0]).toMatch(/maestro-p\.js$/);
+			// maestro-p is told which real claude binary to drive.
+			expect(spawnCall.customEnvVars?.MAESTRO_CLAUDE_BIN).toBe('/usr/local/bin/claude');
+
+			finish();
+			await resultPromise;
+		});
+
+		it('spawns plain claude when the agent is API-only (enableMaestroP false)', async () => {
+			mockAgentDetector.getAgent.mockResolvedValue(interactiveClaudeAgent);
+			const finish = wireProcessEvents();
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Help me implement a login form',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+				enableMaestroP: false,
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalled();
+			});
+
+			const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
+			// API mode leaves the original claude command/args untouched - no
+			// process.execPath wrap, no maestro-p script.
+			expect(spawnCall.command).toBe('/usr/local/bin/claude');
+			expect(spawnCall.command).not.toBe(process.execPath);
+			expect(spawnCall.args[0]).not.toMatch(/maestro-p\.js$/);
+			expect(spawnCall.args).toContain('--print');
+
+			finish();
+			await resultPromise;
 		});
 	});
 });

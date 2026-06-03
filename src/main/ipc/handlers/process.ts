@@ -287,7 +287,11 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 
 					const tokenMode = getClaudeTokenMode({
 						enableMaestroP: persistedSession?.enableMaestroP ?? config.enableMaestroP,
-						maestroPMode: persistedSession?.maestroPMode,
+						// Fall back to the inline config when the persisted lookup misses
+						// (e.g. background synopsis spawns under a synthetic sessionId that
+						// won't match any persisted session, so they forward the token-mode
+						// fields explicitly on the spawn payload).
+						maestroPMode: persistedSession?.maestroPMode ?? config.maestroPMode,
 					});
 
 					const decision = resolveClaudeSpawnMode({

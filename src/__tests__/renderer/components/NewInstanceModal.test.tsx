@@ -737,7 +737,8 @@ describe('NewInstanceModal', () => {
 				undefined,
 				undefined,
 				true, // enableMaestroP defaults on for Claude Code (Adaptive Mode)
-				undefined
+				undefined, // maestroPPath
+				'dynamic' // maestroPMode defaults to dynamic when Adaptive on
 			);
 		});
 
@@ -788,7 +789,8 @@ describe('NewInstanceModal', () => {
 				undefined,
 				undefined,
 				true, // enableMaestroP defaults on for Claude Code (Adaptive Mode)
-				undefined
+				undefined, // maestroPPath
+				'dynamic' // maestroPMode defaults to dynamic when Adaptive on
 			);
 		});
 
@@ -839,7 +841,8 @@ describe('NewInstanceModal', () => {
 				undefined,
 				undefined,
 				true, // enableMaestroP defaults on for Claude Code (Adaptive Mode)
-				undefined
+				undefined, // maestroPPath
+				'dynamic' // maestroPMode defaults to dynamic when Adaptive on
 			);
 		});
 	});
@@ -891,7 +894,8 @@ describe('NewInstanceModal', () => {
 				undefined,
 				undefined,
 				true, // enableMaestroP defaults on for Claude Code (Adaptive Mode)
-				undefined
+				undefined, // maestroPPath
+				'dynamic' // maestroPMode defaults to dynamic when Adaptive on
 			);
 			expect(onClose).toHaveBeenCalled();
 		});
@@ -1406,7 +1410,8 @@ describe('NewInstanceModal', () => {
 				undefined,
 				undefined,
 				true, // enableMaestroP defaults on for Claude Code (Adaptive Mode)
-				undefined
+				undefined, // maestroPPath
+				'dynamic' // maestroPMode defaults to dynamic when Adaptive on
 			);
 		});
 
@@ -1557,7 +1562,8 @@ describe('NewInstanceModal', () => {
 				undefined,
 				undefined,
 				true, // enableMaestroP defaults on for Claude Code (Adaptive Mode)
-				undefined
+				undefined, // maestroPPath
+				'dynamic' // maestroPMode defaults to dynamic when Adaptive on
 			);
 		});
 	});
@@ -2714,8 +2720,9 @@ describe('NewInstanceModal', () => {
 				}),
 				undefined,
 				undefined,
-				undefined,
-				undefined
+				undefined, // enableMaestroP
+				undefined, // maestroPPath
+				undefined // maestroPMode
 			);
 		});
 
@@ -2943,7 +2950,8 @@ describe('NewInstanceModal', () => {
 				undefined,
 				undefined,
 				true, // enableMaestroP defaults on for Claude Code (Adaptive Mode)
-				undefined
+				undefined, // maestroPPath
+				'dynamic' // maestroPMode defaults to dynamic when Adaptive on
 			);
 		});
 
@@ -3057,7 +3065,8 @@ describe('NewInstanceModal', () => {
 				undefined,
 				undefined,
 				true, // enableMaestroP defaults on for Claude Code (Adaptive Mode)
-				undefined
+				undefined, // maestroPPath
+				'dynamic' // maestroPMode defaults to dynamic when Adaptive on
 			);
 		});
 

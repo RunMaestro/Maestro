@@ -47,6 +47,9 @@ export interface GroupChatHandlersReturn {
 			customArgs?: string;
 			customEnvVars?: Record<string, string>;
 			customModel?: string;
+			enableMaestroP?: boolean;
+			maestroPMode?: 'interactive' | 'dynamic';
+			maestroPPath?: string;
 		}
 	) => Promise<void>;
 	handleDeleteGroupChat: (id: string) => Promise<void>;
@@ -60,6 +63,9 @@ export interface GroupChatHandlersReturn {
 			customPath?: string;
 			customArgs?: string;
 			customEnvVars?: Record<string, string>;
+			enableMaestroP?: boolean;
+			maestroPMode?: 'interactive' | 'dynamic';
+			maestroPPath?: string;
 		}
 	) => Promise<void>;
 	deleteGroupChatWithConfirmation: (id: string) => void;
@@ -499,6 +505,9 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 				customArgs?: string;
 				customEnvVars?: Record<string, string>;
 				customModel?: string;
+				enableMaestroP?: boolean;
+				maestroPMode?: 'interactive' | 'dynamic';
+				maestroPPath?: string;
 			}
 		) => {
 			const { setGroupChats } = useGroupChatStore.getState();
@@ -570,6 +579,9 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 				customPath?: string;
 				customArgs?: string;
 				customEnvVars?: Record<string, string>;
+				enableMaestroP?: boolean;
+				maestroPMode?: 'interactive' | 'dynamic';
+				maestroPPath?: string;
 			}
 		) => {
 			const { setGroupChats } = useGroupChatStore.getState();

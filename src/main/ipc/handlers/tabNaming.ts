@@ -20,6 +20,11 @@ import {
 	CreateHandlerOptions,
 } from '../../utils/ipcHandler';
 import { buildAgentArgs, applyAgentConfigOverrides } from '../../utils/agent-args';
+import {
+	resolveClaudeSpawnMode,
+	applyClaudeSpawnDecision,
+} from '../../agents/resolveClaudeSpawnMode';
+import { getClaudeTokenMode } from '../../../shared/claudeTokenMode';
 import { getSshRemoteConfig, createSshRemoteStoreAdapter } from '../../utils/ssh-remote-resolver';
 import { buildSshCommand } from '../../utils/ssh-command-builder';
 import { getPrompt } from '../../prompt-manager';
@@ -94,6 +99,13 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 					remoteId: string | null;
 					workingDirOverride?: string;
 				};
+				// Claude token-source selection for the triggering agent, forwarded
+				// from the renderer's session (tab naming has no sessionId to look up
+				// the persisted session by, so the caller passes these inline). When
+				// absent, getClaudeTokenMode() collapses to 'api'.
+				enableMaestroP?: boolean;
+				maestroPMode?: 'interactive' | 'dynamic';
+				maestroPPath?: string;
 			}): Promise<string | null> => {
 				const processManager = requireDependency(getProcessManager, 'Process manager');
 				const agentDetector = requireDependency(getAgentDetector, 'Agent detector');
@@ -145,7 +157,7 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 					// Determine command and working directory
 					let command = agent.path || agent.command;
 					let cwd = config.cwd;
-					const customEnvVars: Record<string, string> | undefined =
+					let customEnvVars: Record<string, string> | undefined =
 						configResolution.effectiveCustomEnvVars;
 
 					// Handle SSH remote execution if configured
@@ -219,6 +231,49 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 							finalArgs = sshCommand.args;
 							// Local cwd is not used for SSH commands - the command runs on remote
 							cwd = process.cwd();
+						}
+					}
+
+					// Honor the triggering agent's Claude token source. Tab naming spawns
+					// claude directly (it does NOT route through the process:spawn handler
+					// where the resolver normally lives), so it would otherwise always run
+					// `claude --print` regardless of the agent's selection. Resolve through
+					// the shared resolver and, when it picks interactive, wrap the spawn with
+					// maestro-p via `process.execPath`. SSH stays on API (the resolver returns
+					// api when sshEnabled is true) since maestro-p needs the local claude TUI.
+					//
+					// NOTE: interactive tab-naming drives the maestro-p TUI and therefore
+					// spends Max-plan quota on a short, low-value turn. That's the correct
+					// behavior when the user picked TUI/Dynamic, but it's worth being aware of.
+					if (agent.id === 'claude-code') {
+						const tokenMode = getClaudeTokenMode({
+							enableMaestroP: config.enableMaestroP,
+							maestroPMode: config.maestroPMode,
+						});
+						const decision = resolveClaudeSpawnMode({
+							agent,
+							tokenMode,
+							sshEnabled: !!config.sessionSshRemoteConfig?.enabled,
+							command,
+							sessionCustomEnvVars: customEnvVars,
+							maestroPPath: config.maestroPPath,
+							now: new Date(),
+						});
+						if (decision.mode === 'interactive' && decision.maestroPBinPath) {
+							const applied = applyClaudeSpawnDecision({
+								decision,
+								interactiveModeArgs: agent.interactiveModeArgs,
+								command,
+								args: finalArgs,
+								customEnvVars,
+							});
+							command = applied.command;
+							finalArgs = applied.args;
+							customEnvVars = applied.customEnvVars;
+							logger.debug('Tab naming resolved to interactive maestro-p TUI', LOG_CONTEXT, {
+								sessionId,
+								maestroPBin: decision.maestroPBinPath,
+							});
 						}
 					}
 

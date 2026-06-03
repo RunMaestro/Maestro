@@ -92,6 +92,9 @@ export interface UseAgentExecutionReturn {
 			customEnvVars?: Record<string, string>;
 			customModel?: string;
 			customContextWindow?: number;
+			enableMaestroP?: boolean;
+			maestroPMode?: 'interactive' | 'dynamic';
+			maestroPPath?: string;
 			sessionSshRemoteConfig?: {
 				enabled: boolean;
 				remoteId: string | null;
@@ -113,6 +116,9 @@ export interface UseAgentExecutionReturn {
 					customEnvVars?: Record<string, string>;
 					customModel?: string;
 					customContextWindow?: number;
+					enableMaestroP?: boolean;
+					maestroPMode?: 'interactive' | 'dynamic';
+					maestroPPath?: string;
 					sessionSshRemoteConfig?: {
 						enabled: boolean;
 						remoteId: string | null;
@@ -597,6 +603,12 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 				customEnvVars?: Record<string, string>;
 				customModel?: string;
 				customContextWindow?: number;
+				// Claude token-source selection. The synopsis spawns under a synthetic
+				// sessionId, so the process:spawn handler can't resolve the token mode
+				// from the persisted session - forward these fields explicitly instead.
+				enableMaestroP?: boolean;
+				maestroPMode?: 'interactive' | 'dynamic';
+				maestroPPath?: string;
 				sessionSshRemoteConfig?: {
 					enabled: boolean;
 					remoteId: string | null;
@@ -717,6 +729,12 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 							sessionCustomEnvVars: sessionConfig?.customEnvVars,
 							sessionCustomModel: sessionConfig?.customModel,
 							sessionCustomContextWindow: sessionConfig?.customContextWindow,
+							// Forward the agent's Claude token source. The synopsis runs under a
+							// synthetic sessionId, so the process:spawn handler can't hydrate the
+							// token mode from the persisted session - it falls back to these.
+							enableMaestroP: sessionConfig?.enableMaestroP,
+							maestroPMode: sessionConfig?.maestroPMode,
+							maestroPPath: sessionConfig?.maestroPPath,
 							// Always use effective SSH remote config if available
 							sessionSshRemoteConfig: effectiveSessionSshRemoteConfig,
 							sendPromptViaStdin,

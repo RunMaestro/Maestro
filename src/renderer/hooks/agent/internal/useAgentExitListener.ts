@@ -250,6 +250,11 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 								customEnvVars: currentSession.customEnvVars,
 								customModel: currentSession.customModel,
 								customContextWindow: currentSession.customContextWindow,
+								// Carry the agent's Claude token source into the synopsis spawn so
+								// it resolves the same TUI/Dynamic/API mode as a normal turn.
+								enableMaestroP: currentSession.enableMaestroP,
+								maestroPMode: currentSession.maestroPMode,
+								maestroPPath: currentSession.maestroPPath,
 							},
 						};
 					}

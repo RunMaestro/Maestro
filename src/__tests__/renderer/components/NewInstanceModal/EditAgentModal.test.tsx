@@ -298,7 +298,8 @@ describe('EditAgentModal', () => {
 			expect.anything(), // contextWindow
 			expect.objectContaining({ enabled: false }), // SSH disabled
 			undefined, // enableMaestroP
-			undefined // maestroPPath
+			undefined, // maestroPPath
+			undefined // maestroPMode
 		);
 		expect(onClose).toHaveBeenCalled();
 	});
@@ -525,7 +526,8 @@ describe('EditAgentModal', () => {
 				workingDirOverride: '/home/devuser/my-project',
 			}),
 			undefined, // enableMaestroP
-			undefined // maestroPPath
+			undefined, // maestroPPath
+			undefined // maestroPMode
 		);
 	});
 
@@ -592,7 +594,8 @@ describe('EditAgentModal', () => {
 				workingDirOverride: '/explicit/remote/path',
 			}),
 			undefined, // enableMaestroP
-			undefined // maestroPPath
+			undefined, // maestroPPath
+			undefined // maestroPMode
 		);
 	});
 
@@ -665,7 +668,8 @@ describe('EditAgentModal', () => {
 				shareHistoryToProjectDir: true,
 			}),
 			undefined, // enableMaestroP
-			undefined // maestroPPath
+			undefined, // maestroPPath
+			undefined // maestroPMode
 		);
 	});
 

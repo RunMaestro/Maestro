@@ -29,6 +29,14 @@ export interface HistoryEntryInput {
 	elapsedTimeMs?: number;
 	/** Context usage percentage from the agent run (used when activeSession context isn't available) */
 	contextUsage?: number;
+	/**
+	 * Claude-only, per-turn token source override. When omitted, it's resolved from
+	 * the entry's session `claudeInteractive` mode. Background/Auto Run/Cue callers
+	 * can set it explicitly to stamp the source they ran under.
+	 */
+	tokenSource?: 'interactive' | 'api';
+	/** Claude-only, per-turn token source reason override. See {@link tokenSource}. */
+	tokenSourceReason?: 'auto' | 'limit';
 }
 
 /**
@@ -148,6 +156,33 @@ export function useAgentSessionManagement(
 
 			const shouldIncludeContextUsage = !entry.sessionId || entry.sessionId === activeSession?.id;
 
+			// Resolve the Claude token source for this turn. Token source belongs on
+			// the ENTRY, not the agent: a Dynamic-mode agent flips between TUI and API
+			// across turns, so we snapshot the resolved mode at write time. An explicit
+			// override from the caller (background/Auto Run/Cue) always wins; otherwise
+			// read the resolved session's live `claudeInteractive`, but only for Claude
+			// Code sessions that actually have it (omit the fields entirely otherwise so
+			// non-Claude and pre-existing entries stay clean).
+			const tokenSourceFields = (() => {
+				if (entry.tokenSource) {
+					return {
+						tokenSource: entry.tokenSource,
+						...(entry.tokenSourceReason ? { tokenSourceReason: entry.tokenSourceReason } : {}),
+					};
+				}
+				const tokenSession = entry.sessionId
+					? selectSessionById(entry.sessionId)(useSessionStore.getState())
+					: activeSession;
+				if (tokenSession?.toolType === 'claude-code' && tokenSession.claudeInteractive) {
+					const { mode, modeReason } = tokenSession.claudeInteractive;
+					return {
+						tokenSource: mode,
+						...(modeReason ? { tokenSourceReason: modeReason } : {}),
+					};
+				}
+				return {};
+			})();
+
 			await window.maestro.history.add(
 				{
 					id: generateId(),
@@ -159,6 +194,8 @@ export function useAgentSessionManagement(
 					sessionId: targetSessionId,
 					sessionName: sessionName,
 					projectPath: targetProjectPath,
+					// Claude-only per-turn token source (TUI vs API); omitted otherwise
+					...tokenSourceFields,
 					// Prefer active session's live context percentage; fall back to entry's own estimate
 					...(() => {
 						const ctx = shouldIncludeContextUsage
