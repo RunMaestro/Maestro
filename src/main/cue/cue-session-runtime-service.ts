@@ -14,7 +14,7 @@ import type { CueSessionRegistry } from './cue-session-registry';
 import { createTriggerSource } from './triggers/cue-trigger-source-registry';
 import { passesFilter } from './triggers/cue-trigger-filter';
 import type { CueTriggerSource } from './triggers/cue-trigger-source';
-import { removeSubscriptionFromYaml } from './cue-self-destruct';
+import { removeSubscriptionFromYaml, type SelfDestructResult } from './cue-self-destruct';
 import { captureException } from '../utils/sentry';
 
 /**
@@ -59,6 +59,14 @@ export interface CueSessionRuntimeServiceDeps {
 	) => number;
 	clearQueue: (sessionId: string, preserveStartup?: boolean) => void;
 	clearFanInState: (sessionId: string) => void;
+	/**
+	 * Remove a subscription from cue.yaml on behalf of a trigger source's
+	 * `requestSelfDestruct` (missed-grace / filtered `time.once`). The engine
+	 * injects a version serialised against its per-root YAML write chain so the
+	 * rewrite can't race a toggle or another self-destruct on the same file.
+	 * When omitted (standalone use / tests), the service writes directly.
+	 */
+	selfDestruct?: (projectRoot: string, subscriptionName: string) => Promise<SelfDestructResult>;
 }
 
 /**
@@ -247,7 +255,11 @@ export function createCueSessionRuntimeService(
 				// YAML watcher reloads the config naturally after the rewrite, so
 				// there's no need to refresh the session manually.
 				requestSelfDestruct: (subscriptionName, reason) => {
-					void removeSubscriptionFromYaml(session.projectRoot, subscriptionName)
+					// Prefer the engine-injected serialised writer so this rewrite
+					// can't race a toggle / run-completion self-destruct on the same
+					// cue.yaml; fall back to a direct write when running standalone.
+					const selfDestruct = deps.selfDestruct ?? removeSubscriptionFromYaml;
+					void selfDestruct(session.projectRoot, subscriptionName)
 						.then((result) => {
 							if (result.removed) {
 								deps.onLog(

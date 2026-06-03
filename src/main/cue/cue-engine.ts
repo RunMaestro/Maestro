@@ -64,7 +64,7 @@ import { createCueQueuePersistence, type CueQueuePersistence } from './cue-queue
 import { countCueEvents, getRecentCueEvents, type CueEventRecord } from './cue-db';
 import { loadCueConfigDetailed } from './cue-yaml-loader';
 import { readCueConfigFile, writeCueConfigFile } from './config/cue-config-repository';
-import { removeSubscriptionFromYaml } from './cue-self-destruct';
+import { removeSubscriptionFromYaml, type SelfDestructResult } from './cue-self-destruct';
 import * as yaml from 'js-yaml';
 import { cueDebugLog } from '../../shared/cueDebug';
 import { captureException } from '../utils/sentry';
@@ -373,6 +373,11 @@ export class CueEngine {
 			clearFanInState: (sessionId) => {
 				this.fanInTracker.clearForSession(sessionId);
 			},
+			// Route trigger-source self-destructs (missed-grace / filtered) through
+			// the engine's per-root write chain so they serialise against toggles
+			// and run-completion self-destructs on the same cue.yaml.
+			selfDestruct: (projectRoot, subscriptionName) =>
+				this.selfDestructSubscription(projectRoot, subscriptionName),
 		});
 		this.completionService = createCueCompletionService({
 			enabled: () => this.enabled,
@@ -698,27 +703,49 @@ export class CueEngine {
 		const projectRoot = session.projectRoot;
 		if (!projectRoot) return false;
 
-		// Serialise per projectRoot so concurrent toggles (and other engine-
-		// driven YAML writes once they thread through this chain) can't trample
-		// each other. `prev` resolves before our work starts; any thrown error
-		// in `prev` is intentionally swallowed here so a failed earlier write
-		// doesn't poison later writes — each toggle reports its own pass/fail.
-		const prev = this.yamlWriteChains.get(projectRoot) ?? Promise.resolve();
-		const next = prev.then(
-			() =>
-				this.runSubscriptionEnabledWrite(sessionId, projectRoot, targetPipeline, subName, enabled),
-			() =>
-				this.runSubscriptionEnabledWrite(sessionId, projectRoot, targetPipeline, subName, enabled)
+		// Serialise per projectRoot so concurrent toggles and `time.once`
+		// self-destructs can't trample each other's read-modify-write cycle.
+		return await this.enqueueYamlWrite(projectRoot, () =>
+			this.runSubscriptionEnabledWrite(sessionId, projectRoot, targetPipeline, subName, enabled)
 		);
-		// Track the chain so the next call for this projectRoot waits on us.
+	}
+
+	/**
+	 * Serialise a cue.yaml mutation for `projectRoot` against the per-root write
+	 * chain. Both `setSubscriptionEnabled` (remote toggle) and `time.once`
+	 * self-destruct route through here, so a self-destruct can't race a toggle
+	 * (or another self-destruct) on the same file and silently clobber the other
+	 * write. A rejected earlier job does not poison later ones - each runs
+	 * regardless of how the previous settled and reports its own pass/fail.
+	 */
+	private async enqueueYamlWrite<T>(projectRoot: string, work: () => T | Promise<T>): Promise<T> {
+		const prev = this.yamlWriteChains.get(projectRoot) ?? Promise.resolve();
+		const next = prev.then(work, work);
 		this.yamlWriteChains.set(projectRoot, next);
-		const result = await next;
-		// Drop the entry when the chain has settled to ours — guard against
-		// dropping a later writer's promise that already replaced ours.
-		if (this.yamlWriteChains.get(projectRoot) === next) {
-			this.yamlWriteChains.delete(projectRoot);
+		try {
+			return await next;
+		} finally {
+			// Drop the entry once the chain has settled to ours — guard against
+			// dropping a later writer's promise that already replaced ours.
+			if (this.yamlWriteChains.get(projectRoot) === next) {
+				this.yamlWriteChains.delete(projectRoot);
+			}
 		}
-		return result;
+	}
+
+	/**
+	 * Remove a subscription from cue.yaml, serialised against the per-root write
+	 * chain (see {@link enqueueYamlWrite}). The single serialised entry point for
+	 * both the run-completion self-destruct path and the trigger-source
+	 * `requestSelfDestruct` callback wired into the runtime service.
+	 */
+	private selfDestructSubscription(
+		projectRoot: string,
+		subscriptionName: string
+	): Promise<SelfDestructResult> {
+		return this.enqueueYamlWrite(projectRoot, () =>
+			removeSubscriptionFromYaml(projectRoot, subscriptionName)
+		);
 	}
 
 	private runSubscriptionEnabledWrite(
@@ -1216,7 +1243,7 @@ export class CueEngine {
 		const session = this.deps.getSessions().find((s) => s.id === sessionId);
 		if (!session) return;
 
-		void removeSubscriptionFromYaml(session.projectRoot, subscriptionName)
+		void this.selfDestructSubscription(session.projectRoot, subscriptionName)
 			.then((res) => {
 				if (res.removed) {
 					this.meteredOnLog(
