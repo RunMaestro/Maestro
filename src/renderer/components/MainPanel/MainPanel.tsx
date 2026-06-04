@@ -24,6 +24,7 @@ import { useSettingsStore } from '../../stores/settingsStore';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { useTerminalMounting } from '../../hooks/terminal/useTerminalMounting';
 import { getTerminalTabDisplayName } from '../../utils/terminalTabHelpers';
+import { aiTabFocusFields } from '../../utils/tabHelpers';
 import { useSshRemoteName } from '../../hooks/mainPanel/useSshRemoteName';
 import { useContextWindow } from '../../hooks/mainPanel/useContextWindow';
 import { useFilePreviewHandlers } from '../../hooks/mainPanel/useFilePreviewHandlers';
@@ -249,15 +250,8 @@ export const MainPanel = React.memo(
 				setSessions((prev) =>
 					prev.map((s) => {
 						if (s.id !== sessionId) return s;
-						if (tabId && !s.aiTabs?.some((t) => t.id === tabId)) {
-							return { ...s, activeFileTabId: null, inputMode: 'ai' as const };
-						}
-						return {
-							...s,
-							...(tabId && { activeTabId: tabId }),
-							activeFileTabId: null,
-							inputMode: 'ai' as const,
-						};
+						const targetTabId = tabId && s.aiTabs?.some((t) => t.id === tabId) ? tabId : undefined;
+						return { ...s, ...aiTabFocusFields(targetTabId) };
 					})
 				);
 			},

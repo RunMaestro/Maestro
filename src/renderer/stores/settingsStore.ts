@@ -687,7 +687,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		bionifyAlgorithm: '- 0 1 1 2 0.4',
 		showHiddenFiles: true,
 		fileExplorerIconTheme: 'default',
-		toastWidth: 'small',
+		toastWidth: 'dynamic',
 		terminalWidth: 100,
 		logLevel: 'info',
 		maxLogBuffer: 5000,

@@ -38,6 +38,7 @@ import {
 	addAiTabToUnifiedHistory,
 	reopenUnifiedClosedTab,
 	setActiveTab,
+	aiTabFocusFields,
 	getWriteModeTab,
 	getBusyTabs,
 	getNavigableTabs,
@@ -669,7 +670,7 @@ describe('tabHelpers', () => {
 			expect(result!.session.orphanedThinkingTabs![0].id).toBe('tab-only');
 		});
 
-		describe('execution queue re-targeting', () => {
+		describe('execution queue cleanup on close', () => {
 			const makeQueuedItem = (tabId: string, text: string): QueuedItem => ({
 				id: `q-${text}`,
 				timestamp: Date.now(),
@@ -678,7 +679,7 @@ describe('tabHelpers', () => {
 				text,
 			});
 
-			it('re-targets queued items from a closed background tab to the active tab', () => {
+			it('drops queued items belonging to a closed background tab', () => {
 				const tab1 = createMockTab({ id: 'tab-1' });
 				const tab2 = createMockTab({ id: 'tab-2' });
 				const session = createMockSession({
@@ -689,14 +690,12 @@ describe('tabHelpers', () => {
 
 				const result = closeTab(session, 'tab-2');
 
-				// The queued message belongs to the session, not the closed tab — it
-				// must survive the close and point at a live tab (the active one).
-				expect(result!.session.executionQueue).toHaveLength(1);
-				expect(result!.session.executionQueue[0].tabId).toBe('tab-1');
-				expect(result!.session.executionQueue[0].text).toBe('build api');
+				// The queued message belongs to the tab it was composed for — closing
+				// that tab discards it rather than migrating it onto the active tab.
+				expect(result!.session.executionQueue).toHaveLength(0);
 			});
 
-			it('re-targets queued items to the surviving fresh tab when the only tab is closed', () => {
+			it('drops queued items when the only tab is closed', () => {
 				const tab = createMockTab({ id: 'tab-1' });
 				const session = createMockSession({
 					aiTabs: [tab],
@@ -706,13 +705,12 @@ describe('tabHelpers', () => {
 
 				const result = closeTab(session, 'tab-1');
 
-				// A fresh tab replaces the closed one; the queued item follows it.
-				const freshTabId = result!.session.aiTabs[0].id;
-				expect(result!.session.executionQueue).toHaveLength(1);
-				expect(result!.session.executionQueue[0].tabId).toBe(freshTabId);
+				// A fresh tab replaces the closed one, but the queued item does not
+				// follow it onto the new tab — it's discarded with the closed tab.
+				expect(result!.session.executionQueue).toHaveLength(0);
 			});
 
-			it('re-targets items from multiple closed tabs onto a single surviving tab', () => {
+			it("drops each tab's queued items as that tab is closed", () => {
 				const tab1 = createMockTab({ id: 'tab-1' });
 				const tab2 = createMockTab({ id: 'tab-2' });
 				const tab3 = createMockTab({ id: 'tab-3' });
@@ -723,13 +721,14 @@ describe('tabHelpers', () => {
 				});
 
 				session = closeTab(session, 'tab-2')!.session;
+				// Closing tab-2 dropped only its own queued item; tab-3's remains.
+				expect(session.executionQueue).toHaveLength(1);
+				expect(session.executionQueue[0].text).toBe('msg-c');
+
 				const result = closeTab(session, 'tab-3')!;
 
-				// Both orphaned messages now route to the still-active tab-1 and run
-				// sequentially from there rather than being dropped.
-				expect(result.session.executionQueue).toHaveLength(2);
-				expect(result.session.executionQueue.every((q) => q.tabId === 'tab-1')).toBe(true);
-				expect(result.session.executionQueue.map((q) => q.text)).toEqual(['msg-b', 'msg-c']);
+				// Closing tab-3 drops the last queued item; nothing migrates to tab-1.
+				expect(result.session.executionQueue).toHaveLength(0);
 			});
 
 			it('leaves queued items untouched when the closed tab has none', () => {
@@ -948,6 +947,70 @@ describe('tabHelpers', () => {
 
 			expect(result!.session).not.toBe(session);
 			expect(result!.session.inputMode).toBe('ai');
+		});
+
+		it('clears activeBrowserTabId when selecting an AI tab (regression: browser outranks AI)', () => {
+			// A browser tab was active. Browser outranks AI in the render precedence
+			// (terminal > file > browser > ai), so a lingering activeBrowserTabId would
+			// keep the browser view on screen even though activeTabId points at the AI tab.
+			const tab = createMockTab({ id: 'tab-1' });
+			const session = createMockSession({
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+				activeBrowserTabId: 'browser-tab-1',
+				inputMode: 'ai',
+			});
+
+			const result = setActiveTab(session, 'tab-1');
+
+			expect(result!.session).not.toBe(session);
+			expect(result!.session.activeBrowserTabId).toBeNull();
+			expect(result!.session.activeTabId).toBe('tab-1');
+		});
+	});
+
+	describe('aiTabFocusFields', () => {
+		it('clears all non-AI active-tab ids and forces AI mode', () => {
+			const fields = aiTabFocusFields('tab-1');
+			expect(fields).toEqual({
+				activeTabId: 'tab-1',
+				activeFileTabId: null,
+				activeTerminalTabId: null,
+				activeBrowserTabId: null,
+				inputMode: 'ai',
+			});
+		});
+
+		it('omits activeTabId when no tabId is given (keep current AI tab)', () => {
+			const fields = aiTabFocusFields();
+			expect(fields).not.toHaveProperty('activeTabId');
+			expect(fields).toEqual({
+				activeFileTabId: null,
+				activeTerminalTabId: null,
+				activeBrowserTabId: null,
+				inputMode: 'ai',
+			});
+		});
+
+		it('produces a patch that lands on the AI tab regardless of prior view', () => {
+			// Spreading the patch over a session last viewed on a browser tab must
+			// surface the AI tab, not the browser tab.
+			const session = createMockSession({
+				aiTabs: [createMockTab({ id: 'tab-1' })],
+				activeTabId: 'tab-1',
+				activeFileTabId: 'file-1',
+				activeTerminalTabId: 'term-1',
+				activeBrowserTabId: 'browser-1',
+				inputMode: 'ai',
+			});
+
+			const next = { ...session, ...aiTabFocusFields('tab-1') };
+
+			expect(next.activeFileTabId).toBeNull();
+			expect(next.activeTerminalTabId).toBeNull();
+			expect(next.activeBrowserTabId).toBeNull();
+			expect(next.activeTabId).toBe('tab-1');
+			expect(next.inputMode).toBe('ai');
 		});
 	});
 

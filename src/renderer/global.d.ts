@@ -1658,6 +1658,7 @@ interface MaestroAPI {
 			pagination?: { limit?: number; offset?: number };
 			lookbackHours?: number | null;
 			sharedContext?: { sshRemoteId: string; remoteCwd: string };
+			types?: HistoryEntryType[];
 		}) => Promise<{
 			entries: Array<{
 				id: string;
@@ -1732,7 +1733,8 @@ interface MaestroAPI {
 		getOffsetForTimestamp: (
 			sessionId: string,
 			timestamp: number,
-			lookbackHours?: number | null
+			lookbackHours?: number | null,
+			types?: HistoryEntryType[]
 		) => Promise<number>;
 		onExternalChange: (handler: () => void) => () => void;
 		reload: () => Promise<boolean>;

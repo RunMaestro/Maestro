@@ -254,9 +254,9 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 	},
 	toastWidth: {
 		description:
-			'Width of toast notifications. Options: small (default), medium, large, dynamic (match the Right Bar width).',
+			'Width of toast notifications. Options: small, medium, large, dynamic (default, matches the Right Bar width).',
 		type: 'string',
-		default: 'small',
+		default: 'dynamic',
 		category: 'appearance',
 	},
 	disableConfetti: {

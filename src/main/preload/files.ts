@@ -97,6 +97,7 @@ export function createHistoryApi() {
 			pagination?: { limit?: number; offset?: number };
 			lookbackHours?: number | null;
 			sharedContext?: { sshRemoteId: string; remoteCwd: string };
+			types?: ('AUTO' | 'USER' | 'CUE')[];
 		}) => ipcRenderer.invoke('history:getAllPaginated', options),
 
 		add: (entry: HistoryEntry, sharedContext?: { sshRemoteId: string; remoteCwd: string }) =>
@@ -144,9 +145,16 @@ export function createHistoryApi() {
 		getOffsetForTimestamp: (
 			sessionId: string,
 			timestamp: number,
-			lookbackHours?: number | null
+			lookbackHours?: number | null,
+			types?: ('AUTO' | 'USER' | 'CUE')[]
 		): Promise<number> =>
-			ipcRenderer.invoke('history:getOffsetForTimestamp', sessionId, timestamp, lookbackHours),
+			ipcRenderer.invoke(
+				'history:getOffsetForTimestamp',
+				sessionId,
+				timestamp,
+				lookbackHours,
+				types
+			),
 
 		onExternalChange: (handler: () => void) => {
 			const wrappedHandler = () => handler();

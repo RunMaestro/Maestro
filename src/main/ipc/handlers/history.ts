@@ -14,7 +14,7 @@
 
 import { ipcMain } from 'electron';
 import { logger } from '../../utils/logger';
-import { HistoryEntry, SshRemoteConfig } from '../../../shared/types';
+import { HistoryEntry, HistoryEntryType, SshRemoteConfig } from '../../../shared/types';
 import {
 	PaginationOptions,
 	ORPHANED_SESSION_ID,
@@ -251,15 +251,29 @@ export function registerHistoryHandlers(deps: HistoryHandlerDependencies): void 
 				pagination?: PaginationOptions;
 				lookbackHours?: number | null;
 				sharedContext?: SharedHistoryContext;
+				types?: HistoryEntryType[];
 			}) => {
-				const { projectPath, sessionId, pagination, lookbackHours, sharedContext } = options || {};
+				const { projectPath, sessionId, pagination, lookbackHours, sharedContext, types } =
+					options || {};
 				const cutoffTime =
 					lookbackHours !== null && lookbackHours !== undefined && lookbackHours > 0
 						? Date.now() - lookbackHours * 60 * 60 * 1000
 						: 0;
 
-				const applyLookback = (entries: HistoryEntry[]): HistoryEntry[] =>
-					cutoffTime > 0 ? entries.filter((e) => e.timestamp >= cutoffTime) : entries;
+				// Type filter runs server-side (before pagination) so the loaded
+				// window holds the newest N entries OF THE SELECTED TYPES rather
+				// than the newest N of all types. Without this, a Cue-heavy agent
+				// (heartbeats + agent.completed firing constantly) fills the whole
+				// window with CUE entries and toggling CUE off shows nothing even
+				// though USER/AUTO history exists further back. `undefined` means
+				// "no type filter" (backward compatible); an empty array correctly
+				// yields no entries.
+				const typeSet = types ? new Set(types) : null;
+				const applyFilters = (entries: HistoryEntry[]): HistoryEntry[] => {
+					let out = cutoffTime > 0 ? entries.filter((e) => e.timestamp >= cutoffTime) : entries;
+					if (typeSet) out = out.filter((e) => typeSet.has(e.type));
+					return out;
+				};
 
 				// Single-session path: optionally merge shared (SSH or local
 				// project-mirrored) entries before applying lookback + pagination.
@@ -301,7 +315,7 @@ export function registerHistoryHandlers(deps: HistoryHandlerDependencies): void 
 						}
 					}
 
-					return paginateEntries(applyLookback(local), pagination);
+					return paginateEntries(applyFilters(local), pagination);
 				}
 
 				if (projectPath) {
@@ -309,11 +323,11 @@ export function registerHistoryHandlers(deps: HistoryHandlerDependencies): void 
 						projectPath,
 						undefined
 					);
-					return paginateEntries(applyLookback(result.entries), pagination);
+					return paginateEntries(applyFilters(result.entries), pagination);
 				}
 
 				const result = await historyManager.getAllEntriesPaginated(undefined);
-				return paginateEntries(applyLookback(result.entries), pagination);
+				return paginateEntries(applyFilters(result.entries), pagination);
 			}
 		)
 	);
@@ -438,7 +452,8 @@ export function registerHistoryHandlers(deps: HistoryHandlerDependencies): void 
 			async (
 				sessionId: string,
 				timestamp: number,
-				lookbackHours?: number | null
+				lookbackHours?: number | null,
+				types?: HistoryEntryType[]
 			): Promise<number> => {
 				const cutoffTime =
 					lookbackHours !== null && lookbackHours !== undefined && lookbackHours > 0
@@ -446,6 +461,12 @@ export function registerHistoryHandlers(deps: HistoryHandlerDependencies): void 
 						: 0;
 				let entries = await historyManager.getEntries(sessionId);
 				if (cutoffTime > 0) entries = entries.filter((e) => e.timestamp >= cutoffTime);
+				// Mirror the paginated list's type filter so the resolved offset
+				// lines up with the rendered (type-filtered) indices.
+				if (types) {
+					const typeSet = new Set(types);
+					entries = entries.filter((e) => typeSet.has(e.type));
+				}
 				if (entries.length === 0) return 0;
 				const sorted = sortEntriesByTimestamp(entries);
 				let offset = 0;

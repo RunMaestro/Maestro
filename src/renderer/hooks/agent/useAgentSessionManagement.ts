@@ -1,7 +1,7 @@
 import { useCallback, useRef } from 'react';
 import type { Session, LogEntry, UsageStats, ThinkingMode } from '../../types';
 import { useSessionStore, selectSessionById } from '../../stores/sessionStore';
-import { createTab, getActiveTab } from '../../utils/tabHelpers';
+import { aiTabFocusFields, createTab, getActiveTab } from '../../utils/tabHelpers';
 import { generateId } from '../../utils/ids';
 import { buildSharedHistoryContext } from '../../utils/sessionHelpers';
 import type { RightPanelHandle } from '../../components/RightPanel';
@@ -301,15 +301,7 @@ export function useAgentSessionManagement(
 				// Switch to the existing tab instead of creating a duplicate
 				setSessions((prev) =>
 					prev.map((s) =>
-						s.id === targetSession.id
-							? {
-									...s,
-									activeTabId: existingTab.id,
-									activeFileTabId: null,
-									activeTerminalTabId: null,
-									inputMode: 'ai',
-								}
-							: s
+						s.id === targetSession.id ? { ...s, ...aiTabFocusFields(existingTab.id) } : s
 					)
 				);
 				setActiveAgentSessionId(agentSessionId);
@@ -458,10 +450,7 @@ export function useAgentSessionManagement(
 							return {
 								...s,
 								aiTabs: updatedTabs,
-								activeTabId: existingTab.id,
-								activeFileTabId: null,
-								activeTerminalTabId: null,
-								inputMode: 'ai' as const,
+								...aiTabFocusFields(existingTab.id),
 							};
 						}
 

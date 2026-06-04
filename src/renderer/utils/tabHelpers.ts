@@ -775,45 +775,36 @@ export function closeTab(
 				}
 			: sessionWithOrphans;
 
-	// Re-target any queued items that pointed at the just-closed tab. A queued
-	// message belongs to the session, not to a single tab — closing the tab must
-	// not orphan or drop it. We route orphaned items to a surviving AI tab (the
-	// active one if it's still alive, otherwise the first remaining tab, which
-	// always exists since closing the last tab spawns a fresh one). Without this,
-	// the dequeue paths fall back to whatever tab happens to be active and
-	// processQueuedItem aborts on the dead tabId — that abort drives the session
-	// idle, which the runtime queue-recovery effect treats as "stuck," so it
-	// re-dispatches the next item and drains the whole queue in one cascade.
-	const sessionWithRetargetedQueue = retargetQueuedItemsFromClosedTab(finalSession, tabId);
+	// Drop any queued items that targeted the just-closed tab. A queued message
+	// belongs to the tab it was composed for, so closing that tab discards its
+	// queue rather than silently migrating the message onto whatever tab happens
+	// to survive (the user's mental model: the message stays with the tab they
+	// closed, it does not jump to the new active tab). Dropping (vs. re-pointing
+	// at a live tab) also keeps the dispatcher safe: no item is left holding a
+	// dead tabId, so the dequeue paths never abort on a missing tab and trigger
+	// the queue-recovery cascade that would drain the whole queue at once.
+	const sessionWithCleanedQueue = dropQueuedItemsFromClosedTab(finalSession, tabId);
 
 	return {
 		closedTab,
-		session: sessionWithRetargetedQueue,
+		session: sessionWithCleanedQueue,
 	};
 }
 
 /**
- * After a tab is removed from `session.aiTabs`, reassign any `executionQueue`
- * items still pointing at the closed tab to a surviving AI tab so they remain
- * deliverable. Returns the session unchanged when nothing needs re-targeting.
+ * After a tab is removed from `session.aiTabs`, drop any `executionQueue` items
+ * that targeted the closed tab. Queued messages belong to the tab they were
+ * composed for, so closing the tab discards them instead of migrating them onto
+ * a surviving tab. Returns the session unchanged when nothing targeted the
+ * closed tab.
  */
-function retargetQueuedItemsFromClosedTab(session: Session, closedTabId: string): Session {
+function dropQueuedItemsFromClosedTab(session: Session, closedTabId: string): Session {
 	const queue = session.executionQueue ?? [];
 	if (!queue.some((item) => item.tabId === closedTabId)) {
 		return session;
 	}
-	// Prefer the still-active AI tab; fall back to the first remaining tab. In the
-	// terminal/file-fallback close branches activeTabId can still point at the
-	// closed tab, so the find() guards against handing back a dead id.
-	const survivingTabId =
-		session.aiTabs.find((tab) => tab.id === session.activeTabId)?.id ?? session.aiTabs[0]?.id;
-	if (!survivingTabId) {
-		return session;
-	}
-	const retargeted: QueuedItem[] = queue.map((item) =>
-		item.tabId === closedTabId ? { ...item, tabId: survivingTabId } : item
-	);
-	return { ...session, executionQueue: retargeted };
+	const remaining: QueuedItem[] = queue.filter((item) => item.tabId !== closedTabId);
+	return { ...session, executionQueue: remaining };
 }
 
 /**
@@ -1522,6 +1513,35 @@ export function reopenUnifiedClosedTab(session: Session): ReopenUnifiedClosedTab
 /**
  * Result of setting the active tab.
  */
+/**
+ * The session-state patch that focuses an agent's AI tab area.
+ *
+ * The main window renders exactly one tab type using this precedence:
+ *   terminal (inputMode==='terminal') > file (activeFileTabId) > browser
+ *   (activeBrowserTabId, while inputMode==='ai') > ai (activeTabId).
+ * See findActiveUnifiedTabIndex in unifiedTabOrderUtils.ts. Because browser, file,
+ * and terminal all outrank the AI tab, ANY code that wants to land the user on an
+ * AI tab must clear all three active-tab ids as well as set inputMode:'ai'. Leaving
+ * even one dangling keeps the previous view on screen (e.g. clicking a toast while a
+ * browser tab is active silently leaves the user on the browser tab).
+ *
+ * Spread this into a session update instead of hand-rolling the literal, so the
+ * invariant lives in one place:
+ *   updateSession(id, (s) => ({ ...s, ...aiTabFocusFields(tabId) }))
+ *
+ * @param tabId - The AI tab to activate. Omit to clear the non-AI views and force
+ *                AI mode without changing which AI tab is active.
+ */
+export function aiTabFocusFields(tabId?: string): Partial<Session> {
+	return {
+		...(tabId ? { activeTabId: tabId } : {}),
+		activeFileTabId: null,
+		activeTerminalTabId: null,
+		activeBrowserTabId: null,
+		inputMode: 'ai',
+	};
+}
+
 export interface SetActiveTabResult {
 	tab: AITab; // The newly active tab
 	session: Session; // Updated session with activeTabId changed
@@ -1576,11 +1596,7 @@ export function setActiveTab(session: Session, tabId: string): SetActiveTabResul
 		tab: targetTab,
 		session: {
 			...session,
-			activeTabId: tabId,
-			activeFileTabId: null,
-			activeBrowserTabId: null,
-			activeTerminalTabId: null,
-			inputMode: 'ai' as const,
+			...aiTabFocusFields(tabId),
 		},
 	};
 }
