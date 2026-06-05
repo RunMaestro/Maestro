@@ -22,6 +22,8 @@ export function useSshRemotes({
 	const [sshRemoteConfig, setSshRemoteConfig] = useState<AgentSshRemoteConfig | undefined>(() =>
 		getInitialSshRemoteConfig(sessionSshRemoteConfig)
 	);
+	const sessionRemoteEnabled = Boolean(sessionSshRemoteConfig?.enabled);
+	const sessionRemoteId = sessionSshRemoteConfig?.remoteId ?? null;
 
 	useEffect(() => {
 		const syncedConfig = getSyncedSshRemoteConfig(sessionSshRemoteConfig);
@@ -40,6 +42,23 @@ export function useSshRemotes({
 		async function loadSshRemotes() {
 			try {
 				const configsResult = await window.maestro.sshRemote.getConfigs();
+				if (!configsResult.success) {
+					if (mounted) {
+						setSshRemotes([]);
+					}
+					const errorMessage = configsResult.error ?? 'Unknown SSH remote load failure';
+					const loadError = new Error(errorMessage);
+					logger.error('Failed to load SSH remotes:', undefined, loadError);
+					captureException(loadError, {
+						extra: {
+							operation: 'agentSelection:loadSshRemotes',
+							sessionRemoteEnabled,
+							sessionRemoteId,
+							error: configsResult.error ?? null,
+						},
+					});
+					return;
+				}
 				if (mounted && configsResult.success && configsResult.configs) {
 					setSshRemotes(configsResult.configs);
 				}
@@ -48,9 +67,8 @@ export function useSshRemotes({
 				captureException(error, {
 					extra: {
 						operation: 'agentSelection:loadSshRemotes',
-						sessionRemoteEnabled: Boolean(sessionSshRemoteConfig?.enabled),
-						sessionRemoteId: sessionSshRemoteConfig?.remoteId ?? null,
-						hasWorkingDirOverride: Boolean(sessionSshRemoteConfig?.workingDirOverride),
+						sessionRemoteEnabled,
+						sessionRemoteId,
 					},
 				});
 			}
@@ -61,11 +79,7 @@ export function useSshRemotes({
 		return () => {
 			mounted = false;
 		};
-	}, [
-		sessionSshRemoteConfig?.enabled,
-		sessionSshRemoteConfig?.remoteId,
-		sessionSshRemoteConfig?.workingDirOverride,
-	]);
+	}, [sessionRemoteEnabled, sessionRemoteId]);
 
 	const handleSshRemoteChange = useCallback(
 		(remoteId: string) => {

@@ -190,6 +190,7 @@ describe('AgentSelectionScreen hooks', () => {
 		);
 
 		await waitFor(() => expect(result.current.sshRemotes).toHaveLength(1));
+		expect(window.maestro.sshRemote.getConfigs).toHaveBeenCalledTimes(1);
 
 		act(() => result.current.handleSshRemoteChange('remote-1'));
 		expect(result.current.sshRemoteConfig).toEqual({ enabled: true, remoteId: 'remote-1' });
@@ -218,6 +219,22 @@ describe('AgentSelectionScreen hooks', () => {
 			remoteId: 'remote-2',
 			workingDirOverride: '/work',
 		});
+		await waitFor(() => expect(window.maestro.sshRemote.getConfigs).toHaveBeenCalledTimes(2));
+
+		rerender({
+			sessionSshRemoteConfig: {
+				enabled: true,
+				remoteId: 'remote-2',
+				workingDirOverride: '/other-work',
+			},
+		});
+
+		expect(result.current.sshRemoteConfig).toEqual({
+			enabled: true,
+			remoteId: 'remote-2',
+			workingDirOverride: '/other-work',
+		});
+		expect(window.maestro.sshRemote.getConfigs).toHaveBeenCalledTimes(2);
 	});
 
 	it('swallows SSH remote load failures and reports telemetry', async () => {
@@ -238,9 +255,34 @@ describe('AgentSelectionScreen hooks', () => {
 				operation: 'agentSelection:loadSshRemotes',
 				sessionRemoteEnabled: false,
 				sessionRemoteId: null,
-				hasWorkingDirOverride: false,
 			},
 		});
+	});
+
+	it('handles unsuccessful SSH remote config responses', async () => {
+		vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValue({
+			success: false,
+			error: 'Failed to load',
+		});
+
+		const { result } = renderHook(() =>
+			useSshRemotes({
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+				setWizardSessionSshRemoteConfig: vi.fn(),
+			})
+		);
+
+		await waitFor(() => expect(window.maestro.sshRemote.getConfigs).toHaveBeenCalled());
+		expect(result.current.sshRemotes).toEqual([]);
+		expect(captureException).toHaveBeenCalledWith(expect.any(Error), {
+			extra: {
+				operation: 'agentSelection:loadSshRemotes',
+				sessionRemoteEnabled: true,
+				sessionRemoteId: 'remote-1',
+				error: 'Failed to load',
+			},
+		});
+		expect((vi.mocked(captureException).mock.calls[0][0] as Error).message).toBe('Failed to load');
 	});
 
 	it('focuses name field for one selectable agent and tile for multiple selectable agents', () => {
