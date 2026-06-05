@@ -15,6 +15,7 @@ import { useBrowserTabMounting } from '../../hooks/browser/useBrowserTabMounting
 import { useUIStore } from '../../stores/uiStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useTabStore } from '../../stores/tabStore';
+import { useLayerStack } from '../../contexts/LayerStackContext';
 import type {
 	Session,
 	Theme,
@@ -427,6 +428,11 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 	// page state survives switching away. All mounted tabs render through the persistent
 	// overlay block below (mirroring the terminal keep-alive overlay).
 	const mountedBrowserTabIds = useBrowserTabMounting(activeSession);
+	// Number of open modal/overlay layers. When any layer is open over a browser
+	// tab (e.g. the Tab Switcher), the guest <webview> must release Chromium input
+	// focus so keyboard navigation lands in the modal instead of the page. Driving
+	// isActive off this re-blurs the webview the moment a layer opens.
+	const { layerCount } = useLayerStack();
 	// Per-tab BrowserTabView handles. The single browserViewRef passed from MainPanel must
 	// point at the active (visible) tab's handle so resolveBrowserContent reads that webview.
 	const browserViewRefs = React.useRef<Map<string, BrowserTabViewHandle>>(new Map());
@@ -815,6 +821,11 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 				if (!browserTab) return null;
 				const isBrowserVisible =
 					activeSession.inputMode === 'ai' && activeSession.activeBrowserTabId === tabId;
+				// Hold keyboard focus only when no modal/overlay is layered above the
+				// page. The tab stays visually rendered (visibility/zIndex below are
+				// driven by isBrowserVisible), but the webview yields input focus to an
+				// open layer so its keyboard navigation works (e.g. the Tab Switcher).
+				const isBrowserFocusActive = isBrowserVisible && layerCount === 0;
 				return (
 					<div
 						key={tabId}
@@ -832,6 +843,7 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 							}}
 							tab={browserTab}
 							theme={theme}
+							isActive={isBrowserFocusActive}
 							onUpdateTab={(tid, updates) =>
 								handleBrowserTabUpdate?.(activeSession.id, tid, updates)
 							}

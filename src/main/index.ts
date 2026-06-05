@@ -376,7 +376,10 @@ const settingsWatcher = createSettingsWatcher({
 	getAgentConfigsPath: () => productionDataPath,
 });
 
-const devServerPort = process.env.VITE_PORT ? parseInt(process.env.VITE_PORT, 10) : 5173;
+// Fallback must match DEFAULT_START_PORT in scripts/dev-port.mjs. Never 5173
+// (Vite's default) - sharing it lets an agent-built dev server hijack the port
+// and replace the whole app window. See scripts/dev-port.mjs for the rationale.
+const devServerPort = process.env.VITE_PORT ? parseInt(process.env.VITE_PORT, 10) : 17173;
 const devServerUrl = `http://localhost:${devServerPort}`;
 
 // Forward declaration: quitHandler is constructed after the window, but the

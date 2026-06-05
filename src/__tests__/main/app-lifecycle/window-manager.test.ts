@@ -939,7 +939,7 @@ describe('app-lifecycle/window-manager', () => {
 			expect(mockEvent.preventDefault).toHaveBeenCalled();
 		});
 
-		it('should allow dev server navigation in development mode', async () => {
+		it('should allow only the dev server entry document in development mode', async () => {
 			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
 
 			const windowManager = createWindowManager({
@@ -961,10 +961,18 @@ describe('app-lifecycle/window-manager', () => {
 			);
 			const navigateHandler = willNavigateCall![1];
 
-			// Should allow dev server navigation
-			const mockEvent = { preventDefault: vi.fn() };
-			navigateHandler(mockEvent, 'http://localhost:5173/some/path');
-			expect(mockEvent.preventDefault).not.toHaveBeenCalled();
+			// The dev guard now matches production: only the app's own entry document
+			// (origin AND root pathname) may load top-level. The root URL is allowed
+			// so HMR/full-reloads keep working.
+			const rootEvent = { preventDefault: vi.fn() };
+			navigateHandler(rootEvent, 'http://localhost:5173/');
+			expect(rootEvent.preventDefault).not.toHaveBeenCalled();
+
+			// Same-origin sub-paths are blocked - page content belongs in a <webview>
+			// browser tab, never the top-level frame.
+			const subPathEvent = { preventDefault: vi.fn() };
+			navigateHandler(subPathEvent, 'http://localhost:5173/some/path');
+			expect(subPathEvent.preventDefault).toHaveBeenCalled();
 		});
 
 		it('should block file:// navigation in development mode', async () => {

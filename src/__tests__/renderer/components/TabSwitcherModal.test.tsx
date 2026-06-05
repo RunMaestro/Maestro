@@ -2685,7 +2685,7 @@ describe('TabSwitcherModal', () => {
 				expect(screen.getByText('Browser')).toBeInTheDocument();
 			});
 
-			it('falls back to URL when title is empty', () => {
+			it('falls back to host when title is empty', () => {
 				const browserTabs = [createTestBrowserTab({ title: '', url: 'https://fallback.com' })];
 
 				renderWithLayerStack(
@@ -2701,8 +2701,10 @@ describe('TabSwitcherModal', () => {
 					/>
 				);
 
-				// URL appears as both display name and subtitle
-				expect(screen.getAllByText('https://fallback.com')).toHaveLength(2);
+				// With no title, the display name falls back to the URL host
+				// (getBrowserTabLabel), while the full URL remains the subtitle.
+				expect(screen.getByText('fallback.com')).toBeInTheDocument();
+				expect(screen.getByText('https://fallback.com')).toBeInTheDocument();
 			});
 
 			it('calls onBrowserTabSelect when clicking a browser tab', () => {

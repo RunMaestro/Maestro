@@ -186,6 +186,8 @@ export interface MainPanelProps {
 	onNewBrowserTab?: () => void;
 	onBrowserTabSelect?: (tabId: string) => void;
 	onBrowserTabClose?: (tabId: string) => void;
+	onBrowserTabRename?: (tabId: string) => void;
+	onBrowserTabResetName?: (tabId: string) => void;
 	onBrowserTabUpdate?: (sessionId: string, tabId: string, updates: Partial<BrowserTab>) => void;
 
 	// Terminal tab callbacks (Phase 8)

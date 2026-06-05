@@ -584,6 +584,9 @@ export interface BrowserTab {
 	id: string; // Unique tab ID (UUID)
 	url: string; // Current URL shown in the address bar
 	title: string; // Last known document title (falls back to URL)
+	// User-assigned tab name. When set, it locks the displayed label and overrides
+	// page-set titles (the website can no longer rename the tab) until the user clears it.
+	customTitle?: string;
 	createdAt: number; // Timestamp for ordering
 	partition?: string; // Persisted Electron partition so browser tabs share session data per agent
 	canGoBack: boolean; // Navigation state for toolbar back button

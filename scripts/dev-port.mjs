@@ -1,6 +1,11 @@
 import net from 'node:net';
 
-const DEFAULT_START_PORT = 5173;
+// Deliberately NOT 5173: that is Vite's universal default port, so every web
+// project an agent scaffolds and runs with `npm run dev` competes for it. When
+// such a server wins the bind, Electron (pointed at the same localhost port)
+// loads the stranger's page and the whole app shell is replaced. A private base
+// port keeps Maestro's dev server out of that contention entirely.
+const DEFAULT_START_PORT = 17173;
 const DEFAULT_MAX_ATTEMPTS = 20;
 const LOCALHOST_HOSTS = ['127.0.0.1', '::1'];
 

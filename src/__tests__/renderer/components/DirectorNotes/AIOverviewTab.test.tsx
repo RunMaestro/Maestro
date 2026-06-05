@@ -77,6 +77,32 @@ beforeEach(() => {
 	// Reset module-level synopsis cache so each test starts fresh
 	_resetCacheForTesting();
 
+	// jsdom in this environment doesn't provide a working Storage on
+	// window.localStorage, so install a minimal in-memory mock that satisfies
+	// the Storage methods the component uses (font-scale persistence). Same
+	// pattern as GitDiffViewer.test.tsx / ProcessMonitor.test.tsx.
+	const store = new Map<string, string>();
+	Object.defineProperty(window, 'localStorage', {
+		configurable: true,
+		writable: true,
+		value: {
+			getItem: vi.fn((key: string) => (store.has(key) ? store.get(key)! : null)),
+			setItem: vi.fn((key: string, value: string) => {
+				store.set(key, String(value));
+			}),
+			removeItem: vi.fn((key: string) => {
+				store.delete(key);
+			}),
+			clear: vi.fn(() => {
+				store.clear();
+			}),
+			key: vi.fn((index: number) => Array.from(store.keys())[index] ?? null),
+			get length() {
+				return store.size;
+			},
+		},
+	});
+
 	(window as any).maestro = {
 		directorNotes: {
 			generateSynopsis: mockGenerateSynopsis,
@@ -287,6 +313,68 @@ describe('AIOverviewTab', () => {
 
 		expect(screen.getByText(/history entry\b/)).toBeInTheDocument();
 		expect(screen.getByText(/\bagent\b/)).toBeInTheDocument();
+	});
+
+	describe('synopsis font scaling', () => {
+		const FONT_SCALE_STORAGE_KEY = 'directorNotes.fontScale';
+
+		beforeEach(() => {
+			mockGenerateSynopsis.mockResolvedValue({
+				success: true,
+				synopsis: '# Synopsis',
+				stats: { agentCount: 3, entryCount: 42, durationMs: 95000 },
+			});
+		});
+
+		it('renders increase/decrease font-size controls with the stats bar', async () => {
+			render(<AIOverviewTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('markdown-renderer')).toBeInTheDocument();
+			});
+
+			expect(screen.getByLabelText('Increase font size')).toBeInTheDocument();
+			expect(screen.getByLabelText('Decrease font size')).toBeInTheDocument();
+		});
+
+		it('persists a larger scale to localStorage when increasing', async () => {
+			render(<AIOverviewTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('markdown-renderer')).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getByLabelText('Increase font size'));
+
+			// Default is 1.0, step is 0.1.
+			expect(window.localStorage.getItem(FONT_SCALE_STORAGE_KEY)).toBe('1.1');
+		});
+
+		it('persists a smaller scale to localStorage when decreasing', async () => {
+			render(<AIOverviewTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('markdown-renderer')).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getByLabelText('Decrease font size'));
+
+			expect(window.localStorage.getItem(FONT_SCALE_STORAGE_KEY)).toBe('0.9');
+		});
+
+		it('loads the persisted scale and disables increase at the max bound', async () => {
+			// Preload a scale at the clamp ceiling (FONT_SCALE_MAX = 2.0).
+			window.localStorage.setItem(FONT_SCALE_STORAGE_KEY, '2');
+
+			render(<AIOverviewTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('markdown-renderer')).toBeInTheDocument();
+			});
+
+			expect(screen.getByLabelText('Increase font size')).toBeDisabled();
+			expect(screen.getByLabelText('Decrease font size')).not.toBeDisabled();
+		});
 	});
 
 	it('does not update state after unmount but caches result', async () => {

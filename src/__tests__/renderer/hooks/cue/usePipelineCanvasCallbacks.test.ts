@@ -195,6 +195,87 @@ describe('usePipelineCanvasCallbacks', () => {
 		});
 	});
 
+	describe('onNodeDrag (pipeline-group child translation)', () => {
+		// Regression: ReactFlow fires onNodesChange (which moves the group node)
+		// BEFORE onNodeDrag. An incremental per-frame delta read the group's
+		// already-updated position and computed zero, stranding the child nodes
+		// outside the dragged card. The absolute delta (start + total) must keep
+		// children locked to the group regardless of that ordering.
+		it('translates children by the full delta even when the group moved first', () => {
+			const groupId = 'pipeline-group:p1';
+			const group = {
+				id: groupId,
+				type: 'pipeline-group',
+				position: { x: 10, y: 10 },
+				data: {},
+			} as unknown as Node;
+			const child1 = {
+				id: 'p1:t1',
+				type: 'trigger',
+				position: { x: 20, y: 30 },
+				data: {},
+			} as unknown as Node;
+			const child2 = {
+				id: 'p1:a1',
+				type: 'agent',
+				position: { x: 60, y: 80 },
+				data: {},
+			} as unknown as Node;
+			const h = setup({
+				pipelines: [pipeline('p1', [])],
+				selectedPipelineId: null,
+				isAllPipelinesView: true,
+				nodes: [group, child1, child2],
+			});
+
+			// 1) Drag start snapshots child start positions.
+			act(() => {
+				h.result.current.onNodeDragStart({} as React.MouseEvent, group, [group]);
+			});
+			// 2) ReactFlow moves the GROUP node first (the bug trigger).
+			act(() => {
+				h.result.current.onNodesChange([
+					{ id: groupId, type: 'position', position: { x: 50, y: 70 }, dragging: true },
+				]);
+			});
+			// 3) onNodeDrag fires with the group already at its new position.
+			const movedGroup = { ...group, position: { x: 50, y: 70 } } as Node;
+			act(() => {
+				h.result.current.onNodeDrag({} as React.MouseEvent, movedGroup, [movedGroup]);
+			});
+
+			// Delta = (40, 60); children must track it exactly.
+			const dn = h.getDisplayNodes();
+			expect(dn.find((n) => n.id === 'p1:t1')!.position).toEqual({ x: 60, y: 90 });
+			expect(dn.find((n) => n.id === 'p1:a1')!.position).toEqual({ x: 100, y: 140 });
+			// The group node itself is moved by ReactFlow, not this handler.
+			expect(dn.find((n) => n.id === groupId)!.position).toEqual({ x: 50, y: 70 });
+		});
+
+		it('ignores drags that did not originate on a pipeline-group node', () => {
+			const child = {
+				id: 'p1:t1',
+				type: 'trigger',
+				position: { x: 20, y: 30 },
+				data: {},
+			} as unknown as Node;
+			const h = setup({
+				pipelines: [pipeline('p1', [])],
+				selectedPipelineId: null,
+				isAllPipelinesView: true,
+				nodes: [child],
+			});
+			// No dragStart for a group → ref is null → onNodeDrag is a no-op.
+			act(() => {
+				h.result.current.onNodeDrag({} as React.MouseEvent, child, [child]);
+			});
+			expect(h.getDisplayNodes().find((n) => n.id === 'p1:t1')!.position).toEqual({
+				x: 20,
+				y: 30,
+			});
+		});
+	});
+
 	describe('onNodeDragStop', () => {
 		it('no-op in All Pipelines view', () => {
 			const h = setup({ isAllPipelinesView: true });

@@ -1,5 +1,16 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { RefreshCw, Save, Clock, Copy, Check, Bot, History, Timer } from 'lucide-react';
+import {
+	RefreshCw,
+	Save,
+	Clock,
+	Copy,
+	Check,
+	Bot,
+	History,
+	Timer,
+	AArrowUp,
+	AArrowDown,
+} from 'lucide-react';
 import { Spinner } from '../ui/Spinner';
 import type { Theme } from '../../types';
 import { MarkdownRenderer } from '../MarkdownRenderer';
@@ -17,6 +28,26 @@ type SynopsisStats = NonNullable<
 interface AIOverviewTabProps {
 	theme: Theme;
 	onSynopsisReady?: () => void;
+}
+
+// Font-scale zoom for the rendered synopsis. Stored as an em multiplier so the
+// em-based prose styles scale proportionally. Persisted to localStorage so the
+// chosen size is remembered across opens of Director's Notes.
+const FONT_SCALE_STORAGE_KEY = 'directorNotes.fontScale';
+const FONT_SCALE_MIN = 0.7;
+const FONT_SCALE_MAX = 2.0;
+const FONT_SCALE_STEP = 0.1;
+const FONT_SCALE_DEFAULT = 1.0;
+
+function clampFontScale(value: number): number {
+	if (!Number.isFinite(value)) return FONT_SCALE_DEFAULT;
+	return Math.min(FONT_SCALE_MAX, Math.max(FONT_SCALE_MIN, value));
+}
+
+function loadFontScale(): number {
+	const raw = localStorage.getItem(FONT_SCALE_STORAGE_KEY);
+	if (raw === null) return FONT_SCALE_DEFAULT;
+	return clampFontScale(Number(raw));
 }
 
 // Module-level cache so synopsis survives tab switches (unmount/remount)
@@ -69,7 +100,17 @@ export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
 	const [copied, setCopied] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [stats, setStats] = useState<SynopsisStats | null>(cachedSynopsis?.stats ?? null);
+	const [fontScale, setFontScale] = useState<number>(loadFontScale);
 	const mountedRef = useRef(true);
+
+	// Adjust the synopsis font size and persist the new scale.
+	const adjustFontScale = useCallback((direction: -1 | 1) => {
+		setFontScale((prev) => {
+			const next = clampFontScale(prev + direction * FONT_SCALE_STEP);
+			localStorage.setItem(FONT_SCALE_STORAGE_KEY, String(next));
+			return next;
+		});
+	}, []);
 	const isGeneratingRef = useRef(false);
 
 	// Generate prose styles for markdown rendering
@@ -333,6 +374,40 @@ export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
 							</span>
 						</div>
 					)}
+
+					{/* Font-size controls — right-justified, scale only the synopsis text */}
+					<div className="ml-auto flex items-center gap-1">
+						<button
+							onClick={() => adjustFontScale(-1)}
+							disabled={fontScale <= FONT_SCALE_MIN}
+							aria-label="Decrease font size"
+							title="Decrease font size"
+							className="flex items-center justify-center w-7 h-7 rounded transition-colors hover:opacity-100"
+							style={{
+								color: theme.colors.textDim,
+								border: `1px solid ${theme.colors.border}`,
+								opacity: fontScale <= FONT_SCALE_MIN ? 0.4 : 0.8,
+								cursor: fontScale <= FONT_SCALE_MIN ? 'default' : 'pointer',
+							}}
+						>
+							<AArrowDown className="w-4 h-4" />
+						</button>
+						<button
+							onClick={() => adjustFontScale(1)}
+							disabled={fontScale >= FONT_SCALE_MAX}
+							aria-label="Increase font size"
+							title="Increase font size"
+							className="flex items-center justify-center w-7 h-7 rounded transition-colors hover:opacity-100"
+							style={{
+								color: theme.colors.textDim,
+								border: `1px solid ${theme.colors.border}`,
+								opacity: fontScale >= FONT_SCALE_MAX ? 0.4 : 0.8,
+								cursor: fontScale >= FONT_SCALE_MAX ? 'default' : 'pointer',
+							}}
+						>
+							<AArrowUp className="w-4 h-4" />
+						</button>
+					</div>
 				</div>
 			)}
 
@@ -352,7 +427,7 @@ export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
 					</div>
 				)}
 				{synopsis ? (
-					<div className="director-notes-content">
+					<div className="director-notes-content" style={{ fontSize: `${fontScale}em` }}>
 						<style>{proseStyles}</style>
 						<MarkdownRenderer
 							content={synopsis}

@@ -65,6 +65,10 @@ export interface TabBarProps {
 	onBrowserTabSelect?: (tabId: string) => void;
 	/** Handler to close a browser tab */
 	onBrowserTabClose?: (tabId: string) => void;
+	/** Handler to open the rename dialog for a browser tab */
+	onBrowserTabRename?: (tabId: string) => void;
+	/** Handler to clear a browser tab's user-assigned name */
+	onBrowserTabResetName?: (tabId: string) => void;
 
 	// === Terminal Tab Props (Phase 8) ===
 	/** Currently active terminal tab ID (null if no terminal tab is active) */

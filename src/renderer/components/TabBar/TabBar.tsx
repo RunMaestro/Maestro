@@ -59,6 +59,8 @@ function TabBarInner({
 	activeBrowserTabId,
 	onBrowserTabSelect,
 	onBrowserTabClose,
+	onBrowserTabRename,
+	onBrowserTabResetName,
 	onUnifiedTabReorder,
 	activeTerminalTabId,
 	inputMode = 'ai',
@@ -594,6 +596,8 @@ function TabBarInner({
 										theme={theme}
 										onSelect={onBrowserTabSelect || (() => {})}
 										onClose={onBrowserTabClose || (() => {})}
+										onRename={onBrowserTabRename}
+										onResetName={onBrowserTabResetName}
 										onDragStart={handleDragStart}
 										onDragOver={handleDragOver}
 										onDragEnd={handleDragEnd}

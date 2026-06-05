@@ -227,7 +227,10 @@ export default defineConfig(({ mode }) => ({
 		include: ['diff', 'reactflow'],
 	},
 	server: {
-		port: process.env.VITE_PORT ? parseInt(process.env.VITE_PORT, 10) : 5173,
+		// Fallback must match DEFAULT_START_PORT in scripts/dev-port.mjs. Never
+		// 5173 (Vite's default): an agent-built dev server on that port would
+		// otherwise hijack the URL Electron loads and replace the app shell.
+		port: process.env.VITE_PORT ? parseInt(process.env.VITE_PORT, 10) : 17173,
 		strictPort: true,
 		hmr: !disableHmr,
 		// Disable file watching entirely when HMR is disabled to prevent any reloads

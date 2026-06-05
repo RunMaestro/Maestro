@@ -195,6 +195,8 @@ export const MainPanel = React.memo(
 			onNewBrowserTab,
 			onBrowserTabSelect,
 			onBrowserTabClose,
+			onBrowserTabRename,
+			onBrowserTabResetName,
 			onBrowserTabUpdate,
 			onFileTabEditModeChange,
 			onFileTabEditContentChange,
@@ -540,6 +542,7 @@ export const MainPanel = React.memo(
 				if (!handle || handle.getTabId() !== tabId) return null;
 				const content = await handle.getContent();
 				const displayName =
+					(browserTab.customTitle && browserTab.customTitle.trim()) ||
 					(browserTab.title && browserTab.title.trim()) ||
 					(() => {
 						try {
@@ -813,6 +816,8 @@ export const MainPanel = React.memo(
 									onNewBrowserTab={onNewBrowserTab}
 									onBrowserTabSelect={onBrowserTabSelect}
 									onBrowserTabClose={onBrowserTabClose}
+									onBrowserTabRename={onBrowserTabRename}
+									onBrowserTabResetName={onBrowserTabResetName}
 									// Terminal tab props (Phase 8)
 									onNewTerminalTab={onNewTerminalTab}
 									activeTerminalTabId={activeSession.activeTerminalTabId}

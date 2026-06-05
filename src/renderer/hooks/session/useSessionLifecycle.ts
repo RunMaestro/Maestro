@@ -252,15 +252,19 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 				return;
 			}
 
-			// If this is a browser tab, update its title directly
+			// If this is a browser tab, set a user-assigned name that locks the
+			// displayed label. An empty value clears it, letting the website set the
+			// tab title again. We never touch `title` so the live page title stays
+			// tracked underneath and reappears once the custom name is cleared.
 			if (activeSession.browserTabs?.some((t) => t.id === renameTabId)) {
+				const nextCustomTitle = newName.trim() || undefined;
 				useSessionStore.getState().setSessions((prev) =>
 					prev.map((s) => {
 						if (s.id !== activeSession.id) return s;
 						return {
 							...s,
 							browserTabs: (s.browserTabs || []).map((t) =>
-								t.id === renameTabId ? { ...t, title: newName || t.url } : t
+								t.id === renameTabId ? { ...t, customTitle: nextCustomTitle } : t
 							),
 						};
 					})

@@ -428,13 +428,24 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 			// file inside the renderer dir through, which meant a stray <a href="foo.md">
 			// in chat output could resolve relative to index.html and unload the app to
 			// a non-existent bundle file.
-			const allowedDevOrigin = isDevelopment ? new URL(devServerUrl).origin : null;
+			// The dev server serves the app at its root. A previous guard allowed the
+			// ENTIRE dev origin through, which let any same-origin path (a game served
+			// by the dev server, or a stray relative <a href="game/"> in chat/markdown
+			// output) unload the app and take over the whole window. Page content
+			// belongs in a <webview> browser tab, never the top-level frame, so the dev
+			// guard is now as strict as production: only the app's own entry document
+			// (origin AND pathname) may load top-level. HMR/full-reloads target the same
+			// root URL and the renderer has no top-level URL routing, so this is safe.
+			const devEntryUrl = isDevelopment ? new URL(devServerUrl) : null;
+			const allowedDevOrigin = devEntryUrl ? devEntryUrl.origin : null;
+			const allowedDevPathname = devEntryUrl ? devEntryUrl.pathname || '/' : null;
 			const allowedProdOrigin = isDevelopment ? null : new URL(rendererProductionUrl).origin;
 			const allowedProdEntryUrl = isDevelopment ? null : rendererProductionUrl;
 			mainWindow.webContents.on('will-navigate', (event, url) => {
 				const parsedUrl = new URL(url);
 				if (isDevelopment) {
-					if (parsedUrl.origin === allowedDevOrigin) return;
+					const pathname = parsedUrl.pathname || '/';
+					if (parsedUrl.origin === allowedDevOrigin && pathname === allowedDevPathname) return;
 				} else {
 					if (parsedUrl.origin === allowedProdOrigin && url === allowedProdEntryUrl) return;
 				}
