@@ -7,6 +7,12 @@ import { useAgentDetection } from '../../../../../../renderer/components/Wizard/
 import { useAgentSelectionFocus } from '../../../../../../renderer/components/Wizard/screens/AgentSelectionScreen/hooks/useAgentSelectionFocus';
 import { useAgentSelectionKeyboard } from '../../../../../../renderer/components/Wizard/screens/AgentSelectionScreen/hooks/useAgentSelectionKeyboard';
 import { useSshRemotes } from '../../../../../../renderer/components/Wizard/screens/AgentSelectionScreen/hooks/useSshRemotes';
+import { captureException } from '../../../../../../renderer/utils/sentry';
+
+vi.mock('../../../../../../renderer/utils/sentry', () => ({
+	captureException: vi.fn(),
+	captureMessage: vi.fn(),
+}));
 
 function agent(overrides: Partial<AgentConfig>): AgentConfig {
 	return {
@@ -124,6 +130,10 @@ describe('AgentSelectionScreen hooks', () => {
 		expect(window.maestro.agents.detect).toHaveBeenCalledWith('remote-1');
 		expect(result.current.sshConnectionError).toBe('Connection timed out');
 		expect(result.current.announcement).toContain('Unable to connect to remote host');
+
+		vi.mocked(window.maestro.agents.detect).mockClear();
+		await act(async () => result.current.refreshAgentDetection());
+		expect(window.maestro.agents.detect).toHaveBeenCalledWith('remote-1');
 	});
 
 	it('handles thrown detection errors and ignores stale completion after unmount', async () => {
@@ -210,8 +220,9 @@ describe('AgentSelectionScreen hooks', () => {
 		});
 	});
 
-	it('swallows SSH remote load failures', async () => {
-		vi.mocked(window.maestro.sshRemote.getConfigs).mockRejectedValue(new Error('no ssh'));
+	it('swallows SSH remote load failures and reports telemetry', async () => {
+		const error = new Error('no ssh');
+		vi.mocked(window.maestro.sshRemote.getConfigs).mockRejectedValue(error);
 
 		const { result } = renderHook(() =>
 			useSshRemotes({
@@ -222,6 +233,14 @@ describe('AgentSelectionScreen hooks', () => {
 
 		await waitFor(() => expect(window.maestro.sshRemote.getConfigs).toHaveBeenCalled());
 		expect(result.current.sshRemotes).toEqual([]);
+		expect(captureException).toHaveBeenCalledWith(error, {
+			extra: {
+				operation: 'agentSelection:loadSshRemotes',
+				sessionRemoteEnabled: false,
+				sessionRemoteId: null,
+				hasWorkingDirOverride: false,
+			},
+		});
 	});
 
 	it('focuses name field for one selectable agent and tile for multiple selectable agents', () => {
@@ -305,7 +324,7 @@ describe('AgentSelectionScreen hooks', () => {
 
 		rerender({ isNameFieldFocused: true, focusedTileIndex: 0 });
 		act(() => result.current({ key: 'Tab', shiftKey: true, preventDefault } as any));
-		expect(setFocusedTileIndex).toHaveBeenCalledWith(4);
+		expect(setFocusedTileIndex).toHaveBeenCalledWith(1);
 	});
 
 	it('opens and closes config panel, loading config and models with SSH ID', async () => {
@@ -354,6 +373,19 @@ describe('AgentSelectionScreen hooks', () => {
 		expect(showConfigView).toHaveBeenCalledTimes(1);
 		expect(announce).toHaveBeenCalledWith('Configuring Codex');
 
+		const loadError = new Error('load failed');
+		vi.mocked(window.maestro.agents.getModels).mockRejectedValueOnce(loadError);
+		await act(async () => {
+			await result.current.handleOpenConfig('codex');
+		});
+		expect(captureException).toHaveBeenCalledWith(loadError, {
+			extra: {
+				operation: 'agentSelection:loadModels',
+				agentId: 'codex',
+				remoteMode: true,
+			},
+		});
+
 		act(() => result.current.handleCloseConfig());
 		expect(setWizardSessionSshRemoteConfig).toHaveBeenCalledWith({
 			enabled: true,
@@ -401,6 +433,9 @@ describe('AgentSelectionScreen hooks', () => {
 		await act(async () => result.current.handleConfigBlur('model', 'gpt-5'));
 		await act(async () => result.current.handleCustomPathBlur());
 		await act(async () => result.current.handleRefreshModels());
+		const refreshError = new Error('refresh failed');
+		vi.mocked(window.maestro.agents.getModels).mockRejectedValueOnce(refreshError);
+		await act(async () => result.current.handleRefreshModels());
 		await act(async () => result.current.handleRefreshAgent());
 
 		expect(setWizardCustomPath).toHaveBeenCalledWith(undefined);
@@ -412,6 +447,13 @@ describe('AgentSelectionScreen hooks', () => {
 		expect(window.maestro.agents.setConfig).toHaveBeenCalledWith('codex', { model: 'gpt-5' });
 		expect(window.maestro.agents.setCustomPath).toHaveBeenCalledWith('codex', '/bin/codex');
 		expect(window.maestro.agents.getModels).toHaveBeenCalledWith('codex', true, undefined);
+		expect(captureException).toHaveBeenCalledWith(refreshError, {
+			extra: {
+				operation: 'agentSelection:refreshModels',
+				agentId: 'codex',
+				remoteMode: false,
+			},
+		});
 		expect(refreshAgentDetection).toHaveBeenCalledTimes(2);
 	});
 });

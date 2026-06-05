@@ -37,14 +37,20 @@ export function useAgentDetection({
 		setAnnouncementKey((previous) => previous + 1);
 	}, []);
 
+	const sshRemoteConfigKey = JSON.stringify(sshRemoteConfig) ?? 'null';
+
+	const detectAgentsWithContext = useCallback(async () => {
+		const sshRemoteId = getSshRemoteIdForDetection(sshRemoteConfig);
+		return window.maestro.agents.detect(sshRemoteId ?? undefined);
+	}, [sshRemoteConfigKey]);
+	const sshEnabled = Boolean(sshRemoteConfig?.enabled);
+
 	const refreshAgentDetection = useCallback(async () => {
-		const agents = await window.maestro.agents.detect();
+		const agents = await detectAgentsWithContext();
 		const visibleAgents = getVisibleAgents(agents);
 		setDetectedAgents(visibleAgents);
 		setAvailableAgents(visibleAgents);
-	}, [setAvailableAgents]);
-
-	const sshRemoteConfigKey = JSON.stringify(sshRemoteConfig) ?? 'null';
+	}, [detectAgentsWithContext, setAvailableAgents]);
 
 	useEffect(() => {
 		let mounted = true;
@@ -54,13 +60,12 @@ export function useAgentDetection({
 			setSshConnectionError(null);
 
 			try {
-				const sshRemoteId = getSshRemoteIdForDetection(sshRemoteConfig);
-				const agents = await window.maestro.agents.detect(sshRemoteId ?? undefined);
+				const agents = await detectAgentsWithContext();
 				if (!mounted) return;
 
 				const visibleAgents = getVisibleAgents(agents);
 
-				if (hasSshConnectionFailure(visibleAgents, sshRemoteConfig?.enabled)) {
+				if (hasSshConnectionFailure(visibleAgents, sshEnabled)) {
 					const errorMessage = getConnectionErrors(visibleAgents)[0];
 					setSshConnectionError(errorMessage);
 					announce(`Unable to connect to remote host: ${errorMessage}`);
@@ -89,7 +94,7 @@ export function useAgentDetection({
 					buildDetectionAnnouncement({
 						availableCount,
 						totalCount,
-						remote: Boolean(sshRemoteConfig?.enabled),
+						remote: sshEnabled,
 						autoSelectedClaude,
 					})
 				);
@@ -99,7 +104,7 @@ export function useAgentDetection({
 				logger.error('Failed to detect agents:', undefined, error);
 				if (!mounted) return;
 
-				if (sshRemoteConfig?.enabled) {
+				if (sshEnabled) {
 					setSshConnectionError(
 						error instanceof Error ? error.message : 'Unknown connection error'
 					);
@@ -114,7 +119,7 @@ export function useAgentDetection({
 		return () => {
 			mounted = false;
 		};
-	}, [announce, setAvailableAgents, setSelectedAgent, sshRemoteConfigKey]);
+	}, [announce, detectAgentsWithContext, setAvailableAgents, setSelectedAgent, sshEnabled]);
 
 	return {
 		isDetecting,

@@ -142,6 +142,7 @@ export function AgentTileButton({
 					}}
 					onKeyDown={(event) => {
 						if (event.key === 'Enter' || event.key === ' ') {
+							event.preventDefault();
 							event.stopPropagation();
 							onOpenConfig(tile.id);
 						}
@@ -149,7 +150,8 @@ export function AgentTileButton({
 					className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-1 px-2 py-1 mt-2 rounded text-[10px] hover:bg-white/10 transition-colors cursor-pointer"
 					style={{ color: theme.colors.textDim }}
 					title="Customize agent settings"
-					tabIndex={-1}
+					tabIndex={0}
+					aria-label="Customize agent settings"
 				>
 					<Settings className="w-3 h-3" />
 					Customize

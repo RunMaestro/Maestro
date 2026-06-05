@@ -82,8 +82,12 @@ describe('AgentSelectionScreen components', () => {
 		expect(screen.getAllByText('Beta').length).toBeGreaterThan(0);
 		expect(screen.getAllByText('Not installed').length).toBeGreaterThan(0);
 
-		fireEvent.click(screen.getAllByTitle('Customize agent settings')[1]);
+		const customizeActions = screen.getAllByTitle('Customize agent settings');
+		fireEvent.click(customizeActions[1]);
 		expect(onOpenConfig).toHaveBeenCalledWith('codex');
+		expect(customizeActions[1]).toHaveAttribute('tabindex', '0');
+		fireEvent.keyDown(customizeActions[1], { key: 'Enter' });
+		expect(onOpenConfig).toHaveBeenCalledTimes(2);
 	});
 
 	it('renders location select only when remotes exist and forwards selection', () => {

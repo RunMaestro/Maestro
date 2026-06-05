@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ToolType } from '../../../../types';
 import { useWizard } from '../../WizardContext';
 import { ScreenReaderAnnouncement } from '../../ScreenReaderAnnouncement';
@@ -48,6 +48,7 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 	const containerRef = useRef<HTMLDivElement>(null);
 	const nameInputRef = useRef<HTMLInputElement>(null);
 	const tileRefs = useRef<(HTMLButtonElement | null)[]>([]);
+	const transitionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
 	const refs = useMemo<AgentSelectionRefs>(
 		() => ({
@@ -64,6 +65,15 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 		},
 		[setSelectedAgent]
 	);
+
+	const clearTransitionTimer = useCallback(() => {
+		if (transitionTimerRef.current) {
+			clearTimeout(transitionTimerRef.current);
+			transitionTimerRef.current = null;
+		}
+	}, []);
+
+	useEffect(() => clearTransitionTimer, [clearTransitionTimer]);
 
 	const { sshRemotes, sshRemoteConfig, handleSshRemoteChange } = useSshRemotes({
 		sessionSshRemoteConfig: state.sessionSshRemoteConfig,
@@ -95,26 +105,33 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 	});
 
 	const showConfigView = useCallback(() => {
+		clearTransitionTimer();
 		setIsTransitioning(true);
-		setTimeout(() => {
+		transitionTimerRef.current = setTimeout(() => {
 			setViewMode('config');
 			setIsTransitioning(false);
+			transitionTimerRef.current = null;
 		}, 150);
-	}, []);
+	}, [clearTransitionTimer]);
 
-	const showGridView = useCallback((agentId: string | null) => {
-		setIsTransitioning(true);
-		setTimeout(() => {
-			setViewMode('grid');
-			setConfiguringAgentId(null);
-			setIsTransitioning(false);
-			const index = AGENT_TILES.findIndex((tile) => tile.id === agentId);
-			if (index !== -1) {
-				setFocusedTileIndex(index);
-				tileRefs.current[index]?.focus();
-			}
-		}, 150);
-	}, []);
+	const showGridView = useCallback(
+		(agentId: string | null) => {
+			clearTransitionTimer();
+			setIsTransitioning(true);
+			transitionTimerRef.current = setTimeout(() => {
+				setViewMode('grid');
+				setConfiguringAgentId(null);
+				setIsTransitioning(false);
+				transitionTimerRef.current = null;
+				const index = AGENT_TILES.findIndex((tile) => tile.id === agentId);
+				if (index !== -1) {
+					setFocusedTileIndex(index);
+					tileRefs.current[index]?.focus();
+				}
+			}, 150);
+		},
+		[clearTransitionTimer]
+	);
 
 	const customPath = state.customPath ?? '';
 	const customArgs = state.customArgs ?? '';

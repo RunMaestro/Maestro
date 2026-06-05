@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { AgentSshRemoteConfig, SshRemoteConfig } from '../../../../../../shared/types';
 import { logger } from '../../../../../utils/logger';
+import { captureException } from '../../../../../utils/sentry';
 import {
 	getInitialSshRemoteConfig,
 	getSyncedSshRemoteConfig,
@@ -44,6 +45,14 @@ export function useSshRemotes({
 				}
 			} catch (error) {
 				logger.error('Failed to load SSH remotes:', undefined, error);
+				captureException(error, {
+					extra: {
+						operation: 'agentSelection:loadSshRemotes',
+						sessionRemoteEnabled: Boolean(sessionSshRemoteConfig?.enabled),
+						sessionRemoteId: sessionSshRemoteConfig?.remoteId ?? null,
+						hasWorkingDirOverride: Boolean(sessionSshRemoteConfig?.workingDirOverride),
+					},
+				});
 			}
 		}
 
@@ -52,7 +61,11 @@ export function useSshRemotes({
 		return () => {
 			mounted = false;
 		};
-	}, []);
+	}, [
+		sessionSshRemoteConfig?.enabled,
+		sessionSshRemoteConfig?.remoteId,
+		sessionSshRemoteConfig?.workingDirOverride,
+	]);
 
 	const handleSshRemoteChange = useCallback(
 		(remoteId: string) => {

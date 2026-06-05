@@ -22,9 +22,15 @@ export function useAgentSelectionKeyboard({
 				if (event.key === 'Tab' && event.shiftKey) {
 					event.preventDefault();
 					setIsNameFieldFocused(false);
-					const lastIndex = AGENT_TILES.length - 1;
-					setFocusedTileIndex(lastIndex);
-					tileRefs.current?.[lastIndex]?.focus();
+					for (let index = AGENT_TILES.length - 1; index >= 0; index -= 1) {
+						const tile = AGENT_TILES[index];
+						const detected = findDetectedAgent(detectedAgents, tile.id);
+						if (tile.supported && detected?.available) {
+							setFocusedTileIndex(index);
+							tileRefs.current?.[index]?.focus();
+							break;
+						}
+					}
 				} else if (event.key === 'Enter' && canProceedToNext()) {
 					event.preventDefault();
 					nextStep();

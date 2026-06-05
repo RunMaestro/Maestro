@@ -137,6 +137,11 @@ describe('AgentSelectionScreen utils', () => {
 			remoteId: 'remote-1',
 			workingDirOverride: undefined,
 		});
+		expect(getInitialSshRemoteConfig({ enabled: true, remoteId: '' })).toEqual({
+			enabled: true,
+			remoteId: null,
+			workingDirOverride: undefined,
+		});
 		expect(getSyncedSshRemoteConfig({ enabled: false, remoteId: null })).toBeUndefined();
 		expect(getSyncedSshRemoteConfig(undefined)).toBeNull();
 		expect(selectSshRemoteConfig('')).toBeUndefined();

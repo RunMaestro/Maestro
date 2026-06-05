@@ -2,6 +2,7 @@ import { useCallback, useRef, useState } from 'react';
 import type { AgentConfig } from '../../../../../types';
 import type { AgentSshRemoteConfig } from '../../../../../../shared/types';
 import { logger } from '../../../../../utils/logger';
+import { captureException } from '../../../../../utils/sentry';
 import type { AgentTile } from '../types';
 import { AGENT_TILES } from '../utils/agentTiles';
 import {
@@ -84,12 +85,19 @@ export function useAgentConfigurationPanel({
 			const agent = detectedAgents.find((candidate) => candidate.id === agentId);
 			if (agent?.capabilities?.supportsModelSelection) {
 				setLoadingModels(true);
+				const sshRemoteId = getSshRemoteIdForDetection(sshRemoteConfig);
 				try {
-					const sshRemoteId = getSshRemoteIdForDetection(sshRemoteConfig);
 					const models = await window.maestro.agents.getModels(agentId, false, sshRemoteId);
 					setAvailableModels(models);
 				} catch (error) {
 					logger.error('Failed to load models:', undefined, error);
+					captureException(error, {
+						extra: {
+							operation: 'agentSelection:loadModels',
+							agentId,
+							remoteMode: Boolean(sshRemoteId),
+						},
+					});
 				} finally {
 					setLoadingModels(false);
 				}
@@ -136,12 +144,19 @@ export function useAgentConfigurationPanel({
 	const handleRefreshModels = useCallback(async () => {
 		if (!configuringAgentId) return;
 		setLoadingModels(true);
+		const sshRemoteId = getSshRemoteIdForDetection(sshRemoteConfig);
 		try {
-			const sshRemoteId = getSshRemoteIdForDetection(sshRemoteConfig);
 			const models = await window.maestro.agents.getModels(configuringAgentId, true, sshRemoteId);
 			setAvailableModels(models);
 		} catch (error) {
 			logger.error('Failed to refresh models:', undefined, error);
+			captureException(error, {
+				extra: {
+					operation: 'agentSelection:refreshModels',
+					agentId: configuringAgentId,
+					remoteMode: Boolean(sshRemoteId),
+				},
+			});
 		} finally {
 			setLoadingModels(false);
 		}

@@ -10,10 +10,11 @@ export function getInitialSshRemoteConfig(
 	sessionSshRemoteConfig: WizardSessionSshRemoteConfig | undefined
 ): AgentSshRemoteConfig | undefined {
 	if (!sessionSshRemoteConfig?.enabled) return undefined;
+	const remoteId = sessionSshRemoteConfig.remoteId || null;
 
 	return {
 		enabled: true,
-		remoteId: sessionSshRemoteConfig.remoteId ?? null,
+		remoteId,
 		workingDirOverride: sessionSshRemoteConfig.workingDirOverride,
 	};
 }
