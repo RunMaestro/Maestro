@@ -246,6 +246,13 @@ describe('path-prober', () => {
 			// Should have tried multiple paths
 			expect(accessMock).toHaveBeenCalled();
 		});
+
+		it.each(['hermes', 'pi'])('should probe known Windows paths for %s', async (binaryName) => {
+			accessMock.mockRejectedValue(new Error('ENOENT'));
+
+			expect(await probeWindowsPaths(binaryName)).toBeNull();
+			expect(accessMock).toHaveBeenCalled();
+		});
 	});
 
 	describe('probeUnixPaths', () => {
@@ -257,6 +264,13 @@ describe('path-prober', () => {
 
 		afterEach(() => {
 			accessMock.mockRestore();
+		});
+
+		it.each(['hermes', 'pi'])('should probe known Unix paths for %s', async (binaryName) => {
+			accessMock.mockRejectedValue(new Error('ENOENT'));
+
+			expect(await probeUnixPaths(binaryName)).toBeNull();
+			expect(accessMock).toHaveBeenCalled();
 		});
 
 		it('should return null for unknown binary', async () => {

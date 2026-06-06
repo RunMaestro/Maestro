@@ -338,6 +338,17 @@ function getWindowsKnownPaths(binaryName: string): string[] {
 			// npm global installation
 			...npmGlobal('gemini'),
 		],
+		hermes: [
+			// Python/pipx and standalone installations
+			...localBin('hermes'),
+			path.join(home, 'AppData', 'Roaming', 'Python', 'Scripts', 'hermes.exe'),
+			...npmGlobal('hermes'),
+		],
+		pi: [
+			// npm global installation
+			...npmGlobal('pi'),
+			...localBin('pi'),
+		],
 		gh: [
 			// GitHub CLI official installer (MSI)
 			path.join(programFiles, 'GitHub CLI', 'gh.exe'),
@@ -465,6 +476,20 @@ function getUnixKnownPaths(binaryName: string): string[] {
 			...homebrew('gemini'),
 			// Node version managers (nvm, fnm, volta, etc.)
 			...nodeVersionManagers('gemini'),
+		],
+		hermes: [
+			// Python/pipx and standalone installations
+			...localBin('hermes'),
+			...homebrew('hermes'),
+			path.join(home, 'bin', 'hermes'),
+		],
+		pi: [
+			// npm global and Node version manager installations
+			...localBin('pi'),
+			...homebrew('pi'),
+			...npmGlobal('pi'),
+			path.join(home, 'bin', 'pi'),
+			...nodeVersionManagers('pi'),
 		],
 		gh: [
 			// Homebrew (Apple Silicon + Intel)

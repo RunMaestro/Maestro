@@ -200,8 +200,9 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 	},
 
 	/**
-	 * Hermes - first-pass experimental registration based on documented CLI behavior.
-	 * Session storage and structured-output parsing stay gated until later runtime work lands.
+	 * Hermes - plain-text batch integration based on documented CLI behavior.
+	 * Structured output and session features remain gated because Hermes does not
+	 * expose a stable protocol Maestro can consume.
 	 */
 	hermes: {
 		supportsResume: false,
@@ -232,32 +233,33 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 	},
 
 	/**
-	 * Pi - first-pass experimental registration based on documented CLI behavior.
-	 * JSON/session-storage plumbing stays gated until dedicated runtime phases land.
+	 * Pi - JSONL batch integration based on the documented `--mode json` protocol.
+	 * Pi emits session IDs, message deltas, tool events, and usage statistics.
+	 * Pi accepts session IDs through `--session` and enforces read-only mode with a tool allowlist.
 	 */
 	pi: {
-		supportsResume: false,
-		supportsReadOnlyMode: false,
-		supportsJsonOutput: false,
-		supportsSessionId: false,
+		supportsResume: true,
+		supportsReadOnlyMode: true,
+		supportsJsonOutput: true,
+		supportsSessionId: true,
 		supportsImageInput: true,
-		supportsImageInputOnResume: false,
+		supportsImageInputOnResume: true,
 		supportsSlashCommands: false,
 		supportsSessionStorage: false,
-		supportsCostTracking: false,
-		supportsUsageStats: false,
+		supportsCostTracking: true,
+		supportsUsageStats: true,
 		supportsBatchMode: true,
 		requiresPromptToStart: true,
 		supportsStreaming: true,
-		supportsResultMessages: false,
+		supportsResultMessages: true,
 		supportsModelSelection: true,
 		supportsStreamJsonInput: false,
-		supportsThinkingDisplay: false,
+		supportsThinkingDisplay: true,
 		supportsContextMerge: true,
 		supportsContextExport: false,
 		supportsWizard: false,
 		supportsGroupChatModeration: false,
-		usesJsonLineOutput: false,
+		usesJsonLineOutput: true,
 		usesCombinedContextWindow: false,
 		supportsAppendSystemPrompt: false,
 		supportsProjectMemory: false,

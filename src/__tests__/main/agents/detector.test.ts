@@ -411,6 +411,23 @@ describe('agent-detector', () => {
 			expect(piAgent?.binaryName).toBe('pi');
 		});
 
+		it('should detect Pi using the shared CLI metadata', async () => {
+			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
+				if (args[0] === 'pi') {
+					return { stdout: '/usr/local/bin/pi\n', stderr: '', exitCode: 0 };
+				}
+				return { stdout: '', stderr: 'not found', exitCode: 1 };
+			});
+
+			const agents = await detector.detectAgents();
+			const piAgent = agents.find((a) => a.id === 'pi');
+
+			expect(piAgent?.available).toBe(true);
+			expect(piAgent?.path).toBe('/usr/local/bin/pi');
+			expect(piAgent?.name).toBe('Pi');
+			expect(piAgent?.binaryName).toBe('pi');
+		});
+
 		it('should use deduplication for parallel calls', async () => {
 			let callCount = 0;
 			mockExecFileNoThrow.mockImplementation(async () => {

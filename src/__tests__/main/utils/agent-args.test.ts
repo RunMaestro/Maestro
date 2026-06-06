@@ -387,6 +387,7 @@ describe('buildAgentArgs', () => {
 		expect(result).toEqual([
 			'chat',
 			'-Q',
+			'--yolo',
 			'-m',
 			'anthropic/claude-sonnet-4-20250514',
 			'-q',
@@ -408,11 +409,29 @@ describe('buildAgentArgs', () => {
 
 		expect(result).toEqual([
 			'-p',
+			'--mode',
+			'json',
 			'--model',
 			'claude-sonnet-4.5',
 			'Plan the next implementation step',
 		]);
 		expect(pi!.imageArgs!('/tmp/screenshot.png')).toEqual(['@/tmp/screenshot.png']);
+		expect(
+			buildAgentArgs(pi!, {
+				baseArgs: [],
+				prompt,
+				agentSessionId: 'pi-session-1',
+				readOnlyMode: true,
+			})
+		).toEqual([
+			'-p',
+			'--mode',
+			'json',
+			'--tools',
+			'read,grep,find,ls',
+			'--session',
+			'pi-session-1',
+		]);
 		expect(
 			pi!.configOptions?.find((option) => option.key === 'model')?.argBuilder?.('gpt-5')
 		).toEqual(['--model', 'gpt-5']);
