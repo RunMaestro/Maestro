@@ -1238,13 +1238,62 @@ describe('CodexOutputParser', () => {
 		});
 
 		describe('reasoning type', () => {
-			it('should parse reasoning as system event', () => {
+			it('should parse string[] summary as partial text with isReasoning', () => {
 				const line = JSON.stringify({
 					type: 'response_item',
 					payload: {
 						type: 'reasoning',
 						summary: ['step 1', 'step 2'],
 						encrypted_content: 'base64data...',
+					},
+				});
+
+				const event = parser.parseJsonLine(line);
+				expect(event?.type).toBe('text');
+				expect(event?.isPartial).toBe(true);
+				expect(event?.isReasoning).toBe(true);
+				expect(event?.text).toBe('step 1\nstep 2');
+			});
+
+			it('should parse summary_text object array (Responses API shape) as partial text', () => {
+				const line = JSON.stringify({
+					type: 'response_item',
+					payload: {
+						type: 'reasoning',
+						summary: [
+							{ type: 'summary_text', text: '**Thinking**\nfirst step' },
+							{ type: 'summary_text', text: 'second step' },
+						],
+					},
+				});
+
+				const event = parser.parseJsonLine(line);
+				expect(event?.type).toBe('text');
+				expect(event?.isPartial).toBe(true);
+				expect(event?.isReasoning).toBe(true);
+				// formatReasoningText adds \n\n before **section** markers for readability
+				expect(event?.text).toBe('\n\n**Thinking**\nfirst step\nsecond step');
+			});
+
+			it('should fall back to system event when only encrypted_content is present', () => {
+				const line = JSON.stringify({
+					type: 'response_item',
+					payload: {
+						type: 'reasoning',
+						encrypted_content: 'base64data...',
+					},
+				});
+
+				const event = parser.parseJsonLine(line);
+				expect(event?.type).toBe('system');
+			});
+
+			it('should fall back to system event when summary contains only blank strings', () => {
+				const line = JSON.stringify({
+					type: 'response_item',
+					payload: {
+						type: 'reasoning',
+						summary: ['   ', ''],
 					},
 				});
 
