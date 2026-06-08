@@ -49,6 +49,10 @@ type AgentSessionReadCall = {
 	sessionId: string;
 };
 
+type ProviderDetectionOptions = {
+	refreshAvailableProviderIds?: ProviderMatrixRow['id'][];
+};
+
 const PROVIDER_MATRIX: ProviderMatrixRow[] = [
 	{
 		id: 'codex',
@@ -188,49 +192,77 @@ function createSeedSession({
 async function stubProviderDetection(
 	electronApp: ElectronApplication,
 	providers: ProviderMatrixRow[] = PROVIDER_MATRIX,
-	unavailableProviderIds: ProviderMatrixRow['id'][] = []
+	unavailableProviderIds: ProviderMatrixRow['id'][] = [],
+	options: ProviderDetectionOptions = {}
 ) {
 	await electronApp.evaluate(
 		({ ipcMain }, payload) => {
-			const agents = payload.providers.map((row) => {
-				const available = !payload.unavailableProviderIds.includes(row.id);
+			const buildAgents = (unavailableIds: string[]) =>
+				payload.providers.map((row) => {
+					const available = !unavailableIds.includes(row.id);
+					return {
+						id: row.id,
+						name: row.displayName,
+						binaryName: row.binaryName,
+						command: row.command,
+						args: [],
+						available,
+						path: available ? row.customPath : null,
+						capabilities: {
+							supportsBatchMode: true,
+							supportsModelSelection: row.id === 'codex' || row.id === 'opencode',
+						},
+						configOptions: [
+							{
+								key: 'model',
+								type: 'text',
+								label: 'Model',
+								description: 'Model override for deterministic provider configuration coverage.',
+								default: '',
+							},
+							{
+								key: 'contextWindow',
+								type: 'number',
+								label: 'Context Window Size',
+								description: 'Context window size used by the session context widget.',
+								default: row.id === 'codex' ? 400000 : 128000,
+							},
+						],
+					};
+				});
+			const buildDebugInfo = (agentId: string, agentsForDebug: ReturnType<typeof buildAgents>) => {
+				const agent = agentsForDebug.find((candidate) => candidate.id === agentId);
+				const binaryName = agent?.binaryName ?? agentId;
 				return {
-					id: row.id,
-					name: row.displayName,
-					binaryName: row.binaryName,
-					command: row.command,
-					args: [],
-					available,
-					path: available ? row.customPath : null,
-					capabilities: {
-						supportsBatchMode: true,
-						supportsModelSelection: row.id === 'codex' || row.id === 'opencode',
-					},
-					configOptions: [
-						{
-							key: 'model',
-							type: 'text',
-							label: 'Model',
-							description: 'Model override for deterministic provider configuration coverage.',
-							default: '',
-						},
-						{
-							key: 'contextWindow',
-							type: 'number',
-							label: 'Context Window Size',
-							description: 'Context window size used by the session context widget.',
-							default: row.id === 'codex' ? 400000 : 128000,
-						},
-					],
+					agentId,
+					available: agent?.available ?? false,
+					path: agent?.path ?? null,
+					binaryName,
+					envPath: '/usr/local/bin:/usr/bin:/bin',
+					homeDir: '/tmp/maestro-e2e-provider-refresh',
+					platform: 'darwin',
+					whichCommand: 'which',
+					error: agent?.available
+						? null
+						: `which ${binaryName} failed (exit code 1): Binary not found in PATH`,
 				};
-			});
+			};
+			let agents = buildAgents(payload.unavailableProviderIds);
 
 			ipcMain.removeHandler('agents:detect');
 			ipcMain.handle('agents:detect', async () => agents);
 			ipcMain.removeHandler('agents:refresh');
-			ipcMain.handle('agents:refresh', async (_event, agentId: string) =>
-				agents.find((agent) => agent.id === agentId)
-			);
+			ipcMain.handle('agents:refresh', async (_event, agentId: string) => {
+				const refreshAvailableProviderIds = payload.options.refreshAvailableProviderIds ?? [];
+				const refreshedUnavailableProviderIds = payload.unavailableProviderIds.filter(
+					(id) => !refreshAvailableProviderIds.includes(id)
+				);
+				agents = buildAgents(refreshedUnavailableProviderIds);
+				return {
+					agents,
+					debugInfo: agentId ? buildDebugInfo(agentId, agents) : null,
+				};
+			});
 			ipcMain.removeHandler('agents:getConfig');
 			ipcMain.handle('agents:getConfig', async () => ({}));
 			ipcMain.removeHandler('agents:setConfig');
@@ -238,7 +270,7 @@ async function stubProviderDetection(
 			ipcMain.removeHandler('agents:getModels');
 			ipcMain.handle('agents:getModels', async () => []);
 		},
-		{ providers, unavailableProviderIds }
+		{ providers, unavailableProviderIds, options }
 	);
 }
 
@@ -1117,6 +1149,184 @@ test.describe('Agent CRUD lifecycle', () => {
 			await expect(editAgentDialog.getByPlaceholder('value', { exact: true })).toHaveValue('draft');
 			await editAgentDialog.getByRole('button', { name: 'Cancel' }).click();
 			await expect(editAgentDialog).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('shows provider refresh debug info for an unavailable Create New Agent provider', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: [seeded.sessions[0]],
+		});
+
+		try {
+			await stubProviderDetection(launched.electronApp, PROVIDER_MATRIX, ['opencode']);
+
+			const createAgentDialog = await openCreateAgentDialog(launched.window);
+			const opencodeOption = createAgentDialog.getByRole('option', { name: /OpenCode/ });
+			await opencodeOption.click();
+			await expect(opencodeOption.getByText('Not Found')).toBeVisible();
+
+			await opencodeOption.getByTitle('Refresh detection').click();
+
+			await expect(createAgentDialog.getByText('Debug Info: opencode not found')).toBeVisible();
+			await expect(createAgentDialog.getByText(/which opencode failed/)).toBeVisible();
+			await expect(createAgentDialog.getByText('/usr/local/bin')).toBeVisible();
+			await createAgentDialog.getByRole('button', { name: 'Dismiss' }).click();
+			await expect(createAgentDialog.getByText('Debug Info: opencode not found')).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('refreshes an unavailable provider and creates once detection succeeds', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: [seeded.sessions[0]],
+		});
+		const projectDir = path.join(seeded.homeDir, 'refreshed-opencode-project');
+		fs.mkdirSync(projectDir, { recursive: true });
+
+		try {
+			await stubProviderDetection(launched.electronApp, PROVIDER_MATRIX, ['opencode'], {
+				refreshAvailableProviderIds: ['opencode'],
+			});
+
+			const createAgentDialog = await openCreateAgentDialog(launched.window);
+			const opencodeOption = createAgentDialog.getByRole('option', { name: /OpenCode/ });
+			await opencodeOption.click();
+			await createAgentDialog.getByLabel('Agent Name').fill('Refreshed OpenCode Agent');
+			await createAgentDialog.getByLabel('Working Directory').fill(projectDir);
+
+			const createButton = createAgentDialog.getByRole('button', { name: 'Create Agent' });
+			await expect(createButton).toBeDisabled();
+			await expect(opencodeOption.getByText('Not Found')).toBeVisible();
+
+			await opencodeOption.getByTitle('Refresh detection').click();
+
+			await expect(opencodeOption.getByText('Available')).toBeVisible();
+			await expect(createButton).toBeEnabled();
+			await createButton.click();
+			await expect(createAgentDialog).toBeHidden();
+			await expect(
+				launched.window
+					.locator('[data-tour="session-list"]')
+					.getByText('Refreshed OpenCode Agent', { exact: true })
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('creates a provider agent using folder picker and keyboard submit', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: [seeded.sessions[0]],
+		});
+		const selectedDir = path.join(seeded.homeDir, 'keyboard-folder-picker-project');
+		fs.mkdirSync(selectedDir, { recursive: true });
+
+		try {
+			await stubProviderDetection(launched.electronApp);
+			await stubSelectFolderDialog(launched.electronApp, selectedDir);
+
+			const createAgentDialog = await openCreateAgentDialog(launched.window);
+			await createAgentDialog.getByRole('option', { name: /Codex/ }).click();
+			await createAgentDialog.getByLabel('Agent Name').fill('Keyboard Folder Agent');
+			await createAgentDialog.getByRole('button', { name: /Browse folders/ }).click();
+			await expect(createAgentDialog.getByLabel('Working Directory')).toHaveValue(selectedDir);
+
+			await launched.window.keyboard.press('Control+Enter');
+
+			await expect(createAgentDialog).toBeHidden();
+			await expect(
+				launched.window
+					.locator('[data-tour="session-list"]')
+					.getByText('Keyboard Folder Agent', { exact: true })
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('saves Edit Agent changes with the keyboard shortcut', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubProviderDetection(launched.electronApp);
+
+			const editAgentDialog = await openEditAgentDialog(launched.window, 'Matrix Codex Agent');
+			await editAgentDialog.getByLabel('Agent Name').fill('Matrix Codex Keyboard Saved');
+			await editAgentDialog
+				.getByPlaceholder('Instructions appended to every message you send...')
+				.fill('Saved through the edit modal keyboard shortcut.');
+
+			await launched.window.keyboard.press('Control+Enter');
+
+			await expect(editAgentDialog).toBeHidden();
+			const sessionList = launched.window.locator('[data-tour="session-list"]');
+			await expect(
+				sessionList.getByText('Matrix Codex Keyboard Saved', { exact: true })
+			).toBeVisible();
+			await expect(sessionList.getByText('Matrix Codex Agent', { exact: true })).toHaveCount(0);
+
+			const reopenedDialog = await openEditAgentDialog(
+				launched.window,
+				'Matrix Codex Keyboard Saved'
+			);
+			await expect(
+				reopenedDialog.getByPlaceholder('Instructions appended to every message you send...')
+			).toHaveValue('Saved through the edit modal keyboard shortcut.');
+			await reopenedDialog.getByRole('button', { name: 'Cancel' }).click();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('cancels Edit Agent provider switch drafts without changing the agent', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubProviderDetection(launched.electronApp);
+
+			const editAgentDialog = await openEditAgentDialog(launched.window, 'Matrix Codex Agent');
+			await editAgentDialog.getByLabel('Agent Name').fill('Draft OpenCode Switch');
+			await editAgentDialog.getByRole('combobox').selectOption('opencode');
+			await expect(
+				editAgentDialog.getByText(/Changing the provider will clear your session list/)
+			).toBeVisible();
+			await editAgentDialog
+				.getByPlaceholder('/path/to/opencode')
+				.fill('/opt/maestro/opencode-cancelled');
+			await editAgentDialog
+				.getByPlaceholder('--flag value --another-flag')
+				.fill('--draft-provider-switch');
+			await editAgentDialog.getByRole('button', { name: 'Cancel' }).click();
+			await expect(editAgentDialog).toBeHidden();
+
+			const sessionList = launched.window.locator('[data-tour="session-list"]');
+			await expect(sessionList.getByText('Matrix Codex Agent', { exact: true })).toBeVisible();
+			await expect(sessionList.getByText('Draft OpenCode Switch', { exact: true })).toHaveCount(0);
+
+			const reopenedDialog = await openEditAgentDialog(launched.window, 'Matrix Codex Agent');
+			await expect(reopenedDialog.getByRole('combobox')).toHaveValue('codex');
+			await expect(reopenedDialog.getByPlaceholder('/path/to/codex')).toHaveValue(
+				'/usr/local/bin/codex-e2e'
+			);
+			await expect(reopenedDialog.getByPlaceholder('--flag value --another-flag')).toHaveValue('');
+			await reopenedDialog.getByRole('button', { name: 'Cancel' }).click();
 		} finally {
 			await launched.cleanup();
 		}
