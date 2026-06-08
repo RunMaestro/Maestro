@@ -1,6 +1,6 @@
 # wizard-settings-prompts
 
-Status: tranche 6 fallback committed
+Status: tranche 7 fallback committed
 
 ## Scope
 
@@ -177,3 +177,32 @@ New Agent Wizard, inline wizard, Settings, Director Notes, prompt composer.
   - PM2-managed Codex worker runtime is still blocked by 503 managed-account availability errors.
   - Real provider account and live agent handoff coverage remains env-gated.
   - Remaining matrix-backed target: about 338 active/skipped rows after this tranche.
+
+### 2026-06-08 tranche 7 fallback
+
+- Scope: compact manual fallback tranche in isolated worktree `Maestro-worktrees/e2e-wizard-settings-prompts-fallback-3`.
+- Authored: 5 additional active deterministic Playwright scenarios.
+  - Settings General persists the custom shell path from Shell Configuration.
+  - Settings General toggles stats collection from Usage & Stats.
+  - Settings General persists the default Usage Dashboard time range.
+  - Settings Display persists Bionify reading mode and intensity.
+  - Settings Display validates and persists the Bionify algorithm.
+- Cumulative lane-authored coverage: 39 active deterministic scenarios, 1 env-gated scenario.
+- Skipped/env-gated: no new rows; total remains 1 provider-account handoff placeholder.
+- Files touched:
+  - `e2e/wizard-settings-prompts.spec.ts`
+  - `docs/e2e-parallel-campaign/agents/wizard-settings-prompts.md`
+- Shared helpers edited: no.
+- Validation run:
+  - `NODE_OPTIONS=--max-old-space-size=8192 npx prettier --check e2e/wizard-settings-prompts.spec.ts` - passed.
+  - `npx eslint e2e/wizard-settings-prompts.spec.ts` - passed.
+  - `npx tsc -p tsconfig.lint.json --noEmit` - passed.
+  - Static scenario-ID/`.only` scan - passed with 39 active rows, 1 env-gated row, no duplicate IDs, and no `.only`.
+  - `git diff --check -- e2e/wizard-settings-prompts.spec.ts docs/e2e-parallel-campaign/agents/wizard-settings-prompts.md` - passed.
+- Review:
+  - Manual focused diff review found no blocking issues in selector scope, matrix indexes, persistence assertions, or doc arithmetic.
+- Not run by instruction: `npm run test:e2e`, `playwright test`, headed/UI E2E, and Playwright listing.
+- Blockers/remaining work:
+  - PM2-managed Codex worker runtime is still blocked by 503 managed-account availability errors.
+  - Real provider account and live agent handoff coverage remains env-gated.
+  - Remaining matrix-backed target: about 333 active/skipped rows after this tranche.

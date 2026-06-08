@@ -72,6 +72,11 @@ const activeScenarioMatrix = [
 	{ id: 'WSP-032', title: 'persists the Settings GitHub CLI custom path' },
 	{ id: 'WSP-033', title: 'persists the Display terminal width selection' },
 	{ id: 'WSP-034', title: 'toggles Display Document Graph external links default' },
+	{ id: 'WSP-035', title: 'persists the Settings custom shell path' },
+	{ id: 'WSP-036', title: 'toggles Settings stats collection' },
+	{ id: 'WSP-037', title: 'persists the default Usage Dashboard range' },
+	{ id: 'WSP-038', title: 'persists Display Bionify mode and intensity' },
+	{ id: 'WSP-039', title: 'validates and persists the Display Bionify algorithm' },
 ];
 
 const envGatedScenarioMatrix = [
@@ -1119,6 +1124,161 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 					});
 				})
 				.toBe(false);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[34].id} ${activeScenarioMatrix[34].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				customShellPath: '',
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'General',
+				'Default Terminal Shell'
+			);
+			await settingsDialog.getByRole('button', { name: 'Shell Configuration' }).click();
+			await settingsDialog.getByPlaceholder('/path/to/shell').fill('/usr/local/bin/fish');
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('customShellPath');
+					});
+				})
+				.toBe('/usr/local/bin/fish');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[35].id} ${activeScenarioMatrix[35].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				statsCollectionEnabled: false,
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(launched.window, 'General', 'Usage & Stats');
+			await settingsDialog.getByRole('switch', { name: 'Enable stats collection' }).click();
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('statsCollectionEnabled');
+					});
+				})
+				.toBe(true);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[36].id} ${activeScenarioMatrix[36].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				defaultStatsTimeRange: 'week',
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(launched.window, 'General', 'Usage & Stats');
+			await settingsDialog
+				.locator('select')
+				.filter({ hasText: 'Last 30 days' })
+				.selectOption('month');
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('defaultStatsTimeRange');
+					});
+				})
+				.toBe('month');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[37].id} ${activeScenarioMatrix[37].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				bionifyReadingMode: false,
+				bionifyIntensity: 1,
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(launched.window, 'Display', 'Reading Mode');
+			await settingsDialog.getByRole('button', { name: /^Bionify$/ }).click();
+			await settingsDialog.getByRole('button', { name: /^Strong$/ }).click();
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return {
+							readingMode: await window.maestro.settings.get('bionifyReadingMode'),
+							intensity: await window.maestro.settings.get('bionifyIntensity'),
+						};
+					});
+				})
+				.toEqual({
+					readingMode: true,
+					intensity: 1.35,
+				});
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[38].id} ${activeScenarioMatrix[38].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				bionifyAlgorithm: '- 0 1 1 2 0.4',
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(launched.window, 'Display', 'Bionify Algorithm');
+			const algorithmInput = settingsDialog.getByLabel('Bionify algorithm');
+			const validationMessage = settingsDialog.getByText(
+				'Enter `+|- len1 len2 len3 len4 fraction`, for example `- 0 1 1 2 0.4`.'
+			);
+
+			await algorithmInput.fill('invalid algorithm');
+			await expect(validationMessage).toBeVisible();
+			await algorithmInput.fill('+ 1 1 2 2 0.5');
+			await algorithmInput.press('Enter');
+
+			await expect(validationMessage).toBeHidden();
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('bionifyAlgorithm');
+					});
+				})
+				.toBe('+ 1 1 2 2 0.5');
 		} finally {
 			await launched.cleanup();
 		}
