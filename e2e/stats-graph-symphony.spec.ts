@@ -28,6 +28,11 @@ const activeScenarioMatrix = [
 	{ id: 'SGS-A15', title: 'opens achievement badge details and share menu actions' },
 	{ id: 'SGS-A16', title: 'shows Symphony GitHub CLI preflight when starting contribution' },
 	{ id: 'SGS-A17', title: 'handles mocked leaderboard pending confirmation state' },
+	{ id: 'SGS-A18', title: 'toggles Usage Dashboard duration trend smoothing' },
+	{ id: 'SGS-A19', title: 'reads Auto Run task completion chart accessibility details' },
+	{ id: 'SGS-A20', title: 'opens Document Graph help legend shortcut and mouse guidance' },
+	{ id: 'SGS-A21', title: 'shows Symphony empty project issue states' },
+	{ id: 'SGS-A22', title: 'reviews Symphony completed contribution summary details' },
 ] as const;
 
 const skippedScenarioMatrix = [
@@ -920,6 +925,80 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 		await expect(
 			leaderboardDialog.getByText('Click the link in your email to complete registration.')
 		).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[17].id} ${activeScenarioMatrix[17].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await usageDashboard.getByRole('tab', { name: 'Activity' }).click();
+		const durationTrends = usageDashboard.getByTestId('section-duration-trends');
+		await durationTrends.scrollIntoViewIfNeeded();
+
+		await expect(
+			durationTrends.getByRole('figure', { name: /Duration trends chart showing average/i })
+		).toBeVisible();
+		await durationTrends.getByRole('button', { name: 'Enable smoothing' }).click();
+		await expect(durationTrends.getByRole('button', { name: 'Disable smoothing' })).toBeVisible();
+		await expect(durationTrends.getByText('Duration Trends')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[18].id} ${activeScenarioMatrix[18].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await usageDashboard.getByRole('tab', { name: 'Auto Run' }).click();
+		const tasksChart = usageDashboard.getByTestId('autorun-tasks-chart');
+		await tasksChart.scrollIntoViewIfNeeded();
+
+		await expect(tasksChart).toHaveAttribute('aria-label', /Tasks completed over time chart/);
+		await expect(tasksChart.getByRole('list', { name: 'Tasks completed by date' })).toBeVisible();
+		await expect(usageDashboard.getByTestId('task-bar-2026-05-29')).toHaveAttribute(
+			'aria-label',
+			/May 29, 2026: \d+ tasks attempted, \d+ successful/
+		);
+	});
+
+	test(`${activeScenarioMatrix[19].id} ${activeScenarioMatrix[19].title}`, async () => {
+		const graphDialog = await openDocumentGraphFromPreview(window);
+
+		await graphDialog.getByTitle('Open help panel').click();
+		const helpPanel = graphDialog.getByRole('region', { name: 'Help panel' });
+		await expect(helpPanel).toBeVisible();
+		await expect(helpPanel.getByText('Keyboard Shortcuts')).toBeVisible();
+		await expect(helpPanel.getByText('Focus node in graph')).toBeVisible();
+		await expect(helpPanel.getByText('Preview document in-graph')).toBeVisible();
+		await expect(helpPanel.getByText('Mouse Actions')).toBeVisible();
+		await expect(helpPanel.getByText('Right-click')).toBeVisible();
+
+		await closeDocumentGraph(window);
+	});
+
+	test(`${activeScenarioMatrix[20].id} ${activeScenarioMatrix[20].title}`, async () => {
+		const symphonyDialog = await openSymphonyFromQuickActions(window);
+
+		await symphonyDialog.getByPlaceholder('Search repositories...').fill('documentation');
+		await expect(symphonyDialog.getByRole('button', { name: /Documentation Hub/ })).toBeVisible();
+		await symphonyDialog.getByRole('button', { name: /Documentation Hub/ }).click();
+
+		await expect(symphonyDialog.getByText('Maestro Symphony: Documentation Hub')).toBeVisible();
+		await expect(symphonyDialog.getByText('No issues with runmaestro.ai label')).toBeVisible();
+		await expect(symphonyDialog.getByText('No outstanding work for this project')).toBeVisible();
+		await expect(
+			symphonyDialog.getByText('There are no issues labeled with runmaestro.ai')
+		).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[21].id} ${activeScenarioMatrix[21].title}`, async () => {
+		const symphonyDialog = await openSymphonyFromQuickActions(window);
+
+		await symphonyDialog.getByRole('button', { name: 'History' }).click();
+		await expect(symphonyDialog.getByText('Document mobile bridge setup')).toBeVisible();
+		await expect(symphonyDialog.getByText('Merged')).toBeVisible();
+		await expect(symphonyDialog.getByRole('button', { name: /PR #12/ })).toBeVisible();
+		await expect(symphonyDialog.getByText('Documents')).toBeVisible();
+		await expect(symphonyDialog.getByText('Tasks')).toBeVisible();
+		await expect(symphonyDialog.getByText('Tokens')).toBeVisible();
+		await expect(symphonyDialog.getByText('Cost')).toBeVisible();
+		await expect(symphonyDialog.getByText('$4.56')).toBeVisible();
 	});
 
 	for (const scenario of skippedScenarioMatrix) {
