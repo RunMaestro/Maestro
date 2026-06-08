@@ -163,6 +163,14 @@ const twentiethTrancheActiveScenarioMatrix = [
 	{ id: 'DA-101', title: 'reports Process Monitor session totals and running status' },
 ] as const;
 
+const twentyFirstTrancheActiveScenarioMatrix = [
+	{ id: 'DA-102', title: 'selects the first Process Monitor node with ArrowDown' },
+	{ id: 'DA-103', title: 'moves Process Monitor child selection back to its parent' },
+	{ id: 'DA-104', title: 'opens Process Monitor details with Space on selected processes' },
+	{ id: 'DA-105', title: 'restores collapsed Process Monitor rows from Expand all' },
+	{ id: 'DA-106', title: 'opens clicked Process Monitor rows with Enter' },
+] as const;
+
 const debugPackagePreviewCategories = [
 	{ id: 'logs', name: 'System Logs', included: true, sizeEstimate: '~50 KB' },
 	{ id: 'errors', name: 'Error States', included: true, sizeEstimate: '< 10 KB' },
@@ -2858,6 +2866,133 @@ test.describe('Debug and accessibility smoke tranche', () => {
 			await expect(
 				processMonitor.getByText('↑↓ navigate • Enter view details • R refresh')
 			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${twentyFirstTrancheActiveScenarioMatrix[0].id} ${twentyFirstTrancheActiveScenarioMatrix[0].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubActiveProcesses(
+				launched.electronApp,
+				createStubbedActiveProcesses(launched.sessions[0], launched.projectDir)
+			);
+			const processMonitor = await openProcessMonitorFromQuickActions(launched.window);
+			await expect(
+				processMonitor.getByText('Debug Accessibility Agent - AI Agent (codex)')
+			).toBeVisible();
+
+			await launched.window.keyboard.press('ArrowDown');
+			await launched.window.keyboard.press('Enter');
+
+			await expect(processMonitor.getByText('Debug Accessibility Agent')).toBeVisible();
+			await expect(
+				processMonitor.getByText('Debug Accessibility Agent - AI Agent (codex)')
+			).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${twentyFirstTrancheActiveScenarioMatrix[1].id} ${twentyFirstTrancheActiveScenarioMatrix[1].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubActiveProcesses(
+				launched.electronApp,
+				createStubbedActiveProcesses(launched.sessions[0], launched.projectDir)
+			);
+			const processMonitor = await openProcessMonitorFromQuickActions(launched.window);
+			await expect(
+				processMonitor.getByText('Debug Accessibility Agent - AI Agent (codex)')
+			).toBeVisible();
+
+			await launched.window.keyboard.press('ArrowDown');
+			await launched.window.keyboard.press('ArrowRight');
+			await launched.window.keyboard.press('ArrowLeft');
+			await launched.window.keyboard.press('Enter');
+
+			await expect(processMonitor.getByText('Debug Accessibility Agent')).toBeVisible();
+			await expect(
+				processMonitor.getByText('Debug Accessibility Agent - AI Agent (codex)')
+			).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${twentyFirstTrancheActiveScenarioMatrix[2].id} ${twentyFirstTrancheActiveScenarioMatrix[2].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubActiveProcesses(
+				launched.electronApp,
+				createStubbedActiveProcesses(launched.sessions[0], launched.projectDir)
+			);
+			const processMonitor = await openProcessMonitorFromQuickActions(launched.window);
+			await expect(
+				processMonitor.getByText('Debug Accessibility Agent - AI Agent (codex)')
+			).toBeVisible();
+
+			await launched.window.keyboard.press('ArrowDown');
+			await launched.window.keyboard.press('ArrowRight');
+			await launched.window.keyboard.press('Space');
+
+			const detailView = launched.window.getByRole('dialog', { name: 'Process Details' });
+			await expect(detailView).toBeVisible();
+			await expect(detailView.getByText('Process Session ID')).toBeVisible();
+			await expect(detailView.getByText('codex').first()).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${twentyFirstTrancheActiveScenarioMatrix[3].id} ${twentyFirstTrancheActiveScenarioMatrix[3].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubActiveProcesses(
+				launched.electronApp,
+				createStubbedActiveProcesses(launched.sessions[0], launched.projectDir)
+			);
+			const processMonitor = await openProcessMonitorFromQuickActions(launched.window);
+			await expect(
+				processMonitor.getByText('Debug Accessibility Agent - Terminal Shell')
+			).toBeVisible();
+
+			await processMonitor.getByTitle('Collapse all').click();
+			await expect(
+				processMonitor.getByText('Debug Accessibility Agent - Terminal Shell')
+			).toBeHidden();
+			await processMonitor.getByTitle('Expand all').click();
+
+			await expect(
+				processMonitor.getByText('Debug Accessibility Agent - Terminal Shell')
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${twentyFirstTrancheActiveScenarioMatrix[4].id} ${twentyFirstTrancheActiveScenarioMatrix[4].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubActiveProcesses(
+				launched.electronApp,
+				createStubbedActiveProcesses(launched.sessions[0], launched.projectDir)
+			);
+			const processMonitor = await openProcessMonitorFromQuickActions(launched.window);
+			await processMonitor.getByTitle('Expand all').click();
+			const aiProcessRow = processMonitor
+				.locator('[tabindex="0"]')
+				.filter({ hasText: 'Debug Accessibility Agent - AI Agent (codex)' })
+				.first();
+
+			await aiProcessRow.click();
+			await launched.window.keyboard.press('Enter');
+
+			const detailView = launched.window.getByRole('dialog', { name: 'Process Details' });
+			await expect(detailView).toBeVisible();
+			await expect(detailView.getByText('Process Session ID')).toBeVisible();
+			await expect(detailView.getByText(`${launched.sessions[0].id}-ai-`)).toBeVisible();
 		} finally {
 			await launched.cleanup();
 		}
