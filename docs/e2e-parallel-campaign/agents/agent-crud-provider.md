@@ -16,6 +16,34 @@ Agent CRUD, provider setup, Agent Sessions.
 
 ## Progress
 
+### 2026-06-08 recovery tranche 15
+
+- Scope: manual fallback tranche for provider draft lifecycle cancel and switch isolation.
+- Authored: 3 active deterministic Playwright scenarios.
+  - Cancels a filled Create New Agent provider draft without adding an agent.
+  - Keeps Create New Agent provider drafts isolated while switching providers.
+  - Cancels ordinary Edit Agent config drafts without saving changes.
+- Skipped/env-gated: no new rows.
+- Lane target remains: about 27 active scenarios plus fuller skipped/env-gated real-provider coverage.
+- Files touched:
+  - `e2e/agent-crud-provider.spec.ts`
+  - `docs/e2e-parallel-campaign/agents/agent-crud-provider.md`
+  - `docs/e2e-parallel-campaign/coverage-ledger.md`
+  - `docs/e2e-coverage-campaign.md`
+- Shared helpers edited: no.
+- Broadcast update required: no.
+- Checks run:
+  - `npx prettier --write e2e/agent-crud-provider.spec.ts`
+  - `npx eslint e2e/agent-crud-provider.spec.ts`
+  - `npx tsc -p tsconfig.lint.json --noEmit`
+  - `git diff --check`
+  - Static scan: 953 declared E2E tests, 0 `.only`, 0 prohibited Playwright/E2E commands, 0 duplicate titles in `e2e/agent-crud-provider.spec.ts`.
+  - Code-reviewer checklist: no blocking issues in the `agent-crud-provider` diff.
+- Commit hashes:
+  - `0cb3fda43` - `test(e2e-agent-crud-provider): add provider draft lifecycle coverage`
+- Blockers:
+  - E2E execution, Playwright listing, headed/UI E2E, and full E2E validation are intentionally not run under the recovery-run hard rules.
+
 ### 2026-06-08 recovery tranche 14
 
 - Scope: manual fallback tranche for provider group state and bookmark visibility.
