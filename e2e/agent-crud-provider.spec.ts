@@ -2678,6 +2678,152 @@ test.describe('Agent Sessions provider storage', () => {
 			await launched.cleanup();
 		}
 	});
+
+	test('adds a name to an unnamed generic provider session from the list row', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: [seeded.sessions[0]],
+		});
+
+		try {
+			await stubCodexAgentSessionStorage(launched.electronApp, seeded.projectDir);
+
+			const agentSessions = await openAgentSessions(launched.window, 'Matrix Codex Agent');
+			const unnamedRow = agentSessions
+				.getByText('Unnamed provider setup sentinel')
+				.locator('xpath=ancestor::div[contains(@class, "cursor-pointer")][1]');
+			await unnamedRow.hover();
+			await unnamedRow.getByTitle('Add session name').click();
+			const renameInput = agentSessions.getByPlaceholder('Enter session name...');
+			await renameInput.fill('Provider List Named Session');
+			await renameInput.press('Enter');
+
+			await expect(agentSessions.getByText('Provider List Named Session')).toBeVisible();
+			await expect(await getAgentSessionUpdates(launched.electronApp)).toContainEqual({
+				type: 'name',
+				agentId: 'codex',
+				projectPath: seeded.projectDir,
+				sessionId: 'codex-provider-unnamed',
+				name: 'Provider List Named Session',
+			});
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('clears a generic provider session name from the list row with a blank rename', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: [seeded.sessions[0]],
+		});
+
+		try {
+			await stubCodexAgentSessionStorage(launched.electronApp, seeded.projectDir);
+
+			const agentSessions = await openAgentSessions(launched.window, 'Matrix Codex Agent');
+			const reviewRow = agentSessions
+				.getByText('Provider Setup Review')
+				.locator('xpath=ancestor::div[contains(@class, "cursor-pointer")][1]');
+			await reviewRow.hover();
+			await reviewRow.getByTitle('Rename session').click();
+			const renameInput = agentSessions.getByPlaceholder('Enter session name...');
+			await renameInput.fill('   ');
+			await renameInput.press('Enter');
+
+			await expect(agentSessions.getByText('Provider Setup Review')).toHaveCount(0);
+			await expect(
+				agentSessions.getByText('Review provider setup sentinel coverage')
+			).toBeVisible();
+			await expect(await getAgentSessionUpdates(launched.electronApp)).toContainEqual({
+				type: 'name',
+				agentId: 'codex',
+				projectPath: seeded.projectDir,
+				sessionId: 'codex-provider-review',
+				name: null,
+			});
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('shows origin metadata pills for generic provider sessions', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: [seeded.sessions[0]],
+		});
+
+		try {
+			await stubCodexAgentSessionStorage(launched.electronApp, seeded.projectDir, {
+				includeHiddenAgentSession: true,
+			});
+
+			const agentSessions = await openAgentSessions(launched.window, 'Matrix Codex Agent');
+			await expect(agentSessions.getByTitle('User-initiated through Maestro')).toBeVisible();
+			await expect(agentSessions.getByTitle('Claude Code CLI session')).toBeVisible();
+
+			await agentSessions.getByRole('checkbox', { name: 'Show All' }).check();
+			await expect(agentSessions.getByTitle('Auto-run session')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('searches hidden generic provider session titles after Show All', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: [seeded.sessions[0]],
+		});
+
+		try {
+			await stubCodexAgentSessionStorage(launched.electronApp, seeded.projectDir, {
+				includeHiddenAgentSession: true,
+			});
+
+			const agentSessions = await openAgentSessions(launched.window, 'Matrix Codex Agent');
+			await agentSessions.getByRole('checkbox', { name: 'Show All' }).check();
+			await agentSessions.getByRole('button', { name: /^All$/ }).click();
+			await agentSessions.getByRole('button', { name: 'Title Only' }).click();
+			const titleSearch = agentSessions.getByPlaceholder('Search titles...');
+			await titleSearch.fill('Hidden Provider');
+
+			await expect(agentSessions.getByText('Hidden Provider Run')).toBeVisible();
+			await expect(agentSessions.getByText('Provider Setup Review')).toBeHidden();
+			await expect(await getAgentSessionSearchCalls(launched.electronApp)).toEqual([]);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('clears an unmatched generic provider search when switching to activity graph', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: [seeded.sessions[0]],
+		});
+
+		try {
+			await stubCodexAgentSessionStorage(launched.electronApp, seeded.projectDir);
+
+			const agentSessions = await openAgentSessions(launched.window, 'Matrix Codex Agent');
+			const searchInput = agentSessions.getByPlaceholder('Search all content...');
+			await searchInput.fill('missing provider graph sentinel');
+			await expect(agentSessions.getByText('No sessions match your search')).toBeVisible();
+
+			await agentSessions.getByTitle('Show activity graph').click();
+			await expect(searchInput).toBeHidden();
+			await expect(agentSessions.getByText('No sessions match your search')).toBeHidden();
+
+			await agentSessions.getByTitle(/Search sessions/).click();
+			await expect(agentSessions.getByPlaceholder('Search all content...')).toHaveValue('');
+			await expect(agentSessions.getByText('Provider Setup Review')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
 });
 
 test.describe.skip('Real provider state coverage gated by MAESTRO_E2E_REAL_PROVIDER_STATE', () => {
