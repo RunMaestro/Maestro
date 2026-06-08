@@ -1,5 +1,5 @@
 /**
- * E2E Tests: wizard, settings, prompts first tranche.
+ * E2E Tests: wizard, settings, prompts lane coverage.
  *
  * This file keeps the lane deterministic: seeded state only, no live providers,
  * and no network-backed flows.
@@ -16,6 +16,13 @@ const activeScenarioMatrix = [
 	{ id: 'WSP-003', title: 'persists a custom AI command from Settings' },
 	{ id: 'WSP-004', title: "opens Director's Notes from Quick Actions when enabled" },
 	{ id: 'WSP-005', title: 'inserts a seeded Prompt Composer mention without sending' },
+	{ id: 'WSP-006', title: 'preserves inline wizard draft text through Prompt Composer' },
+	{ id: 'WSP-007', title: 'cancels inline wizard exit confirmation' },
+	{ id: 'WSP-008', title: 'exits inline wizard after explicit confirmation' },
+	{ id: 'WSP-009', title: 'closes the New Agent Wizard from the header button' },
+	{ id: 'WSP-010', title: 'renders seeded custom AI command settings' },
+	{ id: 'WSP-011', title: 'dismisses Prompt Composer mention suggestions before closing' },
+	{ id: 'WSP-012', title: 'keeps Prompt Composer send disabled for blank drafts' },
 ];
 
 const envGatedScenarioMatrix = [
@@ -197,7 +204,7 @@ async function openPromptComposer(window: Page) {
 	return composerInput;
 }
 
-test.describe(`wizard settings prompts first tranche (${activeScenarioMatrix.length} active, 0 skipped, ${envGatedScenarioMatrix.length} env-gated)`, () => {
+test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} active, 0 skipped, ${envGatedScenarioMatrix.length} env-gated)`, () => {
 	test(`${activeScenarioMatrix[0].id} ${activeScenarioMatrix[0].title}`, async ({ window }) => {
 		await helpers.openWizardViaShortcut(window);
 		const wizardDialog = window.getByRole('dialog', { name: 'New Agent Wizard' });
@@ -320,6 +327,167 @@ test.describe(`wizard settings prompts first tranche (${activeScenarioMatrix.len
 			await expect(launched.window.getByText('Prompt Composer')).toBeHidden();
 			await launched.window.getByTitle(/Open Prompt Composer/).click();
 			await expect(composerInput).toHaveValue('Ask @Reviewer ');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[5].id} ${activeScenarioMatrix[5].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench({ inlineWizard: true });
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			const wizardInput = launched.window.getByPlaceholder('Tell the wizard about your project...');
+			await wizardInput.fill('Draft an Auto Run plan for the seeded project.');
+			await launched.window.getByTitle('Open Prompt Composer').click();
+
+			const composerInput = launched.window.getByPlaceholder(/Write your prompt here/);
+			await expect(composerInput).toHaveValue('Draft an Auto Run plan for the seeded project.');
+			await launched.window.getByTitle('Close (Escape)').click();
+			await expect(wizardInput).toHaveValue('Draft an Auto Run plan for the seeded project.');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[6].id} ${activeScenarioMatrix[6].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench({ inlineWizard: true });
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await launched.window.getByPlaceholder('Tell the wizard about your project...').focus();
+			await launched.window.keyboard.press('Escape');
+
+			const exitDialog = launched.window.getByRole('dialog', { name: /Exit Wizard/ });
+			await expect(exitDialog).toBeVisible();
+			await expect(
+				exitDialog.getByText('Progress will be lost. Are you sure you want to exit the wizard?')
+			).toBeVisible();
+			await exitDialog.getByRole('button', { name: 'Cancel' }).click();
+
+			await expect(exitDialog).toBeHidden();
+			await expect(launched.window.getByText('Project Wizard')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[7].id} ${activeScenarioMatrix[7].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench({ inlineWizard: true });
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await launched.window.getByPlaceholder('Tell the wizard about your project...').focus();
+			await launched.window.keyboard.press('Escape');
+
+			const exitDialog = launched.window.getByRole('dialog', { name: /Exit Wizard/ });
+			await expect(exitDialog).toBeVisible();
+			await exitDialog.getByRole('button', { name: 'Exit' }).click();
+
+			await expect(exitDialog).toBeHidden();
+			await expect(launched.window.getByText('Project Wizard')).toBeHidden();
+			await expect(launched.window.getByTitle('Send message')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[8].id} ${activeScenarioMatrix[8].title}`, async ({ window }) => {
+		await helpers.openWizardViaShortcut(window);
+		const wizardDialog = window.getByRole('dialog', { name: 'New Agent Wizard' });
+		await expect(
+			wizardDialog.getByRole('heading', { name: 'Create a Maestro Agent' })
+		).toBeVisible();
+
+		await wizardDialog.getByRole('button', { name: 'Close wizard' }).click();
+		await expect(wizardDialog).toBeHidden();
+	});
+
+	test(`${activeScenarioMatrix[9].id} ${activeScenarioMatrix[9].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				customAICommands: [
+					{
+						id: 'wsp-seeded-summary',
+						command: '/wsp-seeded-summary',
+						description: 'Seeded wizard settings summary',
+						prompt: 'Summarize {{CWD}} for wizard settings prompt coverage.',
+						isBuiltIn: false,
+					},
+				],
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'AI Commands',
+				'Custom AI Commands'
+			);
+
+			await expect(settingsDialog.getByText('/wsp-seeded-summary')).toBeVisible();
+			await expect(settingsDialog.getByText('Seeded wizard settings summary')).toBeVisible();
+			await expect(settingsDialog.getByText('Add Command')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[10].id} ${activeScenarioMatrix[10].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			const composerInput = await openPromptComposer(launched.window);
+			await composerInput.fill('Ask @Rev');
+
+			const reviewerMention = launched.window.getByRole('button', { name: /@Reviewer/ });
+			await expect(reviewerMention).toBeVisible();
+			await launched.window.keyboard.press('Escape');
+
+			await expect(reviewerMention).toBeHidden();
+			await expect(launched.window.getByText('Prompt Composer')).toBeVisible();
+			await launched.window.keyboard.press('Escape');
+			await expect(launched.window.getByText('Prompt Composer')).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[11].id} ${activeScenarioMatrix[11].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			const composerInput = await openPromptComposer(launched.window);
+			const sendButton = launched.window.getByRole('button', { name: /^Send$/ });
+
+			await expect(sendButton).toBeDisabled();
+			await composerInput.fill('   ');
+			await expect(sendButton).toBeDisabled();
+			await composerInput.fill('Review seeded prompt composer behavior.');
+			await expect(sendButton).toBeEnabled();
+
+			await launched.window.keyboard.press('Escape');
+			await expect(launched.window.getByText('Prompt Composer')).toBeHidden();
 		} finally {
 			await launched.cleanup();
 		}
