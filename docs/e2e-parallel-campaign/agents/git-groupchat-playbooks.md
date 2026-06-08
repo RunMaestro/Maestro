@@ -17,6 +17,7 @@ OpenSpec.
 - [x] Commit second tranche on `codex/e2e-git-groupchat-playbooks`.
 - [x] Commit third tranche on `codex/e2e-git-groupchat-playbooks`.
 - [x] Commit fourth recovery tranche on `codex/e2e-git-groupchat-playbooks`.
+- [x] Commit fifth fallback tranche on `codex/e2e-git-groupchat-playbooks`.
 
 ## Progress
 
@@ -126,11 +127,47 @@ Fourth recovery tranche:
   - `npx eslint e2e/git-groupchat-playbooks.spec.ts`
   - `git diff --check`
 
+Fifth fallback tranche:
+
+- Extended `e2e/git-groupchat-playbooks.spec.ts`.
+- PM2 context:
+  - `maestro-e2e-git-groupchat-playbooks-t7` was launched as a one-shot worker
+    with `--no-autorestart`.
+  - It exited before edits with Codex managed-account 503 errors from model
+    refresh and `/responses`.
+- Active scenarios added: 5 (`GGP-A26` through `GGP-A30`).
+- Skipped/env-gated rows added: 0.
+- Cumulative active scenarios authored in this lane: 30.
+- Cumulative skipped/env-gated scenarios authored in this lane: 7.
+- Matrix-backed active scenarios still remaining: 333.
+- Files touched:
+  - `e2e/git-groupchat-playbooks.spec.ts`
+  - `docs/e2e-parallel-campaign/agents/git-groupchat-playbooks.md`
+- Coverage added:
+  - Create Pull Request target-branch selection before stubbed submission.
+  - Create Pull Request cancel path without submitting IPC payload.
+  - Playbook Exchange marketplace document preview.
+  - Playbook Exchange full import payload recording.
+  - Quick Actions filtering to a seeded group chat result.
+- Skipped/env-gated blockers: unchanged.
+- Shared helper edits: none; `broadcasts.md` unchanged.
+- Live GitHub, Gist publishing, marketplace network, SSH remote, provider,
+  headed/UI E2E, Playwright list, and full E2E execution: none.
+- Commit: `b5e623c04`.
+- Validation passed:
+  - `npx prettier --write e2e/git-groupchat-playbooks.spec.ts`
+  - `npx eslint e2e/git-groupchat-playbooks.spec.ts`
+  - `npx tsc --noEmit --target ES2020 --lib ES2020,DOM,DOM.Iterable --module ESNext --skipLibCheck --moduleResolution bundler --allowImportingTsExtensions --resolveJsonModule --isolatedModules --strict --noUnusedLocals --noUnusedParameters --noFallthroughCasesInSwitch --types node,@playwright/test e2e/git-groupchat-playbooks.spec.ts e2e/fixtures/electron-app.ts`
+  - `git diff --check -- e2e/git-groupchat-playbooks.spec.ts`
+  - Static Git/group-chat/playbooks spec ID/`.only` scan.
+- Review:
+  - Focused code review found no critical or high issues.
+
 Remaining work:
 
 - Expand remaining Git diff/log details, PR failure variants, Gist modal coverage,
   group chat mutation/history, marketplace import/export edge cases, and
   Spec Kit/OpenSpec refresh/failure matrices.
-- Continue from 338 remaining matrix-backed active scenarios after this recovery
-  tranche.
+- Continue from 333 remaining matrix-backed active scenarios after this recovery
+  fallback tranche.
 - Run actual Playwright/E2E validation only after orchestrator approval.
