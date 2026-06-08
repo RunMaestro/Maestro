@@ -1,6 +1,6 @@
 # debug-accessibility
 
-Status: sixth fallback tranche authored
+Status: seventh fallback tranche authored
 
 ## Scope
 
@@ -9,9 +9,9 @@ accessibility smoke.
 
 ## Campaign Head
 
-- Ledger head before this tranche: `c936f8ff6`.
-- Implementation commit: `07c782f13`.
-- Coverage ledger before this tranche: 26 active scenarios accepted, 166
+- Ledger head before this tranche: `0060c7545`.
+- Implementation commit: `713267101`.
+- Coverage ledger before this tranche: 31 active scenarios accepted, 161
   matrix-backed scenarios remaining.
 
 ## Checklist
@@ -25,12 +25,12 @@ accessibility smoke.
 
 ## Progress
 
-- Added matrix-backed Process Monitor scenarios `DA-027` through `DA-031`.
+- Added matrix-backed agent error modal scenarios `DA-032` through `DA-036`.
 - Active scenarios added this tranche: 5.
-- Active scenarios authored in lane total: 31.
+- Active scenarios authored in lane total: 36.
 - Skipped/product-gap scenarios added this tranche: 0.
 - Env-gated scenarios added this tranche: 0.
-- Matrix-backed remaining after orchestrator ledger acceptance: 161.
+- Matrix-backed remaining after orchestrator ledger acceptance: 156.
 
 Files touched:
 
@@ -45,7 +45,7 @@ Validation passed:
 - `NODE_OPTIONS=--max-old-space-size=8192 npx prettier --check e2e/debug-accessibility.spec.ts docs/e2e-parallel-campaign/agents/debug-accessibility.md docs/e2e-parallel-campaign/coverage-ledger.md docs/e2e-coverage-campaign.md`
 - `npx tsc -p tsconfig.lint.json --noEmit`
 - `git diff --check`
-- Static inventory scan reports 995 declared E2E tests, no `.only`, no
+- Static inventory scan reports 1000 declared E2E tests, no `.only`, no
   prohibited commands, and no duplicate scenario IDs.
 
 Blockers:
@@ -56,5 +56,5 @@ Blockers:
 
 Remaining work:
 
-- Process monitor details, crash/error overlays, destructive agent/worktree
-  confirmations, and broader accessibility audits remain for later tranches.
+- Crash/error overlays, destructive agent/worktree confirmations, and broader
+  accessibility audits remain for later tranches.
