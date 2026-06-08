@@ -97,6 +97,12 @@ const activeScenarioMatrix = [
 	{ id: 'WSP-057', title: 'toggles Settings native title bar preference' },
 	{ id: 'WSP-058', title: 'toggles Settings confetti animation preference' },
 	{ id: 'WSP-059', title: 'toggles Settings update checks on startup' },
+	{ id: 'WSP-060', title: 'cancels a new custom AI command draft in Settings' },
+	{ id: 'WSP-061', title: 'edits a seeded custom AI command in Settings' },
+	{ id: 'WSP-062', title: 'persists Settings global environment variables' },
+	{ id: 'WSP-063', title: 'persists Settings Group Chat standing instructions' },
+	{ id: 'WSP-064', title: 'trims pasted Prompt Composer text' },
+	{ id: 'WSP-065', title: 'keeps literal Prompt Composer at-text without selecting a mention' },
 ];
 
 const envGatedScenarioMatrix = [
@@ -276,6 +282,12 @@ async function openPromptComposer(window: Page) {
 	const composerInput = window.getByPlaceholder(/Write your prompt here/);
 	await expect(composerInput).toBeVisible();
 	return composerInput;
+}
+
+function promptComposerDialog(window: Page) {
+	return window
+		.getByText('Prompt Composer')
+		.locator('xpath=ancestor::div[contains(@class, "z-10")][1]');
 }
 
 test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} active, 0 skipped, ${envGatedScenarioMatrix.length} env-gated)`, () => {
@@ -1937,6 +1949,226 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 					});
 				})
 				.toBe(false);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[59].id} ${activeScenarioMatrix[59].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				customAICommands: [],
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'AI Commands',
+				'Custom AI Commands'
+			);
+
+			await settingsDialog.getByRole('button', { name: 'Add Command' }).click();
+			await settingsDialog.getByPlaceholder('/mycommand').fill('/wsp-cancel');
+			await settingsDialog
+				.getByPlaceholder('Short description for autocomplete')
+				.fill('Canceled wizard settings command');
+			await settingsDialog
+				.getByPlaceholder(/The actual prompt sent to the AI agent/)
+				.fill('This draft should not persist.');
+			await settingsDialog.getByRole('button', { name: 'Cancel' }).first().click();
+
+			await expect(settingsDialog.getByText('New Command')).toBeHidden();
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						const commands = await window.maestro.settings.get('customAICommands');
+						return Array.isArray(commands)
+							? commands.some((command) => command.command === '/wsp-cancel')
+							: false;
+					});
+				})
+				.toBe(false);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[60].id} ${activeScenarioMatrix[60].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				customAICommands: [
+					{
+						id: 'wsp-edit-command',
+						command: '/wsp-edit',
+						description: 'Initial WSP edit command',
+						prompt: 'Initial prompt for {{CWD}}.',
+						isBuiltIn: false,
+					},
+				],
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'AI Commands',
+				'Custom AI Commands'
+			);
+			await settingsDialog.getByRole('button', { name: /\/wsp-edit/ }).click();
+			await settingsDialog.getByTitle('Edit command').click();
+
+			const editForm = settingsDialog
+				.getByText('/wsp-edit')
+				.locator('xpath=ancestor::div[contains(@class, "p-3")][1]');
+			await editForm.locator('input').nth(1).fill('Edited WSP command');
+			await editForm.locator('textarea').fill('Edited prompt preserves {{PROJECT_DIR}} coverage.');
+			await editForm.getByRole('button', { name: 'Save' }).click();
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						const commands = await window.maestro.settings.get('customAICommands');
+						return Array.isArray(commands)
+							? commands.find((command) => command.command === '/wsp-edit')
+							: undefined;
+					});
+				})
+				.toMatchObject({
+					description: 'Edited WSP command',
+					prompt: 'Edited prompt preserves {{PROJECT_DIR}} coverage.',
+					isBuiltIn: false,
+				});
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[61].id} ${activeScenarioMatrix[61].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				shellEnvVars: {},
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'General',
+				'Global Environment Variables'
+			);
+			const envSection = settingsDialog
+				.getByText('Environment Variables (optional)')
+				.locator('xpath=ancestor::div[.//button[normalize-space(.)="Add Variable"]][1]');
+			await envSection.getByRole('button', { name: 'Add Variable' }).click();
+			await envSection.getByPlaceholder('VARIABLE').last().fill('WSP_ENV_FLAG');
+			await envSection.getByPlaceholder('value').last().fill('enabled');
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('shellEnvVars');
+					});
+				})
+				.toMatchObject({
+					WSP_ENV_FLAG: 'enabled',
+				});
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[62].id} ${activeScenarioMatrix[62].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				moderatorStandingInstructions: '',
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'Group Chat',
+				'Moderator Standing Instructions'
+			);
+			const standingInstructions =
+				'Always ask agents to keep wizard settings prompt coverage static and deterministic.';
+			await settingsDialog.getByPlaceholder(/Always instruct agents/).fill(standingInstructions);
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('moderatorStandingInstructions');
+					});
+				})
+				.toBe(standingInstructions);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[63].id} ${activeScenarioMatrix[63].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			const composerInput = await openPromptComposer(launched.window);
+
+			await composerInput.fill('Prefix: ');
+			await composerInput.evaluate((textarea) => {
+				const input = textarea as HTMLTextAreaElement;
+				input.setSelectionRange(input.value.length, input.value.length);
+				const dataTransfer = new DataTransfer();
+				dataTransfer.setData('text/plain', '  pasted wizard prompt text  \n\n');
+				input.dispatchEvent(
+					new ClipboardEvent('paste', {
+						clipboardData: dataTransfer,
+						bubbles: true,
+						cancelable: true,
+					})
+				);
+			});
+
+			await expect(composerInput).toHaveValue('Prefix: pasted wizard prompt text');
+			await launched.window.keyboard.press('Escape');
+			await expect(launched.window.getByText('Prompt Composer')).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[64].id} ${activeScenarioMatrix[64].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			const composerInput = await openPromptComposer(launched.window);
+			const composerDialog = promptComposerDialog(launched.window);
+
+			await composerInput.fill('@NoMatchingWspAgent');
+			await expect(composerDialog.getByRole('button', { name: /@Reviewer/ })).toHaveCount(0);
+			await expect(composerInput).toHaveValue('@NoMatchingWspAgent');
+
+			await launched.window.keyboard.press('Escape');
+			await expect(launched.window.getByText('Prompt Composer')).toBeHidden();
 		} finally {
 			await launched.cleanup();
 		}
