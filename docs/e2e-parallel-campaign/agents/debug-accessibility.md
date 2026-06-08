@@ -1,6 +1,6 @@
 # debug-accessibility
 
-Status: seventeenth fallback tranche authored
+Status: eighteenth fallback tranche authored
 
 ## Scope
 
@@ -9,9 +9,9 @@ accessibility smoke.
 
 ## Campaign Head
 
-- Ledger head before this tranche: `02652a69a`.
-- Implementation commit: `1f3044aa3`.
-- Coverage ledger before this tranche: 81 active scenarios accepted, 111
+- Ledger head before this tranche: `a0ee9da5d`.
+- Implementation commit: `30ecb2060`.
+- Coverage ledger before this tranche: 86 active scenarios accepted, 106
   matrix-backed scenarios remaining.
 
 ## Checklist
@@ -25,13 +25,13 @@ accessibility smoke.
 
 ## Progress
 
-- Added matrix-backed System Log clear-confirmation scenarios `DA-082` through
-  `DA-086`.
+- Added matrix-backed Process Monitor keyboard scenarios `DA-087` through
+  `DA-091`.
 - Active scenarios added this tranche: 5.
-- Active scenarios authored in lane total: 86.
+- Active scenarios authored in lane total: 91.
 - Skipped/product-gap scenarios added this tranche: 0.
 - Env-gated scenarios added this tranche: 0.
-- Matrix-backed remaining after orchestrator ledger acceptance: 106.
+- Matrix-backed remaining after orchestrator ledger acceptance: 101.
 
 Files touched:
 
@@ -46,7 +46,7 @@ Validation passed:
 - `NODE_OPTIONS=--max-old-space-size=8192 npx prettier --write e2e/debug-accessibility.spec.ts docs/e2e-parallel-campaign/agents/debug-accessibility.md docs/e2e-parallel-campaign/coverage-ledger.md docs/e2e-coverage-campaign.md`
 - `npx tsc -p tsconfig.lint.json --noEmit`
 - `git diff --check`
-- Static inventory scan reports 1050 declared E2E tests, no `.only`, no
+- Static inventory scan reports 1055 declared E2E tests, no `.only`, no
   prohibited commands, and no duplicate scenario IDs.
 
 Blockers:
@@ -58,4 +58,4 @@ Blockers:
 Remaining work:
 
 - Debug/about/update/app-info/agent-error modal scenarios are complete.
-- 106 accessibility smoke and destructive-action confirmation scenarios remain.
+- 101 accessibility smoke and destructive-action confirmation scenarios remain.
