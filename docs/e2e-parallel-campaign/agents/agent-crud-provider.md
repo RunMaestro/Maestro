@@ -16,6 +16,36 @@ Agent CRUD, provider setup, Agent Sessions.
 
 ## Progress
 
+### 2026-06-08 recovery tranche 3
+
+- Scope: manual fallback tranche for generic provider Agent Sessions controls.
+- Authored: 5 active deterministic Playwright scenarios.
+  - Opens a generic provider session detail view with stored messages and cost.
+  - Favorites a generic provider session through shared `agentSessions` storage.
+  - Renames a generic provider session detail through shared `agentSessions` storage.
+  - Routes user and assistant search modes through generic provider search storage.
+  - Adds a name to an unnamed generic provider session and resumes it with the keyboard.
+- Skipped/env-gated: no new rows.
+- Lane target remains: about 85 active scenarios plus fuller skipped/env-gated real-provider coverage.
+- Files touched:
+  - `e2e/agent-crud-provider.spec.ts`
+  - `docs/e2e-parallel-campaign/agents/agent-crud-provider.md`
+  - `docs/e2e-parallel-campaign/coverage-ledger.md`
+  - `docs/e2e-coverage-campaign.md`
+- Shared helpers edited: no.
+- Broadcast update required: no.
+- Checks run:
+  - `NODE_OPTIONS=--max-old-space-size=8192 npx prettier --write e2e/agent-crud-provider.spec.ts`
+  - `npx eslint e2e/agent-crud-provider.spec.ts`
+  - `npx tsc -p tsconfig.lint.json --noEmit`
+  - `git diff --check`
+  - Static scan: 895 declared E2E tests, 0 `.only`, 0 prohibited Playwright/E2E commands, 2 pre-existing duplicate titles in `e2e/app-shell.spec.ts`.
+  - Code-reviewer checklist: no blocking issues in the `agent-crud-provider` diff.
+- Commit hashes:
+  - `ef05abd54` - `test(e2e-agent-crud-provider): add provider session controls`
+- Blockers:
+  - E2E execution, Playwright listing, headed/UI E2E, and full E2E validation are intentionally not run under the recovery-run hard rules.
+
 ### 2026-06-08 recovery tranche 2
 
 - Scope: manual fallback tranche for validation-heavy Agent CRUD/provider setup coverage.
