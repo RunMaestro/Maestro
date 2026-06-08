@@ -2,9 +2,9 @@
 
 Source of truth: `docs/e2e-coverage-campaign.md`.
 
-Current active tests: 716
+Current active tests: 724
 Target active tests: 3,025
-Remaining matrix-backed active scenarios: 2,309
+Remaining matrix-backed active scenarios: 2,301
 
 ## Matrix
 
@@ -15,9 +15,9 @@ Remaining matrix-backed active scenarios: 2,309
 | Codex AI terminal workflows                                    | `autorun-ai-terminal`     |             29 |           170 |       141 |
 | Command terminal workflows                                     | `shell-tabs-command`      |             49 |            95 |        46 |
 | Tabs and tab overlays                                          | `shell-tabs-command`      |             53 |           120 |        67 |
-| File explorer and file operations                              | `files-docs-history`      |             17 |           140 |       123 |
-| File preview and document rendering                            | `files-docs-history`      |             33 |           180 |       147 |
-| History panel                                                  | `files-docs-history`      |             16 |            95 |        79 |
+| File explorer and file operations                              | `files-docs-history`      |             21 |           140 |       119 |
+| File preview and document rendering                            | `files-docs-history`      |             36 |           180 |       144 |
+| History panel                                                  | `files-docs-history`      |             17 |            95 |        78 |
 | Auto Run                                                       | `autorun-ai-terminal`     |            128 |           260 |       132 |
 | New Agent Wizard and inline wizard                             | `wizard-settings-prompts` |             32 |           190 |       158 |
 | Settings                                                       | `wizard-settings-prompts` |             55 |           190 |       135 |
@@ -38,7 +38,7 @@ Remaining matrix-backed active scenarios: 2,309
 | -------------------------- | ----------------------: | ------------------------: | -----------------------------------: | -------------------- |
 | `agent-crud-provider`      |                      95 |                         9 |                                    2 | `bb4fbcce2`          |
 | `shell-tabs-command`       |                     197 |                        69 |                                    0 | `02ce883da`          |
-| `files-docs-history`       |                     349 |                         0 |                                    0 | pending              |
+| `files-docs-history`       |                     341 |                         8 |                                    5 | `bd10d5fdd`          |
 | `autorun-ai-terminal`      |                     273 |                         0 |                                    0 | pending              |
 | `wizard-settings-prompts`  |                     372 |                         0 |                                    0 | pending              |
 | `git-groupchat-playbooks`  |                     363 |                         0 |                                    0 | pending              |
@@ -51,3 +51,4 @@ Remaining matrix-backed active scenarios: 2,309
 
 - 2026-06-08: accepted `codex/e2e-shell-tabs-command` through `02ce883da`; authored 9 tests covering 69 active shell/tab/terminal scenarios. No E2E execution was run.
 - 2026-06-08: accepted `codex/e2e-agent-crud-provider` through `bb4fbcce2`; authored 9 active provider/CRUD/session scenarios and 2 skipped/env-gated real-provider rows. No E2E execution was run.
+- 2026-06-08: accepted `codex/e2e-files-docs-history` through `bd10d5fdd`; authored 8 active file/docs/history scenarios plus 3 product-gap skips and 2 env-gated rows. No E2E execution was run.
