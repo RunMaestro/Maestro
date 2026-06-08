@@ -227,11 +227,44 @@ Seventh fallback tranche:
   - Focused static review found one high-risk stale prompt assertion; fixed before
     commit. No critical issues remain; E2E execution remains deferred.
 
+Eighth fallback tranche:
+
+- Extended `e2e/git-groupchat-playbooks.spec.ts`.
+- Active scenarios added: 5 (`GGP-A41` through `GGP-A45`).
+- Skipped/env-gated rows added: 0.
+- Cumulative active scenarios authored in this lane: 45.
+- Cumulative skipped/env-gated scenarios authored in this lane: 7.
+- Matrix-backed active scenarios still remaining: 318.
+- Files touched:
+  - `e2e/git-groupchat-playbooks.spec.ts`
+  - `docs/e2e-parallel-campaign/agents/git-groupchat-playbooks.md`
+- Coverage added:
+  - Create Pull Request branch defaults, generated title, and dirty-work warning.
+  - Create Pull Request non-URL failure state without closing the modal.
+  - Playbook Exchange detail-view back navigation to a filtered list.
+  - Playbook Exchange keyboard search focus and Escape containment.
+  - Playbook Exchange detail-view document cycling with keyboard shortcuts.
+- Skipped/env-gated blockers: unchanged.
+- Shared helper edits: none; `broadcasts.md` unchanged.
+- Live GitHub, Gist publishing, marketplace network, SSH remote, provider,
+  headed/UI E2E, Playwright list, and full E2E execution: none.
+- Commit: `ac81d7b1f`.
+- Validation passed:
+  - `NODE_OPTIONS=--max-old-space-size=8192 npx prettier --write e2e/git-groupchat-playbooks.spec.ts`
+  - `npx eslint e2e/git-groupchat-playbooks.spec.ts`
+  - `npm run build:prompts`
+  - `npx tsc -p tsconfig.lint.json --noEmit`
+  - Static Git/group-chat/playbooks spec ID/`.only` scan.
+  - `git diff --check -- e2e/git-groupchat-playbooks.spec.ts`
+- Review:
+  - Focused static review found no critical or high issues; E2E execution remains
+    deferred.
+
 Remaining work:
 
 - Expand remaining Git diff/log details, PR failure variants, Gist modal coverage,
   group chat mutation/history, marketplace import/export edge cases, and
   Spec Kit/OpenSpec refresh/failure matrices.
-- Continue from 323 remaining matrix-backed active scenarios after this recovery
+- Continue from 318 remaining matrix-backed active scenarios after this recovery
   fallback tranche.
 - Run actual Playwright/E2E validation only after orchestrator approval.
