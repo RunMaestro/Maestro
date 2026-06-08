@@ -3856,6 +3856,20 @@ test.describe('App shell seeded workbench', () => {
 		await expect(searchInput).toBeHidden();
 	});
 
+	test('opens command terminal output search from the focused input shortcut', async () => {
+		const terminalInput = await openSeededTerminalAgent(window);
+
+		await terminalInput.focus();
+		await terminalInput.press('Control+f');
+
+		const searchInput = window.getByPlaceholder('Search output... (Esc to close)');
+		await expect(searchInput).toBeVisible();
+		await expect(searchInput).toBeFocused();
+		await searchInput.fill('terminal stderr');
+		await expect(window.getByText('terminal stderr sentinel')).toBeVisible();
+		await expect(window.getByText('terminal seeded output is visible')).toBeHidden();
+	});
+
 	test('filters a single command terminal output block', async () => {
 		await openSeededTerminalAgent(window);
 
@@ -3900,6 +3914,40 @@ test.describe('App shell seeded workbench', () => {
 		await expect(outputBlock.getByText('terminal filter haystack')).toBeVisible();
 	});
 
+	test('uses regex filtering on command terminal output blocks', async () => {
+		await openSeededTerminalAgent(window);
+
+		const outputBlock = window.locator('[data-log-index="2"]');
+
+		await outputBlock.getByTitle('Filter this output').click();
+		await outputBlock.getByTitle('Using plain text').click();
+		await outputBlock.getByPlaceholder('Include by RegEx').fill('needle|haystack');
+		await expect(outputBlock.getByText('terminal filter needle')).toBeVisible();
+		await expect(outputBlock.getByText('terminal filter haystack')).toBeVisible();
+
+		await outputBlock.getByPlaceholder('Include by RegEx').fill('needle$');
+		await expect(outputBlock.getByText('terminal filter needle')).toBeVisible();
+		await expect(outputBlock.getByText('terminal filter haystack')).toBeHidden();
+	});
+
+	test('shows command terminal local filter empty state and clears it with Escape', async () => {
+		await openSeededTerminalAgent(window);
+
+		const outputBlock = window.locator('[data-log-index="2"]');
+
+		await outputBlock.getByTitle('Filter this output').click();
+		const filterInput = outputBlock.getByPlaceholder('Include by keyword');
+		await filterInput.fill('missing local filter sentinel');
+
+		await expect(outputBlock.getByText('No matches found for filter')).toBeVisible();
+		await expect(outputBlock.getByText('terminal filter needle')).toBeHidden();
+
+		await filterInput.press('Escape');
+		await expect(outputBlock.getByText('No matches found for filter')).toBeHidden();
+		await expect(outputBlock.getByText('terminal filter needle')).toBeVisible();
+		await expect(filterInput).toBeHidden();
+	});
+
 	test('cancels command terminal user-command paired deletion', async () => {
 		await openSeededTerminalAgent(window);
 
@@ -3932,6 +3980,15 @@ test.describe('App shell seeded workbench', () => {
 		await expect(window.locator('[data-log-index]')).toHaveCount(1);
 	});
 
+	test('copies command terminal user commands from transcript actions', async () => {
+		await openSeededTerminalAgent(window);
+
+		const commandBlock = window.locator('[data-log-index="1"]');
+
+		await commandBlock.getByTitle('Copy to clipboard').click();
+		await expect(window.getByText('Copied to Clipboard')).toBeVisible();
+	});
+
 	test('selects command history entries from the terminal input', async () => {
 		const terminalInput = await openSeededTerminalAgent(window);
 
@@ -3962,6 +4019,37 @@ test.describe('App shell seeded workbench', () => {
 		await historyFilter.press('Escape');
 		await expect(historyFilter).toBeHidden();
 		await expect(terminalInput).toHaveValue('manual terminal draft sentinel');
+	});
+
+	test('shows command history empty state and recovers to a filtered command', async () => {
+		const terminalInput = await openSeededTerminalAgent(window);
+
+		await terminalInput.focus();
+		await terminalInput.press('ArrowUp');
+		const historyFilter = window.getByPlaceholder('Filter commands...');
+		await historyFilter.fill('missing history sentinel');
+
+		await expect(window.getByText('No matching commands')).toBeVisible();
+
+		await historyFilter.fill('npm');
+		await expect(window.getByText('npm test -- --runInBand')).toBeVisible();
+		await historyFilter.press('Enter');
+		await expect(terminalInput).toHaveValue('npm test -- --runInBand');
+	});
+
+	test('navigates command history with arrow keys before selecting', async () => {
+		const terminalInput = await openSeededTerminalAgent(window);
+
+		await terminalInput.focus();
+		await terminalInput.press('ArrowUp');
+		const historyFilter = window.getByPlaceholder('Filter commands...');
+		await expect(
+			window.getByRole('button', { name: 'echo terminal history sentinel' })
+		).toBeVisible();
+
+		await historyFilter.press('ArrowDown');
+		await historyFilter.press('Enter');
+		await expect(terminalInput).toHaveValue('npm test -- --runInBand');
 	});
 
 	test('runs a command selected from terminal history through the stubbed runner', async () => {
@@ -4025,6 +4113,21 @@ test.describe('App shell seeded workbench', () => {
 
 		await expect(terminalInput).toHaveValue('   ');
 		await expect(await getStubbedTerminalRunCommandCalls(electronApp)).toEqual([]);
+	});
+
+	test('submits multiline command terminal input through the shell runner', async () => {
+		await stubTerminalRunCommand(electronApp);
+		const terminalInput = await openSeededTerminalAgent(window);
+		const inputArea = window.locator('[data-tour="input-area"]');
+		const multilineCommand = 'printf "terminal multiline one"\\nprintf "terminal multiline two"';
+
+		await terminalInput.fill(multilineCommand);
+		await inputArea.getByTitle('Run command (Enter)').click();
+
+		await expect(terminalInput).toHaveValue('');
+		expect(
+			(await getStubbedTerminalRunCommandCalls(electronApp)).map((call) => call.command)
+		).toEqual([multilineCommand]);
 	});
 
 	test('passes terminal slash commands through to the shell runner', async () => {
