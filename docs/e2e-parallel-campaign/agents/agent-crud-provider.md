@@ -16,6 +16,36 @@ Agent CRUD, provider setup, Agent Sessions.
 
 ## Progress
 
+### 2026-06-08 recovery tranche 14
+
+- Scope: manual fallback tranche for provider group state and bookmark visibility.
+- Authored: 5 active deterministic Playwright scenarios.
+  - Renames a provider group when inline edit loses focus.
+  - Keeps provider group name when inline rename is blank.
+  - Marks the provider current group submenu item disabled.
+  - Shows empty provider group delete control after moving the last agent to Ungrouped.
+  - Keeps a bookmarked provider agent visible after moving it into a group.
+- Skipped/env-gated: no new rows.
+- Lane target remains: about 30 active scenarios plus fuller skipped/env-gated real-provider coverage.
+- Files touched:
+  - `e2e/agent-crud-provider.spec.ts`
+  - `docs/e2e-parallel-campaign/agents/agent-crud-provider.md`
+  - `docs/e2e-parallel-campaign/coverage-ledger.md`
+  - `docs/e2e-coverage-campaign.md`
+- Shared helpers edited: no.
+- Broadcast update required: no.
+- Checks run:
+  - `npx prettier --write e2e/agent-crud-provider.spec.ts`
+  - `npx eslint e2e/agent-crud-provider.spec.ts`
+  - `npx tsc -p tsconfig.lint.json --noEmit`
+  - `git diff --check`
+  - Static scan: 950 declared E2E tests, 0 `.only`, 0 prohibited Playwright/E2E commands, 0 duplicate titles in `e2e/agent-crud-provider.spec.ts`.
+  - Code-reviewer checklist: no blocking issues in the `agent-crud-provider` diff.
+- Commit hashes:
+  - `230e6e1c3` - `test(e2e-agent-crud-provider): add group state coverage`
+- Blockers:
+  - E2E execution, Playwright listing, headed/UI E2E, and full E2E validation are intentionally not run under the recovery-run hard rules.
+
 ### 2026-06-08 recovery tranche 13
 
 - Scope: manual fallback tranche for provider group validation and bookmark context-menu controls.
