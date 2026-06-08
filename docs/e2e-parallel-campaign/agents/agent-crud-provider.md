@@ -9,12 +9,44 @@ Agent CRUD, provider setup, Agent Sessions.
 ## Checklist
 
 - [x] Inspect existing related E2E coverage and component surfaces.
-- [ ] Author deterministic active scenarios up to the lane target where feasible.
+- [x] Author deterministic active scenarios up to the lane target where feasible.
 - [x] Add skipped/env-gated cases for real-provider-only flows.
 - [x] Record files touched and scenario counts.
 - [x] Commit lane work on `codex/e2e-agent-crud-provider`.
 
 ## Progress
+
+### 2026-06-08 recovery tranche 20
+
+- Scope: final manual fallback tranche for provider SSH modal reset, cancel, and duplicate persistence coverage.
+- Authored: 7 active deterministic Playwright scenarios.
+  - Resets Create New Agent remote command override to the SSH binary default.
+  - Resets Edit Agent remote command override to the SSH binary default.
+  - Clears Create New Agent SSH selection after a successful provider create.
+  - Keeps Create New Agent SSH selection while switching provider drafts.
+  - Cancels Edit Agent SSH remote draft without persisting remote execution.
+  - Creates a duplicated provider agent with inherited SSH remote execution.
+  - Creates a duplicated provider agent after clearing inherited SSH remote execution.
+- Skipped/env-gated: no new rows.
+- Lane target reached: 160 / 160 active matrix-backed scenarios; no active lane scenarios remain.
+- Files touched:
+  - `e2e/agent-crud-provider.spec.ts`
+  - `docs/e2e-parallel-campaign/agents/agent-crud-provider.md`
+  - `docs/e2e-parallel-campaign/coverage-ledger.md`
+  - `docs/e2e-coverage-campaign.md`
+- Shared helpers edited: no.
+- Broadcast update required: no.
+- Checks run:
+  - `npx prettier --write e2e/agent-crud-provider.spec.ts`
+  - `npx eslint e2e/agent-crud-provider.spec.ts`
+  - `npx tsc -p tsconfig.lint.json --noEmit`
+  - `git diff --check`
+  - Static scan: 979 declared E2E tests, 0 `.only`, 0 prohibited Playwright/E2E commands, 0 duplicate titles in `e2e/agent-crud-provider.spec.ts`.
+  - Code-reviewer checklist: no blocking issues in the `agent-crud-provider` diff.
+- Commit hashes:
+  - `563b9db6c` - `test(e2e-agent-crud-provider): finish provider ssh modal coverage`
+- Blockers:
+  - E2E execution, Playwright listing, headed/UI E2E, and full E2E validation are intentionally not run under the recovery-run hard rules.
 
 ### 2026-06-08 recovery tranche 19
 
