@@ -216,7 +216,7 @@ Seventh fallback tranche:
 - Shared helper edits: none; `broadcasts.md` unchanged.
 - Live GitHub, Gist publishing, marketplace network, SSH remote, provider,
   headed/UI E2E, Playwright list, and full E2E execution: none.
-- Commit: pending.
+- Commit: `035001d86`.
 - Validation passed:
   - `NODE_OPTIONS=--max-old-space-size=8192 npx prettier --check e2e/git-groupchat-playbooks.spec.ts docs/e2e-parallel-campaign/agents/git-groupchat-playbooks.md`
   - `npx eslint e2e/git-groupchat-playbooks.spec.ts`
