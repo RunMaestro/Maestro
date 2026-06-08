@@ -1,6 +1,6 @@
 # Parallel E2E Orchestrator Status
 
-Last updated: 2026-06-08 10:11 EDT
+Last updated: 2026-06-08 18:30 EDT
 
 ## Base
 
@@ -31,18 +31,18 @@ coverage and the shell-lane tab coverage.
 
 ## Lane State
 
-| Lane                       | Branch                                         | Worktree                                                   | PM2 process                            | State                      | Notes                                           |
-| -------------------------- | ---------------------------------------------- | ---------------------------------------------------------- | -------------------------------------- | -------------------------- | ----------------------------------------------- |
-| `agent-crud-provider`      | `codex/e2e-agent-crud-provider`                | `Maestro-worktrees/e2e-agent-crud-provider`                | `maestro-e2e-agent-crud-provider`      | merged through `bb4fbcce2` | 9 active scenarios accepted; 95 remain          |
-| `shell-tabs-command`       | `codex/e2e-shell-tabs-command`                 | `Maestro-worktrees/e2e-shell-tabs-command`                 | `maestro-e2e-shell-tabs-command`       | merged through `44e98a94f` | 76 active scenarios accepted; 190 remain        |
-| `files-docs-history`       | `codex/e2e-files-docs-history-fallback-2`      | `Maestro-worktrees/e2e-files-docs-history-fallback-2`      | manual fallback                        | merged through `b5491cd9b` | 37 active scenarios accepted; 312 remain        |
-| `autorun-ai-terminal`      | `codex/e2e-autorun-ai-terminal`                | `Maestro-worktrees/e2e-autorun-ai-terminal`                | `maestro-e2e-autorun-ai-terminal`      | merged through `cd804bebf` | 10 active scenarios accepted; 263 remain        |
-| `wizard-settings-prompts`  | `codex/e2e-wizard-settings-prompts-fallback-7` | `Maestro-worktrees/e2e-wizard-settings-prompts-fallback-7` | manual fallback                        | merged through `bb21caed1` | 59 active scenarios accepted; 313 remain        |
-| `git-groupchat-playbooks`  | `codex/e2e-git-groupchat-playbooks-fallback-5` | `Maestro-worktrees/e2e-git-groupchat-playbooks-fallback-5` | manual fallback                        | merged through `10ed8a71a` | 50 active scenarios accepted; 313 remain        |
-| `stats-graph-symphony`     | `codex/e2e-stats-graph-symphony-fallback-3`    | `Maestro-worktrees/e2e-stats-graph-symphony-fallback-3`    | manual fallback                        | merged through `bb9a6f68b` | 27 active scenarios accepted; 309 remain        |
-| `debug-accessibility`      | `codex/e2e-debug-accessibility`                | `Maestro-worktrees/e2e-debug-accessibility`                | `maestro-e2e-debug-accessibility`      | merged through `15e7a1a20` | 11 active scenarios accepted; 181 remain        |
-| `mobile-web-bridge`        | `codex/e2e-mobile-web-bridge-fallback-2`       | `Maestro-worktrees/e2e-mobile-web-bridge-fallback-2`       | manual fallback                        | merged through `d7ccdd3d`  | 16 active scenarios accepted; 86 remain         |
-| `fixtures-sharding-review` | `codex/e2e-fixtures-sharding-review`           | `Maestro-worktrees/e2e-fixtures-sharding-review`           | `maestro-e2e-fixtures-sharding-review` | merged through `392c4527`  | Support plan accepted; no active scenario quota |
+| Lane                       | Branch                               | Worktree                                         | PM2 process                                         | State                           | Notes                                           |
+| -------------------------- | ------------------------------------ | ------------------------------------------------ | --------------------------------------------------- | ------------------------------- | ----------------------------------------------- |
+| `agent-crud-provider`      | `codex/e2e-agent-crud-provider`      | `Maestro-worktrees/e2e-agent-crud-provider`      | not relaunched                                      | complete                        | 104 active scenarios accepted; 0 remain         |
+| `shell-tabs-command`       | `codex/e2e-shell-tabs-command`       | `Maestro-worktrees/e2e-shell-tabs-command`       | `maestro-e2e-shell-tabs-command-campaign-goal`      | waiting restart after 503       | 76 active scenarios accepted; 190 remain        |
+| `files-docs-history`       | `codex/e2e-files-docs-history`       | `Maestro-worktrees/e2e-files-docs-history`       | `maestro-e2e-files-docs-history-campaign-goal`      | waiting restart after 503       | 37 active scenarios accepted; 312 remain        |
+| `autorun-ai-terminal`      | `codex/e2e-autorun-ai-terminal`      | `Maestro-worktrees/e2e-autorun-ai-terminal`      | `maestro-e2e-autorun-ai-terminal-campaign-goal`     | waiting restart after 503       | 10 active scenarios accepted; 263 remain        |
+| `wizard-settings-prompts`  | `codex/e2e-wizard-settings-prompts`  | `Maestro-worktrees/e2e-wizard-settings-prompts`  | `maestro-e2e-wizard-settings-prompts-campaign-goal` | waiting restart after 503       | 59 active scenarios accepted; 313 remain        |
+| `git-groupchat-playbooks`  | `codex/e2e-git-groupchat-playbooks`  | `Maestro-worktrees/e2e-git-groupchat-playbooks`  | `maestro-e2e-git-groupchat-playbooks-campaign-goal` | online, staggered start pending | 50 active scenarios accepted; 313 remain        |
+| `stats-graph-symphony`     | `codex/e2e-stats-graph-symphony`     | `Maestro-worktrees/e2e-stats-graph-symphony`     | `maestro-e2e-stats-graph-symphony-campaign-goal`    | online, staggered start pending | 27 active scenarios accepted; 309 remain        |
+| `debug-accessibility`      | `codex/e2e-debug-accessibility`      | `Maestro-worktrees/e2e-debug-accessibility`      | `maestro-e2e-debug-accessibility-campaign-goal`     | online, staggered start pending | 141 active scenarios accepted; 51 remain        |
+| `mobile-web-bridge`        | `codex/e2e-mobile-web-bridge`        | `Maestro-worktrees/e2e-mobile-web-bridge`        | `maestro-e2e-mobile-web-bridge-campaign-goal`       | online, staggered start pending | 16 active scenarios accepted; 86 remain         |
+| `fixtures-sharding-review` | `codex/e2e-fixtures-sharding-review` | `Maestro-worktrees/e2e-fixtures-sharding-review` | not relaunched                                      | support complete                | Support plan accepted; no active scenario quota |
 
 ## Merge Queue
 
@@ -183,6 +183,16 @@ coverage and the shell-lane tab coverage.
   `bb21caed1` with 5 active Settings max-output, user-alignment,
   native-title-bar, confetti, and update-check scenarios. Focused static review
   found no critical or high issues. No E2E execution was run.
+- 2026-06-08 18:13-18:30 EDT: removed stale stopped PM2 entries and relaunched
+  the eight remaining quota-bearing lanes as `/goal` campaign workers with
+  15-minute PM2 restart delays and staggered starts. `agent-crud-provider` was
+  not relaunched because its ledger remaining count is 0; `fixtures-sharding-review`
+  was not relaunched because it has no scenario quota. The first four goal
+  workers (`shell-tabs-command`, `files-docs-history`, `autorun-ai-terminal`, and
+  `wizard-settings-prompts`) reached Codex startup and failed before authoring
+  with managed-account 503 service-unavailable errors; PM2 is holding them in
+  `waiting restart`. The first `shell-tabs-command` retry also failed with the
+  same 503 condition.
 
 ## Blockers
 
@@ -212,3 +222,9 @@ coverage and the shell-lane tab coverage.
   `wizard-settings-prompts`, `git-groupchat-playbooks`, and
   `stats-graph-symphony`; manual fallback authoring remains the only productive
   path until detached Codex runtime availability recovers.
+- The 2026-06-08 18:13 EDT `/goal` campaign relaunch verified that the stale
+  stopped PM2 list was not proof of completed work. Old stopped worker logs were
+  mixed across completed one-shot tranches, 503 capacity failures, 429 rate
+  limits, interrupted turns, and unclear exits. Current PM2 state has no stale
+  stopped `maestro-e2e-*` entries, but the first four restarted goal workers are
+  blocked by the same managed-account 503 condition before authoring.
