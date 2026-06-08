@@ -106,6 +106,14 @@ const sixthTrancheActiveScenarioMatrix = [
 	{ id: 'GGP-A35', title: 'cancels Spec Kit prompt edits without marking the command modified' },
 ] as const;
 
+const seventhTrancheActiveScenarioMatrix = [
+	{ id: 'GGP-A36', title: 'shows Git Diff empty state from a stubbed IPC diff' },
+	{ id: 'GGP-A37', title: 'opens and closes Playbook Exchange help content' },
+	{ id: 'GGP-A38', title: 'refreshes Playbook Exchange cache status to live data' },
+	{ id: 'GGP-A39', title: 'cancels OpenSpec prompt edits without marking the command modified' },
+	{ id: 'GGP-A40', title: 'disables Create Pull Request when the title is cleared' },
+] as const;
+
 function runGit(cwd: string, args: string[]) {
 	execFileSync('git', args, {
 		cwd,
@@ -411,6 +419,16 @@ async function stubMultiFileGitDiffState(electronApp: ElectronApplication) {
 				' Initial committed flow.',
 				'+Flow diff tab sentinel.',
 			].join('\n'),
+			stderr: '',
+		}));
+	});
+}
+
+async function stubEmptyGitDiffState(electronApp: ElectronApplication) {
+	await electronApp.evaluate(({ ipcMain }) => {
+		ipcMain.removeHandler('git:diff');
+		ipcMain.handle('git:diff', async () => ({
+			stdout: '',
 			stderr: '',
 		}));
 	});
@@ -1674,6 +1692,104 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 			await expect(commandCard.getByText('Modified')).toBeHidden();
 			await expect(commandCard.getByText(/Bundled specify prompt/)).toBeVisible();
 			await expect(commandCard.getByText('Canceled Spec Kit prompt edit.')).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${seventhTrancheActiveScenarioMatrix[0].id}: ${seventhTrancheActiveScenarioMatrix[0].title}`, async () => {
+		const launched = await launchGitGroupChatPlaybooksWorkbench();
+		try {
+			await stubEmptyGitDiffState(launched.electronApp);
+			const gitDiffDialog = await openGitDiffFromQuickActions(launched.window);
+
+			await expect(gitDiffDialog.getByText('No changes to display')).toBeVisible();
+			await expect(gitDiffDialog.getByRole('button', { name: 'Close (Esc)' })).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${seventhTrancheActiveScenarioMatrix[1].id}: ${seventhTrancheActiveScenarioMatrix[1].title}`, async () => {
+		const launched = await launchGitGroupChatPlaybooksWorkbench();
+		try {
+			await stubMarketplaceForPlaybookExchange(launched.electronApp);
+			const marketplaceDialog = await openPlaybookExchangeFromQuickActions(launched.window);
+
+			await marketplaceDialog.getByRole('button', { name: 'Help' }).click();
+			await expect(marketplaceDialog.getByText('About the Playbook Exchange')).toBeVisible();
+			await expect(marketplaceDialog.getByText('Submit Your Playbook')).toBeVisible();
+			await expect(
+				marketplaceDialog.getByText('github.com/RunMaestro/Maestro-Playbooks')
+			).toBeVisible();
+			await marketplaceDialog.getByRole('button', { name: 'Close', exact: true }).click();
+			await expect(marketplaceDialog.getByText('About the Playbook Exchange')).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${seventhTrancheActiveScenarioMatrix[2].id}: ${seventhTrancheActiveScenarioMatrix[2].title}`, async () => {
+		const launched = await launchGitGroupChatPlaybooksWorkbench();
+		try {
+			await stubMarketplaceFilteringState(launched.electronApp);
+			const marketplaceDialog = await openPlaybookExchangeFromQuickActions(launched.window);
+
+			await expect(marketplaceDialog.getByText(/Cached/)).toBeVisible();
+			await marketplaceDialog.getByRole('button', { name: 'Refresh marketplace' }).click();
+			await expect(marketplaceDialog.getByText('Live')).toBeVisible({ timeout: 5000 });
+			await expect(
+				marketplaceDialog.getByRole('button', { name: /Git Release Review/ })
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${seventhTrancheActiveScenarioMatrix[3].id}: ${seventhTrancheActiveScenarioMatrix[3].title}`, async () => {
+		const launched = await launchGitGroupChatPlaybooksWorkbench();
+		try {
+			await stubSpecKitAndOpenSpecCommands(launched.electronApp);
+			const settingsDialog = await openSettings(launched.window);
+
+			await settingsDialog.getByText('/openspec.proposal').click();
+			const commandCard = settingsDialog
+				.getByText('/openspec.proposal')
+				.locator('xpath=ancestor::div[contains(@class, "rounded-lg")][1]');
+			await commandCard.getByRole('button', { name: 'Edit' }).click();
+			await commandCard.locator('textarea').fill('Canceled OpenSpec prompt edit.');
+			await commandCard.getByRole('button', { name: 'Cancel' }).click();
+
+			await expect(commandCard.getByText('Modified')).toBeHidden();
+			await expect(commandCard.getByText(/Bundled proposal prompt/)).toBeVisible();
+			await expect(commandCard.getByText('Canceled OpenSpec prompt edit.')).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${seventhTrancheActiveScenarioMatrix[4].id}: ${seventhTrancheActiveScenarioMatrix[4].title}`, async () => {
+		const launched = await launchGitGroupChatPlaybooksWorkbench({ withWorktreeChild: true });
+		try {
+			await stubPullRequestCreation(
+				launched.electronApp,
+				{ installed: true, authenticated: true },
+				{ success: true, prUrl: 'https://github.com/RunMaestro/Maestro/pull/140' }
+			);
+			await activateSession(launched.window, launched.worktreeBranch);
+			const quickActionsDialog = await openQuickActions(launched.window);
+			await quickActionsDialog
+				.getByPlaceholder('Type a command or jump to agent...')
+				.fill('Create Pull Request');
+			await quickActionsDialog.getByRole('button', { name: /Create Pull Request/ }).click();
+
+			const prModal = modalRootByHeading(launched.window, 'Create Pull Request');
+			const createButton = prModal.getByRole('button', { name: 'Create PR' });
+			await expect(createButton).toBeEnabled({ timeout: 5000 });
+			await prModal.getByPlaceholder('PR title...').fill('');
+
+			await expect(createButton).toBeDisabled();
+			expect(await getStubbedCreatePRRequest(launched.electronApp)).toBeNull();
 		} finally {
 			await launched.cleanup();
 		}
