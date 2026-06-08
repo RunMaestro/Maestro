@@ -10,6 +10,7 @@ import {
 	themeNameForMode,
 } from '../../utils/shiki/highlighterManager';
 import { detectLanguage } from '../../utils/shiki/languageDetect';
+import { useDebouncedValue } from '../../hooks/utils/useThrottle';
 import { LanguagePicker } from './LanguagePicker';
 
 interface CodeFenceProps {
@@ -22,6 +23,13 @@ interface CodeFenceProps {
 }
 
 const FALLBACK_LANG = 'text';
+
+// Auto-detection only needs to run once a fence has settled, not on every
+// streamed character. Debouncing the `code` value that feeds detection keeps
+// `detectLanguage` from churning (and flickering the picker) while tokens
+// stream in, while still resolving untagged fences shortly after they stop
+// growing. Highlighting itself is NOT debounced - it tracks `code` live.
+const DETECTION_DEBOUNCE_MS = 150;
 
 function isExplicitLang(lang: string): boolean {
 	return Boolean(lang) && lang !== FALLBACK_LANG;
@@ -49,6 +57,11 @@ export const CodeFence = memo(function CodeFence({
 	const [html, setHtml] = useState<string | null>(null);
 	const userOverrodeRef = useRef(false);
 
+	// Debounced code feeds auto-detection only. Without this, the effect below
+	// re-runs (and re-detects) on every streamed character, which flickers the
+	// resolved language and, by extension, the highlight effect.
+	const debouncedCode = useDebouncedValue(code, DETECTION_DEBOUNCE_MS);
+
 	// Resolve the fence tag to a canonical Shiki id (handles aliases). Once
 	// the user picks a language via the dropdown (`userOverrodeRef`), this
 	// effect stays out of the way for the lifetime of the component instance —
@@ -58,6 +71,11 @@ export const CodeFence = memo(function CodeFence({
 		if (userOverrodeRef.current) return;
 		let cancelled = false;
 		const stale = () => cancelled || userOverrodeRef.current;
+		// Skip a redundant state update (and the highlight re-run it triggers)
+		// when detection lands on the value we're already showing.
+		const applyLang = (next: string) => {
+			setResolvedLang((prev) => (prev === next ? prev : next));
+		};
 		void (async () => {
 			// An explicit, resolvable fence tag (e.g. `ts`, `python`) is trusted
 			// as-is. We only consult the alias table for explicit tags — a bare
@@ -66,18 +84,19 @@ export const CodeFence = memo(function CodeFence({
 			const resolved = isExplicitLang(language) ? await resolveLanguage(language) : null;
 			if (stale()) return;
 			if (resolved) {
-				setResolvedLang(resolved);
+				applyLang(resolved);
 				return;
 			}
 			// No explicit language (or an unknown tag) — guess from the body.
-			const detected = await detectLanguage(code);
+			// Uses the debounced snapshot so streaming doesn't re-detect per char.
+			const detected = await detectLanguage(debouncedCode);
 			if (stale()) return;
-			setResolvedLang(detected?.language ?? FALLBACK_LANG);
+			applyLang(detected?.language ?? FALLBACK_LANG);
 		})();
 		return () => {
 			cancelled = true;
 		};
-	}, [language, code]);
+	}, [language, debouncedCode]);
 
 	// Highlight whenever the resolved language, code, or theme changes.
 	useEffect(() => {
