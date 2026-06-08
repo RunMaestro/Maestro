@@ -1,6 +1,6 @@
 # wizard-settings-prompts
 
-Status: tranche 14 fallback committed
+Status: tranche 15 fallback committed
 
 ## Scope
 
@@ -425,3 +425,35 @@ New Agent Wizard, inline wizard, Settings, Director Notes, prompt composer.
 - Blockers/remaining work:
   - Real provider account and live agent handoff coverage remains env-gated.
   - Remaining matrix-backed target: about 295 active/skipped rows after this tranche.
+
+### 2026-06-08 tranche 15 fallback
+
+- Scope: compact persistent-worker tranche in the current lane worktree.
+- Authored: 6 additional active deterministic Playwright scenarios.
+  - Settings AI Commands cancels a seeded command edit without persisting changes.
+  - Settings SSH Hosts shows duplicate remote ignore pattern feedback.
+  - Settings SSH Hosts resets remote ignore patterns and `.gitignore` honoring to defaults.
+  - Prompt Composer inserts a literal tab character with Tab.
+  - Prompt Composer toggles History with the keyboard shortcut.
+  - Prompt Composer toggles Read-Only with the keyboard shortcut.
+- Cumulative lane-authored coverage: 83 active deterministic scenarios, 1 env-gated scenario.
+- Skipped/env-gated: no new rows; total remains 1 provider-account handoff placeholder.
+- Files touched:
+  - `e2e/wizard-settings-prompts.spec.ts`
+  - `docs/e2e-parallel-campaign/agents/wizard-settings-prompts.md`
+  - `docs/e2e-parallel-campaign/coverage-ledger.md`
+  - `docs/e2e-coverage-campaign.md`
+- Shared helpers edited: no.
+- Validation run:
+  - `NODE_OPTIONS=--max-old-space-size=8192 npx prettier --write e2e/wizard-settings-prompts.spec.ts` - passed.
+  - `NODE_OPTIONS=--max-old-space-size=8192 npx eslint e2e/wizard-settings-prompts.spec.ts` - passed.
+  - `NODE_OPTIONS=--max-old-space-size=8192 npx tsc -p tsconfig.lint.json --noEmit` - passed.
+  - Static scenario-ID/`.only`/prohibited-command scan - passed with 83 active rows, 83 active tests, 1 env-gated row, no duplicate IDs, and no `.only`.
+  - `git diff --check -- e2e/wizard-settings-prompts.spec.ts` - passed.
+- Review:
+  - Focused static code-reviewer checklist found no critical or high-severity issues; E2E execution remains deferred.
+- Not run by instruction: `npm run test:e2e`, `playwright test`, headed/UI E2E, and Playwright listing.
+- Implementation commit hash: `2d069a57a`.
+- Blockers/remaining work:
+  - Real provider account and live agent handoff coverage remains env-gated.
+  - Remaining matrix-backed target: about 289 active/skipped rows after this tranche.
