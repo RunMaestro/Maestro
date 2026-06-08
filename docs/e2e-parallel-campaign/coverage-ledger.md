@@ -2,16 +2,16 @@
 
 Source of truth: `docs/e2e-coverage-campaign.md`.
 
-Current active tests: 988
+Current active tests: 993
 Target active tests: 3,025
-Remaining matrix-backed active scenarios: 2,037
+Remaining matrix-backed active scenarios: 2,032
 
 ## Matrix
 
 | Surface                                                        | Lane                      | Current Active | Target Active | Remaining |
 | -------------------------------------------------------------- | ------------------------- | -------------: | ------------: | --------: |
 | App shell, layout, sidebars, resizing, focus, global shortcuts | `shell-tabs-command`      |             26 |           110 |        84 |
-| Agent CRUD and provider setup                                  | `agent-crud-provider`     |             85 |           160 |        75 |
+| Agent CRUD and provider setup                                  | `agent-crud-provider`     |             90 |           160 |        70 |
 | Codex AI terminal workflows                                    | `autorun-ai-terminal`     |             33 |           170 |       137 |
 | Command terminal workflows                                     | `shell-tabs-command`      |             56 |            95 |        39 |
 | Tabs and tab overlays                                          | `shell-tabs-command`      |             53 |           120 |        67 |
@@ -36,7 +36,7 @@ Remaining matrix-backed active scenarios: 2,037
 
 | Lane                       | Matrix-backed remaining | Authored active scenarios | Authored skipped/env-gated scenarios | Last accepted commit |
 | -------------------------- | ----------------------: | ------------------------: | -----------------------------------: | -------------------- |
-| `agent-crud-provider`      |                      75 |                        29 |                                    2 | `8bbf419f8`          |
+| `agent-crud-provider`      |                      70 |                        34 |                                    2 | `750e25fd0`          |
 | `shell-tabs-command`       |                     190 |                        76 |                                    0 | `44e98a94f`          |
 | `files-docs-history`       |                     312 |                        37 |                                    5 | `b5491cd9b`          |
 | `autorun-ai-terminal`      |                     263 |                        10 |                                    0 | `cd804bebf`          |
@@ -98,3 +98,4 @@ Remaining matrix-backed active scenarios: 2,037
 - 2026-06-08: accepted manual `agent-crud-provider` fallback through `ef05abd54`; authored 5 additional active generic provider Agent Sessions detail, favorite, rename, search-mode, and keyboard-resume scenarios. No E2E execution was run.
 - 2026-06-08: accepted manual `agent-crud-provider` fallback through `9362cf4fc`; authored 5 additional active agent group creation, context-menu move/ungroup, context-menu create-group, collapse/expand, and inline rename scenarios. No E2E execution was run.
 - 2026-06-08: accepted manual `agent-crud-provider` fallback through `8bbf419f8`; authored 5 additional active Quick Actions create, duplicate cancel/create, Agent Only directory preservation, and exact-name working-directory delete scenarios. No E2E execution was run.
+- 2026-06-08: accepted manual `agent-crud-provider` fallback through `750e25fd0`; authored 5 additional active Agent Sessions New Session, quick-resume, metadata preservation, Show All, and search-control scenarios. No E2E execution was run.
