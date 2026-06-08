@@ -53,7 +53,7 @@ Second tranche:
 - Env-gated tests: 0.
 - Shared helper edits: none.
 - Live provider execution: none; no E2E validation/listing was run.
-- Campaign head before this tranche: `ca4241a13`.
+- Campaign head before this tranche: `25df7b9d8`.
 - Tranche implementation commit: `825e24335`.
 
 Covered:
