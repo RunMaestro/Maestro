@@ -75,6 +75,14 @@ const ninthTrancheActiveScenarioMatrix = [
 	{ id: 'DA-046', title: 'hides the header close control for non-recoverable errors' },
 ] as const;
 
+const tenthTrancheActiveScenarioMatrix = [
+	{ id: 'DA-047', title: 'opens the Maestro website from the About modal header' },
+	{ id: 'DA-048', title: 'opens Discord from the About modal header' },
+	{ id: 'DA-049', title: 'opens documentation from the About modal header' },
+	{ id: 'DA-050', title: 'opens the project GitHub link from the About modal body' },
+	{ id: 'DA-051', title: 'opens the creator LinkedIn link from the About modal body' },
+] as const;
+
 const debugPackagePreviewCategories = [
 	{ id: 'logs', name: 'System Logs', included: true, sizeEstimate: '~50 KB' },
 	{ id: 'errors', name: 'Error States', included: true, sizeEstimate: '< 10 KB' },
@@ -610,6 +618,18 @@ async function openProcessMonitorFromQuickActions(page: Page) {
 	const processMonitor = page.getByRole('dialog', { name: 'System Processes' });
 	await expect(processMonitor).toBeVisible();
 	return processMonitor;
+}
+
+async function openAboutFromQuickActions(page: Page) {
+	const quickActionsDialog = await openQuickActions(page);
+	await quickActionsDialog
+		.getByPlaceholder('Type a command or jump to agent...')
+		.fill('About Maestro');
+	await quickActionsDialog.getByRole('button', { name: /About Maestro/ }).click();
+
+	const aboutDialog = page.getByRole('dialog', { name: 'About Maestro' });
+	await expect(aboutDialog).toBeVisible();
+	return aboutDialog;
 }
 
 function createStubbedActiveProcesses(
@@ -1627,6 +1647,89 @@ test.describe('Debug and accessibility smoke tranche', () => {
 			await expect(errorModal.getByText('Debug accessibility locked modal sentinel')).toBeVisible();
 			await expect(errorModal.getByRole('button', { name: 'Close modal' })).toHaveCount(0);
 			await expect(errorModal.getByRole('button', { name: 'Dismiss' })).toHaveCount(0);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${tenthTrancheActiveScenarioMatrix[0].id} ${tenthTrancheActiveScenarioMatrix[0].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubShellOpenExternal(launched.electronApp);
+			const aboutDialog = await openAboutFromQuickActions(launched.window);
+
+			await aboutDialog.getByTitle('Visit runmaestro.ai').click();
+
+			expect((await getStubbedShellOpenExternalState(launched.electronApp))?.urls).toEqual([
+				'https://runmaestro.ai',
+			]);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${tenthTrancheActiveScenarioMatrix[1].id} ${tenthTrancheActiveScenarioMatrix[1].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubShellOpenExternal(launched.electronApp);
+			const aboutDialog = await openAboutFromQuickActions(launched.window);
+
+			await aboutDialog.getByTitle('Join our Discord').click();
+
+			expect((await getStubbedShellOpenExternalState(launched.electronApp))?.urls).toEqual([
+				'https://runmaestro.ai/discord',
+			]);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${tenthTrancheActiveScenarioMatrix[2].id} ${tenthTrancheActiveScenarioMatrix[2].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubShellOpenExternal(launched.electronApp);
+			const aboutDialog = await openAboutFromQuickActions(launched.window);
+
+			await aboutDialog.getByTitle('Documentation').click();
+
+			expect((await getStubbedShellOpenExternalState(launched.electronApp))?.urls).toEqual([
+				'https://docs.runmaestro.ai/',
+			]);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${tenthTrancheActiveScenarioMatrix[3].id} ${tenthTrancheActiveScenarioMatrix[3].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubShellOpenExternal(launched.electronApp);
+			const aboutDialog = await openAboutFromQuickActions(launched.window);
+
+			await aboutDialog
+				.getByRole('button', { name: /GitHub/ })
+				.first()
+				.click();
+
+			expect((await getStubbedShellOpenExternalState(launched.electronApp))?.urls).toEqual([
+				'https://github.com/RunMaestro/Maestro',
+			]);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${tenthTrancheActiveScenarioMatrix[4].id} ${tenthTrancheActiveScenarioMatrix[4].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubShellOpenExternal(launched.electronApp);
+			const aboutDialog = await openAboutFromQuickActions(launched.window);
+
+			await aboutDialog.getByRole('button', { name: 'LinkedIn' }).click();
+
+			expect((await getStubbedShellOpenExternalState(launched.electronApp))?.urls).toEqual([
+				'https://www.linkedin.com/in/pedramamini/',
+			]);
 		} finally {
 			await launched.cleanup();
 		}
