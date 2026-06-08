@@ -1261,6 +1261,46 @@ test.describe('Agent CRUD lifecycle', () => {
 		}
 	});
 
+	test('cancels a filled Create New Agent provider draft without adding an agent', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: [seeded.sessions[0]],
+		});
+		const projectDir = path.join(seeded.homeDir, 'cancelled-create-draft-project');
+		fs.mkdirSync(projectDir, { recursive: true });
+
+		try {
+			await stubProviderDetection(launched.electronApp);
+
+			const createAgentDialog = await openCreateAgentDialog(launched.window);
+			await createAgentDialog.getByRole('option', { name: /Codex/ }).click();
+			await expect(createAgentDialog.getByText('Codex Settings')).toBeVisible();
+			await createAgentDialog.getByLabel('Agent Name').fill('Cancelled Provider Draft');
+			await createAgentDialog.getByLabel('Working Directory').fill(projectDir);
+			await createAgentDialog
+				.getByPlaceholder('Instructions appended to every message you send...')
+				.fill('This draft should be discarded on cancel.');
+			await createAgentDialog.getByPlaceholder('/path/to/codex').fill('/opt/maestro/codex-cancel');
+			await createAgentDialog
+				.getByPlaceholder('--flag value --another-flag')
+				.fill('--cancelled-create-draft');
+			await addCustomEnvVar(createAgentDialog, 'CODEX_CANCEL_CREATE_E2E', 'discarded');
+			await getModelInput(createAgentDialog).fill('gpt-5-codex-cancel-create');
+			await getContextWindowInput(createAgentDialog).fill('255000');
+			await createAgentDialog.getByRole('button', { name: 'Cancel' }).click();
+			await expect(createAgentDialog).toBeHidden();
+
+			await expect(
+				launched.window
+					.locator('[data-tour="session-list"]')
+					.getByText('Cancelled Provider Draft', { exact: true })
+			).toHaveCount(0);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
 	test('saves Edit Agent changes with the keyboard shortcut', async () => {
 		const seeded = createAgentCrudWorkbench();
 		const launched = await helpers.launchAppWithState({
@@ -1294,6 +1334,92 @@ test.describe('Agent CRUD lifecycle', () => {
 				reopenedDialog.getByPlaceholder('Instructions appended to every message you send...')
 			).toHaveValue('Saved through the edit modal keyboard shortcut.');
 			await reopenedDialog.getByRole('button', { name: 'Cancel' }).click();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('keeps Create New Agent provider drafts isolated while switching providers', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: [seeded.sessions[0]],
+		});
+		const projectDir = path.join(seeded.homeDir, 'switched-provider-create-project');
+		fs.mkdirSync(projectDir, { recursive: true });
+
+		try {
+			await stubProviderDetection(launched.electronApp);
+
+			const createAgentDialog = await openCreateAgentDialog(launched.window);
+			const codexOption = createAgentDialog.getByRole('option', { name: /Codex/ });
+			const opencodeOption = createAgentDialog.getByRole('option', { name: /OpenCode/ });
+
+			await codexOption.click();
+			await expect(createAgentDialog.getByText('Codex Settings')).toBeVisible();
+			await createAgentDialog.getByPlaceholder('/path/to/codex').fill('/opt/maestro/codex-draft');
+			await createAgentDialog
+				.getByPlaceholder('--flag value --another-flag')
+				.fill('--codex-draft-only');
+			await addCustomEnvVar(createAgentDialog, 'CODEX_DRAFT_ONLY_E2E', 'codex');
+
+			await opencodeOption.click();
+			await expect(createAgentDialog.getByText('OpenCode Settings')).toBeVisible();
+			await createAgentDialog.getByLabel('Agent Name').fill('Switched OpenCode Create');
+			await createAgentDialog.getByLabel('Working Directory').fill(projectDir);
+			await createAgentDialog
+				.getByPlaceholder('/path/to/opencode')
+				.fill('/opt/maestro/opencode-create-draft');
+			await createAgentDialog
+				.getByPlaceholder('--flag value --another-flag')
+				.fill('--opencode-create-draft');
+			await addCustomEnvVar(createAgentDialog, 'OPENCODE_CREATE_DRAFT_E2E', 'opencode');
+
+			await codexOption.click();
+			await expect(createAgentDialog.getByText('Codex Settings')).toBeVisible();
+			await expect(createAgentDialog.getByPlaceholder('/path/to/codex')).toHaveValue(
+				'/opt/maestro/codex-draft'
+			);
+			await expect(createAgentDialog.getByPlaceholder('--flag value --another-flag')).toHaveValue(
+				'--codex-draft-only'
+			);
+			await expect(createAgentDialog.getByPlaceholder('VARIABLE_NAME')).toHaveValue(
+				'CODEX_DRAFT_ONLY_E2E'
+			);
+
+			await opencodeOption.click();
+			await expect(createAgentDialog.getByText('OpenCode Settings')).toBeVisible();
+			await expect(createAgentDialog.getByPlaceholder('/path/to/opencode')).toHaveValue(
+				'/opt/maestro/opencode-create-draft'
+			);
+			await expect(createAgentDialog.getByPlaceholder('--flag value --another-flag')).toHaveValue(
+				'--opencode-create-draft'
+			);
+			await expect(createAgentDialog.getByPlaceholder('VARIABLE_NAME')).toHaveValue(
+				'OPENCODE_CREATE_DRAFT_E2E'
+			);
+
+			await createAgentDialog.getByRole('button', { name: 'Create Agent' }).click();
+			await expect(createAgentDialog).toBeHidden();
+
+			const editAgentDialog = await openEditAgentDialog(
+				launched.window,
+				'Switched OpenCode Create'
+			);
+			await expect(editAgentDialog.getByRole('combobox')).toHaveValue('opencode');
+			await expect(editAgentDialog.getByPlaceholder('/path/to/opencode')).toHaveValue(
+				'/opt/maestro/opencode-create-draft'
+			);
+			await expect(editAgentDialog.getByPlaceholder('--flag value --another-flag')).toHaveValue(
+				'--opencode-create-draft'
+			);
+			await expect(editAgentDialog.getByPlaceholder('VARIABLE_NAME')).toHaveValue(
+				'OPENCODE_CREATE_DRAFT_E2E'
+			);
+			await expect(editAgentDialog.getByPlaceholder('value', { exact: true })).toHaveValue(
+				'opencode'
+			);
+			await editAgentDialog.getByRole('button', { name: 'Cancel' }).click();
 		} finally {
 			await launched.cleanup();
 		}
@@ -1334,6 +1460,55 @@ test.describe('Agent CRUD lifecycle', () => {
 				'/usr/local/bin/codex-e2e'
 			);
 			await expect(reopenedDialog.getByPlaceholder('--flag value --another-flag')).toHaveValue('');
+			await reopenedDialog.getByRole('button', { name: 'Cancel' }).click();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('cancels ordinary Edit Agent config drafts without saving changes', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubProviderDetection(launched.electronApp);
+
+			const editAgentDialog = await openEditAgentDialog(launched.window, 'Matrix Codex Agent');
+			await expect(editAgentDialog.getByText('Codex Settings')).toBeVisible();
+			await editAgentDialog.getByLabel('Agent Name').fill('Cancelled Edit Draft');
+			await editAgentDialog
+				.getByPlaceholder('Instructions appended to every message you send...')
+				.fill('This edit draft should be discarded on cancel.');
+			await editAgentDialog
+				.getByPlaceholder('/path/to/codex')
+				.fill('/opt/maestro/codex-edit-cancel');
+			await editAgentDialog
+				.getByPlaceholder('--flag value --another-flag')
+				.fill('--cancelled-edit-draft');
+			await addCustomEnvVar(editAgentDialog, 'CODEX_EDIT_CANCEL_E2E', 'discarded');
+			await getModelInput(editAgentDialog).fill('gpt-5-codex-edit-cancel');
+			await getContextWindowInput(editAgentDialog).fill('245000');
+			await editAgentDialog.getByRole('button', { name: 'Cancel' }).click();
+			await expect(editAgentDialog).toBeHidden();
+
+			const sessionList = launched.window.locator('[data-tour="session-list"]');
+			await expect(sessionList.getByText('Matrix Codex Agent', { exact: true })).toBeVisible();
+			await expect(sessionList.getByText('Cancelled Edit Draft', { exact: true })).toHaveCount(0);
+
+			const reopenedDialog = await openEditAgentDialog(launched.window, 'Matrix Codex Agent');
+			await expect(
+				reopenedDialog.getByPlaceholder('Instructions appended to every message you send...')
+			).toHaveValue('');
+			await expect(reopenedDialog.getByPlaceholder('/path/to/codex')).toHaveValue(
+				'/usr/local/bin/codex-e2e'
+			);
+			await expect(reopenedDialog.getByPlaceholder('--flag value --another-flag')).toHaveValue('');
+			await expect(reopenedDialog.getByPlaceholder('VARIABLE_NAME')).toHaveCount(0);
+			await expect(getModelInput(reopenedDialog)).toHaveValue('');
+			await expect(getContextWindowInput(reopenedDialog)).toHaveValue('400000');
 			await reopenedDialog.getByRole('button', { name: 'Cancel' }).click();
 		} finally {
 			await launched.cleanup();
