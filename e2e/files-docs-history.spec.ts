@@ -1,7 +1,7 @@
 /**
  * E2E Tests: files, docs, and history coverage tranche.
  *
- * This file intentionally keeps the first recovery tranche small and matrix-backed.
+ * This file intentionally keeps each recovery tranche small and matrix-backed.
  * It seeds deterministic local state and does not launch live agent processes.
  */
 import { test, expect, helpers } from './fixtures/electron-app';
@@ -19,6 +19,15 @@ const activeScenarioMatrix = [
 	{ id: 'FDH-A06', title: 'saves plain text preview edits to disk' },
 	{ id: 'FDH-A07', title: 'renders markdown task table and code content' },
 	{ id: 'FDH-A08', title: 'searches History by provider session id and opens metadata detail' },
+	{
+		id: 'FDH-A09',
+		title: 'collapses and expands nested File Explorer folders from toolbar controls',
+	},
+	{ id: 'FDH-A10', title: 'shows and recovers from the File Explorer no-match filter state' },
+	{ id: 'FDH-A11', title: 'confirms folder deletion and removes nested document files' },
+	{ id: 'FDH-A12', title: 'rejects folder rename values that would create nested paths' },
+	{ id: 'FDH-A13', title: 'opens failed History detail metadata for preview failures' },
+	{ id: 'FDH-A14', title: 'searches History response text for manual file operation notes' },
 ] as const;
 
 const skippedScenarioMatrix = [
@@ -285,7 +294,7 @@ async function openFileContextMenu(window: Page, name: string) {
 	return contextMenu;
 }
 
-test.describe(`Files docs history first tranche (${activeScenarioMatrix.length} active, ${skippedScenarioMatrix.length} skipped, ${envGatedScenarioMatrix.length} env-gated)`, () => {
+test.describe(`Files docs history lane matrix (${activeScenarioMatrix.length} active, ${skippedScenarioMatrix.length} skipped, ${envGatedScenarioMatrix.length} env-gated)`, () => {
 	let window: Page;
 	let cleanupApp: (() => Promise<void>) | undefined;
 	let seededWorkbench: ReturnType<typeof createFilesDocsHistoryWorkbench>;
@@ -438,6 +447,101 @@ test.describe(`Files docs history first tranche (${activeScenarioMatrix.length} 
 		await expect(window.getByTitle('Copy session ID: codex-history-render')).toBeVisible();
 		await expect(window.getByText('1m 10s')).toBeVisible();
 		await expect(window.getByText('$0.04')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[8].id} ${activeScenarioMatrix[8].title}`, async () => {
+		await helpers.openRightPanelTab(window, 'Files');
+		await window.getByTitle('Expand all folders').click();
+		await getFileTreeRow(window, 'runbook.md');
+
+		await window.getByTitle('Collapse all folders').click();
+		await expect(
+			window.locator('[data-file-index]').filter({ hasText: 'runbook.md' })
+		).toBeHidden();
+		await expect(
+			window.locator('[data-file-index]').filter({ hasText: 'archive.md' })
+		).toBeHidden();
+
+		await window.getByTitle('Expand all folders').click();
+		await getFileTreeRow(window, 'runbook.md');
+		await getFileTreeRow(window, 'archive.md');
+	});
+
+	test(`${activeScenarioMatrix[9].id} ${activeScenarioMatrix[9].title}`, async () => {
+		await helpers.openRightPanelTab(window, 'Files');
+		const readmeRow = await getFileTreeRow(window, 'README.md');
+		await readmeRow.click();
+		await window.keyboard.press('Control+f');
+
+		const filterInput = window.getByPlaceholder('Filter files...');
+		await filterInput.fill('__missing_file_docs_history__');
+		await expect(window.getByText('No files match your search')).toBeVisible();
+
+		await filterInput.fill('plain');
+		await getFileTreeRow(window, 'plain.txt');
+		await expect(window.getByText('No files match your search')).toBeHidden();
+	});
+
+	test(`${activeScenarioMatrix[10].id} ${activeScenarioMatrix[10].title}`, async () => {
+		const contextMenu = await openFileContextMenu(window, 'docs');
+		await contextMenu.getByRole('button', { name: 'Delete' }).click();
+
+		const deleteDialog = window.getByRole('dialog', { name: 'Delete Folder' });
+		await expect(deleteDialog).toBeVisible();
+		await expect(deleteDialog.getByText('This folder contains 2 files')).toBeVisible();
+		await deleteDialog.getByRole('button', { name: 'Delete' }).click();
+
+		await expect(deleteDialog).toBeHidden();
+		await expect(window.getByText('Deleted "docs"')).toBeVisible();
+		await expect(window.locator('[data-file-index]').filter({ hasText: 'docs' })).toBeHidden();
+		await expect(fs.existsSync(seededWorkbench.runbookPath)).toBe(false);
+		await expect(fs.existsSync(seededWorkbench.archivePath)).toBe(false);
+	});
+
+	test(`${activeScenarioMatrix[11].id} ${activeScenarioMatrix[11].title}`, async () => {
+		const contextMenu = await openFileContextMenu(window, 'docs');
+		await contextMenu.getByRole('button', { name: 'Rename' }).click();
+
+		const renameDialog = window.getByRole('dialog', { name: 'Rename Folder' });
+		await expect(renameDialog).toBeVisible();
+		await renameDialog.getByPlaceholder('Enter folder name...').fill('notes/escaped');
+		await renameDialog.getByRole('button', { name: 'Rename' }).click();
+
+		await expect(renameDialog.getByText('Name cannot contain slashes')).toBeVisible();
+		await expect(fs.existsSync(path.join(seededWorkbench.projectDir, 'docs'))).toBe(true);
+		await expect(fs.existsSync(path.join(seededWorkbench.projectDir, 'notes/escaped'))).toBe(false);
+	});
+
+	test(`${activeScenarioMatrix[12].id} ${activeScenarioMatrix[12].title}`, async () => {
+		await helpers.openRightPanelTab(window, 'History');
+		const historyPanel = window.locator('[data-tour="history-panel"]');
+		await historyPanel.getByText('Preview fallback failed').click();
+
+		await expect(
+			window.getByText('Failure detail includes a blocked external renderer path.')
+		).toBeVisible();
+		await expect(window.getByTitle('Task failed')).toBeVisible();
+		await expect(window.getByTitle('Copy session ID: codex-history-preview-failure')).toBeVisible();
+		await expect(window.getByText('14s')).toBeVisible();
+		await expect(window.getByTitle('Mark as human-validated')).toBeHidden();
+	});
+
+	test(`${activeScenarioMatrix[13].id} ${activeScenarioMatrix[13].title}`, async () => {
+		await helpers.openRightPanelTab(window, 'History');
+		const historyPanel = window.locator('[data-tour="history-panel"]');
+		await historyPanel.locator('[tabindex="0"]').focus();
+		await window.keyboard.press('Control+f');
+
+		const historyFilter = historyPanel.getByPlaceholder('Filter history...');
+		await historyFilter.fill('archive.md');
+		await expect(historyPanel.getByText('1 result')).toBeVisible();
+		await historyPanel.getByText('Manual file operation note').click();
+
+		await expect(
+			window.getByText('Manual detail references draft/plain.txt and archive.md.')
+		).toBeVisible();
+		await expect(window.getByText('USER')).toBeVisible();
+		await expect(window.getByTitle('Copy session ID: codex-history-manual')).toBeVisible();
 	});
 
 	for (const scenario of skippedScenarioMatrix) {
