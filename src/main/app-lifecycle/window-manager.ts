@@ -196,7 +196,11 @@ function buildBrowserTabContextMenuTemplate(
 			linkSection.push({
 				label: 'Open Link in Browser',
 				click: () => {
-					void shell.openExternal(linkURL);
+					void shell.openExternal(linkURL).catch((err) => {
+						logger.warn(`Failed to open link in browser: ${linkURL}`, 'Window', {
+							error: err instanceof Error ? err.message : String(err),
+						});
+					});
 				},
 			});
 		}
@@ -241,6 +245,8 @@ function buildBrowserTabContextMenuTemplate(
 function attachBrowserTabContextMenu(guest: Electron.WebContents, mainWindow: BrowserWindow): void {
 	guest.on('context-menu', (_event, params) => {
 		const template = buildBrowserTabContextMenuTemplate(guest, params);
+		// Defensive: the builder always emits a navigation section today, but guard
+		// against a future code path returning [] so we never popup() an empty menu.
 		if (template.length === 0) return;
 		Menu.buildFromTemplate(template).popup({ window: mainWindow });
 	});

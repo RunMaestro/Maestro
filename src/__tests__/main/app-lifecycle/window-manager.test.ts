@@ -97,7 +97,7 @@ const mockHandle = vi.fn();
 // Mock Menu / shell / clipboard for the browser-tab context menu (#1065)
 const mockMenuPopup = vi.fn();
 const mockBuildFromTemplate = vi.fn(() => ({ popup: mockMenuPopup }));
-const mockShellOpenExternal = vi.fn();
+const mockShellOpenExternal = vi.fn((..._args: unknown[]) => Promise.resolve());
 const mockClipboardWriteText = vi.fn();
 
 vi.mock('electron', () => ({
