@@ -1,6 +1,6 @@
 # Parallel E2E Orchestrator Status
 
-Last updated: 2026-06-08 09:20 ET
+Last updated: 2026-06-08 09:42 EDT
 
 ## Base
 
@@ -39,7 +39,7 @@ coverage and the shell-lane tab coverage.
 | `autorun-ai-terminal`      | `codex/e2e-autorun-ai-terminal`                | `Maestro-worktrees/e2e-autorun-ai-terminal`                | `maestro-e2e-autorun-ai-terminal`      | merged through `cd804bebf` | 10 active scenarios accepted; 263 remain        |
 | `wizard-settings-prompts`  | `codex/e2e-wizard-settings-prompts-fallback-6` | `Maestro-worktrees/e2e-wizard-settings-prompts-fallback-6` | manual fallback                        | merged through `d3c251829` | 54 active scenarios accepted; 318 remain        |
 | `git-groupchat-playbooks`  | `codex/e2e-git-groupchat-playbooks-fallback-4` | `Maestro-worktrees/e2e-git-groupchat-playbooks-fallback-4` | manual fallback                        | merged through `4867f111c` | 45 active scenarios accepted; 318 remain        |
-| `stats-graph-symphony`     | `codex/e2e-stats-graph-symphony-fallback-2`    | `Maestro`                                                  | manual fallback                        | merged through `33581a7ec` | 22 active scenarios accepted; 314 remain        |
+| `stats-graph-symphony`     | `codex/e2e-stats-graph-symphony-fallback-3`    | `Maestro-worktrees/e2e-stats-graph-symphony-fallback-3`    | manual fallback                        | merged through `bb9a6f68b` | 27 active scenarios accepted; 309 remain        |
 | `debug-accessibility`      | `codex/e2e-debug-accessibility`                | `Maestro-worktrees/e2e-debug-accessibility`                | `maestro-e2e-debug-accessibility`      | merged through `15e7a1a20` | 11 active scenarios accepted; 181 remain        |
 | `mobile-web-bridge`        | `codex/e2e-mobile-web-bridge-fallback-2`       | `Maestro-worktrees/e2e-mobile-web-bridge-fallback-2`       | manual fallback                        | merged through `d7ccdd3d`  | 16 active scenarios accepted; 86 remain         |
 | `fixtures-sharding-review` | `codex/e2e-fixtures-sharding-review`           | `Maestro-worktrees/e2e-fixtures-sharding-review`           | `maestro-e2e-fixtures-sharding-review` | merged through `392c4527`  | Support plan accepted; no active scenario quota |
@@ -52,7 +52,7 @@ coverage and the shell-lane tab coverage.
 - `mobile-web-bridge` merged through `d7ccdd3d`.
 - `autorun-ai-terminal` merged through `cd804bebf`.
 - `wizard-settings-prompts` merged through `d3c251829`.
-- `stats-graph-symphony` merged through `33581a7ec`.
+- `stats-graph-symphony` merged through `bb9a6f68b`.
 - `debug-accessibility` merged through `15e7a1a20`.
 - `fixtures-sharding-review` merged through `392c4527`.
 - `git-groupchat-playbooks` merged through `4867f111c`.
@@ -170,6 +170,10 @@ coverage and the shell-lane tab coverage.
   `b5491cd9b` with 5 active file preview clipboard, edit-save, unsaved-edit,
   and search recovery scenarios. Focused static review found no critical or
   high issues after clipboard assertions were added. No E2E execution was run.
+- 2026-06-08 09:42 EDT: accepted fallback `stats-graph-symphony` through
+  `bb9a6f68b` with 5 active Usage Dashboard heatmap/provider comparison and
+  Symphony help/stats/leaderboard failure scenarios. Focused static review found
+  no critical or high issues. No E2E execution was run.
 
 ## Blockers
 
@@ -182,13 +186,14 @@ coverage and the shell-lane tab coverage.
   `git-groupchat-playbooks`, twelfth `wizard-settings-prompts`, thirteenth
   `wizard-settings-prompts`, fourteenth `git-groupchat-playbooks`, fifteenth
   `wizard-settings-prompts`, sixteenth `git-groupchat-playbooks`, seventeenth
-  `wizard-settings-prompts`, eighteenth `mobile-web-bridge`, and nineteenth
-  `files-docs-history` fallbacks are accepted for selected high-remaining lanes.
-  Remaining work should continue in smaller batches, with each run committing
-  one coherent tranche and recording remaining work instead of trying to consume
-  a full lane quota in one Codex turn.
-- The `stats-graph-symphony` t5 worker stalled before authoring; the ninth manual
-  fallback recovered 5 active scenarios, but more stats/graph/Symphony coverage is needed.
+  `wizard-settings-prompts`, eighteenth `mobile-web-bridge`, nineteenth
+  `files-docs-history`, and twentieth `stats-graph-symphony` fallbacks are
+  accepted for selected high-remaining lanes. Remaining work should continue in
+  smaller batches, with each run committing one coherent tranche and recording
+  remaining work instead of trying to consume a full lane quota in one Codex turn.
+- The `stats-graph-symphony` t5 worker stalled before authoring; the ninth and
+  twentieth manual fallbacks recovered 10 active scenarios, but more
+  stats/graph/Symphony coverage is needed.
 - Codex runtime 503 errors affected all tranche-6 PM2 workers before authoring;
   retry PM2 lane workers only after managed-account runtime availability
   recovers.

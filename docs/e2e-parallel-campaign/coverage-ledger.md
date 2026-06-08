@@ -2,9 +2,9 @@
 
 Source of truth: `docs/e2e-coverage-campaign.md`.
 
-Current active tests: 948
+Current active tests: 953
 Target active tests: 3,025
-Remaining matrix-backed active scenarios: 2,077
+Remaining matrix-backed active scenarios: 2,072
 
 ## Matrix
 
@@ -23,10 +23,10 @@ Remaining matrix-backed active scenarios: 2,077
 | Settings                                                       | `wizard-settings-prompts` |             91 |           190 |        99 |
 | Git, worktrees, PR, diff/log, Gist                             | `git-groupchat-playbooks` |             35 |           160 |       125 |
 | Group chat                                                     | `git-groupchat-playbooks` |             54 |           140 |        86 |
-| Usage dashboard and stats                                      | `stats-graph-symphony`    |             21 |           125 |       104 |
+| Usage dashboard and stats                                      | `stats-graph-symphony`    |             23 |           125 |       102 |
 | Document graph                                                 | `stats-graph-symphony`    |             28 |           130 |       102 |
 | Playbooks, marketplace, Spec Kit, OpenSpec                     | `git-groupchat-playbooks` |             38 |           145 |       107 |
-| Symphony, leaderboard, achievements                            | `stats-graph-symphony`    |             12 |           120 |       108 |
+| Symphony, leaderboard, achievements                            | `stats-graph-symphony`    |             15 |           120 |       105 |
 | Director notes and prompt composer                             | `wizard-settings-prompts` |             21 |            90 |        69 |
 | Debug/about/update/app info/agent error modals                 | `debug-accessibility`     |             25 |            85 |        60 |
 | Mobile/web bridge                                              | `mobile-web-bridge`       |            104 |           190 |        86 |
@@ -42,7 +42,7 @@ Remaining matrix-backed active scenarios: 2,077
 | `autorun-ai-terminal`      |                     263 |                        10 |                                    0 | `cd804bebf`          |
 | `wizard-settings-prompts`  |                     318 |                        54 |                                    1 | `d3c251829`          |
 | `git-groupchat-playbooks`  |                     318 |                        45 |                                    7 | `4867f111c`          |
-| `stats-graph-symphony`     |                     314 |                        22 |                                    6 | `33581a7ec`          |
+| `stats-graph-symphony`     |                     309 |                        27 |                                    6 | `bb9a6f68b`          |
 | `debug-accessibility`      |                     181 |                        11 |                                    0 | `15e7a1a20`          |
 | `mobile-web-bridge`        |                      86 |                        16 |                                    0 | `d7ccdd3d`           |
 | `fixtures-sharding-review` |                       0 |                         0 |                                    0 | `392c4527`           |
@@ -88,5 +88,6 @@ Remaining matrix-backed active scenarios: 2,077
 - 2026-06-08: accepted `codex/e2e-wizard-settings-prompts-fallback-5` through `02c808467`; authored 5 additional active Settings shell/input/notification fallback scenarios. No E2E execution was run.
 - 2026-06-08: accepted `codex/e2e-git-groupchat-playbooks-fallback-4` through `4867f111c`; authored 5 additional active Create PR/Playbook Exchange fallback scenarios. No E2E execution was run.
 - 2026-06-08: accepted `codex/e2e-wizard-settings-prompts-fallback-6` through `d3c251829`; authored 5 additional active Settings Display local file indexing/context warning fallback scenarios. No E2E execution was run.
+- 2026-06-08: accepted `codex/e2e-stats-graph-symphony-fallback-3` through `bb9a6f68b`; authored 5 additional active Usage Dashboard heatmap/provider comparison and Symphony help/stats/leaderboard failure fallback scenarios. No E2E execution was run.
 - 2026-06-08: accepted `codex/e2e-mobile-web-bridge-fallback-2` through `d7ccdd3d4`; authored 5 additional active token API/theme/Auto Run WebSocket/subscription/server-lifecycle fallback scenarios. No E2E execution was run.
 - 2026-06-08: accepted `codex/e2e-files-docs-history-fallback-2` through `b5491cd9b`; authored 5 additional active file preview clipboard/edit/search fallback scenarios. No E2E execution was run.

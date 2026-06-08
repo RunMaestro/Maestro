@@ -34,10 +34,11 @@ Parallel E2E authoring checkpoint:
 
 - Campaign: `docs/e2e-parallel-prompt.md`
 - Result: in progress
-- Current authoring progress: 948 / 3,025 active scenarios after accepting the
-  nineteenth-tranche files/docs/history fallback through `b5491cd9b`. This
-  tranche added 5 active file preview clipboard, edit-save, unsaved-edit, and
-  search recovery rows without adding skipped or env-gated rows.
+- Current authoring progress: 953 / 3,025 active scenarios after accepting the
+  twentieth-tranche stats/graph/Symphony fallback through `bb9a6f68b`. This
+  tranche added 5 active Usage Dashboard heatmap/provider-comparison and
+  Symphony help/stats/leaderboard failure rows without adding skipped or
+  env-gated rows.
 - Accepted lanes so far: `shell-tabs-command`, `agent-crud-provider`,
   `files-docs-history`, `mobile-web-bridge`, `autorun-ai-terminal`,
   `wizard-settings-prompts`, `stats-graph-symphony`, `debug-accessibility`,
@@ -47,9 +48,9 @@ Parallel E2E authoring checkpoint:
 - Latest static validation: Prettier, explicit main-config ESLint, TypeScript
   single-file check, duplicate-ID/test-count scan, `.only`,
   prohibited-command guard, and `git diff --check` passed for the
-  `files-docs-history` fallback before merge; focused static review found no
-  critical or high issues after clipboard assertions were added. No
-  Playwright/E2E/listing command was run.
+  `stats-graph-symphony` fallback before merge; focused code-reviewer checklist
+  review found no critical or high issues. No Playwright/E2E/listing command was
+  run.
 
 Integration checkpoint:
 
