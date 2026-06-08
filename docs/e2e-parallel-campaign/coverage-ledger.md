@@ -2,9 +2,9 @@
 
 Source of truth: `docs/e2e-coverage-campaign.md`.
 
-Current active tests: 928
+Current active tests: 933
 Target active tests: 3,025
-Remaining matrix-backed active scenarios: 2,097
+Remaining matrix-backed active scenarios: 2,092
 
 ## Matrix
 
@@ -21,11 +21,11 @@ Remaining matrix-backed active scenarios: 2,097
 | Auto Run                                                       | `autorun-ai-terminal`     |            134 |           260 |       126 |
 | New Agent Wizard and inline wizard                             | `wizard-settings-prompts` |             40 |           190 |       150 |
 | Settings                                                       | `wizard-settings-prompts` |             86 |           190 |       104 |
-| Git, worktrees, PR, diff/log, Gist                             | `git-groupchat-playbooks` |             33 |           160 |       127 |
+| Git, worktrees, PR, diff/log, Gist                             | `git-groupchat-playbooks` |             35 |           160 |       125 |
 | Group chat                                                     | `git-groupchat-playbooks` |             54 |           140 |        86 |
 | Usage dashboard and stats                                      | `stats-graph-symphony`    |             21 |           125 |       104 |
 | Document graph                                                 | `stats-graph-symphony`    |             28 |           130 |       102 |
-| Playbooks, marketplace, Spec Kit, OpenSpec                     | `git-groupchat-playbooks` |             35 |           145 |       110 |
+| Playbooks, marketplace, Spec Kit, OpenSpec                     | `git-groupchat-playbooks` |             38 |           145 |       107 |
 | Symphony, leaderboard, achievements                            | `stats-graph-symphony`    |             12 |           120 |       108 |
 | Director notes and prompt composer                             | `wizard-settings-prompts` |             21 |            90 |        69 |
 | Debug/about/update/app info/agent error modals                 | `debug-accessibility`     |             25 |            85 |        60 |
@@ -41,7 +41,7 @@ Remaining matrix-backed active scenarios: 2,097
 | `files-docs-history`       |                     317 |                        32 |                                    5 | `6f8134fb9`          |
 | `autorun-ai-terminal`      |                     263 |                        10 |                                    0 | `cd804bebf`          |
 | `wizard-settings-prompts`  |                     323 |                        49 |                                    1 | `02c808467`          |
-| `git-groupchat-playbooks`  |                     323 |                        40 |                                    7 | `1efd6cfc5`          |
+| `git-groupchat-playbooks`  |                     318 |                        45 |                                    7 | `4867f111c`          |
 | `stats-graph-symphony`     |                     314 |                        22 |                                    6 | `33581a7ec`          |
 | `debug-accessibility`      |                     181 |                        11 |                                    0 | `15e7a1a20`          |
 | `mobile-web-bridge`        |                      91 |                        11 |                                    0 | `d580f80ea`          |
@@ -86,3 +86,4 @@ Remaining matrix-backed active scenarios: 2,097
 - 2026-06-08: accepted `codex/e2e-wizard-settings-prompts-fallback-4` through `1741d2b74`; authored 5 additional active Settings preference fallback scenarios. No E2E execution was run.
 - 2026-06-08: accepted `codex/e2e-git-groupchat-playbooks-fallback-3` through `1efd6cfc5`; authored 5 additional active Git Diff/Create PR/Playbook Exchange/OpenSpec fallback scenarios. No E2E execution was run.
 - 2026-06-08: accepted `codex/e2e-wizard-settings-prompts-fallback-5` through `02c808467`; authored 5 additional active Settings shell/input/notification fallback scenarios. No E2E execution was run.
+- 2026-06-08: accepted `codex/e2e-git-groupchat-playbooks-fallback-4` through `4867f111c`; authored 5 additional active Create PR/Playbook Exchange fallback scenarios. No E2E execution was run.
