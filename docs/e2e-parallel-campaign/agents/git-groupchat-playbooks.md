@@ -57,7 +57,7 @@ Second tranche:
 - Shared helper edits: none; `broadcasts.md` unchanged.
 - Live GitHub, marketplace network, provider, headed/UI E2E, and full E2E
   execution: none.
-- Commit: `52db7e713`.
+- Commit: `365727129`.
 - Validation passed:
   - `npx eslint e2e/git-groupchat-playbooks.spec.ts`
   - `git diff --check`
