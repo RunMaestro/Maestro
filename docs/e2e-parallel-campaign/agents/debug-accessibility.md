@@ -1,6 +1,6 @@
 # debug-accessibility
 
-Status: twenty-sixth fallback tranche authored
+Status: twenty-seventh fallback tranche authored
 
 ## Scope
 
@@ -9,9 +9,9 @@ accessibility smoke.
 
 ## Campaign Head
 
-- Ledger head before this tranche: `15a8e4108`.
-- Implementation commit: `4fdcc0307`.
-- Coverage ledger before this tranche: 126 active scenarios accepted, 66
+- Ledger head before this tranche: `fe4b16a8b`.
+- Implementation commit: `8c5706ee9`.
+- Coverage ledger before this tranche: 131 active scenarios accepted, 61
   matrix-backed scenarios remaining.
 
 ## Checklist
@@ -25,13 +25,13 @@ accessibility smoke.
 
 ## Progress
 
-- Added matrix-backed Quick Actions and Keyboard Shortcuts accessibility-state
-  scenarios `DA-127` through `DA-131`.
+- Added matrix-backed Quick Actions debug visibility, keyboard-selection, and
+  external shell routing scenarios `DA-132` through `DA-136`.
 - Active scenarios added this tranche: 5.
-- Active scenarios authored in lane total: 131.
+- Active scenarios authored in lane total: 136.
 - Skipped/product-gap scenarios added this tranche: 0.
 - Env-gated scenarios added this tranche: 0.
-- Matrix-backed remaining after orchestrator ledger acceptance: 61.
+- Matrix-backed remaining after orchestrator ledger acceptance: 56.
 
 Files touched:
 
@@ -46,7 +46,7 @@ Validation passed:
 - `NODE_OPTIONS=--max-old-space-size=8192 npx prettier --write e2e/debug-accessibility.spec.ts docs/e2e-parallel-campaign/agents/debug-accessibility.md docs/e2e-parallel-campaign/coverage-ledger.md docs/e2e-coverage-campaign.md`
 - `NODE_OPTIONS=--max-old-space-size=8192 npx tsc -p tsconfig.lint.json --noEmit`
 - `git diff --check`
-- Static inventory scan reports 1095 declared E2E tests, no `.only`, no
+- Static inventory scan reports 1100 declared E2E tests, no `.only`, no
   prohibited commands, and no duplicate campaign scenario IDs.
 
 Blockers:
@@ -58,4 +58,4 @@ Blockers:
 Remaining work:
 
 - Debug/about/update/app-info/agent-error modal scenarios are complete.
-- 61 accessibility smoke and destructive-action confirmation scenarios remain.
+- 56 accessibility smoke and destructive-action confirmation scenarios remain.
