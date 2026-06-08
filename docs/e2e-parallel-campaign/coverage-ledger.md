@@ -2,9 +2,9 @@
 
 Source of truth: `docs/e2e-coverage-campaign.md`.
 
-Current active tests: 1098
+Current active tests: 1103
 Target active tests: 3,025
-Remaining matrix-backed active scenarios: 1,927
+Remaining matrix-backed active scenarios: 1,922
 
 ## Matrix
 
@@ -28,7 +28,7 @@ Remaining matrix-backed active scenarios: 1,927
 | Playbooks, marketplace, Spec Kit, OpenSpec                     | `git-groupchat-playbooks` |             41 |           145 |       104 |
 | Symphony, leaderboard, achievements                            | `stats-graph-symphony`    |             15 |           120 |       105 |
 | Director notes and prompt composer                             | `wizard-settings-prompts` |             21 |            90 |        69 |
-| Debug/about/update/app info/agent error modals                 | `debug-accessibility`     |             60 |            85 |        25 |
+| Debug/about/update/app info/agent error modals                 | `debug-accessibility`     |             65 |            85 |        20 |
 | Mobile/web bridge                                              | `mobile-web-bridge`       |            104 |           190 |        86 |
 | Accessibility smoke and destructive-action confirmations       | `debug-accessibility`     |             14 |           130 |       116 |
 
@@ -43,7 +43,7 @@ Remaining matrix-backed active scenarios: 1,927
 | `wizard-settings-prompts`  |                     313 |                        59 |                                    1 | `bb21caed1`          |
 | `git-groupchat-playbooks`  |                     313 |                        50 |                                    7 | `10ed8a71a`          |
 | `stats-graph-symphony`     |                     309 |                        27 |                                    6 | `bb9a6f68b`          |
-| `debug-accessibility`      |                     141 |                        51 |                                    0 | `824ddb7a1`          |
+| `debug-accessibility`      |                     136 |                        56 |                                    0 | `a3009ef36`          |
 | `mobile-web-bridge`        |                      86 |                        16 |                                    0 | `d7ccdd3d`           |
 | `fixtures-sharding-review` |                       0 |                         0 |                                    0 | `392c4527`           |
 
@@ -120,3 +120,4 @@ Remaining matrix-backed active scenarios: 1,927
 - 2026-06-08: accepted manual `debug-accessibility` fallback through `21ec6909a`; authored 5 additional active agent error recovery banner-clear, token-exhaustion, rate-limit, missing-session, and unknown-error scenarios. No E2E execution was run.
 - 2026-06-08: accepted manual `debug-accessibility` fallback through `43d359dc6`; authored 5 additional active agent error modal JSON toggle, unstructured-detail, header-close, Escape-close, and non-recoverable close-control scenarios. No E2E execution was run.
 - 2026-06-08: accepted manual `debug-accessibility` fallback through `824ddb7a1`; authored 5 additional active About modal website, Discord, documentation, project GitHub, and creator LinkedIn external-link scenarios. No E2E execution was run.
+- 2026-06-08: accepted manual `debug-accessibility` fallback through `a3009ef36`; authored 5 additional active About modal creator GitHub, close-control, Escape-close, leaderboard registration open, and leaderboard Escape-close scenarios. No E2E execution was run.
