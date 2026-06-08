@@ -109,6 +109,12 @@ const activeScenarioMatrix = [
 	{ id: 'WSP-069', title: 'removes a Settings global environment variable' },
 	{ id: 'WSP-070', title: "adjusts Director's Notes default lookback period" },
 	{ id: 'WSP-071', title: 'opens Prompt Composer from the keyboard shortcut' },
+	{ id: 'WSP-072', title: 'prefixes custom AI commands created without a slash' },
+	{ id: 'WSP-073', title: 'adds a Settings SSH remote ignore pattern' },
+	{ id: 'WSP-074', title: 'removes a Settings SSH remote ignore pattern' },
+	{ id: 'WSP-075', title: 'toggles Settings SSH remote gitignore honor' },
+	{ id: 'WSP-076', title: 'uploads a Prompt Composer image and opens the lightbox' },
+	{ id: 'WSP-077', title: 'removes a Prompt Composer staged image before sending' },
 ];
 
 const envGatedScenarioMatrix = [
@@ -128,6 +134,13 @@ function createWizardSettingsPromptsWorkbench(options: { inlineWizard?: boolean 
 
 	fs.mkdirSync(path.join(projectDir, 'Auto Run Docs'), { recursive: true });
 	fs.writeFileSync(path.join(projectDir, 'README.md'), '# Wizard Settings Prompts\n', 'utf-8');
+	fs.writeFileSync(
+		path.join(projectDir, 'wsp-diagram.png'),
+		Buffer.from(
+			'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=',
+			'base64'
+		)
+	);
 
 	return {
 		homeDir,
@@ -2417,6 +2430,210 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 
 			await launched.window.keyboard.press('Escape');
 			await expect(launched.window.getByText('Prompt Composer')).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[71].id} ${activeScenarioMatrix[71].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				customAICommands: [],
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'AI Commands',
+				'Custom AI Commands'
+			);
+
+			await settingsDialog.getByRole('button', { name: 'Add Command' }).click();
+			await settingsDialog.getByPlaceholder('/mycommand').fill('wsp-noslash');
+			await settingsDialog
+				.getByPlaceholder('Short description for autocomplete')
+				.fill('No slash command normalization');
+			await settingsDialog
+				.getByPlaceholder(/The actual prompt sent to the AI agent/)
+				.fill('Normalize the slash prefix for {{CWD}}.');
+			await settingsDialog.getByRole('button', { name: 'Create' }).first().click();
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						const commands = await window.maestro.settings.get('customAICommands');
+						return Array.isArray(commands)
+							? commands.find((command) => command.command === '/wsp-noslash')
+							: undefined;
+					});
+				})
+				.toMatchObject({
+					description: 'No slash command normalization',
+					prompt: 'Normalize the slash prefix for {{CWD}}.',
+					isBuiltIn: false,
+				});
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[72].id} ${activeScenarioMatrix[72].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				sshRemoteIgnorePatterns: ['.git', '*cache*'],
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'SSH Hosts',
+				'Remote Ignore Patterns'
+			);
+			const remoteIgnoreSection = settingsDialog
+				.getByText('Remote Ignore Patterns')
+				.locator('xpath=ancestor::div[contains(@class, "rounded")][1]');
+			await remoteIgnoreSection
+				.getByPlaceholder('Enter glob pattern (e.g., node_modules, *.log)')
+				.fill('remote-dist-cache');
+			await remoteIgnoreSection.getByRole('button', { name: 'Add' }).click();
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('sshRemoteIgnorePatterns');
+					});
+				})
+				.toEqual(['.git', '*cache*', 'remote-dist-cache']);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[73].id} ${activeScenarioMatrix[73].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				sshRemoteIgnorePatterns: ['.git', 'remote-dist-cache', '*cache*'],
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'SSH Hosts',
+				'Remote Ignore Patterns'
+			);
+			const patternRow = settingsDialog
+				.getByText('remote-dist-cache')
+				.locator('xpath=ancestor::div[contains(@class, "font-mono")][1]');
+			await patternRow.getByTitle('Remove pattern').click();
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('sshRemoteIgnorePatterns');
+					});
+				})
+				.toEqual(['.git', '*cache*']);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[74].id} ${activeScenarioMatrix[74].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				sshRemoteHonorGitignore: true,
+				sshRemoteIgnorePatterns: ['.git'],
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'SSH Hosts',
+				'Remote Ignore Patterns'
+			);
+			const gitignoreRow = settingsDialog
+				.getByText('Honor .gitignore')
+				.locator('xpath=ancestor::label[1]');
+			await gitignoreRow.getByRole('checkbox').click();
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('sshRemoteHonorGitignore');
+					});
+				})
+				.toBe(false);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[75].id} ${activeScenarioMatrix[75].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await openPromptComposer(launched.window);
+			const composerDialog = promptComposerDialog(launched.window);
+			const imagePath = path.join(seeded.projectDir, 'wsp-diagram.png');
+
+			await composerDialog.locator('input[type="file"]').setInputFiles(imagePath);
+			const stagedImage = composerDialog.getByRole('button', {
+				name: 'Prompt composer staged image 1',
+			});
+			await expect(stagedImage).toBeVisible();
+
+			await stagedImage.click();
+			const lightbox = launched.window.getByRole('dialog', { name: 'Image Lightbox' });
+			await expect(lightbox).toBeVisible();
+			await expect(lightbox.getByRole('img', { name: 'Expanded image preview' })).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[76].id} ${activeScenarioMatrix[76].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await openPromptComposer(launched.window);
+			const composerDialog = promptComposerDialog(launched.window);
+			const imagePath = path.join(seeded.projectDir, 'wsp-diagram.png');
+
+			await composerDialog.locator('input[type="file"]').setInputFiles(imagePath);
+			const stagedImage = composerDialog.getByRole('button', {
+				name: 'Prompt composer staged image 1',
+			});
+			await expect(stagedImage).toBeVisible();
+
+			await stagedImage
+				.locator('xpath=ancestor::div[contains(@class, "relative")][1]')
+				.locator('button')
+				.click();
+			await expect(stagedImage).toBeHidden();
 		} finally {
 			await launched.cleanup();
 		}
