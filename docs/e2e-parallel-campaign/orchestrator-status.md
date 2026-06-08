@@ -1,6 +1,6 @@
 # Parallel E2E Orchestrator Status
 
-Last updated: 2026-06-08 00:45 ET
+Last updated: 2026-06-08 01:12 ET
 
 ## Base
 
@@ -41,7 +41,7 @@ coverage and the shell-lane tab coverage.
 | `git-groupchat-playbooks`  | `codex/e2e-git-groupchat-playbooks`  | `Maestro-worktrees/e2e-git-groupchat-playbooks`  | `maestro-e2e-git-groupchat-playbooks`  | launched, PM2 id 12        | Git, group chat, playbooks               |
 | `stats-graph-symphony`     | `codex/e2e-stats-graph-symphony`     | `Maestro-worktrees/e2e-stats-graph-symphony`     | `maestro-e2e-stats-graph-symphony`     | launched, PM2 id 13        | Stats, graph, Symphony                   |
 | `debug-accessibility`      | `codex/e2e-debug-accessibility`      | `Maestro-worktrees/e2e-debug-accessibility`      | `maestro-e2e-debug-accessibility`      | launched, PM2 id 14        | Debug modals, confirmations, a11y smoke  |
-| `mobile-web-bridge`        | `codex/e2e-mobile-web-bridge`        | `Maestro-worktrees/e2e-mobile-web-bridge`        | `maestro-e2e-mobile-web-bridge`        | launched, PM2 id 15        | Mobile/web bridge                        |
+| `mobile-web-bridge`        | `codex/e2e-mobile-web-bridge`        | `Maestro-worktrees/e2e-mobile-web-bridge`        | `maestro-e2e-mobile-web-bridge`        | merged through `243662e8f` | 5 active scenarios accepted; 97 remain   |
 | `fixtures-sharding-review` | `codex/e2e-fixtures-sharding-review` | `Maestro-worktrees/e2e-fixtures-sharding-review` | `maestro-e2e-fixtures-sharding-review` | launched, PM2 id 16        | Shared fixtures and review               |
 
 ## Merge Queue
@@ -49,6 +49,7 @@ coverage and the shell-lane tab coverage.
 - `shell-tabs-command` merged through `02ce883da`.
 - `agent-crud-provider` merged through `bb4fbcce2`.
 - `files-docs-history` merged through `bd10d5fdd`.
+- `mobile-web-bridge` merged through `243662e8f`.
 
 ## Launch Log
 
@@ -66,6 +67,8 @@ coverage and the shell-lane tab coverage.
   the initial ten-way launch produced 429 exits in most lanes.
 - 2026-06-08 00:42 ET: accepted `agent-crud-provider` through `bb4fbcce2`.
 - 2026-06-08 00:45 ET: accepted `files-docs-history` through `bd10d5fdd`.
+- 2026-06-08 01:12 ET: accepted `mobile-web-bridge` through `243662e8f`
+  with 5 active bridge-contract scenarios.
 
 ## Blockers
 

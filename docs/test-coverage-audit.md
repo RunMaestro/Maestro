@@ -34,6 +34,10 @@ Parallel E2E authoring checkpoint:
 
 - Campaign: `docs/e2e-parallel-prompt.md`
 - Result: in progress
+- Current authoring progress: 729 / 3,025 active scenarios after accepting
+  `mobile-web-bridge` through `243662e8f`.
+- Accepted lanes so far: `shell-tabs-command`, `agent-crud-provider`,
+  `files-docs-history`, and `mobile-web-bridge`.
 - Execution policy: Playwright E2E tests are intentionally not executed in this phase.
 - Validation plan: static review of authored selectors, fixtures, scenario names, assertions, and lane progress logs; runtime validation is deferred to a later sharded execution phase.
 
