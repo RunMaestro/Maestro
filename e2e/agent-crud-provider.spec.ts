@@ -6,7 +6,7 @@
  * CLI installs, auth state, or provider history.
  */
 import { test, expect, helpers } from './fixtures/electron-app';
-import type { ElectronApplication, Page } from '@playwright/test';
+import type { ElectronApplication, Locator, Page } from '@playwright/test';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -192,7 +192,6 @@ async function stubProviderDetection(
 ) {
 	await electronApp.evaluate(
 		({ ipcMain }, payload) => {
-			const capabilities = { supportsBatchMode: true, supportsModelSelection: false };
 			const agents = payload.providers.map((row) => {
 				const available = !payload.unavailableProviderIds.includes(row.id);
 				return {
@@ -203,7 +202,26 @@ async function stubProviderDetection(
 					args: [],
 					available,
 					path: available ? row.customPath : null,
-					capabilities,
+					capabilities: {
+						supportsBatchMode: true,
+						supportsModelSelection: row.id === 'codex' || row.id === 'opencode',
+					},
+					configOptions: [
+						{
+							key: 'model',
+							type: 'text',
+							label: 'Model',
+							description: 'Model override for deterministic provider configuration coverage.',
+							default: '',
+						},
+						{
+							key: 'contextWindow',
+							type: 'number',
+							label: 'Context Window Size',
+							description: 'Context window size used by the session context widget.',
+							default: row.id === 'codex' ? 400000 : 128000,
+						},
+					],
 				};
 			});
 
@@ -567,6 +585,25 @@ async function openSessionContextMenu(window: Page, sessionName: string, expecte
 		contextMenu.getByRole('button', { name: expectedAction, exact: true })
 	).toBeVisible();
 	return contextMenu;
+}
+
+function getModelInput(dialog: Locator) {
+	return dialog.getByText('Model', { exact: true }).locator('..').getByRole('textbox');
+}
+
+function getContextWindowInput(dialog: Locator) {
+	return dialog
+		.getByText('Context Window Size', { exact: true })
+		.locator('..')
+		.getByRole('spinbutton');
+}
+
+async function addCustomEnvVar(dialog: Locator, key: string, value: string) {
+	await dialog.getByRole('button', { name: 'Add Variable' }).click();
+	const keyInput = dialog.getByPlaceholder('VARIABLE_NAME').last();
+	await keyInput.fill(key);
+	await keyInput.blur();
+	await dialog.getByPlaceholder('value', { exact: true }).last().fill(value);
 }
 
 test.describe('Agent CRUD provider setup matrix', () => {
@@ -1080,6 +1117,261 @@ test.describe('Agent CRUD lifecycle', () => {
 			await expect(editAgentDialog.getByPlaceholder('value', { exact: true })).toHaveValue('draft');
 			await editAgentDialog.getByRole('button', { name: 'Cancel' }).click();
 			await expect(editAgentDialog).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('persists Create New Agent provider config when reopened from Edit Agent', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: [seeded.sessions[0]],
+		});
+		const projectDir = path.join(seeded.homeDir, 'configured-create-project');
+		fs.mkdirSync(projectDir, { recursive: true });
+
+		try {
+			await stubProviderDetection(launched.electronApp);
+
+			const createAgentDialog = await openCreateAgentDialog(launched.window);
+			await createAgentDialog.getByRole('option', { name: /Codex/ }).click();
+			await expect(createAgentDialog.getByText('Codex Settings')).toBeVisible();
+			await createAgentDialog.getByLabel('Agent Name').fill('Configured Codex Create');
+			await createAgentDialog.getByLabel('Working Directory').fill(projectDir);
+			await createAgentDialog
+				.getByPlaceholder('Instructions appended to every message you send...')
+				.fill('Prefer deterministic provider config during E2E authoring.');
+			await createAgentDialog.getByPlaceholder('/path/to/codex').fill('/opt/maestro/codex-create');
+			await createAgentDialog
+				.getByPlaceholder('--flag value --another-flag')
+				.fill('--approval-mode create-e2e');
+			await addCustomEnvVar(createAgentDialog, 'CODEX_CREATE_E2E', 'enabled');
+			await getModelInput(createAgentDialog).fill('gpt-5-codex-create-e2e');
+			await getContextWindowInput(createAgentDialog).fill('260000');
+			await createAgentDialog.getByRole('button', { name: 'Create Agent' }).click();
+			await expect(createAgentDialog).toBeHidden();
+
+			const editAgentDialog = await openEditAgentDialog(launched.window, 'Configured Codex Create');
+			await expect(editAgentDialog.getByRole('combobox')).toHaveValue('codex');
+			await expect(
+				editAgentDialog.getByPlaceholder('Instructions appended to every message you send...')
+			).toHaveValue('Prefer deterministic provider config during E2E authoring.');
+			await expect(editAgentDialog.getByPlaceholder('/path/to/codex')).toHaveValue(
+				'/opt/maestro/codex-create'
+			);
+			await expect(editAgentDialog.getByPlaceholder('--flag value --another-flag')).toHaveValue(
+				'--approval-mode create-e2e'
+			);
+			await expect(editAgentDialog.getByPlaceholder('VARIABLE_NAME')).toHaveValue(
+				'CODEX_CREATE_E2E'
+			);
+			await expect(editAgentDialog.getByPlaceholder('value', { exact: true })).toHaveValue(
+				'enabled'
+			);
+			await expect(getModelInput(editAgentDialog)).toHaveValue('gpt-5-codex-create-e2e');
+			await expect(getContextWindowInput(editAgentDialog)).toHaveValue('260000');
+			await editAgentDialog.getByRole('button', { name: 'Cancel' }).click();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('persists Edit Agent nudge, path, args, env, model, and context window', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubProviderDetection(launched.electronApp);
+
+			const editAgentDialog = await openEditAgentDialog(launched.window, 'Matrix Codex Agent');
+			await expect(editAgentDialog.getByText('Codex Settings')).toBeVisible();
+			await editAgentDialog
+				.getByPlaceholder('Instructions appended to every message you send...')
+				.fill('Persist this nudge for resumed Codex authoring.');
+			await editAgentDialog.getByPlaceholder('/path/to/codex').fill('/opt/maestro/codex-edit');
+			await editAgentDialog
+				.getByPlaceholder('--flag value --another-flag')
+				.fill('--sandbox read-only --e2e-edit');
+			await addCustomEnvVar(editAgentDialog, 'CODEX_EDIT_E2E', 'persisted');
+			await getModelInput(editAgentDialog).fill('gpt-5-codex-edit-e2e');
+			await getContextWindowInput(editAgentDialog).fill('275000');
+			await editAgentDialog.getByRole('button', { name: 'Save Changes' }).click();
+			await expect(editAgentDialog).toBeHidden();
+
+			const reopenedDialog = await openEditAgentDialog(launched.window, 'Matrix Codex Agent');
+			await expect(
+				reopenedDialog.getByPlaceholder('Instructions appended to every message you send...')
+			).toHaveValue('Persist this nudge for resumed Codex authoring.');
+			await expect(reopenedDialog.getByPlaceholder('/path/to/codex')).toHaveValue(
+				'/opt/maestro/codex-edit'
+			);
+			await expect(reopenedDialog.getByPlaceholder('--flag value --another-flag')).toHaveValue(
+				'--sandbox read-only --e2e-edit'
+			);
+			await expect(reopenedDialog.getByPlaceholder('VARIABLE_NAME')).toHaveValue('CODEX_EDIT_E2E');
+			await expect(reopenedDialog.getByPlaceholder('value', { exact: true })).toHaveValue(
+				'persisted'
+			);
+			await expect(getModelInput(reopenedDialog)).toHaveValue('gpt-5-codex-edit-e2e');
+			await expect(getContextWindowInput(reopenedDialog)).toHaveValue('275000');
+			await reopenedDialog.getByRole('button', { name: 'Cancel' }).click();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('clears optional Edit Agent provider config with reset and remove controls', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const configuredSession = {
+			...seeded.sessions[0],
+			nudgeMessage: 'Remove this nudge.',
+			customPath: '/opt/maestro/codex-existing',
+			customArgs: '--existing-config',
+			customEnvVars: { CODEX_EXISTING_E2E: 'before' },
+			customModel: 'gpt-5-codex-existing-e2e',
+			customContextWindow: 300000,
+		};
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: [configuredSession, ...seeded.sessions.slice(1)],
+		});
+
+		try {
+			await stubProviderDetection(launched.electronApp);
+
+			const editAgentDialog = await openEditAgentDialog(launched.window, 'Matrix Codex Agent');
+			await expect(editAgentDialog.getByText('Codex Settings')).toBeVisible();
+			await editAgentDialog
+				.getByPlaceholder('Instructions appended to every message you send...')
+				.fill('   ');
+			await editAgentDialog.getByRole('button', { name: 'Reset' }).click();
+			await editAgentDialog.getByRole('button', { name: 'Clear' }).click();
+			await editAgentDialog.getByTitle('Remove variable').click();
+			await getModelInput(editAgentDialog).fill('   ');
+			await getContextWindowInput(editAgentDialog).fill('0');
+			await editAgentDialog.getByRole('button', { name: 'Save Changes' }).click();
+			await expect(editAgentDialog).toBeHidden();
+
+			const reopenedDialog = await openEditAgentDialog(launched.window, 'Matrix Codex Agent');
+			await expect(
+				reopenedDialog.getByPlaceholder('Instructions appended to every message you send...')
+			).toHaveValue('');
+			await expect(reopenedDialog.getByPlaceholder('/path/to/codex')).toHaveValue(
+				'/usr/local/bin/codex-e2e'
+			);
+			await expect(reopenedDialog.getByRole('button', { name: 'Reset' })).toHaveCount(0);
+			await expect(reopenedDialog.getByPlaceholder('--flag value --another-flag')).toHaveValue('');
+			await expect(reopenedDialog.getByPlaceholder('VARIABLE_NAME')).toHaveCount(0);
+			await expect(getModelInput(reopenedDialog)).toHaveValue('');
+			await expect(getContextWindowInput(reopenedDialog)).toHaveValue('400000');
+			await reopenedDialog.getByRole('button', { name: 'Cancel' }).click();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('prefills duplicate agent modal with source provider configuration', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const configuredSession = {
+			...seeded.sessions[0],
+			nudgeMessage: 'Duplicate this provider nudge.',
+			customPath: '/opt/maestro/codex-source',
+			customArgs: '--source-config',
+			customEnvVars: { CODEX_DUPLICATE_E2E: 'source' },
+			customModel: 'gpt-5-codex-duplicate-e2e',
+			customContextWindow: 234567,
+		};
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: [configuredSession, ...seeded.sessions.slice(1)],
+		});
+
+		try {
+			await stubProviderDetection(launched.electronApp);
+
+			const contextMenu = await openSessionContextMenu(
+				launched.window,
+				'Matrix Codex Agent',
+				'Duplicate...'
+			);
+			await contextMenu.getByRole('button', { name: 'Duplicate...', exact: true }).click();
+
+			const createAgentDialog = launched.window.getByRole('dialog', { name: 'Create New Agent' });
+			await expect(createAgentDialog).toBeVisible();
+			await expect(createAgentDialog.getByLabel('Agent Name')).toHaveValue(
+				'Matrix Codex Agent (Copy)'
+			);
+			await expect(createAgentDialog.getByText('Codex Settings')).toBeVisible();
+			await expect(
+				createAgentDialog.getByPlaceholder('Instructions appended to every message you send...')
+			).toHaveValue('Duplicate this provider nudge.');
+			await expect(createAgentDialog.getByPlaceholder('/path/to/codex')).toHaveValue(
+				'/opt/maestro/codex-source'
+			);
+			await expect(createAgentDialog.getByPlaceholder('--flag value --another-flag')).toHaveValue(
+				'--source-config'
+			);
+			await expect(createAgentDialog.getByPlaceholder('VARIABLE_NAME')).toHaveValue(
+				'CODEX_DUPLICATE_E2E'
+			);
+			await expect(createAgentDialog.getByPlaceholder('value', { exact: true })).toHaveValue(
+				'source'
+			);
+			await expect(getModelInput(createAgentDialog)).toHaveValue('gpt-5-codex-duplicate-e2e');
+			await expect(getContextWindowInput(createAgentDialog)).toHaveValue('234567');
+			await createAgentDialog.getByRole('button', { name: 'Cancel' }).click();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('persists provider switch config and reopens on the new provider', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubProviderDetection(launched.electronApp);
+
+			const editAgentDialog = await openEditAgentDialog(launched.window, 'Matrix Codex Agent');
+			await editAgentDialog.getByRole('combobox').selectOption('opencode');
+			await expect(editAgentDialog.getByText('OpenCode Settings')).toBeVisible();
+			await editAgentDialog
+				.getByPlaceholder('/path/to/opencode')
+				.fill('/opt/maestro/opencode-switch');
+			await editAgentDialog
+				.getByPlaceholder('--flag value --another-flag')
+				.fill('--model opencode-switch-e2e');
+			await addCustomEnvVar(editAgentDialog, 'OPENCODE_SWITCH_E2E', 'persisted');
+			await getModelInput(editAgentDialog).fill('anthropic/claude-switch-e2e');
+			await getContextWindowInput(editAgentDialog).fill('155000');
+			await editAgentDialog.getByRole('button', { name: 'Save Changes' }).click();
+			await expect(editAgentDialog).toBeHidden();
+
+			const reopenedDialog = await openEditAgentDialog(launched.window, 'Matrix Codex Agent');
+			await expect(reopenedDialog.getByRole('combobox')).toHaveValue('opencode');
+			await expect(reopenedDialog.getByText('OpenCode Settings')).toBeVisible();
+			await expect(reopenedDialog.getByPlaceholder('/path/to/opencode')).toHaveValue(
+				'/opt/maestro/opencode-switch'
+			);
+			await expect(reopenedDialog.getByPlaceholder('--flag value --another-flag')).toHaveValue(
+				'--model opencode-switch-e2e'
+			);
+			await expect(reopenedDialog.getByPlaceholder('VARIABLE_NAME')).toHaveValue(
+				'OPENCODE_SWITCH_E2E'
+			);
+			await expect(reopenedDialog.getByPlaceholder('value', { exact: true })).toHaveValue(
+				'persisted'
+			);
+			await expect(getModelInput(reopenedDialog)).toHaveValue('anthropic/claude-switch-e2e');
+			await expect(getContextWindowInput(reopenedDialog)).toHaveValue('155000');
+			await reopenedDialog.getByRole('button', { name: 'Cancel' }).click();
 		} finally {
 			await launched.cleanup();
 		}
