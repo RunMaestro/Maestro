@@ -87,6 +87,11 @@ const activeScenarioMatrix = [
 	{ id: 'WSP-047', title: 'toggles Settings OS notifications' },
 	{ id: 'WSP-048', title: 'persists Settings custom notification command state' },
 	{ id: 'WSP-049', title: 'persists Settings toast notification duration' },
+	{ id: 'WSP-050', title: 'adds a Settings local file indexing ignore pattern' },
+	{ id: 'WSP-051', title: 'removes a Settings local file indexing ignore pattern' },
+	{ id: 'WSP-052', title: 'toggles Settings local file indexing gitignore honor' },
+	{ id: 'WSP-053', title: 'toggles Settings context window warnings' },
+	{ id: 'WSP-054', title: 'adjusts Settings context warning thresholds' },
 ];
 
 const envGatedScenarioMatrix = [
@@ -1592,6 +1597,194 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 					});
 				})
 				.toBe(10);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[49].id} ${activeScenarioMatrix[49].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				localIgnorePatterns: ['.git', 'node_modules'],
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'Display',
+				'Local Ignore Patterns'
+			);
+			const localIgnorePatternsSection = settingsDialog
+				.getByText('Local Ignore Patterns')
+				.locator('xpath=ancestor::div[contains(@class, "rounded")][1]');
+			await localIgnorePatternsSection
+				.getByPlaceholder('Enter glob pattern (e.g., node_modules, *.log)')
+				.fill('dist-e2e-cache');
+			await localIgnorePatternsSection.getByRole('button', { name: 'Add' }).click();
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('localIgnorePatterns');
+					});
+				})
+				.toEqual(['.git', 'node_modules', 'dist-e2e-cache']);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[50].id} ${activeScenarioMatrix[50].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				localIgnorePatterns: ['.git', 'node_modules', 'dist-e2e-cache'],
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'Display',
+				'Local Ignore Patterns'
+			);
+			const patternRow = settingsDialog
+				.getByText('dist-e2e-cache')
+				.locator('xpath=ancestor::div[contains(@class, "font-mono")][1]');
+			await patternRow.getByTitle('Remove pattern').click();
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('localIgnorePatterns');
+					});
+				})
+				.toEqual(['.git', 'node_modules']);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[51].id} ${activeScenarioMatrix[51].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				localHonorGitignore: true,
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'Display',
+				'Local Ignore Patterns'
+			);
+			const gitignoreRow = settingsDialog
+				.getByText('Honor .gitignore')
+				.locator('xpath=ancestor::label[1]');
+			await gitignoreRow.getByRole('checkbox').click();
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('localHonorGitignore');
+					});
+				})
+				.toBe(false);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[52].id} ${activeScenarioMatrix[52].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				contextManagementSettings: {
+					contextWarningsEnabled: false,
+					contextWarningYellowThreshold: 60,
+					contextWarningRedThreshold: 80,
+				},
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'Display',
+				'Context Window Warnings'
+			);
+			await settingsDialog
+				.getByRole('button', { name: /Show context consumption warnings/ })
+				.click();
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('contextManagementSettings');
+					});
+				})
+				.toMatchObject({
+					contextWarningsEnabled: true,
+					contextWarningYellowThreshold: 60,
+					contextWarningRedThreshold: 80,
+				});
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[53].id} ${activeScenarioMatrix[53].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				contextManagementSettings: {
+					contextWarningsEnabled: true,
+					contextWarningYellowThreshold: 55,
+					contextWarningRedThreshold: 70,
+				},
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'Display',
+				'Context Window Warnings'
+			);
+			const yellowThresholdControl = settingsDialog
+				.getByText('Yellow warning threshold')
+				.locator('xpath=ancestor::div[input[@type="range"]][1]');
+			await yellowThresholdControl.locator('input[type="range"]').evaluate((slider) => {
+				const input = slider as HTMLInputElement;
+				input.value = '80';
+				input.dispatchEvent(new Event('input', { bubbles: true }));
+				input.dispatchEvent(new Event('change', { bubbles: true }));
+			});
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('contextManagementSettings');
+					});
+				})
+				.toMatchObject({
+					contextWarningsEnabled: true,
+					contextWarningYellowThreshold: 80,
+					contextWarningRedThreshold: 90,
+				});
 		} finally {
 			await launched.cleanup();
 		}
