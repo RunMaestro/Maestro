@@ -115,6 +115,14 @@ const fourteenthTrancheActiveScenarioMatrix = [
 	{ id: 'DA-071', title: 'closes the Process Monitor from the header control' },
 ] as const;
 
+const fifteenthTrancheActiveScenarioMatrix = [
+	{ id: 'DA-072', title: 'closes the System Log Viewer from the header control' },
+	{ id: 'DA-073', title: 'closes the System Log Viewer with Escape' },
+	{ id: 'DA-074', title: 'shows individual System Log Viewer structured details' },
+	{ id: 'DA-075', title: 'hides individual System Log Viewer structured details' },
+	{ id: 'DA-076', title: 'shows unmatched System Log Viewer search state' },
+] as const;
+
 const debugPackagePreviewCategories = [
 	{ id: 'logs', name: 'System Logs', included: true, sizeEstimate: '~50 KB' },
 	{ id: 'errors', name: 'Error States', included: true, sizeEstimate: '< 10 KB' },
@@ -2148,6 +2156,94 @@ test.describe('Debug and accessibility smoke tranche', () => {
 			await processMonitor.getByTitle('Close (Esc)').click();
 
 			await expect(processMonitor).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${fifteenthTrancheActiveScenarioMatrix[0].id} ${fifteenthTrancheActiveScenarioMatrix[0].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await seedSystemLogs(launched.window);
+			const logViewer = await openSystemLogViewer(launched.window);
+			await expect(logViewer).toBeVisible();
+
+			await logViewer.getByTitle('Close log viewer').click();
+
+			await expect(logViewer).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${fifteenthTrancheActiveScenarioMatrix[1].id} ${fifteenthTrancheActiveScenarioMatrix[1].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await seedSystemLogs(launched.window);
+			const logViewer = await openSystemLogViewer(launched.window);
+			await expect(logViewer).toBeVisible();
+
+			await launched.window.keyboard.press('Escape');
+
+			await expect(logViewer).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${fifteenthTrancheActiveScenarioMatrix[2].id} ${fifteenthTrancheActiveScenarioMatrix[2].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await seedSystemLogs(launched.window);
+			const logViewer = await openSystemLogViewer(launched.window);
+
+			await logViewer.getByRole('button', { name: 'Show details' }).first().click();
+
+			await expect(
+				logViewer.locator('pre').filter({ hasText: 'debug-accessibility-' })
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${fifteenthTrancheActiveScenarioMatrix[3].id} ${fifteenthTrancheActiveScenarioMatrix[3].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await seedSystemLogs(launched.window);
+			const logViewer = await openSystemLogViewer(launched.window);
+			const structuredDetails = logViewer
+				.locator('pre')
+				.filter({ hasText: 'debug-accessibility-' });
+
+			await logViewer.getByRole('button', { name: 'Show details' }).first().click();
+			await expect(structuredDetails).toBeVisible();
+			await logViewer.getByRole('button', { name: 'Hide details' }).click();
+
+			await expect(structuredDetails).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${fifteenthTrancheActiveScenarioMatrix[4].id} ${fifteenthTrancheActiveScenarioMatrix[4].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await seedSystemLogs(launched.window);
+			const logViewer = await openSystemLogViewer(launched.window);
+
+			await logViewer.evaluate((element) => {
+				element.dispatchEvent(
+					new KeyboardEvent('keydown', { key: 'f', ctrlKey: true, bubbles: true })
+				);
+			});
+			const searchInput = logViewer.getByPlaceholder('Search logs...');
+			await expect(searchInput).toBeVisible();
+			await searchInput.fill('missing debug accessibility sentinel');
+
+			await expect(logViewer.getByText('No logs match your filter')).toBeVisible();
+			await expect(logViewer.getByText('Debug accessibility info sentinel')).toBeHidden();
+			await expect(logViewer.getByText('Debug accessibility error sentinel')).toBeHidden();
 		} finally {
 			await launched.cleanup();
 		}
