@@ -1301,6 +1301,111 @@ test.describe('Agent CRUD lifecycle', () => {
 		}
 	});
 
+	test('keeps Create New Agent disabled until required fields are complete', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: [seeded.sessions[0]],
+		});
+		const projectDir = path.join(seeded.homeDir, 'required-create-fields-project');
+		fs.mkdirSync(projectDir, { recursive: true });
+
+		try {
+			await stubProviderDetection(launched.electronApp);
+
+			const createAgentDialog = await openCreateAgentDialog(launched.window);
+			await createAgentDialog.getByRole('option', { name: /Codex/ }).click();
+			const createButton = createAgentDialog.getByRole('button', { name: 'Create Agent' });
+
+			await expect(createButton).toBeDisabled();
+			await createAgentDialog.getByLabel('Agent Name').fill('Required Fields Agent');
+			await expect(createButton).toBeDisabled();
+			await createAgentDialog.getByLabel('Working Directory').fill(projectDir);
+			await expect(createButton).toBeEnabled();
+			await createAgentDialog.getByLabel('Agent Name').fill('   ');
+			await expect(createButton).toBeDisabled();
+			await createAgentDialog.getByLabel('Agent Name').fill('Required Fields Agent');
+			await expect(createButton).toBeEnabled();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('clears Create New Agent directory warnings after choosing an unused folder', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+		const replacementDir = path.join(seeded.homeDir, 'resolved-directory-warning-project');
+		fs.mkdirSync(replacementDir, { recursive: true });
+
+		try {
+			await stubProviderDetection(launched.electronApp);
+
+			const createAgentDialog = await openCreateAgentDialog(launched.window);
+			await createAgentDialog.getByRole('option', { name: /Codex/ }).click();
+			await createAgentDialog.getByLabel('Agent Name').fill('Resolved Directory Warning Agent');
+			await createAgentDialog.getByLabel('Working Directory').fill(seeded.projectDir);
+
+			const warning = createAgentDialog.getByText(
+				/This directory is already used by "Matrix Codex Agent", "Matrix Claude Code Agent"/
+			);
+			await expect(warning).toBeVisible();
+			await expect(createAgentDialog.getByRole('button', { name: 'Create Agent' })).toBeDisabled();
+
+			await createAgentDialog.getByLabel('Working Directory').fill(replacementDir);
+			await expect(warning).toBeHidden();
+			await expect(createAgentDialog.getByRole('button', { name: 'Create Agent' })).toBeEnabled();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('creates after clearing Create New Agent optional provider overrides', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: [seeded.sessions[0]],
+		});
+		const projectDir = path.join(seeded.homeDir, 'cleared-create-overrides-project');
+		fs.mkdirSync(projectDir, { recursive: true });
+
+		try {
+			await stubProviderDetection(launched.electronApp);
+
+			const createAgentDialog = await openCreateAgentDialog(launched.window);
+			await createAgentDialog.getByRole('option', { name: /Codex/ }).click();
+			await expect(createAgentDialog.getByText('Codex Settings')).toBeVisible();
+			await createAgentDialog.getByLabel('Agent Name').fill('Cleared Create Overrides');
+			await createAgentDialog.getByLabel('Working Directory').fill(projectDir);
+			await createAgentDialog.getByPlaceholder('/path/to/codex').fill('/opt/maestro/codex-clear');
+			await createAgentDialog
+				.getByPlaceholder('--flag value --another-flag')
+				.fill('--clear-before-create');
+			await addCustomEnvVar(createAgentDialog, 'CODEX_CLEAR_CREATE_E2E', 'remove-me');
+
+			await createAgentDialog.getByRole('button', { name: 'Reset' }).click();
+			await createAgentDialog.getByRole('button', { name: 'Clear' }).click();
+			await createAgentDialog.getByTitle('Remove variable').click();
+			await createAgentDialog.getByRole('button', { name: 'Create Agent' }).click();
+			await expect(createAgentDialog).toBeHidden();
+
+			const editAgentDialog = await openEditAgentDialog(
+				launched.window,
+				'Cleared Create Overrides'
+			);
+			await expect(editAgentDialog.getByPlaceholder('/path/to/codex')).toHaveValue(
+				'/usr/local/bin/codex-e2e'
+			);
+			await expect(editAgentDialog.getByPlaceholder('--flag value --another-flag')).toHaveValue('');
+			await expect(editAgentDialog.getByPlaceholder('VARIABLE_NAME')).toHaveCount(0);
+			await editAgentDialog.getByRole('button', { name: 'Cancel' }).click();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
 	test('saves Edit Agent changes with the keyboard shortcut', async () => {
 		const seeded = createAgentCrudWorkbench();
 		const launched = await helpers.launchAppWithState({
@@ -1334,6 +1439,30 @@ test.describe('Agent CRUD lifecycle', () => {
 				reopenedDialog.getByPlaceholder('Instructions appended to every message you send...')
 			).toHaveValue('Saved through the edit modal keyboard shortcut.');
 			await reopenedDialog.getByRole('button', { name: 'Cancel' }).click();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('keeps Edit Agent save disabled while the agent name is blank', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubProviderDetection(launched.electronApp);
+
+			const editAgentDialog = await openEditAgentDialog(launched.window, 'Matrix Codex Agent');
+			const saveButton = editAgentDialog.getByRole('button', { name: 'Save Changes' });
+			await expect(saveButton).toBeEnabled();
+
+			await editAgentDialog.getByLabel('Agent Name').fill('   ');
+			await expect(saveButton).toBeDisabled();
+			await editAgentDialog.getByLabel('Agent Name').fill('Matrix Codex Agent');
+			await expect(saveButton).toBeEnabled();
+			await editAgentDialog.getByRole('button', { name: 'Cancel' }).click();
 		} finally {
 			await launched.cleanup();
 		}
@@ -1460,6 +1589,53 @@ test.describe('Agent CRUD lifecycle', () => {
 				'/usr/local/bin/codex-e2e'
 			);
 			await expect(reopenedDialog.getByPlaceholder('--flag value --another-flag')).toHaveValue('');
+			await reopenedDialog.getByRole('button', { name: 'Cancel' }).click();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('cleans up Edit Agent provider-switch draft when switching back to the original provider', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubProviderDetection(launched.electronApp);
+
+			const editAgentDialog = await openEditAgentDialog(launched.window, 'Matrix Codex Agent');
+			await editAgentDialog.getByRole('combobox').selectOption('opencode');
+			await expect(
+				editAgentDialog.getByText(/Changing the provider will clear your session list/)
+			).toBeVisible();
+			await editAgentDialog
+				.getByPlaceholder('/path/to/opencode')
+				.fill('/opt/maestro/opencode-return-draft');
+			await editAgentDialog.getByPlaceholder('--flag value --another-flag').fill('--return-draft');
+			await addCustomEnvVar(editAgentDialog, 'OPENCODE_RETURN_DRAFT_E2E', 'discarded');
+
+			await editAgentDialog.getByRole('combobox').selectOption('codex');
+			await expect(
+				editAgentDialog.getByText(/Changing the provider will clear your session list/)
+			).toHaveCount(0);
+			await expect(editAgentDialog.getByText('Codex Settings')).toBeVisible();
+			await expect(editAgentDialog.getByPlaceholder('/path/to/codex')).toHaveValue(
+				'/usr/local/bin/codex-e2e'
+			);
+			await expect(editAgentDialog.getByPlaceholder('--flag value --another-flag')).toHaveValue('');
+			await expect(editAgentDialog.getByPlaceholder('VARIABLE_NAME')).toHaveCount(0);
+			await editAgentDialog.getByRole('button', { name: 'Save Changes' }).click();
+			await expect(editAgentDialog).toBeHidden();
+
+			const reopenedDialog = await openEditAgentDialog(launched.window, 'Matrix Codex Agent');
+			await expect(reopenedDialog.getByRole('combobox')).toHaveValue('codex');
+			await expect(reopenedDialog.getByPlaceholder('/path/to/codex')).toHaveValue(
+				'/usr/local/bin/codex-e2e'
+			);
+			await expect(reopenedDialog.getByPlaceholder('--flag value --another-flag')).toHaveValue('');
+			await expect(reopenedDialog.getByPlaceholder('VARIABLE_NAME')).toHaveCount(0);
 			await reopenedDialog.getByRole('button', { name: 'Cancel' }).click();
 		} finally {
 			await launched.cleanup();
