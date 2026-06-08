@@ -1,6 +1,6 @@
 # Parallel E2E Orchestrator Status
 
-Last updated: 2026-06-08 00:18 ET
+Last updated: 2026-06-08 00:42 ET
 
 ## Base
 
@@ -47,6 +47,7 @@ coverage and the shell-lane tab coverage.
 ## Merge Queue
 
 - `shell-tabs-command` merged through `02ce883da`.
+- `agent-crud-provider` merged through `bb4fbcce2`.
 
 ## Launch Log
 
@@ -62,6 +63,7 @@ coverage and the shell-lane tab coverage.
   lane as commit `7e522c1bc`.
 - 2026-06-08 00:18 ET: added capacity guards to the remaining lane prompts after
   the initial ten-way launch produced 429 exits in most lanes.
+- 2026-06-08 00:42 ET: accepted `agent-crud-provider` through `bb4fbcce2`.
 
 ## Blockers
 

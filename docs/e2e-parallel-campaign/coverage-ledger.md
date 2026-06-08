@@ -2,16 +2,16 @@
 
 Source of truth: `docs/e2e-coverage-campaign.md`.
 
-Current active tests: 707
+Current active tests: 716
 Target active tests: 3,025
-Remaining matrix-backed active scenarios: 2,318
+Remaining matrix-backed active scenarios: 2,309
 
 ## Matrix
 
 | Surface                                                        | Lane                      | Current Active | Target Active | Remaining |
 | -------------------------------------------------------------- | ------------------------- | -------------: | ------------: | --------: |
 | App shell, layout, sidebars, resizing, focus, global shortcuts | `shell-tabs-command`      |             26 |           110 |        84 |
-| Agent CRUD and provider setup                                  | `agent-crud-provider`     |             56 |           160 |       104 |
+| Agent CRUD and provider setup                                  | `agent-crud-provider`     |             65 |           160 |        95 |
 | Codex AI terminal workflows                                    | `autorun-ai-terminal`     |             29 |           170 |       141 |
 | Command terminal workflows                                     | `shell-tabs-command`      |             49 |            95 |        46 |
 | Tabs and tab overlays                                          | `shell-tabs-command`      |             53 |           120 |        67 |
@@ -36,7 +36,7 @@ Remaining matrix-backed active scenarios: 2,318
 
 | Lane                       | Matrix-backed remaining | Authored active scenarios | Authored skipped/env-gated scenarios | Last accepted commit |
 | -------------------------- | ----------------------: | ------------------------: | -----------------------------------: | -------------------- |
-| `agent-crud-provider`      |                     104 |                         0 |                                    0 | pending              |
+| `agent-crud-provider`      |                      95 |                         9 |                                    2 | `bb4fbcce2`          |
 | `shell-tabs-command`       |                     197 |                        69 |                                    0 | `02ce883da`          |
 | `files-docs-history`       |                     349 |                         0 |                                    0 | pending              |
 | `autorun-ai-terminal`      |                     273 |                         0 |                                    0 | pending              |
@@ -50,3 +50,4 @@ Remaining matrix-backed active scenarios: 2,318
 ## Merge Log
 
 - 2026-06-08: accepted `codex/e2e-shell-tabs-command` through `02ce883da`; authored 9 tests covering 69 active shell/tab/terminal scenarios. No E2E execution was run.
+- 2026-06-08: accepted `codex/e2e-agent-crud-provider` through `bb4fbcce2`; authored 9 active provider/CRUD/session scenarios and 2 skipped/env-gated real-provider rows. No E2E execution was run.
