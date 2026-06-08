@@ -1,6 +1,6 @@
 # wizard-settings-prompts
 
-Status: tranche 4 committed locally
+Status: tranche 5 committed locally
 
 ## Scope
 
@@ -114,3 +114,36 @@ New Agent Wizard, inline wizard, Settings, Director Notes, prompt composer.
 - Blockers/remaining work:
   - Real provider account and live agent handoff coverage remains env-gated.
   - Remaining matrix-backed target: about 348 active/skipped rows after this tranche.
+
+### 2026-06-08 tranche 5 fallback
+
+- Scope: compact fallback tranche after the tranche-7 PM2 retry failed before authoring.
+- PM2 context:
+  - `maestro-e2e-wizard-settings-prompts-t7`, `maestro-e2e-git-groupchat-playbooks-t7`, and `maestro-e2e-stats-graph-symphony-t7` were launched as one-shot workers with `--no-autorestart`.
+  - All three exited before edits with Codex managed-account 503 errors from model refresh and `/responses`.
+- Authored: 5 additional active deterministic Playwright scenarios.
+  - Settings General persists the default History toggle.
+  - Settings General persists the automatic tab naming toggle.
+  - Settings Display persists the Files Pane Icon Theme selection.
+  - Settings Display persists the auto-hide menu bar toggle.
+  - Prompt Composer toggles Enter-to-send mode from inside the composer modal.
+- Cumulative lane-authored coverage: 29 active deterministic scenarios, 1 env-gated scenario.
+- Skipped/env-gated: no new rows; total remains 1 provider-account handoff placeholder.
+- Files touched:
+  - `e2e/wizard-settings-prompts.spec.ts`
+  - `docs/e2e-parallel-campaign/agents/wizard-settings-prompts.md`
+- Shared helpers edited: no.
+- Validation run:
+  - `npx prettier --write e2e/wizard-settings-prompts.spec.ts` - passed.
+  - `npx eslint e2e/wizard-settings-prompts.spec.ts` - passed.
+  - `npx tsc --noEmit --target ES2020 --lib ES2020,DOM,DOM.Iterable --module ESNext --skipLibCheck --moduleResolution bundler --allowImportingTsExtensions --resolveJsonModule --isolatedModules --strict --noUnusedLocals --noUnusedParameters --noFallthroughCasesInSwitch --types node,@playwright/test e2e/wizard-settings-prompts.spec.ts e2e/fixtures/electron-app.ts` - passed.
+  - `git diff --check -- e2e/wizard-settings-prompts.spec.ts` - passed.
+  - Static wizard spec ID/`.only` scan - passed with 29 active rows, 1 env-gated row, no duplicate IDs, and no `.only`.
+- Review:
+  - Focused code review passed after scoping the Prompt Composer Enter-to-send locator to the modal container.
+- Not run by instruction: `npm run test:e2e`, `playwright test`, headed/UI E2E, and Playwright listing.
+- Implementation commit hash: `4e246ffc0`.
+- Blockers/remaining work:
+  - PM2-managed Codex worker runtime is still blocked by 503 managed-account availability errors.
+  - Real provider account and live agent handoff coverage remains env-gated.
+  - Remaining matrix-backed target: about 343 active/skipped rows after this tranche.
