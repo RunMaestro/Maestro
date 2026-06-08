@@ -34,21 +34,23 @@ Parallel E2E authoring checkpoint:
 
 - Campaign: `docs/e2e-parallel-prompt.md`
 - Result: in progress
-- Current authoring progress: 883 / 3,025 active scenarios after accepting the
-  sixth-tranche files/docs/history fallback through `6f8134fb9`. The tranche-6
-  PM2 workers failed with Codex managed-account 503 errors before authoring, so
-  only the manual `files-docs-history` fallback rows were accepted.
+- Current authoring progress: 888 / 3,025 active scenarios after accepting the
+  seventh-tranche wizard/settings/prompts fallback through `e8bc7da23`. The
+  tranche-7 PM2 workers failed with Codex managed-account 503 errors before
+  authoring, so only the manual `wizard-settings-prompts` fallback rows were
+  accepted.
 - Accepted lanes so far: `shell-tabs-command`, `agent-crud-provider`,
   `files-docs-history`, `mobile-web-bridge`, `autorun-ai-terminal`,
   `wizard-settings-prompts`, `stats-graph-symphony`, `debug-accessibility`,
   `fixtures-sharding-review`, and `git-groupchat-playbooks`.
 - Execution policy: Playwright E2E tests are intentionally not executed in this phase.
 - Validation plan: static review of authored selectors, fixtures, scenario names, assertions, and lane progress logs; runtime validation is deferred to a later sharded execution phase.
-- Latest static validation: lane-local ESLint, TypeScript, duplicate-ID, `.only`,
-  and `git diff --check` checks passed for the `files-docs-history` fallback
-  before merge; the central-doc update also passed ESLint, `git diff --check`,
-  inventory/duplicate-ID scans, and campaign/ledger matrix total checks. No
-  Playwright/E2E/listing command was run.
+- Latest static validation: lane-local ESLint, strict single-spec TypeScript,
+  duplicate-ID, `.only`, and `git diff --check` checks passed for the
+  `wizard-settings-prompts` fallback before merge; the central-doc update also
+  passed ESLint, `git diff --check`, inventory/duplicate-ID scans, and
+  campaign/ledger matrix total checks. No Playwright/E2E/listing command was
+  run.
 
 Integration checkpoint:
 

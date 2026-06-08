@@ -1,6 +1,6 @@
 # Parallel E2E Orchestrator Status
 
-Last updated: 2026-06-08 05:00 ET
+Last updated: 2026-06-08 05:17 ET
 
 ## Base
 
@@ -37,7 +37,7 @@ coverage and the shell-lane tab coverage.
 | `shell-tabs-command`       | `codex/e2e-shell-tabs-command`       | `Maestro-worktrees/e2e-shell-tabs-command`       | `maestro-e2e-shell-tabs-command`         | merged through `44e98a94f` | 76 active scenarios accepted; 190 remain        |
 | `files-docs-history`       | `codex/e2e-files-docs-history`       | `Maestro-worktrees/e2e-files-docs-history`       | `maestro-e2e-files-docs-history-t6`      | merged through `6f8134fb9` | 32 active scenarios accepted; 317 remain        |
 | `autorun-ai-terminal`      | `codex/e2e-autorun-ai-terminal`      | `Maestro-worktrees/e2e-autorun-ai-terminal`      | `maestro-e2e-autorun-ai-terminal`        | merged through `cd804bebf` | 10 active scenarios accepted; 263 remain        |
-| `wizard-settings-prompts`  | `codex/e2e-wizard-settings-prompts`  | `Maestro-worktrees/e2e-wizard-settings-prompts`  | `maestro-e2e-wizard-settings-prompts-t5` | merged through `a210a889e` | 24 active scenarios accepted; 348 remain        |
+| `wizard-settings-prompts`  | `codex/e2e-wizard-settings-prompts`  | `Maestro-worktrees/e2e-wizard-settings-prompts`  | `maestro-e2e-wizard-settings-prompts-t7` | merged through `e8bc7da23` | 29 active scenarios accepted; 343 remain        |
 | `git-groupchat-playbooks`  | `codex/e2e-git-groupchat-playbooks`  | `Maestro-worktrees/e2e-git-groupchat-playbooks`  | `maestro-e2e-git-groupchat-playbooks-t5` | merged through `b40916745` | 25 active scenarios accepted; 338 remain        |
 | `stats-graph-symphony`     | `codex/e2e-stats-graph-symphony`     | `Maestro-worktrees/e2e-stats-graph-symphony`     | `maestro-e2e-stats-graph-symphony-t5`    | stopped, no t5 changes     | 17 active scenarios accepted; 319 remain        |
 | `debug-accessibility`      | `codex/e2e-debug-accessibility`      | `Maestro-worktrees/e2e-debug-accessibility`      | `maestro-e2e-debug-accessibility`        | merged through `15e7a1a20` | 11 active scenarios accepted; 181 remain        |
@@ -51,7 +51,7 @@ coverage and the shell-lane tab coverage.
 - `files-docs-history` merged through `6f8134fb9`.
 - `mobile-web-bridge` merged through `d580f80ea`.
 - `autorun-ai-terminal` merged through `cd804bebf`.
-- `wizard-settings-prompts` merged through `a210a889e`.
+- `wizard-settings-prompts` merged through `e8bc7da23`.
 - `stats-graph-symphony` remains merged through `784d84e34`; t5 stopped with no changes.
 - `debug-accessibility` merged through `15e7a1a20`.
 - `fixtures-sharding-review` merged through `392c4527`.
@@ -121,14 +121,23 @@ coverage and the shell-lane tab coverage.
 - 2026-06-08 05:00 ET: accepted fallback `files-docs-history` through
   `6f8134fb9` with 5 active file/docs/history scenarios. No E2E execution was
   run.
+- 2026-06-08 05:06 ET: launched tranche-7 PM2 one-shot workers for
+  `wizard-settings-prompts`, `git-groupchat-playbooks`, and
+  `stats-graph-symphony` using `--no-autorestart` and the no-E2E execution rule.
+- 2026-06-08 05:07 ET: all tranche-7 PM2 workers failed before authoring with
+  Codex managed-account 503 service-unavailable errors.
+- 2026-06-08 05:17 ET: accepted fallback `wizard-settings-prompts` through
+  `e8bc7da23` with 5 active Settings/Prompt Composer scenarios. No E2E
+  execution was run.
 
 ## Blockers
 
 - The source prompt has a lane-quota inconsistency for `shell-tabs-command`.
   The canonical matrix remains authoritative until changed deliberately.
 - The first recovery tranche is accepted for every lane, and the second through
-  fifth recovery tranches plus the sixth `files-docs-history` fallback are
-  accepted for selected high-remaining lanes.
+  fifth recovery tranches plus the sixth `files-docs-history` and seventh
+  `wizard-settings-prompts` fallbacks are accepted for selected high-remaining
+  lanes.
   Remaining work should continue in smaller batches, with each run committing
   one coherent tranche and recording remaining work instead of trying to consume
   a full lane quota in one Codex turn.
@@ -137,3 +146,7 @@ coverage and the shell-lane tab coverage.
 - Codex runtime 503 errors affected all tranche-6 PM2 workers before authoring;
   retry PM2 lane workers only after managed-account runtime availability
   recovers.
+- Codex runtime 503 errors also affected the tranche-7 PM2 retry for
+  `wizard-settings-prompts`, `git-groupchat-playbooks`, and
+  `stats-graph-symphony`; manual fallback authoring remains the only productive
+  path until detached Codex runtime availability recovers.

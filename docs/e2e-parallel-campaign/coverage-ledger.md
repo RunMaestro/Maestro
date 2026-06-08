@@ -2,9 +2,9 @@
 
 Source of truth: `docs/e2e-coverage-campaign.md`.
 
-Current active tests: 883
+Current active tests: 888
 Target active tests: 3,025
-Remaining matrix-backed active scenarios: 2,142
+Remaining matrix-backed active scenarios: 2,137
 
 ## Matrix
 
@@ -20,14 +20,14 @@ Remaining matrix-backed active scenarios: 2,142
 | History panel                                                  | `files-docs-history`      |             26 |            95 |        69 |
 | Auto Run                                                       | `autorun-ai-terminal`     |            134 |           260 |       126 |
 | New Agent Wizard and inline wizard                             | `wizard-settings-prompts` |             40 |           190 |       150 |
-| Settings                                                       | `wizard-settings-prompts` |             62 |           190 |       128 |
+| Settings                                                       | `wizard-settings-prompts` |             66 |           190 |       124 |
 | Git, worktrees, PR, diff/log, Gist                             | `git-groupchat-playbooks` |             28 |           160 |       132 |
 | Group chat                                                     | `git-groupchat-playbooks` |             51 |           140 |        89 |
 | Usage dashboard and stats                                      | `stats-graph-symphony`    |             19 |           125 |       106 |
 | Document graph                                                 | `stats-graph-symphony`    |             27 |           130 |       103 |
 | Playbooks, marketplace, Spec Kit, OpenSpec                     | `git-groupchat-playbooks` |             28 |           145 |       117 |
 | Symphony, leaderboard, achievements                            | `stats-graph-symphony`    |             10 |           120 |       110 |
-| Director notes and prompt composer                             | `wizard-settings-prompts` |             20 |            90 |        70 |
+| Director notes and prompt composer                             | `wizard-settings-prompts` |             21 |            90 |        69 |
 | Debug/about/update/app info/agent error modals                 | `debug-accessibility`     |             25 |            85 |        60 |
 | Mobile/web bridge                                              | `mobile-web-bridge`       |             99 |           190 |        91 |
 | Accessibility smoke and destructive-action confirmations       | `debug-accessibility`     |              9 |           130 |       121 |
@@ -40,7 +40,7 @@ Remaining matrix-backed active scenarios: 2,142
 | `shell-tabs-command`       |                     190 |                        76 |                                    0 | `44e98a94f`          |
 | `files-docs-history`       |                     317 |                        32 |                                    5 | `6f8134fb9`          |
 | `autorun-ai-terminal`      |                     263 |                        10 |                                    0 | `cd804bebf`          |
-| `wizard-settings-prompts`  |                     348 |                        24 |                                    1 | `a210a889e`          |
+| `wizard-settings-prompts`  |                     343 |                        29 |                                    1 | `e8bc7da23`          |
 | `git-groupchat-playbooks`  |                     338 |                        25 |                                    7 | `b40916745`          |
 | `stats-graph-symphony`     |                     319 |                        17 |                                    6 | `784d84e34`          |
 | `debug-accessibility`      |                     181 |                        11 |                                    0 | `15e7a1a20`          |
@@ -77,3 +77,4 @@ Remaining matrix-backed active scenarios: 2,142
 - 2026-06-08: accepted `codex/e2e-git-groupchat-playbooks` through `b40916745`; authored 7 additional active Git/playbook scenarios plus 2 skipped/env-gated rows. No E2E execution was run.
 - 2026-06-08: stopped `maestro-e2e-stats-graph-symphony-t5` after it stalled with no worktree changes; no stats/Symphony rows were accepted in this tranche.
 - 2026-06-08: accepted `codex/e2e-files-docs-history` through `6f8134fb9`; authored 5 additional active file/docs/history fallback scenarios after tranche-6 PM2 workers failed with Codex managed-account 503 errors before authoring. No E2E execution was run.
+- 2026-06-08: accepted `codex/e2e-wizard-settings-prompts` through `e8bc7da23`; authored 5 additional active Settings/Prompt Composer fallback scenarios after tranche-7 PM2 workers failed with Codex managed-account 503 errors before authoring. No E2E execution was run.
