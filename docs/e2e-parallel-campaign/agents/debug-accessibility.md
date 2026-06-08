@@ -1,6 +1,6 @@
 # debug-accessibility
 
-Status: second tranche authored
+Status: third fallback tranche authored
 
 ## Scope
 
@@ -9,9 +9,9 @@ accessibility smoke.
 
 ## Campaign Head
 
-- Ledger head before this tranche: `94f7b2d7`.
-- Implementation commit: `a620abaa9f2ecec28da9bc0345d1d25b1b79b253`.
-- Coverage ledger before this tranche: 5 active scenarios accepted, 187
+- Ledger head before this tranche: `462780a03`.
+- Implementation commit: `1ab3dbece2484b7041efa113974b86187a9298d1`.
+- Coverage ledger before this tranche: 11 active scenarios accepted, 181
   matrix-backed scenarios remaining.
 
 ## Checklist
@@ -21,29 +21,33 @@ accessibility smoke.
 - [x] Author deterministic active scenarios for the next coherent tranche.
 - [x] Keep accessibility checks lightweight and static in this phase.
 - [x] Record files touched, scenario counts, blockers, and commit hash.
-- [x] Commit lane work on `codex/e2e-debug-accessibility`.
+- [x] Commit lane work on `codex/full-e2e-coverage-campaign`.
 
 ## Progress
 
-- Added matrix-backed debug package modal scenarios `DA-006` through `DA-011`.
-- Active scenarios added this tranche: 6.
-- Active scenarios authored in lane total: 11.
+- Added matrix-backed System Log Viewer and update-modal scenarios `DA-012`
+  through `DA-016`.
+- Active scenarios added this tranche: 5.
+- Active scenarios authored in lane total: 16.
 - Skipped/product-gap scenarios added this tranche: 0.
 - Env-gated scenarios added this tranche: 0.
-- Projected matrix-backed remaining after this tranche: 181, pending
-  orchestrator ledger acceptance.
+- Matrix-backed remaining after orchestrator ledger acceptance: 176.
 
 Files touched:
 
 - `e2e/debug-accessibility.spec.ts`
 - `docs/e2e-parallel-campaign/agents/debug-accessibility.md`
+- `docs/e2e-parallel-campaign/coverage-ledger.md`
+- `docs/e2e-coverage-campaign.md`
 
 Validation passed:
 
 - `npx eslint e2e/debug-accessibility.spec.ts`
+- `NODE_OPTIONS=--max-old-space-size=8192 npx prettier --check e2e/debug-accessibility.spec.ts docs/e2e-parallel-campaign/agents/debug-accessibility.md docs/e2e-parallel-campaign/coverage-ledger.md docs/e2e-coverage-campaign.md`
+- `npx tsc -p tsconfig.lint.json --noEmit`
 - `git diff --check`
-- `gac` pre-commit hook ran `prettier --write --ignore-unknown` and
-  `eslint --fix` on the staged spec file.
+- Static inventory scan reports 885 declared E2E tests, no `.only`, no
+  prohibited commands, and no duplicate scenario IDs.
 
 Blockers:
 
@@ -54,5 +58,4 @@ Blockers:
 Remaining work:
 
 - Process monitor details, crash/error overlays, destructive agent/worktree
-  confirmations, update edge cases, and broader accessibility audits remain for
-  later tranches.
+  confirmations, and broader accessibility audits remain for later tranches.
