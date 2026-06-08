@@ -23,6 +23,12 @@ const activeScenarioMatrix = [
 	{ id: 'WSP-010', title: 'renders seeded custom AI command settings' },
 	{ id: 'WSP-011', title: 'dismisses Prompt Composer mention suggestions before closing' },
 	{ id: 'WSP-012', title: 'keeps Prompt Composer send disabled for blank drafts' },
+	{ id: 'WSP-013', title: 'shows seeded inline wizard confidence state' },
+	{ id: 'WSP-014', title: 'updates Prompt Composer character count for a draft' },
+	{ id: 'WSP-015', title: 'persists a Prompt Composer draft from the close button' },
+	{ id: 'WSP-016', title: 'filters Settings shortcuts to Prompt Composer commands' },
+	{ id: 'WSP-017', title: "hides Director's Notes quick action when disabled" },
+	{ id: 'WSP-018', title: "enables Director's Notes settings from Encore features" },
 ];
 
 const envGatedScenarioMatrix = [
@@ -488,6 +494,147 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 
 			await launched.window.keyboard.press('Escape');
 			await expect(launched.window.getByText('Prompt Composer')).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[12].id} ${activeScenarioMatrix[12].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench({ inlineWizard: true });
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await expect(launched.window.getByText('Project Understanding Confidence')).toBeVisible();
+			await expect(launched.window.getByText('37%')).toBeVisible();
+			await expect(
+				launched.window.getByTitle('Project Understanding Confidence: 37%')
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[13].id} ${activeScenarioMatrix[13].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			const composerInput = await openPromptComposer(launched.window);
+			await expect(launched.window.getByText('0 characters')).toBeVisible();
+
+			await composerInput.fill('Count this seeded composer draft.');
+			await expect(launched.window.getByText('33 characters')).toBeVisible();
+			await expect(launched.window.getByRole('button', { name: /^Send$/ })).toBeEnabled();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[14].id} ${activeScenarioMatrix[14].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			const composerInput = await openPromptComposer(launched.window);
+			await composerInput.fill('Persist this draft through the header close control.');
+			await launched.window.getByTitle('Close (Escape)').click();
+
+			await expect(launched.window.getByText('Prompt Composer')).toBeHidden();
+			await launched.window.getByTitle(/Open Prompt Composer/).click();
+			await expect(composerInput).toHaveValue(
+				'Persist this draft through the header close control.'
+			);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[15].id} ${activeScenarioMatrix[15].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'Shortcuts',
+				'Not all shortcuts can be modified'
+			);
+
+			await settingsDialog.getByPlaceholder('Filter shortcuts...').fill('Prompt Composer');
+			await expect(settingsDialog.getByText('Open Prompt Composer')).toBeVisible();
+			await expect(settingsDialog.getByText('New Agent Wizard')).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[16].id} ${activeScenarioMatrix[16].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				encoreFeatures: {
+					directorNotes: false,
+				},
+			},
+		});
+
+		try {
+			const quickActionsDialog = await openQuickActions(launched.window);
+			await quickActionsDialog
+				.getByPlaceholder('Type a command or jump to agent...')
+				.fill("Director's Notes");
+			await expect(
+				quickActionsDialog.getByRole('button', { name: /Director's Notes/ })
+			).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[17].id} ${activeScenarioMatrix[17].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				encoreFeatures: {
+					directorNotes: false,
+				},
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'Encore Features',
+				'Optional features that extend Maestro'
+			);
+			await settingsDialog.getByRole('button', { name: /Director's Notes/ }).click();
+
+			await expect(settingsDialog.getByText('Synopsis Provider')).toBeVisible();
+			await expect(settingsDialog.getByText(/Default Lookback Period:/)).toBeVisible();
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						const features = await window.maestro.settings.get('encoreFeatures');
+						return Boolean(features?.directorNotes);
+					});
+				})
+				.toBe(true);
 		} finally {
 			await launched.cleanup();
 		}

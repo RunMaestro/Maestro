@@ -1,6 +1,6 @@
 # wizard-settings-prompts
 
-Status: tranche 2 committed locally
+Status: tranche 3 validated, pending implementation commit hash record
 
 ## Scope
 
@@ -63,3 +63,28 @@ New Agent Wizard, inline wizard, Settings, Director Notes, prompt composer.
 - Blockers/remaining work:
   - Real provider account and live agent handoff coverage remains env-gated.
   - Remaining matrix-backed target: about 360 active/skipped rows after this tranche.
+
+### 2026-06-08 tranche 3
+
+- Scope: third compact recovery tranche only.
+- Authored: 6 additional active deterministic Playwright scenarios.
+  - Seeded inline wizard confidence gauge renders the expected 37% state.
+  - Prompt Composer character count updates as a deterministic draft is typed.
+  - Prompt Composer header close persists the draft for reopen.
+  - Settings Shortcuts filter narrows to the Prompt Composer shortcut.
+  - Director's Notes quick action stays hidden when the Encore feature is disabled.
+  - Settings Encore tab enables Director's Notes controls and persists the feature flag.
+- Cumulative lane-authored coverage: 18 active deterministic scenarios, 1 env-gated scenario.
+- Skipped/env-gated: no new rows; total remains 1 provider-account handoff placeholder.
+- Files touched:
+  - `e2e/wizard-settings-prompts.spec.ts`
+  - `docs/e2e-parallel-campaign/agents/wizard-settings-prompts.md`
+- Shared helpers edited: no.
+- Validation run:
+  - `npx eslint e2e/wizard-settings-prompts.spec.ts` - passed.
+  - `git diff --check -- e2e/wizard-settings-prompts.spec.ts docs/e2e-parallel-campaign/agents/wizard-settings-prompts.md` - passed.
+- Not run by instruction: `npm run test:e2e`, `playwright test`, headed/UI E2E, and Playwright listing.
+- Implementation commit hash: pending.
+- Blockers/remaining work:
+  - Real provider account and live agent handoff coverage remains env-gated.
+  - Remaining matrix-backed target: about 354 active/skipped rows after this tranche.
