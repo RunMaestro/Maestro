@@ -667,7 +667,7 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 		});
 
 		try {
-			const settingsDialog = await openSettingsTab(launched.window, 'Themes', 'dark Mode');
+			const settingsDialog = await openSettingsTab(launched.window, 'Themes', 'Dark Mode');
 			const solarizedTheme = settingsDialog.locator('[data-theme-id="solarized-light"]');
 
 			await expect(solarizedTheme).toContainText('Solarized');
