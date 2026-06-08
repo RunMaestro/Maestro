@@ -400,6 +400,13 @@ async function stubCodexAgentSessionStorage(electronApp: ElectronApplication, pr
 	);
 }
 
+async function stubSelectFolderDialog(electronApp: ElectronApplication, folderPath: string) {
+	await electronApp.evaluate(({ ipcMain }, selectedFolder: string) => {
+		ipcMain.removeHandler('dialog:selectFolder');
+		ipcMain.handle('dialog:selectFolder', async () => selectedFolder);
+	}, folderPath);
+}
+
 async function getAgentSessionSearchCalls(electronApp: ElectronApplication) {
 	return electronApp.evaluate(() => {
 		const state = globalThis as typeof globalThis & {
@@ -428,6 +435,19 @@ async function openQuickActions(window: Page) {
 	}
 	await expect(quickActionsDialog).toBeVisible();
 	return quickActionsDialog;
+}
+
+async function openCreateNewAgentFromQuickActions(window: Page) {
+	const quickActionsDialog = await openQuickActions(window);
+	await quickActionsDialog
+		.getByPlaceholder('Type a command or jump to agent...')
+		.fill('Create New Agent');
+	await quickActionsDialog.getByRole('button', { name: /Create New Agent/ }).click();
+
+	await expect(quickActionsDialog).toBeHidden();
+	const dialog = window.getByRole('dialog', { name: 'Create New Agent' });
+	await expect(dialog).toBeVisible();
+	return dialog;
 }
 
 async function openCreateAgentDialog(window: Page) {
@@ -626,6 +646,210 @@ test.describe('Agent CRUD provider setup matrix', () => {
 			await expect(createAgentDialog.getByPlaceholder('value', { exact: true })).toHaveValue(
 				'enabled'
 			);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+});
+
+test.describe('Agent duplicate and destructive delete flows', () => {
+	test('opens Create New Agent from Quick Actions with provider setup controls', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubProviderDetection(launched.electronApp);
+
+			const createAgentDialog = await openCreateNewAgentFromQuickActions(launched.window);
+			await expect(createAgentDialog.getByRole('option', { name: /Codex/ })).toBeVisible();
+			await expect(createAgentDialog.getByRole('option', { name: /Claude Code/ })).toBeVisible();
+			await expect(createAgentDialog.getByRole('option', { name: /OpenCode/ })).toBeVisible();
+			await expect(createAgentDialog.getByRole('option', { name: /Factory Droid/ })).toBeVisible();
+			await expect(createAgentDialog.getByLabel('Agent Name')).toBeVisible();
+			await expect(createAgentDialog.getByLabel('Working Directory')).toBeVisible();
+			await expect(createAgentDialog.getByRole('button', { name: 'Create Agent' })).toBeDisabled();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('cancels provider agent duplication without adding a copy', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubProviderDetection(launched.electronApp);
+
+			const contextMenu = await openSessionContextMenu(
+				launched.window,
+				'Matrix Codex Agent',
+				'Duplicate...'
+			);
+			await contextMenu.getByRole('button', { name: 'Duplicate...', exact: true }).click();
+
+			const createAgentDialog = launched.window.getByRole('dialog', { name: 'Create New Agent' });
+			await expect(createAgentDialog).toBeVisible();
+			await expect(createAgentDialog.getByLabel('Agent Name')).toHaveValue(
+				'Matrix Codex Agent (Copy)'
+			);
+			await expect(createAgentDialog.getByLabel('Working Directory')).toHaveValue(
+				seeded.projectDir
+			);
+			await createAgentDialog.getByRole('button', { name: 'Cancel' }).click();
+
+			await expect(createAgentDialog).toBeHidden();
+			await expect(
+				launched.window
+					.locator('[data-tour="session-list"]')
+					.getByText('Matrix Codex Agent (Copy)', { exact: true })
+			).toHaveCount(0);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('duplicates a provider agent from the context menu with folder picker creation', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+		const duplicateDir = path.join(seeded.homeDir, 'matrix-codex-copy-project');
+		fs.mkdirSync(duplicateDir, { recursive: true });
+
+		try {
+			await stubProviderDetection(launched.electronApp);
+			await stubSelectFolderDialog(launched.electronApp, duplicateDir);
+
+			const contextMenu = await openSessionContextMenu(
+				launched.window,
+				'Matrix Codex Agent',
+				'Duplicate...'
+			);
+			await contextMenu.getByRole('button', { name: 'Duplicate...', exact: true }).click();
+
+			const createAgentDialog = launched.window.getByRole('dialog', { name: 'Create New Agent' });
+			await expect(createAgentDialog).toBeVisible();
+			await expect(createAgentDialog.getByRole('option', { name: /Codex/ })).toHaveAttribute(
+				'aria-selected',
+				'true'
+			);
+			await expect(createAgentDialog.getByText(/This directory is already used by/)).toBeVisible();
+			await createAgentDialog.getByLabel('Agent Name').fill('Matrix Codex Agent Copy');
+			await createAgentDialog.getByRole('button', { name: /Browse folders/ }).click();
+			await expect(createAgentDialog.getByLabel('Working Directory')).toHaveValue(duplicateDir);
+			await expect(createAgentDialog.getByText(/This directory is already used by/)).toBeHidden();
+
+			await expect(createAgentDialog.getByRole('button', { name: 'Create Agent' })).toBeEnabled();
+			await createAgentDialog.getByRole('button', { name: 'Create Agent' }).click();
+			await expect(createAgentDialog).toBeHidden();
+			await expect(
+				launched.window
+					.locator('[data-tour="session-list"]')
+					.getByText('Matrix Codex Agent Copy', { exact: true })
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('removes a disposable provider agent only while preserving its working directory', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const disposableDir = path.join(seeded.homeDir, 'agent-only-delete-project');
+		fs.mkdirSync(path.join(disposableDir, 'nested'), { recursive: true });
+		fs.writeFileSync(path.join(disposableDir, 'nested', 'sentinel.txt'), 'keep me', 'utf-8');
+		const disposableSession = createSeedSession({
+			id: 'agent-crud-disposable-agent-only',
+			name: 'Disposable Agent Only',
+			toolType: 'codex',
+			projectDir: disposableDir,
+			now: Date.parse('2026-02-03T06:00:00Z'),
+			agentSessionId: 'thread_agent_crud_disposable_agent_only',
+		});
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: [...seeded.sessions, disposableSession],
+		});
+
+		try {
+			const contextMenu = await openSessionContextMenu(
+				launched.window,
+				'Disposable Agent Only',
+				'Remove Agent'
+			);
+			await contextMenu.getByRole('button', { name: 'Remove Agent', exact: true }).click();
+
+			const confirmDialog = launched.window.getByRole('dialog', { name: 'Confirm Delete' });
+			await expect(confirmDialog.getByText('the agent "Disposable Agent Only"')).toBeVisible();
+			await expect(confirmDialog.getByText(disposableDir)).toBeVisible();
+			await confirmDialog.getByRole('button', { name: 'Agent Only' }).click();
+
+			await expect(confirmDialog).toBeHidden();
+			await expect(
+				launched.window
+					.locator('[data-tour="session-list"]')
+					.getByText('Disposable Agent Only', { exact: true })
+			).toHaveCount(0);
+			expect(fs.existsSync(disposableDir)).toBe(true);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('deletes a provider working directory after exact-name confirmation', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const disposableDir = path.join(seeded.homeDir, 'agent-working-dir-delete-project');
+		fs.mkdirSync(path.join(disposableDir, 'nested'), { recursive: true });
+		fs.writeFileSync(path.join(disposableDir, 'nested', 'sentinel.txt'), 'delete me', 'utf-8');
+		const disposableSession = createSeedSession({
+			id: 'agent-crud-disposable-delete-dir',
+			name: 'Disposable Delete Directory',
+			toolType: 'codex',
+			projectDir: disposableDir,
+			now: Date.parse('2026-02-03T06:05:00Z'),
+			agentSessionId: 'thread_agent_crud_disposable_delete_dir',
+		});
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: [...seeded.sessions, disposableSession],
+		});
+
+		try {
+			const contextMenu = await openSessionContextMenu(
+				launched.window,
+				'Disposable Delete Directory',
+				'Remove Agent'
+			);
+			await contextMenu.getByRole('button', { name: 'Remove Agent', exact: true }).click();
+
+			const confirmDialog = launched.window.getByRole('dialog', { name: 'Confirm Delete' });
+			const eraseButton = confirmDialog.getByRole('button', {
+				name: 'Agent + Working Directory',
+			});
+			await expect(
+				confirmDialog.getByText('the agent "Disposable Delete Directory"')
+			).toBeVisible();
+			await expect(confirmDialog.getByText(disposableDir)).toBeVisible();
+			await expect(eraseButton).toBeDisabled();
+			await confirmDialog.getByLabel('Confirm agent name').fill('Disposable Delete');
+			await expect(eraseButton).toBeDisabled();
+			await confirmDialog.getByLabel('Confirm agent name').fill('Disposable Delete Directory');
+			await expect(eraseButton).toBeEnabled();
+			await eraseButton.click();
+
+			await expect(confirmDialog).toBeHidden();
+			await expect(
+				launched.window
+					.locator('[data-tour="session-list"]')
+					.getByText('Disposable Delete Directory', { exact: true })
+			).toHaveCount(0);
+			expect(fs.existsSync(disposableDir)).toBe(false);
 		} finally {
 			await launched.cleanup();
 		}
