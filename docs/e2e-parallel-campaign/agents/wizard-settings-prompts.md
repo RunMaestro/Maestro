@@ -110,6 +110,7 @@ New Agent Wizard, inline wizard, Settings, Director Notes, prompt composer.
   - `git diff --check -- e2e/wizard-settings-prompts.spec.ts docs/e2e-parallel-campaign/agents/wizard-settings-prompts.md` - passed.
 - Not run by instruction: `npm run test:e2e`, `playwright test`, headed/UI E2E, and Playwright listing.
 - Implementation commit hash: `989097c21`.
+- Review fix commit hash: `31d9335e3` tightened the Themes tab readiness assertion text.
 - Blockers/remaining work:
   - Real provider account and live agent handoff coverage remains env-gated.
   - Remaining matrix-backed target: about 348 active/skipped rows after this tranche.
