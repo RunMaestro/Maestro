@@ -34,11 +34,11 @@ Parallel E2E authoring checkpoint:
 
 - Campaign: `docs/e2e-parallel-prompt.md`
 - Result: in progress
-- Current authoring progress: 958 / 3,025 active scenarios after accepting the
-  twenty-first-tranche Git/group-chat/playbooks fallback through `10ed8a71a`.
-  This tranche added 5 active Group Chat close, Playbook Exchange
-  search/detail/document switching, and Create Pull Request multiline
-  description rows without adding skipped or env-gated rows.
+- Current authoring progress: 963 / 3,025 active scenarios after accepting the
+  twenty-second-tranche wizard/settings/prompts fallback through `bb21caed1`.
+  This tranche added 5 active Settings max-output, user-alignment,
+  native-title-bar, confetti, and update-check rows without adding skipped or
+  env-gated rows.
 - Accepted lanes so far: `shell-tabs-command`, `agent-crud-provider`,
   `files-docs-history`, `mobile-web-bridge`, `autorun-ai-terminal`,
   `wizard-settings-prompts`, `stats-graph-symphony`, `debug-accessibility`,
@@ -48,7 +48,7 @@ Parallel E2E authoring checkpoint:
 - Latest static validation: large-heap Prettier, explicit main-config ESLint,
   `npm run build:prompts`, TypeScript lint project check, duplicate-ID/test-count
   scan, `.only`, prohibited-command guard, and `git diff --check` passed for the
-  `git-groupchat-playbooks` fallback before merge; focused code-reviewer
+  `wizard-settings-prompts` fallback before merge; focused code-reviewer
   checklist review found no critical or high issues. No Playwright/E2E/listing
   command was run.
 

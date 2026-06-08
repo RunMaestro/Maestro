@@ -2,9 +2,9 @@
 
 Source of truth: `docs/e2e-coverage-campaign.md`.
 
-Current active tests: 958
+Current active tests: 963
 Target active tests: 3,025
-Remaining matrix-backed active scenarios: 2,067
+Remaining matrix-backed active scenarios: 2,062
 
 ## Matrix
 
@@ -20,7 +20,7 @@ Remaining matrix-backed active scenarios: 2,067
 | History panel                                                  | `files-docs-history`      |             26 |            95 |        69 |
 | Auto Run                                                       | `autorun-ai-terminal`     |            134 |           260 |       126 |
 | New Agent Wizard and inline wizard                             | `wizard-settings-prompts` |             40 |           190 |       150 |
-| Settings                                                       | `wizard-settings-prompts` |             91 |           190 |        99 |
+| Settings                                                       | `wizard-settings-prompts` |             96 |           190 |        94 |
 | Git, worktrees, PR, diff/log, Gist                             | `git-groupchat-playbooks` |             36 |           160 |       124 |
 | Group chat                                                     | `git-groupchat-playbooks` |             55 |           140 |        85 |
 | Usage dashboard and stats                                      | `stats-graph-symphony`    |             23 |           125 |       102 |
@@ -40,7 +40,7 @@ Remaining matrix-backed active scenarios: 2,067
 | `shell-tabs-command`       |                     190 |                        76 |                                    0 | `44e98a94f`          |
 | `files-docs-history`       |                     312 |                        37 |                                    5 | `b5491cd9b`          |
 | `autorun-ai-terminal`      |                     263 |                        10 |                                    0 | `cd804bebf`          |
-| `wizard-settings-prompts`  |                     318 |                        54 |                                    1 | `d3c251829`          |
+| `wizard-settings-prompts`  |                     313 |                        59 |                                    1 | `bb21caed1`          |
 | `git-groupchat-playbooks`  |                     313 |                        50 |                                    7 | `10ed8a71a`          |
 | `stats-graph-symphony`     |                     309 |                        27 |                                    6 | `bb9a6f68b`          |
 | `debug-accessibility`      |                     181 |                        11 |                                    0 | `15e7a1a20`          |
@@ -90,5 +90,6 @@ Remaining matrix-backed active scenarios: 2,067
 - 2026-06-08: accepted `codex/e2e-wizard-settings-prompts-fallback-6` through `d3c251829`; authored 5 additional active Settings Display local file indexing/context warning fallback scenarios. No E2E execution was run.
 - 2026-06-08: accepted `codex/e2e-stats-graph-symphony-fallback-3` through `bb9a6f68b`; authored 5 additional active Usage Dashboard heatmap/provider comparison and Symphony help/stats/leaderboard failure fallback scenarios. No E2E execution was run.
 - 2026-06-08: accepted `codex/e2e-git-groupchat-playbooks-fallback-5` through `10ed8a71a`; authored 5 additional active Group Chat close, Playbook Exchange search/detail/document switching, and Create Pull Request multiline description fallback scenarios. No E2E execution was run.
+- 2026-06-08: accepted `codex/e2e-wizard-settings-prompts-fallback-7` through `bb21caed1`; authored 5 additional active Settings max-output/user-alignment/native-title-bar/confetti/update-check fallback scenarios. No E2E execution was run.
 - 2026-06-08: accepted `codex/e2e-mobile-web-bridge-fallback-2` through `d7ccdd3d4`; authored 5 additional active token API/theme/Auto Run WebSocket/subscription/server-lifecycle fallback scenarios. No E2E execution was run.
 - 2026-06-08: accepted `codex/e2e-files-docs-history-fallback-2` through `b5491cd9b`; authored 5 additional active file preview clipboard/edit/search fallback scenarios. No E2E execution was run.
