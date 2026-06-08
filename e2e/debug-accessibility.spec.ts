@@ -5,7 +5,7 @@
  * provider, network, and Playwright execution during the authoring phase.
  */
 import { test, expect, helpers } from './fixtures/electron-app';
-import type { ElectronApplication, Page } from '@playwright/test';
+import type { ElectronApplication, Locator, Page } from '@playwright/test';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -121,6 +121,14 @@ const fifteenthTrancheActiveScenarioMatrix = [
 	{ id: 'DA-074', title: 'shows individual System Log Viewer structured details' },
 	{ id: 'DA-075', title: 'hides individual System Log Viewer structured details' },
 	{ id: 'DA-076', title: 'shows unmatched System Log Viewer search state' },
+] as const;
+
+const sixteenthTrancheActiveScenarioMatrix = [
+	{ id: 'DA-077', title: 'cancels Process Monitor kill confirmation from the button' },
+	{ id: 'DA-078', title: 'dismisses Process Monitor kill confirmation from the backdrop' },
+	{ id: 'DA-079', title: 'confirms Process Monitor kill confirmation from the button' },
+	{ id: 'DA-080', title: 'keeps Process Monitor entries after cancelled kill refresh' },
+	{ id: 'DA-081', title: 'kills only the selected Process Monitor process' },
 ] as const;
 
 const debugPackagePreviewCategories = [
@@ -658,6 +666,13 @@ async function openProcessMonitorFromQuickActions(page: Page) {
 	const processMonitor = page.getByRole('dialog', { name: 'System Processes' });
 	await expect(processMonitor).toBeVisible();
 	return processMonitor;
+}
+
+async function openProcessKillConfirmation(page: Page, processMonitor: Locator) {
+	await processMonitor.getByTitle('Expand all').click();
+	await processMonitor.getByText('Debug Accessibility Agent - AI Agent (codex)').hover();
+	await processMonitor.getByTitle('Kill process').click();
+	await expect(page.getByText('Kill Process?')).toBeVisible();
 }
 
 async function openAboutFromQuickActions(page: Page) {
@@ -2244,6 +2259,118 @@ test.describe('Debug and accessibility smoke tranche', () => {
 			await expect(logViewer.getByText('No logs match your filter')).toBeVisible();
 			await expect(logViewer.getByText('Debug accessibility info sentinel')).toBeHidden();
 			await expect(logViewer.getByText('Debug accessibility error sentinel')).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${sixteenthTrancheActiveScenarioMatrix[0].id} ${sixteenthTrancheActiveScenarioMatrix[0].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		const [aiProcess] = createStubbedActiveProcesses(launched.sessions[0], launched.projectDir);
+		try {
+			await stubActiveProcesses(launched.electronApp, [aiProcess]);
+			const processMonitor = await openProcessMonitorFromQuickActions(launched.window);
+			await openProcessKillConfirmation(launched.window, processMonitor);
+
+			await launched.window.getByRole('button', { name: 'Cancel' }).click();
+
+			await expect(launched.window.getByText('Kill Process?')).toBeHidden();
+			expect((await getStubbedActiveProcessState(launched.electronApp))?.killCalls).toEqual([]);
+			await expect(
+				processMonitor.getByText('Debug Accessibility Agent - AI Agent (codex)')
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${sixteenthTrancheActiveScenarioMatrix[1].id} ${sixteenthTrancheActiveScenarioMatrix[1].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		const [aiProcess] = createStubbedActiveProcesses(launched.sessions[0], launched.projectDir);
+		try {
+			await stubActiveProcesses(launched.electronApp, [aiProcess]);
+			const processMonitor = await openProcessMonitorFromQuickActions(launched.window);
+			await openProcessKillConfirmation(launched.window, processMonitor);
+
+			await launched.window
+				.locator('div.fixed.inset-0')
+				.last()
+				.click({ position: { x: 5, y: 5 } });
+
+			await expect(launched.window.getByText('Kill Process?')).toBeHidden();
+			expect((await getStubbedActiveProcessState(launched.electronApp))?.killCalls).toEqual([]);
+			await expect(
+				processMonitor.getByText('Debug Accessibility Agent - AI Agent (codex)')
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${sixteenthTrancheActiveScenarioMatrix[2].id} ${sixteenthTrancheActiveScenarioMatrix[2].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		const [aiProcess] = createStubbedActiveProcesses(launched.sessions[0], launched.projectDir);
+		try {
+			await stubActiveProcesses(launched.electronApp, [aiProcess]);
+			const processMonitor = await openProcessMonitorFromQuickActions(launched.window);
+			await openProcessKillConfirmation(launched.window, processMonitor);
+
+			await launched.window.getByRole('button', { name: 'Kill Process' }).click();
+
+			await expect
+				.poll(async () => (await getStubbedActiveProcessState(launched.electronApp))?.killCalls)
+				.toEqual([aiProcess.sessionId]);
+			await expect(processMonitor.getByText('No running processes')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${sixteenthTrancheActiveScenarioMatrix[3].id} ${sixteenthTrancheActiveScenarioMatrix[3].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		const processes = createStubbedActiveProcesses(launched.sessions[0], launched.projectDir);
+		try {
+			await stubActiveProcesses(launched.electronApp, processes);
+			const processMonitor = await openProcessMonitorFromQuickActions(launched.window);
+			await openProcessKillConfirmation(launched.window, processMonitor);
+
+			await launched.window.getByRole('button', { name: 'Cancel' }).click();
+			await processMonitor.getByTitle('Refresh (R)').click();
+
+			expect((await getStubbedActiveProcessState(launched.electronApp))?.killCalls).toEqual([]);
+			await expect(
+				processMonitor.getByText('Debug Accessibility Agent - AI Agent (codex)')
+			).toBeVisible();
+			await expect(
+				processMonitor.getByText('Debug Accessibility Agent - Terminal Shell')
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${sixteenthTrancheActiveScenarioMatrix[4].id} ${sixteenthTrancheActiveScenarioMatrix[4].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		const [aiProcess, terminalProcess] = createStubbedActiveProcesses(
+			launched.sessions[0],
+			launched.projectDir
+		);
+		try {
+			await stubActiveProcesses(launched.electronApp, [aiProcess, terminalProcess]);
+			const processMonitor = await openProcessMonitorFromQuickActions(launched.window);
+			await openProcessKillConfirmation(launched.window, processMonitor);
+
+			await launched.window.getByRole('button', { name: 'Kill Process' }).click();
+
+			await expect
+				.poll(async () => (await getStubbedActiveProcessState(launched.electronApp))?.killCalls)
+				.toEqual([aiProcess.sessionId]);
+			await expect(
+				processMonitor.getByText('Debug Accessibility Agent - AI Agent (codex)')
+			).toBeHidden();
+			await expect(
+				processMonitor.getByText('Debug Accessibility Agent - Terminal Shell')
+			).toBeVisible();
 		} finally {
 			await launched.cleanup();
 		}
