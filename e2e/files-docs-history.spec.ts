@@ -50,6 +50,11 @@ const activeScenarioMatrix = [
 		title: 'navigates between History detail entries with next and previous controls',
 	},
 	{ id: 'FDH-A27', title: 'deletes a failed History entry from the detail modal' },
+	{ id: 'FDH-A28', title: 'opens a nested plain text preview from filtered File Explorer results' },
+	{ id: 'FDH-A29', title: 'toggles the History USER filter off and back on' },
+	{ id: 'FDH-A30', title: 'cancels failed History deletion from the confirmation modal' },
+	{ id: 'FDH-A31', title: 'shows History no-match state and restores entries after Escape' },
+	{ id: 'FDH-A32', title: 'dismisses folder delete confirmation with Escape' },
 ] as const;
 
 const skippedScenarioMatrix = [
@@ -796,6 +801,96 @@ test.describe(`Files docs history lane matrix (${activeScenarioMatrix.length} ac
 		await expect(historyPanel.getByText('Preview fallback failed')).toBeHidden();
 		await expect(historyPanel.getByText('Rendered docs history tranche')).toBeVisible();
 		await expect(historyPanel.getByText('Manual file operation note')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[27].id} ${activeScenarioMatrix[27].title}`, async () => {
+		await helpers.openRightPanelTab(window, 'Files');
+		await window.getByTitle('Expand all folders').click();
+		await window.keyboard.press('Control+f');
+
+		const filterInput = window.getByPlaceholder('Filter files...');
+		await filterInput.fill('plain');
+		const plainTextRow = await getFileTreeRow(window, 'plain.txt');
+		await expect(
+			window.locator('[data-file-index]').filter({ hasText: 'runbook.md' })
+		).toBeHidden();
+
+		await plainTextRow.dblclick();
+		await expect(window.getByText('Plain preview starting line.')).toBeVisible();
+		await expect(window.getByText('Plain preview editable line.')).toBeVisible();
+
+		await filterInput.press('Escape');
+		await expect(filterInput).toBeHidden();
+		await getFileTreeRow(window, 'runbook.md');
+	});
+
+	test(`${activeScenarioMatrix[28].id} ${activeScenarioMatrix[28].title}`, async () => {
+		await helpers.openRightPanelTab(window, 'History');
+		const historyPanel = window.locator('[data-tour="history-panel"]');
+
+		await historyPanel.getByRole('button', { name: 'USER' }).click();
+		await expect(historyPanel.getByText('Manual file operation note')).toBeHidden();
+		await expect(historyPanel.getByText('Rendered docs history tranche')).toBeVisible();
+		await expect(historyPanel.getByText('Preview fallback failed')).toBeVisible();
+
+		await historyPanel.getByRole('button', { name: 'USER' }).click();
+		await expect(historyPanel.getByText('Manual file operation note')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[29].id} ${activeScenarioMatrix[29].title}`, async () => {
+		await helpers.openRightPanelTab(window, 'History');
+		const historyPanel = window.locator('[data-tour="history-panel"]');
+		await historyPanel.getByText('Preview fallback failed').click();
+
+		await expect(
+			window.getByText('Failure detail includes a blocked external renderer path.')
+		).toBeVisible();
+		await window.getByRole('button', { name: 'Delete' }).click();
+
+		const deleteConfirm = window.locator('.fixed').filter({ hasText: 'Delete History Entry' });
+		await expect(deleteConfirm.getByText('Delete History Entry')).toBeVisible();
+		await deleteConfirm.getByRole('button', { name: 'Cancel' }).click();
+
+		await expect(deleteConfirm).toBeHidden();
+		await expect(
+			window.getByText('Failure detail includes a blocked external renderer path.')
+		).toBeVisible();
+		await window.keyboard.press('Escape');
+		await expect(historyPanel.getByText('Preview fallback failed')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[30].id} ${activeScenarioMatrix[30].title}`, async () => {
+		await helpers.openRightPanelTab(window, 'History');
+		const historyPanel = window.locator('[data-tour="history-panel"]');
+		await historyPanel.locator('[tabindex="0"]').focus();
+		await window.keyboard.press('Control+f');
+
+		const historyFilter = historyPanel.getByPlaceholder('Filter history...');
+		await historyFilter.fill('definitely-missing-history-entry');
+		await expect(historyPanel.getByText('0 results')).toBeVisible();
+		await expect(
+			historyPanel.getByText('No entries match "definitely-missing-history-entry"')
+		).toBeVisible();
+
+		await historyFilter.press('Escape');
+		await expect(historyFilter).toBeHidden();
+		await expect(historyPanel.getByText('Rendered docs history tranche')).toBeVisible();
+		await expect(historyPanel.getByText('Preview fallback failed')).toBeVisible();
+		await expect(historyPanel.getByText('Manual file operation note')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[31].id} ${activeScenarioMatrix[31].title}`, async () => {
+		const contextMenu = await openFileContextMenu(window, 'docs');
+		await contextMenu.getByRole('button', { name: 'Delete' }).click();
+
+		const deleteDialog = window.getByRole('dialog', { name: 'Delete Folder' });
+		await expect(deleteDialog).toBeVisible();
+		await window.keyboard.press('Escape');
+
+		await expect(deleteDialog).toBeHidden();
+		await getFileTreeRow(window, 'docs');
+		await expect(fs.existsSync(seededWorkbench.runbookPath)).toBe(true);
+		await expect(fs.existsSync(seededWorkbench.archivePath)).toBe(true);
 	});
 
 	for (const scenario of skippedScenarioMatrix) {
