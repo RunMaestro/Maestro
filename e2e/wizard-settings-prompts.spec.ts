@@ -67,6 +67,11 @@ const activeScenarioMatrix = [
 	{ id: 'WSP-027', title: 'persists the Display file icon theme selection' },
 	{ id: 'WSP-028', title: 'persists the Display auto-hide menu bar toggle' },
 	{ id: 'WSP-029', title: 'toggles Prompt Composer enter-to-send mode' },
+	{ id: 'WSP-030', title: 'persists the Settings conductor profile draft' },
+	{ id: 'WSP-031', title: 'persists the Settings system log level selection' },
+	{ id: 'WSP-032', title: 'persists the Settings GitHub CLI custom path' },
+	{ id: 'WSP-033', title: 'persists the Display terminal width selection' },
+	{ id: 'WSP-034', title: 'toggles Display Document Graph external links default' },
 ];
 
 const envGatedScenarioMatrix = [
@@ -971,6 +976,146 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 				.poll(async () => {
 					return await launched.window.evaluate(async () => {
 						return await window.maestro.settings.get('enterToSendAI');
+					});
+				})
+				.toBe(false);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[29].id} ${activeScenarioMatrix[29].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				conductorProfile: '',
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(launched.window, 'General', 'Conductor Profile');
+			await settingsDialog
+				.getByPlaceholder(/I'm a senior developer working on a React\/TypeScript project/)
+				.fill('Prefer concise implementation notes and focused diffs.');
+
+			await expect(settingsDialog.getByText('54/1000')).toBeVisible();
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('conductorProfile');
+					});
+				})
+				.toBe('Prefer concise implementation notes and focused diffs.');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[30].id} ${activeScenarioMatrix[30].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				logLevel: 'info',
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(launched.window, 'General', 'System Log Level');
+			await settingsDialog.getByRole('button', { name: 'Warn' }).click();
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('logLevel');
+					});
+				})
+				.toBe('warn');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[31].id} ${activeScenarioMatrix[31].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				ghPath: '',
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'General',
+				'GitHub CLI (gh) Path'
+			);
+			await settingsDialog.getByPlaceholder('/opt/homebrew/bin/gh').fill('/usr/local/bin/gh');
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('ghPath');
+					});
+				})
+				.toBe('/usr/local/bin/gh');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[32].id} ${activeScenarioMatrix[32].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				terminalWidth: 80,
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(launched.window, 'Display', 'Terminal Width');
+			await settingsDialog.getByRole('button', { name: '160' }).click();
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('terminalWidth');
+					});
+				})
+				.toBe(160);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[33].id} ${activeScenarioMatrix[33].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				documentGraphShowExternalLinks: true,
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(launched.window, 'Display', 'Document Graph');
+			const externalLinksRow = settingsDialog
+				.getByText('Show external links by default')
+				.locator('xpath=ancestor::div[contains(@class, "flex")][1]');
+
+			await externalLinksRow.getByRole('switch').click();
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('documentGraphShowExternalLinks');
 					});
 				})
 				.toBe(false);
