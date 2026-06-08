@@ -1,6 +1,6 @@
 # Parallel E2E Orchestrator Status
 
-Last updated: 2026-06-08 01:12 ET
+Last updated: 2026-06-08 02:05 ET
 
 ## Base
 
@@ -31,18 +31,18 @@ coverage and the shell-lane tab coverage.
 
 ## Lane State
 
-| Lane                       | Branch                               | Worktree                                         | PM2 process                            | State                      | Notes                                    |
-| -------------------------- | ------------------------------------ | ------------------------------------------------ | -------------------------------------- | -------------------------- | ---------------------------------------- |
-| `agent-crud-provider`      | `codex/e2e-agent-crud-provider`      | `Maestro-worktrees/e2e-agent-crud-provider`      | `maestro-e2e-agent-crud-provider`      | launched, PM2 id 7         | Agent CRUD/provider/Agent Sessions       |
-| `shell-tabs-command`       | `codex/e2e-shell-tabs-command`       | `Maestro-worktrees/e2e-shell-tabs-command`       | `maestro-e2e-shell-tabs-command`       | merged through `02ce883da` | 69 active scenarios accepted; 197 remain |
-| `files-docs-history`       | `codex/e2e-files-docs-history`       | `Maestro-worktrees/e2e-files-docs-history`       | `maestro-e2e-files-docs-history`       | launched, PM2 id 9         | Files, preview, history                  |
-| `autorun-ai-terminal`      | `codex/e2e-autorun-ai-terminal`      | `Maestro-worktrees/e2e-autorun-ai-terminal`      | `maestro-e2e-autorun-ai-terminal`      | launched, PM2 id 10        | Auto Run and Codex AI terminal           |
-| `wizard-settings-prompts`  | `codex/e2e-wizard-settings-prompts`  | `Maestro-worktrees/e2e-wizard-settings-prompts`  | `maestro-e2e-wizard-settings-prompts`  | launched, PM2 id 11        | Wizard, settings, prompt surfaces        |
-| `git-groupchat-playbooks`  | `codex/e2e-git-groupchat-playbooks`  | `Maestro-worktrees/e2e-git-groupchat-playbooks`  | `maestro-e2e-git-groupchat-playbooks`  | launched, PM2 id 12        | Git, group chat, playbooks               |
-| `stats-graph-symphony`     | `codex/e2e-stats-graph-symphony`     | `Maestro-worktrees/e2e-stats-graph-symphony`     | `maestro-e2e-stats-graph-symphony`     | launched, PM2 id 13        | Stats, graph, Symphony                   |
-| `debug-accessibility`      | `codex/e2e-debug-accessibility`      | `Maestro-worktrees/e2e-debug-accessibility`      | `maestro-e2e-debug-accessibility`      | launched, PM2 id 14        | Debug modals, confirmations, a11y smoke  |
-| `mobile-web-bridge`        | `codex/e2e-mobile-web-bridge`        | `Maestro-worktrees/e2e-mobile-web-bridge`        | `maestro-e2e-mobile-web-bridge`        | merged through `243662e8f` | 5 active scenarios accepted; 97 remain   |
-| `fixtures-sharding-review` | `codex/e2e-fixtures-sharding-review` | `Maestro-worktrees/e2e-fixtures-sharding-review` | `maestro-e2e-fixtures-sharding-review` | launched, PM2 id 16        | Shared fixtures and review               |
+| Lane                       | Branch                               | Worktree                                         | PM2 process                            | State                      | Notes                                           |
+| -------------------------- | ------------------------------------ | ------------------------------------------------ | -------------------------------------- | -------------------------- | ----------------------------------------------- |
+| `agent-crud-provider`      | `codex/e2e-agent-crud-provider`      | `Maestro-worktrees/e2e-agent-crud-provider`      | `maestro-e2e-agent-crud-provider`      | merged through `bb4fbcce2` | 9 active scenarios accepted; 95 remain          |
+| `shell-tabs-command`       | `codex/e2e-shell-tabs-command`       | `Maestro-worktrees/e2e-shell-tabs-command`       | `maestro-e2e-shell-tabs-command`       | merged through `02ce883da` | 69 active scenarios accepted; 197 remain        |
+| `files-docs-history`       | `codex/e2e-files-docs-history`       | `Maestro-worktrees/e2e-files-docs-history`       | `maestro-e2e-files-docs-history`       | merged through `bd10d5fdd` | 8 active scenarios accepted; 341 remain         |
+| `autorun-ai-terminal`      | `codex/e2e-autorun-ai-terminal`      | `Maestro-worktrees/e2e-autorun-ai-terminal`      | `maestro-e2e-autorun-ai-terminal`      | merged through `ca4241a13` | 5 active scenarios accepted; 268 remain         |
+| `wizard-settings-prompts`  | `codex/e2e-wizard-settings-prompts`  | `Maestro-worktrees/e2e-wizard-settings-prompts`  | `maestro-e2e-wizard-settings-prompts`  | merged through `01b93b1f`  | 5 active scenarios accepted; 367 remain         |
+| `git-groupchat-playbooks`  | `codex/e2e-git-groupchat-playbooks`  | `Maestro-worktrees/e2e-git-groupchat-playbooks`  | `maestro-e2e-git-groupchat-playbooks`  | merged through `f56007a23` | 5 active scenarios accepted; 358 remain         |
+| `stats-graph-symphony`     | `codex/e2e-stats-graph-symphony`     | `Maestro-worktrees/e2e-stats-graph-symphony`     | `maestro-e2e-stats-graph-symphony`     | merged through `8d37e190`  | 5 active scenarios accepted; 331 remain         |
+| `debug-accessibility`      | `codex/e2e-debug-accessibility`      | `Maestro-worktrees/e2e-debug-accessibility`      | `maestro-e2e-debug-accessibility`      | merged through `94f7b2d7`  | 5 active scenarios accepted; 187 remain         |
+| `mobile-web-bridge`        | `codex/e2e-mobile-web-bridge`        | `Maestro-worktrees/e2e-mobile-web-bridge`        | `maestro-e2e-mobile-web-bridge`        | merged through `243662e8f` | 5 active scenarios accepted; 97 remain          |
+| `fixtures-sharding-review` | `codex/e2e-fixtures-sharding-review` | `Maestro-worktrees/e2e-fixtures-sharding-review` | `maestro-e2e-fixtures-sharding-review` | merged through `392c4527`  | Support plan accepted; no active scenario quota |
 
 ## Merge Queue
 
@@ -50,6 +50,12 @@ coverage and the shell-lane tab coverage.
 - `agent-crud-provider` merged through `bb4fbcce2`.
 - `files-docs-history` merged through `bd10d5fdd`.
 - `mobile-web-bridge` merged through `243662e8f`.
+- `autorun-ai-terminal` merged through `ca4241a13`.
+- `wizard-settings-prompts` merged through `01b93b1f`.
+- `stats-graph-symphony` merged through `8d37e190`.
+- `debug-accessibility` merged through `94f7b2d7`.
+- `fixtures-sharding-review` merged through `392c4527`.
+- `git-groupchat-playbooks` merged through `f56007a23`.
 
 ## Launch Log
 
@@ -69,11 +75,17 @@ coverage and the shell-lane tab coverage.
 - 2026-06-08 00:45 ET: accepted `files-docs-history` through `bd10d5fdd`.
 - 2026-06-08 01:12 ET: accepted `mobile-web-bridge` through `243662e8f`
   with 5 active bridge-contract scenarios.
+- 2026-06-08 02:05 ET: accepted the remaining first-tranche recovery lanes:
+  `autorun-ai-terminal` through `ca4241a13`, `wizard-settings-prompts` through
+  `01b93b1f`, `stats-graph-symphony` through `8d37e190`,
+  `debug-accessibility` through `94f7b2d7`, `fixtures-sharding-review` through
+  `392c4527`, and `git-groupchat-playbooks` through `f56007a23`.
 
 ## Blockers
 
 - The source prompt has a lane-quota inconsistency for `shell-tabs-command`.
   The canonical matrix remains authoritative until changed deliberately.
-- The remaining lanes are being relaunched in smaller batches. Each recovery run
-  should commit one coherent tranche, stop, and record remaining work instead of
-  trying to consume the full lane quota in one Codex turn.
+- The first recovery tranche is accepted for every lane. Remaining work should
+  continue in smaller batches, with each run committing one coherent tranche and
+  recording remaining work instead of trying to consume a full lane quota in one
+  Codex turn.
