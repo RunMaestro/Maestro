@@ -34,21 +34,22 @@ Parallel E2E authoring checkpoint:
 
 - Campaign: `docs/e2e-parallel-prompt.md`
 - Result: in progress
-- Current authoring progress: 943 / 3,025 active scenarios after accepting the
-  eighteenth-tranche mobile/web bridge fallback through `d7ccdd3d4`. This
-  tranche added 5 active token API, theme, Auto Run WebSocket, subscription
-  scoping, and server lifecycle rows without adding skipped or env-gated rows.
+- Current authoring progress: 948 / 3,025 active scenarios after accepting the
+  nineteenth-tranche files/docs/history fallback through `b5491cd9b`. This
+  tranche added 5 active file preview clipboard, edit-save, unsaved-edit, and
+  search recovery rows without adding skipped or env-gated rows.
 - Accepted lanes so far: `shell-tabs-command`, `agent-crud-provider`,
   `files-docs-history`, `mobile-web-bridge`, `autorun-ai-terminal`,
   `wizard-settings-prompts`, `stats-graph-symphony`, `debug-accessibility`,
   `fixtures-sharding-review`, and `git-groupchat-playbooks`.
 - Execution policy: Playwright E2E tests are intentionally not executed in this phase.
 - Validation plan: static review of authored selectors, fixtures, scenario names, assertions, and lane progress logs; runtime validation is deferred to a later sharded execution phase.
-- Latest static validation: Prettier, explicit main-config ESLint,
-  duplicate scenario-name scan, `.only`, added-spec-line prohibited-command
-  guard, `git diff --check`, and targeted TypeScript new-line filtering passed
-  for the `mobile-web-bridge` fallback before merge; focused static review found
-  no critical or high issues. No Playwright/E2E/listing command was run.
+- Latest static validation: Prettier, explicit main-config ESLint, TypeScript
+  single-file check, duplicate-ID/test-count scan, `.only`,
+  prohibited-command guard, and `git diff --check` passed for the
+  `files-docs-history` fallback before merge; focused static review found no
+  critical or high issues after clipboard assertions were added. No
+  Playwright/E2E/listing command was run.
 
 Integration checkpoint:
 

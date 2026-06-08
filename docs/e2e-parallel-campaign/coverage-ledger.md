@@ -2,9 +2,9 @@
 
 Source of truth: `docs/e2e-coverage-campaign.md`.
 
-Current active tests: 943
+Current active tests: 948
 Target active tests: 3,025
-Remaining matrix-backed active scenarios: 2,082
+Remaining matrix-backed active scenarios: 2,077
 
 ## Matrix
 
@@ -16,7 +16,7 @@ Remaining matrix-backed active scenarios: 2,082
 | Command terminal workflows                                     | `shell-tabs-command`      |             56 |            95 |        39 |
 | Tabs and tab overlays                                          | `shell-tabs-command`      |             53 |           120 |        67 |
 | File explorer and file operations                              | `files-docs-history`      |             33 |           140 |       107 |
-| File preview and document rendering                            | `files-docs-history`      |             39 |           180 |       141 |
+| File preview and document rendering                            | `files-docs-history`      |             44 |           180 |       136 |
 | History panel                                                  | `files-docs-history`      |             26 |            95 |        69 |
 | Auto Run                                                       | `autorun-ai-terminal`     |            134 |           260 |       126 |
 | New Agent Wizard and inline wizard                             | `wizard-settings-prompts` |             40 |           190 |       150 |
@@ -38,7 +38,7 @@ Remaining matrix-backed active scenarios: 2,082
 | -------------------------- | ----------------------: | ------------------------: | -----------------------------------: | -------------------- |
 | `agent-crud-provider`      |                      95 |                         9 |                                    2 | `bb4fbcce2`          |
 | `shell-tabs-command`       |                     190 |                        76 |                                    0 | `44e98a94f`          |
-| `files-docs-history`       |                     317 |                        32 |                                    5 | `6f8134fb9`          |
+| `files-docs-history`       |                     312 |                        37 |                                    5 | `b5491cd9b`          |
 | `autorun-ai-terminal`      |                     263 |                        10 |                                    0 | `cd804bebf`          |
 | `wizard-settings-prompts`  |                     318 |                        54 |                                    1 | `d3c251829`          |
 | `git-groupchat-playbooks`  |                     318 |                        45 |                                    7 | `4867f111c`          |
@@ -89,3 +89,4 @@ Remaining matrix-backed active scenarios: 2,082
 - 2026-06-08: accepted `codex/e2e-git-groupchat-playbooks-fallback-4` through `4867f111c`; authored 5 additional active Create PR/Playbook Exchange fallback scenarios. No E2E execution was run.
 - 2026-06-08: accepted `codex/e2e-wizard-settings-prompts-fallback-6` through `d3c251829`; authored 5 additional active Settings Display local file indexing/context warning fallback scenarios. No E2E execution was run.
 - 2026-06-08: accepted `codex/e2e-mobile-web-bridge-fallback-2` through `d7ccdd3d4`; authored 5 additional active token API/theme/Auto Run WebSocket/subscription/server-lifecycle fallback scenarios. No E2E execution was run.
+- 2026-06-08: accepted `codex/e2e-files-docs-history-fallback-2` through `b5491cd9b`; authored 5 additional active file preview clipboard/edit/search fallback scenarios. No E2E execution was run.

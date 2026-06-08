@@ -1,6 +1,6 @@
 # Parallel E2E Orchestrator Status
 
-Last updated: 2026-06-08 09:01 ET
+Last updated: 2026-06-08 09:20 ET
 
 ## Base
 
@@ -35,7 +35,7 @@ coverage and the shell-lane tab coverage.
 | -------------------------- | ---------------------------------------------- | ---------------------------------------------------------- | -------------------------------------- | -------------------------- | ----------------------------------------------- |
 | `agent-crud-provider`      | `codex/e2e-agent-crud-provider`                | `Maestro-worktrees/e2e-agent-crud-provider`                | `maestro-e2e-agent-crud-provider`      | merged through `bb4fbcce2` | 9 active scenarios accepted; 95 remain          |
 | `shell-tabs-command`       | `codex/e2e-shell-tabs-command`                 | `Maestro-worktrees/e2e-shell-tabs-command`                 | `maestro-e2e-shell-tabs-command`       | merged through `44e98a94f` | 76 active scenarios accepted; 190 remain        |
-| `files-docs-history`       | `codex/e2e-files-docs-history`                 | `Maestro-worktrees/e2e-files-docs-history`                 | `maestro-e2e-files-docs-history-t6`    | merged through `6f8134fb9` | 32 active scenarios accepted; 317 remain        |
+| `files-docs-history`       | `codex/e2e-files-docs-history-fallback-2`      | `Maestro-worktrees/e2e-files-docs-history-fallback-2`      | manual fallback                        | merged through `b5491cd9b` | 37 active scenarios accepted; 312 remain        |
 | `autorun-ai-terminal`      | `codex/e2e-autorun-ai-terminal`                | `Maestro-worktrees/e2e-autorun-ai-terminal`                | `maestro-e2e-autorun-ai-terminal`      | merged through `cd804bebf` | 10 active scenarios accepted; 263 remain        |
 | `wizard-settings-prompts`  | `codex/e2e-wizard-settings-prompts-fallback-6` | `Maestro-worktrees/e2e-wizard-settings-prompts-fallback-6` | manual fallback                        | merged through `d3c251829` | 54 active scenarios accepted; 318 remain        |
 | `git-groupchat-playbooks`  | `codex/e2e-git-groupchat-playbooks-fallback-4` | `Maestro-worktrees/e2e-git-groupchat-playbooks-fallback-4` | manual fallback                        | merged through `4867f111c` | 45 active scenarios accepted; 318 remain        |
@@ -48,7 +48,7 @@ coverage and the shell-lane tab coverage.
 
 - `shell-tabs-command` merged through `44e98a94f`.
 - `agent-crud-provider` merged through `bb4fbcce2`.
-- `files-docs-history` merged through `6f8134fb9`.
+- `files-docs-history` merged through `b5491cd9b`.
 - `mobile-web-bridge` merged through `d7ccdd3d`.
 - `autorun-ai-terminal` merged through `cd804bebf`.
 - `wizard-settings-prompts` merged through `d3c251829`.
@@ -166,6 +166,10 @@ coverage and the shell-lane tab coverage.
   `d7ccdd3d4` with 5 active token API, theme, Auto Run WebSocket, subscription
   scoping, and server lifecycle scenarios. Focused static review found no
   critical or high issues. No E2E execution was run.
+- 2026-06-08 09:20 ET: accepted fallback `files-docs-history` through
+  `b5491cd9b` with 5 active file preview clipboard, edit-save, unsaved-edit,
+  and search recovery scenarios. Focused static review found no critical or
+  high issues after clipboard assertions were added. No E2E execution was run.
 
 ## Blockers
 
@@ -178,8 +182,8 @@ coverage and the shell-lane tab coverage.
   `git-groupchat-playbooks`, twelfth `wizard-settings-prompts`, thirteenth
   `wizard-settings-prompts`, fourteenth `git-groupchat-playbooks`, fifteenth
   `wizard-settings-prompts`, sixteenth `git-groupchat-playbooks`, seventeenth
-  `wizard-settings-prompts`, and eighteenth `mobile-web-bridge` fallbacks are
-  accepted for selected high-remaining lanes.
+  `wizard-settings-prompts`, eighteenth `mobile-web-bridge`, and nineteenth
+  `files-docs-history` fallbacks are accepted for selected high-remaining lanes.
   Remaining work should continue in smaller batches, with each run committing
   one coherent tranche and recording remaining work instead of trying to consume
   a full lane quota in one Codex turn.
