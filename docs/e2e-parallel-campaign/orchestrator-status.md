@@ -1,6 +1,6 @@
 # Parallel E2E Orchestrator Status
 
-Last updated: 2026-06-08 05:17 ET
+Last updated: 2026-06-08 05:29 ET
 
 ## Base
 
@@ -38,7 +38,7 @@ coverage and the shell-lane tab coverage.
 | `files-docs-history`       | `codex/e2e-files-docs-history`       | `Maestro-worktrees/e2e-files-docs-history`       | `maestro-e2e-files-docs-history-t6`      | merged through `6f8134fb9` | 32 active scenarios accepted; 317 remain        |
 | `autorun-ai-terminal`      | `codex/e2e-autorun-ai-terminal`      | `Maestro-worktrees/e2e-autorun-ai-terminal`      | `maestro-e2e-autorun-ai-terminal`        | merged through `cd804bebf` | 10 active scenarios accepted; 263 remain        |
 | `wizard-settings-prompts`  | `codex/e2e-wizard-settings-prompts`  | `Maestro-worktrees/e2e-wizard-settings-prompts`  | `maestro-e2e-wizard-settings-prompts-t7` | merged through `e8bc7da23` | 29 active scenarios accepted; 343 remain        |
-| `git-groupchat-playbooks`  | `codex/e2e-git-groupchat-playbooks`  | `Maestro-worktrees/e2e-git-groupchat-playbooks`  | `maestro-e2e-git-groupchat-playbooks-t5` | merged through `b40916745` | 25 active scenarios accepted; 338 remain        |
+| `git-groupchat-playbooks`  | `codex/e2e-git-groupchat-playbooks`  | `Maestro-worktrees/e2e-git-groupchat-playbooks`  | `maestro-e2e-git-groupchat-playbooks-t7` | merged through `839b3e3b6` | 30 active scenarios accepted; 333 remain        |
 | `stats-graph-symphony`     | `codex/e2e-stats-graph-symphony`     | `Maestro-worktrees/e2e-stats-graph-symphony`     | `maestro-e2e-stats-graph-symphony-t5`    | stopped, no t5 changes     | 17 active scenarios accepted; 319 remain        |
 | `debug-accessibility`      | `codex/e2e-debug-accessibility`      | `Maestro-worktrees/e2e-debug-accessibility`      | `maestro-e2e-debug-accessibility`        | merged through `15e7a1a20` | 11 active scenarios accepted; 181 remain        |
 | `mobile-web-bridge`        | `codex/e2e-mobile-web-bridge`        | `Maestro-worktrees/e2e-mobile-web-bridge`        | `maestro-e2e-mobile-web-bridge`          | merged through `d580f80ea` | 11 active scenarios accepted; 91 remain         |
@@ -55,7 +55,7 @@ coverage and the shell-lane tab coverage.
 - `stats-graph-symphony` remains merged through `784d84e34`; t5 stopped with no changes.
 - `debug-accessibility` merged through `15e7a1a20`.
 - `fixtures-sharding-review` merged through `392c4527`.
-- `git-groupchat-playbooks` merged through `b40916745`.
+- `git-groupchat-playbooks` merged through `839b3e3b6`.
 
 ## Launch Log
 
@@ -129,15 +129,18 @@ coverage and the shell-lane tab coverage.
 - 2026-06-08 05:17 ET: accepted fallback `wizard-settings-prompts` through
   `e8bc7da23` with 5 active Settings/Prompt Composer scenarios. No E2E
   execution was run.
+- 2026-06-08 05:29 ET: accepted fallback `git-groupchat-playbooks` through
+  `839b3e3b6` with 5 active Git/PR/group-chat/marketplace scenarios. No E2E
+  execution was run.
 
 ## Blockers
 
 - The source prompt has a lane-quota inconsistency for `shell-tabs-command`.
   The canonical matrix remains authoritative until changed deliberately.
 - The first recovery tranche is accepted for every lane, and the second through
-  fifth recovery tranches plus the sixth `files-docs-history` and seventh
-  `wizard-settings-prompts` fallbacks are accepted for selected high-remaining
-  lanes.
+  fifth recovery tranches plus the sixth `files-docs-history`, seventh
+  `wizard-settings-prompts`, and eighth `git-groupchat-playbooks` fallbacks are
+  accepted for selected high-remaining lanes.
   Remaining work should continue in smaller batches, with each run committing
   one coherent tranche and recording remaining work instead of trying to consume
   a full lane quota in one Codex turn.
