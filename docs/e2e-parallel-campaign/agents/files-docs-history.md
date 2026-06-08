@@ -1,6 +1,6 @@
 # files-docs-history
 
-Status: second recovery tranche committed
+Status: third recovery tranche committed
 
 ## Scope
 
@@ -16,6 +16,9 @@ File explorer, file preview, document rendering, history.
 - [x] Author deterministic active scenarios for the second recovery tranche.
 - [x] Record files touched and scenario counts for the second tranche.
 - [x] Commit second tranche spec work on `codex/e2e-files-docs-history`.
+- [x] Author deterministic active scenarios for the third recovery tranche.
+- [x] Record files touched and scenario counts for the third tranche.
+- [x] Commit third tranche spec work on `codex/e2e-files-docs-history`.
 
 ## Progress
 
@@ -96,3 +99,41 @@ File explorer, file preview, document rendering, history.
   - Product gaps from the first tranche remain skipped until matching product controls exist.
   - External/default-app and SSH remote cases still need orchestrator-provided environment state before activation.
   - Later tranches should continue filling `e2e/files-docs-history.spec.ts` with compact, matrix-backed rows and avoid duplicating the app-shell file operations/history cluster.
+
+### 2026-06-08 third recovery tranche
+
+- Spec commit: `4dbc52938b725465ae94c4495d974d34b6ad591d`
+- Files touched:
+  - `e2e/files-docs-history.spec.ts`
+  - `docs/e2e-parallel-campaign/agents/files-docs-history.md`
+- Shared helpers touched: none. `docs/e2e-parallel-campaign/broadcasts.md` did not need an update.
+- Scenario counts:
+  - Active matrix rows added: 7
+  - Skipped product-gap rows added: 0
+  - Env-gated external-state rows added: 0
+  - Total matrix rows added: 7
+  - Cumulative lane matrix rows: 21 active, 3 skipped, 2 env-gated
+- Active coverage IDs:
+  - `FDH-A15` Successful markdown file rename from the File Explorer context menu
+  - `FDH-A16` Successful nested docs folder rename preserving child documents
+  - `FDH-A17` Cancelled file delete preserves the selected markdown document
+  - `FDH-A18` Confirmed file delete removes only the selected markdown document
+  - `FDH-A19` Context-menu Preview opens the archive markdown document
+  - `FDH-A20` History filter Escape reset restores all seeded results
+  - `FDH-A21` Successful History detail can be marked human-validated
+- Checks run:
+  - `npx prettier --write e2e/files-docs-history.spec.ts`
+  - `npx prettier --check e2e/files-docs-history.spec.ts`
+  - `npx eslint e2e/files-docs-history.spec.ts`
+  - `npx tsc --noEmit --target ES2020 --lib ES2020,DOM,DOM.Iterable --module ESNext --skipLibCheck --moduleResolution bundler --allowImportingTsExtensions --resolveJsonModule --isolatedModules --strict --noUnusedLocals --noUnusedParameters --noFallthroughCasesInSwitch --types node,@playwright/test e2e/files-docs-history.spec.ts e2e/fixtures/electron-app.ts`
+  - `git diff --check`
+- E2E execution deliberately not run:
+  - Did not run `npm run test:e2e`, `playwright test`, headed/UI E2E, or `npx playwright test --list`.
+  - Did not use the E2E Runner skill.
+- Remaining lane target:
+  - Source objective remains about 349 additional active scenarios plus skipped/env-gated rows.
+  - First three tranches add 21 active rows, leaving roughly 328 active scenarios to author in later tranches.
+- Blockers and follow-up:
+  - Product gaps from the first tranche remain skipped until matching product controls exist.
+  - External/default-app and SSH remote cases still need orchestrator-provided environment state before activation.
+  - Later tranches should keep authoring compact, matrix-backed rows in `e2e/files-docs-history.spec.ts` and avoid full E2E validation until the orchestrator opens that phase.
