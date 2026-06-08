@@ -99,6 +99,14 @@ const twelfthTrancheActiveScenarioMatrix = [
 	{ id: 'DA-061', title: 'closes the successful debug package modal with Done' },
 ] as const;
 
+const thirteenthTrancheActiveScenarioMatrix = [
+	{ id: 'DA-062', title: 'toggles update pre-release checks back to stable releases' },
+	{ id: 'DA-063', title: 'refreshes update check errors from the modal header' },
+	{ id: 'DA-064', title: 'closes update check errors with Escape' },
+	{ id: 'DA-065', title: 'closes debug package creation errors from footer cancel' },
+	{ id: 'DA-066', title: 'copies successful debug package paths from the success state' },
+] as const;
+
 const debugPackagePreviewCategories = [
 	{ id: 'logs', name: 'System Logs', included: true, sizeEstimate: '~50 KB' },
 	{ id: 'errors', name: 'Error States', included: true, sizeEstimate: '< 10 KB' },
@@ -1905,6 +1913,124 @@ test.describe('Debug and accessibility smoke tranche', () => {
 			await debugPackageDialog.getByRole('button', { name: 'Done' }).click();
 
 			await expect(debugPackageDialog).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${thirteenthTrancheActiveScenarioMatrix[0].id} ${thirteenthTrancheActiveScenarioMatrix[0].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubUpdateWorkflowHandlers(launched.electronApp, { checkMode: 'current' });
+			const updateDialog = await openUpdateCheckFromQuickActions(launched.window);
+			const betaToggle = updateDialog.getByText('Include pre-release updates');
+
+			await expect(updateDialog.getByText('Maestro v0.16.0')).toBeVisible();
+			await betaToggle.click();
+			await expect
+				.poll(async () => (await getStubbedUpdateState(launched.electronApp))?.checkCalls)
+				.toEqual([false, true]);
+			await expect(updateDialog.getByText('Maestro v0.16.0-beta.1')).toBeVisible();
+			await betaToggle.click();
+
+			await expect
+				.poll(async () => (await getStubbedUpdateState(launched.electronApp))?.checkCalls)
+				.toEqual([false, true, false]);
+			await expect(updateDialog.getByText('Maestro v0.16.0')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${thirteenthTrancheActiveScenarioMatrix[1].id} ${thirteenthTrancheActiveScenarioMatrix[1].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubUpdateWorkflowHandlers(launched.electronApp, { checkMode: 'error' });
+			const updateDialog = await openUpdateCheckFromQuickActions(launched.window);
+			await expect(updateDialog.getByText('Update check failure sentinel')).toBeVisible();
+			expect((await getStubbedUpdateState(launched.electronApp))?.checkCalls).toEqual([false]);
+
+			await updateDialog.getByTitle('Refresh').click();
+
+			await expect
+				.poll(async () => (await getStubbedUpdateState(launched.electronApp))?.checkCalls.length)
+				.toBe(2);
+			expect((await getStubbedUpdateState(launched.electronApp))?.checkCalls).toEqual([
+				false,
+				false,
+			]);
+			await expect(updateDialog.getByText('Update check failure sentinel')).toBeVisible();
+			await expect(
+				updateDialog.getByRole('button', { name: /Check releases manually/ })
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${thirteenthTrancheActiveScenarioMatrix[2].id} ${thirteenthTrancheActiveScenarioMatrix[2].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubUpdateWorkflowHandlers(launched.electronApp, { checkMode: 'error' });
+			const updateDialog = await openUpdateCheckFromQuickActions(launched.window);
+			await expect(updateDialog.getByText('Update check failure sentinel')).toBeVisible();
+
+			await launched.window.keyboard.press('Escape');
+
+			await expect(updateDialog).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${thirteenthTrancheActiveScenarioMatrix[3].id} ${thirteenthTrancheActiveScenarioMatrix[3].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubDebugPackageHandlers(launched.electronApp, { createMode: 'error' });
+			const debugPackageDialog = await openDebugPackageFromQuickActions(launched.window);
+
+			await debugPackageDialog.getByRole('button', { name: 'Generate Package' }).click();
+			await expect(debugPackageDialog.getByText('Failed to create package')).toBeVisible();
+			await debugPackageDialog.getByRole('button', { name: 'Cancel' }).click();
+
+			await expect(debugPackageDialog).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${thirteenthTrancheActiveScenarioMatrix[4].id} ${thirteenthTrancheActiveScenarioMatrix[4].title}`, async () => {
+		const resultPath = path.join(os.tmpdir(), 'maestro-debug-accessibility-copy.zip');
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await launched.window.evaluate(() => {
+				Object.defineProperty(navigator, 'clipboard', {
+					configurable: true,
+					value: {
+						writeText: async (text: string) => {
+							(
+								window as typeof window & { __maestroDebugPackageCopiedPath?: string }
+							).__maestroDebugPackageCopiedPath = text;
+						},
+					},
+				});
+			});
+			await stubDebugPackageHandlers(launched.electronApp, { resultPath });
+			const debugPackageDialog = await openDebugPackageFromQuickActions(launched.window);
+
+			await debugPackageDialog.getByRole('button', { name: 'Generate Package' }).click();
+			await expect(debugPackageDialog.getByText('Package created successfully!')).toBeVisible();
+			await debugPackageDialog.getByTitle('Copy file path to clipboard').click();
+
+			await expect
+				.poll(() =>
+					launched.window.evaluate(
+						() =>
+							(window as typeof window & { __maestroDebugPackageCopiedPath?: string })
+								.__maestroDebugPackageCopiedPath
+					)
+				)
+				.toBe(resultPath);
 		} finally {
 			await launched.cleanup();
 		}
