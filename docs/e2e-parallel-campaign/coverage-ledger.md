@@ -2,9 +2,9 @@
 
 Source of truth: `docs/e2e-coverage-campaign.md`.
 
-Current active tests: 878
+Current active tests: 883
 Target active tests: 3,025
-Remaining matrix-backed active scenarios: 2,147
+Remaining matrix-backed active scenarios: 2,142
 
 ## Matrix
 
@@ -15,9 +15,9 @@ Remaining matrix-backed active scenarios: 2,147
 | Codex AI terminal workflows                                    | `autorun-ai-terminal`     |             33 |           170 |       137 |
 | Command terminal workflows                                     | `shell-tabs-command`      |             56 |            95 |        39 |
 | Tabs and tab overlays                                          | `shell-tabs-command`      |             53 |           120 |        67 |
-| File explorer and file operations                              | `files-docs-history`      |             31 |           140 |       109 |
-| File preview and document rendering                            | `files-docs-history`      |             38 |           180 |       142 |
-| History panel                                                  | `files-docs-history`      |             24 |            95 |        71 |
+| File explorer and file operations                              | `files-docs-history`      |             33 |           140 |       107 |
+| File preview and document rendering                            | `files-docs-history`      |             39 |           180 |       141 |
+| History panel                                                  | `files-docs-history`      |             26 |            95 |        69 |
 | Auto Run                                                       | `autorun-ai-terminal`     |            134 |           260 |       126 |
 | New Agent Wizard and inline wizard                             | `wizard-settings-prompts` |             40 |           190 |       150 |
 | Settings                                                       | `wizard-settings-prompts` |             62 |           190 |       128 |
@@ -38,7 +38,7 @@ Remaining matrix-backed active scenarios: 2,147
 | -------------------------- | ----------------------: | ------------------------: | -----------------------------------: | -------------------- |
 | `agent-crud-provider`      |                      95 |                         9 |                                    2 | `bb4fbcce2`          |
 | `shell-tabs-command`       |                     190 |                        76 |                                    0 | `44e98a94f`          |
-| `files-docs-history`       |                     322 |                        27 |                                    5 | `0f93fb81d`          |
+| `files-docs-history`       |                     317 |                        32 |                                    5 | `6f8134fb9`          |
 | `autorun-ai-terminal`      |                     263 |                        10 |                                    0 | `cd804bebf`          |
 | `wizard-settings-prompts`  |                     348 |                        24 |                                    1 | `a210a889e`          |
 | `git-groupchat-playbooks`  |                     338 |                        25 |                                    7 | `b40916745`          |
@@ -76,3 +76,4 @@ Remaining matrix-backed active scenarios: 2,147
 - 2026-06-08: accepted `codex/e2e-wizard-settings-prompts` through `a210a889e`; authored 6 additional active wizard/settings/prompt scenarios and a static review assertion fix. No E2E execution was run.
 - 2026-06-08: accepted `codex/e2e-git-groupchat-playbooks` through `b40916745`; authored 7 additional active Git/playbook scenarios plus 2 skipped/env-gated rows. No E2E execution was run.
 - 2026-06-08: stopped `maestro-e2e-stats-graph-symphony-t5` after it stalled with no worktree changes; no stats/Symphony rows were accepted in this tranche.
+- 2026-06-08: accepted `codex/e2e-files-docs-history` through `6f8134fb9`; authored 5 additional active file/docs/history fallback scenarios after tranche-6 PM2 workers failed with Codex managed-account 503 errors before authoring. No E2E execution was run.
