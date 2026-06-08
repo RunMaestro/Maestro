@@ -59,6 +59,14 @@ const seventhTrancheActiveScenarioMatrix = [
 	{ id: 'DA-036', title: 'shows crash recovery actions for failed agent processes' },
 ] as const;
 
+const eighthTrancheActiveScenarioMatrix = [
+	{ id: 'DA-037', title: 'clears recoverable active errors from the banner control' },
+	{ id: 'DA-038', title: 'shows context-limit recovery actions for token exhaustion' },
+	{ id: 'DA-039', title: 'shows retry guidance for rate-limited agent errors' },
+	{ id: 'DA-040', title: 'shows generic recovery for missing provider sessions' },
+	{ id: 'DA-041', title: 'shows generic recovery for unknown agent errors' },
+] as const;
+
 const debugPackagePreviewCategories = [
 	{ id: 'logs', name: 'System Logs', included: true, sizeEstimate: '~50 KB' },
 	{ id: 'errors', name: 'Error States', included: true, sizeEstimate: '< 10 KB' },
@@ -1390,6 +1398,116 @@ test.describe('Debug and accessibility smoke tranche', () => {
 			await expect(errorModal.getByText('Restart Agent')).toBeVisible();
 			await expect(errorModal.getByText('Respawn the agent process')).toBeVisible();
 			await expect(errorModal.getByText('Start New Session')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${eighthTrancheActiveScenarioMatrix[0].id} ${eighthTrancheActiveScenarioMatrix[0].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench({
+			agentError: {
+				type: 'network_error',
+				message: 'Debug accessibility clearable banner sentinel',
+				recoverable: true,
+			},
+		});
+		try {
+			await expect(
+				launched.window.getByText('Debug accessibility clearable banner sentinel')
+			).toBeVisible();
+			await launched.window.getByTitle('Dismiss error').click();
+
+			await expect(
+				launched.window.getByText('Debug accessibility clearable banner sentinel')
+			).toHaveCount(0);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${eighthTrancheActiveScenarioMatrix[1].id} ${eighthTrancheActiveScenarioMatrix[1].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench({
+			agentError: {
+				type: 'token_exhaustion',
+				message: 'Debug accessibility context limit sentinel',
+				recoverable: true,
+			},
+		});
+		try {
+			await launched.window.getByRole('button', { name: 'View Details' }).click();
+			const errorModal = launched.window.getByRole('dialog', { name: 'Context Limit Reached' });
+
+			await expect(
+				errorModal.getByText('Debug accessibility context limit sentinel')
+			).toBeVisible();
+			await expect(errorModal.getByText('Start New Session')).toBeVisible();
+			await expect(
+				errorModal.getByText('Begin a fresh conversation with full context')
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${eighthTrancheActiveScenarioMatrix[2].id} ${eighthTrancheActiveScenarioMatrix[2].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench({
+			agentError: {
+				type: 'rate_limited',
+				message: 'Debug accessibility rate limit sentinel',
+				recoverable: true,
+			},
+		});
+		try {
+			await launched.window.getByRole('button', { name: 'View Details' }).click();
+			const errorModal = launched.window.getByRole('dialog', { name: 'Rate Limit Exceeded' });
+
+			await expect(errorModal.getByText('Debug accessibility rate limit sentinel')).toBeVisible();
+			await expect(errorModal.getByText('Try Again')).toBeVisible();
+			await expect(errorModal.getByText('Wait a moment and retry')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${eighthTrancheActiveScenarioMatrix[3].id} ${eighthTrancheActiveScenarioMatrix[3].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench({
+			agentError: {
+				type: 'session_not_found',
+				message: 'Debug accessibility missing session sentinel',
+				recoverable: true,
+			},
+		});
+		try {
+			await launched.window.getByRole('button', { name: 'View Details' }).click();
+			const errorModal = launched.window.getByRole('dialog', { name: 'Error' });
+
+			await expect(
+				errorModal.getByText('Debug accessibility missing session sentinel')
+			).toBeVisible();
+			await expect(errorModal.getByText('Try Again')).toBeVisible();
+			await expect(errorModal.getByText('Retry the operation')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${eighthTrancheActiveScenarioMatrix[4].id} ${eighthTrancheActiveScenarioMatrix[4].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench({
+			agentError: {
+				type: 'unknown',
+				message: 'Debug accessibility unknown error sentinel',
+				recoverable: true,
+			},
+		});
+		try {
+			await launched.window.getByRole('button', { name: 'View Details' }).click();
+			const errorModal = launched.window.getByRole('dialog', { name: 'Error' });
+
+			await expect(
+				errorModal.getByText('Debug accessibility unknown error sentinel')
+			).toBeVisible();
+			await expect(errorModal.getByText('Try Again')).toBeVisible();
+			await expect(errorModal.getByRole('button', { name: 'Dismiss' })).toBeVisible();
 		} finally {
 			await launched.cleanup();
 		}
