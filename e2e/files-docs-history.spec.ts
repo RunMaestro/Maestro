@@ -55,6 +55,11 @@ const activeScenarioMatrix = [
 	{ id: 'FDH-A30', title: 'cancels failed History deletion from the confirmation modal' },
 	{ id: 'FDH-A31', title: 'shows History no-match state and restores entries after Escape' },
 	{ id: 'FDH-A32', title: 'dismisses folder delete confirmation with Escape' },
+	{ id: 'FDH-A33', title: 'copies markdown preview content from the toolbar' },
+	{ id: 'FDH-A34', title: 'copies markdown preview path from the toolbar' },
+	{ id: 'FDH-A35', title: 'exits unsaved plain text edits without writing to disk' },
+	{ id: 'FDH-A36', title: 'saves markdown preview edits only after content changes' },
+	{ id: 'FDH-A37', title: 'shows file preview no-match search state and recovers' },
 ] as const;
 
 const skippedScenarioMatrix = [
@@ -891,6 +896,90 @@ test.describe(`Files docs history lane matrix (${activeScenarioMatrix.length} ac
 		await getFileTreeRow(window, 'docs');
 		await expect(fs.existsSync(seededWorkbench.runbookPath)).toBe(true);
 		await expect(fs.existsSync(seededWorkbench.archivePath)).toBe(true);
+	});
+
+	test(`${activeScenarioMatrix[32].id} ${activeScenarioMatrix[32].title}`, async ({
+		electronApp,
+	}) => {
+		await expect(window.getByRole('heading', { name: 'Files Docs History Matrix' })).toBeVisible();
+		await electronApp.evaluate(({ clipboard }) => clipboard.writeText(''));
+
+		await window.getByTitle('Copy content to clipboard').click();
+
+		await expect(window.getByText('Content Copied to Clipboard')).toBeVisible();
+		await expect
+			.poll(() => electronApp.evaluate(({ clipboard }) => clipboard.readText()))
+			.toBe(fs.readFileSync(seededWorkbench.readmePath, 'utf-8'));
+	});
+
+	test(`${activeScenarioMatrix[33].id} ${activeScenarioMatrix[33].title}`, async ({
+		electronApp,
+	}) => {
+		await expect(window.getByRole('heading', { name: 'Files Docs History Matrix' })).toBeVisible();
+		await electronApp.evaluate(({ clipboard }) => clipboard.writeText(''));
+
+		await window.getByTitle('Copy full path to clipboard').click();
+
+		await expect(window.getByText('File Path Copied to Clipboard')).toBeVisible();
+		await expect
+			.poll(() => electronApp.evaluate(({ clipboard }) => clipboard.readText()))
+			.toBe(seededWorkbench.readmePath);
+	});
+
+	test(`${activeScenarioMatrix[34].id} ${activeScenarioMatrix[34].title}`, async () => {
+		const unsavedSentinel = 'Unsaved plain text sentinel.';
+		await helpers.openRightPanelTab(window, 'Files');
+		await window.getByTitle('Expand all folders').click();
+		await window.getByText('plain.txt').dblclick();
+		await expect(window.getByText('Plain preview starting line.')).toBeVisible();
+
+		await window.getByTitle(/Edit file/).click();
+		const editor = window.locator('textarea').first();
+		await expect(editor).toBeVisible();
+		await editor.fill(`Plain preview starting line.\n${unsavedSentinel}\n`);
+		await editor.press('Escape');
+
+		await expect(editor).toBeHidden();
+		await expect(window.getByText('Plain preview starting line.')).toBeVisible();
+		await expect(window.getByText(unsavedSentinel)).toBeHidden();
+		await expect(fs.readFileSync(seededWorkbench.plainTextPath, 'utf-8')).not.toContain(
+			unsavedSentinel
+		);
+	});
+
+	test(`${activeScenarioMatrix[35].id} ${activeScenarioMatrix[35].title}`, async () => {
+		const markdownSentinel = 'Saved markdown edit sentinel.';
+		await expect(window.getByRole('heading', { name: 'Files Docs History Matrix' })).toBeVisible();
+
+		await window.getByTitle(/Edit file/).click();
+		const saveButton = window.getByRole('button', { name: 'Save' });
+		const editor = window.locator('textarea').first();
+		await expect(editor).toBeVisible();
+		await expect(saveButton).toBeDisabled();
+
+		await editor.fill(`# Files Docs History Matrix\n\n${markdownSentinel}\n`);
+		await expect(saveButton).toBeEnabled();
+		await saveButton.click();
+
+		await expect(window.getByText('File Saved')).toBeVisible();
+		await expect(saveButton).toBeDisabled();
+		await expect(fs.readFileSync(seededWorkbench.readmePath, 'utf-8')).toContain(markdownSentinel);
+	});
+
+	test(`${activeScenarioMatrix[36].id} ${activeScenarioMatrix[36].title}`, async () => {
+		await window.keyboard.press('Control+f');
+		const fileSearch = window.getByPlaceholder(
+			'Search in file... (Enter: next, Shift+Enter: prev)'
+		);
+		await expect(fileSearch).toBeVisible();
+
+		await fileSearch.fill('__missing_preview_search_term__');
+		await expect(window.getByText('No matches')).toBeVisible();
+
+		await fileSearch.fill('Preview');
+		await expect(window.getByText('1/2')).toBeVisible();
+		await fileSearch.press('Escape');
+		await expect(fileSearch).toBeHidden();
 	});
 
 	for (const scenario of skippedScenarioMatrix) {
