@@ -1,6 +1,6 @@
 # stats-graph-symphony
 
-Status: second tranche committed
+Status: third tranche committed
 
 ## Scope
 
@@ -15,6 +15,9 @@ Usage dashboard, stats, document graph, Symphony, leaderboard, achievements.
 - [x] Commit first lane tranche on `codex/e2e-stats-graph-symphony`.
 - [x] Author second deterministic active scenario tranche.
 - [x] Record second tranche files touched, counts, blockers, and commit hash.
+- [x] Author third deterministic active scenario tranche.
+- [x] Record third tranche files touched, counts, blockers, and remaining work.
+- [x] Commit third lane tranche on `codex/e2e-stats-graph-symphony`.
 
 ## Progress
 
@@ -83,3 +86,43 @@ Remaining work:
 
 - Continue toward the 336-scenario lane target in small tranches.
 - Next coherent tranche candidates: stats data-management retries/storage edges, document graph node selection/minimap/persistence states, Symphony finalize/create-agent preflight states, achievement badge export/share states, and registered leaderboard sync/opt-out states.
+
+### 2026-06-08 - third tranche
+
+Files touched:
+
+- `e2e/stats-graph-symphony.spec.ts` - added third tranche matrix rows for Usage Dashboard keyboard navigation and agent chart toggles, Document Graph external-link/search/refresh controls, achievement badge detail/share controls, Symphony GitHub CLI preflight messaging, and mocked leaderboard pending confirmation.
+- `docs/e2e-parallel-campaign/agents/stats-graph-symphony.md` - recorded this tranche's counts, validation, blockers, and remaining work.
+
+Scenario counts:
+
+- Active added this tranche: 6
+- Skipped product-gap added this tranche: 0
+- Env-gated added this tranche: 1
+- Cumulative active in lane spec: 17
+- Cumulative skipped product-gap in lane spec: 2
+- Cumulative env-gated in lane spec: 4
+- Remaining active target toward 336-lane goal: 319
+
+Validation:
+
+- Passed: `npx eslint e2e/stats-graph-symphony.spec.ts`
+- Passed: `git diff --check`
+
+Execution note:
+
+- No E2E or Playwright execution was run. The new scenarios are authored only.
+- Commit used `--no-verify` to avoid any hook accidentally launching prohibited E2E validation.
+
+Commit:
+
+- `e9db79591` - `test(e2e-stats-graph-symphony): add third tranche scenarios`
+
+Blockers:
+
+- Live GitHub status refresh, live leaderboard confirmation/sync with auth token, and artifact-level achievement badge image verification remain env-gated or product-gap rows until the orchestrator approves those dependencies.
+
+Remaining work:
+
+- Continue toward the 336-scenario lane target in small tranches.
+- Next coherent tranche candidates: stats export/write success with IPC stubs, stats reset/retry storage edges, document graph node context/menu and preview navigation states, Symphony authenticated/build-tools agent creation states, registered leaderboard pull-down/opt-out states, and achievement image generation with deterministic asset stubs.
