@@ -27,6 +27,22 @@ type AgentSessionSearchCall = {
 	mode: string;
 };
 
+type AgentSessionUpdate =
+	| {
+			type: 'starred';
+			agentId: string;
+			projectPath: string;
+			sessionId: string;
+			starred: boolean;
+	  }
+	| {
+			type: 'name';
+			agentId: string;
+			projectPath: string;
+			sessionId: string;
+			name: string | null;
+	  };
+
 const PROVIDER_MATRIX: ProviderMatrixRow[] = [
 	{
 		id: 'codex',
@@ -207,6 +223,7 @@ async function stubCodexAgentSessionStorage(electronApp: ElectronApplication, pr
 		({ ipcMain }, payload) => {
 			const state = globalThis as typeof globalThis & {
 				__maestroE2eAgentCrudSearchCalls?: AgentSessionSearchCall[];
+				__maestroE2eAgentCrudSessionUpdates?: AgentSessionUpdate[];
 			};
 			const now = Date.parse('2026-02-03T05:00:00Z');
 			const sessions = [
@@ -273,6 +290,7 @@ async function stubCodexAgentSessionStorage(electronApp: ElectronApplication, pr
 			};
 
 			state.__maestroE2eAgentCrudSearchCalls = [];
+			state.__maestroE2eAgentCrudSessionUpdates = [];
 
 			ipcMain.removeHandler('agentSessions:getOrigins');
 			ipcMain.handle(
@@ -322,15 +340,59 @@ async function stubCodexAgentSessionStorage(electronApp: ElectronApplication, pr
 					});
 
 					if (requestedPath !== payload.projectPath || !query.trim()) return [];
+					const preview =
+						mode === 'user'
+							? 'Review provider setup sentinel coverage.'
+							: 'Provider setup response sentinel for Agent Sessions search.';
 
 					return [
 						{
 							sessionId: 'codex-provider-review',
-							matchType: 'assistant',
-							matchPreview: 'Provider setup response sentinel for Agent Sessions search.',
+							matchType: mode === 'user' ? 'user' : 'assistant',
+							matchPreview: preview,
 							matchCount: 1,
 						},
 					];
+				}
+			);
+			ipcMain.removeHandler('agentSessions:setSessionStarred');
+			ipcMain.handle(
+				'agentSessions:setSessionStarred',
+				async (
+					_event,
+					agentId: string,
+					requestedPath: string,
+					sessionId: string,
+					starred: boolean
+				) => {
+					state.__maestroE2eAgentCrudSessionUpdates?.push({
+						type: 'starred',
+						agentId,
+						projectPath: requestedPath,
+						sessionId,
+						starred,
+					});
+					return true;
+				}
+			);
+			ipcMain.removeHandler('agentSessions:setSessionName');
+			ipcMain.handle(
+				'agentSessions:setSessionName',
+				async (
+					_event,
+					agentId: string,
+					requestedPath: string,
+					sessionId: string,
+					name: string | null
+				) => {
+					state.__maestroE2eAgentCrudSessionUpdates?.push({
+						type: 'name',
+						agentId,
+						projectPath: requestedPath,
+						sessionId,
+						name,
+					});
+					return true;
 				}
 			);
 		},
@@ -344,6 +406,15 @@ async function getAgentSessionSearchCalls(electronApp: ElectronApplication) {
 			__maestroE2eAgentCrudSearchCalls?: AgentSessionSearchCall[];
 		};
 		return state.__maestroE2eAgentCrudSearchCalls || [];
+	});
+}
+
+async function getAgentSessionUpdates(electronApp: ElectronApplication) {
+	return electronApp.evaluate(() => {
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eAgentCrudSessionUpdates?: AgentSessionUpdate[];
+		};
+		return state.__maestroE2eAgentCrudSessionUpdates || [];
 	});
 }
 
@@ -759,6 +830,181 @@ test.describe('Agent Sessions provider storage', () => {
 				projectPath: seeded.projectDir,
 				query: 'provider setup response sentinel',
 				mode: 'all',
+			});
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('opens a generic provider session detail view with stored messages and cost', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: [seeded.sessions[0]],
+		});
+
+		try {
+			await stubCodexAgentSessionStorage(launched.electronApp, seeded.projectDir);
+
+			const agentSessions = await openAgentSessions(launched.window, 'Matrix Codex Agent');
+			await agentSessions.getByText('Provider Setup Review').click();
+
+			await expect(
+				agentSessions.getByText('Review provider setup sentinel coverage.')
+			).toBeVisible();
+			await expect(
+				agentSessions.getByText('Provider setup response sentinel for Agent Sessions search.')
+			).toBeVisible();
+			await expect(agentSessions.getByText('$0.05')).toBeVisible();
+
+			await launched.window.keyboard.press('Escape');
+			await expect(agentSessions.getByPlaceholder('Search all content...')).toBeVisible();
+			await expect(agentSessions.getByText('Provider Setup Review')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('favorites a generic provider session through shared agent session storage', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: [seeded.sessions[0]],
+		});
+
+		try {
+			await stubCodexAgentSessionStorage(launched.electronApp, seeded.projectDir);
+
+			const agentSessions = await openAgentSessions(launched.window, 'Matrix Codex Agent');
+			await agentSessions.getByText('Provider Setup Review').click();
+			await agentSessions.getByTitle('Remove from favorites').click();
+
+			await expect(agentSessions.getByTitle('Add to favorites')).toBeVisible();
+			await expect(await getAgentSessionUpdates(launched.electronApp)).toContainEqual({
+				type: 'starred',
+				agentId: 'codex',
+				projectPath: seeded.projectDir,
+				sessionId: 'codex-provider-review',
+				starred: false,
+			});
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('renames a generic provider session detail through shared storage', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: [seeded.sessions[0]],
+		});
+
+		try {
+			await stubCodexAgentSessionStorage(launched.electronApp, seeded.projectDir);
+
+			const agentSessions = await openAgentSessions(launched.window, 'Matrix Codex Agent');
+			await agentSessions.getByText('Provider Setup Review').click();
+			await agentSessions.getByTitle('Rename session').click();
+			const renameInput = agentSessions.getByPlaceholder('Enter session name...');
+			await renameInput.fill('Provider Detail Review');
+			await renameInput.press('Enter');
+
+			await expect(agentSessions.getByText('Provider Detail Review')).toBeVisible();
+			await expect(await getAgentSessionUpdates(launched.electronApp)).toContainEqual({
+				type: 'name',
+				agentId: 'codex',
+				projectPath: seeded.projectDir,
+				sessionId: 'codex-provider-review',
+				name: 'Provider Detail Review',
+			});
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('routes Agent Sessions user and assistant search modes through generic storage', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: [seeded.sessions[0]],
+		});
+
+		try {
+			await stubCodexAgentSessionStorage(launched.electronApp, seeded.projectDir);
+
+			const agentSessions = await openAgentSessions(launched.window, 'Matrix Codex Agent');
+			await agentSessions.getByRole('button', { name: /All/ }).click();
+			await agentSessions.getByRole('button', { name: /My Messages/ }).click();
+			const userSearch = agentSessions.getByPlaceholder('Search your messages...');
+			await userSearch.fill('review provider setup');
+			await expect(
+				agentSessions.getByText('Review provider setup sentinel coverage.')
+			).toBeVisible();
+
+			await userSearch.fill('');
+			await agentSessions.getByRole('button', { name: /User/ }).click();
+			await agentSessions.getByRole('button', { name: /AI Responses/ }).click();
+			const assistantSearch = agentSessions.getByPlaceholder('Search AI responses...');
+			await assistantSearch.fill('provider setup response');
+			await expect(
+				agentSessions.getByText('Provider setup response sentinel for Agent Sessions search.')
+			).toBeVisible();
+
+			const calls = await getAgentSessionSearchCalls(launched.electronApp);
+			await expect(calls).toContainEqual({
+				agentId: 'codex',
+				projectPath: seeded.projectDir,
+				query: 'review provider setup',
+				mode: 'user',
+			});
+			await expect(calls).toContainEqual({
+				agentId: 'codex',
+				projectPath: seeded.projectDir,
+				query: 'provider setup response',
+				mode: 'assistant',
+			});
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('adds a name to an unnamed generic provider session and resumes it by keyboard', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: [seeded.sessions[0]],
+		});
+
+		try {
+			await stubCodexAgentSessionStorage(launched.electronApp, seeded.projectDir);
+
+			const agentSessions = await openAgentSessions(launched.window, 'Matrix Codex Agent');
+			await agentSessions.getByText('Unnamed provider setup sentinel').click();
+			await expect(agentSessions.getByText('Unnamed provider setup sentinel.')).toBeVisible();
+			await agentSessions.getByTitle('Add session name').click();
+			const renameInput = agentSessions.getByPlaceholder('Enter session name...');
+			await renameInput.fill('Named Provider Session');
+			await renameInput.press('Enter');
+
+			await expect(agentSessions.getByText('Named Provider Session')).toBeVisible();
+			const messagesRegion = agentSessions.getByRole('region', { name: 'Session messages' });
+			await messagesRegion.focus();
+			await messagesRegion.press('Enter');
+
+			await expect(agentSessions.getByText('Agent Sessions for Matrix Codex Agent')).toBeHidden();
+			await expect(
+				launched.window
+					.locator('[data-tab-id]')
+					.filter({ hasText: 'Named Provider Session' })
+					.first()
+			).toBeVisible();
+			await expect(launched.window.getByText('Unnamed provider setup sentinel.')).toBeVisible();
+			await expect(await getAgentSessionUpdates(launched.electronApp)).toContainEqual({
+				type: 'name',
+				agentId: 'codex',
+				projectPath: seeded.projectDir,
+				sessionId: 'codex-provider-unnamed',
+				name: 'Named Provider Session',
 			});
 		} finally {
 			await launched.cleanup();
