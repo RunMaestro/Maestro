@@ -30,6 +30,13 @@ E2E checkpoint:
 - Duration: 3.9m
 - Runner: Playwright Electron fixtures. Agent-Browser was not used for Electron because the installed CLI did not expose the documented `skills` subcommand during this checkpoint.
 
+Parallel E2E authoring checkpoint:
+
+- Campaign: `docs/e2e-parallel-prompt.md`
+- Result: in progress
+- Execution policy: Playwright E2E tests are intentionally not executed in this phase.
+- Validation plan: static review of authored selectors, fixtures, scenario names, assertions, and lane progress logs; runtime validation is deferred to a later sharded execution phase.
+
 Integration checkpoint:
 
 - Command: `/tmp/run-maestro-full-integration-coverage.sh`
