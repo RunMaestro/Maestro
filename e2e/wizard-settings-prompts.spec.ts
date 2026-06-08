@@ -10,6 +10,33 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
+interface WizardE2ETab {
+	id: string;
+	saveToHistory?: boolean;
+	readOnlyMode?: boolean;
+}
+
+interface WizardE2ESession {
+	id: string;
+	aiTabs?: WizardE2ETab[];
+}
+
+declare global {
+	interface Window {
+		maestro: {
+			settings: {
+				get: {
+					(key: 'encoreFeatures'): Promise<{ directorNotes?: boolean } | undefined>;
+					(key: string): Promise<unknown>;
+				};
+			};
+			sessions: {
+				getAll: () => Promise<WizardE2ESession[]>;
+			};
+		};
+	}
+}
+
 const activeScenarioMatrix = [
 	{ id: 'WSP-001', title: 'opens and closes the New Agent Wizard' },
 	{ id: 'WSP-002', title: 'renders seeded inline wizard controls' },
@@ -35,6 +62,11 @@ const activeScenarioMatrix = [
 	{ id: 'WSP-022', title: 'toggles Prompt Composer History state from the toolbar' },
 	{ id: 'WSP-023', title: 'toggles Prompt Composer Read-Only state from the toolbar' },
 	{ id: 'WSP-024', title: "keeps Director's Notes AI Overview disabled until synopsis is ready" },
+	{ id: 'WSP-025', title: 'persists the Settings default History toggle' },
+	{ id: 'WSP-026', title: 'persists the Settings automatic tab naming toggle' },
+	{ id: 'WSP-027', title: 'persists the Display file icon theme selection' },
+	{ id: 'WSP-028', title: 'persists the Display auto-hide menu bar toggle' },
+	{ id: 'WSP-029', title: 'toggles Prompt Composer enter-to-send mode' },
 ];
 
 const envGatedScenarioMatrix = [
@@ -793,6 +825,155 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 
 			await directorNotesDialog.getByRole('button', { name: 'Help' }).click();
 			await expect(directorNotesDialog.getByText("What are Director's Notes?")).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[24].id} ${activeScenarioMatrix[24].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				defaultSaveToHistory: false,
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'General',
+				'Default History Toggle'
+			);
+
+			await settingsDialog.getByText('Enable "History" by default for new tabs').click();
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('defaultSaveToHistory');
+					});
+				})
+				.toBe(true);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[25].id} ${activeScenarioMatrix[25].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				automaticTabNamingEnabled: true,
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'General',
+				'Automatic Tab Naming'
+			);
+
+			await settingsDialog.getByText('Automatically name tabs based on first message').click();
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('automaticTabNamingEnabled');
+					});
+				})
+				.toBe(false);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[26].id} ${activeScenarioMatrix[26].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				fileExplorerIconTheme: 'default',
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'Display',
+				'Files Pane Icon Theme'
+			);
+
+			await settingsDialog.getByRole('button', { name: /^Rich$/ }).click();
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('fileExplorerIconTheme');
+					});
+				})
+				.toBe('rich');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[27].id} ${activeScenarioMatrix[27].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				autoHideMenuBar: false,
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(launched.window, 'Display', 'Window Chrome');
+			const autoHideRow = settingsDialog
+				.getByText('Auto-hide menu bar')
+				.locator('xpath=ancestor::div[contains(@class, "flex")][1]');
+
+			await autoHideRow.getByRole('switch').click();
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('autoHideMenuBar');
+					});
+				})
+				.toBe(true);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[28].id} ${activeScenarioMatrix[28].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				enterToSendAI: true,
+			},
+		});
+
+		try {
+			const composerInput = await openPromptComposer(launched.window);
+			const composerModal = composerInput.locator(
+				'xpath=ancestor::div[contains(@class, "fixed")][1]'
+			);
+			await composerModal.getByTitle(/Switch to .*Enter to send/).click();
+
+			await expect(composerModal.getByTitle('Switch to Enter to send')).toBeVisible();
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('enterToSendAI');
+					});
+				})
+				.toBe(false);
 		} finally {
 			await launched.cleanup();
 		}
