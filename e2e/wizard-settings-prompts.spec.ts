@@ -29,6 +29,12 @@ const activeScenarioMatrix = [
 	{ id: 'WSP-016', title: 'filters Settings shortcuts to Prompt Composer commands' },
 	{ id: 'WSP-017', title: "hides Director's Notes quick action when disabled" },
 	{ id: 'WSP-018', title: "enables Director's Notes settings from Encore features" },
+	{ id: 'WSP-019', title: 'marks unavailable New Agent Wizard providers as coming soon' },
+	{ id: 'WSP-020', title: 'persists the Settings theme picker selection' },
+	{ id: 'WSP-021', title: 'persists the Settings Display font size selection' },
+	{ id: 'WSP-022', title: 'toggles Prompt Composer History state from the toolbar' },
+	{ id: 'WSP-023', title: 'toggles Prompt Composer Read-Only state from the toolbar' },
+	{ id: 'WSP-024', title: "keeps Director's Notes AI Overview disabled until synopsis is ready" },
 ];
 
 const envGatedScenarioMatrix = [
@@ -635,6 +641,158 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 					});
 				})
 				.toBe(true);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[18].id} ${activeScenarioMatrix[18].title}`, async ({ window }) => {
+		await helpers.openWizardViaShortcut(window);
+		const wizardDialog = window.getByRole('dialog', { name: 'New Agent Wizard' });
+
+		await expect(
+			wizardDialog.getByRole('button', { name: /Gemini CLI \(coming soon\)/ })
+		).toBeDisabled();
+		await expect(
+			wizardDialog.getByRole('button', { name: /Qwen3 Coder \(coming soon\)/ })
+		).toBeDisabled();
+		await expect(wizardDialog.getByText('Soon').first()).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[19].id} ${activeScenarioMatrix[19].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(launched.window, 'Themes', 'dark Mode');
+			const solarizedTheme = settingsDialog.locator('[data-theme-id="solarized-light"]');
+
+			await expect(solarizedTheme).toContainText('Solarized');
+			await solarizedTheme.click();
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('activeThemeId');
+					});
+				})
+				.toBe('solarized-light');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[20].id} ${activeScenarioMatrix[20].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(launched.window, 'Display', 'Font Size');
+
+			await settingsDialog.getByRole('button', { name: /^Large$/ }).click();
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('fontSize');
+					});
+				})
+				.toBe(16);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[21].id} ${activeScenarioMatrix[21].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await openPromptComposer(launched.window);
+			await launched.window.getByTitle(/Save to History/).click();
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						const sessions = await window.maestro.sessions.getAll();
+						const primarySession = sessions.find((session) => session.id === 'wsp-primary-agent');
+						const primaryTab = primarySession?.aiTabs?.find(
+							(tab) => tab.id === 'wsp-primary-agent-tab'
+						);
+						return Boolean(primaryTab?.saveToHistory);
+					});
+				})
+				.toBe(true);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[22].id} ${activeScenarioMatrix[22].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await openPromptComposer(launched.window);
+			await launched.window.getByRole('button', { name: /Read-Only/ }).click();
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						const sessions = await window.maestro.sessions.getAll();
+						const primarySession = sessions.find((session) => session.id === 'wsp-primary-agent');
+						const primaryTab = primarySession?.aiTabs?.find(
+							(tab) => tab.id === 'wsp-primary-agent-tab'
+						);
+						return Boolean(primaryTab?.readOnlyMode);
+					});
+				})
+				.toBe(true);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[23].id} ${activeScenarioMatrix[23].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				encoreFeatures: {
+					directorNotes: true,
+				},
+			},
+		});
+
+		try {
+			const quickActionsDialog = await openQuickActions(launched.window);
+			await quickActionsDialog
+				.getByPlaceholder('Type a command or jump to agent...')
+				.fill("Director's Notes");
+			await quickActionsDialog.getByRole('button', { name: /Director's Notes/ }).click();
+
+			const directorNotesDialog = launched.window.getByRole('dialog', {
+				name: "Director's Notes",
+			});
+			await expect(directorNotesDialog.getByRole('button', { name: 'Help' })).toBeVisible();
+			await expect(
+				directorNotesDialog.getByRole('button', { name: 'Unified History' })
+			).toBeVisible();
+			await expect(directorNotesDialog.getByRole('button', { name: 'AI Overview' })).toBeDisabled();
+
+			await directorNotesDialog.getByRole('button', { name: 'Help' }).click();
+			await expect(directorNotesDialog.getByText("What are Director's Notes?")).toBeVisible();
 		} finally {
 			await launched.cleanup();
 		}
