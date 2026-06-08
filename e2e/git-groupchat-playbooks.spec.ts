@@ -90,6 +90,14 @@ const fourthTrancheSkippedScenarioMatrix = [
 	},
 ] as const;
 
+const fifthTrancheActiveScenarioMatrix = [
+	{ id: 'GGP-A26', title: 'changes Create Pull Request target branch before submission' },
+	{ id: 'GGP-A27', title: 'cancels Create Pull Request without submitting IPC payload' },
+	{ id: 'GGP-A28', title: 'previews marketplace playbook document content' },
+	{ id: 'GGP-A29', title: 'records full marketplace import payload details' },
+	{ id: 'GGP-A30', title: 'filters Quick Actions to seeded group chat results' },
+] as const;
+
 function runGit(cwd: string, args: string[]) {
 	execFileSync('git', args, {
 		cwd,
@@ -1406,6 +1414,130 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 			await openSpecPanel.getByRole('button', { name: 'Check for Updates' }).click();
 			await expect(openSpecPanel.getByText('v2.0.2')).toBeVisible();
 			await expect(settingsDialog.getByText('/openspec.proposal')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${fifthTrancheActiveScenarioMatrix[0].id}: ${fifthTrancheActiveScenarioMatrix[0].title}`, async () => {
+		const launched = await launchGitGroupChatPlaybooksWorkbench({ withWorktreeChild: true });
+		try {
+			await stubPullRequestCreation(
+				launched.electronApp,
+				{ installed: true, authenticated: true },
+				{ success: true, prUrl: 'https://github.com/RunMaestro/Maestro/pull/126' }
+			);
+			await activateSession(launched.window, launched.worktreeBranch);
+			const quickActionsDialog = await openQuickActions(launched.window);
+			await quickActionsDialog
+				.getByPlaceholder('Type a command or jump to agent...')
+				.fill('Create Pull Request');
+			await quickActionsDialog.getByRole('button', { name: /Create Pull Request/ }).click();
+
+			const prModal = modalRootByHeading(launched.window, 'Create Pull Request');
+			await prModal.locator('select').selectOption(launched.worktreeBranch);
+			await prModal.getByPlaceholder('PR title...').fill('E2E alternate target branch');
+			await prModal.getByRole('button', { name: 'Create PR' }).click();
+
+			await expect
+				.poll(
+					async () => (await getStubbedCreatePRRequest(launched.electronApp))?.targetBranch ?? null
+				)
+				.toBe(launched.worktreeBranch);
+			await expect(prModal).toBeHidden({ timeout: 5000 });
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${fifthTrancheActiveScenarioMatrix[1].id}: ${fifthTrancheActiveScenarioMatrix[1].title}`, async () => {
+		const launched = await launchGitGroupChatPlaybooksWorkbench({ withWorktreeChild: true });
+		try {
+			await stubPullRequestCreation(
+				launched.electronApp,
+				{ installed: true, authenticated: true },
+				{ success: true, prUrl: 'https://github.com/RunMaestro/Maestro/pull/127' }
+			);
+			await activateSession(launched.window, launched.worktreeBranch);
+			const quickActionsDialog = await openQuickActions(launched.window);
+			await quickActionsDialog
+				.getByPlaceholder('Type a command or jump to agent...')
+				.fill('Create Pull Request');
+			await quickActionsDialog.getByRole('button', { name: /Create Pull Request/ }).click();
+
+			const prModal = modalRootByHeading(launched.window, 'Create Pull Request');
+			await prModal.getByPlaceholder('PR title...').fill('E2E canceled PR title');
+			await prModal.getByRole('button', { name: 'Cancel' }).click();
+
+			await expect(prModal).toBeHidden();
+			expect(await getStubbedCreatePRRequest(launched.electronApp)).toBeNull();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${fifthTrancheActiveScenarioMatrix[2].id}: ${fifthTrancheActiveScenarioMatrix[2].title}`, async () => {
+		const launched = await launchGitGroupChatPlaybooksWorkbench();
+		try {
+			await stubMarketplaceForPlaybookExchange(launched.electronApp);
+			const marketplaceDialog = await openPlaybookExchangeFromQuickActions(launched.window);
+
+			await marketplaceDialog.getByRole('button', { name: /Git Lane Review/ }).click();
+			await marketplaceDialog.getByRole('button', { name: 'review-plan.md' }).click();
+			await expect(marketplaceDialog.getByText('Review Plan')).toBeVisible();
+			await expect(marketplaceDialog.getByText('Review plan body for the git lane.')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${fifthTrancheActiveScenarioMatrix[3].id}: ${fifthTrancheActiveScenarioMatrix[3].title}`, async () => {
+		const launched = await launchGitGroupChatPlaybooksWorkbench();
+		try {
+			await stubMarketplaceForPlaybookExchange(launched.electronApp);
+			const marketplaceDialog = await openPlaybookExchangeFromQuickActions(launched.window);
+
+			await marketplaceDialog.getByRole('button', { name: /Git Lane Review/ }).click();
+			await marketplaceDialog
+				.locator('#marketplace-target-folder')
+				.fill('collaboration/group-chat-import');
+			await marketplaceDialog.getByRole('button', { name: 'Import Playbook' }).click();
+
+			await expect
+				.poll(async () => {
+					const request = await getStubbedMarketplaceImport(launched.electronApp);
+					return request
+						? {
+								playbookId: request.playbookId,
+								targetFolderName: request.targetFolderName,
+								sessionId: request.sessionId,
+								autoRunFolderPath: request.autoRunFolderPath,
+							}
+						: null;
+				})
+				.toMatchObject({
+					playbookId: 'git-lane-review',
+					targetFolderName: 'collaboration/group-chat-import',
+					sessionId: expect.stringContaining('git-groupchat-playbooks-'),
+					autoRunFolderPath: expect.stringContaining('Playbooks'),
+				});
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${fifthTrancheActiveScenarioMatrix[4].id}: ${fifthTrancheActiveScenarioMatrix[4].title}`, async () => {
+		const launched = await launchGitGroupChatPlaybooksWorkbench();
+		try {
+			const quickActionsDialog = await openQuickActions(launched.window);
+			await quickActionsDialog
+				.getByPlaceholder('Type a command or jump to agent...')
+				.fill('Git Lane Room');
+
+			await expect(
+				quickActionsDialog.getByRole('button', { name: /Group Chat: Git Lane Room/ })
+			).toBeVisible();
+			await expect(quickActionsDialog.getByRole('button', { name: /View Git Diff/ })).toBeHidden();
 		} finally {
 			await launched.cleanup();
 		}
