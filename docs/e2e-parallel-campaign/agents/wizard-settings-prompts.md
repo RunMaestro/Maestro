@@ -1,6 +1,6 @@
 # wizard-settings-prompts
 
-Status: tranche 9 fallback in progress
+Status: tranche 9 fallback committed
 
 ## Scope
 
@@ -262,7 +262,7 @@ New Agent Wizard, inline wizard, Settings, Director Notes, prompt composer.
 - Review:
   - Focused static review found one high-risk collapsed Shell Configuration selector; fixed before commit.
 - Not run by instruction: `npm run test:e2e`, `playwright test`, headed/UI E2E, and Playwright listing.
-- Implementation commit hash: pending.
+- Implementation commit hash: `26159c767`.
 - Blockers/remaining work:
   - PM2-managed Codex worker runtime is still blocked by 503 managed-account availability errors.
   - Real provider account and live agent handoff coverage remains env-gated.
