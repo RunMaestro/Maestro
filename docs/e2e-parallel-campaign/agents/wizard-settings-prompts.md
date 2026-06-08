@@ -1,6 +1,6 @@
 # wizard-settings-prompts
 
-Status: tranche 3 validated, pending implementation commit hash record
+Status: tranche 3 committed locally
 
 ## Scope
 
@@ -84,7 +84,7 @@ New Agent Wizard, inline wizard, Settings, Director Notes, prompt composer.
   - `npx eslint e2e/wizard-settings-prompts.spec.ts` - passed.
   - `git diff --check -- e2e/wizard-settings-prompts.spec.ts docs/e2e-parallel-campaign/agents/wizard-settings-prompts.md` - passed.
 - Not run by instruction: `npm run test:e2e`, `playwright test`, headed/UI E2E, and Playwright listing.
-- Implementation commit hash: pending.
+- Implementation commit hash: `e0b608ca8`.
 - Blockers/remaining work:
   - Real provider account and live agent handoff coverage remains env-gated.
   - Remaining matrix-backed target: about 354 active/skipped rows after this tranche.
