@@ -51,6 +51,14 @@ const sixthTrancheActiveScenarioMatrix = [
 	{ id: 'DA-031', title: 'confirms Process Monitor kill confirmation with Enter' },
 ] as const;
 
+const seventhTrancheActiveScenarioMatrix = [
+	{ id: 'DA-032', title: 'opens active network error modal with JSON details' },
+	{ id: 'DA-033', title: 'dismisses active error details without clearing the banner' },
+	{ id: 'DA-034', title: 'hides dismiss controls for non-recoverable permission errors' },
+	{ id: 'DA-035', title: 'shows authentication recovery actions for expired credentials' },
+	{ id: 'DA-036', title: 'shows crash recovery actions for failed agent processes' },
+] as const;
+
 const debugPackagePreviewCategories = [
 	{ id: 'logs', name: 'System Logs', included: true, sizeEstimate: '~50 KB' },
 	{ id: 'errors', name: 'Error States', included: true, sizeEstimate: '< 10 KB' },
@@ -119,7 +127,38 @@ type StubbedActiveProcessState = {
 	killCalls: string[];
 };
 
-function createDebugAccessibilityWorkbench() {
+type DebugAccessibilityAgentErrorType =
+	| 'auth_expired'
+	| 'token_exhaustion'
+	| 'rate_limited'
+	| 'network_error'
+	| 'agent_crashed'
+	| 'permission_denied'
+	| 'session_not_found'
+	| 'unknown';
+
+type DebugAccessibilityAgentError = {
+	type: DebugAccessibilityAgentErrorType;
+	message: string;
+	recoverable: boolean;
+	agentId: string;
+	sessionId: string;
+	timestamp: number;
+	raw?: {
+		exitCode?: number;
+		stderr?: string;
+		stdout?: string;
+		errorLine?: string;
+	};
+	parsedJson?: unknown;
+};
+
+type DebugAccessibilityWorkbenchOptions = {
+	agentError?: Partial<DebugAccessibilityAgentError> &
+		Pick<DebugAccessibilityAgentError, 'type' | 'message' | 'recoverable'>;
+};
+
+function createDebugAccessibilityWorkbench(options: DebugAccessibilityWorkbenchOptions = {}) {
 	const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-e2e-debug-accessibility-'));
 	const projectDir = path.join(homeDir, 'project');
 	const now = Date.parse('2026-05-29T12:00:00.000Z');
@@ -134,6 +173,22 @@ function createDebugAccessibilityWorkbench() {
 			text: 'Debug accessibility seeded transcript sentinel.',
 		},
 	];
+	const agentError: DebugAccessibilityAgentError | undefined = options.agentError
+		? {
+				agentId: 'codex',
+				sessionId,
+				timestamp: now + 250,
+				raw: {
+					exitCode: 7,
+					stderr: 'debug accessibility active error stderr sentinel',
+				},
+				parsedJson: {
+					code: 'debug_accessibility_active_error',
+					retryable: options.agentError.recoverable,
+				},
+				...options.agentError,
+			}
+		: undefined;
 
 	fs.mkdirSync(projectDir, { recursive: true });
 	fs.writeFileSync(
@@ -150,7 +205,7 @@ function createDebugAccessibilityWorkbench() {
 				id: sessionId,
 				name: 'Debug Accessibility Agent',
 				toolType: 'codex',
-				state: 'idle',
+				state: agentError ? 'error' : 'idle',
 				cwd: projectDir,
 				fullPath: projectDir,
 				projectRoot: projectDir,
@@ -179,13 +234,17 @@ function createDebugAccessibilityWorkbench() {
 						name: 'Main',
 						starred: false,
 						logs: aiLogs,
+						agentError,
 						inputValue: '',
 						stagedImages: [],
 						createdAt: now,
-						state: 'idle',
+						state: agentError ? 'error' : 'idle',
 					},
 				],
 				activeTabId: aiTabId,
+				agentError,
+				agentErrorTabId: agentError ? aiTabId : undefined,
+				agentErrorPaused: !!agentError,
 				closedTabHistory: [],
 				filePreviewTabs: [],
 				activeFileTabId: null,
@@ -196,8 +255,8 @@ function createDebugAccessibilityWorkbench() {
 	};
 }
 
-async function launchDebugAccessibilityWorkbench() {
-	const seeded = createDebugAccessibilityWorkbench();
+async function launchDebugAccessibilityWorkbench(options: DebugAccessibilityWorkbenchOptions = {}) {
+	const seeded = createDebugAccessibilityWorkbench(options);
 	const launched = await helpers.launchAppWithState({
 		homeDir: seeded.homeDir,
 		sessions: seeded.sessions,
@@ -1212,6 +1271,125 @@ test.describe('Debug and accessibility smoke tranche', () => {
 				.poll(async () => (await getStubbedActiveProcessState(launched.electronApp))?.killCalls)
 				.toEqual([aiProcess.sessionId]);
 			await expect(processMonitor.getByText('No running processes')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${seventhTrancheActiveScenarioMatrix[0].id} ${seventhTrancheActiveScenarioMatrix[0].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench({
+			agentError: {
+				type: 'network_error',
+				message: 'Debug accessibility active network error sentinel',
+				recoverable: true,
+			},
+		});
+		try {
+			await expect(
+				launched.window.getByText('Debug accessibility active network error sentinel')
+			).toBeVisible();
+			await launched.window.getByRole('button', { name: 'View Details' }).click();
+
+			const errorModal = launched.window.getByRole('dialog', { name: 'Connection Error' });
+			await expect(errorModal).toBeVisible();
+			await expect(errorModal.getByText('Debug Accessibility Agent')).toBeVisible();
+			await expect(errorModal.getByText('Retry Connection')).toBeVisible();
+			await expect(errorModal.getByRole('button', { name: 'Dismiss' })).toBeVisible();
+			await errorModal.getByRole('button', { name: 'Error Details (JSON)' }).click();
+			await expect(errorModal.getByText('debug_accessibility_active_error')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${seventhTrancheActiveScenarioMatrix[1].id} ${seventhTrancheActiveScenarioMatrix[1].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench({
+			agentError: {
+				type: 'network_error',
+				message: 'Debug accessibility dismissible details sentinel',
+				recoverable: true,
+			},
+		});
+		try {
+			await launched.window.getByRole('button', { name: 'View Details' }).click();
+			const errorModal = launched.window.getByRole('dialog', { name: 'Connection Error' });
+			await expect(errorModal).toBeVisible();
+
+			await errorModal.getByRole('button', { name: 'Dismiss' }).click();
+			await expect(errorModal).toBeHidden();
+			await expect(
+				launched.window.getByText('Debug accessibility dismissible details sentinel')
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${seventhTrancheActiveScenarioMatrix[2].id} ${seventhTrancheActiveScenarioMatrix[2].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench({
+			agentError: {
+				type: 'permission_denied',
+				message: 'Debug accessibility non-recoverable permission sentinel',
+				recoverable: false,
+			},
+		});
+		try {
+			await expect(
+				launched.window.getByText('Debug accessibility non-recoverable permission sentinel')
+			).toBeVisible();
+			await expect(launched.window.getByTitle('Dismiss error')).toHaveCount(0);
+			await launched.window.getByRole('button', { name: 'View Details' }).click();
+
+			const errorModal = launched.window.getByRole('dialog', { name: 'Permission Denied' });
+			await expect(errorModal).toBeVisible();
+			await expect(errorModal.getByRole('button', { name: 'Dismiss' })).toHaveCount(0);
+			await expect(errorModal.getByText('Try Again')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${seventhTrancheActiveScenarioMatrix[3].id} ${seventhTrancheActiveScenarioMatrix[3].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench({
+			agentError: {
+				type: 'auth_expired',
+				message: 'Debug accessibility expired credentials sentinel',
+				recoverable: true,
+			},
+		});
+		try {
+			await launched.window.getByRole('button', { name: 'View Details' }).click();
+			const errorModal = launched.window.getByRole('dialog', { name: 'Authentication Required' });
+
+			await expect(
+				errorModal.getByText('Debug accessibility expired credentials sentinel')
+			).toBeVisible();
+			await expect(errorModal.getByText('Re-authenticate')).toBeVisible();
+			await expect(errorModal.getByText('Log in again to restore access')).toBeVisible();
+			await expect(errorModal.getByText('Start New Session')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${seventhTrancheActiveScenarioMatrix[4].id} ${seventhTrancheActiveScenarioMatrix[4].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench({
+			agentError: {
+				type: 'agent_crashed',
+				message: 'Debug accessibility crashed process sentinel',
+				recoverable: true,
+			},
+		});
+		try {
+			await launched.window.getByRole('button', { name: 'View Details' }).click();
+			const errorModal = launched.window.getByRole('dialog', { name: 'Agent Error' });
+
+			await expect(
+				errorModal.getByText('Debug accessibility crashed process sentinel')
+			).toBeVisible();
+			await expect(errorModal.getByText('Restart Agent')).toBeVisible();
+			await expect(errorModal.getByText('Respawn the agent process')).toBeVisible();
+			await expect(errorModal.getByText('Start New Session')).toBeVisible();
 		} finally {
 			await launched.cleanup();
 		}
