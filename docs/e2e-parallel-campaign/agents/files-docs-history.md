@@ -1,6 +1,6 @@
 # files-docs-history
 
-Status: fourth recovery tranche committed
+Status: sixth recovery fallback committed
 
 ## Scope
 
@@ -22,6 +22,9 @@ File explorer, file preview, document rendering, history.
 - [x] Author deterministic active scenarios for the fourth recovery tranche.
 - [x] Record files touched and scenario counts for the fourth tranche.
 - [x] Commit fourth tranche spec work on `codex/e2e-files-docs-history`.
+- [x] Author deterministic active scenarios for the sixth recovery fallback.
+- [x] Record files touched and scenario counts for the sixth fallback.
+- [x] Commit sixth fallback work on `codex/e2e-files-docs-history-fallback-2`.
 
 ## Progress
 
@@ -214,3 +217,41 @@ File explorer, file preview, document rendering, history.
   - Product gaps from the first tranche remain skipped until matching product controls exist.
   - External/default-app and SSH remote cases still need orchestrator-provided environment state before activation.
   - This tranche was authored as an isolated fallback after all tranche-6 PM2 workers failed before editing because the Codex runtime returned 503 service-unavailable responses.
+
+### 2026-06-08 sixth recovery fallback
+
+- Spec commit: `4c21283ca`
+- Files touched:
+  - `e2e/files-docs-history.spec.ts`
+  - `docs/e2e-parallel-campaign/agents/files-docs-history.md`
+- Shared helpers touched: none. `docs/e2e-parallel-campaign/broadcasts.md` did not need an update.
+- Scenario counts:
+  - Active matrix rows added: 5
+  - Skipped product-gap rows added: 0
+  - Env-gated external-state rows added: 0
+  - Total matrix rows added: 5
+  - Cumulative lane matrix rows: 37 active, 3 skipped, 2 env-gated
+- Active coverage IDs:
+  - `FDH-A33` Markdown preview content copy verifies clipboard payload
+  - `FDH-A34` Markdown preview path copy verifies clipboard payload
+  - `FDH-A35` Unsaved plain text edit Escape exit without disk write
+  - `FDH-A36` Markdown edit save button disabled/enabled state plus disk write
+  - `FDH-A37` File preview no-match search recovery
+- Checks run:
+  - `/Users/jeffscottward/Github/tools/Maestro/node_modules/.bin/prettier --write e2e/files-docs-history.spec.ts`
+  - `/Users/jeffscottward/Github/tools/Maestro/node_modules/.bin/prettier --check e2e/files-docs-history.spec.ts`
+  - `/Users/jeffscottward/Github/tools/Maestro/node_modules/.bin/eslint --config /Users/jeffscottward/Github/tools/Maestro/eslint.config.mjs e2e/files-docs-history.spec.ts`
+  - `/Users/jeffscottward/Github/tools/Maestro/node_modules/.bin/tsc --noEmit --target ES2020 --lib ES2020,DOM,DOM.Iterable --module ESNext --skipLibCheck --moduleResolution bundler --allowImportingTsExtensions --resolveJsonModule --isolatedModules --strict --noUnusedLocals --noUnusedParameters --noFallthroughCasesInSwitch --types node,@playwright/test e2e/files-docs-history.spec.ts e2e/fixtures/electron-app.ts`
+  - `git diff --check`
+  - Active-row/duplicate-ID/`.only`/prohibited-command static guard
+  - Focused code-reviewer pass; no critical or high findings after clipboard assertions were added
+- E2E execution deliberately not run:
+  - Did not run `npm run test:e2e`, `playwright test`, headed/UI E2E, or `npx playwright test --list`.
+  - Did not use the E2E Runner skill.
+- Remaining lane target:
+  - Source objective remains about 349 additional active scenarios plus skipped/env-gated rows.
+  - First six tranches add 37 active rows, leaving roughly 312 active scenarios to author in later tranches.
+- Blockers and follow-up:
+  - Product gaps from the first tranche remain skipped until matching product controls exist.
+  - External/default-app and SSH remote cases still need orchestrator-provided environment state before activation.
+  - Manual fallback authoring remains the productive path while detached PM2 Codex lane workers are affected by managed-account runtime instability.
