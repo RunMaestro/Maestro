@@ -1,6 +1,6 @@
 # autorun-ai-terminal
 
-Status: first tranche authored
+Status: second tranche authored
 
 ## Scope
 
@@ -42,4 +42,33 @@ Remaining work:
 
 - Expand the rest of the Auto Run matrix.
 - Expand Codex AI terminal queue, attachment, slash-command, transcript action, interrupt, and error-state cases.
+- Run actual Playwright/E2E validation only after orchestrator approval.
+
+Second tranche:
+
+- Added 5 active matrix-backed tests to `e2e/autorun-ai-terminal.spec.ts`.
+- New active tests: 5.
+- Cumulative active tests: 10.
+- Skipped tests: 0.
+- Env-gated tests: 0.
+- Shared helper edits: none.
+- Live provider execution: none; no E2E validation/listing was run.
+- Campaign head before this tranche: `ca4241a13`.
+
+Covered:
+
+- Duplicate Auto Run document creation guard for a Codex lane agent.
+- File-backed Auto Run document creation and edit-mode handoff.
+- External Auto Run document refresh discovery.
+- Long queued Codex prompt expansion with attachment count.
+- Queued Codex prompt removal confirmation.
+
+Validation:
+
+- `npx eslint e2e/autorun-ai-terminal.spec.ts` passed.
+
+Remaining work:
+
+- Matrix-backed remaining after this tranche: 263.
+- Continue with small tranches for Codex AI terminal slash-command, transcript action, interrupt, and error-state cases without duplicating existing app-shell coverage.
 - Run actual Playwright/E2E validation only after orchestrator approval.

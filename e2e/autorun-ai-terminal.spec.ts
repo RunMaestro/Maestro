@@ -139,9 +139,65 @@ async function launchLaneWorkbench() {
 	return { ...seeded, ...launched };
 }
 
+function createQueuedLaneWorkbench() {
+	const seeded = createLaneWorkbench();
+	const session = seeded.sessions[0]!;
+	const activeTab = session.aiTabs[0]!;
+	const longQueuedPrompt = Array.from(
+		{ length: 18 },
+		(_, index) =>
+			`Codex queued long prompt line ${String(index + 1).padStart(2, '0')} for Auto Run lane coverage`
+	).join('\n');
+
+	session.executionQueue = [
+		{
+			id: 'queued-autorun-ai-long-message',
+			timestamp: Date.now() - 1_000,
+			tabId: activeTab.id,
+			type: 'message',
+			text: longQueuedPrompt,
+			images: ['data:image/png;base64,iVBORw0KGgo='],
+			tabName: activeTab.name || 'Main',
+			readOnlyMode: true,
+		},
+		{
+			id: 'queued-autorun-ai-command',
+			timestamp: Date.now() - 500,
+			tabId: activeTab.id,
+			type: 'command',
+			command: '/history',
+			commandDescription: 'Generate a synopsis of this agent history',
+			tabName: activeTab.name || 'Main',
+		},
+	];
+
+	return { ...seeded, longQueuedPrompt };
+}
+
+async function launchQueuedLaneWorkbench() {
+	const seeded = createQueuedLaneWorkbench();
+	const launched = await helpers.launchAppWithState({
+		homeDir: seeded.homeDir,
+		sessions: seeded.sessions,
+	});
+
+	return { ...seeded, ...launched };
+}
+
 async function openAutoRunPanel(page: Page) {
 	await helpers.openRightPanelTab(page, 'Auto Run');
 	await expect(page.locator('[data-tour="autorun-panel"]')).toBeVisible();
+}
+
+async function waitForSeededAutoRunDocumentList(page: Page) {
+	const selector = page.locator('[data-tour="autorun-document-selector"]');
+	await selector
+		.getByRole('button', { name: /Phase 1\.md/ })
+		.first()
+		.click();
+	await expect(page.getByRole('button', { name: /Phase 2\.md/ })).toBeVisible();
+	await page.keyboard.press('Escape');
+	return selector;
 }
 
 async function openCodexAiTerminal(page: Page) {
@@ -290,6 +346,132 @@ test.describe('Auto Run and Codex AI Terminal', () => {
 			await expect(
 				launched.window.getByText('Codex lane stubbed spawn response sentinel')
 			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('prevents duplicate Auto Run document creation in a Codex lane agent', async () => {
+		const launched = await launchLaneWorkbench();
+		try {
+			await openAutoRunPanel(launched.window);
+			await waitForSeededAutoRunDocumentList(launched.window);
+			await launched.window.getByTitle('Create new document').click();
+
+			const dialog = launched.window.getByRole('dialog', { name: 'Create New Document' });
+			await expect(dialog).toBeVisible();
+			await dialog.getByLabel('Document Name').fill('Phase 1');
+
+			await expect(dialog.getByText('A document with this name already exists')).toBeVisible();
+			await expect(dialog.getByRole('button', { name: 'Create' })).toBeDisabled();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('creates a file-backed Auto Run document for the Codex lane agent', async () => {
+		const launched = await launchLaneWorkbench();
+		const phaseThreePath = path.join(launched.autoRunFolder, 'Phase 3.md');
+		try {
+			await openAutoRunPanel(launched.window);
+			await waitForSeededAutoRunDocumentList(launched.window);
+			await launched.window.getByTitle('Create new document').click();
+
+			const dialog = launched.window.getByRole('dialog', { name: 'Create New Document' });
+			await dialog.getByLabel('Document Name').fill('Phase 3');
+			await dialog.getByRole('button', { name: 'Create' }).click();
+
+			await expect(dialog).toBeHidden();
+			await expect.poll(() => fs.existsSync(phaseThreePath)).toBe(true);
+			await expect(launched.window.getByText('Phase 3.md')).toBeVisible();
+			await expect(launched.window.getByPlaceholder(/Capture notes/)).toBeEditable();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('refreshes externally added Auto Run documents for the Codex lane agent', async () => {
+		const launched = await launchLaneWorkbench();
+		try {
+			await openAutoRunPanel(launched.window);
+			const selector = await waitForSeededAutoRunDocumentList(launched.window);
+
+			fs.writeFileSync(
+				path.join(launched.autoRunFolder, 'Phase 3.md'),
+				`# Phase 3: External Refresh
+
+## Tasks
+
+- [ ] Verify refreshed Codex lane document
+
+Externally refreshed Codex Auto Run sentinel.
+`,
+				'utf-8'
+			);
+			await launched.window.getByTitle('Refresh document list').click();
+
+			await expect(launched.window.getByText('Found 1 new document')).toBeVisible();
+			await selector
+				.getByRole('button', { name: /Phase 1\.md/ })
+				.first()
+				.click();
+			await launched.window.getByRole('button', { name: /Phase 3\.md/ }).click();
+			await expect(
+				launched.window.getByRole('heading', { name: 'Phase 3: External Refresh' })
+			).toBeVisible();
+			await expect(
+				launched.window.getByText('Externally refreshed Codex Auto Run sentinel.')
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('expands a long queued Codex prompt with attachment count in the lane terminal', async () => {
+		const launched = await launchQueuedLaneWorkbench();
+		try {
+			await openCodexAiTerminal(launched.window);
+
+			await expect(launched.window.getByText('QUEUED (2)')).toBeVisible();
+			await expect(launched.window.getByText('1 image attached')).toBeVisible();
+			await expect(
+				launched.window.getByText('Codex queued long prompt line 18 for Auto Run lane coverage')
+			).toBeHidden();
+
+			await launched.window.getByRole('button', { name: /Show all/ }).click();
+			await expect(
+				launched.window.getByText('Codex queued long prompt line 18 for Auto Run lane coverage')
+			).toBeVisible();
+
+			await launched.window.getByRole('button', { name: 'Show less' }).click();
+			await expect(
+				launched.window.getByText('Codex queued long prompt line 18 for Auto Run lane coverage')
+			).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('removes a queued Codex prompt only after confirmation in the lane terminal', async () => {
+		const launched = await launchQueuedLaneWorkbench();
+		try {
+			await openCodexAiTerminal(launched.window);
+
+			await expect(launched.window.getByText('QUEUED (2)')).toBeVisible();
+			await launched.window.getByTitle('Remove from queue').first().click();
+			const confirmDialog = launched.window.getByText('Remove Queued Message?').locator('..');
+			await expect(confirmDialog).toBeVisible();
+			await confirmDialog.getByRole('button', { name: 'Cancel' }).click();
+			await expect(launched.window.getByText('QUEUED (2)')).toBeVisible();
+
+			await launched.window.getByTitle('Remove from queue').first().click();
+			await confirmDialog.getByRole('button', { name: 'Remove' }).click();
+
+			await expect(launched.window.getByText('QUEUED (1)')).toBeVisible();
+			await expect(
+				launched.window.getByText('Codex queued long prompt line 01 for Auto Run lane coverage')
+			).toBeHidden();
+			await expect(launched.window.getByText('/history')).toBeVisible();
 		} finally {
 			await launched.cleanup();
 		}
