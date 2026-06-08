@@ -65,6 +65,31 @@ const thirdTrancheSkippedScenarioMatrix = [
 	},
 ] as const;
 
+const fourthTrancheActiveScenarioMatrix = [
+	{ id: 'GGP-A19', title: 'renders Git Log commit refs, body, stats, and diff details' },
+	{ id: 'GGP-A20', title: 'shows GitHub CLI installation guidance in Create Pull Request' },
+	{ id: 'GGP-A21', title: 'keeps Create Pull Request open after a stubbed gh failure' },
+	{ id: 'GGP-A22', title: 'filters Playbook Exchange results by category and search text' },
+	{ id: 'GGP-A23', title: 'requires a target folder before importing a marketplace playbook' },
+	{ id: 'GGP-A24', title: 'refreshes Spec Kit metadata and command prompts from IPC stubs' },
+	{ id: 'GGP-A25', title: 'refreshes OpenSpec metadata and command prompts from IPC stubs' },
+] as const;
+
+const fourthTrancheSkippedScenarioMatrix = [
+	{
+		id: 'GGP-S06',
+		title: 'verifies live multi-agent group chat fan-in across provider accounts',
+		reason:
+			'Env-gated: requires real provider accounts, live agent launches, and authenticated account state.',
+	},
+	{
+		id: 'GGP-S07',
+		title: 'refreshes Spec Kit and OpenSpec prompts from live GitHub archives',
+		reason:
+			'Env-gated: requires live GitHub network access and should not run during deterministic authoring.',
+	},
+] as const;
+
 function runGit(cwd: string, args: string[]) {
 	execFileSync('git', args, {
 		cwd,
@@ -341,6 +366,60 @@ async function openSettings(page: Page) {
 	return settingsDialog;
 }
 
+function commandPanelByHeading(page: Page, heading: string) {
+	return page
+		.getByText(heading, { exact: true })
+		.locator('xpath=ancestor::div[contains(@class, "space-y-4")][1]');
+}
+
+async function stubDetailedGitLogState(electronApp: ElectronApplication) {
+	await electronApp.evaluate(({ ipcMain }) => {
+		ipcMain.removeHandler('git:log');
+		ipcMain.handle('git:log', async () => ({
+			entries: [
+				{
+					hash: 'abcdef1234567890abcdef1234567890abcdef12',
+					shortHash: 'abcdef1',
+					author: 'E2E Bot',
+					date: '2026-05-29T12:00:00.000Z',
+					refs: ['HEAD -> main', 'tag: v-e2e'],
+					subject: 'feat: seed detailed git log',
+					additions: 1,
+					deletions: 1,
+				},
+			],
+			error: null,
+		}));
+		ipcMain.removeHandler('git:commitCount');
+		ipcMain.handle('git:commitCount', async () => ({ count: 3, error: null }));
+		ipcMain.removeHandler('git:show');
+		ipcMain.handle('git:show', async () => ({
+			stdout: [
+				'commit abcdef1234567890abcdef1234567890abcdef12',
+				'Author: E2E Bot <e2e@example.com>',
+				'Date:   Fri May 29 12:00:00 2026 +0000',
+				'',
+				'    feat: seed detailed git log',
+				'',
+				'    Body sentinel for detailed git log coverage.',
+				'',
+				'---',
+				' README.md | 2 +-',
+				' 1 file changed, 1 insertion(+), 1 deletion(-)',
+				'',
+				'diff --git a/README.md b/README.md',
+				'index 1111111..2222222 100644',
+				'--- a/README.md',
+				'+++ b/README.md',
+				'@@ -1 +1 @@',
+				'-Old git log line',
+				'+New git log sentinel',
+			].join('\n'),
+			stderr: '',
+		}));
+	});
+}
+
 async function stubGitLogState(
 	electronApp: ElectronApplication,
 	state: { mode: 'error' | 'empty' }
@@ -578,6 +657,86 @@ async function stubEmptyMarketplaceManifest(electronApp: ElectronApplication) {
 			manifest,
 			fromCache: false,
 			cacheAge: 0,
+		}));
+	});
+}
+
+async function stubMarketplaceFilteringState(electronApp: ElectronApplication) {
+	await electronApp.evaluate(({ ipcMain }) => {
+		const manifest = {
+			lastUpdated: '2026-05-29',
+			playbooks: [
+				{
+					id: 'git-release-review',
+					title: 'Git Release Review',
+					description: 'Review branch diffs before release.',
+					category: 'Engineering',
+					author: 'RunMaestro',
+					tags: ['git', 'release'],
+					lastUpdated: '2026-05-29',
+					path: 'engineering/git-release-review',
+					documents: [],
+					loopEnabled: false,
+					maxLoops: null,
+					prompt: null,
+					source: 'local',
+				},
+				{
+					id: 'openspec-proposal-review',
+					title: 'OpenSpec Proposal Review',
+					description: 'Validate openspec proposal coverage.',
+					category: 'QA',
+					author: 'RunMaestro',
+					tags: ['openspec', 'proposal'],
+					lastUpdated: '2026-05-29',
+					path: 'qa/openspec-proposal-review',
+					documents: [],
+					loopEnabled: false,
+					maxLoops: null,
+					prompt: null,
+					source: 'local',
+				},
+				{
+					id: 'group-chat-briefing',
+					title: 'Group Chat Briefing',
+					description: 'Coordinate seeded group chat review handoff.',
+					category: 'Collaboration',
+					author: 'RunMaestro',
+					tags: ['group-chat', 'handoff'],
+					lastUpdated: '2026-05-29',
+					path: 'collaboration/group-chat-briefing',
+					documents: [],
+					loopEnabled: true,
+					maxLoops: 2,
+					prompt: null,
+					source: 'local',
+				},
+			],
+		};
+
+		ipcMain.removeHandler('marketplace:getManifest');
+		ipcMain.handle('marketplace:getManifest', async () => ({
+			success: true,
+			manifest,
+			fromCache: true,
+			cacheAge: 90_000,
+		}));
+		ipcMain.removeHandler('marketplace:refreshManifest');
+		ipcMain.handle('marketplace:refreshManifest', async () => ({
+			success: true,
+			manifest,
+			fromCache: false,
+			cacheAge: 0,
+		}));
+		ipcMain.removeHandler('marketplace:getReadme');
+		ipcMain.handle('marketplace:getReadme', async () => ({
+			success: true,
+			content: '# Filtered Playbook\n',
+		}));
+		ipcMain.removeHandler('marketplace:getDocument');
+		ipcMain.handle('marketplace:getDocument', async () => ({
+			success: true,
+			content: null,
 		}));
 	});
 }
@@ -1097,12 +1256,167 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 			await launched.cleanup();
 		}
 	});
+
+	test(`${fourthTrancheActiveScenarioMatrix[0].id}: ${fourthTrancheActiveScenarioMatrix[0].title}`, async () => {
+		const launched = await launchGitGroupChatPlaybooksWorkbench();
+		try {
+			await stubDetailedGitLogState(launched.electronApp);
+			const gitLogDialog = await openGitLogFromQuickActions(launched.window);
+
+			await expect(gitLogDialog.getByText('1 of 3 commits')).toBeVisible();
+			await expect(gitLogDialog.getByText('feat: seed detailed git log').first()).toBeVisible();
+			await expect(gitLogDialog.getByText('main')).toBeVisible();
+			await expect(gitLogDialog.getByText('v-e2e')).toBeVisible();
+			await expect(
+				gitLogDialog.getByText('Body sentinel for detailed git log coverage.')
+			).toBeVisible();
+			await expect(
+				gitLogDialog.getByText('1 file changed, 1 insertion(+), 1 deletion(-)')
+			).toBeVisible();
+			await expect(gitLogDialog.getByText('README.md')).toBeVisible();
+			await expect(gitLogDialog.getByText('New git log sentinel')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${fourthTrancheActiveScenarioMatrix[1].id}: ${fourthTrancheActiveScenarioMatrix[1].title}`, async () => {
+		const launched = await launchGitGroupChatPlaybooksWorkbench({ withWorktreeChild: true });
+		try {
+			await stubPullRequestCreation(
+				launched.electronApp,
+				{ installed: false, authenticated: false },
+				{ success: false, error: 'gh missing' }
+			);
+			await activateSession(launched.window, launched.worktreeBranch);
+			const quickActionsDialog = await openQuickActions(launched.window);
+			await quickActionsDialog
+				.getByPlaceholder('Type a command or jump to agent...')
+				.fill('Create Pull Request');
+			await quickActionsDialog.getByRole('button', { name: /Create Pull Request/ }).click();
+
+			const prModal = modalRootByHeading(launched.window, 'Create Pull Request');
+			await expect(prModal.getByText('GitHub CLI not installed')).toBeVisible();
+			await expect(prModal.getByText('to create pull requests.')).toBeVisible();
+			await expect(prModal.getByRole('button', { name: 'Create PR' })).toBeDisabled();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${fourthTrancheActiveScenarioMatrix[2].id}: ${fourthTrancheActiveScenarioMatrix[2].title}`, async () => {
+		const launched = await launchGitGroupChatPlaybooksWorkbench({ withWorktreeChild: true });
+		try {
+			await stubPullRequestCreation(
+				launched.electronApp,
+				{ installed: true, authenticated: true },
+				{
+					success: false,
+					error: 'E2E gh rejected duplicate branch https://github.com/RunMaestro/Maestro/pull/119',
+				}
+			);
+			await activateSession(launched.window, launched.worktreeBranch);
+			const quickActionsDialog = await openQuickActions(launched.window);
+			await quickActionsDialog
+				.getByPlaceholder('Type a command or jump to agent...')
+				.fill('Create Pull Request');
+			await quickActionsDialog.getByRole('button', { name: /Create Pull Request/ }).click();
+
+			const prModal = modalRootByHeading(launched.window, 'Create Pull Request');
+			await prModal.getByPlaceholder('PR title...').fill('E2E rejected PR title');
+			await prModal.getByRole('button', { name: 'Create PR' }).click();
+
+			await expect(prModal.getByText('E2E gh rejected duplicate branch')).toBeVisible();
+			await expect(prModal.getByRole('button', { name: 'PR #119' })).toBeVisible();
+			await expect(prModal.getByRole('button', { name: 'Create PR' })).toBeEnabled();
+			await expect
+				.poll(async () => (await getStubbedCreatePRRequest(launched.electronApp))?.title ?? null)
+				.toBe('E2E rejected PR title');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${fourthTrancheActiveScenarioMatrix[3].id}: ${fourthTrancheActiveScenarioMatrix[3].title}`, async () => {
+		const launched = await launchGitGroupChatPlaybooksWorkbench();
+		try {
+			await stubMarketplaceFilteringState(launched.electronApp);
+			const marketplaceDialog = await openPlaybookExchangeFromQuickActions(launched.window);
+
+			await expect(marketplaceDialog.getByText('Git Release Review')).toBeVisible();
+			await marketplaceDialog.getByRole('button', { name: /^QA\s+\(1\)$/ }).click();
+			await expect(marketplaceDialog.getByText('OpenSpec Proposal Review')).toBeVisible();
+			await expect(marketplaceDialog.getByText('Git Release Review')).toBeHidden();
+
+			await marketplaceDialog.getByPlaceholder('Search playbooks...').fill('handoff');
+			await expect(marketplaceDialog.getByText('No results found')).toBeVisible();
+			await marketplaceDialog.getByRole('button', { name: /^All\s+\(3\)$/ }).click();
+			await expect(marketplaceDialog.getByText('Group Chat Briefing')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${fourthTrancheActiveScenarioMatrix[4].id}: ${fourthTrancheActiveScenarioMatrix[4].title}`, async () => {
+		const launched = await launchGitGroupChatPlaybooksWorkbench();
+		try {
+			await stubMarketplaceForPlaybookExchange(launched.electronApp);
+			const marketplaceDialog = await openPlaybookExchangeFromQuickActions(launched.window);
+
+			await marketplaceDialog.getByRole('button', { name: /Git Lane Review/ }).click();
+			await marketplaceDialog.locator('#marketplace-target-folder').fill('');
+			await expect(
+				marketplaceDialog.getByRole('button', { name: 'Import Playbook' })
+			).toBeDisabled();
+			await marketplaceDialog
+				.locator('#marketplace-target-folder')
+				.fill('engineering/git-lane-review');
+			await expect(
+				marketplaceDialog.getByRole('button', { name: 'Import Playbook' })
+			).toBeEnabled();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${fourthTrancheActiveScenarioMatrix[5].id}: ${fourthTrancheActiveScenarioMatrix[5].title}`, async () => {
+		const launched = await launchGitGroupChatPlaybooksWorkbench();
+		try {
+			await stubSpecKitAndOpenSpecCommands(launched.electronApp);
+			const settingsDialog = await openSettings(launched.window);
+			const specKitPanel = commandPanelByHeading(launched.window, 'Spec Kit Commands');
+
+			await expect(specKitPanel.getByText('v1.2.3')).toBeVisible();
+			await specKitPanel.getByRole('button', { name: 'Check for Updates' }).click();
+			await expect(specKitPanel.getByText('v1.2.4')).toBeVisible();
+			await expect(settingsDialog.getByText('/speckit.specify')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${fourthTrancheActiveScenarioMatrix[6].id}: ${fourthTrancheActiveScenarioMatrix[6].title}`, async () => {
+		const launched = await launchGitGroupChatPlaybooksWorkbench();
+		try {
+			await stubSpecKitAndOpenSpecCommands(launched.electronApp);
+			const settingsDialog = await openSettings(launched.window);
+			const openSpecPanel = commandPanelByHeading(launched.window, 'OpenSpec Commands');
+
+			await expect(openSpecPanel.getByText('v2.0.1')).toBeVisible();
+			await openSpecPanel.getByRole('button', { name: 'Check for Updates' }).click();
+			await expect(openSpecPanel.getByText('v2.0.2')).toBeVisible();
+			await expect(settingsDialog.getByText('/openspec.proposal')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
 });
 
 test.describe('Git, Group Chat, and Playbooks skipped/env-gated rows', () => {
 	for (const scenario of [
 		...secondTrancheSkippedScenarioMatrix,
 		...thirdTrancheSkippedScenarioMatrix,
+		...fourthTrancheSkippedScenarioMatrix,
 	]) {
 		test(`${scenario.id}: ${scenario.title}`, async () => {
 			test.skip(true, scenario.reason);
