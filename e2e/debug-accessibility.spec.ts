@@ -27,6 +27,14 @@ const thirdTrancheActiveScenarioMatrix = [
 	{ id: 'DA-016', title: 'keeps update modal open after download failure' },
 ] as const;
 
+const fourthTrancheActiveScenarioMatrix = [
+	{ id: 'DA-017', title: 'confirms System Log Viewer destructive clear action' },
+	{ id: 'DA-018', title: 'closes System Log Viewer search from inline keyboard affordance' },
+	{ id: 'DA-019', title: 'toggles all System Log Viewer filters off and back on' },
+	{ id: 'DA-020', title: 'refreshes update checks from the modal header without network access' },
+	{ id: 'DA-021', title: 'opens manual release fallback after update check errors' },
+] as const;
+
 const debugPackagePreviewCategories = [
 	{ id: 'logs', name: 'System Logs', included: true, sizeEstimate: '~50 KB' },
 	{ id: 'errors', name: 'Error States', included: true, sizeEstimate: '< 10 KB' },
@@ -59,6 +67,10 @@ type StubbedUpdateState = {
 	checkCalls: boolean[];
 	downloadCalls: number;
 	installCalls: number;
+};
+
+type StubbedShellOpenExternalState = {
+	urls: string[];
 };
 
 function createDebugAccessibilityWorkbench() {
@@ -347,6 +359,30 @@ async function getStubbedUpdateState(electronApp: ElectronApplication) {
 			__maestroE2eUpdateState?: StubbedUpdateState;
 		};
 		return state.__maestroE2eUpdateState ?? null;
+	});
+}
+
+async function stubShellOpenExternal(electronApp: ElectronApplication) {
+	await electronApp.evaluate(({ ipcMain }) => {
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eShellOpenExternalState?: StubbedShellOpenExternalState;
+		};
+		state.__maestroE2eShellOpenExternalState = { urls: [] };
+
+		ipcMain.removeHandler('shell:openExternal');
+		ipcMain.handle('shell:openExternal', async (_event, url: string) => {
+			state.__maestroE2eShellOpenExternalState!.urls.push(url);
+			return { success: true };
+		});
+	});
+}
+
+async function getStubbedShellOpenExternalState(electronApp: ElectronApplication) {
+	return electronApp.evaluate(() => {
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eShellOpenExternalState?: StubbedShellOpenExternalState;
+		};
+		return state.__maestroE2eShellOpenExternalState ?? null;
 	});
 }
 
@@ -694,6 +730,114 @@ test.describe('Debug and accessibility smoke tranche', () => {
 				updateDialog.getByRole('button', { name: /Download manually from GitHub/ })
 			).toBeVisible();
 			expect((await getStubbedUpdateState(launched.electronApp))?.downloadCalls).toBe(1);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${fourthTrancheActiveScenarioMatrix[0].id} ${fourthTrancheActiveScenarioMatrix[0].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await seedSystemLogs(launched.window);
+			const logViewer = await openSystemLogViewer(launched.window);
+
+			await logViewer.getByTitle('Clear logs').click();
+			const confirmDialog = launched.window.getByRole('dialog', { name: 'Confirm' });
+			await expect(confirmDialog).toBeVisible();
+			await expect(
+				confirmDialog.getByText(
+					'Are you sure you want to clear all Maestro system logs? This action cannot be undone.'
+				)
+			).toBeVisible();
+			await confirmDialog.getByRole('button', { name: 'Confirm' }).click();
+
+			await expect(confirmDialog).toBeHidden();
+			await expect(logViewer.getByText('No logs yet')).toBeVisible();
+			await expect(logViewer.getByText('Debug accessibility info sentinel')).toHaveCount(0);
+			await expect(logViewer.getByText('Debug accessibility error sentinel')).toHaveCount(0);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${fourthTrancheActiveScenarioMatrix[1].id} ${fourthTrancheActiveScenarioMatrix[1].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await seedSystemLogs(launched.window);
+			const logViewer = await openSystemLogViewer(launched.window);
+
+			await logViewer.evaluate((element) => {
+				element.dispatchEvent(
+					new KeyboardEvent('keydown', { key: 'f', ctrlKey: true, bubbles: true })
+				);
+			});
+			const searchInput = logViewer.getByPlaceholder('Search logs...');
+			await expect(searchInput).toBeVisible();
+			await searchInput.fill('error sentinel');
+			await expect(logViewer.getByText('Debug accessibility info sentinel')).toBeHidden();
+
+			await logViewer.getByRole('button', { name: 'ESC' }).click();
+			await expect(searchInput).toBeHidden();
+			await expect(logViewer.getByText('Debug accessibility info sentinel')).toBeVisible();
+			await expect(logViewer.getByText('Debug accessibility error sentinel')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${fourthTrancheActiveScenarioMatrix[2].id} ${fourthTrancheActiveScenarioMatrix[2].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await seedSystemLogs(launched.window);
+			const logViewer = await openSystemLogViewer(launched.window);
+
+			await logViewer.getByRole('button', { name: 'ALL' }).click();
+			await expect(logViewer.getByText('No logs match your filter')).toBeVisible();
+			await expect(logViewer.getByText('Debug accessibility info sentinel')).toBeHidden();
+			await expect(logViewer.getByText('Debug accessibility error sentinel')).toBeHidden();
+
+			await logViewer.getByRole('button', { name: 'ALL' }).click();
+			await expect(logViewer.getByText('Debug accessibility info sentinel')).toBeVisible();
+			await expect(logViewer.getByText('Debug accessibility error sentinel')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${fourthTrancheActiveScenarioMatrix[3].id} ${fourthTrancheActiveScenarioMatrix[3].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubUpdateWorkflowHandlers(launched.electronApp);
+			const updateDialog = await openUpdateCheckFromQuickActions(launched.window);
+			await expect(updateDialog.getByText('Update Available!')).toBeVisible();
+			expect((await getStubbedUpdateState(launched.electronApp))?.checkCalls).toEqual([false]);
+
+			await updateDialog.getByTitle('Refresh').click();
+			await expect
+				.poll(async () => (await getStubbedUpdateState(launched.electronApp))?.checkCalls.length)
+				.toBe(2);
+			expect((await getStubbedUpdateState(launched.electronApp))?.checkCalls).toEqual([
+				false,
+				false,
+			]);
+			await expect(updateDialog.getByText('Update Available!')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${fourthTrancheActiveScenarioMatrix[4].id} ${fourthTrancheActiveScenarioMatrix[4].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubShellOpenExternal(launched.electronApp);
+			await stubUpdateWorkflowHandlers(launched.electronApp, { checkMode: 'error' });
+			const updateDialog = await openUpdateCheckFromQuickActions(launched.window);
+
+			await expect(updateDialog.getByText('Update check failure sentinel')).toBeVisible();
+			await updateDialog.getByRole('button', { name: /Check releases manually/ }).click();
+			expect((await getStubbedShellOpenExternalState(launched.electronApp))?.urls).toEqual([
+				'https://github.com/RunMaestro/Maestro/releases',
+			]);
 		} finally {
 			await launched.cleanup();
 		}
