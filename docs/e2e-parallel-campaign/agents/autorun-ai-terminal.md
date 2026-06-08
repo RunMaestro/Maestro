@@ -54,6 +54,7 @@ Second tranche:
 - Shared helper edits: none.
 - Live provider execution: none; no E2E validation/listing was run.
 - Campaign head before this tranche: `ca4241a13`.
+- Tranche implementation commit: `825e24335`.
 
 Covered:
 
