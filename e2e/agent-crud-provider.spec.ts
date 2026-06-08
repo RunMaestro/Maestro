@@ -418,6 +418,18 @@ async function getAgentSessionUpdates(electronApp: ElectronApplication) {
 	});
 }
 
+async function openQuickActions(window: Page) {
+	const quickActionsDialog = window.getByRole('dialog', { name: 'Quick Actions' });
+	for (let attempt = 0; attempt < 3; attempt++) {
+		if (await quickActionsDialog.isVisible().catch(() => false)) break;
+		await window.bringToFront();
+		await window.keyboard.press('Meta+K');
+		await quickActionsDialog.waitFor({ state: 'visible', timeout: 1000 }).catch(() => undefined);
+	}
+	await expect(quickActionsDialog).toBeVisible();
+	return quickActionsDialog;
+}
+
 async function openCreateAgentDialog(window: Page) {
 	await window.getByRole('button', { name: /New Agent/ }).click();
 	const dialog = window.getByRole('dialog', { name: 'Create New Agent' });
@@ -430,14 +442,7 @@ function escapeRegExp(value: string) {
 }
 
 async function openAgentSessions(window: Page, agentName: string) {
-	const quickActionsDialog = window.getByRole('dialog', { name: 'Quick Actions' });
-	for (let attempt = 0; attempt < 3; attempt++) {
-		if (await quickActionsDialog.isVisible().catch(() => false)) break;
-		await window.bringToFront();
-		await window.keyboard.press('Meta+K');
-		await quickActionsDialog.waitFor({ state: 'visible', timeout: 1000 }).catch(() => undefined);
-	}
-	await expect(quickActionsDialog).toBeVisible();
+	const quickActionsDialog = await openQuickActions(window);
 	await quickActionsDialog
 		.getByPlaceholder('Type a command or jump to agent...')
 		.fill('View Agent Sessions');
@@ -452,14 +457,7 @@ async function openEditAgentDialog(window: Page, agentName: string) {
 	const sessionList = window.locator('[data-tour="session-list"]');
 	await sessionList.getByText(agentName, { exact: true }).click();
 
-	const quickActionsDialog = window.getByRole('dialog', { name: 'Quick Actions' });
-	for (let attempt = 0; attempt < 3; attempt++) {
-		if (await quickActionsDialog.isVisible().catch(() => false)) break;
-		await window.bringToFront();
-		await window.keyboard.press('Meta+K');
-		await quickActionsDialog.waitFor({ state: 'visible', timeout: 1000 }).catch(() => undefined);
-	}
-	await expect(quickActionsDialog).toBeVisible();
+	const quickActionsDialog = await openQuickActions(window);
 	await quickActionsDialog
 		.getByPlaceholder('Type a command or jump to agent...')
 		.fill('Edit Agent');
@@ -471,6 +469,21 @@ async function openEditAgentDialog(window: Page, agentName: string) {
 	const dialog = window.getByRole('dialog', { name: `Edit Agent: ${agentName}` });
 	await expect(dialog).toBeVisible();
 	return dialog;
+}
+
+async function openSessionContextMenu(window: Page, sessionName: string, expectedAction: string) {
+	const sessionList = window.locator('[data-tour="session-list"]');
+	await sessionList.getByText(sessionName, { exact: true }).first().click({ button: 'right' });
+	const contextMenu = window
+		.locator('.fixed')
+		.filter({
+			has: window.getByRole('button', { name: expectedAction, exact: true }),
+		})
+		.last();
+	await expect(
+		contextMenu.getByRole('button', { name: expectedAction, exact: true })
+	).toBeVisible();
+	return contextMenu;
 }
 
 test.describe('Agent CRUD provider setup matrix', () => {
@@ -780,6 +793,211 @@ test.describe('Agent CRUD lifecycle', () => {
 			await expect(editAgentDialog.getByPlaceholder('value', { exact: true })).toHaveValue('draft');
 			await editAgentDialog.getByRole('button', { name: 'Cancel' }).click();
 			await expect(editAgentDialog).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+});
+
+test.describe('Agent group organization', () => {
+	test('creates an agent group from Quick Actions', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			const quickActionsDialog = await openQuickActions(launched.window);
+			await quickActionsDialog
+				.getByPlaceholder('Type a command or jump to agent...')
+				.fill('Create New Group');
+			await quickActionsDialog.getByRole('button', { name: /Create New Group/ }).click();
+
+			await expect(quickActionsDialog).toBeHidden();
+			const createGroupDialog = launched.window.getByRole('dialog', { name: 'Create New Group' });
+			await expect(createGroupDialog).toBeVisible();
+			await createGroupDialog.getByLabel('Group Name').fill('provider lane');
+			await createGroupDialog.getByRole('button', { name: 'Create' }).click();
+
+			await expect(createGroupDialog).toBeHidden();
+			await expect(launched.window.getByText('PROVIDER LANE', { exact: true })).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('moves a provider agent to a group and returns it to Ungrouped Agents', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			let contextMenu = await openSessionContextMenu(
+				launched.window,
+				'Matrix OpenCode Agent',
+				'Move to Group'
+			);
+			await contextMenu.getByText('Move to Group', { exact: true }).hover();
+			await contextMenu.getByRole('button', { name: /Create New Group/ }).click();
+
+			const createGroupDialog = launched.window.getByRole('dialog', { name: 'Create New Group' });
+			await createGroupDialog.getByLabel('Group Name').fill('opencode lane');
+			await createGroupDialog.getByRole('button', { name: 'Create' }).click();
+			await expect(createGroupDialog).toBeHidden();
+
+			const groupSection = launched.window
+				.getByText('OPENCODE LANE', { exact: true })
+				.locator('xpath=ancestor::div[contains(@class, "mb-1")][1]');
+			await expect(groupSection.getByText('Matrix OpenCode Agent', { exact: true })).toBeVisible();
+
+			contextMenu = await openSessionContextMenu(
+				launched.window,
+				'Matrix OpenCode Agent',
+				'Move to Group'
+			);
+			await contextMenu.getByText('Move to Group', { exact: true }).hover();
+			await contextMenu.getByRole('button', { name: /Ungrouped/ }).click();
+
+			await expect(groupSection.getByText('Matrix OpenCode Agent', { exact: true })).toHaveCount(0);
+			const ungroupedSection = launched.window
+				.getByText('Ungrouped Agents', { exact: true })
+				.locator('xpath=ancestor::div[contains(@class, "mb-1")][1]');
+			await expect(
+				ungroupedSection.getByText('Matrix OpenCode Agent', { exact: true })
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('creates a group from a provider context menu and moves the agent into it', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			const contextMenu = await openSessionContextMenu(
+				launched.window,
+				'Matrix Factory Droid Agent',
+				'Move to Group'
+			);
+			await contextMenu.getByText('Move to Group', { exact: true }).hover();
+			await contextMenu.getByRole('button', { name: /Create New Group/ }).click();
+
+			const createGroupDialog = launched.window.getByRole('dialog', { name: 'Create New Group' });
+			await createGroupDialog.getByLabel('Group Name').fill('droid lane');
+			await createGroupDialog.getByRole('button', { name: 'Create' }).click();
+			await expect(createGroupDialog).toBeHidden();
+
+			const groupSection = launched.window
+				.getByText('DROID LANE', { exact: true })
+				.locator('xpath=ancestor::div[contains(@class, "mb-1")][1]');
+			await expect(
+				groupSection.getByText('Matrix Factory Droid Agent', { exact: true })
+			).toBeVisible();
+
+			const ungroupedSection = launched.window
+				.getByText('Ungrouped Agents', { exact: true })
+				.locator('xpath=ancestor::div[contains(@class, "mb-1")][1]');
+			await expect(
+				ungroupedSection.getByText('Matrix Factory Droid Agent', { exact: true })
+			).toHaveCount(0);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('collapses and expands a provider agent group section', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			const contextMenu = await openSessionContextMenu(
+				launched.window,
+				'Matrix Claude Code Agent',
+				'Move to Group'
+			);
+			await contextMenu.getByText('Move to Group', { exact: true }).hover();
+			await contextMenu.getByRole('button', { name: /Create New Group/ }).click();
+
+			const createGroupDialog = launched.window.getByRole('dialog', { name: 'Create New Group' });
+			await createGroupDialog.getByLabel('Group Name').fill('claude lane');
+			await createGroupDialog.getByRole('button', { name: 'Create' }).click();
+			await expect(createGroupDialog).toBeHidden();
+
+			const groupHeader = launched.window.getByRole('button', { name: /CLAUDE LANE/ });
+			const groupSection = launched.window
+				.getByText('CLAUDE LANE', { exact: true })
+				.locator('xpath=ancestor::div[contains(@class, "mb-1")][1]');
+			await expect(groupHeader).toHaveAttribute('aria-expanded', 'true');
+			await expect(
+				groupSection.getByText('Matrix Claude Code Agent', { exact: true })
+			).toBeVisible();
+
+			await groupHeader.click();
+			await expect(groupHeader).toHaveAttribute('aria-expanded', 'false');
+			await expect(
+				groupSection.getByRole('button', { name: 'Switch to Matrix Claude Code Agent' })
+			).toBeVisible();
+
+			await groupHeader.click();
+			await expect(groupHeader).toHaveAttribute('aria-expanded', 'true');
+			await expect(
+				groupSection.getByText('Matrix Claude Code Agent', { exact: true })
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('renames a populated provider agent group inline', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			const contextMenu = await openSessionContextMenu(
+				launched.window,
+				'Matrix Codex Agent',
+				'Move to Group'
+			);
+			await contextMenu.getByText('Move to Group', { exact: true }).hover();
+			await contextMenu.getByRole('button', { name: /Create New Group/ }).click();
+
+			const createGroupDialog = launched.window.getByRole('dialog', { name: 'Create New Group' });
+			await createGroupDialog.getByLabel('Group Name').fill('rename provider lane');
+			await createGroupDialog.getByRole('button', { name: 'Create' }).click();
+			await expect(createGroupDialog).toBeHidden();
+
+			const groupSection = launched.window
+				.getByText('RENAME PROVIDER LANE', { exact: true })
+				.locator('xpath=ancestor::div[contains(@class, "mb-1")][1]');
+			await expect(groupSection.getByText('Matrix Codex Agent', { exact: true })).toBeVisible();
+
+			await groupSection.getByText('RENAME PROVIDER LANE', { exact: true }).dblclick();
+			const renameInput = launched.window.locator('input:focus');
+			await expect(renameInput).toHaveValue('RENAME PROVIDER LANE');
+			await renameInput.fill('primary provider lane');
+			await renameInput.press('Enter');
+
+			const renamedSection = launched.window
+				.getByText('PRIMARY PROVIDER LANE', { exact: true })
+				.locator('xpath=ancestor::div[contains(@class, "mb-1")][1]');
+			await expect(renamedSection).toBeVisible();
+			await expect(launched.window.getByText('RENAME PROVIDER LANE', { exact: true })).toHaveCount(
+				0
+			);
+			await expect(renamedSection.getByText('Matrix Codex Agent', { exact: true })).toBeVisible();
 		} finally {
 			await launched.cleanup();
 		}
