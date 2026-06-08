@@ -2334,6 +2334,251 @@ test.describe('Agent CRUD lifecycle', () => {
 			await launched.cleanup();
 		}
 	});
+
+	test('resets Create New Agent directory warning acknowledgment after path edits', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+		const replacementDir = path.join(seeded.homeDir, 'ack-reset-replacement-project');
+		fs.mkdirSync(replacementDir, { recursive: true });
+
+		try {
+			await stubProviderDetection(launched.electronApp);
+
+			const createAgentDialog = await openCreateAgentDialog(launched.window);
+			await createAgentDialog.getByRole('option', { name: /Codex/ }).click();
+			await createAgentDialog.getByLabel('Agent Name').fill('Acknowledgment Reset Agent');
+			await createAgentDialog.getByLabel('Working Directory').fill(seeded.projectDir);
+
+			const createButton = createAgentDialog.getByRole('button', { name: 'Create Agent' });
+			const warning = createAgentDialog.getByText(
+				/This directory is already used by "Matrix Codex Agent", "Matrix Claude Code Agent"/
+			);
+			const acknowledgment = createAgentDialog.getByLabel(
+				'I understand the risk and want to proceed'
+			);
+			await expect(warning).toBeVisible();
+			await expect(createButton).toBeDisabled();
+			await acknowledgment.check();
+			await expect(createButton).toBeEnabled();
+
+			await createAgentDialog.getByLabel('Working Directory').fill(replacementDir);
+			await expect(warning).toHaveCount(0);
+			await expect(createButton).toBeEnabled();
+
+			await createAgentDialog.getByLabel('Working Directory').fill(seeded.projectDir);
+			await expect(warning).toBeVisible();
+			await expect(acknowledgment).not.toBeChecked();
+			await expect(createButton).toBeDisabled();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('ignores Create New Agent folder picker shortcut while SSH remote is selected', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const remote = createProviderSshRemote();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: [seeded.sessions[0]],
+		});
+		const selectedDir = path.join(seeded.homeDir, 'shortcut-ignored-local-project');
+		fs.mkdirSync(selectedDir, { recursive: true });
+
+		try {
+			await stubProviderDetection(launched.electronApp);
+			await stubSshRemoteConfigs(launched.electronApp, [remote]);
+			await stubSelectFolderDialog(launched.electronApp, selectedDir);
+
+			const createAgentDialog = await openCreateAgentDialog(launched.window);
+			await createAgentDialog.getByRole('option', { name: /Codex/ }).click();
+			const workingDirectoryInput = createAgentDialog.getByLabel('Working Directory');
+			await workingDirectoryInput.fill('/srv/maestro/shortcut-ignored');
+			await createAgentDialog.locator('select').last().selectOption(remote.id);
+			await expect(
+				createAgentDialog.getByTitle(/Folder picker unavailable for SSH remote/)
+			).toBeDisabled();
+
+			await launched.window.keyboard.press('Control+O');
+
+			await expect(workingDirectoryInput).toHaveValue('/srv/maestro/shortcut-ignored');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('restores Create New Agent folder picker shortcut after returning to local execution', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const remote = createProviderSshRemote();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: [seeded.sessions[0]],
+		});
+		const selectedDir = path.join(seeded.homeDir, 'shortcut-restored-local-project');
+		fs.mkdirSync(selectedDir, { recursive: true });
+
+		try {
+			await stubProviderDetection(launched.electronApp);
+			await stubSshRemoteConfigs(launched.electronApp, [remote]);
+			await stubSelectFolderDialog(launched.electronApp, selectedDir);
+
+			const createAgentDialog = await openCreateAgentDialog(launched.window);
+			await createAgentDialog.getByRole('option', { name: /Codex/ }).click();
+			await createAgentDialog.locator('select').last().selectOption(remote.id);
+			await expect(
+				createAgentDialog.getByText(/Agent will run on Provider Build Host/)
+			).toBeVisible();
+			await createAgentDialog.locator('select').last().selectOption('local');
+			await expect(createAgentDialog.getByText('Agent will run locally')).toBeVisible();
+
+			await launched.window.keyboard.press('Control+O');
+
+			await expect(createAgentDialog.getByLabel('Working Directory')).toHaveValue(selectedDir);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('creates a duplicated provider agent with edited provider configuration', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const duplicateDir = path.join(seeded.homeDir, 'edited-duplicate-provider-project');
+		fs.mkdirSync(duplicateDir, { recursive: true });
+		const configuredSession = {
+			...seeded.sessions[0],
+			nudgeMessage: 'Duplicate source nudge before edits.',
+			customPath: '/opt/maestro/codex-duplicate-source',
+			customArgs: '--duplicate-source',
+			customEnvVars: { CODEX_DUPLICATE_SOURCE_E2E: 'source' },
+			customModel: 'gpt-5-codex-duplicate-source',
+			customContextWindow: 210000,
+		};
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: [configuredSession, ...seeded.sessions.slice(1)],
+		});
+
+		try {
+			await stubProviderDetection(launched.electronApp);
+
+			const contextMenu = await openSessionContextMenu(
+				launched.window,
+				'Matrix Codex Agent',
+				'Duplicate...'
+			);
+			await contextMenu.getByRole('button', { name: 'Duplicate...', exact: true }).click();
+
+			const createAgentDialog = launched.window.getByRole('dialog', { name: 'Create New Agent' });
+			await expect(createAgentDialog).toBeVisible();
+			await createAgentDialog.getByLabel('Agent Name').fill('Edited Duplicate Provider Agent');
+			await createAgentDialog.getByLabel('Working Directory').fill(duplicateDir);
+			await createAgentDialog
+				.getByPlaceholder('Instructions appended to every message you send...')
+				.fill('Edited duplicate provider config should persist.');
+			await createAgentDialog
+				.getByPlaceholder('/path/to/codex')
+				.fill('/opt/maestro/codex-duplicate-edited');
+			await createAgentDialog
+				.getByPlaceholder('--flag value --another-flag')
+				.fill('--duplicate-edited');
+			await createAgentDialog.getByPlaceholder('VARIABLE_NAME').fill('CODEX_DUPLICATE_EDITED_E2E');
+			await createAgentDialog.getByPlaceholder('VARIABLE_NAME').blur();
+			await createAgentDialog.getByPlaceholder('value', { exact: true }).fill('edited');
+			await getModelInput(createAgentDialog).fill('gpt-5-codex-duplicate-edited');
+			await getContextWindowInput(createAgentDialog).fill('222222');
+			await createAgentDialog.getByRole('button', { name: 'Create Agent' }).click();
+			await expect(createAgentDialog).toBeHidden();
+
+			const editAgentDialog = await openEditAgentDialog(
+				launched.window,
+				'Edited Duplicate Provider Agent'
+			);
+			await expect(
+				editAgentDialog.getByPlaceholder('Instructions appended to every message you send...')
+			).toHaveValue('Edited duplicate provider config should persist.');
+			await expect(editAgentDialog.getByPlaceholder('/path/to/codex')).toHaveValue(
+				'/opt/maestro/codex-duplicate-edited'
+			);
+			await expect(editAgentDialog.getByPlaceholder('--flag value --another-flag')).toHaveValue(
+				'--duplicate-edited'
+			);
+			await expect(editAgentDialog.getByPlaceholder('VARIABLE_NAME')).toHaveValue(
+				'CODEX_DUPLICATE_EDITED_E2E'
+			);
+			await expect(editAgentDialog.getByPlaceholder('value', { exact: true })).toHaveValue(
+				'edited'
+			);
+			await expect(getModelInput(editAgentDialog)).toHaveValue('gpt-5-codex-duplicate-edited');
+			await expect(getContextWindowInput(editAgentDialog)).toHaveValue('222222');
+			await editAgentDialog.getByRole('button', { name: 'Cancel' }).click();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('clears duplicated provider overrides before creating a copy', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const duplicateDir = path.join(seeded.homeDir, 'cleared-duplicate-provider-project');
+		fs.mkdirSync(duplicateDir, { recursive: true });
+		const configuredSession = {
+			...seeded.sessions[0],
+			nudgeMessage: 'Clear duplicate source nudge.',
+			customPath: '/opt/maestro/codex-duplicate-clear-source',
+			customArgs: '--duplicate-clear-source',
+			customEnvVars: { CODEX_DUPLICATE_CLEAR_E2E: 'remove-me' },
+			customModel: 'gpt-5-codex-duplicate-clear',
+			customContextWindow: 230000,
+		};
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: [configuredSession, ...seeded.sessions.slice(1)],
+		});
+
+		try {
+			await stubProviderDetection(launched.electronApp);
+
+			const contextMenu = await openSessionContextMenu(
+				launched.window,
+				'Matrix Codex Agent',
+				'Duplicate...'
+			);
+			await contextMenu.getByRole('button', { name: 'Duplicate...', exact: true }).click();
+
+			const createAgentDialog = launched.window.getByRole('dialog', { name: 'Create New Agent' });
+			await expect(createAgentDialog).toBeVisible();
+			await createAgentDialog.getByLabel('Agent Name').fill('Cleared Duplicate Provider Agent');
+			await createAgentDialog.getByLabel('Working Directory').fill(duplicateDir);
+			await createAgentDialog
+				.getByPlaceholder('Instructions appended to every message you send...')
+				.fill('   ');
+			await createAgentDialog.getByTitle('Reset to detected path').click();
+			await createAgentDialog.getByRole('button', { name: 'Clear' }).click();
+			await createAgentDialog.getByTitle('Remove variable').click();
+			await getModelInput(createAgentDialog).fill('   ');
+			await getContextWindowInput(createAgentDialog).fill('0');
+			await createAgentDialog.getByRole('button', { name: 'Create Agent' }).click();
+			await expect(createAgentDialog).toBeHidden();
+
+			const editAgentDialog = await openEditAgentDialog(
+				launched.window,
+				'Cleared Duplicate Provider Agent'
+			);
+			await expect(
+				editAgentDialog.getByPlaceholder('Instructions appended to every message you send...')
+			).toHaveValue('');
+			await expect(editAgentDialog.getByPlaceholder('/path/to/codex')).toHaveValue(
+				'/usr/local/bin/codex-e2e'
+			);
+			await expect(editAgentDialog.getByPlaceholder('--flag value --another-flag')).toHaveValue('');
+			await expect(editAgentDialog.getByPlaceholder('VARIABLE_NAME')).toHaveCount(0);
+			await expect(getModelInput(editAgentDialog)).toHaveValue('');
+			await expect(getContextWindowInput(editAgentDialog)).toHaveValue('400000');
+			await editAgentDialog.getByRole('button', { name: 'Cancel' }).click();
+		} finally {
+			await launched.cleanup();
+		}
+	});
 });
 
 test.describe('Agent group organization', () => {
