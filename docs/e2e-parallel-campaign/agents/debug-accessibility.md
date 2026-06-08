@@ -1,6 +1,6 @@
 # debug-accessibility
 
-Status: fifth fallback tranche authored
+Status: sixth fallback tranche authored
 
 ## Scope
 
@@ -9,9 +9,9 @@ accessibility smoke.
 
 ## Campaign Head
 
-- Ledger head before this tranche: `0dd610853`.
-- Implementation commit: `8aa446c40`.
-- Coverage ledger before this tranche: 21 active scenarios accepted, 171
+- Ledger head before this tranche: `c936f8ff6`.
+- Implementation commit: `07c782f13`.
+- Coverage ledger before this tranche: 26 active scenarios accepted, 166
   matrix-backed scenarios remaining.
 
 ## Checklist
@@ -25,13 +25,12 @@ accessibility smoke.
 
 ## Progress
 
-- Added matrix-backed update-modal and debug-package reveal scenarios `DA-022`
-  through `DA-026`.
+- Added matrix-backed Process Monitor scenarios `DA-027` through `DA-031`.
 - Active scenarios added this tranche: 5.
-- Active scenarios authored in lane total: 26.
+- Active scenarios authored in lane total: 31.
 - Skipped/product-gap scenarios added this tranche: 0.
 - Env-gated scenarios added this tranche: 0.
-- Matrix-backed remaining after orchestrator ledger acceptance: 166.
+- Matrix-backed remaining after orchestrator ledger acceptance: 161.
 
 Files touched:
 
@@ -46,7 +45,7 @@ Validation passed:
 - `NODE_OPTIONS=--max-old-space-size=8192 npx prettier --check e2e/debug-accessibility.spec.ts docs/e2e-parallel-campaign/agents/debug-accessibility.md docs/e2e-parallel-campaign/coverage-ledger.md docs/e2e-coverage-campaign.md`
 - `npx tsc -p tsconfig.lint.json --noEmit`
 - `git diff --check`
-- Static inventory scan reports 990 declared E2E tests, no `.only`, no
+- Static inventory scan reports 995 declared E2E tests, no `.only`, no
   prohibited commands, and no duplicate scenario IDs.
 
 Blockers:
