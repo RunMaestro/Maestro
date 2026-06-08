@@ -41,6 +41,30 @@ const secondTrancheSkippedScenarioMatrix = [
 	},
 ] as const;
 
+const thirdTrancheActiveScenarioMatrix = [
+	{ id: 'GGP-A12', title: 'shows worktree Create Pull Request in Quick Actions' },
+	{ id: 'GGP-A13', title: 'shows GitHub CLI auth guidance in Create Pull Request' },
+	{ id: 'GGP-A14', title: 'creates a stubbed pull request from a worktree child' },
+	{ id: 'GGP-A15', title: 'validates quick worktree branch names before creation' },
+	{ id: 'GGP-A16', title: 'imports a marketplace playbook into Auto Run with IPC stubs' },
+	{ id: 'GGP-A17', title: 'edits and resets a Spec Kit command prompt' },
+	{ id: 'GGP-A18', title: 'edits and resets an OpenSpec command prompt' },
+] as const;
+
+const thirdTrancheSkippedScenarioMatrix = [
+	{
+		id: 'GGP-S04',
+		title: 'opens an existing published Gist URL from a real file preview',
+		reason:
+			'Env-gated: requires authenticated gh state because the file-preview Gist affordance is hidden without gh availability.',
+	},
+	{
+		id: 'GGP-S05',
+		title: 'imports a remote marketplace playbook into an SSH Auto Run folder',
+		reason: 'Env-gated: requires configured SSH remote state and remote filesystem access.',
+	},
+] as const;
+
 function runGit(cwd: string, args: string[]) {
 	execFileSync('git', args, {
 		cwd,
@@ -55,14 +79,18 @@ function runGit(cwd: string, args: string[]) {
 	});
 }
 
-function createGitGroupChatPlaybooksWorkbench() {
+function createGitGroupChatPlaybooksWorkbench(options: { withWorktreeChild?: boolean } = {}) {
 	const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-e2e-git-groupchat-'));
 	const projectDir = path.join(homeDir, 'project');
+	const worktreesDir = path.join(homeDir, 'worktrees');
+	const worktreeBranch = 'feat/git-pr-tranche';
+	const worktreeDir = path.join(worktreesDir, 'feat-git-pr-tranche');
 	const autoRunFolder = path.join(projectDir, 'Playbooks');
 	const now = Date.parse('2026-05-29T12:00:00.000Z');
 	const idSuffix = `${now}-${Math.random().toString(36).slice(2)}`;
 	const sessionId = `git-groupchat-playbooks-${idSuffix}`;
 	const aiTabId = `git-groupchat-playbooks-ai-${idSuffix}`;
+	const worktreeAiTabId = `git-groupchat-playbooks-worktree-ai-${idSuffix}`;
 	const readmePath = path.join(projectDir, 'README.md');
 	const flowPath = path.join(projectDir, 'FLOW.md');
 	const phaseOnePath = path.join(autoRunFolder, 'Phase 1.md');
@@ -86,6 +114,10 @@ function createGitGroupChatPlaybooksWorkbench() {
 	runGit(projectDir, ['init']);
 	runGit(projectDir, ['add', '.']);
 	runGit(projectDir, ['commit', '-m', 'chore: seed git group chat playbook fixture']);
+	if (options.withWorktreeChild) {
+		fs.mkdirSync(worktreesDir, { recursive: true });
+		runGit(projectDir, ['worktree', 'add', '-b', worktreeBranch, worktreeDir]);
+	}
 	fs.appendFileSync(readmePath, '\nWorking tree diff sentinel for git lane.\n', 'utf-8');
 	fs.writeFileSync(
 		path.join(projectDir, 'NOTES.md'),
@@ -93,65 +125,96 @@ function createGitGroupChatPlaybooksWorkbench() {
 		'utf-8'
 	);
 
+	const parentSession = {
+		id: sessionId,
+		name: 'Git Group Chat Playbooks Agent',
+		toolType: 'codex',
+		state: 'idle',
+		cwd: projectDir,
+		fullPath: projectDir,
+		projectRoot: projectDir,
+		createdAt: now,
+		aiLogs,
+		shellLogs: [],
+		workLog: [],
+		contextUsage: 0,
+		inputMode: 'ai',
+		aiPid: 0,
+		terminalPid: 0,
+		port: 0,
+		isLive: false,
+		changedFiles: [],
+		isGitRepo: true,
+		gitBranches: ['main', worktreeBranch],
+		worktreeConfig: { basePath: worktreesDir, watchEnabled: false },
+		fileTree: [],
+		fileExplorerExpanded: [],
+		fileExplorerScrollPos: 0,
+		executionQueue: [],
+		activeTimeMs: 0,
+		fileTreeAutoRefreshInterval: 180,
+		aiTabs: [
+			{
+				id: aiTabId,
+				agentSessionId: 'codex-git-groupchat-playbooks-tab',
+				name: 'Main',
+				starred: false,
+				logs: aiLogs,
+				inputValue: '',
+				stagedImages: [],
+				createdAt: now,
+				state: 'idle',
+			},
+		],
+		activeTabId: aiTabId,
+		closedTabHistory: [],
+		filePreviewTabs: [],
+		activeFileTabId: null,
+		unifiedTabOrder: [{ type: 'ai', id: aiTabId }],
+		unifiedClosedTabHistory: [],
+		autoRunFolderPath: autoRunFolder,
+		autoRunSelectedFile: 'Phase 1',
+		autoRunContent: fs.readFileSync(phaseOnePath, 'utf-8'),
+		autoRunContentVersion: 1,
+		autoRunMode: 'preview',
+		autoRunEditScrollPos: 0,
+		autoRunPreviewScrollPos: 0,
+		autoRunCursorPosition: 0,
+	};
+	const worktreeSession = {
+		...parentSession,
+		id: `git-groupchat-playbooks-worktree-${idSuffix}`,
+		name: worktreeBranch,
+		cwd: worktreeDir,
+		fullPath: worktreeDir,
+		projectRoot: worktreeDir,
+		parentSessionId: sessionId,
+		worktreeBranch,
+		worktreeConfig: undefined,
+		aiTabs: [
+			{
+				id: worktreeAiTabId,
+				agentSessionId: 'codex-git-groupchat-playbooks-worktree-tab',
+				name: 'Main',
+				starred: false,
+				logs: aiLogs,
+				inputValue: '',
+				stagedImages: [],
+				createdAt: now,
+				state: 'idle',
+			},
+		],
+		activeTabId: worktreeAiTabId,
+		unifiedTabOrder: [{ type: 'ai', id: worktreeAiTabId }],
+		autoRunFolderPath: path.join(worktreeDir, 'Playbooks'),
+		autoRunContent: fs.readFileSync(path.join(worktreeDir, 'Playbooks', 'Phase 1.md'), 'utf-8'),
+	};
+
 	return {
 		homeDir,
 		projectDir,
-		sessions: [
-			{
-				id: sessionId,
-				name: 'Git Group Chat Playbooks Agent',
-				toolType: 'codex',
-				state: 'idle',
-				cwd: projectDir,
-				fullPath: projectDir,
-				projectRoot: projectDir,
-				createdAt: now,
-				aiLogs,
-				shellLogs: [],
-				workLog: [],
-				contextUsage: 0,
-				inputMode: 'ai',
-				aiPid: 0,
-				terminalPid: 0,
-				port: 0,
-				isLive: false,
-				changedFiles: [],
-				isGitRepo: true,
-				fileTree: [],
-				fileExplorerExpanded: [],
-				fileExplorerScrollPos: 0,
-				executionQueue: [],
-				activeTimeMs: 0,
-				fileTreeAutoRefreshInterval: 180,
-				aiTabs: [
-					{
-						id: aiTabId,
-						agentSessionId: 'codex-git-groupchat-playbooks-tab',
-						name: 'Main',
-						starred: false,
-						logs: aiLogs,
-						inputValue: '',
-						stagedImages: [],
-						createdAt: now,
-						state: 'idle',
-					},
-				],
-				activeTabId: aiTabId,
-				closedTabHistory: [],
-				filePreviewTabs: [],
-				activeFileTabId: null,
-				unifiedTabOrder: [{ type: 'ai', id: aiTabId }],
-				unifiedClosedTabHistory: [],
-				autoRunFolderPath: autoRunFolder,
-				autoRunSelectedFile: 'Phase 1',
-				autoRunContent: fs.readFileSync(phaseOnePath, 'utf-8'),
-				autoRunContentVersion: 1,
-				autoRunMode: 'preview',
-				autoRunEditScrollPos: 0,
-				autoRunPreviewScrollPos: 0,
-				autoRunCursorPosition: 0,
-			},
-		],
+		worktreeBranch,
+		sessions: options.withWorktreeChild ? [worktreeSession, parentSession] : [parentSession],
 		groupChats: [
 			{
 				id: `git-groupchat-room-${idSuffix}`,
@@ -173,8 +236,8 @@ function createGitGroupChatPlaybooksWorkbench() {
 	};
 }
 
-async function launchGitGroupChatPlaybooksWorkbench() {
-	const seeded = createGitGroupChatPlaybooksWorkbench();
+async function launchGitGroupChatPlaybooksWorkbench(options: { withWorktreeChild?: boolean } = {}) {
+	const seeded = createGitGroupChatPlaybooksWorkbench(options);
 	const launched = await helpers.launchAppWithState({
 		homeDir: seeded.homeDir,
 		sessions: seeded.sessions,
@@ -182,6 +245,31 @@ async function launchGitGroupChatPlaybooksWorkbench() {
 	});
 
 	return { ...seeded, ...launched };
+}
+
+function modalRootByHeading(page: Page, heading: string) {
+	return page
+		.getByText(heading, { exact: true })
+		.locator('xpath=ancestor::div[contains(@class, "fixed")][1]');
+}
+
+async function openSessionContextMenu(page: Page, sessionName: string, expectedAction: string) {
+	const sessionList = page.locator('[data-tour="session-list"]');
+	await sessionList.getByText(sessionName, { exact: true }).first().click({ button: 'right' });
+	const contextMenu = page
+		.locator('.fixed')
+		.filter({
+			has: page.getByRole('button', { name: expectedAction, exact: true }),
+		})
+		.last();
+	await expect(
+		contextMenu.getByRole('button', { name: expectedAction, exact: true })
+	).toBeVisible();
+	return contextMenu;
+}
+
+async function activateSession(page: Page, sessionName: string) {
+	await page.locator('[data-tour="session-list"]').getByText(sessionName, { exact: true }).click();
 }
 
 async function openQuickActions(page: Page) {
@@ -266,8 +354,77 @@ async function stubGitLogState(
 	}, state);
 }
 
+async function stubPullRequestCreation(
+	electronApp: ElectronApplication,
+	status: { installed: boolean; authenticated: boolean },
+	result: { success: boolean; prUrl?: string; error?: string }
+) {
+	await electronApp.evaluate(
+		({ ipcMain }, payload) => {
+			const state = globalThis as typeof globalThis & {
+				__maestroE2eCreatePRRequest?: {
+					worktreePath: string;
+					targetBranch: string;
+					title: string;
+					description: string;
+				} | null;
+			};
+			state.__maestroE2eCreatePRRequest = null;
+
+			ipcMain.removeHandler('git:checkGhCli');
+			ipcMain.handle('git:checkGhCli', async () => payload.status);
+			ipcMain.removeHandler('git:status');
+			ipcMain.handle('git:status', async () => ({ stdout: ' M README.md\n' }));
+			ipcMain.removeHandler('git:createPR');
+			ipcMain.handle(
+				'git:createPR',
+				async (
+					_event,
+					worktreePath: string,
+					targetBranch: string,
+					title: string,
+					description: string
+				) => {
+					state.__maestroE2eCreatePRRequest = {
+						worktreePath,
+						targetBranch,
+						title,
+						description,
+					};
+					return payload.result;
+				}
+			);
+		},
+		{ status, result }
+	);
+}
+
+async function getStubbedCreatePRRequest(electronApp: ElectronApplication) {
+	return electronApp.evaluate(() => {
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eCreatePRRequest?: {
+				worktreePath: string;
+				targetBranch: string;
+				title: string;
+				description: string;
+			} | null;
+		};
+		return state.__maestroE2eCreatePRRequest ?? null;
+	});
+}
+
 async function stubMarketplaceForPlaybookExchange(electronApp: ElectronApplication) {
 	await electronApp.evaluate(({ ipcMain }) => {
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eMarketplaceImport?: {
+				playbookId: string;
+				targetFolderName: string;
+				autoRunFolderPath: string;
+				sessionId: string;
+				sshRemoteId?: string;
+			} | null;
+		};
+		state.__maestroE2eMarketplaceImport = null;
 		const manifest = {
 			lastUpdated: '2026-05-29',
 			playbooks: [
@@ -306,6 +463,42 @@ async function stubMarketplaceForPlaybookExchange(electronApp: ElectronApplicati
 			success: true,
 			content: '# Review Plan\n\nReview plan body for the git lane.',
 		}));
+		ipcMain.removeHandler('marketplace:importPlaybook');
+		ipcMain.handle(
+			'marketplace:importPlaybook',
+			async (
+				_event,
+				playbookId: string,
+				targetFolderName: string,
+				autoRunFolderPath: string,
+				sessionId: string,
+				sshRemoteId?: string
+			) => {
+				state.__maestroE2eMarketplaceImport = {
+					playbookId,
+					targetFolderName,
+					autoRunFolderPath,
+					sessionId,
+					sshRemoteId,
+				};
+				return { success: true };
+			}
+		);
+	});
+}
+
+async function getStubbedMarketplaceImport(electronApp: ElectronApplication) {
+	return electronApp.evaluate(() => {
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eMarketplaceImport?: {
+				playbookId: string;
+				targetFolderName: string;
+				autoRunFolderPath: string;
+				sessionId: string;
+				sshRemoteId?: string;
+			} | null;
+		};
+		return state.__maestroE2eMarketplaceImport ?? null;
 	});
 }
 
@@ -432,6 +625,12 @@ async function stubSpecKitAndOpenSpecCommands(electronApp: ElectronApplication) 
 			sourceVersion,
 			sourceUrl,
 		});
+		const specKitDefaultPrompt = 'Bundled specify prompt for {{CWD}}.';
+		const openSpecDefaultPrompt = 'Bundled proposal prompt for {{AGENT_NAME}}.';
+		let specKitPrompt = specKitDefaultPrompt;
+		let specKitModified = false;
+		let openSpecPrompt = openSpecDefaultPrompt;
+		let openSpecModified = false;
 		ipcMain.removeHandler('speckit:getMetadata');
 		ipcMain.handle('speckit:getMetadata', async () => ({
 			success: true,
@@ -445,11 +644,28 @@ async function stubSpecKitAndOpenSpecCommands(electronApp: ElectronApplication) 
 					id: 'specify',
 					command: '/speckit.specify',
 					description: 'Create a new product specification.',
-					prompt: 'Bundled specify prompt for {{CWD}}.',
+					prompt: specKitPrompt,
 					isCustom: false,
-					isModified: false,
+					isModified: specKitModified,
 				},
 			],
+		}));
+		ipcMain.removeHandler('speckit:savePrompt');
+		ipcMain.handle('speckit:savePrompt', async (_event, _id: string, content: string) => {
+			specKitPrompt = content;
+			specKitModified = true;
+			return { success: true };
+		});
+		ipcMain.removeHandler('speckit:resetPrompt');
+		ipcMain.handle('speckit:resetPrompt', async () => {
+			specKitPrompt = specKitDefaultPrompt;
+			specKitModified = false;
+			return { success: true, prompt: specKitDefaultPrompt };
+		});
+		ipcMain.removeHandler('speckit:refresh');
+		ipcMain.handle('speckit:refresh', async () => ({
+			success: true,
+			metadata: makeMetadata('v1.2.4', 'https://github.com/github/spec-kit'),
 		}));
 		ipcMain.removeHandler('openspec:getMetadata');
 		ipcMain.handle('openspec:getMetadata', async () => ({
@@ -464,11 +680,28 @@ async function stubSpecKitAndOpenSpecCommands(electronApp: ElectronApplication) 
 					id: 'proposal',
 					command: '/openspec.proposal',
 					description: 'Draft a structured change proposal.',
-					prompt: 'Bundled proposal prompt for {{AGENT_NAME}}.',
+					prompt: openSpecPrompt,
 					isCustom: false,
-					isModified: false,
+					isModified: openSpecModified,
 				},
 			],
+		}));
+		ipcMain.removeHandler('openspec:savePrompt');
+		ipcMain.handle('openspec:savePrompt', async (_event, _id: string, content: string) => {
+			openSpecPrompt = content;
+			openSpecModified = true;
+			return { success: true };
+		});
+		ipcMain.removeHandler('openspec:resetPrompt');
+		ipcMain.handle('openspec:resetPrompt', async () => {
+			openSpecPrompt = openSpecDefaultPrompt;
+			openSpecModified = false;
+			return { success: true, prompt: openSpecDefaultPrompt };
+		});
+		ipcMain.removeHandler('openspec:refresh');
+		ipcMain.handle('openspec:refresh', async () => ({
+			success: true,
+			metadata: makeMetadata('v2.0.2', 'https://github.com/Fission-AI/OpenSpec'),
 		}));
 	});
 }
@@ -677,10 +910,192 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 			await launched.cleanup();
 		}
 	});
+
+	test(`${thirdTrancheActiveScenarioMatrix[0].id}: ${thirdTrancheActiveScenarioMatrix[0].title}`, async () => {
+		const launched = await launchGitGroupChatPlaybooksWorkbench({ withWorktreeChild: true });
+		try {
+			await activateSession(launched.window, launched.worktreeBranch);
+			const quickActionsDialog = await openQuickActions(launched.window);
+			await quickActionsDialog
+				.getByPlaceholder('Type a command or jump to agent...')
+				.fill('Create Pull Request');
+
+			await expect(
+				quickActionsDialog.getByRole('button', {
+					name: new RegExp(`Create Pull Request: ${launched.worktreeBranch}`),
+				})
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${thirdTrancheActiveScenarioMatrix[1].id}: ${thirdTrancheActiveScenarioMatrix[1].title}`, async () => {
+		const launched = await launchGitGroupChatPlaybooksWorkbench({ withWorktreeChild: true });
+		try {
+			await stubPullRequestCreation(
+				launched.electronApp,
+				{ installed: true, authenticated: false },
+				{ success: false, error: 'not authenticated' }
+			);
+			await activateSession(launched.window, launched.worktreeBranch);
+			const quickActionsDialog = await openQuickActions(launched.window);
+			await quickActionsDialog
+				.getByPlaceholder('Type a command or jump to agent...')
+				.fill('Create Pull Request');
+			await quickActionsDialog.getByRole('button', { name: /Create Pull Request/ }).click();
+
+			const prModal = modalRootByHeading(launched.window, 'Create Pull Request');
+			await expect(prModal.getByText('GitHub CLI not authenticated')).toBeVisible();
+			await expect(prModal.getByText('gh auth login')).toBeVisible();
+			await expect(prModal.getByRole('button', { name: 'Create PR' })).toBeDisabled();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${thirdTrancheActiveScenarioMatrix[2].id}: ${thirdTrancheActiveScenarioMatrix[2].title}`, async () => {
+		const launched = await launchGitGroupChatPlaybooksWorkbench({ withWorktreeChild: true });
+		try {
+			await stubPullRequestCreation(
+				launched.electronApp,
+				{ installed: true, authenticated: true },
+				{ success: true, prUrl: 'https://github.com/RunMaestro/Maestro/pull/118' }
+			);
+			await activateSession(launched.window, launched.worktreeBranch);
+			const quickActionsDialog = await openQuickActions(launched.window);
+			await quickActionsDialog
+				.getByPlaceholder('Type a command or jump to agent...')
+				.fill('Create Pull Request');
+			await quickActionsDialog.getByRole('button', { name: /Create Pull Request/ }).click();
+
+			const prModal = modalRootByHeading(launched.window, 'Create Pull Request');
+			await expect(prModal.getByText(launched.worktreeBranch).first()).toBeVisible();
+			await expect(prModal.getByText('1 uncommitted change')).toBeVisible();
+			await expect(prModal.getByRole('button', { name: 'Create PR' })).toBeEnabled({
+				timeout: 5000,
+			});
+			await prModal.getByPlaceholder('PR title...').fill('E2E git lane PR title');
+			await prModal.getByPlaceholder('Add a description...').fill('E2E git lane PR body');
+			await prModal.getByRole('button', { name: 'Create PR' }).click();
+
+			await expect
+				.poll(async () => (await getStubbedCreatePRRequest(launched.electronApp))?.title ?? null)
+				.toBe('E2E git lane PR title');
+			const request = await getStubbedCreatePRRequest(launched.electronApp);
+			expect(request).toMatchObject({
+				targetBranch: 'main',
+				title: 'E2E git lane PR title',
+				description: 'E2E git lane PR body',
+			});
+			expect(request?.worktreePath).toContain('feat-git-pr-tranche');
+			await expect(prModal).toBeHidden({ timeout: 5000 });
+			await expect(launched.window.getByText('Pull Request Created')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${thirdTrancheActiveScenarioMatrix[3].id}: ${thirdTrancheActiveScenarioMatrix[3].title}`, async () => {
+		const launched = await launchGitGroupChatPlaybooksWorkbench();
+		try {
+			const contextMenu = await openSessionContextMenu(
+				launched.window,
+				'Git Group Chat Playbooks Agent',
+				'Create Worktree'
+			);
+			await contextMenu.getByRole('button', { name: 'Create Worktree', exact: true }).click();
+
+			const createModal = modalRootByHeading(launched.window, 'Create New Worktree');
+			await createModal.getByPlaceholder('feature-xyz').fill('bad branch name!');
+			await createModal.getByRole('button', { name: 'Create', exact: true }).click();
+
+			await expect(createModal.getByText('Invalid branch name')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${thirdTrancheActiveScenarioMatrix[4].id}: ${thirdTrancheActiveScenarioMatrix[4].title}`, async () => {
+		const launched = await launchGitGroupChatPlaybooksWorkbench();
+		try {
+			await stubMarketplaceForPlaybookExchange(launched.electronApp);
+			const marketplaceDialog = await openPlaybookExchangeFromQuickActions(launched.window);
+
+			await marketplaceDialog.getByRole('button', { name: /Git Lane Review/ }).click();
+			await expect(
+				marketplaceDialog.getByText('Use this playbook to review lane output.')
+			).toBeVisible();
+			await marketplaceDialog
+				.locator('#marketplace-target-folder')
+				.fill('engineering/git-lane-imported');
+			await marketplaceDialog.getByRole('button', { name: 'Import Playbook' }).click();
+
+			await expect
+				.poll(async () => {
+					const request = await getStubbedMarketplaceImport(launched.electronApp);
+					return request ? `${request.playbookId}:${request.targetFolderName}` : '';
+				})
+				.toBe('git-lane-review:engineering/git-lane-imported');
+			await expect(marketplaceDialog).toBeHidden();
+			await expect(launched.window.getByText('Playbook Imported')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${thirdTrancheActiveScenarioMatrix[5].id}: ${thirdTrancheActiveScenarioMatrix[5].title}`, async () => {
+		const launched = await launchGitGroupChatPlaybooksWorkbench();
+		try {
+			await stubSpecKitAndOpenSpecCommands(launched.electronApp);
+			const settingsDialog = await openSettings(launched.window);
+
+			await settingsDialog.getByText('/speckit.specify').click();
+			const commandCard = settingsDialog
+				.getByText('/speckit.specify')
+				.locator('xpath=ancestor::div[contains(@class, "rounded-lg")][1]');
+			await commandCard.getByRole('button', { name: 'Edit' }).click();
+			await commandCard.locator('textarea').fill('Edited Spec Kit prompt for {{CWD}}.');
+			await commandCard.getByRole('button', { name: 'Save' }).click();
+
+			await expect(commandCard.getByText('Modified')).toBeVisible();
+			await commandCard.getByRole('button', { name: 'Reset' }).click();
+			await expect(commandCard.getByText('Modified')).toBeHidden();
+			await expect(commandCard.getByText(/Bundled specify prompt/)).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${thirdTrancheActiveScenarioMatrix[6].id}: ${thirdTrancheActiveScenarioMatrix[6].title}`, async () => {
+		const launched = await launchGitGroupChatPlaybooksWorkbench();
+		try {
+			await stubSpecKitAndOpenSpecCommands(launched.electronApp);
+			const settingsDialog = await openSettings(launched.window);
+
+			await settingsDialog.getByText('/openspec.proposal').click();
+			const commandCard = settingsDialog
+				.getByText('/openspec.proposal')
+				.locator('xpath=ancestor::div[contains(@class, "rounded-lg")][1]');
+			await commandCard.getByRole('button', { name: 'Edit' }).click();
+			await commandCard.locator('textarea').fill('Edited OpenSpec prompt for {{AGENT_NAME}}.');
+			await commandCard.getByRole('button', { name: 'Save' }).click();
+
+			await expect(commandCard.getByText('Modified')).toBeVisible();
+			await commandCard.getByRole('button', { name: 'Reset' }).click();
+			await expect(commandCard.getByText('Modified')).toBeHidden();
+			await expect(commandCard.getByText(/Bundled proposal prompt/)).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
 });
 
 test.describe('Git, Group Chat, and Playbooks skipped/env-gated rows', () => {
-	for (const scenario of secondTrancheSkippedScenarioMatrix) {
+	for (const scenario of [
+		...secondTrancheSkippedScenarioMatrix,
+		...thirdTrancheSkippedScenarioMatrix,
+	]) {
 		test(`${scenario.id}: ${scenario.title}`, async () => {
 			test.skip(true, scenario.reason);
 		});

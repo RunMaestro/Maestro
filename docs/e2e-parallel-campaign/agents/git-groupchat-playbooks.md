@@ -1,6 +1,6 @@
 # git-groupchat-playbooks
 
-Status: second tranche authored
+Status: third tranche authored
 
 ## Scope
 
@@ -15,6 +15,7 @@ OpenSpec.
 - [x] Record files touched and scenario counts.
 - [x] Commit first tranche on `codex/e2e-git-groupchat-playbooks`.
 - [x] Commit second tranche on `codex/e2e-git-groupchat-playbooks`.
+- [x] Commit third tranche on `codex/e2e-git-groupchat-playbooks`.
 
 ## Progress
 
@@ -62,8 +63,40 @@ Second tranche:
   - `npx eslint e2e/git-groupchat-playbooks.spec.ts`
   - `git diff --check`
 
+Third tranche:
+
+- Extended `e2e/git-groupchat-playbooks.spec.ts`.
+- Active scenarios added: 7 (`GGP-A12` through `GGP-A18`).
+- Skipped/env-gated rows added: 2 (`GGP-S04` through `GGP-S05`).
+- Cumulative active scenarios authored in this lane: 18.
+- Cumulative skipped/env-gated scenarios authored in this lane: 5.
+- Matrix-backed active scenarios still remaining: 345.
+- Files touched:
+  - `e2e/git-groupchat-playbooks.spec.ts`
+  - `docs/e2e-parallel-campaign/agents/git-groupchat-playbooks.md`
+- Coverage added:
+  - Worktree child Create PR Quick Actions visibility.
+  - Create PR authenticated and unauthenticated stub paths.
+  - Quick worktree branch-name validation.
+  - Playbook Exchange import success with recorded IPC payload.
+  - Spec Kit prompt edit/reset path.
+  - OpenSpec prompt edit/reset path.
+- Skipped/env-gated blockers:
+  - Existing Gist URL open requires authenticated gh state because the UI affordance
+    is hidden without gh availability.
+  - Remote marketplace import requires configured SSH remote state and remote
+    filesystem access.
+- Shared helper edits: none; `broadcasts.md` unchanged.
+- Live GitHub, Gist publishing, marketplace network, SSH remote, provider,
+  headed/UI E2E, and full E2E execution: none.
+- Commit: pending.
+- Validation passed:
+  - `npx eslint e2e/git-groupchat-playbooks.spec.ts`
+  - `git diff --check`
+
 Remaining work:
 
-- Expand PR creation, worktree lifecycle, Gist publish, group chat mutation,
-  marketplace import/export, and Spec Kit/OpenSpec edit/reset matrices.
+- Expand remaining Git diff/log details, PR failure variants, Gist modal coverage,
+  group chat mutation/history, marketplace import/export edge cases, and
+  Spec Kit/OpenSpec refresh/failure matrices.
 - Run actual Playwright/E2E validation only after orchestrator approval.
