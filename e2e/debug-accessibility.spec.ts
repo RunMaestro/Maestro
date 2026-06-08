@@ -211,6 +211,14 @@ const twentySixthTrancheActiveScenarioMatrix = [
 	{ id: 'DA-131', title: 'reports Keyboard Shortcuts mastery progress' },
 ] as const;
 
+const twentySeventhTrancheActiveScenarioMatrix = [
+	{ id: 'DA-132', title: 'hides Quick Actions debug commands by default' },
+	{ id: 'DA-133', title: 'reveals Quick Actions debug commands from debug search' },
+	{ id: 'DA-134', title: 'opens Quick Actions commands with Enter selection' },
+	{ id: 'DA-135', title: 'opens Quick Actions commands with number hotkeys' },
+	{ id: 'DA-136', title: 'routes Quick Actions website command through shell open' },
+] as const;
+
 const debugPackagePreviewCategories = [
 	{ id: 'logs', name: 'System Logs', included: true, sizeEstimate: '~50 KB' },
 	{ id: 'errors', name: 'Error States', included: true, sizeEstimate: '< 10 KB' },
@@ -3520,6 +3528,94 @@ test.describe('Debug and accessibility smoke tranche', () => {
 			const shortcutsDialog = await openShortcutsFromQuickActions(launched.window);
 
 			await expect(shortcutsDialog.getByText(/1 \/ \d+ mastered \(\d+%\)/)).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${twentySeventhTrancheActiveScenarioMatrix[0].id} ${twentySeventhTrancheActiveScenarioMatrix[0].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			const quickActionsDialog = await openQuickActions(launched.window);
+
+			await expect(
+				quickActionsDialog.getByRole('button', { name: /Debug: Reset Busy State/ })
+			).toBeHidden();
+			await expect(
+				quickActionsDialog.getByRole('button', { name: /Debug: Log Session State/ })
+			).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${twentySeventhTrancheActiveScenarioMatrix[1].id} ${twentySeventhTrancheActiveScenarioMatrix[1].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			const quickActionsDialog = await openQuickActions(launched.window);
+			await quickActionsDialog.getByPlaceholder('Type a command or jump to agent...').fill('debug');
+
+			await expect(
+				quickActionsDialog.getByRole('button', { name: /Debug: Reset Busy State/ })
+			).toBeVisible();
+			await expect(
+				quickActionsDialog.getByRole('button', { name: /Debug: Copy Install GUID to Clipboard/ })
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${twentySeventhTrancheActiveScenarioMatrix[2].id} ${twentySeventhTrancheActiveScenarioMatrix[2].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			const quickActionsDialog = await openQuickActions(launched.window);
+			await quickActionsDialog
+				.getByPlaceholder('Type a command or jump to agent...')
+				.fill('View System Logs');
+
+			await launched.window.keyboard.press('Enter');
+
+			await expect(quickActionsDialog).toBeHidden();
+			await expect(
+				launched.window.getByRole('dialog', { name: 'System Log Viewer' })
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${twentySeventhTrancheActiveScenarioMatrix[3].id} ${twentySeventhTrancheActiveScenarioMatrix[3].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			const quickActionsDialog = await openQuickActions(launched.window);
+			await quickActionsDialog
+				.getByPlaceholder('Type a command or jump to agent...')
+				.fill('About Maestro');
+
+			await launched.window.keyboard.press('Meta+1');
+
+			await expect(quickActionsDialog).toBeHidden();
+			await expect(launched.window.getByRole('dialog', { name: 'About Maestro' })).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${twentySeventhTrancheActiveScenarioMatrix[4].id} ${twentySeventhTrancheActiveScenarioMatrix[4].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubShellOpenExternal(launched.electronApp);
+			const quickActionsDialog = await openQuickActions(launched.window);
+			await quickActionsDialog
+				.getByPlaceholder('Type a command or jump to agent...')
+				.fill('Maestro Website');
+			await quickActionsDialog.getByRole('button', { name: /Maestro Website/ }).click();
+
+			await expect(quickActionsDialog).toBeHidden();
+			expect((await getStubbedShellOpenExternalState(launched.electronApp))?.urls).toEqual([
+				'https://runmaestro.ai/',
+			]);
 		} finally {
 			await launched.cleanup();
 		}
