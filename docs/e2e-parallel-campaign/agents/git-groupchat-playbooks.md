@@ -1,6 +1,6 @@
 # git-groupchat-playbooks
 
-Status: fourth recovery tranche authored
+Status: sixth fallback tranche authored
 
 ## Scope
 
@@ -18,6 +18,7 @@ OpenSpec.
 - [x] Commit third tranche on `codex/e2e-git-groupchat-playbooks`.
 - [x] Commit fourth recovery tranche on `codex/e2e-git-groupchat-playbooks`.
 - [x] Commit fifth fallback tranche on `codex/e2e-git-groupchat-playbooks`.
+- [x] Commit sixth fallback tranche on `codex/e2e-git-groupchat-playbooks-fallback-2`.
 
 ## Progress
 
@@ -163,11 +164,42 @@ Fifth fallback tranche:
 - Review:
   - Focused code review found no critical or high issues.
 
+Sixth fallback tranche:
+
+- Extended `e2e/git-groupchat-playbooks.spec.ts`.
+- Active scenarios added: 5 (`GGP-A31` through `GGP-A35`).
+- Skipped/env-gated rows added: 0.
+- Cumulative active scenarios authored in this lane: 35.
+- Cumulative skipped/env-gated scenarios authored in this lane: 7.
+- Matrix-backed active scenarios still remaining: 328.
+- Files touched:
+  - `e2e/git-groupchat-playbooks.spec.ts`
+  - `docs/e2e-parallel-campaign/agents/git-groupchat-playbooks.md`
+- Coverage added:
+  - Multi-file Git Diff tabs from a stubbed IPC diff.
+  - Group Chat header metadata after Quick Actions navigation.
+  - Active Group Chat management commands in Quick Actions.
+  - Playbook Exchange loop settings for a category-filtered playbook.
+  - Spec Kit prompt edit cancellation without marking the command modified.
+- Skipped/env-gated blockers: unchanged.
+- Shared helper edits: none; `broadcasts.md` unchanged.
+- Live GitHub, Gist publishing, marketplace network, SSH remote, provider,
+  headed/UI E2E, Playwright list, and full E2E execution: none.
+- Commit: `705b731a7`.
+- Validation passed:
+  - `NODE_OPTIONS=--max-old-space-size=8192 npx prettier --check e2e/git-groupchat-playbooks.spec.ts`
+  - `npx eslint e2e/git-groupchat-playbooks.spec.ts`
+  - `npx tsc -p tsconfig.lint.json --noEmit`
+  - Static Git/group-chat/playbooks spec ID/`.only` scan.
+  - `git diff --check`
+- Review:
+  - Focused code review found no critical or high issues; E2E execution remains deferred.
+
 Remaining work:
 
 - Expand remaining Git diff/log details, PR failure variants, Gist modal coverage,
   group chat mutation/history, marketplace import/export edge cases, and
   Spec Kit/OpenSpec refresh/failure matrices.
-- Continue from 333 remaining matrix-backed active scenarios after this recovery
+- Continue from 328 remaining matrix-backed active scenarios after this recovery
   fallback tranche.
 - Run actual Playwright/E2E validation only after orchestrator approval.
