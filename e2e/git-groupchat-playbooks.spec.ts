@@ -181,40 +181,48 @@ function createGitGroupChatPlaybooksWorkbench(options: { withWorktreeChild?: boo
 		autoRunPreviewScrollPos: 0,
 		autoRunCursorPosition: 0,
 	};
-	const worktreeSession = {
-		...parentSession,
-		id: `git-groupchat-playbooks-worktree-${idSuffix}`,
-		name: worktreeBranch,
-		cwd: worktreeDir,
-		fullPath: worktreeDir,
-		projectRoot: worktreeDir,
-		parentSessionId: sessionId,
-		worktreeBranch,
-		worktreeConfig: undefined,
-		aiTabs: [
-			{
-				id: worktreeAiTabId,
-				agentSessionId: 'codex-git-groupchat-playbooks-worktree-tab',
-				name: 'Main',
-				starred: false,
-				logs: aiLogs,
-				inputValue: '',
-				stagedImages: [],
-				createdAt: now,
-				state: 'idle',
-			},
-		],
-		activeTabId: worktreeAiTabId,
-		unifiedTabOrder: [{ type: 'ai', id: worktreeAiTabId }],
-		autoRunFolderPath: path.join(worktreeDir, 'Playbooks'),
-		autoRunContent: fs.readFileSync(path.join(worktreeDir, 'Playbooks', 'Phase 1.md'), 'utf-8'),
-	};
+	const sessions = options.withWorktreeChild
+		? [
+				{
+					...parentSession,
+					id: `git-groupchat-playbooks-worktree-${idSuffix}`,
+					name: worktreeBranch,
+					cwd: worktreeDir,
+					fullPath: worktreeDir,
+					projectRoot: worktreeDir,
+					parentSessionId: sessionId,
+					worktreeBranch,
+					worktreeConfig: undefined,
+					aiTabs: [
+						{
+							id: worktreeAiTabId,
+							agentSessionId: 'codex-git-groupchat-playbooks-worktree-tab',
+							name: 'Main',
+							starred: false,
+							logs: aiLogs,
+							inputValue: '',
+							stagedImages: [],
+							createdAt: now,
+							state: 'idle',
+						},
+					],
+					activeTabId: worktreeAiTabId,
+					unifiedTabOrder: [{ type: 'ai', id: worktreeAiTabId }],
+					autoRunFolderPath: path.join(worktreeDir, 'Playbooks'),
+					autoRunContent: fs.readFileSync(
+						path.join(worktreeDir, 'Playbooks', 'Phase 1.md'),
+						'utf-8'
+					),
+				},
+				parentSession,
+			]
+		: [parentSession];
 
 	return {
 		homeDir,
 		projectDir,
 		worktreeBranch,
-		sessions: options.withWorktreeChild ? [worktreeSession, parentSession] : [parentSession],
+		sessions,
 		groupChats: [
 			{
 				id: `git-groupchat-room-${idSuffix}`,
