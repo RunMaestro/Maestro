@@ -219,6 +219,14 @@ const twentySeventhTrancheActiveScenarioMatrix = [
 	{ id: 'DA-136', title: 'routes Quick Actions website command through shell open' },
 ] as const;
 
+const twentyEighthTrancheActiveScenarioMatrix = [
+	{ id: 'DA-137', title: 'opens Settings from Quick Actions' },
+	{ id: 'DA-138', title: 'opens Settings theme tab from Quick Actions' },
+	{ id: 'DA-139', title: 'opens global environment settings from Quick Actions' },
+	{ id: 'DA-140', title: 'routes Quick Actions documentation command through shell open' },
+	{ id: 'DA-141', title: 'routes Quick Actions Discord command through shell open' },
+] as const;
+
 const debugPackagePreviewCategories = [
 	{ id: 'logs', name: 'System Logs', included: true, sizeEstimate: '~50 KB' },
 	{ id: 'errors', name: 'Error States', included: true, sizeEstimate: '< 10 KB' },
@@ -3615,6 +3623,102 @@ test.describe('Debug and accessibility smoke tranche', () => {
 			await expect(quickActionsDialog).toBeHidden();
 			expect((await getStubbedShellOpenExternalState(launched.electronApp))?.urls).toEqual([
 				'https://runmaestro.ai/',
+			]);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${twentyEighthTrancheActiveScenarioMatrix[0].id} ${twentyEighthTrancheActiveScenarioMatrix[0].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			const quickActionsDialog = await openQuickActions(launched.window);
+			await quickActionsDialog
+				.getByPlaceholder('Type a command or jump to agent...')
+				.fill('Settings');
+			await quickActionsDialog.getByRole('button', { name: /Settings/ }).click();
+
+			await expect(quickActionsDialog).toBeHidden();
+			const settingsDialog = launched.window.getByRole('dialog', { name: 'Settings' });
+			await expect(settingsDialog).toBeVisible();
+			await expect(settingsDialog.getByText('General')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${twentyEighthTrancheActiveScenarioMatrix[1].id} ${twentyEighthTrancheActiveScenarioMatrix[1].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			const quickActionsDialog = await openQuickActions(launched.window);
+			await quickActionsDialog
+				.getByPlaceholder('Type a command or jump to agent...')
+				.fill('Change Theme');
+			await quickActionsDialog.getByRole('button', { name: /Change Theme/ }).click();
+
+			await expect(quickActionsDialog).toBeHidden();
+			const settingsDialog = launched.window.getByRole('dialog', { name: 'Settings' });
+			await expect(settingsDialog).toBeVisible();
+			await expect(settingsDialog.getByLabel('Theme picker')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${twentyEighthTrancheActiveScenarioMatrix[2].id} ${twentyEighthTrancheActiveScenarioMatrix[2].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			const quickActionsDialog = await openQuickActions(launched.window);
+			await quickActionsDialog
+				.getByPlaceholder('Type a command or jump to agent...')
+				.fill('Configure Global Environment Variables');
+			await quickActionsDialog
+				.getByRole('button', { name: /Configure Global Environment Variables/ })
+				.click();
+
+			await expect(quickActionsDialog).toBeHidden();
+			const settingsDialog = launched.window.getByRole('dialog', { name: 'Settings' });
+			await expect(settingsDialog).toBeVisible();
+			await expect(settingsDialog.getByText('Global Environment Variables')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${twentyEighthTrancheActiveScenarioMatrix[3].id} ${twentyEighthTrancheActiveScenarioMatrix[3].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubShellOpenExternal(launched.electronApp);
+			const quickActionsDialog = await openQuickActions(launched.window);
+			await quickActionsDialog
+				.getByPlaceholder('Type a command or jump to agent...')
+				.fill('Documentation');
+			await quickActionsDialog
+				.getByRole('button', { name: /Documentation and User Guide/ })
+				.click();
+
+			await expect(quickActionsDialog).toBeHidden();
+			expect((await getStubbedShellOpenExternalState(launched.electronApp))?.urls).toEqual([
+				'https://docs.runmaestro.ai/',
+			]);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${twentyEighthTrancheActiveScenarioMatrix[4].id} ${twentyEighthTrancheActiveScenarioMatrix[4].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubShellOpenExternal(launched.electronApp);
+			const quickActionsDialog = await openQuickActions(launched.window);
+			await quickActionsDialog
+				.getByPlaceholder('Type a command or jump to agent...')
+				.fill('Join Discord');
+			await quickActionsDialog.getByRole('button', { name: /Join Discord/ }).click();
+
+			await expect(quickActionsDialog).toBeHidden();
+			expect((await getStubbedShellOpenExternalState(launched.electronApp))?.urls).toEqual([
+				'https://runmaestro.ai/discord',
 			]);
 		} finally {
 			await launched.cleanup();
