@@ -71,7 +71,7 @@ Mobile/web bridge only.
 
 ### 2026-06-08 third bridge server-lifecycle fallback tranche
 
-- Commit: created after this document update; final orchestrator docs record the exact hash.
+- Commit: `f233bc11b`
 - Active scenarios authored: 5
 - Skipped/env-gated scenarios authored: 0
 - Files touched:
