@@ -1,6 +1,6 @@
 # Parallel E2E Orchestrator Status
 
-Last updated: 2026-06-08 07:00 ET
+Last updated: 2026-06-08 07:24 ET
 
 ## Base
 
@@ -38,7 +38,7 @@ coverage and the shell-lane tab coverage.
 | `files-docs-history`       | `codex/e2e-files-docs-history`                 | `Maestro-worktrees/e2e-files-docs-history`                 | `maestro-e2e-files-docs-history-t6`    | merged through `6f8134fb9` | 32 active scenarios accepted; 317 remain        |
 | `autorun-ai-terminal`      | `codex/e2e-autorun-ai-terminal`                | `Maestro-worktrees/e2e-autorun-ai-terminal`                | `maestro-e2e-autorun-ai-terminal`      | merged through `cd804bebf` | 10 active scenarios accepted; 263 remain        |
 | `wizard-settings-prompts`  | `codex/e2e-wizard-settings-prompts-fallback-4` | `Maestro-worktrees/e2e-wizard-settings-prompts-fallback-4` | manual fallback                        | merged through `1741d2b74` | 44 active scenarios accepted; 328 remain        |
-| `git-groupchat-playbooks`  | `codex/e2e-git-groupchat-playbooks-fallback-2` | `Maestro-worktrees/e2e-git-groupchat-playbooks-fallback-2` | manual fallback                        | merged through `705b731a7` | 35 active scenarios accepted; 328 remain        |
+| `git-groupchat-playbooks`  | `codex/e2e-git-groupchat-playbooks-fallback-3` | `Maestro-worktrees/e2e-git-groupchat-playbooks-fallback-3` | manual fallback                        | merged through `1efd6cfc5` | 40 active scenarios accepted; 323 remain        |
 | `stats-graph-symphony`     | `codex/e2e-stats-graph-symphony-fallback-2`    | `Maestro`                                                  | manual fallback                        | merged through `33581a7ec` | 22 active scenarios accepted; 314 remain        |
 | `debug-accessibility`      | `codex/e2e-debug-accessibility`                | `Maestro-worktrees/e2e-debug-accessibility`                | `maestro-e2e-debug-accessibility`      | merged through `15e7a1a20` | 11 active scenarios accepted; 181 remain        |
 | `mobile-web-bridge`        | `codex/e2e-mobile-web-bridge`                  | `Maestro-worktrees/e2e-mobile-web-bridge`                  | `maestro-e2e-mobile-web-bridge`        | merged through `d580f80ea` | 11 active scenarios accepted; 91 remain         |
@@ -55,7 +55,7 @@ coverage and the shell-lane tab coverage.
 - `stats-graph-symphony` merged through `33581a7ec`.
 - `debug-accessibility` merged through `15e7a1a20`.
 - `fixtures-sharding-review` merged through `392c4527`.
-- `git-groupchat-playbooks` merged through `705b731a7`.
+- `git-groupchat-playbooks` merged through `1efd6cfc5`.
 
 ## Launch Log
 
@@ -146,6 +146,10 @@ coverage and the shell-lane tab coverage.
 - 2026-06-08 07:00 ET: accepted fallback `wizard-settings-prompts` through
   `1741d2b74` with 5 active Settings preference scenarios. No E2E execution was
   run.
+- 2026-06-08 07:24 ET: accepted fallback `git-groupchat-playbooks` through
+  `1efd6cfc5` with 5 active Git Diff, Create PR, Playbook Exchange, and
+  OpenSpec scenarios. Static review fixed a stale OpenSpec prompt assertion before
+  merge. No E2E execution was run.
 
 ## Blockers
 
@@ -155,8 +159,9 @@ coverage and the shell-lane tab coverage.
   fifth recovery tranches plus the sixth `files-docs-history`, seventh
   `wizard-settings-prompts`, eighth `git-groupchat-playbooks`, ninth
   `stats-graph-symphony`, tenth `wizard-settings-prompts`, eleventh
-  `git-groupchat-playbooks`, twelfth `wizard-settings-prompts`, and thirteenth
-  `wizard-settings-prompts` fallbacks are accepted for selected high-remaining
+  `git-groupchat-playbooks`, twelfth `wizard-settings-prompts`, thirteenth
+  `wizard-settings-prompts`, and fourteenth `git-groupchat-playbooks` fallbacks
+  are accepted for selected high-remaining
   lanes.
   Remaining work should continue in smaller batches, with each run committing
   one coherent tranche and recording remaining work instead of trying to consume

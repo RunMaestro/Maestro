@@ -34,10 +34,10 @@ Parallel E2E authoring checkpoint:
 
 - Campaign: `docs/e2e-parallel-prompt.md`
 - Result: in progress
-- Current authoring progress: 918 / 3,025 active scenarios after accepting the
-  thirteenth-tranche wizard/settings/prompts fallback through `1741d2b74`. This
-  tranche added 5 active Settings preference rows without adding skipped or env-gated
-  rows.
+- Current authoring progress: 923 / 3,025 active scenarios after accepting the
+  fourteenth-tranche git/group-chat/playbooks fallback through `1efd6cfc5`. This
+  tranche added 5 active Git Diff, Create PR, Playbook Exchange, and OpenSpec rows
+  without adding skipped or env-gated rows.
 - Accepted lanes so far: `shell-tabs-command`, `agent-crud-provider`,
   `files-docs-history`, `mobile-web-bridge`, `autorun-ai-terminal`,
   `wizard-settings-prompts`, `stats-graph-symphony`, `debug-accessibility`,
@@ -46,8 +46,8 @@ Parallel E2E authoring checkpoint:
 - Validation plan: static review of authored selectors, fixtures, scenario names, assertions, and lane progress logs; runtime validation is deferred to a later sharded execution phase.
 - Latest static validation: Prettier, lane-local ESLint, `tsconfig.lint.json`,
   scenario-ID duplicate, `.only`, and `git diff --check` checks passed for the
-  `wizard-settings-prompts` fallback before merge. No Playwright/E2E/listing command
-  was run.
+  `git-groupchat-playbooks` fallback before merge; focused static review found and
+  fixed one stale OpenSpec prompt assertion. No Playwright/E2E/listing command was run.
 
 Integration checkpoint:
 
