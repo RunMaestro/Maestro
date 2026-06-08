@@ -131,6 +131,14 @@ const sixteenthTrancheActiveScenarioMatrix = [
 	{ id: 'DA-081', title: 'kills only the selected Process Monitor process' },
 ] as const;
 
+const seventeenthTrancheActiveScenarioMatrix = [
+	{ id: 'DA-082', title: 'cancels System Log clear confirmation with Escape' },
+	{ id: 'DA-083', title: 'closes System Log clear confirmation from the header control' },
+	{ id: 'DA-084', title: 'keeps System Log clear confirmation open after backdrop clicks' },
+	{ id: 'DA-085', title: 'confirms System Log clear action from focused Enter' },
+	{ id: 'DA-086', title: 'preserves severity filters after cancelled System Log clear' },
+] as const;
+
 const debugPackagePreviewCategories = [
 	{ id: 'logs', name: 'System Logs', included: true, sizeEstimate: '~50 KB' },
 	{ id: 'errors', name: 'Error States', included: true, sizeEstimate: '< 10 KB' },
@@ -363,6 +371,13 @@ async function openSystemLogViewer(page: Page) {
 	const logViewer = page.getByRole('dialog', { name: 'System Log Viewer' });
 	await expect(logViewer).toBeVisible();
 	return logViewer;
+}
+
+async function openSystemLogClearConfirmation(page: Page, logViewer: Locator) {
+	await logViewer.getByTitle('Clear logs').click();
+	const confirmDialog = page.getByRole('dialog', { name: 'Confirm' });
+	await expect(confirmDialog).toBeVisible();
+	return confirmDialog;
 }
 
 async function seedSystemLogs(page: Page) {
@@ -2371,6 +2386,101 @@ test.describe('Debug and accessibility smoke tranche', () => {
 			await expect(
 				processMonitor.getByText('Debug Accessibility Agent - Terminal Shell')
 			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${seventeenthTrancheActiveScenarioMatrix[0].id} ${seventeenthTrancheActiveScenarioMatrix[0].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await seedSystemLogs(launched.window);
+			const logViewer = await openSystemLogViewer(launched.window);
+			const confirmDialog = await openSystemLogClearConfirmation(launched.window, logViewer);
+
+			await launched.window.keyboard.press('Escape');
+
+			await expect(confirmDialog).toBeHidden();
+			await expect(logViewer.getByText('Debug accessibility info sentinel')).toBeVisible();
+			await expect(logViewer.getByText('Debug accessibility error sentinel')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${seventeenthTrancheActiveScenarioMatrix[1].id} ${seventeenthTrancheActiveScenarioMatrix[1].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await seedSystemLogs(launched.window);
+			const logViewer = await openSystemLogViewer(launched.window);
+			const confirmDialog = await openSystemLogClearConfirmation(launched.window, logViewer);
+
+			await confirmDialog.getByRole('button', { name: 'Close modal' }).click();
+
+			await expect(confirmDialog).toBeHidden();
+			await expect(logViewer.getByText('Debug accessibility info sentinel')).toBeVisible();
+			await expect(logViewer.getByText('Debug accessibility error sentinel')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${seventeenthTrancheActiveScenarioMatrix[2].id} ${seventeenthTrancheActiveScenarioMatrix[2].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await seedSystemLogs(launched.window);
+			const logViewer = await openSystemLogViewer(launched.window);
+			const confirmDialog = await openSystemLogClearConfirmation(launched.window, logViewer);
+
+			await confirmDialog.click({ position: { x: 5, y: 5 } });
+
+			await expect(confirmDialog).toBeVisible();
+			await confirmDialog.getByRole('button', { name: 'Cancel' }).click();
+			await expect(logViewer.getByText('Debug accessibility info sentinel')).toBeVisible();
+			await expect(logViewer.getByText('Debug accessibility error sentinel')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${seventeenthTrancheActiveScenarioMatrix[3].id} ${seventeenthTrancheActiveScenarioMatrix[3].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await seedSystemLogs(launched.window);
+			const logViewer = await openSystemLogViewer(launched.window);
+			const confirmDialog = await openSystemLogClearConfirmation(launched.window, logViewer);
+			await expect(confirmDialog.getByRole('button', { name: 'Confirm' })).toBeFocused();
+
+			await launched.window.keyboard.press('Enter');
+
+			await expect(confirmDialog).toBeHidden();
+			await expect(logViewer.getByText('No logs yet')).toBeVisible();
+			await expect(logViewer.getByText('Debug accessibility info sentinel')).toHaveCount(0);
+			await expect(logViewer.getByText('Debug accessibility error sentinel')).toHaveCount(0);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${seventeenthTrancheActiveScenarioMatrix[4].id} ${seventeenthTrancheActiveScenarioMatrix[4].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await seedSystemLogs(launched.window);
+			const logViewer = await openSystemLogViewer(launched.window);
+
+			await logViewer.getByRole('button', { name: 'INFO' }).click();
+			await expect(logViewer.getByText('Debug accessibility info sentinel')).toBeHidden();
+			await expect(logViewer.getByText('Debug accessibility error sentinel')).toBeVisible();
+			const confirmDialog = await openSystemLogClearConfirmation(launched.window, logViewer);
+
+			await confirmDialog.getByRole('button', { name: 'Cancel' }).click();
+
+			await expect(confirmDialog).toBeHidden();
+			await expect(logViewer.getByText('Debug accessibility info sentinel')).toBeHidden();
+			await expect(logViewer.getByText('Debug accessibility error sentinel')).toBeVisible();
+			await logViewer.getByRole('button', { name: 'ALL' }).click();
+			await expect(logViewer.getByText('Debug accessibility info sentinel')).toBeVisible();
+			await expect(logViewer.getByText('Debug accessibility error sentinel')).toBeVisible();
 		} finally {
 			await launched.cleanup();
 		}
