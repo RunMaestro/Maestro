@@ -370,6 +370,14 @@ async function stubCodexAgentSessionStorage(
 						uuid: 'provider-unnamed-user',
 					},
 				],
+				'agent-provider-hidden': [
+					{
+						type: 'assistant',
+						content: 'Hidden provider detail sentinel.',
+						timestamp: new Date(now - 75_000).toISOString(),
+						uuid: 'provider-hidden-assistant',
+					},
+				],
 			};
 
 			state.__maestroE2eAgentCrudSearchCalls = [];
@@ -2518,6 +2526,154 @@ test.describe('Agent Sessions provider storage', () => {
 			await expect(agentSessions.getByPlaceholder('Search all content...')).toBeVisible();
 			await expect(agentSessions.getByPlaceholder('Search all content...')).toHaveValue('');
 			await expect(agentSessions.getByText('Provider Setup Review')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('saves a generic provider session list rename with Enter', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: [seeded.sessions[0]],
+		});
+
+		try {
+			await stubCodexAgentSessionStorage(launched.electronApp, seeded.projectDir);
+
+			const agentSessions = await openAgentSessions(launched.window, 'Matrix Codex Agent');
+			const reviewRow = agentSessions
+				.getByText('Provider Setup Review')
+				.locator('xpath=ancestor::div[contains(@class, "cursor-pointer")][1]');
+			await reviewRow.hover();
+			await reviewRow.getByTitle('Rename session').click();
+			const renameInput = agentSessions.getByPlaceholder('Enter session name...');
+			await renameInput.fill('Provider List Review');
+			await renameInput.press('Enter');
+
+			await expect(agentSessions.getByText('Provider List Review')).toBeVisible();
+			await expect(await getAgentSessionUpdates(launched.electronApp)).toContainEqual({
+				type: 'name',
+				agentId: 'codex',
+				projectPath: seeded.projectDir,
+				sessionId: 'codex-provider-review',
+				name: 'Provider List Review',
+			});
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('clears a generic provider session detail name with a blank rename', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: [seeded.sessions[0]],
+		});
+
+		try {
+			await stubCodexAgentSessionStorage(launched.electronApp, seeded.projectDir);
+
+			const agentSessions = await openAgentSessions(launched.window, 'Matrix Codex Agent');
+			await agentSessions.getByText('Provider Setup Review').click();
+			await agentSessions.getByTitle('Rename session').click();
+			const renameInput = agentSessions.getByPlaceholder('Enter session name...');
+			await renameInput.fill('   ');
+			await renameInput.press('Enter');
+
+			await expect(agentSessions.getByText('CODEX-PROVIDER-REVIEW')).toBeVisible();
+			await expect(agentSessions.getByTitle('Add session name')).toBeVisible();
+			await expect(await getAgentSessionUpdates(launched.electronApp)).toContainEqual({
+				type: 'name',
+				agentId: 'codex',
+				projectPath: seeded.projectDir,
+				sessionId: 'codex-provider-review',
+				name: null,
+			});
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('syncs generic provider detail favorite changes back to the session list', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: [seeded.sessions[0]],
+		});
+
+		try {
+			await stubCodexAgentSessionStorage(launched.electronApp, seeded.projectDir);
+
+			const agentSessions = await openAgentSessions(launched.window, 'Matrix Codex Agent');
+			await agentSessions.getByText('Provider Setup Review').click();
+			await agentSessions.getByTitle('Remove from favorites').click();
+			await launched.window.keyboard.press('Escape');
+
+			const reviewRow = agentSessions
+				.getByText('Provider Setup Review')
+				.locator('xpath=ancestor::div[contains(@class, "cursor-pointer")][1]');
+			await expect(reviewRow.getByTitle('Add to favorites')).toBeVisible();
+			await expect(await getAgentSessionUpdates(launched.electronApp)).toContainEqual({
+				type: 'starred',
+				agentId: 'codex',
+				projectPath: seeded.projectDir,
+				sessionId: 'codex-provider-review',
+				starred: false,
+			});
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('opens hidden generic provider session detail after Show All', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: [seeded.sessions[0]],
+		});
+
+		try {
+			await stubCodexAgentSessionStorage(launched.electronApp, seeded.projectDir, {
+				includeHiddenAgentSession: true,
+			});
+
+			const agentSessions = await openAgentSessions(launched.window, 'Matrix Codex Agent');
+			await agentSessions.getByRole('checkbox', { name: 'Show All' }).check();
+			await agentSessions.getByText('Hidden Provider Run').click();
+
+			await expect(agentSessions.getByText('Hidden provider detail sentinel.')).toBeVisible();
+			await expect(await getAgentSessionReadCalls(launched.electronApp)).toContainEqual({
+				agentId: 'codex',
+				projectPath: seeded.projectDir,
+				sessionId: 'agent-provider-hidden',
+			});
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('combines Named and Show All filters for hidden generic provider sessions', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: [seeded.sessions[0]],
+		});
+
+		try {
+			await stubCodexAgentSessionStorage(launched.electronApp, seeded.projectDir, {
+				includeHiddenAgentSession: true,
+			});
+
+			const agentSessions = await openAgentSessions(launched.window, 'Matrix Codex Agent');
+			await agentSessions.getByRole('checkbox', { name: 'Named' }).check();
+			await expect(agentSessions.getByText('Provider Setup Review')).toBeVisible();
+			await expect(agentSessions.getByText('Hidden Provider Run')).toBeHidden();
+			await expect(agentSessions.getByText('Unnamed provider setup sentinel')).toBeHidden();
+
+			await agentSessions.getByRole('checkbox', { name: 'Show All' }).check();
+			await expect(agentSessions.getByText('Hidden Provider Run')).toBeVisible();
+			await expect(agentSessions.getByText('Unnamed provider setup sentinel')).toBeHidden();
 		} finally {
 			await launched.cleanup();
 		}
