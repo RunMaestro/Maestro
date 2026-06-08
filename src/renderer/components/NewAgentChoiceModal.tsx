@@ -43,7 +43,6 @@ export function NewAgentChoiceModal({
 			priority={MODAL_PRIORITIES.NEW_AGENT_CHOICE}
 			onClose={onClose}
 			width={680}
-			scaleWidthWithFont
 			testId="new-agent-choice-modal"
 		>
 			<div className="flex flex-col gap-5">

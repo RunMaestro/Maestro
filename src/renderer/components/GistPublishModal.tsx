@@ -134,7 +134,6 @@ export function GistPublishModal({
 				priority={MODAL_PRIORITIES.GIST_PUBLISH}
 				onClose={onClose}
 				width={500}
-				scaleWidthWithFont
 				zIndex={10000}
 				initialFocusRef={copyButtonRef}
 				footer={
@@ -235,7 +234,6 @@ export function GistPublishModal({
 			priority={MODAL_PRIORITIES.GIST_PUBLISH}
 			onClose={onClose}
 			width={520}
-			scaleWidthWithFont
 			zIndex={10000}
 			initialFocusRef={secretButtonRef}
 			footer={

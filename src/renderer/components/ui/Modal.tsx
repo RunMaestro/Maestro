@@ -61,10 +61,11 @@ export interface ModalProps {
 	width?: number;
 	/**
 	 * Scale the width with the Cmd+= font-size setting via --font-scale (14px
-	 * baseline → scale 1). When true, `width` is the baseline and the modal
-	 * grows/shrinks proportionally with the font, clamped to 95vw. Use for
-	 * dense layouts (e.g. side-by-side cards) that get squeezed at larger fonts.
-	 * Defaults to false (fixed px width).
+	 * baseline → scale 1). `width` is the baseline and the modal grows/shrinks
+	 * proportionally with the font, clamped to 95vw. This is on by default: at
+	 * the baseline font it's a no-op, and at larger fonts it keeps button rows
+	 * and headers from wrapping/clipping inside a fixed-px shell. Pass `false`
+	 * only for a modal that must stay a literal pixel width regardless of font.
 	 */
 	scaleWidthWithFont?: boolean;
 	/** Max height as CSS value (e.g., '90vh', '600px'). Defaults to '90vh' */
@@ -104,7 +105,7 @@ export function Modal({
 	customHeader,
 	headerIcon,
 	width = 400,
-	scaleWidthWithFont = false,
+	scaleWidthWithFont = true,
 	maxHeight = '90vh',
 	closeOnBackdropClick = false,
 	zIndex = 9999,

@@ -698,10 +698,11 @@ describe('RenameSessionModal', () => {
 				</TestWrapper>
 			);
 
-			// The Modal component now uses inline width style instead of Tailwind class
-			const modalBox = container.querySelector('.border.rounded-lg');
+			// The Modal component uses an inline width style that scales with the
+			// Cmd+= font setting by default (no-op at the baseline font scale).
+			const modalBox = container.querySelector('.border.rounded-lg') as HTMLElement;
 			expect(modalBox).toBeInTheDocument();
-			expect(modalBox).toHaveStyle({ width: '400px' });
+			expect(modalBox.style.width).toBe('min(calc(400px * var(--font-scale, 1)), 95vw)');
 		});
 	});
 });
