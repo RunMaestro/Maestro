@@ -103,6 +103,12 @@ const activeScenarioMatrix = [
 	{ id: 'WSP-063', title: 'persists Settings Group Chat standing instructions' },
 	{ id: 'WSP-064', title: 'trims pasted Prompt Composer text' },
 	{ id: 'WSP-065', title: 'keeps literal Prompt Composer at-text without selecting a mention' },
+	{ id: 'WSP-066', title: 'blocks duplicate custom AI command creation in Settings' },
+	{ id: 'WSP-067', title: 'deletes a seeded custom AI command in Settings' },
+	{ id: 'WSP-068', title: 'rejects invalid Settings global environment variable names' },
+	{ id: 'WSP-069', title: 'removes a Settings global environment variable' },
+	{ id: 'WSP-070', title: "adjusts Director's Notes default lookback period" },
+	{ id: 'WSP-071', title: 'opens Prompt Composer from the keyboard shortcut' },
 ];
 
 const envGatedScenarioMatrix = [
@@ -2166,6 +2172,248 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 			await composerInput.fill('@NoMatchingWspAgent');
 			await expect(composerDialog.getByRole('button', { name: /@Reviewer/ })).toHaveCount(0);
 			await expect(composerInput).toHaveValue('@NoMatchingWspAgent');
+
+			await launched.window.keyboard.press('Escape');
+			await expect(launched.window.getByText('Prompt Composer')).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[65].id} ${activeScenarioMatrix[65].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				customAICommands: [
+					{
+						id: 'wsp-duplicate-command',
+						command: '/wsp-duplicate',
+						description: 'Original duplicate guard command',
+						prompt: 'Original duplicate guard prompt.',
+						isBuiltIn: false,
+					},
+				],
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'AI Commands',
+				'Custom AI Commands'
+			);
+
+			await settingsDialog.getByRole('button', { name: 'Add Command' }).click();
+			await settingsDialog.getByPlaceholder('/mycommand').fill('/wsp-duplicate');
+			await settingsDialog
+				.getByPlaceholder('Short description for autocomplete')
+				.fill('Duplicate attempt should be ignored');
+			await settingsDialog
+				.getByPlaceholder(/The actual prompt sent to the AI agent/)
+				.fill('Duplicate prompt should not persist.');
+			await settingsDialog.getByRole('button', { name: 'Create' }).first().click();
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						const commands = await window.maestro.settings.get('customAICommands');
+						return Array.isArray(commands)
+							? commands.filter((command) => command.command === '/wsp-duplicate').length
+							: 0;
+					});
+				})
+				.toBe(1);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[66].id} ${activeScenarioMatrix[66].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				customAICommands: [
+					{
+						id: 'wsp-delete-command',
+						command: '/wsp-delete',
+						description: 'Delete guard command',
+						prompt: 'Delete this deterministic prompt.',
+						isBuiltIn: false,
+					},
+				],
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'AI Commands',
+				'Custom AI Commands'
+			);
+			await settingsDialog.getByRole('button', { name: /\/wsp-delete/ }).click();
+			const commandCard = settingsDialog
+				.getByText('/wsp-delete')
+				.locator('xpath=ancestor::div[contains(@class, "rounded-lg")][1]');
+			await commandCard.getByTitle('Delete command').click();
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						const commands = await window.maestro.settings.get('customAICommands');
+						return Array.isArray(commands)
+							? commands.some((command) => command.command === '/wsp-delete')
+							: false;
+					});
+				})
+				.toBe(false);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[67].id} ${activeScenarioMatrix[67].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				shellEnvVars: {
+					WSP_VALID: 'kept',
+				},
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'General',
+				'Global Environment Variables'
+			);
+			const envSection = settingsDialog
+				.getByText('Environment Variables (optional)')
+				.locator('xpath=ancestor::div[.//button[normalize-space(.)="Add Variable"]][1]');
+			await envSection.getByRole('button', { name: 'Add Variable' }).click();
+			await envSection.getByPlaceholder('VARIABLE').last().fill('1INVALID');
+			await envSection.getByPlaceholder('value').last().fill('ignored');
+
+			await expect(settingsDialog.getByText(/Invalid variable name/)).toBeVisible();
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('shellEnvVars');
+					});
+				})
+				.toEqual({
+					WSP_VALID: 'kept',
+				});
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[68].id} ${activeScenarioMatrix[68].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				shellEnvVars: {
+					WSP_REMOVE: 'temporary',
+				},
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'General',
+				'Global Environment Variables'
+			);
+			const variableRow = settingsDialog
+				.getByDisplayValue('WSP_REMOVE')
+				.locator('xpath=ancestor::div[contains(@class, "flex")][1]');
+			await variableRow.getByTitle('Remove variable').click();
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						const envVars = await window.maestro.settings.get('shellEnvVars');
+						return Boolean(envVars && typeof envVars === 'object' && 'WSP_REMOVE' in envVars);
+					});
+				})
+				.toBe(false);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[69].id} ${activeScenarioMatrix[69].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				encoreFeatures: {
+					directorNotes: true,
+				},
+				directorNotesSettings: {
+					provider: 'codex',
+					defaultLookbackDays: 7,
+				},
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'Encore Features',
+				'Default Lookback Period: 7 days'
+			);
+			const lookbackControl = settingsDialog
+				.getByText(/Default Lookback Period:/)
+				.locator('xpath=ancestor::div[input[@type="range"]][1]');
+			await lookbackControl.locator('input[type="range"]').evaluate((slider) => {
+				const input = slider as HTMLInputElement;
+				input.value = '30';
+				input.dispatchEvent(new Event('input', { bubbles: true }));
+				input.dispatchEvent(new Event('change', { bubbles: true }));
+			});
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						const settings = await window.maestro.settings.get('directorNotesSettings');
+						return settings && typeof settings === 'object' && 'defaultLookbackDays' in settings
+							? settings.defaultLookbackDays
+							: undefined;
+					});
+				})
+				.toBe(30);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[70].id} ${activeScenarioMatrix[70].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await launched.window.getByText('Main', { exact: true }).click();
+			await expect(launched.window.getByTitle('Send message')).toBeVisible();
+			await launched.window.keyboard.press('Meta+Shift+P');
+
+			const composerInput = launched.window.getByPlaceholder(/Write your prompt here/);
+			await expect(composerInput).toBeVisible();
+			await composerInput.fill('Keyboard-opened wizard settings prompt');
+			await expect(composerInput).toHaveValue('Keyboard-opened wizard settings prompt');
 
 			await launched.window.keyboard.press('Escape');
 			await expect(launched.window.getByText('Prompt Composer')).toBeHidden();
