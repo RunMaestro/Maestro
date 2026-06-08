@@ -1,6 +1,6 @@
 # debug-accessibility
 
-Status: thirteenth fallback tranche authored
+Status: fourteenth fallback tranche authored
 
 ## Scope
 
@@ -9,9 +9,9 @@ accessibility smoke.
 
 ## Campaign Head
 
-- Ledger head before this tranche: `a3a12b44a`.
-- Implementation commit: `b52037cc0`.
-- Coverage ledger before this tranche: 61 active scenarios accepted, 131
+- Ledger head before this tranche: `8aceea24c`.
+- Implementation commit: `681521ec8`.
+- Coverage ledger before this tranche: 66 active scenarios accepted, 126
   matrix-backed scenarios remaining.
 
 ## Checklist
@@ -25,12 +25,12 @@ accessibility smoke.
 
 ## Progress
 
-- Added matrix-backed update error and debug package error/copy control scenarios `DA-062` through `DA-066`.
+- Added matrix-backed Process Monitor control scenarios `DA-067` through `DA-071`.
 - Active scenarios added this tranche: 5.
-- Active scenarios authored in lane total: 66.
+- Active scenarios authored in lane total: 71.
 - Skipped/product-gap scenarios added this tranche: 0.
 - Env-gated scenarios added this tranche: 0.
-- Matrix-backed remaining after orchestrator ledger acceptance: 126.
+- Matrix-backed remaining after orchestrator ledger acceptance: 121.
 
 Files touched:
 
@@ -45,7 +45,7 @@ Validation passed:
 - `NODE_OPTIONS=--max-old-space-size=8192 npx prettier --write e2e/debug-accessibility.spec.ts docs/e2e-parallel-campaign/agents/debug-accessibility.md docs/e2e-parallel-campaign/coverage-ledger.md docs/e2e-coverage-campaign.md`
 - `npx tsc -p tsconfig.lint.json --noEmit`
 - `git diff --check`
-- Static inventory scan reports 1030 declared E2E tests, no `.only`, no
+- Static inventory scan reports 1035 declared E2E tests, no `.only`, no
   prohibited commands, and no duplicate scenario IDs.
 
 Blockers:
@@ -56,5 +56,5 @@ Blockers:
 
 Remaining work:
 
-- 10 debug/about/update/app-info/agent-error modal scenarios remain before the
+- 5 debug/about/update/app-info/agent-error modal scenarios remain before the
   lane shifts to destructive confirmations and broader accessibility audits.
