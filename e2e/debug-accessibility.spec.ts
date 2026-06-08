@@ -187,6 +187,14 @@ const twentyThirdTrancheActiveScenarioMatrix = [
 	{ id: 'DA-116', title: 'shows Debug Package submission instructions' },
 ] as const;
 
+const twentyFourthTrancheActiveScenarioMatrix = [
+	{ id: 'DA-117', title: 'shows update modal version delta copy' },
+	{ id: 'DA-118', title: 'shows auto-expanded update release notes content' },
+	{ id: 'DA-119', title: 'shows available update download and manual controls' },
+	{ id: 'DA-120', title: 'toggles update pre-release setting through checkbox role' },
+	{ id: 'DA-121', title: 'shows current update release history affordance' },
+] as const;
+
 const debugPackagePreviewCategories = [
 	{ id: 'logs', name: 'System Logs', included: true, sizeEstimate: '~50 KB' },
 	{ id: 'errors', name: 'Error States', included: true, sizeEstimate: '< 10 KB' },
@@ -3185,6 +3193,88 @@ test.describe('Debug and accessibility smoke tranche', () => {
 			await expect(debugPackageDialog.getByText('To submit:')).toBeVisible();
 			await expect(debugPackageDialog.getByText(/Open a GitHub issue/)).toBeVisible();
 			await expect(debugPackageDialog.getByText(/Attach the generated zip file/)).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${twentyFourthTrancheActiveScenarioMatrix[0].id} ${twentyFourthTrancheActiveScenarioMatrix[0].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubUpdateWorkflowHandlers(launched.electronApp);
+			const updateDialog = await openUpdateCheckFromQuickActions(launched.window);
+
+			await expect(updateDialog.getByText('Update Available!')).toBeVisible();
+			await expect(
+				updateDialog.getByText('You are 1 version behind the latest release.')
+			).toBeVisible();
+			await expect(updateDialog.getByText('Current: v0.15.3 → Latest: v0.16.0')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${twentyFourthTrancheActiveScenarioMatrix[1].id} ${twentyFourthTrancheActiveScenarioMatrix[1].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubUpdateWorkflowHandlers(launched.electronApp);
+			const updateDialog = await openUpdateCheckFromQuickActions(launched.window);
+
+			await expect(updateDialog.getByText('Release Notes')).toBeVisible();
+			await expect(updateDialog.getByText('v0.16.0 | Debug Accessibility Fallback')).toBeVisible();
+			await expect(updateDialog.getByText('Adds update fallback coverage.')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${twentyFourthTrancheActiveScenarioMatrix[2].id} ${twentyFourthTrancheActiveScenarioMatrix[2].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubUpdateWorkflowHandlers(launched.electronApp);
+			const updateDialog = await openUpdateCheckFromQuickActions(launched.window);
+
+			await expect(
+				updateDialog.getByRole('button', { name: 'Download and Install Update' })
+			).toBeVisible();
+			await expect(
+				updateDialog.getByRole('button', { name: /Or download manually from GitHub/ })
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${twentyFourthTrancheActiveScenarioMatrix[3].id} ${twentyFourthTrancheActiveScenarioMatrix[3].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubUpdateWorkflowHandlers(launched.electronApp, { checkMode: 'current' });
+			const updateDialog = await openUpdateCheckFromQuickActions(launched.window);
+			const preReleaseCheckbox = updateDialog.getByRole('checkbox', {
+				name: /Include pre-release updates/,
+			});
+
+			await expect(preReleaseCheckbox).not.toBeChecked();
+			await preReleaseCheckbox.click();
+
+			await expect(preReleaseCheckbox).toBeChecked();
+			await expect
+				.poll(async () => (await getStubbedUpdateState(launched.electronApp))?.checkCalls)
+				.toEqual([false, true]);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${twentyFourthTrancheActiveScenarioMatrix[4].id} ${twentyFourthTrancheActiveScenarioMatrix[4].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubUpdateWorkflowHandlers(launched.electronApp, { checkMode: 'current' });
+			const updateDialog = await openUpdateCheckFromQuickActions(launched.window);
+
+			await expect(updateDialog.getByText("You're up to date!")).toBeVisible();
+			await expect(updateDialog.getByText('Maestro v0.16.0')).toBeVisible();
+			await expect(updateDialog.getByRole('button', { name: 'View all releases' })).toBeVisible();
 		} finally {
 			await launched.cleanup();
 		}
