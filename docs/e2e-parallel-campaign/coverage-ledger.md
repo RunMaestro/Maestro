@@ -2,9 +2,9 @@
 
 Source of truth: `docs/e2e-coverage-campaign.md`.
 
-Current active tests: 1068
+Current active tests: 1073
 Target active tests: 3,025
-Remaining matrix-backed active scenarios: 1,957
+Remaining matrix-backed active scenarios: 1,952
 
 ## Matrix
 
@@ -28,7 +28,7 @@ Remaining matrix-backed active scenarios: 1,957
 | Playbooks, marketplace, Spec Kit, OpenSpec                     | `git-groupchat-playbooks` |             41 |           145 |       104 |
 | Symphony, leaderboard, achievements                            | `stats-graph-symphony`    |             15 |           120 |       105 |
 | Director notes and prompt composer                             | `wizard-settings-prompts` |             21 |            90 |        69 |
-| Debug/about/update/app info/agent error modals                 | `debug-accessibility`     |             32 |            85 |        53 |
+| Debug/about/update/app info/agent error modals                 | `debug-accessibility`     |             37 |            85 |        48 |
 | Mobile/web bridge                                              | `mobile-web-bridge`       |            104 |           190 |        86 |
 | Accessibility smoke and destructive-action confirmations       | `debug-accessibility`     |             12 |           130 |       118 |
 
@@ -43,7 +43,7 @@ Remaining matrix-backed active scenarios: 1,957
 | `wizard-settings-prompts`  |                     313 |                        59 |                                    1 | `bb21caed1`          |
 | `git-groupchat-playbooks`  |                     313 |                        50 |                                    7 | `10ed8a71a`          |
 | `stats-graph-symphony`     |                     309 |                        27 |                                    6 | `bb9a6f68b`          |
-| `debug-accessibility`      |                     171 |                        21 |                                    0 | `605499366`          |
+| `debug-accessibility`      |                     166 |                        26 |                                    0 | `8aa446c40`          |
 | `mobile-web-bridge`        |                      86 |                        16 |                                    0 | `d7ccdd3d`           |
 | `fixtures-sharding-review` |                       0 |                         0 |                                    0 | `392c4527`           |
 
@@ -114,3 +114,4 @@ Remaining matrix-backed active scenarios: 1,957
 - 2026-06-08: accepted manual `agent-crud-provider` fallback through `023c2e08c`; authored 5 additional active Create New Agent directory-acknowledgment reset, SSH/local folder-picker shortcut, and duplicate provider config create/clear scenarios. No E2E execution was run.
 - 2026-06-08: accepted manual `agent-crud-provider` fallback through `563b9db6c`; authored 7 final active provider SSH command reset, create/edit SSH selection reset/cancel, provider-switch SSH draft, and duplicate SSH inheritance/clearing scenarios. No E2E execution was run.
 - 2026-06-08: accepted manual `debug-accessibility` fallback through `605499366`; authored 5 additional active System Log Viewer clear/search/filter and update refresh/manual release fallback scenarios. No E2E execution was run.
+- 2026-06-08: accepted manual `debug-accessibility` fallback through `8aa446c40`; authored 5 additional active update manual-link/assets-building and debug-package reveal fallback scenarios. No E2E execution was run.
