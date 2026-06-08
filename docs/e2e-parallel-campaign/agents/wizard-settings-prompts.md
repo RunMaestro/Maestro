@@ -1,6 +1,6 @@
 # wizard-settings-prompts
 
-Status: tranche 9 fallback committed
+Status: tranche 11 fallback committed
 
 ## Scope
 
@@ -297,3 +297,34 @@ New Agent Wizard, inline wizard, Settings, Director Notes, prompt composer.
   - PM2-managed Codex worker runtime is still blocked by 503 managed-account availability errors.
   - Real provider account and live agent handoff coverage remains env-gated.
   - Remaining matrix-backed target: about 318 active/skipped rows after this tranche.
+
+### 2026-06-08 tranche 11 fallback
+
+- Scope: compact manual fallback tranche in isolated worktree `Maestro-worktrees/e2e-wizard-settings-prompts-fallback-7`.
+- Authored: 5 additional active deterministic Playwright scenarios.
+  - Settings Display persists max output lines.
+  - Settings Display persists user message alignment.
+  - Settings Display toggles native title bar preference.
+  - Settings General toggles confetti animation preference.
+  - Settings General toggles update checks on startup.
+- Cumulative lane-authored coverage: 59 active deterministic scenarios, 1 env-gated scenario.
+- Skipped/env-gated: no new rows; total remains 1 provider-account handoff placeholder.
+- Files touched:
+  - `e2e/wizard-settings-prompts.spec.ts`
+  - `docs/e2e-parallel-campaign/agents/wizard-settings-prompts.md`
+- Shared helpers edited: no.
+- Validation run:
+  - `NODE_OPTIONS=--max-old-space-size=8192 npx prettier --check e2e/wizard-settings-prompts.spec.ts` - passed.
+  - `npx eslint e2e/wizard-settings-prompts.spec.ts` - passed.
+  - `npm run build:prompts` - passed and generated missing local prompt artifacts for this worktree.
+  - `npx tsc -p tsconfig.lint.json --noEmit` - passed after prompt generation.
+  - Static scenario-ID/`.only`/prohibited-command scan - passed with 59 active rows, 59 active tests, 1 env-gated row, no duplicate IDs, and no `.only`.
+  - `git diff --check -- e2e/wizard-settings-prompts.spec.ts` - passed.
+- Review:
+  - Focused static code-reviewer checklist found no critical or high-severity issues; E2E execution remains deferred.
+- Not run by instruction: `npm run test:e2e`, `playwright test`, headed/UI E2E, and Playwright listing.
+- Implementation commit hash: `bb407abd4`.
+- Blockers/remaining work:
+  - PM2-managed Codex worker runtime is still blocked by 503 managed-account availability errors.
+  - Real provider account and live agent handoff coverage remains env-gated.
+  - Remaining matrix-backed target: about 313 active/skipped rows after this tranche.
