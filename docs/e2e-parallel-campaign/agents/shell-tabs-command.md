@@ -1,6 +1,6 @@
 # shell-tabs-command
 
-Status: pending launch
+Status: spec coverage authored; static-reviewed only
 
 ## Scope
 
@@ -8,12 +8,67 @@ App shell, sidebars, global shortcuts, tabs, command terminal.
 
 ## Checklist
 
-- [ ] Inspect existing related E2E coverage and component surfaces.
-- [ ] Author deterministic active scenarios up to the matrix-backed target where feasible.
-- [ ] Document any proposed +100 scenario expansion separately from the canonical matrix.
-- [ ] Record files touched and scenario counts.
-- [ ] Commit lane work on `codex/e2e-shell-tabs-command`.
+- [x] Inspect existing related E2E coverage and component surfaces.
+- [x] Author deterministic active scenarios up to the matrix-backed target where feasible.
+- [x] Document any proposed +100 scenario expansion separately from the canonical matrix.
+- [x] Record files touched and scenario counts.
+- [x] Commit lane work on `codex/e2e-shell-tabs-command`.
 
 ## Progress
 
-No lane commits accepted yet.
+Canonical matrix-backed lane target: 266 active scenarios. The source-prompt
+366 figure remains treated as an unaccepted +100 proposal; this lane did not
+claim or justify any expansion beyond the canonical 266.
+
+Authored in this branch:
+
+| Bucket                                       | New tests | Active scenarios |
+| -------------------------------------------- | --------: | ---------------: |
+| App shell, sidebars, focus, global shortcuts |         2 |               17 |
+| Command terminal workflows                   |         3 |               20 |
+| Tabs, tab switcher, tab overlays             |         4 |               32 |
+| Total                                        |         9 |               69 |
+
+Matrix-backed scenarios still unclaimed in this lane progress file: 197.
+Skipped/env-gated scenarios authored: 0.
+
+Files touched:
+
+- `e2e/app-shell.spec.ts` - added deterministic seeded-workbench tests for
+  right-panel global shortcuts, agent cycling shortcuts, terminal search and
+  history behavior, tab switcher keyboard modes/empty state, global tab
+  shortcuts, and file tab overlay shell IPC routing.
+- `docs/e2e-parallel-campaign/agents/shell-tabs-command.md` - recorded this
+  lane progress.
+
+Shared helpers changed: none. `docs/e2e-parallel-campaign/broadcasts.md` was
+not updated.
+
+Commits:
+
+- `c9739e8b5` - `test(e2e-shell-tabs-command): add shell tab shortcut coverage`
+
+Validation performed:
+
+- `npx eslint e2e/app-shell.spec.ts` - passed.
+- `npx prettier --check e2e/app-shell.spec.ts` - passed after formatting the
+  spec with Prettier.
+- `git diff --check -- e2e/app-shell.spec.ts` - passed.
+- Static `code-reviewer` diff review - passed, with no prohibited Playwright
+  runner/listing tokens in the added lines.
+
+Validation intentionally not performed:
+
+- No `npm run test:e2e`.
+- No `playwright test`.
+- No headed/UI E2E.
+- No `npx playwright test --list`.
+
+Blockers and limitations:
+
+- E2E execution is intentionally deferred by campaign hard rule.
+- The repo does not include row-level canonical matrix data for the 266
+  scenarios, only bucket counts in `coverage-ledger.md`.
+- A direct ad-hoc `tsc --noEmit` over `e2e/app-shell.spec.ts` is not a usable
+  validation gate today because the existing E2E file has baseline typing
+  assumptions around browser `window` access inside Playwright callbacks.
