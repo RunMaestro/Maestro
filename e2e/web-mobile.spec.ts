@@ -4835,6 +4835,313 @@ test.describe('Web Mobile Bridge', () => {
 		}
 	});
 
+	test('returns timestamped token API payloads across mobile bridge resources', async ({
+		page,
+	}: {
+		page: Page;
+	}) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			const dashboardUrl = await startWebServer(appWindow);
+			const beforeRequests = Date.now();
+			const [sessionsPayload, detailPayload, themePayload, historyPayload] = await Promise.all([
+				getJson(page, `${dashboardUrl}/api/sessions`),
+				getJson(page, `${dashboardUrl}/api/session/${workbench.primarySessionId}`),
+				getJson(page, `${dashboardUrl}/api/theme`),
+				getJson(page, `${dashboardUrl}/api/history`),
+			]);
+
+			for (const payload of [sessionsPayload, detailPayload, themePayload, historyPayload]) {
+				expect(payload.timestamp).toEqual(expect.any(Number));
+				expect(payload.timestamp).toBeGreaterThanOrEqual(beforeRequests);
+			}
+			expect(sessionsPayload.count).toBe(3);
+			expect(detailPayload.session.id).toBe(workbench.primarySessionId);
+			expect(themePayload.theme.id).toBe('dracula');
+			expect(historyPayload.count).toBe(2);
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
+	test('reflects desktop theme changes through the mobile token theme API', async ({
+		page,
+	}: {
+		page: Page;
+	}) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			const dashboardUrl = await startWebServer(appWindow);
+			await expect(getJson(page, `${dashboardUrl}/api/theme`)).resolves.toMatchObject({
+				theme: { id: 'dracula' },
+			});
+
+			await appWindow.evaluate(async () => {
+				await (window as unknown as MaestroE2EWindow).maestro.settings.set(
+					'activeThemeId',
+					'github-light'
+				);
+			});
+
+			await expect(getJson(page, `${dashboardUrl}/api/theme`)).resolves.toMatchObject({
+				theme: { id: 'github-light' },
+			});
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
+	test('sends initial Auto Run states to newly connected mobile WebSocket clients', async ({
+		page,
+	}: {
+		page: Page;
+	}) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			const dashboardUrl = await startWebServer(appWindow);
+			await appWindow.evaluate(
+				async ({
+					primarySessionId,
+					secondarySessionId,
+				}: {
+					primarySessionId: string;
+					secondarySessionId: string;
+				}) => {
+					const maestro = (window as unknown as MaestroE2EWindow).maestro;
+					await maestro.web.broadcastAutoRunState(primarySessionId, {
+						isRunning: true,
+						totalTasks: 4,
+						completedTasks: 1,
+						currentTaskIndex: 1,
+					});
+					await maestro.web.broadcastAutoRunState(secondarySessionId, {
+						isRunning: true,
+						totalTasks: 2,
+						completedTasks: 0,
+						currentTaskIndex: 0,
+					});
+				},
+				{
+					primarySessionId: workbench.primarySessionId,
+					secondarySessionId: workbench.secondarySessionId,
+				}
+			);
+
+			const messages = await page.evaluate(async (socketUrl: string) => {
+				return new Promise<Array<Record<string, unknown>>>((resolve, reject) => {
+					const collected: Array<Record<string, unknown>> = [];
+					const socket = new WebSocket(socketUrl);
+					const timeout = window.setTimeout(() => {
+						socket.close();
+						reject(new Error('Timed out waiting for initial Auto Run states'));
+					}, 10000);
+
+					socket.addEventListener('message', (event) => {
+						const message = JSON.parse(event.data) as Record<string, unknown>;
+						collected.push(message);
+						if (collected.filter((entry) => entry.type === 'autorun_state').length >= 2) {
+							window.clearTimeout(timeout);
+							socket.close();
+							resolve(collected);
+						}
+					});
+					socket.addEventListener('error', () => {
+						window.clearTimeout(timeout);
+						reject(new Error('WebSocket connection failed'));
+					});
+				});
+			}, webSocketUrl(dashboardUrl));
+			const autorunStates = messages.filter(
+				(message: Record<string, unknown>) => message.type === 'autorun_state'
+			);
+
+			expect(autorunStates).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({
+						sessionId: workbench.primarySessionId,
+						state: expect.objectContaining({ totalTasks: 4, completedTasks: 1 }),
+					}),
+					expect.objectContaining({
+						sessionId: workbench.secondarySessionId,
+						state: expect.objectContaining({ totalTasks: 2, completedTasks: 0 }),
+					}),
+				])
+			);
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
+	test('applies WebSocket subscribe changes before scoped mobile broadcasts', async ({
+		page,
+	}: {
+		page: Page;
+	}) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			const dashboardUrl = await startWebServer(appWindow);
+			await page.evaluate(
+				({ socketUrl, secondarySessionId }: { socketUrl: string; secondarySessionId: string }) => {
+					const e2eWindow = window as E2ESocketWindow;
+					e2eWindow.__maestroE2eSocketMessages = [];
+					e2eWindow.__maestroE2eSocket = new WebSocket(socketUrl);
+					e2eWindow.__maestroE2eSocket.onopen = () => {
+						e2eWindow.__maestroE2eSocket?.send(
+							JSON.stringify({ type: 'subscribe', sessionId: secondarySessionId })
+						);
+					};
+					e2eWindow.__maestroE2eSocket.onmessage = (event: MessageEvent) => {
+						e2eWindow.__maestroE2eSocketMessages?.push(JSON.parse(event.data));
+					};
+				},
+				{
+					socketUrl: webSocketUrl(dashboardUrl),
+					secondarySessionId: workbench.secondarySessionId,
+				}
+			);
+			await expect
+				.poll(async () =>
+					page.evaluate((secondarySessionId: string) => {
+						const messages = (window as E2ESocketWindow).__maestroE2eSocketMessages || [];
+						return messages.some(
+							(message) => message.type === 'subscribed' && message.sessionId === secondarySessionId
+						);
+					}, workbench.secondarySessionId)
+				)
+				.toBe(true);
+
+			await appWindow.evaluate(
+				async ({
+					primarySessionId,
+					secondarySessionId,
+				}: {
+					primarySessionId: string;
+					secondarySessionId: string;
+				}) => {
+					const maestro = (window as unknown as MaestroE2EWindow).maestro;
+					await maestro.web.broadcastUserInput(
+						primarySessionId,
+						'Primary message after mobile subscribe switch',
+						'ai'
+					);
+					await maestro.web.broadcastUserInput(
+						secondarySessionId,
+						'Secondary message after mobile subscribe switch',
+						'terminal'
+					);
+				},
+				{
+					primarySessionId: workbench.primarySessionId,
+					secondarySessionId: workbench.secondarySessionId,
+				}
+			);
+
+			await expect
+				.poll(async () =>
+					page.evaluate(
+						({
+							primarySessionId,
+							secondarySessionId,
+						}: {
+							primarySessionId: string;
+							secondarySessionId: string;
+						}) => {
+							const messages = (window as E2ESocketWindow).__maestroE2eSocketMessages || [];
+							return {
+								primary: messages.some(
+									(message) =>
+										message.type === 'user_input' && message.sessionId === primarySessionId
+								),
+								secondary: messages.some(
+									(message) =>
+										message.type === 'user_input' &&
+										message.sessionId === secondarySessionId &&
+										message.command === 'Secondary message after mobile subscribe switch'
+								),
+							};
+						},
+						{
+							primarySessionId: workbench.primarySessionId,
+							secondarySessionId: workbench.secondarySessionId,
+						}
+					)
+				)
+				.toEqual({ primary: false, secondary: true });
+		} finally {
+			await page
+				.evaluate(() => (window as E2ESocketWindow).__maestroE2eSocket?.close())
+				.catch(() => {});
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
+	test('reports mobile dashboard URL and client count through server lifecycle changes', async ({
+		page,
+	}: {
+		page: Page;
+	}) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			const dashboardUrl = await startWebServer(appWindow);
+			const reportedDashboardUrl = await appWindow.evaluate(async () => {
+				return (window as unknown as MaestroE2EWindow).maestro.live.getDashboardUrl();
+			});
+			expect(toLoopbackUrl(reportedDashboardUrl!)).toBe(dashboardUrl);
+
+			await page.evaluate((socketUrl: string) => {
+				const e2eWindow = window as E2ESocketWindow;
+				e2eWindow.__maestroE2eSocketMessages = [];
+				e2eWindow.__maestroE2eSocket = new WebSocket(socketUrl);
+				e2eWindow.__maestroE2eSocket.onmessage = (event: MessageEvent) => {
+					e2eWindow.__maestroE2eSocketMessages?.push(JSON.parse(event.data));
+				};
+			}, webSocketUrl(dashboardUrl));
+			await expect
+				.poll(async () =>
+					appWindow.evaluate(async () => {
+						return (window as unknown as MaestroE2EWindow).maestro.webserver.getConnectedClients();
+					})
+				)
+				.toBe(1);
+
+			await stopWebServer(appWindow);
+			await expect(
+				appWindow.evaluate(async () => {
+					return (window as unknown as MaestroE2EWindow).maestro.live.getDashboardUrl();
+				})
+			).resolves.toBeNull();
+			await expect(
+				appWindow.evaluate(async () => {
+					return (window as unknown as MaestroE2EWindow).maestro.live.getStatus(
+						'missing-mobile-session'
+					);
+				})
+			).resolves.toMatchObject({ live: false, url: null });
+			await expect(
+				appWindow.evaluate(async () => {
+					return (window as unknown as MaestroE2EWindow).maestro.webserver.getConnectedClients();
+				})
+			).resolves.toBe(0);
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
 	test('tracks connected mobile WebSocket clients for the desktop bridge', async ({ page }) => {
 		const workbench = createWebMobileWorkbench();
 		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
