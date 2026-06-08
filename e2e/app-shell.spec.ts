@@ -4119,7 +4119,7 @@ test.describe('App shell seeded workbench', () => {
 		await stubTerminalRunCommand(electronApp);
 		const terminalInput = await openSeededTerminalAgent(window);
 		const inputArea = window.locator('[data-tour="input-area"]');
-		const multilineCommand = 'printf "terminal multiline one"\\nprintf "terminal multiline two"';
+		const multilineCommand = 'printf "terminal multiline one"\nprintf "terminal multiline two"';
 
 		await terminalInput.fill(multilineCommand);
 		await inputArea.getByTitle('Run command (Enter)').click();
