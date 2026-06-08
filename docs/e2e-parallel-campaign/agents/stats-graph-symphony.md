@@ -1,6 +1,6 @@
 # stats-graph-symphony
 
-Status: third tranche committed
+Status: fourth fallback tranche committed
 
 ## Scope
 
@@ -18,6 +18,9 @@ Usage dashboard, stats, document graph, Symphony, leaderboard, achievements.
 - [x] Author third deterministic active scenario tranche.
 - [x] Record third tranche files touched, counts, blockers, and remaining work.
 - [x] Commit third lane tranche on `codex/e2e-stats-graph-symphony`.
+- [x] Author fourth deterministic active scenario fallback tranche.
+- [x] Record fourth fallback files touched, counts, blockers, and remaining work.
+- [x] Commit fourth fallback lane tranche on `codex/e2e-stats-graph-symphony-fallback-2`.
 
 ## Progress
 
@@ -126,3 +129,46 @@ Remaining work:
 
 - Continue toward the 336-scenario lane target in small tranches.
 - Next coherent tranche candidates: stats export/write success with IPC stubs, stats reset/retry storage edges, document graph node context/menu and preview navigation states, Symphony authenticated/build-tools agent creation states, registered leaderboard pull-down/opt-out states, and achievement image generation with deterministic asset stubs.
+
+### 2026-06-08 - fourth fallback tranche
+
+Files touched:
+
+- `e2e/stats-graph-symphony.spec.ts` - added fourth fallback matrix rows for Usage Dashboard duration trend smoothing, Auto Run task chart accessibility details, Document Graph help legend shortcut/mouse guidance, Symphony empty project issue states, and completed contribution summary details.
+- `docs/e2e-parallel-campaign/agents/stats-graph-symphony.md` - recorded this fallback tranche's counts, validation, blockers, and remaining work.
+
+Scenario counts:
+
+- Active added this tranche: 5
+- Skipped product-gap added this tranche: 0
+- Env-gated added this tranche: 0
+- Cumulative active in lane spec: 22
+- Cumulative skipped product-gap in lane spec: 2
+- Cumulative env-gated in lane spec: 4
+- Remaining active target toward 336-lane goal: 314
+
+Validation:
+
+- Passed: `NODE_OPTIONS=--max-old-space-size=8192 npx prettier --check e2e/stats-graph-symphony.spec.ts`
+- Passed: `npx eslint e2e/stats-graph-symphony.spec.ts`
+- Passed: `npx tsc -p tsconfig.lint.json --noEmit`
+- Passed: static scenario-ID/`.only` scan
+- Passed: `git diff --check`
+
+Execution note:
+
+- No E2E, Playwright execution, or Playwright listing command was run. The new scenarios are authored only.
+
+Commit:
+
+- `33581a7ec` - `test(e2e-stats-graph-symphony): add fallback coverage`
+
+Blockers:
+
+- Live GitHub status refresh, live leaderboard confirmation/sync with auth token, and artifact-level achievement badge image verification remain env-gated or product-gap rows until the orchestrator approves those dependencies.
+- Detached PM2 workers for later tranches should wait until managed-account 503 availability recovers; manual fallback authoring remains the productive path.
+
+Remaining work:
+
+- Continue toward the 336-scenario lane target in small tranches.
+- Next coherent tranche candidates: Symphony authenticated/build-tools agent creation states, registered leaderboard pull-down/opt-out states, stats export/write success with IPC stubs, stats reset/retry storage edges, document graph node context/menu and preview navigation states, and achievement image generation with deterministic asset stubs.

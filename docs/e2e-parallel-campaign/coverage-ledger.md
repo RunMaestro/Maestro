@@ -2,9 +2,9 @@
 
 Source of truth: `docs/e2e-coverage-campaign.md`.
 
-Current active tests: 893
+Current active tests: 898
 Target active tests: 3,025
-Remaining matrix-backed active scenarios: 2,132
+Remaining matrix-backed active scenarios: 2,127
 
 ## Matrix
 
@@ -23,10 +23,10 @@ Remaining matrix-backed active scenarios: 2,132
 | Settings                                                       | `wizard-settings-prompts` |             66 |           190 |       124 |
 | Git, worktrees, PR, diff/log, Gist                             | `git-groupchat-playbooks` |             30 |           160 |       130 |
 | Group chat                                                     | `git-groupchat-playbooks` |             52 |           140 |        88 |
-| Usage dashboard and stats                                      | `stats-graph-symphony`    |             19 |           125 |       106 |
-| Document graph                                                 | `stats-graph-symphony`    |             27 |           130 |       103 |
+| Usage dashboard and stats                                      | `stats-graph-symphony`    |             21 |           125 |       104 |
+| Document graph                                                 | `stats-graph-symphony`    |             28 |           130 |       102 |
 | Playbooks, marketplace, Spec Kit, OpenSpec                     | `git-groupchat-playbooks` |             30 |           145 |       115 |
-| Symphony, leaderboard, achievements                            | `stats-graph-symphony`    |             10 |           120 |       110 |
+| Symphony, leaderboard, achievements                            | `stats-graph-symphony`    |             12 |           120 |       108 |
 | Director notes and prompt composer                             | `wizard-settings-prompts` |             21 |            90 |        69 |
 | Debug/about/update/app info/agent error modals                 | `debug-accessibility`     |             25 |            85 |        60 |
 | Mobile/web bridge                                              | `mobile-web-bridge`       |             99 |           190 |        91 |
@@ -42,7 +42,7 @@ Remaining matrix-backed active scenarios: 2,132
 | `autorun-ai-terminal`      |                     263 |                        10 |                                    0 | `cd804bebf`          |
 | `wizard-settings-prompts`  |                     343 |                        29 |                                    1 | `e8bc7da23`          |
 | `git-groupchat-playbooks`  |                     333 |                        30 |                                    7 | `839b3e3b6`          |
-| `stats-graph-symphony`     |                     319 |                        17 |                                    6 | `784d84e34`          |
+| `stats-graph-symphony`     |                     314 |                        22 |                                    6 | `33581a7ec`          |
 | `debug-accessibility`      |                     181 |                        11 |                                    0 | `15e7a1a20`          |
 | `mobile-web-bridge`        |                      91 |                        11 |                                    0 | `d580f80ea`          |
 | `fixtures-sharding-review` |                       0 |                         0 |                                    0 | `392c4527`           |
@@ -79,3 +79,4 @@ Remaining matrix-backed active scenarios: 2,132
 - 2026-06-08: accepted `codex/e2e-files-docs-history` through `6f8134fb9`; authored 5 additional active file/docs/history fallback scenarios after tranche-6 PM2 workers failed with Codex managed-account 503 errors before authoring. No E2E execution was run.
 - 2026-06-08: accepted `codex/e2e-wizard-settings-prompts` through `e8bc7da23`; authored 5 additional active Settings/Prompt Composer fallback scenarios after tranche-7 PM2 workers failed with Codex managed-account 503 errors before authoring. No E2E execution was run.
 - 2026-06-08: accepted `codex/e2e-git-groupchat-playbooks` through `839b3e3b6`; authored 5 additional active Git/PR/group-chat/marketplace fallback scenarios after the tranche-7 PM2 worker failed with Codex managed-account 503 errors before authoring. No E2E execution was run.
+- 2026-06-08: accepted `codex/e2e-stats-graph-symphony-fallback-2` through `33581a7ec`; authored 5 additional active Usage Dashboard/Auto Run/Document Graph/Symphony fallback scenarios. No E2E execution was run.

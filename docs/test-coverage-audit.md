@@ -34,23 +34,20 @@ Parallel E2E authoring checkpoint:
 
 - Campaign: `docs/e2e-parallel-prompt.md`
 - Result: in progress
-- Current authoring progress: 893 / 3,025 active scenarios after accepting the
-  eighth-tranche Git/group-chat/playbooks fallback through `839b3e3b6`. The
-  tranche-7 PM2 worker for this lane failed with Codex managed-account 503
-  errors before authoring, so only the manual `git-groupchat-playbooks`
-  fallback rows were accepted.
+- Current authoring progress: 898 / 3,025 active scenarios after accepting the
+  ninth-tranche stats/graph/Symphony fallback through `33581a7ec`. This tranche
+  added 5 active Usage Dashboard/Auto Run/Document Graph/Symphony rows without
+  adding skipped or env-gated rows.
 - Accepted lanes so far: `shell-tabs-command`, `agent-crud-provider`,
   `files-docs-history`, `mobile-web-bridge`, `autorun-ai-terminal`,
   `wizard-settings-prompts`, `stats-graph-symphony`, `debug-accessibility`,
   `fixtures-sharding-review`, and `git-groupchat-playbooks`.
 - Execution policy: Playwright E2E tests are intentionally not executed in this phase.
 - Validation plan: static review of authored selectors, fixtures, scenario names, assertions, and lane progress logs; runtime validation is deferred to a later sharded execution phase.
-- Latest static validation: lane-local ESLint, strict single-spec TypeScript,
-  duplicate-ID, `.only`, and `git diff --check` checks passed for the
-  `git-groupchat-playbooks` fallback before merge; the central-doc update also
-  passed ESLint, `git diff --check`, inventory/duplicate-ID scans, and
-  campaign/ledger matrix total checks. No Playwright/E2E/listing command was
-  run.
+- Latest static validation: Prettier, lane-local ESLint, `tsconfig.lint.json`,
+  scenario-ID duplicate, `.only`, and `git diff --check` checks passed for the
+  `stats-graph-symphony` fallback before merge. No Playwright/E2E/listing command
+  was run.
 
 Integration checkpoint:
 
