@@ -195,6 +195,14 @@ const twentyFourthTrancheActiveScenarioMatrix = [
 	{ id: 'DA-121', title: 'shows current update release history affordance' },
 ] as const;
 
+const twentyFifthTrancheActiveScenarioMatrix = [
+	{ id: 'DA-122', title: 'reports update download progress from status events' },
+	{ id: 'DA-123', title: 'disables the update download action while downloading' },
+	{ id: 'DA-124', title: 'shows restart action after update download completes' },
+	{ id: 'DA-125', title: 'invokes update install from the restart action' },
+	{ id: 'DA-126', title: 'clears stale update download errors after refresh' },
+] as const;
+
 const debugPackagePreviewCategories = [
 	{ id: 'logs', name: 'System Logs', included: true, sizeEstimate: '~50 KB' },
 	{ id: 'errors', name: 'Error States', included: true, sizeEstimate: '< 10 KB' },
@@ -228,6 +236,20 @@ type StubbedUpdateState = {
 	checkCalls: boolean[];
 	downloadCalls: number;
 	installCalls: number;
+};
+
+type StubbedUpdateStatus = {
+	status: 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'error';
+	progress?: {
+		percent: number;
+		bytesPerSecond: number;
+		total: number;
+		transferred: number;
+	};
+	error?: string;
+	info?: {
+		version: string;
+	};
 };
 
 type StubbedShellOpenExternalState = {
@@ -609,6 +631,16 @@ async function getStubbedUpdateState(electronApp: ElectronApplication) {
 		};
 		return state.__maestroE2eUpdateState ?? null;
 	});
+}
+
+async function emitStubbedUpdateStatus(
+	electronApp: ElectronApplication,
+	status: StubbedUpdateStatus
+) {
+	await electronApp.evaluate(({ BrowserWindow }, updateStatus: StubbedUpdateStatus) => {
+		const appWindow = BrowserWindow.getAllWindows()[0];
+		appWindow?.webContents.send('updates:status', updateStatus);
+	}, status);
 }
 
 async function stubShellOpenExternal(electronApp: ElectronApplication) {
@@ -3275,6 +3307,109 @@ test.describe('Debug and accessibility smoke tranche', () => {
 			await expect(updateDialog.getByText("You're up to date!")).toBeVisible();
 			await expect(updateDialog.getByText('Maestro v0.16.0')).toBeVisible();
 			await expect(updateDialog.getByRole('button', { name: 'View all releases' })).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${twentyFifthTrancheActiveScenarioMatrix[0].id} ${twentyFifthTrancheActiveScenarioMatrix[0].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubUpdateWorkflowHandlers(launched.electronApp);
+			const updateDialog = await openUpdateCheckFromQuickActions(launched.window);
+
+			await emitStubbedUpdateStatus(launched.electronApp, {
+				status: 'downloading',
+				progress: {
+					percent: 64,
+					bytesPerSecond: 2048,
+					total: 4096,
+					transferred: 2048,
+				},
+			});
+
+			await expect(updateDialog.getByText('Downloading update...')).toBeVisible();
+			await expect(updateDialog.getByText('64%')).toBeVisible();
+			await expect(updateDialog.getByText('2 KB / 4 KB')).toBeVisible();
+			await expect(updateDialog.getByText('2 KB/s')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${twentyFifthTrancheActiveScenarioMatrix[1].id} ${twentyFifthTrancheActiveScenarioMatrix[1].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubUpdateWorkflowHandlers(launched.electronApp);
+			const updateDialog = await openUpdateCheckFromQuickActions(launched.window);
+
+			await emitStubbedUpdateStatus(launched.electronApp, {
+				status: 'downloading',
+				progress: {
+					percent: 12,
+					bytesPerSecond: 1024,
+					total: 4096,
+					transferred: 512,
+				},
+			});
+
+			await expect(updateDialog.getByRole('button', { name: 'Downloading...' })).toBeDisabled();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${twentyFifthTrancheActiveScenarioMatrix[2].id} ${twentyFifthTrancheActiveScenarioMatrix[2].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubUpdateWorkflowHandlers(launched.electronApp);
+			const updateDialog = await openUpdateCheckFromQuickActions(launched.window);
+
+			await emitStubbedUpdateStatus(launched.electronApp, {
+				status: 'downloaded',
+				info: { version: '0.16.0' },
+			});
+
+			await expect(updateDialog.getByRole('button', { name: 'Restart to Update' })).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${twentyFifthTrancheActiveScenarioMatrix[3].id} ${twentyFifthTrancheActiveScenarioMatrix[3].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubUpdateWorkflowHandlers(launched.electronApp);
+			const updateDialog = await openUpdateCheckFromQuickActions(launched.window);
+
+			await emitStubbedUpdateStatus(launched.electronApp, {
+				status: 'downloaded',
+				info: { version: '0.16.0' },
+			});
+			await updateDialog.getByRole('button', { name: 'Restart to Update' }).click();
+
+			await expect
+				.poll(async () => (await getStubbedUpdateState(launched.electronApp))?.installCalls)
+				.toBe(1);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${twentyFifthTrancheActiveScenarioMatrix[4].id} ${twentyFifthTrancheActiveScenarioMatrix[4].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubUpdateWorkflowHandlers(launched.electronApp, { downloadMode: 'error' });
+			const updateDialog = await openUpdateCheckFromQuickActions(launched.window);
+
+			await updateDialog.getByRole('button', { name: 'Download and Install Update' }).click();
+			await expect(updateDialog.getByText('Download failed')).toBeVisible();
+			await updateDialog.getByTitle('Refresh').click();
+
+			await expect(updateDialog.getByText('Download failed')).toBeHidden();
+			await expect
+				.poll(async () => (await getStubbedUpdateState(launched.electronApp))?.checkCalls.length)
+				.toBe(2);
 		} finally {
 			await launched.cleanup();
 		}
