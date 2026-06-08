@@ -20,14 +20,14 @@ Remaining matrix-backed active scenarios: 1,827
 | History panel                                                  | `files-docs-history`      |             28 |            95 |        67 |
 | Auto Run                                                       | `autorun-ai-terminal`     |            134 |           260 |       126 |
 | New Agent Wizard and inline wizard                             | `wizard-settings-prompts` |             40 |           190 |       150 |
-| Settings                                                       | `wizard-settings-prompts` |            104 |           190 |        86 |
+| Settings                                                       | `wizard-settings-prompts` |            108 |           190 |        82 |
 | Git, worktrees, PR, diff/log, Gist                             | `git-groupchat-playbooks` |             36 |           160 |       124 |
 | Group chat                                                     | `git-groupchat-playbooks` |             55 |           140 |        85 |
 | Usage dashboard and stats                                      | `stats-graph-symphony`    |             23 |           125 |       102 |
 | Document graph                                                 | `stats-graph-symphony`    |             28 |           130 |       102 |
 | Playbooks, marketplace, Spec Kit, OpenSpec                     | `git-groupchat-playbooks` |             41 |           145 |       104 |
 | Symphony, leaderboard, achievements                            | `stats-graph-symphony`    |             15 |           120 |       105 |
-| Director notes and prompt composer                             | `wizard-settings-prompts` |             25 |            90 |        65 |
+| Director notes and prompt composer                             | `wizard-settings-prompts` |             27 |            90 |        63 |
 | Debug/about/update/app info/agent error modals                 | `debug-accessibility`     |             85 |            85 |         0 |
 | Mobile/web bridge                                              | `mobile-web-bridge`       |            104 |           190 |        86 |
 | Accessibility smoke and destructive-action confirmations       | `debug-accessibility`     |             79 |           130 |        51 |
@@ -40,7 +40,7 @@ Remaining matrix-backed active scenarios: 1,827
 | `shell-tabs-command`       |                     185 |                        81 |                                    0 | `2d9975b17`          |
 | `files-docs-history`       |                     307 |                        42 |                                    5 | `18a4c3b29`          |
 | `autorun-ai-terminal`      |                     263 |                        10 |                                    0 | `cd804bebf`          |
-| `wizard-settings-prompts`  |                     301 |                        71 |                                    1 | `02b18b88c`          |
+| `wizard-settings-prompts`  |                     295 |                        77 |                                    1 | `165edccbe`          |
 | `git-groupchat-playbooks`  |                     313 |                        50 |                                    7 | `10ed8a71a`          |
 | `stats-graph-symphony`     |                     309 |                        27 |                                    6 | `bb9a6f68b`          |
 | `debug-accessibility`      |                      51 |                       141 |                                    0 | `cd485eda6`          |
@@ -141,4 +141,5 @@ Remaining matrix-backed active scenarios: 1,827
 - 2026-06-08: accepted manual `shell-tabs-command` fallback through `2d9975b17`; authored 5 additional active command-terminal output expansion, collapsed-search expandability, clear-history draft preservation, and parent-directory cwd scenarios. Focused static review found no critical or high issues. No E2E execution was run.
 - 2026-06-08: accepted manual `wizard-settings-prompts` fallback through `b6d172c41`; authored 6 additional active Settings AI Commands, global environment, Group Chat instructions, and Prompt Composer paste/literal-at scenarios. Focused static review found no critical or high issues. No E2E execution was run.
 - 2026-06-08: accepted manual `wizard-settings-prompts` fallback through `02b18b88c`; authored 6 additional active Settings AI Commands duplicate/delete, global environment validation/removal, Director's Notes lookback, and Prompt Composer keyboard-open scenarios. Focused static review fixed one weak invalid-env assertion before commit. No E2E execution was run.
+- 2026-06-08: accepted manual `wizard-settings-prompts` fallback through `165edccbe`; authored 6 additional active Settings AI Commands slash-prefix, SSH remote ignore-pattern, SSH remote gitignore, and Prompt Composer staged-image/lightbox scenarios. Focused static review found no critical or high issues. No E2E execution was run.
 - 2026-06-08: accepted manual `files-docs-history` fallback through `18a4c3b29`; authored 5 additional active History Escape close, File Explorer Copy Path clipboard, file preview no-match recovery, and large-file full-load search scenarios. Focused static review found no critical or high issues. No E2E execution was run.
