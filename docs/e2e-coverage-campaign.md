@@ -11,10 +11,10 @@ Measured inventory:
 | Area                                      |                     Current Count |
 | ----------------------------------------- | --------------------------------: |
 | E2E spec files after recovery tranche     |                                15 |
-| Declared E2E tests after recovery tranche |                               910 |
+| Declared E2E tests after recovery tranche |                               915 |
 | Last pre-campaign full E2E result         |             91 passed, 49 skipped |
 | Latest full E2E validation                | 638 passed, 0 skipped (batch 202) |
-| Approx. authored active-target progress   |               32.8% (993 / 3,025) |
+| Approx. authored active-target progress   |               33.0% (998 / 3,025) |
 | Renderer component files                  |                               236 |
 | Renderer hook files                       |                               123 |
 | Renderer store files                      |                                11 |
@@ -30,7 +30,7 @@ Measured inventory:
 
 Latest authoring merge:
 
-- Twenty-eighth recovery fallback accepted `agent-crud-provider` through `750e25fd0`. This added 5 active authored Agent Sessions New Session, quick-resume, metadata preservation, Show All, and search-control scenarios without running Playwright/E2E execution. No skipped or env-gated rows were added.
+- Twenty-ninth recovery fallback accepted `agent-crud-provider` through `b4e5f2bca`. This added 5 active authored provider bookmark, sidebar filter, and empty-group deletion scenarios without running Playwright/E2E execution. No skipped or env-gated rows were added.
 
 The current E2E suite now covers a meaningful Electron shell slice, but it is still far from deep app-wide coverage.
 

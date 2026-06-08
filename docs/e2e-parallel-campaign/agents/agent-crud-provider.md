@@ -16,6 +16,36 @@ Agent CRUD, provider setup, Agent Sessions.
 
 ## Progress
 
+### 2026-06-08 recovery tranche 7
+
+- Scope: manual fallback tranche for provider Left Bar organization controls.
+- Authored: 5 active deterministic Playwright scenarios.
+  - Bookmarks a provider agent from the left bar context menu.
+  - Collapses and expands the provider bookmarks section.
+  - Toggles the active provider bookmark from Quick Actions.
+  - Filters provider agents from Quick Actions and clears the filter with Escape.
+  - Cancels and confirms deleting an empty provider group.
+- Skipped/env-gated: no new rows.
+- Lane target remains: about 65 active scenarios plus fuller skipped/env-gated real-provider coverage.
+- Files touched:
+  - `e2e/agent-crud-provider.spec.ts`
+  - `docs/e2e-parallel-campaign/agents/agent-crud-provider.md`
+  - `docs/e2e-parallel-campaign/coverage-ledger.md`
+  - `docs/e2e-coverage-campaign.md`
+- Shared helpers edited: no.
+- Broadcast update required: no.
+- Checks run:
+  - `npx prettier --write e2e/agent-crud-provider.spec.ts`
+  - `npx eslint e2e/agent-crud-provider.spec.ts`
+  - `npx tsc -p tsconfig.lint.json --noEmit`
+  - `git diff --check`
+  - Static scan: 915 declared E2E tests, 0 `.only`, 0 prohibited Playwright/E2E commands.
+  - Code-reviewer checklist: no blocking issues in the `agent-crud-provider` diff.
+- Commit hashes:
+  - `b4e5f2bca` - `test(e2e-agent-crud-provider): add sidebar organization coverage`
+- Blockers:
+  - E2E execution, Playwright listing, headed/UI E2E, and full E2E validation are intentionally not run under the recovery-run hard rules.
+
 ### 2026-06-08 recovery tranche 6
 
 - Scope: manual fallback tranche for generic provider Agent Sessions list controls.
