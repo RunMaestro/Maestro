@@ -20,7 +20,10 @@ import type {
 	PipelineNode,
 } from '../../../shared/cue-pipeline-types';
 import { graphSessionsToPipelines } from '../../components/CuePipelineEditor/utils/yamlToPipeline';
-import { pipelinesToYamlByOwnerCwd } from '../../components/CuePipelineEditor/utils/pipelineToYaml';
+import {
+	pipelinesToYamlByOwnerCwd,
+	readOwnerAgentIdFromYaml,
+} from '../../components/CuePipelineEditor/utils/pipelineToYaml';
 import { validatePipelines } from '../../components/CuePipelineEditor/utils/pipelineValidation';
 import {
 	resolveNodeWriteRoot,
@@ -319,11 +322,35 @@ export function usePipelinePersistence({
 				}
 				return id;
 			};
+			// Preserve each target root's existing per-root owner_agent_id. The
+			// editor doesn't manage ownership (it's set via Edit YAML for shared
+			// roots), and the global cueSettings intentionally no longer carries
+			// owner_agent_id — so without re-reading it here a full-overwrite save
+			// would drop a shared root's owner and revert it to fragile
+			// "first agent wins" ownership.
+			const ownerAgentIdByCwd = new Map<string, string>();
+			await Promise.all(
+				[...currentRoots].map(async (cwd) => {
+					const existing = await cueService.readYaml(cwd);
+					if (!existing) return;
+					const owner = readOwnerAgentIdFromYaml(existing);
+					if (owner) ownerAgentIdByCwd.set(cwd, owner);
+				})
+			);
+			// Defensively strip owner_agent_id from the GLOBAL settings before
+			// emit. owner_agent_id is per-root (preserved via ownerAgentIdByCwd
+			// above); it must never ride along in the global block. An older main
+			// process whose getSettings() still leaks the first session's
+			// owner_agent_id would otherwise re-stamp it into every cwd on save —
+			// the exact mechanism that poisoned every project's cue.yaml. This
+			// keeps the renderer correct regardless of the main-process version.
+			const { owner_agent_id: _droppedGlobalOwner, ...globalSettingsForEmit } = cueSettings;
 			const { byCwd, unresolved } = pipelinesToYamlByOwnerCwd(
 				writablePipelines,
-				cueSettings,
+				globalSettingsForEmit,
 				sessionsByIdForEmit,
-				resolveOwnerId
+				resolveOwnerId,
+				ownerAgentIdByCwd
 			);
 			if (unresolved.length > 0) {
 				// Defense-in-depth: validation above should have caught these.

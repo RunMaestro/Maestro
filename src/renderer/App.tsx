@@ -164,6 +164,7 @@ import { useActiveSession } from './hooks/session/useActiveSession';
 import { InlineWizardProvider, useInlineWizardContext } from './contexts/InlineWizardContext';
 import { ToastContainer } from './components/Toast';
 import { CenterFlash } from './components/CenterFlash';
+import { useQuitWhenIdle } from './hooks/useQuitWhenIdle';
 
 // Import services
 // gitService — now used in useModalHandlers (Tier 3C)
@@ -888,6 +889,40 @@ function MaestroConsoleInner() {
 		[setRenameTabId, setRenameTabInitialName, setRenameTabModalOpen]
 	);
 
+	// Opens the rename modal for a browser tab. Pre-fills with any existing
+	// user-assigned name (empty when the tab is still using the page-set title).
+	const handleRequestBrowserTabRename = useCallback(
+		(tabId: string) => {
+			const session = selectActiveSession(useSessionStore.getState());
+			if (!session) return;
+			const tab = session.browserTabs?.find((t) => t.id === tabId);
+			if (!tab) return;
+			setRenameTabId(tabId);
+			setRenameTabInitialName(tab.customTitle ?? '');
+			setRenameTabModalOpen(true);
+		},
+		[setRenameTabId, setRenameTabInitialName, setRenameTabModalOpen]
+	);
+
+	// Clears a browser tab's user-assigned name, letting the website set the
+	// tab title again on the next navigation/title update.
+	const handleResetBrowserTabName = useCallback((tabId: string) => {
+		const session = selectActiveSession(useSessionStore.getState());
+		if (!session) return;
+		useSessionStore.getState().setSessions((prev) =>
+			prev.map((s) =>
+				s.id === session.id
+					? {
+							...s,
+							browserTabs: (s.browserTabs || []).map((t) =>
+								t.id === tabId ? { ...t, customTitle: undefined } : t
+							),
+						}
+					: s
+			)
+		);
+	}, []);
+
 	// Opens the startup-command modal for a terminal tab. Captures sessionId at
 	// open time so the save action targets the correct session even if the user
 	// switches agents while the modal is up.
@@ -965,6 +1000,7 @@ function MaestroConsoleInner() {
 		handleCloseRenameTabModal,
 		handleConfirmQuit,
 		handleCancelQuit,
+		handleQuitWhenIdle,
 		onKeyboardMasteryLevelUp,
 		handleKeyboardMasteryCelebrationClose,
 		handleStandingOvationClose,
@@ -1632,6 +1668,9 @@ function MaestroConsoleInner() {
 
 	// Auto Run achievement tracking (progress intervals, peak usage stats)
 	useAutoRunAchievements({ activeBatchSessionIds });
+
+	// "Quit when idle" watcher - quits the app once all operations finish once armed
+	useQuitWhenIdle();
 
 	// Handler for switching to autorun tab - shows setup modal if no folder configured
 	const handleSetActiveRightTab = useCallback(
@@ -2486,6 +2525,8 @@ function MaestroConsoleInner() {
 		handleNewBrowserTab,
 		handleBrowserTabSelect: handleSelectBrowserTab,
 		handleBrowserTabClose: handleCloseBrowserTab,
+		handleBrowserTabRename: handleRequestBrowserTabRename,
+		handleBrowserTabResetName: handleResetBrowserTabName,
 		handleBrowserTabUpdate: handleUpdateBrowserTab,
 
 		// Terminal tab callbacks (Phase 8)
@@ -2795,6 +2836,7 @@ function MaestroConsoleInner() {
 					onCloseConfirmModal={handleCloseConfirmModal}
 					onConfirmQuit={handleConfirmQuit}
 					onCancelQuit={handleCancelQuit}
+					onQuitWhenIdle={handleQuitWhenIdle}
 					activeBatchSessionIds={activeBatchSessionIds}
 					// AppSessionModals props
 					onCloseNewInstanceModal={handleCloseNewInstanceModal}
@@ -3022,6 +3064,8 @@ function MaestroConsoleInner() {
 					onQuickActionsNewBrowserTab={handleNewBrowserTab}
 					onQuickActionsNewTerminalTab={handleOpenTerminalTab}
 					onGoToNextUnread={goToNextUnreadTab}
+					onNavBack={handleNavBack}
+					onNavForward={handleNavForward}
 					onRemoveQueueItem={handleRemoveQueueItem}
 					onSwitchQueueSession={handleSwitchQueueSession}
 					onReorderQueueItems={handleReorderQueueItems}

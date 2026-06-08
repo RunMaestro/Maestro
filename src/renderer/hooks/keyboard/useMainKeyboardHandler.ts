@@ -968,7 +968,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 						);
 						if (browserTab) {
 							ctx.setRenameTabId(browserTab.id);
-							ctx.setRenameTabInitialName(browserTab.title ?? '');
+							ctx.setRenameTabInitialName(browserTab.customTitle ?? '');
 							ctx.setRenameTabModalOpen(true);
 							trackShortcut('renameTab');
 						}

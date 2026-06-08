@@ -21,6 +21,23 @@ import {
 
 // Mock child components to simplify testing - must be before MainPanel import
 
+// LayerStack: MainPanelContent reads layerCount to blur the browser webview when a
+// modal/overlay is layered above it. These tests render MainPanel in isolation
+// without a LayerStackProvider, so stub the hook (no layers open => layerCount 0).
+vi.mock('../../../renderer/contexts/LayerStackContext', () => ({
+	useLayerStack: () => ({
+		registerLayer: vi.fn(() => 'layer-test'),
+		unregisterLayer: vi.fn(),
+		updateLayerHandler: vi.fn(),
+		getTopLayer: vi.fn(() => undefined),
+		closeTopLayer: vi.fn(async () => false),
+		getLayers: vi.fn(() => []),
+		hasOpenLayers: vi.fn(() => false),
+		hasOpenModal: vi.fn(() => false),
+		layerCount: 0,
+	}),
+}));
+
 // TerminalView: forwardRef stub that records render calls per session so we can
 // assert persistence (kept mounted) vs destruction (unmounted) across sessions.
 const terminalViewSessions: string[] = [];

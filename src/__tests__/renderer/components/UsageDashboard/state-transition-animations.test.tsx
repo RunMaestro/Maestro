@@ -17,6 +17,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import '@testing-library/jest-dom';
 import { UsageDashboardModal } from '../../../../renderer/components/UsageDashboard/UsageDashboardModal';
 import { SummaryCards } from '../../../../renderer/components/UsageDashboard/SummaryCards';
+import { useUIStore } from '../../../../renderer/stores/uiStore';
 
 import { mockTheme } from '../../../helpers/mockTheme';
 // Mock lucide-react icons
@@ -53,7 +54,9 @@ vi.mock('lucide-react', () => {
 		Globe: createIcon('globe', '🌐'),
 		Zap: createIcon('zap', '⚡'),
 		PanelTop: createIcon('panel-top', '🔲'),
+		Keyboard: createIcon('keyboard', '⌨️'),
 		Trophy: createIcon('trophy', '🏆'),
+		Sparkles: createIcon('sparkles', '✨'),
 		Briefcase: createIcon('briefcase', '💼'),
 		Coffee: createIcon('coffee', '☕'),
 		Filter: createIcon('filter', '🔍'),
@@ -144,6 +147,10 @@ const mockFs = {
 };
 
 beforeEach(() => {
+	// The dashboard tab is persisted in the shared uiStore singleton across tests
+	// in this file. Reset it so each test starts on 'overview' instead of inheriting
+	// the tab a prior test navigated to (which can mount the Shortcuts panel).
+	useUIStore.setState({ usageDashboardViewMode: 'overview' });
 	(window as any).maestro = {
 		stats: mockStats,
 		dialog: mockDialog,

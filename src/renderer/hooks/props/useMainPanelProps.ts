@@ -206,6 +206,8 @@ export interface UseMainPanelPropsDeps {
 	handleNewBrowserTab: () => void;
 	handleBrowserTabSelect: (tabId: string) => void;
 	handleBrowserTabClose: (tabId: string) => void;
+	handleBrowserTabRename: (tabId: string) => void;
+	handleBrowserTabResetName: (tabId: string) => void;
 	handleBrowserTabUpdate: (
 		sessionId: string,
 		tabId: string,
@@ -427,6 +429,8 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			onNewBrowserTab: deps.handleNewBrowserTab,
 			onBrowserTabSelect: deps.handleBrowserTabSelect,
 			onBrowserTabClose: deps.handleBrowserTabClose,
+			onBrowserTabRename: deps.handleBrowserTabRename,
+			onBrowserTabResetName: deps.handleBrowserTabResetName,
 			onBrowserTabUpdate: deps.handleBrowserTabUpdate,
 			// Terminal tab callbacks (Phase 8)
 			onNewTerminalTab: deps.handleOpenTerminalTab,
@@ -679,6 +683,8 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			deps.handleNewBrowserTab,
 			deps.handleBrowserTabSelect,
 			deps.handleBrowserTabClose,
+			deps.handleBrowserTabRename,
+			deps.handleBrowserTabResetName,
 			deps.handleBrowserTabUpdate,
 			// Terminal tab (Phase 8)
 			deps.handleOpenTerminalTab,

@@ -170,9 +170,9 @@ export interface MainPanelProps {
 	onOpenOutputSearch?: () => void;
 	// Bulk tab close operations
 	onCloseAllTabs?: () => void;
-	onCloseOtherTabs?: () => void;
-	onCloseTabsLeft?: () => void;
-	onCloseTabsRight?: () => void;
+	onCloseOtherTabs?: (pivotTabId?: string) => void;
+	onCloseTabsLeft?: (pivotTabId?: string) => void;
+	onCloseTabsRight?: (pivotTabId?: string) => void;
 
 	// Unified tab system (Phase 4) - file preview tabs integrated with AI tabs
 	unifiedTabs?: UnifiedTab[];
@@ -186,6 +186,8 @@ export interface MainPanelProps {
 	onNewBrowserTab?: () => void;
 	onBrowserTabSelect?: (tabId: string) => void;
 	onBrowserTabClose?: (tabId: string) => void;
+	onBrowserTabRename?: (tabId: string) => void;
+	onBrowserTabResetName?: (tabId: string) => void;
 	onBrowserTabUpdate?: (sessionId: string, tabId: string, updates: Partial<BrowserTab>) => void;
 
 	// Terminal tab callbacks (Phase 8)

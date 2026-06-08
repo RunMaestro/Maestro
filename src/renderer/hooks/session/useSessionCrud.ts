@@ -73,7 +73,8 @@ export interface UseSessionCrudReturn {
 		customEffort?: string,
 		groupId?: string,
 		enableMaestroP?: boolean,
-		maestroPPath?: string
+		maestroPPath?: string,
+		maestroPMode?: 'interactive' | 'dynamic'
 	) => Promise<void>;
 	/** Opens the delete agent confirmation modal */
 	deleteSession: (id: string) => void;
@@ -151,7 +152,8 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 			customEffort?: string,
 			groupId?: string,
 			enableMaestroP?: boolean,
-			maestroPPath?: string
+			maestroPPath?: string,
+			maestroPMode?: 'interactive' | 'dynamic'
 		) => {
 			try {
 				// Get agent definition to get correct command
@@ -279,6 +281,7 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 					autoRunFolderPath: `${workingDir}/${PLAYBOOKS_DIR}`,
 					enableMaestroP,
 					maestroPPath,
+					maestroPMode,
 					claudeInteractive:
 						agentId === 'claude-code' ? { mode: 'api', modeReason: 'auto' } : undefined,
 				};
@@ -470,6 +473,7 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 
 	const handleDragOver = useCallback((e: React.DragEvent) => {
 		e.preventDefault();
+		if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
 	}, []);
 
 	// ========================================================================

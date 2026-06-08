@@ -25,6 +25,7 @@ import { notifyToast } from '../../stores/notificationStore';
 import { logger } from '../../utils/logger';
 import { useImageAnnotatorStore } from './imageAnnotatorStore';
 import { useAnnotatorState } from './useAnnotatorState';
+import type { AnnotatorTool } from './useAnnotatorState';
 import { AnnotatorCanvas } from './AnnotatorCanvas';
 import { AnnotatorToolbar } from './AnnotatorToolbar';
 import { AnnotatorSettingsDrawer } from './AnnotatorSettingsDrawer';
@@ -33,6 +34,18 @@ import compositeAnnotatedImage from './compositeAnnotatedImage';
 interface ImageAnnotatorProps {
 	theme: Theme;
 }
+
+// Single-key tool shortcuts (lowercased). Mnemonic where the tool value differs
+// from the key: S = Square (rect), C = Circle (ellipse), A = Arrow.
+const TOOL_HOTKEYS: Record<string, AnnotatorTool> = {
+	d: 'pen', // Draw
+	p: 'pan',
+	e: 'eraser',
+	s: 'rect', // Square
+	c: 'ellipse', // Circle
+	t: 'text',
+	a: 'arrow',
+};
 
 export function ImageAnnotator({ theme }: ImageAnnotatorProps) {
 	const isOpen = useImageAnnotatorStore((s) => s.isOpen);
@@ -167,6 +180,29 @@ function ImageAnnotatorContent({
 	}, [closeAnnotator]);
 
 	const handleKeepEditing = useCallback(() => setConfirmingDiscard(false), []);
+
+	// Single-key tool hotkeys. Mnemonic where the tool value diverges from the
+	// key: S -> rect (Square), C -> ellipse (Circle). Skipped while a text label
+	// is being edited (the textarea must receive the letters) and whenever a
+	// modifier is held so app-level shortcuts still work.
+	const setTool = state.setTool;
+	useEventListener(
+		'keydown',
+		(event) => {
+			const e = event as KeyboardEvent;
+			if (e.metaKey || e.ctrlKey || e.altKey) return;
+			const target = e.target as HTMLElement | null;
+			const tag = target?.tagName;
+			if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target?.isContentEditable) {
+				return;
+			}
+			const tool = TOOL_HOTKEYS[e.key.toLowerCase()];
+			if (!tool) return;
+			e.preventDefault();
+			setTool(tool);
+		},
+		{ target: typeof document !== 'undefined' ? document : null }
+	);
 
 	const composite = useCallback(async (): Promise<string | null> => {
 		const svg = svgRef.current;

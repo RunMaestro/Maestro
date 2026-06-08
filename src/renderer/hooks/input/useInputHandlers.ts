@@ -31,6 +31,10 @@ import { useAtMentionCompletion, type AtMentionSuggestion } from './useAtMention
 import { useInputProcessing } from './useInputProcessing';
 import { useInputKeyDown } from './useInputKeyDown';
 import { IMAGE_EXTENSIONS } from '../../utils/fileExplorerIcons/shared';
+import {
+	FILE_TREE_SINGLE_MIME,
+	FILE_TREE_MULTI_MIME,
+} from '../../components/FileExplorerPanel/types';
 
 function isImagePath(path: string): boolean {
 	const ext = path.toLowerCase().split('.').pop();
@@ -638,43 +642,70 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 			// Files-panel drag: image files are staged as image attachments;
 			// other files/folders are inserted as @<path> in the AI input.
 			// AI mode only; group chat is excluded.
-			const internalPath = e.dataTransfer.getData('application/x-maestro-file-path');
-			if (internalPath) {
+			//
+			// A multi-selection drag packs every selected relative path into the
+			// multi MIME (a JSON array); a single-row drag packs just one path into
+			// the single MIME. Read the array first so dragging N selected rows
+			// inserts N mentions (folders included, each as its own @mention), and
+			// fall back to the single path otherwise.
+			const internalMulti = e.dataTransfer.getData(FILE_TREE_MULTI_MIME);
+			const internalSingle = e.dataTransfer.getData(FILE_TREE_SINGLE_MIME);
+			if (internalMulti || internalSingle) {
 				if (isGroupChatActive || !isDirectAIMode) return;
 
-				if (isImagePath(internalPath)) {
-					// `internalPath` is built by FileExplorerPanel relative to
-					// `session.fullPath` (see TreeRow's `${session.fullPath}/${fullPath}`),
-					// so resolve against fullPath first to stay consistent with the
-					// explorer's own absolute-path construction.
-					const treeRoot = activeSession?.fullPath ?? activeSession?.projectRoot;
-					if (!treeRoot) return;
-					const absolutePath = `${treeRoot}/${internalPath}`;
-					const sshRemoteId =
-						activeSession?.sshRemoteId ??
-						activeSession?.sessionSshRemoteConfig?.remoteId ??
-						undefined;
-					void window.maestro.fs
-						.readFile(absolutePath, sshRemoteId)
-						.then((content) => {
-							if (typeof content !== 'string' || !content.startsWith('data:image/')) return;
-							setStagedImages((prev) => {
-								if (prev.includes(content)) {
-									setSuccessFlashNotification('Duplicate image ignored');
-									setTimeout(() => setSuccessFlashNotification(null), 2000);
-									return prev;
-								}
-								return [...prev, content];
+				let internalPaths: string[] = [];
+				if (internalMulti) {
+					try {
+						const parsed = JSON.parse(internalMulti);
+						if (Array.isArray(parsed)) {
+							internalPaths = parsed.filter((p): p is string => typeof p === 'string');
+						}
+					} catch {
+						// Malformed payload — fall back to the single path below.
+					}
+				}
+				if (internalPaths.length === 0 && internalSingle) internalPaths = [internalSingle];
+				if (internalPaths.length === 0) return;
+
+				// Relative paths are built by FileExplorerPanel against `session.fullPath`
+				// (see TreeRow's `${session.fullPath}/${fullPath}`), so resolve image
+				// reads against fullPath first to match the explorer's own absolute-path
+				// construction.
+				const treeRoot = activeSession?.fullPath ?? activeSession?.projectRoot;
+				const sshRemoteId =
+					activeSession?.sshRemoteId ??
+					activeSession?.sessionSshRemoteConfig?.remoteId ??
+					undefined;
+
+				const mentionPaths: string[] = [];
+				for (const p of internalPaths) {
+					if (isImagePath(p) && treeRoot) {
+						const absolutePath = `${treeRoot}/${p}`;
+						void window.maestro.fs
+							.readFile(absolutePath, sshRemoteId)
+							.then((content) => {
+								if (typeof content !== 'string' || !content.startsWith('data:image/')) return;
+								setStagedImages((prev) => {
+									if (prev.includes(content)) {
+										setSuccessFlashNotification('Duplicate image ignored');
+										setTimeout(() => setSuccessFlashNotification(null), 2000);
+										return prev;
+									}
+									return [...prev, content];
+								});
+							})
+							.catch(() => {
+								setSuccessFlashNotification('Could not read image file');
+								setTimeout(() => setSuccessFlashNotification(null), 2000);
 							});
-						})
-						.catch(() => {
-							setSuccessFlashNotification('Could not read image file');
-							setTimeout(() => setSuccessFlashNotification(null), 2000);
-						});
-					return;
+					} else {
+						// Non-image file, folder, or image we can't resolve a root for:
+						// insert as an @mention rather than dropping it silently.
+						mentionPaths.push(p);
+					}
 				}
 
-				appendMentionsToAiInput([internalPath]);
+				if (mentionPaths.length > 0) appendMentionsToAiInput(mentionPaths);
 				inputRef.current?.focus();
 				return;
 			}

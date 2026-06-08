@@ -208,17 +208,27 @@ export const FilePreview = React.memo(
 
 		// File change detection state
 		const [fileChangedOnDisk, setFileChangedOnDisk] = useState(false);
+		// True once the file can no longer be stat'd at its cached path (deleted, or
+		// moved/renamed elsewhere). Distinct from fileChangedOnDisk: there is nothing
+		// to reload, so the banner offers only Dismiss.
+		const [fileMissingOnDisk, setFileMissingOnDisk] = useState(false);
 		const lastModifiedRef = useRef(lastModified);
 
 		// Keep ref in sync with prop (reset when parent reloads content with new lastModified)
 		useEffect(() => {
 			lastModifiedRef.current = lastModified;
 			setFileChangedOnDisk(false);
+			setFileMissingOnDisk(false);
 		}, [lastModified]);
+
+		// Reset the missing banner when navigating to a different file.
+		useEffect(() => {
+			setFileMissingOnDisk(false);
+		}, [file?.path]);
 
 		// Poll file stat to detect external changes (every 3s for the active file)
 		useEffect(() => {
-			if (!file?.path || !lastModified || fileChangedOnDisk) return;
+			if (!file?.path || !lastModified || fileChangedOnDisk || fileMissingOnDisk) return;
 
 			const interval = setInterval(async () => {
 				try {
@@ -229,12 +239,15 @@ export const FilePreview = React.memo(
 						setFileChangedOnDisk(true);
 					}
 				} catch {
-					// Silently ignore — file may have been deleted or become inaccessible
+					// stat threw: the file no longer exists at this path. It was deleted
+					// or moved/renamed out from under the open tab. Surface it so the user
+					// knows their edits would no longer save in place.
+					setFileMissingOnDisk(true);
 				}
 			}, 3000);
 
 			return () => clearInterval(interval);
-		}, [file?.path, lastModified, sshRemoteId, fileChangedOnDisk]);
+		}, [file?.path, lastModified, sshRemoteId, fileChangedOnDisk, fileMissingOnDisk]);
 
 		// Handle reload click
 		const handleReloadFile = useCallback(() => {
@@ -625,11 +638,16 @@ export const FilePreview = React.memo(
 				window.maestro.fs
 					.stat(file.path, sshRemoteId)
 					.then((stats) =>
-						setFileStats({
-							size: stats.size,
-							createdAt: stats.createdAt,
-							modifiedAt: stats.modifiedAt,
-						})
+						// stat returns null for a missing path - clear stats like the catch.
+						setFileStats(
+							stats
+								? {
+										size: stats.size,
+										createdAt: stats.createdAt,
+										modifiedAt: stats.modifiedAt,
+									}
+								: null
+						)
 					)
 					.catch((err) => {
 						logger.error('Failed to get file stats:', undefined, err);
@@ -1357,6 +1375,39 @@ export const FilePreview = React.memo(
 							<GhostIconButton onClick={() => setFileChangedOnDisk(false)} title="Dismiss">
 								<X className="w-3 h-3" style={{ color: theme.colors.textDim }} />
 							</GhostIconButton>
+						</div>
+					</div>
+				)}
+
+				{/* File no longer on disk banner (deleted or moved/renamed elsewhere) */}
+				{fileMissingOnDisk && (
+					<div
+						className="flex items-center gap-3 px-6 py-2 border-b shrink-0"
+						style={{
+							backgroundColor: theme.colors.warning + '15',
+							borderColor: theme.colors.warning + '40',
+						}}
+					>
+						<AlertTriangle
+							className="w-3.5 h-3.5 shrink-0"
+							style={{ color: theme.colors.warning }}
+						/>
+						<span className="flex-1 text-xs" style={{ color: theme.colors.textMain }}>
+							This file no longer exists at its original location. It may have been deleted or
+							moved.
+							{hasChanges ? ' Saving will prompt you for a new location.' : ''}
+						</span>
+						<div className="flex items-center gap-2 shrink-0">
+							<button
+								onClick={() => setFileMissingOnDisk(false)}
+								className="px-2 py-1 text-xs font-medium rounded hover:opacity-80 transition-opacity"
+								style={{
+									backgroundColor: theme.colors.warning,
+									color: theme.colors.accentForeground ?? '#000',
+								}}
+							>
+								Dismiss
+							</button>
 						</div>
 					</div>
 				)}

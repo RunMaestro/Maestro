@@ -391,15 +391,25 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				...tab,
 				state: 'idle' as const,
 				thinkingStartTime: undefined,
+				// Clear any stranded naming-in-flight flag. The promise that would
+				// reset it lives in the renderer and cannot survive a reload/restart,
+				// so a tab whose generateTabName() call was interrupted would otherwise
+				// stay isGeneratingName:true forever, permanently blocking the
+				// namingNotInFlight guard in useInputProcessing from ever retrying.
+				isGeneratingName: false,
 			}));
 
-			// Reset terminal tab runtime state - PTY processes don't survive app restart
-			const resetTerminalTabs = (correctedSession.terminalTabs || []).map((tab) => ({
-				...tab,
-				pid: 0,
-				state: 'idle' as const,
-				exitCode: undefined,
-			}));
+			// Terminal tabs don't persist across app restart unless they carry a
+			// startup command - those are intentionally durable so their command
+			// re-runs on relaunch. Drop the rest, then reset PTY runtime state.
+			const resetTerminalTabs = (correctedSession.terminalTabs || [])
+				.filter((tab) => (tab.startupCommand ?? '').trim() !== '')
+				.map((tab) => ({
+					...tab,
+					pid: 0,
+					state: 'idle' as const,
+					exitCode: undefined,
+				}));
 			const resetBrowserTabs = (correctedSession.browserTabs || []).map((tab) =>
 				rehydrateBrowserTab(tab, correctedSession.id)
 			);

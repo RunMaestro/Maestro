@@ -76,6 +76,12 @@ interface ProcessConfig {
 	// Windows command line length workaround
 	sendPromptViaStdin?: boolean; // If true, send the prompt via stdin as JSON instead of command line
 	sendPromptViaStdinRaw?: boolean; // If true, send the prompt via stdin as raw text instead of command line
+	// Claude token-source selection. Normally resolved server-side from the
+	// persisted session by sessionId, but spawns using a synthetic sessionId
+	// (e.g. background synopsis) forward these inline so the handler can resolve.
+	enableMaestroP?: boolean;
+	maestroPMode?: 'interactive' | 'dynamic';
+	maestroPPath?: string;
 }
 
 type AgentConfigOption = import('../shared/types').AgentConfigOption;
@@ -101,6 +107,8 @@ interface SessionMessagesResult {
 		timestamp: string;
 		uuid: string;
 		toolUse?: unknown;
+		/** Base64 data URLs reconstructed from image content blocks in the transcript. */
+		images?: string[];
 	}>;
 	total: number;
 	hasMore: boolean;
@@ -335,6 +343,7 @@ interface MaestroAPI {
 				duration?: number;
 				dismissible?: boolean;
 				sessionId?: string;
+				sourceAgent?: string;
 				tabId?: string;
 				actionUrl?: string;
 				actionLabel?: string;
@@ -919,7 +928,7 @@ interface MaestroAPI {
 			modifiedAt: string;
 			isDirectory: boolean;
 			isFile: boolean;
-		}>;
+		} | null>;
 		directorySize: (
 			dirPath: string,
 			sshRemoteId?: string,
@@ -1395,6 +1404,7 @@ interface MaestroAPI {
 		onQuitConfirmationRequest: (callback: () => void) => () => void;
 		confirmQuit: () => void;
 		cancelQuit: () => void;
+		quitConfirmationPending: () => void;
 		onSystemResume: (callback: () => void) => () => void;
 		onBrowserTabShortcutKey: (
 			callback: (input: {
@@ -1648,6 +1658,7 @@ interface MaestroAPI {
 			pagination?: { limit?: number; offset?: number };
 			lookbackHours?: number | null;
 			sharedContext?: { sshRemoteId: string; remoteCwd: string };
+			types?: HistoryEntryType[];
 		}) => Promise<{
 			entries: Array<{
 				id: string;
@@ -1722,7 +1733,8 @@ interface MaestroAPI {
 		getOffsetForTimestamp: (
 			sessionId: string,
 			timestamp: number,
-			lookbackHours?: number | null
+			lookbackHours?: number | null,
+			types?: HistoryEntryType[]
 		) => Promise<number>;
 		onExternalChange: (handler: () => void) => () => void;
 		reload: () => Promise<boolean>;
@@ -2153,6 +2165,9 @@ interface MaestroAPI {
 				customPath?: string;
 				customArgs?: string;
 				customEnvVars?: Record<string, string>;
+				enableMaestroP?: boolean;
+				maestroPMode?: 'interactive' | 'dynamic';
+				maestroPPath?: string;
 			}
 		) => Promise<GroupChatData>;
 		list: () => Promise<Array<GroupChatData>>;
@@ -2168,6 +2183,9 @@ interface MaestroAPI {
 					customPath?: string;
 					customArgs?: string;
 					customEnvVars?: Record<string, string>;
+					enableMaestroP?: boolean;
+					maestroPMode?: 'interactive' | 'dynamic';
+					maestroPPath?: string;
 				};
 			}
 		) => Promise<GroupChatData>;
@@ -3192,6 +3210,10 @@ interface MaestroAPI {
 				workingDirOverride?: string;
 				syncHistory?: boolean;
 			};
+			// Claude token-source selection, forwarded so tab naming honors TUI/Dynamic/API.
+			enableMaestroP?: boolean;
+			maestroPMode?: 'interactive' | 'dynamic';
+			maestroPPath?: string;
 		}) => Promise<string | null>;
 	};
 
@@ -3199,7 +3221,7 @@ interface MaestroAPI {
 	directorNotes: {
 		getUnifiedHistory: (options: {
 			lookbackDays: number;
-			filter?: 'AUTO' | 'USER' | 'CUE' | null;
+			filter?: 'AUTO' | 'USER' | 'CUE' | Array<'AUTO' | 'USER' | 'CUE'> | null;
 			limit?: number;
 			offset?: number;
 			graphBucketCount?: number;
@@ -3231,6 +3253,7 @@ interface MaestroAPI {
 				sessionCount: number;
 				autoCount: number;
 				userCount: number;
+				cueCount: number;
 				totalCount: number;
 			};
 			graphBuckets?: Array<{ auto: number; user: number; cue: number }>;
@@ -3253,12 +3276,16 @@ interface MaestroAPI {
 				sessionCount: number;
 				autoCount: number;
 				userCount: number;
+				cueCount: number;
 				totalCount: number;
 			};
 		}>;
 		getOffsetForTimestamp: (
 			timestamp: number,
-			options?: { lookbackDays?: number; filter?: 'AUTO' | 'USER' | 'CUE' | null }
+			options?: {
+				lookbackDays?: number;
+				filter?: 'AUTO' | 'USER' | 'CUE' | Array<'AUTO' | 'USER' | 'CUE'> | null;
+			}
 		) => Promise<number>;
 		generateSynopsis: (options: {
 			lookbackDays: number;

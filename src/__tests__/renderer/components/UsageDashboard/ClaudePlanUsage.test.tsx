@@ -15,6 +15,7 @@ import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/re
 import { ClaudePlanUsage } from '../../../../renderer/components/UsageDashboard/ClaudePlanUsage';
 import { useClaudeUsageStore } from '../../../../renderer/stores/claudeUsageStore';
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
+import { useUIStore } from '../../../../renderer/stores/uiStore';
 import { THEMES } from '../../../../shared/themes';
 
 const theme = THEMES['dracula'];
@@ -39,6 +40,7 @@ beforeEach(() => {
 
 	useClaudeUsageStore.getState().__resetForTests();
 	useSessionStore.setState({ sessions: [] } as any);
+	useUIStore.setState({ hiddenQuotaAccounts: {} });
 	cleanup();
 });
 
@@ -320,5 +322,77 @@ describe('ClaudePlanUsage — refresh wiring', () => {
 		const button = screen.getByTestId('claude-plan-refresh') as HTMLButtonElement;
 		expect(button.disabled).toBe(true);
 		expect(button.textContent).toContain('Sampling');
+	});
+});
+
+describe('ClaudePlanUsage — hide/show accounts (list view)', () => {
+	function seedTwoAccounts() {
+		seedSnapshots({
+			'/Users/me/.claude': {
+				sampledAt: '2026-05-15T00:00:00.000Z',
+				configDirKey: '/Users/me/.claude',
+				authState: 'authenticated',
+				session: { percent: 50, resetsAt: '2026-05-15T05:00:00.000Z' },
+				weekAllModels: { percent: 30, resetsAt: '2026-05-22T00:00:00.000Z' },
+				weekSonnetOnly: { percent: 10, resetsAt: '2026-05-22T00:00:00.000Z' },
+			},
+			'/Users/me/.claude-work': {
+				sampledAt: '2026-05-15T00:00:00.000Z',
+				configDirKey: '/Users/me/.claude-work',
+				authState: 'authenticated',
+				session: { percent: 90, resetsAt: '2026-05-15T05:00:00.000Z' },
+				weekAllModels: { percent: 70, resetsAt: '2026-05-22T00:00:00.000Z' },
+				weekSonnetOnly: { percent: 5, resetsAt: '2026-05-22T00:00:00.000Z' },
+			},
+		});
+	}
+
+	it('hides a row, surfaces Show all, and brings it back when unhidden', () => {
+		seedTwoAccounts();
+		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+
+		expect(screen.getByTestId('claude-plan-account-default')).toBeInTheDocument();
+		expect(screen.getByTestId('claude-plan-account-work')).toBeInTheDocument();
+		expect(screen.queryByTestId('claude-plan-show-all')).toBeNull();
+
+		// Hide the default account: its row drops out, Show all (1) appears.
+		fireEvent.click(screen.getByTestId('claude-plan-visibility-default'));
+		expect(screen.queryByTestId('claude-plan-account-default')).toBeNull();
+		expect(screen.getByTestId('claude-plan-account-work')).toBeInTheDocument();
+		expect(screen.getByTestId('claude-plan-show-all')).toHaveTextContent('Show all (1)');
+
+		// Reveal hidden: the hidden row reappears marked as hidden.
+		fireEvent.click(screen.getByTestId('claude-plan-show-all'));
+		expect(screen.getByTestId('claude-plan-account-default-hidden')).toBeInTheDocument();
+
+		// Unhide from its revealed row toggle: back to visible, Show all gone.
+		fireEvent.click(screen.getByTestId('claude-plan-visibility-default'));
+		expect(screen.getByTestId('claude-plan-account-default')).toBeInTheDocument();
+		expect(screen.queryByTestId('claude-plan-show-all')).toBeNull();
+	});
+
+	it('persists the hidden set through uiStore so it survives a remount', () => {
+		seedTwoAccounts();
+		const { unmount } = render(
+			<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />
+		);
+
+		fireEvent.click(screen.getByTestId('claude-plan-visibility-work'));
+		expect(useUIStore.getState().hiddenQuotaAccounts['claude-code']).toEqual([
+			'/Users/me/.claude-work',
+		]);
+
+		unmount();
+		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+		expect(screen.queryByTestId('claude-plan-account-work')).toBeNull();
+		expect(screen.getByTestId('claude-plan-show-all')).toHaveTextContent('Show all (1)');
+	});
+
+	it('does not render per-row hide toggles in tab (single-account) view', () => {
+		seedTwoAccounts();
+		render(<ClaudePlanUsage theme={theme} />);
+
+		expect(screen.queryByTestId('claude-plan-visibility-default')).toBeNull();
+		expect(screen.queryByTestId('claude-plan-show-all')).toBeNull();
 	});
 });

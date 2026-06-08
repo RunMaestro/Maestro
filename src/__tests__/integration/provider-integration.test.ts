@@ -1611,16 +1611,14 @@ describe.skipIf(SKIP_INTEGRATION)('Provider Integration Tests', () => {
 					console.log(`📋 Session ID: ${sessionId}`);
 					expect(sessionId, `${provider.name} should return session ID`).toBeTruthy();
 
-					// Now request a synopsis (this is what happens when a task completes)
-					const synopsisPrompt = `Provide a brief synopsis of what you just accomplished in this task using this exact format:
-
-**Summary:** [1-2 sentences describing the key outcome]
-
-**Details:** [A paragraph with more specifics about what was done]
-
-Rules:
-- Be specific about what was actually accomplished.
-- Focus only on meaningful work that was done.`;
+					// Now request a synopsis (this is what happens when a task completes).
+					// Use the real, live prompt rather than a hand-copied literal so this
+					// test never drifts from the actual prompt - edit the .md freely and
+					// this test follows automatically.
+					const synopsisPrompt = fs.readFileSync(
+						path.join(__dirname, '../../prompts/autorun-synopsis.md'),
+						'utf-8'
+					);
 
 					const synopsisArgs = provider.buildResumeArgs(sessionId!, synopsisPrompt);
 
@@ -1647,13 +1645,13 @@ Rules:
 					console.log(`   - shortSummary: ${parsed.shortSummary.substring(0, 100)}`);
 					console.log(`   - fullSynopsis length: ${parsed.fullSynopsis.length}`);
 
-					// Verify the summary is NOT a template placeholder
-					const templatePlaceholders = [
-						'[1-2 sentences',
-						'[A paragraph',
-						'... (1-2 sentences)',
-						'... then blank line',
-					];
+					// Verify the summary is NOT a verbatim echo of the template. Derive
+					// the placeholder signatures from the loaded prompt (the leading text
+					// of each `**Summary:**/**Details:** [...]` block) so this check tracks
+					// the prompt instead of hard-coding literals that go stale.
+					const templatePlaceholders = Array.from(
+						synopsisPrompt.matchAll(/\*\*(?:Summary|Details):\*\*\s*(\[[^\].]{5,})/g)
+					).map((m) => m[1].trim().slice(0, 20));
 
 					for (const placeholder of templatePlaceholders) {
 						expect(

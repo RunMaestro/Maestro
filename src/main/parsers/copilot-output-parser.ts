@@ -58,6 +58,11 @@ interface CopilotRawMessage {
 		result?: CopilotToolExecutionResult;
 		error?: string;
 		message?: string;
+		/** Set on assistant.message events emitted BY a delegated subagent in response
+		 *  to a parent's `task` tool call. The subagent's reply is plumbed into the
+		 *  parent's events.jsonl for visibility, but it must NOT be treated as the
+		 *  parent's own final answer — the parent's real conclusion comes later. */
+		parentToolCallId?: string;
 		/** Output tokens for this assistant turn (Copilot CLI ≥1.0.39 reports this on `assistant.message`).
 		 *  Copilot does not currently report input or cache tokens at the per-message level. */
 		outputTokens?: number;
@@ -213,11 +218,22 @@ export class CopilotOutputParser implements AgentOutputParser {
 	 *  the final answer structurally: non-empty content with no tool
 	 *  requests. Emitting as `type: 'result'` with the full message content
 	 *  guarantees StdoutHandler has the authoritative final text even when
-	 *  the accumulated delta stream is incomplete or lagging. */
+	 *  the accumulated delta stream is incomplete or lagging.
+	 *
+	 *  Subagent gate: messages with `parentToolCallId` are the replies of a
+	 *  delegated subagent (Copilot's `task` tool), serialized into the parent's
+	 *  events.jsonl for visibility. They are NOT the parent's final answer —
+	 *  the parent will produce its own conclusion after aggregating subagent
+	 *  results. Treating a subagent's `final_answer` as the parent's result
+	 *  causes StdoutHandler to set `resultEmitted = true` on the first
+	 *  subagent reply, which silently swallows the parent's actual final
+	 *  answer further down the stream. We downgrade them to `type: 'system'`
+	 *  so they're visible to the legacy path but don't trigger result-emission. */
 	private parseAssistantMessage(msg: CopilotRawMessage): ParsedEvent {
 		const content = msg.data?.content || '';
 		const phase = msg.data?.phase;
 		const toolRequests = msg.data?.toolRequests || [];
+		const isSubagentReply = !!msg.data?.parentToolCallId;
 
 		const toolUseBlocks = toolRequests
 			.filter(
@@ -249,8 +265,13 @@ export class CopilotOutputParser implements AgentOutputParser {
 		// pattern used by modern Copilot CLI (no phase field, non-empty
 		// content, no pending tool calls). Phase values like 'commentary'
 		// opt out — they mark the message as an intermediate narration.
+		// Subagent replies (parentToolCallId set) are excluded — see the
+		// docstring above; they would otherwise race the parent's final answer
+		// and the parent's real conclusion gets dropped.
 		const isFinalAnswer =
-			phase === 'final_answer' || (phase === undefined && !!content && toolUseBlocks.length === 0);
+			!isSubagentReply &&
+			(phase === 'final_answer' ||
+				(phase === undefined && !!content && toolUseBlocks.length === 0));
 
 		if (isFinalAnswer) {
 			return {

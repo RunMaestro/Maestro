@@ -185,19 +185,28 @@ export const AutoRunDocumentSelector = forwardRef<
 	useEffect(() => {
 		if (isOpen) {
 			setFilterQuery('');
-			// Auto-expand ancestor folders of the selected doc so it's revealed
-			// in the tree (mirrors the pre-flatten behavior).
-			if (selectedDocument && selectedDocument.includes('/')) {
-				const parts = selectedDocument.split('/');
-				const ancestors: string[] = [];
-				for (let i = 1; i < parts.length; i++) {
-					ancestors.push(parts.slice(0, i).join('/'));
+			// Expand every folder on open so nested documents are visible by
+			// default (restores parity with the pre-tree flat list). Without this,
+			// docs that live only in subfolders are hidden behind collapsed
+			// folders, and an empty visibleFiles set looks like "no documents".
+			if (documentTree) {
+				const allFolders: string[] = [];
+				const collect = (nodes: DocTreeNode[]) => {
+					for (const n of nodes) {
+						if (n.type === 'folder') {
+							allFolders.push(n.path);
+							if (n.children) collect(n.children);
+						}
+					}
+				};
+				collect(documentTree);
+				if (allFolders.length > 0) {
+					setExpandedFolders((prev) => {
+						const next = new Set(prev);
+						for (const f of allFolders) next.add(f);
+						return next;
+					});
 				}
-				setExpandedFolders((prev) => {
-					const next = new Set(prev);
-					for (const a of ancestors) next.add(a);
-					return next;
-				});
 			}
 			// Focus the filter input shortly after open so keystrokes flow into it.
 			requestAnimationFrame(() => {
@@ -530,7 +539,7 @@ export const AutoRunDocumentSelector = forwardRef<
 									<div className="px-3 py-2 text-sm" style={{ color: theme.colors.textDim }}>
 										No markdown files found
 									</div>
-								) : visibleFiles.length === 0 ? (
+								) : visibleFiles.length === 0 && filterQuery.trim() ? (
 									<div className="px-3 py-2 text-sm" style={{ color: theme.colors.textDim }}>
 										No matches for &ldquo;{filterQuery}&rdquo;
 									</div>

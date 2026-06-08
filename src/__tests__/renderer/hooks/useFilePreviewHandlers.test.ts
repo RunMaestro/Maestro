@@ -6,11 +6,14 @@ import type { Session, FilePreviewTab } from '../../../renderer/types';
 
 const mockWriteFile = vi.fn().mockResolvedValue(undefined);
 const mockSaveFile = vi.fn().mockResolvedValue(null);
+const mockStat = vi.fn().mockResolvedValue({ modifiedAt: new Date().toISOString() });
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	// Default: stat succeeds, i.e. the file still exists at its cached path.
+	mockStat.mockResolvedValue({ modifiedAt: new Date().toISOString() });
 	(window as any).maestro = {
-		fs: { writeFile: mockWriteFile },
+		fs: { writeFile: mockWriteFile, stat: mockStat },
 		dialog: { saveFile: mockSaveFile },
 	};
 });
@@ -430,8 +433,84 @@ describe('useFilePreviewHandlers', () => {
 			});
 
 			expect(mockSaveFile).not.toHaveBeenCalled();
+			expect(mockStat).toHaveBeenCalledWith('/test/project/src/test.ts', undefined);
 			expect(mockWriteFile).toHaveBeenCalledWith('/test/project/src/test.ts', 'updated', undefined);
 			expect(onEditContent).toHaveBeenCalledWith('file-1', undefined, 'updated');
+		});
+	});
+
+	describe('save when file was moved or deleted on disk', () => {
+		it('prompts for a destination instead of recreating a ghost at the stale path', async () => {
+			// Cached path no longer resolves on disk.
+			mockStat.mockRejectedValue(new Error('ENOENT'));
+			mockSaveFile.mockResolvedValue('/test/project/src/moved.ts');
+			const session = makeSession();
+			useSessionStore.setState({
+				sessions: [
+					{
+						...session,
+						filePreviewTabs: [makeFileTab({ id: 'file-1' })],
+						activeFileTabId: 'file-1',
+					} as Session,
+				],
+				activeSessionId: 'session-1',
+			});
+
+			const { result } = renderHook(() =>
+				useFilePreviewHandlers({
+					activeSession: session,
+					activeFileTabId: 'file-1',
+					activeFileTab: makeFileTab(),
+				})
+			);
+
+			await act(async () => {
+				await result.current.handleFilePreviewSave('/test/project/src/test.ts', 'updated');
+			});
+
+			expect(mockSaveFile).toHaveBeenCalledWith(
+				expect.objectContaining({ defaultPath: '/test/project/src/test.ts' })
+			);
+			// Writes to the user-chosen location, NOT the stale cached path.
+			expect(mockWriteFile).toHaveBeenCalledWith(
+				'/test/project/src/moved.ts',
+				'updated',
+				undefined
+			);
+
+			const updatedTab = useSessionStore
+				.getState()
+				.sessions[0].filePreviewTabs.find((t: FilePreviewTab) => t.id === 'file-1');
+			expect(updatedTab).toMatchObject({
+				path: '/test/project/src/moved.ts',
+				name: 'moved',
+				extension: '.ts',
+			});
+		});
+
+		it('returns false and does not write when the redirect dialog is cancelled', async () => {
+			mockStat.mockRejectedValue(new Error('ENOENT'));
+			mockSaveFile.mockResolvedValue(null);
+
+			const { result } = renderHook(() =>
+				useFilePreviewHandlers({
+					activeSession: makeSession(),
+					activeFileTabId: 'file-1',
+					activeFileTab: makeFileTab(),
+				})
+			);
+
+			let saveResult: boolean | void;
+			await act(async () => {
+				saveResult = await result.current.handleFilePreviewSave(
+					'/test/project/src/test.ts',
+					'updated'
+				);
+			});
+
+			expect(saveResult!).toBe(false);
+			expect(mockSaveFile).toHaveBeenCalled();
+			expect(mockWriteFile).not.toHaveBeenCalled();
 		});
 	});
 });

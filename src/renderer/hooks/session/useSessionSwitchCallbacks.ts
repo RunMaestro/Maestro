@@ -20,6 +20,8 @@ import type { Session, LogEntry, UsageStats } from '../../types';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useActiveSession } from './useActiveSession';
 import { useUIStore } from '../../stores/uiStore';
+import { useFileExplorerStore } from '../../stores/fileExplorerStore';
+import { aiTabFocusFields } from '../../utils/tabHelpers';
 import { subscribeToInAppDeepLinks } from '../../utils/openMaestroLink';
 import type { ParsedDeepLink } from '../../../shared/types';
 
@@ -136,18 +138,7 @@ export function useSessionSwitchCallbacks(
 				// this, activeTabId changes but the session still renders its previous non-AI
 				// view (the bug: jumping to an AI tab silently leaves the user on a terminal).
 				setSessions((prev) =>
-					prev.map((s) =>
-						s.id === sessionId
-							? {
-									...s,
-									activeTabId: tabId,
-									activeFileTabId: null,
-									activeTerminalTabId: null,
-									activeBrowserTabId: null,
-									inputMode: 'ai' as const,
-								}
-							: s
-					)
+					prev.map((s) => (s.id === sessionId ? { ...s, ...aiTabFocusFields(tabId) } : s))
 				);
 			}
 		},
@@ -157,22 +148,26 @@ export function useSessionSwitchCallbacks(
 	// Navigate from toast notification to a session/tab
 	const handleToastSessionClick = useCallback(
 		(sessionId: string, tabId?: string) => {
+			// Close the Document Graph if it's open. It's a full-screen modal
+			// overlay (fixed inset-0, z-9999), so without this the graph stays
+			// on top of the agent we just jumped to and swallows clicks meant
+			// for it. The toast jump should always land the user on the agent.
+			if (useFileExplorerStore.getState().isGraphViewOpen) {
+				useFileExplorerStore.getState().closeGraphView();
+			}
 			// Switch to the session
 			setActiveSessionId(sessionId);
-			// Clear file preview and switch to AI tab (with specific tab if provided)
-			// This ensures clicking a toast always shows the AI terminal, not a file preview
+			// Switch to AI tab (with specific tab if provided). Clear file/terminal/browser
+			// active-tab state so the jump actually shows the AI terminal even when the agent
+			// was last viewed on a browser, terminal, or file-preview tab. Without clearing
+			// activeBrowserTabId/activeTerminalTabId, activeTabId changes but the session keeps
+			// rendering its previous non-AI view (the bug: clicking a toast while a browser tab
+			// is active silently leaves the user on the browser tab).
 			updateSession(sessionId, (s) => {
-				// If a specific tab ID is provided, check if it exists
-				if (tabId && !s.aiTabs?.some((t) => t.id === tabId)) {
-					// Tab doesn't exist, just clear file preview
-					return { ...s, activeFileTabId: null, inputMode: 'ai' };
-				}
-				return {
-					...s,
-					...(tabId && { activeTabId: tabId }),
-					activeFileTabId: null,
-					inputMode: 'ai',
-				};
+				// If a specific tab ID is provided but doesn't exist, force the AI view
+				// without changing which AI tab is active.
+				const targetTabId = tabId && s.aiTabs?.some((t) => t.id === tabId) ? tabId : undefined;
+				return { ...s, ...aiTabFocusFields(targetTabId) };
 			});
 		},
 		[setActiveSessionId]
@@ -282,15 +277,9 @@ export function useSessionSwitchCallbacks(
 	const handleUtilityTabSelect = useCallback(
 		(tabId: string) => {
 			if (!activeSession) return;
-			// Clear activeFileTabId and activeTerminalTabId when selecting an AI tab.
-			// Also reset inputMode to 'ai' in case we're coming from terminal mode.
-			updateSession(activeSession.id, (s) => ({
-				...s,
-				activeTabId: tabId,
-				activeFileTabId: null,
-				activeTerminalTabId: null,
-				inputMode: 'ai',
-			}));
+			// Land on the AI tab, clearing any active file/terminal/browser view that
+			// would otherwise outrank it in the render precedence.
+			updateSession(activeSession.id, (s) => ({ ...s, ...aiTabFocusFields(tabId) }));
 		},
 		[activeSession]
 	);

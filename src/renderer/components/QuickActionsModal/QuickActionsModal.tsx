@@ -152,6 +152,8 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		onNewBrowserTab,
 		onNewTerminalTab,
 		onGoToNextUnread,
+		onNavBack,
+		onNavForward,
 	} = props;
 
 	// Git status refresh — used to re-sync polling cache when `git diff` comes
@@ -326,6 +328,8 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			platform: window.maestro?.platform || 'darwin',
 			openPath: window.maestro?.shell?.openPath,
 			onGoToNextUnread,
+			onNavBack,
+			onNavForward,
 			shortcuts: {
 				newInstance: shortcuts.newInstance,
 				openWizard: shortcuts.openWizard,
@@ -333,6 +337,8 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 				toggleRightPanel: shortcuts.toggleRightPanel,
 				nextUnreadTab: shortcuts.nextUnreadTab,
 				killInstance: shortcuts.killInstance,
+				navBack: shortcuts.navBack,
+				navForward: shortcuts.navForward,
 			},
 		}),
 		...buildNewTabCommands({

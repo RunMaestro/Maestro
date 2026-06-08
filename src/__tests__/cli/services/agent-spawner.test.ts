@@ -1457,21 +1457,20 @@ Some text with [x] in it that's not a checkbox
 			// promptArgs path replaces the '--' separator
 			expect(args).not.toContain('--');
 
-			// Emit a session.start init event
-			mockStdout.emit(
-				'data',
-				Buffer.from(JSON.stringify({ type: 'session.start', data: { sessionId: 'cop-1' } }) + '\n')
-			);
-			// Emit a final assistant.message (no toolRequests + non-empty content → result)
+			// Mirror real Copilot CLI batch-mode stdout: no session.start event;
+			// the sessionId arrives only on the terminal `result` line.
 			mockStdout.emit(
 				'data',
 				Buffer.from(
 					JSON.stringify({
 						type: 'assistant.message',
-						sessionId: 'cop-1',
 						data: { content: 'Final answer from copilot', toolRequests: [] },
 					}) + '\n'
 				)
+			);
+			mockStdout.emit(
+				'data',
+				Buffer.from(JSON.stringify({ type: 'result', sessionId: 'cop-1', exitCode: 0 }) + '\n')
 			);
 			await new Promise((resolve) => setTimeout(resolve, 0));
 			mockChild.emit('close', 0);
@@ -1480,6 +1479,39 @@ Some text with [x] in it that's not a checkbox
 			expect(result.success).toBe(true);
 			expect(result.response).toBe('Final answer from copilot');
 			expect(result.agentSessionId).toBe('cop-1');
+		});
+
+		it('should pass through --resume=<sessionId> when resuming a copilot-cli session', async () => {
+			const resultPromise = spawnAgent('copilot-cli', '/project', 'follow-up', 'cop-resume-1');
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			const [, args] = mockSpawn.mock.calls[0];
+			// resumeArgs in the agent definition emits `--resume=<id>` as a single token.
+			expect(args).toContain('--resume=cop-resume-1');
+
+			mockStdout.emit(
+				'data',
+				Buffer.from(
+					JSON.stringify({
+						type: 'assistant.message',
+						data: { content: 'still remembers', toolRequests: [] },
+					}) + '\n'
+				)
+			);
+			mockStdout.emit(
+				'data',
+				Buffer.from(
+					JSON.stringify({ type: 'result', sessionId: 'cop-resume-1', exitCode: 0 }) + '\n'
+				)
+			);
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 0);
+
+			const result = await resultPromise;
+			expect(result.success).toBe(true);
+			// The resumed session id must round-trip through agentSessionId so the
+			// caller can persist it and keep the chain going.
+			expect(result.agentSessionId).toBe('cop-resume-1');
 		});
 
 		it('should let a pre-set CLAUDE_CODE_DISABLE_BACKGROUND_TASKS from shell env win', async () => {

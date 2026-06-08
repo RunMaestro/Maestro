@@ -15,7 +15,11 @@ import * as Sentry from '@sentry/electron/renderer';
  */
 export function captureException(
 	error: Error | unknown,
-	captureContext?: { extra?: Record<string, unknown> }
+	captureContext?: {
+		level?: Sentry.SeverityLevel;
+		tags?: Record<string, string>;
+		extra?: Record<string, unknown>;
+	}
 ): void {
 	Sentry.captureException(error, captureContext);
 }

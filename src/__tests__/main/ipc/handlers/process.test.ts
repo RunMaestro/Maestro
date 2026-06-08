@@ -232,6 +232,16 @@ vi.mock('../../../../main/agents/claude-transcript-sanitizer', () => ({
 	})),
 }));
 
+// Mock the prompt manager so the copilot-preamble injection has deterministic
+// content without bootstrapping the real prompt cache. Per-test overrides use
+// mockReturnValueOnce / mockImplementation.
+vi.mock('../../../../main/prompt-manager', () => ({
+	getPrompt: vi.fn((id: string) => {
+		if (id === 'copilot-preamble') return 'COPILOT_PREAMBLE_TEXT';
+		return '';
+	}),
+}));
+
 describe('process IPC handlers', () => {
 	let handlers: Map<string, Function>;
 	let mockProcessManager: {
@@ -2820,10 +2830,14 @@ describe('process IPC handlers', () => {
 			const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
 			// --append-system-prompt should NOT be in args (agent doesn't support it)
 			expect(spawnCall.args).not.toContain('--append-system-prompt');
-			// System prompt should NOT be embedded in the user prompt on resume
-			expect(spawnCall.prompt).toBe('Follow-up question');
+			// System prompt should NOT be embedded in the user prompt on resume.
+			// The Copilot preamble is independent and rides on every batch turn —
+			// strip it before comparing the appendSystemPrompt behavior.
 			expect(spawnCall.prompt).not.toContain('Maestro system prompt');
 			expect(spawnCall.prompt).not.toContain('# User Request');
+			expect(spawnCall.prompt!.replace(/^COPILOT_PREAMBLE_TEXT\n\n/, '')).toBe(
+				'Follow-up question'
+			);
 		});
 
 		it('should still embed system prompt on first turn (no agentSessionId) for unsupported agents', async () => {
@@ -3055,6 +3069,133 @@ describe('process IPC handlers', () => {
 					})
 				);
 			});
+		});
+	});
+
+	describe('copilot-preamble injection', () => {
+		const copilotAgent = {
+			id: 'copilot-cli',
+			name: 'Copilot-CLI',
+			requiresPty: true,
+			path: '/usr/local/bin/copilot',
+			capabilities: {
+				supportsAppendSystemPrompt: false,
+				supportsResume: true,
+			},
+			resumeArgs: (sessionId: string) => [`--resume=${sessionId}`],
+		};
+
+		const claudeAgent = {
+			id: 'claude-code',
+			name: 'Claude Code',
+			requiresPty: true,
+			path: '/usr/local/bin/claude',
+			capabilities: { supportsAppendSystemPrompt: true, supportsStreamJsonInput: true },
+		};
+
+		it('prepends copilot-preamble on every Copilot-CLI batch turn, including resume', async () => {
+			mockAgentDetector.getAgent.mockResolvedValue(copilotAgent);
+			mockProcessManager.spawn.mockReturnValue({ pid: 12345, success: true });
+
+			const handler = handlers.get('process:spawn');
+			await handler!({} as any, {
+				sessionId: 'session-1',
+				toolType: 'copilot-cli',
+				cwd: '/home/user/project',
+				command: 'copilot',
+				args: [],
+				prompt: 'Refactor the parser.',
+				agentSessionId: 'prior-session-uuid',
+			});
+
+			const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
+			expect(spawnCall.prompt).toContain('COPILOT_PREAMBLE_TEXT');
+			expect(spawnCall.prompt).toContain('Refactor the parser.');
+			expect(spawnCall.prompt!.indexOf('COPILOT_PREAMBLE_TEXT')).toBeLessThan(
+				spawnCall.prompt!.indexOf('Refactor the parser.')
+			);
+		});
+
+		it('does not inject the preamble for non-Copilot agents', async () => {
+			mockAgentDetector.getAgent.mockResolvedValue(claudeAgent);
+			mockProcessManager.spawn.mockReturnValue({ pid: 12345, success: true });
+
+			const handler = handlers.get('process:spawn');
+			await handler!({} as any, {
+				sessionId: 'session-1',
+				toolType: 'claude-code',
+				cwd: '/home/user/project',
+				command: 'claude',
+				args: ['--print'],
+				prompt: 'Hello world',
+			});
+
+			const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
+			expect(spawnCall.prompt).toBe('Hello world');
+			expect(spawnCall.prompt).not.toContain('COPILOT_PREAMBLE_TEXT');
+		});
+
+		it('skips injection when the preamble customization is empty', async () => {
+			const promptManager = await import('../../../../main/prompt-manager');
+			vi.mocked(promptManager.getPrompt).mockReturnValueOnce('   ');
+
+			mockAgentDetector.getAgent.mockResolvedValue(copilotAgent);
+			mockProcessManager.spawn.mockReturnValue({ pid: 12345, success: true });
+
+			const handler = handlers.get('process:spawn');
+			await handler!({} as any, {
+				sessionId: 'session-1',
+				toolType: 'copilot-cli',
+				cwd: '/home/user/project',
+				command: 'copilot',
+				args: [],
+				prompt: 'Do the thing.',
+			});
+
+			const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
+			expect(spawnCall.prompt).toBe('Do the thing.');
+		});
+
+		it('skips injection when there is no user prompt', async () => {
+			mockAgentDetector.getAgent.mockResolvedValue(copilotAgent);
+			mockProcessManager.spawn.mockReturnValue({ pid: 12345, success: true });
+
+			const handler = handlers.get('process:spawn');
+			await handler!({} as any, {
+				sessionId: 'session-1',
+				toolType: 'copilot-cli',
+				cwd: '/home/user/project',
+				command: 'copilot',
+				args: [],
+				// No prompt: bare interactive launch
+			});
+
+			const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
+			expect(spawnCall.prompt).toBeFalsy();
+		});
+
+		it('preserves appendSystemPrompt fallback when both are present', async () => {
+			mockAgentDetector.getAgent.mockResolvedValue(copilotAgent);
+			mockProcessManager.spawn.mockReturnValue({ pid: 12345, success: true });
+
+			const handler = handlers.get('process:spawn');
+			await handler!({} as any, {
+				sessionId: 'session-1',
+				toolType: 'copilot-cli',
+				cwd: '/home/user/project',
+				command: 'copilot',
+				args: [],
+				prompt: 'Do work.',
+				appendSystemPrompt: 'You are Maestro system prompt content',
+				// No agentSessionId — first-turn path embeds appendSystemPrompt.
+			});
+
+			const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
+			// Order: appendSystemPrompt block (which already embeds the user prompt),
+			// then preamble prepended in front.
+			expect(spawnCall.prompt).toContain('COPILOT_PREAMBLE_TEXT');
+			expect(spawnCall.prompt).toContain('You are Maestro system prompt content');
+			expect(spawnCall.prompt).toContain('Do work.');
 		});
 	});
 });

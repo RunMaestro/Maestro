@@ -15,6 +15,7 @@ import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/re
 import { CodexPlanUsage } from '../../../../renderer/components/UsageDashboard/CodexPlanUsage';
 import { useCodexUsageStore } from '../../../../renderer/stores/codexUsageStore';
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
+import { useUIStore } from '../../../../renderer/stores/uiStore';
 import { THEMES } from '../../../../shared/themes';
 
 const theme = THEMES['dracula'];
@@ -39,6 +40,7 @@ beforeEach(() => {
 
 	useCodexUsageStore.getState().__resetForTests();
 	useSessionStore.setState({ sessions: [] } as any);
+	useUIStore.setState({ hiddenQuotaAccounts: {} });
 	cleanup();
 });
 
@@ -249,5 +251,85 @@ describe('CodexPlanUsage — refresh wiring', () => {
 
 		expect(button.disabled).toBe(true);
 		expect(button.textContent).toContain('Sampling');
+	});
+});
+
+describe('CodexPlanUsage — hide/show accounts (list view)', () => {
+	function seedTwoAccounts() {
+		seedSnapshots({
+			'/Users/me/.codex': {
+				sampledAt: '2026-05-15T00:00:00.000Z',
+				codexHomeKey: '/Users/me/.codex',
+				authState: 'authenticated',
+				session: { percent: 50, resetsAt: '2026-05-15T05:00:00.000Z' },
+				weekly: { percent: 30, resetsAt: '2026-05-22T00:00:00.000Z' },
+			},
+			'/Users/me/.codex-work': {
+				sampledAt: '2026-05-15T00:00:00.000Z',
+				codexHomeKey: '/Users/me/.codex-work',
+				authState: 'authenticated',
+				session: { percent: 90, resetsAt: '2026-05-15T05:00:00.000Z' },
+				weekly: { percent: 70, resetsAt: '2026-05-22T00:00:00.000Z' },
+			},
+		});
+	}
+
+	it('hides a row, surfaces Show all, and brings it back when unhidden', () => {
+		seedTwoAccounts();
+		render(<CodexPlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+
+		// Both rows render; no Show all button until something is hidden.
+		expect(screen.getByTestId('codex-plan-account-default')).toBeInTheDocument();
+		expect(screen.getByTestId('codex-plan-account-work')).toBeInTheDocument();
+		expect(screen.queryByTestId('codex-plan-show-all')).toBeNull();
+
+		// Hide the default account: its row drops out, Show all (1) appears.
+		fireEvent.click(screen.getByTestId('codex-plan-visibility-default'));
+		expect(screen.queryByTestId('codex-plan-account-default')).toBeNull();
+		expect(screen.getByTestId('codex-plan-account-work')).toBeInTheDocument();
+		expect(screen.getByTestId('codex-plan-show-all')).toHaveTextContent('Show all (1)');
+
+		// Reveal hidden: the hidden row reappears marked as hidden.
+		fireEvent.click(screen.getByTestId('codex-plan-show-all'));
+		expect(screen.getByTestId('codex-plan-account-default-hidden')).toBeInTheDocument();
+
+		// Unhide from its revealed row toggle: back to visible, Show all gone.
+		fireEvent.click(screen.getByTestId('codex-plan-visibility-default'));
+		expect(screen.getByTestId('codex-plan-account-default')).toBeInTheDocument();
+		expect(screen.queryByTestId('codex-plan-show-all')).toBeNull();
+	});
+
+	it('persists the hidden set through uiStore so it survives a remount', () => {
+		seedTwoAccounts();
+		const { unmount } = render(
+			<CodexPlanUsage theme={theme} showAllAccounts autoRefresh={false} />
+		);
+
+		fireEvent.click(screen.getByTestId('codex-plan-visibility-work'));
+		expect(useUIStore.getState().hiddenQuotaAccounts['codex']).toEqual(['/Users/me/.codex-work']);
+
+		unmount();
+		render(<CodexPlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+		expect(screen.queryByTestId('codex-plan-account-work')).toBeNull();
+		expect(screen.getByTestId('codex-plan-show-all')).toHaveTextContent('Show all (1)');
+	});
+
+	it('shows an all-hidden hint when every account is hidden', () => {
+		seedTwoAccounts();
+		render(<CodexPlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+
+		fireEvent.click(screen.getByTestId('codex-plan-visibility-default'));
+		fireEvent.click(screen.getByTestId('codex-plan-visibility-work'));
+
+		expect(screen.getByTestId('codex-plan-all-hidden')).toBeInTheDocument();
+		expect(screen.getByTestId('codex-plan-show-all')).toHaveTextContent('Show all (2)');
+	});
+
+	it('does not render per-row hide toggles in tab (single-account) view', () => {
+		seedTwoAccounts();
+		render(<CodexPlanUsage theme={theme} />);
+
+		expect(screen.queryByTestId('codex-plan-visibility-default')).toBeNull();
+		expect(screen.queryByTestId('codex-plan-show-all')).toBeNull();
 	});
 });

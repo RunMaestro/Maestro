@@ -7,7 +7,7 @@ import type {
 	CustomAICommand,
 	BatchRunState,
 } from '../../types';
-import { getActiveTab, extractQuickTabName } from '../../utils/tabHelpers';
+import { getActiveTab, getBusyTabs, extractQuickTabName } from '../../utils/tabHelpers';
 import { getStdinFlags, prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
 import { generateId } from '../../utils/ids';
 import { substituteTemplateVariables } from '../../utils/templateVariables';
@@ -464,8 +464,12 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					if (isReadOnlyMode) return false; // Only applies to write commands
 					if (activeSession.state !== 'busy') return false; // Nothing to bypass
 
-					// Check all busy tabs are in read-only mode
-					const busyTabs = activeSession.aiTabs.filter((tab) => tab.state === 'busy');
+					// Check all busy tabs are in read-only mode. Include orphaned
+					// (closed-but-still-thinking) tabs: they keep writing in the background
+					// and hold the single-writer slot just like a visible busy tab. Omitting
+					// them lets a new write spawn concurrently with an orphan (single-writer
+					// violation when a tab is closed mid-send).
+					const busyTabs = getBusyTabs(activeSession, { includeOrphans: true });
 					const allBusyTabsReadOnly = busyTabs.every((tab) => tab.readOnlyMode === true);
 					if (!allBusyTabsReadOnly) return false;
 
@@ -856,6 +860,10 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							agentType: activeSession.toolType,
 							cwd: activeSession.cwd,
 							sessionSshRemoteConfig: activeSession.sessionSshRemoteConfig,
+							// Honor the agent's Claude token source for the naming spawn.
+							enableMaestroP: activeSession.enableMaestroP,
+							maestroPMode: activeSession.maestroPMode,
+							maestroPPath: activeSession.maestroPPath,
 						})
 						.then((generatedName) => {
 							// Clear the generating indicator

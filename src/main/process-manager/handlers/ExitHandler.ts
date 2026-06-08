@@ -11,8 +11,10 @@ import { captureException } from '../../utils/sentry';
 import {
 	waitForCopilotShutdown,
 	readCopilotFinalAnswer,
+	readCopilotShutdownUsage,
 	type CopilotShutdownWaitResult,
 } from '../CopilotShutdownWaiter';
+import { FALLBACK_CONTEXT_WINDOW } from '../../../shared/agentConstants';
 
 interface ExitHandlerDependencies {
 	processes: Map<string, ManagedProcess>;
@@ -302,6 +304,39 @@ export class ExitHandler {
 			}
 		} catch (err) {
 			logger.warn('[ProcessManager] Failed to read Copilot final answer', 'ProcessManager', {
+				sessionId,
+				agentSessionId,
+				error: String(err),
+			});
+		}
+
+		// Disk-derived usage snapshot. Copilot writes per-turn token counts and
+		// the live `currentTokens` context-window state ONLY into the on-disk
+		// `session.shutdown` event in batch mode; the stdout stream never
+		// carries them, so the streaming usage path emits nothing and the
+		// context gauge stays at 0% for every tab. Read it now and emit a
+		// `usage` event with the same shape the parser would have produced if
+		// session.shutdown had appeared on stdout. See the docstring on
+		// `readCopilotShutdownUsage` for the field-mapping rationale.
+		try {
+			const usage = await readCopilotShutdownUsage(agentSessionId);
+			if (usage) {
+				const contextWindow =
+					managedProcess.contextWindow && managedProcess.contextWindow > 0
+						? managedProcess.contextWindow
+						: FALLBACK_CONTEXT_WINDOW;
+				this.emitter.emit('usage', sessionId, {
+					inputTokens: usage.inputTokens,
+					outputTokens: usage.outputTokens,
+					cacheReadInputTokens: usage.cacheReadInputTokens,
+					cacheCreationInputTokens: usage.cacheCreationInputTokens,
+					totalCostUsd: 0,
+					contextWindow,
+					reasoningTokens: usage.reasoningTokens,
+				});
+			}
+		} catch (err) {
+			logger.warn('[ProcessManager] Failed to read Copilot disk-derived usage', 'ProcessManager', {
 				sessionId,
 				agentSessionId,
 				error: String(err),

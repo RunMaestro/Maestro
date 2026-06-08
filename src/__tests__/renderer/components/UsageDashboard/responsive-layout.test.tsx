@@ -16,6 +16,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, act, fireEvent } from '@testing-library/react';
 import { UsageDashboardModal } from '../../../../renderer/components/UsageDashboard/UsageDashboardModal';
+import { useUIStore } from '../../../../renderer/stores/uiStore';
 import type { Theme } from '../../../../renderer/types';
 
 // Mock lucide-react icons
@@ -52,7 +53,9 @@ vi.mock('lucide-react', () => {
 		Globe: createIcon('globe', '🌐'),
 		Zap: createIcon('zap', '⚡'),
 		PanelTop: createIcon('panel-top', '🔲'),
+		Keyboard: createIcon('keyboard', '⌨️'),
 		Trophy: createIcon('trophy', '🏆'),
+		Sparkles: createIcon('sparkles', '✨'),
 		Briefcase: createIcon('briefcase', '💼'),
 		Coffee: createIcon('coffee', '☕'),
 		Filter: createIcon('filter', '🔍'),
@@ -264,6 +267,10 @@ describe('UsageDashboard Responsive Layout', () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks();
+		// The dashboard tab is persisted in the shared uiStore singleton across
+		// tests in this file. Reset it so each test starts on 'overview' instead of
+		// inheriting the tab a prior test switched to.
+		useUIStore.setState({ usageDashboardViewMode: 'overview' });
 		mockGetAggregation.mockResolvedValue(createSampleData());
 		mockExportCsv.mockResolvedValue('date,count\n2024-01-15,25');
 		mockSaveFile.mockResolvedValue(null);

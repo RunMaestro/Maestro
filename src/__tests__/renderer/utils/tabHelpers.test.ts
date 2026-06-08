@@ -38,6 +38,7 @@ import {
 	addAiTabToUnifiedHistory,
 	reopenUnifiedClosedTab,
 	setActiveTab,
+	aiTabFocusFields,
 	getWriteModeTab,
 	getBusyTabs,
 	getNavigableTabs,
@@ -58,6 +59,8 @@ import {
 	ensureInUnifiedTabOrder,
 	getRepairedUnifiedTabOrder,
 	findNextUnreadSession,
+	resolveQueuedItemTarget,
+	markTabRunningQueuedItem,
 } from '../../../renderer/utils/tabHelpers';
 import type { LogEntry } from '../../../renderer/types';
 import type {
@@ -66,6 +69,7 @@ import type {
 	ClosedTab,
 	ClosedTabEntry,
 	FilePreviewTab,
+	QueuedItem,
 } from '../../../renderer/types';
 import { createMockAITab as createMockTab, createMockFileTab } from '../../helpers/mockTab';
 import { createMockSession } from '../../helpers/mockSession';
@@ -667,6 +671,98 @@ describe('tabHelpers', () => {
 			expect(result!.session.orphanedThinkingTabs).toHaveLength(1);
 			expect(result!.session.orphanedThinkingTabs![0].id).toBe('tab-only');
 		});
+
+		describe('execution queue preservation on close (fire-and-forget)', () => {
+			const makeQueuedItem = (tabId: string, text: string): QueuedItem => ({
+				id: `q-${text}`,
+				timestamp: Date.now(),
+				tabId,
+				type: 'message',
+				text,
+			});
+
+			it('keeps queued items for a closed background tab and orphans the tab so they still send', () => {
+				const tab1 = createMockTab({ id: 'tab-1' });
+				const tab2 = createMockTab({ id: 'tab-2' });
+				const session = createMockSession({
+					aiTabs: [tab1, tab2],
+					activeTabId: 'tab-1',
+					executionQueue: [makeQueuedItem('tab-2', 'build api')],
+				});
+
+				const result = closeTab(session, 'tab-2');
+
+				// The queued message survives the close: it fires in the background
+				// against the now-orphaned tab rather than being discarded.
+				expect(result!.session.executionQueue).toHaveLength(1);
+				expect(result!.session.executionQueue[0].tabId).toBe('tab-2');
+				// The closed tab is orphaned so it stays a valid dispatch target.
+				expect(result!.session.orphanedThinkingTabs).toHaveLength(1);
+				expect(result!.session.orphanedThinkingTabs![0].id).toBe('tab-2');
+			});
+
+			it('keeps the queued item when the only tab is closed and orphans that tab', () => {
+				const tab = createMockTab({ id: 'tab-1' });
+				const session = createMockSession({
+					aiTabs: [tab],
+					activeTabId: 'tab-1',
+					executionQueue: [makeQueuedItem('tab-1', 'deploy')],
+				});
+
+				const result = closeTab(session, 'tab-1');
+
+				// A fresh tab replaces the closed one in the tab bar, but the queued
+				// item still belongs to the orphaned original and fires in the
+				// background.
+				expect(result!.session.executionQueue).toHaveLength(1);
+				expect(result!.session.executionQueue[0].tabId).toBe('tab-1');
+				expect(result!.session.orphanedThinkingTabs).toHaveLength(1);
+				expect(result!.session.orphanedThinkingTabs![0].id).toBe('tab-1');
+			});
+
+			it("preserves each tab's queued items as that tab is closed", () => {
+				const tab1 = createMockTab({ id: 'tab-1' });
+				const tab2 = createMockTab({ id: 'tab-2' });
+				const tab3 = createMockTab({ id: 'tab-3' });
+				let session = createMockSession({
+					aiTabs: [tab1, tab2, tab3],
+					activeTabId: 'tab-1',
+					executionQueue: [makeQueuedItem('tab-2', 'msg-b'), makeQueuedItem('tab-3', 'msg-c')],
+				});
+
+				session = closeTab(session, 'tab-2')!.session;
+				// Closing tab-2 keeps both queued items; tab-2 is orphaned.
+				expect(session.executionQueue).toHaveLength(2);
+				expect(session.orphanedThinkingTabs?.map((t) => t.id)).toContain('tab-2');
+
+				const result = closeTab(session, 'tab-3')!;
+
+				// Closing tab-3 keeps both items; both closed tabs are now orphaned.
+				expect(result.session.executionQueue).toHaveLength(2);
+				expect(result.session.orphanedThinkingTabs?.map((t) => t.id)).toEqual(
+					expect.arrayContaining(['tab-2', 'tab-3'])
+				);
+			});
+
+			it('does not orphan a closed idle tab that has no queued items', () => {
+				const tab1 = createMockTab({ id: 'tab-1' });
+				const tab2 = createMockTab({ id: 'tab-2' });
+				const queue = [makeQueuedItem('tab-1', 'keep me')];
+				const session = createMockSession({
+					aiTabs: [tab1, tab2],
+					activeTabId: 'tab-1',
+					executionQueue: queue,
+				});
+
+				const result = closeTab(session, 'tab-2');
+
+				// tab-2 had no queued work and was idle, so nothing is orphaned and
+				// tab-1's queued item is left untouched.
+				expect(result!.session.executionQueue).toHaveLength(1);
+				expect(result!.session.executionQueue[0].tabId).toBe('tab-1');
+				expect(result!.session.orphanedThinkingTabs ?? []).toHaveLength(0);
+			});
+		});
 	});
 
 	describe('reopenClosedTab', () => {
@@ -868,6 +964,70 @@ describe('tabHelpers', () => {
 			expect(result!.session).not.toBe(session);
 			expect(result!.session.inputMode).toBe('ai');
 		});
+
+		it('clears activeBrowserTabId when selecting an AI tab (regression: browser outranks AI)', () => {
+			// A browser tab was active. Browser outranks AI in the render precedence
+			// (terminal > file > browser > ai), so a lingering activeBrowserTabId would
+			// keep the browser view on screen even though activeTabId points at the AI tab.
+			const tab = createMockTab({ id: 'tab-1' });
+			const session = createMockSession({
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+				activeBrowserTabId: 'browser-tab-1',
+				inputMode: 'ai',
+			});
+
+			const result = setActiveTab(session, 'tab-1');
+
+			expect(result!.session).not.toBe(session);
+			expect(result!.session.activeBrowserTabId).toBeNull();
+			expect(result!.session.activeTabId).toBe('tab-1');
+		});
+	});
+
+	describe('aiTabFocusFields', () => {
+		it('clears all non-AI active-tab ids and forces AI mode', () => {
+			const fields = aiTabFocusFields('tab-1');
+			expect(fields).toEqual({
+				activeTabId: 'tab-1',
+				activeFileTabId: null,
+				activeTerminalTabId: null,
+				activeBrowserTabId: null,
+				inputMode: 'ai',
+			});
+		});
+
+		it('omits activeTabId when no tabId is given (keep current AI tab)', () => {
+			const fields = aiTabFocusFields();
+			expect(fields).not.toHaveProperty('activeTabId');
+			expect(fields).toEqual({
+				activeFileTabId: null,
+				activeTerminalTabId: null,
+				activeBrowserTabId: null,
+				inputMode: 'ai',
+			});
+		});
+
+		it('produces a patch that lands on the AI tab regardless of prior view', () => {
+			// Spreading the patch over a session last viewed on a browser tab must
+			// surface the AI tab, not the browser tab.
+			const session = createMockSession({
+				aiTabs: [createMockTab({ id: 'tab-1' })],
+				activeTabId: 'tab-1',
+				activeFileTabId: 'file-1',
+				activeTerminalTabId: 'term-1',
+				activeBrowserTabId: 'browser-1',
+				inputMode: 'ai',
+			});
+
+			const next = { ...session, ...aiTabFocusFields('tab-1') };
+
+			expect(next.activeFileTabId).toBeNull();
+			expect(next.activeTerminalTabId).toBeNull();
+			expect(next.activeBrowserTabId).toBeNull();
+			expect(next.activeTabId).toBe('tab-1');
+			expect(next.inputMode).toBe('ai');
+		});
 	});
 
 	describe('getWriteModeTab', () => {
@@ -938,6 +1098,47 @@ describe('tabHelpers', () => {
 			expect(result).toHaveLength(2);
 			expect(result).toContain(tab1);
 			expect(result).toContain(tab3);
+		});
+
+		it('ignores busy orphaned tabs by default', () => {
+			const tab1 = createMockTab({ id: 'tab-1', state: 'idle' });
+			const orphan = createMockTab({ id: 'orphan-1', state: 'busy' });
+			const session = createMockSession({
+				aiTabs: [tab1],
+				orphanedThinkingTabs: [orphan],
+			});
+
+			expect(getBusyTabs(session)).toEqual([]);
+		});
+
+		it('includes busy orphaned tabs when includeOrphans is set', () => {
+			const tab1 = createMockTab({ id: 'tab-1', state: 'idle' });
+			const orphan = createMockTab({ id: 'orphan-1', state: 'busy' });
+			const session = createMockSession({
+				aiTabs: [tab1],
+				orphanedThinkingTabs: [orphan],
+			});
+
+			const result = getBusyTabs(session, { includeOrphans: true });
+
+			expect(result).toHaveLength(1);
+			expect(result).toContain(orphan);
+		});
+
+		it('counts an orphan as a busy writer even when the fresh aiTab is idle', () => {
+			// Regression: Cmd+W on a running tab parks it in orphanedThinkingTabs and
+			// leaves a fresh idle aiTab. The orphan is still a live writer, so the
+			// single-writer gate must see it (otherwise a new write spawns concurrently).
+			const freshTab = createMockTab({ id: 'fresh', state: 'idle', readOnlyMode: false });
+			const orphan = createMockTab({ id: 'orphan-1', state: 'busy', readOnlyMode: false });
+			const session = createMockSession({
+				aiTabs: [freshTab],
+				orphanedThinkingTabs: [orphan],
+			});
+
+			const busy = getBusyTabs(session, { includeOrphans: true });
+			expect(busy).toHaveLength(1);
+			expect(busy.every((tab) => tab.readOnlyMode === true)).toBe(false);
 		});
 	});
 
@@ -4056,6 +4257,114 @@ describe('tabHelpers', () => {
 			const result = setActiveTab(session, 'ai-1');
 			expect(result?.session.activeBrowserTabId).toBeNull();
 			expect(result?.session.activeFileTabId).toBeNull();
+		});
+	});
+
+	describe('resolveQueuedItemTarget', () => {
+		const msgItem = (tabId: string): QueuedItem => ({
+			id: 'q1',
+			tabId,
+			type: 'message',
+			text: 'hi',
+			timestamp: 1700000000000,
+		});
+
+		it('resolves to a live aiTab when the queued tab is still open', () => {
+			const open = createMockTab({ id: 'tab-open' });
+			const session = createMockSession({ aiTabs: [open], activeTabId: 'tab-open' });
+			expect(resolveQueuedItemTarget(session, msgItem('tab-open'))).toEqual({
+				tabId: 'tab-open',
+				location: 'aiTab',
+			});
+		});
+
+		it('resolves to an orphan when the queued tab was closed (fire-and-forget)', () => {
+			const active = createMockTab({ id: 'tab-active' });
+			const orphan = createMockTab({ id: 'tab-closed' });
+			const session = createMockSession({
+				aiTabs: [active],
+				activeTabId: 'tab-active',
+				orphanedThinkingTabs: [orphan],
+			});
+			// Must NOT fall back to the active tab - that is the bug this guards.
+			expect(resolveQueuedItemTarget(session, msgItem('tab-closed'))).toEqual({
+				tabId: 'tab-closed',
+				location: 'orphan',
+			});
+		});
+
+		it('falls back to the active tab when the tabId is gone entirely', () => {
+			const active = createMockTab({ id: 'tab-active' });
+			const session = createMockSession({ aiTabs: [active], activeTabId: 'tab-active' });
+			expect(resolveQueuedItemTarget(session, msgItem('tab-vanished'))).toEqual({
+				tabId: 'tab-active',
+				location: 'active',
+			});
+		});
+
+		it('prefers a live aiTab over an orphan with the same id', () => {
+			const open = createMockTab({ id: 'dup' });
+			const orphan = createMockTab({ id: 'dup' });
+			const session = createMockSession({
+				aiTabs: [open],
+				activeTabId: 'dup',
+				orphanedThinkingTabs: [orphan],
+			});
+			expect(resolveQueuedItemTarget(session, msgItem('dup'))?.location).toBe('aiTab');
+		});
+
+		it('returns null when the session has no aiTabs to fall back to', () => {
+			const session = createMockSession({ aiTabs: [], activeTabId: '' });
+			expect(resolveQueuedItemTarget(session, msgItem('whatever'))).toBeNull();
+		});
+	});
+
+	describe('markTabRunningQueuedItem', () => {
+		it('marks the tab busy and appends the user log for a message item', () => {
+			const tab = createMockTab({ id: 't1', state: 'idle', logs: [] });
+			const item: QueuedItem = {
+				id: 'q1',
+				tabId: 't1',
+				type: 'message',
+				text: 'run this',
+				timestamp: 1700000000000,
+			};
+			const result = markTabRunningQueuedItem(tab, item);
+			expect(result.state).toBe('busy');
+			expect(result.thinkingStartTime).toBeDefined();
+			expect(result.logs).toHaveLength(1);
+			expect(result.logs[0]).toMatchObject({ source: 'user', text: 'run this' });
+			// Does not mutate the input tab.
+			expect(tab.logs).toHaveLength(0);
+		});
+
+		it('carries forceParallel and readOnly flags onto the log entry', () => {
+			const tab = createMockTab({ id: 't1', logs: [] });
+			const item: QueuedItem = {
+				id: 'q1',
+				tabId: 't1',
+				type: 'message',
+				text: 'parallel read',
+				timestamp: 1700000000000,
+				forceParallel: true,
+				readOnlyMode: true,
+			};
+			const result = markTabRunningQueuedItem(tab, item);
+			expect(result.logs[0]).toMatchObject({ forceParallel: true, readOnly: true });
+		});
+
+		it('marks the tab busy without a log for a command item', () => {
+			const tab = createMockTab({ id: 't1', logs: [] });
+			const item: QueuedItem = {
+				id: 'q1',
+				tabId: 't1',
+				type: 'command',
+				command: '/commit',
+				timestamp: 1700000000000,
+			};
+			const result = markTabRunningQueuedItem(tab, item);
+			expect(result.state).toBe('busy');
+			expect(result.logs).toHaveLength(0);
 		});
 	});
 });

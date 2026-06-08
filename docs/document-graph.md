@@ -57,7 +57,9 @@ The Document Graph is designed for keyboard-first navigation:
 - **Double-click** a node to recenter the view on it
 - **Drag** nodes to reposition them
 - **Scroll** to zoom in and out
+- **Shift+Scroll** to pan the canvas
 - **Pan** by dragging the background
+- **Mini-map** in the bottom-left corner shows the whole graph; click or drag on it to jump the main view to that spot
 
 ## Graph Controls
 

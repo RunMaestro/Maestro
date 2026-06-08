@@ -41,6 +41,7 @@ import { isFileExplorerIconTheme } from '../utils/fileExplorerIcons/shared';
 import type { ToastWidth } from '../../shared/toastWidth';
 import { isToastWidth } from '../../shared/toastWidth';
 import { logger } from '../utils/logger';
+import { useUIStore } from './uiStore';
 
 // ============================================================================
 // Prompt cache (loaded via IPC at startup)
@@ -320,6 +321,7 @@ export interface SettingsStoreState {
 	forcedParallelExecution: boolean;
 	forcedParallelAcknowledged: boolean;
 	defaultSaveToHistory: boolean;
+	synopsisDebounceSeconds: number;
 	defaultShowThinking: ThinkingMode;
 	leftSidebarWidth: number;
 	rightPanelWidth: number;
@@ -353,6 +355,8 @@ export interface SettingsStoreState {
 	usageStats: MaestroUsageStats;
 	ungroupedCollapsed: boolean;
 	groupChatsExpanded: boolean;
+	groupChatSortAlphabetical: boolean;
+	starredSessionsCollapsed: boolean;
 	tourCompleted: boolean;
 	firstAutoRunCompleted: boolean;
 	onboardingStats: OnboardingStats;
@@ -387,6 +391,8 @@ export interface SettingsStoreState {
 	useSystemBrowser: boolean;
 	browserHomeUrl: string;
 	htmlDoubleClickOpensInBrowser: boolean;
+	browserTabKeepAlive: 'off' | 'recent' | 'all';
+	browserTabKeepAliveLimit: number;
 	automaticTabNamingEnabled: boolean;
 	newTabPlacement: 'end' | 'after-current';
 	newBrowserTabPlacement: 'end' | 'after-current';
@@ -463,6 +469,7 @@ export interface SettingsStoreActions {
 	setForcedParallelExecution: (value: boolean) => void;
 	setForcedParallelAcknowledged: (value: boolean) => void;
 	setDefaultSaveToHistory: (value: boolean) => void;
+	setSynopsisDebounceSeconds: (value: number) => void;
 	setDefaultShowThinking: (value: ThinkingMode) => void;
 	setLeftSidebarWidth: (value: number) => void;
 	setRightPanelWidth: (value: number) => void;
@@ -491,6 +498,8 @@ export interface SettingsStoreActions {
 	setCustomAICommands: (value: CustomAICommand[]) => void;
 	setUngroupedCollapsed: (value: boolean) => void;
 	setGroupChatsExpanded: (value: boolean) => void;
+	setGroupChatSortAlphabetical: (value: boolean) => void;
+	setStarredSessionsCollapsed: (value: boolean) => void;
 	setTourCompleted: (value: boolean) => void;
 	setFirstAutoRunCompleted: (value: boolean) => void;
 	setLeaderboardRegistration: (value: LeaderboardRegistration | null) => void;
@@ -521,6 +530,8 @@ export interface SettingsStoreActions {
 	setUseSystemBrowser: (value: boolean) => void;
 	setBrowserHomeUrl: (value: string) => void;
 	setHtmlDoubleClickOpensInBrowser: (value: boolean) => void;
+	setBrowserTabKeepAlive: (value: 'off' | 'recent' | 'all') => void;
+	setBrowserTabKeepAliveLimit: (value: number) => void;
 	setAutomaticTabNamingEnabled: (value: boolean) => void;
 	setNewTabPlacement: (value: 'end' | 'after-current') => void;
 	setNewBrowserTabPlacement: (value: 'end' | 'after-current') => void;
@@ -667,6 +678,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		forcedParallelExecution: false,
 		forcedParallelAcknowledged: false,
 		defaultSaveToHistory: true,
+		synopsisDebounceSeconds: 0,
 		defaultShowThinking: 'off',
 		leftSidebarWidth: 256,
 		rightPanelWidth: 384,
@@ -677,7 +689,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		bionifyAlgorithm: '- 0 1 1 2 0.4',
 		showHiddenFiles: true,
 		fileExplorerIconTheme: 'default',
-		toastWidth: 'small',
+		toastWidth: 'dynamic',
 		terminalWidth: 100,
 		logLevel: 'info',
 		maxLogBuffer: 5000,
@@ -700,6 +712,8 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		usageStats: DEFAULT_USAGE_STATS,
 		ungroupedCollapsed: false,
 		groupChatsExpanded: true,
+		groupChatSortAlphabetical: false,
+		starredSessionsCollapsed: false,
 		tourCompleted: false,
 		firstAutoRunCompleted: false,
 		onboardingStats: DEFAULT_ONBOARDING_STATS,
@@ -734,6 +748,8 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		useSystemBrowser: false,
 		browserHomeUrl: 'https://runmaestro.ai/#leaderboard',
 		htmlDoubleClickOpensInBrowser: false,
+		browserTabKeepAlive: 'off',
+		browserTabKeepAliveLimit: 10,
 		automaticTabNamingEnabled: true,
 		newTabPlacement: 'end',
 		newBrowserTabPlacement: 'after-current',
@@ -891,6 +907,12 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 			window.maestro.settings.set('defaultSaveToHistory', value);
 		},
 
+		setSynopsisDebounceSeconds: (value) => {
+			const clamped = Math.max(0, Math.round(value));
+			set({ synopsisDebounceSeconds: clamped });
+			window.maestro.settings.set('synopsisDebounceSeconds', clamped);
+		},
+
 		setDefaultShowThinking: (value) => {
 			set({ defaultShowThinking: value });
 			window.maestro.settings.set('defaultShowThinking', value);
@@ -1035,6 +1057,16 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setGroupChatsExpanded: (value) => {
 			set({ groupChatsExpanded: value });
 			window.maestro.settings.set('groupChatsExpanded', value);
+		},
+
+		setGroupChatSortAlphabetical: (value) => {
+			set({ groupChatSortAlphabetical: value });
+			window.maestro.settings.set('groupChatSortAlphabetical', value);
+		},
+
+		setStarredSessionsCollapsed: (value) => {
+			set({ starredSessionsCollapsed: value });
+			window.maestro.settings.set('starredSessionsCollapsed', value);
 		},
 
 		setTourCompleted: (value) => {
@@ -1274,6 +1306,17 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setHtmlDoubleClickOpensInBrowser: (value) => {
 			set({ htmlDoubleClickOpensInBrowser: value });
 			window.maestro.settings.set('htmlDoubleClickOpensInBrowser', value);
+		},
+
+		setBrowserTabKeepAlive: (value) => {
+			set({ browserTabKeepAlive: value });
+			window.maestro.settings.set('browserTabKeepAlive', value);
+		},
+
+		setBrowserTabKeepAliveLimit: (value) => {
+			const clamped = Math.max(1, Math.floor(value) || 1);
+			set({ browserTabKeepAliveLimit: clamped });
+			window.maestro.settings.set('browserTabKeepAliveLimit', clamped);
 		},
 
 		setAutomaticTabNamingEnabled: (value) => {
@@ -2162,6 +2205,9 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['defaultSaveToHistory'] !== undefined)
 			patch.defaultSaveToHistory = allSettings['defaultSaveToHistory'] as boolean;
 
+		if (allSettings['synopsisDebounceSeconds'] !== undefined)
+			patch.synopsisDebounceSeconds = allSettings['synopsisDebounceSeconds'] as number;
+
 		// ThinkingMode: support legacy boolean values (true -> 'on', false -> 'off')
 		if (allSettings['defaultShowThinking'] !== undefined) {
 			const raw = allSettings['defaultShowThinking'];
@@ -2386,6 +2432,36 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['groupChatsExpanded'] !== undefined)
 			patch.groupChatsExpanded = allSettings['groupChatsExpanded'] as boolean;
 
+		if (allSettings['groupChatSortAlphabetical'] !== undefined)
+			patch.groupChatSortAlphabetical = allSettings['groupChatSortAlphabetical'] as boolean;
+
+		if (allSettings['starredSessionsCollapsed'] !== undefined)
+			patch.starredSessionsCollapsed = allSettings['starredSessionsCollapsed'] as boolean;
+
+		// Bookmarks collapse lives in uiStore (it's transiently toggled by filter
+		// mode at runtime), so its persisted value is hydrated directly into that
+		// store rather than the settings store.
+		if (allSettings['bookmarksCollapsed'] !== undefined)
+			useUIStore.setState({ bookmarksCollapsed: allSettings['bookmarksCollapsed'] as boolean });
+
+		// Hidden quota accounts live in uiStore (toggled at runtime from the Usage
+		// Dashboard provider panels), so its persisted map hydrates directly there.
+		if (allSettings['hiddenQuotaAccounts'] !== undefined)
+			useUIStore.setState({
+				hiddenQuotaAccounts: allSettings['hiddenQuotaAccounts'] as Record<string, string[]>,
+			});
+
+		// Usage Dashboard auto-refresh intervals live in uiStore alongside the
+		// hidden-account map (both are provider-panel state), so the persisted map
+		// hydrates directly there too.
+		if (
+			allSettings['usageRefreshIntervals'] !== undefined &&
+			typeof allSettings['usageRefreshIntervals'] === 'object'
+		)
+			useUIStore.setState({
+				usageRefreshIntervals: allSettings['usageRefreshIntervals'] as Record<string, number>,
+			});
+
 		if (allSettings['tourCompleted'] !== undefined)
 			patch.tourCompleted = allSettings['tourCompleted'] as boolean;
 
@@ -2559,6 +2635,12 @@ export async function loadAllSettings(): Promise<void> {
 
 		if (allSettings['htmlDoubleClickOpensInBrowser'] !== undefined)
 			patch.htmlDoubleClickOpensInBrowser = allSettings['htmlDoubleClickOpensInBrowser'] as boolean;
+
+		if (allSettings['browserTabKeepAlive'] !== undefined)
+			patch.browserTabKeepAlive = allSettings['browserTabKeepAlive'] as 'off' | 'recent' | 'all';
+
+		if (allSettings['browserTabKeepAliveLimit'] !== undefined)
+			patch.browserTabKeepAliveLimit = allSettings['browserTabKeepAliveLimit'] as number;
 
 		if (allSettings['automaticTabNamingEnabled'] !== undefined)
 			patch.automaticTabNamingEnabled = allSettings['automaticTabNamingEnabled'] as boolean;
@@ -2793,6 +2875,7 @@ export function getSettingsActions() {
 		setCustomThemeBaseId: state.setCustomThemeBaseId,
 		setEnterToSendAI: state.setEnterToSendAI,
 		setDefaultSaveToHistory: state.setDefaultSaveToHistory,
+		setSynopsisDebounceSeconds: state.setSynopsisDebounceSeconds,
 		setDefaultShowThinking: state.setDefaultShowThinking,
 		setLeftSidebarWidth: state.setLeftSidebarWidth,
 		setRightPanelWidth: state.setRightPanelWidth,
@@ -2830,6 +2913,8 @@ export function getSettingsActions() {
 		updateUsageStats: state.updateUsageStats,
 		setUngroupedCollapsed: state.setUngroupedCollapsed,
 		setGroupChatsExpanded: state.setGroupChatsExpanded,
+		setGroupChatSortAlphabetical: state.setGroupChatSortAlphabetical,
+		setStarredSessionsCollapsed: state.setStarredSessionsCollapsed,
 		setTourCompleted: state.setTourCompleted,
 		setFirstAutoRunCompleted: state.setFirstAutoRunCompleted,
 		setOnboardingStats: state.setOnboardingStats,

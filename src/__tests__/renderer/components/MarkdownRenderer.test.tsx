@@ -1379,5 +1379,38 @@ describe('MarkdownRenderer', () => {
 			expect(container.querySelector('.katex')).toBeNull();
 			expect(container.textContent).toContain('$$x + y$$');
 		});
+
+		it('renders multi-line $$...$$ with delimiters hugging content as display math', () => {
+			// remark-math treats `$$` like a code fence: text after the opening
+			// `$$` is discarded as meta and the closing `$$` must be alone on its
+			// line. `normalizeChatDisplayMath` rewrites this common LLM form so it
+			// parses cleanly instead of failing. See #622.
+			const content = '$$\\begin{aligned}\na &= b \\\\\nc &= d\n\\end{aligned}$$';
+			const { container } = render(
+				<MarkdownRenderer {...defaultProps} content={content} chatMath />
+			);
+			expect(container.querySelector('.katex-display')).not.toBeNull();
+		});
+
+		it('does not let an unterminated multi-line $$ block swallow following content', () => {
+			// The regression: a multi-line `$$...$$` whose close hugged content
+			// consumed the rest of the message into one invalid KaTeX blob.
+			const content =
+				'$$\\begin{aligned}\na &= b\n\\end{aligned}$$\n\nThis prose must still render.';
+			const { container } = render(
+				<MarkdownRenderer {...defaultProps} content={content} chatMath />
+			);
+			expect(container.querySelector('.katex-display')).not.toBeNull();
+			expect(container.textContent).toContain('This prose must still render.');
+		});
+
+		it('does not treat $$ inside a fenced code block as math', () => {
+			const content = '```\n$$not math$$\n```';
+			const { container } = render(
+				<MarkdownRenderer {...defaultProps} content={content} chatMath />
+			);
+			expect(container.querySelector('.katex')).toBeNull();
+			expect(container.textContent).toContain('$$not math$$');
+		});
 	});
 });

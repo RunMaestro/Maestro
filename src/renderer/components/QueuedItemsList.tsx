@@ -252,16 +252,6 @@ export const QueuedItemsList = memo(
 							onDragLeave={handleDragLeave}
 							className="mx-6 mb-2 p-3 rounded-lg relative group transition-all flex flex-col"
 							style={{
-								// Reserve enough vertical room for the stacked top-right
-								// Remove (X) and Copy buttons, plus the bottom-right Force
-								// Send button when shown, without overlap.
-								// X+Copy stack: 8 + 24 + 4 + 22 = 58px from top.
-								// Force Send (pushed to bottom via mt-auto): ~28px button.
-								minHeight: showForceSendButton
-									? '7rem'
-									: onTogglePauseQueuedItem
-										? '5.5rem'
-										: '4.25rem',
 								backgroundColor:
 									item.type === 'command'
 										? theme.colors.success + '20'
@@ -283,48 +273,6 @@ export const QueuedItemsList = memo(
 								</div>
 							)}
 
-							{/* Top-right: Remove button */}
-							<button
-								onClick={() => setQueueRemoveConfirmId(item.id)}
-								className="absolute top-2 right-2 p-1 rounded hover:bg-black/20 transition-colors opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
-								style={{ color: theme.colors.textDim }}
-								title="Remove from queue"
-							>
-								<X className="w-4 h-4" />
-							</button>
-
-							{/* Copy button - directly under the Remove (X) button */}
-							<button
-								onClick={() => handleCopy(item)}
-								className="absolute top-9 right-2 p-1 rounded hover:bg-black/20 transition-colors opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
-								style={{
-									color: copiedItemId === item.id ? theme.colors.success : theme.colors.textDim,
-								}}
-								title="Copy to clipboard"
-							>
-								{copiedItemId === item.id ? (
-									<Check className="w-3.5 h-3.5" />
-								) : (
-									<Copy className="w-3.5 h-3.5" />
-								)}
-							</button>
-
-							{/* Hold/Resume button - stacked under the Copy button */}
-							{onTogglePauseQueuedItem && (
-								<button
-									onClick={() => onTogglePauseQueuedItem(item.id)}
-									className={`absolute top-16 right-2 p-1 rounded hover:bg-black/20 transition-colors group-hover:opacity-100 group-focus-within:opacity-100 ${isPaused ? 'opacity-100' : 'opacity-0'}`}
-									style={{ color: isPaused ? theme.colors.warning : theme.colors.textDim }}
-									title={
-										isPaused
-											? 'Resume this message (let it run when its turn comes)'
-											: 'Hold this message (skip it until you resume)'
-									}
-								>
-									{isPaused ? <Play className="w-3.5 h-3.5" /> : <Pause className="w-3.5 h-3.5" />}
-								</button>
-							)}
-
 							{/* HELD badge for paused items */}
 							{isPaused && (
 								<div className={canDrag ? 'pl-4 mb-1.5' : 'mb-1.5'}>
@@ -342,7 +290,7 @@ export const QueuedItemsList = memo(
 
 							{/* Item content */}
 							<div
-								className={`text-sm pr-8 whitespace-pre-wrap break-words ${canDrag ? 'pl-4' : ''}`}
+								className={`text-sm whitespace-pre-wrap break-words ${canDrag ? 'pl-4' : ''}`}
 								style={{ color: theme.colors.textMain }}
 							>
 								{item.type === 'command' && (
@@ -400,9 +348,11 @@ export const QueuedItemsList = memo(
 								</div>
 							)}
 
-							{/* Bottom-right: Force Send button (mt-auto pushes to bottom of flex column) */}
-							{showForceSendButton && (
-								<div className="mt-auto pt-2 flex justify-end">
+							{/* Bottom footer: Force Send anchored bottom-left, control
+							    buttons anchored bottom-right (always visible). mt-auto
+							    pushes the row to the bottom of the flex column. */}
+							<div className="mt-auto pt-2 flex items-center gap-2">
+								{showForceSendButton && (
 									<button
 										onClick={() => setForceSendConfirmId(item.id)}
 										className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium hover:opacity-80 transition-opacity"
@@ -415,8 +365,56 @@ export const QueuedItemsList = memo(
 										<Hammer className="w-3.5 h-3.5" />
 										Force Send
 									</button>
+								)}
+
+								<div className="ml-auto flex items-center gap-1">
+									{/* Copy button */}
+									<button
+										onClick={() => handleCopy(item)}
+										className="p-1 rounded hover:bg-black/20 transition-colors"
+										style={{
+											color: copiedItemId === item.id ? theme.colors.success : theme.colors.textDim,
+										}}
+										title="Copy to clipboard"
+									>
+										{copiedItemId === item.id ? (
+											<Check className="w-3.5 h-3.5" />
+										) : (
+											<Copy className="w-3.5 h-3.5" />
+										)}
+									</button>
+
+									{/* Hold/Resume button */}
+									{onTogglePauseQueuedItem && (
+										<button
+											onClick={() => onTogglePauseQueuedItem(item.id)}
+											className="p-1 rounded hover:bg-black/20 transition-colors"
+											style={{ color: isPaused ? theme.colors.warning : theme.colors.textDim }}
+											title={
+												isPaused
+													? 'Resume this message (let it run when its turn comes)'
+													: 'Hold this message (skip it until you resume)'
+											}
+										>
+											{isPaused ? (
+												<Play className="w-3.5 h-3.5" />
+											) : (
+												<Pause className="w-3.5 h-3.5" />
+											)}
+										</button>
+									)}
+
+									{/* Remove button */}
+									<button
+										onClick={() => setQueueRemoveConfirmId(item.id)}
+										className="p-1 rounded hover:bg-black/20 transition-colors"
+										style={{ color: theme.colors.textDim }}
+										title="Remove from queue"
+									>
+										<X className="w-4 h-4" />
+									</button>
 								</div>
-							)}
+							</div>
 						</div>
 					);
 				})}

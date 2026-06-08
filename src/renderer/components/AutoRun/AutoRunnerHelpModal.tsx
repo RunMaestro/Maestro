@@ -45,7 +45,7 @@ export function AutoRunnerHelpModal({ theme, onClose, zIndex = 50 }: AutoRunnerH
 			title="Auto Run Guide"
 			priority={MODAL_PRIORITIES.CONFIRM}
 			onClose={onClose}
-			width={672}
+			width={1008}
 			maxHeight="85vh"
 			closeOnBackdropClick
 			zIndex={zIndex}

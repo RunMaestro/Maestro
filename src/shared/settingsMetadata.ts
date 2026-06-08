@@ -253,9 +253,10 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		category: 'appearance',
 	},
 	toastWidth: {
-		description: 'Width of toast notifications. Options: small (default), medium, large.',
+		description:
+			'Width of toast notifications. Options: small, medium, large, dynamic (default, matches the Right Bar width).',
 		type: 'string',
-		default: 'small',
+		default: 'dynamic',
 		category: 'appearance',
 	},
 	disableConfetti: {
@@ -373,6 +374,13 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		description: 'Whether completed tasks are saved to history by default.',
 		type: 'boolean',
 		default: true,
+		category: 'editor',
+	},
+	synopsisDebounceSeconds: {
+		description:
+			'Seconds of idle time to wait after a task completes before generating its History synopsis. Rapid back-to-back completions are coalesced into one synopsis. 0 generates a synopsis immediately after each completion.',
+		type: 'number',
+		default: 0,
 		category: 'editor',
 	},
 	defaultShowThinking: {
@@ -889,6 +897,25 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: true,
 		category: 'onboarding',
 	},
+	groupChatSortAlphabetical: {
+		description:
+			'Sort group chats alphabetically (true) instead of by most recent activity (false).',
+		type: 'boolean',
+		default: false,
+		category: 'onboarding',
+	},
+	starredSessionsCollapsed: {
+		description: 'Whether the "Starred Sessions" section in the left bar is collapsed.',
+		type: 'boolean',
+		default: false,
+		category: 'onboarding',
+	},
+	bookmarksCollapsed: {
+		description: 'Whether the "Bookmarks" section in the left bar is collapsed.',
+		type: 'boolean',
+		default: false,
+		category: 'onboarding',
+	},
 
 	// --- Integrations ---
 	wakatimeEnabled: {
@@ -930,6 +957,19 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 			'When enabled, double-clicking an HTML file in the file explorer opens it in the Maestro browser instead of the file preview.',
 		type: 'boolean',
 		default: false,
+		category: 'editor',
+	},
+	browserTabKeepAlive: {
+		description:
+			"How background browser tabs are handled when inactive. 'off' unloads them (lowest memory, page reloads on return); 'recent' keeps the N most-recently-used tabs alive; 'all' keeps every browser tab in the agent alive.",
+		type: 'string',
+		default: 'off',
+		category: 'editor',
+	},
+	browserTabKeepAliveLimit: {
+		description: "How many recent browser tabs to keep alive when browserTabKeepAlive is 'recent'.",
+		type: 'number',
+		default: 10,
 		category: 'editor',
 	},
 

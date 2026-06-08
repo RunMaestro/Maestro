@@ -59,6 +59,14 @@ export interface ModalProps {
 	headerIcon?: ReactNode;
 	/** Modal width in pixels. Defaults to 400 */
 	width?: number;
+	/**
+	 * Scale the width with the Cmd+= font-size setting via --font-scale (14px
+	 * baseline → scale 1). When true, `width` is the baseline and the modal
+	 * grows/shrinks proportionally with the font, clamped to 95vw. Use for
+	 * dense layouts (e.g. side-by-side cards) that get squeezed at larger fonts.
+	 * Defaults to false (fixed px width).
+	 */
+	scaleWidthWithFont?: boolean;
 	/** Max height as CSS value (e.g., '90vh', '600px'). Defaults to '90vh' */
 	maxHeight?: string;
 	/** Whether clicking the backdrop closes the modal. Defaults to false */
@@ -96,6 +104,7 @@ export function Modal({
 	customHeader,
 	headerIcon,
 	width = 400,
+	scaleWidthWithFont = false,
 	maxHeight = '90vh',
 	closeOnBackdropClick = false,
 	zIndex = 9999,
@@ -154,7 +163,9 @@ export function Modal({
 				ref={cardRef}
 				className={`border rounded-lg shadow-2xl flex flex-col ${allowOverflow ? 'overflow-visible' : 'overflow-hidden'}`}
 				style={{
-					width: `${width}px`,
+					width: scaleWidthWithFont
+						? `min(calc(${width}px * var(--font-scale, 1)), 95vw)`
+						: `${width}px`,
 					maxHeight,
 					backgroundColor: theme.colors.bgSidebar,
 					borderColor: theme.colors.border,

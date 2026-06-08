@@ -4100,6 +4100,10 @@ export class WebSocketMessageHandler {
 		const duration = typeof message.duration === 'number' ? message.duration : undefined;
 		const dismissible = message.dismissible === true;
 		const sessionId = typeof message.sessionId === 'string' ? message.sessionId : undefined;
+		const sourceAgent =
+			typeof message.sourceAgent === 'string' && message.sourceAgent.length > 0
+				? message.sourceAgent
+				: undefined;
 		const tabId = typeof message.tabId === 'string' ? message.tabId : undefined;
 		const actionUrl = typeof message.actionUrl === 'string' ? message.actionUrl : undefined;
 		const actionLabel = typeof message.actionLabel === 'string' ? message.actionLabel : undefined;
@@ -4221,6 +4225,7 @@ export class WebSocketMessageHandler {
 				dismissible,
 				duration,
 				sessionId,
+				sourceAgent,
 				tabId,
 				actionUrl,
 				actionLabel,

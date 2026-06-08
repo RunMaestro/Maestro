@@ -24,7 +24,7 @@ import { useGroupChatStore } from '../../stores/groupChatStore';
 import { useModalStore } from '../../stores/modalStore';
 import { useUIStore } from '../../stores/uiStore';
 import { notifyToast } from '../../stores/notificationStore';
-import { getActiveTab, extractQuickTabName } from '../../utils/tabHelpers';
+import { aiTabFocusFields, getActiveTab, extractQuickTabName } from '../../utils/tabHelpers';
 import {
 	renameTerminalTab as renameTerminalTabHelper,
 	getTerminalSessionId,
@@ -92,7 +92,8 @@ export interface SessionLifecycleReturn {
 			shareHistoryToProjectDir?: boolean;
 		},
 		enableMaestroP?: boolean,
-		maestroPPath?: string
+		maestroPPath?: string,
+		maestroPMode?: 'interactive' | 'dynamic'
 	) => void;
 	/** Rename the currently-selected tab (persists to agent session storage + history) */
 	handleRenameTab: (newName: string) => void;
@@ -159,7 +160,8 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 				shareHistoryToProjectDir?: boolean;
 			},
 			enableMaestroP?: boolean,
-			maestroPPath?: string
+			maestroPPath?: string,
+			maestroPMode?: 'interactive' | 'dynamic'
 		) => {
 			useSessionStore.getState().setSessions((prev) =>
 				prev.map((s) => {
@@ -177,6 +179,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 						sessionSshRemoteConfig,
 						enableMaestroP,
 						maestroPPath,
+						maestroPMode,
 					};
 
 					// If provider changed, reset tabs and provider-specific config
@@ -208,6 +211,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 							customContextWindow: undefined,
 							enableMaestroP: undefined,
 							maestroPPath: undefined,
+							maestroPMode: undefined,
 							// Reset file preview tabs and unified tab order
 							filePreviewTabs: [],
 							activeFileTabId: null,
@@ -248,15 +252,19 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 				return;
 			}
 
-			// If this is a browser tab, update its title directly
+			// If this is a browser tab, set a user-assigned name that locks the
+			// displayed label. An empty value clears it, letting the website set the
+			// tab title again. We never touch `title` so the live page title stays
+			// tracked underneath and reappears once the custom name is cleared.
 			if (activeSession.browserTabs?.some((t) => t.id === renameTabId)) {
+				const nextCustomTitle = newName.trim() || undefined;
 				useSessionStore.getState().setSessions((prev) =>
 					prev.map((s) => {
 						if (s.id !== activeSession.id) return s;
 						return {
 							...s,
 							browserTabs: (s.browserTabs || []).map((t) =>
-								t.id === renameTabId ? { ...t, title: newName || t.url } : t
+								t.id === renameTabId ? { ...t, customTitle: nextCustomTitle } : t
 							),
 						};
 					})
@@ -410,6 +418,10 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 				agentType: activeSession.toolType,
 				cwd: activeSession.cwd,
 				sessionSshRemoteConfig: activeSession.sessionSshRemoteConfig,
+				// Honor the agent's Claude token source for the naming spawn.
+				enableMaestroP: activeSession.enableMaestroP,
+				maestroPMode: activeSession.maestroPMode,
+				maestroPPath: activeSession.maestroPPath,
 			})
 			.then((generatedName) => {
 				useSessionStore.getState().setSessions((prev) =>
@@ -607,13 +619,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 					useSessionStore.getState().setSessions((prev) =>
 						prev.map((s) => {
 							if (s.id !== session.id) return s;
-							return {
-								...s,
-								activeTabId: preFilterActiveTabId,
-								activeFileTabId: null,
-								activeTerminalTabId: null,
-								inputMode: 'ai' as const,
-							};
+							return { ...s, ...aiTabFocusFields(preFilterActiveTabId) };
 						})
 					);
 				}

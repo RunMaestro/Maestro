@@ -304,7 +304,9 @@ describe('UnifiedHistoryTab', () => {
 			await waitFor(() => {
 				expect(mockGetUnifiedHistory).toHaveBeenCalledWith({
 					lookbackDays: 7,
-					filter: null,
+					// All visible types selected by default; pushed to the server so
+					// pagination spans the filtered dataset (maestroCue disabled here).
+					filter: ['USER', 'AUTO'],
 					limit: 100,
 					offset: 0,
 				});
@@ -329,7 +331,7 @@ describe('UnifiedHistoryTab', () => {
 			await waitFor(() => {
 				expect(mockGetUnifiedHistory).toHaveBeenCalledWith({
 					lookbackDays: 0,
-					filter: null,
+					filter: ['USER', 'AUTO'],
 					limit: 100,
 					offset: 0,
 				});

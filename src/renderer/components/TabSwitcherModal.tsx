@@ -19,6 +19,7 @@ import { formatTokensCompact, formatRelativeTime, formatCost } from '../utils/fo
 import { calculateContextDisplay, calculateDisplayInputTokens } from '../utils/contextUsage';
 import { getExtensionColor } from '../utils/extensionColors';
 import { getTabDisplayName } from '../utils/tabHelpers';
+import { getBrowserTabLabel } from '../utils/browserTabPersistence';
 import { logger } from '../utils/logger';
 
 /** Normalize a project path for comparison (strip trailing slashes) */
@@ -341,7 +342,7 @@ export function TabSwitcherModal({
 							: a.type === 'terminal'
 								? (a.tab.name || 'Terminal').toLowerCase()
 								: a.type === 'browser'
-									? (a.tab.title || a.tab.url).toLowerCase()
+									? getBrowserTabLabel(a.tab).toLowerCase()
 									: '';
 				const nameB =
 					b.type === 'open'
@@ -351,7 +352,7 @@ export function TabSwitcherModal({
 							: b.type === 'terminal'
 								? (b.tab.name || 'Terminal').toLowerCase()
 								: b.type === 'browser'
-									? (b.tab.title || b.tab.url).toLowerCase()
+									? getBrowserTabLabel(b.tab).toLowerCase()
 									: '';
 				return nameA.localeCompare(nameB);
 			});
@@ -479,7 +480,7 @@ export function TabSwitcherModal({
 				displayName = item.tab.name || 'Terminal';
 				searchableId = item.tab.shellType + ' ' + item.tab.cwd;
 			} else if (item.type === 'browser') {
-				displayName = item.tab.title || item.tab.url;
+				displayName = getBrowserTabLabel(item.tab);
 				searchableId = item.tab.url;
 			} else {
 				displayName = item.session.sessionName;
@@ -985,7 +986,7 @@ export function TabSwitcherModal({
 							// Browser tab
 							const { tab } = item;
 							const isActive = tab.id === activeBrowserTabId;
-							const displayName = tab.title || tab.url;
+							const displayName = getBrowserTabLabel(tab);
 
 							return (
 								<button

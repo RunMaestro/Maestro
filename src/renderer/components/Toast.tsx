@@ -5,7 +5,7 @@ import { useNotificationStore, type Toast as ToastType } from '../stores/notific
 import { useSettingsStore } from '../stores/settingsStore';
 import { openUrl } from '../utils/openUrl';
 import { formatDurationParts as formatDuration } from '../../shared/formatters';
-import { TOAST_WIDTH_DIMENSIONS } from '../../shared/toastWidth';
+import { getToastWidthDimensions } from '../../shared/toastWidth';
 
 interface ToastContainerProps {
 	theme: Theme;
@@ -354,13 +354,16 @@ export const ToastContainer = memo(function ToastContainer({
 	const toasts = useNotificationStore((s) => s.toasts);
 	const removeToast = useNotificationStore((s) => s.removeToast);
 	const toastWidth = useSettingsStore((s) => s.toastWidth);
-	const widthDimensions = TOAST_WIDTH_DIMENSIONS[toastWidth];
+	// Subscribed so 'dynamic' toasts re-render (and re-resize) live as the user
+	// drags the Right Bar; ignored by the fixed presets.
+	const rightPanelWidth = useSettingsStore((s) => s.rightPanelWidth);
+	const widthDimensions = getToastWidthDimensions(toastWidth, rightPanelWidth);
 
 	if (toasts.length === 0) return null;
 
 	return createPortal(
 		<div
-			className="fixed bottom-4 right-4 flex flex-col-reverse"
+			className="fixed bottom-0 right-4 flex flex-col-reverse"
 			style={{ pointerEvents: 'none', zIndex: 100000 }}
 		>
 			<div style={{ pointerEvents: 'auto' }}>

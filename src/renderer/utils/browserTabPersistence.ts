@@ -108,6 +108,28 @@ export function getBrowserTabTitle(url: string, title?: string | null): string {
 	}
 }
 
+/**
+ * The user-visible label for a browser tab. A user-assigned `customTitle` takes
+ * precedence and locks the label across navigation; otherwise we fall back to the
+ * page-set title, then the URL host, then "New Tab". Shared by the tab bar, tab
+ * switcher, and anywhere a browser tab needs a display name.
+ */
+export function getBrowserTabLabel(tab: BrowserTab): string {
+	const custom = tab.customTitle?.trim();
+	if (custom) return custom;
+	const title = tab.title?.trim();
+	if (title) return title;
+	const url = tab.url?.trim();
+	if (!url || url === DEFAULT_BROWSER_TAB_URL) return DEFAULT_BROWSER_TAB_TITLE;
+
+	try {
+		const parsed = new URL(url);
+		return parsed.host || parsed.href;
+	} catch {
+		return url;
+	}
+}
+
 export function sanitizeBrowserTabForPersistence(tab: BrowserTab, sessionId: string): BrowserTab {
 	const url =
 		typeof tab.url === 'string' && tab.url.trim()

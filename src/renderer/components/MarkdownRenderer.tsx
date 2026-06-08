@@ -30,6 +30,7 @@ import { openUrl } from '../utils/openUrl';
 import { openMaestroLink } from '../utils/openMaestroLink';
 import { urlTransformAllowingMaestro } from '../utils/markdownUrlTransform';
 import { remarkPromoteDisplayMath } from '../../shared/remarkPromoteDisplayMath';
+import { normalizeChatDisplayMath } from '../../shared/normalizeChatDisplayMath';
 
 // ============================================================================
 // LocalImage - Loads local images via IPC
@@ -378,13 +379,19 @@ export const MarkdownRenderer = memo(
 		// Defense-in-depth: sanitize raw HTML with DOMPurify before markdown parsing
 		// to strip script tags, event handlers, and other XSS vectors
 		const sanitizedContent = useMemo(() => {
-			const processed = fixMarkdownLinkSpaces(content);
+			let processed = fixMarkdownLinkSpaces(content);
+			// Chat surfaces: rewrite multi-line `$$...$$` so delimiters sit on
+			// their own lines before remark-math parses (otherwise the block
+			// fence breaks and swallows the rest of the message). See #622.
+			if (chatMath) {
+				processed = normalizeChatDisplayMath(processed);
+			}
 
 			if (allowRawHtml) {
 				return DOMPurify.sanitize(processed);
 			}
 			return processed;
-		}, [content, allowRawHtml]);
+		}, [content, allowRawHtml, chatMath]);
 
 		// Right-click context menus for links and file references
 		const [linkMenu, setLinkMenu] = useState<LinkContextMenuState | null>(null);

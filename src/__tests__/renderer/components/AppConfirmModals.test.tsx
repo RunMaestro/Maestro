@@ -23,6 +23,12 @@ vi.mock('lucide-react', () => ({
 	Trash2: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
 		<svg data-testid="trash2-icon" className={className} style={style} />
 	),
+	MessageSquare: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<svg data-testid="message-square-icon" className={className} style={style} />
+	),
+	Hourglass: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<svg data-testid="hourglass-icon" className={className} style={style} />
+	),
 }));
 
 const testTheme: Theme = {

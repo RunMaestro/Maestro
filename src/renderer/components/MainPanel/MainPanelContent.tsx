@@ -10,10 +10,12 @@ import {
 import { InputArea } from '../InputArea';
 import { FilePreview, type FilePreviewHandle } from '../FilePreview';
 import { WizardConversationView, DocumentGenerationView } from '../InlineWizard';
-import { BrowserTabView } from './BrowserTabView';
+import { BrowserTabView, type BrowserTabViewHandle } from './BrowserTabView';
+import { useBrowserTabMounting } from '../../hooks/browser/useBrowserTabMounting';
 import { useUIStore } from '../../stores/uiStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useTabStore } from '../../stores/tabStore';
+import { useLayerStack } from '../../contexts/LayerStackContext';
 import type {
 	Session,
 	Theme,
@@ -44,7 +46,6 @@ export interface MainPanelContentProps {
 	activeFileTabId?: string | null;
 	activeFileTab?: FilePreviewTab | null;
 	activeBrowserTabId?: string | null;
-	activeBrowserTab?: BrowserTab | null;
 	memoizedFilePreviewFile: { name: string; path: string; content: string } | null;
 	filePreviewCwd: string;
 	filePreviewSshRemoteId: string | undefined;
@@ -258,7 +259,6 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 		activeFileTabId,
 		activeFileTab,
 		activeBrowserTabId,
-		activeBrowserTab,
 		memoizedFilePreviewFile,
 		filePreviewCwd,
 		filePreviewSshRemoteId,
@@ -422,25 +422,44 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 	const outputSearchQuery = useUIStore((s) => s.outputSearchQuery);
 	const outputSearchRegex = useUIStore((s) => s.outputSearchRegex);
 
+	// Browser tab keep-alive: which of this agent's browser tabs stay mounted.
+	// Under the default 'off' policy this is just the active browser tab (mount-only-active,
+	// original behavior); 'recent'/'all' keep extra webviews mounted but hidden so their
+	// page state survives switching away. All mounted tabs render through the persistent
+	// overlay block below (mirroring the terminal keep-alive overlay).
+	const mountedBrowserTabIds = useBrowserTabMounting(activeSession);
+	// Number of open modal/overlay layers. When any layer is open over a browser
+	// tab (e.g. the Tab Switcher), the guest <webview> must release Chromium input
+	// focus so keyboard navigation lands in the modal instead of the page. Driving
+	// isActive off this re-blurs the webview the moment a layer opens.
+	const { layerCount } = useLayerStack();
+	// Per-tab BrowserTabView handles. The single browserViewRef passed from MainPanel must
+	// point at the active (visible) tab's handle so resolveBrowserContent reads that webview.
+	const browserViewRefs = React.useRef<Map<string, BrowserTabViewHandle>>(new Map());
+	React.useEffect(() => {
+		if (!browserViewRef) return;
+		const activeId = activeSession.activeBrowserTabId;
+		browserViewRef.current =
+			activeSession.inputMode === 'ai' && activeId
+				? (browserViewRefs.current.get(activeId) ?? null)
+				: null;
+	}, [
+		browserViewRef,
+		activeSession.inputMode,
+		activeSession.activeBrowserTabId,
+		mountedBrowserTabIds,
+	]);
+
 	return (
 		/* Content area: Show FilePreview when file tab is active, otherwise show terminal output */
 		/* Content wrapper: always-rendered relative container so terminal overlay covers
 		     only the content area. Terminal sessions are mounted here regardless of whether
 		     file preview, AI output, or terminal is active. */
 		<div className="flex-1 min-h-0 overflow-hidden relative flex flex-col">
-			{/* Skip rendering when loading remote file - loading state takes over entire main area */}
-			{activeSession.inputMode === 'ai' && activeBrowserTabId && activeBrowserTab ? (
-				<BrowserTabView
-					ref={(handle) => {
-						if (browserViewRef) browserViewRef.current = handle;
-					}}
-					tab={activeBrowserTab}
-					theme={theme}
-					onUpdateTab={(tabId, updates) =>
-						handleBrowserTabUpdate?.(activeSession.id, tabId, updates)
-					}
-				/>
-			) : activeSession.inputMode === 'ai' && activeFileTab?.isLoading ? (
+			{/* Browser tabs render through the persistent keep-alive overlay block below (not
+			    inline) so their <webview> never remounts when switching tabs. Skip rendering
+			    inline content when loading a remote file - loading state takes over the area. */}
+			{activeSession.inputMode === 'ai' && activeFileTab?.isLoading ? (
 				<div
 					className="flex-1 flex items-center justify-center"
 					style={{ backgroundColor: theme.colors.bgMain }}
@@ -788,6 +807,46 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 							isVisible={isTerminalVisible}
 							onCopySelection={onTerminalCopySelection}
 							onSendSelectionToAgent={onTerminalSendSelectionToAgent}
+						/>
+					</div>
+				);
+			})}
+			{/* Browser tabs are kept alive as persistent overlays so their <webview> guest
+			    contents survive switching tabs. Which tabs stay mounted is decided by
+			    useBrowserTabMounting (the browserTabKeepAlive setting); under 'off' only the
+			    active tab is mounted, reproducing the original unload-on-switch behavior.
+			    visibility:hidden (not unmount) preserves the guest's JS heap and DOM. */}
+			{mountedBrowserTabIds.map((tabId) => {
+				const browserTab = activeSession.browserTabs?.find((t) => t.id === tabId);
+				if (!browserTab) return null;
+				const isBrowserVisible =
+					activeSession.inputMode === 'ai' && activeSession.activeBrowserTabId === tabId;
+				// Hold keyboard focus only when no modal/overlay is layered above the
+				// page. The tab stays visually rendered (visibility/zIndex below are
+				// driven by isBrowserVisible), but the webview yields input focus to an
+				// open layer so its keyboard navigation works (e.g. the Tab Switcher).
+				const isBrowserFocusActive = isBrowserVisible && layerCount === 0;
+				return (
+					<div
+						key={tabId}
+						className="absolute inset-0 flex flex-col"
+						style={{
+							visibility: isBrowserVisible ? 'visible' : 'hidden',
+							pointerEvents: isBrowserVisible ? 'auto' : 'none',
+							zIndex: isBrowserVisible ? 2 : -1,
+						}}
+					>
+						<BrowserTabView
+							ref={(handle) => {
+								if (handle) browserViewRefs.current.set(tabId, handle);
+								else browserViewRefs.current.delete(tabId);
+							}}
+							tab={browserTab}
+							theme={theme}
+							isActive={isBrowserFocusActive}
+							onUpdateTab={(tid, updates) =>
+								handleBrowserTabUpdate?.(activeSession.id, tid, updates)
+							}
 						/>
 					</div>
 				);

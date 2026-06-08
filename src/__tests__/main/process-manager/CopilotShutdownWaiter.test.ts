@@ -17,6 +17,7 @@ vi.mock('../../../main/utils/logger', () => ({
 import {
 	waitForCopilotShutdown,
 	readCopilotFinalAnswer,
+	readCopilotShutdownUsage,
 	resolveCopilotEventsPath,
 } from '../../../main/process-manager/CopilotShutdownWaiter';
 
@@ -246,6 +247,268 @@ describe('CopilotShutdownWaiter', () => {
 			const result = await readCopilotFinalAnswer(AGENT_SESSION_ID, configDir);
 
 			expect(result).toEqual({ content: 'good final' });
+		});
+
+		it('prefers session.task_complete.summary when it appears after the last assistant.message', async () => {
+			// Autopilot turn: model emits an empty assistant.message, then calls
+			// task_complete with the real conclusion in `summary`.
+			await fs.writeFile(
+				eventsPath,
+				[
+					JSON.stringify({
+						type: 'assistant.message',
+						data: { content: 'Older turn answer.', toolRequests: [] },
+					}),
+					JSON.stringify({
+						type: 'assistant.message',
+						data: {
+							content: '',
+							toolRequests: [{ name: 'task_complete', toolCallId: 'tc1' }],
+						},
+					}),
+					JSON.stringify({
+						type: 'session.task_complete',
+						data: { summary: 'Final summary from task_complete tool.' },
+					}),
+					JSON.stringify({ type: 'session.shutdown', data: { currentTokens: 1 } }),
+				].join('\n') + '\n'
+			);
+
+			const result = await readCopilotFinalAnswer(AGENT_SESSION_ID, configDir);
+
+			expect(result).toEqual({ content: 'Final summary from task_complete tool.' });
+		});
+
+		it('prefers a later assistant.message over an earlier session.task_complete', async () => {
+			// Order matters: whichever final-answer signal is most recent wins.
+			await fs.writeFile(
+				eventsPath,
+				[
+					JSON.stringify({
+						type: 'session.task_complete',
+						data: { summary: 'older task_complete summary' },
+					}),
+					JSON.stringify({
+						type: 'assistant.message',
+						data: { content: 'newer assistant final answer', toolRequests: [] },
+					}),
+				].join('\n') + '\n'
+			);
+
+			const result = await readCopilotFinalAnswer(AGENT_SESSION_ID, configDir);
+
+			expect(result).toEqual({ content: 'newer assistant final answer' });
+		});
+
+		it('skips assistant.messages from delegated subagents (parentToolCallId set)', async () => {
+			// Subagent replies are serialized into the parent's events.jsonl with
+			// parentToolCallId set. They must not be returned as the final answer —
+			// the parent will produce its own conclusion later in the file.
+			await fs.writeFile(
+				eventsPath,
+				[
+					JSON.stringify({
+						type: 'assistant.message',
+						data: { content: 'real parent final answer', toolRequests: [] },
+					}),
+					JSON.stringify({
+						type: 'assistant.message',
+						data: {
+							content: 'subagent reply that should be ignored',
+							toolRequests: [],
+							parentToolCallId: 'call_subagent_xyz',
+						},
+					}),
+				].join('\n') + '\n'
+			);
+
+			const result = await readCopilotFinalAnswer(AGENT_SESSION_ID, configDir);
+
+			expect(result).toEqual({ content: 'real parent final answer' });
+		});
+
+		it('skips session.task_complete events with empty summary', async () => {
+			await fs.writeFile(
+				eventsPath,
+				[
+					JSON.stringify({
+						type: 'assistant.message',
+						data: { content: 'real answer', toolRequests: [] },
+					}),
+					JSON.stringify({ type: 'session.task_complete', data: { summary: '' } }),
+				].join('\n') + '\n'
+			);
+
+			const result = await readCopilotFinalAnswer(AGENT_SESSION_ID, configDir);
+
+			expect(result).toEqual({ content: 'real answer' });
+		});
+	});
+
+	describe('readCopilotShutdownUsage', () => {
+		it('returns currentTokens + cumulative model metrics from the latest session.shutdown', async () => {
+			// Snapshot mirrors a real Copilot session.shutdown payload: input
+			// metrics are cumulative across the session, cacheReadTokens is a
+			// subset of inputTokens, and currentTokens is the live context-window
+			// occupancy. The reader surfaces currentTokens as `inputTokens` so the
+			// combined-formula gauge tracks "how full is the window".
+			await fs.writeFile(
+				eventsPath,
+				[
+					JSON.stringify({
+						type: 'session.shutdown',
+						data: {
+							currentTokens: 125412,
+							currentModel: 'gpt-5.5',
+							modelMetrics: {
+								'gpt-5.5': {
+									usage: {
+										inputTokens: 364009,
+										outputTokens: 1137,
+										cacheReadTokens: 261120,
+										cacheWriteTokens: 0,
+										reasoningTokens: 516,
+									},
+								},
+							},
+						},
+					}),
+				].join('\n') + '\n'
+			);
+
+			const result = await readCopilotShutdownUsage(AGENT_SESSION_ID, configDir);
+
+			expect(result).toEqual({
+				inputTokens: 125412,
+				outputTokens: 1137,
+				cacheReadInputTokens: 261120,
+				cacheCreationInputTokens: 0,
+				reasoningTokens: 516,
+			});
+		});
+
+		it('prefers the LAST session.shutdown event when several appear in the file', async () => {
+			// Copilot writes one shutdown per batch spawn — long sessions
+			// accumulate many. The newest one is the snapshot the gauge cares
+			// about.
+			await fs.writeFile(
+				eventsPath,
+				[
+					JSON.stringify({
+						type: 'session.shutdown',
+						data: {
+							currentTokens: 1000,
+							modelMetrics: { m: { usage: { outputTokens: 10, cacheReadTokens: 100 } } },
+						},
+					}),
+					JSON.stringify({
+						type: 'session.shutdown',
+						data: {
+							currentTokens: 5000,
+							modelMetrics: { m: { usage: { outputTokens: 50, cacheReadTokens: 500 } } },
+						},
+					}),
+				].join('\n') + '\n'
+			);
+
+			const result = await readCopilotShutdownUsage(AGENT_SESSION_ID, configDir);
+
+			expect(result).toEqual({
+				inputTokens: 5000,
+				outputTokens: 50,
+				cacheReadInputTokens: 500,
+				cacheCreationInputTokens: 0,
+				reasoningTokens: 0,
+			});
+		});
+
+		it('returns null when events.jsonl is missing', async () => {
+			await fs.rm(eventsPath, { force: true });
+
+			const result = await readCopilotShutdownUsage(AGENT_SESSION_ID, configDir);
+
+			expect(result).toBeNull();
+		});
+
+		it('returns null when no session.shutdown event has been written yet', async () => {
+			await fs.writeFile(
+				eventsPath,
+				JSON.stringify({ type: 'session.start', data: { sessionId: AGENT_SESSION_ID } }) + '\n'
+			);
+
+			const result = await readCopilotShutdownUsage(AGENT_SESSION_ID, configDir);
+
+			expect(result).toBeNull();
+		});
+
+		it('returns null when all token fields are zero (signals "no real data")', async () => {
+			await fs.writeFile(
+				eventsPath,
+				JSON.stringify({
+					type: 'session.shutdown',
+					data: { currentTokens: 0, modelMetrics: {} },
+				}) + '\n'
+			);
+
+			const result = await readCopilotShutdownUsage(AGENT_SESSION_ID, configDir);
+
+			expect(result).toBeNull();
+		});
+
+		it('sums per-model usage rows when Copilot reports more than one (mid-session model switch)', async () => {
+			await fs.writeFile(
+				eventsPath,
+				JSON.stringify({
+					type: 'session.shutdown',
+					data: {
+						currentTokens: 9999,
+						modelMetrics: {
+							'gpt-5.5': {
+								usage: { outputTokens: 100, cacheReadTokens: 1000, reasoningTokens: 5 },
+							},
+							'claude-sonnet': {
+								usage: { outputTokens: 50, cacheReadTokens: 500, cacheWriteTokens: 25 },
+							},
+						},
+					},
+				}) + '\n'
+			);
+
+			const result = await readCopilotShutdownUsage(AGENT_SESSION_ID, configDir);
+
+			expect(result).toEqual({
+				inputTokens: 9999,
+				outputTokens: 150,
+				cacheReadInputTokens: 1500,
+				cacheCreationInputTokens: 25,
+				reasoningTokens: 5,
+			});
+		});
+
+		it('tolerates malformed JSON lines and keeps scanning', async () => {
+			await fs.writeFile(
+				eventsPath,
+				[
+					'not-json',
+					JSON.stringify({
+						type: 'session.shutdown',
+						data: {
+							currentTokens: 200,
+							modelMetrics: { m: { usage: { outputTokens: 5 } } },
+						},
+					}),
+				].join('\n') + '\n'
+			);
+
+			const result = await readCopilotShutdownUsage(AGENT_SESSION_ID, configDir);
+
+			expect(result).toEqual({
+				inputTokens: 200,
+				outputTokens: 5,
+				cacheReadInputTokens: 0,
+				cacheCreationInputTokens: 0,
+				reasoningTokens: 0,
+			});
 		});
 	});
 });

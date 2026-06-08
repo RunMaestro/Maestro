@@ -103,23 +103,24 @@ All utilities in Maestro organized by category. Each entry lists the file path, 
 
 ## Formatting (`src/shared/formatters.ts` - Both)
 
-| Function                               | Signature                              | Purpose                                                          |
-| -------------------------------------- | -------------------------------------- | ---------------------------------------------------------------- |
-| `formatSize(bytes)`                    | `(number) => string`                   | File size: `"1.5 MB"`, `"256 KB"`. Auto-scales B/KB/MB/GB/TB.    |
-| `formatNumber(num)`                    | `(number) => string`                   | Large numbers: `"1.5k"`, `"2.3M"`.                               |
-| `formatTokens(tokens)`                 | `(number) => string`                   | Token counts with `~` prefix: `"~1K"`, `"~2M"`.                  |
-| `formatTokensCompact(tokens)`          | `(number) => string`                   | Token counts without `~`: `"1.5K"`, `"2.3M"`.                    |
-| `formatRelativeTime(dateOrTimestamp)`  | `(Date \| number \| string) => string` | `"just now"`, `"5m ago"`, `"2h ago"`, `"Dec 3"`.                 |
-| `formatActiveTime(ms)`                 | `(number) => string`                   | Duration: `"1D"`, `"2H 30M"`, `"<1M"`.                           |
-| `formatElapsedTime(ms)`                | `(number) => string`                   | Precise: `"500ms"`, `"30s"`, `"5m 12s"`, `"1h 10m"`.             |
-| `formatElapsedTimeColon(seconds)`      | `(number) => string`                   | Timer style: `"5:12"`, `"1:30:45"`.                              |
-| `formatCost(cost)`                     | `(number) => string`                   | USD: `"$1.23"`, `"<$0.01"`, `"$0.00"`.                           |
-| `estimateTokenCount(text)`             | `(string) => number`                   | Estimate at ~4 chars/token.                                      |
-| `truncatePath(path, maxLength?)`       | `(string, number?) => string`          | `".../parent/current"` format. Default max 35 chars.             |
-| `getParentDir(path)`                   | `(string) => string`                   | Return the parent directory segment of a path.                   |
-| `isAbsolutePath(path)`                 | `(string) => boolean`                  | True for Unix (`/x`), Windows drive (`C:\x`, `C:/x`), UNC paths. |
-| `getBasename(path)`                    | `(string) => string`                   | Final path segment; handles `/` and `\`, ignores trailing sep.   |
-| `truncateCommand(command, maxLength?)` | `(string, number?) => string`          | Single-line with ellipsis. Default max 40 chars.                 |
+| Function                               | Signature                              | Purpose                                                                           |
+| -------------------------------------- | -------------------------------------- | --------------------------------------------------------------------------------- |
+| `formatSize(bytes)`                    | `(number) => string`                   | File size: `"1.5 MB"`, `"256 KB"`. Auto-scales B/KB/MB/GB/TB.                     |
+| `formatNumber(num)`                    | `(number) => string`                   | Large numbers: `"1.5k"`, `"2.3M"`.                                                |
+| `formatTokens(tokens)`                 | `(number) => string`                   | Token counts with `~` prefix: `"~1K"`, `"~2M"`.                                   |
+| `formatTokensCompact(tokens)`          | `(number) => string`                   | Token counts without `~`: `"1.5K"`, `"2.3M"`.                                     |
+| `formatRelativeTime(dateOrTimestamp)`  | `(Date \| number \| string) => string` | `"just now"`, `"5m ago"`, `"2h ago"`, `"Dec 3"`.                                  |
+| `formatCacheAge(cacheAgeMs)`           | `(number \| null) => string`           | Cache age labels from elapsed milliseconds: `"just now"`, `"5m ago"`, `"2h ago"`. |
+| `formatActiveTime(ms)`                 | `(number) => string`                   | Duration: `"1D"`, `"2H 30M"`, `"<1M"`.                                            |
+| `formatElapsedTime(ms)`                | `(number) => string`                   | Precise: `"500ms"`, `"30s"`, `"5m 12s"`, `"1h 10m"`.                              |
+| `formatElapsedTimeColon(seconds)`      | `(number) => string`                   | Timer style: `"5:12"`, `"1:30:45"`.                                               |
+| `formatCost(cost)`                     | `(number) => string`                   | USD: `"$1.23"`, `"<$0.01"`, `"$0.00"`.                                            |
+| `estimateTokenCount(text)`             | `(string) => number`                   | Estimate at ~4 chars/token.                                                       |
+| `truncatePath(path, maxLength?)`       | `(string, number?) => string`          | `".../parent/current"` format. Default max 35 chars.                              |
+| `getParentDir(path)`                   | `(string) => string`                   | Return the parent directory segment of a path.                                    |
+| `isAbsolutePath(path)`                 | `(string) => boolean`                  | True for Unix (`/x`), Windows drive (`C:\x`, `C:/x`), UNC paths.                  |
+| `getBasename(path)`                    | `(string) => string`                   | Final path segment; handles `/` and `\`, ignores trailing sep.                    |
+| `truncateCommand(command, maxLength?)` | `(string, number?) => string`          | Single-line with ellipsis. Default max 40 chars.                                  |
 
 ---
 

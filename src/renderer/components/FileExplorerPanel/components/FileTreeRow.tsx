@@ -7,6 +7,7 @@ import type { FileNode } from '../../../types/fileTree';
 import type { FileExplorerIconTheme } from '../../../utils/fileExplorerIcons/shared';
 import type { FlattenedNode } from '../types';
 import { FILE_TREE_SINGLE_MIME, FILE_TREE_MULTI_MIME } from '../types';
+import { parentDirOf } from '../utils/pathHelpers';
 
 interface VirtualRow {
 	index: number;
@@ -46,6 +47,8 @@ interface FileTreeRowProps {
 	handleFolderDragOver: (e: React.DragEvent, destFolderRelative: string) => void;
 	handleFolderDragLeave: (e: React.DragEvent) => void;
 	handleFolderDrop: (e: React.DragEvent, destFolderRelative: string) => void;
+	onInternalDragStart: (showRootReceptacle: boolean) => void;
+	onInternalDragEnd: () => void;
 	toggleFolder: (
 		path: string,
 		activeSessionId: string,
@@ -88,6 +91,8 @@ export const FileTreeRow = memo(function FileTreeRow({
 	handleFolderDragOver,
 	handleFolderDragLeave,
 	handleFolderDrop,
+	onInternalDragStart,
+	onInternalDragEnd,
 	toggleFolder,
 	toggleFolderRecursive,
 	setSessions,
@@ -183,21 +188,31 @@ export const FileTreeRow = memo(function FileTreeRow({
 				// it visually matches what's being dragged).
 				const currentSelection = selectedPathsRef.current;
 				const isPartOfMultiSelection = currentSelection.size > 1 && currentSelection.has(fullPath);
+				let sources: string[];
 				if (isPartOfMultiSelection) {
 					const paths = Array.from(currentSelection);
+					sources = paths;
 					// Single-path MIME stays populated for the receivers (AI input,
 					// existing drop handlers) that don't yet understand the multi MIME.
 					e.dataTransfer.setData(FILE_TREE_SINGLE_MIME, fullPath);
 					e.dataTransfer.setData(FILE_TREE_MULTI_MIME, JSON.stringify(paths));
 				} else {
 					if (currentSelection.size > 0) setSelectedPaths(new Set());
+					sources = [fullPath];
 					e.dataTransfer.setData(FILE_TREE_SINGLE_MIME, fullPath);
 				}
+				// Reveal the "move to root" receptacle for the duration of the drag -
+				// but only when at least one dragged item lives in a subfolder. Items
+				// already at the root have nowhere to go, so the receptacle would be a
+				// dead target; suppress it so we don't offer a no-op drop.
+				const allSourcesAtRoot = sources.every((p) => parentDirOf(p) === '');
+				onInternalDragStart(!allSourcesAtRoot);
 				// 'copyMove' so folder-row drop targets can choose 'move' (in-tree
 				// reorganisation) while drops on the AI input still default to copy
 				// (insert @mention without moving the source file).
 				e.dataTransfer.effectAllowed = 'copyMove';
 			}}
+			onDragEnd={onInternalDragEnd}
 			onDragEnter={isFolder ? (e) => handleFolderDragEnter(e, fullPath) : undefined}
 			onDragOver={isFolder ? (e) => handleFolderDragOver(e, fullPath) : undefined}
 			onDragLeave={isFolder ? handleFolderDragLeave : undefined}

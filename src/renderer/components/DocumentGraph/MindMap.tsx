@@ -28,6 +28,7 @@ import {
 	EXTERNAL_NODE_HEIGHT,
 } from './mindMapLayouts';
 import { logger } from '../../utils/logger';
+import { GraphMiniMap } from './GraphMiniMap';
 
 // ============================================================================
 // Types
@@ -128,6 +129,8 @@ export interface MindMapProps {
 	onNodePositionChange?: (nodeId: string, position: NodePositionOverride) => void;
 	/** Optional ref to the container div for external focus control */
 	containerRef?: React.RefObject<HTMLDivElement>;
+	/** Whether the help/legend drawer is open - slides the minimap clear of it */
+	legendExpanded?: boolean;
 }
 
 // ============================================================================
@@ -582,6 +585,7 @@ export function MindMap({
 	nodePositions,
 	onNodePositionChange,
 	containerRef: externalContainerRef,
+	legendExpanded = false,
 }: MindMapProps) {
 	const canvasRef = useRef<HTMLCanvasElement>(null);
 	const internalContainerRef = useRef<HTMLDivElement>(null);
@@ -745,6 +749,18 @@ export function MindMap({
 			);
 		},
 		[]
+	);
+
+	// Recenter the main view on a canvas-space point (used by the minimap).
+	const recenterOnCanvasPoint = useCallback(
+		(canvasX: number, canvasY: number) => {
+			setTransform((prev) => ({
+				...prev,
+				panX: width / 2 - canvasX * prev.zoom,
+				panY: height / 2 - canvasY * prev.zoom,
+			}));
+		},
+		[width, height]
 	);
 
 	// Render the canvas
@@ -1028,13 +1044,28 @@ export function MindMap({
 		[screenToCanvas, findNodeAtPoint, onNodeContextMenu]
 	);
 
-	// Wheel handler for zooming - must be attached manually with passive: false
-	// Uses functional updater to avoid stale closures and jitter
+	// Wheel handler - must be attached manually with passive: false.
+	// Uses functional updater to avoid stale closures and jitter.
+	// Plain scroll zooms toward the cursor; Shift+scroll pans the canvas
+	// (mirrors the Cue pipeline canvas, where Shift activates panning).
 	const handleWheel = useCallback((e: WheelEvent) => {
 		e.preventDefault();
 
 		const rect = canvasRef.current?.getBoundingClientRect();
 		if (!rect) return;
+
+		// Shift+scroll pans instead of zooming. Browsers translate a vertical
+		// mouse wheel into deltaX while Shift is held, and trackpads report
+		// deltaX/deltaY directly, so subtracting both axes covers every device
+		// (the unused axis is ~0).
+		if (e.shiftKey) {
+			setTransform((prev) => ({
+				...prev,
+				panX: prev.panX - e.deltaX,
+				panY: prev.panY - e.deltaY,
+			}));
+			return;
+		}
 
 		const mouseX = e.clientX - rect.left;
 		const mouseY = e.clientY - rect.top;
@@ -1250,6 +1281,17 @@ export function MindMap({
 				onMouseUp={handleMouseUp}
 				onMouseLeave={handleMouseLeave}
 				onContextMenu={handleContextMenu}
+			/>
+			<GraphMiniMap
+				nodes={nodesWithState}
+				theme={theme}
+				viewWidth={width}
+				viewHeight={height}
+				transform={transform}
+				onRecenter={recenterOnCanvasPoint}
+				legendExpanded={legendExpanded}
+				selectedNodeId={selectedNodeId}
+				focusedNodeId={focusedNodeId}
 			/>
 		</div>
 	);

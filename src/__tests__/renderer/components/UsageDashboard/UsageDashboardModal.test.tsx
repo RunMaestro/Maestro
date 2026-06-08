@@ -17,6 +17,7 @@ import { UsageDashboardModal } from '../../../../renderer/components/UsageDashbo
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import { useClaudeUsageStore } from '../../../../renderer/stores/claudeUsageStore';
 import { useCodexUsageStore } from '../../../../renderer/stores/codexUsageStore';
+import { useUIStore } from '../../../../renderer/stores/uiStore';
 import { mockTheme } from '../../../helpers/mockTheme';
 import type { StatsAggregation } from '../../../../shared/stats-types';
 
@@ -141,6 +142,15 @@ const mockStats = {
 	exportCsv: vi.fn(),
 };
 
+// When both Encore flags are on, the dashboard fetches Cue run totals alongside
+// the main aggregation (for the Overview "Activity Source" donut). The renderer
+// reads cueAgg.totals.{occurrences,totalDurationMs}; resolving to null is a
+// valid "no Cue data" response that the component handles, while still keeping
+// the bridge defined so the fetch doesn't throw a TypeError.
+const mockCueStats = {
+	getAggregation: vi.fn(),
+};
+
 const mockDialog = { saveFile: vi.fn() };
 const mockFs = { writeFile: vi.fn() };
 const mockAgents = {
@@ -197,12 +207,17 @@ beforeEach(() => {
 	vi.clearAllMocks();
 	useClaudeUsageStore.getState().__resetForTests();
 	useCodexUsageStore.getState().__resetForTests();
+	// The dashboard remembers the last-selected tab in the (singleton) uiStore.
+	// Reset it so tab clicks in one test don't bleed into the next test's default.
+	useUIStore.getState().setUsageDashboardViewMode('overview');
 	mockAgents.getClaudeUsageSnapshots.mockResolvedValue({});
 	mockAgents.getCodexUsageSnapshots.mockResolvedValue({});
 	mockAgents.refreshClaudeUsageSnapshots.mockResolvedValue({ refreshed: 1 });
 	mockAgents.refreshCodexUsageSnapshots.mockResolvedValue({ refreshed: 1 });
+	mockCueStats.getAggregation.mockResolvedValue(null);
 	(window as unknown as { maestro: Record<string, unknown> }).maestro = {
 		stats: mockStats,
+		cueStats: mockCueStats,
 		dialog: mockDialog,
 		fs: mockFs,
 		agents: mockAgents,
@@ -291,8 +306,63 @@ describe('UsageDashboardModal — Cue tab gating', () => {
 	});
 });
 
+describe('UsageDashboardModal — tab ordering', () => {
+	it('places the Cue tab immediately after Auto Run, before Shortcuts', async () => {
+		setEncoreFlags({ maestroCue: true, usageStats: true });
+
+		render(<UsageDashboardModal isOpen={true} onClose={() => {}} theme={mockTheme} />);
+
+		await waitFor(() => {
+			expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
+		});
+
+		const labels = screen.getAllByRole('tab').map((el) => el.textContent?.trim());
+		const autoRunIdx = labels.indexOf('Auto Run');
+		const cueIdx = labels.indexOf('Cue');
+		const shortcutsIdx = labels.indexOf('Shortcuts');
+
+		expect(autoRunIdx).toBeGreaterThanOrEqual(0);
+		expect(cueIdx).toBe(autoRunIdx + 1);
+		expect(shortcutsIdx).toBe(cueIdx + 1);
+	});
+});
+
+describe('UsageDashboardModal — remembers last-selected tab', () => {
+	it('reopens on the previously selected tab (within the same session)', async () => {
+		setEncoreFlags({ maestroCue: true, usageStats: true });
+
+		const { unmount } = render(
+			<UsageDashboardModal isOpen={true} onClose={() => {}} theme={mockTheme} />
+		);
+
+		await waitFor(() => {
+			expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
+		});
+
+		// First open starts on Overview.
+		expect(screen.getByRole('tab', { name: 'Overview' })).toHaveAttribute('aria-selected', 'true');
+
+		// Switch to Activity, then close the dashboard (modal unmounts).
+		await act(async () => {
+			fireEvent.click(screen.getByRole('tab', { name: 'Activity' }));
+		});
+		expect(screen.getByRole('tab', { name: 'Activity' })).toHaveAttribute('aria-selected', 'true');
+		unmount();
+
+		// Reopen: it should land back on Activity rather than Overview.
+		render(<UsageDashboardModal isOpen={true} onClose={() => {}} theme={mockTheme} />);
+
+		await waitFor(() => {
+			expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
+		});
+
+		expect(screen.getByRole('tab', { name: 'Activity' })).toHaveAttribute('aria-selected', 'true');
+		expect(screen.getByRole('tab', { name: 'Overview' })).toHaveAttribute('aria-selected', 'false');
+	});
+});
+
 describe('UsageDashboardModal — provider quota tabs', () => {
-	it('shows Anthropic Usage and Codex Usage only when useful provider snapshots exist', async () => {
+	it('shows Anthropic Usage and OpenAI Usage only when useful provider snapshots exist', async () => {
 		setEncoreFlags({ maestroCue: true, usageStats: true });
 		seedAnthropicUsageSnapshots();
 		seedCodexUsageSnapshots();
@@ -305,7 +375,7 @@ describe('UsageDashboardModal — provider quota tabs', () => {
 
 		expect(screen.queryByRole('tab', { name: 'Token Quota Cockpit' })).not.toBeInTheDocument();
 		expect(screen.getByRole('tab', { name: 'Anthropic Usage' })).toBeInTheDocument();
-		expect(screen.getByRole('tab', { name: 'Codex Usage' })).toBeInTheDocument();
+		expect(screen.getByRole('tab', { name: 'OpenAI Usage' })).toBeInTheDocument();
 
 		await act(async () => {
 			fireEvent.click(screen.getByRole('tab', { name: 'Anthropic Usage' }));
@@ -316,7 +386,7 @@ describe('UsageDashboardModal — provider quota tabs', () => {
 		});
 
 		await act(async () => {
-			fireEvent.click(screen.getByRole('tab', { name: 'Codex Usage' }));
+			fireEvent.click(screen.getByRole('tab', { name: 'OpenAI Usage' }));
 		});
 
 		expect(screen.getByTestId('codex-usage-mock')).toBeInTheDocument();
@@ -365,7 +435,7 @@ describe('UsageDashboardModal — provider quota tabs', () => {
 		// Once sampling populates the mirror, the gated tabs appear.
 		await waitFor(() => {
 			expect(screen.getByRole('tab', { name: 'Anthropic Usage' })).toBeInTheDocument();
-			expect(screen.getByRole('tab', { name: 'Codex Usage' })).toBeInTheDocument();
+			expect(screen.getByRole('tab', { name: 'OpenAI Usage' })).toBeInTheDocument();
 		});
 	});
 
@@ -381,7 +451,7 @@ describe('UsageDashboardModal — provider quota tabs', () => {
 		});
 
 		expect(screen.queryByRole('tab', { name: 'Anthropic Usage' })).not.toBeInTheDocument();
-		expect(screen.queryByRole('tab', { name: 'Codex Usage' })).not.toBeInTheDocument();
+		expect(screen.queryByRole('tab', { name: 'OpenAI Usage' })).not.toBeInTheDocument();
 	});
 
 	it('hides provider quota tabs when snapshots contain no useful quota details', async () => {
@@ -420,7 +490,7 @@ describe('UsageDashboardModal — provider quota tabs', () => {
 		});
 
 		expect(screen.queryByRole('tab', { name: 'Anthropic Usage' })).not.toBeInTheDocument();
-		expect(screen.queryByRole('tab', { name: 'Codex Usage' })).not.toBeInTheDocument();
+		expect(screen.queryByRole('tab', { name: 'OpenAI Usage' })).not.toBeInTheDocument();
 	});
 
 	it('bypasses the AI-query empty state because provider quota snapshots do not come from stats.db', async () => {
@@ -431,7 +501,7 @@ describe('UsageDashboardModal — provider quota tabs', () => {
 		render(<UsageDashboardModal isOpen={true} onClose={() => {}} theme={mockTheme} />);
 
 		await act(async () => {
-			fireEvent.click(screen.getByRole('tab', { name: 'Codex Usage' }));
+			fireEvent.click(screen.getByRole('tab', { name: 'OpenAI Usage' }));
 		});
 
 		await waitFor(() => {

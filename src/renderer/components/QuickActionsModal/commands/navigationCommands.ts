@@ -16,6 +16,10 @@ interface BuildNavigationCommandsArgs {
 	// Shared with the Alt+Cmd+Down keyboard shortcut so both invocation paths
 	// use the same sidebar-visible ordering and current-session clear semantics.
 	onGoToNextUnread?: () => void;
+	// Shared with the Cmd+Shift+, / Cmd+Shift+. keyboard shortcuts so both paths
+	// walk the same session/tab navigation history.
+	onNavBack?: () => void;
+	onNavForward?: () => void;
 	shortcuts: {
 		newInstance?: QuickAction['shortcut'];
 		openWizard?: QuickAction['shortcut'];
@@ -23,6 +27,8 @@ interface BuildNavigationCommandsArgs {
 		toggleRightPanel?: QuickAction['shortcut'];
 		nextUnreadTab?: QuickAction['shortcut'];
 		killInstance?: QuickAction['shortcut'];
+		navBack?: QuickAction['shortcut'];
+		navForward?: QuickAction['shortcut'];
 	};
 }
 
@@ -39,6 +45,8 @@ export function buildNavigationCommands({
 	platform,
 	openPath,
 	onGoToNextUnread,
+	onNavBack,
+	onNavForward,
 	shortcuts,
 }: BuildNavigationCommandsArgs): QuickAction[] {
 	const commands: QuickAction[] = [
@@ -88,6 +96,30 @@ export function buildNavigationCommands({
 			},
 		}
 	);
+
+	if (onNavBack) {
+		commands.push({
+			id: 'navBack',
+			label: 'Navigate Back',
+			shortcut: shortcuts.navBack,
+			action: () => {
+				onNavBack();
+				setQuickActionOpen(false);
+			},
+		});
+	}
+
+	if (onNavForward) {
+		commands.push({
+			id: 'navForward',
+			label: 'Navigate Forward',
+			shortcut: shortcuts.navForward,
+			action: () => {
+				onNavForward();
+				setQuickActionOpen(false);
+			},
+		});
+	}
 
 	if (activeSession && !activeSession.sshRemote) {
 		commands.push({

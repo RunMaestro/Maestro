@@ -103,6 +103,51 @@ describe('CopilotOutputParser', () => {
 		);
 	});
 
+	it('does not treat a subagent final_answer (parentToolCallId set) as the parent result', () => {
+		// Subagents reply via the parent's events.jsonl with parentToolCallId set.
+		// If we surfaced them as 'result', StdoutHandler would set resultEmitted on
+		// the FIRST subagent reply and the parent's real conclusion would never
+		// reach the UI. They are downgraded to 'system' instead.
+		const parser = new CopilotOutputParser();
+
+		const event = parser.parseJsonObject({
+			type: 'assistant.message',
+			data: {
+				content: 'main | abc123 fix something | dirty=0',
+				phase: 'final_answer',
+				toolRequests: [],
+				parentToolCallId: 'call_subagent_xyz',
+			},
+		});
+
+		expect(event).toEqual(
+			expect.objectContaining({
+				type: 'system',
+			})
+		);
+		expect(event && parser.isResultMessage(event)).toBe(false);
+	});
+
+	it('does not treat a structural subagent final answer (no phase + parentToolCallId) as the parent result', () => {
+		const parser = new CopilotOutputParser();
+
+		const event = parser.parseJsonObject({
+			type: 'assistant.message',
+			data: {
+				content: 'subagent summary text',
+				toolRequests: [],
+				parentToolCallId: 'call_subagent_xyz',
+			},
+		});
+
+		expect(event).toEqual(
+			expect.objectContaining({
+				type: 'system',
+			})
+		);
+		expect(event && parser.isResultMessage(event)).toBe(false);
+	});
+
 	it('recognizes modern Copilot final messages by structure (no phase field)', () => {
 		// Regression: Copilot CLI ≥ 1.0.35 does not emit `phase: 'final_answer'`.
 		// The final assistant message is identified structurally by non-empty

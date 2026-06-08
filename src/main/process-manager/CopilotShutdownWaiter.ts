@@ -34,6 +34,30 @@ export interface CopilotFinalAnswer {
 }
 
 /**
+ * Token usage snapshot extracted from a Copilot CLI `session.shutdown` event.
+ *
+ * Field semantics:
+ *  - `inputTokens` carries Copilot's `currentTokens` (live context-window
+ *    occupancy: system + tools + conversation), not the per-API-call input.
+ *    Treating it as the cumulative input under the combined-context formula
+ *    yields a gauge that tracks "how full is the window right now".
+ *  - `outputTokens`, `cacheReadInputTokens`, `cacheCreationInputTokens`, and
+ *    `reasoningTokens` come straight from `modelMetrics.<currentModel>.usage`
+ *    and are cumulative across the session. They drive the tooltip lines.
+ *
+ * Returning a single combined snapshot (rather than streaming per-turn deltas)
+ * matches the cadence Copilot itself uses: it writes one shutdown per batch
+ * spawn, after the model has finished.
+ */
+export interface CopilotShutdownUsage {
+	inputTokens: number;
+	outputTokens: number;
+	cacheReadInputTokens: number;
+	cacheCreationInputTokens: number;
+	reasoningTokens: number;
+}
+
+/**
  * Resolve the on-disk path Copilot uses for a given agent session.
  */
 export function resolveCopilotEventsPath(agentSessionId: string, configDir?: string): string {
@@ -107,11 +131,19 @@ export async function waitForCopilotShutdown(
 }
 
 /**
- * Scan `events.jsonl` for the authoritative final assistant message Copilot
- * actually produced. Returns the content of the last `assistant.message`
- * line whose data has non-empty `content`, no tool requests, and either
- * `phase === 'final_answer'` or no `phase` field (the modern Copilot CLI
- * convention).
+ * Scan `events.jsonl` for the authoritative final answer Copilot actually
+ * produced. The latest of two signals wins, in file order:
+ *
+ *  1. The last qualifying `assistant.message` (non-empty `content`, no tool
+ *     requests, and either `phase === 'final_answer'` or no `phase` field).
+ *  2. The last `session.task_complete` event's `data.summary`.
+ *
+ * Copilot CLI in autopilot mode (which batch mode auto-enters) commonly ends
+ * a turn by calling the `task_complete` tool with an empty assistant.message
+ * and the full conclusion in `task_complete.arguments.summary` (mirrored to
+ * `session.task_complete.data.summary`). Without #2, Maestro would fall back
+ * to a stale assistant.message from an earlier turn and show the user
+ * unrelated text.
  *
  * This is the on-disk equivalent of the parser's final-answer recognition
  * in `CopilotOutputParser.parseAssistantMessage`. We re-derive it from
@@ -137,7 +169,11 @@ export async function readCopilotFinalAnswer(
 	let latest: string | null = null;
 	for (const line of content.split(/\r?\n/)) {
 		const trimmed = line.trim();
-		if (!trimmed || !trimmed.includes('"assistant.message"')) continue;
+		if (!trimmed) continue;
+		// Cheap pre-filter: skip lines that can't be either event type.
+		const hasAssistantMessage = trimmed.includes('"assistant.message"');
+		const hasTaskComplete = trimmed.includes('"session.task_complete"');
+		if (!hasAssistantMessage && !hasTaskComplete) continue;
 		try {
 			const evt = JSON.parse(trimmed) as {
 				type?: string;
@@ -145,20 +181,138 @@ export async function readCopilotFinalAnswer(
 					content?: string;
 					phase?: string;
 					toolRequests?: unknown[];
+					summary?: string;
+					/** Set on assistant.message events emitted by a delegated subagent
+					 *  in response to the parent's `task` tool call. Subagent replies
+					 *  are NOT the parent's final answer and must be excluded. */
+					parentToolCallId?: string;
 				};
 			};
-			if (evt.type !== 'assistant.message') continue;
 			const data = evt.data;
-			if (!data || typeof data.content !== 'string' || data.content.length === 0) continue;
-			if (data.toolRequests && data.toolRequests.length > 0) continue;
-			if (data.phase !== undefined && data.phase !== 'final_answer') continue;
-			latest = data.content;
+			if (!data) continue;
+			if (evt.type === 'assistant.message') {
+				if (typeof data.content !== 'string' || data.content.length === 0) continue;
+				if (data.toolRequests && data.toolRequests.length > 0) continue;
+				if (data.phase !== undefined && data.phase !== 'final_answer') continue;
+				// Skip subagent replies — they live in the same events.jsonl as the
+				// parent's messages but are not the parent's conclusion.
+				if (data.parentToolCallId) continue;
+				latest = data.content;
+			} else if (evt.type === 'session.task_complete') {
+				if (typeof data.summary !== 'string' || data.summary.length === 0) continue;
+				latest = data.summary;
+			}
 		} catch {
 			// Malformed line — skip.
 		}
 	}
 
 	return latest === null ? null : { content: latest };
+}
+
+/**
+ * Read the LATEST `session.shutdown` event from a Copilot session's
+ * `events.jsonl` and extract a `CopilotShutdownUsage` snapshot suitable for
+ * pushing into the renderer's usage gauge.
+ *
+ * Copilot CLI in batch mode emits `session.shutdown` ONLY to disk; nothing on
+ * stdout carries `currentTokens`. Without this read the renderer's context
+ * gauge stays at 0% for every Copilot tab even though the actual context is
+ * being filled. The companion `extractCopilotUsageFromDisk` helper in
+ * `group-chat/copilot-usage-extractor.ts` does the same for group chat
+ * participants; this one targets the regular AI-tab spawn path.
+ *
+ * Returns null when the file is unreadable, no shutdown event has been
+ * written yet, or the shutdown event is missing the model-metric block.
+ */
+export async function readCopilotShutdownUsage(
+	agentSessionId: string,
+	configDir?: string
+): Promise<CopilotShutdownUsage | null> {
+	const filePath = resolveCopilotEventsPath(agentSessionId, configDir);
+	let content: string;
+	try {
+		content = await fs.readFile(filePath, 'utf8');
+	} catch (err) {
+		logger.debug('events.jsonl unavailable for usage extraction', LOG_CONTEXT, {
+			error: String(err),
+			agentSessionId,
+		});
+		return null;
+	}
+
+	interface ShutdownData {
+		currentTokens?: number;
+		currentModel?: string;
+		modelMetrics?: Record<
+			string,
+			{
+				usage?: {
+					inputTokens?: number;
+					outputTokens?: number;
+					cacheReadTokens?: number;
+					cacheWriteTokens?: number;
+					reasoningTokens?: number;
+				};
+			}
+		>;
+	}
+
+	let latest: ShutdownData | null = null;
+	for (const line of content.split(/\r?\n/)) {
+		const trimmed = line.trim();
+		if (!trimmed || !trimmed.includes('"session.shutdown"')) continue;
+		try {
+			const evt = JSON.parse(trimmed) as { type?: string; data?: ShutdownData };
+			if (evt.type === 'session.shutdown' && evt.data) {
+				latest = evt.data;
+			}
+		} catch {
+			// Malformed line — skip.
+		}
+	}
+
+	if (!latest) return null;
+
+	const currentTokens = typeof latest.currentTokens === 'number' ? latest.currentTokens : 0;
+	const modelMetrics = latest.modelMetrics ?? {};
+
+	// Sum the per-model usage rows. In practice a single session usually has
+	// one entry keyed on `currentModel`, but Copilot allows mid-session model
+	// switches that can leave multiple rows behind; summing keeps the picture
+	// honest. Cache fields are subsets of inputs at the Copilot reporting
+	// layer (combined-context semantics) — see COMBINED_CONTEXT_AGENTS.
+	let outputTokens = 0;
+	let cacheReadInputTokens = 0;
+	let cacheCreationInputTokens = 0;
+	let reasoningTokens = 0;
+	for (const metric of Object.values(modelMetrics)) {
+		outputTokens += metric.usage?.outputTokens ?? 0;
+		cacheReadInputTokens += metric.usage?.cacheReadTokens ?? 0;
+		cacheCreationInputTokens += metric.usage?.cacheWriteTokens ?? 0;
+		reasoningTokens += metric.usage?.reasoningTokens ?? 0;
+	}
+
+	// `currentTokens` is the live context-window occupancy; we surface it as
+	// inputTokens so the combined-formula gauge (`input + cacheCreation +
+	// output`) approximates the right value without re-adding cache reads
+	// already represented in the conversation slice of currentTokens.
+	if (
+		currentTokens === 0 &&
+		outputTokens === 0 &&
+		cacheReadInputTokens === 0 &&
+		cacheCreationInputTokens === 0
+	) {
+		return null;
+	}
+
+	return {
+		inputTokens: currentTokens,
+		outputTokens,
+		cacheReadInputTokens,
+		cacheCreationInputTokens,
+		reasoningTokens,
+	};
 }
 
 function contentContainsShutdown(content: string): boolean {

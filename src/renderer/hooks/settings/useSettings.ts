@@ -99,6 +99,8 @@ export interface UseSettingsReturn {
 	setEnterToSendAIExpanded: (value: boolean) => void;
 	defaultSaveToHistory: boolean;
 	setDefaultSaveToHistory: (value: boolean) => void;
+	synopsisDebounceSeconds: number;
+	setSynopsisDebounceSeconds: (value: number) => void;
 
 	// Default thinking toggle (three states: 'off' | 'on' | 'sticky')
 	defaultShowThinking: ThinkingMode;
@@ -201,6 +203,8 @@ export interface UseSettingsReturn {
 	setUngroupedCollapsed: (value: boolean) => void;
 	groupChatsExpanded: boolean;
 	setGroupChatsExpanded: (value: boolean) => void;
+	starredSessionsCollapsed: boolean;
+	setStarredSessionsCollapsed: (value: boolean) => void;
 
 	// Onboarding settings
 	tourCompleted: boolean;
@@ -322,6 +326,10 @@ export interface UseSettingsReturn {
 	setBrowserHomeUrl: (value: string) => void;
 	htmlDoubleClickOpensInBrowser: boolean;
 	setHtmlDoubleClickOpensInBrowser: (value: boolean) => void;
+	browserTabKeepAlive: 'off' | 'recent' | 'all';
+	setBrowserTabKeepAlive: (value: 'off' | 'recent' | 'all') => void;
+	browserTabKeepAliveLimit: number;
+	setBrowserTabKeepAliveLimit: (value: number) => void;
 
 	// Automatic tab naming settings
 	automaticTabNamingEnabled: boolean;

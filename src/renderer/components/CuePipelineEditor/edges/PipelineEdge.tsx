@@ -1,5 +1,5 @@
 import { memo } from 'react';
-import { getBezierPath, BaseEdge, EdgeLabelRenderer, type EdgeProps } from 'reactflow';
+import { getSmoothStepPath, BaseEdge, EdgeLabelRenderer, type EdgeProps } from 'reactflow';
 import { MessageCircle, FileText } from 'lucide-react';
 import { CUE_COLOR, type EdgeMode } from '../../../../shared/cue-pipeline-types';
 import type { Theme } from '../../../types';
@@ -46,13 +46,18 @@ export const PipelineEdge = memo(function PipelineEdge({
 	const isRunning = data?.isRunning ?? false;
 	const opacity = isActive ? 1 : 0.25;
 
-	const [edgePath, labelX, labelY] = getBezierPath({
+	// Orthogonal routing with sharp corners (borderRadius 0): when the grid layout
+	// lines two nodes up on the same row this collapses to a single straight
+	// horizontal segment; offset nodes get clean right-angle elbows instead of a
+	// bowed bezier.
+	const [edgePath, labelX, labelY] = getSmoothStepPath({
 		sourceX,
 		sourceY,
 		targetX,
 		targetY,
 		sourcePosition,
 		targetPosition,
+		borderRadius: 0,
 	});
 
 	return (

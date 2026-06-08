@@ -257,8 +257,16 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 		};
 
 		const handleDocumentDrop = (e: DragEvent) => {
+			// This fires in the CAPTURE phase (document -> target), i.e. BEFORE the
+			// bubble-phase React onDrop on a group / ungrouped zone. preventDefault()
+			// here keeps Chromium's drop zone valid for subsequent drags, but we must
+			// NOT clear the session drag state yet: the React drop handler reads
+			// draggingSessionId to decide which agent to move. Clearing here would
+			// null it out before the move runs, silently breaking drag-to-group and
+			// drag-to-ungroup. The ghost state is cleared instead by the successful
+			// React drop (handleDropOnGroup / handleDropOnUngrouped) or, on a missed
+			// drop / cancel, by the dragend listener which always fires after drop.
 			e.preventDefault();
-			handleDragEnd();
 		};
 
 		// Escape during a drag doesn't reliably fire `dragend` for OS-initiated
@@ -274,7 +282,16 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 		// any subsequent ESC/drop happens outside our event scope. Detect this
 		// via a `dragleave` whose relatedTarget is null OR whose coordinates are
 		// at/past the viewport edge, and reset the overlay state proactively.
+		//
+		// This heuristic exists solely for the FILE-drag overlay, so gate it on
+		// an active file drag (dragCounterRef > 0), matching the ESC handler
+		// above. Internal session drags never touch dragCounterRef, and Chromium
+		// fires `dragleave` with a null relatedTarget for ordinary element-to-
+		// element transitions inside the window - without this guard those would
+		// call handleDragEnd() mid-drag, clear draggingSessionId, and silently
+		// break drag-to-group / drag-to-ungroup before the drop ever lands.
 		const handleDocumentDragLeave = (e: DragEvent) => {
+			if (dragCounterRef.current === 0) return;
 			const leftWindow =
 				e.relatedTarget === null ||
 				e.clientX <= 0 ||

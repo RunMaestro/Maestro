@@ -212,8 +212,26 @@ export default defineConfig(({ mode }) => ({
 			},
 		},
 	},
+	// Pre-bundle deps that are ONLY reachable through lazy-loaded components.
+	// Vite's startup dep-scan walks the static import graph from the entry, so
+	// deps behind a dynamic import() (e.g. CueModal -> GitDiffViewer's `diff`,
+	// CuePipelineEditor's `reactflow` and `js-yaml`) are never discovered up
+	// front. The first
+	// time such a component lazy-loads, Vite *discovers* the dep, re-optimizes,
+	// bumps the dep cache hash, and invalidates the page's cached deps - which
+	// 504s ("Outdated Optimize Dep") the dynamic import that's still in flight.
+	// The user sees "Failed to fetch dynamically imported module" and only a
+	// manual reload recovers. Listing them here forces pre-bundling at server
+	// startup, eliminating the mid-import re-optimization. Dev-only; no effect
+	// on the production build.
+	optimizeDeps: {
+		include: ['diff', 'reactflow', 'js-yaml'],
+	},
 	server: {
-		port: process.env.VITE_PORT ? parseInt(process.env.VITE_PORT, 10) : 5173,
+		// Fallback must match DEFAULT_START_PORT in scripts/dev-port.mjs. Never
+		// 5173 (Vite's default): an agent-built dev server on that port would
+		// otherwise hijack the URL Electron loads and replace the app shell.
+		port: process.env.VITE_PORT ? parseInt(process.env.VITE_PORT, 10) : 17173,
 		strictPort: true,
 		hmr: !disableHmr,
 		// Disable file watching entirely when HMR is disabled to prevent any reloads

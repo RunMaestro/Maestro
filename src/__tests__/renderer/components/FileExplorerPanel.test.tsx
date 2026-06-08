@@ -30,6 +30,16 @@ vi.mock('lucide-react', () => ({
 			📁
 		</span>
 	),
+	FolderInput: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<span data-testid="folder-input-icon" className={className} style={style}>
+			📥
+		</span>
+	),
+	FolderUp: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<span data-testid="folder-up-icon" className={className} style={style}>
+			⬆️
+		</span>
+	),
 	RefreshCw: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
 		<span data-testid="refresh-icon" className={className} style={style}>
 			🔄
@@ -2018,6 +2028,113 @@ describe('FileExplorerPanel', () => {
 			expect(dt.effectAllowed).toBe('copyMove');
 		});
 
+		it('shows the move-to-root receptacle only while a row drag is active', () => {
+			const { container, queryByText } = renderWithExpanded();
+			// Hidden before any drag begins.
+			expect(queryByText('Drop here to move to root')).toBeNull();
+
+			const row = getRow(container, 'index.ts');
+			// The flag flip is deferred a tick (so it doesn't reflow during
+			// dragstart and abort the Chromium drag), so advance timers to mount it.
+			act(() => {
+				fireEvent.dragStart(row, { dataTransfer: makeDataTransfer() });
+				vi.advanceTimersByTime(0);
+			});
+			expect(queryByText('Drop here to move to root')).not.toBeNull();
+
+			// dragend tears it back down (drop happened off-target or was cancelled).
+			fireEvent.dragEnd(row, { dataTransfer: makeDataTransfer() });
+			expect(queryByText('Drop here to move to root')).toBeNull();
+		});
+
+		it('moves a nested file to the root via the move-to-root receptacle', async () => {
+			const rename = vi.fn().mockResolvedValue({ success: true });
+			(window as any).maestro = { fs: { rename } };
+			const onShowFlash = vi.fn();
+
+			const { container, getByText } = render(
+				<FileExplorerPanel
+					{...defaultProps}
+					session={createMockSession({ fileExplorerExpanded: ['src'], fileTree: mockFileTree })}
+					filteredFileTree={mockFileTree}
+					refreshFileTree={vi.fn().mockResolvedValue({ totalChanges: 1 })}
+					onShowFlash={onShowFlash}
+				/>
+			);
+
+			// Drag the nested src/index.ts so the receptacle mounts (deferred a tick).
+			const nestedRow = getRow(container, 'index.ts');
+			act(() => {
+				fireEvent.dragStart(nestedRow, { dataTransfer: makeDataTransfer() });
+				vi.advanceTimersByTime(0);
+			});
+
+			const receptacle = getByText('Drop here to move to root');
+			const dt = makeDataTransfer({ 'application/x-maestro-file-path': 'src/index.ts' });
+			await act(async () => {
+				fireEvent.drop(receptacle, { dataTransfer: dt });
+				await Promise.resolve();
+				await Promise.resolve();
+			});
+
+			expect(rename).toHaveBeenCalledWith(
+				'/Users/test/project/src/index.ts',
+				'/Users/test/project/index.ts',
+				undefined
+			);
+			expect(onShowFlash).toHaveBeenCalledWith('Moved "index.ts"');
+		});
+
+		it('suppresses the move-to-root receptacle when dragging a file already at root', () => {
+			const { container, queryByText } = renderWithExpanded();
+			// package.json lives at the workspace root, so there's nowhere to move
+			// it - the receptacle must not appear even after the deferred tick.
+			const rootRow = getRow(container, 'package.json');
+			act(() => {
+				fireEvent.dragStart(rootRow, { dataTransfer: makeDataTransfer() });
+				vi.advanceTimersByTime(0);
+			});
+			expect(queryByText('Drop here to move to root')).toBeNull();
+		});
+
+		it('moves a nested file to the root by dropping on the path row', async () => {
+			const rename = vi.fn().mockResolvedValue({ success: true });
+			(window as any).maestro = { fs: { rename } };
+			const onShowFlash = vi.fn();
+
+			const { container, getByText } = render(
+				<FileExplorerPanel
+					{...defaultProps}
+					session={createMockSession({ fileExplorerExpanded: ['src'], fileTree: mockFileTree })}
+					filteredFileTree={mockFileTree}
+					refreshFileTree={vi.fn().mockResolvedValue({ totalChanges: 1 })}
+					onShowFlash={onShowFlash}
+				/>
+			);
+
+			// Drag the nested src/index.ts, then drop onto the path display (which
+			// points at the root working directory).
+			const nestedRow = getRow(container, 'index.ts');
+			act(() => {
+				fireEvent.dragStart(nestedRow, { dataTransfer: makeDataTransfer() });
+			});
+
+			const pathTarget = getByText('/Users/test/project');
+			const dt = makeDataTransfer({ 'application/x-maestro-file-path': 'src/index.ts' });
+			await act(async () => {
+				fireEvent.drop(pathTarget, { dataTransfer: dt });
+				await Promise.resolve();
+				await Promise.resolve();
+			});
+
+			expect(rename).toHaveBeenCalledWith(
+				'/Users/test/project/src/index.ts',
+				'/Users/test/project/index.ts',
+				undefined
+			);
+			expect(onShowFlash).toHaveBeenCalledWith('Moved "index.ts"');
+		});
+
 		it('moves a root file into a folder via fs.rename with absolute paths', async () => {
 			const rename = vi.fn().mockResolvedValue({ success: true });
 			(window as any).maestro = { fs: { rename } };
@@ -3014,7 +3131,8 @@ describe('FileExplorerPanel', () => {
 				el.textContent?.includes('src')
 			);
 			fireEvent.contextMenu(folderItem!, { clientX: 100, clientY: 200 });
-			expect(screen.getByText('Preview All Files in Folder')).toBeInTheDocument();
+			// src recursively holds index.ts + utils/helpers.ts -> 2 previewable.
+			expect(screen.getByText('Preview All 2 Files in Folder')).toBeInTheDocument();
 		});
 
 		it('does not show "Preview All Files in Folder" option on file context menu', () => {
@@ -3023,7 +3141,7 @@ describe('FileExplorerPanel', () => {
 				el.textContent?.includes('package.json')
 			);
 			fireEvent.contextMenu(fileItem!, { clientX: 100, clientY: 200 });
-			expect(screen.queryByText('Preview All Files in Folder')).not.toBeInTheDocument();
+			expect(screen.queryByText(/Preview All .* in Folder/)).not.toBeInTheDocument();
 		});
 
 		it('opens every previewable file under a folder recursively when clicked', async () => {
@@ -3042,7 +3160,7 @@ describe('FileExplorerPanel', () => {
 			fireEvent.contextMenu(folderItem!, { clientX: 100, clientY: 200 });
 
 			await act(async () => {
-				fireEvent.click(screen.getByText('Preview All Files in Folder'));
+				fireEvent.click(screen.getByText('Preview All 2 Files in Folder'));
 				await Promise.resolve();
 				await Promise.resolve();
 				await Promise.resolve();

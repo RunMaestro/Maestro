@@ -267,11 +267,12 @@ In-app toast notifications appear in the corner when events occur. Configure how
 
 You can also set how wide toasts render:
 
-| Width      | Behavior                                          |
-| ---------- | ------------------------------------------------- |
-| **Small**  | Default compact size                              |
-| **Medium** | Roughly 1.4x wider than Small                     |
-| **Large**  | Roughly 1.8x wider than Small, for longer content |
+| Width       | Behavior                                                                                  |
+| ----------- | ----------------------------------------------------------------------------------------- |
+| **Small**   | Default compact size                                                                      |
+| **Medium**  | Roughly 1.4x wider than Small                                                             |
+| **Large**   | Roughly 1.8x wider than Small, for longer content                                         |
+| **Dynamic** | Matches the Right Bar width, filling that column and re-sizing live as you drag the panel |
 
 ### When Notifications Trigger
 

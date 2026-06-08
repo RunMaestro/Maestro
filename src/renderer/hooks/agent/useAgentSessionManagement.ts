@@ -1,12 +1,32 @@
 import { useCallback, useRef } from 'react';
 import type { Session, LogEntry, UsageStats, ThinkingMode } from '../../types';
 import { useSessionStore, selectSessionById } from '../../stores/sessionStore';
-import { createTab, getActiveTab } from '../../utils/tabHelpers';
+import { aiTabFocusFields, createTab, getActiveTab } from '../../utils/tabHelpers';
 import { generateId } from '../../utils/ids';
 import { buildSharedHistoryContext } from '../../utils/sessionHelpers';
 import type { RightPanelHandle } from '../../components/RightPanel';
 import { FALLBACK_CONTEXT_WINDOW } from '../../../shared/agentConstants';
 import { logger } from '../../utils/logger';
+
+/**
+ * Matches the Auto Run synopsis prompt that Maestro injects into the agent
+ * session after a task ("Give/Provide a brief synopsis of what you just
+ * accomplished ..."). The leading verb and trailing wording have drifted across
+ * versions and the prompt is user-customizable, so we anchor on the stable core
+ * phrase. A restored tab hides this request and the assistant's `**Summary:**`
+ * reply since they are bookkeeping, not part of the user's conversation.
+ */
+const SYNOPSIS_REQUEST_PATTERN =
+	/^\s*\S+\s+a\s+brief\s+synopsis\s+of\s+what\s+you\s+just\s+accomplished/i;
+
+export function isSynopsisRequest(msg: {
+	type?: string;
+	role?: string;
+	content?: string;
+}): boolean {
+	const isUser = msg.type === 'user' || msg.role === 'user';
+	return isUser && typeof msg.content === 'string' && SYNOPSIS_REQUEST_PATTERN.test(msg.content);
+}
 
 /**
  * History entry for the addHistoryEntry function.
@@ -29,6 +49,14 @@ export interface HistoryEntryInput {
 	elapsedTimeMs?: number;
 	/** Context usage percentage from the agent run (used when activeSession context isn't available) */
 	contextUsage?: number;
+	/**
+	 * Claude-only, per-turn token source override. When omitted, it's resolved from
+	 * the entry's session `claudeInteractive` mode. Background/Auto Run/Cue callers
+	 * can set it explicitly to stamp the source they ran under.
+	 */
+	tokenSource?: 'interactive' | 'api';
+	/** Claude-only, per-turn token source reason override. See {@link tokenSource}. */
+	tokenSourceReason?: 'auto' | 'limit';
 }
 
 /**
@@ -148,6 +176,35 @@ export function useAgentSessionManagement(
 
 			const shouldIncludeContextUsage = !entry.sessionId || entry.sessionId === activeSession?.id;
 
+			// Resolve the Claude token source for this turn. Token source belongs on
+			// the ENTRY, not the agent: a Dynamic-mode agent flips between TUI and API
+			// across turns, so we snapshot the resolved mode at write time. An explicit
+			// override from the caller (background/Auto Run/Cue) always wins; otherwise
+			// read the resolved session's live `claudeInteractive`. For Claude Code we
+			// always emit a token source: when `claudeInteractive` is absent the turn
+			// ran the default `claude --print` (API) path - the adaptive/maestro-p
+			// machinery only writes that field when it engages, so absence means API.
+			// Non-Claude agents get no field at all.
+			const tokenSourceFields = (() => {
+				if (entry.tokenSource) {
+					return {
+						tokenSource: entry.tokenSource,
+						...(entry.tokenSourceReason ? { tokenSourceReason: entry.tokenSourceReason } : {}),
+					};
+				}
+				const tokenSession = entry.sessionId
+					? selectSessionById(entry.sessionId)(useSessionStore.getState())
+					: activeSession;
+				if (tokenSession?.toolType === 'claude-code') {
+					const ci = tokenSession.claudeInteractive;
+					return {
+						tokenSource: ci?.mode ?? 'api',
+						...(ci?.modeReason ? { tokenSourceReason: ci.modeReason } : {}),
+					};
+				}
+				return {};
+			})();
+
 			await window.maestro.history.add(
 				{
 					id: generateId(),
@@ -159,6 +216,8 @@ export function useAgentSessionManagement(
 					sessionId: targetSessionId,
 					sessionName: sessionName,
 					projectPath: targetProjectPath,
+					// Claude-only per-turn token source (TUI vs API); omitted otherwise
+					...tokenSourceFields,
 					// Prefer active session's live context percentage; fall back to entry's own estimate
 					...(() => {
 						const ctx = shouldIncludeContextUsage
@@ -242,15 +301,7 @@ export function useAgentSessionManagement(
 				// Switch to the existing tab instead of creating a duplicate
 				setSessions((prev) =>
 					prev.map((s) =>
-						s.id === targetSession.id
-							? {
-									...s,
-									activeTabId: existingTab.id,
-									activeFileTabId: null,
-									activeTerminalTabId: null,
-									inputMode: 'ai',
-								}
-							: s
+						s.id === targetSession.id ? { ...s, ...aiTabFocusFields(existingTab.id) } : s
 					)
 				);
 				setActiveAgentSessionId(agentSessionId);
@@ -275,17 +326,48 @@ export function useAgentSessionManagement(
 						targetSession.sshRemoteId
 					);
 
-					// Convert to log entries, keeping only messages with actual text content.
-					// Tool-use-only messages (empty text) are skipped — restored tabs start
-					// with thinking off so there's nothing useful to render for those entries.
-					messages = result.messages
-						.filter((msg: { content: string }) => msg.content && msg.content.trim().length > 0)
-						.map((msg: { type: string; content: string; timestamp: string; uuid: string }) => ({
-							id: msg.uuid || generateId(),
-							timestamp: new Date(msg.timestamp).getTime(),
-							source: msg.type === 'user' ? ('user' as const) : ('stdout' as const),
-							text: msg.content,
-						}));
+					// Drop the Auto Run synopsis request and the assistant reply that
+					// immediately follows it. These are Maestro bookkeeping turns, not part
+					// of the user's conversation, so they shouldn't reappear on restore.
+					const withoutSynopsis = result.messages.filter(
+						(
+							msg: { type: string; role?: string; content: string },
+							i: number,
+							arr: { type: string; role?: string; content: string }[]
+						) => {
+							if (isSynopsisRequest(msg)) return false;
+							const prev = arr[i - 1];
+							const isAssistant = msg.type === 'assistant' || msg.role === 'assistant';
+							if (prev && isSynopsisRequest(prev) && isAssistant) return false;
+							return true;
+						}
+					);
+
+					// Convert to log entries, keeping messages with actual text content or
+					// reconstructed images. Tool-use-only messages (empty text, no images)
+					// are skipped — restored tabs start with thinking off so there's nothing
+					// useful to render for those entries.
+					messages = withoutSynopsis
+						.filter(
+							(msg: { content: string; images?: string[] }) =>
+								(msg.content && msg.content.trim().length > 0) ||
+								(msg.images != null && msg.images.length > 0)
+						)
+						.map(
+							(msg: {
+								type: string;
+								content: string;
+								timestamp: string;
+								uuid: string;
+								images?: string[];
+							}) => ({
+								id: msg.uuid || generateId(),
+								timestamp: new Date(msg.timestamp).getTime(),
+								source: msg.type === 'user' ? ('user' as const) : ('stdout' as const),
+								text: msg.content,
+								...(msg.images && msg.images.length > 0 && { images: msg.images }),
+							})
+						);
 				}
 
 				if (messages.length === 0) {
@@ -368,10 +450,7 @@ export function useAgentSessionManagement(
 							return {
 								...s,
 								aiTabs: updatedTabs,
-								activeTabId: existingTab.id,
-								activeFileTabId: null,
-								activeTerminalTabId: null,
-								inputMode: 'ai' as const,
+								...aiTabFocusFields(existingTab.id),
 							};
 						}
 

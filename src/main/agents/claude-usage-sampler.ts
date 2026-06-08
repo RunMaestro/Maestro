@@ -116,6 +116,40 @@ export async function sampleUsage(opts: SampleUsageOptions): Promise<UsageSnapsh
 		childEnv.CLAUDE_CONFIG_DIR = opts.configDir;
 	}
 
+	// `process.execPath` is the Electron binary in a packaged app. Running it
+	// against a `.js` script without this flag launches a second GUI instance
+	// instead of executing the script as Node - so `maestro-p --status` would
+	// never run and the snapshot would always be null. Every other execPath
+	// node-script spawn in the app sets this (see `cue-cli-executor.ts`,
+	// `maestro-cli-manager.ts`); the sampler was missing it.
+	childEnv.ELECTRON_RUN_AS_NODE = '1';
+
+	// Hard guarantee: this read-only `/usage` probe must never be able to launch
+	// the Claude OAuth browser. When a config dir holds an expired / needs-consent
+	// token (distinct from fully-logged-out, which claude renders inline as
+	// "Not logged in · Run /login"), launching the TUI kicks off the OAuth consent
+	// flow and opens a browser window - intolerable on an unattended background
+	// refresh tick. claude's URL opener uses `$BROWSER` as the launch command when
+	// set and does NOT fall back to the system opener, so pointing it at a no-op
+	// (`/usr/bin/true` on unix; a nonexistent path on Windows fails closed the same
+	// way) makes the consent flow open nothing. The sampler then just times out and
+	// skips that account. Login still happens normally in real interactive Claude
+	// sessions - those spawn through the process manager, not this sampler.
+	childEnv.BROWSER = '/usr/bin/true';
+
+	// `maestro-p.js` is shipped via `extraResources` at the resources root and
+	// `require('node-pty')` (left external by its esbuild bundle). From outside
+	// the asar, Node can't reach the native module at
+	// `<resources>/app.asar.unpacked/node_modules`, so make it discoverable via
+	// NODE_PATH. Only applies to the packaged app; in dev `resourcesPath` is
+	// empty and node-pty resolves from the project tree normally.
+	if (typeof process.resourcesPath === 'string' && process.resourcesPath.length > 0) {
+		const unpackedModules = path.join(process.resourcesPath, 'app.asar.unpacked', 'node_modules');
+		childEnv.NODE_PATH = childEnv.NODE_PATH
+			? `${unpackedModules}${path.delimiter}${childEnv.NODE_PATH}`
+			: unpackedModules;
+	}
+
 	let stdout: string;
 	try {
 		const result = await execFileAsync(process.execPath, [opts.binPath, '--status'], {

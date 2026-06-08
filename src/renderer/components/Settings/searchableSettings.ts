@@ -179,6 +179,15 @@ export const GENERAL_SETTINGS: SearchableSetting[] = [
 		keywords: ['history', 'synopsis', 'save', 'toggle'],
 	},
 	{
+		id: 'general-synopsis-debounce',
+		tab: 'general',
+		tabLabel: 'General',
+		label: 'Synopsis Debounce',
+		description:
+			'Idle time to wait before generating a History synopsis; coalesces rapid completions into one',
+		keywords: ['synopsis', 'debounce', 'coalesce', 'history', 'delay', 'throttle', 'idle'],
+	},
+	{
 		id: 'general-thinking-mode',
 		tab: 'general',
 		tabLabel: 'General',
@@ -345,6 +354,33 @@ export const GENERAL_SETTINGS: SearchableSetting[] = [
 			'render',
 			'webview',
 			'dashboard',
+		],
+	},
+	{
+		id: 'general-browser-keepalive',
+		tab: 'general',
+		tabLabel: 'General',
+		label: 'Background browser tabs',
+		description:
+			'Control whether inactive browser tabs are unloaded (reloading on return) or kept alive to preserve their in-memory state. Keep the most-recent N tabs alive or keep them all alive.',
+		keywords: [
+			'browser',
+			'background',
+			'tab',
+			'keep alive',
+			'keepalive',
+			'keep-alive',
+			'unload',
+			'reload',
+			'webview',
+			'memory',
+			'persist',
+			'persistence',
+			'state',
+			'suspend',
+			'lru',
+			'recent',
+			'inactive',
 		],
 	},
 	{
@@ -871,8 +907,20 @@ export const NOTIFICATION_SETTINGS: SearchableSetting[] = [
 		tab: 'notifications',
 		tabLabel: 'Notifications',
 		label: 'Toast Notification Width',
-		description: 'Width of toast notifications: Small, Medium, or Large',
-		keywords: ['toast', 'notification', 'width', 'size', 'small', 'medium', 'large'],
+		description:
+			'Width of toast notifications: Small, Medium, Large, or Dynamic (match the Right Bar)',
+		keywords: [
+			'toast',
+			'notification',
+			'width',
+			'size',
+			'small',
+			'medium',
+			'large',
+			'dynamic',
+			'right bar',
+			'panel',
+		],
 	},
 ];
 

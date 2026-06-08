@@ -6,7 +6,7 @@
  */
 
 import { memo } from 'react';
-import { ChevronDown, Clock, Loader2, RefreshCw } from 'lucide-react';
+import { ChevronDown, Clock, Eye, EyeOff, Loader2, RefreshCw } from 'lucide-react';
 import type { Theme } from '../../../types';
 import { formatFutureTime } from '../../../../shared/formatters';
 import { QUOTA_REFRESH_OPTIONS, resolveQuotaFillColor } from './quotaFormatting';
@@ -224,12 +224,15 @@ export const QuotaRefreshControls = memo(function QuotaRefreshControls({
 				type="button"
 				onClick={onRefresh}
 				disabled={isBusy}
-				className="relative flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors disabled:cursor-not-allowed overflow-hidden"
+				className="relative flex items-center justify-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors disabled:cursor-not-allowed overflow-hidden"
 				style={{
 					color: isBusy ? theme.colors.bgMain : theme.colors.accent,
 					backgroundColor: isBusy ? theme.colors.accent : `${theme.colors.accent}15`,
 					border: `1px solid ${theme.colors.accent}40`,
-					minWidth: '7.25rem',
+					// Floor just wide enough for the wider "Sampling..." state so the
+					// button doesn't resize between states; justify-center keeps the
+					// narrower "Refresh" content from drifting against the right edge.
+					minWidth: '6.75rem',
 				}}
 				data-testid={`${testIdPrefix}-refresh`}
 				aria-label={buttonAriaLabel}
@@ -255,6 +258,93 @@ export const QuotaRefreshControls = memo(function QuotaRefreshControls({
 				)}
 			</button>
 		</div>
+	);
+});
+
+/**
+ * Per-account hide/show toggle shown in the top-right of each row when the panel
+ * lists every account (`showAllAccounts`). Eye-off = currently visible (click to
+ * hide); Eye = currently hidden (click to bring back). The hidden set persists
+ * across sessions via `uiStore.toggleHiddenQuotaAccount`.
+ */
+export const QuotaVisibilityToggle = memo(function QuotaVisibilityToggle({
+	theme,
+	hidden,
+	shortName,
+	testIdPrefix,
+	onToggle,
+}: {
+	theme: Theme;
+	hidden: boolean;
+	shortName: string;
+	testIdPrefix: string;
+	onToggle: () => void;
+}) {
+	return (
+		<button
+			type="button"
+			onClick={onToggle}
+			className="flex items-center justify-center w-6 h-6 rounded transition-colors flex-shrink-0"
+			style={{
+				color: theme.colors.textDim,
+				backgroundColor: `${theme.colors.border}55`,
+				border: `1px solid ${theme.colors.border}`,
+			}}
+			data-testid={`${testIdPrefix}-visibility-${shortName}`}
+			aria-pressed={hidden}
+			title={hidden ? 'Show this account' : 'Hide this account'}
+			aria-label={hidden ? `Show account ${shortName}` : `Hide account ${shortName}`}
+		>
+			{hidden ? (
+				<Eye className="w-3.5 h-3.5" aria-hidden="true" />
+			) : (
+				<EyeOff className="w-3.5 h-3.5" aria-hidden="true" />
+			)}
+		</button>
+	);
+});
+
+/**
+ * Header "Show All" toggle. Only mounts when at least one account is hidden;
+ * pressing it reveals the hidden rows (dimmed, with their own Eye toggle) so the
+ * user can bring any back. Pressing again re-collapses to visible-only.
+ */
+export const QuotaShowAllToggle = memo(function QuotaShowAllToggle({
+	theme,
+	hiddenCount,
+	revealing,
+	testIdPrefix,
+	onToggle,
+}: {
+	theme: Theme;
+	hiddenCount: number;
+	revealing: boolean;
+	testIdPrefix: string;
+	onToggle: () => void;
+}) {
+	return (
+		<button
+			type="button"
+			onClick={onToggle}
+			className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors"
+			style={{
+				color: revealing ? theme.colors.bgMain : theme.colors.textDim,
+				backgroundColor: revealing ? theme.colors.accent : `${theme.colors.border}55`,
+				border: `1px solid ${revealing ? `${theme.colors.accent}40` : theme.colors.border}`,
+			}}
+			data-testid={`${testIdPrefix}-show-all`}
+			aria-pressed={revealing}
+			title={
+				revealing ? 'Collapse back to visible accounts' : 'Reveal hidden accounts to unhide them'
+			}
+		>
+			{revealing ? (
+				<EyeOff className="w-3.5 h-3.5" aria-hidden="true" />
+			) : (
+				<Eye className="w-3.5 h-3.5" aria-hidden="true" />
+			)}
+			<span>{revealing ? 'Hide hidden' : `Show all (${hiddenCount})`}</span>
+		</button>
 	);
 });
 

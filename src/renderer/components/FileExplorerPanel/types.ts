@@ -83,7 +83,12 @@ export interface NewFileModalState {
 export interface ContextMenuState {
 	x: number;
 	y: number;
-	node: FileNode;
+	/**
+	 * The file/folder row under the cursor, or `null` for the empty-space menu
+	 * (right-clicking the blank area of the panel or an empty workspace). The
+	 * root menu only offers "New Folder", targeting the workspace root.
+	 */
+	node: FileNode | null;
 	path: string;
 }
 

@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { Edit3, Plus, Smile, Trash2 } from 'lucide-react';
+import { Edit3, Plus, Trash2 } from 'lucide-react';
 import type { Group, Theme } from '../../types';
 import { useClickOutside, useContextMenuPosition } from '../../hooks';
 
@@ -10,7 +10,6 @@ interface GroupContextMenuProps {
 	group: Group;
 	memberCount: number;
 	onRename: () => void;
-	onChangeEmoji?: () => void;
 	onNewAgent: () => void;
 	onDelete?: () => void;
 	/** Override the delete button label; defaults based on memberCount. */
@@ -25,7 +24,6 @@ export function GroupContextMenu({
 	group,
 	memberCount,
 	onRename,
-	onChangeEmoji,
 	onNewAgent,
 	onDelete,
 	deleteLabel,
@@ -83,21 +81,6 @@ export function GroupContextMenu({
 				<Edit3 className="w-3.5 h-3.5" />
 				Rename Group...
 			</button>
-
-			{onChangeEmoji && (
-				<button
-					type="button"
-					onClick={() => {
-						onChangeEmoji();
-						onDismiss();
-					}}
-					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
-					style={{ color: theme.colors.textMain }}
-				>
-					<Smile className="w-3.5 h-3.5" />
-					Change Emoji...
-				</button>
-			)}
 
 			<button
 				type="button"

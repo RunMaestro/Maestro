@@ -379,11 +379,11 @@ function QueueItemRow({
 	const rowRef = useRef<HTMLDivElement>(null);
 
 	const isCommand = item.type === 'command';
-	const displayText = isCommand
-		? item.command
-		: (item.text?.length || 0) > 100
-			? item.text?.slice(0, 100) + '...'
-			: item.text;
+	// Read up to the first 4k characters and let CSS line-clamp truncate to
+	// whatever fits the card's height (the 3-button action stack reserves the
+	// vertical room). The native ellipsis fills the space without wrapping past
+	// the card, so longer messages show as much as fits rather than a hard 100-char cut.
+	const displayText = isCommand ? item.command : item.text?.slice(0, 4000);
 
 	const timeSinceQueued = Date.now() - item.timestamp;
 	const minutes = Math.floor(timeSinceQueued / 60000);
@@ -617,7 +617,7 @@ function QueueItemRow({
 						)}
 					</div>
 					<div
-						className={`mt-1 text-sm ${isCommand ? 'font-mono' : ''}`}
+						className={`mt-1 text-sm line-clamp-3 break-words ${isCommand ? 'font-mono' : ''}`}
 						style={{ color: theme.colors.textMain }}
 					>
 						{displayText}

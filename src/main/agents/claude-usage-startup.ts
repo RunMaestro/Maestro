@@ -290,8 +290,10 @@ function buildTarget(
  *   - 'startup' (default): only sessions that will spawn through maestro-p
  *     AND were created within the 7-day window. Keeps boot fast.
  *   - 'manual': every Claude Code session, ignoring the maestro-p filter and
- *     7-day window. Falls back to default ~/.claude when no Claude Code
- *     sessions exist so the Refresh button never returns "nothing happened".
+ *     7-day window. Still scoped to accounts a configured agent explicitly
+ *     references (session- or agent-level CLAUDE_CONFIG_DIR) - we never
+ *     discover unconfigured ~/.claude-* dirs on disk, since sampling a stale
+ *     leftover account would pop an OAuth browser the user never asked for.
  *
  * Never throws — every failure surfaces as a warn log and a skipped entry.
  */
@@ -349,18 +351,14 @@ export async function runStartupUsageSampling(deps: StartupUsageSamplingDeps): P
 		}
 	}
 
-	if (mode === 'manual') {
-		for (const configDir of await discoverClaudeConfigDirs()) {
-			const configDirKey = resolveConfigDirKey({ CLAUDE_CONFIG_DIR: configDir });
-			if (targetsByKey.has(configDirKey)) continue;
-			targetsByKey.set(configDirKey, {
-				configDir,
-				configDirKey,
-				cwd: os.homedir(),
-				customEnvVars: { ...agentLevelEnvVars, CLAUDE_CONFIG_DIR: configDir },
-			});
-		}
-	}
+	// NB: manual mode does NOT sweep the filesystem for ~/.claude-* account
+	// dirs. A blind sweep would spawn `maestro-p --status` against every
+	// leftover/stale account on disk, and any whose Keychain tokens have
+	// expired launch the Claude TUI's OAuth browser flow on each refresh tick.
+	// We sample only what a configured agent explicitly references, exactly
+	// like the startup path - see buildTarget()'s "don't guess the account"
+	// guard. (discoverClaudeConfigDirs() still backs the account-key listing
+	// IPC handler, which lists keys without spawning anything.)
 
 	if (targetsByKey.size === 0) {
 		logger.info('Skipping Claude usage sampling: no eligible accounts to sample', LOG_CONTEXT, {

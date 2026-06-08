@@ -17,6 +17,7 @@
 
 import { Command } from 'commander';
 import { EventEmitter } from 'node:events';
+import { randomUUID } from 'node:crypto';
 import * as os from 'os';
 import * as path from 'path';
 
@@ -38,8 +39,16 @@ const STATUS_INITIAL_WAIT_MS = 1500;
 // Then debounce on no-new-lines for this long before declaring the panel done.
 const STATUS_QUIET_DEBOUNCE_MS = 800;
 const STATUS_DEBOUNCE_POLL_MS = 100;
-// Window for the new JSONL file to appear after a fresh-session spawn.
-const DISCOVERY_TIMEOUT_MS = 10000;
+// Floor for how long to wait for the new JSONL file to appear after a
+// fresh-session spawn. This is only a FLOOR: the actual discovery window is
+// raised to the caller's `--max-wait` budget (see the fresh-session path
+// below). A cold claude TUI - first launch, MCP-server handshake, model
+// warmup - routinely needs well over 10s to flush its first session JSONL,
+// so a hardcoded 10s ceiling made every fresh-session spawn (tab naming,
+// background synopsis) flake while resume-based turns, which skip discovery,
+// were unaffected. Discovery still resolves the instant the file appears, so
+// a larger ceiling costs nothing on the happy path.
+const DISCOVERY_TIMEOUT_FLOOR_MS = 10000;
 
 const program = new Command();
 
@@ -178,9 +187,24 @@ async function runMode(args: ParsedArgs): Promise<never> {
 	const emitter = new JsonEmitter();
 	const startMs = Date.now();
 
+	// Fresh sessions: pre-assign the session id and tell the TUI to use it via
+	// `claude --session-id <uuid>`. The watcher then polls for exactly
+	// `<uuid>.jsonl` instead of guessing "the earliest new file", which is
+	// race-free when several fresh-session TUIs run concurrently in the same
+	// cwd (tab naming for multiple tabs in one project). Resume already knows
+	// its id, so we leave that path untouched. claude 2.1.x honours
+	// `--session-id` in interactive/TUI mode (verified: it writes exactly the
+	// requested `<uuid>.jsonl`).
+	const passThroughArgs = [...args.passThroughArgs];
+	let freshSessionId: string | null = null;
+	if (!args.resumeSessionId) {
+		freshSessionId = randomUUID();
+		passThroughArgs.push('--session-id', freshSessionId);
+	}
+
 	const driver = new TuiDriver({
 		binPath,
-		args: args.passThroughArgs,
+		args: passThroughArgs,
 		cwd,
 		env: process.env,
 	});
@@ -377,16 +401,23 @@ async function runMode(args: ParsedArgs): Promise<never> {
 		flushPending();
 		driver.send(prompt);
 	} else {
-		// Fresh-session path: spawn-time recorded as startMs (above) so the
-		// session-watcher won't pick up stale files. We start discovery and
-		// send the prompt back-to-back, then attach the tailer once the
-		// session id resolves.
+		// Fresh-session path: we pre-assigned `freshSessionId` and passed it to
+		// the TUI via `--session-id`, so discovery polls for exactly that file
+		// (race-free across concurrent same-cwd spawns). spawnTimestamp is still
+		// passed for the legacy earliest-new fallback, but expectSessionId takes
+		// precedence. We start discovery and send the prompt back-to-back, then
+		// attach the tailer once the file appears.
 		await waitForEvent(driver, 'ready');
 		const discoveryPromise = discoverSessionId({
 			configDir,
 			cwd,
 			spawnTimestamp: startMs,
-			timeoutMs: DISCOVERY_TIMEOUT_MS,
+			expectSessionId: freshSessionId ?? undefined,
+			// Defer to the caller's overall budget rather than imposing a
+			// separate, shorter sub-limit. The caller already enforces its own
+			// process-level timeout (e.g. tab naming kills at 45s), so this only
+			// ever extends the window for a slow cold start, never overruns it.
+			timeoutMs: Math.max(DISCOVERY_TIMEOUT_FLOOR_MS, args.maxWaitSeconds * 1000),
 		});
 		driver.send(prompt);
 		const { sessionId, jsonlPath } = await discoveryPromise;

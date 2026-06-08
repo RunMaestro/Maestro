@@ -152,6 +152,29 @@ describe('group-chat-storage', () => {
 			// Clean up
 			await deleteGroupChat(chat.id);
 		});
+
+		it('round-trips Claude token-source fields in moderatorConfig', async () => {
+			const chat = await createGroupChat('Token Source Test', 'claude-code', {
+				enableMaestroP: true,
+				maestroPMode: 'interactive',
+				maestroPPath: '/x',
+			});
+
+			// Present on the returned object
+			expect(chat.moderatorConfig?.enableMaestroP).toBe(true);
+			expect(chat.moderatorConfig?.maestroPMode).toBe('interactive');
+			expect(chat.moderatorConfig?.maestroPPath).toBe('/x');
+
+			// Survives a reload from disk (no field stripping in the storage layer)
+			const loaded = await loadGroupChat(chat.id);
+			expect(loaded).not.toBeNull();
+			expect(loaded!.moderatorConfig?.enableMaestroP).toBe(true);
+			expect(loaded!.moderatorConfig?.maestroPMode).toBe('interactive');
+			expect(loaded!.moderatorConfig?.maestroPPath).toBe('/x');
+
+			// Clean up
+			await deleteGroupChat(chat.id);
+		});
 	});
 
 	// ===========================================================================

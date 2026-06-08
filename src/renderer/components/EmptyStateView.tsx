@@ -285,23 +285,15 @@ export function EmptyStateView({
 			<div className="flex-1 flex flex-col items-center justify-center px-4">
 				<WelcomeContent theme={theme} showGetStarted />
 
-				{/* Action Buttons */}
-				<div className="flex items-center gap-4 mt-8">
+				{/* Action Button */}
+				<div className="flex items-center justify-center mt-8">
 					<button
 						onClick={onNewAgent}
 						className="flex items-center justify-center gap-3 px-8 py-4 rounded-lg text-base font-bold transition-colors hover:opacity-90 min-w-[180px]"
 						style={{ backgroundColor: theme.colors.accent, color: theme.colors.accentForeground }}
 					>
 						<Bot className="w-5 h-5" />
-						New Agent
-					</button>
-					<button
-						onClick={onOpenWizard}
-						className="flex items-center justify-center gap-3 px-8 py-4 rounded-lg text-base font-bold transition-colors hover:opacity-90 min-w-[180px]"
-						style={{ backgroundColor: theme.colors.accent, color: theme.colors.accentForeground }}
-					>
-						<Wand2 className="w-5 h-5" />
-						Wizard
+						Create your first agent
 					</button>
 				</div>
 			</div>

@@ -66,6 +66,8 @@ import {
 	READY_TAP_INTERVAL_MS,
 	READY_TIMEOUT_MS,
 	SEND_ENTER_DELAY_MS,
+	SUBMIT_ENTER_RETRIES,
+	SUBMIT_ENTER_RETRY_INTERVAL_MS,
 	TuiDriver,
 } from '../../maestro-p/tui-driver';
 
@@ -426,8 +428,13 @@ describe('TuiDriver', () => {
 			vi.useRealTimers();
 		});
 
-		it('writes text first and \\r after SEND_ENTER_DELAY_MS', async () => {
+		it('writes text first, then \\r at SEND_ENTER_DELAY_MS, then retry taps', async () => {
 			const driver = await makeDriver();
+			// Reach 'ready' first so the blind-tap ready loop is cleared; otherwise
+			// advancing fake time past READY_TAP_INTERVAL_MS below would inject
+			// unrelated taps and pollute the write count. Feeding the ❯ indicator
+			// emits ready without writing.
+			feed('❯ \n');
 			mockPtyProcess.write.mockClear();
 			driver.send('hello world');
 			// First write is the text body alone — no trailing \r, because
@@ -435,10 +442,22 @@ describe('TuiDriver', () => {
 			// multi-line input editor and the prompt sits unsubmitted.
 			expect(mockPtyProcess.write).toHaveBeenCalledTimes(1);
 			expect(mockPtyProcess.write).toHaveBeenNthCalledWith(1, 'hello world');
-			// Enter arrives as a separate write after the delay.
+			// First Enter arrives as a separate write after the delay.
 			vi.advanceTimersByTime(SEND_ENTER_DELAY_MS);
 			expect(mockPtyProcess.write).toHaveBeenCalledTimes(2);
 			expect(mockPtyProcess.write).toHaveBeenNthCalledWith(2, '\r');
+			// A single Enter is unreliable on a cold TUI (the input editor may not
+			// accept a submit yet), so send() re-taps Enter SUBMIT_ENTER_RETRIES
+			// more times at SUBMIT_ENTER_RETRY_INTERVAL_MS spacing. After all
+			// retries fire, total writes = 1 (text) + 1 (first Enter) + retries.
+			for (let i = 0; i < SUBMIT_ENTER_RETRIES; i += 1) {
+				vi.advanceTimersByTime(SUBMIT_ENTER_RETRY_INTERVAL_MS);
+			}
+			expect(mockPtyProcess.write).toHaveBeenCalledTimes(2 + SUBMIT_ENTER_RETRIES);
+			// Every retry write is a bare carriage return.
+			for (let n = 3; n <= 2 + SUBMIT_ENTER_RETRIES; n += 1) {
+				expect(mockPtyProcess.write).toHaveBeenNthCalledWith(n, '\r');
+			}
 		});
 
 		it('throws if called before start()', () => {

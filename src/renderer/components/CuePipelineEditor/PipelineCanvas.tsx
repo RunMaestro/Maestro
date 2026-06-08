@@ -12,7 +12,7 @@ import ReactFlow, {
 	ConnectionMode,
 	Controls,
 	MiniMap,
-	getBezierPath,
+	getSmoothStepPath,
 	type ConnectionLineComponentProps,
 	type Node,
 	type Edge,
@@ -70,19 +70,21 @@ const REACT_FLOW_PRO_OPTIONS = { hideAttribution: true } as const;
  * bypasses any styling/specificity issues with the default render path
  * entirely — we own the `<path>` element and its attributes.
  *
- * Visual contract: dashed bezier in CUE_COLOR at 2px, matching the look of
- * committed edges (which also use bezier + CUE_COLOR via PipelineEdge.tsx)
- * so the drag → release transition feels continuous.
+ * Visual contract: dashed orthogonal step line in CUE_COLOR at 2px, matching the
+ * look of committed edges (which also use a sharp-cornered smoothstep path +
+ * CUE_COLOR via PipelineEdge.tsx) so the drag → release transition feels
+ * continuous.
  */
 const PipelineConnectionLine = (props: ConnectionLineComponentProps) => {
 	const { fromX, fromY, toX, toY, fromPosition, toPosition } = props;
-	const [path] = getBezierPath({
+	const [path] = getSmoothStepPath({
 		sourceX: fromX,
 		sourceY: fromY,
 		sourcePosition: fromPosition,
 		targetX: toX,
 		targetY: toY,
 		targetPosition: toPosition,
+		borderRadius: 0,
 	});
 	return (
 		<g>
@@ -402,7 +404,7 @@ export const PipelineCanvas = React.memo(function PipelineCanvas({
 				onDragOver={onDragOver}
 				onDrop={onDrop}
 				connectionMode={ConnectionMode.Loose}
-				connectionLineType={ConnectionLineType.Bezier}
+				connectionLineType={ConnectionLineType.Step}
 				connectionLineStyle={connectionLineStyle}
 				connectionLineComponent={PipelineConnectionLine}
 				minZoom={0.1}

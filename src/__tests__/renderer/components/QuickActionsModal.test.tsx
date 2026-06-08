@@ -104,6 +104,8 @@ const mockShortcuts: Record<string, Shortcut> = {
 	toggleMarkdownMode: { id: 'toggleMarkdownMode', keys: ['Cmd', 'M'], enabled: true },
 	createDebugPackage: { id: 'createDebugPackage', keys: ['Alt', 'Cmd', 'D'], enabled: true },
 	nextUnreadTab: { id: 'nextUnreadTab', keys: ['Alt', 'Meta', 'ArrowDown'], enabled: true },
+	navBack: { id: 'navBack', keys: ['Meta', 'Shift', ','], enabled: true },
+	navForward: { id: 'navForward', keys: ['Meta', 'Shift', '.'], enabled: true },
 };
 
 // Thin wrapper: pre-populates an AI tab so the quick actions modal has
@@ -288,6 +290,29 @@ describe('QuickActionsModal', () => {
 			).toBeInTheDocument();
 		});
 
+		it('renders Navigate Back / Forward actions with shortcuts when handlers provided', () => {
+			const props = createDefaultProps({
+				onNavBack: vi.fn(),
+				onNavForward: vi.fn(),
+			});
+			render(<QuickActionsModal {...props} />);
+
+			expect(screen.getByText('Navigate Back')).toBeInTheDocument();
+			expect(screen.getByText('Navigate Forward')).toBeInTheDocument();
+			expect(screen.getByText(formatShortcutKeys(mockShortcuts.navBack.keys))).toBeInTheDocument();
+			expect(
+				screen.getByText(formatShortcutKeys(mockShortcuts.navForward.keys))
+			).toBeInTheDocument();
+		});
+
+		it('omits Navigate Back / Forward actions when handlers are absent', () => {
+			const props = createDefaultProps();
+			render(<QuickActionsModal {...props} />);
+
+			expect(screen.queryByText('Navigate Back')).not.toBeInTheDocument();
+			expect(screen.queryByText('Navigate Forward')).not.toBeInTheDocument();
+		});
+
 		it('renders Settings action', () => {
 			const props = createDefaultProps();
 			render(<QuickActionsModal {...props} />);
@@ -451,6 +476,28 @@ describe('QuickActionsModal', () => {
 			fireEvent.click(screen.getByText('Toggle Right Panel'));
 
 			expect(props.setRightPanelOpen).toHaveBeenCalled();
+		});
+
+		it('handles Navigate Back action', () => {
+			const onNavBack = vi.fn();
+			const props = createDefaultProps({ onNavBack });
+			render(<QuickActionsModal {...props} />);
+
+			fireEvent.click(screen.getByText('Navigate Back'));
+
+			expect(onNavBack).toHaveBeenCalled();
+			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
+		});
+
+		it('handles Navigate Forward action', () => {
+			const onNavForward = vi.fn();
+			const props = createDefaultProps({ onNavForward });
+			render(<QuickActionsModal {...props} />);
+
+			fireEvent.click(screen.getByText('Navigate Forward'));
+
+			expect(onNavForward).toHaveBeenCalled();
+			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
 		});
 
 		it('handles Switch AI/Shell Mode action', () => {

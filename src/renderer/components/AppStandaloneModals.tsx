@@ -447,6 +447,11 @@ function AppStandaloneModalsInner({
 						}
 						// Copy the gist URL to clipboard
 						safeClipboardWrite(gistUrl);
+						// Record the published gist URL in the system logs
+						logger.info(
+							`${isPublic ? 'Public' : 'Secret'} gist published: ${gistUrl}`,
+							'GistPublish'
+						);
 						// Show a toast notification
 						notifyToast({
 							type: 'success',

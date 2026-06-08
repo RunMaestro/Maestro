@@ -105,12 +105,13 @@ export const LanguagePicker = memo(function LanguagePicker({
 		const btn = buttonRef.current;
 		if (!btn) return;
 		const rect = btn.getBoundingClientRect();
-		// Anchor the popover below the button, right-aligned so it doesn't
-		// hang off the code block's right edge.
+		// Anchor the popover below the button, left-aligned with it (the picker
+		// sits at the code block's top-left). Clamp to the viewport's right edge
+		// so a wide popover near the screen edge can't overflow.
 		const popoverWidth = 280;
 		setPosition({
 			top: rect.bottom + 4,
-			left: Math.max(8, rect.right - popoverWidth),
+			left: Math.min(rect.left, window.innerWidth - popoverWidth - 8),
 		});
 		setOpen(true);
 		setQuery('');

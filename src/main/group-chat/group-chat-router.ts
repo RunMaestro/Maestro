@@ -45,6 +45,7 @@ import { getPrompt } from '../prompt-manager';
 import type { SshRemoteSettingsStore } from '../utils/ssh-remote-resolver';
 import { setGetCustomShellPathCallback } from './group-chat-config';
 import { spawnGroupChatAgent } from './spawnGroupChatAgent';
+import { getClaudeTokenMode } from '../../shared/claudeTokenMode';
 
 // Import emitters from IPC handlers (will be populated after handlers are registered)
 import { groupChatEmitters } from '../ipc/handlers/groupChat';
@@ -73,6 +74,12 @@ export interface GroupChatSessionInfo {
 	customArgs?: string;
 	customEnvVars?: Record<string, string>;
 	customModel?: string;
+	/** Claude token-source opt-in (Claude Code participants only). See getClaudeTokenMode. */
+	enableMaestroP?: boolean;
+	/** Refines enableMaestroP: 'interactive' (always TUI) vs 'dynamic' (auto-switch). */
+	maestroPMode?: 'interactive' | 'dynamic';
+	/** Optional maestro-p script override. */
+	maestroPPath?: string;
 	/** SSH remote name for display in participant card */
 	sshRemoteName?: string;
 	/** Full SSH remote config for remote execution */
@@ -849,6 +856,8 @@ ${readOnly ? 'READ-ONLY MODE is active. You and all participants can only inspec
 						getCustomEnvVarsCallback?.(chat.moderatorAgentId),
 					agentConfigValues,
 					sshRemoteConfig: chat.moderatorConfig?.sshRemoteConfig,
+					tokenMode: getClaudeTokenMode(chat.moderatorConfig),
+					maestroPPath: chat.moderatorConfig?.maestroPPath,
 					sshStore,
 					processManager,
 					readOnlyMode: true,
@@ -1309,6 +1318,8 @@ export async function routeModeratorResponse(
 						getCustomEnvVarsCallback?.(participant.agentId),
 					agentConfigValues,
 					sshRemoteConfig: matchingSession?.sshRemoteConfig,
+					tokenMode: getClaudeTokenMode(matchingSession),
+					maestroPPath: matchingSession?.maestroPPath,
 					sshStore,
 					processManager,
 					readOnlyMode: readOnly ?? false, // Propagate read-only mode from caller
@@ -1680,6 +1691,8 @@ Review the agent responses above. Either:
 				getCustomEnvVarsCallback?.(chat.moderatorAgentId),
 			agentConfigValues,
 			sshRemoteConfig: chat.moderatorConfig?.sshRemoteConfig,
+			tokenMode: getClaudeTokenMode(chat.moderatorConfig),
+			maestroPPath: chat.moderatorConfig?.maestroPPath,
 			sshStore,
 			processManager,
 			readOnlyMode: true,
@@ -1831,6 +1844,8 @@ export async function respawnParticipantWithRecovery(
 			configResolution.effectiveCustomEnvVars ?? getCustomEnvVarsCallback?.(participant.agentId),
 		agentConfigValues,
 		sshRemoteConfig: matchingSession?.sshRemoteConfig,
+		tokenMode: getClaudeTokenMode(matchingSession),
+		maestroPPath: matchingSession?.maestroPPath,
 		sshStore,
 		processManager,
 		readOnlyMode: readOnly ?? false,

@@ -163,6 +163,10 @@ beforeEach(() => {
 		modals: new Map(),
 	});
 
+	useBatchStore.setState({
+		batchRunStates: {},
+	});
+
 	// Ensure window.maestro.app is available for quit confirmation
 	(window as any).maestro = {
 		...((window as any).maestro || {}),
@@ -755,11 +759,14 @@ describe('useBatchHandlers', () => {
 				}
 			);
 
-			const { result } = renderHook(() => useBatchHandlers(createDeps()));
+			// Auto Run activity is sourced from the batch store, not the ref getter.
+			useBatchStore.setState({
+				batchRunStates: {
+					'session-1': createDefaultBatchState({ isRunning: true }),
+				},
+			});
 
-			// Set the ref to return a running state
-			result.current.getBatchStateRef.current = (sessionId: string) =>
-				createDefaultBatchState({ isRunning: true });
+			renderHook(() => useBatchHandlers(createDeps()));
 
 			await act(async () => {
 				await quitCallback();

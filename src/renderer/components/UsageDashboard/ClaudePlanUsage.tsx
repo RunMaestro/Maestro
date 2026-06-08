@@ -19,9 +19,10 @@
  * provider wiring.
  */
 
-import { memo, useCallback } from 'react';
+import { memo, useCallback, useMemo, useState } from 'react';
 import type { Theme } from '../../types';
 import { useClaudeUsageStore, type ClaudeUsageSnapshot } from '../../stores/claudeUsageStore';
+import { useUIStore } from '../../stores/uiStore';
 import { makeAccountKeyHelpers } from './quota/quotaFormatting';
 import {
 	QuotaAccountPill,
@@ -29,12 +30,16 @@ import {
 	QuotaBarRow,
 	QuotaPendingRow,
 	QuotaRefreshControls,
+	QuotaShowAllToggle,
+	QuotaVisibilityToggle,
 	type QuotaTabStatus,
 } from './quota/quotaPrimitives';
 import { useQuotaAccounts } from './quota/useQuotaAccounts';
 import { useQuotaRefresh } from './quota/useQuotaRefresh';
 
 const TEST_ID_PREFIX = 'claude-plan';
+/** Provider id used to key this panel's hidden-account set in uiStore. */
+const PROVIDER_ID = 'claude-code';
 const { deriveShortName, deriveDisplayName, normalizeKey } = makeAccountKeyHelpers('.claude');
 
 interface ClaudePlanUsageProps {
@@ -142,6 +147,19 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 		: null;
 	const snapshotCount = Object.keys(snapshots).length;
 
+	// Hidden-account state (only meaningful in the showAllAccounts list view).
+	const hiddenKeys = useUIStore((s) => s.hiddenQuotaAccounts[PROVIDER_ID]);
+	const toggleHidden = useUIStore((s) => s.toggleHiddenQuotaAccount);
+	const hiddenSet = useMemo(() => new Set(hiddenKeys ?? []), [hiddenKeys]);
+	const [revealHidden, setRevealHidden] = useState(false);
+	// Count only hidden keys still present in the configured set so a stale key
+	// for a removed account never shows a phantom "Show all" badge.
+	const hiddenVisibleCount = configuredAccountKeys.filter((k) => hiddenSet.has(k)).length;
+	const accountsToRender =
+		revealHidden || hiddenVisibleCount === 0
+			? configuredAccountKeys
+			: configuredAccountKeys.filter((k) => !hiddenSet.has(k));
+
 	// Trigger the main re-sample, then re-pull the store. The store re-pull runs
 	// even when the sampler IPC throws so the dashboard reflects the latest cache.
 	const doRefresh = useCallback(async () => {
@@ -154,9 +172,9 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 	}, []);
 
 	const { isBusy, refreshIntervalMs, setRefreshIntervalMs, handleRefresh } = useQuotaRefresh({
+		providerId: PROVIDER_ID,
 		refreshing,
 		autoRefresh,
-		showRefreshButton,
 		accountCount: configuredAccountKeys.length,
 		snapshotCount,
 		doRefresh,
@@ -164,26 +182,46 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 
 	const renderAccount = useCallback(
 		(configDirKey: string) => {
+			const shortName = deriveShortName(configDirKey);
 			const snapshot = snapshots[configDirKey];
-			return snapshot ? (
-				<AccountRow
-					key={configDirKey}
-					configDirKey={configDirKey}
-					snapshot={snapshot}
-					theme={theme}
-				/>
+			const isHidden = hiddenSet.has(configDirKey);
+			const body = snapshot ? (
+				<AccountRow configDirKey={configDirKey} snapshot={snapshot} theme={theme} />
 			) : (
 				<QuotaPendingRow
-					key={configDirKey}
 					accountKey={configDirKey}
-					shortName={deriveShortName(configDirKey)}
+					shortName={shortName}
 					displayName={deriveDisplayName(configDirKey)}
 					testIdPrefix={TEST_ID_PREFIX}
 					theme={theme}
 				/>
 			);
+			// Toggle sits inline to the left of the account pill (items-start keeps
+			// it aligned with the header row, not centered against the full row).
+			// Only the body dims when hidden so the toggle stays clearly clickable.
+			return (
+				<div
+					key={configDirKey}
+					className="flex items-start gap-2"
+					data-testid={`${TEST_ID_PREFIX}-account-${shortName}${isHidden ? '-hidden' : ''}`}
+				>
+					<QuotaVisibilityToggle
+						theme={theme}
+						hidden={isHidden}
+						shortName={shortName}
+						testIdPrefix={TEST_ID_PREFIX}
+						onToggle={() => toggleHidden(PROVIDER_ID, configDirKey)}
+					/>
+					<div
+						className="flex-1 min-w-0"
+						style={{ opacity: isHidden ? 0.45 : 1, transition: 'opacity 0.2s' }}
+					>
+						{body}
+					</div>
+				</div>
+			);
 		},
-		[snapshots, theme]
+		[snapshots, theme, hiddenSet, toggleHidden]
 	);
 
 	return (
@@ -197,34 +235,48 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 					<h3 className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
 						Claude Plan Usage
 					</h3>
-					<span
-						className="rounded-full px-2 py-0.5 text-xs"
-						style={{
-							color: theme.colors.textDim,
-							backgroundColor: `${theme.colors.border}55`,
-							border: `1px solid ${theme.colors.border}`,
-						}}
-					>
-						Claude Code
-					</span>
 				</div>
-				{showRefreshButton && (
-					<QuotaRefreshControls
-						theme={theme}
-						refreshIntervalMs={refreshIntervalMs}
-						onChangeInterval={setRefreshIntervalMs}
-						onRefresh={handleRefresh}
-						isBusy={isBusy}
-						testIdPrefix={TEST_ID_PREFIX}
-						sweepClassName="claude-plan-refresh-sweep"
-						intervalAriaLabel="Claude usage auto refresh interval"
-						buttonAriaLabel="Refresh Claude usage snapshots"
-					/>
-				)}
+				<div className="flex flex-wrap items-center justify-end gap-2">
+					{showAllAccounts && hiddenVisibleCount > 0 && (
+						<QuotaShowAllToggle
+							theme={theme}
+							hiddenCount={hiddenVisibleCount}
+							revealing={revealHidden}
+							testIdPrefix={TEST_ID_PREFIX}
+							onToggle={() => setRevealHidden((v) => !v)}
+						/>
+					)}
+					{showRefreshButton && (
+						<QuotaRefreshControls
+							theme={theme}
+							refreshIntervalMs={refreshIntervalMs}
+							onChangeInterval={setRefreshIntervalMs}
+							onRefresh={handleRefresh}
+							isBusy={isBusy}
+							testIdPrefix={TEST_ID_PREFIX}
+							sweepClassName="claude-plan-refresh-sweep"
+							intervalAriaLabel="Claude usage auto refresh interval"
+							buttonAriaLabel="Refresh Claude usage snapshots"
+						/>
+					)}
+				</div>
 			</div>
 
 			{showAllAccounts && configuredAccountKeys.length > 0 && (
-				<div className="space-y-4">{configuredAccountKeys.map(renderAccount)}</div>
+				<div className="space-y-4">
+					{accountsToRender.length > 0 ? (
+						accountsToRender.map(renderAccount)
+					) : (
+						<div
+							className="flex items-center justify-center h-16 text-sm text-center px-4"
+							style={{ color: theme.colors.textDim }}
+							data-testid={`${TEST_ID_PREFIX}-all-hidden`}
+						>
+							All accounts hidden. Use <strong className="mx-1">Show all</strong> to bring them
+							back.
+						</div>
+					)}
+				</div>
 			)}
 
 			{/* Account tab bar - renders whenever at least one account is

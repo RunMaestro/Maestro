@@ -83,6 +83,8 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 		setEnterToSendAIExpanded,
 		defaultSaveToHistory,
 		setDefaultSaveToHistory,
+		synopsisDebounceSeconds,
+		setSynopsisDebounceSeconds,
 		defaultShowThinking,
 		setDefaultShowThinking,
 		// Spell check
@@ -106,6 +108,10 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 		setBrowserHomeUrl,
 		htmlDoubleClickOpensInBrowser,
 		setHtmlDoubleClickOpensInBrowser,
+		browserTabKeepAlive,
+		setBrowserTabKeepAlive,
+		browserTabKeepAliveLimit,
+		setBrowserTabKeepAliveLimit,
 		// Power management
 		preventSleepEnabled,
 		setPreventSleepEnabled,
@@ -902,6 +908,34 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 					onChange={setDefaultSaveToHistory}
 					theme={theme}
 				/>
+
+				{defaultSaveToHistory && (
+					<div className="mt-3" data-setting-id="general-synopsis-debounce">
+						<div className="block text-xs font-bold opacity-70 uppercase mb-2 flex items-center gap-2">
+							<Clock className="w-3 h-3" />
+							Synopsis Debounce
+						</div>
+						<ToggleButtonGroup
+							options={[
+								{ value: 0, label: 'Off' },
+								{ value: 15, label: '15s' },
+								{ value: 30, label: '30s' },
+								{ value: 60, label: '1 min' },
+								{ value: 120, label: '2 min' },
+							]}
+							value={synopsisDebounceSeconds}
+							onChange={setSynopsisDebounceSeconds}
+							theme={theme}
+						/>
+						<p className="text-xs opacity-50 mt-2">
+							Wait for the agent to be idle this long before generating a History synopsis. Rapid
+							back-to-back completions are coalesced into a single synopsis once the conversation
+							settles, and turns that did no real work (a plain question and answer with no tool
+							use) are skipped entirely. Off generates a synopsis immediately after every
+							completion.
+						</p>
+					</div>
+				)}
 			</div>
 
 			{/* Default Thinking Toggle - Three states: Off, On, Sticky */}
@@ -1400,6 +1434,49 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 					<p className="text-xs opacity-40 mt-2">
 						The URL loaded when opening a new browser tab (Cmd+B).
 					</p>
+				</div>
+				{/* Background browser tabs keep-alive */}
+				<div
+					data-setting-id="general-browser-keepalive"
+					className="mt-3 p-3 rounded border"
+					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
+				>
+					<div className="font-medium" style={{ color: theme.colors.textMain }}>
+						Background browser tabs
+					</div>
+					<div className="text-xs opacity-50 mt-0.5 mb-2" style={{ color: theme.colors.textDim }}>
+						An inactive browser tab is unloaded by default, so its page reloads and loses any
+						in-memory state when you return. Keep recent or all tabs alive to preserve their state
+						at the cost of memory (each live tab holds a full browser process).
+					</div>
+					<ToggleButtonGroup
+						options={[
+							{ value: 'off' as const, label: 'Unload when inactive' },
+							{ value: 'recent' as const, label: 'Keep recent alive' },
+							{ value: 'all' as const, label: 'Keep all alive' },
+						]}
+						value={browserTabKeepAlive}
+						onChange={setBrowserTabKeepAlive}
+						theme={theme}
+					/>
+					{browserTabKeepAlive === 'recent' && (
+						<div className="mt-3 flex items-center gap-2">
+							<label className="text-xs opacity-60" style={{ color: theme.colors.textDim }}>
+								Keep this many recent tabs alive
+							</label>
+							<input
+								type="number"
+								min={1}
+								max={100}
+								value={browserTabKeepAliveLimit}
+								onChange={(e) =>
+									setBrowserTabKeepAliveLimit(Math.max(1, parseInt(e.target.value, 10) || 1))
+								}
+								className="w-20 p-1.5 rounded border bg-transparent outline-none text-xs"
+								style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+							/>
+						</div>
+					)}
 				</div>
 			</div>
 

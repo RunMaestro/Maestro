@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 
@@ -26,6 +26,7 @@ function resetStore() {
 		draggingSessionId: null,
 		editingGroupId: null,
 		editingSessionId: null,
+		usageDashboardViewMode: 'overview',
 	});
 }
 
@@ -55,6 +56,7 @@ describe('uiStore', () => {
 			expect(state.draggingSessionId).toBeNull();
 			expect(state.editingGroupId).toBeNull();
 			expect(state.editingSessionId).toBeNull();
+			expect(state.usageDashboardViewMode).toBe('overview');
 		});
 	});
 
@@ -128,6 +130,17 @@ describe('uiStore', () => {
 			expect(useUIStore.getState().bookmarksCollapsed).toBe(true);
 			useUIStore.getState().toggleBookmarksCollapsed();
 			expect(useUIStore.getState().bookmarksCollapsed).toBe(false);
+		});
+
+		it('persists bookmarks collapse state so it survives restarts', () => {
+			const setSetting = (window as any).maestro.settings.set as ReturnType<typeof vi.fn>;
+			setSetting.mockClear();
+
+			useUIStore.getState().setBookmarksCollapsed(true);
+			expect(setSetting).toHaveBeenCalledWith('bookmarksCollapsed', true);
+
+			useUIStore.getState().toggleBookmarksCollapsed();
+			expect(setSetting).toHaveBeenLastCalledWith('bookmarksCollapsed', false);
 		});
 	});
 
@@ -283,6 +296,21 @@ describe('uiStore', () => {
 
 			useUIStore.getState().setEditingSessionId(null);
 			expect(useUIStore.getState().editingSessionId).toBeNull();
+		});
+	});
+
+	describe('usage dashboard view mode', () => {
+		it('sets the last-selected tab with a value', () => {
+			useUIStore.getState().setUsageDashboardViewMode('cue');
+			expect(useUIStore.getState().usageDashboardViewMode).toBe('cue');
+		});
+
+		it('sets the last-selected tab with an updater', () => {
+			useUIStore.getState().setUsageDashboardViewMode('autorun');
+			useUIStore
+				.getState()
+				.setUsageDashboardViewMode((prev) => (prev === 'autorun' ? 'activity' : 'overview'));
+			expect(useUIStore.getState().usageDashboardViewMode).toBe('activity');
 		});
 	});
 

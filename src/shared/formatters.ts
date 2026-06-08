@@ -8,6 +8,7 @@
  * - formatTokens: Token counts with K/M/B suffixes (~prefix)
  * - formatTokensCompact: Token counts without ~prefix
  * - formatRelativeTime: Relative timestamps ("5m ago", "2h ago")
+ * - formatCacheAge: Cache age labels ("just now", "5m ago", "2h ago")
  * - formatAgeShort: Compact age badge ("new", "5m", "3h", "5d", "3w", "6mo", "3.5y")
  * - formatActiveTime: Duration display (1D, 2H 30M, <1M)
  * - formatElapsedTime: Precise elapsed time (1h 10m, 30s, 500ms)
@@ -126,6 +127,24 @@ export function formatRelativeTime(
 }
 
 /**
+ * Format a cache age duration in milliseconds for compact status labels.
+ *
+ * Unlike `formatRelativeTime`, this receives an elapsed age rather than an
+ * absolute timestamp and intentionally never rolls into days.
+ */
+export function formatCacheAge(cacheAgeMs: number | null): string {
+	if (cacheAgeMs === null || cacheAgeMs === 0) return 'just now';
+
+	const seconds = Math.floor(cacheAgeMs / 1000);
+	const minutes = Math.floor(seconds / 60);
+	const hours = Math.floor(minutes / 60);
+
+	if (hours > 0) return `${hours}h ago`;
+	if (minutes > 0) return `${minutes}m ago`;
+	return 'just now';
+}
+
+/**
  * Format an age (elapsed time since a creation timestamp) as the most compact
  * human-readable string that still fits a small badge. Used by the dashboard
  * agent cards where space is at a premium.
@@ -140,7 +159,7 @@ export function formatRelativeTime(
  *   - < 10 years     → "3.5y" (one decimal, .0 suffix dropped → "3y" / "3.5y")
  *   - >= 10 years    → "12y"
  *
- * Month = 30 days, year = 365 days — coarse enough that the badge stays stable
+ * Month = 30 days, year = 365 days - coarse enough that the badge stays stable
  * across renders without overengineering calendar math.
  */
 export function formatAgeShort(dateOrTimestamp: Date | number | string): string {
@@ -177,7 +196,7 @@ export function formatAgeShort(dateOrTimestamp: Date | number | string): string 
 /**
  * Format a future timestamp as a forward-looking relative string.
  *
- * `formatRelativeTime` only models the past — every future timestamp collapses
+ * `formatRelativeTime` only models the past - every future timestamp collapses
  * to "just now" because the `diffMins < 1` branch fires on negative diffs. This
  * helper is the symmetric forward variant for things like quota reset times.
  *
@@ -190,7 +209,7 @@ export function formatAgeShort(dateOrTimestamp: Date | number | string): string 
  *   - beyond a week → "May 22 at 10:00 AM"
  *
  * If `timestamp` is already past `now` (sample is older than the reset),
- * returns "just now" — same calling-site sentinel as `formatRelativeTime`'s
+ * returns "just now" - same calling-site sentinel as `formatRelativeTime`'s
  * floor so consumers don't need to special-case stale snapshots.
  */
 export function formatFutureTime(dateOrTimestamp: Date | number | string): string {
@@ -537,7 +556,7 @@ export function estimateTokensFromLogs(logs: { text: string }[]): number {
 /**
  * Cleverly shorten a group name so it fits in a small badge/pill.
  *
- * Strategy ladder — first rung that meets `max` wins:
+ * Strategy ladder - first rung that meets `max` wins:
  *   1. Already short enough → return as-is.
  *   2. Contains "&" or " and " conjunction → acronym joined by "&"
  *      ("Amini & Conant" → "A&C", "Foo and Bar and Baz" → "F&B&B").
@@ -580,7 +599,7 @@ export function abbreviateGroupName(
 		return match ? match[0].toUpperCase() : '';
 	};
 
-	// Acronym joined by "&" — handles "A & B" and "A and B" forms.
+	// Acronym joined by "&" - handles "A & B" and "A and B" forms.
 	const conjunctionParts = trimmed
 		.split(/\s*&\s*|\s+and\s+/i)
 		.map((p) => firstLetter(p))

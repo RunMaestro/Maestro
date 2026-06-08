@@ -9,6 +9,7 @@ import {
 	formatTokens,
 	formatTokensCompact,
 	formatRelativeTime,
+	formatCacheAge,
 	formatAgeShort,
 	formatActiveTime,
 	formatElapsedTime,
@@ -193,6 +194,33 @@ describe('shared/formatters', () => {
 				expect(formatRelativeTime(now - 60 * 60000, { includeSeconds: true })).toBe('1h ago');
 				expect(formatRelativeTime(now - 24 * 60 * 60000, { includeSeconds: true })).toBe('1d ago');
 			});
+		});
+	});
+
+	// ==========================================================================
+	// formatCacheAge tests
+	// ==========================================================================
+	describe('formatCacheAge', () => {
+		it('should format null and zero as just now', () => {
+			expect(formatCacheAge(null)).toBe('just now');
+			expect(formatCacheAge(0)).toBe('just now');
+		});
+
+		it('should format sub-minute durations as just now', () => {
+			expect(formatCacheAge(15_000)).toBe('just now');
+			expect(formatCacheAge(59_999)).toBe('just now');
+		});
+
+		it('should format minutes below one hour', () => {
+			expect(formatCacheAge(60_000)).toBe('1m ago');
+			expect(formatCacheAge(45 * 60_000)).toBe('45m ago');
+			expect(formatCacheAge(59 * 60_000)).toBe('59m ago');
+		});
+
+		it('should format whole hours without rolling into days', () => {
+			expect(formatCacheAge(60 * 60_000)).toBe('1h ago');
+			expect(formatCacheAge(2 * 60 * 60_000)).toBe('2h ago');
+			expect(formatCacheAge(25 * 60 * 60_000)).toBe('25h ago');
 		});
 	});
 

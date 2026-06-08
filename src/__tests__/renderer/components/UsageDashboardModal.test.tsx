@@ -8,6 +8,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { logger } from '../../../renderer/utils/logger';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { UsageDashboardModal } from '../../../renderer/components/UsageDashboard/UsageDashboardModal';
+import { useUIStore } from '../../../renderer/stores/uiStore';
 import type { Theme } from '../../../renderer/types';
 
 // Mock lucide-react icons - include all icons used by modal and its child components
@@ -212,6 +213,11 @@ describe('UsageDashboardModal', () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks();
+		// The dashboard tab is now persisted in the shared uiStore singleton, which
+		// survives across tests in this file. Reset it so each test starts on the
+		// default 'overview' tab instead of inheriting whatever a prior tab-switching
+		// test left behind.
+		useUIStore.setState({ usageDashboardViewMode: 'overview' });
 		mockGetAggregation.mockResolvedValue(createSampleData());
 		mockExportCsv.mockResolvedValue('date,count\n2024-01-15,25');
 		mockSaveFile.mockResolvedValue(null); // User cancels by default

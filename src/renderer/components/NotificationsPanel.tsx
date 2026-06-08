@@ -482,6 +482,7 @@ export function NotificationsPanel({
 						{ value: 'small', label: 'Small' },
 						{ value: 'medium', label: 'Medium' },
 						{ value: 'large', label: 'Large' },
+						{ value: 'dynamic', label: 'Dynamic' },
 					]}
 					value={toastWidth}
 					onChange={setToastWidth}
@@ -489,7 +490,8 @@ export function NotificationsPanel({
 				/>
 				<p className="text-xs opacity-50 mt-2">
 					How wide toast notifications render in the corner. Small is the default compact size;
-					Large is roughly 1.8&times; wider.
+					Large is roughly 1.8&times; wider. Dynamic matches the Right Bar width and tracks it as
+					you resize the panel.
 				</p>
 			</div>
 

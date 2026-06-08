@@ -73,6 +73,7 @@ vi.mock('../../../main/utils/sentry', () => ({
 	captureMessage: captureMessageMock,
 }));
 
+import path from 'path';
 import { sampleUsage } from '../../../main/agents/claude-usage-sampler';
 
 const FROZEN_NOW = new Date('2026-05-15T12:00:00.000Z').getTime();
@@ -223,6 +224,70 @@ describe('claude-usage-sampler', () => {
 			const env = inspect()?.options.env as NodeJS.ProcessEnv;
 			expect(env.PATH).toBe('/usr/bin');
 			expect(env.MAESTRO_CLAUDE_BIN).toBe('/opt/claude');
+		});
+
+		it('forces BROWSER to a no-op so an expired-token account can never pop the OAuth browser', async () => {
+			// A read-only `/usage` probe must stay OAuth-silent: claude's URL opener
+			// uses $BROWSER as the launch command and does not fall back to the
+			// system opener, so a no-op here makes the consent flow open nothing on
+			// an unattended background refresh tick. Regressing this silently
+			// re-pops authorization windows.
+			process.env.BROWSER = '/usr/bin/open-a-real-browser';
+			const inspect = primeSuccess(wireEnvelope());
+			await sampleUsage({ binPath: '/bin/maestro-p.js', cwd: '/tmp' });
+			const env = inspect()?.options.env as NodeJS.ProcessEnv;
+			expect(env.BROWSER).toBe('/usr/bin/true');
+		});
+
+		it('sets ELECTRON_RUN_AS_NODE=1 so the Electron execPath runs maestro-p as Node', async () => {
+			// Without this, a packaged app would spawn a second GUI instance
+			// instead of executing the maestro-p script, and --status would
+			// never produce a snapshot.
+			const inspect = primeSuccess(wireEnvelope());
+			await sampleUsage({ binPath: '/bin/maestro-p.js', cwd: '/tmp' });
+			const env = inspect()?.options.env as NodeJS.ProcessEnv;
+			expect(env.ELECTRON_RUN_AS_NODE).toBe('1');
+		});
+
+		it('prepends the unpacked node_modules to NODE_PATH when packaged (resourcesPath set)', async () => {
+			const originalResourcesPath = process.resourcesPath;
+			Object.defineProperty(process, 'resourcesPath', {
+				value: '/Apps/Maestro.app/Contents/Resources',
+				configurable: true,
+			});
+			process.env.NODE_PATH = '/pre/existing';
+			try {
+				const inspect = primeSuccess(wireEnvelope());
+				await sampleUsage({ binPath: '/bin/maestro-p.js', cwd: '/tmp' });
+				const env = inspect()?.options.env as NodeJS.ProcessEnv;
+				const unpacked = '/Apps/Maestro.app/Contents/Resources/app.asar.unpacked/node_modules';
+				expect(env.NODE_PATH).toBe(`${unpacked}${path.delimiter}/pre/existing`);
+			} finally {
+				Object.defineProperty(process, 'resourcesPath', {
+					value: originalResourcesPath,
+					configurable: true,
+				});
+			}
+		});
+
+		it('leaves NODE_PATH untouched in dev (no resourcesPath)', async () => {
+			const originalResourcesPath = process.resourcesPath;
+			Object.defineProperty(process, 'resourcesPath', {
+				value: '',
+				configurable: true,
+			});
+			delete process.env.NODE_PATH;
+			try {
+				const inspect = primeSuccess(wireEnvelope());
+				await sampleUsage({ binPath: '/bin/maestro-p.js', cwd: '/tmp' });
+				const env = inspect()?.options.env as NodeJS.ProcessEnv;
+				expect(env.NODE_PATH).toBeUndefined();
+			} finally {
+				Object.defineProperty(process, 'resourcesPath', {
+					value: originalResourcesPath,
+					configurable: true,
+				});
+			}
 		});
 
 		it('lets explicit configDir win over customEnvVars.CLAUDE_CONFIG_DIR', async () => {

@@ -8,6 +8,7 @@ interface NotifyToastOptions {
 	timeout?: string;
 	dismissible?: boolean;
 	agent?: string;
+	sourceAgent?: string;
 	tab?: string;
 	actionUrl?: string;
 	actionLabel?: string;
@@ -83,6 +84,11 @@ export async function notifyToast(
 		}
 	}
 
+	const sourceAgent =
+		options.sourceAgent && options.sourceAgent.trim().length > 0
+			? options.sourceAgent.trim()
+			: undefined;
+
 	const tabId = options.tab && options.tab.length > 0 ? options.tab : undefined;
 	if (tabId && !sessionId) {
 		console.error('Error: --tab requires --agent (a tab is scoped to an agent)');
@@ -133,6 +139,7 @@ export async function notifyToast(
 					duration,
 					dismissible,
 					sessionId,
+					sourceAgent,
 					tabId,
 					actionUrl,
 					actionLabel,

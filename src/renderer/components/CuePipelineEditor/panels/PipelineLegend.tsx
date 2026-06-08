@@ -32,6 +32,7 @@ function PipelineLegendInner({
 	if (selectedPipelineId !== null || pipelines.length === 0) return null;
 	return (
 		<div
+			className="no-scrollbar"
 			style={{
 				position: 'absolute',
 				top: 8,

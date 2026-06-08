@@ -1,8 +1,9 @@
 import { useState, useRef, useCallback, useEffect, useLayoutEffect, memo } from 'react';
 import { createPortal } from 'react-dom';
-import { FilePlus, Globe, Plus, Terminal } from 'lucide-react';
+import { FileText, Globe, MessageSquare, Plus, Terminal } from 'lucide-react';
 import type { Theme } from '../../types';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
+import { getTabKindColor } from './tabBarUtils';
 
 interface NewTabPopoverProps {
 	theme: Theme;
@@ -150,7 +151,10 @@ export const NewTabPopover = memo(function NewTabPopover({
 							style={{ color: theme.colors.textMain }}
 							onClick={() => closeAndDo(onNewTab)}
 						>
-							<Plus className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+							<MessageSquare
+								className="w-3.5 h-3.5"
+								style={{ color: getTabKindColor('ai', theme) }}
+							/>
 							New AI Chat
 							<span className="ml-auto text-xs" style={{ color: theme.colors.textDim }}>
 								{formatShortcutKeys(newTabKeys)}
@@ -162,7 +166,10 @@ export const NewTabPopover = memo(function NewTabPopover({
 								style={{ color: theme.colors.textMain }}
 								onClick={() => closeAndDo(onNewFileTab)}
 							>
-								<FilePlus className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+								<FileText
+									className="w-3.5 h-3.5"
+									style={{ color: getTabKindColor('file', theme) }}
+								/>
 								New File
 								<span className="ml-auto text-xs" style={{ color: theme.colors.textDim }}>
 									{formatShortcutKeys(fileTabKeys)}
@@ -175,7 +182,10 @@ export const NewTabPopover = memo(function NewTabPopover({
 								style={{ color: theme.colors.textMain }}
 								onClick={() => closeAndDo(onNewBrowserTab)}
 							>
-								<Globe className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+								<Globe
+									className="w-3.5 h-3.5"
+									style={{ color: getTabKindColor('browser', theme) }}
+								/>
 								New Browser
 								<span className="ml-auto text-xs" style={{ color: theme.colors.textDim }}>
 									{formatShortcutKeys(browserTabKeys)}
@@ -187,7 +197,10 @@ export const NewTabPopover = memo(function NewTabPopover({
 							style={{ color: theme.colors.textMain }}
 							onClick={() => closeAndDo(() => onNewTerminalTab?.())}
 						>
-							<Terminal className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+							<Terminal
+								className="w-3.5 h-3.5"
+								style={{ color: getTabKindColor('terminal', theme) }}
+							/>
 							New Terminal
 							<span className="ml-auto text-xs" style={{ color: theme.colors.textDim }}>
 								{formatShortcutKeys(terminalKeys)}

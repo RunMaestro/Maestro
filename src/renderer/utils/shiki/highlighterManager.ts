@@ -79,6 +79,9 @@ export const PRELOADED_LANGUAGES = [
 	'cpp',
 	'sql',
 	'xml',
+	'diff',
+	'toml',
+	'docker',
 ] as const;
 
 /**
@@ -90,6 +93,7 @@ export const LANGUAGE_ALIASES: Record<string, string> = {
 	js: 'javascript',
 	py: 'python',
 	zsh: 'bash',
+	dockerfile: 'docker',
 	plaintext: 'text',
 	'': 'text',
 };

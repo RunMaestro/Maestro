@@ -22,6 +22,7 @@ export const AgentPickerGrid = React.memo(function AgentPickerGrid({
 	customAgentArgs,
 	customAgentEnvVars,
 	enableMaestroPByAgent,
+	maestroPModeByAgent,
 	maestroPPathByAgent,
 	detectedMaestroPPath,
 	agentConfigs,
@@ -34,6 +35,7 @@ export const AgentPickerGrid = React.memo(function AgentPickerGrid({
 	onCustomPathChange,
 	onCustomArgsChange,
 	onEnableMaestroPChange,
+	onMaestroPModeChange,
 	onMaestroPPathChange,
 	onEnvVarKeyChange,
 	onEnvVarValueChange,
@@ -262,6 +264,12 @@ export const AgentPickerGrid = React.memo(function AgentPickerGrid({
 											onEnableMaestroPChange={
 												onEnableMaestroPChange
 													? (value) => onEnableMaestroPChange(agent.id, value)
+													: undefined
+											}
+											maestroPMode={maestroPModeByAgent?.[agent.id] ?? 'dynamic'}
+											onMaestroPModeChange={
+												onMaestroPModeChange
+													? (mode) => onMaestroPModeChange(agent.id, mode)
 													: undefined
 											}
 											maestroPPath={maestroPPathByAgent?.[agent.id] ?? ''}

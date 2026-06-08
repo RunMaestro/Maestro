@@ -326,7 +326,15 @@ export function registerFilesystemHandlers(): void {
 				isDirectory: stats.isDirectory(),
 				isFile: stats.isFile(),
 			};
-		} catch (error) {
+		} catch (error: any) {
+			// Return null for missing files/paths instead of throwing, matching the
+			// fs:readFile handler's ENOENT contract. Callers stat phantom targets
+			// routinely (e.g. the Document Graph following unresolved [[wiki]] links),
+			// and a missing target is an expected, benign condition - not an error.
+			// ENOTDIR covers links that treat a file as a directory (e.g. `[[file.md/sub]]`).
+			if (error?.code === 'ENOENT' || error?.code === 'ENOTDIR') {
+				return null;
+			}
 			throw new Error(`Failed to get file stats: ${error}`);
 		}
 	});

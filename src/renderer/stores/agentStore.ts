@@ -320,8 +320,13 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 		}
 
 		// Find the TARGET tab for this queued item (NOT the active tab!)
-		// The item carries its intended tabId from when it was queued
-		const tabByItemId = session.aiTabs.find((tab) => tab.id === item.tabId);
+		// The item carries its intended tabId from when it was queued. A tab that
+		// was closed while it still had queued work lives on in orphanedThinkingTabs
+		// (fire-and-forget background send), so it is also a valid target - look
+		// there before deciding the tab is truly gone.
+		const tabByItemId =
+			session.aiTabs.find((tab) => tab.id === item.tabId) ||
+			session.orphanedThinkingTabs?.find((tab) => tab.id === item.tabId);
 
 		if (!tabByItemId && item.tabId) {
 			logger.warn(

@@ -389,7 +389,7 @@ export const FileTab = memo(function FileTab({
 
 			{/* Tab name - filename without extension */}
 			<span
-				className={`text-xs font-medium ${isActive ? 'whitespace-nowrap' : 'truncate max-w-[120px]'}`}
+				className="text-xs font-medium whitespace-nowrap"
 				style={{ color: isActive ? theme.colors.textMain : theme.colors.textDim }}
 			>
 				{tab.name}

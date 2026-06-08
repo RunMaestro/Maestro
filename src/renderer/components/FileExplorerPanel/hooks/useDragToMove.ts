@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import type { Session } from '../../../types';
 import type { FileNode } from '../../../types/fileTree';
@@ -31,6 +31,20 @@ interface UseDragToMoveArgs {
 
 interface UseDragToMoveResult {
 	dragOverFolder: string | null;
+	/**
+	 * True while the active drag-over is an OS-file import (Finder/Explorer),
+	 * as opposed to an in-tree move. Lets the panel show an explanatory
+	 * "drop to import" overlay only for external drags. Read alongside
+	 * `dragOverFolder !== null` so it self-clears when the drag leaves.
+	 */
+	isExternalDrag: boolean;
+	/**
+	 * True while an in-tree row drag is in flight (set on the row's dragstart,
+	 * cleared on dragend). Drives the "move to root" receptacle, which only
+	 * needs to appear while the user is actually dragging a tree item - mirrors
+	 * the Left Bar's "Drop here to ungroup" zone that shows only mid-drag.
+	 */
+	internalDragActive: boolean;
 	moveConflict: MoveConflictState | null;
 	isMoving: boolean;
 	performMoves: (
@@ -51,6 +65,8 @@ interface UseDragToMoveResult {
 	handleMoveAutoRenameAll: () => void;
 	handleMoveSkipConflicts: () => void;
 	closeMoveConflict: () => void;
+	handleInternalDragStart: (showRootReceptacle: boolean) => void;
+	handleInternalDragEnd: () => void;
 }
 
 export function useDragToMove({
@@ -62,6 +78,11 @@ export function useDragToMove({
 	setSelectedPaths,
 }: UseDragToMoveArgs): UseDragToMoveResult {
 	const [dragOverFolder, setDragOverFolder] = useState<string | null>(null);
+	const [isExternalDrag, setIsExternalDrag] = useState(false);
+	const [internalDragActive, setInternalDragActive] = useState(false);
+	// Guards the deferred dragstart flag: if the drag ends before the next tick
+	// (a flick or instant cancel), we must not flip the receptacle on afterwards.
+	const dragActiveRef = useRef(false);
 	const [moveConflict, setMoveConflict] = useState<MoveConflictState | null>(null);
 	const [isMoving, setIsMoving] = useState(false);
 
@@ -247,6 +268,7 @@ export function useDragToMove({
 				e.preventDefault();
 				e.stopPropagation();
 				setDragOverFolder(null);
+				setIsExternalDrag(false);
 				handleExternalImport(getDroppedPaths(e.dataTransfer), destFolderRelative);
 				return;
 			}
@@ -277,7 +299,11 @@ export function useDragToMove({
 			e.stopPropagation();
 			setDragOverFolder(null);
 
-			const destFolderAbsolute = `${session.fullPath}/${destFolderRelative}`;
+			// destFolderRelative is '' for the tree root; join without a trailing
+			// slash so root paths stay `${fullPath}/${name}` rather than `//`.
+			const destFolderAbsolute = destFolderRelative
+				? `${session.fullPath}/${destFolderRelative}`
+				: session.fullPath;
 			const destFolderNode = findNodeAtPath(session.fileTree, destFolderRelative);
 			const existingNames = new Set(destFolderNode?.children?.map((c: FileNode) => c.name) ?? []);
 			const noConflict: PendingMove[] = [];
@@ -289,7 +315,12 @@ export function useDragToMove({
 
 				const sourceName = basenameOf(sourceRelative);
 				const sourceAbsolute = `${session.fullPath}/${sourceRelative}`;
-				const destRelative = `${destFolderRelative}/${sourceName}`;
+				// At root (destFolderRelative === '') the relative path is just the
+				// name; otherwise nest it under the folder. A leading slash here would
+				// make findNodeAtPath miss existing root files and skip conflict checks.
+				const destRelative = destFolderRelative
+					? `${destFolderRelative}/${sourceName}`
+					: sourceName;
 				const destAbsolute = `${destFolderAbsolute}/${sourceName}`;
 				const conflictNode = findNodeAtPath(session.fileTree, destRelative);
 				if (conflictNode) {
@@ -376,6 +407,7 @@ export function useDragToMove({
 			if (!sshRemoteId && dragHasOsFiles(e.dataTransfer)) {
 				e.stopPropagation();
 				setDragOverFolder(destFolderRelative);
+				setIsExternalDrag(true);
 				return;
 			}
 			const hasMaestroDrag =
@@ -384,6 +416,7 @@ export function useDragToMove({
 			if (!hasMaestroDrag) return;
 			e.stopPropagation();
 			setDragOverFolder(destFolderRelative);
+			setIsExternalDrag(false);
 		},
 		[sshRemoteId]
 	);
@@ -400,6 +433,7 @@ export function useDragToMove({
 		const row = e.currentTarget as Node | null;
 		if (row && next && row.contains(next)) return;
 		setDragOverFolder(null);
+		setIsExternalDrag(false);
 	}, []);
 
 	const handleMoveOverwriteAll = useCallback(() => {
@@ -449,8 +483,38 @@ export function useDragToMove({
 
 	const closeMoveConflict = useCallback(() => setMoveConflict(null), []);
 
+	// Row dragstart/dragend pair. The row is the only thing that knows a tree
+	// drag began (the panel doesn't see it until the cursor enters a drop zone),
+	// so it flips this flag to reveal the "move to root" receptacle. dragend
+	// always fires - successful drop or cancel - so it doubly clears any leftover
+	// hover state in case the drop happened outside a registered handler.
+	//
+	// The flag flip is deferred to the next tick on purpose: mounting the
+	// receptacle reflows the panel, and Chromium ABORTS an in-flight drag if the
+	// layout mutates synchronously inside the dragstart handler. Letting dragstart
+	// finish first (drag image captured) before the DOM grows keeps the drag alive.
+	const handleInternalDragStart = useCallback((showRootReceptacle: boolean) => {
+		dragActiveRef.current = true;
+		// Skip mounting the receptacle when every dragged item already sits at the
+		// workspace root - there's nothing to move there. dragActiveRef still flips
+		// so dragend cleanup stays symmetric.
+		if (!showRootReceptacle) return;
+		setTimeout(() => {
+			if (dragActiveRef.current) setInternalDragActive(true);
+		}, 0);
+	}, []);
+
+	const handleInternalDragEnd = useCallback(() => {
+		dragActiveRef.current = false;
+		setInternalDragActive(false);
+		setDragOverFolder(null);
+		setIsExternalDrag(false);
+	}, []);
+
 	return {
 		dragOverFolder,
+		isExternalDrag,
+		internalDragActive,
 		moveConflict,
 		isMoving,
 		performMoves,
@@ -462,5 +526,7 @@ export function useDragToMove({
 		handleMoveAutoRenameAll,
 		handleMoveSkipConflicts,
 		closeMoveConflict,
+		handleInternalDragStart,
+		handleInternalDragEnd,
 	};
 }

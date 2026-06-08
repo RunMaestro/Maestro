@@ -39,6 +39,18 @@ import type { HistoryGraphData } from './history';
 
 const LOG_CONTEXT = '[DirectorNotes]';
 
+/** Filter accepted by the unified-history IPCs: a single type, an array of
+ *  types to include, or null/undefined for "all types". An empty array means
+ *  "no types selected" and therefore matches nothing. */
+type UnifiedHistoryFilter = 'AUTO' | 'USER' | 'CUE' | Array<'AUTO' | 'USER' | 'CUE'> | null;
+
+/** Whether an entry's type passes the given filter. */
+function entryPassesFilter(type: HistoryEntry['type'], filter: UnifiedHistoryFilter): boolean {
+	if (filter == null) return true;
+	if (Array.isArray(filter)) return filter.includes(type as 'AUTO' | 'USER' | 'CUE');
+	return type === filter;
+}
+
 // Helper to create handler options with consistent context
 const handlerOpts = (operation: string): Pick<CreateHandlerOptions, 'context' | 'operation'> => ({
 	context: LOG_CONTEXT,
@@ -99,7 +111,9 @@ export interface DirectorNotesHandlerDependencies {
 
 export interface UnifiedHistoryOptions {
 	lookbackDays: number;
-	filter?: 'AUTO' | 'USER' | 'CUE' | null; // null = both
+	// A single type, an array of types to include, or null for "all".
+	// An empty array selects nothing.
+	filter?: UnifiedHistoryFilter;
 	/** Number of entries to return per page (default: 100) */
 	limit?: number;
 	/** Number of entries to skip for pagination (default: 0) */
@@ -126,7 +140,8 @@ export interface UnifiedHistoryStats {
 	sessionCount: number; // Distinct provider sessions across all agents
 	autoCount: number; // Total AUTO entries
 	userCount: number; // Total USER entries
-	totalCount: number; // Total entries (autoCount + userCount)
+	cueCount: number; // Total CUE entries
+	totalCount: number; // Total entries (autoCount + userCount + cueCount)
 }
 
 export interface SynopsisOptions {
@@ -192,6 +207,7 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 				const uniqueAgentSessions = new Set<string>(); // track unique provider sessions
 				let autoCount = 0;
 				let userCount = 0;
+				let cueCount = 0;
 
 				// Pre-compute graph bucketing parameters if requested
 				// For "all time" (cutoffTime=0), we do a two-pass: first find earliest, then bucket
@@ -218,6 +234,7 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 						agentsWithEntries.add(sessionId);
 						if (entry.type === 'AUTO') autoCount++;
 						else if (entry.type === 'USER') userCount++;
+						else if (entry.type === 'CUE') cueCount++;
 						if (entry.agentSessionId) uniqueAgentSessions.add(entry.agentSessionId);
 
 						// Track earliest for "all time" bucketing
@@ -239,7 +256,7 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 						}
 
 						// Apply type filter for the result set
-						if (filter && entry.type !== filter) continue;
+						if (!entryPassesFilter(entry.type, filter ?? null)) continue;
 
 						allEntries.push({
 							...entry,
@@ -283,7 +300,8 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 					sessionCount: uniqueAgentSessions.size,
 					autoCount,
 					userCount,
-					totalCount: autoCount + userCount,
+					cueCount,
+					totalCount: autoCount + userCount + cueCount,
 				};
 
 				logger.debug(
@@ -350,7 +368,8 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 							sessionCount,
 							autoCount: hit.autoCount,
 							userCount: hit.userCount,
-							totalCount: hit.autoCount + hit.userCount,
+							cueCount: hit.cueCount,
+							totalCount: hit.autoCount + hit.userCount + hit.cueCount,
 						},
 					};
 				}
@@ -407,7 +426,8 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 						sessionCount: providerSessionSet.size,
 						autoCount: agg.autoCount,
 						userCount: agg.userCount,
-						totalCount: agg.autoCount + agg.userCount,
+						cueCount: agg.cueCount,
+						totalCount: agg.autoCount + agg.userCount + agg.cueCount,
 					},
 				};
 			}
@@ -424,7 +444,7 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 			handlerOpts('getOffsetForTimestamp'),
 			async (
 				timestamp: number,
-				options?: { lookbackDays?: number; filter?: 'AUTO' | 'USER' | 'CUE' | null }
+				options?: { lookbackDays?: number; filter?: UnifiedHistoryFilter }
 			): Promise<number> => {
 				const sessionIds = await historyManager.listSessionsWithHistory();
 				const lookback = options?.lookbackDays ?? 0;
@@ -438,7 +458,7 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 				for (const entries of entriesArrays) {
 					for (const e of entries) {
 						if (cutoff > 0 && e.timestamp < cutoff) continue;
-						if (filter && e.type !== filter) continue;
+						if (!entryPassesFilter(e.type, filter)) continue;
 						all.push(e);
 					}
 				}
