@@ -19,6 +19,14 @@ const secondTrancheActiveScenarioMatrix = [
 	{ id: 'DA-011', title: 'returns debug package generation to idle after cancellation' },
 ] as const;
 
+const thirdTrancheActiveScenarioMatrix = [
+	{ id: 'DA-012', title: 'filters System Log Viewer entries by severity buttons' },
+	{ id: 'DA-013', title: 'expands and collapses System Log Viewer structured details' },
+	{ id: 'DA-014', title: 'shows update check errors with manual release fallback' },
+	{ id: 'DA-015', title: 'rechecks current-version state when beta updates are enabled' },
+	{ id: 'DA-016', title: 'keeps update modal open after download failure' },
+] as const;
+
 const debugPackagePreviewCategories = [
 	{ id: 'logs', name: 'System Logs', included: true, sizeEstimate: '~50 KB' },
 	{ id: 'errors', name: 'Error States', included: true, sizeEstimate: '< 10 KB' },
@@ -40,6 +48,17 @@ type DebugPackageStubPayload = {
 	createMode: 'success' | 'error' | 'cancelled';
 	resultPath: string;
 	categories: typeof debugPackagePreviewCategories;
+};
+
+type UpdateCheckStubPayload = {
+	checkMode: 'available' | 'current' | 'error';
+	downloadMode: 'success' | 'error';
+};
+
+type StubbedUpdateState = {
+	checkCalls: boolean[];
+	downloadCalls: number;
+	installCalls: number;
 };
 
 function createDebugAccessibilityWorkbench() {
@@ -192,6 +211,78 @@ async function stubUpdateCheck(electronApp: ElectronApplication) {
 	});
 }
 
+async function stubUpdateWorkflowHandlers(
+	electronApp: ElectronApplication,
+	options: Partial<UpdateCheckStubPayload> = {}
+) {
+	const payload: UpdateCheckStubPayload = {
+		checkMode: options.checkMode ?? 'available',
+		downloadMode: options.downloadMode ?? 'success',
+	};
+
+	await electronApp.evaluate(({ ipcMain }, stubPayload: UpdateCheckStubPayload) => {
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eUpdateState?: StubbedUpdateState;
+		};
+		state.__maestroE2eUpdateState = { checkCalls: [], downloadCalls: 0, installCalls: 0 };
+
+		ipcMain.removeHandler('updates:check');
+		ipcMain.handle('updates:check', async (_event, includePrerelease: boolean = false) => {
+			state.__maestroE2eUpdateState!.checkCalls.push(includePrerelease);
+			if (stubPayload.checkMode === 'error') {
+				throw new Error('Update check failure sentinel');
+			}
+			if (stubPayload.checkMode === 'current') {
+				const version = includePrerelease ? '0.16.0-beta.1' : '0.16.0';
+				return {
+					currentVersion: version,
+					latestVersion: version,
+					updateAvailable: false,
+					versionsBehind: 0,
+					assetsReady: true,
+					releasesUrl: 'https://github.com/RunMaestro/Maestro/releases',
+					releases: [],
+				};
+			}
+
+			return {
+				currentVersion: '0.15.3',
+				latestVersion: '0.16.0',
+				updateAvailable: true,
+				versionsBehind: 1,
+				assetsReady: true,
+				releasesUrl: 'https://github.com/RunMaestro/Maestro/releases',
+				releases: [
+					{
+						tag_name: 'v0.16.0',
+						name: 'v0.16.0 | Debug Accessibility Fallback',
+						body: '### Deterministic release notes\n\n- Adds update fallback coverage.',
+						html_url: 'https://github.com/RunMaestro/Maestro/releases/tag/v0.16.0',
+						published_at: '2026-05-29T12:00:00.000Z',
+					},
+				],
+			};
+		});
+
+		ipcMain.removeHandler('updates:download');
+		ipcMain.handle('updates:download', async () => {
+			state.__maestroE2eUpdateState!.downloadCalls += 1;
+			if (stubPayload.downloadMode === 'error') {
+				return { success: false, error: 'Update download failure sentinel' };
+			}
+			return { success: true };
+		});
+
+		ipcMain.removeHandler('updates:install');
+		ipcMain.handle('updates:install', async () => {
+			state.__maestroE2eUpdateState!.installCalls += 1;
+		});
+
+		ipcMain.removeHandler('updates:getStatus');
+		ipcMain.handle('updates:getStatus', async () => ({ status: 'idle' }));
+	}, payload);
+}
+
 async function stubDebugPackageHandlers(
 	electronApp: ElectronApplication,
 	options: Partial<Pick<DebugPackageStubPayload, 'previewMode' | 'createMode' | 'resultPath'>> = {}
@@ -250,6 +341,15 @@ async function getStubbedDebugPackageState(electronApp: ElectronApplication) {
 	});
 }
 
+async function getStubbedUpdateState(electronApp: ElectronApplication) {
+	return electronApp.evaluate(() => {
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eUpdateState?: StubbedUpdateState;
+		};
+		return state.__maestroE2eUpdateState ?? null;
+	});
+}
+
 async function openDebugPackageFromQuickActions(page: Page) {
 	const quickActionsDialog = await openQuickActions(page);
 	await quickActionsDialog
@@ -261,6 +361,19 @@ async function openDebugPackageFromQuickActions(page: Page) {
 	const debugPackageDialog = page.getByRole('dialog', { name: 'Create Debug Package' });
 	await expect(debugPackageDialog).toBeVisible();
 	return debugPackageDialog;
+}
+
+async function openUpdateCheckFromQuickActions(page: Page) {
+	const quickActionsDialog = await openQuickActions(page);
+	await quickActionsDialog
+		.getByPlaceholder('Type a command or jump to agent...')
+		.fill('Check for Updates');
+	await quickActionsDialog.getByRole('button', { name: /Check for Updates/ }).click();
+
+	await expect(quickActionsDialog).toBeHidden();
+	const updateDialog = page.getByRole('dialog', { name: 'Check for Updates' });
+	await expect(updateDialog).toBeVisible();
+	return updateDialog;
 }
 
 test.describe('Debug and accessibility smoke tranche', () => {
@@ -478,6 +591,109 @@ test.describe('Debug and accessibility smoke tranche', () => {
 			await expect(debugPackageDialog.getByText('Select what to include:')).toBeVisible();
 			await expect(debugPackageDialog.getByText('Package created successfully!')).toHaveCount(0);
 			await expect(debugPackageDialog.getByText('Failed to create package')).toHaveCount(0);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${thirdTrancheActiveScenarioMatrix[0].id} ${thirdTrancheActiveScenarioMatrix[0].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await seedSystemLogs(launched.window);
+			const logViewer = await openSystemLogViewer(launched.window);
+
+			await logViewer.getByRole('button', { name: 'INFO' }).click();
+			await expect(logViewer.getByText('Debug accessibility info sentinel')).toBeHidden();
+			await expect(logViewer.getByText('Debug accessibility error sentinel')).toBeVisible();
+
+			await logViewer.getByRole('button', { name: 'ERROR' }).click();
+			await expect(logViewer.getByText('No logs match your filter')).toBeVisible();
+
+			await logViewer.getByRole('button', { name: 'ALL' }).click();
+			await expect(logViewer.getByText('Debug accessibility info sentinel')).toBeVisible();
+			await expect(logViewer.getByText('Debug accessibility error sentinel')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${thirdTrancheActiveScenarioMatrix[1].id} ${thirdTrancheActiveScenarioMatrix[1].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await seedSystemLogs(launched.window);
+			const logViewer = await openSystemLogViewer(launched.window);
+
+			await logViewer.getByTitle('Expand all').click();
+			await expect(
+				logViewer.locator('pre').filter({ hasText: 'debug-accessibility-info' })
+			).toBeVisible();
+			await expect(
+				logViewer.locator('pre').filter({ hasText: 'debug-accessibility-error' })
+			).toBeVisible();
+
+			await logViewer.getByTitle('Collapse all').click();
+			await expect(
+				logViewer.locator('pre').filter({ hasText: 'debug-accessibility-info' })
+			).toBeHidden();
+			await expect(
+				logViewer.locator('pre').filter({ hasText: 'debug-accessibility-error' })
+			).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${thirdTrancheActiveScenarioMatrix[2].id} ${thirdTrancheActiveScenarioMatrix[2].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubUpdateWorkflowHandlers(launched.electronApp, { checkMode: 'error' });
+			const updateDialog = await openUpdateCheckFromQuickActions(launched.window);
+
+			await expect(updateDialog.getByText('Update check failure sentinel')).toBeVisible();
+			await expect(
+				updateDialog.getByRole('button', { name: /Check releases manually/ })
+			).toBeVisible();
+			expect((await getStubbedUpdateState(launched.electronApp))?.checkCalls).toContain(false);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${thirdTrancheActiveScenarioMatrix[3].id} ${thirdTrancheActiveScenarioMatrix[3].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubUpdateWorkflowHandlers(launched.electronApp, { checkMode: 'current' });
+			const updateDialog = await openUpdateCheckFromQuickActions(launched.window);
+
+			await expect(updateDialog.getByText("You're up to date!")).toBeVisible();
+			await expect(updateDialog.getByText('Maestro v0.16.0')).toBeVisible();
+			await updateDialog.getByText('Include pre-release updates').click();
+			await expect
+				.poll(async () => {
+					const state = await getStubbedUpdateState(launched.electronApp);
+					return state?.checkCalls.some((includePrerelease) => includePrerelease) ?? false;
+				})
+				.toBe(true);
+			await expect(updateDialog.getByText('Maestro v0.16.0-beta.1')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${thirdTrancheActiveScenarioMatrix[4].id} ${thirdTrancheActiveScenarioMatrix[4].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubUpdateWorkflowHandlers(launched.electronApp, { downloadMode: 'error' });
+			const updateDialog = await openUpdateCheckFromQuickActions(launched.window);
+
+			await expect(updateDialog.getByText('Update Available!')).toBeVisible();
+			await updateDialog.getByRole('button', { name: 'Download and Install Update' }).click();
+			await expect(updateDialog.getByText('Download failed')).toBeVisible();
+			await expect(updateDialog.getByText('Update download failure sentinel')).toBeVisible();
+			await expect(
+				updateDialog.getByRole('button', { name: /Download manually from GitHub/ })
+			).toBeVisible();
+			expect((await getStubbedUpdateState(launched.electronApp))?.downloadCalls).toBe(1);
 		} finally {
 			await launched.cleanup();
 		}
