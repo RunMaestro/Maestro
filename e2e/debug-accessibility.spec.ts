@@ -91,6 +91,14 @@ const eleventhTrancheActiveScenarioMatrix = [
 	{ id: 'DA-056', title: 'closes leaderboard registration opened from About with Escape' },
 ] as const;
 
+const twelfthTrancheActiveScenarioMatrix = [
+	{ id: 'DA-057', title: 'collapses auto-expanded update release notes' },
+	{ id: 'DA-058', title: 're-expands collapsed update release notes' },
+	{ id: 'DA-059', title: 'closes the update check modal with Escape' },
+	{ id: 'DA-060', title: 'closes the debug package modal from footer cancel' },
+	{ id: 'DA-061', title: 'closes the successful debug package modal with Done' },
+] as const;
+
 const debugPackagePreviewCategories = [
 	{ id: 'logs', name: 'System Logs', included: true, sizeEstimate: '~50 KB' },
 	{ id: 'errors', name: 'Error States', included: true, sizeEstimate: '< 10 KB' },
@@ -1816,6 +1824,87 @@ test.describe('Debug and accessibility smoke tranche', () => {
 			await launched.window.keyboard.press('Escape');
 
 			await expect(leaderboardDialog).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${twelfthTrancheActiveScenarioMatrix[0].id} ${twelfthTrancheActiveScenarioMatrix[0].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubUpdateWorkflowHandlers(launched.electronApp);
+			const updateDialog = await openUpdateCheckFromQuickActions(launched.window);
+			const releaseNotes = updateDialog.getByText('Adds update fallback coverage.');
+
+			await expect(releaseNotes).toBeVisible();
+			await updateDialog.getByRole('button', { name: /v0\.16\.0/ }).click();
+
+			await expect(releaseNotes).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${twelfthTrancheActiveScenarioMatrix[1].id} ${twelfthTrancheActiveScenarioMatrix[1].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubUpdateWorkflowHandlers(launched.electronApp);
+			const updateDialog = await openUpdateCheckFromQuickActions(launched.window);
+			const releaseNotes = updateDialog.getByText('Adds update fallback coverage.');
+			const releaseToggle = updateDialog.getByRole('button', { name: /v0\.16\.0/ });
+
+			await expect(releaseNotes).toBeVisible();
+			await releaseToggle.click();
+			await expect(releaseNotes).toBeHidden();
+			await releaseToggle.click();
+
+			await expect(releaseNotes).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${twelfthTrancheActiveScenarioMatrix[2].id} ${twelfthTrancheActiveScenarioMatrix[2].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubUpdateWorkflowHandlers(launched.electronApp);
+			const updateDialog = await openUpdateCheckFromQuickActions(launched.window);
+			await expect(updateDialog).toBeVisible();
+
+			await launched.window.keyboard.press('Escape');
+
+			await expect(updateDialog).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${twelfthTrancheActiveScenarioMatrix[3].id} ${twelfthTrancheActiveScenarioMatrix[3].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			const debugPackageDialog = await openDebugPackageFromQuickActions(launched.window);
+			await expect(debugPackageDialog).toBeVisible();
+
+			await debugPackageDialog.getByRole('button', { name: 'Cancel' }).click();
+
+			await expect(debugPackageDialog).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${twelfthTrancheActiveScenarioMatrix[4].id} ${twelfthTrancheActiveScenarioMatrix[4].title}`, async () => {
+		const resultPath = path.join(os.tmpdir(), 'maestro-debug-accessibility-done.zip');
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubDebugPackageHandlers(launched.electronApp, { resultPath });
+			const debugPackageDialog = await openDebugPackageFromQuickActions(launched.window);
+
+			await debugPackageDialog.getByRole('button', { name: 'Generate Package' }).click();
+			await expect(debugPackageDialog.getByText('Package created successfully!')).toBeVisible();
+			await debugPackageDialog.getByRole('button', { name: 'Done' }).click();
+
+			await expect(debugPackageDialog).toBeHidden();
 		} finally {
 			await launched.cleanup();
 		}
