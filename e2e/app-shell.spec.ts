@@ -3317,6 +3317,18 @@ test.describe('App shell seeded workbench', () => {
 		await expect(window.getByText(/Detailed Auto Run transcript/)).toBeHidden();
 	});
 
+	test('closes History detail from Escape and returns to the list', async () => {
+		await helpers.openRightPanelTab(window, 'History');
+		const historyPanel = window.locator('[data-tour="history-panel"]');
+		await historyPanel.getByText('Completed Auto Run setup checklist').first().click();
+
+		await expect(window.getByText(/Detailed Auto Run transcript/)).toBeVisible();
+		await window.keyboard.press('Escape');
+
+		await expect(window.getByText(/Detailed Auto Run transcript/)).toBeHidden();
+		await expect(historyPanel.getByText('Completed Auto Run setup checklist')).toBeVisible();
+	});
+
 	test('navigates History detail entries with Prev and Next controls', async () => {
 		await helpers.openRightPanelTab(window, 'History');
 		const historyPanel = window.locator('[data-tour="history-panel"]');
@@ -3399,6 +3411,19 @@ test.describe('App shell seeded workbench', () => {
 
 		await guideDialog.getByRole('button', { name: 'Got it' }).click();
 		await expect(guideDialog).toBeHidden();
+	});
+
+	test('closes the History panel guide with Escape', async () => {
+		await helpers.openRightPanelTab(window, 'History');
+		const historyPanel = window.locator('[data-tour="history-panel"]');
+
+		await historyPanel.getByTitle('History panel help').click();
+		const guideDialog = window.getByRole('dialog', { name: 'History Panel Guide' });
+		await expect(guideDialog).toBeVisible();
+
+		await window.keyboard.press('Escape');
+		await expect(guideDialog).toBeHidden();
+		await expect(historyPanel.getByText('Completed Auto Run setup checklist')).toBeVisible();
 	});
 
 	test('shows History loading state until delayed entries resolve', async () => {
@@ -7976,6 +8001,21 @@ test.describe('App shell seeded workbench', () => {
 		});
 	});
 
+	test('copies a File Explorer context menu path to the clipboard', async () => {
+		const expectedNotesPath = path.join(seededWorkbench.sessions[0].fullPath, 'NOTES.md');
+		await electronApp.evaluate(({ clipboard }) =>
+			clipboard.writeText('before file explorer copy path')
+		);
+
+		const contextMenu = await openFileContextMenu(window, 'NOTES.md');
+		await contextMenu.getByRole('button', { name: 'Copy Path' }).click();
+
+		await expect(contextMenu).toBeHidden();
+		await expect
+			.poll(() => electronApp.evaluate(({ clipboard }) => clipboard.readText()))
+			.toBe(expectedNotesPath);
+	});
+
 	test('previews a file from the File Explorer context menu', async () => {
 		const contextMenu = await openFileContextMenu(window, 'NOTES.md');
 		await expect(contextMenu.getByRole('button', { name: 'Preview' })).toBeVisible();
@@ -8147,6 +8187,19 @@ test.describe('App shell seeded workbench', () => {
 		await expect(window.getByText('No matches')).toBeVisible();
 		await expect(window.getByTitle('Previous match (Shift+Enter)')).toBeDisabled();
 		await expect(window.getByTitle('Next match (Enter)')).toBeDisabled();
+	});
+
+	test('recovers file preview search results after replacing a no-match query', async () => {
+		await window.getByTestId('file-preview-root').press('Control+f');
+		const searchInput = window.getByPlaceholder(/Search in file/);
+
+		await searchInput.fill('missing-preview-search-term');
+		await expect(window.getByText('No matches')).toBeVisible();
+
+		await searchInput.fill('Preview prose');
+		await expect(window.getByText('No matches')).toBeHidden();
+		await expect(window.getByText('1/1')).toBeVisible();
+		await expect(window.getByTitle('Next match (Enter)')).toBeVisible();
 	});
 
 	test('opens wiki-style internal markdown links from the active file preview', async () => {
@@ -8466,6 +8519,22 @@ test.describe('App shell seeded workbench', () => {
 		await window.getByRole('button', { name: 'Load full file' }).click();
 		await expect(window.getByText('Large file preview truncated.')).toBeHidden();
 		await expect(window.getByText('large file tail marker')).toBeVisible();
+	});
+
+	test('searches large text preview tail content after loading the full file', async () => {
+		await helpers.openRightPanelTab(window, 'Files');
+		await window.getByText('large-log.txt').dblclick();
+
+		await expect(window.getByText('Large file preview truncated.')).toBeVisible();
+		await window.getByRole('button', { name: 'Load full file' }).click();
+		await expect(window.getByText('large file tail marker')).toBeVisible();
+
+		await window.getByTestId('file-preview-root').press('Control+f');
+		const searchInput = window.getByPlaceholder(/Search in file/);
+		await searchInput.fill('large file tail marker');
+
+		await expect(window.getByText('1/1')).toBeVisible();
+		await expect(window.getByText('No matches')).toBeHidden();
 	});
 
 	test('opens Document Graph from file preview and uses core graph controls', async () => {
