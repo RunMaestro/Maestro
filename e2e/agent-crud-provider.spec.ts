@@ -1353,6 +1353,103 @@ test.describe('Agent CRUD lifecycle', () => {
 		}
 	});
 
+	test('closes a filled Create New Agent provider draft with Escape', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: [seeded.sessions[0]],
+		});
+		const projectDir = path.join(seeded.homeDir, 'escape-create-draft-project');
+		fs.mkdirSync(projectDir, { recursive: true });
+
+		try {
+			await stubProviderDetection(launched.electronApp);
+
+			const createAgentDialog = await openCreateAgentDialog(launched.window);
+			await createAgentDialog.getByRole('option', { name: /Codex/ }).click();
+			await createAgentDialog.getByLabel('Agent Name').fill('Escaped Provider Draft');
+			await createAgentDialog.getByLabel('Working Directory').fill(projectDir);
+			await createAgentDialog
+				.getByPlaceholder('Instructions appended to every message you send...')
+				.fill('Escape should discard this create draft.');
+
+			await launched.window.keyboard.press('Escape');
+
+			await expect(createAgentDialog).toBeHidden();
+			await expect(
+				launched.window
+					.locator('[data-tour="session-list"]')
+					.getByText('Escaped Provider Draft', { exact: true })
+			).toHaveCount(0);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('resets Create New Agent form state after a successful provider create', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: [seeded.sessions[0]],
+		});
+		const projectDir = path.join(seeded.homeDir, 'reset-after-create-project');
+		fs.mkdirSync(projectDir, { recursive: true });
+
+		try {
+			await stubProviderDetection(launched.electronApp);
+
+			const createAgentDialog = await openCreateAgentDialog(launched.window);
+			await createAgentDialog.getByRole('option', { name: /Codex/ }).click();
+			await createAgentDialog.getByLabel('Agent Name').fill('Reset After Create Agent');
+			await createAgentDialog.getByLabel('Working Directory').fill(projectDir);
+			await createAgentDialog
+				.getByPlaceholder('Instructions appended to every message you send...')
+				.fill('This create modal state should not leak.');
+			await createAgentDialog.getByPlaceholder('/path/to/codex').fill('/opt/maestro/codex-reset');
+			await createAgentDialog.getByRole('button', { name: 'Create Agent' }).click();
+			await expect(createAgentDialog).toBeHidden();
+
+			const reopenedDialog = await openCreateAgentDialog(launched.window);
+			await expect(reopenedDialog.getByLabel('Agent Name')).toHaveValue('');
+			await expect(reopenedDialog.getByLabel('Working Directory')).toHaveValue('');
+			await reopenedDialog.getByRole('option', { name: /Codex/ }).click();
+			await expect(
+				reopenedDialog.getByPlaceholder('Instructions appended to every message you send...')
+			).toHaveValue('');
+			await expect(reopenedDialog.getByPlaceholder('/path/to/codex')).toHaveValue(
+				'/usr/local/bin/codex-e2e'
+			);
+			await reopenedDialog.getByRole('button', { name: 'Cancel' }).click();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('opens the Create New Agent folder picker with the keyboard shortcut', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: [seeded.sessions[0]],
+		});
+		const selectedDir = path.join(seeded.homeDir, 'keyboard-folder-shortcut-project');
+		fs.mkdirSync(selectedDir, { recursive: true });
+
+		try {
+			await stubProviderDetection(launched.electronApp);
+			await stubSelectFolderDialog(launched.electronApp, selectedDir);
+
+			const createAgentDialog = await openCreateAgentDialog(launched.window);
+			await createAgentDialog.getByRole('option', { name: /Codex/ }).click();
+
+			await launched.window.keyboard.press('Control+O');
+
+			await expect(createAgentDialog.getByLabel('Working Directory')).toHaveValue(selectedDir);
+			await createAgentDialog.getByRole('button', { name: 'Cancel' }).click();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
 	test('keeps Create New Agent disabled until required fields are complete', async () => {
 		const seeded = createAgentCrudWorkbench();
 		const launched = await helpers.launchAppWithState({
@@ -1520,6 +1617,33 @@ test.describe('Agent CRUD lifecycle', () => {
 		}
 	});
 
+	test('closes Edit Agent with Escape without saving draft changes', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubProviderDetection(launched.electronApp);
+
+			const editAgentDialog = await openEditAgentDialog(launched.window, 'Matrix Codex Agent');
+			await editAgentDialog.getByLabel('Agent Name').fill('Escaped Edit Draft');
+			await editAgentDialog
+				.getByPlaceholder('Instructions appended to every message you send...')
+				.fill('Escape should discard this edit draft.');
+
+			await launched.window.keyboard.press('Escape');
+
+			await expect(editAgentDialog).toBeHidden();
+			const sessionList = launched.window.locator('[data-tour="session-list"]');
+			await expect(sessionList.getByText('Matrix Codex Agent', { exact: true })).toBeVisible();
+			await expect(sessionList.getByText('Escaped Edit Draft', { exact: true })).toHaveCount(0);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
 	test('keeps Create New Agent provider drafts isolated while switching providers', async () => {
 		const seeded = createAgentCrudWorkbench();
 		const launched = await helpers.launchAppWithState({
@@ -1601,6 +1725,42 @@ test.describe('Agent CRUD lifecycle', () => {
 				'opencode'
 			);
 			await editAgentDialog.getByRole('button', { name: 'Cancel' }).click();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('closes duplicate provider agent modal with Escape without adding a copy', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubProviderDetection(launched.electronApp);
+
+			const contextMenu = await openSessionContextMenu(
+				launched.window,
+				'Matrix Codex Agent',
+				'Duplicate...'
+			);
+			await contextMenu.getByRole('button', { name: 'Duplicate...', exact: true }).click();
+
+			const createAgentDialog = launched.window.getByRole('dialog', { name: 'Create New Agent' });
+			await expect(createAgentDialog).toBeVisible();
+			await expect(createAgentDialog.getByLabel('Agent Name')).toHaveValue(
+				'Matrix Codex Agent (Copy)'
+			);
+
+			await launched.window.keyboard.press('Escape');
+
+			await expect(createAgentDialog).toBeHidden();
+			await expect(
+				launched.window
+					.locator('[data-tour="session-list"]')
+					.getByText('Matrix Codex Agent (Copy)', { exact: true })
+			).toHaveCount(0);
 		} finally {
 			await launched.cleanup();
 		}
