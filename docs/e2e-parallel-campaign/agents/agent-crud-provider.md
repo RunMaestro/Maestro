@@ -12,7 +12,7 @@ Agent CRUD, provider setup, Agent Sessions.
 - [ ] Author deterministic active scenarios up to the lane target where feasible.
 - [x] Add skipped/env-gated cases for real-provider-only flows.
 - [x] Record files touched and scenario counts.
-- [ ] Commit lane work on `codex/e2e-agent-crud-provider`.
+- [x] Commit lane work on `codex/e2e-agent-crud-provider`.
 
 ## Progress
 
@@ -37,7 +37,7 @@ Agent CRUD, provider setup, Agent Sessions.
   - `git diff --check -- e2e/agent-crud-provider.spec.ts docs/e2e-parallel-campaign/agents/agent-crud-provider.md`
   - Note: npm emitted `min-release-age` config warnings only; no TypeScript, ESLint, Prettier, or whitespace diagnostics.
 - Commit hashes:
-  - Pending final tranche commit.
+  - `9e13c6ed3e` - `test(e2e-agent-crud-provider): add provider CRUD tranche`
 - Blockers:
   - E2E execution, Playwright listing, headed/UI E2E, and full E2E validation are intentionally not run under the recovery-run hard rules.
   - Real provider storage/auth state is unavailable in deterministic lane coverage, so real provider scenarios remain skipped/env-gated.
