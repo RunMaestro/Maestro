@@ -34,9 +34,9 @@ Parallel E2E authoring checkpoint:
 
 - Campaign: `docs/e2e-parallel-prompt.md`
 - Result: in progress
-- Current authoring progress: 803 / 3,025 active scenarios after accepting the
-  third-tranche recovery lanes through `cd804bebf`, `44e98a94f`, `15e7a1a20`,
-  and `d580f80ea`.
+- Current authoring progress: 859 / 3,025 active scenarios after accepting the
+  fourth-tranche recovery lanes through `5694e29e6`, `ee4375c7b`, `784d84e34`,
+  and `6033dd4b7`, including a repaired prior matrix/headline drift.
 - Accepted lanes so far: `shell-tabs-command`, `agent-crud-provider`,
   `files-docs-history`, `mobile-web-bridge`, `autorun-ai-terminal`,
   `wizard-settings-prompts`, `stats-graph-symphony`, `debug-accessibility`,
@@ -44,8 +44,8 @@ Parallel E2E authoring checkpoint:
 - Execution policy: Playwright E2E tests are intentionally not executed in this phase.
 - Validation plan: static review of authored selectors, fixtures, scenario names, assertions, and lane progress logs; runtime validation is deferred to a later sharded execution phase.
 - Latest static validation: lane-local ESLint and `git diff --check` passed for
-  tranche 3; static review found the shell multiline command issue and it was
-  fixed before merge.
+  tranche 4; static review found the stats/Symphony preflight close selector and
+  Git/playbooks optional worktree fixture issues, both fixed before merge.
 
 Integration checkpoint:
 

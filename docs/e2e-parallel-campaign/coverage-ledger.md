@@ -2,9 +2,9 @@
 
 Source of truth: `docs/e2e-coverage-campaign.md`.
 
-Current active tests: 803
+Current active tests: 859
 Target active tests: 3,025
-Remaining matrix-backed active scenarios: 2,222
+Remaining matrix-backed active scenarios: 2,166
 
 ## Matrix
 
@@ -15,19 +15,19 @@ Remaining matrix-backed active scenarios: 2,222
 | Codex AI terminal workflows                                    | `autorun-ai-terminal`     |             33 |           170 |       137 |
 | Command terminal workflows                                     | `shell-tabs-command`      |             56 |            95 |        39 |
 | Tabs and tab overlays                                          | `shell-tabs-command`      |             53 |           120 |        67 |
-| File explorer and file operations                              | `files-docs-history`      |             25 |           140 |       115 |
-| File preview and document rendering                            | `files-docs-history`      |             36 |           180 |       144 |
-| History panel                                                  | `files-docs-history`      |             19 |            95 |        76 |
+| File explorer and file operations                              | `files-docs-history`      |             29 |           140 |       111 |
+| File preview and document rendering                            | `files-docs-history`      |             37 |           180 |       143 |
+| History panel                                                  | `files-docs-history`      |             21 |            95 |        74 |
 | Auto Run                                                       | `autorun-ai-terminal`     |            134 |           260 |       126 |
-| New Agent Wizard and inline wizard                             | `wizard-settings-prompts` |             38 |           190 |       152 |
-| Settings                                                       | `wizard-settings-prompts` |             58 |           190 |       132 |
-| Git, worktrees, PR, diff/log, Gist                             | `git-groupchat-playbooks` |             21 |           160 |       139 |
+| New Agent Wizard and inline wizard                             | `wizard-settings-prompts` |             39 |           190 |       151 |
+| Settings                                                       | `wizard-settings-prompts` |             60 |           190 |       130 |
+| Git, worktrees, PR, diff/log, Gist                             | `git-groupchat-playbooks` |             25 |           160 |       135 |
 | Group chat                                                     | `git-groupchat-playbooks` |             51 |           140 |        89 |
-| Usage dashboard and stats                                      | `stats-graph-symphony`    |             17 |           125 |       108 |
-| Document graph                                                 | `stats-graph-symphony`    |             26 |           130 |       104 |
-| Playbooks, marketplace, Spec Kit, OpenSpec                     | `git-groupchat-playbooks` |             21 |           145 |       124 |
-| Symphony, leaderboard, achievements                            | `stats-graph-symphony`    |              7 |           120 |       113 |
-| Director notes and prompt composer                             | `wizard-settings-prompts` |             14 |            90 |        76 |
+| Usage dashboard and stats                                      | `stats-graph-symphony`    |             19 |           125 |       106 |
+| Document graph                                                 | `stats-graph-symphony`    |             27 |           130 |       103 |
+| Playbooks, marketplace, Spec Kit, OpenSpec                     | `git-groupchat-playbooks` |             24 |           145 |       121 |
+| Symphony, leaderboard, achievements                            | `stats-graph-symphony`    |             10 |           120 |       110 |
+| Director notes and prompt composer                             | `wizard-settings-prompts` |             17 |            90 |        73 |
 | Debug/about/update/app info/agent error modals                 | `debug-accessibility`     |             25 |            85 |        60 |
 | Mobile/web bridge                                              | `mobile-web-bridge`       |             99 |           190 |        91 |
 | Accessibility smoke and destructive-action confirmations       | `debug-accessibility`     |              9 |           130 |       121 |
@@ -38,11 +38,11 @@ Remaining matrix-backed active scenarios: 2,222
 | -------------------------- | ----------------------: | ------------------------: | -----------------------------------: | -------------------- |
 | `agent-crud-provider`      |                      95 |                         9 |                                    2 | `bb4fbcce2`          |
 | `shell-tabs-command`       |                     190 |                        76 |                                    0 | `44e98a94f`          |
-| `files-docs-history`       |                     335 |                        14 |                                    5 | `c47df15c2`          |
+| `files-docs-history`       |                     328 |                        21 |                                    5 | `5694e29e6`          |
 | `autorun-ai-terminal`      |                     263 |                        10 |                                    0 | `cd804bebf`          |
-| `wizard-settings-prompts`  |                     360 |                        12 |                                    1 | `30fd144ab`          |
-| `git-groupchat-playbooks`  |                     352 |                        11 |                                    3 | `f8b94b00`           |
-| `stats-graph-symphony`     |                     325 |                        11 |                                    5 | `cd80b10f`           |
+| `wizard-settings-prompts`  |                     354 |                        18 |                                    1 | `ee4375c7b`          |
+| `git-groupchat-playbooks`  |                     345 |                        18 |                                    5 | `6033dd4b7`          |
+| `stats-graph-symphony`     |                     319 |                        17 |                                    6 | `784d84e34`          |
 | `debug-accessibility`      |                     181 |                        11 |                                    0 | `15e7a1a20`          |
 | `mobile-web-bridge`        |                      91 |                        11 |                                    0 | `d580f80ea`          |
 | `fixtures-sharding-review` |                       0 |                         0 |                                    0 | `392c4527`           |
@@ -67,3 +67,7 @@ Remaining matrix-backed active scenarios: 2,222
 - 2026-06-08: accepted `codex/e2e-shell-tabs-command` through `44e98a94f`; authored 7 additional active command-terminal scenarios. No E2E execution was run.
 - 2026-06-08: accepted `codex/e2e-debug-accessibility` through `15e7a1a20`; authored 6 additional active debug package modal scenarios. No E2E execution was run.
 - 2026-06-08: accepted `codex/e2e-mobile-web-bridge` through `d580f80ea`; authored 6 additional active mobile/web bridge scenarios. No E2E execution was run.
+- 2026-06-08: accepted `codex/e2e-files-docs-history` through `5694e29e6`; authored 7 additional active file/docs/history scenarios. No E2E execution was run.
+- 2026-06-08: accepted `codex/e2e-wizard-settings-prompts` through `ee4375c7b`; authored 6 additional active wizard/settings/prompt scenarios. No E2E execution was run.
+- 2026-06-08: accepted `codex/e2e-stats-graph-symphony` through `784d84e34`; authored 6 additional active stats/graph/Symphony scenarios plus 1 env-gated row. No E2E execution was run.
+- 2026-06-08: accepted `codex/e2e-git-groupchat-playbooks` through `6033dd4b7`; authored 7 additional active Git/playbook scenarios plus 2 skipped/env-gated rows. No E2E execution was run.
