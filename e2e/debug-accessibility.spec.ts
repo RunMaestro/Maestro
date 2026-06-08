@@ -203,6 +203,14 @@ const twentyFifthTrancheActiveScenarioMatrix = [
 	{ id: 'DA-126', title: 'clears stale update download errors after refresh' },
 ] as const;
 
+const twentySixthTrancheActiveScenarioMatrix = [
+	{ id: 'DA-127', title: 'shows unmatched Quick Actions search state' },
+	{ id: 'DA-128', title: 'keeps Quick Actions open when returning from group mode' },
+	{ id: 'DA-129', title: 'shows Quick Actions group destination controls' },
+	{ id: 'DA-130', title: 'shows unmatched Keyboard Shortcuts search state' },
+	{ id: 'DA-131', title: 'reports Keyboard Shortcuts mastery progress' },
+] as const;
+
 const debugPackagePreviewCategories = [
 	{ id: 'logs', name: 'System Logs', included: true, sizeEstimate: '~50 KB' },
 	{ id: 'errors', name: 'Error States', included: true, sizeEstimate: '< 10 KB' },
@@ -314,6 +322,7 @@ type DebugAccessibilityAgentError = {
 type DebugAccessibilityWorkbenchOptions = {
 	agentError?: Partial<DebugAccessibilityAgentError> &
 		Pick<DebugAccessibilityAgentError, 'type' | 'message' | 'recoverable'>;
+	settings?: Record<string, unknown>;
 };
 
 function createDebugAccessibilityWorkbench(options: DebugAccessibilityWorkbenchOptions = {}) {
@@ -418,6 +427,7 @@ async function launchDebugAccessibilityWorkbench(options: DebugAccessibilityWork
 	const launched = await helpers.launchAppWithState({
 		homeDir: seeded.homeDir,
 		sessions: seeded.sessions,
+		settings: options.settings,
 	});
 
 	return { ...seeded, ...launched };
@@ -756,6 +766,19 @@ async function openUpdateCheckFromQuickActions(page: Page) {
 	const updateDialog = page.getByRole('dialog', { name: 'Check for Updates' });
 	await expect(updateDialog).toBeVisible();
 	return updateDialog;
+}
+
+async function openShortcutsFromQuickActions(page: Page) {
+	const quickActionsDialog = await openQuickActions(page);
+	await quickActionsDialog
+		.getByPlaceholder('Type a command or jump to agent...')
+		.fill('View Shortcuts');
+	await quickActionsDialog.getByRole('button', { name: /View Shortcuts/ }).click();
+
+	await expect(quickActionsDialog).toBeHidden();
+	const shortcutsDialog = page.getByRole('dialog', { name: 'Keyboard Shortcuts' });
+	await expect(shortcutsDialog).toBeVisible();
+	return shortcutsDialog;
 }
 
 async function openProcessMonitorFromQuickActions(page: Page) {
@@ -3410,6 +3433,93 @@ test.describe('Debug and accessibility smoke tranche', () => {
 			await expect
 				.poll(async () => (await getStubbedUpdateState(launched.electronApp))?.checkCalls.length)
 				.toBe(2);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${twentySixthTrancheActiveScenarioMatrix[0].id} ${twentySixthTrancheActiveScenarioMatrix[0].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			const quickActionsDialog = await openQuickActions(launched.window);
+			await quickActionsDialog
+				.getByPlaceholder('Type a command or jump to agent...')
+				.fill('no matching debug accessibility command');
+
+			await expect(quickActionsDialog.getByText('No actions found')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${twentySixthTrancheActiveScenarioMatrix[1].id} ${twentySixthTrancheActiveScenarioMatrix[1].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			const quickActionsDialog = await openQuickActions(launched.window);
+			await quickActionsDialog
+				.getByPlaceholder('Type a command or jump to agent...')
+				.fill('Move to Group');
+			await quickActionsDialog.getByRole('button', { name: /Move to Group/ }).click();
+			await expect(
+				quickActionsDialog.getByPlaceholder('Move Debug Accessibility Agent to...')
+			).toBeVisible();
+
+			await launched.window.keyboard.press('Escape');
+
+			await expect(quickActionsDialog).toBeVisible();
+			await expect(
+				quickActionsDialog.getByPlaceholder('Type a command or jump to agent...')
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${twentySixthTrancheActiveScenarioMatrix[2].id} ${twentySixthTrancheActiveScenarioMatrix[2].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			const quickActionsDialog = await openQuickActions(launched.window);
+			await quickActionsDialog
+				.getByPlaceholder('Type a command or jump to agent...')
+				.fill('Move to Group');
+			await quickActionsDialog.getByRole('button', { name: /Move to Group/ }).click();
+
+			await expect(quickActionsDialog.getByRole('button', { name: /No Group/ })).toBeVisible();
+			await expect(
+				quickActionsDialog.getByRole('button', { name: /Create New Group/ })
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${twentySixthTrancheActiveScenarioMatrix[3].id} ${twentySixthTrancheActiveScenarioMatrix[3].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			const shortcutsDialog = await openShortcutsFromQuickActions(launched.window);
+			await shortcutsDialog.getByPlaceholder('Search shortcuts...').fill('no shortcut sentinel');
+
+			await expect(shortcutsDialog.getByText('No shortcuts found')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${twentySixthTrancheActiveScenarioMatrix[4].id} ${twentySixthTrancheActiveScenarioMatrix[4].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench({
+			settings: {
+				keyboardMasteryStats: {
+					usedShortcuts: ['help'],
+					currentLevel: 0,
+					lastLevelUpTimestamp: 0,
+					lastAcknowledgedLevel: 0,
+				},
+			},
+		});
+		try {
+			const shortcutsDialog = await openShortcutsFromQuickActions(launched.window);
+
+			await expect(shortcutsDialog.getByText(/1 \/ \d+ mastered \(\d+%\)/)).toBeVisible();
 		} finally {
 			await launched.cleanup();
 		}
