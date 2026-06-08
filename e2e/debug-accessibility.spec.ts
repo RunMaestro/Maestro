@@ -1,5 +1,5 @@
 /**
- * E2E Tests: debug, confirmation, and accessibility smoke first tranche.
+ * E2E Tests: debug, confirmation, and accessibility smoke tranches.
  *
  * These scenarios seed local state and stub update IPC. They avoid live
  * provider, network, and Playwright execution during the authoring phase.
@@ -9,6 +9,38 @@ import type { ElectronApplication, Page } from '@playwright/test';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+
+const secondTrancheActiveScenarioMatrix = [
+	{ id: 'DA-006', title: 'opens Create Debug Package from Quick Actions with preview rows' },
+	{ id: 'DA-007', title: 'disables debug package generation when every category is excluded' },
+	{ id: 'DA-008', title: 'creates a debug package with selected diagnostic options' },
+	{ id: 'DA-009', title: 'falls back to default debug package categories after preview failure' },
+	{ id: 'DA-010', title: 'surfaces debug package creation errors without closing the modal' },
+	{ id: 'DA-011', title: 'returns debug package generation to idle after cancellation' },
+] as const;
+
+const debugPackagePreviewCategories = [
+	{ id: 'logs', name: 'System Logs', included: true, sizeEstimate: '~50 KB' },
+	{ id: 'errors', name: 'Error States', included: true, sizeEstimate: '< 10 KB' },
+	{ id: 'sessions', name: 'Session Metadata', included: true, sizeEstimate: '~10 KB' },
+	{ id: 'groupChats', name: 'Group Chat Metadata', included: true, sizeEstimate: '< 5 KB' },
+	{ id: 'batchState', name: 'Auto Run State', included: true, sizeEstimate: '< 5 KB' },
+];
+
+type DebugPackageCreateOptions = {
+	includeLogs?: boolean;
+	includeErrors?: boolean;
+	includeSessions?: boolean;
+	includeGroupChats?: boolean;
+	includeBatchState?: boolean;
+};
+
+type DebugPackageStubPayload = {
+	previewMode: 'success' | 'error';
+	createMode: 'success' | 'error' | 'cancelled';
+	resultPath: string;
+	categories: typeof debugPackagePreviewCategories;
+};
 
 function createDebugAccessibilityWorkbench() {
 	const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-e2e-debug-accessibility-'));
@@ -160,6 +192,77 @@ async function stubUpdateCheck(electronApp: ElectronApplication) {
 	});
 }
 
+async function stubDebugPackageHandlers(
+	electronApp: ElectronApplication,
+	options: Partial<Pick<DebugPackageStubPayload, 'previewMode' | 'createMode' | 'resultPath'>> = {}
+) {
+	const payload: DebugPackageStubPayload = {
+		previewMode: options.previewMode ?? 'success',
+		createMode: options.createMode ?? 'success',
+		resultPath: options.resultPath ?? path.join(os.tmpdir(), 'maestro-debug-accessibility.zip'),
+		categories: debugPackagePreviewCategories,
+	};
+
+	await electronApp.evaluate(({ ipcMain }, stubPayload: DebugPackageStubPayload) => {
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eDebugPackageState?: {
+				previewCalls: number;
+				createOptions: DebugPackageCreateOptions[];
+			};
+		};
+		state.__maestroE2eDebugPackageState = { previewCalls: 0, createOptions: [] };
+
+		ipcMain.removeHandler('debug:previewPackage');
+		ipcMain.handle('debug:previewPackage', async () => {
+			state.__maestroE2eDebugPackageState!.previewCalls += 1;
+			if (stubPayload.previewMode === 'error') {
+				throw new Error('Debug package preview failure sentinel');
+			}
+			return { categories: stubPayload.categories };
+		});
+
+		ipcMain.removeHandler('debug:createPackage');
+		ipcMain.handle(
+			'debug:createPackage',
+			async (_event, createOptions: DebugPackageCreateOptions) => {
+				state.__maestroE2eDebugPackageState!.createOptions.push(createOptions ?? {});
+				if (stubPayload.createMode === 'error') {
+					return { success: false, error: 'Debug package create failure sentinel' };
+				}
+				if (stubPayload.createMode === 'cancelled') {
+					return { cancelled: true };
+				}
+				return { success: true, path: stubPayload.resultPath };
+			}
+		);
+	}, payload);
+}
+
+async function getStubbedDebugPackageState(electronApp: ElectronApplication) {
+	return electronApp.evaluate(() => {
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eDebugPackageState?: {
+				previewCalls: number;
+				createOptions: DebugPackageCreateOptions[];
+			};
+		};
+		return state.__maestroE2eDebugPackageState ?? null;
+	});
+}
+
+async function openDebugPackageFromQuickActions(page: Page) {
+	const quickActionsDialog = await openQuickActions(page);
+	await quickActionsDialog
+		.getByPlaceholder('Type a command or jump to agent...')
+		.fill('Create Debug Package');
+	await quickActionsDialog.getByRole('button', { name: /Create Debug Package/ }).click();
+
+	await expect(quickActionsDialog).toBeHidden();
+	const debugPackageDialog = page.getByRole('dialog', { name: 'Create Debug Package' });
+	await expect(debugPackageDialog).toBeVisible();
+	return debugPackageDialog;
+}
+
 test.describe('Debug and accessibility smoke tranche', () => {
 	test('opens About Maestro from Quick Actions with accessible dialog chrome', async () => {
 		const launched = await launchDebugAccessibilityWorkbench();
@@ -256,6 +359,125 @@ test.describe('Debug and accessibility smoke tranche', () => {
 			await expect(updateDialog).toBeVisible();
 			await expect(updateDialog.getByText('Update Available!')).toBeVisible();
 			await expect(updateDialog.getByText('Debug Accessibility E2E')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${secondTrancheActiveScenarioMatrix[0].id} ${secondTrancheActiveScenarioMatrix[0].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubDebugPackageHandlers(launched.electronApp);
+			const debugPackageDialog = await openDebugPackageFromQuickActions(launched.window);
+
+			await expect(debugPackageDialog.getByText('Privacy:')).toBeVisible();
+			await expect(debugPackageDialog.getByText('Select what to include:')).toBeVisible();
+			await expect(debugPackageDialog.getByText('5 of 5 selected')).toBeVisible();
+			await expect(debugPackageDialog.getByText('System Logs', { exact: true })).toBeVisible();
+			await expect(debugPackageDialog.getByText('Error States', { exact: true })).toBeVisible();
+			expect(
+				(await getStubbedDebugPackageState(launched.electronApp))?.previewCalls ?? 0
+			).toBeGreaterThanOrEqual(1);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${secondTrancheActiveScenarioMatrix[1].id} ${secondTrancheActiveScenarioMatrix[1].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubDebugPackageHandlers(launched.electronApp);
+			const debugPackageDialog = await openDebugPackageFromQuickActions(launched.window);
+
+			for (const category of debugPackagePreviewCategories) {
+				await debugPackageDialog.getByText(category.name, { exact: true }).click();
+			}
+
+			await expect(debugPackageDialog.getByText('0 of 5 selected')).toBeVisible();
+			await expect(
+				debugPackageDialog.getByRole('button', { name: 'Generate Package' })
+			).toBeDisabled();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${secondTrancheActiveScenarioMatrix[2].id} ${secondTrancheActiveScenarioMatrix[2].title}`, async () => {
+		const resultPath = path.join(os.tmpdir(), 'maestro-debug-accessibility-success.zip');
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubDebugPackageHandlers(launched.electronApp, { resultPath });
+			const debugPackageDialog = await openDebugPackageFromQuickActions(launched.window);
+
+			await debugPackageDialog.getByText('System Logs', { exact: true }).click();
+			await debugPackageDialog.getByText('Error States', { exact: true }).click();
+			await expect(debugPackageDialog.getByText('3 of 5 selected')).toBeVisible();
+			await debugPackageDialog.getByRole('button', { name: 'Generate Package' }).click();
+
+			await expect(debugPackageDialog.getByText('Package created successfully!')).toBeVisible();
+			await expect(debugPackageDialog.getByText(resultPath)).toBeVisible();
+			await expect(debugPackageDialog.getByRole('button', { name: 'Done' })).toBeVisible();
+			expect((await getStubbedDebugPackageState(launched.electronApp))?.createOptions).toEqual([
+				{
+					includeLogs: false,
+					includeErrors: false,
+					includeSessions: true,
+					includeGroupChats: true,
+					includeBatchState: true,
+				},
+			]);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${secondTrancheActiveScenarioMatrix[3].id} ${secondTrancheActiveScenarioMatrix[3].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubDebugPackageHandlers(launched.electronApp, { previewMode: 'error' });
+			const debugPackageDialog = await openDebugPackageFromQuickActions(launched.window);
+
+			await expect(
+				debugPackageDialog.getByText('System Information', { exact: true })
+			).toBeVisible();
+			await expect(
+				debugPackageDialog.getByText('Agent Configurations', { exact: true })
+			).toBeVisible();
+			await expect(debugPackageDialog.getByText('8 of 8 selected')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${secondTrancheActiveScenarioMatrix[4].id} ${secondTrancheActiveScenarioMatrix[4].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubDebugPackageHandlers(launched.electronApp, { createMode: 'error' });
+			const debugPackageDialog = await openDebugPackageFromQuickActions(launched.window);
+
+			await debugPackageDialog.getByRole('button', { name: 'Generate Package' }).click();
+			await expect(debugPackageDialog.getByText('Failed to create package')).toBeVisible();
+			await expect(
+				debugPackageDialog.getByText('Debug package create failure sentinel')
+			).toBeVisible();
+			await expect(
+				debugPackageDialog.getByRole('button', { name: 'Generate Package' })
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${secondTrancheActiveScenarioMatrix[5].id} ${secondTrancheActiveScenarioMatrix[5].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubDebugPackageHandlers(launched.electronApp, { createMode: 'cancelled' });
+			const debugPackageDialog = await openDebugPackageFromQuickActions(launched.window);
+
+			await debugPackageDialog.getByRole('button', { name: 'Generate Package' }).click();
+			await expect(debugPackageDialog.getByText('Select what to include:')).toBeVisible();
+			await expect(debugPackageDialog.getByText('Package created successfully!')).toHaveCount(0);
+			await expect(debugPackageDialog.getByText('Failed to create package')).toHaveCount(0);
 		} finally {
 			await launched.cleanup();
 		}
