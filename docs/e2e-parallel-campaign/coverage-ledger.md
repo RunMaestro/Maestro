@@ -2,9 +2,9 @@
 
 Source of truth: `docs/e2e-coverage-campaign.md`.
 
-Current active tests: 933
+Current active tests: 938
 Target active tests: 3,025
-Remaining matrix-backed active scenarios: 2,092
+Remaining matrix-backed active scenarios: 2,087
 
 ## Matrix
 
@@ -20,7 +20,7 @@ Remaining matrix-backed active scenarios: 2,092
 | History panel                                                  | `files-docs-history`      |             26 |            95 |        69 |
 | Auto Run                                                       | `autorun-ai-terminal`     |            134 |           260 |       126 |
 | New Agent Wizard and inline wizard                             | `wizard-settings-prompts` |             40 |           190 |       150 |
-| Settings                                                       | `wizard-settings-prompts` |             86 |           190 |       104 |
+| Settings                                                       | `wizard-settings-prompts` |             91 |           190 |        99 |
 | Git, worktrees, PR, diff/log, Gist                             | `git-groupchat-playbooks` |             35 |           160 |       125 |
 | Group chat                                                     | `git-groupchat-playbooks` |             54 |           140 |        86 |
 | Usage dashboard and stats                                      | `stats-graph-symphony`    |             21 |           125 |       104 |
@@ -40,7 +40,7 @@ Remaining matrix-backed active scenarios: 2,092
 | `shell-tabs-command`       |                     190 |                        76 |                                    0 | `44e98a94f`          |
 | `files-docs-history`       |                     317 |                        32 |                                    5 | `6f8134fb9`          |
 | `autorun-ai-terminal`      |                     263 |                        10 |                                    0 | `cd804bebf`          |
-| `wizard-settings-prompts`  |                     323 |                        49 |                                    1 | `02c808467`          |
+| `wizard-settings-prompts`  |                     318 |                        54 |                                    1 | `d3c251829`          |
 | `git-groupchat-playbooks`  |                     318 |                        45 |                                    7 | `4867f111c`          |
 | `stats-graph-symphony`     |                     314 |                        22 |                                    6 | `33581a7ec`          |
 | `debug-accessibility`      |                     181 |                        11 |                                    0 | `15e7a1a20`          |
@@ -87,3 +87,4 @@ Remaining matrix-backed active scenarios: 2,092
 - 2026-06-08: accepted `codex/e2e-git-groupchat-playbooks-fallback-3` through `1efd6cfc5`; authored 5 additional active Git Diff/Create PR/Playbook Exchange/OpenSpec fallback scenarios. No E2E execution was run.
 - 2026-06-08: accepted `codex/e2e-wizard-settings-prompts-fallback-5` through `02c808467`; authored 5 additional active Settings shell/input/notification fallback scenarios. No E2E execution was run.
 - 2026-06-08: accepted `codex/e2e-git-groupchat-playbooks-fallback-4` through `4867f111c`; authored 5 additional active Create PR/Playbook Exchange fallback scenarios. No E2E execution was run.
+- 2026-06-08: accepted `codex/e2e-wizard-settings-prompts-fallback-6` through `d3c251829`; authored 5 additional active Settings Display local file indexing/context warning fallback scenarios. No E2E execution was run.

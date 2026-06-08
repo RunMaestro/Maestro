@@ -1,6 +1,6 @@
 # Parallel E2E Orchestrator Status
 
-Last updated: 2026-06-08 08:01 ET
+Last updated: 2026-06-08 08:22 ET
 
 ## Base
 
@@ -37,7 +37,7 @@ coverage and the shell-lane tab coverage.
 | `shell-tabs-command`       | `codex/e2e-shell-tabs-command`                 | `Maestro-worktrees/e2e-shell-tabs-command`                 | `maestro-e2e-shell-tabs-command`       | merged through `44e98a94f` | 76 active scenarios accepted; 190 remain        |
 | `files-docs-history`       | `codex/e2e-files-docs-history`                 | `Maestro-worktrees/e2e-files-docs-history`                 | `maestro-e2e-files-docs-history-t6`    | merged through `6f8134fb9` | 32 active scenarios accepted; 317 remain        |
 | `autorun-ai-terminal`      | `codex/e2e-autorun-ai-terminal`                | `Maestro-worktrees/e2e-autorun-ai-terminal`                | `maestro-e2e-autorun-ai-terminal`      | merged through `cd804bebf` | 10 active scenarios accepted; 263 remain        |
-| `wizard-settings-prompts`  | `codex/e2e-wizard-settings-prompts-fallback-5` | `Maestro-worktrees/e2e-wizard-settings-prompts-fallback-5` | manual fallback                        | merged through `02c808467` | 49 active scenarios accepted; 323 remain        |
+| `wizard-settings-prompts`  | `codex/e2e-wizard-settings-prompts-fallback-6` | `Maestro-worktrees/e2e-wizard-settings-prompts-fallback-6` | manual fallback                        | merged through `d3c251829` | 54 active scenarios accepted; 318 remain        |
 | `git-groupchat-playbooks`  | `codex/e2e-git-groupchat-playbooks-fallback-4` | `Maestro-worktrees/e2e-git-groupchat-playbooks-fallback-4` | manual fallback                        | merged through `4867f111c` | 45 active scenarios accepted; 318 remain        |
 | `stats-graph-symphony`     | `codex/e2e-stats-graph-symphony-fallback-2`    | `Maestro`                                                  | manual fallback                        | merged through `33581a7ec` | 22 active scenarios accepted; 314 remain        |
 | `debug-accessibility`      | `codex/e2e-debug-accessibility`                | `Maestro-worktrees/e2e-debug-accessibility`                | `maestro-e2e-debug-accessibility`      | merged through `15e7a1a20` | 11 active scenarios accepted; 181 remain        |
@@ -51,7 +51,7 @@ coverage and the shell-lane tab coverage.
 - `files-docs-history` merged through `6f8134fb9`.
 - `mobile-web-bridge` merged through `d580f80ea`.
 - `autorun-ai-terminal` merged through `cd804bebf`.
-- `wizard-settings-prompts` merged through `02c808467`.
+- `wizard-settings-prompts` merged through `d3c251829`.
 - `stats-graph-symphony` merged through `33581a7ec`.
 - `debug-accessibility` merged through `15e7a1a20`.
 - `fixtures-sharding-review` merged through `392c4527`.
@@ -158,6 +158,10 @@ coverage and the shell-lane tab coverage.
   `4867f111c` with 5 active Create Pull Request and Playbook Exchange
   detail/keyboard scenarios. Focused static review found no critical or high
   issues. No E2E execution was run.
+- 2026-06-08 08:22 ET: accepted fallback `wizard-settings-prompts` through
+  `d3c251829` with 5 active Settings Display local file indexing and context
+  warning scenarios. Focused static review fixed Local Ignore Patterns and
+  context warning slider selector scope before merge. No E2E execution was run.
 
 ## Blockers
 
@@ -169,8 +173,9 @@ coverage and the shell-lane tab coverage.
   `stats-graph-symphony`, tenth `wizard-settings-prompts`, eleventh
   `git-groupchat-playbooks`, twelfth `wizard-settings-prompts`, thirteenth
   `wizard-settings-prompts`, fourteenth `git-groupchat-playbooks`, fifteenth
-  `wizard-settings-prompts`, and sixteenth `git-groupchat-playbooks` fallbacks
-  are accepted for selected high-remaining lanes.
+  `wizard-settings-prompts`, sixteenth `git-groupchat-playbooks`, and
+  seventeenth `wizard-settings-prompts` fallbacks are accepted for selected
+  high-remaining lanes.
   Remaining work should continue in smaller batches, with each run committing
   one coherent tranche and recording remaining work instead of trying to consume
   a full lane quota in one Codex turn.
