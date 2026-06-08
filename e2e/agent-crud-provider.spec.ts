@@ -1973,6 +1973,159 @@ test.describe('Agent group organization', () => {
 			await launched.cleanup();
 		}
 	});
+
+	test('keeps Create New Group disabled for blank provider group names', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			const quickActionsDialog = await openQuickActions(launched.window);
+			await quickActionsDialog
+				.getByPlaceholder('Type a command or jump to agent...')
+				.fill('Create New Group');
+			await quickActionsDialog.getByRole('button', { name: /Create New Group/ }).click();
+
+			const createGroupDialog = launched.window.getByRole('dialog', { name: 'Create New Group' });
+			const createButton = createGroupDialog.getByRole('button', { name: 'Create' });
+			await expect(createButton).toBeDisabled();
+			await createGroupDialog.getByLabel('Group Name').fill('   ');
+			await expect(createButton).toBeDisabled();
+			await expect(launched.window.getByText('PROVIDER LANE', { exact: true })).toHaveCount(0);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('cancels a Create New Group provider draft without adding a group', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			const quickActionsDialog = await openQuickActions(launched.window);
+			await quickActionsDialog
+				.getByPlaceholder('Type a command or jump to agent...')
+				.fill('Create New Group');
+			await quickActionsDialog.getByRole('button', { name: /Create New Group/ }).click();
+
+			const createGroupDialog = launched.window.getByRole('dialog', { name: 'Create New Group' });
+			await createGroupDialog.getByLabel('Group Name').fill('cancel provider lane');
+			await createGroupDialog.getByRole('button', { name: 'Cancel' }).click();
+
+			await expect(createGroupDialog).toBeHidden();
+			await expect(launched.window.getByText('CANCEL PROVIDER LANE', { exact: true })).toHaveCount(
+				0
+			);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('moves a provider agent into an existing group from the context menu', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			const quickActionsDialog = await openQuickActions(launched.window);
+			await quickActionsDialog
+				.getByPlaceholder('Type a command or jump to agent...')
+				.fill('Create New Group');
+			await quickActionsDialog.getByRole('button', { name: /Create New Group/ }).click();
+
+			const createGroupDialog = launched.window.getByRole('dialog', { name: 'Create New Group' });
+			await createGroupDialog.getByLabel('Group Name').fill('existing provider lane');
+			await createGroupDialog.getByRole('button', { name: 'Create' }).click();
+			await expect(createGroupDialog).toBeHidden();
+
+			const contextMenu = await openSessionContextMenu(
+				launched.window,
+				'Matrix Claude Code Agent',
+				'Move to Group'
+			);
+			await contextMenu.getByText('Move to Group', { exact: true }).hover();
+			await contextMenu.getByRole('button', { name: /EXISTING PROVIDER LANE/ }).click();
+
+			const groupSection = launched.window
+				.getByText('EXISTING PROVIDER LANE', { exact: true })
+				.locator('xpath=ancestor::div[contains(@class, "mb-1")][1]');
+			await expect(
+				groupSection.getByText('Matrix Claude Code Agent', { exact: true })
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('removes a provider bookmark from the left bar context menu', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			let contextMenu = await openSessionContextMenu(
+				launched.window,
+				'Matrix Codex Agent',
+				'Add Bookmark'
+			);
+			await contextMenu.getByRole('button', { name: 'Add Bookmark' }).click();
+			await expect(launched.window.getByText('Bookmarks', { exact: true })).toBeVisible();
+
+			contextMenu = await openSessionContextMenu(
+				launched.window,
+				'Matrix Codex Agent',
+				'Remove Bookmark'
+			);
+			await contextMenu.getByRole('button', { name: 'Remove Bookmark' }).click();
+
+			await expect(launched.window.getByText('Bookmarks', { exact: true })).toHaveCount(0);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('hides the empty-group delete control for populated provider groups', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			const contextMenu = await openSessionContextMenu(
+				launched.window,
+				'Matrix Factory Droid Agent',
+				'Move to Group'
+			);
+			await contextMenu.getByText('Move to Group', { exact: true }).hover();
+			await contextMenu.getByRole('button', { name: /Create New Group/ }).click();
+
+			const createGroupDialog = launched.window.getByRole('dialog', { name: 'Create New Group' });
+			await createGroupDialog.getByLabel('Group Name').fill('populated provider lane');
+			await createGroupDialog.getByRole('button', { name: 'Create' }).click();
+			await expect(createGroupDialog).toBeHidden();
+
+			const groupHeader = launched.window.getByRole('button', { name: /POPULATED PROVIDER LANE/ });
+			const groupSection = groupHeader.locator('xpath=ancestor::div[contains(@class, "mb-1")][1]');
+			await groupHeader.hover();
+
+			await expect(
+				groupSection.getByText('Matrix Factory Droid Agent', { exact: true })
+			).toBeVisible();
+			await expect(groupSection.getByTitle('Delete empty group')).toHaveCount(0);
+		} finally {
+			await launched.cleanup();
+		}
+	});
 });
 
 test.describe('Agent Sessions provider storage', () => {
