@@ -4348,6 +4348,25 @@ test.describe('App shell seeded workbench', () => {
 		await expect(calls[1].cwd).toBe(expectedCwd);
 	});
 
+	test('updates command terminal cwd after parent cd before a follow-up command', async () => {
+		await stubTerminalRunCommand(electronApp);
+		const terminalInput = await openSeededTerminalAgent(window);
+		const inputArea = window.locator('[data-tour="input-area"]');
+		const expectedCwd = path.dirname(seededWorkbench.sessions[1].cwd);
+
+		await terminalInput.fill('cd ..');
+		await inputArea.getByTitle('Run command (Enter)').click();
+
+		await terminalInput.fill('pwd');
+		await inputArea.getByTitle('Run command (Enter)').click();
+
+		await expect(window.locator('[data-log-index]').last().getByText(expectedCwd)).toBeVisible();
+		const calls = await getStubbedTerminalRunCommandCalls(electronApp);
+		await expect(calls.map((call) => call.command)).toEqual(['cd ..', 'pwd']);
+		await expect(calls[0].cwd).toBe(seededWorkbench.sessions[1].cwd);
+		await expect(calls[1].cwd).toBe(expectedCwd);
+	});
+
 	test('persists command terminal history across an app restart', async () => {
 		await stubTerminalRunCommand(electronApp);
 		const terminalInput = await openSeededTerminalAgent(window);
@@ -11039,6 +11058,65 @@ test.describe('Command terminal output controls', () => {
 			.toBeLessThan(bottomScrollTop);
 	});
 
+	test('expands collapsed command terminal output from the transcript control', async () => {
+		await openSeededTerminalAgent(window);
+
+		await expect(
+			window.getByText('terminal scroll line 001 e2e output navigation sentinel')
+		).toBeVisible();
+		await expect(
+			window.getByText('terminal scroll line 140 e2e output navigation sentinel')
+		).toHaveCount(0);
+
+		await window.getByRole('button', { name: 'Show all 140 lines' }).click();
+
+		await expect(window.getByRole('button', { name: 'Show less' })).toBeVisible();
+		await expect(
+			window.getByText('terminal scroll line 140 e2e output navigation sentinel')
+		).toBeVisible();
+	});
+
+	test('recollapses expanded command terminal output from the transcript control', async () => {
+		await openSeededTerminalAgent(window);
+
+		await window.getByRole('button', { name: 'Show all 140 lines' }).click();
+		await expect(
+			window.getByText('terminal scroll line 140 e2e output navigation sentinel')
+		).toBeVisible();
+
+		await window.getByRole('button', { name: 'Show less' }).click();
+
+		await expect(window.getByRole('button', { name: 'Show all 140 lines' })).toBeVisible();
+		await expect(
+			window.getByText('terminal scroll line 140 e2e output navigation sentinel')
+		).toHaveCount(0);
+	});
+
+	test('keeps matching collapsed command terminal output expandable from search', async () => {
+		await openSeededTerminalAgent(window);
+		await window.getByLabel('Terminal output').press('Control+f');
+
+		const searchInput = window.getByPlaceholder('Search output... (Esc to close)');
+		await searchInput.fill('line 140 e2e output navigation');
+
+		await expect(
+			window.getByText('terminal scroll line 001 e2e output navigation sentinel')
+		).toBeVisible();
+		await expect(
+			window.getByText('terminal scroll line 140 e2e output navigation sentinel')
+		).toHaveCount(0);
+		await expect(window.getByRole('button', { name: 'Show all 140 lines' })).toBeVisible();
+
+		await window.getByRole('button', { name: 'Show all 140 lines' }).click();
+		await expect(
+			window.getByText('terminal scroll line 140 e2e output navigation sentinel')
+		).toBeVisible();
+
+		await searchInput.press('Escape');
+		await expect(searchInput).toBeHidden();
+		await expect(window.getByRole('button', { name: 'Show less' })).toBeVisible();
+	});
+
 	test('returns focus to the terminal input when Escape is pressed from output', async () => {
 		const terminalInput = await openSeededTerminalAgent(window);
 		const terminalOutput = window.getByLabel('Terminal output');
@@ -11065,6 +11143,21 @@ test.describe('Command terminal output controls', () => {
 		await expect(window.getByText('terminal seeded output is visible')).toHaveCount(0);
 		await expect(window.getByRole('button', { name: 'Show all 140 lines' })).toHaveCount(0);
 		await expect(window.getByLabel('Terminal output')).toBeVisible();
+	});
+
+	test('preserves command terminal drafts when clearing history from Quick Actions', async () => {
+		const terminalInput = await openSeededTerminalAgent(window);
+		await terminalInput.fill('manual draft before clear history sentinel');
+
+		const quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('Clear Terminal History');
+		await quickActionsDialog.getByRole('button', { name: /Clear Terminal History/ }).click();
+
+		await expect(quickActionsDialog).toBeHidden();
+		await expect(window.locator('[data-log-index]')).toHaveCount(0);
+		await expect(terminalInput).toHaveValue('manual draft before clear history sentinel');
 	});
 });
 
