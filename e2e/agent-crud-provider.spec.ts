@@ -2126,6 +2126,196 @@ test.describe('Agent group organization', () => {
 			await launched.cleanup();
 		}
 	});
+
+	test('renames a provider group when inline edit loses focus', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			const contextMenu = await openSessionContextMenu(
+				launched.window,
+				'Matrix Codex Agent',
+				'Move to Group'
+			);
+			await contextMenu.getByText('Move to Group', { exact: true }).hover();
+			await contextMenu.getByRole('button', { name: /Create New Group/ }).click();
+
+			const createGroupDialog = launched.window.getByRole('dialog', { name: 'Create New Group' });
+			await createGroupDialog.getByLabel('Group Name').fill('blur provider lane');
+			await createGroupDialog.getByRole('button', { name: 'Create' }).click();
+			await expect(createGroupDialog).toBeHidden();
+
+			await launched.window.getByText('BLUR PROVIDER LANE', { exact: true }).dblclick();
+			const renameInput = launched.window.locator('input:focus');
+			await expect(renameInput).toHaveValue('BLUR PROVIDER LANE');
+			await renameInput.fill('blurred provider lane');
+			await launched.window.getByText('Ungrouped Agents', { exact: true }).click();
+
+			await expect(
+				launched.window.getByText('BLURRED PROVIDER LANE', { exact: true })
+			).toBeVisible();
+			await expect(launched.window.getByText('BLUR PROVIDER LANE', { exact: true })).toHaveCount(0);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('keeps provider group name when inline rename is blank', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			const contextMenu = await openSessionContextMenu(
+				launched.window,
+				'Matrix Claude Code Agent',
+				'Move to Group'
+			);
+			await contextMenu.getByText('Move to Group', { exact: true }).hover();
+			await contextMenu.getByRole('button', { name: /Create New Group/ }).click();
+
+			const createGroupDialog = launched.window.getByRole('dialog', { name: 'Create New Group' });
+			await createGroupDialog.getByLabel('Group Name').fill('blank rename lane');
+			await createGroupDialog.getByRole('button', { name: 'Create' }).click();
+			await expect(createGroupDialog).toBeHidden();
+
+			await launched.window.getByText('BLANK RENAME LANE', { exact: true }).dblclick();
+			const renameInput = launched.window.locator('input:focus');
+			await renameInput.fill('   ');
+			await renameInput.press('Enter');
+
+			await expect(launched.window.getByText('BLANK RENAME LANE', { exact: true })).toBeVisible();
+			await expect(renameInput).toHaveCount(0);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('marks the provider current group submenu item disabled', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			let contextMenu = await openSessionContextMenu(
+				launched.window,
+				'Matrix OpenCode Agent',
+				'Move to Group'
+			);
+			await contextMenu.getByText('Move to Group', { exact: true }).hover();
+			await contextMenu.getByRole('button', { name: /Create New Group/ }).click();
+
+			const createGroupDialog = launched.window.getByRole('dialog', { name: 'Create New Group' });
+			await createGroupDialog.getByLabel('Group Name').fill('current provider lane');
+			await createGroupDialog.getByRole('button', { name: 'Create' }).click();
+			await expect(createGroupDialog).toBeHidden();
+
+			contextMenu = await openSessionContextMenu(
+				launched.window,
+				'Matrix OpenCode Agent',
+				'Move to Group'
+			);
+			await contextMenu.getByText('Move to Group', { exact: true }).hover();
+
+			await expect(
+				contextMenu.getByRole('button', { name: /CURRENT PROVIDER LANE/ })
+			).toBeDisabled();
+			await expect(contextMenu.getByText('(current)', { exact: true })).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('shows empty provider group delete control after moving last agent to ungrouped', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			let contextMenu = await openSessionContextMenu(
+				launched.window,
+				'Matrix Factory Droid Agent',
+				'Move to Group'
+			);
+			await contextMenu.getByText('Move to Group', { exact: true }).hover();
+			await contextMenu.getByRole('button', { name: /Create New Group/ }).click();
+
+			const createGroupDialog = launched.window.getByRole('dialog', { name: 'Create New Group' });
+			await createGroupDialog.getByLabel('Group Name').fill('emptied provider lane');
+			await createGroupDialog.getByRole('button', { name: 'Create' }).click();
+			await expect(createGroupDialog).toBeHidden();
+
+			contextMenu = await openSessionContextMenu(
+				launched.window,
+				'Matrix Factory Droid Agent',
+				'Move to Group'
+			);
+			await contextMenu.getByText('Move to Group', { exact: true }).hover();
+			await contextMenu.getByRole('button', { name: /Ungrouped/ }).click();
+
+			const groupHeader = launched.window.getByRole('button', { name: /EMPTIED PROVIDER LANE/ });
+			const groupSection = groupHeader.locator('xpath=ancestor::div[contains(@class, "mb-1")][1]');
+			await groupHeader.hover();
+
+			await expect(
+				groupSection.getByText('Matrix Factory Droid Agent', { exact: true })
+			).toHaveCount(0);
+			await expect(groupSection.getByTitle('Delete empty group')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('keeps a bookmarked provider agent visible after moving it into a group', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			let contextMenu = await openSessionContextMenu(
+				launched.window,
+				'Matrix Codex Agent',
+				'Add Bookmark'
+			);
+			await contextMenu.getByRole('button', { name: 'Add Bookmark' }).click();
+
+			contextMenu = await openSessionContextMenu(
+				launched.window,
+				'Matrix Codex Agent',
+				'Move to Group'
+			);
+			await contextMenu.getByText('Move to Group', { exact: true }).hover();
+			await contextMenu.getByRole('button', { name: /Create New Group/ }).click();
+
+			const createGroupDialog = launched.window.getByRole('dialog', { name: 'Create New Group' });
+			await createGroupDialog.getByLabel('Group Name').fill('bookmarked provider lane');
+			await createGroupDialog.getByRole('button', { name: 'Create' }).click();
+			await expect(createGroupDialog).toBeHidden();
+
+			const bookmarksSection = launched.window
+				.getByText('Bookmarks', { exact: true })
+				.locator('xpath=ancestor::div[contains(@class, "mb-1")][1]');
+			const groupSection = launched.window
+				.getByText('BOOKMARKED PROVIDER LANE', { exact: true })
+				.locator('xpath=ancestor::div[contains(@class, "mb-1")][1]');
+
+			await expect(bookmarksSection.getByText('Matrix Codex Agent', { exact: true })).toBeVisible();
+			await expect(groupSection.getByText('Matrix Codex Agent', { exact: true })).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
 });
 
 test.describe('Agent Sessions provider storage', () => {
