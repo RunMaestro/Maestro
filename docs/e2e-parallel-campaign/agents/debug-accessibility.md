@@ -1,6 +1,6 @@
 # debug-accessibility
 
-Status: twenty-second fallback tranche authored
+Status: twenty-third fallback tranche authored
 
 ## Scope
 
@@ -9,9 +9,9 @@ accessibility smoke.
 
 ## Campaign Head
 
-- Ledger head before this tranche: `7c407a5b6`.
-- Implementation commit: `8d033c945`.
-- Coverage ledger before this tranche: 106 active scenarios accepted, 86
+- Ledger head before this tranche: `e6f4e4765`.
+- Implementation commit: `2bfd428aa`.
+- Coverage ledger before this tranche: 111 active scenarios accepted, 81
   matrix-backed scenarios remaining.
 
 ## Checklist
@@ -25,13 +25,13 @@ accessibility smoke.
 
 ## Progress
 
-- Added matrix-backed System Log Viewer accessibility-state scenarios `DA-107`
-  through `DA-111`.
+- Added matrix-backed Debug Package accessibility-state scenarios `DA-112`
+  through `DA-116`.
 - Active scenarios added this tranche: 5.
-- Active scenarios authored in lane total: 111.
+- Active scenarios authored in lane total: 116.
 - Skipped/product-gap scenarios added this tranche: 0.
 - Env-gated scenarios added this tranche: 0.
-- Matrix-backed remaining after orchestrator ledger acceptance: 81.
+- Matrix-backed remaining after orchestrator ledger acceptance: 76.
 
 Files touched:
 
@@ -46,7 +46,7 @@ Validation passed:
 - `NODE_OPTIONS=--max-old-space-size=8192 npx prettier --write e2e/debug-accessibility.spec.ts docs/e2e-parallel-campaign/agents/debug-accessibility.md docs/e2e-parallel-campaign/coverage-ledger.md docs/e2e-coverage-campaign.md`
 - `NODE_OPTIONS=--max-old-space-size=8192 npx tsc -p tsconfig.lint.json --noEmit`
 - `git diff --check`
-- Static inventory scan reports 1075 declared E2E tests, no `.only`, no
+- Static inventory scan reports 1080 declared E2E tests, no `.only`, no
   prohibited commands, and no duplicate campaign scenario IDs.
 
 Blockers:
@@ -58,4 +58,4 @@ Blockers:
 Remaining work:
 
 - Debug/about/update/app-info/agent-error modal scenarios are complete.
-- 81 accessibility smoke and destructive-action confirmation scenarios remain.
+- 76 accessibility smoke and destructive-action confirmation scenarios remain.
