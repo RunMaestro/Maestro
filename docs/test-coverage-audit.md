@@ -34,14 +34,16 @@ Parallel E2E authoring checkpoint:
 
 - Campaign: `docs/e2e-parallel-prompt.md`
 - Result: in progress
-- Current authoring progress: 754 / 3,025 active scenarios after accepting the
-  remaining first-tranche recovery lanes through `f56007a23`.
+- Current authoring progress: 779 / 3,025 active scenarios after accepting the
+  second-tranche recovery lanes through `f8b94b00`.
 - Accepted lanes so far: `shell-tabs-command`, `agent-crud-provider`,
   `files-docs-history`, `mobile-web-bridge`, `autorun-ai-terminal`,
   `wizard-settings-prompts`, `stats-graph-symphony`, `debug-accessibility`,
   `fixtures-sharding-review`, and `git-groupchat-playbooks`.
 - Execution policy: Playwright E2E tests are intentionally not executed in this phase.
 - Validation plan: static review of authored selectors, fixtures, scenario names, assertions, and lane progress logs; runtime validation is deferred to a later sharded execution phase.
+- Latest static validation: lane-local ESLint and `git diff --check` passed for
+  tranche 2; code-reviewer static review found no blocking issues.
 
 Integration checkpoint:
 

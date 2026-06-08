@@ -1,6 +1,6 @@
 # Parallel E2E Orchestrator Status
 
-Last updated: 2026-06-08 02:05 ET
+Last updated: 2026-06-08 02:41 ET
 
 ## Base
 
@@ -31,31 +31,31 @@ coverage and the shell-lane tab coverage.
 
 ## Lane State
 
-| Lane                       | Branch                               | Worktree                                         | PM2 process                            | State                      | Notes                                           |
-| -------------------------- | ------------------------------------ | ------------------------------------------------ | -------------------------------------- | -------------------------- | ----------------------------------------------- |
-| `agent-crud-provider`      | `codex/e2e-agent-crud-provider`      | `Maestro-worktrees/e2e-agent-crud-provider`      | `maestro-e2e-agent-crud-provider`      | merged through `bb4fbcce2` | 9 active scenarios accepted; 95 remain          |
-| `shell-tabs-command`       | `codex/e2e-shell-tabs-command`       | `Maestro-worktrees/e2e-shell-tabs-command`       | `maestro-e2e-shell-tabs-command`       | merged through `02ce883da` | 69 active scenarios accepted; 197 remain        |
-| `files-docs-history`       | `codex/e2e-files-docs-history`       | `Maestro-worktrees/e2e-files-docs-history`       | `maestro-e2e-files-docs-history`       | merged through `bd10d5fdd` | 8 active scenarios accepted; 341 remain         |
-| `autorun-ai-terminal`      | `codex/e2e-autorun-ai-terminal`      | `Maestro-worktrees/e2e-autorun-ai-terminal`      | `maestro-e2e-autorun-ai-terminal`      | merged through `ca4241a13` | 5 active scenarios accepted; 268 remain         |
-| `wizard-settings-prompts`  | `codex/e2e-wizard-settings-prompts`  | `Maestro-worktrees/e2e-wizard-settings-prompts`  | `maestro-e2e-wizard-settings-prompts`  | merged through `01b93b1f`  | 5 active scenarios accepted; 367 remain         |
-| `git-groupchat-playbooks`  | `codex/e2e-git-groupchat-playbooks`  | `Maestro-worktrees/e2e-git-groupchat-playbooks`  | `maestro-e2e-git-groupchat-playbooks`  | merged through `f56007a23` | 5 active scenarios accepted; 358 remain         |
-| `stats-graph-symphony`     | `codex/e2e-stats-graph-symphony`     | `Maestro-worktrees/e2e-stats-graph-symphony`     | `maestro-e2e-stats-graph-symphony`     | merged through `8d37e190`  | 5 active scenarios accepted; 331 remain         |
-| `debug-accessibility`      | `codex/e2e-debug-accessibility`      | `Maestro-worktrees/e2e-debug-accessibility`      | `maestro-e2e-debug-accessibility`      | merged through `94f7b2d7`  | 5 active scenarios accepted; 187 remain         |
-| `mobile-web-bridge`        | `codex/e2e-mobile-web-bridge`        | `Maestro-worktrees/e2e-mobile-web-bridge`        | `maestro-e2e-mobile-web-bridge`        | merged through `243662e8f` | 5 active scenarios accepted; 97 remain          |
-| `fixtures-sharding-review` | `codex/e2e-fixtures-sharding-review` | `Maestro-worktrees/e2e-fixtures-sharding-review` | `maestro-e2e-fixtures-sharding-review` | merged through `392c4527`  | Support plan accepted; no active scenario quota |
+| Lane                       | Branch                               | Worktree                                         | PM2 process                              | State                      | Notes                                           |
+| -------------------------- | ------------------------------------ | ------------------------------------------------ | ---------------------------------------- | -------------------------- | ----------------------------------------------- |
+| `agent-crud-provider`      | `codex/e2e-agent-crud-provider`      | `Maestro-worktrees/e2e-agent-crud-provider`      | `maestro-e2e-agent-crud-provider`        | merged through `bb4fbcce2` | 9 active scenarios accepted; 95 remain          |
+| `shell-tabs-command`       | `codex/e2e-shell-tabs-command`       | `Maestro-worktrees/e2e-shell-tabs-command`       | `maestro-e2e-shell-tabs-command`         | merged through `02ce883da` | 69 active scenarios accepted; 197 remain        |
+| `files-docs-history`       | `codex/e2e-files-docs-history`       | `Maestro-worktrees/e2e-files-docs-history`       | `maestro-e2e-files-docs-history-t2`      | merged through `c47df15c2` | 14 active scenarios accepted; 335 remain        |
+| `autorun-ai-terminal`      | `codex/e2e-autorun-ai-terminal`      | `Maestro-worktrees/e2e-autorun-ai-terminal`      | `maestro-e2e-autorun-ai-terminal`        | merged through `ca4241a13` | 5 active scenarios accepted; 268 remain         |
+| `wizard-settings-prompts`  | `codex/e2e-wizard-settings-prompts`  | `Maestro-worktrees/e2e-wizard-settings-prompts`  | `maestro-e2e-wizard-settings-prompts-t2` | merged through `30fd144ab` | 12 active scenarios accepted; 360 remain        |
+| `git-groupchat-playbooks`  | `codex/e2e-git-groupchat-playbooks`  | `Maestro-worktrees/e2e-git-groupchat-playbooks`  | `maestro-e2e-git-groupchat-playbooks-t2` | merged through `f8b94b00`  | 11 active scenarios accepted; 352 remain        |
+| `stats-graph-symphony`     | `codex/e2e-stats-graph-symphony`     | `Maestro-worktrees/e2e-stats-graph-symphony`     | `maestro-e2e-stats-graph-symphony-t2`    | merged through `cd80b10f`  | 11 active scenarios accepted; 325 remain        |
+| `debug-accessibility`      | `codex/e2e-debug-accessibility`      | `Maestro-worktrees/e2e-debug-accessibility`      | `maestro-e2e-debug-accessibility`        | merged through `94f7b2d7`  | 5 active scenarios accepted; 187 remain         |
+| `mobile-web-bridge`        | `codex/e2e-mobile-web-bridge`        | `Maestro-worktrees/e2e-mobile-web-bridge`        | `maestro-e2e-mobile-web-bridge`          | merged through `243662e8f` | 5 active scenarios accepted; 97 remain          |
+| `fixtures-sharding-review` | `codex/e2e-fixtures-sharding-review` | `Maestro-worktrees/e2e-fixtures-sharding-review` | `maestro-e2e-fixtures-sharding-review`   | merged through `392c4527`  | Support plan accepted; no active scenario quota |
 
 ## Merge Queue
 
 - `shell-tabs-command` merged through `02ce883da`.
 - `agent-crud-provider` merged through `bb4fbcce2`.
-- `files-docs-history` merged through `bd10d5fdd`.
+- `files-docs-history` merged through `c47df15c2`.
 - `mobile-web-bridge` merged through `243662e8f`.
 - `autorun-ai-terminal` merged through `ca4241a13`.
-- `wizard-settings-prompts` merged through `01b93b1f`.
-- `stats-graph-symphony` merged through `8d37e190`.
+- `wizard-settings-prompts` merged through `30fd144ab`.
+- `stats-graph-symphony` merged through `cd80b10f`.
 - `debug-accessibility` merged through `94f7b2d7`.
 - `fixtures-sharding-review` merged through `392c4527`.
-- `git-groupchat-playbooks` merged through `f56007a23`.
+- `git-groupchat-playbooks` merged through `f8b94b00`.
 
 ## Launch Log
 
@@ -80,12 +80,21 @@ coverage and the shell-lane tab coverage.
   `01b93b1f`, `stats-graph-symphony` through `8d37e190`,
   `debug-accessibility` through `94f7b2d7`, `fixtures-sharding-review` through
   `392c4527`, and `git-groupchat-playbooks` through `f56007a23`.
+- 2026-06-08 02:19 ET: launched second-tranche PM2 one-shot workers for
+  `files-docs-history`, `wizard-settings-prompts`, `stats-graph-symphony`, and
+  `git-groupchat-playbooks` using `--no-autorestart` and the no-E2E execution
+  rule.
+- 2026-06-08 02:41 ET: accepted the second-tranche lane branches: `files-docs-history`
+  through `c47df15c2`, `wizard-settings-prompts` through `30fd144ab`,
+  `stats-graph-symphony` through `cd80b10f`, and `git-groupchat-playbooks`
+  through `f8b94b00`.
 
 ## Blockers
 
 - The source prompt has a lane-quota inconsistency for `shell-tabs-command`.
   The canonical matrix remains authoritative until changed deliberately.
-- The first recovery tranche is accepted for every lane. Remaining work should
+- The first recovery tranche is accepted for every lane, and the second recovery
+  tranche is accepted for four high-remaining lanes. Remaining work should
   continue in smaller batches, with each run committing one coherent tranche and
   recording remaining work instead of trying to consume a full lane quota in one
   Codex turn.
