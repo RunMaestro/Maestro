@@ -1,6 +1,6 @@
 # Parallel E2E Orchestrator Status
 
-Last updated: 2026-06-08 18:48 EDT
+Last updated: 2026-06-08 18:52 EDT
 
 ## Base
 
@@ -31,18 +31,18 @@ coverage and the shell-lane tab coverage.
 
 ## Lane State
 
-| Lane                       | Branch                               | Worktree                                         | PM2 process                                         | State                           | Notes                                           |
-| -------------------------- | ------------------------------------ | ------------------------------------------------ | --------------------------------------------------- | ------------------------------- | ----------------------------------------------- |
-| `agent-crud-provider`      | `codex/e2e-agent-crud-provider`      | `Maestro-worktrees/e2e-agent-crud-provider`      | not relaunched                                      | complete                        | 104 active scenarios accepted; 0 remain         |
-| `shell-tabs-command`       | `codex/e2e-shell-tabs-command`       | `Maestro-worktrees/e2e-shell-tabs-command`       | `maestro-e2e-shell-tabs-command-campaign-goal`      | waiting restart after 503       | 81 active scenarios accepted; 185 remain        |
-| `files-docs-history`       | `codex/e2e-files-docs-history`       | `Maestro-worktrees/e2e-files-docs-history`       | `maestro-e2e-files-docs-history-campaign-goal`      | waiting restart after 503       | 37 active scenarios accepted; 312 remain        |
-| `autorun-ai-terminal`      | `codex/e2e-autorun-ai-terminal`      | `Maestro-worktrees/e2e-autorun-ai-terminal`      | `maestro-e2e-autorun-ai-terminal-campaign-goal`     | waiting restart after 503       | 10 active scenarios accepted; 263 remain        |
-| `wizard-settings-prompts`  | `codex/e2e-wizard-settings-prompts`  | `Maestro-worktrees/e2e-wizard-settings-prompts`  | `maestro-e2e-wizard-settings-prompts-campaign-goal` | waiting restart after 503       | 59 active scenarios accepted; 313 remain        |
-| `git-groupchat-playbooks`  | `codex/e2e-git-groupchat-playbooks`  | `Maestro-worktrees/e2e-git-groupchat-playbooks`  | `maestro-e2e-git-groupchat-playbooks-campaign-goal` | online, staggered start pending | 50 active scenarios accepted; 313 remain        |
-| `stats-graph-symphony`     | `codex/e2e-stats-graph-symphony`     | `Maestro-worktrees/e2e-stats-graph-symphony`     | `maestro-e2e-stats-graph-symphony-campaign-goal`    | online, staggered start pending | 27 active scenarios accepted; 309 remain        |
-| `debug-accessibility`      | `codex/e2e-debug-accessibility`      | `Maestro-worktrees/e2e-debug-accessibility`      | `maestro-e2e-debug-accessibility-campaign-goal`     | online, staggered start pending | 141 active scenarios accepted; 51 remain        |
-| `mobile-web-bridge`        | `codex/e2e-mobile-web-bridge`        | `Maestro-worktrees/e2e-mobile-web-bridge`        | `maestro-e2e-mobile-web-bridge-campaign-goal`       | online, staggered start pending | 16 active scenarios accepted; 86 remain         |
-| `fixtures-sharding-review` | `codex/e2e-fixtures-sharding-review` | `Maestro-worktrees/e2e-fixtures-sharding-review` | not relaunched                                      | support complete                | Support plan accepted; no active scenario quota |
+| Lane                       | Branch                               | Worktree                                         | PM2 process                                         | State                     | Notes                                           |
+| -------------------------- | ------------------------------------ | ------------------------------------------------ | --------------------------------------------------- | ------------------------- | ----------------------------------------------- |
+| `agent-crud-provider`      | `codex/e2e-agent-crud-provider`      | `Maestro-worktrees/e2e-agent-crud-provider`      | not relaunched                                      | complete                  | 104 active scenarios accepted; 0 remain         |
+| `shell-tabs-command`       | `codex/e2e-shell-tabs-command`       | `Maestro-worktrees/e2e-shell-tabs-command`       | `maestro-e2e-shell-tabs-command-campaign-goal`      | PM2 retry cycle after 503 | 81 active scenarios accepted; 185 remain        |
+| `files-docs-history`       | `codex/e2e-files-docs-history`       | `Maestro-worktrees/e2e-files-docs-history`       | `maestro-e2e-files-docs-history-campaign-goal`      | PM2 retry cycle after 503 | 37 active scenarios accepted; 312 remain        |
+| `autorun-ai-terminal`      | `codex/e2e-autorun-ai-terminal`      | `Maestro-worktrees/e2e-autorun-ai-terminal`      | `maestro-e2e-autorun-ai-terminal-campaign-goal`     | PM2 retry cycle after 503 | 10 active scenarios accepted; 263 remain        |
+| `wizard-settings-prompts`  | `codex/e2e-wizard-settings-prompts`  | `Maestro-worktrees/e2e-wizard-settings-prompts`  | `maestro-e2e-wizard-settings-prompts-campaign-goal` | PM2 retry cycle after 503 | 59 active scenarios accepted; 313 remain        |
+| `git-groupchat-playbooks`  | `codex/e2e-git-groupchat-playbooks`  | `Maestro-worktrees/e2e-git-groupchat-playbooks`  | `maestro-e2e-git-groupchat-playbooks-campaign-goal` | PM2 retry cycle after 503 | 50 active scenarios accepted; 313 remain        |
+| `stats-graph-symphony`     | `codex/e2e-stats-graph-symphony`     | `Maestro-worktrees/e2e-stats-graph-symphony`     | `maestro-e2e-stats-graph-symphony-campaign-goal`    | PM2 retry cycle after 503 | 27 active scenarios accepted; 309 remain        |
+| `debug-accessibility`      | `codex/e2e-debug-accessibility`      | `Maestro-worktrees/e2e-debug-accessibility`      | `maestro-e2e-debug-accessibility-campaign-goal`     | PM2 retry cycle after 503 | 141 active scenarios accepted; 51 remain        |
+| `mobile-web-bridge`        | `codex/e2e-mobile-web-bridge`        | `Maestro-worktrees/e2e-mobile-web-bridge`        | `maestro-e2e-mobile-web-bridge-campaign-goal`       | PM2 retry cycle after 503 | 16 active scenarios accepted; 86 remain         |
+| `fixtures-sharding-review` | `codex/e2e-fixtures-sharding-review` | `Maestro-worktrees/e2e-fixtures-sharding-review` | not relaunched                                      | support complete          | Support plan accepted; no active scenario quota |
 
 ## Merge Queue
 
@@ -197,6 +197,10 @@ coverage and the shell-lane tab coverage.
   `2d9975b17` with 5 active command-terminal output expansion, collapsed-search,
   clear-history draft, and parent-directory cwd scenarios. Focused static review
   found no critical or high issues. No E2E execution was run.
+- 2026-06-08 18:52 EDT: all eight `/goal` campaign workers have reached Codex
+  startup at least once and failed before authoring with the same managed-account
+  503 service-unavailable condition. PM2 still has no stale stopped entries; the
+  quota workers remain in staggered retry cycles.
 
 ## Blockers
 
@@ -230,5 +234,5 @@ coverage and the shell-lane tab coverage.
   stopped PM2 list was not proof of completed work. Old stopped worker logs were
   mixed across completed one-shot tranches, 503 capacity failures, 429 rate
   limits, interrupted turns, and unclear exits. Current PM2 state has no stale
-  stopped `maestro-e2e-*` entries, but the first four restarted goal workers are
+  stopped `maestro-e2e-*` entries, but all eight restarted goal workers are
   blocked by the same managed-account 503 condition before authoring.
