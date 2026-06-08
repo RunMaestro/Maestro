@@ -115,6 +115,12 @@ const activeScenarioMatrix = [
 	{ id: 'WSP-075', title: 'toggles Settings SSH remote gitignore honor' },
 	{ id: 'WSP-076', title: 'uploads a Prompt Composer image and opens the lightbox' },
 	{ id: 'WSP-077', title: 'removes a Prompt Composer staged image before sending' },
+	{ id: 'WSP-078', title: 'cancels a seeded custom AI command edit in Settings' },
+	{ id: 'WSP-079', title: 'shows duplicate Settings SSH remote ignore pattern feedback' },
+	{ id: 'WSP-080', title: 'resets Settings SSH remote ignore patterns to defaults' },
+	{ id: 'WSP-081', title: 'inserts a tab character in Prompt Composer' },
+	{ id: 'WSP-082', title: 'toggles Prompt Composer History with the keyboard shortcut' },
+	{ id: 'WSP-083', title: 'toggles Prompt Composer Read-Only with the keyboard shortcut' },
 ];
 
 const envGatedScenarioMatrix = [
@@ -2634,6 +2640,206 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 				.locator('button')
 				.click();
 			await expect(stagedImage).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[77].id} ${activeScenarioMatrix[77].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				customAICommands: [
+					{
+						id: 'wsp-cancel-edit-command',
+						command: '/wsp-cancel-edit',
+						description: 'Original edit-cancel command',
+						prompt: 'Original edit-cancel prompt.',
+						isBuiltIn: false,
+					},
+				],
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'AI Commands',
+				'Custom AI Commands'
+			);
+			await settingsDialog.getByRole('button', { name: /\/wsp-cancel-edit/ }).click();
+			await settingsDialog.getByTitle('Edit command').click();
+
+			const editForm = settingsDialog
+				.getByText('/wsp-cancel-edit')
+				.locator('xpath=ancestor::div[contains(@class, "p-3")][1]');
+			await editForm.locator('input').nth(1).fill('Edited but canceled command');
+			await editForm.locator('textarea').fill('Canceled prompt mutation.');
+			await editForm.getByRole('button', { name: 'Cancel' }).click();
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						const commands = await window.maestro.settings.get('customAICommands');
+						return Array.isArray(commands)
+							? commands.find((command) => command.command === '/wsp-cancel-edit')
+							: undefined;
+					});
+				})
+				.toMatchObject({
+					description: 'Original edit-cancel command',
+					prompt: 'Original edit-cancel prompt.',
+				});
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[78].id} ${activeScenarioMatrix[78].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				sshRemoteIgnorePatterns: ['.git', '*cache*'],
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'SSH Hosts',
+				'Remote Ignore Patterns'
+			);
+			const remoteIgnoreSection = settingsDialog
+				.getByText('Remote Ignore Patterns')
+				.locator('xpath=ancestor::div[contains(@class, "rounded")][1]');
+			await remoteIgnoreSection
+				.getByPlaceholder('Enter glob pattern (e.g., node_modules, *.log)')
+				.fill('.git');
+			await remoteIgnoreSection.getByRole('button', { name: 'Add' }).click();
+
+			await expect(remoteIgnoreSection.getByText('Pattern already exists')).toBeVisible();
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('sshRemoteIgnorePatterns');
+					});
+				})
+				.toEqual(['.git', '*cache*']);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[79].id} ${activeScenarioMatrix[79].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				sshRemoteIgnorePatterns: ['remote-only-cache'],
+				sshRemoteHonorGitignore: false,
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'SSH Hosts',
+				'Remote Ignore Patterns'
+			);
+			await settingsDialog.getByRole('button', { name: /Reset to defaults/ }).click();
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return {
+							ignorePatterns: await window.maestro.settings.get('sshRemoteIgnorePatterns'),
+							honorGitignore: await window.maestro.settings.get('sshRemoteHonorGitignore'),
+						};
+					});
+				})
+				.toEqual({
+					ignorePatterns: ['.git', '*cache*'],
+					honorGitignore: true,
+				});
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[80].id} ${activeScenarioMatrix[80].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			const composerInput = await openPromptComposer(launched.window);
+
+			await composerInput.fill('Draft prompt line');
+			await composerInput.press('Tab');
+			await expect(composerInput).toHaveValue(/Draft prompt line\t$/);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[81].id} ${activeScenarioMatrix[81].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			const composerInput = await openPromptComposer(launched.window);
+			await composerInput.press('Meta+S');
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						const sessions = await window.maestro.sessions.getAll();
+						const primarySession = sessions.find((session) => session.id === 'wsp-primary-agent');
+						const primaryTab = primarySession?.aiTabs?.find(
+							(tab) => tab.id === 'wsp-primary-agent-tab'
+						);
+						return Boolean(primaryTab?.saveToHistory);
+					});
+				})
+				.toBe(true);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[82].id} ${activeScenarioMatrix[82].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			const composerInput = await openPromptComposer(launched.window);
+			await composerInput.press('Meta+R');
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						const sessions = await window.maestro.sessions.getAll();
+						const primarySession = sessions.find((session) => session.id === 'wsp-primary-agent');
+						const primaryTab = primarySession?.aiTabs?.find(
+							(tab) => tab.id === 'wsp-primary-agent-tab'
+						);
+						return Boolean(primaryTab?.readOnlyMode);
+					});
+				})
+				.toBe(true);
 		} finally {
 			await launched.cleanup();
 		}
