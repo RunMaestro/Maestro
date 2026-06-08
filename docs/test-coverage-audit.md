@@ -34,9 +34,10 @@ Parallel E2E authoring checkpoint:
 
 - Campaign: `docs/e2e-parallel-prompt.md`
 - Result: in progress
-- Current authoring progress: 913 / 3,025 active scenarios after accepting the
-  twelfth-tranche wizard/settings/prompts fallback through `16e9f11cd`. This tranche
-  added 5 active Settings/Bionify rows without adding skipped or env-gated rows.
+- Current authoring progress: 918 / 3,025 active scenarios after accepting the
+  thirteenth-tranche wizard/settings/prompts fallback through `1741d2b74`. This
+  tranche added 5 active Settings preference rows without adding skipped or env-gated
+  rows.
 - Accepted lanes so far: `shell-tabs-command`, `agent-crud-provider`,
   `files-docs-history`, `mobile-web-bridge`, `autorun-ai-terminal`,
   `wizard-settings-prompts`, `stats-graph-symphony`, `debug-accessibility`,
