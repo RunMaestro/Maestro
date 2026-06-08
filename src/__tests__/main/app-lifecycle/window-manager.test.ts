@@ -15,6 +15,13 @@ let windowCloseHandler: (() => void) | null = null;
 const webContentsEventHandlers = new Map<string, (...args: any[]) => void>();
 const guestWebContentsEventHandlers = new Map<string, (...args: any[]) => void>();
 
+const mockGuestNavigationHistory = {
+	canGoBack: vi.fn(() => false),
+	goBack: vi.fn(),
+	canGoForward: vi.fn(() => false),
+	goForward: vi.fn(),
+};
+
 const mockGuestWebContents = {
 	getType: vi.fn(() => 'webview'),
 	setWindowOpenHandler: vi.fn(),
@@ -22,6 +29,18 @@ const mockGuestWebContents = {
 		guestWebContentsEventHandlers.set(event, handler);
 	}),
 	executeJavaScript: vi.fn().mockResolvedValue(undefined),
+	// Edit + navigation surface used by the browser-tab context menu (#1065)
+	cut: vi.fn(),
+	copy: vi.fn(),
+	paste: vi.fn(),
+	selectAll: vi.fn(),
+	copyImageAt: vi.fn(),
+	reload: vi.fn(),
+	replaceMisspelling: vi.fn(),
+	navigationHistory: mockGuestNavigationHistory,
+	session: {
+		addWordToSpellCheckerDictionary: vi.fn(),
+	},
 };
 
 // Mock BrowserWindow instance methods
@@ -77,13 +96,25 @@ class MockBrowserWindow {
 // Mock ipcMain
 const mockHandle = vi.fn();
 
+// Mock Menu / shell / clipboard for the browser-tab context menu (#1065)
+const mockMenuPopup = vi.fn();
+const mockBuildFromTemplate = vi.fn(() => ({ popup: mockMenuPopup }));
+const mockShellOpenExternal = vi.fn((..._args: unknown[]) => Promise.resolve());
+const mockClipboardWriteText = vi.fn();
+
 vi.mock('electron', () => ({
 	BrowserWindow: MockBrowserWindow,
 	ipcMain: {
 		handle: (...args: unknown[]) => mockHandle(...args),
 	},
 	Menu: {
-		buildFromTemplate: vi.fn(() => ({ popup: vi.fn() })),
+		buildFromTemplate: (...args: unknown[]) => mockBuildFromTemplate(...args),
+	},
+	shell: {
+		openExternal: (...args: unknown[]) => mockShellOpenExternal(...args),
+	},
+	clipboard: {
+		writeText: (...args: unknown[]) => mockClipboardWriteText(...args),
 	},
 	screen: {
 		getAllDisplays: () => [{ workArea: { x: 0, y: 0, width: 1920, height: 1080 } }],
@@ -154,10 +185,219 @@ describe('app-lifecycle/window-manager', () => {
 		mockWindowInstance.getBounds.mockReturnValue({ x: 100, y: 100, width: 1200, height: 800 });
 		mockWebContents.getType.mockReturnValue('window');
 		mockGuestWebContents.getType.mockReturnValue('webview');
+		mockGuestNavigationHistory.canGoBack.mockReturnValue(false);
+		mockGuestNavigationHistory.canGoForward.mockReturnValue(false);
+		mockBuildFromTemplate.mockReturnValue({ popup: mockMenuPopup });
 	});
 
 	afterEach(() => {
 		vi.restoreAllMocks();
+	});
+
+	describe('browser-tab context menu (#1065)', () => {
+		const baseDeps = {
+			isDevelopment: false,
+			preloadPath: '/path/to/preload.js',
+			rendererProductionUrl: 'app://app/index.html',
+			devServerUrl: 'http://localhost:5173',
+			useNativeTitleBar: false,
+			autoHideMenuBar: false,
+		};
+
+		// Attaches a browser-tab guest and returns its `context-menu` handler.
+		async function attachGuestAndGetContextMenuHandler() {
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+			const windowManager = createWindowManager({
+				windowStateStore: mockWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['windowStateStore'],
+				...baseDeps,
+			});
+			windowManager.createWindow();
+			const attachHandler = webContentsEventHandlers.get('did-attach-webview');
+			attachHandler?.({} as any, mockGuestWebContents as any);
+			return guestWebContentsEventHandlers.get('context-menu');
+		}
+
+		function makeParams(overrides: Record<string, unknown> = {}): any {
+			return {
+				isEditable: false,
+				editFlags: {
+					canCut: true,
+					canCopy: true,
+					canPaste: true,
+					canSelectAll: true,
+					canUndo: false,
+					canRedo: false,
+					canDelete: true,
+					canEditRichly: true,
+				},
+				misspelledWord: '',
+				dictionarySuggestions: [],
+				linkURL: '',
+				srcURL: '',
+				mediaType: 'none',
+				selectionText: '',
+				x: 0,
+				y: 0,
+				...overrides,
+			};
+		}
+
+		// Pull the template handed to Menu.buildFromTemplate on the latest popup.
+		function lastTemplate(): any[] {
+			const calls = mockBuildFromTemplate.mock.calls;
+			return calls[calls.length - 1][0] as unknown as any[];
+		}
+
+		function findItem(template: any[], label: string): any {
+			return template.find((item) => item.label === label);
+		}
+
+		it('registers a context-menu handler on the attached guest', async () => {
+			const handler = await attachGuestAndGetContextMenuHandler();
+			expect(handler).toBeTruthy();
+		});
+
+		it('builds Cut/Copy/Paste/Select All for editable fields and acts on the guest', async () => {
+			const handler = await attachGuestAndGetContextMenuHandler();
+			handler?.({} as any, makeParams({ isEditable: true }));
+
+			const template = lastTemplate();
+			expect(findItem(template, 'Cut')).toBeTruthy();
+			expect(findItem(template, 'Copy')).toBeTruthy();
+			expect(findItem(template, 'Paste')).toBeTruthy();
+			expect(findItem(template, 'Select All')).toBeTruthy();
+
+			// Actions target the guest webContents, not the host window.
+			findItem(template, 'Paste').click();
+			expect(mockGuestWebContents.paste).toHaveBeenCalledTimes(1);
+
+			// The menu is popped over the host window.
+			expect(mockMenuPopup).toHaveBeenCalledWith(
+				expect.objectContaining({ window: expect.any(MockBrowserWindow) })
+			);
+		});
+
+		it('disables edit items when editFlags forbid the action', async () => {
+			const handler = await attachGuestAndGetContextMenuHandler();
+			handler?.(
+				{} as any,
+				makeParams({
+					isEditable: true,
+					editFlags: {
+						canCut: false,
+						canCopy: false,
+						canPaste: false,
+						canSelectAll: false,
+					},
+				})
+			);
+
+			const template = lastTemplate();
+			expect(findItem(template, 'Cut').enabled).toBe(false);
+			expect(findItem(template, 'Paste').enabled).toBe(false);
+		});
+
+		it('offers spellcheck suggestions for a misspelled word in an editable field', async () => {
+			const handler = await attachGuestAndGetContextMenuHandler();
+			handler?.(
+				{} as any,
+				makeParams({
+					isEditable: true,
+					misspelledWord: 'teh',
+					dictionarySuggestions: ['the', 'tech'],
+				})
+			);
+
+			const template = lastTemplate();
+			const suggestion = findItem(template, 'the');
+			expect(suggestion).toBeTruthy();
+			suggestion.click();
+			expect(mockGuestWebContents.replaceMisspelling).toHaveBeenCalledWith('the');
+
+			findItem(template, 'Add to Dictionary').click();
+			expect(mockGuestWebContents.session.addWordToSpellCheckerDictionary).toHaveBeenCalledWith(
+				'teh'
+			);
+		});
+
+		it('copies links and opens http(s) links externally', async () => {
+			const handler = await attachGuestAndGetContextMenuHandler();
+			handler?.({} as any, makeParams({ linkURL: 'https://example.com/login' }));
+
+			const template = lastTemplate();
+			findItem(template, 'Copy Link').click();
+			expect(mockClipboardWriteText).toHaveBeenCalledWith('https://example.com/login');
+
+			findItem(template, 'Open Link in Browser').click();
+			expect(mockShellOpenExternal).toHaveBeenCalledWith('https://example.com/login');
+		});
+
+		it('does not offer external open for non-http(s) link schemes', async () => {
+			const handler = await attachGuestAndGetContextMenuHandler();
+			handler?.({} as any, makeParams({ linkURL: 'javascript:alert(1)' }));
+
+			const template = lastTemplate();
+			// Copy Link is still offered, but a dangerous scheme is never handed to
+			// shell.openExternal.
+			expect(findItem(template, 'Copy Link')).toBeTruthy();
+			expect(findItem(template, 'Open Link in Browser')).toBeUndefined();
+		});
+
+		it('copies images and image addresses', async () => {
+			const handler = await attachGuestAndGetContextMenuHandler();
+			handler?.(
+				{} as any,
+				makeParams({ mediaType: 'image', srcURL: 'https://cdn.example.com/a.png', x: 12, y: 34 })
+			);
+
+			const template = lastTemplate();
+			findItem(template, 'Copy Image').click();
+			expect(mockGuestWebContents.copyImageAt).toHaveBeenCalledWith(12, 34);
+
+			findItem(template, 'Copy Image Address').click();
+			expect(mockClipboardWriteText).toHaveBeenCalledWith('https://cdn.example.com/a.png');
+		});
+
+		it('offers Copy for selected non-editable text', async () => {
+			const handler = await attachGuestAndGetContextMenuHandler();
+			handler?.({} as any, makeParams({ selectionText: 'hello world' }));
+
+			const template = lastTemplate();
+			findItem(template, 'Copy').click();
+			expect(mockGuestWebContents.copy).toHaveBeenCalledTimes(1);
+		});
+
+		it('always offers Back/Forward/Reload and reflects navigation state', async () => {
+			mockGuestNavigationHistory.canGoBack.mockReturnValue(true);
+			mockGuestNavigationHistory.canGoForward.mockReturnValue(false);
+
+			const handler = await attachGuestAndGetContextMenuHandler();
+			handler?.({} as any, makeParams());
+
+			const template = lastTemplate();
+			const back = findItem(template, 'Back');
+			const forward = findItem(template, 'Forward');
+			expect(back.enabled).toBe(true);
+			expect(forward.enabled).toBe(false);
+
+			back.click();
+			expect(mockGuestNavigationHistory.goBack).toHaveBeenCalledTimes(1);
+
+			findItem(template, 'Reload').click();
+			expect(mockGuestWebContents.reload).toHaveBeenCalledTimes(1);
+		});
+
+		it('does not emit a leading or doubled separator for the navigation-only menu', async () => {
+			const handler = await attachGuestAndGetContextMenuHandler();
+			handler?.({} as any, makeParams());
+
+			const template = lastTemplate();
+			expect(template[0].type).not.toBe('separator');
+			// Navigation-only menu has exactly Back/Forward/Reload, no separators.
+			expect(template.filter((item) => item.type === 'separator')).toHaveLength(0);
+		});
 	});
 
 	describe('createWindowManager', () => {

@@ -3,7 +3,7 @@
  * Handles window state persistence, DevTools, crash detection, and auto-updater initialization.
  */
 
-import { BrowserWindow, Menu, ipcMain, screen } from 'electron';
+import { BrowserWindow, Menu, ipcMain, shell, clipboard, screen } from 'electron';
 import type Store from 'electron-store';
 import type { WindowState } from '../stores/types';
 import { logger } from '../utils/logger';
@@ -111,6 +111,144 @@ function attachBrowserTabGuestSecurity(guestContents: BrowserTabGuestContents): 
 
 	guestContents.on('will-redirect', (event, url) => {
 		denyBrowserTabNavigation('will-redirect', event, url);
+	});
+}
+
+// Protocols we're willing to hand to the system browser from a browser-tab
+// link's "Open Link in Browser" action. Anything else (file:, javascript:,
+// custom schemes) is dropped so a malicious page can't smuggle a dangerous URL
+// into shell.openExternal via the context menu.
+const EXTERNAL_LINK_PROTOCOLS = new Set(['http:', 'https:', 'mailto:']);
+
+function isExternallyOpenableLink(rawUrl: string): boolean {
+	try {
+		return EXTERNAL_LINK_PROTOCOLS.has(new URL(rawUrl).protocol);
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * Builds the right-click context-menu template for embedded browser-tab
+ * (`<webview>`) content. Electron does not render any default context menu for
+ * guest webContents, so without this the right-click does nothing inside a
+ * browser tab (issue #1065).
+ *
+ * All actions operate on the *guest* webContents, not the host app window:
+ * edit roles can't be used here because a menu popped over the main window
+ * would target the wrong webContents, so each item calls the guest's edit /
+ * navigation methods directly.
+ */
+function buildBrowserTabContextMenuTemplate(
+	guest: Electron.WebContents,
+	params: Electron.ContextMenuParams
+): Electron.MenuItemConstructorOptions[] {
+	const flags = params.editFlags;
+
+	// Editable fields get the full text-editing menu (plus spellcheck
+	// suggestions when Chromium flags a misspelled word). This is the path that
+	// matters most for login/form workflows inside browser tabs.
+	if (params.isEditable) {
+		const template: Electron.MenuItemConstructorOptions[] = [];
+
+		const suggestions = params.dictionarySuggestions ?? [];
+		if (params.misspelledWord) {
+			if (suggestions.length === 0) {
+				template.push({ label: 'No suggestions', enabled: false });
+			} else {
+				for (const suggestion of suggestions) {
+					template.push({
+						label: suggestion,
+						click: () => guest.replaceMisspelling(suggestion),
+					});
+				}
+			}
+			template.push(
+				{
+					label: 'Add to Dictionary',
+					click: () => guest.session.addWordToSpellCheckerDictionary(params.misspelledWord),
+				},
+				{ type: 'separator' }
+			);
+		}
+
+		template.push(
+			{ label: 'Cut', enabled: flags.canCut, click: () => guest.cut() },
+			{ label: 'Copy', enabled: flags.canCopy, click: () => guest.copy() },
+			{ label: 'Paste', enabled: flags.canPaste, click: () => guest.paste() },
+			{ type: 'separator' },
+			{ label: 'Select All', enabled: flags.canSelectAll, click: () => guest.selectAll() }
+		);
+		return template;
+	}
+
+	// Non-editable content: assemble independent sections (link, image,
+	// selection, navigation) and join them with separators so we never emit a
+	// leading, trailing, or doubled divider.
+	const sections: Electron.MenuItemConstructorOptions[][] = [];
+
+	if (params.linkURL) {
+		const linkURL = params.linkURL;
+		const linkSection: Electron.MenuItemConstructorOptions[] = [
+			{ label: 'Copy Link', click: () => clipboard.writeText(linkURL) },
+		];
+		if (isExternallyOpenableLink(linkURL)) {
+			linkSection.push({
+				label: 'Open Link in Browser',
+				click: () => {
+					void shell.openExternal(linkURL).catch((err) => {
+						logger.warn(`Failed to open link in browser: ${linkURL}`, 'Window', {
+							error: err instanceof Error ? err.message : String(err),
+						});
+					});
+				},
+			});
+		}
+		sections.push(linkSection);
+	}
+
+	if (params.mediaType === 'image' && params.srcURL) {
+		const srcURL = params.srcURL;
+		sections.push([
+			{ label: 'Copy Image', click: () => guest.copyImageAt(params.x, params.y) },
+			{ label: 'Copy Image Address', click: () => clipboard.writeText(srcURL) },
+		]);
+	}
+
+	if (params.selectionText.trim().length > 0) {
+		sections.push([{ label: 'Copy', enabled: flags.canCopy, click: () => guest.copy() }]);
+	}
+
+	// Navigation actions are always offered so right-clicking blank page
+	// background still produces a useful menu. canGoBack/goBack live on
+	// navigationHistory (the WebContents-level methods are deprecated).
+	const nav = guest.navigationHistory;
+	sections.push([
+		{ label: 'Back', enabled: nav.canGoBack(), click: () => nav.goBack() },
+		{ label: 'Forward', enabled: nav.canGoForward(), click: () => nav.goForward() },
+		{ label: 'Reload', click: () => guest.reload() },
+	]);
+
+	const template: Electron.MenuItemConstructorOptions[] = [];
+	sections.forEach((section, index) => {
+		if (index > 0) template.push({ type: 'separator' });
+		template.push(...section);
+	});
+	return template;
+}
+
+/**
+ * Wires a context-menu handler onto an attached browser-tab guest so
+ * right-clicking inside the embedded page shows a native menu whose actions
+ * target the guest webContents.
+ */
+function attachBrowserTabContextMenu(guest: Electron.WebContents, mainWindow: BrowserWindow): void {
+	guest.on('context-menu', (_event, params) => {
+		const template = buildBrowserTabContextMenuTemplate(guest, params);
+		// Defensive: the builder always emits a navigation section today, but guard
+		// against a future code path returning [] so we never popup() an empty menu.
+		if (template.length === 0) return;
+		Menu.buildFromTemplate(template).popup({ window: mainWindow });
 	});
 }
 
@@ -335,6 +473,11 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 
 			mainWindow.webContents.on('did-attach-webview', (_event, guestContents) => {
 				attachBrowserTabGuestSecurity(guestContents as BrowserTabGuestContents);
+
+				// Electron renders no default context menu for guest <webview>
+				// content, so right-click is dead inside browser tabs until we wire
+				// one up against the guest webContents (issue #1065).
+				attachBrowserTabContextMenu(guestContents as unknown as Electron.WebContents, mainWindow);
 
 				// Forward app shortcuts from the webview guest process to the renderer.
 				// When a <webview> has focus, keyboard events are trapped in its guest
