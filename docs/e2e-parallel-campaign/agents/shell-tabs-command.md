@@ -25,11 +25,11 @@ Authored in this branch:
 | Bucket                                       | New tests | Active scenarios |
 | -------------------------------------------- | --------: | ---------------: |
 | App shell, sidebars, focus, global shortcuts |         2 |               17 |
-| Command terminal workflows                   |         3 |               20 |
+| Command terminal workflows                   |        10 |               27 |
 | Tabs, tab switcher, tab overlays             |         4 |               32 |
-| Total                                        |         9 |               69 |
+| Total                                        |        16 |               76 |
 
-Matrix-backed scenarios still unclaimed in this lane progress file: 197.
+Matrix-backed scenarios still unclaimed in this lane progress file: 190.
 Skipped/env-gated scenarios authored: 0.
 
 Files touched:
@@ -37,7 +37,10 @@ Files touched:
 - `e2e/app-shell.spec.ts` - added deterministic seeded-workbench tests for
   right-panel global shortcuts, agent cycling shortcuts, terminal search and
   history behavior, tab switcher keyboard modes/empty state, global tab
-  shortcuts, and file tab overlay shell IPC routing.
+  shortcuts, and file tab overlay shell IPC routing. The second command-terminal
+  tranche adds focused-input output search, regex/local filter recovery,
+  transcript command copy, history empty/recovery and arrow navigation, and
+  multiline shell command submission.
 - `docs/e2e-parallel-campaign/agents/shell-tabs-command.md` - recorded this
   lane progress.
 
@@ -47,13 +50,18 @@ not updated.
 Commits:
 
 - `c9739e8b5` - `test(e2e-shell-tabs-command): add shell tab shortcut coverage`
+- `3748d86fb` - `test(e2e-shell-tabs-command): add terminal control tranche`
 
 Validation performed:
 
+- `npx prettier --write e2e/app-shell.spec.ts` - applied formatting.
 - `npx eslint e2e/app-shell.spec.ts` - passed.
-- `npx prettier --check e2e/app-shell.spec.ts` - passed after formatting the
-  spec with Prettier.
+- `npx prettier --check e2e/app-shell.spec.ts` - passed.
 - `git diff --check -- e2e/app-shell.spec.ts` - passed.
+- `npx prettier --check docs/e2e-parallel-campaign/agents/shell-tabs-command.md` -
+  passed.
+- `git diff --check -- docs/e2e-parallel-campaign/agents/shell-tabs-command.md` -
+  passed.
 - Static `code-reviewer` diff review - passed, with no prohibited Playwright
   runner/listing tokens in the added lines.
 
