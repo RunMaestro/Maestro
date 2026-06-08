@@ -16,6 +16,36 @@ Agent CRUD, provider setup, Agent Sessions.
 
 ## Progress
 
+### 2026-06-08 recovery tranche 9
+
+- Scope: manual fallback tranche for provider lifecycle controls.
+- Authored: 5 active deterministic Playwright scenarios.
+  - Shows provider refresh debug info for an unavailable Create New Agent provider.
+  - Refreshes an unavailable provider and creates once detection succeeds.
+  - Creates a provider agent using folder picker and keyboard submit.
+  - Saves Edit Agent changes with the keyboard shortcut.
+  - Cancels Edit Agent provider-switch drafts without changing the agent.
+- Skipped/env-gated: no new rows.
+- Lane target remains: about 55 active scenarios plus fuller skipped/env-gated real-provider coverage.
+- Files touched:
+  - `e2e/agent-crud-provider.spec.ts`
+  - `docs/e2e-parallel-campaign/agents/agent-crud-provider.md`
+  - `docs/e2e-parallel-campaign/coverage-ledger.md`
+  - `docs/e2e-coverage-campaign.md`
+- Shared helpers edited: no.
+- Broadcast update required: no.
+- Checks run:
+  - `npx prettier --write e2e/agent-crud-provider.spec.ts`
+  - `npx eslint e2e/agent-crud-provider.spec.ts`
+  - `npx tsc -p tsconfig.lint.json --noEmit`
+  - `git diff --check`
+  - Static scan: 925 declared E2E tests, 0 `.only`, 0 prohibited Playwright/E2E commands, 0 duplicate titles in `e2e/agent-crud-provider.spec.ts`.
+  - Code-reviewer checklist: no blocking issues in the `agent-crud-provider` diff.
+- Commit hashes:
+  - `a37cd777a` - `test(e2e-agent-crud-provider): add lifecycle control coverage`
+- Blockers:
+  - E2E execution, Playwright listing, headed/UI E2E, and full E2E validation are intentionally not run under the recovery-run hard rules.
+
 ### 2026-06-08 recovery tranche 8
 
 - Scope: manual fallback tranche for provider configuration persistence.
