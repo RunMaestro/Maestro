@@ -83,6 +83,14 @@ const tenthTrancheActiveScenarioMatrix = [
 	{ id: 'DA-051', title: 'opens the creator LinkedIn link from the About modal body' },
 ] as const;
 
+const eleventhTrancheActiveScenarioMatrix = [
+	{ id: 'DA-052', title: 'opens the creator GitHub link from the About modal body' },
+	{ id: 'DA-053', title: 'closes the About modal from the header control' },
+	{ id: 'DA-054', title: 'closes the About modal with Escape' },
+	{ id: 'DA-055', title: 'opens leaderboard registration from the About modal' },
+	{ id: 'DA-056', title: 'closes leaderboard registration opened from About with Escape' },
+] as const;
+
 const debugPackagePreviewCategories = [
 	{ id: 'logs', name: 'System Logs', included: true, sizeEstimate: '~50 KB' },
 	{ id: 'errors', name: 'Error States', included: true, sizeEstimate: '< 10 KB' },
@@ -1730,6 +1738,84 @@ test.describe('Debug and accessibility smoke tranche', () => {
 			expect((await getStubbedShellOpenExternalState(launched.electronApp))?.urls).toEqual([
 				'https://www.linkedin.com/in/pedramamini/',
 			]);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${eleventhTrancheActiveScenarioMatrix[0].id} ${eleventhTrancheActiveScenarioMatrix[0].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubShellOpenExternal(launched.electronApp);
+			const aboutDialog = await openAboutFromQuickActions(launched.window);
+
+			await aboutDialog.getByRole('button', { name: 'GitHub' }).nth(1).click();
+
+			expect((await getStubbedShellOpenExternalState(launched.electronApp))?.urls).toEqual([
+				'https://github.com/pedramamini',
+			]);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${eleventhTrancheActiveScenarioMatrix[1].id} ${eleventhTrancheActiveScenarioMatrix[1].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			const aboutDialog = await openAboutFromQuickActions(launched.window);
+			await expect(aboutDialog).toBeVisible();
+
+			await aboutDialog.getByRole('button', { name: 'Close modal' }).click();
+
+			await expect(aboutDialog).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${eleventhTrancheActiveScenarioMatrix[2].id} ${eleventhTrancheActiveScenarioMatrix[2].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			const aboutDialog = await openAboutFromQuickActions(launched.window);
+			await expect(aboutDialog).toBeVisible();
+
+			await launched.window.keyboard.press('Escape');
+
+			await expect(aboutDialog).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${eleventhTrancheActiveScenarioMatrix[3].id} ${eleventhTrancheActiveScenarioMatrix[3].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			const aboutDialog = await openAboutFromQuickActions(launched.window);
+
+			await aboutDialog.getByRole('button', { name: 'Join Leaderboard' }).click();
+
+			await expect(aboutDialog).toBeHidden();
+			await expect(
+				launched.window.getByRole('dialog', { name: 'Register for Leaderboard' })
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${eleventhTrancheActiveScenarioMatrix[4].id} ${eleventhTrancheActiveScenarioMatrix[4].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			const aboutDialog = await openAboutFromQuickActions(launched.window);
+			await aboutDialog.getByRole('button', { name: 'Join Leaderboard' }).click();
+			const leaderboardDialog = launched.window.getByRole('dialog', {
+				name: 'Register for Leaderboard',
+			});
+			await expect(leaderboardDialog).toBeVisible();
+
+			await launched.window.keyboard.press('Escape');
+
+			await expect(leaderboardDialog).toBeHidden();
 		} finally {
 			await launched.cleanup();
 		}
