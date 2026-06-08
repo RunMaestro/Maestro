@@ -22,6 +22,12 @@ const activeScenarioMatrix = [
 	{ id: 'SGS-A09', title: 'syncs Symphony active contribution status controls' },
 	{ id: 'SGS-A10', title: 'previews Symphony issue documents and blocked issue messaging' },
 	{ id: 'SGS-A11', title: 'validates and submits mocked leaderboard registration details' },
+	{ id: 'SGS-A12', title: 'navigates Usage Dashboard tabs and sections by keyboard' },
+	{ id: 'SGS-A13', title: 'toggles Agent Usage chart metric modes' },
+	{ id: 'SGS-A14', title: 'toggles Document Graph external links and refresh controls' },
+	{ id: 'SGS-A15', title: 'opens achievement badge details and share menu actions' },
+	{ id: 'SGS-A16', title: 'shows Symphony GitHub CLI preflight when starting contribution' },
+	{ id: 'SGS-A17', title: 'handles mocked leaderboard pending confirmation state' },
 ] as const;
 
 const skippedScenarioMatrix = [
@@ -54,6 +60,11 @@ const envGatedScenarioMatrix = [
 		title: 'confirms leaderboard email through live backend polling',
 		reason: 'Env-gated: requires live runmaestro.ai email confirmation and polling backend.',
 	},
+	{
+		id: 'SGS-E04',
+		title: 'pulls registered leaderboard stats from runmaestro.ai with a live auth token',
+		reason: 'Env-gated: requires live leaderboard backend, confirmed email, and auth token.',
+	},
 ] as const;
 
 function createStatsGraphSymphonyWorkbench() {
@@ -76,6 +87,7 @@ function createStatsGraphSymphonyWorkbench() {
 Usage dashboard, document graph, Symphony, and achievements fixture.
 
 [Runbook](docs/RUNBOOK.md)
+[Maestro leaderboard](https://runmaestro.ai)
 
 - [ ] Graph tranche still active
 - [x] Stats tranche seeded
@@ -495,6 +507,8 @@ async function stubAboutAndLeaderboardHandlers(electronApp: ElectronApplication)
 			clientToken: 'sgs-client-token',
 			message: 'Confirmation email queued.',
 		}));
+		ipcMain.removeHandler('leaderboard:pollAuthStatus');
+		ipcMain.handle('leaderboard:pollAuthStatus', async () => ({ status: 'pending' }));
 	});
 }
 
@@ -803,6 +817,115 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 		await leaderboardDialog.getByPlaceholder('username').first().fill('stats-conductor');
 		await leaderboardDialog.getByRole('button', { name: 'Push Up' }).click();
 		await expect(leaderboardDialog.getByText(/Profile submitted!/)).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[11].id} ${activeScenarioMatrix[11].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+		const viewModeTabs = usageDashboard.getByTestId('view-mode-tabs');
+
+		await viewModeTabs.focus();
+		await window.keyboard.press('ArrowRight');
+		await expect(usageDashboard.getByRole('tab', { name: 'Agents' })).toHaveAttribute(
+			'aria-selected',
+			'true'
+		);
+
+		await window.keyboard.press('Tab');
+		await expect(usageDashboard.getByTestId('section-session-stats')).toBeFocused();
+
+		await window.keyboard.press('ArrowDown');
+		await expect(usageDashboard.getByTestId('section-agent-efficiency')).toBeFocused();
+
+		await window.keyboard.press('End');
+		await expect(usageDashboard.getByTestId('section-agent-usage')).toBeFocused();
+	});
+
+	test(`${activeScenarioMatrix[12].id} ${activeScenarioMatrix[12].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await usageDashboard.getByRole('tab', { name: 'Agents' }).click();
+		const agentUsage = usageDashboard.getByTestId('section-agent-usage');
+		await agentUsage.scrollIntoViewIfNeeded();
+
+		await expect(
+			agentUsage.getByRole('figure', { name: /query counts over time/i })
+		).toBeVisible();
+		await agentUsage.getByRole('button', { name: 'Time' }).click();
+		await expect(agentUsage.getByRole('figure', { name: /duration over time/i })).toBeVisible();
+		await agentUsage.getByRole('button', { name: 'Queries' }).click();
+		await expect(
+			agentUsage.getByRole('figure', { name: /query counts over time/i })
+		).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[13].id} ${activeScenarioMatrix[13].title}`, async () => {
+		const graphDialog = await openDocumentGraphFromPreview(window);
+		const searchInput = graphDialog.getByLabel('Search documents in graph');
+
+		await searchInput.fill('runbook');
+		await expect(graphDialog.getByText('RUNBOOK.md')).toBeVisible();
+		await graphDialog.getByLabel('Clear search').click();
+		await expect(searchInput).toHaveValue('');
+
+		await graphDialog.getByRole('button', { name: 'External' }).click();
+		await expect(graphDialog.getByTitle('Hide external links')).toBeVisible();
+
+		await graphDialog.getByTitle('Refresh graph').click();
+		await expect(graphDialog.getByText(/\d+ documents/)).toBeVisible({ timeout: 15000 });
+		await closeDocumentGraph(window);
+	});
+
+	test(`${activeScenarioMatrix[14].id} ${activeScenarioMatrix[14].title}`, async () => {
+		const aboutDialog = await openAboutFromQuickActions(window);
+
+		await expect(aboutDialog.getByText('Maestro Achievements')).toBeVisible();
+		await aboutDialog.getByTitle('Apprentice Conductor - Click to view details').click();
+		await expect(aboutDialog.getByText('Level 1')).toBeVisible();
+		await expect(aboutDialog.getByText('Locked')).toBeVisible();
+
+		await aboutDialog.getByTitle('Share achievements').click();
+		await expect(aboutDialog.getByRole('button', { name: 'Copy to Clipboard' })).toBeVisible();
+		await expect(aboutDialog.getByRole('button', { name: 'Save as Image' })).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[15].id} ${activeScenarioMatrix[15].title}`, async () => {
+		const symphonyDialog = await openSymphonyFromQuickActions(window);
+
+		await symphonyDialog.getByRole('button', { name: /Maestro Core/ }).click();
+		await symphonyDialog.getByText('Add deterministic E2E coverage').click();
+		await symphonyDialog.getByRole('button', { name: 'Start Symphony' }).click();
+
+		await expect(window.getByText('GitHub CLI Required')).toBeVisible();
+		await expect(window.getByText(/gh auth login/)).toBeVisible();
+		await window.getByRole('button', { name: 'Close' }).click();
+		await expect(window.getByText('GitHub CLI Required')).toBeHidden();
+	});
+
+	test(`${activeScenarioMatrix[16].id} ${activeScenarioMatrix[16].title}`, async () => {
+		await electronApp.evaluate(({ ipcMain }) => {
+			ipcMain.removeHandler('leaderboard:submit');
+			ipcMain.handle('leaderboard:submit', async () => ({
+				success: true,
+				pendingEmailConfirmation: true,
+				clientToken: 'sgs-pending-client-token',
+				message: 'Confirmation email queued.',
+			}));
+			ipcMain.removeHandler('leaderboard:pollAuthStatus');
+			ipcMain.handle('leaderboard:pollAuthStatus', async () => ({ status: 'pending' }));
+		});
+
+		const aboutDialog = await openAboutFromQuickActions(window);
+		await aboutDialog.getByRole('button', { name: /Join Leaderboard/ }).click();
+
+		const leaderboardDialog = window.getByRole('dialog', { name: 'Register for Leaderboard' });
+		await leaderboardDialog.getByPlaceholder('ConductorPedram').fill('Pending Conductor');
+		await leaderboardDialog.getByPlaceholder('conductor@maestro.ai').fill('pending@example.com');
+		await leaderboardDialog.getByRole('button', { name: 'Push Up' }).click();
+
+		await expect(leaderboardDialog.getByText('Please check your email to confirm your registration.')).toBeVisible();
+		await expect(
+			leaderboardDialog.getByText('Click the link in your email to complete registration.')
+		).toBeVisible();
 	});
 
 	for (const scenario of skippedScenarioMatrix) {
