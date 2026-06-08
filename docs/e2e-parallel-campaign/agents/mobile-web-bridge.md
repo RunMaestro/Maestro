@@ -1,6 +1,6 @@
 # mobile-web-bridge
 
-Status: first tranche authored; pending static review and orchestrator merge
+Status: first bridge-contract tranche committed; pending orchestrator merge
 
 ## Scope
 
@@ -12,12 +12,13 @@ Mobile/web bridge only.
 - [x] Author deterministic active scenarios up to the lane target where feasible.
 - [x] Preserve desktop/mobile bridge boundaries and avoid live external services.
 - [x] Record files touched and scenario counts.
-- [ ] Commit lane work on `codex/e2e-mobile-web-bridge`.
+- [x] Commit lane work on `codex/e2e-mobile-web-bridge`.
 
 ## Progress
 
 ### 2026-06-08 first bridge-contract tranche
 
+- Commit: `5ac25ad45`
 - Active scenarios authored: 5
 - Skipped/env-gated scenarios authored: 0
 - Files touched:
