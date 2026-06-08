@@ -98,6 +98,14 @@ const fifthTrancheActiveScenarioMatrix = [
 	{ id: 'GGP-A30', title: 'filters Quick Actions to seeded group chat results' },
 ] as const;
 
+const sixthTrancheActiveScenarioMatrix = [
+	{ id: 'GGP-A31', title: 'renders multi-file Git Diff tabs from a stubbed IPC diff' },
+	{ id: 'GGP-A32', title: 'shows Group Chat header metadata after Quick Actions navigation' },
+	{ id: 'GGP-A33', title: 'lists active Group Chat management commands in Quick Actions' },
+	{ id: 'GGP-A34', title: 'shows marketplace loop settings for a category-filtered playbook' },
+	{ id: 'GGP-A35', title: 'cancels Spec Kit prompt edits without marking the command modified' },
+] as const;
+
 function runGit(cwd: string, args: string[]) {
 	execFileSync('git', args, {
 		cwd,
@@ -378,6 +386,34 @@ function commandPanelByHeading(page: Page, heading: string) {
 	return page
 		.getByText(heading, { exact: true })
 		.locator('xpath=ancestor::div[contains(@class, "space-y-4")][1]');
+}
+
+async function stubMultiFileGitDiffState(electronApp: ElectronApplication) {
+	await electronApp.evaluate(({ ipcMain }) => {
+		ipcMain.removeHandler('git:diff');
+		ipcMain.handle('git:diff', async () => ({
+			stdout: [
+				'diff --git a/README.md b/README.md',
+				'index 1111111..2222222 100644',
+				'--- a/README.md',
+				'+++ b/README.md',
+				'@@ -1 +1,2 @@',
+				' # Git Group Chat Playbooks Fixture',
+				'+Readme diff tab sentinel.',
+				'',
+				'diff --git a/FLOW.md b/FLOW.md',
+				'index 3333333..4444444 100644',
+				'--- a/FLOW.md',
+				'+++ b/FLOW.md',
+				'@@ -1,3 +1,4 @@',
+				' # Flow',
+				'',
+				' Initial committed flow.',
+				'+Flow diff tab sentinel.',
+			].join('\n'),
+			stderr: '',
+		}));
+	});
 }
 
 async function stubDetailedGitLogState(electronApp: ElectronApplication) {
@@ -1538,6 +1574,106 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 				quickActionsDialog.getByRole('button', { name: /Group Chat: Git Lane Room/ })
 			).toBeVisible();
 			await expect(quickActionsDialog.getByRole('button', { name: /View Git Diff/ })).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${sixthTrancheActiveScenarioMatrix[0].id}: ${sixthTrancheActiveScenarioMatrix[0].title}`, async () => {
+		const launched = await launchGitGroupChatPlaybooksWorkbench();
+		try {
+			await stubMultiFileGitDiffState(launched.electronApp);
+			const gitDiffDialog = await openGitDiffFromQuickActions(launched.window);
+
+			await expect(gitDiffDialog.getByText('2 files changed')).toBeVisible();
+			await expect(gitDiffDialog.getByRole('button', { name: /README\.md/ })).toBeVisible();
+			await gitDiffDialog.getByRole('button', { name: /FLOW\.md/ }).click();
+			await expect(gitDiffDialog.getByText('Flow diff tab sentinel.')).toBeVisible();
+			await expect(gitDiffDialog.getByText('Current file:')).toBeVisible();
+			await expect(gitDiffDialog.getByText('File 2 of 2')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${sixthTrancheActiveScenarioMatrix[1].id}: ${sixthTrancheActiveScenarioMatrix[1].title}`, async () => {
+		const launched = await launchGitGroupChatPlaybooksWorkbench();
+		try {
+			const quickActionsDialog = await openQuickActions(launched.window);
+			await quickActionsDialog
+				.getByPlaceholder('Type a command or jump to agent...')
+				.fill('Git Lane Room');
+			await quickActionsDialog.getByRole('button', { name: /Group Chat: Git Lane Room/ }).click();
+
+			await expect(
+				launched.window.getByRole('button', { name: 'Group Chat: Git Lane Room' })
+			).toBeVisible();
+			await expect(launched.window.getByText('1 participant')).toBeVisible();
+			await expect(
+				launched.window.getByText('Seeded group chat message for git lane.')
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${sixthTrancheActiveScenarioMatrix[2].id}: ${sixthTrancheActiveScenarioMatrix[2].title}`, async () => {
+		const launched = await launchGitGroupChatPlaybooksWorkbench();
+		try {
+			const roomPickerDialog = await openQuickActions(launched.window);
+			await roomPickerDialog
+				.getByPlaceholder('Type a command or jump to agent...')
+				.fill('Git Lane Room');
+			await roomPickerDialog.getByRole('button', { name: /Group Chat: Git Lane Room/ }).click();
+
+			const quickActionsDialog = await openQuickActions(launched.window);
+			await quickActionsDialog
+				.getByPlaceholder('Type a command or jump to agent...')
+				.fill('Group Chat');
+			await expect(
+				quickActionsDialog.getByRole('button', { name: 'Close Group Chat' })
+			).toBeVisible();
+			await expect(
+				quickActionsDialog.getByRole('button', { name: 'Remove Group Chat: Git Lane Room' })
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${sixthTrancheActiveScenarioMatrix[3].id}: ${sixthTrancheActiveScenarioMatrix[3].title}`, async () => {
+		const launched = await launchGitGroupChatPlaybooksWorkbench();
+		try {
+			await stubMarketplaceFilteringState(launched.electronApp);
+			const marketplaceDialog = await openPlaybookExchangeFromQuickActions(launched.window);
+
+			await marketplaceDialog.getByRole('button', { name: /^Collaboration\s+\(1\)$/ }).click();
+			await marketplaceDialog.getByRole('button', { name: /Group Chat Briefing/ }).click();
+			await expect(marketplaceDialog.getByText('Documents (0)')).toBeVisible();
+			await expect(marketplaceDialog.getByText(/Loop:\s+Yes \(max 2\)/)).toBeVisible();
+			await expect(marketplaceDialog.getByText('group-chat')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${sixthTrancheActiveScenarioMatrix[4].id}: ${sixthTrancheActiveScenarioMatrix[4].title}`, async () => {
+		const launched = await launchGitGroupChatPlaybooksWorkbench();
+		try {
+			await stubSpecKitAndOpenSpecCommands(launched.electronApp);
+			const settingsDialog = await openSettings(launched.window);
+
+			await settingsDialog.getByText('/speckit.specify').click();
+			const commandCard = settingsDialog
+				.getByText('/speckit.specify')
+				.locator('xpath=ancestor::div[contains(@class, "rounded-lg")][1]');
+			await commandCard.getByRole('button', { name: 'Edit' }).click();
+			await commandCard.locator('textarea').fill('Canceled Spec Kit prompt edit.');
+			await commandCard.getByRole('button', { name: 'Cancel' }).click();
+
+			await expect(commandCard.getByText('Modified')).toBeHidden();
+			await expect(commandCard.getByText(/Bundled specify prompt/)).toBeVisible();
+			await expect(commandCard.getByText('Canceled Spec Kit prompt edit.')).toBeHidden();
 		} finally {
 			await launched.cleanup();
 		}
