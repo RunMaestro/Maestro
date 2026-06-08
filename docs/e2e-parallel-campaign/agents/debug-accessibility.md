@@ -1,6 +1,6 @@
 # debug-accessibility
 
-Status: sixteenth fallback tranche authored
+Status: seventeenth fallback tranche authored
 
 ## Scope
 
@@ -9,9 +9,9 @@ accessibility smoke.
 
 ## Campaign Head
 
-- Ledger head before this tranche: `ae14dc569`.
-- Implementation commit: `6a856bac0`.
-- Coverage ledger before this tranche: 76 active scenarios accepted, 116
+- Ledger head before this tranche: `02652a69a`.
+- Implementation commit: `1f3044aa3`.
+- Coverage ledger before this tranche: 81 active scenarios accepted, 111
   matrix-backed scenarios remaining.
 
 ## Checklist
@@ -25,13 +25,13 @@ accessibility smoke.
 
 ## Progress
 
-- Added matrix-backed Process Monitor kill-confirmation scenarios `DA-077`
-  through `DA-081`.
+- Added matrix-backed System Log clear-confirmation scenarios `DA-082` through
+  `DA-086`.
 - Active scenarios added this tranche: 5.
-- Active scenarios authored in lane total: 81.
+- Active scenarios authored in lane total: 86.
 - Skipped/product-gap scenarios added this tranche: 0.
 - Env-gated scenarios added this tranche: 0.
-- Matrix-backed remaining after orchestrator ledger acceptance: 111.
+- Matrix-backed remaining after orchestrator ledger acceptance: 106.
 
 Files touched:
 
@@ -46,7 +46,7 @@ Validation passed:
 - `NODE_OPTIONS=--max-old-space-size=8192 npx prettier --write e2e/debug-accessibility.spec.ts docs/e2e-parallel-campaign/agents/debug-accessibility.md docs/e2e-parallel-campaign/coverage-ledger.md docs/e2e-coverage-campaign.md`
 - `npx tsc -p tsconfig.lint.json --noEmit`
 - `git diff --check`
-- Static inventory scan reports 1045 declared E2E tests, no `.only`, no
+- Static inventory scan reports 1050 declared E2E tests, no `.only`, no
   prohibited commands, and no duplicate scenario IDs.
 
 Blockers:
@@ -58,4 +58,4 @@ Blockers:
 Remaining work:
 
 - Debug/about/update/app-info/agent-error modal scenarios are complete.
-- 111 accessibility smoke and destructive-action confirmation scenarios remain.
+- 106 accessibility smoke and destructive-action confirmation scenarios remain.

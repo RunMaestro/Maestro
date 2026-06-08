@@ -2,9 +2,9 @@
 
 Source of truth: `docs/e2e-coverage-campaign.md`.
 
-Current active tests: 1128
+Current active tests: 1133
 Target active tests: 3,025
-Remaining matrix-backed active scenarios: 1,897
+Remaining matrix-backed active scenarios: 1,892
 
 ## Matrix
 
@@ -30,7 +30,7 @@ Remaining matrix-backed active scenarios: 1,897
 | Director notes and prompt composer                             | `wizard-settings-prompts` |             21 |            90 |        69 |
 | Debug/about/update/app info/agent error modals                 | `debug-accessibility`     |             85 |            85 |         0 |
 | Mobile/web bridge                                              | `mobile-web-bridge`       |            104 |           190 |        86 |
-| Accessibility smoke and destructive-action confirmations       | `debug-accessibility`     |             19 |           130 |       111 |
+| Accessibility smoke and destructive-action confirmations       | `debug-accessibility`     |             24 |           130 |       106 |
 
 ## Lane Totals
 
@@ -43,7 +43,7 @@ Remaining matrix-backed active scenarios: 1,897
 | `wizard-settings-prompts`  |                     313 |                        59 |                                    1 | `bb21caed1`          |
 | `git-groupchat-playbooks`  |                     313 |                        50 |                                    7 | `10ed8a71a`          |
 | `stats-graph-symphony`     |                     309 |                        27 |                                    6 | `bb9a6f68b`          |
-| `debug-accessibility`      |                     111 |                        81 |                                    0 | `6a856bac0`          |
+| `debug-accessibility`      |                     106 |                        86 |                                    0 | `1f3044aa3`          |
 | `mobile-web-bridge`        |                      86 |                        16 |                                    0 | `d7ccdd3d`           |
 | `fixtures-sharding-review` |                       0 |                         0 |                                    0 | `392c4527`           |
 
@@ -126,3 +126,4 @@ Remaining matrix-backed active scenarios: 1,897
 - 2026-06-08: accepted manual `debug-accessibility` fallback through `681521ec8`; authored 5 additional active Process Monitor empty-state, collapse-all, detail Escape-return, detail Back-return, and header-close scenarios. No E2E execution was run.
 - 2026-06-08: accepted manual `debug-accessibility` fallback through `f2316172c`; authored 5 additional active System Log Viewer header close, Escape close, individual structured detail show/hide, and unmatched search state scenarios. No E2E execution was run.
 - 2026-06-08: accepted manual `debug-accessibility` fallback through `6a856bac0`; authored 5 additional active Process Monitor kill-confirmation cancel, backdrop-dismiss, button-confirm, cancel-refresh preservation, and selected-process-only kill scenarios. No E2E execution was run.
+- 2026-06-08: accepted manual `debug-accessibility` fallback through `1f3044aa3`; authored 5 additional active System Log clear-confirmation Escape cancel, header close, backdrop non-dismissal, focused-Enter confirm, and severity-filter preservation scenarios. No E2E execution was run.
