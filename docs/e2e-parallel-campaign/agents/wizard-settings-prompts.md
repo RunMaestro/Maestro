@@ -202,6 +202,7 @@ New Agent Wizard, inline wizard, Settings, Director Notes, prompt composer.
 - Review:
   - Manual focused diff review found no blocking issues in selector scope, matrix indexes, persistence assertions, or doc arithmetic.
 - Not run by instruction: `npm run test:e2e`, `playwright test`, headed/UI E2E, and Playwright listing.
+- Implementation commit hash: `16e9f11cd`.
 - Blockers/remaining work:
   - PM2-managed Codex worker runtime is still blocked by 503 managed-account availability errors.
   - Real provider account and live agent handoff coverage remains env-gated.
