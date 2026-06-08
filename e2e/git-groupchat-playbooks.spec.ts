@@ -128,6 +128,14 @@ const eighthTrancheActiveScenarioMatrix = [
 	},
 ] as const;
 
+const ninthTrancheActiveScenarioMatrix = [
+	{ id: 'GGP-A46', title: 'closes an active Group Chat from Quick Actions' },
+	{ id: 'GGP-A47', title: 'recovers Playbook Exchange results after clearing search' },
+	{ id: 'GGP-A48', title: 'shows Playbook Exchange local metadata in detail view' },
+	{ id: 'GGP-A49', title: 'switches Playbook Exchange documents from the detail dropdown' },
+	{ id: 'GGP-A50', title: 'submits a multiline Create Pull Request description' },
+] as const;
+
 function runGit(cwd: string, args: string[]) {
 	execFileSync('git', args, {
 		cwd,
@@ -1943,6 +1951,148 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 			await expect(
 				marketplaceDialog.getByText('Use this playbook to review lane output.')
 			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${ninthTrancheActiveScenarioMatrix[0].id}: ${ninthTrancheActiveScenarioMatrix[0].title}`, async () => {
+		const launched = await launchGitGroupChatPlaybooksWorkbench();
+		try {
+			const roomPickerDialog = await openQuickActions(launched.window);
+			await roomPickerDialog
+				.getByPlaceholder('Type a command or jump to agent...')
+				.fill('Git Lane Room');
+			await roomPickerDialog.getByRole('button', { name: /Group Chat: Git Lane Room/ }).click();
+
+			await expect(
+				launched.window.getByText('Seeded group chat message for git lane.')
+			).toBeVisible();
+
+			const quickActionsDialog = await openQuickActions(launched.window);
+			await quickActionsDialog
+				.getByPlaceholder('Type a command or jump to agent...')
+				.fill('Close Group Chat');
+			await quickActionsDialog.getByRole('button', { name: 'Close Group Chat' }).click();
+
+			await expect(
+				launched.window.getByText('Seeded group chat message for git lane.')
+			).toBeHidden();
+			await expect(launched.window.getByText('Git Group Chat Playbooks Agent')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${ninthTrancheActiveScenarioMatrix[1].id}: ${ninthTrancheActiveScenarioMatrix[1].title}`, async () => {
+		const launched = await launchGitGroupChatPlaybooksWorkbench();
+		try {
+			await stubMarketplaceFilteringState(launched.electronApp);
+			const marketplaceDialog = await openPlaybookExchangeFromQuickActions(launched.window);
+			const searchInput = marketplaceDialog.getByPlaceholder('Search playbooks...');
+
+			await searchInput.fill('no matching playbook');
+			await expect(marketplaceDialog.getByText('No results found')).toBeVisible();
+			await searchInput.fill('');
+
+			await expect(
+				marketplaceDialog.getByRole('button', { name: /Git Release Review/ })
+			).toBeVisible();
+			await expect(
+				marketplaceDialog.getByRole('button', { name: /OpenSpec Proposal Review/ })
+			).toBeVisible();
+			await expect(
+				marketplaceDialog.getByRole('button', { name: /Group Chat Briefing/ })
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${ninthTrancheActiveScenarioMatrix[2].id}: ${ninthTrancheActiveScenarioMatrix[2].title}`, async () => {
+		const launched = await launchGitGroupChatPlaybooksWorkbench();
+		try {
+			await stubMarketplaceForPlaybookExchange(launched.electronApp);
+			const marketplaceDialog = await openPlaybookExchangeFromQuickActions(launched.window);
+
+			await marketplaceDialog.getByRole('button', { name: /Git Lane Review/ }).click();
+			await expect(marketplaceDialog.getByText('Author')).toBeVisible();
+			await expect(marketplaceDialog.getByText('RunMaestro')).toBeVisible();
+			await expect(marketplaceDialog.getByText('Tags')).toBeVisible();
+			await expect(marketplaceDialog.getByText('git')).toBeVisible();
+			await expect(marketplaceDialog.getByText('review')).toBeVisible();
+			await expect(marketplaceDialog.getByText('Source')).toBeVisible();
+			await expect(marketplaceDialog.getByText('Local')).toBeVisible();
+			await expect(marketplaceDialog.getByText('2026-05-29')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${ninthTrancheActiveScenarioMatrix[3].id}: ${ninthTrancheActiveScenarioMatrix[3].title}`, async () => {
+		const launched = await launchGitGroupChatPlaybooksWorkbench();
+		try {
+			await stubMarketplaceForPlaybookExchange(launched.electronApp);
+			const marketplaceDialog = await openPlaybookExchangeFromQuickActions(launched.window);
+
+			await marketplaceDialog.getByRole('button', { name: /Git Lane Review/ }).click();
+			await expect(
+				marketplaceDialog.getByText('Use this playbook to review lane output.')
+			).toBeVisible();
+			await marketplaceDialog.getByRole('button', { name: 'README.md' }).click();
+			await marketplaceDialog.getByRole('button', { name: 'review-plan.md' }).click();
+			await expect(marketplaceDialog.getByText('Review Plan')).toBeVisible();
+			await marketplaceDialog.getByRole('button', { name: 'review-plan.md' }).click();
+			await marketplaceDialog.getByRole('button', { name: 'README.md' }).click();
+			await expect(
+				marketplaceDialog.getByText('Use this playbook to review lane output.')
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${ninthTrancheActiveScenarioMatrix[4].id}: ${ninthTrancheActiveScenarioMatrix[4].title}`, async () => {
+		const launched = await launchGitGroupChatPlaybooksWorkbench({ withWorktreeChild: true });
+		try {
+			await stubPullRequestCreation(
+				launched.electronApp,
+				{ installed: true, authenticated: true },
+				{ success: true, prUrl: 'https://github.com/RunMaestro/Maestro/pull/150' }
+			);
+			await activateSession(launched.window, launched.worktreeBranch);
+			const quickActionsDialog = await openQuickActions(launched.window);
+			await quickActionsDialog
+				.getByPlaceholder('Type a command or jump to agent...')
+				.fill('Create Pull Request');
+			await quickActionsDialog.getByRole('button', { name: /Create Pull Request/ }).click();
+
+			const prModal = modalRootByHeading(launched.window, 'Create Pull Request');
+			const description = [
+				'First multiline PR paragraph.',
+				'',
+				'- verifies deterministic GGP fallback coverage',
+				'- keeps live GitHub disabled',
+			].join('\n');
+			await prModal.getByPlaceholder('PR title...').fill('E2E multiline PR description');
+			await prModal.getByPlaceholder('Add a description...').fill(description);
+			await prModal.getByRole('button', { name: 'Create PR' }).click();
+
+			await expect
+				.poll(async () => {
+					const request = await getStubbedCreatePRRequest(launched.electronApp);
+					return request
+						? {
+								title: request.title,
+								description: request.description,
+							}
+						: null;
+				})
+				.toEqual({
+					title: 'E2E multiline PR description',
+					description,
+				});
+			await expect(prModal).toBeHidden({ timeout: 5000 });
 		} finally {
 			await launched.cleanup();
 		}
