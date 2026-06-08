@@ -1,6 +1,6 @@
 # Parallel E2E Orchestrator Status
 
-Last updated: 2026-06-08 00:14 ET
+Last updated: 2026-06-08 00:18 ET
 
 ## Base
 
@@ -57,8 +57,16 @@ coverage and the shell-lane tab coverage.
 - 2026-06-07 23:55 ET: linked each lane worktree's ignored `node_modules` entry
   to the primary checkout so allowed non-E2E static/type tooling can resolve
   dependencies without duplicate installs.
+- 2026-06-08 00:14 ET: accepted `shell-tabs-command` through `02ce883da`,
+  restored the 638-test dirty baseline, and merged it with the accepted shell
+  lane as commit `7e522c1bc`.
+- 2026-06-08 00:18 ET: added capacity guards to the remaining lane prompts after
+  the initial ten-way launch produced 429 exits in most lanes.
 
 ## Blockers
 
 - The source prompt has a lane-quota inconsistency for `shell-tabs-command`.
   The canonical matrix remains authoritative until changed deliberately.
+- The remaining lanes are being relaunched in smaller batches. Each recovery run
+  should commit one coherent tranche, stop, and record remaining work instead of
+  trying to consume the full lane quota in one Codex turn.
