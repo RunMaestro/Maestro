@@ -77,6 +77,11 @@ const activeScenarioMatrix = [
 	{ id: 'WSP-037', title: 'persists the default Usage Dashboard range' },
 	{ id: 'WSP-038', title: 'persists Display Bionify mode and intensity' },
 	{ id: 'WSP-039', title: 'validates and persists the Display Bionify algorithm' },
+	{ id: 'WSP-040', title: 'persists the Settings default thinking mode' },
+	{ id: 'WSP-041', title: 'toggles Settings AI output auto-scroll' },
+	{ id: 'WSP-042', title: 'toggles Settings spell check' },
+	{ id: 'WSP-043', title: 'toggles Settings sleep prevention' },
+	{ id: 'WSP-044', title: 'toggles Settings GPU acceleration' },
 ];
 
 const envGatedScenarioMatrix = [
@@ -1279,6 +1284,147 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 					});
 				})
 				.toBe('+ 1 1 2 2 0.5');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[39].id} ${activeScenarioMatrix[39].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				defaultShowThinking: 'off',
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'General',
+				'Default Thinking Mode'
+			);
+			await settingsDialog.getByRole('button', { name: /^Sticky$/ }).click();
+
+			await expect(
+				settingsDialog.getByText('Thinking streams live and stays visible')
+			).toBeVisible();
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('defaultShowThinking');
+					});
+				})
+				.toBe('sticky');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[40].id} ${activeScenarioMatrix[40].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				autoScrollAiMode: true,
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'General',
+				'Auto-scroll AI Output'
+			);
+			await settingsDialog.getByText('Auto-scroll AI output').click();
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('autoScrollAiMode');
+					});
+				})
+				.toBe(false);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[41].id} ${activeScenarioMatrix[41].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				spellCheck: false,
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(launched.window, 'General', 'Spell Check');
+			await settingsDialog.getByText('Enable spell checking').click();
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('spellCheck');
+					});
+				})
+				.toBe(true);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[42].id} ${activeScenarioMatrix[42].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				preventSleepEnabled: false,
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(launched.window, 'General', 'Power');
+			await settingsDialog.getByRole('switch', { name: 'Prevent sleep while working' }).click();
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('preventSleepEnabled');
+					});
+				})
+				.toBe(true);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[43].id} ${activeScenarioMatrix[43].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				disableGpuAcceleration: false,
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(launched.window, 'General', 'Rendering Options');
+			await settingsDialog.getByRole('switch', { name: 'Disable GPU acceleration' }).click();
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('disableGpuAcceleration');
+					});
+				})
+				.toBe(true);
 		} finally {
 			await launched.cleanup();
 		}
