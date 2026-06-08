@@ -2,9 +2,9 @@
 
 Source of truth: `docs/e2e-coverage-campaign.md`.
 
-Current active tests: 1188
+Current active tests: 1193
 Target active tests: 3,025
-Remaining matrix-backed active scenarios: 1,837
+Remaining matrix-backed active scenarios: 1,832
 
 ## Matrix
 
@@ -13,7 +13,7 @@ Remaining matrix-backed active scenarios: 1,837
 | App shell, layout, sidebars, resizing, focus, global shortcuts | `shell-tabs-command`      |             26 |           110 |        84 |
 | Agent CRUD and provider setup                                  | `agent-crud-provider`     |            160 |           160 |         0 |
 | Codex AI terminal workflows                                    | `autorun-ai-terminal`     |             33 |           170 |       137 |
-| Command terminal workflows                                     | `shell-tabs-command`      |             56 |            95 |        39 |
+| Command terminal workflows                                     | `shell-tabs-command`      |             61 |            95 |        34 |
 | Tabs and tab overlays                                          | `shell-tabs-command`      |             53 |           120 |        67 |
 | File explorer and file operations                              | `files-docs-history`      |             33 |           140 |       107 |
 | File preview and document rendering                            | `files-docs-history`      |             44 |           180 |       136 |
@@ -37,7 +37,7 @@ Remaining matrix-backed active scenarios: 1,837
 | Lane                       | Matrix-backed remaining | Authored active scenarios | Authored skipped/env-gated scenarios | Last accepted commit |
 | -------------------------- | ----------------------: | ------------------------: | -----------------------------------: | -------------------- |
 | `agent-crud-provider`      |                       0 |                       104 |                                    2 | `563b9db6c`          |
-| `shell-tabs-command`       |                     190 |                        76 |                                    0 | `44e98a94f`          |
+| `shell-tabs-command`       |                     185 |                        81 |                                    0 | `2d9975b17`          |
 | `files-docs-history`       |                     312 |                        37 |                                    5 | `b5491cd9b`          |
 | `autorun-ai-terminal`      |                     263 |                        10 |                                    0 | `cd804bebf`          |
 | `wizard-settings-prompts`  |                     313 |                        59 |                                    1 | `bb21caed1`          |
@@ -138,3 +138,4 @@ Remaining matrix-backed active scenarios: 1,837
 - 2026-06-08: accepted manual `debug-accessibility` fallback through `4fdcc0307`; authored 5 additional active Quick Actions unmatched search, group-mode return, group destination controls, Keyboard Shortcuts unmatched search, and mastery progress scenarios. No E2E execution was run.
 - 2026-06-08: accepted manual `debug-accessibility` fallback through `8c5706ee9`; authored 5 additional active Quick Actions debug command visibility, Enter selection, number hotkey selection, and website shell-routing scenarios. No E2E execution was run.
 - 2026-06-08: accepted manual `debug-accessibility` fallback through `cd485eda6`; authored 5 additional active Quick Actions Settings, theme-tab, global environment settings, documentation shell-routing, and Discord shell-routing scenarios. No E2E execution was run.
+- 2026-06-08: accepted manual `shell-tabs-command` fallback through `2d9975b17`; authored 5 additional active command-terminal output expansion, collapsed-search expandability, clear-history draft preservation, and parent-directory cwd scenarios. Focused static review found no critical or high issues. No E2E execution was run.

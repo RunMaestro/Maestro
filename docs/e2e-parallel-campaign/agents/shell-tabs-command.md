@@ -25,11 +25,11 @@ Authored in this branch:
 | Bucket                                       | New tests | Active scenarios |
 | -------------------------------------------- | --------: | ---------------: |
 | App shell, sidebars, focus, global shortcuts |         2 |               17 |
-| Command terminal workflows                   |        10 |               27 |
+| Command terminal workflows                   |        15 |               32 |
 | Tabs, tab switcher, tab overlays             |         4 |               32 |
-| Total                                        |        16 |               76 |
+| Total                                        |        21 |               81 |
 
-Matrix-backed scenarios still unclaimed in this lane progress file: 190.
+Matrix-backed scenarios still unclaimed in this lane progress file: 185.
 Skipped/env-gated scenarios authored: 0.
 
 Files touched:
@@ -40,7 +40,10 @@ Files touched:
   shortcuts, and file tab overlay shell IPC routing. The second command-terminal
   tranche adds focused-input output search, regex/local filter recovery,
   transcript command copy, history empty/recovery and arrow navigation, and
-  multiline shell command submission.
+  multiline shell command submission. The manual fallback tranche adds collapsed
+  terminal output expand/recollapse controls, collapsed-output search
+  expandability, clear-history draft preservation, and parent-directory cwd
+  propagation.
 - `docs/e2e-parallel-campaign/agents/shell-tabs-command.md` - recorded this
   lane progress.
 
@@ -51,6 +54,7 @@ Commits:
 
 - `c9739e8b5` - `test(e2e-shell-tabs-command): add shell tab shortcut coverage`
 - `3748d86fb` - `test(e2e-shell-tabs-command): add terminal control tranche`
+- `2d9975b17` - `test(e2e-shell-tabs-command): add terminal output controls`
 
 Validation performed:
 
@@ -64,6 +68,15 @@ Validation performed:
   passed.
 - Static `code-reviewer` diff review - passed, with no prohibited Playwright
   runner/listing tokens in the added lines.
+- `./node_modules/.bin/eslint e2e/app-shell.spec.ts` - passed for the manual
+  fallback tranche.
+- `./node_modules/.bin/prettier --write e2e/app-shell.spec.ts` - applied
+  formatting for the manual fallback tranche.
+- `git diff --check -- e2e/app-shell.spec.ts` - passed for the manual fallback
+  tranche.
+- Focused static reviewer pass - passed for the manual fallback tranche, with
+  no critical or high issues after correcting the collapsed-output search
+  assertion to match current renderer behavior.
 
 Validation intentionally not performed:
 

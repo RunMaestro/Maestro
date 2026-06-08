@@ -1,6 +1,6 @@
 # Parallel E2E Orchestrator Status
 
-Last updated: 2026-06-08 18:30 EDT
+Last updated: 2026-06-08 18:48 EDT
 
 ## Base
 
@@ -34,7 +34,7 @@ coverage and the shell-lane tab coverage.
 | Lane                       | Branch                               | Worktree                                         | PM2 process                                         | State                           | Notes                                           |
 | -------------------------- | ------------------------------------ | ------------------------------------------------ | --------------------------------------------------- | ------------------------------- | ----------------------------------------------- |
 | `agent-crud-provider`      | `codex/e2e-agent-crud-provider`      | `Maestro-worktrees/e2e-agent-crud-provider`      | not relaunched                                      | complete                        | 104 active scenarios accepted; 0 remain         |
-| `shell-tabs-command`       | `codex/e2e-shell-tabs-command`       | `Maestro-worktrees/e2e-shell-tabs-command`       | `maestro-e2e-shell-tabs-command-campaign-goal`      | waiting restart after 503       | 76 active scenarios accepted; 190 remain        |
+| `shell-tabs-command`       | `codex/e2e-shell-tabs-command`       | `Maestro-worktrees/e2e-shell-tabs-command`       | `maestro-e2e-shell-tabs-command-campaign-goal`      | waiting restart after 503       | 81 active scenarios accepted; 185 remain        |
 | `files-docs-history`       | `codex/e2e-files-docs-history`       | `Maestro-worktrees/e2e-files-docs-history`       | `maestro-e2e-files-docs-history-campaign-goal`      | waiting restart after 503       | 37 active scenarios accepted; 312 remain        |
 | `autorun-ai-terminal`      | `codex/e2e-autorun-ai-terminal`      | `Maestro-worktrees/e2e-autorun-ai-terminal`      | `maestro-e2e-autorun-ai-terminal-campaign-goal`     | waiting restart after 503       | 10 active scenarios accepted; 263 remain        |
 | `wizard-settings-prompts`  | `codex/e2e-wizard-settings-prompts`  | `Maestro-worktrees/e2e-wizard-settings-prompts`  | `maestro-e2e-wizard-settings-prompts-campaign-goal` | waiting restart after 503       | 59 active scenarios accepted; 313 remain        |
@@ -193,6 +193,10 @@ coverage and the shell-lane tab coverage.
   with managed-account 503 service-unavailable errors; PM2 is holding them in
   `waiting restart`. The first `shell-tabs-command` retry also failed with the
   same 503 condition.
+- 2026-06-08 18:48 EDT: accepted manual `shell-tabs-command` fallback through
+  `2d9975b17` with 5 active command-terminal output expansion, collapsed-search,
+  clear-history draft, and parent-directory cwd scenarios. Focused static review
+  found no critical or high issues. No E2E execution was run.
 
 ## Blockers
 
