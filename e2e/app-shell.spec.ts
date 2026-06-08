@@ -3036,6 +3036,41 @@ test.describe('App shell seeded workbench', () => {
 		await expect(window.locator('[data-tour="files-panel"]')).toBeVisible();
 	});
 
+	test('restores right-panel tabs from global shortcuts after collapsing the shell chrome', async () => {
+		await helpers.openRightPanelTab(window, 'History');
+		await expect(window.locator('[data-tour="history-panel"]')).toBeVisible();
+
+		await window.keyboard.press('Alt+Meta+ArrowRight');
+		await expect(window.getByTitle(/Show right panel/)).toBeVisible();
+		await expect(window.locator('[data-tour="history-panel"]')).toBeHidden();
+
+		await window.keyboard.press('Alt+Meta+ArrowRight');
+		await expect(window.locator('[data-tour="history-panel"]')).toBeVisible();
+
+		await window.keyboard.press('Meta+Shift+1');
+		await expect(window.getByText('Auto Run Surface')).toBeVisible();
+		await expect(window.getByRole('button', { name: /^Run$/ })).toBeVisible();
+
+		await window.keyboard.press('Meta+Shift+F');
+		await expect(window.locator('[data-tour="files-panel"]')).toBeVisible();
+		await expect(window.getByText('README.md')).toBeVisible();
+
+		await window.keyboard.press('Meta+Shift+H');
+		await expect(window.locator('[data-tour="history-panel"]')).toBeVisible();
+	});
+
+	test('cycles shell agents with global shortcuts while preserving each workspace surface', async () => {
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+
+		await window.keyboard.press('Meta+]');
+		await expect(window.getByLabel('Terminal output')).toBeVisible();
+		await expect(window.getByText('terminal seeded output is visible')).toBeVisible();
+
+		await window.keyboard.press('Meta+[');
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+		await expect(window.getByText('Preview prose for app shell E2E coverage.')).toBeVisible();
+	});
+
 	test('focuses the Left Bar shortcut and opens the agent filter', async () => {
 		await window.keyboard.press('Alt+Meta+ArrowLeft');
 		await expect(window.locator('[data-tour="session-list"]')).toBeHidden();
@@ -3767,6 +3802,27 @@ test.describe('App shell seeded workbench', () => {
 		await expect(searchInput).toBeHidden();
 	});
 
+	test('recovers command terminal output search from an unmatched query', async () => {
+		await openSeededTerminalAgent(window);
+		await window.getByLabel('Terminal output').press('Control+f');
+
+		const searchInput = window.getByPlaceholder('Search output... (Esc to close)');
+		await searchInput.fill('no terminal output match sentinel');
+		await expect(window.getByText('terminal search sentinel')).toBeHidden();
+		await expect(window.getByText('terminal stderr sentinel')).toBeHidden();
+
+		await searchInput.fill('terminal search');
+		await expect(window.getByText('terminal search sentinel')).toBeVisible();
+		await expect(window.getByText('terminal stderr sentinel')).toBeHidden();
+
+		await searchInput.fill('');
+		await expect(window.getByText('terminal search sentinel')).toBeVisible();
+		await expect(window.getByText('terminal stderr sentinel')).toBeVisible();
+
+		await searchInput.press('Escape');
+		await expect(searchInput).toBeHidden();
+	});
+
 	test('filters a single command terminal output block', async () => {
 		await openSeededTerminalAgent(window);
 
@@ -3858,6 +3914,41 @@ test.describe('App shell seeded workbench', () => {
 		await historyFilter.press('Enter');
 		await expect(historyFilter).toBeHidden();
 		await expect(terminalInput).toHaveValue('git status --short');
+	});
+
+	test('closes command terminal history search with Escape without replacing the draft', async () => {
+		const terminalInput = await openSeededTerminalAgent(window);
+
+		await terminalInput.fill('manual terminal draft sentinel');
+		await terminalInput.press('ArrowUp');
+		const historyFilter = window.getByPlaceholder('Filter commands...');
+		await expect(historyFilter).toBeVisible();
+		await historyFilter.fill('status');
+		await expect(window.getByText('git status --short')).toBeVisible();
+
+		await historyFilter.press('Escape');
+		await expect(historyFilter).toBeHidden();
+		await expect(terminalInput).toHaveValue('manual terminal draft sentinel');
+	});
+
+	test('runs a command selected from terminal history through the stubbed runner', async () => {
+		await stubTerminalRunCommand(electronApp);
+		const terminalInput = await openSeededTerminalAgent(window);
+
+		await terminalInput.focus();
+		await terminalInput.press('ArrowUp');
+		const historyFilter = window.getByPlaceholder('Filter commands...');
+		await historyFilter.fill('history sentinel');
+		await historyFilter.press('Enter');
+		await expect(historyFilter).toBeHidden();
+		await expect(terminalInput).toHaveValue('echo terminal history sentinel');
+
+		await terminalInput.press('Enter');
+
+		await expect(terminalInput).toHaveValue('');
+		await expect(
+			(await getStubbedTerminalRunCommandCalls(electronApp)).map((call) => call.command)
+		).toEqual(['echo terminal history sentinel']);
 	});
 
 	test('runs a command terminal input through the process runner and clears busy state', async () => {
@@ -4707,6 +4798,113 @@ test.describe('App shell seeded workbench', () => {
 
 		await expect(switcher).toBeHidden();
 		await expect(window.getByText('File Preview Surface')).toBeVisible();
+	});
+
+	test('opens the Tab Switcher from the global shortcut and cycles its keyboard modes', async () => {
+		await window.getByText('Main', { exact: true }).click();
+		await window.keyboard.press('Alt+Meta+T');
+
+		const switcher = window.getByRole('dialog', { name: 'Tab Switcher' });
+		await expect(switcher).toBeVisible();
+		await expect(switcher.getByRole('button', { name: /Open Tabs \(2\)/ })).toBeVisible();
+		await expect(switcher.getByText('Tab / ⇧Tab to switch')).toBeVisible();
+
+		let searchInput = switcher.getByPlaceholder('Search open tabs...');
+		await searchInput.press('Tab');
+		await expect(switcher.getByPlaceholder('Search named sessions...')).toBeVisible();
+
+		searchInput = switcher.getByPlaceholder('Search named sessions...');
+		await searchInput.press('Tab');
+		await expect(switcher.getByPlaceholder('Search starred sessions...')).toBeVisible();
+		await expect(switcher.getByText('No starred sessions')).toBeVisible();
+
+		searchInput = switcher.getByPlaceholder('Search starred sessions...');
+		await searchInput.press('Shift+Tab');
+		await expect(switcher.getByPlaceholder('Search named sessions...')).toBeVisible();
+
+		await switcher.getByPlaceholder('Search named sessions...').press('Escape');
+		await expect(switcher).toBeHidden();
+	});
+
+	test('shows Tab Switcher empty results and selects a filtered tab from the keyboard', async () => {
+		await window.getByText('Main', { exact: true }).click();
+		await window.keyboard.press('Alt+Meta+T');
+
+		const switcher = window.getByRole('dialog', { name: 'Tab Switcher' });
+		const searchInput = switcher.getByPlaceholder('Search open tabs...');
+		await searchInput.fill('missing tab sentinel');
+		await expect(switcher.getByText('No open tabs')).toBeVisible();
+		await expect(switcher.getByText('0 tabs')).toBeVisible();
+
+		await searchInput.fill('readme');
+		await expect(switcher.getByRole('button', { name: /README/ })).toBeVisible();
+		await searchInput.press('1');
+
+		await expect(switcher).toBeHidden();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+	});
+
+	test('uses global tab shortcuts to create select close and reopen AI tabs', async () => {
+		const tabRows = window.locator('[data-tab-id]');
+		await window.getByText('Main', { exact: true }).click();
+		await expect(tabRows).toHaveCount(2);
+
+		await window.keyboard.press('Meta+T');
+		await expect(tabRows).toHaveCount(3);
+		await expect(tabRows.nth(2)).toContainText('New Session');
+
+		await window.keyboard.press('Meta+1');
+		await expect(window.getByText('Codex seeded response is visible.')).toBeVisible();
+
+		await window.keyboard.press('Meta+0');
+		await expect(tabRows.nth(2)).toContainText('New Session');
+		await expect(
+			window.getByPlaceholder(/Talking to E2E Workbench powered by Codex/)
+		).toBeVisible();
+
+		await window.keyboard.press('Meta+W');
+		await expect(tabRows).toHaveCount(2);
+		await expect(tabRows.filter({ hasText: 'New Session' })).toHaveCount(0);
+
+		await window.keyboard.press('Meta+Shift+T');
+		await expect(tabRows).toHaveCount(3);
+		await expect(tabRows.filter({ hasText: 'New Session' })).toBeVisible();
+	});
+
+	test('routes file TabBar overlay shell actions through the preload IPC bridge', async () => {
+		await stubShellPathHandlers(electronApp);
+		const readmeTab = window.locator('[data-tab-id]').filter({ hasText: 'README' }).first();
+		const expectedPath = seededWorkbench.sessions[0].filePreviewTabs[0].path;
+
+		await readmeTab.hover();
+		await window.getByText('Open in Default App').click();
+		await expect
+			.poll(() => getStubbedShellPathCalls(electronApp))
+			.toEqual([
+				{
+					type: 'openPath',
+					itemPath: expectedPath,
+				},
+			]);
+
+		await readmeTab.hover();
+		await window
+			.getByRole('button', {
+				name: /Reveal in Finder|Show in Finder|Show in Folder|Show in File Explorer|Open Containing Folder/,
+			})
+			.click();
+		await expect
+			.poll(() => getStubbedShellPathCalls(electronApp))
+			.toEqual([
+				{
+					type: 'openPath',
+					itemPath: expectedPath,
+				},
+				{
+					type: 'showItemInFolder',
+					itemPath: expectedPath,
+				},
+			]);
 	});
 
 	test('filters Quick Actions and opens Shortcuts Help', async () => {
