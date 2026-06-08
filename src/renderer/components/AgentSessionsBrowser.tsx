@@ -147,6 +147,9 @@ export function AgentSessionsBrowser({
 	const [selectedIndex, setSelectedIndex] = useState(0);
 	const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
 	const [renameValue, setRenameValue] = useState('');
+	const skipNextRenameSubmitRef = useRef(false);
+	const renamingSessionIdRef = useRef<string | null>(null);
+	renamingSessionIdRef.current = renamingSessionId;
 
 	// Activity graph vs search toggle state - default to search since graph needs data to load first
 	const [showSearchPanel, setShowSearchPanel] = useState(true);
@@ -186,6 +189,13 @@ export function AgentSessionsBrowser({
 	const { registerLayer, unregisterLayer, updateLayerHandler } = useLayerStack();
 
 	const handleLayerEscape = useCallback(() => {
+		if (renamingSessionIdRef.current) {
+			skipNextRenameSubmitRef.current = true;
+			setRenamingSessionId(null);
+			setRenameValue('');
+			return;
+		}
+
 		if (viewingSessionRef.current) {
 			clearViewingSession();
 		} else {
@@ -228,6 +238,17 @@ export function AgentSessionsBrowser({
 			updateLayerHandler(layerIdRef.current, handleLayerEscape);
 		}
 	}, [viewingSession, updateLayerHandler, handleLayerEscape]);
+
+	useEffect(() => {
+		const handleRenameEscape = (event: KeyboardEvent) => {
+			if (event.key === 'Escape' && renamingSessionIdRef.current) {
+				skipNextRenameSubmitRef.current = true;
+			}
+		};
+
+		window.addEventListener('keydown', handleRenameEscape, { capture: true });
+		return () => window.removeEventListener('keydown', handleRenameEscape, { capture: true });
+	}, []);
 
 	// Restore focus and scroll position when returning from detail view to list view
 	const prevViewingSessionRef = useRef<ClaudeSession | null>(null);
@@ -362,6 +383,7 @@ export function AgentSessionsBrowser({
 	// Start renaming a session
 	const startRename = useCallback((session: ClaudeSession, e: React.MouseEvent) => {
 		e.stopPropagation(); // Don't trigger session view
+		skipNextRenameSubmitRef.current = false;
 		setRenamingSessionId(session.sessionId);
 		setRenameValue(session.sessionName || '');
 		// Focus input after render
@@ -370,6 +392,7 @@ export function AgentSessionsBrowser({
 
 	// Cancel rename
 	const cancelRename = useCallback(() => {
+		skipNextRenameSubmitRef.current = true;
 		setRenamingSessionId(null);
 		setRenameValue('');
 	}, []);
@@ -377,6 +400,11 @@ export function AgentSessionsBrowser({
 	// Submit rename
 	const submitRename = useCallback(
 		async (sessionId: string) => {
+			if (skipNextRenameSubmitRef.current) {
+				skipNextRenameSubmitRef.current = false;
+				return;
+			}
+
 			// Use projectRoot (not cwd) for consistent session storage access
 			if (!activeSession?.projectRoot) return;
 
@@ -740,13 +768,16 @@ export function AgentSessionsBrowser({
 											type="text"
 											value={renameValue}
 											onChange={(e) => setRenameValue(e.target.value)}
-											onKeyDown={(e) => {
-												e.stopPropagation();
-												if (e.key === 'Enter') {
-													e.preventDefault();
-													submitRename(viewingSession.sessionId);
-												}
-											}}
+										onKeyDown={(e) => {
+											e.stopPropagation();
+											if (e.key === 'Enter') {
+												e.preventDefault();
+												submitRename(viewingSession.sessionId);
+											} else if (e.key === 'Escape') {
+												e.preventDefault();
+												cancelRename();
+											}
+										}}
 											onBlur={() => submitRename(viewingSession.sessionId)}
 											placeholder="Enter session name..."
 											className="bg-transparent outline-none text-sm font-semibold px-2 py-0.5 rounded border"
@@ -766,11 +797,12 @@ export function AgentSessionsBrowser({
 											{viewingSession.sessionName}
 										</span>
 										<button
-											onClick={(e) => {
-												e.stopPropagation();
-												setRenamingSessionId(viewingSession.sessionId);
-												setRenameValue(viewingSession.sessionName as string);
-												setTimeout(() => renameInputRef.current?.focus(), 50);
+												onClick={(e) => {
+													e.stopPropagation();
+													skipNextRenameSubmitRef.current = false;
+													setRenamingSessionId(viewingSession.sessionId);
+													setRenameValue(viewingSession.sessionName as string);
+													setTimeout(() => renameInputRef.current?.focus(), 50);
 											}}
 											className="p-0.5 rounded hover:bg-white/10 transition-colors"
 											title="Rename session"
@@ -788,11 +820,12 @@ export function AgentSessionsBrowser({
 											{viewingSession.sessionId.toUpperCase()}
 										</span>
 										<button
-											onClick={(e) => {
-												e.stopPropagation();
-												setRenamingSessionId(viewingSession.sessionId);
-												setRenameValue('');
-												setTimeout(() => renameInputRef.current?.focus(), 50);
+												onClick={(e) => {
+													e.stopPropagation();
+													skipNextRenameSubmitRef.current = false;
+													setRenamingSessionId(viewingSession.sessionId);
+													setRenameValue('');
+													setTimeout(() => renameInputRef.current?.focus(), 50);
 											}}
 											className="p-0.5 rounded hover:bg-white/10 transition-colors"
 											title="Add session name"

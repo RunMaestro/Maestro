@@ -2056,8 +2056,11 @@ async function getStubbedCreatePRRequest(electronApp: ElectronApplication) {
 	});
 }
 
-async function stubAgentDetectionForNewAgent(electronApp: ElectronApplication) {
-	await electronApp.evaluate(({ ipcMain }) => {
+async function stubAgentDetectionForNewAgent(
+	electronApp: ElectronApplication,
+	options: { refreshedAgentId?: string; refreshedPath?: string } = {}
+) {
+	await electronApp.evaluate(({ ipcMain }, refreshOptions) => {
 		const capabilities = { supportsBatchMode: true, supportsModelSelection: false };
 		const agents = [
 			{
@@ -2111,16 +2114,46 @@ async function stubAgentDetectionForNewAgent(electronApp: ElectronApplication) {
 		ipcMain.removeHandler('agents:detect');
 		ipcMain.handle('agents:detect', async () => agents);
 		ipcMain.removeHandler('agents:refresh');
-		ipcMain.handle('agents:refresh', async (_event, agentId: string) =>
-			agents.find((agent) => agent.id === agentId)
-		);
+		ipcMain.handle('agents:refresh', async (_event, agentId: string) => {
+			const refreshedAgents =
+				refreshOptions.refreshedAgentId === agentId
+					? agents.map((candidate) =>
+							candidate.id === agentId
+								? {
+										...candidate,
+										available: true,
+										path: refreshOptions.refreshedPath ?? `/opt/e2e/bin/${candidate.binaryName}`,
+									}
+								: candidate
+						)
+					: agents;
+			const agent = refreshedAgents.find((candidate) => candidate.id === agentId);
+			return {
+				agents: refreshedAgents,
+				debugInfo: agentId
+					? {
+							agentId,
+							available: agent?.available || false,
+							path: agent?.path || null,
+							binaryName: agent?.binaryName || agentId,
+							envPath: '/opt/e2e/bin:/usr/bin',
+							homeDir: '/Users/e2e',
+							platform: 'darwin',
+							whichCommand: 'which',
+							error: agent?.available
+								? null
+								: `which ${agent?.binaryName || agentId} failed (exit code 1): e2e binary missing`,
+						}
+					: null,
+			};
+		});
 		ipcMain.removeHandler('agents:getConfig');
 		ipcMain.handle('agents:getConfig', async () => ({}));
 		ipcMain.removeHandler('agents:setConfig');
 		ipcMain.handle('agents:setConfig', async () => true);
 		ipcMain.removeHandler('agents:getModels');
 		ipcMain.handle('agents:getModels', async () => []);
-	});
+	}, options);
 }
 
 async function stubMarketplaceForPlaybookExchange(electronApp: ElectronApplication) {
@@ -4907,6 +4940,54 @@ test.describe('App shell seeded workbench', () => {
 			]);
 	});
 
+	test('selects a file tab from the Tab Switcher with keyboard navigation', async () => {
+		await window.getByText('Main', { exact: true }).click();
+		await expect(window.getByText('Codex seeded response is visible.')).toBeVisible();
+
+		await window.getByTitle(/Search tabs/).click();
+		const switcher = window.getByRole('dialog', { name: 'Tab Switcher' });
+		await expect(switcher).toBeVisible();
+
+		const searchInput = switcher.getByPlaceholder('Search open tabs...');
+		await expect(searchInput).toBeFocused();
+		await searchInput.press('ArrowDown');
+		await searchInput.press('Enter');
+
+		await expect(switcher).toBeHidden();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+		await expect(
+			window.locator('[data-tab-id]').filter({ hasText: 'README' }).first()
+		).toBeVisible();
+	});
+
+	test('cycles Tab Switcher modes with Tab and Shift+Tab', async () => {
+		await window.getByText('Main', { exact: true }).click();
+		await expect(window.getByText('Codex seeded response is visible.')).toBeVisible();
+
+		await window.getByTitle(/Search tabs/).click();
+		const switcher = window.getByRole('dialog', { name: 'Tab Switcher' });
+		await expect(switcher).toBeVisible();
+
+		let searchInput = switcher.getByPlaceholder('Search open tabs...');
+		await expect(searchInput).toBeFocused();
+		await searchInput.press('Tab');
+
+		searchInput = switcher.getByPlaceholder('Search named sessions...');
+		await expect(searchInput).toBeFocused();
+		await searchInput.press('Tab');
+
+		searchInput = switcher.getByPlaceholder('Search starred sessions...');
+		await expect(searchInput).toBeFocused();
+		await searchInput.press('Shift+Tab');
+
+		searchInput = switcher.getByPlaceholder('Search named sessions...');
+		await expect(searchInput).toBeFocused();
+		await searchInput.press('Shift+Tab');
+
+		await expect(switcher.getByPlaceholder('Search open tabs...')).toBeFocused();
+		await expect(switcher).toBeVisible();
+	});
+
 	test('filters Quick Actions and opens Shortcuts Help', async () => {
 		const quickActionsDialog = await openQuickActions(window);
 		await quickActionsDialog
@@ -5047,6 +5128,196 @@ test.describe('App shell seeded workbench', () => {
 		await expect(window.getByText('REVIEW LANE')).toBeVisible();
 	});
 
+	test('cancels and confirms deleting an empty agent group', async () => {
+		const quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('Create New Group');
+		await quickActionsDialog.getByRole('button', { name: /Create New Group/ }).click();
+
+		const createGroupDialog = window.getByRole('dialog', { name: 'Create New Group' });
+		await expect(createGroupDialog).toBeVisible();
+		await createGroupDialog.getByLabel('Group Name').fill('empty lane');
+		await createGroupDialog.getByRole('button', { name: 'Create' }).click();
+		await expect(createGroupDialog).toBeHidden();
+
+		const groupHeader = window.getByRole('button', { name: /EMPTY LANE/ });
+		const groupSection = groupHeader.locator('xpath=ancestor::div[contains(@class, "mb-1")][1]');
+		await expect(groupSection).toBeVisible();
+
+		await groupHeader.hover();
+		await groupSection.getByTitle('Delete empty group').click();
+		let confirmDialog = window.getByRole('dialog', { name: 'Confirm' });
+		await expect(confirmDialog.getByText('delete the group "EMPTY LANE"')).toBeVisible();
+		await confirmDialog.getByRole('button', { name: 'Cancel' }).click();
+		await expect(confirmDialog).toBeHidden();
+		await expect(groupSection).toBeVisible();
+
+		await groupHeader.hover();
+		await groupSection.getByTitle('Delete empty group').click();
+		confirmDialog = window.getByRole('dialog', { name: 'Confirm' });
+		await expect(confirmDialog.getByText('delete the group "EMPTY LANE"')).toBeVisible();
+		await confirmDialog.getByRole('button', { name: 'Confirm' }).click();
+
+		await expect(window.getByText('EMPTY LANE', { exact: true })).toHaveCount(0);
+	});
+
+	test('moves an agent to a group from the context menu and ungroups it', async () => {
+		const quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('Create New Group');
+		await quickActionsDialog.getByRole('button', { name: /Create New Group/ }).click();
+
+		const createGroupDialog = window.getByRole('dialog', { name: 'Create New Group' });
+		await createGroupDialog.getByLabel('Group Name').fill('agent lane');
+		await createGroupDialog.getByRole('button', { name: 'Create' }).click();
+		await expect(createGroupDialog).toBeHidden();
+
+		const groupSection = window
+			.getByText('AGENT LANE', { exact: true })
+			.locator('xpath=ancestor::div[contains(@class, "mb-1")][1]');
+		await expect(groupSection).toBeVisible();
+		await expect(groupSection.getByText('E2E Terminal', { exact: true })).toHaveCount(0);
+
+		let contextMenu = await openSessionContextMenu(window, 'E2E Terminal', 'Move to Group');
+		await contextMenu.getByText('Move to Group', { exact: true }).hover();
+		await contextMenu.getByRole('button', { name: /AGENT LANE/ }).click();
+
+		await expect(groupSection.getByText('E2E Terminal', { exact: true })).toBeVisible();
+
+		contextMenu = await openSessionContextMenu(window, 'E2E Terminal', 'Move to Group');
+		await contextMenu.getByText('Move to Group', { exact: true }).hover();
+		await contextMenu.getByRole('button', { name: /Ungrouped/ }).click();
+
+		await expect(groupSection.getByText('E2E Terminal', { exact: true })).toHaveCount(0);
+		const ungroupedSection = window
+			.getByText('Ungrouped Agents', { exact: true })
+			.locator('xpath=ancestor::div[contains(@class, "mb-1")][1]');
+		await expect(ungroupedSection.getByText('E2E Terminal', { exact: true })).toBeVisible();
+	});
+
+	test('creates a new group from the agent context menu and moves the agent into it', async () => {
+		const contextMenu = await openSessionContextMenu(window, 'E2E Terminal', 'Move to Group');
+		await contextMenu.getByText('Move to Group', { exact: true }).hover();
+		await contextMenu.getByRole('button', { name: /Create New Group/ }).click();
+
+		const createGroupDialog = window.getByRole('dialog', { name: 'Create New Group' });
+		await expect(createGroupDialog).toBeVisible();
+		await createGroupDialog.getByLabel('Group Name').fill('terminal lane');
+		await createGroupDialog.getByRole('button', { name: 'Create' }).click();
+		await expect(createGroupDialog).toBeHidden();
+
+		const groupSection = window
+			.getByText('TERMINAL LANE', { exact: true })
+			.locator('xpath=ancestor::div[contains(@class, "mb-1")][1]');
+		await expect(groupSection.getByText('E2E Terminal', { exact: true })).toBeVisible();
+
+		const ungroupedSection = window
+			.getByText('Ungrouped Agents', { exact: true })
+			.locator('xpath=ancestor::div[contains(@class, "mb-1")][1]');
+		await expect(ungroupedSection.getByText('E2E Workbench', { exact: true })).toBeVisible();
+		await expect(ungroupedSection.getByText('E2E Terminal', { exact: true })).toHaveCount(0);
+	});
+
+	test('collapses and expands a grouped agent section', async () => {
+		const contextMenu = await openSessionContextMenu(window, 'E2E Terminal', 'Move to Group');
+		await contextMenu.getByText('Move to Group', { exact: true }).hover();
+		await contextMenu.getByRole('button', { name: /Create New Group/ }).click();
+
+		const createGroupDialog = window.getByRole('dialog', { name: 'Create New Group' });
+		await expect(createGroupDialog).toBeVisible();
+		await createGroupDialog.getByLabel('Group Name').fill('focus lane');
+		await createGroupDialog.getByRole('button', { name: 'Create' }).click();
+		await expect(createGroupDialog).toBeHidden();
+
+		const groupHeader = window.getByRole('button', { name: /FOCUS LANE/ });
+		const groupSection = window
+			.getByText('FOCUS LANE', { exact: true })
+			.locator('xpath=ancestor::div[contains(@class, "mb-1")][1]');
+		await expect(groupHeader).toHaveAttribute('aria-expanded', 'true');
+		await expect(groupSection.getByText('E2E Terminal', { exact: true })).toBeVisible();
+
+		await groupHeader.click();
+		await expect(groupHeader).toHaveAttribute('aria-expanded', 'false');
+		await expect(
+			groupSection.getByRole('button', { name: 'Switch to E2E Terminal' })
+		).toBeVisible();
+
+		await groupHeader.click();
+		await expect(groupHeader).toHaveAttribute('aria-expanded', 'true');
+		await expect(groupSection.getByText('E2E Terminal', { exact: true })).toBeVisible();
+	});
+
+	test('renames a populated agent group inline from the sidebar', async () => {
+		const contextMenu = await openSessionContextMenu(window, 'E2E Terminal', 'Move to Group');
+		await contextMenu.getByText('Move to Group', { exact: true }).hover();
+		await contextMenu.getByRole('button', { name: /Create New Group/ }).click();
+
+		const createGroupDialog = window.getByRole('dialog', { name: 'Create New Group' });
+		await expect(createGroupDialog).toBeVisible();
+		await createGroupDialog.getByLabel('Group Name').fill('rename lane');
+		await createGroupDialog.getByRole('button', { name: 'Create' }).click();
+		await expect(createGroupDialog).toBeHidden();
+
+		const groupHeader = window.getByRole('button', { name: /RENAME LANE/ });
+		const groupSection = groupHeader.locator('xpath=ancestor::div[contains(@class, "mb-1")][1]');
+		await expect(groupSection.getByText('E2E Terminal', { exact: true })).toBeVisible();
+
+		await groupSection.getByText('RENAME LANE', { exact: true }).dblclick();
+		const renameInput = window.locator('input:focus');
+		await expect(renameInput).toHaveValue('RENAME LANE');
+		await renameInput.fill('priority lane');
+		await renameInput.press('Enter');
+
+		const renamedSection = window
+			.getByText('PRIORITY LANE', { exact: true })
+			.locator('xpath=ancestor::div[contains(@class, "mb-1")][1]');
+		await expect(renamedSection).toBeVisible();
+		await expect(window.getByText('RENAME LANE', { exact: true })).toHaveCount(0);
+		await expect(renamedSection.getByText('E2E Terminal', { exact: true })).toBeVisible();
+	});
+
+	test('renames the active agent group from Quick Actions', async () => {
+		const contextMenu = await openSessionContextMenu(window, 'E2E Terminal', 'Move to Group');
+		await contextMenu.getByText('Move to Group', { exact: true }).hover();
+		await contextMenu.getByRole('button', { name: /Create New Group/ }).click();
+
+		const createGroupDialog = window.getByRole('dialog', { name: 'Create New Group' });
+		await expect(createGroupDialog).toBeVisible();
+		await createGroupDialog.getByLabel('Group Name').fill('quick lane');
+		await createGroupDialog.getByRole('button', { name: 'Create' }).click();
+		await expect(createGroupDialog).toBeHidden();
+
+		const groupSection = window
+			.getByText('QUICK LANE', { exact: true })
+			.locator('xpath=ancestor::div[contains(@class, "mb-1")][1]');
+		await expect(groupSection.getByText('E2E Terminal', { exact: true })).toBeVisible();
+		await groupSection.getByText('E2E Terminal', { exact: true }).click();
+		await expect(window.getByLabel('Terminal output')).toBeVisible();
+
+		const quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('Rename Group');
+		await quickActionsDialog.getByRole('button', { name: /Rename Group/ }).click();
+
+		await expect(quickActionsDialog).toBeHidden();
+		const renameGroupDialog = window.getByRole('dialog', { name: 'Rename Group' });
+		await expect(renameGroupDialog).toBeVisible();
+		await expect(renameGroupDialog.getByLabel('Group Name')).toHaveValue('QUICK LANE');
+		await renameGroupDialog.getByLabel('Group Name').fill('modal lane');
+		await renameGroupDialog.getByRole('button', { name: 'Rename' }).click();
+		await expect(renameGroupDialog).toBeHidden();
+
+		const renamedSection = window
+			.getByText('MODAL LANE', { exact: true })
+			.locator('xpath=ancestor::div[contains(@class, "mb-1")][1]');
+		await expect(renamedSection).toBeVisible();
+		await expect(window.getByText('QUICK LANE', { exact: true })).toHaveCount(0);
+		await expect(renamedSection.getByText('E2E Terminal', { exact: true })).toBeVisible();
+	});
+
 	test('opens fuzzy file search from Quick Actions and selects a markdown file', async () => {
 		const quickActionsDialog = await openQuickActions(window);
 		await quickActionsDialog
@@ -5148,6 +5419,310 @@ test.describe('App shell seeded workbench', () => {
 		await createAgentDialog.getByRole('option', { name: /OpenCode/ }).click();
 		await expect(createAgentDialog.getByPlaceholder('/path/to/opencode')).toBeVisible();
 		await expect(createAgentDialog.getByText('MAESTRO_SESSION_RESUMED').first()).toBeVisible();
+	});
+
+	test('shows debug info when refreshing unavailable provider detection', async () => {
+		await stubAgentDetectionForNewAgent(electronApp);
+
+		const createAgentDialog = await openCreateNewAgentFromQuickActions(window);
+		const codexOption = createAgentDialog.getByRole('option', { name: /Codex/ });
+		const claudeOption = createAgentDialog.getByRole('option', { name: /Claude Code/ });
+
+		await expect(codexOption).toHaveAttribute('aria-selected', 'true');
+		await expect(claudeOption).toContainText('Not Found');
+		await claudeOption.getByTitle('Refresh detection').click();
+
+		await expect(codexOption).toHaveAttribute('aria-selected', 'true');
+		await expect(claudeOption).toHaveAttribute('aria-selected', 'false');
+		await expect(createAgentDialog.getByText('Debug Info: claude not found')).toBeVisible();
+		await expect(
+			createAgentDialog.getByText('which claude failed (exit code 1): e2e binary missing')
+		).toBeVisible();
+		await expect(createAgentDialog.getByText('/opt/e2e/bin')).toBeVisible();
+		await expect(createAgentDialog.getByText('/Users/e2e')).toBeVisible();
+	});
+
+	test('updates unavailable provider status when refresh detects a binary', async () => {
+		await stubAgentDetectionForNewAgent(electronApp, {
+			refreshedAgentId: 'claude-code',
+			refreshedPath: '/opt/e2e/bin/claude',
+		});
+
+		const createAgentDialog = await openCreateNewAgentFromQuickActions(window);
+		const codexOption = createAgentDialog.getByRole('option', { name: /Codex/ });
+		const claudeOption = createAgentDialog.getByRole('option', { name: /Claude Code/ });
+
+		await expect(codexOption).toHaveAttribute('aria-selected', 'true');
+		await expect(claudeOption).toContainText('Not Found');
+		await claudeOption.getByTitle('Refresh detection').click();
+
+		await expect(codexOption).toHaveAttribute('aria-selected', 'true');
+		await expect(claudeOption).toContainText('Available');
+		await expect(createAgentDialog.getByText('Debug Info: claude not found')).toBeHidden();
+
+		await claudeOption.click();
+		await expect(claudeOption).toHaveAttribute('aria-selected', 'true');
+		await expect(createAgentDialog.getByPlaceholder('/path/to/claude')).toHaveValue(
+			'/opt/e2e/bin/claude'
+		);
+	});
+
+	test('requires a manual path before creating an unavailable provider agent', async () => {
+		const staticProjectDir = path.join(seededWorkbench.homeDir, 'unavailable-provider-validation');
+		fs.mkdirSync(staticProjectDir, { recursive: true });
+		await stubAgentDetectionForNewAgent(electronApp);
+
+		const createAgentDialog = await openCreateNewAgentFromQuickActions(window);
+		const claudeOption = createAgentDialog.getByRole('option', { name: /Claude Code/ });
+		const createButton = createAgentDialog.getByRole('button', { name: 'Create Agent' });
+
+		await claudeOption.click();
+		await expect(claudeOption).toHaveAttribute('aria-selected', 'true');
+		await createAgentDialog.getByLabel('Agent Name').fill('Unavailable Provider Validation');
+		await createAgentDialog.getByLabel('Working Directory').fill(staticProjectDir);
+
+		await expect(createButton).toBeDisabled();
+		await createAgentDialog.getByPlaceholder('/path/to/claude').fill('/opt/e2e/manual/claude');
+		await expect(createButton).toBeEnabled();
+		await createAgentDialog.getByPlaceholder('/path/to/claude').fill('');
+		await expect(createButton).toBeDisabled();
+	});
+
+	test('requires a real custom path before creating a beta OpenCode agent', async () => {
+		const staticProjectDir = path.join(seededWorkbench.homeDir, 'opencode-provider-validation');
+		fs.mkdirSync(staticProjectDir, { recursive: true });
+		await stubAgentDetectionForNewAgent(electronApp);
+
+		const createAgentDialog = await openCreateNewAgentFromQuickActions(window);
+		const opencodeOption = createAgentDialog.getByRole('option', { name: /OpenCode/ });
+		const createButton = createAgentDialog.getByRole('button', { name: 'Create Agent' });
+
+		await opencodeOption.click();
+		await expect(opencodeOption).toHaveAttribute('aria-selected', 'true');
+		await createAgentDialog.getByLabel('Agent Name').fill('OpenCode Provider Validation');
+		await createAgentDialog.getByLabel('Working Directory').fill(staticProjectDir);
+		await createAgentDialog
+			.getByPlaceholder('--flag value --another-flag')
+			.fill('--model opencode-validation-e2e');
+		await createAgentDialog.getByRole('button', { name: 'Add Variable' }).click();
+		await createAgentDialog.getByPlaceholder('VARIABLE_NAME').fill('OPENCODE_VALIDATION_E2E');
+		await createAgentDialog.getByPlaceholder('value', { exact: true }).fill('enabled');
+
+		await expect(createButton).toBeDisabled();
+		await createAgentDialog.getByPlaceholder('/path/to/opencode').fill('   ');
+		await expect(createButton).toBeDisabled();
+		await createAgentDialog.getByPlaceholder('/path/to/opencode').fill('/opt/e2e/manual/opencode');
+		await expect(createButton).toBeEnabled();
+		await createAgentDialog.getByPlaceholder('/path/to/opencode').fill('');
+		await expect(createButton).toBeDisabled();
+	});
+
+	test('keeps Create New Agent static provider drafts isolated while switching providers', async () => {
+		const staticProjectDir = path.join(seededWorkbench.homeDir, 'provider-draft-isolation');
+		fs.mkdirSync(staticProjectDir, { recursive: true });
+		await stubAgentDetectionForNewAgent(electronApp);
+
+		const createAgentDialog = await openCreateNewAgentFromQuickActions(window);
+		const createButton = createAgentDialog.getByRole('button', { name: 'Create Agent' });
+		const claudeOption = createAgentDialog.getByRole('option', { name: /Claude Code/ });
+		const factoryOption = createAgentDialog.getByRole('option', { name: /Factory Droid/ });
+
+		await createAgentDialog.getByLabel('Agent Name').fill('Provider Draft Isolation');
+		await createAgentDialog.getByLabel('Working Directory').fill(staticProjectDir);
+
+		await claudeOption.click();
+		await createAgentDialog
+			.getByPlaceholder('/path/to/claude')
+			.fill('/opt/e2e/manual/claude-draft');
+		await createAgentDialog
+			.getByPlaceholder('--flag value --another-flag')
+			.fill('--model claude-draft');
+		await createAgentDialog.getByRole('button', { name: 'Add Variable' }).click();
+		await createAgentDialog.getByPlaceholder('VARIABLE_NAME').fill('CLAUDE_DRAFT_E2E');
+		await createAgentDialog.getByPlaceholder('value', { exact: true }).fill('claude');
+		await expect(createButton).toBeEnabled();
+
+		await factoryOption.click();
+		await expect(factoryOption).toHaveAttribute('aria-selected', 'true');
+		await expect(createAgentDialog.getByPlaceholder('/path/to/factory')).toHaveValue('');
+		await expect(createAgentDialog.getByPlaceholder('--flag value --another-flag')).toHaveValue('');
+		await expect(createAgentDialog.getByPlaceholder('VARIABLE_NAME')).toHaveCount(0);
+		await expect(createButton).toBeDisabled();
+
+		await createAgentDialog
+			.getByPlaceholder('/path/to/factory')
+			.fill('/opt/e2e/manual/factory-draft');
+		await createAgentDialog
+			.getByPlaceholder('--flag value --another-flag')
+			.fill('--model factory-draft');
+		await createAgentDialog.getByRole('button', { name: 'Add Variable' }).click();
+		await createAgentDialog.getByPlaceholder('VARIABLE_NAME').fill('FACTORY_DRAFT_E2E');
+		await createAgentDialog.getByPlaceholder('value', { exact: true }).fill('factory');
+		await expect(createButton).toBeEnabled();
+
+		await claudeOption.click();
+		await expect(claudeOption).toHaveAttribute('aria-selected', 'true');
+		await expect(createAgentDialog.getByPlaceholder('/path/to/claude')).toHaveValue(
+			'/opt/e2e/manual/claude-draft'
+		);
+		await expect(createAgentDialog.getByPlaceholder('--flag value --another-flag')).toHaveValue(
+			'--model claude-draft'
+		);
+		await expect(createAgentDialog.getByPlaceholder('VARIABLE_NAME')).toHaveValue(
+			'CLAUDE_DRAFT_E2E'
+		);
+		await expect(createAgentDialog.getByPlaceholder('value', { exact: true })).toHaveValue(
+			'claude'
+		);
+
+		await factoryOption.click();
+		await expect(factoryOption).toHaveAttribute('aria-selected', 'true');
+		await expect(createAgentDialog.getByPlaceholder('/path/to/factory')).toHaveValue(
+			'/opt/e2e/manual/factory-draft'
+		);
+		await expect(createAgentDialog.getByPlaceholder('--flag value --another-flag')).toHaveValue(
+			'--model factory-draft'
+		);
+		await expect(createAgentDialog.getByPlaceholder('VARIABLE_NAME')).toHaveValue(
+			'FACTORY_DRAFT_E2E'
+		);
+		await expect(createAgentDialog.getByPlaceholder('value', { exact: true })).toHaveValue(
+			'factory'
+		);
+	});
+
+	test('creates an unavailable Claude Code agent with manual static configuration', async () => {
+		const staticProjectDir = path.join(seededWorkbench.homeDir, 'claude-static-project');
+		fs.mkdirSync(staticProjectDir, { recursive: true });
+		await stubAgentDetectionForNewAgent(electronApp);
+
+		const createAgentDialog = await openCreateNewAgentFromQuickActions(window);
+		const claudeOption = createAgentDialog.getByRole('option', { name: /Claude Code/ });
+		await expect(claudeOption).toContainText('Not Found');
+		await claudeOption.click();
+		await expect(claudeOption).toHaveAttribute('aria-selected', 'true');
+
+		await createAgentDialog.getByLabel('Agent Name').fill('Claude Static Agent');
+		await createAgentDialog.getByLabel('Working Directory').fill(staticProjectDir);
+		await createAgentDialog.getByPlaceholder('/path/to/claude').fill('/opt/e2e/manual/claude');
+		await createAgentDialog
+			.getByPlaceholder('--flag value --another-flag')
+			.fill('--model claude-static-e2e');
+		await createAgentDialog.getByRole('button', { name: 'Add Variable' }).click();
+		await createAgentDialog.getByPlaceholder('VARIABLE_NAME').fill('CLAUDE_STATIC_E2E');
+		await createAgentDialog.getByPlaceholder('value', { exact: true }).fill('enabled');
+
+		await expect(createAgentDialog.getByRole('button', { name: 'Create Agent' })).toBeEnabled();
+		await createAgentDialog.getByRole('button', { name: 'Create Agent' }).click();
+		await expect(createAgentDialog).toBeHidden();
+
+		const sessionList = window.locator('[data-tour="session-list"]');
+		const createdAgent = sessionList.getByText('Claude Static Agent', { exact: true });
+		await expect(createdAgent).toBeVisible();
+		await createdAgent.click();
+
+		const quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('Edit Agent');
+		await quickActionsDialog
+			.getByRole('button', { name: /Edit Agent: Claude Static Agent/ })
+			.click();
+
+		const editAgentDialog = window.getByRole('dialog', {
+			name: 'Edit Agent: Claude Static Agent',
+		});
+		await expect(editAgentDialog).toBeVisible();
+		await expect(editAgentDialog.getByRole('combobox')).toHaveValue('claude-code');
+		await expect(editAgentDialog.getByPlaceholder('/path/to/claude')).toHaveValue(
+			'/opt/e2e/manual/claude'
+		);
+		await expect(editAgentDialog.getByPlaceholder('--flag value --another-flag')).toHaveValue(
+			'--model claude-static-e2e'
+		);
+		await expect(editAgentDialog.getByPlaceholder('VARIABLE_NAME')).toHaveValue(
+			'CLAUDE_STATIC_E2E'
+		);
+		await expect(editAgentDialog.getByPlaceholder('value', { exact: true })).toHaveValue('enabled');
+		await editAgentDialog.getByRole('button', { name: 'Cancel' }).click();
+		await expect(editAgentDialog).toBeHidden();
+	});
+
+	test('creates an unavailable Factory Droid agent with manual static configuration', async () => {
+		const staticProjectDir = path.join(seededWorkbench.homeDir, 'factory-static-project');
+		fs.mkdirSync(staticProjectDir, { recursive: true });
+		await stubAgentDetectionForNewAgent(electronApp);
+
+		const createAgentDialog = await openCreateNewAgentFromQuickActions(window);
+		const factoryOption = createAgentDialog.getByRole('option', { name: /Factory Droid/ });
+		await expect(factoryOption).toContainText('Beta');
+		await factoryOption.click();
+		await expect(factoryOption).toHaveAttribute('aria-selected', 'true');
+
+		await createAgentDialog.getByLabel('Agent Name').fill('Factory Static Agent');
+		await createAgentDialog.getByLabel('Working Directory').fill(staticProjectDir);
+		await createAgentDialog.getByPlaceholder('/path/to/factory').fill('/opt/e2e/manual/factory');
+		await createAgentDialog
+			.getByPlaceholder('--flag value --another-flag')
+			.fill('--model factory-static-e2e');
+		await createAgentDialog.getByRole('button', { name: 'Add Variable' }).click();
+		await createAgentDialog.getByPlaceholder('VARIABLE_NAME').fill('FACTORY_STATIC_E2E');
+		await createAgentDialog.getByPlaceholder('value', { exact: true }).fill('enabled');
+
+		await expect(createAgentDialog.getByRole('button', { name: 'Create Agent' })).toBeEnabled();
+		await createAgentDialog.getByRole('button', { name: 'Create Agent' }).click();
+		await expect(createAgentDialog).toBeHidden();
+
+		const sessionList = window.locator('[data-tour="session-list"]');
+		const createdAgent = sessionList.getByText('Factory Static Agent', { exact: true });
+		await expect(createdAgent).toBeVisible();
+		await createdAgent.click();
+
+		const quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('Edit Agent');
+		await quickActionsDialog
+			.getByRole('button', { name: /Edit Agent: Factory Static Agent/ })
+			.click();
+
+		const editAgentDialog = window.getByRole('dialog', {
+			name: 'Edit Agent: Factory Static Agent',
+		});
+		await expect(editAgentDialog).toBeVisible();
+		await expect(editAgentDialog.getByRole('combobox')).toHaveValue('factory-droid');
+		await expect(editAgentDialog.getByPlaceholder('/path/to/factory')).toHaveValue(
+			'/opt/e2e/manual/factory'
+		);
+		await expect(editAgentDialog.getByPlaceholder('--flag value --another-flag')).toHaveValue(
+			'--model factory-static-e2e'
+		);
+		await expect(editAgentDialog.getByPlaceholder('VARIABLE_NAME')).toHaveValue(
+			'FACTORY_STATIC_E2E'
+		);
+		await expect(editAgentDialog.getByPlaceholder('value', { exact: true })).toHaveValue('enabled');
+		await editAgentDialog.getByRole('button', { name: 'Cancel' }).click();
+		await expect(editAgentDialog).toBeHidden();
+	});
+
+	test('does not switch Create New Agent setup to coming-soon providers', async () => {
+		const comingSoonDir = path.join(seededWorkbench.homeDir, 'coming-soon-provider-project');
+		fs.mkdirSync(comingSoonDir, { recursive: true });
+		await stubAgentDetectionForNewAgent(electronApp);
+
+		const createAgentDialog = await openCreateNewAgentFromQuickActions(window);
+		await createAgentDialog.getByLabel('Agent Name').fill('Gemini Static Agent');
+		await createAgentDialog.getByLabel('Working Directory').fill(comingSoonDir);
+
+		const codexOption = createAgentDialog.getByRole('option', { name: /Codex/ });
+		const geminiOption = createAgentDialog.getByRole('option', { name: /Gemini CLI/ });
+		await expect(codexOption).toHaveAttribute('aria-selected', 'true');
+		await expect(geminiOption).toContainText('Coming Soon');
+		await geminiOption.click();
+
+		await expect(codexOption).toHaveAttribute('aria-selected', 'true');
+		await expect(geminiOption).toHaveAttribute('aria-selected', 'false');
+		await expect(createAgentDialog.getByPlaceholder('/path/to/gemini')).toBeHidden();
 	});
 
 	test('blocks duplicate agent names and requires directory reuse acknowledgment', async () => {
@@ -5259,6 +5834,40 @@ test.describe('App shell seeded workbench', () => {
 		await expect(sessionList.getByText('E2E Terminal', { exact: true })).toHaveCount(0);
 		await expect(sessionList.getByText('E2E Workbench', { exact: true })).toBeVisible();
 		expect(fs.existsSync(terminalSession.cwd)).toBe(true);
+	});
+
+	test('removes an agent and deletes its working directory after exact-name confirmation', async () => {
+		const disposableDir = path.join(seededWorkbench.homeDir, 'delete-working-dir-agent-project');
+		fs.mkdirSync(path.join(disposableDir, 'nested'), { recursive: true });
+		fs.writeFileSync(path.join(disposableDir, 'nested', 'sentinel.txt'), 'delete me', 'utf-8');
+		await stubAgentDetectionForNewAgent(electronApp);
+
+		const createAgentDialog = await openCreateNewAgentFromQuickActions(window);
+		await createAgentDialog.getByRole('option', { name: /Codex/ }).click();
+		await createAgentDialog.getByLabel('Agent Name').fill('Disposable Delete Agent');
+		await createAgentDialog.getByLabel('Working Directory').fill(disposableDir);
+		await expect(createAgentDialog.getByRole('button', { name: 'Create Agent' })).toBeEnabled();
+		await createAgentDialog.getByRole('button', { name: 'Create Agent' }).click();
+
+		const sessionList = window.locator('[data-tour="session-list"]');
+		await expect(sessionList.getByText('Disposable Delete Agent', { exact: true })).toBeVisible();
+
+		const contextMenu = await openSessionContextMenu(
+			window,
+			'Disposable Delete Agent',
+			'Remove Agent'
+		);
+		await contextMenu.getByRole('button', { name: 'Remove Agent', exact: true }).click();
+
+		const confirmDialog = window.getByRole('dialog', { name: 'Confirm Delete' });
+		await expect(confirmDialog.getByText('the agent "Disposable Delete Agent"')).toBeVisible();
+		await expect(confirmDialog.getByText(disposableDir)).toBeVisible();
+		await confirmDialog.getByLabel('Confirm agent name').fill('Disposable Delete Agent');
+		await confirmDialog.getByRole('button', { name: 'Agent + Working Directory' }).click();
+
+		await expect(confirmDialog).toBeHidden();
+		await expect(sessionList.getByText('Disposable Delete Agent', { exact: true })).toHaveCount(0);
+		expect(fs.existsSync(disposableDir)).toBe(false);
 	});
 
 	test('creates an unavailable non-Codex agent using static custom configuration', async () => {
@@ -5498,6 +6107,77 @@ test.describe('App shell seeded workbench', () => {
 		await expect(editAgentDialog).toBeHidden();
 	});
 
+	test('requires a custom path before saving an Edit Agent provider switch', async () => {
+		await stubAgentDetectionForNewAgent(electronApp);
+
+		const quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('Edit Agent');
+		await quickActionsDialog.getByRole('button', { name: /Edit Agent: E2E Workbench/ }).click();
+
+		const editAgentDialog = window.getByRole('dialog', { name: 'Edit Agent: E2E Workbench' });
+		await expect(editAgentDialog).toBeVisible();
+		const saveButton = editAgentDialog.getByRole('button', { name: 'Save Changes' });
+
+		await editAgentDialog.getByRole('combobox').selectOption('opencode');
+		await expect(
+			editAgentDialog.getByText(/Changing the provider will clear your session list/)
+		).toBeVisible();
+		await expect(editAgentDialog.getByText('OpenCode Settings')).toBeVisible();
+
+		const providerPath = editAgentDialog.getByPlaceholder('/path/to/opencode');
+		await expect(saveButton).toBeDisabled();
+		await providerPath.fill('   ');
+		await expect(saveButton).toBeDisabled();
+		await editAgentDialog
+			.getByPlaceholder('--flag value --another-flag')
+			.fill('--model opencode-edit-validation-e2e');
+		await editAgentDialog.getByRole('button', { name: 'Add Variable' }).click();
+		await editAgentDialog.getByPlaceholder('VARIABLE_NAME').fill('OPENCODE_EDIT_VALIDATION_E2E');
+		await editAgentDialog.getByPlaceholder('value', { exact: true }).fill('enabled');
+		await expect(saveButton).toBeDisabled();
+
+		await providerPath.fill('/usr/local/bin/opencode-edit-validation');
+		await expect(saveButton).toBeEnabled();
+		await providerPath.fill('');
+		await expect(saveButton).toBeDisabled();
+
+		await editAgentDialog.getByRole('button', { name: 'Cancel' }).click();
+		await expect(editAgentDialog).toBeHidden();
+	});
+
+	test('enables an Edit Agent provider switch after refresh detects the provider', async () => {
+		await stubAgentDetectionForNewAgent(electronApp, {
+			refreshedAgentId: 'opencode',
+			refreshedPath: '/opt/e2e/bin/opencode',
+		});
+
+		const quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('Edit Agent');
+		await quickActionsDialog.getByRole('button', { name: /Edit Agent: E2E Workbench/ }).click();
+
+		const editAgentDialog = window.getByRole('dialog', { name: 'Edit Agent: E2E Workbench' });
+		await expect(editAgentDialog).toBeVisible();
+		const saveButton = editAgentDialog.getByRole('button', { name: 'Save Changes' });
+
+		await editAgentDialog.getByRole('combobox').selectOption('opencode');
+		await expect(editAgentDialog.getByText('OpenCode Settings')).toBeVisible();
+		const providerPath = editAgentDialog.getByPlaceholder('/path/to/opencode');
+		await expect(providerPath).toHaveValue('');
+		await expect(saveButton).toBeDisabled();
+
+		await editAgentDialog.getByTitle('Re-detect agent path').click();
+
+		await expect(providerPath).toHaveValue('/opt/e2e/bin/opencode');
+		await expect(saveButton).toBeEnabled();
+
+		await editAgentDialog.getByRole('button', { name: 'Cancel' }).click();
+		await expect(editAgentDialog).toBeHidden();
+	});
+
 	test('warns and persists Edit Agent provider switch configuration', async () => {
 		await stubAgentDetectionForNewAgent(electronApp);
 
@@ -5557,6 +6237,81 @@ test.describe('App shell seeded workbench', () => {
 			'OPENCODE_EDIT_E2E'
 		);
 		await expect(editAgentDialog.getByPlaceholder('value', { exact: true })).toHaveValue('static');
+		await editAgentDialog.getByRole('button', { name: 'Cancel' }).click();
+		await expect(editAgentDialog).toBeHidden();
+	});
+
+	test('clears static provider overrides when switching an Edit Agent back to Codex', async () => {
+		const staticProjectDir = path.join(seededWorkbench.homeDir, 'opencode-to-codex-project');
+		fs.mkdirSync(staticProjectDir, { recursive: true });
+		await stubAgentDetectionForNewAgent(electronApp);
+
+		const createAgentDialog = await openCreateNewAgentFromQuickActions(window);
+		await createAgentDialog.getByRole('option', { name: /OpenCode/ }).click();
+		await createAgentDialog.getByLabel('Agent Name').fill('OpenCode Cleanup Agent');
+		await createAgentDialog.getByLabel('Working Directory').fill(staticProjectDir);
+		await createAgentDialog
+			.getByPlaceholder('/path/to/opencode')
+			.fill('/usr/local/bin/opencode-cleanup-e2e');
+		await createAgentDialog
+			.getByPlaceholder('--flag value --another-flag')
+			.fill('--model cleanup-e2e');
+		await createAgentDialog.getByRole('button', { name: 'Add Variable' }).click();
+		await createAgentDialog.getByPlaceholder('VARIABLE_NAME').fill('OPENCODE_CLEANUP_E2E');
+		await createAgentDialog.getByPlaceholder('value', { exact: true }).fill('remove-me');
+		await createAgentDialog.getByRole('button', { name: 'Create Agent' }).click();
+
+		let quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('Edit Agent');
+		await quickActionsDialog
+			.getByRole('button', { name: /Edit Agent: OpenCode Cleanup Agent/ })
+			.click();
+
+		let editAgentDialog = window.getByRole('dialog', {
+			name: 'Edit Agent: OpenCode Cleanup Agent',
+		});
+		await expect(editAgentDialog).toBeVisible();
+		await expect(editAgentDialog.getByRole('combobox')).toHaveValue('opencode');
+		await expect(editAgentDialog.getByPlaceholder('/path/to/opencode')).toHaveValue(
+			'/usr/local/bin/opencode-cleanup-e2e'
+		);
+		await editAgentDialog.getByRole('combobox').selectOption('codex');
+		await expect(
+			editAgentDialog.getByText(/Changing the provider will clear your session list/)
+		).toBeVisible();
+		await expect(editAgentDialog.getByText('Codex Settings')).toBeVisible();
+		await expect(editAgentDialog.getByPlaceholder('/path/to/codex')).toHaveValue(
+			'/usr/local/bin/codex'
+		);
+		await expect(editAgentDialog.getByPlaceholder('--flag value --another-flag')).toHaveValue('');
+		await expect(editAgentDialog.getByText('OPENCODE_CLEANUP_E2E')).toBeHidden();
+		await expect(editAgentDialog.getByRole('button', { name: 'Save Changes' })).toBeEnabled();
+		await editAgentDialog.getByRole('button', { name: 'Save Changes' }).click();
+		await expect(editAgentDialog).toBeHidden();
+
+		quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('Edit Agent');
+		await quickActionsDialog
+			.getByRole('button', { name: /Edit Agent: OpenCode Cleanup Agent/ })
+			.click();
+
+		editAgentDialog = window.getByRole('dialog', { name: 'Edit Agent: OpenCode Cleanup Agent' });
+		await expect(editAgentDialog).toBeVisible();
+		await expect(editAgentDialog.getByRole('combobox')).toHaveValue('codex');
+		await expect(
+			editAgentDialog.getByText(/Changing the provider will clear your session list/)
+		).toBeHidden();
+		await expect(editAgentDialog.getByText('Codex Settings')).toBeVisible();
+		await expect(editAgentDialog.getByPlaceholder('/path/to/codex')).toHaveValue(
+			'/usr/local/bin/codex'
+		);
+		await expect(editAgentDialog.getByPlaceholder('--flag value --another-flag')).toHaveValue('');
+		await expect(editAgentDialog.getByText('OPENCODE_CLEANUP_E2E')).toBeHidden();
+		await expect(editAgentDialog.getByPlaceholder('/path/to/opencode')).toBeHidden();
 		await editAgentDialog.getByRole('button', { name: 'Cancel' }).click();
 		await expect(editAgentDialog).toBeHidden();
 	});
@@ -6523,6 +7278,87 @@ test.describe('App shell seeded workbench', () => {
 		await expect(window.getByTitle('Send message')).toBeVisible();
 	});
 
+	test('quick-resumes an Agent Sessions list row without opening detail', async () => {
+		await stubCodexAgentSessions(electronApp, seededWorkbench);
+		const tabRows = window.locator('[data-tab-id]');
+		await expect(tabRows.first()).toBeVisible();
+		const initialTabCount = await tabRows.count();
+		const agentSessions = await openAgentSessions(window);
+
+		await expect(agentSessions.getByText('Review Checkpoint')).toBeVisible();
+		await expect(
+			agentSessions.getByText('Please review deterministic risk coverage.')
+		).toBeHidden();
+		const reviewRow = agentSessions
+			.getByText('Review Checkpoint')
+			.locator('xpath=ancestor::div[contains(@class, "cursor-pointer")][1]');
+		await reviewRow.hover();
+		await reviewRow.getByTitle('Resume session in new tab').click();
+
+		await expect(agentSessions.getByText('Agent Sessions for E2E Workbench')).toBeHidden();
+		await expect(tabRows).toHaveCount(initialTabCount + 1);
+		await expect(
+			window.locator('[data-tab-id]').filter({ hasText: 'Review Checkpoint' }).first()
+		).toBeVisible();
+		await expect(window.getByTitle('Send message')).toBeVisible();
+	});
+
+	test('preserves Agent Sessions list-row metadata when quick-resuming', async () => {
+		await stubCodexAgentSessions(electronApp, seededWorkbench);
+		const tabRows = window.locator('[data-tab-id]');
+		await expect(tabRows.first()).toBeVisible();
+		const initialTabCount = await tabRows.count();
+		const agentSessions = await openAgentSessions(window);
+		const reviewRow = agentSessions
+			.getByText('Review Checkpoint')
+			.locator('xpath=ancestor::div[contains(@class, "cursor-pointer")][1]');
+
+		await reviewRow.hover();
+		await reviewRow.getByTitle('Resume session in new tab').click();
+
+		await expect(agentSessions.getByText('Agent Sessions for E2E Workbench')).toBeHidden();
+		await expect(tabRows).toHaveCount(initialTabCount + 1);
+		await expect(await getStubbedAgentSessionReadCalls(electronApp)).toEqual([
+			{ sessionId: 'codex-review-session', offset: 0, limit: 100 },
+		]);
+
+		const resumedTab = window
+			.locator('[data-tab-id]')
+			.filter({ hasText: 'Review Checkpoint' })
+			.first();
+		await expect(resumedTab).toBeVisible();
+		await resumedTab.hover();
+		await expect(window.getByText('codex-review-session')).toBeVisible();
+		await expect(window.getByRole('button', { name: 'Unstar Session' })).toBeVisible();
+	});
+
+	test('syncs Agent Sessions restored tab favorite changes from the tab overlay', async () => {
+		await stubCodexAgentSessions(electronApp, seededWorkbench);
+		const agentSessions = await openAgentSessions(window);
+		const reviewRow = agentSessions
+			.getByText('Review Checkpoint')
+			.locator('xpath=ancestor::div[contains(@class, "cursor-pointer")][1]');
+
+		await reviewRow.hover();
+		await reviewRow.getByTitle('Resume session in new tab').click();
+		await expect(agentSessions.getByText('Agent Sessions for E2E Workbench')).toBeHidden();
+
+		const resumedTab = window
+			.locator('[data-tab-id]')
+			.filter({ hasText: 'Review Checkpoint' })
+			.first();
+		await expect(resumedTab).toBeVisible();
+		await resumedTab.hover();
+		await window.getByRole('button', { name: 'Unstar Session' }).click();
+
+		await expect(window.getByRole('button', { name: 'Star Session' })).toBeVisible();
+		await expect(await getStubbedAgentSessionUpdates(electronApp)).toContainEqual({
+			type: 'starred',
+			sessionId: 'codex-review-session',
+			starred: false,
+		});
+	});
+
 	test('lists filters and opens stubbed Codex agent sessions', async () => {
 		await stubCodexAgentSessions(electronApp, seededWorkbench);
 		const agentSessions = await openAgentSessions(window);
@@ -6552,6 +7388,26 @@ test.describe('App shell seeded workbench', () => {
 		await expect(agentSessions.getByPlaceholder('Search all content...')).toBeVisible();
 	});
 
+	test('opens Agent Sessions list rows with keyboard navigation', async () => {
+		await stubCodexAgentSessions(electronApp, seededWorkbench);
+		const agentSessions = await openAgentSessions(window);
+		const searchInput = agentSessions.getByPlaceholder('Search all content...');
+
+		await expect(agentSessions.getByText('Review Checkpoint')).toBeVisible();
+		await expect(agentSessions.getByText('Implementation Draft')).toBeVisible();
+		await searchInput.focus();
+		await searchInput.press('ArrowDown');
+		await searchInput.press('Enter');
+
+		await expect(agentSessions.getByText('Need final implementation details.')).toBeVisible();
+		await expect(agentSessions.getByText('Implementation response sentinel')).toBeVisible();
+
+		await window.keyboard.press('Escape');
+		await expect(searchInput).toBeVisible();
+		await expect(agentSessions.getByText('Review Checkpoint')).toBeVisible();
+		await expect(agentSessions.getByText('Implementation Draft')).toBeVisible();
+	});
+
 	test('reveals hidden agent-prefixed sessions with the Agent Sessions Show All filter', async () => {
 		await stubCodexAgentSessions(electronApp, seededWorkbench, {
 			includeHiddenAgentSession: true,
@@ -6569,6 +7425,29 @@ test.describe('App shell seeded workbench', () => {
 		await agentSessions.getByRole('checkbox', { name: 'Show All' }).uncheck();
 		await expect(hiddenSession).toBeHidden();
 		await expect(agentSessions.getByText('Review Checkpoint')).toBeVisible();
+	});
+
+	test('filters Agent Sessions list to named sessions and restores unnamed rows', async () => {
+		await stubCodexAgentSessions(electronApp, seededWorkbench);
+		const agentSessions = await openAgentSessions(window);
+
+		const namedFilter = agentSessions.getByRole('checkbox', { name: 'Named' });
+		const unnamedSession = agentSessions.getByText('Unnamed CLI sentinel session');
+
+		await expect(namedFilter).not.toBeChecked();
+		await expect(agentSessions.getByText('Review Checkpoint')).toBeVisible();
+		await expect(agentSessions.getByText('Implementation Draft')).toBeVisible();
+		await expect(unnamedSession).toBeVisible();
+
+		await namedFilter.check();
+		await expect(namedFilter).toBeChecked();
+		await expect(agentSessions.getByText('Review Checkpoint')).toBeVisible();
+		await expect(agentSessions.getByText('Implementation Draft')).toBeVisible();
+		await expect(unnamedSession).toBeHidden();
+
+		await namedFilter.uncheck();
+		await expect(namedFilter).not.toBeChecked();
+		await expect(unnamedSession).toBeVisible();
 	});
 
 	test('loads earlier messages in a stubbed Codex agent session detail view', async () => {
@@ -6641,6 +7520,55 @@ test.describe('App shell seeded workbench', () => {
 			type: 'name',
 			sessionId: 'codex-review-session',
 			name: 'Detail Review Session',
+		});
+	});
+
+	test('cancels an Agent Sessions detail rename with Escape', async () => {
+		await stubCodexAgentSessions(electronApp, seededWorkbench);
+		const agentSessions = await openAgentSessions(window);
+
+		await agentSessions.getByText('Review Checkpoint').click();
+		await expect(
+			agentSessions.getByText('Please review deterministic risk coverage.')
+		).toBeVisible();
+
+		await agentSessions.getByTitle('Rename session').click();
+		const renameInput = agentSessions.getByPlaceholder('Enter session name...');
+		await expect(renameInput).toHaveValue('Review Checkpoint');
+		await renameInput.fill('Discarded Detail Rename');
+		await renameInput.press('Escape');
+
+		await expect(renameInput).toBeHidden();
+		await expect(agentSessions.getByText('Review Checkpoint')).toBeVisible();
+		await expect(agentSessions.getByText('Discarded Detail Rename')).toBeHidden();
+		expect(
+			(await getStubbedAgentSessionUpdates(electronApp)).filter((update) => update.type === 'name')
+		).toEqual([]);
+	});
+
+	test('clears an Agent Sessions detail name back to the session id', async () => {
+		await stubCodexAgentSessions(electronApp, seededWorkbench);
+		const agentSessions = await openAgentSessions(window);
+
+		await agentSessions.getByText('Review Checkpoint').click();
+		await expect(
+			agentSessions.getByText('Please review deterministic risk coverage.')
+		).toBeVisible();
+
+		await agentSessions.getByTitle('Rename session').click();
+		const renameInput = agentSessions.getByPlaceholder('Enter session name...');
+		await expect(renameInput).toHaveValue('Review Checkpoint');
+		await renameInput.fill('');
+		await renameInput.press('Enter');
+
+		await expect(agentSessions.getByText('CODEX-REVIEW-SESSION')).toBeVisible();
+		await expect(agentSessions.getByTitle('Add session name')).toBeVisible();
+
+		const updates = await getStubbedAgentSessionUpdates(electronApp);
+		await expect(updates).toContainEqual({
+			type: 'name',
+			sessionId: 'codex-review-session',
+			name: null,
 		});
 	});
 

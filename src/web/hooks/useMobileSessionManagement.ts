@@ -226,6 +226,10 @@ export function useMobileSessionManagement(
 	const activeSessionIdRef = useRef<string | null>(urlSessionId || savedActiveSessionId);
 	// Ref to track activeTabId for use in callbacks (avoids stale closure issues)
 	const activeTabIdRef = useRef<string | null>(urlTabId || savedActiveTabId);
+	const sessionLogsOwnerRef = useRef<{ sessionId: string | null; tabId: string | null }>({
+		sessionId: null,
+		tabId: null,
+	});
 
 	// Keep activeSessionIdRef in sync with state
 	useEffect(() => {
@@ -253,9 +257,27 @@ export function useMobileSessionManagement(
 	// Fetch session logs when active session or active tab changes
 	useEffect(() => {
 		if (!activeSessionId || isOffline) {
+			sessionLogsOwnerRef.current = { sessionId: null, tabId: null };
 			setSessionLogs({ aiLogs: [], shellLogs: [] });
 			return;
 		}
+
+		let cancelled = false;
+		const requestedSessionId = activeSessionId;
+		const requestedTabId = activeTabId;
+
+		const mergeFetchedLogs = (fetchedLogs: LogEntry[], currentLogs: LogEntry[]) => {
+			const localUserLogs = currentLogs.filter((entry) => {
+				if (entry.source !== 'user') return false;
+				return !fetchedLogs.some(
+					(fetchedEntry) =>
+						fetchedEntry.id === entry.id ||
+						(fetchedEntry.source === 'user' && fetchedEntry.text === entry.text)
+				);
+			});
+
+			return [...fetchedLogs, ...localUserLogs];
+		};
 
 		const fetchSessionLogs = async () => {
 			setIsLoadingLogs(true);
@@ -267,9 +289,34 @@ export function useMobileSessionManagement(
 				if (response.ok) {
 					const data = await response.json();
 					const session = data.session;
-					setSessionLogs({
-						aiLogs: session?.aiLogs || [],
-						shellLogs: session?.shellLogs || [],
+					const fetchedAiLogs = session?.aiLogs || [];
+					const fetchedShellLogs = session?.shellLogs || [];
+
+					if (
+						cancelled ||
+						activeSessionIdRef.current !== requestedSessionId ||
+						activeTabIdRef.current !== requestedTabId
+					) {
+						return;
+					}
+
+					setSessionLogs((current) => {
+						const shouldPreserveLocalLogs =
+							sessionLogsOwnerRef.current.sessionId === requestedSessionId &&
+							sessionLogsOwnerRef.current.tabId === requestedTabId;
+						sessionLogsOwnerRef.current = {
+							sessionId: requestedSessionId,
+							tabId: requestedTabId,
+						};
+
+						return {
+							aiLogs: shouldPreserveLocalLogs
+								? mergeFetchedLogs(fetchedAiLogs, current.aiLogs)
+								: fetchedAiLogs,
+							shellLogs: shouldPreserveLocalLogs
+								? mergeFetchedLogs(fetchedShellLogs, current.shellLogs)
+								: fetchedShellLogs,
+						};
 					});
 					webLogger.debug('Fetched session logs:', 'Mobile', {
 						aiLogs: session?.aiLogs?.length || 0,
@@ -281,11 +328,17 @@ export function useMobileSessionManagement(
 			} catch (err) {
 				webLogger.error('Failed to fetch session logs', 'Mobile', err);
 			} finally {
-				setIsLoadingLogs(false);
+				if (!cancelled) {
+					setIsLoadingLogs(false);
+				}
 			}
 		};
 
 		fetchSessionLogs();
+
+		return () => {
+			cancelled = true;
+		};
 	}, [activeSessionId, activeTabId, isOffline]);
 
 	// Handle session selection - also notifies desktop to switch
@@ -445,6 +498,10 @@ export function useMobileSessionManagement(
 
 	// Add a user input log entry to session logs
 	const addUserLogEntry = useCallback((text: string, inputMode: 'ai' | 'terminal') => {
+		sessionLogsOwnerRef.current = {
+			sessionId: activeSessionIdRef.current,
+			tabId: activeTabIdRef.current,
+		};
 		const userLogEntry: LogEntry = {
 			id: `user-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
 			timestamp: Date.now(),

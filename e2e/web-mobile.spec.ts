@@ -3420,7 +3420,11 @@ test.describe('Web Mobile Bridge', () => {
 			await expect(page.getByText('Mobile Primary alpha response line one')).toBeVisible();
 
 			await appWindow.evaluate(async (sessionId) => {
-				await (window as MaestroE2EWindow).maestro.live.broadcastActiveSession(sessionId);
+				const maestro = (window as MaestroE2EWindow).maestro;
+				await maestro.live.broadcastActiveSession(sessionId);
+				await maestro.web.broadcastSessionState(sessionId, 'busy', {
+					inputMode: 'ai',
+				});
 			}, workbench.busySessionId);
 
 			const busyInput = page.getByLabel(/AI message input/i).first();

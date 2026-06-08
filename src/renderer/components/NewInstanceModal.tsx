@@ -1505,10 +1505,11 @@ export function EditAgentModal({
 
 	// Check if form is valid for submission
 	const isFormValid = useMemo(() => {
+		const selectedAgentIsUsable = !providerChanged || agent?.available || !!customPath.trim();
 		// Remote path validation is informational only - don't block save
 		// Users may want to configure SSH remote before the path exists
-		return !!instanceName.trim() && validation.valid;
-	}, [instanceName, validation.valid]);
+		return !!instanceName.trim() && validation.valid && selectedAgentIsUsable;
+	}, [instanceName, validation.valid, providerChanged, agent?.available, customPath]);
 
 	// Handle keyboard shortcuts
 	const handleKeyDown = useCallback(
