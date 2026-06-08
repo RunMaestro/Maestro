@@ -1,6 +1,6 @@
 # Parallel E2E Orchestrator Status
 
-Last updated: 2026-06-08 04:03 ET
+Last updated: 2026-06-08 04:41 ET
 
 ## Base
 
@@ -35,11 +35,11 @@ coverage and the shell-lane tab coverage.
 | -------------------------- | ------------------------------------ | ------------------------------------------------ | ---------------------------------------- | -------------------------- | ----------------------------------------------- |
 | `agent-crud-provider`      | `codex/e2e-agent-crud-provider`      | `Maestro-worktrees/e2e-agent-crud-provider`      | `maestro-e2e-agent-crud-provider`        | merged through `bb4fbcce2` | 9 active scenarios accepted; 95 remain          |
 | `shell-tabs-command`       | `codex/e2e-shell-tabs-command`       | `Maestro-worktrees/e2e-shell-tabs-command`       | `maestro-e2e-shell-tabs-command`         | merged through `44e98a94f` | 76 active scenarios accepted; 190 remain        |
-| `files-docs-history`       | `codex/e2e-files-docs-history`       | `Maestro-worktrees/e2e-files-docs-history`       | `maestro-e2e-files-docs-history-t4`      | merged through `5694e29e6` | 21 active scenarios accepted; 328 remain        |
+| `files-docs-history`       | `codex/e2e-files-docs-history`       | `Maestro-worktrees/e2e-files-docs-history`       | `maestro-e2e-files-docs-history-t5`      | merged through `0f93fb81d` | 27 active scenarios accepted; 322 remain        |
 | `autorun-ai-terminal`      | `codex/e2e-autorun-ai-terminal`      | `Maestro-worktrees/e2e-autorun-ai-terminal`      | `maestro-e2e-autorun-ai-terminal`        | merged through `cd804bebf` | 10 active scenarios accepted; 263 remain        |
-| `wizard-settings-prompts`  | `codex/e2e-wizard-settings-prompts`  | `Maestro-worktrees/e2e-wizard-settings-prompts`  | `maestro-e2e-wizard-settings-prompts-t4` | merged through `ee4375c7b` | 18 active scenarios accepted; 354 remain        |
-| `git-groupchat-playbooks`  | `codex/e2e-git-groupchat-playbooks`  | `Maestro-worktrees/e2e-git-groupchat-playbooks`  | `maestro-e2e-git-groupchat-playbooks-t4` | merged through `6033dd4b7` | 18 active scenarios accepted; 345 remain        |
-| `stats-graph-symphony`     | `codex/e2e-stats-graph-symphony`     | `Maestro-worktrees/e2e-stats-graph-symphony`     | `maestro-e2e-stats-graph-symphony-t4`    | merged through `784d84e34` | 17 active scenarios accepted; 319 remain        |
+| `wizard-settings-prompts`  | `codex/e2e-wizard-settings-prompts`  | `Maestro-worktrees/e2e-wizard-settings-prompts`  | `maestro-e2e-wizard-settings-prompts-t5` | merged through `a210a889e` | 24 active scenarios accepted; 348 remain        |
+| `git-groupchat-playbooks`  | `codex/e2e-git-groupchat-playbooks`  | `Maestro-worktrees/e2e-git-groupchat-playbooks`  | `maestro-e2e-git-groupchat-playbooks-t5` | merged through `b40916745` | 25 active scenarios accepted; 338 remain        |
+| `stats-graph-symphony`     | `codex/e2e-stats-graph-symphony`     | `Maestro-worktrees/e2e-stats-graph-symphony`     | `maestro-e2e-stats-graph-symphony-t5`    | stopped, no t5 changes     | 17 active scenarios accepted; 319 remain        |
 | `debug-accessibility`      | `codex/e2e-debug-accessibility`      | `Maestro-worktrees/e2e-debug-accessibility`      | `maestro-e2e-debug-accessibility`        | merged through `15e7a1a20` | 11 active scenarios accepted; 181 remain        |
 | `mobile-web-bridge`        | `codex/e2e-mobile-web-bridge`        | `Maestro-worktrees/e2e-mobile-web-bridge`        | `maestro-e2e-mobile-web-bridge`          | merged through `d580f80ea` | 11 active scenarios accepted; 91 remain         |
 | `fixtures-sharding-review` | `codex/e2e-fixtures-sharding-review` | `Maestro-worktrees/e2e-fixtures-sharding-review` | `maestro-e2e-fixtures-sharding-review`   | merged through `392c4527`  | Support plan accepted; no active scenario quota |
@@ -48,14 +48,14 @@ coverage and the shell-lane tab coverage.
 
 - `shell-tabs-command` merged through `44e98a94f`.
 - `agent-crud-provider` merged through `bb4fbcce2`.
-- `files-docs-history` merged through `5694e29e6`.
+- `files-docs-history` merged through `0f93fb81d`.
 - `mobile-web-bridge` merged through `d580f80ea`.
 - `autorun-ai-terminal` merged through `cd804bebf`.
-- `wizard-settings-prompts` merged through `ee4375c7b`.
-- `stats-graph-symphony` merged through `784d84e34`.
+- `wizard-settings-prompts` merged through `a210a889e`.
+- `stats-graph-symphony` remains merged through `784d84e34`; t5 stopped with no changes.
 - `debug-accessibility` merged through `15e7a1a20`.
 - `fixtures-sharding-review` merged through `392c4527`.
-- `git-groupchat-playbooks` merged through `6033dd4b7`.
+- `git-groupchat-playbooks` merged through `b40916745`.
 
 ## Launch Log
 
@@ -102,13 +102,25 @@ coverage and the shell-lane tab coverage.
   `git-groupchat-playbooks` through `6033dd4b7`. Static review found and the
   lane branches fixed the stats/Symphony preflight close selector and the
   Git/playbooks optional worktree fixture before merge.
+- 2026-06-08 04:19 ET: launched fifth-tranche PM2 one-shot workers for
+  `files-docs-history`, `wizard-settings-prompts`, `stats-graph-symphony`, and
+  `git-groupchat-playbooks` using `--no-autorestart` and the no-E2E execution
+  rule.
+- 2026-06-08 04:41 ET: accepted fifth-tranche lane branches:
+  `files-docs-history` through `0f93fb81d`, `wizard-settings-prompts` through
+  `a210a889e`, and `git-groupchat-playbooks` through `b40916745`. The
+  `stats-graph-symphony` t5 worker was stopped after stalling with no worktree
+  changes. Static review tightened the wizard Themes tab readiness assertion
+  before merge.
 
 ## Blockers
 
 - The source prompt has a lane-quota inconsistency for `shell-tabs-command`.
   The canonical matrix remains authoritative until changed deliberately.
 - The first recovery tranche is accepted for every lane, and the second through
-  fourth recovery tranches are accepted for selected high-remaining lanes.
+  fifth recovery tranches are accepted for selected high-remaining lanes.
   Remaining work should continue in smaller batches, with each run committing
   one coherent tranche and recording remaining work instead of trying to consume
   a full lane quota in one Codex turn.
+- The `stats-graph-symphony` t5 worker stalled before authoring; relaunch that
+  lane in a later tranche if more stats/graph/Symphony coverage is needed.
