@@ -35,6 +35,14 @@ const fourthTrancheActiveScenarioMatrix = [
 	{ id: 'DA-021', title: 'opens manual release fallback after update check errors' },
 ] as const;
 
+const fifthTrancheActiveScenarioMatrix = [
+	{ id: 'DA-022', title: 'opens manual release fallback from available update state' },
+	{ id: 'DA-023', title: 'opens release history from current update state' },
+	{ id: 'DA-024', title: 'opens manual download fallback after update download failure' },
+	{ id: 'DA-025', title: 'shows update assets building fallback with release page link' },
+	{ id: 'DA-026', title: 'reveals created debug packages through the process runner' },
+] as const;
+
 const debugPackagePreviewCategories = [
 	{ id: 'logs', name: 'System Logs', included: true, sizeEstimate: '~50 KB' },
 	{ id: 'errors', name: 'Error States', included: true, sizeEstimate: '< 10 KB' },
@@ -61,6 +69,7 @@ type DebugPackageStubPayload = {
 type UpdateCheckStubPayload = {
 	checkMode: 'available' | 'current' | 'error';
 	downloadMode: 'success' | 'error';
+	assetsReady: boolean;
 };
 
 type StubbedUpdateState = {
@@ -71,6 +80,17 @@ type StubbedUpdateState = {
 
 type StubbedShellOpenExternalState = {
 	urls: string[];
+};
+
+type StubbedProcessRunCommandConfig = {
+	sessionId?: string;
+	command?: string;
+	cwd?: string;
+	shell?: string;
+};
+
+type StubbedProcessRunCommandState = {
+	configs: StubbedProcessRunCommandConfig[];
 };
 
 function createDebugAccessibilityWorkbench() {
@@ -230,6 +250,7 @@ async function stubUpdateWorkflowHandlers(
 	const payload: UpdateCheckStubPayload = {
 		checkMode: options.checkMode ?? 'available',
 		downloadMode: options.downloadMode ?? 'success',
+		assetsReady: options.assetsReady ?? true,
 	};
 
 	await electronApp.evaluate(({ ipcMain }, stubPayload: UpdateCheckStubPayload) => {
@@ -251,7 +272,7 @@ async function stubUpdateWorkflowHandlers(
 					latestVersion: version,
 					updateAvailable: false,
 					versionsBehind: 0,
-					assetsReady: true,
+					assetsReady: stubPayload.assetsReady,
 					releasesUrl: 'https://github.com/RunMaestro/Maestro/releases',
 					releases: [],
 				};
@@ -262,7 +283,7 @@ async function stubUpdateWorkflowHandlers(
 				latestVersion: '0.16.0',
 				updateAvailable: true,
 				versionsBehind: 1,
-				assetsReady: true,
+				assetsReady: stubPayload.assetsReady,
 				releasesUrl: 'https://github.com/RunMaestro/Maestro/releases',
 				releases: [
 					{
@@ -383,6 +404,30 @@ async function getStubbedShellOpenExternalState(electronApp: ElectronApplication
 			__maestroE2eShellOpenExternalState?: StubbedShellOpenExternalState;
 		};
 		return state.__maestroE2eShellOpenExternalState ?? null;
+	});
+}
+
+async function stubProcessRunCommand(electronApp: ElectronApplication) {
+	await electronApp.evaluate(({ ipcMain }) => {
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eProcessRunCommandState?: StubbedProcessRunCommandState;
+		};
+		state.__maestroE2eProcessRunCommandState = { configs: [] };
+
+		ipcMain.removeHandler('process:runCommand');
+		ipcMain.handle('process:runCommand', async (_event, config: StubbedProcessRunCommandConfig) => {
+			state.__maestroE2eProcessRunCommandState!.configs.push(config);
+			return { exitCode: 0 };
+		});
+	});
+}
+
+async function getStubbedProcessRunCommandState(electronApp: ElectronApplication) {
+	return electronApp.evaluate(() => {
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eProcessRunCommandState?: StubbedProcessRunCommandState;
+		};
+		return state.__maestroE2eProcessRunCommandState ?? null;
 	});
 }
 
@@ -837,6 +882,99 @@ test.describe('Debug and accessibility smoke tranche', () => {
 			await updateDialog.getByRole('button', { name: /Check releases manually/ }).click();
 			expect((await getStubbedShellOpenExternalState(launched.electronApp))?.urls).toEqual([
 				'https://github.com/RunMaestro/Maestro/releases',
+			]);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${fifthTrancheActiveScenarioMatrix[0].id} ${fifthTrancheActiveScenarioMatrix[0].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubShellOpenExternal(launched.electronApp);
+			await stubUpdateWorkflowHandlers(launched.electronApp);
+			const updateDialog = await openUpdateCheckFromQuickActions(launched.window);
+
+			await expect(updateDialog.getByText('Update Available!')).toBeVisible();
+			await updateDialog.getByRole('button', { name: /Or download manually from GitHub/ }).click();
+			expect((await getStubbedShellOpenExternalState(launched.electronApp))?.urls).toEqual([
+				'https://github.com/RunMaestro/Maestro/releases',
+			]);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${fifthTrancheActiveScenarioMatrix[1].id} ${fifthTrancheActiveScenarioMatrix[1].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubShellOpenExternal(launched.electronApp);
+			await stubUpdateWorkflowHandlers(launched.electronApp, { checkMode: 'current' });
+			const updateDialog = await openUpdateCheckFromQuickActions(launched.window);
+
+			await expect(updateDialog.getByText("You're up to date!")).toBeVisible();
+			await updateDialog.getByRole('button', { name: /View all releases/ }).click();
+			expect((await getStubbedShellOpenExternalState(launched.electronApp))?.urls).toEqual([
+				'https://github.com/RunMaestro/Maestro/releases',
+			]);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${fifthTrancheActiveScenarioMatrix[2].id} ${fifthTrancheActiveScenarioMatrix[2].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubShellOpenExternal(launched.electronApp);
+			await stubUpdateWorkflowHandlers(launched.electronApp, { downloadMode: 'error' });
+			const updateDialog = await openUpdateCheckFromQuickActions(launched.window);
+
+			await updateDialog.getByRole('button', { name: 'Download and Install Update' }).click();
+			await expect(updateDialog.getByText('Download failed')).toBeVisible();
+			await updateDialog.getByRole('button', { name: /Download manually from GitHub/ }).click();
+			expect((await getStubbedShellOpenExternalState(launched.electronApp))?.urls).toEqual([
+				'https://github.com/RunMaestro/Maestro/releases',
+			]);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${fifthTrancheActiveScenarioMatrix[3].id} ${fifthTrancheActiveScenarioMatrix[3].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubShellOpenExternal(launched.electronApp);
+			await stubUpdateWorkflowHandlers(launched.electronApp, { assetsReady: false });
+			const updateDialog = await openUpdateCheckFromQuickActions(launched.window);
+
+			await expect(updateDialog.getByText('Binaries are still building...')).toBeVisible();
+			await updateDialog.getByRole('button', { name: /Check release page for updates/ }).click();
+			expect((await getStubbedShellOpenExternalState(launched.electronApp))?.urls).toEqual([
+				'https://github.com/RunMaestro/Maestro/releases',
+			]);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${fifthTrancheActiveScenarioMatrix[4].id} ${fifthTrancheActiveScenarioMatrix[4].title}`, async () => {
+		const resultPath = path.join(os.tmpdir(), 'maestro-debug-accessibility-reveal.zip');
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubProcessRunCommand(launched.electronApp);
+			await stubDebugPackageHandlers(launched.electronApp, { resultPath });
+			const debugPackageDialog = await openDebugPackageFromQuickActions(launched.window);
+
+			await debugPackageDialog.getByRole('button', { name: 'Generate Package' }).click();
+			await expect(debugPackageDialog.getByText('Package created successfully!')).toBeVisible();
+			await debugPackageDialog.getByRole('button', { name: 'Show in Finder' }).click();
+			expect((await getStubbedProcessRunCommandState(launched.electronApp))?.configs).toEqual([
+				{
+					sessionId: 'debug-package',
+					command: `open -R "${resultPath}"`,
+					cwd: '/',
+					shell: '/bin/bash',
+				},
 			]);
 		} finally {
 			await launched.cleanup();
