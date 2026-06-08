@@ -1,6 +1,6 @@
 # files-docs-history
 
-Status: third recovery tranche committed
+Status: fourth recovery tranche committed
 
 ## Scope
 
@@ -19,6 +19,9 @@ File explorer, file preview, document rendering, history.
 - [x] Author deterministic active scenarios for the third recovery tranche.
 - [x] Record files touched and scenario counts for the third tranche.
 - [x] Commit third tranche spec work on `codex/e2e-files-docs-history`.
+- [x] Author deterministic active scenarios for the fourth recovery tranche.
+- [x] Record files touched and scenario counts for the fourth tranche.
+- [x] Commit fourth tranche spec work on `codex/e2e-files-docs-history`.
 
 ## Progress
 
@@ -123,7 +126,9 @@ File explorer, file preview, document rendering, history.
   - `FDH-A21` Successful History detail can be marked human-validated
 - Checks run:
   - `npx prettier --write e2e/files-docs-history.spec.ts`
+  - `npx prettier --write docs/e2e-parallel-campaign/agents/files-docs-history.md`
   - `npx prettier --check e2e/files-docs-history.spec.ts`
+  - `npx prettier --check docs/e2e-parallel-campaign/agents/files-docs-history.md`
   - `npx eslint e2e/files-docs-history.spec.ts`
   - `npx tsc --noEmit --target ES2020 --lib ES2020,DOM,DOM.Iterable --module ESNext --skipLibCheck --moduleResolution bundler --allowImportingTsExtensions --resolveJsonModule --isolatedModules --strict --noUnusedLocals --noUnusedParameters --noFallthroughCasesInSwitch --types node,@playwright/test e2e/files-docs-history.spec.ts e2e/fixtures/electron-app.ts`
   - `git diff --check`
@@ -137,3 +142,40 @@ File explorer, file preview, document rendering, history.
   - Product gaps from the first tranche remain skipped until matching product controls exist.
   - External/default-app and SSH remote cases still need orchestrator-provided environment state before activation.
   - Later tranches should keep authoring compact, matrix-backed rows in `e2e/files-docs-history.spec.ts` and avoid full E2E validation until the orchestrator opens that phase.
+
+### 2026-06-08 fourth recovery tranche
+
+- Spec commit: `c1b0a1650604daa0a739fc7d702176ad11598331`
+- Files touched:
+  - `e2e/files-docs-history.spec.ts`
+  - `docs/e2e-parallel-campaign/agents/files-docs-history.md`
+- Shared helpers touched: none. `docs/e2e-parallel-campaign/broadcasts.md` did not need an update.
+- Scenario counts:
+  - Active matrix rows added: 6
+  - Skipped product-gap rows added: 0
+  - Env-gated external-state rows added: 0
+  - Total matrix rows added: 6
+  - Cumulative lane matrix rows: 27 active, 3 skipped, 2 env-gated
+- Active coverage IDs:
+  - `FDH-A22` Markdown preview search counts matches and clears with Escape
+  - `FDH-A23` Cancelled valid file rename leaves the tree and disk unchanged
+  - `FDH-A24` Unchanged folder rename submissions stay disabled
+  - `FDH-A25` History type filters isolate user-authored entries
+  - `FDH-A26` History detail Previous/Next navigation crosses seeded entries
+  - `FDH-A27` Failed History detail deletion removes the entry from the panel
+- Checks run:
+  - `npx prettier --write e2e/files-docs-history.spec.ts`
+  - `npx prettier --check e2e/files-docs-history.spec.ts`
+  - `npx eslint e2e/files-docs-history.spec.ts`
+  - `npx tsc --noEmit --target ES2020 --lib ES2020,DOM,DOM.Iterable --module ESNext --skipLibCheck --moduleResolution bundler --allowImportingTsExtensions --resolveJsonModule --isolatedModules --strict --noUnusedLocals --noUnusedParameters --noFallthroughCasesInSwitch --types node,@playwright/test e2e/files-docs-history.spec.ts e2e/fixtures/electron-app.ts`
+  - `git diff --check`
+- E2E execution deliberately not run:
+  - Did not run `npm run test:e2e`, `playwright test`, headed/UI E2E, or `npx playwright test --list`.
+  - Did not use the E2E Runner skill.
+- Remaining lane target:
+  - Source objective remains about 349 additional active scenarios plus skipped/env-gated rows.
+  - First four tranches add 27 active rows, leaving roughly 322 active scenarios to author in later tranches.
+- Blockers and follow-up:
+  - Product gaps from the first tranche remain skipped until matching product controls exist.
+  - External/default-app and SSH remote cases still need orchestrator-provided environment state before activation.
+  - Later tranches should keep adding compact, matrix-backed rows in `e2e/files-docs-history.spec.ts` and defer full E2E validation to the orchestrator-approved phase.
