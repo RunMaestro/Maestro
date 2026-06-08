@@ -1,6 +1,6 @@
 # debug-accessibility
 
-Status: nineteenth fallback tranche authored
+Status: twentieth fallback tranche authored
 
 ## Scope
 
@@ -9,9 +9,9 @@ accessibility smoke.
 
 ## Campaign Head
 
-- Ledger head before this tranche: `f6b58ca89`.
-- Implementation commit: `60955184c`.
-- Coverage ledger before this tranche: 91 active scenarios accepted, 101
+- Ledger head before this tranche: `6fef927c0`.
+- Implementation commit: `393595080`.
+- Coverage ledger before this tranche: 96 active scenarios accepted, 96
   matrix-backed scenarios remaining.
 
 ## Checklist
@@ -25,13 +25,13 @@ accessibility smoke.
 
 ## Progress
 
-- Added matrix-backed Process Monitor arrow-key scenarios `DA-092` through
-  `DA-096`.
+- Added matrix-backed Process Monitor detail-control scenarios `DA-097`
+  through `DA-101`.
 - Active scenarios added this tranche: 5.
-- Active scenarios authored in lane total: 96.
+- Active scenarios authored in lane total: 101.
 - Skipped/product-gap scenarios added this tranche: 0.
 - Env-gated scenarios added this tranche: 0.
-- Matrix-backed remaining after orchestrator ledger acceptance: 96.
+- Matrix-backed remaining after orchestrator ledger acceptance: 91.
 
 Files touched:
 
@@ -42,12 +42,12 @@ Files touched:
 
 Validation passed:
 
-- `npx eslint e2e/debug-accessibility.spec.ts`
+- `NODE_OPTIONS=--max-old-space-size=8192 npx eslint e2e/debug-accessibility.spec.ts`
 - `NODE_OPTIONS=--max-old-space-size=8192 npx prettier --write e2e/debug-accessibility.spec.ts docs/e2e-parallel-campaign/agents/debug-accessibility.md docs/e2e-parallel-campaign/coverage-ledger.md docs/e2e-coverage-campaign.md`
-- `npx tsc -p tsconfig.lint.json --noEmit`
+- `NODE_OPTIONS=--max-old-space-size=8192 npx tsc -p tsconfig.lint.json --noEmit`
 - `git diff --check`
-- Static inventory scan reports 1060 declared E2E tests, no `.only`, no
-  prohibited commands, and no duplicate scenario IDs.
+- Static inventory scan reports 1065 declared E2E tests, no `.only`, no
+  prohibited commands, and no duplicate campaign scenario IDs.
 
 Blockers:
 
@@ -58,4 +58,4 @@ Blockers:
 Remaining work:
 
 - Debug/about/update/app-info/agent-error modal scenarios are complete.
-- 96 accessibility smoke and destructive-action confirmation scenarios remain.
+- 91 accessibility smoke and destructive-action confirmation scenarios remain.
