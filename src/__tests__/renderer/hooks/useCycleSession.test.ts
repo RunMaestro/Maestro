@@ -151,6 +151,9 @@ const defaultUIStoreState = {
 	leftSidebarOpen: true,
 	bookmarksCollapsed: false,
 	showUnreadAgentsOnly: false,
+	// Cycle reads this for starred-row position tracking; reset so a starred
+	// selection from a prior test doesn't leak into the next.
+	sidebarExtraSelection: null,
 };
 
 const defaultSettingsStoreState = {
@@ -545,6 +548,98 @@ describe('useCycleSession', () => {
 
 			expect(activateStarredItem).toHaveBeenCalledWith(starredItems[0]);
 			expect(useSessionStore.getState().cyclePosition).toBe(0);
+			// The cursor must visibly mark the starred row (the reported bug was no feedback).
+			expect(useUIStore.getState().sidebarExtraSelection).toEqual({
+				kind: 'starred',
+				key: starredItems[0].key,
+			});
+		});
+
+		it('consecutive presses advance through starred rows instead of getting stuck', () => {
+			// Reproduces the reported bug: a starred row's parent agent == the currently
+			// active agent, so activating it leaves activeSessionId unchanged. Without the
+			// sidebarExtraSelection cursor, the next press would re-resolve to the same
+			// agent occurrence and bounce back onto the same starred row.
+			const sessA = makeSession({ id: 'chat', name: 'Chat Intel', bookmarked: true });
+			// Two starred rows; the second points at the active agent ('chat').
+			const starredItems = [
+				makeOpenStarred('rc', 't0', 'Package Version Check'),
+				makeOpenStarred('chat', 't1', 'Slack Discord Last Run'),
+			];
+
+			useSessionStore.setState({
+				sessions: [sessA],
+				activeSessionId: 'chat',
+				cyclePosition: -1,
+			} as any);
+			useUIStore.setState({
+				leftSidebarOpen: true,
+				bookmarksCollapsed: false,
+				sidebarExtraSelection: null,
+			} as any);
+			useSettingsStore.setState({
+				groupChatsExpanded: false,
+				starredSessionsCollapsed: false,
+			} as any);
+
+			// activateStarredItem is a no-op spy here (the real one would set the parent
+			// active); the cycle owns sidebarExtraSelection regardless.
+			const activateStarredItem = vi.fn();
+			const deps = makeDeps({ starredItems, activateStarredItem });
+			const { result } = renderHook(() => useCycleSession(deps));
+
+			// Visual order: [Package(0), Slack(1), bookmark Chat(2)].
+			// Active 'chat' with no extra cursor → first session occurrence = bookmark(2).
+			// prev → Slack starred(1).
+			act(() => {
+				result.current.cycleSession('prev');
+			});
+			expect(activateStarredItem).toHaveBeenLastCalledWith(starredItems[1]);
+			expect(useUIStore.getState().sidebarExtraSelection).toEqual({
+				kind: 'starred',
+				key: starredItems[1].key,
+			});
+
+			// prev again must ADVANCE to Package starred(0), not bounce back to Slack.
+			act(() => {
+				result.current.cycleSession('prev');
+			});
+			expect(activateStarredItem).toHaveBeenLastCalledWith(starredItems[0]);
+			expect(useUIStore.getState().sidebarExtraSelection).toEqual({
+				kind: 'starred',
+				key: starredItems[0].key,
+			});
+		});
+
+		it('clears the starred cursor when cycling onto a plain agent', () => {
+			const sessA = makeSession({ id: 'a', name: 'Alpha' });
+			const starredItems = [makeOpenStarred('a', 't1', 'Star A')];
+
+			useSessionStore.setState({
+				sessions: [sessA],
+				activeSessionId: 'a',
+				cyclePosition: 0, // currently parked on the starred slot
+			} as any);
+			useUIStore.setState({
+				leftSidebarOpen: true,
+				bookmarksCollapsed: true,
+				sidebarExtraSelection: { kind: 'starred', key: starredItems[0].key },
+			} as any);
+			useSettingsStore.setState({
+				groupChatsExpanded: false,
+				starredSessionsCollapsed: false,
+			} as any);
+
+			const deps = makeDeps({ starredItems });
+			const { result } = renderHook(() => useCycleSession(deps));
+
+			// Visual order: [Star A(0), Alpha(1)]. On starred(0), next → Alpha(1) agent.
+			act(() => {
+				result.current.cycleSession('next');
+			});
+
+			expect(useSessionStore.getState().activeSessionId).toBe('a');
+			expect(useUIStore.getState().sidebarExtraSelection).toBeNull();
 		});
 
 		it('skips the starred section when starredSessionsCollapsed is true', () => {

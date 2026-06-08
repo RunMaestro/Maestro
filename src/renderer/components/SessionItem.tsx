@@ -102,6 +102,13 @@ export interface SessionItemProps {
 	isEditing: boolean;
 	leftSidebarOpen: boolean;
 
+	/**
+	 * Stable DOM key for keyboard auto-scroll. Rendered as `data-nav-key` so the
+	 * Left Bar can locate this row and scroll it into view when it becomes the
+	 * keyboard selection. Format: `idx:<navIndex>`.
+	 */
+	navDomKey?: string;
+
 	// Optional data
 	group?: Group; // The group this session belongs to (for bookmark variant to show group badge)
 	groupId?: string; // The group ID context for generating editing key
@@ -149,6 +156,7 @@ export const SessionItem = memo(function SessionItem({
 	isDragging,
 	isEditing,
 	leftSidebarOpen,
+	navDomKey,
 	group,
 	groupId,
 	gitFileCount,
@@ -227,6 +235,7 @@ export const SessionItem = memo(function SessionItem({
 	return (
 		<div
 			key={`${variant}-${groupId || ''}-${session.id}`}
+			data-nav-key={navDomKey}
 			draggable
 			onDragStart={onDragStart}
 			onDragOver={onDragOver}

@@ -294,6 +294,29 @@ function SessionListInner(props: SessionListProps) {
 	const groupChatStates = useGroupChatStore((s) => s.groupChatStates);
 	const allGroupChatParticipantStates = useGroupChatStore((s) => s.allGroupChatParticipantStates);
 
+	// Keep the keyboard-selected Left Bar row in view as navigation moves it.
+	// Rows are tagged with `data-nav-key`; we resolve the current key from the
+	// active cursor (priority: Starred/Group-Chat extra cursor, then the active
+	// group chat, then the agent index) and scroll it into the list viewport.
+	// Fires for both arrow-key navigation and the global Cmd+[ / Cmd+] cycle.
+	useEffect(() => {
+		const container = listScrollRef.current;
+		if (!container) return;
+		let navKey: string | null = null;
+		if (sidebarExtraSelection?.kind === 'starred') {
+			navKey = `starred:${sidebarExtraSelection.key}`;
+		} else if (sidebarExtraSelection?.kind === 'groupChat') {
+			navKey = `groupchat:${sidebarExtraSelection.id}`;
+		} else if (activeGroupChatId) {
+			navKey = `groupchat:${activeGroupChatId}`;
+		} else if (selectedSidebarIndex >= 0) {
+			navKey = `idx:${selectedSidebarIndex}`;
+		}
+		if (!navKey) return;
+		const el = container.querySelector(`[data-nav-key="${CSS.escape(navKey)}"]`);
+		el?.scrollIntoView({ block: 'nearest' });
+	}, [selectedSidebarIndex, sidebarExtraSelection, activeGroupChatId, activeSessionId]);
+
 	// Stable store actions
 	const setActiveFocus = useUIStore.getState().setActiveFocus;
 	const setLeftSidebarOpen = useUIStore.getState().setLeftSidebarOpen;
@@ -443,6 +466,8 @@ function SessionListInner(props: SessionListProps) {
 		: 0;
 	const menuRef = useRef<HTMLDivElement>(null);
 	const ignoreNextBlurRef = useRef(false);
+	// Scrollable list viewport - used to keep the keyboard-selected row in view.
+	const listScrollRef = useRef<HTMLDivElement>(null);
 	const sessionFilterInputRef = useRef<HTMLInputElement>(null);
 
 	// Drag-over highlight for the group / ungrouped drop zones. While an agent is
@@ -705,7 +730,9 @@ function SessionListInner(props: SessionListProps) {
 		// Use navIndexMap for keyboard selection (context-aware: distinguishes bookmark vs group instances)
 		const navKey = getNavKey(variant, session, options.groupId);
 		const globalIdx = navIndexMap?.get(navKey) ?? sortedSessionIndexById.get(session.id) ?? -1;
-		const isKeyboardSelected = activeFocus === 'sidebar' && globalIdx === selectedSidebarIndex;
+		// Suppressed while a Starred/Group-Chat cursor is live so only one row is highlighted.
+		const isKeyboardSelected =
+			activeFocus === 'sidebar' && !sidebarExtraSelection && globalIdx === selectedSidebarIndex;
 
 		// In flat/ungrouped view, wrap sessions with worktrees in a left-bordered container
 		// to visually associate parent and worktrees together (similar to grouped view)
@@ -721,6 +748,7 @@ function SessionListInner(props: SessionListProps) {
 					session={session}
 					variant={effectiveVariant}
 					theme={theme}
+					navDomKey={globalIdx >= 0 ? `idx:${globalIdx}` : undefined}
 					isActive={activeSessionId === session.id && !activeGroupChatId}
 					isKeyboardSelected={isKeyboardSelected}
 					isDragging={draggingSessionId === session.id}
@@ -769,13 +797,16 @@ function SessionListInner(props: SessionListProps) {
 							const childGlobalIdx =
 								navIndexMap?.get(childNavKey) ?? sortedSessionIndexById.get(child.id) ?? -1;
 							const isChildKeyboardSelected =
-								activeFocus === 'sidebar' && childGlobalIdx === selectedSidebarIndex;
+								activeFocus === 'sidebar' &&
+								!sidebarExtraSelection &&
+								childGlobalIdx === selectedSidebarIndex;
 							return (
 								<div key={`worktree-${session.id}-${child.id}`} className="tree-child">
 									<SessionItem
 										session={child}
 										variant="worktree"
 										theme={theme}
+										navDomKey={childGlobalIdx >= 0 ? `idx:${childGlobalIdx}` : undefined}
 										isActive={activeSessionId === child.id && !activeGroupChatId}
 										isKeyboardSelected={isChildKeyboardSelected}
 										isDragging={draggingSessionId === child.id}
@@ -1055,6 +1086,7 @@ function SessionListInner(props: SessionListProps) {
 			{/* SIDEBAR CONTENT: EXPANDED */}
 			{leftSidebarOpen ? (
 				<div
+					ref={listScrollRef}
 					className="flex-1 min-h-0 flex flex-col overflow-y-auto py-2 select-none scrollbar-thin"
 					data-tour="session-list"
 				>
@@ -1138,14 +1170,17 @@ function SessionListInner(props: SessionListProps) {
 									style={{ borderColor: theme.colors.accent }}
 								>
 									{starredItems.map((item) => {
+										// Not focus-gated: a starred row has no separate "active" highlight,
+										// so this doubles as the indicator when Cmd+[ / Cmd+] (a global
+										// shortcut, fired with focus on the main panel) lands here.
 										const isStarredKeyboardSelected =
-											activeFocus === 'sidebar' &&
 											sidebarExtraSelection?.kind === 'starred' &&
 											sidebarExtraSelection.key === item.key;
 										return (
 											<button
 												key={item.key}
 												type="button"
+												data-nav-key={`starred:${item.key}`}
 												onClick={() => void activateStarredItem(item)}
 												className="px-3 py-1.5 flex flex-col text-left hover:bg-white/5 transition-colors"
 												style={{

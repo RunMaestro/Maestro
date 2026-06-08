@@ -416,6 +416,7 @@ function GroupChatListInner({
 								return (
 									<div
 										key={chat.id}
+										data-nav-key={`groupchat:${chat.id}`}
 										className="flex items-center gap-2 px-3 py-1.5 cursor-pointer transition-colors hover:bg-white/5"
 										style={{
 											backgroundColor: isActive

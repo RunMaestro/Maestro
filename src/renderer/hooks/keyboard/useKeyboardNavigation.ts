@@ -614,12 +614,17 @@ export function useKeyboardNavigation(
 	// This allows keyboard navigation to move the selector independently of the active session
 	// The sync happens when user clicks a session or presses Enter to activate
 	// Uses navSessions so the index matches the visual navigation order (bookmarks first).
-	// Landing on an agent also clears any starred/group-chat cursor.
+	//
+	// Bail when the Starred/Group-Chat cursor is live: activating a starred row sets
+	// its PARENT agent active, which would otherwise drag the agent cursor onto the
+	// parent and clear the starred highlight the cycle just set. The public
+	// setActiveSessionId (clicks/external jumps) clears the extra cursor itself, so
+	// by the time this runs for a genuine agent activation it is already null.
 	useEffect(() => {
+		if (sidebarExtraSelectionRef.current) return;
 		const currentIndex = navSessions.findIndex((s) => s.id === activeSessionId);
 		if (currentIndex !== -1) {
 			setSelectedSidebarIndex(currentIndex);
-			setSidebarExtraSelection(null);
 		}
 	}, [activeSessionId]); // Intentionally excluding navSessions - see comment above
 

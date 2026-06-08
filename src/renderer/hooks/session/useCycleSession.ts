@@ -68,6 +68,7 @@ export function useCycleSession(deps: UseCycleSessionDeps): UseCycleSessionRetur
 	// --- Store actions (stable via getState) ---
 	const { setActiveSessionIdInternal, setCyclePosition } = useSessionStore.getState();
 	const { setActiveGroupChatId } = useGroupChatStore.getState();
+	const { setSidebarExtraSelection } = useUIStore.getState();
 
 	// --- Settings ---
 	const ungroupedCollapsed = useSettingsStore((s) => s.ungroupedCollapsed);
@@ -237,21 +238,35 @@ export function useCycleSession(deps: UseCycleSessionDeps): UseCycleSessionRetur
 			const currentActiveId = activeGroupChatId || activeSessionId;
 			const currentIsGroupChat = activeGroupChatId !== null;
 
-			// Determine current position in visual order
-			// If cyclePosition is valid and points to our current item, use it
-			// Otherwise, find the first occurrence of our current item
-			let currentIndex = useSessionStore.getState().cyclePosition;
-			if (
-				currentIndex < 0 ||
-				currentIndex >= visualOrder.length ||
-				visualOrder[currentIndex].id !== currentActiveId
-			) {
-				// Position is invalid or doesn't match current item - find first occurrence
+			// Determine current position in visual order.
+			// A starred row's parent agent == its id, so activating one sets that
+			// agent active (and clobbers cyclePosition via the public setActiveSessionId).
+			// When the cursor is parked on a starred row we therefore track position via
+			// sidebarExtraSelection rather than cyclePosition/findIndex - otherwise a
+			// session occurrence of the same agent would be matched and cycling would get
+			// stuck bouncing onto the same starred row.
+			const extraSelection = useUIStore.getState().sidebarExtraSelection;
+			let currentIndex: number;
+			if (extraSelection?.kind === 'starred') {
 				currentIndex = visualOrder.findIndex(
-					(item) =>
-						item.id === currentActiveId &&
-						(currentIsGroupChat ? item.type === 'groupChat' : item.type === 'session')
+					(item) => item.type === 'starred' && item.starredKey === extraSelection.key
 				);
+			} else {
+				// If cyclePosition is valid and points to our current item, use it.
+				// Otherwise, find the first occurrence of our current item.
+				currentIndex = useSessionStore.getState().cyclePosition;
+				if (
+					currentIndex < 0 ||
+					currentIndex >= visualOrder.length ||
+					visualOrder[currentIndex].id !== currentActiveId ||
+					visualOrder[currentIndex].type === 'starred'
+				) {
+					currentIndex = visualOrder.findIndex(
+						(item) =>
+							item.id === currentActiveId &&
+							(currentIsGroupChat ? item.type === 'groupChat' : item.type === 'session')
+					);
+				}
 			}
 
 			// Dispatch activation for a slot in the visual order. A session sets the
@@ -261,14 +276,24 @@ export function useCycleSession(deps: UseCycleSessionDeps): UseCycleSessionRetur
 			const activateVisualItem = (item: VisualOrderItem) => {
 				if (item.type === 'session') {
 					setActiveGroupChatId(null);
+					// Landing on a plain agent clears the non-agent cursor so the agent's
+					// own active highlight is the sole indicator.
+					setSidebarExtraSelection(null);
 					setActiveSessionIdInternal(item.id);
 				} else if (item.type === 'starred') {
 					const starred = starredItems.find((s) => s.key === item.starredKey);
 					if (starred) {
 						setActiveGroupChatId(null);
+						// activateStarredItem sets the PARENT agent active (and resets
+						// cyclePosition via the public setter); set the starred cursor AFTER
+						// so it survives and visibly marks the row regardless of focus.
 						void activateStarredItem(starred);
+						setSidebarExtraSelection({ kind: 'starred', key: item.starredKey });
 					}
 				} else {
+					// Group chats have their own active highlight (activeGroupChatId), so the
+					// non-agent cursor is cleared when one is opened.
+					setSidebarExtraSelection(null);
 					handleOpenGroupChat(item.id);
 				}
 			};
