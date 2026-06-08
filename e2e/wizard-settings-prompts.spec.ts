@@ -82,6 +82,11 @@ const activeScenarioMatrix = [
 	{ id: 'WSP-042', title: 'toggles Settings spell check' },
 	{ id: 'WSP-043', title: 'toggles Settings sleep prevention' },
 	{ id: 'WSP-044', title: 'toggles Settings GPU acceleration' },
+	{ id: 'WSP-045', title: 'persists the Settings shell arguments field' },
+	{ id: 'WSP-046', title: 'toggles Settings terminal Enter-to-send mode' },
+	{ id: 'WSP-047', title: 'toggles Settings OS notifications' },
+	{ id: 'WSP-048', title: 'persists Settings custom notification command state' },
+	{ id: 'WSP-049', title: 'persists Settings toast notification duration' },
 ];
 
 const envGatedScenarioMatrix = [
@@ -1425,6 +1430,168 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 					});
 				})
 				.toBe(true);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[44].id} ${activeScenarioMatrix[44].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				shellArgs: '',
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'General',
+				'Default Terminal Shell'
+			);
+			await settingsDialog.getByRole('button', { name: 'Shell Configuration' }).click();
+			await settingsDialog.getByPlaceholder('--flag value').fill('--login --interactive');
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('shellArgs');
+					});
+				})
+				.toBe('--login --interactive');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[45].id} ${activeScenarioMatrix[45].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				enterToSendTerminal: true,
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'General',
+				'Input Send Behavior'
+			);
+			const terminalModeRow = settingsDialog
+				.getByText('Terminal Mode')
+				.locator('xpath=ancestor::div[contains(@class, "rounded")][1]');
+			await terminalModeRow.getByRole('button').click();
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('enterToSendTerminal');
+					});
+				})
+				.toBe(false);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[46].id} ${activeScenarioMatrix[46].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				osNotificationsEnabled: true,
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'Notifications',
+				'Operating System Notifications'
+			);
+			await settingsDialog.getByText('Enable OS Notifications').click();
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('osNotificationsEnabled');
+					});
+				})
+				.toBe(false);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[47].id} ${activeScenarioMatrix[47].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				audioFeedbackEnabled: false,
+				audioFeedbackCommand: 'say',
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'Notifications',
+				'Custom Notification'
+			);
+			await settingsDialog.getByText('Enable Custom Notification').click();
+			await settingsDialog.getByPlaceholder('say').fill('printf wsp-notify');
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return {
+							enabled: await window.maestro.settings.get('audioFeedbackEnabled'),
+							command: await window.maestro.settings.get('audioFeedbackCommand'),
+						};
+					});
+				})
+				.toEqual({
+					enabled: true,
+					command: 'printf wsp-notify',
+				});
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[48].id} ${activeScenarioMatrix[48].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				toastDuration: 20,
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'Notifications',
+				'Toast Notification Duration'
+			);
+			await settingsDialog.getByRole('button', { name: '10s' }).click();
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('toastDuration');
+					});
+				})
+				.toBe(10);
 		} finally {
 			await launched.cleanup();
 		}

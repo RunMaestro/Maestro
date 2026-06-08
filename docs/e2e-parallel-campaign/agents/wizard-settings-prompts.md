@@ -1,6 +1,6 @@
 # wizard-settings-prompts
 
-Status: tranche 8 fallback committed
+Status: tranche 9 fallback in progress
 
 ## Scope
 
@@ -237,3 +237,33 @@ New Agent Wizard, inline wizard, Settings, Director Notes, prompt composer.
   - PM2-managed Codex worker runtime is still blocked by 503 managed-account availability errors.
   - Real provider account and live agent handoff coverage remains env-gated.
   - Remaining matrix-backed target: about 328 active/skipped rows after this tranche.
+
+### 2026-06-08 tranche 9 fallback
+
+- Scope: compact manual fallback tranche in isolated worktree `Maestro-worktrees/e2e-wizard-settings-prompts-fallback-5`.
+- Authored: 5 additional active deterministic Playwright scenarios.
+  - Settings General persists Shell Arguments.
+  - Settings General toggles Terminal Mode Enter-to-send behavior.
+  - Settings Notifications toggles OS notifications.
+  - Settings Notifications persists custom notification enabled/command state.
+  - Settings Notifications persists toast notification duration.
+- Cumulative lane-authored coverage: 49 active deterministic scenarios, 1 env-gated scenario.
+- Skipped/env-gated: no new rows; total remains 1 provider-account handoff placeholder.
+- Files touched:
+  - `e2e/wizard-settings-prompts.spec.ts`
+  - `docs/e2e-parallel-campaign/agents/wizard-settings-prompts.md`
+- Shared helpers edited: no.
+- Validation run:
+  - `NODE_OPTIONS=--max-old-space-size=8192 npx prettier --check e2e/wizard-settings-prompts.spec.ts docs/e2e-parallel-campaign/agents/wizard-settings-prompts.md` - passed.
+  - `npx eslint e2e/wizard-settings-prompts.spec.ts` - passed.
+  - `npx tsc -p tsconfig.lint.json --noEmit` - passed.
+  - Static scenario-ID/`.only` scan - passed with 49 active rows, 1 env-gated row, no duplicate IDs, and no `.only`.
+  - `git diff --check -- e2e/wizard-settings-prompts.spec.ts docs/e2e-parallel-campaign/agents/wizard-settings-prompts.md` - passed.
+- Review:
+  - Focused static review found one high-risk collapsed Shell Configuration selector; fixed before commit.
+- Not run by instruction: `npm run test:e2e`, `playwright test`, headed/UI E2E, and Playwright listing.
+- Implementation commit hash: pending.
+- Blockers/remaining work:
+  - PM2-managed Codex worker runtime is still blocked by 503 managed-account availability errors.
+  - Real provider account and live agent handoff coverage remains env-gated.
+  - Remaining matrix-backed target: about 323 active/skipped rows after this tranche.
