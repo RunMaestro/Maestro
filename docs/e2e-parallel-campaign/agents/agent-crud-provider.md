@@ -16,6 +16,36 @@ Agent CRUD, provider setup, Agent Sessions.
 
 ## Progress
 
+### 2026-06-08 recovery tranche 4
+
+- Scope: manual fallback tranche for grouped-agent organization in the Agent CRUD surface.
+- Authored: 5 active deterministic Playwright scenarios.
+  - Creates an agent group from Quick Actions.
+  - Moves a provider agent into a group and returns it to Ungrouped Agents.
+  - Creates a group from a provider context menu and moves the agent into it.
+  - Collapses and expands a provider agent group section.
+  - Renames a populated provider agent group inline.
+- Skipped/env-gated: no new rows.
+- Lane target remains: about 80 active scenarios plus fuller skipped/env-gated real-provider coverage.
+- Files touched:
+  - `e2e/agent-crud-provider.spec.ts`
+  - `docs/e2e-parallel-campaign/agents/agent-crud-provider.md`
+  - `docs/e2e-parallel-campaign/coverage-ledger.md`
+  - `docs/e2e-coverage-campaign.md`
+- Shared helpers edited: no.
+- Broadcast update required: no.
+- Checks run:
+  - `NODE_OPTIONS=--max-old-space-size=8192 npx prettier --write e2e/agent-crud-provider.spec.ts`
+  - `npx eslint e2e/agent-crud-provider.spec.ts`
+  - `npx tsc -p tsconfig.lint.json --noEmit`
+  - `git diff --check`
+  - Static scan: 900 declared E2E tests, 0 `.only`, 0 prohibited Playwright/E2E commands, 2 pre-existing duplicate titles in `e2e/app-shell.spec.ts`.
+  - Code-reviewer checklist: no blocking issues in the `agent-crud-provider` diff.
+- Commit hashes:
+  - `9362cf4fc` - `test(e2e-agent-crud-provider): add group organization coverage`
+- Blockers:
+  - E2E execution, Playwright listing, headed/UI E2E, and full E2E validation are intentionally not run under the recovery-run hard rules.
+
 ### 2026-06-08 recovery tranche 3
 
 - Scope: manual fallback tranche for generic provider Agent Sessions controls.
