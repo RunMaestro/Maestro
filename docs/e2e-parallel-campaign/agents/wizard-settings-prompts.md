@@ -1,6 +1,6 @@
 # wizard-settings-prompts
 
-Status: tranche 3 committed locally
+Status: tranche 4 committed locally
 
 ## Scope
 
@@ -88,3 +88,28 @@ New Agent Wizard, inline wizard, Settings, Director Notes, prompt composer.
 - Blockers/remaining work:
   - Real provider account and live agent handoff coverage remains env-gated.
   - Remaining matrix-backed target: about 354 active/skipped rows after this tranche.
+
+### 2026-06-08 tranche 4
+
+- Scope: fourth compact recovery tranche only.
+- Authored: 6 additional active deterministic Playwright scenarios.
+  - New Agent Wizard marks coming-soon providers disabled.
+  - Settings Themes tab persists the Solarized theme picker selection.
+  - Settings Display tab persists the Large font size selection.
+  - Prompt Composer toolbar toggles History state onto the active tab.
+  - Prompt Composer toolbar toggles Read-Only state onto the active tab.
+  - Director's Notes exposes Help and Unified History while AI Overview remains disabled until synopsis state is ready.
+- Cumulative lane-authored coverage: 24 active deterministic scenarios, 1 env-gated scenario.
+- Skipped/env-gated: no new rows; total remains 1 provider-account handoff placeholder.
+- Files touched:
+  - `e2e/wizard-settings-prompts.spec.ts`
+  - `docs/e2e-parallel-campaign/agents/wizard-settings-prompts.md`
+- Shared helpers edited: no.
+- Validation run:
+  - `npx eslint e2e/wizard-settings-prompts.spec.ts` - passed.
+  - `git diff --check -- e2e/wizard-settings-prompts.spec.ts docs/e2e-parallel-campaign/agents/wizard-settings-prompts.md` - passed.
+- Not run by instruction: `npm run test:e2e`, `playwright test`, headed/UI E2E, and Playwright listing.
+- Implementation commit hash: `989097c21`.
+- Blockers/remaining work:
+  - Real provider account and live agent handoff coverage remains env-gated.
+  - Remaining matrix-backed target: about 348 active/skipped rows after this tranche.
