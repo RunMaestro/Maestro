@@ -2579,6 +2579,260 @@ test.describe('Agent CRUD lifecycle', () => {
 			await launched.cleanup();
 		}
 	});
+
+	test('resets Create New Agent remote command override to the SSH binary default', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const remote = createProviderSshRemote();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: [seeded.sessions[0]],
+		});
+
+		try {
+			await stubProviderDetection(launched.electronApp);
+			await stubSshRemoteConfigs(launched.electronApp, [remote]);
+
+			const createAgentDialog = await openCreateAgentDialog(launched.window);
+			await createAgentDialog.getByRole('option', { name: /Codex/ }).click();
+			const commandInput = createAgentDialog.getByPlaceholder('/path/to/codex');
+			await commandInput.fill('/opt/maestro/codex-remote-override');
+			await createAgentDialog.locator('select').last().selectOption(remote.id);
+			await expect(createAgentDialog.getByText('Remote Command')).toBeVisible();
+			await expect(commandInput).toHaveValue('/opt/maestro/codex-remote-override');
+
+			await createAgentDialog.getByTitle('Reset to remote binary name').click();
+
+			await expect(commandInput).toHaveValue('codex');
+			await expect(createAgentDialog.getByTitle('Reset to remote binary name')).toHaveCount(0);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('resets Edit Agent remote command override to the SSH binary default', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const remote = createProviderSshRemote();
+		const configuredSession = {
+			...seeded.sessions[0],
+			customPath: '/opt/maestro/codex-edit-remote-override',
+			sessionSshRemoteConfig: { enabled: true, remoteId: remote.id },
+		};
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: [configuredSession, ...seeded.sessions.slice(1)],
+		});
+
+		try {
+			await stubProviderDetection(launched.electronApp);
+			await stubSshRemoteConfigs(launched.electronApp, [remote]);
+
+			const editAgentDialog = await openEditAgentDialog(launched.window, 'Matrix Codex Agent');
+			const commandInput = editAgentDialog.getByPlaceholder('/path/to/codex');
+			await expect(editAgentDialog.locator('select').last()).toHaveValue(remote.id);
+			await expect(editAgentDialog.getByText('Remote Command')).toBeVisible();
+			await expect(commandInput).toHaveValue('/opt/maestro/codex-edit-remote-override');
+
+			await editAgentDialog.getByTitle('Reset to remote binary name').click();
+			await expect(commandInput).toHaveValue('codex');
+			await editAgentDialog.getByRole('button', { name: 'Save Changes' }).click();
+			await expect(editAgentDialog).toBeHidden();
+
+			const reopenedDialog = await openEditAgentDialog(launched.window, 'Matrix Codex Agent');
+			await expect(reopenedDialog.locator('select').last()).toHaveValue(remote.id);
+			await expect(reopenedDialog.getByPlaceholder('/path/to/codex')).toHaveValue('codex');
+			await expect(reopenedDialog.getByTitle('Reset to remote binary name')).toHaveCount(0);
+			await reopenedDialog.getByRole('button', { name: 'Cancel' }).click();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('clears Create New Agent SSH selection after a successful provider create', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const remote = createProviderSshRemote();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: [seeded.sessions[0]],
+		});
+
+		try {
+			await stubProviderDetection(launched.electronApp);
+			await stubSshRemoteConfigs(launched.electronApp, [remote]);
+
+			const createAgentDialog = await openCreateAgentDialog(launched.window);
+			await createAgentDialog.getByRole('option', { name: /Codex/ }).click();
+			await createAgentDialog.locator('select').last().selectOption(remote.id);
+			await createAgentDialog.getByLabel('Agent Name').fill('Remote Reset After Create Agent');
+			await createAgentDialog
+				.getByLabel('Working Directory')
+				.fill('/srv/maestro/reset-after-remote-create');
+			await expect(
+				createAgentDialog.getByText(/Agent will run on Provider Build Host/)
+			).toBeVisible();
+			await createAgentDialog.getByRole('button', { name: 'Create Agent' }).click();
+			await expect(createAgentDialog).toBeHidden();
+
+			const reopenedDialog = await openCreateAgentDialog(launched.window);
+			await reopenedDialog.getByRole('option', { name: /Codex/ }).click();
+			await expect(reopenedDialog.locator('select').last()).toHaveValue('local');
+			await expect(reopenedDialog.getByText('Agent will run locally')).toBeVisible();
+			await reopenedDialog.getByRole('button', { name: 'Cancel' }).click();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('keeps Create New Agent SSH selection while switching provider drafts', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const remote = createProviderSshRemote();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: [seeded.sessions[0]],
+		});
+
+		try {
+			await stubProviderDetection(launched.electronApp);
+			await stubSshRemoteConfigs(launched.electronApp, [remote]);
+
+			const createAgentDialog = await openCreateAgentDialog(launched.window);
+			await createAgentDialog.getByRole('option', { name: /Codex/ }).click();
+			await createAgentDialog.locator('select').last().selectOption(remote.id);
+			await expect(
+				createAgentDialog.getByText(/Agent will run on Provider Build Host/)
+			).toBeVisible();
+
+			await createAgentDialog.getByRole('option', { name: /OpenCode/ }).click();
+
+			await expect(createAgentDialog.getByText('OpenCode Settings')).toBeVisible();
+			await expect(createAgentDialog.locator('select').last()).toHaveValue(remote.id);
+			await expect(
+				createAgentDialog.getByText(/Agent will run on Provider Build Host/)
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('cancels Edit Agent SSH remote draft without persisting remote execution', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const remote = createProviderSshRemote();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubProviderDetection(launched.electronApp);
+			await stubSshRemoteConfigs(launched.electronApp, [remote]);
+
+			const editAgentDialog = await openEditAgentDialog(launched.window, 'Matrix Codex Agent');
+			await editAgentDialog.locator('select').last().selectOption(remote.id);
+			await expect(
+				editAgentDialog.getByText(/Agent will run on Provider Build Host/)
+			).toBeVisible();
+			await editAgentDialog.getByRole('button', { name: 'Cancel' }).click();
+			await expect(editAgentDialog).toBeHidden();
+
+			const reopenedDialog = await openEditAgentDialog(launched.window, 'Matrix Codex Agent');
+			await expect(reopenedDialog.locator('select').last()).toHaveValue('local');
+			await expect(reopenedDialog.getByText('Agent will run locally')).toBeVisible();
+			await reopenedDialog.getByRole('button', { name: 'Cancel' }).click();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('creates a duplicated provider agent with inherited SSH remote execution', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const remote = createProviderSshRemote();
+		const configuredSession = {
+			...seeded.sessions[0],
+			sessionSshRemoteConfig: { enabled: true, remoteId: remote.id },
+		};
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: [configuredSession, ...seeded.sessions.slice(1)],
+		});
+
+		try {
+			await stubProviderDetection(launched.electronApp);
+			await stubSshRemoteConfigs(launched.electronApp, [remote]);
+
+			const contextMenu = await openSessionContextMenu(
+				launched.window,
+				'Matrix Codex Agent',
+				'Duplicate...'
+			);
+			await contextMenu.getByRole('button', { name: 'Duplicate...', exact: true }).click();
+
+			const createAgentDialog = launched.window.getByRole('dialog', { name: 'Create New Agent' });
+			await expect(createAgentDialog.locator('select').last()).toHaveValue(remote.id);
+			await createAgentDialog.getByLabel('Agent Name').fill('Inherited Remote Duplicate Agent');
+			await createAgentDialog
+				.getByLabel('Working Directory')
+				.fill('/srv/maestro/inherited-remote-duplicate');
+			await createAgentDialog.getByRole('button', { name: 'Create Agent' }).click();
+			await expect(createAgentDialog).toBeHidden();
+
+			const editAgentDialog = await openEditAgentDialog(
+				launched.window,
+				'Inherited Remote Duplicate Agent'
+			);
+			await expect(editAgentDialog.locator('select').last()).toHaveValue(remote.id);
+			await expect(
+				editAgentDialog.getByText(/Agent will run on Provider Build Host/)
+			).toBeVisible();
+			await editAgentDialog.getByRole('button', { name: 'Cancel' }).click();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('creates a duplicated provider agent after clearing inherited SSH remote execution', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const remote = createProviderSshRemote();
+		const duplicateDir = path.join(seeded.homeDir, 'local-cleared-remote-duplicate-project');
+		fs.mkdirSync(duplicateDir, { recursive: true });
+		const configuredSession = {
+			...seeded.sessions[0],
+			sessionSshRemoteConfig: { enabled: true, remoteId: remote.id },
+		};
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: [configuredSession, ...seeded.sessions.slice(1)],
+		});
+
+		try {
+			await stubProviderDetection(launched.electronApp);
+			await stubSshRemoteConfigs(launched.electronApp, [remote]);
+
+			const contextMenu = await openSessionContextMenu(
+				launched.window,
+				'Matrix Codex Agent',
+				'Duplicate...'
+			);
+			await contextMenu.getByRole('button', { name: 'Duplicate...', exact: true }).click();
+
+			const createAgentDialog = launched.window.getByRole('dialog', { name: 'Create New Agent' });
+			await expect(createAgentDialog.locator('select').last()).toHaveValue(remote.id);
+			await createAgentDialog.locator('select').last().selectOption('local');
+			await expect(createAgentDialog.getByText('Agent will run locally')).toBeVisible();
+			await createAgentDialog.getByLabel('Agent Name').fill('Local Cleared Remote Duplicate');
+			await createAgentDialog.getByLabel('Working Directory').fill(duplicateDir);
+			await createAgentDialog.getByRole('button', { name: 'Create Agent' }).click();
+			await expect(createAgentDialog).toBeHidden();
+
+			const editAgentDialog = await openEditAgentDialog(
+				launched.window,
+				'Local Cleared Remote Duplicate'
+			);
+			await expect(editAgentDialog.locator('select').last()).toHaveValue('local');
+			await expect(editAgentDialog.getByText('Agent will run locally')).toBeVisible();
+			await editAgentDialog.getByRole('button', { name: 'Cancel' }).click();
+		} finally {
+			await launched.cleanup();
+		}
+	});
 });
 
 test.describe('Agent group organization', () => {
