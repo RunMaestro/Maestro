@@ -171,6 +171,14 @@ const twentyFirstTrancheActiveScenarioMatrix = [
 	{ id: 'DA-106', title: 'opens clicked Process Monitor rows with Enter' },
 ] as const;
 
+const twentySecondTrancheActiveScenarioMatrix = [
+	{ id: 'DA-107', title: 'shows the empty System Log Viewer state without logs' },
+	{ id: 'DA-108', title: 'reports seeded System Log Viewer entry counts' },
+	{ id: 'DA-109', title: 'focuses System Log Viewer search from keyboard shortcut' },
+	{ id: 'DA-110', title: 'hides System Log Viewer footer hint while search is open' },
+	{ id: 'DA-111', title: 'updates System Log Viewer expand collapse disabled states' },
+] as const;
+
 const debugPackagePreviewCategories = [
 	{ id: 'logs', name: 'System Logs', included: true, sizeEstimate: '~50 KB' },
 	{ id: 'errors', name: 'Error States', included: true, sizeEstimate: '< 10 KB' },
@@ -2993,6 +3001,95 @@ test.describe('Debug and accessibility smoke tranche', () => {
 			await expect(detailView).toBeVisible();
 			await expect(detailView.getByText('Process Session ID')).toBeVisible();
 			await expect(detailView.getByText(`${launched.sessions[0].id}-ai-`)).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${twentySecondTrancheActiveScenarioMatrix[0].id} ${twentySecondTrancheActiveScenarioMatrix[0].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await launched.window.evaluate(async () => {
+				await window.maestro.logger.clearLogs();
+			});
+			const logViewer = await openSystemLogViewer(launched.window);
+
+			await expect(logViewer.getByText('No logs yet')).toBeVisible();
+			await expect(logViewer.getByText('0 entries')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${twentySecondTrancheActiveScenarioMatrix[1].id} ${twentySecondTrancheActiveScenarioMatrix[1].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await seedSystemLogs(launched.window);
+			const logViewer = await openSystemLogViewer(launched.window);
+
+			await expect(logViewer.getByText('2 entries')).toBeVisible();
+			await expect(logViewer.getByText('E2EDebug').first()).toBeVisible();
+			await expect(logViewer.getByText('Debug accessibility info sentinel')).toBeVisible();
+			await expect(logViewer.getByText('Debug accessibility error sentinel')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${twentySecondTrancheActiveScenarioMatrix[2].id} ${twentySecondTrancheActiveScenarioMatrix[2].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await seedSystemLogs(launched.window);
+			const logViewer = await openSystemLogViewer(launched.window);
+
+			await logViewer.evaluate((element) => {
+				element.dispatchEvent(
+					new KeyboardEvent('keydown', { key: 'f', ctrlKey: true, bubbles: true })
+				);
+			});
+			const searchInput = logViewer.getByPlaceholder('Search logs...');
+
+			await expect(searchInput).toBeVisible();
+			await expect(searchInput).toBeFocused();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${twentySecondTrancheActiveScenarioMatrix[3].id} ${twentySecondTrancheActiveScenarioMatrix[3].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await seedSystemLogs(launched.window);
+			const logViewer = await openSystemLogViewer(launched.window);
+			await expect(logViewer.getByText('to search')).toBeVisible();
+
+			await logViewer.evaluate((element) => {
+				element.dispatchEvent(
+					new KeyboardEvent('keydown', { key: 'f', ctrlKey: true, bubbles: true })
+				);
+			});
+
+			await expect(logViewer.getByPlaceholder('Search logs...')).toBeVisible();
+			await expect(logViewer.getByText('to search')).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${twentySecondTrancheActiveScenarioMatrix[4].id} ${twentySecondTrancheActiveScenarioMatrix[4].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await seedSystemLogs(launched.window);
+			const logViewer = await openSystemLogViewer(launched.window);
+			const expandAll = logViewer.getByTitle('Expand all');
+			const collapseAll = logViewer.getByTitle('Collapse all');
+
+			await expect(expandAll).toBeEnabled();
+			await expect(collapseAll).toBeDisabled();
+			await expandAll.click();
+
+			await expect(expandAll).toBeDisabled();
+			await expect(collapseAll).toBeEnabled();
 		} finally {
 			await launched.cleanup();
 		}
