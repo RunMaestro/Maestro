@@ -1,6 +1,6 @@
 # mobile-web-bridge
 
-Status: first bridge-contract tranche committed; pending orchestrator merge
+Status: second bridge metadata/API tranche committed; pending orchestrator merge
 
 ## Scope
 
@@ -39,3 +39,31 @@ Mobile/web bridge only.
   - About 97 active scenarios remain from the 102-scenario mobile/web bridge lane target.
 - Notes:
   - No Playwright/E2E execution or `--list` command was run while authoring.
+
+### 2026-06-08 second bridge metadata/API tranche
+
+- Commit: `224eb44a7`
+- Active scenarios authored: 6
+- Skipped/env-gated scenarios authored: 0
+- Files touched:
+  - `e2e/web-mobile.spec.ts`
+  - `docs/e2e-parallel-campaign/agents/mobile-web-bridge.md`
+- Active coverage IDs:
+  - Mobile session summaries expose group metadata for grouped sessions and null group fields for ungrouped sessions.
+  - Active-tab response previews truncate to the first three mobile-safe lines while preserving full response length.
+  - Unknown `tabId` detail requests fall back to first-tab logs without leaking inactive tab output.
+  - Token summary and detail APIs are enriched with live agent session metadata and live-enabled timestamps.
+  - Session history filters take precedence over mismatched project filters and keep unrelated sessions empty.
+  - Desktop bridge client counts increment and clear as token-scoped mobile WebSocket clients connect and disconnect.
+- Checks run:
+  - `npx prettier --write e2e/web-mobile.spec.ts`
+  - `npx eslint e2e/web-mobile.spec.ts`
+  - `git diff --check -- e2e/web-mobile.spec.ts`
+  - Added-line guard scan for prohibited E2E runner/list commands.
+  - Static code-reviewer checklist review of the spec diff; no critical/high issues found.
+- Remaining lane target:
+  - About 91 active scenarios remain from the matrix-backed mobile/web bridge lane target.
+- Blockers and limitations:
+  - No Playwright/E2E execution or `--list` command was run by campaign rule.
+  - Shared helpers were not edited; `docs/e2e-parallel-campaign/broadcasts.md` was not updated.
+  - Targeted `tsc` was not rerun because the previous tranche recorded pre-existing baseline type errors in `web-mobile.spec.ts`; this tranche used ESLint, Prettier, diff whitespace, and static review only.
