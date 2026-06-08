@@ -16,6 +16,36 @@ Agent CRUD, provider setup, Agent Sessions.
 
 ## Progress
 
+### 2026-06-08 recovery tranche 2
+
+- Scope: manual fallback tranche for validation-heavy Agent CRUD/provider setup coverage.
+- Authored: 5 active deterministic Playwright scenarios.
+  - Create New Agent duplicate-name validation blocks create and clears after rename.
+  - Create New Agent same-directory warning requires explicit acknowledgment.
+  - Create New Agent unavailable OpenCode provider requires custom path while preserving args/env drafts.
+  - Edit Agent duplicate-name validation blocks save and clears after restoring the original name.
+  - Edit Agent unavailable OpenCode provider switch warning requires custom path while preserving args/env drafts.
+- Skipped/env-gated: no new rows.
+- Lane target remains: about 90 active scenarios plus fuller skipped/env-gated real-provider coverage.
+- Files touched:
+  - `e2e/agent-crud-provider.spec.ts`
+  - `docs/e2e-parallel-campaign/agents/agent-crud-provider.md`
+  - `docs/e2e-parallel-campaign/coverage-ledger.md`
+  - `docs/e2e-coverage-campaign.md`
+- Shared helpers edited: no.
+- Broadcast update required: no.
+- Checks run:
+  - `NODE_OPTIONS=--max-old-space-size=8192 npx prettier --write e2e/agent-crud-provider.spec.ts`
+  - `npx eslint e2e/agent-crud-provider.spec.ts`
+  - `npx tsc -p tsconfig.lint.json --noEmit`
+  - `git diff --check`
+  - Static scan: 890 declared E2E tests, 0 `.only`, 0 prohibited Playwright/E2E commands, 2 pre-existing duplicate titles in `e2e/app-shell.spec.ts`.
+  - Code-reviewer checklist: no blocking issues in the `agent-crud-provider` diff.
+- Commit hashes:
+  - `03961a3e7` - `test(e2e-agent-crud-provider): add provider validation coverage`
+- Blockers:
+  - E2E execution, Playwright listing, headed/UI E2E, and full E2E validation are intentionally not run under the recovery-run hard rules.
+
 ### 2026-06-08 recovery tranche 1
 
 - Scope: first coherent tranche only per capacity guard.
