@@ -165,34 +165,41 @@ function createSeedSession({
 
 async function stubProviderDetection(
 	electronApp: ElectronApplication,
-	providers: ProviderMatrixRow[] = PROVIDER_MATRIX
+	providers: ProviderMatrixRow[] = PROVIDER_MATRIX,
+	unavailableProviderIds: ProviderMatrixRow['id'][] = []
 ) {
-	await electronApp.evaluate(({ ipcMain }, rows) => {
-		const capabilities = { supportsBatchMode: true, supportsModelSelection: false };
-		const agents = rows.map((row) => ({
-			id: row.id,
-			name: row.displayName,
-			binaryName: row.binaryName,
-			command: row.command,
-			args: [],
-			available: true,
-			path: row.customPath,
-			capabilities,
-		}));
+	await electronApp.evaluate(
+		({ ipcMain }, payload) => {
+			const capabilities = { supportsBatchMode: true, supportsModelSelection: false };
+			const agents = payload.providers.map((row) => {
+				const available = !payload.unavailableProviderIds.includes(row.id);
+				return {
+					id: row.id,
+					name: row.displayName,
+					binaryName: row.binaryName,
+					command: row.command,
+					args: [],
+					available,
+					path: available ? row.customPath : null,
+					capabilities,
+				};
+			});
 
-		ipcMain.removeHandler('agents:detect');
-		ipcMain.handle('agents:detect', async () => agents);
-		ipcMain.removeHandler('agents:refresh');
-		ipcMain.handle('agents:refresh', async (_event, agentId: string) =>
-			agents.find((agent) => agent.id === agentId)
-		);
-		ipcMain.removeHandler('agents:getConfig');
-		ipcMain.handle('agents:getConfig', async () => ({}));
-		ipcMain.removeHandler('agents:setConfig');
-		ipcMain.handle('agents:setConfig', async () => true);
-		ipcMain.removeHandler('agents:getModels');
-		ipcMain.handle('agents:getModels', async () => []);
-	}, providers);
+			ipcMain.removeHandler('agents:detect');
+			ipcMain.handle('agents:detect', async () => agents);
+			ipcMain.removeHandler('agents:refresh');
+			ipcMain.handle('agents:refresh', async (_event, agentId: string) =>
+				agents.find((agent) => agent.id === agentId)
+			);
+			ipcMain.removeHandler('agents:getConfig');
+			ipcMain.handle('agents:getConfig', async () => ({}));
+			ipcMain.removeHandler('agents:setConfig');
+			ipcMain.handle('agents:setConfig', async () => true);
+			ipcMain.removeHandler('agents:getModels');
+			ipcMain.handle('agents:getModels', async () => []);
+		},
+		{ providers, unavailableProviderIds }
+	);
 }
 
 async function stubCodexAgentSessionStorage(electronApp: ElectronApplication, projectPath: string) {
@@ -347,6 +354,10 @@ async function openCreateAgentDialog(window: Page) {
 	return dialog;
 }
 
+function escapeRegExp(value: string) {
+	return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 async function openAgentSessions(window: Page, agentName: string) {
 	const quickActionsDialog = window.getByRole('dialog', { name: 'Quick Actions' });
 	for (let attempt = 0; attempt < 3; attempt++) {
@@ -364,6 +375,31 @@ async function openAgentSessions(window: Page, agentName: string) {
 	await expect(quickActionsDialog).toBeHidden();
 	await expect(window.getByText(`Agent Sessions for ${agentName}`)).toBeVisible();
 	return window;
+}
+
+async function openEditAgentDialog(window: Page, agentName: string) {
+	const sessionList = window.locator('[data-tour="session-list"]');
+	await sessionList.getByText(agentName, { exact: true }).click();
+
+	const quickActionsDialog = window.getByRole('dialog', { name: 'Quick Actions' });
+	for (let attempt = 0; attempt < 3; attempt++) {
+		if (await quickActionsDialog.isVisible().catch(() => false)) break;
+		await window.bringToFront();
+		await window.keyboard.press('Meta+K');
+		await quickActionsDialog.waitFor({ state: 'visible', timeout: 1000 }).catch(() => undefined);
+	}
+	await expect(quickActionsDialog).toBeVisible();
+	await quickActionsDialog
+		.getByPlaceholder('Type a command or jump to agent...')
+		.fill('Edit Agent');
+	await quickActionsDialog
+		.getByRole('button', { name: new RegExp(`Edit Agent: ${escapeRegExp(agentName)}`) })
+		.click();
+
+	await expect(quickActionsDialog).toBeHidden();
+	const dialog = window.getByRole('dialog', { name: `Edit Agent: ${agentName}` });
+	await expect(dialog).toBeVisible();
+	return dialog;
 }
 
 test.describe('Agent CRUD provider setup matrix', () => {
@@ -401,6 +437,115 @@ test.describe('Agent CRUD provider setup matrix', () => {
 			}
 		});
 	}
+
+	test('blocks Create New Agent when the requested name already exists', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+		const newProjectDir = path.join(seeded.homeDir, 'duplicate-name-project');
+		fs.mkdirSync(newProjectDir, { recursive: true });
+
+		try {
+			await stubProviderDetection(launched.electronApp);
+
+			const createAgentDialog = await openCreateAgentDialog(launched.window);
+			await createAgentDialog.getByRole('option', { name: /Codex/ }).click();
+			await createAgentDialog.getByLabel('Agent Name').fill('Matrix Codex Agent');
+			await createAgentDialog.getByLabel('Working Directory').fill(newProjectDir);
+
+			await expect(
+				createAgentDialog.getByText('An agent named "Matrix Codex Agent" already exists')
+			).toBeVisible();
+			await expect(createAgentDialog.getByRole('button', { name: 'Create Agent' })).toBeDisabled();
+
+			await createAgentDialog.getByLabel('Agent Name').fill('Matrix Codex Agent Copy');
+			await expect(
+				createAgentDialog.getByText('An agent named "Matrix Codex Agent" already exists')
+			).toBeHidden();
+			await expect(createAgentDialog.getByRole('button', { name: 'Create Agent' })).toBeEnabled();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('requires directory-conflict acknowledgment before creating a colocated agent', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubProviderDetection(launched.electronApp);
+
+			const createAgentDialog = await openCreateAgentDialog(launched.window);
+			await createAgentDialog.getByRole('option', { name: /Codex/ }).click();
+			await createAgentDialog.getByLabel('Agent Name').fill('Matrix Codex Colocated');
+			await createAgentDialog.getByLabel('Working Directory').fill(seeded.projectDir);
+
+			await expect(
+				createAgentDialog.getByText(
+					/This directory is already used by "Matrix Codex Agent", "Matrix Claude Code Agent"/
+				)
+			).toBeVisible();
+			await expect(createAgentDialog.getByRole('button', { name: 'Create Agent' })).toBeDisabled();
+
+			await createAgentDialog.getByLabel('I understand the risk and want to proceed').check();
+			await expect(createAgentDialog.getByRole('button', { name: 'Create Agent' })).toBeEnabled();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('requires a custom path before creating an unavailable beta provider agent', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: [seeded.sessions[0]],
+		});
+		const newProjectDir = path.join(seeded.homeDir, 'opencode-unavailable-project');
+		fs.mkdirSync(newProjectDir, { recursive: true });
+
+		try {
+			await stubProviderDetection(launched.electronApp, PROVIDER_MATRIX, ['opencode']);
+
+			const createAgentDialog = await openCreateAgentDialog(launched.window);
+			await createAgentDialog.getByRole('option', { name: /OpenCode/ }).click();
+			await createAgentDialog.getByLabel('Agent Name').fill('Unavailable OpenCode Agent');
+			await createAgentDialog.getByLabel('Working Directory').fill(newProjectDir);
+
+			const createButton = createAgentDialog.getByRole('button', { name: 'Create Agent' });
+			const providerPath = createAgentDialog.getByPlaceholder('/path/to/opencode');
+			await expect(createButton).toBeDisabled();
+			await providerPath.fill('   ');
+			await expect(createButton).toBeDisabled();
+
+			await createAgentDialog
+				.getByPlaceholder('--flag value --another-flag')
+				.fill('--model provider-fallback-e2e');
+			await createAgentDialog.getByRole('button', { name: 'Add Variable' }).click();
+			await createAgentDialog.getByPlaceholder('VARIABLE_NAME').fill('OPENCODE_CREATE_E2E');
+			await createAgentDialog.getByPlaceholder('VARIABLE_NAME').blur();
+			await createAgentDialog.getByPlaceholder('value', { exact: true }).fill('enabled');
+			await expect(createButton).toBeDisabled();
+
+			await providerPath.fill('/usr/local/bin/opencode-create-e2e');
+			await expect(createButton).toBeEnabled();
+			await expect(createAgentDialog.getByPlaceholder('--flag value --another-flag')).toHaveValue(
+				'--model provider-fallback-e2e'
+			);
+			await expect(createAgentDialog.getByPlaceholder('VARIABLE_NAME')).toHaveValue(
+				'OPENCODE_CREATE_E2E'
+			);
+			await expect(createAgentDialog.getByPlaceholder('value', { exact: true })).toHaveValue(
+				'enabled'
+			);
+		} finally {
+			await launched.cleanup();
+		}
+	});
 });
 
 test.describe('Agent CRUD lifecycle', () => {
@@ -485,6 +630,85 @@ test.describe('Agent CRUD lifecycle', () => {
 			await expect(
 				sessionList.getByText('Matrix Factory Droid Agent', { exact: true })
 			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('blocks Edit Agent save when the renamed agent duplicates another provider row', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubProviderDetection(launched.electronApp);
+
+			const editAgentDialog = await openEditAgentDialog(launched.window, 'Matrix Codex Agent');
+			await editAgentDialog.getByLabel('Agent Name').fill('Matrix OpenCode Agent');
+
+			await expect(
+				editAgentDialog.getByText('An agent named "Matrix OpenCode Agent" already exists')
+			).toBeVisible();
+			await expect(editAgentDialog.getByRole('button', { name: 'Save Changes' })).toBeDisabled();
+
+			await editAgentDialog.getByLabel('Agent Name').fill('Matrix Codex Agent');
+			await expect(
+				editAgentDialog.getByText('An agent named "Matrix OpenCode Agent" already exists')
+			).toBeHidden();
+			await expect(editAgentDialog.getByRole('button', { name: 'Save Changes' })).toBeEnabled();
+			await editAgentDialog.getByRole('button', { name: 'Cancel' }).click();
+			await expect(editAgentDialog).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('keeps Edit Agent provider-switch drafts disabled until fallback path is provided', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubProviderDetection(launched.electronApp, PROVIDER_MATRIX, ['opencode']);
+
+			const editAgentDialog = await openEditAgentDialog(launched.window, 'Matrix Codex Agent');
+			const saveButton = editAgentDialog.getByRole('button', { name: 'Save Changes' });
+
+			await editAgentDialog.getByRole('combobox').selectOption('opencode');
+			await expect(
+				editAgentDialog.getByText(/Changing the provider will clear your session list/)
+			).toBeVisible();
+			await expect(editAgentDialog.getByText('OpenCode Settings')).toBeVisible();
+
+			const providerPath = editAgentDialog.getByPlaceholder('/path/to/opencode');
+			await expect(saveButton).toBeDisabled();
+			await providerPath.fill('   ');
+			await expect(saveButton).toBeDisabled();
+
+			await editAgentDialog
+				.getByPlaceholder('--flag value --another-flag')
+				.fill('--model edit-provider-fallback-e2e');
+			await editAgentDialog.getByRole('button', { name: 'Add Variable' }).click();
+			await editAgentDialog.getByPlaceholder('VARIABLE_NAME').fill('OPENCODE_EDIT_E2E');
+			await editAgentDialog.getByPlaceholder('VARIABLE_NAME').blur();
+			await editAgentDialog.getByPlaceholder('value', { exact: true }).fill('draft');
+			await expect(saveButton).toBeDisabled();
+
+			await providerPath.fill('/usr/local/bin/opencode-edit-e2e');
+			await expect(saveButton).toBeEnabled();
+			await expect(editAgentDialog.getByPlaceholder('--flag value --another-flag')).toHaveValue(
+				'--model edit-provider-fallback-e2e'
+			);
+			await expect(editAgentDialog.getByPlaceholder('VARIABLE_NAME')).toHaveValue(
+				'OPENCODE_EDIT_E2E'
+			);
+			await expect(editAgentDialog.getByPlaceholder('value', { exact: true })).toHaveValue('draft');
+			await editAgentDialog.getByRole('button', { name: 'Cancel' }).click();
+			await expect(editAgentDialog).toBeHidden();
 		} finally {
 			await launched.cleanup();
 		}
