@@ -148,11 +148,19 @@ describe('CodeFence', () => {
 				await Promise.resolve();
 			});
 
-			// Detection fired far fewer times than the number of streamed updates
-			// (it would be ~6 without debouncing). The exact count depends on the
-			// async detection chain, so we only assert it stayed bounded.
-			expect(callsWhileStreaming).toBeLessThanOrEqual(2);
-			expect(mockHighlightAuto.mock.calls.length).toBeLessThanOrEqual(3);
+			// With debouncing intact, detection does NOT fire per streamed update.
+			// The 5 mid-stream rerenders all land inside the 150ms debounce window
+			// (only 20ms is advanced between each), so `debouncedCode` never changes
+			// and the detection effect never re-runs. At most the initial mount
+			// detection is in flight here. Without debouncing this would be ~5-6
+			// (one detection per streamed character), so this bound is what catches
+			// a broken/removed debounce.
+			expect(callsWhileStreaming).toBeLessThanOrEqual(1);
+			// After the debounce settles, detection runs exactly once more against
+			// the final snapshot. Total is therefore the single mount detection plus
+			// that one settling detection = 2. (It would be ~6 if detection fired
+			// per character.)
+			expect(mockHighlightAuto.mock.calls.length).toBeLessThanOrEqual(2);
 		} finally {
 			vi.useRealTimers();
 		}
