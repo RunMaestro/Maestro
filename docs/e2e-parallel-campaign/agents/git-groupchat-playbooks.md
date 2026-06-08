@@ -1,6 +1,6 @@
 # git-groupchat-playbooks
 
-Status: third tranche authored
+Status: fourth recovery tranche authored
 
 ## Scope
 
@@ -16,6 +16,7 @@ OpenSpec.
 - [x] Commit first tranche on `codex/e2e-git-groupchat-playbooks`.
 - [x] Commit second tranche on `codex/e2e-git-groupchat-playbooks`.
 - [x] Commit third tranche on `codex/e2e-git-groupchat-playbooks`.
+- [x] Commit fourth recovery tranche on `codex/e2e-git-groupchat-playbooks`.
 
 ## Progress
 
@@ -94,9 +95,42 @@ Third tranche:
   - `npx eslint e2e/git-groupchat-playbooks.spec.ts`
   - `git diff --check`
 
+Fourth recovery tranche:
+
+- Extended `e2e/git-groupchat-playbooks.spec.ts`.
+- Active scenarios added: 7 (`GGP-A19` through `GGP-A25`).
+- Skipped/env-gated rows added: 2 (`GGP-S06` through `GGP-S07`).
+- Cumulative active scenarios authored in this lane: 25.
+- Cumulative skipped/env-gated scenarios authored in this lane: 7.
+- Matrix-backed active scenarios still remaining: 338.
+- Files touched:
+  - `e2e/git-groupchat-playbooks.spec.ts`
+  - `docs/e2e-parallel-campaign/agents/git-groupchat-playbooks.md`
+- Coverage added:
+  - Git Log commit refs, body, file stats, and parsed diff preview.
+  - GitHub CLI missing-install guidance in Create Pull Request.
+  - Create Pull Request failure state with stubbed gh error/link rendering.
+  - Playbook Exchange category/search filtering.
+  - Marketplace import target-folder validation.
+  - Spec Kit metadata refresh from IPC stubs.
+  - OpenSpec metadata refresh from IPC stubs.
+- Skipped/env-gated blockers:
+  - Live multi-agent group chat fan-in requires provider accounts and real agent
+    launches.
+  - Live Spec Kit/OpenSpec refresh requires GitHub network access.
+- Shared helper edits: none; `broadcasts.md` unchanged.
+- Live GitHub, Gist publishing, marketplace network, SSH remote, provider,
+  headed/UI E2E, Playwright list, and full E2E execution: none.
+- Commit: `06cbac9f3`.
+- Validation passed:
+  - `npx eslint e2e/git-groupchat-playbooks.spec.ts`
+  - `git diff --check`
+
 Remaining work:
 
 - Expand remaining Git diff/log details, PR failure variants, Gist modal coverage,
   group chat mutation/history, marketplace import/export edge cases, and
   Spec Kit/OpenSpec refresh/failure matrices.
+- Continue from 338 remaining matrix-backed active scenarios after this recovery
+  tranche.
 - Run actual Playwright/E2E validation only after orchestrator approval.
