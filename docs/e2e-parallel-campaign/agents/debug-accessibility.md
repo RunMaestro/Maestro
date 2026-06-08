@@ -1,6 +1,6 @@
 # debug-accessibility
 
-Status: twenty-seventh fallback tranche authored
+Status: twenty-eighth fallback tranche authored
 
 ## Scope
 
@@ -9,9 +9,9 @@ accessibility smoke.
 
 ## Campaign Head
 
-- Ledger head before this tranche: `fe4b16a8b`.
-- Implementation commit: `8c5706ee9`.
-- Coverage ledger before this tranche: 131 active scenarios accepted, 61
+- Ledger head before this tranche: `5a8ed8696`.
+- Implementation commit: `cd485eda6`.
+- Coverage ledger before this tranche: 136 active scenarios accepted, 56
   matrix-backed scenarios remaining.
 
 ## Checklist
@@ -25,13 +25,14 @@ accessibility smoke.
 
 ## Progress
 
-- Added matrix-backed Quick Actions debug visibility, keyboard-selection, and
-  external shell routing scenarios `DA-132` through `DA-136`.
+- Added matrix-backed Quick Actions command-routing scenarios `DA-137` through
+  `DA-141` for Settings, theme-tab, global environment settings,
+  documentation shell routing, and Discord shell routing.
 - Active scenarios added this tranche: 5.
-- Active scenarios authored in lane total: 136.
+- Active scenarios authored in lane total: 141.
 - Skipped/product-gap scenarios added this tranche: 0.
 - Env-gated scenarios added this tranche: 0.
-- Matrix-backed remaining after orchestrator ledger acceptance: 56.
+- Matrix-backed remaining after orchestrator ledger acceptance: 51.
 
 Files touched:
 
@@ -46,8 +47,9 @@ Validation passed:
 - `NODE_OPTIONS=--max-old-space-size=8192 npx prettier --write e2e/debug-accessibility.spec.ts docs/e2e-parallel-campaign/agents/debug-accessibility.md docs/e2e-parallel-campaign/coverage-ledger.md docs/e2e-coverage-campaign.md`
 - `NODE_OPTIONS=--max-old-space-size=8192 npx tsc -p tsconfig.lint.json --noEmit`
 - `git diff --check`
-- Static inventory scan reports 1100 declared E2E tests, no `.only`, no
-  prohibited commands, and no duplicate campaign scenario IDs.
+- Static inventory scan reports 1105 declared E2E tests, 1099 active
+  declarations, 6 skipped/env-gated declarations, no `.only`, no prohibited
+  commands, and no duplicate campaign scenario IDs.
 
 Blockers:
 
@@ -58,4 +60,4 @@ Blockers:
 Remaining work:
 
 - Debug/about/update/app-info/agent-error modal scenarios are complete.
-- 56 accessibility smoke and destructive-action confirmation scenarios remain.
+- 51 accessibility smoke and destructive-action confirmation scenarios remain.
