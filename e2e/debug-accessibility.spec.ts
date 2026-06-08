@@ -67,6 +67,14 @@ const eighthTrancheActiveScenarioMatrix = [
 	{ id: 'DA-041', title: 'shows generic recovery for unknown agent errors' },
 ] as const;
 
+const ninthTrancheActiveScenarioMatrix = [
+	{ id: 'DA-042', title: 'toggles active error JSON details closed after expanding' },
+	{ id: 'DA-043', title: 'omits JSON detail controls when structured details are unavailable' },
+	{ id: 'DA-044', title: 'closes recoverable error details from the modal header' },
+	{ id: 'DA-045', title: 'closes recoverable error details with Escape' },
+	{ id: 'DA-046', title: 'hides the header close control for non-recoverable errors' },
+] as const;
+
 const debugPackagePreviewCategories = [
 	{ id: 'logs', name: 'System Logs', included: true, sizeEstimate: '~50 KB' },
 	{ id: 'errors', name: 'Error States', included: true, sizeEstimate: '< 10 KB' },
@@ -1508,6 +1516,117 @@ test.describe('Debug and accessibility smoke tranche', () => {
 			).toBeVisible();
 			await expect(errorModal.getByText('Try Again')).toBeVisible();
 			await expect(errorModal.getByRole('button', { name: 'Dismiss' })).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${ninthTrancheActiveScenarioMatrix[0].id} ${ninthTrancheActiveScenarioMatrix[0].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench({
+			agentError: {
+				type: 'network_error',
+				message: 'Debug accessibility JSON toggle sentinel',
+				recoverable: true,
+			},
+		});
+		try {
+			await launched.window.getByRole('button', { name: 'View Details' }).click();
+			const errorModal = launched.window.getByRole('dialog', { name: 'Connection Error' });
+			const detailsToggle = errorModal.getByRole('button', { name: 'Error Details (JSON)' });
+
+			await detailsToggle.click();
+			await expect(errorModal.getByText('debug_accessibility_active_error')).toBeVisible();
+			await detailsToggle.click();
+			await expect(errorModal.getByText('debug_accessibility_active_error')).toHaveCount(0);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${ninthTrancheActiveScenarioMatrix[1].id} ${ninthTrancheActiveScenarioMatrix[1].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench({
+			agentError: {
+				type: 'network_error',
+				message: 'Debug accessibility unstructured error sentinel',
+				recoverable: true,
+				parsedJson: undefined,
+			},
+		});
+		try {
+			await launched.window.getByRole('button', { name: 'View Details' }).click();
+			const errorModal = launched.window.getByRole('dialog', { name: 'Connection Error' });
+
+			await expect(
+				errorModal.getByText('Debug accessibility unstructured error sentinel')
+			).toBeVisible();
+			await expect(errorModal.getByRole('button', { name: 'Error Details (JSON)' })).toHaveCount(0);
+			await expect(errorModal.getByText('Retry Connection')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${ninthTrancheActiveScenarioMatrix[2].id} ${ninthTrancheActiveScenarioMatrix[2].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench({
+			agentError: {
+				type: 'network_error',
+				message: 'Debug accessibility header close sentinel',
+				recoverable: true,
+			},
+		});
+		try {
+			await launched.window.getByRole('button', { name: 'View Details' }).click();
+			const errorModal = launched.window.getByRole('dialog', { name: 'Connection Error' });
+			await expect(errorModal).toBeVisible();
+
+			await errorModal.getByRole('button', { name: 'Close modal' }).click();
+			await expect(errorModal).toBeHidden();
+			await expect(
+				launched.window.getByText('Debug accessibility header close sentinel')
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${ninthTrancheActiveScenarioMatrix[3].id} ${ninthTrancheActiveScenarioMatrix[3].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench({
+			agentError: {
+				type: 'network_error',
+				message: 'Debug accessibility escape close sentinel',
+				recoverable: true,
+			},
+		});
+		try {
+			await launched.window.getByRole('button', { name: 'View Details' }).click();
+			const errorModal = launched.window.getByRole('dialog', { name: 'Connection Error' });
+			await expect(errorModal).toBeVisible();
+
+			await launched.window.keyboard.press('Escape');
+			await expect(errorModal).toBeHidden();
+			await expect(
+				launched.window.getByText('Debug accessibility escape close sentinel')
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${ninthTrancheActiveScenarioMatrix[4].id} ${ninthTrancheActiveScenarioMatrix[4].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench({
+			agentError: {
+				type: 'permission_denied',
+				message: 'Debug accessibility locked modal sentinel',
+				recoverable: false,
+			},
+		});
+		try {
+			await launched.window.getByRole('button', { name: 'View Details' }).click();
+			const errorModal = launched.window.getByRole('dialog', { name: 'Permission Denied' });
+
+			await expect(errorModal.getByText('Debug accessibility locked modal sentinel')).toBeVisible();
+			await expect(errorModal.getByRole('button', { name: 'Close modal' })).toHaveCount(0);
+			await expect(errorModal.getByRole('button', { name: 'Dismiss' })).toHaveCount(0);
 		} finally {
 			await launched.cleanup();
 		}
