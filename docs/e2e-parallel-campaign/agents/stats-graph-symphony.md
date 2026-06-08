@@ -1,6 +1,6 @@
 # stats-graph-symphony
 
-Status: in progress
+Status: second tranche committed
 
 ## Scope
 
