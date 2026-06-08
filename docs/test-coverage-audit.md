@@ -34,21 +34,21 @@ Parallel E2E authoring checkpoint:
 
 - Campaign: `docs/e2e-parallel-prompt.md`
 - Result: in progress
-- Current authoring progress: 938 / 3,025 active scenarios after accepting the
-  seventeenth-tranche wizard/settings/prompts fallback through `d3c251829`. This
-  tranche added 5 active Settings Display local file indexing and context warning
-  rows without adding skipped or env-gated rows.
+- Current authoring progress: 943 / 3,025 active scenarios after accepting the
+  eighteenth-tranche mobile/web bridge fallback through `d7ccdd3d4`. This
+  tranche added 5 active token API, theme, Auto Run WebSocket, subscription
+  scoping, and server lifecycle rows without adding skipped or env-gated rows.
 - Accepted lanes so far: `shell-tabs-command`, `agent-crud-provider`,
   `files-docs-history`, `mobile-web-bridge`, `autorun-ai-terminal`,
   `wizard-settings-prompts`, `stats-graph-symphony`, `debug-accessibility`,
   `fixtures-sharding-review`, and `git-groupchat-playbooks`.
 - Execution policy: Playwright E2E tests are intentionally not executed in this phase.
 - Validation plan: static review of authored selectors, fixtures, scenario names, assertions, and lane progress logs; runtime validation is deferred to a later sharded execution phase.
-- Latest static validation: Prettier, lane-local ESLint, `tsconfig.lint.json`,
-  scenario-ID duplicate, `.only`, and `git diff --check` checks passed for the
-  `wizard-settings-prompts` fallback before merge; focused static review passed
-  after fixing Local Ignore Patterns and context warning slider selector scope. No
-  Playwright/E2E/listing command was run.
+- Latest static validation: Prettier, explicit main-config ESLint,
+  duplicate scenario-name scan, `.only`, added-spec-line prohibited-command
+  guard, `git diff --check`, and targeted TypeScript new-line filtering passed
+  for the `mobile-web-bridge` fallback before merge; focused static review found
+  no critical or high issues. No Playwright/E2E/listing command was run.
 
 Integration checkpoint:
 
