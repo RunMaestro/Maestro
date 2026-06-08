@@ -1,6 +1,6 @@
 # wizard-settings-prompts
 
-Status: tranche 12 fallback committed
+Status: tranche 13 fallback committed
 
 ## Scope
 
@@ -361,3 +361,35 @@ New Agent Wizard, inline wizard, Settings, Director Notes, prompt composer.
 - Blockers/remaining work:
   - Real provider account and live agent handoff coverage remains env-gated.
   - Remaining matrix-backed target: about 307 active/skipped rows after this tranche.
+
+### 2026-06-08 tranche 13 fallback
+
+- Scope: compact persistent-worker tranche in the current lane worktree.
+- Authored: 6 additional active deterministic Playwright scenarios.
+  - Settings AI Commands blocks duplicate custom command creation.
+  - Settings AI Commands deletes a seeded custom command.
+  - Settings General rejects invalid global environment variable names.
+  - Settings General removes a global environment variable.
+  - Director's Notes adjusts the default lookback period.
+  - Prompt Composer opens from the keyboard shortcut.
+- Cumulative lane-authored coverage: 71 active deterministic scenarios, 1 env-gated scenario.
+- Skipped/env-gated: no new rows; total remains 1 provider-account handoff placeholder.
+- Files touched:
+  - `e2e/wizard-settings-prompts.spec.ts`
+  - `docs/e2e-parallel-campaign/agents/wizard-settings-prompts.md`
+  - `docs/e2e-parallel-campaign/coverage-ledger.md`
+  - `docs/e2e-coverage-campaign.md`
+- Shared helpers edited: no.
+- Validation run:
+  - `NODE_OPTIONS=--max-old-space-size=8192 npx prettier --write e2e/wizard-settings-prompts.spec.ts` - passed.
+  - `NODE_OPTIONS=--max-old-space-size=8192 npx eslint e2e/wizard-settings-prompts.spec.ts` - passed.
+  - `NODE_OPTIONS=--max-old-space-size=8192 npx tsc -p tsconfig.lint.json --noEmit` - passed.
+  - Static scenario-ID/`.only`/prohibited-command scan - passed with 71 active rows, 71 active tests, 1 env-gated row, no duplicate IDs, and no `.only`.
+  - `git diff --check -- e2e/wizard-settings-prompts.spec.ts` - passed.
+- Review:
+  - Focused static code-reviewer checklist found one weak invalid-env assertion and tightened it before commit; no critical or high-severity issues remain.
+- Not run by instruction: `npm run test:e2e`, `playwright test`, headed/UI E2E, and Playwright listing.
+- Implementation commit hash: `02b18b88c`.
+- Blockers/remaining work:
+  - Real provider account and live agent handoff coverage remains env-gated.
+  - Remaining matrix-backed target: about 301 active/skipped rows after this tranche.
