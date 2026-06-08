@@ -92,6 +92,11 @@ const activeScenarioMatrix = [
 	{ id: 'WSP-052', title: 'toggles Settings local file indexing gitignore honor' },
 	{ id: 'WSP-053', title: 'toggles Settings context window warnings' },
 	{ id: 'WSP-054', title: 'adjusts Settings context warning thresholds' },
+	{ id: 'WSP-055', title: 'persists Settings max output lines selection' },
+	{ id: 'WSP-056', title: 'persists Settings user message alignment' },
+	{ id: 'WSP-057', title: 'toggles Settings native title bar preference' },
+	{ id: 'WSP-058', title: 'toggles Settings confetti animation preference' },
+	{ id: 'WSP-059', title: 'toggles Settings update checks on startup' },
 ];
 
 const envGatedScenarioMatrix = [
@@ -1785,6 +1790,153 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 					contextWarningYellowThreshold: 80,
 					contextWarningRedThreshold: 90,
 				});
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[54].id} ${activeScenarioMatrix[54].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				maxOutputLines: 25,
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'Display',
+				'Max Output Lines per Response'
+			);
+			const maxOutputSection = settingsDialog
+				.getByText('Max Output Lines per Response')
+				.locator('xpath=ancestor::div[.//button[normalize-space(.)="100"]][1]');
+			await maxOutputSection.getByRole('button', { name: '100' }).click();
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('maxOutputLines');
+					});
+				})
+				.toBe(100);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[55].id} ${activeScenarioMatrix[55].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				userMessageAlignment: 'right',
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'Display',
+				'User Message Alignment'
+			);
+			const alignmentSection = settingsDialog
+				.getByText('User Message Alignment')
+				.locator('xpath=ancestor::div[.//button[normalize-space(.)="Left"]][1]');
+			await alignmentSection.getByRole('button', { name: 'Left' }).click();
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('userMessageAlignment');
+					});
+				})
+				.toBe('left');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[56].id} ${activeScenarioMatrix[56].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				useNativeTitleBar: false,
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(launched.window, 'Display', 'Window Chrome');
+			const nativeTitleBarRow = settingsDialog
+				.getByText('Use native title bar')
+				.locator('xpath=ancestor::div[contains(@class, "flex")][1]');
+			await nativeTitleBarRow.getByRole('switch').click();
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('useNativeTitleBar');
+					});
+				})
+				.toBe(true);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[57].id} ${activeScenarioMatrix[57].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				disableConfetti: false,
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(launched.window, 'General', 'Rendering Options');
+			await settingsDialog.getByRole('switch', { name: 'Disable confetti animations' }).click();
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('disableConfetti');
+					});
+				})
+				.toBe(true);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[58].id} ${activeScenarioMatrix[58].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				checkForUpdatesOnStartup: true,
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(launched.window, 'General', 'Updates');
+			await settingsDialog.getByText('Check for updates on startup').click();
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('checkForUpdatesOnStartup');
+					});
+				})
+				.toBe(false);
 		} finally {
 			await launched.cleanup();
 		}
