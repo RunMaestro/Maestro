@@ -33,6 +33,11 @@ const activeScenarioMatrix = [
 	{ id: 'SGS-A20', title: 'opens Document Graph help legend shortcut and mouse guidance' },
 	{ id: 'SGS-A21', title: 'shows Symphony empty project issue states' },
 	{ id: 'SGS-A22', title: 'reviews Symphony completed contribution summary details' },
+	{ id: 'SGS-A23', title: 'toggles Usage Dashboard activity heatmap metric modes' },
+	{ id: 'SGS-A24', title: 'reads Usage Dashboard provider comparison accessibility data' },
+	{ id: 'SGS-A25', title: 'opens the Symphony help popover from the modal header' },
+	{ id: 'SGS-A26', title: 'reviews Symphony stats cards and achievement progress' },
+	{ id: 'SGS-A27', title: 'handles mocked leaderboard submission failure messaging' },
 ] as const;
 
 const skippedScenarioMatrix = [
@@ -71,6 +76,21 @@ const envGatedScenarioMatrix = [
 		reason: 'Env-gated: requires live leaderboard backend, confirmed email, and auth token.',
 	},
 ] as const;
+
+type StatsBridge = {
+	recordSessionCreated: (payload: Record<string, unknown>) => Promise<void>;
+	recordSessionClosed: (sessionId: string, closedAt: number) => Promise<void>;
+	recordQuery: (payload: Record<string, unknown>) => Promise<void>;
+	startAutoRun: (payload: Record<string, unknown>) => Promise<string>;
+	recordAutoTask: (payload: Record<string, unknown>) => Promise<void>;
+	endAutoRun: (autoRunSessionId: string, duration: number, tasksCompleted: number) => Promise<void>;
+};
+
+type MaestroStatsGlobal = typeof globalThis & {
+	maestro: {
+		stats: StatsBridge;
+	};
+};
 
 function createStatsGraphSymphonyWorkbench() {
 	const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-e2e-stats-graph-symphony-'));
@@ -205,15 +225,16 @@ async function seedStats(
 	await page.evaluate(
 		async ({ projectDir, sessionId }) => {
 			const baseTime = Date.parse('2026-05-29T12:00:00.000Z');
-			await window.maestro.stats.recordSessionCreated({
+			const { stats } = (globalThis as MaestroStatsGlobal).maestro;
+			await stats.recordSessionCreated({
 				sessionId,
 				agentType: 'codex',
 				projectPath: projectDir,
 				createdAt: baseTime - 3_600_000,
 				isRemote: false,
 			});
-			await window.maestro.stats.recordSessionClosed(sessionId, baseTime);
-			await window.maestro.stats.recordQuery({
+			await stats.recordSessionClosed(sessionId, baseTime);
+			await stats.recordQuery({
 				sessionId,
 				agentType: 'codex',
 				source: 'user',
@@ -223,7 +244,7 @@ async function seedStats(
 				tabId: 'sgs-user-query',
 				isRemote: false,
 			});
-			await window.maestro.stats.recordQuery({
+			await stats.recordQuery({
 				sessionId,
 				agentType: 'codex',
 				source: 'auto',
@@ -233,7 +254,7 @@ async function seedStats(
 				tabId: 'sgs-auto-query',
 				isRemote: false,
 			});
-			const autoRunId = await window.maestro.stats.startAutoRun({
+			const autoRunId = await stats.startAutoRun({
 				sessionId,
 				agentType: 'codex',
 				documentPath: `${projectDir}/docs/RUNBOOK.md`,
@@ -243,7 +264,7 @@ async function seedStats(
 				tasksCompleted: 2,
 				projectPath: projectDir,
 			});
-			await window.maestro.stats.recordAutoTask({
+			await stats.recordAutoTask({
 				autoRunSessionId: autoRunId,
 				sessionId,
 				agentType: 'codex',
@@ -253,7 +274,7 @@ async function seedStats(
 				duration: 60_000,
 				success: true,
 			});
-			await window.maestro.stats.endAutoRun(autoRunId, 180_000, 2);
+			await stats.endAutoRun(autoRunId, 180_000, 2);
 		},
 		{ projectDir: workbench.projectDir, sessionId: workbench.sessionId }
 	);
@@ -643,7 +664,8 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 
 		await window.evaluate(
 			async ({ projectDir, sessionId }) => {
-				await window.maestro.stats.recordQuery({
+				const { stats } = (globalThis as MaestroStatsGlobal).maestro;
+				await stats.recordQuery({
 					sessionId,
 					agentType: 'codex',
 					source: 'user',
@@ -999,6 +1021,100 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 		await expect(symphonyDialog.getByText('Tokens')).toBeVisible();
 		await expect(symphonyDialog.getByText('Cost')).toBeVisible();
 		await expect(symphonyDialog.getByText('$4.56')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[22].id} ${activeScenarioMatrix[22].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await usageDashboard.getByRole('tab', { name: 'Activity' }).click();
+		const activityHeatmap = usageDashboard.getByTestId('section-activity-heatmap');
+		await activityHeatmap.scrollIntoViewIfNeeded();
+
+		await expect(
+			activityHeatmap.getByRole('figure', { name: /query activity over/i })
+		).toBeVisible();
+		await activityHeatmap.getByLabel('Show total duration').click();
+		await expect(activityHeatmap.getByRole('figure', { name: /duration over/i })).toBeVisible();
+		await expect(
+			activityHeatmap.getByRole('list', { name: 'Activity intensity scale from less to more' })
+		).toBeVisible();
+		await expect(
+			activityHeatmap.getByRole('listitem', { name: 'Intensity level 4: High activity' })
+		).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[23].id} ${activeScenarioMatrix[23].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await usageDashboard.getByRole('tab', { name: 'Agents' }).click();
+		const agentComparison = usageDashboard.getByTestId('section-agent-comparison').first();
+		await agentComparison.scrollIntoViewIfNeeded();
+
+		await expect(
+			agentComparison.getByRole('figure', { name: /Provider comparison chart/i })
+		).toBeVisible();
+		await expect(agentComparison.getByRole('list', { name: 'Agent usage data' })).toBeVisible();
+		await expect(
+			agentComparison.getByRole('listitem', { name: /codex: \d+ queries/i })
+		).toBeVisible();
+		await expect(
+			agentComparison.getByRole('meter', { name: /codex usage percentage/i })
+		).toBeVisible();
+		await expect(agentComparison.getByRole('list', { name: 'Chart legend' })).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[24].id} ${activeScenarioMatrix[24].title}`, async () => {
+		const symphonyDialog = await openSymphonyFromQuickActions(window);
+
+		await symphonyDialog.getByLabel('Help').click();
+
+		await expect(symphonyDialog.getByText('About Maestro Symphony').last()).toBeVisible();
+		await expect(
+			symphonyDialog.getByText('Symphony connects Maestro users with open source projects')
+		).toBeVisible();
+		await expect(symphonyDialog.getByText('runmaestro.ai')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[25].id} ${activeScenarioMatrix[25].title}`, async () => {
+		const symphonyDialog = await openSymphonyFromQuickActions(window);
+
+		await symphonyDialog.getByRole('button', { name: 'Stats' }).click();
+
+		await expect(symphonyDialog.getByText('Tokens Donated')).toBeVisible();
+		await expect(symphonyDialog.getByText('1.5M')).toBeVisible();
+		await expect(symphonyDialog.getByText('Worth $12.34')).toBeVisible();
+		await expect(symphonyDialog.getByText('Time Contributed')).toBeVisible();
+		await expect(symphonyDialog.getByText('2h 0m')).toBeVisible();
+		await expect(symphonyDialog.getByText('2 repositories')).toBeVisible();
+		await expect(symphonyDialog.getByText('Streak')).toBeVisible();
+		await expect(symphonyDialog.getByText('2 weeks')).toBeVisible();
+		await expect(symphonyDialog.getByText('Best: 7 weeks')).toBeVisible();
+		await expect(symphonyDialog.getByText('First Steps')).toBeVisible();
+		await expect(symphonyDialog.getByText('Merged Melody')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[26].id} ${activeScenarioMatrix[26].title}`, async () => {
+		await electronApp.evaluate(({ ipcMain }) => {
+			ipcMain.removeHandler('leaderboard:submit');
+			ipcMain.handle('leaderboard:submit', async () => ({
+				success: false,
+				error: 'Leaderboard unavailable for SGS fallback',
+			}));
+		});
+
+		const aboutDialog = await openAboutFromQuickActions(window);
+		await aboutDialog.getByRole('button', { name: /Join Leaderboard/ }).click();
+
+		const leaderboardDialog = window.getByRole('dialog', { name: 'Register for Leaderboard' });
+		await leaderboardDialog.getByPlaceholder('ConductorPedram').fill('Error Conductor');
+		await leaderboardDialog.getByPlaceholder('conductor@maestro.ai').fill('error@example.com');
+		await leaderboardDialog.getByPlaceholder('username').first().fill('error-conductor');
+		await leaderboardDialog.getByRole('button', { name: 'Push Up' }).click();
+
+		await expect(
+			leaderboardDialog.getByText('Leaderboard unavailable for SGS fallback')
+		).toBeVisible();
+		await expect(leaderboardDialog.getByRole('button', { name: 'Push Up' })).toBeEnabled();
 	});
 
 	for (const scenario of skippedScenarioMatrix) {
