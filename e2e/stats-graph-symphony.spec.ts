@@ -16,6 +16,12 @@ const activeScenarioMatrix = [
 	{ id: 'SGS-A03', title: 'opens Document Graph search and help controls from file preview' },
 	{ id: 'SGS-A04', title: 'browses Symphony projects, status tabs, and achievements' },
 	{ id: 'SGS-A05', title: 'opens About achievements and the leaderboard registration entry point' },
+	{ id: 'SGS-A06', title: 'toggles Usage Dashboard chart metric modes for seeded stats' },
+	{ id: 'SGS-A07', title: 'drills into Usage Dashboard Auto Run task and run tables' },
+	{ id: 'SGS-A08', title: 'adjusts Document Graph layout, depth, and preview controls' },
+	{ id: 'SGS-A09', title: 'syncs Symphony active contribution status controls' },
+	{ id: 'SGS-A10', title: 'previews Symphony issue documents and blocked issue messaging' },
+	{ id: 'SGS-A11', title: 'validates and submits mocked leaderboard registration details' },
 ] as const;
 
 const skippedScenarioMatrix = [
@@ -42,6 +48,11 @@ const envGatedScenarioMatrix = [
 		id: 'SGS-E02',
 		title: 'refreshes real Symphony issue status from GitHub',
 		reason: 'Env-gated: requires authenticated GitHub CLI or API access.',
+	},
+	{
+		id: 'SGS-E03',
+		title: 'confirms leaderboard email through live backend polling',
+		reason: 'Env-gated: requires live runmaestro.ai email confirmation and polling backend.',
 	},
 ] as const;
 
@@ -562,7 +573,7 @@ async function closeDocumentGraph(window: Page) {
 	await expect(window.getByRole('dialog', { name: 'Document Graph' })).toBeHidden();
 }
 
-test.describe(`Stats graph Symphony first tranche (${activeScenarioMatrix.length} active, ${skippedScenarioMatrix.length} skipped, ${envGatedScenarioMatrix.length} env-gated)`, () => {
+test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} active, ${skippedScenarioMatrix.length} skipped, ${envGatedScenarioMatrix.length} env-gated)`, () => {
 	let window: Page;
 	let electronApp: ElectronApplication;
 	let cleanupApp: (() => Promise<void>) | undefined;
@@ -679,6 +690,119 @@ test.describe(`Stats graph Symphony first tranche (${activeScenarioMatrix.length
 		await expect(leaderboardDialog.getByText('Join the global Maestro leaderboard')).toBeVisible();
 		await expect(leaderboardDialog.getByText('Your Current Stats')).toBeVisible();
 		await expect(leaderboardDialog.getByText('Total Runs:')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[5].id} ${activeScenarioMatrix[5].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await usageDashboard.locator('select').first().selectOption('all');
+
+		const sourceSection = usageDashboard.getByTestId('section-source-distribution');
+		await expect(
+			sourceSection.getByRole('figure', { name: /query counts breakdown/i })
+		).toBeVisible();
+		await sourceSection.getByRole('button', { name: 'Duration' }).click();
+		await expect(
+			sourceSection.getByRole('figure', { name: /duration breakdown/i })
+		).toBeVisible();
+		await expect(sourceSection.getByRole('list', { name: 'Chart legend' })).toBeVisible();
+
+		const locationSection = usageDashboard.getByTestId('section-location-distribution');
+		await expect(
+			locationSection.getByRole('img', { name: /Local 100\.0%/i })
+		).toBeVisible();
+		await expect(locationSection.getByText('Local')).toBeVisible();
+
+		const peakSection = usageDashboard.getByTestId('section-peak-hours');
+		await peakSection.getByRole('button', { name: 'Duration' }).click();
+		await expect(peakSection.getByText('Peak:')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[6].id} ${activeScenarioMatrix[6].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await usageDashboard.getByRole('tab', { name: 'Auto Run' }).click();
+		await expect(usageDashboard.getByTestId('section-autorun-stats')).toBeVisible();
+		await expect(usageDashboard.getByTestId('autorun-metrics')).toBeVisible();
+		await expect(usageDashboard.getByRole('group', { name: /Total Sessions/ })).toBeVisible();
+		await expect(usageDashboard.getByRole('group', { name: /Tasks Done/ })).toBeVisible();
+
+		await expect(usageDashboard.getByTestId('section-tasks-by-hour')).toBeVisible();
+		await expect(usageDashboard.getByTestId('tasks-by-hour-chart')).toBeVisible();
+		await expect(usageDashboard.getByText(/Peak hours:/)).toBeVisible();
+
+		const longestRuns = usageDashboard.getByTestId('longest-autoruns-table');
+		await expect(longestRuns).toBeVisible();
+		await expect(longestRuns.getByText('RUNBOOK.md')).toBeVisible();
+		await expect(longestRuns.getByText('2 / 3')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[7].id} ${activeScenarioMatrix[7].title}`, async () => {
+		const graphDialog = await openDocumentGraphFromPreview(window);
+
+		await graphDialog.getByTitle(/Layout: /).click();
+		await graphDialog.getByRole('button', { name: /Radial/ }).click();
+		await expect(graphDialog.getByTitle('Layout: Radial')).toBeVisible();
+
+		await graphDialog.getByText('Depth: All').click();
+		await graphDialog.locator('input[type="range"]').first().fill('2');
+		await expect(graphDialog.getByText('Showing documents within 2 links of focus')).toBeVisible();
+
+		await graphDialog.getByText(/Preview: \d+/).click();
+		await graphDialog.locator('input[type="range"]').last().fill('250');
+		await expect(graphDialog.getByText('Characters shown in document previews')).toBeVisible();
+
+		await graphDialog.getByLabel('Search documents in graph').fill('readme');
+		await expect(graphDialog.getByText('README.md')).toBeVisible();
+		await closeDocumentGraph(window);
+	});
+
+	test(`${activeScenarioMatrix[8].id} ${activeScenarioMatrix[8].title}`, async () => {
+		const symphonyDialog = await openSymphonyFromQuickActions(window);
+
+		await symphonyDialog.getByRole('button', { name: /Active \(1\)/ }).click();
+		await expect(symphonyDialog.getByText('Ready for Review')).toBeVisible();
+		await expect(symphonyDialog.getByText('Current: e2e-plan.md')).toBeVisible();
+
+		await symphonyDialog.getByTitle('Sync status with GitHub').click();
+		await expect(symphonyDialog.getByText('Contribution status synced')).toBeVisible();
+
+		await symphonyDialog.getByRole('button', { name: 'Check PR Status' }).click();
+		await expect(symphonyDialog.getByText('1 PR merged')).toBeVisible();
+		await expect(symphonyDialog.getByRole('button', { name: 'Finalize PR' })).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[9].id} ${activeScenarioMatrix[9].title}`, async () => {
+		const symphonyDialog = await openSymphonyFromQuickActions(window);
+
+		await symphonyDialog.getByRole('button', { name: /Maestro Core/ }).click();
+		await symphonyDialog.getByText('Add deterministic E2E coverage').click();
+		await expect(symphonyDialog.getByText('#42')).toBeVisible();
+		await expect(symphonyDialog.getByText('e2e-plan.md')).toBeVisible();
+		await expect(symphonyDialog.getByText('Document preview body for SGS.')).toBeVisible();
+		await expect(symphonyDialog.getByRole('button', { name: 'Start Symphony' })).toBeEnabled();
+
+		await symphonyDialog.getByText('Blocked dependency upgrade').click();
+		await expect(symphonyDialog.getByText('Blocked by a dependency')).toBeVisible();
+		await expect(symphonyDialog.getByRole('button', { name: 'Start Symphony' })).toBeDisabled();
+		await expect(symphonyDialog.getByText('Already claimed contribution')).toBeVisible();
+		await expect(symphonyDialog.getByText('Draft PR #77 by @codex-user')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[10].id} ${activeScenarioMatrix[10].title}`, async () => {
+		const aboutDialog = await openAboutFromQuickActions(window);
+		await aboutDialog.getByRole('button', { name: /Join Leaderboard/ }).click();
+
+		const leaderboardDialog = window.getByRole('dialog', { name: 'Register for Leaderboard' });
+		await leaderboardDialog.getByPlaceholder('ConductorPedram').fill('Stats Conductor');
+		await leaderboardDialog.getByPlaceholder('conductor@maestro.ai').fill('bad-email');
+		await expect(leaderboardDialog.getByText('Please enter a valid email address')).toBeVisible();
+		await expect(leaderboardDialog.getByRole('button', { name: 'Push Up' })).toBeDisabled();
+
+		await leaderboardDialog.getByPlaceholder('conductor@maestro.ai').fill('stats@example.com');
+		await leaderboardDialog.getByPlaceholder('username').first().fill('stats-conductor');
+		await leaderboardDialog.getByRole('button', { name: 'Push Up' }).click();
+		await expect(leaderboardDialog.getByText(/Profile submitted!/)).toBeVisible();
 	});
 
 	for (const scenario of skippedScenarioMatrix) {
