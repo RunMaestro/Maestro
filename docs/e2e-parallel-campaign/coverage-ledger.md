@@ -2,9 +2,9 @@
 
 Source of truth: `docs/e2e-coverage-campaign.md`.
 
-Current active tests: 1193
+Current active tests: 1198
 Target active tests: 3,025
-Remaining matrix-backed active scenarios: 1,832
+Remaining matrix-backed active scenarios: 1,827
 
 ## Matrix
 
@@ -15,9 +15,9 @@ Remaining matrix-backed active scenarios: 1,832
 | Codex AI terminal workflows                                    | `autorun-ai-terminal`     |             33 |           170 |       137 |
 | Command terminal workflows                                     | `shell-tabs-command`      |             61 |            95 |        34 |
 | Tabs and tab overlays                                          | `shell-tabs-command`      |             53 |           120 |        67 |
-| File explorer and file operations                              | `files-docs-history`      |             33 |           140 |       107 |
-| File preview and document rendering                            | `files-docs-history`      |             44 |           180 |       136 |
-| History panel                                                  | `files-docs-history`      |             26 |            95 |        69 |
+| File explorer and file operations                              | `files-docs-history`      |             34 |           140 |       106 |
+| File preview and document rendering                            | `files-docs-history`      |             46 |           180 |       134 |
+| History panel                                                  | `files-docs-history`      |             28 |            95 |        67 |
 | Auto Run                                                       | `autorun-ai-terminal`     |            134 |           260 |       126 |
 | New Agent Wizard and inline wizard                             | `wizard-settings-prompts` |             40 |           190 |       150 |
 | Settings                                                       | `wizard-settings-prompts` |             96 |           190 |        94 |
@@ -38,7 +38,7 @@ Remaining matrix-backed active scenarios: 1,832
 | -------------------------- | ----------------------: | ------------------------: | -----------------------------------: | -------------------- |
 | `agent-crud-provider`      |                       0 |                       104 |                                    2 | `563b9db6c`          |
 | `shell-tabs-command`       |                     185 |                        81 |                                    0 | `2d9975b17`          |
-| `files-docs-history`       |                     312 |                        37 |                                    5 | `b5491cd9b`          |
+| `files-docs-history`       |                     307 |                        42 |                                    5 | `18a4c3b29`          |
 | `autorun-ai-terminal`      |                     263 |                        10 |                                    0 | `cd804bebf`          |
 | `wizard-settings-prompts`  |                     313 |                        59 |                                    1 | `bb21caed1`          |
 | `git-groupchat-playbooks`  |                     313 |                        50 |                                    7 | `10ed8a71a`          |
@@ -139,3 +139,4 @@ Remaining matrix-backed active scenarios: 1,832
 - 2026-06-08: accepted manual `debug-accessibility` fallback through `8c5706ee9`; authored 5 additional active Quick Actions debug command visibility, Enter selection, number hotkey selection, and website shell-routing scenarios. No E2E execution was run.
 - 2026-06-08: accepted manual `debug-accessibility` fallback through `cd485eda6`; authored 5 additional active Quick Actions Settings, theme-tab, global environment settings, documentation shell-routing, and Discord shell-routing scenarios. No E2E execution was run.
 - 2026-06-08: accepted manual `shell-tabs-command` fallback through `2d9975b17`; authored 5 additional active command-terminal output expansion, collapsed-search expandability, clear-history draft preservation, and parent-directory cwd scenarios. Focused static review found no critical or high issues. No E2E execution was run.
+- 2026-06-08: accepted manual `files-docs-history` fallback through `18a4c3b29`; authored 5 additional active History Escape close, File Explorer Copy Path clipboard, file preview no-match recovery, and large-file full-load search scenarios. Focused static review found no critical or high issues. No E2E execution was run.

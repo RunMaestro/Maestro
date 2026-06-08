@@ -255,3 +255,39 @@ File explorer, file preview, document rendering, history.
   - Product gaps from the first tranche remain skipped until matching product controls exist.
   - External/default-app and SSH remote cases still need orchestrator-provided environment state before activation.
   - Manual fallback authoring remains the productive path while detached PM2 Codex lane workers are affected by managed-account runtime instability.
+
+### 2026-06-08 seventh recovery fallback
+
+- Spec commit: `18a4c3b29`
+- Files touched:
+  - `e2e/app-shell.spec.ts`
+  - `docs/e2e-parallel-campaign/agents/files-docs-history.md`
+- Shared helpers touched: none. `docs/e2e-parallel-campaign/broadcasts.md` did not need an update.
+- Scenario counts:
+  - Active matrix rows added: 5
+  - Skipped product-gap rows added: 0
+  - Env-gated external-state rows added: 0
+  - Total matrix rows added: 5
+  - Cumulative lane matrix rows: 42 active, 3 skipped, 2 env-gated
+- Active coverage IDs:
+  - `FDH-A38` History detail Escape close returns to the visible list
+  - `FDH-A39` History panel guide closes from Escape
+  - `FDH-A40` File Explorer context-menu Copy Path verifies clipboard payload
+  - `FDH-A41` File preview no-match search recovers after a matching query
+  - `FDH-A42` Large text preview tail search works after loading full content
+- Checks run:
+  - `/Users/jeffscottward/Github/tools/Maestro/node_modules/.bin/prettier --write e2e/app-shell.spec.ts`
+  - `/Users/jeffscottward/Github/tools/Maestro/node_modules/.bin/eslint e2e/app-shell.spec.ts`
+  - `git diff --check -- e2e/app-shell.spec.ts`
+  - Prohibited-command static guard over added lines
+  - Focused code-reviewer pass; no findings
+- E2E execution deliberately not run:
+  - Did not run `npm run test:e2e`, `playwright test`, headed/UI E2E, or `npx playwright test --list`.
+  - Did not use the E2E Runner skill.
+- Remaining lane target:
+  - Source objective remains about 349 additional active scenarios plus skipped/env-gated rows.
+  - First seven tranches add 42 active rows, leaving roughly 307 active scenarios to author in later tranches.
+- Blockers and follow-up:
+  - Product gaps from the first tranche remain skipped until matching product controls exist.
+  - External/default-app and SSH remote cases still need orchestrator-provided environment state before activation.
+  - Continue compact static-authored fallback tranches while PM2 Codex workers recover from managed-account runtime instability.

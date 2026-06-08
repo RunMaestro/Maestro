@@ -1,6 +1,6 @@
 # Parallel E2E Orchestrator Status
 
-Last updated: 2026-06-08 18:52 EDT
+Last updated: 2026-06-08 19:20 EDT
 
 ## Base
 
@@ -35,7 +35,7 @@ coverage and the shell-lane tab coverage.
 | -------------------------- | ------------------------------------ | ------------------------------------------------ | --------------------------------------------------- | ------------------------- | ----------------------------------------------- |
 | `agent-crud-provider`      | `codex/e2e-agent-crud-provider`      | `Maestro-worktrees/e2e-agent-crud-provider`      | not relaunched                                      | complete                  | 104 active scenarios accepted; 0 remain         |
 | `shell-tabs-command`       | `codex/e2e-shell-tabs-command`       | `Maestro-worktrees/e2e-shell-tabs-command`       | `maestro-e2e-shell-tabs-command-campaign-goal`      | PM2 retry cycle after 503 | 81 active scenarios accepted; 185 remain        |
-| `files-docs-history`       | `codex/e2e-files-docs-history`       | `Maestro-worktrees/e2e-files-docs-history`       | `maestro-e2e-files-docs-history-campaign-goal`      | PM2 retry cycle after 503 | 37 active scenarios accepted; 312 remain        |
+| `files-docs-history`       | `codex/e2e-files-docs-history`       | `Maestro-worktrees/e2e-files-docs-history`       | `maestro-e2e-files-docs-history-campaign-goal`      | manual fallback accepted  | 42 active scenarios accepted; 307 remain        |
 | `autorun-ai-terminal`      | `codex/e2e-autorun-ai-terminal`      | `Maestro-worktrees/e2e-autorun-ai-terminal`      | `maestro-e2e-autorun-ai-terminal-campaign-goal`     | PM2 retry cycle after 503 | 10 active scenarios accepted; 263 remain        |
 | `wizard-settings-prompts`  | `codex/e2e-wizard-settings-prompts`  | `Maestro-worktrees/e2e-wizard-settings-prompts`  | `maestro-e2e-wizard-settings-prompts-campaign-goal` | PM2 retry cycle after 503 | 59 active scenarios accepted; 313 remain        |
 | `git-groupchat-playbooks`  | `codex/e2e-git-groupchat-playbooks`  | `Maestro-worktrees/e2e-git-groupchat-playbooks`  | `maestro-e2e-git-groupchat-playbooks-campaign-goal` | PM2 retry cycle after 503 | 50 active scenarios accepted; 313 remain        |
@@ -48,7 +48,7 @@ coverage and the shell-lane tab coverage.
 
 - `shell-tabs-command` merged through `44e98a94f`.
 - `agent-crud-provider` merged through `bb4fbcce2`.
-- `files-docs-history` merged through `b5491cd9b`.
+- `files-docs-history` merged through `18a4c3b29`.
 - `mobile-web-bridge` merged through `d7ccdd3d`.
 - `autorun-ai-terminal` merged through `cd804bebf`.
 - `wizard-settings-prompts` merged through `bb21caed1`.
@@ -201,6 +201,10 @@ coverage and the shell-lane tab coverage.
   startup at least once and failed before authoring with the same managed-account
   503 service-unavailable condition. PM2 still has no stale stopped entries; the
   quota workers remain in staggered retry cycles.
+- 2026-06-08 19:20 EDT: accepted manual `files-docs-history` fallback through
+  `18a4c3b29` with 5 active History Escape close, File Explorer Copy Path,
+  file preview no-match recovery, and large-file full-load search scenarios.
+  Focused static review found no findings. No E2E execution was run.
 
 ## Blockers
 
@@ -214,8 +218,9 @@ coverage and the shell-lane tab coverage.
   `wizard-settings-prompts`, fourteenth `git-groupchat-playbooks`, fifteenth
   `wizard-settings-prompts`, sixteenth `git-groupchat-playbooks`, seventeenth
   `wizard-settings-prompts`, eighteenth `mobile-web-bridge`, nineteenth
-  `files-docs-history`, twentieth `stats-graph-symphony`, and twenty-first
-  `git-groupchat-playbooks`, and twenty-second `wizard-settings-prompts`
+  `files-docs-history`, twentieth `stats-graph-symphony`, twenty-first
+  `git-groupchat-playbooks`, twenty-second `wizard-settings-prompts`, and
+  twenty-third `files-docs-history`
   fallbacks are accepted for selected high-remaining lanes. Remaining work should
   continue in smaller batches, with each run committing one coherent tranche and
   recording remaining work instead of trying to consume a full lane quota in one
