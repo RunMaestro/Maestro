@@ -179,6 +179,14 @@ const twentySecondTrancheActiveScenarioMatrix = [
 	{ id: 'DA-111', title: 'updates System Log Viewer expand collapse disabled states' },
 ] as const;
 
+const twentyThirdTrancheActiveScenarioMatrix = [
+	{ id: 'DA-112', title: 'shows Debug Package privacy exclusion copy' },
+	{ id: 'DA-113', title: 'exposes Debug Package categories as checked checkboxes' },
+	{ id: 'DA-114', title: 'toggles Debug Package categories through checkbox roles' },
+	{ id: 'DA-115', title: 'restores Debug Package category selection from checkboxes' },
+	{ id: 'DA-116', title: 'shows Debug Package submission instructions' },
+] as const;
+
 const debugPackagePreviewCategories = [
 	{ id: 'logs', name: 'System Logs', included: true, sizeEstimate: '~50 KB' },
 	{ id: 'errors', name: 'Error States', included: true, sizeEstimate: '< 10 KB' },
@@ -3090,6 +3098,93 @@ test.describe('Debug and accessibility smoke tranche', () => {
 
 			await expect(expandAll).toBeDisabled();
 			await expect(collapseAll).toBeEnabled();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${twentyThirdTrancheActiveScenarioMatrix[0].id} ${twentyThirdTrancheActiveScenarioMatrix[0].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubDebugPackageHandlers(launched.electronApp);
+			const debugPackageDialog = await openDebugPackageFromQuickActions(launched.window);
+
+			await expect(debugPackageDialog.getByText('Privacy:')).toBeVisible();
+			await expect(
+				debugPackageDialog.getByText(/does NOT include your conversations/i)
+			).toBeVisible();
+			await expect(debugPackageDialog.getByText(/API keys/i)).toBeVisible();
+			await expect(debugPackageDialog.getByText(/file contents/i)).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${twentyThirdTrancheActiveScenarioMatrix[1].id} ${twentyThirdTrancheActiveScenarioMatrix[1].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubDebugPackageHandlers(launched.electronApp);
+			const debugPackageDialog = await openDebugPackageFromQuickActions(launched.window);
+
+			await expect(debugPackageDialog.getByText('5 of 5 selected')).toBeVisible();
+			await expect(debugPackageDialog.getByRole('checkbox', { name: /System Logs/ })).toBeChecked();
+			await expect(
+				debugPackageDialog.getByRole('checkbox', { name: /Error States/ })
+			).toBeChecked();
+			await expect(
+				debugPackageDialog.getByRole('checkbox', { name: /Session Metadata/ })
+			).toBeChecked();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${twentyThirdTrancheActiveScenarioMatrix[2].id} ${twentyThirdTrancheActiveScenarioMatrix[2].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubDebugPackageHandlers(launched.electronApp);
+			const debugPackageDialog = await openDebugPackageFromQuickActions(launched.window);
+			const systemLogsCheckbox = debugPackageDialog.getByRole('checkbox', { name: /System Logs/ });
+
+			await systemLogsCheckbox.click();
+
+			await expect(systemLogsCheckbox).not.toBeChecked();
+			await expect(debugPackageDialog.getByText('4 of 5 selected')).toBeVisible();
+			await expect(
+				debugPackageDialog.getByRole('button', { name: 'Generate Package' })
+			).toBeEnabled();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${twentyThirdTrancheActiveScenarioMatrix[3].id} ${twentyThirdTrancheActiveScenarioMatrix[3].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubDebugPackageHandlers(launched.electronApp);
+			const debugPackageDialog = await openDebugPackageFromQuickActions(launched.window);
+			const systemLogsCheckbox = debugPackageDialog.getByRole('checkbox', { name: /System Logs/ });
+
+			await systemLogsCheckbox.click();
+			await expect(debugPackageDialog.getByText('4 of 5 selected')).toBeVisible();
+			await systemLogsCheckbox.click();
+
+			await expect(systemLogsCheckbox).toBeChecked();
+			await expect(debugPackageDialog.getByText('5 of 5 selected')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${twentyThirdTrancheActiveScenarioMatrix[4].id} ${twentyThirdTrancheActiveScenarioMatrix[4].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubDebugPackageHandlers(launched.electronApp);
+			const debugPackageDialog = await openDebugPackageFromQuickActions(launched.window);
+
+			await expect(debugPackageDialog.getByText('To submit:')).toBeVisible();
+			await expect(debugPackageDialog.getByText(/Open a GitHub issue/)).toBeVisible();
+			await expect(debugPackageDialog.getByText(/Attach the generated zip file/)).toBeVisible();
 		} finally {
 			await launched.cleanup();
 		}
