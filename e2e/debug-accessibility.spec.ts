@@ -107,6 +107,14 @@ const thirteenthTrancheActiveScenarioMatrix = [
 	{ id: 'DA-066', title: 'copies successful debug package paths from the success state' },
 ] as const;
 
+const fourteenthTrancheActiveScenarioMatrix = [
+	{ id: 'DA-067', title: 'shows the empty Process Monitor state without active processes' },
+	{ id: 'DA-068', title: 'collapses all Process Monitor process rows' },
+	{ id: 'DA-069', title: 'returns from Process Monitor details with Escape' },
+	{ id: 'DA-070', title: 'returns from Process Monitor details with the Back control' },
+	{ id: 'DA-071', title: 'closes the Process Monitor from the header control' },
+] as const;
+
 const debugPackagePreviewCategories = [
 	{ id: 'logs', name: 'System Logs', included: true, sizeEstimate: '~50 KB' },
 	{ id: 'errors', name: 'Error States', included: true, sizeEstimate: '< 10 KB' },
@@ -2031,6 +2039,115 @@ test.describe('Debug and accessibility smoke tranche', () => {
 					)
 				)
 				.toBe(resultPath);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${fourteenthTrancheActiveScenarioMatrix[0].id} ${fourteenthTrancheActiveScenarioMatrix[0].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubActiveProcesses(launched.electronApp, []);
+			const processMonitor = await openProcessMonitorFromQuickActions(launched.window);
+
+			await expect(processMonitor.getByText('System Processes')).toBeVisible();
+			await expect(processMonitor.getByText('No running processes')).toBeVisible();
+			await expect(processMonitor.getByText('0 active')).toHaveCount(0);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${fourteenthTrancheActiveScenarioMatrix[1].id} ${fourteenthTrancheActiveScenarioMatrix[1].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubActiveProcesses(
+				launched.electronApp,
+				createStubbedActiveProcesses(launched.sessions[0], launched.projectDir)
+			);
+			const processMonitor = await openProcessMonitorFromQuickActions(launched.window);
+
+			await processMonitor.getByTitle('Expand all').click();
+			await expect(
+				processMonitor.getByText('Debug Accessibility Agent - AI Agent (codex)')
+			).toBeVisible();
+			await processMonitor.getByTitle('Collapse all').click();
+
+			await expect(
+				processMonitor.getByText('Debug Accessibility Agent - AI Agent (codex)')
+			).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${fourteenthTrancheActiveScenarioMatrix[2].id} ${fourteenthTrancheActiveScenarioMatrix[2].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubActiveProcesses(
+				launched.electronApp,
+				createStubbedActiveProcesses(launched.sessions[0], launched.projectDir)
+			);
+			const processMonitor = await openProcessMonitorFromQuickActions(launched.window);
+			await processMonitor.getByTitle('Expand all').click();
+			const aiProcessRow = processMonitor
+				.locator('[tabindex="0"]')
+				.filter({ hasText: 'Debug Accessibility Agent - AI Agent (codex)' })
+				.first();
+			await aiProcessRow.focus();
+			await launched.window.keyboard.press('Enter');
+			const detailView = launched.window.getByRole('dialog', { name: 'Process Details' });
+			await expect(detailView).toBeVisible();
+
+			await launched.window.keyboard.press('Escape');
+
+			await expect(detailView).toBeHidden();
+			await expect(launched.window.getByRole('dialog', { name: 'System Processes' })).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${fourteenthTrancheActiveScenarioMatrix[3].id} ${fourteenthTrancheActiveScenarioMatrix[3].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubActiveProcesses(
+				launched.electronApp,
+				createStubbedActiveProcesses(launched.sessions[0], launched.projectDir)
+			);
+			const processMonitor = await openProcessMonitorFromQuickActions(launched.window);
+			await processMonitor.getByTitle('Expand all').click();
+			const aiProcessRow = processMonitor
+				.locator('[tabindex="0"]')
+				.filter({ hasText: 'Debug Accessibility Agent - AI Agent (codex)' })
+				.first();
+			await aiProcessRow.focus();
+			await launched.window.keyboard.press('Enter');
+			const detailView = launched.window.getByRole('dialog', { name: 'Process Details' });
+			await expect(detailView).toBeVisible();
+
+			await detailView.getByTitle('Back (Esc)').click();
+
+			await expect(detailView).toBeHidden();
+			await expect(launched.window.getByRole('dialog', { name: 'System Processes' })).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${fourteenthTrancheActiveScenarioMatrix[4].id} ${fourteenthTrancheActiveScenarioMatrix[4].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubActiveProcesses(
+				launched.electronApp,
+				createStubbedActiveProcesses(launched.sessions[0], launched.projectDir)
+			);
+			const processMonitor = await openProcessMonitorFromQuickActions(launched.window);
+			await expect(processMonitor).toBeVisible();
+
+			await processMonitor.getByTitle('Close (Esc)').click();
+
+			await expect(processMonitor).toBeHidden();
 		} finally {
 			await launched.cleanup();
 		}
