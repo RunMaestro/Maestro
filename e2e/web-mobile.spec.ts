@@ -4660,4 +4660,232 @@ test.describe('Web Mobile Bridge', () => {
 			await electronApp.close();
 		}
 	});
+
+	test('exposes group metadata and null group fields in mobile session summaries', async ({
+		page,
+	}) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			const dashboardUrl = await startWebServer(appWindow);
+			const sessionsPayload = await getJson(page, `${dashboardUrl}/api/sessions`);
+			const sessions = sessionsPayload.sessions as Array<{
+				id: string;
+				groupId?: string | null;
+				groupName?: string | null;
+				groupEmoji?: string | null;
+			}>;
+			const primary = sessions.find((session) => session.id === workbench.primarySessionId);
+			const secondary = sessions.find((session) => session.id === workbench.secondarySessionId);
+
+			expect(primary).toMatchObject({
+				groupId: workbench.groups[0].id,
+				groupName: 'Mobile Ops',
+				groupEmoji: 'M',
+			});
+			expect(secondary).toMatchObject({
+				groupId: null,
+				groupName: null,
+				groupEmoji: null,
+			});
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
+	test('truncates active-tab mobile response previews in session summaries', async ({ page }) => {
+		const workbench = createWebMobileWorkbench();
+		const longResponse = [
+			'Mobile bridge preview line one',
+			'Mobile bridge preview line two',
+			'Mobile bridge preview line three',
+			'Mobile bridge preview line four',
+		].join('\n');
+		appendPrimaryPlanStdout(workbench, longResponse, 'preview-truncation');
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			const dashboardUrl = await startWebServer(appWindow);
+			const sessionsPayload = await getJson(page, `${dashboardUrl}/api/sessions`);
+			const primary = sessionsPayload.sessions.find(
+				(session: WebSessionSummary) => session.id === workbench.primarySessionId
+			) as WebSessionSummary | undefined;
+
+			expect(primary?.lastResponse).toMatchObject({
+				source: 'stdout',
+				fullLength: longResponse.length,
+			});
+			expect(primary?.lastResponse?.text).toBe(
+				[
+					'Mobile bridge preview line one',
+					'Mobile bridge preview line two',
+					'Mobile bridge preview line three...',
+				].join('\n')
+			);
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
+	test('falls back to first-tab logs when mobile detail receives an unknown tab id', async ({
+		page,
+	}) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+		const unknownTabId = `${workbench.primarySessionId}-missing-tab`;
+
+		try {
+			const dashboardUrl = await startWebServer(appWindow);
+			const detail = await getJson(
+				page,
+				`${dashboardUrl}/api/session/${workbench.primarySessionId}?tabId=${unknownTabId}`
+			);
+			const logText = detail.session.aiLogs.map((entry: { text: string }) => entry.text).join('\n');
+
+			expect(detail.session.activeTabId).toBe(unknownTabId);
+			expect(logText).toContain('Mobile Primary user prompt for plan tab.');
+			expect(logText).toContain('Mobile Primary alpha response line one');
+			expect(logText).not.toContain('review tab response only');
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
+	test('enriches mobile summary and detail APIs with live agent metadata', async ({ page }) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+		const liveAgentSessionId = `${workbench.primarySessionId}-mobile-live-agent`;
+
+		try {
+			const dashboardUrl = await startWebServer(appWindow);
+			await appWindow.evaluate(
+				async ([sessionId, agentSessionId]) => {
+					return (window as MaestroE2EWindow).maestro.live.toggle(sessionId, agentSessionId);
+				},
+				[workbench.primarySessionId, liveAgentSessionId]
+			);
+
+			const sessionsPayload = await getJson(page, `${dashboardUrl}/api/sessions`);
+			const primary = sessionsPayload.sessions.find(
+				(session: { id: string }) => session.id === workbench.primarySessionId
+			) as
+				| {
+						agentSessionId?: string | null;
+						isLive?: boolean;
+						liveEnabledAt?: number;
+				  }
+				| undefined;
+			const detail = await getJson(
+				page,
+				`${dashboardUrl}/api/session/${workbench.primarySessionId}`
+			);
+
+			expect(primary).toMatchObject({
+				agentSessionId: liveAgentSessionId,
+				isLive: true,
+				liveEnabledAt: expect.any(Number),
+			});
+			expect(detail.session).toMatchObject({
+				agentSessionId: liveAgentSessionId,
+				isLive: true,
+				liveEnabledAt: expect.any(Number),
+			});
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
+	test('prefers session history filters over mismatched project filters', async ({ page }) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			const dashboardUrl = await startWebServer(appWindow);
+			const mixedFilterHistory = await getJson(
+				page,
+				`${dashboardUrl}/api/history?projectPath=${encodeURIComponent(path.join(workbench.homeDir, 'missing-project'))}&sessionId=${workbench.primarySessionId}`
+			);
+			expect(mixedFilterHistory.count).toBe(2);
+			expect(mixedFilterHistory.entries).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({
+						sessionId: workbench.primarySessionId,
+						summary: 'Auto Run finished the mobile bridge checklist',
+					}),
+					expect.objectContaining({
+						sessionId: workbench.primarySessionId,
+						summary: 'User requested a mobile bridge release summary',
+					}),
+				])
+			);
+
+			const secondaryHistory = await getJson(
+				page,
+				`${dashboardUrl}/api/history?projectPath=${encodeURIComponent(workbench.projectDir)}&sessionId=${workbench.secondarySessionId}`
+			);
+			expect(secondaryHistory).toMatchObject({ count: 0, entries: [] });
+		} finally {
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
+
+	test('tracks connected mobile WebSocket clients for the desktop bridge', async ({ page }) => {
+		const workbench = createWebMobileWorkbench();
+		const { electronApp, window: appWindow } = await launchWebWorkbench(workbench);
+
+		try {
+			const dashboardUrl = await startWebServer(appWindow);
+			await page.evaluate(
+				(socketUrl) => {
+					const e2eWindow = window as E2ESocketWindow;
+					e2eWindow.__maestroE2eSocketMessages = [];
+					e2eWindow.__maestroE2eSocket = new WebSocket(socketUrl);
+					e2eWindow.__maestroE2eSocket.onmessage = (event: MessageEvent) => {
+						e2eWindow.__maestroE2eSocketMessages?.push(JSON.parse(event.data));
+					};
+				},
+				webSocketUrl(dashboardUrl, workbench.primarySessionId)
+			);
+
+			await expect
+				.poll(async () =>
+					page.evaluate(() =>
+						(window as E2ESocketWindow).__maestroE2eSocketMessages?.some(
+							(message) => message.type === 'connected'
+						)
+					)
+				)
+				.toBe(true);
+			await expect
+				.poll(async () =>
+					appWindow.evaluate(async () => {
+						return (window as MaestroE2EWindow).maestro.webserver.getConnectedClients();
+					})
+				)
+				.toBe(1);
+
+			await page.evaluate(() => (window as E2ESocketWindow).__maestroE2eSocket?.close());
+			await expect
+				.poll(
+					async () =>
+						appWindow.evaluate(async () => {
+							return (window as MaestroE2EWindow).maestro.webserver.getConnectedClients();
+						}),
+					{ timeout: 10000 }
+				)
+				.toBe(0);
+		} finally {
+			await page
+				.evaluate(() => (window as E2ESocketWindow).__maestroE2eSocket?.close())
+				.catch(() => {});
+			await stopWebServer(appWindow).catch(() => {});
+			await electronApp.close();
+		}
+	});
 });
