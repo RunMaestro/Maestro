@@ -716,15 +716,11 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 			sourceSection.getByRole('figure', { name: /query counts breakdown/i })
 		).toBeVisible();
 		await sourceSection.getByRole('button', { name: 'Duration' }).click();
-		await expect(
-			sourceSection.getByRole('figure', { name: /duration breakdown/i })
-		).toBeVisible();
+		await expect(sourceSection.getByRole('figure', { name: /duration breakdown/i })).toBeVisible();
 		await expect(sourceSection.getByRole('list', { name: 'Chart legend' })).toBeVisible();
 
 		const locationSection = usageDashboard.getByTestId('section-location-distribution');
-		await expect(
-			locationSection.getByRole('img', { name: /Local 100\.0%/i })
-		).toBeVisible();
+		await expect(locationSection.getByRole('img', { name: /Local 100\.0%/i })).toBeVisible();
 		await expect(locationSection.getByText('Local')).toBeVisible();
 
 		const peakSection = usageDashboard.getByTestId('section-peak-hours');
@@ -847,15 +843,11 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 		const agentUsage = usageDashboard.getByTestId('section-agent-usage');
 		await agentUsage.scrollIntoViewIfNeeded();
 
-		await expect(
-			agentUsage.getByRole('figure', { name: /query counts over time/i })
-		).toBeVisible();
+		await expect(agentUsage.getByRole('figure', { name: /query counts over time/i })).toBeVisible();
 		await agentUsage.getByRole('button', { name: 'Time' }).click();
 		await expect(agentUsage.getByRole('figure', { name: /duration over time/i })).toBeVisible();
 		await agentUsage.getByRole('button', { name: 'Queries' }).click();
-		await expect(
-			agentUsage.getByRole('figure', { name: /query counts over time/i })
-		).toBeVisible();
+		await expect(agentUsage.getByRole('figure', { name: /query counts over time/i })).toBeVisible();
 	});
 
 	test(`${activeScenarioMatrix[13].id} ${activeScenarioMatrix[13].title}`, async () => {
@@ -897,7 +889,7 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 
 		await expect(window.getByText('GitHub CLI Required')).toBeVisible();
 		await expect(window.getByText(/gh auth login/)).toBeVisible();
-		await window.getByRole('button', { name: 'Close' }).click();
+		await window.getByRole('button', { name: 'Close' }).last().click();
 		await expect(window.getByText('GitHub CLI Required')).toBeHidden();
 	});
 
@@ -922,7 +914,9 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 		await leaderboardDialog.getByPlaceholder('conductor@maestro.ai').fill('pending@example.com');
 		await leaderboardDialog.getByRole('button', { name: 'Push Up' }).click();
 
-		await expect(leaderboardDialog.getByText('Please check your email to confirm your registration.')).toBeVisible();
+		await expect(
+			leaderboardDialog.getByText('Please check your email to confirm your registration.')
+		).toBeVisible();
 		await expect(
 			leaderboardDialog.getByText('Click the link in your email to complete registration.')
 		).toBeVisible();
