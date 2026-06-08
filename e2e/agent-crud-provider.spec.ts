@@ -2367,6 +2367,161 @@ test.describe('Agent Sessions provider storage', () => {
 			await launched.cleanup();
 		}
 	});
+
+	test('toggles a generic provider session favorite from the list row', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: [seeded.sessions[0]],
+		});
+
+		try {
+			await stubCodexAgentSessionStorage(launched.electronApp, seeded.projectDir);
+
+			const agentSessions = await openAgentSessions(launched.window, 'Matrix Codex Agent');
+			const reviewRow = agentSessions
+				.getByText('Provider Setup Review')
+				.locator('xpath=ancestor::div[contains(@class, "cursor-pointer")][1]');
+			await reviewRow.getByTitle('Remove from favorites').click();
+			await expect(reviewRow.getByTitle('Add to favorites')).toBeVisible();
+			await reviewRow.getByTitle('Add to favorites').click();
+			await expect(reviewRow.getByTitle('Remove from favorites')).toBeVisible();
+
+			const updates = await getAgentSessionUpdates(launched.electronApp);
+			await expect(updates).toContainEqual({
+				type: 'starred',
+				agentId: 'codex',
+				projectPath: seeded.projectDir,
+				sessionId: 'codex-provider-review',
+				starred: false,
+			});
+			await expect(updates).toContainEqual({
+				type: 'starred',
+				agentId: 'codex',
+				projectPath: seeded.projectDir,
+				sessionId: 'codex-provider-review',
+				starred: true,
+			});
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('cancels generic provider session list rename with Escape', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: [seeded.sessions[0]],
+		});
+
+		try {
+			await stubCodexAgentSessionStorage(launched.electronApp, seeded.projectDir);
+
+			const agentSessions = await openAgentSessions(launched.window, 'Matrix Codex Agent');
+			const reviewRow = agentSessions
+				.getByText('Provider Setup Review')
+				.locator('xpath=ancestor::div[contains(@class, "cursor-pointer")][1]');
+			await reviewRow.hover();
+			await reviewRow.getByTitle('Rename session').click();
+			const renameInput = agentSessions.getByPlaceholder('Enter session name...');
+			await renameInput.fill('Cancelled Provider List Rename');
+			await renameInput.press('Escape');
+
+			await expect(agentSessions.getByText('Provider Setup Review')).toBeVisible();
+			await expect(agentSessions.getByText('Cancelled Provider List Rename')).toHaveCount(0);
+			await expect(await getAgentSessionUpdates(launched.electronApp)).toEqual([]);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('opens a generic provider session with keyboard list navigation', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: [seeded.sessions[0]],
+		});
+
+		try {
+			await stubCodexAgentSessionStorage(launched.electronApp, seeded.projectDir);
+
+			const agentSessions = await openAgentSessions(launched.window, 'Matrix Codex Agent');
+			const searchInput = agentSessions.getByPlaceholder('Search all content...');
+			await searchInput.focus();
+			await searchInput.press('ArrowDown');
+			await searchInput.press('Enter');
+
+			await expect(agentSessions.getByText('Unnamed provider setup sentinel.')).toBeVisible();
+			await expect(agentSessions.getByText('Provider Setup Review')).toBeHidden();
+			await expect(await getAgentSessionReadCalls(launched.electronApp)).toContainEqual({
+				agentId: 'codex',
+				projectPath: seeded.projectDir,
+				sessionId: 'codex-provider-unnamed',
+			});
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('resumes a generic provider session from detail with loaded messages', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: [seeded.sessions[0]],
+		});
+
+		try {
+			await stubCodexAgentSessionStorage(launched.electronApp, seeded.projectDir);
+
+			const agentSessions = await openAgentSessions(launched.window, 'Matrix Codex Agent');
+			await agentSessions.getByText('Provider Setup Review').click();
+			await expect(
+				agentSessions.getByText('Provider setup response sentinel for Agent Sessions search.')
+			).toBeVisible();
+			await agentSessions.getByRole('button', { name: 'Resume' }).click();
+
+			await expect(agentSessions.getByText('Agent Sessions for Matrix Codex Agent')).toBeHidden();
+			await expect(
+				launched.window
+					.locator('[data-tab-id]')
+					.filter({ hasText: 'Provider Setup Review' })
+					.first()
+			).toBeVisible();
+			await expect(
+				launched.window.getByText('Provider setup response sentinel for Agent Sessions search.')
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('switches Agent Sessions activity graph back to search with keyboard shortcut', async () => {
+		const seeded = createAgentCrudWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: [seeded.sessions[0]],
+		});
+
+		try {
+			await stubCodexAgentSessionStorage(launched.electronApp, seeded.projectDir);
+
+			const agentSessions = await openAgentSessions(launched.window, 'Matrix Codex Agent');
+			const searchInput = agentSessions.getByPlaceholder('Search all content...');
+			await searchInput.fill('Provider Setup Review');
+			await expect(searchInput).toHaveValue('Provider Setup Review');
+
+			await agentSessions.getByTitle('Show activity graph').click();
+			await expect(searchInput).toBeHidden();
+			await expect(agentSessions.getByTitle(/Search sessions/)).toBeVisible();
+
+			await launched.window.keyboard.press('Control+F');
+			await expect(agentSessions.getByPlaceholder('Search all content...')).toBeVisible();
+			await expect(agentSessions.getByPlaceholder('Search all content...')).toHaveValue('');
+			await expect(agentSessions.getByText('Provider Setup Review')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
 });
 
 test.describe.skip('Real provider state coverage gated by MAESTRO_E2E_REAL_PROVIDER_STATE', () => {
