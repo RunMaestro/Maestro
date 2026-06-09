@@ -1,6 +1,6 @@
 # wizard-settings-prompts
 
-Status: tranche 35 fallback committed
+Status: tranche 39 director detail accepted
 
 ## Scope
 
@@ -1258,3 +1258,36 @@ New Agent Wizard, inline wizard, Settings, Director Notes, prompt composer.
   - Real provider account and live agent handoff coverage remains env-gated.
   - Settings matrix-backed target remains complete at 190 active Settings scenarios.
   - Remaining matrix-backed target: about 124 active/skipped rows after this tranche.
+
+### 2026-06-09 tranche 39 fallback
+
+- Scope: compact orchestrator import from the persistent-worker branch.
+- Authored: 8 additional active deterministic Playwright scenarios.
+  - Director's Notes Unified History opens the detail modal.
+  - Unified History detail shows stats counts.
+  - Unified History detail marks an entry as not validated.
+  - Unified History detail marks an entry as human validated.
+  - Escape closes the Unified History detail modal.
+  - ArrowRight navigates within Unified History detail.
+  - Keyboard activation opens the Unified History detail modal.
+  - Lookback changes reload Unified History.
+- Cumulative lane-authored coverage: 256 active deterministic scenarios, 1 env-gated scenario.
+- Skipped/env-gated: no new rows; total remains 1 provider-account handoff placeholder.
+- Files touched:
+  - `e2e/wizard-settings-prompts.spec.ts`
+- Shared helpers edited: no.
+- Validation run before orchestrator acceptance:
+  - `npx prettier --write e2e/wizard-settings-prompts.spec.ts` - passed.
+  - `npx eslint e2e/wizard-settings-prompts.spec.ts` - passed.
+  - `NODE_OPTIONS=--max-old-space-size=8192 npx tsc -p tsconfig.lint.json --noEmit` - passed.
+  - Static scenario-ID/`.only`/fixed-wait/force-click/console/prohibited-command scans - passed with 256 WSP IDs, 256 active declarations, and 1 skipped/env-gated row.
+  - Static E2E declaration inventory scan - passed with 15 spec files and 1,884 declared `test`/`test.skip` rows.
+  - `git diff --check -- e2e/wizard-settings-prompts.spec.ts` - passed.
+- Review:
+  - Focused code-reviewer checklist verified WSP-249 through WSP-256, Unified History detail/modal/stat/validation/keyboard/lookback assertions, selector determinism, no native/provider dependencies, no duplicate IDs, and absence of prohibited E2E commands; no critical or high-severity issues found.
+- Not run by instruction: `npm run test:e2e`, `playwright test`, headed/UI E2E, and Playwright listing.
+- Accepted orchestrator commit: `403f4d3d2`.
+- Blockers/remaining work:
+  - Real provider account and live agent handoff coverage remains env-gated.
+  - Settings matrix-backed target remains complete at 190 active Settings scenarios.
+  - Remaining matrix-backed target: about 116 active/skipped rows after this tranche.
