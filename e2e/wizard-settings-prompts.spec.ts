@@ -394,6 +394,31 @@ const activeScenarioMatrix = [
 	{ id: 'WSP-320', title: 'opens Prompt Composer from inline wizard input controls' },
 	{ id: 'WSP-321', title: 'preserves inline wizard draft while toggling send mode' },
 	{ id: 'WSP-322', title: 'shows inline wizard mapped-error technical details' },
+	{ id: 'WSP-323', title: 'streams inline wizard assistant response text' },
+	{ id: 'WSP-324', title: 'shows inline wizard thinking fallback before content arrives' },
+	{ id: 'WSP-325', title: 'renders inline wizard ready-to-create playbook action' },
+	{ id: 'WSP-326', title: 'marks inline wizard confidence gauge ready at threshold' },
+	{ id: 'WSP-327', title: 'hides inline wizard ready action after generation starts' },
+	{ id: 'WSP-328', title: 'renders inline wizard assistant task-list markdown' },
+	{ id: 'WSP-329', title: 'renders inline wizard assistant code block content' },
+	{ id: 'WSP-330', title: 'preserves inline wizard user multiline content' },
+	{ id: 'WSP-331', title: 'renders multiple inline wizard message image attachments' },
+	{ id: 'WSP-332', title: 'opens inline wizard history image lightbox' },
+	{ id: 'WSP-333', title: 'renders inline wizard system markdown content' },
+	{ id: 'WSP-334', title: 'maps inline wizard agent-not-found errors to friendly copy' },
+	{ id: 'WSP-335', title: 'maps inline wizard parse failures to friendly copy' },
+	{ id: 'WSP-336', title: 'keeps inline wizard retry control visible for mapped errors' },
+	{ id: 'WSP-337', title: 'renders inline wizard completion folder path' },
+	{ id: 'WSP-338', title: 'renders inline wizard completion exit control' },
+	{ id: 'WSP-339', title: 'renders inline wizard generated document newest file' },
+	{ id: 'WSP-340', title: 'renders inline wizard generated document task counts' },
+	{ id: 'WSP-341', title: 'expands inline wizard generated document descriptions on click' },
+	{ id: 'WSP-342', title: 'renders inline wizard single-task completion wording' },
+	{ id: 'WSP-343', title: 'uses Auto Run Docs fallback for inline wizard completion folder' },
+	{ id: 'WSP-344', title: 'shows inline wizard generation state before documents arrive' },
+	{ id: 'WSP-345', title: 'keeps inline wizard generation cancel visible with documents' },
+	{ id: 'WSP-346', title: 'renders inline wizard streaming cursor' },
+	{ id: 'WSP-347', title: 'renders inline wizard thinking cursor' },
 ];
 
 const envGatedScenarioMatrix = [
@@ -10695,6 +10720,650 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 			await expect(
 				launched.window.locator('[data-testid="error-technical-details"]')
 			).toContainText(rawError);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[322].id} ${activeScenarioMatrix[322].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench({
+			inlineWizard: true,
+			inlineWizardState: {
+				isWaiting: true,
+				streamingContent: 'Drafting the workspace playbook outline...',
+			},
+		});
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			const streamingResponse = launched.window.locator(
+				'[data-testid="wizard-streaming-response"]'
+			);
+
+			await expect(streamingResponse).toBeVisible();
+			await expect(
+				launched.window.locator('[data-testid="streaming-response-text"]')
+			).toContainText('Drafting the workspace playbook outline...');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[323].id} ${activeScenarioMatrix[323].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench({
+			inlineWizard: true,
+			inlineWizardState: {
+				isWaiting: true,
+				showWizardThinking: true,
+			},
+		});
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			const thinkingDisplay = launched.window.locator('[data-testid="wizard-thinking-display"]');
+
+			await expect(thinkingDisplay).toBeVisible();
+			await expect(
+				launched.window.locator('[data-testid="thinking-display-content"]')
+			).toContainText('Reasoning...');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[324].id} ${activeScenarioMatrix[324].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench({
+			inlineWizard: true,
+			inlineWizardState: {
+				ready: true,
+				confidence: 88,
+				conversationHistory: [
+					{
+						id: 'wsp-ready-message',
+						role: 'assistant',
+						content: 'I understand the project and can create the playbook.',
+						timestamp: Date.parse('2026-06-08T12:11:00Z'),
+						confidence: 88,
+						ready: true,
+					},
+				],
+			},
+		});
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			const letsGoContainer = launched.window.locator('[data-testid="wizard-lets-go-container"]');
+
+			await expect(letsGoContainer).toBeVisible();
+			await expect(letsGoContainer.getByText('Ready to create your Playbook?')).toBeVisible();
+			await expect(launched.window.locator('[data-testid="wizard-lets-go-button"]')).toContainText(
+				"Let's create your Playbook!"
+			);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[325].id} ${activeScenarioMatrix[325].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench({
+			inlineWizard: true,
+			inlineWizardState: {
+				ready: true,
+				confidence: 91,
+			},
+		});
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await expect(
+				launched.window.getByTitle('Project Understanding Confidence: 91% - Ready to proceed')
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[326].id} ${activeScenarioMatrix[326].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench({
+			inlineWizard: true,
+			inlineWizardState: {
+				ready: true,
+				confidence: 93,
+				isGeneratingDocs: true,
+				generatedDocuments: [],
+			},
+		});
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await expect(launched.window.getByText('Generating Auto Run Documents...')).toBeVisible();
+			await expect(
+				launched.window.locator('[data-testid="wizard-lets-go-container"]')
+			).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[327].id} ${activeScenarioMatrix[327].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench({
+			inlineWizard: true,
+			inlineWizardState: {
+				conversationHistory: [
+					{
+						id: 'wsp-assistant-tasks',
+						role: 'assistant',
+						content: '- [x] Map wizard state\n- [ ] Draft Playbook tasks',
+						timestamp: Date.parse('2026-06-08T12:12:00Z'),
+						confidence: 81,
+					},
+				],
+			},
+		});
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			const assistantBubble = launched.window.locator(
+				'[data-testid="wizard-message-bubble-assistant"]'
+			);
+
+			await expect(assistantBubble.locator('input[type="checkbox"]').first()).toBeChecked();
+			await expect(assistantBubble.getByText('Draft Playbook tasks')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[328].id} ${activeScenarioMatrix[328].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench({
+			inlineWizard: true,
+			inlineWizardState: {
+				conversationHistory: [
+					{
+						id: 'wsp-assistant-code',
+						role: 'assistant',
+						content: 'Use this command:\n\n```bash\nmaestro wizard --dry-run\n```',
+						timestamp: Date.parse('2026-06-08T12:13:00Z'),
+						confidence: 77,
+					},
+				],
+			},
+		});
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			const assistantBubble = launched.window.locator(
+				'[data-testid="wizard-message-bubble-assistant"]'
+			);
+
+			await expect(assistantBubble.getByText('Use this command:')).toBeVisible();
+			await expect(assistantBubble.locator('code')).toContainText('maestro wizard --dry-run');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[329].id} ${activeScenarioMatrix[329].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench({
+			inlineWizard: true,
+			inlineWizardState: {
+				conversationHistory: [
+					{
+						id: 'wsp-user-multiline',
+						role: 'user',
+						content: 'First requirement\nSecond requirement\nThird requirement',
+						timestamp: Date.parse('2026-06-08T12:14:00Z'),
+					},
+				],
+			},
+		});
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			const userBubble = launched.window.locator('[data-testid="wizard-message-bubble-user"]');
+
+			await expect(userBubble.locator('[data-testid="message-content"]')).toContainText(
+				'First requirement'
+			);
+			await expect(userBubble.locator('[data-testid="message-content"]')).toContainText(
+				'Third requirement'
+			);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[330].id} ${activeScenarioMatrix[330].title}`, async () => {
+		const attachedImage =
+			'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=';
+		const seeded = createWizardSettingsPromptsWorkbench({
+			inlineWizard: true,
+			inlineWizardState: {
+				conversationHistory: [
+					{
+						id: 'wsp-user-multi-image-history',
+						role: 'user',
+						content: 'Compare both states.',
+						timestamp: Date.parse('2026-06-08T12:15:00Z'),
+						images: [attachedImage, attachedImage],
+					},
+				],
+			},
+		});
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			const imageRail = launched.window.locator('[data-testid="message-images"]');
+
+			await expect(imageRail).toBeVisible();
+			await expect(imageRail.getByAltText('Attached image 1')).toBeVisible();
+			await expect(imageRail.getByAltText('Attached image 2')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[331].id} ${activeScenarioMatrix[331].title}`, async () => {
+		const attachedImage =
+			'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=';
+		const seeded = createWizardSettingsPromptsWorkbench({
+			inlineWizard: true,
+			inlineWizardState: {
+				conversationHistory: [
+					{
+						id: 'wsp-user-lightbox-history',
+						role: 'user',
+						content: 'Open this image.',
+						timestamp: Date.parse('2026-06-08T12:16:00Z'),
+						images: [attachedImage],
+					},
+				],
+			},
+		});
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await launched.window.getByAltText('Attached image 1').click();
+
+			await expect(launched.window.getByRole('dialog', { name: 'Image Lightbox' })).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[332].id} ${activeScenarioMatrix[332].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench({
+			inlineWizard: true,
+			inlineWizardState: {
+				conversationHistory: [
+					{
+						id: 'wsp-system-markdown',
+						role: 'system',
+						content: '## Wizard Checkpoint\n\n- Restored state\n- Ready for follow-up',
+						timestamp: Date.parse('2026-06-08T12:17:00Z'),
+					},
+				],
+			},
+		});
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			const systemBubble = launched.window.locator('[data-testid="wizard-message-bubble-system"]');
+
+			await expect(systemBubble.getByRole('heading', { name: 'Wizard Checkpoint' })).toBeVisible();
+			await expect(systemBubble.getByText('Ready for follow-up')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[333].id} ${activeScenarioMatrix[333].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench({
+			inlineWizard: true,
+			inlineWizardState: {
+				error: 'Codex agent not found on PATH',
+			},
+		});
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await expect(launched.window.locator('[data-testid="error-title"]')).toContainText(
+				'Agent Not Available'
+			);
+			await expect(launched.window.locator('[data-testid="error-description"]')).toContainText(
+				'properly installed and configured'
+			);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[334].id} ${activeScenarioMatrix[334].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench({
+			inlineWizard: true,
+			inlineWizardState: {
+				error: 'Failed to parse wizard response JSON payload',
+			},
+		});
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await expect(launched.window.locator('[data-testid="error-title"]')).toContainText(
+				'Response Error'
+			);
+			await expect(launched.window.locator('[data-testid="error-description"]')).toContainText(
+				'Could not understand the response'
+			);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[335].id} ${activeScenarioMatrix[335].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench({
+			inlineWizard: true,
+			inlineWizardState: {
+				error: 'Timed out waiting for provider response',
+			},
+		});
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await expect(launched.window.locator('[data-testid="error-retry-button"]')).toContainText(
+				'Try Again'
+			);
+			await expect(launched.window.locator('[data-testid="error-dismiss-button"]')).toContainText(
+				'Dismiss'
+			);
+			await expect(launched.window.locator('[data-testid="wizard-error-display"]')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[336].id} ${activeScenarioMatrix[336].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench({
+			inlineWizard: true,
+			inlineWizardState: {
+				isGeneratingDocs: false,
+				generatedDocuments: createInlineWizardGeneratedDocuments(),
+				subfolderName: 'WSP-Roadmap',
+			},
+		});
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await expect(launched.window.getByText('Documentation generation complete.')).toBeVisible();
+			await expect(launched.window.getByText('WSP-Roadmap/')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[337].id} ${activeScenarioMatrix[337].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench({
+			inlineWizard: true,
+			inlineWizardState: {
+				isGeneratingDocs: false,
+				generatedDocuments: createInlineWizardGeneratedDocuments(),
+				subfolderName: 'Exit-Control',
+			},
+		});
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await expect(launched.window.getByRole('button', { name: 'Exit Wizard' })).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[338].id} ${activeScenarioMatrix[338].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench({
+			inlineWizard: true,
+			inlineWizardState: {
+				isGeneratingDocs: false,
+				generatedDocuments: createInlineWizardGeneratedDocuments(),
+			},
+		});
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await expect(launched.window.getByText('Work Plans Drafted (2)')).toBeVisible();
+			await expect(launched.window.getByText('phase-2-build.md')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[339].id} ${activeScenarioMatrix[339].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench({
+			inlineWizard: true,
+			inlineWizardState: {
+				isGeneratingDocs: false,
+				generatedDocuments: createInlineWizardGeneratedDocuments(),
+			},
+		});
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await expect(launched.window.getByText('2 tasks')).toBeVisible();
+			await expect(launched.window.getByText('1 task')).toBeVisible();
+			await expect(launched.window.getByText('Tasks Planned')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[340].id} ${activeScenarioMatrix[340].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench({
+			inlineWizard: true,
+			inlineWizardState: {
+				isGeneratingDocs: false,
+				generatedDocuments: createInlineWizardGeneratedDocuments(),
+			},
+		});
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await launched.window.getByRole('button', { name: /phase-1-research.md/ }).click();
+
+			await expect(launched.window.getByText('Map current wizard setup flow.')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[341].id} ${activeScenarioMatrix[341].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench({
+			inlineWizard: true,
+			inlineWizardState: {
+				isGeneratingDocs: false,
+				generatedDocuments: [
+					{
+						filename: 'phase-single.md',
+						content: [
+							'# Single Task',
+							'',
+							'Handle one focused wizard step.',
+							'',
+							'- [ ] Ship it',
+						].join('\n'),
+						taskCount: 1,
+					},
+				],
+			},
+		});
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await expect(launched.window.getByText('Task Planned')).toBeVisible();
+			await expect(launched.window.getByText('1 task')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[342].id} ${activeScenarioMatrix[342].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench({
+			inlineWizard: true,
+			inlineWizardState: {
+				isGeneratingDocs: false,
+				generatedDocuments: createInlineWizardGeneratedDocuments(),
+				subfolderName: null,
+			},
+		});
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await expect(launched.window.getByText('Auto Run Docs/')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[343].id} ${activeScenarioMatrix[343].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench({
+			inlineWizard: true,
+			inlineWizardState: {
+				isGeneratingDocs: true,
+				generatedDocuments: [],
+			},
+		});
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await expect(launched.window.getByText('Generating Auto Run Documents...')).toBeVisible();
+			await expect(launched.window.getByText('Work Plans Drafted')).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[344].id} ${activeScenarioMatrix[344].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench({
+			inlineWizard: true,
+			inlineWizardState: {
+				isGeneratingDocs: true,
+				generatedDocuments: createInlineWizardGeneratedDocuments(),
+			},
+		});
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await expect(launched.window.getByText('Work Plans Drafted (2)')).toBeVisible();
+			await expect(launched.window.getByRole('button', { name: 'Cancel' })).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[345].id} ${activeScenarioMatrix[345].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench({
+			inlineWizard: true,
+			inlineWizardState: {
+				isWaiting: true,
+				streamingContent: 'Streaming cursor coverage.',
+			},
+		});
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await expect(launched.window.locator('[data-testid="streaming-cursor"]')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[346].id} ${activeScenarioMatrix[346].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench({
+			inlineWizard: true,
+			inlineWizardState: {
+				isWaiting: true,
+				showWizardThinking: true,
+				thinkingContent: 'Checking wizard assumptions.',
+			},
+		});
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await expect(launched.window.locator('[data-testid="thinking-cursor"]')).toBeVisible();
+			await expect(launched.window.getByText('Checking wizard assumptions.')).toBeVisible();
 		} finally {
 			await launched.cleanup();
 		}
