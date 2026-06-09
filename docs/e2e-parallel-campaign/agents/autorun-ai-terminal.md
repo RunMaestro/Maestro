@@ -1434,3 +1434,41 @@ Remaining work:
 - Matrix-backed remaining after this tranche: 68.
 - Continue with small tranches for remaining Codex terminal transcript edge states, live-provider retry execution safeguards, deeper Auto Run run-state variants, and Auto Run worktree/stalled-document variants without duplicating existing app-shell coverage.
 - Run actual Playwright/E2E validation only after orchestrator approval.
+
+Forty-second tranche:
+
+- Added 5 active matrix-backed tests to `e2e/autorun-ai-terminal.spec.ts`.
+- New active tests: 5.
+- Cumulative active tests: 210.
+- Skipped tests: 0.
+- Env-gated tests: 0.
+- Shared helper edits: `stubProcessKill` and `getStubbedProcessKillCalls` helpers added for active-error restart IPC coverage without touching a live process.
+- Live provider execution: none; no E2E validation/listing was run.
+- Campaign head before this tranche: `cf7732494`.
+- Tranche implementation commit: `51de091b2`.
+- Orchestrator import commit: `25b7e29d4`.
+
+Covered:
+
+- Codex AI terminal recoverable network retry from the modal without spawning.
+- Codex AI terminal recoverable rate-limit retry from the modal without spawning.
+- Codex AI terminal re-authentication action switching to command terminal mode.
+- Codex AI terminal context-limit recovery opening a fresh tab.
+- Codex AI terminal crashed-agent restart through the kill IPC path.
+
+Validation:
+
+- `npx prettier --write e2e/autorun-ai-terminal.spec.ts` passed unchanged.
+- `git diff --check --cached -- e2e/autorun-ai-terminal.spec.ts` passed.
+- `npx eslint e2e/autorun-ai-terminal.spec.ts` passed.
+- `npx tsc -p tsconfig.lint.json --noEmit` passed.
+- Marker scan found 210 active declarations and no `.only`/skip declarations in `e2e/autorun-ai-terminal.spec.ts`.
+- Non-ASCII scan found 0 non-ASCII characters in `e2e/autorun-ai-terminal.spec.ts`.
+- Prohibited-pattern scan found no `waitForTimeout`, `.only`, `test.skip`, `console.log`, `npm run test:e2e`, `playwright test`, or `--list`.
+- Code-reviewer pass found no blocking/high issues.
+
+Remaining work:
+
+- Matrix-backed remaining after this tranche: 63.
+- Continue with small tranches for remaining Codex terminal transcript edge states, live-provider retry execution safeguards, deeper Auto Run run-state variants, and Auto Run worktree/stalled-document variants without duplicating existing app-shell coverage.
+- Run actual Playwright/E2E validation only after orchestrator approval.
