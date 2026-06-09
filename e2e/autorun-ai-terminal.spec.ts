@@ -1039,6 +1039,30 @@ async function getStubbedCodexProcessSpawnCalls(electronApp: ElectronApplication
 	});
 }
 
+async function stubProcessKill(electronApp: ElectronApplication) {
+	await electronApp.evaluate(({ ipcMain }) => {
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eProcessKillCalls?: string[];
+		};
+		state.__maestroE2eProcessKillCalls = [];
+
+		ipcMain.removeHandler('process:kill');
+		ipcMain.handle('process:kill', async (_event, sessionId: string) => {
+			state.__maestroE2eProcessKillCalls?.push(sessionId);
+			return true;
+		});
+	});
+}
+
+async function getStubbedProcessKillCalls(electronApp: ElectronApplication) {
+	return electronApp.evaluate(() => {
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eProcessKillCalls?: string[];
+		};
+		return state.__maestroE2eProcessKillCalls || [];
+	});
+}
+
 async function stubWorktreeGit(
 	electronApp: ElectronApplication,
 	options: WorktreeGitStubOptions = {}
@@ -3715,6 +3739,127 @@ Externally refreshed Codex Auto Run sentinel.
 			await expect(dialog).toBeHidden();
 			await expect(launched.window.getByText('Codex lane retry recovery sentinel')).toBeHidden();
 			await expect(promptInput).toBeFocused();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('retries a recoverable Codex network error from the modal without spawning', async () => {
+		const launched = await launchActiveErrorLaneWorkbench({
+			message: 'Codex lane network retry modal sentinel',
+		});
+		try {
+			await stubCodexProcessSpawn(launched.electronApp);
+			const promptInput = await openCodexAiTerminal(launched.window);
+			await launched.window.getByRole('button', { name: 'View Details' }).click();
+			const dialog = launched.window.getByRole('dialog', { name: 'Connection Error' });
+
+			await dialog.getByRole('button', { name: 'Retry Connection' }).click();
+
+			await expect(dialog).toBeHidden();
+			await expect(
+				launched.window.getByText('Codex lane network retry modal sentinel')
+			).toBeHidden();
+			await expect(promptInput).toBeFocused();
+			expect(await getStubbedCodexProcessSpawnCalls(launched.electronApp)).toEqual([]);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('retries a recoverable Codex rate-limit error from the modal without spawning', async () => {
+		const launched = await launchActiveErrorLaneWorkbench({
+			type: 'rate_limited',
+			message: 'Codex lane rate-limit retry sentinel',
+		});
+		try {
+			await stubCodexProcessSpawn(launched.electronApp);
+			const promptInput = await openCodexAiTerminal(launched.window);
+			await launched.window.getByRole('button', { name: 'View Details' }).click();
+			const dialog = launched.window.getByRole('dialog', { name: 'Rate Limit Exceeded' });
+
+			await dialog.getByRole('button', { name: 'Try Again' }).click();
+
+			await expect(dialog).toBeHidden();
+			await expect(launched.window.getByText('Codex lane rate-limit retry sentinel')).toBeHidden();
+			await expect(promptInput).toBeFocused();
+			expect(await getStubbedCodexProcessSpawnCalls(launched.electronApp)).toEqual([]);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('switches the Codex lane to command terminal mode after re-authentication action', async () => {
+		const launched = await launchActiveErrorLaneWorkbench({
+			type: 'auth_expired',
+			message: 'Codex lane re-auth terminal switch sentinel',
+		});
+		try {
+			await openCodexAiTerminal(launched.window);
+			await launched.window.getByRole('button', { name: 'View Details' }).click();
+			const dialog = launched.window.getByRole('dialog', { name: 'Authentication Required' });
+
+			await dialog.getByRole('button', { name: 'Re-authenticate' }).click();
+
+			await expect(dialog).toBeHidden();
+			await expect(
+				launched.window.getByText('Codex lane re-auth terminal switch sentinel')
+			).toBeHidden();
+			await expect(launched.window.getByPlaceholder('Run shell command...')).toBeVisible();
+			await expect(
+				launched.window.getByPlaceholder(/Talking to Auto Run Codex E2E powered by Codex/)
+			).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('starts a fresh Codex lane tab after context-limit recovery', async () => {
+		const launched = await launchActiveErrorLaneWorkbench({
+			type: 'token_exhaustion',
+			message: 'Codex lane fresh context tab sentinel',
+			recoverable: false,
+		});
+		try {
+			await openCodexAiTerminal(launched.window);
+			await expect(launched.window.locator('[data-tab-id]')).toHaveCount(1);
+			await launched.window.getByRole('button', { name: 'View Details' }).click();
+			const dialog = launched.window.getByRole('dialog', { name: 'Context Limit Reached' });
+
+			await dialog.getByRole('button', { name: 'Start New Session' }).click();
+
+			await expect(dialog).toBeHidden();
+			await expect(launched.window.getByText('Codex lane fresh context tab sentinel')).toBeHidden();
+			await expect(launched.window.locator('[data-tab-id]')).toHaveCount(2);
+			await expect(
+				launched.window.locator('[data-tab-id]').filter({ hasText: 'New Session' }).first()
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('restarts a crashed Codex lane agent through the kill IPC path', async () => {
+		const launched = await launchActiveErrorLaneWorkbench({
+			type: 'agent_crashed',
+			message: 'Codex lane restart kill sentinel',
+			recoverable: false,
+		});
+		try {
+			await stubProcessKill(launched.electronApp);
+			const sessionId = launched.sessions[0]!.id;
+
+			await openCodexAiTerminal(launched.window);
+			await launched.window.getByRole('button', { name: 'View Details' }).click();
+			const dialog = launched.window.getByRole('dialog', { name: 'Agent Error' });
+
+			await dialog.getByRole('button', { name: 'Restart Agent' }).click();
+
+			await expect
+				.poll(async () => getStubbedProcessKillCalls(launched.electronApp))
+				.toEqual([`${sessionId}-ai`]);
+			await expect(dialog).toBeHidden();
+			await expect(launched.window.getByText('Codex lane restart kill sentinel')).toBeHidden();
 		} finally {
 			await launched.cleanup();
 		}
