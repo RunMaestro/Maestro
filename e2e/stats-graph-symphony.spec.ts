@@ -165,6 +165,11 @@ const activeScenarioMatrix = [
 	{ id: 'SGS-A152', title: 'opens leaderboard public site link through shell routing' },
 	{ id: 'SGS-A153', title: 'opens Symphony active draft PR link through shell routing' },
 	{ id: 'SGS-A154', title: 'opens Symphony completed PR link through shell routing' },
+	{ id: 'SGS-A155', title: 'copies Document Graph selected path to clipboard' },
+	{ id: 'SGS-A156', title: 'syncs Symphony active contribution by ID' },
+	{ id: 'SGS-A157', title: 'reports Symphony closed PR status count' },
+	{ id: 'SGS-A158', title: 'reports Symphony checked PRs without changes' },
+	{ id: 'SGS-A159', title: 'submits leaderboard social metadata handles' },
 ] as const;
 
 const skippedScenarioMatrix = [
@@ -3865,6 +3870,146 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 		await expect
 			.poll(() => getCapturedExternalLinks(electronApp))
 			.toContain('https://github.com/RunMaestro/docs/pull/12');
+	});
+
+	test(`${activeScenarioMatrix[154].id} ${activeScenarioMatrix[154].title}`, async () => {
+		await window.evaluate(() => {
+			const state = globalThis as typeof globalThis & { __sgsClipboardText?: string };
+			state.__sgsClipboardText = '';
+			Object.defineProperty(navigator, 'clipboard', {
+				configurable: true,
+				value: {
+					writeText: async (text: string) => {
+						state.__sgsClipboardText = text;
+					},
+				},
+			});
+		});
+		const graphDialog = await openDocumentGraphFromPreview(window);
+
+		await clickDocumentGraphCenter(graphDialog, 'right');
+		await graphDialog.getByRole('button', { name: 'Copy Path' }).click();
+
+		await expect
+			.poll(() =>
+				window.evaluate(() => {
+					const state = globalThis as typeof globalThis & { __sgsClipboardText?: string };
+					return state.__sgsClipboardText ?? '';
+				})
+			)
+			.toBe(path.join(workbench.projectDir, 'README.md'));
+	});
+
+	test(`${activeScenarioMatrix[155].id} ${activeScenarioMatrix[155].title}`, async () => {
+		await electronApp.evaluate(({ ipcMain }) => {
+			const state = globalThis as typeof globalThis & { __sgsSyncContributionIds?: string[] };
+			state.__sgsSyncContributionIds = [];
+			ipcMain.removeHandler('symphony:syncContribution');
+			ipcMain.handle('symphony:syncContribution', async (_event, contributionId: string) => {
+				state.__sgsSyncContributionIds!.push(contributionId);
+				return { success: true, message: 'SGS active sync refreshed' };
+			});
+		});
+		const symphonyDialog = await openSymphonyFromQuickActions(window);
+
+		await symphonyDialog.getByRole('button', { name: /Active \(1\)/ }).click();
+		await symphonyDialog.getByTitle('Sync status with GitHub').click();
+
+		await expect
+			.poll(() =>
+				electronApp.evaluate(() => {
+					const state = globalThis as typeof globalThis & {
+						__sgsSyncContributionIds?: string[];
+					};
+					return state.__sgsSyncContributionIds ?? [];
+				})
+			)
+			.toContain('symphony-active-sgs');
+		await expect(symphonyDialog.getByText('SGS active sync refreshed')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[156].id} ${activeScenarioMatrix[156].title}`, async () => {
+		await electronApp.evaluate(({ ipcMain }) => {
+			ipcMain.removeHandler('symphony:checkPRStatuses');
+			ipcMain.handle('symphony:checkPRStatuses', async () => ({
+				success: true,
+				checked: 1,
+				merged: 0,
+				closed: 1,
+			}));
+		});
+		const symphonyDialog = await openSymphonyFromQuickActions(window);
+
+		await symphonyDialog.getByRole('button', { name: /Active \(1\)/ }).click();
+		await symphonyDialog.getByRole('button', { name: 'Check PR Status' }).click();
+
+		await expect(symphonyDialog.getByText('1 PR closed')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[157].id} ${activeScenarioMatrix[157].title}`, async () => {
+		await electronApp.evaluate(({ ipcMain }) => {
+			ipcMain.removeHandler('symphony:checkPRStatuses');
+			ipcMain.handle('symphony:checkPRStatuses', async () => ({
+				success: true,
+				checked: 1,
+				merged: 0,
+				closed: 0,
+			}));
+		});
+		const symphonyDialog = await openSymphonyFromQuickActions(window);
+
+		await symphonyDialog.getByRole('button', { name: /Active \(1\)/ }).click();
+		await symphonyDialog.getByRole('button', { name: 'Check PR Status' }).click();
+
+		await expect(symphonyDialog.getByText('All PRs up to date')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[158].id} ${activeScenarioMatrix[158].title}`, async () => {
+		await electronApp.evaluate(({ ipcMain }) => {
+			const state = globalThis as typeof globalThis & {
+				__sgsSubmitPayloads?: Array<Record<string, unknown>>;
+			};
+			state.__sgsSubmitPayloads = [];
+			ipcMain.removeHandler('leaderboard:submit');
+			ipcMain.handle('leaderboard:submit', async (_event, payload: Record<string, unknown>) => {
+				state.__sgsSubmitPayloads!.push(payload);
+				return { success: true };
+			});
+		});
+		const aboutDialog = await openAboutFromQuickActions(window);
+		await aboutDialog.getByRole('button', { name: /Join Leaderboard/ }).click();
+
+		const leaderboardDialog = window.getByRole('dialog', { name: 'Register for Leaderboard' });
+		await leaderboardDialog.getByPlaceholder('ConductorPedram').fill('Social Metadata');
+		await leaderboardDialog.getByPlaceholder('conductor@maestro.ai').fill('social@example.com');
+		await leaderboardDialog.locator('input[placeholder="username"]').first().fill('social-github');
+		await leaderboardDialog.getByPlaceholder('handle').fill('@social-x');
+		await leaderboardDialog
+			.locator('input[placeholder="username"]')
+			.nth(1)
+			.fill('@social-linkedin');
+		await leaderboardDialog.getByPlaceholder('username#1234 or username').fill('@social-discord');
+		await leaderboardDialog.getByPlaceholder('username.bsky.social').fill('@social.bsky.social');
+		await leaderboardDialog.getByRole('button', { name: 'Push Up' }).click();
+
+		await expect
+			.poll(() =>
+				electronApp.evaluate(() => {
+					const state = globalThis as typeof globalThis & {
+						__sgsSubmitPayloads?: Array<Record<string, unknown>>;
+					};
+					const payload = state.__sgsSubmitPayloads?.[0];
+					if (!payload) return '';
+					return [
+						payload.githubUsername,
+						payload.twitterHandle,
+						payload.linkedinHandle,
+						payload.discordUsername,
+						payload.blueskyHandle,
+					].join('|');
+				})
+			)
+			.toBe('social-github|social-x|social-linkedin|social-discord|social.bsky.social');
 	});
 
 	for (const scenario of skippedScenarioMatrix) {
