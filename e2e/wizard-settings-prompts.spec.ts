@@ -370,6 +370,14 @@ const activeScenarioMatrix = [
 	{ id: 'WSP-296', title: 'maps inline wizard timeout errors to friendly copy' },
 	{ id: 'WSP-297', title: 'maps inline wizard unavailable-agent errors to friendly copy' },
 	{ id: 'WSP-298', title: 'maps inline wizard parse errors to friendly copy' },
+	{ id: 'WSP-299', title: 'maps inline wizard inactive-session errors to friendly copy' },
+	{ id: 'WSP-300', title: 'maps inline wizard failed-spawn errors to friendly copy' },
+	{ id: 'WSP-301', title: 'maps inline wizard agent-exit errors to friendly copy' },
+	{ id: 'WSP-302', title: 'shows inline wizard generic error technical details' },
+	{ id: 'WSP-303', title: 'lists New Agent Wizard supported provider descriptions' },
+	{ id: 'WSP-304', title: 'marks Qwen3 Coder as a disabled New Agent Wizard provider' },
+	{ id: 'WSP-305', title: 'shows New Agent Wizard Codex configuration location choices' },
+	{ id: 'WSP-306', title: 'refreshes New Agent Wizard Codex models for the selected remote' },
 ];
 
 const envGatedScenarioMatrix = [
@@ -3449,12 +3457,8 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 		});
 
 		try {
-			const settingsDialog = await openSettingsTab(
-				launched.window,
-				'General',
-				'Global Environment Variables'
-			);
-			const variableRow = settingsDialog
+			await openSettingsTab(launched.window, 'General', 'Global Environment Variables');
+			const variableRow = launched.window
 				.getByDisplayValue('WSP_REMOVE')
 				.locator('xpath=ancestor::div[contains(@class, "flex")][1]');
 			await variableRow.getByTitle('Remove variable').click();
@@ -10071,6 +10075,194 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 		try {
 			await expect(launched.window.getByText('Response Error')).toBeVisible();
 			await expect(launched.window.getByText(/Could not understand the response/)).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[298].id} ${activeScenarioMatrix[298].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench({
+			inlineWizard: true,
+			inlineWizardState: {
+				error: 'Wizard session is not active',
+			},
+		});
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await expect(launched.window.getByText('Session Error')).toBeVisible();
+			await expect(
+				launched.window.getByText('The wizard session is no longer active.')
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[299].id} ${activeScenarioMatrix[299].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench({
+			inlineWizard: true,
+			inlineWizardState: {
+				error: 'Failed to spawn codex wizard process',
+			},
+		});
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await expect(launched.window.getByText('Failed to Start Agent')).toBeVisible();
+			await expect(launched.window.getByText('Could not start the AI agent.')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[300].id} ${activeScenarioMatrix[300].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench({
+			inlineWizard: true,
+			inlineWizardState: {
+				error: 'Agent exited with code 1',
+			},
+		});
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await expect(launched.window.getByText('Agent Error')).toBeVisible();
+			await expect(
+				launched.window.getByText('The AI agent encountered an error and stopped unexpectedly.')
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[301].id} ${activeScenarioMatrix[301].title}`, async () => {
+		const genericError = 'Wizard provider returned an unclassified setup failure';
+		const seeded = createWizardSettingsPromptsWorkbench({
+			inlineWizard: true,
+			inlineWizardState: {
+				error: genericError,
+			},
+		});
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await expect(launched.window.getByText('Something Went Wrong')).toBeVisible();
+			await expect(launched.window.getByText(genericError).first()).toBeVisible();
+			await launched.window.getByText('Technical details').click();
+
+			await expect(
+				launched.window.locator('[data-testid="error-technical-details"]')
+			).toBeVisible();
+			await expect(
+				launched.window.locator('[data-testid="error-technical-details"]')
+			).toContainText(genericError);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[302].id} ${activeScenarioMatrix[302].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp);
+			const wizardDialog = await openNewAgentWizard(launched.window);
+
+			await expect(wizardDialog.getByText("Anthropic's AI coding assistant")).toBeVisible();
+			await expect(wizardDialog.getByText("OpenAI's AI coding assistant")).toBeVisible();
+			await expect(wizardDialog.getByText('Open-source AI coding assistant')).toBeVisible();
+			await expect(wizardDialog.getByText("Factory's AI coding assistant")).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[303].id} ${activeScenarioMatrix[303].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp);
+			const wizardDialog = await openNewAgentWizard(launched.window);
+
+			await expect(wizardDialog.getByRole('button', { name: /Qwen3 Coder/ })).toBeDisabled();
+			await expect(
+				wizardDialog.getByRole('button', { name: /Qwen3 Coder/ }).getByText('Coming soon')
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[304].id} ${activeScenarioMatrix[304].title}`, async () => {
+		const seededRemote = createStubSshRemoteConfig();
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp);
+			await stubSshRemoteHandlers(launched.electronApp, { configs: [seededRemote] });
+			const wizardDialog = await openCodexWizardCustomization(launched.window);
+			const locationSelect = wizardDialog.getByLabel('Agent location');
+
+			await expect(locationSelect).toHaveValue('');
+			await expect(locationSelect.getByRole('option', { name: 'Local Machine' })).toBeVisible();
+			await expect(locationSelect.getByRole('option', { name: 'Quant VPS' })).toBeVisible();
+			await locationSelect.selectOption('ssh-remote-1');
+
+			await expect(locationSelect).toHaveValue('ssh-remote-1');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[305].id} ${activeScenarioMatrix[305].title}`, async () => {
+		const seededRemote = createStubSshRemoteConfig();
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp);
+			await stubSshRemoteHandlers(launched.electronApp, { configs: [seededRemote] });
+			const wizardDialog = await openCodexWizardCustomization(launched.window);
+
+			await wizardDialog.getByLabel('Agent location').selectOption('ssh-remote-1');
+			await wizardDialog.getByTitle('Refresh available models').click();
+
+			await expect
+				.poll(async () => {
+					const state = await getStubbedCodexAgentState(launched.electronApp);
+					return state.modelCalls.some(
+						(call) =>
+							call.agentId === 'codex' && call.refresh && call.sshRemoteId === 'ssh-remote-1'
+					);
+				})
+				.toBe(true);
 		} finally {
 			await launched.cleanup();
 		}
