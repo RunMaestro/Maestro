@@ -1,6 +1,6 @@
 # Parallel E2E Orchestrator Status
 
-Last updated: 2026-06-08 23:24 EDT
+Last updated: 2026-06-08 23:31 EDT
 
 ## Base
 
@@ -39,7 +39,7 @@ coverage and the shell-lane tab coverage.
 | `autorun-ai-terminal`      | `codex/e2e-autorun-ai-terminal`      | `Maestro-worktrees/e2e-autorun-ai-terminal`      | `maestro-e2e-autorun-ai-terminal-campaign-goal`     | manual fallback accepted   | 140 active scenarios accepted; 133 remain       |
 | `wizard-settings-prompts`  | `codex/e2e-wizard-settings-prompts`  | `Maestro-worktrees/e2e-wizard-settings-prompts`  | `maestro-e2e-wizard-settings-prompts-campaign-goal` | manual fallback accepted   | 83 active scenarios accepted; 289 remain        |
 | `git-groupchat-playbooks`  | `codex/e2e-git-groupchat-playbooks`  | `Maestro-worktrees/e2e-git-groupchat-playbooks`  | `maestro-e2e-git-groupchat-playbooks-campaign-goal` | manual fallback accepted   | 130 active scenarios accepted; 233 remain       |
-| `stats-graph-symphony`     | `codex/e2e-stats-graph-symphony`     | `Maestro-worktrees/e2e-stats-graph-symphony`     | `maestro-e2e-stats-graph-symphony-campaign-goal`    | manual fallback accepted   | 126 active scenarios accepted; 210 remain       |
+| `stats-graph-symphony`     | `codex/e2e-stats-graph-symphony`     | `Maestro-worktrees/e2e-stats-graph-symphony`     | `maestro-e2e-stats-graph-symphony-campaign-goal`    | manual fallback accepted   | 144 active scenarios accepted; 192 remain       |
 | `debug-accessibility`      | `codex/e2e-debug-accessibility`      | `Maestro-worktrees/e2e-debug-accessibility`      | not relaunched                                      | complete                   | 192 active scenarios accepted; 0 remain         |
 | `mobile-web-bridge`        | `codex/e2e-mobile-web-bridge`        | `Maestro-worktrees/e2e-mobile-web-bridge`        | not relaunched                                      | complete after blocker fix | 102 active scenarios accepted; 0 remain         |
 | `fixtures-sharding-review` | `codex/e2e-fixtures-sharding-review` | `Maestro-worktrees/e2e-fixtures-sharding-review` | not relaunched                                      | support complete           | Support plan accepted; no active scenario quota |
@@ -52,7 +52,7 @@ coverage and the shell-lane tab coverage.
 - `mobile-web-bridge` merged through `33a5ace5f`.
 - `autorun-ai-terminal` merged through `f3710f189`.
 - `wizard-settings-prompts` merged through `c32a4e4d5`.
-- `stats-graph-symphony` merged through `df15bd382`.
+- `stats-graph-symphony` merged through `b483f40e0`.
 - `debug-accessibility` merged through `e1879dd27`.
 - `fixtures-sharding-review` merged through `392c4527`.
 - `git-groupchat-playbooks` merged through `6c620c11d`.
@@ -262,6 +262,11 @@ coverage and the shell-lane tab coverage.
   Playbook Exchange, Spec Kit, and OpenSpec scenarios. Static Prettier, ESLint,
   TypeScript, `git diff --check`, inventory scans, and focused review passed. No
   E2E execution was run.
+- 2026-06-08 23:31 EDT: accepted manual `stats-graph-symphony` fallback through
+  `b483f40e0` with 18 active Usage Dashboard, Document Graph, Symphony, leaderboard,
+  and achievements scenarios. Static Prettier, ESLint, TypeScript,
+  `git diff --check`, inventory scans, and focused review passed. No E2E execution
+  was run.
 
 ## Blockers
 
@@ -282,7 +287,8 @@ coverage and the shell-lane tab coverage.
   twenty-ninth `mobile-web-bridge`, thirtieth `stats-graph-symphony`, thirty-first
   `mobile-web-bridge` quota-completion, thirty-second `mobile-web-bridge`
   quota acceptance fix, thirty-third `debug-accessibility` final quota, and
-  thirty-fourth `git-groupchat-playbooks` fallbacks are accepted for selected
+  thirty-fourth `git-groupchat-playbooks`, and thirty-fifth `stats-graph-symphony`
+  fallbacks are accepted for selected
   high-remaining lanes. Remaining work should
   continue in smaller batches, with each run committing one coherent tranche and
   recording remaining work instead of trying to consume a full lane quota in one

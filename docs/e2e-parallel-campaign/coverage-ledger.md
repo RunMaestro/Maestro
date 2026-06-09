@@ -2,9 +2,9 @@
 
 Source of truth: `docs/e2e-coverage-campaign.md`.
 
-Current active tests: 1668
+Current active tests: 1686
 Target active tests: 3,025
-Remaining matrix-backed active scenarios: 1,357
+Remaining matrix-backed active scenarios: 1,339
 
 ## Matrix
 
@@ -23,10 +23,10 @@ Remaining matrix-backed active scenarios: 1,357
 | Settings                                                       | `wizard-settings-prompts` |            111 |           190 |        79 |
 | Git, worktrees, PR, diff/log, Gist                             | `git-groupchat-playbooks` |             70 |           160 |        90 |
 | Group chat                                                     | `git-groupchat-playbooks` |             75 |           140 |        65 |
-| Usage dashboard and stats                                      | `stats-graph-symphony`    |             48 |           125 |        77 |
-| Document graph                                                 | `stats-graph-symphony`    |             55 |           130 |        75 |
+| Usage dashboard and stats                                      | `stats-graph-symphony`    |             53 |           125 |        72 |
+| Document graph                                                 | `stats-graph-symphony`    |             59 |           130 |        71 |
 | Playbooks, marketplace, Spec Kit, OpenSpec                     | `git-groupchat-playbooks` |             67 |           145 |        78 |
-| Symphony, leaderboard, achievements                            | `stats-graph-symphony`    |             62 |           120 |        58 |
+| Symphony, leaderboard, achievements                            | `stats-graph-symphony`    |             71 |           120 |        49 |
 | Director notes and prompt composer                             | `wizard-settings-prompts` |             30 |            90 |        60 |
 | Debug/about/update/app info/agent error modals                 | `debug-accessibility`     |             85 |            85 |         0 |
 | Mobile/web bridge                                              | `mobile-web-bridge`       |            190 |           190 |         0 |
@@ -42,7 +42,7 @@ Remaining matrix-backed active scenarios: 1,357
 | `autorun-ai-terminal`      |                     133 |                       140 |                                    0 | `f3710f189`          |
 | `wizard-settings-prompts`  |                     289 |                        83 |                                    1 | `2d069a57a`          |
 | `git-groupchat-playbooks`  |                     233 |                       130 |                                    7 | `6c620c11d`          |
-| `stats-graph-symphony`     |                     210 |                       126 |                                    6 | `df15bd382`          |
+| `stats-graph-symphony`     |                     192 |                       144 |                                    6 | `b483f40e0`          |
 | `debug-accessibility`      |                       0 |                       192 |                                    0 | `e1879dd27`          |
 | `mobile-web-bridge`        |                       0 |                       102 |                                    0 | `33a5ace5f`          |
 | `fixtures-sharding-review` |                       0 |                         0 |                                    0 | `392c4527`           |
@@ -155,3 +155,4 @@ Remaining matrix-backed active scenarios: 1,357
 - 2026-06-08: accepted manual `git-groupchat-playbooks` fallback through `6c620c11d`; authored 20 additional active Create Pull Request, Git Diff, Gist, Group Chat, Playbook Exchange, Spec Kit, and OpenSpec scenarios. Focused static review found no critical or high issues. No E2E execution was run.
 - 2026-06-08: accepted manual `autorun-ai-terminal` through `f3710f189`; authored 130 additional active Codex AI terminal and Auto Run scenarios from the clean worker branch. Focused static review replaced four fixed waits with visible-state waits and found no critical or high issues. No E2E execution was run.
 - 2026-06-08: accepted manual `stats-graph-symphony` through `df15bd382`; authored 74 additional active Usage Dashboard, Document Graph, Symphony, leaderboard, and achievements scenarios from the clean worker branch. Focused static review found no critical or high issues. No E2E execution was run.
+- 2026-06-08: accepted manual `stats-graph-symphony` through `b483f40e0`; authored 18 additional active Usage Dashboard export/range, Document Graph preview/layout, Symphony external-link/document/clone, and leaderboard scenarios. Focused static review found no critical or high issues. No E2E execution was run.
