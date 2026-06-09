@@ -3511,6 +3511,157 @@ test.describe('App shell seeded workbench', () => {
 		await expect(window.getByText('File Preview Surface')).toBeVisible();
 	});
 
+	test('cancels filtered Quick Actions shell toggle without changing sidebars', async () => {
+		await expect(window.locator('[data-tour="session-list"]')).toBeVisible();
+		await expect(window.locator('[data-tour="files-panel"]')).toBeVisible();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+
+		const quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('Toggle Right Panel');
+		await expect(
+			quickActionsDialog.getByRole('button', { name: /Toggle Right Panel/ })
+		).toBeVisible();
+
+		await closeQuickActions(window, quickActionsDialog);
+
+		await expect(window.locator('[data-tour="session-list"]')).toBeVisible();
+		await expect(window.locator('[data-tour="files-panel"]')).toBeVisible();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+	});
+
+	test('restores the History panel shortcut after Quick Actions hides right chrome', async () => {
+		const terminalInput = await openSeededTerminalAgent(window);
+		await terminalInput.fill('terminal draft before history restore sentinel');
+
+		const quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('Toggle Right Panel');
+		await quickActionsDialog.getByRole('button', { name: /Toggle Right Panel/ }).click();
+		await expect(window.getByTitle(/Show right panel/)).toBeVisible();
+
+		await window.keyboard.press('Meta+Shift+H');
+
+		await expect(window.locator('[data-tour="history-panel"]')).toBeVisible();
+		await expect(window.getByLabel('Terminal output')).toBeVisible();
+		await expect(terminalInput).toHaveValue('terminal draft before history restore sentinel');
+	});
+
+	test('keeps terminal drafts while cycling agents from collapsed Left Bar', async () => {
+		const terminalInput = await openSeededTerminalAgent(window);
+		await terminalInput.fill('terminal draft across collapsed agent cycle sentinel');
+
+		await window.keyboard.press('Alt+Meta+ArrowLeft');
+		await expect(window.locator('[data-tour="session-list"]')).toBeHidden();
+
+		await window.keyboard.press('Meta+[');
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+		await window.keyboard.press('Meta+]');
+
+		await expect(window.getByLabel('Terminal output')).toBeVisible();
+		await expect(terminalInput).toHaveValue('terminal draft across collapsed agent cycle sentinel');
+		await expect(window.locator('[data-tour="session-list"]')).toBeHidden();
+	});
+
+	test('restores Left Bar search after Quick Actions collapses the sidebar', async () => {
+		const quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('Toggle Sidebar');
+		await quickActionsDialog.getByRole('button', { name: /Toggle Sidebar/ }).click();
+		await expect(window.locator('[data-tour="session-list"]')).toBeHidden();
+
+		await window.keyboard.press('Meta+Shift+A');
+		await expect(window.locator('[data-tour="session-list"]')).toBeVisible();
+		await window.keyboard.press('Meta+f');
+
+		const filterInput = window.getByPlaceholder('Filter agents...');
+		await expect(filterInput).toBeFocused();
+		await filterInput.fill('Terminal');
+		await expect(
+			window.locator('[data-tour="session-list"]').getByText('E2E Terminal')
+		).toBeVisible();
+		await expect(
+			window.locator('[data-tour="session-list"]').getByText('E2E Workbench')
+		).toBeHidden();
+	});
+
+	test('keeps History selected while canceling the Left Bar filter', async () => {
+		await helpers.openRightPanelTab(window, 'History');
+		await expect(window.locator('[data-tour="history-panel"]')).toBeVisible();
+
+		await window.keyboard.press('Meta+Shift+A');
+		await window.keyboard.press('Meta+f');
+		const filterInput = window.getByPlaceholder('Filter agents...');
+		await filterInput.fill('Terminal');
+		await expect(
+			window.locator('[data-tour="session-list"]').getByText('E2E Terminal')
+		).toBeVisible();
+
+		await filterInput.press('Escape');
+
+		await expect(filterInput).toBeHidden();
+		await expect(window.locator('[data-tour="history-panel"]')).toBeVisible();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+	});
+
+	test('restores Files panel from shortcut after Quick Actions opens Auto Run', async () => {
+		const quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('Go to Auto Run Tab');
+		await quickActionsDialog.getByRole('button', { name: /Go to Auto Run Tab/ }).click();
+		await expect(window.getByText('Auto Run Surface')).toBeVisible();
+
+		await window.keyboard.press('Meta+Shift+F');
+
+		await expect(window.locator('[data-tour="files-panel"]')).toBeVisible();
+		await expect(window.locator('[data-tour="autorun-panel"]')).toBeHidden();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+	});
+
+	test('closes Shortcuts Help over hidden chrome without restoring sidebars', async () => {
+		const terminalInput = await openSeededTerminalAgent(window);
+		await terminalInput.fill('terminal draft under shortcuts help sentinel');
+
+		await window.keyboard.press('Alt+Meta+ArrowLeft');
+		await window.keyboard.press('Alt+Meta+ArrowRight');
+		await expect(window.locator('[data-tour="session-list"]')).toBeHidden();
+		await expect(window.getByTitle(/Show right panel/)).toBeVisible();
+
+		const quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('View Shortcuts');
+		await quickActionsDialog.getByRole('button', { name: /View Shortcuts/ }).click();
+
+		const shortcutsDialog = window.getByRole('dialog', { name: 'Keyboard Shortcuts' });
+		await expect(shortcutsDialog).toBeVisible();
+		await window.keyboard.press('Escape');
+
+		await expect(shortcutsDialog).toBeHidden();
+		await expect(window.locator('[data-tour="session-list"]')).toBeHidden();
+		await expect(window.getByTitle(/Show right panel/)).toBeVisible();
+		await expect(window.getByLabel('Terminal output')).toBeVisible();
+		await expect(terminalInput).toHaveValue('terminal draft under shortcuts help sentinel');
+	});
+
+	test('restores Auto Run selection from the right-panel collapse control', async () => {
+		await helpers.openRightPanelTab(window, 'Auto Run');
+		await expect(window.getByText('Auto Run Surface')).toBeVisible();
+
+		await window.getByTitle(/Collapse Right Panel/).click();
+		await expect(window.getByTitle(/Show right panel/)).toBeVisible();
+
+		await window.getByTitle(/Show right panel/).click();
+
+		await expect(window.getByText('Auto Run Surface')).toBeVisible();
+		await expect(window.locator('[data-tour="files-panel"]')).toBeHidden();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+	});
+
 	test('renders seeded History entries and type filters', async () => {
 		await helpers.openRightPanelTab(window, 'History');
 		const historyPanel = window.locator('[data-tour="history-panel"]');
@@ -6544,6 +6695,148 @@ test.describe('App shell seeded workbench', () => {
 		await expect(
 			window.locator('[data-tab-id]').filter({ hasText: 'Inactive Rename Canceled' })
 		).toHaveCount(0);
+	});
+
+	test('copies an inactive file tab path without switching away from the AI tab', async () => {
+		await window.getByText('Main', { exact: true }).click();
+		await expect(window.getByText('Codex seeded response is visible.')).toBeVisible();
+
+		const readmeTab = window.locator('[data-tab-id]').filter({ hasText: 'README' }).first();
+		await readmeTab.hover();
+		await window.getByText('Copy File Path').click();
+
+		await expect(window.getByText('Copied!')).toBeVisible();
+		await expect(window.getByText('Codex seeded response is visible.')).toBeVisible();
+		await expect(window.getByText('File Preview Surface')).toBeHidden();
+	});
+
+	test('routes inactive file tab default-app action without switching away from AI', async () => {
+		await stubShellPathHandlers(electronApp);
+		await window.getByText('Main', { exact: true }).click();
+		await expect(window.getByText('Codex seeded response is visible.')).toBeVisible();
+
+		const readmeTab = window.locator('[data-tab-id]').filter({ hasText: 'README' }).first();
+		const expectedPath = seededWorkbench.sessions[0].filePreviewTabs[0].path;
+		await readmeTab.hover();
+		await window.getByText('Open in Default App').click();
+
+		await expect
+			.poll(() => getStubbedShellPathCalls(electronApp))
+			.toEqual([{ type: 'openPath', itemPath: expectedPath }]);
+		await expect(window.getByText('Codex seeded response is visible.')).toBeVisible();
+	});
+
+	test('keeps the AI tab selected after moving an inactive file tab first', async () => {
+		await window.getByText('Main', { exact: true }).click();
+		await expect(window.getByText('Codex seeded response is visible.')).toBeVisible();
+
+		const tabs = window.locator('[data-tab-id]');
+		const readmeTab = tabs.filter({ hasText: 'README' }).first();
+		await readmeTab.hover();
+		await window.getByRole('button', { name: 'Move to First Position' }).click();
+
+		await expect(tabs.nth(0)).toContainText('README');
+		await expect(tabs.nth(1)).toContainText('Main');
+		await expect(window.getByText('Codex seeded response is visible.')).toBeVisible();
+	});
+
+	test('selects a starred inactive AI tab from Tab Switcher while file preview is active', async () => {
+		await window.getByText('Main', { exact: true }).click();
+		await window.keyboard.press('Meta+Shift+S');
+		await window.getByText('README', { exact: true }).click();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+
+		await window.keyboard.press('Alt+Meta+T');
+		const switcher = window.getByRole('dialog', { name: 'Tab Switcher' });
+		await switcher.getByPlaceholder('Search open tabs...').press('Tab');
+		await switcher.getByPlaceholder('Search named sessions...').press('Tab');
+		await switcher.getByRole('button', { name: /Main/ }).click();
+
+		await expect(switcher).toBeHidden();
+		await expect(window.getByText('Codex seeded response is visible.')).toBeVisible();
+	});
+
+	test('closes starred Tab Switcher search with Escape while preserving file preview', async () => {
+		await window.getByText('Main', { exact: true }).click();
+		await window.keyboard.press('Meta+Shift+S');
+		await window.getByText('README', { exact: true }).click();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+
+		await window.keyboard.press('Alt+Meta+T');
+		const switcher = window.getByRole('dialog', { name: 'Tab Switcher' });
+		await switcher.getByPlaceholder('Search open tabs...').press('Tab');
+		await switcher.getByPlaceholder('Search named sessions...').press('Tab');
+		const starredSearch = switcher.getByPlaceholder('Search starred sessions...');
+		await starredSearch.fill('Main');
+		await expect(switcher.getByRole('button', { name: /Main/ })).toBeVisible();
+
+		await starredSearch.press('Escape');
+
+		await expect(switcher).toBeHidden();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+	});
+
+	test('applies and clears unread filtering for an inactive AI tab', async () => {
+		await window.getByText('README', { exact: true }).click();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+
+		const mainTab = window.locator('[data-tab-id]').filter({ hasText: 'Main' }).first();
+		await mainTab.hover();
+		await window.getByText('Mark as Unread').click();
+
+		await window.keyboard.press('Meta+U');
+		await expect(window.getByTitle(/Showing unread only/)).toBeVisible();
+		await expect(mainTab).toBeVisible();
+		await expect(window.locator('[data-tab-id]').filter({ hasText: 'README' })).toHaveCount(0);
+
+		await window.keyboard.press('Meta+U');
+		await expect(window.getByTitle(/Filter unread tabs/)).toBeVisible();
+		await expect(
+			window.locator('[data-tab-id]').filter({ hasText: 'README' }).first()
+		).toBeVisible();
+	});
+
+	test('reopens an AI tab after Quick Actions closes all AI tabs from file preview', async () => {
+		const tabRows = window.locator('[data-tab-id]');
+		await window.getByText('README', { exact: true }).click();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+
+		const quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('Close All Tabs');
+		await quickActionsDialog.getByRole('button', { name: /Close All Tabs/ }).click();
+		await expect(tabRows.filter({ hasText: 'Main' })).toHaveCount(0);
+
+		await window.keyboard.press('Meta+Shift+T');
+
+		await expect(tabRows.filter({ hasText: 'Main' }).first()).toBeVisible();
+		await expect(tabRows.filter({ hasText: 'README' }).first()).toBeVisible();
+		await expect(window.getByText('Codex seeded response is visible.')).toBeVisible();
+	});
+
+	test('finds a renamed new AI tab from the open Tab Switcher search', async () => {
+		const tabRows = window.locator('[data-tab-id]');
+		await window.getByText('Main', { exact: true }).click();
+		await window.keyboard.press('Meta+T');
+		await expect(tabRows.filter({ hasText: 'New Session' }).first()).toBeVisible();
+
+		await window.keyboard.press('Meta+Shift+R');
+		const renameDialog = window.getByRole('dialog', { name: 'Rename Tab' });
+		await renameDialog.locator('input').fill('Review Thread');
+		await renameDialog.locator('input').press('Enter');
+		await expect(tabRows.filter({ hasText: 'Review Thread' }).first()).toBeVisible();
+
+		await window.keyboard.press('Alt+Meta+T');
+		const switcher = window.getByRole('dialog', { name: 'Tab Switcher' });
+		await switcher.getByPlaceholder('Search open tabs...').fill('Review Thread');
+		await switcher.getByRole('button', { name: /Review Thread/ }).click();
+
+		await expect(switcher).toBeHidden();
+		await expect(tabRows.filter({ hasText: 'Review Thread' }).first()).toBeVisible();
+		await expect(
+			window.getByPlaceholder(/Talking to E2E Workbench powered by Codex/)
+		).toBeVisible();
 	});
 
 	test('filters Quick Actions and opens Shortcuts Help', async () => {
