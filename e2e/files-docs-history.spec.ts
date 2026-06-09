@@ -83,6 +83,11 @@ const activeScenarioMatrix = [
 	{ id: 'FDH-A55', title: 'keeps unchanged file rename submissions disabled' },
 	{ id: 'FDH-A56', title: 'dismisses file delete confirmation with Escape' },
 	{ id: 'FDH-A57', title: 'navigates History detail entries with keyboard arrows' },
+	{ id: 'FDH-A58', title: 'opens and closes the History panel guide' },
+	{ id: 'FDH-A59', title: 'searches within a plain text preview and cycles matches' },
+	{ id: 'FDH-A60', title: 'searches markdown preview code block content' },
+	{ id: 'FDH-A61', title: 'cancels a valid folder rename without moving child files' },
+	{ id: 'FDH-A62', title: 'filters History by failed full-response text' },
 ] as const;
 
 const skippedScenarioMatrix = [
@@ -1281,6 +1286,81 @@ test.describe(`Files docs history lane matrix (${activeScenarioMatrix.length} ac
 		await expect(
 			window.getByText('Manual detail references draft/plain.txt and archive.md.')
 		).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[57].id} ${activeScenarioMatrix[57].title}`, async () => {
+		await helpers.openRightPanelTab(window, 'History');
+		await window.getByTitle('History panel help').click();
+
+		await expect(window.getByText('History Panel Guide')).toBeVisible();
+		await expect(window.getByText('Entry Types')).toBeVisible();
+		await expect(window.getByText('Viewing Details')).toBeVisible();
+
+		await window.getByRole('button', { name: 'Got it' }).click();
+		await expect(window.getByText('History Panel Guide')).toBeHidden();
+	});
+
+	test(`${activeScenarioMatrix[58].id} ${activeScenarioMatrix[58].title}`, async () => {
+		await helpers.openRightPanelTab(window, 'Files');
+		await window.getByTitle('Expand all folders').click();
+		await window.getByText('plain.txt').dblclick();
+		await expect(window.getByText('Plain preview starting line.')).toBeVisible();
+		await window.keyboard.press('Control+f');
+
+		const fileSearch = window.getByPlaceholder(
+			'Search in file... (Enter: next, Shift+Enter: prev)'
+		);
+		await fileSearch.fill('Plain preview');
+
+		await expect(window.getByText('1/2')).toBeVisible();
+		await fileSearch.press('Enter');
+		await expect(window.getByText('2/2')).toBeVisible();
+		await fileSearch.press('Shift+Enter');
+		await expect(window.getByText('1/2')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[59].id} ${activeScenarioMatrix[59].title}`, async () => {
+		await expect(window.getByText("const tranche = 'files-docs-history';")).toBeVisible();
+		await window.keyboard.press('Control+f');
+
+		const fileSearch = window.getByPlaceholder(
+			'Search in file... (Enter: next, Shift+Enter: prev)'
+		);
+		await fileSearch.fill('const tranche');
+
+		await expect(window.getByText('1/1')).toBeVisible();
+		await fileSearch.press('Escape');
+		await expect(fileSearch).toBeHidden();
+	});
+
+	test(`${activeScenarioMatrix[60].id} ${activeScenarioMatrix[60].title}`, async () => {
+		const contextMenu = await openFileContextMenu(window, 'docs');
+		await contextMenu.getByRole('button', { name: 'Rename' }).click();
+
+		const renameDialog = window.getByRole('dialog', { name: 'Rename Folder' });
+		await expect(renameDialog).toBeVisible();
+		await renameDialog.getByPlaceholder('Enter folder name...').fill('guides');
+		await renameDialog.getByRole('button', { name: 'Cancel' }).click();
+
+		await expect(renameDialog).toBeHidden();
+		await getFileTreeRow(window, 'docs');
+		await expect(window.locator('[data-file-index]').filter({ hasText: 'guides' })).toBeHidden();
+		await expect(fs.existsSync(seededWorkbench.runbookPath)).toBe(true);
+		await expect(fs.existsSync(seededWorkbench.archivePath)).toBe(true);
+	});
+
+	test(`${activeScenarioMatrix[61].id} ${activeScenarioMatrix[61].title}`, async () => {
+		await helpers.openRightPanelTab(window, 'History');
+		const historyPanel = window.locator('[data-tour="history-panel"]');
+		await historyPanel.locator('[tabindex="0"]').focus();
+		await window.keyboard.press('Control+f');
+
+		const historyFilter = historyPanel.getByPlaceholder('Filter history...');
+		await historyFilter.fill('blocked external renderer');
+
+		await expect(historyPanel.getByText('1 result')).toBeVisible();
+		await expect(historyPanel.getByText('Preview fallback failed')).toBeVisible();
+		await expect(historyPanel.getByText('Rendered docs history tranche')).toBeHidden();
 	});
 
 	for (const scenario of skippedScenarioMatrix) {
