@@ -4392,6 +4392,75 @@ test.describe('App shell seeded workbench', () => {
 		await expect(calls[1].cwd).toBe(expectedCwd);
 	});
 
+	test('updates command terminal cwd after tilde cd before a follow-up command', async () => {
+		await stubTerminalRunCommand(electronApp);
+		const terminalInput = await openSeededTerminalAgent(window);
+		const inputArea = window.locator('[data-tour="input-area"]');
+		const expectedCwd = path.join(seededWorkbench.sessions[1].cwd, 'Auto Run Docs');
+
+		await terminalInput.fill('cd ~/Auto Run Docs');
+		await inputArea.getByTitle('Run command (Enter)').click();
+		await expect(inputArea.getByText(/Auto Run Docs/)).toBeVisible();
+
+		await terminalInput.fill('pwd');
+		await inputArea.getByTitle('Run command (Enter)').click();
+
+		await expect(window.locator('[data-log-index]').last().getByText(expectedCwd)).toBeVisible();
+		const calls = await getStubbedTerminalRunCommandCalls(electronApp);
+		await expect(calls.map((call) => call.command)).toEqual(['cd ~/Auto Run Docs', 'pwd']);
+		await expect(calls[0].cwd).toBe(seededWorkbench.sessions[1].cwd);
+		await expect(calls[1].cwd).toBe(expectedCwd);
+	});
+
+	test('keeps command terminal cwd unchanged when cd target is missing', async () => {
+		await stubTerminalRunCommand(electronApp);
+		const terminalInput = await openSeededTerminalAgent(window);
+		const inputArea = window.locator('[data-tour="input-area"]');
+		const originalCwd = seededWorkbench.sessions[1].cwd;
+
+		await terminalInput.fill('cd missing-e2e-folder');
+		await inputArea.getByTitle('Run command (Enter)').click();
+
+		await terminalInput.fill('pwd');
+		await inputArea.getByTitle('Run command (Enter)').click();
+
+		await expect(window.locator('[data-log-index]').last().getByText(originalCwd)).toBeVisible();
+		const calls = await getStubbedTerminalRunCommandCalls(electronApp);
+		await expect(calls.map((call) => call.command)).toEqual(['cd missing-e2e-folder', 'pwd']);
+		await expect(calls[0].cwd).toBe(originalCwd);
+		await expect(calls[1].cwd).toBe(originalCwd);
+	});
+
+	test('deduplicates repeated command terminal history entries', async () => {
+		await stubTerminalRunCommand(electronApp);
+		const terminalInput = await openSeededTerminalAgent(window);
+		const inputArea = window.locator('[data-tour="input-area"]');
+		const repeatedCommand = 'echo repeated terminal history sentinel';
+
+		await terminalInput.fill(repeatedCommand);
+		await inputArea.getByTitle('Run command (Enter)').click();
+		await expect(terminalInput).toHaveValue('');
+		await expect
+			.poll(async () => (await getStubbedTerminalRunCommandCalls(electronApp)).length)
+			.toBe(1);
+		await expect(window.getByText('Executing command...')).toBeHidden();
+
+		await terminalInput.fill(repeatedCommand);
+		await inputArea.getByTitle('Run command (Enter)').click();
+		await expect(terminalInput).toHaveValue('');
+		await expect
+			.poll(async () => (await getStubbedTerminalRunCommandCalls(electronApp)).length)
+			.toBe(2);
+		await expect(window.getByText('Executing command...')).toBeHidden();
+
+		await terminalInput.focus();
+		await terminalInput.press('ArrowUp');
+		const historyFilter = window.getByPlaceholder('Filter commands...');
+		await historyFilter.fill('repeated terminal history sentinel');
+
+		await expect(window.getByRole('button', { name: repeatedCommand })).toHaveCount(1);
+	});
+
 	test('persists command terminal history across an app restart', async () => {
 		await stubTerminalRunCommand(electronApp);
 		const terminalInput = await openSeededTerminalAgent(window);
@@ -5113,6 +5182,46 @@ test.describe('App shell seeded workbench', () => {
 		await window.keyboard.press('Meta+Shift+T');
 		await expect(tabRows).toHaveCount(3);
 		await expect(tabRows.filter({ hasText: 'New Session' })).toBeVisible();
+	});
+
+	test('closes right-side unified tabs from Quick Actions while keeping the selected AI tab', async () => {
+		const tabRows = window.locator('[data-tab-id]');
+		await window.getByText('Main', { exact: true }).click();
+		await window.keyboard.press('Meta+T');
+		await expect(tabRows).toHaveCount(3);
+
+		await window.getByText('Main', { exact: true }).click();
+		const quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('Close Tabs to Right');
+		await quickActionsDialog.getByRole('button', { name: /Close Tabs to Right/ }).click();
+
+		await expect(quickActionsDialog).toBeHidden();
+		await expect(tabRows).toHaveCount(1);
+		await expect(tabRows.filter({ hasText: 'Main' })).toBeVisible();
+		await expect(window.getByText('Codex seeded response is visible.')).toBeVisible();
+		await expect(tabRows.filter({ hasText: 'README' })).toHaveCount(0);
+		await expect(tabRows.filter({ hasText: 'New Session' })).toHaveCount(0);
+	});
+
+	test('closes other unified tabs from Quick Actions while preserving the active AI tab', async () => {
+		const tabRows = window.locator('[data-tab-id]');
+		await window.getByText('Main', { exact: true }).click();
+		await window.keyboard.press('Meta+T');
+		await expect(tabRows).toHaveCount(3);
+
+		const quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('Close Other Tabs');
+		await quickActionsDialog.getByRole('button', { name: /Close Other Tabs/ }).click();
+
+		await expect(quickActionsDialog).toBeHidden();
+		await expect(tabRows).toHaveCount(1);
+		await expect(tabRows.filter({ hasText: 'New Session' })).toBeVisible();
+		await expect(tabRows.filter({ hasText: 'Main' })).toHaveCount(0);
+		await expect(tabRows.filter({ hasText: 'README' })).toHaveCount(0);
 	});
 
 	test('routes file TabBar overlay shell actions through the preload IPC bridge', async () => {

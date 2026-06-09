@@ -1,6 +1,6 @@
 # shell-tabs-command
 
-Status: tab switcher and tab overlay tranche ready for commit; static-reviewed only
+Status: Quick Actions tab management and terminal cwd/history tranche ready for commit; static-reviewed only
 
 ## Scope
 
@@ -25,11 +25,11 @@ Authored in this branch:
 | Bucket                                       | New tests | Active scenarios |
 | -------------------------------------------- | --------: | ---------------: |
 | App shell, sidebars, focus, global shortcuts |         2 |               17 |
-| Command terminal workflows                   |        20 |               37 |
-| Tabs, tab switcher, tab overlays             |         9 |               37 |
-| Total                                        |        31 |               91 |
+| Command terminal workflows                   |        23 |               40 |
+| Tabs, tab switcher, tab overlays             |        11 |               39 |
+| Total                                        |        36 |               96 |
 
-Matrix-backed scenarios still unclaimed in this lane progress file: 175.
+Matrix-backed scenarios still unclaimed in this lane progress file: 170.
 Skipped/env-gated scenarios authored: 0.
 
 Files touched:
@@ -48,7 +48,10 @@ Files touched:
   SSH history selection routing, and SSH slash-command routing coverage. The tab
   switcher and tab overlay tranche adds Escape-close preservation, numeric AI tab
   selection, inactive AI tab session copying/unread marking, and active file tab
-  name copying without closing the preview.
+  name copying without closing the preview. The Quick Actions tab-management and
+  terminal cwd/history tranche adds command-palette close-right/close-other
+  unified tab flows, tilde `cd` cwd propagation, missing-directory `cd` cwd
+  preservation, and repeated command history deduplication.
 - `docs/e2e-parallel-campaign/agents/shell-tabs-command.md` - recorded this
   lane progress.
 
@@ -109,6 +112,21 @@ Validation performed:
   tab overlay tranche.
 - Focused code-reviewer pass - found no critical or high issues in the tab
   switcher and tab overlay tranche.
+- `./node_modules/.bin/prettier --write e2e/app-shell.spec.ts docs/e2e-parallel-campaign/agents/shell-tabs-command.md` -
+  unchanged for the Quick Actions tab-management and terminal cwd/history
+  tranche.
+- `./node_modules/.bin/eslint e2e/app-shell.spec.ts` - passed for the Quick
+  Actions tab-management and terminal cwd/history tranche.
+- `./node_modules/.bin/prettier --check e2e/app-shell.spec.ts docs/e2e-parallel-campaign/agents/shell-tabs-command.md` -
+  passed for the Quick Actions tab-management and terminal cwd/history tranche.
+- `git diff --check -- e2e/app-shell.spec.ts docs/e2e-parallel-campaign/agents/shell-tabs-command.md` -
+  passed for the Quick Actions tab-management and terminal cwd/history tranche.
+- Added-lines prohibited-token guard for `.only`, fixed waits, and Playwright
+  runner/listing commands - passed for the Quick Actions tab-management and
+  terminal cwd/history tranche.
+- Focused code-reviewer pass - found one determinism risk in the repeated
+  terminal-history assertion; fixed with runner-call polling and busy-state
+  checks. No critical or high issues remain.
 
 Validation intentionally not performed:
 
