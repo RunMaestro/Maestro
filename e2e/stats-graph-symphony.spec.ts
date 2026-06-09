@@ -170,6 +170,11 @@ const activeScenarioMatrix = [
 	{ id: 'SGS-A157', title: 'reports Symphony closed PR status count' },
 	{ id: 'SGS-A158', title: 'reports Symphony checked PRs without changes' },
 	{ id: 'SGS-A159', title: 'submits leaderboard social metadata handles' },
+	{ id: 'SGS-A160', title: 'shows Document Graph external node metadata after selection' },
+	{ id: 'SGS-A161', title: 'opens Document Graph external node context menu actions' },
+	{ id: 'SGS-A162', title: 'copies Document Graph external node URL to clipboard' },
+	{ id: 'SGS-A163', title: 'opens Document Graph external node URL through shell routing' },
+	{ id: 'SGS-A164', title: 'dismisses Document Graph external node context menu with Escape' },
 ] as const;
 
 const skippedScenarioMatrix = [
@@ -780,6 +785,30 @@ async function clickDocumentGraphCenter(
 	await canvas.click({
 		button,
 		position: { x: box.width / 2, y: box.height / 2 },
+	});
+}
+
+async function showDocumentGraphExternalLinks(graphDialog: ReturnType<Page['getByRole']>) {
+	await graphDialog.getByTitle('Show external links').click();
+	await expect(graphDialog.getByTitle('Hide external links')).toBeVisible({ timeout: 15000 });
+}
+
+const DOCUMENT_GRAPH_EXTERNAL_NODE_SCREEN_OFFSET = 160;
+
+async function clickDocumentGraphExternalNode(
+	graphDialog: ReturnType<Page['getByRole']>,
+	button: 'left' | 'right' = 'left'
+) {
+	const canvas = graphDialog.locator('canvas');
+	const box = await canvas.boundingBox();
+	if (!box) throw new Error('Document graph canvas was not visible');
+
+	await canvas.click({
+		button,
+		position: {
+			x: box.width / 2,
+			y: Math.min(box.height - 24, box.height / 2 + DOCUMENT_GRAPH_EXTERNAL_NODE_SCREEN_OFFSET),
+		},
 	});
 }
 
@@ -4010,6 +4039,82 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 				})
 			)
 			.toBe('social-github|social-x|social-linkedin|social-discord|social.bsky.social');
+	});
+
+	test(`${activeScenarioMatrix[159].id} ${activeScenarioMatrix[159].title}`, async () => {
+		const graphDialog = await openDocumentGraphFromPreview(window);
+
+		await showDocumentGraphExternalLinks(graphDialog);
+		await clickDocumentGraphExternalNode(graphDialog);
+
+		await expect(graphDialog.getByText('External: runmaestro.ai')).toBeVisible();
+		await expect(graphDialog.getByText(/2 documents, 1 external domain/)).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[160].id} ${activeScenarioMatrix[160].title}`, async () => {
+		const graphDialog = await openDocumentGraphFromPreview(window);
+
+		await showDocumentGraphExternalLinks(graphDialog);
+		await clickDocumentGraphExternalNode(graphDialog, 'right');
+
+		await expect(graphDialog.getByRole('button', { name: 'Open' })).toBeVisible();
+		await expect(graphDialog.getByRole('button', { name: 'Copy URL' })).toBeVisible();
+		await expect(graphDialog.getByRole('button', { name: 'Focus' })).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[161].id} ${activeScenarioMatrix[161].title}`, async () => {
+		await window.evaluate(() => {
+			const state = globalThis as typeof globalThis & { __sgsClipboardText?: string };
+			state.__sgsClipboardText = '';
+			Object.defineProperty(navigator, 'clipboard', {
+				configurable: true,
+				value: {
+					writeText: async (text: string) => {
+						state.__sgsClipboardText = text;
+					},
+				},
+			});
+		});
+		const graphDialog = await openDocumentGraphFromPreview(window);
+
+		await showDocumentGraphExternalLinks(graphDialog);
+		await clickDocumentGraphExternalNode(graphDialog, 'right');
+		await graphDialog.getByRole('button', { name: 'Copy URL' }).click();
+
+		await expect
+			.poll(() =>
+				window.evaluate(() => {
+					const state = globalThis as typeof globalThis & { __sgsClipboardText?: string };
+					return state.__sgsClipboardText ?? '';
+				})
+			)
+			.toBe('https://runmaestro.ai');
+		await expect(graphDialog.getByRole('button', { name: 'Copy URL' })).toBeHidden();
+	});
+
+	test(`${activeScenarioMatrix[162].id} ${activeScenarioMatrix[162].title}`, async () => {
+		await stubExternalLinkCapture(electronApp);
+		const graphDialog = await openDocumentGraphFromPreview(window);
+
+		await showDocumentGraphExternalLinks(graphDialog);
+		await clickDocumentGraphExternalNode(graphDialog, 'right');
+		await graphDialog.getByRole('button', { name: 'Open' }).click();
+
+		await expect
+			.poll(() => getCapturedExternalLinks(electronApp))
+			.toContain('https://runmaestro.ai');
+	});
+
+	test(`${activeScenarioMatrix[163].id} ${activeScenarioMatrix[163].title}`, async () => {
+		const graphDialog = await openDocumentGraphFromPreview(window);
+
+		await showDocumentGraphExternalLinks(graphDialog);
+		await clickDocumentGraphExternalNode(graphDialog, 'right');
+		await expect(graphDialog.getByRole('button', { name: 'Copy URL' })).toBeVisible();
+		await window.keyboard.press('Escape');
+
+		await expect(graphDialog.getByRole('button', { name: 'Copy URL' })).toBeHidden();
+		await expect(graphDialog).toBeVisible();
 	});
 
 	for (const scenario of skippedScenarioMatrix) {
