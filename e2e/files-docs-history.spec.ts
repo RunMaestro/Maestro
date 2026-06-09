@@ -93,6 +93,11 @@ const activeScenarioMatrix = [
 	{ id: 'FDH-A65', title: 'toggles successful History validation back off' },
 	{ id: 'FDH-A66', title: 'cancels deletion of a user-authored History entry' },
 	{ id: 'FDH-A67', title: 'closes History detail with the Close button' },
+	{ id: 'FDH-A350', title: 'previews a hidden markdown file after dotfile opt-in' },
+	{ id: 'FDH-A351', title: 'refreshes File Explorer after an external file removal' },
+	{ id: 'FDH-A352', title: 'opens a nested markdown preview from filtered results' },
+	{ id: 'FDH-A353', title: 'cancels markdown preview edits without changing disk content' },
+	{ id: 'FDH-A354', title: 'searches History by achievement action response text' },
 ] as const;
 
 const skippedScenarioMatrix = [
@@ -1747,6 +1752,85 @@ test.describe(`Files docs history lane matrix (${activeScenarioCount} active, ${
 			window.getByText('Manual detail references draft/plain.txt and archive.md.')
 		).toBeHidden();
 		await expect(historyPanel.getByText('Manual file operation note')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[67].id} ${activeScenarioMatrix[67].title}`, async () => {
+		await helpers.openRightPanelTab(window, 'Files');
+		await expect(window.getByText('.secret.md')).toBeHidden();
+
+		await window.getByTitle('Show dotfiles').click();
+		const hiddenRow = await getFileTreeRow(window, '.secret.md');
+		await hiddenRow.dblclick();
+
+		await expect(window.getByRole('heading', { name: 'Hidden File Explorer Note' })).toBeVisible();
+		await expect(
+			window.getByText('Hidden dotfile body for File Explorer visibility coverage.')
+		).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[68].id} ${activeScenarioMatrix[68].title}`, async () => {
+		await helpers.openRightPanelTab(window, 'Files');
+		await window.getByTitle('Expand all folders').click();
+		await getFileTreeRow(window, 'archive.md');
+
+		fs.unlinkSync(seededWorkbench.archivePath);
+		await window.getByTitle('Refresh file tree').click();
+
+		await expect(
+			window.locator('[data-file-index]').filter({ hasText: 'archive.md' })
+		).toBeHidden();
+		await expect(fs.existsSync(seededWorkbench.archivePath)).toBe(false);
+		await getFileTreeRow(window, 'runbook.md');
+	});
+
+	test(`${activeScenarioMatrix[69].id} ${activeScenarioMatrix[69].title}`, async () => {
+		await helpers.openRightPanelTab(window, 'Files');
+		await window.getByTitle('Expand all folders').click();
+		await window.keyboard.press('Control+f');
+		const filterInput = window.getByPlaceholder('Filter files...');
+		await filterInput.fill('archive');
+
+		const archiveRow = await getFileTreeRow(window, 'archive.md');
+		await archiveRow.dblclick();
+
+		await expect(window.getByRole('heading', { name: 'Archive Notes' })).toBeVisible();
+		await expect(
+			window.getByText('Archive body should survive cancelled folder deletion.')
+		).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[70].id} ${activeScenarioMatrix[70].title}`, async () => {
+		const originalReadme = fs.readFileSync(seededWorkbench.readmePath, 'utf-8');
+		const unsavedSentinel = 'Unsaved markdown cancel sentinel.';
+		await expect(window.getByRole('heading', { name: 'Files Docs History Matrix' })).toBeVisible();
+
+		await window.getByTitle(/Edit file/).click();
+		const editor = window.locator('textarea').first();
+		await expect(editor).toBeVisible();
+		await editor.fill(`# Files Docs History Matrix\n\n${unsavedSentinel}\n`);
+		await editor.press('Escape');
+
+		await expect(editor).toBeHidden();
+		await expect(window.getByText(unsavedSentinel)).toBeHidden();
+		await expect(fs.readFileSync(seededWorkbench.readmePath, 'utf-8')).toBe(originalReadme);
+	});
+
+	test(`${activeScenarioMatrix[71].id} ${activeScenarioMatrix[71].title}`, async () => {
+		await helpers.openRightPanelTab(window, 'History');
+		const historyPanel = window.locator('[data-tour="history-panel"]');
+		await historyPanel.locator('[tabindex="0"]').focus();
+		await window.keyboard.press('Control+f');
+
+		const historyFilter = historyPanel.getByPlaceholder('Filter history...');
+		await historyFilter.fill('About Maestro achievements');
+
+		await expect(historyPanel.getByText('1 result')).toBeVisible();
+		await expect(historyPanel.getByText('Achievement file history milestone')).toBeVisible();
+		await expect(historyPanel.getByText('Rendered docs history tranche')).toBeHidden();
+		await historyPanel.getByText('Achievement file history milestone').click();
+		await expect(
+			window.getByText('History achievement action opens the About Maestro achievements view.')
+		).toBeVisible();
 	});
 
 	for (const scenario of activeQuotaScenarioMatrix) {
