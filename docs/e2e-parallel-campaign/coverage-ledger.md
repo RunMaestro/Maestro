@@ -2,9 +2,9 @@
 
 Source of truth: `docs/e2e-coverage-campaign.md`.
 
-Current active tests: 1394
+Current active tests: 1439
 Target active tests: 3,025
-Remaining matrix-backed active scenarios: 1,631
+Remaining matrix-backed active scenarios: 1,586
 
 ## Matrix
 
@@ -21,11 +21,11 @@ Remaining matrix-backed active scenarios: 1,631
 | Auto Run                                                       | `autorun-ai-terminal`     |            134 |           260 |       126 |
 | New Agent Wizard and inline wizard                             | `wizard-settings-prompts` |             40 |           190 |       150 |
 | Settings                                                       | `wizard-settings-prompts` |            111 |           190 |        79 |
-| Git, worktrees, PR, diff/log, Gist                             | `git-groupchat-playbooks` |             39 |           160 |       121 |
-| Group chat                                                     | `git-groupchat-playbooks` |             55 |           140 |        85 |
+| Git, worktrees, PR, diff/log, Gist                             | `git-groupchat-playbooks` |             61 |           160 |        99 |
+| Group chat                                                     | `git-groupchat-playbooks` |             70 |           140 |        70 |
 | Usage dashboard and stats                                      | `stats-graph-symphony`    |             32 |           125 |        93 |
 | Document graph                                                 | `stats-graph-symphony`    |             36 |           130 |        94 |
-| Playbooks, marketplace, Spec Kit, OpenSpec                     | `git-groupchat-playbooks` |             48 |           145 |        97 |
+| Playbooks, marketplace, Spec Kit, OpenSpec                     | `git-groupchat-playbooks` |             61 |           145 |        84 |
 | Symphony, leaderboard, achievements                            | `stats-graph-symphony`    |             23 |           120 |        97 |
 | Director notes and prompt composer                             | `wizard-settings-prompts` |             30 |            90 |        60 |
 | Debug/about/update/app info/agent error modals                 | `debug-accessibility`     |             85 |            85 |         0 |
@@ -41,7 +41,7 @@ Remaining matrix-backed active scenarios: 1,631
 | `files-docs-history`       |                     307 |                        42 |                                    5 | `18a4c3b29`          |
 | `autorun-ai-terminal`      |                     263 |                        10 |                                    0 | `cd804bebf`          |
 | `wizard-settings-prompts`  |                     289 |                        83 |                                    1 | `2d069a57a`          |
-| `git-groupchat-playbooks`  |                     303 |                        60 |                                    7 | `e8ac2eddf`          |
+| `git-groupchat-playbooks`  |                     258 |                       105 |                                    7 | `a9a973e8e`          |
 | `stats-graph-symphony`     |                     284 |                        52 |                                    6 | `057ced8e3`          |
 | `debug-accessibility`      |                       0 |                       192 |                                    0 | `e1879dd27`          |
 | `mobile-web-bridge`        |                       0 |                       102 |                                    0 | `33a5ace5f`          |
@@ -150,3 +150,4 @@ Remaining matrix-backed active scenarios: 1,631
 - 2026-06-08: accepted manual `mobile-web-bridge` quota-completion fallback through `edd832da5`; authored 62 additional active mobile route, REST/session metadata, WebSocket resilience, interaction, serializer, metadata-control, history-grouping, and session metadata scenarios. Follow-up static review found the `projectDirTwo` acceptance blocker, which was corrected by `33a5ace5f`. No E2E execution was run.
 - 2026-06-08: accepted manual `mobile-web-bridge` quota acceptance fix through `33a5ace5f`; exposed the secondary project directory from the mobile workbench so accepted history and metadata scenarios no longer dereference undefined. No scenarios were added; the lane remains 190 / 190. No E2E execution was run.
 - 2026-06-08: accepted manual `debug-accessibility` final quota fallback through `e1879dd27`; authored 51 additional active Process Monitor, System Log Viewer, Debug Package, update modal, Quick Actions, and Keyboard Shortcuts accessibility/destructive-action scenarios. The lane reached its 192-active-scenario matrix-backed quota. No E2E execution was run.
+- 2026-06-08: accepted manual `git-groupchat-playbooks` fallback through `a9a973e8e`; authored 45 additional active Git, group chat, Gist, Playbook Exchange, Quick Actions, Spec Kit, and OpenSpec scenarios. Focused static review found no critical or high issues. No E2E execution was run.
