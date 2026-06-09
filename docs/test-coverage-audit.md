@@ -34,11 +34,11 @@ Parallel E2E authoring checkpoint:
 
 - Campaign: `docs/e2e-parallel-prompt.md`
 - Result: in progress
-- Current authoring progress: 963 / 3,025 active scenarios after accepting the
-  twenty-second-tranche wizard/settings/prompts fallback through `bb21caed1`.
-  This tranche added 5 active Settings max-output, user-alignment,
-  native-title-bar, confetti, and update-check rows without adding skipped or
-  env-gated rows.
+- Current authoring progress: 2226 / 3,025 active scenarios after accepting the
+  twentieth-tranche stats/graph/symphony fallback through `a40082e67`. This
+  tranche added 5 active Document Graph clipboard, Symphony active-sync payload,
+  PR status closed/no-change, and leaderboard social metadata rows without
+  adding skipped or env-gated rows.
 - Accepted lanes so far: `shell-tabs-command`, `agent-crud-provider`,
   `files-docs-history`, `mobile-web-bridge`, `autorun-ai-terminal`,
   `wizard-settings-prompts`, `stats-graph-symphony`, `debug-accessibility`,
