@@ -88,6 +88,11 @@ const activeScenarioMatrix = [
 	{ id: 'FDH-A60', title: 'searches markdown preview code block content' },
 	{ id: 'FDH-A61', title: 'cancels a valid folder rename without moving child files' },
 	{ id: 'FDH-A62', title: 'filters History by failed full-response text' },
+	{ id: 'FDH-A63', title: 'copies a folder path from the File Explorer context menu' },
+	{ id: 'FDH-A64', title: 'copies a successful History provider session id' },
+	{ id: 'FDH-A65', title: 'toggles successful History validation back off' },
+	{ id: 'FDH-A66', title: 'cancels deletion of a user-authored History entry' },
+	{ id: 'FDH-A67', title: 'closes History detail with the Close button' },
 ] as const;
 
 const skippedScenarioMatrix = [
@@ -1361,6 +1366,83 @@ test.describe(`Files docs history lane matrix (${activeScenarioMatrix.length} ac
 		await expect(historyPanel.getByText('1 result')).toBeVisible();
 		await expect(historyPanel.getByText('Preview fallback failed')).toBeVisible();
 		await expect(historyPanel.getByText('Rendered docs history tranche')).toBeHidden();
+	});
+
+	test(`${activeScenarioMatrix[62].id} ${activeScenarioMatrix[62].title}`, async ({
+		electronApp,
+	}) => {
+		await electronApp.evaluate(({ clipboard }) => clipboard.writeText(''));
+		const contextMenu = await openFileContextMenu(window, 'docs');
+
+		await contextMenu.getByRole('button', { name: 'Copy Path' }).click();
+
+		await expect(window.getByText('File Path Copied to Clipboard')).toBeVisible();
+		await expect
+			.poll(() => electronApp.evaluate(({ clipboard }) => clipboard.readText()))
+			.toBe(path.join(seededWorkbench.projectDir, 'docs'));
+	});
+
+	test(`${activeScenarioMatrix[63].id} ${activeScenarioMatrix[63].title}`, async ({
+		electronApp,
+	}) => {
+		await helpers.openRightPanelTab(window, 'History');
+		const historyPanel = window.locator('[data-tour="history-panel"]');
+		await electronApp.evaluate(({ clipboard }) => clipboard.writeText(''));
+		await historyPanel.getByText('Rendered docs history tranche').click();
+
+		await window.getByTitle('Copy session ID: codex-history-render').click();
+
+		await expect
+			.poll(() => electronApp.evaluate(({ clipboard }) => clipboard.readText()))
+			.toBe('codex-history-render');
+	});
+
+	test(`${activeScenarioMatrix[64].id} ${activeScenarioMatrix[64].title}`, async () => {
+		await helpers.openRightPanelTab(window, 'History');
+		const historyPanel = window.locator('[data-tour="history-panel"]');
+		await historyPanel.getByText('Rendered docs history tranche').click();
+
+		await window.getByTitle('Mark as human-validated').click();
+		await expect(window.getByTitle('Mark as not validated')).toBeVisible();
+
+		await window.getByTitle('Mark as not validated').click();
+		await expect(window.getByTitle('Mark as human-validated')).toBeVisible();
+		await expect(window.getByTitle('Task completed successfully')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[65].id} ${activeScenarioMatrix[65].title}`, async () => {
+		await helpers.openRightPanelTab(window, 'History');
+		const historyPanel = window.locator('[data-tour="history-panel"]');
+		await historyPanel.getByText('Manual file operation note').click();
+		await window.getByRole('button', { name: 'Delete' }).click();
+
+		const deleteConfirm = window.locator('.fixed').filter({ hasText: 'Delete History Entry' });
+		await expect(deleteConfirm.getByText('Delete History Entry')).toBeVisible();
+		await expect(deleteConfirm.getByText('delete this user history entry')).toBeVisible();
+		await deleteConfirm.getByRole('button', { name: 'Cancel' }).click();
+
+		await expect(deleteConfirm).toBeHidden();
+		await expect(
+			window.getByText('Manual detail references draft/plain.txt and archive.md.')
+		).toBeVisible();
+		await window.keyboard.press('Escape');
+		await expect(historyPanel.getByText('Manual file operation note')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[66].id} ${activeScenarioMatrix[66].title}`, async () => {
+		await helpers.openRightPanelTab(window, 'History');
+		const historyPanel = window.locator('[data-tour="history-panel"]');
+		await historyPanel.getByText('Manual file operation note').click();
+		await expect(
+			window.getByText('Manual detail references draft/plain.txt and archive.md.')
+		).toBeVisible();
+
+		await window.getByRole('button', { name: 'Close' }).click();
+
+		await expect(
+			window.getByText('Manual detail references draft/plain.txt and archive.md.')
+		).toBeHidden();
+		await expect(historyPanel.getByText('Manual file operation note')).toBeVisible();
 	});
 
 	for (const scenario of skippedScenarioMatrix) {
