@@ -14,7 +14,7 @@ Measured inventory:
 | Declared E2E tests after recovery tranche |                              1311 |
 | Last pre-campaign full E2E result         |             91 passed, 49 skipped |
 | Latest full E2E validation                | 638 passed, 0 skipped (batch 202) |
-| Approx. authored active-target progress   |              47.6% (1439 / 3,025) |
+| Approx. authored active-target progress   |              47.7% (1444 / 3,025) |
 | Renderer component files                  |                               236 |
 | Renderer hook files                       |                               123 |
 | Renderer store files                      |                                11 |
@@ -30,7 +30,7 @@ Measured inventory:
 
 Latest authoring merge:
 
-- Eightieth recovery fallback accepted `git-groupchat-playbooks` through `a9a973e8e`. This added 45 active Git, group chat, Gist, Playbook Exchange, Quick Actions, Spec Kit, and OpenSpec scenarios without running Playwright/E2E execution.
+- Eighty-first recovery fallback accepted `git-groupchat-playbooks` through `127bc7189`. This added 5 active group chat transcript, Quick Actions, Playbook Exchange, and Git Log scenarios without running Playwright/E2E execution.
 
 The current E2E suite now covers a meaningful Electron shell slice, but it is still far from deep app-wide coverage.
 
