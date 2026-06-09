@@ -3406,6 +3406,111 @@ test.describe('App shell seeded workbench', () => {
 		await expect(quickActionsDialog).toBeHidden();
 	});
 
+	test('preserves the Auto Run panel while collapsing and restoring the Left Bar', async () => {
+		await helpers.openRightPanelTab(window, 'Auto Run');
+		await expect(window.getByText('Auto Run Surface')).toBeVisible();
+
+		await window.keyboard.press('Alt+Meta+ArrowLeft');
+		await expect(window.locator('[data-tour="session-list"]')).toBeHidden();
+		await expect(window.getByText('Auto Run Surface')).toBeVisible();
+
+		await window.keyboard.press('Meta+Shift+A');
+		await expect(window.locator('[data-tour="session-list"]')).toBeVisible();
+		await expect(window.getByText('Auto Run Surface')).toBeVisible();
+	});
+
+	test('recovers Left Bar agent filter results after an unmatched query', async () => {
+		await window.keyboard.press('Meta+Shift+A');
+		await window.keyboard.press('Meta+f');
+		const filterInput = window.getByPlaceholder('Filter agents...');
+
+		await filterInput.fill('missing-agent-filter-sentinel');
+		await expect(
+			window.locator('[data-tour="session-list"]').getByText('E2E Workbench')
+		).toBeHidden();
+		await expect(
+			window.locator('[data-tour="session-list"]').getByText('E2E Terminal')
+		).toBeHidden();
+
+		await filterInput.fill('Terminal');
+		await expect(
+			window.locator('[data-tour="session-list"]').getByText('E2E Terminal')
+		).toBeVisible();
+		await expect(
+			window.locator('[data-tour="session-list"]').getByText('E2E Workbench')
+		).toBeHidden();
+
+		await filterInput.press('Escape');
+		await expect(filterInput).toBeHidden();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+	});
+
+	test('keeps the terminal workspace active while opening Shortcuts Help from collapsed chrome', async () => {
+		const terminalInput = await openSeededTerminalAgent(window);
+		await terminalInput.fill('draft before shortcuts help sentinel');
+
+		await window.keyboard.press('Alt+Meta+ArrowLeft');
+		await window.keyboard.press('Alt+Meta+ArrowRight');
+		await expect(window.locator('[data-tour="session-list"]')).toBeHidden();
+		await expect(window.getByTitle(/Show right panel/)).toBeVisible();
+
+		const quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('View Shortcuts');
+		await quickActionsDialog.getByRole('button', { name: /View Shortcuts/ }).click();
+
+		await expect(quickActionsDialog).toBeHidden();
+		await expect(window.getByRole('dialog', { name: 'Keyboard Shortcuts' })).toBeVisible();
+		await expect(window.getByLabel('Terminal output')).toBeVisible();
+		await expect(terminalInput).toHaveValue('draft before shortcuts help sentinel');
+	});
+
+	test('restores the active file preview after opening and canceling Quick Actions from hidden chrome', async () => {
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+		await window.keyboard.press('Alt+Meta+ArrowLeft');
+		await window.keyboard.press('Alt+Meta+ArrowRight');
+
+		const quickActionsDialog = await openQuickActions(window);
+		const commandInput = quickActionsDialog.getByPlaceholder('Type a command or jump to agent...');
+		await commandInput.fill('Search: History');
+		await expect(quickActionsDialog.getByRole('button', { name: /Search: History/ })).toBeVisible();
+
+		await commandInput.press('Escape');
+		if (await quickActionsDialog.isVisible({ timeout: 500 }).catch(() => false)) {
+			await commandInput.evaluate((input) => {
+				input.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: 'Escape',
+						code: 'Escape',
+						keyCode: 27,
+						which: 27,
+						bubbles: true,
+						cancelable: true,
+					})
+				);
+			});
+		}
+		await expect(quickActionsDialog).toBeHidden();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+		await expect(window.locator('[data-tour="session-list"]')).toBeHidden();
+		await expect(window.getByTitle(/Show right panel/)).toBeVisible();
+	});
+
+	test('restores Files panel focus after agent cycling from collapsed right chrome', async () => {
+		await window.keyboard.press('Alt+Meta+ArrowRight');
+		await expect(window.getByTitle(/Show right panel/)).toBeVisible();
+
+		await window.keyboard.press('Meta+]');
+		await expect(window.getByLabel('Terminal output')).toBeVisible();
+		await window.keyboard.press('Meta+[');
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+
+		await window.keyboard.press('Meta+Shift+F');
+		await expect(window.locator('[data-tour="files-panel"]')).toBeVisible();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+	});
+
 	test('renders seeded History entries and type filters', async () => {
 		await helpers.openRightPanelTab(window, 'History');
 		const historyPanel = window.locator('[data-tour="history-panel"]');
@@ -4933,6 +5038,71 @@ test.describe('App shell seeded workbench', () => {
 		await expect(window.getByRole('button', { name: repeatedCommand })).toHaveCount(1);
 	});
 
+	test('preserves command terminal cwd after clearing the transcript', async () => {
+		await stubTerminalRunCommand(electronApp);
+		const terminalInput = await openSeededTerminalAgent(window);
+		const inputArea = window.locator('[data-tour="input-area"]');
+		const expectedCwd = path.join(seededWorkbench.sessions[1].cwd, 'Auto Run Docs');
+
+		await terminalInput.fill('cd "Auto Run Docs"');
+		await inputArea.getByTitle('Run command (Enter)').click();
+		await expect(inputArea.getByText(/Auto Run Docs/)).toBeVisible();
+
+		await terminalInput.fill('clear');
+		await inputArea.getByTitle('Run command (Enter)').click();
+		await expect(window.locator('[data-log-index]')).toHaveCount(0);
+
+		await terminalInput.fill('pwd');
+		await inputArea.getByTitle('Run command (Enter)').click();
+
+		await expect(window.locator('[data-log-index]').last().getByText(expectedCwd)).toBeVisible();
+		const calls = await getStubbedTerminalRunCommandCalls(electronApp);
+		await expect(calls.map((call) => call.command)).toEqual(['cd "Auto Run Docs"', 'pwd']);
+		await expect(calls[1].cwd).toBe(expectedCwd);
+	});
+
+	test('recovers command terminal history search after a no-match filter', async () => {
+		const terminalInput = await openSeededTerminalAgent(window);
+
+		await terminalInput.focus();
+		await terminalInput.press('ArrowUp');
+		const historyFilter = window.getByPlaceholder('Filter commands...');
+		await historyFilter.fill('missing-history-command-sentinel');
+		await expect(window.getByText('No matching commands')).toBeVisible();
+
+		await historyFilter.fill('git status');
+		await expect(window.getByRole('button', { name: 'git status --short' })).toBeVisible();
+		await historyFilter.press('Enter');
+		await expect(terminalInput).toHaveValue('git status --short');
+	});
+
+	test('keeps command terminal draft when the command history filter is canceled from no-match', async () => {
+		const terminalInput = await openSeededTerminalAgent(window);
+		await terminalInput.fill('draft before no-match history sentinel');
+
+		await terminalInput.press('ArrowUp');
+		const historyFilter = window.getByPlaceholder('Filter commands...');
+		await historyFilter.fill('missing-history-command-sentinel');
+		await expect(window.getByText('No matching commands')).toBeVisible();
+
+		await historyFilter.press('Escape');
+		await expect(historyFilter).toBeHidden();
+		await expect(terminalInput).toHaveValue('draft before no-match history sentinel');
+	});
+
+	test('keeps command terminal draft after toggling output focus shortcuts', async () => {
+		const terminalInput = await openSeededTerminalAgent(window);
+		const terminalOutput = window.getByLabel('Terminal output');
+		await terminalInput.fill('draft across terminal focus shortcut sentinel');
+
+		await terminalInput.press('Meta+.');
+		await expect(terminalOutput).toBeFocused();
+
+		await terminalOutput.press('Meta+.');
+		await expect(terminalInput).toBeFocused();
+		await expect(terminalInput).toHaveValue('draft across terminal focus shortcut sentinel');
+	});
+
 	test('persists command terminal history across an app restart', async () => {
 		await stubTerminalRunCommand(electronApp);
 		const terminalInput = await openSeededTerminalAgent(window);
@@ -6026,6 +6196,130 @@ test.describe('App shell seeded workbench', () => {
 
 		await expect(switcher.getByPlaceholder('Search open tabs...')).toBeFocused();
 		await expect(switcher).toBeVisible();
+	});
+
+	test('toggles the active AI tab unread filter off and restores file tabs', async () => {
+		await window.getByText('Main', { exact: true }).click();
+
+		await window.keyboard.press('Meta+Shift+U');
+		await expect(window.getByTitle('New messages')).toBeVisible();
+
+		await window.keyboard.press('Meta+U');
+		await expect(window.getByTitle(/Showing unread only/)).toBeVisible();
+		await expect(window.locator('[data-tab-id]').filter({ hasText: 'README' })).toHaveCount(0);
+
+		await window.keyboard.press('Meta+U');
+		await expect(window.getByTitle(/Filter unread tabs/)).toBeVisible();
+		await expect(
+			window.locator('[data-tab-id]').filter({ hasText: 'README' }).first()
+		).toBeVisible();
+	});
+
+	test('toggles the active AI tab unread state off from the global shortcut', async () => {
+		await window.getByText('Main', { exact: true }).click();
+
+		await window.keyboard.press('Meta+Shift+U');
+		await expect(window.getByTitle('New messages')).toBeVisible();
+
+		await window.keyboard.press('Meta+Shift+U');
+		await expect(window.getByTitle('New messages')).toHaveCount(0);
+	});
+
+	test('toggles the active AI tab star off from the keyboard shortcut', async () => {
+		await window.getByText('Main', { exact: true }).click();
+
+		await window.keyboard.press('Meta+Shift+S');
+		await window.keyboard.press('Meta+Shift+S');
+
+		await window.keyboard.press('Alt+Meta+T');
+		const switcher = window.getByRole('dialog', { name: 'Tab Switcher' });
+		await switcher.getByPlaceholder('Search open tabs...').press('Tab');
+		await switcher.getByPlaceholder('Search named sessions...').press('Tab');
+
+		await expect(switcher.getByPlaceholder('Search starred sessions...')).toBeFocused();
+		await expect(switcher.getByText('No starred sessions')).toBeVisible();
+	});
+
+	test('renames the active AI tab from the keyboard with Enter', async () => {
+		await window.getByText('Main', { exact: true }).click();
+
+		await window.keyboard.press('Meta+Shift+R');
+		const renameDialog = window.getByRole('dialog', { name: 'Rename Tab' });
+		await expect(renameDialog).toBeVisible();
+
+		const renameInput = renameDialog.locator('input');
+		await renameInput.fill('Enter Renamed Main');
+		await renameInput.press('Enter');
+
+		await expect(renameDialog).toBeHidden();
+		await expect(
+			window.locator('[data-tab-id]').filter({ hasText: 'Enter Renamed Main' }).first()
+		).toBeVisible();
+	});
+
+	test('reopens a file tab closed from the hover overlay with the global shortcut', async () => {
+		await window.getByText('README', { exact: true }).click();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+
+		const tabRows = window.locator('[data-tab-id]');
+		const readmeTab = tabRows.filter({ hasText: 'README' }).first();
+		await readmeTab.hover();
+		await window.getByRole('button', { name: 'Close Tab', exact: true }).click();
+		await expect(window.getByText('File Preview Surface')).toBeHidden();
+		await expect(tabRows.filter({ hasText: 'README' })).toHaveCount(0);
+
+		await window.keyboard.press('Meta+Shift+T');
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+		await expect(tabRows.filter({ hasText: 'README' }).first()).toBeVisible();
+	});
+
+	test('recovers open Tab Switcher results after clearing an unmatched query', async () => {
+		await window.getByText('Main', { exact: true }).click();
+		await window.keyboard.press('Alt+Meta+T');
+
+		const switcher = window.getByRole('dialog', { name: 'Tab Switcher' });
+		const searchInput = switcher.getByPlaceholder('Search open tabs...');
+		await searchInput.fill('missing-open-tab-sentinel');
+		await expect(switcher.getByText('No open tabs')).toBeVisible();
+
+		await searchInput.fill('');
+		await expect(switcher.getByRole('button', { name: /Main/ })).toBeVisible();
+		await expect(switcher.getByRole('button', { name: /README/ })).toBeVisible();
+	});
+
+	test('returns from empty starred Tab Switcher mode to open-tab results', async () => {
+		await window.getByText('Main', { exact: true }).click();
+		await window.keyboard.press('Alt+Meta+T');
+
+		const switcher = window.getByRole('dialog', { name: 'Tab Switcher' });
+		await switcher.getByPlaceholder('Search open tabs...').press('Tab');
+		await switcher.getByPlaceholder('Search named sessions...').press('Tab');
+		await expect(switcher.getByText('No starred sessions')).toBeVisible();
+
+		await switcher.getByPlaceholder('Search starred sessions...').press('Shift+Tab');
+		await switcher.getByPlaceholder('Search named sessions...').press('Shift+Tab');
+		await expect(switcher.getByPlaceholder('Search open tabs...')).toBeFocused();
+		await expect(switcher.getByRole('button', { name: /Main/ })).toBeVisible();
+		await expect(switcher.getByRole('button', { name: /README/ })).toBeVisible();
+	});
+
+	test('keeps the active file tab selected when canceling AI tab rename from hover overlay', async () => {
+		await window.getByText('README', { exact: true }).click();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+
+		const mainTab = window.locator('[data-tab-id]').filter({ hasText: 'Main' }).first();
+		await mainTab.hover();
+		await window.getByText('Rename Tab').click();
+
+		const renameDialog = window.getByRole('dialog', { name: 'Rename Tab' });
+		await renameDialog.locator('input').fill('Inactive Rename Canceled');
+		await renameDialog.locator('input').press('Escape');
+
+		await expect(renameDialog).toBeHidden();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+		await expect(
+			window.locator('[data-tab-id]').filter({ hasText: 'Inactive Rename Canceled' })
+		).toHaveCount(0);
 	});
 
 	test('filters Quick Actions and opens Shortcuts Help', async () => {
