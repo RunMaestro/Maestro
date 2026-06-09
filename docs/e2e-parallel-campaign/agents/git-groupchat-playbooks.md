@@ -1,6 +1,6 @@
 # git-groupchat-playbooks
 
-Status: twenty-fifth fallback tranche authored
+Status: thirty-first fallback tranche authored
 
 ## Scope
 
@@ -27,6 +27,8 @@ OpenSpec.
 - [x] Commit fifteenth fallback tranche on `codex/e2e-git-groupchat-playbooks`.
 - [x] Commit sixteenth fallback tranche on `codex/e2e-git-groupchat-playbooks`.
 - [x] Commit seventeenth through twenty-fifth fallback tranches on `codex/e2e-git-groupchat-playbooks`.
+- [x] Commit twenty-sixth through twenty-eighth fallback tranches on `codex/e2e-git-groupchat-playbooks`.
+- [x] Commit twenty-ninth through thirty-first fallback tranches on `codex/e2e-git-groupchat-playbooks`.
 
 ## Progress
 
@@ -751,15 +753,6 @@ Twenty-fourth and twenty-fifth fallback tranches:
   - Focused code-reviewer pass approved the spec diff with no critical or high
     issues; E2E execution remains deferred.
 
-Remaining work:
-
-- Expand remaining Git diff/log details, PR failure variants, Gist modal coverage,
-  group chat mutation/history, marketplace import/export edge cases, and
-  Spec Kit/OpenSpec refresh/failure matrices.
-- Continue from 233 remaining matrix-backed active scenarios after this recovery
-  fallback tranche.
-- Run actual Playwright/E2E validation only after orchestrator approval.
-
 Twenty-sixth through twenty-eighth fallback tranches:
 
 - Extended `e2e/git-groupchat-playbooks.spec.ts`.
@@ -774,25 +767,62 @@ Twenty-sixth through twenty-eighth fallback tranches:
   - `docs/e2e-parallel-campaign/coverage-ledger.md`
   - `docs/e2e-coverage-campaign.md`
 - Coverage added:
-  - Binary Git Diff footer state.
-  - Git Log mouse-selected second commit references.
-  - Create Pull Request blank-title description preservation.
-  - Published public Gist URL copy.
-  - Deleted-file Git Diff Escape close.
-  - Group Chat info metadata Escape close.
-  - Group Chat Quick Actions close and reopen.
-  - Group Chat draft clearing, mention click insertion, and rename Escape preservation.
-  - Playbook Exchange search restoration, category context, cached-state refresh, document preview folder editing, and OpenSpec local edit state.
+  - Binary and deleted-file Git Diff footer/close states.
+  - Multi-commit Git Log ref display after mouse selection.
+  - Create Pull Request blank-title validation with description preservation.
+  - Published public Gist URL copy from the confirmation dialog.
+  - Group Chat info Escape close, reopen, send-state clearing, mention click,
+    and rename Escape preservation.
+  - Playbook Exchange search clearing, category detail back-navigation,
+    refresh cache-state hiding, and editable target folder after document preview.
+  - OpenSpec local edit state before saving.
 - Skipped/env-gated blockers: unchanged.
 - Shared helper edits: none; `broadcasts.md` unchanged.
 - Live GitHub, Gist publishing, marketplace network, SSH remote, provider,
   headed/UI E2E, Playwright list, and full E2E execution: none.
-- Commit: `9a8e761c2`.
+- Commit: `3a7c19932`.
 - Validation passed:
   - `NODE_OPTIONS=--max-old-space-size=8192 npx prettier --write e2e/git-groupchat-playbooks.spec.ts`
   - `npx eslint e2e/git-groupchat-playbooks.spec.ts`
-  - `NODE_OPTIONS=--max-old-space-size=8192 npx tsc -p tsconfig.lint.json --noEmit`
-  - Static Git/group-chat/playbooks spec ID/`.only`/duplicate-ID/prohibited-command scan.
+  - `npx tsc -p tsconfig.lint.json --noEmit`
+  - Static Git/group-chat/playbooks spec ID/`.only`/prohibited-command scan.
+  - `git diff --check -- e2e/git-groupchat-playbooks.spec.ts`
+- Review:
+  - Focused code-reviewer pass approved the spec diff with no critical or high
+    issues; E2E execution remains deferred.
+
+Twenty-ninth through thirty-first fallback tranches:
+
+- Extended `e2e/git-groupchat-playbooks.spec.ts`.
+- Active scenarios added: 15 (`GGP-A146` through `GGP-A160`).
+- Skipped/env-gated rows added: 0.
+- Cumulative active scenarios authored in this lane: 160.
+- Cumulative skipped/env-gated scenarios authored in this lane: 7.
+- Matrix-backed active scenarios still remaining: 203.
+- Files touched:
+  - `e2e/git-groupchat-playbooks.spec.ts`
+  - `docs/e2e-parallel-campaign/agents/git-groupchat-playbooks.md`
+  - `docs/e2e-parallel-campaign/coverage-ledger.md`
+  - `docs/e2e-coverage-campaign.md`
+- Coverage added:
+  - Multi-file Git Diff and Git Log keyboard boundary states.
+  - Create Pull Request target-branch restoration and blank-title cancel path.
+  - Published Gist republish back-navigation.
+  - Group Chat close/reopen quick action, history search reset, repeated info
+    metadata, mention suggestion clearing, and rename cancel preservation.
+  - Playbook Exchange cached category counts, category reset, and submit-link
+    routing.
+  - Spec Kit edit cancel and OpenSpec metadata refresh command visibility.
+- Skipped/env-gated blockers: unchanged.
+- Shared helper edits: none; `broadcasts.md` unchanged.
+- Live GitHub, Gist publishing, marketplace network, SSH remote, provider,
+  headed/UI E2E, Playwright list, and full E2E execution: none.
+- Commit: `7d31559e3`.
+- Validation passed:
+  - `NODE_OPTIONS=--max-old-space-size=8192 npx prettier --write e2e/git-groupchat-playbooks.spec.ts`
+  - `npx eslint e2e/git-groupchat-playbooks.spec.ts`
+  - `npx tsc -p tsconfig.lint.json --noEmit`
+  - Static Git/group-chat/playbooks spec ID/`.only`/prohibited-command scan.
   - `git diff --check -- e2e/git-groupchat-playbooks.spec.ts`
 - Review:
   - Focused code-reviewer pass approved the spec diff with no critical or high
@@ -803,6 +833,6 @@ Remaining work:
 - Expand remaining Git diff/log details, PR failure variants, Gist modal coverage,
   group chat mutation/history, marketplace import/export edge cases, and
   Spec Kit/OpenSpec refresh/failure matrices.
-- Continue from 218 remaining matrix-backed active scenarios after this recovery
+- Continue from 203 remaining matrix-backed active scenarios after this recovery
   fallback tranche.
 - Run actual Playwright/E2E validation only after orchestrator approval.

@@ -1,6 +1,6 @@
 # Parallel E2E Orchestrator Status
 
-Last updated: 2026-06-08 23:56 EDT
+Last updated: 2026-06-09 00:01 EDT
 
 ## Base
 
@@ -38,7 +38,7 @@ coverage and the shell-lane tab coverage.
 | `files-docs-history`       | `codex/e2e-files-docs-history`       | `Maestro-worktrees/e2e-files-docs-history`       | `maestro-e2e-files-docs-history-campaign-goal`      | manual fallback accepted   | 47 active scenarios accepted; 302 remain        |
 | `autorun-ai-terminal`      | `codex/e2e-autorun-ai-terminal`      | `Maestro-worktrees/e2e-autorun-ai-terminal`      | `maestro-e2e-autorun-ai-terminal-campaign-goal`     | manual fallback accepted   | 140 active scenarios accepted; 133 remain       |
 | `wizard-settings-prompts`  | `codex/e2e-wizard-settings-prompts`  | `Maestro-worktrees/e2e-wizard-settings-prompts`  | `maestro-e2e-wizard-settings-prompts-campaign-goal` | manual fallback accepted   | 216 active scenarios accepted; 156 remain       |
-| `git-groupchat-playbooks`  | `codex/e2e-git-groupchat-playbooks`  | `Maestro-worktrees/e2e-git-groupchat-playbooks`  | `maestro-e2e-git-groupchat-playbooks-campaign-goal` | manual fallback accepted   | 145 active scenarios accepted; 218 remain       |
+| `git-groupchat-playbooks`  | `codex/e2e-git-groupchat-playbooks`  | `Maestro-worktrees/e2e-git-groupchat-playbooks`  | `maestro-e2e-git-groupchat-playbooks-campaign-goal` | manual fallback accepted   | 160 active scenarios accepted; 203 remain       |
 | `stats-graph-symphony`     | `codex/e2e-stats-graph-symphony`     | `Maestro-worktrees/e2e-stats-graph-symphony`     | `maestro-e2e-stats-graph-symphony-campaign-goal`    | manual fallback accepted   | 154 active scenarios accepted; 182 remain       |
 | `debug-accessibility`      | `codex/e2e-debug-accessibility`      | `Maestro-worktrees/e2e-debug-accessibility`      | not relaunched                                      | complete                   | 192 active scenarios accepted; 0 remain         |
 | `mobile-web-bridge`        | `codex/e2e-mobile-web-bridge`        | `Maestro-worktrees/e2e-mobile-web-bridge`        | not relaunched                                      | complete after blocker fix | 102 active scenarios accepted; 0 remain         |
@@ -55,7 +55,7 @@ coverage and the shell-lane tab coverage.
 - `stats-graph-symphony` merged through `f4d562a33`.
 - `debug-accessibility` merged through `e1879dd27`.
 - `fixtures-sharding-review` merged through `392c4527`.
-- `git-groupchat-playbooks` merged through `9a8e761c2`.
+- `git-groupchat-playbooks` merged through `561fa336d`.
 
 ## Launch Log
 
@@ -287,6 +287,11 @@ coverage and the shell-lane tab coverage.
   Symphony external-link/control scenarios from the clean worker branch. Static
   Prettier, ESLint, TypeScript, `git diff --check`, inventory scans, and focused
   review passed. No E2E execution was run.
+- 2026-06-09 00:01 EDT: accepted manual `git-groupchat-playbooks` through
+  `561fa336d` with 15 active Git Diff/Git Log/Create Pull Request/Gist, Group
+  Chat, Playbook Exchange, Spec Kit, and OpenSpec scenarios from the clean worker
+  branch. Static Prettier, ESLint, TypeScript, `git diff --check`, inventory
+  scans, and focused review passed. No E2E execution was run.
 
 ## Blockers
 
