@@ -4185,6 +4185,58 @@ Externally refreshed Codex Auto Run sentinel.
 		}
 	});
 
+	test('moves the Codex Main AI tab to the last position from the tab overlay', async () => {
+		const launched = await launchMultiTabQueuedLaneWorkbench();
+		try {
+			await openCodexMainTabOverlay(launched.window);
+			await launched.window.getByText('Move to Last Position', { exact: true }).click();
+
+			await expect(launched.window.locator('[data-tab-id]').nth(0)).toContainText('Review');
+			await expect(launched.window.locator('[data-tab-id]').nth(1)).toContainText('Main');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('moves the Codex Review AI tab to the first position from the tab overlay', async () => {
+		const launched = await launchMultiTabQueuedLaneWorkbench();
+		try {
+			await openCodexAiTerminal(launched.window);
+			const reviewTab = launched.window.locator(`[data-tab-id="${launched.reviewTabId}"]`);
+			await expect(reviewTab).toBeVisible();
+			await reviewTab.hover();
+			await expect(launched.window.getByText('Copy Session ID')).toBeVisible();
+
+			await launched.window.getByText('Move to First Position', { exact: true }).click();
+
+			await expect(launched.window.locator('[data-tab-id]').nth(0)).toContainText('Review');
+			await expect(launched.window.locator('[data-tab-id]').nth(1)).toContainText('Main');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('closes other Codex AI tabs from the Review tab overlay', async () => {
+		const launched = await launchMultiTabQueuedLaneWorkbench();
+		try {
+			await openCodexAiTerminal(launched.window);
+			const reviewTab = launched.window.locator(`[data-tab-id="${launched.reviewTabId}"]`);
+			await expect(reviewTab).toBeVisible();
+			await reviewTab.hover();
+			await expect(launched.window.getByText('Copy Session ID')).toBeVisible();
+
+			await launched.window.getByText('Close Other Tabs', { exact: true }).click();
+
+			await expect(reviewTab).toBeVisible();
+			await expect(
+				launched.window.locator('[data-tab-id]').filter({ hasText: 'Main' })
+			).toBeHidden();
+			await expect(launched.window.locator('[data-tab-id]')).toHaveCount(1);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
 	test('lists Codex context Quick Actions without compact below the summarize threshold', async () => {
 		const launched = await launchContextActionsLaneWorkbench();
 		try {
