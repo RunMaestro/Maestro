@@ -5137,6 +5137,176 @@ test.describe('App shell seeded workbench', () => {
 		await expect(relaunchedInput).toHaveValue('echo terminal live stdout sentinel');
 	});
 
+	test('completes a terminal history command with Tab without invoking the runner', async () => {
+		await stubTerminalRunCommand(electronApp);
+		const terminalInput = await openSeededTerminalAgent(window);
+
+		await terminalInput.fill('git');
+		await terminalInput.press('Tab');
+
+		await expect(terminalInput).toHaveValue('git status --short');
+		await expect(await getStubbedTerminalRunCommandCalls(electronApp)).toEqual([]);
+	});
+
+	test('runs a terminal command completed from history with the run control', async () => {
+		await stubTerminalRunCommand(electronApp);
+		const terminalInput = await openSeededTerminalAgent(window);
+		const inputArea = window.locator('[data-tour="input-area"]');
+
+		await terminalInput.fill('echo');
+		await terminalInput.press('Tab');
+		await expect(terminalInput).toHaveValue('echo terminal history sentinel');
+
+		await inputArea.getByTitle('Run command (Enter)').click();
+
+		await expect(terminalInput).toHaveValue('');
+		await expect(
+			(await getStubbedTerminalRunCommandCalls(electronApp)).map((call) => call.command)
+		).toEqual(['echo terminal history sentinel']);
+	});
+
+	test('moves terminal input focus to output with Escape while preserving the draft', async () => {
+		const terminalInput = await openSeededTerminalAgent(window);
+		const terminalOutput = window.getByLabel('Terminal output');
+
+		await terminalInput.fill('draft before terminal escape focus sentinel');
+		await terminalInput.press('Escape');
+
+		await expect(terminalOutput).toBeFocused();
+		await expect(terminalInput).toHaveValue('draft before terminal escape focus sentinel');
+	});
+
+	test('clears a command terminal local output filter from the close control', async () => {
+		await openSeededTerminalAgent(window);
+		const outputBlock = window.locator('[data-log-index="2"]');
+
+		await outputBlock.hover();
+		await outputBlock.getByTitle('Filter this output').click();
+		const filterInput = outputBlock.getByPlaceholder('Include by keyword');
+		await filterInput.fill('needle');
+		await expect(outputBlock.getByText('terminal filter needle')).toBeVisible();
+		await expect(outputBlock.getByText('terminal filter haystack')).toBeHidden();
+
+		await filterInput.locator('xpath=..').locator('button').last().click();
+
+		await expect(filterInput).toBeHidden();
+		await expect(outputBlock.getByText('terminal filter needle')).toBeVisible();
+		await expect(outputBlock.getByText('terminal filter haystack')).toBeVisible();
+
+		await outputBlock.getByTitle('Filter this output').click();
+		await expect(outputBlock.getByPlaceholder('Include by keyword')).toBeVisible();
+	});
+
+	test('keeps a command terminal local output filter while global output search opens and closes', async () => {
+		await openSeededTerminalAgent(window);
+		const outputBlock = window.locator('[data-log-index="2"]');
+
+		await outputBlock.getByTitle('Filter this output').click();
+		await outputBlock.getByPlaceholder('Include by keyword').fill('needle');
+		await expect(outputBlock.getByText('terminal filter needle')).toBeVisible();
+		await expect(outputBlock.getByText('terminal filter haystack')).toBeHidden();
+
+		await window.getByLabel('Terminal output').press('Control+f');
+		const searchInput = window.getByPlaceholder('Search output... (Esc to close)');
+		await searchInput.fill('terminal filter');
+		await expect(outputBlock.getByText('terminal filter needle')).toBeVisible();
+		await expect(outputBlock.getByText('terminal filter haystack')).toBeHidden();
+
+		await searchInput.press('Escape');
+		await expect(searchInput).toBeHidden();
+		await expect(outputBlock.getByText('terminal filter needle')).toBeVisible();
+		await expect(outputBlock.getByText('terminal filter haystack')).toBeHidden();
+	});
+
+	test('filters command terminal stderr locally and restores it from the close control', async () => {
+		await openSeededTerminalAgent(window);
+		const stderrBlock = window.locator('[data-log-index="3"]');
+
+		await stderrBlock.getByTitle('Filter this output').click();
+		const filterInput = stderrBlock.getByPlaceholder('Include by keyword');
+		await filterInput.fill('missing stderr local filter sentinel');
+
+		await expect(stderrBlock.getByText('No matches found for filter')).toBeVisible();
+		await expect(stderrBlock.getByText('terminal stderr sentinel')).toBeHidden();
+
+		await filterInput.locator('xpath=..').locator('button').last().click();
+		await expect(stderrBlock.getByText('No matches found for filter')).toBeHidden();
+		await expect(stderrBlock.getByText('terminal stderr sentinel')).toBeVisible();
+	});
+
+	test('treats a whitespace-padded clear command as a local transcript clear', async () => {
+		await stubTerminalRunCommand(electronApp);
+		const terminalInput = await openSeededTerminalAgent(window);
+		const inputArea = window.locator('[data-tour="input-area"]');
+
+		await terminalInput.fill('  clear  ');
+		await inputArea.getByTitle('Run command (Enter)').click();
+
+		await expect(window.locator('[data-log-index]')).toHaveCount(0);
+		await expect(await getStubbedTerminalRunCommandCalls(electronApp)).toEqual([]);
+	});
+
+	test('updates command terminal cwd after a quoted trailing-slash cd', async () => {
+		await stubTerminalRunCommand(electronApp);
+		const terminalInput = await openSeededTerminalAgent(window);
+		const inputArea = window.locator('[data-tour="input-area"]');
+		const expectedCwd = `${path.join(seededWorkbench.sessions[1].cwd, 'Auto Run Docs')}/`;
+
+		await terminalInput.fill('cd "Auto Run Docs/"');
+		await inputArea.getByTitle('Run command (Enter)').click();
+		await expect(inputArea.getByText(/Auto Run Docs/)).toBeVisible();
+
+		await terminalInput.fill('pwd');
+		await inputArea.getByTitle('Run command (Enter)').click();
+
+		await expect(window.locator('[data-log-index]').last().getByText(expectedCwd)).toBeVisible();
+		const calls = await getStubbedTerminalRunCommandCalls(electronApp);
+		await expect(calls.map((call) => call.command)).toEqual(['cd "Auto Run Docs/"', 'pwd']);
+		await expect(calls[1].cwd).toBe(expectedCwd);
+	});
+
+	test('opens command history with the current terminal draft as its filter', async () => {
+		const terminalInput = await openSeededTerminalAgent(window);
+
+		await terminalInput.fill('npm');
+		await terminalInput.press('ArrowUp');
+		const historyFilter = window.getByPlaceholder('Filter commands...');
+
+		await expect(historyFilter).toHaveValue('npm');
+		await expect(window.getByRole('button', { name: 'npm test -- --runInBand' })).toBeVisible();
+		await expect(window.getByRole('button', { name: 'git status --short' })).toBeHidden();
+
+		await historyFilter.press('Escape');
+		await expect(historyFilter).toBeHidden();
+		await expect(terminalInput).toHaveValue('npm');
+	});
+
+	test('keeps command terminal output search active while toggling the right panel', async () => {
+		await openSeededTerminalAgent(window);
+		await window.getByLabel('Terminal output').press('Control+f');
+		const searchInput = window.getByPlaceholder('Search output... (Esc to close)');
+
+		await searchInput.fill('stderr sentinel');
+		await expect(window.getByText('terminal stderr sentinel')).toBeVisible();
+		await window.keyboard.press('Alt+Meta+ArrowRight');
+		await expect(window.getByTitle(/Show right panel/)).toBeVisible();
+
+		await expect(searchInput).toBeVisible();
+		await expect(searchInput).toHaveValue('stderr sentinel');
+		await expect(window.getByText('terminal stderr sentinel')).toBeVisible();
+	});
+
+	test('searches command terminal user commands from the output search overlay', async () => {
+		await openSeededTerminalAgent(window);
+		await window.getByLabel('Terminal output').press('Control+f');
+
+		const searchInput = window.getByPlaceholder('Search output... (Esc to close)');
+		await searchInput.fill('printf');
+
+		await expect(window.getByText('printf "terminal filter needle')).toBeVisible();
+		await expect(window.getByText('terminal stderr sentinel')).toBeHidden();
+	});
+
 	test('renders seeded Codex AI terminal transcript and input controls', async () => {
 		const promptInput = await openSeededCodexAiTerminal(window);
 
@@ -6112,6 +6282,60 @@ test.describe('App shell seeded workbench', () => {
 		await expect(tabRows.filter({ hasText: 'New Session' })).toBeVisible();
 		await expect(tabRows.filter({ hasText: 'Main' })).toHaveCount(0);
 		await expect(tabRows.filter({ hasText: 'README' })).toHaveCount(0);
+	});
+
+	test('closes all AI tabs from Quick Actions and keeps the file preview tab available', async () => {
+		const tabRows = window.locator('[data-tab-id]');
+		await window.getByText('Main', { exact: true }).click();
+		await expect(tabRows).toHaveCount(2);
+
+		const quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('Close All Tabs');
+		await quickActionsDialog.getByRole('button', { name: /Close All Tabs/ }).click();
+
+		await expect(quickActionsDialog).toBeHidden();
+		await expect(tabRows).toHaveCount(2);
+		await expect(tabRows.filter({ hasText: 'Main' })).toHaveCount(0);
+		await expect(tabRows.filter({ hasText: 'New Session' })).toBeVisible();
+		await expect(tabRows.filter({ hasText: 'README' })).toBeVisible();
+
+		await window.getByText('README', { exact: true }).click();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+	});
+
+	test('closes all AI tabs from the global shortcut and reopens the previous session tab', async () => {
+		const tabRows = window.locator('[data-tab-id]');
+		await window.getByText('Main', { exact: true }).click();
+
+		await window.keyboard.press('Meta+Shift+W');
+		await expect(tabRows.filter({ hasText: 'Main' })).toHaveCount(0);
+		await expect(tabRows.filter({ hasText: 'New Session' })).toBeVisible();
+		await expect(tabRows.filter({ hasText: 'README' })).toBeVisible();
+
+		await window.keyboard.press('Meta+Shift+T');
+
+		await expect(tabRows.filter({ hasText: 'Main' })).toBeVisible();
+		await expect(window.getByText('Codex seeded response is visible.')).toBeVisible();
+	});
+
+	test('keeps the active file preview selected after Quick Actions closes all AI tabs', async () => {
+		const tabRows = window.locator('[data-tab-id]');
+		await window.getByText('README', { exact: true }).click();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+
+		const quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('Close All Tabs');
+		await quickActionsDialog.getByRole('button', { name: /Close All Tabs/ }).click();
+
+		await expect(quickActionsDialog).toBeHidden();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+		await expect(tabRows.filter({ hasText: 'README' })).toBeVisible();
+		await expect(tabRows.filter({ hasText: 'Main' })).toHaveCount(0);
+		await expect(tabRows.filter({ hasText: 'New Session' })).toBeVisible();
 	});
 
 	test('routes file TabBar overlay shell actions through the preload IPC bridge', async () => {
