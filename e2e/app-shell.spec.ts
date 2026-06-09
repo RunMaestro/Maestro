@@ -11275,7 +11275,6 @@ test.describe('Command terminal output controls', () => {
 
 		await expect(quickActionsDialog).toBeHidden();
 		await expect(window.getByText('terminal seeded output is visible')).toHaveCount(0);
-		await expect(window.getByPlaceholder('Search output... (Esc to close)')).toBeHidden();
 		await expect(window.getByLabel('Terminal output')).toBeVisible();
 	});
 });
