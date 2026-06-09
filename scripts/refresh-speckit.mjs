@@ -2,8 +2,15 @@
 /**
  * Refresh Spec Kit Prompts
  *
- * Fetches the latest spec-kit prompts from GitHub and updates the bundled files.
- * Run manually before releases or when spec-kit updates.
+ * Fetches the latest spec-kit command templates from GitHub and updates the
+ * bundled files. Run manually before releases or when spec-kit updates.
+ *
+ * Spec-kit no longer publishes pre-rendered command ZIPs as release assets.
+ * The command templates live at `templates/commands/<cmd>.md` in the repo and
+ * are rendered per-agent at install time. We fetch the raw templates at the
+ * latest release tag and apply the same substitutions spec-kit would for the
+ * Claude (bash) integration (see src/specify_cli/integrations/base.py
+ * process_template).
  *
  * Usage: npm run refresh-speckit
  */
@@ -12,10 +19,6 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import https from 'https';
-import { createWriteStream } from 'fs';
-import { createGunzip } from 'zlib';
-import { pipeline } from 'stream/promises';
-import { Readable } from 'stream';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SPECKIT_DIR = path.join(__dirname, '..', 'src', 'prompts', 'speckit');
@@ -23,6 +26,7 @@ const METADATA_PATH = path.join(SPECKIT_DIR, 'metadata.json');
 
 // GitHub spec-kit repository info
 const GITHUB_API = 'https://api.github.com';
+const RAW_GITHUB = 'https://raw.githubusercontent.com';
 const REPO_OWNER = 'github';
 const REPO_NAME = 'spec-kit';
 
@@ -70,85 +74,102 @@ function httpsGet(url, options = {}) {
 }
 
 /**
- * Download file from URL
+ * Rewrite repo-relative paths to their installed `.specify/...` locations.
+ * Faithful port of CommandRegistrar.rewrite_project_relative_paths.
  */
-function downloadFile(url, destPath) {
-	return new Promise((resolve, reject) => {
-		https
-			.get(url, { headers: { 'User-Agent': 'Maestro-SpecKit-Refresher' } }, (res) => {
-				if (res.statusCode === 301 || res.statusCode === 302) {
-					return resolve(downloadFile(res.headers.location, destPath));
-				}
-
-				if (res.statusCode !== 200) {
-					reject(new Error(`HTTP ${res.statusCode}`));
-					return;
-				}
-
-				const file = createWriteStream(destPath);
-				res.pipe(file);
-				file.on('finish', () => {
-					file.close();
-					resolve();
-				});
-				file.on('error', reject);
-			})
-			.on('error', reject);
-	});
+function rewriteProjectRelativePaths(text) {
+	if (!text) return text;
+	for (const [oldPath, newPath] of [
+		['../../memory/', '.specify/memory/'],
+		['../../scripts/', '.specify/scripts/'],
+		['../../templates/', '.specify/templates/'],
+	]) {
+		text = text.split(oldPath).join(newPath);
+	}
+	text = text.replace(/(^|[\s`"'(])(?:\.?\/)?memory\//gm, '$1.specify/memory/');
+	text = text.replace(/(^|[\s`"'(])(?:\.?\/)?scripts\//gm, '$1.specify/scripts/');
+	text = text.replace(/(^|[\s`"'(])(?:\.?\/)?templates\//gm, '$1.specify/templates/');
+	return text
+		.split('.specify/.specify/')
+		.join('.specify/')
+		.split('.specify.specify/')
+		.join('.specify/');
 }
 
 /**
- * Extract a specific file from a ZIP archive
+ * Turn a raw templates/commands/<cmd>.md source into the agent-ready Claude
+ * command body. Faithful port of IntegrationBase.process_template, specialized
+ * for the Claude (bash) integration.
  */
-async function extractFromZip(zipPath, filePattern, destDir) {
-	const { exec } = await import('child_process');
-	const { promisify } = await import('util');
-	const execAsync = promisify(exec);
+function processSpeckitTemplate(content) {
+	const scriptType = 'sh';
+	const argPlaceholder = '$ARGUMENTS';
+	const contextFile = 'CLAUDE.md';
+	const agentName = 'claude';
 
-	// List files in the ZIP
-	const { stdout: listOutput } = await execAsync(`unzip -l "${zipPath}"`);
-
-	// Find matching files
-	const lines = listOutput.split('\n');
-	const matchingFiles = [];
-
-	for (const line of lines) {
-		// Match lines like: "  12345  01-01-2024 00:00   spec-kit-0.0.90/.claude/commands/constitution.md"
-		const match = line.match(/^\s*\d+\s+\S+\s+\S+\s+(.+)$/);
-		if (match) {
-			const filePath = match[1].trim();
-			if (filePath.includes('.claude/commands/') && filePath.endsWith('.md')) {
-				matchingFiles.push(filePath);
+	// 1. Extract the script command from the `scripts:` frontmatter block.
+	let scriptCommand = '';
+	let inScripts = false;
+	for (const line of content.split('\n')) {
+		if (line.trim() === 'scripts:') {
+			inScripts = true;
+			continue;
+		}
+		if (inScripts && line && !/^\s/.test(line)) inScripts = false;
+		if (inScripts) {
+			const m = line.match(new RegExp(`^\\s*${scriptType}:\\s*(.+)$`));
+			if (m) {
+				scriptCommand = m[1].trim();
+				break;
 			}
 		}
 	}
 
-	// Extract matching files
-	const extractedFiles = {};
-	for (const filePath of matchingFiles) {
-		const fileName = path.basename(filePath, '.md');
-		// Skip files not in our upstream list
-		if (!UPSTREAM_COMMANDS.includes(fileName)) continue;
+	// 2. Replace {SCRIPT}.
+	if (scriptCommand) content = content.split('{SCRIPT}').join(scriptCommand);
 
-		// Extract to temp location
-		const tempDir = path.join(destDir, '.temp-extract');
-		await execAsync(`unzip -o -j "${zipPath}" "${filePath}" -d "${tempDir}"`);
-
-		// Read the extracted content
-		const extractedPath = path.join(tempDir, path.basename(filePath));
-		if (fs.existsSync(extractedPath)) {
-			extractedFiles[fileName] = fs.readFileSync(extractedPath, 'utf8');
-			fs.unlinkSync(extractedPath);
+	// 3. Strip the `scripts:` section from the frontmatter.
+	const out = [];
+	let inFrontmatter = false;
+	let skipSection = false;
+	let dashCount = 0;
+	for (const line of content.split(/(?<=\n)/)) {
+		const stripped = line.replace(/[\r\n]+$/, '');
+		if (stripped === '---') {
+			dashCount += 1;
+			inFrontmatter = dashCount === 1;
+			skipSection = false;
+			out.push(line);
+			continue;
 		}
+		if (inFrontmatter) {
+			if (stripped === 'scripts:') {
+				skipSection = true;
+				continue;
+			}
+			if (skipSection) {
+				if (/^\s/.test(line)) continue;
+				skipSection = false;
+			}
+		}
+		out.push(line);
 	}
+	content = out.join('');
 
-	// Clean up temp directory
-	const tempDir = path.join(destDir, '.temp-extract');
-	if (fs.existsSync(tempDir)) {
-		fs.rmdirSync(tempDir, { recursive: true });
-	}
+	// 4-6. Placeholder substitutions.
+	content = content.split('{ARGS}').join(argPlaceholder).split('$ARGUMENTS').join(argPlaceholder);
+	content = content.split('__AGENT__').join(agentName).split('__CONTEXT_FILE__').join(contextFile);
 
-	return extractedFiles;
+	// 7. Rewrite repo-relative paths.
+	content = rewriteProjectRelativePaths(content);
+
+	// 8. Replace __SPECKIT_COMMAND_<NAME>__ with the slash invocation.
+	content = content.replace(
+		/__SPECKIT_COMMAND_([A-Z][A-Z0-9_]*)__/g,
+		(_m, name) => '/speckit.' + name.toLowerCase().split('_').join('.')
+	);
+
+	return content;
 }
 
 /**
@@ -161,57 +182,29 @@ async function getLatestRelease() {
 }
 
 /**
- * Find the Claude template ZIP asset in the release
- */
-function findClaudeTemplateAsset(release) {
-	return release.assets.find(
-		(asset) => asset.name.includes('claude') && asset.name.endsWith('.zip')
-	);
-}
-
-/**
  * Main refresh function
  */
 async function refreshSpecKit() {
 	console.log('🔄 Refreshing Spec Kit prompts from GitHub...\n');
 
-	// Ensure speckit directory exists
 	if (!fs.existsSync(SPECKIT_DIR)) {
 		console.error('❌ Spec Kit directory not found:', SPECKIT_DIR);
 		process.exit(1);
 	}
 
 	try {
-		// Get latest release
 		console.log('📡 Fetching latest release info...');
 		const release = await getLatestRelease();
-		console.log(`   Found release: ${release.tag_name} (${release.name})`);
+		const version = release.tag_name;
+		console.log(`   Found release: ${version} (${release.name})`);
 
-		// Find Claude template ZIP
-		const claudeAsset = findClaudeTemplateAsset(release);
-		if (!claudeAsset) {
-			console.error('❌ Could not find Claude template ZIP in release assets');
-			process.exit(1);
-		}
-		console.log(`   Claude template: ${claudeAsset.name}`);
-
-		// Download the ZIP
-		const tempZipPath = path.join(SPECKIT_DIR, '.temp-speckit.zip');
-		console.log('\n📥 Downloading template ZIP...');
-		await downloadFile(claudeAsset.browser_download_url, tempZipPath);
-		console.log('   Download complete');
-
-		// Extract prompts from ZIP
-		console.log('\n📦 Extracting prompts...');
-		const extractedPrompts = await extractFromZip(tempZipPath, '', SPECKIT_DIR);
-
-		// Clean up temp ZIP
-		fs.unlinkSync(tempZipPath);
-
-		// Update prompt files
-		console.log('\n✏️  Updating prompt files...');
+		console.log('\n✏️  Fetching and processing command templates...');
 		let updatedCount = 0;
-		for (const [commandName, content] of Object.entries(extractedPrompts)) {
+		for (const commandName of UPSTREAM_COMMANDS) {
+			const url = `${RAW_GITHUB}/${REPO_OWNER}/${REPO_NAME}/${version}/templates/commands/${commandName}.md`;
+			const { data: raw } = await httpsGet(url);
+			const content = processSpeckitTemplate(raw);
+
 			const promptFile = path.join(SPECKIT_DIR, `speckit.${commandName}.md`);
 			const existingContent = fs.existsSync(promptFile) ? fs.readFileSync(promptFile, 'utf8') : '';
 
@@ -225,20 +218,18 @@ async function refreshSpecKit() {
 		}
 
 		// Update metadata
-		const version = release.tag_name.replace(/^v/, '');
 		const metadata = {
 			lastRefreshed: new Date().toISOString(),
-			commitSha: release.tag_name,
-			sourceVersion: version,
+			commitSha: version,
+			sourceVersion: version.replace(/^v/, ''),
 			sourceUrl: `https://github.com/${REPO_OWNER}/${REPO_NAME}`,
 		};
 
 		fs.writeFileSync(METADATA_PATH, JSON.stringify(metadata, null, 2));
 		console.log('\n📄 Updated metadata.json');
 
-		// Summary
 		console.log('\n✅ Refresh complete!');
-		console.log(`   Version: ${version}`);
+		console.log(`   Version: ${version.replace(/^v/, '')}`);
 		console.log(`   Updated: ${updatedCount} files`);
 		console.log(`   Skipped: implement (custom Maestro prompt)`);
 	} catch (error) {

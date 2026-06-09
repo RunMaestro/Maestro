@@ -27,8 +27,6 @@ Load config from `{project-root}/_bmad/bmm/config.yaml` and resolve:
 
 ### Paths
 
-- `installed_path` = `.`
-- `template_path` = `{installed_path}/ux-design-template.md`
 - `default_output_file` = `{planning_artifacts}/ux-design-specification.md`
 
 ## EXECUTION
@@ -42,24 +40,6 @@ Load config from `{project-root}/_bmad/bmm/config.yaml` and resolve:
 # Bundled Reference Assets
 
 The following upstream BMAD files are embedded so this Maestro prompt remains self-contained.
-
-## src/bmm/workflows/2-plan-workflows/bmad-create-ux-design/ux-design-template.md
-
-```md
----
-stepsCompleted: []
-inputDocuments: []
----
-
-# UX Design Specification {{project_name}}
-
-**Author:** {{user_name}}
-**Date:** {{date}}
-
----
-
-<!-- UX design content will be appended sequentially through collaborative workflow steps -->
-```
 
 ## src/bmm/workflows/2-plan-workflows/bmad-create-ux-design/steps/step-01-init.md
 
@@ -125,7 +105,7 @@ Discover and load context documents using smart discovery. Documents can be in t
 - {planning_artifacts}/\*\*
 - {output_folder}/\*\*
 - {product_knowledge}/\*\*
-- docs/\*\*
+- {project-root}/docs/\*\*
 
 Also - when searching - documents can be a single markdown file, or a folder with an index and multiple files. For Example, if searching for `*foo*.md` and not found, also search for a folder called _foo_/index.md (which indicates sharded content)
 
@@ -148,7 +128,7 @@ Try to discover the following:
 
 #### B. Create Initial Document
 
-Copy the template from `{installed_path}/ux-design-template.md` to `{planning_artifacts}/ux-design-specification.md`
+Copy the template from `../ux-design-template.md` to `{planning_artifacts}/ux-design-specification.md`
 Initialize frontmatter in the template.
 
 #### C. Complete Initialization and Report
@@ -316,7 +296,7 @@ After presenting current progress, ask:
 If `lastStep` indicates the final step is completed:
 "Great news! It looks like we've already completed the UX design workflow for {{project_name}}.
 
-The final UX design specification is ready at {output_folder}/ux-design-specification.md with all sections completed through step {finalStepNumber}.
+The final UX design specification is ready at {planning_artifacts}/ux-design-specification.md with all sections completed through step {finalStepNumber}.
 
 The complete UX design includes visual foundations, user flows, and design specifications ready for implementation.
 
@@ -333,6 +313,24 @@ What would be most helpful?"
 After user confirms they're ready to continue, load the appropriate next step file based on the `lastStep` value from frontmatter.
 
 Remember: Do NOT load the next step until user explicitly selects [C] to continue!
+```
+
+## src/bmm/workflows/2-plan-workflows/bmad-create-ux-design/ux-design-template.md
+
+```md
+---
+stepsCompleted: []
+inputDocuments: []
+---
+
+# UX Design Specification {{project_name}}
+
+**Author:** {{user_name}}
+**Date:** {{date}}
+
+---
+
+<!-- UX design content will be appended sequentially through collaborative workflow steps -->
 ```
 
 ## src/bmm/workflows/2-plan-workflows/bmad-create-ux-design/steps/step-02-discovery.md
@@ -370,8 +368,8 @@ This step will generate content and present choices:
 
 ## PROTOCOL INTEGRATION:
 
-- When 'A' selected: Read fully and follow: skill:bmad-advanced-elicitation
-- When 'P' selected: Read fully and follow: {project-root}/\_bmad/core/workflows/bmad-party-mode/workflow.md
+- When 'A' selected: Invoke the `bmad-advanced-elicitation` skill
+- When 'P' selected: Invoke the `bmad-party-mode` skill
 - PROTOCOLS always return to this step's A/P/C menu
 - User accepts/rejects protocol changes before proceeding
 

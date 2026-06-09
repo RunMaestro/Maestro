@@ -1,8 +1,3 @@
----
-name: sprint-planning
-description: 'Generate sprint status tracking from epics. Use when the user says "run sprint planning" or "generate sprint plan"'
----
-
 # Sprint Planning Workflow
 
 **Goal:** Generate sprint status tracking from epics, detecting current story statuses and building a complete sprint-status.yaml file.
@@ -26,9 +21,6 @@ Load config from `{project-root}/_bmad/bmm/config.yaml` and resolve:
 
 ### Paths
 
-- `installed_path` = `{project-root}/_bmad/bmm/workflows/4-implementation/sprint-planning`
-- `template` = `{installed_path}/sprint-status-template.yaml`
-- `checklist` = `{installed_path}/checklist.md`
 - `tracking_system` = `file-system`
 - `project_key` = `NOKEY`
 - `story_location` = `{implementation_artifacts}`
@@ -269,48 +261,3 @@ optional ↔ done
 3. **Parallel Work Supported**: Multiple stories can be `in-progress` if team capacity allows
 4. **Review Before Done**: Stories should pass through `review` before `done`
 5. **Learning Transfer**: SM typically creates next story after previous one is `done` to incorporate learnings
-
----
-
-# Bundled Reference Assets
-
-The following upstream BMAD files are embedded so this Maestro prompt remains self-contained.
-
-## src/bmm/workflows/4-implementation/sprint-planning/checklist.md
-
-```md
-# Sprint Planning Validation Checklist
-
-## Core Validation
-
-### Complete Coverage Check
-
-- [ ] Every epic found in epic\*.md files appears in sprint-status.yaml
-- [ ] Every story found in epic\*.md files appears in sprint-status.yaml
-- [ ] Every epic has a corresponding retrospective entry
-- [ ] No items in sprint-status.yaml that don't exist in epic files
-
-### Parsing Verification
-
-Compare epic files against generated sprint-status.yaml:
-```
-
-Epic Files Contains: Sprint Status Contains:
-✓ Epic 1 ✓ epic-1: [status]
-✓ Story 1.1: User Auth ✓ 1-1-user-auth: [status]
-✓ Story 1.2: Account Mgmt ✓ 1-2-account-mgmt: [status]
-✓ Story 1.3: Plant Naming ✓ 1-3-plant-naming: [status]
-✓ epic-1-retrospective: [status]
-✓ Epic 2 ✓ epic-2: [status]
-✓ Story 2.1: Personality Model ✓ 2-1-personality-model: [status]
-✓ Story 2.2: Chat Interface ✓ 2-2-chat-interface: [status]
-✓ epic-2-retrospective: [status]
-
-```
-
-### Final Check
-
-- [ ] Total count of epics matches
-- [ ] Total count of stories matches
-- [ ] All items are in the expected order (epic, stories, retrospective)
-```
