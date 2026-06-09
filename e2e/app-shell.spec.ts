@@ -5024,6 +5024,70 @@ test.describe('App shell seeded workbench', () => {
 		await expect(window.getByText('File Preview Surface')).toBeVisible();
 	});
 
+	test('closes the Tab Switcher with Escape without changing the active tab', async () => {
+		await window.getByText('Main', { exact: true }).click();
+		await expect(window.getByText('Codex seeded response is visible.')).toBeVisible();
+
+		await window.getByTitle(/Search tabs/).click();
+		const switcher = window.getByRole('dialog', { name: 'Tab Switcher' });
+		await switcher.getByPlaceholder('Search open tabs...').fill('README');
+		await expect(switcher.getByRole('button', { name: /README/ })).toBeVisible();
+
+		await switcher.getByPlaceholder('Search open tabs...').press('Escape');
+
+		await expect(switcher).toBeHidden();
+		await expect(window.getByText('Codex seeded response is visible.')).toBeVisible();
+	});
+
+	test('selects the AI tab from the Tab Switcher with a numeric shortcut', async () => {
+		await window.getByText('README', { exact: true }).click();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+
+		await window.getByTitle(/Search tabs/).click();
+		const switcher = window.getByRole('dialog', { name: 'Tab Switcher' });
+		await switcher.getByPlaceholder('Search open tabs...').fill('Main');
+		await switcher.getByPlaceholder('Search open tabs...').press('1');
+
+		await expect(switcher).toBeHidden();
+		await expect(window.getByText('Codex seeded response is visible.')).toBeVisible();
+	});
+
+	test('copies an inactive AI tab session id without switching away from the file tab', async () => {
+		await window.getByText('README', { exact: true }).click();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+
+		const mainTab = window.locator('[data-tab-id]').filter({ hasText: 'Main' }).first();
+		await mainTab.hover();
+		await window.getByText('Copy Session ID').click();
+
+		await expect(window.getByText('Copied!')).toBeVisible();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+	});
+
+	test('marks an inactive AI tab unread without switching away from the file tab', async () => {
+		await window.getByText('README', { exact: true }).click();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+
+		const mainTab = window.locator('[data-tab-id]').filter({ hasText: 'Main' }).first();
+		await mainTab.hover();
+		await window.getByText('Mark as Unread').click();
+
+		await expect(window.getByTitle('New messages')).toBeVisible();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+	});
+
+	test('copies the active file tab name without closing the preview tab', async () => {
+		await window.getByText('README', { exact: true }).click();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+
+		const readmeTab = window.locator('[data-tab-id]').filter({ hasText: 'README' }).first();
+		await readmeTab.hover();
+		await window.getByText('Copy File Name').click();
+
+		await expect(window.getByText('Copied!')).toBeVisible();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+	});
+
 	test('uses global tab shortcuts to create select close and reopen AI tabs', async () => {
 		const tabRows = window.locator('[data-tab-id]');
 		await window.getByText('Main', { exact: true }).click();

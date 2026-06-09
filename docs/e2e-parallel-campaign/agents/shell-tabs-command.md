@@ -1,6 +1,6 @@
 # shell-tabs-command
 
-Status: terminal search/SSH tranche committed; static-reviewed only
+Status: tab switcher and tab overlay tranche ready for commit; static-reviewed only
 
 ## Scope
 
@@ -26,10 +26,10 @@ Authored in this branch:
 | -------------------------------------------- | --------: | ---------------: |
 | App shell, sidebars, focus, global shortcuts |         2 |               17 |
 | Command terminal workflows                   |        20 |               37 |
-| Tabs, tab switcher, tab overlays             |         4 |               32 |
-| Total                                        |        26 |               86 |
+| Tabs, tab switcher, tab overlays             |         9 |               37 |
+| Total                                        |        31 |               91 |
 
-Matrix-backed scenarios still unclaimed in this lane progress file: 180.
+Matrix-backed scenarios still unclaimed in this lane progress file: 175.
 Skipped/env-gated scenarios authored: 0.
 
 Files touched:
@@ -45,7 +45,10 @@ Files touched:
   expandability, clear-history draft preservation, and parent-directory cwd
   propagation. The terminal search/SSH tranche adds output-search close,
   visible collapsed-output search, clear-history while output search is open,
-  SSH history selection routing, and SSH slash-command routing coverage.
+  SSH history selection routing, and SSH slash-command routing coverage. The tab
+  switcher and tab overlay tranche adds Escape-close preservation, numeric AI tab
+  selection, inactive AI tab session copying/unread marking, and active file tab
+  name copying without closing the preview.
 - `docs/e2e-parallel-campaign/agents/shell-tabs-command.md` - recorded this
   lane progress.
 
@@ -59,6 +62,7 @@ Commits:
 - `2d9975b17` - `test(e2e-shell-tabs-command): add terminal output controls`
 - `ea049b708` - `test(e2e-shell-tabs-command): add terminal search ssh tranche`
 - `36f60d251` - `test(e2e-shell-tabs-command): tighten terminal search clear assertion`
+- `87ff08a42` - `test(e2e-shell-tabs-command): add tab switcher overlay coverage`
 
 Validation performed:
 
@@ -93,6 +97,18 @@ Validation performed:
   search/SSH tranche.
 - Focused code-reviewer pass - found no critical or high issues after the
   clear-history search assertion was tightened to the product contract.
+- `npx prettier --write e2e/app-shell.spec.ts` - applied formatting for the tab
+  switcher and tab overlay tranche.
+- `npx prettier --check e2e/app-shell.spec.ts` - passed for the tab switcher and
+  tab overlay tranche.
+- `npx eslint e2e/app-shell.spec.ts` - passed for the tab switcher and tab
+  overlay tranche.
+- `git diff --check -- e2e/app-shell.spec.ts docs/e2e-parallel-campaign/agents/shell-tabs-command.md` -
+  passed for the tab switcher and tab overlay tranche.
+- Static `.only` and prohibited-command guard - passed for the tab switcher and
+  tab overlay tranche.
+- Focused code-reviewer pass - found no critical or high issues in the tab
+  switcher and tab overlay tranche.
 
 Validation intentionally not performed:
 
