@@ -73,6 +73,11 @@ const activeScenarioMatrix = [
 	{ id: 'FDH-A45', title: 'disables File Explorer auto-refresh from the refresh menu' },
 	{ id: 'FDH-A46', title: 'shows History duration and cost metadata in list rows' },
 	{ id: 'FDH-A47', title: 'opens the achievements modal from a History entry action' },
+	{ id: 'FDH-A48', title: 'opens Document Graph from a File Explorer context menu' },
+	{ id: 'FDH-A49', title: 'shows multiple markdown headings in the preview table of contents' },
+	{ id: 'FDH-A50', title: 'shows remote markdown images blocked before opt-in' },
+	{ id: 'FDH-A51', title: 'refreshes File Explorer after a new markdown file is written' },
+	{ id: 'FDH-A52', title: 'searches History by session name across seeded entries' },
 ] as const;
 
 const skippedScenarioMatrix = [
@@ -134,12 +139,16 @@ Preview prose for the files docs history tranche.
 
 [Runbook](docs/runbook.md)
 
+![Remote badge](https://example.com/maestro-files-docs-history.png)
+
 - [ ] Active tranche item
 - [x] Completed tranche item
 
 | Scenario | State |
 | --- | --- |
 | Preview | Active |
+
+## Runbook Follow-up
 
 \`\`\`ts
 const tranche = 'files-docs-history';
@@ -1139,6 +1148,58 @@ test.describe(`Files docs history lane matrix (${activeScenarioMatrix.length} ac
 
 		const aboutDialog = window.getByRole('dialog', { name: 'About Maestro' });
 		await expect(aboutDialog.getByRole('heading', { name: 'About Maestro' })).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[42].id} ${activeScenarioMatrix[42].title}`, async () => {
+		const contextMenu = await openFileContextMenu(window, 'runbook.md');
+		await contextMenu.getByRole('button', { name: 'Document Graph', exact: true }).click();
+
+		const graphDialog = window.getByRole('dialog', { name: 'Document Graph' });
+		await expect(graphDialog).toBeVisible({ timeout: 15_000 });
+		await expect(graphDialog.getByText(/documents/)).toBeVisible({ timeout: 15_000 });
+	});
+
+	test(`${activeScenarioMatrix[43].id} ${activeScenarioMatrix[43].title}`, async () => {
+		await expect(window.getByRole('heading', { name: 'Files Docs History Matrix' })).toBeVisible();
+
+		await window.getByTitle('Table of Contents').click();
+
+		await expect(window.getByText('Contents')).toBeVisible();
+		await expect(window.getByText('2 headings')).toBeVisible();
+		await expect(window.getByTitle('Files Docs History Matrix')).toBeVisible();
+		await expect(window.getByTitle('Runbook Follow-up')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[44].id} ${activeScenarioMatrix[44].title}`, async () => {
+		await expect(window.getByRole('heading', { name: 'Files Docs History Matrix' })).toBeVisible();
+
+		await expect(window.getByText('Remote image blocked')).toBeVisible();
+		await expect(window.getByTitle('Show remote images')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[45].id} ${activeScenarioMatrix[45].title}`, async () => {
+		const freshPath = path.join(seededWorkbench.projectDir, 'docs', 'fresh.md');
+		fs.writeFileSync(freshPath, '# Fresh manual refresh file\n', 'utf-8');
+
+		await helpers.openRightPanelTab(window, 'Files');
+		await expect(window.getByText('fresh.md')).toBeHidden();
+		await window.getByTitle('Auto-refresh every 180s').click();
+
+		await getFileTreeRow(window, 'fresh.md');
+	});
+
+	test(`${activeScenarioMatrix[46].id} ${activeScenarioMatrix[46].title}`, async () => {
+		await helpers.openRightPanelTab(window, 'History');
+		const historyPanel = window.locator('[data-tour="history-panel"]');
+		await historyPanel.locator('[tabindex="0"]').focus();
+		await window.keyboard.press('Control+f');
+
+		const historyFilter = historyPanel.getByPlaceholder('Filter history...');
+		await historyFilter.fill('Files Docs History Agent');
+
+		await expect(historyPanel.getByText('4 results')).toBeVisible();
+		await expect(historyPanel.getByText('Rendered docs history tranche')).toBeVisible();
+		await expect(historyPanel.getByText('Achievement file history milestone')).toBeVisible();
 	});
 
 	for (const scenario of skippedScenarioMatrix) {
