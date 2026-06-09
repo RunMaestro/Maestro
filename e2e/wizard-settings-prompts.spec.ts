@@ -295,6 +295,25 @@ const activeScenarioMatrix = [
 	{ id: 'WSP-230', title: 'shows New Agent Wizard Codex built-in environment variable help' },
 	{ id: 'WSP-231', title: 'lists New Agent Wizard Codex model options' },
 	{ id: 'WSP-232', title: 'commits a New Agent Wizard Codex model dropdown selection' },
+	{ id: 'WSP-233', title: 'preserves New Agent Wizard Codex path after reopening config' },
+	{ id: 'WSP-234', title: 'preserves New Agent Wizard Codex path reset after reopening config' },
+	{
+		id: 'WSP-235',
+		title: 'preserves cleared New Agent Wizard Codex arguments after reopening config',
+	},
+	{ id: 'WSP-236', title: 'preserves removed New Agent Wizard Codex environment variables' },
+	{ id: 'WSP-237', title: 'preserves typed New Agent Wizard Codex model text' },
+	{ id: 'WSP-238', title: 'preserves New Agent Wizard Codex context window edits' },
+	{ id: 'WSP-239', title: 'filters New Agent Wizard Codex model dropdown options' },
+	{ id: 'WSP-240', title: 'refreshes New Agent Wizard Codex model options' },
+	{ id: 'WSP-241', title: 'shows inline wizard generated document completion state' },
+	{ id: 'WSP-242', title: 'shows inline wizard generated document folder name' },
+	{ id: 'WSP-243', title: 'summarizes inline wizard generated task totals' },
+	{ id: 'WSP-244', title: 'lists inline wizard generated document filenames' },
+	{ id: 'WSP-245', title: 'shows inline wizard generated document task badges' },
+	{ id: 'WSP-246', title: 'expands inline wizard generated document descriptions' },
+	{ id: 'WSP-247', title: 'collapses inline wizard generated document descriptions' },
+	{ id: 'WSP-248', title: 'shows inline wizard document generation in progress' },
 ];
 
 const envGatedScenarioMatrix = [
@@ -305,7 +324,9 @@ const envGatedScenarioMatrix = [
 	},
 ];
 
-function createWizardSettingsPromptsWorkbench(options: { inlineWizard?: boolean } = {}) {
+function createWizardSettingsPromptsWorkbench(
+	options: { inlineWizard?: boolean; inlineWizardState?: Record<string, unknown> } = {}
+) {
 	const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-e2e-wsp-'));
 	const projectDir = path.join(homeDir, 'project');
 	const now = Date.parse('2026-06-08T12:00:00Z');
@@ -336,6 +357,7 @@ function createWizardSettingsPromptsWorkbench(options: { inlineWizard?: boolean 
 							projectDir,
 							sessionId: primarySessionId,
 							tabId: `${primarySessionId}-tab`,
+							overrides: options.inlineWizardState,
 						})
 					: undefined,
 			}),
@@ -960,10 +982,12 @@ function createInlineWizardState({
 	projectDir,
 	sessionId,
 	tabId,
+	overrides = {},
 }: {
 	projectDir: string;
 	sessionId: string;
 	tabId: string;
+	overrides?: Record<string, unknown>;
 }) {
 	return {
 		isActive: true,
@@ -992,7 +1016,36 @@ function createInlineWizardState({
 		subfolderName: null,
 		subfolderPath: null,
 		autoRunFolderPath: path.join(projectDir, 'Auto Run Docs'),
+		...overrides,
 	};
+}
+
+function createInlineWizardGeneratedDocuments() {
+	return [
+		{
+			filename: 'phase-1-research.md',
+			content: [
+				'# Research Plan',
+				'',
+				'Map current wizard setup flow.',
+				'',
+				'- [ ] Audit wizard launch',
+				'- [x] Record prompt composer state',
+			].join('\n'),
+			taskCount: 2,
+		},
+		{
+			filename: 'phase-2-build.md',
+			content: [
+				'# Build Plan',
+				'',
+				'Implement deterministic prompt composer guard.',
+				'',
+				'- [ ] Add static coverage',
+			].join('\n'),
+			taskCount: 1,
+		},
+	];
 }
 
 function createDirectorNotesEnabledSettings(overrides: Partial<DirectorNotesSettings> = {}) {
@@ -1226,9 +1279,17 @@ async function stubEncoreCodexAgent(
 	initialConfig: Record<string, unknown> = {}
 ) {
 	await electronApp.evaluate(({ ipcMain }, config) => {
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eCodexModelCalls?: Array<{
+				agentId?: string;
+				refresh?: boolean;
+				sshRemoteId?: string;
+			}>;
+		};
 		const configs: Record<string, Record<string, unknown>> = {
 			codex: { ...config },
 		};
+		state.__maestroE2eCodexModelCalls = [];
 		const codexAgent = {
 			id: 'codex',
 			name: 'Codex',
@@ -1275,8 +1336,29 @@ async function stubEncoreCodexAgent(
 			}
 		);
 		ipcMain.removeHandler('agents:getModels');
-		ipcMain.handle('agents:getModels', async () => ['gpt-5.3-codex', 'o3']);
+		ipcMain.handle(
+			'agents:getModels',
+			async (_event, agentId?: string, refresh?: boolean, sshRemoteId?: string) => {
+				state.__maestroE2eCodexModelCalls?.push({ agentId, refresh, sshRemoteId });
+				return ['gpt-5.3-codex', 'o3'];
+			}
+		);
 	}, initialConfig);
+}
+
+async function getStubbedCodexAgentState(electronApp: ElectronApplication) {
+	return electronApp.evaluate(() => {
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eCodexModelCalls?: Array<{
+				agentId?: string;
+				refresh?: boolean;
+				sshRemoteId?: string;
+			}>;
+		};
+		return {
+			modelCalls: state.__maestroE2eCodexModelCalls ?? [],
+		};
+	});
 }
 
 test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} active, 0 skipped, ${envGatedScenarioMatrix.length} env-gated)`, () => {
@@ -8220,6 +8302,432 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 					});
 				})
 				.toBe('o3');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[232].id} ${activeScenarioMatrix[232].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp);
+			const wizardDialog = await openCodexWizardCustomization(launched.window);
+			const pathInput = wizardDialog.getByPlaceholder('/path/to/codex');
+
+			await pathInput.fill('/opt/wsp/reopen-codex');
+			await wizardDialog.getByRole('button', { name: 'Done' }).click();
+			await wizardDialog
+				.getByRole('button', { name: 'Codex' })
+				.getByTitle('Customize agent settings')
+				.click();
+
+			await expect(wizardDialog.getByPlaceholder('/path/to/codex')).toHaveValue(
+				'/opt/wsp/reopen-codex'
+			);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[233].id} ${activeScenarioMatrix[233].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp);
+			const wizardDialog = await openCodexWizardCustomization(launched.window);
+			const pathInput = wizardDialog.getByPlaceholder('/path/to/codex');
+
+			await pathInput.fill('/opt/wsp/reset-codex');
+			await settingsFieldPanel(wizardDialog, 'Path').getByRole('button', { name: 'Reset' }).click();
+			await wizardDialog.getByRole('button', { name: 'Done' }).click();
+			await wizardDialog
+				.getByRole('button', { name: 'Codex' })
+				.getByTitle('Customize agent settings')
+				.click();
+
+			await expect(wizardDialog.getByPlaceholder('/path/to/codex')).toHaveValue(
+				'/usr/local/bin/codex'
+			);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[234].id} ${activeScenarioMatrix[234].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp);
+			const wizardDialog = await openCodexWizardCustomization(launched.window);
+			const argsInput = wizardDialog.getByPlaceholder('--flag value --another-flag');
+
+			await argsInput.fill('--temporary-wsp-flag');
+			await settingsFieldPanel(wizardDialog, 'Custom Arguments (optional)')
+				.getByRole('button', { name: 'Clear' })
+				.click();
+			await wizardDialog.getByRole('button', { name: 'Done' }).click();
+			await wizardDialog
+				.getByRole('button', { name: 'Codex' })
+				.getByTitle('Customize agent settings')
+				.click();
+
+			await expect(wizardDialog.getByPlaceholder('--flag value --another-flag')).toHaveValue('');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[235].id} ${activeScenarioMatrix[235].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp);
+			const wizardDialog = await openCodexWizardCustomization(launched.window);
+			const envPanel = settingsFieldPanel(wizardDialog, 'Environment Variables (optional)');
+
+			await envPanel.getByRole('button', { name: 'Add Variable' }).click();
+			await envPanel.getByPlaceholder('VARIABLE_NAME').fill('WSP_REMOVED_ENV');
+			await envPanel.getByPlaceholder('value', { exact: true }).fill('removed');
+			await envPanel.getByTitle('Remove variable').click();
+			await wizardDialog.getByRole('button', { name: 'Done' }).click();
+			await wizardDialog
+				.getByRole('button', { name: 'Codex' })
+				.getByTitle('Customize agent settings')
+				.click();
+
+			await expect(
+				settingsFieldPanel(wizardDialog, 'Environment Variables (optional)').getByText(
+					'WSP_REMOVED_ENV'
+				)
+			).toBeHidden();
+			await expect(
+				settingsFieldPanel(wizardDialog, 'Environment Variables (optional)').getByPlaceholder(
+					'VARIABLE_NAME'
+				)
+			).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[236].id} ${activeScenarioMatrix[236].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp);
+			const wizardDialog = await openCodexWizardCustomization(launched.window);
+			const modelInput = settingsFieldPanel(wizardDialog, 'Model')
+				.locator('input[type="text"]')
+				.first();
+
+			await modelInput.fill('gpt-custom-wsp');
+			await wizardDialog.getByRole('button', { name: 'Done' }).click();
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						const config = await window.maestro.agents.getConfig('codex');
+						return config.model;
+					});
+				})
+				.toBe('gpt-custom-wsp');
+			await wizardDialog
+				.getByRole('button', { name: 'Codex' })
+				.getByTitle('Customize agent settings')
+				.click();
+
+			await expect(
+				settingsFieldPanel(wizardDialog, 'Model').locator('input[type="text"]').first()
+			).toHaveValue('gpt-custom-wsp');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[237].id} ${activeScenarioMatrix[237].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp);
+			const wizardDialog = await openCodexWizardCustomization(launched.window);
+			const contextWindowInput = settingsFieldPanel(wizardDialog, 'Context Window Size')
+				.locator('input[type="number"]')
+				.first();
+
+			await contextWindowInput.fill('128000');
+			await wizardDialog.getByRole('button', { name: 'Done' }).click();
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						const config = await window.maestro.agents.getConfig('codex');
+						return config.contextWindow;
+					});
+				})
+				.toBe(128000);
+			await wizardDialog
+				.getByRole('button', { name: 'Codex' })
+				.getByTitle('Customize agent settings')
+				.click();
+
+			await expect(
+				settingsFieldPanel(wizardDialog, 'Context Window Size')
+					.locator('input[type="number"]')
+					.first()
+			).toHaveValue('128000');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[238].id} ${activeScenarioMatrix[238].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp);
+			const wizardDialog = await openCodexWizardCustomization(launched.window);
+			const modelInput = settingsFieldPanel(wizardDialog, 'Model')
+				.locator('input[type="text"]')
+				.first();
+
+			await modelInput.focus();
+			await modelInput.fill('gpt');
+
+			await expect(wizardDialog.getByRole('button', { name: 'gpt-5.3-codex' })).toBeVisible();
+			await expect(wizardDialog.getByRole('button', { name: 'o3' })).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[239].id} ${activeScenarioMatrix[239].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp);
+			const wizardDialog = await openCodexWizardCustomization(launched.window);
+
+			await settingsFieldPanel(wizardDialog, 'Model')
+				.getByTitle('Refresh available models')
+				.click();
+
+			await expect
+				.poll(async () => {
+					const state = await getStubbedCodexAgentState(launched.electronApp);
+					return state.modelCalls.some((call) => call.agentId === 'codex' && call.refresh);
+				})
+				.toBe(true);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[240].id} ${activeScenarioMatrix[240].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench({
+			inlineWizard: true,
+			inlineWizardState: {
+				generatedDocuments: createInlineWizardGeneratedDocuments(),
+				subfolderName: 'wsp-inline-docs',
+			},
+		});
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await expect(launched.window.getByText('Documentation generation complete.')).toBeVisible();
+			await expect(launched.window.getByText('Work Plans Drafted (2)')).toBeVisible();
+			await expect(launched.window.getByRole('button', { name: 'Exit Wizard' })).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[241].id} ${activeScenarioMatrix[241].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench({
+			inlineWizard: true,
+			inlineWizardState: {
+				generatedDocuments: createInlineWizardGeneratedDocuments(),
+				subfolderName: 'wsp-inline-docs',
+			},
+		});
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await expect(launched.window.getByText('Available under')).toBeVisible();
+			await expect(launched.window.getByText('wsp-inline-docs/')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[242].id} ${activeScenarioMatrix[242].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench({
+			inlineWizard: true,
+			inlineWizardState: {
+				generatedDocuments: createInlineWizardGeneratedDocuments(),
+				subfolderName: 'wsp-inline-docs',
+			},
+		});
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await expect(launched.window.getByText('3', { exact: true }).first()).toBeVisible();
+			await expect(launched.window.getByText('Tasks Planned')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[243].id} ${activeScenarioMatrix[243].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench({
+			inlineWizard: true,
+			inlineWizardState: {
+				generatedDocuments: createInlineWizardGeneratedDocuments(),
+				subfolderName: 'wsp-inline-docs',
+			},
+		});
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await expect(launched.window.getByText('phase-1-research.md')).toBeVisible();
+			await expect(launched.window.getByText('phase-2-build.md')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[244].id} ${activeScenarioMatrix[244].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench({
+			inlineWizard: true,
+			inlineWizardState: {
+				generatedDocuments: createInlineWizardGeneratedDocuments(),
+				subfolderName: 'wsp-inline-docs',
+			},
+		});
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await expect(launched.window.getByText('2 tasks')).toBeVisible();
+			await expect(launched.window.getByText('1 task')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[245].id} ${activeScenarioMatrix[245].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench({
+			inlineWizard: true,
+			inlineWizardState: {
+				generatedDocuments: createInlineWizardGeneratedDocuments(),
+				subfolderName: 'wsp-inline-docs',
+			},
+		});
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await launched.window.getByRole('button', { name: /phase-1-research\.md/ }).click();
+
+			await expect(launched.window.getByText('Map current wizard setup flow.')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[246].id} ${activeScenarioMatrix[246].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench({
+			inlineWizard: true,
+			inlineWizardState: {
+				generatedDocuments: createInlineWizardGeneratedDocuments(),
+				subfolderName: 'wsp-inline-docs',
+			},
+		});
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			const documentRow = launched.window.getByRole('button', { name: /phase-1-research\.md/ });
+			const descriptionPanel = launched.window
+				.getByText('Map current wizard setup flow.')
+				.locator('xpath=ancestor::div[contains(@class, "overflow-hidden")][1]');
+
+			await documentRow.click();
+			await expect(launched.window.getByText('Map current wizard setup flow.')).toBeVisible();
+			await documentRow.click();
+
+			await expect(descriptionPanel).toHaveCSS('max-height', '0px');
+			await expect(descriptionPanel).toHaveCSS('opacity', '0');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[247].id} ${activeScenarioMatrix[247].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench({
+			inlineWizard: true,
+			inlineWizardState: {
+				isGeneratingDocs: true,
+				generatedDocuments: [],
+			},
+		});
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await expect(launched.window.getByText('Generating Auto Run Documents...')).toBeVisible();
+			await expect(launched.window.getByText(/This may take a while/)).toBeVisible();
+			await expect(launched.window.getByRole('button', { name: 'Cancel' })).toBeVisible();
 		} finally {
 			await launched.cleanup();
 		}
