@@ -4631,6 +4631,134 @@ test.describe('App shell seeded workbench', () => {
 		await expect(calls[1].cwd).toBe(expectedCwd);
 	});
 
+	test('updates command terminal cwd after absolute cd before a follow-up command', async () => {
+		await stubTerminalRunCommand(electronApp);
+		const terminalInput = await openSeededTerminalAgent(window);
+		const inputArea = window.locator('[data-tour="input-area"]');
+		const originalCwd = seededWorkbench.sessions[1].cwd;
+		const expectedCwd = path.join(originalCwd, 'Auto Run Docs');
+		const absoluteCdCommand = `cd "${expectedCwd}"`;
+
+		await terminalInput.fill(absoluteCdCommand);
+		await inputArea.getByTitle('Run command (Enter)').click();
+		await expect(inputArea.getByText(/Auto Run Docs/)).toBeVisible();
+
+		await terminalInput.fill('pwd');
+		await inputArea.getByTitle('Run command (Enter)').click();
+
+		await expect(window.locator('[data-log-index]').last().getByText(expectedCwd)).toBeVisible();
+		const calls = await getStubbedTerminalRunCommandCalls(electronApp);
+		await expect(calls.map((call) => call.command)).toEqual([absoluteCdCommand, 'pwd']);
+		await expect(calls[0].cwd).toBe(originalCwd);
+		await expect(calls[1].cwd).toBe(expectedCwd);
+	});
+
+	test('updates command terminal cwd after relative parent-subpath cd', async () => {
+		await stubTerminalRunCommand(electronApp);
+		const terminalInput = await openSeededTerminalAgent(window);
+		const inputArea = window.locator('[data-tour="input-area"]');
+		const originalCwd = seededWorkbench.sessions[1].cwd;
+		const expectedCwd = path.join(path.dirname(originalCwd), 'project', 'Auto Run Docs');
+
+		await terminalInput.fill('cd "../project/Auto Run Docs"');
+		await inputArea.getByTitle('Run command (Enter)').click();
+		await expect(inputArea.getByText(/Auto Run Docs/)).toBeVisible();
+
+		await terminalInput.fill('pwd');
+		await inputArea.getByTitle('Run command (Enter)').click();
+
+		await expect(window.locator('[data-log-index]').last().getByText(expectedCwd)).toBeVisible();
+		const calls = await getStubbedTerminalRunCommandCalls(electronApp);
+		await expect(calls.map((call) => call.command)).toEqual([
+			'cd "../project/Auto Run Docs"',
+			'pwd',
+		]);
+		await expect(calls[0].cwd).toBe(originalCwd);
+		await expect(calls[1].cwd).toBe(expectedCwd);
+	});
+
+	test('keeps changed command terminal cwd when a later cd target is missing', async () => {
+		await stubTerminalRunCommand(electronApp);
+		const terminalInput = await openSeededTerminalAgent(window);
+		const inputArea = window.locator('[data-tour="input-area"]');
+		const originalCwd = seededWorkbench.sessions[1].cwd;
+		const expectedCwd = path.join(originalCwd, 'Auto Run Docs');
+
+		await terminalInput.fill('cd "Auto Run Docs"');
+		await inputArea.getByTitle('Run command (Enter)').click();
+		await expect(inputArea.getByText(/Auto Run Docs/)).toBeVisible();
+
+		await terminalInput.fill('cd missing-after-cwd-change');
+		await inputArea.getByTitle('Run command (Enter)').click();
+
+		await terminalInput.fill('pwd');
+		await inputArea.getByTitle('Run command (Enter)').click();
+
+		await expect(window.locator('[data-log-index]').last().getByText(expectedCwd)).toBeVisible();
+		const calls = await getStubbedTerminalRunCommandCalls(electronApp);
+		await expect(calls.map((call) => call.command)).toEqual([
+			'cd "Auto Run Docs"',
+			'cd missing-after-cwd-change',
+			'pwd',
+		]);
+		await expect(calls[0].cwd).toBe(originalCwd);
+		await expect(calls[1].cwd).toBe(expectedCwd);
+		await expect(calls[2].cwd).toBe(expectedCwd);
+	});
+
+	test('resets local command terminal cwd to the project root with cd tilde', async () => {
+		await stubTerminalRunCommand(electronApp);
+		const terminalInput = await openSeededTerminalAgent(window);
+		const inputArea = window.locator('[data-tour="input-area"]');
+		const originalCwd = seededWorkbench.sessions[1].cwd;
+		const changedCwd = path.join(originalCwd, 'Auto Run Docs');
+
+		await terminalInput.fill('cd "Auto Run Docs"');
+		await inputArea.getByTitle('Run command (Enter)').click();
+		await expect(inputArea.getByText(/Auto Run Docs/)).toBeVisible();
+
+		await terminalInput.fill('cd ~');
+		await inputArea.getByTitle('Run command (Enter)').click();
+		await expect(inputArea.getByText(originalCwd)).toBeVisible();
+
+		await terminalInput.fill('pwd');
+		await inputArea.getByTitle('Run command (Enter)').click();
+
+		await expect(window.locator('[data-log-index]').last().getByText(originalCwd)).toBeVisible();
+		const calls = await getStubbedTerminalRunCommandCalls(electronApp);
+		await expect(calls.map((call) => call.command)).toEqual(['cd "Auto Run Docs"', 'cd ~', 'pwd']);
+		await expect(calls[0].cwd).toBe(originalCwd);
+		await expect(calls[1].cwd).toBe(changedCwd);
+		await expect(calls[2].cwd).toBe(originalCwd);
+	});
+
+	test('preserves command terminal cwd after switching away and back to the terminal agent', async () => {
+		await stubTerminalRunCommand(electronApp);
+		let terminalInput = await openSeededTerminalAgent(window);
+		const inputArea = window.locator('[data-tour="input-area"]');
+		const originalCwd = seededWorkbench.sessions[1].cwd;
+		const expectedCwd = path.join(originalCwd, 'Auto Run Docs');
+
+		await terminalInput.fill('cd "Auto Run Docs"');
+		await inputArea.getByTitle('Run command (Enter)').click();
+		await expect(inputArea.getByText(/Auto Run Docs/)).toBeVisible();
+
+		await window.getByText('E2E Workbench').click();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+
+		terminalInput = await openSeededTerminalAgent(window);
+		await expect(inputArea.getByText(/Auto Run Docs/)).toBeVisible();
+
+		await terminalInput.fill('pwd');
+		await inputArea.getByTitle('Run command (Enter)').click();
+
+		await expect(window.locator('[data-log-index]').last().getByText(expectedCwd)).toBeVisible();
+		const calls = await getStubbedTerminalRunCommandCalls(electronApp);
+		await expect(calls.map((call) => call.command)).toEqual(['cd "Auto Run Docs"', 'pwd']);
+		await expect(calls[0].cwd).toBe(originalCwd);
+		await expect(calls[1].cwd).toBe(expectedCwd);
+	});
+
 	test('keeps command terminal cwd unchanged when cd target is missing', async () => {
 		await stubTerminalRunCommand(electronApp);
 		const terminalInput = await openSeededTerminalAgent(window);
