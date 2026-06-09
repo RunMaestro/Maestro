@@ -137,6 +137,24 @@ const activeScenarioMatrix = [
 	{ id: 'SGS-A124', title: 'shows Symphony agent creation provider detection empty state' },
 	{ id: 'SGS-A125', title: 'surfaces Symphony agent creation failure without closing the dialog' },
 	{ id: 'SGS-A126', title: 'reports leaderboard pull-down when local stats are ahead' },
+	{ id: 'SGS-A127', title: 'uses the selected Usage Dashboard range in the export filename' },
+	{ id: 'SGS-A128', title: 'does not request CSV data after canceling the export dialog' },
+	{ id: 'SGS-A129', title: 'disables Usage Dashboard CSV export while export is pending' },
+	{ id: 'SGS-A130', title: 'shows Document Graph breadcrumb root segment for selected node' },
+	{ id: 'SGS-A131', title: 'dismisses Document Graph context menu after Copy Path' },
+	{ id: 'SGS-A132', title: 'updates Symphony agent working directory from folder picker' },
+	{ id: 'SGS-A133', title: 'creates a Symphony idle session after stubbed contribution start' },
+	{ id: 'SGS-A134', title: 'pushes leaderboard stats after local-ahead pull-down warning' },
+	{ id: 'SGS-A135', title: 'exports Usage Dashboard CSV with the selected quarter range' },
+	{ id: 'SGS-A136', title: 'reloads Usage Dashboard database size when ranges change' },
+	{ id: 'SGS-A137', title: 'closes Document Graph in-graph preview with Escape' },
+	{ id: 'SGS-A138', title: 'preserves Document Graph force layout through refresh' },
+	{ id: 'SGS-A139', title: 'opens Symphony repository GitHub link through shell routing' },
+	{ id: 'SGS-A140', title: 'opens Symphony issue GitHub link through shell routing' },
+	{ id: 'SGS-A141', title: 'cycles Symphony issue documents with keyboard shortcuts' },
+	{ id: 'SGS-A142', title: 'returns from Symphony active empty state to project browse' },
+	{ id: 'SGS-A143', title: 'passes Symphony clone payload before starting contribution' },
+	{ id: 'SGS-A144', title: 'shows Symphony clone failure before starting contribution' },
 ] as const;
 
 const skippedScenarioMatrix = [
@@ -773,6 +791,11 @@ async function stubSymphonyAgentDetection(
 
 		ipcMain.removeHandler('agents:detect');
 		ipcMain.handle('agents:detect', async () => agents);
+		ipcMain.removeHandler('agents:get');
+		ipcMain.handle(
+			'agents:get',
+			async (_event, agentId: string) => agents.find((agent) => agent.id === agentId) ?? null
+		);
 		ipcMain.removeHandler('agents:refresh');
 		ipcMain.handle('agents:refresh', async (_event, agentId: string) =>
 			agents.find((agent) => agent.id === agentId)
@@ -784,6 +807,24 @@ async function stubSymphonyAgentDetection(
 		ipcMain.removeHandler('agents:getModels');
 		ipcMain.handle('agents:getModels', async () => []);
 	}, agentsAvailable);
+}
+
+async function stubExternalLinkCapture(electronApp: ElectronApplication) {
+	await electronApp.evaluate(({ ipcMain }) => {
+		const state = globalThis as typeof globalThis & { __sgsExternalUrls?: string[] };
+		state.__sgsExternalUrls = [];
+		ipcMain.removeHandler('shell:openExternal');
+		ipcMain.handle('shell:openExternal', async (_event, url: string) => {
+			state.__sgsExternalUrls!.push(url);
+		});
+	});
+}
+
+async function getCapturedExternalLinks(electronApp: ElectronApplication) {
+	return electronApp.evaluate(() => {
+		const state = globalThis as typeof globalThis & { __sgsExternalUrls?: string[] };
+		return state.__sgsExternalUrls ?? [];
+	});
 }
 
 async function openLeaderboardWithManualAuthToken(
@@ -3088,6 +3129,8 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 				authenticated: true,
 				username: 'sgs-conductor',
 			}));
+			ipcMain.removeHandler('symphony:cloneRepo');
+			ipcMain.handle('symphony:cloneRepo', async () => ({ success: true }));
 			ipcMain.removeHandler('symphony:startContribution');
 			ipcMain.handle('symphony:startContribution', async () => ({
 				success: false,
@@ -3141,6 +3184,483 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 
 		await expect(leaderboardDialog.getByText(/Local is ahead/)).toBeVisible();
 		await expect(leaderboardDialog.getByText(/No sync needed/)).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[126].id} ${activeScenarioMatrix[126].title}`, async () => {
+		await electronApp.evaluate(({ ipcMain }) => {
+			const state = globalThis as typeof globalThis & {
+				__sgsSaveOptions?: Array<{ defaultPath?: string }>;
+			};
+			state.__sgsSaveOptions = [];
+			ipcMain.removeHandler('dialog:saveFile');
+			ipcMain.handle('dialog:saveFile', async (_event, options: { defaultPath?: string }) => {
+				state.__sgsSaveOptions!.push(options);
+				return null;
+			});
+		});
+
+		const usageDashboard = await openUsageDashboard(window);
+		await usageDashboard.locator('select').first().selectOption('year');
+		await usageDashboard.getByRole('button', { name: 'Export CSV' }).click();
+
+		await expect
+			.poll(() =>
+				electronApp.evaluate(() => {
+					const state = globalThis as typeof globalThis & {
+						__sgsSaveOptions?: Array<{ defaultPath?: string }>;
+					};
+					return state.__sgsSaveOptions?.[0]?.defaultPath ?? '';
+				})
+			)
+			.toContain('maestro-usage-year-');
+	});
+
+	test(`${activeScenarioMatrix[127].id} ${activeScenarioMatrix[127].title}`, async () => {
+		await electronApp.evaluate(({ ipcMain }) => {
+			const state = globalThis as typeof globalThis & { __sgsExportCalls?: number };
+			state.__sgsExportCalls = 0;
+			ipcMain.removeHandler('dialog:saveFile');
+			ipcMain.handle('dialog:saveFile', async () => null);
+			ipcMain.removeHandler('stats:export-csv');
+			ipcMain.handle('stats:export-csv', async () => {
+				state.__sgsExportCalls! += 1;
+				return 'should-not-export';
+			});
+		});
+
+		const usageDashboard = await openUsageDashboard(window);
+		await usageDashboard.getByRole('button', { name: 'Export CSV' }).click();
+
+		await expect
+			.poll(() =>
+				electronApp.evaluate(() => {
+					const state = globalThis as typeof globalThis & { __sgsExportCalls?: number };
+					return state.__sgsExportCalls ?? -1;
+				})
+			)
+			.toBe(0);
+		await expect(usageDashboard).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[128].id} ${activeScenarioMatrix[128].title}`, async () => {
+		await electronApp.evaluate(({ ipcMain }) => {
+			ipcMain.removeHandler('dialog:saveFile');
+			ipcMain.handle('dialog:saveFile', async () => '/tmp/sgs-pending-export.csv');
+			ipcMain.removeHandler('stats:export-csv');
+			ipcMain.handle(
+				'stats:export-csv',
+				async () => new Promise((resolve) => setTimeout(() => resolve('range\nall\n'), 250))
+			);
+		});
+
+		const usageDashboard = await openUsageDashboard(window);
+		const exportButton = usageDashboard.getByRole('button', { name: 'Export CSV' });
+		await exportButton.click();
+
+		await expect(exportButton).toBeDisabled();
+		await expect(exportButton).toBeEnabled();
+	});
+
+	test(`${activeScenarioMatrix[129].id} ${activeScenarioMatrix[129].title}`, async () => {
+		const graphDialog = await openDocumentGraphFromPreview(window);
+
+		await clickDocumentGraphCenter(graphDialog);
+
+		const breadcrumb = graphDialog.getByRole('navigation', { name: 'Selected node path' });
+		await expect(breadcrumb.getByRole('button', { name: 'project' })).toHaveAttribute(
+			'title',
+			'Go to project'
+		);
+		await expect(breadcrumb.getByRole('button', { name: /README/ })).toHaveAttribute(
+			'aria-current',
+			'page'
+		);
+	});
+
+	test(`${activeScenarioMatrix[130].id} ${activeScenarioMatrix[130].title}`, async () => {
+		const graphDialog = await openDocumentGraphFromPreview(window);
+
+		await clickDocumentGraphCenter(graphDialog, 'right');
+		await graphDialog.getByRole('button', { name: 'Copy Path' }).click();
+
+		await expect(graphDialog.getByRole('button', { name: 'Copy Path' })).toBeHidden();
+		await expect(graphDialog).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[131].id} ${activeScenarioMatrix[131].title}`, async () => {
+		await stubSymphonyAgentDetection(electronApp);
+		const selectedFolder = path.join(workbench.homeDir, 'picked-symphony-worktree');
+		await electronApp.evaluate(({ ipcMain }, folder: string) => {
+			ipcMain.removeHandler('git:checkGhCli');
+			ipcMain.handle('git:checkGhCli', async () => ({
+				installed: true,
+				authenticated: true,
+				username: 'sgs-conductor',
+			}));
+			ipcMain.removeHandler('dialog:selectFolder');
+			ipcMain.handle('dialog:selectFolder', async () => folder);
+		}, selectedFolder);
+		const symphonyDialog = await openSymphonyFromQuickActions(window);
+
+		await symphonyDialog.getByRole('button', { name: /Maestro Core/ }).click();
+		await symphonyDialog.getByText('Add deterministic E2E coverage').click();
+		await symphonyDialog.getByRole('button', { name: 'Start Symphony' }).click();
+		await window.getByRole('button', { name: 'I Have the Build Tools' }).click();
+
+		const agentDialog = window.getByRole('dialog', { name: 'Create Symphony Agent' });
+		await agentDialog.getByTitle('Browse for folder').click();
+
+		await expect(agentDialog.getByPlaceholder('~/Maestro-Symphony/owner-repo')).toHaveValue(
+			selectedFolder
+		);
+	});
+
+	test(`${activeScenarioMatrix[132].id} ${activeScenarioMatrix[132].title}`, async () => {
+		await stubSymphonyAgentDetection(electronApp);
+		await electronApp.evaluate(({ ipcMain }) => {
+			const state = globalThis as typeof globalThis & {
+				__sgsStartPayload?: { issueNumber?: number; repoSlug?: string };
+			};
+			state.__sgsStartPayload = undefined;
+			ipcMain.removeHandler('git:checkGhCli');
+			ipcMain.handle('git:checkGhCli', async () => ({
+				installed: true,
+				authenticated: true,
+				username: 'sgs-conductor',
+			}));
+			ipcMain.removeHandler('git:isRepo');
+			ipcMain.handle('git:isRepo', async () => false);
+			ipcMain.removeHandler('symphony:cloneRepo');
+			ipcMain.handle('symphony:cloneRepo', async () => ({ success: true }));
+			ipcMain.removeHandler('symphony:startContribution');
+			ipcMain.handle(
+				'symphony:startContribution',
+				async (_event, payload: { issueNumber?: number; repoSlug?: string }) => {
+					state.__sgsStartPayload = payload;
+					return {
+						success: true,
+						branchName: 'symphony/sgs-42',
+						autoRunPath: '/tmp/sgs-auto-run-docs',
+						draftPrNumber: 88,
+						draftPrUrl: 'https://github.com/RunMaestro/Maestro/pull/88',
+					};
+				}
+			);
+		});
+		const symphonyDialog = await openSymphonyFromQuickActions(window);
+
+		await symphonyDialog.getByRole('button', { name: /Maestro Core/ }).click();
+		await symphonyDialog.getByText('Add deterministic E2E coverage').click();
+		await symphonyDialog.getByRole('button', { name: 'Start Symphony' }).click();
+		await window.getByRole('button', { name: 'I Have the Build Tools' }).click();
+
+		const agentDialog = window.getByRole('dialog', { name: 'Create Symphony Agent' });
+		await expect(agentDialog.getByRole('button', { name: 'Create Agent' })).toBeEnabled();
+		await agentDialog.getByRole('button', { name: 'Create Agent' }).click();
+
+		await expect(agentDialog).toBeHidden();
+		await expect
+			.poll(() =>
+				electronApp.evaluate(() => {
+					const state = globalThis as typeof globalThis & {
+						__sgsStartPayload?: { issueNumber?: number; repoSlug?: string };
+					};
+					return `${state.__sgsStartPayload?.repoSlug ?? ''}#${state.__sgsStartPayload?.issueNumber ?? 0}`;
+				})
+			)
+			.toBe('RunMaestro/Maestro#42');
+	});
+
+	test(`${activeScenarioMatrix[133].id} ${activeScenarioMatrix[133].title}`, async () => {
+		const localTime = 240_000;
+		await window.evaluate((stats) => window.maestro.settings.set('autoRunStats', stats), {
+			cumulativeTimeMs: localTime,
+			totalRuns: 3,
+			currentBadgeLevel: 1,
+			longestRunMs: 180_000,
+			longestRunTimestamp: Date.parse('2026-05-29T12:00:00.000Z'),
+		});
+		const leaderboardDialog = await openLeaderboardWithManualAuthToken(
+			window,
+			electronApp,
+			'Local Ahead Push',
+			'local-ahead-push@example.com'
+		);
+		await electronApp.evaluate(({ ipcMain }, syncedTime: number) => {
+			ipcMain.removeHandler('leaderboard:sync');
+			ipcMain.handle('leaderboard:sync', async () => ({
+				success: true,
+				found: true,
+				data: {
+					cumulativeTimeMs: Math.max(0, syncedTime - 60_000),
+					totalRuns: 1,
+					badgeLevel: 0,
+				},
+			}));
+		}, localTime);
+
+		await leaderboardDialog.getByRole('button', { name: 'Pull Down' }).click();
+		await expect(leaderboardDialog.getByText(/Local is ahead/)).toBeVisible();
+		await leaderboardDialog.getByRole('button', { name: 'Push Up' }).click();
+
+		await expect(
+			leaderboardDialog.getByText(
+				'Profile submitted! Stats are synced via Auto Runs. Use "Pull Down" to sync from other devices.'
+			)
+		).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[134].id} ${activeScenarioMatrix[134].title}`, async () => {
+		const exportPath = path.join(workbench.homeDir, 'usage-dashboard-quarter-export.csv');
+		await electronApp.evaluate(({ ipcMain }, filePath: string) => {
+			const state = globalThis as typeof globalThis & { __sgsExportRanges?: string[] };
+			state.__sgsExportRanges = [];
+			ipcMain.removeHandler('dialog:saveFile');
+			ipcMain.handle('dialog:saveFile', async () => filePath);
+			ipcMain.removeHandler('stats:export-csv');
+			ipcMain.handle('stats:export-csv', async (_event, range: string) => {
+				state.__sgsExportRanges!.push(range);
+				return `range\n${range}\n`;
+			});
+		}, exportPath);
+
+		const usageDashboard = await openUsageDashboard(window);
+		await usageDashboard.locator('select').first().selectOption('quarter');
+		await usageDashboard.getByRole('button', { name: 'Export CSV' }).click();
+
+		await expect.poll(() => fs.existsSync(exportPath)).toBe(true);
+		await expect
+			.poll(() =>
+				electronApp.evaluate(() => {
+					const state = globalThis as typeof globalThis & { __sgsExportRanges?: string[] };
+					return state.__sgsExportRanges ?? [];
+				})
+			)
+			.toEqual(['quarter']);
+	});
+
+	test(`${activeScenarioMatrix[135].id} ${activeScenarioMatrix[135].title}`, async () => {
+		await electronApp.evaluate(({ ipcMain }) => {
+			const state = globalThis as typeof globalThis & { __sgsDatabaseSizeCalls?: number };
+			state.__sgsDatabaseSizeCalls = 0;
+			ipcMain.removeHandler('stats:get-database-size');
+			ipcMain.handle('stats:get-database-size', async () => {
+				state.__sgsDatabaseSizeCalls! += 1;
+				return 4096;
+			});
+		});
+
+		const usageDashboard = await openUsageDashboard(window);
+		await usageDashboard.locator('select').first().selectOption('day');
+		await usageDashboard.locator('select').first().selectOption('week');
+
+		await expect
+			.poll(() =>
+				electronApp.evaluate(() => {
+					const state = globalThis as typeof globalThis & { __sgsDatabaseSizeCalls?: number };
+					return state.__sgsDatabaseSizeCalls ?? 0;
+				})
+			)
+			.toBeGreaterThanOrEqual(3);
+		await expect(usageDashboard).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[136].id} ${activeScenarioMatrix[136].title}`, async () => {
+		const graphDialog = await openDocumentGraphFromPreview(window);
+
+		await clickDocumentGraphCenter(graphDialog);
+		await window.keyboard.press('P');
+		await expect(graphDialog.getByTitle('Open in file preview')).toBeVisible();
+		await window.keyboard.press('Escape');
+
+		await expect(graphDialog.getByTitle('Open in file preview')).toBeHidden();
+		await expect(graphDialog).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[137].id} ${activeScenarioMatrix[137].title}`, async () => {
+		const graphDialog = await openDocumentGraphFromPreview(window);
+
+		await graphDialog.getByTitle(/Layout: /).click();
+		await graphDialog.getByRole('button', { name: /Force/ }).click();
+		await expect(graphDialog.getByTitle('Layout: Force')).toBeVisible();
+		await graphDialog.getByTitle('Refresh graph').click();
+
+		await expect(graphDialog.getByTitle('Layout: Force')).toBeVisible({ timeout: 15000 });
+		await expect(graphDialog.getByText(/\d+ documents/)).toBeVisible({ timeout: 15000 });
+	});
+
+	test(`${activeScenarioMatrix[138].id} ${activeScenarioMatrix[138].title}`, async () => {
+		await stubExternalLinkCapture(electronApp);
+		const symphonyDialog = await openSymphonyFromQuickActions(window);
+
+		await symphonyDialog.getByRole('button', { name: /Maestro Core/ }).click();
+		await symphonyDialog.getByTitle('View repository on GitHub').click();
+
+		await expect
+			.poll(() => getCapturedExternalLinks(electronApp))
+			.toContain('https://github.com/RunMaestro/Maestro');
+	});
+
+	test(`${activeScenarioMatrix[139].id} ${activeScenarioMatrix[139].title}`, async () => {
+		await stubExternalLinkCapture(electronApp);
+		const symphonyDialog = await openSymphonyFromQuickActions(window);
+
+		await symphonyDialog.getByRole('button', { name: /Maestro Core/ }).click();
+		await symphonyDialog.getByText('Add deterministic E2E coverage').click();
+		await symphonyDialog.getByRole('button', { name: 'View Issue' }).click();
+
+		await expect
+			.poll(() => getCapturedExternalLinks(electronApp))
+			.toContain('https://github.com/RunMaestro/Maestro/issues/42');
+	});
+
+	test(`${activeScenarioMatrix[140].id} ${activeScenarioMatrix[140].title}`, async () => {
+		const symphonyDialog = await openSymphonyFromQuickActions(window);
+
+		await symphonyDialog.getByRole('button', { name: /Maestro Core/ }).click();
+		await symphonyDialog.getByText('Add deterministic E2E coverage').click();
+		await expect(symphonyDialog.getByRole('button', { name: 'e2e-plan.md' })).toBeVisible();
+		await window.keyboard.press('Meta+Shift+]');
+		await expect(
+			symphonyDialog.getByRole('button', { name: 'follow-up-checklist.md' })
+		).toBeVisible();
+		await window.keyboard.press('Meta+Shift+]');
+		await expect(symphonyDialog.getByRole('button', { name: 'e2e-plan.md' })).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[141].id} ${activeScenarioMatrix[141].title}`, async () => {
+		await electronApp.evaluate(({ ipcMain }) => {
+			const emptyStats = {
+				totalContributions: 0,
+				totalMerged: 0,
+				totalIssuesResolved: 0,
+				totalDocumentsProcessed: 0,
+				totalTasksCompleted: 0,
+				totalTokensUsed: 0,
+				totalTimeSpent: 0,
+				estimatedCostDonated: 0,
+				repositoriesContributed: [],
+				uniqueMaintainersHelped: 0,
+				currentStreak: 0,
+				longestStreak: 0,
+			};
+			ipcMain.removeHandler('symphony:getState');
+			ipcMain.handle('symphony:getState', async () => ({
+				success: true,
+				state: { active: [], history: [], stats: emptyStats },
+			}));
+			ipcMain.removeHandler('symphony:getActive');
+			ipcMain.handle('symphony:getActive', async () => ({
+				success: true,
+				contributions: [],
+			}));
+			ipcMain.removeHandler('symphony:getStats');
+			ipcMain.handle('symphony:getStats', async () => ({ success: true, stats: emptyStats }));
+		});
+		const symphonyDialog = await openSymphonyFromQuickActions(window);
+
+		await symphonyDialog.getByRole('button', { name: /Active \(0\)/ }).click();
+		await symphonyDialog.getByRole('button', { name: 'Browse Projects' }).click();
+
+		await expect(symphonyDialog.getByPlaceholder('Search repositories...')).toBeVisible();
+		await expect(symphonyDialog.getByRole('button', { name: /Maestro Core/ })).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[142].id} ${activeScenarioMatrix[142].title}`, async () => {
+		await stubSymphonyAgentDetection(electronApp);
+		await electronApp.evaluate(({ ipcMain }) => {
+			const state = globalThis as typeof globalThis & {
+				__sgsClonePayloads?: Array<{ repoUrl?: string; localPath?: string }>;
+			};
+			state.__sgsClonePayloads = [];
+			ipcMain.removeHandler('git:checkGhCli');
+			ipcMain.handle('git:checkGhCli', async () => ({
+				installed: true,
+				authenticated: true,
+				username: 'sgs-conductor',
+			}));
+			ipcMain.removeHandler('symphony:cloneRepo');
+			ipcMain.handle(
+				'symphony:cloneRepo',
+				async (_event, payload: { repoUrl?: string; localPath?: string }) => {
+					state.__sgsClonePayloads!.push(payload);
+					return { success: true };
+				}
+			);
+			ipcMain.removeHandler('symphony:startContribution');
+			ipcMain.handle('symphony:startContribution', async () => ({
+				success: true,
+				branchName: 'symphony/sgs-clone-payload',
+				autoRunPath: '/tmp/sgs-clone-payload-docs',
+				draftPrNumber: 89,
+				draftPrUrl: 'https://github.com/RunMaestro/Maestro/pull/89',
+			}));
+		});
+		const symphonyDialog = await openSymphonyFromQuickActions(window);
+
+		await symphonyDialog.getByRole('button', { name: /Maestro Core/ }).click();
+		await symphonyDialog.getByText('Add deterministic E2E coverage').click();
+		await symphonyDialog.getByRole('button', { name: 'Start Symphony' }).click();
+		await window.getByRole('button', { name: 'I Have the Build Tools' }).click();
+		await window
+			.getByRole('dialog', { name: 'Create Symphony Agent' })
+			.getByRole('button', { name: 'Create Agent' })
+			.click();
+
+		await expect
+			.poll(() =>
+				electronApp.evaluate(() => {
+					const state = globalThis as typeof globalThis & {
+						__sgsClonePayloads?: Array<{ repoUrl?: string; localPath?: string }>;
+					};
+					const payload = state.__sgsClonePayloads?.[0];
+					return `${payload?.repoUrl ?? ''}|${payload?.localPath ?? ''}`;
+				})
+			)
+			.toContain('https://github.com/RunMaestro/Maestro|');
+	});
+
+	test(`${activeScenarioMatrix[143].id} ${activeScenarioMatrix[143].title}`, async () => {
+		await stubSymphonyAgentDetection(electronApp);
+		await electronApp.evaluate(({ ipcMain }) => {
+			const state = globalThis as typeof globalThis & { __sgsStartCalls?: number };
+			state.__sgsStartCalls = 0;
+			ipcMain.removeHandler('git:checkGhCli');
+			ipcMain.handle('git:checkGhCli', async () => ({
+				installed: true,
+				authenticated: true,
+				username: 'sgs-conductor',
+			}));
+			ipcMain.removeHandler('symphony:cloneRepo');
+			ipcMain.handle('symphony:cloneRepo', async () => ({
+				success: false,
+				error: 'SGS clone failed before start',
+			}));
+			ipcMain.removeHandler('symphony:startContribution');
+			ipcMain.handle('symphony:startContribution', async () => {
+				state.__sgsStartCalls! += 1;
+				return { success: true };
+			});
+		});
+		const symphonyDialog = await openSymphonyFromQuickActions(window);
+
+		await symphonyDialog.getByRole('button', { name: /Maestro Core/ }).click();
+		await symphonyDialog.getByText('Add deterministic E2E coverage').click();
+		await symphonyDialog.getByRole('button', { name: 'Start Symphony' }).click();
+		await window.getByRole('button', { name: 'I Have the Build Tools' }).click();
+
+		const agentDialog = window.getByRole('dialog', { name: 'Create Symphony Agent' });
+		await agentDialog.getByRole('button', { name: 'Create Agent' }).click();
+
+		await expect(agentDialog.getByText('SGS clone failed before start')).toBeVisible();
+		await expect
+			.poll(() =>
+				electronApp.evaluate(() => {
+					const state = globalThis as typeof globalThis & { __sgsStartCalls?: number };
+					return state.__sgsStartCalls ?? -1;
+				})
+			)
+			.toBe(0);
 	});
 
 	for (const scenario of skippedScenarioMatrix) {
