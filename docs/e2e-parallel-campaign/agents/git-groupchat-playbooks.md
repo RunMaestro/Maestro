@@ -301,3 +301,33 @@ Remaining work:
 - Continue from 313 remaining matrix-backed active scenarios after this recovery
   fallback tranche.
 - Run actual Playwright/E2E validation only after orchestrator approval.
+
+Tenth fallback tranche:
+
+- Extended `e2e/git-groupchat-playbooks.spec.ts`.
+- Active scenarios added: 10 (`GGP-A51` through `GGP-A60`).
+- Skipped/env-gated rows added: 0.
+- Cumulative active scenarios authored in this lane: 60.
+- Cumulative skipped/env-gated scenarios authored in this lane: 7.
+- Matrix-backed active scenarios still remaining: 303.
+- Files touched:
+  - `e2e/git-groupchat-playbooks.spec.ts`
+  - `docs/e2e-parallel-campaign/agents/git-groupchat-playbooks.md`
+- Coverage added:
+  - Public README Gist publish and published-state republish back-navigation.
+  - Git Log Escape close after rendering commit detail output.
+  - Playbook Exchange import failure keeps the detail view open.
+  - Spec Kit and OpenSpec bundled command save/reset flows.
+  - Spec Kit and OpenSpec source-link shell routing.
+- Skipped/env-gated blockers: unchanged.
+- Shared helper edits: none; `broadcasts.md` unchanged.
+- Live GitHub, Gist publishing, marketplace network, SSH remote, provider,
+  headed/UI E2E, Playwright list, and full E2E execution: none.
+- Commit: `e8ac2eddf`.
+- Validation passed:
+  - `git diff --check codex/full-e2e-coverage-campaign...HEAD`
+  - `npx eslint e2e/git-groupchat-playbooks.spec.ts`
+  - Static prohibited-command scan over added lines.
+- Review:
+  - Focused static review found no critical or high issues; E2E execution remains
+    deferred.

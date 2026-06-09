@@ -2,9 +2,9 @@
 
 Source of truth: `docs/e2e-coverage-campaign.md`.
 
-Current active tests: 1198
+Current active tests: 1232
 Target active tests: 3,025
-Remaining matrix-backed active scenarios: 1,827
+Remaining matrix-backed active scenarios: 1,793
 
 ## Matrix
 
@@ -21,11 +21,11 @@ Remaining matrix-backed active scenarios: 1,827
 | Auto Run                                                       | `autorun-ai-terminal`     |            134 |           260 |       126 |
 | New Agent Wizard and inline wizard                             | `wizard-settings-prompts` |             40 |           190 |       150 |
 | Settings                                                       | `wizard-settings-prompts` |            111 |           190 |        79 |
-| Git, worktrees, PR, diff/log, Gist                             | `git-groupchat-playbooks` |             36 |           160 |       124 |
+| Git, worktrees, PR, diff/log, Gist                             | `git-groupchat-playbooks` |             39 |           160 |       121 |
 | Group chat                                                     | `git-groupchat-playbooks` |             55 |           140 |        85 |
 | Usage dashboard and stats                                      | `stats-graph-symphony`    |             23 |           125 |       102 |
 | Document graph                                                 | `stats-graph-symphony`    |             28 |           130 |       102 |
-| Playbooks, marketplace, Spec Kit, OpenSpec                     | `git-groupchat-playbooks` |             41 |           145 |       104 |
+| Playbooks, marketplace, Spec Kit, OpenSpec                     | `git-groupchat-playbooks` |             48 |           145 |        97 |
 | Symphony, leaderboard, achievements                            | `stats-graph-symphony`    |             15 |           120 |       105 |
 | Director notes and prompt composer                             | `wizard-settings-prompts` |             30 |            90 |        60 |
 | Debug/about/update/app info/agent error modals                 | `debug-accessibility`     |             85 |            85 |         0 |
@@ -41,7 +41,7 @@ Remaining matrix-backed active scenarios: 1,827
 | `files-docs-history`       |                     307 |                        42 |                                    5 | `18a4c3b29`          |
 | `autorun-ai-terminal`      |                     263 |                        10 |                                    0 | `cd804bebf`          |
 | `wizard-settings-prompts`  |                     289 |                        83 |                                    1 | `2d069a57a`          |
-| `git-groupchat-playbooks`  |                     313 |                        50 |                                    7 | `10ed8a71a`          |
+| `git-groupchat-playbooks`  |                     303 |                        60 |                                    7 | `e8ac2eddf`          |
 | `stats-graph-symphony`     |                     309 |                        27 |                                    6 | `bb9a6f68b`          |
 | `debug-accessibility`      |                      51 |                       141 |                                    0 | `cd485eda6`          |
 | `mobile-web-bridge`        |                      86 |                        16 |                                    0 | `d7ccdd3d`           |
@@ -144,3 +144,4 @@ Remaining matrix-backed active scenarios: 1,827
 - 2026-06-08: accepted manual `wizard-settings-prompts` fallback through `165edccbe`; authored 6 additional active Settings AI Commands slash-prefix, SSH remote ignore-pattern, SSH remote gitignore, and Prompt Composer staged-image/lightbox scenarios. Focused static review found no critical or high issues. No E2E execution was run.
 - 2026-06-08: accepted manual `wizard-settings-prompts` fallback through `2d069a57a`; authored 6 additional active Settings AI Commands edit-cancel, SSH remote duplicate/reset, and Prompt Composer tab/history/read-only keyboard scenarios. Focused static review found no critical or high issues. No E2E execution was run.
 - 2026-06-08: accepted manual `files-docs-history` fallback through `18a4c3b29`; authored 5 additional active History Escape close, File Explorer Copy Path clipboard, file preview no-match recovery, and large-file full-load search scenarios. Focused static review found no critical or high issues. No E2E execution was run.
+- 2026-06-08: accepted manual `git-groupchat-playbooks` fallback through `e8ac2eddf`; authored 10 additional active Gist publish/republish, Git Log Escape-close, Playbook Exchange import-failure, Spec Kit/OpenSpec save/reset, and source-link shell-routing scenarios. Focused static review found no critical or high issues. No E2E execution was run.

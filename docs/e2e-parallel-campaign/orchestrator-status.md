@@ -1,6 +1,6 @@
 # Parallel E2E Orchestrator Status
 
-Last updated: 2026-06-08 19:20 EDT
+Last updated: 2026-06-08 20:05 EDT
 
 ## Base
 
@@ -37,8 +37,8 @@ coverage and the shell-lane tab coverage.
 | `shell-tabs-command`       | `codex/e2e-shell-tabs-command`       | `Maestro-worktrees/e2e-shell-tabs-command`       | `maestro-e2e-shell-tabs-command-campaign-goal`      | PM2 retry cycle after 503 | 81 active scenarios accepted; 185 remain        |
 | `files-docs-history`       | `codex/e2e-files-docs-history`       | `Maestro-worktrees/e2e-files-docs-history`       | `maestro-e2e-files-docs-history-campaign-goal`      | manual fallback accepted  | 42 active scenarios accepted; 307 remain        |
 | `autorun-ai-terminal`      | `codex/e2e-autorun-ai-terminal`      | `Maestro-worktrees/e2e-autorun-ai-terminal`      | `maestro-e2e-autorun-ai-terminal-campaign-goal`     | PM2 retry cycle after 503 | 10 active scenarios accepted; 263 remain        |
-| `wizard-settings-prompts`  | `codex/e2e-wizard-settings-prompts`  | `Maestro-worktrees/e2e-wizard-settings-prompts`  | `maestro-e2e-wizard-settings-prompts-campaign-goal` | PM2 retry cycle after 503 | 59 active scenarios accepted; 313 remain        |
-| `git-groupchat-playbooks`  | `codex/e2e-git-groupchat-playbooks`  | `Maestro-worktrees/e2e-git-groupchat-playbooks`  | `maestro-e2e-git-groupchat-playbooks-campaign-goal` | PM2 retry cycle after 503 | 50 active scenarios accepted; 313 remain        |
+| `wizard-settings-prompts`  | `codex/e2e-wizard-settings-prompts`  | `Maestro-worktrees/e2e-wizard-settings-prompts`  | `maestro-e2e-wizard-settings-prompts-campaign-goal` | manual fallback accepted  | 83 active scenarios accepted; 289 remain        |
+| `git-groupchat-playbooks`  | `codex/e2e-git-groupchat-playbooks`  | `Maestro-worktrees/e2e-git-groupchat-playbooks`  | `maestro-e2e-git-groupchat-playbooks-campaign-goal` | manual fallback accepted  | 60 active scenarios accepted; 303 remain        |
 | `stats-graph-symphony`     | `codex/e2e-stats-graph-symphony`     | `Maestro-worktrees/e2e-stats-graph-symphony`     | `maestro-e2e-stats-graph-symphony-campaign-goal`    | PM2 retry cycle after 503 | 27 active scenarios accepted; 309 remain        |
 | `debug-accessibility`      | `codex/e2e-debug-accessibility`      | `Maestro-worktrees/e2e-debug-accessibility`      | `maestro-e2e-debug-accessibility-campaign-goal`     | PM2 retry cycle after 503 | 141 active scenarios accepted; 51 remain        |
 | `mobile-web-bridge`        | `codex/e2e-mobile-web-bridge`        | `Maestro-worktrees/e2e-mobile-web-bridge`        | `maestro-e2e-mobile-web-bridge-campaign-goal`       | PM2 retry cycle after 503 | 16 active scenarios accepted; 86 remain         |
@@ -51,11 +51,11 @@ coverage and the shell-lane tab coverage.
 - `files-docs-history` merged through `18a4c3b29`.
 - `mobile-web-bridge` merged through `d7ccdd3d`.
 - `autorun-ai-terminal` merged through `cd804bebf`.
-- `wizard-settings-prompts` merged through `bb21caed1`.
+- `wizard-settings-prompts` merged through `c32a4e4d5`.
 - `stats-graph-symphony` merged through `bb9a6f68b`.
 - `debug-accessibility` merged through `15e7a1a20`.
 - `fixtures-sharding-review` merged through `392c4527`.
-- `git-groupchat-playbooks` merged through `10ed8a71a`.
+- `git-groupchat-playbooks` merged through `e8ac2eddf`.
 
 ## Launch Log
 
@@ -205,6 +205,14 @@ coverage and the shell-lane tab coverage.
   `18a4c3b29` with 5 active History Escape close, File Explorer Copy Path,
   file preview no-match recovery, and large-file full-load search scenarios.
   Focused static review found no findings. No E2E execution was run.
+- 2026-06-08 19:55 EDT: accepted manual `wizard-settings-prompts` fallbacks
+  through `c32a4e4d5` with 24 active Settings, SSH remote, Prompt Composer, and
+  command-environment scenarios across four clean worker tranches. Focused
+  static review found no findings. No E2E execution was run.
+- 2026-06-08 20:05 EDT: accepted manual `git-groupchat-playbooks` fallback
+  through `e8ac2eddf` with 10 active Gist, Git Log, Playbook Exchange, Spec Kit,
+  and OpenSpec scenarios. Focused static review found no findings. No E2E
+  execution was run.
 
 ## Blockers
 
@@ -219,8 +227,9 @@ coverage and the shell-lane tab coverage.
   `wizard-settings-prompts`, sixteenth `git-groupchat-playbooks`, seventeenth
   `wizard-settings-prompts`, eighteenth `mobile-web-bridge`, nineteenth
   `files-docs-history`, twentieth `stats-graph-symphony`, twenty-first
-  `git-groupchat-playbooks`, twenty-second `wizard-settings-prompts`, and
-  twenty-third `files-docs-history`
+  `git-groupchat-playbooks`, twenty-second `wizard-settings-prompts`,
+  twenty-third `files-docs-history`, twenty-fourth through twenty-seventh
+  `wizard-settings-prompts`, and twenty-eighth `git-groupchat-playbooks`
   fallbacks are accepted for selected high-remaining lanes. Remaining work should
   continue in smaller batches, with each run committing one coherent tranche and
   recording remaining work instead of trying to consume a full lane quota in one
