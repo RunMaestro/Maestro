@@ -4673,6 +4673,105 @@ Externally refreshed Codex Auto Run sentinel.
 		}
 	});
 
+	test('closes historical Codex lane error details without hiding the transcript row', async () => {
+		const launched = await launchTranscriptSurfaceLaneWorkbench();
+		try {
+			await openCodexAiTerminal(launched.window);
+
+			const errorBlock = launched.window.locator('[data-log-index="7"]');
+			await errorBlock.getByRole('button', { name: 'View Details' }).click();
+			const dialog = launched.window.getByRole('dialog', { name: 'Agent Error' });
+			await expect(dialog.getByText('Codex lane historical error detail sentinel')).toBeVisible();
+
+			await dialog.getByLabel('Close modal').click();
+
+			await expect(dialog).toBeHidden();
+			await expect(
+				errorBlock.getByText('Codex lane historical error transcript sentinel.')
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('copies a Codex lane running tool transcript block from inline actions', async () => {
+		const launched = await launchTranscriptSurfaceLaneWorkbench();
+		try {
+			await openCodexAiTerminal(launched.window);
+
+			const runningToolBlock = launched.window.locator('[data-log-index="4"]');
+			await expect(
+				runningToolBlock.getByText('pnpm lint --filter autorun-ai-terminal')
+			).toBeVisible();
+			await runningToolBlock.hover();
+			await runningToolBlock.getByTitle('Copy to clipboard').click();
+
+			await expect(launched.window.getByText('Copied to Clipboard')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('copies a Codex lane completed tool transcript block from inline actions', async () => {
+		const launched = await launchTranscriptSurfaceLaneWorkbench();
+		try {
+			await openCodexAiTerminal(launched.window);
+
+			const completedToolBlock = launched.window.locator('[data-log-index="5"]');
+			await expect(completedToolBlock.getByText('e2e/autorun-ai-terminal.spec.ts')).toBeVisible();
+			await completedToolBlock.hover();
+			await completedToolBlock.getByTitle('Copy to clipboard').click();
+
+			await expect(launched.window.getByText('Copied to Clipboard')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('saves a Codex lane failed tool transcript block to markdown', async () => {
+		const launched = await launchTranscriptSurfaceLaneWorkbench();
+		const savedPath = path.join(launched.projectDir, 'codex-lane-failed-tool.md');
+		try {
+			await openCodexAiTerminal(launched.window);
+
+			const failedToolBlock = launched.window.locator('[data-log-index="6"]');
+			await failedToolBlock.hover();
+			await failedToolBlock.getByTitle('Save to file').click();
+
+			const saveDialog = launched.window.getByRole('dialog', { name: 'Save Markdown' });
+			await saveDialog.getByPlaceholder('document.md').fill('codex-lane-failed-tool');
+			await saveDialog.getByRole('button', { name: 'Save' }).click();
+
+			await expect
+				.poll(() => fs.readFileSync(savedPath, 'utf-8'))
+				.toContain('Codex lane failed patch sentinel');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('saves a Codex lane historical error transcript block to markdown', async () => {
+		const launched = await launchTranscriptSurfaceLaneWorkbench();
+		const savedPath = path.join(launched.projectDir, 'codex-lane-historical-error.md');
+		try {
+			await openCodexAiTerminal(launched.window);
+
+			const errorBlock = launched.window.locator('[data-log-index="7"]');
+			await errorBlock.hover();
+			await errorBlock.getByTitle('Save to file').click();
+
+			const saveDialog = launched.window.getByRole('dialog', { name: 'Save Markdown' });
+			await saveDialog.getByPlaceholder('document.md').fill('codex-lane-historical-error');
+			await saveDialog.getByRole('button', { name: 'Save' }).click();
+
+			await expect
+				.poll(() => fs.readFileSync(savedPath, 'utf-8'))
+				.toContain('Codex lane historical error transcript sentinel.');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
 	test('toggles a Codex lane response between formatted and plain markdown', async () => {
 		const launched = await launchLaneWorkbench();
 		try {
