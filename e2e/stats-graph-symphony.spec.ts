@@ -345,6 +345,133 @@ const activeScenarioMatrix = [
 	{ id: 'SGS-A242', title: 'shows Usage Dashboard Agents chart after reopening the modal' },
 	{ id: 'SGS-A243', title: 'shows Usage Dashboard Activity chart after reopening the modal' },
 	{ id: 'SGS-A244', title: 'shows Usage Dashboard Auto Run chart after reopening the modal' },
+	{ id: 'SGS-A245', title: 'keeps Document Graph README search result visible after refresh' },
+	{ id: 'SGS-A246', title: 'keeps Document Graph runbook search result visible after refresh' },
+	{ id: 'SGS-A247', title: 'clears Document Graph README search before searching runbook' },
+	{ id: 'SGS-A248', title: 'clears Document Graph runbook search before searching readme' },
+	{ id: 'SGS-A249', title: 'opens Document Graph help node-types guidance from closeout tranche' },
+	{ id: 'SGS-A250', title: 'opens Document Graph help keyboard guidance from closeout tranche' },
+	{ id: 'SGS-A251', title: 'opens Document Graph help mouse guidance from closeout tranche' },
+	{
+		id: 'SGS-A252',
+		title: 'keeps Document Graph help status guidance visible after repeated open',
+	},
+	{ id: 'SGS-A253', title: 'selects Document Graph radial layout in closeout tranche' },
+	{ id: 'SGS-A254', title: 'selects Document Graph force layout in closeout tranche' },
+	{ id: 'SGS-A255', title: 'returns Document Graph layout to mind map in closeout tranche' },
+	{ id: 'SGS-A256', title: 'keeps Document Graph layout menu visible after switching radial' },
+	{ id: 'SGS-A257', title: 'sets Document Graph neighbor depth to one link' },
+	{ id: 'SGS-A258', title: 'sets Document Graph neighbor depth to two links' },
+	{ id: 'SGS-A259', title: 'sets Document Graph neighbor depth to three links' },
+	{ id: 'SGS-A260', title: 'restores Document Graph depth guidance after repeated adjustment' },
+	{ id: 'SGS-A261', title: 'lowers Document Graph preview size to compact text' },
+	{ id: 'SGS-A262', title: 'raises Document Graph preview size to medium text' },
+	{ id: 'SGS-A263', title: 'raises Document Graph preview size to long text' },
+	{ id: 'SGS-A264', title: 'keeps Document Graph preview controls visible after adjustment' },
+	{ id: 'SGS-A265', title: 'toggles Document Graph external links on from closeout tranche' },
+	{ id: 'SGS-A266', title: 'toggles Document Graph external links back off from closeout tranche' },
+	{ id: 'SGS-A267', title: 'refreshes Document Graph after README search' },
+	{ id: 'SGS-A268', title: 'refreshes Document Graph after runbook search' },
+	{ id: 'SGS-A269', title: 'refreshes Document Graph after external link toggle' },
+	{ id: 'SGS-A270', title: 'refreshes Document Graph after layout change' },
+	{
+		id: 'SGS-A271',
+		title: 'shows Document Graph center-node README metadata after closeout click',
+	},
+	{ id: 'SGS-A272', title: 'shows Document Graph selected node task counts after closeout click' },
+	{ id: 'SGS-A273', title: 'shows Document Graph selected node created-date metadata' },
+	{ id: 'SGS-A274', title: 'shows Document Graph selected node modified-date metadata' },
+	{ id: 'SGS-A275', title: 'opens Document Graph node context menu from closeout right click' },
+	{ id: 'SGS-A276', title: 'keeps Document Graph context Open action available' },
+	{ id: 'SGS-A277', title: 'keeps Document Graph context Copy Path action available' },
+	{ id: 'SGS-A278', title: 'keeps Document Graph context Focus action available' },
+	{ id: 'SGS-A279', title: 'dismisses Document Graph context menu after closeout Escape' },
+	{ id: 'SGS-A280', title: 'previews Document Graph node content from closeout keyboard shortcut' },
+	{ id: 'SGS-A281', title: 'keeps Document Graph preview file action available' },
+	{ id: 'SGS-A282', title: 'shows Document Graph preview fixture content after keyboard shortcut' },
+	{
+		id: 'SGS-A283',
+		title: 'shows Document Graph preview history disabled controls in closeout tranche',
+	},
+	{ id: 'SGS-A284', title: 'shows Document Graph selected-node breadcrumb navigation' },
+	{ id: 'SGS-A285', title: 'shows Document Graph breadcrumb project segment metadata' },
+	{ id: 'SGS-A286', title: 'shows Document Graph breadcrumb README current state' },
+	{
+		id: 'SGS-A287',
+		title: 'keeps Document Graph selected node visible after breadcrumb inspection',
+	},
+	{ id: 'SGS-A288', title: 'clears Document Graph search with Escape in closeout tranche' },
+	{ id: 'SGS-A289', title: 'keeps Document Graph search input focused after keyboard clear' },
+	{ id: 'SGS-A290', title: 'restores Document Graph results after retyping README search' },
+	{ id: 'SGS-A291', title: 'restores Document Graph results after retyping runbook search' },
+	{ id: 'SGS-A292', title: 'keeps Document Graph document count visible after search clear' },
+	{ id: 'SGS-A293', title: 'keeps Document Graph close control visible during closeout tranche' },
+	{ id: 'SGS-A294', title: 'cancels Document Graph close confirmation during closeout tranche' },
+	{ id: 'SGS-A295', title: 'confirms Document Graph close from closeout tranche' },
+	{ id: 'SGS-A296', title: 'keeps Document Graph help close button visible in closeout tranche' },
+	{ id: 'SGS-A297', title: 'dismisses Document Graph help panel with Escape in closeout tranche' },
+	{ id: 'SGS-A298', title: 'opens Document Graph help panel again after Escape dismissal' },
+	{ id: 'SGS-A299', title: 'keeps Document Graph status indicator guidance visible' },
+	{ id: 'SGS-A300', title: 'keeps Document Graph shortcut guidance visible after refresh' },
+	{ id: 'SGS-A301', title: 'keeps Document Graph mouse action guidance visible after refresh' },
+	{ id: 'SGS-A302', title: 'shows Document Graph README node after focus context action' },
+	{ id: 'SGS-A303', title: 'shows Document Graph runbook node after search focus' },
+	{ id: 'SGS-A304', title: 'keeps Document Graph canvas visible after layout cycling' },
+	{ id: 'SGS-A305', title: 'keeps Document Graph canvas visible after depth cycling' },
+	{ id: 'SGS-A306', title: 'keeps Document Graph canvas visible after preview cycling' },
+	{ id: 'SGS-A307', title: 'keeps Document Graph node count visible after repeated refresh' },
+	{ id: 'SGS-A308', title: 'keeps Document Graph external link legend stable after toggle' },
+	{ id: 'SGS-A309', title: 'keeps Document Graph README search stable after layout change' },
+	{ id: 'SGS-A310', title: 'keeps Document Graph runbook search stable after depth change' },
+	{ id: 'SGS-A311', title: 'keeps Document Graph help panel scoped inside dialog' },
+	{
+		id: 'SGS-A312',
+		title: 'keeps Document Graph toolbar controls visible after context dismissal',
+	},
+	{ id: 'SGS-A313', title: 'keeps Document Graph selection visible after reset layout' },
+	{ id: 'SGS-A314', title: 'keeps Symphony project browse search matching Maestro Core' },
+	{ id: 'SGS-A315', title: 'keeps Symphony project browse search matching Documentation Hub' },
+	{ id: 'SGS-A316', title: 'shows Symphony project browse empty search recovery' },
+	{ id: 'SGS-A317', title: 'opens Symphony Maestro Core detail from closeout tranche' },
+	{ id: 'SGS-A318', title: 'shows Symphony available issue count from project detail' },
+	{ id: 'SGS-A319', title: 'shows Symphony in-progress issue count from project detail' },
+	{ id: 'SGS-A320', title: 'shows Symphony blocked issue count from project detail' },
+	{ id: 'SGS-A321', title: 'opens Symphony available issue detail from closeout tranche' },
+	{ id: 'SGS-A322', title: 'shows Symphony selected issue document list' },
+	{ id: 'SGS-A323', title: 'shows Symphony blocked issue messaging from closeout tranche' },
+	{ id: 'SGS-A324', title: 'shows Symphony claimed issue draft PR notice' },
+	{ id: 'SGS-A325', title: 'keeps Symphony active tab ready-for-review status visible' },
+	{ id: 'SGS-A326', title: 'keeps Symphony active tab draft PR action visible' },
+	{ id: 'SGS-A327', title: 'keeps Symphony active tab current document metadata visible' },
+	{ id: 'SGS-A328', title: 'keeps Symphony active tab progress metadata visible' },
+	{ id: 'SGS-A329', title: 'keeps Symphony history tab completed contribution visible' },
+	{ id: 'SGS-A330', title: 'keeps Symphony history tab merged status visible' },
+	{ id: 'SGS-A331', title: 'keeps Symphony history tab PR action visible' },
+	{ id: 'SGS-A332', title: 'keeps Symphony history tab cost metadata visible' },
+	{ id: 'SGS-A333', title: 'keeps Symphony stats tab tokens donated card visible' },
+	{ id: 'SGS-A334', title: 'keeps Symphony stats tab time contributed card visible' },
+	{ id: 'SGS-A335', title: 'keeps Symphony stats tab streak card visible' },
+	{ id: 'SGS-A336', title: 'keeps Symphony stats tab achievements heading visible' },
+	{ id: 'SGS-A337', title: 'opens Symphony help popover in closeout tranche' },
+	{ id: 'SGS-A338', title: 'keeps Symphony help runmaestro copy visible' },
+	{ id: 'SGS-A339', title: 'keeps Symphony help close control visible' },
+	{ id: 'SGS-A340', title: 'opens About achievements section from closeout tranche' },
+	{ id: 'SGS-A341', title: 'opens About achievement detail from closeout tranche' },
+	{ id: 'SGS-A342', title: 'opens About achievement share menu from closeout tranche' },
+	{ id: 'SGS-A343', title: 'opens leaderboard registration from closeout tranche' },
+	{ id: 'SGS-A344', title: 'keeps leaderboard current stats copy visible' },
+	{ id: 'SGS-A345', title: 'validates leaderboard display-name required state' },
+	{ id: 'SGS-A346', title: 'validates leaderboard email required state' },
+	{ id: 'SGS-A347', title: 'enables leaderboard push after valid profile fields' },
+	{ id: 'SGS-A348', title: 'keeps leaderboard optional GitHub field editable' },
+	{ id: 'SGS-A349', title: 'keeps leaderboard optional X field editable' },
+	{ id: 'SGS-A350', title: 'shows leaderboard privacy copy with invalid email' },
+	{ id: 'SGS-A351', title: 'shows leaderboard confirmation message after submit' },
+	{ id: 'SGS-A352', title: 'shows leaderboard pending email confirmation state' },
+	{ id: 'SGS-A353', title: 'shows leaderboard submission failure retry control' },
+	{ id: 'SGS-A354', title: 'shows leaderboard manual token recovery field' },
+	{ id: 'SGS-A355', title: 'shows leaderboard pull-down after manual token recovery' },
+	{ id: 'SGS-A356', title: 'keeps Symphony repository back navigation visible' },
 ] as const;
 
 const skippedScenarioMatrix = [
@@ -5188,6 +5315,694 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 		await usageDashboard.getByRole('tab', { name: 'Overview' }).click();
 		await expect(usageDashboard.getByTestId('summary-cards')).toBeVisible();
 	});
+
+	const documentGraphCloseoutMatrix = [
+		{ matrixIndex: 224, action: 'search-refresh', query: 'readme', expected: 'README.md' },
+		{ matrixIndex: 225, action: 'search-refresh', query: 'runbook', expected: 'RUNBOOK.md' },
+		{
+			matrixIndex: 226,
+			action: 'search-clear-retype',
+			firstQuery: 'readme',
+			query: 'runbook',
+			expected: 'RUNBOOK.md',
+		},
+		{
+			matrixIndex: 227,
+			action: 'search-clear-retype',
+			firstQuery: 'runbook',
+			query: 'readme',
+			expected: 'README.md',
+		},
+		{ matrixIndex: 228, action: 'help', expected: 'Node Types' },
+		{ matrixIndex: 229, action: 'help', expected: 'Keyboard Shortcuts' },
+		{ matrixIndex: 230, action: 'help', expected: 'Mouse Actions' },
+		{ matrixIndex: 231, action: 'help-repeat', expected: 'Status Indicator' },
+		{ matrixIndex: 232, action: 'layout', option: 'Radial', expected: 'Layout: Radial' },
+		{ matrixIndex: 233, action: 'layout', option: 'Force', expected: 'Layout: Force' },
+		{ matrixIndex: 234, action: 'layout', option: 'Mind Map', expected: 'Layout: Mind Map' },
+		{ matrixIndex: 235, action: 'layout-menu', option: 'Radial', expected: 'Radial' },
+		{
+			matrixIndex: 236,
+			action: 'depth',
+			value: '1',
+			expected: 'Showing documents within 1 links of focus',
+		},
+		{
+			matrixIndex: 237,
+			action: 'depth',
+			value: '2',
+			expected: 'Showing documents within 2 links of focus',
+		},
+		{
+			matrixIndex: 238,
+			action: 'depth',
+			value: '3',
+			expected: 'Showing documents within 3 links of focus',
+		},
+		{
+			matrixIndex: 239,
+			action: 'depth',
+			value: '2',
+			expected: 'Showing documents within 2 links of focus',
+		},
+		{ matrixIndex: 240, action: 'preview', value: '120' },
+		{ matrixIndex: 241, action: 'preview', value: '250' },
+		{ matrixIndex: 242, action: 'preview', value: '500' },
+		{ matrixIndex: 243, action: 'preview', value: '350' },
+		{ matrixIndex: 244, action: 'external-on' },
+		{ matrixIndex: 245, action: 'external-toggle-twice' },
+		{ matrixIndex: 246, action: 'refresh-after-search', query: 'readme', expected: 'README.md' },
+		{ matrixIndex: 247, action: 'refresh-after-search', query: 'runbook', expected: 'RUNBOOK.md' },
+		{ matrixIndex: 248, action: 'refresh-after-external' },
+		{
+			matrixIndex: 249,
+			action: 'refresh-after-layout',
+			option: 'Radial',
+			expected: 'Layout: Radial',
+		},
+		{ matrixIndex: 250, action: 'center-text', expected: 'README.md' },
+		{ matrixIndex: 251, action: 'center-text', expected: '1 connection' },
+		{ matrixIndex: 252, action: 'center-title', expected: 'Created date' },
+		{ matrixIndex: 253, action: 'center-title', expected: 'Modified date' },
+		{ matrixIndex: 254, action: 'context-button', expected: 'Open' },
+		{ matrixIndex: 255, action: 'context-button', expected: 'Open' },
+		{ matrixIndex: 256, action: 'context-button', expected: 'Copy Path' },
+		{ matrixIndex: 257, action: 'context-button', expected: 'Focus' },
+		{ matrixIndex: 258, action: 'context-escape' },
+		{ matrixIndex: 259, action: 'keyboard-preview-text', expected: 'README.md' },
+		{ matrixIndex: 260, action: 'keyboard-preview-title', expected: 'Open in file preview' },
+		{ matrixIndex: 261, action: 'keyboard-preview-text', expected: 'Stats Graph Symphony Fixture' },
+		{ matrixIndex: 262, action: 'keyboard-preview-history' },
+		{ matrixIndex: 263, action: 'breadcrumb-current' },
+		{ matrixIndex: 264, action: 'breadcrumb-project' },
+		{ matrixIndex: 265, action: 'breadcrumb-readme' },
+		{ matrixIndex: 266, action: 'center-text', expected: 'README.md' },
+		{ matrixIndex: 267, action: 'escape-search', query: 'runbook' },
+		{ matrixIndex: 268, action: 'escape-search-focused', query: 'readme' },
+		{
+			matrixIndex: 269,
+			action: 'search-clear-retype',
+			firstQuery: 'runbook',
+			query: 'readme',
+			expected: 'README.md',
+		},
+		{
+			matrixIndex: 270,
+			action: 'search-clear-retype',
+			firstQuery: 'readme',
+			query: 'runbook',
+			expected: 'RUNBOOK.md',
+		},
+		{ matrixIndex: 271, action: 'search-clear-count', query: 'readme' },
+		{ matrixIndex: 272, action: 'close-control' },
+		{ matrixIndex: 273, action: 'close-cancel' },
+		{ matrixIndex: 274, action: 'close-confirm' },
+		{ matrixIndex: 275, action: 'help-close-visible' },
+		{ matrixIndex: 276, action: 'help-escape' },
+		{ matrixIndex: 277, action: 'help-repeat', expected: 'Node Types' },
+		{ matrixIndex: 278, action: 'help', expected: 'Status Indicator' },
+		{ matrixIndex: 279, action: 'help-refresh', expected: 'Keyboard Shortcuts' },
+		{ matrixIndex: 280, action: 'help-refresh', expected: 'Mouse Actions' },
+		{ matrixIndex: 281, action: 'context-focus' },
+		{ matrixIndex: 282, action: 'search', query: 'runbook', expected: 'RUNBOOK.md' },
+		{ matrixIndex: 283, action: 'canvas-after-layout' },
+		{ matrixIndex: 284, action: 'canvas-after-depth' },
+		{ matrixIndex: 285, action: 'canvas-after-preview' },
+		{ matrixIndex: 286, action: 'refresh-count' },
+		{ matrixIndex: 287, action: 'external-on' },
+		{ matrixIndex: 288, action: 'layout-search', query: 'readme', expected: 'README.md' },
+		{ matrixIndex: 289, action: 'depth-search', query: 'runbook', expected: 'RUNBOOK.md' },
+		{ matrixIndex: 290, action: 'help-dialog-scope', expected: 'Node Types' },
+		{ matrixIndex: 291, action: 'context-escape' },
+		{ matrixIndex: 292, action: 'reset-layout-selection' },
+	] as const;
+
+	const symphonyCloseoutMatrix = [
+		{ matrixIndex: 293, action: 'project-search', query: 'core', expected: 'Maestro Core' },
+		{
+			matrixIndex: 294,
+			action: 'project-search',
+			query: 'documentation',
+			expected: 'Documentation Hub',
+		},
+		{ matrixIndex: 295, action: 'project-search-empty', query: 'missing-repository' },
+		{ matrixIndex: 296, action: 'project-detail', expected: 'Maestro Symphony: Maestro Core' },
+		{ matrixIndex: 297, action: 'project-detail', expected: 'Available Issues (1)' },
+		{ matrixIndex: 298, action: 'project-detail', expected: 'In Progress (1)' },
+		{ matrixIndex: 299, action: 'project-detail', expected: 'Blocked (1)' },
+		{
+			matrixIndex: 300,
+			action: 'issue-detail',
+			issue: 'Add deterministic E2E coverage',
+			expected: '#42',
+		},
+		{
+			matrixIndex: 301,
+			action: 'issue-detail',
+			issue: 'Add deterministic E2E coverage',
+			expected: 'e2e-plan.md',
+		},
+		{
+			matrixIndex: 302,
+			action: 'issue-detail',
+			issue: 'Blocked dependency upgrade',
+			expected: 'Blocked by a dependency',
+		},
+		{
+			matrixIndex: 303,
+			action: 'issue-detail',
+			issue: 'Blocked dependency upgrade',
+			expected: 'Draft PR #77 by @codex-user',
+		},
+		{ matrixIndex: 304, action: 'tab-text', tab: 'Active (1)', expected: 'Ready for Review' },
+		{ matrixIndex: 305, action: 'tab-text', tab: 'Active (1)', expected: 'Draft PR #77' },
+		{ matrixIndex: 306, action: 'tab-text', tab: 'Active (1)', expected: 'Current: e2e-plan.md' },
+		{ matrixIndex: 307, action: 'tab-text', tab: 'Active (1)', expected: '2 / 2 documents' },
+		{
+			matrixIndex: 308,
+			action: 'tab-text',
+			tab: 'History',
+			expected: 'Document mobile bridge setup',
+		},
+		{ matrixIndex: 309, action: 'tab-text', tab: 'History', expected: 'Merged' },
+		{ matrixIndex: 310, action: 'tab-text', tab: 'History', expected: 'PR #12' },
+		{ matrixIndex: 311, action: 'tab-text', tab: 'History', expected: '$4.56' },
+		{ matrixIndex: 312, action: 'tab-text', tab: 'Stats', expected: 'Tokens Donated' },
+		{ matrixIndex: 313, action: 'tab-text', tab: 'Stats', expected: 'Time Contributed' },
+		{ matrixIndex: 314, action: 'tab-text', tab: 'Stats', expected: 'Streak' },
+		{ matrixIndex: 315, action: 'tab-text', tab: 'Stats', expected: 'Achievements' },
+		{ matrixIndex: 316, action: 'help', expected: 'About Maestro Symphony' },
+		{ matrixIndex: 317, action: 'help', expected: 'runmaestro.ai' },
+		{ matrixIndex: 318, action: 'help-close' },
+		{ matrixIndex: 319, action: 'about-text', expected: 'Maestro Achievements' },
+		{ matrixIndex: 320, action: 'achievement-detail' },
+		{ matrixIndex: 321, action: 'achievement-share' },
+		{
+			matrixIndex: 322,
+			action: 'leaderboard-open',
+			expected: 'Join the global Maestro leaderboard',
+		},
+		{ matrixIndex: 323, action: 'leaderboard-open', expected: 'Your Current Stats' },
+		{ matrixIndex: 324, action: 'leaderboard-display-required' },
+		{ matrixIndex: 325, action: 'leaderboard-email-required' },
+		{ matrixIndex: 326, action: 'leaderboard-valid' },
+		{ matrixIndex: 327, action: 'leaderboard-github-field' },
+		{ matrixIndex: 328, action: 'leaderboard-x-field' },
+		{ matrixIndex: 329, action: 'leaderboard-invalid-email' },
+		{ matrixIndex: 330, action: 'leaderboard-confirmation' },
+		{ matrixIndex: 331, action: 'leaderboard-pending' },
+		{ matrixIndex: 332, action: 'leaderboard-failure' },
+		{ matrixIndex: 333, action: 'leaderboard-manual-token' },
+		{ matrixIndex: 334, action: 'leaderboard-pulldown-after-token' },
+		{ matrixIndex: 335, action: 'project-back' },
+	] as const;
+
+	for (const scenario of documentGraphCloseoutMatrix) {
+		test(`${activeScenarioMatrix[scenario.matrixIndex].id} ${activeScenarioMatrix[scenario.matrixIndex].title}`, async () => {
+			const graphDialog = await openDocumentGraphFromPreview(window);
+
+			switch (scenario.action) {
+				case 'search':
+					await graphDialog.getByLabel('Search documents in graph').fill(scenario.query);
+					await expect(graphDialog.getByText(scenario.expected)).toBeVisible();
+					break;
+				case 'search-refresh':
+					await graphDialog.getByLabel('Search documents in graph').fill(scenario.query);
+					await graphDialog.getByTitle('Refresh graph').click();
+					await expect(graphDialog.getByText(scenario.expected)).toBeVisible({ timeout: 15000 });
+					break;
+				case 'search-clear-retype': {
+					const searchInput = graphDialog.getByLabel('Search documents in graph');
+					await searchInput.fill(scenario.firstQuery);
+					await graphDialog.getByLabel('Clear search').click();
+					await searchInput.fill(scenario.query);
+					await expect(graphDialog.getByText(scenario.expected)).toBeVisible();
+					break;
+				}
+				case 'help':
+					await graphDialog.getByTitle('Open help panel').click();
+					await expect(graphDialog.getByRole('region', { name: 'Help panel' })).toBeVisible();
+					await expect(graphDialog.getByText(scenario.expected)).toBeVisible();
+					break;
+				case 'help-repeat':
+					await graphDialog.getByTitle('Open help panel').click();
+					await graphDialog.getByTitle('Close help panel').click();
+					await graphDialog.getByTitle('Open help panel').click();
+					await expect(graphDialog.getByText(scenario.expected)).toBeVisible();
+					break;
+				case 'help-refresh':
+					await graphDialog.getByTitle('Refresh graph').click();
+					await graphDialog.getByTitle('Open help panel').click();
+					await expect(graphDialog.getByText(scenario.expected)).toBeVisible({ timeout: 15000 });
+					break;
+				case 'layout':
+					await graphDialog.getByTitle(/Layout: /).click();
+					await graphDialog.getByRole('button', { name: new RegExp(scenario.option) }).click();
+					await expect(graphDialog.getByTitle(scenario.expected)).toBeVisible();
+					break;
+				case 'layout-menu':
+					await graphDialog.getByTitle(/Layout: /).click();
+					await expect(
+						graphDialog.getByRole('button', { name: new RegExp(scenario.expected) })
+					).toBeVisible();
+					break;
+				case 'depth':
+					await graphDialog.getByText('Depth: All').click();
+					await graphDialog.locator('input[type="range"]').first().fill(scenario.value);
+					await expect(graphDialog.getByText(scenario.expected)).toBeVisible();
+					break;
+				case 'preview':
+					await graphDialog.getByText(/Preview: \d+/).click();
+					await graphDialog.locator('input[type="range"]').last().fill(scenario.value);
+					await expect(
+						graphDialog.getByText('Characters shown in document previews')
+					).toBeVisible();
+					break;
+				case 'external-on':
+					await graphDialog.getByTitle('Show external links').click();
+					await expect(graphDialog.getByTitle('Hide external links')).toBeVisible({
+						timeout: 15000,
+					});
+					break;
+				case 'external-toggle-twice':
+					await graphDialog.getByTitle('Show external links').click();
+					await graphDialog.getByTitle('Hide external links').click();
+					await expect(graphDialog.getByTitle('Show external links')).toBeVisible({
+						timeout: 15000,
+					});
+					break;
+				case 'refresh-after-search':
+					await graphDialog.getByLabel('Search documents in graph').fill(scenario.query);
+					await graphDialog.getByTitle('Refresh graph').click();
+					await expect(graphDialog.getByText(scenario.expected)).toBeVisible({ timeout: 15000 });
+					break;
+				case 'refresh-after-external':
+					await graphDialog.getByTitle('Show external links').click();
+					await graphDialog.getByTitle('Refresh graph').click();
+					await expect(graphDialog.getByTitle('Hide external links')).toBeVisible({
+						timeout: 15000,
+					});
+					break;
+				case 'refresh-after-layout':
+					await graphDialog.getByTitle(/Layout: /).click();
+					await graphDialog.getByRole('button', { name: new RegExp(scenario.option) }).click();
+					await graphDialog.getByTitle('Refresh graph').click();
+					await expect(graphDialog.getByTitle(scenario.expected)).toBeVisible({ timeout: 15000 });
+					break;
+				case 'center-text':
+					await clickDocumentGraphCenter(graphDialog);
+					await expect(graphDialog.getByText(scenario.expected).first()).toBeVisible();
+					break;
+				case 'center-title':
+					await clickDocumentGraphCenter(graphDialog);
+					await expect(graphDialog.getByTitle(scenario.expected)).toBeVisible();
+					break;
+				case 'context-button':
+					await clickDocumentGraphCenter(graphDialog, 'right');
+					await expect(graphDialog.getByRole('button', { name: scenario.expected })).toBeVisible();
+					break;
+				case 'context-escape':
+					await clickDocumentGraphCenter(graphDialog, 'right');
+					await expect(graphDialog.getByRole('button', { name: 'Open' })).toBeVisible();
+					await window.keyboard.press('Escape');
+					await expect(graphDialog.getByRole('button', { name: 'Open' })).toBeHidden();
+					break;
+				case 'keyboard-preview-text':
+					await clickDocumentGraphCenter(graphDialog);
+					await window.keyboard.press('P');
+					await expect(graphDialog.getByText(scenario.expected).first()).toBeVisible();
+					break;
+				case 'keyboard-preview-title':
+					await clickDocumentGraphCenter(graphDialog);
+					await window.keyboard.press('P');
+					await expect(graphDialog.getByTitle(scenario.expected)).toBeVisible();
+					break;
+				case 'keyboard-preview-history':
+					await clickDocumentGraphCenter(graphDialog);
+					await window.keyboard.press('P');
+					await expect(graphDialog.getByLabel('Go back')).toBeDisabled();
+					await expect(graphDialog.getByLabel('Go forward')).toBeDisabled();
+					break;
+				case 'breadcrumb-current': {
+					await clickDocumentGraphCenter(graphDialog);
+					const breadcrumb = graphDialog.getByRole('navigation', { name: 'Selected node path' });
+					await expect(breadcrumb).toBeVisible();
+					await expect(breadcrumb.getByRole('button', { name: /README/ })).toHaveAttribute(
+						'aria-current',
+						'page'
+					);
+					break;
+				}
+				case 'breadcrumb-project': {
+					await clickDocumentGraphCenter(graphDialog);
+					const breadcrumb = graphDialog.getByRole('navigation', { name: 'Selected node path' });
+					await expect(breadcrumb.getByRole('button', { name: 'project' })).toHaveAttribute(
+						'title',
+						'Go to project'
+					);
+					break;
+				}
+				case 'breadcrumb-readme': {
+					await clickDocumentGraphCenter(graphDialog);
+					const breadcrumb = graphDialog.getByRole('navigation', { name: 'Selected node path' });
+					await expect(breadcrumb.getByRole('button', { name: /README/ })).toBeVisible();
+					break;
+				}
+				case 'escape-search': {
+					const searchInput = graphDialog.getByLabel('Search documents in graph');
+					await searchInput.fill(scenario.query);
+					await window.keyboard.press('Escape');
+					await expect(searchInput).toHaveValue('');
+					break;
+				}
+				case 'escape-search-focused': {
+					const searchInput = graphDialog.getByLabel('Search documents in graph');
+					await searchInput.fill(scenario.query);
+					await window.keyboard.press('Escape');
+					await expect(searchInput).toBeFocused();
+					break;
+				}
+				case 'search-clear-count': {
+					const searchInput = graphDialog.getByLabel('Search documents in graph');
+					await searchInput.fill(scenario.query);
+					await graphDialog.getByLabel('Clear search').click();
+					await expect(graphDialog.getByText(/\d+ documents/)).toBeVisible({ timeout: 15000 });
+					break;
+				}
+				case 'close-control':
+					await expect(graphDialog.getByTitle('Close (Esc)').first()).toBeVisible();
+					break;
+				case 'close-cancel': {
+					await graphDialog.getByTitle('Close (Esc)').first().click();
+					const closeDialog = window.getByRole('dialog', { name: 'Close Document Graph?' });
+					await expect(closeDialog).toBeVisible();
+					await closeDialog.getByRole('button', { name: 'Cancel' }).click();
+					await expect(graphDialog).toBeVisible();
+					break;
+				}
+				case 'close-confirm':
+					await closeDocumentGraph(window);
+					break;
+				case 'help-close-visible':
+					await graphDialog.getByTitle('Open help panel').click();
+					await expect(graphDialog.getByTitle('Close help panel')).toBeVisible();
+					break;
+				case 'help-escape':
+					await graphDialog.getByTitle('Open help panel').click();
+					await window.keyboard.press('Escape');
+					await expect(graphDialog.getByRole('region', { name: 'Help panel' })).toBeHidden();
+					break;
+				case 'context-focus':
+					await clickDocumentGraphCenter(graphDialog, 'right');
+					await graphDialog.getByRole('button', { name: 'Focus' }).click();
+					await expect(graphDialog.getByText('README.md').first()).toBeVisible();
+					break;
+				case 'canvas-after-layout':
+					await graphDialog.getByTitle(/Layout: /).click();
+					await graphDialog.getByRole('button', { name: /Radial/ }).click();
+					await expect(graphDialog.locator('canvas')).toBeVisible();
+					break;
+				case 'canvas-after-depth':
+					await graphDialog.getByText('Depth: All').click();
+					await graphDialog.locator('input[type="range"]').first().fill('2');
+					await expect(graphDialog.locator('canvas')).toBeVisible();
+					break;
+				case 'canvas-after-preview':
+					await graphDialog.getByText(/Preview: \d+/).click();
+					await graphDialog.locator('input[type="range"]').last().fill('250');
+					await expect(graphDialog.locator('canvas')).toBeVisible();
+					break;
+				case 'refresh-count':
+					await graphDialog.getByTitle('Refresh graph').click();
+					await expect(graphDialog.getByText(/\d+ documents/)).toBeVisible({ timeout: 15000 });
+					break;
+				case 'layout-search':
+					await graphDialog.getByTitle(/Layout: /).click();
+					await graphDialog.getByRole('button', { name: /Radial/ }).click();
+					await graphDialog.getByLabel('Search documents in graph').fill(scenario.query);
+					await expect(graphDialog.getByText(scenario.expected)).toBeVisible();
+					break;
+				case 'depth-search':
+					await graphDialog.getByText('Depth: All').click();
+					await graphDialog.locator('input[type="range"]').first().fill('2');
+					await graphDialog.getByLabel('Search documents in graph').fill(scenario.query);
+					await expect(graphDialog.getByText(scenario.expected)).toBeVisible();
+					break;
+				case 'help-dialog-scope':
+					await graphDialog.getByTitle('Open help panel').click();
+					await expect(
+						graphDialog.getByRole('region', { name: 'Help panel' }).getByText(scenario.expected)
+					).toBeVisible();
+					break;
+				case 'reset-layout-selection':
+					await clickDocumentGraphCenter(graphDialog);
+					await graphDialog.getByTitle('Reset all node positions to algorithmic layout').click();
+					await expect(graphDialog.getByText('README.md').first()).toBeVisible();
+					break;
+			}
+		});
+	}
+
+	for (const scenario of symphonyCloseoutMatrix) {
+		test(`${activeScenarioMatrix[scenario.matrixIndex].id} ${activeScenarioMatrix[scenario.matrixIndex].title}`, async () => {
+			switch (scenario.action) {
+				case 'project-search': {
+					const symphonyDialog = await openSymphonyFromQuickActions(window);
+					await symphonyDialog.getByPlaceholder('Search repositories...').fill(scenario.query);
+					await expect(
+						symphonyDialog.getByRole('button', { name: new RegExp(scenario.expected) })
+					).toBeVisible();
+					break;
+				}
+				case 'project-search-empty': {
+					const symphonyDialog = await openSymphonyFromQuickActions(window);
+					await symphonyDialog.getByPlaceholder('Search repositories...').fill(scenario.query);
+					await expect(symphonyDialog.getByText('No repositories match your search')).toBeVisible();
+					break;
+				}
+				case 'project-detail': {
+					const symphonyDialog = await openSymphonyFromQuickActions(window);
+					await symphonyDialog.getByRole('button', { name: /Maestro Core/ }).click();
+					await expect(symphonyDialog.getByText(scenario.expected)).toBeVisible();
+					break;
+				}
+				case 'issue-detail': {
+					const symphonyDialog = await openSymphonyFromQuickActions(window);
+					await symphonyDialog.getByRole('button', { name: /Maestro Core/ }).click();
+					await symphonyDialog.getByText(scenario.issue).click();
+					await expect(symphonyDialog.getByText(scenario.expected)).toBeVisible();
+					break;
+				}
+				case 'tab-text': {
+					const symphonyDialog = await openSymphonyFromQuickActions(window);
+					await symphonyDialog.getByRole('button', { name: scenario.tab }).click();
+					await expect(symphonyDialog.getByText(scenario.expected)).toBeVisible();
+					break;
+				}
+				case 'help': {
+					const symphonyDialog = await openSymphonyFromQuickActions(window);
+					await symphonyDialog.getByLabel('Help').click();
+					await expect(symphonyDialog.getByText(scenario.expected).last()).toBeVisible();
+					break;
+				}
+				case 'help-close': {
+					const symphonyDialog = await openSymphonyFromQuickActions(window);
+					await symphonyDialog.getByLabel('Help').click();
+					await expect(symphonyDialog.getByRole('button', { name: 'Close' }).last()).toBeVisible();
+					break;
+				}
+				case 'about-text': {
+					const aboutDialog = await openAboutFromQuickActions(window);
+					await expect(aboutDialog.getByText(scenario.expected)).toBeVisible();
+					break;
+				}
+				case 'achievement-detail': {
+					const aboutDialog = await openAboutFromQuickActions(window);
+					await aboutDialog.getByTitle('Apprentice Conductor - Click to view details').click();
+					await expect(aboutDialog.getByText('Level 1')).toBeVisible();
+					break;
+				}
+				case 'achievement-share': {
+					const aboutDialog = await openAboutFromQuickActions(window);
+					await aboutDialog.getByTitle('Share achievements').click();
+					await expect(
+						aboutDialog.getByRole('button', { name: 'Copy to Clipboard' })
+					).toBeVisible();
+					break;
+				}
+				case 'leaderboard-open': {
+					const aboutDialog = await openAboutFromQuickActions(window);
+					await aboutDialog.getByRole('button', { name: /Join Leaderboard/ }).click();
+					const leaderboardDialog = window.getByRole('dialog', {
+						name: 'Register for Leaderboard',
+					});
+					await expect(leaderboardDialog.getByText(scenario.expected)).toBeVisible();
+					break;
+				}
+				case 'leaderboard-display-required': {
+					const aboutDialog = await openAboutFromQuickActions(window);
+					await aboutDialog.getByRole('button', { name: /Join Leaderboard/ }).click();
+					const leaderboardDialog = window.getByRole('dialog', {
+						name: 'Register for Leaderboard',
+					});
+					await leaderboardDialog
+						.getByPlaceholder('conductor@maestro.ai')
+						.fill('display-required@example.com');
+					await expect(leaderboardDialog.getByRole('button', { name: 'Push Up' })).toBeDisabled();
+					break;
+				}
+				case 'leaderboard-email-required': {
+					const aboutDialog = await openAboutFromQuickActions(window);
+					await aboutDialog.getByRole('button', { name: /Join Leaderboard/ }).click();
+					const leaderboardDialog = window.getByRole('dialog', {
+						name: 'Register for Leaderboard',
+					});
+					await leaderboardDialog.getByPlaceholder('ConductorPedram').fill('Email Required');
+					await expect(leaderboardDialog.getByRole('button', { name: 'Push Up' })).toBeDisabled();
+					break;
+				}
+				case 'leaderboard-valid': {
+					const aboutDialog = await openAboutFromQuickActions(window);
+					await aboutDialog.getByRole('button', { name: /Join Leaderboard/ }).click();
+					const leaderboardDialog = window.getByRole('dialog', {
+						name: 'Register for Leaderboard',
+					});
+					await leaderboardDialog.getByPlaceholder('ConductorPedram').fill('Valid Closeout');
+					await leaderboardDialog
+						.getByPlaceholder('conductor@maestro.ai')
+						.fill('valid-closeout@example.com');
+					await expect(leaderboardDialog.getByRole('button', { name: 'Push Up' })).toBeEnabled();
+					break;
+				}
+				case 'leaderboard-github-field': {
+					const aboutDialog = await openAboutFromQuickActions(window);
+					await aboutDialog.getByRole('button', { name: /Join Leaderboard/ }).click();
+					const leaderboardDialog = window.getByRole('dialog', {
+						name: 'Register for Leaderboard',
+					});
+					await leaderboardDialog.getByPlaceholder('username').first().fill('stats-closeout');
+					await expect(leaderboardDialog.getByPlaceholder('username').first()).toHaveValue(
+						'stats-closeout'
+					);
+					break;
+				}
+				case 'leaderboard-x-field': {
+					const aboutDialog = await openAboutFromQuickActions(window);
+					await aboutDialog.getByRole('button', { name: /Join Leaderboard/ }).click();
+					const leaderboardDialog = window.getByRole('dialog', {
+						name: 'Register for Leaderboard',
+					});
+					await leaderboardDialog.getByPlaceholder('username').nth(1).fill('stats_x_closeout');
+					await expect(leaderboardDialog.getByPlaceholder('username').nth(1)).toHaveValue(
+						'stats_x_closeout'
+					);
+					break;
+				}
+				case 'leaderboard-invalid-email': {
+					const aboutDialog = await openAboutFromQuickActions(window);
+					await aboutDialog.getByRole('button', { name: /Join Leaderboard/ }).click();
+					const leaderboardDialog = window.getByRole('dialog', {
+						name: 'Register for Leaderboard',
+					});
+					await leaderboardDialog.getByPlaceholder('ConductorPedram').fill('Invalid Email');
+					await leaderboardDialog.getByPlaceholder('conductor@maestro.ai').fill('bad-email');
+					await expect(
+						leaderboardDialog.getByText('Please enter a valid email address')
+					).toBeVisible();
+					break;
+				}
+				case 'leaderboard-confirmation': {
+					const aboutDialog = await openAboutFromQuickActions(window);
+					await aboutDialog.getByRole('button', { name: /Join Leaderboard/ }).click();
+					const leaderboardDialog = window.getByRole('dialog', {
+						name: 'Register for Leaderboard',
+					});
+					await leaderboardDialog.getByPlaceholder('ConductorPedram').fill('Confirm Closeout');
+					await leaderboardDialog
+						.getByPlaceholder('conductor@maestro.ai')
+						.fill('confirm-closeout@example.com');
+					await leaderboardDialog.getByRole('button', { name: 'Push Up' }).click();
+					await expect(leaderboardDialog.getByText(/Profile submitted!/)).toBeVisible();
+					break;
+				}
+				case 'leaderboard-pending': {
+					await electronApp.evaluate(({ ipcMain }) => {
+						ipcMain.removeHandler('leaderboard:submit');
+						ipcMain.handle('leaderboard:submit', async () => ({
+							success: true,
+							pendingEmailConfirmation: true,
+							clientToken: 'sgs-closeout-pending-token',
+							message: 'Confirmation email queued.',
+						}));
+					});
+					const aboutDialog = await openAboutFromQuickActions(window);
+					await aboutDialog.getByRole('button', { name: /Join Leaderboard/ }).click();
+					const leaderboardDialog = window.getByRole('dialog', {
+						name: 'Register for Leaderboard',
+					});
+					await leaderboardDialog.getByPlaceholder('ConductorPedram').fill('Pending Closeout');
+					await leaderboardDialog
+						.getByPlaceholder('conductor@maestro.ai')
+						.fill('pending-closeout@example.com');
+					await leaderboardDialog.getByRole('button', { name: 'Push Up' }).click();
+					await expect(
+						leaderboardDialog.getByText('Please check your email to confirm your registration.')
+					).toBeVisible();
+					break;
+				}
+				case 'leaderboard-failure': {
+					await electronApp.evaluate(({ ipcMain }) => {
+						ipcMain.removeHandler('leaderboard:submit');
+						ipcMain.handle('leaderboard:submit', async () => ({
+							success: false,
+							error: 'SGS closeout leaderboard failure',
+						}));
+					});
+					const aboutDialog = await openAboutFromQuickActions(window);
+					await aboutDialog.getByRole('button', { name: /Join Leaderboard/ }).click();
+					const leaderboardDialog = window.getByRole('dialog', {
+						name: 'Register for Leaderboard',
+					});
+					await leaderboardDialog.getByPlaceholder('ConductorPedram').fill('Failure Closeout');
+					await leaderboardDialog
+						.getByPlaceholder('conductor@maestro.ai')
+						.fill('failure-closeout@example.com');
+					await leaderboardDialog.getByRole('button', { name: 'Push Up' }).click();
+					await expect(
+						leaderboardDialog.getByText('SGS closeout leaderboard failure')
+					).toBeVisible();
+					await expect(leaderboardDialog.getByRole('button', { name: 'Push Up' })).toBeEnabled();
+					break;
+				}
+				case 'leaderboard-manual-token': {
+					await openLeaderboardWithManualAuthToken(
+						window,
+						electronApp,
+						'Manual Closeout',
+						'manual-closeout@example.com'
+					);
+					await expect(window.getByRole('dialog', { name: /Leaderboard/ })).toBeVisible();
+					break;
+				}
+				case 'leaderboard-pulldown-after-token': {
+					const leaderboardDialog = await openLeaderboardWithManualAuthToken(
+						window,
+						electronApp,
+						'Pull Closeout',
+						'pull-closeout@example.com'
+					);
+					await expect(leaderboardDialog.getByRole('button', { name: 'Pull Down' })).toBeVisible();
+					break;
+				}
+				case 'project-back': {
+					const symphonyDialog = await openSymphonyFromQuickActions(window);
+					await symphonyDialog.getByRole('button', { name: /Maestro Core/ }).click();
+					await expect(symphonyDialog.getByTitle('Back (Esc)')).toBeVisible();
+					break;
+				}
+			}
+		});
+	}
 
 	for (const scenario of skippedScenarioMatrix) {
 		test.skip(`${scenario.id} ${scenario.title} [skipped product gap]`, async () => {
