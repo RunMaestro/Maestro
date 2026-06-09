@@ -2,9 +2,9 @@
 
 Source of truth: `docs/e2e-coverage-campaign.md`.
 
-Current active tests: 2143
+Current active tests: 2159
 Target active tests: 3,025
-Remaining matrix-backed active scenarios: 882
+Remaining matrix-backed active scenarios: 866
 
 ## Matrix
 
@@ -19,7 +19,7 @@ Remaining matrix-backed active scenarios: 882
 | File preview and document rendering                            | `files-docs-history`      |             46 |           180 |       134 |
 | History panel                                                  | `files-docs-history`      |             30 |            95 |        65 |
 | Auto Run                                                       | `autorun-ai-terminal`     |            237 |           260 |        23 |
-| New Agent Wizard and inline wizard                             | `wizard-settings-prompts` |             88 |           190 |       102 |
+| New Agent Wizard and inline wizard                             | `wizard-settings-prompts` |            104 |           190 |        86 |
 | Settings                                                       | `wizard-settings-prompts` |            190 |           190 |         0 |
 | Git, worktrees, PR, diff/log, Gist                             | `git-groupchat-playbooks` |            160 |           160 |         0 |
 | Group chat                                                     | `git-groupchat-playbooks` |            140 |           140 |         0 |
@@ -40,7 +40,7 @@ Remaining matrix-backed active scenarios: 882
 | `shell-tabs-command`       |                     185 |                        81 |                                    0 | `2d9975b17`          |
 | `files-docs-history`       |                     302 |                        47 |                                    5 | `b409f4538`          |
 | `autorun-ai-terminal`      |                      73 |                       200 |                                    0 | `be6f56584`          |
-| `wizard-settings-prompts`  |                     140 |                       232 |                                    1 | `c8095b6eb`          |
+| `wizard-settings-prompts`  |                     124 |                       248 |                                    1 | `adf5d6dfd`          |
 | `git-groupchat-playbooks`  |                       0 |                       363 |                                    7 | `ec72c453c`          |
 | `stats-graph-symphony`     |                     182 |                       154 |                                    6 | `f4d562a33`          |
 | `debug-accessibility`      |                       0 |                       192 |                                    0 | `e1879dd27`          |
@@ -164,3 +164,4 @@ Remaining matrix-backed active scenarios: 882
 - 2026-06-09: accepted manual `wizard-settings-prompts` through `c8095b6eb`; authored 16 additional active Director's Notes Unified History and New Agent Wizard Codex configuration scenarios from the clean worker branch. Focused static review found no critical or high issues. No E2E execution was run.
 - 2026-06-09: accepted manual `git-groupchat-playbooks` quota close through `ec72c453c`; authored 203 additional matrix-backed active Git/worktree/PR/diff/log/Gist, Group Chat, Playbook Exchange, Spec Kit, and OpenSpec scenarios from the clean worker branch. The lane reached its 363-active-scenario matrix-backed quota. Focused static review found no critical or high issues. No E2E execution was run.
 - 2026-06-09: accepted manual `autorun-ai-terminal` through `be6f56584`; authored 60 additional active Codex AI terminal context/action/modal and Auto Run setup/header/preview/editor/worktree scenarios from the clean worker branch. Focused static review removed fixed waits from the worker snapshot and found no critical or high issues. No E2E execution was run.
+- 2026-06-09: accepted manual `wizard-settings-prompts` through `adf5d6dfd`; authored 16 additional active New Agent Wizard Codex persistence/configuration and inline wizard generated-document scenarios from the clean worker branch. Focused static review found no critical or high issues. No E2E execution was run.

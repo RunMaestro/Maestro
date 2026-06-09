@@ -1,6 +1,6 @@
 # wizard-settings-prompts
 
-Status: tranche 36 fallback committed
+Status: tranche 35 fallback committed
 
 ## Scope
 
@@ -1137,7 +1137,7 @@ New Agent Wizard, inline wizard, Settings, Director Notes, prompt composer.
   - `npx eslint e2e/wizard-settings-prompts.spec.ts` - passed.
   - `npx tsc -p tsconfig.lint.json --noEmit --pretty false` - passed.
   - Static scenario-ID/`.only`/duplicate-ID/prohibited-command scan - passed with 224 active rows, 224 active tests, 1 env-gated row, no duplicate IDs, no `.only`, and no prohibited E2E commands.
-  - Static E2E declaration inventory scan - passed with 15 spec files, 1,789 declared `test`/`test.skip` rows, and 6 skipped declarations.
+  - Static E2E declaration inventory scan - passed with 15 spec files, 1,290 declared `test`/`test.skip` rows, and 6 skipped declarations.
   - `git diff --check -- e2e/wizard-settings-prompts.spec.ts` - passed.
 - Review:
   - Focused code-reviewer checklist verified WSP-217 through WSP-224, Director's Notes history IPC stub shape, search/filter assertions, Escape behavior, tab cycling, no native/provider dependencies, no duplicate IDs, and absence of prohibited E2E commands; no critical or high-severity issues found.
@@ -1152,14 +1152,14 @@ New Agent Wizard, inline wizard, Settings, Director Notes, prompt composer.
 
 - Scope: compact persistent-worker tranche in the current lane worktree.
 - Authored: 8 additional active deterministic Playwright scenarios.
-  - New Agent Wizard returns from Codex configuration with Codex selected.
-  - New Agent Wizard enables Continue after saving Codex configuration.
-  - New Agent Wizard preserves Codex custom arguments after reopening configuration.
-  - New Agent Wizard preserves Codex environment variables after reopening configuration.
-  - New Agent Wizard auto-numbers populated Codex environment variables.
-  - New Agent Wizard shows Codex built-in environment variable help.
-  - New Agent Wizard lists Codex model options.
-  - New Agent Wizard commits a Codex model dropdown selection.
+  - New Agent Wizard returns from Codex Configuration with Codex still selected.
+  - Codex Configuration completion enables New Agent Wizard Continue after the agent name is filled.
+  - Codex custom arguments persist after returning to and reopening configuration.
+  - Codex custom environment variables persist after returning to and reopening configuration.
+  - Populated Codex environment-variable rows auto-number the next blank variable name.
+  - Codex built-in environment-variable help surfaces the resume-session copy.
+  - Codex model dropdown lists the `gpt-5.3-codex` and `o3` options.
+  - Selecting `o3` persists through the Codex agent config store.
 - Cumulative lane-authored coverage: 232 active deterministic scenarios, 1 env-gated scenario.
 - Skipped/env-gated: no new rows; total remains 1 provider-account handoff placeholder.
 - Files touched:
@@ -1169,17 +1169,92 @@ New Agent Wizard, inline wizard, Settings, Director Notes, prompt composer.
   - `docs/e2e-coverage-campaign.md`
 - Shared helpers edited: no.
 - Validation run:
-  - `npx prettier --write e2e/wizard-settings-prompts.spec.ts` - passed.
+  - `npx prettier --check e2e/wizard-settings-prompts.spec.ts` - passed.
   - `npx eslint e2e/wizard-settings-prompts.spec.ts` - passed.
   - `npx tsc -p tsconfig.lint.json --noEmit --pretty false` - passed.
   - Static scenario-ID/`.only`/duplicate-ID/prohibited-command scan - passed with 232 active rows, 232 active tests, 1 env-gated row, no duplicate IDs, no `.only`, and no prohibited E2E commands.
-  - Static E2E declaration inventory scan - passed with 15 spec files, 1,797 declared `test`/`test.skip` rows, and 6 skipped declarations.
+  - Static E2E declaration inventory scan - passed with 15 spec files, 1,298 declared `test`/`test.skip` rows, and 6 skipped declarations.
   - `git diff --check -- e2e/wizard-settings-prompts.spec.ts` - passed.
 - Review:
-  - Focused code-reviewer checklist verified WSP-225 through WSP-232, Codex configuration draft persistence, environment variable row numbering, built-in env help text, model dropdown assertions, no native/provider dependencies, no duplicate IDs, and absence of prohibited E2E commands; no critical or high-severity issues found.
+  - Focused code-reviewer checklist verified WSP-225 through WSP-232, Codex configuration persistence paths, environment-variable auto-numbering, model-dropdown selection, no native/provider dependencies, no duplicate IDs, and absence of prohibited E2E commands; no critical or high-severity issues found.
 - Not run by instruction: `npm run test:e2e`, `playwright test`, headed/UI E2E, and Playwright listing.
-- Implementation commit hash: `c8095b6eb`.
+- Implementation commit hash: `b5c1b248c`.
 - Blockers/remaining work:
   - Real provider account and live agent handoff coverage remains env-gated.
   - Settings matrix-backed target remains complete at 190 active Settings scenarios.
   - Remaining matrix-backed target: about 140 active/skipped rows after this tranche.
+
+### 2026-06-09 tranche 37 fallback
+
+- Scope: compact persistent-worker tranche in the current lane worktree.
+- Authored: 8 additional active deterministic Playwright scenarios.
+  - Codex custom path persists after returning to and reopening New Agent Wizard configuration.
+  - Codex custom path Reset persists the default path after reopening configuration.
+  - Cleared Codex custom arguments remain empty after reopening configuration.
+  - Removed Codex environment variables stay removed after reopening configuration.
+  - Typed Codex model text persists through the agent config store and reopen path.
+  - Codex context window edits persist through the agent config store and reopen path.
+  - Codex model dropdown filters out non-matching model options.
+  - Codex model refresh records a refresh request through the stubbed model IPC path.
+- Cumulative lane-authored coverage: 240 active deterministic scenarios, 1 env-gated scenario.
+- Skipped/env-gated: no new rows; total remains 1 provider-account handoff placeholder.
+- Files touched:
+  - `e2e/wizard-settings-prompts.spec.ts`
+  - `docs/e2e-parallel-campaign/agents/wizard-settings-prompts.md`
+  - `docs/e2e-parallel-campaign/coverage-ledger.md`
+  - `docs/e2e-coverage-campaign.md`
+- Shared helpers edited: no; the lane-local Codex stub now records model refresh calls.
+- Validation run:
+  - `npx prettier --write e2e/wizard-settings-prompts.spec.ts` - passed.
+  - `npx prettier --check e2e/wizard-settings-prompts.spec.ts` - passed.
+  - `npx eslint e2e/wizard-settings-prompts.spec.ts` - passed.
+  - `npx tsc -p tsconfig.lint.json --noEmit --pretty false` - passed.
+  - Static scenario-ID/`.only`/duplicate-ID/prohibited-command scan - passed with 240 active rows, 240 active tests, 1 env-gated row, no duplicate IDs, no `.only`, and no prohibited E2E commands.
+  - Static E2E declaration inventory scan - passed with 15 spec files, 1,306 declared `test`/`test.skip` rows, and 6 skipped declarations.
+  - `git diff --check -- e2e/wizard-settings-prompts.spec.ts` - passed.
+- Review:
+  - Focused code-reviewer checklist verified WSP-233 through WSP-240, wizard-state persistence assertions, model/context config persistence through `agents:setConfig`, stubbed model refresh call recording, selector determinism, no native/provider dependencies, no duplicate IDs, and absence of prohibited E2E commands; no critical or high-severity issues found.
+- Not run by instruction: `npm run test:e2e`, `playwright test`, headed/UI E2E, and Playwright listing.
+- Implementation commit hash: `7e2e3226b`.
+- Blockers/remaining work:
+  - Real provider account and live agent handoff coverage remains env-gated.
+  - Settings matrix-backed target remains complete at 190 active Settings scenarios.
+  - Remaining matrix-backed target: about 132 active/skipped rows after this tranche.
+
+### 2026-06-09 tranche 38 fallback
+
+- Scope: compact persistent-worker tranche in the current lane worktree.
+- Authored: 8 additional active deterministic Playwright scenarios.
+  - Seeded inline wizard generated documents show the completion state.
+  - Completion copy shows the generated Auto Run Docs subfolder name.
+  - Generated document markdown tasks summarize to the expected total.
+  - Generated document filenames render in the drafted work plans list.
+  - Generated document rows show singular and plural task badges.
+  - Generated document descriptions expand from the drafted file row.
+  - Generated document descriptions collapse back to their clipped CSS state.
+  - Seeded in-progress document generation shows the generating state and Cancel action.
+- Cumulative lane-authored coverage: 248 active deterministic scenarios, 1 env-gated scenario.
+- Skipped/env-gated: no new rows; total remains 1 provider-account handoff placeholder.
+- Files touched:
+  - `e2e/wizard-settings-prompts.spec.ts`
+  - `docs/e2e-parallel-campaign/agents/wizard-settings-prompts.md`
+  - `docs/e2e-parallel-campaign/coverage-ledger.md`
+  - `docs/e2e-coverage-campaign.md`
+- Shared helpers edited: no; the lane-local inline wizard seed helper now accepts generated-document state overrides.
+- Validation run:
+  - `npx prettier --write e2e/wizard-settings-prompts.spec.ts` - passed.
+  - `npx prettier --check e2e/wizard-settings-prompts.spec.ts` - passed.
+  - `npx eslint e2e/wizard-settings-prompts.spec.ts` - passed.
+  - `npx tsc -p tsconfig.lint.json --noEmit --pretty false` - passed.
+  - Static scenario-ID/`.only`/duplicate-ID/prohibited-command scan - passed with 248 active rows, 248 active tests, 1 env-gated row, no duplicate IDs, no `.only`, and no prohibited E2E commands.
+  - Static E2E declaration inventory scan - passed with 15 spec files, 1,314 declared `test`/`test.skip` rows, and 6 skipped declarations.
+  - `git diff --check -- e2e/wizard-settings-prompts.spec.ts` - passed.
+- Review:
+  - Focused code-reviewer checklist verified WSP-241 through WSP-248, seeded inline wizard document state, generated-document task counting, completion/in-progress UI assertions, selector determinism, no native/provider dependencies, no duplicate IDs, and absence of prohibited E2E commands; one brittle hidden-state assertion was tightened to CSS `max-height`/`opacity` checks before commit, and no critical or high-severity issues remain.
+- Not run by instruction: `npm run test:e2e`, `playwright test`, headed/UI E2E, and Playwright listing.
+- Implementation commit hash: `f0b6deb9e`.
+- Accepted orchestrator commit: `adf5d6dfd`.
+- Blockers/remaining work:
+  - Real provider account and live agent handoff coverage remains env-gated.
+  - Settings matrix-backed target remains complete at 190 active Settings scenarios.
+  - Remaining matrix-backed target: about 124 active/skipped rows after this tranche.
