@@ -233,6 +233,14 @@ const twentiethTrancheActiveScenarioMatrix = [
 	{ id: 'GGP-A105', title: 'hides Create Pull Request Quick Action for the parent Git session' },
 ] as const;
 
+const twentyFirstTrancheActiveScenarioMatrix = [
+	{ id: 'GGP-A106', title: 'copies a seeded Group Chat message from transcript actions' },
+	{ id: 'GGP-A107', title: 'toggles seeded Group Chat messages between formatted and plain text' },
+	{ id: 'GGP-A108', title: 'hides Gist publishing in Quick Actions without a file preview' },
+	{ id: 'GGP-A109', title: 'filters Playbook Exchange All category search to an OpenSpec result' },
+	{ id: 'GGP-A110', title: 'closes Git Log error output with Escape' },
+] as const;
+
 function runGit(cwd: string, args: string[]) {
 	execFileSync('git', args, {
 		cwd,
@@ -3969,6 +3977,92 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 				quickActionsDialog.getByRole('button', { name: /Create Pull Request/ })
 			).toBeHidden();
 			await expect(quickActionsDialog.getByText('No actions found')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${twentyFirstTrancheActiveScenarioMatrix[0].id}: ${twentyFirstTrancheActiveScenarioMatrix[0].title}`, async () => {
+		const launched = await launchGitGroupChatPlaybooksWorkbench();
+		try {
+			await launched.electronApp.evaluate(({ clipboard }) => clipboard.writeText(''));
+			await openSeededGroupChat(launched.window);
+			const messageRow = launched.window
+				.getByText('Seeded group chat message for git lane.')
+				.locator('xpath=ancestor::div[@data-message-timestamp][1]');
+
+			await messageRow.hover();
+			await messageRow.getByTitle('Copy to clipboard').click();
+
+			await expect
+				.poll(() => launched.electronApp.evaluate(({ clipboard }) => clipboard.readText()))
+				.toBe('Seeded group chat message for git lane.');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${twentyFirstTrancheActiveScenarioMatrix[1].id}: ${twentyFirstTrancheActiveScenarioMatrix[1].title}`, async () => {
+		const launched = await launchGitGroupChatPlaybooksWorkbench();
+		try {
+			await openSeededGroupChat(launched.window);
+			const messageRow = launched.window
+				.getByText('Seeded group chat message for git lane.')
+				.locator('xpath=ancestor::div[@data-message-timestamp][1]');
+
+			await messageRow.hover();
+			await messageRow.getByTitle(/Show plain text/).click();
+			await expect(messageRow.getByTitle(/Show formatted/)).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${twentyFirstTrancheActiveScenarioMatrix[2].id}: ${twentyFirstTrancheActiveScenarioMatrix[2].title}`, async () => {
+		const launched = await launchGitGroupChatPlaybooksWorkbench();
+		try {
+			const quickActionsDialog = await openQuickActions(launched.window);
+			await quickActionsDialog.getByPlaceholder('Type a command or jump to agent...').fill('Gist');
+
+			await expect(
+				quickActionsDialog.getByRole('button', { name: /Publish Document as GitHub Gist/ })
+			).toBeHidden();
+			await expect(quickActionsDialog.getByText('No actions found')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${twentyFirstTrancheActiveScenarioMatrix[3].id}: ${twentyFirstTrancheActiveScenarioMatrix[3].title}`, async () => {
+		const launched = await launchGitGroupChatPlaybooksWorkbench();
+		try {
+			await stubMarketplaceFilteringState(launched.electronApp);
+			const marketplaceDialog = await openPlaybookExchangeFromQuickActions(launched.window);
+
+			await marketplaceDialog.getByPlaceholder('Search playbooks...').fill('openspec');
+
+			await expect(
+				marketplaceDialog.getByRole('button', { name: /OpenSpec Proposal Review/ })
+			).toBeVisible();
+			await expect(marketplaceDialog.getByText('Git Release Review')).toBeHidden();
+			await expect(marketplaceDialog.getByText('Group Chat Briefing')).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${twentyFirstTrancheActiveScenarioMatrix[4].id}: ${twentyFirstTrancheActiveScenarioMatrix[4].title}`, async () => {
+		const launched = await launchGitGroupChatPlaybooksWorkbench();
+		try {
+			await stubGitLogState(launched.electronApp, { mode: 'error' });
+			const gitLogDialog = await openGitLogFromQuickActions(launched.window);
+
+			await expect(
+				gitLogDialog.getByText('E2E git log unavailable for fallback coverage')
+			).toBeVisible();
+			await launched.window.keyboard.press('Escape');
+
+			await expect(gitLogDialog).toBeHidden();
 		} finally {
 			await launched.cleanup();
 		}
