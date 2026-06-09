@@ -3069,6 +3069,65 @@ test.describe('App shell seeded workbench', () => {
 		await expect(window.locator('[data-tour="files-panel"]')).toBeVisible();
 	});
 
+	test('toggles shell chrome from Quick Actions without changing the active preview', async () => {
+		await expect(window.locator('[data-tour="session-list"]')).toBeVisible();
+		await expect(window.locator('[data-tour="files-panel"]')).toBeVisible();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+
+		let quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('Toggle Sidebar');
+		await quickActionsDialog.getByRole('button', { name: /Toggle Sidebar/ }).click();
+
+		await expect(quickActionsDialog).toBeHidden();
+		await expect(window.locator('[data-tour="session-list"]')).toBeHidden();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+
+		quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('Toggle Sidebar');
+		await quickActionsDialog.getByRole('button', { name: /Toggle Sidebar/ }).click();
+
+		await expect(window.locator('[data-tour="session-list"]')).toBeVisible();
+
+		quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('Toggle Right Panel');
+		await quickActionsDialog.getByRole('button', { name: /Toggle Right Panel/ }).click();
+
+		await expect(quickActionsDialog).toBeHidden();
+		await expect(window.locator('[data-tour="files-panel"]')).toBeHidden();
+		await expect(window.getByTitle(/Show right panel/)).toBeVisible();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+	});
+
+	test('opens the agent filter from Quick Actions after the Left Bar is collapsed', async () => {
+		await window.keyboard.press('Alt+Meta+ArrowLeft');
+		await expect(window.locator('[data-tour="session-list"]')).toBeHidden();
+
+		const quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('Search: Agents');
+		await quickActionsDialog.getByRole('button', { name: /Search: Agents/ }).click();
+
+		const filterInput = window.getByPlaceholder('Filter agents...');
+		await expect(quickActionsDialog).toBeHidden();
+		await expect(window.locator('[data-tour="session-list"]')).toBeVisible();
+		await expect(filterInput).toBeFocused();
+
+		await filterInput.fill('Terminal');
+		const sessionList = window.locator('[data-tour="session-list"]');
+		await expect(sessionList.getByText('E2E Terminal')).toBeVisible();
+		await expect(sessionList.getByText('E2E Workbench')).toBeHidden();
+
+		await filterInput.press('Escape');
+		await expect(filterInput).toBeHidden();
+	});
+
 	test('restores right-panel tabs from global shortcuts after collapsing the shell chrome', async () => {
 		await helpers.openRightPanelTab(window, 'History');
 		await expect(window.locator('[data-tour="history-panel"]')).toBeVisible();
@@ -3846,6 +3905,18 @@ test.describe('App shell seeded workbench', () => {
 		await expect(window.getByTitle('Run command (Enter)')).toBeVisible();
 	});
 
+	test('toggles command terminal input and output focus from the global shortcut', async () => {
+		const terminalInput = await openSeededTerminalAgent(window);
+		const terminalOutput = window.getByLabel('Terminal output');
+
+		await terminalInput.focus();
+		await terminalInput.press('Meta+.');
+		await expect(terminalOutput).toBeFocused();
+
+		await terminalOutput.press('Meta+.');
+		await expect(terminalInput).toBeFocused();
+	});
+
 	test('searches command terminal output with the output search overlay', async () => {
 		await openSeededTerminalAgent(window);
 		await window.getByLabel('Terminal output').press('Control+f');
@@ -4044,6 +4115,26 @@ test.describe('App shell seeded workbench', () => {
 		await historyFilter.press('Escape');
 		await expect(historyFilter).toBeHidden();
 		await expect(terminalInput).toHaveValue('manual terminal draft sentinel');
+	});
+
+	test('keeps command history available after clearing the terminal transcript', async () => {
+		const terminalInput = await openSeededTerminalAgent(window);
+		await expect(window.locator('[data-log-index]')).toHaveCount(4);
+
+		const quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('Clear Terminal History');
+		await quickActionsDialog.getByRole('button', { name: /Clear Terminal History/ }).click();
+
+		await expect(quickActionsDialog).toBeHidden();
+		await expect(window.locator('[data-log-index]')).toHaveCount(0);
+
+		await terminalInput.focus();
+		await terminalInput.press('ArrowUp');
+		const historyFilter = window.getByPlaceholder('Filter commands...');
+		await expect(historyFilter).toBeVisible();
+		await expect(window.getByText('git status --short')).toBeVisible();
 	});
 
 	test('shows command history empty state and recovers to a filtered command', async () => {
@@ -4999,6 +5090,54 @@ test.describe('App shell seeded workbench', () => {
 
 		await window.getByText('Mark as Unread').click();
 		await expect(window.getByTitle('New messages')).toBeVisible();
+	});
+
+	test('toggles the active AI tab star from the keyboard and shows it in the Tab Switcher', async () => {
+		await window.getByText('Main', { exact: true }).click();
+
+		await window.keyboard.press('Meta+Shift+S');
+		const mainTab = window.locator('[data-tab-id]').filter({ hasText: 'Main' }).first();
+		await mainTab.hover();
+		await expect(window.getByText('Unstar Session')).toBeVisible();
+
+		await window.keyboard.press('Alt+Meta+T');
+		const switcher = window.getByRole('dialog', { name: 'Tab Switcher' });
+		await expect(switcher).toBeVisible();
+
+		let searchInput = switcher.getByPlaceholder('Search open tabs...');
+		await searchInput.press('Tab');
+		searchInput = switcher.getByPlaceholder('Search named sessions...');
+		await searchInput.press('Tab');
+
+		await expect(switcher.getByPlaceholder('Search starred sessions...')).toBeFocused();
+		await expect(switcher.getByRole('button', { name: /Main/ })).toBeVisible();
+		await expect(switcher.getByText('1 starred')).toBeVisible();
+	});
+
+	test('renames the active AI tab from the global keyboard shortcut', async () => {
+		await window.getByText('Main', { exact: true }).click();
+
+		await window.keyboard.press('Meta+Shift+R');
+		const renameDialog = window.getByRole('dialog', { name: 'Rename Tab' });
+		await expect(renameDialog).toBeVisible();
+		await renameDialog.locator('input').fill('Keyboard Main');
+		await renameDialog.getByRole('button', { name: 'Rename' }).click();
+
+		await expect(renameDialog).toBeHidden();
+		await expect(
+			window.locator('[data-tab-id]').filter({ hasText: 'Keyboard Main' }).first()
+		).toBeVisible();
+	});
+
+	test('marks the active AI tab unread and toggles the unread filter from shortcuts', async () => {
+		await window.getByText('Main', { exact: true }).click();
+
+		await window.keyboard.press('Meta+Shift+U');
+		await expect(window.getByTitle('New messages')).toBeVisible();
+
+		await window.keyboard.press('Meta+U');
+		await expect(window.getByTitle(/Showing unread only/)).toBeVisible();
+		await expect(window.locator('[data-tab-id]').filter({ hasText: 'Main' }).first()).toBeVisible();
 	});
 
 	test('renames an AI tab from the TabBar hover overlay', async () => {
@@ -11298,6 +11437,25 @@ test.describe('Command terminal output controls', () => {
 		await expect
 			.poll(async () => (await getTerminalOutputScrollState(window)).scrollTop)
 			.toBeLessThan(bottomScrollTop);
+	});
+
+	test('jumps command terminal output to the bottom from the global shortcut', async () => {
+		await openSeededTerminalAgent(window);
+		const terminalOutput = window.getByLabel('Terminal output');
+		const scrollState = await getTerminalOutputScrollState(window);
+		expect(scrollState.maxScrollTop).toBeGreaterThan(100);
+
+		await terminalOutput.focus();
+		await terminalOutput.press('Meta+ArrowUp');
+		await expect.poll(async () => (await getTerminalOutputScrollState(window)).scrollTop).toBe(0);
+
+		await terminalOutput.press('Meta+Shift+J');
+		await expect
+			.poll(async () => {
+				const current = await getTerminalOutputScrollState(window);
+				return current.maxScrollTop - current.scrollTop <= 2;
+			})
+			.toBe(true);
 	});
 
 	test('expands collapsed command terminal output from the transcript control', async () => {
