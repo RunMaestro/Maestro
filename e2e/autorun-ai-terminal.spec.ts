@@ -190,7 +190,9 @@ async function launchLaneWorkbench() {
 
 async function launchBusyLaneWorkbench() {
 	const seeded = createLaneWorkbench();
-	seeded.sessions[0]!.state = 'busy';
+	const session = seeded.sessions[0]!;
+	session.state = 'busy';
+	session.aiTabs[0]!.state = 'busy';
 	const launched = await helpers.launchAppWithState({
 		homeDir: seeded.homeDir,
 		sessions: seeded.sessions,
@@ -3361,6 +3363,109 @@ Externally refreshed Codex Auto Run sentinel.
 				launched.window.getByText('Codex queued Main tab prompt sentinel')
 			).toBeVisible();
 			await expect(launched.window.getByText('/compact')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('queues a Codex AI terminal prompt while the lane is busy without spawning', async () => {
+		const launched = await launchBusyLaneWorkbench();
+		try {
+			await stubCodexProcessSpawn(launched.electronApp);
+			const promptInput = await openCodexAiTerminal(launched.window);
+
+			await promptInput.fill('Codex busy queued prompt sentinel');
+			await launched.window.getByTitle('Send message').click();
+
+			await expect(launched.window.getByRole('button', { name: /1 item queued/ })).toBeVisible();
+			await expect(launched.window.getByText('QUEUED (1)')).toBeVisible();
+			await expect(launched.window.getByText('Codex busy queued prompt sentinel')).toBeVisible();
+			expect(await getStubbedCodexProcessSpawnCalls(launched.electronApp)).toHaveLength(0);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('queues a Codex slash command while the lane is busy without spawning', async () => {
+		const launched = await launchBusyLaneWorkbench();
+		try {
+			await stubCodexProcessSpawn(launched.electronApp);
+			const promptInput = await openCodexAiTerminal(launched.window);
+
+			await promptInput.fill('/history');
+			await launched.window.getByTitle('Send message').click();
+
+			await expect(launched.window.getByRole('button', { name: /1 item queued/ })).toBeVisible();
+			await expect(launched.window.getByText('QUEUED (1)')).toBeVisible();
+			await expect(launched.window.getByText('/history')).toBeVisible();
+			await expect(
+				launched.window.getByText('Generate a synopsis of this agent history')
+			).toBeVisible();
+			expect(await getStubbedCodexProcessSpawnCalls(launched.electronApp)).toHaveLength(0);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('queues a Codex image prompt while the lane is busy with attachment metadata', async () => {
+		const launched = await launchBusyLaneWorkbench();
+		const imagePath = path.join(launched.homeDir, 'codex-busy-queued-image.png');
+		try {
+			fs.writeFileSync(
+				imagePath,
+				Buffer.from(
+					'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=',
+					'base64'
+				)
+			);
+			await stubCodexProcessSpawn(launched.electronApp);
+			const promptInput = await openCodexAiTerminal(launched.window);
+
+			await launched.window.locator('#image-file-input').setInputFiles(imagePath);
+			await promptInput.fill('Codex busy queued image prompt sentinel');
+			await launched.window.getByTitle('Send message').click();
+
+			await expect(launched.window.getByRole('button', { name: /1 item queued/ })).toBeVisible();
+			await expect(
+				launched.window.getByText('Codex busy queued image prompt sentinel')
+			).toBeVisible();
+			await expect(launched.window.getByText('1 image attached')).toBeVisible();
+			expect(await getStubbedCodexProcessSpawnCalls(launched.electronApp)).toHaveLength(0);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('shows Codex queue browser ordering metadata and reorder guidance', async () => {
+		const launched = await launchQueuedLaneWorkbench();
+		try {
+			await openCodexAiTerminal(launched.window);
+
+			const browser = await openExecutionQueueBrowser(launched.window);
+
+			await expect(browser.getByText('#1')).toBeVisible();
+			await expect(browser.getByText('#2')).toBeVisible();
+			await expect(
+				browser.getByText(
+					'Drag and drop to reorder. Items are processed sequentially per agent to prevent file conflicts.'
+				)
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('switches from the Codex all-agent queue browser into the companion agent', async () => {
+		const launched = await launchCrossSessionQueuedLaneWorkbench();
+		try {
+			await openCodexAiTerminal(launched.window);
+
+			const browser = await openExecutionQueueBrowser(launched.window);
+			await browser.getByRole('button', { name: /All Agents/ }).click();
+			await browser.getByRole('button', { name: /Queued Companion Codex/ }).click();
+
+			await expect(browser.getByRole('heading', { name: 'Execution Queue' })).toBeHidden();
+			await expect(launched.window.getByText('Companion Codex transcript sentinel.')).toBeVisible();
 		} finally {
 			await launched.cleanup();
 		}
