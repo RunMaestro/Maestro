@@ -1,6 +1,6 @@
 # Parallel E2E Orchestrator Status
 
-Last updated: 2026-06-09 02:02 EDT
+Last updated: 2026-06-09 02:24 EDT
 
 ## Base
 
@@ -37,7 +37,7 @@ coverage and the shell-lane tab coverage.
 | `shell-tabs-command`       | `codex/e2e-shell-tabs-command`       | `Maestro-worktrees/e2e-shell-tabs-command`       | `maestro-e2e-shell-tabs-command-campaign-goal`      | PM2 retry cycle after 503  | 81 active scenarios accepted; 185 remain        |
 | `files-docs-history`       | `codex/e2e-files-docs-history`       | `Maestro-worktrees/e2e-files-docs-history`       | `maestro-e2e-files-docs-history-campaign-goal`      | manual fallback accepted   | 47 active scenarios accepted; 302 remain        |
 | `autorun-ai-terminal`      | `codex/e2e-autorun-ai-terminal`      | `Maestro-worktrees/e2e-autorun-ai-terminal`      | `maestro-e2e-autorun-ai-terminal-campaign-goal`     | manual fallback accepted   | 210 active scenarios accepted; 63 remain        |
-| `wizard-settings-prompts`  | `codex/e2e-wizard-settings-prompts`  | `Maestro-worktrees/e2e-wizard-settings-prompts`  | `maestro-e2e-wizard-settings-prompts-campaign-goal` | manual fallback accepted   | 280 active scenarios accepted; 92 remain        |
+| `wizard-settings-prompts`  | `codex/e2e-wizard-settings-prompts`  | `Maestro-worktrees/e2e-wizard-settings-prompts`  | `maestro-e2e-wizard-settings-prompts-campaign-goal` | manual fallback accepted   | 289 active scenarios accepted; 86 remain        |
 | `git-groupchat-playbooks`  | `codex/e2e-git-groupchat-playbooks`  | `Maestro-worktrees/e2e-git-groupchat-playbooks`  | not relaunched                                      | complete                   | 363 active scenarios accepted; 0 remain         |
 | `stats-graph-symphony`     | `codex/e2e-stats-graph-symphony`     | `Maestro-worktrees/e2e-stats-graph-symphony`     | `maestro-e2e-stats-graph-symphony-campaign-goal`    | manual fallback accepted   | 154 active scenarios accepted; 182 remain       |
 | `debug-accessibility`      | `codex/e2e-debug-accessibility`      | `Maestro-worktrees/e2e-debug-accessibility`      | not relaunched                                      | complete                   | 192 active scenarios accepted; 0 remain         |
@@ -51,7 +51,7 @@ coverage and the shell-lane tab coverage.
 - `files-docs-history` merged through `b409f4538`.
 - `mobile-web-bridge` merged through `33a5ace5f`.
 - `autorun-ai-terminal` merged through `25b7e29d4`.
-- `wizard-settings-prompts` merged through `79a670f31`.
+- `wizard-settings-prompts` merged through `4760f851f`.
 - `stats-graph-symphony` merged through `f4d562a33`.
 - `debug-accessibility` merged through `e1879dd27`.
 - `fixtures-sharding-review` merged through `392c4527`.
@@ -345,6 +345,11 @@ coverage and the shell-lane tab coverage.
   scenarios from the clean worker branch. Static Prettier, ESLint, TypeScript,
   `git diff --check`, prohibited-pattern scans, and focused review passed. No
   E2E execution was run.
+- 2026-06-09 02:24 EDT: accepted manual `wizard-settings-prompts` through
+  `4760f851f` with 9 active Director's Notes Unified History label, detail
+  keyboard, stats, filter-count, and activity graph scenarios from the clean
+  worker branch. Static Prettier, ESLint, TypeScript, `git diff --check`,
+  prohibited-pattern scans, and focused review passed. No E2E execution was run.
 
 ## Blockers
 
@@ -370,8 +375,9 @@ coverage and the shell-lane tab coverage.
   thirty-eighth `wizard-settings-prompts` director-detail, thirty-ninth
   `wizard-settings-prompts` director-navigation, fortieth
   `wizard-settings-prompts` director-filter, forty-first
-  `wizard-settings-prompts` director-lookback, and forty-second
-  `autorun-ai-terminal` active-error recovery action fallbacks are accepted for selected
+  `wizard-settings-prompts` director-lookback, forty-second
+  `autorun-ai-terminal` active-error recovery action, and forty-third
+  `wizard-settings-prompts` director completion fallbacks are accepted for selected
   high-remaining lanes. Remaining work should
   continue in smaller batches, with each run committing one coherent tranche and
   recording remaining work instead of trying to consume a full lane quota in one

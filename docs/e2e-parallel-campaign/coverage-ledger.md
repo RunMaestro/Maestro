@@ -2,9 +2,9 @@
 
 Source of truth: `docs/e2e-coverage-campaign.md`.
 
-Current active tests: 2201
+Current active tests: 2207
 Target active tests: 3,025
-Remaining matrix-backed active scenarios: 824
+Remaining matrix-backed active scenarios: 818
 
 ## Matrix
 
@@ -27,7 +27,7 @@ Remaining matrix-backed active scenarios: 824
 | Document graph                                                 | `stats-graph-symphony`    |             61 |           130 |        69 |
 | Playbooks, marketplace, Spec Kit, OpenSpec                     | `git-groupchat-playbooks` |            145 |           145 |         0 |
 | Symphony, leaderboard, achievements                            | `stats-graph-symphony`    |             77 |           120 |        43 |
-| Director notes and prompt composer                             | `wizard-settings-prompts` |             84 |            90 |         6 |
+| Director notes and prompt composer                             | `wizard-settings-prompts` |             90 |            90 |         0 |
 | Debug/about/update/app info/agent error modals                 | `debug-accessibility`     |             85 |            85 |         0 |
 | Mobile/web bridge                                              | `mobile-web-bridge`       |            190 |           190 |         0 |
 | Accessibility smoke and destructive-action confirmations       | `debug-accessibility`     |            130 |           130 |         0 |
@@ -40,7 +40,7 @@ Remaining matrix-backed active scenarios: 824
 | `shell-tabs-command`       |                     185 |                        81 |                                    0 | `2d9975b17`          |
 | `files-docs-history`       |                     302 |                        47 |                                    5 | `b409f4538`          |
 | `autorun-ai-terminal`      |                      63 |                       210 |                                    0 | `25b7e29d4`          |
-| `wizard-settings-prompts`  |                      92 |                       280 |                                    1 | `79a670f31`          |
+| `wizard-settings-prompts`  |                      86 |                       289 |                                    1 | `4760f851f`          |
 | `git-groupchat-playbooks`  |                       0 |                       363 |                                    7 | `ec72c453c`          |
 | `stats-graph-symphony`     |                     182 |                       154 |                                    6 | `f4d562a33`          |
 | `debug-accessibility`      |                       0 |                       192 |                                    0 | `e1879dd27`          |
@@ -171,3 +171,4 @@ Remaining matrix-backed active scenarios: 824
 - 2026-06-09: accepted manual `wizard-settings-prompts` through `6f74ecab0`; authored 8 additional active Director's Notes Unified History detail navigation, user/failed-status, search-count, and all-time lookback scenarios from the clean worker branch. Focused static review found no critical or high issues. No E2E execution was run.
 - 2026-06-09: accepted manual `wizard-settings-prompts` through `fe2984fae`; authored 8 additional active Director's Notes Unified History filtering, search-close, empty-state, and lookback scenarios from the clean worker branch. Focused static review found no critical or high issues. No E2E execution was run.
 - 2026-06-09: accepted manual `wizard-settings-prompts` through `79a670f31`; authored 8 additional active Director's Notes Unified History default lookback, extended lookback, activity graph, and menu-option scenarios from the clean worker branch. Focused static review found no critical or high issues. No E2E execution was run.
+- 2026-06-09: accepted manual `wizard-settings-prompts` through `4760f851f`; authored 9 additional active Director's Notes Unified History label, detail keyboard, stats, filter-count, and activity graph scenarios from the clean worker branch. Six scenarios completed the matrix-backed Director Notes row, and three remain lane-authored coverage beyond that row's remaining target. Focused static review found no critical or high issues. No E2E execution was run.
