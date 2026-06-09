@@ -155,6 +155,16 @@ const activeScenarioMatrix = [
 	{ id: 'SGS-A142', title: 'returns from Symphony active empty state to project browse' },
 	{ id: 'SGS-A143', title: 'passes Symphony clone payload before starting contribution' },
 	{ id: 'SGS-A144', title: 'shows Symphony clone failure before starting contribution' },
+	{ id: 'SGS-A145', title: 'shows Usage Dashboard Auto Run stats load failure controls' },
+	{ id: 'SGS-A146', title: 'shows Usage Dashboard Auto Run empty state from no sessions' },
+	{ id: 'SGS-A147', title: 'shows disabled Document Graph preview history controls' },
+	{ id: 'SGS-A148', title: 'keeps Document Graph reset-layout control available after refresh' },
+	{ id: 'SGS-A149', title: 'submits leaderboard payload metadata for local stats' },
+	{ id: 'SGS-A150', title: 'resends leaderboard confirmation and resumes polling' },
+	{ id: 'SGS-A151', title: 'shows leaderboard resend confirmation failure message' },
+	{ id: 'SGS-A152', title: 'opens leaderboard public site link through shell routing' },
+	{ id: 'SGS-A153', title: 'opens Symphony active draft PR link through shell routing' },
+	{ id: 'SGS-A154', title: 'opens Symphony completed PR link through shell routing' },
 ] as const;
 
 const skippedScenarioMatrix = [
@@ -3661,6 +3671,200 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 				})
 			)
 			.toBe(0);
+	});
+
+	test(`${activeScenarioMatrix[144].id} ${activeScenarioMatrix[144].title}`, async () => {
+		await electronApp.evaluate(({ ipcMain }) => {
+			ipcMain.removeHandler('stats:get-autorun-sessions');
+			ipcMain.handle('stats:get-autorun-sessions', async () => {
+				throw new Error('SGS Auto Run sessions unavailable');
+			});
+		});
+
+		const usageDashboard = await openUsageDashboard(window);
+		await usageDashboard.getByRole('tab', { name: 'Auto Run' }).click();
+
+		await expect(usageDashboard.getByTestId('autorun-stats-error')).toBeVisible();
+		await expect(usageDashboard.getByText('Failed to load Auto Run stats')).toBeVisible();
+		await expect(usageDashboard.getByRole('button', { name: 'Retry' })).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[145].id} ${activeScenarioMatrix[145].title}`, async () => {
+		await electronApp.evaluate(({ ipcMain }) => {
+			ipcMain.removeHandler('stats:get-autorun-sessions');
+			ipcMain.handle('stats:get-autorun-sessions', async () => []);
+		});
+
+		const usageDashboard = await openUsageDashboard(window);
+		await usageDashboard.getByRole('tab', { name: 'Auto Run' }).click();
+
+		await expect(usageDashboard.getByTestId('autorun-stats-empty')).toBeVisible();
+		await expect(usageDashboard.getByText('No Auto Run data yet')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[146].id} ${activeScenarioMatrix[146].title}`, async () => {
+		const graphDialog = await openDocumentGraphFromPreview(window);
+
+		await clickDocumentGraphCenter(graphDialog);
+		await window.keyboard.press('P');
+
+		await expect(graphDialog.getByTitle('Open in file preview')).toBeVisible();
+		await expect(graphDialog.getByLabel('Go back')).toBeDisabled();
+		await expect(graphDialog.getByLabel('Go forward')).toBeDisabled();
+		await expect(graphDialog.getByTitle('No previous document')).toBeVisible();
+		await expect(graphDialog.getByTitle('No next document')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[147].id} ${activeScenarioMatrix[147].title}`, async () => {
+		const graphDialog = await openDocumentGraphFromPreview(window);
+
+		await graphDialog.getByTitle(/Layout: /).click();
+		await graphDialog.getByRole('button', { name: /Radial/ }).click();
+		await expect(graphDialog.getByTitle('Layout: Radial')).toBeVisible();
+		await graphDialog.getByTitle('Refresh graph').click();
+		await graphDialog.getByTitle('Reset all node positions to algorithmic layout').click();
+
+		await expect(
+			graphDialog.getByTitle('Reset all node positions to algorithmic layout')
+		).toBeVisible();
+		await expect(graphDialog.getByTitle('Layout: Radial')).toBeVisible({ timeout: 15000 });
+	});
+
+	test(`${activeScenarioMatrix[148].id} ${activeScenarioMatrix[148].title}`, async () => {
+		await electronApp.evaluate(({ ipcMain }) => {
+			const state = globalThis as typeof globalThis & {
+				__sgsSubmitPayloads?: Array<Record<string, unknown>>;
+			};
+			state.__sgsSubmitPayloads = [];
+			ipcMain.removeHandler('leaderboard:submit');
+			ipcMain.handle('leaderboard:submit', async (_event, payload: Record<string, unknown>) => {
+				state.__sgsSubmitPayloads!.push(payload);
+				return { success: true };
+			});
+		});
+		const aboutDialog = await openAboutFromQuickActions(window);
+		await aboutDialog.getByRole('button', { name: /Join Leaderboard/ }).click();
+
+		const leaderboardDialog = window.getByRole('dialog', { name: 'Register for Leaderboard' });
+		await leaderboardDialog.getByPlaceholder('ConductorPedram').fill('Payload Conductor');
+		await leaderboardDialog.getByPlaceholder('conductor@maestro.ai').fill('payload@example.com');
+		await leaderboardDialog.locator('input[placeholder="username"]').first().fill('payload-user');
+		await leaderboardDialog.getByRole('button', { name: 'Push Up' }).click();
+
+		await expect
+			.poll(() =>
+				electronApp.evaluate(() => {
+					const state = globalThis as typeof globalThis & {
+						__sgsSubmitPayloads?: Array<Record<string, unknown>>;
+					};
+					const payload = state.__sgsSubmitPayloads?.[0];
+					if (!payload) return '';
+					return [
+						payload.displayName,
+						payload.email,
+						payload.githubUsername,
+						payload.keyboardMasteryLevel,
+						payload.clientTotalTimeMs === payload.cumulativeTimeMs,
+					].join('|');
+				})
+			)
+			.toBe('Payload Conductor|payload@example.com|payload-user|1|true');
+	});
+
+	test(`${activeScenarioMatrix[149].id} ${activeScenarioMatrix[149].title}`, async () => {
+		await electronApp.evaluate(({ ipcMain }) => {
+			ipcMain.removeHandler('leaderboard:submit');
+			ipcMain.handle('leaderboard:submit', async () => ({
+				success: false,
+				authTokenRequired: true,
+			}));
+			ipcMain.removeHandler('leaderboard:pollAuthStatus');
+			ipcMain.handle('leaderboard:pollAuthStatus', async () => ({ status: 'pending' }));
+			ipcMain.removeHandler('leaderboard:resendConfirmation');
+			ipcMain.handle('leaderboard:resendConfirmation', async () => ({
+				success: true,
+				message: 'SGS resend confirmation queued',
+			}));
+		});
+		const aboutDialog = await openAboutFromQuickActions(window);
+		await aboutDialog.getByRole('button', { name: /Join Leaderboard/ }).click();
+
+		const leaderboardDialog = window.getByRole('dialog', { name: 'Register for Leaderboard' });
+		await leaderboardDialog.getByPlaceholder('ConductorPedram').fill('Resend Success');
+		await leaderboardDialog.getByPlaceholder('conductor@maestro.ai').fill('resend@example.com');
+		await leaderboardDialog.getByRole('button', { name: 'Push Up' }).click();
+		await leaderboardDialog.getByRole('button', { name: 'Resend Confirmation Email' }).click();
+
+		await expect(leaderboardDialog.getByText('SGS resend confirmation queued')).toBeVisible();
+		await expect(
+			leaderboardDialog.getByText('Click the link in your email to complete registration.')
+		).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[150].id} ${activeScenarioMatrix[150].title}`, async () => {
+		await electronApp.evaluate(({ ipcMain }) => {
+			ipcMain.removeHandler('leaderboard:submit');
+			ipcMain.handle('leaderboard:submit', async () => ({
+				success: false,
+				authTokenRequired: true,
+			}));
+			ipcMain.removeHandler('leaderboard:pollAuthStatus');
+			ipcMain.handle('leaderboard:pollAuthStatus', async () => ({ status: 'pending' }));
+			ipcMain.removeHandler('leaderboard:resendConfirmation');
+			ipcMain.handle('leaderboard:resendConfirmation', async () => ({
+				success: false,
+				error: 'SGS resend confirmation failed',
+			}));
+		});
+		const aboutDialog = await openAboutFromQuickActions(window);
+		await aboutDialog.getByRole('button', { name: /Join Leaderboard/ }).click();
+
+		const leaderboardDialog = window.getByRole('dialog', { name: 'Register for Leaderboard' });
+		await leaderboardDialog.getByPlaceholder('ConductorPedram').fill('Resend Failure');
+		await leaderboardDialog
+			.getByPlaceholder('conductor@maestro.ai')
+			.fill('resend-failure@example.com');
+		await leaderboardDialog.getByRole('button', { name: 'Push Up' }).click();
+		await leaderboardDialog.getByRole('button', { name: 'Resend Confirmation Email' }).click();
+
+		await expect(leaderboardDialog.getByText('SGS resend confirmation failed')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[151].id} ${activeScenarioMatrix[151].title}`, async () => {
+		await stubExternalLinkCapture(electronApp);
+		const aboutDialog = await openAboutFromQuickActions(window);
+		await aboutDialog.getByRole('button', { name: /Join Leaderboard/ }).click();
+
+		const leaderboardDialog = window.getByRole('dialog', { name: 'Register for Leaderboard' });
+		await leaderboardDialog.getByRole('button', { name: /runmaestro\.ai/ }).click();
+
+		await expect
+			.poll(() => getCapturedExternalLinks(electronApp))
+			.toContain('https://runmaestro.ai');
+	});
+
+	test(`${activeScenarioMatrix[152].id} ${activeScenarioMatrix[152].title}`, async () => {
+		await stubExternalLinkCapture(electronApp);
+		const symphonyDialog = await openSymphonyFromQuickActions(window);
+
+		await symphonyDialog.getByRole('button', { name: /Active \(1\)/ }).click();
+		await symphonyDialog.getByRole('button', { name: /Draft PR #77/ }).click();
+
+		await expect
+			.poll(() => getCapturedExternalLinks(electronApp))
+			.toContain('https://github.com/RunMaestro/Maestro/pull/77');
+	});
+
+	test(`${activeScenarioMatrix[153].id} ${activeScenarioMatrix[153].title}`, async () => {
+		await stubExternalLinkCapture(electronApp);
+		const symphonyDialog = await openSymphonyFromQuickActions(window);
+
+		await symphonyDialog.getByRole('button', { name: 'History' }).click();
+		await symphonyDialog.getByRole('button', { name: /PR #12/ }).click();
+
+		await expect
+			.poll(() => getCapturedExternalLinks(electronApp))
+			.toContain('https://github.com/RunMaestro/docs/pull/12');
 	});
 
 	for (const scenario of skippedScenarioMatrix) {
