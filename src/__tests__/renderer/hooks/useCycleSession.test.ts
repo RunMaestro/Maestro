@@ -115,6 +115,7 @@ function makeDeps(overrides: Partial<UseCycleSessionDeps> = {}): UseCycleSession
 		handleOpenGroupChat: vi.fn(),
 		starredItems: [],
 		activateStarredItem: vi.fn(),
+		navIndexMap: new Map(),
 		...overrides,
 	};
 }
@@ -509,6 +510,90 @@ describe('useCycleSession', () => {
 
 			expect(useSessionStore.getState().activeSessionId).toBe('b');
 			expect(useSessionStore.getState().cyclePosition).toBe(1);
+		});
+	});
+
+	// =========================================================================
+	// Highlight tracks the EXACT occurrence (bookmarked-agent jump-up bug)
+	// =========================================================================
+	describe('selectedSidebarIndex tracks the cycled occurrence', () => {
+		it('lands on a bookmarked agent group row without snapping to its bookmark row', () => {
+			// 'b' is bookmarked AND in a group, so it appears twice in the sidebar:
+			// bookmark row (top) and group row (below). Cycling onto the GROUP row must
+			// highlight the group row, not jump the highlight up to the bookmark row.
+			const grp = makeGroup('grp-1', 'Group', false);
+			const sessA = makeSession({ id: 'a', name: 'Alpha', groupId: 'grp-1' });
+			const sessB = makeSession({ id: 'b', name: 'Beta', bookmarked: true, groupId: 'grp-1' });
+
+			useSessionStore.setState({
+				sessions: [sessA, sessB],
+				groups: [grp],
+				activeSessionId: 'a',
+				cyclePosition: -1,
+			} as any);
+			useUIStore.setState({
+				leftSidebarOpen: true,
+				bookmarksCollapsed: false,
+				selectedSidebarIndex: 0,
+				sidebarExtraSelection: null,
+			} as any);
+			useSettingsStore.setState({ groupChatsExpanded: false, ungroupedCollapsed: false } as any);
+
+			// navIndexMap: bookmark row for 'b' at 0, then group rows Alpha=1, Beta=2.
+			const navIndexMap = new Map<string, number>([
+				['bookmark:b', 0],
+				['group:grp-1:a', 1],
+				['group:grp-1:b', 2],
+			]);
+			const deps = makeDeps({ navIndexMap });
+			const { result } = renderHook(() => useCycleSession(deps));
+
+			// Visual order: [bookmark Beta(0), group Alpha(1), group Beta(2)].
+			// Active Alpha → first session occurrence is group Alpha(1). next → group Beta(2).
+			act(() => {
+				result.current.cycleSession('next');
+			});
+
+			expect(useSessionStore.getState().activeSessionId).toBe('b');
+			// Highlight must be the GROUP occurrence (navIndex 2), NOT the bookmark row (0).
+			expect(useUIStore.getState().selectedSidebarIndex).toBe(2);
+		});
+
+		it('highlights the bookmark row when cycling through the bookmarks section', () => {
+			const sessA = makeSession({ id: 'a', name: 'Alpha' });
+			const sessB = makeSession({ id: 'b', name: 'Beta', bookmarked: true });
+
+			useSessionStore.setState({
+				sessions: [sessA, sessB],
+				activeSessionId: 'a',
+				cyclePosition: -1,
+			} as any);
+			useUIStore.setState({
+				leftSidebarOpen: true,
+				bookmarksCollapsed: false,
+				selectedSidebarIndex: -1,
+				sidebarExtraSelection: null,
+			} as any);
+			useSettingsStore.setState({ groupChatsExpanded: false, ungroupedCollapsed: false } as any);
+
+			// bookmark Beta=0, ungrouped Alpha=1, ungrouped Beta=2
+			const navIndexMap = new Map<string, number>([
+				['bookmark:b', 0],
+				['ungrouped:a', 1],
+				['ungrouped:b', 2],
+			]);
+			const deps = makeDeps({ navIndexMap });
+			const { result } = renderHook(() => useCycleSession(deps));
+
+			// Visual order: [bookmark Beta(0), Alpha(1), Beta(2)]. Active Alpha is at
+			// visual index 1; prev → bookmark Beta(0).
+			act(() => {
+				result.current.cycleSession('prev');
+			});
+
+			expect(useSessionStore.getState().activeSessionId).toBe('b');
+			// Bookmark occurrence highlighted (navIndex 0).
+			expect(useUIStore.getState().selectedSidebarIndex).toBe(0);
 		});
 	});
 

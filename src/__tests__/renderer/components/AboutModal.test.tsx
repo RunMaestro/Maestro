@@ -1006,8 +1006,12 @@ describe('AboutModal', () => {
 			const modalCard = dialog.querySelector('div > div') as HTMLElement;
 			expect(modalCard).toBeInTheDocument();
 
-			// Modal applies a fixed pixel width as an inline style on the card element.
-			const widthPx = parseInt(modalCard.style.width, 10);
+			// Modal applies its baseline width as an inline style on the card element.
+			// The width now scales with the font setting, so the value is a
+			// `min(calc(<baseline>px * var(--font-scale, 1)), 95vw)` expression rather
+			// than a bare pixel value - extract the baseline px to assert against.
+			const baselineMatch = modalCard.style.width.match(/(\d+)px/);
+			const widthPx = baselineMatch ? parseInt(baselineMatch[1], 10) : NaN;
 			expect(widthPx).toBeGreaterThanOrEqual(MIN_MODAL_WIDTH);
 		});
 	});

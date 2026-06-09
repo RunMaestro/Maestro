@@ -271,7 +271,7 @@ describe('ShortcutsHelpModal', () => {
 					<ShortcutsHelpModal theme={mockTheme} shortcuts={mockShortcuts} onClose={mockOnClose} />
 				</TestWrapper>
 			);
-			const modalContent = container.querySelector('[style*="width: 400px"]');
+			const modalContent = container.querySelector('[style*="width: min(calc(400px"]');
 			expect(modalContent).toHaveStyle({
 				backgroundColor: mockTheme.colors.bgSidebar,
 				borderColor: mockTheme.colors.border,
@@ -348,7 +348,7 @@ describe('ShortcutsHelpModal', () => {
 			expect(backdrop).toBeInTheDocument();
 
 			// Check dialog width (Modal component uses inline style instead of Tailwind class)
-			const dialogBox = container.querySelector('[style*="width: 400px"]');
+			const dialogBox = container.querySelector('[style*="width: min(calc(400px"]');
 			expect(dialogBox).toBeInTheDocument();
 		});
 

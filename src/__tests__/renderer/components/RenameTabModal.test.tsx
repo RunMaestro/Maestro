@@ -335,7 +335,7 @@ describe('RenameTabModal', () => {
 			);
 
 			// Modal component uses inline style for width instead of Tailwind class
-			const modalBox = container.querySelector('[style*="width: 400px"]');
+			const modalBox = container.querySelector('[style*="width: min(calc(400px"]');
 			expect(modalBox).toHaveStyle({
 				backgroundColor: mockTheme.colors.bgSidebar,
 				borderColor: mockTheme.colors.border,
@@ -448,7 +448,7 @@ describe('RenameTabModal', () => {
 			);
 
 			// Modal component uses inline style for width instead of Tailwind class
-			const modalBox = container.querySelector('[style*="width: 400px"]');
+			const modalBox = container.querySelector('[style*="width: min(calc(400px"]');
 			expect(modalBox).toBeInTheDocument();
 		});
 	});

@@ -229,6 +229,7 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 			onClose={onClose}
 			customHeader={customHeader}
 			width={1250}
+			maxWidthCss="50vw"
 			maxHeight="80vh"
 		>
 			<div className="space-y-4 -my-2">

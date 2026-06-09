@@ -453,6 +453,75 @@ describe('useKeyboardNavigation', () => {
 
 			expect(setSelectedSidebarIndex).toHaveBeenCalledWith(1);
 		});
+
+		it('stays on the cycled occurrence when the index already points at the active session', () => {
+			// A bookmarked agent appears twice in navSessions: the bookmark row (top)
+			// and its group/ungrouped row below. Cycling onto the lower occurrence sets
+			// selectedSidebarIndex to that row. The sync effect must NOT snap the
+			// highlight back up to the first (bookmark) occurrence - that was the
+			// panel-jump bug.
+			const sessionA = createMockSession({ id: 'a' });
+			const sessionB = createMockSession({ id: 'b', bookmarked: true });
+			const setSelectedSidebarIndex = vi.fn();
+			// navSessions: bookmark B (0), group A (1), group B (2). 'b' occurs at 0 and 2.
+			const deps = createMockDeps({
+				sortedSessions: [sessionA, sessionB],
+				navSessions: [sessionB, sessionA, sessionB],
+				activeSessionId: 'a',
+				selectedSidebarIndex: 1,
+				setSelectedSidebarIndex,
+			});
+
+			const { rerender } = renderHook(
+				({ activeSessionId, selectedSidebarIndex }) =>
+					useKeyboardNavigation({ ...deps, activeSessionId, selectedSidebarIndex }),
+				{ initialProps: { activeSessionId: 'a', selectedSidebarIndex: 1 } }
+			);
+			setSelectedSidebarIndex.mockClear();
+
+			// Cycle lands on the GROUP occurrence of B (index 2): both the active
+			// session and the index move together.
+			act(() => {
+				rerender({ activeSessionId: 'b', selectedSidebarIndex: 2 });
+			});
+
+			// Index already points at an occurrence of 'b' (navSessions[2]), so the
+			// effect bails - the highlight is NOT dragged to the bookmark row (0).
+			expect(setSelectedSidebarIndex).not.toHaveBeenCalled();
+		});
+
+		it('re-resolves to the first occurrence when the current index is stale', () => {
+			// When the index does NOT already point at the active session, the effect
+			// falls back to findIndex (first occurrence). For a bookmarked agent that
+			// is its bookmark row at the top.
+			const sessionA = createMockSession({ id: 'a' });
+			const sessionB = createMockSession({ id: 'b', bookmarked: true });
+			const setSelectedSidebarIndex = vi.fn();
+			// navSessions: bookmark B (0), group A (1), group B (2).
+			const deps = createMockDeps({
+				sortedSessions: [sessionA, sessionB],
+				navSessions: [sessionB, sessionA, sessionB],
+				activeSessionId: 'a',
+				selectedSidebarIndex: 1,
+				setSelectedSidebarIndex,
+			});
+
+			const { rerender } = renderHook(
+				({ activeSessionId, selectedSidebarIndex }) =>
+					useKeyboardNavigation({ ...deps, activeSessionId, selectedSidebarIndex }),
+				{ initialProps: { activeSessionId: 'a', selectedSidebarIndex: 1 } }
+			);
+			setSelectedSidebarIndex.mockClear();
+
+			// Active jumps to 'b' but the index stays at 1 (still pointing at A) - e.g.
+			// an external jump that did not pre-set the index.
+			act(() => {
+				rerender({ activeSessionId: 'b', selectedSidebarIndex: 1 });
+			});
+
+			// Stale index → re-resolve to the first 'b' occurrence (bookmark row, 0).
+			expect(setSelectedSidebarIndex).toHaveBeenCalledWith(0);
+		});
 	});
 
 	describe('starred + group chat sidebar navigation', () => {

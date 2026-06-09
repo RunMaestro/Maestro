@@ -36,6 +36,13 @@ export interface UseCycleSessionDeps {
 	starredItems: StarredItem[];
 	/** Activate a starred row (focus its tab, or resume a closed session). */
 	activateStarredItem: (item: StarredItem) => void | Promise<void>;
+	/**
+	 * Maps a render-context navKey (`bookmark:{id}`, `group:{gid}:{id}`,
+	 * `ungrouped:{id}`, plus `:wt:` child variants) to its index in navSessions.
+	 * Lets cycling highlight the EXACT occurrence it landed on (e.g. a bookmarked
+	 * agent's group row) instead of the first navSessions occurrence.
+	 */
+	navIndexMap: Map<string, number>;
 }
 
 // ============================================================================
@@ -52,7 +59,8 @@ export interface UseCycleSessionReturn {
 // ============================================================================
 
 export function useCycleSession(deps: UseCycleSessionDeps): UseCycleSessionReturn {
-	const { sortedSessions, handleOpenGroupChat, starredItems, activateStarredItem } = deps;
+	const { sortedSessions, handleOpenGroupChat, starredItems, activateStarredItem, navIndexMap } =
+		deps;
 
 	// --- Reactive subscriptions ---
 	const sessions = useSessionStore((s) => s.sessions);
@@ -68,7 +76,7 @@ export function useCycleSession(deps: UseCycleSessionDeps): UseCycleSessionRetur
 	// --- Store actions (stable via getState) ---
 	const { setActiveSessionIdInternal, setCyclePosition } = useSessionStore.getState();
 	const { setActiveGroupChatId } = useGroupChatStore.getState();
-	const { setSidebarExtraSelection } = useUIStore.getState();
+	const { setSidebarExtraSelection, setSelectedSidebarIndex } = useUIStore.getState();
 
 	// --- Settings ---
 	const ungroupedCollapsed = useSettingsStore((s) => s.ungroupedCollapsed);
@@ -95,8 +103,14 @@ export function useCycleSession(deps: UseCycleSessionDeps): UseCycleSessionRetur
 			// location. cyclePosition keeps the two occurrences distinct.
 
 			// Visual order item can be a session, a group chat, or a starred row.
+			// `navKey` on session entries maps the entry to its exact row in
+			// navSessions (via navIndexMap), so activating it can highlight/scroll the
+			// SAME occurrence the cycle landed on. Without it the render falls back to
+			// navSessions.findIndex (first occurrence), which for a bookmarked agent is
+			// its bookmark row at the top - making the panel jump up when you cycle onto
+			// the agent's group/ungrouped occurrence below.
 			type VisualOrderItem =
-				| { type: 'session'; id: string; name: string }
+				| { type: 'session'; id: string; name: string; navKey: string }
 				| { type: 'groupChat'; id: string; name: string }
 				| { type: 'starred'; id: string; name: string; starredKey: string };
 
@@ -112,8 +126,11 @@ export function useCycleSession(deps: UseCycleSessionDeps): UseCycleSessionRetur
 					.filter((s) => s.parentSessionId === parentId)
 					.sort((a, b) => compareNamesIgnoringEmojis(a.name, b.name));
 
-			// Helper to add session with its worktree children to visual order
-			const addSessionWithWorktrees = (session: Session) => {
+			// Helper to add session with its worktree children to visual order.
+			// keyPrefix selects the navIndexMap namespace for this occurrence
+			// ('bookmark' | `group:${groupId}` | 'ungrouped'), matching the keys built
+			// in useSortedSessions.
+			const addSessionWithWorktrees = (session: Session, keyPrefix: string) => {
 				// Skip worktree children - they're added with their parent
 				if (session.parentSessionId) return;
 
@@ -121,6 +138,7 @@ export function useCycleSession(deps: UseCycleSessionDeps): UseCycleSessionRetur
 					type: 'session' as const,
 					id: session.id,
 					name: session.name,
+					navKey: `${keyPrefix}:${session.id}`,
 				});
 
 				// Add worktree children if expanded
@@ -131,6 +149,7 @@ export function useCycleSession(deps: UseCycleSessionDeps): UseCycleSessionRetur
 							type: 'session' as const,
 							id: s.id,
 							name: s.name,
+							navKey: `${keyPrefix}:wt:${s.id}`,
 						}))
 					);
 				}
@@ -157,7 +176,7 @@ export function useCycleSession(deps: UseCycleSessionDeps): UseCycleSessionRetur
 					const bookmarkedSessions = sessions
 						.filter((s) => s.bookmarked && !s.parentSessionId)
 						.sort((a, b) => compareNamesIgnoringEmojis(a.name, b.name));
-					bookmarkedSessions.forEach(addSessionWithWorktrees);
+					bookmarkedSessions.forEach((s) => addSessionWithWorktrees(s, 'bookmark'));
 				}
 
 				// Groups (sorted alphabetically), with each group's sessions
@@ -167,7 +186,7 @@ export function useCycleSession(deps: UseCycleSessionDeps): UseCycleSessionRetur
 						const groupSessions = sessions
 							.filter((s) => s.groupId === group.id && !s.parentSessionId)
 							.sort((a, b) => compareNamesIgnoringEmojis(a.name, b.name));
-						groupSessions.forEach(addSessionWithWorktrees);
+						groupSessions.forEach((s) => addSessionWithWorktrees(s, `group:${group.id}`));
 					}
 				}
 
@@ -176,7 +195,7 @@ export function useCycleSession(deps: UseCycleSessionDeps): UseCycleSessionRetur
 					const ungroupedSessions = sessions
 						.filter((s) => !s.groupId && !s.parentSessionId)
 						.sort((a, b) => compareNamesIgnoringEmojis(a.name, b.name));
-					ungroupedSessions.forEach(addSessionWithWorktrees);
+					ungroupedSessions.forEach((s) => addSessionWithWorktrees(s, 'ungrouped'));
 				}
 
 				// Group Chats section (if expanded and has non-archived group chats)
@@ -194,12 +213,15 @@ export function useCycleSession(deps: UseCycleSessionDeps): UseCycleSessionRetur
 					);
 				}
 			} else {
-				// Sidebar collapsed: cycle through all sessions in their sorted order
+				// Sidebar collapsed: cycle through all sessions in their sorted order.
+				// No expanded list is rendered, so the navKey is unused here (left empty
+				// - it won't resolve in navIndexMap and activation skips the highlight set).
 				visualOrder.push(
 					...sortedSessions.map((s) => ({
 						type: 'session' as const,
 						id: s.id,
 						name: s.name,
+						navKey: '',
 					}))
 				);
 			}
@@ -279,6 +301,11 @@ export function useCycleSession(deps: UseCycleSessionDeps): UseCycleSessionRetur
 					// Landing on a plain agent clears the non-agent cursor so the agent's
 					// own active highlight is the sole indicator.
 					setSidebarExtraSelection(null);
+					// Highlight + auto-scroll the EXACT occurrence we landed on (e.g. a
+					// bookmarked agent's group row), not the first navSessions occurrence
+					// the sync effect would otherwise pick (its bookmark row up top).
+					const navIdx = navIndexMap.get(item.navKey);
+					if (navIdx !== undefined) setSelectedSidebarIndex(navIdx);
 					setActiveSessionIdInternal(item.id);
 				} else if (item.type === 'starred') {
 					const starred = starredItems.find((s) => s.key === item.starredKey);
@@ -332,6 +359,7 @@ export function useCycleSession(deps: UseCycleSessionDeps): UseCycleSessionRetur
 			starredSectionCollapsed,
 			starredItems,
 			activateStarredItem,
+			navIndexMap,
 		]
 	);
 

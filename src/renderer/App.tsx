@@ -1844,6 +1844,7 @@ function MaestroConsoleInner() {
 		handleOpenGroupChat,
 		starredItems,
 		activateStarredItem,
+		navIndexMap,
 	});
 
 	// --- KEYBOARD NAVIGATION ---

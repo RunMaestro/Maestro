@@ -240,7 +240,7 @@ describe('AutoRunnerHelpModal', () => {
 			render(<AutoRunnerHelpModal theme={mockTheme} onClose={mockOnClose} />);
 
 			// Modal component uses inline width style
-			const modal = document.querySelector('[style*="width: 1008px"]');
+			const modal = document.querySelector('[style*="width: min(calc(1008px"]');
 			expect(modal).toHaveStyle({ backgroundColor: mockTheme.colors.bgSidebar });
 		});
 
@@ -445,7 +445,7 @@ describe('AutoRunnerHelpModal', () => {
 			render(<AutoRunnerHelpModal theme={mockTheme} onClose={mockOnClose} />);
 
 			// Modal component uses inline width style
-			const modal = document.querySelector('[style*="width: 1008px"]');
+			const modal = document.querySelector('[style*="width: min(calc(1008px"]');
 			expect(modal).toBeInTheDocument();
 		});
 

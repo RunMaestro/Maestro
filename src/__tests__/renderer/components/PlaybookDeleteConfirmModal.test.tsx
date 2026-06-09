@@ -250,7 +250,7 @@ describe('PlaybookDeleteConfirmModal', () => {
 			);
 
 			// Modal component uses inline width style instead of Tailwind class
-			const modalBox = container.querySelector('[style*="width: 400px"]');
+			const modalBox = container.querySelector('[style*="width: min(calc(400px"]');
 			expect(modalBox).toHaveStyle({
 				backgroundColor: mockTheme.colors.bgSidebar,
 				borderColor: mockTheme.colors.border,
@@ -385,7 +385,7 @@ describe('PlaybookDeleteConfirmModal', () => {
 			);
 
 			// Modal component uses inline width style instead of Tailwind class
-			const modalBox = container.querySelector('[style*="width: 400px"]');
+			const modalBox = container.querySelector('[style*="width: min(calc(400px"]');
 			expect(modalBox).toBeInTheDocument();
 		});
 	});

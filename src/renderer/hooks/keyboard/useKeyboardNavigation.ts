@@ -620,8 +620,17 @@ export function useKeyboardNavigation(
 	// parent and clear the starred highlight the cycle just set. The public
 	// setActiveSessionId (clicks/external jumps) clears the extra cursor itself, so
 	// by the time this runs for a genuine agent activation it is already null.
+	//
+	// Sticky: if the current index already points to an occurrence of the active
+	// session, keep it. A bookmarked agent appears twice in navSessions (bookmark
+	// row + group/ungrouped row); the cycle/arrow nav may have intentionally landed
+	// on the lower one. findIndex would always snap back to the first (bookmark)
+	// occurrence, making the panel jump up - so only re-resolve when the current
+	// index is stale.
 	useEffect(() => {
 		if (sidebarExtraSelectionRef.current) return;
+		const cur = selectedSidebarIndexRef.current;
+		if (cur >= 0 && navSessions[cur]?.id === activeSessionId) return;
 		const currentIndex = navSessions.findIndex((s) => s.id === activeSessionId);
 		if (currentIndex !== -1) {
 			setSelectedSidebarIndex(currentIndex);
