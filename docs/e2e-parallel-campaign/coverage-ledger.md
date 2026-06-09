@@ -2,9 +2,9 @@
 
 Source of truth: `docs/e2e-coverage-campaign.md`.
 
-Current active tests: 1281
+Current active tests: 1343
 Target active tests: 3,025
-Remaining matrix-backed active scenarios: 1,744
+Remaining matrix-backed active scenarios: 1,682
 
 ## Matrix
 
@@ -29,7 +29,7 @@ Remaining matrix-backed active scenarios: 1,744
 | Symphony, leaderboard, achievements                            | `stats-graph-symphony`    |             23 |           120 |        97 |
 | Director notes and prompt composer                             | `wizard-settings-prompts` |             30 |            90 |        60 |
 | Debug/about/update/app info/agent error modals                 | `debug-accessibility`     |             85 |            85 |         0 |
-| Mobile/web bridge                                              | `mobile-web-bridge`       |            128 |           190 |        62 |
+| Mobile/web bridge                                              | `mobile-web-bridge`       |            190 |           190 |         0 |
 | Accessibility smoke and destructive-action confirmations       | `debug-accessibility`     |             79 |           130 |        51 |
 
 ## Lane Totals
@@ -44,7 +44,7 @@ Remaining matrix-backed active scenarios: 1,744
 | `git-groupchat-playbooks`  |                     303 |                        60 |                                    7 | `e8ac2eddf`          |
 | `stats-graph-symphony`     |                     284 |                        52 |                                    6 | `057ced8e3`          |
 | `debug-accessibility`      |                      51 |                       141 |                                    0 | `cd485eda6`          |
-| `mobile-web-bridge`        |                      62 |                        40 |                                    0 | `958f07ff4`          |
+| `mobile-web-bridge`        |                       0 |                       102 |                                    0 | `33a5ace5f`          |
 | `fixtures-sharding-review` |                       0 |                         0 |                                    0 | `392c4527`           |
 
 ## Merge Log
@@ -147,3 +147,5 @@ Remaining matrix-backed active scenarios: 1,744
 - 2026-06-08: accepted manual `git-groupchat-playbooks` fallback through `e8ac2eddf`; authored 10 additional active Gist publish/republish, Git Log Escape-close, Playbook Exchange import-failure, Spec Kit/OpenSpec save/reset, and source-link shell-routing scenarios. Focused static review found no critical or high issues. No E2E execution was run.
 - 2026-06-08: accepted manual `mobile-web-bridge` fallback through `958f07ff4`; authored 24 additional active live bridge API, lifecycle metadata, REST API metadata, and static PWA route metadata scenarios. Focused static review found no critical or high issues; one lane-doc range note was corrected before commit. No E2E execution was run.
 - 2026-06-08: accepted manual `stats-graph-symphony` fallback through `057ced8e3`; authored 25 additional active Usage Dashboard export/preflight, Document Graph search/layout/help, and Symphony active/history/navigation scenarios. Focused static review found no critical or high issues. No E2E execution was run.
+- 2026-06-08: accepted manual `mobile-web-bridge` quota-completion fallback through `edd832da5`; authored 62 additional active mobile route, REST/session metadata, WebSocket resilience, interaction, serializer, metadata-control, history-grouping, and session metadata scenarios. Follow-up static review found the `projectDirTwo` acceptance blocker, which was corrected by `33a5ace5f`. No E2E execution was run.
+- 2026-06-08: accepted manual `mobile-web-bridge` quota acceptance fix through `33a5ace5f`; exposed the secondary project directory from the mobile workbench so accepted history and metadata scenarios no longer dereference undefined. No scenarios were added; the lane remains 190 / 190. No E2E execution was run.

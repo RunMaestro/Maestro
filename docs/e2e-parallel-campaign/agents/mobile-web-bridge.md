@@ -1,6 +1,6 @@
 # mobile-web-bridge
 
-Status: seventh static PWA route fallback tranche accepted by orchestrator through `958f07ff4`
+Status: quota reached at 190 / 190 and accepted by orchestrator through `33a5ace5f`; quota acceptance blocker fixed.
 
 ## Scope
 
@@ -15,6 +15,310 @@ Mobile/web bridge only.
 - [x] Commit lane work on `codex/e2e-mobile-web-bridge`.
 
 ## Progress
+
+### 2026-06-08 quota acceptance blocker fix
+
+- Commit: `33a5ace5f`
+- Active scenarios authored: 0
+- Skipped/env-gated scenarios authored: 0
+- Files touched:
+  - `e2e/web-mobile.spec.ts`
+- Fix:
+  - Exposed `projectDirTwo` from `createWebMobileWorkbench()` so secondary-project history and metadata scenarios no longer read an undefined workbench field.
+- Checks run:
+  - `npx prettier --check e2e/web-mobile.spec.ts`
+  - `npx eslint e2e/web-mobile.spec.ts`
+  - `npx tsc -p tsconfig.lint.json --noEmit --pretty false`
+  - `git diff --check -- e2e/web-mobile.spec.ts`
+  - Static spec inventory scan: 190 unique `web-mobile.spec.ts` test names, 0 duplicate names, 0 `.only`, 0 `.skip`/`.fixme`, and 0 prohibited E2E command strings.
+  - Focused code-reviewer static review found no critical/high issues.
+- Remaining lane target:
+  - 0 active scenarios remain; mobile-web-bridge remains at its 190-active-scenario matrix-backed quota.
+- Blockers and limitations:
+  - No Playwright/E2E execution or `--list` command was run by campaign rule.
+  - No new scenarios were added.
+
+### 2026-06-08 seventeenth mobile session metadata tranche
+
+- Commit: `3039b671e`
+- Active scenarios authored: 8
+- Skipped/env-gated scenarios authored: 0
+- Files touched:
+  - `e2e/web-mobile.spec.ts`
+  - `docs/e2e-parallel-campaign/agents/mobile-web-bridge.md`
+  - `docs/e2e-parallel-campaign/coverage-ledger.md`
+  - `docs/e2e-coverage-campaign.md`
+- Active coverage IDs:
+  - Mobile session info popover shows ready AI session metadata.
+  - Mobile session info popover shows terminal session metadata.
+  - Mobile session info popover shows busy session metadata.
+  - Mobile session info popover shows connecting session metadata.
+  - Mobile session info popover shows error session metadata.
+  - Mobile session summaries omit desktop-only session fields.
+  - Mobile session details omit desktop-only session fields.
+  - Mobile session summaries omit raw transcript arrays.
+- Checks run:
+  - `npx prettier --write e2e/web-mobile.spec.ts`
+  - `npx eslint e2e/web-mobile.spec.ts`
+  - `git diff --check -- e2e/web-mobile.spec.ts`
+  - Duplicate scenario-name scan: 190 unique `web-mobile.spec.ts` test names.
+  - Orchestrator-status untouched guard.
+  - `npx tsc -p tsconfig.lint.json --noEmit --pretty false` passed with 0 diagnostics.
+  - Focused code-reviewer checklist review found no critical/high issues.
+- Remaining lane target:
+  - 0 active scenarios remain; mobile-web-bridge reached its 190-active-scenario matrix-backed quota.
+- Blockers and limitations:
+  - No Playwright/E2E execution or `--list` command was run by campaign rule.
+  - Shared helpers were not edited; `docs/e2e-parallel-campaign/broadcasts.md` was not updated.
+
+### 2026-06-08 sixteenth mobile history grouping tranche
+
+- Commit: `da4601a0d`
+- Active scenarios authored: 6
+- Skipped/env-gated scenarios authored: 0
+- Files touched:
+  - `e2e/web-mobile.spec.ts`
+  - `docs/e2e-parallel-campaign/agents/mobile-web-bridge.md`
+  - `docs/e2e-parallel-campaign/coverage-ledger.md`
+  - `docs/e2e-coverage-campaign.md`
+- Active coverage IDs:
+  - Mobile All Agents keeps the Bookmarks group expanded while regular groups start collapsed.
+  - Mobile All Agents expands the Ungrouped group and selects a busy agent from it.
+  - Token history API returns encoded project paths containing spaces.
+  - Global token history merges multiple session-history files and keeps newest-first ordering.
+  - Token history API returns secondary-session entries from an independent session file.
+  - Project-filtered token history includes matching entries across multiple session files.
+- Checks run:
+  - `npx prettier --write e2e/web-mobile.spec.ts`
+  - `npx eslint e2e/web-mobile.spec.ts`
+  - `git diff --check -- e2e/web-mobile.spec.ts`
+  - Duplicate scenario-name scan: 182 unique `web-mobile.spec.ts` test names.
+  - Orchestrator-status untouched guard.
+  - `npx tsc -p tsconfig.lint.json --noEmit --pretty false` passed with 0 diagnostics.
+  - Focused code-reviewer checklist review found no critical/high issues.
+- Remaining lane target:
+  - About 8 active scenarios remain from the matrix-backed mobile/web bridge lane target.
+- Blockers and limitations:
+  - No Playwright/E2E execution or `--list` command was run by campaign rule.
+  - Shared helpers were not edited; `docs/e2e-parallel-campaign/broadcasts.md` was not updated.
+
+### 2026-06-08 fifteenth mobile metadata controls tranche
+
+- Commit: `6ba282094`
+- Active scenarios authored: 6
+- Skipped/env-gated scenarios authored: 0
+- Files touched:
+  - `e2e/web-mobile.spec.ts`
+  - `docs/e2e-parallel-campaign/agents/mobile-web-bridge.md`
+  - `docs/e2e-parallel-campaign/coverage-ledger.md`
+  - `docs/e2e-coverage-campaign.md`
+- Active coverage IDs:
+  - Mobile All Agents regular groups start collapsed and toggle `aria-expanded` states.
+  - Mobile All Agents search auto-expands collapsed groups that contain matching sessions.
+  - Session summaries expose busy-session and busy-tab thinking metadata.
+  - Session detail payloads preserve git-repository and usage metadata.
+  - Session summaries return web-safe AI tab drafts, state, timestamps, and thinking metadata without logs.
+  - Session summary response previews stay scoped to the stored active tab when inactive tabs have newer output.
+- Checks run:
+  - `npx prettier --write e2e/web-mobile.spec.ts`
+  - `npx eslint e2e/web-mobile.spec.ts`
+  - `git diff --check -- e2e/web-mobile.spec.ts`
+  - Duplicate scenario-name scan: 176 unique `web-mobile.spec.ts` test names.
+  - Orchestrator-status untouched guard.
+  - `npx tsc -p tsconfig.lint.json --noEmit --pretty false` passed with 0 diagnostics.
+  - Focused code-reviewer checklist review corrected one strict-mode group locator issue; no remaining critical/high issues.
+- Remaining lane target:
+  - About 14 active scenarios remain from the matrix-backed mobile/web bridge lane target.
+- Blockers and limitations:
+  - No Playwright/E2E execution or `--list` command was run by campaign rule.
+  - Shared helpers were not edited; `docs/e2e-parallel-campaign/broadcasts.md` was not updated.
+
+### 2026-06-08 fourteenth mobile serializer fallback tranche
+
+- Commit: `d441e999c`
+- Active scenarios authored: 6
+- Skipped/env-gated scenarios authored: 0
+- Files touched:
+  - `e2e/web-mobile.spec.ts`
+  - `docs/e2e-parallel-campaign/agents/mobile-web-bridge.md`
+  - `docs/e2e-parallel-campaign/coverage-ledger.md`
+  - `docs/e2e-coverage-campaign.md`
+- Active coverage IDs:
+  - Mobile All Agents overlay closes from the Escape key and returns to the active transcript.
+  - Mobile History list closes from the Escape key before a detail entry is selected.
+  - Session summaries use stderr output as the latest mobile response preview.
+  - Session details include stderr transcript rows while continuing to hide thinking and tool rows.
+  - Session summaries preserve a stale stored active-tab id while falling back to first-tab preview logs.
+  - Default session details preserve a stale stored active-tab id while falling back to first-tab detail logs.
+- Checks run:
+  - `npx prettier --write e2e/web-mobile.spec.ts`
+  - `npx eslint e2e/web-mobile.spec.ts`
+  - `git diff --check -- e2e/web-mobile.spec.ts`
+  - Duplicate scenario-name scan: 170 unique `web-mobile.spec.ts` test names.
+  - Orchestrator-status untouched guard.
+  - `npx tsc -p tsconfig.lint.json --noEmit --pretty false` passed with 0 diagnostics.
+  - Focused code-reviewer checklist review found no critical/high issues.
+- Remaining lane target:
+  - About 20 active scenarios remain from the matrix-backed mobile/web bridge lane target.
+- Blockers and limitations:
+  - No Playwright/E2E execution or `--list` command was run by campaign rule.
+  - Shared helpers were not edited; `docs/e2e-parallel-campaign/broadcasts.md` was not updated.
+
+### 2026-06-08 thirteenth WebSocket resilience tranche
+
+- Commit: `33ad93578`
+- Active scenarios authored: 6
+- Skipped/env-gated scenarios authored: 0
+- Files touched:
+  - `e2e/web-mobile.spec.ts`
+  - `docs/e2e-parallel-campaign/agents/mobile-web-bridge.md`
+  - `docs/e2e-parallel-campaign/coverage-ledger.md`
+  - `docs/e2e-coverage-campaign.md`
+- Active coverage IDs:
+  - Initial mobile WebSocket handshake metadata includes timestamps and dashboard connection copy.
+  - Initial dashboard WebSocket session lists include all seeded sessions without stale live timestamps.
+  - Malformed WebSocket payloads return an error while keeping the connection usable for `ping`.
+  - Unknown WebSocket payloads return timestamped echo metadata with the original data.
+  - Live/offline WebSocket broadcasts include timestamp metadata.
+  - Desktop user-input broadcasts to subscribed mobile sockets include input mode and timestamp metadata.
+- Checks run:
+  - `npx prettier --write e2e/web-mobile.spec.ts`
+  - `npx eslint e2e/web-mobile.spec.ts`
+  - `git diff --check -- e2e/web-mobile.spec.ts`
+  - Duplicate scenario-name scan: 164 unique `web-mobile.spec.ts` test names.
+  - Orchestrator-status untouched guard.
+  - `npx tsc -p tsconfig.lint.json --noEmit --pretty false` passed with 0 diagnostics.
+  - Focused code-reviewer checklist review corrected one brittle `subscribedSessionId` assertion; no remaining critical/high issues.
+- Remaining lane target:
+  - About 26 active scenarios remain from the matrix-backed mobile/web bridge lane target.
+- Blockers and limitations:
+  - No Playwright/E2E execution or `--list` command was run by campaign rule.
+  - Shared helpers were not edited; `docs/e2e-parallel-campaign/broadcasts.md` was not updated.
+
+### 2026-06-08 twelfth mobile interaction tranche
+
+- Commit: `49f94b8c6`
+- Active scenarios authored: 6
+- Skipped/env-gated scenarios authored: 0
+- Files touched:
+  - `e2e/web-mobile.spec.ts`
+  - `docs/e2e-parallel-campaign/agents/mobile-web-bridge.md`
+  - `docs/e2e-parallel-campaign/coverage-ledger.md`
+  - `docs/e2e-coverage-campaign.md`
+- Active coverage IDs:
+  - Unsupported Web Speech API hides the mobile voice-input action while preserving other composer actions.
+  - Speech recognition errors exit listening state and preserve the current mobile AI draft.
+  - Voice transcripts append to an existing mobile AI draft with a separator.
+  - Mobile tab keyboard shortcuts wrap from first-to-last and last-to-first tabs.
+  - Mobile AI drafts stay isolated per active AI tab.
+  - Mobile history detail entries navigate through horizontal swipe gestures.
+- Checks run:
+  - `npx prettier --write e2e/web-mobile.spec.ts`
+  - `npx eslint e2e/web-mobile.spec.ts`
+  - `git diff --check -- e2e/web-mobile.spec.ts`
+  - Duplicate scenario-name scan: 158 unique `web-mobile.spec.ts` test names.
+  - Orchestrator-status untouched guard.
+  - `npx tsc -p tsconfig.lint.json --noEmit --pretty false` passed with 0 diagnostics.
+  - Focused code-reviewer checklist review found no critical/high issues.
+- Remaining lane target:
+  - About 32 active scenarios remain from the matrix-backed mobile/web bridge lane target.
+- Blockers and limitations:
+  - No Playwright/E2E execution or `--list` command was run by campaign rule.
+  - Shared helpers were not edited; `docs/e2e-parallel-campaign/broadcasts.md` was not updated.
+
+### 2026-06-08 eleventh WebSocket metadata tranche
+
+- Commit: `c29c8914d`
+- Active scenarios authored: 6
+- Skipped/env-gated scenarios authored: 0
+- Files touched:
+  - `e2e/web-mobile.spec.ts`
+  - `docs/e2e-parallel-campaign/agents/mobile-web-bridge.md`
+  - `docs/e2e-parallel-campaign/coverage-ledger.md`
+  - `docs/e2e-coverage-campaign.md`
+- Active coverage IDs:
+  - WebSocket `send_command` messages without a client input mode fall back to the session's terminal input mode.
+  - Empty WebSocket `rename_tab` payloads clear mobile tab names and persist the empty name.
+  - WebSocket `star_tab` payloads echo and persist explicit `false` starred state.
+  - WebSocket `get_sessions` reports offline sessions without stale `liveEnabledAt` timestamps after live toggle-off.
+  - Token detail and summary APIs stay stable for sessions without AI tabs.
+  - Mobile session summaries return `lastResponse: null` when the active tab has no stdout/stderr output logs.
+- Checks run:
+  - `npx prettier --write e2e/web-mobile.spec.ts`
+  - `npx eslint e2e/web-mobile.spec.ts`
+  - `git diff --check -- e2e/web-mobile.spec.ts`
+  - Duplicate scenario-name scan: 152 unique `web-mobile.spec.ts` test names.
+  - Orchestrator-status untouched guard.
+  - `npx tsc -p tsconfig.lint.json --noEmit --pretty false` passed with 0 diagnostics.
+  - Focused code-reviewer checklist review found no critical/high issues.
+- Remaining lane target:
+  - About 38 active scenarios remain from the matrix-backed mobile/web bridge lane target.
+- Blockers and limitations:
+  - No Playwright/E2E execution or `--list` command was run by campaign rule.
+  - Shared helpers were not edited; `docs/e2e-parallel-campaign/broadcasts.md` was not updated.
+
+### 2026-06-08 tenth route asset/token validation tranche
+
+- Commit: `16610b117`
+- Active scenarios authored: 6
+- Skipped/env-gated scenarios authored: 0
+- Files touched:
+  - `e2e/web-mobile.spec.ts`
+  - `docs/e2e-parallel-campaign/agents/mobile-web-bridge.md`
+  - `docs/e2e-parallel-campaign/coverage-ledger.md`
+  - `docs/e2e-coverage-campaign.md`
+- Active coverage IDs:
+  - Stale persistent mobile token nested routes reject API, bundle asset, and icon access after token replacement.
+  - Tokenized mobile bundle assets serve JavaScript content and untokened asset paths return 404.
+  - Missing tokenized mobile static assets return 404 for bundle and icon prefixes.
+  - Valid-token unknown API and session subroutes return 404 without redirecting.
+  - Mobile command payloads with missing `command` properties return timestamped bad-request metadata.
+  - Invalid persistent mobile tokens are replaced with UUID tokens before serving routes.
+- Checks run:
+  - `npx prettier --write e2e/web-mobile.spec.ts`
+  - `npx eslint e2e/web-mobile.spec.ts`
+  - `git diff --check -- e2e/web-mobile.spec.ts`
+  - Duplicate scenario-name scan: 146 unique `web-mobile.spec.ts` test names.
+  - `.only` / `.skip` / `.fixme` guard scan.
+  - Prohibited E2E runner/list command scan.
+  - Focused static review corrected one overlapping `sw.js` HTML rewrite scenario before commit; no remaining critical/high issues found.
+- Remaining lane target:
+  - About 44 active scenarios remain from the matrix-backed mobile/web bridge lane target.
+- Blockers and limitations:
+  - No Playwright/E2E execution or `--list` command was run by campaign rule.
+  - Shared helpers were not edited; `docs/e2e-parallel-campaign/broadcasts.md` was not updated.
+
+### 2026-06-08 ninth REST session metadata tranche
+
+- Commit: `4484b7573`
+- Active scenarios authored: 6
+- Skipped/env-gated scenarios authored: 0
+- Files touched:
+  - `e2e/web-mobile.spec.ts`
+  - `docs/e2e-parallel-campaign/agents/mobile-web-bridge.md`
+  - `docs/e2e-parallel-campaign/coverage-ledger.md`
+  - `docs/e2e-coverage-campaign.md`
+- Active coverage IDs:
+  - Terminal-mode session detail responses expose terminal input metadata and shell logs through token APIs.
+  - REST sessions payloads reflect desktop session-store additions without requiring a WebSocket refresh.
+  - History API requests prioritize session filters over mismatched project-path filters.
+  - Dashboard HTML rewrites built asset, manifest, and icon references to tokenized mobile routes.
+  - Session-detail REST payloads include live metadata after live toggles.
+  - Remaining tokenized mobile icon sizes serve PNG content.
+- Checks run:
+  - `npx prettier --write e2e/web-mobile.spec.ts`
+  - `npx eslint e2e/web-mobile.spec.ts`
+  - `git diff --check -- e2e/web-mobile.spec.ts`
+  - Duplicate scenario-name scan: 140 unique `web-mobile.spec.ts` test names.
+  - `.only` / `.skip` / `.fixme` guard scan.
+  - Prohibited E2E runner/list command scan.
+  - Targeted TypeScript diagnostic filter still exits nonzero on pre-existing baseline diagnostics outside this tranche; filtered new-line range `6400-6699` showed 0 diagnostics.
+  - Focused code-reviewer checklist review corrected one bad `sw.js` HTML assertion before commit; no remaining critical/high issues found.
+- Remaining lane target:
+  - About 50 active scenarios remain from the matrix-backed mobile/web bridge lane target.
+- Blockers and limitations:
+  - No Playwright/E2E execution or `--list` command was run by campaign rule.
+  - Shared helpers were not edited; `docs/e2e-parallel-campaign/broadcasts.md` was not updated.
 
 ### 2026-06-08 first bridge-contract tranche
 
@@ -94,6 +398,38 @@ Mobile/web bridge only.
   - Targeted TypeScript check using the main worktree compiler against this fallback worktree still exits nonzero on pre-existing baseline diagnostics (263 total outside this tranche); filtered new-line range `4838-5144` showed 0 diagnostics.
 - Remaining lane target:
   - About 86 active scenarios remain from the matrix-backed mobile/web bridge lane target.
+- Blockers and limitations:
+  - No Playwright/E2E execution or `--list` command was run by campaign rule.
+  - Shared helpers were not edited; `docs/e2e-parallel-campaign/broadcasts.md` was not updated.
+
+### 2026-06-08 eighth route edge metadata tranche
+
+- Commit: `4bb8e7a8e`
+- Active scenarios authored: 6
+- Skipped/env-gated scenarios authored: 0
+- Files touched:
+  - `e2e/web-mobile.spec.ts`
+  - `docs/e2e-parallel-campaign/agents/mobile-web-bridge.md`
+  - `docs/e2e-parallel-campaign/coverage-ledger.md`
+  - `docs/e2e-coverage-campaign.md`
+- Active coverage IDs:
+  - Default session-detail API responses preserve active tab metadata and active-tab transcript selection when no tab query is provided.
+  - Global mobile history API responses preserve count metadata and newest-first timestamp ordering.
+  - Invalid-token manifest and service-worker subroutes reject tokenized PWA asset access with 404s.
+  - Repeated live server starts reuse the already-running tokenized dashboard URL.
+  - Live session toggles can move an active mobile session offline without stopping the dashboard server.
+  - Missing-session mobile send API failures return timestamped internal-error metadata.
+- Checks run:
+  - `npx prettier --write e2e/web-mobile.spec.ts`
+  - `npx eslint e2e/web-mobile.spec.ts`
+  - `git diff --check -- e2e/web-mobile.spec.ts`
+  - Duplicate scenario-name scan: 134 unique `web-mobile.spec.ts` test names.
+  - `.only` / `.skip` / `.fixme` guard scan.
+  - Prohibited E2E runner/list command scan.
+  - Targeted TypeScript diagnostic filter still exits nonzero on pre-existing baseline diagnostics outside this tranche; filtered new-line range `6250-6420` showed 0 diagnostics.
+  - Focused code-reviewer checklist review of the spec diff found and corrected one bad interrupt-failure assumption; no remaining critical/high issues found.
+- Remaining lane target:
+  - About 56 active scenarios remain from the matrix-backed mobile/web bridge lane target.
 - Blockers and limitations:
   - No Playwright/E2E execution or `--list` command was run by campaign rule.
   - Shared helpers were not edited; `docs/e2e-parallel-campaign/broadcasts.md` was not updated.

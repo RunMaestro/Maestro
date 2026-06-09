@@ -11,10 +11,10 @@ Measured inventory:
 | Area                                      |                     Current Count |
 | ----------------------------------------- | --------------------------------: |
 | E2E spec files after recovery tranche     |                                15 |
-| Declared E2E tests after recovery tranche |                              1198 |
+| Declared E2E tests after recovery tranche |                              1260 |
 | Last pre-campaign full E2E result         |             91 passed, 49 skipped |
 | Latest full E2E validation                | 638 passed, 0 skipped (batch 202) |
-| Approx. authored active-target progress   |              42.3% (1281 / 3,025) |
+| Approx. authored active-target progress   |              44.4% (1343 / 3,025) |
 | Renderer component files                  |                               236 |
 | Renderer hook files                       |                               123 |
 | Renderer store files                      |                                11 |
@@ -30,7 +30,7 @@ Measured inventory:
 
 Latest authoring merge:
 
-- Seventy-sixth recovery fallback accepted `stats-graph-symphony` through `057ced8e3`. This added 25 active usage dashboard, document graph, and Symphony/leaderboard scenarios covering export and graph controls, dashboard preflight states, and Symphony navigation without running Playwright/E2E execution. No skipped or env-gated rows were added.
+- Seventy-eighth recovery fallback accepted the `mobile-web-bridge` quota acceptance fix through `33a5ace5f`. This added 0 active scenarios and exposed the secondary project directory from the mobile workbench so the accepted secondary-project history and metadata scenarios no longer dereference an undefined field. The lane remains complete at 190 / 190 without running Playwright/E2E execution.
 
 The current E2E suite now covers a meaningful Electron shell slice, but it is still far from deep app-wide coverage.
 
@@ -622,3 +622,5 @@ Continue high-ROI app-surface gaps that can be tested deterministically:
 - Validation: `npx prettier --check e2e/web-mobile.spec.ts`, `./node_modules/.bin/eslint e2e/web-mobile.spec.ts`, `npx tsc -p tsconfig.lint.json --noEmit --pretty false`, `git diff --check -- e2e/web-mobile.spec.ts`, static `.only`/duplicate-name/prohibited-command scans, and focused code-reviewer checklist review passed after correcting one lane-doc TypeScript range note. Playwright/E2E execution remained intentionally deferred. No `npm run test:e2e`, `playwright test`, headed/UI E2E, or `npx playwright test --list` was run.
 - 2026-06-08 parallel recovery tranche 76 fallback: accepted `stats-graph-symphony` through `057ced8e3`. Added 25 active matrix-backed Usage Dashboard export/preflight, Document Graph search/layout/help, and Symphony active/history/navigation scenarios after persistent-worker authoring. Declared static inventory is now 15 spec files and 1198 `test`/`test.skip` declarations.
 - Validation: `npx prettier --check e2e/stats-graph-symphony.spec.ts`, `./node_modules/.bin/eslint e2e/stats-graph-symphony.spec.ts`, `npx tsc -p tsconfig.lint.json --noEmit --pretty false`, `git diff --check -- e2e/stats-graph-symphony.spec.ts`, static `.only`/duplicate-name/prohibited-command scans, and focused code-reviewer checklist review passed. Playwright/E2E execution remained intentionally deferred. No `npm run test:e2e`, `playwright test`, headed/UI E2E, or `npx playwright test --list` was run.
+- 2026-06-08 parallel recovery tranche 77 fallback: accepted `mobile-web-bridge` through `edd832da5`. Added 62 active matrix-backed mobile route, REST/session metadata, WebSocket resilience, interaction, serializer, metadata-control, history-grouping, and session metadata scenarios after persistent-worker authoring. Declared static inventory is now 15 spec files and 1260 `test`/`test.skip` declarations.
+- Validation: initial static review later found an undefined `projectDirTwo` workbench field in accepted secondary-project history and metadata scenarios. Follow-up fix `33a5ace5f` exposed that field, then `npx prettier --check e2e/web-mobile.spec.ts`, `./node_modules/.bin/eslint e2e/web-mobile.spec.ts`, `npx tsc -p tsconfig.lint.json --noEmit --pretty false`, `git diff --check -- e2e/web-mobile.spec.ts`, static `.only`/duplicate-name/prohibited-command scans, and focused code-reviewer checklist review passed. Playwright/E2E execution remained intentionally deferred. No `npm run test:e2e`, `playwright test`, headed/UI E2E, or `npx playwright test --list` was run.

@@ -1,6 +1,6 @@
 # Parallel E2E Orchestrator Status
 
-Last updated: 2026-06-08 20:39 EDT
+Last updated: 2026-06-08 22:39 EDT
 
 ## Base
 
@@ -31,25 +31,25 @@ coverage and the shell-lane tab coverage.
 
 ## Lane State
 
-| Lane                       | Branch                               | Worktree                                         | PM2 process                                         | State                     | Notes                                           |
-| -------------------------- | ------------------------------------ | ------------------------------------------------ | --------------------------------------------------- | ------------------------- | ----------------------------------------------- |
-| `agent-crud-provider`      | `codex/e2e-agent-crud-provider`      | `Maestro-worktrees/e2e-agent-crud-provider`      | not relaunched                                      | complete                  | 104 active scenarios accepted; 0 remain         |
-| `shell-tabs-command`       | `codex/e2e-shell-tabs-command`       | `Maestro-worktrees/e2e-shell-tabs-command`       | `maestro-e2e-shell-tabs-command-campaign-goal`      | PM2 retry cycle after 503 | 81 active scenarios accepted; 185 remain        |
-| `files-docs-history`       | `codex/e2e-files-docs-history`       | `Maestro-worktrees/e2e-files-docs-history`       | `maestro-e2e-files-docs-history-campaign-goal`      | manual fallback accepted  | 42 active scenarios accepted; 307 remain        |
-| `autorun-ai-terminal`      | `codex/e2e-autorun-ai-terminal`      | `Maestro-worktrees/e2e-autorun-ai-terminal`      | `maestro-e2e-autorun-ai-terminal-campaign-goal`     | PM2 retry cycle after 503 | 10 active scenarios accepted; 263 remain        |
-| `wizard-settings-prompts`  | `codex/e2e-wizard-settings-prompts`  | `Maestro-worktrees/e2e-wizard-settings-prompts`  | `maestro-e2e-wizard-settings-prompts-campaign-goal` | manual fallback accepted  | 83 active scenarios accepted; 289 remain        |
-| `git-groupchat-playbooks`  | `codex/e2e-git-groupchat-playbooks`  | `Maestro-worktrees/e2e-git-groupchat-playbooks`  | `maestro-e2e-git-groupchat-playbooks-campaign-goal` | manual fallback accepted  | 60 active scenarios accepted; 303 remain        |
-| `stats-graph-symphony`     | `codex/e2e-stats-graph-symphony`     | `Maestro-worktrees/e2e-stats-graph-symphony`     | `maestro-e2e-stats-graph-symphony-campaign-goal`    | manual fallback accepted  | 52 active scenarios accepted; 284 remain        |
-| `debug-accessibility`      | `codex/e2e-debug-accessibility`      | `Maestro-worktrees/e2e-debug-accessibility`      | `maestro-e2e-debug-accessibility-campaign-goal`     | PM2 retry cycle after 503 | 141 active scenarios accepted; 51 remain        |
-| `mobile-web-bridge`        | `codex/e2e-mobile-web-bridge`        | `Maestro-worktrees/e2e-mobile-web-bridge`        | `maestro-e2e-mobile-web-bridge-campaign-goal`       | manual fallback accepted  | 40 active scenarios accepted; 62 remain         |
-| `fixtures-sharding-review` | `codex/e2e-fixtures-sharding-review` | `Maestro-worktrees/e2e-fixtures-sharding-review` | not relaunched                                      | support complete          | Support plan accepted; no active scenario quota |
+| Lane                       | Branch                               | Worktree                                         | PM2 process                                         | State                      | Notes                                           |
+| -------------------------- | ------------------------------------ | ------------------------------------------------ | --------------------------------------------------- | -------------------------- | ----------------------------------------------- |
+| `agent-crud-provider`      | `codex/e2e-agent-crud-provider`      | `Maestro-worktrees/e2e-agent-crud-provider`      | not relaunched                                      | complete                   | 104 active scenarios accepted; 0 remain         |
+| `shell-tabs-command`       | `codex/e2e-shell-tabs-command`       | `Maestro-worktrees/e2e-shell-tabs-command`       | `maestro-e2e-shell-tabs-command-campaign-goal`      | PM2 retry cycle after 503  | 81 active scenarios accepted; 185 remain        |
+| `files-docs-history`       | `codex/e2e-files-docs-history`       | `Maestro-worktrees/e2e-files-docs-history`       | `maestro-e2e-files-docs-history-campaign-goal`      | manual fallback accepted   | 42 active scenarios accepted; 307 remain        |
+| `autorun-ai-terminal`      | `codex/e2e-autorun-ai-terminal`      | `Maestro-worktrees/e2e-autorun-ai-terminal`      | `maestro-e2e-autorun-ai-terminal-campaign-goal`     | PM2 retry cycle after 503  | 10 active scenarios accepted; 263 remain        |
+| `wizard-settings-prompts`  | `codex/e2e-wizard-settings-prompts`  | `Maestro-worktrees/e2e-wizard-settings-prompts`  | `maestro-e2e-wizard-settings-prompts-campaign-goal` | manual fallback accepted   | 83 active scenarios accepted; 289 remain        |
+| `git-groupchat-playbooks`  | `codex/e2e-git-groupchat-playbooks`  | `Maestro-worktrees/e2e-git-groupchat-playbooks`  | `maestro-e2e-git-groupchat-playbooks-campaign-goal` | manual fallback accepted   | 60 active scenarios accepted; 303 remain        |
+| `stats-graph-symphony`     | `codex/e2e-stats-graph-symphony`     | `Maestro-worktrees/e2e-stats-graph-symphony`     | `maestro-e2e-stats-graph-symphony-campaign-goal`    | manual fallback accepted   | 52 active scenarios accepted; 284 remain        |
+| `debug-accessibility`      | `codex/e2e-debug-accessibility`      | `Maestro-worktrees/e2e-debug-accessibility`      | `maestro-e2e-debug-accessibility-campaign-goal`     | PM2 retry cycle after 503  | 141 active scenarios accepted; 51 remain        |
+| `mobile-web-bridge`        | `codex/e2e-mobile-web-bridge`        | `Maestro-worktrees/e2e-mobile-web-bridge`        | not relaunched                                      | complete after blocker fix | 102 active scenarios accepted; 0 remain         |
+| `fixtures-sharding-review` | `codex/e2e-fixtures-sharding-review` | `Maestro-worktrees/e2e-fixtures-sharding-review` | not relaunched                                      | support complete           | Support plan accepted; no active scenario quota |
 
 ## Merge Queue
 
 - `shell-tabs-command` merged through `44e98a94f`.
 - `agent-crud-provider` merged through `bb4fbcce2`.
 - `files-docs-history` merged through `18a4c3b29`.
-- `mobile-web-bridge` merged through `958f07ff4`.
+- `mobile-web-bridge` merged through `33a5ace5f`.
 - `autorun-ai-terminal` merged through `cd804bebf`.
 - `wizard-settings-prompts` merged through `c32a4e4d5`.
 - `stats-graph-symphony` merged through `057ced8e3`.
@@ -222,6 +222,18 @@ coverage and the shell-lane tab coverage.
   `057ced8e3` with 25 active Usage Dashboard export/preflight, Document Graph
   search/layout/help, and Symphony active/history/navigation scenarios. Focused
   static review found no critical or high issues. No E2E execution was run.
+- 2026-06-08 22:27 EDT: accepted manual `mobile-web-bridge` quota-completion
+  fallback through `edd832da5` with 62 active mobile route, REST/session metadata,
+  WebSocket resilience, interaction, serializer, metadata-control,
+  history-grouping, and session metadata scenarios. Follow-up static review found
+  the `projectDirTwo` acceptance blocker, corrected in `33a5ace5f`. No E2E execution was run. The lane is complete at
+  190/190 and should not be relaunched.
+- 2026-06-08 22:39 EDT: accepted manual `mobile-web-bridge` quota acceptance fix
+  through `33a5ace5f` with 0 added scenarios. This exposes the secondary project
+  directory from the mobile workbench so accepted history and metadata scenarios
+  no longer dereference undefined. Static Prettier, ESLint, TypeScript,
+  `git diff --check`, inventory scans, and focused review passed. No E2E execution
+  was run.
 
 ## Blockers
 
@@ -239,7 +251,9 @@ coverage and the shell-lane tab coverage.
   `git-groupchat-playbooks`, twenty-second `wizard-settings-prompts`,
   twenty-third `files-docs-history`, twenty-fourth through twenty-seventh
   `wizard-settings-prompts`, twenty-eighth `git-groupchat-playbooks`, and
-  twenty-ninth `mobile-web-bridge`, and thirtieth `stats-graph-symphony` fallbacks are accepted for selected
+  twenty-ninth `mobile-web-bridge`, thirtieth `stats-graph-symphony`, thirty-first
+  `mobile-web-bridge` quota-completion, and thirty-second `mobile-web-bridge`
+  quota acceptance fix fallbacks are accepted for selected
   high-remaining lanes. Remaining work should
   continue in smaller batches, with each run committing one coherent tranche and
   recording remaining work instead of trying to consume a full lane quota in one
