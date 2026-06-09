@@ -5568,6 +5568,288 @@ test.describe('App shell seeded workbench', () => {
 		await expect(window.getByText('terminal stderr sentinel')).toBeHidden();
 	});
 
+	test('restores command terminal transcript after clearing output search query', async () => {
+		await openSeededTerminalAgent(window);
+		await window.getByLabel('Terminal output').press('Control+f');
+
+		const searchInput = window.getByPlaceholder('Search output... (Esc to close)');
+		await searchInput.fill('stderr sentinel');
+		await expect(window.locator('[data-log-index]')).toHaveCount(1);
+		await expect(window.getByText('terminal stderr sentinel')).toBeVisible();
+
+		await searchInput.fill('');
+
+		await expect(window.locator('[data-log-index]')).toHaveCount(4);
+		await expect(window.getByText('terminal seeded output is visible')).toBeVisible();
+		await expect(window.getByText('terminal search sentinel')).toBeVisible();
+		await expect(window.getByText('terminal stderr sentinel')).toBeVisible();
+	});
+
+	test('keeps command terminal output search visible after hiding and restoring the Right Bar', async () => {
+		await openSeededTerminalAgent(window);
+		await window.getByLabel('Terminal output').press('Control+f');
+
+		const searchInput = window.getByPlaceholder('Search output... (Esc to close)');
+		await searchInput.fill('terminal search sentinel');
+		await expect(window.getByText('terminal search sentinel')).toBeVisible();
+
+		await window.keyboard.press('Alt+Meta+ArrowRight');
+		await expect(window.getByTitle(/Show right panel/)).toBeVisible();
+		await expect(searchInput).toBeVisible();
+		await expect(searchInput).toHaveValue('terminal search sentinel');
+
+		await window.keyboard.press('Alt+Meta+ArrowRight');
+		await expect(window.locator('[data-tour="files-panel"]')).toBeVisible();
+		await expect(searchInput).toBeVisible();
+		await expect(searchInput).toHaveValue('terminal search sentinel');
+	});
+
+	test('preserves command terminal draft after canceling Quick Actions over output search', async () => {
+		const terminalInput = await openSeededTerminalAgent(window);
+		await terminalInput.fill('draft survives quick actions over search sentinel');
+		await window.getByLabel('Terminal output').press('Control+f');
+
+		const searchInput = window.getByPlaceholder('Search output... (Esc to close)');
+		await searchInput.fill('terminal stderr');
+		await expect(window.getByText('terminal stderr sentinel')).toBeVisible();
+
+		const quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('missing quick action sentinel');
+		await closeQuickActions(window, quickActionsDialog);
+
+		await expect(searchInput).toBeVisible();
+		await expect(searchInput).toHaveValue('terminal stderr');
+		await expect(terminalInput).toHaveValue('draft survives quick actions over search sentinel');
+		await expect(window.getByText('terminal stderr sentinel')).toBeVisible();
+	});
+
+	test('keeps a command terminal local output filter while command history opens and closes', async () => {
+		const terminalInput = await openSeededTerminalAgent(window);
+		const outputBlock = window.locator('[data-log-index="2"]');
+
+		await outputBlock.getByTitle('Filter this output').click();
+		await outputBlock.getByPlaceholder('Include by keyword').fill('needle');
+		await expect(outputBlock.getByText('terminal filter needle')).toBeVisible();
+		await expect(outputBlock.getByText('terminal filter haystack')).toBeHidden();
+
+		await terminalInput.focus();
+		await terminalInput.press('ArrowUp');
+		const historyFilter = window.getByPlaceholder('Filter commands...');
+		await expect(historyFilter).toBeVisible();
+		await historyFilter.press('Escape');
+
+		await expect(historyFilter).toBeHidden();
+		await expect(outputBlock.getByText('terminal filter needle')).toBeVisible();
+		await expect(outputBlock.getByText('terminal filter haystack')).toBeHidden();
+	});
+
+	test('recovers command history results after clearing a draft-seeded filter', async () => {
+		const terminalInput = await openSeededTerminalAgent(window);
+
+		await terminalInput.fill('missing-history-command-sentinel');
+		await terminalInput.press('ArrowUp');
+		const historyFilter = window.getByPlaceholder('Filter commands...');
+		await expect(historyFilter).toHaveValue('missing-history-command-sentinel');
+		await expect(window.getByText('No matching commands')).toBeVisible();
+
+		await historyFilter.fill('');
+
+		await expect(
+			window.getByRole('button', { name: 'echo terminal history sentinel' })
+		).toBeVisible();
+		await expect(window.getByRole('button', { name: 'npm test -- --runInBand' })).toBeVisible();
+		await expect(window.getByRole('button', { name: 'git status --short' })).toBeVisible();
+		await historyFilter.press('Enter');
+		await expect(terminalInput).toHaveValue('echo terminal history sentinel');
+	});
+
+	test('runs a mouse-selected command history entry from the terminal run control', async () => {
+		await stubTerminalRunCommand(electronApp);
+		const terminalInput = await openSeededTerminalAgent(window);
+		const inputArea = window.locator('[data-tour="input-area"]');
+
+		await terminalInput.focus();
+		await terminalInput.press('ArrowUp');
+		const historyFilter = window.getByPlaceholder('Filter commands...');
+		await historyFilter.fill('status');
+		await window.getByRole('button', { name: 'git status --short' }).click();
+		await inputArea.getByTitle('Run command (Enter)').click();
+
+		await expect(terminalInput).toHaveValue('');
+		await expect(
+			(await getStubbedTerminalRunCommandCalls(electronApp)).map((call) => call.command)
+		).toEqual(['git status --short']);
+	});
+
+	test('keeps shell command history available after whitespace clear command', async () => {
+		await stubTerminalRunCommand(electronApp);
+		const terminalInput = await openSeededTerminalAgent(window);
+		const inputArea = window.locator('[data-tour="input-area"]');
+
+		await terminalInput.fill('  clear  ');
+		await inputArea.getByTitle('Run command (Enter)').click();
+		await expect(window.locator('[data-log-index]')).toHaveCount(0);
+		await expect(await getStubbedTerminalRunCommandCalls(electronApp)).toEqual([]);
+
+		await terminalInput.focus();
+		await terminalInput.press('ArrowUp');
+		const historyFilter = window.getByPlaceholder('Filter commands...');
+
+		await expect(historyFilter).toBeVisible();
+		await expect(
+			window.getByRole('button', { name: 'echo terminal history sentinel' })
+		).toBeVisible();
+	});
+
+	test('preserves command terminal cwd after whitespace clear command', async () => {
+		await stubTerminalRunCommand(electronApp);
+		const terminalInput = await openSeededTerminalAgent(window);
+		const inputArea = window.locator('[data-tour="input-area"]');
+		const originalCwd = seededWorkbench.sessions[1].cwd;
+		const expectedCwd = path.join(originalCwd, 'Auto Run Docs');
+
+		await terminalInput.fill('cd "Auto Run Docs"');
+		await inputArea.getByTitle('Run command (Enter)').click();
+		await expect(inputArea.getByText(/Auto Run Docs/)).toBeVisible();
+
+		await terminalInput.fill('  clear  ');
+		await inputArea.getByTitle('Run command (Enter)').click();
+		await expect(window.locator('[data-log-index]')).toHaveCount(0);
+
+		await terminalInput.fill('pwd');
+		await inputArea.getByTitle('Run command (Enter)').click();
+
+		await expect(window.locator('[data-log-index]').last().getByText(expectedCwd)).toBeVisible();
+		const calls = await getStubbedTerminalRunCommandCalls(electronApp);
+		await expect(calls.map((call) => call.command)).toEqual(['cd "Auto Run Docs"', 'pwd']);
+		await expect(calls[0].cwd).toBe(originalCwd);
+		await expect(calls[1].cwd).toBe(expectedCwd);
+	});
+
+	test('runs pwd after closing command terminal output search without changing cwd', async () => {
+		await stubTerminalRunCommand(electronApp);
+		const terminalInput = await openSeededTerminalAgent(window);
+		const originalCwd = seededWorkbench.sessions[1].cwd;
+
+		await window.getByLabel('Terminal output').press('Control+f');
+		const searchInput = window.getByPlaceholder('Search output... (Esc to close)');
+		await searchInput.fill('stderr sentinel');
+		await expect(window.getByText('terminal stderr sentinel')).toBeVisible();
+		await searchInput.press('Escape');
+
+		await terminalInput.fill('pwd');
+		await terminalInput.press('Enter');
+
+		await expect(window.locator('[data-log-index]').last().getByText(originalCwd)).toBeVisible();
+		const calls = await getStubbedTerminalRunCommandCalls(electronApp);
+		await expect(calls).toHaveLength(1);
+		await expect(calls[0]).toMatchObject({ command: 'pwd', cwd: originalCwd });
+	});
+
+	test('keeps terminal focus shortcuts usable after command history cancellation', async () => {
+		const terminalInput = await openSeededTerminalAgent(window);
+		const terminalOutput = window.getByLabel('Terminal output');
+
+		await terminalInput.fill('draft before history focus sentinel');
+		await terminalInput.press('ArrowUp');
+		const historyFilter = window.getByPlaceholder('Filter commands...');
+		await historyFilter.fill('status');
+		await historyFilter.press('Escape');
+
+		await expect(historyFilter).toBeHidden();
+		await expect(terminalInput).toBeFocused();
+		await expect(terminalInput).toHaveValue('draft before history focus sentinel');
+
+		await terminalInput.press('Escape');
+		await expect(terminalOutput).toBeFocused();
+	});
+
+	test('opens command terminal output search from a history-selected draft', async () => {
+		const terminalInput = await openSeededTerminalAgent(window);
+
+		await terminalInput.focus();
+		await terminalInput.press('ArrowUp');
+		const historyFilter = window.getByPlaceholder('Filter commands...');
+		await historyFilter.fill('npm');
+		await historyFilter.press('Enter');
+		await expect(terminalInput).toHaveValue('npm test -- --runInBand');
+
+		await terminalInput.press('Control+f');
+		const searchInput = window.getByPlaceholder('Search output... (Esc to close)');
+
+		await expect(searchInput).toBeFocused();
+		await expect(terminalInput).toHaveValue('npm test -- --runInBand');
+	});
+
+	test('closes command terminal Tab Switcher search with Escape while preserving the draft', async () => {
+		const terminalInput = await openSeededTerminalAgent(window);
+		await terminalInput.fill('draft before terminal tab switcher sentinel');
+
+		await window.keyboard.press('Alt+Meta+T');
+		const switcher = window.getByRole('dialog', { name: 'Tab Switcher' });
+		const searchInput = switcher.getByPlaceholder('Search open tabs...');
+		await searchInput.fill('missing terminal tab sentinel');
+		await expect(switcher.getByText('No open tabs')).toBeVisible();
+		await searchInput.press('Escape');
+
+		await expect(switcher).toBeHidden();
+		await expect(window.getByLabel('Terminal output')).toBeVisible();
+		await expect(terminalInput).toHaveValue('draft before terminal tab switcher sentinel');
+	});
+
+	test('recovers command terminal Tab Switcher results after an unmatched search', async () => {
+		await openSeededTerminalAgent(window);
+
+		await window.keyboard.press('Alt+Meta+T');
+		const switcher = window.getByRole('dialog', { name: 'Tab Switcher' });
+		const searchInput = switcher.getByPlaceholder('Search open tabs...');
+		await searchInput.fill('missing terminal tab sentinel');
+		await expect(switcher.getByText('No open tabs')).toBeVisible();
+
+		await searchInput.fill('Terminal');
+		await switcher.getByRole('button', { name: /Terminal/ }).click();
+
+		await expect(switcher).toBeHidden();
+		await expect(window.getByLabel('Terminal output')).toBeVisible();
+	});
+
+	test('cycles command terminal Tab Switcher modes back to open tabs', async () => {
+		await openSeededTerminalAgent(window);
+
+		await window.keyboard.press('Alt+Meta+T');
+		const switcher = window.getByRole('dialog', { name: 'Tab Switcher' });
+		await expect(switcher.getByRole('button', { name: /Open Tabs \(1\)/ })).toBeVisible();
+
+		await switcher.getByPlaceholder('Search open tabs...').press('Tab');
+		await expect(switcher.getByPlaceholder('Search named sessions...')).toBeFocused();
+		await switcher.getByPlaceholder('Search named sessions...').press('Shift+Tab');
+
+		await expect(switcher.getByPlaceholder('Search open tabs...')).toBeFocused();
+		await expect(switcher.getByRole('button', { name: /Terminal/ })).toBeVisible();
+	});
+
+	test('opens command terminal Tab Switcher from Quick Actions without clearing the draft', async () => {
+		const terminalInput = await openSeededTerminalAgent(window);
+		await terminalInput.fill('draft before quick tab switcher sentinel');
+
+		const quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('Tab Switcher');
+		await quickActionsDialog.getByRole('button', { name: /Tab Switcher/ }).click();
+
+		await expect(quickActionsDialog).toBeHidden();
+		const switcher = window.getByRole('dialog', { name: 'Tab Switcher' });
+		await expect(switcher).toBeVisible();
+		await switcher.getByPlaceholder('Search open tabs...').press('Escape');
+
+		await expect(switcher).toBeHidden();
+		await expect(window.getByLabel('Terminal output')).toBeVisible();
+		await expect(terminalInput).toHaveValue('draft before quick tab switcher sentinel');
+	});
+
 	test('renders seeded Codex AI terminal transcript and input controls', async () => {
 		const promptInput = await openSeededCodexAiTerminal(window);
 
