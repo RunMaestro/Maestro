@@ -7556,6 +7556,246 @@ test.describe('App shell seeded workbench', () => {
 		).toBeVisible();
 	});
 
+	test('keeps file preview active after Shortcuts Help closes over collapsed right chrome', async () => {
+		await window.getByText('README', { exact: true }).click();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+		await window.keyboard.press('Alt+Meta+ArrowRight');
+		await expect(window.getByTitle(/Show right panel/)).toBeVisible();
+
+		const quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('View Shortcuts');
+		await quickActionsDialog.getByRole('button', { name: /View Shortcuts/ }).click();
+
+		const shortcutsDialog = window.getByRole('dialog', { name: 'Keyboard Shortcuts' });
+		await expect(shortcutsDialog).toBeVisible();
+		await window.keyboard.press('Escape');
+
+		await expect(shortcutsDialog).toBeHidden();
+		await expect(window.getByTitle(/Show right panel/)).toBeVisible();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+	});
+
+	test('restores Files panel from shortcut after Tab Switcher closes over hidden right chrome', async () => {
+		await helpers.openRightPanelTab(window, 'History');
+		await expect(window.locator('[data-tour="history-panel"]')).toBeVisible();
+		await window.keyboard.press('Alt+Meta+ArrowRight');
+		await expect(window.getByTitle(/Show right panel/)).toBeVisible();
+
+		await window.keyboard.press('Alt+Meta+T');
+		const switcher = window.getByRole('dialog', { name: 'Tab Switcher' });
+		await expect(switcher).toBeVisible();
+		await switcher.getByPlaceholder('Search open tabs...').press('Escape');
+		await expect(switcher).toBeHidden();
+		await expect(window.getByTitle(/Show right panel/)).toBeVisible();
+
+		await window.keyboard.press('Meta+Shift+F');
+		await expect(window.locator('[data-tour="files-panel"]')).toBeVisible();
+		await expect(window.getByText('README.md')).toBeVisible();
+	});
+
+	test('keeps terminal draft after Tab Switcher closes over hidden Left Bar', async () => {
+		const terminalInput = await openSeededTerminalAgent(window);
+		await terminalInput.fill('terminal draft under tab switcher sentinel');
+		await window.keyboard.press('Alt+Meta+ArrowLeft');
+		await expect(window.locator('[data-tour="session-list"]')).toBeHidden();
+
+		await window.keyboard.press('Alt+Meta+T');
+		const switcher = window.getByRole('dialog', { name: 'Tab Switcher' });
+		await expect(switcher).toBeVisible();
+		await switcher.getByPlaceholder('Search open tabs...').press('Escape');
+
+		await expect(switcher).toBeHidden();
+		await expect(window.locator('[data-tour="session-list"]')).toBeHidden();
+		await expect(terminalInput).toHaveValue('terminal draft under tab switcher sentinel');
+	});
+
+	test('keeps Auto Run selected after creating and closing a scratch AI tab', async () => {
+		await helpers.openRightPanelTab(window, 'Auto Run');
+		await expect(window.getByText('Auto Run Surface')).toBeVisible();
+		await window.getByText('Main', { exact: true }).click();
+
+		await window.keyboard.press('Meta+T');
+		await expect(
+			window.locator('[data-tab-id]').filter({ hasText: 'New Session' }).first()
+		).toBeVisible();
+		await window.keyboard.press('Meta+W');
+
+		await expect(window.getByText('Auto Run Surface')).toBeVisible();
+		await expect(window.getByRole('button', { name: /^Run$/ })).toBeVisible();
+		await expect(window.getByText('Codex seeded response is visible.')).toBeVisible();
+	});
+
+	test('keeps History selected after closing an inactive AI tab from file preview', async () => {
+		const tabRows = window.locator('[data-tab-id]');
+		await helpers.openRightPanelTab(window, 'History');
+		await expect(window.locator('[data-tour="history-panel"]')).toBeVisible();
+		await window.getByText('README', { exact: true }).click();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+
+		const mainTab = tabRows.filter({ hasText: 'Main' }).first();
+		await mainTab.hover();
+		await window.getByRole('button', { name: 'Close Tab', exact: true }).click();
+
+		await expect(tabRows.filter({ hasText: 'Main' })).toHaveCount(0);
+		await expect(window.locator('[data-tour="history-panel"]')).toBeVisible();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+	});
+
+	test('keeps Left Bar search results while right-panel shortcuts change tabs', async () => {
+		await window.keyboard.press('Meta+Shift+A');
+		await window.keyboard.press('Meta+f');
+		const filterInput = window.getByPlaceholder('Filter agents...');
+		const sessionList = window.locator('[data-tour="session-list"]');
+		await filterInput.fill('Terminal');
+		await expect(sessionList.getByText('E2E Terminal')).toBeVisible();
+		await expect(sessionList.getByText('E2E Workbench')).toBeHidden();
+
+		await window.keyboard.press('Meta+Shift+H');
+
+		await expect(window.locator('[data-tour="history-panel"]')).toBeVisible();
+		await expect(filterInput).toHaveValue('Terminal');
+		await expect(sessionList.getByText('E2E Terminal')).toBeVisible();
+	});
+
+	test('keeps terminal draft when the Files shortcut restores hidden right chrome', async () => {
+		const terminalInput = await openSeededTerminalAgent(window);
+		await terminalInput.fill('terminal draft before files restore sentinel');
+		await window.keyboard.press('Alt+Meta+ArrowRight');
+		await expect(window.getByTitle(/Show right panel/)).toBeVisible();
+
+		await window.keyboard.press('Meta+Shift+F');
+
+		await expect(window.locator('[data-tour="files-panel"]')).toBeVisible();
+		await expect(window.getByText('README.md')).toBeVisible();
+		await expect(terminalInput).toHaveValue('terminal draft before files restore sentinel');
+	});
+
+	test('keeps file preview selected after agent cycling with both sidebars hidden', async () => {
+		await window.getByText('README', { exact: true }).click();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+		await window.keyboard.press('Alt+Meta+ArrowLeft');
+		await window.keyboard.press('Alt+Meta+ArrowRight');
+		await expect(window.locator('[data-tour="session-list"]')).toBeHidden();
+		await expect(window.getByTitle(/Show right panel/)).toBeVisible();
+
+		await window.keyboard.press('Meta+]');
+		await expect(window.getByLabel('Terminal output')).toBeVisible();
+		await window.keyboard.press('Meta+]');
+
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+		await expect(window.locator('[data-tour="session-list"]')).toBeHidden();
+		await expect(window.getByTitle(/Show right panel/)).toBeVisible();
+	});
+
+	test('keeps an active agent filter after canceling Quick Actions', async () => {
+		await window.keyboard.press('Meta+Shift+A');
+		await window.keyboard.press('Meta+f');
+		const filterInput = window.getByPlaceholder('Filter agents...');
+		const sessionList = window.locator('[data-tour="session-list"]');
+		await filterInput.fill('Terminal');
+		await expect(sessionList.getByText('E2E Terminal')).toBeVisible();
+		await expect(sessionList.getByText('E2E Workbench')).toBeHidden();
+
+		const quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('Toggle Right Panel');
+		await expect(
+			quickActionsDialog.getByRole('button', { name: /Toggle Right Panel/ })
+		).toBeVisible();
+		await closeQuickActions(window, quickActionsDialog);
+
+		await expect(filterInput).toHaveValue('Terminal');
+		await expect(sessionList.getByText('E2E Terminal')).toBeVisible();
+		await expect(sessionList.getByText('E2E Workbench')).toBeHidden();
+	});
+
+	test('selects a second renamed AI tab from the Tab Switcher after filtering scratch tabs', async () => {
+		const tabRows = window.locator('[data-tab-id]');
+		await window.getByText('Main', { exact: true }).click();
+		await window.keyboard.press('Meta+T');
+		await window.keyboard.press('Meta+Shift+R');
+		let renameDialog = window.getByRole('dialog', { name: 'Rename Tab' });
+		await renameDialog.locator('input').fill('First Scratch Tab');
+		await renameDialog.locator('input').press('Enter');
+		await expect(tabRows.filter({ hasText: 'First Scratch Tab' }).first()).toBeVisible();
+
+		await window.keyboard.press('Meta+T');
+		await window.keyboard.press('Meta+Shift+R');
+		renameDialog = window.getByRole('dialog', { name: 'Rename Tab' });
+		await renameDialog.locator('input').fill('Second Scratch Tab');
+		await renameDialog.locator('input').press('Enter');
+		await expect(tabRows.filter({ hasText: 'Second Scratch Tab' }).first()).toBeVisible();
+
+		await window.getByText('README', { exact: true }).click();
+		await window.keyboard.press('Alt+Meta+T');
+		const switcher = window.getByRole('dialog', { name: 'Tab Switcher' });
+		const searchInput = switcher.getByPlaceholder('Search open tabs...');
+		await searchInput.fill('Second Scratch');
+		await searchInput.press('1');
+
+		await expect(switcher).toBeHidden();
+		await expect(
+			window.getByPlaceholder(/Talking to E2E Workbench powered by Codex/)
+		).toBeVisible();
+	});
+
+	test('closes a renamed inactive scratch tab from file preview while keeping another scratch tab', async () => {
+		const tabRows = window.locator('[data-tab-id]');
+		await window.getByText('Main', { exact: true }).click();
+		await window.keyboard.press('Meta+T');
+		await window.keyboard.press('Meta+Shift+R');
+		let renameDialog = window.getByRole('dialog', { name: 'Rename Tab' });
+		await renameDialog.locator('input').fill('Keep Scratch Tab');
+		await renameDialog.locator('input').press('Enter');
+		await expect(tabRows.filter({ hasText: 'Keep Scratch Tab' }).first()).toBeVisible();
+
+		await window.keyboard.press('Meta+T');
+		await window.keyboard.press('Meta+Shift+R');
+		renameDialog = window.getByRole('dialog', { name: 'Rename Tab' });
+		await renameDialog.locator('input').fill('Close Scratch Tab');
+		await renameDialog.locator('input').press('Enter');
+		await expect(tabRows.filter({ hasText: 'Close Scratch Tab' }).first()).toBeVisible();
+
+		await window.getByText('README', { exact: true }).click();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+		const closeScratchTab = tabRows.filter({ hasText: 'Close Scratch Tab' }).first();
+		await closeScratchTab.hover();
+		await window.getByRole('button', { name: 'Close Tab', exact: true }).click();
+
+		await expect(tabRows.filter({ hasText: 'Close Scratch Tab' })).toHaveCount(0);
+		await expect(tabRows.filter({ hasText: 'Keep Scratch Tab' }).first()).toBeVisible();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+	});
+
+	test('reopens a renamed scratch AI tab after closing it from file preview', async () => {
+		const tabRows = window.locator('[data-tab-id]');
+		await window.getByText('Main', { exact: true }).click();
+		await window.keyboard.press('Meta+T');
+		await window.keyboard.press('Meta+Shift+R');
+		const renameDialog = window.getByRole('dialog', { name: 'Rename Tab' });
+		await renameDialog.locator('input').fill('Reopen Scratch Tab');
+		await renameDialog.locator('input').press('Enter');
+		await expect(tabRows.filter({ hasText: 'Reopen Scratch Tab' }).first()).toBeVisible();
+
+		await window.getByText('README', { exact: true }).click();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+		const reopenScratchTab = tabRows.filter({ hasText: 'Reopen Scratch Tab' }).first();
+		await reopenScratchTab.hover();
+		await window.getByRole('button', { name: 'Close Tab', exact: true }).click();
+		await expect(tabRows.filter({ hasText: 'Reopen Scratch Tab' })).toHaveCount(0);
+
+		await window.keyboard.press('Meta+Shift+T');
+
+		await expect(tabRows.filter({ hasText: 'Reopen Scratch Tab' }).first()).toBeVisible();
+		await tabRows.filter({ hasText: 'Reopen Scratch Tab' }).first().click();
+		await expect(
+			window.getByPlaceholder(/Talking to E2E Workbench powered by Codex/)
+		).toBeVisible();
+	});
+
 	test('filters Quick Actions and opens Shortcuts Help', async () => {
 		const quickActionsDialog = await openQuickActions(window);
 		await quickActionsDialog
