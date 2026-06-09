@@ -361,6 +361,15 @@ const activeScenarioMatrix = [
 		id: 'WSP-289',
 		title: "restores Director's Notes Unified History after unmatched search closes",
 	},
+	{ id: 'WSP-290', title: 'lists partial inline wizard generated documents while generating' },
+	{ id: 'WSP-291', title: 'expands partial inline wizard generated document descriptions' },
+	{ id: 'WSP-292', title: 'shows inline wizard ready-to-generate call to action' },
+	{ id: 'WSP-293', title: 'hides inline wizard ready action below confidence threshold' },
+	{ id: 'WSP-294', title: 'renders inline wizard conversation history with confidence' },
+	{ id: 'WSP-295', title: 'shows inline wizard thinking content while waiting' },
+	{ id: 'WSP-296', title: 'maps inline wizard timeout errors to friendly copy' },
+	{ id: 'WSP-297', title: 'maps inline wizard unavailable-agent errors to friendly copy' },
+	{ id: 'WSP-298', title: 'maps inline wizard parse errors to friendly copy' },
 ];
 
 const envGatedScenarioMatrix = [
@@ -9838,6 +9847,230 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 			await expect(
 				directorNotesDialog.getByText('Reviewed billing prompt composer draft')
 			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[289].id} ${activeScenarioMatrix[289].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench({
+			inlineWizard: true,
+			inlineWizardState: {
+				isGeneratingDocs: true,
+				generatedDocuments: createInlineWizardGeneratedDocuments().slice(0, 1),
+			},
+		});
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await expect(launched.window.getByText('Generating Auto Run Documents...')).toBeVisible();
+			await expect(launched.window.getByText('Work Plans Drafted (1)')).toBeVisible();
+			await expect(launched.window.getByText('2', { exact: true }).first()).toBeVisible();
+			await expect(launched.window.getByText('Tasks Planned')).toBeVisible();
+			await expect(launched.window.getByText('phase-1-research.md')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[290].id} ${activeScenarioMatrix[290].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench({
+			inlineWizard: true,
+			inlineWizardState: {
+				isGeneratingDocs: true,
+				generatedDocuments: createInlineWizardGeneratedDocuments().slice(0, 1),
+			},
+		});
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await launched.window.getByRole('button', { name: /phase-1-research\.md/ }).click();
+
+			await expect(launched.window.getByText('Map current wizard setup flow.')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[291].id} ${activeScenarioMatrix[291].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench({
+			inlineWizard: true,
+			inlineWizardState: {
+				ready: true,
+				confidence: 84,
+			},
+		});
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await expect(
+				launched.window.getByText('I think I have a good understanding of your project.')
+			).toBeVisible();
+			await expect(
+				launched.window.getByRole('button', { name: /Let's create your Playbook/ })
+			).toBeVisible();
+			await expect(
+				launched.window.getByText('Or continue chatting below to add more details')
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[292].id} ${activeScenarioMatrix[292].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench({
+			inlineWizard: true,
+			inlineWizardState: {
+				ready: true,
+				confidence: 79,
+			},
+		});
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await expect(
+				launched.window.getByRole('button', { name: /Let's create your Playbook/ })
+			).toBeHidden();
+			await expect(
+				launched.window.getByTitle(/Project Understanding Confidence: 79%/)
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[293].id} ${activeScenarioMatrix[293].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench({
+			inlineWizard: true,
+			inlineWizardState: {
+				conversationHistory: [
+					{
+						id: 'wsp-user-history',
+						role: 'user',
+						content: 'Use the existing Maestro project prompts.',
+						timestamp: Date.parse('2026-06-08T12:01:00Z'),
+					},
+					{
+						id: 'wsp-assistant-history',
+						role: 'assistant',
+						content: 'I found the wizard settings surface and can draft the playbook.',
+						timestamp: Date.parse('2026-06-08T12:02:00Z'),
+						confidence: 68,
+					},
+				],
+			},
+		});
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await expect(
+				launched.window.getByText('Use the existing Maestro project prompts.')
+			).toBeVisible();
+			await expect(
+				launched.window.getByText('I found the wizard settings surface and can draft the playbook.')
+			).toBeVisible();
+			await expect(launched.window.getByText('68% confident')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[294].id} ${activeScenarioMatrix[294].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench({
+			inlineWizard: true,
+			inlineWizardState: {
+				isWaiting: true,
+				showWizardThinking: true,
+				thinkingContent: 'Reading package metadata before drafting setup tasks.',
+			},
+		});
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await expect(launched.window.getByText('thinking')).toBeVisible();
+			await expect(
+				launched.window.getByText('Reading package metadata before drafting setup tasks.')
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[295].id} ${activeScenarioMatrix[295].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench({
+			inlineWizard: true,
+			inlineWizardState: {
+				error: 'Timed out waiting for provider response',
+			},
+		});
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await expect(launched.window.getByText('Response Timeout')).toBeVisible();
+			await expect(launched.window.getByText(/agent stopped producing output/)).toBeVisible();
+			await expect(launched.window.getByRole('button', { name: 'Try Again' })).toBeVisible();
+			await expect(launched.window.getByRole('button', { name: 'Dismiss' })).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[296].id} ${activeScenarioMatrix[296].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench({
+			inlineWizard: true,
+			inlineWizardState: {
+				error: 'Codex agent not available',
+			},
+		});
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await expect(launched.window.getByText('Agent Not Available')).toBeVisible();
+			await expect(launched.window.getByText(/could not be started/)).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[297].id} ${activeScenarioMatrix[297].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench({
+			inlineWizard: true,
+			inlineWizardState: {
+				error: 'Failed to parse wizard response envelope',
+			},
+		});
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await expect(launched.window.getByText('Response Error')).toBeVisible();
+			await expect(launched.window.getByText(/Could not understand the response/)).toBeVisible();
 		} finally {
 			await launched.cleanup();
 		}
