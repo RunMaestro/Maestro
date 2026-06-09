@@ -86,20 +86,20 @@ export function AICommandsPanel({
 	};
 
 	const handleSaveEdit = () => {
-		if (!editingCommand) return;
+		const commandBeingEdited = editingCommand!;
 
 		// Ensure command starts with /
-		const command = editingCommand.command.startsWith('/')
-			? editingCommand.command
-			: `/${editingCommand.command}`;
+		const command = commandBeingEdited.command.startsWith('/')
+			? commandBeingEdited.command
+			: `/${commandBeingEdited.command}`;
 
 		const updated = customAICommands.map((cmd) =>
-			cmd.id === editingCommand.id
+			cmd.id === commandBeingEdited.id
 				? {
 						...cmd,
 						command,
-						description: editingCommand.description,
-						prompt: editingCommand.prompt,
+						description: commandBeingEdited.description,
+						prompt: commandBeingEdited.prompt,
 					}
 				: cmd
 		);
@@ -108,8 +108,6 @@ export function AICommandsPanel({
 	};
 
 	const handleCreate = () => {
-		if (!newCommand.command || !newCommand.description || !newCommand.prompt) return;
-
 		// Ensure command starts with /
 		const command = newCommand.command.startsWith('/')
 			? newCommand.command
@@ -140,8 +138,6 @@ export function AICommandsPanel({
 	};
 
 	const handleDelete = (id: string) => {
-		const cmd = customAICommands.find((c) => c.id === id);
-		if (cmd?.isBuiltIn) return; // Can't delete built-in commands
 		setCustomAICommands(customAICommands.filter((c) => c.id !== id));
 	};
 

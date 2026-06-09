@@ -50,7 +50,7 @@ export function StandingOvationOverlay({
 	onCloseRef.current = onClose;
 
 	// Ref for the close handler that includes confetti animation
-	const handleCloseRef = useRef<() => void>(() => {});
+	const handleCloseRef = useRef<() => void>(onClose);
 
 	// State
 	const nextBadge = getNextBadge(badge);
@@ -326,8 +326,8 @@ export function StandingOvationOverlay({
 				currentLine = testLine;
 			}
 		});
-		if (currentLine) lines.push(currentLine);
-		return lines;
+		lines.push(currentLine);
+		return lines.filter(Boolean);
 	};
 
 	// Copy to clipboard

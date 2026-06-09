@@ -50,6 +50,7 @@ vi.mock('../../../web/components/ThemeProvider', () => ({
 
 // Mock haptic feedback
 const mockTriggerHaptic = vi.fn();
+const originalConsoleLog = console.log;
 vi.mock('../../../web/mobile/constants', () => ({
 	triggerHaptic: (...args: unknown[]) => mockTriggerHaptic(...args),
 	HAPTIC_PATTERNS: {
@@ -94,6 +95,10 @@ function createDefaultProps(overrides: Partial<AllSessionsViewProps> = {}): AllS
 describe('AllSessionsView', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+			if (typeof args[0] === 'string' && args[0].startsWith('[findParentSession]')) return;
+			originalConsoleLog(...args);
+		});
 	});
 
 	afterEach(() => {
@@ -481,6 +486,181 @@ describe('AllSessionsView', () => {
 				expect(screen.getByText('Ungrouped')).toBeInTheDocument();
 			});
 		});
+
+		it('groups explicit worktree children with their parent and prefixes the display name', async () => {
+			const sessions = [
+				createMockSession({
+					id: 'parent',
+					name: 'Parent Agent',
+					groupId: 'parent-group',
+					groupName: 'Parent Group',
+					groupEmoji: '🧭',
+				}),
+				createMockSession({
+					id: 'child',
+					name: 'Child Agent',
+					parentSessionId: 'parent',
+					worktreeBranch: 'feature-api',
+					groupId: 'child-group',
+					groupName: 'Child Group',
+				} as Partial<Session>),
+			];
+
+			render(<AllSessionsView {...createDefaultProps({ sessions })} />);
+
+			const parentGroupHeader = await screen.findByRole('button', {
+				name: /Parent Group group with 2 sessions/i,
+			});
+			expect(screen.queryByText('Child Group')).not.toBeInTheDocument();
+
+			fireEvent.click(parentGroupHeader);
+
+			expect(screen.getByText('Parent Agent')).toBeInTheDocument();
+			expect(screen.getByText('Parent Agent: feature-api')).toBeInTheDocument();
+		});
+
+		it('falls back to the child group when parentSessionId points to a missing parent', async () => {
+			const sessions = [
+				createMockSession({
+					id: 'child',
+					name: 'Detached Child',
+					parentSessionId: 'missing-parent',
+					groupId: 'child-group',
+					groupName: 'Child Group',
+				} as Partial<Session>),
+			];
+
+			render(<AllSessionsView {...createDefaultProps({ sessions })} />);
+
+			const childGroupHeader = await screen.findByRole('button', {
+				name: /Child Group group with 1 sessions/i,
+			});
+			fireEvent.click(childGroupHeader);
+
+			expect(screen.getByText('Detached Child')).toBeInTheDocument();
+			expect(screen.queryByText(/missing-parent:/)).not.toBeInTheDocument();
+		});
+
+		it('keeps explicit worktree children ungrouped when their parent has no group metadata', () => {
+			const sessions = [
+				createMockSession({
+					id: 'parent',
+					name: 'Parent Without Group',
+					groupId: null,
+					groupName: null,
+					groupEmoji: null,
+				}),
+				createMockSession({
+					id: 'child',
+					name: 'fallback-branch',
+					parentSessionId: 'parent',
+					groupId: 'child-group',
+					groupName: 'Child Group',
+				} as Partial<Session>),
+			];
+
+			render(<AllSessionsView {...createDefaultProps({ sessions })} />);
+
+			expect(screen.getByText('Parent Without Group')).toBeInTheDocument();
+			expect(screen.getByText('Parent Without Group: fallback-branch')).toBeInTheDocument();
+			expect(screen.queryByText('Child Group')).not.toBeInTheDocument();
+		});
+
+		it('infers legacy WorkTrees parents from paths for display names and group inheritance', async () => {
+			const sessions = [
+				createMockSession({
+					id: 'legacy-parent',
+					name: 'Legacy Parent',
+					cwd: '/projects/Maestro',
+					groupId: 'legacy-group',
+					groupName: 'Legacy Group',
+				}),
+				createMockSession({
+					id: 'legacy-child',
+					name: 'feature-mobile',
+					cwd: '/projects/Maestro-WorkTrees/feature-mobile',
+					groupId: null,
+					groupName: null,
+					worktreeBranch: undefined,
+				} as Partial<Session>),
+			];
+
+			render(<AllSessionsView {...createDefaultProps({ sessions })} />);
+
+			const legacyGroupHeader = await screen.findByRole('button', {
+				name: /Legacy Group group with 2 sessions/i,
+			});
+			fireEvent.click(legacyGroupHeader);
+
+			expect(screen.getByText('Legacy Parent: feature-mobile')).toBeInTheDocument();
+		});
+
+		it('infers legacy WorkTrees parents whose cwd is inside the base path', async () => {
+			const sessions = [
+				createMockSession({
+					id: 'nested-parent',
+					name: 'Nested Parent',
+					cwd: '/projects/Maestro/main',
+					groupId: 'nested-group',
+					groupName: 'Nested Group',
+				}),
+				createMockSession({
+					id: 'nested-child',
+					name: 'feature-nested',
+					cwd: '/projects/Maestro-WorkTrees/feature-nested',
+				}),
+			];
+
+			render(<AllSessionsView {...createDefaultProps({ sessions })} />);
+
+			const nestedGroupHeader = await screen.findByRole('button', {
+				name: /Nested Group group with 2 sessions/i,
+			});
+			fireEvent.click(nestedGroupHeader);
+
+			expect(screen.getByText('Nested Parent: feature-nested')).toBeInTheDocument();
+		});
+
+		it('infers legacy WorkTrees parents from Windows-style paths', async () => {
+			const sessions = [
+				createMockSession({
+					id: 'windows-parent',
+					name: 'Windows Parent',
+					cwd: String.raw`C:\projects\Maestro\main`,
+					groupId: 'windows-group',
+					groupName: 'Windows Group',
+				}),
+				createMockSession({
+					id: 'windows-child',
+					name: 'feature-windows',
+					cwd: String.raw`C:\projects\Maestro-WorkTrees\feature-windows`,
+				}),
+			];
+
+			render(<AllSessionsView {...createDefaultProps({ sessions })} />);
+
+			const windowsGroupHeader = await screen.findByRole('button', {
+				name: /Windows Group group with 2 sessions/i,
+			});
+			fireEvent.click(windowsGroupHeader);
+
+			expect(screen.getByText('Windows Parent: feature-windows')).toBeInTheDocument();
+		});
+
+		it('falls back to the session group when a WorkTrees path has no matching parent', () => {
+			const sessions = [
+				createMockSession({
+					id: 'orphan-worktree',
+					name: 'Orphan Worktree',
+					cwd: '/projects/Unknown-WorkTrees/feature-orphan',
+				}),
+			];
+
+			render(<AllSessionsView {...createDefaultProps({ sessions })} />);
+
+			expect(screen.getByText('Orphan Worktree')).toBeInTheDocument();
+			expect(screen.queryByText(/Unknown:/)).not.toBeInTheDocument();
+		});
 	});
 
 	describe('bookmarked sessions', () => {
@@ -526,6 +706,30 @@ describe('AllSessionsView', () => {
 				const aGroupIndex = allButtons.findIndex((b) => b.textContent?.includes('A Group'));
 
 				expect(bookmarksIndex).toBeLessThan(aGroupIndex);
+			});
+		});
+
+		it('keeps bookmarks first even when numeric-like group ids sort before strings', async () => {
+			const sessions = [
+				createMockSession({
+					id: 's1',
+					name: 'Numeric Group Session',
+					groupId: '1',
+					groupName: 'Numeric Group',
+				}),
+				createMockSession({ id: 's2', name: 'Bookmarked', bookmarked: true }),
+			];
+
+			render(<AllSessionsView {...createDefaultProps({ sessions })} />);
+
+			await waitFor(() => {
+				const allButtons = screen.getAllByRole('button');
+				const bookmarksIndex = allButtons.findIndex((b) => b.textContent?.includes('Bookmarks'));
+				const numericGroupIndex = allButtons.findIndex((b) =>
+					b.textContent?.includes('Numeric Group')
+				);
+
+				expect(bookmarksIndex).toBeLessThan(numericGroupIndex);
 			});
 		});
 	});
@@ -576,6 +780,27 @@ describe('AllSessionsView', () => {
 
 			expect(screen.getByText('Gemini Session')).toBeInTheDocument();
 			expect(screen.queryByText('Claude Session')).not.toBeInTheDocument();
+		});
+
+		it('filters sessions by worktree branch when no other field matches', () => {
+			const sessions = [
+				createMockSession({
+					id: 's1',
+					name: 'Plain Session',
+					cwd: '/tmp/plain',
+					toolType: 'claude-code',
+					worktreeBranch: 'feature-mobile-shell',
+				} as Partial<Session>),
+				createMockSession({ id: 's2', name: 'Other Session', cwd: '/tmp/other' }),
+			];
+
+			render(<AllSessionsView {...createDefaultProps({ sessions })} />);
+
+			const searchInput = screen.getByPlaceholderText('Search agents...');
+			fireEvent.change(searchInput, { target: { value: 'feature-mobile-shell' } });
+
+			expect(screen.getByText('Plain Session')).toBeInTheDocument();
+			expect(screen.queryByText('Other Session')).not.toBeInTheDocument();
 		});
 
 		it('search is case insensitive', () => {

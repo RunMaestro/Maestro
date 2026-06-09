@@ -15,7 +15,11 @@ import {
 } from '../../../renderer/stores/settingsStore';
 import type { SettingsStoreState } from '../../../renderer/stores/settingsStore';
 import type { FileExplorerIconTheme } from '../../../renderer/utils/fileExplorerIcons/shared';
-import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS } from '../../../renderer/constants/shortcuts';
+import {
+	DEFAULT_SHORTCUTS,
+	TAB_SHORTCUTS,
+	FIXED_SHORTCUTS,
+} from '../../../renderer/constants/shortcuts';
 import { DEFAULT_CUSTOM_THEME_COLORS } from '../../../renderer/constants/themes';
 
 /**
@@ -47,6 +51,9 @@ function resetStore() {
 		rightPanelWidth: 384,
 		markdownEditMode: false,
 		chatRawTextMode: false,
+		bionifyReadingMode: false,
+		bionifyIntensity: 1,
+		bionifyAlgorithm: '- 0 1 1 2 0.4',
 		showHiddenFiles: true,
 		fileExplorerIconTheme: 'default',
 		terminalWidth: 100,
@@ -94,6 +101,7 @@ function resetStore() {
 		directorNotesSettings: { provider: 'claude-code', defaultLookbackDays: 7 },
 		wakatimeApiKey: '',
 		wakatimeEnabled: false,
+		spellCheck: false,
 	});
 }
 
@@ -343,6 +351,16 @@ describe('settingsStore', () => {
 				expect(window.maestro.settings.set).toHaveBeenCalledWith('chatRawTextMode', true);
 			});
 
+			it('updates and persists Bionify reading settings', () => {
+				useSettingsStore.getState().setBionifyReadingMode(true);
+				expect(useSettingsStore.getState().bionifyReadingMode).toBe(true);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('bionifyReadingMode', true);
+
+				useSettingsStore.getState().setBionifyAlgorithm('1 0 2');
+				expect(useSettingsStore.getState().bionifyAlgorithm).toBe('1 0 2');
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('bionifyAlgorithm', '1 0 2');
+			});
+
 			it('setShowHiddenFiles updates state and persists', () => {
 				useSettingsStore.getState().setShowHiddenFiles(false);
 				expect(useSettingsStore.getState().showHiddenFiles).toBe(false);
@@ -488,6 +506,17 @@ describe('settingsStore', () => {
 				expect(useSettingsStore.getState().leaderboardRegistration).toEqual(reg);
 				expect(window.maestro.settings.set).toHaveBeenCalledWith('leaderboardRegistration', reg);
 			});
+
+			it('setModeratorStandingInstructions trims long instructions before persisting', () => {
+				const longInstructions = 'a'.repeat(2100);
+				useSettingsStore.getState().setModeratorStandingInstructions(longInstructions);
+				const expected = 'a'.repeat(2000);
+				expect(useSettingsStore.getState().moderatorStandingInstructions).toBe(expected);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith(
+					'moderatorStandingInstructions',
+					expected
+				);
+			});
 		});
 
 		describe('Web', () => {
@@ -564,6 +593,19 @@ describe('settingsStore', () => {
 		});
 
 		describe('SSH', () => {
+			it('setLocalIgnorePatterns updates state and persists', () => {
+				const patterns = ['node_modules', '.next'];
+				useSettingsStore.getState().setLocalIgnorePatterns(patterns);
+				expect(useSettingsStore.getState().localIgnorePatterns).toEqual(patterns);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('localIgnorePatterns', patterns);
+			});
+
+			it('setLocalHonorGitignore updates state and persists', () => {
+				useSettingsStore.getState().setLocalHonorGitignore(false);
+				expect(useSettingsStore.getState().localHonorGitignore).toBe(false);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('localHonorGitignore', false);
+			});
+
 			it('setSshRemoteIgnorePatterns updates state and persists', () => {
 				const patterns = ['.git', 'node_modules'];
 				useSettingsStore.getState().setSshRemoteIgnorePatterns(patterns);
@@ -603,6 +645,25 @@ describe('settingsStore', () => {
 				expect(window.maestro.settings.set).toHaveBeenCalledWith('suppressWindowsWarning', true);
 			});
 
+			it('setAutoScrollAiMode updates state and persists', () => {
+				useSettingsStore.getState().setAutoScrollAiMode(false);
+				expect(useSettingsStore.getState().autoScrollAiMode).toBe(false);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('autoScrollAiMode', false);
+			});
+
+			it('setUserMessageAlignment updates state and persists', () => {
+				useSettingsStore.getState().setUserMessageAlignment('right');
+				expect(useSettingsStore.getState().userMessageAlignment).toBe('right');
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('userMessageAlignment', 'right');
+			});
+
+			it('setEncoreFeatures updates state and persists', () => {
+				const encoreFeatures = { directorNotes: true };
+				useSettingsStore.getState().setEncoreFeatures(encoreFeatures);
+				expect(useSettingsStore.getState().encoreFeatures).toEqual(encoreFeatures);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('encoreFeatures', encoreFeatures);
+			});
+
 			it('setDirectorNotesSettings updates state and persists', () => {
 				const settings = { provider: 'codex' as const, defaultLookbackDays: 14 };
 				useSettingsStore.getState().setDirectorNotesSettings(settings);
@@ -623,6 +684,30 @@ describe('settingsStore', () => {
 				useSettingsStore.getState().setWakatimeEnabled(true);
 				expect(useSettingsStore.getState().wakatimeEnabled).toBe(true);
 				expect(window.maestro.settings.set).toHaveBeenCalledWith('wakatimeEnabled', true);
+			});
+
+			it('setWakatimeDetailedTracking updates state and persists', () => {
+				useSettingsStore.getState().setWakatimeDetailedTracking(true);
+				expect(useSettingsStore.getState().wakatimeDetailedTracking).toBe(true);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('wakatimeDetailedTracking', true);
+			});
+
+			it('setUseNativeTitleBar updates state and persists', () => {
+				useSettingsStore.getState().setUseNativeTitleBar(true);
+				expect(useSettingsStore.getState().useNativeTitleBar).toBe(true);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('useNativeTitleBar', true);
+			});
+
+			it('setAutoHideMenuBar updates state and persists', () => {
+				useSettingsStore.getState().setAutoHideMenuBar(true);
+				expect(useSettingsStore.getState().autoHideMenuBar).toBe(true);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('autoHideMenuBar', true);
+			});
+
+			it('setSpellCheck updates state and persists', () => {
+				useSettingsStore.getState().setSpellCheck(true);
+				expect(useSettingsStore.getState().spellCheck).toBe(true);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('spellCheck', true);
 			});
 		});
 	});
@@ -661,6 +746,24 @@ describe('settingsStore', () => {
 			useSettingsStore.getState().setLeftSidebarWidth(400);
 			expect(useSettingsStore.getState().leftSidebarWidth).toBe(400);
 			expect(window.maestro.settings.set).toHaveBeenCalledWith('leftSidebarWidth', 400);
+		});
+
+		it('setBionifyIntensity clamps finite values and falls back for non-numeric input', () => {
+			useSettingsStore.getState().setBionifyIntensity(0.2);
+			expect(useSettingsStore.getState().bionifyIntensity).toBe(0.6);
+			expect(window.maestro.settings.set).toHaveBeenCalledWith('bionifyIntensity', 0.6);
+
+			vi.clearAllMocks();
+
+			useSettingsStore.getState().setBionifyIntensity(2);
+			expect(useSettingsStore.getState().bionifyIntensity).toBe(1.5);
+			expect(window.maestro.settings.set).toHaveBeenCalledWith('bionifyIntensity', 1.5);
+
+			vi.clearAllMocks();
+
+			useSettingsStore.getState().setBionifyIntensity('not-a-number' as any);
+			expect(useSettingsStore.getState().bionifyIntensity).toBe(1);
+			expect(window.maestro.settings.set).toHaveBeenCalledWith('bionifyIntensity', 1);
 		});
 
 		it('setWebInterfaceCustomPort persists only valid 1024-65535', () => {
@@ -730,6 +833,17 @@ describe('settingsStore', () => {
 			expect(window.maestro.settings.set).toHaveBeenCalledWith('preventSleepEnabled', true);
 			expect(window.maestro.power.setEnabled).toHaveBeenCalledWith(true);
 		});
+
+		it('setPreventSleepEnabled rolls back and rethrows when persistence fails', async () => {
+			const error = new Error('settings write failed');
+			useSettingsStore.setState({ preventSleepEnabled: false });
+			vi.mocked(window.maestro.settings.set).mockRejectedValueOnce(error);
+
+			await expect(useSettingsStore.getState().setPreventSleepEnabled(true)).rejects.toThrow(error);
+
+			expect(useSettingsStore.getState().preventSleepEnabled).toBe(false);
+			expect(window.maestro.power.setEnabled).not.toHaveBeenCalled();
+		});
 	});
 
 	// ========================================================================
@@ -787,6 +901,7 @@ describe('settingsStore', () => {
 					maxQueueDepth: 1,
 				},
 			});
+
 			vi.clearAllMocks();
 
 			useSettingsStore.getState().setUsageStats({
@@ -801,6 +916,36 @@ describe('settingsStore', () => {
 			expect(result.maxAgents).toBe(5); // kept existing (higher)
 			expect(result.maxDefinedAgents).toBe(6); // new value (higher)
 			expect(result.maxQueueDepth).toBe(5); // new value (higher)
+		});
+
+		it('setUsageStats treats missing legacy fields as zero', () => {
+			useSettingsStore.setState({
+				usageStats: {
+					maxAgents: 5,
+					maxDefinedAgents: 3,
+					maxSimultaneousAutoRuns: 2,
+					maxSimultaneousQueries: 4,
+					maxQueueDepth: 1,
+				},
+			});
+			vi.clearAllMocks();
+
+			useSettingsStore.getState().setUsageStats({} as any);
+
+			expect(useSettingsStore.getState().usageStats).toEqual({
+				maxAgents: 5,
+				maxDefinedAgents: 3,
+				maxSimultaneousAutoRuns: 2,
+				maxSimultaneousQueries: 4,
+				maxQueueDepth: 1,
+			});
+			expect(window.maestro.settings.set).toHaveBeenCalledWith('usageStats', {
+				maxAgents: 5,
+				maxDefinedAgents: 3,
+				maxSimultaneousAutoRuns: 2,
+				maxSimultaneousQueries: 4,
+				maxQueueDepth: 1,
+			});
 		});
 
 		it('updateUsageStats only persists if values changed', () => {
@@ -953,6 +1098,27 @@ describe('settingsStore', () => {
 			expect(useSettingsStore.getState().autoRunStats.currentBadgeLevel).toBe(1);
 		});
 
+		it('recordAutoRunComplete normalizes legacy badge fields', () => {
+			useSettingsStore.setState({
+				autoRunStats: {
+					...DEFAULT_AUTO_RUN_STATS,
+					cumulativeTimeMs: 15 * 60 * 1000,
+					lastBadgeUnlockLevel: 0,
+					badgeHistory: undefined,
+					lastAcknowledgedBadgeLevel: undefined,
+				} as any,
+			});
+			vi.clearAllMocks();
+
+			const result = useSettingsStore.getState().recordAutoRunComplete(5000);
+
+			const stats = useSettingsStore.getState().autoRunStats;
+			expect(result.newBadgeLevel).toBe(1);
+			expect(stats.badgeHistory).toHaveLength(1);
+			expect(stats.badgeHistory[0].level).toBe(1);
+			expect(stats.lastAcknowledgedBadgeLevel).toBe(0);
+		});
+
 		it('updateAutoRunProgress adds delta to cumulativeTimeMs', () => {
 			useSettingsStore.setState({
 				autoRunStats: { ...DEFAULT_AUTO_RUN_STATS, cumulativeTimeMs: 50000 },
@@ -979,6 +1145,27 @@ describe('settingsStore', () => {
 			expect(result.newBadgeLevel).toBe(1);
 			expect(useSettingsStore.getState().autoRunStats.badgeHistory).toHaveLength(1);
 			expect(useSettingsStore.getState().autoRunStats.badgeHistory[0].level).toBe(1);
+		});
+
+		it('updateAutoRunProgress normalizes legacy badge fields', () => {
+			const justBelow15Min = 15 * 60 * 1000 - 1000;
+			useSettingsStore.setState({
+				autoRunStats: {
+					...DEFAULT_AUTO_RUN_STATS,
+					cumulativeTimeMs: justBelow15Min,
+					lastBadgeUnlockLevel: 0,
+					badgeHistory: undefined,
+					lastAcknowledgedBadgeLevel: undefined,
+				} as any,
+			});
+			vi.clearAllMocks();
+
+			const result = useSettingsStore.getState().updateAutoRunProgress(2000);
+
+			const stats = useSettingsStore.getState().autoRunStats;
+			expect(result.newBadgeLevel).toBe(1);
+			expect(stats.badgeHistory).toHaveLength(1);
+			expect(stats.lastAcknowledgedBadgeLevel).toBe(0);
 		});
 
 		it('updateAutoRunProgress returns isNewRecord: false', () => {
@@ -1018,6 +1205,20 @@ describe('settingsStore', () => {
 			expect(useSettingsStore.getState().autoRunStats.lastAcknowledgedBadgeLevel).toBe(5);
 		});
 
+		it('acknowledgeBadge treats missing legacy acknowledgment as zero', () => {
+			useSettingsStore.setState({
+				autoRunStats: {
+					...DEFAULT_AUTO_RUN_STATS,
+					lastAcknowledgedBadgeLevel: undefined,
+				} as any,
+			});
+			vi.clearAllMocks();
+
+			useSettingsStore.getState().acknowledgeBadge(2);
+
+			expect(useSettingsStore.getState().autoRunStats.lastAcknowledgedBadgeLevel).toBe(2);
+		});
+
 		it('getUnacknowledgedBadgeLevel returns level when current > acknowledged', () => {
 			useSettingsStore.setState({
 				autoRunStats: {
@@ -1028,6 +1229,18 @@ describe('settingsStore', () => {
 			});
 
 			expect(useSettingsStore.getState().getUnacknowledgedBadgeLevel()).toBe(3);
+		});
+
+		it('getUnacknowledgedBadgeLevel treats missing legacy acknowledgment as zero', () => {
+			useSettingsStore.setState({
+				autoRunStats: {
+					...DEFAULT_AUTO_RUN_STATS,
+					currentBadgeLevel: 1,
+					lastAcknowledgedBadgeLevel: undefined,
+				} as any,
+			});
+
+			expect(useSettingsStore.getState().getUnacknowledgedBadgeLevel()).toBe(1);
 		});
 
 		it('getUnacknowledgedBadgeLevel returns null when all acknowledged', () => {
@@ -1073,6 +1286,17 @@ describe('settingsStore', () => {
 	// ========================================================================
 
 	describe('onboarding stats actions', () => {
+		it('setOnboardingStats replaces stats and persists', () => {
+			const stats = {
+				...DEFAULT_ONBOARDING_STATS,
+				wizardStartCount: 3,
+				tourStartCount: 2,
+			};
+			useSettingsStore.getState().setOnboardingStats(stats);
+			expect(useSettingsStore.getState().onboardingStats).toEqual(stats);
+			expect(window.maestro.settings.set).toHaveBeenCalledWith('onboardingStats', stats);
+		});
+
 		it('recordWizardStart increments count', () => {
 			useSettingsStore.getState().recordWizardStart();
 			expect(useSettingsStore.getState().onboardingStats.wizardStartCount).toBe(1);
@@ -1096,6 +1320,15 @@ describe('settingsStore', () => {
 			expect(stats.averageConversationExchanges).toBe(10);
 			expect(stats.totalPhasesGenerated).toBe(3);
 			expect(stats.totalTasksGenerated).toBe(12);
+		});
+
+		it('recordWizardComplete handles zero generated phases without dividing tasks', () => {
+			useSettingsStore.getState().recordWizardComplete(1000, 0, 0, 4);
+
+			const stats = useSettingsStore.getState().onboardingStats;
+			expect(stats.totalPhasesGenerated).toBe(0);
+			expect(stats.totalTasksGenerated).toBe(4);
+			expect(stats.averageTasksPerPhase).toBe(0);
 		});
 
 		it('recordWizardAbandon increments count', () => {
@@ -1196,6 +1429,17 @@ describe('settingsStore', () => {
 	// ========================================================================
 
 	describe('keyboard mastery actions', () => {
+		it('setKeyboardMasteryStats replaces stats and persists', () => {
+			const stats = {
+				...DEFAULT_KEYBOARD_MASTERY_STATS,
+				usedShortcuts: ['toggleSidebar'],
+				currentLevel: 2,
+			};
+			useSettingsStore.getState().setKeyboardMasteryStats(stats);
+			expect(useSettingsStore.getState().keyboardMasteryStats).toEqual(stats);
+			expect(window.maestro.settings.set).toHaveBeenCalledWith('keyboardMasteryStats', stats);
+		});
+
 		it('recordShortcutUsage adds new shortcut and returns null if no level up', () => {
 			const result = useSettingsStore.getState().recordShortcutUsage('toggleSidebar');
 			expect(result.newLevel).toBeNull();
@@ -1222,9 +1466,10 @@ describe('settingsStore', () => {
 
 		it('recordShortcutUsage detects level-up', () => {
 			// To trigger level 1 (student), we need >= 25% of total shortcuts
-			// Total = DEFAULT_SHORTCUTS + TAB_SHORTCUTS + FIXED_SHORTCUTS keys
 			const totalShortcuts =
-				Object.keys(DEFAULT_SHORTCUTS).length + Object.keys(TAB_SHORTCUTS).length + 8; // FIXED_SHORTCUTS has 8 entries
+				Object.keys(DEFAULT_SHORTCUTS).length +
+				Object.keys(TAB_SHORTCUTS).length +
+				Object.keys(FIXED_SHORTCUTS).length;
 
 			const needed = Math.ceil(totalShortcuts * 0.25);
 
@@ -1247,12 +1492,11 @@ describe('settingsStore', () => {
 
 			// The new shortcut should have been added
 			expect(useSettingsStore.getState().keyboardMasteryStats.usedShortcuts).toHaveLength(needed);
-
-			// If this crossed the threshold, newLevel should be 1
-			if (result.newLevel !== null) {
-				expect(result.newLevel).toBeGreaterThan(0);
-				expect(useSettingsStore.getState().keyboardMasteryStats.currentLevel).toBeGreaterThan(0);
-			}
+			expect(result.newLevel).toBe(1);
+			expect(useSettingsStore.getState().keyboardMasteryStats.currentLevel).toBe(1);
+			expect(useSettingsStore.getState().keyboardMasteryStats.lastLevelUpTimestamp).toBeGreaterThan(
+				0
+			);
 		});
 
 		it('acknowledgeKeyboardMasteryLevel updates level', () => {
@@ -1348,6 +1592,117 @@ describe('settingsStore', () => {
 			expect(state.enterToSendAI).toBe(true);
 		});
 
+		it('loads persisted scalar, merged, and validated settings in one batch', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				conductorProfile: 'Ship steady changes',
+				llmProvider: 'openai',
+				modelSlug: 'gpt-5.2',
+				apiKey: 'test-key',
+				defaultShell: 'bash',
+				customShellPath: '/bin/fish',
+				shellArgs: '--login',
+				shellEnvVars: { MAESTRO: '1' },
+				ghPath: '/opt/homebrew/bin/gh',
+				customThemeColors: { ...DEFAULT_CUSTOM_THEME_COLORS, accent: '#ff00aa' },
+				customThemeBaseId: 'one-dark-pro',
+				enterToSendTerminal: false,
+				defaultSaveToHistory: false,
+				chatRawTextMode: true,
+				showHiddenFiles: false,
+				terminalWidth: 140,
+				maxOutputLines: 250,
+				osNotificationsEnabled: false,
+				audioFeedbackEnabled: true,
+				audioFeedbackCommand: 'afplay /tmp/done.aiff',
+				checkForUpdatesOnStartup: false,
+				enableBetaUpdates: true,
+				crashReportingEnabled: false,
+				logViewerSelectedLevels: ['error', 'warn'],
+				usageStats: { maxAgents: 4 },
+				onboardingStats: { wizardStartCount: 3 },
+				contextManagementSettings: { maxContextTokens: 75000 },
+				keyboardMasteryStats: { currentLevel: 2 },
+				ungroupedCollapsed: true,
+				tourCompleted: true,
+				firstAutoRunCompleted: true,
+				leaderboardRegistration: { email: 'dev@example.com', emailConfirmed: true },
+				persistentWebLink: true,
+				webInterfaceUseCustomPort: true,
+				webInterfaceCustomPort: 9090,
+				colorBlindMode: true,
+				documentGraphShowExternalLinks: true,
+				documentGraphMaxNodes: 150,
+				documentGraphPreviewCharLimit: 250,
+				statsCollectionEnabled: false,
+				defaultStatsTimeRange: 'month',
+				preventSleepEnabled: true,
+				disableGpuAcceleration: true,
+				disableConfetti: true,
+				rightPanelWidth: 512,
+				markdownEditMode: true,
+				bionifyReadingMode: true,
+				bionifyIntensity: 1.25,
+				bionifyAlgorithm: '0 1 2',
+				toastDuration: 8,
+				localIgnorePatterns: ['dist', '.cache'],
+				localHonorGitignore: false,
+				sshRemoteIgnorePatterns: ['target', '.venv'],
+				sshRemoteHonorGitignore: false,
+				automaticTabNamingEnabled: false,
+				fileTabAutoRefreshEnabled: true,
+				suppressWindowsWarning: true,
+				autoScrollAiMode: true,
+				userMessageAlignment: 'left',
+				encoreFeatures: { directorNotes: true },
+				directorNotesSettings: { provider: 'opencode', defaultLookbackDays: 14 },
+				wakatimeApiKey: 'waka-key',
+				wakatimeEnabled: true,
+				wakatimeDetailedTracking: true,
+				useNativeTitleBar: true,
+				autoHideMenuBar: true,
+				moderatorStandingInstructions: 'Keep the run focused',
+				spellCheck: true,
+			});
+
+			await loadAllSettings();
+
+			const state = useSettingsStore.getState();
+			expect(state.conductorProfile).toBe('Ship steady changes');
+			expect(state.llmProvider).toBe('openai');
+			expect(state.shellEnvVars).toEqual({ MAESTRO: '1' });
+			expect(state.customThemeColors.accent).toBe('#ff00aa');
+			expect(state.usageStats).toEqual({ ...DEFAULT_USAGE_STATS, maxAgents: 4 });
+			expect(state.onboardingStats.wizardStartCount).toBe(3);
+			expect(state.contextManagementSettings.maxContextTokens).toBe(75000);
+			expect(state.keyboardMasteryStats.currentLevel).toBe(2);
+			expect(selectIsLeaderboardRegistered(state)).toBe(true);
+			expect(state.documentGraphMaxNodes).toBe(150);
+			expect(state.documentGraphPreviewCharLimit).toBe(250);
+			expect(state.defaultStatsTimeRange).toBe('month');
+			expect(state.rightPanelWidth).toBe(512);
+			expect(state.markdownEditMode).toBe(true);
+			expect(state.bionifyReadingMode).toBe(true);
+			expect(state.bionifyIntensity).toBe(1.25);
+			expect(state.bionifyAlgorithm).toBe('0 1 2');
+			expect(state.toastDuration).toBe(8);
+			expect(state.enterToSendTerminal).toBe(false);
+			expect(state.defaultSaveToHistory).toBe(false);
+			expect(state.maxOutputLines).toBe(250);
+			expect(state.osNotificationsEnabled).toBe(false);
+			expect(state.audioFeedbackEnabled).toBe(true);
+			expect(state.audioFeedbackCommand).toBe('afplay /tmp/done.aiff');
+			expect(state.checkForUpdatesOnStartup).toBe(false);
+			expect(state.crashReportingEnabled).toBe(false);
+			expect(state.logViewerSelectedLevels).toEqual(['error', 'warn']);
+			expect(state.localIgnorePatterns).toEqual(['dist', '.cache']);
+			expect(state.sshRemoteIgnorePatterns).toEqual(['target', '.venv']);
+			expect(state.encoreFeatures.directorNotes).toBe(true);
+			expect(state.directorNotesSettings.defaultLookbackDays).toBe(14);
+			expect(state.moderatorStandingInstructions).toBe('Keep the run focused');
+			expect(state.spellCheck).toBe(true);
+			expect(state.settingsLoaded).toBe(true);
+		});
+
 		it('loads fileExplorerIconTheme when the persisted value is valid', async () => {
 			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
 				fileExplorerIconTheme: 'rich' satisfies FileExplorerIconTheme,
@@ -1380,12 +1735,33 @@ describe('settingsStore', () => {
 			expect(state.fontSize).toBe(14);
 		});
 
-		it('sets settingsLoaded = true on failure', async () => {
-			vi.mocked(window.maestro.settings.getAll).mockRejectedValue(new Error('IPC failure'));
+		it('keeps current logger settings when logger IPC returns undefined', async () => {
+			useSettingsStore.setState({ logLevel: 'warn', maxLogBuffer: 1234 });
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({});
+			vi.mocked(window.maestro.logger.getLogLevel).mockResolvedValueOnce(undefined as any);
+			vi.mocked(window.maestro.logger.getMaxLogBuffer).mockResolvedValueOnce(undefined as any);
 
 			await loadAllSettings();
 
-			expect(useSettingsStore.getState().settingsLoaded).toBe(true);
+			const state = useSettingsStore.getState();
+			expect(state.logLevel).toBe('warn');
+			expect(state.maxLogBuffer).toBe(1234);
+			expect(state.settingsLoaded).toBe(true);
+		});
+
+		it('sets settingsLoaded = true on failure', async () => {
+			const error = new Error('IPC failure');
+			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+			vi.mocked(window.maestro.settings.getAll).mockRejectedValue(error);
+
+			try {
+				await loadAllSettings();
+
+				expect(consoleError).toHaveBeenCalledWith('[Settings] Failed to load settings:', error);
+				expect(useSettingsStore.getState().settingsLoaded).toBe(true);
+			} finally {
+				consoleError.mockRestore();
+			}
 		});
 
 		it('migrates ThinkingMode boolean true to "on"', async () => {
@@ -1408,6 +1784,16 @@ describe('settingsStore', () => {
 			expect(useSettingsStore.getState().defaultShowThinking).toBe('off');
 		});
 
+		it('loads persisted ThinkingMode string values without boolean migration', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				defaultShowThinking: 'auto',
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().defaultShowThinking).toBe('auto');
+		});
+
 		it('clamps leftSidebarWidth on load', async () => {
 			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
 				leftSidebarWidth: 100,
@@ -1416,6 +1802,26 @@ describe('settingsStore', () => {
 			await loadAllSettings();
 
 			expect(useSettingsStore.getState().leftSidebarWidth).toBe(256);
+		});
+
+		it('clamps valid saved Bionify intensity and ignores invalid saved intensity', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				bionifyIntensity: 9,
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().bionifyIntensity).toBe(1.5);
+
+			resetStore();
+			useSettingsStore.setState({ bionifyIntensity: 1.2 });
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				bionifyIntensity: Number.POSITIVE_INFINITY,
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().bionifyIntensity).toBe(1.2);
 		});
 
 		it('converts maxOutputLines null to Infinity', async () => {
@@ -1452,6 +1858,50 @@ describe('settingsStore', () => {
 						keys: ['Alt', 'Meta', 'l'],
 					}),
 				})
+			);
+		});
+
+		it('migrates tab shortcut Alt-key macOS special characters', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				tabShortcuts: {
+					tabSwitcher: {
+						id: 'tabSwitcher',
+						label: 'Tab Switcher',
+						keys: ['Alt', 'Meta', '†'],
+					},
+				},
+			});
+
+			await loadAllSettings();
+
+			const tabShortcuts = useSettingsStore.getState().tabShortcuts;
+			expect(tabShortcuts.tabSwitcher.keys).toEqual(['Alt', 'Meta', 't']);
+			expect(window.maestro.settings.set).toHaveBeenCalledWith(
+				'tabShortcuts',
+				expect.objectContaining({
+					tabSwitcher: expect.objectContaining({
+						keys: ['Alt', 'Meta', 't'],
+					}),
+				})
+			);
+		});
+
+		it('loads tab shortcuts without persisting when migration is unnecessary', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				tabShortcuts: {
+					tabSwitcher: {
+						...TAB_SHORTCUTS.tabSwitcher,
+						keys: ['Meta', 't'],
+					},
+				},
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().tabShortcuts.tabSwitcher.keys).toEqual(['Meta', 't']);
+			expect(window.maestro.settings.set).not.toHaveBeenCalledWith(
+				'tabShortcuts',
+				expect.anything()
 			);
 		});
 
@@ -1519,6 +1969,7 @@ describe('settingsStore', () => {
 
 		it('applies auto-run time migration for concurrent tallying bug', async () => {
 			const THREE_HOURS_MS = 3 * 60 * 60 * 1000;
+			const consoleLog = vi.spyOn(console, 'log').mockImplementation(() => {});
 			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
 				autoRunStats: {
 					...DEFAULT_AUTO_RUN_STATS,
@@ -1527,19 +1978,50 @@ describe('settingsStore', () => {
 				// Migration not yet applied
 			});
 
-			await loadAllSettings();
+			try {
+				await loadAllSettings();
 
-			const stats = useSettingsStore.getState().autoRunStats;
-			expect(stats.cumulativeTimeMs).toBe(100000 + THREE_HOURS_MS);
-			// Should persist the migrated stats and the flag
-			expect(window.maestro.settings.set).toHaveBeenCalledWith(
-				'autoRunStats',
-				expect.objectContaining({ cumulativeTimeMs: 100000 + THREE_HOURS_MS })
-			);
-			expect(window.maestro.settings.set).toHaveBeenCalledWith(
-				'concurrentAutoRunTimeMigrationApplied',
-				true
-			);
+				const stats = useSettingsStore.getState().autoRunStats;
+				expect(stats.cumulativeTimeMs).toBe(100000 + THREE_HOURS_MS);
+				// Should persist the migrated stats and the flag
+				expect(window.maestro.settings.set).toHaveBeenCalledWith(
+					'autoRunStats',
+					expect.objectContaining({ cumulativeTimeMs: 100000 + THREE_HOURS_MS })
+				);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith(
+					'concurrentAutoRunTimeMigrationApplied',
+					true
+				);
+				expect(consoleLog).toHaveBeenCalledWith(
+					'[Settings] Applied concurrent Auto Run time migration: added 3 hours to cumulative time'
+				);
+			} finally {
+				consoleLog.mockRestore();
+			}
+		});
+
+		it('skips auto-run time migration after the migration flag is set', async () => {
+			const consoleLog = vi.spyOn(console, 'log').mockImplementation(() => {});
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				autoRunStats: {
+					...DEFAULT_AUTO_RUN_STATS,
+					cumulativeTimeMs: 100000,
+				},
+				concurrentAutoRunTimeMigrationApplied: true,
+			});
+
+			try {
+				await loadAllSettings();
+
+				expect(useSettingsStore.getState().autoRunStats.cumulativeTimeMs).toBe(100000);
+				expect(window.maestro.settings.set).not.toHaveBeenCalledWith(
+					'concurrentAutoRunTimeMigrationApplied',
+					true
+				);
+				expect(consoleLog).not.toHaveBeenCalled();
+			} finally {
+				consoleLog.mockRestore();
+			}
 		});
 
 		it('totalActiveTimeMs migration: copies from legacy globalStats when standalone field absent', async () => {
@@ -1630,6 +2112,26 @@ describe('settingsStore', () => {
 
 			expect(useSettingsStore.getState().documentGraphLayoutType).toBe('force');
 		});
+
+		it('rejects non-array ignore pattern values on load', async () => {
+			useSettingsStore.setState({
+				localIgnorePatterns: ['.git', 'node_modules', '__pycache__'],
+				sshRemoteIgnorePatterns: ['.git', '*cache*'],
+			});
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				localIgnorePatterns: 'dist',
+				sshRemoteIgnorePatterns: '.cache',
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().localIgnorePatterns).toEqual([
+				'.git',
+				'node_modules',
+				'__pycache__',
+			]);
+			expect(useSettingsStore.getState().sshRemoteIgnorePatterns).toEqual(['.git', '*cache*']);
+		});
 	});
 
 	// ========================================================================
@@ -1683,26 +2185,43 @@ describe('settingsStore', () => {
 		});
 
 		it('should rollback to false on soft IPC failure (result.success === false)', async () => {
+			const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 			vi.mocked(window.maestro.live.persistCurrentToken).mockResolvedValueOnce({
 				success: false,
 				message: 'Web server is not running.',
 			});
 
-			const { setPersistentWebLink } = useSettingsStore.getState();
-			await setPersistentWebLink(true);
+			try {
+				const { setPersistentWebLink } = useSettingsStore.getState();
+				await setPersistentWebLink(true);
 
-			expect(useSettingsStore.getState().persistentWebLink).toBe(false);
+				expect(consoleWarn).toHaveBeenCalledWith(
+					'[Settings] Failed to persist web link token:',
+					'Web server is not running.'
+				);
+				expect(useSettingsStore.getState().persistentWebLink).toBe(false);
+			} finally {
+				consoleWarn.mockRestore();
+			}
 		});
 
 		it('should rollback to false on hard IPC failure (thrown exception)', async () => {
-			vi.mocked(window.maestro.live.persistCurrentToken).mockRejectedValueOnce(
-				new Error('IPC timeout')
-			);
+			const error = new Error('IPC timeout');
+			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+			vi.mocked(window.maestro.live.persistCurrentToken).mockRejectedValueOnce(error);
 
-			const { setPersistentWebLink } = useSettingsStore.getState();
-			await setPersistentWebLink(true);
+			try {
+				const { setPersistentWebLink } = useSettingsStore.getState();
+				await setPersistentWebLink(true);
 
-			expect(useSettingsStore.getState().persistentWebLink).toBe(false);
+				expect(consoleError).toHaveBeenCalledWith(
+					'[Settings] Failed to persist web link token:',
+					error
+				);
+				expect(useSettingsStore.getState().persistentWebLink).toBe(false);
+			} finally {
+				consoleError.mockRestore();
+			}
 		});
 
 		it('should call clearPersistentToken when disabling', async () => {
@@ -1717,27 +2236,44 @@ describe('settingsStore', () => {
 
 		it('should rollback to true on clearPersistentToken hard failure (thrown exception)', async () => {
 			useSettingsStore.setState({ persistentWebLink: true });
-			vi.mocked(window.maestro.live.clearPersistentToken).mockRejectedValueOnce(
-				new Error('IPC timeout')
-			);
+			const error = new Error('IPC timeout');
+			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+			vi.mocked(window.maestro.live.clearPersistentToken).mockRejectedValueOnce(error);
 
-			const { setPersistentWebLink } = useSettingsStore.getState();
-			await setPersistentWebLink(false);
+			try {
+				const { setPersistentWebLink } = useSettingsStore.getState();
+				await setPersistentWebLink(false);
 
-			expect(useSettingsStore.getState().persistentWebLink).toBe(true);
+				expect(consoleError).toHaveBeenCalledWith(
+					'[Settings] Failed to clear persistent web link:',
+					error
+				);
+				expect(useSettingsStore.getState().persistentWebLink).toBe(true);
+			} finally {
+				consoleError.mockRestore();
+			}
 		});
 
 		it('should rollback to true on clearPersistentToken soft failure (result.success === false)', async () => {
 			useSettingsStore.setState({ persistentWebLink: true });
+			const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 			vi.mocked(window.maestro.live.clearPersistentToken).mockResolvedValueOnce({
 				success: false,
 				message: 'Settings write failed.',
 			} as any);
 
-			const { setPersistentWebLink } = useSettingsStore.getState();
-			await setPersistentWebLink(false);
+			try {
+				const { setPersistentWebLink } = useSettingsStore.getState();
+				await setPersistentWebLink(false);
 
-			expect(useSettingsStore.getState().persistentWebLink).toBe(true);
+				expect(consoleWarn).toHaveBeenCalledWith(
+					'[Settings] Failed to clear persistent web link:',
+					'Settings write failed.'
+				);
+				expect(useSettingsStore.getState().persistentWebLink).toBe(true);
+			} finally {
+				consoleWarn.mockRestore();
+			}
 		});
 
 		it('should handle rapid double-toggle (enable then disable) correctly', async () => {
@@ -1764,6 +2300,86 @@ describe('settingsStore', () => {
 			// Final state should reflect the last user intent: disabled
 			expect(useSettingsStore.getState().persistentWebLink).toBe(false);
 			expect(window.maestro.live.clearPersistentToken).toHaveBeenCalled();
+		});
+
+		it('does not clear a stale enable response when the latest state is enabled', async () => {
+			let resolveEnable: (value: any) => void;
+			const slowEnable = new Promise((resolve) => {
+				resolveEnable = resolve;
+			});
+			vi.mocked(window.maestro.live.persistCurrentToken)
+				.mockReturnValueOnce(slowEnable as any)
+				.mockResolvedValueOnce({ success: true } as any);
+
+			const { setPersistentWebLink } = useSettingsStore.getState();
+			const firstEnablePromise = setPersistentWebLink(true);
+			const secondEnablePromise = setPersistentWebLink(true);
+
+			resolveEnable!({ success: true });
+
+			await firstEnablePromise;
+			await secondEnablePromise;
+
+			expect(useSettingsStore.getState().persistentWebLink).toBe(true);
+			expect(window.maestro.live.clearPersistentToken).not.toHaveBeenCalled();
+		});
+
+		it('ignores stale enable failures after a newer disable takes ownership', async () => {
+			const error = new Error('stale persist failed');
+			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+			let rejectEnable: (reason: Error) => void;
+			const slowEnable = new Promise((_, reject) => {
+				rejectEnable = reject;
+			});
+			vi.mocked(window.maestro.live.persistCurrentToken).mockReturnValueOnce(slowEnable as any);
+
+			try {
+				const { setPersistentWebLink } = useSettingsStore.getState();
+				const enablePromise = setPersistentWebLink(true);
+				const disablePromise = setPersistentWebLink(false);
+
+				rejectEnable!(error);
+
+				await enablePromise;
+				await disablePromise;
+
+				expect(consoleError).not.toHaveBeenCalled();
+				expect(useSettingsStore.getState().persistentWebLink).toBe(false);
+			} finally {
+				consoleError.mockRestore();
+			}
+		});
+
+		it('logs stale persistent-link cleanup failures without changing latest disabled state', async () => {
+			const error = new Error('cleanup failed');
+			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+			let resolveEnable: (value: any) => void;
+			const slowEnable = new Promise((resolve) => {
+				resolveEnable = resolve;
+			});
+			vi.mocked(window.maestro.live.persistCurrentToken).mockReturnValueOnce(slowEnable as any);
+			vi.mocked(window.maestro.live.clearPersistentToken)
+				.mockResolvedValueOnce({ success: true } as any)
+				.mockRejectedValueOnce(error);
+
+			try {
+				const { setPersistentWebLink } = useSettingsStore.getState();
+				const enablePromise = setPersistentWebLink(true);
+				const disablePromise = setPersistentWebLink(false);
+
+				resolveEnable!({ success: true });
+
+				await enablePromise;
+				await disablePromise;
+
+				expect(consoleError).toHaveBeenCalledWith(
+					'[Settings] Failed to clear stale persistent web link:',
+					error
+				);
+				expect(useSettingsStore.getState().persistentWebLink).toBe(false);
+			} finally {
+				consoleError.mockRestore();
+			}
 		});
 
 		it('should handle rapid reverse toggle (disable then enable) correctly', async () => {
@@ -1793,6 +2409,33 @@ describe('settingsStore', () => {
 			// Final state should reflect the last user intent: enabled
 			expect(useSettingsStore.getState().persistentWebLink).toBe(true);
 			expect(window.maestro.live.persistCurrentToken).toHaveBeenCalled();
+		});
+
+		it('ignores stale disable failures after a newer enable takes ownership', async () => {
+			useSettingsStore.setState({ persistentWebLink: true });
+			const error = new Error('stale clear failed');
+			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+			let rejectClear: (reason: Error) => void;
+			const slowClear = new Promise((_, reject) => {
+				rejectClear = reject;
+			});
+			vi.mocked(window.maestro.live.clearPersistentToken).mockReturnValueOnce(slowClear as any);
+
+			try {
+				const { setPersistentWebLink } = useSettingsStore.getState();
+				const disablePromise = setPersistentWebLink(false);
+				const enablePromise = setPersistentWebLink(true);
+
+				rejectClear!(error);
+
+				await disablePromise;
+				await enablePromise;
+
+				expect(consoleError).not.toHaveBeenCalled();
+				expect(useSettingsStore.getState().persistentWebLink).toBe(true);
+			} finally {
+				consoleError.mockRestore();
+			}
 		});
 	});
 

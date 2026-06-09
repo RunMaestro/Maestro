@@ -483,12 +483,15 @@ describe('useMergeSession', () => {
 				const targetSession = createMockSession('target');
 
 				// Start first merge without awaiting
-				const firstMerge = result.current.startMerge({
-					sourceSession,
-					sourceTabId: 'tab-1',
-					targetSession,
-					targetTabId: 'tab-1',
-					options: { groomContext: true, createNewSession: true, preserveTimestamps: true },
+				let firstMerge: ReturnType<typeof result.current.startMerge>;
+				act(() => {
+					firstMerge = result.current.startMerge({
+						sourceSession,
+						sourceTabId: 'tab-1',
+						targetSession,
+						targetTabId: 'tab-1',
+						options: { groomContext: true, createNewSession: true, preserveTimestamps: true },
+					});
 				});
 
 				// Try to start second merge immediately
@@ -609,12 +612,14 @@ describe('useMergeSession', () => {
 			const targetSession = createMockSession('target');
 
 			// Start merge without awaiting
-			const mergePromise = result.current.startMerge({
-				sourceSession,
-				sourceTabId: 'tab-1',
-				targetSession,
-				targetTabId: 'tab-1',
-				options: { groomContext: true, createNewSession: true, preserveTimestamps: true },
+			act(() => {
+				result.current.startMerge({
+					sourceSession,
+					sourceTabId: 'tab-1',
+					targetSession,
+					targetTabId: 'tab-1',
+					options: { groomContext: true, createNewSession: true, preserveTimestamps: true },
+				});
 			});
 
 			// Cancel immediately - clears all state back to idle

@@ -4,6 +4,7 @@ import remarkParse from 'remark-parse';
 import remarkStringify from 'remark-stringify';
 import { remarkFileLinks, buildFileTreeIndices } from '../../../renderer/utils/remarkFileLinks';
 import type { FileNode } from '../../../renderer/types/fileTree';
+import type { Link, Paragraph, Root } from 'mdast';
 
 // Helper to process markdown and return the result
 async function processMarkdown(
@@ -240,6 +241,81 @@ describe('remarkFileLinks', () => {
 			// remark-stringify wraps URLs with spaces in angle brackets
 			expect(result).toContain('[Notes/Meeting Notes](<maestro-file://Notes/Meeting Notes.md>)');
 		});
+
+		it('disambiguates partial paths that match only one candidate', async () => {
+			const tree: FileNode[] = [
+				{
+					name: 'Docs',
+					type: 'folder',
+					children: [
+						{
+							name: 'Guides',
+							type: 'folder',
+							children: [{ name: 'Setup.md', type: 'file' }],
+						},
+					],
+				},
+				{
+					name: 'Archive',
+					type: 'folder',
+					children: [{ name: 'Setup.md', type: 'file' }],
+				},
+			];
+
+			const result = await processMarkdown('See [[Guides/Setup]]', tree, '');
+
+			expect(result).toContain('[Guides/Setup](maestro-file://Docs/Guides/Setup.md)');
+		});
+
+		it('uses cwd proximity when a partial path still matches multiple candidates', async () => {
+			const tree: FileNode[] = [
+				{
+					name: 'Product',
+					type: 'folder',
+					children: [
+						{
+							name: 'Guides',
+							type: 'folder',
+							children: [{ name: 'Setup.md', type: 'file' }],
+						},
+					],
+				},
+				{
+					name: 'Engineering',
+					type: 'folder',
+					children: [
+						{
+							name: 'Guides',
+							type: 'folder',
+							children: [{ name: 'Setup.md', type: 'file' }],
+						},
+					],
+				},
+			];
+
+			const result = await processMarkdown('See [[Guides/Setup]]', tree, 'Engineering');
+
+			expect(result).toContain('[Guides/Setup](maestro-file://Engineering/Guides/Setup.md)');
+		});
+
+		it('falls back to cwd proximity when a partial path filters out every candidate', async () => {
+			const tree: FileNode[] = [
+				{
+					name: 'Product',
+					type: 'folder',
+					children: [{ name: 'Setup.md', type: 'file' }],
+				},
+				{
+					name: 'Engineering',
+					type: 'folder',
+					children: [{ name: 'Setup.md', type: 'file' }],
+				},
+			];
+
+			const result = await processMarkdown('See [[Missing/Setup]]', tree, 'Product');
+
+			expect(result).toContain('[Missing/Setup](maestro-file://Product/Setup.md)');
+		});
 	});
 
 	describe('edge cases', () => {
@@ -257,6 +333,32 @@ describe('remarkFileLinks', () => {
 			);
 			expect(result).not.toContain('maestro-file://');
 			expect(result).toContain('This is just regular text');
+		});
+
+		it('uses empty indices when neither fileTree nor indices are provided', async () => {
+			const result = await unified()
+				.use(remarkParse)
+				.use(remarkFileLinks, { cwd: '' })
+				.use(remarkStringify)
+				.process('See [[TODO]] and README.md');
+
+			expect(String(result)).not.toContain('maestro-file://');
+			expect(String(result)).toContain('README.md');
+		});
+
+		it('converts a first-token match without adding leading empty text', async () => {
+			const result = await processMarkdown('[[TODO]] is first.', sampleFileTree, '');
+
+			expect(result).toContain('[TODO](maestro-file://Notes/TODO.md) is first.');
+		});
+
+		it('ignores root-level text and inline code nodes without parent context', () => {
+			const transform = remarkFileLinks({ fileTree: sampleFileTree, cwd: '' });
+			const textRoot = { type: 'text', value: 'README.md' } as unknown as Root;
+			const inlineCodeRoot = { type: 'inlineCode', value: 'README.md' } as unknown as Root;
+
+			expect(() => transform(textRoot)).not.toThrow();
+			expect(() => transform(inlineCodeRoot)).not.toThrow();
 		});
 
 		it('preserves existing markdown links', async () => {
@@ -413,6 +515,33 @@ describe('remarkFileLinks', () => {
 				'[/Users/pedram/Project/SomeOther/NonExistent File.md](<maestro-file://SomeOther/NonExistent File.md>)'
 			);
 		});
+
+		it('handles project roots with trailing slashes', async () => {
+			const result = await processMarkdown(
+				'See /Users/pedram/Project/OPSWAT/README.md for details.',
+				sampleFileTree,
+				'',
+				'/Users/pedram/Project/'
+			);
+
+			expect(result).toContain(
+				'[/Users/pedram/Project/OPSWAT/README.md](maestro-file://OPSWAT/README.md)'
+			);
+		});
+
+		it('does not double-convert absolute paths inside an existing wiki match', async () => {
+			const result = await processMarkdown(
+				'See [[README|/Users/pedram/Project/OPSWAT/README.md]] now.',
+				sampleFileTree,
+				'',
+				'/Users/pedram/Project'
+			);
+
+			expect(result).toContain(
+				'[/Users/pedram/Project/OPSWAT/README.md](maestro-file://README.md)'
+			);
+			expect(result.match(/maestro-file:\/\//g)).toHaveLength(1);
+		});
 	});
 
 	describe('inline code paths (backticks)', () => {
@@ -447,6 +576,54 @@ describe('remarkFileLinks', () => {
 				'/Users/pedram/Project'
 			);
 			expect(result).toContain('[OPSWAT/README](maestro-file://OPSWAT/README.md)');
+		});
+
+		it('leaves unresolved wiki links in backticks unchanged', async () => {
+			const result = await processMarkdown(
+				'Reference `[[Missing Note]]` here.',
+				sampleFileTree,
+				'',
+				'/Users/pedram/Project'
+			);
+
+			expect(result).toContain('`[[Missing Note]]`');
+			expect(result).not.toContain('maestro-file://');
+		});
+
+		it('leaves absolute paths in backticks unchanged when the extension is unsupported', async () => {
+			const result = await processMarkdown(
+				'Check `/Users/pedram/Project/archive.bin` for info.',
+				sampleFileTree,
+				'',
+				'/Users/pedram/Project'
+			);
+
+			expect(result).toContain('`/Users/pedram/Project/archive.bin`');
+			expect(result).not.toContain('maestro-file://');
+		});
+
+		it('leaves absolute paths in backticks unchanged when outside projectRoot', async () => {
+			const result = await processMarkdown(
+				'Check `/other/path/README.md` for info.',
+				sampleFileTree,
+				'',
+				'/Users/pedram/Project'
+			);
+
+			expect(result).toContain('`/other/path/README.md`');
+			expect(result).not.toContain('maestro-file://');
+		});
+
+		it('leaves missing relative paths in backticks unchanged', async () => {
+			const result = await processMarkdown(
+				'See `Missing/README.md` for details.',
+				sampleFileTree,
+				'',
+				'/Users/pedram/Project'
+			);
+
+			expect(result).toContain('`Missing/README.md`');
+			expect(result).not.toContain('maestro-file://');
 		});
 
 		it('leaves non-path inline code unchanged', async () => {
@@ -559,6 +736,94 @@ describe('remarkFileLinks', () => {
 				'/Users/pedram/Project'
 			);
 			expect(result).toContain('![Pasted image 20250519123910.png]');
+		});
+
+		it('uses a relative image path when projectRoot is not provided', async () => {
+			const result = await processMarkdown(
+				'Preview: ![[attachments/screenshot.jpg]]',
+				sampleFileTree,
+				''
+			);
+
+			expect(result).toContain('![attachments/screenshot.jpg](attachments/screenshot.jpg)');
+		});
+	});
+
+	describe('standard markdown links', () => {
+		it('converts relative markdown links to maestro file links', async () => {
+			const result = await processMarkdown(
+				'Check [tasks](TODO) and [meeting](Notes%2FMeeting%20Notes.md).',
+				sampleFileTree,
+				''
+			);
+
+			expect(result).toContain('[tasks](maestro-file://Notes/TODO.md)');
+			expect(result).toContain('[meeting](<maestro-file://Notes/Meeting Notes.md>)');
+		});
+
+		it('leaves unresolved relative markdown links unchanged', async () => {
+			const result = await processMarkdown('Check [missing](Missing.md).', sampleFileTree, '');
+
+			expect(result).toContain('[missing](Missing.md)');
+			expect(result).not.toContain('maestro-file://');
+		});
+
+		it('preserves links with protocols, anchors, or empty hrefs', async () => {
+			const result = await processMarkdown(
+				[
+					'[already](maestro-file://README.md)',
+					'[http](http://example.com)',
+					'[https](https://example.com)',
+					'[mail](mailto:test@example.com)',
+					'[anchor](#section)',
+					'[file](file:///tmp/readme.md)',
+					'[empty]()',
+				].join(' '),
+				sampleFileTree,
+				''
+			);
+
+			expect(result).toContain('[already](maestro-file://README.md)');
+			expect(result).toContain('[http](http://example.com)');
+			expect(result).toContain('[https](https://example.com)');
+			expect(result).toContain('[mail](mailto:test@example.com)');
+			expect(result).toContain('[anchor](#section)');
+			expect(result).toContain('[file](file:///tmp/readme.md)');
+			expect(result).toContain('[empty]()');
+		});
+
+		it('preserves existing link hProperties while adding the maestro file attribute', () => {
+			const tree: Root = {
+				type: 'root',
+				children: [
+					{
+						type: 'paragraph',
+						children: [
+							{
+								type: 'link',
+								url: 'TODO',
+								data: {
+									hProperties: {
+										className: 'existing-link',
+									},
+								},
+								children: [{ type: 'text', value: 'tasks' }],
+							},
+						],
+					},
+				],
+			};
+
+			const transformer = remarkFileLinks({ fileTree: sampleFileTree, cwd: '' });
+			transformer(tree);
+
+			const paragraph = tree.children[0] as Paragraph;
+			const link = paragraph.children[0] as Link;
+			expect(link.url).toBe('maestro-file://Notes/TODO.md');
+			expect(link.data?.hProperties).toMatchObject({
+				className: 'existing-link',
+				'data-maestro-file': 'Notes/TODO.md',
+			});
 		});
 	});
 

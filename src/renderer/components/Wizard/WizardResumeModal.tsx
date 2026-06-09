@@ -272,7 +272,7 @@ export function WizardResumeModal({
 										Project Name
 									</p>
 									<p className="text-sm" style={{ color: theme.colors.textMain }}>
-										{resumeState.agentName || 'Unnamed Project'}
+										{resumeState.agentName}
 									</p>
 								</div>
 							</div>

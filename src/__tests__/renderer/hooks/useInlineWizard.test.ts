@@ -7,6 +7,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { useInlineWizard } from '../../../renderer/hooks/batch/useInlineWizard';
+import type { ToolType } from '../../../renderer/types';
 
 // Mock hasCapabilityCached for wizard support checks
 vi.mock('../../../renderer/hooks/agent/useAgentCapabilities', async () => {
@@ -97,8 +98,20 @@ Object.defineProperty(window, 'maestro', {
 	writable: true,
 });
 
-import { generateInlineDocuments } from '../../../renderer/services/inlineWizardDocumentGeneration';
+import {
+	generateInlineDocuments,
+	extractDisplayTextFromChunk,
+} from '../../../renderer/services/inlineWizardDocumentGeneration';
+import {
+	startInlineWizardConversation,
+	sendWizardMessage,
+	endInlineWizardConversation,
+} from '../../../renderer/services/inlineWizardConversation';
 const mockGenerateInlineDocuments = vi.mocked(generateInlineDocuments);
+const mockExtractDisplayTextFromChunk = vi.mocked(extractDisplayTextFromChunk);
+const mockStartInlineWizardConversation = vi.mocked(startInlineWizardConversation);
+const mockSendWizardMessage = vi.mocked(sendWizardMessage);
+const mockEndInlineWizardConversation = vi.mocked(endInlineWizardConversation);
 
 // Import mocked modules
 import { parseWizardIntent } from '../../../renderer/services/wizardIntentParser';
@@ -118,6 +131,44 @@ describe('useInlineWizard', () => {
 		mockHasExistingAutoRunDocs.mockResolvedValue(false);
 		mockGetExistingAutoRunDocs.mockResolvedValue([]);
 		mockParseWizardIntent.mockReturnValue({ mode: 'new' });
+		mockStartInlineWizardConversation.mockReturnValue({
+			sessionId: 'test-session-id',
+			agentType: 'claude-code',
+			directoryPath: '/test/project',
+			projectName: 'Test Project',
+			systemPrompt: 'Test system prompt',
+			isActive: true,
+		});
+		mockSendWizardMessage.mockResolvedValue({
+			success: true,
+			response: {
+				confidence: 50,
+				ready: false,
+				message: 'Test response',
+			},
+		});
+		mockEndInlineWizardConversation.mockResolvedValue(undefined);
+		mockGenerateInlineDocuments.mockResolvedValue({
+			success: true,
+			documents: [
+				{
+					filename: 'Phase-01-Setup.md',
+					content: '# Phase 01\n\n- [ ] Task 1',
+					taskCount: 1,
+					savedPath: '/test/project/Auto Run Docs/Test-Project/Phase-01-Setup.md',
+				},
+			],
+			rawOutput: 'test output',
+			subfolderName: 'Test-Project',
+			subfolderPath: '/test/project/Auto Run Docs/Test-Project',
+		});
+		mockExtractDisplayTextFromChunk.mockImplementation((chunk: string) => chunk);
+		window.maestro.autorun.listDocs = vi.fn().mockResolvedValue({ success: true, files: [] });
+		window.maestro.autorun.readDoc = vi.fn().mockResolvedValue({ success: true, content: '' });
+		window.maestro.autorun.watchFolder = vi.fn().mockResolvedValue({ success: true });
+		window.maestro.autorun.unwatchFolder = vi.fn().mockResolvedValue({ success: true });
+		window.maestro.autorun.onFileChanged = vi.fn(() => vi.fn());
+		delete (window.maestro as unknown as { history?: unknown }).history;
 	});
 
 	afterEach(() => {
@@ -140,6 +191,30 @@ describe('useInlineWizard', () => {
 			expect(result.current.error).toBe(null);
 			expect(result.current.streamingContent).toBe('');
 			expect(result.current.generationProgress).toBe(null);
+		});
+
+		it('should expose per-tab state and active status', async () => {
+			const { result } = renderHook(() => useInlineWizard());
+
+			await act(async () => {
+				await result.current.startWizard(
+					'plan tab work',
+					undefined,
+					'/test/project',
+					'claude-code',
+					'Test Project',
+					'tab-1'
+				);
+			});
+
+			expect(result.current.getStateForTab('tab-1')).toEqual(
+				expect.objectContaining({
+					isActive: true,
+					tabId: 'tab-1',
+				})
+			);
+			expect(result.current.isWizardActiveForTab('tab-1')).toBe(true);
+			expect(result.current.isWizardActiveForTab('tab-2')).toBe(false);
 		});
 	});
 
@@ -286,6 +361,101 @@ describe('useInlineWizard', () => {
 				expect(result.current.existingDocuments[1].name).toBe('phase-2');
 			});
 
+			it('should pass loaded document content to the iterate conversation', async () => {
+				const mockListDocs = vi
+					.fn()
+					.mockResolvedValueOnce({ success: true, files: ['phase-1'] })
+					.mockResolvedValueOnce({ success: true, files: ['phase-1'] });
+				const mockReadDoc = vi.fn().mockResolvedValue({
+					success: true,
+					content: '# Phase 1\n\nExisting checklist',
+				});
+				window.maestro.autorun.listDocs = mockListDocs;
+				window.maestro.autorun.readDoc = mockReadDoc;
+				mockParseWizardIntent.mockReturnValue({ mode: 'iterate', goal: 'extend docs' });
+
+				const { result } = renderHook(() => useInlineWizard());
+
+				await act(async () => {
+					await result.current.startWizard(
+						'extend existing docs',
+						undefined,
+						'/test/project',
+						'claude-code',
+						'Test Project'
+					);
+				});
+
+				expect(mockReadDoc).toHaveBeenCalledWith('/test/project/Auto Run Docs', 'phase-1');
+				expect(mockStartInlineWizardConversation).toHaveBeenCalledWith(
+					expect.objectContaining({
+						mode: 'iterate',
+						existingDocs: [
+							expect.objectContaining({
+								name: 'phase-1',
+								content: '# Phase 1\n\nExisting checklist',
+							}),
+						],
+					})
+				);
+			});
+
+			it('should continue iterate setup when document listing fails during context loading', async () => {
+				window.maestro.autorun.listDocs = vi
+					.fn()
+					.mockResolvedValueOnce({ success: true, files: ['phase-1'] })
+					.mockRejectedValueOnce(new Error('unreadable folder'));
+				mockParseWizardIntent.mockReturnValue({ mode: 'iterate', goal: 'repair docs' });
+
+				const { result } = renderHook(() => useInlineWizard());
+
+				await act(async () => {
+					await result.current.startWizard(
+						'repair existing docs',
+						undefined,
+						'/test/project',
+						'claude-code',
+						'Test Project'
+					);
+				});
+
+				expect(result.current.existingDocuments).toEqual([]);
+				expect(mockStartInlineWizardConversation).toHaveBeenCalledWith(
+					expect.objectContaining({
+						mode: 'iterate',
+						existingDocs: undefined,
+					})
+				);
+			});
+
+			it('should continue iterate setup when document listing returns an unsuccessful result', async () => {
+				window.maestro.autorun.listDocs = vi
+					.fn()
+					.mockResolvedValueOnce({ success: true, files: ['phase-1'] })
+					.mockResolvedValueOnce({ success: false, files: ['phase-1'] });
+				mockParseWizardIntent.mockReturnValue({ mode: 'iterate', goal: 'repair docs' });
+
+				const { result } = renderHook(() => useInlineWizard());
+
+				await act(async () => {
+					await result.current.startWizard(
+						'repair existing docs',
+						undefined,
+						'/test/project',
+						'claude-code',
+						'Test Project'
+					);
+				});
+
+				expect(result.current.existingDocuments).toEqual([]);
+				expect(mockStartInlineWizardConversation).toHaveBeenCalledWith(
+					expect.objectContaining({
+						mode: 'iterate',
+						existingDocs: undefined,
+					})
+				);
+			});
+
 			it('should not load existing docs when mode is new', async () => {
 				// Mock listDocs to return files (existing docs)
 				const mockListDocs = vi.fn().mockResolvedValue({
@@ -377,7 +547,7 @@ describe('useInlineWizard', () => {
 				mockParseWizardIntent.mockReturnValue({ mode: 'iterate', goal: 'add feature' });
 
 				const { result } = renderHook(() => useInlineWizard());
-				const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+				const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
 				await act(async () => {
 					await result.current.startWizard('add feature', undefined, '/test/project');
@@ -386,6 +556,14 @@ describe('useInlineWizard', () => {
 				// readDoc failure causes loadDocumentContents to fail
 				// This should set an error since it's a real loading failure
 				expect(result.current.isInitializing).toBe(false);
+				expect(consoleSpy).toHaveBeenCalledWith(
+					'[useInlineWizard] Failed to load phase-1.md:',
+					expect.any(Error)
+				);
+				expect(consoleSpy).toHaveBeenCalledWith(
+					'[useInlineWizard] Failed to load phase-2.md:',
+					expect.any(Error)
+				);
 
 				consoleSpy.mockRestore();
 			});
@@ -406,6 +584,71 @@ describe('useInlineWizard', () => {
 				// Empty files means no existing docs → new mode
 				expect(result.current.error).toBe(null);
 				expect(result.current.wizardMode).toBe('new');
+			});
+
+			it('should report unsupported wizard agents without starting a conversation', async () => {
+				const { result } = renderHook(() => useInlineWizard());
+
+				await act(async () => {
+					await result.current.startWizard(
+						'build docs',
+						undefined,
+						'/test/project',
+						'factory-droid' as ToolType,
+						'Factory Droid'
+					);
+				});
+
+				expect(result.current.error).toBe(
+					'The inline wizard is not supported for this agent type.'
+				);
+				expect(result.current.isInitializing).toBe(false);
+				expect(mockStartInlineWizardConversation).not.toHaveBeenCalled();
+			});
+
+			it('should surface initialization failures from intent parsing', async () => {
+				const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+				mockParseWizardIntent.mockImplementationOnce(() => {
+					throw new Error('parse failed');
+				});
+
+				const { result } = renderHook(() => useInlineWizard());
+
+				await act(async () => {
+					await result.current.startWizard('broken intent', undefined, '/test/project');
+				});
+
+				expect(result.current.wizardMode).toBe('new');
+				expect(result.current.error).toBe('parse failed');
+				expect(result.current.isInitializing).toBe(false);
+				expect(consoleSpy).toHaveBeenCalledWith(
+					'[useInlineWizard] startWizard error:',
+					expect.any(Error)
+				);
+
+				consoleSpy.mockRestore();
+			});
+
+			it('should use the generic initialization message for non-Error failures', async () => {
+				const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+				mockParseWizardIntent.mockImplementationOnce(() => {
+					throw 'parse failed';
+				});
+
+				const { result } = renderHook(() => useInlineWizard());
+
+				await act(async () => {
+					await result.current.startWizard('broken intent', undefined, '/test/project');
+				});
+
+				expect(result.current.wizardMode).toBe('new');
+				expect(result.current.error).toBe('Failed to initialize wizard');
+				expect(consoleSpy).toHaveBeenCalledWith(
+					'[useInlineWizard] startWizard error:',
+					'parse failed'
+				);
+
+				consoleSpy.mockRestore();
 			});
 		});
 
@@ -520,10 +763,73 @@ describe('useInlineWizard', () => {
 				// Should be 'ask' mode since docs exist
 				expect(result.current.wizardMode).toBe('ask');
 			});
+
+			it('should convert a missing history file path to undefined for conversation setup', async () => {
+				const history = { getFilePath: vi.fn().mockResolvedValue(null) };
+				(window.maestro as unknown as { history: typeof history }).history = history;
+
+				const { result } = renderHook(() => useInlineWizard());
+
+				await act(async () => {
+					await result.current.startWizard(
+						'test',
+						undefined,
+						'/my/project',
+						'claude-code',
+						'Test Project',
+						'tab-1',
+						'session-1'
+					);
+				});
+
+				expect(history.getFilePath).toHaveBeenCalledWith('session-1');
+				expect(mockStartInlineWizardConversation).toHaveBeenCalledWith(
+					expect.objectContaining({
+						historyFilePath: undefined,
+					})
+				);
+			});
+
+			it('should use configured folder and default project name when project metadata is missing', async () => {
+				const { result } = renderHook(() => useInlineWizard());
+
+				await act(async () => {
+					await result.current.startWizard(
+						'test',
+						undefined,
+						undefined,
+						'claude-code',
+						undefined,
+						'tab-1',
+						undefined,
+						'/custom/auto-run/folder'
+					);
+				});
+
+				expect(mockStartInlineWizardConversation).toHaveBeenCalledWith(
+					expect.objectContaining({
+						directoryPath: '/custom/auto-run/folder',
+						projectName: 'Project',
+						autoRunFolderPath: '/custom/auto-run/folder',
+					})
+				);
+			});
 		});
 	});
 
 	describe('endWizard', () => {
+		it('should be a no-op when there is no active wizard', async () => {
+			const { result } = renderHook(() => useInlineWizard());
+
+			let previousState: Awaited<ReturnType<typeof result.current.endWizard>> = null;
+			await act(async () => {
+				previousState = await result.current.endWizard();
+			});
+
+			expect(previousState).toBe(null);
+			expect(mockEndInlineWizardConversation).not.toHaveBeenCalled();
+		});
+
 		it('should reset state to initial values', async () => {
 			const { result } = renderHook(() => useInlineWizard());
 
@@ -544,6 +850,60 @@ describe('useInlineWizard', () => {
 			expect(result.current.wizardGoal).toBe(null);
 			expect(result.current.existingDocuments).toEqual([]);
 		});
+
+		it('should end the active conversation session', async () => {
+			const { result } = renderHook(() => useInlineWizard());
+
+			await act(async () => {
+				await result.current.startWizard(
+					'add feature',
+					undefined,
+					'/test/project',
+					'claude-code',
+					'Test Project'
+				);
+			});
+
+			await act(async () => {
+				await result.current.endWizard();
+			});
+
+			expect(mockEndInlineWizardConversation).toHaveBeenCalledWith(
+				expect.objectContaining({
+					sessionId: 'test-session-id',
+				})
+			);
+			expect(result.current.isWizardActive).toBe(false);
+		});
+
+		it('should clear wizard state when conversation cleanup fails', async () => {
+			const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+			mockEndInlineWizardConversation.mockRejectedValueOnce(new Error('close failed'));
+
+			const { result } = renderHook(() => useInlineWizard());
+
+			await act(async () => {
+				await result.current.startWizard(
+					'add feature',
+					undefined,
+					'/test/project',
+					'claude-code',
+					'Test Project'
+				);
+			});
+
+			await act(async () => {
+				await result.current.endWizard();
+			});
+
+			expect(consoleSpy).toHaveBeenCalledWith(
+				'[useInlineWizard] Failed to end conversation session:',
+				expect.any(Error)
+			);
+			expect(result.current.isWizardActive).toBe(false);
+
+			consoleSpy.mockRestore();
+		});
 	});
 
 	describe('setExistingDocuments', () => {
@@ -560,17 +920,59 @@ describe('useInlineWizard', () => {
 		});
 	});
 
-	describe('sendMessage', () => {
-		it('should add user message to conversation history', () => {
+	describe('document generation state setters', () => {
+		it('should update the generating flag', () => {
 			const { result } = renderHook(() => useInlineWizard());
 
 			act(() => {
-				result.current.sendMessage('Hello wizard');
+				result.current.setGeneratingDocs(true);
+			});
+
+			expect(result.current.isGeneratingDocs).toBe(true);
+		});
+
+		it('should store generated documents and clear the generating flag', () => {
+			const { result } = renderHook(() => useInlineWizard());
+			const docs = [
+				{
+					filename: 'Phase-01-Setup.md',
+					content: '# Phase 01',
+					taskCount: 1,
+					savedPath: '/test/project/Auto Run Docs/Phase-01-Setup.md',
+				},
+			];
+
+			act(() => {
+				result.current.setGeneratingDocs(true);
+				result.current.setGeneratedDocuments(docs);
+			});
+
+			expect(result.current.generatedDocuments).toEqual(docs);
+			expect(result.current.isGeneratingDocs).toBe(false);
+		});
+	});
+
+	describe('sendMessage', () => {
+		it('should add user message to conversation history', async () => {
+			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const { result } = renderHook(() => useInlineWizard());
+
+			await act(async () => {
+				await result.current.sendMessage('Hello wizard');
 			});
 
 			expect(result.current.conversationHistory).toHaveLength(1);
 			expect(result.current.conversationHistory[0].role).toBe('user');
 			expect(result.current.conversationHistory[0].content).toBe('Hello wizard');
+			expect(consoleSpy).toHaveBeenCalledWith(
+				'[useInlineWizard] No active conversation session, currentState:',
+				expect.objectContaining({
+					mode: undefined,
+					agentType: undefined,
+				})
+			);
+
+			consoleSpy.mockRestore();
 		});
 
 		it('should auto-create session when sending message in ask mode', async () => {
@@ -580,7 +982,10 @@ describe('useInlineWizard', () => {
 			mockStartConversation.mockClear();
 
 			// Setup: existing docs exist, so we get 'ask' mode
-			mockHasExistingAutoRunDocs.mockResolvedValue(true);
+			window.maestro.autorun.listDocs = vi.fn().mockResolvedValue({
+				success: true,
+				files: ['phase-1'],
+			});
 
 			const { result } = renderHook(() => useInlineWizard());
 
@@ -616,6 +1021,254 @@ describe('useInlineWizard', () => {
 			// Mode should have changed to 'new'
 			expect(result.current.wizardMode).toBe('new');
 		});
+
+		it('should auto-create ask-mode sessions with configured folder defaults', async () => {
+			window.maestro.autorun.listDocs = vi.fn().mockResolvedValue({
+				success: true,
+				files: ['phase-1'],
+			});
+
+			const { result } = renderHook(() => useInlineWizard());
+
+			await act(async () => {
+				await result.current.startWizard(
+					undefined,
+					undefined,
+					undefined,
+					'claude-code',
+					undefined,
+					'tab-1',
+					undefined,
+					'/custom/auto-run/folder'
+				);
+			});
+
+			mockStartInlineWizardConversation.mockClear();
+
+			await act(async () => {
+				await result.current.sendMessage('Help me plan my project');
+			});
+
+			expect(mockStartInlineWizardConversation).toHaveBeenCalledWith(
+				expect.objectContaining({
+					mode: 'new',
+					directoryPath: '/custom/auto-run/folder',
+					projectName: 'Project',
+					autoRunFolderPath: '/custom/auto-run/folder',
+				})
+			);
+			expect(result.current.wizardMode).toBe('new');
+		});
+
+		it('should ignore duplicate sends while a response is pending', async () => {
+			const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+			let resolveSend!: (value: Awaited<ReturnType<typeof sendWizardMessage>>) => void;
+			const pendingResponse = new Promise<Awaited<ReturnType<typeof sendWizardMessage>>>(
+				(resolve) => {
+					resolveSend = resolve;
+				}
+			);
+			mockSendWizardMessage.mockReturnValueOnce(pendingResponse);
+
+			const { result } = renderHook(() => useInlineWizard());
+
+			await act(async () => {
+				await result.current.startWizard(
+					'test',
+					undefined,
+					'/test/project',
+					'claude-code',
+					'Test Project'
+				);
+			});
+
+			let firstSend!: Promise<void>;
+			act(() => {
+				firstSend = result.current.sendMessage('First message');
+			});
+
+			await waitFor(() => expect(result.current.isWaiting).toBe(true));
+
+			await act(async () => {
+				await result.current.sendMessage('Second message');
+			});
+
+			expect(consoleSpy).toHaveBeenCalledWith(
+				'[useInlineWizard] Already waiting for response, ignoring duplicate send'
+			);
+			expect(mockSendWizardMessage).toHaveBeenCalledTimes(1);
+
+			await act(async () => {
+				resolveSend({
+					success: true,
+					response: {
+						confidence: 40,
+						ready: false,
+						message: 'Response after delay',
+					},
+				});
+				await firstSend;
+			});
+
+			consoleSpy.mockRestore();
+		});
+
+		it('should set an error when the wizard service returns failure', async () => {
+			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const onError = vi.fn();
+			mockSendWizardMessage.mockResolvedValueOnce({
+				success: false,
+				error: 'Agent failed',
+			});
+
+			const { result } = renderHook(() => useInlineWizard());
+
+			await act(async () => {
+				await result.current.startWizard(
+					'test',
+					undefined,
+					'/test/project',
+					'claude-code',
+					'Test Project'
+				);
+			});
+
+			await act(async () => {
+				await result.current.sendMessage('Please respond', undefined, { onError });
+			});
+
+			expect(result.current.error).toBe('Agent failed');
+			expect(result.current.isWaiting).toBe(false);
+			expect(onError).toHaveBeenCalledWith('Agent failed');
+			expect(consoleSpy).toHaveBeenCalledWith(
+				'[useInlineWizard] sendWizardMessage error:',
+				'Agent failed'
+			);
+
+			consoleSpy.mockRestore();
+		});
+
+		it('should use the default send failure message when the service omits an error', async () => {
+			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const onError = vi.fn();
+			mockSendWizardMessage.mockResolvedValueOnce({
+				success: false,
+			});
+
+			const { result } = renderHook(() => useInlineWizard());
+
+			await act(async () => {
+				await result.current.startWizard(
+					'test',
+					undefined,
+					'/test/project',
+					'claude-code',
+					'Test Project'
+				);
+			});
+
+			await act(async () => {
+				await result.current.sendMessage('Please respond', undefined, { onError });
+			});
+
+			expect(result.current.error).toBe('Failed to get response from AI');
+			expect(onError).toHaveBeenCalledWith('Failed to get response from AI');
+			expect(consoleSpy).toHaveBeenCalledWith(
+				'[useInlineWizard] sendWizardMessage error:',
+				'Failed to get response from AI'
+			);
+
+			consoleSpy.mockRestore();
+		});
+
+		it('should set an error when sending throws', async () => {
+			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const onError = vi.fn();
+			mockSendWizardMessage.mockRejectedValueOnce(new Error('network down'));
+
+			const { result } = renderHook(() => useInlineWizard());
+
+			await act(async () => {
+				await result.current.startWizard(
+					'test',
+					undefined,
+					'/test/project',
+					'claude-code',
+					'Test Project'
+				);
+			});
+
+			await act(async () => {
+				await result.current.sendMessage('Please respond', undefined, { onError });
+			});
+
+			expect(result.current.error).toBe('network down');
+			expect(result.current.isWaiting).toBe(false);
+			expect(onError).toHaveBeenCalledWith('network down');
+			expect(consoleSpy).toHaveBeenCalledWith(
+				'[useInlineWizard] sendMessage error:',
+				expect.any(Error)
+			);
+
+			consoleSpy.mockRestore();
+		});
+
+		it('should use the generic error when sending throws a non-Error value', async () => {
+			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const onError = vi.fn();
+			mockSendWizardMessage.mockRejectedValueOnce('network down');
+
+			const { result } = renderHook(() => useInlineWizard());
+
+			await act(async () => {
+				await result.current.startWizard(
+					'test',
+					undefined,
+					'/test/project',
+					'claude-code',
+					'Test Project'
+				);
+			});
+
+			await act(async () => {
+				await result.current.sendMessage('Please respond', undefined, { onError });
+			});
+
+			expect(result.current.error).toBe('Unknown error occurred');
+			expect(onError).toHaveBeenCalledWith('Unknown error occurred');
+			expect(consoleSpy).toHaveBeenCalledWith(
+				'[useInlineWizard] sendMessage error:',
+				'network down'
+			);
+
+			consoleSpy.mockRestore();
+		});
+
+		it('should include images on user messages', async () => {
+			const { result } = renderHook(() => useInlineWizard());
+
+			await act(async () => {
+				await result.current.startWizard(
+					'test',
+					undefined,
+					'/test/project',
+					'claude-code',
+					'Test Project'
+				);
+			});
+
+			await act(async () => {
+				await result.current.sendMessage('Describe this', ['data:image/png;base64,abc']);
+			});
+
+			expect(result.current.conversationHistory[0]).toEqual(
+				expect.objectContaining({
+					role: 'user',
+					content: 'Describe this',
+					images: ['data:image/png;base64,abc'],
+				})
+			);
+		});
 	});
 
 	describe('addAssistantMessage', () => {
@@ -630,6 +1283,58 @@ describe('useInlineWizard', () => {
 			expect(result.current.conversationHistory[0].role).toBe('assistant');
 			expect(result.current.conversationHistory[0].confidence).toBe(75);
 			expect(result.current.confidence).toBe(75);
+		});
+
+		it('should preserve confidence and ready when optional values are omitted', () => {
+			const { result } = renderHook(() => useInlineWizard());
+
+			act(() => {
+				result.current.setConfidence(35);
+				result.current.addAssistantMessage('A message without confidence');
+			});
+
+			expect(result.current.conversationHistory).toHaveLength(1);
+			expect(result.current.confidence).toBe(35);
+			expect(result.current.ready).toBe(false);
+		});
+
+		it('should add assistant messages on the active wizard tab', async () => {
+			const { result } = renderHook(() => useInlineWizard());
+
+			await act(async () => {
+				await result.current.startWizard(
+					'test',
+					undefined,
+					'/test/project',
+					'claude-code',
+					'Test Project',
+					'tab-1'
+				);
+			});
+
+			act(() => {
+				result.current.addAssistantMessage('Tab-specific response', 60, true);
+			});
+
+			expect(result.current.getStateForTab('tab-1')?.conversationHistory).toEqual([
+				expect.objectContaining({
+					role: 'assistant',
+					content: 'Tab-specific response',
+				}),
+			]);
+		});
+	});
+
+	describe('clearConversation', () => {
+		it('should remove all conversation messages', () => {
+			const { result } = renderHook(() => useInlineWizard());
+
+			act(() => {
+				result.current.addAssistantMessage('I understand your request', 75, false);
+				result.current.clearConversation();
+			});
+
+			expect(result.current.conversationHistory).toEqual([]);
 		});
 	});
 
@@ -651,7 +1356,10 @@ describe('useInlineWizard', () => {
 			mockStartConversation.mockClear();
 
 			// Setup: existing docs exist, so we get 'ask' mode when starting with no input
-			mockHasExistingAutoRunDocs.mockResolvedValue(true);
+			window.maestro.autorun.listDocs = vi.fn().mockResolvedValue({
+				success: true,
+				files: ['phase-1'],
+			});
 
 			const { result } = renderHook(() => useInlineWizard());
 
@@ -696,7 +1404,10 @@ describe('useInlineWizard', () => {
 			mockStartConversation.mockClear();
 
 			// Setup: existing docs exist, so we get 'ask' mode
-			mockHasExistingAutoRunDocs.mockResolvedValue(true);
+			window.maestro.autorun.listDocs = vi.fn().mockResolvedValue({
+				success: true,
+				files: ['phase-1'],
+			});
 
 			const { result } = renderHook(() => useInlineWizard());
 
@@ -727,6 +1438,70 @@ describe('useInlineWizard', () => {
 					mode: 'iterate',
 				})
 			);
+		});
+
+		it('should create ask-mode sessions with configured folder defaults after mode selection', async () => {
+			window.maestro.autorun.listDocs = vi.fn().mockResolvedValue({
+				success: true,
+				files: ['phase-1'],
+			});
+
+			const { result } = renderHook(() => useInlineWizard());
+
+			await act(async () => {
+				await result.current.startWizard(
+					undefined,
+					undefined,
+					undefined,
+					'claude-code',
+					undefined,
+					'tab-1',
+					undefined,
+					'/custom/auto-run/folder'
+				);
+			});
+
+			mockStartInlineWizardConversation.mockClear();
+
+			act(() => {
+				result.current.setMode('new');
+			});
+
+			expect(mockStartInlineWizardConversation).toHaveBeenCalledWith(
+				expect.objectContaining({
+					mode: 'new',
+					directoryPath: '/custom/auto-run/folder',
+					projectName: 'Project',
+				})
+			);
+		});
+
+		it('should not create a session when selecting a mode for an unsupported ask-mode agent', async () => {
+			window.maestro.autorun.listDocs = vi.fn().mockResolvedValue({
+				success: true,
+				files: ['phase-1'],
+			});
+
+			const { result } = renderHook(() => useInlineWizard());
+
+			await act(async () => {
+				await result.current.startWizard(
+					undefined,
+					undefined,
+					'/test/project',
+					'factory-droid' as ToolType,
+					'Factory Droid'
+				);
+			});
+
+			mockStartInlineWizardConversation.mockClear();
+
+			act(() => {
+				result.current.setMode('new');
+			});
+
+			expect(result.current.wizardMode).toBe('new');
+			expect(mockStartInlineWizardConversation).not.toHaveBeenCalled();
 		});
 
 		it('should not create duplicate session when transitioning from new to iterate', async () => {
@@ -783,6 +1558,17 @@ describe('useInlineWizard', () => {
 	});
 
 	describe('reset', () => {
+		it('should be a no-op when resetting without an active wizard', () => {
+			const { result } = renderHook(() => useInlineWizard());
+
+			act(() => {
+				result.current.reset();
+			});
+
+			expect(result.current.isWizardActive).toBe(false);
+			expect(mockEndInlineWizardConversation).not.toHaveBeenCalled();
+		});
+
 		it('should reset wizard to initial state', async () => {
 			const { result } = renderHook(() => useInlineWizard());
 
@@ -793,7 +1579,7 @@ describe('useInlineWizard', () => {
 
 			act(() => {
 				result.current.setConfidence(50);
-				result.current.sendMessage('Hello');
+				result.current.addAssistantMessage('Hello');
 			});
 
 			// Reset
@@ -805,6 +1591,33 @@ describe('useInlineWizard', () => {
 			expect(result.current.confidence).toBe(0);
 			expect(result.current.conversationHistory).toEqual([]);
 			expect(result.current.state.projectPath).toBe(null);
+		});
+
+		it('should clean up an active conversation session during reset', async () => {
+			mockEndInlineWizardConversation.mockRejectedValueOnce(new Error('cleanup failed'));
+			const { result } = renderHook(() => useInlineWizard());
+
+			await act(async () => {
+				await result.current.startWizard(
+					'test',
+					undefined,
+					'/test/project',
+					'claude-code',
+					'Test Project'
+				);
+			});
+
+			act(() => {
+				result.current.reset();
+			});
+			await Promise.resolve();
+
+			expect(mockEndInlineWizardConversation).toHaveBeenCalledWith(
+				expect.objectContaining({
+					sessionId: 'test-session-id',
+				})
+			);
+			expect(result.current.isWizardActive).toBe(false);
 		});
 	});
 
@@ -891,10 +1704,162 @@ describe('useInlineWizard', () => {
 
 			consoleSpy.mockRestore();
 		});
+
+		it('should remove the failed user message and resend the last message', async () => {
+			mockSendWizardMessage
+				.mockResolvedValueOnce({
+					success: false,
+					error: 'Agent failed',
+				})
+				.mockResolvedValueOnce({
+					success: true,
+					response: {
+						confidence: 85,
+						ready: true,
+						message: 'Retry succeeded',
+					},
+				});
+			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+			const { result } = renderHook(() => useInlineWizard());
+
+			await act(async () => {
+				await result.current.startWizard(
+					'test',
+					undefined,
+					'/test/project',
+					'claude-code',
+					'Test Project'
+				);
+			});
+
+			await act(async () => {
+				await result.current.sendMessage('Retry this');
+			});
+
+			expect(result.current.error).toBe('Agent failed');
+			expect(result.current.conversationHistory).toHaveLength(1);
+
+			await act(async () => {
+				await result.current.retryLastMessage();
+			});
+
+			expect(mockSendWizardMessage).toHaveBeenCalledTimes(2);
+			expect(result.current.error).toBe(null);
+			expect(result.current.conversationHistory.map((message) => message.role)).toEqual([
+				'user',
+				'assistant',
+			]);
+			expect(result.current.conversationHistory[0].content).toBe('Retry this');
+			expect(result.current.conversationHistory[1].content).toBe('Retry succeeded');
+			expect(result.current.ready).toBe(true);
+
+			consoleSpy.mockRestore();
+		});
+
+		it('should retry after skipping newer non-user messages in history', async () => {
+			mockSendWizardMessage
+				.mockResolvedValueOnce({
+					success: false,
+					error: 'Agent failed',
+				})
+				.mockResolvedValueOnce({
+					success: true,
+					response: {
+						confidence: 85,
+						ready: true,
+						message: 'Retry succeeded',
+					},
+				});
+			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+			const { result } = renderHook(() => useInlineWizard());
+
+			await act(async () => {
+				await result.current.startWizard(
+					'test',
+					undefined,
+					'/test/project',
+					'claude-code',
+					'Test Project'
+				);
+			});
+
+			await act(async () => {
+				await result.current.sendMessage('Retry this');
+			});
+
+			act(() => {
+				result.current.addAssistantMessage('Diagnostic note');
+			});
+
+			await act(async () => {
+				await result.current.retryLastMessage();
+			});
+
+			expect(mockSendWizardMessage).toHaveBeenCalledTimes(2);
+			expect(result.current.conversationHistory.map((message) => message.content)).toEqual([
+				'Diagnostic note',
+				'Retry this',
+				'Retry succeeded',
+			]);
+
+			consoleSpy.mockRestore();
+		});
+
+		it('should retry the last message after the failed message was cleared from history', async () => {
+			mockSendWizardMessage
+				.mockResolvedValueOnce({
+					success: false,
+					error: 'Agent failed',
+				})
+				.mockResolvedValueOnce({
+					success: true,
+					response: {
+						confidence: 70,
+						ready: false,
+						message: 'Recovered',
+					},
+				});
+			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+			const { result } = renderHook(() => useInlineWizard());
+
+			await act(async () => {
+				await result.current.startWizard(
+					'test',
+					undefined,
+					'/test/project',
+					'claude-code',
+					'Test Project'
+				);
+			});
+
+			await act(async () => {
+				await result.current.sendMessage('Retry this');
+			});
+
+			act(() => {
+				result.current.clearConversation();
+			});
+
+			await act(async () => {
+				await result.current.retryLastMessage();
+			});
+
+			expect(mockSendWizardMessage).toHaveBeenCalledTimes(2);
+			expect(result.current.conversationHistory.map((message) => message.content)).toEqual([
+				'Retry this',
+				'Recovered',
+			]);
+
+			consoleSpy.mockRestore();
+		});
 	});
 
 	describe('generateDocuments', () => {
 		it('should return error when agent type or Auto Run folder path is missing', async () => {
+			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 			const { result } = renderHook(() => useInlineWizard());
 
 			// Don't start wizard (no agentType or autoRunFolderPath)
@@ -906,6 +1871,12 @@ describe('useInlineWizard', () => {
 				'Cannot generate documents: missing agent type or Auto Run folder path'
 			);
 			expect(result.current.isGeneratingDocs).toBe(false);
+			expect(consoleSpy).toHaveBeenCalledWith(
+				'[useInlineWizard]',
+				'Cannot generate documents: missing agent type or Auto Run folder path'
+			);
+
+			consoleSpy.mockRestore();
 		});
 
 		it('should set isGeneratingDocs to true during generation', async () => {
@@ -986,6 +1957,66 @@ describe('useInlineWizard', () => {
 			);
 		});
 
+		it('should generate with configured folder defaults when project metadata is missing', async () => {
+			const { result } = renderHook(() => useInlineWizard());
+
+			await act(async () => {
+				await result.current.startWizard(
+					'test goal',
+					undefined,
+					undefined,
+					'claude-code',
+					undefined,
+					'tab-1',
+					undefined,
+					'/custom/auto-run/folder'
+				);
+			});
+
+			await act(async () => {
+				await result.current.generateDocuments();
+			});
+
+			expect(mockGenerateInlineDocuments).toHaveBeenCalledWith(
+				expect.objectContaining({
+					directoryPath: '/custom/auto-run/folder',
+					projectName: 'Project',
+					autoRunFolderPath: '/custom/auto-run/folder',
+				})
+			);
+		});
+
+		it('should pass iterate mode to document generation', async () => {
+			window.maestro.autorun.listDocs = vi
+				.fn()
+				.mockResolvedValueOnce({ success: true, files: ['phase-1'] })
+				.mockResolvedValueOnce({ success: true, files: ['phase-1'] });
+			mockParseWizardIntent.mockReturnValue({ mode: 'iterate', goal: 'extend docs' });
+
+			const { result } = renderHook(() => useInlineWizard());
+
+			await act(async () => {
+				await result.current.startWizard(
+					'extend existing docs',
+					undefined,
+					'/test/project',
+					'claude-code',
+					'Test Project'
+				);
+			});
+
+			await act(async () => {
+				await result.current.generateDocuments();
+			});
+
+			expect(mockGenerateInlineDocuments).toHaveBeenCalledWith(
+				expect.objectContaining({
+					mode: 'iterate',
+					goal: 'extend docs',
+				})
+			);
+		});
+
 		it('should update generatedDocuments on success', async () => {
 			const { result } = renderHook(() => useInlineWizard());
 
@@ -1008,6 +2039,32 @@ describe('useInlineWizard', () => {
 			expect(result.current.generatedDocuments).toHaveLength(1);
 			expect(result.current.generatedDocuments[0].filename).toBe('Phase-01-Setup.md');
 			expect(result.current.isGeneratingDocs).toBe(false);
+		});
+
+		it('should treat a successful generation without documents as an empty result', async () => {
+			mockGenerateInlineDocuments.mockResolvedValueOnce({
+				success: true,
+				rawOutput: 'test output',
+			});
+
+			const { result } = renderHook(() => useInlineWizard());
+
+			await act(async () => {
+				await result.current.startWizard(
+					'test',
+					undefined,
+					'/test/project',
+					'claude-code',
+					'Test Project'
+				);
+			});
+
+			await act(async () => {
+				await result.current.generateDocuments();
+			});
+
+			expect(result.current.generatedDocuments).toEqual([]);
+			expect(result.current.generationProgress).toEqual({ current: 0, total: 0 });
 		});
 
 		it('should set error on generation failure', async () => {
@@ -1036,6 +2093,32 @@ describe('useInlineWizard', () => {
 
 			expect(result.current.error).toBe('Generation failed');
 			expect(result.current.isGeneratingDocs).toBe(false);
+		});
+
+		it('should use the default document generation failure message', async () => {
+			mockGenerateInlineDocuments.mockResolvedValueOnce({
+				success: false,
+			});
+
+			const { result } = renderHook(() => useInlineWizard());
+
+			await act(async () => {
+				await result.current.startWizard(
+					'test',
+					undefined,
+					'/test/project',
+					'claude-code',
+					'Test Project'
+				);
+			});
+
+			await act(async () => {
+				await result.current.generateDocuments();
+			});
+
+			expect(result.current.error).toBe('Document generation failed');
+			expect(result.current.streamingContent).toBe('');
+			expect(result.current.generationProgress).toBe(null);
 		});
 
 		it('should call callbacks during generation', async () => {
@@ -1072,6 +2155,62 @@ describe('useInlineWizard', () => {
 					}),
 				})
 			);
+		});
+
+		it('should run completion and error callback wrappers from the generation service', async () => {
+			const docs = [
+				{
+					filename: 'Phase-01-Setup.md',
+					content: '# Phase 01\n\n- [ ] Task 1',
+					taskCount: 1,
+					savedPath: '/test/project/Auto Run Docs/Phase-01-Setup.md',
+				},
+			];
+			mockGenerateInlineDocuments.mockImplementationOnce(async (config) => {
+				config.callbacks?.onComplete?.(docs);
+				config.callbacks?.onError?.('stream warning');
+				return {
+					success: true,
+					documents: docs,
+					rawOutput: 'test output',
+				};
+			});
+			const consoleLog = vi.spyOn(console, 'log').mockImplementation(() => {});
+			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const onComplete = vi.fn();
+			const onError = vi.fn();
+
+			const { result } = renderHook(() => useInlineWizard());
+
+			await act(async () => {
+				await result.current.startWizard(
+					'test',
+					undefined,
+					'/test/project',
+					'claude-code',
+					'Test Project'
+				);
+			});
+
+			await act(async () => {
+				await result.current.generateDocuments({ onComplete, onError });
+			});
+
+			expect(onComplete).toHaveBeenCalledWith(docs);
+			expect(onError).toHaveBeenCalledWith('stream warning');
+			expect(result.current.generatedDocuments).toEqual(docs);
+			expect(result.current.isGeneratingDocs).toBe(false);
+			expect(consoleLog).toHaveBeenCalledWith(
+				'[useInlineWizard] All documents complete:',
+				docs.length
+			);
+			expect(consoleError).toHaveBeenCalledWith(
+				'[useInlineWizard] Generation error:',
+				'stream warning'
+			);
+
+			consoleLog.mockRestore();
+			consoleError.mockRestore();
 		});
 
 		describe('streaming state', () => {
@@ -1147,6 +2286,7 @@ describe('useInlineWizard', () => {
 
 				// Streaming content should have accumulated
 				expect(result.current.streamingContent).toBe('First chunk Second chunk');
+				expect(mockExtractDisplayTextFromChunk).toHaveBeenCalledWith('First chunk', 'claude-code');
 			});
 
 			it('should update generationProgress when onDocumentComplete is called', async () => {
@@ -1252,6 +2392,69 @@ describe('useInlineWizard', () => {
 				expect(result.current.generationProgress).toBeDefined();
 			});
 
+			it('should ignore progress messages without a numeric count', async () => {
+				mockGenerateInlineDocuments.mockImplementationOnce(async (config) => {
+					config.callbacks?.onProgress?.('Working on the next document');
+					return {
+						success: true,
+						documents: [],
+						rawOutput: 'test output',
+					};
+				});
+
+				const { result } = renderHook(() => useInlineWizard());
+
+				await act(async () => {
+					await result.current.startWizard(
+						'test',
+						undefined,
+						'/test/project',
+						'claude-code',
+						'Test Project'
+					);
+				});
+
+				await act(async () => {
+					await result.current.generateDocuments();
+				});
+
+				expect(result.current.generationProgress).toEqual({ current: 0, total: 0 });
+			});
+
+			it('should ignore chunks that do not contain display text', async () => {
+				mockExtractDisplayTextFromChunk.mockReturnValueOnce('');
+				mockGenerateInlineDocuments.mockImplementationOnce(async (config) => {
+					config.callbacks?.onChunk?.('{"type":"metadata"}');
+					return {
+						success: true,
+						documents: [],
+						rawOutput: 'test output',
+					};
+				});
+
+				const { result } = renderHook(() => useInlineWizard());
+
+				await act(async () => {
+					await result.current.startWizard(
+						'test',
+						undefined,
+						'/test/project',
+						'claude-code',
+						'Test Project'
+					);
+				});
+
+				await act(async () => {
+					await result.current.generateDocuments();
+				});
+
+				expect(result.current.streamingContent).toBe('');
+				expect(mockExtractDisplayTextFromChunk).toHaveBeenCalledWith(
+					'{"type":"metadata"}',
+					'claude-code'
+				);
+			});
+
 			it('should clear streaming state on error', async () => {
 				mockGenerateInlineDocuments.mockImplementationOnce(async (config) => {
 					// Simulate some streaming before error
@@ -1284,6 +2487,79 @@ describe('useInlineWizard', () => {
 				expect(result.current.error).toBe('Generation failed');
 				expect(result.current.streamingContent).toBe('');
 				expect(result.current.generationProgress).toBe(null);
+			});
+
+			it('should clear streaming state when generation throws', async () => {
+				mockGenerateInlineDocuments.mockImplementationOnce(async (config) => {
+					config.callbacks?.onChunk?.('Some content');
+					throw new Error('spawn failed');
+				});
+				const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+				const onError = vi.fn();
+
+				const { result } = renderHook(() => useInlineWizard());
+
+				await act(async () => {
+					await result.current.startWizard(
+						'test',
+						undefined,
+						'/test/project',
+						'claude-code',
+						'Test Project'
+					);
+				});
+
+				await act(async () => {
+					await result.current.generateDocuments({ onError });
+				});
+
+				expect(result.current.error).toBe('spawn failed');
+				expect(result.current.streamingContent).toBe('');
+				expect(result.current.generationProgress).toBe(null);
+				expect(result.current.isGeneratingDocs).toBe(false);
+				expect(onError).toHaveBeenCalledWith('spawn failed');
+				expect(consoleSpy).toHaveBeenCalledWith(
+					'[useInlineWizard] generateDocuments error:',
+					expect.any(Error)
+				);
+
+				consoleSpy.mockRestore();
+			});
+
+			it('should use the generic generation error for non-Error throws', async () => {
+				mockGenerateInlineDocuments.mockImplementationOnce(async (config) => {
+					config.callbacks?.onChunk?.('Some content');
+					throw 'spawn failed';
+				});
+				const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+				const onError = vi.fn();
+
+				const { result } = renderHook(() => useInlineWizard());
+
+				await act(async () => {
+					await result.current.startWizard(
+						'test',
+						undefined,
+						'/test/project',
+						'claude-code',
+						'Test Project'
+					);
+				});
+
+				await act(async () => {
+					await result.current.generateDocuments({ onError });
+				});
+
+				expect(result.current.error).toBe('Unknown error during document generation');
+				expect(result.current.streamingContent).toBe('');
+				expect(result.current.generationProgress).toBe(null);
+				expect(onError).toHaveBeenCalledWith('Unknown error during document generation');
+				expect(consoleSpy).toHaveBeenCalledWith(
+					'[useInlineWizard] generateDocuments error:',
+					'spawn failed'
+				);
+
+				consoleSpy.mockRestore();
 			});
 
 			it('should set final progress on successful completion', async () => {

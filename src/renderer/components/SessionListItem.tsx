@@ -109,6 +109,7 @@ export function SessionListItem({
 	const isSelected = index === selectedIndex;
 	const isRenaming = renamingSessionId === session.sessionId;
 	const isActive = activeAgentSessionId === session.sessionId;
+	const costUsd = session.costUsd ?? 0;
 
 	return (
 		<div
@@ -270,13 +271,13 @@ export function SessionListItem({
 					</span>
 
 					{/* Cost per session */}
-					{(session.costUsd ?? 0) > 0 && (
+					{costUsd > 0 && (
 						<span
 							className="flex items-center gap-1 font-mono"
 							style={{ color: theme.colors.success }}
 						>
 							<DollarSign className="w-3 h-3" />
-							{(session.costUsd ?? 0).toFixed(2)}
+							{costUsd.toFixed(2)}
 						</span>
 					)}
 

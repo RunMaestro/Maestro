@@ -359,6 +359,25 @@ describe('batch-processor', () => {
 			expect(promptArg).toContain('My task');
 		});
 
+		it('should use the default Auto Run prompt when the playbook prompt is blank', async () => {
+			let callCount = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				callCount++;
+				if (callCount <= 3) return { content: '- [ ] Task', taskCount: 1 };
+				return { content: '', taskCount: 0 };
+			});
+
+			const session = mockSession();
+			const playbook = mockPlaybook({ prompt: '' });
+
+			await collectEvents(runPlaybook(session, playbook, '/playbooks'));
+
+			const promptArg = vi.mocked(spawnAgent).mock.calls[0][2];
+			expect(promptArg).toContain('Your name is **Test Session**');
+			expect(promptArg).toContain('# Current Document: /playbooks/tasks.md');
+			expect(promptArg).not.toContain('Custom prompt for processing');
+		});
+
 		it('should track usage statistics', async () => {
 			const usageStats: UsageStats = {
 				inputTokens: 1000,
@@ -394,6 +413,32 @@ describe('batch-processor', () => {
 			expect(completeEvent?.totalCost).toBe(0.05);
 		});
 
+		it('should treat missing usage stat fields as zero when accumulating totals', async () => {
+			let callCount = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				callCount++;
+				if (callCount <= 2) return { content: '- [ ] Task', taskCount: 1 };
+				return { content: '', taskCount: 0 };
+			});
+			vi.mocked(spawnAgent).mockResolvedValue({
+				success: true,
+				response: 'Done',
+				usageStats: {
+					inputTokens: undefined,
+					outputTokens: undefined,
+					cacheReadInputTokens: 0,
+					cacheCreationInputTokens: 0,
+					totalCostUsd: undefined,
+					contextWindow: 0,
+				} as unknown as UsageStats,
+			});
+
+			const events = await collectEvents(runPlaybook(mockSession(), mockPlaybook(), '/playbooks'));
+
+			const completeEvent = events.find((e) => e.type === 'complete');
+			expect(completeEvent?.totalCost).toBe(0);
+		});
+
 		it('should handle task failure', async () => {
 			let callCount = 0;
 			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
@@ -415,6 +460,27 @@ describe('batch-processor', () => {
 			const taskCompleteEvent = events.find((e) => e.type === 'task_complete');
 			expect(taskCompleteEvent?.success).toBe(false);
 			expect(taskCompleteEvent?.fullResponse).toContain('Agent error occurred');
+		});
+
+		it('should fall back to the default failure summary when no error is returned', async () => {
+			let callCount = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				callCount++;
+				if (callCount <= 2) return { content: '- [ ] Task', taskCount: 1 };
+				return { content: '', taskCount: 0 };
+			});
+			vi.mocked(spawnAgent).mockResolvedValue({
+				success: false,
+			});
+
+			const events = await collectEvents(runPlaybook(mockSession(), mockPlaybook(), '/playbooks'));
+
+			const taskCompleteEvent = events.find((e) => e.type === 'task_complete');
+			expect(taskCompleteEvent).toMatchObject({
+				success: false,
+				summary: '[tasks] Task failed',
+				fullResponse: '[tasks] Task failed',
+			});
 		});
 	});
 
@@ -509,6 +575,198 @@ describe('batch-processor', () => {
 
 			const taskCompleteEvent = events.find((e) => e.type === 'task_complete');
 			expect(taskCompleteEvent?.summary).toBe('Test summary');
+		});
+
+		it('should keep the default task summary when synopsis generation returns no response', async () => {
+			let callCount = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				callCount++;
+				if (callCount <= 2) return { content: '- [ ] Task', taskCount: 1 };
+				return { content: '', taskCount: 0 };
+			});
+			vi.mocked(spawnAgent)
+				.mockResolvedValueOnce({
+					success: true,
+					response: 'Done',
+					agentSessionId: 'session-123',
+				})
+				.mockResolvedValueOnce({
+					success: true,
+					response: '',
+				});
+
+			const events = await collectEvents(runPlaybook(mockSession(), mockPlaybook(), '/playbooks'));
+
+			const taskCompleteEvent = events.find((e) => e.type === 'task_complete');
+			expect(taskCompleteEvent).toMatchObject({
+				summary: '[tasks] Task completed',
+				fullResponse: '[tasks] Task completed',
+			});
+		});
+
+		it('tracks synopsis usage stats and reports debug timing', async () => {
+			let callCount = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				callCount++;
+				if (callCount <= 2) return { content: '- [ ] Task', taskCount: 1 };
+				return { content: '', taskCount: 0 };
+			});
+			const synopsisUsageStats: UsageStats = {
+				inputTokens: 12,
+				outputTokens: 5,
+				cacheReadInputTokens: 0,
+				cacheCreationInputTokens: 0,
+				totalCostUsd: 0.02,
+				contextWindow: 200000,
+			};
+			vi.mocked(spawnAgent)
+				.mockResolvedValueOnce({
+					success: true,
+					response: 'Done',
+					agentSessionId: 'session-123',
+				})
+				.mockResolvedValueOnce({
+					success: true,
+					response: '**Summary:** Generated synopsis',
+					usageStats: synopsisUsageStats,
+				});
+
+			const events = await collectEvents(
+				runPlaybook(mockSession(), mockPlaybook(), '/playbooks', { debug: true })
+			);
+
+			const taskCompleteEvent = events.find((e) => e.type === 'task_complete');
+			expect(taskCompleteEvent?.synopsisUsageStats).toEqual(synopsisUsageStats);
+			expect(events.find((e) => e.type === 'complete')?.totalCost).toBe(0.02);
+			expect(events).toContainEqual(
+				expect.objectContaining({
+					type: 'debug',
+					category: 'synopsis',
+					message: expect.stringContaining('Synopsis generated in'),
+				})
+			);
+		});
+
+		it('uses zero defaults for missing synopsis usage stats fields', async () => {
+			let callCount = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				callCount++;
+				if (callCount <= 2) return { content: '- [ ] Task', taskCount: 1 };
+				return { content: '', taskCount: 0 };
+			});
+			vi.mocked(spawnAgent)
+				.mockResolvedValueOnce({
+					success: true,
+					response: 'Done',
+					agentSessionId: 'session-123',
+				})
+				.mockResolvedValueOnce({
+					success: true,
+					response: '**Summary:** Generated synopsis',
+					usageStats: {} as UsageStats,
+				});
+
+			const events = await collectEvents(
+				runPlaybook(mockSession(), mockPlaybook(), '/playbooks', { debug: true })
+			);
+
+			expect(events.find((e) => e.type === 'complete')?.totalCost).toBe(0);
+			expect(events).toContainEqual(
+				expect.objectContaining({
+					type: 'debug',
+					category: 'synopsis',
+					message: expect.stringContaining('(0 input tokens)'),
+				})
+			);
+		});
+
+		it('reports synopsis debug timing without usage stats', async () => {
+			let callCount = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				callCount++;
+				if (callCount <= 2) return { content: '- [ ] Task', taskCount: 1 };
+				return { content: '', taskCount: 0 };
+			});
+			vi.mocked(spawnAgent)
+				.mockResolvedValueOnce({
+					success: true,
+					response: 'Done',
+					agentSessionId: 'session-123',
+				})
+				.mockResolvedValueOnce({
+					success: true,
+					response: '**Summary:** Generated synopsis',
+				});
+
+			const events = await collectEvents(
+				runPlaybook(mockSession(), mockPlaybook(), '/playbooks', { debug: true })
+			);
+
+			expect(events).toContainEqual(
+				expect.objectContaining({
+					type: 'debug',
+					category: 'synopsis',
+					message: expect.not.stringContaining('input tokens'),
+				})
+			);
+		});
+
+		it('emits a debug event when synopsis generation is skipped', async () => {
+			let callCount = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				callCount++;
+				if (callCount <= 2) return { content: '- [ ] Task', taskCount: 1 };
+				return { content: '', taskCount: 0 };
+			});
+			vi.mocked(spawnAgent).mockResolvedValue({
+				success: true,
+				response: 'Done',
+				agentSessionId: 'session-123',
+			});
+
+			const events = await collectEvents(
+				runPlaybook(mockSession(), mockPlaybook(), '/playbooks', {
+					debug: true,
+					skipSynopsis: true,
+				})
+			);
+
+			expect(spawnAgent).toHaveBeenCalledTimes(1);
+			expect(events.find((e) => e.type === 'task_complete')).toMatchObject({
+				synopsisSkipped: true,
+			});
+			expect(events).toContainEqual(
+				expect.objectContaining({
+					type: 'debug',
+					category: 'synopsis',
+					message: 'Synopsis skipped (--no-synopsis)',
+				})
+			);
+		});
+
+		it('skips synopsis without emitting debug when debug mode is off', async () => {
+			let callCount = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				callCount++;
+				if (callCount <= 2) return { content: '- [ ] Task', taskCount: 1 };
+				return { content: '', taskCount: 0 };
+			});
+			vi.mocked(spawnAgent).mockResolvedValue({
+				success: true,
+				response: 'Done',
+				agentSessionId: 'session-123',
+			});
+
+			const events = await collectEvents(
+				runPlaybook(mockSession(), mockPlaybook(), '/playbooks', {
+					skipSynopsis: true,
+				})
+			);
+
+			expect(events.find((e) => e.type === 'task_complete')).toMatchObject({
+				synopsisSkipped: true,
+			});
+			expect(events.some((e) => e.type === 'debug' && e.category === 'synopsis')).toBe(false);
 		});
 	});
 
@@ -701,11 +959,143 @@ describe('batch-processor', () => {
 			expect(loopCompleteEvents.length).toBe(0);
 		});
 
-		// NOTE: Testing maxLoops limit is skipped because the async generator
-		// requires careful mock coordination to simulate proper task completion
-		// patterns across multiple loop iterations without causing memory issues.
-		it.skip('should respect maxLoops limit', async () => {
-			// Test skipped - requires complex mock state management
+		it('should respect maxLoops limit after a completed loop iteration', async () => {
+			const usageStats: UsageStats = {
+				inputTokens: 100,
+				outputTokens: 50,
+				cacheReadInputTokens: 0,
+				cacheCreationInputTokens: 0,
+				totalCostUsd: 0.01,
+				contextWindow: 200000,
+			};
+			const taskReads = [
+				{ content: '- [ ] Initial scan', taskCount: 1 },
+				{ content: '- [ ] First loop task', taskCount: 1 },
+				{ content: '- [ ] First loop task', taskCount: 1 },
+				{ content: '', taskCount: 0 },
+				{ content: '- [ ] External follow-up task', taskCount: 1 },
+				{ content: '- [ ] Second loop task\n- [ ] Third loop task', taskCount: 2 },
+				{ content: '- [ ] Second loop task\n- [ ] Third loop task', taskCount: 2 },
+				{ content: '- [ ] Third loop task', taskCount: 1 },
+				{ content: '- [ ] Third loop task', taskCount: 1 },
+				{ content: '', taskCount: 0 },
+			];
+			vi.mocked(readDocAndCountTasks).mockImplementation(
+				() => taskReads.shift() ?? { content: '', taskCount: 0 }
+			);
+			vi.mocked(spawnAgent).mockResolvedValue({
+				success: true,
+				response: 'Done',
+				usageStats,
+			});
+
+			const session = mockSession();
+			const playbook = mockPlaybook({
+				loopEnabled: true,
+				maxLoops: 2,
+			});
+
+			const events = await collectEvents(
+				runPlaybook(session, playbook, '/playbooks', { debug: true })
+			);
+
+			const loopCompleteEvents = events.filter((e) => e.type === 'loop_complete');
+			expect(loopCompleteEvents).toHaveLength(1);
+			expect(loopCompleteEvents[0]).toMatchObject({
+				iteration: 1,
+				tasksCompleted: 1,
+				usageStats: expect.objectContaining({
+					inputTokens: 100,
+					outputTokens: 50,
+					totalCostUsd: 0.01,
+				}),
+			});
+			expect(events).toContainEqual(
+				expect.objectContaining({
+					type: 'debug',
+					category: 'loop',
+					message: 'Exiting: reached max loops (2)',
+				})
+			);
+			expect(vi.mocked(addHistoryEntry).mock.calls).toEqual(
+				expect.arrayContaining([
+					[
+						expect.objectContaining({
+							summary: 'Loop 1 completed: 1 tasks accomplished',
+							usageStats: expect.objectContaining({
+								inputTokens: 100,
+								outputTokens: 50,
+								totalCostUsd: 0.01,
+							}),
+						}),
+					],
+					[
+						expect.objectContaining({
+							summary: 'Loop 2 (final) completed: 2 tasks accomplished',
+							fullResponse: expect.stringContaining('Reached max loop limit (2)'),
+						}),
+					],
+					[
+						expect.objectContaining({
+							summary: 'Auto Run completed: 3 tasks in 2 loops',
+							usageStats: expect.objectContaining({
+								inputTokens: 300,
+								outputTokens: 150,
+								totalCostUsd: 0.03,
+							}),
+						}),
+					],
+				])
+			);
+			const completeEvent = events.find((e) => e.type === 'complete');
+			expect(completeEvent?.totalTasksCompleted).toBe(3);
+			expect(completeEvent?.totalCost).toBe(0.03);
+		});
+
+		it('should continue mixed reset and non-reset documents without debug or history', async () => {
+			const taskReads = [
+				{ content: '- [ ] Reset task', taskCount: 1 },
+				{ content: '- [ ] Driver task', taskCount: 1 },
+				{ content: '- [ ] Reset task', taskCount: 1 },
+				{ content: '- [ ] Reset task', taskCount: 1 },
+				{ content: '', taskCount: 0 },
+				{ content: '- [x] Reset task', taskCount: 0 },
+				{ content: '- [ ] Driver task', taskCount: 1 },
+				{ content: '- [ ] Driver task', taskCount: 1 },
+				{ content: '', taskCount: 0 },
+				{ content: '- [ ] External driver task', taskCount: 1 },
+				{ content: '', taskCount: 0 },
+				{ content: '- [ ] External driver task', taskCount: 1 },
+				{ content: '- [ ] External driver task', taskCount: 1 },
+				{ content: '', taskCount: 0 },
+			];
+			vi.mocked(readDocAndCountTasks).mockImplementation(
+				() => taskReads.shift() ?? { content: '', taskCount: 0 }
+			);
+			vi.mocked(spawnAgent).mockResolvedValue({
+				success: true,
+				response: 'Done',
+			});
+
+			const events = await collectEvents(
+				runPlaybook(
+					mockSession(),
+					mockPlaybook({
+						loopEnabled: true,
+						maxLoops: 2,
+						documents: [
+							{ filename: 'resetter', resetOnCompletion: true },
+							{ filename: 'driver', resetOnCompletion: false },
+						],
+					}),
+					'/playbooks',
+					{ writeHistory: false }
+				)
+			);
+
+			expect(events.filter((e) => e.type === 'loop_complete')).toHaveLength(1);
+			expect(uncheckAllTasks).toHaveBeenCalledWith('- [x] Reset task');
+			expect(addHistoryEntry).not.toHaveBeenCalled();
 		});
 
 		it('should exit when all non-reset documents have no tasks', async () => {
@@ -739,6 +1129,29 @@ describe('batch-processor', () => {
 			expect(exitDebug).toBeDefined();
 		});
 
+		it('should exit quietly when all non-reset documents have no tasks and debug is false', async () => {
+			let callCount = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				callCount++;
+				if (callCount <= 2) return { content: '- [ ] Task', taskCount: 1 };
+				return { content: '', taskCount: 0 };
+			});
+
+			const events = await collectEvents(
+				runPlaybook(
+					mockSession(),
+					mockPlaybook({
+						loopEnabled: true,
+						documents: [{ filename: 'tasks', resetOnCompletion: false }],
+					}),
+					'/playbooks'
+				)
+			);
+
+			expect(events.some((e) => e.type === 'debug' && e.category === 'loop')).toBe(false);
+			expect(events.find((e) => e.type === 'complete')).toBeDefined();
+		});
+
 		it('should exit when all documents have resetOnCompletion', async () => {
 			let callCount = 0;
 			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
@@ -763,6 +1176,29 @@ describe('batch-processor', () => {
 					e.type === 'debug' && e.message?.includes('ALL documents have resetOnCompletion=true')
 			);
 			expect(exitDebug).toBeDefined();
+		});
+
+		it('should exit quietly when all documents reset on completion and debug is false', async () => {
+			let callCount = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				callCount++;
+				if (callCount <= 2) return { content: '- [ ] Task', taskCount: 1 };
+				return { content: '', taskCount: 0 };
+			});
+
+			const events = await collectEvents(
+				runPlaybook(
+					mockSession(),
+					mockPlaybook({
+						loopEnabled: true,
+						documents: [{ filename: 'tasks', resetOnCompletion: true }],
+					}),
+					'/playbooks'
+				)
+			);
+
+			expect(events.some((e) => e.type === 'debug' && e.category === 'loop')).toBe(false);
+			expect(events.find((e) => e.type === 'complete')).toBeDefined();
 		});
 	});
 
@@ -798,6 +1234,26 @@ describe('batch-processor', () => {
 			// Should still emit events
 			const startEvent = events.find((e) => e.type === 'start');
 			expect(startEvent).toBeDefined();
+		});
+
+		it('should treat a blank git branch name as unavailable', async () => {
+			vi.mocked(childProcess.execFileSync).mockReturnValueOnce('\n').mockReturnValueOnce('true\n');
+			let callCount = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				callCount++;
+				if (callCount <= 3) return { content: '- [ ] Branch: {{GIT_BRANCH}}', taskCount: 1 };
+				return { content: '', taskCount: 0 };
+			});
+
+			const session = mockSession();
+			const playbook = mockPlaybook({ prompt: 'Branch {{GIT_BRANCH}}' });
+
+			await collectEvents(runPlaybook(session, playbook, '/playbooks'));
+
+			const promptArg = vi.mocked(spawnAgent).mock.calls[0][2];
+			expect(promptArg).not.toContain('Branch main');
+			expect(promptArg).not.toContain('{{GIT_BRANCH}}');
+			expect(promptArg).toContain('Branch');
 		});
 	});
 
@@ -999,15 +1455,7 @@ describe('batch-processor', () => {
 			let callCount = 0;
 			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
 				callCount++;
-				if (callCount === 1) {
-					// Initial scan with template
-					return { content: '- [ ] Deploy to ${session.cwd}', taskCount: 1 };
-				}
-				if (callCount === 2) {
-					// Processing scan - still has task
-					return { content: '- [ ] Deploy to /path/to/project', taskCount: 1 };
-				}
-				// After template substitution and task completion
+				if (callCount <= 3) return { content: '- [ ] Deploy to {{CWD}}', taskCount: 1 };
 				return { content: '', taskCount: 0 };
 			});
 
@@ -1019,14 +1467,19 @@ describe('batch-processor', () => {
 			// Should complete successfully
 			const completeEvent = events.find((e) => e.type === 'complete');
 			expect(completeEvent?.success).toBe(true);
+			expect(writeDoc).toHaveBeenCalledWith(
+				'/playbooks',
+				'tasks.md',
+				expect.stringContaining('/path/to/project')
+			);
 		});
 
 		it('should handle safety check for no tasks processed in a loop iteration', async () => {
 			let callCount = 0;
 			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
 				callCount++;
-				// Initial scan shows tasks, but processing shows none - triggers safety exit
 				if (callCount === 1) return { content: '', taskCount: 1 };
+				if (callCount === 3) return { content: '', taskCount: 1 };
 				return { content: '', taskCount: 0 };
 			});
 
@@ -1043,6 +1496,37 @@ describe('batch-processor', () => {
 			// Should complete without infinite loop
 			const completeEvent = events.find((e) => e.type === 'complete');
 			expect(completeEvent).toBeDefined();
+			expect(events).toContainEqual(
+				expect.objectContaining({
+					type: 'debug',
+					category: 'loop',
+					message: 'Exiting: no tasks were processed this iteration (safety check)',
+				})
+			);
+		});
+
+		it('should handle safety-check exit without debug output', async () => {
+			let callCount = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				callCount++;
+				if (callCount === 1) return { content: '', taskCount: 1 };
+				if (callCount === 3) return { content: '', taskCount: 1 };
+				return { content: '', taskCount: 0 };
+			});
+
+			const events = await collectEvents(
+				runPlaybook(
+					mockSession(),
+					mockPlaybook({
+						loopEnabled: true,
+						documents: [{ filename: 'tasks', resetOnCompletion: false }],
+					}),
+					'/playbooks'
+				)
+			);
+
+			expect(events.some((e) => e.type === 'debug' && e.category === 'loop')).toBe(false);
+			expect(events.find((e) => e.type === 'complete')).toBeDefined();
 		});
 	});
 });

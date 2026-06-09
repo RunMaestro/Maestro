@@ -551,6 +551,39 @@ describe('useQuickActionsHandlers', () => {
 			expect(updatedActive?.showThinking).toBe('on');
 			expect(updatedOther?.showThinking).toBe('off');
 		});
+
+		it('does not modify other sessions when toggling thinking mode', () => {
+			const activeTab = createTab({ id: 'tab-active', showThinking: 'off' });
+			const otherTab = createTab({ id: 'tab-other-session', showThinking: 'off' });
+			const activeSession = createSession({
+				id: 'sess-active',
+				inputMode: 'ai',
+				activeTabId: 'tab-active',
+				aiTabs: [activeTab],
+			});
+			const otherSession = createSession({
+				id: 'sess-other',
+				inputMode: 'ai',
+				activeTabId: 'tab-other-session',
+				aiTabs: [otherTab],
+			});
+			useSessionStore.setState({
+				sessions: [activeSession, otherSession],
+				activeSessionId: 'sess-active',
+			});
+
+			const deps = createDeps();
+			const { result } = renderHook(() => useQuickActionsHandlers(deps));
+
+			act(() => {
+				result.current.handleQuickActionsToggleTabShowThinking();
+			});
+
+			const sessions = useSessionStore.getState().sessions;
+			expect(sessions[0].aiTabs[0].showThinking).toBe('on');
+			expect(sessions[1]).toBe(otherSession);
+			expect(sessions[1].aiTabs[0].showThinking).toBe('off');
+		});
 	});
 
 	// ========================================================================

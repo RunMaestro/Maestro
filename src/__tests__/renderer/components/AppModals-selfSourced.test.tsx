@@ -31,74 +31,196 @@ vi.mock('../../../renderer/components/ShortcutsHelpModal', () => ({
 }));
 vi.mock('../../../renderer/components/UpdateCheckModal', () => ({ UpdateCheckModal: () => null }));
 vi.mock('../../../renderer/components/ProcessMonitor', () => ({ ProcessMonitor: () => null }));
-vi.mock('../../../renderer/components/UsageDashboard', () => ({ UsageDashboardModal: () => null }));
-vi.mock('../../../renderer/components/GitDiffViewer', () => ({ GitDiffViewer: () => null }));
-vi.mock('../../../renderer/components/GitLogViewer', () => ({ GitLogViewer: () => null }));
-vi.mock('../../../renderer/components/ConfirmModal', () => ({ ConfirmModal: () => null }));
-vi.mock('../../../renderer/components/QuitConfirmModal', () => ({ QuitConfirmModal: () => null }));
+vi.mock('../../../renderer/components/UsageDashboard', () => ({
+	UsageDashboardModal: () => <div data-testid="usage-dashboard-modal" />,
+}));
+vi.mock('../../../renderer/components/GitDiffViewer', () => ({
+	GitDiffViewer: () => <div data-testid="git-diff-viewer" />,
+}));
+vi.mock('../../../renderer/components/GitLogViewer', () => ({
+	GitLogViewer: () => <div data-testid="git-log-viewer" />,
+}));
+vi.mock('../../../renderer/components/ConfirmModal', () => ({
+	ConfirmModal: (props: Record<string, unknown>) => {
+		capturedConfirmProps.confirm = props;
+		return <div data-testid="confirm-modal">{String(props.message ?? '')}</div>;
+	},
+}));
+vi.mock('../../../renderer/components/QuitConfirmModal', () => ({
+	QuitConfirmModal: (props: { busyAgentCount?: number; busyAgentNames?: string[] }) => {
+		capturedConfirmProps.quit = props;
+		return <div data-testid="quit-confirm-modal">{props.busyAgentNames?.join('|')}</div>;
+	},
+}));
 vi.mock('../../../renderer/components/NewInstanceModal', () => ({
-	NewInstanceModal: () => null,
+	NewInstanceModal: (props: { sourceSession?: Session }) => (
+		<div data-testid="new-instance-modal">{props.sourceSession?.name}</div>
+	),
 	EditAgentModal: () => null,
 }));
 vi.mock('../../../renderer/components/RenameSessionModal', () => ({
 	RenameSessionModal: () => null,
 }));
-vi.mock('../../../renderer/components/RenameTabModal', () => ({ RenameTabModal: () => null }));
-vi.mock('../../../renderer/components/CreateGroupModal', () => ({ CreateGroupModal: () => null }));
-vi.mock('../../../renderer/components/RenameGroupModal', () => ({ RenameGroupModal: () => null }));
+vi.mock('../../../renderer/components/RenameTabModal', () => ({
+	RenameTabModal: (props: { agentSessionId?: string }) => (
+		<div data-testid="rename-tab-modal">{props.agentSessionId}</div>
+	),
+}));
+vi.mock('../../../renderer/components/CreateGroupModal', () => ({
+	CreateGroupModal: (props: Record<string, unknown>) => {
+		capturedGroupProps.create = props;
+		return <div data-testid="create-group-modal" />;
+	},
+}));
+vi.mock('../../../renderer/components/RenameGroupModal', () => ({
+	RenameGroupModal: (props: { groupId?: string; groupName?: string; groupEmoji?: string }) => {
+		capturedGroupProps.rename = props;
+		return (
+			<div data-testid="rename-group-modal">
+				{props.groupId}:{props.groupName}:{props.groupEmoji}
+			</div>
+		);
+	},
+}));
 vi.mock('../../../renderer/components/WorktreeConfigModal', () => ({
-	WorktreeConfigModal: () => null,
+	WorktreeConfigModal: (props: { session?: Session }) => {
+		capturedWorktreeProps.config = props;
+		return <div data-testid="worktree-config-modal">{props.session?.name}</div>;
+	},
 }));
 vi.mock('../../../renderer/components/CreateWorktreeModal', () => ({
-	CreateWorktreeModal: () => null,
+	CreateWorktreeModal: (props: { session?: Session }) => {
+		capturedWorktreeProps.create = props;
+		return <div data-testid="create-worktree-modal">{props.session?.name}</div>;
+	},
 }));
 vi.mock('../../../renderer/components/CreatePRModal', () => ({
-	CreatePRModal: () => null,
+	CreatePRModal: (props: {
+		worktreePath?: string;
+		worktreeBranch?: string;
+		availableBranches?: string[];
+	}) => {
+		capturedWorktreeProps.createPR = props;
+		return (
+			<div data-testid="create-pr-modal">
+				{props.worktreePath}:{props.worktreeBranch}:{props.availableBranches?.join(',')}
+			</div>
+		);
+	},
 }));
 vi.mock('../../../renderer/components/DeleteWorktreeModal', () => ({
-	DeleteWorktreeModal: () => null,
+	DeleteWorktreeModal: (props: { session?: Session }) => {
+		capturedWorktreeProps.delete = props;
+		return <div data-testid="delete-worktree-modal">{props.session?.name}</div>;
+	},
 }));
 vi.mock('../../../renderer/components/QuickActionsModal', () => ({
 	QuickActionsModal: () => null,
 }));
-vi.mock('../../../renderer/components/TabSwitcherModal', () => ({ TabSwitcherModal: () => null }));
+vi.mock('../../../renderer/components/TabSwitcherModal', () => ({
+	TabSwitcherModal: (props: { tabs?: unknown[]; fileTabs?: unknown[]; activeTabId?: string }) => {
+		capturedUtilityProps.tabSwitcher = props;
+		return <div data-testid="tab-switcher-modal">{props.activeTabId}</div>;
+	},
+}));
 vi.mock('../../../renderer/components/FileSearchModal', () => ({
-	FileSearchModal: () => null,
+	FileSearchModal: (props: Record<string, unknown>) => {
+		capturedUtilityProps.fileSearch = props;
+		return <div data-testid="file-search-modal" />;
+	},
 }));
 vi.mock('../../../renderer/components/PromptComposerModal', () => ({
-	PromptComposerModal: () => null,
+	PromptComposerModal: (props: {
+		sessions?: Session[];
+		groups?: Group[];
+		sessionName?: string;
+	}) => {
+		capturedUtilityProps.promptComposer = props;
+		return <div data-testid="prompt-composer-modal">{props.sessionName}</div>;
+	},
 }));
 vi.mock('../../../renderer/components/ExecutionQueueBrowser', () => ({
 	ExecutionQueueBrowser: () => null,
 }));
-vi.mock('../../../renderer/components/BatchRunnerModal', () => ({ BatchRunnerModal: () => null }));
+vi.mock('../../../renderer/components/BatchRunnerModal', () => ({
+	BatchRunnerModal: (props: {
+		initialPrompt?: string;
+		currentDocument?: string;
+		folderPath?: string;
+	}) => {
+		capturedUtilityProps.batchRunner = props;
+		return (
+			<div data-testid="batch-runner-modal">
+				{props.folderPath}:{props.initialPrompt}:{props.currentDocument}
+			</div>
+		);
+	},
+}));
 vi.mock('../../../renderer/components/AutoRunSetupModal', () => ({
 	AutoRunSetupModal: () => null,
 }));
-vi.mock('../../../renderer/components/LightboxModal', () => ({ LightboxModal: () => null }));
+vi.mock('../../../renderer/components/LightboxModal', () => ({
+	LightboxModal: (props: { image?: string; stagedImages?: string[] }) => {
+		capturedUtilityProps.lightbox = props;
+		return <div data-testid="lightbox-modal">{props.stagedImages?.join('|')}</div>;
+	},
+}));
 vi.mock('../../../renderer/components/GroupChatModal', () => ({
-	GroupChatModal: () => null,
+	GroupChatModal: (props: { mode?: string; groupChat?: GroupChat | null }) => {
+		capturedGroupChatProps[props.mode ?? 'unknown'] = props;
+		return <div data-testid={`group-chat-modal-${props.mode}`}>{props.groupChat?.name}</div>;
+	},
 }));
 vi.mock('../../../renderer/components/DeleteGroupChatModal', () => ({
-	DeleteGroupChatModal: () => null,
+	DeleteGroupChatModal: (props: { groupChatName?: string }) => (
+		<div data-testid="delete-group-chat-modal">{props.groupChatName}</div>
+	),
 }));
 vi.mock('../../../renderer/components/RenameGroupChatModal', () => ({
-	RenameGroupChatModal: () => null,
+	RenameGroupChatModal: (props: { currentName?: string }) => (
+		<div data-testid="rename-group-chat-modal">{props.currentName}</div>
+	),
 }));
 vi.mock('../../../renderer/components/GroupChatInfoOverlay', () => ({
-	GroupChatInfoOverlay: () => null,
+	GroupChatInfoOverlay: (props: { groupChat?: GroupChat }) => (
+		<div data-testid="group-chat-info-overlay">{props.groupChat?.name}</div>
+	),
 }));
 vi.mock('../../../renderer/components/AgentErrorModal', () => ({
-	AgentErrorModal: () => null,
+	AgentErrorModal: (props: { agentName?: string; sessionName?: string; dismissible?: boolean }) => {
+		capturedAgentProps.error = props;
+		return (
+			<div data-testid="agent-error-modal">
+				{props.agentName}:{props.sessionName}:{String(props.dismissible)}
+			</div>
+		);
+	},
 }));
 vi.mock('../../../renderer/components/MergeSessionModal', () => ({
-	MergeSessionModal: () => null,
+	MergeSessionModal: (props: { sourceSession?: Session; sourceTabId?: string }) => {
+		capturedAgentProps.merge = props;
+		return <div data-testid="merge-session-modal">{props.sourceTabId}</div>;
+	},
 }));
 vi.mock('../../../renderer/components/SendToAgentModal', () => ({
-	SendToAgentModal: () => null,
+	SendToAgentModal: (props: { sourceSession?: Session; sourceTabId?: string }) => {
+		capturedAgentProps.sendToAgent = props;
+		return <div data-testid="send-to-agent-modal">{props.sourceTabId}</div>;
+	},
 }));
 vi.mock('../../../renderer/components/TransferProgressModal', () => ({
-	TransferProgressModal: () => null,
+	TransferProgressModal: (props: {
+		progress?: unknown;
+		sourceAgent?: string;
+		targetAgent?: string;
+	}) => {
+		capturedAgentProps.transfer = props;
+		return (
+			<div data-testid="transfer-progress-modal">
+				{props.sourceAgent}:{props.targetAgent}
+			</div>
+		);
+	},
 }));
 vi.mock('../../../renderer/components/LeaderboardRegistrationModal', () => ({
 	LeaderboardRegistrationModal: () => null,
@@ -583,6 +705,512 @@ describe('AppModals (Tier 1B self-sourcing)', () => {
 			act(() => {
 				useModalStore.getState().openModal('about');
 			});
+
+			unmount();
+		});
+
+		it('resolves lazy dashboard and git viewer modals when opened', async () => {
+			useSessionStore.setState({
+				sessions: [createMockSession({ id: 's1', name: 'Agent 1', cwd: '/repo' })],
+				activeSessionId: 's1',
+			});
+			const { openModal } = useModalStore.getState();
+			openModal('usageDashboard');
+			openModal('gitLog');
+
+			const { unmount } = render(
+				<AppModals {...createDefaultProps({ gitDiffPreview: 'diff --git a/file b/file' })} />
+			);
+
+			expect(await screen.findByTestId('usage-dashboard-modal')).toBeInTheDocument();
+			expect(await screen.findByTestId('git-diff-viewer')).toBeInTheDocument();
+			expect(await screen.findByTestId('git-log-viewer')).toBeInTheDocument();
+
+			unmount();
+		});
+
+		it('passes derived session data into new-instance and rename-tab modals', () => {
+			useSessionStore.setState({
+				sessions: [
+					createMockSession({
+						id: 's1',
+						name: 'Source Agent',
+						aiTabs: [
+							{
+								id: 'tab-1',
+								name: 'Planning',
+								agentSessionId: 'agent-session-1',
+								logs: [],
+							},
+						],
+						activeTabId: 'tab-1',
+					}),
+				],
+				activeSessionId: 's1',
+			});
+			const { openModal } = useModalStore.getState();
+			openModal('newInstance');
+			openModal('renameTab');
+
+			const { unmount } = render(
+				<AppModals
+					{...createDefaultProps({
+						duplicatingSessionId: 's1',
+						renameTabId: 'tab-1',
+						renameTabInitialName: 'Planning',
+					})}
+				/>
+			);
+
+			expect(screen.getByTestId('new-instance-modal')).toHaveTextContent('Source Agent');
+			expect(screen.getByTestId('rename-tab-modal')).toHaveTextContent('agent-session-1');
+
+			unmount();
+		});
+
+		it('looks up group chat modal data from groupChatStore ids', () => {
+			const groupChat = createMockGroupChat({ id: 'gc-1', name: 'Planning Chat' });
+			useGroupChatStore.setState({
+				groupChats: [groupChat],
+				activeGroupChatId: 'gc-1',
+			});
+			useModalStore.getState().openModal('groupChatInfo');
+
+			const { unmount } = render(
+				<AppModals
+					{...createDefaultProps({
+						showDeleteGroupChatModal: 'gc-1',
+						showRenameGroupChatModal: 'gc-1',
+						showEditGroupChatModal: 'gc-1',
+						groupChatError: {
+							groupChatId: 'gc-1',
+							participantName: 'Planner',
+							error: {
+								message: 'participant failed',
+								recoverable: true,
+								timestamp: Date.now(),
+								type: 'agent_crashed',
+							},
+						},
+					})}
+				/>
+			);
+
+			expect(screen.getByTestId('delete-group-chat-modal')).toHaveTextContent('Planning Chat');
+			expect(screen.getByTestId('rename-group-chat-modal')).toHaveTextContent('Planning Chat');
+			expect(screen.getByTestId('group-chat-modal-edit')).toHaveTextContent('Planning Chat');
+			expect(screen.getByTestId('group-chat-info-overlay')).toHaveTextContent('Planning Chat');
+			expect(screen.getByTestId('agent-error-modal')).toHaveTextContent('Planning Chat');
+
+			unmount();
+		});
+
+		it('builds quit-confirm busy agent names from active and auto-run sessions', () => {
+			const sessions = [
+				createMockSession({ id: 'idle', name: 'Idle Agent', state: 'idle' }),
+				createMockSession({
+					id: 'user-busy',
+					name: 'User Busy',
+					state: 'busy',
+					busySource: 'user',
+				}),
+				createMockSession({
+					id: 'terminal-busy',
+					name: 'Terminal Busy',
+					state: 'busy',
+					busySource: 'ai',
+					toolType: 'terminal',
+				}),
+				createMockSession({
+					id: 'ai-busy',
+					name: 'AI Busy',
+					state: 'busy',
+					busySource: 'ai',
+					toolType: 'claude-code',
+				}),
+				createMockSession({ id: 'auto-run', name: 'Auto Runner', state: 'idle' }),
+			];
+			useSessionStore.setState({ sessions, activeSessionId: 'ai-busy' });
+			useModalStore.getState().openModal('quitConfirm');
+
+			const { unmount } = render(
+				<AppModals
+					{...createDefaultProps({
+						activeBatchSessionIds: ['ai-busy', 'auto-run'],
+					})}
+				/>
+			);
+
+			expect(screen.getByTestId('quit-confirm-modal')).toHaveTextContent(
+				'AI Busy|Auto Runner (Auto Run)'
+			);
+			expect((capturedConfirmProps.quit as { busyAgentCount?: number }).busyAgentCount).toBe(2);
+
+			unmount();
+		});
+
+		it('renders create and rename group modals with store-provided rename data', () => {
+			useSessionStore.setState({
+				groups: [createMockGroup({ id: 'group-1', name: 'Original Group' })],
+			});
+			useModalStore.getState().openModal('renameGroup');
+
+			const { unmount } = render(
+				<AppModals
+					{...createDefaultProps({
+						createGroupModalOpen: true,
+						renameGroupId: 'group-1',
+						renameGroupValue: 'Renamed Group',
+						renameGroupEmoji: 'folder',
+					})}
+				/>
+			);
+
+			expect(screen.getByTestId('create-group-modal')).toBeInTheDocument();
+			expect(screen.getByTestId('rename-group-modal')).toHaveTextContent(
+				'group-1:Renamed Group:folder'
+			);
+			expect((capturedGroupProps.rename as { groupId?: string }).groupId).toBe('group-1');
+
+			unmount();
+		});
+
+		it('renders worktree modals and create-PR branch data from active and explicit sessions', () => {
+			const activeSession = createMockSession({
+				id: 'active',
+				name: 'Active Worktree',
+				cwd: '/repo/active',
+				worktreeBranch: 'feature/current',
+				gitBranches: ['feature/current', 'main'],
+			});
+			const createSession = createMockSession({ id: 'create', name: 'Create Worktree' });
+			const deleteSession = createMockSession({ id: 'delete', name: 'Delete Worktree' });
+			useSessionStore.setState({ sessions: [activeSession], activeSessionId: 'active' });
+			const { openModal } = useModalStore.getState();
+			openModal('worktreeConfig');
+			openModal('createWorktree');
+			openModal('createPR');
+			openModal('deleteWorktree');
+
+			const { unmount } = render(
+				<AppModals
+					{...createDefaultProps({
+						createWorktreeSession: createSession,
+						deleteWorktreeSession: deleteSession,
+					})}
+				/>
+			);
+
+			expect(screen.getByTestId('worktree-config-modal')).toHaveTextContent('Active Worktree');
+			expect(screen.getByTestId('create-worktree-modal')).toHaveTextContent('Create Worktree');
+			expect(screen.getByTestId('delete-worktree-modal')).toHaveTextContent('Delete Worktree');
+			expect(screen.getByTestId('create-pr-modal')).toHaveTextContent(
+				'/repo/active:feature/current:feature/current,main'
+			);
+
+			unmount();
+		});
+
+		it('falls back through create-PR branch sources in order', () => {
+			const branchOnlySession = createMockSession({
+				id: 'branch-only',
+				cwd: '/repo/branch-only',
+				gitBranches: ['develop'],
+			});
+			useModalStore.getState().openModal('createPR');
+			const first = render(
+				<AppModals {...createDefaultProps({ createPRSession: branchOnlySession })} />
+			);
+
+			expect(screen.getByTestId('create-pr-modal')).toHaveTextContent(
+				'/repo/branch-only:develop:develop'
+			);
+			first.unmount();
+
+			useModalStore.setState({ modals: new Map() });
+			const fallbackSession = createMockSession({ id: 'fallback', cwd: '/repo/fallback' });
+			useModalStore.getState().openModal('createPR');
+			const second = render(
+				<AppModals {...createDefaultProps({ createPRSession: fallbackSession })} />
+			);
+
+			expect(screen.getByTestId('create-pr-modal')).toHaveTextContent(
+				'/repo/fallback:main:main,master'
+			);
+			second.unmount();
+		});
+
+		it('uses explicit lightbox images before staged-image fallbacks', () => {
+			const explicit = render(
+				<AppModals
+					{...createDefaultProps({
+						lightboxImage: 'current.png',
+						lightboxImages: ['current.png', 'next.png'],
+						stagedImages: ['fallback.png'],
+					})}
+				/>
+			);
+
+			expect(screen.getByTestId('lightbox-modal')).toHaveTextContent('current.png|next.png');
+			explicit.unmount();
+
+			const fallback = render(
+				<AppModals
+					{...createDefaultProps({
+						lightboxImage: 'current.png',
+						lightboxImages: [],
+						stagedImages: ['fallback.png'],
+					})}
+				/>
+			);
+
+			expect(screen.getByTestId('lightbox-modal')).toHaveTextContent('fallback.png');
+			fallback.unmount();
+		});
+
+		it('renders utility modals from active-session state and prompt composer group-chat context', () => {
+			const session = createMockSession({
+				id: 'utility-session',
+				name: 'Utility Agent',
+				autoRunFolderPath: '/docs',
+				batchRunnerPrompt: 'Summarize',
+				autoRunSelectedFile: 'intro.md',
+				aiTabs: [{ id: 'tab-1', name: 'Main', logs: [] }],
+				filePreviewTabs: [{ id: 'file-1', path: '/docs/intro.md' }],
+				activeTabId: 'tab-1',
+				activeFileTabId: 'file-1',
+				projectRoot: '/repo',
+			} as Partial<Session>);
+			const groups = [createMockGroup({ id: 'group-1', name: 'Writers' })];
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'utility-session', groups });
+			useGroupChatStore.setState({
+				groupChats: [createMockGroupChat()],
+				activeGroupChatId: 'gc-1',
+			});
+			const { openModal } = useModalStore.getState();
+			openModal('batchRunner');
+			openModal('tabSwitcher');
+			openModal('fuzzyFileSearch');
+			openModal('promptComposer');
+
+			const { unmount } = render(
+				<AppModals
+					{...createDefaultProps({
+						filteredFileTree: [{ name: 'intro.md' }],
+						fileExplorerExpanded: new Set(['/docs']),
+						promptComposerSessionName: 'Utility Agent',
+						onCloseBatchRunner: vi.fn(),
+						onStartBatchRun: vi.fn(),
+						onSaveBatchPrompt: vi.fn(),
+					})}
+				/>
+			);
+
+			expect(screen.getByTestId('batch-runner-modal')).toHaveTextContent(
+				'/docs:Summarize:intro.md'
+			);
+			expect(screen.getByTestId('tab-switcher-modal')).toHaveTextContent('tab-1');
+			expect(screen.getByTestId('file-search-modal')).toBeInTheDocument();
+			expect(screen.getByTestId('prompt-composer-modal')).toHaveTextContent('Utility Agent');
+			expect((capturedUtilityProps.promptComposer as { sessions?: Session[] }).sessions).toEqual([
+				session,
+			]);
+			expect((capturedUtilityProps.promptComposer as { groups?: Group[] }).groups).toEqual(groups);
+
+			unmount();
+		});
+
+		it('falls back batch-runner prompt and document values and omits group lists outside group chat', () => {
+			const session = createMockSession({
+				id: 'batch-fallback',
+				autoRunFolderPath: '/docs',
+				aiTabs: [{ id: 'tab-1', name: 'Main', logs: [] }],
+				activeTabId: 'tab-1',
+			} as Partial<Session>);
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'batch-fallback' });
+			const { openModal } = useModalStore.getState();
+			openModal('batchRunner');
+			openModal('promptComposer');
+
+			const { unmount } = render(
+				<AppModals
+					{...createDefaultProps({
+						onCloseBatchRunner: vi.fn(),
+						onStartBatchRun: vi.fn(),
+						onSaveBatchPrompt: vi.fn(),
+					})}
+				/>
+			);
+
+			expect(screen.getByTestId('batch-runner-modal')).toHaveTextContent('/docs::');
+			expect(
+				(capturedUtilityProps.promptComposer as { sessions?: Session[] }).sessions
+			).toBeUndefined();
+			expect((capturedUtilityProps.promptComposer as { groups?: Group[] }).groups).toBeUndefined();
+
+			unmount();
+		});
+
+		it('covers agent error naming for claude, non-claude, and missing sessions', () => {
+			const claudeSession = createMockSession({
+				id: 'claude-session',
+				name: 'Claude Session',
+				toolType: 'claude-code',
+			});
+			let result = render(
+				<AppModals
+					{...createDefaultProps({
+						errorSession: claudeSession,
+						effectiveAgentError: { message: 'boom', recoverable: true, timestamp: 1 },
+						onDismissAgentError: vi.fn(),
+					})}
+				/>
+			);
+			expect(screen.getByTestId('agent-error-modal')).toHaveTextContent(
+				'Claude Code:Claude Session:true'
+			);
+			result.unmount();
+
+			const codexSession = createMockSession({
+				id: 'codex-session',
+				name: 'Codex Session',
+				toolType: 'codex',
+			} as Partial<Session>);
+			result = render(
+				<AppModals
+					{...createDefaultProps({
+						errorSession: codexSession,
+						effectiveAgentError: { message: 'boom', recoverable: false, timestamp: 1 },
+						onDismissAgentError: vi.fn(),
+					})}
+				/>
+			);
+			expect(screen.getByTestId('agent-error-modal')).toHaveTextContent(
+				'codex:Codex Session:false'
+			);
+			result.unmount();
+
+			result = render(
+				<AppModals
+					{...createDefaultProps({
+						errorSession: null,
+						effectiveAgentError: { message: 'boom', timestamp: 1 },
+						onDismissAgentError: vi.fn(),
+					})}
+				/>
+			);
+			expect(screen.getByTestId('agent-error-modal')).toHaveTextContent('::true');
+			result.unmount();
+		});
+
+		it('falls back group-chat error labels when participant or chat lookup is missing', () => {
+			const { unmount } = render(
+				<AppModals
+					{...createDefaultProps({
+						groupChatError: {
+							groupChatId: 'missing-chat',
+							error: {
+								message: 'participant failed',
+								recoverable: false,
+								timestamp: Date.now(),
+								type: 'agent_crashed',
+							},
+						},
+						onClearGroupChatError: vi.fn(),
+					})}
+				/>
+			);
+
+			expect(screen.getByTestId('agent-error-modal')).toHaveTextContent('Group Chat:Unknown:false');
+
+			unmount();
+		});
+
+		it('renders merge, transfer, and send-to-agent modals only with required active-tab data', () => {
+			const session = createMockSession({
+				id: 'source-session',
+				name: 'Source',
+				activeTabId: 'tab-1',
+				aiTabs: [{ id: 'tab-1', name: 'Main', logs: [] }],
+			} as Partial<Session>);
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'source-session' });
+			useModalStore.getState().openModal('mergeSession');
+			useModalStore.getState().openModal('sendToAgent');
+
+			const { unmount } = render(
+				<AppModals
+					{...createDefaultProps({
+						onCloseMergeSession: vi.fn(),
+						onMerge: vi.fn(),
+						onCloseSendToAgent: vi.fn(),
+						onSendToAgent: vi.fn(),
+						transferState: 'complete',
+						transferProgress: { step: 'done', progress: 100 },
+						transferSourceAgent: 'claude-code',
+						transferTargetAgent: 'codex',
+						onCancelTransfer: vi.fn(),
+						onCompleteTransfer: vi.fn(),
+					})}
+				/>
+			);
+
+			expect(screen.getByTestId('merge-session-modal')).toHaveTextContent('tab-1');
+			expect(screen.getByTestId('send-to-agent-modal')).toHaveTextContent('tab-1');
+			expect(screen.getByTestId('transfer-progress-modal')).toHaveTextContent('claude-code:codex');
+
+			unmount();
+		});
+
+		it('keeps agent transfer modals closed when required guard data is missing', () => {
+			const session = createMockSession({ id: 'source-session', name: 'Source' });
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'source-session' });
+			useModalStore.getState().openModal('mergeSession');
+			useModalStore.getState().openModal('sendToAgent');
+
+			let result = render(
+				<AppModals
+					{...createDefaultProps({
+						transferState: 'idle',
+						transferProgress: { step: 'pending' },
+						transferSourceAgent: 'claude-code',
+						transferTargetAgent: 'codex',
+					})}
+				/>
+			);
+			expect(screen.queryByTestId('merge-session-modal')).not.toBeInTheDocument();
+			expect(screen.queryByTestId('send-to-agent-modal')).not.toBeInTheDocument();
+			expect(screen.queryByTestId('transfer-progress-modal')).not.toBeInTheDocument();
+			result.unmount();
+
+			for (const transferOverrides of [
+				{ transferState: 'grooming', transferProgress: null, transferSourceAgent: 'claude-code' },
+				{
+					transferState: 'grooming',
+					transferProgress: { step: 'pending' },
+					transferSourceAgent: null,
+				},
+				{
+					transferState: 'grooming',
+					transferProgress: { step: 'pending' },
+					transferSourceAgent: 'claude-code',
+					transferTargetAgent: null,
+				},
+			]) {
+				result = render(<AppModals {...createDefaultProps(transferOverrides)} />);
+				expect(screen.queryByTestId('transfer-progress-modal')).not.toBeInTheDocument();
+				result.unmount();
+			}
+		});
+
+		it('passes null to edit group chat modal when the requested chat no longer exists', () => {
+			const { unmount } = render(
+				<AppModals {...createDefaultProps({ showEditGroupChatModal: 'missing-chat' })} />
+			);
+
+			expect(screen.getByTestId('group-chat-modal-edit')).toBeInTheDocument();
+			expect(
+				(capturedGroupChatProps.edit as { groupChat?: GroupChat | null }).groupChat
+			).toBeNull();
 
 			unmount();
 		});

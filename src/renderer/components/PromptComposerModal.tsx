@@ -1,4 +1,5 @@
-import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
+import { useEffect, useRef, useState, useMemo, useCallback } from 'react';
+import type { ChangeEvent, ClipboardEvent, Dispatch, KeyboardEvent, SetStateAction } from 'react';
 import {
 	X,
 	PenLine,
@@ -46,7 +47,7 @@ interface PromptComposerModalProps {
 	sessionName?: string;
 	// Image attachment props
 	stagedImages?: string[];
-	setStagedImages?: React.Dispatch<React.SetStateAction<string[]>>;
+	setStagedImages?: Dispatch<SetStateAction<string[]>>;
 	onImageAttachBlocked?: () => void;
 	onOpenLightbox?: (image: string, contextImages?: string[], source?: 'staged' | 'history') => void;
 	// Bottom bar toggles
@@ -271,7 +272,7 @@ export function PromptComposerModal({
 		onClose();
 	};
 
-	const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+	const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
 		// Handle mention dropdown navigation
 		if (showMentions && filteredMentions.length > 0) {
 			if (e.key === 'ArrowDown') {
@@ -339,7 +340,7 @@ export function PromptComposerModal({
 	};
 
 	// Handle paste for images and text (with whitespace trimming)
-	const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+	const handlePaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
 		const items = e.clipboardData.items;
 		const hasImage = Array.from(items).some((item) => item.type.startsWith('image/'));
 
@@ -351,9 +352,9 @@ export function PromptComposerModal({
 				// Only intercept if trimming actually changed the text
 				if (trimmedText !== text) {
 					e.preventDefault();
-					const target = e.target as HTMLTextAreaElement;
-					const start = target.selectionStart ?? 0;
-					const end = target.selectionEnd ?? 0;
+					const target = e.currentTarget;
+					const start = target.selectionStart;
+					const end = target.selectionEnd;
 					const currentValue = target.value;
 					const pastedValue = currentValue.slice(0, start) + trimmedText + currentValue.slice(end);
 					handleValueChange(pastedValue);
@@ -367,10 +368,8 @@ export function PromptComposerModal({
 		}
 
 		if (!setStagedImages) {
-			if (hasImage) {
-				e.preventDefault();
-				onImageAttachBlocked?.();
-			}
+			e.preventDefault();
+			onImageAttachBlocked?.();
 			return;
 		}
 
@@ -392,15 +391,13 @@ export function PromptComposerModal({
 	};
 
 	// Handle file input change for image attachment
-	const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-		if (!setStagedImages) return;
-
+	const handleFileInputChange = (e: ChangeEvent<HTMLInputElement>) => {
 		const files = Array.from(e.target.files || []);
 		files.forEach((file) => {
 			const reader = new FileReader();
 			reader.onload = (event) => {
 				if (event.target?.result) {
-					setStagedImages((prev) => [...prev, event.target!.result as string]);
+					setStagedImages!((prev) => [...prev, event.target!.result as string]);
 				}
 			};
 			reader.readAsDataURL(file);

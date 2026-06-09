@@ -3,9 +3,22 @@ import {
 	buildSshCommand,
 	buildRemoteCommand,
 	buildSshCommandWithStdin,
+	buildSshScriptPreview,
+	getRemoteImageExtension,
 } from '../../../main/utils/ssh-command-builder';
 import type { SshRemoteConfig } from '../../../shared/types';
 import * as os from 'os';
+
+const mockLogger = vi.hoisted(() => ({
+	debug: vi.fn(),
+	info: vi.fn(),
+	warn: vi.fn(),
+	error: vi.fn(),
+}));
+
+vi.mock('../../../main/utils/logger', () => ({
+	logger: mockLogger,
+}));
 
 // Mock os.homedir() for consistent path expansion tests
 vi.mock('os', async () => {
@@ -41,6 +54,27 @@ describe('ssh-command-builder', () => {
 		privateKeyPath: '~/.ssh/id_ed25519',
 		enabled: true,
 	};
+
+	describe('small helpers', () => {
+		it('extracts a remote image extension from a parsed media type', () => {
+			expect(getRemoteImageExtension('image/png')).toBe('png');
+			expect(getRemoteImageExtension('image/jpeg')).toBe('jpeg');
+		});
+
+		it('falls back to png when parsed image media type has no subtype', () => {
+			expect(getRemoteImageExtension('image')).toBe('png');
+		});
+
+		it('keeps short stdin script previews intact', () => {
+			expect(buildSshScriptPreview('exec opencode')).toBe('exec opencode');
+		});
+
+		it('truncates long stdin script previews', () => {
+			const preview = buildSshScriptPreview('x'.repeat(501));
+
+			expect(preview).toBe(`${'x'.repeat(500)}...`);
+		});
+	});
 
 	describe('buildRemoteCommand', () => {
 		// Note: The command itself is NOT escaped - it comes from agent config (trusted).
@@ -154,6 +188,26 @@ describe('ssh-command-builder', () => {
 				env: undefined,
 			});
 			expect(result).toBe('claude');
+		});
+
+		it('passes raw stdin through without adding exec when stream-json is not requested', async () => {
+			const result = buildRemoteCommand({
+				command: 'opencode',
+				args: ['run'],
+				useStdin: true,
+			});
+
+			expect(result).toBe("opencode 'run'");
+		});
+
+		it('uses exec for stream-json stdin so shell control sequences are avoided', async () => {
+			const result = buildRemoteCommand({
+				command: 'claude',
+				args: ['--print', '--input-format', 'stream-json'],
+				useStdin: true,
+			});
+
+			expect(result).toBe("exec claude '--print' '--input-format' 'stream-json'");
 		});
 	});
 
@@ -395,6 +449,53 @@ describe('ssh-command-builder', () => {
 			expect(wrappedCommand).toContain('fix:');
 			// $VARIABLES is preserved literally inside single quotes (no escaping needed)
 			expect(wrappedCommand).toContain('$VARIABLES');
+		});
+
+		it('does not force a TTY when --print is paired with stdin streaming', async () => {
+			const result = await buildSshCommand(baseConfig, {
+				command: 'claude',
+				args: ['--print'],
+				useStdin: true,
+			});
+
+			expect(result.args[0]).not.toBe('-tt');
+			expect(result.args).toContain('RequestTTY=no');
+			expect(mockLogger.debug).toHaveBeenCalledWith('SSH TTY decision', '[ssh-command-builder]', {
+				host: 'dev.example.com',
+				useStdinFlag: true,
+				hasPrintFlag: true,
+				hasStreamJsonInput: true,
+				forceTty: false,
+			});
+		});
+
+		it('still forces a TTY when --input-format is present without stream-json', async () => {
+			const result = await buildSshCommand(baseConfig, {
+				command: 'claude',
+				args: ['--print', '--input-format', 'text'],
+			});
+
+			expect(result.args[0]).toBe('-tt');
+			expect(result.args).toContain('RequestTTY=force');
+			expect(mockLogger.debug).toHaveBeenCalledWith('SSH TTY decision', '[ssh-command-builder]', {
+				host: 'dev.example.com',
+				useStdinFlag: false,
+				hasPrintFlag: true,
+				hasStreamJsonInput: false,
+				forceTty: true,
+			});
+		});
+
+		it('treats missing args from malformed callers as an empty arg list', async () => {
+			const result = await buildSshCommand(baseConfig, {
+				command: 'claude',
+				args: undefined as unknown as string[],
+			});
+
+			const wrappedCommand = result.args[result.args.length - 1];
+			expect(result.args).not.toContain('-tt');
+			expect(wrappedCommand).toContain('/bin/bash --norc --noprofile -c');
+			expect(wrappedCommand).toContain('claude');
 		});
 	});
 
@@ -847,6 +948,27 @@ describe('ssh-command-builder', () => {
 			expect(result.args).toContain('testuser@dev.example.com');
 		});
 
+		it('uses SSH config defaults in stdin mode without key, port, or username overrides', async () => {
+			const config: SshRemoteConfig = {
+				...baseConfig,
+				useSshConfig: true,
+				privateKeyPath: '',
+				username: '',
+				port: 22,
+			};
+
+			const result = await buildSshCommandWithStdin(config, {
+				command: 'opencode',
+				args: ['run'],
+			});
+
+			expect(result.args).not.toContain('-i');
+			expect(result.args).not.toContain('-p');
+			expect(result.args).toContain('dev.example.com');
+			expect(result.args).not.toContain('testuser@dev.example.com');
+			expect(result.args).toContain('RequestTTY=no');
+		});
+
 		it('merges remote config env with option env', async () => {
 			const configWithEnv = {
 				...baseConfig,
@@ -861,6 +983,23 @@ describe('ssh-command-builder', () => {
 
 			expect(result.stdinScript).toContain('export REMOTE_VAR=');
 			expect(result.stdinScript).toContain('export OPTION_VAR=');
+		});
+
+		it('ignores invalid environment variable names in stdin scripts', async () => {
+			const result = await buildSshCommandWithStdin(baseConfig, {
+				command: 'opencode',
+				args: ['run'],
+				env: {
+					VALID_VAR: 'included',
+					'invalid-var': 'excluded',
+					'123invalid': 'excluded',
+				},
+			});
+
+			expect(result.stdinScript).toContain("export VALID_VAR='included'");
+			expect(result.stdinScript).not.toContain('invalid-var');
+			expect(result.stdinScript).not.toContain('123invalid');
+			expect(result.stdinScript).not.toContain('excluded');
 		});
 
 		it('decodes images into remote temp files for file-based agents', async () => {
@@ -945,6 +1084,35 @@ describe('ssh-command-builder', () => {
 
 			expect(result.stdinScript).not.toContain('base64 -d');
 			expect(result.stdinScript).not.toContain('MAESTRO_IMG');
+		});
+
+		it('does not decode image data when no image argument builder is provided', async () => {
+			const result = await buildSshCommandWithStdin(baseConfig, {
+				command: 'codex',
+				args: ['exec'],
+				stdinInput: 'hello',
+				images: ['data:image/png;base64,iVBORw0KGgoAAAANSUhEUg=='],
+			});
+
+			expect(result.stdinScript).not.toContain('base64 -d');
+			expect(result.stdinScript).not.toContain('MAESTRO_IMG');
+			expect(result.remoteTempImagePaths).toBeUndefined();
+		});
+
+		it('does not synthesize prompt content for prompt-embed images when no prompt is provided', async () => {
+			const result = await buildSshCommandWithStdin(baseConfig, {
+				command: 'codex',
+				args: ['exec', 'resume'],
+				images: ['data:image/png;base64,iVBORw0KGgoAAAANSUhEUg=='],
+				imageArgs: (path: string) => ['-i', path],
+				imageResumeMode: 'prompt-embed',
+			});
+
+			const cmdLine = result.stdinScript?.split('\n').find((line) => line.startsWith('codex '));
+			expect(cmdLine).toContain('; rm -f');
+			expect(cmdLine).not.toContain("'-i'");
+			expect(result.stdinScript).not.toContain('[Attached images:');
+			expect(result.remoteTempImagePaths).toHaveLength(1);
 		});
 
 		it('embeds image paths in stdinInput when imageResumeMode is prompt-embed', async () => {

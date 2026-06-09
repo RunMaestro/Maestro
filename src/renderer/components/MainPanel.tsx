@@ -489,6 +489,7 @@ export const MainPanel = React.memo(
 			[activeSession?.aiTabs, activeSession?.activeTabId]
 		);
 		const activeTabError = activeTab?.agentError;
+		const reasoningTokens = activeTab?.usageStats?.reasoningTokens ?? 0;
 
 		// Resolve the configured context window from session override or agent settings.
 		useEffect(() => {
@@ -496,7 +497,7 @@ export const MainPanel = React.memo(
 
 			const loadContextWindow = async () => {
 				if (!activeSession) {
-					if (isActive) setConfiguredContextWindow(0);
+					setConfiguredContextWindow(0);
 					return;
 				}
 
@@ -504,7 +505,7 @@ export const MainPanel = React.memo(
 					typeof activeSession.customContextWindow === 'number' &&
 					activeSession.customContextWindow > 0
 				) {
-					if (isActive) setConfiguredContextWindow(activeSession.customContextWindow);
+					setConfiguredContextWindow(activeSession.customContextWindow);
 					return;
 				}
 
@@ -638,10 +639,8 @@ export const MainPanel = React.memo(
 		// Handler for input focus - select session in sidebar
 		// Memoized to avoid recreating on every render
 		const handleInputFocus = useCallback(() => {
-			if (activeSession) {
-				setActiveSessionId(activeSession.id);
-				useUIStore.getState().setActiveFocus('main');
-			}
+			setActiveSessionId(activeSession!.id);
+			useUIStore.getState().setActiveFocus('main');
 		}, [activeSession, setActiveSessionId]);
 
 		// Memoized session click handler for InputArea's ThinkingStatusPill
@@ -674,16 +673,12 @@ export const MainPanel = React.memo(
 
 		// Memoized callbacks for FilePreview
 		const handleFilePreviewClose = useCallback(() => {
-			if (activeFileTabId) {
-				onFileTabClose?.(activeFileTabId);
-			}
+			onFileTabClose?.(activeFileTabId!);
 		}, [activeFileTabId, onFileTabClose]);
 
 		const handleFilePreviewEditModeChange = useCallback(
 			(editMode: boolean) => {
-				if (activeFileTabId) {
-					onFileTabEditModeChange?.(activeFileTabId, editMode);
-				}
+				onFileTabEditModeChange?.(activeFileTabId!, editMode);
 			},
 			[activeFileTabId, onFileTabEditModeChange]
 		);
@@ -691,9 +686,7 @@ export const MainPanel = React.memo(
 		const handleFilePreviewSave = useCallback(
 			async (path: string, content: string) => {
 				await window.maestro.fs.writeFile(path, content);
-				if (activeFileTabId) {
-					onFileTabEditContentChange?.(activeFileTabId, undefined, content);
-				}
+				onFileTabEditContentChange?.(activeFileTabId!, undefined, content);
 			},
 			[activeFileTabId, onFileTabEditContentChange]
 		);
@@ -709,36 +702,28 @@ export const MainPanel = React.memo(
 
 		const handleFilePreviewEditContentChange = useCallback(
 			(content: string) => {
-				if (activeFileTabId && activeFileTab) {
-					const hasChanges = content !== activeFileTab.content;
-					onFileTabEditContentChange?.(activeFileTabId, hasChanges ? content : undefined);
-				}
+				const hasChanges = content !== activeFileTab!.content;
+				onFileTabEditContentChange?.(activeFileTabId!, hasChanges ? content : undefined);
 			},
 			[activeFileTabId, activeFileTab?.content, onFileTabEditContentChange]
 		);
 
 		const handleFilePreviewScrollPositionChange = useCallback(
 			(scrollTop: number) => {
-				if (activeFileTabId) {
-					onFileTabScrollPositionChange?.(activeFileTabId, scrollTop);
-				}
+				onFileTabScrollPositionChange?.(activeFileTabId!, scrollTop);
 			},
 			[activeFileTabId, onFileTabScrollPositionChange]
 		);
 
 		const handleFilePreviewSearchQueryChange = useCallback(
 			(query: string) => {
-				if (activeFileTabId) {
-					onFileTabSearchQueryChange?.(activeFileTabId, query);
-				}
+				onFileTabSearchQueryChange?.(activeFileTabId!, query);
 			},
 			[activeFileTabId, onFileTabSearchQueryChange]
 		);
 
 		const handleFilePreviewReload = useCallback(() => {
-			if (activeFileTabId) {
-				props.onReloadFileTab?.(activeFileTabId);
-			}
+			props.onReloadFileTab?.(activeFileTabId!);
 		}, [activeFileTabId, props.onReloadFileTab]);
 
 		// Memoize sshRemoteId to prevent object recreation
@@ -801,7 +786,7 @@ export const MainPanel = React.memo(
 		}
 
 		// Show agent sessions browser (only if agent supports session storage)
-		if (agentSessionsOpen && hasCapability('supportsSessionStorage')) {
+		if (agentSessionsOpen && activeSession && hasCapability('supportsSessionStorage')) {
 			return (
 				<div
 					className="flex-1 flex flex-col min-w-0 relative"
@@ -809,7 +794,7 @@ export const MainPanel = React.memo(
 				>
 					<AgentSessionsBrowser
 						theme={theme}
-						activeSession={activeSession || undefined}
+						activeSession={activeSession}
 						activeAgentSessionId={activeAgentSessionId}
 						onClose={() => setAgentSessionsOpen(false)}
 						onResumeSession={onResumeAgentSession}
@@ -1123,7 +1108,6 @@ export const MainPanel = React.memo(
 								{isCurrentSessionAutoMode && (
 									<button
 										onClick={() => {
-											if (isCurrentSessionStopping) return;
 											// Call onStopBatchRun with the active session's ID to stop THIS session's batch
 											onStopBatchRun?.(activeSession.id);
 										}}
@@ -1309,7 +1293,7 @@ export const MainPanel = React.memo(
 																		</span>
 																	</div>
 																	{/* Reasoning tokens - only shown for agents that report them (e.g., Codex o3/o4-mini) */}
-																	{(activeTab?.usageStats?.reasoningTokens ?? 0) > 0 && (
+																	{reasoningTokens > 0 && (
 																		<div className="flex justify-between items-center">
 																			<span
 																				className="text-xs"
@@ -1324,9 +1308,7 @@ export const MainPanel = React.memo(
 																				className="text-xs font-mono"
 																				style={{ color: theme.colors.textMain }}
 																			>
-																				{(
-																					activeTab?.usageStats?.reasoningTokens ?? 0
-																				).toLocaleString('en-US')}
+																				{reasoningTokens.toLocaleString('en-US')}
 																			</span>
 																		</div>
 																	)}
@@ -1631,8 +1613,8 @@ export const MainPanel = React.memo(
 											currentDocumentIndex={activeTab?.wizardState?.currentDocumentIndex ?? 0}
 											isGenerating={activeTab?.wizardState?.isGeneratingDocs ?? false}
 											streamingContent={activeTab?.wizardState?.streamingContent}
-											onComplete={props.onWizardComplete || (() => {})}
-											onDocumentSelect={props.onWizardDocumentSelect || (() => {})}
+											onComplete={props.onWizardComplete}
+											onDocumentSelect={props.onWizardDocumentSelect}
 											folderPath={
 												activeTab?.wizardState?.subfolderPath ??
 												activeTab?.wizardState?.autoRunFolderPath

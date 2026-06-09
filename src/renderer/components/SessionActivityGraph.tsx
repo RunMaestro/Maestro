@@ -103,9 +103,7 @@ export const SessionActivityGraph: React.FC<SessionActivityGraphProps> = ({
 					bucketCount - 1,
 					Math.floor((timestamp - startTime) / msPerBucket)
 				);
-				if (bucketIndex >= 0 && bucketIndex < bucketCount) {
-					buckets[bucketIndex]++;
-				}
+				buckets[bucketIndex]++;
 			}
 		});
 

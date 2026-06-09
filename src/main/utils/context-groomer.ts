@@ -70,7 +70,7 @@ const activeGroomingSessions = new Map<
 	{
 		groomerSessionId: string;
 		startTime: number;
-		cancel?: () => void;
+		cancel: () => void;
 	}
 >();
 
@@ -84,10 +84,8 @@ export function cancelAllGroomingSessions(): void {
 	});
 
 	for (const [sessionId, session] of activeGroomingSessions) {
-		if (session.cancel) {
-			logger.debug('Cancelling grooming session', LOG_CONTEXT, { sessionId });
-			session.cancel();
-		}
+		logger.debug('Cancelling grooming session', LOG_CONTEXT, { sessionId });
+		session.cancel();
 	}
 }
 
@@ -219,6 +217,7 @@ export async function groomContext(
 		let responseBuffer = '';
 		let lastDataTime = Date.now();
 		let idleCheckInterval: NodeJS.Timeout | null = null;
+		let overallTimeout: NodeJS.Timeout | null = null;
 		let resolved = false;
 		let chunkCount = 0;
 		let cancelled = false;
@@ -227,6 +226,10 @@ export async function groomContext(
 			if (idleCheckInterval) {
 				clearInterval(idleCheckInterval);
 				idleCheckInterval = null;
+			}
+			if (overallTimeout) {
+				clearTimeout(overallTimeout);
+				overallTimeout = null;
 			}
 			processManager.off('data', onData);
 			processManager.off('exit', onExit);
@@ -365,20 +368,18 @@ export async function groomContext(
 		}, 1000);
 
 		// Overall timeout
-		setTimeout(() => {
-			if (!resolved) {
-				logger.warn('Grooming timeout', LOG_CONTEXT, {
-					groomerSessionId,
-					responseLength: responseBuffer.length,
-				});
+		overallTimeout = setTimeout(() => {
+			logger.warn('Grooming timeout', LOG_CONTEXT, {
+				groomerSessionId,
+				responseLength: responseBuffer.length,
+			});
 
-				if (responseBuffer.length > 0) {
-					finishWithResponse('overall timeout with content');
-				} else {
-					cleanup();
-					resolved = true;
-					reject(new Error('Grooming timed out with no response'));
-				}
+			if (responseBuffer.length > 0) {
+				finishWithResponse('overall timeout with content');
+			} else {
+				cleanup();
+				resolved = true;
+				reject(new Error('Grooming timed out with no response'));
 			}
 		}, timeoutMs);
 	});

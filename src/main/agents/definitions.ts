@@ -148,7 +148,9 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		// Base args for interactive mode (no flags that are exec-only)
 		args: [],
 		// Codex CLI argument builders
-		// Batch mode: codex exec --json --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check [--sandbox read-only] [-C dir] [resume <id>] -- "prompt"
+		// Batch mode: codex [-C dir] exec --json --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check [--sandbox read-only] [resume <id>] -- "prompt"
+		// `-C` is a root-level global flag and MUST appear before the `exec` subcommand
+		// or Codex silently ignores it (see #959). buildAgentArgs prepends workingDirArgs accordingly.
 		// Sandbox modes:
 		//   - Default (YOLO): --dangerously-bypass-approvals-and-sandbox (full system access, required by Maestro)
 		//   - Read-only: --sandbox read-only (can only read files, overrides YOLO)

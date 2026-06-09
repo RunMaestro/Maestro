@@ -131,6 +131,30 @@ const createBadge = (level: number = 1): ConductorBadge => ({
 	},
 });
 
+const createMockCanvasContext = (overrides: Record<string, unknown> = {}) =>
+	({
+		fillStyle: '',
+		strokeStyle: '',
+		lineWidth: 0,
+		font: '',
+		textAlign: 'left' as CanvasTextAlign,
+		fillRect: vi.fn(),
+		fill: vi.fn(),
+		stroke: vi.fn(),
+		beginPath: vi.fn(),
+		arc: vi.fn(),
+		roundRect: vi.fn(),
+		fillText: vi.fn(),
+		measureText: vi.fn(() => ({ width: 50 })),
+		createLinearGradient: vi.fn(() => ({
+			addColorStop: vi.fn(),
+		})),
+		createRadialGradient: vi.fn(() => ({
+			addColorStop: vi.fn(),
+		})),
+		...overrides,
+	}) as unknown as CanvasRenderingContext2D;
+
 describe('StandingOvationOverlay', () => {
 	const mockOnClose = vi.fn();
 
@@ -139,29 +163,7 @@ describe('StandingOvationOverlay', () => {
 		vi.useFakeTimers();
 
 		// Mock canvas API
-		const mockContext = {
-			fillStyle: '',
-			strokeStyle: '',
-			lineWidth: 0,
-			font: '',
-			textAlign: 'left' as CanvasTextAlign,
-			fillRect: vi.fn(),
-			fill: vi.fn(),
-			stroke: vi.fn(),
-			beginPath: vi.fn(),
-			arc: vi.fn(),
-			roundRect: vi.fn(),
-			fillText: vi.fn(),
-			measureText: vi.fn(() => ({ width: 50 })),
-			createLinearGradient: vi.fn(() => ({
-				addColorStop: vi.fn(),
-			})),
-			createRadialGradient: vi.fn(() => ({
-				addColorStop: vi.fn(),
-			})),
-		};
-
-		HTMLCanvasElement.prototype.getContext = vi.fn(() => mockContext) as any;
+		HTMLCanvasElement.prototype.getContext = vi.fn(() => createMockCanvasContext()) as any;
 		HTMLCanvasElement.prototype.toDataURL = vi.fn(() => 'data:image/png;base64,test');
 		HTMLCanvasElement.prototype.toBlob = vi.fn((callback: BlobCallback) => {
 			callback(new Blob(['test'], { type: 'image/png' }));
@@ -323,6 +325,64 @@ describe('StandingOvationOverlay', () => {
 			);
 
 			expect(mockUpdateLayerHandler).toHaveBeenCalled();
+		});
+
+		it('routes layer escape through the current close handler', () => {
+			render(
+				<StandingOvationOverlay
+					theme={createTheme()}
+					themeMode="dark"
+					badge={createBadge()}
+					cumulativeTimeMs={3600000}
+					onClose={mockOnClose}
+				/>
+			);
+
+			const layerConfig = mockRegisterLayer.mock.calls[0][0];
+			act(() => {
+				layerConfig.onEscape();
+				vi.advanceTimersByTime(1500);
+			});
+
+			expect(mockOnClose).toHaveBeenCalledTimes(1);
+		});
+
+		it('routes layer handler updates through the current close handler', () => {
+			render(
+				<StandingOvationOverlay
+					theme={createTheme()}
+					themeMode="dark"
+					badge={createBadge()}
+					cumulativeTimeMs={3600000}
+					onClose={mockOnClose}
+				/>
+			);
+
+			const [, updatedHandler] = mockUpdateLayerHandler.mock.calls.at(-1);
+			act(() => {
+				updatedHandler();
+				vi.advanceTimersByTime(1500);
+			});
+
+			expect(mockOnClose).toHaveBeenCalledTimes(1);
+		});
+
+		it('skips layer updates and cleanup when registration returns no layer id', () => {
+			mockRegisterLayer.mockReturnValueOnce('');
+
+			const { unmount } = render(
+				<StandingOvationOverlay
+					theme={createTheme()}
+					themeMode="dark"
+					badge={createBadge()}
+					cumulativeTimeMs={3600000}
+					onClose={mockOnClose}
+				/>
+			);
+
+			expect(mockUpdateLayerHandler).not.toHaveBeenCalled();
+			unmount();
+			expect(mockUnregisterLayer).not.toHaveBeenCalled();
 		});
 	});
 
@@ -588,6 +648,31 @@ describe('StandingOvationOverlay', () => {
 			expect(mockConfetti).toHaveBeenCalledTimes(6); // 3 initial + 3 for single close
 		});
 
+		it('ignores close actions after the closing state has rendered', () => {
+			render(
+				<StandingOvationOverlay
+					theme={createTheme()}
+					themeMode="dark"
+					badge={createBadge()}
+					cumulativeTimeMs={3600000}
+					onClose={mockOnClose}
+				/>
+			);
+
+			fireEvent.click(screen.getByText('Take a Bow'));
+			expect(screen.getByRole('button', { name: /bravo/i })).toBeDisabled();
+			mockConfetti.mockClear();
+			const [, updatedHandler] = mockUpdateLayerHandler.mock.calls.at(-1);
+
+			act(() => {
+				updatedHandler();
+				vi.advanceTimersByTime(1500);
+			});
+
+			expect(mockConfetti).not.toHaveBeenCalled();
+			expect(mockOnClose).toHaveBeenCalledTimes(1);
+		});
+
 		it('shows closing state button text', async () => {
 			render(
 				<StandingOvationOverlay
@@ -740,6 +825,152 @@ describe('StandingOvationOverlay', () => {
 			expect(screen.queryByText('Copy to Clipboard')).not.toBeInTheDocument();
 		});
 
+		it('generates a share image with record stats and theme color fallbacks', async () => {
+			const fillText = vi.fn();
+			const context = createMockCanvasContext({
+				fillText,
+				measureText: vi.fn((text: string) => ({
+					width: text.includes(' ') ? 1000 : 50,
+				})),
+			});
+			HTMLCanvasElement.prototype.getContext = vi.fn(() => context) as any;
+			const theme = createTheme();
+			theme.colors.bgSidebar = 'transparent';
+			theme.colors.bgActivity = 'rgba(1, 2, 3, 0.5)';
+			theme.colors.textMain = 'rgba(4, 5, 6, 0.8)';
+			theme.colors.textDim = '';
+			theme.colors.border = 'rgba(invalid)';
+			const badge = createBadge();
+			badge.flavorText = 'A long phrase that wraps into multiple lines';
+
+			render(
+				<StandingOvationOverlay
+					theme={theme}
+					themeMode="dark"
+					badge={badge}
+					isNewRecord={true}
+					recordTimeMs={1800000}
+					cumulativeTimeMs={3600000}
+					onClose={mockOnClose}
+				/>
+			);
+
+			fireEvent.click(screen.getByText('Share Achievement'));
+			await act(async () => {
+				fireEvent.click(screen.getByText('Copy to Clipboard'));
+			});
+
+			expect(navigator.clipboard.write).toHaveBeenCalledWith([
+				expect.objectContaining({ types: ['image/png'] }),
+			]);
+			expect(screen.getByText('Copied!')).toBeInTheDocument();
+			expect(fillText).toHaveBeenCalledWith('Longest Run:', 350, expect.any(Number));
+			expect(fillText).toHaveBeenCalledWith('30m', 450, expect.any(Number));
+			expect(fillText).toHaveBeenCalledWith('"A', 300, expect.any(Number));
+
+			act(() => {
+				vi.advanceTimersByTime(2000);
+			});
+		});
+
+		it('generates share image record stats for existing records', async () => {
+			render(
+				<StandingOvationOverlay
+					theme={createTheme()}
+					themeMode="dark"
+					badge={createBadge(4)}
+					isNewRecord={false}
+					recordTimeMs={1800000}
+					cumulativeTimeMs={3600000}
+					onClose={mockOnClose}
+				/>
+			);
+
+			fireEvent.click(screen.getByText('Share Achievement'));
+			await act(async () => {
+				fireEvent.click(screen.getByText('Save as Image'));
+				await Promise.resolve();
+			});
+
+			expect(HTMLCanvasElement.prototype.toDataURL).toHaveBeenCalledWith('image/png');
+		});
+
+		it('does not write to clipboard when canvas produces no blob', async () => {
+			HTMLCanvasElement.prototype.toBlob = vi.fn((callback: BlobCallback) => {
+				callback(null);
+			});
+
+			render(
+				<StandingOvationOverlay
+					theme={createTheme()}
+					themeMode="dark"
+					badge={createBadge()}
+					cumulativeTimeMs={3600000}
+					onClose={mockOnClose}
+				/>
+			);
+
+			fireEvent.click(screen.getByText('Share Achievement'));
+			await act(async () => {
+				fireEvent.click(screen.getByText('Copy to Clipboard'));
+			});
+
+			expect(navigator.clipboard.write).not.toHaveBeenCalled();
+			expect(screen.queryByText('Copied!')).not.toBeInTheDocument();
+		});
+
+		it('does not show copied feedback when clipboard write fails', async () => {
+			vi.mocked(navigator.clipboard.write).mockRejectedValueOnce(new Error('clipboard denied'));
+
+			render(
+				<StandingOvationOverlay
+					theme={createTheme()}
+					themeMode="dark"
+					badge={createBadge()}
+					cumulativeTimeMs={3600000}
+					onClose={mockOnClose}
+				/>
+			);
+
+			fireEvent.click(screen.getByText('Share Achievement'));
+			await act(async () => {
+				fireEvent.click(screen.getByText('Copy to Clipboard'));
+			});
+
+			expect(navigator.clipboard.write).toHaveBeenCalledTimes(1);
+			expect(screen.queryByText('Copied!')).not.toBeInTheDocument();
+		});
+
+		it('logs copy generation failures without closing the share menu', async () => {
+			const error = new Error('canvas unavailable');
+			HTMLCanvasElement.prototype.getContext = vi.fn(() => {
+				throw error;
+			}) as any;
+			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+			try {
+				render(
+					<StandingOvationOverlay
+						theme={createTheme()}
+						themeMode="dark"
+						badge={createBadge()}
+						cumulativeTimeMs={3600000}
+						onClose={mockOnClose}
+					/>
+				);
+
+				fireEvent.click(screen.getByText('Share Achievement'));
+				await act(async () => {
+					fireEvent.click(screen.getByText('Copy to Clipboard'));
+				});
+
+				expect(consoleError).toHaveBeenCalledWith('Failed to generate share image:', error);
+				expect(screen.getByText('Copy to Clipboard')).toBeInTheDocument();
+			} finally {
+				consoleError.mockRestore();
+			}
+		});
+
 		it('triggers download action when clicking save option', () => {
 			render(
 				<StandingOvationOverlay
@@ -763,6 +994,36 @@ describe('StandingOvationOverlay', () => {
 			expect(screen.queryByText('Save as Image')).not.toBeInTheDocument();
 		});
 
+		it('logs download image failures', async () => {
+			const error = new Error('encode failed');
+			HTMLCanvasElement.prototype.toDataURL = vi.fn(() => {
+				throw error;
+			});
+			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+			try {
+				render(
+					<StandingOvationOverlay
+						theme={createTheme()}
+						themeMode="dark"
+						badge={createBadge()}
+						cumulativeTimeMs={3600000}
+						onClose={mockOnClose}
+					/>
+				);
+
+				fireEvent.click(screen.getByText('Share Achievement'));
+				await act(async () => {
+					fireEvent.click(screen.getByText('Save as Image'));
+					await Promise.resolve();
+				});
+
+				expect(consoleError).toHaveBeenCalledWith('Failed to download image:', error);
+			} finally {
+				consoleError.mockRestore();
+			}
+		});
+
 		it('displays copy and download icons in share menu', () => {
 			render(
 				<StandingOvationOverlay
@@ -781,6 +1042,46 @@ describe('StandingOvationOverlay', () => {
 			// Both options should be visible
 			expect(screen.getByText('Copy to Clipboard')).toBeInTheDocument();
 			expect(screen.getByText('Save as Image')).toBeInTheDocument();
+		});
+	});
+
+	describe('Leaderboard Registration', () => {
+		it('closes the overlay and opens leaderboard registration', () => {
+			const onOpenLeaderboardRegistration = vi.fn();
+			render(
+				<StandingOvationOverlay
+					theme={createTheme()}
+					themeMode="dark"
+					badge={createBadge()}
+					cumulativeTimeMs={3600000}
+					onClose={mockOnClose}
+					onOpenLeaderboardRegistration={onOpenLeaderboardRegistration}
+					isLeaderboardRegistered={false}
+				/>
+			);
+
+			fireEvent.click(screen.getByRole('button', { name: /join global leaderboard/i }));
+
+			expect(mockOnClose).toHaveBeenCalledTimes(1);
+			expect(onOpenLeaderboardRegistration).toHaveBeenCalledTimes(1);
+		});
+
+		it('hides registration action for registered users', () => {
+			render(
+				<StandingOvationOverlay
+					theme={createTheme()}
+					themeMode="dark"
+					badge={createBadge()}
+					cumulativeTimeMs={3600000}
+					onClose={mockOnClose}
+					onOpenLeaderboardRegistration={vi.fn()}
+					isLeaderboardRegistered={true}
+				/>
+			);
+
+			expect(
+				screen.queryByRole('button', { name: /join global leaderboard/i })
+			).not.toBeInTheDocument();
 		});
 	});
 

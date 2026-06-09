@@ -72,12 +72,6 @@ function validateAndTransition(
 				},
 			};
 			break;
-		case 'TASK_COMPLETED':
-			event = { type: 'TASK_COMPLETED', payload: { newCompletedCount: 0 } };
-			break;
-		case 'DOCUMENT_ADVANCED':
-			event = { type: 'DOCUMENT_ADVANCED', documentIndex: 0 };
-			break;
 		case 'LOOP_COMPLETED':
 			event = { type: 'LOOP_COMPLETED', payload: { newTotalTasks: 0 } };
 			break;

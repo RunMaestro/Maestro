@@ -86,6 +86,12 @@ export function ImagePreview({
 /**
  * Custom image component for markdown preview
  */
+export function openDocumentPreviewExternalLink(href: string): void {
+	if (/^https?:\/\/|^mailto:/.test(href)) {
+		void window.maestro.shell.openExternal(href);
+	}
+}
+
 export function MarkdownImage({
 	src,
 	alt,
@@ -250,7 +256,7 @@ export function DocumentEditor({
 
 	// Handle paste (images and text with whitespace trimming)
 	const handlePaste = useCallback(
-		async (e: React.ClipboardEvent) => {
+		async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
 			if (isLocked) return;
 
 			const items = e.clipboardData?.items;
@@ -267,17 +273,15 @@ export function DocumentEditor({
 					// Only intercept if trimming actually changed the text
 					if (trimmedText !== text) {
 						e.preventDefault();
-						const textarea = textareaRef.current;
-						if (textarea) {
-							const start = textarea.selectionStart ?? 0;
-							const end = textarea.selectionEnd ?? 0;
-							const newContent = content.slice(0, start) + trimmedText + content.slice(end);
-							onContentChange(newContent);
-							// Set cursor position after the pasted text
-							requestAnimationFrame(() => {
-								textarea.selectionStart = textarea.selectionEnd = start + trimmedText.length;
-							});
-						}
+						const textarea = e.currentTarget;
+						const start = textarea.selectionStart;
+						const end = textarea.selectionEnd;
+						const newContent = content.slice(0, start) + trimmedText + content.slice(end);
+						onContentChange(newContent);
+						// Set cursor position after the pasted text
+						requestAnimationFrame(() => {
+							textarea.selectionStart = textarea.selectionEnd = start + trimmedText.length;
+						});
 					}
 				}
 				return;
@@ -371,7 +375,7 @@ export function DocumentEditor({
 		if ((e.metaKey || e.ctrlKey) && e.key === 'e') {
 			e.preventDefault();
 			e.stopPropagation();
-			onModeChange(mode === 'edit' ? 'preview' : 'edit');
+			onModeChange('preview');
 			return;
 		}
 
@@ -485,9 +489,7 @@ export function DocumentEditor({
 					mermaid: MermaidWrapper,
 				},
 				onExternalLinkClick: (href) => {
-					if (/^https?:\/\/|^mailto:/.test(href)) {
-						void window.maestro.shell.openExternal(href);
-					}
+					openDocumentPreviewExternalLink(href);
 				},
 			}),
 		[bionifyReadingMode, theme, WizardImageRenderer, MermaidWrapper]

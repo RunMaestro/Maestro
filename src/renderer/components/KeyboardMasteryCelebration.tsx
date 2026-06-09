@@ -67,8 +67,7 @@ export function KeyboardMasteryCelebration({
 	disableConfetti = false,
 }: KeyboardMasteryCelebrationProps): JSX.Element {
 	const containerRef = useRef<HTMLDivElement>(null);
-	const { registerLayer, unregisterLayer, updateLayerHandler } = useLayerStack();
-	const layerIdRef = useRef<string>();
+	const { registerLayer, unregisterLayer } = useLayerStack();
 	const onCloseRef = useRef(onClose);
 	onCloseRef.current = onClose;
 
@@ -190,23 +189,13 @@ export function KeyboardMasteryCelebration({
 			ariaLabel: 'Keyboard Mastery Level Up Celebration',
 			onEscape: () => handleCloseRef.current(),
 		});
-		layerIdRef.current = id;
 
 		containerRef.current?.focus();
 
 		return () => {
-			if (layerIdRef.current) {
-				unregisterLayer(layerIdRef.current);
-			}
+			unregisterLayer(id);
 		};
 	}, [registerLayer, unregisterLayer]);
-
-	// Update escape handler when handleClose changes
-	useEffect(() => {
-		if (layerIdRef.current) {
-			updateLayerHandler(layerIdRef.current, handleClose);
-		}
-	}, [updateLayerHandler, handleClose]);
 
 	// Get next level info for encouragement message
 	const nextLevel =

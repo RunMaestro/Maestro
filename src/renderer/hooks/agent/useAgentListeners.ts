@@ -197,15 +197,14 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 			let isFromAi: boolean;
 			let tabIdFromSession: string | undefined;
 
-			// Format: sessionId-ai-tabId
-			const aiTabMatch = sessionId.match(/^(.+)-ai-(.+)$/);
-			if (aiTabMatch) {
-				actualSessionId = aiTabMatch[1];
-				tabIdFromSession = aiTabMatch[2];
+			const parsed = parseSessionId(sessionId);
+			if (parsed.type === 'ai-tab' || parsed.type === 'legacy-ai') {
+				actualSessionId = parsed.actualSessionId;
+				tabIdFromSession = parsed.tabId ?? undefined;
 				isFromAi = true;
 			} else if (sessionId.endsWith('-terminal')) {
 				return;
-			} else if (sessionId.includes('-batch-')) {
+			} else if (parsed.type === 'batch' || sessionId.includes('-batch-')) {
 				return;
 			} else {
 				actualSessionId = sessionId;
@@ -298,15 +297,15 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 				let isFromAi: boolean;
 				let tabIdFromSession: string | undefined;
 
-				const aiTabMatch = sessionId.match(/^(.+)-ai-(.+)$/);
-				if (aiTabMatch) {
-					actualSessionId = aiTabMatch[1];
-					tabIdFromSession = aiTabMatch[2];
+				const parsed = parseSessionId(sessionId);
+				if (parsed.type === 'ai-tab' || parsed.type === 'legacy-ai') {
+					actualSessionId = parsed.actualSessionId;
+					tabIdFromSession = parsed.tabId ?? undefined;
 					isFromAi = true;
 				} else if (sessionId.endsWith('-terminal')) {
 					actualSessionId = sessionId.slice(0, -9);
 					isFromAi = false;
-				} else if (sessionId.includes('-batch-')) {
+				} else if (parsed.type === 'batch' || sessionId.includes('-batch-')) {
 					return;
 				} else {
 					actualSessionId = sessionId;
@@ -343,7 +342,7 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 					prompt?: string;
 					response?: string;
 					sessionSizeKB?: string;
-					sessionId?: string;
+					sessionId: string;
 					tabId?: string;
 					agentType?: string;
 					projectPath?: string;
@@ -625,12 +624,9 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 									: s.aiTabs;
 
 							const anyTabStillBusy = updatedAiTabs.some((tab) => tab.state === 'busy');
-							const newState =
-								s.state === 'error' && s.agentError
-									? ('error' as SessionState)
-									: anyTabStillBusy
-										? ('busy' as SessionState)
-										: ('idle' as SessionState);
+							const newState = anyTabStillBusy
+								? ('busy' as SessionState)
+								: ('idle' as SessionState);
 							const newBusySource = anyTabStillBusy ? s.busySource : undefined;
 
 							console.log('[onExit] Session state transition:', {
@@ -725,7 +721,7 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 
 				// Fire side effects AFTER state update
 				if (toastData?.startTime && toastData?.agentType) {
-					const sessionIdForStats = toastData.sessionId || actualSessionId;
+					const sessionIdForStats = toastData.sessionId;
 					const isAutoRunQuery = deps.getBatchStateRef.current
 						? deps.getBatchStateRef.current(sessionIdForStats).isRunning
 						: false;
@@ -1163,7 +1159,7 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 				const groupChatParsed = parseGroupChatSessionId(sessionId);
 				if (groupChatParsed.isGroupChat) {
 					const groupChatId = groupChatParsed.groupChatId!;
-					const isModeratorError = groupChatParsed.isModerator ?? false;
+					const isModeratorError = groupChatParsed.isModerator;
 					const participantOrModerator = isModeratorError
 						? 'moderator'
 						: groupChatParsed.participantName!;

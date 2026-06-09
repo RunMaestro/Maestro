@@ -199,21 +199,20 @@ export function AgentPromptComposerModal({
 											}}
 											onClick={() => {
 												// Insert variable at cursor position
-												if (textareaRef.current) {
-													const start = textareaRef.current.selectionStart;
-													const end = textareaRef.current.selectionEnd;
-													const newValue =
-														value.substring(0, start) + variable + value.substring(end);
-													setValue(newValue);
-													// Restore focus and set cursor position after the inserted variable
-													requestAnimationFrame(() => {
-														if (textareaRef.current) {
-															textareaRef.current.focus();
-															textareaRef.current.selectionStart = start + variable.length;
-															textareaRef.current.selectionEnd = start + variable.length;
-														}
-													});
-												}
+												const textarea = textareaRef.current!;
+												const start = textarea.selectionStart;
+												const end = textarea.selectionEnd;
+												const newValue =
+													value.substring(0, start) + variable + value.substring(end);
+												setValue(newValue);
+												// Restore focus and set cursor position after the inserted variable
+												requestAnimationFrame(() => {
+													if (textareaRef.current) {
+														textareaRef.current.focus();
+														textareaRef.current.selectionStart = start + variable.length;
+														textareaRef.current.selectionEnd = start + variable.length;
+													}
+												});
 											}}
 											title="Click to insert"
 										>

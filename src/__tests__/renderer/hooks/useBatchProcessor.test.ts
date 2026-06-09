@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { renderHook, act, waitFor } from '@testing-library/react';
+import { renderHook, act, waitFor, cleanup } from '@testing-library/react';
 import type {
 	Session,
 	Group,
@@ -21,7 +21,9 @@ import type {
 
 // Import the exported functions directly
 import { countUnfinishedTasks, uncheckAllTasks, useBatchProcessor } from '../../../renderer/hooks';
+import { createLoopSummaryEntry } from '../../../renderer/hooks/batch/useBatchProcessor';
 import { useBatchStore } from '../../../renderer/stores/batchStore';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
 
 // Mock notifyToast so we can verify toast notifications
 const { mockNotifyToast } = vi.hoisted(() => ({
@@ -571,6 +573,67 @@ describe('countUnfinishedTasks + uncheckAllTasks integration', () => {
 	});
 });
 
+describe('createLoopSummaryEntry', () => {
+	it('formats singular non-final loops without usage or exit metadata', () => {
+		const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(1_700_000_065_000);
+		try {
+			const entry = createLoopSummaryEntry({
+				loopIteration: 1,
+				loopTasksCompleted: 1,
+				loopStartTime: 1_700_000_000_000,
+				loopTotalInputTokens: 0,
+				loopTotalOutputTokens: 0,
+				loopTotalCost: 0,
+				sessionCwd: '/repo',
+				sessionId: 'session-1',
+				isFinal: false,
+			});
+
+			expect(entry.summary).toBe('Loop 2 completed: 1 task accomplished');
+			expect(entry.fullResponse).toContain('**Loop 2 Summary**');
+			expect(entry.fullResponse).not.toContain('Tokens');
+			expect(entry.fullResponse).not.toContain('Cost');
+			expect(entry.fullResponse).not.toContain('Exit Reason');
+			expect(entry.usageStats).toBeUndefined();
+		} finally {
+			nowSpy.mockRestore();
+		}
+	});
+
+	it('formats final loop summaries with usage, cost, and exit reason', () => {
+		const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(1_700_000_130_000);
+		try {
+			const entry = createLoopSummaryEntry({
+				loopIteration: 2,
+				loopTasksCompleted: 3,
+				loopStartTime: 1_700_000_000_000,
+				loopTotalInputTokens: 1000,
+				loopTotalOutputTokens: 250,
+				loopTotalCost: 0.125,
+				sessionCwd: '/repo',
+				sessionId: 'session-2',
+				isFinal: true,
+				exitReason: 'max loops reached',
+			});
+
+			expect(entry.summary).toBe('Loop 3 (final) completed: 3 tasks accomplished');
+			expect(entry.fullResponse).toContain('**Loop 3 (final) Summary**');
+			expect(entry.fullResponse).toContain('1,250');
+			expect(entry.fullResponse).toContain('$0.1250');
+			expect(entry.fullResponse).toContain('max loops reached');
+			expect(entry.usageStats).toEqual(
+				expect.objectContaining({
+					inputTokens: 1000,
+					outputTokens: 250,
+					totalCostUsd: 0.125,
+				})
+			);
+		} finally {
+			nowSpy.mockRestore();
+		}
+	});
+});
+
 // ============================================================================
 // Tests for useBatchProcessor hook
 // ============================================================================
@@ -622,8 +685,224 @@ describe('useBatchProcessor hook', () => {
 	let mockWorktreeCheckout: ReturnType<typeof vi.fn>;
 	let mockGetDefaultBranch: ReturnType<typeof vi.fn>;
 	let mockCreatePR: ReturnType<typeof vi.fn>;
+	let consoleLog: ReturnType<typeof vi.spyOn>;
+	let consoleError: ReturnType<typeof vi.spyOn> | undefined;
+	let consoleWarn: ReturnType<typeof vi.spyOn> | undefined;
+
+	type ExpectedConsoleMessage = {
+		testName: string;
+		level: 'error' | 'warn';
+		message: string;
+		seen: number;
+	};
+
+	const expectedConsoleMessages: Array<Omit<ExpectedConsoleMessage, 'seen'>> = [
+		{
+			testName: 'stopBatchRun > should honor a stop request made before the processing loop starts',
+			level: 'warn',
+			message: '[BatchStateMachine] Invalid transition: IDLE + STOP_REQUESTED',
+		},
+		{
+			testName: 'worktree handling > should handle worktree setup failure',
+			level: 'error',
+			message: '[WorktreeManager] Failed to set up worktree:',
+		},
+		{
+			testName: 'PR creation > should handle PR creation failure',
+			level: 'warn',
+			message: '[WorktreeManager] PR creation failed:',
+		},
+		{
+			testName: 'synopsis parsing > should handle synopsis generation error',
+			level: 'error',
+			message: '[BatchProcessor] Error running task in task for session test-session-id:',
+		},
+		{
+			testName: 'git branch detection > should handle git status failure gracefully',
+			level: 'error',
+			message: 'Git status error:',
+		},
+		{
+			testName: 'task error handling > should continue to next task on agent spawn error',
+			level: 'error',
+			message: '[BatchProcessor] Error running task in tasks for session test-session-id:',
+		},
+		{
+			testName:
+				'error pause handling > should abort a missing batch without requiring a pending error resolution',
+			level: 'warn',
+			message: '[BatchStateMachine] Invalid transition: IDLE + STOP_REQUESTED',
+		},
+		{
+			testName:
+				'error pause handling when processTask throws > should await error resolution when processTask throws on last task and abort stops batch',
+			level: 'error',
+			message: '[BatchProcessor] Error running task in tasks for session test-session-id:',
+		},
+		{
+			testName:
+				'error pause handling when processTask throws > should await error resolution when processTask throws on last task and resume re-reads document',
+			level: 'error',
+			message: '[BatchProcessor] Error running task in tasks for session test-session-id:',
+		},
+		{
+			testName:
+				'skip-document across multi-doc boundary > should skip errored document and continue processing next document',
+			level: 'error',
+			message: '[BatchProcessor] Error running task in doc1 for session test-session-id:',
+		},
+		{
+			testName:
+				'error state fully cleared after abort > should have no lingering error fields after abort completes batch',
+			level: 'error',
+			message: '[BatchProcessor] Error running task in tasks for session test-session-id:',
+		},
+		{
+			testName:
+				'rapid error\u2192resume\u2192error cycle > should handle sequential error-resume-error without corrupting refs',
+			level: 'error',
+			message: '[BatchProcessor] Error running task in tasks for session test-session-id:',
+		},
+		{
+			testName: 'worktree setup > should handle worktree setup failure',
+			level: 'error',
+			message: '[WorktreeManager] Failed to set up worktree:',
+		},
+		{
+			testName: 'worktree setup > should handle worktree checkout failure with uncommitted changes',
+			level: 'error',
+			message: '[WorktreeManager] Cannot checkout: worktree has uncommitted changes',
+		},
+		{
+			testName: 'PR creation on completion > should handle PR creation failure gracefully',
+			level: 'warn',
+			message: '[WorktreeManager] PR creation failed:',
+		},
+		{
+			testName: 'PR creation exception handling > should handle PR creation throwing an Error',
+			level: 'error',
+			message: '[WorktreeManager] Error creating PR:',
+		},
+		{
+			testName:
+				'PR creation exception handling > should handle PR creation throwing a non-Error object',
+			level: 'error',
+			message: '[WorktreeManager] Error creating PR:',
+		},
+		{
+			testName:
+				'PR creation exception handling > should handle PR creation exception without onPRResult callback',
+			level: 'error',
+			message: '[WorktreeManager] Error creating PR:',
+		},
+		{
+			testName:
+				'worktree checkout handling > should handle worktree checkout failure due to uncommitted changes',
+			level: 'error',
+			message: '[WorktreeManager] Cannot checkout: worktree has uncommitted changes',
+		},
+		{
+			testName:
+				'worktree checkout handling > should handle worktree checkout failure without uncommitted changes',
+			level: 'error',
+			message: '[WorktreeManager] Failed to checkout branch:',
+		},
+		{
+			testName: 'worktree checkout handling > should handle worktree setup exception',
+			level: 'error',
+			message: '[WorktreeManager] Error setting up worktree:',
+		},
+		{
+			testName: 'Claude session registration > should handle session registration error gracefully',
+			level: 'error',
+			message: '[DocumentProcessor] Failed to register session origin:',
+		},
+		{
+			testName: 'audio feedback edge cases > should handle speak error gracefully',
+			level: 'error',
+			message: '[BatchProcessor] Failed to speak synopsis:',
+		},
+		{
+			testName:
+				'worktree-dispatched PR creation > should add history entry with fallback error on failed PR creation',
+			level: 'warn',
+			message: '[WorktreeManager] PR creation failed:',
+		},
+		{
+			testName:
+				'worktree-dispatched PR creation > records unknown PR target when default branch detection fails before PR creation',
+			level: 'error',
+			message: '[WorktreeManager] Error creating PR:',
+		},
+	];
+
+	let activeExpectedConsoleMessages: ExpectedConsoleMessage[] = [];
+	let unexpectedConsoleMessages: Array<{ level: 'error' | 'warn'; message: string }> = [];
+
+	const waitForBatchRun = (promise: Promise<void>) =>
+		act(async () => {
+			await promise;
+		});
+
+	const installExpectedConsoleSpies = () => {
+		const currentTestName = expect.getState().currentTestName ?? '';
+		activeExpectedConsoleMessages = expectedConsoleMessages
+			.filter(({ testName }) => currentTestName.includes(testName))
+			.map((expectedMessage) => ({ ...expectedMessage, seen: 0 }));
+		unexpectedConsoleMessages = [];
+
+		const handleConsoleCall =
+			(level: 'error' | 'warn', original: (...args: unknown[]) => void) =>
+			(...args: unknown[]) => {
+				const message = String(args[0]);
+				const expectedMessage = activeExpectedConsoleMessages.find(
+					(expected) => expected.level === level && expected.message === message
+				);
+
+				if (expectedMessage) {
+					expectedMessage.seen += 1;
+					return;
+				}
+
+				unexpectedConsoleMessages.push({ level, message });
+				original(...args);
+			};
+
+		if (activeExpectedConsoleMessages.some(({ level }) => level === 'error')) {
+			const originalError = console.error.bind(console);
+			consoleError = vi
+				.spyOn(console, 'error')
+				.mockImplementation(handleConsoleCall('error', originalError));
+		}
+
+		if (activeExpectedConsoleMessages.some(({ level }) => level === 'warn')) {
+			const originalWarn = console.warn.bind(console);
+			consoleWarn = vi
+				.spyOn(console, 'warn')
+				.mockImplementation(handleConsoleCall('warn', originalWarn));
+		}
+	};
+
+	const assertExpectedConsoleMessages = () => {
+		const missingMessages = activeExpectedConsoleMessages
+			.filter(({ seen }) => seen === 0)
+			.map(({ level, message }) => `${level}: ${message}`);
+
+		consoleError?.mockRestore();
+		consoleWarn?.mockRestore();
+		consoleError = undefined;
+		consoleWarn = undefined;
+		activeExpectedConsoleMessages = [];
+
+		expect(missingMessages).toEqual([]);
+		expect(unexpectedConsoleMessages).toEqual([]);
+	};
 
 	beforeEach(() => {
+		useSessionStore.setState({ sessions: [] });
+		consoleLog = vi.spyOn(console, 'log').mockImplementation(() => {});
+		installExpectedConsoleSpies();
+
 		// Reset mocks
 		mockOnUpdateSession = vi.fn();
 		mockOnSpawnAgent = vi.fn().mockResolvedValue({
@@ -701,7 +980,11 @@ describe('useBatchProcessor hook', () => {
 	});
 
 	afterEach(() => {
+		cleanup();
+		assertExpectedConsoleMessages();
+		consoleLog.mockRestore();
 		vi.clearAllMocks();
+		useSessionStore.setState({ sessions: [] });
 	});
 
 	describe('hook initialization', () => {
@@ -942,6 +1225,156 @@ describe('useBatchProcessor hook', () => {
 			expect(mockOnSpawnAgent).not.toHaveBeenCalled();
 		});
 
+		it('should include available session IDs when logging a missing session', async () => {
+			const sessions: Session[] = [createMockSession({ id: 'available-session' })];
+			const groups: Group[] = [];
+
+			const { result } = renderHook(() =>
+				useBatchProcessor({
+					sessions,
+					groups,
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+				})
+			);
+
+			await act(async () => {
+				await result.current.startBatchRun(
+					'missing-session',
+					{
+						documents: [{ filename: 'test', resetOnCompletion: false }],
+						prompt: 'Test prompt',
+						loopEnabled: false,
+					},
+					'/test/folder'
+				);
+			});
+
+			expect(window.maestro.logger.log).toHaveBeenCalledWith(
+				'error',
+				'Session not found for batch processing',
+				'BatchProcessor',
+				expect.objectContaining({
+					sessionId: 'missing-session',
+					availableSessionIds: ['available-session'],
+				})
+			);
+			expect(mockOnSpawnAgent).not.toHaveBeenCalled();
+		});
+
+		it('should include worktree target details when logging a missing session', async () => {
+			const sessions: Session[] = [createMockSession({ id: 'available-session' })];
+			const groups: Group[] = [];
+			const worktreeTargets: Array<{
+				sessionId: string;
+				target: NonNullable<BatchRunConfig['worktreeTarget']>;
+				expectedDetails: string;
+			}> = [
+				{
+					sessionId: 'missing-existing-closed',
+					target: {
+						mode: 'existing-closed',
+						worktreePath: '/worktrees/closed-feature',
+						createPROnCompletion: false,
+					},
+					expectedDetails:
+						'Session not found for batch processing (worktree mode: existing-closed, path: /worktrees/closed-feature)',
+				},
+				{
+					sessionId: 'missing-create-new',
+					target: {
+						mode: 'create-new',
+						newBranchName: 'feature/new-worktree',
+						baseBranch: 'main',
+						createPROnCompletion: true,
+					},
+					expectedDetails:
+						'Session not found for batch processing (worktree mode: create-new, path: feature/new-worktree)',
+				},
+				{
+					sessionId: 'missing-existing-open',
+					target: {
+						mode: 'existing-open',
+						sessionId: 'open-worktree-session',
+						createPROnCompletion: false,
+					},
+					expectedDetails:
+						'Session not found for batch processing (worktree mode: existing-open, path: open-worktree-session)',
+				},
+			];
+
+			const { result } = renderHook(() =>
+				useBatchProcessor({
+					sessions,
+					groups,
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+				})
+			);
+
+			for (const { sessionId, target, expectedDetails } of worktreeTargets) {
+				await act(async () => {
+					await result.current.startBatchRun(
+						sessionId,
+						{
+							documents: [{ filename: 'test', resetOnCompletion: false }],
+							prompt: 'Test prompt',
+							loopEnabled: false,
+							worktreeTarget: target,
+						},
+						'/test/folder'
+					);
+				});
+
+				expect(window.maestro.logger.log).toHaveBeenCalledWith(
+					'error',
+					expectedDetails,
+					'BatchProcessor',
+					expect.objectContaining({
+						sessionId,
+						availableSessionIds: ['available-session'],
+						worktreeTargetMode: target.mode,
+					})
+				);
+			}
+			expect(mockOnSpawnAgent).not.toHaveBeenCalled();
+		});
+
+		it('should start from the session store when the sessions prop has not refreshed yet', async () => {
+			const storedSession = createMockSession({ id: 'stored-session' });
+			useSessionStore.setState({ sessions: [storedSession] });
+
+			const { result } = renderHook(() =>
+				useBatchProcessor({
+					sessions: [],
+					groups: [],
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+					onComplete: mockOnComplete,
+				})
+			);
+
+			await act(async () => {
+				await result.current.startBatchRun(
+					'stored-session',
+					{
+						documents: [{ filename: 'test', resetOnCompletion: false }],
+						prompt: 'Test prompt',
+						loopEnabled: false,
+					},
+					'/test/folder'
+				);
+			});
+
+			expect(mockOnSpawnAgent).toHaveBeenCalled();
+			expect(mockOnComplete).toHaveBeenCalledWith(
+				expect.objectContaining({ sessionId: 'stored-session' })
+			);
+		});
+
 		it('should not start if no documents provided', async () => {
 			const sessions = [createMockSession()];
 			const groups = [createMockGroup()];
@@ -1052,6 +1485,47 @@ describe('useBatchProcessor hook', () => {
 					sessionId: 'test-session-id',
 					sessionName: 'Test Session',
 				})
+			);
+		});
+
+		it('should process queued work after the batch completes', async () => {
+			const sessions = [createMockSession()];
+			const groups = [createMockGroup()];
+			const mockOnProcessQueueAfterCompletion = vi.fn();
+
+			let callCount = 0;
+			mockReadDoc.mockImplementation(async () => {
+				callCount++;
+				if (callCount <= 3) return { success: true, content: '- [ ] Task' };
+				return { success: true, content: '- [x] Task' };
+			});
+
+			const { result } = renderHook(() =>
+				useBatchProcessor({
+					sessions,
+					groups,
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+					onComplete: mockOnComplete,
+					onProcessQueueAfterCompletion: mockOnProcessQueueAfterCompletion,
+				})
+			);
+
+			await act(async () => {
+				await result.current.startBatchRun(
+					'test-session-id',
+					{
+						documents: [{ filename: 'tasks', resetOnCompletion: false }],
+						prompt: 'Test',
+						loopEnabled: false,
+					},
+					'/test/folder'
+				);
+			});
+
+			await waitFor(() =>
+				expect(mockOnProcessQueueAfterCompletion).toHaveBeenCalledWith('test-session-id')
 			);
 		});
 
@@ -1172,6 +1646,423 @@ describe('useBatchProcessor hook', () => {
 				expect(batchFinished).toBe(true);
 			});
 		});
+
+		it('should honor a stop request made before the processing loop starts', async () => {
+			const sessions = [createMockSession()];
+			const groups = [createMockGroup()];
+			let resolveRead!: (value: { success: boolean; content: string }) => void;
+			mockReadDoc.mockImplementation(
+				() =>
+					new Promise((resolve) => {
+						resolveRead = resolve;
+					})
+			);
+
+			const { result } = renderHook(() =>
+				useBatchProcessor({
+					sessions,
+					groups,
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+					onComplete: mockOnComplete,
+				})
+			);
+
+			let startPromise: Promise<void>;
+			act(() => {
+				startPromise = result.current.startBatchRun(
+					'test-session-id',
+					{
+						documents: [{ filename: 'tasks', resetOnCompletion: false }],
+						prompt: 'Test',
+						loopEnabled: true,
+						maxLoops: 2,
+					},
+					'/test/folder'
+				);
+			});
+
+			await waitFor(() => expect(mockReadDoc).toHaveBeenCalledTimes(1));
+
+			act(() => {
+				result.current.stopBatchRun('test-session-id');
+			});
+
+			await act(async () => {
+				resolveRead({ success: true, content: '- [ ] Task 1' });
+				await startPromise!;
+			});
+
+			expect(mockOnSpawnAgent).not.toHaveBeenCalled();
+			expect(mockOnComplete).toHaveBeenCalledWith(
+				expect.objectContaining({
+					sessionId: 'test-session-id',
+					wasStopped: true,
+				})
+			);
+		});
+
+		it('should stop before starting the next document after an empty document continues', async () => {
+			const sessions = [createMockSession()];
+			const groups = [createMockGroup()];
+			let stopBatch: (() => void) | undefined;
+			let emptyDocCalls = 0;
+			let doc2Calls = 0;
+
+			mockReadDoc.mockImplementation(async (_folder: string, filename: string) => {
+				if (filename === 'empty.md') {
+					emptyDocCalls++;
+					if (emptyDocCalls === 2) {
+						stopBatch?.();
+					}
+					return { success: true, content: '# No tasks here' };
+				}
+				if (filename === 'doc2.md') {
+					doc2Calls++;
+					return { success: true, content: '- [ ] Doc2 Task' };
+				}
+				return { success: true, content: '' };
+			});
+
+			const { result } = renderHook(() =>
+				useBatchProcessor({
+					sessions,
+					groups,
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+					onComplete: mockOnComplete,
+				})
+			);
+			stopBatch = () => result.current.stopBatchRun('test-session-id');
+
+			await act(async () => {
+				await result.current.startBatchRun(
+					'test-session-id',
+					{
+						documents: [
+							{ filename: 'empty', resetOnCompletion: false },
+							{ filename: 'doc2', resetOnCompletion: false },
+						],
+						prompt: 'Test',
+						loopEnabled: false,
+					},
+					'/test/folder'
+				);
+			});
+
+			expect(mockOnSpawnAgent).not.toHaveBeenCalled();
+			expect(emptyDocCalls).toBe(2);
+			expect(doc2Calls).toBe(1);
+			expect(mockOnComplete).toHaveBeenCalledWith(
+				expect.objectContaining({
+					sessionId: 'test-session-id',
+					wasStopped: true,
+				})
+			);
+		});
+
+		it('should record a final loop summary when stopped after a full pass', async () => {
+			const sessions = [createMockSession()];
+			const groups = [createMockGroup()];
+			let stopBatch: (() => void) | undefined;
+			let readCount = 0;
+
+			mockReadDoc.mockImplementation(async () => {
+				readCount++;
+				if (readCount <= 3) return { success: true, content: '- [ ] Task' };
+				return { success: true, content: '- [x] Task' };
+			});
+
+			mockOnSpawnAgent.mockImplementation(async () => {
+				stopBatch?.();
+				return { success: true, agentSessionId: 'session-1' };
+			});
+
+			const { result } = renderHook(() =>
+				useBatchProcessor({
+					sessions,
+					groups,
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+					onComplete: mockOnComplete,
+				})
+			);
+			stopBatch = () => result.current.stopBatchRun('test-session-id');
+
+			await act(async () => {
+				await result.current.startBatchRun(
+					'test-session-id',
+					{
+						documents: [{ filename: 'tasks', resetOnCompletion: false }],
+						prompt: 'Test',
+						loopEnabled: true,
+						maxLoops: 2,
+					},
+					'/test/folder'
+				);
+			});
+
+			expect(mockOnAddHistoryEntry).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'AUTO',
+					summary: 'Loop 1 (final) completed: 1 task accomplished',
+					fullResponse: expect.stringContaining('Stopped by user'),
+					success: true,
+				})
+			);
+			expect(mockOnComplete).toHaveBeenCalledWith(
+				expect.objectContaining({
+					sessionId: 'test-session-id',
+					wasStopped: true,
+				})
+			);
+		});
+
+		it('should resolve a paused error before stopping the batch', async () => {
+			const sessions = [createMockSession()];
+			const groups = [createMockGroup()];
+			const contentInitial = '- [ ] Task 1\n- [ ] Task 2';
+			const contentAfterFirst = '- [x] Task 1\n- [ ] Task 2';
+
+			let readCount = 0;
+			mockReadDoc.mockImplementation(async () => {
+				readCount++;
+				if (readCount <= 3) return { success: true, content: contentInitial };
+				return { success: true, content: contentAfterFirst };
+			});
+
+			let pauseHandler:
+				| ((
+						sessionId: string,
+						error: AgentError,
+						documentIndex: number,
+						taskDescription?: string
+				  ) => void)
+				| null = null;
+
+			mockOnSpawnAgent.mockImplementation(async () => {
+				if (pauseHandler) {
+					act(() => {
+						pauseHandler!(
+							'test-session-id',
+							{
+								type: 'auth',
+								message: 'Auth expired',
+								recoverable: true,
+								timestamp: Date.now(),
+							},
+							0,
+							'Task 1'
+						);
+					});
+					pauseHandler = null;
+				}
+				return { success: true, agentSessionId: 'session-1' };
+			});
+
+			const { result } = renderHook(() =>
+				useBatchProcessor({
+					sessions,
+					groups,
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+					onComplete: mockOnComplete,
+				})
+			);
+
+			pauseHandler = result.current.pauseBatchOnError;
+
+			let startPromise: Promise<void>;
+			act(() => {
+				startPromise = result.current.startBatchRun(
+					'test-session-id',
+					{
+						documents: [{ filename: 'tasks', resetOnCompletion: false }],
+						prompt: 'Test',
+						loopEnabled: false,
+					},
+					'/test/folder'
+				);
+			});
+
+			await waitFor(() =>
+				expect(result.current.getBatchState('test-session-id').errorPaused).toBe(true)
+			);
+
+			act(() => {
+				result.current.stopBatchRun('test-session-id');
+			});
+
+			await waitForBatchRun(startPromise!);
+
+			expect(result.current.getBatchState('test-session-id').isRunning).toBe(false);
+			expect(mockOnSpawnAgent).toHaveBeenCalledTimes(1);
+		});
+
+		it('should unblock a paused batch when the hook unmounts', async () => {
+			const sessions = [createMockSession()];
+			const groups = [createMockGroup()];
+
+			mockReadDoc.mockResolvedValue({ success: true, content: '- [ ] Task 1\n- [ ] Task 2' });
+
+			let pauseHandler:
+				| ((
+						sessionId: string,
+						error: AgentError,
+						documentIndex: number,
+						taskDescription?: string
+				  ) => void)
+				| null = null;
+
+			mockOnSpawnAgent.mockImplementation(async () => {
+				if (pauseHandler) {
+					act(() => {
+						pauseHandler!(
+							'test-session-id',
+							{
+								type: 'rate_limited',
+								message: 'Rate limited',
+								recoverable: true,
+								timestamp: Date.now(),
+							},
+							0,
+							'Task 1'
+						);
+					});
+					pauseHandler = null;
+				}
+				return { success: true, agentSessionId: 'session-1' };
+			});
+
+			const { result, unmount } = renderHook(() =>
+				useBatchProcessor({
+					sessions,
+					groups,
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+					onComplete: mockOnComplete,
+				})
+			);
+
+			pauseHandler = result.current.pauseBatchOnError;
+
+			let startPromise: Promise<void>;
+			act(() => {
+				startPromise = result.current.startBatchRun(
+					'test-session-id',
+					{
+						documents: [{ filename: 'tasks', resetOnCompletion: false }],
+						prompt: 'Test',
+						loopEnabled: false,
+					},
+					'/test/folder'
+				);
+			});
+
+			await waitFor(() =>
+				expect(result.current.getBatchState('test-session-id').errorPaused).toBe(true)
+			);
+
+			unmount();
+			await waitForBatchRun(startPromise!);
+
+			expect(mockOnComplete).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('killBatchRun', () => {
+		it('should force kill the process and clear remote Auto Run state', async () => {
+			const sessions = [createMockSession()];
+			const groups = [createMockGroup()];
+
+			const { result } = renderHook(() =>
+				useBatchProcessor({
+					sessions,
+					groups,
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+				})
+			);
+
+			await act(async () => {
+				await result.current.killBatchRun('test-session-id');
+			});
+
+			expect(window.maestro.process.kill).toHaveBeenCalledWith('test-session-id');
+			expect(mockBroadcastAutoRunState).toHaveBeenCalledWith('test-session-id', null);
+			expect(window.maestro.power.removeReason).toHaveBeenCalledWith('autorun:test-session-id');
+		});
+
+		it('should resolve a pending error pause when force killing the batch', async () => {
+			const sessions = [createMockSession()];
+			const groups = [createMockGroup()];
+
+			const { result } = renderHook(() =>
+				useBatchProcessor({
+					sessions,
+					groups,
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+				})
+			);
+
+			act(() => {
+				result.current.pauseBatchOnError(
+					'test-session-id',
+					{
+						type: 'rate_limited',
+						message: 'Rate limited',
+						recoverable: true,
+						timestamp: Date.now(),
+					},
+					0,
+					'Task 1'
+				);
+			});
+
+			await act(async () => {
+				await result.current.killBatchRun('test-session-id');
+			});
+
+			expect(window.maestro.process.kill).toHaveBeenCalledWith('test-session-id');
+			expect(mockBroadcastAutoRunState).toHaveBeenCalledWith('test-session-id', null);
+		});
+
+		it('should still clean up when force killing the process fails', async () => {
+			const sessions = [createMockSession()];
+			const groups = [createMockGroup()];
+			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+			vi.mocked(window.maestro.process.kill).mockRejectedValueOnce(new Error('kill failed'));
+
+			const { result } = renderHook(() =>
+				useBatchProcessor({
+					sessions,
+					groups,
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+				})
+			);
+
+			await act(async () => {
+				await result.current.killBatchRun('test-session-id');
+			});
+
+			expect(consoleError).toHaveBeenCalledWith(
+				'[BatchProcessor:killBatchRun] Failed to kill process:',
+				expect.any(Error)
+			);
+			expect(mockBroadcastAutoRunState).toHaveBeenCalledWith('test-session-id', null);
+
+			consoleError.mockRestore();
+		});
 	});
 
 	describe('worktree handling', () => {
@@ -1223,6 +2114,71 @@ describe('useBatchProcessor hook', () => {
 				'feature/test',
 				undefined // sshRemoteId (undefined for local sessions)
 			);
+		});
+
+		it('should record loop mode details when a worktree batch starts with an empty custom prompt', async () => {
+			const sessions = [createMockSession()];
+			const groups = [createMockGroup()];
+
+			mockWorktreeSetup.mockResolvedValue({
+				success: true,
+				effectiveCwd: '/test/worktree/feature-loop',
+				worktreeActive: true,
+				worktreePath: '/test/worktree/feature-loop',
+				worktreeBranch: 'feature/loop',
+			});
+
+			let callCount = 0;
+			mockReadDoc.mockImplementation(async () => {
+				callCount++;
+				if (callCount <= 3) {
+					return { success: true, content: '- [ ] Task' };
+				}
+				return { success: true, content: '- [x] Task' };
+			});
+
+			const { result } = renderHook(() =>
+				useBatchProcessor({
+					sessions,
+					groups,
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+					onComplete: mockOnComplete,
+				})
+			);
+
+			await act(async () => {
+				await result.current.startBatchRun(
+					'test-session-id',
+					{
+						documents: [{ filename: 'task', resetOnCompletion: false }],
+						prompt: '',
+						loopEnabled: true,
+						maxLoops: 3,
+						worktree: {
+							enabled: true,
+							path: '/test/worktree',
+							branchName: 'feature/loop',
+						},
+					},
+					'/test/folder'
+				);
+			});
+
+			expect(mockOnAddHistoryEntry).toHaveBeenCalledWith(
+				expect.objectContaining({
+					summary: 'Auto Run started in worktree',
+					fullResponse: expect.stringContaining('Loop Mode:** Enabled (max 3)'),
+				})
+			);
+			expect(
+				mockBroadcastAutoRunState.mock.calls.some(([_sessionId, payload]) =>
+					payload && typeof payload === 'object'
+						? Object.prototype.hasOwnProperty.call(payload, 'customPrompt')
+						: false
+				)
+			).toBe(false);
 		});
 
 		it('should handle worktree setup failure', async () => {
@@ -1578,6 +2534,99 @@ describe('useBatchProcessor hook', () => {
 
 			// Should have created a working copy for the reset-on-completion document
 			expect(mockCreateWorkingCopy).toHaveBeenCalledWith('/test/folder', 'tasks', 1, undefined);
+		});
+
+		it('should keep a reset working copy as audit log when no tasks are completed', async () => {
+			const sessions = [createMockSession()];
+			const groups = [createMockGroup()];
+
+			let readCount = 0;
+			mockReadDoc.mockImplementation(async () => {
+				readCount++;
+				if (readCount <= 4) {
+					return { success: true, content: '- [ ] Task 1' };
+				}
+				return { success: true, content: '# Task removed without checkbox completion' };
+			});
+
+			const { result } = renderHook(() =>
+				useBatchProcessor({
+					sessions,
+					groups,
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+					onComplete: mockOnComplete,
+				})
+			);
+
+			await act(async () => {
+				await result.current.startBatchRun(
+					'test-session-id',
+					{
+						documents: [{ filename: 'tasks', resetOnCompletion: true }],
+						prompt: 'Test',
+						loopEnabled: false,
+					},
+					'/test/folder'
+				);
+			});
+
+			expect(mockCreateWorkingCopy).toHaveBeenCalledWith('/test/folder', 'tasks', 1, undefined);
+			expect(mockOnSpawnAgent).toHaveBeenCalledTimes(1);
+			expect(mockOnComplete).toHaveBeenCalledWith(
+				expect.objectContaining({
+					completedTasks: 0,
+					totalTasks: 1,
+				})
+			);
+		});
+
+		it('should fall back to the original document when working copy creation fails', async () => {
+			const sessions = [createMockSession()];
+			const groups = [createMockGroup()];
+			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+			mockCreateWorkingCopy.mockRejectedValueOnce(new Error('copy failed'));
+
+			let callCount = 0;
+			mockReadDoc.mockImplementation(async () => {
+				callCount++;
+				if (callCount <= 3) return { success: true, content: '- [ ] Task 1' };
+				return { success: true, content: '- [x] Task 1' };
+			});
+
+			const { result } = renderHook(() =>
+				useBatchProcessor({
+					sessions,
+					groups,
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+					onComplete: mockOnComplete,
+				})
+			);
+
+			await act(async () => {
+				await result.current.startBatchRun(
+					'test-session-id',
+					{
+						documents: [{ filename: 'tasks', resetOnCompletion: true }],
+						prompt: 'Test',
+						loopEnabled: false,
+					},
+					'/test/folder'
+				);
+			});
+
+			expect(consoleError).toHaveBeenCalledWith(
+				'[BatchProcessor] Failed to create working copy for tasks:',
+				expect.any(Error)
+			);
+			expect(mockOnSpawnAgent).toHaveBeenCalled();
+			expect(mockOnComplete).toHaveBeenCalled();
+
+			consoleError.mockRestore();
 		});
 	});
 
@@ -2575,17 +3624,19 @@ describe('useBatchProcessor hook', () => {
 
 			mockOnSpawnAgent.mockImplementation(async () => {
 				if (pauseHandler) {
-					pauseHandler(
-						'test-session-id',
-						{
-							type: 'auth',
-							message: 'Auth error',
-							recoverable: true,
-							timestamp: Date.now(),
-						},
-						0,
-						'Task 1'
-					);
+					act(() => {
+						pauseHandler!(
+							'test-session-id',
+							{
+								type: 'auth',
+								message: 'Auth error',
+								recoverable: true,
+								timestamp: Date.now(),
+							},
+							0,
+							'Task 1'
+						);
+					});
 					pauseHandler = null;
 				}
 				return { success: true, agentSessionId: 'session-1' };
@@ -2627,8 +3678,133 @@ describe('useBatchProcessor hook', () => {
 				result.current.resumeAfterError('test-session-id');
 			});
 
-			await startPromise;
+			await waitForBatchRun(startPromise);
 			expect(mockOnSpawnAgent).toHaveBeenCalledTimes(2);
+		});
+
+		it('should skip a document when an error pause exists before task execution', async () => {
+			const sessions = [createMockSession()];
+			const groups = [createMockGroup()];
+
+			let triggerPause: (() => void) | null = null;
+			let readCount = 0;
+			mockReadDoc.mockImplementation(async () => {
+				readCount++;
+				if (readCount === 2) {
+					act(() => {
+						triggerPause?.();
+					});
+				}
+				return { success: true, content: '- [ ] Task 1' };
+			});
+
+			const { result } = renderHook(() =>
+				useBatchProcessor({
+					sessions,
+					groups,
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+					onComplete: mockOnComplete,
+				})
+			);
+
+			triggerPause = () => {
+				result.current.pauseBatchOnError(
+					'test-session-id',
+					{
+						type: 'token_exhaustion',
+						message: 'Prompt is too long',
+						recoverable: true,
+						timestamp: Date.now(),
+					},
+					0,
+					'Task 1'
+				);
+			};
+
+			let startPromise: Promise<void>;
+			act(() => {
+				startPromise = result.current.startBatchRun(
+					'test-session-id',
+					{
+						documents: [{ filename: 'tasks', resetOnCompletion: false }],
+						prompt: 'Test',
+						loopEnabled: false,
+					},
+					'/test/folder'
+				);
+			});
+
+			await waitFor(() =>
+				expect(result.current.getBatchState('test-session-id').errorPaused).toBe(true)
+			);
+
+			act(() => {
+				result.current.skipCurrentDocument('test-session-id');
+			});
+
+			await waitForBatchRun(startPromise!);
+
+			expect(mockOnSpawnAgent).not.toHaveBeenCalled();
+			expect(mockOnComplete).toHaveBeenCalledWith(
+				expect.objectContaining({ sessionId: 'test-session-id' })
+			);
+		});
+
+		it('should tolerate pause, skip, and resume controls for missing batch state', () => {
+			const sessions = [createMockSession()];
+			const groups = [createMockGroup()];
+			const error: AgentError = {
+				type: 'auth',
+				message: 'Auth error',
+				recoverable: true,
+				timestamp: Date.now(),
+			};
+
+			const { result } = renderHook(() =>
+				useBatchProcessor({
+					sessions,
+					groups,
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+					onComplete: mockOnComplete,
+				})
+			);
+
+			act(() => {
+				result.current.pauseBatchOnError('missing-session', error, 0, 'Task 1');
+				result.current.pauseBatchOnError('missing-session', error, 0, 'Task 1 retry');
+				result.current.skipCurrentDocument('missing-skip');
+				result.current.resumeAfterError('missing-resume');
+			});
+
+			expect(mockBroadcastAutoRunState).not.toHaveBeenCalled();
+			expect(result.current.getBatchState('missing-session').errorPaused).toBe(false);
+		});
+
+		it('should abort a missing batch without requiring a pending error resolution', () => {
+			const sessions = [createMockSession()];
+			const groups = [createMockGroup()];
+
+			const { result } = renderHook(() =>
+				useBatchProcessor({
+					sessions,
+					groups,
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+					onComplete: mockOnComplete,
+				})
+			);
+
+			act(() => {
+				result.current.abortBatchOnError('missing-abort');
+			});
+
+			expect(result.current.getBatchState('missing-abort').isStopping).toBe(true);
+			expect(mockBroadcastAutoRunState).toHaveBeenCalledWith('missing-abort', null);
 		});
 	});
 
@@ -2655,17 +3831,19 @@ describe('useBatchProcessor hook', () => {
 			// processTask calls pauseBatchOnError then throws (simulates agent error + processTask failure)
 			mockOnSpawnAgent.mockImplementation(async () => {
 				if (pauseHandler) {
-					pauseHandler(
-						'test-session-id',
-						{
-							type: 'token_exhaustion',
-							message: 'Prompt is too long',
-							recoverable: true,
-							timestamp: Date.now(),
-						},
-						0,
-						'Task 1'
-					);
+					act(() => {
+						pauseHandler!(
+							'test-session-id',
+							{
+								type: 'token_exhaustion',
+								message: 'Prompt is too long',
+								recoverable: true,
+								timestamp: Date.now(),
+							},
+							0,
+							'Task 1'
+						);
+					});
 					pauseHandler = null;
 				}
 				throw new Error('Agent exited with error');
@@ -2707,7 +3885,7 @@ describe('useBatchProcessor hook', () => {
 				result.current.abortBatchOnError('test-session-id');
 			});
 
-			await startPromise;
+			await waitForBatchRun(startPromise);
 
 			// Batch should have completed (stopped via abort)
 			expect(result.current.getBatchState('test-session-id').isRunning).toBe(false);
@@ -2741,17 +3919,19 @@ describe('useBatchProcessor hook', () => {
 			mockOnSpawnAgent.mockImplementation(async () => {
 				spawnCount++;
 				if (spawnCount === 1 && pauseHandler) {
-					pauseHandler(
-						'test-session-id',
-						{
-							type: 'token_exhaustion',
-							message: 'Prompt is too long',
-							recoverable: true,
-							timestamp: Date.now(),
-						},
-						0,
-						'Task 1'
-					);
+					act(() => {
+						pauseHandler!(
+							'test-session-id',
+							{
+								type: 'token_exhaustion',
+								message: 'Prompt is too long',
+								recoverable: true,
+								timestamp: Date.now(),
+							},
+							0,
+							'Task 1'
+						);
+					});
 					pauseHandler = null;
 					throw new Error('Agent exited with error');
 				}
@@ -2794,7 +3974,7 @@ describe('useBatchProcessor hook', () => {
 				result.current.resumeAfterError('test-session-id');
 			});
 
-			await startPromise;
+			await waitForBatchRun(startPromise);
 
 			// Error should be cleared
 			expect(result.current.getBatchState('test-session-id').errorPaused).toBe(false);
@@ -2835,17 +4015,19 @@ describe('useBatchProcessor hook', () => {
 				spawnCount++;
 				if (spawnCount === 1 && pauseHandler) {
 					// First spawn (doc1) — triggers error pause and throws
-					pauseHandler(
-						'test-session-id',
-						{
-							type: 'token_exhaustion',
-							message: 'Context limit',
-							recoverable: true,
-							timestamp: Date.now(),
-						},
-						0,
-						'Task A'
-					);
+					act(() => {
+						pauseHandler!(
+							'test-session-id',
+							{
+								type: 'token_exhaustion',
+								message: 'Context limit',
+								recoverable: true,
+								timestamp: Date.now(),
+							},
+							0,
+							'Task A'
+						);
+					});
 					pauseHandler = null;
 					throw new Error('Agent exited with error');
 				}
@@ -2894,7 +4076,7 @@ describe('useBatchProcessor hook', () => {
 				result.current.skipCurrentDocument('test-session-id');
 			});
 
-			await startPromise;
+			await waitForBatchRun(startPromise);
 
 			// Batch should have completed
 			expect(result.current.getBatchState('test-session-id').isRunning).toBe(false);
@@ -2924,17 +4106,19 @@ describe('useBatchProcessor hook', () => {
 
 			mockOnSpawnAgent.mockImplementation(async () => {
 				if (pauseHandler) {
-					pauseHandler(
-						'test-session-id',
-						{
-							type: 'auth_expired',
-							message: 'Auth token expired',
-							recoverable: false,
-							timestamp: Date.now(),
-						},
-						0,
-						'Task 1'
-					);
+					act(() => {
+						pauseHandler!(
+							'test-session-id',
+							{
+								type: 'auth_expired',
+								message: 'Auth token expired',
+								recoverable: false,
+								timestamp: Date.now(),
+							},
+							0,
+							'Task 1'
+						);
+					});
 					pauseHandler = null;
 					throw new Error('Agent auth failure');
 				}
@@ -2976,7 +4160,7 @@ describe('useBatchProcessor hook', () => {
 				result.current.abortBatchOnError('test-session-id');
 			});
 
-			await startPromise;
+			await waitForBatchRun(startPromise);
 
 			// All error fields must be completely cleared
 			const finalState = result.current.getBatchState('test-session-id');
@@ -2985,6 +4169,42 @@ describe('useBatchProcessor hook', () => {
 			expect(finalState.error).toBeUndefined();
 			expect(finalState.errorDocumentIndex).toBeUndefined();
 			expect(finalState.errorTaskDescription).toBeUndefined();
+		});
+	});
+
+	describe('error recovery after unmount', () => {
+		it('should ignore recovery actions after the hook has unmounted', () => {
+			const sessions = [createMockSession()];
+			const groups = [createMockGroup()];
+			const error: AgentError = {
+				type: 'auth',
+				message: 'Auth expired',
+				recoverable: true,
+				timestamp: Date.now(),
+			};
+
+			const { result, unmount } = renderHook(() =>
+				useBatchProcessor({
+					sessions,
+					groups,
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+				})
+			);
+
+			unmount();
+
+			act(() => {
+				result.current.pauseBatchOnError('test-session-id', error, 0, 'Task 1');
+				result.current.skipCurrentDocument('test-session-id');
+				result.current.resumeAfterError('test-session-id');
+				result.current.abortBatchOnError('test-session-id');
+			});
+
+			expect(window.maestro.logger.autorun).not.toHaveBeenCalled();
+			expect(mockBroadcastAutoRunState).not.toHaveBeenCalled();
+			expect(result.current.getBatchState('test-session-id').errorPaused).toBe(false);
 		});
 	});
 
@@ -3024,32 +4244,36 @@ describe('useBatchProcessor hook', () => {
 				spawnCount++;
 				// First spawn: error + throw
 				if (spawnCount === 1 && pauseHandler) {
-					pauseHandler(
-						'test-session-id',
-						{
-							type: 'rate_limited',
-							message: 'Rate limit hit',
-							recoverable: true,
-							timestamp: Date.now(),
-						},
-						0,
-						'Task 1'
-					);
+					act(() => {
+						pauseHandler!(
+							'test-session-id',
+							{
+								type: 'rate_limited',
+								message: 'Rate limit hit',
+								recoverable: true,
+								timestamp: Date.now(),
+							},
+							0,
+							'Task 1'
+						);
+					});
 					throw new Error('Rate limited');
 				}
 				// Second spawn: error again + throw
 				if (spawnCount === 2 && pauseHandler) {
-					pauseHandler(
-						'test-session-id',
-						{
-							type: 'rate_limited',
-							message: 'Rate limit hit again',
-							recoverable: true,
-							timestamp: Date.now(),
-						},
-						0,
-						'Task 2'
-					);
+					act(() => {
+						pauseHandler!(
+							'test-session-id',
+							{
+								type: 'rate_limited',
+								message: 'Rate limit hit again',
+								recoverable: true,
+								timestamp: Date.now(),
+							},
+							0,
+							'Task 2'
+						);
+					});
 					throw new Error('Rate limited again');
 				}
 				// Third spawn: succeeds
@@ -3106,7 +4330,7 @@ describe('useBatchProcessor hook', () => {
 				result.current.resumeAfterError('test-session-id');
 			});
 
-			await startPromise;
+			await waitForBatchRun(startPromise);
 
 			// Batch completed successfully after two error cycles
 			const finalState = result.current.getBatchState('test-session-id');
@@ -3275,6 +4499,177 @@ describe('useBatchProcessor hook', () => {
 					}),
 				})
 			);
+		});
+
+		it('should continue when Auto Run stats tracking cannot start', async () => {
+			const sessions = [createMockSession()];
+			const groups = [createMockGroup()];
+			const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+			vi.mocked(window.maestro.stats.startAutoRun).mockRejectedValueOnce(
+				new Error('stats unavailable')
+			);
+
+			let callCount = 0;
+			mockReadDoc.mockImplementation(async () => {
+				callCount++;
+				if (callCount <= 3) return { success: true, content: '- [ ] Task' };
+				return { success: true, content: '- [x] Task' };
+			});
+
+			const { result } = renderHook(() =>
+				useBatchProcessor({
+					sessions,
+					groups,
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+					onComplete: mockOnComplete,
+				})
+			);
+
+			await act(async () => {
+				await result.current.startBatchRun(
+					'test-session-id',
+					{
+						documents: [{ filename: 'tasks', resetOnCompletion: false }],
+						prompt: 'Test',
+						loopEnabled: false,
+					},
+					'/test/folder'
+				);
+			});
+
+			expect(consoleWarn).toHaveBeenCalledWith(
+				'[BatchProcessor] Failed to start stats tracking:',
+				expect.any(Error)
+			);
+			expect(mockOnComplete).toHaveBeenCalled();
+
+			consoleWarn.mockRestore();
+		});
+
+		it('should continue when task stats and completion stats fail to record', async () => {
+			const sessions = [createMockSession()];
+			const groups = [createMockGroup()];
+			const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+			vi.mocked(window.maestro.stats.recordAutoTask).mockRejectedValueOnce(
+				new Error('record failed')
+			);
+			vi.mocked(window.maestro.stats.endAutoRun).mockRejectedValueOnce(new Error('end failed'));
+
+			let callCount = 0;
+			mockReadDoc.mockImplementation(async () => {
+				callCount++;
+				if (callCount <= 3) return { success: true, content: '- [ ] Task' };
+				return { success: true, content: '- [x] Task' };
+			});
+
+			const { result } = renderHook(() =>
+				useBatchProcessor({
+					sessions,
+					groups,
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+					onComplete: mockOnComplete,
+				})
+			);
+
+			await act(async () => {
+				await result.current.startBatchRun(
+					'test-session-id',
+					{
+						documents: [{ filename: 'tasks', resetOnCompletion: false }],
+						prompt: 'Test',
+						loopEnabled: false,
+					},
+					'/test/folder'
+				);
+			});
+
+			expect(consoleWarn).toHaveBeenCalledWith(
+				'[BatchProcessor] Failed to record task stats:',
+				expect.any(Error)
+			);
+			expect(consoleWarn).toHaveBeenCalledWith(
+				'[BatchProcessor] Failed to end stats tracking:',
+				expect.any(Error)
+			);
+			expect(mockOnComplete).toHaveBeenCalled();
+
+			consoleWarn.mockRestore();
+		});
+
+		it('should report Symphony progress failures without failing Auto Run', async () => {
+			const sessions = [
+				createMockSession({
+					symphonyMetadata: {
+						isSymphonySession: true,
+						contributionId: 'contribution-1',
+						repoSlug: 'owner/repo',
+						issueNumber: 42,
+						issueTitle: 'Implement feature',
+						documentPaths: ['tasks.md'],
+						status: 'running',
+					},
+				}),
+			];
+			const groups = [createMockGroup()];
+			const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+			vi.mocked(window.maestro.symphony.updateStatus).mockRejectedValueOnce(
+				new Error('symphony offline')
+			);
+
+			let callCount = 0;
+			mockReadDoc.mockImplementation(async () => {
+				callCount++;
+				if (callCount <= 3) return { success: true, content: '- [ ] Task' };
+				return { success: true, content: '- [x] Task' };
+			});
+
+			const { result } = renderHook(() =>
+				useBatchProcessor({
+					sessions,
+					groups,
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+					onComplete: mockOnComplete,
+				})
+			);
+
+			await act(async () => {
+				await result.current.startBatchRun(
+					'test-session-id',
+					{
+						documents: [{ filename: 'tasks', resetOnCompletion: false }],
+						prompt: 'Test',
+						loopEnabled: false,
+					},
+					'/test/folder'
+				);
+			});
+
+			await waitFor(() =>
+				expect(consoleWarn).toHaveBeenCalledWith(
+					'[BatchProcessor] Failed to update Symphony progress:',
+					expect.any(Error)
+				)
+			);
+			expect(window.maestro.symphony.updateStatus).toHaveBeenCalledWith(
+				expect.objectContaining({
+					contributionId: 'contribution-1',
+					progress: expect.objectContaining({
+						currentDocument: 'tasks',
+					}),
+				})
+			);
+			expect(mockOnComplete).toHaveBeenCalled();
+
+			consoleWarn.mockRestore();
 		});
 	});
 
@@ -3555,7 +4950,11 @@ describe('useBatchProcessor hook', () => {
 				return { success: true, content: '- [x] Task' };
 			});
 
-			mockOnSpawnAgent.mockResolvedValue({ success: true, agentSessionId: 'test' });
+			let resolveSpawn: (value: { success: true; agentSessionId: string }) => void;
+			const spawnPromise = new Promise<{ success: true; agentSessionId: string }>((resolve) => {
+				resolveSpawn = resolve;
+			});
+			mockOnSpawnAgent.mockReturnValue(spawnPromise);
 
 			const { result } = renderHook(() =>
 				useBatchProcessor({
@@ -3568,9 +4967,9 @@ describe('useBatchProcessor hook', () => {
 				})
 			);
 
-			// Start batch and immediately stop
+			let startPromise: Promise<void>;
 			act(() => {
-				result.current.startBatchRun(
+				startPromise = result.current.startBatchRun(
 					'test-session-id',
 					{
 						documents: [{ filename: 'tasks', resetOnCompletion: false }],
@@ -3579,11 +4978,21 @@ describe('useBatchProcessor hook', () => {
 					},
 					'/test/folder'
 				);
+			});
+
+			await waitFor(() => expect(mockOnSpawnAgent).toHaveBeenCalled());
+
+			act(() => {
 				result.current.stopBatchRun('test-session-id');
 			});
 
 			// Verify stop flag is set
 			expect(result.current.getBatchState('test-session-id').isStopping).toBe(true);
+
+			await act(async () => {
+				resolveSpawn!({ success: true, agentSessionId: 'test' });
+				await startPromise!;
+			});
 		});
 	});
 
@@ -4106,6 +5515,143 @@ describe('useBatchProcessor hook', () => {
 			// Should have created a working copy for the reset-on-completion document
 			expect(mockCreateWorkingCopy).toHaveBeenCalledWith('/test/folder', 'tasks', 1, undefined);
 		});
+
+		it('continues all-reset documents until max loops and records loop summaries without usage', async () => {
+			const sessions = [createMockSession()];
+			const groups = [createMockGroup()];
+			const workingCopyReads = new Map<string, number>();
+
+			mockCreateWorkingCopy.mockImplementation(async (_folder, filename, loopNumber) => ({
+				workingCopyPath: `Runs/${filename}-run-${loopNumber}`,
+			}));
+			mockReadDoc.mockImplementation(async (_folder: string, filename: string) => {
+				if (filename.startsWith('Runs/')) {
+					const readCount = (workingCopyReads.get(filename) || 0) + 1;
+					workingCopyReads.set(filename, readCount);
+					return {
+						success: true,
+						content: readCount === 1 ? '- [ ] Repeating task' : '- [x] Repeating task',
+					};
+				}
+
+				return { success: true, content: '- [ ] Repeating task' };
+			});
+			mockOnSpawnAgent.mockResolvedValue({
+				success: true,
+				response: 'Completed repeating task successfully.',
+			});
+
+			const { result } = renderHook(() =>
+				useBatchProcessor({
+					sessions,
+					groups,
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+					onComplete: mockOnComplete,
+					autoRunStats: {
+						cumulativeTimeMs: 10 * 365 * 24 * 60 * 60 * 1000,
+						longestRunMs: 0,
+						longestRunTimestamp: 0,
+						totalRuns: 1,
+						currentBadgeLevel: 11,
+						lastBadgeUnlockLevel: 11,
+						lastAcknowledgedBadgeLevel: 11,
+						badgeHistory: [],
+					},
+				})
+			);
+
+			await act(async () => {
+				await result.current.startBatchRun(
+					'test-session-id',
+					{
+						documents: [{ filename: 'tasks', resetOnCompletion: true }],
+						prompt: 'Test',
+						loopEnabled: true,
+						maxLoops: 2,
+					},
+					'/test/folder'
+				);
+			});
+
+			expect(mockOnSpawnAgent).toHaveBeenCalledTimes(2);
+			expect(mockCreateWorkingCopy).toHaveBeenCalledWith('/test/folder', 'tasks', 1, undefined);
+			expect(mockCreateWorkingCopy).toHaveBeenCalledWith('/test/folder', 'tasks', 2, undefined);
+
+			const firstLoopSummary = mockOnAddHistoryEntry.mock.calls
+				.map(([entry]) => entry)
+				.find((entry) => entry.summary === 'Loop 1 completed: 1 task accomplished');
+
+			expect(firstLoopSummary?.fullResponse).not.toContain('Tokens');
+			expect(firstLoopSummary?.fullResponse).not.toContain('Cost');
+			expect(firstLoopSummary?.usageStats).toBeUndefined();
+			expect(mockOnComplete).toHaveBeenCalledWith(
+				expect.objectContaining({
+					completedTasks: 2,
+				})
+			);
+			expect(
+				mockOnAddHistoryEntry.mock.calls.some(([entry]) =>
+					String(entry.fullResponse).includes('Maximum level achieved')
+				)
+			).toBe(true);
+		});
+
+		it('records plural completed-loop summaries for reset documents with multiple tasks', async () => {
+			const sessions = [createMockSession()];
+			const groups = [createMockGroup()];
+			const workingCopyReads = new Map<string, number>();
+
+			mockCreateWorkingCopy.mockImplementation(async (_folder, filename, loopNumber) => ({
+				workingCopyPath: `Runs/${filename}-plural-run-${loopNumber}`,
+			}));
+			mockReadDoc.mockImplementation(async (_folder: string, filename: string) => {
+				if (filename.startsWith('Runs/')) {
+					const readCount = (workingCopyReads.get(filename) || 0) + 1;
+					workingCopyReads.set(filename, readCount);
+					if (readCount === 1) return { success: true, content: '- [ ] Task A\n- [ ] Task B' };
+					if (readCount === 2) return { success: true, content: '- [x] Task A\n- [ ] Task B' };
+					return { success: true, content: '- [x] Task A\n- [x] Task B' };
+				}
+
+				return { success: true, content: '- [ ] Task A\n- [ ] Task B' };
+			});
+			mockOnSpawnAgent.mockResolvedValue({
+				success: true,
+				response: 'Completed another repeating task successfully.',
+			});
+
+			const { result } = renderHook(() =>
+				useBatchProcessor({
+					sessions,
+					groups,
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+					onComplete: mockOnComplete,
+				})
+			);
+
+			await act(async () => {
+				await result.current.startBatchRun(
+					'test-session-id',
+					{
+						documents: [{ filename: 'tasks', resetOnCompletion: true }],
+						prompt: 'Test',
+						loopEnabled: true,
+						maxLoops: 2,
+					},
+					'/test/folder'
+				);
+			});
+
+			expect(
+				mockOnAddHistoryEntry.mock.calls.some(
+					([entry]) => entry.summary === 'Loop 1 completed: 2 tasks accomplished'
+				)
+			).toBe(true);
+		});
 	});
 
 	describe('PR creation exception handling', () => {
@@ -4340,6 +5886,135 @@ describe('useBatchProcessor hook', () => {
 			expect(mockOnComplete).toHaveBeenCalled();
 		});
 
+		it('should record a loop summary and continue when a non-reset document has new tasks', async () => {
+			const sessions = [createMockSession()];
+			const groups = [createMockGroup()];
+
+			let readCount = 0;
+			mockReadDoc.mockImplementation(async () => {
+				readCount++;
+				switch (readCount) {
+					case 1:
+					case 2:
+					case 3:
+						return { success: true, content: '- [ ] Task 1' };
+					case 4:
+						return { success: true, content: '- [x] Task 1' };
+					case 5:
+					case 6:
+					case 7:
+					case 8:
+						return { success: true, content: '- [x] Task 1\n- [ ] New task' };
+					default:
+						return { success: true, content: '- [x] Task 1\n- [x] New task' };
+				}
+			});
+
+			mockOnSpawnAgent.mockResolvedValue({
+				success: true,
+				agentSessionId: 'loop-session',
+				usageStats: {
+					inputTokens: 20,
+					outputTokens: 10,
+					totalCostUsd: 0.02,
+					cacheReadInputTokens: 0,
+					cacheCreationInputTokens: 0,
+					contextWindow: 0,
+				},
+				response: '**Summary:** Completed a loop task.\n\n**Details:** Done.',
+			});
+
+			const { result } = renderHook(() =>
+				useBatchProcessor({
+					sessions,
+					groups,
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+					onComplete: mockOnComplete,
+				})
+			);
+
+			await act(async () => {
+				await result.current.startBatchRun(
+					'test-session-id',
+					{
+						documents: [{ filename: 'tasks', resetOnCompletion: false }],
+						prompt: 'Test',
+						loopEnabled: true,
+						maxLoops: 2,
+					},
+					'/test/folder'
+				);
+			});
+
+			expect(mockOnSpawnAgent).toHaveBeenCalledTimes(2);
+			expect(mockOnAddHistoryEntry).toHaveBeenCalledWith(
+				expect.objectContaining({
+					summary: expect.stringContaining('Loop 1 completed'),
+					fullResponse: expect.stringContaining('Tasks Discovered for Next Loop'),
+					usageStats: expect.objectContaining({
+						inputTokens: 20,
+						outputTokens: 10,
+						totalCostUsd: 0.02,
+					}),
+				})
+			);
+			expect(mockOnComplete).toHaveBeenCalled();
+		});
+
+		it('should ignore reset documents when checking whether non-reset tasks remain', async () => {
+			const sessions = [createMockSession()];
+			const groups = [createMockGroup()];
+
+			let taskDocReads = 0;
+			mockReadDoc.mockImplementation(async (_folder: string, filename: string) => {
+				if (filename.includes('reset-empty')) {
+					return { success: true, content: '# No reset tasks' };
+				}
+				taskDocReads++;
+				if (taskDocReads <= 3) {
+					return { success: true, content: '- [ ] Task 1' };
+				}
+				return { success: true, content: '- [x] Task 1' };
+			});
+
+			const { result } = renderHook(() =>
+				useBatchProcessor({
+					sessions,
+					groups,
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+					onComplete: mockOnComplete,
+				})
+			);
+
+			await act(async () => {
+				await result.current.startBatchRun(
+					'test-session-id',
+					{
+						documents: [
+							{ filename: 'reset-empty', resetOnCompletion: true },
+							{ filename: 'tasks', resetOnCompletion: false },
+						],
+						prompt: 'Test',
+						loopEnabled: true,
+						maxLoops: 2,
+					},
+					'/test/folder'
+				);
+			});
+
+			expect(mockOnSpawnAgent).toHaveBeenCalledTimes(1);
+			expect(mockOnComplete).toHaveBeenCalledWith(
+				expect.objectContaining({
+					completedTasks: 1,
+					documentsProcessed: 2,
+				})
+			);
+		});
+
 		it('should exit loop when reaching max loops limit', async () => {
 			const sessions = [createMockSession()];
 			const groups = [createMockGroup()];
@@ -4429,6 +6104,53 @@ describe('useBatchProcessor hook', () => {
 			expect(mockOnComplete).toHaveBeenCalled();
 		});
 
+		it('should reset a checked reset-on-completion document when no unchecked tasks remain in loop mode', async () => {
+			const sessions = [createMockSession()];
+			const groups = [createMockGroup()];
+
+			let readCount = 0;
+			mockReadDoc.mockImplementation(async () => {
+				readCount++;
+				if (readCount === 1) {
+					return { success: true, content: '- [ ] Repeating task' };
+				}
+				return { success: true, content: '- [x] Repeating task' };
+			});
+
+			const { result } = renderHook(() =>
+				useBatchProcessor({
+					sessions,
+					groups,
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+					onComplete: mockOnComplete,
+				})
+			);
+
+			await act(async () => {
+				await result.current.startBatchRun(
+					'test-session-id',
+					{
+						documents: [{ filename: 'tasks', resetOnCompletion: true }],
+						prompt: 'Test',
+						loopEnabled: true,
+						maxLoops: 2,
+					},
+					'/test/folder'
+				);
+			});
+
+			expect(mockWriteDoc).toHaveBeenCalledWith(
+				'/test/folder',
+				'tasks.md',
+				'- [ ] Repeating task',
+				undefined
+			);
+			expect(mockOnSpawnAgent).not.toHaveBeenCalled();
+			expect(mockOnComplete).toHaveBeenCalled();
+		});
+
 		it('should exit loop when no tasks were processed in an iteration', async () => {
 			const sessions = [createMockSession()];
 			const groups = [createMockGroup()];
@@ -4472,6 +6194,129 @@ describe('useBatchProcessor hook', () => {
 			});
 
 			expect(mockOnComplete).toHaveBeenCalled();
+		});
+	});
+
+	describe('stall detection', () => {
+		it('should mark a document as stalled after repeated runs with no document progress', async () => {
+			const sessions = [createMockSession()];
+			const groups = [createMockGroup()];
+
+			mockReadDoc.mockResolvedValue({ success: true, content: '- [ ] Task that stays open' });
+			mockOnSpawnAgent.mockResolvedValue({
+				success: true,
+				agentSessionId: 'stalled-session',
+				response: '**Summary:** Looked at the task but could not make progress.',
+			});
+
+			const { result } = renderHook(() =>
+				useBatchProcessor({
+					sessions,
+					groups,
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+					onComplete: mockOnComplete,
+				})
+			);
+
+			await act(async () => {
+				await result.current.startBatchRun(
+					'test-session-id',
+					{
+						documents: [{ filename: 'stalled-doc', resetOnCompletion: false }],
+						prompt: 'Test',
+						loopEnabled: false,
+					},
+					'/test/folder'
+				);
+			});
+
+			expect(mockOnSpawnAgent).toHaveBeenCalledTimes(2);
+			expect(mockOnAddHistoryEntry).toHaveBeenCalledWith(
+				expect.objectContaining({
+					summary: 'Document stalled: stalled-doc (1 tasks remaining)',
+					success: false,
+					fullResponse: expect.stringContaining('Document Stalled: stalled-doc'),
+				})
+			);
+			expect(mockOnAddHistoryEntry).toHaveBeenCalledWith(
+				expect.objectContaining({
+					summary: expect.stringContaining('Auto Run stalled: 0 tasks'),
+					success: false,
+					fullResponse: expect.stringContaining('Stalled Documents'),
+				})
+			);
+			expect(mockOnComplete).toHaveBeenCalledWith(
+				expect.objectContaining({
+					completedTasks: 0,
+					totalTasks: 1,
+				})
+			);
+		});
+
+		it('should report completed-with-stalls when only some documents stall', async () => {
+			const sessions = [createMockSession()];
+			const groups = [createMockGroup()];
+
+			let completingDocReads = 0;
+			mockReadDoc.mockImplementation(async (_folder: string, filename: string) => {
+				if (filename.includes('stalled-doc')) {
+					return { success: true, content: '- [ ] Stuck task' };
+				}
+
+				completingDocReads++;
+				if (completingDocReads <= 3) {
+					return { success: true, content: '- [ ] Finishable task' };
+				}
+				return { success: true, content: '- [x] Finishable task' };
+			});
+			mockOnSpawnAgent.mockResolvedValue({
+				success: true,
+				agentSessionId: 'mixed-stall-session',
+				response: '**Summary:** Attempted the task.\n\n**Details:** Done.',
+			});
+
+			const { result } = renderHook(() =>
+				useBatchProcessor({
+					sessions,
+					groups,
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+					onComplete: mockOnComplete,
+				})
+			);
+
+			await act(async () => {
+				await result.current.startBatchRun(
+					'test-session-id',
+					{
+						documents: [
+							{ filename: 'stalled-doc', resetOnCompletion: false },
+							{ filename: 'finishing-doc', resetOnCompletion: false },
+						],
+						prompt: 'Test',
+						loopEnabled: false,
+					},
+					'/test/folder'
+				);
+			});
+
+			expect(mockOnSpawnAgent).toHaveBeenCalledTimes(2);
+			expect(mockOnAddHistoryEntry).toHaveBeenCalledWith(
+				expect.objectContaining({
+					summary: expect.stringContaining('Auto Run completed with stalls'),
+					success: true,
+					fullResponse: expect.stringContaining('Completed with 1 stalled document(s)'),
+				})
+			);
+			expect(mockOnComplete).toHaveBeenCalledWith(
+				expect.objectContaining({
+					totalTasks: 2,
+					wasStopped: false,
+				})
+			);
 		});
 	});
 
@@ -5681,6 +7526,133 @@ describe('useBatchProcessor hook', () => {
 			expect(mockCreatePR).toHaveBeenCalled();
 		});
 
+		it('should use configured branch fallback and unbounded loop text for worktree targets', async () => {
+			const parentSession = createMockSession({
+				id: 'parent-id',
+				cwd: '/main/repo',
+			});
+			const worktreeSession = createMockSession({
+				id: 'wt-config-branch-id',
+				cwd: '/main/repo/worktrees/config-branch',
+				parentSessionId: 'parent-id',
+			});
+			const sessions = [parentSession, worktreeSession];
+			const groups = [createMockGroup()];
+
+			let callCount = 0;
+			mockReadDoc.mockImplementation(async () => {
+				callCount++;
+				if (callCount <= 3) return { success: true, content: '- [ ] Task' };
+				return { success: true, content: '- [x] Task' };
+			});
+
+			const { result } = renderHook(() =>
+				useBatchProcessor({
+					sessions,
+					groups,
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+					onComplete: mockOnComplete,
+					onPRResult: mockOnPRResult,
+				})
+			);
+
+			await act(async () => {
+				await result.current.startBatchRun(
+					'wt-config-branch-id',
+					{
+						documents: [{ filename: 'tasks', resetOnCompletion: false }],
+						prompt: 'Test',
+						loopEnabled: true,
+						worktreeTarget: {
+							mode: 'create-new',
+							newBranchName: 'config-branch-name',
+							baseBranch: 'main',
+							createPROnCompletion: false,
+						},
+						worktree: {
+							enabled: true,
+							path: '/main/repo/worktrees/config-branch',
+							branchName: 'config-branch-name',
+						},
+					},
+					'/test/folder'
+				);
+			});
+
+			const startEntry = mockOnAddHistoryEntry.mock.calls
+				.map(([entry]) => entry)
+				.find((entry) => entry.summary === 'Auto Run started in worktree');
+
+			expect(startEntry?.fullResponse).toContain('`config-branch-name`');
+			expect(startEntry?.fullResponse).toContain('**Loop Mode:** Enabled');
+			expect(startEntry?.fullResponse).not.toContain('max');
+		});
+
+		it('should still create a PR when the parent session record is unavailable', async () => {
+			const worktreeSession = createMockSession({
+				id: 'wt-missing-parent-id',
+				name: 'Orphaned Worktree Agent',
+				cwd: '/main/repo/worktrees/orphaned-branch',
+				parentSessionId: 'missing-parent-id',
+				worktreeBranch: 'orphaned-branch',
+			});
+			const sessions = [worktreeSession];
+			const groups = [createMockGroup()];
+
+			let callCount = 0;
+			mockReadDoc.mockImplementation(async () => {
+				callCount++;
+				if (callCount <= 3) return { success: true, content: '- [ ] Task' };
+				return { success: true, content: '- [x] Task' };
+			});
+
+			const { result } = renderHook(() =>
+				useBatchProcessor({
+					sessions,
+					groups,
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+					onComplete: mockOnComplete,
+					onPRResult: mockOnPRResult,
+				})
+			);
+
+			await act(async () => {
+				await result.current.startBatchRun(
+					'wt-missing-parent-id',
+					{
+						documents: [{ filename: 'tasks', resetOnCompletion: false }],
+						prompt: 'Test',
+						loopEnabled: false,
+						worktreeTarget: {
+							mode: 'create-new',
+							newBranchName: 'orphaned-branch',
+							baseBranch: 'main',
+							createPROnCompletion: true,
+						},
+						worktree: {
+							enabled: true,
+							path: '/main/repo/worktrees/orphaned-branch',
+							branchName: 'orphaned-branch',
+							createPROnCompletion: true,
+						},
+					},
+					'/test/folder'
+				);
+			});
+
+			expect(mockCreatePR).toHaveBeenCalled();
+			expect(mockOnPRResult).toHaveBeenCalledWith(
+				expect.objectContaining({
+					sessionId: 'wt-missing-parent-id',
+					success: true,
+				})
+			);
+		});
+
 		it('should skip setupWorktree when worktreeTarget is set (worktree already created)', async () => {
 			const parentSession = createMockSession({
 				id: 'parent-session-id',
@@ -5900,7 +7872,7 @@ describe('useBatchProcessor hook', () => {
 			expect(prEntry.fullResponse).toContain('https://github.com/test/repo/pull/99');
 		});
 
-		it('should add history entry with error on failed PR creation', async () => {
+		it('should add history entry with fallback error on failed PR creation', async () => {
 			const parentSession = createMockSession({
 				id: 'parent-session-id',
 				cwd: '/main/repo',
@@ -5924,7 +7896,6 @@ describe('useBatchProcessor hook', () => {
 
 			mockCreatePR.mockResolvedValue({
 				success: false,
-				error: 'gh: not authenticated',
 			});
 
 			const { result } = renderHook(() =>
@@ -5982,7 +7953,76 @@ describe('useBatchProcessor hook', () => {
 			expect(prHistoryCall).toBeDefined();
 			const prEntry = prHistoryCall![0] as { fullResponse: string };
 			expect(prEntry.fullResponse).toContain('Pull Request Creation Failed');
-			expect(prEntry.fullResponse).toContain('gh: not authenticated');
+			expect(prEntry.fullResponse).toContain('Unknown error');
+		});
+
+		it('records unknown PR target when default branch detection fails before PR creation', async () => {
+			const parentSession = createMockSession({
+				id: 'parent-session-id',
+				cwd: '/main/repo',
+			});
+			const worktreeSession = createMockSession({
+				id: 'wt-session-id',
+				name: 'WT Agent',
+				cwd: '/main/repo/worktrees/no-target-branch',
+				parentSessionId: 'parent-session-id',
+				worktreeBranch: 'no-target-branch',
+			});
+			const sessions = [parentSession, worktreeSession];
+			const groups = [createMockGroup()];
+
+			let callCount = 0;
+			mockReadDoc.mockImplementation(async () => {
+				callCount++;
+				if (callCount <= 3) return { success: true, content: '- [ ] Task' };
+				return { success: true, content: '- [x] Task' };
+			});
+			mockGetDefaultBranch.mockRejectedValue(new Error('default branch unavailable'));
+
+			const { result } = renderHook(() =>
+				useBatchProcessor({
+					sessions,
+					groups,
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+					onComplete: mockOnComplete,
+					onPRResult: mockOnPRResult,
+				})
+			);
+
+			await act(async () => {
+				await result.current.startBatchRun(
+					'wt-session-id',
+					{
+						documents: [{ filename: 'tasks', resetOnCompletion: false }],
+						prompt: 'Test',
+						loopEnabled: false,
+						worktreeTarget: {
+							mode: 'create-new',
+							newBranchName: 'no-target-branch',
+							baseBranch: 'main',
+							createPROnCompletion: true,
+						},
+						worktree: {
+							enabled: true,
+							path: '/main/repo/worktrees/no-target-branch',
+							branchName: 'no-target-branch',
+							createPROnCompletion: true,
+						},
+					},
+					'/test/folder'
+				);
+			});
+
+			const prHistoryCall = mockOnAddHistoryEntry.mock.calls.find((call: unknown[]) => {
+				const entry = call[0] as { summary?: string };
+				return entry.summary?.includes('PR creation failed');
+			});
+			expect(prHistoryCall).toBeDefined();
+			const prEntry = prHistoryCall![0] as { fullResponse: string };
+			expect(prEntry.fullResponse).toContain('**Target:** `unknown`');
+			expect(mockCreatePR).not.toHaveBeenCalled();
 		});
 	});
 });

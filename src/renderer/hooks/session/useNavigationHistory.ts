@@ -74,9 +74,7 @@ export function useNavigationHistory() {
 		isNavigatingRef.current = true;
 
 		// Push current to forward stack
-		if (currentRef.current) {
-			forwardStackRef.current.push(currentRef.current);
-		}
+		forwardStackRef.current.push(currentRef.current!);
 
 		// Pop from history
 		const entry = historyRef.current.pop()!;
@@ -101,9 +99,7 @@ export function useNavigationHistory() {
 		isNavigatingRef.current = true;
 
 		// Push current to history
-		if (currentRef.current) {
-			historyRef.current.push(currentRef.current);
-		}
+		historyRef.current.push(currentRef.current!);
 
 		// Pop from forward stack
 		const entry = forwardStackRef.current.pop()!;

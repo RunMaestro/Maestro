@@ -13,7 +13,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { renderHook, act, cleanup } from '@testing-library/react';
+import { renderHook, act, cleanup, waitFor } from '@testing-library/react';
 
 // ============================================================================
 // Mocks
@@ -358,6 +358,27 @@ describe('useSessionCrud', () => {
 			);
 		});
 
+		it('uses fallback validation message when validation has no error', async () => {
+			(validateNewSession as any).mockReturnValueOnce({
+				valid: false,
+				error: null,
+			});
+
+			const deps = createDeps();
+			const { result } = renderHook(() => useSessionCrud(deps));
+
+			await act(async () => {
+				await result.current.createNewSession('claude-code', '/test/project', 'Duplicate');
+			});
+
+			expect(useSessionStore.getState().sessions).toHaveLength(0);
+			expect(notifyToast).toHaveBeenCalledWith(
+				expect.objectContaining({
+					message: 'Cannot create duplicate agent',
+				})
+			);
+		});
+
 		it('handles agent not found', async () => {
 			mockMaestro.agents.get.mockResolvedValueOnce(null);
 			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -371,6 +392,23 @@ describe('useSessionCrud', () => {
 
 			expect(useSessionStore.getState().sessions).toHaveLength(0);
 			expect(consoleError).toHaveBeenCalledWith('Agent not found: unknown-agent');
+			consoleError.mockRestore();
+		});
+
+		it('logs unexpected session creation failures', async () => {
+			const error = new Error('agent bridge failed');
+			mockMaestro.agents.get.mockRejectedValueOnce(error);
+			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+			const deps = createDeps();
+			const { result } = renderHook(() => useSessionCrud(deps));
+
+			await act(async () => {
+				await result.current.createNewSession('claude-code', '/test/project', 'Broken');
+			});
+
+			expect(useSessionStore.getState().sessions).toHaveLength(0);
+			expect(consoleError).toHaveBeenCalledWith('Failed to create session:', error);
 			consoleError.mockRestore();
 		});
 
@@ -830,6 +868,9 @@ describe('useSessionCrud', () => {
 			});
 
 			expect(deps.setRemovedWorktreePaths).toHaveBeenCalled();
+			const updateRemovedPaths = (deps.setRemovedWorktreePaths as any).mock.calls[0][0];
+			const updatedPaths = updateRemovedPaths(new Set(['/existing']));
+			expect(updatedPaths).toEqual(new Set(['/existing', '/parent/wt1']));
 		});
 
 		it('continues even if process kill fails', async () => {
@@ -855,6 +896,60 @@ describe('useSessionCrud', () => {
 
 			// Should still remove sessions despite kill failure
 			expect(useSessionStore.getState().sessions).toHaveLength(0);
+			consoleError.mockRestore();
+		});
+
+		it('continues even if terminal process kill fails', async () => {
+			const error = new Error('terminal kill failed');
+			mockMaestro.process.kill.mockResolvedValueOnce(undefined).mockRejectedValueOnce(error);
+			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+			useSessionStore.setState({
+				groups: [{ id: 'grp-1', name: 'Terminal Error Group' }],
+				sessions: [createSession({ id: 's1', groupId: 'grp-1' })],
+			});
+
+			const deps = createDeps();
+			const { result } = renderHook(() => useSessionCrud(deps));
+
+			act(() => {
+				result.current.deleteWorktreeGroup('grp-1');
+			});
+
+			const onConfirm = (deps.showConfirmation as any).mock.calls[0][1];
+			await act(async () => {
+				await onConfirm();
+			});
+
+			expect(useSessionStore.getState().sessions).toHaveLength(0);
+			expect(consoleError).toHaveBeenCalledWith('Failed to kill terminal process:', error);
+			consoleError.mockRestore();
+		});
+
+		it('continues even if playbook deletion fails', async () => {
+			const error = new Error('delete failed');
+			mockMaestro.playbooks.deleteAll.mockRejectedValueOnce(error);
+			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+			useSessionStore.setState({
+				groups: [{ id: 'grp-1', name: 'Playbook Error Group' }],
+				sessions: [createSession({ id: 's1', groupId: 'grp-1' })],
+			});
+
+			const deps = createDeps();
+			const { result } = renderHook(() => useSessionCrud(deps));
+
+			act(() => {
+				result.current.deleteWorktreeGroup('grp-1');
+			});
+
+			const onConfirm = (deps.showConfirmation as any).mock.calls[0][1];
+			await act(async () => {
+				await onConfirm();
+			});
+
+			expect(useSessionStore.getState().sessions).toHaveLength(0);
+			expect(consoleError).toHaveBeenCalledWith('Failed to delete playbooks:', error);
 			consoleError.mockRestore();
 		});
 	});
@@ -931,6 +1026,32 @@ describe('useSessionCrud', () => {
 				'/my/project',
 				'agent-sess-123',
 				'Synced Name'
+			);
+		});
+
+		it('uses Claude session storage when session has no tool type', () => {
+			useSessionStore.setState({
+				sessions: [
+					createSession({
+						id: 'sess-1',
+						toolType: '' as any,
+						agentSessionId: 'agent-sess-123',
+						projectRoot: '/my/project',
+					}),
+				],
+			});
+
+			const deps = createDeps();
+			const { result } = renderHook(() => useSessionCrud(deps));
+
+			act(() => {
+				result.current.finishRenamingSession('sess-1', 'Fallback Name');
+			});
+
+			expect(mockMaestro.claude.updateSessionName).toHaveBeenCalledWith(
+				'/my/project',
+				'agent-sess-123',
+				'Fallback Name'
 			);
 		});
 
@@ -1021,6 +1142,70 @@ describe('useSessionCrud', () => {
 			const sessions = useSessionStore.getState().sessions;
 			expect(sessions[0].name).toBe('Keep Me');
 			expect(sessions[1].name).toBe('Renamed');
+		});
+
+		it('logs warning when Claude session name sync fails', async () => {
+			const error = new Error('sync failed');
+			mockMaestro.claude.updateSessionName.mockRejectedValueOnce(error);
+			const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+			useSessionStore.setState({
+				sessions: [
+					createSession({
+						id: 'sess-1',
+						toolType: 'claude-code' as any,
+						agentSessionId: 'agent-sess-123',
+						projectRoot: '/my/project',
+					}),
+				],
+			});
+
+			const deps = createDeps();
+			const { result } = renderHook(() => useSessionCrud(deps));
+
+			act(() => {
+				result.current.finishRenamingSession('sess-1', 'Rejected Name');
+			});
+
+			await waitFor(() => {
+				expect(consoleWarn).toHaveBeenCalledWith(
+					'[finishRenamingSession] Failed to sync session name:',
+					error
+				);
+			});
+			consoleWarn.mockRestore();
+		});
+
+		it('logs warning when non-Claude session name sync fails', async () => {
+			const error = new Error('sync failed');
+			mockMaestro.agentSessions.setSessionName.mockRejectedValueOnce(error);
+			const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+			useSessionStore.setState({
+				sessions: [
+					createSession({
+						id: 'sess-1',
+						toolType: 'codex' as any,
+						agentSessionId: 'codex-sess-456',
+						projectRoot: '/my/project',
+					}),
+				],
+			});
+
+			const deps = createDeps();
+			const { result } = renderHook(() => useSessionCrud(deps));
+
+			act(() => {
+				result.current.finishRenamingSession('sess-1', 'Rejected Name');
+			});
+
+			await waitFor(() => {
+				expect(consoleWarn).toHaveBeenCalledWith(
+					'[finishRenamingSession] Failed to sync session name:',
+					error
+				);
+			});
+			consoleWarn.mockRestore();
 		});
 	});
 

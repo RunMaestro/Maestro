@@ -183,10 +183,8 @@ function SessionPill({ session, isActive, onSelect, onLongPress }: SessionPillPr
 			onContextMenu={(e) => {
 				e.preventDefault();
 				// Show long press menu on right-click for desktop
-				if (buttonRef.current) {
-					const rect = buttonRef.current.getBoundingClientRect();
-					onLongPress(session, rect);
-				}
+				const rect = buttonRef.current!.getBoundingClientRect();
+				onLongPress(session, rect);
 			}}
 			style={{
 				display: 'flex',
@@ -819,12 +817,10 @@ export function SessionPillBar({
 	const sortedGroupKeys = useMemo(() => {
 		const keys = Object.keys(sessionsByGroup);
 		return keys.sort((a, b) => {
-			// Put 'bookmarks' at the start
-			if (a === 'bookmarks') return -1;
-			if (b === 'bookmarks') return 1;
-			// Put 'ungrouped' at the end
-			if (a === 'ungrouped') return 1;
-			if (b === 'ungrouped') return -1;
+			// Put bookmarks first and ungrouped sessions last.
+			const priority = (key: string) => (key === 'bookmarks' ? 0 : key === 'ungrouped' ? 2 : 1);
+			const priorityDiff = priority(a) - priority(b);
+			if (priorityDiff !== 0) return priorityDiff;
 			// Sort others alphabetically by group name
 			return sessionsByGroup[a].name.localeCompare(sessionsByGroup[b].name);
 		});
@@ -858,7 +854,7 @@ export function SessionPillBar({
 		// If the active session's group is collapsed, expand it
 		if (collapsedGroups.has(activeGroupKey)) {
 			setCollapsedGroups((prev) => {
-				const next = new Set(prev || []);
+				const next = new Set(prev);
 				next.delete(activeGroupKey);
 				return next;
 			});
@@ -878,10 +874,10 @@ export function SessionPillBar({
 	// Toggle group collapsed state and scroll to show the group header when expanding
 	const handleToggleCollapse = useCallback(
 		(groupId: string) => {
-			const wasCollapsed = collapsedGroups?.has(groupId) ?? true;
+			const wasCollapsed = new Set(collapsedGroups).has(groupId);
 
 			setCollapsedGroups((prev) => {
-				const next = new Set(prev || []);
+				const next = new Set(prev);
 				if (next.has(groupId)) {
 					next.delete(groupId);
 				} else {

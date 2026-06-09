@@ -6,10 +6,12 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { EventEmitter } from 'events';
 import type { ExecResult } from '../../../main/utils/execFile';
 
 // Create mock function
 const mockExecFile = vi.fn();
+const mockSpawn = vi.fn();
 
 // Mock child_process module using vi.mock with dynamic import
 vi.mock('child_process', async (importOriginal) => {
@@ -19,8 +21,10 @@ vi.mock('child_process', async (importOriginal) => {
 		default: {
 			...actual,
 			execFile: mockExecFile,
+			spawn: mockSpawn,
 		},
 		execFile: mockExecFile,
+		spawn: mockSpawn,
 	};
 });
 
@@ -64,12 +68,45 @@ vi.mock('util', async (importOriginal) => {
 });
 
 describe('execFile.ts', () => {
+	const originalPlatform = process.platform;
+
+	function mockPlatform(platform: string): void {
+		Object.defineProperty(process, 'platform', {
+			value: platform,
+			configurable: true,
+		});
+	}
+
+	function restorePlatform(): void {
+		Object.defineProperty(process, 'platform', {
+			value: originalPlatform,
+			configurable: true,
+		});
+	}
+
+	function createMockChild() {
+		const child = new EventEmitter() as any;
+		child.stdout = new EventEmitter();
+		child.stderr = new EventEmitter();
+		child.stdin = {
+			write: vi.fn(),
+			end: vi.fn(),
+		};
+		child.kill = vi.fn(() => {
+			child.emit('close', null);
+		});
+		return child;
+	}
+
 	beforeEach(() => {
 		vi.clearAllMocks();
+		restorePlatform();
 	});
 
 	afterEach(() => {
 		vi.restoreAllMocks();
+		restorePlatform();
+		vi.useRealTimers();
 	});
 
 	describe('ExecResult interface', () => {
@@ -88,6 +125,56 @@ describe('execFile.ts', () => {
 	});
 
 	describe('execFileNoThrow', () => {
+		describe('needsWindowsShell', () => {
+			it('should require shell execution for Windows batch files', async () => {
+				const { needsWindowsShell } = await import('../../../main/utils/execFile');
+
+				expect(needsWindowsShell('deploy.cmd')).toBe(true);
+				expect(needsWindowsShell('build.bat')).toBe(true);
+			});
+
+			it('should not require shell execution for Windows executable files', async () => {
+				const { needsWindowsShell } = await import('../../../main/utils/execFile');
+
+				expect(needsWindowsShell('node.exe')).toBe(false);
+				expect(needsWindowsShell('tool.com')).toBe(false);
+			});
+
+			it('should not require shell execution for known executable commands without extension', async () => {
+				const { needsWindowsShell } = await import('../../../main/utils/execFile');
+
+				for (const command of [
+					'git',
+					'node',
+					'npm',
+					'npx',
+					'yarn',
+					'pnpm',
+					'python',
+					'python3',
+					'pip',
+					'pip3',
+					'C:\\Program Files\\Git\\bin\\git',
+				]) {
+					expect(needsWindowsShell(command)).toBe(false);
+				}
+			});
+
+			it('should require shell execution for unknown commands without extension', async () => {
+				const { needsWindowsShell } = await import('../../../main/utils/execFile');
+
+				expect(needsWindowsShell('custom-tool')).toBe(true);
+				expect(needsWindowsShell('C:\\Tools\\custom-tool')).toBe(true);
+				expect(needsWindowsShell('')).toBe(true);
+			});
+
+			it('should not require shell execution for unknown commands with an extension', async () => {
+				const { needsWindowsShell } = await import('../../../main/utils/execFile');
+
+				expect(needsWindowsShell('custom-tool.ps1')).toBe(false);
+			});
+		});
+
 		describe('successful execution', () => {
 			it('should return stdout and stderr with exitCode 0 on success', async () => {
 				mockExecFile.mockImplementation(
@@ -611,6 +698,29 @@ describe('execFile.ts', () => {
 				expect(result.stdout).toBe('partial');
 			});
 
+			it('should report timeout even when timed-out process has no stderr', async () => {
+				const error = new Error('Command timed out') as any;
+				error.killed = true;
+				error.code = undefined;
+				error.stdout = '';
+				error.stderr = '';
+
+				mockExecFile.mockImplementation(
+					(_cmd: string, _args: readonly string[], _options: any, callback?: any) => {
+						if (callback) {
+							callback(error, '', '');
+						}
+						return {} as any;
+					}
+				);
+
+				const { execFileNoThrow } = await import('../../../main/utils/execFile');
+				const result = await execFileNoThrow('ssh', ['host'], undefined, { timeout: 10 });
+
+				expect(result.exitCode).toBe('ETIMEDOUT');
+				expect(result.stderr).toBe('\nETIMEDOUT: process timed out after 10ms');
+			});
+
 			it('should NOT return ETIMEDOUT for maxBuffer kills', async () => {
 				const error = new Error('maxBuffer exceeded') as any;
 				error.killed = true;
@@ -654,6 +764,236 @@ describe('execFile.ts', () => {
 				const result = await execFileNoThrow('cmd');
 
 				expect(result.exitCode).toBe(1);
+			});
+
+			it('should not detect timeout when timeout is set but process was not killed', async () => {
+				const error = new Error('Failed before timeout') as any;
+				error.killed = false;
+				error.code = undefined;
+				error.stdout = '';
+				error.stderr = 'failed';
+
+				mockExecFile.mockImplementation(
+					(_cmd: string, _args: readonly string[], _options: any, callback?: any) => {
+						if (callback) {
+							callback(error, '', '');
+						}
+						return {} as any;
+					}
+				);
+
+				const { execFileNoThrow } = await import('../../../main/utils/execFile');
+				const result = await execFileNoThrow('cmd', [], undefined, { timeout: 30 });
+
+				expect(result).toEqual({
+					stdout: '',
+					stderr: 'failed',
+					exitCode: 1,
+				});
+			});
+		});
+
+		describe('Windows shell mode', () => {
+			it('should enable shell mode for Windows commands that need PATHEXT resolution', async () => {
+				mockPlatform('win32');
+				let capturedOptions: any;
+				mockExecFile.mockImplementation(
+					(_cmd: string, _args: readonly string[], options: any, callback?: any) => {
+						capturedOptions = options;
+						callback?.(null, 'output', '');
+						return {} as any;
+					}
+				);
+
+				const { execFileNoThrow } = await import('../../../main/utils/execFile');
+				await execFileNoThrow('custom-tool', ['--version']);
+
+				expect(capturedOptions.shell).toBe(true);
+			});
+
+			it('should avoid shell mode for known Windows exe-backed commands', async () => {
+				mockPlatform('win32');
+				let capturedOptions: any;
+				mockExecFile.mockImplementation(
+					(_cmd: string, _args: readonly string[], options: any, callback?: any) => {
+						capturedOptions = options;
+						callback?.(null, 'output', '');
+						return {} as any;
+					}
+				);
+
+				const { execFileNoThrow } = await import('../../../main/utils/execFile');
+				await execFileNoThrow('git', ['status']);
+
+				expect(capturedOptions.shell).toBe(false);
+			});
+
+			it('should not enable shell mode on non-Windows platforms', async () => {
+				mockPlatform('darwin');
+				let capturedOptions: any;
+				mockExecFile.mockImplementation(
+					(_cmd: string, _args: readonly string[], options: any, callback?: any) => {
+						capturedOptions = options;
+						callback?.(null, 'output', '');
+						return {} as any;
+					}
+				);
+
+				const { execFileNoThrow } = await import('../../../main/utils/execFile');
+				await execFileNoThrow('custom-tool', ['--version']);
+
+				expect(capturedOptions.shell).toBe(false);
+			});
+		});
+
+		describe('stdin input execution', () => {
+			it('should use spawn, write stdin, collect output, and resolve on close', async () => {
+				const child = createMockChild();
+				mockSpawn.mockReturnValue(child);
+
+				const { execFileNoThrow } = await import('../../../main/utils/execFile');
+				const promise = execFileNoThrow('cat', ['-'], '/tmp', { input: 'hello' });
+
+				child.stdout.emit('data', Buffer.from('out'));
+				child.stderr.emit('data', Buffer.from('err'));
+				child.emit('close', 0);
+
+				await expect(promise).resolves.toEqual({
+					stdout: 'out',
+					stderr: 'err',
+					exitCode: 0,
+				});
+				expect(mockSpawn).toHaveBeenCalledWith('cat', ['-'], {
+					cwd: '/tmp',
+					shell: false,
+					stdio: ['pipe', 'pipe', 'pipe'],
+				});
+				expect(child.stdin.write).toHaveBeenCalledWith('hello');
+				expect(child.stdin.end).toHaveBeenCalled();
+			});
+
+			it('should use Windows shell mode for stdin execution when required', async () => {
+				mockPlatform('win32');
+				const child = createMockChild();
+				mockSpawn.mockReturnValue(child);
+
+				const { execFileNoThrow } = await import('../../../main/utils/execFile');
+				const promise = execFileNoThrow('script.cmd', [], undefined, { input: 'payload' });
+
+				child.emit('close', 0);
+				await promise;
+
+				expect(mockSpawn).toHaveBeenCalledWith('script.cmd', [], {
+					cwd: undefined,
+					shell: true,
+					stdio: ['pipe', 'pipe', 'pipe'],
+				});
+			});
+
+			it('should resolve exit code 1 when spawned process closes without a code', async () => {
+				const child = createMockChild();
+				mockSpawn.mockReturnValue(child);
+
+				const { execFileNoThrow } = await import('../../../main/utils/execFile');
+				const promise = execFileNoThrow('cat', [], undefined, { input: 'hello' });
+
+				child.emit('close', null);
+
+				await expect(promise).resolves.toEqual({
+					stdout: '',
+					stderr: '',
+					exitCode: 1,
+				});
+			});
+
+			it('should resolve spawn errors without throwing', async () => {
+				const child = createMockChild();
+				mockSpawn.mockReturnValue(child);
+
+				const { execFileNoThrow } = await import('../../../main/utils/execFile');
+				const promise = execFileNoThrow('missing-command', [], undefined, { input: 'hello' });
+
+				child.stdout.emit('data', Buffer.from('ignored'));
+				child.emit('error', new Error('spawn ENOENT'));
+
+				await expect(promise).resolves.toEqual({
+					stdout: '',
+					stderr: 'spawn ENOENT',
+					exitCode: 1,
+				});
+			});
+
+			it('should clear input timeout when spawned process errors', async () => {
+				vi.useFakeTimers();
+				const child = createMockChild();
+				mockSpawn.mockReturnValue(child);
+
+				const { execFileNoThrow } = await import('../../../main/utils/execFile');
+				const promise = execFileNoThrow('missing-command', [], undefined, {
+					input: 'hello',
+					timeout: 50,
+				});
+
+				child.emit('error', new Error('spawn ENOENT'));
+				vi.advanceTimersByTime(50);
+
+				await expect(promise).resolves.toEqual({
+					stdout: '',
+					stderr: 'spawn ENOENT',
+					exitCode: 1,
+				});
+				expect(child.kill).not.toHaveBeenCalled();
+			});
+
+			it('should skip stdin writes when stdin is unavailable', async () => {
+				const child = createMockChild();
+				child.stdin = undefined;
+				mockSpawn.mockReturnValue(child);
+
+				const { execFileNoThrow } = await import('../../../main/utils/execFile');
+				const promise = execFileNoThrow('cat', [], undefined, { input: 'hello' });
+
+				child.emit('close', 0);
+
+				await expect(promise).resolves.toEqual({
+					stdout: '',
+					stderr: '',
+					exitCode: 0,
+				});
+			});
+
+			it('should kill spawned input process on timeout and report ETIMEDOUT', async () => {
+				vi.useFakeTimers();
+				const child = createMockChild();
+				mockSpawn.mockReturnValue(child);
+
+				const { execFileNoThrow } = await import('../../../main/utils/execFile');
+				const promise = execFileNoThrow('cat', [], undefined, { input: 'hello', timeout: 50 });
+
+				child.stderr.emit('data', Buffer.from('partial err'));
+				vi.advanceTimersByTime(50);
+
+				await expect(promise).resolves.toEqual({
+					stdout: '',
+					stderr: 'partial err\nETIMEDOUT: process timed out after 50ms',
+					exitCode: 'ETIMEDOUT',
+				});
+				expect(child.kill).toHaveBeenCalled();
+			});
+
+			it('should not create a timeout for non-positive input timeouts', async () => {
+				vi.useFakeTimers();
+				const child = createMockChild();
+				mockSpawn.mockReturnValue(child);
+
+				const { execFileNoThrow } = await import('../../../main/utils/execFile');
+				const promise = execFileNoThrow('cat', [], undefined, { input: 'hello', timeout: 0 });
+
+				vi.runOnlyPendingTimers();
+				expect(child.kill).not.toHaveBeenCalled();
+				child.emit('close', 0);
+
+				await promise;
 			});
 		});
 	});

@@ -4,7 +4,19 @@
  * Uses a concrete TestSessionStorage subclass to test the abstract base class.
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const mockLoggerWarn = vi.hoisted(() => vi.fn());
+
+vi.mock('../../../main/utils/logger', () => ({
+	logger: {
+		debug: vi.fn(),
+		error: vi.fn(),
+		info: vi.fn(),
+		warn: mockLoggerWarn,
+	},
+}));
+
 import { BaseSessionStorage, SearchableMessage } from '../../../main/storage/base-session-storage';
 import type { ToolType, SshRemoteConfig } from '../../../shared/types';
 import type {
@@ -29,6 +41,9 @@ class TestSessionStorage extends BaseSessionStorage {
 
 	/** Session IDs that should throw when loading messages */
 	failingSessions: Set<string> = new Set();
+
+	/** Session-specific thrown values for testing non-Error failures */
+	failingSessionErrors: Map<string, unknown> = new Map();
 
 	async listSessions(
 		_projectPath: string,
@@ -69,6 +84,9 @@ class TestSessionStorage extends BaseSessionStorage {
 		_projectPath: string,
 		_sshConfig?: SshRemoteConfig
 	): Promise<SearchableMessage[]> {
+		if (this.failingSessionErrors.has(sessionId)) {
+			throw this.failingSessionErrors.get(sessionId);
+		}
 		if (this.failingSessions.has(sessionId)) {
 			throw new Error(`Failed to load messages for ${sessionId}`);
 		}
@@ -112,6 +130,10 @@ function makeMessage(role: 'user' | 'assistant', content: string, index: number)
 // ============================================================
 
 describe('BaseSessionStorage', () => {
+	beforeEach(() => {
+		mockLoggerWarn.mockClear();
+	});
+
 	// ---- paginateSessions (static) ----
 
 	describe('paginateSessions', () => {
@@ -388,6 +410,18 @@ describe('BaseSessionStorage', () => {
 			expect(results[0].matchType).toBe('assistant');
 		});
 
+		it('does not use assistant matches when searching user-only mode', async () => {
+			const storage = new TestSessionStorage();
+			storage.sessions = [makeSession('s-1')];
+			storage.searchableMessages.set('s-1', [
+				{ role: 'assistant', textContent: 'Only the assistant mentions deployment' },
+			]);
+
+			const results = await storage.searchSessions('/test', 'deployment', 'user');
+
+			expect(results).toEqual([]);
+		});
+
 		it('searches all modes correctly', async () => {
 			const storage = new TestSessionStorage();
 			storage.sessions = [makeSession('s-1'), makeSession('s-2')];
@@ -468,6 +502,30 @@ describe('BaseSessionStorage', () => {
 			expect(results[0].matchType).toBe('title');
 		});
 
+		it('falls back to empty title metadata and still searches messages', async () => {
+			const storage = new TestSessionStorage();
+			const session = makeSession('s-1') as AgentSessionInfo & {
+				firstMessage?: string;
+				sessionName?: string;
+			};
+			delete session.firstMessage;
+			delete session.sessionName;
+			storage.sessions = [session as AgentSessionInfo];
+			storage.searchableMessages.set('s-1', [
+				{ role: 'assistant', textContent: 'Deployment finished successfully' },
+			]);
+
+			const results = await storage.searchSessions('/test', 'deployment', 'assistant');
+
+			expect(results).toEqual([
+				expect.objectContaining({
+					sessionId: 's-1',
+					matchType: 'assistant',
+					matchCount: 1,
+				}),
+			]);
+		});
+
 		it('does not match title from user message content', async () => {
 			const storage = new TestSessionStorage();
 			storage.sessions = [makeSession('s-1')]; // firstMessage: 'Session s-1'
@@ -490,6 +548,26 @@ describe('BaseSessionStorage', () => {
 			// s-1 fails but s-2 still returns results
 			expect(results).toHaveLength(1);
 			expect(results[0].sessionId).toBe('s-2');
+			expect(mockLoggerWarn).toHaveBeenCalledWith(
+				expect.stringContaining('failed to load messages for session "s-1"'),
+				'BaseSessionStorage'
+			);
+		});
+
+		it('logs non-Error message loading failures and continues searching', async () => {
+			const storage = new TestSessionStorage();
+			storage.sessions = [makeSession('s-1'), makeSession('s-2')];
+			storage.failingSessionErrors.set('s-1', 'string failure');
+			storage.searchableMessages.set('s-2', [{ role: 'user', textContent: 'search term here' }]);
+
+			const results = await storage.searchSessions('/test', 'search term', 'user');
+
+			expect(results).toHaveLength(1);
+			expect(results[0].sessionId).toBe('s-2');
+			expect(mockLoggerWarn).toHaveBeenCalledWith(
+				expect.stringContaining('string failure'),
+				'BaseSessionStorage'
+			);
 		});
 
 		it('returns empty when all sessions fail to load messages', async () => {
@@ -499,6 +577,10 @@ describe('BaseSessionStorage', () => {
 
 			const results = await storage.searchSessions('/test', 'anything', 'all');
 			expect(results).toHaveLength(0);
+			expect(mockLoggerWarn).toHaveBeenCalledWith(
+				expect.stringContaining('failed to load messages for session "s-1"'),
+				'BaseSessionStorage'
+			);
 		});
 	});
 });

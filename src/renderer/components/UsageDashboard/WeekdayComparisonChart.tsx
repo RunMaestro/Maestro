@@ -45,6 +45,27 @@ function formatDuration(ms: number): string {
 	return `${seconds}s`;
 }
 
+function getDayOfWeek(dateString: string): number {
+	const localDateMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateString);
+	if (localDateMatch) {
+		const [, year, month, day] = localDateMatch;
+		const yearNumber = Number(year);
+		const monthIndex = Number(month) - 1;
+		const dayNumber = Number(day);
+		const localDate = new Date(yearNumber, monthIndex, dayNumber);
+
+		if (
+			localDate.getFullYear() === yearNumber &&
+			localDate.getMonth() === monthIndex &&
+			localDate.getDate() === dayNumber
+		) {
+			return localDate.getDay();
+		}
+	}
+
+	return new Date(dateString).getDay();
+}
+
 export const WeekdayComparisonChart = memo(function WeekdayComparisonChart({
 	data,
 	theme,
@@ -56,8 +77,7 @@ export const WeekdayComparisonChart = memo(function WeekdayComparisonChart({
 		const weekendStats = { count: 0, duration: 0, days: 0 };
 
 		data.byDay.forEach((day) => {
-			const date = new Date(day.date);
-			const dayOfWeek = date.getDay();
+			const dayOfWeek = getDayOfWeek(day.date);
 			const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
 
 			if (isWeekend) {

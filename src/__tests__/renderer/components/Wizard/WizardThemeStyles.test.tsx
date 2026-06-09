@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import React from 'react';
 import { THEMES } from '../../../../renderer/constants/themes';
 import type { Theme, ThemeId } from '../../../../renderer/types';
@@ -180,6 +180,16 @@ function renderWithProviders(component: React.ReactElement) {
 	);
 }
 
+async function waitForResumeValidation() {
+	await waitFor(() => {
+		expect(mockMaestro.git.isRepo).toHaveBeenCalled();
+		expect(mockMaestro.agents.detect).toHaveBeenCalled();
+	});
+	await waitFor(() => {
+		expect(screen.queryByText('Checking...')).not.toBeInTheDocument();
+	});
+}
+
 // Get all theme IDs for parameterized testing
 const themeIds = Object.keys(THEMES) as ThemeId[];
 const darkThemes = themeIds.filter((id) => THEMES[id].mode === 'dark');
@@ -329,13 +339,13 @@ describe('Wizard Theme Styles', () => {
 		it.each(sampleThemes)('should render with %s theme without errors', async (themeId) => {
 			const theme = THEMES[themeId];
 
-			const { container } = renderWithProviders(<AgentSelectionScreen theme={theme} />);
+			renderWithProviders(<AgentSelectionScreen theme={theme} />);
 
 			// Should show loading state initially
 			expect(screen.getByText('Detecting available agents...')).toBeInTheDocument();
 
 			// Wait for agent detection to complete
-			await vi.waitFor(() => {
+			await waitFor(() => {
 				expect(screen.getByText('Create a Maestro Agent')).toBeInTheDocument();
 			});
 
@@ -349,7 +359,7 @@ describe('Wizard Theme Styles', () => {
 
 			renderWithProviders(<AgentSelectionScreen theme={theme} />);
 
-			await vi.waitFor(() => {
+			await waitFor(() => {
 				// Find the Continue button (there may be multiple elements with this text)
 				const buttons = screen.getAllByRole('button');
 				const continueButton = buttons.find((btn) => btn.textContent?.includes('Continue'));
@@ -374,7 +384,7 @@ describe('Wizard Theme Styles', () => {
 			renderWithProviders(<DirectorySelectionScreen theme={theme} />);
 
 			// Wait for initial rendering and detection
-			await vi.waitFor(() => {
+			await waitFor(() => {
 				// Either loading or the main screen should be visible
 				const hasLoading = screen.queryByText('Detecting project location...');
 				const hasHeader = screen.queryByText('Where Should We Work?');
@@ -382,7 +392,7 @@ describe('Wizard Theme Styles', () => {
 			});
 
 			// Wait for detection to complete
-			await vi.waitFor(
+			await waitFor(
 				() => {
 					expect(screen.getByText('Where Should We Work?')).toBeInTheDocument();
 				},
@@ -458,7 +468,7 @@ describe('Wizard Theme Styles', () => {
 			isGitRepo: true,
 		};
 
-		it.each(sampleThemes)('should render with %s theme without errors', (themeId) => {
+		it.each(sampleThemes)('should render with %s theme without errors', async (themeId) => {
 			const theme = THEMES[themeId];
 
 			render(
@@ -475,6 +485,7 @@ describe('Wizard Theme Styles', () => {
 
 			// Check that the modal renders
 			expect(screen.getByText('Resume Setup?')).toBeInTheDocument();
+			await waitForResumeValidation();
 		});
 
 		it.each(sampleThemes)(
@@ -495,10 +506,11 @@ describe('Wizard Theme Styles', () => {
 				);
 
 				// Find the progress bar by its structure
-				await vi.waitFor(() => {
+				await waitFor(() => {
 					const progressBars = container.querySelectorAll('[class*="h-2"][class*="rounded-full"]');
 					expect(progressBars.length).toBeGreaterThan(0);
 				});
+				await waitForResumeValidation();
 			}
 		);
 	});

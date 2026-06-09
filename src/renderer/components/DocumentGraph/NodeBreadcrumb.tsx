@@ -189,11 +189,13 @@ export function NodeBreadcrumb({
 							backgroundColor: 'transparent',
 							cursor: segment.isFinal ? 'default' : 'pointer',
 						}}
-						onMouseEnter={(e) => {
-							if (!segment.isFinal) {
-								e.currentTarget.style.backgroundColor = `${theme.colors.accent}15`;
-							}
-						}}
+						onMouseEnter={
+							segment.isFinal
+								? undefined
+								: (e) => {
+										e.currentTarget.style.backgroundColor = `${theme.colors.accent}15`;
+									}
+						}
 						onMouseLeave={(e) => {
 							e.currentTarget.style.backgroundColor = 'transparent';
 						}}

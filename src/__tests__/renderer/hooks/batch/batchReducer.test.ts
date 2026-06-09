@@ -232,6 +232,79 @@ describe('batchReducer', () => {
 			expect(result['session-1'].currentTaskIndex).toBe(3);
 			expect(result['session-1'].completedTasks).toBe(3);
 		});
+
+		it('should update every optional progress field when provided', () => {
+			const initialState: BatchState = {
+				'session-1': {
+					...DEFAULT_BATCH_STATE,
+					isRunning: true,
+				},
+			};
+
+			const result = batchReducer(initialState, {
+				type: 'UPDATE_PROGRESS',
+				sessionId: 'session-1',
+				payload: {
+					currentDocumentIndex: 2,
+					currentDocTasksTotal: 7,
+					currentDocTasksCompleted: 4,
+					totalTasksAcrossAllDocs: 20,
+					completedTasksAcrossAllDocs: 11,
+					totalTasks: 20,
+					completedTasks: 11,
+					currentTaskIndex: 4,
+					sessionIds: ['provider-session'],
+					accumulatedElapsedMs: 1234,
+					lastActiveTimestamp: 5678,
+					loopIteration: 3,
+				},
+			});
+
+			expect(result['session-1']).toMatchObject({
+				currentDocumentIndex: 2,
+				currentDocTasksTotal: 7,
+				currentDocTasksCompleted: 4,
+				totalTasksAcrossAllDocs: 20,
+				completedTasksAcrossAllDocs: 11,
+				totalTasks: 20,
+				completedTasks: 11,
+				currentTaskIndex: 4,
+				sessionIds: ['provider-session'],
+				accumulatedElapsedMs: 1234,
+				lastActiveTimestamp: 5678,
+				loopIteration: 3,
+			});
+		});
+
+		it('should preserve all optional progress fields when payload is empty', () => {
+			const initialSession = {
+				...DEFAULT_BATCH_STATE,
+				isRunning: true,
+				currentDocumentIndex: 1,
+				currentDocTasksTotal: 5,
+				currentDocTasksCompleted: 2,
+				totalTasksAcrossAllDocs: 10,
+				completedTasksAcrossAllDocs: 4,
+				totalTasks: 10,
+				completedTasks: 4,
+				currentTaskIndex: 2,
+				sessionIds: ['existing-session'],
+				accumulatedElapsedMs: 1000,
+				lastActiveTimestamp: 2000,
+				loopIteration: 1,
+			};
+			const initialState: BatchState = {
+				'session-1': initialSession,
+			};
+
+			const result = batchReducer(initialState, {
+				type: 'UPDATE_PROGRESS',
+				sessionId: 'session-1',
+				payload: {},
+			});
+
+			expect(result['session-1']).toEqual(initialSession);
+		});
 	});
 
 	// ============================================================================
@@ -255,6 +328,17 @@ describe('batchReducer', () => {
 
 			expect(result['session-1'].processingState).toBe('RUNNING');
 		});
+
+		it('should return unchanged state for unknown session', () => {
+			const initialState: BatchState = {};
+
+			const result = batchReducer(initialState, {
+				type: 'SET_RUNNING',
+				sessionId: 'missing-session',
+			});
+
+			expect(result).toBe(initialState);
+		});
 	});
 
 	// ============================================================================
@@ -277,6 +361,54 @@ describe('batchReducer', () => {
 			});
 
 			expect(result['session-1'].isStopping).toBe(true);
+		});
+
+		it('should initialize default state when stopping an unknown session', () => {
+			const initialState: BatchState = {};
+
+			const result = batchReducer(initialState, {
+				type: 'SET_STOPPING',
+				sessionId: 'session-1',
+			});
+
+			expect(result['session-1']).toEqual({
+				...DEFAULT_BATCH_STATE,
+				isStopping: true,
+				processingState: 'IDLE',
+			});
+		});
+
+		it('should abort from paused error and clear error fields', () => {
+			const error: AgentError = {
+				type: 'rate_limited',
+				message: 'Rate limit exceeded',
+				recoverable: true,
+				agentId: 'agent-1',
+				timestamp: Date.now(),
+			};
+			const initialState: BatchState = {
+				'session-1': {
+					...DEFAULT_BATCH_STATE,
+					isRunning: true,
+					processingState: 'PAUSED_ERROR',
+					error,
+					errorPaused: true,
+					errorDocumentIndex: 1,
+					errorTaskDescription: 'Task failed',
+				},
+			};
+
+			const result = batchReducer(initialState, {
+				type: 'SET_STOPPING',
+				sessionId: 'session-1',
+			});
+
+			expect(result['session-1'].isStopping).toBe(true);
+			expect(result['session-1'].processingState).toBe('STOPPING');
+			expect(result['session-1'].error).toBeUndefined();
+			expect(result['session-1'].errorPaused).toBe(false);
+			expect(result['session-1'].errorDocumentIndex).toBeUndefined();
+			expect(result['session-1'].errorTaskDescription).toBeUndefined();
 		});
 	});
 
@@ -318,6 +450,33 @@ describe('batchReducer', () => {
 			expect(result['session-1'].errorTaskDescription).toBe('Processing task 3');
 			expect(result['session-1'].processingState).toBe('PAUSED_ERROR');
 		});
+
+		it('should return unchanged state when session is not running', () => {
+			const initialState: BatchState = {
+				'session-1': {
+					...DEFAULT_BATCH_STATE,
+					isRunning: false,
+				},
+			};
+			const error: AgentError = {
+				type: 'unknown',
+				message: 'Ignored',
+				recoverable: false,
+				agentId: 'agent-1',
+				timestamp: Date.now(),
+			};
+
+			const result = batchReducer(initialState, {
+				type: 'SET_ERROR',
+				sessionId: 'session-1',
+				payload: {
+					error,
+					documentIndex: 0,
+				},
+			});
+
+			expect(result).toBe(initialState);
+		});
 	});
 
 	describe('CLEAR_ERROR', () => {
@@ -350,6 +509,47 @@ describe('batchReducer', () => {
 			expect(result['session-1'].errorDocumentIndex).toBeUndefined();
 			expect(result['session-1'].errorTaskDescription).toBeUndefined();
 			expect(result['session-1'].processingState).toBe('RUNNING');
+		});
+
+		it('should return unchanged state for unknown session', () => {
+			const initialState: BatchState = {};
+
+			const result = batchReducer(initialState, {
+				type: 'CLEAR_ERROR',
+				sessionId: 'missing-session',
+			});
+
+			expect(result).toBe(initialState);
+		});
+	});
+
+	describe('SET_COMPLETING', () => {
+		it('should transition running state to completing', () => {
+			const initialState: BatchState = {
+				'session-1': {
+					...DEFAULT_BATCH_STATE,
+					isRunning: true,
+					processingState: 'RUNNING',
+				},
+			};
+
+			const result = batchReducer(initialState, {
+				type: 'SET_COMPLETING',
+				sessionId: 'session-1',
+			});
+
+			expect(result['session-1'].processingState).toBe('COMPLETING');
+		});
+
+		it('should return unchanged state for unknown session', () => {
+			const initialState: BatchState = {};
+
+			const result = batchReducer(initialState, {
+				type: 'SET_COMPLETING',
+				sessionId: 'missing-session',
+			});
+
+			expect(result).toBe(initialState);
 		});
 	});
 
@@ -402,6 +602,57 @@ describe('batchReducer', () => {
 
 			expect(result['session-1'].sessionIds).toEqual(['new-session-1', 'new-session-2']);
 		});
+
+		it('should finalize from completing state', () => {
+			const initialState: BatchState = {
+				'session-1': {
+					...DEFAULT_BATCH_STATE,
+					isRunning: true,
+					processingState: 'COMPLETING',
+					sessionIds: ['provider-session'],
+				},
+			};
+
+			const result = batchReducer(initialState, {
+				type: 'COMPLETE_BATCH',
+				sessionId: 'session-1',
+			});
+
+			expect(result['session-1'].processingState).toBe('IDLE');
+			expect(result['session-1'].sessionIds).toEqual(['provider-session']);
+		});
+
+		it('should finalize from stopping state', () => {
+			const initialState: BatchState = {
+				'session-1': {
+					...DEFAULT_BATCH_STATE,
+					isRunning: true,
+					isStopping: true,
+					processingState: 'STOPPING',
+				},
+			};
+
+			const result = batchReducer(initialState, {
+				type: 'COMPLETE_BATCH',
+				sessionId: 'session-1',
+			});
+
+			expect(result['session-1'].processingState).toBe('IDLE');
+			expect(result['session-1'].isRunning).toBe(false);
+			expect(result['session-1'].isStopping).toBe(false);
+		});
+
+		it('should use empty sessionIds when completing an unknown session without finals', () => {
+			const initialState: BatchState = {};
+
+			const result = batchReducer(initialState, {
+				type: 'COMPLETE_BATCH',
+				sessionId: 'session-1',
+			});
+
+			expect(result['session-1'].sessionIds).toEqual([]);
+			expect(result['session-1'].processingState).toBe('IDLE');
+		});
 	});
 
 	// ============================================================================
@@ -433,6 +684,18 @@ describe('batchReducer', () => {
 			// newTotalTasks + completedTasksAcrossAllDocs
 			expect(result['session-1'].totalTasksAcrossAllDocs).toBe(18);
 			expect(result['session-1'].totalTasks).toBe(18);
+		});
+
+		it('should return unchanged state for unknown session', () => {
+			const initialState: BatchState = {};
+
+			const result = batchReducer(initialState, {
+				type: 'INCREMENT_LOOP',
+				sessionId: 'missing-session',
+				newTotalTasks: 3,
+			});
+
+			expect(result).toBe(initialState);
 		});
 	});
 

@@ -54,17 +54,13 @@ export function ExistingAutoRunDocsModal({
 		});
 		layerIdRef.current = id;
 		return () => {
-			if (layerIdRef.current) {
-				unregisterLayer(layerIdRef.current);
-			}
+			unregisterLayer(id);
 		};
 	}, [registerLayer, unregisterLayer]);
 
 	// Update handler when dependencies change
 	useEffect(() => {
-		if (layerIdRef.current) {
-			updateLayerHandler(layerIdRef.current, onCancel);
-		}
+		updateLayerHandler(layerIdRef.current!, onCancel);
 	}, [onCancel, updateLayerHandler]);
 
 	// Handle keyboard navigation between buttons

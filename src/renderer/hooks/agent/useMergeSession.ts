@@ -637,96 +637,96 @@ export function useMergeSessionWithSessions(
 					// we need to spawn the agent process and add it to state
 
 					// Get the source tab for merged logs
-					const sourceTab = sourceSession.aiTabs.find((t) => t.id === sourceTabId);
+					const sourceTab = sourceSession.aiTabs.find((t) => t.id === sourceTabId)!;
 					const targetTab = targetTabId
-						? targetSession.aiTabs.find((t) => t.id === targetTabId)
-						: getActiveTab(targetSession);
+						? targetSession.aiTabs.find((t) => t.id === targetTabId)!
+						: getActiveTab(targetSession)!;
 
-					if (sourceTab && targetTab) {
-						// Create merged session with proper initialization
-						const mergedName = generateMergedSessionName(
-							sourceSession,
-							sourceTab,
-							targetSession,
-							targetTab
-						);
+					// Create merged session with proper initialization
+					const mergedName = generateMergedSessionName(
+						sourceSession,
+						sourceTab,
+						targetSession,
+						targetTab
+					);
 
-						// Extract and merge logs (simplified - actual implementation uses groomed logs)
-						const sourceContext = extractTabContext(
-							sourceTab,
-							getSessionDisplayName(sourceSession),
-							sourceSession
-						);
-						const targetContext = extractTabContext(
-							targetTab,
-							getSessionDisplayName(targetSession),
-							targetSession
-						);
-						const mergedLogs = [...sourceContext.logs, ...targetContext.logs].sort(
-							(a, b) => a.timestamp - b.timestamp
-						);
+					// Extract and merge logs (simplified - actual implementation uses groomed logs)
+					const sourceContext = extractTabContext(
+						sourceTab,
+						getSessionDisplayName(sourceSession),
+						sourceSession
+					);
+					const targetContext = extractTabContext(
+						targetTab,
+						getSessionDisplayName(targetSession),
+						targetSession
+					);
+					const mergedLogs = [...sourceContext.logs, ...targetContext.logs].sort(
+						(a, b) => a.timestamp - b.timestamp
+					);
 
-						const { session: newSession } = createMergedSession({
-							name: mergedName,
-							projectRoot: sourceSession.projectRoot,
-							toolType: sourceSession.toolType,
-							mergedLogs,
-							groupId: sourceSession.groupId,
+					const { session: newSession } = createMergedSession({
+						name: mergedName,
+						projectRoot: sourceSession.projectRoot,
+						toolType: sourceSession.toolType,
+						mergedLogs,
+						groupId: sourceSession.groupId,
+					});
+
+					// Add new session to state
+					setSessions((prev) => [...prev, newSession]);
+
+					// Log merge operation to history
+					const sourceNames = [
+						getSessionDisplayName(sourceSession),
+						getSessionDisplayName(targetSession),
+					].filter((name, i, arr) => arr.indexOf(name) === i); // Dedupe if same session
+
+					try {
+						await window.maestro.history.add({
+							id: generateId(),
+							type: 'AUTO',
+							timestamp: Date.now(),
+							summary: `Merged contexts from ${sourceNames.join(', ')}`,
+							sessionId: newSession.id,
+							projectPath: sourceSession.projectRoot,
+							sessionName: mergedName,
 						});
-
-						// Add new session to state
-						setSessions((prev) => [...prev, newSession]);
-
-						// Log merge operation to history
-						const sourceNames = [
-							getSessionDisplayName(sourceSession),
-							getSessionDisplayName(targetSession),
-						].filter((name, i, arr) => arr.indexOf(name) === i); // Dedupe if same session
-
-						try {
-							await window.maestro.history.add({
-								id: generateId(),
-								type: 'AUTO',
-								timestamp: Date.now(),
-								summary: `Merged contexts from ${sourceNames.join(', ')}`,
-								sessionId: newSession.id,
-								projectPath: sourceSession.projectRoot,
-								sessionName: mergedName,
-							});
-						} catch (historyError) {
-							// Non-critical: log but don't fail the merge operation
-							console.warn('Failed to log merge operation to history:', historyError);
-						}
-
-						// Notify caller with session info for notification purposes
-						if (onSessionCreated) {
-							onSessionCreated({
-								sessionId: newSession.id,
-								sessionName: mergedName,
-								sourceSessionName: result.sourceSessionName,
-								targetSessionName: result.targetSessionName,
-								estimatedTokens: result.estimatedTokens,
-								tokensSaved: result.tokensSaved,
-							});
-						}
-
-						// Return result with the actual new session ID
-						return {
-							...result,
-							newSessionId: newSession.id,
-							newTabId: newSession.activeTabId,
-						};
+					} catch (historyError) {
+						// Non-critical: log but don't fail the merge operation
+						console.warn('Failed to log merge operation to history:', historyError);
 					}
-				} else if (result.targetSessionId && result.targetTabId) {
+
+					// Notify caller with session info for notification purposes
+					if (onSessionCreated) {
+						onSessionCreated({
+							sessionId: newSession.id,
+							sessionName: mergedName,
+							sourceSessionName: result.sourceSessionName,
+							targetSessionName: result.targetSessionName,
+							estimatedTokens: result.estimatedTokens,
+							tokensSaved: result.tokensSaved,
+						});
+					}
+
+					// Return result with the actual new session ID
+					return {
+						...result,
+						newSessionId: newSession.id,
+						newTabId: newSession.activeTabId,
+					};
+				} else {
 					// Merge into existing tab - inject SOURCE context only (not target's own logs)
 					// Format the source context as a string to inject into the AI conversation
 					// Filter out system messages (including system prompts) - only include user/assistant messages
+					const targetSessionId = result.targetSessionId!;
+					const targetTabId = result.targetTabId!;
 
 					// Always use the SOURCE tab's logs for injection - we're transferring source context to target
 					// The result.mergedLogs contains both source AND target logs (for createNewSession=true case)
 					// but when injecting into existing tab, we only want the source context
-					const sourceTab = sourceSession.aiTabs.find((t) => t.id === sourceTabId);
-					const logsToInject = sourceTab?.logs ?? [];
+					const sourceTab = sourceSession.aiTabs.find((t) => t.id === sourceTabId)!;
+					const logsToInject = sourceTab.logs;
 
 					const sourceContext = logsToInject
 						.filter((log) => log.text && log.text.trim() && log.source !== 'system')
@@ -754,12 +754,12 @@ export function useMergeSessionWithSessions(
 
 					setSessions((prev) =>
 						prev.map((session) => {
-							if (session.id !== result.targetSessionId) return session;
+							if (session.id !== targetSessionId) return session;
 
 							return {
 								...session,
 								aiTabs: session.aiTabs.map((tab) => {
-									if (tab.id !== result.targetTabId) return tab;
+									if (tab.id !== targetTabId) return tab;
 
 									// Add a visible log entry, set pendingMergedContext to inject into the AI message,
 									// and set autoSendOnActivate to immediately send the context to the agent
@@ -782,7 +782,7 @@ export function useMergeSessionWithSessions(
 							type: 'AUTO',
 							timestamp: Date.now(),
 							summary: `Merged context from ${getSessionDisplayName(sourceSession)} into ${getSessionDisplayName(targetSession)}`,
-							sessionId: result.targetSessionId,
+							sessionId: targetSessionId,
 							projectPath: targetSession.projectRoot,
 							sessionName: getSessionDisplayName(targetSession),
 						});
@@ -791,8 +791,8 @@ export function useMergeSessionWithSessions(
 					}
 
 					console.log('[MergeSession] Injected context into target tab:', {
-						targetSessionId: result.targetSessionId,
-						targetTabId: result.targetTabId,
+						targetSessionId,
+						targetTabId,
 						sourceSession: getSessionDisplayName(sourceSession),
 					});
 

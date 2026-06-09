@@ -204,10 +204,8 @@ export function LeaderboardRegistrationModal({
 
 	// Stop polling
 	const stopPolling = useCallback(() => {
-		if (pollingIntervalRef.current) {
-			clearInterval(pollingIntervalRef.current);
-			pollingIntervalRef.current = null;
-		}
+		clearInterval(pollingIntervalRef.current as ReturnType<typeof setInterval>);
+		pollingIntervalRef.current = null;
 		setIsPolling(false);
 	}, []);
 
@@ -284,8 +282,6 @@ export function LeaderboardRegistrationModal({
 
 	// Handle form submission
 	const handleSubmit = useCallback(async () => {
-		if (!isFormValid) return;
-
 		setSubmitState('submitting');
 		setErrorMessage('');
 
@@ -369,83 +365,81 @@ export function LeaderboardRegistrationModal({
 			} else if (result.authTokenRequired) {
 				// Email is confirmed but auth token is missing/invalid - try to recover it automatically
 				let recovered = false;
-				if (clientToken) {
-					setSubmitState('submitting');
-					setErrorMessage('');
-					try {
-						const pollResult = await window.maestro.leaderboard.pollAuthStatus(clientToken);
-						if (pollResult.status === 'confirmed' && pollResult.authToken) {
-							// Token recovered! Save it and retry submission
-							const registration: LeaderboardRegistration = {
-								email: email.trim(),
-								displayName: displayName.trim(),
-								twitterHandle: twitterHandle.trim() || undefined,
-								githubUsername: githubUsername.trim() || undefined,
-								linkedinHandle: linkedinHandle.trim() || undefined,
-								discordUsername: discordUsername.trim() || undefined,
-								blueskyHandle: blueskyHandle.trim() || undefined,
-								registeredAt: existingRegistration?.registeredAt || Date.now(),
-								emailConfirmed: true,
-								lastSubmissionAt: Date.now(),
-								clientToken,
-								authToken: pollResult.authToken,
-							};
-							onSave(registration);
+				let recoveryErrorMessage = AUTH_TOKEN_LOST_MESSAGE;
+				setSubmitState('submitting');
+				setErrorMessage('');
+				try {
+					const pollResult = await window.maestro.leaderboard.pollAuthStatus(clientToken);
+					if (pollResult.status === 'confirmed' && pollResult.authToken) {
+						// Token recovered! Save it and retry submission
+						const registration: LeaderboardRegistration = {
+							email: email.trim(),
+							displayName: displayName.trim(),
+							twitterHandle: twitterHandle.trim() || undefined,
+							githubUsername: githubUsername.trim() || undefined,
+							linkedinHandle: linkedinHandle.trim() || undefined,
+							discordUsername: discordUsername.trim() || undefined,
+							blueskyHandle: blueskyHandle.trim() || undefined,
+							registeredAt: existingRegistration?.registeredAt || Date.now(),
+							emailConfirmed: true,
+							lastSubmissionAt: Date.now(),
+							clientToken,
+							authToken: pollResult.authToken,
+						};
+						onSave(registration);
 
-							// Retry submission with recovered token
-							let longestRunDate: string | undefined;
-							if (autoRunStats.longestRunTimestamp > 0) {
-								longestRunDate = new Date(autoRunStats.longestRunTimestamp)
-									.toISOString()
-									.split('T')[0];
-							}
-
-							// Retry submission with recovered token
-							const retryResult = await window.maestro.leaderboard.submit({
-								email: email.trim(),
-								displayName: displayName.trim(),
-								githubUsername: githubUsername.trim() || undefined,
-								twitterHandle: twitterHandle.trim() || undefined,
-								linkedinHandle: linkedinHandle.trim() || undefined,
-								discordUsername: discordUsername.trim() || undefined,
-								blueskyHandle: blueskyHandle.trim() || undefined,
-								badgeLevel,
-								badgeName,
-								// Send cumulative stats - required by API
-								cumulativeTimeMs: autoRunStats.cumulativeTimeMs,
-								totalRuns: autoRunStats.totalRuns,
-								longestRunMs: autoRunStats.longestRunMs || undefined,
-								longestRunDate,
-								theme: theme.id,
-								clientToken,
-								authToken: pollResult.authToken,
-								// Keyboard mastery data (aligned with RunMaestro.ai server schema)
-								keyboardMasteryLevel,
-								keyboardMasteryTitle,
-								keyboardCoveragePercent,
-								keyboardKeysUnlocked,
-								keyboardTotalKeys,
-								// Client's local total for discrepancy detection
-								clientTotalTimeMs: autoRunStats.cumulativeTimeMs,
-							});
-
-							if (retryResult.success) {
-								setSubmitState('success');
-								setSuccessMessage('Auth token recovered and stats submitted successfully!');
-								recovered = true;
-							} else {
-								setErrorMessage(retryResult.error || 'Submission failed after token recovery');
-							}
+						// Retry submission with recovered token
+						let longestRunDate: string | undefined;
+						if (autoRunStats.longestRunTimestamp > 0) {
+							longestRunDate = new Date(autoRunStats.longestRunTimestamp)
+								.toISOString()
+								.split('T')[0];
 						}
-					} catch {
-						// Recovery failed - fall through to manual entry
+
+						const retryResult = await window.maestro.leaderboard.submit({
+							email: email.trim(),
+							displayName: displayName.trim(),
+							githubUsername: githubUsername.trim() || undefined,
+							twitterHandle: twitterHandle.trim() || undefined,
+							linkedinHandle: linkedinHandle.trim() || undefined,
+							discordUsername: discordUsername.trim() || undefined,
+							blueskyHandle: blueskyHandle.trim() || undefined,
+							badgeLevel,
+							badgeName,
+							// Send cumulative stats - required by API
+							cumulativeTimeMs: autoRunStats.cumulativeTimeMs,
+							totalRuns: autoRunStats.totalRuns,
+							longestRunMs: autoRunStats.longestRunMs || undefined,
+							longestRunDate,
+							theme: theme.id,
+							clientToken,
+							authToken: pollResult.authToken,
+							// Keyboard mastery data (aligned with RunMaestro.ai server schema)
+							keyboardMasteryLevel,
+							keyboardMasteryTitle,
+							keyboardCoveragePercent,
+							keyboardKeysUnlocked,
+							keyboardTotalKeys,
+							// Client's local total for discrepancy detection
+							clientTotalTimeMs: autoRunStats.cumulativeTimeMs,
+						});
+
+						if (retryResult.success) {
+							setSubmitState('success');
+							setSuccessMessage('Auth token recovered and stats submitted successfully!');
+							recovered = true;
+						} else {
+							recoveryErrorMessage = retryResult.error || 'Submission failed after token recovery';
+						}
 					}
+				} catch {
+					// Recovery failed - fall through to manual entry
 				}
 				// If recovery failed or wasn't possible, show manual entry
 				if (!recovered) {
 					setSubmitState('error');
 					setShowManualTokenEntry(true);
-					if (!errorMessage) setErrorMessage(AUTH_TOKEN_LOST_MESSAGE);
+					setErrorMessage(recoveryErrorMessage);
 				}
 			} else {
 				setSubmitState('error');
@@ -456,7 +450,6 @@ export function LeaderboardRegistrationModal({
 			setErrorMessage(error instanceof Error ? error.message : 'An unexpected error occurred');
 		}
 	}, [
-		isFormValid,
 		email,
 		displayName,
 		githubUsername,
@@ -481,7 +474,7 @@ export function LeaderboardRegistrationModal({
 
 	// Handle manual token submission
 	const handleManualTokenSubmit = useCallback(async () => {
-		if (!manualToken.trim()) return;
+		const trimmedManualToken = manualToken.trim();
 
 		// Save the manually entered token and retry submission
 		const registration: LeaderboardRegistration = {
@@ -496,7 +489,7 @@ export function LeaderboardRegistrationModal({
 			emailConfirmed: true,
 			lastSubmissionAt: Date.now(),
 			clientToken,
-			authToken: manualToken.trim(),
+			authToken: trimmedManualToken,
 		};
 		onSave(registration);
 		setShowManualTokenEntry(false);
@@ -528,7 +521,7 @@ export function LeaderboardRegistrationModal({
 				longestRunDate,
 				theme: theme.id,
 				clientToken,
-				authToken: manualToken.trim(),
+				authToken: trimmedManualToken,
 				// Keyboard mastery data (aligned with RunMaestro.ai server schema)
 				keyboardMasteryLevel,
 				keyboardMasteryTitle,
@@ -579,7 +572,7 @@ export function LeaderboardRegistrationModal({
 
 	// Handle resend confirmation email
 	const handleResendConfirmation = useCallback(async () => {
-		if (!email.trim() || !clientToken) return;
+		const trimmedEmail = email.trim();
 
 		setIsResending(true);
 		setResendSuccess(false);
@@ -587,7 +580,7 @@ export function LeaderboardRegistrationModal({
 
 		try {
 			const result = await window.maestro.leaderboard.resendConfirmation({
-				email: email.trim(),
+				email: trimmedEmail,
 				clientToken,
 			});
 
@@ -638,15 +631,13 @@ export function LeaderboardRegistrationModal({
 						? new Date(result.data.longestRunDate).getTime()
 						: 0;
 
-					if (onSyncStats) {
-						onSyncStats({
-							cumulativeTimeMs: serverTime,
-							totalRuns: result.data.totalRuns,
-							currentBadgeLevel: result.data.badgeLevel,
-							longestRunMs: result.data.longestRunMs || 0,
-							longestRunTimestamp,
-						});
-					}
+					onSyncStats!({
+						cumulativeTimeMs: serverTime,
+						totalRuns: result.data.totalRuns,
+						currentBadgeLevel: result.data.badgeLevel,
+						longestRunMs: result.data.longestRunMs || 0,
+						longestRunTimestamp,
+					});
 
 					const hours = Math.floor(serverTime / 3600000);
 					const minutes = Math.floor((serverTime % 3600000) / 60000);
@@ -1079,7 +1070,7 @@ export function LeaderboardRegistrationModal({
 							/>
 							<div className="flex-1">
 								<p className="text-xs" style={{ color: theme.colors.textMain }}>
-									{successMessage || 'Waiting for email confirmation...'}
+									{successMessage}
 								</p>
 								<p className="text-xs mt-1" style={{ color: theme.colors.textDim }}>
 									Click the link in your email to complete registration. This will update

@@ -95,6 +95,23 @@ describe('NodeBreadcrumb', () => {
 			expect(container.firstChild).toBeNull();
 		});
 
+		it('renders nothing for unsupported node types', () => {
+			const { container } = render(
+				<NodeBreadcrumb
+					selectedNodeData={
+						{
+							nodeType: 'unsupported',
+							theme: mockTheme,
+						} as unknown as NodeBreadcrumbProps['selectedNodeData']
+					}
+					theme={mockTheme}
+					rootPath="/project"
+				/>
+			);
+
+			expect(container.firstChild).toBeNull();
+		});
+
 		it('renders breadcrumb for a document node in root directory', () => {
 			render(
 				<NodeBreadcrumb
@@ -262,6 +279,32 @@ describe('NodeBreadcrumb', () => {
 			// Click on root segment
 			fireEvent.click(screen.getByText('project'));
 			expect(onSegmentClick).toHaveBeenCalledWith('');
+		});
+
+		it('uses root as the root segment label when rootPath has no folder name', () => {
+			render(
+				<NodeBreadcrumb
+					selectedNodeData={createDocumentNodeData('folder/file.md')}
+					theme={mockTheme}
+					rootPath="/"
+				/>
+			);
+
+			expect(screen.getByText('root')).toBeInTheDocument();
+		});
+
+		it('ignores non-final segment clicks when no segment click handler is provided', () => {
+			render(
+				<NodeBreadcrumb
+					selectedNodeData={createDocumentNodeData('folder/file.md')}
+					theme={mockTheme}
+					rootPath="/project"
+				/>
+			);
+
+			fireEvent.click(screen.getByText('folder'));
+
+			expect(screen.getByText('folder')).toBeInTheDocument();
 		});
 
 		it('final segment button is disabled', () => {
@@ -608,6 +651,40 @@ describe('NodeBreadcrumb', () => {
 
 			const fileButton = screen.getByText('file').closest('button');
 			expect(fileButton).toHaveStyle({ cursor: 'default' });
+		});
+
+		it('highlights non-final segments on hover and clears highlight on leave', () => {
+			render(
+				<NodeBreadcrumb
+					selectedNodeData={createDocumentNodeData('folder/file.md')}
+					theme={mockTheme}
+					rootPath="/project"
+				/>
+			);
+
+			const folderButton = screen.getByText('folder').closest('button')!;
+
+			fireEvent.mouseEnter(folderButton);
+			expect(folderButton).toHaveStyle({ backgroundColor: `${mockTheme.colors.accent}15` });
+
+			fireEvent.mouseLeave(folderButton);
+			expect(folderButton.style.backgroundColor).toBe('transparent');
+		});
+
+		it('does not highlight the final segment on hover', () => {
+			render(
+				<NodeBreadcrumb
+					selectedNodeData={createDocumentNodeData('folder/file.md')}
+					theme={mockTheme}
+					rootPath="/project"
+				/>
+			);
+
+			const fileButton = screen.getByText('file').closest('button')!;
+
+			fireEvent.mouseEnter(fileButton);
+
+			expect(fileButton.style.backgroundColor).toBe('transparent');
 		});
 	});
 });

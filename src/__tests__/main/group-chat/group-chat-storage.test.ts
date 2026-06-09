@@ -16,6 +16,20 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
 
+vi.mock('fs/promises', async () => {
+	const actual = await import('node:fs/promises');
+	return {
+		access: actual.access,
+		appendFile: actual.appendFile,
+		mkdir: actual.mkdir,
+		readFile: actual.readFile,
+		readdir: actual.readdir,
+		rename: vi.fn(actual.rename),
+		rm: vi.fn(actual.rm),
+		writeFile: actual.writeFile,
+	};
+});
+
 // Mock Electron's app module before importing the storage module
 let mockUserDataPath: string;
 vi.mock('electron', () => ({
@@ -65,6 +79,19 @@ let mockUuidCounter = 0;
 vi.mock('uuid', () => ({
 	v4: vi.fn(() => `test-uuid-${++mockUuidCounter}`),
 }));
+
+function fsError(code: string): NodeJS.ErrnoException {
+	return Object.assign(new Error(code), { code });
+}
+
+function runRetryDelaysImmediately() {
+	return vi.spyOn(globalThis, 'setTimeout').mockImplementation((handler: TimerHandler) => {
+		if (typeof handler === 'function') {
+			handler();
+		}
+		return 0 as unknown as ReturnType<typeof setTimeout>;
+	});
+}
 
 describe('group-chat-storage', () => {
 	let testDir: string;
@@ -153,6 +180,20 @@ describe('group-chat-storage', () => {
 			// Clean up
 			await deleteGroupChat(chat.id);
 		});
+
+		it('rejects moderator agents without group chat moderation capability', async () => {
+			await expect(createGroupChat('Invalid Agent', 'non-existent-agent')).rejects.toThrow(
+				/does not support group chat moderation/i
+			);
+		});
+
+		it('uses a fallback name when sanitization removes the entire chat name', async () => {
+			const chat = await createGroupChat('<>:"/\\|?*', 'claude-code');
+
+			expect(chat.name).toBe('Untitled Chat');
+
+			await deleteGroupChat(chat.id);
+		});
 	});
 
 	// ===========================================================================
@@ -179,6 +220,29 @@ describe('group-chat-storage', () => {
 
 			// Clean up
 			await deleteGroupChat(created.id);
+		});
+
+		it('returns null for empty metadata files', async () => {
+			const chatDir = path.join(getGroupChatsDir(), 'empty-metadata');
+			await fs.mkdir(chatDir, { recursive: true });
+			await fs.writeFile(path.join(chatDir, 'metadata.json'), '   \n', 'utf-8');
+
+			await expect(loadGroupChat('empty-metadata')).resolves.toBeNull();
+		});
+
+		it('returns null for malformed metadata JSON', async () => {
+			const chatDir = path.join(getGroupChatsDir(), 'bad-metadata');
+			await fs.mkdir(chatDir, { recursive: true });
+			await fs.writeFile(path.join(chatDir, 'metadata.json'), '{not json', 'utf-8');
+
+			await expect(loadGroupChat('bad-metadata')).resolves.toBeNull();
+		});
+
+		it('surfaces unexpected metadata read failures', async () => {
+			const chatDir = path.join(getGroupChatsDir(), 'metadata-directory');
+			await fs.mkdir(path.join(chatDir, 'metadata.json'), { recursive: true });
+
+			await expect(loadGroupChat('metadata-directory')).rejects.toThrow();
 		});
 	});
 
@@ -234,6 +298,30 @@ describe('group-chat-storage', () => {
 
 			// If the directory was empty before, it should be empty after
 			// (but we can't guarantee this in parallel test execution)
+		});
+
+		it('surfaces unexpected directory read failures', async () => {
+			await fs.writeFile(getGroupChatsDir(), 'not a directory', 'utf-8');
+
+			await expect(listGroupChats()).rejects.toThrow();
+		});
+
+		it('skips non-directory entries and directories without loadable metadata', async () => {
+			const visibleChat = await createGroupChat('Visible Chat', 'claude-code');
+			await fs.writeFile(path.join(getGroupChatsDir(), 'README.txt'), 'not a chat', 'utf-8');
+			await fs.mkdir(path.join(getGroupChatsDir(), 'empty-chat'), { recursive: true });
+			await fs.writeFile(
+				path.join(getGroupChatsDir(), 'empty-chat', 'metadata.json'),
+				'   \n',
+				'utf-8'
+			);
+
+			const chats = await listGroupChats();
+
+			expect(chats.map((chat) => chat.id)).toContain(visibleChat.id);
+			expect(chats.map((chat) => chat.id)).not.toContain('empty-chat');
+
+			await deleteGroupChat(visibleChat.id);
 		});
 
 		it('lists chats with different moderator agents', async () => {
@@ -514,6 +602,47 @@ describe('group-chat-storage', () => {
 
 			await deleteGroupChat(chat.id);
 		});
+
+		it('retries atomic metadata writes after transient rename locks', async () => {
+			const chat = await createGroupChat('Atomic Retry', 'claude-code');
+			const timeoutSpy = runRetryDelaysImmediately();
+			vi.mocked(fs.rename).mockClear();
+			vi.mocked(fs.rename).mockImplementationOnce(async () => {
+				throw fsError('EPERM');
+			});
+
+			try {
+				await expect(updateGroupChat(chat.id, { name: 'After Retry' })).resolves.toEqual(
+					expect.objectContaining({ name: 'After Retry' })
+				);
+
+				expect(fs.rename).toHaveBeenCalledTimes(2);
+				expect(timeoutSpy).toHaveBeenCalledWith(expect.any(Function), 100);
+				await expect(loadGroupChat(chat.id)).resolves.toEqual(
+					expect.objectContaining({ name: 'After Retry' })
+				);
+			} finally {
+				timeoutSpy.mockRestore();
+				await deleteGroupChat(chat.id);
+			}
+		});
+
+		it('surfaces non-retryable atomic metadata write failures', async () => {
+			const chat = await createGroupChat('Atomic Failure', 'claude-code');
+			const renameError = fsError('EACCES');
+			vi.mocked(fs.rename).mockImplementationOnce(async () => {
+				throw renameError;
+			});
+
+			try {
+				await expect(updateGroupChat(chat.id, { name: 'Should Fail' })).rejects.toBe(renameError);
+				await expect(loadGroupChat(chat.id)).resolves.toEqual(
+					expect.objectContaining({ name: 'Atomic Failure' })
+				);
+			} finally {
+				await deleteGroupChat(chat.id);
+			}
+		});
 	});
 
 	// ===========================================================================
@@ -554,6 +683,44 @@ describe('group-chat-storage', () => {
 			// Chat directory should not exist
 			const loaded = await loadGroupChat(chat.id);
 			expect(loaded).toBeNull();
+		});
+
+		it('retries transient locked-directory failures when deleting', async () => {
+			const chat = await createGroupChat('Delete Retry', 'claude-code');
+			const chatDir = path.dirname(chat.logPath);
+			const timeoutSpy = runRetryDelaysImmediately();
+			vi.mocked(fs.rm).mockImplementationOnce(async () => {
+				throw fsError('ENOTEMPTY');
+			});
+
+			try {
+				await expect(deleteGroupChat(chat.id)).resolves.not.toThrow();
+
+				expect(fs.rm).toHaveBeenCalledTimes(2);
+				expect(timeoutSpy).toHaveBeenCalledWith(expect.any(Function), 1000);
+				await expect(loadGroupChat(chat.id)).resolves.toBeNull();
+				await expect(fs.access(chatDir)).rejects.toThrow();
+			} finally {
+				timeoutSpy.mockRestore();
+				await fs.rm(chatDir, { recursive: true, force: true });
+			}
+		});
+
+		it('surfaces non-retryable delete failures', async () => {
+			const chat = await createGroupChat('Delete Failure', 'claude-code');
+			const rmError = fsError('EACCES');
+			vi.mocked(fs.rm).mockImplementationOnce(async () => {
+				throw rmError;
+			});
+
+			try {
+				await expect(deleteGroupChat(chat.id)).rejects.toBe(rmError);
+				await expect(loadGroupChat(chat.id)).resolves.toEqual(
+					expect.objectContaining({ id: chat.id })
+				);
+			} finally {
+				await deleteGroupChat(chat.id);
+			}
 		});
 	});
 
@@ -725,6 +892,12 @@ describe('group-chat-storage', () => {
 
 			await deleteGroupChat(chat.id);
 		});
+
+		it('throws when updating participant in a non-existent chat', async () => {
+			await expect(
+				updateParticipant('non-existent-chat', 'Ghost', { tokenCount: 100 })
+			).rejects.toThrow(/not found/i);
+		});
 	});
 
 	// ===========================================================================
@@ -803,6 +976,7 @@ describe('group-chat-storage', () => {
 
 		it('skips malformed JSONL lines without crashing', async () => {
 			const chat = await createGroupChat('Malformed Lines', 'claude-code');
+			const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 
 			// Add a valid entry
 			const valid = await addGroupChatHistoryEntry(chat.id, {
@@ -830,6 +1004,95 @@ describe('group-chat-storage', () => {
 			const entries = await getGroupChatHistory(chat.id);
 			expect(entries).toHaveLength(2);
 			expect(entries.every((e) => e.summary !== undefined)).toBe(true);
+			expect(consoleWarnSpy).toHaveBeenCalledWith(
+				'[GroupChatHistory] Skipping malformed line: this is not json...'
+			);
+
+			await deleteGroupChat(chat.id);
+		});
+
+		it('ignores blank history lines while reading entries', async () => {
+			const chat = await createGroupChat('Blank History Lines', 'claude-code');
+			const historyPath = path.join(path.dirname(chat.logPath), 'history.jsonl');
+			const older = {
+				id: 'older',
+				timestamp: 1000,
+				summary: 'Older entry',
+				participantName: 'A',
+				participantColor: '#000',
+				type: 'response',
+			};
+			const newer = {
+				id: 'newer',
+				timestamp: 2000,
+				summary: 'Newer entry',
+				participantName: 'B',
+				participantColor: '#000',
+				type: 'delegation',
+			};
+			await fs.writeFile(
+				historyPath,
+				`${JSON.stringify(older)}\n\n   \n${JSON.stringify(newer)}\n`,
+				'utf-8'
+			);
+
+			const entries = await getGroupChatHistory(chat.id);
+
+			expect(entries.map((entry) => entry.id)).toEqual(['newer', 'older']);
+
+			await deleteGroupChat(chat.id);
+		});
+
+		it('keeps malformed history lines and drops blank lines when deleting an entry', async () => {
+			const chat = await createGroupChat('Delete Malformed Lines', 'claude-code');
+			const historyPath = path.join(path.dirname(chat.logPath), 'history.jsonl');
+			const keep = {
+				id: 'keep',
+				timestamp: 1000,
+				summary: 'Keep me',
+				participantName: 'A',
+				participantColor: '#000',
+				type: 'response',
+			};
+			const remove = {
+				id: 'remove',
+				timestamp: 2000,
+				summary: 'Remove me',
+				participantName: 'B',
+				participantColor: '#000',
+				type: 'delegation',
+			};
+			await fs.writeFile(
+				historyPath,
+				`${JSON.stringify(keep)}\n\nnot json\n${JSON.stringify(remove)}\n`,
+				'utf-8'
+			);
+
+			await expect(deleteGroupChatHistoryEntry(chat.id, 'remove')).resolves.toBe(true);
+
+			const content = await fs.readFile(historyPath, 'utf-8');
+			expect(content).toContain('"id":"keep"');
+			expect(content).toContain('not json');
+			expect(content).not.toContain('"id":"remove"');
+
+			await deleteGroupChat(chat.id);
+		});
+
+		it('deleting the only history entry leaves an empty history file', async () => {
+			const chat = await createGroupChat('Delete Sole Entry', 'claude-code');
+			const historyPath = path.join(path.dirname(chat.logPath), 'history.jsonl');
+			const entry = await addGroupChatHistoryEntry(chat.id, {
+				timestamp: 1000,
+				summary: 'Only entry',
+				participantName: 'A',
+				participantColor: '#000',
+				type: 'response',
+			});
+
+			await expect(deleteGroupChatHistoryEntry(chat.id, entry.id)).resolves.toBe(true);
+
+			await expect(fs.readFile(historyPath, 'utf-8')).resolves.toBe('');
+			await expect(getGroupChatHistory(chat.id)).resolves.toEqual([]);
 
 			await deleteGroupChat(chat.id);
 		});
@@ -887,6 +1150,16 @@ describe('group-chat-storage', () => {
 			expect(deleted).toBe(false);
 		});
 
+		it('surfaces unexpected history read failures when deleting entries', async () => {
+			const chat = await createGroupChat('Delete History Read Failure', 'claude-code');
+			const historyPath = path.join(path.dirname(chat.logPath), 'history.jsonl');
+			await fs.mkdir(historyPath, { recursive: true });
+
+			await expect(deleteGroupChatHistoryEntry(chat.id, 'entry-id')).rejects.toThrow();
+
+			await deleteGroupChat(chat.id);
+		});
+
 		it('clears all history entries', async () => {
 			const chat = await createGroupChat('Clear History', 'claude-code');
 
@@ -915,6 +1188,26 @@ describe('group-chat-storage', () => {
 
 		it('clearing non-existent chat history does not throw', async () => {
 			await expect(clearGroupChatHistory('non-existent')).resolves.not.toThrow();
+		});
+
+		it('surfaces unexpected history clear failures', async () => {
+			const chat = await createGroupChat('Clear History Failure', 'claude-code');
+			const historyPath = path.join(path.dirname(chat.logPath), 'history.jsonl');
+			await fs.mkdir(historyPath, { recursive: true });
+
+			await expect(clearGroupChatHistory(chat.id)).rejects.toThrow();
+
+			await deleteGroupChat(chat.id);
+		});
+
+		it('surfaces unexpected history read failures', async () => {
+			const chat = await createGroupChat('History Read Failure', 'claude-code');
+			const historyPath = path.join(path.dirname(chat.logPath), 'history.jsonl');
+			await fs.mkdir(historyPath, { recursive: true });
+
+			await expect(getGroupChatHistory(chat.id)).rejects.toThrow();
+
+			await deleteGroupChat(chat.id);
 		});
 
 		it('stores optional fields (elapsedTimeMs, tokenCount, cost, fullResponse)', async () => {

@@ -261,7 +261,7 @@ export function TransferProgressModal({
 
 	// Layer stack registration
 	const { registerLayer, unregisterLayer, updateLayerHandler } = useLayerStack();
-	const layerIdRef = useRef<string>();
+	const layerIdRef = useRef('');
 	const onCancelRef = useRef(onCancel);
 	const onCompleteRef = useRef(onComplete);
 
@@ -291,7 +291,7 @@ export function TransferProgressModal({
 	useEffect(() => {
 		if (!isOpen) return;
 
-		layerIdRef.current = registerLayer({
+		const id = registerLayer({
 			type: 'modal',
 			priority: MODAL_PRIORITIES.TRANSFER_PROGRESS,
 			blocksLowerLayers: true,
@@ -300,20 +300,18 @@ export function TransferProgressModal({
 			ariaLabel: 'Transfer Progress',
 			onEscape: handleEscape,
 		});
+		layerIdRef.current = id;
 
 		return () => {
-			if (layerIdRef.current) {
-				unregisterLayer(layerIdRef.current);
-			}
+			unregisterLayer(id);
 		};
 	}, [isOpen, registerLayer, unregisterLayer, handleEscape]);
 
 	// Update handler when callbacks change
 	useEffect(() => {
-		if (layerIdRef.current) {
-			updateLayerHandler(layerIdRef.current, handleEscape);
-		}
-	}, [updateLayerHandler, handleEscape]);
+		if (!isOpen) return;
+		updateLayerHandler(layerIdRef.current, handleEscape);
+	}, [isOpen, updateLayerHandler, handleEscape]);
 
 	// Get the current stage index
 	const currentStageIndex = useMemo(() => {

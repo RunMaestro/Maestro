@@ -169,24 +169,6 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 				setWakatimeCliStatus(status);
 				if (!status.available) {
 					retryTimer = setTimeout(() => {
-						if (!cancelled) {
-							window.maestro.wakatime
-								.checkCli()
-								.then((retryStatus) => {
-									if (!cancelled) setWakatimeCliStatus(retryStatus);
-								})
-								.catch(() => {
-									if (!cancelled) setWakatimeCliStatus({ available: false });
-								});
-						}
-					}, 3000);
-				}
-			})
-			.catch(() => {
-				if (cancelled) return;
-				setWakatimeCliStatus({ available: false });
-				retryTimer = setTimeout(() => {
-					if (!cancelled) {
 						window.maestro.wakatime
 							.checkCli()
 							.then((retryStatus) => {
@@ -195,7 +177,21 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 							.catch(() => {
 								if (!cancelled) setWakatimeCliStatus({ available: false });
 							});
-					}
+					}, 3000);
+				}
+			})
+			.catch(() => {
+				if (cancelled) return;
+				setWakatimeCliStatus({ available: false });
+				retryTimer = setTimeout(() => {
+					window.maestro.wakatime
+						.checkCli()
+						.then((retryStatus) => {
+							if (!cancelled) setWakatimeCliStatus(retryStatus);
+						})
+						.catch(() => {
+							if (!cancelled) setWakatimeCliStatus({ available: false });
+						});
 				}, 3000);
 			});
 
@@ -258,7 +254,6 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 	}, [isOpen]);
 
 	const loadShells = async () => {
-		if (shellsLoaded) return;
 		setShellsLoading(true);
 		try {
 			const detected = await window.maestro.shells.detect();
@@ -1509,9 +1504,7 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 						<button
 							onClick={() => {
 								const folderPath = customSyncPath || defaultStoragePath;
-								if (folderPath) {
-									window.maestro?.shell?.openPath(folderPath);
-								}
+								window.maestro.shell.openPath(folderPath);
 							}}
 							disabled={!defaultStoragePath && !customSyncPath}
 							className="flex items-center gap-1.5 text-[11px] opacity-60 hover:opacity-100 transition-opacity disabled:opacity-30"

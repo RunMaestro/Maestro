@@ -105,15 +105,6 @@ export class ClaudeOutputParser implements AgentOutputParser {
 		}
 
 		const msg = parsed as ClaudeRawMessage;
-
-		// DEBUG: Log raw message if it contains usage data
-		if (msg.modelUsage || msg.usage || msg.total_cost_usd !== undefined) {
-			console.log(
-				'[ClaudeOutputParser] Raw message with usage data:',
-				JSON.stringify(msg, null, 2)
-			);
-		}
-
 		return this.transformMessage(msg);
 	}
 
@@ -183,7 +174,7 @@ export class ClaudeOutputParser implements AgentOutputParser {
 			return {
 				type: 'usage',
 				sessionId: msg.session_id,
-				usage: usage || undefined,
+				usage: usage!,
 				raw: msg,
 			};
 		}
@@ -426,18 +417,14 @@ export class ClaudeOutputParser implements AgentOutputParser {
 
 		// Structured error event that didn't match a known pattern —
 		// still report it rather than silently dropping
-		if (parsedJson) {
-			return {
-				type: 'unknown',
-				message: errorText,
-				recoverable: true,
-				agentId: this.agentId,
-				timestamp: Date.now(),
-				parsedJson,
-			};
-		}
-
-		return null;
+		return {
+			type: 'unknown',
+			message: errorText,
+			recoverable: true,
+			agentId: this.agentId,
+			timestamp: Date.now(),
+			parsedJson,
+		};
 	}
 
 	/**

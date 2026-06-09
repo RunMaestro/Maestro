@@ -385,9 +385,7 @@ export function CustomThemeBuilder({
 			reader.readAsText(file);
 
 			// Reset file input
-			if (fileInputRef.current) {
-				fileInputRef.current.value = '';
-			}
+			event.currentTarget.value = '';
 		},
 		[setCustomThemeColors, setCustomThemeBaseId, onImportError, onImportSuccess]
 	);

@@ -221,6 +221,22 @@ describe('Autorun Preload API', () => {
 
 				expect(callback).toHaveBeenCalledWith(data);
 			});
+
+			it('should remove file watcher listener when cleanup is called', () => {
+				const callback = vi.fn();
+				let registeredHandler: (event: unknown, data: unknown) => void;
+
+				mockOn.mockImplementation(
+					(_channel: string, handler: (event: unknown, data: unknown) => void) => {
+						registeredHandler = handler;
+					}
+				);
+
+				const cleanup = api.onFileChanged(callback);
+				cleanup();
+
+				expect(mockRemoveListener).toHaveBeenCalledWith('autorun:fileChanged', registeredHandler!);
+			});
 		});
 
 		describe('createBackup', () => {
@@ -498,6 +514,23 @@ describe('Autorun Preload API', () => {
 				registeredHandler!();
 
 				expect(callback).toHaveBeenCalled();
+			});
+
+			it('should remove manifest listener when cleanup is called', () => {
+				const callback = vi.fn();
+				let registeredHandler: () => void;
+
+				mockOn.mockImplementation((_channel: string, handler: () => void) => {
+					registeredHandler = handler;
+				});
+
+				const cleanup = api.onManifestChanged(callback);
+				cleanup();
+
+				expect(mockRemoveListener).toHaveBeenCalledWith(
+					'marketplace:manifestChanged',
+					registeredHandler!
+				);
 			});
 		});
 	});

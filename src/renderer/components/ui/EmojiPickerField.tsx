@@ -77,15 +77,13 @@ export function EmojiPickerField({
 	}, [onCloseProp, restoreFocusRef]);
 
 	const handleToggle = useCallback(() => {
-		if (disabled) return;
-
 		if (isOpen) {
 			handleClose();
 		} else {
 			setIsOpen(true);
 			onOpen?.();
 		}
-	}, [disabled, isOpen, handleClose, onOpen]);
+	}, [isOpen, handleClose, onOpen]);
 
 	const handleEmojiSelect = useCallback(
 		(emojiData: { native: string }) => {

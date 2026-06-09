@@ -47,6 +47,7 @@ vi.mock('../../../../main/utils/logger', () => ({
 vi.mock('../../../../main/utils/remote-fs', () => ({
 	readDirRemote: vi.fn(),
 	readFileRemote: vi.fn(),
+	writeFileRemote: vi.fn(),
 	statRemote: vi.fn(),
 	directorySizeRemote: vi.fn(),
 	renameRemote: vi.fn(),
@@ -65,6 +66,7 @@ import { getSshRemoteById } from '../../../../main/stores';
 import {
 	readDirRemote,
 	readFileRemote,
+	writeFileRemote,
 	statRemote,
 	directorySizeRemote,
 	countItemsRemote,
@@ -158,6 +160,47 @@ describe('filesystem handlers', () => {
 			expect(result).toHaveLength(2);
 			expect(result[0].name).toBe('remote-file.txt');
 			expect(result[0].isFile).toBe(true);
+		});
+
+		it('should map remote file symlinks as files and preserve trailing slash paths', async () => {
+			const mockSshConfig = { id: 'remote-1', host: 'server.com', username: 'user' };
+			vi.mocked(getSshRemoteById).mockReturnValue(mockSshConfig as any);
+			vi.mocked(readDirRemote).mockResolvedValue({
+				success: true,
+				data: [{ name: 'linked-file', isDirectory: false, isSymlink: true }],
+			});
+
+			const handler = registeredHandlers.get('fs:readDir');
+			const result = await handler!({}, '/remote/path/', 'remote-1');
+
+			expect(result[0]).toEqual({
+				name: 'linked-file',
+				isDirectory: false,
+				isFile: true,
+				path: '/remote/path/linked-file',
+			});
+		});
+
+		it('should throw when remote directory read fails', async () => {
+			const mockSshConfig = { id: 'remote-1', host: 'server.com', username: 'user' };
+			vi.mocked(getSshRemoteById).mockReturnValue(mockSshConfig as any);
+			vi.mocked(readDirRemote).mockResolvedValue({ success: false, error: 'Permission denied' });
+
+			const handler = registeredHandlers.get('fs:readDir');
+			await expect(handler!({}, '/remote/private', 'remote-1')).rejects.toThrow(
+				'Permission denied'
+			);
+		});
+
+		it('should use fallback error when remote directory read fails without details', async () => {
+			const mockSshConfig = { id: 'remote-1', host: 'server.com', username: 'user' };
+			vi.mocked(getSshRemoteById).mockReturnValue(mockSshConfig as any);
+			vi.mocked(readDirRemote).mockResolvedValue({ success: false });
+
+			const handler = registeredHandlers.get('fs:readDir');
+			await expect(handler!({}, '/remote/private', 'remote-1')).rejects.toThrow(
+				'Failed to read remote directory'
+			);
 		});
 
 		it('should throw when SSH remote not found', async () => {
@@ -288,6 +331,26 @@ describe('filesystem handlers', () => {
 			expect(result).toBe('file content');
 		});
 
+		it('should read extensionless local files as UTF-8 text', async () => {
+			vi.mocked(fs.readFile).mockResolvedValue('script content' as any);
+
+			const handler = registeredHandlers.get('fs:readFile');
+			const result = await handler!({}, '/test/Makefile');
+
+			expect(fs.readFile).toHaveBeenCalledWith('/test/Makefile', 'utf-8');
+			expect(result).toBe('script content');
+		});
+
+		it('should treat local paths with empty extensions as UTF-8 text', async () => {
+			vi.mocked(fs.readFile).mockResolvedValue('file content' as any);
+
+			const handler = registeredHandlers.get('fs:readFile');
+			const result = await handler!({}, '/test/file.');
+
+			expect(fs.readFile).toHaveBeenCalledWith('/test/file.', 'utf-8');
+			expect(result).toBe('file content');
+		});
+
 		it('should read image files as base64 data URL', async () => {
 			const mockBuffer = Buffer.from('fake-image-data');
 			vi.mocked(fs.readFile).mockResolvedValue(mockBuffer as any);
@@ -309,6 +372,78 @@ describe('filesystem handlers', () => {
 			expect(result).toMatch(/^data:image\/svg\+xml;base64,/);
 		});
 
+		it('should read remote text files via SSH', async () => {
+			const mockSshConfig = { id: 'remote-1', host: 'server.com', username: 'user' };
+			vi.mocked(getSshRemoteById).mockReturnValue(mockSshConfig as any);
+			vi.mocked(readFileRemote).mockResolvedValue({ success: true, data: 'remote notes' });
+
+			const handler = registeredHandlers.get('fs:readFile');
+			const result = await handler!({}, '/remote/README', 'remote-1');
+
+			expect(readFileRemote).toHaveBeenCalledWith('/remote/README', mockSshConfig);
+			expect(result).toBe('remote notes');
+		});
+
+		it('should encode remote image reads as data URLs', async () => {
+			const mockSshConfig = { id: 'remote-1', host: 'server.com', username: 'user' };
+			vi.mocked(getSshRemoteById).mockReturnValue(mockSshConfig as any);
+			vi.mocked(readFileRemote).mockResolvedValue({ success: true, data: 'remote-image-bytes' });
+
+			const handler = registeredHandlers.get('fs:readFile');
+			const result = await handler!({}, '/remote/image.png', 'remote-1');
+
+			expect(result).toBe(
+				`data:image/png;base64,${Buffer.from('remote-image-bytes', 'binary').toString('base64')}`
+			);
+		});
+
+		it('should encode remote SVG reads with SVG mime type', async () => {
+			const mockSshConfig = { id: 'remote-1', host: 'server.com', username: 'user' };
+			vi.mocked(getSshRemoteById).mockReturnValue(mockSshConfig as any);
+			vi.mocked(readFileRemote).mockResolvedValue({ success: true, data: '<svg />' });
+
+			const handler = registeredHandlers.get('fs:readFile');
+			const result = await handler!({}, '/remote/icon.svg', 'remote-1');
+
+			expect(result).toBe(
+				`data:image/svg+xml;base64,${Buffer.from('<svg />', 'binary').toString('base64')}`
+			);
+		});
+
+		it('should return remote text reads when the path has an empty extension', async () => {
+			const mockSshConfig = { id: 'remote-1', host: 'server.com', username: 'user' };
+			vi.mocked(getSshRemoteById).mockReturnValue(mockSshConfig as any);
+			vi.mocked(readFileRemote).mockResolvedValue({ success: true, data: 'remote notes' });
+
+			const handler = registeredHandlers.get('fs:readFile');
+			const result = await handler!({}, '/remote/README.', 'remote-1');
+
+			expect(result).toBe('remote notes');
+		});
+
+		it('should throw for missing or failed remote file reads', async () => {
+			const handler = registeredHandlers.get('fs:readFile');
+			vi.mocked(getSshRemoteById).mockReturnValue(undefined);
+			await expect(handler!({}, '/remote/file.txt', 'missing-remote')).rejects.toThrow(
+				'Failed to read file: Error: SSH remote not found: missing-remote'
+			);
+
+			const mockSshConfig = { id: 'remote-1', host: 'server.com', username: 'user' };
+			vi.mocked(getSshRemoteById).mockReturnValue(mockSshConfig as any);
+			vi.mocked(readFileRemote).mockResolvedValueOnce({
+				success: false,
+				error: 'Permission denied',
+			});
+			await expect(handler!({}, '/remote/private.txt', 'remote-1')).rejects.toThrow(
+				'Failed to read file: Error: Permission denied'
+			);
+
+			vi.mocked(readFileRemote).mockResolvedValueOnce({ success: false });
+			await expect(handler!({}, '/remote/private.txt', 'remote-1')).rejects.toThrow(
+				'Failed to read file: Error: Failed to read remote file'
+			);
+		});
+
 		it('should return null when path resolves to a directory (EISDIR)', async () => {
 			// Caller may pass a path that turned out to be a folder. Returning
 			// null instead of throwing keeps the IPC promise from rejecting and
@@ -321,6 +456,19 @@ describe('filesystem handlers', () => {
 			const result = await handler!({}, '/test/some-folder');
 
 			expect(result).toBeNull();
+		});
+
+		it('should return null for missing files and rethrow unexpected local read errors', async () => {
+			const handler = registeredHandlers.get('fs:readFile');
+			vi.mocked(fs.readFile).mockRejectedValueOnce(
+				Object.assign(new Error('missing'), { code: 'ENOENT' })
+			);
+			await expect(handler!({}, '/missing/file.txt')).resolves.toBeNull();
+
+			vi.mocked(fs.readFile).mockRejectedValueOnce(new Error('Permission denied'));
+			await expect(handler!({}, '/private/file.txt')).rejects.toThrow(
+				'Failed to read file: Error: Permission denied'
+			);
 		});
 	});
 
@@ -366,6 +514,44 @@ describe('filesystem handlers', () => {
 			expect(result.size).toBe(2048);
 			expect(result.isFile).toBe(true);
 		});
+
+		it('should throw when remote stat fails', async () => {
+			const mockSshConfig = { id: 'remote-1', host: 'server.com', username: 'user' };
+			vi.mocked(getSshRemoteById).mockReturnValue(mockSshConfig as any);
+			vi.mocked(statRemote).mockResolvedValue({ success: false, error: 'No such file' });
+
+			const handler = registeredHandlers.get('fs:stat');
+			await expect(handler!({}, '/remote/missing.txt', 'remote-1')).rejects.toThrow(
+				'Failed to get file stats'
+			);
+		});
+
+		it('should use fallback error when remote stat fails without details', async () => {
+			const mockSshConfig = { id: 'remote-1', host: 'server.com', username: 'user' };
+			vi.mocked(getSshRemoteById).mockReturnValue(mockSshConfig as any);
+			vi.mocked(statRemote).mockResolvedValue({ success: false });
+
+			const handler = registeredHandlers.get('fs:stat');
+			await expect(handler!({}, '/remote/missing.txt', 'remote-1')).rejects.toThrow(
+				'Failed to get remote file stats'
+			);
+		});
+
+		it('should throw when stat uses a missing SSH remote', async () => {
+			vi.mocked(getSshRemoteById).mockReturnValue(undefined);
+
+			const handler = registeredHandlers.get('fs:stat');
+			await expect(handler!({}, '/remote/file.txt', 'missing-remote')).rejects.toThrow(
+				'SSH remote not found: missing-remote'
+			);
+		});
+
+		it('should throw when local stat fails', async () => {
+			vi.mocked(fs.stat).mockRejectedValue(new Error('Permission denied'));
+
+			const handler = registeredHandlers.get('fs:stat');
+			await expect(handler!({}, '/private/file.txt')).rejects.toThrow('Failed to get file stats');
+		});
 	});
 
 	describe('fs:writeFile', () => {
@@ -385,6 +571,53 @@ describe('filesystem handlers', () => {
 			const handler = registeredHandlers.get('fs:writeFile');
 			await expect(handler!({}, '/readonly/file.txt', 'content')).rejects.toThrow(
 				'Failed to write file'
+			);
+		});
+
+		it('should write remote files via SSH', async () => {
+			const mockSshConfig = { id: 'remote-1', host: 'server.com', username: 'user' };
+			vi.mocked(getSshRemoteById).mockReturnValue(mockSshConfig as any);
+			vi.mocked(writeFileRemote).mockResolvedValue({ success: true });
+
+			const handler = registeredHandlers.get('fs:writeFile');
+			const result = await handler!({}, '/remote/output.txt', 'new content', 'remote-1');
+
+			expect(writeFileRemote).toHaveBeenCalledWith(
+				'/remote/output.txt',
+				'new content',
+				mockSshConfig
+			);
+			expect(result).toEqual({ success: true });
+		});
+
+		it('should throw when remote write fails', async () => {
+			const mockSshConfig = { id: 'remote-1', host: 'server.com', username: 'user' };
+			vi.mocked(getSshRemoteById).mockReturnValue(mockSshConfig as any);
+			vi.mocked(writeFileRemote).mockResolvedValue({ success: false, error: 'Disk full' });
+
+			const handler = registeredHandlers.get('fs:writeFile');
+			await expect(handler!({}, '/remote/output.txt', 'content', 'remote-1')).rejects.toThrow(
+				'Failed to write file'
+			);
+		});
+
+		it('should use fallback error when remote write fails without details', async () => {
+			const mockSshConfig = { id: 'remote-1', host: 'server.com', username: 'user' };
+			vi.mocked(getSshRemoteById).mockReturnValue(mockSshConfig as any);
+			vi.mocked(writeFileRemote).mockResolvedValue({ success: false });
+
+			const handler = registeredHandlers.get('fs:writeFile');
+			await expect(handler!({}, '/remote/output.txt', 'content', 'remote-1')).rejects.toThrow(
+				'Failed to write remote file'
+			);
+		});
+
+		it('should throw when writing via a missing SSH remote', async () => {
+			vi.mocked(getSshRemoteById).mockReturnValue(undefined);
+
+			const handler = registeredHandlers.get('fs:writeFile');
+			await expect(handler!({}, '/remote/output.txt', 'content', 'missing-remote')).rejects.toThrow(
+				'SSH remote not found: missing-remote'
 			);
 		});
 	});
@@ -411,6 +644,46 @@ describe('filesystem handlers', () => {
 			expect(renameRemote).toHaveBeenCalledWith('/old/path.txt', '/new/path.txt', mockSshConfig);
 			expect(result).toEqual({ success: true });
 		});
+
+		it('should throw when remote rename fails', async () => {
+			const mockSshConfig = { id: 'remote-1', host: 'server.com', username: 'user' };
+			vi.mocked(getSshRemoteById).mockReturnValue(mockSshConfig as any);
+			vi.mocked(renameRemote).mockResolvedValue({ success: false, error: 'Target exists' });
+
+			const handler = registeredHandlers.get('fs:rename');
+			await expect(handler!({}, '/old/path.txt', '/new/path.txt', 'remote-1')).rejects.toThrow(
+				'Failed to rename'
+			);
+		});
+
+		it('should use fallback error when remote rename fails without details', async () => {
+			const mockSshConfig = { id: 'remote-1', host: 'server.com', username: 'user' };
+			vi.mocked(getSshRemoteById).mockReturnValue(mockSshConfig as any);
+			vi.mocked(renameRemote).mockResolvedValue({ success: false });
+
+			const handler = registeredHandlers.get('fs:rename');
+			await expect(handler!({}, '/old/path.txt', '/new/path.txt', 'remote-1')).rejects.toThrow(
+				'Failed to rename remote file'
+			);
+		});
+
+		it('should throw when local rename fails', async () => {
+			vi.mocked(fs.rename).mockRejectedValue(new Error('Permission denied'));
+
+			const handler = registeredHandlers.get('fs:rename');
+			await expect(handler!({}, '/old/path.txt', '/new/path.txt')).rejects.toThrow(
+				'Failed to rename'
+			);
+		});
+
+		it('should throw when rename uses a missing SSH remote', async () => {
+			vi.mocked(getSshRemoteById).mockReturnValue(undefined);
+
+			const handler = registeredHandlers.get('fs:rename');
+			await expect(
+				handler!({}, '/old/path.txt', '/new/path.txt', 'missing-remote')
+			).rejects.toThrow('SSH remote not found: missing-remote');
+		});
 	});
 
 	describe('fs:delete', () => {
@@ -436,6 +709,28 @@ describe('filesystem handlers', () => {
 			expect(result).toEqual({ success: true });
 		});
 
+		it('should default local directory deletes to recursive mode', async () => {
+			vi.mocked(fs.stat).mockResolvedValue({ isDirectory: () => true } as any);
+			vi.mocked(fs.rm).mockResolvedValue(undefined);
+
+			const handler = registeredHandlers.get('fs:delete');
+			const result = await handler!({}, '/test/folder');
+
+			expect(fs.rm).toHaveBeenCalledWith('/test/folder', { recursive: true, force: true });
+			expect(result).toEqual({ success: true });
+		});
+
+		it('should pass explicit recursive false to local directory delete', async () => {
+			vi.mocked(fs.stat).mockResolvedValue({ isDirectory: () => true } as any);
+			vi.mocked(fs.rm).mockResolvedValue(undefined);
+
+			const handler = registeredHandlers.get('fs:delete');
+			const result = await handler!({}, '/test/folder', { recursive: false });
+
+			expect(fs.rm).toHaveBeenCalledWith('/test/folder', { recursive: false, force: true });
+			expect(result).toEqual({ success: true });
+		});
+
 		it('should delete remote files via SSH', async () => {
 			const mockSshConfig = { id: 'remote-1', host: 'server.com', username: 'user' };
 			vi.mocked(getSshRemoteById).mockReturnValue(mockSshConfig as any);
@@ -446,6 +741,55 @@ describe('filesystem handlers', () => {
 
 			expect(deleteRemote).toHaveBeenCalledWith('/remote/file.txt', mockSshConfig, true);
 			expect(result).toEqual({ success: true });
+		});
+
+		it('should pass explicit recursive false to remote delete', async () => {
+			const mockSshConfig = { id: 'remote-1', host: 'server.com', username: 'user' };
+			vi.mocked(getSshRemoteById).mockReturnValue(mockSshConfig as any);
+			vi.mocked(deleteRemote).mockResolvedValue({ success: true });
+
+			const handler = registeredHandlers.get('fs:delete');
+			await handler!({}, '/remote/file.txt', { sshRemoteId: 'remote-1', recursive: false });
+
+			expect(deleteRemote).toHaveBeenCalledWith('/remote/file.txt', mockSshConfig, false);
+		});
+
+		it('should throw when remote delete fails', async () => {
+			const mockSshConfig = { id: 'remote-1', host: 'server.com', username: 'user' };
+			vi.mocked(getSshRemoteById).mockReturnValue(mockSshConfig as any);
+			vi.mocked(deleteRemote).mockResolvedValue({ success: false, error: 'Permission denied' });
+
+			const handler = registeredHandlers.get('fs:delete');
+			await expect(handler!({}, '/remote/file.txt', { sshRemoteId: 'remote-1' })).rejects.toThrow(
+				'Failed to delete'
+			);
+		});
+
+		it('should use fallback error when remote delete fails without details', async () => {
+			const mockSshConfig = { id: 'remote-1', host: 'server.com', username: 'user' };
+			vi.mocked(getSshRemoteById).mockReturnValue(mockSshConfig as any);
+			vi.mocked(deleteRemote).mockResolvedValue({ success: false });
+
+			const handler = registeredHandlers.get('fs:delete');
+			await expect(handler!({}, '/remote/file.txt', { sshRemoteId: 'remote-1' })).rejects.toThrow(
+				'Failed to delete remote file'
+			);
+		});
+
+		it('should throw when local delete fails', async () => {
+			vi.mocked(fs.stat).mockRejectedValue(new Error('No such file'));
+
+			const handler = registeredHandlers.get('fs:delete');
+			await expect(handler!({}, '/missing/file.txt')).rejects.toThrow('Failed to delete');
+		});
+
+		it('should throw when delete uses a missing SSH remote', async () => {
+			vi.mocked(getSshRemoteById).mockReturnValue(undefined);
+
+			const handler = registeredHandlers.get('fs:delete');
+			await expect(
+				handler!({}, '/remote/file.txt', { sshRemoteId: 'missing-remote' })
+			).rejects.toThrow('SSH remote not found: missing-remote');
 		});
 	});
 
@@ -550,9 +894,107 @@ describe('filesystem handlers', () => {
 			expect(countItemsRemote).toHaveBeenCalledWith('/remote/folder', mockSshConfig);
 			expect(result).toEqual({ fileCount: 10, folderCount: 3 });
 		});
+
+		it('should throw when remote count fails', async () => {
+			const mockSshConfig = { id: 'remote-1', host: 'server.com', username: 'user' };
+			vi.mocked(getSshRemoteById).mockReturnValue(mockSshConfig as any);
+			vi.mocked(countItemsRemote).mockResolvedValue({ success: false, error: 'Cannot count' });
+
+			const handler = registeredHandlers.get('fs:countItems');
+			await expect(handler!({}, '/remote/folder', 'remote-1')).rejects.toThrow(
+				'Failed to count items'
+			);
+		});
+
+		it('should use fallback error when remote count fails without details', async () => {
+			const mockSshConfig = { id: 'remote-1', host: 'server.com', username: 'user' };
+			vi.mocked(getSshRemoteById).mockReturnValue(mockSshConfig as any);
+			vi.mocked(countItemsRemote).mockResolvedValue({ success: false });
+
+			const handler = registeredHandlers.get('fs:countItems');
+			await expect(handler!({}, '/remote/folder', 'remote-1')).rejects.toThrow(
+				'Failed to count remote items'
+			);
+		});
+
+		it('should throw when local count traversal fails', async () => {
+			vi.mocked(fs.readdir).mockRejectedValue(new Error('Permission denied'));
+
+			const handler = registeredHandlers.get('fs:countItems');
+			await expect(handler!({}, '/private/folder')).rejects.toThrow('Failed to count items');
+		});
+
+		it('should throw when count uses a missing SSH remote', async () => {
+			vi.mocked(getSshRemoteById).mockReturnValue(undefined);
+
+			const handler = registeredHandlers.get('fs:countItems');
+			await expect(handler!({}, '/remote/folder', 'missing-remote')).rejects.toThrow(
+				'SSH remote not found: missing-remote'
+			);
+		});
 	});
 
 	describe('fs:directorySize', () => {
+		it('should calculate local directory size while skipping ignored folders and stat failures', async () => {
+			vi.mocked(fs.readdir)
+				.mockResolvedValueOnce([
+					{ name: 'file1.txt', isDirectory: () => false, isFile: () => true },
+					{ name: 'broken.txt', isDirectory: () => false, isFile: () => true },
+					{ name: 'subfolder', isDirectory: () => true, isFile: () => false },
+					{ name: 'node_modules', isDirectory: () => true, isFile: () => false },
+					{ name: 'socket', isDirectory: () => false, isFile: () => false },
+				] as any)
+				.mockResolvedValueOnce([
+					{ name: 'file2.txt', isDirectory: () => false, isFile: () => true },
+					{ name: '__pycache__', isDirectory: () => true, isFile: () => false },
+				] as any);
+			vi.mocked(fs.stat)
+				.mockResolvedValueOnce({ size: 100 } as any)
+				.mockRejectedValueOnce(new Error('stat failed'))
+				.mockResolvedValueOnce({ size: 250 } as any);
+
+			const handler = registeredHandlers.get('fs:directorySize');
+			const result = await handler!({}, '/test/folder');
+
+			expect(result).toEqual({
+				totalSize: 350,
+				fileCount: 3,
+				folderCount: 1,
+			});
+			expect(fs.readdir).toHaveBeenCalledTimes(2);
+		});
+
+		it('should stop local directory size traversal at depth ten', async () => {
+			for (let depth = 0; depth < 10; depth++) {
+				vi.mocked(fs.readdir).mockResolvedValueOnce([
+					{ name: `level-${depth}`, isDirectory: () => true, isFile: () => false },
+				] as any);
+			}
+
+			const handler = registeredHandlers.get('fs:directorySize');
+			const result = await handler!({}, '/deep/folder');
+
+			expect(result).toEqual({
+				totalSize: 0,
+				fileCount: 0,
+				folderCount: 10,
+			});
+			expect(fs.readdir).toHaveBeenCalledTimes(10);
+		});
+
+		it('should return zero counts when local directory traversal cannot read the root', async () => {
+			vi.mocked(fs.readdir).mockRejectedValue(new Error('Permission denied'));
+
+			const handler = registeredHandlers.get('fs:directorySize');
+			const result = await handler!({}, '/private/folder');
+
+			expect(result).toEqual({
+				totalSize: 0,
+				fileCount: 0,
+				folderCount: 0,
+			});
+		});
+
 		it('should calculate directory size for remote via SSH', async () => {
 			const mockSshConfig = { id: 'remote-1', host: 'server.com', username: 'user' };
 			vi.mocked(getSshRemoteById).mockReturnValue(mockSshConfig as any);
@@ -570,6 +1012,59 @@ describe('filesystem handlers', () => {
 				fileCount: 50,
 				folderCount: 5,
 			});
+		});
+
+		it('should fall back to zero counts when remote count fails', async () => {
+			const mockSshConfig = { id: 'remote-1', host: 'server.com', username: 'user' };
+			vi.mocked(getSshRemoteById).mockReturnValue(mockSshConfig as any);
+			vi.mocked(directorySizeRemote).mockResolvedValue({ success: true, data: 4096 });
+			vi.mocked(countItemsRemote).mockResolvedValue({ success: false, error: 'count failed' });
+
+			const handler = registeredHandlers.get('fs:directorySize');
+			const result = await handler!({}, '/remote/folder', 'remote-1');
+
+			expect(result).toEqual({
+				totalSize: 4096,
+				fileCount: 0,
+				folderCount: 0,
+			});
+		});
+
+		it('should throw when remote directory size fails', async () => {
+			const mockSshConfig = { id: 'remote-1', host: 'server.com', username: 'user' };
+			vi.mocked(getSshRemoteById).mockReturnValue(mockSshConfig as any);
+			vi.mocked(directorySizeRemote).mockResolvedValue({ success: false, error: 'du failed' });
+			vi.mocked(countItemsRemote).mockResolvedValue({
+				success: true,
+				data: { fileCount: 1, folderCount: 0 },
+			});
+
+			const handler = registeredHandlers.get('fs:directorySize');
+			await expect(handler!({}, '/remote/folder', 'remote-1')).rejects.toThrow('du failed');
+		});
+
+		it('should use fallback error when remote directory size fails without details', async () => {
+			const mockSshConfig = { id: 'remote-1', host: 'server.com', username: 'user' };
+			vi.mocked(getSshRemoteById).mockReturnValue(mockSshConfig as any);
+			vi.mocked(directorySizeRemote).mockResolvedValue({ success: false });
+			vi.mocked(countItemsRemote).mockResolvedValue({
+				success: true,
+				data: { fileCount: 1, folderCount: 0 },
+			});
+
+			const handler = registeredHandlers.get('fs:directorySize');
+			await expect(handler!({}, '/remote/folder', 'remote-1')).rejects.toThrow(
+				'Failed to get remote directory size'
+			);
+		});
+
+		it('should throw when directory size uses a missing SSH remote', async () => {
+			vi.mocked(getSshRemoteById).mockReturnValue(undefined);
+
+			const handler = registeredHandlers.get('fs:directorySize');
+			await expect(handler!({}, '/remote/folder', 'missing-remote')).rejects.toThrow(
+				'SSH remote not found: missing-remote'
+			);
 		});
 	});
 
@@ -627,10 +1122,37 @@ describe('filesystem handlers', () => {
 		});
 
 		describe('SSRF protection', () => {
+			it('should return null for malformed URLs', async () => {
+				global.fetch = vi.fn();
+				const handler = registeredHandlers.get('fs:fetchImageAsBase64');
+
+				const result = await handler!({}, 'not a url');
+				expect(result).toBeNull();
+				expect(global.fetch).not.toHaveBeenCalled();
+			});
+
 			it('should block file:// protocol', async () => {
 				const handler = registeredHandlers.get('fs:fetchImageAsBase64');
 				const result = await handler!({}, 'file:///etc/passwd');
 
+				expect(result).toBeNull();
+				expect(global.fetch).not.toHaveBeenCalled();
+			});
+
+			it('should block subdomains ending in .localhost', async () => {
+				global.fetch = vi.fn();
+				const handler = registeredHandlers.get('fs:fetchImageAsBase64');
+
+				const result = await handler!({}, 'http://app.localhost/secret');
+				expect(result).toBeNull();
+				expect(global.fetch).not.toHaveBeenCalled();
+			});
+
+			it('should block metadata.google.internal', async () => {
+				global.fetch = vi.fn();
+				const handler = registeredHandlers.get('fs:fetchImageAsBase64');
+
+				const result = await handler!({}, 'http://metadata.google.internal/computeMetadata/v1/');
 				expect(result).toBeNull();
 				expect(global.fetch).not.toHaveBeenCalled();
 			});
@@ -661,11 +1183,29 @@ describe('filesystem handlers', () => {
 				expect(global.fetch).not.toHaveBeenCalled();
 			});
 
+			it('should block the full IPv4 loopback range', async () => {
+				global.fetch = vi.fn();
+				const handler = registeredHandlers.get('fs:fetchImageAsBase64');
+
+				const result = await handler!({}, 'http://127.0.0.2:9222/json');
+				expect(result).toBeNull();
+				expect(global.fetch).not.toHaveBeenCalled();
+			});
+
 			it('should block AWS metadata endpoint', async () => {
 				global.fetch = vi.fn();
 				const handler = registeredHandlers.get('fs:fetchImageAsBase64');
 
 				const result = await handler!({}, 'http://169.254.169.254/latest/meta-data/');
+				expect(result).toBeNull();
+				expect(global.fetch).not.toHaveBeenCalled();
+			});
+
+			it('should block generic link-local IPv4 addresses', async () => {
+				global.fetch = vi.fn();
+				const handler = registeredHandlers.get('fs:fetchImageAsBase64');
+
+				const result = await handler!({}, 'http://169.254.1.1/internal');
 				expect(result).toBeNull();
 				expect(global.fetch).not.toHaveBeenCalled();
 			});
@@ -688,6 +1228,15 @@ describe('filesystem handlers', () => {
 				expect(global.fetch).not.toHaveBeenCalled();
 			});
 
+			it('should block private RFC1918 ranges through 172.31.x.x', async () => {
+				global.fetch = vi.fn();
+				const handler = registeredHandlers.get('fs:fetchImageAsBase64');
+
+				const result = await handler!({}, 'http://172.31.255.255/internal');
+				expect(result).toBeNull();
+				expect(global.fetch).not.toHaveBeenCalled();
+			});
+
 			it('should block private RFC1918 ranges (192.168.x.x)', async () => {
 				global.fetch = vi.fn();
 				const handler = registeredHandlers.get('fs:fetchImageAsBase64');
@@ -706,6 +1255,29 @@ describe('filesystem handlers', () => {
 				expect(global.fetch).not.toHaveBeenCalled();
 			});
 
+			it('should block IPv6 loopback requests', async () => {
+				global.fetch = vi.fn();
+				const handler = registeredHandlers.get('fs:fetchImageAsBase64');
+
+				const result = await handler!({}, 'http://[::1]/secret');
+				expect(result).toBeNull();
+				expect(global.fetch).not.toHaveBeenCalled();
+			});
+
+			it('should return null when an image response omits content type', async () => {
+				const mockResponse = {
+					ok: true,
+					arrayBuffer: () => Promise.resolve(new ArrayBuffer(8)),
+					headers: { get: () => null },
+				};
+				global.fetch = vi.fn().mockResolvedValue(mockResponse);
+
+				const handler = registeredHandlers.get('fs:fetchImageAsBase64');
+				const result = await handler!({}, 'https://cdn.example.com/image');
+
+				expect(result).toBeNull();
+			});
+
 			it('should allow legitimate external HTTPS image URLs', async () => {
 				const mockArrayBuffer = new ArrayBuffer(8);
 				const mockResponse = {
@@ -719,6 +1291,22 @@ describe('filesystem handlers', () => {
 				const result = await handler!({}, 'https://cdn.example.com/image.png');
 
 				expect(global.fetch).toHaveBeenCalledWith('https://cdn.example.com/image.png');
+				expect(result).toMatch(/^data:image\/png;base64,/);
+			});
+
+			it('should allow public IPv4 image URLs', async () => {
+				const mockArrayBuffer = new ArrayBuffer(8);
+				const mockResponse = {
+					ok: true,
+					arrayBuffer: () => Promise.resolve(mockArrayBuffer),
+					headers: { get: () => 'image/png' },
+				};
+				global.fetch = vi.fn().mockResolvedValue(mockResponse);
+
+				const handler = registeredHandlers.get('fs:fetchImageAsBase64');
+				const result = await handler!({}, 'https://8.8.8.8/image.png');
+
+				expect(global.fetch).toHaveBeenCalledWith('https://8.8.8.8/image.png');
 				expect(result).toMatch(/^data:image\/png;base64,/);
 			});
 		});

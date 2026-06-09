@@ -15,6 +15,7 @@ import {
 	getAllSessionStorages,
 	clearStorageRegistry,
 } from '../../../main/agents';
+import { logger } from '../../../main/utils/logger';
 import type { ToolType } from '../../../shared/types';
 
 vi.mock('os', async () => {
@@ -89,6 +90,106 @@ class MockSessionStorage implements AgentSessionStorage {
 	}
 }
 
+const EXPECTED_INFO_LOGS = [
+	{
+		context: 'OpenCodeSessionStorage',
+		message: /^OpenCode project directory not found(?::| on remote:)/,
+	},
+	{
+		context: 'OpenCodeSessionStorage',
+		message: /^No OpenCode project found for path on remote:/,
+	},
+	{
+		context: 'CodexSessionStorage',
+		message: /^No Codex sessions found(?: on remote)?$/,
+	},
+	{
+		context: 'FactoryDroidSessionStorage',
+		message: /^No Factory Droid sessions directory(?: found on remote)? for project:/,
+	},
+];
+
+const EXPECTED_WARN_LOGS = [
+	{
+		context: 'AgentSessionStorage',
+		message: /^Unrecognized agent ID requested for session storage:/,
+	},
+	{
+		context: 'OpenCodeSessionStorage',
+		message: /^No messages found in OpenCode session$/,
+	},
+	{
+		context: 'OpenCodeSessionStorage',
+		message: /^Delete message pair not supported for SSH remote sessions$/,
+	},
+	{
+		context: 'CodexSessionStorage',
+		message: /^Codex session file not found/,
+	},
+	{
+		context: 'CodexSessionStorage',
+		message: /^Delete message pair not supported for SSH remote sessions$/,
+	},
+	{
+		context: 'FactoryDroidSessionStorage',
+		message: /^Delete message pair not supported for SSH remote sessions$/,
+	},
+];
+
+const EXPECTED_ERROR_LOGS = [
+	{
+		context: 'FactoryDroidSessionStorage',
+		message: /^Error deleting message pair from Factory Droid session$/,
+	},
+];
+
+const normalizeLoggerContext = (context: unknown) =>
+	typeof context === 'string' ? context.replace(/^\[/, '').replace(/\]$/, '') : context;
+
+const isExpectedLoggerCall = (
+	call: unknown[],
+	expectedLogs: Array<{ context: string; message: RegExp }>
+) => {
+	const [message, context] = call;
+	return expectedLogs.some(
+		(expected) =>
+			typeof message === 'string' &&
+			expected.message.test(message) &&
+			normalizeLoggerContext(context) === expected.context
+	);
+};
+
+const formatLoggerCall = (call: unknown[]) => {
+	const [message, context, data] = call;
+	return `${String(context)} | ${String(message)}${data === undefined ? '' : ` | ${JSON.stringify(data)}`}`;
+};
+
+beforeEach(() => {
+	vi.spyOn(logger, 'info').mockImplementation(() => undefined);
+	vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+	vi.spyOn(logger, 'error').mockImplementation(() => undefined);
+});
+
+afterEach(() => {
+	try {
+		const unexpectedInfo = vi
+			.mocked(logger.info)
+			.mock.calls.filter((call) => !isExpectedLoggerCall(call, EXPECTED_INFO_LOGS));
+		const unexpectedWarn = vi
+			.mocked(logger.warn)
+			.mock.calls.filter((call) => !isExpectedLoggerCall(call, EXPECTED_WARN_LOGS));
+		const unexpectedError = vi
+			.mocked(logger.error)
+			.mock.calls.filter((call) => !isExpectedLoggerCall(call, EXPECTED_ERROR_LOGS));
+
+		expect(unexpectedInfo.map(formatLoggerCall)).toEqual([]);
+		expect(unexpectedWarn.map(formatLoggerCall)).toEqual([]);
+		expect(unexpectedError.map(formatLoggerCall)).toEqual([]);
+	} finally {
+		vi.restoreAllMocks();
+	}
+});
+
 describe('agent-session-storage', () => {
 	beforeEach(() => {
 		clearStorageRegistry();
@@ -116,6 +217,19 @@ describe('agent-session-storage', () => {
 		it('should return null for unregistered agent', () => {
 			const result = getSessionStorage('unknown-agent' as ToolType);
 			expect(result).toBeNull();
+			expect(logger.warn).toHaveBeenCalledWith(
+				'Unrecognized agent ID requested for session storage: "unknown-agent"',
+				'[AgentSessionStorage]'
+			);
+		});
+
+		it('should not warn when a recognized agent has no registered storage', () => {
+			const warnCallCount = vi.mocked(logger.warn).mock.calls.length;
+
+			const result = getSessionStorage('codex');
+
+			expect(result).toBeNull();
+			expect(vi.mocked(logger.warn).mock.calls).toHaveLength(warnCallCount);
 		});
 
 		it('should return false for hasSessionStorage on unregistered agent', () => {

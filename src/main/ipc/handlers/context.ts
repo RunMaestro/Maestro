@@ -242,10 +242,15 @@ export function registerContextHandlers(deps: ContextHandlerDependencies): void 
 				}
 
 				// Track this grooming session
-				activeGroomingSessions.set(groomerSessionId, {
+				const groomingSession: {
+					groomerSessionId: string;
+					startTime: number;
+					cleanup?: () => void;
+				} = {
 					groomerSessionId,
 					startTime: Date.now(),
-				});
+				};
+				activeGroomingSessions.set(groomerSessionId, groomingSession);
 
 				// Set up timeout cleanup
 				const timeoutId = setTimeout(() => {
@@ -254,10 +259,7 @@ export function registerContextHandlers(deps: ContextHandlerDependencies): void 
 				}, GROOMING_TIMEOUT_MS);
 
 				// Store cleanup function
-				const groomingSession = activeGroomingSessions.get(groomerSessionId);
-				if (groomingSession) {
-					groomingSession.cleanup = () => clearTimeout(timeoutId);
-				}
+				groomingSession.cleanup = () => clearTimeout(timeoutId);
 
 				logger.info('Grooming session created', LOG_CONTEXT, {
 					groomerSessionId,

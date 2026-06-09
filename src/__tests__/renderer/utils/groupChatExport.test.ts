@@ -1,5 +1,8 @@
-import { describe, it, expect } from 'vitest';
-import { generateGroupChatExportHtml } from '../../../renderer/utils/groupChatExport';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import {
+	downloadGroupChatExport,
+	generateGroupChatExportHtml,
+} from '../../../renderer/utils/groupChatExport';
 import type {
 	GroupChat,
 	GroupChatMessage,
@@ -98,6 +101,16 @@ function createMockHistory(): GroupChatHistoryEntry[] {
 		},
 	];
 }
+
+type GroupChatImagesMock = ReturnType<typeof vi.fn<[string], Promise<Record<string, string>>>>;
+
+type TestWindow = typeof window & {
+	maestro?: {
+		groupChat?: {
+			getImages?: GroupChatImagesMock;
+		};
+	};
+};
 
 describe('groupChatExport', () => {
 	describe('generateGroupChatExportHtml', () => {
@@ -278,6 +291,18 @@ describe('groupChatExport', () => {
 				expect(html).toContain('Agent Replies');
 				expect(html).toContain('Duration');
 			});
+
+			it('formats durations longer than an hour', () => {
+				const groupChat = createMockGroupChat();
+				const messages: GroupChatMessage[] = [
+					{ timestamp: '2023-12-21T10:00:00Z', from: 'user', content: 'Start' },
+					{ timestamp: '2023-12-21T11:42:00Z', from: 'Agent1', content: 'Done' },
+				];
+
+				const html = generateGroupChatExportHtml(groupChat, messages, [], {}, mockTheme);
+
+				expect(html).toContain('<div class="stat-value">1h 42m</div>');
+			});
 		});
 
 		describe('message rendering', () => {
@@ -356,6 +381,17 @@ describe('groupChatExport', () => {
 
 				// User messages should use theme accent color
 				expect(html).toContain(`style="color: ${mockTheme.colors.accent}"`);
+			});
+
+			it('uses theme warning color for moderator messages', () => {
+				const groupChat = createMockGroupChat();
+				const messages: GroupChatMessage[] = [
+					{ timestamp: '2023-12-21T10:00:00Z', from: 'moderator', content: 'Moderating' },
+				];
+
+				const html = generateGroupChatExportHtml(groupChat, messages, [], {}, mockTheme);
+
+				expect(html).toContain(`style="color: ${mockTheme.colors.warning}"`);
 			});
 		});
 
@@ -719,6 +755,120 @@ describe('groupChatExport', () => {
 
 				expect(html).toContain('@media print');
 			});
+		});
+	});
+
+	describe('downloadGroupChatExport', () => {
+		let originalMaestro: TestWindow['maestro'];
+		const hadCreateObjectURL = 'createObjectURL' in URL;
+		const hadRevokeObjectURL = 'revokeObjectURL' in URL;
+		const originalCreateObjectURL = URL.createObjectURL;
+		const originalRevokeObjectURL = URL.revokeObjectURL;
+
+		beforeEach(() => {
+			originalMaestro = (window as TestWindow).maestro;
+		});
+
+		afterEach(() => {
+			if (originalMaestro) {
+				(window as TestWindow).maestro = originalMaestro;
+			} else {
+				Reflect.deleteProperty(window, 'maestro');
+			}
+
+			if (hadCreateObjectURL) {
+				Object.defineProperty(URL, 'createObjectURL', {
+					configurable: true,
+					value: originalCreateObjectURL,
+				});
+			} else {
+				Reflect.deleteProperty(URL, 'createObjectURL');
+			}
+
+			if (hadRevokeObjectURL) {
+				Object.defineProperty(URL, 'revokeObjectURL', {
+					configurable: true,
+					value: originalRevokeObjectURL,
+				});
+			} else {
+				Reflect.deleteProperty(URL, 'revokeObjectURL');
+			}
+
+			vi.restoreAllMocks();
+		});
+
+		const installDownloadMocks = () => {
+			const createObjectURL = vi.fn<[Blob], string>(() => 'blob:group-chat-export');
+			const revokeObjectURL = vi.fn<[string], void>();
+			Object.defineProperty(URL, 'createObjectURL', {
+				configurable: true,
+				value: createObjectURL,
+			});
+			Object.defineProperty(URL, 'revokeObjectURL', {
+				configurable: true,
+				value: revokeObjectURL,
+			});
+
+			const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+			const appendSpy = vi.spyOn(document.body, 'appendChild');
+			const removeSpy = vi.spyOn(document.body, 'removeChild');
+
+			return { appendSpy, clickSpy, createObjectURL, removeSpy, revokeObjectURL };
+		};
+
+		const setGroupChatImagesMock = (getImages: GroupChatImagesMock) => {
+			const testWindow = window as TestWindow;
+			testWindow.maestro = {
+				...(testWindow.maestro ?? {}),
+				groupChat: {
+					...(testWindow.maestro?.groupChat ?? {}),
+					getImages,
+				},
+			};
+		};
+
+		it('fetches images, creates an HTML blob, clicks a sanitized download link, and revokes the URL', async () => {
+			const { appendSpy, clickSpy, createObjectURL, removeSpy, revokeObjectURL } =
+				installDownloadMocks();
+			const getImages = vi
+				.fn<[string], Promise<Record<string, string>>>()
+				.mockResolvedValue({ 'screenshot.png': 'data:image/png;base64,abc123' });
+			setGroupChatImagesMock(getImages);
+			const groupChat = createMockGroupChat({ name: 'My Export Chat!' });
+			const messages: GroupChatMessage[] = [
+				{
+					timestamp: '2023-12-21T10:00:00Z',
+					from: 'Agent1',
+					content: '![screenshot](screenshot.png)',
+				},
+			];
+
+			await downloadGroupChatExport(groupChat, messages, createMockHistory(), mockTheme);
+
+			expect(getImages).toHaveBeenCalledWith(groupChat.id);
+			expect(createObjectURL).toHaveBeenCalledWith(expect.any(Blob));
+			const link = appendSpy.mock.calls[0][0] as HTMLAnchorElement;
+			expect(link.href).toBe('blob:group-chat-export');
+			expect(link.download).toBe('my-export-chat--export.html');
+			expect(clickSpy).toHaveBeenCalledTimes(1);
+			expect(removeSpy).toHaveBeenCalledWith(link);
+			expect(revokeObjectURL).toHaveBeenCalledWith('blob:group-chat-export');
+		});
+
+		it('still downloads the export when image fetching fails', async () => {
+			const { clickSpy, createObjectURL } = installDownloadMocks();
+			const imageError = new Error('image IPC failed');
+			const getImages = vi
+				.fn<[string], Promise<Record<string, string>>>()
+				.mockRejectedValue(imageError);
+			const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+			setGroupChatImagesMock(getImages);
+
+			await downloadGroupChatExport(createMockGroupChat(), createMockMessages(1), [], mockTheme);
+
+			expect(consoleWarn).toHaveBeenCalledWith('Failed to fetch images for export:', imageError);
+			expect(createObjectURL).toHaveBeenCalledWith(expect.any(Blob));
+			expect(clickSpy).toHaveBeenCalledTimes(1);
 		});
 	});
 });

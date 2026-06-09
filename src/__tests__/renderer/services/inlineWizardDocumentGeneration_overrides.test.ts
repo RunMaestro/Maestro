@@ -5,7 +5,7 @@
  * are correctly propagated to the process manager during document generation.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Mock window.maestro
 const mockMaestro = {
@@ -31,8 +31,15 @@ vi.stubGlobal('window', { maestro: mockMaestro });
 import { generateInlineDocuments } from '../../../renderer/services/inlineWizardDocumentGeneration';
 
 describe('inlineWizardDocumentGeneration - Session Overrides', () => {
+	let consoleLog: ReturnType<typeof vi.spyOn>;
+
 	beforeEach(() => {
 		vi.clearAllMocks();
+		consoleLog = vi.spyOn(console, 'log').mockImplementation(() => {});
+	});
+
+	afterEach(() => {
+		consoleLog.mockRestore();
 	});
 
 	it('should pass session overrides to process.spawn', async () => {
@@ -75,15 +82,12 @@ describe('inlineWizardDocumentGeneration - Session Overrides', () => {
 		// Clean up
 		const spawnSessionId = spawnCall.sessionId;
 		const exitCallback = mockMaestro.process.onExit.mock.calls[0][0];
-		exitCallback(spawnSessionId, 0);
+		exitCallback(spawnSessionId, 2);
 
-		// We don't need to await the full promise since we just wanted to check spawn args
-		// But waiting for it ensures we don't leave floating promises
-		try {
-			await generationPromise;
-		} catch (e) {
-			// Ignore expected errors from incomplete mock setup (parsing etc)
-		}
+		await expect(generationPromise).resolves.toMatchObject({
+			success: false,
+			error: 'Agent exited with code 2',
+		});
 	});
 
 	it('should handle missing overrides gracefully', async () => {
@@ -122,12 +126,11 @@ describe('inlineWizardDocumentGeneration - Session Overrides', () => {
 		// Clean up
 		const spawnSessionId = spawnCall.sessionId;
 		const exitCallback = mockMaestro.process.onExit.mock.calls[0][0];
-		exitCallback(spawnSessionId, 0);
+		exitCallback(spawnSessionId, 2);
 
-		try {
-			await generationPromise;
-		} catch (e) {
-			// Ignore
-		}
+		await expect(generationPromise).resolves.toMatchObject({
+			success: false,
+			error: 'Agent exited with code 2',
+		});
 	});
 });

@@ -120,16 +120,29 @@ vi.mock('lucide-react', () => ({
 
 // Mock @tanstack/react-virtual for virtualization
 vi.mock('@tanstack/react-virtual', () => ({
-	useVirtualizer: ({ count }: { count: number }) => ({
-		getVirtualItems: () =>
-			Array.from({ length: count }, (_, i) => ({
-				index: i,
-				start: i * 28,
-				size: 28,
-				key: i,
-			})),
-		getTotalSize: () => count * 28,
-	}),
+	useVirtualizer: ({
+		count,
+		getScrollElement,
+		estimateSize,
+	}: {
+		count: number;
+		getScrollElement?: () => Element | null;
+		estimateSize?: () => number;
+	}) => {
+		getScrollElement?.();
+		const rowHeight = estimateSize?.() ?? 28;
+
+		return {
+			getVirtualItems: () =>
+				Array.from({ length: count }, (_, i) => ({
+					index: i,
+					start: i * rowHeight,
+					size: rowHeight,
+					key: i,
+				})),
+			getTotalSize: () => count * rowHeight,
+		};
+	},
 }));
 
 // Mock createPortal
@@ -409,6 +422,18 @@ describe('FileExplorerPanel', () => {
 			);
 		});
 
+		it('clears the filter through the registered layer escape handler', () => {
+			render(
+				<FileExplorerPanel {...defaultProps} fileTreeFilterOpen={true} fileTreeFilter="package" />
+			);
+
+			const layerConfig = mockRegisterLayer.mock.calls[0][0];
+			layerConfig.onEscape();
+
+			expect(defaultProps.setFileTreeFilterOpen).toHaveBeenCalledWith(false);
+			expect(defaultProps.setFileTreeFilter).toHaveBeenCalledWith('');
+		});
+
 		it('unregisters layer when filter is closed', () => {
 			const { rerender } = render(
 				<FileExplorerPanel {...defaultProps} fileTreeFilterOpen={true} />
@@ -422,6 +447,18 @@ describe('FileExplorerPanel', () => {
 		it('updates layer handler when filter dependencies change', () => {
 			render(<FileExplorerPanel {...defaultProps} fileTreeFilterOpen={true} />);
 			expect(mockUpdateLayerHandler).toHaveBeenCalled();
+		});
+
+		it('clears the filter through the updated layer handler', () => {
+			render(
+				<FileExplorerPanel {...defaultProps} fileTreeFilterOpen={true} fileTreeFilter="src" />
+			);
+
+			const updatedHandler = mockUpdateLayerHandler.mock.calls[0][1];
+			updatedHandler();
+
+			expect(defaultProps.setFileTreeFilterOpen).toHaveBeenCalledWith(false);
+			expect(defaultProps.setFileTreeFilter).toHaveBeenCalledWith('');
 		});
 
 		it('shows no results message when filter has no matches', () => {
@@ -442,6 +479,48 @@ describe('FileExplorerPanel', () => {
 		it('renders refresh button', () => {
 			render(<FileExplorerPanel {...defaultProps} />);
 			expect(screen.getByTestId('refresh-icon')).toBeInTheDocument();
+		});
+
+		it('toggles hidden files and keeps .maestro visible by default', () => {
+			const treeWithHiddenFiles = [
+				{ name: '.env', type: 'file' as const },
+				{ name: '.maestro', type: 'folder' as const, children: [] },
+				{ name: 'visible.ts', type: 'file' as const },
+			];
+
+			render(<FileExplorerPanel {...defaultProps} filteredFileTree={treeWithHiddenFiles} />);
+
+			expect(screen.queryByText('.env')).not.toBeInTheDocument();
+			expect(screen.getByText('.maestro')).toBeInTheDocument();
+			expect(screen.getByText('visible.ts')).toBeInTheDocument();
+
+			fireEvent.click(screen.getByTitle('Show dotfiles'));
+
+			expect(defaultProps.setShowHiddenFiles).toHaveBeenCalledWith(true);
+		});
+
+		it('shows hidden files when enabled', () => {
+			const treeWithHiddenFiles = [
+				{ name: '.env', type: 'file' as const },
+				{ name: 'visible.ts', type: 'file' as const },
+			];
+
+			render(
+				<FileExplorerPanel
+					{...defaultProps}
+					filteredFileTree={treeWithHiddenFiles}
+					showHiddenFiles={true}
+				/>
+			);
+
+			expect(screen.getByTitle('Hide dotfiles')).toBeInTheDocument();
+			expect(screen.getByText('.env')).toBeInTheDocument();
+		});
+
+		it('treats a missing filtered tree as empty', () => {
+			render(<FileExplorerPanel {...defaultProps} filteredFileTree={null as any} />);
+
+			expect(screen.getByText('No files found')).toBeInTheDocument();
 		});
 
 		it('renders expand all button with correct title', () => {
@@ -488,6 +567,12 @@ describe('FileExplorerPanel', () => {
 			expect(screen.getByTitle('Auto-refresh every 20s')).toBeInTheDocument();
 		});
 
+		it('uses the default auto-refresh interval for unmigrated sessions', () => {
+			const session = createMockSession({ fileTreeAutoRefreshInterval: undefined });
+			render(<FileExplorerPanel {...defaultProps} session={session} />);
+			expect(screen.getByTitle('Auto-refresh every 180s')).toBeInTheDocument();
+		});
+
 		it('applies accent color when auto-refresh is active', () => {
 			const session = createMockSession({ fileTreeAutoRefreshInterval: 20 });
 			const { container } = render(<FileExplorerPanel {...defaultProps} session={session} />);
@@ -500,6 +585,33 @@ describe('FileExplorerPanel', () => {
 			const refreshButton = screen.getByTitle('Refresh file tree');
 			fireEvent.click(refreshButton);
 			expect(defaultProps.refreshFileTree).toHaveBeenCalledWith('session-1');
+		});
+
+		it('copies the project root when the header path is double-clicked', () => {
+			const mockClipboard = { writeText: vi.fn().mockResolvedValue(undefined) };
+			Object.defineProperty(navigator, 'clipboard', { value: mockClipboard, writable: true });
+
+			render(<FileExplorerPanel {...defaultProps} />);
+
+			fireEvent.doubleClick(screen.getByTitle('/Users/test/project'));
+
+			expect(mockClipboard.writeText).toHaveBeenCalledWith('/Users/test/project');
+			expect(defaultProps.onShowFlash).toHaveBeenCalledWith('Path copied to clipboard');
+		});
+
+		it('opens the last document graph from the header shortcut', () => {
+			const onOpenLastDocumentGraph = vi.fn();
+			render(
+				<FileExplorerPanel
+					{...defaultProps}
+					lastGraphFocusFile="README.md"
+					onOpenLastDocumentGraph={onOpenLastDocumentGraph}
+				/>
+			);
+
+			fireEvent.click(screen.getByTitle('Open Last Document Graph'));
+
+			expect(onOpenLastDocumentGraph).toHaveBeenCalledTimes(1);
 		});
 
 		it('shows flash notification on refresh with 0 changes', async () => {
@@ -993,6 +1105,36 @@ describe('FileExplorerPanel', () => {
 
 			consoleSpy.mockRestore();
 		});
+
+		it('skips duplicate full paths that would collide after flattening', () => {
+			const treeWithDuplicatePaths = [
+				{ name: 'src/index.ts', type: 'file' as const },
+				{
+					name: 'src',
+					type: 'folder' as const,
+					children: [{ name: 'index.ts', type: 'file' as const }],
+				},
+			];
+			const session = createMockSession({ fileExplorerExpanded: ['src'] });
+			const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+			render(
+				<FileExplorerPanel
+					{...defaultProps}
+					session={session}
+					filteredFileTree={treeWithDuplicatePaths}
+				/>
+			);
+
+			expect(consoleSpy).toHaveBeenCalledWith(
+				'[FileExplorer] Duplicate path skipped:',
+				'src/index.ts'
+			);
+			expect(screen.getByText('src/index.ts')).toBeInTheDocument();
+			expect(screen.queryByText('index.ts')).not.toBeInTheDocument();
+
+			consoleSpy.mockRestore();
+		});
 	});
 
 	describe('File and Folder Clicks', () => {
@@ -1015,6 +1157,23 @@ describe('FileExplorerPanel', () => {
 
 			expect(defaultProps.setSelectedFileIndex).toHaveBeenCalled();
 			expect(defaultProps.setActiveFocus).toHaveBeenCalledWith('right');
+		});
+
+		it('keeps filter input focus when clicking a file while filtering', () => {
+			const { container } = render(
+				<FileExplorerPanel {...defaultProps} fileTreeFilter="package" />
+			);
+			const fileItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+				el.textContent?.includes('package.json')
+			);
+			const mouseDown = new MouseEvent('mousedown', {
+				bubbles: true,
+				cancelable: true,
+			});
+
+			fileItem!.dispatchEvent(mouseDown);
+
+			expect(mouseDown.defaultPrevented).toBe(true);
 		});
 
 		it('calls handleFileClick on double-click of file', async () => {
@@ -1062,7 +1221,7 @@ describe('FileExplorerPanel', () => {
 			});
 			const props = {
 				...defaultProps,
-				activeSession: sessionWithFileTab,
+				session: sessionWithFileTab,
 			};
 			const { container } = render(<FileExplorerPanel {...props} />);
 			const selectedItem = container.querySelector('[class*="bg-white/10"]');
@@ -1224,6 +1383,22 @@ describe('FileExplorerPanel', () => {
 			expect(defaultProps.refreshFileTree).toHaveBeenCalledWith('session-1');
 		});
 
+		it('lets terminal sessions choose a new directory after file tree errors', () => {
+			const session = createMockSession({
+				toolType: 'terminal',
+				fileTreeError: 'Permission denied',
+			});
+			render(<FileExplorerPanel {...defaultProps} session={session} />);
+
+			fireEvent.click(screen.getByText('Select New Directory'));
+
+			expect(defaultProps.updateSessionWorkingDirectory).toHaveBeenCalledWith(
+				'session-1',
+				expect.any(Function)
+			);
+			expect(screen.queryByText('Retry Connection')).not.toBeInTheDocument();
+		});
+
 		it('applies error color to error message', () => {
 			const session = createMockSession({
 				fileTreeError: 'Error message',
@@ -1243,6 +1418,32 @@ describe('FileExplorerPanel', () => {
 			expect(screen.queryByText('src')).not.toBeInTheDocument();
 			expect(screen.queryByText('package.json')).not.toBeInTheDocument();
 		});
+
+		it('shows retry countdown and clears scheduled retry when retry now is clicked', async () => {
+			const retryAt = Date.now() + 5000;
+			const session = createMockSession({
+				fileTreeError: 'SSH connection failed',
+				fileTreeRetryAt: retryAt,
+			});
+
+			render(<FileExplorerPanel {...defaultProps} session={session} />);
+
+			expect(screen.getByText('Retrying in 5s...')).toBeInTheDocument();
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(1000);
+			});
+
+			expect(screen.getByText('Retrying in 4s...')).toBeInTheDocument();
+
+			fireEvent.click(screen.getByText('Retry Now'));
+
+			expect(defaultProps.setSessions).toHaveBeenCalledWith(expect.any(Function));
+			const updateSessions = vi.mocked(defaultProps.setSessions).mock.calls[0][0] as (
+				sessions: Session[]
+			) => Session[];
+			expect(updateSessions([session])[0].fileTreeRetryAt).toBeUndefined();
+		});
 	});
 
 	describe('Empty State', () => {
@@ -1251,6 +1452,57 @@ describe('FileExplorerPanel', () => {
 			render(<FileExplorerPanel {...defaultProps} session={session} filteredFileTree={[]} />);
 
 			expect(screen.getByText('Loading files...')).toBeInTheDocument();
+		});
+
+		it('shows remote loading progress counters and current folder', () => {
+			const session = createMockSession({
+				fileTree: [],
+				fileTreeLoading: true,
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+				fileTreeLoadingProgress: {
+					directoriesScanned: 12,
+					filesFound: 3456,
+					currentDirectory: '/remote/workspace/src',
+				},
+			});
+
+			render(<FileExplorerPanel {...defaultProps} session={session} filteredFileTree={[]} />);
+
+			expect(screen.getByText('Loading remote files...')).toBeInTheDocument();
+			expect(screen.getByText('3,456')).toBeInTheDocument();
+			expect(screen.getByText('12')).toBeInTheDocument();
+			expect(screen.getByText('scanning: src/')).toHaveAttribute('title', '/remote/workspace/src');
+		});
+
+		it('shows root folder fallback and hides zero progress counters', () => {
+			const session = createMockSession({
+				fileTree: [],
+				fileTreeLoading: true,
+				fileTreeLoadingProgress: {
+					directoriesScanned: 0,
+					filesFound: 0,
+					currentDirectory: '/',
+				},
+			});
+
+			render(<FileExplorerPanel {...defaultProps} session={session} filteredFileTree={[]} />);
+
+			expect(screen.getByText('Loading files...')).toBeInTheDocument();
+			expect(screen.queryByText('files in')).not.toBeInTheDocument();
+			expect(screen.getByText('scanning: //')).toHaveAttribute('title', '/');
+		});
+
+		it('hides progress counters when loading progress is unavailable', () => {
+			const session = createMockSession({
+				fileTree: [],
+				fileTreeLoading: true,
+				fileTreeLoadingProgress: undefined,
+			});
+
+			render(<FileExplorerPanel {...defaultProps} session={session} filteredFileTree={[]} />);
+
+			expect(screen.getByText('Loading files...')).toBeInTheDocument();
+			expect(screen.queryByText('files in')).not.toBeInTheDocument();
 		});
 
 		it('shows no files found when fileTree is empty and not loading', () => {
@@ -1271,6 +1523,25 @@ describe('FileExplorerPanel', () => {
 			);
 
 			expect(screen.getByText('No files found')).toBeInTheDocument();
+		});
+
+		it('formats zero-byte singular status bar values', () => {
+			const session = createMockSession({
+				fileTreeStats: {
+					fileCount: 1,
+					folderCount: 1,
+					totalSize: 0,
+					lastUpdated: '2024-01-01T00:00:00.000Z',
+				},
+			});
+
+			render(<FileExplorerPanel {...defaultProps} session={session} />);
+
+			expect(screen.getByText('0 B')).toBeInTheDocument();
+			expect(screen.getByText('file,')).toBeInTheDocument();
+			expect(screen.getByText('folder')).toBeInTheDocument();
+			expect(screen.queryByText('files,')).not.toBeInTheDocument();
+			expect(screen.queryByText('folders')).not.toBeInTheDocument();
 		});
 	});
 
@@ -1680,6 +1951,24 @@ describe('FileExplorerPanel', () => {
 			expect(onFocusFileInGraph).toHaveBeenCalledWith('README.md');
 		});
 
+		it('previews a file from the context menu and closes the menu', () => {
+			const { container } = render(<FileExplorerPanel {...defaultProps} />);
+
+			const fileItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+				el.textContent?.includes('package.json')
+			);
+			fireEvent.contextMenu(fileItem!, { clientX: 100, clientY: 200 });
+
+			fireEvent.click(screen.getByText('Preview'));
+
+			expect(defaultProps.handleFileClick).toHaveBeenCalledWith(
+				expect.objectContaining({ name: 'package.json', type: 'file' }),
+				'package.json',
+				defaultProps.session
+			);
+			expect(screen.queryByText('Preview')).not.toBeInTheDocument();
+		});
+
 		it('copies path to clipboard when Copy Path is clicked', async () => {
 			const mockClipboard = { writeText: vi.fn().mockResolvedValue(undefined) };
 			Object.defineProperty(navigator, 'clipboard', { value: mockClipboard, writable: true });
@@ -1735,6 +2024,22 @@ describe('FileExplorerPanel', () => {
 			expect(clickOutsideCallback).toBeInstanceOf(Function);
 		});
 
+		it('closes context menu when the click-outside callback runs', () => {
+			clickOutsideCallback = null;
+			const { container } = render(<FileExplorerPanel {...defaultProps} />);
+			const fileItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+				el.textContent?.includes('package.json')
+			);
+			fireEvent.contextMenu(fileItem!, { clientX: 100, clientY: 200 });
+			expect(screen.getByText('Copy Path')).toBeInTheDocument();
+
+			act(() => {
+				clickOutsideCallback?.();
+			});
+
+			expect(screen.queryByText('Copy Path')).not.toBeInTheDocument();
+		});
+
 		it('shows Rename option in context menu', () => {
 			const { container } = render(<FileExplorerPanel {...defaultProps} />);
 			const fileItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
@@ -1768,6 +2073,46 @@ describe('FileExplorerPanel', () => {
 			// Modal title is now "Rename File" (capital F)
 			expect(screen.getByText('Rename File')).toBeInTheDocument();
 			expect(screen.getByDisplayValue('package.json')).toBeInTheDocument();
+		});
+
+		it('selects the filename stem when opening file rename', () => {
+			const rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+				callback(0);
+				return 1;
+			});
+			const setSelectionRangeSpy = vi.spyOn(HTMLInputElement.prototype, 'setSelectionRange');
+
+			const { container } = render(<FileExplorerPanel {...defaultProps} />);
+			const fileItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+				el.textContent?.includes('package.json')
+			);
+			fireEvent.contextMenu(fileItem!, { clientX: 100, clientY: 200 });
+			fireEvent.click(screen.getByText('Rename'));
+
+			expect(setSelectionRangeSpy).toHaveBeenCalledWith(0, 'package'.length);
+
+			setSelectionRangeSpy.mockRestore();
+			rafSpy.mockRestore();
+		});
+
+		it('selects the full folder name when opening folder rename', () => {
+			const rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+				callback(0);
+				return 1;
+			});
+			const selectSpy = vi.spyOn(HTMLInputElement.prototype, 'select').mockImplementation(() => {});
+
+			const { container } = render(<FileExplorerPanel {...defaultProps} />);
+			const folderItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+				el.textContent?.includes('src')
+			);
+			fireEvent.contextMenu(folderItem!, { clientX: 100, clientY: 200 });
+			fireEvent.click(screen.getByText('Rename'));
+
+			expect(selectSpy).toHaveBeenCalled();
+
+			selectSpy.mockRestore();
+			rafSpy.mockRestore();
 		});
 
 		it('opens delete modal when Delete is clicked', async () => {
@@ -1813,6 +2158,135 @@ describe('FileExplorerPanel', () => {
 			fireEvent.click(cancelButton);
 
 			expect(screen.queryByText('Rename File')).not.toBeInTheDocument();
+		});
+
+		it('keeps rename modal open without filesystem changes when the new name is blank', async () => {
+			const mockFs = { rename: vi.fn().mockResolvedValue(undefined) };
+			(window as any).maestro = { platform: 'darwin', fs: mockFs };
+			const { container } = render(<FileExplorerPanel {...defaultProps} />);
+			const fileItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+				el.textContent?.includes('package.json')
+			);
+			fireEvent.contextMenu(fileItem!, { clientX: 100, clientY: 200 });
+			fireEvent.click(screen.getByText('Rename'));
+
+			fireEvent.change(screen.getByDisplayValue('package.json'), {
+				target: { value: '   ' },
+			});
+			await act(async () => {
+				fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
+			});
+
+			expect(mockFs.rename).not.toHaveBeenCalled();
+			expect(screen.getByText('Rename File')).toBeInTheDocument();
+		});
+
+		it('disables rename submission when the name is unchanged', () => {
+			const mockFs = { rename: vi.fn().mockResolvedValue(undefined) };
+			(window as any).maestro = { platform: 'darwin', fs: mockFs };
+			const { container } = render(<FileExplorerPanel {...defaultProps} />);
+			const fileItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+				el.textContent?.includes('package.json')
+			);
+			fireEvent.contextMenu(fileItem!, { clientX: 100, clientY: 200 });
+			fireEvent.click(screen.getByText('Rename'));
+
+			const input = screen.getByDisplayValue('package.json');
+			const renameButton = screen.getByRole('button', { name: 'Rename' });
+			expect(renameButton).toBeDisabled();
+
+			fireEvent.keyDown(input, { key: 'Enter' });
+
+			expect(mockFs.rename).not.toHaveBeenCalled();
+			expect(screen.getByText('Rename File')).toBeInTheDocument();
+		});
+
+		it('shows rename validation errors for invalid names', async () => {
+			const mockFs = { rename: vi.fn().mockResolvedValue(undefined) };
+			(window as any).maestro = { platform: 'darwin', fs: mockFs };
+			const { container } = render(<FileExplorerPanel {...defaultProps} />);
+			const fileItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+				el.textContent?.includes('package.json')
+			);
+			fireEvent.contextMenu(fileItem!, { clientX: 100, clientY: 200 });
+			fireEvent.click(screen.getByText('Rename'));
+
+			fireEvent.change(screen.getByDisplayValue('package.json'), {
+				target: { value: 'bad/name.json' },
+			});
+			await act(async () => {
+				fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
+			});
+
+			expect(screen.getByText('Name cannot contain slashes')).toBeInTheDocument();
+			expect(mockFs.rename).not.toHaveBeenCalled();
+		});
+
+		it('shows rename filesystem failures without closing the modal', async () => {
+			const mockFs = { rename: vi.fn().mockRejectedValue(new Error('permission denied')) };
+			(window as any).maestro = { platform: 'darwin', fs: mockFs };
+			const { container } = render(<FileExplorerPanel {...defaultProps} />);
+			const fileItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+				el.textContent?.includes('package.json')
+			);
+			fireEvent.contextMenu(fileItem!, { clientX: 100, clientY: 200 });
+			fireEvent.click(screen.getByText('Rename'));
+
+			fireEvent.change(screen.getByDisplayValue('package.json'), {
+				target: { value: 'package-renamed.json' },
+			});
+			await act(async () => {
+				fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
+				await Promise.resolve();
+			});
+
+			expect(mockFs.rename).toHaveBeenCalledWith(
+				'/Users/test/project/package.json',
+				'/Users/test/project/package-renamed.json',
+				undefined
+			);
+			expect(screen.getByText('permission denied')).toBeInTheDocument();
+			expect(screen.getByText('Rename File')).toBeInTheDocument();
+		});
+
+		it('renames folders, updates expanded paths, and reports success', async () => {
+			const mockFs = { rename: vi.fn().mockResolvedValue(undefined) };
+			(window as any).maestro = { platform: 'darwin', fs: mockFs };
+			const session = createMockSession({
+				fileExplorerExpanded: ['src', 'src/utils', 'docs'],
+				fileTree: mockFileTree,
+			});
+			const unrelatedSession = createMockSession({
+				id: 'other-session',
+				fileExplorerExpanded: ['unrelated'],
+			});
+			const { container } = render(<FileExplorerPanel {...defaultProps} session={session} />);
+			const folderItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+				el.textContent?.includes('src')
+			);
+			fireEvent.contextMenu(folderItem!, { clientX: 100, clientY: 200 });
+			fireEvent.click(screen.getByText('Rename'));
+
+			fireEvent.change(screen.getByDisplayValue('src'), { target: { value: 'lib' } });
+			await act(async () => {
+				fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
+				await Promise.resolve();
+			});
+
+			expect(mockFs.rename).toHaveBeenCalledWith(
+				'/Users/test/project/src',
+				'/Users/test/project/lib',
+				undefined
+			);
+
+			const updateSessions = vi.mocked(defaultProps.setSessions).mock.calls[0][0] as (
+				sessions: Session[]
+			) => Session[];
+			const [updatedSession, untouchedSession] = updateSessions([session, unrelatedSession]);
+			expect(updatedSession.fileTree?.[0].name).toBe('lib');
+			expect(updatedSession.fileExplorerExpanded).toEqual(['lib', 'lib/utils', 'docs']);
+			expect(untouchedSession).toBe(unrelatedSession);
+			expect(defaultProps.onShowFlash).toHaveBeenCalledWith('Renamed to "lib"');
 		});
 
 		it('shows Open in Default App option for files', () => {
@@ -1933,6 +2407,280 @@ describe('FileExplorerPanel', () => {
 			expect(screen.getByText(/2 subfolders/)).toBeInTheDocument();
 		});
 
+		it('shows singular folder delete warning text', async () => {
+			const mockFs = {
+				countItems: vi.fn().mockResolvedValue({ fileCount: 1, folderCount: 1 }),
+			};
+			(window as any).maestro = { platform: 'darwin', fs: mockFs };
+
+			const { container } = render(<FileExplorerPanel {...defaultProps} />);
+			const folderItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+				el.textContent?.includes('src')
+			);
+			fireEvent.contextMenu(folderItem!, { clientX: 100, clientY: 200 });
+
+			await act(async () => {
+				fireEvent.click(screen.getByText('Delete'));
+			});
+
+			expect(screen.getByText(/1 file/)).toBeInTheDocument();
+			expect(screen.getByText(/1 subfolder/)).toBeInTheDocument();
+		});
+
+		it('deletes folders, updates stats and expanded paths, and reports success', async () => {
+			const mockFs = {
+				countItems: vi.fn().mockResolvedValue({ fileCount: 2, folderCount: 1 }),
+				delete: vi.fn().mockResolvedValue(undefined),
+			};
+			(window as any).maestro = { platform: 'darwin', fs: mockFs };
+			const session = createMockSession({
+				fileTree: mockFileTree,
+				fileExplorerExpanded: ['src', 'src/utils'],
+				fileTreeStats: { fileCount: 4, folderCount: 2, lastUpdated: '2024-01-01T00:00:00.000Z' },
+			});
+			const unrelatedSession = createMockSession({
+				id: 'other-session',
+				fileTreeStats: { fileCount: 99, folderCount: 9, lastUpdated: '2024-01-01T00:00:00.000Z' },
+			});
+			const { container } = render(<FileExplorerPanel {...defaultProps} session={session} />);
+			const folderItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+				el.textContent?.includes('src')
+			);
+			fireEvent.contextMenu(folderItem!, { clientX: 100, clientY: 200 });
+			await act(async () => {
+				fireEvent.click(screen.getByText('Delete'));
+			});
+
+			await act(async () => {
+				fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+				await Promise.resolve();
+			});
+
+			expect(mockFs.delete).toHaveBeenCalledWith('/Users/test/project/src', {
+				sshRemoteId: undefined,
+			});
+
+			const updateSessions = vi.mocked(defaultProps.setSessions).mock.calls[0][0] as (
+				sessions: Session[]
+			) => Session[];
+			const [untouchedSession, updatedSession] = updateSessions([unrelatedSession, session]);
+			expect(untouchedSession).toBe(unrelatedSession);
+			expect(updatedSession.fileTree?.map((node) => node.name)).toEqual([
+				'package.json',
+				'README.md',
+			]);
+			expect(updatedSession.fileTreeStats).toEqual({
+				fileCount: 2,
+				folderCount: 0,
+				lastUpdated: '2024-01-01T00:00:00.000Z',
+			});
+			expect(updatedSession.fileExplorerExpanded).toEqual([]);
+			expect(defaultProps.onShowFlash).toHaveBeenCalledWith('Deleted "src"');
+		});
+
+		it('deletes files, updates stats, and keeps expanded folders', async () => {
+			const mockFs = {
+				countItems: vi.fn().mockResolvedValue({ fileCount: 0, folderCount: 0 }),
+				delete: vi.fn().mockResolvedValue(undefined),
+			};
+			(window as any).maestro = { platform: 'darwin', fs: mockFs };
+			const session = createMockSession({
+				fileTree: mockFileTree,
+				fileExplorerExpanded: ['src'],
+				fileTreeStats: { fileCount: 4, folderCount: 2, lastUpdated: '2024-01-01T00:00:00.000Z' },
+			});
+			const { container } = render(<FileExplorerPanel {...defaultProps} session={session} />);
+			const fileItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+				el.textContent?.includes('package.json')
+			);
+			fireEvent.contextMenu(fileItem!, { clientX: 100, clientY: 200 });
+			await act(async () => {
+				fireEvent.click(screen.getByText('Delete'));
+			});
+
+			await act(async () => {
+				fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+				await Promise.resolve();
+			});
+
+			expect(mockFs.delete).toHaveBeenCalledWith('/Users/test/project/package.json', {
+				sshRemoteId: undefined,
+			});
+
+			const updateSessions = vi.mocked(defaultProps.setSessions).mock.calls[0][0] as (
+				sessions: Session[]
+			) => Session[];
+			const [updatedSession] = updateSessions([session]);
+			expect(updatedSession.fileTree?.map((node) => node.name)).toEqual(['src', 'README.md']);
+			expect(updatedSession.fileTreeStats).toEqual({
+				fileCount: 3,
+				folderCount: 2,
+				lastUpdated: '2024-01-01T00:00:00.000Z',
+			});
+			expect(updatedSession.fileExplorerExpanded).toEqual(['src']);
+			expect(defaultProps.onShowFlash).toHaveBeenCalledWith('Deleted "package.json"');
+		});
+
+		it('deletes files when tree stats and expanded folders are missing', async () => {
+			const mockFs = {
+				countItems: vi.fn().mockResolvedValue({ fileCount: 0, folderCount: 0 }),
+				delete: vi.fn().mockResolvedValue(undefined),
+			};
+			(window as any).maestro = { platform: 'darwin', fs: mockFs };
+			const session = createMockSession({
+				fileTree: mockFileTree,
+				fileTreeStats: undefined,
+				fileExplorerExpanded: undefined as any,
+			});
+			const { container } = render(<FileExplorerPanel {...defaultProps} session={session} />);
+			const fileItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+				el.textContent?.includes('README.md')
+			);
+			fireEvent.contextMenu(fileItem!, { clientX: 100, clientY: 200 });
+			await act(async () => {
+				fireEvent.click(screen.getByText('Delete'));
+			});
+
+			await act(async () => {
+				fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+				await Promise.resolve();
+			});
+
+			const updateSessions = vi.mocked(defaultProps.setSessions).mock.calls[0][0] as (
+				sessions: Session[]
+			) => Session[];
+			const [updatedSession] = updateSessions([session]);
+			expect(updatedSession.fileTreeStats).toBeUndefined();
+			expect(updatedSession.fileExplorerExpanded).toBeUndefined();
+			expect(updatedSession.fileTree?.map((node) => node.name)).toEqual(['src', 'package.json']);
+		});
+
+		it('deletes empty folders without child counts', async () => {
+			const mockFs = {
+				countItems: vi.fn().mockResolvedValue({ fileCount: 0, folderCount: 0 }),
+				delete: vi.fn().mockResolvedValue(undefined),
+			};
+			(window as any).maestro = { platform: 'darwin', fs: mockFs };
+			const emptyFolderTree = [
+				{
+					name: 'empty',
+					type: 'folder' as const,
+				},
+				{
+					name: 'keep.ts',
+					type: 'file' as const,
+				},
+			];
+			const session = createMockSession({
+				fileTree: emptyFolderTree,
+				fileTreeStats: { fileCount: 1, folderCount: 1, lastUpdated: '2024-01-01T00:00:00.000Z' },
+				fileExplorerExpanded: undefined as any,
+			});
+			const { container } = render(
+				<FileExplorerPanel {...defaultProps} session={session} filteredFileTree={emptyFolderTree} />
+			);
+			const folderItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+				el.textContent?.includes('empty')
+			);
+			fireEvent.contextMenu(folderItem!, { clientX: 100, clientY: 200 });
+			await act(async () => {
+				fireEvent.click(screen.getByText('Delete'));
+			});
+
+			await act(async () => {
+				fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+				await Promise.resolve();
+			});
+
+			const updateSessions = vi.mocked(defaultProps.setSessions).mock.calls[0][0] as (
+				sessions: Session[]
+			) => Session[];
+			const [updatedSession] = updateSessions([session]);
+			expect(updatedSession.fileTreeStats).toMatchObject({ fileCount: 1, folderCount: 0 });
+			expect(updatedSession.fileExplorerExpanded).toEqual([]);
+		});
+
+		it('reports non-Error delete failures as unknown errors', async () => {
+			const mockFs = {
+				countItems: vi.fn().mockResolvedValue({ fileCount: 0, folderCount: 0 }),
+				delete: vi.fn().mockRejectedValue('denied'),
+			};
+			(window as any).maestro = { platform: 'darwin', fs: mockFs };
+			const { container } = render(<FileExplorerPanel {...defaultProps} />);
+			const fileItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+				el.textContent?.includes('package.json')
+			);
+			fireEvent.contextMenu(fileItem!, { clientX: 100, clientY: 200 });
+			await act(async () => {
+				fireEvent.click(screen.getByText('Delete'));
+			});
+
+			await act(async () => {
+				fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+				await Promise.resolve();
+			});
+
+			expect(defaultProps.onShowFlash).toHaveBeenCalledWith('Delete failed: Unknown error');
+		});
+
+		it('keeps the delete modal open when close is clicked while deletion is pending', async () => {
+			let resolveDelete: () => void = () => {};
+			const deletePromise = new Promise<void>((resolve) => {
+				resolveDelete = resolve;
+			});
+			const mockFs = {
+				countItems: vi.fn().mockResolvedValue({ fileCount: 0, folderCount: 0 }),
+				delete: vi.fn().mockReturnValue(deletePromise),
+			};
+			(window as any).maestro = { platform: 'darwin', fs: mockFs };
+			const { container } = render(<FileExplorerPanel {...defaultProps} />);
+			const fileItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+				el.textContent?.includes('package.json')
+			);
+			fireEvent.contextMenu(fileItem!, { clientX: 100, clientY: 200 });
+			await act(async () => {
+				fireEvent.click(screen.getByText('Delete'));
+			});
+
+			await act(async () => {
+				fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+				await Promise.resolve();
+			});
+
+			expect(screen.getByRole('button', { name: 'Deleting...' })).toBeDisabled();
+			fireEvent.click(screen.getByLabelText('Close modal'));
+			expect(screen.getByText('Delete File')).toBeInTheDocument();
+
+			await act(async () => {
+				resolveDelete();
+				await deletePromise;
+			});
+		});
+
+		it('reports delete failures and closes the busy state', async () => {
+			const mockFs = {
+				countItems: vi.fn().mockResolvedValue({ fileCount: 0, folderCount: 0 }),
+				delete: vi.fn().mockRejectedValue(new Error('permission denied')),
+			};
+			(window as any).maestro = { platform: 'darwin', fs: mockFs };
+			const { container } = render(<FileExplorerPanel {...defaultProps} />);
+			const fileItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+				el.textContent?.includes('package.json')
+			);
+			fireEvent.contextMenu(fileItem!, { clientX: 100, clientY: 200 });
+			await act(async () => {
+				fireEvent.click(screen.getByText('Delete'));
+			});
+
+			await act(async () => {
+				fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+				await Promise.resolve();
+			});
+
+			expect(defaultProps.onShowFlash).toHaveBeenCalledWith('Delete failed: permission denied');
+			expect(screen.getByRole('button', { name: 'Delete' })).not.toBeDisabled();
+		});
+
 		it('renders Cancel button in delete modal', async () => {
 			const mockFs = {
 				countItems: vi.fn().mockResolvedValue({ fileCount: 0, folderCount: 0 }),
@@ -1954,6 +2702,262 @@ describe('FileExplorerPanel', () => {
 			// Focus behavior with requestAnimationFrame is tested elsewhere
 			const cancelButton = screen.getByText('Cancel');
 			expect(cancelButton).toBeInTheDocument();
+
+			fireEvent.click(cancelButton);
+			expect(screen.queryByText('Delete File')).not.toBeInTheDocument();
+		});
+
+		describe('branch completion coverage', () => {
+			it('handles rename selection after the rename modal has unmounted', () => {
+				let frameCallback: FrameRequestCallback | null = null;
+				const rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+					frameCallback = callback;
+					return 1;
+				});
+
+				const { container } = render(<FileExplorerPanel {...defaultProps} />);
+				const fileItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+					el.textContent?.includes('package.json')
+				);
+				fireEvent.contextMenu(fileItem!, { clientX: 100, clientY: 200 });
+				fireEvent.click(screen.getByText('Rename'));
+				fireEvent.click(screen.getByText('Cancel'));
+
+				expect(() => frameCallback?.(0)).not.toThrow();
+				rafSpy.mockRestore();
+			});
+
+			it('renames files and leaves expanded folders unchanged', async () => {
+				const mockFs = { rename: vi.fn().mockResolvedValue(undefined) };
+				(window as any).maestro = { platform: 'darwin', fs: mockFs };
+				const session = createMockSession({
+					fileTree: mockFileTree,
+					fileExplorerExpanded: ['src'],
+				});
+				const { container } = render(<FileExplorerPanel {...defaultProps} session={session} />);
+				const fileItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+					el.textContent?.includes('package.json')
+				);
+				fireEvent.contextMenu(fileItem!, { clientX: 100, clientY: 200 });
+				fireEvent.click(screen.getByText('Rename'));
+
+				fireEvent.change(screen.getByDisplayValue('package.json'), {
+					target: { value: 'package-new.json' },
+				});
+				await act(async () => {
+					fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
+					await Promise.resolve();
+				});
+
+				const updateSessions = vi.mocked(defaultProps.setSessions).mock.calls[0][0] as (
+					sessions: Session[]
+				) => Session[];
+				const [updatedSession] = updateSessions([session]);
+				expect(updatedSession.fileTree?.map((node) => node.name)).toEqual([
+					'src',
+					'package-new.json',
+					'README.md',
+				]);
+				expect(updatedSession.fileExplorerExpanded).toEqual(['src']);
+			});
+
+			it('renames folders when expanded paths are missing', async () => {
+				const mockFs = { rename: vi.fn().mockResolvedValue(undefined) };
+				(window as any).maestro = { platform: 'darwin', fs: mockFs };
+				const session = createMockSession({
+					fileTree: mockFileTree,
+					fileExplorerExpanded: undefined as any,
+				});
+				const { container } = render(<FileExplorerPanel {...defaultProps} session={session} />);
+				const folderItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+					el.textContent?.includes('src')
+				);
+				fireEvent.contextMenu(folderItem!, { clientX: 100, clientY: 200 });
+				fireEvent.click(screen.getByText('Rename'));
+
+				fireEvent.change(screen.getByDisplayValue('src'), { target: { value: 'lib' } });
+				await act(async () => {
+					fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
+					await Promise.resolve();
+				});
+
+				const updateSessions = vi.mocked(defaultProps.setSessions).mock.calls[0][0] as (
+					sessions: Session[]
+				) => Session[];
+				const [updatedSession] = updateSessions([session]);
+				expect(updatedSession.fileTree?.[0].name).toBe('lib');
+				expect(updatedSession.fileExplorerExpanded).toEqual([]);
+			});
+
+			it('reports non-Error rename failures with the fallback message', async () => {
+				const mockFs = { rename: vi.fn().mockRejectedValue('bad') };
+				(window as any).maestro = { platform: 'darwin', fs: mockFs };
+				const { container } = render(<FileExplorerPanel {...defaultProps} />);
+				const fileItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+					el.textContent?.includes('package.json')
+				);
+				fireEvent.contextMenu(fileItem!, { clientX: 100, clientY: 200 });
+				fireEvent.click(screen.getByText('Rename'));
+
+				fireEvent.change(screen.getByDisplayValue('package.json'), {
+					target: { value: 'package-renamed.json' },
+				});
+				await act(async () => {
+					fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
+					await Promise.resolve();
+				});
+
+				expect(screen.getByText('Rename failed')).toBeInTheDocument();
+			});
+
+			it('uses empty trees for rename and delete local updates when session fileTree is missing', async () => {
+				const mockFs = {
+					rename: vi.fn().mockResolvedValue(undefined),
+					countItems: vi.fn().mockResolvedValue({ fileCount: 0, folderCount: 0 }),
+					delete: vi.fn().mockResolvedValue(undefined),
+				};
+				(window as any).maestro = { platform: 'darwin', fs: mockFs };
+				const session = createMockSession({ fileTree: undefined as any });
+				const { container } = render(<FileExplorerPanel {...defaultProps} session={session} />);
+				const fileItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+					el.textContent?.includes('package.json')
+				);
+
+				fireEvent.contextMenu(fileItem!, { clientX: 100, clientY: 200 });
+				fireEvent.click(screen.getByText('Rename'));
+				fireEvent.change(screen.getByDisplayValue('package.json'), {
+					target: { value: 'package-renamed.json' },
+				});
+				await act(async () => {
+					fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
+					await Promise.resolve();
+				});
+
+				let updateSessions = vi.mocked(defaultProps.setSessions).mock.calls[0][0] as (
+					sessions: Session[]
+				) => Session[];
+				expect(updateSessions([session])[0].fileTree).toEqual([]);
+
+				fireEvent.contextMenu(fileItem!, { clientX: 100, clientY: 200 });
+				await act(async () => {
+					fireEvent.click(screen.getByText('Delete'));
+				});
+				await act(async () => {
+					fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+					await Promise.resolve();
+				});
+
+				updateSessions = vi.mocked(defaultProps.setSessions).mock.calls[1][0] as (
+					sessions: Session[]
+				) => Session[];
+				expect(updateSessions([session])[0].fileTree).toEqual([]);
+			});
+
+			it('renders SSH remote host details in the header', () => {
+				const session = createMockSession({
+					sshRemote: { id: 'remote-1', name: 'Prod', host: 'prod.example.com' } as any,
+				});
+
+				render(<FileExplorerPanel {...defaultProps} session={session} />);
+
+				expect(screen.getByTitle('SSH: Prod (prod.example.com)')).toBeInTheDocument();
+				expect(screen.getByTitle('prod.example.com:/Users/test/project')).toBeInTheDocument();
+			});
+
+			it('retry-now clears only the active session retry marker', () => {
+				const retryAt = Date.now() + 5000;
+				const session = createMockSession({ fileTreeError: 'Failed', fileTreeRetryAt: retryAt });
+				const otherSession = createMockSession({
+					id: 'other-session',
+					fileTreeRetryAt: retryAt,
+				});
+				render(<FileExplorerPanel {...defaultProps} session={session} />);
+
+				fireEvent.click(screen.getByText('Retry Now'));
+
+				const updateSessions = vi.mocked(defaultProps.setSessions).mock.calls[0][0] as (
+					sessions: Session[]
+				) => Session[];
+				const [updatedSession, untouchedSession] = updateSessions([session, otherSession]);
+				expect(updatedSession.fileTreeRetryAt).toBeUndefined();
+				expect(untouchedSession.fileTreeRetryAt).toBe(retryAt);
+			});
+
+			it('keeps context menu open on non-Escape keys', () => {
+				const { container } = render(<FileExplorerPanel {...defaultProps} />);
+				const fileItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+					el.textContent?.includes('package.json')
+				);
+				fireEvent.contextMenu(fileItem!, { clientX: 100, clientY: 200 });
+
+				fireEvent.keyDown(window, { key: 'Enter' });
+
+				expect(screen.getByText('Rename')).toBeInTheDocument();
+			});
+
+			it('does not prevent mouse down or move focus when no file filter is active', () => {
+				const { container } = render(<FileExplorerPanel {...defaultProps} />);
+				const fileItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+					el.textContent?.includes('package.json')
+				);
+				const preventDefault = vi.fn();
+
+				fireEvent.mouseDown(fileItem!, { preventDefault });
+				fireEvent.click(fileItem!);
+
+				expect(preventDefault).not.toHaveBeenCalled();
+				expect(defaultProps.setActiveFocus).toHaveBeenCalledWith('right');
+			});
+
+			it('does not move focus when selecting a file while filtered', () => {
+				const { container } = render(
+					<FileExplorerPanel {...defaultProps} fileTreeFilter="package" />
+				);
+				const fileItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+					el.textContent?.includes('package.json')
+				);
+
+				fireEvent.click(fileItem!);
+
+				expect(defaultProps.setSelectedFileIndex).toHaveBeenCalled();
+				expect(defaultProps.setActiveFocus).not.toHaveBeenCalled();
+			});
+
+			it('covers refresh overlay timer paths around hover and unmount', () => {
+				const { unmount } = render(<FileExplorerPanel {...defaultProps} />);
+				const refreshButton = screen.getByTitle('Refresh file tree');
+
+				fireEvent.mouseEnter(refreshButton);
+				fireEvent.mouseLeave(refreshButton);
+				act(() => {
+					vi.advanceTimersByTime(100);
+				});
+
+				fireEvent.mouseEnter(refreshButton);
+				act(() => {
+					vi.advanceTimersByTime(450);
+				});
+				expect(screen.getByText('Auto-refresh')).toBeInTheDocument();
+				fireEvent.mouseLeave(refreshButton);
+				fireEvent.mouseEnter(screen.getByText('Auto-refresh'));
+				act(() => {
+					vi.advanceTimersByTime(100);
+				});
+				expect(screen.getByText('Auto-refresh')).toBeInTheDocument();
+				fireEvent.mouseLeave(screen.getByText('Auto-refresh'));
+				act(() => {
+					vi.advanceTimersByTime(100);
+				});
+				expect(screen.queryByText('Auto-refresh')).not.toBeInTheDocument();
+
+				fireEvent.mouseEnter(refreshButton);
+				unmount();
+				expect(() => {
+					act(() => {
+						vi.advanceTimersByTime(450);
+					});
+				}).not.toThrow();
+			});
 		});
 	});
 });

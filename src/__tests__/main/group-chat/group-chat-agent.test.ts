@@ -45,6 +45,7 @@ import {
 	getParticipantSessionId,
 	isParticipantActive,
 	getActiveParticipants,
+	clearAllParticipantSessions,
 	clearAllParticipantSessionsGlobal,
 	getParticipantSystemPrompt,
 	setActiveParticipantSession,
@@ -271,6 +272,23 @@ describe('group-chat-agent', () => {
 				messages.some((m) => m.from === 'moderator->Client' && m.content === 'Logged message')
 			).toBe(true);
 		});
+
+		it('logs message without writing when no process manager is provided', async () => {
+			const chat = await createTestChatWithModerator('Log Only Test');
+			await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+			setActiveParticipantSession(chat.id, 'Client', 'active-session-log-only');
+
+			await sendToParticipant(chat.id, 'Client', 'Record this only');
+
+			const messages = await readLog(chat.logPath);
+			expect(
+				messages.some((m) => m.from === 'moderator->Client' && m.content === 'Record this only')
+			).toBe(true);
+			expect(mockProcessManager.write).not.toHaveBeenCalledWith(
+				'active-session-log-only',
+				expect.any(String)
+			);
+		});
 	});
 
 	// ===========================================================================
@@ -417,6 +435,31 @@ describe('group-chat-agent', () => {
 
 			expect(getActiveParticipants(chat1.id)).toEqual([]);
 			expect(getActiveParticipants(chat2.id)).toEqual([]);
+		});
+
+		it('clearAllParticipantSessions kills and removes only the selected group sessions', async () => {
+			setActiveParticipantSession('chat-1', 'Client', 'session-client');
+			setActiveParticipantSession('chat-1', 'Server', 'session-server');
+			setActiveParticipantSession('chat-2', 'Client', 'session-other');
+
+			await clearAllParticipantSessions('chat-1', mockProcessManager);
+
+			expect(mockProcessManager.kill).toHaveBeenCalledWith('session-client');
+			expect(mockProcessManager.kill).toHaveBeenCalledWith('session-server');
+			expect(mockProcessManager.kill).not.toHaveBeenCalledWith('session-other');
+			expect(getActiveParticipants('chat-1')).toEqual([]);
+			expect(getParticipantSessionId('chat-2', 'Client')).toBe('session-other');
+		});
+
+		it('clearAllParticipantSessions clears selected group sessions without a process manager', async () => {
+			setActiveParticipantSession('chat-1', 'Client', 'session-client');
+			setActiveParticipantSession('chat-2', 'Client', 'session-other');
+
+			await clearAllParticipantSessions('chat-1');
+
+			expect(mockProcessManager.kill).not.toHaveBeenCalled();
+			expect(isParticipantActive('chat-1', 'Client')).toBe(false);
+			expect(getParticipantSessionId('chat-2', 'Client')).toBe('session-other');
 		});
 	});
 

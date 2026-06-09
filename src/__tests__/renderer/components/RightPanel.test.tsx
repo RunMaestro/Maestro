@@ -9,6 +9,14 @@ import { useFileExplorerStore } from '../../../renderer/stores/fileExplorerStore
 import { useBatchStore } from '../../../renderer/stores/batchStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 
+const childHandleMocks = vi.hoisted(() => ({
+	historyRefresh: vi.fn(),
+	historyFocus: vi.fn(),
+	autoRunFocus: vi.fn(),
+	autoRunOpenResetTasksModal: vi.fn(),
+	autoRunGetCompletedTaskCount: vi.fn(() => 7),
+}));
+
 // Mock child components
 vi.mock('../../../renderer/components/FileExplorerPanel', () => ({
 	FileExplorerPanel: vi.fn(({ session }) => (
@@ -16,12 +24,52 @@ vi.mock('../../../renderer/components/FileExplorerPanel', () => ({
 	)),
 }));
 
-vi.mock('../../../renderer/components/HistoryPanel', () => ({
-	HistoryPanel: vi.fn((props) => <div data-testid="history-panel">HistoryPanel</div>),
-}));
+vi.mock('../../../renderer/components/HistoryPanel', async () => {
+	const React = await vi.importActual<typeof import('react')>('react');
+	return {
+		HistoryPanel: React.forwardRef((_props, ref) => {
+			React.useImperativeHandle(ref, () => ({
+				refreshHistory: childHandleMocks.historyRefresh,
+				focus: childHandleMocks.historyFocus,
+			}));
+			return React.createElement('div', { 'data-testid': 'history-panel' }, 'HistoryPanel');
+		}),
+	};
+});
 
-vi.mock('../../../renderer/components/AutoRun', () => ({
-	AutoRun: vi.fn((props) => <div data-testid="auto-run">AutoRun</div>),
+vi.mock('../../../renderer/components/AutoRun', async () => {
+	const React = await vi.importActual<typeof import('react')>('react');
+	return {
+		AutoRun: React.forwardRef((props: { content?: string; onExpand?: () => void }, ref) => {
+			React.useImperativeHandle(ref, () => ({
+				focus: childHandleMocks.autoRunFocus,
+				openResetTasksModal: childHandleMocks.autoRunOpenResetTasksModal,
+				getCompletedTaskCount: childHandleMocks.autoRunGetCompletedTaskCount,
+			}));
+			return React.createElement(
+				'div',
+				{ 'data-testid': 'auto-run' },
+				`AutoRun ${props.content ?? ''}`,
+				props.onExpand
+					? React.createElement(
+							'button',
+							{ type: 'button', 'data-testid': 'auto-run-expand', onClick: props.onExpand },
+							'Expand Auto Run'
+						)
+					: null
+			);
+		}),
+	};
+});
+
+vi.mock('../../../renderer/components/AutoRunExpandedModal', () => ({
+	AutoRunExpandedModal: vi.fn(({ onClose }) => (
+		<div data-testid="auto-run-expanded-modal">
+			<button type="button" onClick={onClose}>
+				Close expanded Auto Run
+			</button>
+		</div>
+	)),
 }));
 
 vi.mock('../../../renderer/utils/shortcutFormatter', () => ({
@@ -366,6 +414,40 @@ describe('RightPanel', () => {
 			expect(screen.queryByTestId('history-panel')).not.toBeInTheDocument();
 			expect(screen.getByTestId('auto-run')).toBeInTheDocument();
 		});
+
+		it('syncs shared Auto Run content when the session document changes', async () => {
+			useUIStore.setState({ activeRightTab: 'autorun' });
+			useSessionStore.setState({
+				activeSessionId: 'session-1',
+				sessions: [
+					{
+						...mockSession,
+						autoRunContent: 'initial checklist',
+						autoRunContentVersion: 1,
+						autoRunSelectedFile: 'phase-one.md',
+					},
+				],
+			});
+
+			render(<RightPanel {...createDefaultProps()} />);
+			expect(screen.getByTestId('auto-run')).toHaveTextContent('initial checklist');
+
+			await act(async () => {
+				useSessionStore.setState({
+					activeSessionId: 'session-1',
+					sessions: [
+						{
+							...mockSession,
+							autoRunContent: 'updated checklist',
+							autoRunContentVersion: 2,
+							autoRunSelectedFile: 'phase-two.md',
+						},
+					],
+				});
+			});
+
+			expect(screen.getByTestId('auto-run')).toHaveTextContent('updated checklist');
+		});
 	});
 
 	describe('Focus management', () => {
@@ -575,6 +657,50 @@ describe('RightPanel', () => {
 			render(<RightPanel {...props} />);
 
 			expect(screen.getByText('Auto Run Active')).toBeInTheDocument();
+		});
+
+		it('should show worktree active fallback when branch name is unavailable', () => {
+			const currentSessionBatchState: BatchRunState = {
+				isRunning: true,
+				isStopping: false,
+				documents: ['doc1'],
+				currentDocumentIndex: 0,
+				totalTasks: 10,
+				completedTasks: 5,
+				currentDocTasksTotal: 10,
+				currentDocTasksCompleted: 5,
+				totalTasksAcrossAllDocs: 10,
+				completedTasksAcrossAllDocs: 5,
+				loopEnabled: false,
+				loopIteration: 0,
+				worktreeActive: true,
+			};
+			const props = createDefaultProps({ currentSessionBatchState });
+			render(<RightPanel {...props} />);
+
+			expect(screen.getByTitle('Worktree: active')).toBeInTheDocument();
+		});
+
+		it('shows zero-width current document progress when the current document has no tasks', () => {
+			const currentSessionBatchState: BatchRunState = {
+				isRunning: true,
+				isStopping: false,
+				documents: ['doc1', 'doc2'],
+				currentDocumentIndex: 0,
+				totalTasks: 10,
+				completedTasks: 5,
+				currentDocTasksTotal: 0,
+				currentDocTasksCompleted: 0,
+				totalTasksAcrossAllDocs: 10,
+				completedTasksAcrossAllDocs: 5,
+				loopEnabled: false,
+				loopIteration: 0,
+			};
+			const props = createDefaultProps({ currentSessionBatchState });
+			const { container } = render(<RightPanel {...props} />);
+
+			expect(container.textContent).toContain('Document 1/2');
+			expect(container.querySelector('[style*="width: 0%"]')).toBeInTheDocument();
 		});
 
 		it('should show "Stopping..." when isStopping is true', () => {
@@ -954,6 +1080,32 @@ describe('RightPanel', () => {
 			expect(screen.queryByText(/tasks completed/)).not.toBeInTheDocument();
 		});
 
+		it('falls back to generic paused status when error details are missing', () => {
+			const currentSessionBatchState: BatchRunState = {
+				isRunning: true,
+				isStopping: false,
+				documents: ['doc1'],
+				currentDocumentIndex: 0,
+				totalTasks: 10,
+				completedTasks: 9,
+				currentDocTasksTotal: 10,
+				currentDocTasksCompleted: 9,
+				totalTasksAcrossAllDocs: 10,
+				completedTasksAcrossAllDocs: 9,
+				loopEnabled: false,
+				loopIteration: 0,
+				errorPaused: true,
+			};
+			useBatchStore.setState({
+				batchRunStates: { 'session-1': currentSessionBatchState },
+			});
+			const props = createDefaultProps({ currentSessionBatchState });
+			render(<RightPanel {...props} />);
+
+			expect(screen.getByText('Paused due to error')).toBeInTheDocument();
+			expect(screen.queryByText(/tasks completed/)).not.toBeInTheDocument();
+		});
+
 		it('should switch to Auto Run tab when paused badge is clicked', () => {
 			const setActiveRightTab = vi.fn();
 			const currentSessionBatchState: BatchRunState = {
@@ -1190,6 +1342,64 @@ describe('RightPanel', () => {
 			render(<RightPanel {...props} ref={ref} />);
 
 			expect(() => ref.current?.focusAutoRun()).not.toThrow();
+		});
+
+		it('returns zero completed tasks when Auto Run is not mounted', () => {
+			const ref = createRef<RightPanelHandle>();
+			useUIStore.setState({ activeRightTab: 'files' });
+			render(<RightPanel {...createDefaultProps()} ref={ref} />);
+
+			expect(ref.current?.getAutoRunCompletedTaskCount()).toBe(0);
+			expect(childHandleMocks.autoRunGetCompletedTaskCount).not.toHaveBeenCalled();
+		});
+
+		it('delegates imperative methods to mounted history and Auto Run panels', () => {
+			const historyRef = createRef<RightPanelHandle>();
+			useUIStore.setState({ activeRightTab: 'history' });
+			const historyRender = render(<RightPanel {...createDefaultProps()} ref={historyRef} />);
+
+			historyRef.current?.refreshHistoryPanel();
+			expect(childHandleMocks.historyRefresh).toHaveBeenCalledTimes(1);
+			historyRender.unmount();
+
+			const autoRunRef = createRef<RightPanelHandle>();
+			useUIStore.setState({ activeRightTab: 'autorun' });
+			render(<RightPanel {...createDefaultProps()} ref={autoRunRef} />);
+			childHandleMocks.autoRunFocus.mockClear();
+
+			autoRunRef.current?.focusAutoRun();
+			autoRunRef.current?.openAutoRunResetTasksModal();
+			const completedCount = autoRunRef.current?.getAutoRunCompletedTaskCount();
+
+			expect(childHandleMocks.autoRunFocus).toHaveBeenCalledTimes(1);
+			expect(childHandleMocks.autoRunOpenResetTasksModal).toHaveBeenCalledTimes(1);
+			expect(childHandleMocks.autoRunGetCompletedTaskCount).toHaveBeenCalledTimes(1);
+			expect(completedCount).toBe(7);
+		});
+
+		it('expands and collapses Auto Run from child and imperative controls', () => {
+			const ref = createRef<RightPanelHandle>();
+			useUIStore.setState({ activeRightTab: 'autorun' });
+			render(<RightPanel {...createDefaultProps()} ref={ref} />);
+			childHandleMocks.autoRunFocus.mockClear();
+
+			fireEvent.click(screen.getByTestId('auto-run-expand'));
+			expect(screen.getByTestId('auto-run-expanded-modal')).toBeInTheDocument();
+
+			fireEvent.click(screen.getByText('Close expanded Auto Run'));
+			expect(screen.queryByTestId('auto-run-expanded-modal')).not.toBeInTheDocument();
+			expect(childHandleMocks.autoRunFocus).toHaveBeenCalledTimes(1);
+
+			act(() => {
+				ref.current?.toggleAutoRunExpanded();
+			});
+			expect(screen.getByTestId('auto-run-expanded-modal')).toBeInTheDocument();
+
+			act(() => {
+				ref.current?.toggleAutoRunExpanded();
+			});
+			expect(screen.queryByTestId('auto-run-expanded-modal')).not.toBeInTheDocument();
+			expect(childHandleMocks.autoRunFocus).toHaveBeenCalledTimes(2);
 		});
 	});
 

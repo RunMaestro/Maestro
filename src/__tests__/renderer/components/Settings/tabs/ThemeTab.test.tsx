@@ -19,11 +19,12 @@ import type { Theme } from '../../../../../renderer/types';
 const mockSetActiveThemeId = vi.fn();
 const mockSetCustomThemeColors = vi.fn();
 const mockSetCustomThemeBaseId = vi.fn();
+let mockActiveThemeId = 'dracula';
 
 // Mock useSettings hook
 vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 	useSettings: () => ({
-		activeThemeId: 'dracula',
+		activeThemeId: mockActiveThemeId,
 		setActiveThemeId: mockSetActiveThemeId,
 		customThemeColors: {
 			bgMain: '#282a36',
@@ -129,6 +130,7 @@ const mockThemes: Record<string, Theme> = {
 describe('ThemeTab', () => {
 	beforeEach(() => {
 		vi.useFakeTimers();
+		mockActiveThemeId = 'dracula';
 	});
 
 	afterEach(() => {
@@ -215,6 +217,34 @@ describe('ThemeTab', () => {
 		expect(mockSetActiveThemeId).toHaveBeenCalledWith('custom');
 	});
 
+	it('should navigate backwards from non-first theme and scroll the selection into view', async () => {
+		mockActiveThemeId = 'github-light';
+		const originalScrollIntoView = Element.prototype.scrollIntoView;
+		const scrollIntoView = vi.fn();
+		Element.prototype.scrollIntoView = scrollIntoView;
+
+		try {
+			render(<ThemeTab theme={mockTheme} themes={mockThemes} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			const themePickerContainer = screen.getByLabelText('Theme picker');
+			fireEvent.keyDown(themePickerContainer, { key: 'Tab', shiftKey: true });
+
+			expect(mockSetActiveThemeId).toHaveBeenCalledWith('dracula');
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(0);
+			});
+
+			expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'nearest' });
+		} finally {
+			Element.prototype.scrollIntoView = originalScrollIntoView;
+		}
+	});
+
 	it('should render custom theme builder', async () => {
 		render(<ThemeTab theme={mockTheme} themes={mockThemes} />);
 
@@ -241,6 +271,23 @@ describe('ThemeTab', () => {
 		const darkButtons = darkSection?.querySelectorAll('button[data-theme-id]') || [];
 		const darkThemeIds = Array.from(darkButtons).map((b) => b.getAttribute('data-theme-id'));
 		expect(darkThemeIds).not.toContain('custom');
+	});
+
+	it('should group multiple themes with the same mode', async () => {
+		const themesWithRepeatedMode = {
+			...mockThemes,
+			'night-owl': {
+				...mockTheme,
+				id: 'night-owl',
+				name: 'Night Owl',
+				colors: { ...mockTheme.colors, accent: '#82aaff' },
+			},
+		};
+
+		render(<ThemeTab theme={mockTheme} themes={themesWithRepeatedMode} />);
+
+		expect(screen.getByText('Dracula')).toBeInTheDocument();
+		expect(screen.getByText('Night Owl')).toBeInTheDocument();
 	});
 
 	it('should select custom theme via CustomThemeBuilder', async () => {
@@ -317,6 +364,10 @@ describe('ThemeTab', () => {
 		expect(screen.getByText('dark Mode')).toBeInTheDocument();
 		expect(screen.getByText('light Mode')).toBeInTheDocument();
 		expect(screen.getByText('vibe Mode')).toBeInTheDocument();
+
+		const themePickerContainer = screen.getByLabelText('Theme picker');
+		fireEvent.keyDown(themePickerContainer, { key: 'Tab' });
+		expect(mockSetActiveThemeId).toHaveBeenCalledWith('custom');
 	});
 
 	it('should pass import callbacks to CustomThemeBuilder', async () => {

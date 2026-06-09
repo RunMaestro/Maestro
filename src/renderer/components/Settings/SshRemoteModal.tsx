@@ -237,11 +237,7 @@ export function SshRemoteModal({
 
 	// Handle keyboard navigation in dropdown
 	const handleDropdownKeyDown = (e: React.KeyboardEvent) => {
-		if (e.key === 'Escape') {
-			e.preventDefault();
-			e.stopPropagation();
-			setShowSshConfigDropdown(false);
-		} else if (e.key === 'ArrowDown') {
+		if (e.key === 'ArrowDown') {
 			e.preventDefault();
 			setSshConfigHighlightIndex((prev) =>
 				prev < filteredSshConfigHosts.length - 1 ? prev + 1 : prev
@@ -354,12 +350,6 @@ export function SshRemoteModal({
 
 	// Handle save
 	const handleSave = async () => {
-		const validationError = validateForm();
-		if (validationError) {
-			setError(validationError);
-			return;
-		}
-
 		setSaving(true);
 		setError(null);
 
@@ -380,21 +370,13 @@ export function SshRemoteModal({
 
 	// Handle test connection
 	const handleTestConnection = async () => {
-		if (!onTestConnection) return;
-
-		const validationError = validateForm();
-		if (validationError) {
-			setError(validationError);
-			return;
-		}
-
 		setTesting(true);
 		setError(null);
 		setTestResult(null);
 
 		try {
 			const config = buildConfig();
-			const result = await onTestConnection(config);
+			const result = await onTestConnection!(config);
 			if (result.success && result.result) {
 				setTestResult({
 					success: true,

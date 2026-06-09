@@ -284,16 +284,14 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 			const prevTabId = prevActiveTabIdRef.current;
 
 			// Save current AI input to the PREVIOUS tab
-			if (prevTabId) {
-				setSessions((prev) =>
-					prev.map((s) => ({
-						...s,
-						aiTabs: s.aiTabs.map((tab) =>
-							tab.id === prevTabId ? { ...tab, inputValue: aiInputValueLocal } : tab
-						),
-					}))
-				);
-			}
+			setSessions((prev) =>
+				prev.map((s) => ({
+					...s,
+					aiTabs: s.aiTabs.map((tab) =>
+						tab.id === prevTabId ? { ...tab, inputValue: aiInputValueLocal } : tab
+					),
+				}))
+			);
 
 			// Load new tab's persisted input value
 			setAiInputValueLocal(activeTab.inputValue ?? '');
@@ -321,13 +319,11 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 			const prevSessionId = prevActiveSessionIdRef.current;
 
 			// Save terminal input to the previous session (including empty string to persist cleared input)
-			if (prevSessionId) {
-				setSessions((prev) =>
-					prev.map((s) =>
-						s.id === prevSessionId ? { ...s, terminalDraftInput: terminalInputValue } : s
-					)
-				);
-			}
+			setSessions((prev) =>
+				prev.map((s) =>
+					s.id === prevSessionId ? { ...s, terminalDraftInput: terminalInputValue } : s
+				)
+			);
 
 			// Load terminal input from the new session
 			setTerminalInputValue(activeSession.terminalDraftInput ?? '');
@@ -374,7 +370,8 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 			if (!suggestion || suggestion.type === 'history' || flatFileList.length === 0) return;
 
 			const targetPath = suggestion.value.replace(/\/$/, '');
-			const pathOnly = targetPath.split(/\s+/).pop() || targetPath;
+			const pathSegments = targetPath.split(/\s+/);
+			const pathOnly = pathSegments[pathSegments.length - 1];
 			const matchIndex = flatFileList.findIndex((item) => item.fullPath === pathOnly);
 
 			if (matchIndex >= 0) {
@@ -421,7 +418,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 	});
 
 	// processInputRef — maintained for access in memoized callbacks without stale closures
-	const processInputRef = useRef<(text?: string) => void>(() => {});
+	const processInputRef = useRef(processInput);
 	useEffect(() => {
 		processInputRef.current = processInput;
 	}, [processInput]);

@@ -9,6 +9,7 @@ import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { CustomThemeBuilder } from '../../../renderer/components/CustomThemeBuilder';
+import { THEMES } from '../../../renderer/constants/themes';
 import type { Theme, ThemeColors, ThemeId } from '../../../shared/theme-types';
 
 // ============================================================================
@@ -289,6 +290,38 @@ describe('CustomThemeBuilder', () => {
 					expect(setCustomThemeBaseId).toHaveBeenCalledWith('monokai');
 				});
 			});
+
+			it('should import colors without updating base theme when baseTheme is unknown', async () => {
+				const importData = {
+					name: 'Custom Theme',
+					baseTheme: 'unknown-theme',
+					colors: mockThemeColors,
+					exportedAt: new Date().toISOString(),
+				};
+
+				render(
+					<CustomThemeBuilder
+						theme={mockTheme}
+						customThemeColors={mockThemeColors}
+						setCustomThemeColors={setCustomThemeColors}
+						customThemeBaseId="dracula"
+						setCustomThemeBaseId={setCustomThemeBaseId}
+						isSelected={false}
+						onSelect={onSelect}
+						onImportError={onImportError}
+						onImportSuccess={onImportSuccess}
+					/>
+				);
+
+				const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+				await simulateFileUpload(fileInput, createFileFromJSON(JSON.stringify(importData)));
+
+				await waitFor(() => {
+					expect(setCustomThemeColors).toHaveBeenCalledWith(mockThemeColors);
+					expect(setCustomThemeBaseId).not.toHaveBeenCalled();
+					expect(onImportSuccess).toHaveBeenCalledWith('Theme imported successfully');
+				});
+			});
 		});
 
 		describe('Color Validation', () => {
@@ -348,6 +381,43 @@ describe('CustomThemeBuilder', () => {
 
 				await waitFor(() => {
 					expect(onImportError).toHaveBeenCalled();
+					expect(setCustomThemeColors).not.toHaveBeenCalled();
+				});
+			});
+
+			it('should truncate invalid color errors after the first three keys', async () => {
+				const invalidColors = {
+					...mockThemeColors,
+					bgMain: 'not-a-color',
+					bgSidebar: 'still-not-a-color',
+					bgActivity: 'also-not-a-color',
+					border: 'invalid-border',
+				};
+
+				render(
+					<CustomThemeBuilder
+						theme={mockTheme}
+						customThemeColors={mockThemeColors}
+						setCustomThemeColors={setCustomThemeColors}
+						customThemeBaseId="dracula"
+						setCustomThemeBaseId={setCustomThemeBaseId}
+						isSelected={false}
+						onSelect={onSelect}
+						onImportError={onImportError}
+						onImportSuccess={onImportSuccess}
+					/>
+				);
+
+				const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+				await simulateFileUpload(
+					fileInput,
+					createFileFromJSON(createValidThemeJSON(invalidColors))
+				);
+
+				await waitFor(() => {
+					expect(onImportError).toHaveBeenCalledWith(
+						'Invalid theme file: invalid color values for bgMain, bgSidebar, bgActivity...'
+					);
 					expect(setCustomThemeColors).not.toHaveBeenCalled();
 				});
 			});
@@ -542,6 +612,39 @@ describe('CustomThemeBuilder', () => {
 					expect(errorCall).toContain('bgSidebar');
 				});
 			});
+
+			it('should omit the ellipsis when three or fewer color keys are missing', async () => {
+				const incompleteColors: Partial<ThemeColors> = { ...mockThemeColors };
+				delete incompleteColors.warning;
+				delete incompleteColors.error;
+
+				render(
+					<CustomThemeBuilder
+						theme={mockTheme}
+						customThemeColors={mockThemeColors}
+						setCustomThemeColors={setCustomThemeColors}
+						customThemeBaseId="dracula"
+						setCustomThemeBaseId={setCustomThemeBaseId}
+						isSelected={false}
+						onSelect={onSelect}
+						onImportError={onImportError}
+						onImportSuccess={onImportSuccess}
+					/>
+				);
+
+				const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+				await simulateFileUpload(
+					fileInput,
+					createFileFromJSON(JSON.stringify({ colors: incompleteColors }))
+				);
+
+				await waitFor(() => {
+					expect(onImportError).toHaveBeenCalledWith(
+						'Invalid theme file: missing color keys (warning, error)'
+					);
+					expect(setCustomThemeColors).not.toHaveBeenCalled();
+				});
+			});
 		});
 
 		describe('JSON Parse Errors', () => {
@@ -713,9 +816,85 @@ describe('CustomThemeBuilder', () => {
 			expect(screen.getByText('Monokai')).toBeInTheDocument();
 			expect(screen.getByText('Nord')).toBeInTheDocument();
 		});
+
+		it('should initialize colors from a selected base theme', () => {
+			render(
+				<CustomThemeBuilder
+					theme={mockTheme}
+					customThemeColors={mockThemeColors}
+					setCustomThemeColors={setCustomThemeColors}
+					customThemeBaseId="dracula"
+					setCustomThemeBaseId={setCustomThemeBaseId}
+					isSelected={false}
+					onSelect={onSelect}
+				/>
+			);
+
+			fireEvent.click(screen.getByRole('button', { name: /Initialize/i }));
+			fireEvent.click(screen.getByRole('button', { name: /Monokai/i }));
+
+			expect(setCustomThemeColors).toHaveBeenCalledWith(THEMES.monokai.colors);
+			expect(setCustomThemeBaseId).toHaveBeenCalledWith('monokai');
+			expect(screen.queryByText('Nord')).not.toBeInTheDocument();
+		});
+
+		it('should close the selector without applying colors when a listed base theme is unavailable', () => {
+			const themes = THEMES as unknown as Record<string, Theme>;
+			themes.__missingBaseForTest = {
+				...THEMES.dracula,
+				id: 'missing-theme' as ThemeId,
+				name: 'Missing Theme',
+			};
+
+			try {
+				render(
+					<CustomThemeBuilder
+						theme={mockTheme}
+						customThemeColors={mockThemeColors}
+						setCustomThemeColors={setCustomThemeColors}
+						customThemeBaseId="dracula"
+						setCustomThemeBaseId={setCustomThemeBaseId}
+						isSelected={false}
+						onSelect={onSelect}
+					/>
+				);
+
+				fireEvent.click(screen.getByRole('button', { name: /Initialize/i }));
+				fireEvent.click(screen.getByRole('button', { name: /Missing Theme/i }));
+
+				expect(setCustomThemeColors).not.toHaveBeenCalled();
+				expect(setCustomThemeBaseId).not.toHaveBeenCalled();
+				expect(screen.queryByText('Missing Theme')).not.toBeInTheDocument();
+			} finally {
+				delete themes.__missingBaseForTest;
+			}
+		});
 	});
 
 	describe('Color Input', () => {
+		it('should render complex rgba colors with a neutral color picker and alpha marker', () => {
+			const complexColors = {
+				...mockThemeColors,
+				accentDim: 'rgba(139,92,246,0.25)',
+			};
+
+			render(
+				<CustomThemeBuilder
+					theme={mockTheme}
+					customThemeColors={complexColors}
+					setCustomThemeColors={setCustomThemeColors}
+					customThemeBaseId="dracula"
+					setCustomThemeBaseId={setCustomThemeBaseId}
+					isSelected={false}
+					onSelect={onSelect}
+				/>
+			);
+
+			expect(screen.getByTitle('Accent Dim')).toHaveValue('#888888');
+			expect(screen.getByText('α')).toBeInTheDocument();
+			expect(screen.getByRole('button', { name: 'rgba(139,92,...' })).toBeInTheDocument();
+		});
+
 		it('should update color when color picker value changes', () => {
 			render(
 				<CustomThemeBuilder
@@ -737,6 +916,87 @@ describe('CustomThemeBuilder', () => {
 			fireEvent.change(colorInputs[0], { target: { value: '#ff0000' } });
 
 			expect(setCustomThemeColors).toHaveBeenCalled();
+		});
+
+		it('should edit a color value from the inline text input', () => {
+			render(
+				<CustomThemeBuilder
+					theme={mockTheme}
+					customThemeColors={mockThemeColors}
+					setCustomThemeColors={setCustomThemeColors}
+					customThemeBaseId="dracula"
+					setCustomThemeBaseId={setCustomThemeBaseId}
+					isSelected={false}
+					onSelect={onSelect}
+				/>
+			);
+
+			fireEvent.click(screen.getByRole('button', { name: '#1a1a2e' }));
+			const textInput = screen
+				.getAllByDisplayValue('#1a1a2e')
+				.find((input) => input.getAttribute('type') === 'text')!;
+			fireEvent.change(textInput, { target: { value: '#123456' } });
+			fireEvent.keyDown(textInput, { key: 'Enter' });
+
+			expect(setCustomThemeColors).toHaveBeenCalledWith({
+				...mockThemeColors,
+				bgMain: '#123456',
+			});
+			expect(document.querySelector('input[type="text"]')).not.toBeInTheDocument();
+		});
+
+		it('should close the inline color editor on blur', () => {
+			render(
+				<CustomThemeBuilder
+					theme={mockTheme}
+					customThemeColors={mockThemeColors}
+					setCustomThemeColors={setCustomThemeColors}
+					customThemeBaseId="dracula"
+					setCustomThemeBaseId={setCustomThemeBaseId}
+					isSelected={false}
+					onSelect={onSelect}
+				/>
+			);
+
+			fireEvent.click(screen.getByRole('button', { name: '#16213e' }));
+			const textInput = screen
+				.getAllByDisplayValue('#16213e')
+				.find((input) => input.getAttribute('type') === 'text')!;
+			fireEvent.blur(textInput);
+
+			expect(document.querySelector('input[type="text"]')).not.toBeInTheDocument();
+		});
+	});
+
+	describe('Import Button', () => {
+		it('should open the hidden file input and ignore an empty file selection', () => {
+			const inputClick = vi
+				.spyOn(HTMLInputElement.prototype, 'click')
+				.mockImplementation(() => undefined);
+
+			render(
+				<CustomThemeBuilder
+					theme={mockTheme}
+					customThemeColors={mockThemeColors}
+					setCustomThemeColors={setCustomThemeColors}
+					customThemeBaseId="dracula"
+					setCustomThemeBaseId={setCustomThemeBaseId}
+					isSelected={false}
+					onSelect={onSelect}
+					onImportError={onImportError}
+					onImportSuccess={onImportSuccess}
+				/>
+			);
+
+			fireEvent.click(screen.getByTitle('Import theme'));
+			expect(inputClick).toHaveBeenCalledOnce();
+
+			const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+			fireEvent.change(fileInput);
+
+			expect(setCustomThemeColors).not.toHaveBeenCalled();
+			expect(onImportError).not.toHaveBeenCalled();
+			expect(onImportSuccess).not.toHaveBeenCalled();
 		});
 	});
 });

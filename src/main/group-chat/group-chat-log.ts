@@ -53,22 +53,17 @@ export function escapeContent(content: string): string {
  * @returns Original unescaped content
  */
 export function unescapeContent(escaped: string): string {
+	const replacements: Record<string, string> = {
+		'\\\\': '\\',
+		'\\n': '\n',
+		'\\|': '|',
+	};
+
 	// Use a single regex with alternation to handle all escapes correctly.
 	// \\\\  matches escaped backslash
 	// \\n   matches escaped newline
 	// \\|   matches escaped pipe (note: \| in regex is just |, but \\| is backslash-pipe)
-	return escaped.replace(/\\\\|\\n|\\\|/g, (match) => {
-		switch (match) {
-			case '\\\\':
-				return '\\';
-			case '\\n':
-				return '\n';
-			case '\\|':
-				return '|';
-			default:
-				return match;
-		}
-	});
+	return escaped.replace(/\\\\|\\n|\\\|/g, (match) => replacements[match]!);
 }
 
 /**

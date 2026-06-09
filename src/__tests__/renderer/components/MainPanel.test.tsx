@@ -17,6 +17,10 @@ import {
 	setCapabilitiesCache,
 } from '../../../renderer/hooks/agent/useAgentCapabilities';
 
+const mockFilePreviewFocus = vi.hoisted(() => vi.fn());
+const getMockFsWriteFile = () =>
+	(window.maestro.fs as unknown as { writeFile: ReturnType<typeof vi.fn> }).writeFile;
+
 // Mock child components to simplify testing - must be before MainPanel import
 vi.mock('../../../renderer/components/LogViewer', () => ({
 	LogViewer: (props: { onClose: () => void }) => {
@@ -33,39 +37,149 @@ vi.mock('../../../renderer/components/LogViewer', () => ({
 }));
 
 vi.mock('../../../renderer/components/TerminalOutput', () => ({
-	TerminalOutput: React.forwardRef((props: { session: { name: string } }, ref) => {
-		return React.createElement(
-			'div',
-			{ 'data-testid': 'terminal-output', ref },
-			`Terminal Output for ${props.session?.name}`
-		);
-	}),
+	TerminalOutput: React.forwardRef(
+		(
+			props: {
+				session: { name: string };
+				onFileSaved?: () => void;
+				onStopAutoRun?: () => void;
+				cwd?: string;
+			},
+			ref
+		) => {
+			return React.createElement(
+				'div',
+				{ 'data-testid': 'terminal-output', ref },
+				`Terminal Output for ${props.session?.name}`,
+				React.createElement('span', { 'data-testid': 'terminal-cwd' }, props.cwd ?? ''),
+				React.createElement(
+					'button',
+					{ onClick: props.onFileSaved, 'data-testid': 'terminal-file-saved' },
+					'File Saved'
+				),
+				React.createElement(
+					'button',
+					{ onClick: props.onStopAutoRun, 'data-testid': 'terminal-stop-auto-run' },
+					'Stop Auto Run'
+				)
+			);
+		}
+	),
 }));
 
 vi.mock('../../../renderer/components/InputArea', () => ({
-	InputArea: (props: { session: { name: string }; onInputFocus: () => void }) => {
+	InputArea: (props: {
+		session: { name: string };
+		onInputFocus: () => void;
+		onStopAutoRun?: () => void;
+		onSummarizeAndContinue?: () => void;
+		onSessionClick?: (sessionId: string, tabId?: string) => void;
+	}) => {
 		return React.createElement(
 			'div',
 			{ 'data-testid': 'input-area' },
 			React.createElement('input', { 'data-testid': 'input-field', onFocus: props.onInputFocus }),
-			`Input for ${props.session?.name}`
+			`Input for ${props.session?.name}`,
+			React.createElement(
+				'button',
+				{ onClick: props.onStopAutoRun, 'data-testid': 'input-stop-auto-run' },
+				'Stop Input Auto Run'
+			),
+			React.createElement(
+				'button',
+				{ onClick: props.onSummarizeAndContinue, 'data-testid': 'input-summarize' },
+				'Summarize'
+			),
+			React.createElement(
+				'button',
+				{
+					onClick: () => props.onSessionClick?.('clicked-session', 'clicked-tab'),
+					'data-testid': 'input-session-click',
+				},
+				'Session Click'
+			)
 		);
 	},
 }));
 
 vi.mock('../../../renderer/components/FilePreview', () => ({
-	FilePreview: (props: { file: { name: string }; onClose: () => void }) => {
-		return React.createElement(
-			'div',
-			{ 'data-testid': 'file-preview' },
-			`File Preview: ${props.file.name}`,
-			React.createElement(
-				'button',
-				{ onClick: props.onClose, 'data-testid': 'file-preview-close' },
-				'Close'
-			)
-		);
-	},
+	FilePreview: React.forwardRef(
+		(
+			props: {
+				file: { name: string };
+				onClose: () => void;
+				setMarkdownEditMode?: (editMode: boolean) => void;
+				onSave?: (path: string, content: string) => void | Promise<void>;
+				onEditContentChange?: (content: string) => void;
+				onScrollPositionChange?: (scrollTop: number) => void;
+				onSearchQueryChange?: (query: string) => void;
+				onReloadFile?: () => void;
+				cwd?: string;
+			},
+			ref
+		) => {
+			React.useImperativeHandle(ref, () =>
+				props.file.name === 'no-ref.ts' ? null : { focus: mockFilePreviewFocus }
+			);
+
+			return React.createElement(
+				'div',
+				{ 'data-testid': 'file-preview' },
+				`File Preview: ${props.file.name}`,
+				React.createElement('span', { 'data-testid': 'file-preview-cwd' }, props.cwd ?? ''),
+				React.createElement(
+					'button',
+					{ onClick: props.onClose, 'data-testid': 'file-preview-close' },
+					'Close'
+				),
+				React.createElement(
+					'button',
+					{
+						onClick: () => props.setMarkdownEditMode?.(true),
+						'data-testid': 'file-preview-edit-mode',
+					},
+					'Edit Mode'
+				),
+				React.createElement(
+					'button',
+					{
+						onClick: () => props.onSave?.('/test/test.ts', 'saved content'),
+						'data-testid': 'file-preview-save',
+					},
+					'Save'
+				),
+				React.createElement(
+					'button',
+					{
+						onClick: () => props.onEditContentChange?.('changed content'),
+						'data-testid': 'file-preview-edit-content',
+					},
+					'Edit Content'
+				),
+				React.createElement(
+					'button',
+					{
+						onClick: () => props.onScrollPositionChange?.(123),
+						'data-testid': 'file-preview-scroll',
+					},
+					'Scroll'
+				),
+				React.createElement(
+					'button',
+					{
+						onClick: () => props.onSearchQueryChange?.('needle'),
+						'data-testid': 'file-preview-search',
+					},
+					'Search'
+				),
+				React.createElement(
+					'button',
+					{ onClick: props.onReloadFile, 'data-testid': 'file-preview-reload' },
+					'Reload'
+				)
+			);
+		}
+	),
 }));
 
 vi.mock('../../../renderer/components/AgentSessionsBrowser', () => ({
@@ -147,6 +261,46 @@ vi.mock('../../../renderer/components/InlineWizard', () => ({
 			`Wizard Conversation (${props.conversationHistory.length} messages)`,
 			props.isLoading &&
 				React.createElement('span', { 'data-testid': 'wizard-loading' }, ' Loading...')
+		);
+	},
+	DocumentGenerationView: (props: {
+		documents: Array<{ filename: string }>;
+		onComplete?: () => void;
+		onDocumentSelect?: (index: number) => void;
+		onContentChange?: (content: string, docIndex: number) => void;
+		onCancel?: () => void;
+		folderPath?: string;
+	}) => {
+		return React.createElement(
+			'div',
+			{ 'data-testid': 'document-generation-view' },
+			`Document Generation (${props.documents.length}) ${props.folderPath ?? ''}`,
+			React.createElement(
+				'button',
+				{ onClick: props.onComplete, 'data-testid': 'wizard-complete' },
+				'Complete'
+			),
+			React.createElement(
+				'button',
+				{
+					onClick: () => props.onDocumentSelect?.(1),
+					'data-testid': 'wizard-select-document',
+				},
+				'Select'
+			),
+			React.createElement(
+				'button',
+				{
+					onClick: () => props.onContentChange?.('updated', 0),
+					'data-testid': 'wizard-change-content',
+				},
+				'Change'
+			),
+			React.createElement(
+				'button',
+				{ onClick: props.onCancel, 'data-testid': 'wizard-cancel-generation' },
+				'Cancel'
+			)
 		);
 	},
 }));
@@ -402,6 +556,17 @@ describe('MainPanel', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		vi.useFakeTimers({ shouldAdvanceTime: true });
+		mockFilePreviewFocus.mockClear();
+		vi.mocked(window.maestro.agents.getConfig).mockResolvedValue({});
+		vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValue({
+			success: true,
+			configs: [],
+		});
+		(window.maestro.fs as unknown as { writeFile: ReturnType<typeof vi.fn> }).writeFile = vi
+			.fn()
+			.mockResolvedValue(undefined);
+		vi.mocked(window.maestro.shell.openExternal).mockResolvedValue(undefined);
+		vi.mocked(gitService.getDiff).mockResolvedValue({ diff: 'mock diff content' });
 
 		// Reset Zustand stores to initial state (Phase 3C: MainPanel reads from stores)
 		useUIStore.setState({
@@ -523,6 +688,19 @@ describe('MainPanel', () => {
 			expect(screen.getByTestId('terminal-output')).toBeInTheDocument();
 			expect(screen.getByTestId('input-area')).toBeInTheDocument();
 		});
+
+		it('should refresh the active session file tree after TerminalOutput saves a file', () => {
+			const refreshFileTree = vi.fn().mockResolvedValue(undefined);
+			const session = createSession({ id: 'session-refresh' });
+
+			render(
+				<MainPanel {...defaultProps} activeSession={session} refreshFileTree={refreshFileTree} />
+			);
+
+			fireEvent.click(screen.getByTestId('terminal-file-saved'));
+
+			expect(refreshFileTree).toHaveBeenCalledWith('session-refresh');
+		});
 	});
 
 	describe('Header display', () => {
@@ -562,6 +740,18 @@ describe('MainPanel', () => {
 
 			const agentSessionsBtn = screen.getByTitle(/Agent Sessions/);
 			expect(agentSessionsBtn).toBeInTheDocument();
+		});
+
+		it('should use the default Agent Sessions shortcut when the saved shortcut is missing', () => {
+			useSettingsStore.setState({
+				shortcuts: {
+					toggleRightPanel: defaultShortcuts.toggleRightPanel,
+				} as never,
+			});
+
+			render(<MainPanel {...defaultProps} />);
+
+			expect(screen.getByTitle('Agent Sessions (Meta+Shift+l)')).toBeInTheDocument();
 		});
 
 		it('should open Agent Sessions when button is clicked', () => {
@@ -719,6 +909,183 @@ describe('MainPanel', () => {
 
 			expect(onFileTabClose).toHaveBeenCalledWith('file-tab-1');
 		});
+
+		it('should pass edit, save, scroll, search, and reload callbacks through FilePreview', async () => {
+			const activeFileTab = createFileTab();
+			const onFileTabEditModeChange = vi.fn();
+			const onFileTabEditContentChange = vi.fn();
+			const onFileTabScrollPositionChange = vi.fn();
+			const onFileTabSearchQueryChange = vi.fn();
+			const onReloadFileTab = vi.fn();
+
+			render(
+				<MainPanel
+					{...defaultProps}
+					activeFileTabId="file-tab-1"
+					activeFileTab={activeFileTab}
+					onFileTabEditModeChange={onFileTabEditModeChange}
+					onFileTabEditContentChange={onFileTabEditContentChange}
+					onFileTabScrollPositionChange={onFileTabScrollPositionChange}
+					onFileTabSearchQueryChange={onFileTabSearchQueryChange}
+					onReloadFileTab={onReloadFileTab}
+				/>
+			);
+
+			fireEvent.click(screen.getByTestId('file-preview-edit-mode'));
+			fireEvent.click(screen.getByTestId('file-preview-edit-content'));
+			fireEvent.click(screen.getByTestId('file-preview-scroll'));
+			fireEvent.click(screen.getByTestId('file-preview-search'));
+			fireEvent.click(screen.getByTestId('file-preview-reload'));
+			fireEvent.click(screen.getByTestId('file-preview-save'));
+
+			expect(onFileTabEditModeChange).toHaveBeenCalledWith('file-tab-1', true);
+			expect(onFileTabEditContentChange).toHaveBeenCalledWith('file-tab-1', 'changed content');
+			expect(onFileTabScrollPositionChange).toHaveBeenCalledWith('file-tab-1', 123);
+			expect(onFileTabSearchQueryChange).toHaveBeenCalledWith('file-tab-1', 'needle');
+			expect(onReloadFileTab).toHaveBeenCalledWith('file-tab-1');
+			await waitFor(() => {
+				expect(getMockFsWriteFile()).toHaveBeenCalledWith('/test/test.ts', 'saved content');
+			});
+			expect(onFileTabEditContentChange).toHaveBeenCalledWith(
+				'file-tab-1',
+				undefined,
+				'saved content'
+			);
+		});
+
+		it('should clear external edit content when FilePreview reports unchanged content', () => {
+			const activeFileTab = createFileTab({ content: 'changed content' });
+			const onFileTabEditContentChange = vi.fn();
+
+			render(
+				<MainPanel
+					{...defaultProps}
+					activeFileTabId="file-tab-1"
+					activeFileTab={activeFileTab}
+					onFileTabEditContentChange={onFileTabEditContentChange}
+				/>
+			);
+
+			fireEvent.click(screen.getByTestId('file-preview-edit-content'));
+
+			expect(onFileTabEditContentChange).toHaveBeenCalledWith('file-tab-1', undefined);
+		});
+
+		it('should focus the FilePreview ref through the MainPanel imperative handle', () => {
+			const activeFileTab = createFileTab();
+			const panelRef = React.createRef<React.ElementRef<typeof MainPanel>>();
+
+			render(
+				<MainPanel
+					{...defaultProps}
+					ref={panelRef}
+					activeFileTabId="file-tab-1"
+					activeFileTab={activeFileTab}
+				/>
+			);
+
+			act(() => {
+				panelRef.current?.focusFilePreview();
+			});
+
+			expect(mockFilePreviewFocus).toHaveBeenCalled();
+		});
+
+		it('should focus the preview container when FilePreview does not expose a focus ref', () => {
+			const activeFileTab = createFileTab({ name: 'no-ref' });
+			const panelRef = React.createRef<React.ElementRef<typeof MainPanel>>();
+			const focusSpy = vi.spyOn(HTMLElement.prototype, 'focus').mockImplementation(() => {});
+
+			render(
+				<MainPanel
+					{...defaultProps}
+					ref={panelRef}
+					activeFileTabId="file-tab-1"
+					activeFileTab={activeFileTab}
+				/>
+			);
+
+			act(() => {
+				panelRef.current?.focusFilePreview();
+			});
+
+			expect(mockFilePreviewFocus).not.toHaveBeenCalled();
+			expect(focusSpy).toHaveBeenCalled();
+			focusSpy.mockRestore();
+		});
+
+		it('should pass a relative cwd to FilePreview for files under the session root', () => {
+			const activeFileTab = createFileTab({ path: '/test/project/src/test.ts' });
+			const session = createSession({ fullPath: '/test/project' });
+
+			render(
+				<MainPanel
+					{...defaultProps}
+					activeSession={session}
+					activeFileTabId="file-tab-1"
+					activeFileTab={activeFileTab}
+				/>
+			);
+
+			expect(screen.getByTestId('file-preview-cwd')).toHaveTextContent('src');
+		});
+
+		it('should pass an empty cwd to FilePreview for files outside the session root', () => {
+			const activeFileTab = createFileTab({ path: '/other/project/src/test.ts' });
+			const session = createSession({ fullPath: '/test/project' });
+
+			render(
+				<MainPanel
+					{...defaultProps}
+					activeSession={session}
+					activeFileTabId="file-tab-1"
+					activeFileTab={activeFileTab}
+				/>
+			);
+
+			expect(screen.getByTestId('file-preview-cwd').textContent).toBe('');
+		});
+
+		it('should pass an empty cwd to FilePreview for a root-level file under the session root', () => {
+			const activeFileTab = createFileTab({ path: '/test/project/README.md' });
+			const session = createSession({ fullPath: '/test/project' });
+
+			render(
+				<MainPanel
+					{...defaultProps}
+					activeSession={session}
+					activeFileTabId="file-tab-1"
+					activeFileTab={activeFileTab}
+				/>
+			);
+
+			expect(screen.getByTestId('file-preview-cwd').textContent).toBe('');
+		});
+
+		it('should show the remote loading state for a pending file preview request', () => {
+			render(
+				<MainPanel
+					{...defaultProps}
+					filePreviewLoading={{ name: 'remote.md', path: '/remote/remote.md' }}
+				/>
+			);
+
+			expect(screen.getByText('Fetching from remote server...')).toBeInTheDocument();
+			expect(screen.queryByTestId('terminal-output')).not.toBeInTheDocument();
+		});
+
+		it('should show the active file tab name while the tab content is loading', () => {
+			const activeFileTab = createFileTab({ isLoading: true });
+
+			render(
+				<MainPanel {...defaultProps} activeFileTabId="file-tab-1" activeFileTab={activeFileTab} />
+			);
+
+			expect(screen.getByText('Fetching from remote server...')).toBeInTheDocument();
+			expect(
+				screen.getByText((_content, element) => element?.textContent === 'Loading test.ts')
+			).toBeInTheDocument();
+		});
 	});
 
 	describe('Tab Bar', () => {
@@ -816,9 +1183,31 @@ describe('MainPanel', () => {
 
 			render(<MainPanel {...defaultProps} activeSession={session} />);
 
-			fireEvent.click(screen.getByText('ABC12345'));
+			await act(async () => {
+				fireEvent.click(screen.getByText('ABC12345'));
+			});
 
 			expect(writeText).toHaveBeenCalledWith('abc12345-def6-7890-ghij-klmnopqrstuv');
+		});
+
+		it('should use the generic copy title when the active tab has no name', () => {
+			const session = createSession({
+				inputMode: 'ai',
+				aiTabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: 'abc12345-def6-7890',
+						name: '',
+						isUnread: false,
+						createdAt: Date.now(),
+					},
+				],
+				activeTabId: 'tab-1',
+			});
+
+			render(<MainPanel {...defaultProps} activeSession={session} />);
+
+			expect(screen.getByTitle('Click to copy: abc12345-def6-7890')).toBeInTheDocument();
 		});
 
 		it('should not show UUID pill in terminal mode', () => {
@@ -1050,6 +1439,169 @@ describe('MainPanel', () => {
 			// Context Window widget should not be present
 			expect(screen.queryByText('Context Window')).not.toBeInTheDocument();
 		});
+
+		it('should use a positive session customContextWindow over the reported usage window', async () => {
+			const getContextColor = vi.fn().mockReturnValue('#22c55e');
+			const session = createSession({
+				customContextWindow: 1000,
+				aiTabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: 'claude-1',
+						name: 'Tab 1',
+						isUnread: false,
+						createdAt: Date.now(),
+						usageStats: {
+							inputTokens: 300,
+							outputTokens: 100,
+							cacheReadInputTokens: 50,
+							cacheCreationInputTokens: 50,
+							totalCostUsd: 0.05,
+							contextWindow: 200000,
+						},
+					},
+				],
+				activeTabId: 'tab-1',
+			});
+
+			render(
+				<MainPanel {...defaultProps} activeSession={session} getContextColor={getContextColor} />
+			);
+
+			await waitFor(() => {
+				expect(getContextColor).toHaveBeenCalledWith(40, theme);
+			});
+			expect(window.maestro.agents.getConfig).not.toHaveBeenCalled();
+		});
+
+		it('should hide context usage and log when agent config context window fails to load', async () => {
+			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+			vi.mocked(window.maestro.agents.getConfig).mockRejectedValueOnce(new Error('config failed'));
+			const session = createSession({
+				aiTabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: 'claude-1',
+						name: 'Tab 1',
+						isUnread: false,
+						createdAt: Date.now(),
+						usageStats: {
+							inputTokens: 300,
+							outputTokens: 100,
+							cacheReadInputTokens: 50,
+							cacheCreationInputTokens: 50,
+							totalCostUsd: 0.05,
+							contextWindow: 0,
+						},
+					},
+				],
+				activeTabId: 'tab-1',
+			});
+
+			render(<MainPanel {...defaultProps} activeSession={session} />);
+
+			await waitFor(() => {
+				expect(consoleError).toHaveBeenCalledWith(
+					'Failed to load agent context window setting',
+					expect.any(Error)
+				);
+			});
+			expect(screen.queryByText('Context Window')).not.toBeInTheDocument();
+			consoleError.mockRestore();
+		});
+
+		it('should use agent config context window and zero missing usage token fields in the tooltip', async () => {
+			vi.mocked(window.maestro.agents.getConfig).mockResolvedValueOnce({ contextWindow: 1000 });
+			const getContextColor = vi.fn().mockReturnValue('#22c55e');
+			const session = createSession({
+				aiTabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: 'claude-1',
+						name: 'Tab 1',
+						isUnread: false,
+						createdAt: Date.now(),
+						usageStats: {
+							contextWindow: 0,
+							reasoningTokens: 25,
+						} as never,
+					},
+				],
+				activeTabId: 'tab-1',
+			});
+
+			render(
+				<MainPanel {...defaultProps} activeSession={session} getContextColor={getContextColor} />
+			);
+
+			await waitFor(() => {
+				expect(screen.getByText('Context Window')).toBeInTheDocument();
+			});
+			fireEvent.mouseEnter(screen.getByText('Context Window').parentElement!);
+			act(() => {
+				vi.advanceTimersByTime(200);
+			});
+
+			await waitFor(() => {
+				expect(screen.getByText('Reasoning Tokens')).toBeInTheDocument();
+			});
+			expect(screen.getByText('25')).toBeInTheDocument();
+			expect(screen.getByText('Cache Read')).toBeInTheDocument();
+			expect(screen.getByText('Cache Write')).toBeInTheDocument();
+			expect(screen.getAllByText('0').length).toBeGreaterThanOrEqual(4);
+		});
+
+		it('should ignore a failed agent config load after unmounting', async () => {
+			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+			let rejectConfig!: (error: Error) => void;
+			const configPromise = new Promise<never>((_resolve, reject) => {
+				rejectConfig = reject;
+			});
+			vi.mocked(window.maestro.agents.getConfig).mockReturnValueOnce(configPromise);
+			const session = createSession({
+				aiTabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: 'claude-1',
+						name: 'Tab 1',
+						isUnread: false,
+						createdAt: Date.now(),
+						usageStats: {
+							inputTokens: 300,
+							outputTokens: 100,
+							cacheReadInputTokens: 50,
+							cacheCreationInputTokens: 50,
+							totalCostUsd: 0.05,
+							contextWindow: 0,
+						},
+					},
+				],
+				activeTabId: 'tab-1',
+			});
+
+			const { unmount } = render(<MainPanel {...defaultProps} activeSession={session} />);
+			unmount();
+			await act(async () => {
+				rejectConfig(new Error('late config failed'));
+				await configPromise.catch(() => undefined);
+			});
+
+			expect(consoleError).toHaveBeenCalledWith(
+				'Failed to load agent context window setting',
+				expect.any(Error)
+			);
+			consoleError.mockRestore();
+		});
+
+		it('should fall back missing context management settings to safe defaults', () => {
+			useSettingsStore.setState({
+				contextManagementSettings: {} as never,
+			});
+
+			render(<MainPanel {...defaultProps} />);
+
+			expect(screen.getAllByText(/^Context( Window)?$/)[0]).toBeInTheDocument();
+		});
 	});
 
 	describe('Auto mode indicator', () => {
@@ -1174,7 +1726,9 @@ describe('MainPanel', () => {
 				/>
 			);
 
-			fireEvent.click(screen.getByText('Stopping'));
+			const stoppingButton = screen.getByText('Stopping').closest('button') as HTMLButtonElement;
+			expect(stoppingButton).toBeDisabled();
+			fireEvent.click(stoppingButton);
 
 			expect(onStopBatchRun).not.toHaveBeenCalled();
 		});
@@ -1629,6 +2183,26 @@ describe('MainPanel', () => {
 			});
 		});
 
+		it('should fall back to blank branch and remote values when git status fields are empty', () => {
+			setMockGitStatus('session-1', {
+				fileCount: 0,
+				branch: '',
+				remote: '',
+				ahead: 0,
+				behind: 0,
+				totalAdditions: 0,
+				totalDeletions: 0,
+				modifiedCount: 0,
+				fileChanges: [],
+				lastUpdated: Date.now(),
+			});
+			const session = createSession({ isGitRepo: true });
+
+			render(<MainPanel {...defaultProps} activeSession={session} />);
+
+			expect(screen.getByText('GIT')).toBeInTheDocument();
+		});
+
 		it('should copy branch name when copy button is clicked', async () => {
 			const writeText = vi.fn().mockResolvedValue(undefined);
 			Object.assign(navigator, { clipboard: { writeText } });
@@ -1650,7 +2224,9 @@ describe('MainPanel', () => {
 
 			// Click copy button
 			const copyButtons = screen.getAllByTitle(/Copy branch name/);
-			fireEvent.click(copyButtons[0]);
+			await act(async () => {
+				fireEvent.click(copyButtons[0]);
+			});
 
 			expect(writeText).toHaveBeenCalledWith('main');
 		});
@@ -1678,6 +2254,76 @@ describe('MainPanel', () => {
 			fireEvent.click(screen.getByText('my-ssh-remote'));
 
 			expect(setGitLogOpen).toHaveBeenCalledWith(true);
+		});
+
+		it('should render an SSH remote badge without git actions for non-git sessions', async () => {
+			const setGitLogOpen = vi.fn();
+			const session = createSession({
+				isGitRepo: false,
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-remote-123' },
+			});
+			vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValueOnce({
+				success: true,
+				configs: [{ id: 'ssh-remote-123', name: 'my-ssh-remote' }],
+			});
+
+			render(<MainPanel {...defaultProps} activeSession={session} setGitLogOpen={setGitLogOpen} />);
+
+			const sshBadge = await screen.findByText('my-ssh-remote');
+			expect(screen.getByTitle('SSH Remote: my-ssh-remote')).toBeInTheDocument();
+			fireEvent.click(sshBadge);
+
+			expect(setGitLogOpen).not.toHaveBeenCalled();
+			expect(mockRefreshGitStatus).not.toHaveBeenCalled();
+		});
+
+		it('should ignore clicks on the local badge for non-git sessions', () => {
+			const setGitLogOpen = vi.fn();
+			const session = createSession({ isGitRepo: false });
+
+			render(<MainPanel {...defaultProps} activeSession={session} setGitLogOpen={setGitLogOpen} />);
+
+			fireEvent.click(screen.getByText('LOCAL'));
+
+			expect(setGitLogOpen).not.toHaveBeenCalled();
+			expect(mockRefreshGitStatus).not.toHaveBeenCalled();
+		});
+
+		it('should fall back to the git badge when SSH remote lookup is unsuccessful', async () => {
+			const session = createSession({
+				isGitRepo: true,
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-remote-123' },
+			});
+			vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValueOnce({
+				success: false,
+				configs: [],
+			});
+
+			render(<MainPanel {...defaultProps} activeSession={session} />);
+
+			await waitFor(() => {
+				expect(window.maestro.sshRemote.getConfigs).toHaveBeenCalled();
+			});
+			expect(screen.queryByText('ssh-remote-123')).not.toBeInTheDocument();
+			expect(screen.getByText(/main|GIT/)).toBeInTheDocument();
+		});
+
+		it('should fall back to the git badge when SSH remote lookup rejects', async () => {
+			const session = createSession({
+				isGitRepo: true,
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-remote-123' },
+			});
+			vi.mocked(window.maestro.sshRemote.getConfigs).mockRejectedValueOnce(
+				new Error('ssh config failed')
+			);
+
+			render(<MainPanel {...defaultProps} activeSession={session} />);
+
+			await waitFor(() => {
+				expect(window.maestro.sshRemote.getConfigs).toHaveBeenCalled();
+			});
+			expect(screen.queryByText('ssh-remote-123')).not.toBeInTheDocument();
+			expect(screen.getByText(/main|GIT/)).toBeInTheDocument();
 		});
 
 		it('should call gitService.getDiff with SSH remote ID when session has SSH remote config enabled', async () => {
@@ -1710,6 +2356,44 @@ describe('MainPanel', () => {
 			});
 		});
 
+		it('should request terminal git diff from shell cwd when available', async () => {
+			const session = createSession({
+				inputMode: 'terminal',
+				isGitRepo: true,
+				cwd: '/test/project',
+				shellCwd: '/test/project/subdir',
+			});
+
+			render(<MainPanel {...defaultProps} activeSession={session} />);
+
+			fireEvent.click(screen.getByTestId('view-diff-btn'));
+
+			await waitFor(() => {
+				expect(gitService.getDiff).toHaveBeenCalledWith(
+					'/test/project/subdir',
+					undefined,
+					undefined
+				);
+			});
+		});
+
+		it('should request terminal git diff from session cwd when shell cwd is missing', async () => {
+			const session = createSession({
+				inputMode: 'terminal',
+				isGitRepo: true,
+				cwd: '/test/project',
+				shellCwd: undefined,
+			});
+
+			render(<MainPanel {...defaultProps} activeSession={session} />);
+
+			fireEvent.click(screen.getByTestId('view-diff-btn'));
+
+			await waitFor(() => {
+				expect(gitService.getDiff).toHaveBeenCalledWith('/test/project', undefined, undefined);
+			});
+		});
+
 		it('should call setGitLogOpen when View Git Log button is clicked in SSH sessions', async () => {
 			const setGitLogOpen = vi.fn();
 			const session = createSession({
@@ -1733,6 +2417,54 @@ describe('MainPanel', () => {
 			fireEvent.click(screen.getByTestId('view-log-btn'));
 
 			expect(setGitLogOpen).toHaveBeenCalledWith(true);
+		});
+
+		it('should open worktree configuration from the git tooltip for parent sessions', async () => {
+			const onOpenWorktreeConfig = vi.fn();
+			const session = createSession({ isGitRepo: true });
+
+			render(
+				<MainPanel
+					{...defaultProps}
+					activeSession={session}
+					onOpenWorktreeConfig={onOpenWorktreeConfig}
+					isWorktreeChild={false}
+				/>
+			);
+
+			const gitBadge = await screen.findByText(/main|GIT/);
+			fireEvent.mouseEnter(gitBadge.parentElement!);
+
+			await waitFor(() => {
+				expect(screen.getByText('Configure Worktrees')).toBeInTheDocument();
+			});
+			fireEvent.click(screen.getByText('Configure Worktrees'));
+
+			expect(onOpenWorktreeConfig).toHaveBeenCalled();
+		});
+
+		it('should open PR creation from the git tooltip for worktree child sessions', async () => {
+			const onOpenCreatePR = vi.fn();
+			const session = createSession({ isGitRepo: true });
+
+			render(
+				<MainPanel
+					{...defaultProps}
+					activeSession={session}
+					onOpenCreatePR={onOpenCreatePR}
+					isWorktreeChild={true}
+				/>
+			);
+
+			const gitBadge = await screen.findByText(/main|GIT/);
+			fireEvent.mouseEnter(gitBadge.parentElement!);
+
+			await waitFor(() => {
+				expect(screen.getByText('Create Pull Request')).toBeInTheDocument();
+			});
+			fireEvent.click(screen.getByText('Create Pull Request'));
+
+			expect(onOpenCreatePR).toHaveBeenCalled();
 		});
 	});
 
@@ -1853,6 +2585,36 @@ describe('MainPanel', () => {
 
 			expect(screen.queryByTestId('input-area')).not.toBeInTheDocument();
 		});
+
+		it('should stop the active session auto-run from the input area', () => {
+			const onStopBatchRun = vi.fn();
+			const session = createSession({ id: 'session-abc' });
+
+			render(
+				<MainPanel {...defaultProps} activeSession={session} onStopBatchRun={onStopBatchRun} />
+			);
+
+			fireEvent.click(screen.getByTestId('input-stop-auto-run'));
+
+			expect(onStopBatchRun).toHaveBeenCalledWith('session-abc');
+		});
+
+		it('should summarize and continue the active tab from the input area', () => {
+			const onSummarizeAndContinue = vi.fn();
+			const session = createSession({ activeTabId: 'tab-summary' });
+
+			render(
+				<MainPanel
+					{...defaultProps}
+					activeSession={session}
+					onSummarizeAndContinue={onSummarizeAndContinue}
+				/>
+			);
+
+			fireEvent.click(screen.getByTestId('input-summarize'));
+
+			expect(onSummarizeAndContinue).toHaveBeenCalledWith('tab-summary');
+		});
 	});
 
 	describe('Git diff preview', () => {
@@ -1914,6 +2676,24 @@ describe('MainPanel', () => {
 			await waitFor(() => {
 				expect(gitService.getDiff).toHaveBeenCalledWith(session.cwd, undefined, undefined);
 			});
+		});
+
+		it('should not fetch a diff for non-git sessions', () => {
+			const setGitDiffPreview = vi.fn();
+			const session = createSession({ isGitRepo: false });
+
+			render(
+				<MainPanel
+					{...defaultProps}
+					activeSession={session}
+					setGitDiffPreview={setGitDiffPreview}
+				/>
+			);
+
+			fireEvent.click(screen.getByTestId('view-diff-btn'));
+
+			expect(gitService.getDiff).not.toHaveBeenCalled();
+			expect(setGitDiffPreview).not.toHaveBeenCalled();
 		});
 	});
 
@@ -2129,9 +2909,26 @@ describe('MainPanel', () => {
 				/>
 			);
 
-			// The InputArea receives handleSessionClick, but we can't directly test it without accessing the mock
-			// This is tested through the integration with InputArea mock
-			expect(screen.getByTestId('input-area')).toBeInTheDocument();
+			fireEvent.click(screen.getByTestId('input-session-click'));
+
+			expect(setActiveSessionId).toHaveBeenCalledWith('clicked-session');
+			expect(onTabSelect).toHaveBeenCalledWith('clicked-tab');
+		});
+
+		it('should select the session without tab navigation when no tab selector is provided', () => {
+			const setActiveSessionId = vi.fn();
+
+			render(
+				<MainPanel
+					{...defaultProps}
+					setActiveSessionId={setActiveSessionId}
+					onTabSelect={undefined}
+				/>
+			);
+
+			fireEvent.click(screen.getByTestId('input-session-click'));
+
+			expect(setActiveSessionId).toHaveBeenCalledWith('clicked-session');
 		});
 	});
 
@@ -2326,9 +3123,69 @@ describe('MainPanel', () => {
 
 			// Click copy remote URL button
 			const copyButtons = screen.getAllByTitle(/Copy remote URL/);
-			fireEvent.click(copyButtons[0]);
+			await act(async () => {
+				fireEvent.click(copyButtons[0]);
+			});
 
 			expect(writeText).toHaveBeenCalledWith('https://github.com/user/repo.git');
+		});
+
+		it('should open the remote origin in an external browser when the origin is clickable', async () => {
+			setMockGitStatus('session-1', {
+				fileCount: 0,
+				branch: 'main',
+				remote: 'https://github.com/user/repo.git',
+				ahead: 0,
+				behind: 0,
+				totalAdditions: 0,
+				totalDeletions: 0,
+				modifiedCount: 0,
+				fileChanges: [],
+				lastUpdated: Date.now(),
+			});
+
+			const session = createSession({ isGitRepo: true });
+			render(<MainPanel {...defaultProps} activeSession={session} />);
+
+			const gitBadge = await screen.findByText(/main|GIT/);
+			fireEvent.mouseEnter(gitBadge.parentElement!);
+
+			await waitFor(() => {
+				expect(screen.getByText('github.com/user/repo')).toBeInTheDocument();
+			});
+			fireEvent.click(screen.getByText('github.com/user/repo'));
+
+			expect(window.maestro.shell.openExternal).toHaveBeenCalledWith(
+				'https://github.com/user/repo'
+			);
+		});
+
+		it('should not open an external browser for an invalid remote origin', async () => {
+			setMockGitStatus('session-1', {
+				fileCount: 0,
+				branch: 'main',
+				remote: 'not-a-remote-url',
+				ahead: 0,
+				behind: 0,
+				totalAdditions: 0,
+				totalDeletions: 0,
+				modifiedCount: 0,
+				fileChanges: [],
+				lastUpdated: Date.now(),
+			});
+
+			const session = createSession({ isGitRepo: true });
+			render(<MainPanel {...defaultProps} activeSession={session} />);
+
+			const gitBadge = await screen.findByText(/main|GIT/);
+			fireEvent.mouseEnter(gitBadge.parentElement!);
+
+			await waitFor(() => {
+				expect(screen.getByText('not-a-remote-url')).toBeInTheDocument();
+			});
+			fireEvent.click(screen.getByText('not-a-remote-url'));
+
+			expect(window.maestro.shell.openExternal).not.toHaveBeenCalled();
 		});
 	});
 
@@ -2433,6 +3290,17 @@ describe('MainPanel', () => {
 				// Should not call setGitDiffPreview with empty diff
 				expect(setGitDiffPreview).not.toHaveBeenCalled();
 			});
+		});
+
+		it('should pass a relative cwd to TerminalOutput when cwd is inside the project root', () => {
+			const session = createSession({
+				fullPath: '/test/project',
+				cwd: '/test/project/subdir',
+			});
+
+			render(<MainPanel {...defaultProps} activeSession={session} />);
+
+			expect(screen.getByTestId('terminal-cwd')).toHaveTextContent('subdir');
 		});
 	});
 
@@ -3247,6 +4115,122 @@ describe('MainPanel', () => {
 
 			expect(screen.getByTestId('wizard-conversation-view')).toBeInTheDocument();
 			expect(screen.getByTestId('wizard-loading')).toBeInTheDocument();
+		});
+
+		it('should render document generation and wire document callbacks while wizard docs are generating', () => {
+			const onWizardComplete = vi.fn();
+			const onWizardDocumentSelect = vi.fn();
+			const onWizardContentChange = vi.fn();
+			const onWizardCancelGeneration = vi.fn();
+			const session = createSessionWithTabWizardState({
+				isActive: true,
+				isGeneratingDocs: true,
+				mode: 'new',
+				confidence: 80,
+				conversationHistory: [],
+				generatedDocuments: [{ filename: 'Phase-01.md' }, { filename: 'Phase-02.md' }],
+				currentDocumentIndex: 0,
+				streamingContent: 'draft content',
+				subfolderPath: '/test/project/generated',
+				previousUIState: {
+					readOnlyMode: false,
+					saveToHistory: true,
+					showThinking: false,
+				},
+			});
+
+			render(
+				<MainPanel
+					{...defaultProps}
+					activeSession={session}
+					onWizardComplete={onWizardComplete}
+					onWizardDocumentSelect={onWizardDocumentSelect}
+					onWizardContentChange={onWizardContentChange}
+					onWizardCancelGeneration={onWizardCancelGeneration}
+				/>
+			);
+
+			expect(screen.getByTestId('document-generation-view')).toHaveTextContent(
+				'Document Generation (2) /test/project/generated'
+			);
+			expect(screen.queryByTestId('input-area')).not.toBeInTheDocument();
+
+			fireEvent.click(screen.getByTestId('wizard-complete'));
+			fireEvent.click(screen.getByTestId('wizard-select-document'));
+			fireEvent.click(screen.getByTestId('wizard-change-content'));
+			fireEvent.click(screen.getByTestId('wizard-cancel-generation'));
+
+			expect(onWizardComplete).toHaveBeenCalled();
+			expect(onWizardDocumentSelect).toHaveBeenCalledWith(1);
+			expect(onWizardContentChange).toHaveBeenCalledWith('updated', 0);
+			expect(onWizardCancelGeneration).toHaveBeenCalled();
+		});
+
+		it('should keep document generation visible for generated documents waiting to complete', () => {
+			const session = createSessionWithTabWizardState({
+				isActive: true,
+				isGeneratingDocs: false,
+				mode: 'new',
+				confidence: 80,
+				conversationHistory: [],
+				generatedDocuments: [{ filename: 'Phase-01.md' }],
+				currentDocumentIndex: 0,
+				autoRunFolderPath: '/test/project/autorun',
+				previousUIState: {
+					readOnlyMode: false,
+					saveToHistory: true,
+					showThinking: false,
+				},
+			});
+
+			render(<MainPanel {...defaultProps} activeSession={session} />);
+
+			expect(screen.getByTestId('document-generation-view')).toHaveTextContent(
+				'Document Generation (1) /test/project/autorun'
+			);
+			expect(screen.queryByTestId('wizard-conversation-view')).not.toBeInTheDocument();
+		});
+
+		it('should render document generation with empty document defaults while generation is active', () => {
+			const session = createSessionWithTabWizardState({
+				isActive: true,
+				isGeneratingDocs: true,
+				mode: 'new',
+				confidence: 80,
+				conversationHistory: [],
+				previousUIState: {
+					readOnlyMode: false,
+					saveToHistory: true,
+					showThinking: false,
+				},
+			});
+
+			render(<MainPanel {...defaultProps} activeSession={session} />);
+
+			expect(screen.getByTestId('document-generation-view')).toHaveTextContent(
+				'Document Generation (0)'
+			);
+		});
+
+		it('should render completed document generation when generating flag is omitted', () => {
+			const session = createSessionWithTabWizardState({
+				isActive: true,
+				mode: 'new',
+				confidence: 80,
+				conversationHistory: [],
+				generatedDocuments: [{ filename: 'Phase-01.md' }],
+				previousUIState: {
+					readOnlyMode: false,
+					saveToHistory: true,
+					showThinking: false,
+				},
+			});
+
+			render(<MainPanel {...defaultProps} activeSession={session} />);
+
+			expect(screen.getByTestId('document-generation-view')).toHaveTextContent(
+				'Document Generation (1)'
+			);
 		});
 
 		it('should still render header and tabs when wizard is active', () => {

@@ -53,6 +53,8 @@ import {
 	buildUnifiedTabs,
 	ensureInUnifiedTabOrder,
 	getRepairedUnifiedTabOrder,
+	getInitialRenameValue,
+	createTabAtPosition,
 } from '../../../renderer/utils/tabHelpers';
 import type { LogEntry } from '../../../renderer/types';
 import type {
@@ -181,7 +183,18 @@ describe('tabHelpers', () => {
 		});
 	});
 
+	describe('getInitialRenameValue', () => {
+		it('returns the custom tab name or an empty fallback', () => {
+			expect(getInitialRenameValue(createMockTab({ name: 'Feature work' }))).toBe('Feature work');
+			expect(getInitialRenameValue(createMockTab({ name: null }))).toBe('');
+		});
+	});
+
 	describe('createTab', () => {
+		it('returns null for a missing session', () => {
+			expect(createTab(null as unknown as Session)).toBeNull();
+		});
+
 		it('creates a new tab with default options', () => {
 			const session = createMockSession({ aiTabs: [] });
 
@@ -275,6 +288,76 @@ describe('tabHelpers', () => {
 			const result = createTab(session);
 
 			expect(result.session.activeTabId).toBe(result.tab.id);
+		});
+
+		it('repairs undefined tab arrays while creating a new tab', () => {
+			const session = createMockSession();
+			(session as any).aiTabs = undefined;
+			(session as any).unifiedTabOrder = undefined;
+
+			const result = createTab(session);
+
+			expect(result).not.toBeNull();
+			expect(result!.session.aiTabs).toEqual([result!.tab]);
+			expect(result!.session.unifiedTabOrder).toEqual([{ type: 'ai', id: result!.tab.id }]);
+		});
+	});
+
+	describe('createTabAtPosition', () => {
+		it('returns null when the base tab creation fails', () => {
+			const result = createTabAtPosition(null as unknown as Session, {
+				afterTabId: 'tab-1',
+				name: 'Compacted',
+			});
+
+			expect(result).toBeNull();
+		});
+
+		it('returns the appended tab when the target tab is missing', () => {
+			const tab = createMockTab({ id: 'tab-1' });
+			const session = createMockSession({ aiTabs: [tab], activeTabId: 'tab-1' });
+
+			const result = createTabAtPosition(session, {
+				afterTabId: 'missing-tab',
+				name: 'Compacted',
+			});
+
+			expect(result).not.toBeNull();
+			expect(result!.session.aiTabs.map((item) => item.id)).toEqual(['tab-1', 'mock-generated-id']);
+		});
+
+		it('leaves the new tab in place when it is already after the target tab', () => {
+			const tab = createMockTab({ id: 'tab-1' });
+			const session = createMockSession({ aiTabs: [tab], activeTabId: 'tab-1' });
+
+			const result = createTabAtPosition(session, {
+				afterTabId: 'tab-1',
+				name: 'Compacted',
+			});
+
+			expect(result).not.toBeNull();
+			expect(result!.session.aiTabs.map((item) => item.id)).toEqual(['tab-1', 'mock-generated-id']);
+		});
+
+		it('moves the new tab immediately after the target tab when other tabs follow it', () => {
+			const tab1 = createMockTab({ id: 'tab-1' });
+			const tab2 = createMockTab({ id: 'tab-2' });
+			const session = createMockSession({
+				aiTabs: [tab1, tab2],
+				activeTabId: 'tab-2',
+			});
+
+			const result = createTabAtPosition(session, {
+				afterTabId: 'tab-1',
+				name: 'Compacted',
+			});
+
+			expect(result).not.toBeNull();
+			expect(result!.session.aiTabs.map((item) => item.id)).toEqual([
+				'tab-1',
+				'mock-generated-id',
+				'tab-2',
+			]);
 		});
 	});
 
@@ -470,6 +553,104 @@ describe('tabHelpers', () => {
 			expect(result!.session.closedTabHistory).toHaveLength(1); // Still only the old one
 			expect(result!.session.closedTabHistory[0].tab.id).toBe('old-tab');
 		});
+
+		it('handles undefined closed history for skipped and recorded closes', () => {
+			const skippedTab1 = createMockTab({ id: 'skip-tab-1' });
+			const skippedTab2 = createMockTab({ id: 'skip-tab-2' });
+			const skippedSession = createMockSession({
+				aiTabs: [skippedTab1, skippedTab2],
+				activeTabId: 'skip-tab-1',
+			});
+			(skippedSession as any).closedTabHistory = undefined;
+
+			const skippedResult = closeTab(skippedSession, 'skip-tab-1', false, {
+				skipHistory: true,
+			});
+
+			expect(skippedResult).not.toBeNull();
+			expect(skippedResult!.session.closedTabHistory).toEqual([]);
+
+			const recordedTab1 = createMockTab({ id: 'record-tab-1' });
+			const recordedTab2 = createMockTab({ id: 'record-tab-2' });
+			const recordedSession = createMockSession({
+				aiTabs: [recordedTab1, recordedTab2],
+				activeTabId: 'record-tab-1',
+			});
+			(recordedSession as any).closedTabHistory = undefined;
+
+			const recordedResult = closeTab(recordedSession, 'record-tab-1');
+
+			expect(recordedResult).not.toBeNull();
+			expect(recordedResult!.session.closedTabHistory).toHaveLength(1);
+			expect(recordedResult!.session.closedTabHistory[0].tab.id).toBe('record-tab-1');
+		});
+
+		it('updates mixed or missing unified order while closing AI tabs', () => {
+			const closingTab = createMockTab({ id: 'closing-tab' });
+			const remainingTab = createMockTab({ id: 'remaining-tab' });
+			const fileTab = createMockFileTab({ id: 'file-tab' });
+			const session = createMockSession({
+				aiTabs: [closingTab, remainingTab],
+				filePreviewTabs: [fileTab],
+				activeTabId: 'remaining-tab',
+				unifiedTabOrder: [
+					{ type: 'ai', id: 'closing-tab' },
+					{ type: 'file', id: 'file-tab' },
+					{ type: 'ai', id: 'remaining-tab' },
+				],
+			});
+
+			const result = closeTab(session, 'closing-tab');
+
+			expect(result).not.toBeNull();
+			expect(result!.session.unifiedTabOrder).toEqual([
+				{ type: 'file', id: 'file-tab' },
+				{ type: 'ai', id: 'remaining-tab' },
+			]);
+
+			const missingOrderTab = createMockTab({ id: 'missing-order-tab' });
+			const replacementTab = createMockTab({ id: 'replacement-tab' });
+			const missingOrderSession = createMockSession({
+				aiTabs: [missingOrderTab, replacementTab],
+				activeTabId: 'replacement-tab',
+			});
+			(missingOrderSession as any).unifiedTabOrder = undefined;
+
+			const missingOrderResult = closeTab(missingOrderSession, 'missing-order-tab');
+
+			expect(missingOrderResult).not.toBeNull();
+			expect(missingOrderResult!.session.unifiedTabOrder).toEqual([]);
+		});
+
+		it('selects the previous unread tab when closing the active tab in unread-only mode', () => {
+			const unreadLeft = createMockTab({ id: 'unread-left', hasUnread: true });
+			const closingTab = createMockTab({ id: 'closing', hasUnread: true });
+			const unreadRight = createMockTab({ id: 'unread-right', hasUnread: true });
+			const session = createMockSession({
+				aiTabs: [unreadLeft, closingTab, unreadRight],
+				activeTabId: 'closing',
+			});
+
+			const result = closeTab(session, 'closing', true);
+
+			expect(result).not.toBeNull();
+			expect(result!.session.activeTabId).toBe('unread-left');
+		});
+
+		it('falls back to positional selection when unread-only mode has no remaining unread tabs', () => {
+			const readLeft = createMockTab({ id: 'read-left', hasUnread: false, inputValue: '' });
+			const closingTab = createMockTab({ id: 'closing', hasUnread: true });
+			const readRight = createMockTab({ id: 'read-right', hasUnread: false, inputValue: '' });
+			const session = createMockSession({
+				aiTabs: [readLeft, closingTab, readRight],
+				activeTabId: 'closing',
+			});
+
+			const result = closeTab(session, 'closing', true);
+
+			expect(result).not.toBeNull();
+			expect(result!.session.activeTabId).toBe('read-left');
+		});
 	});
 
 	describe('reopenClosedTab', () => {
@@ -542,6 +723,29 @@ describe('tabHelpers', () => {
 			expect(result!.session.aiTabs).toHaveLength(1);
 		});
 
+		it('repairs missing unified order when reopening a duplicate tab', () => {
+			const existingTab = createMockTab({
+				id: 'existing',
+				agentSessionId: 'session-123',
+			});
+			const closedTab = createMockTab({
+				id: 'closed',
+				agentSessionId: 'session-123',
+			});
+			const session = createMockSession({
+				aiTabs: [existingTab],
+				activeTabId: 'some-other-tab',
+				closedTabHistory: [{ tab: closedTab, index: 1, closedAt: Date.now() }],
+			});
+			(session as any).unifiedTabOrder = undefined;
+
+			const result = reopenClosedTab(session);
+
+			expect(result).not.toBeNull();
+			expect(result!.wasDuplicate).toBe(true);
+			expect(result!.session.unifiedTabOrder).toEqual([{ type: 'ai', id: 'existing' }]);
+		});
+
 		it('does not consider null agentSessionId as duplicate', () => {
 			const existingTab = createMockTab({
 				id: 'existing',
@@ -561,6 +765,21 @@ describe('tabHelpers', () => {
 
 			expect(result!.wasDuplicate).toBe(false);
 			expect(result!.session.aiTabs).toHaveLength(2);
+		});
+
+		it('repairs missing unified order when restoring a closed tab', () => {
+			const closedTab = createMockTab({ id: 'closed', agentSessionId: null });
+			const session = createMockSession({
+				aiTabs: [],
+				closedTabHistory: [{ tab: closedTab, index: 0, closedAt: Date.now() }],
+			});
+			(session as any).unifiedTabOrder = undefined;
+
+			const result = reopenClosedTab(session);
+
+			expect(result).not.toBeNull();
+			expect(result!.wasDuplicate).toBe(false);
+			expect(result!.session.unifiedTabOrder).toEqual([{ type: 'ai', id: 'mock-generated-id' }]);
 		});
 
 		it('appends at end if original index exceeds current length', () => {
@@ -1793,6 +2012,28 @@ describe('tabHelpers', () => {
 			expect(result!.session.activeTabId).toBe('ai-1');
 		});
 
+		it('creates unified closed history when it was missing', () => {
+			const fileTab = createMockFileTab({ id: 'file-1', path: '/test/myfile.ts' });
+			const aiTab = createMockTab({ id: 'ai-1' });
+			const session = createMockSession({
+				aiTabs: [aiTab],
+				activeTabId: 'ai-1',
+				filePreviewTabs: [fileTab],
+				activeFileTabId: 'file-1',
+				unifiedTabOrder: [
+					{ type: 'ai', id: 'ai-1' },
+					{ type: 'file', id: 'file-1' },
+				],
+			});
+			(session as any).unifiedClosedTabHistory = undefined;
+
+			const result = closeFileTab(session, 'file-1');
+
+			expect(result).not.toBeNull();
+			expect(result!.session.unifiedClosedTabHistory).toHaveLength(1);
+			expect(result!.session.unifiedClosedTabHistory[0].tab.id).toBe('file-1');
+		});
+
 		it('selects new first tab when closing first file tab', () => {
 			const fileTab1 = createMockFileTab({ id: 'file-1' });
 			const fileTab2 = createMockFileTab({ id: 'file-2' });
@@ -1840,6 +2081,61 @@ describe('tabHelpers', () => {
 			expect(result).not.toBeNull();
 			expect(result!.session.activeFileTabId).toBe('file-1');
 		});
+
+		it('falls back to the first file tab when the active file tab is missing from unified order', () => {
+			const closingFile = createMockFileTab({ id: 'file-missing-from-order' });
+			const remainingFile = createMockFileTab({ id: 'file-remaining' });
+			const aiTab = createMockTab({ id: 'ai-1' });
+			const session = createMockSession({
+				aiTabs: [aiTab],
+				activeTabId: 'ai-1',
+				filePreviewTabs: [closingFile, remainingFile],
+				activeFileTabId: 'file-missing-from-order',
+				unifiedTabOrder: [
+					{ type: 'file', id: 'file-remaining' },
+					{ type: 'ai', id: 'ai-1' },
+				],
+			});
+
+			const result = closeFileTab(session, 'file-missing-from-order');
+
+			expect(result).not.toBeNull();
+			expect(result!.closedTabEntry.unifiedIndex).toBe(2);
+			expect(result!.session.activeFileTabId).toBe('file-remaining');
+		});
+
+		it('falls back to the first AI tab when a missing-order active file tab closes', () => {
+			const closingFile = createMockFileTab({ id: 'file-missing-from-order' });
+			const aiTab = createMockTab({ id: 'ai-1' });
+			const session = createMockSession({
+				aiTabs: [aiTab],
+				activeTabId: 'ai-1',
+				filePreviewTabs: [closingFile],
+				activeFileTabId: 'file-missing-from-order',
+				unifiedTabOrder: [{ type: 'ai', id: 'ai-1' }],
+			});
+
+			const result = closeFileTab(session, 'file-missing-from-order');
+
+			expect(result).not.toBeNull();
+			expect(result!.closedTabEntry.unifiedIndex).toBe(1);
+			expect(result!.session.activeFileTabId).toBeNull();
+			expect(result!.session.activeTabId).toBe('ai-1');
+		});
+
+		it('clears the active file tab when no unified tabs remain after close', () => {
+			const closingFile = createMockFileTab({ id: 'file-1' });
+			const session = createMockSession({
+				filePreviewTabs: [closingFile],
+				activeFileTabId: 'file-1',
+				unifiedTabOrder: [{ type: 'file', id: 'file-1' }],
+			});
+
+			const result = closeFileTab(session, 'file-1');
+
+			expect(result).not.toBeNull();
+			expect(result!.session.activeFileTabId).toBeNull();
+		});
 	});
 
 	// addAiTabToUnifiedHistory tests
@@ -1875,6 +2171,20 @@ describe('tabHelpers', () => {
 			expect(result.unifiedClosedTabHistory).toHaveLength(2);
 			expect(result.unifiedClosedTabHistory[0].type).toBe('ai');
 			expect(result.unifiedClosedTabHistory[1].type).toBe('file');
+		});
+
+		it('creates unified closed history when adding an AI tab to a missing history', () => {
+			const aiTab = createMockTab({ id: 'ai-new' });
+			const session = createMockSession();
+			(session as any).unifiedClosedTabHistory = undefined;
+
+			const result = addAiTabToUnifiedHistory(session, aiTab, 2);
+
+			expect(result.unifiedClosedTabHistory).toHaveLength(1);
+			expect(result.unifiedClosedTabHistory[0]).toMatchObject({
+				type: 'ai',
+				unifiedIndex: 2,
+			});
 		});
 	});
 
@@ -1984,6 +2294,68 @@ describe('tabHelpers', () => {
 			expect(result!.session.aiTabs).toHaveLength(2);
 			expect(result!.session.activeTabId).toBe(result!.tabId);
 			expect(result!.session.activeFileTabId).toBeNull();
+		});
+
+		it('restores AI tabs with null agent session IDs without duplicate lookup', () => {
+			const existingAiTab = createMockTab({ id: 'ai-existing', agentSessionId: null });
+			const closedAiTab = createMockTab({ id: 'ai-closed', agentSessionId: null });
+			const closedEntry = {
+				type: 'ai' as const,
+				tab: closedAiTab,
+				unifiedIndex: 1,
+				closedAt: Date.now(),
+			};
+			const session = createMockSession({
+				aiTabs: [existingAiTab],
+				activeTabId: 'ai-existing',
+				unifiedTabOrder: [{ type: 'ai', id: 'ai-existing' }],
+				unifiedClosedTabHistory: [closedEntry],
+			});
+
+			const result = reopenUnifiedClosedTab(session);
+
+			expect(result).not.toBeNull();
+			expect(result!.tabType).toBe('ai');
+			expect(result!.wasDuplicate).toBe(false);
+			expect(result!.session.aiTabs).toHaveLength(2);
+			expect(result!.session.activeTabId).toBe('mock-generated-id');
+		});
+
+		it('restores an AI tab at the AI index implied by mixed unified order', () => {
+			const aiBefore = createMockTab({ id: 'ai-before' });
+			const aiAfter = createMockTab({ id: 'ai-after' });
+			const fileBefore = createMockFileTab({ id: 'file-before' });
+			const closedAiTab = createMockTab({ id: 'ai-closed', agentSessionId: 'session-456' });
+			const closedEntry = {
+				type: 'ai' as const,
+				tab: closedAiTab,
+				unifiedIndex: 2,
+				closedAt: Date.now(),
+			};
+			const session = createMockSession({
+				aiTabs: [aiBefore, aiAfter],
+				filePreviewTabs: [fileBefore],
+				activeTabId: 'ai-before',
+				unifiedTabOrder: [
+					{ type: 'file', id: 'file-before' },
+					{ type: 'ai', id: 'ai-before' },
+					{ type: 'ai', id: 'ai-after' },
+				],
+				unifiedClosedTabHistory: [closedEntry],
+			});
+
+			const result = reopenUnifiedClosedTab(session);
+
+			expect(result).not.toBeNull();
+			expect(result!.session.aiTabs.map((tab) => tab.id)).toEqual([
+				'ai-before',
+				'mock-generated-id',
+				'ai-after',
+			]);
+			expect(result!.session.unifiedTabOrder[2]).toEqual({
+				type: 'ai',
+				id: 'mock-generated-id',
+			});
 		});
 
 		it('switches to existing file tab when duplicate found', () => {
@@ -2345,6 +2717,53 @@ describe('tabHelpers', () => {
 			expect(result!.type).toBe('ai');
 			expect(result!.id).toBe('unread-tab');
 		});
+
+		it('returns null when current tab is missing and every unified entry is orphaned', () => {
+			const session = createMockSession({
+				aiTabs: [],
+				filePreviewTabs: [],
+				activeTabId: 'missing-active',
+				activeFileTabId: null,
+				unifiedTabOrder: [
+					{ type: 'file', id: 'orphaned-file' },
+					{ type: 'ai', id: 'orphaned-ai' },
+				],
+			});
+
+			expect(navigateToNextUnifiedTab(session)).toBeNull();
+		});
+
+		it('returns null in unread-only mode when no unread, draft, or file tab is navigable', () => {
+			const readTab1 = createMockTab({ id: 'read-1', hasUnread: false, inputValue: '' });
+			const readTab2 = createMockTab({ id: 'read-2', hasUnread: false, inputValue: '' });
+			const session = createMockSession({
+				aiTabs: [readTab1, readTab2],
+				activeTabId: 'read-1',
+				activeFileTabId: null,
+				unifiedTabOrder: [
+					{ type: 'ai', id: 'read-1' },
+					{ type: 'ai', id: 'read-2' },
+				],
+			});
+
+			expect(navigateToNextUnifiedTab(session, true)).toBeNull();
+		});
+
+		it('returns null when all next candidates are orphaned', () => {
+			const activeTab = createMockTab({ id: 'active-tab' });
+			const session = createMockSession({
+				aiTabs: [activeTab],
+				filePreviewTabs: [],
+				activeTabId: 'active-tab',
+				activeFileTabId: null,
+				unifiedTabOrder: [
+					{ type: 'ai', id: 'active-tab' },
+					{ type: 'file', id: 'orphaned-file' },
+				],
+			});
+
+			expect(navigateToNextUnifiedTab(session)).toBeNull();
+		});
 	});
 
 	describe('navigateToPrevUnifiedTab', () => {
@@ -2484,6 +2903,28 @@ describe('tabHelpers', () => {
 			expect(result!.id).toBe('file-1');
 		});
 
+		it('skips orphaned file entries in showUnreadOnly mode', () => {
+			const unreadTab = createMockTab({ id: 'unread-tab', hasUnread: true });
+			const readTab = createMockTab({ id: 'read-tab', hasUnread: false, inputValue: '' });
+			const session = createMockSession({
+				aiTabs: [unreadTab, readTab],
+				filePreviewTabs: [],
+				activeTabId: 'read-tab',
+				activeFileTabId: null,
+				unifiedTabOrder: [
+					{ type: 'ai', id: 'unread-tab' },
+					{ type: 'file', id: 'orphaned-file' },
+					{ type: 'ai', id: 'read-tab' },
+				],
+			});
+
+			const result = navigateToPrevUnifiedTab(session, true);
+
+			expect(result).not.toBeNull();
+			expect(result!.type).toBe('ai');
+			expect(result!.id).toBe('unread-tab');
+		});
+
 		it('navigates to last tab when current tab not found in unified order', () => {
 			const tab1 = createMockTab({ id: 'tab-1' });
 			const tab2 = createMockTab({ id: 'tab-2' });
@@ -2581,6 +3022,53 @@ describe('tabHelpers', () => {
 			expect(result3!.type).toBe('ai');
 			expect(result3!.id).toBe('ai-2');
 		});
+
+		it('returns null when current tab is missing and every previous unified entry is orphaned', () => {
+			const session = createMockSession({
+				aiTabs: [],
+				filePreviewTabs: [],
+				activeTabId: 'missing-active',
+				activeFileTabId: null,
+				unifiedTabOrder: [
+					{ type: 'file', id: 'orphaned-file' },
+					{ type: 'ai', id: 'orphaned-ai' },
+				],
+			});
+
+			expect(navigateToPrevUnifiedTab(session)).toBeNull();
+		});
+
+		it('returns null in unread-only mode when no previous unread, draft, or file tab is navigable', () => {
+			const readTab1 = createMockTab({ id: 'read-1', hasUnread: false, inputValue: '' });
+			const readTab2 = createMockTab({ id: 'read-2', hasUnread: false, inputValue: '' });
+			const session = createMockSession({
+				aiTabs: [readTab1, readTab2],
+				activeTabId: 'read-1',
+				activeFileTabId: null,
+				unifiedTabOrder: [
+					{ type: 'ai', id: 'read-1' },
+					{ type: 'ai', id: 'read-2' },
+				],
+			});
+
+			expect(navigateToPrevUnifiedTab(session, true)).toBeNull();
+		});
+
+		it('returns null when all previous candidates are orphaned', () => {
+			const activeTab = createMockTab({ id: 'active-tab' });
+			const session = createMockSession({
+				aiTabs: [activeTab],
+				filePreviewTabs: [],
+				activeTabId: 'active-tab',
+				activeFileTabId: null,
+				unifiedTabOrder: [
+					{ type: 'file', id: 'orphaned-file' },
+					{ type: 'ai', id: 'active-tab' },
+				],
+			});
+
+			expect(navigateToPrevUnifiedTab(session)).toBeNull();
+		});
 	});
 
 	describe('extractQuickTabName', () => {
@@ -2646,6 +3134,10 @@ describe('tabHelpers', () => {
 	});
 
 	describe('buildUnifiedTabs', () => {
+		it('returns an empty list for a missing session', () => {
+			expect(buildUnifiedTabs(null as unknown as Session)).toEqual([]);
+		});
+
 		it('returns tabs in unifiedTabOrder sequence', () => {
 			const aiTab = createMockTab({ id: 'ai-1' });
 			const fileTab = createMockFileTab({ id: 'file-1' });
@@ -2714,6 +3206,31 @@ describe('tabHelpers', () => {
 
 			expect(result).toHaveLength(1);
 			expect(result[0].id).toBe('ai-1');
+		});
+
+		it('skips file refs with no matching tab data', () => {
+			const fileTab = createMockFileTab({ id: 'file-1' });
+			const session = createMockSession({
+				filePreviewTabs: [fileTab],
+				unifiedTabOrder: [
+					{ type: 'file', id: 'file-1' },
+					{ type: 'file', id: 'file-deleted' },
+				],
+			});
+
+			const result = buildUnifiedTabs(session);
+
+			expect(result).toHaveLength(1);
+			expect(result[0].id).toBe('file-1');
+		});
+
+		it('handles undefined tab arrays and unified order as empty collections', () => {
+			const session = createMockSession();
+			(session as any).aiTabs = undefined;
+			(session as any).filePreviewTabs = undefined;
+			(session as any).unifiedTabOrder = undefined;
+
+			expect(buildUnifiedTabs(session)).toEqual([]);
 		});
 
 		it('returns empty array for empty session', () => {
@@ -2823,6 +3340,17 @@ describe('tabHelpers', () => {
 			expect(result).toHaveLength(1);
 			expect(result[0]).toEqual({ type: 'ai', id: 'tab-1' });
 		});
+
+		it('handles undefined tab arrays as empty when repairing order', () => {
+			const order = [{ type: 'ai' as const, id: 'tab-1' }];
+			const session = createMockSession({ unifiedTabOrder: order });
+			(session as any).aiTabs = undefined;
+			(session as any).filePreviewTabs = undefined;
+
+			const result = getRepairedUnifiedTabOrder(session);
+
+			expect(result).toBe(order);
+		});
 	});
 
 	describe('navigation with orphaned tabs', () => {
@@ -2896,6 +3424,21 @@ describe('tabHelpers', () => {
 			const result = navigateToLastUnifiedTab(session);
 			expect(result).not.toBeNull();
 			expect(result!.id).toBe('orphan-tab');
+		});
+
+		it('navigateToLastUnifiedTab returns null when every repaired ref is orphaned', () => {
+			const session = createMockSession({
+				aiTabs: [],
+				filePreviewTabs: [],
+				activeTabId: 'missing-active',
+				activeFileTabId: null,
+				unifiedTabOrder: [
+					{ type: 'file', id: 'orphaned-file' },
+					{ type: 'ai', id: 'orphaned-ai' },
+				],
+			});
+
+			expect(navigateToLastUnifiedTab(session)).toBeNull();
 		});
 	});
 

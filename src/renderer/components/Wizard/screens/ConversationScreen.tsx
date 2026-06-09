@@ -13,7 +13,7 @@
  * - Structured output parsing (confidence, ready, message)
  */
 
-import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { Brain } from 'lucide-react';
 import type { Theme } from '../../../types';
@@ -424,12 +424,12 @@ export function ConversationScreen({
 	useEffect(() => {
 		if (pendingAutoContinue && !state.isConversationLoading && !isSendingRef.current) {
 			const message = pendingAutoContinue;
-			setPendingAutoContinue(null);
 
 			// Small delay to let the UI update and show the AI's response
 			const timeoutId = setTimeout(() => {
 				// Set the input value first so handleSendMessage picks it up
 				setInputValue(message);
+				setPendingAutoContinue(null);
 			}, 800);
 
 			return () => clearTimeout(timeoutId);
@@ -587,9 +587,7 @@ export function ConversationScreen({
 
 		// Clear input immediately and reset textarea height
 		setInputValue('');
-		if (inputRef.current) {
-			inputRef.current.style.height = 'auto';
-		}
+		inputRef.current!.style.height = 'auto';
 		setConversationError(null);
 		setDetectedError(null);
 		setStreamingText('');
@@ -643,12 +641,6 @@ export function ConversationScreen({
 				trimmedInput,
 				state.conversationHistory,
 				{
-					onSending: () => {
-						// Already set loading state
-					},
-					onReceiving: () => {
-						// Agent is responding
-					},
 					onChunk: (chunk) => {
 						// Show streaming response - extract text from stream-json format
 						// Claude Code with --include-partial-messages outputs:
@@ -818,7 +810,7 @@ export function ConversationScreen({
 	]);
 
 	// Keep ref updated with current handleSendMessage for auto-continue effect
-	useEffect(() => {
+	useLayoutEffect(() => {
 		handleSendMessageRef.current = handleSendMessage;
 	}, [handleSendMessage]);
 
@@ -1015,9 +1007,9 @@ export function ConversationScreen({
 			!autoSentInitialMessage &&
 			state.conversationHistory.length === 0
 		) {
-			setAutoSentInitialMessage(true);
 			// Small delay to ensure conversation manager is ready
 			const timer = setTimeout(() => {
+				setAutoSentInitialMessage(true);
 				sendInitialContinueMessage();
 			}, 100);
 			return () => clearTimeout(timer);
@@ -1073,10 +1065,8 @@ export function ConversationScreen({
 	 * Handle "Let's Get Started" button click
 	 */
 	const handleLetsGo = useCallback(() => {
-		if (state.isReadyToProceed) {
-			nextStep();
-		}
-	}, [state.isReadyToProceed, nextStep]);
+		nextStep();
+	}, [nextStep]);
 
 	return (
 		<div

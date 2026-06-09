@@ -57,6 +57,13 @@ const mockExternalNodeDataSingle: ExternalLinkNodeData = {
 	urls: ['https://example.com/page'],
 };
 
+const mockExternalNodeDataEmpty: ExternalLinkNodeData = {
+	nodeType: 'external',
+	domain: 'empty.example.com',
+	linkCount: 0,
+	urls: [],
+};
+
 // Mock external node data with multiple URLs
 const mockExternalNodeDataMultiple: ExternalLinkNodeData = {
 	nodeType: 'external',
@@ -219,6 +226,25 @@ describe('NodeContextMenu', () => {
 			expect(onOpenExternal).toHaveBeenCalledWith('https://example.com/page');
 		});
 
+		it('dismisses without opening when an external node has no URLs', () => {
+			const onOpen = vi.fn();
+			const onOpenExternal = vi.fn();
+			const onDismiss = vi.fn();
+			const props = createProps({
+				nodeData: mockExternalNodeDataEmpty,
+				onOpen,
+				onOpenExternal,
+				onDismiss,
+			});
+			render(<NodeContextMenu {...props} />);
+
+			fireEvent.click(screen.getByRole('button', { name: /open/i }));
+
+			expect(onOpen).not.toHaveBeenCalled();
+			expect(onOpenExternal).not.toHaveBeenCalled();
+			expect(onDismiss).toHaveBeenCalled();
+		});
+
 		it('copies URL to clipboard when Copy URL is clicked', async () => {
 			const onDismiss = vi.fn();
 			const props = createProps({ nodeData: mockExternalNodeDataSingle, onDismiss });
@@ -229,6 +255,22 @@ describe('NodeContextMenu', () => {
 			await waitFor(() => {
 				expect(mockClipboardWriteText).toHaveBeenCalledWith('https://example.com/page');
 			});
+			expect(onDismiss).toHaveBeenCalled();
+		});
+
+		it('dismisses without copying when node data has an unsupported type', () => {
+			const unsupportedNodeData = {
+				nodeType: 'unsupported',
+				filePath: '/ignored.md',
+				urls: ['https://ignored.example.com'],
+			} as unknown as NodeContextMenuProps['nodeData'];
+			const onDismiss = vi.fn();
+			const props = createProps({ nodeData: unsupportedNodeData, onDismiss });
+			render(<NodeContextMenu {...props} />);
+
+			fireEvent.click(screen.getByRole('button', { name: /copy url$/i }));
+
+			expect(mockClipboardWriteText).not.toHaveBeenCalled();
 			expect(onDismiss).toHaveBeenCalled();
 		});
 	});
@@ -304,6 +346,9 @@ describe('NodeContextMenu', () => {
 			const onDismiss = vi.fn();
 			const props = createProps({ onDismiss });
 			render(<NodeContextMenu {...props} />);
+
+			fireEvent.keyDown(document, { key: 'Enter' });
+			expect(onDismiss).not.toHaveBeenCalled();
 
 			fireEvent.keyDown(document, { key: 'Escape' });
 

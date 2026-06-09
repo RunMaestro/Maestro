@@ -75,6 +75,45 @@ describe('useMobileViewState', () => {
 		expect(result.current.isSmallScreen).toBe(false);
 	});
 
+	it('defaults to not small screen when window is unavailable during initialization', async () => {
+		const originalWindow = globalThis.window;
+
+		vi.resetModules();
+		vi.doMock('react', async () => {
+			const actual = await vi.importActual<typeof import('react')>('react');
+
+			return {
+				...actual,
+				useCallback: (callback: unknown) => callback,
+				useEffect: vi.fn(),
+				useMemo: (factory: () => unknown) => factory(),
+				useState: (initialValue: unknown) => [
+					typeof initialValue === 'function' ? (initialValue as () => unknown)() : initialValue,
+					vi.fn(),
+				],
+			};
+		});
+
+		Object.defineProperty(globalThis, 'window', {
+			value: undefined,
+			configurable: true,
+		});
+
+		try {
+			const { useMobileViewState: useHookWithoutWindow } =
+				await import('../../../web/hooks/useMobileViewState');
+
+			expect(useHookWithoutWindow().isSmallScreen).toBe(false);
+		} finally {
+			Object.defineProperty(globalThis, 'window', {
+				value: originalWindow,
+				configurable: true,
+			});
+			vi.doUnmock('react');
+			vi.resetModules();
+		}
+	});
+
 	it('persists view and history state via debounced save', () => {
 		const { result } = renderHook(() => useMobileViewState());
 

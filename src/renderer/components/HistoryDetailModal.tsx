@@ -115,19 +115,15 @@ export function HistoryDetailModal({
 		layerIdRef.current = id;
 
 		return () => {
-			if (layerIdRef.current) {
-				unregisterLayer(layerIdRef.current);
-			}
+			unregisterLayer(id);
 		};
 	}, [registerLayer, unregisterLayer]);
 
 	// Keep escape handler up to date
 	useEffect(() => {
-		if (layerIdRef.current) {
-			updateLayerHandler(layerIdRef.current, () => {
-				onCloseRef.current();
-			});
-		}
+		updateLayerHandler(layerIdRef.current!, () => {
+			onCloseRef.current();
+		});
 	}, [onClose, updateLayerHandler]);
 
 	// Focus delete button when confirmation modal appears

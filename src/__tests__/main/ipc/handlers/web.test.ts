@@ -29,6 +29,7 @@ vi.mock('../../../../main/web-server', () => ({
 }));
 
 import { registerWebHandlers } from '../../../../main/ipc/handlers/web';
+import { logger } from '../../../../main/utils/logger';
 
 describe('web handlers', () => {
 	let mockWebServer: any;
@@ -165,6 +166,73 @@ describe('web handlers', () => {
 			expect(mockWebServer.broadcastAutoRunState).toHaveBeenCalledWith('session-123', state);
 			expect(result).toBe(true);
 		});
+
+		it('should return false when web server is null', async () => {
+			webServerRef.current = null;
+
+			const handler = registeredHandlers.get('web:broadcastAutoRunState');
+			const result = await handler!({}, 'session-123', null);
+
+			expect(result).toBe(false);
+			expect(mockWebServer.broadcastAutoRunState).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('web:broadcastTabsChange', () => {
+		it('should broadcast tab changes when clients are connected', async () => {
+			const aiTabs = [{ id: 'tab-1', name: 'Agent', status: 'idle' }];
+
+			const handler = registeredHandlers.get('web:broadcastTabsChange');
+			const result = await handler!({}, 'session-123', aiTabs, 'tab-1');
+
+			expect(mockWebServer.broadcastTabsChange).toHaveBeenCalledWith(
+				'session-123',
+				aiTabs,
+				'tab-1'
+			);
+			expect(result).toBe(true);
+		});
+
+		it('should not broadcast tab changes without connected clients', async () => {
+			mockWebServer.getWebClientCount.mockReturnValue(0);
+
+			const handler = registeredHandlers.get('web:broadcastTabsChange');
+			const result = await handler!({}, 'session-123', [], 'tab-1');
+
+			expect(result).toBe(false);
+			expect(mockWebServer.broadcastTabsChange).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('web:broadcastSessionState', () => {
+		it('should broadcast session state changes with additional data', async () => {
+			const additionalData = {
+				name: 'Agent',
+				toolType: 'codex',
+				inputMode: 'ai',
+				cwd: '/tmp/project',
+			};
+
+			const handler = registeredHandlers.get('web:broadcastSessionState');
+			const result = await handler!({}, 'session-123', 'busy', additionalData);
+
+			expect(mockWebServer.broadcastSessionStateChange).toHaveBeenCalledWith(
+				'session-123',
+				'busy',
+				additionalData
+			);
+			expect(result).toBe(true);
+		});
+
+		it('should not broadcast session state changes without connected clients', async () => {
+			mockWebServer.getWebClientCount.mockReturnValue(0);
+
+			const handler = registeredHandlers.get('web:broadcastSessionState');
+			const result = await handler!({}, 'session-123', 'idle');
+
+			expect(result).toBe(false);
+			expect(mockWebServer.broadcastSessionStateChange).not.toHaveBeenCalled();
+		});
 	});
 
 	describe('live:toggle', () => {
@@ -264,6 +332,63 @@ describe('web handlers', () => {
 		});
 	});
 
+	describe('live:getDashboardUrl', () => {
+		it('should return the secure dashboard URL', async () => {
+			const handler = registeredHandlers.get('live:getDashboardUrl');
+			const result = await handler!({});
+
+			expect(result).toBe('http://localhost:8080');
+		});
+
+		it('should return null when web server is unavailable', async () => {
+			webServerRef.current = null;
+
+			const handler = registeredHandlers.get('live:getDashboardUrl');
+			const result = await handler!({});
+
+			expect(result).toBeNull();
+		});
+	});
+
+	describe('live:getLiveSessions', () => {
+		it('should return current live sessions', async () => {
+			const liveSessions = [{ sessionId: 'session-1' }, { sessionId: 'session-2' }];
+			mockWebServer.getLiveSessions.mockReturnValue(liveSessions);
+
+			const handler = registeredHandlers.get('live:getLiveSessions');
+			const result = await handler!({});
+
+			expect(result).toBe(liveSessions);
+		});
+
+		it('should return an empty list when web server is unavailable', async () => {
+			webServerRef.current = null;
+
+			const handler = registeredHandlers.get('live:getLiveSessions');
+			const result = await handler!({});
+
+			expect(result).toEqual([]);
+		});
+	});
+
+	describe('live:broadcastActiveSession', () => {
+		it('should broadcast the active session when web server exists', async () => {
+			const handler = registeredHandlers.get('live:broadcastActiveSession');
+			await handler!({}, 'session-123');
+
+			expect(mockWebServer.broadcastActiveSessionChange).toHaveBeenCalledWith('session-123');
+		});
+
+		it('should no-op when web server is unavailable', async () => {
+			webServerRef.current = null;
+
+			const handler = registeredHandlers.get('live:broadcastActiveSession');
+			await expect(handler!({}, 'session-123')).resolves.toBeUndefined();
+
+			expect(mockWebServer.broadcastActiveSessionChange).not.toHaveBeenCalled();
+		});
+	});
+
 	describe('live:startServer', () => {
 		it('should create and start web server if not exists', async () => {
 			webServerRef.current = null;
@@ -329,9 +454,32 @@ describe('web handlers', () => {
 
 			expect(result).toEqual({ success: true });
 		});
+
+		it('should report stop failures and keep the server reference', async () => {
+			mockWebServer.stop.mockRejectedValue(new Error('shutdown failed'));
+
+			const handler = registeredHandlers.get('live:stopServer');
+			const result = await handler!({});
+
+			expect(result).toEqual({ success: false, error: 'shutdown failed' });
+			expect(webServerRef.current).toBe(mockWebServer);
+			expect(logger.error).toHaveBeenCalledWith(
+				'Failed to stop web server: shutdown failed',
+				'WebServer'
+			);
+		});
 	});
 
 	describe('live:disableAll', () => {
+		it('should return count 0 when web server is unavailable', async () => {
+			webServerRef.current = null;
+
+			const handler = registeredHandlers.get('live:disableAll');
+			const result = await handler!({});
+
+			expect(result).toEqual({ success: true, count: 0 });
+		});
+
 		it('should disable all live sessions and stop server', async () => {
 			mockWebServer.getLiveSessions.mockReturnValue([
 				{ sessionId: 'session-1' },
@@ -355,6 +503,26 @@ describe('web handlers', () => {
 			const result = await handler!({});
 
 			expect(result).toEqual({ success: true, count: 0 });
+		});
+
+		it('should report stop failures after marking sessions offline', async () => {
+			mockWebServer.getLiveSessions.mockReturnValue([
+				{ sessionId: 'session-1' },
+				{ sessionId: 'session-2' },
+			]);
+			mockWebServer.stop.mockRejectedValue(new Error('stop failed'));
+
+			const handler = registeredHandlers.get('live:disableAll');
+			const result = await handler!({});
+
+			expect(mockWebServer.setSessionOffline).toHaveBeenCalledWith('session-1');
+			expect(mockWebServer.setSessionOffline).toHaveBeenCalledWith('session-2');
+			expect(result).toEqual({ success: false, count: 2, error: 'stop failed' });
+			expect(webServerRef.current).toBe(mockWebServer);
+			expect(logger.error).toHaveBeenCalledWith(
+				'Failed to stop web server during disableAll: stop failed',
+				'WebServer'
+			);
 		});
 	});
 

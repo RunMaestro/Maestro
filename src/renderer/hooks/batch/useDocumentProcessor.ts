@@ -383,7 +383,7 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 				if (responseText) {
 					// Use the first paragraph as the short summary
 					const paragraphs = responseText.split(/\n\n+/);
-					const firstParagraph = paragraphs[0]?.trim() || '';
+					const firstParagraph = paragraphs[0].trim();
 
 					// Clean up the first paragraph - remove markdown formatting for summary
 					const cleanFirstParagraph = firstParagraph

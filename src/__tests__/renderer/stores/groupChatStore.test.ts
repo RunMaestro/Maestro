@@ -78,6 +78,7 @@ function resetStore() {
 		groupChatRightTab: 'participants',
 		groupChatParticipantColors: {},
 		groupChatStagedImages: [],
+		participantLiveOutput: new Map(),
 		groupChatError: null,
 	});
 }
@@ -111,6 +112,7 @@ describe('groupChatStore', () => {
 			expect(state.groupChatRightTab).toBe('participants');
 			expect(state.groupChatParticipantColors).toEqual({});
 			expect(state.groupChatStagedImages).toEqual([]);
+			expect(state.participantLiveOutput).toEqual(new Map());
 			expect(state.groupChatError).toBeNull();
 		});
 	});
@@ -380,6 +382,46 @@ describe('groupChatStore', () => {
 	});
 
 	// ==========================================================================
+	// Live output peek
+	// ==========================================================================
+
+	describe('live output peek', () => {
+		it('appends live output chunks per participant', () => {
+			useGroupChatStore.getState().appendParticipantLiveOutput('Alice', 'first');
+			useGroupChatStore.getState().appendParticipantLiveOutput('Alice', ' second');
+			useGroupChatStore.getState().appendParticipantLiveOutput('Bob', 'other');
+
+			const output = useGroupChatStore.getState().participantLiveOutput;
+			expect(output.get('Alice')).toBe('first second');
+			expect(output.get('Bob')).toBe('other');
+		});
+
+		it('keeps only the latest 50KB of live output per participant', () => {
+			const oversizedChunk = `${'a'.repeat(50_000)}tail`;
+
+			useGroupChatStore.getState().appendParticipantLiveOutput('Alice', oversizedChunk);
+
+			const output = useGroupChatStore.getState().participantLiveOutput.get('Alice');
+			expect(output).toHaveLength(50_000);
+			expect(output).toBe(`${'a'.repeat(49_996)}tail`);
+		});
+
+		it('clears live output for one participant or all participants', () => {
+			useGroupChatStore.getState().appendParticipantLiveOutput('Alice', 'alpha');
+			useGroupChatStore.getState().appendParticipantLiveOutput('Bob', 'beta');
+
+			useGroupChatStore.getState().clearParticipantLiveOutput('Alice');
+
+			expect(useGroupChatStore.getState().participantLiveOutput.has('Alice')).toBe(false);
+			expect(useGroupChatStore.getState().participantLiveOutput.get('Bob')).toBe('beta');
+
+			useGroupChatStore.getState().clearParticipantLiveOutput();
+
+			expect(useGroupChatStore.getState().participantLiveOutput).toEqual(new Map());
+		});
+	});
+
+	// ==========================================================================
 	// Error state
 	// ==========================================================================
 
@@ -419,6 +461,7 @@ describe('groupChatStore', () => {
 			useGroupChatStore.getState().setGroupChatMessages([createMockMessage()]);
 			useGroupChatStore.getState().setGroupChatState('moderator-thinking');
 			useGroupChatStore.getState().setParticipantStates(new Map([['Alice', 'working']]));
+			useGroupChatStore.getState().appendParticipantLiveOutput('Alice', 'live output');
 			useGroupChatStore.getState().setGroupChatError(createMockError());
 
 			// Also set some state that should NOT be cleared
@@ -434,6 +477,7 @@ describe('groupChatStore', () => {
 			expect(useGroupChatStore.getState().groupChatMessages).toEqual([]);
 			expect(useGroupChatStore.getState().groupChatState).toBe('idle');
 			expect(useGroupChatStore.getState().participantStates).toEqual(new Map());
+			expect(useGroupChatStore.getState().participantLiveOutput).toEqual(new Map());
 			expect(useGroupChatStore.getState().groupChatError).toBeNull();
 
 			// Non-active fields should be preserved
@@ -502,6 +546,8 @@ describe('groupChatStore', () => {
 			expect(typeof actions.setGroupChatParticipantColors).toBe('function');
 			expect(typeof actions.setGroupChatStagedImages).toBe('function');
 			expect(typeof actions.setGroupChatError).toBe('function');
+			expect(typeof actions.appendParticipantLiveOutput).toBe('function');
+			expect(typeof actions.clearParticipantLiveOutput).toBe('function');
 			expect(typeof actions.clearGroupChatError).toBe('function');
 			expect(typeof actions.resetGroupChatState).toBe('function');
 		});
@@ -511,13 +557,16 @@ describe('groupChatStore', () => {
 			useGroupChatStore.getState().setGroupChatState('agent-working');
 			const actions2 = getGroupChatActions();
 			expect(actions1.setGroupChats).toBe(actions2.setGroupChats);
+			expect(actions1.appendParticipantLiveOutput).toBe(actions2.appendParticipantLiveOutput);
 			expect(actions1.clearGroupChatError).toBe(actions2.clearGroupChatError);
 		});
 
 		it('actions from getGroupChatActions mutate state correctly', () => {
 			const actions = getGroupChatActions();
 			actions.setActiveGroupChatId('gc-from-actions');
+			actions.appendParticipantLiveOutput('Alice', 'from actions');
 			expect(useGroupChatStore.getState().activeGroupChatId).toBe('gc-from-actions');
+			expect(useGroupChatStore.getState().participantLiveOutput.get('Alice')).toBe('from actions');
 		});
 	});
 
@@ -553,6 +602,7 @@ describe('groupChatStore', () => {
 			expect(state.groupChatRightTab).toBe('participants');
 			expect(state.groupChatParticipantColors).toEqual({});
 			expect(state.groupChatStagedImages).toEqual([]);
+			expect(state.participantLiveOutput).toEqual(new Map());
 			expect(state.groupChatError).toBeNull();
 		});
 	});

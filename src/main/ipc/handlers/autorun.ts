@@ -66,13 +66,20 @@ let autoRunWatchDebounceTimer: NodeJS.Timeout | null = null;
  *
  * @internal
  */
-interface TreeNode {
-	name: string;
-	type: 'file' | 'folder';
-	/** Pre-computed relative path from root folder */
-	path: string;
-	children?: TreeNode[];
-}
+type TreeNode =
+	| {
+			name: string;
+			type: 'file';
+			/** Pre-computed relative path from root folder */
+			path: string;
+	  }
+	| {
+			name: string;
+			type: 'folder';
+			/** Pre-computed relative path from root folder */
+			path: string;
+			children: TreeNode[];
+	  };
 
 /**
  * Recursively scan directory for markdown files
@@ -204,7 +211,7 @@ function flattenTree(nodes: TreeNode[]): string[] {
 	for (const node of nodes) {
 		if (node.type === 'file') {
 			files.push(node.path);
-		} else if (node.children) {
+		} else {
 			files.push(...flattenTree(node.children));
 		}
 	}

@@ -143,6 +143,40 @@ describe('TransferProgressModal', () => {
 			expect(groomingMessages.length).toBeGreaterThan(0);
 		});
 
+		it('falls back to the active stage label when progress has no message', () => {
+			renderWithLayerStack(
+				<TransferProgressModal
+					theme={testTheme}
+					isOpen={true}
+					progress={{ ...groomingProgress, message: '' }}
+					sourceAgent="claude-code"
+					targetAgent="opencode"
+					onCancel={vi.fn()}
+				/>
+			);
+
+			expect(screen.getAllByText('Grooming for OpenCode...').length).toBeGreaterThan(0);
+		});
+
+		it('falls back to a generic processing message for unknown stages without messages', () => {
+			renderWithLayerStack(
+				<TransferProgressModal
+					theme={testTheme}
+					isOpen={true}
+					progress={{
+						...groomingProgress,
+						stage: 'unknown' as GroomingProgress['stage'],
+						message: '',
+					}}
+					sourceAgent="claude-code"
+					targetAgent="opencode"
+					onCancel={vi.fn()}
+				/>
+			);
+
+			expect(screen.getByText('Processing...')).toBeInTheDocument();
+		});
+
 		it('displays progress percentage', () => {
 			renderWithLayerStack(
 				<TransferProgressModal
@@ -307,6 +341,24 @@ describe('TransferProgressModal', () => {
 			expect(screen.getByTestId('x-icon')).toBeInTheDocument();
 		});
 
+		it('calls onCancel from the complete-state close button when onComplete is absent', () => {
+			const onCancel = vi.fn();
+			renderWithLayerStack(
+				<TransferProgressModal
+					theme={testTheme}
+					isOpen={true}
+					progress={completeProgress}
+					sourceAgent="claude-code"
+					targetAgent="opencode"
+					onCancel={onCancel}
+				/>
+			);
+
+			fireEvent.click(screen.getByLabelText('Close modal'));
+
+			expect(onCancel).toHaveBeenCalledTimes(1);
+		});
+
 		it('calls onComplete when Done is clicked', () => {
 			const onComplete = vi.fn();
 			renderWithLayerStack(
@@ -414,6 +466,60 @@ describe('TransferProgressModal', () => {
 
 			expect(screen.queryByText('Cancel Transfer?')).not.toBeInTheDocument();
 		});
+
+		it('shows cancel confirmation when Escape is pressed during transfer', () => {
+			renderWithLayerStack(
+				<TransferProgressModal
+					theme={testTheme}
+					isOpen={true}
+					progress={groomingProgress}
+					sourceAgent="claude-code"
+					targetAgent="opencode"
+					onCancel={vi.fn()}
+				/>
+			);
+
+			fireEvent.keyDown(window, { key: 'Escape' });
+
+			expect(screen.getByText('Cancel Transfer?')).toBeInTheDocument();
+		});
+
+		it('completes when Escape is pressed after transfer completion', () => {
+			const onComplete = vi.fn();
+			renderWithLayerStack(
+				<TransferProgressModal
+					theme={testTheme}
+					isOpen={true}
+					progress={completeProgress}
+					sourceAgent="claude-code"
+					targetAgent="opencode"
+					onCancel={vi.fn()}
+					onComplete={onComplete}
+				/>
+			);
+
+			fireEvent.keyDown(window, { key: 'Escape' });
+
+			expect(onComplete).toHaveBeenCalledTimes(1);
+		});
+
+		it('falls back to cancel when Escape closes a completed transfer without onComplete', () => {
+			const onCancel = vi.fn();
+			renderWithLayerStack(
+				<TransferProgressModal
+					theme={testTheme}
+					isOpen={true}
+					progress={completeProgress}
+					sourceAgent="claude-code"
+					targetAgent="opencode"
+					onCancel={onCancel}
+				/>
+			);
+
+			fireEvent.keyDown(window, { key: 'Escape' });
+
+			expect(onCancel).toHaveBeenCalledTimes(1);
+		});
 	});
 
 	describe('elapsed time', () => {
@@ -453,6 +559,25 @@ describe('TransferProgressModal', () => {
 			});
 
 			expect(screen.getByText('3s')).toBeInTheDocument();
+		});
+
+		it('formats elapsed time in minutes and seconds', async () => {
+			renderWithLayerStack(
+				<TransferProgressModal
+					theme={testTheme}
+					isOpen={true}
+					progress={groomingProgress}
+					sourceAgent="claude-code"
+					targetAgent="opencode"
+					onCancel={vi.fn()}
+				/>
+			);
+
+			await act(async () => {
+				vi.advanceTimersByTime(65000);
+			});
+
+			expect(screen.getByText('1m 5s')).toBeInTheDocument();
 		});
 
 		it('does not show elapsed time when complete', () => {

@@ -238,7 +238,7 @@ export const TasksByHourChart = memo(function TasksByHourChart({
 				{/* Bars */}
 				<div className="flex items-end gap-0.5 h-24" role="img" aria-label="Tasks by hour of day">
 					{hourlyData.map((hourData) => {
-						const height = maxCount > 0 ? (hourData.count / maxCount) * 100 : 0;
+						const height = (hourData.count / maxCount) * 100;
 						const isPeak = peakHours.includes(hourData.hour);
 						const isHovered = hoveredHour === hourData.hour;
 

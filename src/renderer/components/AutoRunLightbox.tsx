@@ -52,8 +52,7 @@ export const AutoRunLightbox = memo(
 		const [copied, setCopied] = useState(false);
 		const [copiedMarkdown, setCopiedMarkdown] = useState(false);
 		const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-		const { registerLayer, unregisterLayer, updateLayerHandler } = useLayerStack();
-		const layerIdRef = useRef<string>();
+		const { registerLayer, unregisterLayer } = useLayerStack();
 		const onCloseRef = useRef(onClose);
 		onCloseRef.current = onClose;
 
@@ -74,24 +73,12 @@ export const AutoRunLightbox = memo(
 						onCloseRef.current();
 					},
 				});
-				layerIdRef.current = id;
 
 				return () => {
-					if (layerIdRef.current) {
-						unregisterLayer(layerIdRef.current);
-					}
+					unregisterLayer(id);
 				};
 			}
 		}, [isVisible, registerLayer, unregisterLayer]);
-
-		// Keep escape handler up to date
-		useEffect(() => {
-			if (layerIdRef.current) {
-				updateLayerHandler(layerIdRef.current, () => {
-					onCloseRef.current();
-				});
-			}
-		}, [onClose, updateLayerHandler]);
 
 		// Calculate current index and navigation availability
 		const currentIndex = lightboxFilename ? attachmentsList.indexOf(lightboxFilename) : -1;
@@ -113,9 +100,7 @@ export const AutoRunLightbox = memo(
 
 		// Copy image to clipboard
 		const copyToClipboard = useCallback(async () => {
-			if (!lightboxFilename) return;
-
-			const imageUrl = lightboxExternalUrl || attachmentPreviews.get(lightboxFilename);
+			const imageUrl = lightboxExternalUrl || attachmentPreviews.get(lightboxFilename!);
 			if (!imageUrl) return;
 
 			try {
@@ -131,18 +116,16 @@ export const AutoRunLightbox = memo(
 
 		// Copy markdown reference to clipboard
 		const copyMarkdownReference = useCallback(async () => {
-			if (!lightboxFilename) return;
-
 			// For external URLs, use the URL directly; for local images, URL-encode the path
 			const imagePath =
 				lightboxExternalUrl ||
-				lightboxFilename
+				lightboxFilename!
 					.split('/')
 					.map((part) => encodeURIComponent(part))
 					.join('/');
 			// Extract just the filename for the alt text
 			const altText =
-				lightboxFilename
+				lightboxFilename!
 					.split('/')
 					.pop()
 					?.replace(/\.[^.]+$/, '') || 'image';
@@ -157,9 +140,8 @@ export const AutoRunLightbox = memo(
 
 		// Show delete confirmation modal
 		const promptDelete = useCallback(() => {
-			if (!lightboxFilename || !onDelete || lightboxExternalUrl) return;
 			setShowDeleteConfirm(true);
-		}, [lightboxFilename, lightboxExternalUrl, onDelete]);
+		}, []);
 
 		// Actually delete the current image (called after confirmation)
 		const handleDeleteConfirmed = useCallback(() => {
@@ -176,7 +158,7 @@ export const AutoRunLightbox = memo(
 			} else if (currentIndex >= totalImages - 1) {
 				// Was last image, go to previous
 				const newList = attachmentsList.filter((f) => f !== lightboxFilename);
-				onNavigate(newList[newList.length - 1] || null);
+				onNavigate(newList[newList.length - 1]);
 			} else {
 				// Go to next image (same index in new list)
 				const newList = attachmentsList.filter((f) => f !== lightboxFilename);

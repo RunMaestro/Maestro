@@ -432,6 +432,12 @@ describe('BroadcastService', () => {
 	});
 
 	describe('Session-Specific Broadcasting', () => {
+		it('should not broadcast session messages when no callback is set', () => {
+			const freshService = new BroadcastService();
+
+			expect(() => freshService.broadcastToSession('session-1', { type: 'test' })).not.toThrow();
+		});
+
 		it('should only send to clients subscribed to the specific session', () => {
 			const session1Client = createMockClient('s1', { subscribedSessionId: 'session-1' });
 			const session2Client = createMockClient('s2', { subscribedSessionId: 'session-2' });

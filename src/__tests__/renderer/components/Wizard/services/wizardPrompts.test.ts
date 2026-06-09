@@ -208,6 +208,15 @@ describe('wizardPrompts', () => {
 				expect(result.structured?.confidence).toBe(60);
 			});
 
+			it('should ignore extracted confidence values outside the valid range', () => {
+				const input = 'My confidence: 150 but I still need more details';
+				const result = parseStructuredOutput(input);
+
+				expect(result.parseSuccess).toBe(false);
+				expect(result.structured?.confidence).toBe(20);
+				expect(result.structured?.ready).toBe(false);
+			});
+
 			it('should detect ready status from "ready to proceed" text', () => {
 				const input = 'I am ready to proceed with confidence: 85';
 				const result = parseStructuredOutput(input);
@@ -404,6 +413,13 @@ describe('wizardPrompts', () => {
 
 				expect(result.parseSuccess).toBe(false);
 			});
+
+			it('should handle parsed null JSON as invalid structured output', () => {
+				const result = parseStructuredOutput('null');
+
+				expect(result.parseSuccess).toBe(false);
+				expect(result.structured?.message).toBe('null');
+			});
 		});
 
 		describe('Edge cases', () => {
@@ -570,6 +586,31 @@ describe('wizardPrompts', () => {
 
 			// Should contain the custom path, not the default
 			expect(prompt).toContain('/Users/test/shared-autorun');
+		});
+
+		it('should append existing documents when continuing from a previous wizard session', () => {
+			const config: SystemPromptConfig = {
+				agentName: 'Test',
+				agentPath: '/Users/test/project',
+				existingDocs: [
+					{
+						filename: 'Phase-01-Plan.md',
+						content: 'Existing plan content',
+					},
+					{
+						filename: 'Phase-02-Build.md',
+						content: 'Existing build content',
+					},
+				],
+			};
+
+			const prompt = generateSystemPrompt(config);
+
+			expect(prompt).toContain('Phase-01-Plan.md');
+			expect(prompt).toContain('Existing plan content');
+			expect(prompt).toContain('---');
+			expect(prompt).toContain('Phase-02-Build.md');
+			expect(prompt).toContain('Existing build content');
 		});
 
 		it('should include example responses', () => {

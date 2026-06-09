@@ -202,11 +202,7 @@ export function DirectorySelectionScreen({ theme }: DirectorySelectionScreenProp
 	 * Validate directory and check Git repo status
 	 */
 	const validateDirectory = useCallback(
-		async (
-			path: string,
-			shouldAnnounce: boolean = true,
-			skipExistingDocsCheck: boolean = false
-		) => {
+		async (path: string) => {
 			if (!path.trim()) {
 				setDirectoryError(null);
 				setIsGitRepo(false);
@@ -231,10 +227,8 @@ export function DirectorySelectionScreen({ theme }: DirectorySelectionScreenProp
 					setHasExistingAutoRunDocs(false, 0);
 
 					// Announce error
-					if (shouldAnnounce) {
-						setAnnouncement('Error: Directory not found. Please check the path exists.');
-						setAnnouncementKey((prev) => prev + 1);
-					}
+					setAnnouncement('Error: Directory not found. Please check the path exists.');
+					setAnnouncementKey((prev) => prev + 1);
 					setIsValidating(false);
 					return;
 				}
@@ -245,20 +239,18 @@ export function DirectorySelectionScreen({ theme }: DirectorySelectionScreenProp
 				setDirectoryError(null);
 
 				// Check for existing Auto Run Docs folder (unless we're skipping because user already made a choice)
-				if (!skipExistingDocsCheck && !state.existingDocsChoice) {
+				if (!state.existingDocsChoice) {
 					const existingDocs = await checkForExistingDocs(path);
 					setHasExistingAutoRunDocs(existingDocs.exists, existingDocs.count);
 				}
 
 				// Announce validation result
-				if (shouldAnnounce) {
-					if (isRepo) {
-						setAnnouncement('Directory validated. Git repository detected.');
-					} else {
-						setAnnouncement('Directory validated. Not a Git repository.');
-					}
-					setAnnouncementKey((prev) => prev + 1);
+				if (isRepo) {
+					setAnnouncement('Directory validated. Git repository detected.');
+				} else {
+					setAnnouncement('Directory validated. Not a Git repository.');
 				}
+				setAnnouncementKey((prev) => prev + 1);
 			} catch (error) {
 				// If git check fails, the directory might not exist or is inaccessible
 				console.error('Directory validation error:', error);
@@ -267,10 +259,8 @@ export function DirectorySelectionScreen({ theme }: DirectorySelectionScreenProp
 				setHasExistingAutoRunDocs(false, 0);
 
 				// Announce error
-				if (shouldAnnounce) {
-					setAnnouncement('Error: Unable to access this directory. Please check the path exists.');
-					setAnnouncementKey((prev) => prev + 1);
-				}
+				setAnnouncement('Error: Unable to access this directory. Please check the path exists.');
+				setAnnouncementKey((prev) => prev + 1);
 			}
 
 			setIsValidating(false);
@@ -359,8 +349,6 @@ export function DirectorySelectionScreen({ theme }: DirectorySelectionScreenProp
 	 * Shows modal if Auto Run Docs folder exists and is not empty
 	 */
 	const attemptNextStep = useCallback(async () => {
-		if (!canProceedToNext()) return;
-
 		// If user already made a choice about existing docs, proceed
 		if (state.existingDocsChoice) {
 			nextStep();
@@ -386,7 +374,6 @@ export function DirectorySelectionScreen({ theme }: DirectorySelectionScreenProp
 
 		nextStep();
 	}, [
-		canProceedToNext,
 		nextStep,
 		state.directoryPath,
 		state.existingDocsChoice,
@@ -458,10 +445,8 @@ export function DirectorySelectionScreen({ theme }: DirectorySelectionScreenProp
 	 * Handle continue button click
 	 */
 	const handleContinue = useCallback(() => {
-		if (canProceedToNext()) {
-			attemptNextStep();
-		}
-	}, [canProceedToNext, attemptNextStep]);
+		attemptNextStep();
+	}, [attemptNextStep]);
 
 	// Loading state while detecting agent path
 	if (isDetecting) {

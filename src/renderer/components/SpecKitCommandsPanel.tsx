@@ -73,19 +73,14 @@ export function SpecKitCommandsPanel({ theme }: SpecKitCommandsPanelProps) {
 	}, []);
 
 	const handleSaveEdit = async () => {
-		if (!editingCommand) return;
+		const command = editingCommand!;
 
 		try {
-			const result = await window.maestro.speckit.savePrompt(
-				editingCommand.id,
-				editingCommand.prompt
-			);
+			const result = await window.maestro.speckit.savePrompt(command.id, command.prompt);
 			if (result.success) {
 				setCommands(
 					commands.map((cmd) =>
-						cmd.id === editingCommand.id
-							? { ...cmd, prompt: editingCommand.prompt, isModified: true }
-							: cmd
+						cmd.id === command.id ? { ...cmd, prompt: command.prompt, isModified: true } : cmd
 					)
 				);
 				setEditingCommand(null);

@@ -193,7 +193,7 @@ export function MergeProgressModal({
 
 	// Layer stack registration
 	const { registerLayer, unregisterLayer, updateLayerHandler } = useLayerStack();
-	const layerIdRef = useRef<string>();
+	const layerIdRef = useRef('');
 	const onCancelRef = useRef(onCancel);
 
 	// Keep onCancel ref up to date
@@ -214,7 +214,7 @@ export function MergeProgressModal({
 	useEffect(() => {
 		if (!isOpen) return;
 
-		layerIdRef.current = registerLayer({
+		const id = registerLayer({
 			type: 'modal',
 			priority: MODAL_PRIORITIES.MERGE_PROGRESS,
 			blocksLowerLayers: true,
@@ -223,20 +223,18 @@ export function MergeProgressModal({
 			ariaLabel: 'Merge Progress',
 			onEscape: handleEscape,
 		});
+		layerIdRef.current = id;
 
 		return () => {
-			if (layerIdRef.current) {
-				unregisterLayer(layerIdRef.current);
-			}
+			unregisterLayer(id);
 		};
 	}, [isOpen, registerLayer, unregisterLayer, handleEscape]);
 
 	// Update handler when callbacks change
 	useEffect(() => {
-		if (layerIdRef.current) {
-			updateLayerHandler(layerIdRef.current, handleEscape);
-		}
-	}, [updateLayerHandler, handleEscape]);
+		if (!isOpen) return;
+		updateLayerHandler(layerIdRef.current, handleEscape);
+	}, [isOpen, updateLayerHandler, handleEscape]);
 
 	// Get the current stage index
 	const currentStageIndex = useMemo(() => {

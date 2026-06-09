@@ -188,8 +188,7 @@ export function getCurrentVersion(db: Database.Database): number {
  */
 export function getTargetVersion(): number {
 	const migrations = getMigrations();
-	if (migrations.length === 0) return 0;
-	return Math.max(...migrations.map((m) => m.version));
+	return Math.max(0, ...migrations.map((m) => m.version));
 }
 
 /**

@@ -138,8 +138,19 @@ vi.mock('../../../../../renderer/components/Settings/IgnorePatternsSection', () 
 }));
 
 vi.mock('../../../../../renderer/components/ui/Modal', () => ({
-	Modal: ({ title, children }: { title: string; children: React.ReactNode }) => (
+	Modal: ({
+		title,
+		children,
+		onClose,
+	}: {
+		title: string;
+		children: React.ReactNode;
+		onClose?: () => void;
+	}) => (
 		<div role="dialog" aria-label={title}>
+			<button type="button" onClick={onClose}>
+				Close modal
+			</button>
 			{children}
 		</div>
 	),
@@ -222,6 +233,18 @@ describe('DisplayTab', () => {
 			expect(mockSetBionifyIntensity).toHaveBeenCalledWith(1.35);
 		});
 
+		it('toggles Bionify reading mode on and off', () => {
+			render(<DisplayTab theme={mockTheme} />);
+
+			fireEvent.click(screen.getByRole('button', { name: 'Bionify' }));
+			expect(mockSetBionifyReadingMode).toHaveBeenCalledWith(true);
+
+			mockUseSettingsOverrides = { bionifyReadingMode: true };
+			render(<DisplayTab theme={mockTheme} />);
+			fireEvent.click(screen.getAllByRole('button', { name: 'Off' }).at(-1)!);
+			expect(mockSetBionifyReadingMode).toHaveBeenCalledWith(false);
+		});
+
 		it('updates the algorithm string when edited', () => {
 			render(<DisplayTab theme={mockTheme} />);
 
@@ -230,6 +253,33 @@ describe('DisplayTab', () => {
 			fireEvent.blur(input);
 
 			expect(mockSetBionifyAlgorithm).toHaveBeenLastCalledWith('+ 1 1 2 2 0.55');
+		});
+
+		it('does not persist an unchanged algorithm and commits a valid draft on Enter', () => {
+			render(<DisplayTab theme={mockTheme} />);
+
+			const input = screen.getByLabelText('Bionify algorithm');
+			fireEvent.blur(input);
+			expect(mockSetBionifyAlgorithm).not.toHaveBeenCalled();
+
+			fireEvent.change(input, { target: { value: '+ 1 1 2 2 0.55' } });
+			fireEvent.keyDown(input, { key: 'Enter' });
+			fireEvent.blur(input);
+
+			expect(mockSetBionifyAlgorithm).toHaveBeenCalledWith('+ 1 1 2 2 0.55');
+		});
+
+		it('uses the default algorithm when settings have none and ignores non-Enter keys', () => {
+			mockUseSettingsOverrides = { bionifyAlgorithm: undefined };
+			render(<DisplayTab theme={mockTheme} />);
+
+			const input = screen.getByLabelText('Bionify algorithm');
+			expect(input).toHaveValue('- 0 1 1 2 0.4');
+
+			fireEvent.keyDown(input, { key: 'Escape' });
+			fireEvent.blur(input);
+
+			expect(mockSetBionifyAlgorithm).not.toHaveBeenCalled();
 		});
 
 		it('shows validation feedback and avoids persisting invalid algorithm input', () => {
@@ -253,6 +303,11 @@ describe('DisplayTab', () => {
 			expect(within(dialog).getAllByText(/- 0 1 1 2 0.4/).length).toBeGreaterThan(0);
 			expect(within(dialog).getByText(/common english words/i)).toBeInTheDocument();
 			expect(within(dialog).getByText(/fraction of each word/i)).toBeInTheDocument();
+
+			fireEvent.click(within(dialog).getByRole('button', { name: 'Close modal' }));
+			expect(
+				screen.queryByRole('dialog', { name: 'Bionify Algorithm Reference' })
+			).not.toBeInTheDocument();
 		});
 	});
 
@@ -379,8 +434,8 @@ describe('DisplayTab', () => {
 
 			expect((window as any).maestro.fonts.detect).toHaveBeenCalledTimes(1);
 
-			// Second focus should not reload
-			fireEvent.focus(fontSelect);
+			// A later interaction after fonts are loaded should not reload.
+			fireEvent.click(screen.getByRole('combobox'));
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
@@ -1304,6 +1359,21 @@ describe('DisplayTab', () => {
 			expect(mockUpdateContextManagementSettings).toHaveBeenCalledWith({
 				contextWarningsEnabled: false,
 			});
+		});
+
+		it('should ignore non-activation keys on the context warnings row', async () => {
+			render(<DisplayTab theme={mockTheme} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			const warningsRow = screen.getByRole('button', {
+				name: /Show context consumption warnings/,
+			});
+			fireEvent.keyDown(warningsRow, { key: 'Escape' });
+
+			expect(mockUpdateContextManagementSettings).not.toHaveBeenCalled();
 		});
 
 		it('should display yellow and red threshold values', async () => {

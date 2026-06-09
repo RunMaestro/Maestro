@@ -101,10 +101,7 @@ export function MessageHistory({
 		if (lines.length > LINE_TRUNCATE_THRESHOLD) {
 			return lines.slice(0, LINE_TRUNCATE_THRESHOLD).join('\n');
 		}
-		if (text.length > CHAR_TRUNCATE_THRESHOLD) {
-			return text.slice(0, CHAR_TRUNCATE_THRESHOLD);
-		}
-		return text;
+		return text.slice(0, CHAR_TRUNCATE_THRESHOLD);
 	}, []);
 
 	/**
@@ -158,8 +155,7 @@ export function MessageHistory({
 
 	// Track scroll position to detect when user scrolls away from bottom
 	const handleScroll = useCallback(() => {
-		const container = containerRef.current;
-		if (!container) return;
+		const container = containerRef.current!;
 
 		const { scrollTop, scrollHeight, clientHeight } = container;
 		const atBottom = scrollHeight - scrollTop - clientHeight < 50;
@@ -176,12 +172,10 @@ export function MessageHistory({
 		const currentCount = logs.length;
 		if (currentCount > prevLogsLengthRef.current && hasInitiallyScrolled) {
 			// Check actual scroll position
-			const container = containerRef.current;
+			const container = containerRef.current!;
 			let actuallyAtBottom = isAtBottom;
-			if (container) {
-				const { scrollTop, scrollHeight, clientHeight } = container;
-				actuallyAtBottom = scrollHeight - scrollTop - clientHeight < 50;
-			}
+			const { scrollTop, scrollHeight, clientHeight } = container;
+			actuallyAtBottom = scrollHeight - scrollTop - clientHeight < 50;
 
 			if (!actuallyAtBottom) {
 				const newCount = currentCount - prevLogsLengthRef.current;
@@ -195,11 +189,9 @@ export function MessageHistory({
 
 	// Scroll to bottom function
 	const scrollToBottom = useCallback(() => {
-		if (bottomRef.current) {
-			bottomRef.current.scrollIntoView({ behavior: 'smooth' });
-			setHasNewMessages(false);
-			setNewMessageCount(0);
-		}
+		bottomRef.current!.scrollIntoView({ behavior: 'smooth' });
+		setHasNewMessages(false);
+		setNewMessageCount(0);
 	}, []);
 
 	if (!logs || logs.length === 0) {

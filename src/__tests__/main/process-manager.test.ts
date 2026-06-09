@@ -7,10 +7,23 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
+const { mockExecFile } = vi.hoisted(() => ({
+	mockExecFile: vi.fn(),
+}));
+
 // Mock node-pty before importing process-manager (native module)
 vi.mock('node-pty', () => ({
 	spawn: vi.fn(),
 }));
+
+vi.mock('child_process', async () => {
+	const actual = await vi.importActual<typeof import('child_process')>('child_process');
+	return {
+		...actual,
+		execFile: mockExecFile,
+		default: { ...actual, execFile: mockExecFile },
+	};
+});
 
 // Mock logger to avoid any side effects
 vi.mock('../../main/utils/logger', () => ({
@@ -44,6 +57,7 @@ import {
 	type ModelStats,
 	type AgentError,
 } from '../../main/process-manager';
+import { logger } from '../../main/utils/logger';
 
 describe('process-manager.ts', () => {
 	describe('aggregateModelUsage', () => {
@@ -367,8 +381,26 @@ describe('process-manager.ts', () => {
 		let processManager: ProcessManager;
 
 		beforeEach(() => {
+			vi.clearAllMocks();
 			processManager = new ProcessManager();
 		});
+
+		const getProcesses = () =>
+			(processManager as unknown as { processes: Map<string, Record<string, any>> }).processes;
+
+		const addProcess = (overrides: Record<string, any> = {}) => {
+			const managedProcess = {
+				sessionId: 'session-1',
+				toolType: 'claude-code',
+				cwd: '/tmp',
+				pid: 123,
+				isTerminal: false,
+				startTime: Date.now(),
+				...overrides,
+			};
+			getProcesses().set(managedProcess.sessionId, managedProcess);
+			return managedProcess;
+		};
 
 		describe('error detection exports', () => {
 			it('should export AgentError type', () => {
@@ -438,6 +470,358 @@ describe('process-manager.ts', () => {
 			it('should return null for unknown session', () => {
 				const event = processManager.parseLine('non-existent-session', '{"type":"test"}');
 				expect(event).toBeNull();
+			});
+
+			it('should parse JSON lines with the session parser when present', () => {
+				const parsedEvent = { type: 'assistant', text: 'hello' };
+				const outputParser = {
+					parseJsonLine: vi.fn().mockReturnValue(parsedEvent),
+				};
+				addProcess({ outputParser });
+
+				const event = processManager.parseLine('session-1', '{"type":"assistant"}');
+
+				expect(event).toBe(parsedEvent);
+				expect(outputParser.parseJsonLine).toHaveBeenCalledWith('{"type":"assistant"}');
+				expect(processManager.getParser('session-1')).toBe(outputParser);
+			});
+		});
+
+		describe('spawn routing', () => {
+			const baseConfig = {
+				sessionId: 'session-1',
+				toolType: 'claude-code',
+				cwd: '/tmp',
+				command: 'echo',
+				args: ['hello'],
+			};
+
+			it('should route terminal processes to the PTY spawner', () => {
+				const ptySpawn = vi
+					.spyOn((processManager as any).ptySpawner, 'spawn')
+					.mockReturnValue({ success: true, pid: 101 });
+				const childSpawn = vi.spyOn((processManager as any).childProcessSpawner, 'spawn');
+
+				const result = processManager.spawn({ ...baseConfig, toolType: 'terminal' });
+
+				expect(result).toEqual({ success: true, pid: 101 });
+				expect(ptySpawn).toHaveBeenCalledWith({ ...baseConfig, toolType: 'terminal' });
+				expect(childSpawn).not.toHaveBeenCalled();
+			});
+
+			it('should route requiresPty processes without prompts to the PTY spawner', () => {
+				const ptySpawn = vi
+					.spyOn((processManager as any).ptySpawner, 'spawn')
+					.mockReturnValue({ success: true, pid: 102 });
+
+				processManager.spawn({ ...baseConfig, requiresPty: true });
+
+				expect(ptySpawn).toHaveBeenCalledWith({ ...baseConfig, requiresPty: true });
+			});
+
+			it('should route prompt-based processes to the child-process spawner', () => {
+				const ptySpawn = vi.spyOn((processManager as any).ptySpawner, 'spawn');
+				const childSpawn = vi
+					.spyOn((processManager as any).childProcessSpawner, 'spawn')
+					.mockReturnValue({ success: true, pid: 103 });
+
+				const result = processManager.spawn({ ...baseConfig, requiresPty: true, prompt: 'hello' });
+
+				expect(result).toEqual({ success: true, pid: 103 });
+				expect(childSpawn).toHaveBeenCalledWith({
+					...baseConfig,
+					requiresPty: true,
+					prompt: 'hello',
+				});
+				expect(ptySpawn).not.toHaveBeenCalled();
+			});
+		});
+
+		describe('write method', () => {
+			it('should return false and log when writing to an unknown session', () => {
+				expect(processManager.write('missing-session', 'data')).toBe(false);
+				expect(logger.error).toHaveBeenCalledWith(
+					'[ProcessManager] write() - No process found for session',
+					'ProcessManager',
+					{ sessionId: 'missing-session' }
+				);
+			});
+
+			it('should write to PTY processes and remember the trimmed command', () => {
+				const ptyProcess = { write: vi.fn() };
+				const managedProcess = addProcess({
+					isTerminal: true,
+					ptyProcess,
+					lastCommand: 'previous',
+				});
+
+				expect(processManager.write('session-1', '  npm test  \n')).toBe(true);
+
+				expect(ptyProcess.write).toHaveBeenCalledWith('  npm test  \n');
+				expect(managedProcess.lastCommand).toBe('npm test');
+			});
+
+			it('should not replace the last terminal command for blank input', () => {
+				const ptyProcess = { write: vi.fn() };
+				const managedProcess = addProcess({
+					isTerminal: true,
+					ptyProcess,
+					lastCommand: 'previous',
+				});
+
+				expect(processManager.write('session-1', '   \n')).toBe(true);
+
+				expect(ptyProcess.write).toHaveBeenCalledWith('   \n');
+				expect(managedProcess.lastCommand).toBe('previous');
+			});
+
+			it('should write to child process stdin when available', () => {
+				const stdin = { write: vi.fn() };
+				addProcess({ childProcess: { stdin } });
+
+				expect(processManager.write('session-1', 'hello')).toBe(true);
+
+				expect(stdin.write).toHaveBeenCalledWith('hello');
+			});
+
+			it('should return false when no writable process stream is available', () => {
+				addProcess({ childProcess: {} });
+
+				expect(processManager.write('session-1', 'hello')).toBe(false);
+			});
+
+			it('should return false and log when process writing throws', () => {
+				const ptyProcess = {
+					write: vi.fn(() => {
+						throw new Error('closed');
+					}),
+				};
+				addProcess({ isTerminal: true, ptyProcess });
+
+				expect(processManager.write('session-1', 'hello')).toBe(false);
+				expect(logger.error).toHaveBeenCalledWith(
+					'[ProcessManager] Failed to write to process',
+					'ProcessManager',
+					expect.objectContaining({ sessionId: 'session-1', error: 'Error: closed' })
+				);
+			});
+		});
+
+		describe('resize method', () => {
+			it('should return false when the session is not a PTY process', () => {
+				addProcess({ isTerminal: false });
+
+				expect(processManager.resize('session-1', 120, 40)).toBe(false);
+				expect(processManager.resize('missing-session', 120, 40)).toBe(false);
+			});
+
+			it('should resize PTY processes', () => {
+				const ptyProcess = { resize: vi.fn() };
+				addProcess({ isTerminal: true, ptyProcess });
+
+				expect(processManager.resize('session-1', 120, 40)).toBe(true);
+
+				expect(ptyProcess.resize).toHaveBeenCalledWith(120, 40);
+			});
+
+			it('should return false and log when resize throws', () => {
+				const ptyProcess = {
+					resize: vi.fn(() => {
+						throw new Error('bad size');
+					}),
+				};
+				addProcess({ isTerminal: true, ptyProcess });
+
+				expect(processManager.resize('session-1', 120, 40)).toBe(false);
+				expect(logger.error).toHaveBeenCalledWith(
+					'[ProcessManager] Failed to resize terminal',
+					'ProcessManager',
+					expect.objectContaining({ sessionId: 'session-1', error: 'Error: bad size' })
+				);
+			});
+		});
+
+		describe('interrupt method', () => {
+			afterEach(() => {
+				vi.useRealTimers();
+				mockIsWindows.mockImplementation(() => process.platform === 'win32');
+			});
+
+			it('should return false when no process exists', () => {
+				expect(processManager.interrupt('missing-session')).toBe(false);
+			});
+
+			it('should send Ctrl+C to PTY processes', () => {
+				const ptyProcess = { write: vi.fn() };
+				addProcess({ isTerminal: true, ptyProcess });
+
+				expect(processManager.interrupt('session-1')).toBe(true);
+
+				expect(ptyProcess.write).toHaveBeenCalledWith('\x03');
+			});
+
+			it('should return false when the managed process has no interruptible handle', () => {
+				addProcess({ isTerminal: false, childProcess: undefined, ptyProcess: undefined });
+
+				expect(processManager.interrupt('session-1')).toBe(false);
+			});
+
+			it('should send SIGINT to child processes and escalate if they remain running', () => {
+				vi.useFakeTimers();
+				mockIsWindows.mockReturnValue(false);
+				const childProcess = {
+					kill: vi.fn(),
+					killed: false,
+					once: vi.fn(),
+					pid: 456,
+				};
+				addProcess({ childProcess, pid: 456 });
+				const killSpy = vi.spyOn(processManager, 'kill').mockReturnValue(true);
+
+				expect(processManager.interrupt('session-1')).toBe(true);
+
+				expect(childProcess.kill).toHaveBeenCalledWith('SIGINT');
+				expect(childProcess.once).toHaveBeenCalledWith('exit', expect.any(Function));
+				vi.advanceTimersByTime(2000);
+				expect(killSpy).toHaveBeenCalledWith('session-1');
+			});
+
+			it('should not escalate interrupt when the child is already killed', () => {
+				vi.useFakeTimers();
+				mockIsWindows.mockReturnValue(false);
+				const childProcess = {
+					kill: vi.fn(),
+					killed: true,
+					once: vi.fn(),
+					pid: 456,
+				};
+				addProcess({ childProcess, pid: 456 });
+				const killSpy = vi.spyOn(processManager, 'kill');
+
+				expect(processManager.interrupt('session-1')).toBe(true);
+				vi.advanceTimersByTime(2000);
+
+				expect(killSpy).not.toHaveBeenCalled();
+			});
+
+			it('should clear interrupt escalation when the child exits', () => {
+				vi.useFakeTimers();
+				mockIsWindows.mockReturnValue(false);
+				let exitHandler: (() => void) | undefined;
+				const childProcess = {
+					kill: vi.fn(),
+					killed: false,
+					once: vi.fn((_event: string, handler: () => void) => {
+						exitHandler = handler;
+					}),
+					pid: 456,
+				};
+				addProcess({ childProcess, pid: 456 });
+				const killSpy = vi.spyOn(processManager, 'kill');
+
+				expect(processManager.interrupt('session-1')).toBe(true);
+				exitHandler!();
+				vi.advanceTimersByTime(2000);
+
+				expect(killSpy).not.toHaveBeenCalled();
+			});
+
+			it('should write Ctrl+C to child stdin for Windows interrupts', () => {
+				vi.useFakeTimers();
+				mockIsWindows.mockReturnValue(true);
+				const stdin = { write: vi.fn(), destroyed: false, writableEnded: false };
+				const childProcess = {
+					stdin,
+					kill: vi.fn(),
+					killed: true,
+					once: vi.fn(),
+					pid: 456,
+				};
+				addProcess({ childProcess, pid: 456 });
+
+				expect(processManager.interrupt('session-1')).toBe(true);
+
+				expect(stdin.write).toHaveBeenCalledWith('\x03');
+				expect(childProcess.kill).not.toHaveBeenCalledWith('SIGINT');
+			});
+
+			it('should warn when Windows child stdin is unavailable', () => {
+				vi.useFakeTimers();
+				mockIsWindows.mockReturnValue(true);
+				const childProcess = {
+					stdin: { write: vi.fn(), destroyed: true, writableEnded: false },
+					killed: true,
+					once: vi.fn(),
+					pid: 456,
+				};
+				addProcess({ childProcess, pid: 456 });
+
+				expect(processManager.interrupt('session-1')).toBe(true);
+
+				expect(logger.warn).toHaveBeenCalledWith(
+					'[ProcessManager] stdin unavailable for Windows interrupt, will escalate to kill',
+					'ProcessManager',
+					{ sessionId: 'session-1' }
+				);
+			});
+
+			it('should return false and log when interrupt throws', () => {
+				mockIsWindows.mockReturnValue(false);
+				const childProcess = {
+					kill: vi.fn(() => {
+						throw new Error('signal failed');
+					}),
+					once: vi.fn(),
+					pid: 456,
+				};
+				addProcess({ childProcess, pid: 456 });
+
+				expect(processManager.interrupt('session-1')).toBe(false);
+				expect(logger.error).toHaveBeenCalledWith(
+					'[ProcessManager] Failed to interrupt process',
+					'ProcessManager',
+					expect.objectContaining({ sessionId: 'session-1', error: 'Error: signal failed' })
+				);
+			});
+		});
+
+		describe('runCommand method', () => {
+			it('should delegate local commands to the local command runner', async () => {
+				const localRun = vi
+					.spyOn((processManager as any).localCommandRunner, 'run')
+					.mockResolvedValue({ exitCode: 0 });
+
+				await expect(
+					processManager.runCommand('session-1', 'npm test', '/project', 'zsh', {
+						NODE_ENV: 'test',
+					})
+				).resolves.toEqual({ exitCode: 0 });
+
+				expect(localRun).toHaveBeenCalledWith('session-1', 'npm test', '/project', 'zsh', {
+					NODE_ENV: 'test',
+				});
+			});
+
+			it('should delegate SSH commands to the SSH command runner', async () => {
+				const sshConfig = { id: 'remote-1', host: 'example.com', username: 'ubuntu' } as any;
+				const sshRun = vi
+					.spyOn((processManager as any).sshCommandRunner, 'run')
+					.mockResolvedValue({ exitCode: 0 });
+
+				await expect(
+					processManager.runCommand(
+						'session-1',
+						'npm test',
+						'/project',
+						'zsh',
+						{ NODE_ENV: 'test' },
+						sshConfig
+					)
+				).resolves.toEqual({ exitCode: 0 });
+
+				expect(sshRun).toHaveBeenCalledWith('session-1', 'npm test', '/project', sshConfig, {
+					NODE_ENV: 'test',
+				});
 			});
 		});
 
@@ -542,6 +926,144 @@ describe('process-manager.ts', () => {
 				processManager.kill('pty-session');
 
 				expect(processManager.get('pty-session')).toBeUndefined();
+			});
+
+			it('should return false when killing an unknown session', () => {
+				expect(processManager.kill('missing-session')).toBe(false);
+			});
+
+			it('should remove managed processes even when no process handle is attached', () => {
+				addProcess({
+					sessionId: 'detached-session',
+					childProcess: undefined,
+					ptyProcess: undefined,
+				});
+
+				expect(processManager.kill('detached-session')).toBe(true);
+
+				expect(processManager.get('detached-session')).toBeUndefined();
+			});
+
+			it('should send SIGTERM to child processes on non-Windows', () => {
+				mockIsWindows.mockReturnValue(false);
+				const childProcess = { kill: vi.fn(), pid: 99999 };
+				addProcess({ sessionId: 'child-session', childProcess, pid: 99999 });
+
+				expect(processManager.kill('child-session')).toBe(true);
+
+				expect(childProcess.kill).toHaveBeenCalledWith('SIGTERM');
+				expect(killWindowsTreeSpy).not.toHaveBeenCalled();
+				expect(processManager.get('child-session')).toBeUndefined();
+			});
+
+			it('should fall back to SIGTERM when Windows child pid is unavailable', () => {
+				mockIsWindows.mockReturnValue(true);
+				const childProcess = { kill: vi.fn(), pid: undefined };
+				addProcess({ sessionId: 'child-session', childProcess, pid: undefined });
+
+				expect(processManager.kill('child-session')).toBe(true);
+
+				expect(childProcess.kill).toHaveBeenCalledWith('SIGTERM');
+				expect(logger.warn).toHaveBeenCalledWith(
+					'[ProcessManager] pid unavailable for Windows taskkill, falling back to SIGTERM',
+					'ProcessManager',
+					{ sessionId: 'child-session' }
+				);
+			});
+
+			it('should clear buffered data timeout and flush before killing', () => {
+				mockIsWindows.mockReturnValue(false);
+				vi.useFakeTimers();
+				const timeout = setTimeout(() => {}, 1000);
+				const clearTimeoutSpy = vi.spyOn(globalThis, 'clearTimeout');
+				const flushSpy = vi.spyOn((processManager as any).bufferManager, 'flushDataBuffer');
+				try {
+					const childProcess = { kill: vi.fn(), pid: 99999 };
+					addProcess({
+						sessionId: 'child-session',
+						childProcess,
+						pid: 99999,
+						dataBufferTimeout: timeout,
+					});
+
+					expect(processManager.kill('child-session')).toBe(true);
+
+					expect(clearTimeoutSpy).toHaveBeenCalledWith(timeout);
+					expect(flushSpy).toHaveBeenCalledWith('child-session');
+				} finally {
+					clearTimeoutSpy.mockRestore();
+					flushSpy.mockRestore();
+					vi.useRealTimers();
+				}
+			});
+
+			it('should return false and log when kill throws', () => {
+				mockIsWindows.mockReturnValue(false);
+				const childProcess = {
+					kill: vi.fn(() => {
+						throw new Error('kill failed');
+					}),
+					pid: 99999,
+				};
+				addProcess({ sessionId: 'child-session', childProcess, pid: 99999 });
+
+				expect(processManager.kill('child-session')).toBe(false);
+				expect(logger.error).toHaveBeenCalledWith(
+					'[ProcessManager] Failed to kill process',
+					'ProcessManager',
+					expect.objectContaining({ sessionId: 'child-session', error: 'Error: kill failed' })
+				);
+			});
+
+			it('should kill all managed processes', () => {
+				addProcess({ sessionId: 'session-1' });
+				addProcess({ sessionId: 'session-2' });
+				const killSpy = vi.spyOn(processManager, 'kill').mockReturnValue(true);
+
+				processManager.killAll();
+
+				expect(killSpy).toHaveBeenCalledWith('session-1');
+				expect(killSpy).toHaveBeenCalledWith('session-2');
+			});
+
+			it('should return all managed processes', () => {
+				const first = addProcess({ sessionId: 'session-1' });
+				const second = addProcess({ sessionId: 'session-2' });
+
+				expect(processManager.getAll()).toEqual([first, second]);
+				expect(processManager.get('session-1')).toBe(first);
+			});
+
+			it('should invoke taskkill for Windows process tree termination', () => {
+				killWindowsTreeSpy.mockRestore();
+				mockExecFile.mockImplementation((_command, _args, callback) => callback(null));
+
+				(processManager as any).killWindowsProcessTree(12345, 'session-1');
+
+				expect(mockExecFile).toHaveBeenCalledWith(
+					'taskkill',
+					['/pid', '12345', '/t', '/f'],
+					expect.any(Function)
+				);
+				expect(logger.info).toHaveBeenCalledWith(
+					'[ProcessManager] Using taskkill to terminate process tree on Windows',
+					'ProcessManager',
+					{ sessionId: 'session-1', pid: 12345 }
+				);
+			});
+
+			it('should log debug details when taskkill reports an error', () => {
+				killWindowsTreeSpy.mockRestore();
+				const error = new Error('already exited');
+				mockExecFile.mockImplementation((_command, _args, callback) => callback(error));
+
+				(processManager as any).killWindowsProcessTree(12345, 'session-1');
+
+				expect(logger.debug).toHaveBeenCalledWith(
+					'[ProcessManager] taskkill exited with error (process may already be terminated)',
+					'ProcessManager',
+					{ sessionId: 'session-1', pid: 12345, error: 'Error: already exited' }
+				);
 			});
 		});
 	});

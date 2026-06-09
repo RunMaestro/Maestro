@@ -7,6 +7,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, cleanup } from '@testing-library/react';
+import { StrictMode, createElement, type ReactNode } from 'react';
 
 // Mock gitService before any imports that use it
 vi.mock('../../../renderer/services/git', () => ({
@@ -183,44 +184,142 @@ describe('restoreSession — Migration logic', () => {
 	});
 
 	it('sets fileTreeAutoRefreshInterval to 180 when missing', async () => {
+		const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 		const session = createMockSession({ fileTreeAutoRefreshInterval: undefined as any });
 		const { result } = renderHook(() => useSessionRestoration());
 
-		let restored: Session;
-		await act(async () => {
-			restored = await result.current.restoreSession(session);
-		});
+		try {
+			let restored: Session;
+			await act(async () => {
+				restored = await result.current.restoreSession(session);
+			});
 
-		expect(restored!.fileTreeAutoRefreshInterval).toBe(180);
+			expect(consoleWarn).toHaveBeenCalledWith(
+				'[restoreSession] Session missing fileTreeAutoRefreshInterval, defaulting to 180s'
+			);
+			expect(restored!.fileTreeAutoRefreshInterval).toBe(180);
+		} finally {
+			consoleWarn.mockRestore();
+		}
 	});
 
 	it('migrates toolType terminal to claude-code', async () => {
+		const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 		const session = createMockSession({ toolType: 'terminal' as any });
 		const { result } = renderHook(() => useSessionRestoration());
 
-		let restored: Session;
-		await act(async () => {
-			restored = await result.current.restoreSession(session);
-		});
+		try {
+			let restored: Session;
+			await act(async () => {
+				restored = await result.current.restoreSession(session);
+			});
 
-		expect(restored!.toolType).toBe('claude-code');
+			expect(consoleWarn).toHaveBeenCalledWith(
+				"[restoreSession] Session has toolType='terminal', migrating to claude-code"
+			);
+			expect(restored!.toolType).toBe('claude-code');
+		} finally {
+			consoleWarn.mockRestore();
+		}
 	});
 
 	it('adds warning log when migrating from terminal toolType', async () => {
+		const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 		const session = createMockSession({ toolType: 'terminal' as any });
 		const { result } = renderHook(() => useSessionRestoration());
 
-		let restored: Session;
-		await act(async () => {
-			restored = await result.current.restoreSession(session);
-		});
+		try {
+			let restored: Session;
+			await act(async () => {
+				restored = await result.current.restoreSession(session);
+			});
 
-		const activeTab = restored!.aiTabs.find((t) => t.id === restored!.activeTabId);
-		const warningLog = activeTab?.logs.find((l) =>
-			l.text.includes('Session migrated to use Claude Code agent')
-		);
-		expect(warningLog).toBeDefined();
-		expect(warningLog?.source).toBe('system');
+			expect(consoleWarn).toHaveBeenCalledWith(
+				"[restoreSession] Session has toolType='terminal', migrating to claude-code"
+			);
+			const activeTab = restored!.aiTabs.find((t) => t.id === restored!.activeTabId);
+			const warningLog = activeTab?.logs.find((l) =>
+				l.text.includes('Session migrated to use Claude Code agent')
+			);
+			expect(warningLog).toBeDefined();
+			expect(warningLog?.source).toBe('system');
+		} finally {
+			consoleWarn.mockRestore();
+		}
+	});
+
+	it('adds terminal migration warning only to the active tab', async () => {
+		const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		const session = createMockSession({
+			toolType: 'terminal' as any,
+			aiTabs: [
+				{
+					id: 'tab-1',
+					agentSessionId: null,
+					name: null,
+					state: 'idle' as const,
+					logs: [],
+					starred: false,
+					inputValue: '',
+					stagedImages: [],
+					createdAt: Date.now(),
+				},
+				{
+					id: 'tab-2',
+					agentSessionId: null,
+					name: null,
+					state: 'idle' as const,
+					logs: [],
+					starred: false,
+					inputValue: '',
+					stagedImages: [],
+					createdAt: Date.now(),
+				},
+			],
+			activeTabId: 'tab-2',
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		try {
+			let restored: Session;
+			await act(async () => {
+				restored = await result.current.restoreSession(session);
+			});
+
+			expect(consoleWarn).toHaveBeenCalledWith(
+				"[restoreSession] Session has toolType='terminal', migrating to claude-code"
+			);
+			expect(restored!.aiTabs.find((tab) => tab.id === 'tab-1')?.logs).toEqual([]);
+			expect(restored!.aiTabs.find((tab) => tab.id === 'tab-2')?.logs[0]?.text).toContain(
+				'Session migrated to use Claude Code agent'
+			);
+		} finally {
+			consoleWarn.mockRestore();
+		}
+	});
+
+	it('migrates terminal toolType without appending a warning when activeTabId is stale', async () => {
+		const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		const session = createMockSession({
+			toolType: 'terminal' as any,
+			activeTabId: 'missing-tab',
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		try {
+			let restored: Session;
+			await act(async () => {
+				restored = await result.current.restoreSession(session);
+			});
+
+			expect(consoleWarn).toHaveBeenCalledWith(
+				"[restoreSession] Session has toolType='terminal', migrating to claude-code"
+			);
+			expect(restored!.toolType).toBe('claude-code');
+			expect(restored!.aiTabs.every((tab) => tab.logs.length === 0)).toBe(true);
+		} finally {
+			consoleWarn.mockRestore();
+		}
 	});
 });
 
@@ -230,74 +329,118 @@ describe('restoreSession — Migration logic', () => {
 
 describe('restoreSession — Corruption recovery', () => {
 	it('creates default tab when aiTabs is empty', async () => {
+		const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 		const session = createMockSession({ aiTabs: [], activeTabId: null });
 		const { result } = renderHook(() => useSessionRestoration());
 
-		let restored: Session;
-		await act(async () => {
-			restored = await result.current.restoreSession(session);
-		});
+		try {
+			let restored: Session;
+			await act(async () => {
+				restored = await result.current.restoreSession(session);
+			});
 
-		expect(restored!.aiTabs).toHaveLength(1);
-		expect(restored!.aiTabs[0].id).toBe('mock-id-1');
-		expect(restored!.activeTabId).toBe('mock-id-1');
-		expect(restored!.state).toBe('error');
+			expect(consoleError).toHaveBeenCalledWith(
+				'[restoreSession] Session has no aiTabs - data corruption, creating default tab:',
+				session.id
+			);
+			expect(restored!.aiTabs).toHaveLength(1);
+			expect(restored!.aiTabs[0].id).toBe('mock-id-1');
+			expect(restored!.activeTabId).toBe('mock-id-1');
+			expect(restored!.state).toBe('error');
+		} finally {
+			consoleError.mockRestore();
+		}
 	});
 
 	it('includes corruption warning log in recovered tab', async () => {
+		const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 		const session = createMockSession({ aiTabs: [], activeTabId: null });
 		const { result } = renderHook(() => useSessionRestoration());
 
-		let restored: Session;
-		await act(async () => {
-			restored = await result.current.restoreSession(session);
-		});
+		try {
+			let restored: Session;
+			await act(async () => {
+				restored = await result.current.restoreSession(session);
+			});
 
-		const log = restored!.aiTabs[0].logs[0];
-		expect(log.text).toContain('corrupted');
-		expect(log.source).toBe('system');
+			expect(consoleError).toHaveBeenCalledWith(
+				'[restoreSession] Session has no aiTabs - data corruption, creating default tab:',
+				session.id
+			);
+			const log = restored!.aiTabs[0].logs[0];
+			expect(log.text).toContain('corrupted');
+			expect(log.source).toBe('system');
+		} finally {
+			consoleError.mockRestore();
+		}
 	});
 
 	it('creates default tab when aiTabs is undefined', async () => {
+		const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 		const session = createMockSession({ aiTabs: undefined as any, activeTabId: null });
 		const { result } = renderHook(() => useSessionRestoration());
 
-		let restored: Session;
-		await act(async () => {
-			restored = await result.current.restoreSession(session);
-		});
+		try {
+			let restored: Session;
+			await act(async () => {
+				restored = await result.current.restoreSession(session);
+			});
 
-		expect(restored!.aiTabs).toHaveLength(1);
-		expect(restored!.state).toBe('error');
+			expect(consoleError).toHaveBeenCalledWith(
+				'[restoreSession] Session has no aiTabs - data corruption, creating default tab:',
+				session.id
+			);
+			expect(restored!.aiTabs).toHaveLength(1);
+			expect(restored!.state).toBe('error');
+		} finally {
+			consoleError.mockRestore();
+		}
 	});
 
 	it('sets up unifiedTabOrder for recovered session', async () => {
+		const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 		const session = createMockSession({ aiTabs: [], activeTabId: null });
 		const { result } = renderHook(() => useSessionRestoration());
 
-		let restored: Session;
-		await act(async () => {
-			restored = await result.current.restoreSession(session);
-		});
+		try {
+			let restored: Session;
+			await act(async () => {
+				restored = await result.current.restoreSession(session);
+			});
 
-		expect(restored!.unifiedTabOrder).toEqual([{ type: 'ai', id: 'mock-id-1' }]);
-		expect(restored!.filePreviewTabs).toEqual([]);
-		expect(restored!.activeFileTabId).toBeNull();
+			expect(consoleError).toHaveBeenCalledWith(
+				'[restoreSession] Session has no aiTabs - data corruption, creating default tab:',
+				session.id
+			);
+			expect(restored!.unifiedTabOrder).toEqual([{ type: 'ai', id: 'mock-id-1' }]);
+			expect(restored!.filePreviewTabs).toEqual([]);
+			expect(restored!.activeFileTabId).toBeNull();
+		} finally {
+			consoleError.mockRestore();
+		}
 	});
 
 	it('clears orphaned activeFileTabId when inputMode is terminal', async () => {
+		const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 		const session = createMockSession({
 			inputMode: 'terminal',
 			activeFileTabId: 'orphaned-file-tab',
 		});
 		const { result } = renderHook(() => useSessionRestoration());
 
-		let restored: Session;
-		await act(async () => {
-			restored = await result.current.restoreSession(session);
-		});
+		try {
+			let restored: Session;
+			await act(async () => {
+				restored = await result.current.restoreSession(session);
+			});
 
-		expect(restored!.activeFileTabId).toBeNull();
+			expect(consoleWarn).toHaveBeenCalledWith(
+				"[restoreSession] Session has activeFileTabId='orphaned-file-tab' but inputMode='terminal' — clearing orphaned file tab reference"
+			);
+			expect(restored!.activeFileTabId).toBeNull();
+		} finally {
+			consoleWarn.mockRestore();
+		}
 	});
 
 	it('preserves activeFileTabId when inputMode is ai', async () => {
@@ -527,6 +670,46 @@ describe('restoreSession — Runtime state reset', () => {
 		expect(restored!.unifiedTabOrder).toEqual([{ type: 'ai', id: 'tab-1' }]);
 	});
 
+	it('builds unifiedTabOrder when filePreviewTabs is also missing', async () => {
+		const session = createMockSession({
+			unifiedTabOrder: undefined as any,
+			filePreviewTabs: undefined as any,
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		expect(restored!.unifiedTabOrder).toEqual([{ type: 'ai', id: 'tab-1' }]);
+	});
+
+	it('builds unifiedTabOrder from ai and file preview tabs when missing', async () => {
+		const session = createMockSession({
+			unifiedTabOrder: undefined as any,
+			filePreviewTabs: [
+				{
+					id: 'file-tab-1',
+					path: '/projects/myapp/README.md',
+					name: 'README.md',
+					content: '# Readme',
+				},
+			] as any,
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		expect(restored!.unifiedTabOrder).toEqual([
+			{ type: 'ai', id: 'tab-1' },
+			{ type: 'file', id: 'file-tab-1' },
+		]);
+	});
+
 	it('resets closedTabHistory to empty', async () => {
 		const session = createMockSession({ closedTabHistory: [{ type: 'ai', id: 'old' }] as any });
 		const { result } = renderHook(() => useSessionRestoration());
@@ -622,6 +805,27 @@ describe('restoreSession — Git info (local sessions)', () => {
 		expect(mockGitService.isRepo).not.toHaveBeenCalled();
 		expect(restored!.isGitRepo).toBe(false);
 	});
+
+	it('defaults persisted git repo state to false for remote sessions without cached value', async () => {
+		const session = createMockSession({
+			sshRemoteId: 'remote-1',
+			isGitRepo: undefined as any,
+			gitBranches: undefined,
+			gitTags: undefined,
+			gitRefsCacheTime: undefined,
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		expect(mockGitService.isRepo).not.toHaveBeenCalled();
+		expect(restored!.isGitRepo).toBe(false);
+		expect(restored!.gitBranches).toBeUndefined();
+		expect(restored!.gitTags).toBeUndefined();
+	});
 });
 
 // ============================================================================
@@ -630,32 +834,45 @@ describe('restoreSession — Git info (local sessions)', () => {
 
 describe('restoreSession — Error handling', () => {
 	it('returns error session when agent not found', async () => {
+		const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 		mockAgentsGet.mockResolvedValueOnce(null);
 		const session = createMockSession();
 		const { result } = renderHook(() => useSessionRestoration());
 
-		let restored: Session;
-		await act(async () => {
-			restored = await result.current.restoreSession(session);
-		});
+		try {
+			let restored: Session;
+			await act(async () => {
+				restored = await result.current.restoreSession(session);
+			});
 
-		expect(restored!.state).toBe('error');
-		expect(restored!.aiPid).toBe(-1);
-		expect(restored!.isLive).toBe(false);
+			expect(consoleError).toHaveBeenCalledWith('Agent not found for toolType: claude-code');
+			expect(restored!.state).toBe('error');
+			expect(restored!.aiPid).toBe(-1);
+			expect(restored!.isLive).toBe(false);
+		} finally {
+			consoleError.mockRestore();
+		}
 	});
 
 	it('returns error session on unexpected exception', async () => {
-		mockAgentsGet.mockRejectedValueOnce(new Error('IPC failure'));
+		const error = new Error('IPC failure');
+		const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+		mockAgentsGet.mockRejectedValueOnce(error);
 		const session = createMockSession();
 		const { result } = renderHook(() => useSessionRestoration());
 
-		let restored: Session;
-		await act(async () => {
-			restored = await result.current.restoreSession(session);
-		});
+		try {
+			let restored: Session;
+			await act(async () => {
+				restored = await result.current.restoreSession(session);
+			});
 
-		expect(restored!.state).toBe('error');
-		expect(restored!.aiPid).toBe(-1);
+			expect(consoleError).toHaveBeenCalledWith(`Error restoring session ${session.id}:`, error);
+			expect(restored!.state).toBe('error');
+			expect(restored!.aiPid).toBe(-1);
+		} finally {
+			consoleError.mockRestore();
+		}
 	});
 });
 
@@ -672,7 +889,10 @@ describe('fetchGitInfoInBackground', () => {
 			await new Promise((r) => setTimeout(r, 50));
 		});
 		useSessionStore.setState({
-			sessions: [createMockSession({ id: 's1', isGitRepo: false })],
+			sessions: [
+				createMockSession({ id: 's1', isGitRepo: false }),
+				createMockSession({ id: 's2', isGitRepo: false, sshConnectionFailed: true }),
+			],
 		} as any);
 		mockGitService.isRepo.mockClear();
 		mockGitService.getBranches.mockClear();
@@ -687,29 +907,47 @@ describe('fetchGitInfoInBackground', () => {
 		expect(mockGitService.getTags).toHaveBeenCalledWith('/remote/path', 'ssh-1');
 
 		const updated = useSessionStore.getState().sessions.find((s) => s.id === 's1');
+		const untouched = useSessionStore.getState().sessions.find((s) => s.id === 's2');
 		expect(updated?.isGitRepo).toBe(true);
 		expect(updated?.gitBranches).toEqual(['main', 'feature-1']);
 		expect(updated?.gitTags).toEqual(['v1.0', 'v2.0']);
 		expect(updated?.sshConnectionFailed).toBe(false);
+		expect(untouched?.isGitRepo).toBe(false);
+		expect(untouched?.sshConnectionFailed).toBe(true);
 	});
 
 	it('marks sshConnectionFailed on error', async () => {
+		const error = new Error('SSH timeout');
+		const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 		const { result } = renderHook(() => useSessionRestoration());
 
 		await act(async () => {
 			await new Promise((r) => setTimeout(r, 50));
 		});
 		useSessionStore.setState({
-			sessions: [createMockSession({ id: 's1' })],
+			sessions: [
+				createMockSession({ id: 's1' }),
+				createMockSession({ id: 's2', sshConnectionFailed: false }),
+			],
 		} as any);
-		mockGitService.isRepo.mockRejectedValueOnce(new Error('SSH timeout'));
+		mockGitService.isRepo.mockRejectedValueOnce(error);
 
-		await act(async () => {
-			await result.current.fetchGitInfoInBackground('s1', '/remote/path', 'ssh-1');
-		});
+		try {
+			await act(async () => {
+				await result.current.fetchGitInfoInBackground('s1', '/remote/path', 'ssh-1');
+			});
 
-		const updated = useSessionStore.getState().sessions.find((s) => s.id === 's1');
-		expect(updated?.sshConnectionFailed).toBe(true);
+			expect(consoleWarn).toHaveBeenCalledWith(
+				'[fetchGitInfoInBackground] Failed to fetch git info for session s1:',
+				error
+			);
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 's1');
+			const untouched = useSessionStore.getState().sessions.find((s) => s.id === 's2');
+			expect(updated?.sshConnectionFailed).toBe(true);
+			expect(untouched?.sshConnectionFailed).toBe(false);
+		} finally {
+			consoleWarn.mockRestore();
+		}
 	});
 
 	it('skips branches/tags when not a git repo', async () => {
@@ -766,6 +1004,14 @@ describe('initialLoadComplete proxy', () => {
 
 		expect(result.current.initialLoadComplete.current).toBe(true);
 	});
+
+	it('leaves unrelated proxy properties untouched', () => {
+		const { result } = renderHook(() => useSessionRestoration());
+
+		expect(Reflect.set(result.current.initialLoadComplete, 'other', true)).toBe(false);
+		expect(Reflect.get(result.current.initialLoadComplete, 'other')).toBeUndefined();
+		expect(useSessionStore.getState().initialLoadComplete).toBe(false);
+	});
 });
 
 // ============================================================================
@@ -821,6 +1067,20 @@ describe('Session & Group loading effect', () => {
 		expect(groupChats).toHaveLength(1);
 	});
 
+	it('falls back to an empty group chat list when IPC returns null', async () => {
+		mockGetAll.mockResolvedValueOnce([]);
+		mockGroupsGetAll.mockResolvedValueOnce([]);
+		mockGroupChatList.mockResolvedValueOnce(null);
+
+		renderHook(() => useSessionRestoration());
+
+		await act(async () => {
+			await new Promise((r) => setTimeout(r, 50));
+		});
+
+		expect(useGroupChatStore.getState().groupChats).toEqual([]);
+	});
+
 	it('sets sessionsLoaded to true after loading', async () => {
 		mockGetAll.mockResolvedValueOnce([]);
 
@@ -874,33 +1134,47 @@ describe('Session & Group loading effect', () => {
 	});
 
 	it('handles IPC failure gracefully (sets empty arrays)', async () => {
-		mockGetAll.mockRejectedValueOnce(new Error('IPC dead'));
+		const error = new Error('IPC dead');
+		const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+		mockGetAll.mockRejectedValueOnce(error);
 
-		renderHook(() => useSessionRestoration());
+		try {
+			renderHook(() => useSessionRestoration());
 
-		await act(async () => {
-			await new Promise((r) => setTimeout(r, 50));
-		});
+			await act(async () => {
+				await new Promise((r) => setTimeout(r, 50));
+			});
 
-		expect(useSessionStore.getState().sessions).toEqual([]);
-		expect(useSessionStore.getState().groups).toEqual([]);
-		expect(useSessionStore.getState().sessionsLoaded).toBe(true);
-		expect(useSessionStore.getState().initialLoadComplete).toBe(true);
+			expect(useSessionStore.getState().sessions).toEqual([]);
+			expect(useSessionStore.getState().groups).toEqual([]);
+			expect(useSessionStore.getState().sessionsLoaded).toBe(true);
+			expect(useSessionStore.getState().initialLoadComplete).toBe(true);
+			expect(consoleError).toHaveBeenCalledWith('Failed to load sessions/groups:', error);
+		} finally {
+			consoleError.mockRestore();
+		}
 	});
 
 	it('handles group chat load failure gracefully', async () => {
+		const error = new Error('GC fail');
+		const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 		mockGetAll.mockResolvedValueOnce([]);
 		mockGroupsGetAll.mockResolvedValueOnce([]);
-		mockGroupChatList.mockRejectedValueOnce(new Error('GC fail'));
+		mockGroupChatList.mockRejectedValueOnce(error);
 
-		renderHook(() => useSessionRestoration());
+		try {
+			renderHook(() => useSessionRestoration());
 
-		await act(async () => {
-			await new Promise((r) => setTimeout(r, 50));
-		});
+			await act(async () => {
+				await new Promise((r) => setTimeout(r, 50));
+			});
 
-		expect(useGroupChatStore.getState().groupChats).toEqual([]);
-		expect(useSessionStore.getState().sessionsLoaded).toBe(true);
+			expect(useGroupChatStore.getState().groupChats).toEqual([]);
+			expect(useSessionStore.getState().sessionsLoaded).toBe(true);
+			expect(consoleError).toHaveBeenCalledWith('Failed to load group chats:', error);
+		} finally {
+			consoleError.mockRestore();
+		}
 	});
 
 	it('fires fetchGitInfoInBackground for SSH sessions after load', async () => {
@@ -927,6 +1201,29 @@ describe('Session & Group loading effect', () => {
 		expect(backgroundCall).toBeDefined();
 	});
 
+	it('fires background git info using enabled session SSH config remoteId after load', async () => {
+		const sshSession = createMockSession({
+			id: 'ssh-config-1',
+			sshRemoteId: undefined,
+			sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-from-config' } as any,
+			cwd: '/remote/config-dir',
+			isGitRepo: false,
+		});
+		mockGetAll.mockResolvedValueOnce([sshSession]);
+		mockGitService.isRepo.mockResolvedValue(true);
+
+		renderHook(() => useSessionRestoration());
+
+		await act(async () => {
+			await new Promise((r) => setTimeout(r, 100));
+		});
+
+		const backgroundCall = mockGitService.isRepo.mock.calls.find(
+			(c: any[]) => c[0] === '/remote/config-dir' && c[1] === 'remote-from-config'
+		);
+		expect(backgroundCall).toBeDefined();
+	});
+
 	it('runs loading effect only once per hook instance (ref guard)', async () => {
 		mockGetAll.mockResolvedValue([]);
 
@@ -944,6 +1241,20 @@ describe('Session & Group loading effect', () => {
 		});
 
 		// getAll should only have been called once
+		expect(mockGetAll).toHaveBeenCalledTimes(1);
+	});
+
+	it('guards duplicate StrictMode mount-effect execution', async () => {
+		mockGetAll.mockResolvedValue([]);
+		const wrapper = ({ children }: { children: ReactNode }) =>
+			createElement(StrictMode, null, children);
+
+		renderHook(() => useSessionRestoration(), { wrapper });
+
+		await act(async () => {
+			await new Promise((r) => setTimeout(r, 50));
+		});
+
 		expect(mockGetAll).toHaveBeenCalledTimes(1);
 	});
 

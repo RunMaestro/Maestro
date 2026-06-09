@@ -154,17 +154,15 @@ async function execRemoteCommand(
 	deps: RemoteFsDeps = defaultDeps
 ): Promise<ExecResult> {
 	const { maxRetries, baseDelayMs, maxDelayMs } = DEFAULT_RETRY_CONFIG;
-	let lastResult: ExecResult | null = null;
 
 	// Resolve SSH binary path (critical for Windows where spawn() doesn't search PATH)
 	const sshPath = await resolveSshPath();
 
-	for (let attempt = 0; attempt <= maxRetries; attempt++) {
+	for (let attempt = 0; ; attempt++) {
 		const sshArgs = deps.buildSshArgs(config);
 		sshArgs.push(remoteCommand);
 
 		const result = await deps.execSsh(sshPath, sshArgs);
-		lastResult = result;
 
 		// Success - return immediately
 		if (result.exitCode === 0) {
@@ -186,9 +184,6 @@ async function execRemoteCommand(
 		// Non-recoverable error or max retries reached - return the result
 		return result;
 	}
-
-	// Should never reach here, but return last result as fallback
-	return lastResult!;
 }
 
 /**
@@ -481,13 +476,6 @@ export async function directorySizeRemote(
 	}
 
 	const size = parseInt(match[1], 10);
-
-	if (isNaN(size)) {
-		return {
-			success: false,
-			error: `Invalid size value for: ${dirPath}`,
-		};
-	}
 
 	return {
 		success: true,

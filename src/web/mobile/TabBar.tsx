@@ -490,7 +490,6 @@ function TabActionsPopover({
 							{onMoveLeft && (
 								<button
 									onClick={() => {
-										if (isFirst) return;
 										triggerHaptic(HAPTIC_PATTERNS.tap);
 										onMoveLeft();
 										onClose();
@@ -507,7 +506,6 @@ function TabActionsPopover({
 							{onMoveRight && (
 								<button
 									onClick={() => {
-										if (isLast) return;
 										triggerHaptic(HAPTIC_PATTERNS.tap);
 										onMoveRight();
 										onClose();

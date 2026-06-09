@@ -14,10 +14,11 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as path from 'path';
-import { ipcMain, dialog, shell, BrowserWindow, App } from 'electron';
+import { ipcMain, dialog, shell, clipboard, nativeImage, BrowserWindow, App } from 'electron';
 import Store from 'electron-store';
 import {
 	registerSystemHandlers,
+	setupLoggerEventForwarding,
 	SystemHandlerDependencies,
 } from '../../../../main/ipc/handlers/system';
 
@@ -36,6 +37,12 @@ vi.mock('electron', () => ({
 		openPath: vi.fn(),
 		showItemInFolder: vi.fn(),
 		trashItem: vi.fn(),
+	},
+	clipboard: {
+		writeImage: vi.fn(),
+	},
+	nativeImage: {
+		createFromDataURL: vi.fn(),
 	},
 	BrowserWindow: {
 		getFocusedWindow: vi.fn(),
@@ -102,6 +109,17 @@ vi.mock('../../../../main/tunnel-manager', () => ({
 	},
 }));
 
+// Mock power manager
+vi.mock('../../../../main/power-manager', () => ({
+	powerManager: {
+		setEnabled: vi.fn(),
+		isEnabled: vi.fn(),
+		getStatus: vi.fn(),
+		addBlockReason: vi.fn(),
+		removeBlockReason: vi.fn(),
+	},
+}));
+
 // Mock fs
 vi.mock('fs', () => ({
 	default: {
@@ -124,6 +142,7 @@ import { execFileNoThrow } from '../../../../main/utils/execFile';
 import { checkForUpdates } from '../../../../main/update-checker';
 import { setAllowPrerelease } from '../../../../main/auto-updater';
 import { tunnelManager } from '../../../../main/tunnel-manager';
+import { powerManager } from '../../../../main/power-manager';
 import * as fsSync from 'fs';
 
 describe('system IPC handlers', () => {
@@ -152,6 +171,7 @@ describe('system IPC handlers', () => {
 				openDevTools: vi.fn(),
 				closeDevTools: vi.fn(),
 				isDevToolsOpened: vi.fn(),
+				isDestroyed: vi.fn().mockReturnValue(false),
 				send: vi.fn(),
 			},
 		};
@@ -316,6 +336,18 @@ describe('system IPC handlers', () => {
 			expect(result).toBeNull();
 			expect(dialog.showOpenDialog).not.toHaveBeenCalled();
 		});
+
+		it('should log and return null when the dialog throws', async () => {
+			vi.mocked(dialog.showOpenDialog).mockRejectedValue(new Error('window disposed'));
+
+			const handler = handlers.get('dialog:selectFolder');
+			const result = await handler!({} as any);
+
+			expect(result).toBeNull();
+			expect(logger.error).toHaveBeenCalledWith('dialog:selectFolder failed', 'Dialog', {
+				error: expect.any(Error),
+			});
+		});
 	});
 
 	describe('dialog:saveFile', () => {
@@ -446,19 +478,25 @@ describe('system IPC handlers', () => {
 
 		it('should return fallback fonts on error', async () => {
 			vi.mocked(execFileNoThrow).mockRejectedValue(new Error('Command failed'));
+			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-			const handler = handlers.get('fonts:detect');
-			const result = await handler!({} as any);
+			try {
+				const handler = handlers.get('fonts:detect');
+				const result = await handler!({} as any);
 
-			expect(result).toEqual([
-				'Monaco',
-				'Menlo',
-				'Courier New',
-				'Consolas',
-				'Roboto Mono',
-				'Fira Code',
-				'JetBrains Mono',
-			]);
+				expect(result).toEqual([
+					'Monaco',
+					'Menlo',
+					'Courier New',
+					'Consolas',
+					'Roboto Mono',
+					'Fira Code',
+					'JetBrains Mono',
+				]);
+				expect(consoleError).toHaveBeenCalledWith('Font detection error:', expect.any(Error));
+			} finally {
+				consoleError.mockRestore();
+			}
 		});
 	});
 
@@ -566,6 +604,15 @@ describe('system IPC handlers', () => {
 			expect(shell.openExternal).not.toHaveBeenCalled();
 		});
 
+		it('should reject empty URLs before parsing', async () => {
+			const handler = handlers.get('shell:openExternal');
+
+			await expect(handler!({} as any, '')).rejects.toThrow(
+				'Invalid URL: URL must be a non-empty string'
+			);
+			expect(shell.openExternal).not.toHaveBeenCalled();
+		});
+
 		it('should gracefully handle Launch Services errors', async () => {
 			vi.mocked(shell.openExternal).mockRejectedValue(
 				new Error('No application in the Launch Services database matches the input criteria.')
@@ -574,6 +621,19 @@ describe('system IPC handlers', () => {
 			const handler = handlers.get('shell:openExternal');
 			// Should not throw - known recoverable error is caught and logged
 			await expect(handler!({} as any, 'https://example.com/some/path')).resolves.toBeUndefined();
+		});
+
+		it('should gracefully handle string no-application openExternal errors', async () => {
+			vi.mocked(shell.openExternal).mockRejectedValue('No application available');
+
+			const handler = handlers.get('shell:openExternal');
+
+			await expect(handler!({} as any, 'https://example.com/some/path')).resolves.toBeUndefined();
+			expect(logger.warn).toHaveBeenCalledWith(
+				'No application found to open "https://example.com/some/path"',
+				'Shell',
+				{ error: 'No application available' }
+			);
 		});
 
 		it('should re-throw unexpected openExternal errors', async () => {
@@ -596,6 +656,28 @@ describe('system IPC handlers', () => {
 
 			expect(shell.openExternal).not.toHaveBeenCalled();
 			expect(shell.openPath).toHaveBeenCalledWith('/Users/test/workspace/src/app.tsx');
+		});
+
+		it('should reject absolute file paths when openPath reports an error', async () => {
+			vi.mocked(fsSync.existsSync).mockReturnValue(true);
+			vi.mocked(shell.openPath).mockResolvedValue('No application found');
+
+			const handler = handlers.get('shell:openExternal');
+
+			await expect(handler!({} as any, '/Users/test/workspace/file.xyz')).rejects.toThrow(
+				'No application found'
+			);
+		});
+
+		it('should reject file URLs when openPath reports an error', async () => {
+			vi.mocked(fsSync.existsSync).mockReturnValue(true);
+			vi.mocked(shell.openPath).mockResolvedValue('Cannot open file');
+
+			const handler = handlers.get('shell:openExternal');
+
+			await expect(handler!({} as any, 'file:///Users/test/file.xyz')).rejects.toThrow(
+				'Cannot open file'
+			);
 		});
 
 		it('should throw for non-existent absolute file paths', async () => {
@@ -682,6 +764,19 @@ describe('system IPC handlers', () => {
 			await expect(handler!({} as any, '/path/to/file.txt')).resolves.toBeUndefined();
 		});
 
+		it('should handle string cancelled operation gracefully', async () => {
+			vi.mocked(fsSync.existsSync).mockReturnValue(true);
+			vi.mocked(shell.trashItem).mockRejectedValue('cancelled by user');
+
+			const handler = handlers.get('shell:trashItem');
+
+			await expect(handler!({} as any, '/path/to/file.txt')).resolves.toBeUndefined();
+			expect(logger.debug).toHaveBeenCalledWith(
+				`Trash operation cancelled for ${path.resolve('/path/to/file.txt')}`,
+				'Shell'
+			);
+		});
+
 		it('should rethrow unexpected errors', async () => {
 			vi.mocked(fsSync.existsSync).mockReturnValue(true);
 			vi.mocked(shell.trashItem).mockRejectedValue(new Error('Permission denied'));
@@ -723,6 +818,40 @@ describe('system IPC handlers', () => {
 			const handler = handlers.get('shell:openPath');
 			// Should not throw — logs warning instead
 			await expect(handler!({} as any, '/path/to/file.xyz')).resolves.toBeUndefined();
+		});
+	});
+
+	describe('clipboard:writeImage', () => {
+		it('should write a valid data URL image to the clipboard', async () => {
+			const image = { isEmpty: vi.fn().mockReturnValue(false) };
+			vi.mocked(nativeImage.createFromDataURL).mockReturnValue(image as any);
+
+			const handler = handlers.get('clipboard:writeImage');
+			await handler!({} as any, 'data:image/png;base64,abc123');
+
+			expect(nativeImage.createFromDataURL).toHaveBeenCalledWith('data:image/png;base64,abc123');
+			expect(clipboard.writeImage).toHaveBeenCalledWith(image);
+		});
+
+		it('should reject missing data URLs', async () => {
+			const handler = handlers.get('clipboard:writeImage');
+
+			await expect(handler!({} as any, '')).rejects.toThrow(
+				'Invalid data URL: must be a non-empty string'
+			);
+			expect(clipboard.writeImage).not.toHaveBeenCalled();
+		});
+
+		it('should reject data URLs that do not create an image', async () => {
+			const image = { isEmpty: vi.fn().mockReturnValue(true) };
+			vi.mocked(nativeImage.createFromDataURL).mockReturnValue(image as any);
+
+			const handler = handlers.get('clipboard:writeImage');
+
+			await expect(handler!({} as any, 'data:image/png;base64,not-image')).rejects.toThrow(
+				'Failed to create image from data URL'
+			);
+			expect(clipboard.writeImage).not.toHaveBeenCalled();
 		});
 	});
 
@@ -1475,6 +1604,110 @@ describe('system IPC handlers', () => {
 			expect(result.success).toBe(false);
 			expect(result.errors).toBeDefined();
 			expect(result.errors!.length).toBeGreaterThan(0);
+		});
+
+		it('should record string file migration errors', async () => {
+			mockBootstrapStore.get.mockReturnValue(null);
+			mockApp.getPath.mockReturnValue('/default/path');
+			vi.mocked(fsSync.existsSync).mockReturnValue(true);
+			vi.mocked(fsSync.readFileSync).mockReturnValue('same content');
+			const copyError = 'copy failed';
+			vi.mocked(fsSync.copyFileSync).mockImplementation(() => {
+				throw copyError;
+			});
+
+			const handler = handlers.get('sync:setCustomPath');
+			const result = await handler!({} as any, '/new/path');
+
+			expect(result.success).toBe(false);
+			expect(result.errors?.[0]).toContain('copy failed');
+		});
+	});
+
+	describe('power management', () => {
+		it('should restore sleep prevention when persisted setting is enabled', () => {
+			handlers.clear();
+			mockSettingsStore.get.mockImplementation((key: string) =>
+				key === 'preventSleepEnabled' ? true : undefined
+			);
+
+			registerSystemHandlers(deps);
+
+			expect(powerManager.setEnabled).toHaveBeenCalledWith(true);
+			expect(logger.info).toHaveBeenCalledWith(
+				'Sleep prevention restored from settings',
+				'PowerManager'
+			);
+		});
+
+		it('should set and persist sleep prevention state', async () => {
+			const handler = handlers.get('power:setEnabled');
+			await handler!({} as any, true);
+
+			expect(powerManager.setEnabled).toHaveBeenCalledWith(true);
+			expect(mockSettingsStore.set).toHaveBeenCalledWith('preventSleepEnabled', true);
+		});
+
+		it('should return whether sleep prevention is enabled', async () => {
+			vi.mocked(powerManager.isEnabled).mockReturnValue(true);
+
+			const handler = handlers.get('power:isEnabled');
+			const result = await handler!({} as any);
+
+			expect(result).toBe(true);
+		});
+
+		it('should return current power manager status', async () => {
+			const status = { enabled: true, active: true, blockReasons: ['auto-run'] };
+			vi.mocked(powerManager.getStatus).mockReturnValue(status);
+
+			const handler = handlers.get('power:getStatus');
+			const result = await handler!({} as any);
+
+			expect(result).toBe(status);
+		});
+
+		it('should add and remove sleep block reasons', async () => {
+			await handlers.get('power:addReason')!({} as any, 'auto-run');
+			await handlers.get('power:removeReason')!({} as any, 'auto-run');
+
+			expect(powerManager.addBlockReason).toHaveBeenCalledWith('auto-run');
+			expect(powerManager.removeBlockReason).toHaveBeenCalledWith('auto-run');
+		});
+	});
+
+	describe('setupLoggerEventForwarding', () => {
+		it('should forward new log entries to an available renderer', () => {
+			const entry = { level: 'info', message: 'hello' };
+			setupLoggerEventForwarding(() => mockMainWindow);
+
+			const callback = vi.mocked(logger.on).mock.calls.at(-1)![1] as (entry: unknown) => void;
+			callback(entry);
+
+			expect(logger.on).toHaveBeenCalledWith('newLog', expect.any(Function));
+			expect(mockMainWindow.webContents.send).toHaveBeenCalledWith('logger:newLog', entry);
+		});
+
+		it('should ignore new log entries when renderer webContents is destroyed', () => {
+			mockMainWindow.webContents.isDestroyed.mockReturnValue(true);
+			setupLoggerEventForwarding(() => mockMainWindow);
+
+			const callback = vi.mocked(logger.on).mock.calls.at(-1)![1] as (entry: unknown) => void;
+			callback({ level: 'warn', message: 'hidden' });
+
+			expect(mockMainWindow.webContents.send).not.toHaveBeenCalled();
+		});
+
+		it('should ignore renderer forwarding errors', () => {
+			mockMainWindow.webContents.isDestroyed.mockImplementation(() => {
+				throw new Error('renderer gone');
+			});
+			setupLoggerEventForwarding(() => mockMainWindow);
+
+			const callback = vi.mocked(logger.on).mock.calls.at(-1)![1] as (entry: unknown) => void;
+
+			expect(() => callback({ level: 'error', message: 'boom' })).not.toThrow();
+			expect(mockMainWindow.webContents.send).not.toHaveBeenCalled();
 		});
 	});
 });

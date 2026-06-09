@@ -24,7 +24,7 @@ function formatDuration(ms: number): string {
 	if (minutes > 0) parts.push(`${minutes}m`);
 	if (seconds > 0 && days === 0) parts.push(`${seconds}s`); // Skip seconds when showing days
 
-	return parts.join(' ') || '0s';
+	return parts.join(' ');
 }
 
 const ToastItem = memo(function ToastItem({
@@ -65,10 +65,8 @@ const ToastItem = memo(function ToastItem({
 
 	// Handle click on toast to navigate to session
 	const handleToastClick = () => {
-		if (toast.sessionId && onSessionClick) {
-			onSessionClick(toast.sessionId, toast.tabId);
-			handleClose();
-		}
+		onSessionClick!(toast.sessionId!, toast.tabId);
+		handleClose();
 	};
 
 	// Check if toast is clickable (has session navigation)

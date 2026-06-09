@@ -136,7 +136,6 @@ export function TourOverlay({
 		nextStep,
 		previousStep,
 		goToStep,
-		skipTour: internalSkipTour,
 		isLastStep,
 	} = useTour({
 		isOpen,
@@ -151,8 +150,8 @@ export function TourOverlay({
 		if (onTourSkipRef.current) {
 			onTourSkipRef.current(maxStepViewedRef.current);
 		}
-		internalSkipTour();
-	}, [internalSkipTour]);
+		onCloseRef.current();
+	}, []);
 
 	// Track tour start when it opens
 	// Uses ref for onTourStart to avoid effect re-running on callback changes
@@ -189,16 +188,12 @@ export function TourOverlay({
 	// Handle keyboard navigation
 	const handleKeyDown = useCallback(
 		(e: KeyboardEvent) => {
-			if (!isOpen) return;
-
 			switch (e.key) {
 				case 'Enter':
 				case ' ':
 					e.preventDefault();
 					if (showWelcome) {
 						handleStartTour();
-					} else if (isLastStep) {
-						skipTour(); // Finish tour
 					} else {
 						nextStep();
 					}
@@ -225,7 +220,7 @@ export function TourOverlay({
 					break;
 			}
 		},
-		[isOpen, showWelcome, isLastStep, nextStep, previousStep, skipTour, handleStartTour]
+		[isOpen, showWelcome, nextStep, previousStep, skipTour, handleStartTour]
 	);
 
 	// Register keyboard handler

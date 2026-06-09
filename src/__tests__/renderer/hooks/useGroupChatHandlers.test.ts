@@ -1,13 +1,18 @@
 /**
  * Tests for useGroupChatHandlers hook (extracted from App.tsx Phase 2B)
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useGroupChatHandlers } from '../../../renderer/hooks/groupChat/useGroupChatHandlers';
+import { useBatchStore } from '../../../renderer/stores/batchStore';
 import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
 import { useModalStore } from '../../../renderer/stores/modalStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
+import {
+	consumeGroupChatAutoRun,
+	registerGroupChatAutoRun,
+} from '../../../renderer/utils/groupChatAutoRunRegistry';
 
 // Mock notifyToast (module-level export can't be spied — must vi.mock)
 vi.mock('../../../renderer/stores/notificationStore', async () => {
@@ -34,7 +39,11 @@ const mockGroupChat = {
 	onParticipantsChanged: vi.fn().mockReturnValue(() => {}),
 	onModeratorUsage: vi.fn().mockReturnValue(() => {}),
 	onParticipantState: vi.fn().mockReturnValue(() => {}),
+	onParticipantLiveOutput: vi.fn().mockReturnValue(() => {}),
 	onModeratorSessionIdChanged: vi.fn().mockReturnValue(() => {}),
+	onAutoRunBatchComplete: vi.fn().mockReturnValue(() => {}),
+	archive: vi.fn().mockResolvedValue({ id: 'gc-1', name: 'Chat', archived: true }),
+	stopAll: vi.fn().mockResolvedValue(undefined),
 };
 
 // ---------------------------------------------------------------------------
@@ -54,8 +63,10 @@ const initialGroupChatState = {
 	groupChatRightTab: 'participants' as const,
 	groupChatParticipantColors: {},
 	groupChatStagedImages: [],
+	participantLiveOutput: new Map(),
 	groupChatError: null,
 };
+const originalDispatchBatch = useBatchStore.getState().dispatchBatch;
 
 beforeEach(() => {
 	vi.clearAllMocks();
@@ -71,6 +82,14 @@ beforeEach(() => {
 		(window.maestro as any).groupChat = mockGroupChat;
 	}
 	Object.assign((window.maestro as any).groupChat, mockGroupChat);
+});
+
+afterEach(() => {
+	vi.useRealTimers();
+	useBatchStore.setState({ dispatchBatch: originalDispatchBatch });
+	consumeGroupChatAutoRun('session-auto');
+	consumeGroupChatAutoRun('session-auto-1');
+	consumeGroupChatAutoRun('session-auto-other');
 });
 
 // ===========================================================================
@@ -159,6 +178,29 @@ describe('useGroupChatHandlers', () => {
 			expect(mockGroupChat.startModerator).toHaveBeenCalledWith('gc-1');
 		});
 
+		it('stores the moderator session id without changing other chats', async () => {
+			const chat = { id: 'gc-1', name: 'Chat', participants: [] };
+			useGroupChatStore.setState({
+				groupChats: [
+					{ id: 'gc-1', name: 'Chat' } as any,
+					{ id: 'gc-2', name: 'Other Chat', moderatorSessionId: 'existing' } as any,
+				],
+			});
+			mockGroupChat.load.mockResolvedValueOnce(chat);
+			mockGroupChat.getMessages.mockResolvedValueOnce([]);
+			mockGroupChat.startModerator.mockResolvedValueOnce('mod-session-1');
+
+			const { result } = renderHook(() => useGroupChatHandlers());
+			await act(async () => {
+				await result.current.handleOpenGroupChat('gc-1');
+			});
+
+			expect(useGroupChatStore.getState().groupChats).toEqual([
+				expect.objectContaining({ id: 'gc-1', moderatorSessionId: 'mod-session-1' }),
+				expect.objectContaining({ id: 'gc-2', moderatorSessionId: 'existing' }),
+			]);
+		});
+
 		it('does nothing if chat load returns null', async () => {
 			mockGroupChat.load.mockResolvedValueOnce(null);
 
@@ -224,6 +266,53 @@ describe('useGroupChatHandlers', () => {
 
 			expect(useGroupChatStore.getState().groupChatState).toBe('agent-working');
 		});
+
+		it('keeps the chat open and logs a warning when moderator startup fails', async () => {
+			const chat = { id: 'gc-1', name: 'Chat', participants: [] };
+			const startupError = new Error('moderator unavailable');
+			const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+			mockGroupChat.load.mockResolvedValueOnce(chat);
+			mockGroupChat.getMessages.mockResolvedValueOnce([]);
+			mockGroupChat.startModerator.mockRejectedValueOnce(startupError);
+
+			const { result } = renderHook(() => useGroupChatHandlers());
+			await act(async () => {
+				await result.current.handleOpenGroupChat('gc-1');
+			});
+
+			expect(useGroupChatStore.getState().activeGroupChatId).toBe('gc-1');
+			expect(consoleWarn).toHaveBeenCalledWith(
+				'Failed to start moderator for group chat gc-1:',
+				startupError
+			);
+
+			consoleWarn.mockRestore();
+		});
+
+		it('focuses the group chat input after opening a chat', async () => {
+			vi.useFakeTimers();
+			const chat = { id: 'gc-1', name: 'Chat', participants: [] };
+			const focus = vi.fn();
+			mockGroupChat.load.mockResolvedValueOnce(chat);
+			mockGroupChat.getMessages.mockResolvedValueOnce([]);
+			mockGroupChat.startModerator.mockResolvedValueOnce(null);
+
+			const { result } = renderHook(() => useGroupChatHandlers());
+			await act(async () => {
+				await result.current.handleOpenGroupChat('gc-1');
+			});
+
+			(result.current.groupChatInputRef as any).current = { focus };
+
+			act(() => {
+				vi.advanceTimersByTime(100);
+			});
+
+			expect(useUIStore.getState().activeFocus).toBe('main');
+			expect(focus).toHaveBeenCalled();
+
+			vi.useRealTimers();
+		});
 	});
 
 	// -----------------------------------------------------------------------
@@ -285,6 +374,22 @@ describe('useGroupChatHandlers', () => {
 					await result.current.handleCreateGroupChat('Chat', 'claude-code');
 				})
 			).rejects.toThrow('Network timeout');
+
+			expect(notifyToast).toHaveBeenCalledWith(
+				expect.objectContaining({ type: 'error', message: 'Failed to create group chat' })
+			);
+		});
+
+		it('re-throws non-Error creation failures with the generic toast', async () => {
+			mockGroupChat.create.mockRejectedValueOnce('transport failed');
+			useModalStore.getState().openModal('newGroupChat');
+
+			const { result } = renderHook(() => useGroupChatHandlers());
+			await expect(
+				act(async () => {
+					await result.current.handleCreateGroupChat('Chat', 'claude-code');
+				})
+			).rejects.toBe('transport failed');
 
 			expect(notifyToast).toHaveBeenCalledWith(
 				expect.objectContaining({ type: 'error', message: 'Failed to create group chat' })
@@ -361,12 +466,60 @@ describe('useGroupChatHandlers', () => {
 	});
 
 	// -----------------------------------------------------------------------
+	// handleArchiveGroupChat
+	// -----------------------------------------------------------------------
+	describe('handleArchiveGroupChat', () => {
+		it('archives a group chat, updates the store, and closes it when active', async () => {
+			const archived = { id: 'gc-1', name: 'Chat 1', archived: true };
+			mockGroupChat.archive.mockResolvedValueOnce(archived);
+			useGroupChatStore.setState({
+				groupChats: [{ id: 'gc-1', name: 'Chat 1', archived: false } as any],
+				activeGroupChatId: 'gc-1',
+				groupChatMessages: [{ role: 'user', content: 'test' }] as any,
+			});
+
+			const { result } = renderHook(() => useGroupChatHandlers());
+			await act(async () => {
+				await result.current.handleArchiveGroupChat('gc-1', true);
+			});
+
+			expect(mockGroupChat.archive).toHaveBeenCalledWith('gc-1', true);
+			expect(useGroupChatStore.getState().groupChats[0]).toEqual(archived);
+			expect(useGroupChatStore.getState().activeGroupChatId).toBeNull();
+			expect(useGroupChatStore.getState().groupChatMessages).toEqual([]);
+		});
+
+		it('updates archived state without closing inactive chats', async () => {
+			const updated = { id: 'gc-2', name: 'Chat 2', archived: false };
+			mockGroupChat.archive.mockResolvedValueOnce(updated);
+			useGroupChatStore.setState({
+				groupChats: [
+					{ id: 'gc-1', name: 'Chat 1' } as any,
+					{ id: 'gc-2', name: 'Chat 2', archived: true } as any,
+				],
+				activeGroupChatId: 'gc-1',
+			});
+
+			const { result } = renderHook(() => useGroupChatHandlers());
+			await act(async () => {
+				await result.current.handleArchiveGroupChat('gc-2', false);
+			});
+
+			expect(useGroupChatStore.getState().groupChats[1]).toEqual(updated);
+			expect(useGroupChatStore.getState().activeGroupChatId).toBe('gc-1');
+		});
+	});
+
+	// -----------------------------------------------------------------------
 	// handleRenameGroupChat
 	// -----------------------------------------------------------------------
 	describe('handleRenameGroupChat', () => {
 		it('renames a group chat in the store', async () => {
 			useGroupChatStore.setState({
-				groupChats: [{ id: 'gc-1', name: 'Old Name' } as any],
+				groupChats: [
+					{ id: 'gc-1', name: 'Old Name' } as any,
+					{ id: 'gc-2', name: 'Other Name' } as any,
+				],
 			});
 
 			const { result } = renderHook(() => useGroupChatHandlers());
@@ -376,6 +529,7 @@ describe('useGroupChatHandlers', () => {
 
 			expect(mockGroupChat.rename).toHaveBeenCalledWith('gc-1', 'New Name');
 			expect(useGroupChatStore.getState().groupChats[0].name).toBe('New Name');
+			expect(useGroupChatStore.getState().groupChats[1].name).toBe('Other Name');
 		});
 
 		it('closes the renameGroupChat modal after rename', async () => {
@@ -402,7 +556,10 @@ describe('useGroupChatHandlers', () => {
 			const updated = { id: 'gc-1', name: 'Updated', moderatorAgentId: 'claude-code' };
 			mockGroupChat.update.mockResolvedValueOnce(updated);
 			useGroupChatStore.setState({
-				groupChats: [{ id: 'gc-1', name: 'Old', moderatorAgentId: 'codex' } as any],
+				groupChats: [
+					{ id: 'gc-1', name: 'Old', moderatorAgentId: 'codex' } as any,
+					{ id: 'gc-2', name: 'Other', moderatorAgentId: 'opencode' } as any,
+				],
 			});
 
 			const { result } = renderHook(() => useGroupChatHandlers());
@@ -411,6 +568,11 @@ describe('useGroupChatHandlers', () => {
 			});
 
 			expect(useGroupChatStore.getState().groupChats[0]).toEqual(updated);
+			expect(useGroupChatStore.getState().groupChats[1]).toEqual({
+				id: 'gc-2',
+				name: 'Other',
+				moderatorAgentId: 'opencode',
+			});
 		});
 
 		it('closes the editGroupChat modal after update', async () => {
@@ -445,6 +607,47 @@ describe('useGroupChatHandlers', () => {
 			const confirmModal = useModalStore.getState().modals.get('confirm');
 			expect(confirmModal?.open).toBe(true);
 			expect((confirmModal?.data as any)?.message).toContain('My Chat');
+		});
+
+		it('deletes from the confirm modal callback and closes the active chat', async () => {
+			useGroupChatStore.setState({
+				groupChats: [{ id: 'gc-1', name: 'My Chat' } as any],
+				activeGroupChatId: 'gc-1',
+				groupChatMessages: [{ role: 'user', content: 'test' }] as any,
+			});
+
+			const { result } = renderHook(() => useGroupChatHandlers());
+			act(() => result.current.deleteGroupChatWithConfirmation('gc-1'));
+
+			const confirmModal = useModalStore.getState().modals.get('confirm');
+			await act(async () => {
+				await (confirmModal?.data as any).onConfirm();
+			});
+
+			expect(mockGroupChat.delete).toHaveBeenCalledWith('gc-1');
+			expect(useGroupChatStore.getState().groupChats).toEqual([]);
+			expect(useGroupChatStore.getState().activeGroupChatId).toBeNull();
+		});
+
+		it('deletes from the confirm modal callback without closing another active chat', async () => {
+			useGroupChatStore.setState({
+				groupChats: [
+					{ id: 'gc-1', name: 'My Chat' } as any,
+					{ id: 'gc-2', name: 'Other Chat' } as any,
+				],
+				activeGroupChatId: 'gc-2',
+			});
+
+			const { result } = renderHook(() => useGroupChatHandlers());
+			act(() => result.current.deleteGroupChatWithConfirmation('gc-1'));
+
+			const confirmModal = useModalStore.getState().modals.get('confirm');
+			await act(async () => {
+				await (confirmModal?.data as any).onConfirm();
+			});
+
+			expect(useGroupChatStore.getState().groupChats.map((chat) => chat.id)).toEqual(['gc-2']);
+			expect(useGroupChatStore.getState().activeGroupChatId).toBe('gc-2');
 		});
 
 		it('does nothing for nonexistent chat', () => {
@@ -557,6 +760,21 @@ describe('useGroupChatHandlers', () => {
 			expect(queue[0].timestamp).toBeDefined();
 		});
 
+		it('uses fallback queue tab name when active chat metadata is missing', async () => {
+			useGroupChatStore.setState({
+				activeGroupChatId: 'gc-1',
+				groupChatState: 'agent-working',
+				groupChats: [{ id: 'gc-other', name: 'Other Chat' } as any],
+			});
+
+			const { result } = renderHook(() => useGroupChatHandlers());
+			await act(async () => {
+				await result.current.handleSendGroupChatMessage('queued');
+			});
+
+			expect(useGroupChatStore.getState().groupChatExecutionQueue[0].tabName).toBe('Group Chat');
+		});
+
 		it('does nothing when no active group chat', async () => {
 			const { result } = renderHook(() => useGroupChatHandlers());
 			await act(async () => {
@@ -568,19 +786,85 @@ describe('useGroupChatHandlers', () => {
 	});
 
 	// -----------------------------------------------------------------------
+	// handleStopAll
+	// -----------------------------------------------------------------------
+	describe('handleStopAll', () => {
+		it('does nothing when no group chat is active', async () => {
+			const { result } = renderHook(() => useGroupChatHandlers());
+
+			await act(async () => {
+				await result.current.handleStopAll();
+			});
+
+			expect(mockGroupChat.stopAll).not.toHaveBeenCalled();
+		});
+
+		it('completes in-flight autorun batches and stops the active group chat', async () => {
+			const dispatchBatch = vi.fn();
+			useBatchStore.setState({ dispatchBatch });
+			useGroupChatStore.setState({ activeGroupChatId: 'gc-1' });
+			registerGroupChatAutoRun('session-auto-1', 'gc-1', 'Agent A');
+			registerGroupChatAutoRun('session-auto-other', 'gc-other', 'Agent B');
+
+			const { result } = renderHook(() => useGroupChatHandlers());
+			await act(async () => {
+				await result.current.handleStopAll();
+			});
+
+			expect(dispatchBatch).toHaveBeenCalledWith({
+				type: 'COMPLETE_BATCH',
+				sessionId: 'session-auto-1',
+			});
+			expect(dispatchBatch).not.toHaveBeenCalledWith({
+				type: 'COMPLETE_BATCH',
+				sessionId: 'session-auto-other',
+			});
+			expect(mockGroupChat.stopAll).toHaveBeenCalledWith('gc-1');
+
+			consumeGroupChatAutoRun('session-auto-1');
+			consumeGroupChatAutoRun('session-auto-other');
+		});
+
+		it('shows a toast when stopping the active group chat fails', async () => {
+			const stopError = new Error('stop failed');
+			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+			mockGroupChat.stopAll.mockRejectedValueOnce(stopError);
+			useGroupChatStore.setState({ activeGroupChatId: 'gc-1' });
+
+			const { result } = renderHook(() => useGroupChatHandlers());
+			await act(async () => {
+				await result.current.handleStopAll();
+			});
+
+			expect(consoleError).toHaveBeenCalledWith('[GroupChat] Failed to stop all:', stopError);
+			expect(notifyToast).toHaveBeenCalledWith({
+				type: 'error',
+				title: 'Stop Failed',
+				message: 'Failed to stop all group chat conversations. Please try again.',
+			});
+
+			consoleError.mockRestore();
+		});
+	});
+
+	// -----------------------------------------------------------------------
 	// handleGroupChatDraftChange
 	// -----------------------------------------------------------------------
 	describe('handleGroupChatDraftChange', () => {
 		it('updates draft message for the active group chat', () => {
 			useGroupChatStore.setState({
 				activeGroupChatId: 'gc-1',
-				groupChats: [{ id: 'gc-1', name: 'Chat', draftMessage: '' } as any],
+				groupChats: [
+					{ id: 'gc-1', name: 'Chat', draftMessage: '' } as any,
+					{ id: 'gc-2', name: 'Other Chat', draftMessage: 'keep me' } as any,
+				],
 			});
 
 			const { result } = renderHook(() => useGroupChatHandlers());
 			act(() => result.current.handleGroupChatDraftChange('new draft'));
 
 			expect(useGroupChatStore.getState().groupChats[0].draftMessage).toBe('new draft');
+			expect(useGroupChatStore.getState().groupChats[1].draftMessage).toBe('keep me');
 		});
 
 		it('does nothing when no active group chat', () => {
@@ -708,6 +992,12 @@ describe('useGroupChatHandlers', () => {
 							{ id: 'tab-mod', agentSessionId: 'mod-session-1' },
 						],
 					} as any,
+					{
+						id: 's-2',
+						name: 'Session 2',
+						activeTabId: 'tab-stable',
+						aiTabs: [{ id: 'tab-stable', agentSessionId: 'other-session' }],
+					} as any,
 				],
 			});
 
@@ -715,7 +1005,9 @@ describe('useGroupChatHandlers', () => {
 			act(() => result.current.handleOpenModeratorSession('mod-session-1'));
 
 			const session = useSessionStore.getState().sessions[0];
+			const otherSession = useSessionStore.getState().sessions[1];
 			expect(session.activeTabId).toBe('tab-mod');
+			expect(otherSession.activeTabId).toBe('tab-stable');
 		});
 
 		it('closes the active group chat when navigating', () => {
@@ -764,6 +1056,17 @@ describe('useGroupChatHandlers', () => {
 			expect(useGroupChatStore.getState().groupChatState).toBe('agent-working');
 			const pmModal = useModalStore.getState().modals.get('processMonitor');
 			expect(pmModal?.open ?? false).toBe(false);
+		});
+
+		it('uses idle state and empty participants when process monitor has no saved state', () => {
+			useModalStore.getState().openModal('processMonitor');
+
+			const { result } = renderHook(() => useGroupChatHandlers());
+			act(() => result.current.handleProcessMonitorNavigateToGroupChat('gc-missing'));
+
+			expect(useGroupChatStore.getState().activeGroupChatId).toBe('gc-missing');
+			expect(useGroupChatStore.getState().groupChatState).toBe('idle');
+			expect(useGroupChatStore.getState().participantStates.size).toBe(0);
 		});
 	});
 
@@ -1037,7 +1340,10 @@ describe('useGroupChatHandlers', () => {
 
 		it('onParticipantsChanged callback updates participants for the chat', () => {
 			useGroupChatStore.setState({
-				groupChats: [{ id: 'gc-1', name: 'Chat', participants: [] } as any],
+				groupChats: [
+					{ id: 'gc-1', name: 'Chat', participants: [] } as any,
+					{ id: 'gc-2', name: 'Other Chat', participants: [{ name: 'Keep' }] } as any,
+				],
 			});
 
 			let participantsCallback: any;
@@ -1051,11 +1357,15 @@ describe('useGroupChatHandlers', () => {
 			act(() => participantsCallback('gc-1', newParticipants));
 
 			expect(useGroupChatStore.getState().groupChats[0].participants).toEqual(newParticipants);
+			expect(useGroupChatStore.getState().groupChats[1].participants).toEqual([{ name: 'Keep' }]);
 		});
 
 		it('onModeratorSessionIdChanged callback updates the moderator agent session id', () => {
 			useGroupChatStore.setState({
-				groupChats: [{ id: 'gc-1', name: 'Chat' } as any],
+				groupChats: [
+					{ id: 'gc-1', name: 'Chat' } as any,
+					{ id: 'gc-2', name: 'Other Chat', moderatorAgentSessionId: 'existing' } as any,
+				],
 			});
 
 			let sessionIdCallback: any;
@@ -1070,6 +1380,7 @@ describe('useGroupChatHandlers', () => {
 			expect(useGroupChatStore.getState().groupChats[0].moderatorAgentSessionId).toBe(
 				'new-agent-session-42'
 			);
+			expect(useGroupChatStore.getState().groupChats[1].moderatorAgentSessionId).toBe('existing');
 		});
 
 		it('onParticipantState callback updates active and global participant states', () => {
@@ -1093,6 +1404,152 @@ describe('useGroupChatHandlers', () => {
 			// Global map
 			const allStates = useGroupChatStore.getState().allGroupChatParticipantStates;
 			expect(allStates.get('gc-1')?.get('Agent A')).toBe('working');
+		});
+
+		it('onParticipantState clears live output when a participant becomes idle', () => {
+			useGroupChatStore.setState({
+				activeGroupChatId: 'gc-1',
+				participantStates: new Map([['Agent A', 'working']]),
+				allGroupChatParticipantStates: new Map(),
+				participantLiveOutput: new Map([['gc-1:Agent A', 'still running']]),
+			});
+
+			let participantStateCallback: any;
+			mockGroupChat.onParticipantState.mockImplementationOnce((cb: any) => {
+				participantStateCallback = cb;
+				return () => {};
+			});
+
+			renderHook(() => useGroupChatHandlers());
+			act(() => participantStateCallback('gc-1', 'Agent A', 'idle'));
+
+			expect(useGroupChatStore.getState().participantLiveOutput.has('gc-1:Agent A')).toBe(false);
+		});
+
+		it('onParticipantState tracks non-active chats without changing active participant state', () => {
+			useGroupChatStore.setState({
+				activeGroupChatId: 'gc-1',
+				participantStates: new Map([['Agent A', 'working']]),
+				allGroupChatParticipantStates: new Map(),
+			});
+
+			let participantStateCallback: any;
+			mockGroupChat.onParticipantState.mockImplementationOnce((cb: any) => {
+				participantStateCallback = cb;
+				return () => {};
+			});
+
+			renderHook(() => useGroupChatHandlers());
+			act(() => participantStateCallback('gc-other', 'Agent B', 'working'));
+
+			expect(useGroupChatStore.getState().participantStates).toEqual(
+				new Map([['Agent A', 'working']])
+			);
+			expect(
+				useGroupChatStore.getState().allGroupChatParticipantStates.get('gc-other')?.get('Agent B')
+			).toBe('working');
+		});
+
+		it('onParticipantLiveOutput appends chunks for the active group chat only', () => {
+			useGroupChatStore.setState({
+				activeGroupChatId: 'gc-1',
+				participantLiveOutput: new Map(),
+			});
+
+			let liveOutputCallback: any;
+			mockGroupChat.onParticipantLiveOutput.mockImplementationOnce((cb: any) => {
+				liveOutputCallback = cb;
+				return () => {};
+			});
+
+			renderHook(() => useGroupChatHandlers());
+			act(() => liveOutputCallback('gc-1', 'Agent A', 'first'));
+			act(() => liveOutputCallback('gc-1', 'Agent A', ' second'));
+			act(() => liveOutputCallback('gc-other', 'Agent B', 'ignored'));
+
+			expect(useGroupChatStore.getState().participantLiveOutput.get('gc-1:Agent A')).toBe(
+				'first second'
+			);
+			expect(useGroupChatStore.getState().participantLiveOutput.has('gc-other:Agent B')).toBe(
+				false
+			);
+		});
+
+		it('onAutoRunBatchComplete completes the registered autorun session for the participant', () => {
+			const dispatchBatch = vi.fn();
+			useBatchStore.setState({ dispatchBatch });
+			useSessionStore.setState({
+				sessions: [{ id: 'session-auto', name: 'Agent A' } as any],
+			});
+			registerGroupChatAutoRun('session-auto', 'gc-1', 'Agent A');
+
+			let batchCompleteCallback: any;
+			mockGroupChat.onAutoRunBatchComplete.mockImplementationOnce((cb: any) => {
+				batchCompleteCallback = cb;
+				return () => {};
+			});
+
+			renderHook(() => useGroupChatHandlers());
+			act(() => batchCompleteCallback('gc-1', 'Agent A'));
+
+			expect(dispatchBatch).toHaveBeenCalledWith({
+				type: 'COMPLETE_BATCH',
+				sessionId: 'session-auto',
+			});
+
+			consumeGroupChatAutoRun('session-auto');
+		});
+
+		it('onAutoRunBatchComplete falls back to participant name when no registry session matches', () => {
+			const dispatchBatch = vi.fn();
+			useBatchStore.setState({ dispatchBatch });
+			useSessionStore.setState({
+				sessions: [{ id: 'session-fallback', name: 'Agent B' } as any],
+			});
+
+			let batchCompleteCallback: any;
+			mockGroupChat.onAutoRunBatchComplete.mockImplementationOnce((cb: any) => {
+				batchCompleteCallback = cb;
+				return () => {};
+			});
+
+			renderHook(() => useGroupChatHandlers());
+			act(() => batchCompleteCallback('gc-1', 'Agent B'));
+			act(() => batchCompleteCallback('gc-1', 'Missing Agent'));
+
+			expect(dispatchBatch).toHaveBeenCalledTimes(1);
+			expect(dispatchBatch).toHaveBeenCalledWith({
+				type: 'COMPLETE_BATCH',
+				sessionId: 'session-fallback',
+			});
+		});
+
+		it('onAutoRunBatchComplete falls back when registry sessions do not match the participant', () => {
+			const dispatchBatch = vi.fn();
+			useBatchStore.setState({ dispatchBatch });
+			useSessionStore.setState({
+				sessions: [
+					{ id: 'session-auto', name: 'Different Agent' } as any,
+					{ id: 'session-fallback', name: 'Agent A' } as any,
+				],
+			});
+			registerGroupChatAutoRun('session-auto', 'gc-1', 'Different Agent');
+
+			let batchCompleteCallback: any;
+			mockGroupChat.onAutoRunBatchComplete.mockImplementationOnce((cb: any) => {
+				batchCompleteCallback = cb;
+				return () => {};
+			});
+
+			renderHook(() => useGroupChatHandlers());
+			act(() => batchCompleteCallback('gc-1', 'Agent A'));
+
+			expect(dispatchBatch).toHaveBeenCalledWith({
+				type: 'COMPLETE_BATCH',
+				sessionId: 'session-fallback',
+			});
+
+			consumeGroupChatAutoRun('session-auto');
 		});
 
 		it('onModeratorUsage callback updates moderator usage for active chat', () => {
@@ -1134,6 +1591,40 @@ describe('useGroupChatHandlers', () => {
 			expect(usage?.totalCost).toBe(0.05); // Updated
 			expect(usage?.tokenCount).toBe(100); // Preserved
 		});
+
+		it('onModeratorUsage initializes accumulated usage when no previous usage exists', () => {
+			useGroupChatStore.setState({ activeGroupChatId: 'gc-1', moderatorUsage: null });
+
+			let usageCallback: any;
+			mockGroupChat.onModeratorUsage.mockImplementationOnce((cb: any) => {
+				usageCallback = cb;
+				return () => {};
+			});
+
+			renderHook(() => useGroupChatHandlers());
+			act(() => usageCallback('gc-1', { contextUsage: -1, totalCost: 0.05, tokenCount: 200 }));
+
+			expect(useGroupChatStore.getState().moderatorUsage).toEqual({
+				contextUsage: 0,
+				totalCost: 0.05,
+				tokenCount: 0,
+			});
+		});
+
+		it('onModeratorUsage ignores usage for non-active group chats', () => {
+			useGroupChatStore.setState({ activeGroupChatId: 'gc-1', moderatorUsage: null });
+
+			let usageCallback: any;
+			mockGroupChat.onModeratorUsage.mockImplementationOnce((cb: any) => {
+				usageCallback = cb;
+				return () => {};
+			});
+
+			renderHook(() => useGroupChatHandlers());
+			act(() => usageCallback('gc-other', { contextUsage: 0.5, totalCost: 0.05, tokenCount: 200 }));
+
+			expect(useGroupChatStore.getState().moderatorUsage).toBeNull();
+		});
 	});
 
 	// -----------------------------------------------------------------------
@@ -1174,6 +1665,32 @@ describe('useGroupChatHandlers', () => {
 			);
 			expect(useGroupChatStore.getState().groupChatExecutionQueue.length).toBe(0);
 			expect(useGroupChatStore.getState().groupChatState).toBe('moderator-thinking');
+		});
+
+		it('sends an empty string for queued items without text', async () => {
+			const queuedItem = {
+				id: 'q-empty',
+				images: undefined,
+				readOnlyMode: true,
+				timestamp: Date.now(),
+				tabId: 'gc-1',
+				tabName: 'Chat',
+				type: 'message' as const,
+			};
+
+			useGroupChatStore.setState({
+				activeGroupChatId: 'gc-1',
+				groupChatState: 'idle',
+				groupChatExecutionQueue: [queuedItem as any],
+			});
+
+			renderHook(() => useGroupChatHandlers());
+
+			await act(async () => {
+				await new Promise((r) => setTimeout(r, 10));
+			});
+
+			expect(mockGroupChat.sendToModerator).toHaveBeenCalledWith('gc-1', '', undefined, true);
 		});
 
 		it('does not process queue when state is not idle', () => {

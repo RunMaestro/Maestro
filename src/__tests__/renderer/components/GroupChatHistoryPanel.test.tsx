@@ -222,6 +222,16 @@ describe('GroupChatHistoryPanel', () => {
 			expect(screen.getByPlaceholderText('Filter group chat history...')).toBeInTheDocument();
 		});
 
+		it('should focus the search input after opening search with Cmd+F', () => {
+			const { container } = render(<GroupChatHistoryPanel {...defaultProps} />);
+
+			const panel = container.querySelector('[tabIndex="0"]');
+			fireEvent.keyDown(panel!, { key: 'f', metaKey: true });
+			vi.runOnlyPendingTimers();
+
+			expect(screen.getByPlaceholderText('Filter group chat history...')).toHaveFocus();
+		});
+
 		it('should close search with Escape and clear filter', () => {
 			const entries = [createMockEntry({ summary: 'Visible entry' })];
 			const { container } = render(<GroupChatHistoryPanel {...defaultProps} entries={entries} />);
@@ -241,6 +251,21 @@ describe('GroupChatHistoryPanel', () => {
 
 			// Search input should be gone and entry visible again
 			expect(screen.queryByPlaceholderText('Filter group chat history...')).not.toBeInTheDocument();
+			expect(screen.getByText('Visible entry')).toBeInTheDocument();
+		});
+
+		it('should keep search open for non-Escape input keys', () => {
+			const entries = [createMockEntry({ summary: 'Visible entry' })];
+			const { container } = render(<GroupChatHistoryPanel {...defaultProps} entries={entries} />);
+
+			const panel = container.querySelector('[tabIndex="0"]');
+			fireEvent.keyDown(panel!, { key: 'f', metaKey: true });
+
+			const searchInput = screen.getByPlaceholderText('Filter group chat history...');
+			fireEvent.change(searchInput, { target: { value: 'Visible' } });
+			fireEvent.keyDown(searchInput, { key: 'Enter' });
+
+			expect(screen.getByPlaceholderText('Filter group chat history...')).toBeInTheDocument();
 			expect(screen.getByText('Visible entry')).toBeInTheDocument();
 		});
 
@@ -367,6 +392,18 @@ describe('GroupChatHistoryPanel', () => {
 			expect(pill).toHaveStyle({ color: '#ff0000' });
 		});
 
+		it('should fall back to the theme accent when no participant colors are available', () => {
+			const entries = [
+				createMockEntry({
+					participantName: 'Unmapped Agent',
+					participantColor: undefined,
+				}),
+			];
+			render(<GroupChatHistoryPanel {...defaultProps} entries={entries} participantColors={{}} />);
+
+			expect(screen.getByText('Unmapped Agent')).toHaveStyle({ color: mockTheme.colors.accent });
+		});
+
 		it('should render entry summary', () => {
 			const entries = [createMockEntry({ summary: 'Completed the refactoring task' })];
 			render(<GroupChatHistoryPanel {...defaultProps} entries={entries} />);
@@ -433,6 +470,283 @@ describe('GroupChatHistoryPanel', () => {
 				// scrollIntoView should have been called
 				expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
 			}
+		});
+
+		it('should ignore empty activity bars when clicked or hovered', () => {
+			const now = Date.now();
+			const entries = [
+				createMockEntry({ id: 'recent', timestamp: now - 1000, summary: 'Recent entry' }),
+			];
+			const { container } = render(<GroupChatHistoryPanel {...defaultProps} entries={entries} />);
+
+			const bars = Array.from(container.querySelectorAll('[style*="cursor"]'));
+			const emptyBar = bars.find((bar) => (bar as HTMLElement).style.cursor === 'default');
+			expect(emptyBar).toBeDefined();
+
+			fireEvent.click(emptyBar!);
+			expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled();
+
+			fireEvent.mouseEnter(emptyBar!);
+			expect(screen.getByText('No activity')).toBeInTheDocument();
+		});
+
+		it('should do nothing when a populated bar has no matching rendered entry element', () => {
+			const now = Date.now();
+			const entries = [
+				createMockEntry({ id: 'recent', timestamp: now - 1000, summary: 'Recent entry' }),
+			];
+			const { container } = render(<GroupChatHistoryPanel {...defaultProps} entries={entries} />);
+			const originalQuerySelector = Element.prototype.querySelector;
+			const querySelectorSpy = vi
+				.spyOn(Element.prototype, 'querySelector')
+				.mockImplementation(function (selector: string) {
+					if (selector.includes('data-entry-id')) {
+						return null;
+					}
+					return originalQuerySelector.call(this, selector);
+				});
+
+			try {
+				const bars = container.querySelectorAll('[style*="cursor: pointer"]');
+				expect(bars.length).toBeGreaterThan(0);
+
+				fireEvent.click(bars[bars.length - 1]);
+
+				expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled();
+			} finally {
+				querySelectorSpy.mockRestore();
+			}
+		});
+
+		it('should show and hide the activity tooltip when hovering a populated bar', () => {
+			const now = Date.now();
+			const entries = [
+				createMockEntry({
+					id: 'recent',
+					timestamp: now - 1000,
+					summary: 'Recent entry',
+					participantName: 'Agent A',
+				}),
+			];
+			const { container } = render(<GroupChatHistoryPanel {...defaultProps} entries={entries} />);
+
+			const bars = container.querySelectorAll('[style*="cursor: pointer"]');
+			expect(bars.length).toBeGreaterThan(0);
+
+			fireEvent.mouseEnter(bars[bars.length - 1]);
+
+			expect(screen.getAllByText('Agent A')).toHaveLength(2);
+			expect(screen.getByText('1')).toBeInTheDocument();
+
+			fireEvent.mouseLeave(bars[bars.length - 1]);
+
+			expect(screen.queryByText('1')).not.toBeInTheDocument();
+		});
+
+		it('should position a populated middle-bucket tooltip and use fallback tooltip colors', () => {
+			vi.setSystemTime(new Date(2026, 0, 15, 13, 0, 0));
+			const middleEntryTime = new Date(2026, 0, 15, 1, 30, 0).getTime();
+			const entries = [
+				createMockEntry({
+					id: 'middle',
+					timestamp: middleEntryTime,
+					summary: 'Middle entry',
+					participantName: 'Unmapped Agent',
+				}),
+			];
+			const { container } = render(<GroupChatHistoryPanel {...defaultProps} entries={entries} />);
+
+			const bars = container.querySelectorAll('[style*="cursor: pointer"]');
+			expect(bars.length).toBeGreaterThan(0);
+			fireEvent.mouseEnter(bars[Math.floor(bars.length / 2)]);
+
+			expect(screen.getAllByText('Unmapped Agent')).toHaveLength(2);
+			expect(screen.getByText('1')).toBeInTheDocument();
+		});
+
+		it('should show PM and 12-hour labels in short lookback tooltips', () => {
+			vi.setSystemTime(new Date(2026, 0, 15, 13, 0, 0));
+			const entries = [
+				createMockEntry({
+					id: 'noon-entry',
+					timestamp: new Date(2026, 0, 15, 12, 30, 0).getTime(),
+					summary: 'Noon entry',
+				}),
+			];
+			const { container } = render(<GroupChatHistoryPanel {...defaultProps} entries={entries} />);
+
+			const bars = container.querySelectorAll('[style*="cursor: pointer"]');
+			fireEvent.mouseEnter(bars[bars.length - 1]);
+
+			expect(screen.getByText('12PM - 1PM')).toBeInTheDocument();
+		});
+
+		it('should load a persisted all-time lookback and save context-menu lookback changes', async () => {
+			vi.mocked(window.maestro.settings.get).mockResolvedValueOnce(null);
+			const now = Date.now();
+			const entries = [
+				createMockEntry({
+					id: 'old',
+					timestamp: now - 10 * 24 * 60 * 60 * 1000,
+					summary: 'Old entry',
+					participantName: 'Agent B',
+				}),
+				createMockEntry({
+					id: 'recent',
+					timestamp: now - 1000,
+					summary: 'Recent entry',
+					participantName: 'Agent A',
+				}),
+			];
+			const { container } = render(<GroupChatHistoryPanel {...defaultProps} entries={entries} />);
+
+			await waitFor(() =>
+				expect(container.querySelector('.w-full.flex.flex-col.relative')).toHaveAttribute(
+					'title',
+					expect.stringContaining('All time')
+				)
+			);
+
+			const graph = container.querySelector('.w-full.flex.flex-col.relative');
+			let bars = container.querySelectorAll('[style*="cursor: pointer"]');
+			fireEvent.mouseEnter(bars[bars.length - 1]);
+			expect(screen.getAllByText('Agent A')).toHaveLength(2);
+			fireEvent.mouseLeave(bars[bars.length - 1]);
+
+			fireEvent.contextMenu(graph!, { clientX: 120, clientY: 80 });
+
+			expect(screen.getByText('Lookback Period')).toBeInTheDocument();
+
+			fireEvent.click(screen.getByRole('button', { name: /1 month/i }));
+
+			expect(window.maestro.settings.set).toHaveBeenCalledWith(
+				'groupChatHistoryLookback:group-1',
+				720
+			);
+			expect(screen.queryByText('Lookback Period')).not.toBeInTheDocument();
+			expect(graph).toHaveAttribute('title', expect.stringContaining('1 month'));
+
+			bars = container.querySelectorAll('[style*="cursor: pointer"]');
+			fireEvent.mouseEnter(bars[bars.length - 1]);
+			expect(screen.getAllByText('Agent A')).toHaveLength(2);
+			fireEvent.mouseLeave(bars[bars.length - 1]);
+
+			fireEvent.contextMenu(graph!, { clientX: 140, clientY: 90 });
+			fireEvent.click(screen.getByRole('button', { name: /1 week/i }));
+
+			expect(window.maestro.settings.set).toHaveBeenCalledWith(
+				'groupChatHistoryLookback:group-1',
+				168
+			);
+			expect(graph).toHaveAttribute('title', expect.stringContaining('1 week'));
+		});
+
+		it('should fall back to the default lookback when saved hours are unsupported', async () => {
+			vi.mocked(window.maestro.settings.get).mockResolvedValueOnce(999);
+			const { container } = render(
+				<GroupChatHistoryPanel
+					{...defaultProps}
+					entries={[createMockEntry({ id: 'recent', timestamp: Date.now() - 1000 })]}
+				/>
+			);
+
+			await waitFor(() =>
+				expect(container.querySelector('.w-full.flex.flex-col.relative')).toHaveAttribute(
+					'title',
+					expect.stringContaining('24 hours')
+				)
+			);
+		});
+
+		it('should handle all-time lookback with no entries', async () => {
+			vi.mocked(window.maestro.settings.get).mockResolvedValueOnce(null);
+			const { container } = render(<GroupChatHistoryPanel {...defaultProps} entries={[]} />);
+
+			await waitFor(() =>
+				expect(container.querySelector('.w-full.flex.flex-col.relative')).toHaveAttribute(
+					'title',
+					expect.stringContaining('All time')
+				)
+			);
+
+			const bars = Array.from(container.querySelectorAll('[style*="cursor"]'));
+			const emptyBar = bars.find((bar) => (bar as HTMLElement).style.cursor === 'default');
+			expect(emptyBar).toBeDefined();
+			fireEvent.mouseEnter(emptyBar!);
+			expect(screen.getByText('No activity')).toBeInTheDocument();
+		});
+
+		it('should handle a zero-duration all-time range without assigning graph activity', async () => {
+			vi.setSystemTime(new Date(2026, 0, 15, 13, 0, 0));
+			vi.mocked(window.maestro.settings.get).mockResolvedValueOnce(null);
+			const entries = [
+				createMockEntry({
+					id: 'right-now',
+					timestamp: Date.now(),
+					summary: 'Right now entry',
+				}),
+			];
+			const { container } = render(<GroupChatHistoryPanel {...defaultProps} entries={entries} />);
+
+			await waitFor(() =>
+				expect(container.querySelector('.w-full.flex.flex-col.relative')).toHaveAttribute(
+					'title',
+					expect.stringContaining('All time')
+				)
+			);
+
+			expect(screen.getByText('Right now entry')).toBeInTheDocument();
+		});
+
+		it('should show a single date for all-time tooltip buckets within one day', async () => {
+			vi.setSystemTime(new Date('2026-01-15T18:00:00Z'));
+			vi.mocked(window.maestro.settings.get).mockResolvedValueOnce(null);
+			const firstEntryTime = new Date('2026-01-15T12:00:00Z').getTime();
+			const entries = [
+				createMockEntry({
+					id: 'same-day-start',
+					timestamp: firstEntryTime,
+					summary: 'Same-day start',
+					participantName: 'Agent A',
+				}),
+				createMockEntry({
+					id: 'same-day-later',
+					timestamp: firstEntryTime + 60 * 60 * 1000,
+					summary: 'Same-day later',
+					participantName: 'Agent B',
+				}),
+			];
+			const { container } = render(<GroupChatHistoryPanel {...defaultProps} entries={entries} />);
+
+			await waitFor(() =>
+				expect(container.querySelector('.w-full.flex.flex-col.relative')).toHaveAttribute(
+					'title',
+					expect.stringContaining('All time')
+				)
+			);
+
+			const bars = container.querySelectorAll('[style*="cursor: pointer"]');
+			const dateLabelsBeforeHover = screen.queryAllByText('Jan 15').length;
+			fireEvent.mouseEnter(bars[0]);
+
+			expect(screen.getAllByText('Jan 15')).toHaveLength(dateLabelsBeforeHover + 1);
+			expect(screen.queryByText('Jan 15 - Jan 15')).not.toBeInTheDocument();
+		});
+
+		it('should close the lookback context menu on an outside document click', () => {
+			const entries = [
+				createMockEntry({ id: 'recent', timestamp: Date.now() - 1000, summary: 'Recent entry' }),
+			];
+			const { container } = render(<GroupChatHistoryPanel {...defaultProps} entries={entries} />);
+
+			const graph = container.querySelector('.w-full.flex.flex-col.relative');
+			fireEvent.contextMenu(graph!, { clientX: 120, clientY: 80 });
+
+			expect(screen.getByText('Lookback Period')).toBeInTheDocument();
+
+			fireEvent.click(document);
+
+			expect(screen.queryByText('Lookback Period')).not.toBeInTheDocument();
 		});
 	});
 

@@ -77,7 +77,8 @@ describe('useGroupManagement', () => {
 	});
 
 	it('toggles group collapsed state', () => {
-		const deps = createDeps();
+		const otherGroup = createMockGroup({ id: 'group-2', name: 'BETA', collapsed: true });
+		const deps = createDeps({ groups: [createMockGroup(), otherGroup] });
 		const { result } = renderHook(() => useGroupManagement(deps));
 
 		act(() => {
@@ -89,6 +90,7 @@ describe('useGroupManagement', () => {
 		const updater = deps.setGroups.mock.calls[0][0];
 		const updated = updater(deps.groups);
 		expect(updated[0].collapsed).toBe(true);
+		expect(updated[1]).toBe(otherGroup);
 	});
 
 	it('starts group rename by setting editingGroupId', () => {
@@ -103,7 +105,8 @@ describe('useGroupManagement', () => {
 	});
 
 	it('finishes group rename with trimmed uppercase value', () => {
-		const deps = createDeps();
+		const otherGroup = createMockGroup({ id: 'group-2', name: 'BETA' });
+		const deps = createDeps({ groups: [createMockGroup(), otherGroup] });
 		const { result } = renderHook(() => useGroupManagement(deps));
 
 		act(() => {
@@ -116,6 +119,7 @@ describe('useGroupManagement', () => {
 		const updater = deps.setGroups.mock.calls[0][0];
 		const updated = updater(deps.groups);
 		expect(updated[0].name).toBe('NEW NAME');
+		expect(updated[1]).toBe(otherGroup);
 	});
 
 	it('ignores empty group rename values', () => {
@@ -143,6 +147,7 @@ describe('useGroupManagement', () => {
 
 	it('assigns dragged session to group on drop', () => {
 		const session = createMockSession({ id: 'session-1' });
+		const otherSession = createMockSession({ id: 'session-2', groupId: 'group-1' });
 		const deps = createDeps({
 			draggingSessionId: 'session-1',
 		});
@@ -156,12 +161,14 @@ describe('useGroupManagement', () => {
 		expect(deps.setDraggingSessionId).toHaveBeenCalledWith(null);
 
 		const updater = deps.setSessions.mock.calls[0][0];
-		const updated = updater([session]);
+		const updated = updater([session, otherSession]);
 		expect(updated[0].groupId).toBe('group-2');
+		expect(updated[1]).toBe(otherSession);
 	});
 
 	it('clears group assignment when dropped on ungrouped', () => {
 		const session = createMockSession({ id: 'session-1', groupId: 'group-1' });
+		const otherSession = createMockSession({ id: 'session-2', groupId: 'group-2' });
 		const deps = createDeps({
 			draggingSessionId: 'session-1',
 		});
@@ -175,8 +182,9 @@ describe('useGroupManagement', () => {
 		expect(deps.setDraggingSessionId).toHaveBeenCalledWith(null);
 
 		const updater = deps.setSessions.mock.calls[0][0];
-		const updated = updater([session]);
+		const updated = updater([session, otherSession]);
 		expect(updated[0].groupId).toBeUndefined();
+		expect(updated[1]).toBe(otherSession);
 	});
 
 	it('ignores drops when no session is being dragged', () => {

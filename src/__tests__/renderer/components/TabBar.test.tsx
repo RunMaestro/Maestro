@@ -37,6 +37,11 @@ vi.mock('lucide-react', () => ({
 			✉
 		</span>
 	),
+	Loader2: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<span data-testid="loader-icon" className={className} style={style}>
+			⟳
+		</span>
+	),
 	Pencil: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
 		<span data-testid="pencil-icon" className={className} style={style}>
 			✏
@@ -305,6 +310,75 @@ describe('TabBar', () => {
 			);
 
 			expect(screen.getByText('ABCD1234')).toBeInTheDocument();
+		});
+
+		it('displays OpenCode session IDs with the SES prefix', () => {
+			const tabs = [
+				createTab({
+					id: 'tab-1',
+					name: '',
+					agentSessionId: 'ses_4bcdfe8c5ffe4kc1uv9nsmyedb',
+				}),
+			];
+
+			render(
+				<TabBar
+					tabs={tabs}
+					activeTabId="tab-1"
+					theme={mockTheme}
+					onTabSelect={mockOnTabSelect}
+					onTabClose={mockOnTabClose}
+					onNewTab={mockOnNewTab}
+				/>
+			);
+
+			expect(screen.getByText('SES_4BCD')).toBeInTheDocument();
+		});
+
+		it('displays Codex thread IDs with the THR prefix', () => {
+			const tabs = [
+				createTab({
+					id: 'tab-1',
+					name: '',
+					agentSessionId: 'thread_abc123456789',
+				}),
+			];
+
+			render(
+				<TabBar
+					tabs={tabs}
+					activeTabId="tab-1"
+					theme={mockTheme}
+					onTabSelect={mockOnTabSelect}
+					onTabClose={mockOnTabClose}
+					onNewTab={mockOnNewTab}
+				/>
+			);
+
+			expect(screen.getByText('THR_ABC1')).toBeInTheDocument();
+		});
+
+		it('displays generic session IDs as the first eight uppercase characters', () => {
+			const tabs = [
+				createTab({
+					id: 'tab-1',
+					name: '',
+					agentSessionId: 'generic123456789',
+				}),
+			];
+
+			render(
+				<TabBar
+					tabs={tabs}
+					activeTabId="tab-1"
+					theme={mockTheme}
+					onTabSelect={mockOnTabSelect}
+					onTabClose={mockOnTabClose}
+					onNewTab={mockOnNewTab}
+				/>
+			);
+
+			expect(screen.getByText('GENERIC1')).toBeInTheDocument();
 		});
 
 		it('displays "New Session" when no name and no agentSessionId', () => {
@@ -786,6 +860,56 @@ describe('TabBar', () => {
 			// Only draft tab should be visible
 			expect(screen.queryByText('Tab 1')).not.toBeInTheDocument();
 			expect(screen.getByText('Draft Tab')).toBeInTheDocument();
+		});
+
+		it('filters unified tabs to unread, active, draft, and active file tabs', () => {
+			const activeAiTab = createTab({ id: 'tab-active', name: 'Active AI' });
+			const unreadAiTab = createTab({ id: 'tab-unread', name: 'Unread AI', hasUnread: true });
+			const draftAiTab = createTab({ id: 'tab-draft', name: 'Draft AI', inputValue: 'draft' });
+			const hiddenAiTab = createTab({ id: 'tab-hidden', name: 'Hidden AI' });
+			const activeFileTab: FilePreviewTab = {
+				id: 'file-active',
+				path: '/path/active.ts',
+				name: 'active',
+				extension: '.ts',
+			};
+			const hiddenFileTab: FilePreviewTab = {
+				id: 'file-hidden',
+				path: '/path/hidden.ts',
+				name: 'hidden',
+				extension: '.ts',
+			};
+			const unifiedTabs = [
+				{ type: 'ai' as const, id: activeAiTab.id, data: activeAiTab },
+				{ type: 'ai' as const, id: unreadAiTab.id, data: unreadAiTab },
+				{ type: 'ai' as const, id: draftAiTab.id, data: draftAiTab },
+				{ type: 'ai' as const, id: hiddenAiTab.id, data: hiddenAiTab },
+				{ type: 'file' as const, id: activeFileTab.id, data: activeFileTab },
+				{ type: 'file' as const, id: hiddenFileTab.id, data: hiddenFileTab },
+			];
+
+			render(
+				<TabBar
+					tabs={[activeAiTab, unreadAiTab, draftAiTab, hiddenAiTab]}
+					activeTabId="tab-active"
+					theme={mockTheme}
+					onTabSelect={mockOnTabSelect}
+					onTabClose={mockOnTabClose}
+					onNewTab={mockOnNewTab}
+					unifiedTabs={unifiedTabs}
+					showUnreadOnly={true}
+					activeFileTabId="file-active"
+					onFileTabSelect={vi.fn()}
+					onFileTabClose={vi.fn()}
+				/>
+			);
+
+			expect(screen.getByText('Active AI')).toBeInTheDocument();
+			expect(screen.getByText('Unread AI')).toBeInTheDocument();
+			expect(screen.getByText('Draft AI')).toBeInTheDocument();
+			expect(screen.getByText('active')).toBeInTheDocument();
+			expect(screen.queryByText('Hidden AI')).not.toBeInTheDocument();
+			expect(screen.queryByText('hidden')).not.toBeInTheDocument();
 		});
 
 		it('updates filter button title based on state', () => {
@@ -1401,6 +1525,309 @@ describe('TabBar', () => {
 
 			fireEvent.click(screen.getByText('Mark as Unread'));
 			expect(mockOnTabMarkUnread).toHaveBeenCalledWith('tab-1');
+		});
+
+		it('calls context merge, compact, copy, and export callbacks from the hover overlay', async () => {
+			const onMergeWith = vi.fn();
+			const onSummarizeAndContinue = vi.fn();
+			const onCopyContext = vi.fn();
+			const onExportHtml = vi.fn();
+			const logs = Array.from({ length: 5 }, (_, index) => ({
+				id: `log-${index}`,
+				timestamp: Date.now() + index,
+				source: 'user' as const,
+				text: `Message ${index}`,
+			}));
+
+			const renderOverlay = () => {
+				const tabs = [
+					createTab({
+						id: 'tab-1',
+						name: 'Tab 1',
+						agentSessionId: 'abc123',
+						logs,
+					}),
+				];
+
+				const view = render(
+					<TabBar
+						tabs={tabs}
+						activeTabId="tab-1"
+						theme={mockTheme}
+						onTabSelect={mockOnTabSelect}
+						onTabClose={mockOnTabClose}
+						onNewTab={mockOnNewTab}
+						onMergeWith={onMergeWith}
+						onSummarizeAndContinue={onSummarizeAndContinue}
+						onCopyContext={onCopyContext}
+						onExportHtml={onExportHtml}
+					/>
+				);
+
+				const tab = screen.getByText('Tab 1').closest('[data-tab-id]')!;
+				fireEvent.mouseEnter(tab);
+				act(() => {
+					vi.advanceTimersByTime(450);
+				});
+				return view;
+			};
+
+			let view = renderOverlay();
+			fireEvent.click(screen.getByText('Context: Merge Into'));
+			expect(onMergeWith).toHaveBeenCalledWith('tab-1');
+			view.unmount();
+
+			view = renderOverlay();
+			fireEvent.click(screen.getByText('Context: Compact'));
+			expect(onSummarizeAndContinue).toHaveBeenCalledWith('tab-1');
+			view.unmount();
+
+			view = renderOverlay();
+			fireEvent.click(screen.getByText('Context: Copy to Clipboard'));
+			expect(onCopyContext).toHaveBeenCalledWith('tab-1');
+			view.unmount();
+
+			renderOverlay();
+			fireEvent.click(screen.getByText('Export as HTML'));
+			expect(onExportHtml).toHaveBeenCalledWith('tab-1');
+		});
+
+		it('routes unified AI overlay session and context actions through their callbacks', async () => {
+			const onTabStar = vi.fn();
+			const onTabMarkUnread = vi.fn();
+			const onMergeWith = vi.fn();
+			const onSendToAgent = vi.fn();
+			const onSummarizeAndContinue = vi.fn();
+			const onCopyContext = vi.fn();
+			const onExportHtml = vi.fn();
+			const onPublishGist = vi.fn();
+			const logs = Array.from({ length: 5 }, (_, index) => ({
+				id: `log-${index}`,
+				timestamp: Date.now() + index,
+				source: 'user' as const,
+				text: `Message ${index}`,
+			}));
+			const activeTab = createTab({
+				id: 'tab-1',
+				name: 'Tab 1',
+				agentSessionId: 'abc123',
+				logs,
+			});
+			const otherTab = createTab({ id: 'tab-2', name: 'Tab 2', agentSessionId: 'def456' });
+			const unifiedTabs = [
+				{ type: 'ai' as const, id: activeTab.id, data: activeTab },
+				{ type: 'ai' as const, id: otherTab.id, data: otherTab },
+			];
+
+			const renderOverlay = () => {
+				const view = render(
+					<TabBar
+						tabs={[activeTab, otherTab]}
+						activeTabId="tab-1"
+						theme={mockTheme}
+						onTabSelect={mockOnTabSelect}
+						onTabClose={mockOnTabClose}
+						onNewTab={mockOnNewTab}
+						onTabStar={onTabStar}
+						onTabMarkUnread={onTabMarkUnread}
+						onMergeWith={onMergeWith}
+						onSendToAgent={onSendToAgent}
+						onSummarizeAndContinue={onSummarizeAndContinue}
+						onCopyContext={onCopyContext}
+						onExportHtml={onExportHtml}
+						onPublishGist={onPublishGist}
+						ghCliAvailable={true}
+						unifiedTabs={unifiedTabs}
+						activeFileTabId={null}
+					/>
+				);
+
+				const tab = screen.getByText('Tab 1').closest('[data-tab-id]')!;
+				fireEvent.mouseEnter(tab);
+				act(() => {
+					vi.advanceTimersByTime(450);
+				});
+				return view;
+			};
+
+			const runAction = (label: string, assertion: () => void) => {
+				const view = renderOverlay();
+				fireEvent.click(screen.getByText(label));
+				assertion();
+				view.unmount();
+			};
+
+			runAction('Star Session', () => expect(onTabStar).toHaveBeenCalledWith('tab-1', true));
+			runAction('Mark as Unread', () => expect(onTabMarkUnread).toHaveBeenCalledWith('tab-1'));
+			runAction('Context: Merge Into', () => expect(onMergeWith).toHaveBeenCalledWith('tab-1'));
+			runAction('Context: Send to Agent', () =>
+				expect(onSendToAgent).toHaveBeenCalledWith('tab-1')
+			);
+			runAction('Context: Compact', () =>
+				expect(onSummarizeAndContinue).toHaveBeenCalledWith('tab-1')
+			);
+			runAction('Context: Copy to Clipboard', () =>
+				expect(onCopyContext).toHaveBeenCalledWith('tab-1')
+			);
+			runAction('Export as HTML', () => expect(onExportHtml).toHaveBeenCalledWith('tab-1'));
+			runAction('Context: Publish as GitHub Gist', () =>
+				expect(onPublishGist).toHaveBeenCalledWith('tab-1')
+			);
+		});
+
+		it('hides unified AI overlay actions until session and log prerequisites exist', async () => {
+			const draftTab = createTab({
+				id: 'draft-tab',
+				name: 'Draft Tab',
+				agentSessionId: undefined,
+				logs: [],
+			});
+			const otherTab = createTab({ id: 'other-tab', name: 'Other Tab', agentSessionId: 'def456' });
+			const unifiedTabs = [
+				{ type: 'ai' as const, id: draftTab.id, data: draftTab },
+				{ type: 'ai' as const, id: otherTab.id, data: otherTab },
+			];
+
+			render(
+				<TabBar
+					tabs={[draftTab, otherTab]}
+					activeTabId="draft-tab"
+					theme={mockTheme}
+					onTabSelect={mockOnTabSelect}
+					onTabClose={mockOnTabClose}
+					onNewTab={mockOnNewTab}
+					onTabStar={vi.fn()}
+					onTabMarkUnread={vi.fn()}
+					onMergeWith={vi.fn()}
+					onSendToAgent={vi.fn()}
+					onSummarizeAndContinue={vi.fn()}
+					onCopyContext={vi.fn()}
+					onExportHtml={vi.fn()}
+					onPublishGist={vi.fn()}
+					ghCliAvailable={true}
+					unifiedTabs={unifiedTabs}
+					activeFileTabId={null}
+				/>
+			);
+
+			const tab = screen.getByText('Draft Tab').closest('[data-tab-id]')!;
+			fireEvent.mouseEnter(tab);
+			act(() => {
+				vi.advanceTimersByTime(450);
+			});
+
+			expect(screen.getByText('Close Tab')).toBeInTheDocument();
+			expect(screen.queryByText('Star Session')).not.toBeInTheDocument();
+			expect(screen.queryByText('Mark as Unread')).not.toBeInTheDocument();
+			expect(screen.queryByText('Export as HTML')).not.toBeInTheDocument();
+			expect(screen.queryByText('Context: Copy to Clipboard')).not.toBeInTheDocument();
+			expect(screen.queryByText('Context: Compact')).not.toBeInTheDocument();
+			expect(screen.queryByText('Context: Merge Into')).not.toBeInTheDocument();
+			expect(screen.queryByText('Context: Send to Agent')).not.toBeInTheDocument();
+			expect(screen.queryByText('Context: Publish as GitHub Gist')).not.toBeInTheDocument();
+		});
+
+		it('disables unified AI overlay close actions when only one tab is open', async () => {
+			const onCloseOtherTabs = vi.fn();
+			const onCloseTabsLeft = vi.fn();
+			const onCloseTabsRight = vi.fn();
+			const tabs = [createTab({ id: 'tab-1', name: 'Solo Tab', agentSessionId: 'session-1' })];
+			const unifiedTabs = [{ type: 'ai' as const, id: 'tab-1', data: tabs[0] }];
+
+			render(
+				<TabBar
+					tabs={tabs}
+					activeTabId="tab-1"
+					theme={mockTheme}
+					onTabSelect={mockOnTabSelect}
+					onTabClose={mockOnTabClose}
+					onNewTab={mockOnNewTab}
+					onCloseOtherTabs={onCloseOtherTabs}
+					onCloseTabsLeft={onCloseTabsLeft}
+					onCloseTabsRight={onCloseTabsRight}
+					unifiedTabs={unifiedTabs}
+					activeFileTabId={null}
+				/>
+			);
+
+			const tab = screen.getByText('Solo Tab').closest('[data-tab-id]')!;
+			fireEvent.mouseEnter(tab);
+			act(() => {
+				vi.advanceTimersByTime(450);
+			});
+
+			const closeTabButton = screen.getByText('Close Tab').closest('button')!;
+			const closeOtherTabsButton = screen.getByText('Close Other Tabs').closest('button')!;
+			const closeTabsLeftButton = screen.getByText('Close Tabs to Left').closest('button')!;
+			const closeTabsRightButton = screen.getByText('Close Tabs to Right').closest('button')!;
+
+			expect(closeTabButton).toHaveAttribute('disabled');
+			expect(closeOtherTabsButton).toHaveAttribute('disabled');
+			expect(closeTabsLeftButton).toHaveAttribute('disabled');
+			expect(closeTabsRightButton).toHaveAttribute('disabled');
+
+			fireEvent.click(closeTabButton);
+			fireEvent.click(closeOtherTabsButton);
+			fireEvent.click(closeTabsLeftButton);
+			fireEvent.click(closeTabsRightButton);
+
+			expect(mockOnTabClose).not.toHaveBeenCalled();
+			expect(onCloseOtherTabs).not.toHaveBeenCalled();
+			expect(onCloseTabsLeft).not.toHaveBeenCalled();
+			expect(onCloseTabsRight).not.toHaveBeenCalled();
+		});
+
+		it('calls AI overlay close actions with the hovered tab context', async () => {
+			const onCloseOtherTabs = vi.fn();
+			const onCloseTabsLeft = vi.fn();
+			const onCloseTabsRight = vi.fn();
+			const tabs = [
+				createTab({ id: 'tab-1', name: 'Tab 1', agentSessionId: 'session-1' }),
+				createTab({ id: 'tab-2', name: 'Tab 2', agentSessionId: 'session-2' }),
+				createTab({ id: 'tab-3', name: 'Tab 3', agentSessionId: 'session-3' }),
+			];
+
+			const renderMiddleOverlay = () => {
+				const view = render(
+					<TabBar
+						tabs={tabs}
+						activeTabId="tab-2"
+						theme={mockTheme}
+						onTabSelect={mockOnTabSelect}
+						onTabClose={mockOnTabClose}
+						onNewTab={mockOnNewTab}
+						onCloseOtherTabs={onCloseOtherTabs}
+						onCloseTabsLeft={onCloseTabsLeft}
+						onCloseTabsRight={onCloseTabsRight}
+					/>
+				);
+
+				const tab = screen.getByText('Tab 2').closest('[data-tab-id]')!;
+				fireEvent.mouseEnter(tab);
+				act(() => {
+					vi.advanceTimersByTime(450);
+				});
+				return view;
+			};
+
+			let view = renderMiddleOverlay();
+			fireEvent.click(screen.getByText('Close Tab'));
+			expect(mockOnTabClose).toHaveBeenCalledWith('tab-2');
+			view.unmount();
+
+			view = renderMiddleOverlay();
+			fireEvent.click(screen.getByText('Close Other Tabs'));
+			expect(onCloseOtherTabs).toHaveBeenCalled();
+			view.unmount();
+
+			view = renderMiddleOverlay();
+			fireEvent.click(screen.getByText('Close Tabs to Left'));
+			expect(onCloseTabsLeft).toHaveBeenCalled();
+			view.unmount();
+
+			renderMiddleOverlay();
+			fireEvent.click(screen.getByText('Close Tabs to Right'));
+			expect(onCloseTabsRight).toHaveBeenCalled();
 		});
 
 		it('displays session name in overlay header', async () => {
@@ -3049,6 +3476,12 @@ describe('FileTab overlay menu', () => {
 		expect(mockWriteText).toHaveBeenCalledWith('/path/to/document.md');
 		expect(screen.getByText('Copied!')).toBeInTheDocument();
 
+		await act(async () => {
+			vi.advanceTimersByTime(1500);
+		});
+
+		expect(screen.getByText('Copy File Path')).toBeInTheDocument();
+
 		vi.useRealTimers();
 	});
 
@@ -3088,6 +3521,13 @@ describe('FileTab overlay menu', () => {
 		});
 
 		expect(mockWriteText).toHaveBeenCalledWith('document.md');
+		expect(screen.getByText('Copied!')).toBeInTheDocument();
+
+		await act(async () => {
+			vi.advanceTimersByTime(1500);
+		});
+
+		expect(screen.getByText('Copy File Name')).toBeInTheDocument();
 
 		vi.useRealTimers();
 	});
@@ -3652,6 +4092,79 @@ describe('FileTab overlay menu', () => {
 		});
 
 		// Overlay should be closed
+		expect(screen.queryByText('Copy File Path')).not.toBeInTheDocument();
+
+		vi.useRealTimers();
+	});
+
+	it('tolerates file tabs without optional select and close handlers', () => {
+		render(
+			<TabBar
+				tabs={[]}
+				activeTabId=""
+				theme={mockTheme}
+				onTabSelect={vi.fn()}
+				onTabClose={vi.fn()}
+				onNewTab={vi.fn()}
+				unifiedTabs={[{ type: 'file' as const, id: 'file-tab-1', data: fileTab }]}
+				activeFileTabId="file-tab-1"
+			/>
+		);
+
+		const fileTabElement = screen.getByText('document').closest('[data-tab-id="file-tab-1"]');
+		const closeButton = screen.getByTitle('Close tab');
+
+		expect(() => fireEvent.click(fileTabElement!)).not.toThrow();
+		expect(() => fireEvent.click(closeButton)).not.toThrow();
+	});
+
+	it('keeps the file overlay open while hovering it and stops overlay clicks from selecting the tab', async () => {
+		vi.useFakeTimers();
+		const onFileTabSelect = vi.fn();
+
+		render(
+			<TabBar
+				tabs={defaultTabs}
+				activeTabId="tab-1"
+				theme={mockTheme}
+				onTabSelect={vi.fn()}
+				onTabClose={vi.fn()}
+				onNewTab={vi.fn()}
+				unifiedTabs={unifiedTabs}
+				activeFileTabId={null}
+				onFileTabSelect={onFileTabSelect}
+				onFileTabClose={vi.fn()}
+			/>
+		);
+
+		const fileTabElement = screen.getByText('document').closest('[data-tab-id="file-tab-1"]');
+
+		await act(async () => {
+			fireEvent.mouseEnter(fileTabElement!);
+			vi.advanceTimersByTime(450);
+		});
+
+		const overlay = screen.getByText('Copy File Path').closest('.fixed');
+		expect(overlay).toBeInTheDocument();
+
+		await act(async () => {
+			fireEvent.click(overlay!);
+		});
+
+		expect(onFileTabSelect).not.toHaveBeenCalled();
+
+		await act(async () => {
+			fireEvent.mouseLeave(fileTabElement!);
+			fireEvent.mouseEnter(overlay!);
+			vi.advanceTimersByTime(150);
+		});
+
+		expect(screen.getByText('Copy File Path')).toBeInTheDocument();
+
+		await act(async () => {
+			fireEvent.mouseLeave(overlay!);
+		});
+
 		expect(screen.queryByText('Copy File Path')).not.toBeInTheDocument();
 
 		vi.useRealTimers();
@@ -5674,5 +6187,469 @@ describe('Performance: Many file tabs (10+)', () => {
 		// Inactive file tab should NOT have the active margin adjustment
 		const inactiveFileTab = screen.getByText('file-5').closest('[data-tab-id]')!;
 		expect(inactiveFileTab).toHaveStyle({ marginBottom: '0' });
+	});
+
+	describe('branch completion coverage', () => {
+		it('renders the generated-name spinner while keeping the tab selectable', () => {
+			const tabs = [
+				createTab({
+					id: 'tab-1',
+					name: 'Generating',
+					isGeneratingName: true,
+				} as Partial<AITab>),
+			];
+
+			render(
+				<TabBar
+					tabs={tabs}
+					activeTabId="tab-1"
+					theme={mockTheme}
+					onTabSelect={mockOnTabSelect}
+					onTabClose={mockOnTabClose}
+					onNewTab={mockOnNewTab}
+				/>
+			);
+
+			expect(screen.getByTitle('Generating tab name...')).toBeInTheDocument();
+			fireEvent.click(screen.getByText('Generating'));
+			expect(mockOnTabSelect).toHaveBeenCalledWith('tab-1');
+		});
+
+		it('opens rename action without a rename handler without throwing', async () => {
+			const tabs = [createTab({ id: 'tab-1', name: 'No Rename Handler' })];
+
+			render(
+				<TabBar
+					tabs={tabs}
+					activeTabId="tab-1"
+					theme={mockTheme}
+					onTabSelect={mockOnTabSelect}
+					onTabClose={mockOnTabClose}
+					onNewTab={mockOnNewTab}
+				/>
+			);
+
+			const tab = screen.getByText('No Rename Handler').closest('[data-tab-id]')!;
+			await act(async () => {
+				fireEvent.mouseEnter(tab);
+				vi.advanceTimersByTime(450);
+			});
+
+			expect(() => fireEvent.click(screen.getByText('Rename Tab'))).not.toThrow();
+		});
+
+		it('keeps the AI overlay open when entering it after the open timer has fired', async () => {
+			const tabs = [createTab({ id: 'tab-1', name: 'Overlay AI' })];
+
+			render(
+				<TabBar
+					tabs={tabs}
+					activeTabId="tab-1"
+					theme={mockTheme}
+					onTabSelect={mockOnTabSelect}
+					onTabClose={mockOnTabClose}
+					onNewTab={mockOnNewTab}
+				/>
+			);
+
+			const tab = screen.getByText('Overlay AI').closest('[data-tab-id]')!;
+			await act(async () => {
+				fireEvent.mouseEnter(tab);
+				vi.advanceTimersByTime(450);
+			});
+			const overlay = screen.getByText('Copy Session ID').closest('.fixed')!;
+			fireEvent.mouseEnter(overlay);
+
+			expect(screen.getByText('Copy Session ID')).toBeInTheDocument();
+		});
+
+		it('does not expose context actions until the tab has enough logs', async () => {
+			const tabs = [
+				createTab({
+					id: 'tab-1',
+					name: 'Short Context',
+				} as Partial<AITab>),
+			];
+
+			render(
+				<TabBar
+					tabs={tabs}
+					activeTabId="tab-1"
+					theme={mockTheme}
+					onTabSelect={mockOnTabSelect}
+					onTabClose={mockOnTabClose}
+					onNewTab={mockOnNewTab}
+					onSummarizeAndContinue={vi.fn()}
+					onCopyContext={vi.fn()}
+					onPublishGist={vi.fn()}
+					ghCliAvailable={true}
+				/>
+			);
+
+			const tab = screen.getByText('Short Context').closest('[data-tab-id]')!;
+			await act(async () => {
+				fireEvent.mouseEnter(tab);
+				vi.advanceTimersByTime(450);
+			});
+
+			expect(screen.queryByText('Context: Compact')).not.toBeInTheDocument();
+			expect(screen.queryByText('Context: Copy to Clipboard')).not.toBeInTheDocument();
+			expect(screen.queryByText('Context: Publish as GitHub Gist')).not.toBeInTheDocument();
+		});
+
+		it('does not open a delayed AI overlay after the tab unmounts', () => {
+			const { unmount } = render(
+				<TabBar
+					tabs={[createTab({ id: 'tab-1', name: 'Unmounted AI' })]}
+					activeTabId="tab-1"
+					theme={mockTheme}
+					onTabSelect={mockOnTabSelect}
+					onTabClose={mockOnTabClose}
+					onNewTab={mockOnNewTab}
+				/>
+			);
+
+			fireEvent.mouseEnter(screen.getByText('Unmounted AI').closest('[data-tab-id]')!);
+			unmount();
+			expect(() => {
+				act(() => {
+					vi.runOnlyPendingTimers();
+				});
+			}).not.toThrow();
+		});
+
+		it('does not open a delayed file overlay after the file tab unmounts', () => {
+			const fileTab: FilePreviewTab = {
+				id: 'file-tab-1',
+				path: '/tmp/file.ts',
+				name: 'file',
+				extension: '.ts',
+				content: 'content',
+				scrollTop: 0,
+				searchQuery: '',
+				editMode: false,
+				editContent: undefined,
+				createdAt: Date.now(),
+				lastModified: Date.now(),
+			};
+			const { unmount } = render(
+				<TabBar
+					tabs={[createTab({ id: 'tab-1', name: 'AI' })]}
+					activeTabId="tab-1"
+					theme={mockTheme}
+					onTabSelect={mockOnTabSelect}
+					onTabClose={mockOnTabClose}
+					onNewTab={mockOnNewTab}
+					unifiedTabs={[{ type: 'file' as const, id: 'file-tab-1', data: fileTab }]}
+					activeFileTabId="file-tab-1"
+					onFileTabSelect={vi.fn()}
+					onFileTabClose={vi.fn()}
+				/>
+			);
+
+			fireEvent.mouseEnter(screen.getByText('file').closest('[data-tab-id]')!);
+			unmount();
+			expect(() => {
+				act(() => {
+					vi.runOnlyPendingTimers();
+				});
+			}).not.toThrow();
+		});
+
+		it('keeps the file overlay open when entering it after the open timer has fired', async () => {
+			const fileTab: FilePreviewTab = {
+				id: 'file-tab-1',
+				path: '/tmp/file.ts',
+				name: 'file',
+				extension: '.ts',
+				content: 'content',
+				scrollTop: 0,
+				searchQuery: '',
+				editMode: false,
+				editContent: undefined,
+				createdAt: Date.now(),
+				lastModified: Date.now(),
+			};
+
+			render(
+				<TabBar
+					tabs={[createTab({ id: 'tab-1', name: 'AI' })]}
+					activeTabId="tab-1"
+					theme={mockTheme}
+					onTabSelect={mockOnTabSelect}
+					onTabClose={mockOnTabClose}
+					onNewTab={mockOnNewTab}
+					unifiedTabs={[{ type: 'file' as const, id: 'file-tab-1', data: fileTab }]}
+					activeFileTabId="file-tab-1"
+					onFileTabSelect={vi.fn()}
+					onFileTabClose={vi.fn()}
+				/>
+			);
+
+			const tab = screen.getByText('file').closest('[data-tab-id]')!;
+			await act(async () => {
+				fireEvent.mouseEnter(tab);
+				vi.advanceTimersByTime(450);
+			});
+			const overlay = screen.getByText('Copy File Path').closest('.fixed')!;
+			fireEvent.mouseEnter(overlay);
+
+			expect(screen.getByText('Copy File Path')).toBeInTheDocument();
+		});
+
+		it('marks the new-tab rail sticky when the scroll container overflows', async () => {
+			const tabs = Array.from({ length: 12 }, (_, index) =>
+				createTab({ id: `tab-${index}`, name: `Overflow ${index}` })
+			);
+
+			const { container } = render(
+				<TabBar
+					tabs={tabs}
+					activeTabId="tab-0"
+					theme={mockTheme}
+					onTabSelect={mockOnTabSelect}
+					onTabClose={mockOnTabClose}
+					onNewTab={mockOnNewTab}
+				/>
+			);
+			const scrollContainer = container.querySelector('.overflow-x-auto') as HTMLElement;
+			Object.defineProperty(scrollContainer, 'scrollWidth', {
+				configurable: true,
+				value: 1200,
+			});
+			Object.defineProperty(scrollContainer, 'clientWidth', {
+				configurable: true,
+				value: 300,
+			});
+
+			act(() => {
+				vi.runOnlyPendingTimers();
+			});
+
+			expect(screen.getByTestId('plus-icon').closest('div')).toHaveClass('sticky', 'right-0');
+		});
+
+		it('scrolls active tabs right when the selected tab is behind the sticky rail', () => {
+			const rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
+				cb(0);
+				return 0;
+			});
+			const rectSpy = vi
+				.spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+				.mockImplementation(function (this: HTMLElement) {
+					if (this.classList.contains('overflow-x-auto')) {
+						return { left: 0, right: 200, top: 0, bottom: 40, width: 200, height: 40 } as DOMRect;
+					}
+					if (this.getAttribute('data-tab-id') === 'tab-2') {
+						return {
+							left: 180,
+							right: 260,
+							top: 0,
+							bottom: 40,
+							width: 80,
+							height: 40,
+						} as DOMRect;
+					}
+					return { left: 0, right: 80, top: 0, bottom: 40, width: 80, height: 40 } as DOMRect;
+				});
+			const offsetWidthSpy = vi
+				.spyOn(HTMLElement.prototype, 'offsetWidth', 'get')
+				.mockReturnValue(0);
+			const tabs = [
+				createTab({ id: 'tab-1', name: 'Tab 1' }),
+				createTab({ id: 'tab-2', name: 'Tab 2' }),
+			];
+
+			const { container } = render(
+				<TabBar
+					tabs={tabs}
+					activeTabId="tab-2"
+					theme={mockTheme}
+					onTabSelect={mockOnTabSelect}
+					onTabClose={mockOnTabClose}
+					onNewTab={mockOnNewTab}
+				/>
+			);
+
+			const scrollContainer = container.querySelector('.overflow-x-auto') as HTMLElement;
+			expect(scrollContainer.scrollLeft).toBeGreaterThan(0);
+			offsetWidthSpy.mockRestore();
+			rectSpy.mockRestore();
+			rafSpy.mockRestore();
+		});
+
+		it('handles visible active tab geometry without errors', () => {
+			const rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
+				cb(0);
+				return 0;
+			});
+			const rectSpy = vi
+				.spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+				.mockImplementation(function (this: HTMLElement) {
+					if (this.classList.contains('overflow-x-auto')) {
+						return { left: 0, right: 2000, top: 0, bottom: 40, width: 2000, height: 40 } as DOMRect;
+					}
+					if (this.getAttribute('data-tab-id') === 'tab-1') {
+						return {
+							left: 1000,
+							right: 1100,
+							top: 0,
+							bottom: 40,
+							width: 100,
+							height: 40,
+						} as DOMRect;
+					}
+					return { left: 0, right: 80, top: 0, bottom: 40, width: 80, height: 40 } as DOMRect;
+				});
+			const offsetWidthSpy = vi
+				.spyOn(HTMLElement.prototype, 'offsetWidth', 'get')
+				.mockReturnValue(0);
+
+			const { container } = render(
+				<TabBar
+					tabs={[createTab({ id: 'tab-1', name: 'Visible Tab' })]}
+					activeTabId="tab-1"
+					theme={mockTheme}
+					onTabSelect={mockOnTabSelect}
+					onTabClose={mockOnTabClose}
+					onNewTab={mockOnNewTab}
+				/>
+			);
+
+			const scrollContainer = container.querySelector('.overflow-x-auto') as HTMLElement;
+			expect(scrollContainer.scrollLeft).toBe(0);
+			offsetWidthSpy.mockRestore();
+			rectSpy.mockRestore();
+			rafSpy.mockRestore();
+		});
+
+		it('skips scroll math when the active tab id is not rendered', () => {
+			const rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
+				cb(0);
+				return 0;
+			});
+
+			expect(() =>
+				render(
+					<TabBar
+						tabs={[createTab({ id: 'tab-1', name: 'Tab 1' })]}
+						activeTabId="missing-tab"
+						theme={mockTheme}
+						onTabSelect={mockOnTabSelect}
+						onTabClose={mockOnTabClose}
+						onNewTab={mockOnNewTab}
+					/>
+				)
+			).not.toThrow();
+			rafSpy.mockRestore();
+		});
+
+		it('ignores a pending overflow check after unmount', () => {
+			const { unmount } = render(
+				<TabBar
+					tabs={[createTab({ id: 'tab-1', name: 'Unmount Overflow' })]}
+					activeTabId="tab-1"
+					theme={mockTheme}
+					onTabSelect={mockOnTabSelect}
+					onTabClose={mockOnTabClose}
+					onNewTab={mockOnNewTab}
+				/>
+			);
+
+			unmount();
+			expect(() => {
+				act(() => {
+					vi.runOnlyPendingTimers();
+				});
+			}).not.toThrow();
+		});
+
+		it('ignores drag-over on the currently dragged tab and invalid drop targets', () => {
+			const tabs = [
+				createTab({ id: 'tab-1', name: 'Tab 1' }),
+				createTab({ id: 'tab-2', name: 'Tab 2' }),
+			];
+			const unifiedTabs = tabs.map((tab) => ({ type: 'ai' as const, id: tab.id, data: tab }));
+			const mockUnifiedReorder = vi.fn();
+
+			render(
+				<TabBar
+					tabs={tabs}
+					activeTabId="tab-1"
+					theme={mockTheme}
+					onTabSelect={mockOnTabSelect}
+					onTabClose={mockOnTabClose}
+					onNewTab={mockOnNewTab}
+					onUnifiedTabReorder={mockUnifiedReorder}
+					unifiedTabs={unifiedTabs}
+				/>
+			);
+
+			const tab1 = screen.getByText('Tab 1').closest('[data-tab-id]')!;
+			const tab2 = screen.getByText('Tab 2').closest('[data-tab-id]')!;
+			fireEvent.dragStart(tab1, {
+				dataTransfer: {
+					effectAllowed: '',
+					setData: vi.fn(),
+					getData: vi.fn().mockReturnValue('tab-1'),
+				},
+			});
+			fireEvent.dragOver(tab1, {
+				dataTransfer: {
+					dropEffect: '',
+				},
+			});
+			fireEvent.drop(tab2, {
+				dataTransfer: {
+					getData: vi.fn().mockReturnValue('missing-tab'),
+				},
+			});
+
+			expect(mockUnifiedReorder).not.toHaveBeenCalled();
+		});
+
+		it('ignores invalid legacy drops and drops without a reorder handler', () => {
+			const tabs = [
+				createTab({ id: 'tab-1', name: 'Tab 1' }),
+				createTab({ id: 'tab-2', name: 'Tab 2' }),
+			];
+			const mockReorder = vi.fn();
+			const { rerender } = render(
+				<TabBar
+					tabs={tabs}
+					activeTabId="tab-1"
+					theme={mockTheme}
+					onTabSelect={mockOnTabSelect}
+					onTabClose={mockOnTabClose}
+					onNewTab={mockOnNewTab}
+					onTabReorder={mockReorder}
+				/>
+			);
+
+			fireEvent.drop(screen.getByText('Tab 2').closest('[data-tab-id]')!, {
+				dataTransfer: {
+					getData: vi.fn().mockReturnValue('missing-tab'),
+				},
+			});
+			expect(mockReorder).not.toHaveBeenCalled();
+
+			rerender(
+				<TabBar
+					tabs={tabs}
+					activeTabId="tab-1"
+					theme={mockTheme}
+					onTabSelect={mockOnTabSelect}
+					onTabClose={mockOnTabClose}
+					onNewTab={mockOnNewTab}
+				/>
+			);
+			expect(() =>
+				fireEvent.drop(screen.getByText('Tab 2').closest('[data-tab-id]')!, {
+					dataTransfer: {
+						getData: vi.fn().mockReturnValue('tab-1'),
+					},
+				})
+			).not.toThrow();
+		});
 	});
 });

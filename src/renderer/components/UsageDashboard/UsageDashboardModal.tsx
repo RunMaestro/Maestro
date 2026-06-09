@@ -355,8 +355,6 @@ export function UsageDashboardModal({
 				return ACTIVITY_SECTIONS;
 			case 'autorun':
 				return AUTORUN_SECTIONS;
-			default:
-				return OVERVIEW_SECTIONS;
 		}
 	}, [viewMode]);
 
@@ -378,17 +376,15 @@ export function UsageDashboardModal({
 			'tasks-by-hour': 'Tasks by Time of Day Chart',
 			'longest-autoruns': 'Top 25 Longest Auto Runs',
 		};
-		return labels[sectionId] || sectionId;
+		return labels[sectionId];
 	}, []);
 
 	// Navigate to a section
 	const navigateToSection = useCallback((sectionId: SectionId) => {
 		setFocusedSection(sectionId);
-		const sectionEl = sectionRefs.current.get(sectionId);
-		if (sectionEl) {
-			sectionEl.focus();
-			sectionEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-		}
+		const sectionEl = sectionRefs.current.get(sectionId)!;
+		sectionEl.focus();
+		sectionEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 	}, []);
 
 	// Handle keyboard navigation for view mode tabs

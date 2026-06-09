@@ -21,8 +21,11 @@ const renderWithProviders = (ui: React.ReactElement) => {
 	const result = render(<LayerStackProvider>{ui}</LayerStackProvider>);
 	return {
 		...result,
-		rerender: (newUi: React.ReactElement) =>
-			result.rerender(<LayerStackProvider>{newUi}</LayerStackProvider>),
+		rerender: (newUi: React.ReactElement) => {
+			act(() => {
+				result.rerender(<LayerStackProvider>{newUi}</LayerStackProvider>);
+			});
+		},
 	};
 };
 
@@ -126,6 +129,10 @@ vi.mock('../../../renderer/components/TemplateAutocompleteDropdown', () => ({
 	TemplateAutocompleteDropdown: React.forwardRef(() => null),
 }));
 
+vi.mock('../../../renderer/utils/tokenCounter', () => ({
+	getEncoder: vi.fn(() => new Promise(() => {})),
+}));
+
 // Create a mock theme for testing
 const createMockTheme = (): Theme => ({
 	id: 'test-theme',
@@ -155,7 +162,7 @@ const setupMaestroMock = () => {
 			readDir: vi.fn().mockResolvedValue([]),
 		},
 		autorun: {
-			listImages: vi.fn().mockResolvedValue({ success: true, images: [] }),
+			listImages: vi.fn(() => new Promise(() => {})),
 			saveImage: vi.fn().mockResolvedValue({ success: true, relativePath: 'images/test-123.png' }),
 			deleteImage: vi.fn().mockResolvedValue({ success: true }),
 			writeDoc: vi.fn().mockResolvedValue(undefined),
@@ -420,7 +427,9 @@ describe('AutoRun Session Isolation', () => {
 
 			// Click save button
 			const saveButton = screen.getByText('Save');
-			fireEvent.click(saveButton);
+			await act(async () => {
+				fireEvent.click(saveButton);
+			});
 
 			// Should save to correct path
 			expect(mockMaestro.autorun.writeDoc).toHaveBeenCalledWith(
@@ -685,7 +694,9 @@ describe('AutoRun Folder Path Isolation', () => {
 		const textarea = screen.getByRole('textbox');
 		fireEvent.change(textarea, { target: { value: 'Changed' } });
 
-		fireEvent.click(screen.getByText('Save'));
+		await act(async () => {
+			fireEvent.click(screen.getByText('Save'));
+		});
 
 		expect(mockMaestro.autorun.writeDoc).toHaveBeenCalledWith(
 			'/unique/session/path',

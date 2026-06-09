@@ -153,21 +153,9 @@ const DocumentNodePreview = memo(function DocumentNodePreview({
 /**
  * Mini preview of an external link node pill for the legend (mind map style)
  */
-const ExternalNodePreview = memo(function ExternalNodePreview({
-	theme,
-	selected = false,
-}: {
-	theme: Theme;
-	selected?: boolean;
-}) {
+const ExternalNodePreview = memo(function ExternalNodePreview({ theme }: { theme: Theme }) {
 	return (
-		<svg
-			width={36}
-			height={18}
-			viewBox="0 0 36 18"
-			role="img"
-			aria-label={`External link node pill${selected ? ' (selected)' : ''}`}
-		>
+		<svg width={36} height={18} viewBox="0 0 36 18" role="img" aria-label="External link node pill">
 			{/* Pill background */}
 			<rect
 				x={1}
@@ -176,7 +164,7 @@ const ExternalNodePreview = memo(function ExternalNodePreview({
 				height={14}
 				rx={7}
 				fill={theme.colors.bgMain}
-				stroke={selected ? theme.colors.accent : `${theme.colors.border}80`}
+				stroke={`${theme.colors.border}80`}
 				strokeWidth={1}
 			/>
 			{/* Domain text representation */}

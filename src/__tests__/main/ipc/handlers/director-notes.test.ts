@@ -436,6 +436,37 @@ describe('director-notes IPC handlers', () => {
 			expect(result.entries[0].agentName).toBeUndefined();
 		});
 
+		it('should ignore incomplete stored sessions and unknown entry types in stats', async () => {
+			const now = Date.now();
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
+			vi.mocked(mockHistoryManager.getEntries).mockReturnValue([
+				createMockEntry({
+					id: 'system-entry',
+					type: 'SYSTEM' as HistoryEntry['type'],
+					timestamp: now,
+				}),
+			]);
+
+			mockGetSessionsStore.mockReturnValue({
+				get: vi
+					.fn()
+					.mockReturnValue([
+						{ id: 'session-1' },
+						{ name: 'Missing ID' },
+						{ id: '', name: 'Blank ID' },
+					]),
+			});
+
+			const handler = handlers.get('director-notes:getUnifiedHistory');
+			const result = await handler!({} as any, { lookbackDays: 7 });
+
+			expect(result.entries).toHaveLength(1);
+			expect(result.entries[0].agentName).toBeUndefined();
+			expect(result.stats.autoCount).toBe(0);
+			expect(result.stats.userCount).toBe(0);
+			expect(result.stats.totalCount).toBe(0);
+		});
+
 		it('should return empty entries when no sessions have history', async () => {
 			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue([]);
 
@@ -775,6 +806,58 @@ describe('director-notes IPC handlers', () => {
 			const promptArg = vi.mocked(groomContext).mock.calls[0][0].prompt;
 			expect(promptArg).toContain('Lookback period: 14 days');
 			expect(promptArg).toContain('Timestamp cutoff:');
+		});
+
+		it('should count only entries inside the lookback window for synopsis stats', async () => {
+			const { groomContext } = await import('../../../../main/utils/context-groomer');
+			const now = Date.now();
+			vi.mocked(groomContext).mockResolvedValue({
+				response: '# Synopsis',
+				durationMs: 2500,
+				completionReason: 'process exited with code 0',
+			});
+
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue([
+				'session-1',
+				'session-2',
+			]);
+			vi.mocked(mockHistoryManager.getHistoryFilePath)
+				.mockReturnValueOnce('/data/history/session-1.json')
+				.mockReturnValueOnce('/data/history/session-2.json');
+			vi.mocked(mockHistoryManager.getEntries)
+				.mockReturnValueOnce([
+					createMockEntry({ id: 'recent-1', timestamp: now - 1000 }),
+					createMockEntry({
+						id: 'old-1',
+						timestamp: now - 10 * 24 * 60 * 60 * 1000,
+					}),
+				])
+				.mockReturnValueOnce([createMockEntry({ id: 'recent-2', timestamp: now - 2000 })]);
+
+			const handler = handlers.get('director-notes:generateSynopsis');
+			const result = await handler!({} as any, { lookbackDays: 7, provider: 'claude-code' });
+
+			expect(result.success).toBe(true);
+			expect(result.stats).toEqual({ agentCount: 2, entryCount: 2, durationMs: 2500 });
+
+			const promptArg = vi.mocked(groomContext).mock.calls[0][0].prompt;
+			expect(promptArg).toContain('2 agents had 2 qualifying entries.');
+		});
+
+		it('should stringify non-Error synopsis failures', async () => {
+			const { groomContext } = await import('../../../../main/utils/context-groomer');
+			vi.mocked(groomContext).mockRejectedValue('agent exited without details');
+
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
+			vi.mocked(mockHistoryManager.getHistoryFilePath).mockReturnValue(
+				'/data/history/session-1.json'
+			);
+
+			const handler = handlers.get('director-notes:generateSynopsis');
+			const result = await handler!({} as any, { lookbackDays: 7, provider: 'claude-code' });
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('agent exited without details');
 		});
 	});
 });

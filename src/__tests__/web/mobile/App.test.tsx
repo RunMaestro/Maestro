@@ -6,7 +6,7 @@
 
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, act, waitFor, within } from '@testing-library/react';
+import { render, screen, fireEvent, act } from '@testing-library/react';
 
 // First, set up all mocks before importing the component
 
@@ -99,32 +99,47 @@ vi.mock('../../../web/hooks/useWebSocket', () => ({
 // Mock useNotifications hook
 const mockShowNotification = vi.fn();
 let mockNotificationPermission = 'default';
+type NotificationHookOptions = {
+	onGranted?: () => void;
+	onDenied?: () => void;
+};
+let mockNotificationOptions: NotificationHookOptions = {};
 
 vi.mock('../../../web/hooks/useNotifications', () => ({
-	useNotifications: () => ({
-		permission: mockNotificationPermission,
-		showNotification: mockShowNotification,
-		requestPermission: vi.fn(),
-		declineNotifications: vi.fn(),
-		hasPrompted: false,
-		hasDeclined: false,
-	}),
+	useNotifications: (options: NotificationHookOptions = {}) => {
+		mockNotificationOptions = options;
+		return {
+			permission: mockNotificationPermission,
+			showNotification: mockShowNotification,
+			requestPermission: vi.fn(),
+			declineNotifications: vi.fn(),
+			hasPrompted: false,
+			hasDeclined: false,
+		};
+	},
 }));
 
 // Mock useUnreadBadge hook
 const mockAddUnread = vi.fn();
 const mockMarkAllRead = vi.fn();
 let mockUnreadCount = 0;
+type UnreadBadgeHookOptions = {
+	onCountChange?: (count: number) => void;
+};
+let mockUnreadBadgeOptions: UnreadBadgeHookOptions = {};
 
 vi.mock('../../../web/hooks/useUnreadBadge', () => ({
-	useUnreadBadge: () => ({
-		addUnread: mockAddUnread,
-		markRead: vi.fn(),
-		markAllRead: mockMarkAllRead,
-		clearBadge: vi.fn(),
-		unreadCount: mockUnreadCount,
-		unreadIds: [],
-	}),
+	useUnreadBadge: (options: UnreadBadgeHookOptions = {}) => {
+		mockUnreadBadgeOptions = options;
+		return {
+			addUnread: mockAddUnread,
+			markRead: vi.fn(),
+			markAllRead: mockMarkAllRead,
+			clearBadge: vi.fn(),
+			unreadCount: mockUnreadCount,
+			unreadIds: [],
+		};
+	},
 }));
 
 // Mock useOfflineQueue hook
@@ -135,17 +150,28 @@ const mockProcessQueue = vi.fn();
 let mockQueue: unknown[] = [];
 let mockQueueLength = 0;
 let mockQueueStatus = 'idle';
+type OfflineQueueHookOptions = {
+	sendCommand?: (sessionId: string, command: string) => boolean;
+	onCommandSent?: (cmd: { command: string }) => void;
+	onCommandFailed?: (cmd: { command: string }, error: unknown) => void;
+	onProcessingStart?: () => void;
+	onProcessingComplete?: (successCount: number, failCount: number) => void;
+};
+let mockOfflineQueueOptions: OfflineQueueHookOptions = {};
 
 vi.mock('../../../web/hooks/useOfflineQueue', () => ({
-	useOfflineQueue: () => ({
-		queue: mockQueue,
-		queueLength: mockQueueLength,
-		status: mockQueueStatus,
-		queueCommand: mockQueueCommand,
-		removeCommand: mockRemoveCommand,
-		clearQueue: mockClearQueue,
-		processQueue: mockProcessQueue,
-	}),
+	useOfflineQueue: (options: OfflineQueueHookOptions = {}) => {
+		mockOfflineQueueOptions = options;
+		return {
+			queue: mockQueue,
+			queueLength: mockQueueLength,
+			status: mockQueueStatus,
+			queueCommand: mockQueueCommand,
+			removeCommand: mockRemoveCommand,
+			clearQueue: mockClearQueue,
+			processQueue: mockProcessQueue,
+		};
+	},
 }));
 
 // Mock config
@@ -175,13 +201,14 @@ vi.mock('../../../web/mobile/constants', () => ({
 }));
 
 // Mock webLogger
+const mockWebLogger = vi.hoisted(() => ({
+	debug: vi.fn(),
+	info: vi.fn(),
+	warn: vi.fn(),
+	error: vi.fn(),
+}));
 vi.mock('../../../web/utils/logger', () => ({
-	webLogger: {
-		debug: vi.fn(),
-		info: vi.fn(),
-		warn: vi.fn(),
-		error: vi.fn(),
-	},
+	webLogger: mockWebLogger,
 }));
 
 // Mock child components
@@ -354,6 +381,9 @@ vi.mock('../../../web/mobile/CommandInputBar', () => ({
 			<button data-testid="submit-command" onClick={() => onSubmit(value)}>
 				Send
 			</button>
+			<button data-testid="repeat-command-change" onClick={() => onChange(value)}>
+				Repeat Change
+			</button>
 			<button
 				data-testid="mode-toggle"
 				onClick={() => onModeToggle(inputMode === 'ai' ? 'terminal' : 'ai')}
@@ -371,10 +401,29 @@ vi.mock('../../../web/mobile/CommandInputBar', () => ({
 			<span data-testid="command-input-has-bionify-prop">
 				{Object.prototype.hasOwnProperty.call(rest, 'enableBionifyReadingMode') ? 'true' : 'false'}
 			</span>
+			<span data-testid="command-cwd">{cwd ?? ''}</span>
+			<span data-testid="slash-commands">
+				{slashCommands
+					.map((command) =>
+						typeof command === 'string' ? command : (command as { command?: string }).command
+					)
+					.join('|')}
+			</span>
 		</div>
 	),
 	default: () => <div data-testid="command-input-bar-default" />,
 }));
+
+type ResponseViewerProps = {
+	isOpen: boolean;
+	response: unknown;
+	allResponses?: unknown[];
+	currentIndex: number;
+	onNavigate: (index: number) => void;
+	onClose: () => void;
+	sessionName?: string;
+};
+let lastResponseViewerProps: ResponseViewerProps | null = null;
 
 vi.mock('../../../web/mobile/ResponseViewer', () => ({
 	ResponseViewer: ({
@@ -395,27 +444,39 @@ vi.mock('../../../web/mobile/ResponseViewer', () => ({
 		onClose: () => void;
 		sessionName?: string;
 		enableBionifyReadingMode?: boolean;
-	}) => (
-		<div data-testid="response-viewer-props">
-			<span data-testid="response-viewer-bionify">
-				{enableBionifyReadingMode ? 'true' : 'false'}
-			</span>
-			{isOpen ? (
-				<div data-testid="response-viewer">
-					<button data-testid="close-response-viewer" onClick={onClose}>
-						Close
-					</button>
-					<button data-testid="navigate-prev" onClick={() => onNavigate(currentIndex - 1)}>
-						Prev
-					</button>
-					<button data-testid="navigate-next" onClick={() => onNavigate(currentIndex + 1)}>
-						Next
-					</button>
-					<span data-testid="response-index">{currentIndex}</span>
-				</div>
-			) : null}
-		</div>
-	),
+	}) => {
+		lastResponseViewerProps = {
+			isOpen,
+			response,
+			allResponses,
+			currentIndex,
+			onNavigate,
+			onClose,
+			sessionName,
+		};
+
+		return (
+			<div data-testid="response-viewer-props">
+				<span data-testid="response-viewer-bionify">
+					{enableBionifyReadingMode ? 'true' : 'false'}
+				</span>
+				{isOpen ? (
+					<div data-testid="response-viewer">
+						<button data-testid="close-response-viewer" onClick={onClose}>
+							Close
+						</button>
+						<button data-testid="navigate-prev" onClick={() => onNavigate(currentIndex - 1)}>
+							Prev
+						</button>
+						<button data-testid="navigate-next" onClick={() => onNavigate(currentIndex + 1)}>
+							Next
+						</button>
+						<span data-testid="response-index">{currentIndex}</span>
+					</div>
+				) : null}
+			</div>
+		);
+	},
 }));
 
 vi.mock('../../../web/mobile/OfflineQueueBanner', () => ({
@@ -580,10 +641,13 @@ describe('MobileApp', () => {
 		mockWebSocketError = null;
 		mockReconnectAttempts = 0;
 		mockNotificationPermission = 'default';
+		mockNotificationOptions = {};
 		mockUnreadCount = 0;
+		mockUnreadBadgeOptions = {};
 		mockQueue = [];
 		mockQueueLength = 0;
 		mockQueueStatus = 'idle';
+		mockOfflineQueueOptions = {};
 		mockHandlers = {};
 		mockDesktopTheme = null;
 		mockDesktopBionifyReadingMode = false;
@@ -711,6 +775,44 @@ describe('MobileApp', () => {
 
 				expect(screen.getByTestId('session-session-1')).toBeInTheDocument();
 			});
+
+			it('shows warning and error context usage levels in the header', async () => {
+				const { rerender } = render(<MobileApp />);
+
+				await act(async () => {
+					mockHandlers.onSessionsUpdate?.([
+						createMockSession({
+							id: 'session-1',
+							usageStats: {
+								inputTokens: 75,
+								outputTokens: 0,
+								totalCostUsd: 0,
+								contextWindow: 100,
+							},
+						}),
+					]);
+				});
+
+				expect(screen.getByText('75%')).toBeInTheDocument();
+
+				rerender(<MobileApp />);
+
+				await act(async () => {
+					mockHandlers.onSessionsUpdate?.([
+						createMockSession({
+							id: 'session-1',
+							usageStats: {
+								inputTokens: 95,
+								outputTokens: 0,
+								totalCostUsd: 0,
+								contextWindow: 100,
+							},
+						}),
+					]);
+				});
+
+				expect(screen.getByText('95%')).toBeInTheDocument();
+			});
 		});
 
 		describe('calculateContextUsage (via UI)', () => {
@@ -826,6 +928,27 @@ describe('MobileApp', () => {
 				expect(screen.getByTestId('tab-tab-1')).toBeInTheDocument();
 				expect(screen.getByTestId('tab-tab-2')).toBeInTheDocument();
 			});
+
+			it('falls back to session data when active tab id has no match', async () => {
+				render(<MobileApp />);
+
+				await act(async () => {
+					mockHandlers.onSessionsUpdate?.([
+						createMockSession({
+							id: 'session-1',
+							name: 'Fallback Session',
+							agentSessionId: 'session-level-abcdef',
+							aiTabs: [{ id: 'tab-1', name: 'Tab 1', state: 'idle' }],
+							activeTabId: 'missing-tab',
+						}),
+					]);
+				});
+
+				expect(screen.getAllByText('Fallback Session')).toHaveLength(2);
+				expect(screen.getByTitle('Claude Session: session-level-abcdef')).toHaveTextContent(
+					'session-'
+				);
+			});
 		});
 	});
 
@@ -843,6 +966,70 @@ describe('MobileApp', () => {
 			expect(mockConnect).toHaveBeenCalled();
 		});
 
+		it('retries initial connection when injected config is not ready yet', () => {
+			delete (window as any).__MAESTRO_CONFIG__;
+
+			render(<MobileApp />);
+			act(() => {
+				vi.advanceTimersByTime(50);
+			});
+
+			expect(mockConnect).not.toHaveBeenCalled();
+			expect(mockWebLogger.warn).toHaveBeenCalledWith(
+				'Config not ready, retrying connection in 100ms',
+				'Mobile'
+			);
+
+			(window as any).__MAESTRO_CONFIG__ = {};
+			act(() => {
+				vi.advanceTimersByTime(100);
+			});
+
+			expect(mockConnect).toHaveBeenCalledTimes(1);
+		});
+
+		it('waits for window load before connecting when the document is still loading', () => {
+			Object.defineProperty(document, 'readyState', {
+				value: 'loading',
+				configurable: true,
+			});
+			const removeLoadListener = vi.spyOn(window, 'removeEventListener');
+
+			const { unmount } = render(<MobileApp />);
+
+			act(() => {
+				vi.advanceTimersByTime(50);
+			});
+			expect(mockConnect).not.toHaveBeenCalled();
+
+			act(() => {
+				window.dispatchEvent(new Event('load'));
+				vi.advanceTimersByTime(50);
+			});
+
+			expect(mockConnect).toHaveBeenCalledTimes(1);
+
+			unmount();
+			expect(removeLoadListener).toHaveBeenCalledWith('load', expect.any(Function));
+			removeLoadListener.mockRestore();
+		});
+
+		it('cleans up load listener before a connect timeout is scheduled', () => {
+			Object.defineProperty(document, 'readyState', {
+				value: 'loading',
+				configurable: true,
+			});
+			const removeLoadListener = vi.spyOn(window, 'removeEventListener');
+
+			const { unmount } = render(<MobileApp />);
+
+			unmount();
+
+			expect(removeLoadListener).toHaveBeenCalledWith('load', expect.any(Function));
+			expect(mockConnect).not.toHaveBeenCalled();
+			removeLoadListener.mockRestore();
+		});
+
 		it('cleans up pending connect retry on unmount', () => {
 			const { unmount } = render(<MobileApp />);
 			unmount();
@@ -855,6 +1042,105 @@ describe('MobileApp', () => {
 		it('renders command input bar', () => {
 			render(<MobileApp />);
 			expect(screen.getByTestId('command-input-bar')).toBeInTheDocument();
+		});
+	});
+
+	describe('hook callbacks', () => {
+		it('handles notification permission callbacks with logging and haptics', () => {
+			render(<MobileApp />);
+
+			act(() => {
+				mockNotificationOptions.onGranted?.();
+				mockNotificationOptions.onDenied?.();
+			});
+
+			expect(mockWebLogger.debug).toHaveBeenCalledWith('Notification permission granted', 'Mobile');
+			expect(mockTriggerHaptic).toHaveBeenCalledWith([30]);
+			expect(mockWebLogger.debug).toHaveBeenCalledWith('Notification permission denied', 'Mobile');
+		});
+
+		it('logs unread badge count changes', () => {
+			render(<MobileApp />);
+
+			act(() => {
+				mockUnreadBadgeOptions.onCountChange?.(4);
+			});
+
+			expect(mockWebLogger.debug).toHaveBeenCalledWith('Unread response count: 4', 'Mobile');
+		});
+
+		it('routes offline queue callbacks through send, logging, and haptics', () => {
+			render(<MobileApp />);
+
+			expect(mockOfflineQueueOptions.sendCommand?.('session-1', 'queued command')).toBe(true);
+			expect(mockSend).toHaveBeenCalledWith({
+				type: 'send_command',
+				sessionId: 'session-1',
+				command: 'queued command',
+			});
+
+			act(() => {
+				mockOfflineQueueOptions.onCommandSent?.({ command: 'queued command body' });
+				mockOfflineQueueOptions.onCommandFailed?.(
+					{ command: 'failed command body' },
+					new Error('send failed')
+				);
+				mockOfflineQueueOptions.onProcessingStart?.();
+			});
+
+			expect(mockWebLogger.debug).toHaveBeenCalledWith(
+				'Queued command sent: queued command body',
+				'Mobile'
+			);
+			expect(mockTriggerHaptic).toHaveBeenCalledWith([30]);
+			expect(mockWebLogger.error).toHaveBeenCalledWith(
+				'Queued command failed: failed command body',
+				'Mobile',
+				expect.any(Error)
+			);
+			expect(mockWebLogger.debug).toHaveBeenCalledWith('Processing offline queue...', 'Mobile');
+
+			mockTriggerHaptic.mockClear();
+			act(() => {
+				mockOfflineQueueOptions.onProcessingComplete?.(0, 1);
+			});
+			expect(mockTriggerHaptic).not.toHaveBeenCalled();
+
+			act(() => {
+				mockOfflineQueueOptions.onProcessingComplete?.(2, 1);
+			});
+			expect(mockWebLogger.debug).toHaveBeenCalledWith(
+				'Offline queue processed. Success: 2, Failed: 1',
+				'Mobile'
+			);
+			expect(mockTriggerHaptic).toHaveBeenCalledWith([30]);
+		});
+	});
+
+	describe('mobile header', () => {
+		it('uses session mode header as a dashboard link and shows error status', async () => {
+			mockIsSession.mockReturnValue(true);
+			render(<MobileApp />);
+
+			await act(async () => {
+				mockHandlers.onSessionsUpdate?.([createMockSession({ id: 'session-1', state: 'error' })]);
+			});
+
+			expect(screen.getByTitle('Session error')).toBeInTheDocument();
+			fireEvent.click(screen.getByText('Maestro'));
+			expect(mockGoToDashboard).toHaveBeenCalledTimes(1);
+		});
+
+		it('shows warning status for connecting sessions', async () => {
+			render(<MobileApp />);
+
+			await act(async () => {
+				mockHandlers.onSessionsUpdate?.([
+					createMockSession({ id: 'session-1', state: 'connecting' }),
+				]);
+			});
+
+			expect(screen.getByTitle('Session connecting')).toBeInTheDocument();
 		});
 	});
 
@@ -954,7 +1240,10 @@ describe('MobileApp', () => {
 				]);
 			});
 
-			fireEvent.click(screen.getByTestId('session-session-2'));
+			await act(async () => {
+				fireEvent.click(screen.getByTestId('session-session-2'));
+				await Promise.resolve();
+			});
 
 			expect(mockTriggerHaptic).toHaveBeenCalledWith([10]); // tap
 			expect(mockSend).toHaveBeenCalledWith({
@@ -1108,6 +1397,27 @@ describe('MobileApp', () => {
 			expect(mockQueueCommand).toHaveBeenCalledWith('session-1', 'Hello offline', 'ai');
 		});
 
+		it('logs queue failure when offline command cannot be stored', async () => {
+			mockIsOffline.mockReturnValue(true);
+			mockQueueCommand.mockReturnValueOnce(false);
+
+			render(<MobileApp />);
+
+			await act(async () => {
+				mockHandlers.onSessionsUpdate?.([createMockSession({ id: 'session-1', inputMode: 'ai' })]);
+			});
+
+			fireEvent.change(screen.getByTestId('command-input'), {
+				target: { value: 'Will not fit in queue' },
+			});
+			fireEvent.click(screen.getByTestId('submit-command'));
+
+			expect(mockWebLogger.warn).toHaveBeenCalledWith(
+				'Failed to queue command - queue may be full',
+				'Mobile'
+			);
+		});
+
 		it('queues command when not connected', async () => {
 			mockWebSocketState = 'disconnected';
 
@@ -1135,6 +1445,124 @@ describe('MobileApp', () => {
 			// Should not call send since no active session
 			expect(mockSend).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'send_command' }));
 		});
+
+		it('submits and clears terminal drafts', async () => {
+			render(<MobileApp />);
+
+			await act(async () => {
+				mockHandlers.onSessionsUpdate?.([
+					createMockSession({ id: 'session-1', inputMode: 'terminal' }),
+				]);
+			});
+
+			fireEvent.change(screen.getByTestId('command-input'), { target: { value: 'pwd' } });
+			fireEvent.click(screen.getByTestId('repeat-command-change'));
+			fireEvent.click(screen.getByTestId('submit-command'));
+
+			expect(mockSend).toHaveBeenCalledWith({
+				type: 'send_command',
+				sessionId: 'session-1',
+				command: 'pwd',
+				inputMode: 'terminal',
+			});
+			expect(screen.getByTestId('command-input')).toHaveValue('');
+		});
+
+		it('keeps empty terminal drafts empty after submit', async () => {
+			render(<MobileApp />);
+
+			await act(async () => {
+				mockHandlers.onSessionsUpdate?.([
+					createMockSession({ id: 'session-1', inputMode: 'terminal' }),
+				]);
+			});
+
+			fireEvent.click(screen.getByTestId('submit-command'));
+
+			expect(mockSend).toHaveBeenCalledWith({
+				type: 'send_command',
+				sessionId: 'session-1',
+				command: '',
+				inputMode: 'terminal',
+			});
+			expect(screen.getByTestId('command-input')).toHaveValue('');
+		});
+	});
+
+	describe('command input props', () => {
+		it('uses the compact AI placeholder on small screens', async () => {
+			Object.defineProperty(window, 'innerHeight', {
+				value: 600,
+				writable: true,
+				configurable: true,
+			});
+
+			render(<MobileApp />);
+
+			await act(async () => {
+				mockHandlers.onSessionsUpdate?.([
+					createMockSession({ id: 'session-1', name: 'Mobile Session', inputMode: 'ai' }),
+				]);
+			});
+
+			expect(screen.getByTestId('command-input')).toHaveAttribute('placeholder', 'Ask AI...');
+		});
+
+		it('uses tool and session names in the full AI placeholder on larger screens', async () => {
+			render(<MobileApp />);
+
+			await act(async () => {
+				mockHandlers.onSessionsUpdate?.([
+					createMockSession({
+						id: 'session-1',
+						name: 'Planning Session',
+						inputMode: 'ai',
+						toolType: 'opencode',
+					}),
+				]);
+			});
+
+			expect(screen.getByTestId('command-input')).toHaveAttribute(
+				'placeholder',
+				'Ask opencode about Planning Session...'
+			);
+		});
+
+		it('uses AI and session fallbacks in the full AI placeholder', async () => {
+			render(<MobileApp />);
+
+			await act(async () => {
+				mockHandlers.onSessionsUpdate?.([
+					createMockSession({
+						id: 'session-1',
+						name: '',
+						inputMode: 'ai',
+						toolType: undefined,
+					} as any),
+				]);
+			});
+
+			expect(screen.getByTestId('command-input')).toHaveAttribute(
+				'placeholder',
+				'Ask AI about this session...'
+			);
+		});
+
+		it('uses a shell command placeholder in terminal mode', async () => {
+			render(<MobileApp />);
+
+			await act(async () => {
+				mockHandlers.onSessionsUpdate?.([
+					createMockSession({ id: 'session-1', inputMode: 'terminal' }),
+				]);
+			});
+
+			expect(screen.getByTestId('command-input')).toHaveAttribute(
+				'placeholder',
+				'Run shell command...'
+			);
+			expect(screen.getByTestId('command-cwd')).toHaveTextContent('/Users/test/project');
+		});
 	});
 
 	describe('mode toggle', () => {
@@ -1142,7 +1570,10 @@ describe('MobileApp', () => {
 			render(<MobileApp />);
 
 			await act(async () => {
-				mockHandlers.onSessionsUpdate?.([createMockSession({ id: 'session-1', inputMode: 'ai' })]);
+				mockHandlers.onSessionsUpdate?.([
+					createMockSession({ id: 'session-1', inputMode: 'ai' }),
+					createMockSession({ id: 'session-2', name: 'Other Session', inputMode: 'ai' }),
+				]);
 			});
 
 			fireEvent.click(screen.getByTestId('mode-toggle'));
@@ -1153,6 +1584,24 @@ describe('MobileApp', () => {
 				sessionId: 'session-1',
 				mode: 'terminal',
 			});
+		});
+
+		it('ignores mode toggle when no session is active', () => {
+			render(<MobileApp />);
+
+			fireEvent.click(screen.getByTestId('mode-toggle'));
+
+			expect(mockSend).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'switch_mode' }));
+		});
+
+		it('ignores draft changes when no session is active', () => {
+			render(<MobileApp />);
+
+			fireEvent.change(screen.getByTestId('command-input'), {
+				target: { value: 'ignored draft' },
+			});
+
+			expect(screen.getByTestId('command-input')).toHaveValue('');
 		});
 
 		it('keeps separate drafts for AI and terminal mode', async () => {
@@ -1171,6 +1620,7 @@ describe('MobileApp', () => {
 
 			const input = screen.getByTestId('command-input');
 			fireEvent.change(input, { target: { value: 'Explain the repo status' } });
+			fireEvent.click(screen.getByTestId('repeat-command-change'));
 
 			fireEvent.click(screen.getByTestId('mode-toggle'));
 
@@ -1212,14 +1662,20 @@ describe('MobileApp', () => {
 				target: { value: 'draft for session one' },
 			});
 
-			fireEvent.click(screen.getByTestId('session-session-2'));
+			await act(async () => {
+				fireEvent.click(screen.getByTestId('session-session-2'));
+				await Promise.resolve();
+			});
 			expect(screen.getByTestId('command-input')).toHaveValue('');
 
 			fireEvent.change(screen.getByTestId('command-input'), {
 				target: { value: 'draft for session two' },
 			});
 
-			fireEvent.click(screen.getByTestId('session-session-1'));
+			await act(async () => {
+				fireEvent.click(screen.getByTestId('session-session-1'));
+				await Promise.resolve();
+			});
 			expect(screen.getByTestId('command-input')).toHaveValue('draft for session one');
 		});
 
@@ -1254,6 +1710,107 @@ describe('MobileApp', () => {
 
 			expect(screen.getByTestId('command-input')).toHaveValue('desktop restored draft');
 		});
+
+		it('removes stale session and tab drafts when desktop session data changes', async () => {
+			render(<MobileApp />);
+
+			await act(async () => {
+				mockHandlers.onSessionsUpdate?.([
+					createMockSession({
+						id: 'session-1',
+						name: 'Session 1',
+						inputMode: 'ai',
+						aiTabs: [
+							{ id: 'tab-1', name: 'Tab 1', state: 'idle', inputValue: '' },
+							{ id: 'tab-2', name: 'Tab 2', state: 'idle', inputValue: '' },
+						],
+						activeTabId: 'tab-1',
+					}),
+					createMockSession({
+						id: 'session-2',
+						name: 'Session 2',
+						inputMode: 'ai',
+						aiTabs: [{ id: 'tab-3', name: 'Tab 3', state: 'idle', inputValue: '' }],
+						activeTabId: 'tab-3',
+					}),
+				]);
+			});
+
+			fireEvent.change(screen.getByTestId('command-input'), {
+				target: { value: 'draft for removed tab' },
+			});
+			await act(async () => {
+				fireEvent.click(screen.getByTestId('tab-tab-2'));
+				await Promise.resolve();
+				await Promise.resolve();
+				await Promise.resolve();
+			});
+			fireEvent.change(screen.getByTestId('command-input'), {
+				target: { value: 'draft for retained tab' },
+			});
+
+			await act(async () => {
+				mockHandlers.onTabsChanged?.(
+					'session-1',
+					[{ id: 'tab-2', name: 'Tab 2', state: 'idle', inputValue: '' }],
+					'tab-2'
+				);
+			});
+
+			expect(screen.getByTestId('command-input')).toHaveValue('draft for retained tab');
+
+			fireEvent.click(screen.getByTestId('session-session-2'));
+			fireEvent.change(screen.getByTestId('command-input'), {
+				target: { value: 'draft for session two' },
+			});
+
+			await act(async () => {
+				mockHandlers.onSessionsUpdate?.([
+					createMockSession({
+						id: 'session-2',
+						name: 'Session 2',
+						inputMode: 'ai',
+						aiTabs: [{ id: 'tab-3', name: 'Tab 3', state: 'idle', inputValue: '' }],
+						activeTabId: 'tab-3',
+					}),
+				]);
+			});
+
+			expect(screen.queryByTestId('session-session-1')).not.toBeInTheDocument();
+			expect(screen.getByTestId('command-input')).toHaveValue('draft for session two');
+		});
+
+		it('drops stale tab drafts when a session no longer has AI tabs', async () => {
+			render(<MobileApp />);
+
+			await act(async () => {
+				mockHandlers.onSessionsUpdate?.([
+					createMockSession({
+						id: 'session-1',
+						inputMode: 'ai',
+						aiTabs: [{ id: 'tab-1', name: 'Tab 1', state: 'idle', inputValue: '' }],
+						activeTabId: 'tab-1',
+					}),
+				]);
+			});
+
+			fireEvent.change(screen.getByTestId('command-input'), {
+				target: { value: 'draft for disappearing tab' },
+			});
+
+			await act(async () => {
+				mockHandlers.onSessionsUpdate?.([
+					createMockSession({
+						id: 'session-1',
+						inputMode: 'ai',
+						aiTabs: undefined,
+						activeTabId: undefined,
+					}),
+				]);
+			});
+
+			expect(screen.getByTestId('command-input')).toHaveValue('');
+		});
 	});
 
 	describe('interrupt handling', () => {
@@ -1264,10 +1821,10 @@ describe('MobileApp', () => {
 				mockHandlers.onSessionsUpdate?.([createMockSession({ id: 'session-1', state: 'busy' })]);
 			});
 
-			fireEvent.click(screen.getByTestId('interrupt-button'));
-
 			await act(async () => {
-				await vi.runAllTimersAsync();
+				fireEvent.click(screen.getByTestId('interrupt-button'));
+				await Promise.resolve();
+				await Promise.resolve();
 			});
 
 			expect(global.fetch).toHaveBeenCalledWith(
@@ -1276,8 +1833,16 @@ describe('MobileApp', () => {
 			);
 		});
 
-		it('handles interrupt API error', async () => {
-			(global.fetch as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('Network error'));
+		it('records successful interrupt responses with success haptics', async () => {
+			(global.fetch as ReturnType<typeof vi.fn>)
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve({ session: { aiLogs: [], shellLogs: [] } }),
+				})
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve({ success: true }),
+				});
 
 			render(<MobileApp />);
 
@@ -1285,14 +1850,54 @@ describe('MobileApp', () => {
 				mockHandlers.onSessionsUpdate?.([createMockSession({ id: 'session-1', state: 'busy' })]);
 			});
 
-			fireEvent.click(screen.getByTestId('interrupt-button'));
-
 			await act(async () => {
-				await vi.runAllTimersAsync();
+				fireEvent.click(screen.getByTestId('interrupt-button'));
+				await Promise.resolve();
+				await Promise.resolve();
 			});
 
-			// Should not throw, handles error gracefully
+			expect(mockWebLogger.debug).toHaveBeenCalledWith('Session interrupted: session-1', 'Mobile');
+			expect(mockTriggerHaptic).toHaveBeenCalledWith([30]);
+		});
+
+		it('handles interrupt API error', async () => {
+			(global.fetch as ReturnType<typeof vi.fn>)
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve({ session: { aiLogs: [], shellLogs: [] } }),
+				})
+				.mockRejectedValueOnce(new Error('Network error'));
+
+			render(<MobileApp />);
+
+			await act(async () => {
+				mockHandlers.onSessionsUpdate?.([createMockSession({ id: 'session-1', state: 'busy' })]);
+			});
+
+			await act(async () => {
+				fireEvent.click(screen.getByTestId('interrupt-button'));
+				await Promise.resolve();
+				await Promise.resolve();
+			});
+
 			expect(mockTriggerHaptic).toHaveBeenCalledWith([10]); // tap
+			expect(mockWebLogger.error).toHaveBeenCalledWith(
+				'Error interrupting session',
+				'Mobile',
+				expect.any(Error)
+			);
+		});
+
+		it('does not expose interrupt control when no session is active', async () => {
+			render(<MobileApp />);
+
+			await act(async () => {
+				await Promise.resolve();
+				await Promise.resolve();
+			});
+
+			expect(screen.queryByTestId('interrupt-button')).not.toBeInTheDocument();
+			expect(global.fetch).not.toHaveBeenCalled();
 		});
 	});
 
@@ -1556,6 +2161,40 @@ describe('MobileApp', () => {
 			// Verify the filter was persisted
 			expect(screen.getByTestId('history-initial-filter')).toHaveTextContent('AUTO');
 		});
+
+		it('opens persisted history panel without a selected session', () => {
+			const originalLocalStorage = Object.getOwnPropertyDescriptor(window, 'localStorage');
+			const store = new Map<string, string>([
+				[
+					'maestro-web-view-state',
+					JSON.stringify({
+						showHistoryPanel: true,
+						savedAt: Date.now(),
+					}),
+				],
+			]);
+			Object.defineProperty(window, 'localStorage', {
+				configurable: true,
+				value: {
+					getItem: vi.fn((key: string) => store.get(key) ?? null),
+					setItem: vi.fn((key: string, value: string) => store.set(key, value)),
+					removeItem: vi.fn((key: string) => store.delete(key)),
+				},
+			});
+
+			try {
+				render(<MobileApp />);
+
+				expect(screen.getByTestId('mobile-history-panel')).toBeInTheDocument();
+				expect(screen.getByTestId('history-session-id')).toHaveTextContent('');
+			} finally {
+				if (originalLocalStorage) {
+					Object.defineProperty(window, 'localStorage', originalLocalStorage);
+				} else {
+					delete (window as any).localStorage;
+				}
+			}
+		});
 	});
 
 	describe('tab search modal', () => {
@@ -1764,11 +2403,15 @@ describe('MobileApp', () => {
 			render(<MobileApp />);
 
 			await act(async () => {
-				mockHandlers.onCustomCommands?.([{ command: 'custom1', description: 'Custom command 1' }]);
+				mockHandlers.onCustomCommands?.([
+					{ command: 'custom1', description: 'Custom command 1' },
+					{ command: '/already-prefixed', description: 'Custom command 2' },
+				]);
 			});
 
-			// Handler should be defined
-			expect(mockHandlers.onCustomCommands).toBeDefined();
+			expect(screen.getByTestId('slash-commands')).toHaveTextContent(
+				'/help|/clear|/custom1|/already-prefixed'
+			);
 		});
 	});
 
@@ -1867,6 +2510,54 @@ describe('MobileApp', () => {
 			expect(mockShowNotification).toHaveBeenCalled();
 		});
 
+		it('focuses the app and clears unread responses when a completion notification is clicked', async () => {
+			mockNotificationPermission = 'granted';
+			const notification = {
+				close: vi.fn(),
+				onclick: null as null | (() => void),
+			};
+			mockShowNotification.mockReturnValueOnce(notification);
+			const focus = vi.spyOn(window, 'focus').mockImplementation(() => {});
+
+			Object.defineProperty(document, 'visibilityState', {
+				value: 'hidden',
+				configurable: true,
+			});
+
+			render(<MobileApp />);
+
+			await act(async () => {
+				mockHandlers.onSessionsUpdate?.([createMockSession({ id: 'session-1', state: 'busy' })]);
+			});
+
+			await act(async () => {
+				mockHandlers.onSessionStateChange?.('session-1', 'idle', {
+					lastResponse: { text: 'Ready to review', timestamp: 123 },
+				});
+			});
+
+			expect(mockWebLogger.debug).toHaveBeenCalledWith(
+				'Notification shown for session: Test Session',
+				'Mobile'
+			);
+			expect(mockShowNotification).toHaveBeenCalledWith(
+				'Test Session - Response Ready',
+				expect.objectContaining({
+					body: 'Ready to review',
+					tag: 'maestro-response-session-1',
+				})
+			);
+
+			act(() => {
+				notification.onclick?.();
+			});
+
+			expect(focus).toHaveBeenCalledTimes(1);
+			expect(notification.close).toHaveBeenCalledTimes(1);
+			expect(mockMarkAllRead).toHaveBeenCalledTimes(1);
+			focus.mockRestore();
+		});
+
 		it('does not show notification when app is visible', async () => {
 			mockNotificationPermission = 'granted';
 
@@ -1953,7 +2644,10 @@ describe('MobileApp', () => {
 				]);
 			});
 
-			fireEvent.keyDown(document, { key: '[', metaKey: true });
+			await act(async () => {
+				fireEvent.keyDown(document, { key: '[', metaKey: true });
+				await Promise.resolve();
+			});
 
 			expect(mockSend).toHaveBeenCalledWith({
 				type: 'select_tab',
@@ -1979,7 +2673,10 @@ describe('MobileApp', () => {
 				]);
 			});
 
-			fireEvent.keyDown(document, { key: ']', metaKey: true });
+			await act(async () => {
+				fireEvent.keyDown(document, { key: ']', metaKey: true });
+				await Promise.resolve();
+			});
 
 			expect(mockSend).toHaveBeenCalledWith({
 				type: 'select_tab',
@@ -2005,7 +2702,10 @@ describe('MobileApp', () => {
 				]);
 			});
 
-			fireEvent.keyDown(document, { key: ']', metaKey: true });
+			await act(async () => {
+				fireEvent.keyDown(document, { key: ']', metaKey: true });
+				await Promise.resolve();
+			});
 
 			expect(mockSend).toHaveBeenCalledWith({
 				type: 'select_tab',
@@ -2228,9 +2928,11 @@ describe('MobileApp', () => {
 				]);
 			});
 
-			fireEvent.click(screen.getByTestId('session-session-2'));
-			fireEvent.click(screen.getByTestId('session-session-3'));
-			fireEvent.click(screen.getByTestId('session-session-1'));
+			act(() => {
+				fireEvent.click(screen.getByTestId('session-session-2'));
+				fireEvent.click(screen.getByTestId('session-session-3'));
+				fireEvent.click(screen.getByTestId('session-session-1'));
+			});
 
 			// All should be handled without errors
 			expect(mockSend).toHaveBeenCalledTimes(3);
@@ -2287,6 +2989,39 @@ describe('MobileApp', () => {
 		// Note: handleExpandResponse is called from future UI components
 		// that aren't currently implemented. These tests cover the ResponseViewer
 		// integration points that are accessible.
+
+		it('sorts response viewer navigation data by newest response and exposes callbacks', async () => {
+			render(<MobileApp />);
+
+			await act(async () => {
+				mockHandlers.onSessionsUpdate?.([
+					createMockSession({
+						id: 'session-1',
+						name: 'Older Session',
+						lastResponse: { text: 'older response', timestamp: 10 },
+					} as any),
+					createMockSession({
+						id: 'session-2',
+						name: 'Newer Session',
+						lastResponse: { text: 'newer response', timestamp: 20 },
+					} as any),
+				]);
+			});
+
+			expect(lastResponseViewerProps?.allResponses).toMatchObject([
+				{ sessionId: 'session-2', sessionName: 'Newer Session' },
+				{ sessionId: 'session-1', sessionName: 'Older Session' },
+			]);
+
+			act(() => {
+				lastResponseViewerProps?.onNavigate(1);
+				lastResponseViewerProps?.onNavigate(99);
+				lastResponseViewerProps?.onClose();
+				vi.advanceTimersByTime(300);
+			});
+
+			expect(mockWebLogger.debug).toHaveBeenCalledWith('Navigating to response index: 1', 'Mobile');
+		});
 	});
 
 	describe('getFirstLineOfResponse', () => {
@@ -2311,8 +3046,10 @@ describe('MobileApp', () => {
 				});
 			});
 
-			expect(mockShowNotification).toHaveBeenCalled();
-			// The notification body should have the actual content, not the code markers
+			expect(mockShowNotification).toHaveBeenCalledWith(
+				'Test Session - Response Ready',
+				expect.objectContaining({ body: 'Actual content' })
+			);
 		});
 
 		it('truncates long response lines', async () => {
@@ -2337,7 +3074,10 @@ describe('MobileApp', () => {
 				});
 			});
 
-			expect(mockShowNotification).toHaveBeenCalled();
+			expect(mockShowNotification).toHaveBeenCalledWith(
+				'Test Session - Response Ready',
+				expect.objectContaining({ body: `${'a'.repeat(100)}...` })
+			);
 		});
 
 		it('handles empty response text', async () => {
@@ -2360,7 +3100,36 @@ describe('MobileApp', () => {
 				});
 			});
 
-			expect(mockShowNotification).toHaveBeenCalled();
+			expect(mockShowNotification).toHaveBeenCalledWith(
+				'Test Session - Response Ready',
+				expect.objectContaining({ body: 'AI response completed' })
+			);
+		});
+
+		it('uses fallback body when response text contains only skipped markdown markers', async () => {
+			mockNotificationPermission = 'granted';
+
+			Object.defineProperty(document, 'visibilityState', {
+				value: 'hidden',
+				configurable: true,
+			});
+
+			render(<MobileApp />);
+
+			await act(async () => {
+				mockHandlers.onSessionsUpdate?.([createMockSession({ id: 'session-1', state: 'busy' })]);
+			});
+
+			await act(async () => {
+				mockHandlers.onSessionStateChange?.('session-1', 'idle', {
+					lastResponse: { text: '```\n---\n   ', timestamp: Date.now() },
+				});
+			});
+
+			expect(mockShowNotification).toHaveBeenCalledWith(
+				'Test Session - Response Ready',
+				expect.objectContaining({ body: 'Response completed' })
+			);
 		});
 
 		it('skips horizontal rules in response', async () => {
@@ -2383,7 +3152,10 @@ describe('MobileApp', () => {
 				});
 			});
 
-			expect(mockShowNotification).toHaveBeenCalled();
+			expect(mockShowNotification).toHaveBeenCalledWith(
+				'Test Session - Response Ready',
+				expect.objectContaining({ body: 'Actual content' })
+			);
 		});
 	});
 });

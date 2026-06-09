@@ -12,6 +12,12 @@ describe('groupChatAutoRun', () => {
 	});
 
 	describe('resolveGroupChatAutoRunTarget', () => {
+		it('returns all files when no target filename is provided', () => {
+			expect(resolveGroupChatAutoRunTarget(['plans/phase-01', 'plans/phase-02'])).toEqual({
+				files: ['plans/phase-01', 'plans/phase-02'],
+			});
+		});
+
 		it('matches an exact relative path after normalization', () => {
 			expect(
 				resolveGroupChatAutoRunTarget(['plans/phase-01', 'plans/phase-02'], 'plans/phase-01.md')

@@ -85,7 +85,7 @@ export function ExecutionQueueBrowser({
 		if (isOpen) {
 			const id = registerLayer({
 				type: 'modal',
-				priority: MODAL_PRIORITIES.EXECUTION_QUEUE_BROWSER || 50,
+				priority: MODAL_PRIORITIES.EXECUTION_QUEUE_BROWSER,
 				blocksLowerLayers: true,
 				capturesFocus: true,
 				focusTrap: 'strict',
@@ -109,10 +109,7 @@ export function ExecutionQueueBrowser({
 			: sessionsWithQueues;
 
 	// Get total queue count for display
-	const totalQueuedItems = sessionsWithQueues.reduce(
-		(sum, s) => sum + (s.executionQueue?.length || 0),
-		0
-	);
+	const totalQueuedItems = sessionsWithQueues.reduce((sum, s) => sum + s.executionQueue.length, 0);
 
 	const currentSessionItems = activeSessionId
 		? sessions.find((s) => s.id === activeSessionId)?.executionQueue?.length || 0
@@ -222,14 +219,14 @@ export function ExecutionQueueBrowser({
 												color: theme.colors.textDim,
 											}}
 										>
-											{session.executionQueue?.length || 0}
+											{session.executionQueue.length}
 										</span>
 									</button>
 								)}
 
 								{/* Queue Items */}
 								<div className="space-y-0">
-									{session.executionQueue?.map((item, index) => (
+									{session.executionQueue.map((item, index) => (
 										<React.Fragment key={item.id}>
 											{/* Drop indicator before this item */}
 											<DropZone
@@ -249,7 +246,7 @@ export function ExecutionQueueBrowser({
 													onClose();
 												}}
 												isDragging={dragState?.itemId === item.id}
-												canDrag={!!onReorderItems && (session.executionQueue?.length || 0) > 1}
+												canDrag={!!onReorderItems && session.executionQueue.length > 1}
 												isAnyDragging={!!dragState}
 												onDragStart={() => handleDragStart(session.id, item.id, index)}
 												onDragEnd={handleDragEnd}
@@ -263,11 +260,9 @@ export function ExecutionQueueBrowser({
 										theme={theme}
 										isActive={
 											dropIndicator?.sessionId === session.id &&
-											dropIndicator?.index === (session.executionQueue?.length || 0)
+											dropIndicator?.index === session.executionQueue.length
 										}
-										onDragOver={() =>
-											handleDragOver(session.id, session.executionQueue?.length || 0)
-										}
+										onDragOver={() => handleDragOver(session.id, session.executionQueue.length)}
 									/>
 								</div>
 							</div>

@@ -70,8 +70,6 @@ function getSourceColor(source: LogEntry['source'], theme: Theme): string {
 			return theme.colors.textDim;
 		case 'tool':
 			return theme.colors.accentDim;
-		default:
-			return theme.colors.textMain;
 	}
 }
 
@@ -94,8 +92,6 @@ function getSourceLabel(source: LogEntry['source']): string {
 			return 'Thinking';
 		case 'tool':
 			return 'Tool';
-		default:
-			return source;
 	}
 }
 

@@ -139,12 +139,33 @@ function createDefaultProps() {
 	};
 }
 
+async function renderBatchRunnerModal(ui: React.ReactElement) {
+	const result = render(ui);
+
+	await act(async () => {
+		await Promise.resolve();
+		await Promise.resolve();
+	});
+
+	return result;
+}
+
+function mockBatchRunnerConsoleLog() {
+	return vi.spyOn(console, 'log').mockImplementation(() => {});
+}
+
 describe('BatchRunnerModal', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 
 		// Mock crypto.randomUUID
-		vi.spyOn(crypto, 'randomUUID').mockReturnValue('uuid-123');
+		let uuidCounter = 0;
+		vi.spyOn(crypto, 'randomUUID').mockImplementation(
+			() =>
+				`00000000-0000-4000-8000-${(++uuidCounter).toString().padStart(12, '0')}` as ReturnType<
+					typeof crypto.randomUUID
+				>
+		);
 
 		// Add missing mocks to window.maestro
 		(window.maestro as Record<string, unknown>).playbooks = {
@@ -182,7 +203,7 @@ describe('BatchRunnerModal', () => {
 
 	describe('Rendering', () => {
 		it('renders modal with correct structure and ARIA attributes', async () => {
-			render(<BatchRunnerModal {...createDefaultProps()} />);
+			await renderBatchRunnerModal(<BatchRunnerModal {...createDefaultProps()} />);
 
 			const dialog = screen.getByRole('dialog');
 			expect(dialog).toBeInTheDocument();
@@ -191,7 +212,7 @@ describe('BatchRunnerModal', () => {
 		});
 
 		it('displays header with title and close button', async () => {
-			render(<BatchRunnerModal {...createDefaultProps()} />);
+			await renderBatchRunnerModal(<BatchRunnerModal {...createDefaultProps()} />);
 
 			expect(screen.getByText('Auto Run Configuration')).toBeInTheDocument();
 			// X button is present
@@ -201,7 +222,7 @@ describe('BatchRunnerModal', () => {
 
 		it('displays task count badge in header', async () => {
 			const props = createDefaultProps();
-			render(<BatchRunnerModal {...props} />);
+			await renderBatchRunnerModal(<BatchRunnerModal {...props} />);
 
 			await waitFor(() => {
 				expect(screen.getByText('5')).toBeInTheDocument();
@@ -210,7 +231,7 @@ describe('BatchRunnerModal', () => {
 		});
 
 		it('displays current document in document list', async () => {
-			render(<BatchRunnerModal {...createDefaultProps()} />);
+			await renderBatchRunnerModal(<BatchRunnerModal {...createDefaultProps()} />);
 
 			expect(screen.getByText('test-doc.md')).toBeInTheDocument();
 		});
@@ -218,7 +239,7 @@ describe('BatchRunnerModal', () => {
 		it('shows "1 task" (singular) when task count is 1', async () => {
 			const props = createDefaultProps();
 			props.getDocumentTaskCount = vi.fn().mockResolvedValue(1);
-			render(<BatchRunnerModal {...props} />);
+			await renderBatchRunnerModal(<BatchRunnerModal {...props} />);
 
 			await waitFor(() => {
 				expect(screen.getByText('task')).toBeInTheDocument();
@@ -226,7 +247,7 @@ describe('BatchRunnerModal', () => {
 		});
 
 		it('displays footer with Cancel, Save, and Go buttons', async () => {
-			render(<BatchRunnerModal {...createDefaultProps()} />);
+			await renderBatchRunnerModal(<BatchRunnerModal {...createDefaultProps()} />);
 
 			expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
 			expect(screen.getByRole('button', { name: /Save/ })).toBeInTheDocument();
@@ -236,7 +257,7 @@ describe('BatchRunnerModal', () => {
 
 	describe('Layer Stack Integration', () => {
 		it('registers with layer stack on mount', async () => {
-			render(<BatchRunnerModal {...createDefaultProps()} />);
+			await renderBatchRunnerModal(<BatchRunnerModal {...createDefaultProps()} />);
 
 			expect(mockRegisterLayer).toHaveBeenCalledWith(
 				expect.objectContaining({
@@ -248,7 +269,9 @@ describe('BatchRunnerModal', () => {
 		});
 
 		it('unregisters from layer stack on unmount', async () => {
-			const { unmount } = render(<BatchRunnerModal {...createDefaultProps()} />);
+			const { unmount } = await renderBatchRunnerModal(
+				<BatchRunnerModal {...createDefaultProps()} />
+			);
 
 			unmount();
 
@@ -257,7 +280,7 @@ describe('BatchRunnerModal', () => {
 
 		it('calls onClose when escape is triggered', async () => {
 			const props = createDefaultProps();
-			render(<BatchRunnerModal {...props} />);
+			await renderBatchRunnerModal(<BatchRunnerModal {...props} />);
 
 			// Get the onEscape handler and call it
 			const registerCall = mockRegisterLayer.mock.calls[0][0];
@@ -265,11 +288,24 @@ describe('BatchRunnerModal', () => {
 
 			expect(props.onClose).toHaveBeenCalled();
 		});
+
+		it('uses the updated escape handler to close the main modal when no child modal is open', async () => {
+			const props = createDefaultProps();
+			await renderBatchRunnerModal(<BatchRunnerModal {...props} />);
+
+			const lastUpdateCall =
+				mockUpdateLayerHandler.mock.calls[mockUpdateLayerHandler.mock.calls.length - 1];
+			await act(async () => {
+				lastUpdateCall[1]();
+			});
+
+			expect(props.onClose).toHaveBeenCalled();
+		});
 	});
 
 	describe('Document Management', () => {
 		it('opens document selector modal when Add Docs is clicked', async () => {
-			render(<BatchRunnerModal {...createDefaultProps()} />);
+			await renderBatchRunnerModal(<BatchRunnerModal {...createDefaultProps()} />);
 
 			const addButton = screen.getByRole('button', { name: 'Add Docs' });
 			fireEvent.click(addButton);
@@ -278,7 +314,7 @@ describe('BatchRunnerModal', () => {
 		});
 
 		it('displays all documents in selector modal', async () => {
-			render(<BatchRunnerModal {...createDefaultProps()} />);
+			await renderBatchRunnerModal(<BatchRunnerModal {...createDefaultProps()} />);
 
 			fireEvent.click(screen.getByRole('button', { name: 'Add Docs' }));
 
@@ -293,7 +329,7 @@ describe('BatchRunnerModal', () => {
 		});
 
 		it('adds selected documents from selector', async () => {
-			render(<BatchRunnerModal {...createDefaultProps()} />);
+			await renderBatchRunnerModal(<BatchRunnerModal {...createDefaultProps()} />);
 
 			fireEvent.click(screen.getByRole('button', { name: 'Add Docs' }));
 
@@ -314,7 +350,7 @@ describe('BatchRunnerModal', () => {
 
 		it('removes document when X button is clicked', async () => {
 			const props = createDefaultProps();
-			render(<BatchRunnerModal {...props} />);
+			await renderBatchRunnerModal(<BatchRunnerModal {...props} />);
 
 			// Add another document first
 			fireEvent.click(screen.getByRole('button', { name: 'Add Docs' }));
@@ -335,7 +371,7 @@ describe('BatchRunnerModal', () => {
 		});
 
 		it('toggles reset on completion when reset button is clicked', async () => {
-			render(<BatchRunnerModal {...createDefaultProps()} />);
+			await renderBatchRunnerModal(<BatchRunnerModal {...createDefaultProps()} />);
 
 			// Wait for task counts to load
 			await waitFor(() => {
@@ -354,7 +390,7 @@ describe('BatchRunnerModal', () => {
 		});
 
 		it('duplicates document when duplicate button is clicked', async () => {
-			render(<BatchRunnerModal {...createDefaultProps()} />);
+			await renderBatchRunnerModal(<BatchRunnerModal {...createDefaultProps()} />);
 
 			// First enable reset (which shows the duplicate button)
 			await waitFor(() => {
@@ -381,14 +417,14 @@ describe('BatchRunnerModal', () => {
 		it('shows empty state when no documents are selected', async () => {
 			const props = createDefaultProps();
 			props.currentDocument = '';
-			render(<BatchRunnerModal {...props} />);
+			await renderBatchRunnerModal(<BatchRunnerModal {...props} />);
 
 			expect(screen.getByText('No documents selected')).toBeInTheDocument();
 		});
 
 		it('handles document selector refresh', async () => {
 			const props = createDefaultProps();
-			render(<BatchRunnerModal {...props} />);
+			await renderBatchRunnerModal(<BatchRunnerModal {...props} />);
 
 			fireEvent.click(screen.getByRole('button', { name: 'Add Docs' }));
 
@@ -399,7 +435,7 @@ describe('BatchRunnerModal', () => {
 		});
 
 		it('closes document selector on backdrop click', async () => {
-			render(<BatchRunnerModal {...createDefaultProps()} />);
+			await renderBatchRunnerModal(<BatchRunnerModal {...createDefaultProps()} />);
 
 			fireEvent.click(screen.getByRole('button', { name: 'Add Docs' }));
 			expect(screen.getByText('Select Documents')).toBeInTheDocument();
@@ -419,7 +455,7 @@ describe('BatchRunnerModal', () => {
 	describe('Drag and Drop', () => {
 		it('supports drag and drop reordering of documents', async () => {
 			const props = createDefaultProps();
-			render(<BatchRunnerModal {...props} />);
+			await renderBatchRunnerModal(<BatchRunnerModal {...props} />);
 
 			// Add a second document
 			fireEvent.click(screen.getByRole('button', { name: 'Add Docs' }));
@@ -451,7 +487,7 @@ describe('BatchRunnerModal', () => {
 	describe('Loop Mode', () => {
 		it('shows loop button when multiple documents exist', async () => {
 			const props = createDefaultProps();
-			render(<BatchRunnerModal {...props} />);
+			await renderBatchRunnerModal(<BatchRunnerModal {...props} />);
 
 			// Add another document
 			fireEvent.click(screen.getByRole('button', { name: 'Add Docs' }));
@@ -465,7 +501,7 @@ describe('BatchRunnerModal', () => {
 
 		it('toggles loop mode when Loop button is clicked', async () => {
 			const props = createDefaultProps();
-			render(<BatchRunnerModal {...props} />);
+			await renderBatchRunnerModal(<BatchRunnerModal {...props} />);
 
 			// Add another document
 			fireEvent.click(screen.getByRole('button', { name: 'Add Docs' }));
@@ -484,7 +520,7 @@ describe('BatchRunnerModal', () => {
 
 		it('shows max loops slider when max is selected', async () => {
 			const props = createDefaultProps();
-			render(<BatchRunnerModal {...props} />);
+			await renderBatchRunnerModal(<BatchRunnerModal {...props} />);
 
 			// Add another document
 			fireEvent.click(screen.getByRole('button', { name: 'Add Docs' }));
@@ -510,7 +546,7 @@ describe('BatchRunnerModal', () => {
 
 		it('updates max loops value when slider changes', async () => {
 			const props = createDefaultProps();
-			render(<BatchRunnerModal {...props} />);
+			await renderBatchRunnerModal(<BatchRunnerModal {...props} />);
 
 			// Add another document and enable loop with max
 			fireEvent.click(screen.getByRole('button', { name: 'Add Docs' }));
@@ -533,7 +569,7 @@ describe('BatchRunnerModal', () => {
 
 	describe('Agent Prompt', () => {
 		it('inserts tab character on Tab key', async () => {
-			render(<BatchRunnerModal {...createDefaultProps()} />);
+			await renderBatchRunnerModal(<BatchRunnerModal {...createDefaultProps()} />);
 
 			const textarea = screen.getByPlaceholderText(
 				'Enter the system prompt for auto-run...'
@@ -553,15 +589,28 @@ describe('BatchRunnerModal', () => {
 			});
 		});
 
+		it('leaves the prompt unchanged for non-Tab keys', async () => {
+			await renderBatchRunnerModal(<BatchRunnerModal {...createDefaultProps()} />);
+
+			const textarea = screen.getByPlaceholderText(
+				'Enter the system prompt for auto-run...'
+			) as HTMLTextAreaElement;
+			fireEvent.change(textarea, { target: { value: 'HelloWorld' } });
+
+			fireEvent.keyDown(textarea, { key: 'Enter' });
+
+			expect(textarea.value).toBe('HelloWorld');
+		});
+
 		it('displays default prompt in textarea', async () => {
-			render(<BatchRunnerModal {...createDefaultProps()} />);
+			await renderBatchRunnerModal(<BatchRunnerModal {...createDefaultProps()} />);
 
 			const textarea = screen.getByPlaceholderText('Enter the system prompt for auto-run...');
 			expect(textarea).toHaveValue(DEFAULT_BATCH_PROMPT);
 		});
 
 		it('displays CUSTOMIZED badge when prompt is modified', async () => {
-			render(<BatchRunnerModal {...createDefaultProps()} />);
+			await renderBatchRunnerModal(<BatchRunnerModal {...createDefaultProps()} />);
 
 			const textarea = screen.getByPlaceholderText('Enter the system prompt for auto-run...');
 			fireEvent.change(textarea, { target: { value: 'Custom prompt' } });
@@ -571,7 +620,7 @@ describe('BatchRunnerModal', () => {
 
 		it('resets prompt to default when Reset button is clicked', async () => {
 			const props = createDefaultProps();
-			render(<BatchRunnerModal {...props} />);
+			await renderBatchRunnerModal(<BatchRunnerModal {...props} />);
 
 			const textarea = screen.getByPlaceholderText('Enter the system prompt for auto-run...');
 			fireEvent.change(textarea, { target: { value: 'Custom prompt' } });
@@ -584,7 +633,7 @@ describe('BatchRunnerModal', () => {
 		});
 
 		it('opens prompt composer modal when expand button is clicked', async () => {
-			render(<BatchRunnerModal {...createDefaultProps()} />);
+			await renderBatchRunnerModal(<BatchRunnerModal {...createDefaultProps()} />);
 
 			const expandButton = screen.getByTitle('Expand editor');
 			fireEvent.click(expandButton);
@@ -593,7 +642,7 @@ describe('BatchRunnerModal', () => {
 		});
 
 		it('updates prompt from composer modal', async () => {
-			render(<BatchRunnerModal {...createDefaultProps()} />);
+			await renderBatchRunnerModal(<BatchRunnerModal {...createDefaultProps()} />);
 
 			fireEvent.click(screen.getByTitle('Expand editor'));
 			fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
@@ -601,11 +650,24 @@ describe('BatchRunnerModal', () => {
 			const textarea = screen.getByPlaceholderText('Enter the system prompt for auto-run...');
 			expect(textarea).toHaveValue('Updated prompt from composer');
 		});
+
+		it('closes prompt composer modal without changing prompt', async () => {
+			await renderBatchRunnerModal(<BatchRunnerModal {...createDefaultProps()} />);
+
+			fireEvent.click(screen.getByTitle('Expand editor'));
+			expect(screen.getByTestId('prompt-composer-modal')).toBeInTheDocument();
+			fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+
+			expect(screen.queryByTestId('prompt-composer-modal')).not.toBeInTheDocument();
+			expect(screen.getByPlaceholderText('Enter the system prompt for auto-run...')).toHaveValue(
+				DEFAULT_BATCH_PROMPT
+			);
+		});
 	});
 
 	describe('Template Variables', () => {
 		it('expands template variables section when clicked', async () => {
-			render(<BatchRunnerModal {...createDefaultProps()} />);
+			await renderBatchRunnerModal(<BatchRunnerModal {...createDefaultProps()} />);
 
 			const variablesButton = screen.getByText('Template Variables');
 			fireEvent.click(variablesButton);
@@ -616,7 +678,7 @@ describe('BatchRunnerModal', () => {
 		});
 
 		it('shows template variable documentation', async () => {
-			render(<BatchRunnerModal {...createDefaultProps()} />);
+			await renderBatchRunnerModal(<BatchRunnerModal {...createDefaultProps()} />);
 
 			fireEvent.click(screen.getByRole('button', { name: /Template Variables/ }));
 
@@ -638,7 +700,7 @@ describe('BatchRunnerModal', () => {
 				import: vi.fn(),
 			};
 
-			render(<BatchRunnerModal {...createDefaultProps()} />);
+			await renderBatchRunnerModal(<BatchRunnerModal {...createDefaultProps()} />);
 
 			await waitFor(() => {
 				expect(screen.getByText('Load Playbook')).toBeInTheDocument();
@@ -656,7 +718,7 @@ describe('BatchRunnerModal', () => {
 				import: vi.fn(),
 			};
 
-			render(<BatchRunnerModal {...createDefaultProps()} />);
+			await renderBatchRunnerModal(<BatchRunnerModal {...createDefaultProps()} />);
 
 			await waitFor(() => {
 				expect(screen.getByText('Load Playbook')).toBeInTheDocument();
@@ -667,6 +729,17 @@ describe('BatchRunnerModal', () => {
 			await waitFor(() => {
 				expect(screen.getByText('Test Playbook')).toBeInTheDocument();
 			});
+		});
+
+		it('opens the playbook exchange when the marketplace callback is provided', async () => {
+			const onOpenMarketplace = vi.fn();
+			await renderBatchRunnerModal(
+				<BatchRunnerModal {...createDefaultProps()} onOpenMarketplace={onOpenMarketplace} />
+			);
+
+			fireEvent.click(screen.getByRole('button', { name: /Playbook Exchange/i }));
+
+			expect(onOpenMarketplace).toHaveBeenCalledTimes(1);
 		});
 
 		it('loads playbook when clicked in dropdown', async () => {
@@ -681,7 +754,7 @@ describe('BatchRunnerModal', () => {
 				import: vi.fn(),
 			};
 
-			render(<BatchRunnerModal {...createDefaultProps()} />);
+			await renderBatchRunnerModal(<BatchRunnerModal {...createDefaultProps()} />);
 
 			await waitFor(() => screen.getByText('Load Playbook'));
 			fireEvent.click(screen.getByRole('button', { name: 'Load Playbook' }));
@@ -694,9 +767,31 @@ describe('BatchRunnerModal', () => {
 			});
 		});
 
+		it('uses singular document copy for one-document playbooks', async () => {
+			const mockPlaybook = createMockPlaybook({
+				documents: [{ filename: 'test-doc', resetOnCompletion: false }],
+			});
+			const mockPlaybooks: Playbook[] = [mockPlaybook];
+			(window.maestro as Record<string, unknown>).playbooks = {
+				list: vi.fn().mockResolvedValue({ success: true, playbooks: mockPlaybooks }),
+				create: vi.fn(),
+				update: vi.fn(),
+				delete: vi.fn(),
+				export: vi.fn(),
+				import: vi.fn(),
+			};
+
+			await renderBatchRunnerModal(<BatchRunnerModal {...createDefaultProps()} />);
+
+			await waitFor(() => screen.getByText('Load Playbook'));
+			fireEvent.click(screen.getByRole('button', { name: 'Load Playbook' }));
+
+			expect(screen.getByText('1 doc')).toBeInTheDocument();
+		});
+
 		it('shows Save as Playbook button when multiple documents exist', async () => {
 			const props = createDefaultProps();
-			render(<BatchRunnerModal {...props} />);
+			await renderBatchRunnerModal(<BatchRunnerModal {...props} />);
 
 			// Add another document
 			fireEvent.click(screen.getByRole('button', { name: 'Add Docs' }));
@@ -710,7 +805,7 @@ describe('BatchRunnerModal', () => {
 
 		it('opens save playbook modal when Save as Playbook is clicked', async () => {
 			const props = createDefaultProps();
-			render(<BatchRunnerModal {...props} />);
+			await renderBatchRunnerModal(<BatchRunnerModal {...props} />);
 
 			// Add another document
 			fireEvent.click(screen.getByRole('button', { name: 'Add Docs' }));
@@ -720,6 +815,23 @@ describe('BatchRunnerModal', () => {
 			fireEvent.click(screen.getByRole('button', { name: 'Save as Playbook' }));
 
 			expect(screen.getByTestId('playbook-name-modal')).toBeInTheDocument();
+		});
+
+		it('closes save playbook modal when its Cancel button is clicked', async () => {
+			const props = createDefaultProps();
+			await renderBatchRunnerModal(<BatchRunnerModal {...props} />);
+
+			fireEvent.click(screen.getByRole('button', { name: 'Add Docs' }));
+			fireEvent.click(screen.getByRole('button', { name: /doc1\.md/ }));
+			fireEvent.click(screen.getByRole('button', { name: /Add \d+ file/ }));
+			fireEvent.click(screen.getByRole('button', { name: 'Save as Playbook' }));
+
+			const modal = screen.getByTestId('playbook-name-modal');
+			fireEvent.click(within(modal).getByRole('button', { name: 'Cancel' }));
+
+			await waitFor(() => {
+				expect(screen.queryByTestId('playbook-name-modal')).not.toBeInTheDocument();
+			});
 		});
 
 		it('saves new playbook when modal is submitted', async () => {
@@ -732,7 +844,7 @@ describe('BatchRunnerModal', () => {
 				create: mockCreate,
 			};
 
-			render(<BatchRunnerModal {...props} />);
+			await renderBatchRunnerModal(<BatchRunnerModal {...props} />);
 
 			// Add another document
 			fireEvent.click(screen.getByRole('button', { name: 'Add Docs' }));
@@ -762,7 +874,7 @@ describe('BatchRunnerModal', () => {
 				import: vi.fn(),
 			};
 
-			render(<BatchRunnerModal {...createDefaultProps()} />);
+			await renderBatchRunnerModal(<BatchRunnerModal {...createDefaultProps()} />);
 
 			// Load playbook
 			await waitFor(() => screen.getByText('Load Playbook'));
@@ -792,7 +904,7 @@ describe('BatchRunnerModal', () => {
 				import: vi.fn(),
 			};
 
-			render(<BatchRunnerModal {...createDefaultProps()} />);
+			await renderBatchRunnerModal(<BatchRunnerModal {...createDefaultProps()} />);
 
 			// Open dropdown
 			await waitFor(() => screen.getByText('Load Playbook'));
@@ -824,7 +936,7 @@ describe('BatchRunnerModal', () => {
 				import: vi.fn(),
 			};
 
-			render(<BatchRunnerModal {...createDefaultProps()} />);
+			await renderBatchRunnerModal(<BatchRunnerModal {...createDefaultProps()} />);
 
 			await waitFor(() => screen.getByText('Load Playbook'));
 			fireEvent.click(screen.getByRole('button', { name: 'Load Playbook' }));
@@ -849,7 +961,7 @@ describe('BatchRunnerModal', () => {
 				import: mockImport,
 			};
 
-			render(<BatchRunnerModal {...createDefaultProps()} />);
+			await renderBatchRunnerModal(<BatchRunnerModal {...createDefaultProps()} />);
 
 			await waitFor(() => screen.getByText('Load Playbook'));
 			fireEvent.click(screen.getByRole('button', { name: 'Load Playbook' }));
@@ -877,7 +989,7 @@ describe('BatchRunnerModal', () => {
 				import: vi.fn(),
 			};
 
-			render(<BatchRunnerModal {...createDefaultProps()} />);
+			await renderBatchRunnerModal(<BatchRunnerModal {...createDefaultProps()} />);
 
 			await waitFor(() => screen.getByText('Load Playbook'));
 			fireEvent.click(screen.getByRole('button', { name: 'Load Playbook' }));
@@ -885,6 +997,31 @@ describe('BatchRunnerModal', () => {
 
 			await waitFor(() => {
 				expect(screen.getByText('Missing')).toBeInTheDocument();
+			});
+		});
+
+		it('disables Go when every selected playbook document is missing', async () => {
+			const mockPlaybook = createMockPlaybook({
+				documents: [{ filename: 'missing-doc', resetOnCompletion: false }],
+			});
+			const mockPlaybooks: Playbook[] = [mockPlaybook];
+			(window.maestro as Record<string, unknown>).playbooks = {
+				list: vi.fn().mockResolvedValue({ success: true, playbooks: mockPlaybooks }),
+				create: vi.fn(),
+				update: vi.fn(),
+				delete: vi.fn(),
+				export: vi.fn(),
+				import: vi.fn(),
+			};
+
+			await renderBatchRunnerModal(<BatchRunnerModal {...createDefaultProps()} />);
+
+			await waitFor(() => screen.getByText('Load Playbook'));
+			fireEvent.click(screen.getByRole('button', { name: 'Load Playbook' }));
+			fireEvent.click(screen.getByText('Test Playbook'));
+
+			await waitFor(() => {
+				expect(screen.getByTitle('All selected documents are missing')).toBeDisabled();
 			});
 		});
 	});
@@ -895,14 +1032,17 @@ describe('BatchRunnerModal', () => {
 	describe('Go/Run Functionality', () => {
 		it('calls onGo with correct config when Go is clicked', async () => {
 			const props = createDefaultProps();
-			render(<BatchRunnerModal {...props} />);
+			const consoleLog = mockBatchRunnerConsoleLog();
+			await renderBatchRunnerModal(<BatchRunnerModal {...props} />);
 
 			await waitFor(() => {
 				expect(screen.getByText('5')).toBeInTheDocument();
 				expect(screen.getByText('tasks')).toBeInTheDocument();
 			});
 
-			fireEvent.click(screen.getByRole('button', { name: /Go/ }));
+			await act(async () => {
+				fireEvent.click(screen.getByRole('button', { name: /Go/ }));
+			});
 
 			expect(props.onGo).toHaveBeenCalledWith(
 				expect.objectContaining({
@@ -916,13 +1056,17 @@ describe('BatchRunnerModal', () => {
 					loopEnabled: false,
 				})
 			);
+			expect(consoleLog).toHaveBeenCalledWith(
+				'[BatchRunnerModal] handleGo - calling onGo with config:',
+				expect.any(Object)
+			);
 			expect(props.onClose).toHaveBeenCalled();
 		});
 
 		it('disables Go button when no tasks', async () => {
 			const props = createDefaultProps();
 			props.getDocumentTaskCount = vi.fn().mockResolvedValue(0);
-			render(<BatchRunnerModal {...props} />);
+			await renderBatchRunnerModal(<BatchRunnerModal {...props} />);
 
 			await waitFor(() => {
 				expect(screen.getByText('0')).toBeInTheDocument();
@@ -935,7 +1079,7 @@ describe('BatchRunnerModal', () => {
 		it('disables Go button when no documents', async () => {
 			const props = createDefaultProps();
 			props.currentDocument = '';
-			render(<BatchRunnerModal {...props} />);
+			await renderBatchRunnerModal(<BatchRunnerModal {...props} />);
 
 			const goButton = screen.getByRole('button', { name: /Go/ });
 			expect(goButton).toBeDisabled();
@@ -946,7 +1090,7 @@ describe('BatchRunnerModal', () => {
 	describe('Save Functionality', () => {
 		it('calls onSave when Save button is clicked', async () => {
 			const props = createDefaultProps();
-			render(<BatchRunnerModal {...props} />);
+			await renderBatchRunnerModal(<BatchRunnerModal {...props} />);
 
 			const textarea = screen.getByPlaceholderText('Enter the system prompt for auto-run...');
 			fireEvent.change(textarea, { target: { value: 'Custom prompt' } });
@@ -957,7 +1101,7 @@ describe('BatchRunnerModal', () => {
 		});
 
 		it('disables Save button when no unsaved changes', async () => {
-			render(<BatchRunnerModal {...createDefaultProps()} />);
+			await renderBatchRunnerModal(<BatchRunnerModal {...createDefaultProps()} />);
 
 			const saveButton = screen.getByRole('button', { name: /Save/ });
 			expect(saveButton).toBeDisabled();
@@ -967,16 +1111,37 @@ describe('BatchRunnerModal', () => {
 	describe('Cancel Functionality', () => {
 		it('calls onClose when Cancel is clicked', async () => {
 			const props = createDefaultProps();
-			render(<BatchRunnerModal {...props} />);
+			await renderBatchRunnerModal(<BatchRunnerModal {...props} />);
 
 			fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
 
 			expect(props.onClose).toHaveBeenCalled();
 		});
 
+		it('asks for confirmation before closing with unsaved configuration changes', async () => {
+			const props = createDefaultProps();
+			props.showConfirmation = vi.fn();
+			await renderBatchRunnerModal(<BatchRunnerModal {...props} />);
+
+			fireEvent.change(screen.getByPlaceholderText('Enter the system prompt for auto-run...'), {
+				target: { value: 'Modified prompt text' },
+			});
+			fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+			expect(props.onClose).not.toHaveBeenCalled();
+			expect(props.showConfirmation).toHaveBeenCalledWith(
+				'You have unsaved changes to your Auto Run configuration. Close without saving?',
+				expect.any(Function)
+			);
+
+			const [, confirmClose] = props.showConfirmation.mock.calls[0];
+			confirmClose();
+			expect(props.onClose).toHaveBeenCalled();
+		});
+
 		it('calls onClose when X button is clicked', async () => {
 			const props = createDefaultProps();
-			render(<BatchRunnerModal {...props} />);
+			await renderBatchRunnerModal(<BatchRunnerModal {...props} />);
 
 			// Find the X button in the header
 			const header = screen.getByText('Auto Run Configuration').closest('div');
@@ -991,7 +1156,7 @@ describe('BatchRunnerModal', () => {
 			const props = createDefaultProps();
 			// Override so showConfirmation does NOT auto-invoke onConfirm
 			props.showConfirmation = vi.fn();
-			render(<BatchRunnerModal {...props} />);
+			await renderBatchRunnerModal(<BatchRunnerModal {...props} />);
 
 			// Modify the prompt
 			const textarea = screen.getByPlaceholderText('Enter the system prompt for auto-run...');
@@ -1013,7 +1178,7 @@ describe('BatchRunnerModal', () => {
 			const props = createDefaultProps();
 			props.allDocuments = [];
 			props.currentDocument = '';
-			render(<BatchRunnerModal {...props} />);
+			await renderBatchRunnerModal(<BatchRunnerModal {...props} />);
 
 			fireEvent.click(screen.getByRole('button', { name: 'Add Docs' }));
 
@@ -1023,7 +1188,7 @@ describe('BatchRunnerModal', () => {
 		it('handles API errors for task count gracefully', async () => {
 			const props = createDefaultProps();
 			props.getDocumentTaskCount = vi.fn().mockRejectedValue(new Error('Failed'));
-			render(<BatchRunnerModal {...props} />);
+			await renderBatchRunnerModal(<BatchRunnerModal {...props} />);
 
 			await waitFor(() => {
 				expect(screen.getByText('0 tasks')).toBeInTheDocument();
@@ -1031,6 +1196,7 @@ describe('BatchRunnerModal', () => {
 		});
 
 		it('handles playbook list error gracefully', async () => {
+			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 			(window.maestro as Record<string, unknown>).playbooks = {
 				list: vi.fn().mockRejectedValue(new Error('Failed to load playbooks')),
 				create: vi.fn(),
@@ -1040,12 +1206,13 @@ describe('BatchRunnerModal', () => {
 				import: vi.fn(),
 			};
 
-			render(<BatchRunnerModal {...createDefaultProps()} />);
+			await renderBatchRunnerModal(<BatchRunnerModal {...createDefaultProps()} />);
 
 			// Should not show playbook button if loading failed
 			await waitFor(() => {
 				expect(screen.queryByText('Load Playbook')).not.toBeInTheDocument();
 			});
+			expect(consoleError).toHaveBeenCalledWith('Failed to load playbooks:', expect.any(Error));
 		});
 
 		it('handles git repo check error gracefully', async () => {
@@ -1053,7 +1220,7 @@ describe('BatchRunnerModal', () => {
 				new Error('Failed')
 			);
 
-			render(<BatchRunnerModal {...createDefaultProps()} />);
+			await renderBatchRunnerModal(<BatchRunnerModal {...createDefaultProps()} />);
 
 			// Should not crash and should not show worktree section
 			await waitFor(() => {
@@ -1065,7 +1232,7 @@ describe('BatchRunnerModal', () => {
 			const props = createDefaultProps();
 			props.allDocuments = ['doc<script>', "doc'quote", 'doc"double'];
 			props.currentDocument = 'doc<script>';
-			render(<BatchRunnerModal {...props} />);
+			await renderBatchRunnerModal(<BatchRunnerModal {...props} />);
 
 			expect(screen.getByText('doc<script>.md')).toBeInTheDocument();
 		});
@@ -1074,7 +1241,7 @@ describe('BatchRunnerModal', () => {
 			const props = createDefaultProps();
 			props.allDocuments = ['文档', 'документ', '📄doc'];
 			props.currentDocument = '文档';
-			render(<BatchRunnerModal {...props} />);
+			await renderBatchRunnerModal(<BatchRunnerModal {...props} />);
 
 			expect(screen.getByText('文档.md')).toBeInTheDocument();
 		});
@@ -1083,7 +1250,7 @@ describe('BatchRunnerModal', () => {
 			const props = createDefaultProps();
 			props.lastModifiedAt = Date.now() - 3600000; // 1 hour ago
 			props.initialPrompt = 'Custom prompt';
-			render(<BatchRunnerModal {...props} />);
+			await renderBatchRunnerModal(<BatchRunnerModal {...props} />);
 
 			expect(screen.getByText(/Last modified/)).toBeInTheDocument();
 		});
@@ -1091,7 +1258,7 @@ describe('BatchRunnerModal', () => {
 
 	describe('Keyboard Navigation', () => {
 		it('focuses textarea on mount', async () => {
-			render(<BatchRunnerModal {...createDefaultProps()} />);
+			await renderBatchRunnerModal(<BatchRunnerModal {...createDefaultProps()} />);
 
 			await waitFor(
 				() => {
@@ -1119,7 +1286,7 @@ describe('Helper Functions', () => {
 			// Test "today"
 			props.lastModifiedAt = Date.now();
 			props.initialPrompt = 'Custom';
-			const { rerender } = render(<BatchRunnerModal {...props} />);
+			const { rerender } = await renderBatchRunnerModal(<BatchRunnerModal {...props} />);
 			expect(screen.getByText(/today at/)).toBeInTheDocument();
 
 			// Test "yesterday"
@@ -1210,7 +1377,7 @@ describe('Agent Prompt Validation in UI', () => {
 		const props = createDefaultProps();
 		props.initialPrompt = '';
 		// Override currentDocument to have tasks (so it's not disabled for other reasons)
-		render(<BatchRunnerModal {...props} />);
+		await renderBatchRunnerModal(<BatchRunnerModal {...props} />);
 
 		// Clear the prompt textarea
 		const textarea = screen.getByPlaceholderText('Enter the system prompt for auto-run...');
@@ -1224,7 +1391,7 @@ describe('Agent Prompt Validation in UI', () => {
 
 	it('disables Go button when prompt has no task references', async () => {
 		const props = createDefaultProps();
-		render(<BatchRunnerModal {...props} />);
+		await renderBatchRunnerModal(<BatchRunnerModal {...props} />);
 
 		// Set prompt to something without task references
 		const textarea = screen.getByPlaceholderText('Enter the system prompt for auto-run...');
@@ -1238,7 +1405,7 @@ describe('Agent Prompt Validation in UI', () => {
 
 	it('shows empty prompt warning when prompt is cleared', async () => {
 		const props = createDefaultProps();
-		render(<BatchRunnerModal {...props} />);
+		await renderBatchRunnerModal(<BatchRunnerModal {...props} />);
 
 		const textarea = screen.getByPlaceholderText('Enter the system prompt for auto-run...');
 		fireEvent.change(textarea, { target: { value: '' } });
@@ -1250,7 +1417,7 @@ describe('Agent Prompt Validation in UI', () => {
 
 	it('shows task reference warning when prompt lacks task references', async () => {
 		const props = createDefaultProps();
-		render(<BatchRunnerModal {...props} />);
+		await renderBatchRunnerModal(<BatchRunnerModal {...props} />);
 
 		const textarea = screen.getByPlaceholderText('Enter the system prompt for auto-run...');
 		fireEvent.change(textarea, { target: { value: 'Just do some coding please.' } });
@@ -1262,7 +1429,7 @@ describe('Agent Prompt Validation in UI', () => {
 
 	it('enables Go button when prompt has valid task references', async () => {
 		const props = createDefaultProps();
-		render(<BatchRunnerModal {...props} />);
+		await renderBatchRunnerModal(<BatchRunnerModal {...props} />);
 
 		// Wait for task counts to load
 		await waitFor(() => {
@@ -1277,7 +1444,7 @@ describe('Agent Prompt Validation in UI', () => {
 
 describe('Document Selector Modal Additional Controls', () => {
 	it('closes document selector when Cancel button in footer is clicked', async () => {
-		render(<BatchRunnerModal {...createDefaultProps()} />);
+		await renderBatchRunnerModal(<BatchRunnerModal {...createDefaultProps()} />);
 
 		// Open document selector
 		fireEvent.click(screen.getByText('Add Docs'));
@@ -1294,7 +1461,7 @@ describe('Document Selector Modal Additional Controls', () => {
 	});
 
 	it('does not close document selector when clicking on inner modal content', async () => {
-		render(<BatchRunnerModal {...createDefaultProps()} />);
+		await renderBatchRunnerModal(<BatchRunnerModal {...createDefaultProps()} />);
 
 		// Open document selector
 		fireEvent.click(screen.getByText('Add Docs'));
@@ -1315,7 +1482,7 @@ describe('Document Selector Modal Additional Controls', () => {
 describe('Loop Mode Additional Controls', () => {
 	it('switches to infinite mode when ∞ is clicked', async () => {
 		const props = createDefaultProps();
-		render(<BatchRunnerModal {...props} />);
+		await renderBatchRunnerModal(<BatchRunnerModal {...props} />);
 
 		// Add another document to show loop controls
 		fireEvent.click(screen.getByText('Add Docs'));
@@ -1341,7 +1508,8 @@ describe('Loop Mode Additional Controls', () => {
 
 	it('includes maxLoops in config when set', async () => {
 		const props = createDefaultProps();
-		render(<BatchRunnerModal {...props} />);
+		const consoleLog = mockBatchRunnerConsoleLog();
+		await renderBatchRunnerModal(<BatchRunnerModal {...props} />);
 
 		// Add another document
 		fireEvent.click(screen.getByText('Add Docs'));
@@ -1359,7 +1527,9 @@ describe('Loop Mode Additional Controls', () => {
 
 		// Wait for task counts to load (total shows combined count: 10 tasks from 2 docs)
 		await waitFor(() => expect(screen.getByText('10')).toBeInTheDocument());
-		fireEvent.click(screen.getByRole('button', { name: /Go/ }));
+		await act(async () => {
+			fireEvent.click(screen.getByRole('button', { name: /Go/ }));
+		});
 
 		expect(props.onGo).toHaveBeenCalledWith(
 			expect.objectContaining({
@@ -1367,11 +1537,16 @@ describe('Loop Mode Additional Controls', () => {
 				maxLoops: 15,
 			})
 		);
+		expect(consoleLog).toHaveBeenCalledWith(
+			'[BatchRunnerModal] handleGo - calling onGo with config:',
+			expect.any(Object)
+		);
 	});
 
 	it('sets maxLoops to null in config when infinite mode', async () => {
 		const props = createDefaultProps();
-		render(<BatchRunnerModal {...props} />);
+		const consoleLog = mockBatchRunnerConsoleLog();
+		await renderBatchRunnerModal(<BatchRunnerModal {...props} />);
 
 		// Add another document
 		fireEvent.click(screen.getByText('Add Docs'));
@@ -1384,13 +1559,19 @@ describe('Loop Mode Additional Controls', () => {
 
 		// Wait for task counts to load (total shows combined count: 10 tasks from 2 docs)
 		await waitFor(() => expect(screen.getByText('10')).toBeInTheDocument());
-		fireEvent.click(screen.getByRole('button', { name: /Go/ }));
+		await act(async () => {
+			fireEvent.click(screen.getByRole('button', { name: /Go/ }));
+		});
 
 		expect(props.onGo).toHaveBeenCalledWith(
 			expect.objectContaining({
 				loopEnabled: true,
 				maxLoops: null,
 			})
+		);
+		expect(consoleLog).toHaveBeenCalledWith(
+			'[BatchRunnerModal] handleGo - calling onGo with config:',
+			expect.any(Object)
 		);
 	});
 });
@@ -1435,7 +1616,7 @@ describe.skip('Playbook with Worktree Settings', () => {
 			import: vi.fn(),
 		};
 
-		render(<BatchRunnerModal {...createDefaultProps()} />);
+		await renderBatchRunnerModal(<BatchRunnerModal {...createDefaultProps()} />);
 
 		// Wait for playbooks to load
 		await waitFor(() => screen.getByText('Load Playbook'));
@@ -1461,7 +1642,7 @@ describe.skip('Playbook with Worktree Settings', () => {
 		};
 
 		const props = createDefaultProps();
-		render(<BatchRunnerModal {...props} />);
+		await renderBatchRunnerModal(<BatchRunnerModal {...props} />);
 
 		// First enable worktree manually
 		await waitFor(() => {
@@ -1501,7 +1682,7 @@ describe('Playbook Update Functionality', () => {
 			import: vi.fn(),
 		};
 
-		render(<BatchRunnerModal {...createDefaultProps()} />);
+		await renderBatchRunnerModal(<BatchRunnerModal {...createDefaultProps()} />);
 
 		// Load playbook
 		await waitFor(() => screen.getByText('Load Playbook'));
@@ -1546,7 +1727,7 @@ describe('Playbook Update Functionality', () => {
 			import: vi.fn(),
 		};
 
-		render(<BatchRunnerModal {...createDefaultProps()} />);
+		await renderBatchRunnerModal(<BatchRunnerModal {...createDefaultProps()} />);
 
 		// Load playbook
 		await waitFor(() => screen.getByText('Load Playbook'));
@@ -1580,7 +1761,7 @@ describe('Discard Changes Functionality', () => {
 			import: vi.fn(),
 		};
 
-		render(<BatchRunnerModal {...createDefaultProps()} />);
+		await renderBatchRunnerModal(<BatchRunnerModal {...createDefaultProps()} />);
 
 		// Load playbook
 		await waitFor(() => screen.getByText('Load Playbook'));
@@ -1622,7 +1803,7 @@ describe('Delete Playbook Edge Cases', () => {
 			import: vi.fn(),
 		};
 
-		render(<BatchRunnerModal {...createDefaultProps()} />);
+		await renderBatchRunnerModal(<BatchRunnerModal {...createDefaultProps()} />);
 
 		// Load the playbook first
 		await waitFor(() => screen.getByText('Load Playbook'));
@@ -1666,7 +1847,7 @@ describe('Delete Playbook Edge Cases', () => {
 			import: vi.fn(),
 		};
 
-		render(<BatchRunnerModal {...createDefaultProps()} />);
+		await renderBatchRunnerModal(<BatchRunnerModal {...createDefaultProps()} />);
 
 		await waitFor(() => screen.getByText('Load Playbook'));
 		fireEvent.click(screen.getByRole('button', { name: 'Load Playbook' }));
@@ -1694,7 +1875,7 @@ describe('Delete Playbook Edge Cases', () => {
 			import: vi.fn(),
 		};
 
-		render(<BatchRunnerModal {...createDefaultProps()} />);
+		await renderBatchRunnerModal(<BatchRunnerModal {...createDefaultProps()} />);
 
 		await waitFor(() => screen.getByText('Load Playbook'));
 		fireEvent.click(screen.getByRole('button', { name: 'Load Playbook' }));
@@ -1731,7 +1912,7 @@ describe('Export Playbook Edge Cases', () => {
 			import: vi.fn(),
 		};
 
-		render(<BatchRunnerModal {...createDefaultProps()} />);
+		await renderBatchRunnerModal(<BatchRunnerModal {...createDefaultProps()} />);
 
 		await waitFor(() => screen.getByText('Load Playbook'));
 		fireEvent.click(screen.getByRole('button', { name: 'Load Playbook' }));
@@ -1760,7 +1941,7 @@ describe('Export Playbook Edge Cases', () => {
 			import: vi.fn(),
 		};
 
-		render(<BatchRunnerModal {...createDefaultProps()} />);
+		await renderBatchRunnerModal(<BatchRunnerModal {...createDefaultProps()} />);
 
 		await waitFor(() => screen.getByText('Load Playbook'));
 		fireEvent.click(screen.getByRole('button', { name: 'Load Playbook' }));
@@ -1792,7 +1973,7 @@ describe('Export Playbook Edge Cases', () => {
 			import: vi.fn(),
 		};
 
-		render(<BatchRunnerModal {...createDefaultProps()} />);
+		await renderBatchRunnerModal(<BatchRunnerModal {...createDefaultProps()} />);
 
 		await waitFor(() => screen.getByText('Load Playbook'));
 		fireEvent.click(screen.getByRole('button', { name: 'Load Playbook' }));
@@ -1823,7 +2004,7 @@ describe('Import Playbook Edge Cases', () => {
 			import: mockImport,
 		};
 
-		render(<BatchRunnerModal {...createDefaultProps()} />);
+		await renderBatchRunnerModal(<BatchRunnerModal {...createDefaultProps()} />);
 
 		await waitFor(() => screen.getByText('Load Playbook'));
 		fireEvent.click(screen.getByRole('button', { name: 'Load Playbook' }));
@@ -1850,7 +2031,7 @@ describe('Import Playbook Edge Cases', () => {
 			import: mockImport,
 		};
 
-		render(<BatchRunnerModal {...createDefaultProps()} />);
+		await renderBatchRunnerModal(<BatchRunnerModal {...createDefaultProps()} />);
 
 		await waitFor(() => screen.getByText('Load Playbook'));
 		fireEvent.click(screen.getByRole('button', { name: 'Load Playbook' }));
@@ -1880,7 +2061,7 @@ describe('Import Playbook Edge Cases', () => {
 			import: mockImport,
 		};
 
-		render(<BatchRunnerModal {...createDefaultProps()} />);
+		await renderBatchRunnerModal(<BatchRunnerModal {...createDefaultProps()} />);
 
 		await waitFor(() => screen.getByText('Load Playbook'));
 		fireEvent.click(screen.getByRole('button', { name: 'Load Playbook' }));
@@ -1907,7 +2088,7 @@ describe('Click Outside Dropdown Handlers', () => {
 			import: vi.fn(),
 		};
 
-		render(<BatchRunnerModal {...createDefaultProps()} />);
+		await renderBatchRunnerModal(<BatchRunnerModal {...createDefaultProps()} />);
 
 		await waitFor(() => screen.getByText('Load Playbook'));
 		fireEvent.click(screen.getByRole('button', { name: 'Load Playbook' }));
@@ -1940,7 +2121,7 @@ describe('Click Outside Dropdown Handlers', () => {
 			.fn()
 			.mockResolvedValue({ success: true, root: '/path/to/project' });
 
-		render(<BatchRunnerModal {...createDefaultProps()} />);
+		await renderBatchRunnerModal(<BatchRunnerModal {...createDefaultProps()} />);
 
 		await waitFor(() => {
 			expect(screen.getByText('Enable Worktree')).toBeInTheDocument();
@@ -1992,7 +2173,7 @@ describe('Save as New Playbook', () => {
 			import: vi.fn(),
 		};
 
-		render(<BatchRunnerModal {...createDefaultProps()} />);
+		await renderBatchRunnerModal(<BatchRunnerModal {...createDefaultProps()} />);
 
 		// Load playbook
 		await waitFor(() => screen.getByText('Load Playbook'));
@@ -2021,7 +2202,7 @@ describe('Save as New Playbook', () => {
 			import: vi.fn(),
 		};
 
-		render(<BatchRunnerModal {...createDefaultProps()} />);
+		await renderBatchRunnerModal(<BatchRunnerModal {...createDefaultProps()} />);
 
 		// Load playbook and modify
 		await waitFor(() => screen.getByText('Load Playbook'));
@@ -2058,7 +2239,7 @@ describe.skip('Worktree Browse Button', () => {
 			'/selected/path'
 		);
 
-		render(<BatchRunnerModal {...createDefaultProps()} />);
+		await renderBatchRunnerModal(<BatchRunnerModal {...createDefaultProps()} />);
 
 		await waitFor(() => {
 			expect(screen.getByText('Enable Worktree')).toBeInTheDocument();
@@ -2089,7 +2270,7 @@ describe.skip('Worktree Browse Button', () => {
 			.mockResolvedValue({ success: true, root: '/path/to/project' });
 		(window.maestro.dialog.selectFolder as ReturnType<typeof vi.fn>).mockResolvedValue(null);
 
-		render(<BatchRunnerModal {...createDefaultProps()} />);
+		await renderBatchRunnerModal(<BatchRunnerModal {...createDefaultProps()} />);
 
 		await waitFor(() => {
 			expect(screen.getByText('Enable Worktree')).toBeInTheDocument();
@@ -2135,7 +2316,7 @@ describe.skip('Worktree Validation Edge Cases', () => {
 			stdout: 'M modified-file.ts\n',
 		});
 
-		render(<BatchRunnerModal {...createDefaultProps()} />);
+		await renderBatchRunnerModal(<BatchRunnerModal {...createDefaultProps()} />);
 
 		await waitFor(() => {
 			expect(screen.getByText('Enable Worktree')).toBeInTheDocument();
@@ -2174,7 +2355,7 @@ describe.skip('Worktree Validation Edge Cases', () => {
 			root: '/path/to/project',
 		});
 
-		render(<BatchRunnerModal {...createDefaultProps()} />);
+		await renderBatchRunnerModal(<BatchRunnerModal {...createDefaultProps()} />);
 
 		await waitFor(() => {
 			expect(screen.getByText('Enable Worktree')).toBeInTheDocument();
@@ -2203,6 +2384,10 @@ describe.skip('Worktree Validation Edge Cases', () => {
 });
 
 describe('Document Selector Refresh', () => {
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
 	it('shows added documents notification after refresh', async () => {
 		vi.useFakeTimers();
 		const props = createDefaultProps();
@@ -2213,7 +2398,7 @@ describe('Document Selector Refresh', () => {
 			docCount = 4;
 		});
 
-		const { rerender } = render(<BatchRunnerModal {...props} />);
+		const { rerender } = await renderBatchRunnerModal(<BatchRunnerModal {...props} />);
 
 		// Open document selector
 		fireEvent.click(screen.getByText('Add Docs'));
@@ -2250,7 +2435,7 @@ describe('Document Selector Refresh', () => {
 		props.allDocuments = ['test-doc', 'doc1', 'doc2', 'doc3'];
 		props.onRefreshDocuments = vi.fn();
 
-		const { rerender } = render(<BatchRunnerModal {...props} />);
+		const { rerender } = await renderBatchRunnerModal(<BatchRunnerModal {...props} />);
 
 		// Open document selector
 		fireEvent.click(screen.getByText('Add Docs'));
@@ -2265,6 +2450,10 @@ describe('Document Selector Refresh', () => {
 
 		// Rerender with fewer documents
 		rerender(<BatchRunnerModal {...props} allDocuments={['test-doc', 'doc1']} />);
+		await act(async () => {
+			await Promise.resolve();
+			await Promise.resolve();
+		});
 
 		await act(async () => {
 			vi.advanceTimersByTime(500);
@@ -2282,7 +2471,7 @@ describe('countUncheckedTasks helper', () => {
 	it('correctly counts unchecked tasks (tested via mock)', async () => {
 		const props = createDefaultProps();
 		// getDocumentTaskCount mock returns 5 by default
-		render(<BatchRunnerModal {...props} />);
+		await renderBatchRunnerModal(<BatchRunnerModal {...props} />);
 
 		await waitFor(() => {
 			expect(screen.getByText('5')).toBeInTheDocument();
@@ -2308,7 +2497,7 @@ describe.skip('GitHub CLI Link', () => {
 			.fn()
 			.mockResolvedValue({ success: true, root: '/path/to/project' });
 
-		render(<BatchRunnerModal {...createDefaultProps()} />);
+		await renderBatchRunnerModal(<BatchRunnerModal {...createDefaultProps()} />);
 
 		await waitFor(() => {
 			expect(screen.getByText('Git Worktree')).toBeInTheDocument();
@@ -2328,6 +2517,58 @@ describe.skip('GitHub CLI Link', () => {
 });
 
 describe('Escape Handler Priority', () => {
+	it('registered escape handler closes delete modal before closing main modal', async () => {
+		const mockPlaybook = createMockPlaybook();
+		const mockPlaybooks: Playbook[] = [mockPlaybook];
+		(window.maestro as Record<string, unknown>).playbooks = {
+			list: vi.fn().mockResolvedValue({ success: true, playbooks: mockPlaybooks }),
+			create: vi.fn(),
+			update: vi.fn(),
+			delete: vi.fn(),
+			export: vi.fn(),
+			import: vi.fn(),
+		};
+
+		const props = createDefaultProps();
+		await renderBatchRunnerModal(<BatchRunnerModal {...props} />);
+
+		await waitFor(() => screen.getByText('Load Playbook'));
+		fireEvent.click(screen.getByRole('button', { name: 'Load Playbook' }));
+		fireEvent.click(screen.getByTitle('Delete playbook'));
+		expect(screen.getByTestId('playbook-delete-modal')).toBeInTheDocument();
+
+		const latestRegisterCall =
+			mockRegisterLayer.mock.calls[mockRegisterLayer.mock.calls.length - 1][0];
+		await act(async () => {
+			latestRegisterCall.onEscape();
+		});
+
+		expect(screen.queryByTestId('playbook-delete-modal')).not.toBeInTheDocument();
+		expect(props.onClose).not.toHaveBeenCalled();
+	});
+
+	it('registered escape handler closes save playbook modal before closing main modal', async () => {
+		const props = createDefaultProps();
+		await renderBatchRunnerModal(<BatchRunnerModal {...props} />);
+
+		fireEvent.click(screen.getByText('Add Docs'));
+		fireEvent.click(screen.getByRole('button', { name: /doc1\.md/ }));
+		fireEvent.click(screen.getByRole('button', { name: /Add \d+ file/ }));
+
+		await waitFor(() => screen.getByText('Save as Playbook'));
+		fireEvent.click(screen.getByRole('button', { name: 'Save as Playbook' }));
+		expect(screen.getByTestId('playbook-name-modal')).toBeInTheDocument();
+
+		const latestRegisterCall =
+			mockRegisterLayer.mock.calls[mockRegisterLayer.mock.calls.length - 1][0];
+		await act(async () => {
+			latestRegisterCall.onEscape();
+		});
+
+		expect(screen.queryByTestId('playbook-name-modal')).not.toBeInTheDocument();
+		expect(props.onClose).not.toHaveBeenCalled();
+	});
+
 	it('closes delete modal on escape before closing main modal', async () => {
 		const mockPlaybook = createMockPlaybook();
 		const mockPlaybooks: Playbook[] = [mockPlaybook];
@@ -2341,7 +2582,7 @@ describe('Escape Handler Priority', () => {
 		};
 
 		const props = createDefaultProps();
-		render(<BatchRunnerModal {...props} />);
+		await renderBatchRunnerModal(<BatchRunnerModal {...props} />);
 
 		await waitFor(() => screen.getByText('Load Playbook'));
 		fireEvent.click(screen.getByRole('button', { name: 'Load Playbook' }));
@@ -2356,7 +2597,9 @@ describe('Escape Handler Priority', () => {
 		const lastUpdateCall =
 			mockUpdateLayerHandler.mock.calls[mockUpdateLayerHandler.mock.calls.length - 1];
 		if (lastUpdateCall && lastUpdateCall[1]) {
-			lastUpdateCall[1]();
+			await act(async () => {
+				lastUpdateCall[1]();
+			});
 		}
 
 		// Delete modal should close, but main modal should remain
@@ -2370,7 +2613,7 @@ describe('Escape Handler Priority', () => {
 
 	it('closes save playbook modal on escape', async () => {
 		const props = createDefaultProps();
-		render(<BatchRunnerModal {...props} />);
+		await renderBatchRunnerModal(<BatchRunnerModal {...props} />);
 
 		// Add documents to show Save as Playbook button
 		fireEvent.click(screen.getByText('Add Docs'));
@@ -2386,7 +2629,9 @@ describe('Escape Handler Priority', () => {
 		const lastUpdateCall =
 			mockUpdateLayerHandler.mock.calls[mockUpdateLayerHandler.mock.calls.length - 1];
 		if (lastUpdateCall && lastUpdateCall[1]) {
-			lastUpdateCall[1]();
+			await act(async () => {
+				lastUpdateCall[1]();
+			});
 		}
 
 		await waitFor(() => {
@@ -2398,10 +2643,51 @@ describe('Escape Handler Priority', () => {
 describe('Worktree Loading State', () => {
 	afterEach(async () => {
 		const { useSessionStore } = await import('../../../renderer/stores/sessionStore');
-		useSessionStore.setState({ sessions: [], activeSessionId: '' });
+		const { useModalStore } = await import('../../../renderer/stores/modalStore');
+		await act(async () => {
+			useSessionStore.setState({ sessions: [], activeSessionId: '' });
+			useModalStore.getState().closeAll();
+		});
+	});
+
+	it('opens worktree configuration from the unconfigured worktree section', async () => {
+		const { useSessionStore } = await import('../../../renderer/stores/sessionStore');
+		const { useModalStore } = await import('../../../renderer/stores/modalStore');
+		const sessionWithoutWorktreeConfig = {
+			id: 'session-123',
+			name: 'Test Agent',
+			toolType: 'claude-code',
+			cwd: '/project',
+			fullPath: '/project',
+			projectRoot: '/project',
+			state: 'idle',
+			tabs: [],
+			activeTabIndex: 0,
+			isGitRepo: true,
+			isLive: false,
+			changedFiles: [],
+			fileTree: [],
+			fileExplorerExpanded: [],
+			fileExplorerScrollPos: 0,
+		};
+
+		await act(async () => {
+			useModalStore.getState().closeAll();
+			useSessionStore.setState({
+				sessions: [sessionWithoutWorktreeConfig as never],
+				activeSessionId: 'session-123',
+			});
+		});
+
+		await renderBatchRunnerModal(<BatchRunnerModal {...createDefaultProps()} />);
+
+		fireEvent.click(screen.getByRole('button', { name: 'Configure →' }));
+
+		expect(useModalStore.getState().isOpen('worktreeConfig')).toBe(true);
 	});
 
 	it('shows Preparing Worktree text when onGo is async and worktree mode is active', async () => {
+		const consoleLog = mockBatchRunnerConsoleLog();
 		// Setup session store with a session that has worktreeConfig
 		const { useSessionStore } = await import('../../../renderer/stores/sessionStore');
 		const sessionWithWorktreeConfig = {
@@ -2426,9 +2712,11 @@ describe('Worktree Loading State', () => {
 			},
 		};
 
-		useSessionStore.setState({
-			sessions: [sessionWithWorktreeConfig as never],
-			activeSessionId: 'session-123',
+		await act(async () => {
+			useSessionStore.setState({
+				sessions: [sessionWithWorktreeConfig as never],
+				activeSessionId: 'session-123',
+			});
 		});
 
 		// Mock scanWorktreeDirectory
@@ -2444,7 +2732,7 @@ describe('Worktree Loading State', () => {
 		const props = createDefaultProps();
 		props.onGo = vi.fn().mockReturnValue(onGoPromise);
 
-		render(<BatchRunnerModal {...props} />);
+		await renderBatchRunnerModal(<BatchRunnerModal {...props} />);
 
 		// Wait for tasks to load
 		await waitFor(() => {
@@ -2453,7 +2741,9 @@ describe('Worktree Loading State', () => {
 
 		// Enable worktree toggle (should be visible since session has worktreeConfig)
 		const toggleButton = screen.getByText('Dispatch to a separate worktree');
-		fireEvent.click(toggleButton);
+		await act(async () => {
+			fireEvent.click(toggleButton);
+		});
 
 		// The select should now be visible with "Create New Worktree" as default
 		await waitFor(() => {
@@ -2478,26 +2768,38 @@ describe('Worktree Loading State', () => {
 		// Resolve the promise to complete the async operation
 		await act(async () => {
 			resolveOnGo!();
+			await onGoPromise;
 		});
 
 		// onGo should have been called
 		expect(props.onGo).toHaveBeenCalled();
+		expect(consoleLog).toHaveBeenCalledWith(
+			'[BatchRunnerModal] handleGo - calling onGo with config:',
+			expect.any(Object)
+		);
 	});
 
 	it('does not show loading state for non-worktree Go clicks', async () => {
 		const props = createDefaultProps();
+		const consoleLog = mockBatchRunnerConsoleLog();
 		props.onGo = vi.fn();
 
-		render(<BatchRunnerModal {...props} />);
+		await renderBatchRunnerModal(<BatchRunnerModal {...props} />);
 
 		await waitFor(() => {
 			expect(screen.getByText('5')).toBeInTheDocument();
 		});
 
 		// Click Go without worktree enabled — should call onGo and onClose immediately
-		fireEvent.click(screen.getByRole('button', { name: /Go/ }));
+		await act(async () => {
+			fireEvent.click(screen.getByRole('button', { name: /Go/ }));
+		});
 
 		expect(props.onGo).toHaveBeenCalled();
+		expect(consoleLog).toHaveBeenCalledWith(
+			'[BatchRunnerModal] handleGo - calling onGo with config:',
+			expect.any(Object)
+		);
 		expect(props.onClose).toHaveBeenCalled();
 
 		// Should NOT show "Preparing Worktree..." text

@@ -246,8 +246,7 @@ function PlaybookDetailView({
 	// OPT+Up/Down: page up/down, CMD+Up/Down: home/end
 	useEffect(() => {
 		const handleKeyDown = (e: KeyboardEvent) => {
-			const scrollContainer = previewScrollRef.current;
-			if (!scrollContainer) return;
+			const scrollContainer = previewScrollRef.current!;
 
 			// Don't handle if typing in an input
 			if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
@@ -882,8 +881,6 @@ export function MarketplaceModal({
 	// Handle selecting a document in detail view
 	const handleSelectDocument = useCallback(
 		async (filename: string) => {
-			if (!selectedPlaybook) return;
-
 			if (filename === '') {
 				// Switch back to README
 				setSelectedDocFilename(null);
@@ -893,7 +890,7 @@ export function MarketplaceModal({
 
 			setSelectedDocFilename(filename);
 			setIsLoadingDocument(true);
-			const content = await fetchDocument(selectedPlaybook.path, filename);
+			const content = await fetchDocument(selectedPlaybook!.path, filename);
 			setDocumentContent(content);
 			setIsLoadingDocument(false);
 		},
@@ -902,10 +899,8 @@ export function MarketplaceModal({
 
 	// Handle import action (SSH-aware - imports to remote host if sshRemoteId provided)
 	const handleImport = useCallback(async () => {
-		if (!selectedPlaybook || !targetFolderName.trim()) return;
-
 		const result = await importPlaybook(
-			selectedPlaybook,
+			selectedPlaybook!,
 			targetFolderName,
 			autoRunFolderPath,
 			sessionId,
@@ -930,15 +925,13 @@ export function MarketplaceModal({
 		onClose,
 	]);
 
-	// Handle browse folder action (disabled for remote sessions)
+	// Handle browse folder action
 	const handleBrowseFolder = useCallback(async () => {
-		// Browse is only available for local sessions
-		if (isRemoteSession) return;
 		const folder = await window.maestro.dialog.selectFolder();
 		if (folder) {
 			setTargetFolderName(folder);
 		}
-	}, [isRemoteSession]);
+	}, []);
 
 	// Cmd+F to focus search input
 	useEffect(() => {

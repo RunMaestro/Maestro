@@ -247,6 +247,27 @@ describe('useTabExportHandlers', () => {
 			});
 		});
 
+		it('shows a warning toast when formatted context is blank', () => {
+			mockFormatLogsForClipboard.mockReturnValueOnce('   ');
+
+			const tab = createMockTab({ id: 'tab-1' });
+			const session = createMockSession({ aiTabs: [tab] });
+			const deps = createDeps({ sessionsRef: { current: [session] } });
+
+			const { result } = renderHook(() => useTabExportHandlers(deps));
+
+			act(() => {
+				result.current.handleCopyContext('tab-1');
+			});
+
+			expect(mockClipboardWriteText).not.toHaveBeenCalled();
+			expect(mockNotifyToast).toHaveBeenCalledWith({
+				type: 'warning',
+				title: 'Nothing to Copy',
+				message: 'No user or assistant messages to copy.',
+			});
+		});
+
 		it('shows an error toast when clipboard write fails', async () => {
 			mockClipboardWriteText.mockRejectedValueOnce(new Error('Permission denied'));
 			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -430,6 +451,24 @@ describe('useTabExportHandlers', () => {
 			});
 		});
 
+		it('does nothing when there is no current theme', async () => {
+			const tab = createMockTab({ id: 'tab-1' });
+			const session = createMockSession({ aiTabs: [tab] });
+			const deps = createDeps({
+				sessionsRef: { current: [session] },
+				themeRef: { current: null },
+			});
+
+			const { result } = renderHook(() => useTabExportHandlers(deps));
+
+			await act(async () => {
+				await result.current.handleExportHtml('tab-1');
+			});
+
+			expect(mockDownloadTabExport).not.toHaveBeenCalled();
+			expect(mockNotifyToast).not.toHaveBeenCalled();
+		});
+
 		it('shows an error toast when downloadTabExport throws', async () => {
 			mockDownloadTabExport.mockRejectedValueOnce(new Error('Write failed'));
 			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -589,6 +628,32 @@ describe('useTabExportHandlers', () => {
 			});
 
 			expect(mockFormatLogsForClipboard).toHaveBeenCalledWith(logs);
+		});
+
+		it('shows a warning toast when formatted gist content is blank', () => {
+			mockFormatLogsForClipboard.mockReturnValueOnce('\n\t');
+
+			const setGistPublishModalOpen = vi.fn();
+			const tab = createMockTab({ id: 'tab-1' });
+			const session = createMockSession({ aiTabs: [tab] });
+			const deps = createDeps({
+				sessionsRef: { current: [session] },
+				setGistPublishModalOpen,
+			});
+
+			const { result } = renderHook(() => useTabExportHandlers(deps));
+
+			act(() => {
+				result.current.handlePublishTabGist('tab-1');
+			});
+
+			expect(mockSetTabGistContent).not.toHaveBeenCalled();
+			expect(setGistPublishModalOpen).not.toHaveBeenCalled();
+			expect(mockNotifyToast).toHaveBeenCalledWith({
+				type: 'warning',
+				title: 'Nothing to Publish',
+				message: 'No user or assistant messages to publish.',
+			});
 		});
 
 		it('sanitizes tab name by replacing special characters with underscores', () => {

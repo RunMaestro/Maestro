@@ -357,17 +357,18 @@ async function spawnJsonLineAgent(
 
 		// Build args from agent definition
 		const args: string[] = [];
+		// Codex requires explicit working directory arg (other agents use process cwd).
+		// Must come before batchModePrefix because Codex treats `-C` as a root-level
+		// global flag that's silently ignored if it appears after the `exec` subcommand (#959).
+		if (toolType === 'codex' && def?.workingDirArgs) {
+			args.push(...def.workingDirArgs(cwd));
+		}
 		if (def?.batchModePrefix) args.push(...def.batchModePrefix);
 		if (def?.batchModeArgs) args.push(...def.batchModeArgs);
 		if (def?.jsonOutputArgs) args.push(...def.jsonOutputArgs);
 
 		if (agentSessionId && def?.resumeArgs) {
 			args.push(...def.resumeArgs(agentSessionId));
-		}
-
-		// Codex requires explicit working directory arg (other agents use process cwd)
-		if (toolType === 'codex' && def?.workingDirArgs) {
-			args.push(...def.workingDirArgs(cwd));
 		}
 
 		// Add prompt (with or without '--' separator depending on agent)

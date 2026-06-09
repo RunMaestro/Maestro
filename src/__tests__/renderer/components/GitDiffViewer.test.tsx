@@ -295,7 +295,7 @@ describe('GitDiffViewer', () => {
 			expect(mockUnregisterLayer).toHaveBeenCalledWith('mock-layer-id');
 		});
 
-		it('updates layer handler after mount', () => {
+		it('does not need a layer handler update after mount', () => {
 			const onClose = vi.fn();
 			mockParseGitDiff.mockReturnValue([createMockParsedFile()]);
 
@@ -308,7 +308,7 @@ describe('GitDiffViewer', () => {
 				/>
 			);
 
-			expect(mockUpdateLayerHandler).toHaveBeenCalledWith('mock-layer-id', expect.any(Function));
+			expect(mockUpdateLayerHandler).not.toHaveBeenCalled();
 		});
 
 		it('escape handler calls onClose', () => {
@@ -617,6 +617,29 @@ describe('GitDiffViewer', () => {
 			});
 
 			expect(screen.getByText('File 2 of 2')).toBeInTheDocument();
+		});
+
+		it('ignores unrelated modifier shortcuts', () => {
+			const onClose = vi.fn();
+			mockParseGitDiff.mockReturnValue([
+				createMockParsedFile({ oldPath: 'src/file1.ts', newPath: 'src/file1.ts' }),
+				createMockParsedFile({ oldPath: 'src/file2.ts', newPath: 'src/file2.ts' }),
+			]);
+
+			render(
+				<GitDiffViewer
+					diffText="mock diff"
+					cwd="/test/project"
+					theme={mockTheme}
+					onClose={onClose}
+				/>
+			);
+
+			act(() => {
+				fireEvent.keyDown(window, { key: 'P', metaKey: true });
+			});
+
+			expect(screen.getByText('File 1 of 2')).toBeInTheDocument();
 		});
 
 		it('cleans up keyboard listener on unmount', () => {
@@ -1072,6 +1095,101 @@ describe('GitDiffViewer', () => {
 
 			// May appear multiple times (tab + footer)
 			expect(screen.getAllByText('file-with-dashes.ts').length).toBeGreaterThanOrEqual(1);
+		});
+
+		it('uses oldPath and index fallbacks for tab labels when newPath is missing', () => {
+			const onClose = vi.fn();
+			mockParseGitDiff.mockReturnValue([
+				createMockParsedFile({
+					oldPath: 'src/old-only.ts',
+					newPath: '',
+				}),
+				createMockParsedFile({
+					oldPath: '',
+					newPath: '',
+				}),
+			]);
+
+			render(
+				<GitDiffViewer
+					diffText="mock diff"
+					cwd="/test/project"
+					theme={mockTheme}
+					onClose={onClose}
+				/>
+			);
+
+			expect(screen.getAllByText('old-only.ts').length).toBeGreaterThanOrEqual(1);
+			expect(screen.getByText('file-1')).toBeInTheDocument();
+
+			fireEvent.click(screen.getByText('file-1'));
+
+			expect(screen.getAllByText('file-1').length).toBeGreaterThanOrEqual(2);
+		});
+
+		it('keeps a valid active file when the parsed diff shrinks', () => {
+			const onClose = vi.fn();
+			mockParseGitDiff
+				.mockReturnValueOnce([
+					createMockParsedFile({ oldPath: 'src/file1.ts', newPath: 'src/file1.ts' }),
+					createMockParsedFile({ oldPath: 'src/file2.ts', newPath: 'src/file2.ts' }),
+				])
+				.mockReturnValueOnce([
+					createMockParsedFile({ oldPath: 'src/file1.ts', newPath: 'src/file1.ts' }),
+				]);
+
+			const { rerender } = render(
+				<GitDiffViewer
+					diffText="first diff"
+					cwd="/test/project"
+					theme={mockTheme}
+					onClose={onClose}
+				/>
+			);
+
+			fireEvent.click(screen.getByText('file2.ts'));
+			expect(screen.getByText('File 2 of 2')).toBeInTheDocument();
+
+			rerender(
+				<GitDiffViewer
+					diffText="second diff"
+					cwd="/test/project"
+					theme={mockTheme}
+					onClose={onClose}
+				/>
+			);
+
+			expect(screen.getByText('File 1 of 1')).toBeInTheDocument();
+			expect(screen.getAllByText('file1.ts').length).toBeGreaterThanOrEqual(1);
+		});
+
+		it('ignores tab shortcuts while empty so later diffs start on the first file', () => {
+			const onClose = vi.fn();
+			mockParseGitDiff
+				.mockReturnValueOnce([])
+				.mockReturnValueOnce([
+					createMockParsedFile({ oldPath: 'src/file1.ts', newPath: 'src/file1.ts' }),
+				]);
+
+			const { rerender } = render(
+				<GitDiffViewer diffText="" cwd="/test/project" theme={mockTheme} onClose={onClose} />
+			);
+
+			act(() => {
+				fireEvent.keyDown(window, { key: ']', metaKey: true });
+			});
+
+			rerender(
+				<GitDiffViewer
+					diffText="mock diff"
+					cwd="/test/project"
+					theme={mockTheme}
+					onClose={onClose}
+				/>
+			);
+
+			expect(screen.getByText('File 1 of 1')).toBeInTheDocument();
+			expect(screen.getAllByText('file1.ts').length).toBeGreaterThanOrEqual(1);
 		});
 	});
 

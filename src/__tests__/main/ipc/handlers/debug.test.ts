@@ -269,6 +269,30 @@ describe('debug IPC handlers', () => {
 			expect(result.error).toContain('Failed to create zip file');
 		});
 
+		it('should use fallback error when generateDebugPackage fails without details', async () => {
+			const mockFilePath = '/export/path/maestro-debug.zip';
+			const mockOutputDir = '/export/path';
+
+			vi.mocked(dialog.showSaveDialog).mockResolvedValue({
+				canceled: false,
+				filePath: mockFilePath,
+			});
+
+			vi.mocked(path.dirname).mockReturnValue(mockOutputDir);
+
+			vi.mocked(debugPackage.generateDebugPackage).mockResolvedValue({
+				success: false,
+				filesIncluded: [],
+				totalSizeBytes: 0,
+			});
+
+			const handler = handlers.get('debug:createPackage');
+			const result = await handler!({} as any);
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Failed to generate debug package');
+		});
+
 		it('should return error when generateDebugPackage throws', async () => {
 			const mockFilePath = '/export/path/maestro-debug.zip';
 			const mockOutputDir = '/export/path';

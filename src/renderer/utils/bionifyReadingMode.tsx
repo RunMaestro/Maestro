@@ -118,7 +118,7 @@ function normalizeBionifyConfig(
 	return {
 		enabled: config.enabled,
 		intensity: clamp(config.intensity ?? DEFAULT_BIONIFY_INTENSITY, 0.6, 1.5),
-		algorithm: config.algorithm?.trim() || DEFAULT_BIONIFY_ALGORITHM,
+		algorithm: config.algorithm ?? DEFAULT_BIONIFY_ALGORITHM,
 	};
 }
 
@@ -211,7 +211,7 @@ export function renderBionifyText(
 	let lastIndex = 0;
 
 	for (const match of content.matchAll(BIONIFY_WORD_PATTERN)) {
-		const index = match.index ?? 0;
+		const index = match.index as number;
 		const word = match[0];
 
 		if (index > lastIndex) {

@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { renderHook, waitFor } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import { useWorktreeValidation } from '../../../renderer/hooks';
 
 // Mock the window.maestro.git object
@@ -35,7 +35,10 @@ afterEach(() => {
 });
 
 // Helper to wait for debounce (500ms) + extra time for async operations
-const waitForDebounce = () => new Promise((resolve) => setTimeout(resolve, 600));
+const waitForDebounce = () =>
+	act(async () => {
+		await new Promise((resolve) => setTimeout(resolve, 600));
+	});
 
 describe('useWorktreeValidation', () => {
 	describe('initial state', () => {
@@ -160,6 +163,40 @@ describe('useWorktreeValidation', () => {
 			expect(result.current.validation.branchMismatch).toBe(false);
 			expect(result.current.validation.sameRepo).toBe(true);
 			expect(result.current.validation.currentBranch).toBe('feature-branch');
+		});
+
+		it('validates an existing directory that is not a worktree', async () => {
+			mockGit.worktreeInfo.mockResolvedValue({
+				success: true,
+				exists: true,
+				isWorktree: false,
+			});
+			mockGit.getRepoRoot.mockResolvedValue({
+				success: true,
+				root: '/main/repo',
+			});
+
+			const { result } = renderHook(() =>
+				useWorktreeValidation({
+					worktreePath: '/path/to/existing-directory',
+					branchName: 'feature-branch',
+					worktreeEnabled: true,
+					sessionCwd: '/main/repo',
+				})
+			);
+
+			await waitForDebounce();
+
+			await waitFor(() => {
+				expect(result.current.validation.checking).toBe(false);
+			});
+
+			expect(result.current.validation.exists).toBe(true);
+			expect(result.current.validation.isWorktree).toBe(false);
+			expect(result.current.validation.branchMismatch).toBe(false);
+			expect(result.current.validation.sameRepo).toBe(true);
+			expect(result.current.validation.error).toBeUndefined();
+			expect(mockGit.status).not.toHaveBeenCalled();
 		});
 	});
 

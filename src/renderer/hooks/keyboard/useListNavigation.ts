@@ -212,12 +212,10 @@ export function useListNavigation(options: UseListNavigationOptions): UseListNav
 	}, [listLength, wrap]);
 
 	const navigatePageDown = useCallback(() => {
-		if (listLength === 0) return;
 		setSelectedIndex((prev) => Math.min(prev + pageSize, listLength - 1));
 	}, [listLength, pageSize]);
 
 	const navigatePageUp = useCallback(() => {
-		if (listLength === 0) return;
 		setSelectedIndex((prev) => Math.max(prev - pageSize, 0));
 	}, [listLength, pageSize]);
 
@@ -226,7 +224,6 @@ export function useListNavigation(options: UseListNavigationOptions): UseListNav
 	}, []);
 
 	const navigateToEnd = useCallback(() => {
-		if (listLength === 0) return;
 		setSelectedIndex(listLength - 1);
 	}, [listLength]);
 

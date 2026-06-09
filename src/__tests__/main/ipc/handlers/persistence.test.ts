@@ -228,6 +228,19 @@ describe('persistence IPC handlers', () => {
 			expect(mockWebServer.broadcastThemeChange).toHaveBeenCalled();
 		});
 
+		it('should not broadcast theme changes when theme metadata is missing', async () => {
+			mockWebServer.getWebClientCount.mockReturnValue(3);
+			const { getThemeById } = await import('../../../../main/themes');
+			vi.mocked(getThemeById).mockReturnValueOnce(undefined as any);
+
+			const handler = handlers.get('settings:set');
+			const result = await handler!({} as any, 'activeThemeId', 'missing-theme');
+
+			expect(result).toBe(true);
+			expect(getThemeById).toHaveBeenCalledWith('missing-theme');
+			expect(mockWebServer.broadcastThemeChange).not.toHaveBeenCalled();
+		});
+
 		it('should not broadcast theme changes when no web clients connected', async () => {
 			mockWebServer.getWebClientCount.mockReturnValue(0);
 
@@ -298,6 +311,17 @@ describe('persistence IPC handlers', () => {
 			error.code = 'ENOSPC';
 			mockSettingsStore.set.mockImplementation(() => {
 				throw error;
+			});
+
+			const handler = handlers.get('settings:set');
+			const result = await handler!({} as any, 'fontSize', 16);
+
+			expect(result).toBe(false);
+		});
+
+		it('should return false and log message when settings write throws without code', async () => {
+			mockSettingsStore.set.mockImplementation(() => {
+				throw new Error('settings are read-only');
 			});
 
 			const handler = handlers.get('settings:set');
@@ -677,6 +701,17 @@ describe('persistence IPC handlers', () => {
 
 			const handler = handlers.get('sessions:setAll');
 			const result = await handler!({} as any, [{ id: 's1', name: 'S1', state: 'idle' }]);
+
+			expect(result).toBe(false);
+		});
+
+		it('should return false when groups write throws without code', async () => {
+			mockGroupsStore.set.mockImplementation(() => {
+				throw new Error('groups are read-only');
+			});
+
+			const handler = handlers.get('groups:setAll');
+			const result = await handler!({} as any, [{ id: 'g1', name: 'G1' }]);
 
 			expect(result).toBe(false);
 		});

@@ -72,13 +72,11 @@ export function ParticipantCard({
 	const agentSessionId = participant.agentSessionId;
 	const isPending = !agentSessionId;
 
-	const copySessionId = useCallback(async () => {
-		if (agentSessionId) {
-			await safeClipboardWrite(agentSessionId);
-			setCopied(true);
-			setTimeout(() => setCopied(false), 2000);
-		}
-	}, [agentSessionId]);
+	const copySessionId = useCallback(async (sessionId: string) => {
+		await safeClipboardWrite(sessionId);
+		setCopied(true);
+		setTimeout(() => setCopied(false), 2000);
+	}, []);
 
 	// Determine if state should animate (busy or connecting)
 	const shouldPulse = state === 'busy' || state === 'connecting';
@@ -102,26 +100,30 @@ export function ParticipantCard({
 	// Always show reset button (useful for disconnected sessions, not just high context)
 	const showResetButton = onContextReset && groupChatId && !isResetting;
 
-	const handleReset = useCallback(async () => {
-		if (!onContextReset || !groupChatId) return;
-		setIsResetting(true);
-		try {
-			await onContextReset(participant.name);
-		} finally {
-			setIsResetting(false);
-		}
-	}, [onContextReset, groupChatId, participant.name]);
+	const handleReset = useCallback(
+		async (resetContext: (participantName: string) => void | Promise<void>) => {
+			setIsResetting(true);
+			try {
+				await resetContext(participant.name);
+			} finally {
+				setIsResetting(false);
+			}
+		},
+		[participant.name]
+	);
 
-	const handleRemove = useCallback(async () => {
-		if (!onRemove || !groupChatId) return;
-		setIsRemoving(true);
-		try {
-			await onRemove(participant.name);
-		} finally {
-			setIsRemoving(false);
-			setConfirmRemove(false);
-		}
-	}, [onRemove, groupChatId, participant.name]);
+	const handleRemove = useCallback(
+		async (removeParticipant: (participantName: string) => void | Promise<void>) => {
+			setIsRemoving(true);
+			try {
+				await removeParticipant(participant.name);
+			} finally {
+				setIsRemoving(false);
+				setConfirmRemove(false);
+			}
+		},
+		[participant.name]
+	);
 
 	const showRemoveButton = onRemove && groupChatId && !isRemoving;
 
@@ -173,7 +175,7 @@ export function ParticipantCard({
 					</span>
 				) : (
 					<button
-						onClick={copySessionId}
+						onClick={() => copySessionId(agentSessionId)}
 						className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full hover:opacity-80 transition-opacity cursor-pointer shrink-0"
 						style={{
 							backgroundColor: `${theme.colors.accent}20`,
@@ -248,7 +250,7 @@ export function ParticipantCard({
 				{/* Reset button */}
 				{showResetButton && (
 					<button
-						onClick={handleReset}
+						onClick={() => handleReset(onContextReset)}
 						className="flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded shrink-0 hover:opacity-80 transition-opacity cursor-pointer"
 						style={{
 							backgroundColor: `${theme.colors.warning}20`,
@@ -291,10 +293,10 @@ export function ParticipantCard({
 					</button>
 				)}
 				{/* Remove confirmation */}
-				{confirmRemove && !isRemoving && (
+				{confirmRemove && !isRemoving && onRemove && groupChatId && (
 					<span className="flex items-center gap-1 text-[10px] shrink-0">
 						<button
-							onClick={handleRemove}
+							onClick={() => handleRemove(onRemove)}
 							className="px-1.5 py-0.5 rounded cursor-pointer hover:opacity-80 transition-opacity"
 							style={{
 								backgroundColor: `${theme.colors.error}30`,

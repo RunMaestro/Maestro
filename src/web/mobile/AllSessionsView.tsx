@@ -532,7 +532,7 @@ export function AllSessionsView({
 			// If any groups have matches, expand them
 			if (groupsWithMatches.size > 0) {
 				setCollapsedGroups((prev) => {
-					const next = new Set(prev || []);
+					const next = new Set(prev);
 					// Remove groups with matches from collapsed set (expand them)
 					for (const groupKey of groupsWithMatches) {
 						next.delete(groupKey);
@@ -546,7 +546,7 @@ export function AllSessionsView({
 	// Toggle group collapse
 	const handleToggleCollapse = useCallback((groupId: string) => {
 		setCollapsedGroups((prev) => {
-			const next = new Set(prev || []);
+			const next = new Set(prev);
 			if (next.has(groupId)) {
 				next.delete(groupId);
 			} else {

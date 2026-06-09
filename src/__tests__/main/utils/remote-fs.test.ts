@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
 	readDirRemote,
 	readFileRemote,
@@ -7,6 +7,11 @@ import {
 	writeFileRemote,
 	existsRemote,
 	mkdirRemote,
+	renameRemote,
+	deleteRemote,
+	countItemsRemote,
+	incrementalScanRemote,
+	listAllFilesRemote,
 	type RemoteFsDeps,
 } from '../../../main/utils/remote-fs';
 import type { SshRemoteConfig } from '../../../shared/types';
@@ -30,7 +35,7 @@ describe('remote-fs', () => {
 			execSsh: vi.fn().mockResolvedValue(execResult),
 			buildSshArgs: vi
 				.fn()
-				.mockReturnValue([
+				.mockImplementation(() => [
 					'-i',
 					'/home/user/.ssh/id_ed25519',
 					'-o',
@@ -78,6 +83,22 @@ describe('remote-fs', () => {
 			]);
 		});
 
+		it('marks symbolic links to directories as directories when reported by the remote shell', async () => {
+			const deps = createMockDeps({
+				stdout: 'link-to-dir@\nlink-to-file@\n__SYMDIR__link-to-dir\n',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			const result = await readDirRemote('/home/user', baseConfig, deps);
+
+			expect(result.success).toBe(true);
+			expect(result.data).toEqual([
+				{ name: 'link-to-dir', isDirectory: true, isSymlink: true },
+				{ name: 'link-to-file', isDirectory: false, isSymlink: true },
+			]);
+		});
+
 		it('handles hidden files (from -A flag)', async () => {
 			const deps = createMockDeps({
 				stdout: '.gitignore\n.env\npackage.json\nsrc/\n',
@@ -106,6 +127,22 @@ describe('remote-fs', () => {
 				{ name: 'run.sh', isDirectory: false, isSymlink: false },
 				{ name: 'script.py', isDirectory: false, isSymlink: false },
 				{ name: 'data.txt', isDirectory: false, isSymlink: false },
+			]);
+		});
+
+		it('strips named pipe and socket indicators and skips empty parsed names', async () => {
+			const deps = createMockDeps({
+				stdout: 'fifo|\nsocket=\n*\n__LS_ERROR__\n',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			const result = await readDirRemote('/special', baseConfig, deps);
+
+			expect(result.success).toBe(true);
+			expect(result.data).toEqual([
+				{ name: 'fifo', isDirectory: false, isSymlink: false },
+				{ name: 'socket', isDirectory: false, isSymlink: false },
 			]);
 		});
 
@@ -631,6 +668,425 @@ describe('remote-fs', () => {
 
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('already exists');
+		});
+	});
+
+	describe('renameRemote', () => {
+		it('renames paths successfully with escaped source and destination', async () => {
+			const deps = createMockDeps({ stdout: '', stderr: '', exitCode: 0 });
+
+			const result = await renameRemote('/old name.txt', "/new'name.txt", baseConfig, deps);
+
+			expect(result.success).toBe(true);
+			const call = (deps.execSsh as any).mock.calls[0][1];
+			const remoteCommand = call[call.length - 1];
+			expect(remoteCommand).toContain("mv '/old name.txt' '/new'\\''name.txt'");
+		});
+
+		it('maps rename permission and missing-path errors', async () => {
+			const permissionDeps = createMockDeps({
+				stdout: '',
+				stderr: "mv: cannot move '/old': Permission denied",
+				exitCode: 1,
+			});
+			const missingDeps = createMockDeps({
+				stdout: '',
+				stderr: "mv: cannot stat '/old': No such file or directory",
+				exitCode: 1,
+			});
+
+			await expect(renameRemote('/old', '/new', baseConfig, permissionDeps)).resolves.toMatchObject(
+				{
+					success: false,
+					error: 'Permission denied: /old',
+				}
+			);
+			await expect(renameRemote('/old', '/new', baseConfig, missingDeps)).resolves.toMatchObject({
+				success: false,
+				error: 'Path not found: /old',
+			});
+		});
+	});
+
+	describe('deleteRemote', () => {
+		it('deletes recursively by default and can delete non-recursively', async () => {
+			const deps = createMockDeps({ stdout: '', stderr: '', exitCode: 0 });
+
+			await expect(deleteRemote('/tmp/tree', baseConfig, true, deps)).resolves.toMatchObject({
+				success: true,
+			});
+			await expect(deleteRemote('/tmp/file.txt', baseConfig, false, deps)).resolves.toMatchObject({
+				success: true,
+			});
+
+			const recursiveCommand = (deps.execSsh as any).mock.calls[0][1].at(-1);
+			const fileCommand = (deps.execSsh as any).mock.calls[1][1].at(-1);
+			expect(recursiveCommand).toContain('rm -rf');
+			expect(fileCommand).toContain('rm -f');
+		});
+
+		it('maps delete permission and missing-path errors', async () => {
+			const permissionDeps = createMockDeps({
+				stdout: '',
+				stderr: "rm: cannot remove '/protected': Permission denied",
+				exitCode: 1,
+			});
+			const missingDeps = createMockDeps({
+				stdout: '',
+				stderr: "rm: cannot remove '/missing': No such file or directory",
+				exitCode: 1,
+			});
+
+			await expect(
+				deleteRemote('/protected', baseConfig, true, permissionDeps)
+			).resolves.toMatchObject({
+				success: false,
+				error: 'Permission denied: /protected',
+			});
+			await expect(deleteRemote('/missing', baseConfig, true, missingDeps)).resolves.toMatchObject({
+				success: false,
+				error: 'Path not found: /missing',
+			});
+		});
+	});
+
+	describe('countItemsRemote', () => {
+		it('parses file and folder counts', async () => {
+			const deps = createMockDeps({
+				stdout: 'FILES:123\nDIRS:45\n',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			const result = await countItemsRemote('/project', baseConfig, deps);
+
+			expect(result).toEqual({
+				success: true,
+				data: { fileCount: 123, folderCount: 45 },
+			});
+		});
+
+		it('defaults missing count lines to zero', async () => {
+			const deps = createMockDeps({
+				stdout: 'FILES:\n',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			const result = await countItemsRemote('/project', baseConfig, deps);
+
+			expect(result).toEqual({
+				success: true,
+				data: { fileCount: 0, folderCount: 0 },
+			});
+		});
+
+		it('maps count permission and missing directory errors', async () => {
+			const permissionDeps = createMockDeps({
+				stdout: '',
+				stderr: "find: '/protected': Permission denied",
+				exitCode: 1,
+			});
+			const missingDeps = createMockDeps({
+				stdout: '',
+				stderr: "find: '/missing': No such file or directory",
+				exitCode: 1,
+			});
+
+			await expect(
+				countItemsRemote('/protected', baseConfig, permissionDeps)
+			).resolves.toMatchObject({
+				success: false,
+				error: 'Permission denied: /protected',
+			});
+			await expect(countItemsRemote('/missing', baseConfig, missingDeps)).resolves.toMatchObject({
+				success: false,
+				error: 'Directory not found: /missing',
+			});
+		});
+	});
+
+	describe('incrementalScanRemote', () => {
+		it('returns relative changed files and scan metadata', async () => {
+			vi.useFakeTimers();
+			try {
+				vi.setSystemTime(new Date('2026-05-15T12:00:00.000Z'));
+				const deps = createMockDeps({
+					stdout: '/project/src/app.ts\n/outside/path.txt\n\n',
+					stderr: '',
+					exitCode: 0,
+				});
+
+				const result = await incrementalScanRemote('/project', baseConfig, 1703836800, deps);
+
+				expect(result.success).toBe(true);
+				expect(result.data).toEqual({
+					added: ['src/app.ts', '/outside/path.txt'],
+					deleted: [],
+					hasChanges: true,
+					scanTime: 1778846400,
+				});
+				const remoteCommand = (deps.execSsh as any).mock.calls[0][1].at(-1);
+				expect(remoteCommand).toContain('2023-12-29T08:00:00.000Z');
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
+		it('returns no changes for empty scan output', async () => {
+			const deps = createMockDeps({ stdout: '', stderr: '', exitCode: 0 });
+
+			const result = await incrementalScanRemote('/project', baseConfig, 1703836800, deps);
+
+			expect(result.success).toBe(true);
+			expect(result.data?.added).toEqual([]);
+			expect(result.data?.hasChanges).toBe(false);
+		});
+
+		it('returns stderr when incremental scan fails', async () => {
+			const deps = createMockDeps({
+				stdout: '',
+				stderr: 'find: Permission denied',
+				exitCode: 1,
+			});
+
+			const result = await incrementalScanRemote('/project', baseConfig, 1703836800, deps);
+
+			expect(result).toEqual({ success: false, error: 'find: Permission denied' });
+		});
+	});
+
+	describe('listAllFilesRemote', () => {
+		it('returns relative file paths and preserves outside paths', async () => {
+			const deps = createMockDeps({
+				stdout: '/project/a.ts\n/project/src/b.ts\n/other/c.ts\n',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			const result = await listAllFilesRemote('/project', baseConfig, 3, deps);
+
+			expect(result).toEqual({
+				success: true,
+				data: ['a.ts', 'src/b.ts', '/other/c.ts'],
+			});
+			const remoteCommand = (deps.execSsh as any).mock.calls[0][1].at(-1);
+			expect(remoteCommand).toContain('-maxdepth 3');
+		});
+
+		it('uses the default max depth and filters empty lines', async () => {
+			const deps = createMockDeps({
+				stdout: '\n/project/file.ts\n\n',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			const result = await listAllFilesRemote('/project', baseConfig, undefined, deps);
+
+			expect(result).toEqual({ success: true, data: ['file.ts'] });
+			const remoteCommand = (deps.execSsh as any).mock.calls[0][1].at(-1);
+			expect(remoteCommand).toContain('-maxdepth 10');
+		});
+
+		it('returns stderr when list-all fails', async () => {
+			const deps = createMockDeps({
+				stdout: '',
+				stderr: 'find failed',
+				exitCode: 1,
+			});
+
+			const result = await listAllFilesRemote('/project', baseConfig, 10, deps);
+
+			expect(result).toEqual({ success: false, error: 'find failed' });
+		});
+	});
+
+	describe('fallback and generic error messages', () => {
+		it('reports readDir command failures when stderr is unavailable', async () => {
+			const deps = createMockDeps({ stdout: '', stderr: '', exitCode: 2 });
+
+			await expect(readDirRemote('/missing', baseConfig, deps)).resolves.toMatchObject({
+				success: false,
+				error: 'ls failed with exit code 2',
+			});
+		});
+
+		it('reports stat fallback and generic failures', async () => {
+			await expect(
+				statRemote('/mystery', baseConfig, createMockDeps({ stdout: '', stderr: '', exitCode: 2 }))
+			).resolves.toMatchObject({
+				success: false,
+				error: 'Failed to stat: /mystery',
+			});
+			await expect(
+				statRemote(
+					'/mystery',
+					baseConfig,
+					createMockDeps({ stdout: '', stderr: 'stat exploded', exitCode: 1 })
+				)
+			).resolves.toMatchObject({
+				success: false,
+				error: 'stat exploded',
+			});
+		});
+
+		it('reports directory size fallback and generic failures', async () => {
+			await expect(
+				directorySizeRemote(
+					'/mystery',
+					baseConfig,
+					createMockDeps({ stdout: '', stderr: '', exitCode: 2 })
+				)
+			).resolves.toMatchObject({
+				success: false,
+				error: 'Failed to get directory size: /mystery',
+			});
+			await expect(
+				directorySizeRemote(
+					'/mystery',
+					baseConfig,
+					createMockDeps({ stdout: '', stderr: 'du exploded', exitCode: 1 })
+				)
+			).resolves.toMatchObject({
+				success: false,
+				error: 'du exploded',
+			});
+		});
+
+		it('reports write fallback and generic failures', async () => {
+			await expect(
+				writeFileRemote(
+					'/mystery.txt',
+					'data',
+					baseConfig,
+					createMockDeps({ stdout: '', stderr: '', exitCode: 2 })
+				)
+			).resolves.toMatchObject({
+				success: false,
+				error: 'Failed to write file: /mystery.txt',
+			});
+			await expect(
+				writeFileRemote(
+					'/mystery.txt',
+					'data',
+					baseConfig,
+					createMockDeps({ stdout: '', stderr: 'write exploded', exitCode: 1 })
+				)
+			).resolves.toMatchObject({
+				success: false,
+				error: 'write exploded',
+			});
+		});
+
+		it('reports exists fallback failures', async () => {
+			await expect(
+				existsRemote(
+					'/mystery',
+					baseConfig,
+					createMockDeps({ stdout: '', stderr: '', exitCode: 2 })
+				)
+			).resolves.toMatchObject({
+				success: false,
+				error: 'Failed to check path existence',
+			});
+		});
+
+		it('reports mkdir fallback and generic failures', async () => {
+			await expect(
+				mkdirRemote(
+					'/mystery',
+					baseConfig,
+					true,
+					createMockDeps({ stdout: '', stderr: '', exitCode: 2 })
+				)
+			).resolves.toMatchObject({
+				success: false,
+				error: 'Failed to create directory: /mystery',
+			});
+			await expect(
+				mkdirRemote(
+					'/mystery',
+					baseConfig,
+					true,
+					createMockDeps({ stdout: '', stderr: 'mkdir exploded', exitCode: 1 })
+				)
+			).resolves.toMatchObject({
+				success: false,
+				error: 'mkdir exploded',
+			});
+		});
+
+		it('reports rename fallback and generic failures', async () => {
+			await expect(
+				renameRemote(
+					'/old',
+					'/new',
+					baseConfig,
+					createMockDeps({ stdout: '', stderr: '', exitCode: 2 })
+				)
+			).resolves.toMatchObject({
+				success: false,
+				error: 'Failed to rename: /old',
+			});
+			await expect(
+				renameRemote(
+					'/old',
+					'/new',
+					baseConfig,
+					createMockDeps({ stdout: '', stderr: 'mv exploded', exitCode: 1 })
+				)
+			).resolves.toMatchObject({
+				success: false,
+				error: 'mv exploded',
+			});
+		});
+
+		it('reports delete fallback and generic failures', async () => {
+			await expect(
+				deleteRemote(
+					'/mystery',
+					baseConfig,
+					true,
+					createMockDeps({ stdout: '', stderr: '', exitCode: 2 })
+				)
+			).resolves.toMatchObject({
+				success: false,
+				error: 'Failed to delete: /mystery',
+			});
+			await expect(
+				deleteRemote(
+					'/mystery',
+					baseConfig,
+					true,
+					createMockDeps({ stdout: '', stderr: 'rm exploded', exitCode: 1 })
+				)
+			).resolves.toMatchObject({
+				success: false,
+				error: 'rm exploded',
+			});
+		});
+
+		it('reports count fallback and generic failures', async () => {
+			await expect(
+				countItemsRemote(
+					'/mystery',
+					baseConfig,
+					createMockDeps({ stdout: '', stderr: '', exitCode: 2 })
+				)
+			).resolves.toMatchObject({
+				success: false,
+				error: 'Failed to count items: /mystery',
+			});
+			await expect(
+				countItemsRemote(
+					'/mystery',
+					baseConfig,
+					createMockDeps({ stdout: '', stderr: 'find exploded', exitCode: 1 })
+				)
+			).resolves.toMatchObject({
+				success: false,
+				error: 'find exploded',
+			});
 		});
 	});
 

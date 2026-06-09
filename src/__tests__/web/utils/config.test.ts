@@ -14,6 +14,8 @@ import {
 	buildWebSocketUrl,
 	getDashboardUrl,
 	getSessionUrl,
+	getCurrentTabId,
+	updateUrlForSessionTab,
 	type MaestroConfig,
 } from '../../../web/utils/config';
 import { webLogger } from '../../../web/utils/logger';
@@ -291,6 +293,24 @@ describe('config.ts', () => {
 				// filter(Boolean) removes empty strings
 				expect(result.securityToken).toBe('token');
 				expect(result.sessionId).toBe('sess-id');
+			});
+
+			it('should extract tabId from the query string', () => {
+				Object.defineProperty(window, 'location', {
+					writable: true,
+					value: {
+						protocol: 'http:',
+						host: 'localhost:3000',
+						origin: 'http://localhost:3000',
+						pathname: '/token123/session/sess-456',
+						search: '?tabId=tab%20one',
+						href: 'http://localhost:3000/token123/session/sess-456?tabId=tab%20one',
+					},
+				});
+
+				const result = getMaestroConfig();
+
+				expect(result.tabId).toBe('tab one');
 			});
 		});
 	});
@@ -659,6 +679,90 @@ describe('config.ts', () => {
 			// Generating URL to switch to a different session
 			const result = getSessionUrl('other-session-2');
 			expect(result).toBe('http://localhost:3000/multi-token/session/other-session-2');
+		});
+
+		it('should include an encoded tabId when provided', () => {
+			const result = getSessionUrl('session-abc', 'tab with spaces');
+
+			expect(result).toBe(
+				'http://localhost:3000/sess-url-token/session/session-abc?tabId=tab%20with%20spaces'
+			);
+		});
+	});
+
+	describe('getCurrentTabId()', () => {
+		it('should return tabId from injected config', () => {
+			window.__MAESTRO_CONFIG__ = {
+				securityToken: 'token',
+				sessionId: 'session-123',
+				tabId: 'tab-456',
+				apiBase: '/token/api',
+				wsUrl: '/token/ws',
+			};
+
+			expect(getCurrentTabId()).toBe('tab-456');
+		});
+
+		it('should return null when no tab is selected', () => {
+			window.__MAESTRO_CONFIG__ = {
+				securityToken: 'token',
+				sessionId: 'session-123',
+				tabId: null,
+				apiBase: '/token/api',
+				wsUrl: '/token/ws',
+			};
+
+			expect(getCurrentTabId()).toBeNull();
+		});
+	});
+
+	describe('updateUrlForSessionTab()', () => {
+		beforeEach(() => {
+			window.__MAESTRO_CONFIG__ = {
+				securityToken: 'url-update-token',
+				sessionId: 'session-old',
+				tabId: null,
+				apiBase: '/url-update-token/api',
+				wsUrl: '/url-update-token/ws',
+			};
+		});
+
+		it('should replace browser history when the target session URL changes', () => {
+			const replaceState = vi.spyOn(window.history, 'replaceState').mockImplementation(() => {});
+
+			try {
+				updateUrlForSessionTab('session-new', 'tab-1');
+
+				expect(replaceState).toHaveBeenCalledWith(
+					{ sessionId: 'session-new', tabId: 'tab-1' },
+					'',
+					'http://localhost:3000/url-update-token/session/session-new?tabId=tab-1'
+				);
+			} finally {
+				replaceState.mockRestore();
+			}
+		});
+
+		it('should not replace browser history when the URL already matches', () => {
+			Object.defineProperty(window, 'location', {
+				writable: true,
+				value: {
+					protocol: 'http:',
+					host: 'localhost:3000',
+					origin: 'http://localhost:3000',
+					pathname: '/url-update-token/session/session-new',
+					href: 'http://localhost:3000/url-update-token/session/session-new',
+				},
+			});
+			const replaceState = vi.spyOn(window.history, 'replaceState').mockImplementation(() => {});
+
+			try {
+				updateUrlForSessionTab('session-new');
+
+				expect(replaceState).not.toHaveBeenCalled();
+			} finally {
+				replaceState.mockRestore();
+			}
 		});
 	});
 

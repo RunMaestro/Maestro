@@ -1093,9 +1093,7 @@ export async function routeModeratorResponse(
 				continue;
 			}
 
-			const matchingSession = sessions.find(
-				(s) => mentionMatches(s.name, participant.name) || s.name === participant.name
-			);
+			const matchingSession = sessions.find((s) => mentionMatches(s.name, participant.name));
 
 			if (!matchingSession?.autoRunFolderPath) {
 				console.warn(
@@ -1167,20 +1165,12 @@ export async function routeModeratorResponse(
 			console.log(`[GroupChat:Debug] --- Spawning participant: @${participantName} ---`);
 
 			// Find the participant info
-			const participant = updatedChat.participants.find((p) => p.name === participantName);
-			if (!participant) {
-				console.warn(
-					`[GroupChat:Debug] Participant ${participantName} not found in chat - skipping`
-				);
-				continue;
-			}
+			const participant = updatedChat.participants.find((p) => p.name === participantName)!;
 
 			console.log(`[GroupChat:Debug] Participant agent ID: ${participant.agentId}`);
 
 			// Find matching session to get cwd
-			const matchingSession = sessions.find(
-				(s) => mentionMatches(s.name, participantName) || s.name === participantName
-			);
+			const matchingSession = sessions.find((s) => mentionMatches(s.name, participantName));
 			const cwd = matchingSession?.cwd || os.homedir();
 			console.log(`[GroupChat:Debug] CWD for participant: ${cwd}`);
 
@@ -1254,9 +1244,7 @@ export async function routeModeratorResponse(
 				console.log(
 					`[GroupChat:Debug] Session customModel: ${matchingSession?.customModel || '(none)'}`
 				);
-				console.log(
-					`[GroupChat:Debug] Config model source: ${configResolution.modelSource || 'unknown'}`
-				);
+				console.log(`[GroupChat:Debug] Config model source: ${configResolution.modelSource}`);
 				console.log(`[GroupChat:Debug] Prompt length: ${participantPrompt.length}`);
 				console.log(
 					`[GroupChat:Debug] CustomEnvVars: ${JSON.stringify(configResolution.effectiveCustomEnvVars || {})}`
@@ -1347,12 +1335,7 @@ export async function routeModeratorResponse(
 				// this map — if the participant isn't registered yet, synthesis never triggers).
 				participantsToRespond.add(participantName);
 				pendingParticipantResponses.set(groupChatId, participantsToRespond);
-				setParticipantResponseTimeout(
-					groupChatId,
-					participantName,
-					processManager ?? undefined,
-					agentDetector ?? undefined
-				);
+				setParticipantResponseTimeout(groupChatId, participantName, processManager, agentDetector);
 				// Emit 'agent-working' on first spawn so sidebar and chat indicators update immediately
 				if (participantsToRespond.size === 1) {
 					groupChatEmitters.emitStateChange?.(groupChatId, 'agent-working');
@@ -1472,17 +1455,14 @@ export async function routeAgentResponse(
 	const newMessageCount = (currentParticipant.messageCount || 0) + 1;
 
 	try {
-		await updateParticipant(groupChatId, participantName, {
+		const updatedChat = await updateParticipant(groupChatId, participantName, {
 			lastActivity: Date.now(),
 			lastSummary: summary,
 			messageCount: newMessageCount,
 		});
 
 		// Emit participants changed so UI updates
-		const updatedChat = await loadGroupChat(groupChatId);
-		if (updatedChat) {
-			groupChatEmitters.emitParticipantsChanged?.(groupChatId, updatedChat.participants);
-		}
+		groupChatEmitters.emitParticipantsChanged?.(groupChatId, updatedChat.participants);
 	} catch (error) {
 		logger.error(`Failed to update participant stats for ${participantName}`, LOG_CONTEXT, {
 			error,
@@ -1824,9 +1804,7 @@ export async function respawnParticipantWithRecovery(
 
 	// Find matching session for cwd
 	const sessions = getSessionsCallback?.() || [];
-	const matchingSession = sessions.find(
-		(s) => mentionMatches(s.name, participantName) || s.name === participantName
-	);
+	const matchingSession = sessions.find((s) => mentionMatches(s.name, participantName));
 	const cwd = matchingSession?.cwd || os.homedir();
 
 	// Build the prompt with recovery context
@@ -1868,7 +1846,7 @@ export async function respawnParticipantWithRecovery(
 		baseArgs: [...agent.args],
 		prompt: fullPrompt,
 		cwd,
-		readOnlyMode: readOnly ?? false,
+		readOnlyMode: readOnly,
 		// No agentSessionId - we're starting fresh after session recovery
 	});
 
@@ -1938,7 +1916,7 @@ export async function respawnParticipantWithRecovery(
 		cwd: finalSpawnCwd,
 		command: finalSpawnCommand,
 		args: finalSpawnArgs,
-		readOnlyMode: readOnly ?? false,
+		readOnlyMode: readOnly,
 		prompt: finalSpawnPrompt,
 		contextWindow: getContextWindowValue(agent, agentConfigValues),
 		customEnvVars: finalSpawnEnvVars,

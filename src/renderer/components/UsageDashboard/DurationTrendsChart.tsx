@@ -183,14 +183,6 @@ export const DurationTrendsChart = memo(function DurationTrendsChart({
 
 	// Calculate scales
 	const { xScale, yScale, yTicks } = useMemo(() => {
-		if (chartData.length === 0) {
-			return {
-				xScale: (_: number) => padding.left,
-				yScale: (_: number) => chartHeight - padding.bottom,
-				yTicks: [0],
-			};
-		}
-
 		const maxDuration = Math.max(
 			...chartData.map((d) => d.displayDuration),
 			1 // Ensure we have at least some range
@@ -349,7 +341,7 @@ export const DurationTrendsChart = memo(function DurationTrendsChart({
 						viewBox={`0 0 ${chartWidth} ${chartHeight}`}
 						preserveAspectRatio="xMidYMid meet"
 						role="img"
-						aria-label={`Line chart of duration trends. ${chartData.length > 0 ? `Range from ${formatDuration(Math.min(...chartData.map((d) => d.displayDuration)))} to ${formatDuration(Math.max(...chartData.map((d) => d.displayDuration)))}` : 'No data available'}`}
+						aria-label={`Line chart of duration trends. Range from ${formatDuration(Math.min(...chartData.map((d) => d.displayDuration)))} to ${formatDuration(Math.max(...chartData.map((d) => d.displayDuration)))}`}
 					>
 						{/* Gradient definition */}
 						<defs>

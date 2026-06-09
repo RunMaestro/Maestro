@@ -368,8 +368,7 @@ export function useTabHandlers(): TabHandlersReturn {
 					saveToHistory: defaultSaveToHistory,
 					showThinking: defaultShowThinking,
 				});
-				if (!result) return s;
-				return result.session;
+				return result!.session;
 			});
 		});
 		useModalStore.getState().closeModal('agentSessions');
@@ -679,8 +678,7 @@ export function useTabHandlers(): TabHandlersReturn {
 					saveToHistory: defaultSaveToHistory,
 					showThinking: defaultShowThinking,
 				});
-				if (!result) return s;
-				return result.session;
+				return result!.session;
 			})
 		);
 	}, []);
@@ -694,12 +692,10 @@ export function useTabHandlers(): TabHandlersReturn {
 				const tabIds = s.aiTabs.map((t) => t.id);
 				for (const tabId of tabIds) {
 					const tab = updatedSession.aiTabs.find((t) => t.id === tabId);
-					const result = closeTab(updatedSession, tabId, false, {
-						skipHistory: tab ? hasActiveWizard(tab) : false,
-					});
-					if (result) {
-						updatedSession = result.session;
-					}
+					if (!tab) continue;
+					updatedSession = closeTab(updatedSession, tabId, false, {
+						skipHistory: hasActiveWizard(tab),
+					})!.session;
 				}
 				return updatedSession;
 			})
@@ -741,12 +737,9 @@ export function useTabHandlers(): TabHandlersReturn {
 					if (tabRef.type === 'ai') {
 						const tab = updatedSession.aiTabs.find((t) => t.id === tabRef.id);
 						if (tab) {
-							const result = closeTab(updatedSession, tab.id, false, {
+							updatedSession = closeTab(updatedSession, tab.id, false, {
 								skipHistory: hasActiveWizard(tab),
-							});
-							if (result) {
-								updatedSession = result.session;
-							}
+							})!.session;
 						}
 					} else {
 						updatedSession = {
@@ -804,12 +797,9 @@ export function useTabHandlers(): TabHandlersReturn {
 					if (tabRef.type === 'ai') {
 						const tab = updatedSession.aiTabs.find((t) => t.id === tabRef.id);
 						if (tab) {
-							const result = closeTab(updatedSession, tab.id, false, {
+							updatedSession = closeTab(updatedSession, tab.id, false, {
 								skipHistory: hasActiveWizard(tab),
-							});
-							if (result) {
-								updatedSession = result.session;
-							}
+							})!.session;
 						}
 					} else {
 						updatedSession = {
@@ -876,12 +866,9 @@ export function useTabHandlers(): TabHandlersReturn {
 					if (tabRef.type === 'ai') {
 						const tab = updatedSession.aiTabs.find((t) => t.id === tabRef.id);
 						if (tab) {
-							const result = closeTab(updatedSession, tab.id, false, {
+							updatedSession = closeTab(updatedSession, tab.id, false, {
 								skipHistory: hasActiveWizard(tab),
-							});
-							if (result) {
-								updatedSession = result.session;
-							}
+							})!.session;
 						}
 					} else {
 						updatedSession = {
@@ -992,11 +979,8 @@ export function useTabHandlers(): TabHandlersReturn {
 		const newLogs = [...logs.slice(0, logIndex), ...logs.slice(endIndex)];
 
 		let nextUserCommandIndex: number | null = null;
-		for (let i = logIndex; i < newLogs.length; i++) {
-			if (newLogs[i].source === 'user') {
-				nextUserCommandIndex = i;
-				break;
-			}
+		if (newLogs[logIndex]?.source === 'user') {
+			nextUserCommandIndex = logIndex;
 		}
 		if (nextUserCommandIndex === null) {
 			for (let i = logIndex - 1; i >= 0; i--) {
@@ -1138,17 +1122,17 @@ export function useTabHandlers(): TabHandlersReturn {
 			prev.map((s) => {
 				if (s.id !== activeSessionId) return s;
 				const tab = s.aiTabs.find((t) => t.id === tabId);
-				if (tab?.agentSessionId) {
-					const agentId = s.toolType || 'claude-code';
-					if (agentId === 'claude-code') {
-						window.maestro.claude
-							.updateSessionStarred(s.projectRoot, tab.agentSessionId, starred)
-							.catch((err) => console.error('Failed to persist tab starred:', err));
-					} else {
-						window.maestro.agentSessions
-							.setSessionStarred(agentId, s.projectRoot, tab.agentSessionId, starred)
-							.catch((err) => console.error('Failed to persist tab starred:', err));
-					}
+				if (!tab?.agentSessionId) return s;
+				const agentSessionId = tab.agentSessionId;
+				const agentId = s.toolType || 'claude-code';
+				if (agentId === 'claude-code') {
+					window.maestro.claude
+						.updateSessionStarred(s.projectRoot, agentSessionId, starred)
+						.catch((err) => console.error('Failed to persist tab starred:', err));
+				} else {
+					window.maestro.agentSessions
+						.setSessionStarred(agentId, s.projectRoot, agentSessionId, starred)
+						.catch((err) => console.error('Failed to persist tab starred:', err));
 				}
 				return {
 					...s,

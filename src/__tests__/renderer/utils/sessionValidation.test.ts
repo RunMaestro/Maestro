@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
 	validateNewSession,
+	validateEditSession,
 	SessionValidationResult,
 } from '../../../renderer/utils/sessionValidation';
 import type { Session, ToolType } from '../../../renderer/types';
@@ -672,6 +673,55 @@ describe('sessionValidation', () => {
 				expect(typeof result.error).toBe('string');
 				expect(result.errorField).toBe('name');
 			});
+		});
+	});
+
+	describe('validateEditSession', () => {
+		it('allows keeping the current session name', () => {
+			const existingSessions = [
+				createMockSession({ id: 'current', name: 'Current Agent' }),
+				createMockSession({ id: 'other', name: 'Other Agent' }),
+			];
+
+			const result = validateEditSession('Current Agent', 'current', existingSessions);
+
+			expect(result).toEqual({ valid: true });
+		});
+
+		it('rejects duplicate names from other sessions', () => {
+			const existingSessions = [
+				createMockSession({ id: 'current', name: 'Current Agent' }),
+				createMockSession({ id: 'other', name: 'Existing Agent' }),
+			];
+
+			const result = validateEditSession('Existing Agent', 'current', existingSessions);
+
+			expect(result.valid).toBe(false);
+			expect(result.errorField).toBe('name');
+			expect(result.error).toBe('An agent named "Existing Agent" already exists');
+		});
+
+		it('compares edited names case-insensitively after trimming', () => {
+			const existingSessions = [
+				createMockSession({ id: 'current', name: 'Current Agent' }),
+				createMockSession({ id: 'other', name: 'Existing Agent' }),
+			];
+
+			const result = validateEditSession('  existing agent  ', 'current', existingSessions);
+
+			expect(result.valid).toBe(false);
+			expect(result.errorField).toBe('name');
+		});
+
+		it('returns valid when the edited name is unique', () => {
+			const existingSessions = [
+				createMockSession({ id: 'current', name: 'Current Agent' }),
+				createMockSession({ id: 'other', name: 'Other Agent' }),
+			];
+
+			const result = validateEditSession('Renamed Agent', 'current', existingSessions);
+
+			expect(result).toEqual({ valid: true });
 		});
 	});
 });

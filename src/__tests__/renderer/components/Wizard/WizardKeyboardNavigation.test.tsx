@@ -7,7 +7,7 @@
 
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { WizardProvider, useWizard } from '../../../../renderer/components/Wizard/WizardContext';
 import { MaestroWizard } from '../../../../renderer/components/Wizard/MaestroWizard';
 import { AgentSelectionScreen } from '../../../../renderer/components/Wizard/screens/AgentSelectionScreen';
@@ -216,6 +216,12 @@ const renderWithProviders = (ui: React.ReactElement) => {
 	);
 };
 
+async function settleWizardEffects() {
+	await act(async () => {
+		await Promise.resolve();
+	});
+}
+
 // Test component to trigger wizard opening
 function WizardOpener({ theme }: { theme: Theme }) {
 	const { openWizard, state } = useWizard();
@@ -268,37 +274,48 @@ describe('Wizard Keyboard Navigation', () => {
 		});
 
 		it('should handle arrow key navigation between tiles', async () => {
-			renderWithProviders(<AgentSelectionScreen theme={mockTheme} />);
+			mockMaestro.agents.detect.mockResolvedValueOnce([
+				mockAgents[0],
+				{
+					id: 'codex',
+					name: 'Codex',
+					command: 'codex',
+					args: [],
+					available: true,
+					path: '/usr/local/bin/codex',
+					hidden: false,
+				},
+			]);
+			await act(async () => {
+				renderWithProviders(<AgentSelectionScreen theme={mockTheme} />);
+				await Promise.resolve();
+				await Promise.resolve();
+			});
 
 			await waitFor(() => {
 				expect(screen.queryByText('Detecting available agents...')).not.toBeInTheDocument();
 			});
-
 			// Get the container with keyboard handler
 			const container = screen.getByText('Create a Maestro Agent').closest('div[tabindex]');
 			expect(container).toBeInTheDocument();
 
-			// When only one agent is available, focus goes to name field, not tiles
-			// Focus the tile manually to test arrow key navigation
 			const claudeTile = screen.getByRole('button', { name: /claude code/i });
-			claudeTile.focus();
-			expect(claudeTile).toHaveFocus();
+			await waitFor(() => expect(claudeTile).toHaveFocus());
 
 			// Press ArrowRight - the keyboard handler should process the event
-			// Note: Disabled buttons may not receive focus, but the index tracking should still work
-			fireEvent.keyDown(container!, { key: 'ArrowRight' });
+			await act(async () => {
+				fireEvent.keyDown(container!, { key: 'ArrowRight' });
 
-			// Press ArrowLeft to go back - should stay on Claude (or handle boundary)
-			fireEvent.keyDown(container!, { key: 'ArrowLeft' });
+				// Press ArrowLeft to go back - should stay on Claude (or handle boundary)
+				fireEvent.keyDown(container!, { key: 'ArrowLeft' });
 
-			// Claude Code should remain accessible
-			expect(claudeTile).toBeInTheDocument();
+				// Arrow key navigation should not break the component
+				fireEvent.keyDown(container!, { key: 'ArrowDown' });
+				fireEvent.keyDown(container!, { key: 'ArrowUp' });
+				await Promise.resolve();
+			});
 
-			// Arrow key navigation should not break the component
-			fireEvent.keyDown(container!, { key: 'ArrowDown' });
-			fireEvent.keyDown(container!, { key: 'ArrowUp' });
-
-			// Component should still be functional
+			// Component should remain functional
 			expect(claudeTile).toBeInTheDocument();
 		});
 
@@ -496,6 +513,7 @@ describe('Wizard Keyboard Navigation', () => {
 
 		it('should focus textarea on mount', async () => {
 			renderWithProviders(<ConversationScreenWrapper theme={mockTheme} />);
+			await settleWizardEffects();
 
 			const textarea = screen.getByPlaceholderText('Describe your project...');
 			expect(textarea).toHaveFocus();
@@ -503,6 +521,7 @@ describe('Wizard Keyboard Navigation', () => {
 
 		it('should add new line with Shift+Enter', async () => {
 			renderWithProviders(<ConversationScreenWrapper theme={mockTheme} />);
+			await settleWizardEffects();
 
 			const textarea = screen.getByPlaceholderText(
 				'Describe your project...'
@@ -587,6 +606,7 @@ describe('Wizard Keyboard Navigation', () => {
 
 		it('should display keyboard shortcut label next to thinking toggle', async () => {
 			renderWithProviders(<ConversationScreenWrapper theme={mockTheme} />);
+			await settleWizardEffects();
 
 			// Find the keyboard shortcut label
 			const shortcutLabel = screen.getByText(formatShortcutKeys(['Meta', 'Shift', 'k']));

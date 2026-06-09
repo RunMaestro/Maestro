@@ -84,7 +84,6 @@ export function FontConfigurationPanel({
 
 			// Fast O(1) lookup
 			if (normalizedFontsSet.has(normalizedSearch)) return true;
-			if (normalizedFontsSet.has(fontName.toLowerCase())) return true;
 
 			// Fallback to substring search (slower but comprehensive)
 			for (const font of normalizedFontsSet) {

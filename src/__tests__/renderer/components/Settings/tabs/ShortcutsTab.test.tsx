@@ -389,6 +389,24 @@ describe('ShortcutsTab', () => {
 		expect(screen.getByText('Press keys...')).toBeInTheDocument();
 	});
 
+	it('should ignore shortcut keydown events when not recording', async () => {
+		render(<ShortcutsTab theme={mockTheme} />);
+
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(100);
+		});
+
+		const shortcutButton = screen.getByText('Meta+n');
+		fireEvent.keyDown(shortcutButton, {
+			key: 'k',
+			preventDefault: vi.fn(),
+			stopPropagation: vi.fn(),
+		});
+
+		expect(mockSetShortcuts).not.toHaveBeenCalled();
+		expect(screen.queryByText('Press keys...')).not.toBeInTheDocument();
+	});
+
 	it('should handle Alt+Digit recording using e.code', async () => {
 		render(<ShortcutsTab theme={mockTheme} />);
 
@@ -410,6 +428,30 @@ describe('ShortcutsTab', () => {
 		expect(mockSetShortcuts).toHaveBeenCalledWith({
 			...mockShortcuts,
 			'new-session': { ...mockShortcuts['new-session'], keys: ['Alt', '1'] },
+		});
+	});
+
+	it('should keep non-letter Alt shortcut keys from the keyboard event key', async () => {
+		render(<ShortcutsTab theme={mockTheme} />);
+
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(100);
+		});
+
+		const shortcutButton = screen.getByText('Meta+n');
+		fireEvent.click(shortcutButton);
+
+		fireEvent.keyDown(shortcutButton, {
+			key: 'ArrowUp',
+			code: 'ArrowUp',
+			altKey: true,
+			preventDefault: vi.fn(),
+			stopPropagation: vi.fn(),
+		});
+
+		expect(mockSetShortcuts).toHaveBeenCalledWith({
+			...mockShortcuts,
+			'new-session': { ...mockShortcuts['new-session'], keys: ['Alt', 'ArrowUp'] },
 		});
 	});
 

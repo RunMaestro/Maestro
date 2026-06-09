@@ -282,9 +282,7 @@ export const LiveOverlayPanel = memo(function LiveOverlayPanel({
 											setWebInterfaceCustomPort(0);
 										} else {
 											const value = parseInt(raw, 10);
-											if (!isNaN(value)) {
-												setWebInterfaceCustomPort(value);
-											}
+											setWebInterfaceCustomPort(value);
 										}
 									}}
 									onBlur={() => {

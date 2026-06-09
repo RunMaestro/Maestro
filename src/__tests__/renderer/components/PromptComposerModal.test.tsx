@@ -88,6 +88,8 @@ const renderWithProvider = (ui: React.ReactElement) => {
 	return render(<LayerStackProvider>{ui}</LayerStackProvider>);
 };
 
+const originalScrollIntoView = HTMLElement.prototype.scrollIntoView;
+
 describe('PromptComposerModal', () => {
 	let onClose: ReturnType<typeof vi.fn>;
 	let onSubmit: ReturnType<typeof vi.fn>;
@@ -101,6 +103,16 @@ describe('PromptComposerModal', () => {
 
 	afterEach(() => {
 		vi.clearAllMocks();
+		vi.restoreAllMocks();
+		vi.unstubAllGlobals();
+		if (originalScrollIntoView) {
+			Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+				configurable: true,
+				value: originalScrollIntoView,
+			});
+		} else {
+			Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView');
+		}
 	});
 
 	describe('Rendering', () => {
@@ -1296,6 +1308,52 @@ describe('PromptComposerModal', () => {
 			expect(textarea.value).toBe('@Agent2 ');
 		});
 
+		it('should wrap mention navigation at both ends', () => {
+			const sessions = [createMockSession('s1', 'Agent1'), createMockSession('s2', 'Agent2')];
+			const first = renderWithProvider(
+				<PromptComposerModal
+					isOpen={true}
+					onClose={onClose}
+					theme={mockTheme}
+					initialValue=""
+					onSubmit={onSubmit}
+					onSend={onSend}
+					sessions={sessions}
+				/>
+			);
+
+			const textarea = screen.getByPlaceholderText(
+				'Write your prompt here... (@ to mention agent)'
+			) as HTMLTextAreaElement;
+			fireEvent.change(textarea, { target: { value: '@' } });
+			fireEvent.keyDown(textarea, { key: 'ArrowDown' });
+			fireEvent.keyDown(textarea, { key: 'ArrowDown' });
+			fireEvent.keyDown(textarea, { key: 'Tab' });
+			expect(textarea.value).toBe('@Agent1 ');
+			first.unmount();
+
+			renderWithProvider(
+				<PromptComposerModal
+					isOpen={true}
+					onClose={onClose}
+					theme={mockTheme}
+					initialValue=""
+					onSubmit={onSubmit}
+					onSend={onSend}
+					sessions={sessions}
+				/>
+			);
+
+			const secondTextarea = screen.getByPlaceholderText(
+				'Write your prompt here... (@ to mention agent)'
+			) as HTMLTextAreaElement;
+			fireEvent.change(secondTextarea, { target: { value: '@' } });
+			fireEvent.keyDown(secondTextarea, { key: 'ArrowDown' });
+			fireEvent.keyDown(secondTextarea, { key: 'ArrowUp' });
+			fireEvent.keyDown(secondTextarea, { key: 'Tab' });
+			expect(secondTextarea.value).toBe('@Agent1 ');
+		});
+
 		it('should close dropdown on Escape', () => {
 			const sessions = [createMockSession('s1', 'Agent1')];
 			renderWithProvider(
@@ -1393,6 +1451,774 @@ describe('PromptComposerModal', () => {
 			const buttons = screen.queryAllByRole('button');
 			const mentionButtons = buttons.filter((btn) => btn.textContent?.startsWith('@'));
 			expect(mentionButtons).toHaveLength(0);
+		});
+
+		it('should filter groups by normalized names and expand their normalized members', () => {
+			const groups = [createMockGroup('g1', 'Frontend Team', '🏢')];
+			const sessions = [
+				{ ...createMockSession('s1', 'Lead Agent'), groupId: 'g1' },
+				{ ...createMockSession('s2', 'Review Agent'), groupId: 'g1' },
+				createMockSession('s3', 'Solo Agent'),
+			];
+
+			renderWithProvider(
+				<PromptComposerModal
+					isOpen={true}
+					onClose={onClose}
+					theme={mockTheme}
+					initialValue=""
+					onSubmit={onSubmit}
+					onSend={onSend}
+					sessions={sessions}
+					groups={groups}
+				/>
+			);
+
+			const textarea = screen.getByPlaceholderText(
+				'Write your prompt here... (@ to mention agent)'
+			) as HTMLTextAreaElement;
+			fireEvent.change(textarea, { target: { value: '@frontend-' } });
+			fireEvent.click(screen.getByText('@Frontend-Team'));
+
+			expect(textarea.value).toBe('@Lead-Agent @Review-Agent ');
+			expect(onSubmit).toHaveBeenCalledWith('@Lead-Agent @Review-Agent ');
+		});
+
+		it('should skip groups without mentionable members', () => {
+			const groups = [createMockGroup('g1', 'Empty Team', '🏢')];
+			const sessions = [createMockSession('s1', 'Solo Agent')];
+
+			renderWithProvider(
+				<PromptComposerModal
+					isOpen={true}
+					onClose={onClose}
+					theme={mockTheme}
+					initialValue=""
+					onSubmit={onSubmit}
+					onSend={onSend}
+					sessions={sessions}
+					groups={groups}
+				/>
+			);
+
+			const textarea = screen.getByPlaceholderText(
+				'Write your prompt here... (@ to mention agent)'
+			);
+			fireEvent.change(textarea, { target: { value: '@' } });
+
+			expect(screen.queryByText('@Empty-Team')).not.toBeInTheDocument();
+			expect(screen.getByText('@Solo-Agent')).toBeInTheDocument();
+		});
+
+		it('should render the original agent name when the mention is normalized', () => {
+			const sessions = [createMockSession('s1', 'Lead Agent')];
+
+			renderWithProvider(
+				<PromptComposerModal
+					isOpen={true}
+					onClose={onClose}
+					theme={mockTheme}
+					initialValue=""
+					onSubmit={onSubmit}
+					onSend={onSend}
+					sessions={sessions}
+				/>
+			);
+
+			const textarea = screen.getByPlaceholderText(
+				'Write your prompt here... (@ to mention agent)'
+			);
+			fireEvent.change(textarea, { target: { value: '@' } });
+
+			expect(screen.getByText('@Lead-Agent')).toBeInTheDocument();
+			expect(screen.getByText('(Lead Agent)')).toBeInTheDocument();
+		});
+
+		it('should omit the alias label when a mention name matches the session name', () => {
+			const sessions = [createMockSession('s1', 'Agent1')];
+
+			renderWithProvider(
+				<PromptComposerModal
+					isOpen={true}
+					onClose={onClose}
+					theme={mockTheme}
+					initialValue=""
+					onSubmit={onSubmit}
+					onSend={onSend}
+					sessions={sessions}
+				/>
+			);
+
+			const textarea = screen.getByPlaceholderText(
+				'Write your prompt here... (@ to mention agent)'
+			);
+			fireEvent.change(textarea, { target: { value: '@' } });
+
+			expect(screen.getByText('@Agent1')).toBeInTheDocument();
+			expect(screen.queryByText('(Agent1)')).not.toBeInTheDocument();
+		});
+
+		it('should not insert a mention on modified Enter while suggestions are open', () => {
+			const sessions = [createMockSession('s1', 'Agent1')];
+			renderWithProvider(
+				<PromptComposerModal
+					isOpen={true}
+					onClose={onClose}
+					theme={mockTheme}
+					initialValue=""
+					onSubmit={onSubmit}
+					onSend={onSend}
+					sessions={sessions}
+				/>
+			);
+
+			const textarea = screen.getByPlaceholderText(
+				'Write your prompt here... (@ to mention agent)'
+			) as HTMLTextAreaElement;
+			fireEvent.change(textarea, { target: { value: '@' } });
+			fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: true });
+
+			expect(textarea.value).toBe('@');
+			expect(screen.getByText('@Agent1')).toBeInTheDocument();
+		});
+
+		it('should navigate upward, scroll the selected mention, and insert with Enter', async () => {
+			vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+				callback(0);
+				return 1;
+			});
+			const scrollIntoView = vi.fn();
+			Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+				configurable: true,
+				value: scrollIntoView,
+			});
+			const sessions = [createMockSession('s1', 'Agent1'), createMockSession('s2', 'Agent2')];
+
+			renderWithProvider(
+				<PromptComposerModal
+					isOpen={true}
+					onClose={onClose}
+					theme={mockTheme}
+					initialValue=""
+					onSubmit={onSubmit}
+					onSend={onSend}
+					sessions={sessions}
+				/>
+			);
+
+			const textarea = screen.getByPlaceholderText(
+				'Write your prompt here... (@ to mention agent)'
+			) as HTMLTextAreaElement;
+			fireEvent.change(textarea, { target: { value: '@' } });
+			await waitFor(() => expect(scrollIntoView).toHaveBeenCalled());
+
+			fireEvent.keyDown(textarea, { key: 'ArrowUp' });
+			fireEvent.keyDown(textarea, { key: 'Enter' });
+
+			expect(textarea.value).toBe('@Agent2 ');
+		});
+
+		it('should close mention suggestions once the active mention ends or disappears', () => {
+			const sessions = [createMockSession('s1', 'Agent1')];
+			renderWithProvider(
+				<PromptComposerModal
+					isOpen={true}
+					onClose={onClose}
+					theme={mockTheme}
+					initialValue=""
+					onSubmit={onSubmit}
+					onSend={onSend}
+					sessions={sessions}
+				/>
+			);
+
+			const textarea = screen.getByPlaceholderText(
+				'Write your prompt here... (@ to mention agent)'
+			);
+			fireEvent.change(textarea, { target: { value: '@' } });
+			expect(screen.getByText('@Agent1')).toBeInTheDocument();
+
+			fireEvent.change(textarea, { target: { value: '@Agent1 done' } });
+			expect(screen.queryByText('@Agent1')).not.toBeInTheDocument();
+
+			fireEvent.change(textarea, { target: { value: 'plain text' } });
+			expect(screen.queryByText('@Agent1')).not.toBeInTheDocument();
+		});
+	});
+
+	describe('Editing shortcuts and paste handling', () => {
+		it('should insert a tab character at the cursor and restore selection', () => {
+			let pendingFrame: FrameRequestCallback | undefined;
+			vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+				pendingFrame = callback;
+				return 1;
+			});
+			renderWithProvider(
+				<PromptComposerModal
+					isOpen={true}
+					onClose={onClose}
+					theme={mockTheme}
+					initialValue="HelloWorld"
+					onSubmit={onSubmit}
+					onSend={onSend}
+				/>
+			);
+			const textarea = screen.getByPlaceholderText(
+				'Write your prompt here...'
+			) as HTMLTextAreaElement;
+			textarea.selectionStart = 5;
+			textarea.selectionEnd = 5;
+
+			fireEvent.keyDown(textarea, { key: 'Tab' });
+			pendingFrame?.(0);
+
+			expect(textarea.value).toBe('Hello\tWorld');
+			expect(textarea.selectionStart).toBe(6);
+			expect(textarea.selectionEnd).toBe(6);
+		});
+
+		it('should trim pasted plain text and keep the cursor after the inserted text', () => {
+			vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+				callback(0);
+				return 1;
+			});
+			renderWithProvider(
+				<PromptComposerModal
+					isOpen={true}
+					onClose={onClose}
+					theme={mockTheme}
+					initialValue="Hello world"
+					onSubmit={onSubmit}
+					onSend={onSend}
+				/>
+			);
+			const textarea = screen.getByPlaceholderText(
+				'Write your prompt here...'
+			) as HTMLTextAreaElement;
+			textarea.selectionStart = 6;
+			textarea.selectionEnd = 11;
+			const pasteEvent = new Event('paste', { bubbles: true, cancelable: true });
+			Object.defineProperty(pasteEvent, 'clipboardData', {
+				value: {
+					items: [],
+					getData: () => '  Maestro  ',
+				},
+			});
+
+			fireEvent(textarea, pasteEvent);
+
+			expect(pasteEvent.defaultPrevented).toBe(true);
+			expect(textarea.value).toBe('Hello Maestro');
+			expect(textarea.selectionStart).toBe(13);
+			expect(textarea.selectionEnd).toBe(13);
+		});
+
+		it('should leave already-trimmed pasted text to the browser default path', () => {
+			renderWithProvider(
+				<PromptComposerModal
+					isOpen={true}
+					onClose={onClose}
+					theme={mockTheme}
+					initialValue="Hello"
+					onSubmit={onSubmit}
+					onSend={onSend}
+				/>
+			);
+			const textarea = screen.getByPlaceholderText('Write your prompt here...');
+			const pasteEvent = new Event('paste', { bubbles: true, cancelable: true });
+			Object.defineProperty(pasteEvent, 'clipboardData', {
+				value: {
+					items: [],
+					getData: () => 'Maestro',
+				},
+			});
+
+			fireEvent(textarea, pasteEvent);
+
+			expect(pasteEvent.defaultPrevented).toBe(false);
+		});
+
+		it('should leave empty pasted text to the browser default path', () => {
+			renderWithProvider(
+				<PromptComposerModal
+					isOpen={true}
+					onClose={onClose}
+					theme={mockTheme}
+					initialValue="Hello"
+					onSubmit={onSubmit}
+					onSend={onSend}
+				/>
+			);
+			const textarea = screen.getByPlaceholderText('Write your prompt here...');
+			const pasteEvent = new Event('paste', { bubbles: true, cancelable: true });
+			Object.defineProperty(pasteEvent, 'clipboardData', {
+				value: {
+					items: [],
+					getData: () => '',
+				},
+			});
+
+			fireEvent(textarea, pasteEvent);
+
+			expect(pasteEvent.defaultPrevented).toBe(false);
+		});
+
+		it('should ignore partial modifier shortcuts that are reserved for footer actions', () => {
+			const onOpenLightbox = vi.fn();
+			const onToggleTabSaveToHistory = vi.fn();
+
+			renderWithProvider(
+				<PromptComposerModal
+					isOpen={true}
+					onClose={onClose}
+					theme={mockTheme}
+					initialValue="Draft"
+					onSubmit={onSubmit}
+					onSend={onSend}
+					stagedImages={['img-a']}
+					onOpenLightbox={onOpenLightbox}
+					onToggleTabSaveToHistory={onToggleTabSaveToHistory}
+				/>
+			);
+			const textarea = screen.getByPlaceholderText('Write your prompt here...');
+
+			fireEvent.keyDown(textarea, { key: 'l', metaKey: true });
+			fireEvent.keyDown(textarea, { key: 's', metaKey: true, shiftKey: true });
+
+			expect(onOpenLightbox).not.toHaveBeenCalled();
+			expect(onToggleTabSaveToHistory).not.toHaveBeenCalled();
+		});
+
+		it('should support Ctrl variants for footer keyboard shortcuts', () => {
+			const onOpenLightbox = vi.fn();
+			const onToggleTabSaveToHistory = vi.fn();
+
+			renderWithProvider(
+				<PromptComposerModal
+					isOpen={true}
+					onClose={onClose}
+					theme={mockTheme}
+					initialValue="Draft"
+					onSubmit={onSubmit}
+					onSend={onSend}
+					stagedImages={['img-a']}
+					onOpenLightbox={onOpenLightbox}
+					onToggleTabSaveToHistory={onToggleTabSaveToHistory}
+				/>
+			);
+			const textarea = screen.getByPlaceholderText('Write your prompt here...');
+
+			fireEvent.keyDown(textarea, { key: 'l', ctrlKey: true, shiftKey: true });
+			fireEvent.keyDown(textarea, { key: 's', ctrlKey: true });
+
+			expect(onOpenLightbox).toHaveBeenCalledWith('img-a', ['img-a'], 'staged');
+			expect(onToggleTabSaveToHistory).toHaveBeenCalledTimes(1);
+		});
+
+		it('should ignore the lightbox shortcut when no staged image can be opened', () => {
+			const onOpenLightbox = vi.fn();
+
+			renderWithProvider(
+				<PromptComposerModal
+					isOpen={true}
+					onClose={onClose}
+					theme={mockTheme}
+					initialValue="Draft"
+					onSubmit={onSubmit}
+					onSend={onSend}
+					stagedImages={[]}
+					onOpenLightbox={onOpenLightbox}
+				/>
+			);
+			const textarea = screen.getByPlaceholderText('Write your prompt here...');
+
+			fireEvent.keyDown(textarea, { key: 'l', ctrlKey: true, shiftKey: true });
+
+			expect(onOpenLightbox).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('Image attachments and staged previews', () => {
+		class MockFileReader {
+			onload: ((event: { target: { result: string } }) => void) | null = null;
+
+			readAsDataURL() {
+				this.onload?.({ target: { result: 'data:image/png;base64,loaded' } });
+			}
+		}
+
+		it('should block pasted images when image attachment is unavailable', () => {
+			const onImageAttachBlocked = vi.fn();
+			renderWithProvider(
+				<PromptComposerModal
+					isOpen={true}
+					onClose={onClose}
+					theme={mockTheme}
+					initialValue=""
+					onSubmit={onSubmit}
+					onSend={onSend}
+					onImageAttachBlocked={onImageAttachBlocked}
+				/>
+			);
+			const textarea = screen.getByPlaceholderText('Write your prompt here...');
+			const pasteEvent = new Event('paste', { bubbles: true, cancelable: true });
+			Object.defineProperty(pasteEvent, 'clipboardData', {
+				value: {
+					items: [{ type: 'image/png', getAsFile: () => new File(['img'], 'paste.png') }],
+					getData: () => '',
+				},
+			});
+
+			fireEvent(textarea, pasteEvent);
+
+			expect(pasteEvent.defaultPrevented).toBe(true);
+			expect(onImageAttachBlocked).toHaveBeenCalled();
+			expect(screen.queryByTitle('Attach Image')).not.toBeInTheDocument();
+		});
+
+		it('should load pasted and selected image files into staged images', () => {
+			vi.stubGlobal('FileReader', MockFileReader);
+			const setStagedImages = vi.fn();
+			const clickInput = vi.spyOn(HTMLInputElement.prototype, 'click').mockImplementation(() => {});
+			const { container } = renderWithProvider(
+				<PromptComposerModal
+					isOpen={true}
+					onClose={onClose}
+					theme={mockTheme}
+					initialValue=""
+					onSubmit={onSubmit}
+					onSend={onSend}
+					stagedImages={[]}
+					setStagedImages={setStagedImages as React.Dispatch<React.SetStateAction<string[]>>}
+				/>
+			);
+			const textarea = screen.getByPlaceholderText('Write your prompt here...');
+
+			fireEvent.paste(textarea, {
+				clipboardData: {
+					items: [{ type: 'image/png', getAsFile: () => new File(['img'], 'paste.png') }],
+					getData: () => '',
+				},
+			});
+			fireEvent.click(screen.getByTitle('Attach Image'));
+			const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+			fireEvent.change(input, {
+				target: {
+					files: [new File(['img'], 'select.png', { type: 'image/png' })],
+				},
+			});
+
+			expect(clickInput).toHaveBeenCalled();
+			expect(setStagedImages).toHaveBeenCalledTimes(2);
+			const pasteUpdater = setStagedImages.mock.calls[0][0] as (prev: string[]) => string[];
+			const fileUpdater = setStagedImages.mock.calls[1][0] as (prev: string[]) => string[];
+			expect(pasteUpdater(['existing'])).toEqual(['existing', 'data:image/png;base64,loaded']);
+			expect(fileUpdater([])).toEqual(['data:image/png;base64,loaded']);
+			expect(input.value).toBe('');
+		});
+
+		it('should skip non-image paste items before loading the pasted image', () => {
+			vi.stubGlobal('FileReader', MockFileReader);
+			const setStagedImages = vi.fn();
+			renderWithProvider(
+				<PromptComposerModal
+					isOpen={true}
+					onClose={onClose}
+					theme={mockTheme}
+					initialValue=""
+					onSubmit={onSubmit}
+					onSend={onSend}
+					stagedImages={[]}
+					setStagedImages={setStagedImages as React.Dispatch<React.SetStateAction<string[]>>}
+				/>
+			);
+
+			fireEvent.paste(screen.getByPlaceholderText('Write your prompt here...'), {
+				clipboardData: {
+					items: [
+						{ type: 'text/html', getAsFile: () => null },
+						{ type: 'image/png', getAsFile: () => new File(['img'], 'paste.png') },
+					],
+					getData: () => '',
+				},
+			});
+
+			expect(setStagedImages).toHaveBeenCalledTimes(1);
+		});
+
+		it('should ignore pasted image items without files or reader data', () => {
+			const setStagedImages = vi.fn();
+			const nullFile = renderWithProvider(
+				<PromptComposerModal
+					isOpen={true}
+					onClose={onClose}
+					theme={mockTheme}
+					initialValue=""
+					onSubmit={onSubmit}
+					onSend={onSend}
+					stagedImages={[]}
+					setStagedImages={setStagedImages as React.Dispatch<React.SetStateAction<string[]>>}
+				/>
+			);
+
+			fireEvent.paste(screen.getByPlaceholderText('Write your prompt here...'), {
+				clipboardData: {
+					items: [{ type: 'image/png', getAsFile: () => null }],
+					getData: () => '',
+				},
+			});
+			expect(setStagedImages).not.toHaveBeenCalled();
+			nullFile.unmount();
+
+			class EmptyFileReader {
+				onload: ((event: { target: { result: string } }) => void) | null = null;
+				readAsDataURL() {
+					this.onload?.({ target: { result: '' } });
+				}
+			}
+			vi.stubGlobal('FileReader', EmptyFileReader);
+			renderWithProvider(
+				<PromptComposerModal
+					isOpen={true}
+					onClose={onClose}
+					theme={mockTheme}
+					initialValue=""
+					onSubmit={onSubmit}
+					onSend={onSend}
+					stagedImages={[]}
+					setStagedImages={setStagedImages as React.Dispatch<React.SetStateAction<string[]>>}
+				/>
+			);
+
+			fireEvent.paste(screen.getByPlaceholderText('Write your prompt here...'), {
+				clipboardData: {
+					items: [{ type: 'image/png', getAsFile: () => new File(['img'], 'paste.png') }],
+					getData: () => '',
+				},
+			});
+			expect(setStagedImages).not.toHaveBeenCalled();
+		});
+
+		it('should ignore selected image files when FileReader has no result', () => {
+			class EmptyFileReader {
+				onload: ((event: { target: { result: string } }) => void) | null = null;
+				readAsDataURL() {
+					this.onload?.({ target: { result: '' } });
+				}
+			}
+			vi.stubGlobal('FileReader', EmptyFileReader);
+			const setStagedImages = vi.fn();
+			const { container } = renderWithProvider(
+				<PromptComposerModal
+					isOpen={true}
+					onClose={onClose}
+					theme={mockTheme}
+					initialValue=""
+					onSubmit={onSubmit}
+					onSend={onSend}
+					stagedImages={[]}
+					setStagedImages={setStagedImages as React.Dispatch<React.SetStateAction<string[]>>}
+				/>
+			);
+			const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+
+			fireEvent.change(input, {
+				target: {
+					files: [new File(['img'], 'select.png', { type: 'image/png' })],
+				},
+			});
+
+			expect(setStagedImages).not.toHaveBeenCalled();
+		});
+
+		it('should leave selected image state unchanged when file input has no files', () => {
+			const setStagedImages = vi.fn();
+			const { container } = renderWithProvider(
+				<PromptComposerModal
+					isOpen={true}
+					onClose={onClose}
+					theme={mockTheme}
+					initialValue=""
+					onSubmit={onSubmit}
+					onSend={onSend}
+					stagedImages={[]}
+					setStagedImages={setStagedImages as React.Dispatch<React.SetStateAction<string[]>>}
+				/>
+			);
+			const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+
+			fireEvent.change(input, { target: { files: null } });
+
+			expect(setStagedImages).not.toHaveBeenCalled();
+		});
+
+		it('should open and remove staged image previews with pointer and keyboard controls', () => {
+			const onOpenLightbox = vi.fn();
+			const setStagedImages = vi.fn();
+			renderWithProvider(
+				<PromptComposerModal
+					isOpen={true}
+					onClose={onClose}
+					theme={mockTheme}
+					initialValue="Review this"
+					onSubmit={onSubmit}
+					onSend={onSend}
+					stagedImages={['img-a', 'img-b']}
+					setStagedImages={setStagedImages as React.Dispatch<React.SetStateAction<string[]>>}
+					onOpenLightbox={onOpenLightbox}
+				/>
+			);
+			const firstImage = screen.getByAltText('Prompt composer staged image 1');
+
+			fireEvent.click(firstImage);
+			fireEvent.keyDown(firstImage, { key: 'Enter' });
+			fireEvent.keyDown(firstImage, { key: ' ' });
+			fireEvent.keyDown(firstImage, { key: 'Escape' });
+			const removeButton = screen.getAllByTestId('x-icon')[1].closest('button');
+			expect(removeButton).not.toBeNull();
+			fireEvent.click(removeButton!);
+
+			expect(onOpenLightbox).toHaveBeenCalledWith('img-a', ['img-a', 'img-b'], 'staged');
+			expect(onOpenLightbox).toHaveBeenCalledTimes(3);
+			const updater = setStagedImages.mock.calls[0][0] as (prev: string[]) => string[];
+			expect(updater(['img-a', 'img-b'])).toEqual(['img-b']);
+		});
+
+		it('should ignore unrelated staged image keyboard events', () => {
+			const onOpenLightbox = vi.fn();
+			renderWithProvider(
+				<PromptComposerModal
+					isOpen={true}
+					onClose={onClose}
+					theme={mockTheme}
+					initialValue="Review this"
+					onSubmit={onSubmit}
+					onSend={onSend}
+					stagedImages={['img-a']}
+					onOpenLightbox={onOpenLightbox}
+				/>
+			);
+
+			fireEvent.keyDown(screen.getByAltText('Prompt composer staged image 1'), { key: 'a' });
+
+			expect(onOpenLightbox).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('Footer controls and modal close controls', () => {
+		it('should trigger footer toggles from buttons and keyboard shortcuts', () => {
+			const onOpenLightbox = vi.fn();
+			const onToggleTabSaveToHistory = vi.fn();
+			const onToggleTabReadOnlyMode = vi.fn();
+			const onToggleTabShowThinking = vi.fn();
+			const onToggleEnterToSend = vi.fn();
+
+			renderWithProvider(
+				<PromptComposerModal
+					isOpen={true}
+					onClose={onClose}
+					theme={mockTheme}
+					initialValue="Ask the team"
+					onSubmit={onSubmit}
+					onSend={onSend}
+					stagedImages={['img-a']}
+					tabSaveToHistory={true}
+					onToggleTabSaveToHistory={onToggleTabSaveToHistory}
+					tabReadOnlyMode={true}
+					onToggleTabReadOnlyMode={onToggleTabReadOnlyMode}
+					agentId="claude-code"
+					tabShowThinking="sticky"
+					supportsThinking={true}
+					onToggleTabShowThinking={onToggleTabShowThinking}
+					enterToSend={true}
+					onToggleEnterToSend={onToggleEnterToSend}
+					onOpenLightbox={onOpenLightbox}
+				/>
+			);
+			const textarea = screen.getByPlaceholderText('Write your prompt here...');
+
+			fireEvent.keyDown(textarea, { key: 'l', metaKey: true, shiftKey: true });
+			fireEvent.keyDown(textarea, { key: 's', metaKey: true });
+			fireEvent.keyDown(textarea, { key: 'r', ctrlKey: true });
+			fireEvent.click(screen.getByRole('button', { name: /history/i }));
+			fireEvent.click(screen.getByRole('button', { name: /plan-mode/i }));
+			fireEvent.click(screen.getByRole('button', { name: /thinking/i }));
+			fireEvent.click(screen.getByRole('button', { name: formatEnterToSend(true) }));
+
+			expect(onOpenLightbox).toHaveBeenCalledWith('img-a', ['img-a'], 'staged');
+			expect(onToggleTabSaveToHistory).toHaveBeenCalledTimes(2);
+			expect(onToggleTabReadOnlyMode).toHaveBeenCalledTimes(2);
+			expect(onToggleTabShowThinking).toHaveBeenCalledTimes(1);
+			expect(onToggleEnterToSend).toHaveBeenCalledTimes(1);
+			expect(screen.getByTestId('pin-icon')).toBeInTheDocument();
+		});
+
+		it('should render inactive footer toggle labels and fallback read-only text', () => {
+			renderWithProvider(
+				<PromptComposerModal
+					isOpen={true}
+					onClose={onClose}
+					theme={mockTheme}
+					initialValue=""
+					onSubmit={onSubmit}
+					onSend={onSend}
+					tabSaveToHistory={false}
+					onToggleTabSaveToHistory={vi.fn()}
+					tabReadOnlyMode={false}
+					onToggleTabReadOnlyMode={vi.fn()}
+					tabShowThinking="on"
+					supportsThinking={true}
+					onToggleTabShowThinking={vi.fn()}
+				/>
+			);
+
+			expect(screen.getByRole('button', { name: /history/i })).toBeInTheDocument();
+			expect(screen.getByRole('button', { name: /read-only/i })).toHaveAttribute(
+				'title',
+				"Toggle Read-Only mode (agent won't modify files)"
+			);
+			expect(screen.getByRole('button', { name: /thinking/i })).toHaveAttribute(
+				'title',
+				'Thinking (temporary) - Click for sticky mode'
+			);
+		});
+
+		it('should render the off state for the thinking toggle', () => {
+			renderWithProvider(
+				<PromptComposerModal
+					isOpen={true}
+					onClose={onClose}
+					theme={mockTheme}
+					initialValue=""
+					onSubmit={onSubmit}
+					onSend={onSend}
+					tabShowThinking="off"
+					supportsThinking={true}
+					onToggleTabShowThinking={vi.fn()}
+				/>
+			);
+
+			const button = screen.getByRole('button', { name: /thinking/i });
+			expect(button).toHaveAttribute('title', 'Show Thinking - Click to stream AI reasoning');
+			expect(button).toHaveClass('opacity-40');
+		});
+
+		it('should save and close from the accessible backdrop button', () => {
+			renderWithProvider(
+				<PromptComposerModal
+					isOpen={true}
+					onClose={onClose}
+					theme={mockTheme}
+					initialValue="Backdrop draft"
+					onSubmit={onSubmit}
+					onSend={onSend}
+				/>
+			);
+
+			fireEvent.click(screen.getByLabelText('Close prompt composer'));
+
+			expect(onSubmit).toHaveBeenCalledWith('Backdrop draft');
+			expect(onClose).toHaveBeenCalled();
 		});
 	});
 });

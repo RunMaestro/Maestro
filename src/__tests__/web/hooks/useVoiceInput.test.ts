@@ -13,9 +13,13 @@ import { renderHook, act } from '@testing-library/react';
 import {
 	useVoiceInput,
 	isSpeechRecognitionSupported,
+	getSpeechRecognition,
+	triggerHapticFeedback,
 	type SpeechRecognitionEvent,
+	type SpeechRecognitionErrorEvent,
 	type SpeechRecognitionResultList,
 } from '../../../web/hooks/useVoiceInput';
+import { webLogger } from '../../../web/utils/logger';
 
 vi.mock('../../../web/utils/logger', () => ({
 	webLogger: {
@@ -27,6 +31,7 @@ vi.mock('../../../web/utils/logger', () => ({
 }));
 
 let lastRecognitionInstance: MockSpeechRecognition | null = null;
+const originalNavigatorLanguage = navigator.language;
 
 class MockSpeechRecognition {
 	continuous = false;
@@ -36,7 +41,7 @@ class MockSpeechRecognition {
 	onaudioend = null;
 	onaudiostart = null;
 	onend: ((this: MockSpeechRecognition, ev: Event) => void) | null = null;
-	onerror = null;
+	onerror: ((this: MockSpeechRecognition, ev: SpeechRecognitionErrorEvent) => void) | null = null;
 	onnomatch = null;
 	onresult: ((this: MockSpeechRecognition, ev: SpeechRecognitionEvent) => void) | null = null;
 	onsoundend = null;
@@ -60,16 +65,37 @@ class MockSpeechRecognition {
 	}
 }
 
-function setSpeechRecognitionAvailable() {
+class ThrowingStartSpeechRecognition extends MockSpeechRecognition {
+	start = vi.fn(() => {
+		throw new Error('microphone blocked');
+	});
+}
+
+function setSpeechRecognitionAvailable(
+	Ctor: typeof MockSpeechRecognition = MockSpeechRecognition,
+	property: 'SpeechRecognition' | 'webkitSpeechRecognition' = 'SpeechRecognition'
+) {
+	clearSpeechRecognition();
 	Object.defineProperty(window, 'SpeechRecognition', {
-		value: MockSpeechRecognition,
+		value: property === 'SpeechRecognition' ? Ctor : undefined,
+		configurable: true,
+		writable: true,
+	});
+	Object.defineProperty(window, 'webkitSpeechRecognition', {
+		value: property === 'webkitSpeechRecognition' ? Ctor : undefined,
 		configurable: true,
 		writable: true,
 	});
 }
 
 function clearSpeechRecognition() {
+	if (typeof window === 'undefined') return;
 	Object.defineProperty(window, 'SpeechRecognition', {
+		value: undefined,
+		configurable: true,
+		writable: true,
+	});
+	Object.defineProperty(window, 'webkitSpeechRecognition', {
 		value: undefined,
 		configurable: true,
 		writable: true,
@@ -77,18 +103,99 @@ function clearSpeechRecognition() {
 	lastRecognitionInstance = null;
 }
 
+function setVibrate(vibrate: ((pattern: number) => boolean) | undefined) {
+	if (vibrate) {
+		Object.defineProperty(navigator, 'vibrate', {
+			value: vibrate,
+			configurable: true,
+			writable: true,
+		});
+		return;
+	}
+
+	Reflect.deleteProperty(navigator, 'vibrate');
+}
+
+function setNavigatorLanguage(language: string) {
+	Object.defineProperty(navigator, 'language', {
+		value: language,
+		configurable: true,
+	});
+}
+
+function createSpeechEvent(
+	transcripts: Array<{ transcript: string; isFinal: boolean }>,
+	resultIndex = 0
+): SpeechRecognitionEvent {
+	const results = transcripts.map(({ transcript, isFinal }) => {
+		const alt = { transcript, confidence: 0.9 };
+		return {
+			isFinal,
+			length: 1,
+			0: alt,
+			item: () => alt,
+		};
+	}) as unknown as SpeechRecognitionResultList;
+	(results as { item?: (index: number) => unknown }).item = (index: number) => results[index];
+
+	return {
+		resultIndex,
+		results,
+	} as SpeechRecognitionEvent;
+}
+
 describe('useVoiceInput', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		setSpeechRecognitionAvailable();
+		setNavigatorLanguage(originalNavigatorLanguage);
+		setVibrate(undefined);
 	});
 
 	afterEach(() => {
+		vi.unstubAllGlobals();
 		clearSpeechRecognition();
+		setNavigatorLanguage(originalNavigatorLanguage);
+		setVibrate(undefined);
 	});
 
-	it('detects speech recognition support', () => {
+	it('detects speech recognition support and constructor fallbacks', () => {
 		expect(isSpeechRecognitionSupported()).toBe(true);
+		expect(getSpeechRecognition()).toBe(MockSpeechRecognition);
+
+		setSpeechRecognitionAvailable(MockSpeechRecognition, 'webkitSpeechRecognition');
+		expect(isSpeechRecognitionSupported()).toBe(true);
+		expect(getSpeechRecognition()).toBe(MockSpeechRecognition);
+
+		clearSpeechRecognition();
+		expect(isSpeechRecognitionSupported()).toBe(false);
+		expect(getSpeechRecognition()).toBeNull();
+
+		vi.stubGlobal('window', undefined);
+		expect(isSpeechRecognitionSupported()).toBe(false);
+		expect(getSpeechRecognition()).toBeNull();
+		vi.unstubAllGlobals();
+	});
+
+	it('maps haptic feedback patterns and ignores blocked vibration', () => {
+		const vibrate = vi.fn();
+		setVibrate(vibrate);
+
+		triggerHapticFeedback('light');
+		triggerHapticFeedback('medium');
+		triggerHapticFeedback('strong');
+		triggerHapticFeedback(75);
+
+		expect(vibrate.mock.calls).toEqual([[10], [25], [50], [75]]);
+
+		vibrate.mockImplementationOnce(() => {
+			throw new Error('blocked');
+		});
+
+		expect(() => triggerHapticFeedback('medium')).not.toThrow();
+
+		setVibrate(undefined);
+		expect(() => triggerHapticFeedback('light')).not.toThrow();
 	});
 
 	it('starts listening and updates transcription', () => {
@@ -108,25 +215,161 @@ describe('useVoiceInput', () => {
 		expect(result.current.isListening).toBe(true);
 		expect(lastRecognitionInstance?.start).toHaveBeenCalled();
 
-		const alt = { transcript: 'world', confidence: 0.9 };
-		const mockResult = {
-			isFinal: true,
-			length: 1,
-			0: alt,
-			item: () => alt,
-		};
-		const mockResults = [mockResult] as unknown as SpeechRecognitionResultList;
-		(mockResults as { item?: (index: number) => unknown }).item = (index: number) =>
-			mockResults[index];
-
 		act(() => {
 			lastRecognitionInstance?.onresult?.call(lastRecognitionInstance, {
-				resultIndex: 0,
-				results: mockResults,
-			} as SpeechRecognitionEvent);
+				...createSpeechEvent([{ transcript: 'world', isFinal: true }]),
+			});
 		});
 
 		expect(onTranscriptionChange).toHaveBeenCalledWith('hello world');
+	});
+
+	it('updates transcription with interim text and default language fallback', () => {
+		const onTranscriptionChange = vi.fn();
+		setNavigatorLanguage('');
+
+		const { result } = renderHook(() =>
+			useVoiceInput({
+				currentValue: '  ',
+				onTranscriptionChange,
+			})
+		);
+
+		act(() => {
+			result.current.startVoiceInput();
+		});
+
+		expect(lastRecognitionInstance?.lang).toBe('en-US');
+
+		act(() => {
+			lastRecognitionInstance?.onresult?.call(
+				lastRecognitionInstance,
+				createSpeechEvent([{ transcript: 'draft', isFinal: false }])
+			);
+		});
+
+		expect(onTranscriptionChange).toHaveBeenCalledWith('draft');
+	});
+
+	it('does not start when voice input is disabled, unsupported, or missing at start time', () => {
+		const onTranscriptionChange = vi.fn();
+		const disabledHook = renderHook(() =>
+			useVoiceInput({
+				currentValue: '',
+				disabled: true,
+				onTranscriptionChange,
+			})
+		);
+
+		act(() => {
+			disabledHook.result.current.startVoiceInput();
+		});
+
+		expect(lastRecognitionInstance).toBeNull();
+
+		clearSpeechRecognition();
+		const unsupportedHook = renderHook(() =>
+			useVoiceInput({
+				currentValue: '',
+				onTranscriptionChange,
+			})
+		);
+
+		expect(unsupportedHook.result.current.voiceSupported).toBe(false);
+
+		act(() => {
+			unsupportedHook.result.current.startVoiceInput();
+		});
+
+		expect(lastRecognitionInstance).toBeNull();
+
+		setSpeechRecognitionAvailable();
+		const missingAtStartHook = renderHook(() =>
+			useVoiceInput({
+				currentValue: '',
+				onTranscriptionChange,
+			})
+		);
+		clearSpeechRecognition();
+
+		act(() => {
+			missingAtStartHook.result.current.startVoiceInput();
+		});
+
+		expect(lastRecognitionInstance).toBeNull();
+	});
+
+	it('logs start failures and resets listening state', () => {
+		const onTranscriptionChange = vi.fn();
+		setSpeechRecognitionAvailable(ThrowingStartSpeechRecognition);
+
+		const { result } = renderHook(() =>
+			useVoiceInput({
+				currentValue: '',
+				onTranscriptionChange,
+			})
+		);
+
+		act(() => {
+			result.current.startVoiceInput();
+		});
+
+		expect(result.current.isListening).toBe(false);
+		expect(webLogger.warn).toHaveBeenCalledWith(
+			'Failed to start speech recognition',
+			'VoiceInput',
+			expect.any(Error)
+		);
+	});
+
+	it('handles recognition errors without strong haptics for benign errors', () => {
+		const onTranscriptionChange = vi.fn();
+		const vibrate = vi.fn();
+		setVibrate(vibrate);
+
+		const { result } = renderHook(() =>
+			useVoiceInput({
+				currentValue: '',
+				onTranscriptionChange,
+			})
+		);
+
+		act(() => {
+			result.current.startVoiceInput();
+		});
+
+		act(() => {
+			lastRecognitionInstance?.onerror?.call(lastRecognitionInstance, {
+				error: 'no-speech',
+				message: 'silence',
+			} as SpeechRecognitionErrorEvent);
+		});
+
+		expect(result.current.isListening).toBe(false);
+		expect(vibrate).not.toHaveBeenCalledWith(50);
+		expect(webLogger.warn).toHaveBeenCalledWith(
+			'Speech recognition error',
+			'VoiceInput',
+			'no-speech'
+		);
+
+		act(() => {
+			result.current.startVoiceInput();
+		});
+
+		act(() => {
+			lastRecognitionInstance?.onerror?.call(lastRecognitionInstance, {
+				error: 'network',
+				message: 'offline',
+			} as SpeechRecognitionErrorEvent);
+		});
+
+		expect(vibrate).toHaveBeenCalledWith(50);
+		expect(webLogger.warn).toHaveBeenCalledWith(
+			'Speech recognition error',
+			'VoiceInput',
+			'network'
+		);
 	});
 
 	it('stops listening when toggled off', () => {
@@ -151,6 +394,64 @@ describe('useVoiceInput', () => {
 		expect(result.current.isListening).toBe(false);
 	});
 
+	it('handles stop without active recognition and ignores stop failures', () => {
+		const onTranscriptionChange = vi.fn();
+
+		const { result } = renderHook(() =>
+			useVoiceInput({
+				currentValue: '',
+				onTranscriptionChange,
+			})
+		);
+
+		act(() => {
+			result.current.stopVoiceInput();
+		});
+
+		expect(result.current.isListening).toBe(false);
+
+		act(() => {
+			result.current.startVoiceInput();
+		});
+
+		const recognition = lastRecognitionInstance;
+		recognition?.stop.mockImplementationOnce(() => {
+			throw new Error('already stopped');
+		});
+
+		expect(() => {
+			act(() => {
+				result.current.stopVoiceInput();
+			});
+		}).not.toThrow();
+		expect(result.current.isListening).toBe(false);
+	});
+
+	it('toggles voice input between start and stop', () => {
+		const onTranscriptionChange = vi.fn();
+
+		const { result } = renderHook(() =>
+			useVoiceInput({
+				currentValue: '',
+				onTranscriptionChange,
+			})
+		);
+
+		act(() => {
+			result.current.toggleVoiceInput();
+		});
+
+		const recognition = lastRecognitionInstance;
+		expect(result.current.isListening).toBe(true);
+
+		act(() => {
+			result.current.toggleVoiceInput();
+		});
+
+		expect(recognition?.stop).toHaveBeenCalled();
+		expect(result.current.isListening).toBe(false);
+	});
+
 	it('aborts recognition on unmount', () => {
 		const onTranscriptionChange = vi.fn();
 
@@ -168,5 +469,26 @@ describe('useVoiceInput', () => {
 		unmount();
 
 		expect(lastRecognitionInstance?.abort).toHaveBeenCalled();
+	});
+
+	it('ignores abort failures during unmount cleanup', () => {
+		const onTranscriptionChange = vi.fn();
+
+		const { result, unmount } = renderHook(() =>
+			useVoiceInput({
+				currentValue: '',
+				onTranscriptionChange,
+			})
+		);
+
+		act(() => {
+			result.current.startVoiceInput();
+		});
+
+		lastRecognitionInstance?.abort.mockImplementationOnce(() => {
+			throw new Error('already aborted');
+		});
+
+		expect(() => unmount()).not.toThrow();
 	});
 });

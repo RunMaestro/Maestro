@@ -308,6 +308,18 @@ describe('LiveSessionManager', () => {
 					null
 				);
 			});
+
+			it('should broadcast null when clearing a state that was not stored', () => {
+				manager.setBroadcastCallbacks(mockBroadcastCallbacks);
+
+				manager.setAutoRunState('missing-session', null);
+
+				expect(manager.getAutoRunState('missing-session')).toBeUndefined();
+				expect(mockBroadcastCallbacks.broadcastAutoRunState).toHaveBeenCalledWith(
+					'missing-session',
+					null
+				);
+			});
 		});
 
 		describe('getAutoRunState', () => {
@@ -395,6 +407,21 @@ describe('LiveSessionManager', () => {
 			// Should not throw
 			manager.clearAll();
 			expect(manager.getLiveSessionCount()).toBe(0);
+		});
+
+		it('should clear stale AutoRun states that are not attached to live sessions', () => {
+			manager.setBroadcastCallbacks(mockBroadcastCallbacks);
+			manager.setAutoRunState('stale-session', {
+				isRunning: true,
+				totalTasks: 4,
+				completedTasks: 2,
+				currentTask: 'Task 2',
+			});
+
+			manager.clearAll();
+
+			expect(manager.getAutoRunStates().size).toBe(0);
+			expect(mockBroadcastCallbacks.broadcastSessionOffline).not.toHaveBeenCalled();
 		});
 	});
 

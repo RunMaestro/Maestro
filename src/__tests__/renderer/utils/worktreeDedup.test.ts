@@ -56,6 +56,12 @@ describe('worktreeDedup', () => {
 		expect(isRecentlyCreatedWorktreePath('/projects/worktrees/to-clear')).toBe(false);
 	});
 
+	it('clearing an unmarked path is a no-op', () => {
+		clearRecentlyCreatedWorktreePath('/projects/worktrees/not-marked');
+
+		expect(isRecentlyCreatedWorktreePath('/projects/worktrees/not-marked')).toBe(false);
+	});
+
 	it('auto-expires after TTL (default 10s)', () => {
 		markWorktreePathAsRecentlyCreated('/projects/worktrees/ttl-test');
 		expect(isRecentlyCreatedWorktreePath('/projects/worktrees/ttl-test')).toBe(true);

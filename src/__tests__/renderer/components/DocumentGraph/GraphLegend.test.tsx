@@ -139,6 +139,17 @@ describe('GraphLegend', () => {
 
 			expect(onClose).toHaveBeenCalledOnce();
 		});
+
+		it('applies and clears hover background on the close button', () => {
+			render(<GraphLegend {...defaultProps} />);
+
+			const closeButton = screen.getByTitle('Close (Esc)');
+			fireEvent.mouseEnter(closeButton);
+			expect(closeButton).toHaveStyle({ backgroundColor: `${mockTheme.colors.accent}20` });
+
+			fireEvent.mouseLeave(closeButton);
+			expect(closeButton.style.backgroundColor).toBe('transparent');
+		});
 	});
 
 	describe('Keyboard Shortcuts Section', () => {

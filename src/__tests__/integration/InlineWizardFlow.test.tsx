@@ -25,6 +25,11 @@ import {
 } from '../../renderer/contexts/InlineWizardContext';
 import { WizardConversationView } from '../../renderer/components/InlineWizard/WizardConversationView';
 import { parseWizardIntent } from '../../renderer/services/wizardIntentParser';
+import {
+	clearCapabilitiesCache,
+	DEFAULT_CAPABILITIES,
+	setCapabilitiesCache,
+} from '../../renderer/hooks/agent/useAgentCapabilities';
 import type { Theme } from '../../renderer/types';
 
 // Mock the maestro API
@@ -49,6 +54,10 @@ const mockMaestro = {
 beforeEach(() => {
 	(window as any).maestro = mockMaestro;
 	vi.clearAllMocks();
+	clearCapabilitiesCache();
+	for (const agentId of ['claude-code', 'codex', 'opencode']) {
+		setCapabilitiesCache(agentId, { ...DEFAULT_CAPABILITIES, supportsWizard: true });
+	}
 });
 
 afterEach(() => {
@@ -714,15 +723,49 @@ describe('Inline Wizard Integration Flow', () => {
 				useInlineWizardContext();
 				return null;
 			};
+			class ErrorBoundary extends React.Component<
+				{ children: React.ReactNode },
+				{ error: Error | null }
+			> {
+				state = { error: null };
 
-			// Suppress console.error for this test
+				static getDerivedStateFromError(error: Error) {
+					return { error };
+				}
+
+				render() {
+					if (this.state.error) {
+						return <div data-testid="provider-error">{this.state.error.message}</div>;
+					}
+					return this.props.children;
+				}
+			}
+
 			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const preventExpectedError = (event: ErrorEvent) => {
+				if (
+					event.message.includes(
+						'useInlineWizardContext must be used within an InlineWizardProvider'
+					)
+				) {
+					event.preventDefault();
+				}
+			};
+			window.addEventListener('error', preventExpectedError);
 
-			expect(() => render(<TestComponent />)).toThrow(
-				'useInlineWizardContext must be used within an InlineWizardProvider'
-			);
-
-			consoleError.mockRestore();
+			try {
+				render(
+					<ErrorBoundary>
+						<TestComponent />
+					</ErrorBoundary>
+				);
+				expect(screen.getByTestId('provider-error')).toHaveTextContent(
+					'useInlineWizardContext must be used within an InlineWizardProvider'
+				);
+			} finally {
+				window.removeEventListener('error', preventExpectedError);
+				consoleError.mockRestore();
+			}
 		});
 	});
 
