@@ -1,6 +1,6 @@
 # wizard-settings-prompts
 
-Status: tranche 39 director detail accepted
+Status: tranche 40 director navigation accepted
 
 ## Scope
 
@@ -1291,3 +1291,37 @@ New Agent Wizard, inline wizard, Settings, Director Notes, prompt composer.
   - Real provider account and live agent handoff coverage remains env-gated.
   - Settings matrix-backed target remains complete at 190 active Settings scenarios.
   - Remaining matrix-backed target: about 116 active/skipped rows after this tranche.
+
+### 2026-06-09 tranche 40 fallback
+
+- Scope: compact orchestrator import from the persistent-worker branch.
+- Authored: 8 additional active deterministic Playwright scenarios.
+  - Director's Notes Unified History detail shows first-entry navigation bounds.
+  - The detail modal Next action navigates from the AUTO entry to the USER entry.
+  - The detail modal Previous action navigates from the USER entry back to the AUTO entry.
+  - The final detail entry shows previous-enabled and no-next navigation bounds.
+  - USER history detail hides AUTO-only validation actions.
+  - Failed AUTO history detail shows failed status without validation affordances.
+  - Unified History search shows the result count while filtering.
+  - Activity graph all-time lookback reloads Unified History with a zero-day lookback.
+- Cumulative lane-authored coverage: 264 active deterministic scenarios, 1 env-gated scenario.
+- Skipped/env-gated: no new rows; total remains 1 provider-account handoff placeholder.
+- Files touched:
+  - `e2e/wizard-settings-prompts.spec.ts`
+- Shared helpers edited: no.
+- Validation run before orchestrator acceptance:
+  - `NODE_OPTIONS=--max-old-space-size=8192 npx prettier --write e2e/wizard-settings-prompts.spec.ts` - passed.
+  - `NODE_OPTIONS=--max-old-space-size=8192 npx eslint e2e/wizard-settings-prompts.spec.ts` - passed.
+  - `NODE_OPTIONS=--max-old-space-size=8192 npx tsc -p tsconfig.lint.json --noEmit` - passed.
+  - Static scenario-ID/`.only`/fixed-wait/force-click/console/prohibited-command scans - passed with 264 WSP IDs, 264 active declarations, and 1 skipped/env-gated row.
+  - Static E2E declaration inventory scan - passed with 15 spec files and 1,892 declared `test`/`test.skip` rows.
+  - `git diff --check -- e2e/wizard-settings-prompts.spec.ts` - passed.
+- Review:
+  - Focused code-reviewer checklist verified WSP-257 through WSP-264, detail navigation bounds and button actions, USER validation-action absence, failed AUTO status, scoped search count, all-time lookback reload parameters, no native/provider dependencies, no duplicate IDs, and absence of prohibited E2E commands; no critical or high-severity issues found.
+- Not run by instruction: `npm run test:e2e`, `playwright test`, headed/UI E2E, and Playwright listing.
+- Worker implementation commit: `d7950997c`.
+- Accepted orchestrator commit: `6f74ecab0`.
+- Blockers/remaining work:
+  - Real provider account and live agent handoff coverage remains env-gated.
+  - Settings matrix-backed target remains complete at 190 active Settings scenarios.
+  - Remaining matrix-backed target: about 108 active/skipped rows after this tranche.
