@@ -2,9 +2,9 @@
 
 Source of truth: `docs/e2e-coverage-campaign.md`.
 
-Current active tests: 2216
+Current active tests: 2221
 Target active tests: 3,025
-Remaining matrix-backed active scenarios: 809
+Remaining matrix-backed active scenarios: 804
 
 ## Matrix
 
@@ -15,9 +15,9 @@ Remaining matrix-backed active scenarios: 809
 | Codex AI terminal workflows                                    | `autorun-ai-terminal`     |            130 |           170 |        40 |
 | Command terminal workflows                                     | `shell-tabs-command`      |             61 |            95 |        34 |
 | Tabs and tab overlays                                          | `shell-tabs-command`      |             53 |           120 |        67 |
-| File explorer and file operations                              | `files-docs-history`      |             37 |           140 |       103 |
-| File preview and document rendering                            | `files-docs-history`      |             46 |           180 |       134 |
-| History panel                                                  | `files-docs-history`      |             30 |            95 |        65 |
+| File explorer and file operations                              | `files-docs-history`      |             38 |           140 |       102 |
+| File preview and document rendering                            | `files-docs-history`      |             48 |           180 |       132 |
+| History panel                                                  | `files-docs-history`      |             32 |            95 |        63 |
 | Auto Run                                                       | `autorun-ai-terminal`     |            237 |           260 |        23 |
 | New Agent Wizard and inline wizard                             | `wizard-settings-prompts` |            113 |           190 |        77 |
 | Settings                                                       | `wizard-settings-prompts` |            190 |           190 |         0 |
@@ -38,7 +38,7 @@ Remaining matrix-backed active scenarios: 809
 | -------------------------- | ----------------------: | ------------------------: | -----------------------------------: | -------------------- |
 | `agent-crud-provider`      |                       0 |                       104 |                                    2 | `563b9db6c`          |
 | `shell-tabs-command`       |                     185 |                        81 |                                    0 | `2d9975b17`          |
-| `files-docs-history`       |                     302 |                        47 |                                    5 | `b409f4538`          |
+| `files-docs-history`       |                     297 |                        52 |                                    5 | `08c4a85f9`          |
 | `autorun-ai-terminal`      |                      63 |                       210 |                                    0 | `25b7e29d4`          |
 | `wizard-settings-prompts`  |                      77 |                       298 |                                    1 | `b4e85b286`          |
 | `git-groupchat-playbooks`  |                       0 |                       363 |                                    7 | `ec72c453c`          |
@@ -173,3 +173,4 @@ Remaining matrix-backed active scenarios: 809
 - 2026-06-09: accepted manual `wizard-settings-prompts` through `79a670f31`; authored 8 additional active Director's Notes Unified History default lookback, extended lookback, activity graph, and menu-option scenarios from the clean worker branch. Focused static review found no critical or high issues. No E2E execution was run.
 - 2026-06-09: accepted manual `wizard-settings-prompts` through `4760f851f`; authored 9 additional active Director's Notes Unified History label, detail keyboard, stats, filter-count, and activity graph scenarios from the clean worker branch. Six scenarios completed the matrix-backed Director Notes row, and three remain lane-authored coverage beyond that row's remaining target. Focused static review found no critical or high issues. No E2E execution was run.
 - 2026-06-09: accepted manual `wizard-settings-prompts` through `b4e85b286`; authored 9 additional active inline wizard generated-document, ready CTA, conversation-history, thinking, timeout, unavailable-agent, and parse-error scenarios. Focused static review found no critical or high issues. No E2E execution was run.
+- 2026-06-09: accepted manual `files-docs-history` matrix-gap fill through `08c4a85f9`; authored 5 additional active nested markdown return, File Explorer context copy path, plain text context preview, failed History Escape close, and provider session ID clipboard scenarios. Focused static review found no critical or high issues. No E2E execution was run.

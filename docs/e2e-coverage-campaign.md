@@ -11,10 +11,10 @@ Measured inventory:
 | Area                                      |                     Current Count |
 | ----------------------------------------- | --------------------------------: |
 | E2E spec files after recovery tranche     |                                15 |
-| Declared E2E tests after recovery tranche |                              1927 |
+| Declared E2E tests after recovery tranche |                              1941 |
 | Last pre-campaign full E2E result         |             91 passed, 49 skipped |
 | Latest full E2E validation                | 638 passed, 0 skipped (batch 202) |
-| Approx. authored active-target progress   |              73.3% (2216 / 3,025) |
+| Approx. authored active-target progress   |              73.4% (2221 / 3,025) |
 | Renderer component files                  |                               236 |
 | Renderer hook files                       |                               123 |
 | Renderer store files                      |                                11 |
@@ -656,3 +656,5 @@ Continue high-ROI app-surface gaps that can be tested deterministically:
 - Validation: `npx prettier --write e2e/wizard-settings-prompts.spec.ts`, `npx prettier --check e2e/wizard-settings-prompts.spec.ts`, `npx eslint e2e/wizard-settings-prompts.spec.ts`, `NODE_OPTIONS=--max-old-space-size=8192 npx tsc -p tsconfig.lint.json --noEmit --pretty false`, `git diff --check -- e2e/wizard-settings-prompts.spec.ts`, static scenario-ID/`.only`/duplicate-ID/prohibited-command scans, and focused code-reviewer checklist review passed. Playwright/E2E execution remained intentionally deferred. No `npm run test:e2e`, `playwright test`, headed/UI E2E, or `npx playwright test --list` was run.
 - 2026-06-09 parallel recovery tranche 94 fallback: accepted `wizard-settings-prompts` through `b4e85b286`. Added 9 active inline wizard generated-document, ready CTA, conversation-history, thinking, timeout, unavailable-agent, and parse-error scenarios after orchestrator import. Current static inventory scan is now 15 spec files and 1936 `test`/`test.skip` declarations.
 - Validation: `npx prettier --write e2e/wizard-settings-prompts.spec.ts`, `npx prettier --check e2e/wizard-settings-prompts.spec.ts`, `npx eslint e2e/wizard-settings-prompts.spec.ts`, `NODE_OPTIONS=--max-old-space-size=8192 npx tsc -p tsconfig.lint.json --noEmit --pretty false`, `git diff --check -- e2e/wizard-settings-prompts.spec.ts`, static scenario-ID/`.only`/duplicate-ID/prohibited-command scans, and focused code-reviewer checklist review passed. Playwright/E2E execution remained intentionally deferred. No `npm run test:e2e`, `playwright test`, headed/UI E2E, or `npx playwright test --list` was run.
+- 2026-06-09 parallel recovery tranche 95 fallback: accepted `files-docs-history` through `08c4a85f9`. Added 5 active matrix-backed nested markdown return, File Explorer context copy path, plain text context preview, failed History Escape close, and provider session ID clipboard scenarios after root FDH matrix-gap fill. Current static inventory scan is now 15 spec files and 1941 `test`/`test.skip` declarations.
+- Validation: `npx prettier --write e2e/files-docs-history.spec.ts`, `npx prettier --check e2e/files-docs-history.spec.ts`, `npx eslint e2e/files-docs-history.spec.ts`, `NODE_OPTIONS=--max-old-space-size=8192 npx tsc -p tsconfig.lint.json --noEmit --pretty false`, `git diff --check -- e2e/files-docs-history.spec.ts`, static scenario-ID/`.only`/duplicate-ID/prohibited-command scans, and focused code-reviewer checklist review passed. Playwright/E2E execution remained intentionally deferred. No `npm run test:e2e`, `playwright test`, headed/UI E2E, or `npx playwright test --list` was run.
