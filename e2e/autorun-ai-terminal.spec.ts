@@ -147,6 +147,14 @@ Codex second document sentinel.
 						logs: codexLogs,
 						inputValue: '',
 						stagedImages: [],
+						usageStats: {
+							inputTokens: 0,
+							outputTokens: 0,
+							cacheReadInputTokens: 0,
+							cacheCreationInputTokens: 0,
+							totalCostUsd: 0,
+							contextWindow: 100,
+						},
 						createdAt: now,
 						state: 'idle',
 					},
@@ -172,6 +180,80 @@ Codex second document sentinel.
 
 async function launchLaneWorkbench() {
 	const seeded = createLaneWorkbench();
+	const launched = await helpers.launchAppWithState({
+		homeDir: seeded.homeDir,
+		sessions: seeded.sessions,
+	});
+
+	return { ...seeded, ...launched };
+}
+
+async function launchBusyLaneWorkbench() {
+	const seeded = createLaneWorkbench();
+	seeded.sessions[0]!.state = 'busy';
+	const launched = await helpers.launchAppWithState({
+		homeDir: seeded.homeDir,
+		sessions: seeded.sessions,
+	});
+
+	return { ...seeded, ...launched };
+}
+
+async function launchContextWarningLaneWorkbench(
+	contextUsage: number,
+	thresholds: { yellow?: number; red?: number } = {}
+) {
+	const seeded = createLaneWorkbench();
+	const session = seeded.sessions[0]!;
+	const activeTab = session.aiTabs[0]!;
+	session.contextUsage = contextUsage;
+	activeTab.usageStats = {
+		inputTokens: contextUsage,
+		outputTokens: 0,
+		cacheReadInputTokens: 0,
+		cacheCreationInputTokens: 0,
+		totalCostUsd: 0,
+		contextWindow: 100,
+	};
+	const launched = await helpers.launchAppWithState({
+		homeDir: seeded.homeDir,
+		sessions: seeded.sessions,
+		settings: {
+			contextManagementSettings: {
+				contextWarningsEnabled: true,
+				contextWarningYellowThreshold: thresholds.yellow ?? 60,
+				contextWarningRedThreshold: thresholds.red ?? 80,
+			},
+		},
+	});
+
+	return { ...seeded, ...launched };
+}
+
+async function launchContextActionsLaneWorkbench(options: { compactable?: boolean } = {}) {
+	const seeded = createCrossSessionQueuedLaneWorkbench();
+	if (options.compactable) {
+		const session = seeded.sessions[0]!;
+		const activeTab = session.aiTabs[0]!;
+		const now = Date.now();
+		const extraLogs = [
+			{
+				id: `ai-log-autorun-ai-context-extra-user-${now}`,
+				timestamp: now + 10,
+				source: 'user',
+				text: 'Codex context action extra user sentinel.',
+				delivered: true,
+			},
+			{
+				id: `ai-log-autorun-ai-context-extra-response-${now}`,
+				timestamp: now + 11,
+				source: 'stdout',
+				text: 'Codex context action extra response sentinel.',
+			},
+		];
+		activeTab.logs = [...activeTab.logs, ...extraLogs];
+		session.aiLogs = activeTab.logs;
+	}
 	const launched = await helpers.launchAppWithState({
 		homeDir: seeded.homeDir,
 		sessions: seeded.sessions,
@@ -236,6 +318,14 @@ function createMultiTabQueuedLaneWorkbench() {
 		logs: [reviewLog],
 		inputValue: '',
 		stagedImages: [],
+		usageStats: {
+			inputTokens: 0,
+			outputTokens: 0,
+			cacheReadInputTokens: 0,
+			cacheCreationInputTokens: 0,
+			totalCostUsd: 0,
+			contextWindow: 100,
+		},
 		createdAt: now,
 		state: 'idle',
 	});
@@ -295,6 +385,14 @@ function createCrossSessionQueuedLaneWorkbench() {
 			name: 'Main',
 			logs: [companionLog],
 			createdAt: now,
+			usageStats: {
+				inputTokens: 0,
+				outputTokens: 0,
+				cacheReadInputTokens: 0,
+				cacheCreationInputTokens: 0,
+				totalCostUsd: 0,
+				contextWindow: 100,
+			},
 		},
 	];
 	companionSession.aiLogs = [companionLog];
@@ -320,6 +418,7 @@ function createPreviewLinkLaneWorkbench() {
 	const session = seeded.sessions[0]!;
 	const imagesDir = path.join(seeded.autoRunFolder, 'images');
 	const imageFilename = 'Phase 1-Codex Lane.png';
+	const secondImageFilename = 'Phase 1-Z Codex Followup.png';
 	const richContent = `# Phase 1: Lane Setup
 
 See [[Phase 2|Phase Two Follow-up]] and [Phase 2 markdown](Phase 2.md).
@@ -327,6 +426,8 @@ See [[Phase 2|Phase Two Follow-up]] and [Phase 2 markdown](Phase 2.md).
 [RunMaestro external](https://runmaestro.ai/autorun-lane)
 
 ![Codex preview image](images/Phase%201-Codex%20Lane.png)
+
+![Codex follow-up preview](images/Phase%201-Z%20Codex%20Followup.png)
 
 ![Missing Codex preview](images/missing-codex-preview.png)
 
@@ -340,18 +441,20 @@ Codex auto-run lane sentinel.
 `;
 
 	fs.mkdirSync(imagesDir, { recursive: true });
-	fs.writeFileSync(
-		path.join(imagesDir, imageFilename),
-		Buffer.from(
-			'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=',
-			'base64'
-		)
-	);
+	for (const filename of [imageFilename, secondImageFilename]) {
+		fs.writeFileSync(
+			path.join(imagesDir, filename),
+			Buffer.from(
+				'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=',
+				'base64'
+			)
+		);
+	}
 	fs.writeFileSync(seeded.phaseOnePath, richContent, 'utf-8');
 	session.autoRunContent = richContent;
 	session.autoRunContentVersion = 2;
 
-	return { ...seeded, phaseOneContent: richContent, imageFilename };
+	return { ...seeded, phaseOneContent: richContent, imageFilename, secondImageFilename };
 }
 
 function createBatchConfigLaneWorkbench() {
@@ -782,6 +885,23 @@ async function openAutoRunPanel(page: Page) {
 	await expect(page.locator('[data-tour="autorun-panel"]')).toBeVisible();
 }
 
+async function openAutoRunExpandedModal(page: Page) {
+	await openAutoRunPanel(page);
+	await page.getByTitle(/Expand to full screen/).click();
+	const collapseButton = page.getByRole('button', { name: 'Collapse' });
+	const modal = page.locator('div.fixed.inset-0').filter({ has: collapseButton }).first();
+	await expect(modal.getByRole('heading', { name: 'Auto Run' })).toBeVisible();
+	return modal;
+}
+
+async function openAutoRunSetupDialog(page: Page) {
+	await openAutoRunPanel(page);
+	await page.getByRole('button', { name: 'Select Auto Run Folder' }).click();
+	const dialog = page.getByRole('dialog', { name: 'Change Auto Run Folder' });
+	await expect(dialog).toBeVisible();
+	return dialog;
+}
+
 async function openAutoRunBatchConfig(page: Page) {
 	await openAutoRunPanel(page);
 	await helpers.getRunButton(page).first().click();
@@ -802,6 +922,16 @@ async function waitForSeededAutoRunDocumentList(page: Page) {
 	return selector;
 }
 
+async function openCodexPreviewLightbox(page: Page, imageFilename: string) {
+	await openAutoRunPanel(page);
+	await expect(page.getByRole('img', { name: 'Codex preview image' })).toBeVisible();
+	await page.getByTitle(`Click to enlarge: ${imageFilename}`).click();
+	const lightboxImage = page.getByRole('img', { name: `images/${imageFilename}` });
+	await expect(lightboxImage).toBeVisible();
+	const lightbox = page.locator('div.fixed.inset-0').filter({ has: lightboxImage }).first();
+	return { lightbox, lightboxImage };
+}
+
 async function openCodexAiTerminal(page: Page) {
 	await page
 		.locator('[data-tour="session-list"]')
@@ -813,6 +943,56 @@ async function openCodexAiTerminal(page: Page) {
 	const promptInput = page.getByPlaceholder(/Talking to Auto Run Codex E2E powered by Codex/);
 	await expect(promptInput).toBeVisible();
 	return promptInput;
+}
+
+async function openCodexMainTabOverlay(page: Page) {
+	await openCodexAiTerminal(page);
+	const mainTab = page.locator('[data-tab-id]').filter({ hasText: 'Main' }).first();
+	await expect(mainTab).toBeVisible();
+	await mainTab.hover();
+	await expect(page.getByText('Copy Session ID')).toBeVisible();
+	return mainTab;
+}
+
+async function openQuickActions(page: Page) {
+	const quickActionsDialog = page.getByRole('dialog', { name: 'Quick Actions' });
+	for (let attempt = 0; attempt < 3; attempt++) {
+		if (await quickActionsDialog.isVisible().catch(() => false)) break;
+		await page.bringToFront();
+		await page.keyboard.press('Meta+K');
+		await quickActionsDialog.waitFor({ state: 'visible', timeout: 1000 }).catch(() => undefined);
+	}
+	await expect(quickActionsDialog).toBeVisible();
+	await expect(
+		quickActionsDialog.getByPlaceholder('Type a command or jump to agent...')
+	).toBeVisible();
+	return quickActionsDialog;
+}
+
+async function openCodexMergeModal(page: Page) {
+	await openCodexMainTabOverlay(page);
+	await page.getByText('Context: Merge Into', { exact: true }).click();
+	const dialog = page.getByRole('dialog', { name: /Merge "Main" Into/ });
+	await expect(dialog).toBeVisible();
+	return dialog;
+}
+
+async function openCodexSendToAgentModal(page: Page) {
+	await openCodexMainTabOverlay(page);
+	await page.getByText('Context: Send to Agent', { exact: true }).click();
+	const dialog = page.getByRole('dialog', { name: 'Send Context to Agent' });
+	await expect(dialog).toBeVisible();
+	return dialog;
+}
+
+async function openCodexPromptComposer(page: Page) {
+	const promptInput = await openCodexAiTerminal(page);
+	await page.getByTitle(/Open Prompt Composer/).click();
+	const composer = page.locator('div.fixed.inset-0.z-50').filter({ hasText: 'Prompt Composer' });
+	await expect(composer.getByText('Prompt Composer')).toBeVisible();
+	const composerInput = composer.getByPlaceholder(/Write your prompt here/);
+	await expect(composerInput).toBeVisible();
+	return { promptInput, composer, composerInput };
 }
 
 async function openExecutionQueueBrowser(page: Page, queuedItemCount = 2) {
@@ -979,6 +1159,35 @@ async function getStubbedOpenExternalUrl(electronApp: ElectronApplication) {
 	});
 }
 
+async function stubSelectFolder(electronApp: ElectronApplication, selectedFolder: string | null) {
+	await electronApp.evaluate(({ ipcMain }, folder) => {
+		ipcMain.removeHandler('dialog:selectFolder');
+		ipcMain.handle('dialog:selectFolder', async () => folder);
+	}, selectedFolder);
+}
+
+async function stubImageClipboardWrite(electronApp: ElectronApplication) {
+	await electronApp.evaluate(({ ipcMain }) => {
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eClipboardImageDataUrl?: string;
+		};
+		state.__maestroE2eClipboardImageDataUrl = undefined;
+		ipcMain.removeHandler('clipboard:writeImage');
+		ipcMain.handle('clipboard:writeImage', async (_event, dataUrl: string) => {
+			state.__maestroE2eClipboardImageDataUrl = dataUrl;
+		});
+	});
+}
+
+async function getStubbedImageClipboardDataUrl(electronApp: ElectronApplication) {
+	return electronApp.evaluate(() => {
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eClipboardImageDataUrl?: string;
+		};
+		return state.__maestroE2eClipboardImageDataUrl ?? null;
+	});
+}
+
 test.describe('Auto Run and Codex AI Terminal', () => {
 	test('renders a seeded Codex Auto Run document with task progress', async () => {
 		const launched = await launchLaneWorkbench();
@@ -1039,6 +1248,211 @@ test.describe('Auto Run and Codex AI Terminal', () => {
 		}
 	});
 
+	test('opens the Codex Auto Run expanded modal from the right panel', async () => {
+		const launched = await launchLaneWorkbench();
+		try {
+			const modal = await openAutoRunExpandedModal(launched.window);
+
+			await expect(modal.getByRole('heading', { name: 'Phase 1: Lane Setup' })).toBeVisible();
+			await expect(modal.getByRole('button', { name: 'Run' })).toBeVisible();
+			await expect(modal.getByRole('button', { name: 'Collapse' })).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('collapses the Codex Auto Run expanded modal back to the right panel', async () => {
+		const launched = await launchLaneWorkbench();
+		try {
+			const modal = await openAutoRunExpandedModal(launched.window);
+
+			await modal.getByRole('button', { name: 'Collapse' }).click();
+
+			await expect(modal).toBeHidden();
+			await expect(launched.window.locator('[data-tour="autorun-panel"]')).toBeVisible();
+			await expect(launched.window.getByText('Codex auto-run lane sentinel.')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('closes the Codex Auto Run expanded modal with Escape', async () => {
+		const launched = await launchLaneWorkbench();
+		try {
+			const modal = await openAutoRunExpandedModal(launched.window);
+
+			await launched.window.keyboard.press('Escape');
+
+			await expect(modal).toBeHidden();
+			await expect(launched.window.locator('[data-tour="autorun-panel"]')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('saves Codex Auto Run edits from the expanded modal header', async () => {
+		const launched = await launchLaneWorkbench();
+		const expandedContent = `${launched.phaseOneContent}
+## Expanded Save
+
+- [ ] Saved from expanded Auto Run modal
+`;
+
+		try {
+			const modal = await openAutoRunExpandedModal(launched.window);
+			await modal.getByTitle('Edit document').click();
+			const editor = modal.getByPlaceholder(/Capture notes/);
+
+			await editor.fill(expandedContent);
+			await expect(modal.getByTitle('Save changes')).toBeVisible();
+			await modal.getByTitle('Save changes').click();
+
+			await expect
+				.poll(() => fs.readFileSync(launched.phaseOnePath, 'utf-8'))
+				.toContain('Saved from expanded Auto Run modal');
+			await expect(modal.getByTitle('Save changes')).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('confirms before discarding dirty Codex Auto Run expanded modal edits', async () => {
+		const launched = await launchLaneWorkbench();
+		const dirtyContent = `${launched.phaseOneContent}
+## Expanded Dirty Close
+
+- [ ] Unsaved expanded modal sentinel
+`;
+
+		try {
+			const modal = await openAutoRunExpandedModal(launched.window);
+			await modal.getByTitle('Edit document').click();
+			const editor = modal.getByPlaceholder(/Capture notes/);
+			await editor.fill(dirtyContent);
+			await expect(modal.getByTitle('Save changes')).toBeVisible();
+
+			await modal.getByTitle('Close (Esc)').click();
+			const confirmDialog = launched.window.getByRole('dialog', { name: 'Unsaved Changes' });
+			await expect(confirmDialog).toBeVisible();
+			await confirmDialog.getByRole('button', { name: 'Cancel' }).click();
+			await expect(confirmDialog).toBeHidden();
+			await expect(modal).toBeVisible();
+			await expect(editor).toHaveValue(dirtyContent);
+
+			await modal.getByTitle('Close (Esc)').click();
+			await launched.window
+				.getByRole('dialog', { name: 'Unsaved Changes' })
+				.getByRole('button', { name: 'Discard' })
+				.click();
+
+			await expect(modal).toBeHidden();
+			expect(fs.readFileSync(launched.phaseOnePath, 'utf-8')).not.toContain(
+				'Unsaved expanded modal sentinel'
+			);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('keeps the Codex right-panel preview mode after expanded modal edit toggling', async () => {
+		const launched = await launchLaneWorkbench();
+		try {
+			const modal = await openAutoRunExpandedModal(launched.window);
+			await modal.getByTitle('Edit document').click();
+			await expect(modal.getByPlaceholder(/Capture notes/)).toBeVisible();
+
+			await modal.getByRole('button', { name: 'Collapse' }).click();
+
+			await expect(modal).toBeHidden();
+			await expect(
+				launched.window.getByRole('heading', { name: 'Phase 1: Lane Setup' })
+			).toBeVisible();
+			await expect(launched.window.getByPlaceholder(/Capture notes/)).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('reverts dirty Codex Auto Run expanded modal edits from the header', async () => {
+		const launched = await launchLaneWorkbench();
+		const dirtyContent = `${launched.phaseOneContent}
+## Expanded Revert
+
+- [ ] Reverted expanded modal sentinel
+`;
+
+		try {
+			const modal = await openAutoRunExpandedModal(launched.window);
+			await modal.getByTitle('Edit document').click();
+			const editor = modal.getByPlaceholder(/Capture notes/);
+
+			await editor.fill(dirtyContent);
+			await expect(modal.getByTitle('Save changes')).toBeVisible();
+			await modal.getByTitle('Discard changes').click();
+
+			await expect(editor).toHaveValue(launched.phaseOneContent);
+			await expect(modal.getByTitle('Save changes')).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('opens Auto Run configuration from the expanded modal Run button', async () => {
+		const launched = await launchLaneWorkbench();
+		try {
+			const modal = await openAutoRunExpandedModal(launched.window);
+
+			await modal.getByRole('button', { name: 'Run' }).click();
+
+			const dialog = launched.window.getByRole('dialog', { name: 'Auto Run Configuration' });
+			await expect(dialog).toBeVisible();
+			await expect(dialog.getByText('Phase 1.md')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('saves dirty Codex Auto Run expanded modal edits before opening Run configuration', async () => {
+		const launched = await launchLaneWorkbench();
+		const runSavedContent = `${launched.phaseOneContent}
+## Expanded Run Save
+
+- [ ] Saved before expanded modal Run
+`;
+
+		try {
+			const modal = await openAutoRunExpandedModal(launched.window);
+			await modal.getByTitle('Edit document').click();
+			const editor = modal.getByPlaceholder(/Capture notes/);
+			await editor.fill(runSavedContent);
+			await expect(modal.getByTitle('Save changes')).toBeVisible();
+
+			await modal.getByRole('button', { name: 'Run' }).click();
+
+			await expect(
+				launched.window.getByRole('dialog', { name: 'Auto Run Configuration' })
+			).toBeVisible();
+			await expect
+				.poll(() => fs.readFileSync(launched.phaseOnePath, 'utf-8'))
+				.toContain('Saved before expanded modal Run');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('disables expanded modal Run while the Codex lane agent is busy', async () => {
+		const launched = await launchBusyLaneWorkbench();
+		try {
+			const modal = await openAutoRunExpandedModal(launched.window);
+			const runButton = modal.getByRole('button', { name: 'Run' });
+
+			await expect(runButton).toBeDisabled();
+			await expect(runButton).toHaveAttribute('title', 'Cannot run while agent is thinking');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
 	test('shows Auto Run setup guidance when the Codex lane has no folder configured', async () => {
 		const launched = await launchUnconfiguredAutoRunLaneWorkbench();
 		try {
@@ -1049,6 +1463,96 @@ test.describe('Auto Run and Codex AI Terminal', () => {
 			await expect(launched.window.getByText('Batch Execution')).toBeVisible();
 			await expect(
 				launched.window.getByRole('button', { name: 'Select Auto Run Folder' })
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('opens the Codex Auto Run setup modal with Continue disabled until a path is entered', async () => {
+		const launched = await launchUnconfiguredAutoRunLaneWorkbench();
+		try {
+			const dialog = await openAutoRunSetupDialog(launched.window);
+
+			await expect(dialog.getByText('Markdown Documents')).toBeVisible();
+			await expect(dialog.getByText('Checkbox Tasks')).toBeVisible();
+			await expect(dialog.getByLabel('Auto Run Folder')).toHaveValue('');
+			await expect(dialog.getByRole('button', { name: 'Continue' })).toBeDisabled();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('continues Codex Auto Run setup from a typed valid folder path', async () => {
+		const launched = await launchUnconfiguredAutoRunLaneWorkbench();
+		try {
+			const dialog = await openAutoRunSetupDialog(launched.window);
+
+			await dialog.getByLabel('Auto Run Folder').fill(launched.autoRunFolder);
+			await expect(dialog.getByText('Found 2 markdown documents')).toBeVisible();
+			await dialog.getByRole('button', { name: 'Continue' }).click();
+
+			await expect(dialog).toBeHidden();
+			await expect(
+				launched.window.getByRole('heading', { name: 'Phase 1: Lane Setup' })
+			).toBeVisible();
+			await expect(launched.window.getByText('Codex auto-run lane sentinel.')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('continues Codex Auto Run setup from Enter after a typed valid folder path', async () => {
+		const launched = await launchUnconfiguredAutoRunLaneWorkbench();
+		try {
+			const dialog = await openAutoRunSetupDialog(launched.window);
+			const folderInput = dialog.getByLabel('Auto Run Folder');
+
+			await folderInput.fill(launched.autoRunFolder);
+			await expect(dialog.getByText('Found 2 markdown documents')).toBeVisible();
+			await folderInput.press('Enter');
+
+			await expect(dialog).toBeHidden();
+			await expect(
+				launched.window.getByRole('heading', { name: 'Phase 1: Lane Setup' })
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('reports invalid Codex Auto Run setup folder paths without closing the modal', async () => {
+		const launched = await launchUnconfiguredAutoRunLaneWorkbench();
+		try {
+			const dialog = await openAutoRunSetupDialog(launched.window);
+			const missingFolder = path.join(launched.homeDir, 'missing-auto-run-docs');
+
+			await dialog.getByLabel('Auto Run Folder').fill(missingFolder);
+
+			await expect(dialog.getByText('Folder not found or not accessible')).toBeVisible();
+			await expect(dialog).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('uses the Codex Auto Run setup Browse control to fill and continue a folder path', async () => {
+		const launched = await launchUnconfiguredAutoRunLaneWorkbench();
+		try {
+			await stubSelectFolder(launched.electronApp, launched.autoRunFolder);
+			const dialog = await openAutoRunSetupDialog(launched.window);
+			const folderInput = dialog.getByLabel('Auto Run Folder');
+			const continueButton = dialog.getByRole('button', { name: 'Continue' });
+
+			await dialog.getByTitle(/Browse folders/).click();
+
+			await expect(folderInput).toHaveValue(launched.autoRunFolder);
+			await expect(dialog.getByText('Found 2 markdown documents')).toBeVisible();
+			await continueButton.click();
+
+			await expect(dialog).toBeHidden();
+			await expect(
+				launched.window.getByRole('heading', { name: 'Phase 1: Lane Setup' })
 			).toBeVisible();
 		} finally {
 			await launched.cleanup();
@@ -1763,6 +2267,223 @@ Recovered refresh sentinel.
 		}
 	});
 
+	test('does not dispatch a blank Codex AI terminal prompt from the send button', async () => {
+		const launched = await launchLaneWorkbench();
+		try {
+			await stubCodexProcessSpawn(launched.electronApp);
+			const promptInput = await openCodexAiTerminal(launched.window);
+
+			await promptInput.fill('   \n   ');
+			await launched.window.getByTitle('Send message').click();
+
+			await expect(promptInput).toHaveValue('   \n   ');
+			expect(await getStubbedCodexProcessSpawnCalls(launched.electronApp)).toHaveLength(0);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('dispatches a Codex AI terminal prompt with Enter when Enter-to-send is enabled', async () => {
+		const launched = await launchLaneWorkbench();
+		try {
+			await stubCodexProcessSpawn(launched.electronApp);
+			const promptInput = await openCodexAiTerminal(launched.window);
+
+			await promptInput.fill('Codex Enter key dispatch sentinel');
+			await promptInput.press('Enter');
+
+			await expect
+				.poll(async () => (await getStubbedCodexProcessSpawnCalls(launched.electronApp)).length)
+				.toBe(1);
+			const calls = await getStubbedCodexProcessSpawnCalls(launched.electronApp);
+			expect(calls[0].prompt).toContain('Codex Enter key dispatch sentinel');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('keeps a Codex AI terminal draft multiline when Shift Enter is pressed', async () => {
+		const launched = await launchLaneWorkbench();
+		try {
+			await stubCodexProcessSpawn(launched.electronApp);
+			const promptInput = await openCodexAiTerminal(launched.window);
+
+			await promptInput.fill('Codex multiline draft sentinel');
+			await promptInput.press('Shift+Enter');
+
+			await expect(promptInput).toHaveValue('Codex multiline draft sentinel\n');
+			expect(await getStubbedCodexProcessSpawnCalls(launched.electronApp)).toHaveLength(0);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('requires Control Enter after Codex Enter-to-send is switched off', async () => {
+		const launched = await launchLaneWorkbench();
+		try {
+			await stubCodexProcessSpawn(launched.electronApp);
+			const promptInput = await openCodexAiTerminal(launched.window);
+
+			await launched.window.getByTitle('Switch to Cmd+Enter to send').click();
+			await expect(launched.window.getByTitle('Switch to Enter to send')).toBeVisible();
+			await promptInput.fill('Codex Control Enter dispatch sentinel');
+			await promptInput.press('Enter');
+
+			await expect(promptInput).toHaveValue('Codex Control Enter dispatch sentinel\n');
+			expect(await getStubbedCodexProcessSpawnCalls(launched.electronApp)).toHaveLength(0);
+
+			await promptInput.press('Control+Enter');
+
+			await expect
+				.poll(async () => (await getStubbedCodexProcessSpawnCalls(launched.electronApp)).length)
+				.toBe(1);
+			const calls = await getStubbedCodexProcessSpawnCalls(launched.electronApp);
+			expect(calls[0].prompt).toContain('Codex Control Enter dispatch sentinel');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('dispatches with Codex read-only metadata cleared after toggling back to write mode', async () => {
+		const launched = await launchLaneWorkbench();
+		try {
+			await stubCodexProcessSpawn(launched.electronApp);
+			const promptInput = await openCodexAiTerminal(launched.window);
+			const readOnlyToggle = launched.window.getByTitle(
+				"Toggle Read-Only mode (agent won't modify files)"
+			);
+
+			await readOnlyToggle.click();
+			await readOnlyToggle.click();
+			await promptInput.fill('Codex write-mode metadata prompt sentinel');
+			await launched.window.getByTitle('Send message').click();
+
+			await expect
+				.poll(async () => (await getStubbedCodexProcessSpawnCalls(launched.electronApp)).length)
+				.toBe(1);
+			const calls = await getStubbedCodexProcessSpawnCalls(launched.electronApp);
+			expect(calls[0].prompt).toContain('Codex write-mode metadata prompt sentinel');
+			expect(calls[0].prompt).not.toContain('IMPORTANT: You are in read-only/plan mode');
+			expect(calls[0].readOnlyMode).not.toBe(true);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('persists a Codex prompt composer draft back to the lane input on close', async () => {
+		const launched = await launchLaneWorkbench();
+		try {
+			const promptInput = await openCodexAiTerminal(launched.window);
+			await promptInput.fill('Codex composer original draft sentinel');
+			await launched.window.getByTitle(/Open Prompt Composer/).click();
+
+			const composer = launched.window
+				.locator('div.fixed.inset-0.z-50')
+				.filter({ hasText: 'Prompt Composer' });
+			const composerInput = composer.getByPlaceholder(/Write your prompt here/);
+			await expect(composerInput).toHaveValue('Codex composer original draft sentinel');
+
+			await composerInput.fill('Codex composer edited draft sentinel');
+			await composer.getByTitle('Close (Escape)').click();
+
+			await expect(composer).toBeHidden();
+			await expect(promptInput).toHaveValue('Codex composer edited draft sentinel');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('sends a Codex prompt composer prompt with Control Enter through the stubbed path', async () => {
+		const launched = await launchLaneWorkbench();
+		try {
+			await stubCodexProcessSpawn(launched.electronApp);
+			const { composer, composerInput } = await openCodexPromptComposer(launched.window);
+
+			await composerInput.fill('Codex prompt composer Control Enter sentinel');
+			await composerInput.press('Control+Enter');
+
+			await expect(composer).toBeHidden();
+			await expect
+				.poll(async () => (await getStubbedCodexProcessSpawnCalls(launched.electronApp)).length)
+				.toBe(1);
+			const calls = await getStubbedCodexProcessSpawnCalls(launched.electronApp);
+			expect(calls[0].prompt).toContain('Codex prompt composer Control Enter sentinel');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('sends Codex prompt composer read-only metadata through the stubbed path', async () => {
+		const launched = await launchLaneWorkbench();
+		try {
+			await stubCodexProcessSpawn(launched.electronApp);
+			const { composer, composerInput } = await openCodexPromptComposer(launched.window);
+
+			await composer.getByTitle("Toggle Read-Only mode (agent won't modify files)").click();
+			await composerInput.fill('Codex prompt composer read-only sentinel');
+			await composer.getByRole('button', { name: /^Send$/ }).click();
+
+			await expect
+				.poll(async () => (await getStubbedCodexProcessSpawnCalls(launched.electronApp)).length)
+				.toBe(1);
+			const calls = await getStubbedCodexProcessSpawnCalls(launched.electronApp);
+			expect(calls[0].prompt).toContain('Codex prompt composer read-only sentinel');
+			expect(calls[0].prompt).toContain('IMPORTANT: You are in read-only/plan mode');
+			expect(calls[0].readOnlyMode).toBe(true);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('inserts a Codex prompt composer self mention without dispatching', async () => {
+		const launched = await launchLaneWorkbench();
+		try {
+			await stubCodexProcessSpawn(launched.electronApp);
+			const { composer, composerInput } = await openCodexPromptComposer(launched.window);
+
+			await composerInput.fill('Ask @Auto');
+			await expect(composer.getByRole('button', { name: /@Auto-Run-Codex-E2E/ })).toBeVisible();
+			await composerInput.press('Enter');
+
+			await expect(composerInput).toHaveValue('Ask @Auto-Run-Codex-E2E ');
+			expect(await getStubbedCodexProcessSpawnCalls(launched.electronApp)).toHaveLength(0);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('stages and removes a Codex prompt composer image attachment without dispatching', async () => {
+		const launched = await launchLaneWorkbench();
+		const imagePath = path.join(launched.homeDir, 'codex-composer-attachment.png');
+		try {
+			fs.writeFileSync(
+				imagePath,
+				Buffer.from(
+					'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=',
+					'base64'
+				)
+			);
+			await stubCodexProcessSpawn(launched.electronApp);
+			const { composer, composerInput } = await openCodexPromptComposer(launched.window);
+
+			await composer.locator('input[type="file"]').setInputFiles(imagePath);
+
+			const stagedImage = composer.getByAltText('Prompt composer staged image 1');
+			await expect(stagedImage).toBeVisible();
+			const attachment = stagedImage.locator(
+				'xpath=ancestor::div[contains(@class, "relative")][1]'
+			);
+			await attachment.locator('button').last().click();
+
+			await expect(stagedImage).toBeHidden();
+			await composerInput.fill('Codex composer attachment draft sentinel');
+			await expect(composerInput).toHaveValue('Codex composer attachment draft sentinel');
+			expect(await getStubbedCodexProcessSpawnCalls(launched.electronApp)).toHaveLength(0);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
 	test('prevents duplicate Auto Run document creation in a Codex lane agent', async () => {
 		const launched = await launchLaneWorkbench();
 		try {
@@ -2349,6 +3070,335 @@ Externally refreshed Codex Auto Run sentinel.
 			await launched.window.getByTitle("Toggle Read-Only mode (agent won't modify files)").click();
 			await expect(launched.window.getByText('Read-Only')).toBeVisible();
 			await expect(promptInput).toHaveValue('Codex lane local toggle draft sentinel');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('shows a yellow Codex context warning below the AI terminal input', async () => {
+		const launched = await launchContextWarningLaneWorkbench(76);
+		try {
+			await openCodexAiTerminal(launched.window);
+
+			const warning = launched.window.getByRole('alert', {
+				name: 'Context window at 76% capacity',
+			});
+			await expect(warning).toBeVisible();
+			await expect(warning.getByText(/Context window reaching/)).toBeVisible();
+			await expect(warning.getByText('76%')).toBeVisible();
+			await expect(warning.getByRole('button', { name: 'Compact & Continue' })).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('dismisses a yellow Codex context warning without clearing the draft', async () => {
+		const launched = await launchContextWarningLaneWorkbench(76);
+		try {
+			const promptInput = await openCodexAiTerminal(launched.window);
+			await promptInput.fill('Codex context warning draft sentinel');
+
+			const warning = launched.window.getByRole('alert', {
+				name: 'Context window at 76% capacity',
+			});
+			await warning.getByRole('button', { name: 'Dismiss warning' }).click();
+
+			await expect(warning).toBeHidden();
+			await expect(promptInput).toHaveValue('Codex context warning draft sentinel');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('keeps Codex context warning hidden below the yellow threshold', async () => {
+		const launched = await launchContextWarningLaneWorkbench(54, { yellow: 55, red: 80 });
+		try {
+			const promptInput = await openCodexAiTerminal(launched.window);
+
+			await expect(launched.window.getByRole('alert', { name: /Context window/ })).toHaveCount(0);
+			await expect(promptInput).toHaveAttribute(
+				'placeholder',
+				'Talking to Auto Run Codex E2E powered by Codex'
+			);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('shows a red Codex context warning with compact action at the red threshold', async () => {
+		const launched = await launchContextWarningLaneWorkbench(93);
+		try {
+			await openCodexAiTerminal(launched.window);
+
+			const warning = launched.window.getByRole('alert', {
+				name: 'Context window at 93% capacity',
+			});
+			await expect(warning).toBeVisible();
+			await expect(warning.getByText(/consider compacting to continue/)).toBeVisible();
+			await expect(warning.getByRole('button', { name: 'Compact & Continue' })).toBeVisible();
+			await expect(warning.getByRole('button', { name: 'Dismiss warning' })).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('uses custom Codex context warning thresholds in the AI terminal', async () => {
+		const launched = await launchContextWarningLaneWorkbench(72, { yellow: 55, red: 70 });
+		try {
+			await openCodexAiTerminal(launched.window);
+
+			const warning = launched.window.getByRole('alert', {
+				name: 'Context window at 72% capacity',
+			});
+			await expect(warning).toBeVisible();
+			await expect(warning.getByText(/consider compacting to continue/)).toBeVisible();
+			await expect(warning.getByText('72%')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('shows Codex AI tab context actions for a log-bearing terminal tab', async () => {
+		const launched = await launchContextActionsLaneWorkbench();
+		try {
+			await openCodexMainTabOverlay(launched.window);
+
+			await expect(
+				launched.window.getByText('Context: Copy to Clipboard', { exact: true })
+			).toBeVisible();
+			await expect(launched.window.getByText('Context: Merge Into', { exact: true })).toBeVisible();
+			await expect(
+				launched.window.getByText('Context: Send to Agent', { exact: true })
+			).toBeVisible();
+			await expect(launched.window.getByText('Context: Compact', { exact: true })).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('shows Codex AI tab compact action once enough context logs exist', async () => {
+		const launched = await launchContextActionsLaneWorkbench({ compactable: true });
+		try {
+			await openCodexMainTabOverlay(launched.window);
+
+			await expect(launched.window.getByText('Context: Compact', { exact: true })).toBeVisible();
+			await expect(
+				launched.window.getByText('Context: Copy to Clipboard', { exact: true })
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('opens the Codex tab merge modal from the context action without merging', async () => {
+		const launched = await launchContextActionsLaneWorkbench();
+		try {
+			await openCodexMainTabOverlay(launched.window);
+			await launched.window.getByText('Context: Merge Into', { exact: true }).click();
+
+			const dialog = launched.window.getByRole('dialog', { name: /Merge "Main" Into/ });
+			await expect(dialog).toBeVisible();
+			await expect(dialog.getByText('Queued Companion Codex')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('opens the Codex tab send-to-agent modal from the context action without sending', async () => {
+		const launched = await launchContextActionsLaneWorkbench();
+		try {
+			await openCodexMainTabOverlay(launched.window);
+			await launched.window.getByText('Context: Send to Agent', { exact: true }).click();
+
+			const dialog = launched.window.getByRole('dialog', { name: 'Send Context to Agent' });
+			await expect(dialog).toBeVisible();
+			await expect(dialog.getByText('Queued Companion Codex')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('copies Codex AI tab context from the tab overlay into the renderer clipboard', async () => {
+		const launched = await launchContextActionsLaneWorkbench();
+		try {
+			await launched.window.evaluate(() => {
+				Object.defineProperty(navigator, 'clipboard', {
+					configurable: true,
+					value: {
+						writeText: async (text: string) => {
+							(window as Window & { __codexCopiedContext?: string }).__codexCopiedContext = text;
+						},
+					},
+				});
+			});
+			await openCodexMainTabOverlay(launched.window);
+			await launched.window.getByText('Context: Copy to Clipboard', { exact: true }).click();
+
+			await expect
+				.poll(async () =>
+					launched.window.evaluate(
+						() => (window as Window & { __codexCopiedContext?: string }).__codexCopiedContext ?? ''
+					)
+				)
+				.toContain('USER:\nReview Auto Run lane coverage without a live provider');
+			const copiedContext = await launched.window.evaluate(
+				() => (window as Window & { __codexCopiedContext?: string }).__codexCopiedContext ?? ''
+			);
+			expect(copiedContext).toContain('ASSISTANT:\n# Codex Lane Transcript');
+			expect(copiedContext).toContain('ASSISTANT:\n# Codex Lane Paired Response');
+			await expect(launched.window.getByText('Context Copied')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('lists Codex context Quick Actions without compact below the summarize threshold', async () => {
+		const launched = await launchContextActionsLaneWorkbench();
+		try {
+			await openCodexAiTerminal(launched.window);
+			const dialog = await openQuickActions(launched.window);
+			await dialog.getByPlaceholder('Type a command or jump to agent...').fill('context');
+
+			await expect(dialog.getByText('Context: Merge Into', { exact: true })).toBeVisible();
+			await expect(dialog.getByText('Merge current context into another session')).toBeVisible();
+			await expect(dialog.getByText('Context: Send to Agent', { exact: true })).toBeVisible();
+			await expect(dialog.getByText('Transfer context to a different AI agent')).toBeVisible();
+			await expect(dialog.getByText('Context: Compact', { exact: true })).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('lists Codex compact Quick Action once enough context logs exist', async () => {
+		const launched = await launchContextActionsLaneWorkbench({ compactable: true });
+		try {
+			await openCodexAiTerminal(launched.window);
+			const dialog = await openQuickActions(launched.window);
+			await dialog.getByPlaceholder('Type a command or jump to agent...').fill('compact');
+
+			await expect(dialog.getByText('Context: Compact', { exact: true })).toBeVisible();
+			await expect(dialog.getByText('Compact context into a fresh tab')).toBeVisible();
+			await expect(dialog.getByText('Context: Merge Into', { exact: true })).toBeHidden();
+			await expect(dialog.getByText('Context: Send to Agent', { exact: true })).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('filters Codex Quick Actions to the send-to-agent command', async () => {
+		const launched = await launchContextActionsLaneWorkbench({ compactable: true });
+		try {
+			await openCodexAiTerminal(launched.window);
+			const dialog = await openQuickActions(launched.window);
+			await dialog.getByPlaceholder('Type a command or jump to agent...').fill('send to');
+
+			await expect(dialog.getByText('Context: Send to Agent', { exact: true })).toBeVisible();
+			await expect(dialog.getByText('Transfer context to a different AI agent')).toBeVisible();
+			await expect(dialog.getByText('Context: Merge Into', { exact: true })).toBeHidden();
+			await expect(dialog.getByText('Context: Compact', { exact: true })).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('opens the Codex merge modal from Quick Actions without merging', async () => {
+		const launched = await launchContextActionsLaneWorkbench();
+		try {
+			await openCodexAiTerminal(launched.window);
+			const quickActionsDialog = await openQuickActions(launched.window);
+			await quickActionsDialog.getByText('Context: Merge Into', { exact: true }).click();
+
+			await expect(quickActionsDialog).toBeHidden();
+			const dialog = launched.window.getByRole('dialog', { name: /Merge "Main" Into/ });
+			await expect(dialog).toBeVisible();
+			await expect(dialog.getByText('Queued Companion Codex')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('opens the Codex send-to-agent modal from Quick Actions without sending', async () => {
+		const launched = await launchContextActionsLaneWorkbench();
+		try {
+			await openCodexAiTerminal(launched.window);
+			const quickActionsDialog = await openQuickActions(launched.window);
+			await quickActionsDialog.getByText('Context: Send to Agent', { exact: true }).click();
+
+			await expect(quickActionsDialog).toBeHidden();
+			const dialog = launched.window.getByRole('dialog', { name: 'Send Context to Agent' });
+			await expect(dialog).toBeVisible();
+			await expect(dialog.getByText('Queued Companion Codex')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('validates invalid pasted Codex merge targets without merging', async () => {
+		const launched = await launchContextActionsLaneWorkbench();
+		try {
+			const dialog = await openCodexMergeModal(launched.window);
+			await dialog.getByRole('tab', { name: 'Paste ID' }).click();
+			await dialog.getByPlaceholder('Paste session or tab ID...').fill('missing-codex-tab-id');
+
+			await expect(dialog.getByText('No matching session or tab found for this ID')).toBeVisible();
+			await expect(dialog.getByRole('button', { name: 'Merge Into' })).toBeDisabled();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('shows an empty Codex merge target search state', async () => {
+		const launched = await launchContextActionsLaneWorkbench();
+		try {
+			const dialog = await openCodexMergeModal(launched.window);
+			await dialog.getByPlaceholder('Search open tabs across all agents...').fill('missing target');
+
+			await expect(dialog.getByText('No matching sessions found')).toBeVisible();
+			await expect(dialog.getByText('Queued Companion Codex')).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('cancels the Codex merge modal without merging', async () => {
+		const launched = await launchContextActionsLaneWorkbench();
+		try {
+			const dialog = await openCodexMergeModal(launched.window);
+			await dialog.getByRole('button', { name: 'Cancel' }).click();
+
+			await expect(dialog).toBeHidden();
+			await expect(
+				launched.window.getByText('Codex lane seeded response is visible.')
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('shows an empty Codex send-to-agent target search state', async () => {
+		const launched = await launchContextActionsLaneWorkbench();
+		try {
+			const dialog = await openCodexSendToAgentModal(launched.window);
+			await dialog.getByPlaceholder('Search sessions...').fill('missing target');
+
+			await expect(dialog.getByText('No matching sessions found')).toBeVisible();
+			await expect(dialog.getByText('Queued Companion Codex')).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('updates Codex send-to-agent preview options after selecting a target', async () => {
+		const launched = await launchContextActionsLaneWorkbench();
+		try {
+			const dialog = await openCodexSendToAgentModal(launched.window);
+			await dialog.getByRole('option', { name: /Queued Companion Codex, idle/i }).click();
+
+			await expect(dialog.getByText('Target: Queued Companion Codex')).toBeVisible();
+			await expect(dialog.getByText('After cleaning:')).toBeVisible();
+			await dialog.getByLabel('Clean context (remove duplicates, reduce size)').uncheck();
+			await expect(dialog.getByText('After cleaning:')).toBeHidden();
+			await expect(dialog.getByRole('button', { name: 'Send Context' })).toBeEnabled();
 		} finally {
 			await launched.cleanup();
 		}
@@ -3313,6 +4363,313 @@ Codex phase two saved edit sentinel.
 		}
 	});
 
+	test('copies a Codex Auto Run preview image markdown reference from the lightbox', async () => {
+		const launched = await launchPreviewLinkLaneWorkbench();
+		try {
+			await launched.window.evaluate(() => {
+				const state = window as Window & { __maestroE2eCopiedMarkdown?: string };
+				state.__maestroE2eCopiedMarkdown = undefined;
+				Object.defineProperty(navigator, 'clipboard', {
+					configurable: true,
+					value: {
+						writeText: async (text: string) => {
+							state.__maestroE2eCopiedMarkdown = text;
+						},
+					},
+				});
+			});
+			await openCodexPreviewLightbox(launched.window, launched.imageFilename);
+
+			await launched.window.getByTitle('Copy markdown reference (e.g., ![alt](path))').click();
+
+			await expect
+				.poll(() =>
+					launched.window.evaluate(() => {
+						return (window as Window & { __maestroE2eCopiedMarkdown?: string })
+							.__maestroE2eCopiedMarkdown;
+					})
+				)
+				.toBe(`![images/${launched.imageFilename}](images/${launched.imageFilename})`);
+			await expect(launched.window.getByText('Copied!')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('closes the Codex Auto Run preview image lightbox with Escape', async () => {
+		const launched = await launchPreviewLinkLaneWorkbench();
+		try {
+			const { lightboxImage } = await openCodexPreviewLightbox(
+				launched.window,
+				launched.imageFilename
+			);
+
+			await launched.window.keyboard.press('Escape');
+
+			await expect(lightboxImage).toBeHidden();
+			await expect(launched.window.getByRole('img', { name: 'Codex preview image' })).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('closes the Codex Auto Run preview image lightbox from the toolbar button', async () => {
+		const launched = await launchPreviewLinkLaneWorkbench();
+		try {
+			const { lightboxImage } = await openCodexPreviewLightbox(
+				launched.window,
+				launched.imageFilename
+			);
+
+			await launched.window.getByTitle('Close (ESC)').click();
+
+			await expect(lightboxImage).toBeHidden();
+			await expect(launched.window.getByRole('img', { name: 'Codex preview image' })).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('keeps the Codex Auto Run preview image lightbox open when the image is clicked', async () => {
+		const launched = await launchPreviewLinkLaneWorkbench();
+		try {
+			const { lightboxImage } = await openCodexPreviewLightbox(
+				launched.window,
+				launched.imageFilename
+			);
+
+			await lightboxImage.click();
+
+			await expect(lightboxImage).toBeVisible();
+			await expect(launched.window.getByTitle('Close (ESC)')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('closes the Codex Auto Run preview image lightbox from the backdrop', async () => {
+		const launched = await launchPreviewLinkLaneWorkbench();
+		try {
+			const { lightbox, lightboxImage } = await openCodexPreviewLightbox(
+				launched.window,
+				launched.imageFilename
+			);
+
+			await lightbox.click({ position: { x: 20, y: 20 } });
+
+			await expect(lightboxImage).toBeHidden();
+			await expect(launched.window.getByRole('img', { name: 'Codex preview image' })).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('navigates the Codex Auto Run preview lightbox with the next toolbar button', async () => {
+		const launched = await launchPreviewLinkLaneWorkbench();
+		try {
+			const { lightboxImage } = await openCodexPreviewLightbox(
+				launched.window,
+				launched.imageFilename
+			);
+			const secondLightboxImage = launched.window.getByRole('img', {
+				name: `images/${launched.secondImageFilename}`,
+			});
+
+			await launched.window.getByTitle(/Next image/).click();
+
+			await expect(lightboxImage).toBeHidden();
+			await expect(secondLightboxImage).toBeVisible();
+			await expect(
+				launched.window.getByText(`images/${launched.secondImageFilename}`)
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('navigates the Codex Auto Run preview lightbox with the previous toolbar button', async () => {
+		const launched = await launchPreviewLinkLaneWorkbench();
+		try {
+			const { lightboxImage } = await openCodexPreviewLightbox(
+				launched.window,
+				launched.imageFilename
+			);
+			const secondLightboxImage = launched.window.getByRole('img', {
+				name: `images/${launched.secondImageFilename}`,
+			});
+
+			await launched.window.getByTitle(/Previous image/).click();
+
+			await expect(lightboxImage).toBeHidden();
+			await expect(secondLightboxImage).toBeVisible();
+			await expect(
+				launched.window.getByText(`images/${launched.secondImageFilename}`)
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('navigates the Codex Auto Run preview lightbox with ArrowRight', async () => {
+		const launched = await launchPreviewLinkLaneWorkbench();
+		try {
+			const { lightboxImage } = await openCodexPreviewLightbox(
+				launched.window,
+				launched.imageFilename
+			);
+			const secondLightboxImage = launched.window.getByRole('img', {
+				name: `images/${launched.secondImageFilename}`,
+			});
+
+			await launched.window.keyboard.press('ArrowRight');
+
+			await expect(lightboxImage).toBeHidden();
+			await expect(secondLightboxImage).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('cancels Codex Auto Run preview lightbox keyboard image deletion', async () => {
+		const launched = await launchPreviewLinkLaneWorkbench();
+		try {
+			const imagePath = path.join(launched.autoRunFolder, 'images', launched.imageFilename);
+			const { lightboxImage } = await openCodexPreviewLightbox(
+				launched.window,
+				launched.imageFilename
+			);
+
+			await launched.window.keyboard.press('Delete');
+			const confirmDialog = launched.window.getByRole('dialog', { name: 'Confirm' });
+			await expect(confirmDialog.getByText(/Are you sure you want to delete/)).toBeVisible();
+			await confirmDialog.getByRole('button', { name: 'Cancel' }).click();
+
+			await expect(confirmDialog).toBeHidden();
+			await expect(lightboxImage).toBeVisible();
+			expect(fs.existsSync(imagePath)).toBe(true);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('confirms Codex Auto Run preview lightbox toolbar image deletion', async () => {
+		const launched = await launchPreviewLinkLaneWorkbench();
+		try {
+			const imagePath = path.join(launched.autoRunFolder, 'images', launched.imageFilename);
+			const { lightboxImage } = await openCodexPreviewLightbox(
+				launched.window,
+				launched.imageFilename
+			);
+			const secondLightboxImage = launched.window.getByRole('img', {
+				name: `images/${launched.secondImageFilename}`,
+			});
+
+			await launched.window.getByTitle('Delete image (Delete key)').click();
+			const confirmDialog = launched.window.getByRole('dialog', { name: 'Confirm' });
+			await confirmDialog.getByRole('button', { name: 'Confirm' }).click();
+
+			await expect(lightboxImage).toBeHidden();
+			await expect(secondLightboxImage).toBeVisible();
+			await expect.poll(() => fs.existsSync(imagePath)).toBe(false);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('copies a Codex Auto Run preview lightbox image through shell clipboard IPC', async () => {
+		const launched = await launchPreviewLinkLaneWorkbench();
+		try {
+			await stubImageClipboardWrite(launched.electronApp);
+			await openCodexPreviewLightbox(launched.window, launched.imageFilename);
+
+			await launched.window.getByTitle(/Copy image to clipboard/).click();
+
+			await expect
+				.poll(async () => getStubbedImageClipboardDataUrl(launched.electronApp))
+				.toContain('data:image/png;base64,');
+			await expect(launched.window.getByText('Copied!')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('copies a Codex Auto Run preview lightbox image with Control C', async () => {
+		const launched = await launchPreviewLinkLaneWorkbench();
+		try {
+			await stubImageClipboardWrite(launched.electronApp);
+			await openCodexPreviewLightbox(launched.window, launched.imageFilename);
+
+			await launched.window.keyboard.press('Control+C');
+
+			await expect
+				.poll(async () => getStubbedImageClipboardDataUrl(launched.electronApp))
+				.toContain('data:image/png;base64,');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('collapses and re-expands Codex Auto Run attached image thumbnails in edit mode', async () => {
+		const launched = await launchPreviewLinkLaneWorkbench();
+		try {
+			await openAutoRunPanel(launched.window);
+			await launched.window.getByTitle('Edit document').click();
+			const attachmentsButton = launched.window.getByRole('button', {
+				name: /Attached Images \(2\)/,
+			});
+			const firstThumbnail = launched.window.getByRole('img', {
+				name: `images/${launched.imageFilename}`,
+			});
+
+			await expect(attachmentsButton).toBeVisible();
+			await expect(firstThumbnail).toBeVisible();
+			await attachmentsButton.click();
+			await expect(firstThumbnail).toBeHidden();
+			await attachmentsButton.click();
+			await expect(firstThumbnail).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('opens the Codex Auto Run lightbox from an edit-mode attached image thumbnail', async () => {
+		const launched = await launchPreviewLinkLaneWorkbench();
+		try {
+			await openAutoRunPanel(launched.window);
+			await launched.window.getByTitle('Edit document').click();
+
+			await launched.window.getByRole('img', { name: `images/${launched.imageFilename}` }).click();
+
+			await expect(launched.window.getByTitle('Close (ESC)')).toBeVisible();
+			await expect(launched.window.getByText(`images/${launched.imageFilename}`)).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('removes a Codex Auto Run attached image thumbnail in edit mode', async () => {
+		const launched = await launchPreviewLinkLaneWorkbench();
+		try {
+			const imagePath = path.join(launched.autoRunFolder, 'images', launched.imageFilename);
+			await openAutoRunPanel(launched.window);
+			await launched.window.getByTitle('Edit document').click();
+			const firstThumbnail = launched.window.getByRole('img', {
+				name: `images/${launched.imageFilename}`,
+			});
+
+			await firstThumbnail.hover();
+			await launched.window.getByTitle('Remove image').first().click();
+
+			await expect(firstThumbnail).toBeHidden();
+			await expect.poll(() => fs.existsSync(imagePath)).toBe(false);
+			await expect(
+				launched.window.getByRole('button', { name: /Attached Images \(1\)/ })
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
 	test('reports missing Auto Run preview image loads in the Codex lane document', async () => {
 		const launched = await launchPreviewLinkLaneWorkbench();
 		try {
@@ -3743,7 +5100,7 @@ Codex saved Auto Run body sentinel.
 			const editor = launched.window.getByPlaceholder(/Capture notes/);
 
 			await editor.fill(draftContent);
-			await expect(launched.window.getByText('Unsaved changes')).toBeVisible();
+			await expect(editor).toHaveValue(draftContent);
 			await editor.press('Meta+Z');
 
 			await expect(editor).toHaveValue(launched.phaseOneContent);
@@ -3762,7 +5119,7 @@ Codex saved Auto Run body sentinel.
 			const editor = launched.window.getByPlaceholder(/Capture notes/);
 
 			await editor.fill(draftContent);
-			await expect(launched.window.getByText('Unsaved changes')).toBeVisible();
+			await expect(editor).toHaveValue(draftContent);
 			await editor.press('Meta+Z');
 			await expect(editor).toHaveValue(launched.phaseOneContent);
 			await editor.press('Meta+Shift+Z');
@@ -3784,12 +5141,12 @@ Codex saved Auto Run body sentinel.
 			const editor = launched.window.getByPlaceholder(/Capture notes/);
 
 			await editor.fill(firstDraft);
-			await expect(launched.window.getByText('Unsaved changes')).toBeVisible();
+			await expect(editor).toHaveValue(firstDraft);
 			await editor.press('Meta+Z');
 			await expect(editor).toHaveValue(launched.phaseOneContent);
 
 			await editor.fill(secondDraft);
-			await expect(launched.window.getByText('Unsaved changes')).toBeVisible();
+			await expect(editor).toHaveValue(secondDraft);
 			await editor.press('Meta+Shift+Z');
 
 			await expect(editor).toHaveValue(secondDraft);
