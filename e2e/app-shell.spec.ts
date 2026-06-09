@@ -11186,6 +11186,38 @@ test.describe('Command terminal output controls', () => {
 		await expect(window.getByRole('button', { name: 'Show less' })).toBeVisible();
 	});
 
+	test('closes command terminal output search without clearing transcript content', async () => {
+		await openSeededTerminalAgent(window);
+		const terminalOutput = window.getByLabel('Terminal output');
+		await terminalOutput.press('Control+f');
+
+		const searchInput = window.getByPlaceholder('Search output... (Esc to close)');
+		await searchInput.fill('terminal seeded output');
+		await expect(window.getByText('terminal seeded output is visible')).toBeVisible();
+
+		await searchInput.press('Escape');
+
+		await expect(searchInput).toBeHidden();
+		await expect(window.getByText('terminal seeded output is visible')).toBeVisible();
+		await expect(window.getByRole('button', { name: 'Show all 140 lines' })).toBeVisible();
+	});
+
+	test('keeps long command terminal output collapsed while searching visible text', async () => {
+		await openSeededTerminalAgent(window);
+		await window.getByLabel('Terminal output').press('Control+f');
+
+		const searchInput = window.getByPlaceholder('Search output... (Esc to close)');
+		await searchInput.fill('line 001 e2e output navigation');
+
+		await expect(
+			window.getByText('terminal scroll line 001 e2e output navigation sentinel')
+		).toBeVisible();
+		await expect(
+			window.getByText('terminal scroll line 140 e2e output navigation sentinel')
+		).toHaveCount(0);
+		await expect(window.getByRole('button', { name: 'Show all 140 lines' })).toBeVisible();
+	});
+
 	test('returns focus to the terminal input when Escape is pressed from output', async () => {
 		const terminalInput = await openSeededTerminalAgent(window);
 		const terminalOutput = window.getByLabel('Terminal output');
@@ -11227,6 +11259,24 @@ test.describe('Command terminal output controls', () => {
 		await expect(quickActionsDialog).toBeHidden();
 		await expect(window.locator('[data-log-index]')).toHaveCount(0);
 		await expect(terminalInput).toHaveValue('manual draft before clear history sentinel');
+	});
+
+	test('clears command terminal history while output search is open', async () => {
+		await openSeededTerminalAgent(window);
+		await window.getByLabel('Terminal output').press('Control+f');
+		await window.getByPlaceholder('Search output... (Esc to close)').fill('terminal seeded output');
+		await expect(window.getByText('terminal seeded output is visible')).toBeVisible();
+
+		const quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('Clear Terminal History');
+		await quickActionsDialog.getByRole('button', { name: /Clear Terminal History/ }).click();
+
+		await expect(quickActionsDialog).toBeHidden();
+		await expect(window.getByText('terminal seeded output is visible')).toHaveCount(0);
+		await expect(window.getByPlaceholder('Search output... (Esc to close)')).toBeHidden();
+		await expect(window.getByLabel('Terminal output')).toBeVisible();
 	});
 });
 
@@ -11297,5 +11347,47 @@ test.describe('Command terminal SSH remote surfaces', () => {
 		await expect(calls.map((call) => call.command)).toEqual(['cd', 'pwd']);
 		await expect(calls[0].cwd).toBe(E2E_SSH_REMOTE_CURRENT_CWD);
 		await expect(calls[1].cwd).toBe(E2E_SSH_REMOTE_BASE_CWD);
+	});
+
+	test('routes SSH terminal history selections through the remote cwd and config', async () => {
+		await stubTerminalRunCommand(electronApp);
+		const terminalInput = await openSeededTerminalAgent(window);
+
+		await terminalInput.focus();
+		await terminalInput.press('ArrowUp');
+		const historyFilter = window.getByPlaceholder('Filter commands...');
+		await historyFilter.fill('status');
+		await historyFilter.press('Enter');
+		await terminalInput.press('Enter');
+
+		const calls = await getStubbedTerminalRunCommandCalls(electronApp);
+		await expect(calls[0]).toMatchObject({
+			command: 'git status --short',
+			cwd: E2E_SSH_REMOTE_CURRENT_CWD,
+			sessionSshRemoteConfig: {
+				enabled: true,
+				remoteId: E2E_SSH_REMOTE_ID,
+				workingDirOverride: E2E_SSH_REMOTE_BASE_CWD,
+			},
+		});
+	});
+
+	test('routes SSH slash-prefixed terminal commands through the remote config', async () => {
+		await stubTerminalRunCommand(electronApp);
+		const terminalInput = await openSeededTerminalAgent(window);
+
+		await terminalInput.fill('/clear');
+		await terminalInput.press('Enter');
+
+		const calls = await getStubbedTerminalRunCommandCalls(electronApp);
+		await expect(calls[0]).toMatchObject({
+			command: '/clear',
+			cwd: E2E_SSH_REMOTE_CURRENT_CWD,
+			sessionSshRemoteConfig: {
+				enabled: true,
+				remoteId: E2E_SSH_REMOTE_ID,
+				workingDirOverride: E2E_SSH_REMOTE_BASE_CWD,
+			},
+		});
 	});
 });
