@@ -759,3 +759,50 @@ Remaining work:
 - Continue from 233 remaining matrix-backed active scenarios after this recovery
   fallback tranche.
 - Run actual Playwright/E2E validation only after orchestrator approval.
+
+Twenty-sixth through twenty-eighth fallback tranches:
+
+- Extended `e2e/git-groupchat-playbooks.spec.ts`.
+- Active scenarios added: 15 (`GGP-A131` through `GGP-A145`).
+- Skipped/env-gated rows added: 0.
+- Cumulative active scenarios authored in this lane: 145.
+- Cumulative skipped/env-gated scenarios authored in this lane: 7.
+- Matrix-backed active scenarios still remaining: 218.
+- Files touched:
+  - `e2e/git-groupchat-playbooks.spec.ts`
+  - `docs/e2e-parallel-campaign/agents/git-groupchat-playbooks.md`
+  - `docs/e2e-parallel-campaign/coverage-ledger.md`
+  - `docs/e2e-coverage-campaign.md`
+- Coverage added:
+  - Binary Git Diff footer state.
+  - Git Log mouse-selected second commit references.
+  - Create Pull Request blank-title description preservation.
+  - Published public Gist URL copy.
+  - Deleted-file Git Diff Escape close.
+  - Group Chat info metadata Escape close.
+  - Group Chat Quick Actions close and reopen.
+  - Group Chat draft clearing, mention click insertion, and rename Escape preservation.
+  - Playbook Exchange search restoration, category context, cached-state refresh, document preview folder editing, and OpenSpec local edit state.
+- Skipped/env-gated blockers: unchanged.
+- Shared helper edits: none; `broadcasts.md` unchanged.
+- Live GitHub, Gist publishing, marketplace network, SSH remote, provider,
+  headed/UI E2E, Playwright list, and full E2E execution: none.
+- Commit: `9a8e761c2`.
+- Validation passed:
+  - `NODE_OPTIONS=--max-old-space-size=8192 npx prettier --write e2e/git-groupchat-playbooks.spec.ts`
+  - `npx eslint e2e/git-groupchat-playbooks.spec.ts`
+  - `NODE_OPTIONS=--max-old-space-size=8192 npx tsc -p tsconfig.lint.json --noEmit`
+  - Static Git/group-chat/playbooks spec ID/`.only`/duplicate-ID/prohibited-command scan.
+  - `git diff --check -- e2e/git-groupchat-playbooks.spec.ts`
+- Review:
+  - Focused code-reviewer pass approved the spec diff with no critical or high
+    issues; E2E execution remains deferred.
+
+Remaining work:
+
+- Expand remaining Git diff/log details, PR failure variants, Gist modal coverage,
+  group chat mutation/history, marketplace import/export edge cases, and
+  Spec Kit/OpenSpec refresh/failure matrices.
+- Continue from 218 remaining matrix-backed active scenarios after this recovery
+  fallback tranche.
+- Run actual Playwright/E2E validation only after orchestrator approval.
