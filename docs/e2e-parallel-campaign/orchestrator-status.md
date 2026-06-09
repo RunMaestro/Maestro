@@ -36,7 +36,7 @@ coverage and the shell-lane tab coverage.
 | `agent-crud-provider`      | `codex/e2e-agent-crud-provider`      | `Maestro-worktrees/e2e-agent-crud-provider`      | not relaunched                                      | complete                   | 104 active scenarios accepted; 0 remain         |
 | `shell-tabs-command`       | `codex/e2e-shell-tabs-command`       | `Maestro-worktrees/e2e-shell-tabs-command`       | `maestro-e2e-shell-tabs-command-campaign-goal`      | PM2 retry cycle after 503  | 81 active scenarios accepted; 185 remain        |
 | `files-docs-history`       | `codex/e2e-files-docs-history`       | `Maestro-worktrees/e2e-files-docs-history`       | `maestro-e2e-files-docs-history-campaign-goal`      | manual fallback accepted   | 42 active scenarios accepted; 307 remain        |
-| `autorun-ai-terminal`      | `codex/e2e-autorun-ai-terminal`      | `Maestro-worktrees/e2e-autorun-ai-terminal`      | `maestro-e2e-autorun-ai-terminal-campaign-goal`     | PM2 retry cycle after 503  | 10 active scenarios accepted; 263 remain        |
+| `autorun-ai-terminal`      | `codex/e2e-autorun-ai-terminal`      | `Maestro-worktrees/e2e-autorun-ai-terminal`      | `maestro-e2e-autorun-ai-terminal-campaign-goal`     | manual fallback accepted   | 140 active scenarios accepted; 133 remain       |
 | `wizard-settings-prompts`  | `codex/e2e-wizard-settings-prompts`  | `Maestro-worktrees/e2e-wizard-settings-prompts`  | `maestro-e2e-wizard-settings-prompts-campaign-goal` | manual fallback accepted   | 83 active scenarios accepted; 289 remain        |
 | `git-groupchat-playbooks`  | `codex/e2e-git-groupchat-playbooks`  | `Maestro-worktrees/e2e-git-groupchat-playbooks`  | `maestro-e2e-git-groupchat-playbooks-campaign-goal` | manual fallback accepted   | 110 active scenarios accepted; 253 remain       |
 | `stats-graph-symphony`     | `codex/e2e-stats-graph-symphony`     | `Maestro-worktrees/e2e-stats-graph-symphony`     | `maestro-e2e-stats-graph-symphony-campaign-goal`    | manual fallback accepted   | 52 active scenarios accepted; 284 remain        |
@@ -50,7 +50,7 @@ coverage and the shell-lane tab coverage.
 - `agent-crud-provider` merged through `bb4fbcce2`.
 - `files-docs-history` merged through `18a4c3b29`.
 - `mobile-web-bridge` merged through `33a5ace5f`.
-- `autorun-ai-terminal` merged through `cd804bebf`.
+- `autorun-ai-terminal` merged through `f3710f189`.
 - `wizard-settings-prompts` merged through `c32a4e4d5`.
 - `stats-graph-symphony` merged through `057ced8e3`.
 - `debug-accessibility` merged through `e1879dd27`.
@@ -221,6 +221,11 @@ coverage and the shell-lane tab coverage.
   through `127bc7189` with 5 active group chat transcript, Quick Actions,
   Playbook Exchange, and Git Log scenarios. Focused static review found no
   critical or high issues. No E2E execution was run.
+- 2026-06-08 23:09 EDT: accepted manual `autorun-ai-terminal` through
+  `f3710f189` with 130 active Codex AI terminal and Auto Run scenarios from the
+  clean worker branch. Focused static review replaced four fixed waits with
+  visible-state waits and found no critical or high issues. No E2E execution was
+  run.
 - 2026-06-08 20:35 EDT: accepted manual `mobile-web-bridge` fallback through
   `958f07ff4` with 24 active live bridge API, lifecycle metadata, REST API
   metadata, and static PWA route metadata scenarios. Focused static review found
