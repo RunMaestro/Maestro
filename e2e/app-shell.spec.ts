@@ -7321,6 +7321,241 @@ test.describe('App shell seeded workbench', () => {
 		await expect(window.getByText('File Preview Surface')).toBeVisible();
 	});
 
+	test('renames an inactive AI tab from the hover overlay without leaving file preview', async () => {
+		const tabRows = window.locator('[data-tab-id]');
+		await window.getByText('README', { exact: true }).click();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+
+		const mainTab = tabRows.filter({ hasText: 'Main' }).first();
+		await mainTab.hover();
+		await window.getByText('Rename Tab').click();
+
+		const renameDialog = window.getByRole('dialog', { name: 'Rename Tab' });
+		await renameDialog.locator('input').fill('Inactive Reviewed Main');
+		await renameDialog.getByRole('button', { name: 'Rename' }).click();
+
+		await expect(renameDialog).toBeHidden();
+		await expect(tabRows.filter({ hasText: 'Inactive Reviewed Main' }).first()).toBeVisible();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+	});
+
+	test('selects a renamed inactive AI tab from the Tab Switcher', async () => {
+		const tabRows = window.locator('[data-tab-id]');
+		await window.getByText('README', { exact: true }).click();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+
+		const mainTab = tabRows.filter({ hasText: 'Main' }).first();
+		await mainTab.hover();
+		await window.getByText('Rename Tab').click();
+		const renameDialog = window.getByRole('dialog', { name: 'Rename Tab' });
+		await renameDialog.locator('input').fill('Switcher Reviewed Main');
+		await renameDialog.locator('input').press('Enter');
+		await expect(tabRows.filter({ hasText: 'Switcher Reviewed Main' }).first()).toBeVisible();
+
+		await window.keyboard.press('Alt+Meta+T');
+		const switcher = window.getByRole('dialog', { name: 'Tab Switcher' });
+		await switcher.getByPlaceholder('Search open tabs...').fill('Switcher Reviewed Main');
+		await switcher.getByRole('button', { name: /Switcher Reviewed Main/ }).click();
+
+		await expect(switcher).toBeHidden();
+		await expect(window.getByText('Codex seeded response is visible.')).toBeVisible();
+	});
+
+	test('closes an inactive AI tab from the hover overlay while preserving file preview', async () => {
+		const tabRows = window.locator('[data-tab-id]');
+		await window.getByText('README', { exact: true }).click();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+
+		const mainTab = tabRows.filter({ hasText: 'Main' }).first();
+		await mainTab.hover();
+		await window.getByRole('button', { name: 'Close Tab', exact: true }).click();
+
+		await expect(tabRows.filter({ hasText: 'Main' })).toHaveCount(0);
+		await expect(tabRows.filter({ hasText: 'README' }).first()).toBeVisible();
+		await expect(tabRows.filter({ hasText: 'New Session' }).first()).toBeVisible();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+	});
+
+	test('reopens an inactive AI tab closed from file preview with the global shortcut', async () => {
+		const tabRows = window.locator('[data-tab-id]');
+		await window.getByText('README', { exact: true }).click();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+
+		const mainTab = tabRows.filter({ hasText: 'Main' }).first();
+		await mainTab.hover();
+		await window.getByRole('button', { name: 'Close Tab', exact: true }).click();
+		await expect(tabRows.filter({ hasText: 'Main' })).toHaveCount(0);
+
+		await window.keyboard.press('Meta+Shift+T');
+
+		await expect(tabRows.filter({ hasText: 'Main' }).first()).toBeVisible();
+		await expect(tabRows.filter({ hasText: 'README' }).first()).toBeVisible();
+		await tabRows.filter({ hasText: 'Main' }).first().click();
+		await expect(window.getByText('Codex seeded response is visible.')).toBeVisible();
+	});
+
+	test('stars an inactive AI tab from the hover overlay and lists it in starred switcher mode', async () => {
+		await window.getByText('README', { exact: true }).click();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+
+		const mainTab = window.locator('[data-tab-id]').filter({ hasText: 'Main' }).first();
+		await mainTab.hover();
+		await window.getByText('Star Session').click();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+
+		await window.keyboard.press('Alt+Meta+T');
+		const switcher = window.getByRole('dialog', { name: 'Tab Switcher' });
+		await switcher.getByPlaceholder('Search open tabs...').press('Tab');
+		await switcher.getByPlaceholder('Search named sessions...').press('Tab');
+
+		await expect(switcher.getByPlaceholder('Search starred sessions...')).toBeFocused();
+		await expect(switcher.getByRole('button', { name: /Main/ })).toBeVisible();
+	});
+
+	test('unstars an inactive AI tab from the hover overlay and returns starred mode empty', async () => {
+		await window.getByText('README', { exact: true }).click();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+
+		const mainTab = window.locator('[data-tab-id]').filter({ hasText: 'Main' }).first();
+		await mainTab.hover();
+		await window.getByText('Star Session').click();
+		await mainTab.hover();
+		await window.getByText('Unstar Session').click();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+
+		await window.keyboard.press('Alt+Meta+T');
+		const switcher = window.getByRole('dialog', { name: 'Tab Switcher' });
+		await switcher.getByPlaceholder('Search open tabs...').press('Tab');
+		await switcher.getByPlaceholder('Search named sessions...').press('Tab');
+
+		await expect(switcher.getByText('No starred sessions')).toBeVisible();
+	});
+
+	test('moves an inactive AI tab back to first position without leaving file preview', async () => {
+		const tabRows = window.locator('[data-tab-id]');
+		await window.getByText('README', { exact: true }).click();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+
+		const mainTab = tabRows.filter({ hasText: 'Main' }).first();
+		await mainTab.hover();
+		await window.getByRole('button', { name: 'Move to Last Position' }).click();
+		await expect(tabRows.nth(0)).toContainText('README');
+		await expect(tabRows.nth(1)).toContainText('Main');
+
+		await mainTab.hover();
+		await window.getByRole('button', { name: 'Move to First Position' }).click();
+
+		await expect(tabRows.nth(0)).toContainText('Main');
+		await expect(tabRows.nth(1)).toContainText('README');
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+	});
+
+	test('moves an inactive file tab back to last position without leaving the AI tab', async () => {
+		const tabRows = window.locator('[data-tab-id]');
+		await window.getByText('Main', { exact: true }).click();
+		await expect(window.getByText('Codex seeded response is visible.')).toBeVisible();
+
+		const readmeTab = tabRows.filter({ hasText: 'README' }).first();
+		await readmeTab.hover();
+		await window.getByRole('button', { name: 'Move to First Position' }).click();
+		await expect(tabRows.nth(0)).toContainText('README');
+		await expect(tabRows.nth(1)).toContainText('Main');
+
+		await readmeTab.hover();
+		await window.getByRole('button', { name: 'Move to Last Position' }).click();
+
+		await expect(tabRows.nth(0)).toContainText('Main');
+		await expect(tabRows.nth(1)).toContainText('README');
+		await expect(window.getByText('Codex seeded response is visible.')).toBeVisible();
+	});
+
+	test('returns from named-session no-match search to open Tab Switcher results', async () => {
+		await window.getByText('Main', { exact: true }).click();
+		await window.keyboard.press('Alt+Meta+T');
+
+		const switcher = window.getByRole('dialog', { name: 'Tab Switcher' });
+		await switcher.getByPlaceholder('Search open tabs...').press('Tab');
+		const namedSearch = switcher.getByPlaceholder('Search named sessions...');
+		await namedSearch.fill('missing-named-return-sentinel');
+		await expect(switcher.getByText('No named sessions found')).toBeVisible();
+
+		await namedSearch.press('Shift+Tab');
+
+		await expect(switcher.getByPlaceholder('Search open tabs...')).toBeFocused();
+		await expect(switcher.getByRole('button', { name: /Main/ })).toBeVisible();
+		await expect(switcher.getByRole('button', { name: /README/ })).toBeVisible();
+	});
+
+	test('returns from starred no-match search to named Tab Switcher results', async () => {
+		await window.getByText('README', { exact: true }).click();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+		await window.keyboard.press('Alt+Meta+T');
+
+		const switcher = window.getByRole('dialog', { name: 'Tab Switcher' });
+		await switcher.getByPlaceholder('Search open tabs...').press('Tab');
+		await switcher.getByPlaceholder('Search named sessions...').press('Tab');
+		const starredSearch = switcher.getByPlaceholder('Search starred sessions...');
+		await starredSearch.fill('missing-starred-return-sentinel');
+		await expect(switcher.getByText('No starred sessions')).toBeVisible();
+
+		await starredSearch.press('Shift+Tab');
+		const namedSearch = switcher.getByPlaceholder('Search named sessions...');
+		await expect(namedSearch).toBeFocused();
+		await namedSearch.fill('E2E Workbench');
+
+		await expect(switcher.getByRole('button', { name: /E2E Workbench/ })).toBeVisible();
+		await namedSearch.press('Escape');
+		await expect(switcher).toBeHidden();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+	});
+
+	test('recovers open Tab Switcher results after no-match search with multiple new tabs', async () => {
+		const tabRows = window.locator('[data-tab-id]');
+		await window.getByText('Main', { exact: true }).click();
+		await window.keyboard.press('Meta+T');
+		await window.keyboard.press('Meta+T');
+		await expect(tabRows).toHaveCount(4);
+
+		await window.keyboard.press('Alt+Meta+T');
+		const switcher = window.getByRole('dialog', { name: 'Tab Switcher' });
+		const searchInput = switcher.getByPlaceholder('Search open tabs...');
+		await searchInput.fill('missing-multi-new-tab-sentinel');
+		await expect(switcher.getByText('No open tabs')).toBeVisible();
+
+		await searchInput.fill('');
+
+		await expect(switcher.getByRole('button', { name: /Main/ })).toBeVisible();
+		await expect(switcher.getByRole('button', { name: /README/ })).toBeVisible();
+		await expect(switcher.getByRole('button', { name: /New Session/ }).first()).toBeVisible();
+	});
+
+	test('selects a newly renamed AI tab from file preview with a numeric switcher shortcut', async () => {
+		const tabRows = window.locator('[data-tab-id]');
+		await window.getByText('Main', { exact: true }).click();
+		await window.keyboard.press('Meta+T');
+		await expect(tabRows.filter({ hasText: 'New Session' }).first()).toBeVisible();
+
+		await window.keyboard.press('Meta+Shift+R');
+		const renameDialog = window.getByRole('dialog', { name: 'Rename Tab' });
+		await renameDialog.locator('input').fill('Scratch Review Tab');
+		await renameDialog.locator('input').press('Enter');
+		await expect(tabRows.filter({ hasText: 'Scratch Review Tab' }).first()).toBeVisible();
+
+		await window.getByText('README', { exact: true }).click();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+
+		await window.keyboard.press('Alt+Meta+T');
+		const switcher = window.getByRole('dialog', { name: 'Tab Switcher' });
+		const searchInput = switcher.getByPlaceholder('Search open tabs...');
+		await searchInput.fill('Scratch Review');
+		await searchInput.press('1');
+
+		await expect(switcher).toBeHidden();
+		await expect(
+			window.getByPlaceholder(/Talking to E2E Workbench powered by Codex/)
+		).toBeVisible();
+	});
+
 	test('filters Quick Actions and opens Shortcuts Help', async () => {
 		const quickActionsDialog = await openQuickActions(window);
 		await quickActionsDialog
