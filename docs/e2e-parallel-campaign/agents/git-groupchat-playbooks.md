@@ -1,6 +1,6 @@
 # git-groupchat-playbooks
 
-Status: thirty-first fallback tranche authored
+Status: quota reached
 
 ## Scope
 
@@ -29,6 +29,7 @@ OpenSpec.
 - [x] Commit seventeenth through twenty-fifth fallback tranches on `codex/e2e-git-groupchat-playbooks`.
 - [x] Commit twenty-sixth through twenty-eighth fallback tranches on `codex/e2e-git-groupchat-playbooks`.
 - [x] Commit twenty-ninth through thirty-first fallback tranches on `codex/e2e-git-groupchat-playbooks`.
+- [x] Commit quota-closing fallback tranche on `codex/e2e-git-groupchat-playbooks`.
 
 ## Progress
 
@@ -830,9 +831,40 @@ Twenty-ninth through thirty-first fallback tranches:
 
 Remaining work:
 
-- Expand remaining Git diff/log details, PR failure variants, Gist modal coverage,
-  group chat mutation/history, marketplace import/export edge cases, and
-  Spec Kit/OpenSpec refresh/failure matrices.
-- Continue from 203 remaining matrix-backed active scenarios after this recovery
-  fallback tranche.
+- Lane matrix-backed quota is reached after the quota-closing fallback tranche.
 - Run actual Playwright/E2E validation only after orchestrator approval.
+
+Quota-closing fallback tranche:
+
+- Extended `e2e/git-groupchat-playbooks.spec.ts`.
+- Active scenarios added: 203 (`GGP-A161` through `GGP-A363`).
+- Skipped/env-gated rows added: 0.
+- Cumulative active scenarios authored in this lane: 363.
+- Cumulative skipped/env-gated scenarios authored in this lane: 7.
+- Matrix-backed active scenarios still remaining: 0.
+- Files touched:
+  - `e2e/git-groupchat-playbooks.spec.ts`
+  - `docs/e2e-parallel-campaign/agents/git-groupchat-playbooks.md`
+  - `docs/e2e-parallel-campaign/coverage-ledger.md`
+  - `docs/e2e-coverage-campaign.md`
+- Coverage added:
+  - 80 Git/worktree/PR/diff/log/Gist quota-closing scenarios (`GGP-A161`
+    through `GGP-A240`).
+  - 55 Group Chat quota-closing scenarios (`GGP-A241` through `GGP-A295`).
+  - 68 Playbooks, marketplace, Spec Kit, and OpenSpec quota-closing scenarios
+    (`GGP-A296` through `GGP-A363`).
+- Skipped/env-gated blockers: unchanged.
+- Shared helper edits: none; `broadcasts.md` unchanged.
+- Live GitHub, Gist publishing, marketplace network, SSH remote, provider,
+  headed/UI E2E, Playwright list, and full E2E execution: none.
+- Worker commit: `b7f3ec6a5`.
+- Accepted orchestrator commit: `ec72c453c`.
+- Validation passed:
+  - `NODE_OPTIONS=--max-old-space-size=8192 npx prettier --write e2e/git-groupchat-playbooks.spec.ts`
+  - `npx eslint e2e/git-groupchat-playbooks.spec.ts`
+  - `npx tsc -p tsconfig.lint.json --noEmit`
+  - Static Git/group-chat/playbooks spec ID/`.only`/prohibited-command scan.
+  - `git diff --check -- e2e/git-groupchat-playbooks.spec.ts`
+- Review:
+  - Focused code-reviewer pass found two high issues, both fixed before commit.
+    Re-review found no critical or high issues; E2E execution remains deferred.

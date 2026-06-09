@@ -1,6 +1,6 @@
 # Parallel E2E Orchestrator Status
 
-Last updated: 2026-06-09 00:06 EDT
+Last updated: 2026-06-09 00:13 EDT
 
 ## Base
 
@@ -38,7 +38,7 @@ coverage and the shell-lane tab coverage.
 | `files-docs-history`       | `codex/e2e-files-docs-history`       | `Maestro-worktrees/e2e-files-docs-history`       | `maestro-e2e-files-docs-history-campaign-goal`      | manual fallback accepted   | 47 active scenarios accepted; 302 remain        |
 | `autorun-ai-terminal`      | `codex/e2e-autorun-ai-terminal`      | `Maestro-worktrees/e2e-autorun-ai-terminal`      | `maestro-e2e-autorun-ai-terminal-campaign-goal`     | manual fallback accepted   | 140 active scenarios accepted; 133 remain       |
 | `wizard-settings-prompts`  | `codex/e2e-wizard-settings-prompts`  | `Maestro-worktrees/e2e-wizard-settings-prompts`  | `maestro-e2e-wizard-settings-prompts-campaign-goal` | manual fallback accepted   | 232 active scenarios accepted; 140 remain       |
-| `git-groupchat-playbooks`  | `codex/e2e-git-groupchat-playbooks`  | `Maestro-worktrees/e2e-git-groupchat-playbooks`  | `maestro-e2e-git-groupchat-playbooks-campaign-goal` | manual fallback accepted   | 160 active scenarios accepted; 203 remain       |
+| `git-groupchat-playbooks`  | `codex/e2e-git-groupchat-playbooks`  | `Maestro-worktrees/e2e-git-groupchat-playbooks`  | not relaunched                                      | complete                   | 363 active scenarios accepted; 0 remain         |
 | `stats-graph-symphony`     | `codex/e2e-stats-graph-symphony`     | `Maestro-worktrees/e2e-stats-graph-symphony`     | `maestro-e2e-stats-graph-symphony-campaign-goal`    | manual fallback accepted   | 154 active scenarios accepted; 182 remain       |
 | `debug-accessibility`      | `codex/e2e-debug-accessibility`      | `Maestro-worktrees/e2e-debug-accessibility`      | not relaunched                                      | complete                   | 192 active scenarios accepted; 0 remain         |
 | `mobile-web-bridge`        | `codex/e2e-mobile-web-bridge`        | `Maestro-worktrees/e2e-mobile-web-bridge`        | not relaunched                                      | complete after blocker fix | 102 active scenarios accepted; 0 remain         |
@@ -55,7 +55,7 @@ coverage and the shell-lane tab coverage.
 - `stats-graph-symphony` merged through `f4d562a33`.
 - `debug-accessibility` merged through `e1879dd27`.
 - `fixtures-sharding-review` merged through `392c4527`.
-- `git-groupchat-playbooks` merged through `561fa336d`.
+- `git-groupchat-playbooks` merged through `ec72c453c`.
 
 ## Launch Log
 
@@ -297,6 +297,12 @@ coverage and the shell-lane tab coverage.
   Codex configuration scenarios from the clean worker branch. Static Prettier,
   ESLint, TypeScript, `git diff --check`, inventory scans, and focused review
   passed. No E2E execution was run.
+- 2026-06-09 00:13 EDT: accepted manual `git-groupchat-playbooks` quota close
+  through `ec72c453c` with 203 matrix-backed active Git/worktree/PR/diff/log/Gist,
+  Group Chat, Playbook Exchange, Spec Kit, and OpenSpec scenarios from the clean
+  worker branch. Static Prettier, ESLint, TypeScript, `git diff --check`,
+  prohibited-pattern scans, and focused review passed. The lane is complete at
+  363/363 and should not be relaunched. No E2E execution was run.
 
 ## Blockers
 
@@ -338,7 +344,8 @@ coverage and the shell-lane tab coverage.
   stopped PM2 list was not proof of completed work. Old stopped worker logs were
   mixed across completed one-shot tranches, 503 capacity failures, 429 rate
   limits, interrupted turns, and unclear exits. Current PM2 campaign state uses
-  six `maestro-e2e-*-campaign-goal` workers for the quota-bearing lanes that
-  remain open; `agent-crud-provider`, `mobile-web-bridge`, and
-  `debug-accessibility` are not relaunched because their ledger remaining counts
-  are 0, and `fixtures-sharding-review` has no scenario quota.
+  five `maestro-e2e-*-campaign-goal` workers for the quota-bearing lanes that
+  remain open; `agent-crud-provider`, `git-groupchat-playbooks`,
+  `mobile-web-bridge`, and `debug-accessibility` are not relaunched because
+  their ledger remaining counts are 0, and `fixtures-sharding-review` has no
+  scenario quota.
