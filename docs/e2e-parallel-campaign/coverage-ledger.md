@@ -2,9 +2,9 @@
 
 Source of truth: `docs/e2e-coverage-campaign.md`.
 
-Current active tests: 2207
+Current active tests: 2216
 Target active tests: 3,025
-Remaining matrix-backed active scenarios: 818
+Remaining matrix-backed active scenarios: 809
 
 ## Matrix
 
@@ -19,7 +19,7 @@ Remaining matrix-backed active scenarios: 818
 | File preview and document rendering                            | `files-docs-history`      |             46 |           180 |       134 |
 | History panel                                                  | `files-docs-history`      |             30 |            95 |        65 |
 | Auto Run                                                       | `autorun-ai-terminal`     |            237 |           260 |        23 |
-| New Agent Wizard and inline wizard                             | `wizard-settings-prompts` |            104 |           190 |        86 |
+| New Agent Wizard and inline wizard                             | `wizard-settings-prompts` |            113 |           190 |        77 |
 | Settings                                                       | `wizard-settings-prompts` |            190 |           190 |         0 |
 | Git, worktrees, PR, diff/log, Gist                             | `git-groupchat-playbooks` |            160 |           160 |         0 |
 | Group chat                                                     | `git-groupchat-playbooks` |            140 |           140 |         0 |
@@ -40,7 +40,7 @@ Remaining matrix-backed active scenarios: 818
 | `shell-tabs-command`       |                     185 |                        81 |                                    0 | `2d9975b17`          |
 | `files-docs-history`       |                     302 |                        47 |                                    5 | `b409f4538`          |
 | `autorun-ai-terminal`      |                      63 |                       210 |                                    0 | `25b7e29d4`          |
-| `wizard-settings-prompts`  |                      86 |                       289 |                                    1 | `4760f851f`          |
+| `wizard-settings-prompts`  |                      77 |                       298 |                                    1 | `b4e85b286`          |
 | `git-groupchat-playbooks`  |                       0 |                       363 |                                    7 | `ec72c453c`          |
 | `stats-graph-symphony`     |                     182 |                       154 |                                    6 | `f4d562a33`          |
 | `debug-accessibility`      |                       0 |                       192 |                                    0 | `e1879dd27`          |
@@ -172,3 +172,4 @@ Remaining matrix-backed active scenarios: 818
 - 2026-06-09: accepted manual `wizard-settings-prompts` through `fe2984fae`; authored 8 additional active Director's Notes Unified History filtering, search-close, empty-state, and lookback scenarios from the clean worker branch. Focused static review found no critical or high issues. No E2E execution was run.
 - 2026-06-09: accepted manual `wizard-settings-prompts` through `79a670f31`; authored 8 additional active Director's Notes Unified History default lookback, extended lookback, activity graph, and menu-option scenarios from the clean worker branch. Focused static review found no critical or high issues. No E2E execution was run.
 - 2026-06-09: accepted manual `wizard-settings-prompts` through `4760f851f`; authored 9 additional active Director's Notes Unified History label, detail keyboard, stats, filter-count, and activity graph scenarios from the clean worker branch. Six scenarios completed the matrix-backed Director Notes row, and three remain lane-authored coverage beyond that row's remaining target. Focused static review found no critical or high issues. No E2E execution was run.
+- 2026-06-09: accepted manual `wizard-settings-prompts` through `b4e85b286`; authored 9 additional active inline wizard generated-document, ready CTA, conversation-history, thinking, timeout, unavailable-agent, and parse-error scenarios. Focused static review found no critical or high issues. No E2E execution was run.

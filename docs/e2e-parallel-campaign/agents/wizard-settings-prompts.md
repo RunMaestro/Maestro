@@ -1,6 +1,6 @@
 # wizard-settings-prompts
 
-Status: tranche 42 director lookback accepted
+Status: tranche 44 inline wizard recovery accepted
 
 ## Scope
 
@@ -1430,3 +1430,40 @@ New Agent Wizard, inline wizard, Settings, Director Notes, prompt composer.
   - Settings matrix-backed target remains complete at 190 active Settings scenarios.
   - Director Notes and prompt composer matrix-backed target is complete at 90 active scenarios; remaining WSP lane work should target New Agent Wizard and inline wizard coverage.
   - Remaining matrix-backed target: about 86 active/skipped rows after this tranche.
+
+### 2026-06-09 tranche 44 fallback
+
+- Scope: compact orchestrator import from the persistent-worker branch.
+- Authored: 9 additional active deterministic Playwright scenarios.
+  - Partial inline wizard generated documents list while generation is still running.
+  - Partial generated-document descriptions expand from the generated-doc button.
+  - Inline wizard ready-to-generate CTA appears when confidence clears the threshold.
+  - Inline wizard ready action stays hidden below the confidence threshold.
+  - Inline wizard conversation history renders both turns and assistant confidence.
+  - Inline wizard thinking content appears while waiting.
+  - Timeout errors map to the friendly retry/dismiss recovery copy.
+  - Unavailable-agent errors map to friendly unavailable-agent copy.
+  - Parse errors map to friendly response-error copy.
+- Cumulative lane-authored coverage: 298 active deterministic scenarios, 1 env-gated scenario.
+- Skipped/env-gated: no new rows; total remains 1 provider-account handoff placeholder.
+- Files touched:
+  - `e2e/wizard-settings-prompts.spec.ts`
+- Shared helpers edited: no.
+- Validation run before orchestrator acceptance:
+  - `npx prettier --write e2e/wizard-settings-prompts.spec.ts` - passed.
+  - `npx prettier --check e2e/wizard-settings-prompts.spec.ts` - passed.
+  - `npx eslint e2e/wizard-settings-prompts.spec.ts` - passed.
+  - `NODE_OPTIONS=--max-old-space-size=8192 npx tsc -p tsconfig.lint.json --noEmit --pretty false` - passed.
+  - Static scenario-ID/`.only`/duplicate-ID/prohibited-command scan - passed with 298 WSP IDs, 298 active declarations, and 1 skipped/env-gated row.
+  - Static E2E declaration inventory scan - passed with 15 spec files and 1,936 declared `test`/`test.skip` rows.
+  - `git diff --check -- e2e/wizard-settings-prompts.spec.ts` - passed.
+- Review:
+  - Focused code-reviewer checklist verified WSP-290 through WSP-298, partial generated documents, ready CTA threshold states, conversation history, thinking content, friendly error mapping, cleanup in every path, no native/provider dependencies, no duplicate IDs, and absence of prohibited E2E commands; no critical or high-severity issues found.
+- Not run by instruction: `npm run test:e2e`, `playwright test`, headed/UI E2E, and Playwright listing.
+- Worker implementation commit: `69ff1007e`.
+- Accepted orchestrator commit: `b4e85b286`.
+- Blockers/remaining work:
+  - Real provider account and live agent handoff coverage remains env-gated.
+  - Settings matrix-backed target remains complete at 190 active Settings scenarios.
+  - Director Notes and prompt composer matrix-backed target remains complete at 90 active scenarios.
+  - Remaining matrix-backed target: about 77 active/skipped rows after this tranche.
