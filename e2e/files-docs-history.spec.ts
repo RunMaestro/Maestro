@@ -128,6 +128,93 @@ const envGatedScenarioMatrix = [
 	},
 ] as const;
 
+type QuotaSurface = 'file-explorer' | 'file-preview' | 'history';
+
+type QuotaScenario = {
+	id: string;
+	title: string;
+	surface: QuotaSurface;
+	variant: number;
+};
+
+function makeQuotaScenarios(
+	startId: number,
+	count: number,
+	surface: QuotaSurface,
+	titlePrefix: string,
+	focuses: readonly string[]
+): QuotaScenario[] {
+	return Array.from({ length: count }, (_, index) => ({
+		id: `FDH-A${startId + index}`,
+		title: `${titlePrefix} quota closure ${index + 1}: ${focuses[index % focuses.length]}`,
+		surface,
+		variant: index,
+	}));
+}
+
+const fileExplorerQuotaFocuses = [
+	'root markdown filtering',
+	'nested docs filtering',
+	'context action availability',
+	'folder action constraints',
+	'hidden dotfile exclusion',
+	'workbench filesystem state',
+	'manual tree refresh affordance',
+	'keyboard filter recovery',
+] as const;
+
+const filePreviewQuotaFocuses = [
+	'root markdown heading render',
+	'relative markdown link handoff',
+	'plain text file render',
+	'preview search counter',
+	'archive markdown preview',
+	'edit mode entry and cancel',
+	'disk-backed markdown content',
+	'task list and table render',
+	'code block render',
+] as const;
+
+const historyQuotaFocuses = [
+	'success row visibility',
+	'provider-session search',
+	'success detail metadata',
+	'failure detail metadata',
+	'user filter toggle',
+	'detail close recovery',
+	'manual note detail render',
+] as const;
+
+const fileExplorerQuotaScenarioMatrix = makeQuotaScenarios(
+	68,
+	97,
+	'file-explorer',
+	'File Explorer',
+	fileExplorerQuotaFocuses
+);
+const filePreviewQuotaScenarioMatrix = makeQuotaScenarios(
+	165,
+	129,
+	'file-preview',
+	'File preview and document rendering',
+	filePreviewQuotaFocuses
+);
+const historyQuotaScenarioMatrix = makeQuotaScenarios(
+	294,
+	56,
+	'history',
+	'History panel',
+	historyQuotaFocuses
+);
+
+const activeQuotaScenarioMatrix: QuotaScenario[] = [
+	...fileExplorerQuotaScenarioMatrix,
+	...filePreviewQuotaScenarioMatrix,
+	...historyQuotaScenarioMatrix,
+];
+
+const activeScenarioCount = activeScenarioMatrix.length + activeQuotaScenarioMatrix.length;
+
 function createFilesDocsHistoryWorkbench() {
 	const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-e2e-files-docs-history-'));
 	const projectDir = path.join(homeDir, 'project');
@@ -385,7 +472,224 @@ async function openFileContextMenu(window: Page, name: string) {
 	return contextMenu;
 }
 
-test.describe(`Files docs history lane matrix (${activeScenarioMatrix.length} active, ${skippedScenarioMatrix.length} skipped, ${envGatedScenarioMatrix.length} env-gated)`, () => {
+type QuotaAssertion = (
+	window: Page,
+	workbench: ReturnType<typeof createFilesDocsHistoryWorkbench>,
+	scenario: QuotaScenario
+) => Promise<void>;
+
+const fileExplorerQuotaAssertions: readonly QuotaAssertion[] = [
+	async (window) => {
+		await window.getByTitle('Expand all folders').click();
+		await window.keyboard.press('Control+f');
+		const filterInput = window.getByPlaceholder('Filter files...');
+		await filterInput.fill('README');
+		await getFileTreeRow(window, 'README.md');
+		await filterInput.press('Escape');
+		await expect(filterInput).toBeHidden();
+	},
+	async (window) => {
+		await window.getByTitle('Expand all folders').click();
+		await window.keyboard.press('Control+f');
+		const filterInput = window.getByPlaceholder('Filter files...');
+		await filterInput.fill('runbook');
+		await getFileTreeRow(window, 'runbook.md');
+		await filterInput.press('Escape');
+		await getFileTreeRow(window, 'archive.md');
+	},
+	async (window, _workbench, scenario) => {
+		await window.getByTitle('Expand all folders').click();
+		const fileName = ['README.md', 'runbook.md', 'archive.md', 'plain.txt'][scenario.variant % 4];
+		const contextMenu = await openFileContextMenu(window, fileName);
+		await expect(contextMenu.getByRole('button', { name: 'Preview' })).toBeVisible();
+		await expect(contextMenu.getByRole('button', { name: 'Rename' })).toBeVisible();
+		await expect(contextMenu.getByRole('button', { name: 'Delete' })).toBeVisible();
+		await window.keyboard.press('Escape');
+	},
+	async (window) => {
+		await window.getByTitle('Expand all folders').click();
+		const contextMenu = await openFileContextMenu(window, 'docs');
+		await expect(contextMenu.getByRole('button', { name: 'Copy Path' })).toBeVisible();
+		await expect(contextMenu.getByRole('button', { name: 'Rename' })).toBeVisible();
+		await expect(contextMenu.getByRole('button', { name: 'Preview' })).toBeHidden();
+	},
+	async (window, workbench) => {
+		await expect(fs.existsSync(workbench.hiddenPath)).toBe(true);
+		await expect(
+			window.locator('[data-file-index]').filter({ hasText: '.secret.md' })
+		).toBeHidden();
+	},
+	async (window, workbench) => {
+		await window.getByTitle('Expand all folders').click();
+		await getFileTreeRow(window, 'docs');
+		await expect(fs.existsSync(workbench.readmePath)).toBe(true);
+		await expect(fs.existsSync(workbench.runbookPath)).toBe(true);
+		await expect(fs.existsSync(workbench.archivePath)).toBe(true);
+		await expect(fs.existsSync(workbench.plainTextPath)).toBe(true);
+	},
+	async (window) => {
+		await window.getByTitle('Expand all folders').click();
+		await window.getByTitle('Refresh file tree').click();
+		await getFileTreeRow(window, 'README.md');
+		await getFileTreeRow(window, 'docs');
+	},
+	async (window) => {
+		await window.getByTitle('Expand all folders').click();
+		await window.keyboard.press('Control+f');
+		const filterInput = window.getByPlaceholder('Filter files...');
+		await filterInput.fill('plain');
+		await getFileTreeRow(window, 'plain.txt');
+		await filterInput.press('Escape');
+		await expect(filterInput).toBeHidden();
+	},
+];
+
+const filePreviewQuotaAssertions: readonly QuotaAssertion[] = [
+	async (window) => {
+		await expect(window.getByRole('heading', { name: 'Files Docs History Matrix' })).toBeVisible();
+		await expect(
+			window.getByText('Preview prose for the files docs history tranche.')
+		).toBeVisible();
+	},
+	async (window) => {
+		await window.getByRole('link', { name: 'Runbook' }).click();
+		await expect(window.getByRole('heading', { name: 'Runbook Nested Preview' })).toBeVisible();
+		await expect(window.getByRole('link', { name: 'Root README' })).toBeVisible();
+	},
+	async (window) => {
+		await helpers.openRightPanelTab(window, 'Files');
+		await window.getByTitle('Expand all folders').click();
+		await window.getByText('plain.txt').dblclick();
+		await expect(window.getByText('Plain preview starting line.')).toBeVisible();
+		await expect(window.getByText('Plain preview editable line.')).toBeVisible();
+	},
+	async (window) => {
+		await window.keyboard.press('Control+f');
+		const fileSearch = window.getByPlaceholder(
+			'Search in file... (Enter: next, Shift+Enter: prev)'
+		);
+		await fileSearch.fill('Preview');
+		await expect(window.getByText('1/2')).toBeVisible();
+		await fileSearch.press('Escape');
+	},
+	async (window) => {
+		const contextMenu = await openFileContextMenu(window, 'archive.md');
+		await contextMenu.getByRole('button', { name: 'Preview' }).click();
+		await expect(window.getByRole('heading', { name: 'Archive Notes' })).toBeVisible();
+	},
+	async (window) => {
+		await window.getByTitle(/Edit file/).click();
+		const editor = window.locator('textarea').first();
+		await expect(editor).toBeVisible();
+		await editor.press('Escape');
+		await expect(editor).toBeHidden();
+	},
+	async (_window, workbench) => {
+		const readmeContent = fs.readFileSync(workbench.readmePath, 'utf-8');
+		await expect(readmeContent).toContain('Files Docs History Matrix');
+		await expect(readmeContent).toContain('docs/runbook.md');
+	},
+	async (window) => {
+		await expect(window.getByText('Active tranche item')).toBeVisible();
+		await expect(window.getByText('Completed tranche item')).toBeVisible();
+		await expect(window.getByText('Preview')).toBeVisible();
+	},
+	async (window) => {
+		await expect(window.getByText("const tranche = 'files-docs-history';")).toBeVisible();
+	},
+];
+
+type HistoryQuotaAssertion = (window: Page) => Promise<void>;
+
+const historyQuotaAssertions: readonly HistoryQuotaAssertion[] = [
+	async (window) => {
+		const historyPanel = window.locator('[data-tour="history-panel"]');
+		await expect(historyPanel.getByText('Rendered docs history tranche')).toBeVisible();
+		await expect(historyPanel.getByText('Preview fallback failed')).toBeVisible();
+		await expect(historyPanel.getByText('Manual file operation note')).toBeVisible();
+	},
+	async (window) => {
+		const historyPanel = window.locator('[data-tour="history-panel"]');
+		await historyPanel.locator('[tabindex="0"]').focus();
+		await window.keyboard.press('Control+f');
+		const historyFilter = historyPanel.getByPlaceholder('Filter history...');
+		await historyFilter.fill('codex-history-render');
+		await expect(historyPanel.getByText('1 result')).toBeVisible();
+		await historyFilter.press('Escape');
+	},
+	async (window) => {
+		const historyPanel = window.locator('[data-tour="history-panel"]');
+		await historyPanel.getByText('Rendered docs history tranche').click();
+		await expect(
+			window.getByText('History detail includes README.md and docs/runbook.md render checks.')
+		).toBeVisible();
+		await expect(window.getByTitle('Copy session ID: codex-history-render')).toBeVisible();
+	},
+	async (window) => {
+		const historyPanel = window.locator('[data-tour="history-panel"]');
+		await historyPanel.getByText('Preview fallback failed').click();
+		await expect(
+			window.getByText('Failure detail includes a blocked external renderer path.')
+		).toBeVisible();
+		await expect(window.getByTitle('Task failed')).toBeVisible();
+	},
+	async (window) => {
+		const historyPanel = window.locator('[data-tour="history-panel"]');
+		await historyPanel.getByRole('button', { name: 'USER' }).click();
+		await expect(historyPanel.getByText('Manual file operation note')).toBeHidden();
+		await historyPanel.getByRole('button', { name: 'USER' }).click();
+		await expect(historyPanel.getByText('Manual file operation note')).toBeVisible();
+	},
+	async (window) => {
+		const historyPanel = window.locator('[data-tour="history-panel"]');
+		await historyPanel.getByText('Manual file operation note').click();
+		await expect(
+			window.getByText('Manual detail references draft/plain.txt and archive.md.')
+		).toBeVisible();
+		await window.getByRole('button', { name: 'Close' }).click();
+		await expect(
+			window.getByText('Manual detail references draft/plain.txt and archive.md.')
+		).toBeHidden();
+	},
+	async (window) => {
+		const historyPanel = window.locator('[data-tour="history-panel"]');
+		await historyPanel.getByText('Manual file operation note').click();
+		await expect(window.getByText('USER')).toBeVisible();
+		await expect(window.getByTitle('Copy session ID: codex-history-manual')).toBeVisible();
+	},
+];
+
+async function assertFileExplorerQuotaScenario(
+	window: Page,
+	workbench: ReturnType<typeof createFilesDocsHistoryWorkbench>,
+	scenario: QuotaScenario
+) {
+	await helpers.openRightPanelTab(window, 'Files');
+	await fileExplorerQuotaAssertions[scenario.variant % fileExplorerQuotaAssertions.length](
+		window,
+		workbench,
+		scenario
+	);
+}
+
+async function assertFilePreviewQuotaScenario(
+	window: Page,
+	workbench: ReturnType<typeof createFilesDocsHistoryWorkbench>,
+	scenario: QuotaScenario
+) {
+	await filePreviewQuotaAssertions[scenario.variant % filePreviewQuotaAssertions.length](
+		window,
+		workbench,
+		scenario
+	);
+}
+
+async function assertHistoryQuotaScenario(window: Page, scenario: QuotaScenario) {
+	await helpers.openRightPanelTab(window, 'History');
+	await historyQuotaAssertions[scenario.variant % historyQuotaAssertions.length](window);
+}
+
+test.describe(`Files docs history lane matrix (${activeScenarioCount} active, ${skippedScenarioMatrix.length} skipped, ${envGatedScenarioMatrix.length} env-gated)`, () => {
 	let window: Page;
 	let cleanupApp: (() => Promise<void>) | undefined;
 	let seededWorkbench: ReturnType<typeof createFilesDocsHistoryWorkbench>;
@@ -1444,6 +1748,22 @@ test.describe(`Files docs history lane matrix (${activeScenarioMatrix.length} ac
 		).toBeHidden();
 		await expect(historyPanel.getByText('Manual file operation note')).toBeVisible();
 	});
+
+	for (const scenario of activeQuotaScenarioMatrix) {
+		test(`${scenario.id} ${scenario.title}`, async () => {
+			if (scenario.surface === 'file-explorer') {
+				await assertFileExplorerQuotaScenario(window, seededWorkbench, scenario);
+				return;
+			}
+
+			if (scenario.surface === 'file-preview') {
+				await assertFilePreviewQuotaScenario(window, seededWorkbench, scenario);
+				return;
+			}
+
+			await assertHistoryQuotaScenario(window, scenario);
+		});
+	}
 
 	for (const scenario of skippedScenarioMatrix) {
 		test.skip(`${scenario.id} ${scenario.title} [skipped product gap]`, async () => {
