@@ -227,6 +227,90 @@ const twentyEighthTrancheActiveScenarioMatrix = [
 	{ id: 'DA-141', title: 'routes Quick Actions Discord command through shell open' },
 ] as const;
 
+const twentyNinthTrancheActiveScenarioMatrix = [
+	{ id: 'DA-142', title: 'exposes Quick Actions accessible dialog semantics' },
+	{ id: 'DA-143', title: 'auto-focuses Quick Actions command search' },
+	{ id: 'DA-144', title: 'keeps Quick Actions Escape hint visible for keyboard users' },
+	{ id: 'DA-145', title: 'moves Quick Actions selection with ArrowDown' },
+	{ id: 'DA-146', title: 'closes Quick Actions with Escape from the search field' },
+] as const;
+
+const thirtiethTrancheActiveScenarioMatrix = [
+	{ id: 'DA-147', title: 'exposes Keyboard Shortcuts accessible dialog semantics' },
+	{ id: 'DA-148', title: 'labels Keyboard Shortcuts search for filtering' },
+	{ id: 'DA-149', title: 'exposes Keyboard Shortcuts close control by accessible name' },
+	{ id: 'DA-150', title: 'keeps Keyboard Shortcuts shortcut rows keyboard-readable' },
+	{ id: 'DA-151', title: 'closes Keyboard Shortcuts with Escape' },
+] as const;
+
+const thirtyFirstTrancheActiveScenarioMatrix = [
+	{ id: 'DA-152', title: 'exposes System Log Viewer accessible dialog semantics' },
+	{ id: 'DA-153', title: 'labels System Log Viewer header icon controls' },
+	{ id: 'DA-154', title: 'labels System Log Viewer severity filter buttons' },
+	{ id: 'DA-155', title: 'preserves System Log Viewer search field accessibility' },
+	{ id: 'DA-156', title: 'exposes System Log Viewer empty state accessibly' },
+] as const;
+
+const thirtySecondTrancheActiveScenarioMatrix = [
+	{ id: 'DA-157', title: 'exposes System Log clear confirmation semantics' },
+	{ id: 'DA-158', title: 'focuses System Log clear confirm button by default' },
+	{ id: 'DA-159', title: 'keeps System Log clear cancel action keyboard reachable' },
+	{ id: 'DA-160', title: 'keeps System Log clear confirm action keyboard reachable' },
+	{ id: 'DA-161', title: 'keeps System Log clear confirmation above the parent dialog' },
+] as const;
+
+const thirtyThirdTrancheActiveScenarioMatrix = [
+	{ id: 'DA-162', title: 'exposes Process Monitor accessible dialog semantics' },
+	{ id: 'DA-163', title: 'labels Process Monitor header controls' },
+	{ id: 'DA-164', title: 'exposes Process Monitor footer keyboard hint' },
+	{ id: 'DA-165', title: 'reports Process Monitor active count accessibly' },
+	{ id: 'DA-166', title: 'exposes Process Monitor empty state accessibly' },
+] as const;
+
+const thirtyFourthTrancheActiveScenarioMatrix = [
+	{ id: 'DA-167', title: 'exposes Process Monitor kill confirmation copy' },
+	{ id: 'DA-168', title: 'focuses Process Monitor kill confirmation container' },
+	{ id: 'DA-169', title: 'keeps Process Monitor kill cancel action keyboard reachable' },
+	{ id: 'DA-170', title: 'keeps Process Monitor kill confirm action keyboard reachable' },
+	{ id: 'DA-171', title: 'keeps Process Monitor kill confirmation above the parent dialog' },
+] as const;
+
+const thirtyFifthTrancheActiveScenarioMatrix = [
+	{ id: 'DA-172', title: 'exposes Debug Package accessible dialog semantics' },
+	{ id: 'DA-173', title: 'labels Debug Package category checkboxes' },
+	{ id: 'DA-174', title: 'keeps Debug Package generate button disabled with no categories' },
+	{ id: 'DA-175', title: 'keeps Debug Package cancel action keyboard reachable' },
+	{ id: 'DA-176', title: 'exposes Debug Package privacy warning text' },
+] as const;
+
+const thirtySixthTrancheActiveScenarioMatrix = [
+	{ id: 'DA-177', title: 'exposes update check accessible dialog semantics' },
+	{ id: 'DA-178', title: 'labels update check beta opt-in checkbox' },
+	{ id: 'DA-179', title: 'keeps update download action keyboard reachable' },
+	{ id: 'DA-180', title: 'keeps update manual download action keyboard reachable' },
+	{ id: 'DA-181', title: 'closes update check with the accessible close control' },
+] as const;
+
+const thirtySeventhTrancheActiveScenarioMatrix = [
+	{ id: 'DA-182', title: 'exposes About Maestro accessible dialog semantics' },
+	{ id: 'DA-183', title: 'labels About Maestro documentation link control' },
+	{ id: 'DA-184', title: 'labels About Maestro website link control' },
+	{ id: 'DA-185', title: 'keeps About Maestro close action keyboard reachable' },
+	{ id: 'DA-186', title: 'closes About Maestro with Escape' },
+] as const;
+
+const thirtyEighthTrancheActiveScenarioMatrix = [
+	{ id: 'DA-187', title: 'keeps Quick Actions Settings result accessible by button role' },
+	{ id: 'DA-188', title: 'keeps Quick Actions System Logs result accessible by button role' },
+	{ id: 'DA-189', title: 'keeps Quick Actions Process Monitor result accessible by button role' },
+	{ id: 'DA-190', title: 'keeps Quick Actions About result accessible by button role' },
+	{ id: 'DA-191', title: 'keeps Quick Actions Debug Package result accessible by button role' },
+] as const;
+
+const thirtyNinthTrancheActiveScenarioMatrix = [
+	{ id: 'DA-192', title: 'keeps final Quick Actions no-result state accessible' },
+] as const;
+
 const debugPackagePreviewCategories = [
 	{ id: 'logs', name: 'System Logs', included: true, sizeEstimate: '~50 KB' },
 	{ id: 'errors', name: 'Error States', included: true, sizeEstimate: '< 10 KB' },
@@ -827,6 +911,12 @@ async function openAboutFromQuickActions(page: Page) {
 	const aboutDialog = page.getByRole('dialog', { name: 'About Maestro' });
 	await expect(aboutDialog).toBeVisible();
 	return aboutDialog;
+}
+
+async function expectDialogSemantics(dialog: Locator, label: string) {
+	await expect(dialog).toHaveAttribute('role', 'dialog');
+	await expect(dialog).toHaveAttribute('aria-modal', 'true');
+	await expect(dialog).toHaveAttribute('aria-label', label);
 }
 
 function createStubbedActiveProcesses(
@@ -3720,6 +3810,695 @@ test.describe('Debug and accessibility smoke tranche', () => {
 			expect((await getStubbedShellOpenExternalState(launched.electronApp))?.urls).toEqual([
 				'https://runmaestro.ai/discord',
 			]);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${twentyNinthTrancheActiveScenarioMatrix[0].id} ${twentyNinthTrancheActiveScenarioMatrix[0].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			const quickActionsDialog = await openQuickActions(launched.window);
+
+			await expectDialogSemantics(quickActionsDialog, 'Quick Actions');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${twentyNinthTrancheActiveScenarioMatrix[1].id} ${twentyNinthTrancheActiveScenarioMatrix[1].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			const quickActionsDialog = await openQuickActions(launched.window);
+
+			await expect(
+				quickActionsDialog.getByPlaceholder('Type a command or jump to agent...')
+			).toBeFocused();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${twentyNinthTrancheActiveScenarioMatrix[2].id} ${twentyNinthTrancheActiveScenarioMatrix[2].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			const quickActionsDialog = await openQuickActions(launched.window);
+
+			await expect(quickActionsDialog.getByText('ESC')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${twentyNinthTrancheActiveScenarioMatrix[3].id} ${twentyNinthTrancheActiveScenarioMatrix[3].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			const quickActionsDialog = await openQuickActions(launched.window);
+			await quickActionsDialog.getByPlaceholder('Type a command or jump to agent...').fill('View');
+
+			await launched.window.keyboard.press('ArrowDown');
+
+			await expect(
+				quickActionsDialog.getByRole('button', { name: /View System Logs/ })
+			).toBeVisible();
+			await expect(
+				quickActionsDialog.getByRole('button', { name: /View System Processes/ })
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${twentyNinthTrancheActiveScenarioMatrix[4].id} ${twentyNinthTrancheActiveScenarioMatrix[4].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			const quickActionsDialog = await openQuickActions(launched.window);
+
+			await launched.window.keyboard.press('Escape');
+
+			await expect(quickActionsDialog).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${thirtiethTrancheActiveScenarioMatrix[0].id} ${thirtiethTrancheActiveScenarioMatrix[0].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			const shortcutsDialog = await openShortcutsFromQuickActions(launched.window);
+
+			await expectDialogSemantics(shortcutsDialog, 'Keyboard Shortcuts');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${thirtiethTrancheActiveScenarioMatrix[1].id} ${thirtiethTrancheActiveScenarioMatrix[1].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			const shortcutsDialog = await openShortcutsFromQuickActions(launched.window);
+
+			await expect(shortcutsDialog.getByPlaceholder('Search shortcuts...')).toBeVisible();
+			await shortcutsDialog.getByPlaceholder('Search shortcuts...').fill('help');
+			await expect(shortcutsDialog.getByText(/\d+ \/ \d+/)).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${thirtiethTrancheActiveScenarioMatrix[2].id} ${thirtiethTrancheActiveScenarioMatrix[2].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			const shortcutsDialog = await openShortcutsFromQuickActions(launched.window);
+
+			await expect(shortcutsDialog.getByRole('button', { name: 'Close modal' })).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${thirtiethTrancheActiveScenarioMatrix[3].id} ${thirtiethTrancheActiveScenarioMatrix[3].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			const shortcutsDialog = await openShortcutsFromQuickActions(launched.window);
+
+			await expect(shortcutsDialog.locator('kbd').first()).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${thirtiethTrancheActiveScenarioMatrix[4].id} ${thirtiethTrancheActiveScenarioMatrix[4].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			const shortcutsDialog = await openShortcutsFromQuickActions(launched.window);
+
+			await launched.window.keyboard.press('Escape');
+
+			await expect(shortcutsDialog).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${thirtyFirstTrancheActiveScenarioMatrix[0].id} ${thirtyFirstTrancheActiveScenarioMatrix[0].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			const logViewer = await openSystemLogViewer(launched.window);
+
+			await expectDialogSemantics(logViewer, 'System Log Viewer');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${thirtyFirstTrancheActiveScenarioMatrix[1].id} ${thirtyFirstTrancheActiveScenarioMatrix[1].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			const logViewer = await openSystemLogViewer(launched.window);
+
+			await expect(logViewer.getByTitle('Export logs')).toBeVisible();
+			await expect(logViewer.getByTitle('Clear logs')).toBeVisible();
+			await expect(logViewer.getByTitle('Close log viewer')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${thirtyFirstTrancheActiveScenarioMatrix[2].id} ${thirtyFirstTrancheActiveScenarioMatrix[2].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await seedSystemLogs(launched.window);
+			const logViewer = await openSystemLogViewer(launched.window);
+
+			await expect(logViewer.getByRole('button', { name: 'INFO' })).toBeVisible();
+			await expect(logViewer.getByRole('button', { name: 'ERROR' })).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${thirtyFirstTrancheActiveScenarioMatrix[3].id} ${thirtyFirstTrancheActiveScenarioMatrix[3].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			const logViewer = await openSystemLogViewer(launched.window);
+
+			await logViewer.evaluate((element) => {
+				element.dispatchEvent(
+					new KeyboardEvent('keydown', { key: 'f', ctrlKey: true, bubbles: true })
+				);
+			});
+
+			await expect(logViewer.getByPlaceholder('Search logs...')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${thirtyFirstTrancheActiveScenarioMatrix[4].id} ${thirtyFirstTrancheActiveScenarioMatrix[4].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			const logViewer = await openSystemLogViewer(launched.window);
+
+			await expect(logViewer.getByText('No logs yet')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${thirtySecondTrancheActiveScenarioMatrix[0].id} ${thirtySecondTrancheActiveScenarioMatrix[0].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await seedSystemLogs(launched.window);
+			const logViewer = await openSystemLogViewer(launched.window);
+			const confirmDialog = await openSystemLogClearConfirmation(launched.window, logViewer);
+
+			await expectDialogSemantics(confirmDialog, 'Confirm');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${thirtySecondTrancheActiveScenarioMatrix[1].id} ${thirtySecondTrancheActiveScenarioMatrix[1].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await seedSystemLogs(launched.window);
+			const logViewer = await openSystemLogViewer(launched.window);
+			const confirmDialog = await openSystemLogClearConfirmation(launched.window, logViewer);
+
+			await expect(confirmDialog.getByRole('button', { name: 'Confirm' })).toBeFocused();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${thirtySecondTrancheActiveScenarioMatrix[2].id} ${thirtySecondTrancheActiveScenarioMatrix[2].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await seedSystemLogs(launched.window);
+			const logViewer = await openSystemLogViewer(launched.window);
+			const confirmDialog = await openSystemLogClearConfirmation(launched.window, logViewer);
+
+			await expect(confirmDialog.getByRole('button', { name: 'Cancel' })).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${thirtySecondTrancheActiveScenarioMatrix[3].id} ${thirtySecondTrancheActiveScenarioMatrix[3].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await seedSystemLogs(launched.window);
+			const logViewer = await openSystemLogViewer(launched.window);
+			const confirmDialog = await openSystemLogClearConfirmation(launched.window, logViewer);
+
+			await expect(confirmDialog.getByRole('button', { name: 'Confirm' })).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${thirtySecondTrancheActiveScenarioMatrix[4].id} ${thirtySecondTrancheActiveScenarioMatrix[4].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await seedSystemLogs(launched.window);
+			const logViewer = await openSystemLogViewer(launched.window);
+			const confirmDialog = await openSystemLogClearConfirmation(launched.window, logViewer);
+
+			await expect(confirmDialog).toBeVisible();
+			await expect(logViewer).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${thirtyThirdTrancheActiveScenarioMatrix[0].id} ${thirtyThirdTrancheActiveScenarioMatrix[0].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubActiveProcesses(launched.electronApp, []);
+			const processMonitor = await openProcessMonitorFromQuickActions(launched.window);
+
+			await expectDialogSemantics(processMonitor, 'System Processes');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${thirtyThirdTrancheActiveScenarioMatrix[1].id} ${thirtyThirdTrancheActiveScenarioMatrix[1].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubActiveProcesses(
+				launched.electronApp,
+				createStubbedActiveProcesses(launched.sessions[0], launched.projectDir)
+			);
+			const processMonitor = await openProcessMonitorFromQuickActions(launched.window);
+
+			await expect(processMonitor.getByTitle('Refresh (R)')).toBeVisible();
+			await expect(processMonitor.getByTitle('Expand all')).toBeVisible();
+			await expect(processMonitor.getByTitle('Collapse all')).toBeVisible();
+			await expect(processMonitor.getByTitle('Close (Esc)')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${thirtyThirdTrancheActiveScenarioMatrix[2].id} ${thirtyThirdTrancheActiveScenarioMatrix[2].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubActiveProcesses(
+				launched.electronApp,
+				createStubbedActiveProcesses(launched.sessions[0], launched.projectDir)
+			);
+			const processMonitor = await openProcessMonitorFromQuickActions(launched.window);
+
+			await expect(processMonitor.getByText(/Enter view details.*R refresh/)).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${thirtyThirdTrancheActiveScenarioMatrix[3].id} ${thirtyThirdTrancheActiveScenarioMatrix[3].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubActiveProcesses(
+				launched.electronApp,
+				createStubbedActiveProcesses(launched.sessions[0], launched.projectDir)
+			);
+			const processMonitor = await openProcessMonitorFromQuickActions(launched.window);
+
+			await expect(processMonitor.getByText('2 active')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${thirtyThirdTrancheActiveScenarioMatrix[4].id} ${thirtyThirdTrancheActiveScenarioMatrix[4].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubActiveProcesses(launched.electronApp, []);
+			const processMonitor = await openProcessMonitorFromQuickActions(launched.window);
+
+			await expect(processMonitor.getByText('No running processes')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${thirtyFourthTrancheActiveScenarioMatrix[0].id} ${thirtyFourthTrancheActiveScenarioMatrix[0].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		const [aiProcess] = createStubbedActiveProcesses(launched.sessions[0], launched.projectDir);
+		try {
+			await stubActiveProcesses(launched.electronApp, [aiProcess]);
+			const processMonitor = await openProcessMonitorFromQuickActions(launched.window);
+			await openProcessKillConfirmation(launched.window, processMonitor);
+
+			await expect(launched.window.getByText('Kill Process?')).toBeVisible();
+			await expect(launched.window.getByText(/Any unsaved work may be lost/)).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${thirtyFourthTrancheActiveScenarioMatrix[1].id} ${thirtyFourthTrancheActiveScenarioMatrix[1].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		const [aiProcess] = createStubbedActiveProcesses(launched.sessions[0], launched.projectDir);
+		try {
+			await stubActiveProcesses(launched.electronApp, [aiProcess]);
+			const processMonitor = await openProcessMonitorFromQuickActions(launched.window);
+			await openProcessKillConfirmation(launched.window, processMonitor);
+
+			await expect(launched.window.getByRole('button', { name: 'Kill Process' })).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${thirtyFourthTrancheActiveScenarioMatrix[2].id} ${thirtyFourthTrancheActiveScenarioMatrix[2].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		const [aiProcess] = createStubbedActiveProcesses(launched.sessions[0], launched.projectDir);
+		try {
+			await stubActiveProcesses(launched.electronApp, [aiProcess]);
+			const processMonitor = await openProcessMonitorFromQuickActions(launched.window);
+			await openProcessKillConfirmation(launched.window, processMonitor);
+
+			await expect(launched.window.getByRole('button', { name: 'Cancel' })).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${thirtyFourthTrancheActiveScenarioMatrix[3].id} ${thirtyFourthTrancheActiveScenarioMatrix[3].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		const [aiProcess] = createStubbedActiveProcesses(launched.sessions[0], launched.projectDir);
+		try {
+			await stubActiveProcesses(launched.electronApp, [aiProcess]);
+			const processMonitor = await openProcessMonitorFromQuickActions(launched.window);
+			await openProcessKillConfirmation(launched.window, processMonitor);
+
+			await expect(launched.window.getByRole('button', { name: 'Kill Process' })).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${thirtyFourthTrancheActiveScenarioMatrix[4].id} ${thirtyFourthTrancheActiveScenarioMatrix[4].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		const [aiProcess] = createStubbedActiveProcesses(launched.sessions[0], launched.projectDir);
+		try {
+			await stubActiveProcesses(launched.electronApp, [aiProcess]);
+			const processMonitor = await openProcessMonitorFromQuickActions(launched.window);
+			await openProcessKillConfirmation(launched.window, processMonitor);
+
+			await expect(launched.window.getByText('Kill Process?')).toBeVisible();
+			await expect(processMonitor).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${thirtyFifthTrancheActiveScenarioMatrix[0].id} ${thirtyFifthTrancheActiveScenarioMatrix[0].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubDebugPackageHandlers(launched.electronApp);
+			const debugPackageDialog = await openDebugPackageFromQuickActions(launched.window);
+
+			await expectDialogSemantics(debugPackageDialog, 'Create Debug Package');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${thirtyFifthTrancheActiveScenarioMatrix[1].id} ${thirtyFifthTrancheActiveScenarioMatrix[1].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubDebugPackageHandlers(launched.electronApp);
+			const debugPackageDialog = await openDebugPackageFromQuickActions(launched.window);
+
+			for (const category of debugPackagePreviewCategories) {
+				await expect(
+					debugPackageDialog.getByRole('checkbox', { name: new RegExp(category.name) })
+				).toBeVisible();
+			}
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${thirtyFifthTrancheActiveScenarioMatrix[2].id} ${thirtyFifthTrancheActiveScenarioMatrix[2].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubDebugPackageHandlers(launched.electronApp);
+			const debugPackageDialog = await openDebugPackageFromQuickActions(launched.window);
+
+			for (const category of debugPackagePreviewCategories) {
+				await debugPackageDialog.getByRole('checkbox', { name: new RegExp(category.name) }).click();
+			}
+
+			await expect(
+				debugPackageDialog.getByRole('button', { name: 'Generate Package' })
+			).toBeDisabled();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${thirtyFifthTrancheActiveScenarioMatrix[3].id} ${thirtyFifthTrancheActiveScenarioMatrix[3].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubDebugPackageHandlers(launched.electronApp);
+			const debugPackageDialog = await openDebugPackageFromQuickActions(launched.window);
+
+			await expect(debugPackageDialog.getByRole('button', { name: 'Cancel' })).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${thirtyFifthTrancheActiveScenarioMatrix[4].id} ${thirtyFifthTrancheActiveScenarioMatrix[4].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubDebugPackageHandlers(launched.electronApp);
+			const debugPackageDialog = await openDebugPackageFromQuickActions(launched.window);
+
+			await expect(
+				debugPackageDialog.getByText(/does NOT include your conversations/i)
+			).toBeVisible();
+			await expect(debugPackageDialog.getByText(/API keys/i)).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${thirtySixthTrancheActiveScenarioMatrix[0].id} ${thirtySixthTrancheActiveScenarioMatrix[0].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubUpdateWorkflowHandlers(launched.electronApp);
+			const updateDialog = await openUpdateCheckFromQuickActions(launched.window);
+
+			await expectDialogSemantics(updateDialog, 'Check for Updates');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${thirtySixthTrancheActiveScenarioMatrix[1].id} ${thirtySixthTrancheActiveScenarioMatrix[1].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubUpdateWorkflowHandlers(launched.electronApp, { checkMode: 'current' });
+			const updateDialog = await openUpdateCheckFromQuickActions(launched.window);
+
+			await expect(
+				updateDialog.getByRole('checkbox', { name: /Include pre-release updates/ })
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${thirtySixthTrancheActiveScenarioMatrix[2].id} ${thirtySixthTrancheActiveScenarioMatrix[2].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubUpdateWorkflowHandlers(launched.electronApp);
+			const updateDialog = await openUpdateCheckFromQuickActions(launched.window);
+
+			await expect(
+				updateDialog.getByRole('button', { name: 'Download and Install Update' })
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${thirtySixthTrancheActiveScenarioMatrix[3].id} ${thirtySixthTrancheActiveScenarioMatrix[3].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubUpdateWorkflowHandlers(launched.electronApp);
+			const updateDialog = await openUpdateCheckFromQuickActions(launched.window);
+
+			await expect(
+				updateDialog.getByRole('button', { name: /Or download manually from GitHub/ })
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${thirtySixthTrancheActiveScenarioMatrix[4].id} ${thirtySixthTrancheActiveScenarioMatrix[4].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			await stubUpdateWorkflowHandlers(launched.electronApp);
+			const updateDialog = await openUpdateCheckFromQuickActions(launched.window);
+
+			await updateDialog.getByRole('button', { name: 'Close modal' }).click();
+
+			await expect(updateDialog).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${thirtySeventhTrancheActiveScenarioMatrix[0].id} ${thirtySeventhTrancheActiveScenarioMatrix[0].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			const aboutDialog = await openAboutFromQuickActions(launched.window);
+
+			await expectDialogSemantics(aboutDialog, 'About Maestro');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${thirtySeventhTrancheActiveScenarioMatrix[1].id} ${thirtySeventhTrancheActiveScenarioMatrix[1].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			const aboutDialog = await openAboutFromQuickActions(launched.window);
+
+			await expect(aboutDialog.getByTitle('Documentation')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${thirtySeventhTrancheActiveScenarioMatrix[2].id} ${thirtySeventhTrancheActiveScenarioMatrix[2].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			const aboutDialog = await openAboutFromQuickActions(launched.window);
+
+			await expect(aboutDialog.getByTitle('Visit runmaestro.ai')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${thirtySeventhTrancheActiveScenarioMatrix[3].id} ${thirtySeventhTrancheActiveScenarioMatrix[3].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			const aboutDialog = await openAboutFromQuickActions(launched.window);
+
+			await expect(aboutDialog.getByRole('button', { name: 'Close modal' })).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${thirtySeventhTrancheActiveScenarioMatrix[4].id} ${thirtySeventhTrancheActiveScenarioMatrix[4].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			const aboutDialog = await openAboutFromQuickActions(launched.window);
+
+			await launched.window.keyboard.press('Escape');
+
+			await expect(aboutDialog).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${thirtyEighthTrancheActiveScenarioMatrix[0].id} ${thirtyEighthTrancheActiveScenarioMatrix[0].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			const quickActionsDialog = await openQuickActions(launched.window);
+			await quickActionsDialog
+				.getByPlaceholder('Type a command or jump to agent...')
+				.fill('Settings');
+
+			await expect(quickActionsDialog.getByRole('button', { name: /Settings/ })).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${thirtyEighthTrancheActiveScenarioMatrix[1].id} ${thirtyEighthTrancheActiveScenarioMatrix[1].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			const quickActionsDialog = await openQuickActions(launched.window);
+			await quickActionsDialog
+				.getByPlaceholder('Type a command or jump to agent...')
+				.fill('View System Logs');
+
+			await expect(
+				quickActionsDialog.getByRole('button', { name: /View System Logs/ })
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${thirtyEighthTrancheActiveScenarioMatrix[2].id} ${thirtyEighthTrancheActiveScenarioMatrix[2].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			const quickActionsDialog = await openQuickActions(launched.window);
+			await quickActionsDialog
+				.getByPlaceholder('Type a command or jump to agent...')
+				.fill('View System Processes');
+
+			await expect(
+				quickActionsDialog.getByRole('button', { name: /View System Processes/ })
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${thirtyEighthTrancheActiveScenarioMatrix[3].id} ${thirtyEighthTrancheActiveScenarioMatrix[3].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			const quickActionsDialog = await openQuickActions(launched.window);
+			await quickActionsDialog
+				.getByPlaceholder('Type a command or jump to agent...')
+				.fill('About Maestro');
+
+			await expect(quickActionsDialog.getByRole('button', { name: /About Maestro/ })).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${thirtyEighthTrancheActiveScenarioMatrix[4].id} ${thirtyEighthTrancheActiveScenarioMatrix[4].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			const quickActionsDialog = await openQuickActions(launched.window);
+			await quickActionsDialog
+				.getByPlaceholder('Type a command or jump to agent...')
+				.fill('Create Debug Package');
+
+			await expect(
+				quickActionsDialog.getByRole('button', { name: /Create Debug Package/ })
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${thirtyNinthTrancheActiveScenarioMatrix[0].id} ${thirtyNinthTrancheActiveScenarioMatrix[0].title}`, async () => {
+		const launched = await launchDebugAccessibilityWorkbench();
+		try {
+			const quickActionsDialog = await openQuickActions(launched.window);
+			await quickActionsDialog
+				.getByPlaceholder('Type a command or jump to agent...')
+				.fill('zzzz no final debug accessibility command');
+
+			await expect(quickActionsDialog.getByText('No actions found')).toBeVisible();
 		} finally {
 			await launched.cleanup();
 		}
