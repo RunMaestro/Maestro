@@ -2,9 +2,9 @@
 
 Source of truth: `docs/e2e-coverage-campaign.md`.
 
-Current active tests: 2261
+Current active tests: 2271
 Target active tests: 3,025
-Remaining matrix-backed active scenarios: 764
+Remaining matrix-backed active scenarios: 754
 
 ## Matrix
 
@@ -12,13 +12,13 @@ Remaining matrix-backed active scenarios: 764
 | -------------------------------------------------------------- | ------------------------- | -------------: | ------------: | --------: |
 | App shell, layout, sidebars, resizing, focus, global shortcuts | `shell-tabs-command`      |             26 |           110 |        84 |
 | Agent CRUD and provider setup                                  | `agent-crud-provider`     |            160 |           160 |         0 |
-| Codex AI terminal workflows                                    | `autorun-ai-terminal`     |            130 |           170 |        40 |
+| Codex AI terminal workflows                                    | `autorun-ai-terminal`     |            137 |           170 |        33 |
 | Command terminal workflows                                     | `shell-tabs-command`      |             61 |            95 |        34 |
 | Tabs and tab overlays                                          | `shell-tabs-command`      |             53 |           120 |        67 |
 | File explorer and file operations                              | `files-docs-history`      |             38 |           140 |       102 |
 | File preview and document rendering                            | `files-docs-history`      |             48 |           180 |       132 |
 | History panel                                                  | `files-docs-history`      |             32 |            95 |        63 |
-| Auto Run                                                       | `autorun-ai-terminal`     |            257 |           260 |         3 |
+| Auto Run                                                       | `autorun-ai-terminal`     |            260 |           260 |         0 |
 | New Agent Wizard and inline wizard                             | `wizard-settings-prompts` |            113 |           190 |        77 |
 | Settings                                                       | `wizard-settings-prompts` |            190 |           190 |         0 |
 | Git, worktrees, PR, diff/log, Gist                             | `git-groupchat-playbooks` |            160 |           160 |         0 |
@@ -39,7 +39,7 @@ Remaining matrix-backed active scenarios: 764
 | `agent-crud-provider`      |                       0 |                       104 |                                    2 | `563b9db6c`          |
 | `shell-tabs-command`       |                     185 |                        81 |                                    0 | `2d9975b17`          |
 | `files-docs-history`       |                     297 |                        52 |                                    5 | `08c4a85f9`          |
-| `autorun-ai-terminal`      |                      43 |                       230 |                                    0 | `1ed92c5a2`          |
+| `autorun-ai-terminal`      |                      33 |                       240 |                                    0 | `f7474c297`          |
 | `wizard-settings-prompts`  |                      77 |                       298 |                                    1 | `b4e85b286`          |
 | `git-groupchat-playbooks`  |                       0 |                       363 |                                    7 | `ec72c453c`          |
 | `stats-graph-symphony`     |                     162 |                       174 |                                    6 | `d3b523370`          |
@@ -49,6 +49,7 @@ Remaining matrix-backed active scenarios: 764
 
 ## Merge Log
 
+- 2026-06-09: accepted `codex/e2e-autorun-ai-terminal` through `f7474c297`; authored 10 active final Auto Run selector and Codex active-error modal scenarios. No E2E execution was run.
 - 2026-06-09: accepted `codex/e2e-autorun-ai-terminal` through `1ed92c5a2`; authored 20 active Auto Run editor search, active-state, worktree configuration, and batch selector scenarios. No E2E execution was run.
 - 2026-06-08: accepted `codex/e2e-shell-tabs-command` through `02ce883da`; authored 9 tests covering 69 active shell/tab/terminal scenarios. No E2E execution was run.
 - 2026-06-08: accepted `codex/e2e-agent-crud-provider` through `bb4fbcce2`; authored 9 active provider/CRUD/session scenarios and 2 skipped/env-gated real-provider rows. No E2E execution was run.

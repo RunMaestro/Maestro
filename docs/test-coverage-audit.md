@@ -34,10 +34,10 @@ Parallel E2E authoring checkpoint:
 
 - Campaign: `docs/e2e-parallel-prompt.md`
 - Result: in progress
-- Current authoring progress: 2261 / 3,025 active scenarios after accepting the
-  `autorun-ai-terminal` branch through `1ed92c5a2`. This tranche added 20 active
-  Auto Run editor search, active-state, worktree configuration, and batch
-  selector rows without adding skipped or env-gated rows.
+- Current authoring progress: 2271 / 3,025 active scenarios after accepting the
+  `autorun-ai-terminal` branch through `f7474c297`. This tranche added 10 active
+  final Auto Run selector and Codex active-error modal rows without adding
+  skipped or env-gated rows.
 - Accepted lanes so far: `shell-tabs-command`, `agent-crud-provider`,
   `files-docs-history`, `mobile-web-bridge`, `autorun-ai-terminal`,
   `wizard-settings-prompts`, `stats-graph-symphony`, `debug-accessibility`,

@@ -1616,3 +1616,75 @@ Remaining work:
 - Matrix-backed remaining after this tranche: 43.
 - Continue with the final Auto Run selector/worktree/stalled-document variants, then shift the remaining lane quota to Codex terminal live-provider retry safeguards and paused-error resolution variants without duplicating existing app-shell coverage.
 - Run actual Playwright/E2E validation only after orchestrator approval.
+
+Forty-seventh tranche:
+
+- Added 5 active matrix-backed tests to `e2e/autorun-ai-terminal.spec.ts`.
+- New active tests: 5.
+- Cumulative active tests: 235.
+- Skipped tests: 0.
+- Env-gated tests: 0.
+- Shared helper edits: none; reused existing batch selector and active-error fixtures.
+- Live provider execution: none; no E2E validation/listing was run.
+- Campaign head before this tranche: `569b56382`.
+- Tranche implementation commit: `9334b3ab5`.
+
+Covered:
+
+- Codex batch selector removed-document refresh messaging and list removal.
+- Codex batch one-document loop hint hiding after selecting a second document.
+- Codex batch duplicate reset locking while duplicate documents remain.
+- Codex recoverable active-error modal header close without clearing the banner.
+- Codex active-error tab scoping between errored Main and clean Review AI tabs.
+
+Validation:
+
+- `npx prettier --check e2e/autorun-ai-terminal.spec.ts` passed.
+- `npx eslint e2e/autorun-ai-terminal.spec.ts` passed.
+- Targeted TypeScript parse/check for `e2e/autorun-ai-terminal.spec.ts` passed with `--esModuleInterop`.
+- `git diff --check` passed.
+- Marker scan found 235 active declarations and no `.only`/skip declarations in `e2e/autorun-ai-terminal.spec.ts`.
+- Non-ASCII scan found 0 non-ASCII characters in `e2e/autorun-ai-terminal.spec.ts`.
+- Code-reviewer checklist pass found no blocking/high issues after the sub-agent reviewer stalled.
+
+Remaining work:
+
+- Matrix-backed remaining after this tranche: 38.
+- Auto Run row is now at quota; continue with Codex terminal live-provider retry safeguards, paused-error resolution variants, and remaining terminal state/targeting gaps without duplicating existing app-shell coverage.
+- Run actual Playwright/E2E validation only after orchestrator approval.
+
+Forty-eighth tranche:
+
+- Added 5 active matrix-backed tests to `e2e/autorun-ai-terminal.spec.ts`.
+- New active tests: 5.
+- Cumulative active tests: 240.
+- Skipped tests: 0.
+- Env-gated tests: 0.
+- Shared helper edits: none; reused existing active-error fixtures and process stubs.
+- Live provider execution: none; no E2E validation/listing was run.
+- Campaign head before this tranche: `3c60e79aa`.
+- Tranche implementation commit: `ceb7a2290`.
+
+Covered:
+
+- Codex rate-limit modal Dismiss preserving the active error banner.
+- Codex authentication recovery Start New Session creating a fresh AI tab.
+- Codex crashed-agent recovery Start New Session creating a fresh AI tab without kill IPC.
+- Codex recoverable active-error JSON details collapse after expansion.
+- Codex permission-error retry clearing the banner without spawning a provider process.
+
+Validation:
+
+- `npx prettier --check e2e/autorun-ai-terminal.spec.ts` passed after formatting with Prettier.
+- `npx eslint e2e/autorun-ai-terminal.spec.ts` passed.
+- Targeted TypeScript parse/check for `e2e/autorun-ai-terminal.spec.ts` passed with `--esModuleInterop`.
+- `git diff --check` passed.
+- Marker scan found 240 active declarations and no `.only`/skip declarations in `e2e/autorun-ai-terminal.spec.ts`.
+- Non-ASCII scan found 0 non-ASCII characters in `e2e/autorun-ai-terminal.spec.ts`.
+- Code-reviewer checklist pass found no blocking/high issues.
+
+Remaining work:
+
+- Matrix-backed remaining after this tranche: 33.
+- Continue with Codex terminal live-provider retry safeguards, queue/targeting variants, tab state variants, and remaining terminal recovery gaps without duplicating existing app-shell coverage.
+- Run actual Playwright/E2E validation only after orchestrator approval.

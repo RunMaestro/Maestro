@@ -1949,6 +1949,76 @@ Recovered refresh sentinel.
 		}
 	});
 
+	test('reports removed Codex lane documents after batch selector refresh', async () => {
+		const launched = await launchBatchConfigLaneWorkbench();
+		try {
+			const dialog = await openAutoRunBatchConfig(launched.window);
+			await dialog.getByRole('button', { name: 'Add Docs' }).click();
+			const selector = launched.window
+				.getByText('Select Documents')
+				.locator('xpath=ancestor::div[contains(@class, "shadow-2xl")][1]');
+			await expect(selector.getByRole('button', { name: /Reference\.md/ })).toBeVisible();
+
+			fs.rmSync(launched.referencePath);
+			await selector.getByTitle('Refresh document list').click();
+
+			await expect(selector.getByText('1 document removed')).toBeVisible();
+			await expect(selector.getByRole('button', { name: /Reference\.md/ })).toHaveCount(0);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('hides Codex lane batch loop hint after a second document is selected', async () => {
+		const launched = await launchBatchConfigLaneWorkbench();
+		try {
+			const dialog = await openAutoRunBatchConfig(launched.window);
+
+			await expect(
+				dialog.getByText('You can enable loops with two or more documents')
+			).toBeVisible();
+			await dialog.getByRole('button', { name: 'Add Docs' }).click();
+			const selector = launched.window
+				.getByText('Select Documents')
+				.locator('xpath=ancestor::div[contains(@class, "shadow-2xl")][1]');
+			await selector.getByRole('button', { name: /Phase 2\.md/ }).click();
+			await selector.getByRole('button', { name: /Add 2 files/ }).click();
+
+			await expect(
+				dialog.getByText('You can enable loops with two or more documents')
+			).toBeHidden();
+			await expect(dialog.getByTitle('Loop back to first document when finished')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('keeps Codex lane reset locked while duplicate batch documents remain', async () => {
+		const launched = await launchBatchConfigLaneWorkbench();
+		try {
+			const dialog = await openAutoRunBatchConfig(launched.window);
+
+			await dialog.getByTitle(/Enable reset/).click();
+			await dialog.getByTitle('Duplicate document').click();
+			const lockedReset = dialog
+				.getByTitle(
+					'Reset enabled: uncompleted tasks will be re-checked when done. Remove duplicates to disable.'
+				)
+				.first();
+
+			await expect(dialog.locator('[title="Phase 1.md"]')).toHaveCount(2);
+			await expect(lockedReset).toBeVisible();
+			await lockedReset.click();
+			await expect(
+				dialog.getByTitle(
+					'Reset enabled: uncompleted tasks will be re-checked when done. Remove duplicates to disable.'
+				)
+			).toHaveCount(2);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
 	test('shows Codex lane Auto Run active state after starting a stubbed batch', async () => {
 		const launched = await launchBatchConfigLaneWorkbench();
 		try {
@@ -3854,6 +3924,83 @@ Externally refreshed Codex Auto Run sentinel.
 		}
 	});
 
+	test('closes recoverable Codex lane error details from the header without clearing the banner', async () => {
+		const launched = await launchActiveErrorLaneWorkbench({
+			message: 'Codex lane header close sentinel',
+		});
+		try {
+			await openCodexAiTerminal(launched.window);
+			await launched.window.getByRole('button', { name: 'View Details' }).click();
+			const dialog = launched.window.getByRole('dialog', { name: 'Connection Error' });
+			await expect(dialog.getByText('Codex lane header close sentinel')).toBeVisible();
+
+			await dialog.getByLabel('Close modal').click();
+
+			await expect(dialog).toBeHidden();
+			await expect(launched.window.getByText('Codex lane header close sentinel')).toBeVisible();
+			await expect(launched.window.getByRole('button', { name: 'View Details' })).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('scopes Codex lane active errors to the errored AI tab', async () => {
+		const seeded = createActiveErrorLaneWorkbench({
+			message: 'Codex lane tab-scoped error sentinel',
+		});
+		const session = seeded.sessions[0]!;
+		const now = Date.now();
+		const reviewTabId = `ai-tab-autorun-ai-error-review-${now}`;
+		const reviewLog = {
+			id: `ai-log-autorun-ai-error-review-${now}`,
+			timestamp: now + 3,
+			source: 'stdout' as const,
+			text: 'Codex clean Review tab sentinel.',
+		};
+		session.aiTabs.push({
+			id: reviewTabId,
+			agentSessionId: 'thread_autorun_ai_terminal_error_review',
+			name: 'Review',
+			starred: false,
+			logs: [reviewLog],
+			inputValue: '',
+			stagedImages: [],
+			usageStats: {
+				inputTokens: 0,
+				outputTokens: 0,
+				cacheReadInputTokens: 0,
+				cacheCreationInputTokens: 0,
+				totalCostUsd: 0,
+				contextWindow: 100,
+			},
+			createdAt: now,
+			state: 'idle',
+		});
+		session.unifiedTabOrder.push({ type: 'ai', id: reviewTabId });
+		const launched = {
+			...seeded,
+			...(await helpers.launchAppWithState({
+				homeDir: seeded.homeDir,
+				sessions: seeded.sessions,
+			})),
+		};
+		try {
+			await openCodexAiTerminal(launched.window);
+			await expect(launched.window.getByText('Codex lane tab-scoped error sentinel')).toBeVisible();
+
+			await launched.window.getByText('Review', { exact: true }).click();
+
+			await expect(launched.window.getByText('Codex clean Review tab sentinel.')).toBeVisible();
+			await expect(launched.window.getByText('Codex lane tab-scoped error sentinel')).toBeHidden();
+			await expect(launched.window.getByRole('button', { name: 'View Details' })).toBeHidden();
+
+			await launched.window.getByText('Main', { exact: true }).click();
+			await expect(launched.window.getByText('Codex lane tab-scoped error sentinel')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
 	test('shows Codex authentication recovery actions in the active error modal', async () => {
 		const launched = await launchActiveErrorLaneWorkbench({
 			type: 'auth_expired',
@@ -3931,6 +4078,121 @@ Externally refreshed Codex Auto Run sentinel.
 			await expect(dialog.getByRole('button', { name: 'Restart Agent' })).toBeVisible();
 			await expect(dialog.getByText('Respawn the agent process')).toBeVisible();
 			await expect(dialog.getByRole('button', { name: 'Start New Session' })).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('dismisses Codex rate-limit details without clearing the active banner', async () => {
+		const launched = await launchActiveErrorLaneWorkbench({
+			type: 'rate_limited',
+			message: 'Codex lane rate-limit dismiss sentinel',
+		});
+		try {
+			await openCodexAiTerminal(launched.window);
+			await launched.window.getByRole('button', { name: 'View Details' }).click();
+			const dialog = launched.window.getByRole('dialog', { name: 'Rate Limit Exceeded' });
+			await expect(dialog.getByText('Codex lane rate-limit dismiss sentinel')).toBeVisible();
+
+			await dialog.getByRole('button', { name: 'Dismiss' }).click();
+
+			await expect(dialog).toBeHidden();
+			await expect(
+				launched.window.getByText('Codex lane rate-limit dismiss sentinel')
+			).toBeVisible();
+			await expect(launched.window.getByRole('button', { name: 'View Details' })).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('starts a fresh Codex lane tab from authentication recovery', async () => {
+		const launched = await launchActiveErrorLaneWorkbench({
+			type: 'auth_expired',
+			message: 'Codex lane auth new-session sentinel',
+		});
+		try {
+			await openCodexAiTerminal(launched.window);
+			await expect(launched.window.locator('[data-tab-id]')).toHaveCount(1);
+			await launched.window.getByRole('button', { name: 'View Details' }).click();
+			const dialog = launched.window.getByRole('dialog', { name: 'Authentication Required' });
+
+			await dialog.getByRole('button', { name: 'Start New Session' }).click();
+
+			await expect(dialog).toBeHidden();
+			await expect(launched.window.getByText('Codex lane auth new-session sentinel')).toBeHidden();
+			await expect(launched.window.locator('[data-tab-id]')).toHaveCount(2);
+			await expect(
+				launched.window.locator('[data-tab-id]').filter({ hasText: 'New Session' }).first()
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('starts a fresh Codex lane tab from crashed-agent recovery without kill IPC', async () => {
+		const launched = await launchActiveErrorLaneWorkbench({
+			type: 'agent_crashed',
+			message: 'Codex lane crash new-session sentinel',
+			recoverable: false,
+		});
+		try {
+			await stubProcessKill(launched.electronApp);
+			await openCodexAiTerminal(launched.window);
+			await expect(launched.window.locator('[data-tab-id]')).toHaveCount(1);
+			await launched.window.getByRole('button', { name: 'View Details' }).click();
+			const dialog = launched.window.getByRole('dialog', { name: 'Agent Error' });
+
+			await dialog.getByRole('button', { name: 'Start New Session' }).click();
+
+			expect(await getStubbedProcessKillCalls(launched.electronApp)).toEqual([]);
+			await expect(dialog).toBeHidden();
+			await expect(launched.window.getByText('Codex lane crash new-session sentinel')).toBeHidden();
+			await expect(launched.window.locator('[data-tab-id]')).toHaveCount(2);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('collapses Codex recoverable active-error JSON details after expansion', async () => {
+		const launched = await launchActiveErrorLaneWorkbench({
+			message: 'Codex lane collapsible JSON sentinel',
+		});
+		try {
+			await openCodexAiTerminal(launched.window);
+			await launched.window.getByRole('button', { name: 'View Details' }).click();
+			const dialog = launched.window.getByRole('dialog', { name: 'Connection Error' });
+			const detailsToggle = dialog.getByRole('button', { name: /Error Details/ });
+
+			await detailsToggle.click();
+			await expect(dialog.getByText('codex_lane_active_error')).toBeVisible();
+			await detailsToggle.click();
+
+			await expect(dialog.getByText('codex_lane_active_error')).toBeHidden();
+			await expect(dialog.getByText('Codex lane collapsible JSON sentinel')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('retries Codex permission errors without spawning a provider process', async () => {
+		const launched = await launchActiveErrorLaneWorkbench({
+			message: 'Codex lane permission no-spawn sentinel',
+			recoverable: false,
+		});
+		try {
+			await stubCodexProcessSpawn(launched.electronApp);
+			await openCodexAiTerminal(launched.window);
+			await launched.window.getByRole('button', { name: 'View Details' }).click();
+			const dialog = launched.window.getByRole('dialog', { name: 'Permission Denied' });
+
+			await dialog.getByRole('button', { name: 'Try Again' }).click();
+
+			await expect(dialog).toBeHidden();
+			await expect(
+				launched.window.getByText('Codex lane permission no-spawn sentinel')
+			).toBeHidden();
+			expect(await getStubbedCodexProcessSpawnCalls(launched.electronApp)).toEqual([]);
 		} finally {
 			await launched.cleanup();
 		}
