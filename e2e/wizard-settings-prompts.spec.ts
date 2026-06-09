@@ -273,6 +273,28 @@ const activeScenarioMatrix = [
 	{ id: 'WSP-214', title: 'reports New Agent Wizard existing document delete failures' },
 	{ id: 'WSP-215', title: 'continues New Agent Wizard discovery from existing documents' },
 	{ id: 'WSP-216', title: 'deletes existing New Agent Wizard documents before discovery' },
+	{ id: 'WSP-217', title: "loads Director's Notes Unified History entries" },
+	{ id: 'WSP-218', title: "filters Director's Notes Unified History by summary" },
+	{ id: 'WSP-219', title: "filters Director's Notes Unified History by agent name" },
+	{ id: 'WSP-220', title: "shows Director's Notes Unified History empty search state" },
+	{ id: 'WSP-221', title: "collapses Director's Notes history search with Escape" },
+	{ id: 'WSP-222', title: "closes Director's Notes Help tab with Escape" },
+	{ id: 'WSP-223', title: "cycles Director's Notes tabs from the keyboard" },
+	{ id: 'WSP-224', title: "filters Director's Notes Unified History by entry type" },
+	{ id: 'WSP-225', title: 'returns from New Agent Wizard Codex configuration with Codex selected' },
+	{ id: 'WSP-226', title: 'enables New Agent Wizard Continue after Codex configuration' },
+	{ id: 'WSP-227', title: 'preserves New Agent Wizard Codex arguments after reopening config' },
+	{
+		id: 'WSP-228',
+		title: 'preserves New Agent Wizard Codex environment variables after reopening config',
+	},
+	{
+		id: 'WSP-229',
+		title: 'auto-numbers New Agent Wizard Codex populated environment variables',
+	},
+	{ id: 'WSP-230', title: 'shows New Agent Wizard Codex built-in environment variable help' },
+	{ id: 'WSP-231', title: 'lists New Agent Wizard Codex model options' },
+	{ id: 'WSP-232', title: 'commits a New Agent Wizard Codex model dropdown selection' },
 ];
 
 const envGatedScenarioMatrix = [
@@ -986,6 +1008,138 @@ function createDirectorNotesEnabledSettings(overrides: Partial<DirectorNotesSett
 	};
 }
 
+type StubbedDirectorHistoryEntry = {
+	id: string;
+	type: 'AUTO' | 'USER';
+	timestamp: number;
+	summary: string;
+	projectPath: string;
+	sourceSessionId: string;
+	agentName?: string;
+	agentSessionId?: string;
+	sessionName?: string;
+	success?: boolean;
+	elapsedTimeMs?: number;
+	validated?: boolean;
+};
+
+function createStubDirectorHistoryEntries(): StubbedDirectorHistoryEntry[] {
+	return [
+		{
+			id: 'director-history-auto-1',
+			type: 'AUTO',
+			timestamp: Date.parse('2026-06-08T13:00:00Z'),
+			summary: 'Refined onboarding copy for the setup wizard',
+			projectPath: '/tmp/maestro-wizard',
+			sourceSessionId: 'wsp-primary-agent',
+			agentName: 'Planner Agent',
+			agentSessionId: 'provider-session-1',
+			sessionName: 'Planning thread',
+			success: true,
+			elapsedTimeMs: 4200,
+			validated: true,
+		},
+		{
+			id: 'director-history-user-1',
+			type: 'USER',
+			timestamp: Date.parse('2026-06-08T12:30:00Z'),
+			summary: 'Reviewed billing prompt composer draft',
+			projectPath: '/tmp/maestro-prompts',
+			sourceSessionId: 'wsp-reviewer-agent',
+			agentName: 'Review Agent',
+			agentSessionId: 'provider-session-2',
+			sessionName: 'Review thread',
+			elapsedTimeMs: 1900,
+		},
+	];
+}
+
+async function stubDirectorNotesHistory(
+	electronApp: ElectronApplication,
+	entries: StubbedDirectorHistoryEntry[] = createStubDirectorHistoryEntries()
+) {
+	await electronApp.evaluate(
+		({ ipcMain }, payload) => {
+			const state = globalThis as typeof globalThis & {
+				__maestroE2eDirectorHistoryCalls?: Array<{
+					lookbackDays: number;
+					filter?: 'AUTO' | 'USER' | null;
+					limit?: number;
+					offset?: number;
+				}>;
+				__maestroE2eHistoryUpdateCalls?: Array<{
+					entryId: string;
+					updates: Record<string, unknown>;
+					sessionId?: string;
+				}>;
+			};
+			state.__maestroE2eDirectorHistoryCalls = [];
+			state.__maestroE2eHistoryUpdateCalls = [];
+
+			ipcMain.removeHandler('director-notes:getUnifiedHistory');
+			ipcMain.handle('director-notes:getUnifiedHistory', async (_event, options) => {
+				state.__maestroE2eDirectorHistoryCalls?.push(options);
+				const filteredEntries = options.filter
+					? payload.entries.filter((entry) => entry.type === options.filter)
+					: payload.entries;
+				const offset = options.offset ?? 0;
+				const limit = options.limit ?? filteredEntries.length;
+				const pagedEntries = filteredEntries.slice(offset, offset + limit);
+				const autoCount = payload.entries.filter((entry) => entry.type === 'AUTO').length;
+				const userCount = payload.entries.filter((entry) => entry.type === 'USER').length;
+
+				return {
+					entries: pagedEntries,
+					total: filteredEntries.length,
+					limit,
+					offset,
+					hasMore: offset + limit < filteredEntries.length,
+					stats: {
+						agentCount: new Set(payload.entries.map((entry) => entry.sourceSessionId)).size,
+						sessionCount: new Set(
+							payload.entries.map((entry) => entry.agentSessionId).filter(Boolean)
+						).size,
+						autoCount,
+						userCount,
+						totalCount: payload.entries.length,
+					},
+				};
+			});
+			ipcMain.removeHandler('history:update');
+			ipcMain.handle(
+				'history:update',
+				async (_event, entryId: string, updates: Record<string, unknown>, sessionId?: string) => {
+					state.__maestroE2eHistoryUpdateCalls?.push({ entryId, updates, sessionId });
+					return true;
+				}
+			);
+		},
+		{ entries }
+	);
+}
+
+async function getStubbedDirectorNotesHistoryState(electronApp: ElectronApplication) {
+	return electronApp.evaluate(() => {
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eDirectorHistoryCalls?: Array<{
+				lookbackDays: number;
+				filter?: 'AUTO' | 'USER' | null;
+				limit?: number;
+				offset?: number;
+			}>;
+			__maestroE2eHistoryUpdateCalls?: Array<{
+				entryId: string;
+				updates: Record<string, unknown>;
+				sessionId?: string;
+			}>;
+		};
+		return {
+			historyCalls: state.__maestroE2eDirectorHistoryCalls ?? [],
+			updateCalls: state.__maestroE2eHistoryUpdateCalls ?? [],
+		};
+	});
+}
+
 async function openQuickActions(window: Page) {
 	const quickActionsDialog = window.getByRole('dialog', { name: 'Quick Actions' });
 	for (let attempt = 0; attempt < 3; attempt++) {
@@ -996,6 +1150,17 @@ async function openQuickActions(window: Page) {
 	}
 	await expect(quickActionsDialog).toBeVisible();
 	return quickActionsDialog;
+}
+
+async function openDirectorNotesFromQuickActions(window: Page) {
+	const quickActionsDialog = await openQuickActions(window);
+	await quickActionsDialog
+		.getByPlaceholder('Type a command or jump to agent...')
+		.fill("Director's Notes");
+	await quickActionsDialog.getByRole('button', { name: /Director's Notes/ }).click();
+	const directorNotesDialog = window.getByRole('dialog', { name: "Director's Notes" });
+	await expect(directorNotesDialog).toBeVisible();
+	return directorNotesDialog;
 }
 
 async function openSettingsTab(window: Page, tabTitle: string, expectedText: string) {
@@ -7617,6 +7782,444 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 						(await getStubbedWizardRemoteDirectoryState(launched.electronApp)).deleteFolderCalls
 				)
 				.toEqual([seeded.projectDir]);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[216].id} ${activeScenarioMatrix[216].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: createDirectorNotesEnabledSettings(),
+		});
+
+		try {
+			await stubDirectorNotesHistory(launched.electronApp);
+			const directorNotesDialog = await openDirectorNotesFromQuickActions(launched.window);
+
+			await expect(
+				directorNotesDialog.getByText('Refined onboarding copy for the setup wizard')
+			).toBeVisible();
+			await expect(directorNotesDialog.getByText('Planner Agent')).toBeVisible();
+			await expect
+				.poll(async () => {
+					const state = await getStubbedDirectorNotesHistoryState(launched.electronApp);
+					const firstCall = state.historyCalls[0];
+					return {
+						lookbackDays: firstCall?.lookbackDays,
+						limit: firstCall?.limit,
+						offset: firstCall?.offset,
+					};
+				})
+				.toEqual({ lookbackDays: 7, limit: 100, offset: 0 });
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[217].id} ${activeScenarioMatrix[217].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: createDirectorNotesEnabledSettings(),
+		});
+
+		try {
+			await stubDirectorNotesHistory(launched.electronApp);
+			const directorNotesDialog = await openDirectorNotesFromQuickActions(launched.window);
+
+			await expect(
+				directorNotesDialog.getByText('Refined onboarding copy for the setup wizard')
+			).toBeVisible();
+			await directorNotesDialog.getByTitle(/Search entries/).click();
+			await directorNotesDialog
+				.getByPlaceholder('Filter by summary or agent name...')
+				.fill('onboarding');
+
+			await expect(
+				directorNotesDialog.getByText('Refined onboarding copy for the setup wizard')
+			).toBeVisible();
+			await expect(
+				directorNotesDialog.getByText('Reviewed billing prompt composer draft')
+			).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[218].id} ${activeScenarioMatrix[218].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: createDirectorNotesEnabledSettings(),
+		});
+
+		try {
+			await stubDirectorNotesHistory(launched.electronApp);
+			const directorNotesDialog = await openDirectorNotesFromQuickActions(launched.window);
+
+			await expect(directorNotesDialog.getByText('Review Agent')).toBeVisible();
+			await directorNotesDialog.getByTitle(/Search entries/).click();
+			await directorNotesDialog
+				.getByPlaceholder('Filter by summary or agent name...')
+				.fill('Review Agent');
+
+			await expect(
+				directorNotesDialog.getByText('Reviewed billing prompt composer draft')
+			).toBeVisible();
+			await expect(
+				directorNotesDialog.getByText('Refined onboarding copy for the setup wizard')
+			).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[219].id} ${activeScenarioMatrix[219].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: createDirectorNotesEnabledSettings(),
+		});
+
+		try {
+			await stubDirectorNotesHistory(launched.electronApp);
+			const directorNotesDialog = await openDirectorNotesFromQuickActions(launched.window);
+
+			await expect(
+				directorNotesDialog.getByText('Refined onboarding copy for the setup wizard')
+			).toBeVisible();
+			await directorNotesDialog.getByTitle(/Search entries/).click();
+			await directorNotesDialog
+				.getByPlaceholder('Filter by summary or agent name...')
+				.fill('unmatched-query');
+
+			await expect(
+				directorNotesDialog.getByText('No entries matching "unmatched-query".')
+			).toBeVisible();
+			await expect(
+				directorNotesDialog.getByText('Refined onboarding copy for the setup wizard')
+			).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[220].id} ${activeScenarioMatrix[220].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: createDirectorNotesEnabledSettings(),
+		});
+
+		try {
+			await stubDirectorNotesHistory(launched.electronApp);
+			const directorNotesDialog = await openDirectorNotesFromQuickActions(launched.window);
+
+			await expect(
+				directorNotesDialog.getByText('Refined onboarding copy for the setup wizard')
+			).toBeVisible();
+			await directorNotesDialog.getByTitle(/Search entries/).click();
+			const searchInput = directorNotesDialog.getByPlaceholder(
+				'Filter by summary or agent name...'
+			);
+			await searchInput.fill('onboarding');
+			await launched.window.keyboard.press('Escape');
+
+			await expect(searchInput).toBeHidden();
+			await expect(directorNotesDialog).toBeVisible();
+			await expect(
+				directorNotesDialog.getByText('Reviewed billing prompt composer draft')
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[221].id} ${activeScenarioMatrix[221].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: createDirectorNotesEnabledSettings(),
+		});
+
+		try {
+			await stubDirectorNotesHistory(launched.electronApp);
+			const directorNotesDialog = await openDirectorNotesFromQuickActions(launched.window);
+
+			await directorNotesDialog.getByRole('button', { name: 'Help' }).click();
+			await expect(directorNotesDialog.getByText("What are Director's Notes?")).toBeVisible();
+			await launched.window.keyboard.press('Escape');
+
+			await expect(directorNotesDialog).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[222].id} ${activeScenarioMatrix[222].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: createDirectorNotesEnabledSettings(),
+		});
+
+		try {
+			await stubDirectorNotesHistory(launched.electronApp);
+			const directorNotesDialog = await openDirectorNotesFromQuickActions(launched.window);
+
+			await expect(
+				directorNotesDialog.getByText('Refined onboarding copy for the setup wizard')
+			).toBeVisible();
+			await launched.window.keyboard.press('Meta+Shift+[');
+			await expect(directorNotesDialog.getByText("What are Director's Notes?")).toBeVisible();
+			await launched.window.keyboard.press('Meta+Shift+]');
+			await expect(
+				directorNotesDialog.getByText('Refined onboarding copy for the setup wizard')
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[223].id} ${activeScenarioMatrix[223].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: createDirectorNotesEnabledSettings(),
+		});
+
+		try {
+			await stubDirectorNotesHistory(launched.electronApp);
+			const directorNotesDialog = await openDirectorNotesFromQuickActions(launched.window);
+
+			await expect(
+				directorNotesDialog.getByText('Refined onboarding copy for the setup wizard')
+			).toBeVisible();
+			await expect(
+				directorNotesDialog.getByText('Reviewed billing prompt composer draft')
+			).toBeVisible();
+			await directorNotesDialog.getByRole('button', { name: 'AUTO' }).click();
+
+			await expect(
+				directorNotesDialog.getByText('Refined onboarding copy for the setup wizard')
+			).toBeHidden();
+			await expect(
+				directorNotesDialog.getByText('Reviewed billing prompt composer draft')
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[224].id} ${activeScenarioMatrix[224].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp);
+			const wizardDialog = await openCodexWizardCustomization(launched.window);
+
+			await wizardDialog.getByRole('button', { name: 'Done' }).click();
+
+			await expect(
+				wizardDialog.getByRole('heading', { name: 'Create a Maestro Agent' })
+			).toBeVisible();
+			await expect(wizardDialog.getByRole('button', { name: 'Codex' })).toHaveAttribute(
+				'aria-pressed',
+				'true'
+			);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[225].id} ${activeScenarioMatrix[225].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp);
+			const wizardDialog = await openNewAgentWizard(launched.window);
+			const codexTile = wizardDialog.getByRole('button', { name: 'Codex' });
+
+			await wizardDialog.getByLabel('Agent name').fill('Configured Codex Agent');
+			await codexTile.getByTitle('Customize agent settings').click();
+			await expect(wizardDialog.getByText('Codex Configuration')).toBeVisible();
+			await wizardDialog.getByRole('button', { name: 'Done' }).click();
+
+			await expect(wizardDialog.getByRole('button', { name: 'Continue' })).toBeEnabled();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[226].id} ${activeScenarioMatrix[226].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp);
+			const wizardDialog = await openCodexWizardCustomization(launched.window);
+			const argsInput = wizardDialog.getByPlaceholder('--flag value --another-flag');
+
+			await argsInput.fill('--profile wsp --reasoning high');
+			await wizardDialog.getByRole('button', { name: 'Done' }).click();
+			await wizardDialog
+				.getByRole('button', { name: 'Codex' })
+				.getByTitle('Customize agent settings')
+				.click();
+
+			await expect(wizardDialog.getByPlaceholder('--flag value --another-flag')).toHaveValue(
+				'--profile wsp --reasoning high'
+			);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[227].id} ${activeScenarioMatrix[227].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp);
+			const wizardDialog = await openCodexWizardCustomization(launched.window);
+
+			await wizardDialog.getByRole('button', { name: 'Add Variable' }).click();
+			await wizardDialog.getByPlaceholder('VARIABLE_NAME').fill('WSP_REOPEN_ENV');
+			await wizardDialog.getByPlaceholder('value', { exact: true }).fill('persisted');
+			await wizardDialog.getByRole('button', { name: 'Done' }).click();
+			await wizardDialog
+				.getByRole('button', { name: 'Codex' })
+				.getByTitle('Customize agent settings')
+				.click();
+
+			await expect(wizardDialog.getByPlaceholder('VARIABLE_NAME')).toHaveValue('WSP_REOPEN_ENV');
+			await expect(wizardDialog.getByPlaceholder('value', { exact: true })).toHaveValue(
+				'persisted'
+			);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[228].id} ${activeScenarioMatrix[228].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp);
+			const wizardDialog = await openCodexWizardCustomization(launched.window);
+			const envPanel = settingsFieldPanel(wizardDialog, 'Environment Variables (optional)');
+
+			await envPanel.getByRole('button', { name: 'Add Variable' }).click();
+			await envPanel.getByPlaceholder('value', { exact: true }).fill('first');
+			await envPanel.getByRole('button', { name: 'Add Variable' }).click();
+
+			await expect(envPanel.getByPlaceholder('VARIABLE_NAME')).toHaveCount(2);
+			await expect(envPanel.getByPlaceholder('VARIABLE_NAME').nth(0)).toHaveValue('NEW_VAR');
+			await expect(envPanel.getByPlaceholder('VARIABLE_NAME').nth(1)).toHaveValue('NEW_VAR_1');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[229].id} ${activeScenarioMatrix[229].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp);
+			const wizardDialog = await openCodexWizardCustomization(launched.window);
+			const envPanel = settingsFieldPanel(wizardDialog, 'Environment Variables (optional)');
+
+			await envPanel.getByTitle('What is this?').click();
+
+			await expect(
+				envPanel.getByText('Set to "1" when resuming an existing session.')
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[230].id} ${activeScenarioMatrix[230].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp);
+			const wizardDialog = await openCodexWizardCustomization(launched.window);
+			const modelInput = settingsFieldPanel(wizardDialog, 'Model')
+				.locator('input[type="text"]')
+				.first();
+
+			await modelInput.focus();
+
+			await expect(wizardDialog.getByRole('button', { name: 'gpt-5.3-codex' })).toBeVisible();
+			await expect(wizardDialog.getByRole('button', { name: 'o3' })).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[231].id} ${activeScenarioMatrix[231].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp);
+			const wizardDialog = await openCodexWizardCustomization(launched.window);
+			const modelInput = settingsFieldPanel(wizardDialog, 'Model')
+				.locator('input[type="text"]')
+				.first();
+
+			await modelInput.focus();
+			await wizardDialog.getByRole('button', { name: 'o3' }).click();
+
+			await expect(modelInput).toHaveValue('o3');
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						const config = await window.maestro.agents.getConfig('codex');
+						return config.model;
+					});
+				})
+				.toBe('o3');
 		} finally {
 			await launched.cleanup();
 		}
