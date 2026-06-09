@@ -3008,6 +3008,112 @@ Recovered refresh sentinel.
 		}
 	});
 
+	test('toggles Codex prompt composer History with the footer control without dispatching', async () => {
+		const launched = await launchLaneWorkbench();
+		try {
+			await stubCodexProcessSpawn(launched.electronApp);
+			const { composer, composerInput } = await openCodexPromptComposer(launched.window);
+			const historyToggle = composer.getByTitle(/Save to History/);
+
+			await composerInput.fill('Codex composer history toggle sentinel');
+			await expect(historyToggle).toHaveClass(/opacity-40/);
+			await historyToggle.click();
+
+			await expect(historyToggle).not.toHaveClass(/opacity-40/);
+			await expect(composerInput).toHaveValue('Codex composer history toggle sentinel');
+			expect(await getStubbedCodexProcessSpawnCalls(launched.electronApp)).toHaveLength(0);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('toggles Codex prompt composer History with Control S without dispatching', async () => {
+		const launched = await launchLaneWorkbench();
+		try {
+			await stubCodexProcessSpawn(launched.electronApp);
+			const { composer, composerInput } = await openCodexPromptComposer(launched.window);
+			const historyToggle = composer.getByTitle(/Save to History/);
+
+			await composerInput.fill('Codex composer history shortcut sentinel');
+			await composerInput.press('Control+S');
+			await expect(historyToggle).not.toHaveClass(/opacity-40/);
+			await composerInput.press('Control+S');
+			await expect(historyToggle).toHaveClass(/opacity-40/);
+			await expect(composerInput).toHaveValue('Codex composer history shortcut sentinel');
+			expect(await getStubbedCodexProcessSpawnCalls(launched.electronApp)).toHaveLength(0);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('cycles Codex prompt composer thinking states without dispatching', async () => {
+		const launched = await launchLaneWorkbench();
+		try {
+			await stubCodexProcessSpawn(launched.electronApp);
+			const { composer, composerInput } = await openCodexPromptComposer(launched.window);
+
+			await composerInput.fill('Codex composer thinking cycle sentinel');
+			await composer.getByTitle('Show Thinking - Click to stream AI reasoning').click();
+			await expect(
+				composer.getByTitle('Thinking (temporary) - Click for sticky mode')
+			).toBeVisible();
+
+			await composer.getByTitle('Thinking (temporary) - Click for sticky mode').click();
+			await expect(composer.getByTitle('Thinking (sticky) - Click to turn off')).toBeVisible();
+
+			await composer.getByTitle('Thinking (sticky) - Click to turn off').click();
+			await expect(
+				composer.getByTitle('Show Thinking - Click to stream AI reasoning')
+			).toBeVisible();
+			await expect(composerInput).toHaveValue('Codex composer thinking cycle sentinel');
+			expect(await getStubbedCodexProcessSpawnCalls(launched.electronApp)).toHaveLength(0);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('toggles Codex prompt composer Enter-to-send display without dispatching', async () => {
+		const launched = await launchLaneWorkbench();
+		try {
+			await stubCodexProcessSpawn(launched.electronApp);
+			const { composer, composerInput } = await openCodexPromptComposer(launched.window);
+
+			await composerInput.fill('Codex composer enter toggle sentinel');
+			await composer.getByTitle(/Switch to (Cmd|Ctrl)\+Enter to send/).click();
+			await expect(composer.getByTitle('Switch to Enter to send')).toBeVisible();
+			await composerInput.press('Enter');
+
+			await expect(composer).toBeVisible();
+			expect(await getStubbedCodexProcessSpawnCalls(launched.electronApp)).toHaveLength(0);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('opens a Codex prompt composer staged image lightbox with the keyboard shortcut', async () => {
+		const launched = await launchLaneWorkbench();
+		const imagePath = path.join(launched.homeDir, 'codex-composer-shortcut-lightbox.png');
+		try {
+			fs.writeFileSync(
+				imagePath,
+				Buffer.from(
+					'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=',
+					'base64'
+				)
+			);
+			const { composer, composerInput } = await openCodexPromptComposer(launched.window);
+
+			await composer.locator('input[type="file"]').setInputFiles(imagePath);
+			await composerInput.press('Control+Shift+L');
+
+			const lightbox = launched.window.getByRole('dialog', { name: 'Image Lightbox' });
+			await expect(lightbox).toBeVisible();
+			await expect(lightbox.getByRole('img', { name: 'Expanded image preview' })).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
 	test('prevents duplicate Auto Run document creation in a Codex lane agent', async () => {
 		const launched = await launchLaneWorkbench();
 		try {
@@ -3965,6 +4071,115 @@ Externally refreshed Codex Auto Run sentinel.
 			await expect(
 				launched.window.locator('[data-tab-id]').filter({ hasText: 'Main' })
 			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('copies the Codex Main session id from the tab overlay', async () => {
+		const launched = await launchContextActionsLaneWorkbench();
+		try {
+			await launched.window.evaluate(() => {
+				Object.defineProperty(navigator, 'clipboard', {
+					configurable: true,
+					value: {
+						writeText: async (text: string) => {
+							(window as Window & { __codexCopiedSessionId?: string }).__codexCopiedSessionId =
+								text;
+						},
+					},
+				});
+			});
+			await openCodexMainTabOverlay(launched.window);
+			await launched.window.getByText('Copy Session ID', { exact: true }).click();
+
+			await expect
+				.poll(async () =>
+					launched.window.evaluate(
+						() => (window as Window & { __codexCopiedSessionId?: string }).__codexCopiedSessionId
+					)
+				)
+				.toBe('thread_autorun_ai_terminal_seed');
+			await expect(launched.window.getByText('Copied!', { exact: true })).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('marks the Codex Main AI tab unread from the tab overlay', async () => {
+		const launched = await launchContextActionsLaneWorkbench();
+		try {
+			await openCodexMainTabOverlay(launched.window);
+			await launched.window.getByText('Mark as Unread', { exact: true }).click();
+
+			const mainTab = launched.window.locator('[data-tab-id]').filter({ hasText: 'Main' }).first();
+			await expect(mainTab.getByTitle('New messages')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('toggles Codex read-only mode from Quick Actions without clearing the draft', async () => {
+		const launched = await launchContextActionsLaneWorkbench();
+		try {
+			const promptInput = await openCodexAiTerminal(launched.window);
+			await promptInput.fill('Codex Quick Actions read-only draft sentinel');
+			const dialog = await openQuickActions(launched.window);
+			await dialog.getByPlaceholder('Type a command or jump to agent...').fill('read-only');
+
+			await dialog.getByText('Toggle Read-Only Mode', { exact: true }).click();
+
+			await expect(dialog).toBeHidden();
+			await expect(launched.window.getByText('Read-Only')).toBeVisible();
+			await expect(promptInput).toHaveValue('Codex Quick Actions read-only draft sentinel');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('toggles Codex thinking display from Quick Actions without clearing the draft', async () => {
+		const launched = await launchContextActionsLaneWorkbench();
+		try {
+			const promptInput = await openCodexAiTerminal(launched.window);
+			await promptInput.fill('Codex Quick Actions thinking draft sentinel');
+			const dialog = await openQuickActions(launched.window);
+			await dialog.getByPlaceholder('Type a command or jump to agent...').fill('thinking');
+
+			await dialog.getByText('Toggle Show Thinking', { exact: true }).click();
+
+			await expect(dialog).toBeHidden();
+			await expect(
+				launched.window.getByTitle('Thinking (temporary) - Click for sticky mode')
+			).toBeVisible();
+			await expect(promptInput).toHaveValue('Codex Quick Actions thinking draft sentinel');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('releases the next queued Codex item from Quick Actions through the stubbed path', async () => {
+		const launched = await launchQueuedLaneWorkbench();
+		try {
+			await stubCodexProcessSpawn(launched.electronApp);
+			await openCodexAiTerminal(launched.window);
+			const dialog = await openQuickActions(launched.window);
+			await dialog.getByPlaceholder('Type a command or jump to agent...').fill('release queued');
+
+			await expect(dialog.getByText('Debug: Release Next Queued Item')).toBeVisible();
+			await expect(dialog.getByText('Process next item from queue (2 queued)')).toBeVisible();
+			await dialog.getByText('Debug: Release Next Queued Item').click();
+
+			await expect(dialog).toBeHidden();
+			await expect
+				.poll(async () => (await getStubbedCodexProcessSpawnCalls(launched.electronApp)).length)
+				.toBe(1);
+			const calls = await getStubbedCodexProcessSpawnCalls(launched.electronApp);
+			expect(calls[0].prompt).toContain(
+				'Codex queued long prompt line 01 for Auto Run lane coverage'
+			);
+			expect(calls[0].readOnlyMode).toBe(true);
+			await expect(launched.window.getByText('QUEUED (1)')).toBeVisible();
+			await expect(launched.window.getByText('/history')).toBeVisible();
 		} finally {
 			await launched.cleanup();
 		}
