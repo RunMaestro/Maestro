@@ -3174,6 +3174,22 @@ test.describe('App shell seeded workbench', () => {
 		await expect(window.getByPlaceholder('Filter agents...')).toBeVisible();
 	});
 
+	test('restores the Files panel shortcut after cycling agents with the right panel collapsed', async () => {
+		await helpers.openRightPanelTab(window, 'History');
+		await expect(window.locator('[data-tour="history-panel"]')).toBeVisible();
+
+		await window.keyboard.press('Alt+Meta+ArrowRight');
+		await expect(window.getByTitle(/Show right panel/)).toBeVisible();
+
+		await window.keyboard.press('Meta+]');
+		await expect(window.getByLabel('Terminal output')).toBeVisible();
+		await expect(window.getByTitle(/Show right panel/)).toBeVisible();
+
+		await window.keyboard.press('Meta+Shift+F');
+		await expect(window.locator('[data-tour="files-panel"]')).toBeVisible();
+		await expect(window.getByLabel('Terminal output')).toBeVisible();
+	});
+
 	test('opens shell search targets from Quick Actions', async () => {
 		let quickActionsDialog = await openQuickActions(window);
 		await quickActionsDialog
@@ -3966,6 +3982,22 @@ test.describe('App shell seeded workbench', () => {
 		await expect(window.getByText('terminal seeded output is visible')).toBeHidden();
 	});
 
+	test('preserves command terminal drafts after opening and closing output search', async () => {
+		const terminalInput = await openSeededTerminalAgent(window);
+
+		await terminalInput.fill('draft survives output search sentinel');
+		await terminalInput.press('Control+f');
+
+		const searchInput = window.getByPlaceholder('Search output... (Esc to close)');
+		await expect(searchInput).toBeFocused();
+		await searchInput.fill('stderr sentinel');
+		await expect(window.getByText('terminal stderr sentinel')).toBeVisible();
+
+		await searchInput.press('Escape');
+		await expect(searchInput).toBeHidden();
+		await expect(terminalInput).toHaveValue('draft survives output search sentinel');
+	});
+
 	test('filters a single command terminal output block', async () => {
 		await openSeededTerminalAgent(window);
 
@@ -3988,6 +4020,17 @@ test.describe('App shell seeded workbench', () => {
 		await stderrBlock.hover();
 		await stderrBlock.getByTitle('Copy to clipboard').click();
 		await expect(window.getByText('Copied to Clipboard')).toBeVisible();
+	});
+
+	test('copies command terminal stdout output from transcript actions', async () => {
+		await openSeededTerminalAgent(window);
+
+		const outputBlock = window.locator('[data-log-index="2"]');
+		await outputBlock.hover();
+		await outputBlock.getByTitle('Copy to clipboard').click();
+
+		await expect(window.getByText('Copied to Clipboard')).toBeVisible();
+		await expect(outputBlock.getByText('terminal search sentinel')).toBeVisible();
 	});
 
 	test('switches a command terminal output block to exclude filtering', async () => {
@@ -4166,6 +4209,19 @@ test.describe('App shell seeded workbench', () => {
 		await historyFilter.press('ArrowDown');
 		await historyFilter.press('Enter');
 		await expect(terminalInput).toHaveValue('npm test -- --runInBand');
+	});
+
+	test('selects the previous command history entry after reverse arrow navigation', async () => {
+		const terminalInput = await openSeededTerminalAgent(window);
+
+		await terminalInput.focus();
+		await terminalInput.press('ArrowUp');
+		const historyFilter = window.getByPlaceholder('Filter commands...');
+		await historyFilter.press('ArrowDown');
+		await historyFilter.press('ArrowUp');
+		await historyFilter.press('Enter');
+
+		await expect(terminalInput).toHaveValue('echo terminal history sentinel');
 	});
 
 	test('runs a command selected from terminal history through the stubbed runner', async () => {
@@ -4481,6 +4537,30 @@ test.describe('App shell seeded workbench', () => {
 		await expect(calls.map((call) => call.command)).toEqual(['cd ..', 'pwd']);
 		await expect(calls[0].cwd).toBe(seededWorkbench.sessions[1].cwd);
 		await expect(calls[1].cwd).toBe(expectedCwd);
+	});
+
+	test('resets local command terminal cwd to the project root with bare cd', async () => {
+		await stubTerminalRunCommand(electronApp);
+		const terminalInput = await openSeededTerminalAgent(window);
+		const inputArea = window.locator('[data-tour="input-area"]');
+		const originalCwd = seededWorkbench.sessions[1].cwd;
+
+		await terminalInput.fill('cd "Auto Run Docs"');
+		await inputArea.getByTitle('Run command (Enter)').click();
+		await expect(inputArea.getByText(/Auto Run Docs/)).toBeVisible();
+
+		await terminalInput.fill('cd');
+		await inputArea.getByTitle('Run command (Enter)').click();
+		await expect(inputArea.getByText(originalCwd)).toBeVisible();
+
+		await terminalInput.fill('pwd');
+		await inputArea.getByTitle('Run command (Enter)').click();
+
+		await expect(window.locator('[data-log-index]').last().getByText(originalCwd)).toBeVisible();
+		const calls = await getStubbedTerminalRunCommandCalls(electronApp);
+		await expect(calls.map((call) => call.command)).toEqual(['cd "Auto Run Docs"', 'cd', 'pwd']);
+		await expect(calls[0].cwd).toBe(originalCwd);
+		await expect(calls[2].cwd).toBe(originalCwd);
 	});
 
 	test('updates command terminal cwd after tilde cd before a follow-up command', async () => {
@@ -5092,6 +5172,24 @@ test.describe('App shell seeded workbench', () => {
 		await expect(window.getByTitle('New messages')).toBeVisible();
 	});
 
+	test('toggles an AI tab star off from the TabBar hover overlay', async () => {
+		const mainTab = window.locator('[data-tab-id]').filter({ hasText: 'Main' }).first();
+
+		await mainTab.hover();
+		await window.getByText('Star Session').click();
+		await expect(window.getByText('Unstar Session')).toBeVisible();
+
+		await window.getByText('Unstar Session').click();
+		await mainTab.hover();
+		await expect(window.getByText('Star Session')).toBeVisible();
+
+		await window.getByTitle(/Search tabs/).click();
+		const switcher = window.getByRole('dialog', { name: 'Tab Switcher' });
+		await switcher.getByPlaceholder('Search open tabs...').press('Tab');
+		await switcher.getByPlaceholder('Search named sessions...').press('Tab');
+		await expect(switcher.getByText('No starred sessions')).toBeVisible();
+	});
+
 	test('toggles the active AI tab star from the keyboard and shows it in the Tab Switcher', async () => {
 		await window.getByText('Main', { exact: true }).click();
 
@@ -5155,6 +5253,24 @@ test.describe('App shell seeded workbench', () => {
 		await expect(
 			window.locator('[data-tab-id]').filter({ hasText: 'Renamed Main' }).first()
 		).toBeVisible();
+	});
+
+	test('cancels an AI tab rename from the TabBar hover overlay without changing the label', async () => {
+		const mainTab = window.locator('[data-tab-id]').filter({ hasText: 'Main' }).first();
+
+		await mainTab.hover();
+		await window.getByText('Rename Tab').click();
+
+		const renameDialog = window.getByRole('dialog', { name: 'Rename Tab' });
+		await expect(renameDialog).toBeVisible();
+		await renameDialog.locator('input').fill('Canceled Main');
+		await renameDialog.locator('input').press('Escape');
+
+		await expect(renameDialog).toBeHidden();
+		await expect(mainTab).toContainText('Main');
+		await expect(window.locator('[data-tab-id]').filter({ hasText: 'Canceled Main' })).toHaveCount(
+			0
+		);
 	});
 
 	test('creates and closes a new AI tab from the TabBar', async () => {
