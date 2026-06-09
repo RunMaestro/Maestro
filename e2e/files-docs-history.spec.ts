@@ -60,6 +60,14 @@ const activeScenarioMatrix = [
 	{ id: 'FDH-A35', title: 'exits unsaved plain text edits without writing to disk' },
 	{ id: 'FDH-A36', title: 'saves markdown preview edits only after content changes' },
 	{ id: 'FDH-A37', title: 'shows file preview no-match search state and recovers' },
+	{ id: 'FDH-A38', title: 'returns from a nested markdown preview to the root README' },
+	{ id: 'FDH-A39', title: 'copies a File Explorer context-menu path to the clipboard' },
+	{ id: 'FDH-A40', title: 'opens a plain text document from the context preview action' },
+	{
+		id: 'FDH-A41',
+		title: 'closes failed History detail with Escape and keeps the row list intact',
+	},
+	{ id: 'FDH-A42', title: 'copies failed History provider session id from detail metadata' },
 	{ id: 'FDH-A43', title: 'closes the File Explorer context menu with Escape' },
 	{ id: 'FDH-A44', title: 'reveals hidden dotfiles only after enabling dotfile visibility' },
 	{ id: 'FDH-A45', title: 'disables File Explorer auto-refresh from the refresh menu' },
@@ -1010,6 +1018,75 @@ test.describe(`Files docs history lane matrix (${activeScenarioMatrix.length} ac
 	});
 
 	test(`${activeScenarioMatrix[37].id} ${activeScenarioMatrix[37].title}`, async () => {
+		await window.getByRole('link', { name: 'Runbook' }).click();
+		await expect(window.getByText('Runbook Nested Preview')).toBeVisible();
+
+		await window.getByRole('link', { name: 'Root README' }).click();
+
+		await expect(window.getByRole('heading', { name: 'Files Docs History Matrix' })).toBeVisible();
+		await expect(
+			window.getByText('Preview prose for the files docs history tranche.')
+		).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[38].id} ${activeScenarioMatrix[38].title}`, async ({
+		electronApp,
+	}) => {
+		await electronApp.evaluate(({ clipboard }) => clipboard.writeText(''));
+		const contextMenu = await openFileContextMenu(window, 'README.md');
+
+		await contextMenu.getByRole('button', { name: 'Copy Path' }).click();
+
+		await expect(window.getByText('File Path Copied to Clipboard')).toBeVisible();
+		await expect
+			.poll(() => electronApp.evaluate(({ clipboard }) => clipboard.readText()))
+			.toBe(seededWorkbench.readmePath);
+	});
+
+	test(`${activeScenarioMatrix[39].id} ${activeScenarioMatrix[39].title}`, async () => {
+		await helpers.openRightPanelTab(window, 'Files');
+		await window.getByTitle('Expand all folders').click();
+		const contextMenu = await openFileContextMenu(window, 'plain.txt');
+
+		await contextMenu.getByRole('button', { name: 'Preview' }).click();
+
+		await expect(window.getByText('Plain preview starting line.')).toBeVisible();
+		await expect(window.getByText('Plain preview editable line.')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[40].id} ${activeScenarioMatrix[40].title}`, async () => {
+		await helpers.openRightPanelTab(window, 'History');
+		const historyPanel = window.locator('[data-tour="history-panel"]');
+		await historyPanel.getByText('Preview fallback failed').click();
+		await expect(
+			window.getByText('Failure detail includes a blocked external renderer path.')
+		).toBeVisible();
+
+		await window.keyboard.press('Escape');
+
+		await expect(
+			window.getByText('Failure detail includes a blocked external renderer path.')
+		).toBeHidden();
+		await expect(historyPanel.getByText('Preview fallback failed')).toBeVisible();
+		await expect(historyPanel.getByText('Rendered docs history tranche')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[41].id} ${activeScenarioMatrix[41].title}`, async ({
+		electronApp,
+	}) => {
+		await helpers.openRightPanelTab(window, 'History');
+		const historyPanel = window.locator('[data-tour="history-panel"]');
+		await electronApp.evaluate(({ clipboard }) => clipboard.writeText(''));
+		await historyPanel.getByText('Preview fallback failed').click();
+
+		await window.getByTitle('Copy session ID: codex-history-preview-failure').click();
+
+		await expect
+			.poll(() => electronApp.evaluate(({ clipboard }) => clipboard.readText()))
+			.toBe('codex-history-preview-failure');
+	});
+
+	test(`${activeScenarioMatrix[42].id} ${activeScenarioMatrix[42].title}`, async () => {
 		const contextMenu = await openFileContextMenu(window, 'README.md');
 		await expect(contextMenu.getByRole('button', { name: 'Rename' })).toBeVisible();
 
@@ -1019,7 +1096,7 @@ test.describe(`Files docs history lane matrix (${activeScenarioMatrix.length} ac
 		await expect(window.getByRole('dialog', { name: 'Rename File' })).toBeHidden();
 	});
 
-	test(`${activeScenarioMatrix[38].id} ${activeScenarioMatrix[38].title}`, async () => {
+	test(`${activeScenarioMatrix[43].id} ${activeScenarioMatrix[43].title}`, async () => {
 		await helpers.openRightPanelTab(window, 'Files');
 		await expect(window.getByText('.secret.md')).toBeHidden();
 
@@ -1030,7 +1107,7 @@ test.describe(`Files docs history lane matrix (${activeScenarioMatrix.length} ac
 		await expect(window.getByText('.secret.md')).toBeHidden();
 	});
 
-	test(`${activeScenarioMatrix[39].id} ${activeScenarioMatrix[39].title}`, async () => {
+	test(`${activeScenarioMatrix[44].id} ${activeScenarioMatrix[44].title}`, async () => {
 		await helpers.openRightPanelTab(window, 'Files');
 		await window.getByTitle('Auto-refresh every 180s').hover();
 
@@ -1040,7 +1117,7 @@ test.describe(`Files docs history lane matrix (${activeScenarioMatrix.length} ac
 		await expect(window.getByTitle('Refresh file tree')).toBeVisible();
 	});
 
-	test(`${activeScenarioMatrix[40].id} ${activeScenarioMatrix[40].title}`, async () => {
+	test(`${activeScenarioMatrix[45].id} ${activeScenarioMatrix[45].title}`, async () => {
 		await helpers.openRightPanelTab(window, 'History');
 		const historyPanel = window.locator('[data-tour="history-panel"]');
 		const successRow = historyPanel
@@ -1053,7 +1130,7 @@ test.describe(`Files docs history lane matrix (${activeScenarioMatrix.length} ac
 		await expect(successRow.getByText('$0.04')).toBeVisible();
 	});
 
-	test(`${activeScenarioMatrix[41].id} ${activeScenarioMatrix[41].title}`, async () => {
+	test(`${activeScenarioMatrix[46].id} ${activeScenarioMatrix[46].title}`, async () => {
 		await helpers.openRightPanelTab(window, 'History');
 		const historyPanel = window.locator('[data-tour="history-panel"]');
 
