@@ -175,6 +175,11 @@ const activeScenarioMatrix = [
 	{ id: 'SGS-A162', title: 'copies Document Graph external node URL to clipboard' },
 	{ id: 'SGS-A163', title: 'opens Document Graph external node URL through shell routing' },
 	{ id: 'SGS-A164', title: 'dismisses Document Graph external node context menu with Escape' },
+	{ id: 'SGS-A165', title: 'shows Document Graph external breadcrumb path' },
+	{ id: 'SGS-A166', title: 'opens focused Document Graph external node with Enter' },
+	{ id: 'SGS-A167', title: 'shows Document Graph external node multi-link count' },
+	{ id: 'SGS-A168', title: 'uses Copy URLs for aggregated Document Graph external links' },
+	{ id: 'SGS-A169', title: 'copies aggregated Document Graph external URLs to clipboard' },
 ] as const;
 
 const skippedScenarioMatrix = [
@@ -810,6 +815,16 @@ async function clickDocumentGraphExternalNode(
 			y: Math.min(box.height - 24, box.height / 2 + DOCUMENT_GRAPH_EXTERNAL_NODE_SCREEN_OFFSET),
 		},
 	});
+}
+
+function addSecondRunMaestroExternalLink(
+	workbench: ReturnType<typeof createStatsGraphSymphonyWorkbench>
+) {
+	fs.appendFileSync(
+		workbench.runbookPath,
+		'\n[Maestro docs](https://runmaestro.ai/docs)\n',
+		'utf-8'
+	);
 }
 
 async function stubSymphonyAgentDetection(
@@ -4115,6 +4130,97 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 
 		await expect(graphDialog.getByRole('button', { name: 'Copy URL' })).toBeHidden();
 		await expect(graphDialog).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[164].id} ${activeScenarioMatrix[164].title}`, async () => {
+		const graphDialog = await openDocumentGraphFromPreview(window);
+
+		await showDocumentGraphExternalLinks(graphDialog);
+		await clickDocumentGraphExternalNode(graphDialog);
+
+		const breadcrumb = graphDialog.getByRole('navigation', { name: 'Selected node path' });
+		await expect(breadcrumb.getByText('External Links')).toBeVisible();
+		await expect(breadcrumb.getByRole('button', { name: 'runmaestro.ai' })).toHaveAttribute(
+			'aria-current',
+			'page'
+		);
+	});
+
+	test(`${activeScenarioMatrix[165].id} ${activeScenarioMatrix[165].title}`, async () => {
+		await window.evaluate(() => {
+			const state = globalThis as typeof globalThis & { __sgsWindowOpenUrls?: string[] };
+			state.__sgsWindowOpenUrls = [];
+			window.open = (url?: string | URL) => {
+				state.__sgsWindowOpenUrls!.push(String(url));
+				return null;
+			};
+		});
+		const graphDialog = await openDocumentGraphFromPreview(window);
+
+		await showDocumentGraphExternalLinks(graphDialog);
+		await clickDocumentGraphExternalNode(graphDialog);
+		await window.keyboard.press('Enter');
+
+		await expect
+			.poll(() =>
+				window.evaluate(() => {
+					const state = globalThis as typeof globalThis & { __sgsWindowOpenUrls?: string[] };
+					return state.__sgsWindowOpenUrls ?? [];
+				})
+			)
+			.toContain('https://runmaestro.ai');
+	});
+
+	test(`${activeScenarioMatrix[166].id} ${activeScenarioMatrix[166].title}`, async () => {
+		addSecondRunMaestroExternalLink(workbench);
+		const graphDialog = await openDocumentGraphFromPreview(window);
+
+		await showDocumentGraphExternalLinks(graphDialog);
+		await clickDocumentGraphExternalNode(graphDialog);
+
+		await expect(graphDialog.getByText('External: runmaestro.ai')).toBeVisible();
+		await expect(graphDialog.getByText('(2 links)')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[167].id} ${activeScenarioMatrix[167].title}`, async () => {
+		addSecondRunMaestroExternalLink(workbench);
+		const graphDialog = await openDocumentGraphFromPreview(window);
+
+		await showDocumentGraphExternalLinks(graphDialog);
+		await clickDocumentGraphExternalNode(graphDialog, 'right');
+
+		await expect(graphDialog.getByRole('button', { name: /^Copy URLs$/ })).toBeVisible();
+		await expect(graphDialog.getByRole('button', { name: /^Copy URL$/ })).toBeHidden();
+	});
+
+	test(`${activeScenarioMatrix[168].id} ${activeScenarioMatrix[168].title}`, async () => {
+		addSecondRunMaestroExternalLink(workbench);
+		await window.evaluate(() => {
+			const state = globalThis as typeof globalThis & { __sgsClipboardText?: string };
+			state.__sgsClipboardText = '';
+			Object.defineProperty(navigator, 'clipboard', {
+				configurable: true,
+				value: {
+					writeText: async (text: string) => {
+						state.__sgsClipboardText = text;
+					},
+				},
+			});
+		});
+		const graphDialog = await openDocumentGraphFromPreview(window);
+
+		await showDocumentGraphExternalLinks(graphDialog);
+		await clickDocumentGraphExternalNode(graphDialog, 'right');
+		await graphDialog.getByRole('button', { name: /^Copy URLs$/ }).click();
+
+		await expect
+			.poll(() =>
+				window.evaluate(() => {
+					const state = globalThis as typeof globalThis & { __sgsClipboardText?: string };
+					return state.__sgsClipboardText ?? '';
+				})
+			)
+			.toBe('https://runmaestro.ai\nhttps://runmaestro.ai/docs');
 	});
 
 	for (const scenario of skippedScenarioMatrix) {
