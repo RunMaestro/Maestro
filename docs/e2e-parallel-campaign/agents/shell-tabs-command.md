@@ -1,6 +1,6 @@
 # shell-tabs-command
 
-Status: spec coverage authored; static-reviewed only
+Status: terminal search/SSH tranche committed; static-reviewed only
 
 ## Scope
 
@@ -25,11 +25,11 @@ Authored in this branch:
 | Bucket                                       | New tests | Active scenarios |
 | -------------------------------------------- | --------: | ---------------: |
 | App shell, sidebars, focus, global shortcuts |         2 |               17 |
-| Command terminal workflows                   |        15 |               32 |
+| Command terminal workflows                   |        20 |               37 |
 | Tabs, tab switcher, tab overlays             |         4 |               32 |
-| Total                                        |        21 |               81 |
+| Total                                        |        26 |               86 |
 
-Matrix-backed scenarios still unclaimed in this lane progress file: 185.
+Matrix-backed scenarios still unclaimed in this lane progress file: 180.
 Skipped/env-gated scenarios authored: 0.
 
 Files touched:
@@ -43,7 +43,9 @@ Files touched:
   multiline shell command submission. The manual fallback tranche adds collapsed
   terminal output expand/recollapse controls, collapsed-output search
   expandability, clear-history draft preservation, and parent-directory cwd
-  propagation.
+  propagation. The terminal search/SSH tranche adds output-search close,
+  visible collapsed-output search, clear-history while output search is open,
+  SSH history selection routing, and SSH slash-command routing coverage.
 - `docs/e2e-parallel-campaign/agents/shell-tabs-command.md` - recorded this
   lane progress.
 
@@ -55,6 +57,7 @@ Commits:
 - `c9739e8b5` - `test(e2e-shell-tabs-command): add shell tab shortcut coverage`
 - `3748d86fb` - `test(e2e-shell-tabs-command): add terminal control tranche`
 - `2d9975b17` - `test(e2e-shell-tabs-command): add terminal output controls`
+- `ea049b708` - `test(e2e-shell-tabs-command): add terminal search ssh tranche`
 
 Validation performed:
 
@@ -77,6 +80,16 @@ Validation performed:
 - Focused static reviewer pass - passed for the manual fallback tranche, with
   no critical or high issues after correcting the collapsed-output search
   assertion to match current renderer behavior.
+- `npx prettier --write e2e/app-shell.spec.ts` - applied formatting for the
+  terminal search/SSH tranche.
+- `npx prettier --check e2e/app-shell.spec.ts` - passed for the terminal
+  search/SSH tranche.
+- `npx eslint e2e/app-shell.spec.ts` - passed for the terminal search/SSH
+  tranche.
+- `git diff --check -- e2e/app-shell.spec.ts` - passed for the terminal
+  search/SSH tranche.
+- Static `.only` and prohibited-command guard - passed for the terminal
+  search/SSH tranche.
 
 Validation intentionally not performed:
 
