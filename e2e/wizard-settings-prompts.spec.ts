@@ -386,6 +386,14 @@ const activeScenarioMatrix = [
 	{ id: 'WSP-312', title: 'hides inline wizard empty state once history exists' },
 	{ id: 'WSP-313', title: 'shows inline wizard busy input state while thinking' },
 	{ id: 'WSP-314', title: 'shows inline wizard generation progress before documents arrive' },
+	{ id: 'WSP-315', title: 'renders inline wizard system message bubbles' },
+	{ id: 'WSP-316', title: 'renders inline wizard assistant markdown and confidence' },
+	{ id: 'WSP-317', title: 'renders inline wizard message image attachments' },
+	{ id: 'WSP-318', title: 'toggles inline wizard thinking control' },
+	{ id: 'WSP-319', title: 'toggles inline wizard enter-to-send mode' },
+	{ id: 'WSP-320', title: 'opens Prompt Composer from inline wizard input controls' },
+	{ id: 'WSP-321', title: 'preserves inline wizard draft while toggling send mode' },
+	{ id: 'WSP-322', title: 'shows inline wizard mapped-error technical details' },
 ];
 
 const envGatedScenarioMatrix = [
@@ -10483,6 +10491,210 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 			).toBeVisible();
 			await expect(launched.window.getByRole('button', { name: 'Cancel' })).toBeVisible();
 			await expect(launched.window.getByText('Work Plans Drafted')).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[314].id} ${activeScenarioMatrix[314].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench({
+			inlineWizard: true,
+			inlineWizardState: {
+				conversationHistory: [
+					{
+						id: 'wsp-system-history',
+						role: 'system',
+						content: 'Wizard resumed with saved project context.',
+						timestamp: Date.parse('2026-06-08T12:08:00Z'),
+					},
+				],
+			},
+		});
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			const systemBubble = launched.window.locator('[data-testid="wizard-message-bubble-system"]');
+
+			await expect(systemBubble).toBeVisible();
+			await expect(systemBubble.locator('[data-testid="message-sender"]')).toContainText('System');
+			await expect(systemBubble.locator('[data-testid="message-content"]')).toContainText(
+				'Wizard resumed with saved project context.'
+			);
+			await expect(systemBubble.locator('[data-testid="message-timestamp"]')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[315].id} ${activeScenarioMatrix[315].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench({
+			inlineWizard: true,
+			inlineWizardState: {
+				conversationHistory: [
+					{
+						id: 'wsp-assistant-markdown',
+						role: 'assistant',
+						content: '# Proposed Playbook\n\n- Audit wizard shell\n- Draft setup tasks',
+						timestamp: Date.parse('2026-06-08T12:09:00Z'),
+						confidence: 72,
+					},
+				],
+			},
+		});
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			const assistantBubble = launched.window.locator(
+				'[data-testid="wizard-message-bubble-assistant"]'
+			);
+
+			await expect(assistantBubble).toBeVisible();
+			await expect(assistantBubble.locator('[data-testid="confidence-badge"]')).toContainText(
+				'72% confident'
+			);
+			await expect(
+				assistantBubble.getByRole('heading', { name: 'Proposed Playbook' })
+			).toBeVisible();
+			await expect(assistantBubble.getByText('Audit wizard shell')).toBeVisible();
+			await expect(assistantBubble.getByText('Draft setup tasks')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[316].id} ${activeScenarioMatrix[316].title}`, async () => {
+		const attachedImage =
+			'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=';
+		const seeded = createWizardSettingsPromptsWorkbench({
+			inlineWizard: true,
+			inlineWizardState: {
+				conversationHistory: [
+					{
+						id: 'wsp-user-image-history',
+						role: 'user',
+						content: 'Use this current-state screenshot.',
+						timestamp: Date.parse('2026-06-08T12:10:00Z'),
+						images: [attachedImage],
+					},
+				],
+			},
+		});
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			const userBubble = launched.window.locator('[data-testid="wizard-message-bubble-user"]');
+
+			await expect(userBubble.getByText('Use this current-state screenshot.')).toBeVisible();
+			await expect(userBubble.locator('[data-testid="message-images"]')).toBeVisible();
+			await expect(userBubble.getByAltText('Attached image 1')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[317].id} ${activeScenarioMatrix[317].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench({ inlineWizard: true });
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await launched.window.getByTitle('Show AI thinking').click();
+
+			await expect(
+				launched.window.getByTitle('Hide AI thinking (show filler messages)')
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[318].id} ${activeScenarioMatrix[318].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench({ inlineWizard: true });
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				enterToSendAI: true,
+			},
+		});
+
+		try {
+			await launched.window.getByTitle(/Switch to .*Enter to send/).click();
+
+			await expect(launched.window.getByTitle('Switch to Enter to send')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[319].id} ${activeScenarioMatrix[319].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench({ inlineWizard: true });
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await launched.window.getByTitle('Open Prompt Composer').click();
+
+			await expect(launched.window.getByText('Prompt Composer')).toBeVisible();
+			await expect(launched.window.getByPlaceholder(/Write your prompt here/)).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[320].id} ${activeScenarioMatrix[320].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench({ inlineWizard: true });
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				enterToSendAI: true,
+			},
+		});
+
+		try {
+			const input = launched.window.getByPlaceholder('Tell the wizard about your project...');
+			await input.fill('Keep this inline wizard draft.');
+			await launched.window.getByTitle(/Switch to .*Enter to send/).click();
+
+			await expect(input).toHaveValue('Keep this inline wizard draft.');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[321].id} ${activeScenarioMatrix[321].title}`, async () => {
+		const rawError = 'Timed out waiting for provider response';
+		const seeded = createWizardSettingsPromptsWorkbench({
+			inlineWizard: true,
+			inlineWizardState: {
+				error: rawError,
+			},
+		});
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await launched.window.getByText('Technical details').click();
+
+			await expect(
+				launched.window.locator('[data-testid="error-technical-details"]')
+			).toContainText(rawError);
 		} finally {
 			await launched.cleanup();
 		}
