@@ -34,11 +34,11 @@ Parallel E2E authoring checkpoint:
 
 - Campaign: `docs/e2e-parallel-prompt.md`
 - Result: in progress
-- Current authoring progress: 2231 / 3,025 active scenarios after accepting the
-  twenty-first-tranche stats/graph/symphony fallback through `ab810788e`. This
-  tranche added 5 active Document Graph external-node metadata, context-menu,
-  URL clipboard, shell-routing, and Escape-dismissal rows without adding skipped
-  or env-gated rows.
+- Current authoring progress: 2236 / 3,025 active scenarios after accepting the
+  twenty-second-tranche stats/graph/symphony fallback through `5422a7c94`. This
+  tranche added 5 active Document Graph external breadcrumb, keyboard-open,
+  multi-link count, Copy URLs, and aggregated clipboard rows without adding
+  skipped or env-gated rows.
 - Accepted lanes so far: `shell-tabs-command`, `agent-crud-provider`,
   `files-docs-history`, `mobile-web-bridge`, `autorun-ai-terminal`,
   `wizard-settings-prompts`, `stats-graph-symphony`, `debug-accessibility`,
