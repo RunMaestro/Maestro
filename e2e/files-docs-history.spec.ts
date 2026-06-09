@@ -78,6 +78,11 @@ const activeScenarioMatrix = [
 	{ id: 'FDH-A50', title: 'shows remote markdown images blocked before opt-in' },
 	{ id: 'FDH-A51', title: 'refreshes File Explorer after a new markdown file is written' },
 	{ id: 'FDH-A52', title: 'searches History by session name across seeded entries' },
+	{ id: 'FDH-A53', title: 'filters hidden dotfiles after dotfile visibility is enabled' },
+	{ id: 'FDH-A54', title: 'omits file-only context actions from folder context menus' },
+	{ id: 'FDH-A55', title: 'keeps unchanged file rename submissions disabled' },
+	{ id: 'FDH-A56', title: 'dismisses file delete confirmation with Escape' },
+	{ id: 'FDH-A57', title: 'navigates History detail entries with keyboard arrows' },
 ] as const;
 
 const skippedScenarioMatrix = [
@@ -1200,6 +1205,82 @@ test.describe(`Files docs history lane matrix (${activeScenarioMatrix.length} ac
 		await expect(historyPanel.getByText('4 results')).toBeVisible();
 		await expect(historyPanel.getByText('Rendered docs history tranche')).toBeVisible();
 		await expect(historyPanel.getByText('Achievement file history milestone')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[52].id} ${activeScenarioMatrix[52].title}`, async () => {
+		await helpers.openRightPanelTab(window, 'Files');
+		await window.getByTitle('Show dotfiles').click();
+		const readmeRow = await getFileTreeRow(window, 'README.md');
+		await readmeRow.click();
+		await window.keyboard.press('Control+f');
+
+		const filterInput = window.getByPlaceholder('Filter files...');
+		await filterInput.fill('secret');
+
+		await getFileTreeRow(window, '.secret.md');
+		await expect(window.locator('[data-file-index]').filter({ hasText: 'README.md' })).toBeHidden();
+	});
+
+	test(`${activeScenarioMatrix[53].id} ${activeScenarioMatrix[53].title}`, async () => {
+		const contextMenu = await openFileContextMenu(window, 'docs');
+
+		await expect(contextMenu.getByRole('button', { name: 'Preview' })).toBeHidden();
+		await expect(
+			contextMenu.getByRole('button', { name: 'Document Graph', exact: true })
+		).toBeHidden();
+		await expect(contextMenu.getByRole('button', { name: 'Open in Default App' })).toBeHidden();
+		await expect(contextMenu.getByRole('button', { name: 'Copy Path' })).toBeVisible();
+		await expect(contextMenu.getByRole('button', { name: 'Rename' })).toBeVisible();
+		await expect(contextMenu.getByRole('button', { name: 'Delete' })).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[54].id} ${activeScenarioMatrix[54].title}`, async () => {
+		const contextMenu = await openFileContextMenu(window, 'README.md');
+		await contextMenu.getByRole('button', { name: 'Rename' }).click();
+
+		const renameDialog = window.getByRole('dialog', { name: 'Rename File' });
+		await expect(renameDialog).toBeVisible();
+		await expect(renameDialog.getByRole('button', { name: 'Rename' })).toBeDisabled();
+		await renameDialog.getByPlaceholder('Enter file name...').fill('README.md');
+		await expect(renameDialog.getByRole('button', { name: 'Rename' })).toBeDisabled();
+
+		await renameDialog.getByRole('button', { name: 'Cancel' }).click();
+		await expect(renameDialog).toBeHidden();
+		await getFileTreeRow(window, 'README.md');
+	});
+
+	test(`${activeScenarioMatrix[55].id} ${activeScenarioMatrix[55].title}`, async () => {
+		await helpers.openRightPanelTab(window, 'Files');
+		await window.getByTitle('Expand all folders').click();
+		const contextMenu = await openFileContextMenu(window, 'archive.md');
+		await contextMenu.getByRole('button', { name: 'Delete' }).click();
+
+		const deleteDialog = window.getByRole('dialog', { name: 'Delete File' });
+		await expect(deleteDialog).toBeVisible();
+		await window.keyboard.press('Escape');
+
+		await expect(deleteDialog).toBeHidden();
+		await getFileTreeRow(window, 'archive.md');
+		await expect(fs.existsSync(seededWorkbench.archivePath)).toBe(true);
+	});
+
+	test(`${activeScenarioMatrix[56].id} ${activeScenarioMatrix[56].title}`, async () => {
+		await helpers.openRightPanelTab(window, 'History');
+		const historyPanel = window.locator('[data-tour="history-panel"]');
+		await historyPanel.getByText('Manual file operation note').click();
+		await expect(
+			window.getByText('Manual detail references draft/plain.txt and archive.md.')
+		).toBeVisible();
+
+		await window.keyboard.press('ArrowRight');
+		await expect(
+			window.getByText('Failure detail includes a blocked external renderer path.')
+		).toBeVisible();
+
+		await window.keyboard.press('ArrowLeft');
+		await expect(
+			window.getByText('Manual detail references draft/plain.txt and archive.md.')
+		).toBeVisible();
 	});
 
 	for (const scenario of skippedScenarioMatrix) {
