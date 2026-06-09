@@ -1,6 +1,6 @@
 # autorun-ai-terminal
 
-Status: twenty-eighth tranche authored
+Status: fortieth tranche authored
 
 ## Scope
 
@@ -971,4 +971,429 @@ Remaining work:
 
 - Matrix-backed remaining after this tranche: 133.
 - Continue with small tranches for deeper Auto Run run-state variants, Auto Run worktree/stalled-document variants, live-provider retry execution safeguards, and remaining Codex terminal transcript edge states without duplicating existing app-shell coverage.
+- Run actual Playwright/E2E validation only after orchestrator approval.
+
+Twenty-ninth tranche:
+
+- Added 5 active matrix-backed tests to `e2e/autorun-ai-terminal.spec.ts`.
+- New active tests: 5.
+- Cumulative active tests: 145.
+- Skipped tests: 0.
+- Env-gated tests: 0.
+- Shared helper edits: none.
+- Live provider execution: none; no E2E validation/listing was run.
+- Campaign head before this tranche: `78c79f615`.
+- Tranche implementation commit: `78b13d0eb`.
+
+Covered:
+
+- Blank Codex AI terminal sends remaining local drafts without provider spawn.
+- Enter dispatching a Codex AI terminal prompt when Enter-to-send is enabled.
+- Shift Enter preserving a multiline Codex AI terminal draft without provider spawn.
+- Control Enter dispatch after the Codex Enter-to-send toggle is switched off.
+- Read-only toggle restoration sending write-mode metadata after toggling back.
+
+Validation:
+
+- `npx prettier --check e2e/autorun-ai-terminal.spec.ts` passed.
+- `npx eslint e2e/autorun-ai-terminal.spec.ts` passed.
+- Targeted TypeScript parse/check for `e2e/autorun-ai-terminal.spec.ts` passed with `--esModuleInterop`.
+- `git diff --check` passed.
+- Marker scan found 145 active declarations and no `.only`/skip declarations in `e2e/autorun-ai-terminal.spec.ts`.
+- Code-reviewer pass found no blocking/high issues.
+
+Remaining work:
+
+- Matrix-backed remaining after this tranche: 128.
+- Continue with small tranches for deeper Auto Run run-state variants, Auto Run worktree/stalled-document variants, live-provider retry execution safeguards, and remaining Codex terminal transcript edge states without duplicating existing app-shell coverage.
+- Run actual Playwright/E2E validation only after orchestrator approval.
+
+Thirtieth tranche:
+
+- Added 5 active matrix-backed tests to `e2e/autorun-ai-terminal.spec.ts`.
+- New active tests: 5.
+- Cumulative active tests: 150.
+- Skipped tests: 0.
+- Env-gated tests: 0.
+- Shared helper edits: `openCodexPromptComposer` helper added in the lane spec.
+- Live provider execution: none; no E2E validation/listing was run.
+- Campaign head before this tranche: `f03721117`.
+- Tranche implementation commit: `089abdefc`.
+
+Covered:
+
+- Prompt Composer draft persistence back to the Codex lane terminal input.
+- Prompt Composer Control Enter send through the Codex stubbed process path.
+- Prompt Composer read-only metadata propagation through the Codex stubbed process path.
+- Prompt Composer self-mention insertion without dispatch.
+- Prompt Composer image attachment staging/removal without dispatch.
+
+Validation:
+
+- `npx prettier --check e2e/autorun-ai-terminal.spec.ts` passed.
+- `npx eslint e2e/autorun-ai-terminal.spec.ts` passed.
+- Targeted TypeScript parse/check for `e2e/autorun-ai-terminal.spec.ts` passed with `--esModuleInterop`.
+- `git diff --check` passed.
+- Marker scan found 150 active declarations and no `.only`/skip declarations in `e2e/autorun-ai-terminal.spec.ts`.
+- Code-reviewer pass found no blocking/high issues.
+
+Remaining work:
+
+- Matrix-backed remaining after this tranche: 123.
+- Continue with small tranches for deeper Auto Run run-state variants, Auto Run worktree/stalled-document variants, live-provider retry execution safeguards, and remaining Codex terminal transcript edge states without duplicating existing app-shell coverage.
+- Run actual Playwright/E2E validation only after orchestrator approval.
+
+Thirty-first tranche:
+
+- Added 5 active matrix-backed tests to `e2e/autorun-ai-terminal.spec.ts`.
+- New active tests: 5.
+- Cumulative active tests: 155.
+- Skipped tests: 0.
+- Env-gated tests: 0.
+- Shared helper edits: `openCodexPreviewLightbox` helper added in the lane spec.
+- Live provider execution: none; no E2E validation/listing was run.
+- Campaign head before this tranche: `638a1dabd`.
+- Tranche implementation commit: `77903a032`.
+
+Covered:
+
+- Auto Run preview lightbox markdown-reference copy through the stubbed clipboard path.
+- Auto Run preview lightbox Escape close behavior.
+- Auto Run preview lightbox toolbar close behavior.
+- Auto Run preview lightbox image-click stay-open behavior.
+- Auto Run preview lightbox backdrop close behavior.
+
+Validation:
+
+- `npx prettier --check e2e/autorun-ai-terminal.spec.ts` passed.
+- `npx eslint e2e/autorun-ai-terminal.spec.ts` passed.
+- Targeted TypeScript parse/check for `e2e/autorun-ai-terminal.spec.ts` passed with `--esModuleInterop`.
+- `git diff --check` passed.
+- Marker scan found 155 active declarations and no `.only`/skip declarations in `e2e/autorun-ai-terminal.spec.ts`.
+- Code-reviewer pass found no blocking/high issues.
+
+Remaining work:
+
+- Matrix-backed remaining after this tranche: 118.
+- Continue with small tranches for deeper Auto Run run-state variants, Auto Run worktree/stalled-document variants, live-provider retry execution safeguards, and remaining Codex terminal transcript edge states without duplicating existing app-shell coverage.
+- Run actual Playwright/E2E validation only after orchestrator approval.
+
+Thirty-second tranche:
+
+- Added 5 active matrix-backed tests to `e2e/autorun-ai-terminal.spec.ts`.
+- New active tests: 5.
+- Cumulative active tests: 160.
+- Skipped tests: 0.
+- Env-gated tests: 0.
+- Shared helper edits: `createPreviewLinkLaneWorkbench` now seeds a second local preview image; `openCodexPreviewLightbox` now targets the fixed overlay containing the lightbox image.
+- Live provider execution: none; no E2E validation/listing was run.
+- Campaign head before this tranche: `5b05d26b6`.
+- Tranche implementation commit: `28fa6e254`.
+
+Covered:
+
+- Auto Run preview lightbox next-toolbar carousel navigation.
+- Auto Run preview lightbox previous-toolbar carousel navigation.
+- Auto Run preview lightbox ArrowRight carousel navigation.
+- Auto Run preview lightbox Delete-key confirmation cancel preserving the image.
+- Auto Run preview lightbox toolbar delete confirmation removing the selected image and navigating to the remaining image.
+
+Validation:
+
+- `npx prettier --check e2e/autorun-ai-terminal.spec.ts` passed.
+- `npx eslint e2e/autorun-ai-terminal.spec.ts` passed.
+- Targeted TypeScript parse/check for `e2e/autorun-ai-terminal.spec.ts` passed with `--esModuleInterop`.
+- `git diff --check` passed.
+- Marker scan found 160 active declarations and no `.only`/skip declarations in `e2e/autorun-ai-terminal.spec.ts`.
+- Code-reviewer pass found no blocking/high issues.
+
+Remaining work:
+
+- Matrix-backed remaining after this tranche: 113.
+- Continue with small tranches for deeper Auto Run run-state variants, Auto Run worktree/stalled-document variants, live-provider retry execution safeguards, and remaining Codex terminal transcript edge states without duplicating existing app-shell coverage.
+- Run actual Playwright/E2E validation only after orchestrator approval.
+
+Thirty-third tranche:
+
+- Added 5 active matrix-backed tests to `e2e/autorun-ai-terminal.spec.ts`.
+- New active tests: 5.
+- Cumulative active tests: 165.
+- Skipped tests: 0.
+- Env-gated tests: 0.
+- Shared helper edits: `stubImageClipboardWrite` and `getStubbedImageClipboardDataUrl` helpers added for native image clipboard IPC assertions.
+- Live provider execution: none; no E2E validation/listing was run.
+- Campaign head before this tranche: `aada48fab`.
+- Tranche implementation commit: `31dba1051`.
+
+Covered:
+
+- Auto Run preview lightbox copy-image toolbar action through stubbed shell clipboard IPC.
+- Auto Run preview lightbox Control-C copy-image keyboard action through stubbed shell clipboard IPC.
+- Auto Run edit-mode attached image panel collapse and re-expand behavior.
+- Auto Run edit-mode attached image thumbnail opening the lightbox.
+- Auto Run edit-mode attached image thumbnail removal with local image deletion.
+
+Validation:
+
+- `npx prettier --check e2e/autorun-ai-terminal.spec.ts` passed.
+- `npx eslint e2e/autorun-ai-terminal.spec.ts` passed.
+- Targeted TypeScript parse/check for `e2e/autorun-ai-terminal.spec.ts` passed with `--esModuleInterop`.
+- `git diff --check` passed.
+- Marker scan found 165 active declarations and no `.only`/skip declarations in `e2e/autorun-ai-terminal.spec.ts`.
+- Code-reviewer pass found no blocking/high issues.
+
+Remaining work:
+
+- Matrix-backed remaining after this tranche: 108.
+- Continue with small tranches for deeper Auto Run run-state variants, Auto Run worktree/stalled-document variants, live-provider retry execution safeguards, and remaining Codex terminal transcript edge states without duplicating existing app-shell coverage.
+- Run actual Playwright/E2E validation only after orchestrator approval.
+
+Thirty-fourth tranche:
+
+- Added 5 active matrix-backed tests to `e2e/autorun-ai-terminal.spec.ts`.
+- New active tests: 5.
+- Cumulative active tests: 170.
+- Skipped tests: 0.
+- Env-gated tests: 0.
+- Shared helper edits: `openAutoRunExpandedModal` helper added for scoped expanded-modal assertions.
+- Live provider execution: none; no E2E validation/listing was run.
+- Campaign head before this tranche: `b970fdb7a`.
+- Tranche implementation commit: `630ab1189`.
+
+Covered:
+
+- Auto Run expanded modal opening from the right-panel preview.
+- Auto Run expanded modal Collapse button returning to the right panel.
+- Auto Run expanded modal Escape close behavior.
+- Auto Run expanded modal header Save action writing document edits.
+- Auto Run expanded modal dirty-close confirmation with cancel and discard behavior.
+
+Validation:
+
+- `npx prettier --check e2e/autorun-ai-terminal.spec.ts` passed.
+- `npx eslint e2e/autorun-ai-terminal.spec.ts` passed.
+- Targeted TypeScript parse/check for `e2e/autorun-ai-terminal.spec.ts` passed with `--esModuleInterop`.
+- `git diff --check` passed.
+- Marker scan found 170 active declarations and no `.only`/skip declarations in `e2e/autorun-ai-terminal.spec.ts`.
+- Code-reviewer pass found no blocking/high issues.
+
+Remaining work:
+
+- Matrix-backed remaining after this tranche: 103.
+- Continue with small tranches for deeper Auto Run run-state variants, Auto Run worktree/stalled-document variants, live-provider retry execution safeguards, and remaining Codex terminal transcript edge states without duplicating existing app-shell coverage.
+- Run actual Playwright/E2E validation only after orchestrator approval.
+
+Thirty-fifth tranche:
+
+- Added 5 active matrix-backed tests to `e2e/autorun-ai-terminal.spec.ts`.
+- New active tests: 5.
+- Cumulative active tests: 175.
+- Skipped tests: 0.
+- Env-gated tests: 0.
+- Shared helper edits: `launchBusyLaneWorkbench` helper added for Codex busy-state header-control assertions.
+- Live provider execution: none; no E2E validation/listing was run.
+- Campaign head before this tranche: `2161e69c6`.
+- Tranche implementation commit: `6dff3936b`.
+
+Covered:
+
+- Auto Run expanded modal edit-mode toggle staying local to the modal after collapse.
+- Auto Run expanded modal header Revert behavior for dirty edits.
+- Auto Run expanded modal Run button opening batch configuration.
+- Auto Run expanded modal dirty Run auto-save before configuration open.
+- Auto Run expanded modal Run disablement while the Codex lane agent is busy.
+
+Validation:
+
+- `npx prettier --check e2e/autorun-ai-terminal.spec.ts` passed.
+- `npx eslint e2e/autorun-ai-terminal.spec.ts` passed.
+- Targeted TypeScript parse/check for `e2e/autorun-ai-terminal.spec.ts` passed with `--esModuleInterop`.
+- `git diff --check` passed.
+- Marker scan found 175 active declarations and no `.only`/skip declarations in `e2e/autorun-ai-terminal.spec.ts`.
+- Code-reviewer pass found no blocking/high issues.
+
+Remaining work:
+
+- Matrix-backed remaining after this tranche: 98.
+- Continue with small tranches for deeper Auto Run run-state variants, Auto Run worktree/stalled-document variants, live-provider retry execution safeguards, and remaining Codex terminal transcript edge states without duplicating existing app-shell coverage.
+- Run actual Playwright/E2E validation only after orchestrator approval.
+
+Thirty-sixth tranche:
+
+- Added 5 active matrix-backed tests to `e2e/autorun-ai-terminal.spec.ts`.
+- New active tests: 5.
+- Cumulative active tests: 180.
+- Skipped tests: 0.
+- Env-gated tests: 0.
+- Shared helper edits: `openAutoRunSetupDialog` and `stubSelectFolder` helpers added for setup-modal path coverage without native folder picker usage.
+- Live provider execution: none; no E2E validation/listing was run.
+- Campaign head before this tranche: `33be8b0c4`.
+- Tranche implementation commit: `1cb8cb0c0`.
+
+Covered:
+
+- Auto Run setup modal empty-path Continue disablement.
+- Auto Run setup modal typed valid-folder Continue path.
+- Auto Run setup modal Enter-to-continue path.
+- Auto Run setup modal invalid folder validation staying open.
+- Auto Run setup modal Browse folder picker stub and Continue path.
+
+Validation:
+
+- `npx prettier --check e2e/autorun-ai-terminal.spec.ts` passed.
+- `npx eslint e2e/autorun-ai-terminal.spec.ts` passed.
+- Targeted TypeScript parse/check for `e2e/autorun-ai-terminal.spec.ts` passed with `--esModuleInterop`.
+- `git diff --check` passed.
+- Marker scan found 180 active declarations and no `.only`/skip declarations in `e2e/autorun-ai-terminal.spec.ts`.
+- Code-reviewer pass found no blocking/high issues.
+
+Remaining work:
+
+- Matrix-backed remaining after this tranche: 93.
+- Continue with small tranches for deeper Auto Run run-state variants, Auto Run worktree/stalled-document variants, live-provider retry execution safeguards, and remaining Codex terminal transcript edge states without duplicating existing app-shell coverage.
+- Run actual Playwright/E2E validation only after orchestrator approval.
+
+Thirty-seventh tranche:
+
+- Added 5 active matrix-backed tests to `e2e/autorun-ai-terminal.spec.ts`.
+- New active tests: 5.
+- Cumulative active tests: 185.
+- Skipped tests: 0.
+- Env-gated tests: 0.
+- Shared helper edits: `launchContextWarningLaneWorkbench` helper and tab `usageStats` seed data added for context-warning path coverage without starting compaction.
+- Live provider execution: none; no E2E validation/listing was run.
+- Campaign head before this tranche: `d52eec70b`.
+- Tranche implementation commit: `159edfa38`.
+
+Covered:
+
+- Codex AI terminal yellow context-warning rendering.
+- Codex AI terminal context-warning dismissal with draft preservation.
+- Codex AI terminal below-threshold hidden context-warning state.
+- Codex AI terminal red context-warning compact-action visibility.
+- Codex AI terminal custom warning-threshold propagation.
+
+Validation:
+
+- `npx prettier --check e2e/autorun-ai-terminal.spec.ts` passed.
+- `npx eslint e2e/autorun-ai-terminal.spec.ts` passed.
+- Targeted TypeScript parse/check for `e2e/autorun-ai-terminal.spec.ts` passed with `--esModuleInterop`.
+- `git diff --check` passed.
+- Marker scan found 185 active declarations and no `.only`/skip declarations in `e2e/autorun-ai-terminal.spec.ts`.
+- Non-ASCII scan found 0 non-ASCII characters in `e2e/autorun-ai-terminal.spec.ts`.
+- Code-reviewer pass found no blocking/high issues.
+
+Remaining work:
+
+- Matrix-backed remaining after this tranche: 88.
+- Continue with small tranches for remaining Codex terminal transcript edge states, live-provider retry execution safeguards, deeper Auto Run run-state variants, and Auto Run worktree/stalled-document variants without duplicating existing app-shell coverage.
+- Run actual Playwright/E2E validation only after orchestrator approval.
+
+Thirty-eighth tranche:
+
+- Added 5 active matrix-backed tests to `e2e/autorun-ai-terminal.spec.ts`.
+- New active tests: 5.
+- Cumulative active tests: 190.
+- Skipped tests: 0.
+- Env-gated tests: 0.
+- Shared helper edits: `launchContextActionsLaneWorkbench` and `openCodexMainTabOverlay` helpers added for Codex AI tab context-action coverage without live provider execution.
+- Live provider execution: none; no E2E validation/listing was run.
+- Campaign head before this tranche: `9e8351943`.
+- Tranche implementation commit: `9841eebb8`.
+
+Covered:
+
+- Codex AI terminal context copy action visibility.
+- Codex AI terminal compact action visibility once enough context logs exist.
+- Codex AI terminal merge-modal opening from the tab context action.
+- Codex AI terminal send-to-agent modal opening from the tab context action.
+- Codex AI terminal copied-context transcript formatting and toast feedback.
+
+Validation:
+
+- `npx prettier --check e2e/autorun-ai-terminal.spec.ts` passed.
+- `npx eslint e2e/autorun-ai-terminal.spec.ts` passed.
+- Targeted TypeScript parse/check for `e2e/autorun-ai-terminal.spec.ts` passed with `--esModuleInterop`.
+- `git diff --check` passed.
+- Marker scan found 190 active declarations and no `.only`/skip declarations in `e2e/autorun-ai-terminal.spec.ts`.
+- Non-ASCII scan found 0 non-ASCII characters in `e2e/autorun-ai-terminal.spec.ts`.
+- Code-reviewer pass found no blocking/high issues.
+
+Remaining work:
+
+- Matrix-backed remaining after this tranche: 83.
+- Continue with small tranches for remaining Codex terminal transcript edge states, live-provider retry execution safeguards, deeper Auto Run run-state variants, and Auto Run worktree/stalled-document variants without duplicating existing app-shell coverage.
+- Run actual Playwright/E2E validation only after orchestrator approval.
+
+Thirty-ninth tranche:
+
+- Added 5 active matrix-backed tests to `e2e/autorun-ai-terminal.spec.ts`.
+- New active tests: 5.
+- Cumulative active tests: 195.
+- Skipped tests: 0.
+- Env-gated tests: 0.
+- Shared helper edits: `openQuickActions` helper added for Codex AI context command-palette coverage without live provider execution.
+- Live provider execution: none; no E2E validation/listing was run.
+- Campaign head before this tranche: `387e06155`.
+- Tranche implementation commit: `f404f9dc2`.
+
+Covered:
+
+- Codex AI terminal Quick Actions context merge/send visibility below the compact threshold.
+- Codex AI terminal Quick Actions compact command visibility once enough context logs exist.
+- Codex AI terminal Quick Actions send-to-agent filtering.
+- Codex AI terminal merge-modal opening from Quick Actions.
+- Codex AI terminal send-to-agent modal opening from Quick Actions.
+
+Validation:
+
+- `npx prettier --check e2e/autorun-ai-terminal.spec.ts` passed.
+- `npx eslint e2e/autorun-ai-terminal.spec.ts` passed.
+- Targeted TypeScript parse/check for `e2e/autorun-ai-terminal.spec.ts` passed with `--esModuleInterop`.
+- `git diff --check` passed.
+- Marker scan found 195 active declarations and no `.only`/skip declarations in `e2e/autorun-ai-terminal.spec.ts`.
+- Non-ASCII scan found 0 non-ASCII characters in `e2e/autorun-ai-terminal.spec.ts`.
+- Code-reviewer pass found no blocking/high issues.
+
+Remaining work:
+
+- Matrix-backed remaining after this tranche: 78.
+- Continue with small tranches for remaining Codex terminal transcript edge states, live-provider retry execution safeguards, deeper Auto Run run-state variants, and Auto Run worktree/stalled-document variants without duplicating existing app-shell coverage.
+- Run actual Playwright/E2E validation only after orchestrator approval.
+
+Fortieth tranche:
+
+- Added 5 active matrix-backed tests to `e2e/autorun-ai-terminal.spec.ts`.
+- New active tests: 5.
+- Cumulative active tests: 200.
+- Skipped tests: 0.
+- Env-gated tests: 0.
+- Shared helper edits: `openCodexMergeModal` and `openCodexSendToAgentModal` helpers added for modal-control coverage without merge/send execution.
+- Live provider execution: none; no E2E validation/listing was run.
+- Campaign head before this tranche: `653532cae`.
+- Tranche implementation commit: `33022e1d1`.
+- Accepted orchestrator commit: `be6f56584`.
+
+Covered:
+
+- Codex AI terminal merge modal invalid pasted target validation.
+- Codex AI terminal merge modal empty target search state.
+- Codex AI terminal merge modal cancel behavior.
+- Codex AI terminal send-to-agent modal empty target search state.
+- Codex AI terminal send-to-agent preview target selection and clean-context toggle.
+
+Validation:
+
+- `npx prettier --check e2e/autorun-ai-terminal.spec.ts` passed.
+- `npx eslint e2e/autorun-ai-terminal.spec.ts` passed.
+- Targeted TypeScript parse/check for `e2e/autorun-ai-terminal.spec.ts` passed with `--esModuleInterop`.
+- `git diff --check` passed.
+- Marker scan found 200 active declarations and no `.only`/skip declarations in `e2e/autorun-ai-terminal.spec.ts`.
+- Non-ASCII scan found 0 non-ASCII characters in `e2e/autorun-ai-terminal.spec.ts`.
+- Code-reviewer pass found no blocking/high issues.
+
+Remaining work:
+
+- Matrix-backed remaining after this tranche: 73.
+- Continue with small tranches for remaining Codex terminal transcript edge states, live-provider retry execution safeguards, deeper Auto Run run-state variants, and Auto Run worktree/stalled-document variants without duplicating existing app-shell coverage.
 - Run actual Playwright/E2E validation only after orchestrator approval.

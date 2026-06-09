@@ -1,6 +1,6 @@
 # Parallel E2E Orchestrator Status
 
-Last updated: 2026-06-09 00:13 EDT
+Last updated: 2026-06-09 00:18 EDT
 
 ## Base
 
@@ -36,7 +36,7 @@ coverage and the shell-lane tab coverage.
 | `agent-crud-provider`      | `codex/e2e-agent-crud-provider`      | `Maestro-worktrees/e2e-agent-crud-provider`      | not relaunched                                      | complete                   | 104 active scenarios accepted; 0 remain         |
 | `shell-tabs-command`       | `codex/e2e-shell-tabs-command`       | `Maestro-worktrees/e2e-shell-tabs-command`       | `maestro-e2e-shell-tabs-command-campaign-goal`      | PM2 retry cycle after 503  | 81 active scenarios accepted; 185 remain        |
 | `files-docs-history`       | `codex/e2e-files-docs-history`       | `Maestro-worktrees/e2e-files-docs-history`       | `maestro-e2e-files-docs-history-campaign-goal`      | manual fallback accepted   | 47 active scenarios accepted; 302 remain        |
-| `autorun-ai-terminal`      | `codex/e2e-autorun-ai-terminal`      | `Maestro-worktrees/e2e-autorun-ai-terminal`      | `maestro-e2e-autorun-ai-terminal-campaign-goal`     | manual fallback accepted   | 140 active scenarios accepted; 133 remain       |
+| `autorun-ai-terminal`      | `codex/e2e-autorun-ai-terminal`      | `Maestro-worktrees/e2e-autorun-ai-terminal`      | `maestro-e2e-autorun-ai-terminal-campaign-goal`     | manual fallback accepted   | 200 active scenarios accepted; 73 remain        |
 | `wizard-settings-prompts`  | `codex/e2e-wizard-settings-prompts`  | `Maestro-worktrees/e2e-wizard-settings-prompts`  | `maestro-e2e-wizard-settings-prompts-campaign-goal` | manual fallback accepted   | 232 active scenarios accepted; 140 remain       |
 | `git-groupchat-playbooks`  | `codex/e2e-git-groupchat-playbooks`  | `Maestro-worktrees/e2e-git-groupchat-playbooks`  | not relaunched                                      | complete                   | 363 active scenarios accepted; 0 remain         |
 | `stats-graph-symphony`     | `codex/e2e-stats-graph-symphony`     | `Maestro-worktrees/e2e-stats-graph-symphony`     | `maestro-e2e-stats-graph-symphony-campaign-goal`    | manual fallback accepted   | 154 active scenarios accepted; 182 remain       |
@@ -50,7 +50,7 @@ coverage and the shell-lane tab coverage.
 - `agent-crud-provider` merged through `bb4fbcce2`.
 - `files-docs-history` merged through `b409f4538`.
 - `mobile-web-bridge` merged through `33a5ace5f`.
-- `autorun-ai-terminal` merged through `f3710f189`.
+- `autorun-ai-terminal` merged through `be6f56584`.
 - `wizard-settings-prompts` merged through `c8095b6eb`.
 - `stats-graph-symphony` merged through `f4d562a33`.
 - `debug-accessibility` merged through `e1879dd27`.
@@ -303,6 +303,12 @@ coverage and the shell-lane tab coverage.
   worker branch. Static Prettier, ESLint, TypeScript, `git diff --check`,
   prohibited-pattern scans, and focused review passed. The lane is complete at
   363/363 and should not be relaunched. No E2E execution was run.
+- 2026-06-09 00:18 EDT: accepted manual `autorun-ai-terminal` through
+  `be6f56584` with 60 active Codex AI terminal context/action/modal and Auto Run
+  setup/header/preview/editor/worktree scenarios from the clean worker branch.
+  Static Prettier, ESLint, TypeScript, `git diff --check`, prohibited-pattern
+  scans, and focused review passed after removing fixed waits from the worker
+  snapshot. No E2E execution was run.
 
 ## Blockers
 
