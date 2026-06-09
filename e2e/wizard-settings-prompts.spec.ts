@@ -378,6 +378,14 @@ const activeScenarioMatrix = [
 	{ id: 'WSP-304', title: 'marks Qwen3 Coder as a disabled New Agent Wizard provider' },
 	{ id: 'WSP-305', title: 'shows New Agent Wizard Codex configuration location choices' },
 	{ id: 'WSP-306', title: 'refreshes New Agent Wizard Codex models for the selected remote' },
+	{ id: 'WSP-307', title: 'renders inline wizard empty-state guidance' },
+	{ id: 'WSP-308', title: 'shows inline wizard input controls and confidence' },
+	{ id: 'WSP-309', title: 'opens inline wizard exit confirmation from Escape' },
+	{ id: 'WSP-310', title: 'opens inline wizard exit confirmation from the wizard pill' },
+	{ id: 'WSP-311', title: 'dismisses inline wizard error display' },
+	{ id: 'WSP-312', title: 'hides inline wizard empty state once history exists' },
+	{ id: 'WSP-313', title: 'shows inline wizard busy input state while thinking' },
+	{ id: 'WSP-314', title: 'shows inline wizard generation progress before documents arrive' },
 ];
 
 const envGatedScenarioMatrix = [
@@ -10263,6 +10271,218 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 					);
 				})
 				.toBe(true);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[306].id} ${activeScenarioMatrix[306].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench({ inlineWizard: true });
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			const emptyState = launched.window.locator('[data-testid="wizard-conversation-empty"]');
+
+			await expect(emptyState).toBeVisible();
+			await expect(emptyState.getByText('Project Wizard')).toBeVisible();
+			await expect(emptyState.getByText("What You'll Get")).toBeVisible();
+			await expect(
+				emptyState.getByText('Phased markdown documents with actionable tasks')
+			).toBeVisible();
+			await expect(
+				emptyState.getByText('Auto Run-ready checkboxes the AI can execute')
+			).toBeVisible();
+			await expect(emptyState.getByText('A clear roadmap tailored to your project')).toBeVisible();
+			await expect(emptyState.getByText(/Press\s+Escape\s+at any time/)).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[307].id} ${activeScenarioMatrix[307].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench({ inlineWizard: true });
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await expect(
+				launched.window.getByPlaceholder('Tell the wizard about your project...')
+			).toBeVisible();
+			await expect(
+				launched.window.getByTitle(/Project Understanding Confidence: 37%/)
+			).toBeVisible();
+			await expect(launched.window.getByTitle('Wizard mode active - click to exit')).toBeVisible();
+			await expect(launched.window.getByTitle('Open Prompt Composer')).toBeVisible();
+			await expect(launched.window.getByTitle('Show AI thinking')).toBeVisible();
+			await expect(launched.window.getByTitle(/Switch to .*Enter to send/)).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[308].id} ${activeScenarioMatrix[308].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench({ inlineWizard: true });
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			const input = launched.window.getByPlaceholder('Tell the wizard about your project...');
+			await input.focus();
+			await input.press('Escape');
+
+			const exitDialog = launched.window.getByRole('dialog', { name: 'Confirm Exit Wizard' });
+			await expect(exitDialog.getByText('Exit Wizard?')).toBeVisible();
+			await expect(exitDialog.getByText(/Progress will be lost/)).toBeVisible();
+			await expect(exitDialog.getByRole('button', { name: 'Exit' })).toBeVisible();
+			await exitDialog.getByRole('button', { name: 'Cancel' }).click();
+
+			await expect(exitDialog).toBeHidden();
+			await expect(input).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[309].id} ${activeScenarioMatrix[309].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench({ inlineWizard: true });
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await launched.window.getByTitle('Wizard mode active - click to exit').click();
+
+			const exitDialog = launched.window.getByRole('dialog', { name: 'Confirm Exit Wizard' });
+			await expect(exitDialog.getByText('Exit Wizard?')).toBeVisible();
+			await expect(exitDialog.getByText(/Progress will be lost/)).toBeVisible();
+			await expect(exitDialog.getByRole('button', { name: 'Cancel' })).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[310].id} ${activeScenarioMatrix[310].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench({
+			inlineWizard: true,
+			inlineWizardState: {
+				error: 'Timed out waiting for provider response',
+			},
+		});
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			const errorDisplay = launched.window.locator('[data-testid="wizard-error-display"]');
+
+			await expect(errorDisplay).toBeVisible();
+			await expect(launched.window.locator('[data-testid="error-title"]')).toContainText(
+				'Response Timeout'
+			);
+			await expect(launched.window.locator('[data-testid="error-description"]')).toContainText(
+				'agent stopped producing output'
+			);
+			await expect(launched.window.locator('[data-testid="error-retry-button"]')).toBeVisible();
+			await launched.window.locator('[data-testid="error-dismiss-button"]').click();
+
+			await expect(errorDisplay).toBeHidden();
+			await expect(
+				launched.window.locator('[data-testid="wizard-conversation-empty"]')
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[311].id} ${activeScenarioMatrix[311].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench({
+			inlineWizard: true,
+			inlineWizardState: {
+				conversationHistory: [
+					{
+						id: 'wsp-single-history',
+						role: 'user',
+						content: 'Draft onboarding tasks for the current workspace.',
+						timestamp: Date.parse('2026-06-08T12:05:00Z'),
+					},
+				],
+			},
+		});
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await expect(
+				launched.window.locator('[data-testid="wizard-conversation-empty"]')
+			).toBeHidden();
+			await expect(
+				launched.window.getByText('Draft onboarding tasks for the current workspace.')
+			).toBeVisible();
+			await expect(launched.window.locator('[data-testid="wizard-scroll-anchor"]')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[312].id} ${activeScenarioMatrix[312].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench({
+			inlineWizard: true,
+			inlineWizardState: {
+				isWaiting: true,
+				showWizardThinking: true,
+				thinkingContent: 'Checking repository prompts before continuing.',
+			},
+		});
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await expect(launched.window.getByTitle('Wizard is thinking...')).toBeVisible();
+			await expect(launched.window.getByText('Thinking...')).toBeVisible();
+			await expect(
+				launched.window.getByTitle('Cannot switch mode while wizard is processing')
+			).toBeVisible();
+			await expect(
+				launched.window.getByText('Checking repository prompts before continuing.')
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[313].id} ${activeScenarioMatrix[313].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench({
+			inlineWizard: true,
+			inlineWizardState: {
+				isGeneratingDocs: true,
+				generatedDocuments: [],
+			},
+		});
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await expect(launched.window.getByText('Generating Auto Run Documents...')).toBeVisible();
+			await expect(
+				launched.window.getByText(/creating detailed task documents based on your project/)
+			).toBeVisible();
+			await expect(launched.window.getByRole('button', { name: 'Cancel' })).toBeVisible();
+			await expect(launched.window.getByText('Work Plans Drafted')).toBeHidden();
 		} finally {
 			await launched.cleanup();
 		}
