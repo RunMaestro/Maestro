@@ -1,6 +1,6 @@
 # Parallel E2E Orchestrator Status
 
-Last updated: 2026-06-08 22:44 EDT
+Last updated: 2026-06-08 23:24 EDT
 
 ## Base
 
@@ -38,7 +38,7 @@ coverage and the shell-lane tab coverage.
 | `files-docs-history`       | `codex/e2e-files-docs-history`       | `Maestro-worktrees/e2e-files-docs-history`       | `maestro-e2e-files-docs-history-campaign-goal`      | manual fallback accepted   | 42 active scenarios accepted; 307 remain        |
 | `autorun-ai-terminal`      | `codex/e2e-autorun-ai-terminal`      | `Maestro-worktrees/e2e-autorun-ai-terminal`      | `maestro-e2e-autorun-ai-terminal-campaign-goal`     | manual fallback accepted   | 140 active scenarios accepted; 133 remain       |
 | `wizard-settings-prompts`  | `codex/e2e-wizard-settings-prompts`  | `Maestro-worktrees/e2e-wizard-settings-prompts`  | `maestro-e2e-wizard-settings-prompts-campaign-goal` | manual fallback accepted   | 83 active scenarios accepted; 289 remain        |
-| `git-groupchat-playbooks`  | `codex/e2e-git-groupchat-playbooks`  | `Maestro-worktrees/e2e-git-groupchat-playbooks`  | `maestro-e2e-git-groupchat-playbooks-campaign-goal` | manual fallback accepted   | 110 active scenarios accepted; 253 remain       |
+| `git-groupchat-playbooks`  | `codex/e2e-git-groupchat-playbooks`  | `Maestro-worktrees/e2e-git-groupchat-playbooks`  | `maestro-e2e-git-groupchat-playbooks-campaign-goal` | manual fallback accepted   | 130 active scenarios accepted; 233 remain       |
 | `stats-graph-symphony`     | `codex/e2e-stats-graph-symphony`     | `Maestro-worktrees/e2e-stats-graph-symphony`     | `maestro-e2e-stats-graph-symphony-campaign-goal`    | manual fallback accepted   | 126 active scenarios accepted; 210 remain       |
 | `debug-accessibility`      | `codex/e2e-debug-accessibility`      | `Maestro-worktrees/e2e-debug-accessibility`      | not relaunched                                      | complete                   | 192 active scenarios accepted; 0 remain         |
 | `mobile-web-bridge`        | `codex/e2e-mobile-web-bridge`        | `Maestro-worktrees/e2e-mobile-web-bridge`        | not relaunched                                      | complete after blocker fix | 102 active scenarios accepted; 0 remain         |
@@ -55,7 +55,7 @@ coverage and the shell-lane tab coverage.
 - `stats-graph-symphony` merged through `df15bd382`.
 - `debug-accessibility` merged through `e1879dd27`.
 - `fixtures-sharding-review` merged through `392c4527`.
-- `git-groupchat-playbooks` merged through `127bc7189`.
+- `git-groupchat-playbooks` merged through `6c620c11d`.
 
 ## Launch Log
 
@@ -257,6 +257,11 @@ coverage and the shell-lane tab coverage.
   destructive-action scenarios. Static Prettier, ESLint, TypeScript,
   `git diff --check`, inventory scans, and focused review passed. No E2E execution
   was run. The lane is complete at 192/192 and should not be relaunched.
+- 2026-06-08 23:24 EDT: accepted manual `git-groupchat-playbooks` fallback through
+  `6c620c11d` with 20 active Create Pull Request, Git Diff, Gist, Group Chat,
+  Playbook Exchange, Spec Kit, and OpenSpec scenarios. Static Prettier, ESLint,
+  TypeScript, `git diff --check`, inventory scans, and focused review passed. No
+  E2E execution was run.
 
 ## Blockers
 
@@ -273,11 +278,11 @@ coverage and the shell-lane tab coverage.
   `files-docs-history`, twentieth `stats-graph-symphony`, twenty-first
   `git-groupchat-playbooks`, twenty-second `wizard-settings-prompts`,
   twenty-third `files-docs-history`, twenty-fourth through twenty-seventh
-  `wizard-settings-prompts`, twenty-eighth `git-groupchat-playbooks`, and
+  `wizard-settings-prompts`, twenty-eighth `git-groupchat-playbooks`,
   twenty-ninth `mobile-web-bridge`, thirtieth `stats-graph-symphony`, thirty-first
   `mobile-web-bridge` quota-completion, thirty-second `mobile-web-bridge`
-  quota acceptance fix, and thirty-third `debug-accessibility` final quota
-  fallbacks are accepted for selected
+  quota acceptance fix, thirty-third `debug-accessibility` final quota, and
+  thirty-fourth `git-groupchat-playbooks` fallbacks are accepted for selected
   high-remaining lanes. Remaining work should
   continue in smaller batches, with each run committing one coherent tranche and
   recording remaining work instead of trying to consume a full lane quota in one
