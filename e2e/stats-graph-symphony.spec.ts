@@ -472,6 +472,26 @@ const activeScenarioMatrix = [
 	{ id: 'SGS-A354', title: 'shows leaderboard manual token recovery field' },
 	{ id: 'SGS-A355', title: 'shows leaderboard pull-down after manual token recovery' },
 	{ id: 'SGS-A356', title: 'keeps Symphony repository back navigation visible' },
+	{
+		id: 'SGS-A357',
+		title: 'keeps Usage Dashboard database size visible after recovery range change',
+	},
+	{
+		id: 'SGS-A358',
+		title: 'keeps Document Graph help scoped after recovery refresh',
+	},
+	{
+		id: 'SGS-A359',
+		title: 'keeps Symphony stats achievements visible after recovery tab switch',
+	},
+	{
+		id: 'SGS-A360',
+		title: 'keeps About achievement share actions visible in recovery tranche',
+	},
+	{
+		id: 'SGS-A361',
+		title: 'keeps leaderboard pull-down visible after recovery manual token flow',
+	},
 ] as const;
 
 const skippedScenarioMatrix = [
@@ -5998,6 +6018,61 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 					const symphonyDialog = await openSymphonyFromQuickActions(window);
 					await symphonyDialog.getByRole('button', { name: /Maestro Core/ }).click();
 					await expect(symphonyDialog.getByTitle('Back (Esc)')).toBeVisible();
+					break;
+				}
+			}
+		});
+	}
+
+	const recoveryTrancheMatrix = [
+		{ matrixIndex: 336, action: 'usage-db-size' },
+		{ matrixIndex: 337, action: 'graph-help-after-refresh' },
+		{ matrixIndex: 338, action: 'symphony-stats-achievements' },
+		{ matrixIndex: 339, action: 'achievement-share-actions' },
+		{ matrixIndex: 340, action: 'leaderboard-manual-token-pulldown' },
+	] as const;
+
+	for (const scenario of recoveryTrancheMatrix) {
+		test(`${activeScenarioMatrix[scenario.matrixIndex].id} ${activeScenarioMatrix[scenario.matrixIndex].title}`, async () => {
+			switch (scenario.action) {
+				case 'usage-db-size': {
+					const usageDashboard = await openUsageDashboard(window);
+					await usageDashboard.locator('select').first().selectOption('month');
+					await expect(usageDashboard.getByTestId('database-size-indicator')).toBeVisible();
+					break;
+				}
+				case 'graph-help-after-refresh': {
+					const graphDialog = await openDocumentGraphFromPreview(window);
+					await graphDialog.getByTitle('Refresh graph').click();
+					await graphDialog.getByTitle('Open help panel').click();
+					const helpPanel = graphDialog.getByRole('region', { name: 'Help panel' });
+					await expect(helpPanel).toBeVisible({ timeout: 15000 });
+					await expect(helpPanel.getByText('Node Types')).toBeVisible();
+					break;
+				}
+				case 'symphony-stats-achievements': {
+					const symphonyDialog = await openSymphonyFromQuickActions(window);
+					await symphonyDialog.getByRole('button', { name: 'Stats' }).click();
+					await expect(symphonyDialog.getByText('Tokens Donated')).toBeVisible();
+					await expect(symphonyDialog.getByText('Achievements')).toBeVisible();
+					break;
+				}
+				case 'achievement-share-actions': {
+					const aboutDialog = await openAboutFromQuickActions(window);
+					await aboutDialog.getByTitle('Share achievements').click();
+					await expect(
+						aboutDialog.getByRole('button', { name: 'Copy to Clipboard' })
+					).toBeVisible();
+					break;
+				}
+				case 'leaderboard-manual-token-pulldown': {
+					const leaderboardDialog = await openLeaderboardWithManualAuthToken(
+						window,
+						electronApp,
+						'Recovery Pull Down',
+						'recovery-pulldown@example.com'
+					);
+					await expect(leaderboardDialog.getByRole('button', { name: 'Pull Down' })).toBeVisible();
 					break;
 				}
 			}
