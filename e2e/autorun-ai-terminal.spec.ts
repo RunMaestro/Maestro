@@ -3404,6 +3404,86 @@ Externally refreshed Codex Auto Run sentinel.
 		}
 	});
 
+	test('previews a valid pasted Codex merge tab target without merging', async () => {
+		const launched = await launchContextActionsLaneWorkbench();
+		try {
+			const dialog = await openCodexMergeModal(launched.window);
+			await dialog.getByRole('tab', { name: 'Paste ID' }).click();
+			await dialog.getByPlaceholder('Paste session or tab ID...').fill(launched.companionTabId);
+
+			await expect(dialog.getByText('Queued Companion Codex')).toBeVisible();
+			await expect(dialog.getByText('Target: Main')).toBeVisible();
+			await expect(dialog.getByText('Estimated merged size:')).toBeVisible();
+			await expect(dialog.getByRole('button', { name: 'Merge Into' })).toBeEnabled();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('selects a Codex merge target from Open Tabs search without merging', async () => {
+		const launched = await launchContextActionsLaneWorkbench();
+		try {
+			const dialog = await openCodexMergeModal(launched.window);
+			await dialog
+				.getByPlaceholder('Search open tabs across all agents...')
+				.fill('Queued Companion');
+			await dialog.getByRole('option').filter({ hasText: 'Main' }).first().click();
+
+			await expect(dialog.getByText('Target: Main')).toBeVisible();
+			await expect(dialog.getByText('After cleaning:')).toBeVisible();
+			await expect(dialog.getByRole('button', { name: 'Merge Into' })).toBeEnabled();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('updates Codex merge preview when clean context is toggled off', async () => {
+		const launched = await launchContextActionsLaneWorkbench();
+		try {
+			const dialog = await openCodexMergeModal(launched.window);
+			await dialog
+				.getByPlaceholder('Search open tabs across all agents...')
+				.fill('Queued Companion');
+			await dialog.getByRole('option').filter({ hasText: 'Main' }).first().click();
+
+			await expect(dialog.getByText('After cleaning:')).toBeVisible();
+			await dialog.getByLabel('Clean context (remove duplicates, reduce size)').uncheck();
+			await expect(dialog.getByText('After cleaning:')).toBeHidden();
+			await expect(dialog.getByText('Estimated merged size:')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('selects a Codex send-to-agent target with the number shortcut', async () => {
+		const launched = await launchContextActionsLaneWorkbench();
+		try {
+			const dialog = await openCodexSendToAgentModal(launched.window);
+			await dialog.getByPlaceholder('Search sessions...').fill('Queued Companion');
+			await dialog.getByPlaceholder('Search sessions...').press('1');
+
+			await expect(dialog.getByText('Target: Queued Companion Codex')).toBeVisible();
+			await expect(dialog.getByRole('button', { name: 'Send Context' })).toBeEnabled();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('cancels the Codex send-to-agent modal without sending', async () => {
+		const launched = await launchContextActionsLaneWorkbench();
+		try {
+			const dialog = await openCodexSendToAgentModal(launched.window);
+			await dialog.getByRole('button', { name: 'Cancel' }).click();
+
+			await expect(dialog).toBeHidden();
+			await expect(
+				launched.window.getByText('Codex lane seeded response is visible.')
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
 	test('shows recoverable active Codex lane error banner controls', async () => {
 		const launched = await launchActiveErrorLaneWorkbench();
 		try {
