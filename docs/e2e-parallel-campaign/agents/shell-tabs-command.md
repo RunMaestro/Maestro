@@ -62,7 +62,7 @@ Commits:
 - `2d9975b17` - `test(e2e-shell-tabs-command): add terminal output controls`
 - `ea049b708` - `test(e2e-shell-tabs-command): add terminal search ssh tranche`
 - `36f60d251` - `test(e2e-shell-tabs-command): tighten terminal search clear assertion`
-- `87ff08a42` - `test(e2e-shell-tabs-command): add tab switcher overlay coverage`
+- `d9b81d185` - `test(e2e-shell-tabs-command): add tab switcher overlay coverage`
 
 Validation performed:
 
