@@ -2,9 +2,9 @@
 
 Source of truth: `docs/e2e-coverage-campaign.md`.
 
-Current active tests: 1256
+Current active tests: 1281
 Target active tests: 3,025
-Remaining matrix-backed active scenarios: 1,769
+Remaining matrix-backed active scenarios: 1,744
 
 ## Matrix
 
@@ -23,10 +23,10 @@ Remaining matrix-backed active scenarios: 1,769
 | Settings                                                       | `wizard-settings-prompts` |            111 |           190 |        79 |
 | Git, worktrees, PR, diff/log, Gist                             | `git-groupchat-playbooks` |             39 |           160 |       121 |
 | Group chat                                                     | `git-groupchat-playbooks` |             55 |           140 |        85 |
-| Usage dashboard and stats                                      | `stats-graph-symphony`    |             23 |           125 |       102 |
-| Document graph                                                 | `stats-graph-symphony`    |             28 |           130 |       102 |
+| Usage dashboard and stats                                      | `stats-graph-symphony`    |             32 |           125 |        93 |
+| Document graph                                                 | `stats-graph-symphony`    |             36 |           130 |        94 |
 | Playbooks, marketplace, Spec Kit, OpenSpec                     | `git-groupchat-playbooks` |             48 |           145 |        97 |
-| Symphony, leaderboard, achievements                            | `stats-graph-symphony`    |             15 |           120 |       105 |
+| Symphony, leaderboard, achievements                            | `stats-graph-symphony`    |             23 |           120 |        97 |
 | Director notes and prompt composer                             | `wizard-settings-prompts` |             30 |            90 |        60 |
 | Debug/about/update/app info/agent error modals                 | `debug-accessibility`     |             85 |            85 |         0 |
 | Mobile/web bridge                                              | `mobile-web-bridge`       |            128 |           190 |        62 |
@@ -42,7 +42,7 @@ Remaining matrix-backed active scenarios: 1,769
 | `autorun-ai-terminal`      |                     263 |                        10 |                                    0 | `cd804bebf`          |
 | `wizard-settings-prompts`  |                     289 |                        83 |                                    1 | `2d069a57a`          |
 | `git-groupchat-playbooks`  |                     303 |                        60 |                                    7 | `e8ac2eddf`          |
-| `stats-graph-symphony`     |                     309 |                        27 |                                    6 | `bb9a6f68b`          |
+| `stats-graph-symphony`     |                     284 |                        52 |                                    6 | `057ced8e3`          |
 | `debug-accessibility`      |                      51 |                       141 |                                    0 | `cd485eda6`          |
 | `mobile-web-bridge`        |                      62 |                        40 |                                    0 | `958f07ff4`          |
 | `fixtures-sharding-review` |                       0 |                         0 |                                    0 | `392c4527`           |
@@ -146,3 +146,4 @@ Remaining matrix-backed active scenarios: 1,769
 - 2026-06-08: accepted manual `files-docs-history` fallback through `18a4c3b29`; authored 5 additional active History Escape close, File Explorer Copy Path clipboard, file preview no-match recovery, and large-file full-load search scenarios. Focused static review found no critical or high issues. No E2E execution was run.
 - 2026-06-08: accepted manual `git-groupchat-playbooks` fallback through `e8ac2eddf`; authored 10 additional active Gist publish/republish, Git Log Escape-close, Playbook Exchange import-failure, Spec Kit/OpenSpec save/reset, and source-link shell-routing scenarios. Focused static review found no critical or high issues. No E2E execution was run.
 - 2026-06-08: accepted manual `mobile-web-bridge` fallback through `958f07ff4`; authored 24 additional active live bridge API, lifecycle metadata, REST API metadata, and static PWA route metadata scenarios. Focused static review found no critical or high issues; one lane-doc range note was corrected before commit. No E2E execution was run.
+- 2026-06-08: accepted manual `stats-graph-symphony` fallback through `057ced8e3`; authored 25 additional active Usage Dashboard export/preflight, Document Graph search/layout/help, and Symphony active/history/navigation scenarios. Focused static review found no critical or high issues. No E2E execution was run.

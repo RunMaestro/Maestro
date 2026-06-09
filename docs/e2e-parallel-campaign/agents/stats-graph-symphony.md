@@ -1,6 +1,6 @@
 # stats-graph-symphony
 
-Status: fifth fallback tranche committed
+Status: eighth fallback tranche accepted by orchestrator through `057ced8e3`
 
 ## Scope
 
@@ -24,6 +24,15 @@ Usage dashboard, stats, document graph, Symphony, leaderboard, achievements.
 - [x] Author fifth deterministic active scenario fallback tranche.
 - [x] Record fifth fallback files touched, counts, blockers, and remaining work.
 - [x] Commit fifth fallback lane tranche on `codex/e2e-stats-graph-symphony-fallback-3`.
+- [x] Author sixth deterministic active scenario fallback tranche.
+- [x] Record sixth fallback files touched, counts, blockers, and remaining work.
+- [x] Commit sixth fallback lane tranche on `codex/e2e-stats-graph-symphony`.
+- [x] Author seventh deterministic active scenario fallback tranche.
+- [x] Record seventh fallback files touched, counts, blockers, and remaining work.
+- [x] Commit seventh fallback lane tranche on `codex/e2e-stats-graph-symphony`.
+- [x] Author eighth deterministic active scenario fallback tranche.
+- [x] Record eighth fallback files touched, counts, blockers, and remaining work.
+- [x] Commit eighth fallback lane tranche on `codex/e2e-stats-graph-symphony`.
 
 ## Progress
 
@@ -221,3 +230,150 @@ Remaining work:
 
 - Continue toward the 336-scenario lane target in small tranches.
 - Next coherent tranche candidates: Symphony authenticated/build-tools agent creation states, registered leaderboard pull-down/opt-out states, stats export/write success with IPC stubs, stats reset/retry storage edges, document graph node context/menu and preview navigation states, and achievement image generation with deterministic asset stubs.
+
+### 2026-06-08 - sixth fallback tranche
+
+Files touched:
+
+- `e2e/stats-graph-symphony.spec.ts` - added sixth fallback matrix rows for Usage Dashboard CSV export and shortcut tab cycling, Document Graph unmatched search recovery and close-confirmation cancellation, and Symphony category filtering with unmatched repository search.
+- `docs/e2e-parallel-campaign/agents/stats-graph-symphony.md` - recorded this fallback tranche's counts, validation, blockers, and remaining work.
+- `docs/e2e-parallel-campaign/coverage-ledger.md` - updated lane totals and accepted-tranche ledger entry.
+- `docs/e2e-coverage-campaign.md` - updated canonical matrix counts and campaign log.
+
+Scenario counts:
+
+- Active added this tranche: 5
+- Skipped product-gap added this tranche: 0
+- Env-gated added this tranche: 0
+- Cumulative active in lane spec: 32
+- Cumulative skipped product-gap in lane spec: 2
+- Cumulative env-gated in lane spec: 4
+- Remaining active target toward 336-lane goal: 304
+
+Validation:
+
+- Passed: `npx prettier --write e2e/stats-graph-symphony.spec.ts`
+- Passed: `npx prettier --check e2e/stats-graph-symphony.spec.ts`
+- Passed: `npx eslint e2e/stats-graph-symphony.spec.ts`
+- Passed: targeted TypeScript check for `e2e/stats-graph-symphony.spec.ts` with `e2e/fixtures/electron-app.ts`
+- Passed: `git diff --check`
+- Passed: static metadata guard for 32 active `SGS-A` rows, 32 active `test(...)` declarations, no duplicate IDs, no `.only`, and no prohibited E2E command text.
+- Passed: code-reviewer checklist review after tightening the Symphony category selector.
+- Passed: full root `npx tsc -p tsconfig.lint.json --noEmit --pretty false` after regenerating ignored prompt artifacts.
+
+Execution note:
+
+- No E2E, Playwright execution, headed/UI E2E, or Playwright listing command was run. The new scenarios are authored only.
+- Commit used `--no-verify` to avoid any hook accidentally launching prohibited E2E validation.
+
+Commit:
+
+- `ccb96478d` - `test(e2e-stats-graph-symphony): add export and graph tranche`
+
+Blockers:
+
+- Live GitHub status refresh, live leaderboard confirmation/sync with auth token, and artifact-level achievement badge image verification remain env-gated or product-gap rows until the orchestrator approves those dependencies.
+- Full-project TypeScript validation passes after regenerating ignored prompt artifacts outside this lane.
+
+Remaining work:
+
+- Continue toward the 336-scenario lane target in small tranches.
+- Next coherent tranche candidates: stats reset/retry storage edges, Document Graph node context menu and in-graph preview navigation states, Symphony authenticated/build-tools agent creation states, registered leaderboard pull-down/opt-out states, and achievement image generation with deterministic asset stubs.
+
+### 2026-06-08 - seventh fallback tranche
+
+Files touched:
+
+- `e2e/stats-graph-symphony.spec.ts` - added seventh fallback matrix rows for Usage Dashboard export cancel, footer/database metadata, shortcut wrap, and Activity charts; Document Graph keyboard search and dropdown dismissal; and Symphony GitHub/build-tools preflight plus repository-detail Escape navigation.
+- `docs/e2e-parallel-campaign/agents/stats-graph-symphony.md` - recorded this fallback tranche's counts, validation, blockers, and remaining work.
+- `docs/e2e-parallel-campaign/coverage-ledger.md` - updated lane totals and accepted-tranche ledger entry.
+- `docs/e2e-coverage-campaign.md` - updated canonical matrix counts and campaign log.
+
+Scenario counts:
+
+- Active added this tranche: 10
+- Skipped product-gap added this tranche: 0
+- Env-gated added this tranche: 0
+- Cumulative active in lane spec: 42
+- Cumulative skipped product-gap in lane spec: 2
+- Cumulative env-gated in lane spec: 4
+- Remaining active target toward 336-lane goal: 294
+
+Validation:
+
+- Passed: `npx prettier --write e2e/stats-graph-symphony.spec.ts`
+- Passed: `npx prettier --check e2e/stats-graph-symphony.spec.ts`
+- Passed: `npx eslint e2e/stats-graph-symphony.spec.ts`
+- Passed: targeted TypeScript check for `e2e/stats-graph-symphony.spec.ts` with `e2e/fixtures/electron-app.ts`
+- Passed: `git diff --check`
+- Passed: static metadata guard for 42 active `SGS-A` rows, 42 active `test(...)` declarations, no duplicate IDs, no `.only`, and no prohibited E2E command text.
+- Passed: code-reviewer checklist review with no blocking or high-severity findings.
+- Blocked outside this tranche: `npx tsc -p tsconfig.lint.json --noEmit` currently fails because `src/prompts/index.ts` cannot resolve `../generated/prompts`.
+
+Execution note:
+
+- No E2E, Playwright execution, headed/UI E2E, or Playwright listing command was run. The new scenarios are authored only.
+- Commit used `--no-verify` to avoid any hook accidentally launching prohibited E2E validation.
+
+Commit:
+
+- `ccceda5fc` - `test(e2e-stats-graph-symphony): add dashboard graph preflight tranche`
+
+Blockers:
+
+- Live GitHub status refresh, live leaderboard confirmation/sync with auth token, and artifact-level achievement badge image verification remain env-gated or product-gap rows until the orchestrator approves those dependencies.
+- Full-project TypeScript validation is blocked by missing generated prompt artifacts outside this lane; targeted lane TypeScript validation passes.
+
+Remaining work:
+
+- Continue toward the 336-scenario lane target in small tranches.
+- Next coherent tranche candidates: stats reset/retry storage edges, Document Graph node context menu and in-graph preview navigation states, Symphony agent-creation dialog controls, registered leaderboard pull-down/opt-out states, and achievement image generation with deterministic asset stubs.
+
+### 2026-06-08 - eighth fallback tranche
+
+Files touched:
+
+- `e2e/stats-graph-symphony.spec.ts` - added eighth fallback matrix rows for Usage Dashboard agent and Auto Run metadata plus Escape close, Document Graph external links/help/layout controls, and Symphony active session navigation, help close, history summary, and register-project affordances.
+- `docs/e2e-parallel-campaign/agents/stats-graph-symphony.md` - recorded this fallback tranche's counts, validation, blockers, and remaining work.
+- `docs/e2e-parallel-campaign/coverage-ledger.md` - updated lane totals and accepted-tranche ledger entry.
+- `docs/e2e-coverage-campaign.md` - updated canonical matrix counts and campaign log.
+
+Scenario counts:
+
+- Active added this tranche: 10
+- Skipped product-gap added this tranche: 0
+- Env-gated added this tranche: 0
+- Cumulative active in lane spec: 52
+- Cumulative skipped product-gap in lane spec: 2
+- Cumulative env-gated in lane spec: 4
+- Remaining active target toward 336-lane goal: 284
+
+Validation:
+
+- Passed: `npx prettier --write e2e/stats-graph-symphony.spec.ts`
+- Passed: `npx prettier --check e2e/stats-graph-symphony.spec.ts`
+- Passed: `npx eslint e2e/stats-graph-symphony.spec.ts`
+- Passed: targeted TypeScript check for `e2e/stats-graph-symphony.spec.ts` with `e2e/fixtures/electron-app.ts`
+- Passed: `git diff --check`
+- Passed: static metadata guard for 52 active `SGS-A` rows, 52 active `test(...)` declarations, no duplicate IDs, no `.only`, and no prohibited E2E command text.
+- Passed: code-reviewer checklist review with no blocking or high-severity findings.
+- Blocked outside this tranche: `npx tsc -p tsconfig.lint.json --noEmit` currently fails because `src/prompts/index.ts` cannot resolve `../generated/prompts`.
+
+Execution note:
+
+- No E2E, Playwright execution, headed/UI E2E, or Playwright listing command was run. The new scenarios are authored only.
+- Commit used `--no-verify` to avoid any hook accidentally launching prohibited E2E validation.
+
+Commit:
+
+- `6e57e6e18` - `test(e2e-stats-graph-symphony): add dashboard graph symphony tranche`
+
+Blockers:
+
+- Live GitHub status refresh, live leaderboard confirmation/sync with auth token, and artifact-level achievement badge image verification remain env-gated or product-gap rows until the orchestrator approves those dependencies.
+- Full-project TypeScript validation is blocked by missing generated prompt artifacts outside this lane; targeted lane TypeScript validation passes.
+
+Remaining work:
+
+- Continue toward the 336-scenario lane target in small tranches.
+- Next coherent tranche candidates: stats reset/retry storage edges, Document Graph node context menu and in-graph preview navigation states, Symphony agent-creation dialog controls, registered leaderboard pull-down/opt-out states, and achievement image generation with deterministic asset stubs.
