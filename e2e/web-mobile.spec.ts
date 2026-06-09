@@ -334,6 +334,7 @@ function createWebMobileWorkbench() {
 	return {
 		homeDir,
 		projectDir,
+		projectDirTwo,
 		primarySessionId,
 		secondarySessionId,
 		busySessionId,
