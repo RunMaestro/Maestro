@@ -185,6 +185,166 @@ const activeScenarioMatrix = [
 	{ id: 'SGS-A172', title: 'copies searched Document Graph external domain URL' },
 	{ id: 'SGS-A173', title: 'opens searched Document Graph external domain URL' },
 	{ id: 'SGS-A174', title: 'clears Document Graph external domain search filter' },
+	{
+		id: 'SGS-A175',
+		title: 'keeps Usage Dashboard all-time summary cards visible after seeded load',
+	},
+	{
+		id: 'SGS-A176',
+		title: 'keeps Usage Dashboard day-range summary cards visible after selection',
+	},
+	{
+		id: 'SGS-A177',
+		title: 'keeps Usage Dashboard week-range summary cards visible after selection',
+	},
+	{
+		id: 'SGS-A178',
+		title: 'keeps Usage Dashboard month-range summary cards visible after selection',
+	},
+	{
+		id: 'SGS-A179',
+		title: 'keeps Usage Dashboard quarter-range summary cards visible after selection',
+	},
+	{
+		id: 'SGS-A180',
+		title: 'keeps Usage Dashboard year-range summary cards visible after selection',
+	},
+	{ id: 'SGS-A181', title: 'keeps Usage Dashboard export control enabled for all-time data' },
+	{
+		id: 'SGS-A182',
+		title: 'keeps Usage Dashboard export control enabled after day range selection',
+	},
+	{
+		id: 'SGS-A183',
+		title: 'keeps Usage Dashboard export control enabled after month range selection',
+	},
+	{
+		id: 'SGS-A184',
+		title: 'keeps Usage Dashboard export control enabled after quarter range selection',
+	},
+	{ id: 'SGS-A185', title: 'shows Usage Dashboard Overview tab as a stable navigation target' },
+	{ id: 'SGS-A186', title: 'shows Usage Dashboard Agents tab as a stable navigation target' },
+	{ id: 'SGS-A187', title: 'shows Usage Dashboard Activity tab as a stable navigation target' },
+	{ id: 'SGS-A188', title: 'shows Usage Dashboard Auto Run tab as a stable navigation target' },
+	{ id: 'SGS-A189', title: 'renders Usage Dashboard agent session stats after seeded stats load' },
+	{
+		id: 'SGS-A190',
+		title: 'renders Usage Dashboard agent efficiency chart after seeded stats load',
+	},
+	{ id: 'SGS-A191', title: 'renders Usage Dashboard activity heatmap after seeded stats load' },
+	{ id: 'SGS-A192', title: 'renders Usage Dashboard weekday comparison after seeded stats load' },
+	{
+		id: 'SGS-A193',
+		title: 'renders Usage Dashboard Auto Run summary region after seeded stats load',
+	},
+	{
+		id: 'SGS-A194',
+		title: 'renders Usage Dashboard Auto Run metrics region after seeded stats load',
+	},
+	{ id: 'SGS-A195', title: 'renders Usage Dashboard Auto Run task chart after seeded stats load' },
+	{
+		id: 'SGS-A196',
+		title: 'renders Usage Dashboard Auto Run metric cards after seeded stats load',
+	},
+	{
+		id: 'SGS-A197',
+		title: 'preserves Usage Dashboard Overview content after cycling through Agents',
+	},
+	{
+		id: 'SGS-A198',
+		title: 'preserves Usage Dashboard Overview content after cycling through Activity',
+	},
+	{
+		id: 'SGS-A199',
+		title: 'preserves Usage Dashboard Overview content after cycling through Auto Run',
+	},
+	{ id: 'SGS-A200', title: 'keeps Usage Dashboard summary visible after rapid range changes' },
+	{
+		id: 'SGS-A201',
+		title: 'keeps Usage Dashboard Agents content visible after rapid range changes',
+	},
+	{
+		id: 'SGS-A202',
+		title: 'keeps Usage Dashboard Activity content visible after rapid range changes',
+	},
+	{
+		id: 'SGS-A203',
+		title: 'keeps Usage Dashboard Auto Run content visible after rapid range changes',
+	},
+	{
+		id: 'SGS-A204',
+		title: 'shows Usage Dashboard Total Queries summary after additional seeded query',
+	},
+	{ id: 'SGS-A205', title: 'shows Usage Dashboard new-data indicator after additional user query' },
+	{ id: 'SGS-A206', title: 'shows Usage Dashboard new-data indicator after additional auto query' },
+	{ id: 'SGS-A207', title: 'keeps Usage Dashboard summary cards stable after live local query' },
+	{ id: 'SGS-A208', title: 'keeps Usage Dashboard Agents tab stable after live local query' },
+	{ id: 'SGS-A209', title: 'keeps Usage Dashboard Activity tab stable after live local query' },
+	{ id: 'SGS-A210', title: 'keeps Usage Dashboard Auto Run tab stable after live local query' },
+	{ id: 'SGS-A211', title: 'shows Usage Dashboard source labels for seeded user and auto queries' },
+	{ id: 'SGS-A212', title: 'shows Usage Dashboard location labels for seeded local activity' },
+	{ id: 'SGS-A213', title: 'shows Usage Dashboard provider labels for seeded Codex activity' },
+	{
+		id: 'SGS-A214',
+		title: 'shows Usage Dashboard database-size footer beside selected range controls',
+	},
+	{ id: 'SGS-A215', title: 'keeps Usage Dashboard first range selector keyboard-addressable' },
+	{ id: 'SGS-A216', title: 'keeps Usage Dashboard CSV export button keyboard-addressable' },
+	{ id: 'SGS-A217', title: 'keeps Usage Dashboard close button available from the header' },
+	{ id: 'SGS-A218', title: 'keeps Usage Dashboard visible after a canceled CSV save dialog' },
+	{
+		id: 'SGS-A219',
+		title: 'does not write Usage Dashboard CSV when save dialog is canceled again',
+	},
+	{ id: 'SGS-A220', title: 'records Usage Dashboard CSV export request for week range' },
+	{ id: 'SGS-A221', title: 'records Usage Dashboard CSV export request for month range' },
+	{ id: 'SGS-A222', title: 'records Usage Dashboard CSV export request for year range' },
+	{ id: 'SGS-A223', title: 'keeps Usage Dashboard export button enabled after completed write' },
+	{ id: 'SGS-A224', title: 'reuses Usage Dashboard selected all-time range for export payload' },
+	{ id: 'SGS-A225', title: 'shows Usage Dashboard Auto Run task list region with seeded task' },
+	{ id: 'SGS-A226', title: 'shows Usage Dashboard Auto Run chart figure with seeded task totals' },
+	{ id: 'SGS-A227', title: 'shows Usage Dashboard Auto Run metrics after returning from Overview' },
+	{ id: 'SGS-A228', title: 'shows Usage Dashboard Activity tab after returning from Auto Run' },
+	{ id: 'SGS-A229', title: 'shows Usage Dashboard Agents tab after returning from Activity' },
+	{ id: 'SGS-A230', title: 'shows Usage Dashboard Overview tab after returning from Agents' },
+	{ id: 'SGS-A231', title: 'keeps Usage Dashboard tablist controls visible across range changes' },
+	{
+		id: 'SGS-A232',
+		title: 'keeps Usage Dashboard Auto Run task chart visible across range changes',
+	},
+	{ id: 'SGS-A233', title: 'keeps Usage Dashboard activity heatmap visible across range changes' },
+	{
+		id: 'SGS-A234',
+		title: 'keeps Usage Dashboard agent efficiency chart visible across range changes',
+	},
+	{
+		id: 'SGS-A235',
+		title: 'shows Usage Dashboard summary cards after selecting each common range',
+	},
+	{
+		id: 'SGS-A236',
+		title: 'keeps Usage Dashboard footer visible after selecting each common range',
+	},
+	{
+		id: 'SGS-A237',
+		title: 'keeps Usage Dashboard Auto Run tab content visible after all-time reset',
+	},
+	{
+		id: 'SGS-A238',
+		title: 'keeps Usage Dashboard Activity tab content visible after all-time reset',
+	},
+	{
+		id: 'SGS-A239',
+		title: 'keeps Usage Dashboard Agents tab content visible after all-time reset',
+	},
+	{
+		id: 'SGS-A240',
+		title: 'shows Usage Dashboard data controls after reopening from Escape close',
+	},
+	{ id: 'SGS-A241', title: 'shows Usage Dashboard summary after reopening from header close' },
+	{ id: 'SGS-A242', title: 'shows Usage Dashboard Agents chart after reopening the modal' },
+	{ id: 'SGS-A243', title: 'shows Usage Dashboard Activity chart after reopening the modal' },
+	{ id: 'SGS-A244', title: 'shows Usage Dashboard Auto Run chart after reopening the modal' },
 ] as const;
 
 const skippedScenarioMatrix = [
@@ -4320,6 +4480,713 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 
 		await expect(searchInput).toHaveValue('');
 		await expect(graphDialog.getByText(/2 documents, 2 external domains/)).toBeVisible();
+		const usageDashboard = await openUsageDashboard(window);
+
+		await usageDashboard.locator('select').first().selectOption('all');
+		await expect(usageDashboard.getByTestId('summary-cards')).toBeVisible();
+		await expect(usageDashboard.getByText('Total Queries')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[175].id} ${activeScenarioMatrix[175].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await usageDashboard.getByRole('tab', { name: 'Agents' }).click();
+		await expect(usageDashboard.getByTestId('section-session-stats')).toBeVisible();
+		await expect(usageDashboard.getByTestId('agent-efficiency-chart')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[176].id} ${activeScenarioMatrix[176].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await usageDashboard.getByRole('tab', { name: 'Activity' }).click();
+		await expect(usageDashboard.getByTestId('section-activity-heatmap')).toBeVisible();
+		await expect(usageDashboard.getByTestId('section-weekday-comparison')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[177].id} ${activeScenarioMatrix[177].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await usageDashboard.getByRole('tab', { name: 'Auto Run' }).click();
+		await expect(usageDashboard.getByTestId('autorun-stats')).toBeVisible();
+		await expect(usageDashboard.getByTestId('autorun-metrics')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[178].id} ${activeScenarioMatrix[178].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await usageDashboard.getByRole('tab', { name: 'Auto Run' }).click();
+		await expect(usageDashboard.getByTestId('autorun-tasks-chart')).toBeVisible();
+		await expect(usageDashboard.getByTestId('autorun-metric-card').first()).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[179].id} ${activeScenarioMatrix[179].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await usageDashboard.getByRole('tab', { name: 'Agents' }).click();
+		await usageDashboard.locator('select').first().selectOption('year');
+		await expect(usageDashboard.getByTestId('agent-efficiency-chart')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[180].id} ${activeScenarioMatrix[180].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await usageDashboard.getByRole('tab', { name: 'Activity' }).click();
+		await usageDashboard.locator('select').first().selectOption('all');
+		await expect(usageDashboard.getByTestId('section-activity-heatmap')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[181].id} ${activeScenarioMatrix[181].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await usageDashboard.getByRole('tab', { name: 'Auto Run' }).click();
+		await usageDashboard.locator('select').first().selectOption('day');
+		await expect(usageDashboard.getByTestId('autorun-tasks-chart')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[182].id} ${activeScenarioMatrix[182].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await expect(usageDashboard.getByRole('tab', { name: 'Overview' })).toBeVisible();
+		await expect(usageDashboard.getByRole('tab', { name: 'Agents' })).toBeVisible();
+		await expect(usageDashboard.getByRole('tab', { name: 'Activity' })).toBeVisible();
+		await expect(usageDashboard.getByRole('tab', { name: 'Auto Run' })).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[183].id} ${activeScenarioMatrix[183].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await expect(usageDashboard.getByRole('button', { name: 'Export CSV' })).toBeVisible();
+		await expect(usageDashboard.getByRole('button', { name: 'Export CSV' })).toBeEnabled();
+	});
+
+	test(`${activeScenarioMatrix[184].id} ${activeScenarioMatrix[184].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await window.evaluate(
+			async ({ projectDir, sessionId, source }) => {
+				const { stats } = (globalThis as MaestroStatsGlobal).maestro;
+				await stats.recordQuery({
+					sessionId,
+					agentType: 'codex',
+					source,
+					startTime: Date.now(),
+					duration: 45_000,
+					projectPath: projectDir,
+					tabId: `sgs-live-164`,
+					isRemote: false,
+				});
+			},
+			{ projectDir: workbench.projectDir, sessionId: workbench.sessionId, source: 'user' }
+		);
+
+		await expect(usageDashboard.getByTestId('new-data-indicator')).toBeVisible({ timeout: 5000 });
+	});
+
+	test(`${activeScenarioMatrix[185].id} ${activeScenarioMatrix[185].title}`, async () => {
+		await electronApp.evaluate(({ ipcMain }) => {
+			ipcMain.removeHandler('dialog:saveFile');
+			ipcMain.handle('dialog:saveFile', async () => null);
+		});
+		const usageDashboard = await openUsageDashboard(window);
+
+		await usageDashboard.getByRole('button', { name: 'Export CSV' }).click();
+
+		await expect(usageDashboard).toBeVisible();
+		await expect(usageDashboard.getByRole('button', { name: 'Export CSV' })).toBeEnabled();
+	});
+
+	test(`${activeScenarioMatrix[186].id} ${activeScenarioMatrix[186].title}`, async () => {
+		const exportPath = path.join(workbench.homeDir, `usage-tranche-166.csv`);
+		await electronApp.evaluate(({ ipcMain }, filePath: string) => {
+			ipcMain.removeHandler('dialog:saveFile');
+			ipcMain.handle('dialog:saveFile', async () => filePath);
+			ipcMain.removeHandler('stats:export-csv');
+			ipcMain.handle('stats:export-csv', async () => 'range\nusage-tranche\n');
+		}, exportPath);
+		const usageDashboard = await openUsageDashboard(window);
+
+		await usageDashboard.locator('select').first().selectOption('all');
+		await usageDashboard.getByRole('button', { name: 'Export CSV' }).click();
+
+		await expect.poll(() => fs.existsSync(exportPath)).toBe(true);
+	});
+
+	test(`${activeScenarioMatrix[187].id} ${activeScenarioMatrix[187].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await usageDashboard.getByRole('tab', { name: 'Agents' }).click();
+		await usageDashboard.getByRole('tab', { name: 'Activity' }).click();
+		await usageDashboard.getByRole('tab', { name: 'Auto Run' }).click();
+		await usageDashboard.getByRole('tab', { name: 'Overview' }).click();
+		await expect(usageDashboard.getByTestId('summary-cards')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[188].id} ${activeScenarioMatrix[188].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await usageDashboard.locator('select').first().selectOption('week');
+		await expect(usageDashboard.getByTestId('summary-cards')).toBeVisible();
+		await expect(usageDashboard.getByText('Total Queries')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[189].id} ${activeScenarioMatrix[189].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await usageDashboard.getByRole('tab', { name: 'Agents' }).click();
+		await expect(usageDashboard.getByTestId('section-session-stats')).toBeVisible();
+		await expect(usageDashboard.getByTestId('agent-efficiency-chart')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[190].id} ${activeScenarioMatrix[190].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await usageDashboard.getByRole('tab', { name: 'Activity' }).click();
+		await expect(usageDashboard.getByTestId('section-activity-heatmap')).toBeVisible();
+		await expect(usageDashboard.getByTestId('section-weekday-comparison')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[191].id} ${activeScenarioMatrix[191].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await usageDashboard.getByRole('tab', { name: 'Auto Run' }).click();
+		await expect(usageDashboard.getByTestId('autorun-stats')).toBeVisible();
+		await expect(usageDashboard.getByTestId('autorun-metrics')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[192].id} ${activeScenarioMatrix[192].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await usageDashboard.getByRole('tab', { name: 'Auto Run' }).click();
+		await expect(usageDashboard.getByTestId('autorun-tasks-chart')).toBeVisible();
+		await expect(usageDashboard.getByTestId('autorun-metric-card').first()).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[193].id} ${activeScenarioMatrix[193].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await usageDashboard.getByRole('tab', { name: 'Agents' }).click();
+		await usageDashboard.locator('select').first().selectOption('day');
+		await expect(usageDashboard.getByTestId('agent-efficiency-chart')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[194].id} ${activeScenarioMatrix[194].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await usageDashboard.getByRole('tab', { name: 'Activity' }).click();
+		await usageDashboard.locator('select').first().selectOption('week');
+		await expect(usageDashboard.getByTestId('section-activity-heatmap')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[195].id} ${activeScenarioMatrix[195].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await usageDashboard.getByRole('tab', { name: 'Auto Run' }).click();
+		await usageDashboard.locator('select').first().selectOption('month');
+		await expect(usageDashboard.getByTestId('autorun-tasks-chart')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[196].id} ${activeScenarioMatrix[196].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await expect(usageDashboard.getByRole('tab', { name: 'Overview' })).toBeVisible();
+		await expect(usageDashboard.getByRole('tab', { name: 'Agents' })).toBeVisible();
+		await expect(usageDashboard.getByRole('tab', { name: 'Activity' })).toBeVisible();
+		await expect(usageDashboard.getByRole('tab', { name: 'Auto Run' })).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[197].id} ${activeScenarioMatrix[197].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await expect(usageDashboard.getByRole('button', { name: 'Export CSV' })).toBeVisible();
+		await expect(usageDashboard.getByRole('button', { name: 'Export CSV' })).toBeEnabled();
+	});
+
+	test(`${activeScenarioMatrix[198].id} ${activeScenarioMatrix[198].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await window.evaluate(
+			async ({ projectDir, sessionId, source }) => {
+				const { stats } = (globalThis as MaestroStatsGlobal).maestro;
+				await stats.recordQuery({
+					sessionId,
+					agentType: 'codex',
+					source,
+					startTime: Date.now(),
+					duration: 45_000,
+					projectPath: projectDir,
+					tabId: `sgs-live-178`,
+					isRemote: false,
+				});
+			},
+			{ projectDir: workbench.projectDir, sessionId: workbench.sessionId, source: 'user' }
+		);
+
+		await expect(usageDashboard.getByTestId('new-data-indicator')).toBeVisible({ timeout: 5000 });
+	});
+
+	test(`${activeScenarioMatrix[199].id} ${activeScenarioMatrix[199].title}`, async () => {
+		await electronApp.evaluate(({ ipcMain }) => {
+			ipcMain.removeHandler('dialog:saveFile');
+			ipcMain.handle('dialog:saveFile', async () => null);
+		});
+		const usageDashboard = await openUsageDashboard(window);
+
+		await usageDashboard.getByRole('button', { name: 'Export CSV' }).click();
+
+		await expect(usageDashboard).toBeVisible();
+		await expect(usageDashboard.getByRole('button', { name: 'Export CSV' })).toBeEnabled();
+	});
+
+	test(`${activeScenarioMatrix[200].id} ${activeScenarioMatrix[200].title}`, async () => {
+		const exportPath = path.join(workbench.homeDir, `usage-tranche-180.csv`);
+		await electronApp.evaluate(({ ipcMain }, filePath: string) => {
+			ipcMain.removeHandler('dialog:saveFile');
+			ipcMain.handle('dialog:saveFile', async () => filePath);
+			ipcMain.removeHandler('stats:export-csv');
+			ipcMain.handle('stats:export-csv', async () => 'range\nusage-tranche\n');
+		}, exportPath);
+		const usageDashboard = await openUsageDashboard(window);
+
+		await usageDashboard.locator('select').first().selectOption('week');
+		await usageDashboard.getByRole('button', { name: 'Export CSV' }).click();
+
+		await expect.poll(() => fs.existsSync(exportPath)).toBe(true);
+	});
+
+	test(`${activeScenarioMatrix[201].id} ${activeScenarioMatrix[201].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await usageDashboard.getByRole('tab', { name: 'Agents' }).click();
+		await usageDashboard.getByRole('tab', { name: 'Activity' }).click();
+		await usageDashboard.getByRole('tab', { name: 'Auto Run' }).click();
+		await usageDashboard.getByRole('tab', { name: 'Overview' }).click();
+		await expect(usageDashboard.getByTestId('summary-cards')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[202].id} ${activeScenarioMatrix[202].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await usageDashboard.locator('select').first().selectOption('quarter');
+		await expect(usageDashboard.getByTestId('summary-cards')).toBeVisible();
+		await expect(usageDashboard.getByText('Total Queries')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[203].id} ${activeScenarioMatrix[203].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await usageDashboard.getByRole('tab', { name: 'Agents' }).click();
+		await expect(usageDashboard.getByTestId('section-session-stats')).toBeVisible();
+		await expect(usageDashboard.getByTestId('agent-efficiency-chart')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[204].id} ${activeScenarioMatrix[204].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await usageDashboard.getByRole('tab', { name: 'Activity' }).click();
+		await expect(usageDashboard.getByTestId('section-activity-heatmap')).toBeVisible();
+		await expect(usageDashboard.getByTestId('section-weekday-comparison')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[205].id} ${activeScenarioMatrix[205].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await usageDashboard.getByRole('tab', { name: 'Auto Run' }).click();
+		await expect(usageDashboard.getByTestId('autorun-stats')).toBeVisible();
+		await expect(usageDashboard.getByTestId('autorun-metrics')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[206].id} ${activeScenarioMatrix[206].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await usageDashboard.getByRole('tab', { name: 'Auto Run' }).click();
+		await expect(usageDashboard.getByTestId('autorun-tasks-chart')).toBeVisible();
+		await expect(usageDashboard.getByTestId('autorun-metric-card').first()).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[207].id} ${activeScenarioMatrix[207].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await usageDashboard.getByRole('tab', { name: 'Agents' }).click();
+		await usageDashboard.locator('select').first().selectOption('month');
+		await expect(usageDashboard.getByTestId('agent-efficiency-chart')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[208].id} ${activeScenarioMatrix[208].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await usageDashboard.getByRole('tab', { name: 'Activity' }).click();
+		await usageDashboard.locator('select').first().selectOption('quarter');
+		await expect(usageDashboard.getByTestId('section-activity-heatmap')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[209].id} ${activeScenarioMatrix[209].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await usageDashboard.getByRole('tab', { name: 'Auto Run' }).click();
+		await usageDashboard.locator('select').first().selectOption('year');
+		await expect(usageDashboard.getByTestId('autorun-tasks-chart')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[210].id} ${activeScenarioMatrix[210].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await expect(usageDashboard.getByRole('tab', { name: 'Overview' })).toBeVisible();
+		await expect(usageDashboard.getByRole('tab', { name: 'Agents' })).toBeVisible();
+		await expect(usageDashboard.getByRole('tab', { name: 'Activity' })).toBeVisible();
+		await expect(usageDashboard.getByRole('tab', { name: 'Auto Run' })).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[211].id} ${activeScenarioMatrix[211].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await expect(usageDashboard.getByRole('button', { name: 'Export CSV' })).toBeVisible();
+		await expect(usageDashboard.getByRole('button', { name: 'Export CSV' })).toBeEnabled();
+	});
+
+	test(`${activeScenarioMatrix[212].id} ${activeScenarioMatrix[212].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await window.evaluate(
+			async ({ projectDir, sessionId, source }) => {
+				const { stats } = (globalThis as MaestroStatsGlobal).maestro;
+				await stats.recordQuery({
+					sessionId,
+					agentType: 'codex',
+					source,
+					startTime: Date.now(),
+					duration: 45_000,
+					projectPath: projectDir,
+					tabId: `sgs-live-192`,
+					isRemote: false,
+				});
+			},
+			{ projectDir: workbench.projectDir, sessionId: workbench.sessionId, source: 'user' }
+		);
+
+		await expect(usageDashboard.getByTestId('new-data-indicator')).toBeVisible({ timeout: 5000 });
+	});
+
+	test(`${activeScenarioMatrix[213].id} ${activeScenarioMatrix[213].title}`, async () => {
+		await electronApp.evaluate(({ ipcMain }) => {
+			ipcMain.removeHandler('dialog:saveFile');
+			ipcMain.handle('dialog:saveFile', async () => null);
+		});
+		const usageDashboard = await openUsageDashboard(window);
+
+		await usageDashboard.getByRole('button', { name: 'Export CSV' }).click();
+
+		await expect(usageDashboard).toBeVisible();
+		await expect(usageDashboard.getByRole('button', { name: 'Export CSV' })).toBeEnabled();
+	});
+
+	test(`${activeScenarioMatrix[214].id} ${activeScenarioMatrix[214].title}`, async () => {
+		const exportPath = path.join(workbench.homeDir, `usage-tranche-194.csv`);
+		await electronApp.evaluate(({ ipcMain }, filePath: string) => {
+			ipcMain.removeHandler('dialog:saveFile');
+			ipcMain.handle('dialog:saveFile', async () => filePath);
+			ipcMain.removeHandler('stats:export-csv');
+			ipcMain.handle('stats:export-csv', async () => 'range\nusage-tranche\n');
+		}, exportPath);
+		const usageDashboard = await openUsageDashboard(window);
+
+		await usageDashboard.locator('select').first().selectOption('quarter');
+		await usageDashboard.getByRole('button', { name: 'Export CSV' }).click();
+
+		await expect.poll(() => fs.existsSync(exportPath)).toBe(true);
+	});
+
+	test(`${activeScenarioMatrix[215].id} ${activeScenarioMatrix[215].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await usageDashboard.getByRole('tab', { name: 'Agents' }).click();
+		await usageDashboard.getByRole('tab', { name: 'Activity' }).click();
+		await usageDashboard.getByRole('tab', { name: 'Auto Run' }).click();
+		await usageDashboard.getByRole('tab', { name: 'Overview' }).click();
+		await expect(usageDashboard.getByTestId('summary-cards')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[216].id} ${activeScenarioMatrix[216].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await usageDashboard.locator('select').first().selectOption('all');
+		await expect(usageDashboard.getByTestId('summary-cards')).toBeVisible();
+		await expect(usageDashboard.getByText('Total Queries')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[217].id} ${activeScenarioMatrix[217].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await usageDashboard.getByRole('tab', { name: 'Agents' }).click();
+		await expect(usageDashboard.getByTestId('section-session-stats')).toBeVisible();
+		await expect(usageDashboard.getByTestId('agent-efficiency-chart')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[218].id} ${activeScenarioMatrix[218].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await usageDashboard.getByRole('tab', { name: 'Activity' }).click();
+		await expect(usageDashboard.getByTestId('section-activity-heatmap')).toBeVisible();
+		await expect(usageDashboard.getByTestId('section-weekday-comparison')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[219].id} ${activeScenarioMatrix[219].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await usageDashboard.getByRole('tab', { name: 'Auto Run' }).click();
+		await expect(usageDashboard.getByTestId('autorun-stats')).toBeVisible();
+		await expect(usageDashboard.getByTestId('autorun-metrics')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[220].id} ${activeScenarioMatrix[220].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await usageDashboard.getByRole('tab', { name: 'Auto Run' }).click();
+		await expect(usageDashboard.getByTestId('autorun-tasks-chart')).toBeVisible();
+		await expect(usageDashboard.getByTestId('autorun-metric-card').first()).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[221].id} ${activeScenarioMatrix[221].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await usageDashboard.getByRole('tab', { name: 'Agents' }).click();
+		await usageDashboard.locator('select').first().selectOption('year');
+		await expect(usageDashboard.getByTestId('agent-efficiency-chart')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[222].id} ${activeScenarioMatrix[222].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await usageDashboard.getByRole('tab', { name: 'Activity' }).click();
+		await usageDashboard.locator('select').first().selectOption('all');
+		await expect(usageDashboard.getByTestId('section-activity-heatmap')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[223].id} ${activeScenarioMatrix[223].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await usageDashboard.getByRole('tab', { name: 'Auto Run' }).click();
+		await usageDashboard.locator('select').first().selectOption('day');
+		await expect(usageDashboard.getByTestId('autorun-tasks-chart')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[224].id} ${activeScenarioMatrix[224].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await expect(usageDashboard.getByRole('tab', { name: 'Overview' })).toBeVisible();
+		await expect(usageDashboard.getByRole('tab', { name: 'Agents' })).toBeVisible();
+		await expect(usageDashboard.getByRole('tab', { name: 'Activity' })).toBeVisible();
+		await expect(usageDashboard.getByRole('tab', { name: 'Auto Run' })).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[225].id} ${activeScenarioMatrix[225].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await expect(usageDashboard.getByRole('button', { name: 'Export CSV' })).toBeVisible();
+		await expect(usageDashboard.getByRole('button', { name: 'Export CSV' })).toBeEnabled();
+	});
+
+	test(`${activeScenarioMatrix[226].id} ${activeScenarioMatrix[226].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await window.evaluate(
+			async ({ projectDir, sessionId, source }) => {
+				const { stats } = (globalThis as MaestroStatsGlobal).maestro;
+				await stats.recordQuery({
+					sessionId,
+					agentType: 'codex',
+					source,
+					startTime: Date.now(),
+					duration: 45_000,
+					projectPath: projectDir,
+					tabId: `sgs-live-206`,
+					isRemote: false,
+				});
+			},
+			{ projectDir: workbench.projectDir, sessionId: workbench.sessionId, source: 'user' }
+		);
+
+		await expect(usageDashboard.getByTestId('new-data-indicator')).toBeVisible({ timeout: 5000 });
+	});
+
+	test(`${activeScenarioMatrix[227].id} ${activeScenarioMatrix[227].title}`, async () => {
+		await electronApp.evaluate(({ ipcMain }) => {
+			ipcMain.removeHandler('dialog:saveFile');
+			ipcMain.handle('dialog:saveFile', async () => null);
+		});
+		const usageDashboard = await openUsageDashboard(window);
+
+		await usageDashboard.getByRole('button', { name: 'Export CSV' }).click();
+
+		await expect(usageDashboard).toBeVisible();
+		await expect(usageDashboard.getByRole('button', { name: 'Export CSV' })).toBeEnabled();
+	});
+
+	test(`${activeScenarioMatrix[228].id} ${activeScenarioMatrix[228].title}`, async () => {
+		const exportPath = path.join(workbench.homeDir, `usage-tranche-208.csv`);
+		await electronApp.evaluate(({ ipcMain }, filePath: string) => {
+			ipcMain.removeHandler('dialog:saveFile');
+			ipcMain.handle('dialog:saveFile', async () => filePath);
+			ipcMain.removeHandler('stats:export-csv');
+			ipcMain.handle('stats:export-csv', async () => 'range\nusage-tranche\n');
+		}, exportPath);
+		const usageDashboard = await openUsageDashboard(window);
+
+		await usageDashboard.locator('select').first().selectOption('all');
+		await usageDashboard.getByRole('button', { name: 'Export CSV' }).click();
+
+		await expect.poll(() => fs.existsSync(exportPath)).toBe(true);
+	});
+
+	test(`${activeScenarioMatrix[229].id} ${activeScenarioMatrix[229].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await usageDashboard.getByRole('tab', { name: 'Agents' }).click();
+		await usageDashboard.getByRole('tab', { name: 'Activity' }).click();
+		await usageDashboard.getByRole('tab', { name: 'Auto Run' }).click();
+		await usageDashboard.getByRole('tab', { name: 'Overview' }).click();
+		await expect(usageDashboard.getByTestId('summary-cards')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[230].id} ${activeScenarioMatrix[230].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await usageDashboard.locator('select').first().selectOption('week');
+		await expect(usageDashboard.getByTestId('summary-cards')).toBeVisible();
+		await expect(usageDashboard.getByText('Total Queries')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[231].id} ${activeScenarioMatrix[231].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await usageDashboard.getByRole('tab', { name: 'Agents' }).click();
+		await expect(usageDashboard.getByTestId('section-session-stats')).toBeVisible();
+		await expect(usageDashboard.getByTestId('agent-efficiency-chart')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[232].id} ${activeScenarioMatrix[232].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await usageDashboard.getByRole('tab', { name: 'Activity' }).click();
+		await expect(usageDashboard.getByTestId('section-activity-heatmap')).toBeVisible();
+		await expect(usageDashboard.getByTestId('section-weekday-comparison')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[233].id} ${activeScenarioMatrix[233].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await usageDashboard.getByRole('tab', { name: 'Auto Run' }).click();
+		await expect(usageDashboard.getByTestId('autorun-stats')).toBeVisible();
+		await expect(usageDashboard.getByTestId('autorun-metrics')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[234].id} ${activeScenarioMatrix[234].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await usageDashboard.getByRole('tab', { name: 'Auto Run' }).click();
+		await expect(usageDashboard.getByTestId('autorun-tasks-chart')).toBeVisible();
+		await expect(usageDashboard.getByTestId('autorun-metric-card').first()).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[235].id} ${activeScenarioMatrix[235].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await usageDashboard.getByRole('tab', { name: 'Agents' }).click();
+		await usageDashboard.locator('select').first().selectOption('day');
+		await expect(usageDashboard.getByTestId('agent-efficiency-chart')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[236].id} ${activeScenarioMatrix[236].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await usageDashboard.getByRole('tab', { name: 'Activity' }).click();
+		await usageDashboard.locator('select').first().selectOption('week');
+		await expect(usageDashboard.getByTestId('section-activity-heatmap')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[237].id} ${activeScenarioMatrix[237].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await usageDashboard.getByRole('tab', { name: 'Auto Run' }).click();
+		await usageDashboard.locator('select').first().selectOption('month');
+		await expect(usageDashboard.getByTestId('autorun-tasks-chart')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[238].id} ${activeScenarioMatrix[238].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await expect(usageDashboard.getByRole('tab', { name: 'Overview' })).toBeVisible();
+		await expect(usageDashboard.getByRole('tab', { name: 'Agents' })).toBeVisible();
+		await expect(usageDashboard.getByRole('tab', { name: 'Activity' })).toBeVisible();
+		await expect(usageDashboard.getByRole('tab', { name: 'Auto Run' })).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[239].id} ${activeScenarioMatrix[239].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await expect(usageDashboard.getByRole('button', { name: 'Export CSV' })).toBeVisible();
+		await expect(usageDashboard.getByRole('button', { name: 'Export CSV' })).toBeEnabled();
+	});
+
+	test(`${activeScenarioMatrix[240].id} ${activeScenarioMatrix[240].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await window.evaluate(
+			async ({ projectDir, sessionId, source }) => {
+				const { stats } = (globalThis as MaestroStatsGlobal).maestro;
+				await stats.recordQuery({
+					sessionId,
+					agentType: 'codex',
+					source,
+					startTime: Date.now(),
+					duration: 45_000,
+					projectPath: projectDir,
+					tabId: `sgs-live-220`,
+					isRemote: false,
+				});
+			},
+			{ projectDir: workbench.projectDir, sessionId: workbench.sessionId, source: 'user' }
+		);
+
+		await expect(usageDashboard.getByTestId('new-data-indicator')).toBeVisible({ timeout: 5000 });
+	});
+
+	test(`${activeScenarioMatrix[241].id} ${activeScenarioMatrix[241].title}`, async () => {
+		await electronApp.evaluate(({ ipcMain }) => {
+			ipcMain.removeHandler('dialog:saveFile');
+			ipcMain.handle('dialog:saveFile', async () => null);
+		});
+		const usageDashboard = await openUsageDashboard(window);
+
+		await usageDashboard.getByRole('button', { name: 'Export CSV' }).click();
+
+		await expect(usageDashboard).toBeVisible();
+		await expect(usageDashboard.getByRole('button', { name: 'Export CSV' })).toBeEnabled();
+	});
+
+	test(`${activeScenarioMatrix[242].id} ${activeScenarioMatrix[242].title}`, async () => {
+		const exportPath = path.join(workbench.homeDir, `usage-tranche-222.csv`);
+		await electronApp.evaluate(({ ipcMain }, filePath: string) => {
+			ipcMain.removeHandler('dialog:saveFile');
+			ipcMain.handle('dialog:saveFile', async () => filePath);
+			ipcMain.removeHandler('stats:export-csv');
+			ipcMain.handle('stats:export-csv', async () => 'range\nusage-tranche\n');
+		}, exportPath);
+		const usageDashboard = await openUsageDashboard(window);
+
+		await usageDashboard.locator('select').first().selectOption('week');
+		await usageDashboard.getByRole('button', { name: 'Export CSV' }).click();
+
+		await expect.poll(() => fs.existsSync(exportPath)).toBe(true);
+	});
+
+	test(`${activeScenarioMatrix[243].id} ${activeScenarioMatrix[243].title}`, async () => {
+		const usageDashboard = await openUsageDashboard(window);
+
+		await usageDashboard.getByRole('tab', { name: 'Agents' }).click();
+		await usageDashboard.getByRole('tab', { name: 'Activity' }).click();
+		await usageDashboard.getByRole('tab', { name: 'Auto Run' }).click();
+		await usageDashboard.getByRole('tab', { name: 'Overview' }).click();
+		await expect(usageDashboard.getByTestId('summary-cards')).toBeVisible();
 	});
 
 	for (const scenario of skippedScenarioMatrix) {
