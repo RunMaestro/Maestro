@@ -3772,6 +3772,338 @@ test.describe('App shell seeded workbench', () => {
 		await expect(window.getByLabel('Terminal output')).toBeHidden();
 	});
 
+	test('preserves History while restoring the Left Bar from its expand control', async () => {
+		await helpers.openRightPanelTab(window, 'History');
+		await expect(window.locator('[data-tour="history-panel"]')).toBeVisible();
+
+		await window.keyboard.press('Alt+Meta+ArrowLeft');
+		await expect(window.locator('[data-tour="session-list"]')).toBeHidden();
+		await window.getByTitle(/Expand Sidebar/).click();
+
+		await expect(window.locator('[data-tour="session-list"]')).toBeVisible();
+		await expect(window.locator('[data-tour="history-panel"]')).toBeVisible();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+	});
+
+	test('preserves Auto Run while Quick Actions toggles the Left Bar closed and open', async () => {
+		await helpers.openRightPanelTab(window, 'Auto Run');
+		await expect(window.getByText('Auto Run Surface')).toBeVisible();
+
+		let quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('Toggle Sidebar');
+		await quickActionsDialog.getByRole('button', { name: /Toggle Sidebar/ }).click();
+		await expect(window.locator('[data-tour="session-list"]')).toBeHidden();
+		await expect(window.getByText('Auto Run Surface')).toBeVisible();
+
+		quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('Toggle Sidebar');
+		await quickActionsDialog.getByRole('button', { name: /Toggle Sidebar/ }).click();
+
+		await expect(window.locator('[data-tour="session-list"]')).toBeVisible();
+		await expect(window.getByText('Auto Run Surface')).toBeVisible();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+	});
+
+	test('keeps Files selected while canceling Quick Actions after a right-panel toggle query', async () => {
+		await expect(window.locator('[data-tour="files-panel"]')).toBeVisible();
+
+		const quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('Toggle Right Panel');
+		await expect(
+			quickActionsDialog.getByRole('button', { name: /Toggle Right Panel/ })
+		).toBeVisible();
+
+		await closeQuickActions(window, quickActionsDialog);
+
+		await expect(window.locator('[data-tour="files-panel"]')).toBeVisible();
+		await expect(window.locator('[data-tour="session-list"]')).toBeVisible();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+	});
+
+	test('keeps History selected while canceling Quick Actions after a sidebar toggle query', async () => {
+		await helpers.openRightPanelTab(window, 'History');
+		await expect(window.locator('[data-tour="history-panel"]')).toBeVisible();
+
+		const quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('Toggle Sidebar');
+		await expect(quickActionsDialog.getByRole('button', { name: /Toggle Sidebar/ })).toBeVisible();
+
+		await closeQuickActions(window, quickActionsDialog);
+
+		await expect(window.locator('[data-tour="history-panel"]')).toBeVisible();
+		await expect(window.locator('[data-tour="session-list"]')).toBeVisible();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+	});
+
+	test('keeps Auto Run selected while canceling Quick Actions after an agent-search query', async () => {
+		await helpers.openRightPanelTab(window, 'Auto Run');
+		await expect(window.getByText('Auto Run Surface')).toBeVisible();
+
+		const quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('Search: Agents');
+		await expect(quickActionsDialog.getByRole('button', { name: /Search: Agents/ })).toBeVisible();
+
+		await closeQuickActions(window, quickActionsDialog);
+
+		await expect(window.getByPlaceholder('Filter agents...')).toBeHidden();
+		await expect(window.getByText('Auto Run Surface')).toBeVisible();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+	});
+
+	test('restores Files from shortcut after both sidebars are hidden and Quick Actions is canceled', async () => {
+		await window.keyboard.press('Alt+Meta+ArrowLeft');
+		await window.keyboard.press('Alt+Meta+ArrowRight');
+		await expect(window.locator('[data-tour="session-list"]')).toBeHidden();
+		await expect(window.getByTitle(/Show right panel/)).toBeVisible();
+
+		const quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('E2E Terminal');
+		await expect(quickActionsDialog.getByRole('button', { name: /E2E Terminal/ })).toBeVisible();
+		await closeQuickActions(window, quickActionsDialog);
+
+		await window.keyboard.press('Meta+Shift+F');
+
+		await expect(window.locator('[data-tour="files-panel"]')).toBeVisible();
+		await expect(window.locator('[data-tour="session-list"]')).toBeHidden();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+	});
+
+	test('restores History from shortcut after an unmatched agent filter closes over hidden right chrome', async () => {
+		await window.keyboard.press('Alt+Meta+ArrowRight');
+		await expect(window.getByTitle(/Show right panel/)).toBeVisible();
+
+		await window.keyboard.press('Meta+Shift+A');
+		await window.keyboard.press('Meta+f');
+		const filterInput = window.getByPlaceholder('Filter agents...');
+		await filterInput.fill('missing-history-shortcut-agent-sentinel');
+		await expect(
+			window.locator('[data-tour="session-list"]').getByText('E2E Terminal')
+		).toBeHidden();
+
+		await filterInput.press('Escape');
+		await expect(filterInput).toBeHidden();
+
+		await window.keyboard.press('Meta+Shift+H');
+
+		await expect(window.locator('[data-tour="history-panel"]')).toBeVisible();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+	});
+
+	test('preserves terminal draft when Files shortcut restores hidden right chrome', async () => {
+		const terminalInput = await openSeededTerminalAgent(window);
+		await terminalInput.fill('terminal draft before files shortcut restore sentinel');
+		await window.keyboard.press('Alt+Meta+ArrowRight');
+		await expect(window.getByTitle(/Show right panel/)).toBeVisible();
+
+		await window.keyboard.press('Meta+Shift+F');
+
+		await expect(window.locator('[data-tour="files-panel"]')).toBeVisible();
+		await expect(window.getByLabel('Terminal output')).toBeVisible();
+		await expect(terminalInput).toHaveValue(
+			'terminal draft before files shortcut restore sentinel'
+		);
+	});
+
+	test('preserves terminal draft when History shortcut restores hidden right chrome', async () => {
+		const terminalInput = await openSeededTerminalAgent(window);
+		await terminalInput.fill('terminal draft before history shortcut restore sentinel');
+		await window.keyboard.press('Alt+Meta+ArrowRight');
+		await expect(window.getByTitle(/Show right panel/)).toBeVisible();
+
+		await window.keyboard.press('Meta+Shift+H');
+
+		await expect(window.locator('[data-tour="history-panel"]')).toBeVisible();
+		await expect(window.getByLabel('Terminal output')).toBeVisible();
+		await expect(terminalInput).toHaveValue(
+			'terminal draft before history shortcut restore sentinel'
+		);
+	});
+
+	test('preserves terminal draft when Auto Run shortcut restores hidden right chrome', async () => {
+		const terminalInput = await openSeededTerminalAgent(window);
+		await terminalInput.fill('terminal draft before autorun hidden restore sentinel');
+		await window.keyboard.press('Alt+Meta+ArrowRight');
+		await expect(window.getByTitle(/Show right panel/)).toBeVisible();
+
+		await window.keyboard.press('Meta+Shift+1');
+
+		await expect(window.getByText('Auto Run Surface')).toBeVisible();
+		await expect(window.getByLabel('Terminal output')).toBeVisible();
+		await expect(terminalInput).toHaveValue(
+			'terminal draft before autorun hidden restore sentinel'
+		);
+	});
+
+	test('keeps terminal draft while the Left Bar is restored from the agent shortcut', async () => {
+		const terminalInput = await openSeededTerminalAgent(window);
+		await terminalInput.fill('terminal draft before left bar agent shortcut sentinel');
+		await window.keyboard.press('Alt+Meta+ArrowLeft');
+		await expect(window.locator('[data-tour="session-list"]')).toBeHidden();
+
+		await window.keyboard.press('Meta+Shift+A');
+
+		await expect(window.locator('[data-tour="session-list"]')).toBeVisible();
+		await expect(window.getByLabel('Terminal output')).toBeVisible();
+		await expect(terminalInput).toHaveValue(
+			'terminal draft before left bar agent shortcut sentinel'
+		);
+	});
+
+	test('keeps file preview active while cycling agents after hiding the Left Bar', async () => {
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+		await window.keyboard.press('Alt+Meta+ArrowLeft');
+		await expect(window.locator('[data-tour="session-list"]')).toBeHidden();
+
+		await window.keyboard.press('Meta+]');
+		await expect(window.getByLabel('Terminal output')).toBeVisible();
+
+		await window.keyboard.press('Meta+[');
+
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+		await expect(window.locator('[data-tour="session-list"]')).toBeHidden();
+	});
+
+	test('keeps History recoverable after cycling agents with right chrome hidden', async () => {
+		await helpers.openRightPanelTab(window, 'History');
+		await expect(window.locator('[data-tour="history-panel"]')).toBeVisible();
+		await window.keyboard.press('Alt+Meta+ArrowRight');
+		await expect(window.getByTitle(/Show right panel/)).toBeVisible();
+
+		await window.keyboard.press('Meta+]');
+		await expect(window.getByLabel('Terminal output')).toBeVisible();
+		await expect(window.getByTitle(/Show right panel/)).toBeVisible();
+
+		await window.keyboard.press('Meta+[');
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+
+		await window.keyboard.press('Meta+Shift+H');
+
+		await expect(window.locator('[data-tour="history-panel"]')).toBeVisible();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+	});
+
+	test('opens agent search over History and returns to the selected panel on Escape', async () => {
+		await helpers.openRightPanelTab(window, 'History');
+		await expect(window.locator('[data-tour="history-panel"]')).toBeVisible();
+
+		const quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('Search: Agents');
+		await quickActionsDialog.getByRole('button', { name: /Search: Agents/ }).click();
+
+		const filterInput = window.getByPlaceholder('Filter agents...');
+		await expect(filterInput).toBeFocused();
+		await filterInput.fill('missing-history-agent-search-sentinel');
+		await expect(
+			window.locator('[data-tour="session-list"]').getByText('E2E Workbench')
+		).toBeHidden();
+
+		await filterInput.press('Escape');
+
+		await expect(filterInput).toBeHidden();
+		await expect(window.locator('[data-tour="history-panel"]')).toBeVisible();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+	});
+
+	test('opens agent search over Auto Run and returns to the selected panel on Escape', async () => {
+		await helpers.openRightPanelTab(window, 'Auto Run');
+		await expect(window.getByText('Auto Run Surface')).toBeVisible();
+
+		const quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('Search: Agents');
+		await quickActionsDialog.getByRole('button', { name: /Search: Agents/ }).click();
+
+		const filterInput = window.getByPlaceholder('Filter agents...');
+		await expect(filterInput).toBeFocused();
+		await filterInput.fill('Terminal');
+		await expect(
+			window.locator('[data-tour="session-list"]').getByText('E2E Terminal')
+		).toBeVisible();
+
+		await filterInput.press('Escape');
+
+		await expect(filterInput).toBeHidden();
+		await expect(window.getByText('Auto Run Surface')).toBeVisible();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+	});
+
+	test('jumps to the terminal agent from Auto Run without changing the selected right-panel tab', async () => {
+		await helpers.openRightPanelTab(window, 'Auto Run');
+		await expect(window.getByText('Auto Run Surface')).toBeVisible();
+
+		const quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('E2E Terminal');
+		await quickActionsDialog.getByRole('button', { name: /E2E Terminal/ }).click();
+
+		await expect(quickActionsDialog).toBeHidden();
+		await expect(window.getByLabel('Terminal output')).toBeVisible();
+		await expect(window.getByText('Auto Run Surface')).toBeVisible();
+	});
+
+	test('returns to the workbench from terminal cycling while History stays selected', async () => {
+		await helpers.openRightPanelTab(window, 'History');
+		await expect(window.locator('[data-tour="history-panel"]')).toBeVisible();
+
+		const terminalInput = await openSeededTerminalAgent(window);
+		await terminalInput.fill('terminal draft before return cycle sentinel');
+		await expect(window.locator('[data-tour="history-panel"]')).toBeVisible();
+
+		await window.keyboard.press('Meta+[');
+
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+		await expect(window.locator('[data-tour="history-panel"]')).toBeVisible();
+	});
+
+	test('restores the workbench from terminal cycling while the Left Bar remains hidden', async () => {
+		await openSeededTerminalAgent(window);
+		await window.keyboard.press('Alt+Meta+ArrowLeft');
+		await expect(window.locator('[data-tour="session-list"]')).toBeHidden();
+		await expect(window.getByLabel('Terminal output')).toBeVisible();
+
+		await window.keyboard.press('Meta+[');
+
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+		await expect(window.locator('[data-tour="session-list"]')).toBeHidden();
+		await expect(window.locator('[data-tour="files-panel"]')).toBeVisible();
+	});
+
+	test('keeps Shortcuts Help scoped over a Left Bar-hidden shell after Escape', async () => {
+		await window.keyboard.press('Alt+Meta+ArrowLeft');
+		await expect(window.locator('[data-tour="session-list"]')).toBeHidden();
+
+		const quickActionsDialog = await openQuickActions(window);
+		await quickActionsDialog
+			.getByPlaceholder('Type a command or jump to agent...')
+			.fill('View Shortcuts');
+		await quickActionsDialog.getByRole('button', { name: /View Shortcuts/ }).click();
+
+		const shortcutsDialog = window.getByRole('dialog', { name: 'Keyboard Shortcuts' });
+		await expect(shortcutsDialog).toBeVisible();
+		await window.keyboard.press('Escape');
+
+		await expect(shortcutsDialog).toBeHidden();
+		await expect(window.locator('[data-tour="session-list"]')).toBeHidden();
+		await expect(window.locator('[data-tour="files-panel"]')).toBeVisible();
+		await expect(window.getByText('File Preview Surface')).toBeVisible();
+	});
+
 	test('renders seeded History entries and type filters', async () => {
 		await helpers.openRightPanelTab(window, 'History');
 		const historyPanel = window.locator('[data-tour="history-panel"]');
