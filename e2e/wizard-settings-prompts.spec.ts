@@ -314,6 +314,14 @@ const activeScenarioMatrix = [
 	{ id: 'WSP-246', title: 'expands inline wizard generated document descriptions' },
 	{ id: 'WSP-247', title: 'collapses inline wizard generated document descriptions' },
 	{ id: 'WSP-248', title: 'shows inline wizard document generation in progress' },
+	{ id: 'WSP-249', title: "opens Director's Notes Unified History detail modal" },
+	{ id: 'WSP-250', title: "shows Director's Notes Unified History stats counts" },
+	{ id: 'WSP-251', title: "marks Director's Notes Unified History detail as not validated" },
+	{ id: 'WSP-252', title: "marks Director's Notes Unified History detail as human validated" },
+	{ id: 'WSP-253', title: "closes Director's Notes Unified History detail with Escape" },
+	{ id: 'WSP-254', title: "navigates Director's Notes Unified History detail with ArrowRight" },
+	{ id: 'WSP-255', title: "opens Director's Notes Unified History detail from the keyboard" },
+	{ id: 'WSP-256', title: "reloads Director's Notes Unified History after lookback changes" },
 ];
 
 const envGatedScenarioMatrix = [
@@ -8728,6 +8736,221 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 			await expect(launched.window.getByText('Generating Auto Run Documents...')).toBeVisible();
 			await expect(launched.window.getByText(/This may take a while/)).toBeVisible();
 			await expect(launched.window.getByRole('button', { name: 'Cancel' })).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[248].id} ${activeScenarioMatrix[248].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: createDirectorNotesEnabledSettings(),
+		});
+
+		try {
+			await stubDirectorNotesHistory(launched.electronApp);
+			const directorNotesDialog = await openDirectorNotesFromQuickActions(launched.window);
+
+			await directorNotesDialog.getByText('Refined onboarding copy for the setup wizard').click();
+
+			await expect(launched.window.getByText('Planner Agent')).toBeVisible();
+			await expect(launched.window.getByText('Planning thread')).toBeVisible();
+			await expect(launched.window.getByText('AUTO').last()).toBeVisible();
+			await expect(launched.window.getByTitle('Copy session ID: provider-session-1')).toBeVisible();
+			await expect(launched.window.getByTitle('Resume session provider-session-1')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[249].id} ${activeScenarioMatrix[249].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: createDirectorNotesEnabledSettings(),
+		});
+
+		try {
+			await stubDirectorNotesHistory(launched.electronApp);
+			const directorNotesDialog = await openDirectorNotesFromQuickActions(launched.window);
+			const statsBar = directorNotesDialog
+				.getByText('Agents')
+				.locator('xpath=ancestor::div[contains(@class, "justify-center")][1]');
+
+			await expect(statsBar.getByText('Agents')).toBeVisible();
+			await expect(statsBar.getByText('Sessions')).toBeVisible();
+			await expect(statsBar.getByText('User')).toBeVisible();
+			await expect(statsBar.getByText('Auto')).toBeVisible();
+			await expect(statsBar.getByText('Total')).toBeVisible();
+			await expect(statsBar.getByText('2', { exact: true })).toHaveCount(3);
+			await expect(statsBar.getByText('1', { exact: true })).toHaveCount(2);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[250].id} ${activeScenarioMatrix[250].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: createDirectorNotesEnabledSettings(),
+		});
+
+		try {
+			await stubDirectorNotesHistory(launched.electronApp);
+			const directorNotesDialog = await openDirectorNotesFromQuickActions(launched.window);
+
+			await directorNotesDialog.getByText('Refined onboarding copy for the setup wizard').click();
+			await launched.window.getByTitle('Mark as not validated').click();
+
+			await expect
+				.poll(async () => {
+					const state = await getStubbedDirectorNotesHistoryState(launched.electronApp);
+					return state.updateCalls[0];
+				})
+				.toEqual({
+					entryId: 'director-history-auto-1',
+					updates: { validated: false },
+					sessionId: 'wsp-primary-agent',
+				});
+			await expect(launched.window.getByTitle('Mark as human-validated')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[251].id} ${activeScenarioMatrix[251].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const entries = createStubDirectorHistoryEntries().map((entry) =>
+			entry.id === 'director-history-auto-1' ? { ...entry, validated: false } : entry
+		);
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: createDirectorNotesEnabledSettings(),
+		});
+
+		try {
+			await stubDirectorNotesHistory(launched.electronApp, entries);
+			const directorNotesDialog = await openDirectorNotesFromQuickActions(launched.window);
+
+			await directorNotesDialog.getByText('Refined onboarding copy for the setup wizard').click();
+			await launched.window.getByTitle('Mark as human-validated').click();
+
+			await expect
+				.poll(async () => {
+					const state = await getStubbedDirectorNotesHistoryState(launched.electronApp);
+					return state.updateCalls[0];
+				})
+				.toEqual({
+					entryId: 'director-history-auto-1',
+					updates: { validated: true },
+					sessionId: 'wsp-primary-agent',
+				});
+			await expect(launched.window.getByTitle('Mark as not validated')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[252].id} ${activeScenarioMatrix[252].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: createDirectorNotesEnabledSettings(),
+		});
+
+		try {
+			await stubDirectorNotesHistory(launched.electronApp);
+			const directorNotesDialog = await openDirectorNotesFromQuickActions(launched.window);
+
+			await directorNotesDialog.getByText('Refined onboarding copy for the setup wizard').click();
+			await expect(launched.window.getByTitle('Copy session ID: provider-session-1')).toBeVisible();
+			await launched.window.keyboard.press('Escape');
+
+			await expect(launched.window.getByTitle('Copy session ID: provider-session-1')).toBeHidden();
+			await expect(directorNotesDialog).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[253].id} ${activeScenarioMatrix[253].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: createDirectorNotesEnabledSettings(),
+		});
+
+		try {
+			await stubDirectorNotesHistory(launched.electronApp);
+			const directorNotesDialog = await openDirectorNotesFromQuickActions(launched.window);
+
+			await directorNotesDialog.getByText('Refined onboarding copy for the setup wizard').click();
+			await expect(launched.window.getByTitle('Copy session ID: provider-session-1')).toBeVisible();
+			await launched.window.keyboard.press('ArrowRight');
+
+			await expect(launched.window.getByTitle('Copy session ID: provider-session-2')).toBeVisible();
+			await expect(launched.window.getByTitle('Copy session ID: provider-session-1')).toBeHidden();
+			await expect(
+				launched.window.getByText('Reviewed billing prompt composer draft')
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[254].id} ${activeScenarioMatrix[254].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: createDirectorNotesEnabledSettings(),
+		});
+
+		try {
+			await stubDirectorNotesHistory(launched.electronApp);
+			await openDirectorNotesFromQuickActions(launched.window);
+
+			await launched.window.keyboard.press('ArrowDown');
+			await launched.window.keyboard.press('Enter');
+
+			await expect(launched.window.getByText('Planning thread')).toBeVisible();
+			await expect(launched.window.getByTitle('Resume session provider-session-1')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[255].id} ${activeScenarioMatrix[255].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: createDirectorNotesEnabledSettings(),
+		});
+
+		try {
+			await stubDirectorNotesHistory(launched.electronApp);
+			const directorNotesDialog = await openDirectorNotesFromQuickActions(launched.window);
+
+			await directorNotesDialog
+				.locator('[title*="right-click to change"]')
+				.click({ button: 'right' });
+			await launched.window.getByRole('button', { name: '24 hours' }).click();
+
+			await expect
+				.poll(async () => {
+					const state = await getStubbedDirectorNotesHistoryState(launched.electronApp);
+					return state.historyCalls.at(-1);
+				})
+				.toEqual({ lookbackDays: 1, filter: null, limit: 100, offset: 0 });
 		} finally {
 			await launched.cleanup();
 		}
