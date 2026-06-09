@@ -2,9 +2,9 @@
 
 Source of truth: `docs/e2e-coverage-campaign.md`.
 
-Current active tests: 1232
+Current active tests: 1256
 Target active tests: 3,025
-Remaining matrix-backed active scenarios: 1,793
+Remaining matrix-backed active scenarios: 1,769
 
 ## Matrix
 
@@ -29,7 +29,7 @@ Remaining matrix-backed active scenarios: 1,793
 | Symphony, leaderboard, achievements                            | `stats-graph-symphony`    |             15 |           120 |       105 |
 | Director notes and prompt composer                             | `wizard-settings-prompts` |             30 |            90 |        60 |
 | Debug/about/update/app info/agent error modals                 | `debug-accessibility`     |             85 |            85 |         0 |
-| Mobile/web bridge                                              | `mobile-web-bridge`       |            104 |           190 |        86 |
+| Mobile/web bridge                                              | `mobile-web-bridge`       |            128 |           190 |        62 |
 | Accessibility smoke and destructive-action confirmations       | `debug-accessibility`     |             79 |           130 |        51 |
 
 ## Lane Totals
@@ -44,7 +44,7 @@ Remaining matrix-backed active scenarios: 1,793
 | `git-groupchat-playbooks`  |                     303 |                        60 |                                    7 | `e8ac2eddf`          |
 | `stats-graph-symphony`     |                     309 |                        27 |                                    6 | `bb9a6f68b`          |
 | `debug-accessibility`      |                      51 |                       141 |                                    0 | `cd485eda6`          |
-| `mobile-web-bridge`        |                      86 |                        16 |                                    0 | `d7ccdd3d`           |
+| `mobile-web-bridge`        |                      62 |                        40 |                                    0 | `958f07ff4`          |
 | `fixtures-sharding-review` |                       0 |                         0 |                                    0 | `392c4527`           |
 
 ## Merge Log
@@ -145,3 +145,4 @@ Remaining matrix-backed active scenarios: 1,793
 - 2026-06-08: accepted manual `wizard-settings-prompts` fallback through `2d069a57a`; authored 6 additional active Settings AI Commands edit-cancel, SSH remote duplicate/reset, and Prompt Composer tab/history/read-only keyboard scenarios. Focused static review found no critical or high issues. No E2E execution was run.
 - 2026-06-08: accepted manual `files-docs-history` fallback through `18a4c3b29`; authored 5 additional active History Escape close, File Explorer Copy Path clipboard, file preview no-match recovery, and large-file full-load search scenarios. Focused static review found no critical or high issues. No E2E execution was run.
 - 2026-06-08: accepted manual `git-groupchat-playbooks` fallback through `e8ac2eddf`; authored 10 additional active Gist publish/republish, Git Log Escape-close, Playbook Exchange import-failure, Spec Kit/OpenSpec save/reset, and source-link shell-routing scenarios. Focused static review found no critical or high issues. No E2E execution was run.
+- 2026-06-08: accepted manual `mobile-web-bridge` fallback through `958f07ff4`; authored 24 additional active live bridge API, lifecycle metadata, REST API metadata, and static PWA route metadata scenarios. Focused static review found no critical or high issues; one lane-doc range note was corrected before commit. No E2E execution was run.

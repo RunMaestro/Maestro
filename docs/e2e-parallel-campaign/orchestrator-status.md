@@ -1,6 +1,6 @@
 # Parallel E2E Orchestrator Status
 
-Last updated: 2026-06-08 20:05 EDT
+Last updated: 2026-06-08 20:35 EDT
 
 ## Base
 
@@ -41,7 +41,7 @@ coverage and the shell-lane tab coverage.
 | `git-groupchat-playbooks`  | `codex/e2e-git-groupchat-playbooks`  | `Maestro-worktrees/e2e-git-groupchat-playbooks`  | `maestro-e2e-git-groupchat-playbooks-campaign-goal` | manual fallback accepted  | 60 active scenarios accepted; 303 remain        |
 | `stats-graph-symphony`     | `codex/e2e-stats-graph-symphony`     | `Maestro-worktrees/e2e-stats-graph-symphony`     | `maestro-e2e-stats-graph-symphony-campaign-goal`    | PM2 retry cycle after 503 | 27 active scenarios accepted; 309 remain        |
 | `debug-accessibility`      | `codex/e2e-debug-accessibility`      | `Maestro-worktrees/e2e-debug-accessibility`      | `maestro-e2e-debug-accessibility-campaign-goal`     | PM2 retry cycle after 503 | 141 active scenarios accepted; 51 remain        |
-| `mobile-web-bridge`        | `codex/e2e-mobile-web-bridge`        | `Maestro-worktrees/e2e-mobile-web-bridge`        | `maestro-e2e-mobile-web-bridge-campaign-goal`       | PM2 retry cycle after 503 | 16 active scenarios accepted; 86 remain         |
+| `mobile-web-bridge`        | `codex/e2e-mobile-web-bridge`        | `Maestro-worktrees/e2e-mobile-web-bridge`        | `maestro-e2e-mobile-web-bridge-campaign-goal`       | manual fallback accepted  | 40 active scenarios accepted; 62 remain         |
 | `fixtures-sharding-review` | `codex/e2e-fixtures-sharding-review` | `Maestro-worktrees/e2e-fixtures-sharding-review` | not relaunched                                      | support complete          | Support plan accepted; no active scenario quota |
 
 ## Merge Queue
@@ -49,7 +49,7 @@ coverage and the shell-lane tab coverage.
 - `shell-tabs-command` merged through `44e98a94f`.
 - `agent-crud-provider` merged through `bb4fbcce2`.
 - `files-docs-history` merged through `18a4c3b29`.
-- `mobile-web-bridge` merged through `d7ccdd3d`.
+- `mobile-web-bridge` merged through `958f07ff4`.
 - `autorun-ai-terminal` merged through `cd804bebf`.
 - `wizard-settings-prompts` merged through `c32a4e4d5`.
 - `stats-graph-symphony` merged through `bb9a6f68b`.
@@ -213,6 +213,11 @@ coverage and the shell-lane tab coverage.
   through `e8ac2eddf` with 10 active Gist, Git Log, Playbook Exchange, Spec Kit,
   and OpenSpec scenarios. Focused static review found no findings. No E2E
   execution was run.
+- 2026-06-08 20:35 EDT: accepted manual `mobile-web-bridge` fallback through
+  `958f07ff4` with 24 active live bridge API, lifecycle metadata, REST API
+  metadata, and static PWA route metadata scenarios. Focused static review found
+  no critical or high issues and corrected one lane-doc TypeScript range note. No
+  E2E execution was run.
 
 ## Blockers
 
@@ -229,8 +234,9 @@ coverage and the shell-lane tab coverage.
   `files-docs-history`, twentieth `stats-graph-symphony`, twenty-first
   `git-groupchat-playbooks`, twenty-second `wizard-settings-prompts`,
   twenty-third `files-docs-history`, twenty-fourth through twenty-seventh
-  `wizard-settings-prompts`, and twenty-eighth `git-groupchat-playbooks`
-  fallbacks are accepted for selected high-remaining lanes. Remaining work should
+  `wizard-settings-prompts`, twenty-eighth `git-groupchat-playbooks`, and
+  twenty-ninth `mobile-web-bridge` fallbacks are accepted for selected
+  high-remaining lanes. Remaining work should
   continue in smaller batches, with each run committing one coherent tranche and
   recording remaining work instead of trying to consume a full lane quota in one
   Codex turn.
