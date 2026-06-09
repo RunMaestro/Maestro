@@ -1,6 +1,6 @@
 # files-docs-history
 
-Status: sixth recovery fallback committed
+Status: eighth persistent worker tranche committed
 
 ## Scope
 
@@ -25,6 +25,10 @@ File explorer, file preview, document rendering, history.
 - [x] Author deterministic active scenarios for the sixth recovery fallback.
 - [x] Record files touched and scenario counts for the sixth fallback.
 - [x] Commit sixth fallback work on `codex/e2e-files-docs-history-fallback-2`.
+- [x] Commit seventh fallback work on `codex/e2e-files-docs-history`.
+- [x] Author deterministic active scenarios for the eighth persistent worker tranche.
+- [x] Record files touched and scenario counts for the eighth tranche.
+- [x] Commit eighth tranche spec work on `codex/e2e-files-docs-history`.
 
 ## Progress
 
@@ -291,3 +295,43 @@ File explorer, file preview, document rendering, history.
   - Product gaps from the first tranche remain skipped until matching product controls exist.
   - External/default-app and SSH remote cases still need orchestrator-provided environment state before activation.
   - Continue compact static-authored fallback tranches while PM2 Codex workers recover from managed-account runtime instability.
+
+### 2026-06-08 eighth persistent worker tranche
+
+- Spec commit: `05daf9734`
+- Files touched:
+  - `e2e/files-docs-history.spec.ts`
+  - `docs/e2e-parallel-campaign/agents/files-docs-history.md`
+  - `docs/e2e-parallel-campaign/coverage-ledger.md`
+  - `docs/e2e-coverage-campaign.md`
+- Shared helpers touched: none. `docs/e2e-parallel-campaign/broadcasts.md` did not need an update.
+- Scenario counts:
+  - Active matrix rows added: 5
+  - Skipped product-gap rows added: 0
+  - Env-gated external-state rows added: 0
+  - Total matrix rows added: 5
+  - Cumulative lane matrix rows: 47 active, 3 skipped, 2 env-gated
+- Active coverage IDs:
+  - `FDH-A43` File Explorer context menu closes with Escape
+  - `FDH-A44` Hidden dotfiles reveal only after enabling dotfile visibility
+  - `FDH-A45` File Explorer auto-refresh disables from the refresh menu
+  - `FDH-A46` History list row duration and cost metadata renders
+  - `FDH-A47` History achievement action opens the About Maestro modal
+- Checks run:
+  - `/Users/jeffscottward/Github/tools/Maestro/node_modules/.bin/prettier --write e2e/files-docs-history.spec.ts`
+  - `/Users/jeffscottward/Github/tools/Maestro/node_modules/.bin/prettier --check e2e/files-docs-history.spec.ts`
+  - `/Users/jeffscottward/Github/tools/Maestro/node_modules/.bin/eslint --config /Users/jeffscottward/Github/tools/Maestro/eslint.config.mjs e2e/files-docs-history.spec.ts`
+  - `/Users/jeffscottward/Github/tools/Maestro/node_modules/.bin/tsc --noEmit --target ES2020 --lib ES2020,DOM,DOM.Iterable --module ESNext --skipLibCheck --moduleResolution bundler --allowImportingTsExtensions --resolveJsonModule --isolatedModules --strict --noUnusedLocals --noUnusedParameters --noFallthroughCasesInSwitch --types node,@playwright/test e2e/files-docs-history.spec.ts e2e/fixtures/electron-app.ts`
+  - `git diff --check -- e2e/files-docs-history.spec.ts`
+  - Active-row/duplicate-ID/`.only` static guard
+  - Focused code-reviewer pass; no critical or high findings after row-scoped History metadata assertions were added
+- E2E execution deliberately not run:
+  - Did not run `npm run test:e2e`, `playwright test`, headed/UI E2E, or `npx playwright test --list`.
+  - Did not use the E2E Runner skill.
+- Remaining lane target:
+  - Source objective remains about 349 additional active scenarios plus skipped/env-gated rows.
+  - First eight tranches add 47 active rows, leaving roughly 302 active scenarios to author in later tranches.
+- Blockers and follow-up:
+  - Product gaps from the first tranche remain skipped until matching product controls exist.
+  - External/default-app and SSH remote cases still need orchestrator-provided environment state before activation.
+  - Continue compact static-authored persistent-worker tranches until the matrix-backed quota is reached or a real blocker is proven.

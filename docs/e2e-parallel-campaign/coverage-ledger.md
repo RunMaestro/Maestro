@@ -2,9 +2,9 @@
 
 Source of truth: `docs/e2e-coverage-campaign.md`.
 
-Current active tests: 1686
+Current active tests: 1691
 Target active tests: 3,025
-Remaining matrix-backed active scenarios: 1,339
+Remaining matrix-backed active scenarios: 1,334
 
 ## Matrix
 
@@ -15,9 +15,9 @@ Remaining matrix-backed active scenarios: 1,339
 | Codex AI terminal workflows                                    | `autorun-ai-terminal`     |             90 |           170 |        80 |
 | Command terminal workflows                                     | `shell-tabs-command`      |             61 |            95 |        34 |
 | Tabs and tab overlays                                          | `shell-tabs-command`      |             53 |           120 |        67 |
-| File explorer and file operations                              | `files-docs-history`      |             34 |           140 |       106 |
+| File explorer and file operations                              | `files-docs-history`      |             37 |           140 |       103 |
 | File preview and document rendering                            | `files-docs-history`      |             46 |           180 |       134 |
-| History panel                                                  | `files-docs-history`      |             28 |            95 |        67 |
+| History panel                                                  | `files-docs-history`      |             30 |            95 |        65 |
 | Auto Run                                                       | `autorun-ai-terminal`     |            207 |           260 |        53 |
 | New Agent Wizard and inline wizard                             | `wizard-settings-prompts` |             40 |           190 |       150 |
 | Settings                                                       | `wizard-settings-prompts` |            111 |           190 |        79 |
@@ -38,7 +38,7 @@ Remaining matrix-backed active scenarios: 1,339
 | -------------------------- | ----------------------: | ------------------------: | -----------------------------------: | -------------------- |
 | `agent-crud-provider`      |                       0 |                       104 |                                    2 | `563b9db6c`          |
 | `shell-tabs-command`       |                     185 |                        81 |                                    0 | `2d9975b17`          |
-| `files-docs-history`       |                     307 |                        42 |                                    5 | `18a4c3b29`          |
+| `files-docs-history`       |                     302 |                        47 |                                    5 | `b409f4538`          |
 | `autorun-ai-terminal`      |                     133 |                       140 |                                    0 | `f3710f189`          |
 | `wizard-settings-prompts`  |                     289 |                        83 |                                    1 | `2d069a57a`          |
 | `git-groupchat-playbooks`  |                     233 |                       130 |                                    7 | `6c620c11d`          |
@@ -144,6 +144,7 @@ Remaining matrix-backed active scenarios: 1,339
 - 2026-06-08: accepted manual `wizard-settings-prompts` fallback through `165edccbe`; authored 6 additional active Settings AI Commands slash-prefix, SSH remote ignore-pattern, SSH remote gitignore, and Prompt Composer staged-image/lightbox scenarios. Focused static review found no critical or high issues. No E2E execution was run.
 - 2026-06-08: accepted manual `wizard-settings-prompts` fallback through `2d069a57a`; authored 6 additional active Settings AI Commands edit-cancel, SSH remote duplicate/reset, and Prompt Composer tab/history/read-only keyboard scenarios. Focused static review found no critical or high issues. No E2E execution was run.
 - 2026-06-08: accepted manual `files-docs-history` fallback through `18a4c3b29`; authored 5 additional active History Escape close, File Explorer Copy Path clipboard, file preview no-match recovery, and large-file full-load search scenarios. Focused static review found no critical or high issues. No E2E execution was run.
+- 2026-06-08: accepted manual `files-docs-history` fallback through `b409f4538`; authored 5 additional active File Explorer context-menu/dotfile/auto-refresh and History metadata/achievement scenarios. Focused static review found no critical or high issues. No E2E execution was run.
 - 2026-06-08: accepted manual `git-groupchat-playbooks` fallback through `e8ac2eddf`; authored 10 additional active Gist publish/republish, Git Log Escape-close, Playbook Exchange import-failure, Spec Kit/OpenSpec save/reset, and source-link shell-routing scenarios. Focused static review found no critical or high issues. No E2E execution was run.
 - 2026-06-08: accepted manual `mobile-web-bridge` fallback through `958f07ff4`; authored 24 additional active live bridge API, lifecycle metadata, REST API metadata, and static PWA route metadata scenarios. Focused static review found no critical or high issues; one lane-doc range note was corrected before commit. No E2E execution was run.
 - 2026-06-08: accepted manual `stats-graph-symphony` fallback through `057ced8e3`; authored 25 additional active Usage Dashboard export/preflight, Document Graph search/layout/help, and Symphony active/history/navigation scenarios. Focused static review found no critical or high issues. No E2E execution was run.

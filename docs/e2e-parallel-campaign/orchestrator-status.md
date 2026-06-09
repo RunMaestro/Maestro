@@ -1,6 +1,6 @@
 # Parallel E2E Orchestrator Status
 
-Last updated: 2026-06-08 23:31 EDT
+Last updated: 2026-06-08 23:36 EDT
 
 ## Base
 
@@ -35,7 +35,7 @@ coverage and the shell-lane tab coverage.
 | -------------------------- | ------------------------------------ | ------------------------------------------------ | --------------------------------------------------- | -------------------------- | ----------------------------------------------- |
 | `agent-crud-provider`      | `codex/e2e-agent-crud-provider`      | `Maestro-worktrees/e2e-agent-crud-provider`      | not relaunched                                      | complete                   | 104 active scenarios accepted; 0 remain         |
 | `shell-tabs-command`       | `codex/e2e-shell-tabs-command`       | `Maestro-worktrees/e2e-shell-tabs-command`       | `maestro-e2e-shell-tabs-command-campaign-goal`      | PM2 retry cycle after 503  | 81 active scenarios accepted; 185 remain        |
-| `files-docs-history`       | `codex/e2e-files-docs-history`       | `Maestro-worktrees/e2e-files-docs-history`       | `maestro-e2e-files-docs-history-campaign-goal`      | manual fallback accepted   | 42 active scenarios accepted; 307 remain        |
+| `files-docs-history`       | `codex/e2e-files-docs-history`       | `Maestro-worktrees/e2e-files-docs-history`       | `maestro-e2e-files-docs-history-campaign-goal`      | manual fallback accepted   | 47 active scenarios accepted; 302 remain        |
 | `autorun-ai-terminal`      | `codex/e2e-autorun-ai-terminal`      | `Maestro-worktrees/e2e-autorun-ai-terminal`      | `maestro-e2e-autorun-ai-terminal-campaign-goal`     | manual fallback accepted   | 140 active scenarios accepted; 133 remain       |
 | `wizard-settings-prompts`  | `codex/e2e-wizard-settings-prompts`  | `Maestro-worktrees/e2e-wizard-settings-prompts`  | `maestro-e2e-wizard-settings-prompts-campaign-goal` | manual fallback accepted   | 83 active scenarios accepted; 289 remain        |
 | `git-groupchat-playbooks`  | `codex/e2e-git-groupchat-playbooks`  | `Maestro-worktrees/e2e-git-groupchat-playbooks`  | `maestro-e2e-git-groupchat-playbooks-campaign-goal` | manual fallback accepted   | 130 active scenarios accepted; 233 remain       |
@@ -48,7 +48,7 @@ coverage and the shell-lane tab coverage.
 
 - `shell-tabs-command` merged through `44e98a94f`.
 - `agent-crud-provider` merged through `bb4fbcce2`.
-- `files-docs-history` merged through `18a4c3b29`.
+- `files-docs-history` merged through `b409f4538`.
 - `mobile-web-bridge` merged through `33a5ace5f`.
 - `autorun-ai-terminal` merged through `f3710f189`.
 - `wizard-settings-prompts` merged through `c32a4e4d5`.
@@ -267,6 +267,11 @@ coverage and the shell-lane tab coverage.
   and achievements scenarios. Static Prettier, ESLint, TypeScript,
   `git diff --check`, inventory scans, and focused review passed. No E2E execution
   was run.
+- 2026-06-08 23:36 EDT: accepted manual `files-docs-history` fallback through
+  `b409f4538` with 5 active File Explorer context-menu/dotfile/auto-refresh and
+  History metadata/achievement scenarios. Static Prettier, ESLint, TypeScript,
+  `git diff --check`, inventory scans, and focused review passed. No E2E execution
+  was run.
 
 ## Blockers
 
@@ -287,8 +292,8 @@ coverage and the shell-lane tab coverage.
   twenty-ninth `mobile-web-bridge`, thirtieth `stats-graph-symphony`, thirty-first
   `mobile-web-bridge` quota-completion, thirty-second `mobile-web-bridge`
   quota acceptance fix, thirty-third `debug-accessibility` final quota, and
-  thirty-fourth `git-groupchat-playbooks`, and thirty-fifth `stats-graph-symphony`
-  fallbacks are accepted for selected
+  thirty-fourth `git-groupchat-playbooks`, thirty-fifth `stats-graph-symphony`, and
+  thirty-sixth `files-docs-history` fallbacks are accepted for selected
   high-remaining lanes. Remaining work should
   continue in smaller batches, with each run committing one coherent tranche and
   recording remaining work instead of trying to consume a full lane quota in one
