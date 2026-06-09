@@ -180,6 +180,11 @@ const activeScenarioMatrix = [
 	{ id: 'SGS-A167', title: 'shows Document Graph external node multi-link count' },
 	{ id: 'SGS-A168', title: 'uses Copy URLs for aggregated Document Graph external links' },
 	{ id: 'SGS-A169', title: 'copies aggregated Document Graph external URLs to clipboard' },
+	{ id: 'SGS-A170', title: 'shows Document Graph multiple external domain count' },
+	{ id: 'SGS-A171', title: 'selects Document Graph external domain from search filter' },
+	{ id: 'SGS-A172', title: 'copies searched Document Graph external domain URL' },
+	{ id: 'SGS-A173', title: 'opens searched Document Graph external domain URL' },
+	{ id: 'SGS-A174', title: 'clears Document Graph external domain search filter' },
 ] as const;
 
 const skippedScenarioMatrix = [
@@ -823,6 +828,16 @@ function addSecondRunMaestroExternalLink(
 	fs.appendFileSync(
 		workbench.runbookPath,
 		'\n[Maestro docs](https://runmaestro.ai/docs)\n',
+		'utf-8'
+	);
+}
+
+function addDocsRunMaestroExternalLink(
+	workbench: ReturnType<typeof createStatsGraphSymphonyWorkbench>
+) {
+	fs.appendFileSync(
+		workbench.runbookPath,
+		'\n[Maestro docs site](https://docs.runmaestro.ai)\n',
 		'utf-8'
 	);
 }
@@ -4221,6 +4236,90 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 				})
 			)
 			.toBe('https://runmaestro.ai\nhttps://runmaestro.ai/docs');
+	});
+
+	test(`${activeScenarioMatrix[169].id} ${activeScenarioMatrix[169].title}`, async () => {
+		addDocsRunMaestroExternalLink(workbench);
+		const graphDialog = await openDocumentGraphFromPreview(window);
+
+		await showDocumentGraphExternalLinks(graphDialog);
+
+		await expect(graphDialog.getByText(/2 documents, 2 external domains/)).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[170].id} ${activeScenarioMatrix[170].title}`, async () => {
+		addDocsRunMaestroExternalLink(workbench);
+		const graphDialog = await openDocumentGraphFromPreview(window);
+		const searchInput = graphDialog.getByLabel('Search documents in graph');
+
+		await showDocumentGraphExternalLinks(graphDialog);
+		await searchInput.fill('docs.runmaestro.ai');
+		await expect(graphDialog.getByText(/[12] of 4 matching/)).toBeVisible();
+		await clickDocumentGraphExternalNode(graphDialog);
+
+		await expect(graphDialog.getByText('External: docs.runmaestro.ai')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[171].id} ${activeScenarioMatrix[171].title}`, async () => {
+		addDocsRunMaestroExternalLink(workbench);
+		await window.evaluate(() => {
+			const state = globalThis as typeof globalThis & { __sgsClipboardText?: string };
+			state.__sgsClipboardText = '';
+			Object.defineProperty(navigator, 'clipboard', {
+				configurable: true,
+				value: {
+					writeText: async (text: string) => {
+						state.__sgsClipboardText = text;
+					},
+				},
+			});
+		});
+		const graphDialog = await openDocumentGraphFromPreview(window);
+		const searchInput = graphDialog.getByLabel('Search documents in graph');
+
+		await showDocumentGraphExternalLinks(graphDialog);
+		await searchInput.fill('docs.runmaestro.ai');
+		await clickDocumentGraphExternalNode(graphDialog, 'right');
+		await graphDialog.getByRole('button', { name: /^Copy URL$/ }).click();
+
+		await expect
+			.poll(() =>
+				window.evaluate(() => {
+					const state = globalThis as typeof globalThis & { __sgsClipboardText?: string };
+					return state.__sgsClipboardText ?? '';
+				})
+			)
+			.toBe('https://docs.runmaestro.ai');
+	});
+
+	test(`${activeScenarioMatrix[172].id} ${activeScenarioMatrix[172].title}`, async () => {
+		await stubExternalLinkCapture(electronApp);
+		addDocsRunMaestroExternalLink(workbench);
+		const graphDialog = await openDocumentGraphFromPreview(window);
+		const searchInput = graphDialog.getByLabel('Search documents in graph');
+
+		await showDocumentGraphExternalLinks(graphDialog);
+		await searchInput.fill('docs.runmaestro.ai');
+		await clickDocumentGraphExternalNode(graphDialog, 'right');
+		await graphDialog.getByRole('button', { name: 'Open' }).click();
+
+		await expect
+			.poll(() => getCapturedExternalLinks(electronApp))
+			.toContain('https://docs.runmaestro.ai');
+	});
+
+	test(`${activeScenarioMatrix[173].id} ${activeScenarioMatrix[173].title}`, async () => {
+		addDocsRunMaestroExternalLink(workbench);
+		const graphDialog = await openDocumentGraphFromPreview(window);
+		const searchInput = graphDialog.getByLabel('Search documents in graph');
+
+		await showDocumentGraphExternalLinks(graphDialog);
+		await searchInput.fill('docs.runmaestro.ai');
+		await expect(graphDialog.getByText(/[12] of 4 matching/)).toBeVisible();
+		await graphDialog.getByLabel('Clear search').click();
+
+		await expect(searchInput).toHaveValue('');
+		await expect(graphDialog.getByText(/2 documents, 2 external domains/)).toBeVisible();
 	});
 
 	for (const scenario of skippedScenarioMatrix) {
