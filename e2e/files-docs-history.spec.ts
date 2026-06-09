@@ -60,6 +60,11 @@ const activeScenarioMatrix = [
 	{ id: 'FDH-A35', title: 'exits unsaved plain text edits without writing to disk' },
 	{ id: 'FDH-A36', title: 'saves markdown preview edits only after content changes' },
 	{ id: 'FDH-A37', title: 'shows file preview no-match search state and recovers' },
+	{ id: 'FDH-A43', title: 'closes the File Explorer context menu with Escape' },
+	{ id: 'FDH-A44', title: 'reveals hidden dotfiles only after enabling dotfile visibility' },
+	{ id: 'FDH-A45', title: 'disables File Explorer auto-refresh from the refresh menu' },
+	{ id: 'FDH-A46', title: 'shows History duration and cost metadata in list rows' },
+	{ id: 'FDH-A47', title: 'opens the achievements modal from a History entry action' },
 ] as const;
 
 const skippedScenarioMatrix = [
@@ -109,6 +114,7 @@ function createFilesDocsHistoryWorkbench() {
 	const runbookPath = path.join(docsDir, 'runbook.md');
 	const archivePath = path.join(docsDir, 'archive.md');
 	const plainTextPath = path.join(draftsDir, 'plain.txt');
+	const hiddenPath = path.join(projectDir, '.secret.md');
 
 	fs.mkdirSync(docsDir, { recursive: true });
 	fs.mkdirSync(draftsDir, { recursive: true });
@@ -156,6 +162,14 @@ Archive body should survive cancelled folder deletion.
 		['Plain preview starting line.', 'Plain preview editable line.'].join('\n'),
 		'utf-8'
 	);
+	fs.writeFileSync(
+		hiddenPath,
+		`# Hidden File Explorer Note
+
+Hidden dotfile body for File Explorer visibility coverage.
+`,
+		'utf-8'
+	);
 
 	return {
 		homeDir,
@@ -164,6 +178,7 @@ Archive body should survive cancelled folder deletion.
 		runbookPath,
 		archivePath,
 		plainTextPath,
+		hiddenPath,
 		sessionId,
 		sessions: [
 			{
@@ -289,6 +304,18 @@ async function seedHistoryEntries(page: Page, projectPath: string, sessionId: st
 					sessionId,
 					sessionName: 'Files Docs History Agent',
 					agentSessionId: 'codex-history-manual',
+				},
+				{
+					id: 'fdh-history-achievement-note',
+					type: 'USER' as const,
+					timestamp: now - 10_000,
+					summary: 'Achievement file history milestone',
+					fullResponse: 'History achievement action opens the About Maestro achievements view.',
+					projectPath,
+					sessionId,
+					sessionName: 'Files Docs History Agent',
+					agentSessionId: 'codex-history-achievement',
+					achievementAction: 'openAbout' as const,
 				},
 			];
 			const maestro = (
@@ -980,6 +1007,61 @@ test.describe(`Files docs history lane matrix (${activeScenarioMatrix.length} ac
 		await expect(window.getByText('1/2')).toBeVisible();
 		await fileSearch.press('Escape');
 		await expect(fileSearch).toBeHidden();
+	});
+
+	test(`${activeScenarioMatrix[37].id} ${activeScenarioMatrix[37].title}`, async () => {
+		const contextMenu = await openFileContextMenu(window, 'README.md');
+		await expect(contextMenu.getByRole('button', { name: 'Rename' })).toBeVisible();
+
+		await window.keyboard.press('Escape');
+
+		await expect(contextMenu.getByRole('button', { name: 'Rename' })).toBeHidden();
+		await expect(window.getByRole('dialog', { name: 'Rename File' })).toBeHidden();
+	});
+
+	test(`${activeScenarioMatrix[38].id} ${activeScenarioMatrix[38].title}`, async () => {
+		await helpers.openRightPanelTab(window, 'Files');
+		await expect(window.getByText('.secret.md')).toBeHidden();
+
+		await window.getByTitle('Show dotfiles').click();
+		await getFileTreeRow(window, '.secret.md');
+
+		await window.getByTitle('Hide dotfiles').click();
+		await expect(window.getByText('.secret.md')).toBeHidden();
+	});
+
+	test(`${activeScenarioMatrix[39].id} ${activeScenarioMatrix[39].title}`, async () => {
+		await helpers.openRightPanelTab(window, 'Files');
+		await window.getByTitle('Auto-refresh every 180s').hover();
+
+		await expect(window.getByText('Auto-refresh')).toBeVisible();
+		await window.getByText('Disable auto-refresh').click();
+
+		await expect(window.getByTitle('Refresh file tree')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[40].id} ${activeScenarioMatrix[40].title}`, async () => {
+		await helpers.openRightPanelTab(window, 'History');
+		const historyPanel = window.locator('[data-tour="history-panel"]');
+		const successRow = historyPanel
+			.locator('[data-index]')
+			.filter({ hasText: 'Rendered docs history tranche' })
+			.first();
+
+		await expect(successRow).toBeVisible();
+		await expect(successRow.getByText('1m 10s')).toBeVisible();
+		await expect(successRow.getByText('$0.04')).toBeVisible();
+	});
+
+	test(`${activeScenarioMatrix[41].id} ${activeScenarioMatrix[41].title}`, async () => {
+		await helpers.openRightPanelTab(window, 'History');
+		const historyPanel = window.locator('[data-tour="history-panel"]');
+
+		await expect(historyPanel.getByText('Achievement file history milestone')).toBeVisible();
+		await historyPanel.getByRole('button', { name: 'View Achievements' }).click();
+
+		const aboutDialog = window.getByRole('dialog', { name: 'About Maestro' });
+		await expect(aboutDialog.getByRole('heading', { name: 'About Maestro' })).toBeVisible();
 	});
 
 	for (const scenario of skippedScenarioMatrix) {
