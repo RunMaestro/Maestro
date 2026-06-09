@@ -2,9 +2,9 @@
 
 Source of truth: `docs/e2e-coverage-campaign.md`.
 
-Current active tests: 2191
+Current active tests: 2196
 Target active tests: 3,025
-Remaining matrix-backed active scenarios: 834
+Remaining matrix-backed active scenarios: 829
 
 ## Matrix
 
@@ -12,7 +12,7 @@ Remaining matrix-backed active scenarios: 834
 | -------------------------------------------------------------- | ------------------------- | -------------: | ------------: | --------: |
 | App shell, layout, sidebars, resizing, focus, global shortcuts | `shell-tabs-command`      |             26 |           110 |        84 |
 | Agent CRUD and provider setup                                  | `agent-crud-provider`     |            160 |           160 |         0 |
-| Codex AI terminal workflows                                    | `autorun-ai-terminal`     |            120 |           170 |        50 |
+| Codex AI terminal workflows                                    | `autorun-ai-terminal`     |            125 |           170 |        45 |
 | Command terminal workflows                                     | `shell-tabs-command`      |             61 |            95 |        34 |
 | Tabs and tab overlays                                          | `shell-tabs-command`      |             53 |           120 |        67 |
 | File explorer and file operations                              | `files-docs-history`      |             37 |           140 |       103 |
@@ -39,7 +39,7 @@ Remaining matrix-backed active scenarios: 834
 | `agent-crud-provider`      |                       0 |                       104 |                                    2 | `563b9db6c`          |
 | `shell-tabs-command`       |                     185 |                        81 |                                    0 | `2d9975b17`          |
 | `files-docs-history`       |                     302 |                        47 |                                    5 | `b409f4538`          |
-| `autorun-ai-terminal`      |                      73 |                       200 |                                    0 | `be6f56584`          |
+| `autorun-ai-terminal`      |                      68 |                       205 |                                    0 | `cd178a73f`          |
 | `wizard-settings-prompts`  |                      92 |                       280 |                                    1 | `79a670f31`          |
 | `git-groupchat-playbooks`  |                       0 |                       363 |                                    7 | `ec72c453c`          |
 | `stats-graph-symphony`     |                     182 |                       154 |                                    6 | `f4d562a33`          |
@@ -164,6 +164,7 @@ Remaining matrix-backed active scenarios: 834
 - 2026-06-09: accepted manual `wizard-settings-prompts` through `c8095b6eb`; authored 16 additional active Director's Notes Unified History and New Agent Wizard Codex configuration scenarios from the clean worker branch. Focused static review found no critical or high issues. No E2E execution was run.
 - 2026-06-09: accepted manual `git-groupchat-playbooks` quota close through `ec72c453c`; authored 203 additional matrix-backed active Git/worktree/PR/diff/log/Gist, Group Chat, Playbook Exchange, Spec Kit, and OpenSpec scenarios from the clean worker branch. The lane reached its 363-active-scenario matrix-backed quota. Focused static review found no critical or high issues. No E2E execution was run.
 - 2026-06-09: accepted manual `autorun-ai-terminal` through `be6f56584`; authored 60 additional active Codex AI terminal context/action/modal and Auto Run setup/header/preview/editor/worktree scenarios from the clean worker branch. Focused static review removed fixed waits from the worker snapshot and found no critical or high issues. No E2E execution was run.
+- 2026-06-09: accepted manual `autorun-ai-terminal` through `cd178a73f`; authored 5 additional active Codex AI terminal context target selection scenarios from the clean worker branch. Focused static review removed unrelated fixed waits from the worker snapshot and found no critical or high issues. No E2E execution was run.
 - 2026-06-09: accepted manual `wizard-settings-prompts` through `adf5d6dfd`; authored 16 additional active New Agent Wizard Codex persistence/configuration and inline wizard generated-document scenarios from the clean worker branch. Focused static review found no critical or high issues. No E2E execution was run.
 - 2026-06-09: accepted manual `wizard-settings-prompts` through `403f4d3d2`; authored 8 additional active Director's Notes Unified History detail, stats, validation, keyboard, and lookback scenarios from the clean worker branch. Focused static review found no critical or high issues. No E2E execution was run.
 - 2026-06-09: accepted manual `wizard-settings-prompts` through `6f74ecab0`; authored 8 additional active Director's Notes Unified History detail navigation, user/failed-status, search-count, and all-time lookback scenarios from the clean worker branch. Focused static review found no critical or high issues. No E2E execution was run.

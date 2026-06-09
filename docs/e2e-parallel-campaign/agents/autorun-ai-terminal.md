@@ -1,6 +1,6 @@
 # autorun-ai-terminal
 
-Status: fortieth tranche authored
+Status: forty-first tranche authored
 
 ## Scope
 
@@ -1395,5 +1395,42 @@ Validation:
 Remaining work:
 
 - Matrix-backed remaining after this tranche: 73.
+- Continue with small tranches for remaining Codex terminal transcript edge states, live-provider retry execution safeguards, deeper Auto Run run-state variants, and Auto Run worktree/stalled-document variants without duplicating existing app-shell coverage.
+- Run actual Playwright/E2E validation only after orchestrator approval.
+
+Forty-first tranche:
+
+- Added 5 active matrix-backed tests to `e2e/autorun-ai-terminal.spec.ts`.
+- New active tests: 5.
+- Cumulative active tests: 205.
+- Skipped tests: 0.
+- Env-gated tests: 0.
+- Shared helper edits: none; reused context merge/send modal helpers.
+- Live provider execution: none; no E2E validation/listing was run.
+- Campaign head before this tranche: `3caf1908e`.
+- Tranche implementation commit: `4e745a031`.
+- Orchestrator import commit: `cd178a73f`.
+
+Covered:
+
+- Codex AI terminal valid pasted merge target preview.
+- Codex AI terminal Open Tabs merge target selection.
+- Codex AI terminal merge clean-context preview toggle.
+- Codex AI terminal send-to-agent number-key target selection.
+- Codex AI terminal send-to-agent cancel behavior.
+
+Validation:
+
+- `npx prettier --check e2e/autorun-ai-terminal.spec.ts` passed.
+- `npx eslint e2e/autorun-ai-terminal.spec.ts` passed.
+- Targeted TypeScript parse/check for `e2e/autorun-ai-terminal.spec.ts` passed with `--esModuleInterop`.
+- `git diff --check` passed.
+- Marker scan found 205 active declarations and no `.only`/skip declarations in `e2e/autorun-ai-terminal.spec.ts`.
+- Non-ASCII scan found 0 non-ASCII characters in `e2e/autorun-ai-terminal.spec.ts`.
+- Code-reviewer pass found no blocking/high issues.
+
+Remaining work:
+
+- Matrix-backed remaining after this tranche: 68.
 - Continue with small tranches for remaining Codex terminal transcript edge states, live-provider retry execution safeguards, deeper Auto Run run-state variants, and Auto Run worktree/stalled-document variants without duplicating existing app-shell coverage.
 - Run actual Playwright/E2E validation only after orchestrator approval.
