@@ -1030,6 +1030,21 @@ async function stubCodexProcessSpawn(
 	}, options);
 }
 
+async function startCodexLaneStubbedAutoRun(
+	launched: Awaited<ReturnType<typeof launchLaneWorkbench>>,
+	options: { exitDelayMs?: number } = {}
+) {
+	await stubCodexProcessSpawn(launched.electronApp, {
+		exitDelayMs: options.exitDelayMs ?? 20_000,
+	});
+	const dialog = await openAutoRunBatchConfig(launched.window);
+	await dialog.getByRole('button', { name: 'Go' }).click();
+	await expect(dialog).toBeHidden();
+	await expect(launched.window.getByText('Auto Run Active').first()).toBeVisible({
+		timeout: 15_000,
+	});
+}
+
 async function getStubbedCodexProcessSpawnCalls(electronApp: ElectronApplication) {
 	return electronApp.evaluate(() => {
 		const state = globalThis as typeof globalThis & {
@@ -1831,6 +1846,186 @@ Recovered refresh sentinel.
 		}
 	});
 
+	test('updates Codex lane batch selector selected task counts as documents change', async () => {
+		const launched = await launchBatchConfigLaneWorkbench();
+		try {
+			const dialog = await openAutoRunBatchConfig(launched.window);
+
+			await dialog.getByRole('button', { name: 'Add Docs' }).click();
+			const selector = launched.window
+				.getByText('Select Documents')
+				.locator('xpath=ancestor::div[contains(@class, "shadow-2xl")][1]');
+			await selector.getByRole('button', { name: /Phase 1\.md/ }).click();
+			await selector.getByRole('button', { name: /Phase 2\.md/ }).click();
+
+			await expect(selector.getByRole('button', { name: /Add 1 file.*2 tasks/ })).toBeVisible();
+			await selector.getByRole('button', { name: /Reference\.md/ }).click();
+			await expect(selector.getByRole('button', { name: /Add 2 files.*2 tasks/ })).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('cancels Codex lane batch document selector changes without changing the queue', async () => {
+		const launched = await launchBatchConfigLaneWorkbench();
+		try {
+			const dialog = await openAutoRunBatchConfig(launched.window);
+
+			await dialog.getByRole('button', { name: 'Add Docs' }).click();
+			const selector = launched.window
+				.getByText('Select Documents')
+				.locator('xpath=ancestor::div[contains(@class, "shadow-2xl")][1]');
+			await selector.getByRole('button', { name: /Phase 1\.md/ }).click();
+			await selector.getByRole('button', { name: 'Cancel' }).click();
+
+			await expect(selector).toBeHidden();
+			await expect(dialog.getByText('Phase 1.md')).toBeVisible();
+			await expect(dialog.getByText('No documents selected')).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('refreshes Codex lane batch selector after a new Auto Run document appears', async () => {
+		const launched = await launchBatchConfigLaneWorkbench();
+		const refreshedPath = path.join(launched.autoRunFolder, 'Batch Refresh.md');
+		try {
+			const dialog = await openAutoRunBatchConfig(launched.window);
+			await dialog.getByRole('button', { name: 'Add Docs' }).click();
+			const selector = launched.window
+				.getByText('Select Documents')
+				.locator('xpath=ancestor::div[contains(@class, "shadow-2xl")][1]');
+
+			fs.writeFileSync(refreshedPath, '# Batch Refresh\n\n- [ ] Refresh batch selector\n', 'utf-8');
+			await selector.getByTitle('Refresh document list').click();
+
+			await expect(selector.getByText('Found 1 new document')).toBeVisible();
+			await expect(selector.getByRole('button', { name: /Batch Refresh\.md/ })).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('toggles Codex lane batch selector bulk action state', async () => {
+		const launched = await launchBatchConfigLaneWorkbench();
+		try {
+			const dialog = await openAutoRunBatchConfig(launched.window);
+
+			await dialog.getByRole('button', { name: 'Add Docs' }).click();
+			const selector = launched.window
+				.getByText('Select Documents')
+				.locator('xpath=ancestor::div[contains(@class, "shadow-2xl")][1]');
+			const bulkButton = selector.getByRole('button', { name: 'Select All' });
+
+			await expect(bulkButton).toHaveAttribute('title', 'Select all documents');
+			await bulkButton.click();
+
+			await expect(selector.getByRole('button', { name: 'Deselect All' })).toHaveAttribute(
+				'title',
+				'Deselect all documents'
+			);
+			await selector.getByRole('button', { name: 'Deselect All' }).click();
+			await expect(selector.getByRole('button', { name: /Add 0 files.*0 tasks/ })).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('removes the only Codex lane batch document into the empty queue state', async () => {
+		const launched = await launchBatchConfigLaneWorkbench();
+		try {
+			const dialog = await openAutoRunBatchConfig(launched.window);
+
+			await dialog.getByTitle('Remove document').click();
+
+			await expect(dialog.getByText('No documents selected')).toBeVisible();
+			await expect(dialog.getByRole('button', { name: 'Go' })).toBeDisabled();
+			await expect(dialog.getByRole('button', { name: 'Go' })).toHaveAttribute(
+				'title',
+				'No documents selected'
+			);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('shows Codex lane Auto Run active state after starting a stubbed batch', async () => {
+		const launched = await launchBatchConfigLaneWorkbench();
+		try {
+			await startCodexLaneStubbedAutoRun(launched);
+
+			await expect(launched.window.getByText('Auto Run Active').first()).toBeVisible();
+			await expect(launched.window.getByTitle('Stop auto-run', { exact: true })).toBeVisible();
+			await expect(launched.window.getByRole('button', { name: 'Run' })).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('locks Codex lane Auto Run editing while a stubbed batch is active', async () => {
+		const launched = await launchBatchConfigLaneWorkbench();
+		try {
+			await startCodexLaneStubbedAutoRun(launched);
+
+			const editButton = launched.window.getByTitle('Editing disabled while Auto Run active');
+			await expect(editButton).toBeVisible();
+			await expect(editButton).toBeDisabled();
+			await expect(launched.window.getByTitle('Preview document')).toHaveAttribute(
+				'aria-pressed',
+				'true'
+			);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('switches Codex lane Auto Run to preview mode when a batch starts from edit mode', async () => {
+		const launched = await launchBatchConfigLaneWorkbench();
+		try {
+			await openAutoRunPanel(launched.window);
+			await launched.window.getByTitle('Edit document').click();
+			const editor = launched.window.getByPlaceholder(/Capture notes/);
+			await expect(editor).toBeVisible();
+
+			await startCodexLaneStubbedAutoRun(launched);
+
+			await expect(editor).toBeHidden();
+			await expect(
+				launched.window.getByRole('heading', { name: 'Phase 1: Lane Setup' })
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('shows Codex lane Auto Run stopping state after graceful stop request', async () => {
+		const launched = await launchBatchConfigLaneWorkbench();
+		try {
+			await startCodexLaneStubbedAutoRun(launched);
+
+			await launched.window.getByTitle('Stop auto-run', { exact: true }).click();
+
+			await expect(launched.window.getByRole('button', { name: 'Stopping...' })).toBeVisible();
+			await expect(launched.window.getByTitle('Stopping after current task...')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('hides Codex lane completed-task reset while a batch is active', async () => {
+		const launched = await launchBatchConfigLaneWorkbench();
+		try {
+			await openAutoRunPanel(launched.window);
+			await expect(launched.window.getByTitle('Reset 1 completed task')).toBeVisible();
+
+			await startCodexLaneStubbedAutoRun(launched);
+
+			await expect(launched.window.getByTitle('Reset 1 completed task')).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
 	test('adds a nested Codex Auto Run folder to the batch queue', async () => {
 		const launched = await launchNestedDocumentLaneWorkbench();
 		try {
@@ -2109,6 +2304,111 @@ Recovered refresh sentinel.
 		}
 	});
 
+	test('updates Codex batch create-new worktree path preview from a custom branch name', async () => {
+		const launched = await launchWorktreeBatchLaneWorkbench();
+		try {
+			await stubWorktreeGit(launched.electronApp, {
+				branches: ['main'],
+				currentBranch: 'main',
+				gitSubdirs: [],
+			});
+			const dialog = await openAutoRunBatchConfig(launched.window);
+
+			await dialog.getByRole('button', { name: /Dispatch to a separate worktree/ }).click();
+			await dialog.getByLabel('Worktree Branch Name').fill('feature/codex-preview');
+
+			await expect(
+				dialog.getByTitle(path.join(launched.worktreesDir, 'feature/codex-preview'))
+			).toBeVisible();
+			await expect(dialog.getByText('feature/codex-preview')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('warns for whitespace-only Codex batch create-new worktree branch names', async () => {
+		const launched = await launchWorktreeBatchLaneWorkbench();
+		try {
+			await stubWorktreeGit(launched.electronApp);
+			const dialog = await openAutoRunBatchConfig(launched.window);
+
+			await dialog.getByRole('button', { name: /Dispatch to a separate worktree/ }).click();
+			await dialog.getByLabel('Worktree Branch Name').fill('   ');
+
+			await expect(dialog.getByText('Branch name is required')).toBeVisible();
+			await expect(
+				dialog.locator('span[title]').filter({ hasText: launched.worktreesDir })
+			).toHaveCount(0);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('toggles Codex batch create-new PR creation with the keyboard', async () => {
+		const launched = await launchWorktreeBatchLaneWorkbench();
+		try {
+			await stubWorktreeGit(launched.electronApp);
+			const dialog = await openAutoRunBatchConfig(launched.window);
+
+			await dialog.getByRole('button', { name: /Dispatch to a separate worktree/ }).click();
+			const prCheckbox = dialog.getByRole('checkbox');
+			await expect(prCheckbox).toHaveAttribute('aria-checked', 'false');
+
+			await prCheckbox.press('Enter');
+			await expect(prCheckbox).toHaveAttribute('aria-checked', 'true');
+			await prCheckbox.press('Enter');
+			await expect(prCheckbox).toHaveAttribute('aria-checked', 'false');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('preserves Codex batch PR creation when switching to an open worktree target', async () => {
+		const launched = await launchWorktreeBatchLaneWorkbench({ withChild: true });
+		try {
+			await stubWorktreeGit(launched.electronApp);
+			const dialog = await openAutoRunBatchConfig(launched.window);
+
+			await dialog.getByRole('button', { name: /Dispatch to a separate worktree/ }).click();
+			const prCheckbox = dialog.getByRole('checkbox');
+			await prCheckbox.press('Space');
+			await dialog.locator('select').first().selectOption(launched.childSessionId);
+
+			await expect(dialog.getByTestId('agent-state-indicator')).toContainText('ready');
+			await expect(prCheckbox).toHaveAttribute('aria-checked', 'true');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('hides Codex batch create-new inputs after selecting a closed worktree target', async () => {
+		const launched = await launchWorktreeBatchLaneWorkbench();
+		const closedWorktreePath = path.join(launched.worktreesDir, 'feat-closed-inputs');
+		try {
+			await stubWorktreeGit(launched.electronApp, {
+				gitSubdirs: [
+					{
+						path: closedWorktreePath,
+						name: 'feat-closed-inputs',
+						branch: 'feat/closed-inputs',
+					},
+				],
+			});
+			const dialog = await openAutoRunBatchConfig(launched.window);
+
+			await dialog.getByRole('button', { name: /Dispatch to a separate worktree/ }).click();
+			const targetSelect = dialog.locator('select').first();
+			await expect(targetSelect.locator('option', { hasText: 'feat/closed-inputs' })).toBeVisible();
+			await targetSelect.selectOption(`__closed__:${closedWorktreePath}`);
+
+			await expect(dialog.getByLabel('Base Branch')).toBeHidden();
+			await expect(dialog.getByLabel('Worktree Branch Name')).toBeHidden();
+			await expect(dialog.getByRole('checkbox')).toHaveAttribute('aria-checked', 'false');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
 	test('shows preparing state while Codex create-new batch worktree setup is pending', async () => {
 		const launched = await launchWorktreeBatchLaneWorkbench();
 		try {
@@ -2300,8 +2600,12 @@ Recovered refresh sentinel.
 			await promptInput.fill('   \n   ');
 			await launched.window.getByTitle('Send message').click();
 
+			await expect
+				.poll(async () => (await getStubbedCodexProcessSpawnCalls(launched.electronApp)).length, {
+					timeout: 200,
+				})
+				.toBe(0);
 			await expect(promptInput).toHaveValue('   \n   ');
-			expect(await getStubbedCodexProcessSpawnCalls(launched.electronApp)).toHaveLength(0);
 		} finally {
 			await launched.cleanup();
 		}
@@ -2336,7 +2640,11 @@ Recovered refresh sentinel.
 			await promptInput.press('Shift+Enter');
 
 			await expect(promptInput).toHaveValue('Codex multiline draft sentinel\n');
-			expect(await getStubbedCodexProcessSpawnCalls(launched.electronApp)).toHaveLength(0);
+			await expect
+				.poll(async () => (await getStubbedCodexProcessSpawnCalls(launched.electronApp)).length, {
+					timeout: 200,
+				})
+				.toBe(0);
 		} finally {
 			await launched.cleanup();
 		}
@@ -2354,7 +2662,11 @@ Recovered refresh sentinel.
 			await promptInput.press('Enter');
 
 			await expect(promptInput).toHaveValue('Codex Control Enter dispatch sentinel\n');
-			expect(await getStubbedCodexProcessSpawnCalls(launched.electronApp)).toHaveLength(0);
+			await expect
+				.poll(async () => (await getStubbedCodexProcessSpawnCalls(launched.electronApp)).length, {
+					timeout: 200,
+				})
+				.toBe(0);
 
 			await promptInput.press('Control+Enter');
 
@@ -2501,8 +2813,11 @@ Recovered refresh sentinel.
 
 			await expect(stagedImage).toBeHidden();
 			await composerInput.fill('Codex composer attachment draft sentinel');
-			await expect(composerInput).toHaveValue('Codex composer attachment draft sentinel');
-			expect(await getStubbedCodexProcessSpawnCalls(launched.electronApp)).toHaveLength(0);
+			await expect
+				.poll(async () => (await getStubbedCodexProcessSpawnCalls(launched.electronApp)).length, {
+					timeout: 200,
+				})
+				.toBe(0);
 		} finally {
 			await launched.cleanup();
 		}
@@ -5326,6 +5641,7 @@ Codex saved Auto Run body sentinel.
 
 			await editor.fill(draftContent);
 			await expect(editor).toHaveValue(draftContent);
+			await expect(launched.window.getByText('Unsaved changes')).toBeVisible();
 			await editor.press('Meta+Z');
 
 			await expect(editor).toHaveValue(launched.phaseOneContent);
@@ -5345,6 +5661,7 @@ Codex saved Auto Run body sentinel.
 
 			await editor.fill(draftContent);
 			await expect(editor).toHaveValue(draftContent);
+			await expect(launched.window.getByText('Unsaved changes')).toBeVisible();
 			await editor.press('Meta+Z');
 			await expect(editor).toHaveValue(launched.phaseOneContent);
 			await editor.press('Meta+Shift+Z');
@@ -5367,11 +5684,13 @@ Codex saved Auto Run body sentinel.
 
 			await editor.fill(firstDraft);
 			await expect(editor).toHaveValue(firstDraft);
+			await expect(launched.window.getByText('Unsaved changes')).toBeVisible();
 			await editor.press('Meta+Z');
 			await expect(editor).toHaveValue(launched.phaseOneContent);
 
 			await editor.fill(secondDraft);
 			await expect(editor).toHaveValue(secondDraft);
+			await expect(launched.window.getByText('Unsaved changes')).toBeVisible();
 			await editor.press('Meta+Shift+Z');
 
 			await expect(editor).toHaveValue(secondDraft);
@@ -5519,6 +5838,115 @@ Codex saved Auto Run body sentinel.
 
 			await editor.fill('Now live-match-sentinel exists in the Codex lane editor');
 			await expect(launched.window.getByText('1/1')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('counts Codex lane Auto Run editor search matches case-insensitively', async () => {
+		const launched = await launchLaneWorkbench();
+		try {
+			await openAutoRunPanel(launched.window);
+			await launched.window.getByTitle('Edit document').click();
+			const editor = launched.window.getByPlaceholder(/Capture notes/);
+
+			await editor.fill('MixedCase Codex sentinel\nmixedcase Codex sentinel');
+			await editor.press('Control+f');
+			const searchInput = launched.window.getByPlaceholder('Search...');
+			await searchInput.fill('MIXEDCASE');
+
+			await expect(launched.window.getByText('1/2')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('disables Codex lane Auto Run editor search navigation for missing text', async () => {
+		const launched = await launchLaneWorkbench();
+		try {
+			await openAutoRunPanel(launched.window);
+			await launched.window.getByTitle('Edit document').click();
+			const editor = launched.window.getByPlaceholder(/Capture notes/);
+
+			await editor.fill('Codex missing-search navigation sentinel');
+			await editor.press('Control+f');
+			const panel = launched.window.locator('.autorun-panel');
+			const searchInput = panel.getByPlaceholder('Search...');
+			await searchInput.fill('absent-codex-query');
+
+			await expect(panel.getByText('No matches')).toBeVisible();
+			await expect(panel.getByTitle('Previous match (Shift+Enter)')).toBeDisabled();
+			await expect(panel.getByTitle('Next match (Enter)')).toBeDisabled();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('hides Codex lane Auto Run editor search counters when the query is cleared', async () => {
+		const launched = await launchLaneWorkbench();
+		try {
+			await openAutoRunPanel(launched.window);
+			await launched.window.getByTitle('Edit document').click();
+			const editor = launched.window.getByPlaceholder(/Capture notes/);
+
+			await editor.fill('clear-query-codex-sentinel');
+			await editor.press('Control+f');
+			const panel = launched.window.locator('.autorun-panel');
+			const searchInput = panel.getByPlaceholder('Search...');
+			await searchInput.fill('clear-query-codex-sentinel');
+			await expect(panel.getByText('1/1')).toBeVisible();
+
+			await searchInput.fill('');
+
+			await expect(panel.getByText('1/1')).toBeHidden();
+			await expect(panel.getByTitle('Previous match (Shift+Enter)')).toBeHidden();
+			await expect(panel.getByTitle('Next match (Enter)')).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('closes Codex lane Auto Run editor search from the toolbar button', async () => {
+		const launched = await launchLaneWorkbench();
+		try {
+			await openAutoRunPanel(launched.window);
+			await launched.window.getByTitle('Edit document').click();
+			const editor = launched.window.getByPlaceholder(/Capture notes/);
+
+			await editor.fill('toolbar-close-codex-sentinel');
+			await editor.press('Control+f');
+			const searchInput = launched.window.getByPlaceholder('Search...');
+			await searchInput.fill('toolbar-close');
+			await expect(launched.window.getByText('1/1')).toBeVisible();
+
+			await launched.window.getByTitle('Close search (Esc)').click();
+
+			await expect(searchInput).toBeHidden();
+			await expect(editor).toBeFocused();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('keeps Codex lane Auto Run editor search count after saving edits', async () => {
+		const launched = await launchLaneWorkbench();
+		const savedContent = `${launched.phaseOneContent}\nsave-search-codex-sentinel\nsave-search-codex-sentinel\n`;
+		try {
+			await openAutoRunPanel(launched.window);
+			await launched.window.getByTitle('Edit document').click();
+			const editor = launched.window.getByPlaceholder(/Capture notes/);
+
+			await editor.fill(savedContent);
+			await editor.press('Control+f');
+			const searchInput = launched.window.getByPlaceholder('Search...');
+			await searchInput.fill('save-search-codex-sentinel');
+			await expect(launched.window.getByText('1/2')).toBeVisible();
+
+			await launched.window.getByTitle(/Save changes/).click();
+
+			await expect.poll(() => fs.readFileSync(launched.phaseOnePath, 'utf-8')).toBe(savedContent);
+			await expect(launched.window.getByText('Unsaved changes')).toBeHidden();
+			await expect(launched.window.getByText('1/2')).toBeVisible();
 		} finally {
 			await launched.cleanup();
 		}

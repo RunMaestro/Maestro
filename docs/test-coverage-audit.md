@@ -34,11 +34,10 @@ Parallel E2E authoring checkpoint:
 
 - Campaign: `docs/e2e-parallel-prompt.md`
 - Result: in progress
-- Current authoring progress: 2241 / 3,025 active scenarios after accepting the
-  twenty-third-tranche stats/graph/symphony fallback through `d3b523370`. This
-  tranche added 5 active Document Graph multiple-domain count, external-domain
-  search selection, searched-domain URL copy/open, and search-clear rows without
-  adding skipped or env-gated rows.
+- Current authoring progress: 2261 / 3,025 active scenarios after accepting the
+  `autorun-ai-terminal` branch through `1ed92c5a2`. This tranche added 20 active
+  Auto Run editor search, active-state, worktree configuration, and batch
+  selector rows without adding skipped or env-gated rows.
 - Accepted lanes so far: `shell-tabs-command`, `agent-crud-provider`,
   `files-docs-history`, `mobile-web-bridge`, `autorun-ai-terminal`,
   `wizard-settings-prompts`, `stats-graph-symphony`, `debug-accessibility`,
@@ -46,10 +45,10 @@ Parallel E2E authoring checkpoint:
 - Execution policy: Playwright E2E tests are intentionally not executed in this phase.
 - Validation plan: static review of authored selectors, fixtures, scenario names, assertions, and lane progress logs; runtime validation is deferred to a later sharded execution phase.
 - Latest static validation: large-heap Prettier check, targeted ESLint,
-  duplicate-ID/test-count scan, `.only`, prohibited-command guard, and
-  `git diff --check` passed for the `stats-graph-symphony` fallback before
-  merge; focused code-reviewer checklist review found no critical or high
-  issues. No Playwright/E2E/listing command was run.
+  `tsconfig.lint.json`, active-test/title-count scan, `.only`, fixed-wait, and
+  prohibited-command guards, and `git diff --check` passed for the
+  `autorun-ai-terminal` branch import; focused code-reviewer checklist review
+  found no critical or high issues. No Playwright/E2E/listing command was run.
 
 Integration checkpoint:
 
