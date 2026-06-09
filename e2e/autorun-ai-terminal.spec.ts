@@ -3879,6 +3879,97 @@ Externally refreshed Codex Auto Run sentinel.
 		}
 	});
 
+	test('shows Codex Main tab management actions in the tab overlay', async () => {
+		const launched = await launchContextActionsLaneWorkbench();
+		try {
+			await openCodexMainTabOverlay(launched.window);
+
+			await expect(launched.window.getByText('Rename Tab', { exact: true })).toBeVisible();
+			await expect(launched.window.getByText('Star Session', { exact: true })).toBeVisible();
+			await expect(launched.window.getByText('Mark as Unread', { exact: true })).toBeVisible();
+			await expect(launched.window.getByText('Export as HTML', { exact: true })).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('renames the Codex Main AI tab from the tab overlay', async () => {
+		const launched = await launchContextActionsLaneWorkbench();
+		try {
+			await openCodexMainTabOverlay(launched.window);
+			await launched.window.getByText('Rename Tab', { exact: true }).click();
+
+			const dialog = launched.window.getByRole('dialog', { name: 'Rename Tab' });
+			await expect(dialog).toBeVisible();
+			await dialog.locator('input').fill('Renamed Codex Main');
+			await dialog.getByRole('button', { name: 'Rename' }).click();
+
+			await expect(dialog).toBeHidden();
+			await expect(
+				launched.window.locator('[data-tab-id]').filter({ hasText: 'Renamed Codex Main' })
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('toggles the Codex Main AI tab star state from the tab overlay', async () => {
+		const launched = await launchContextActionsLaneWorkbench();
+		try {
+			await openCodexMainTabOverlay(launched.window);
+			await launched.window.getByText('Star Session', { exact: true }).click();
+
+			await openCodexMainTabOverlay(launched.window);
+			await expect(launched.window.getByText('Unstar Session', { exact: true })).toBeVisible();
+			await launched.window.getByText('Unstar Session', { exact: true }).click();
+
+			await openCodexMainTabOverlay(launched.window);
+			await expect(launched.window.getByText('Star Session', { exact: true })).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('keeps single Codex Main tab close actions disabled in the tab overlay', async () => {
+		const launched = await launchContextActionsLaneWorkbench();
+		try {
+			await openCodexMainTabOverlay(launched.window);
+
+			await expect(launched.window.getByRole('button', { name: 'Close Tab' })).toBeDisabled();
+			await expect(
+				launched.window.getByRole('button', { name: 'Close Other Tabs' })
+			).toBeDisabled();
+			await expect(
+				launched.window.getByRole('button', { name: 'Close Tabs to Left' })
+			).toBeDisabled();
+			await expect(
+				launched.window.getByRole('button', { name: 'Close Tabs to Right' })
+			).toBeDisabled();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('closes the Codex Review AI tab from its tab overlay', async () => {
+		const launched = await launchMultiTabQueuedLaneWorkbench();
+		try {
+			await openCodexAiTerminal(launched.window);
+			const reviewTab = launched.window.locator(`[data-tab-id="${launched.reviewTabId}"]`);
+			await expect(reviewTab).toBeVisible();
+			await reviewTab.hover();
+			await expect(launched.window.getByText('Copy Session ID')).toBeVisible();
+
+			await launched.window.getByRole('button', { name: 'Close Tab' }).click();
+
+			await expect(reviewTab).toBeHidden();
+			await expect(
+				launched.window.locator('[data-tab-id]').filter({ hasText: 'Main' })
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
 	test('lists Codex context Quick Actions without compact below the summarize threshold', async () => {
 		const launched = await launchContextActionsLaneWorkbench();
 		try {
