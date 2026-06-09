@@ -5,15 +5,24 @@
  * and no network-backed flows.
  */
 import { test, expect, helpers } from './fixtures/electron-app';
-import type { Page } from '@playwright/test';
+import type { ElectronApplication, Locator, Page } from '@playwright/test';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+
+interface DirectorNotesSettings {
+	provider?: string;
+	customPath?: string;
+	customArgs?: string;
+	customEnvVars?: Record<string, string>;
+	defaultLookbackDays?: number;
+}
 
 interface WizardE2ETab {
 	id: string;
 	saveToHistory?: boolean;
 	readOnlyMode?: boolean;
+	showThinking?: 'off' | 'on' | 'sticky';
 }
 
 interface WizardE2ESession {
@@ -27,8 +36,12 @@ declare global {
 			settings: {
 				get: {
 					(key: 'encoreFeatures'): Promise<{ directorNotes?: boolean } | undefined>;
+					(key: 'directorNotesSettings'): Promise<DirectorNotesSettings>;
 					(key: string): Promise<unknown>;
 				};
+			};
+			agents: {
+				getConfig: (agentId: string) => Promise<Record<string, unknown>>;
 			};
 			sessions: {
 				getAll: () => Promise<WizardE2ESession[]>;
@@ -121,6 +134,145 @@ const activeScenarioMatrix = [
 	{ id: 'WSP-081', title: 'inserts a tab character in Prompt Composer' },
 	{ id: 'WSP-082', title: 'toggles Prompt Composer History with the keyboard shortcut' },
 	{ id: 'WSP-083', title: 'toggles Prompt Composer Read-Only with the keyboard shortcut' },
+	{ id: 'WSP-084', title: 'inserts a newline with Shift+Enter in Prompt Composer' },
+	{ id: 'WSP-085', title: 'opens a staged Prompt Composer image with the keyboard shortcut' },
+	{ id: 'WSP-086', title: 'closes the image lightbox without closing Prompt Composer' },
+	{ id: 'WSP-087', title: 'cycles Prompt Composer Thinking mode from the toolbar' },
+	{ id: 'WSP-088', title: 'persists the Display maximum log buffer selection' },
+	{ id: 'WSP-089', title: 'toggles Settings beta update channel' },
+	{ id: 'WSP-090', title: 'toggles Settings crash reporting preference' },
+	{ id: 'WSP-091', title: 'records a Settings general shortcut override' },
+	{ id: 'WSP-092', title: 'cancels Settings shortcut recording with Escape' },
+	{ id: 'WSP-093', title: 'records a Settings AI tab shortcut override' },
+	{ id: 'WSP-094', title: 'adds a Display custom interface font' },
+	{ id: 'WSP-095', title: 'removes a Display custom interface font' },
+	{ id: 'WSP-096', title: 'selects a Display custom interface font' },
+	{ id: 'WSP-097', title: 'prevents duplicate Display custom interface fonts' },
+	{ id: 'WSP-098', title: 'selects the Settings custom theme card' },
+	{ id: 'WSP-099', title: 'initializes the Settings custom theme from Solarized' },
+	{ id: 'WSP-100', title: 'resets the Settings custom theme to Dracula defaults' },
+	{ id: 'WSP-101', title: 'edits the Settings custom theme main background color' },
+	{ id: 'WSP-102', title: 'advances the Settings theme picker with Tab' },
+	{ id: 'WSP-103', title: 'wraps the Settings theme picker backward to Custom' },
+	{ id: 'WSP-104', title: 'persists selecting the GitHub light theme' },
+	{ id: 'WSP-105', title: "lists Codex as the Director's Notes synopsis provider" },
+	{ id: 'WSP-106', title: "persists Director's Notes provider path args and env vars" },
+	{ id: 'WSP-107', title: "clears Director's Notes provider custom overrides" },
+	{ id: 'WSP-108', title: "persists Director's Notes Codex model override" },
+	{ id: 'WSP-109', title: "persists Director's Notes Codex context window" },
+	{ id: 'WSP-110', title: "shows Director's Notes available model count" },
+	{ id: 'WSP-111', title: "shows Director's Notes built-in environment variables" },
+	{ id: 'WSP-112', title: 'keeps New Agent Wizard Continue disabled by default' },
+	{ id: 'WSP-113', title: 'preserves a typed New Agent Wizard agent name' },
+	{ id: 'WSP-114', title: 'selects Codex in the New Agent Wizard provider grid' },
+	{ id: 'WSP-115', title: 'enables New Agent Wizard Continue after name and provider' },
+	{ id: 'WSP-116', title: 'selects Codex in the New Agent Wizard with Enter' },
+	{ id: 'WSP-117', title: 'marks Gemini CLI as a disabled coming-soon provider' },
+	{ id: 'WSP-118', title: 'opens Codex customization from the New Agent Wizard' },
+	{ id: 'WSP-119', title: 'edits the New Agent Wizard Codex custom path' },
+	{ id: 'WSP-120', title: 'resets the New Agent Wizard Codex custom path' },
+	{ id: 'WSP-121', title: 'edits the New Agent Wizard Codex custom arguments' },
+	{ id: 'WSP-122', title: 'clears the New Agent Wizard Codex custom arguments' },
+	{ id: 'WSP-123', title: 'adds a New Agent Wizard Codex environment variable' },
+	{ id: 'WSP-124', title: 'removes a New Agent Wizard Codex environment variable' },
+	{ id: 'WSP-125', title: 'edits New Agent Wizard Codex model and context settings' },
+	{ id: 'WSP-126', title: 'advances New Agent Wizard to directory selection' },
+	{ id: 'WSP-127', title: 'returns from directory selection with wizard state preserved' },
+	{ id: 'WSP-128', title: 'shows New Agent Wizard project directory controls' },
+	{ id: 'WSP-129', title: 'reports a missing New Agent Wizard project directory' },
+	{ id: 'WSP-130', title: 'accepts a regular New Agent Wizard project directory' },
+	{ id: 'WSP-131', title: 'enables directory-step Continue for a valid project directory' },
+	{ id: 'WSP-132', title: 'clears New Agent Wizard project directory validation state' },
+	{ id: 'WSP-133', title: 'surfaces existing Auto Run documents in the New Agent Wizard' },
+	{ id: 'WSP-134', title: 'marks continuing with existing Auto Run documents as recommended' },
+	{ id: 'WSP-135', title: 'cancels existing Auto Run document reuse from the New Agent Wizard' },
+	{ id: 'WSP-136', title: 'offers a delete-and-start-fresh path for existing documents' },
+	{ id: 'WSP-137', title: 'opens existing Auto Run document choices from Enter on directory step' },
+	{ id: 'WSP-138', title: 'dismisses existing Auto Run document choices with Escape' },
+	{
+		id: 'WSP-139',
+		title: 'revalidates a project directory after cancelling existing document reuse',
+	},
+	{ id: 'WSP-140', title: 'shows Settings stats database controls' },
+	{ id: 'WSP-141', title: 'clears Settings stats older than a selected period' },
+	{ id: 'WSP-142', title: 'keeps WakaTime detail controls hidden while disabled' },
+	{ id: 'WSP-143', title: 'keeps the WakaTime API key field hidden while disabled' },
+	{ id: 'WSP-144', title: 'shows WakaTime local-storage privacy copy' },
+	{ id: 'WSP-145', title: 'shows Settings storage location defaults' },
+	{ id: 'WSP-146', title: 'shows Settings storage file-manager action' },
+	{ id: 'WSP-147', title: 'shows Settings custom theme import controls' },
+	{ id: 'WSP-148', title: 'imports valid Settings custom theme colors' },
+	{ id: 'WSP-149', title: 'rejects invalid Settings custom theme color values' },
+	{ id: 'WSP-150', title: 'rejects Settings custom theme files without colors' },
+	{ id: 'WSP-151', title: 'rejects Settings custom theme files missing color keys' },
+	{ id: 'WSP-152', title: 'rejects invalid Settings custom theme JSON' },
+	{ id: 'WSP-153', title: 'imports a Settings custom theme base id' },
+	{ id: 'WSP-154', title: 'chooses a custom Settings storage folder' },
+	{ id: 'WSP-155', title: 'resets a custom Settings storage folder to default' },
+	{ id: 'WSP-156', title: 'leaves Settings storage unchanged when folder selection is cancelled' },
+	{ id: 'WSP-157', title: 'reports Settings storage migration errors' },
+	{ id: 'WSP-158', title: 'reports Settings storage reset errors' },
+	{ id: 'WSP-159', title: 'routes Settings storage file-manager opens through shell IPC' },
+	{ id: 'WSP-160', title: 'persists Display Document Graph maximum nodes' },
+	{ id: 'WSP-161', title: 'clamps Display Document Graph maximum nodes to the supported range' },
+	{ id: 'WSP-162', title: 'ghosts context warning thresholds when warnings are disabled' },
+	{ id: 'WSP-163', title: 'renders seeded context warning threshold percentages' },
+	{ id: 'WSP-164', title: 'lowers the yellow context threshold when red crosses it' },
+	{ id: 'WSP-165', title: 'toggles context warnings from the keyboard' },
+	{ id: 'WSP-166', title: 'blocks duplicate local file indexing ignore patterns' },
+	{ id: 'WSP-167', title: 'resets local file indexing ignore patterns to defaults' },
+	{ id: 'WSP-168', title: 'keeps local ignore pattern Add disabled for blank input' },
+	{ id: 'WSP-169', title: 'adds a local ignore pattern from Enter' },
+	{ id: 'WSP-170', title: 'opens the Bionify algorithm reference modal' },
+	{ id: 'WSP-171', title: 'closes the Bionify algorithm reference modal with Escape' },
+	{ id: 'WSP-172', title: 'persists the Settings default stats time range' },
+	{ id: 'WSP-173', title: 'clears the Settings GitHub CLI custom path' },
+	{ id: 'WSP-174', title: 'clears Settings shell arguments' },
+	{ id: 'WSP-175', title: 'reports Settings stats clearing failures' },
+	{ id: 'WSP-176', title: 'renders Settings stats database metadata' },
+	{ id: 'WSP-177', title: 'shows Settings global environment variable scope copy' },
+	{ id: 'WSP-178', title: 'persists a Settings custom shell path' },
+	{ id: 'WSP-179', title: 'clears a Settings custom shell path' },
+	{ id: 'WSP-180', title: 'toggles Settings stats collection off' },
+	{ id: 'WSP-181', title: 'reports successful Settings stats clearing totals' },
+	{ id: 'WSP-182', title: 'adds a Settings global environment variable' },
+	{ id: 'WSP-183', title: 'removes a Settings global environment variable' },
+	{ id: 'WSP-184', title: 'blocks invalid Settings global environment variable names' },
+	{ id: 'WSP-185', title: 'toggles Settings operating system notifications off' },
+	{ id: 'WSP-186', title: 'routes Settings test notifications through notification IPC' },
+	{ id: 'WSP-187', title: 'persists the Settings custom notification command' },
+	{ id: 'WSP-188', title: 'shows Settings custom notification running and success states' },
+	{ id: 'WSP-189', title: 'stops a running Settings custom notification command' },
+	{ id: 'WSP-190', title: 'reports Settings custom notification command failures' },
+	{ id: 'WSP-191', title: 'persists Settings toast notification duration' },
+	{ id: 'WSP-192', title: 'renders Settings SSH remote empty state' },
+	{ id: 'WSP-193', title: 'opens the Settings SSH remote add modal' },
+	{ id: 'WSP-194', title: 'validates required Settings SSH remote fields' },
+	{ id: 'WSP-195', title: 'saves a Settings SSH remote with environment variables' },
+	{ id: 'WSP-196', title: 'imports Settings SSH remote fields from SSH config' },
+	{ id: 'WSP-197', title: 'clears Settings SSH config import origin' },
+	{ id: 'WSP-198', title: 'toggles the Settings SSH remote default host' },
+	{ id: 'WSP-199', title: 'reports successful Settings SSH remote connection tests' },
+	{ id: 'WSP-200', title: 'marks disabled Settings SSH remotes and blocks tests' },
+	{ id: 'WSP-201', title: 'deletes a Settings SSH remote from the list' },
+	{ id: 'WSP-202', title: 'shows New Agent Wizard remote location choices' },
+	{ id: 'WSP-203', title: 'carries New Agent Wizard remote selection into directory step' },
+	{ id: 'WSP-204', title: 'validates New Agent Wizard remote project directories through SSH' },
+	{ id: 'WSP-205', title: 'shows existing remote Auto Run documents in the New Agent Wizard' },
+	{ id: 'WSP-206', title: 'reports missing New Agent Wizard remote project directories' },
+	{ id: 'WSP-207', title: 'clears New Agent Wizard remote selection when switching back local' },
+	{ id: 'WSP-208', title: 'preserves New Agent Wizard remote selection when returning' },
+	{ id: 'WSP-209', title: 'selects a local New Agent Wizard directory from Browse' },
+	{ id: 'WSP-210', title: 'keeps New Agent Wizard directory empty when Browse is cancelled' },
+	{ id: 'WSP-211', title: 'reports New Agent Wizard Browse failures' },
+	{ id: 'WSP-212', title: 'routes local New Agent Wizard directory validation without SSH' },
+	{
+		id: 'WSP-213',
+		title: 'shows plural existing Auto Run document counts in the New Agent Wizard',
+	},
+	{ id: 'WSP-214', title: 'reports New Agent Wizard existing document delete failures' },
+	{ id: 'WSP-215', title: 'continues New Agent Wizard discovery from existing documents' },
+	{ id: 'WSP-216', title: 'deletes existing New Agent Wizard documents before discovery' },
 ];
 
 const envGatedScenarioMatrix = [
@@ -173,6 +325,549 @@ function createWizardSettingsPromptsWorkbench(options: { inlineWizard?: boolean 
 			}),
 		],
 	};
+}
+
+function seedExistingAutoRunDoc(projectDir: string, filename = 'phase-legacy.md') {
+	const docPath = path.join(projectDir, 'Auto Run Docs', filename);
+	fs.writeFileSync(
+		docPath,
+		'# Existing Wizard Plan\n\n- Keep planning from prior work.\n',
+		'utf-8'
+	);
+	return docPath;
+}
+
+function createCustomThemeImportColors(overrides: Record<string, string> = {}) {
+	return {
+		bgMain: '#101820',
+		bgSidebar: '#17212b',
+		bgActivity: '#22303c',
+		border: '#334455',
+		textMain: '#f5f7fa',
+		textDim: '#9aa6b2',
+		accent: '#33aaff',
+		accentDim: 'rgba(51, 170, 255, 0.24)',
+		accentText: '#77ddff',
+		accentForeground: '#07131f',
+		success: '#44cc88',
+		warning: '#ffcc66',
+		error: '#ff6677',
+		...overrides,
+	};
+}
+
+function writeThemeImportFile(homeDir: string, filename: string, content: string) {
+	const filePath = path.join(homeDir, filename);
+	fs.writeFileSync(filePath, content, 'utf-8');
+	return filePath;
+}
+
+type StubbedStorageSyncResult = {
+	success: boolean;
+	migrated?: number;
+	error?: string;
+	errors?: string[];
+};
+
+type StubbedStorageSyncOptions = {
+	defaultPath?: string;
+	initialCustomPath?: string;
+	selectedFolder?: string | null;
+	setCustomPathResult?: StubbedStorageSyncResult;
+	resetCustomPathResult?: StubbedStorageSyncResult;
+};
+
+type StubbedStorageSyncState = {
+	customPath?: string;
+	setCalls: Array<string | null>;
+};
+
+async function stubStorageSyncHandlers(
+	electronApp: ElectronApplication,
+	options: StubbedStorageSyncOptions = {}
+) {
+	await electronApp.evaluate(
+		({ ipcMain }, payload) => {
+			const state = globalThis as typeof globalThis & {
+				__maestroE2eStorageSyncState?: StubbedStorageSyncState;
+			};
+			state.__maestroE2eStorageSyncState = {
+				customPath: payload.initialCustomPath,
+				setCalls: [],
+			};
+
+			ipcMain.removeHandler('sync:getDefaultPath');
+			ipcMain.handle('sync:getDefaultPath', async () => payload.defaultPath);
+			ipcMain.removeHandler('sync:getSettings');
+			ipcMain.handle('sync:getSettings', async () => ({
+				customSyncPath: state.__maestroE2eStorageSyncState?.customPath,
+			}));
+			ipcMain.removeHandler('sync:getCurrentStoragePath');
+			ipcMain.handle(
+				'sync:getCurrentStoragePath',
+				async () => state.__maestroE2eStorageSyncState?.customPath ?? payload.defaultPath
+			);
+			ipcMain.removeHandler('sync:selectSyncFolder');
+			ipcMain.handle('sync:selectSyncFolder', async () => payload.selectedFolder);
+			ipcMain.removeHandler('sync:setCustomPath');
+			ipcMain.handle('sync:setCustomPath', async (_event, customPath: string | null) => {
+				state.__maestroE2eStorageSyncState?.setCalls.push(customPath);
+				const result =
+					customPath === null ? payload.resetCustomPathResult : payload.setCustomPathResult;
+				if (result.success) {
+					state.__maestroE2eStorageSyncState = {
+						customPath: customPath ?? undefined,
+						setCalls: state.__maestroE2eStorageSyncState?.setCalls ?? [],
+					};
+				}
+				return result;
+			});
+		},
+		{
+			defaultPath: options.defaultPath ?? '/tmp/maestro-e2e-default-storage',
+			initialCustomPath: options.initialCustomPath,
+			selectedFolder: options.selectedFolder ?? null,
+			setCustomPathResult: options.setCustomPathResult ?? { success: true, migrated: 3 },
+			resetCustomPathResult: options.resetCustomPathResult ?? { success: true, migrated: 2 },
+		}
+	);
+}
+
+async function getStubbedStorageSyncState(electronApp: ElectronApplication) {
+	return electronApp.evaluate(() => {
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eStorageSyncState?: StubbedStorageSyncState;
+		};
+		return state.__maestroE2eStorageSyncState ?? { setCalls: [] };
+	});
+}
+
+type StubbedShellPathCall = {
+	type: 'openPath';
+	itemPath: string;
+};
+
+async function stubShellPathHandlers(electronApp: ElectronApplication) {
+	await electronApp.evaluate(({ ipcMain }) => {
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eShellPathCalls?: StubbedShellPathCall[];
+		};
+		state.__maestroE2eShellPathCalls = [];
+		ipcMain.removeHandler('shell:openPath');
+		ipcMain.handle('shell:openPath', async (_event, itemPath: string) => {
+			state.__maestroE2eShellPathCalls?.push({ type: 'openPath', itemPath });
+			return '';
+		});
+	});
+}
+
+async function getStubbedShellPathCalls(electronApp: ElectronApplication) {
+	return electronApp.evaluate(() => {
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eShellPathCalls?: StubbedShellPathCall[];
+		};
+		return state.__maestroE2eShellPathCalls ?? [];
+	});
+}
+
+type StubbedStatsClearResult = {
+	success: boolean;
+	deletedQueryEvents: number;
+	deletedAutoRunSessions: number;
+	deletedAutoRunTasks: number;
+	error?: string;
+};
+
+type StubbedStatsOptions = {
+	dbSize?: number;
+	earliestTimestamp?: number | null;
+	clearResult?: StubbedStatsClearResult;
+};
+
+async function stubStatsDataManagement(
+	electronApp: ElectronApplication,
+	options: StubbedStatsOptions = {}
+) {
+	await electronApp.evaluate(
+		({ ipcMain }, payload) => {
+			const state = globalThis as typeof globalThis & {
+				__maestroE2eStatsClearDays?: number[];
+				__maestroE2eStatsDbSize?: number;
+			};
+			state.__maestroE2eStatsClearDays = [];
+			state.__maestroE2eStatsDbSize = payload.dbSize;
+
+			ipcMain.removeHandler('stats:get-database-size');
+			ipcMain.handle('stats:get-database-size', async () => state.__maestroE2eStatsDbSize);
+			ipcMain.removeHandler('stats:get-earliest-timestamp');
+			ipcMain.handle('stats:get-earliest-timestamp', async () => payload.earliestTimestamp);
+			ipcMain.removeHandler('stats:clear-old-data');
+			ipcMain.handle('stats:clear-old-data', async (_event, olderThanDays: number) => {
+				state.__maestroE2eStatsClearDays?.push(olderThanDays);
+				return payload.clearResult;
+			});
+		},
+		{
+			dbSize: options.dbSize ?? 2 * 1024 * 1024,
+			earliestTimestamp: options.earliestTimestamp ?? Date.UTC(2026, 0, 2),
+			clearResult: options.clearResult ?? {
+				success: true,
+				deletedQueryEvents: 2,
+				deletedAutoRunSessions: 1,
+				deletedAutoRunTasks: 3,
+			},
+		}
+	);
+}
+
+async function getStubbedStatsClearDays(electronApp: ElectronApplication) {
+	return electronApp.evaluate(() => {
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eStatsClearDays?: number[];
+		};
+		return state.__maestroE2eStatsClearDays ?? [];
+	});
+}
+
+interface StubbedNotificationOptions {
+	speakResult?: { success: boolean; notificationId?: number; error?: string };
+}
+
+async function stubNotificationHandlers(
+	electronApp: ElectronApplication,
+	options: StubbedNotificationOptions = {}
+) {
+	await electronApp.evaluate(
+		({ ipcMain }, payload) => {
+			const state = globalThis as typeof globalThis & {
+				__maestroE2eNotificationShowCalls?: Array<{ title: string; body: string }>;
+				__maestroE2eNotificationSpeakCalls?: Array<{ text: string; command?: string }>;
+				__maestroE2eNotificationStopCalls?: number[];
+			};
+			state.__maestroE2eNotificationShowCalls = [];
+			state.__maestroE2eNotificationSpeakCalls = [];
+			state.__maestroE2eNotificationStopCalls = [];
+
+			ipcMain.removeHandler('notification:show');
+			ipcMain.handle('notification:show', async (_event, title: string, body: string) => {
+				state.__maestroE2eNotificationShowCalls?.push({ title, body });
+				return { success: true };
+			});
+			ipcMain.removeHandler('notification:speak');
+			ipcMain.handle('notification:speak', async (_event, text: string, command?: string) => {
+				state.__maestroE2eNotificationSpeakCalls?.push({ text, command });
+				return payload.speakResult;
+			});
+			ipcMain.removeHandler('notification:stopSpeak');
+			ipcMain.handle('notification:stopSpeak', async (_event, notificationId: number) => {
+				state.__maestroE2eNotificationStopCalls?.push(notificationId);
+				return { success: true };
+			});
+		},
+		{
+			speakResult: options.speakResult ?? { success: true, notificationId: 701 },
+		}
+	);
+}
+
+async function getStubbedNotificationState(electronApp: ElectronApplication) {
+	return electronApp.evaluate(() => {
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eNotificationShowCalls?: Array<{ title: string; body: string }>;
+			__maestroE2eNotificationSpeakCalls?: Array<{ text: string; command?: string }>;
+			__maestroE2eNotificationStopCalls?: number[];
+		};
+		return {
+			showCalls: state.__maestroE2eNotificationShowCalls ?? [],
+			speakCalls: state.__maestroE2eNotificationSpeakCalls ?? [],
+			stopCalls: state.__maestroE2eNotificationStopCalls ?? [],
+		};
+	});
+}
+
+async function emitStubbedNotificationCompletion(
+	electronApp: ElectronApplication,
+	notificationId: number
+) {
+	await electronApp.evaluate(({ BrowserWindow }, completedId) => {
+		BrowserWindow.getAllWindows()[0]?.webContents.send(
+			'notification:commandCompleted',
+			completedId
+		);
+	}, notificationId);
+}
+
+interface StubbedSshRemoteConfig {
+	id: string;
+	name: string;
+	host: string;
+	port: number;
+	username: string;
+	privateKeyPath: string;
+	remoteEnv?: Record<string, string>;
+	enabled: boolean;
+	useSshConfig?: boolean;
+	sshConfigHost?: string;
+}
+
+interface StubbedSshConfigHost {
+	host: string;
+	hostName?: string;
+	port?: number;
+	user?: string;
+	identityFile?: string;
+	proxyJump?: string;
+}
+
+interface StubbedSshRemoteOptions {
+	configs?: StubbedSshRemoteConfig[];
+	defaultId?: string | null;
+	sshConfigHosts?: StubbedSshConfigHost[];
+	testResult?: {
+		success: boolean;
+		result?: { remoteInfo?: { hostname?: string } };
+		error?: string;
+	};
+}
+
+function createStubSshRemoteConfig(
+	overrides: Partial<StubbedSshRemoteConfig> = {}
+): StubbedSshRemoteConfig {
+	return {
+		id: overrides.id ?? 'ssh-remote-1',
+		name: overrides.name ?? 'Quant VPS',
+		host: overrides.host ?? 'quant.example.com',
+		port: overrides.port ?? 22,
+		username: overrides.username ?? 'ubuntu',
+		privateKeyPath: overrides.privateKeyPath ?? '~/.ssh/quant',
+		remoteEnv: overrides.remoteEnv ?? {},
+		enabled: overrides.enabled ?? true,
+		useSshConfig: overrides.useSshConfig,
+		sshConfigHost: overrides.sshConfigHost,
+	};
+}
+
+async function stubSshRemoteHandlers(
+	electronApp: ElectronApplication,
+	options: StubbedSshRemoteOptions = {}
+) {
+	await electronApp.evaluate(
+		({ ipcMain }, payload) => {
+			const state = globalThis as typeof globalThis & {
+				__maestroE2eSshRemoteConfigs?: StubbedSshRemoteConfig[];
+				__maestroE2eSshDefaultId?: string | null;
+				__maestroE2eSshSaveCalls?: Array<Partial<StubbedSshRemoteConfig>>;
+				__maestroE2eSshDeleteCalls?: string[];
+				__maestroE2eSshDefaultCalls?: Array<string | null>;
+				__maestroE2eSshTestCalls?: unknown[];
+			};
+			state.__maestroE2eSshRemoteConfigs = payload.configs.map((config) => ({ ...config }));
+			state.__maestroE2eSshDefaultId = payload.defaultId;
+			state.__maestroE2eSshSaveCalls = [];
+			state.__maestroE2eSshDeleteCalls = [];
+			state.__maestroE2eSshDefaultCalls = [];
+			state.__maestroE2eSshTestCalls = [];
+
+			ipcMain.removeHandler('ssh-remote:getConfigs');
+			ipcMain.handle('ssh-remote:getConfigs', async () => ({
+				success: true,
+				configs: state.__maestroE2eSshRemoteConfigs ?? [],
+			}));
+			ipcMain.removeHandler('ssh-remote:getDefaultId');
+			ipcMain.handle('ssh-remote:getDefaultId', async () => ({
+				success: true,
+				id: state.__maestroE2eSshDefaultId,
+			}));
+			ipcMain.removeHandler('ssh-remote:setDefaultId');
+			ipcMain.handle('ssh-remote:setDefaultId', async (_event, id: string | null) => {
+				state.__maestroE2eSshDefaultId = id;
+				state.__maestroE2eSshDefaultCalls?.push(id);
+				return { success: true };
+			});
+			ipcMain.removeHandler('ssh-remote:saveConfig');
+			ipcMain.handle(
+				'ssh-remote:saveConfig',
+				async (_event, config: Partial<StubbedSshRemoteConfig>) => {
+					state.__maestroE2eSshSaveCalls?.push(config);
+					const existing = state.__maestroE2eSshRemoteConfigs?.find(
+						(item) => item.id === config.id
+					);
+					const saved: StubbedSshRemoteConfig = {
+						id:
+							config.id ||
+							existing?.id ||
+							`ssh-remote-${(state.__maestroE2eSshRemoteConfigs?.length ?? 0) + 1}`,
+						name: config.name ?? existing?.name ?? 'Saved Remote',
+						host: config.host ?? existing?.host ?? 'localhost',
+						port: config.port ?? existing?.port ?? 22,
+						username: config.username ?? existing?.username ?? '',
+						privateKeyPath: config.privateKeyPath ?? existing?.privateKeyPath ?? '',
+						remoteEnv: config.remoteEnv ?? existing?.remoteEnv ?? {},
+						enabled: config.enabled ?? existing?.enabled ?? true,
+						useSshConfig: config.useSshConfig ?? existing?.useSshConfig,
+						sshConfigHost: config.sshConfigHost ?? existing?.sshConfigHost,
+					};
+					const configs = state.__maestroE2eSshRemoteConfigs ?? [];
+					const index = configs.findIndex((item) => item.id === saved.id);
+					if (index >= 0) {
+						configs[index] = saved;
+					} else {
+						configs.push(saved);
+					}
+					state.__maestroE2eSshRemoteConfigs = configs;
+					return { success: true, config: saved };
+				}
+			);
+			ipcMain.removeHandler('ssh-remote:deleteConfig');
+			ipcMain.handle('ssh-remote:deleteConfig', async (_event, id: string) => {
+				state.__maestroE2eSshDeleteCalls?.push(id);
+				state.__maestroE2eSshRemoteConfigs = (state.__maestroE2eSshRemoteConfigs ?? []).filter(
+					(config) => config.id !== id
+				);
+				if (state.__maestroE2eSshDefaultId === id) {
+					state.__maestroE2eSshDefaultId = null;
+				}
+				return { success: true };
+			});
+			ipcMain.removeHandler('ssh-remote:test');
+			ipcMain.handle('ssh-remote:test', async (_event, configOrId: unknown) => {
+				state.__maestroE2eSshTestCalls?.push(configOrId);
+				return payload.testResult;
+			});
+			ipcMain.removeHandler('ssh-remote:getSshConfigHosts');
+			ipcMain.handle('ssh-remote:getSshConfigHosts', async () => ({
+				success: true,
+				hosts: payload.sshConfigHosts,
+				configPath: '~/.ssh/config',
+			}));
+		},
+		{
+			configs: options.configs ?? [],
+			defaultId: options.defaultId ?? null,
+			sshConfigHosts: options.sshConfigHosts ?? [],
+			testResult: options.testResult ?? {
+				success: true,
+				result: { remoteInfo: { hostname: 'quant-vps' } },
+			},
+		}
+	);
+}
+
+async function getStubbedSshRemoteState(electronApp: ElectronApplication) {
+	return electronApp.evaluate(() => {
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eSshRemoteConfigs?: StubbedSshRemoteConfig[];
+			__maestroE2eSshDefaultId?: string | null;
+			__maestroE2eSshSaveCalls?: Array<Partial<StubbedSshRemoteConfig>>;
+			__maestroE2eSshDeleteCalls?: string[];
+			__maestroE2eSshDefaultCalls?: Array<string | null>;
+			__maestroE2eSshTestCalls?: unknown[];
+		};
+		return {
+			configs: state.__maestroE2eSshRemoteConfigs ?? [],
+			defaultId: state.__maestroE2eSshDefaultId ?? null,
+			saveCalls: state.__maestroE2eSshSaveCalls ?? [],
+			deleteCalls: state.__maestroE2eSshDeleteCalls ?? [],
+			defaultCalls: state.__maestroE2eSshDefaultCalls ?? [],
+			testCalls: state.__maestroE2eSshTestCalls ?? [],
+		};
+	});
+}
+
+interface StubbedWizardRemoteDirectoryOptions {
+	readDirError?: string;
+	isRepo?: boolean;
+	autoRunDocs?: Array<{ name: string; path: string }>;
+	selectedFolder?: string | null;
+	selectFolderError?: string;
+	deleteFolderResult?: { success: boolean; error?: string };
+}
+
+async function stubWizardRemoteDirectoryHandlers(
+	electronApp: ElectronApplication,
+	options: StubbedWizardRemoteDirectoryOptions = {}
+) {
+	await electronApp.evaluate(
+		({ ipcMain }, payload) => {
+			const state = globalThis as typeof globalThis & {
+				__maestroE2eWizardReadDirCalls?: Array<{ dirPath: string; sshRemoteId?: string }>;
+				__maestroE2eWizardGitCalls?: Array<{ cwd: string; sshRemoteId?: string }>;
+				__maestroE2eWizardListDocsCalls?: Array<{ folderPath: string; sshRemoteId?: string }>;
+				__maestroE2eWizardSelectFolderCalls?: number;
+				__maestroE2eWizardDeleteFolderCalls?: string[];
+			};
+			state.__maestroE2eWizardReadDirCalls = [];
+			state.__maestroE2eWizardGitCalls = [];
+			state.__maestroE2eWizardListDocsCalls = [];
+			state.__maestroE2eWizardSelectFolderCalls = 0;
+			state.__maestroE2eWizardDeleteFolderCalls = [];
+
+			ipcMain.removeHandler('fs:readDir');
+			ipcMain.handle('fs:readDir', async (_event, dirPath: string, sshRemoteId?: string) => {
+				state.__maestroE2eWizardReadDirCalls?.push({ dirPath, sshRemoteId });
+				if (payload.readDirError) {
+					throw new Error(payload.readDirError);
+				}
+				return [
+					{ name: 'README.md', isDirectory: false, isFile: true, path: `${dirPath}/README.md` },
+				];
+			});
+			ipcMain.removeHandler('git:isRepo');
+			ipcMain.handle('git:isRepo', async (_event, cwd: string, sshRemoteId?: string) => {
+				state.__maestroE2eWizardGitCalls?.push({ cwd, sshRemoteId });
+				return payload.isRepo;
+			});
+			ipcMain.removeHandler('autorun:listDocs');
+			ipcMain.handle(
+				'autorun:listDocs',
+				async (_event, folderPath: string, sshRemoteId?: string) => {
+					state.__maestroE2eWizardListDocsCalls?.push({ folderPath, sshRemoteId });
+					return { success: true, files: payload.autoRunDocs, tree: [] };
+				}
+			);
+			ipcMain.removeHandler('dialog:selectFolder');
+			ipcMain.handle('dialog:selectFolder', async () => {
+				state.__maestroE2eWizardSelectFolderCalls =
+					(state.__maestroE2eWizardSelectFolderCalls ?? 0) + 1;
+				if (payload.selectFolderError) {
+					throw new Error(payload.selectFolderError);
+				}
+				return payload.selectedFolder ?? null;
+			});
+			ipcMain.removeHandler('autorun:deleteFolder');
+			ipcMain.handle('autorun:deleteFolder', async (_event, folderPath: string) => {
+				state.__maestroE2eWizardDeleteFolderCalls?.push(folderPath);
+				return payload.deleteFolderResult;
+			});
+		},
+		{
+			readDirError: options.readDirError,
+			isRepo: options.isRepo ?? false,
+			autoRunDocs: options.autoRunDocs ?? [],
+			selectedFolder: options.selectedFolder ?? null,
+			selectFolderError: options.selectFolderError,
+			deleteFolderResult: options.deleteFolderResult ?? { success: true },
+		}
+	);
+}
+
+async function getStubbedWizardRemoteDirectoryState(electronApp: ElectronApplication) {
+	return electronApp.evaluate(() => {
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eWizardReadDirCalls?: Array<{ dirPath: string; sshRemoteId?: string }>;
+			__maestroE2eWizardGitCalls?: Array<{ cwd: string; sshRemoteId?: string }>;
+			__maestroE2eWizardListDocsCalls?: Array<{ folderPath: string; sshRemoteId?: string }>;
+			__maestroE2eWizardSelectFolderCalls?: number;
+			__maestroE2eWizardDeleteFolderCalls?: string[];
+		};
+		return {
+			readDirCalls: state.__maestroE2eWizardReadDirCalls ?? [],
+			gitCalls: state.__maestroE2eWizardGitCalls ?? [],
+			listDocsCalls: state.__maestroE2eWizardListDocsCalls ?? [],
+			selectFolderCalls: state.__maestroE2eWizardSelectFolderCalls ?? 0,
+			deleteFolderCalls: state.__maestroE2eWizardDeleteFolderCalls ?? [],
+		};
+	});
 }
 
 function createSeedSession({
@@ -278,6 +973,19 @@ function createInlineWizardState({
 	};
 }
 
+function createDirectorNotesEnabledSettings(overrides: Partial<DirectorNotesSettings> = {}) {
+	return {
+		encoreFeatures: {
+			directorNotes: true,
+		},
+		directorNotesSettings: {
+			provider: 'codex',
+			defaultLookbackDays: 7,
+			...overrides,
+		},
+	};
+}
+
 async function openQuickActions(window: Page) {
 	const quickActionsDialog = window.getByRole('dialog', { name: 'Quick Actions' });
 	for (let attempt = 0; attempt < 3; attempt++) {
@@ -309,10 +1017,101 @@ async function openPromptComposer(window: Page) {
 	return composerInput;
 }
 
+async function openNewAgentWizard(window: Page) {
+	await helpers.openWizardViaShortcut(window);
+	const wizardDialog = window.getByRole('dialog', { name: 'New Agent Wizard' });
+	await expect(wizardDialog).toBeVisible();
+	await expect(wizardDialog.getByRole('heading', { name: 'Create a Maestro Agent' })).toBeVisible();
+	return wizardDialog;
+}
+
+async function openCodexWizardCustomization(window: Page) {
+	const wizardDialog = await openNewAgentWizard(window);
+	const codexTile = wizardDialog.getByRole('button', { name: 'Codex' });
+
+	await codexTile.getByTitle('Customize agent settings').click();
+	await expect(wizardDialog.getByText('Codex Configuration')).toBeVisible();
+	return wizardDialog;
+}
+
+async function openWizardDirectoryStep(window: Page, agentName = 'Directory Codex Agent') {
+	const wizardDialog = await openNewAgentWizard(window);
+
+	await wizardDialog.getByLabel('Agent name').fill(agentName);
+	await wizardDialog.getByRole('button', { name: 'Codex' }).click();
+	await wizardDialog.getByRole('button', { name: 'Continue' }).click();
+	await expect(wizardDialog.getByText('Where Should We Work?')).toBeVisible();
+	return wizardDialog;
+}
+
 function promptComposerDialog(window: Page) {
 	return window
 		.getByText('Prompt Composer')
 		.locator('xpath=ancestor::div[contains(@class, "z-10")][1]');
+}
+
+function settingsFieldPanel(scope: Locator, label: string) {
+	return scope
+		.getByText(label, { exact: true })
+		.locator('xpath=ancestor::div[contains(@class, "rounded border")][1]');
+}
+
+async function stubEncoreCodexAgent(
+	electronApp: ElectronApplication,
+	initialConfig: Record<string, unknown> = {}
+) {
+	await electronApp.evaluate(({ ipcMain }, config) => {
+		const configs: Record<string, Record<string, unknown>> = {
+			codex: { ...config },
+		};
+		const codexAgent = {
+			id: 'codex',
+			name: 'Codex',
+			binaryName: 'codex',
+			command: 'codex',
+			args: [],
+			available: true,
+			hidden: false,
+			path: '/usr/local/bin/codex',
+			capabilities: {
+				supportsBatchMode: true,
+				supportsModelSelection: true,
+			},
+			configOptions: [
+				{
+					key: 'model',
+					type: 'text',
+					label: 'Model',
+					description: 'Model override for E2E coverage.',
+					default: '',
+				},
+				{
+					key: 'contextWindow',
+					type: 'number',
+					label: 'Context Window Size',
+					description: 'Maximum context window size in tokens.',
+					default: 400000,
+				},
+			],
+		};
+
+		ipcMain.removeHandler('agents:detect');
+		ipcMain.handle('agents:detect', async () => [codexAgent]);
+		ipcMain.removeHandler('agents:refresh');
+		ipcMain.handle('agents:refresh', async () => codexAgent);
+		ipcMain.removeHandler('agents:getConfig');
+		ipcMain.handle('agents:getConfig', async (_event, agentId: string) => configs[agentId] || {});
+		ipcMain.removeHandler('agents:setConfig');
+		ipcMain.handle(
+			'agents:setConfig',
+			async (_event, agentId: string, nextConfig: Record<string, unknown>) => {
+				configs[agentId] = { ...nextConfig };
+				return true;
+			}
+		);
+		ipcMain.removeHandler('agents:getModels');
+		ipcMain.handle('agents:getModels', async () => ['gpt-5.3-codex', 'o3']);
+	}, initialConfig);
 }
 
 test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} active, 0 skipped, ${envGatedScenarioMatrix.length} env-gated)`, () => {
@@ -2375,15 +3174,7 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 		const launched = await helpers.launchAppWithState({
 			homeDir: seeded.homeDir,
 			sessions: seeded.sessions,
-			settings: {
-				encoreFeatures: {
-					directorNotes: true,
-				},
-				directorNotesSettings: {
-					provider: 'codex',
-					defaultLookbackDays: 7,
-				},
-			},
+			settings: createDirectorNotesEnabledSettings(),
 		});
 
 		try {
@@ -2840,6 +3631,3992 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 					});
 				})
 				.toBe(true);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[83].id} ${activeScenarioMatrix[83].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			const composerInput = await openPromptComposer(launched.window);
+
+			await composerInput.fill('First wizard prompt line');
+			await composerInput.press('Shift+Enter');
+			await composerInput.type('Second wizard prompt line');
+
+			await expect(composerInput).toHaveValue(
+				'First wizard prompt line\nSecond wizard prompt line'
+			);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[84].id} ${activeScenarioMatrix[84].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await openPromptComposer(launched.window);
+			const composerDialog = promptComposerDialog(launched.window);
+			const imagePath = path.join(seeded.projectDir, 'wsp-diagram.png');
+
+			await composerDialog.locator('input[type="file"]').setInputFiles(imagePath);
+			await expect(
+				composerDialog.getByRole('button', { name: 'Prompt composer staged image 1' })
+			).toBeVisible();
+
+			await launched.window.keyboard.press('Meta+Shift+L');
+			const lightbox = launched.window.getByRole('dialog', { name: 'Image Lightbox' });
+			await expect(lightbox).toBeVisible();
+			await expect(lightbox.getByRole('img', { name: 'Expanded image preview' })).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[85].id} ${activeScenarioMatrix[85].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await openPromptComposer(launched.window);
+			const composerDialog = promptComposerDialog(launched.window);
+			const imagePath = path.join(seeded.projectDir, 'wsp-diagram.png');
+
+			await composerDialog.locator('input[type="file"]').setInputFiles(imagePath);
+			await launched.window.keyboard.press('Meta+Shift+L');
+
+			const lightbox = launched.window.getByRole('dialog', { name: 'Image Lightbox' });
+			await expect(lightbox).toBeVisible();
+			await launched.window.keyboard.press('Escape');
+
+			await expect(lightbox).toBeHidden();
+			await expect(launched.window.getByText('Prompt Composer')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[86].id} ${activeScenarioMatrix[86].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await openPromptComposer(launched.window);
+			const composerDialog = promptComposerDialog(launched.window);
+			const thinkingButton = composerDialog.getByRole('button', { name: /Thinking/ });
+
+			await thinkingButton.click();
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						const sessions = await window.maestro.sessions.getAll();
+						const primarySession = sessions.find((session) => session.id === 'wsp-primary-agent');
+						const primaryTab = primarySession?.aiTabs?.find(
+							(tab) => tab.id === 'wsp-primary-agent-tab'
+						);
+						return primaryTab?.showThinking;
+					});
+				})
+				.toBe('on');
+
+			await thinkingButton.click();
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						const sessions = await window.maestro.sessions.getAll();
+						const primarySession = sessions.find((session) => session.id === 'wsp-primary-agent');
+						const primaryTab = primarySession?.aiTabs?.find(
+							(tab) => tab.id === 'wsp-primary-agent-tab'
+						);
+						return primaryTab?.showThinking;
+					});
+				})
+				.toBe('sticky');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[87].id} ${activeScenarioMatrix[87].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				maxLogBuffer: 1000,
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'Display',
+				'Maximum Log Buffer'
+			);
+			const maxLogBufferSection = settingsDialog
+				.getByText('Maximum Log Buffer')
+				.locator('xpath=ancestor::div[.//button[normalize-space(.)="25000"]][1]');
+			await maxLogBufferSection.getByRole('button', { name: '25000' }).click();
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('maxLogBuffer');
+					});
+				})
+				.toBe(25000);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[88].id} ${activeScenarioMatrix[88].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				enableBetaUpdates: false,
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'General',
+				'Pre-release Channel'
+			);
+			await settingsDialog.getByText('Include beta and release candidate updates').click();
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('enableBetaUpdates');
+					});
+				})
+				.toBe(true);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[89].id} ${activeScenarioMatrix[89].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				crashReportingEnabled: true,
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(launched.window, 'General', 'Privacy');
+			await settingsDialog.getByText('Send anonymous crash reports').click();
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('crashReportingEnabled');
+					});
+				})
+				.toBe(false);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[90].id} ${activeScenarioMatrix[90].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'Shortcuts',
+				'Not all shortcuts can be modified'
+			);
+			await settingsDialog.getByPlaceholder('Filter shortcuts...').fill('New Agent Wizard');
+			const shortcutRow = settingsDialog
+				.getByText('New Agent Wizard')
+				.locator('xpath=ancestor::div[contains(@class, "rounded")][1]');
+			const shortcutButton = shortcutRow.getByRole('button');
+
+			await shortcutButton.click();
+			await expect(shortcutButton).toHaveText('Press keys...');
+			await shortcutButton.press('Control+Shift+N');
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						const shortcuts = await window.maestro.settings.get('shortcuts');
+						return shortcuts &&
+							typeof shortcuts === 'object' &&
+							'openWizard' in shortcuts &&
+							shortcuts.openWizard &&
+							typeof shortcuts.openWizard === 'object' &&
+							'keys' in shortcuts.openWizard
+							? shortcuts.openWizard.keys
+							: undefined;
+					});
+				})
+				.toEqual(['Ctrl', 'Shift', 'N']);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[91].id} ${activeScenarioMatrix[91].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'Shortcuts',
+				'Not all shortcuts can be modified'
+			);
+			await settingsDialog.getByPlaceholder('Filter shortcuts...').fill('Open Settings');
+			const shortcutRow = settingsDialog
+				.getByText('Open Settings')
+				.locator('xpath=ancestor::div[contains(@class, "rounded")][1]');
+			const shortcutButton = shortcutRow.getByRole('button');
+
+			await shortcutButton.click();
+			await expect(shortcutButton).toHaveText('Press keys...');
+			await shortcutButton.press('Escape');
+
+			await expect(shortcutButton).not.toHaveText('Press keys...');
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						const shortcuts = await window.maestro.settings.get('shortcuts');
+						return shortcuts &&
+							typeof shortcuts === 'object' &&
+							'settings' in shortcuts &&
+							shortcuts.settings &&
+							typeof shortcuts.settings === 'object' &&
+							'keys' in shortcuts.settings
+							? shortcuts.settings.keys
+							: undefined;
+					});
+				})
+				.toEqual(['Meta', ',']);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[92].id} ${activeScenarioMatrix[92].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'Shortcuts',
+				'Not all shortcuts can be modified'
+			);
+			await settingsDialog.getByPlaceholder('Filter shortcuts...').fill('Toggle Show Thinking');
+			const shortcutRow = settingsDialog
+				.getByText('Toggle Show Thinking')
+				.locator('xpath=ancestor::div[contains(@class, "rounded")][1]');
+			const shortcutButton = shortcutRow.getByRole('button');
+
+			await shortcutButton.click();
+			await shortcutButton.press('Control+Shift+K');
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						const tabShortcuts = await window.maestro.settings.get('tabShortcuts');
+						return tabShortcuts &&
+							typeof tabShortcuts === 'object' &&
+							'toggleShowThinking' in tabShortcuts &&
+							tabShortcuts.toggleShowThinking &&
+							typeof tabShortcuts.toggleShowThinking === 'object' &&
+							'keys' in tabShortcuts.toggleShowThinking
+							? tabShortcuts.toggleShowThinking.keys
+							: undefined;
+					});
+				})
+				.toEqual(['Ctrl', 'Shift', 'K']);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[93].id} ${activeScenarioMatrix[93].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				customFonts: [],
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(launched.window, 'Display', 'Interface Font');
+			const fontSection = settingsDialog
+				.getByText('Interface Font')
+				.locator('xpath=ancestor::div[.//input[@placeholder="Add custom font name..."]][1]');
+			await fontSection.getByPlaceholder('Add custom font name...').fill('WSP Mono');
+			await fontSection.getByRole('button', { name: 'Add' }).click();
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('customFonts');
+					});
+				})
+				.toEqual(['WSP Mono']);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[94].id} ${activeScenarioMatrix[94].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				customFonts: ['WSP Mono'],
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(launched.window, 'Display', 'Interface Font');
+			const fontSection = settingsDialog
+				.getByText('Interface Font')
+				.locator('xpath=ancestor::div[.//input[@placeholder="Add custom font name..."]][1]');
+			await fontSection.getByText('WSP Mono').locator('xpath=following-sibling::button[1]').click();
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('customFonts');
+					});
+				})
+				.toEqual([]);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[95].id} ${activeScenarioMatrix[95].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				customFonts: ['WSP Mono'],
+				fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(launched.window, 'Display', 'Interface Font');
+			await settingsDialog.locator('select').first().selectOption('WSP Mono');
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('fontFamily');
+					});
+				})
+				.toBe('WSP Mono');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[96].id} ${activeScenarioMatrix[96].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				customFonts: ['WSP Mono'],
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(launched.window, 'Display', 'Interface Font');
+			const fontSection = settingsDialog
+				.getByText('Interface Font')
+				.locator('xpath=ancestor::div[.//input[@placeholder="Add custom font name..."]][1]');
+			await fontSection.getByPlaceholder('Add custom font name...').fill('WSP Mono');
+			await fontSection.getByRole('button', { name: 'Add' }).click();
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('customFonts');
+					});
+				})
+				.toEqual(['WSP Mono']);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[97].id} ${activeScenarioMatrix[97].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				activeThemeId: 'dracula',
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(launched.window, 'Themes', 'Custom Theme');
+			await settingsDialog.locator('[data-theme-id="custom"]').getByRole('button').first().click();
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('activeThemeId');
+					});
+				})
+				.toBe('custom');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[98].id} ${activeScenarioMatrix[98].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				customThemeBaseId: 'dracula',
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(launched.window, 'Themes', 'Custom Theme');
+			const customThemeSection = settingsDialog.locator('[data-theme-id="custom"]');
+			await customThemeSection.getByRole('button', { name: /Initialize/ }).click();
+			await customThemeSection.getByRole('button', { name: /^Solarized$/ }).click();
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return {
+							base: await window.maestro.settings.get('customThemeBaseId'),
+							colors: await window.maestro.settings.get('customThemeColors'),
+						};
+					});
+				})
+				.toMatchObject({
+					base: 'solarized-light',
+					colors: {
+						bgMain: '#fdf6e3',
+						accent: '#207c76',
+					},
+				});
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[99].id} ${activeScenarioMatrix[99].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				customThemeBaseId: 'solarized-light',
+				customThemeColors: {
+					bgMain: '#123456',
+					bgSidebar: '#eee8d5',
+					bgActivity: '#e6dfc8',
+					border: '#d3cbb7',
+					textMain: '#5f737b',
+					textDim: '#606969',
+					accent: '#207c76',
+					accentDim: 'rgba(32, 124, 118, 0.1)',
+					accentText: '#207c76',
+					accentForeground: '#fdf6e3',
+					success: '#687700',
+					warning: '#8d6a00',
+					error: '#d3302d',
+				},
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(launched.window, 'Themes', 'Custom Theme');
+			await settingsDialog
+				.locator('[data-theme-id="custom"]')
+				.getByTitle('Reset to default')
+				.click();
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return {
+							base: await window.maestro.settings.get('customThemeBaseId'),
+							colors: await window.maestro.settings.get('customThemeColors'),
+						};
+					});
+				})
+				.toMatchObject({
+					base: 'dracula',
+					colors: {
+						bgMain: '#282a36',
+						accent: '#bd93f9',
+					},
+				});
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[100].id} ${activeScenarioMatrix[100].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(launched.window, 'Themes', 'Custom Theme');
+			const customThemeSection = settingsDialog.locator('[data-theme-id="custom"]');
+			const mainBackgroundRow = customThemeSection
+				.getByText('Main Background')
+				.locator('xpath=ancestor::div[contains(@class, "flex")][1]');
+			await mainBackgroundRow.getByRole('button', { name: /#/ }).click();
+			await mainBackgroundRow.locator('input[type="text"]').fill('#123456');
+			await mainBackgroundRow.locator('input[type="text"]').press('Enter');
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						const colors = await window.maestro.settings.get('customThemeColors');
+						return colors && typeof colors === 'object' && 'bgMain' in colors
+							? colors.bgMain
+							: undefined;
+					});
+				})
+				.toBe('#123456');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[101].id} ${activeScenarioMatrix[101].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				activeThemeId: 'dracula',
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(launched.window, 'Themes', 'Dark Mode');
+			await settingsDialog.getByRole('group', { name: 'Theme picker' }).focus();
+			await launched.window.keyboard.press('Tab');
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('activeThemeId');
+					});
+				})
+				.toBe('monokai');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[102].id} ${activeScenarioMatrix[102].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				activeThemeId: 'dracula',
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(launched.window, 'Themes', 'Dark Mode');
+			await settingsDialog.getByRole('group', { name: 'Theme picker' }).focus();
+			await launched.window.keyboard.press('Shift+Tab');
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('activeThemeId');
+					});
+				})
+				.toBe('custom');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[103].id} ${activeScenarioMatrix[103].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				activeThemeId: 'dracula',
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(launched.window, 'Themes', 'Light Mode');
+			await settingsDialog.locator('[data-theme-id="github-light"]').click();
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('activeThemeId');
+					});
+				})
+				.toBe('github-light');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[104].id} ${activeScenarioMatrix[104].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: createDirectorNotesEnabledSettings(),
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp);
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'Encore Features',
+				'Optional features that extend Maestro'
+			);
+			const providerSelect = settingsDialog.getByLabel('Select synopsis provider agent');
+
+			await expect(providerSelect).toHaveValue('codex');
+			await expect(providerSelect.locator('option[value="codex"]')).toHaveText('Codex');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[105].id} ${activeScenarioMatrix[105].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				encoreFeatures: {
+					directorNotes: true,
+				},
+				directorNotesSettings: {
+					provider: 'codex',
+					defaultLookbackDays: 7,
+				},
+			},
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp);
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'Encore Features',
+				'Optional features that extend Maestro'
+			);
+			await settingsDialog.getByTitle('Customize provider settings').click();
+
+			await settingsDialog.getByPlaceholder('/path/to/codex').fill('/tmp/wsp-director-codex');
+			await settingsDialog.getByPlaceholder('/path/to/codex').blur();
+			await settingsDialog
+				.getByPlaceholder('--flag value --another-flag')
+				.fill('--sandbox read-only --model wsp');
+			await settingsDialog.getByPlaceholder('--flag value --another-flag').blur();
+			await settingsDialog.getByRole('button', { name: 'Add Variable' }).click();
+			await settingsDialog.getByPlaceholder('VARIABLE_NAME').fill('WSP_DIRECTOR_NOTES');
+			await settingsDialog.getByPlaceholder('VARIABLE_NAME').blur();
+			await settingsDialog.getByPlaceholder('value', { exact: true }).fill('enabled');
+			await settingsDialog.getByPlaceholder('value', { exact: true }).blur();
+
+			await expect(settingsDialog.getByText('Customized')).toBeVisible();
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						const settings = await window.maestro.settings.get('directorNotesSettings');
+						return {
+							customArgs: settings.customArgs,
+							customEnvVars: settings.customEnvVars,
+							customPath: settings.customPath,
+						};
+					});
+				})
+				.toEqual({
+					customArgs: '--sandbox read-only --model wsp',
+					customEnvVars: { WSP_DIRECTOR_NOTES: 'enabled' },
+					customPath: '/tmp/wsp-director-codex',
+				});
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[106].id} ${activeScenarioMatrix[106].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: createDirectorNotesEnabledSettings({
+				customPath: '/tmp/wsp-director-codex',
+				customArgs: '--sandbox read-only',
+				customEnvVars: {
+					WSP_DIRECTOR_CLEAR: 'before-clear',
+				},
+			}),
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp);
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'Encore Features',
+				'Optional features that extend Maestro'
+			);
+			await settingsDialog.getByTitle('Customize provider settings').click();
+
+			await settingsFieldPanel(settingsDialog, 'Path')
+				.getByRole('button', { name: 'Reset' })
+				.click();
+			await settingsFieldPanel(settingsDialog, 'Custom Arguments (optional)')
+				.getByRole('button', { name: 'Clear' })
+				.click();
+			await settingsFieldPanel(settingsDialog, 'Environment Variables (optional)')
+				.getByTitle('Remove variable')
+				.click();
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						const settings = await window.maestro.settings.get('directorNotesSettings');
+						return {
+							customArgs: settings.customArgs ?? null,
+							customEnvVars: settings.customEnvVars ?? {},
+							customPath: settings.customPath ?? null,
+						};
+					});
+				})
+				.toEqual({
+					customArgs: null,
+					customEnvVars: {},
+					customPath: null,
+				});
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[107].id} ${activeScenarioMatrix[107].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: createDirectorNotesEnabledSettings(),
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp, { model: 'gpt-5.2-codex' });
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'Encore Features',
+				'Optional features that extend Maestro'
+			);
+			await settingsDialog.getByTitle('Customize provider settings').click();
+			const modelInput = settingsFieldPanel(settingsDialog, 'Model')
+				.locator('input[type="text"]')
+				.first();
+
+			await expect(modelInput).toHaveValue('gpt-5.2-codex');
+			await modelInput.fill('gpt-5.3-codex');
+			await modelInput.blur();
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						const config = await window.maestro.agents.getConfig('codex');
+						return config.model;
+					});
+				})
+				.toBe('gpt-5.3-codex');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[108].id} ${activeScenarioMatrix[108].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: createDirectorNotesEnabledSettings(),
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp, { contextWindow: 400000 });
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'Encore Features',
+				'Optional features that extend Maestro'
+			);
+			await settingsDialog.getByTitle('Customize provider settings').click();
+			const contextWindowInput = settingsFieldPanel(settingsDialog, 'Context Window Size')
+				.locator('input[type="number"]')
+				.first();
+
+			await expect(contextWindowInput).toHaveValue('400000');
+			await contextWindowInput.fill('128000');
+			await contextWindowInput.blur();
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						const config = await window.maestro.agents.getConfig('codex');
+						return config.contextWindow;
+					});
+				})
+				.toBe(128000);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[109].id} ${activeScenarioMatrix[109].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: createDirectorNotesEnabledSettings(),
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp, { model: 'gpt-5.2-codex' });
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'Encore Features',
+				'Optional features that extend Maestro'
+			);
+			await settingsDialog.getByTitle('Customize provider settings').click();
+
+			await expect(settingsDialog.getByText('2 models available')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[110].id} ${activeScenarioMatrix[110].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: createDirectorNotesEnabledSettings(),
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp);
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'Encore Features',
+				'Optional features that extend Maestro'
+			);
+			await settingsDialog.getByTitle('Customize provider settings').click();
+			const envPanel = settingsFieldPanel(settingsDialog, 'Environment Variables (optional)');
+
+			await expect(envPanel.getByText('MAESTRO_SESSION_RESUMED')).toBeVisible();
+			await expect(envPanel.getByText('1 (when resuming)')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[111].id} ${activeScenarioMatrix[111].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp);
+			const wizardDialog = await openNewAgentWizard(launched.window);
+
+			await expect(wizardDialog.getByLabel('Agent name')).toHaveValue('');
+			await expect(wizardDialog.getByRole('button', { name: 'Continue' })).toBeDisabled();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[112].id} ${activeScenarioMatrix[112].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp);
+			const wizardDialog = await openNewAgentWizard(launched.window);
+			const agentNameInput = wizardDialog.getByLabel('Agent name');
+
+			await agentNameInput.fill('Wizard Codex Agent');
+			await expect(agentNameInput).toHaveValue('Wizard Codex Agent');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[113].id} ${activeScenarioMatrix[113].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp);
+			const wizardDialog = await openNewAgentWizard(launched.window);
+			const codexTile = wizardDialog.getByRole('button', { name: 'Codex' });
+
+			await codexTile.click();
+			await expect(codexTile).toHaveAttribute('aria-pressed', 'true');
+			await expect(
+				wizardDialog.getByRole('button', { name: 'Claude Code (not installed)' })
+			).toBeDisabled();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[114].id} ${activeScenarioMatrix[114].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp);
+			const wizardDialog = await openNewAgentWizard(launched.window);
+
+			await wizardDialog.getByLabel('Agent name').fill('Ready Codex Agent');
+			await wizardDialog.getByRole('button', { name: 'Codex' }).click();
+			await expect(wizardDialog.getByRole('button', { name: 'Continue' })).toBeEnabled();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[115].id} ${activeScenarioMatrix[115].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp);
+			const wizardDialog = await openNewAgentWizard(launched.window);
+			const codexTile = wizardDialog.getByRole('button', { name: 'Codex' });
+
+			await codexTile.focus();
+			await launched.window.keyboard.press('Enter');
+			await expect(codexTile).toHaveAttribute('aria-pressed', 'true');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[116].id} ${activeScenarioMatrix[116].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp);
+			const wizardDialog = await openNewAgentWizard(launched.window);
+			const geminiTile = wizardDialog.getByRole('button', { name: 'Gemini CLI (coming soon)' });
+
+			await expect(geminiTile).toBeDisabled();
+			await expect(geminiTile).toHaveAttribute('aria-pressed', 'false');
+			await expect(geminiTile.getByText('Soon')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[117].id} ${activeScenarioMatrix[117].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp);
+			const wizardDialog = await openNewAgentWizard(launched.window);
+			const codexTile = wizardDialog.getByRole('button', { name: 'Codex' });
+
+			await codexTile.getByTitle('Customize agent settings').click();
+			await expect(wizardDialog.getByText('Codex Configuration')).toBeVisible();
+			await expect(wizardDialog.getByPlaceholder('/path/to/codex')).toHaveValue(
+				'/usr/local/bin/codex'
+			);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[118].id} ${activeScenarioMatrix[118].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp);
+			const wizardDialog = await openCodexWizardCustomization(launched.window);
+			const pathInput = wizardDialog.getByPlaceholder('/path/to/codex');
+
+			await pathInput.fill('/opt/wsp/codex');
+			await expect(pathInput).toHaveValue('/opt/wsp/codex');
+			await expect(
+				settingsFieldPanel(wizardDialog, 'Path').getByRole('button', { name: 'Reset' })
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[119].id} ${activeScenarioMatrix[119].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp);
+			const wizardDialog = await openCodexWizardCustomization(launched.window);
+			const pathInput = wizardDialog.getByPlaceholder('/path/to/codex');
+
+			await pathInput.fill('/opt/wsp/codex');
+			await settingsFieldPanel(wizardDialog, 'Path').getByRole('button', { name: 'Reset' }).click();
+			await expect(pathInput).toHaveValue('/usr/local/bin/codex');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[120].id} ${activeScenarioMatrix[120].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp);
+			const wizardDialog = await openCodexWizardCustomization(launched.window);
+			const argsInput = wizardDialog.getByPlaceholder('--flag value --another-flag');
+
+			await argsInput.fill('--sandbox read-only --model wsp-wizard');
+			await expect(argsInput).toHaveValue('--sandbox read-only --model wsp-wizard');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[121].id} ${activeScenarioMatrix[121].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp);
+			const wizardDialog = await openCodexWizardCustomization(launched.window);
+			const argsInput = wizardDialog.getByPlaceholder('--flag value --another-flag');
+
+			await argsInput.fill('--sandbox read-only');
+			await settingsFieldPanel(wizardDialog, 'Custom Arguments (optional)')
+				.getByRole('button', { name: 'Clear' })
+				.click();
+			await expect(argsInput).toHaveValue('');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[122].id} ${activeScenarioMatrix[122].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp);
+			const wizardDialog = await openCodexWizardCustomization(launched.window);
+
+			await wizardDialog.getByRole('button', { name: 'Add Variable' }).click();
+			await wizardDialog.getByPlaceholder('VARIABLE_NAME').fill('WSP_WIZARD_ENV');
+			await wizardDialog.getByPlaceholder('value', { exact: true }).fill('enabled');
+
+			await expect(wizardDialog.getByPlaceholder('VARIABLE_NAME')).toHaveValue('WSP_WIZARD_ENV');
+			await expect(wizardDialog.getByPlaceholder('value', { exact: true })).toHaveValue('enabled');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[123].id} ${activeScenarioMatrix[123].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp);
+			const wizardDialog = await openCodexWizardCustomization(launched.window);
+
+			await wizardDialog.getByRole('button', { name: 'Add Variable' }).click();
+			await wizardDialog.getByPlaceholder('VARIABLE_NAME').fill('WSP_WIZARD_REMOVE');
+			await settingsFieldPanel(wizardDialog, 'Environment Variables (optional)')
+				.getByTitle('Remove variable')
+				.click();
+
+			await expect(wizardDialog.getByText('WSP_WIZARD_REMOVE')).toBeHidden();
+			await expect(wizardDialog.getByPlaceholder('VARIABLE_NAME')).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[124].id} ${activeScenarioMatrix[124].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp, {
+				contextWindow: 400000,
+				model: 'gpt-5.2-codex',
+			});
+			const wizardDialog = await openCodexWizardCustomization(launched.window);
+			const modelInput = settingsFieldPanel(wizardDialog, 'Model')
+				.locator('input[type="text"]')
+				.first();
+			const contextWindowInput = settingsFieldPanel(wizardDialog, 'Context Window Size')
+				.locator('input[type="number"]')
+				.first();
+
+			await modelInput.fill('gpt-5.4-codex');
+			await contextWindowInput.fill('196000');
+
+			await expect(modelInput).toHaveValue('gpt-5.4-codex');
+			await expect(contextWindowInput).toHaveValue('196000');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[125].id} ${activeScenarioMatrix[125].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp);
+			const wizardDialog = await openWizardDirectoryStep(launched.window);
+
+			await expect(
+				wizardDialog.getByText('Choose the folder where your project lives')
+			).toBeVisible();
+			await expect(wizardDialog.getByText("Howdy, I'm Directory Codex Agent")).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[126].id} ${activeScenarioMatrix[126].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp);
+			const wizardDialog = await openWizardDirectoryStep(launched.window, 'Return State Agent');
+
+			await wizardDialog.getByRole('button', { name: 'Back' }).click();
+			await expect(wizardDialog.getByLabel('Agent name')).toHaveValue('Return State Agent');
+			await expect(wizardDialog.getByRole('button', { name: 'Codex' })).toHaveAttribute(
+				'aria-pressed',
+				'true'
+			);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[127].id} ${activeScenarioMatrix[127].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp);
+			const wizardDialog = await openWizardDirectoryStep(launched.window);
+
+			await expect(wizardDialog.getByLabel('Project Directory')).toHaveAttribute(
+				'placeholder',
+				'/path/to/your/project'
+			);
+			await expect(wizardDialog.getByRole('button', { name: 'Browse' })).toBeVisible();
+			await expect(wizardDialog.getByRole('button', { name: 'Continue' })).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[128].id} ${activeScenarioMatrix[128].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp);
+			const wizardDialog = await openWizardDirectoryStep(launched.window);
+			const missingDir = path.join(seeded.homeDir, 'missing-project');
+
+			await wizardDialog.getByLabel('Project Directory').fill(missingDir);
+
+			await expect(
+				wizardDialog.getByText('Directory not found. Please check the path exists.')
+			).toBeVisible();
+			await expect(wizardDialog.getByLabel('Project Directory')).toHaveAttribute(
+				'aria-invalid',
+				'true'
+			);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[129].id} ${activeScenarioMatrix[129].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp);
+			const wizardDialog = await openWizardDirectoryStep(launched.window);
+
+			await wizardDialog.getByLabel('Project Directory').fill(seeded.projectDir);
+
+			await expect(wizardDialog.getByText('Regular Directory')).toBeVisible();
+			await expect(wizardDialog.getByText('Not a Git repository')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[130].id} ${activeScenarioMatrix[130].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp);
+			const wizardDialog = await openWizardDirectoryStep(launched.window);
+
+			await wizardDialog.getByLabel('Project Directory').fill(seeded.projectDir);
+			await expect(wizardDialog.getByText('Regular Directory')).toBeVisible();
+			await expect(wizardDialog.getByRole('button', { name: 'Continue' })).toBeEnabled();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[131].id} ${activeScenarioMatrix[131].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp);
+			const wizardDialog = await openWizardDirectoryStep(launched.window);
+			const directoryInput = wizardDialog.getByLabel('Project Directory');
+
+			await directoryInput.fill(path.join(seeded.homeDir, 'missing-project'));
+			await expect(
+				wizardDialog.getByText('Directory not found. Please check the path exists.')
+			).toBeVisible();
+			await directoryInput.fill('');
+
+			await expect(
+				wizardDialog.getByText('Directory not found. Please check the path exists.')
+			).toBeHidden();
+			await expect(wizardDialog.getByRole('button', { name: 'Continue' })).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[132].id} ${activeScenarioMatrix[132].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		seedExistingAutoRunDoc(seeded.projectDir);
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp);
+			const wizardDialog = await openWizardDirectoryStep(launched.window);
+
+			await wizardDialog.getByLabel('Project Directory').fill(seeded.projectDir);
+			await expect(wizardDialog.getByText('Regular Directory')).toBeVisible();
+			await wizardDialog.getByRole('button', { name: 'Continue' }).click();
+
+			const existingDocsDialog = launched.window.getByRole('dialog', {
+				name: 'Existing Auto Run Documents Found',
+			});
+			await expect(existingDocsDialog).toBeVisible();
+			await expect(existingDocsDialog.getByText('1 Auto Run document')).toBeVisible();
+			await expect(
+				existingDocsDialog.getByRole('button', { name: /Continue Building on Existing Plan/ })
+			).toBeFocused();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[133].id} ${activeScenarioMatrix[133].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		seedExistingAutoRunDoc(seeded.projectDir);
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp);
+			const wizardDialog = await openWizardDirectoryStep(launched.window, 'Existing Docs Agent');
+
+			await wizardDialog.getByLabel('Project Directory').fill(seeded.projectDir);
+			await expect(wizardDialog.getByText('Regular Directory')).toBeVisible();
+			await wizardDialog.getByRole('button', { name: 'Continue' }).click();
+
+			const existingDocsDialog = launched.window.getByRole('dialog', {
+				name: 'Existing Auto Run Documents Found',
+			});
+			const continueExistingPlan = existingDocsDialog.getByRole('button', {
+				name: /Continue Building on Existing Plan/,
+			});
+
+			await expect(continueExistingPlan).toBeEnabled();
+			await expect(existingDocsDialog.getByText('Recommended')).toBeVisible();
+			await expect(existingDocsDialog.getByText('continue from where you left off.')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[134].id} ${activeScenarioMatrix[134].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		seedExistingAutoRunDoc(seeded.projectDir);
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp);
+			const wizardDialog = await openWizardDirectoryStep(launched.window, 'Cancel Docs Agent');
+			const directoryInput = wizardDialog.getByLabel('Project Directory');
+
+			await directoryInput.fill(seeded.projectDir);
+			await expect(wizardDialog.getByText('Regular Directory')).toBeVisible();
+			await wizardDialog.getByRole('button', { name: 'Continue' }).click();
+
+			const existingDocsDialog = launched.window.getByRole('dialog', {
+				name: 'Existing Auto Run Documents Found',
+			});
+			await existingDocsDialog
+				.getByRole('button', { name: 'Cancel and choose a different directory' })
+				.click();
+
+			await expect(existingDocsDialog).toBeHidden();
+			await expect(directoryInput).toHaveValue('');
+			await expect(wizardDialog.getByRole('button', { name: 'Continue' })).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[135].id} ${activeScenarioMatrix[135].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		seedExistingAutoRunDoc(seeded.projectDir);
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp);
+			const wizardDialog = await openWizardDirectoryStep(launched.window, 'Fresh Docs Agent');
+
+			await wizardDialog.getByLabel('Project Directory').fill(seeded.projectDir);
+			await expect(wizardDialog.getByText('Regular Directory')).toBeVisible();
+			await wizardDialog.getByRole('button', { name: 'Continue' }).click();
+
+			const existingDocsDialog = launched.window.getByRole('dialog', {
+				name: 'Existing Auto Run Documents Found',
+			});
+			const deleteAndStartFresh = existingDocsDialog.getByRole('button', {
+				name: /Delete & Start Fresh/,
+			});
+
+			await expect(deleteAndStartFresh).toBeEnabled();
+			await expect(
+				existingDocsDialog.getByText(
+					'Remove all existing Auto Run documents and start the planning process from scratch.'
+				)
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[136].id} ${activeScenarioMatrix[136].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		seedExistingAutoRunDoc(seeded.projectDir);
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp);
+			const wizardDialog = await openWizardDirectoryStep(launched.window, 'Keyboard Docs Agent');
+			const directoryInput = wizardDialog.getByLabel('Project Directory');
+
+			await directoryInput.fill(seeded.projectDir);
+			await expect(wizardDialog.getByText('Regular Directory')).toBeVisible();
+			await launched.window.keyboard.press('Enter');
+
+			await expect(
+				launched.window.getByRole('dialog', { name: 'Existing Auto Run Documents Found' })
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[137].id} ${activeScenarioMatrix[137].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		seedExistingAutoRunDoc(seeded.projectDir);
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp);
+			const wizardDialog = await openWizardDirectoryStep(launched.window, 'Escape Docs Agent');
+			const directoryInput = wizardDialog.getByLabel('Project Directory');
+
+			await directoryInput.fill(seeded.projectDir);
+			await expect(wizardDialog.getByText('Regular Directory')).toBeVisible();
+			await wizardDialog.getByRole('button', { name: 'Continue' }).click();
+
+			const existingDocsDialog = launched.window.getByRole('dialog', {
+				name: 'Existing Auto Run Documents Found',
+			});
+			await expect(existingDocsDialog).toBeVisible();
+			await launched.window.keyboard.press('Escape');
+
+			await expect(existingDocsDialog).toBeHidden();
+			await expect(directoryInput).toHaveValue('');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[138].id} ${activeScenarioMatrix[138].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		seedExistingAutoRunDoc(seeded.projectDir);
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp);
+			const wizardDialog = await openWizardDirectoryStep(launched.window, 'Revalidate Docs Agent');
+			const directoryInput = wizardDialog.getByLabel('Project Directory');
+
+			await directoryInput.fill(seeded.projectDir);
+			await expect(wizardDialog.getByText('Regular Directory')).toBeVisible();
+			await wizardDialog.getByRole('button', { name: 'Continue' }).click();
+
+			await launched.window
+				.getByRole('dialog', { name: 'Existing Auto Run Documents Found' })
+				.getByRole('button', { name: 'Cancel and choose a different directory' })
+				.click();
+
+			await directoryInput.fill(seeded.projectDir);
+
+			await expect(wizardDialog.getByText('Regular Directory')).toBeVisible();
+			await expect(wizardDialog.getByRole('button', { name: 'Continue' })).toBeEnabled();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[139].id} ${activeScenarioMatrix[139].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(launched.window, 'General', 'Usage & Stats');
+
+			await expect(settingsDialog.getByText('Database size')).toBeVisible();
+			await expect(settingsDialog.locator('#clear-stats-period')).toBeVisible();
+			await expect(settingsDialog.getByRole('button', { name: 'Clear' })).toBeVisible();
+			await expect(
+				settingsDialog.getByText('Remove old query events, Auto Run sessions, and tasks')
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[140].id} ${activeScenarioMatrix[140].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(launched.window, 'General', 'Usage & Stats');
+
+			await settingsDialog.locator('#clear-stats-period').selectOption('30');
+			await settingsDialog.getByRole('button', { name: 'Clear' }).click();
+
+			await expect(settingsDialog.getByText(/Cleared \d+ records/)).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[141].id} ${activeScenarioMatrix[141].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				wakatimeEnabled: false,
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(launched.window, 'General', 'Usage & Stats');
+
+			await expect(
+				settingsDialog.getByRole('switch', { name: 'Enable WakaTime tracking' })
+			).toHaveAttribute('aria-checked', 'false');
+			await expect(settingsDialog.getByText('Detailed file tracking')).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[142].id} ${activeScenarioMatrix[142].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				wakatimeEnabled: false,
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(launched.window, 'General', 'Usage & Stats');
+
+			await expect(settingsDialog.getByPlaceholder('waka_...')).toBeHidden();
+			await expect(settingsDialog.getByTitle('Clear API key')).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[143].id} ${activeScenarioMatrix[143].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				wakatimeEnabled: false,
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(launched.window, 'General', 'Usage & Stats');
+
+			await expect(settingsDialog.getByText('Enable WakaTime tracking')).toBeVisible();
+			await expect(
+				settingsDialog.getByText('Track coding activity in Maestro sessions via WakaTime.')
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[144].id} ${activeScenarioMatrix[144].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(launched.window, 'General', 'Storage Location');
+
+			await expect(settingsDialog.getByText('Settings folder')).toBeVisible();
+			await expect(settingsDialog.getByText('Default Location')).toBeVisible();
+			await expect(settingsDialog.getByRole('button', { name: /Choose Folder/ })).toBeVisible();
+			await expect(
+				settingsDialog.getByText('Only run Maestro on one device at a time')
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[145].id} ${activeScenarioMatrix[145].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(launched.window, 'General', 'Storage Location');
+			const openStorageLocation = settingsDialog.getByRole('button', {
+				name: /Open in (Finder|Explorer|File Manager)/,
+			});
+
+			await expect(openStorageLocation).toBeVisible();
+			await expect(openStorageLocation).toBeEnabled();
+			await expect(openStorageLocation).toHaveAttribute('title', /.+/);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[146].id} ${activeScenarioMatrix[146].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(launched.window, 'Themes', 'Custom Theme');
+			const customThemeSection = settingsDialog.locator('[data-theme-id="custom"]');
+
+			await expect(customThemeSection.getByTitle('Export theme')).toBeVisible();
+			await expect(customThemeSection.getByTitle('Import theme')).toBeVisible();
+			await expect(customThemeSection.getByTitle('Reset to default')).toBeVisible();
+			await expect(customThemeSection.locator('input[type="file"]')).toHaveAttribute(
+				'accept',
+				'.json'
+			);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[147].id} ${activeScenarioMatrix[147].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const importedColors = createCustomThemeImportColors();
+		const themePath = writeThemeImportFile(
+			seeded.homeDir,
+			'wsp-valid-custom-theme.json',
+			JSON.stringify({
+				name: 'WSP Valid Theme',
+				baseTheme: 'nord',
+				colors: importedColors,
+			})
+		);
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(launched.window, 'Themes', 'Custom Theme');
+			await settingsDialog
+				.locator('[data-theme-id="custom"] input[type="file"]')
+				.setInputFiles(themePath);
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						const colors = await window.maestro.settings.get('customThemeColors');
+						return colors && typeof colors === 'object'
+							? {
+									bgMain: 'bgMain' in colors ? colors.bgMain : undefined,
+									accent: 'accent' in colors ? colors.accent : undefined,
+									accentDim: 'accentDim' in colors ? colors.accentDim : undefined,
+								}
+							: undefined;
+					});
+				})
+				.toEqual({
+					bgMain: importedColors.bgMain,
+					accent: importedColors.accent,
+					accentDim: importedColors.accentDim,
+				});
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[148].id} ${activeScenarioMatrix[148].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const originalColors = createCustomThemeImportColors({ accent: '#aa5500' });
+		const invalidThemePath = writeThemeImportFile(
+			seeded.homeDir,
+			'wsp-invalid-color-theme.json',
+			JSON.stringify({
+				colors: createCustomThemeImportColors({ accent: 'not-a-color' }),
+			})
+		);
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				customThemeColors: originalColors,
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(launched.window, 'Themes', 'Custom Theme');
+			await settingsDialog
+				.locator('[data-theme-id="custom"] input[type="file"]')
+				.setInputFiles(invalidThemePath);
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						const colors = await window.maestro.settings.get('customThemeColors');
+						return colors && typeof colors === 'object' && 'accent' in colors
+							? colors.accent
+							: undefined;
+					});
+				})
+				.toBe(originalColors.accent);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[149].id} ${activeScenarioMatrix[149].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const originalColors = createCustomThemeImportColors({ bgMain: '#202020' });
+		const missingColorsPath = writeThemeImportFile(
+			seeded.homeDir,
+			'wsp-missing-colors-theme.json',
+			JSON.stringify({ name: 'Missing Colors' })
+		);
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				customThemeColors: originalColors,
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(launched.window, 'Themes', 'Custom Theme');
+			await settingsDialog
+				.locator('[data-theme-id="custom"] input[type="file"]')
+				.setInputFiles(missingColorsPath);
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						const colors = await window.maestro.settings.get('customThemeColors');
+						return colors && typeof colors === 'object' && 'bgMain' in colors
+							? colors.bgMain
+							: undefined;
+					});
+				})
+				.toBe(originalColors.bgMain);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[150].id} ${activeScenarioMatrix[150].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const originalColors = createCustomThemeImportColors({ textMain: '#eeeeee' });
+		const missingKeysPath = writeThemeImportFile(
+			seeded.homeDir,
+			'wsp-missing-theme-keys.json',
+			JSON.stringify({ colors: { accent: '#33aaff' } })
+		);
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				customThemeColors: originalColors,
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(launched.window, 'Themes', 'Custom Theme');
+			await settingsDialog
+				.locator('[data-theme-id="custom"] input[type="file"]')
+				.setInputFiles(missingKeysPath);
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						const colors = await window.maestro.settings.get('customThemeColors');
+						return colors && typeof colors === 'object' && 'textMain' in colors
+							? colors.textMain
+							: undefined;
+					});
+				})
+				.toBe(originalColors.textMain);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[151].id} ${activeScenarioMatrix[151].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const originalColors = createCustomThemeImportColors({ border: '#121212' });
+		const invalidJsonPath = writeThemeImportFile(
+			seeded.homeDir,
+			'wsp-invalid-theme-json.json',
+			'{ invalid json'
+		);
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				customThemeColors: originalColors,
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(launched.window, 'Themes', 'Custom Theme');
+			await settingsDialog
+				.locator('[data-theme-id="custom"] input[type="file"]')
+				.setInputFiles(invalidJsonPath);
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						const colors = await window.maestro.settings.get('customThemeColors');
+						return colors && typeof colors === 'object' && 'border' in colors
+							? colors.border
+							: undefined;
+					});
+				})
+				.toBe(originalColors.border);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[152].id} ${activeScenarioMatrix[152].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const importedColors = createCustomThemeImportColors();
+		const themePath = writeThemeImportFile(
+			seeded.homeDir,
+			'wsp-valid-base-theme.json',
+			JSON.stringify({
+				baseTheme: 'solarized-light',
+				colors: importedColors,
+			})
+		);
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				customThemeBaseId: 'dracula',
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(launched.window, 'Themes', 'Custom Theme');
+			await settingsDialog
+				.locator('[data-theme-id="custom"] input[type="file"]')
+				.setInputFiles(themePath);
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('customThemeBaseId');
+					});
+				})
+				.toBe('solarized-light');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[153].id} ${activeScenarioMatrix[153].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const customPath = path.join(seeded.homeDir, 'synced-settings');
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubStorageSyncHandlers(launched.electronApp, {
+				selectedFolder: customPath,
+				setCustomPathResult: { success: true, migrated: 4 },
+			});
+			const settingsDialog = await openSettingsTab(launched.window, 'General', 'Storage Location');
+
+			await settingsDialog.getByRole('button', { name: /Choose Folder/ }).click();
+
+			await expect(settingsDialog.getByText('Current Location (Custom)')).toBeVisible();
+			await expect(settingsDialog.getByText(customPath)).toBeVisible();
+			await expect(settingsDialog.getByText('Migrated 4 settings files')).toBeVisible();
+			await expect(
+				settingsDialog.getByText('Restart Maestro for changes to take effect')
+			).toBeVisible();
+			await expect
+				.poll(async () => await getStubbedStorageSyncState(launched.electronApp))
+				.toEqual(expect.objectContaining({ customPath, setCalls: [customPath] }));
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[154].id} ${activeScenarioMatrix[154].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const customPath = path.join(seeded.homeDir, 'cloud-settings');
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubStorageSyncHandlers(launched.electronApp, {
+				initialCustomPath: customPath,
+				resetCustomPathResult: { success: true, migrated: 2 },
+			});
+			const settingsDialog = await openSettingsTab(launched.window, 'General', 'Storage Location');
+			await expect(settingsDialog.getByText('Current Location (Custom)')).toBeVisible();
+
+			await settingsDialog.getByRole('button', { name: 'Use Default' }).click();
+
+			await expect(settingsDialog.getByText('Current Location (Custom)')).toBeHidden();
+			await expect(settingsDialog.getByText('Migrated 2 settings files')).toBeVisible();
+			await expect(
+				settingsDialog.getByText('Restart Maestro for changes to take effect')
+			).toBeVisible();
+			const state = await getStubbedStorageSyncState(launched.electronApp);
+			expect(state.customPath).toBeUndefined();
+			expect(state.setCalls).toEqual([null]);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[155].id} ${activeScenarioMatrix[155].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubStorageSyncHandlers(launched.electronApp, { selectedFolder: null });
+			const settingsDialog = await openSettingsTab(launched.window, 'General', 'Storage Location');
+
+			await settingsDialog.getByRole('button', { name: /Choose Folder/ }).click();
+
+			await expect(settingsDialog.getByText('Current Location (Custom)')).toBeHidden();
+			await expect(
+				settingsDialog.getByText('Restart Maestro for changes to take effect')
+			).toBeHidden();
+			const state = await getStubbedStorageSyncState(launched.electronApp);
+			expect(state.setCalls).toEqual([]);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[156].id} ${activeScenarioMatrix[156].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const customPath = path.join(seeded.homeDir, 'blocked-settings');
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubStorageSyncHandlers(launched.electronApp, {
+				selectedFolder: customPath,
+				setCustomPathResult: {
+					success: false,
+					errors: ['Cannot migrate active settings'],
+				},
+			});
+			const settingsDialog = await openSettingsTab(launched.window, 'General', 'Storage Location');
+
+			await settingsDialog.getByRole('button', { name: /Choose Folder/ }).click();
+
+			await expect(settingsDialog.getByText('Cannot migrate active settings')).toBeVisible();
+			await expect(
+				settingsDialog.getByText('Restart Maestro for changes to take effect')
+			).toBeHidden();
+			const state = await getStubbedStorageSyncState(launched.electronApp);
+			expect(state.customPath).toBeUndefined();
+			expect(state.setCalls).toEqual([customPath]);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[157].id} ${activeScenarioMatrix[157].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const customPath = path.join(seeded.homeDir, 'existing-cloud-settings');
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubStorageSyncHandlers(launched.electronApp, {
+				initialCustomPath: customPath,
+				resetCustomPathResult: {
+					success: false,
+					error: 'Reset blocked by sync lock',
+				},
+			});
+			const settingsDialog = await openSettingsTab(launched.window, 'General', 'Storage Location');
+
+			await settingsDialog.getByRole('button', { name: 'Use Default' }).click();
+
+			await expect(settingsDialog.getByText('Reset blocked by sync lock')).toBeVisible();
+			await expect(settingsDialog.getByText('Current Location (Custom)')).toBeVisible();
+			await expect(settingsDialog.getByText(customPath)).toBeVisible();
+			const state = await getStubbedStorageSyncState(launched.electronApp);
+			expect(state.customPath).toBe(customPath);
+			expect(state.setCalls).toEqual([null]);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[158].id} ${activeScenarioMatrix[158].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const customPath = path.join(seeded.homeDir, 'file-manager-settings');
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubStorageSyncHandlers(launched.electronApp, {
+				initialCustomPath: customPath,
+			});
+			await stubShellPathHandlers(launched.electronApp);
+			const settingsDialog = await openSettingsTab(launched.window, 'General', 'Storage Location');
+
+			await settingsDialog.getByRole('button', { name: /Open in/ }).click();
+
+			await expect
+				.poll(async () => await getStubbedShellPathCalls(launched.electronApp))
+				.toEqual([{ type: 'openPath', itemPath: customPath }]);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[159].id} ${activeScenarioMatrix[159].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				documentGraphMaxNodes: 150,
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(launched.window, 'Display', 'Document Graph');
+			const maxNodesControl = settingsDialog
+				.getByText('Maximum nodes to display')
+				.locator('xpath=ancestor::div[.//input[@type="range"]][1]');
+
+			await maxNodesControl.locator('input[type="range"]').evaluate((slider) => {
+				const input = slider as HTMLInputElement;
+				input.value = '350';
+				input.dispatchEvent(new Event('input', { bubbles: true }));
+				input.dispatchEvent(new Event('change', { bubbles: true }));
+			});
+
+			await expect(maxNodesControl.getByText('350')).toBeVisible();
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('documentGraphMaxNodes');
+					});
+				})
+				.toBe(350);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[160].id} ${activeScenarioMatrix[160].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				documentGraphMaxNodes: 950,
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(launched.window, 'Display', 'Document Graph');
+			const maxNodesControl = settingsDialog
+				.getByText('Maximum nodes to display')
+				.locator('xpath=ancestor::div[.//input[@type="range"]][1]');
+
+			await maxNodesControl.locator('input[type="range"]').evaluate((slider) => {
+				const input = slider as HTMLInputElement;
+				input.value = '1200';
+				input.dispatchEvent(new Event('input', { bubbles: true }));
+				input.dispatchEvent(new Event('change', { bubbles: true }));
+			});
+
+			await expect(maxNodesControl.getByText('1000')).toBeVisible();
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('documentGraphMaxNodes');
+					});
+				})
+				.toBe(1000);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[161].id} ${activeScenarioMatrix[161].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				contextManagementSettings: {
+					contextWarningsEnabled: false,
+					contextWarningYellowThreshold: 65,
+					contextWarningRedThreshold: 85,
+				},
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'Display',
+				'Context Window Warnings'
+			);
+			const thresholdPanel = settingsDialog
+				.getByText('Yellow warning threshold')
+				.locator('xpath=ancestor::div[contains(@class, "space-y-4")][1]');
+
+			await expect(thresholdPanel).toHaveCSS('pointer-events', 'none');
+			await expect(thresholdPanel).toHaveCSS('opacity', '0.4');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[162].id} ${activeScenarioMatrix[162].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				contextManagementSettings: {
+					contextWarningsEnabled: true,
+					contextWarningYellowThreshold: 65,
+					contextWarningRedThreshold: 85,
+				},
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'Display',
+				'Context Window Warnings'
+			);
+
+			await expect(settingsDialog.getByText('65%')).toBeVisible();
+			await expect(settingsDialog.getByText('85%')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[163].id} ${activeScenarioMatrix[163].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				contextManagementSettings: {
+					contextWarningsEnabled: true,
+					contextWarningYellowThreshold: 60,
+					contextWarningRedThreshold: 80,
+				},
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'Display',
+				'Context Window Warnings'
+			);
+			const redThresholdControl = settingsDialog
+				.getByText('Red warning threshold')
+				.locator('xpath=ancestor::div[.//input[@type="range"]][1]');
+
+			await redThresholdControl.locator('input[type="range"]').evaluate((slider) => {
+				const input = slider as HTMLInputElement;
+				input.value = '55';
+				input.dispatchEvent(new Event('input', { bubbles: true }));
+				input.dispatchEvent(new Event('change', { bubbles: true }));
+			});
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('contextManagementSettings');
+					});
+				})
+				.toMatchObject({
+					contextWarningsEnabled: true,
+					contextWarningYellowThreshold: 45,
+					contextWarningRedThreshold: 55,
+				});
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[164].id} ${activeScenarioMatrix[164].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				contextManagementSettings: {
+					contextWarningsEnabled: false,
+					contextWarningYellowThreshold: 70,
+					contextWarningRedThreshold: 90,
+				},
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'Display',
+				'Context Window Warnings'
+			);
+			const contextWarningsToggle = settingsDialog.getByRole('button', {
+				name: /Show context consumption warnings/,
+			});
+
+			await contextWarningsToggle.press('Enter');
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('contextManagementSettings');
+					});
+				})
+				.toMatchObject({
+					contextWarningsEnabled: true,
+					contextWarningYellowThreshold: 70,
+					contextWarningRedThreshold: 90,
+				});
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[165].id} ${activeScenarioMatrix[165].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				localIgnorePatterns: ['.git', 'node_modules'],
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'Display',
+				'Local Ignore Patterns'
+			);
+			const localIgnorePatternsSection = settingsDialog
+				.getByText('Local Ignore Patterns')
+				.locator('xpath=ancestor::div[contains(@class, "rounded")][1]');
+
+			await localIgnorePatternsSection
+				.getByPlaceholder('Enter glob pattern (e.g., node_modules, *.log)')
+				.fill('.git');
+			await localIgnorePatternsSection.getByRole('button', { name: 'Add' }).click();
+
+			await expect(localIgnorePatternsSection.getByText('Pattern already exists')).toBeVisible();
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('localIgnorePatterns');
+					});
+				})
+				.toEqual(['.git', 'node_modules']);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[166].id} ${activeScenarioMatrix[166].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				localIgnorePatterns: ['custom-cache'],
+				localHonorGitignore: false,
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'Display',
+				'Local Ignore Patterns'
+			);
+			const localIgnorePatternsSection = settingsDialog
+				.getByText('Local Ignore Patterns')
+				.locator('xpath=ancestor::div[contains(@class, "rounded")][1]');
+
+			await localIgnorePatternsSection.getByRole('button', { name: /Reset to defaults/ }).click();
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return {
+							patterns: await window.maestro.settings.get('localIgnorePatterns'),
+							honorGitignore: await window.maestro.settings.get('localHonorGitignore'),
+						};
+					});
+				})
+				.toEqual({
+					patterns: ['.git', 'node_modules', '__pycache__'],
+					honorGitignore: true,
+				});
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[167].id} ${activeScenarioMatrix[167].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'Display',
+				'Local Ignore Patterns'
+			);
+			const localIgnorePatternsSection = settingsDialog
+				.getByText('Local Ignore Patterns')
+				.locator('xpath=ancestor::div[contains(@class, "rounded")][1]');
+
+			await expect(localIgnorePatternsSection.getByRole('button', { name: 'Add' })).toBeDisabled();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[168].id} ${activeScenarioMatrix[168].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				localIgnorePatterns: ['.git'],
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'Display',
+				'Local Ignore Patterns'
+			);
+			const localIgnorePatternsSection = settingsDialog
+				.getByText('Local Ignore Patterns')
+				.locator('xpath=ancestor::div[contains(@class, "rounded")][1]');
+			await localIgnorePatternsSection
+				.getByPlaceholder('Enter glob pattern (e.g., node_modules, *.log)')
+				.fill('tmp-e2e-cache');
+			await localIgnorePatternsSection
+				.getByPlaceholder('Enter glob pattern (e.g., node_modules, *.log)')
+				.press('Enter');
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('localIgnorePatterns');
+					});
+				})
+				.toEqual(['.git', 'tmp-e2e-cache']);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[169].id} ${activeScenarioMatrix[169].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(launched.window, 'Display', 'Bionify Algorithm');
+
+			await settingsDialog.getByTitle('Bionify algorithm info').click();
+
+			const referenceDialog = launched.window.getByRole('dialog', {
+				name: 'Bionify Algorithm Reference',
+			});
+			await expect(referenceDialog).toBeVisible();
+			await expect(referenceDialog.getByText('Current default:')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[170].id} ${activeScenarioMatrix[170].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(launched.window, 'Display', 'Bionify Algorithm');
+			await settingsDialog.getByTitle('Bionify algorithm info').click();
+			const referenceDialog = launched.window.getByRole('dialog', {
+				name: 'Bionify Algorithm Reference',
+			});
+			await expect(referenceDialog).toBeVisible();
+
+			await launched.window.keyboard.press('Escape');
+
+			await expect(referenceDialog).toBeHidden();
+			await expect(settingsDialog).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[171].id} ${activeScenarioMatrix[171].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				defaultStatsTimeRange: 'week',
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(launched.window, 'General', 'Usage & Stats');
+			const timeRangeControl = settingsDialog
+				.getByText('Default dashboard time range')
+				.locator('xpath=ancestor::div[.//select][1]');
+
+			await timeRangeControl.locator('select').selectOption('all');
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('defaultStatsTimeRange');
+					});
+				})
+				.toBe('all');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[172].id} ${activeScenarioMatrix[172].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				ghPath: '/usr/local/bin/gh',
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'General',
+				'GitHub CLI (gh) Path'
+			);
+			const ghPathSection = settingsDialog
+				.getByText('GitHub CLI (gh) Path')
+				.locator('xpath=ancestor::div[contains(@class, "rounded border")][1]');
+
+			await ghPathSection.getByRole('button', { name: 'Clear' }).click();
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('ghPath');
+					});
+				})
+				.toBe('');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[173].id} ${activeScenarioMatrix[173].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				shellArgs: '--login --interactive',
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'General',
+				'Default Terminal Shell'
+			);
+			await settingsDialog.getByRole('button', { name: 'Shell Configuration' }).click();
+			const shellArgsSection = settingsDialog
+				.getByText('Additional Arguments (optional)')
+				.locator('xpath=ancestor::div[.//input[@placeholder="--flag value"]][1]');
+
+			await shellArgsSection.getByRole('button', { name: 'Clear' }).click();
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('shellArgs');
+					});
+				})
+				.toBe('');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[174].id} ${activeScenarioMatrix[174].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubStatsDataManagement(launched.electronApp, {
+				clearResult: {
+					success: false,
+					deletedQueryEvents: 0,
+					deletedAutoRunSessions: 0,
+					deletedAutoRunTasks: 0,
+					error: 'Stats database locked',
+				},
+			});
+			const settingsDialog = await openSettingsTab(launched.window, 'General', 'Usage & Stats');
+			const clearStatsSection = settingsDialog
+				.getByText('Clear stats older than...')
+				.locator('xpath=ancestor::div[.//select[@id="clear-stats-period"]][1]');
+
+			await clearStatsSection.locator('select').selectOption('30');
+			await clearStatsSection.getByRole('button', { name: 'Clear' }).click();
+
+			await expect(settingsDialog.getByText('Stats database locked')).toBeVisible();
+			await expect
+				.poll(async () => await getStubbedStatsClearDays(launched.electronApp))
+				.toEqual([30]);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[175].id} ${activeScenarioMatrix[175].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubStatsDataManagement(launched.electronApp, {
+				dbSize: 3 * 1024 * 1024,
+				earliestTimestamp: Date.UTC(2026, 4, 10),
+			});
+			const settingsDialog = await openSettingsTab(launched.window, 'General', 'Usage & Stats');
+
+			await expect(settingsDialog.getByText('3.00 MB')).toBeVisible();
+			await expect(settingsDialog.getByText(/since/)).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[176].id} ${activeScenarioMatrix[176].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'General',
+				'Default Terminal Shell'
+			);
+			await settingsDialog.getByRole('button', { name: 'Shell Configuration' }).click();
+
+			await expect(settingsDialog.getByText('Global Environment Variables')).toBeVisible();
+			await expect(
+				settingsDialog.getByText(/apply to all terminal sessions and\s+AI agent processes/)
+			).toBeVisible();
+			await expect(
+				settingsDialog.getByText('Agent-specific settings can override these values.')
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[177].id} ${activeScenarioMatrix[177].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'General',
+				'Default Terminal Shell'
+			);
+			await settingsDialog.getByRole('button', { name: 'Shell Configuration' }).click();
+
+			await settingsDialog
+				.locator('input[placeholder="/path/to/shell"]')
+				.fill('/opt/maestro/bin/fish');
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('customShellPath');
+					});
+				})
+				.toBe('/opt/maestro/bin/fish');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[178].id} ${activeScenarioMatrix[178].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				customShellPath: '/opt/maestro/bin/fish',
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'General',
+				'Default Terminal Shell'
+			);
+			await settingsDialog.getByRole('button', { name: 'Shell Configuration' }).click();
+			const customShellPathSection = settingsDialog
+				.locator('input[placeholder="/path/to/shell"]')
+				.locator('xpath=ancestor::div[contains(@class, "flex")][1]');
+
+			await customShellPathSection.getByRole('button', { name: 'Clear' }).click();
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('customShellPath');
+					});
+				})
+				.toBe('');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[179].id} ${activeScenarioMatrix[179].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				statsCollectionEnabled: true,
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(launched.window, 'General', 'Usage & Stats');
+
+			await settingsDialog.getByRole('switch', { name: 'Enable stats collection' }).click();
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('statsCollectionEnabled');
+					});
+				})
+				.toBe(false);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[180].id} ${activeScenarioMatrix[180].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubStatsDataManagement(launched.electronApp, {
+				clearResult: {
+					success: true,
+					deletedQueryEvents: 4,
+					deletedAutoRunSessions: 2,
+					deletedAutoRunTasks: 1,
+				},
+			});
+			const settingsDialog = await openSettingsTab(launched.window, 'General', 'Usage & Stats');
+			const clearStatsSection = settingsDialog
+				.getByText('Clear stats older than...')
+				.locator('xpath=ancestor::div[.//select[@id="clear-stats-period"]][1]');
+
+			await clearStatsSection.locator('select').selectOption('365');
+			await clearStatsSection.getByRole('button', { name: 'Clear' }).click();
+
+			await expect(
+				settingsDialog.getByText('Cleared 7 records (4 queries, 2 sessions, 1 tasks)')
+			).toBeVisible();
+			await expect
+				.poll(async () => await getStubbedStatsClearDays(launched.electronApp))
+				.toEqual([365]);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[181].id} ${activeScenarioMatrix[181].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'General',
+				'Default Terminal Shell'
+			);
+			await settingsDialog.getByRole('button', { name: 'Shell Configuration' }).click();
+			await settingsDialog.getByRole('button', { name: 'Add Variable' }).click();
+			await settingsDialog
+				.locator('input[placeholder="VARIABLE"]')
+				.last()
+				.fill('MAESTRO_TEST_TOKEN');
+			await settingsDialog.locator('input[placeholder="value"]').last().fill('redacted-value');
+
+			await expect(settingsDialog.getByText(/Valid \(1 variables loaded\)/)).toBeVisible();
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('shellEnvVars');
+					});
+				})
+				.toEqual({ MAESTRO_TEST_TOKEN: 'redacted-value' });
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[182].id} ${activeScenarioMatrix[182].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				shellEnvVars: {
+					MAESTRO_FLAG: 'enabled',
+				},
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'General',
+				'Default Terminal Shell'
+			);
+			await settingsDialog.getByRole('button', { name: 'Shell Configuration' }).click();
+			await expect(settingsDialog.getByText(/Valid \(1 variables loaded\)/)).toBeVisible();
+
+			await settingsDialog.getByTitle('Remove variable').click();
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('shellEnvVars');
+					});
+				})
+				.toEqual({});
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[183].id} ${activeScenarioMatrix[183].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'General',
+				'Default Terminal Shell'
+			);
+			await settingsDialog.getByRole('button', { name: 'Shell Configuration' }).click();
+			await settingsDialog.getByRole('button', { name: 'Add Variable' }).click();
+			await settingsDialog.locator('input[placeholder="VARIABLE"]').last().fill('1INVALID');
+			await settingsDialog.locator('input[placeholder="value"]').last().fill('blocked-value');
+
+			await expect(settingsDialog.getByText(/Invalid variable name/)).toBeVisible();
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('shellEnvVars');
+					});
+				})
+				.toEqual({});
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[184].id} ${activeScenarioMatrix[184].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				osNotificationsEnabled: true,
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'Notifications',
+				'Operating System Notifications'
+			);
+
+			await settingsDialog.getByText('Enable OS Notifications').click();
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('osNotificationsEnabled');
+					});
+				})
+				.toBe(false);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[185].id} ${activeScenarioMatrix[185].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubNotificationHandlers(launched.electronApp);
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'Notifications',
+				'Operating System Notifications'
+			);
+
+			await settingsDialog.getByRole('button', { name: 'Test Notification' }).click();
+
+			await expect
+				.poll(async () => (await getStubbedNotificationState(launched.electronApp)).showCalls)
+				.toEqual([
+					{
+						title: 'Maestro',
+						body: 'Test notification - notifications are working!',
+					},
+				]);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[186].id} ${activeScenarioMatrix[186].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				audioFeedbackCommand: 'say',
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'Notifications',
+				'Custom Notification'
+			);
+
+			await settingsDialog.locator('input[placeholder="say"]').fill('say -v Samantha');
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('audioFeedbackCommand');
+					});
+				})
+				.toBe('say -v Samantha');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[187].id} ${activeScenarioMatrix[187].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				audioFeedbackCommand: 'say -v Alex',
+			},
+		});
+
+		try {
+			await stubNotificationHandlers(launched.electronApp, {
+				speakResult: { success: true, notificationId: 902 },
+			});
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'Notifications',
+				'Custom Notification'
+			);
+
+			await settingsDialog.getByRole('button', { name: 'Test', exact: true }).click();
+
+			await expect(settingsDialog.getByRole('button', { name: 'Stop' })).toBeVisible();
+			await expect
+				.poll(async () => (await getStubbedNotificationState(launched.electronApp)).speakCalls)
+				.toEqual([
+					{
+						text: "Howdy, I'm Maestro, here to conduct your agentic tools into a well-tuned symphony.",
+						command: 'say -v Alex',
+					},
+				]);
+
+			await emitStubbedNotificationCompletion(launched.electronApp, 902);
+
+			await expect(settingsDialog.getByRole('button', { name: 'Success' })).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[188].id} ${activeScenarioMatrix[188].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubNotificationHandlers(launched.electronApp, {
+				speakResult: { success: true, notificationId: 903 },
+			});
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'Notifications',
+				'Custom Notification'
+			);
+
+			await settingsDialog.getByRole('button', { name: 'Test', exact: true }).click();
+			await expect(settingsDialog.getByRole('button', { name: 'Stop' })).toBeVisible();
+			await settingsDialog.getByRole('button', { name: 'Stop' }).click();
+
+			await expect
+				.poll(async () => (await getStubbedNotificationState(launched.electronApp)).stopCalls)
+				.toEqual([903]);
+			await expect(settingsDialog.getByRole('button', { name: 'Test', exact: true })).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[189].id} ${activeScenarioMatrix[189].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubNotificationHandlers(launched.electronApp, {
+				speakResult: { success: false, error: 'Command failed: missing binary' },
+			});
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'Notifications',
+				'Custom Notification'
+			);
+
+			await settingsDialog.getByRole('button', { name: 'Test', exact: true }).click();
+
+			await expect(settingsDialog.getByRole('button', { name: 'Failed' })).toBeVisible();
+			await expect(settingsDialog.getByText('Command failed: missing binary')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[190].id} ${activeScenarioMatrix[190].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: {
+				toastDuration: 20,
+			},
+		});
+
+		try {
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'Notifications',
+				'Toast Notification Duration'
+			);
+
+			await settingsDialog.getByRole('button', { name: 'Never' }).click();
+
+			await expect
+				.poll(async () => {
+					return await launched.window.evaluate(async () => {
+						return await window.maestro.settings.get('toastDuration');
+					});
+				})
+				.toBe(0);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[191].id} ${activeScenarioMatrix[191].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubSshRemoteHandlers(launched.electronApp);
+			const settingsDialog = await openSettingsTab(launched.window, 'General', 'SSH Remote Hosts');
+
+			await expect(settingsDialog.getByText('No SSH remotes configured')).toBeVisible();
+			await expect(
+				settingsDialog.getByText('Add a remote host to run AI agents on external machines')
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[192].id} ${activeScenarioMatrix[192].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubSshRemoteHandlers(launched.electronApp);
+			const settingsDialog = await openSettingsTab(launched.window, 'General', 'SSH Remote Hosts');
+
+			await settingsDialog.getByRole('button', { name: 'Add SSH Remote' }).click();
+
+			await expect(launched.window.getByRole('dialog', { name: 'Add SSH Remote' })).toBeVisible();
+			await expect(launched.window.getByLabel('Display Name')).toHaveValue('');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[193].id} ${activeScenarioMatrix[193].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubSshRemoteHandlers(launched.electronApp);
+			const settingsDialog = await openSettingsTab(launched.window, 'General', 'SSH Remote Hosts');
+			await settingsDialog.getByRole('button', { name: 'Add SSH Remote' }).click();
+			const sshDialog = launched.window.getByRole('dialog', { name: 'Add SSH Remote' });
+
+			await expect(sshDialog.getByRole('button', { name: 'Save' })).toBeDisabled();
+			await sshDialog.getByLabel('Display Name').fill('Invalid Remote');
+			await expect(sshDialog.getByRole('button', { name: 'Save' })).toBeDisabled();
+			await sshDialog.getByLabel('Host').fill('invalid.example.com');
+			await sshDialog.getByLabel('Port').fill('70000');
+			await expect(sshDialog.getByRole('button', { name: 'Save' })).toBeDisabled();
+			await sshDialog.getByLabel('Port').fill('2222');
+			await expect(sshDialog.getByRole('button', { name: 'Save' })).toBeEnabled();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[194].id} ${activeScenarioMatrix[194].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubSshRemoteHandlers(launched.electronApp);
+			const settingsDialog = await openSettingsTab(launched.window, 'General', 'SSH Remote Hosts');
+			await settingsDialog.getByRole('button', { name: 'Add SSH Remote' }).click();
+			const sshDialog = launched.window.getByRole('dialog', { name: 'Add SSH Remote' });
+
+			await sshDialog.getByLabel('Display Name').fill('Quant VPS');
+			await sshDialog.getByLabel('Host').fill('quant.example.com');
+			await sshDialog.getByLabel('Port').fill('2222');
+			await sshDialog.getByLabel('Username (optional)').fill('ubuntu');
+			await sshDialog.getByLabel('Private Key Path (optional)').fill('~/.ssh/quant_vps');
+			await sshDialog.getByRole('button', { name: 'Add Variable' }).click();
+			await sshDialog.locator('input[placeholder="VARIABLE"]').last().fill('MAESTRO_REMOTE');
+			await sshDialog.locator('input[placeholder="value"]').last().fill('enabled');
+			await sshDialog.getByRole('button', { name: 'Save' }).click();
+
+			await expect(settingsDialog.getByText('Quant VPS')).toBeVisible();
+			await expect
+				.poll(async () => (await getStubbedSshRemoteState(launched.electronApp)).configs)
+				.toEqual([
+					expect.objectContaining({
+						id: 'ssh-remote-1',
+						name: 'Quant VPS',
+						host: 'quant.example.com',
+						port: 2222,
+						username: 'ubuntu',
+						privateKeyPath: '~/.ssh/quant_vps',
+						remoteEnv: { MAESTRO_REMOTE: 'enabled' },
+						enabled: true,
+					}),
+				]);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[195].id} ${activeScenarioMatrix[195].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubSshRemoteHandlers(launched.electronApp, {
+				sshConfigHosts: [
+					{
+						host: 'quant-vps',
+						hostName: '203.0.113.10',
+						port: 2202,
+						user: 'ubuntu',
+						identityFile: '~/.ssh/quant_vps',
+					},
+				],
+			});
+			const settingsDialog = await openSettingsTab(launched.window, 'General', 'SSH Remote Hosts');
+			await settingsDialog.getByRole('button', { name: 'Add SSH Remote' }).click();
+			const sshDialog = launched.window.getByRole('dialog', { name: 'Add SSH Remote' });
+
+			await sshDialog.getByRole('button', { name: /Select a host to import/ }).click();
+			await sshDialog.getByRole('button', { name: /quant-vps/ }).click();
+
+			await expect(sshDialog.getByLabel('Display Name')).toHaveValue('quant-vps');
+			await expect(sshDialog.getByLabel('Host', { exact: true })).toHaveValue('quant-vps');
+			await expect(sshDialog.getByLabel('Port')).toHaveValue('2202');
+			await expect(sshDialog.getByLabel('Username (optional)')).toHaveValue('ubuntu');
+			await expect(sshDialog.getByLabel('Private Key Path (optional)')).toHaveValue(
+				'~/.ssh/quant_vps'
+			);
+			await expect(sshDialog.getByText('Imported from:')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[196].id} ${activeScenarioMatrix[196].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubSshRemoteHandlers(launched.electronApp, {
+				sshConfigHosts: [{ host: 'staging-vps', user: 'deploy' }],
+			});
+			const settingsDialog = await openSettingsTab(launched.window, 'General', 'SSH Remote Hosts');
+			await settingsDialog.getByRole('button', { name: 'Add SSH Remote' }).click();
+			const sshDialog = launched.window.getByRole('dialog', { name: 'Add SSH Remote' });
+			await sshDialog.getByRole('button', { name: /Select a host to import/ }).click();
+			await sshDialog.getByRole('button', { name: /staging-vps/ }).click();
+
+			await sshDialog.getByTitle('Stop tracking SSH config origin').click();
+
+			await expect(sshDialog.getByText('Imported from:')).toBeHidden();
+			await expect(sshDialog.getByLabel('Host', { exact: true })).toHaveValue('staging-vps');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[197].id} ${activeScenarioMatrix[197].title}`, async () => {
+		const seededRemote = createStubSshRemoteConfig();
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubSshRemoteHandlers(launched.electronApp, { configs: [seededRemote] });
+			const settingsDialog = await openSettingsTab(launched.window, 'General', 'SSH Remote Hosts');
+
+			await settingsDialog.getByTitle('Set as default').click();
+			await expect(settingsDialog.getByText('Default')).toBeVisible();
+			await settingsDialog.getByTitle('Remove as default').click();
+
+			await expect
+				.poll(async () => (await getStubbedSshRemoteState(launched.electronApp)).defaultCalls)
+				.toEqual(['ssh-remote-1', null]);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[198].id} ${activeScenarioMatrix[198].title}`, async () => {
+		const seededRemote = createStubSshRemoteConfig();
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubSshRemoteHandlers(launched.electronApp, {
+				configs: [seededRemote],
+				testResult: {
+					success: true,
+					result: { remoteInfo: { hostname: 'quant-vps.internal' } },
+				},
+			});
+			const settingsDialog = await openSettingsTab(launched.window, 'General', 'SSH Remote Hosts');
+
+			await settingsDialog.getByTitle('Test connection').click();
+
+			await expect(settingsDialog.getByText('Connected to quant-vps.internal')).toBeVisible();
+			await expect
+				.poll(async () => (await getStubbedSshRemoteState(launched.electronApp)).testCalls)
+				.toEqual([expect.objectContaining({ id: 'ssh-remote-1' })]);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[199].id} ${activeScenarioMatrix[199].title}`, async () => {
+		const disabledRemote = createStubSshRemoteConfig({ enabled: false });
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubSshRemoteHandlers(launched.electronApp, { configs: [disabledRemote] });
+			const settingsDialog = await openSettingsTab(launched.window, 'General', 'SSH Remote Hosts');
+
+			await expect(settingsDialog.getByText('Disabled')).toBeVisible();
+			await expect(settingsDialog.getByTitle('Test connection')).toBeDisabled();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[200].id} ${activeScenarioMatrix[200].title}`, async () => {
+		const seededRemote = createStubSshRemoteConfig();
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubSshRemoteHandlers(launched.electronApp, { configs: [seededRemote] });
+			const settingsDialog = await openSettingsTab(launched.window, 'General', 'SSH Remote Hosts');
+
+			await settingsDialog.getByTitle('Delete').click();
+
+			await expect(settingsDialog.getByText('No SSH remotes configured')).toBeVisible();
+			await expect
+				.poll(async () => (await getStubbedSshRemoteState(launched.electronApp)).deleteCalls)
+				.toEqual(['ssh-remote-1']);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[201].id} ${activeScenarioMatrix[201].title}`, async () => {
+		const seededRemote = createStubSshRemoteConfig({ name: 'Remote Build Host' });
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp);
+			await stubSshRemoteHandlers(launched.electronApp, { configs: [seededRemote] });
+			const wizardDialog = await openNewAgentWizard(launched.window);
+			const locationSelect = wizardDialog.getByLabel('Agent location');
+
+			await expect(locationSelect).toBeVisible();
+			await expect(locationSelect).toHaveValue('');
+			await expect(locationSelect.locator('option[value=""]')).toHaveText('Local Machine');
+			await expect(locationSelect.locator('option[value="ssh-remote-1"]')).toHaveText(
+				'Remote Build Host'
+			);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[202].id} ${activeScenarioMatrix[202].title}`, async () => {
+		const seededRemote = createStubSshRemoteConfig({ name: 'Quant VPS' });
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp);
+			await stubSshRemoteHandlers(launched.electronApp, { configs: [seededRemote] });
+			const wizardDialog = await openNewAgentWizard(launched.window);
+
+			await wizardDialog.getByLabel('Agent location').selectOption('ssh-remote-1');
+			await wizardDialog.getByLabel('Agent name').fill('Remote Directory Agent');
+			await wizardDialog.getByRole('button', { name: 'Codex' }).click();
+			await wizardDialog.getByRole('button', { name: 'Continue' }).click();
+
+			await expect(wizardDialog.getByLabel('Project Directory')).toHaveAttribute(
+				'placeholder',
+				/Enter path on Quant VPS/
+			);
+			await expect(wizardDialog.getByRole('button', { name: 'Browse' })).toBeHidden();
+			await expect(wizardDialog.getByText(/Enter the full path on/)).toBeVisible();
+			await expect(wizardDialog.getByText('Quant VPS')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[203].id} ${activeScenarioMatrix[203].title}`, async () => {
+		const seededRemote = createStubSshRemoteConfig();
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp);
+			await stubSshRemoteHandlers(launched.electronApp, { configs: [seededRemote] });
+			await stubWizardRemoteDirectoryHandlers(launched.electronApp, { isRepo: true });
+			const wizardDialog = await openNewAgentWizard(launched.window);
+
+			await wizardDialog.getByLabel('Agent location').selectOption('ssh-remote-1');
+			await wizardDialog.getByLabel('Agent name').fill('Remote Git Agent');
+			await wizardDialog.getByRole('button', { name: 'Codex' }).click();
+			await wizardDialog.getByRole('button', { name: 'Continue' }).click();
+			await wizardDialog.getByLabel('Project Directory').fill('/srv/maestro/project');
+
+			await expect(wizardDialog.getByText('Git Repository Detected')).toBeVisible();
+			await expect
+				.poll(async () => await getStubbedWizardRemoteDirectoryState(launched.electronApp))
+				.toMatchObject({
+					readDirCalls: [{ dirPath: '/srv/maestro/project', sshRemoteId: 'ssh-remote-1' }],
+					gitCalls: [{ cwd: '/srv/maestro/project', sshRemoteId: 'ssh-remote-1' }],
+				});
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[204].id} ${activeScenarioMatrix[204].title}`, async () => {
+		const seededRemote = createStubSshRemoteConfig({ name: 'Planning VPS' });
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp);
+			await stubSshRemoteHandlers(launched.electronApp, { configs: [seededRemote] });
+			await stubWizardRemoteDirectoryHandlers(launched.electronApp, {
+				autoRunDocs: [
+					{ name: 'phase-remote.md', path: '/srv/maestro/project/Auto Run Docs/phase-remote.md' },
+				],
+			});
+			const wizardDialog = await openNewAgentWizard(launched.window);
+
+			await wizardDialog.getByLabel('Agent location').selectOption('ssh-remote-1');
+			await wizardDialog.getByLabel('Agent name').fill('Remote Existing Docs Agent');
+			await wizardDialog.getByRole('button', { name: 'Codex' }).click();
+			await wizardDialog.getByRole('button', { name: 'Continue' }).click();
+			await wizardDialog.getByLabel('Project Directory').fill('/srv/maestro/project');
+			await expect(wizardDialog.getByText('Regular Directory')).toBeVisible();
+			await wizardDialog.getByRole('button', { name: 'Continue' }).click();
+
+			await expect(
+				launched.window.getByRole('dialog', { name: 'Existing Auto Run Documents Found' })
+			).toBeVisible();
+			await expect
+				.poll(
+					async () =>
+						(await getStubbedWizardRemoteDirectoryState(launched.electronApp)).listDocsCalls
+				)
+				.toContainEqual({
+					folderPath: '/srv/maestro/project/Auto Run Docs',
+					sshRemoteId: 'ssh-remote-1',
+				});
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[205].id} ${activeScenarioMatrix[205].title}`, async () => {
+		const seededRemote = createStubSshRemoteConfig();
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp);
+			await stubSshRemoteHandlers(launched.electronApp, { configs: [seededRemote] });
+			await stubWizardRemoteDirectoryHandlers(launched.electronApp, {
+				readDirError: 'Remote directory missing',
+			});
+			const wizardDialog = await openNewAgentWizard(launched.window);
+
+			await wizardDialog.getByLabel('Agent location').selectOption('ssh-remote-1');
+			await wizardDialog.getByLabel('Agent name').fill('Missing Remote Agent');
+			await wizardDialog.getByRole('button', { name: 'Codex' }).click();
+			await wizardDialog.getByRole('button', { name: 'Continue' }).click();
+			await wizardDialog.getByLabel('Project Directory').fill('/srv/missing-project');
+
+			await expect(
+				wizardDialog.getByText('Directory not found. Please check the path exists.')
+			).toBeVisible();
+			await expect
+				.poll(
+					async () =>
+						(await getStubbedWizardRemoteDirectoryState(launched.electronApp)).readDirCalls
+				)
+				.toEqual([{ dirPath: '/srv/missing-project', sshRemoteId: 'ssh-remote-1' }]);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[206].id} ${activeScenarioMatrix[206].title}`, async () => {
+		const seededRemote = createStubSshRemoteConfig({ name: 'Temporary Remote' });
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp);
+			await stubSshRemoteHandlers(launched.electronApp, { configs: [seededRemote] });
+			const wizardDialog = await openNewAgentWizard(launched.window);
+			const locationSelect = wizardDialog.getByLabel('Agent location');
+
+			await locationSelect.selectOption('ssh-remote-1');
+			await locationSelect.selectOption('');
+			await wizardDialog.getByLabel('Agent name').fill('Local Again Agent');
+			await wizardDialog.getByRole('button', { name: 'Codex' }).click();
+			await wizardDialog.getByRole('button', { name: 'Continue' }).click();
+
+			await expect(wizardDialog.getByLabel('Project Directory')).toHaveAttribute(
+				'placeholder',
+				'/path/to/your/project'
+			);
+			await expect(wizardDialog.getByRole('button', { name: 'Browse' })).toBeVisible();
+			await expect(wizardDialog.getByText(/Enter the full path on/)).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[207].id} ${activeScenarioMatrix[207].title}`, async () => {
+		const seededRemote = createStubSshRemoteConfig({ name: 'Return Remote' });
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp);
+			await stubSshRemoteHandlers(launched.electronApp, { configs: [seededRemote] });
+			const wizardDialog = await openNewAgentWizard(launched.window);
+
+			await wizardDialog.getByLabel('Agent location').selectOption('ssh-remote-1');
+			await wizardDialog.getByLabel('Agent name').fill('Return Remote Agent');
+			await wizardDialog.getByRole('button', { name: 'Codex' }).click();
+			await wizardDialog.getByRole('button', { name: 'Continue' }).click();
+			await wizardDialog.getByRole('button', { name: 'Back' }).click();
+
+			await expect(wizardDialog.getByLabel('Agent location')).toHaveValue('ssh-remote-1');
+			await expect(wizardDialog.getByLabel('Agent name')).toHaveValue('Return Remote Agent');
+			await expect(wizardDialog.getByRole('button', { name: 'Codex' })).toHaveAttribute(
+				'aria-pressed',
+				'true'
+			);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[208].id} ${activeScenarioMatrix[208].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp);
+			await stubWizardRemoteDirectoryHandlers(launched.electronApp, {
+				selectedFolder: seeded.projectDir,
+				isRepo: true,
+			});
+			const wizardDialog = await openWizardDirectoryStep(launched.window, 'Browse Local Agent');
+
+			await wizardDialog.getByRole('button', { name: 'Browse' }).click();
+
+			await expect(wizardDialog.getByLabel('Project Directory')).toHaveValue(seeded.projectDir);
+			await expect(wizardDialog.getByText('Git Repository Detected')).toBeVisible();
+			await expect
+				.poll(async () => await getStubbedWizardRemoteDirectoryState(launched.electronApp))
+				.toMatchObject({
+					selectFolderCalls: 1,
+					readDirCalls: [{ dirPath: seeded.projectDir }],
+					gitCalls: [{ cwd: seeded.projectDir }],
+				});
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[209].id} ${activeScenarioMatrix[209].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp);
+			await stubWizardRemoteDirectoryHandlers(launched.electronApp, { selectedFolder: null });
+			const wizardDialog = await openWizardDirectoryStep(launched.window, 'Browse Cancel Agent');
+
+			await wizardDialog.getByRole('button', { name: 'Browse' }).click();
+
+			await expect(wizardDialog.getByLabel('Project Directory')).toHaveValue('');
+			await expect(wizardDialog.getByRole('button', { name: 'Continue' })).toBeHidden();
+			await expect
+				.poll(
+					async () =>
+						(await getStubbedWizardRemoteDirectoryState(launched.electronApp)).selectFolderCalls
+				)
+				.toBe(1);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[210].id} ${activeScenarioMatrix[210].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp);
+			await stubWizardRemoteDirectoryHandlers(launched.electronApp, {
+				selectFolderError: 'Native picker unavailable',
+			});
+			const wizardDialog = await openWizardDirectoryStep(launched.window, 'Browse Error Agent');
+
+			await wizardDialog.getByRole('button', { name: 'Browse' }).click();
+
+			await expect(wizardDialog.getByText('Failed to open folder picker')).toBeVisible();
+			await expect(wizardDialog.getByLabel('Project Directory')).toHaveValue('');
+			await expect
+				.poll(
+					async () =>
+						(await getStubbedWizardRemoteDirectoryState(launched.electronApp)).selectFolderCalls
+				)
+				.toBe(1);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[211].id} ${activeScenarioMatrix[211].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp);
+			await stubWizardRemoteDirectoryHandlers(launched.electronApp, { isRepo: true });
+			const wizardDialog = await openWizardDirectoryStep(launched.window, 'Local Git Agent');
+
+			await wizardDialog.getByLabel('Project Directory').fill(seeded.projectDir);
+
+			await expect(wizardDialog.getByText('Git Repository Detected')).toBeVisible();
+			await expect
+				.poll(async () => {
+					const state = await getStubbedWizardRemoteDirectoryState(launched.electronApp);
+					const readDirCall = state.readDirCalls.at(-1);
+					const gitCall = state.gitCalls.at(-1);
+					return {
+						readDirPath: readDirCall?.dirPath,
+						readDirRemote: readDirCall?.sshRemoteId ?? null,
+						gitCwd: gitCall?.cwd,
+						gitRemote: gitCall?.sshRemoteId ?? null,
+					};
+				})
+				.toEqual({
+					readDirPath: seeded.projectDir,
+					readDirRemote: null,
+					gitCwd: seeded.projectDir,
+					gitRemote: null,
+				});
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[212].id} ${activeScenarioMatrix[212].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp);
+			await stubWizardRemoteDirectoryHandlers(launched.electronApp, {
+				autoRunDocs: [
+					{ name: 'phase-1.md', path: `${seeded.projectDir}/Auto Run Docs/phase-1.md` },
+					{ name: 'phase-2.md', path: `${seeded.projectDir}/Auto Run Docs/phase-2.md` },
+					{ name: 'summary.md', path: `${seeded.projectDir}/Auto Run Docs/summary.md` },
+				],
+			});
+			const wizardDialog = await openWizardDirectoryStep(
+				launched.window,
+				'Plural Existing Docs Agent'
+			);
+
+			await wizardDialog.getByLabel('Project Directory').fill(seeded.projectDir);
+			await expect(wizardDialog.getByText('Regular Directory')).toBeVisible();
+			await wizardDialog.getByRole('button', { name: 'Continue' }).click();
+
+			const existingDocsDialog = launched.window.getByRole('dialog', {
+				name: 'Existing Auto Run Documents Found',
+			});
+			await expect(existingDocsDialog).toBeVisible();
+			await expect(existingDocsDialog.getByText('3 Auto Run documents')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[213].id} ${activeScenarioMatrix[213].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp);
+			await stubWizardRemoteDirectoryHandlers(launched.electronApp, {
+				autoRunDocs: [
+					{ name: 'phase-1.md', path: `${seeded.projectDir}/Auto Run Docs/phase-1.md` },
+				],
+				deleteFolderResult: { success: false, error: 'Auto Run Docs are locked' },
+			});
+			const wizardDialog = await openWizardDirectoryStep(launched.window, 'Delete Error Agent');
+
+			await wizardDialog.getByLabel('Project Directory').fill(seeded.projectDir);
+			await expect(wizardDialog.getByText('Regular Directory')).toBeVisible();
+			await wizardDialog.getByRole('button', { name: 'Continue' }).click();
+
+			const existingDocsDialog = launched.window.getByRole('dialog', {
+				name: 'Existing Auto Run Documents Found',
+			});
+			await existingDocsDialog.getByRole('button', { name: /Delete & Start Fresh/ }).click();
+
+			await expect(existingDocsDialog.getByText('Auto Run Docs are locked')).toBeVisible();
+			await expect(
+				existingDocsDialog.getByRole('button', { name: /Delete & Start Fresh/ })
+			).toBeEnabled();
+			await expect
+				.poll(
+					async () =>
+						(await getStubbedWizardRemoteDirectoryState(launched.electronApp)).deleteFolderCalls
+				)
+				.toEqual([seeded.projectDir]);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[214].id} ${activeScenarioMatrix[214].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp);
+			await stubWizardRemoteDirectoryHandlers(launched.electronApp, {
+				autoRunDocs: [
+					{ name: 'phase-1.md', path: `${seeded.projectDir}/Auto Run Docs/phase-1.md` },
+					{ name: 'phase-2.md', path: `${seeded.projectDir}/Auto Run Docs/phase-2.md` },
+				],
+			});
+			const wizardDialog = await openWizardDirectoryStep(launched.window, 'Continue Docs Agent');
+
+			await wizardDialog.getByLabel('Project Directory').fill(seeded.projectDir);
+			await expect(wizardDialog.getByText('Regular Directory')).toBeVisible();
+			await wizardDialog.getByRole('button', { name: 'Continue' }).click();
+			await launched.window
+				.getByRole('dialog', { name: 'Existing Auto Run Documents Found' })
+				.getByRole('button', { name: /Continue Building on Existing Plan/ })
+				.click();
+
+			await expect(wizardDialog.getByRole('heading', { name: 'Project Discovery' })).toBeVisible();
+			await expect
+				.poll(
+					async () =>
+						(await getStubbedWizardRemoteDirectoryState(launched.electronApp)).deleteFolderCalls
+				)
+				.toEqual([]);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[215].id} ${activeScenarioMatrix[215].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			await stubEncoreCodexAgent(launched.electronApp);
+			await stubWizardRemoteDirectoryHandlers(launched.electronApp, {
+				autoRunDocs: [
+					{ name: 'phase-1.md', path: `${seeded.projectDir}/Auto Run Docs/phase-1.md` },
+				],
+			});
+			const wizardDialog = await openWizardDirectoryStep(launched.window, 'Fresh Delete Agent');
+
+			await wizardDialog.getByLabel('Project Directory').fill(seeded.projectDir);
+			await expect(wizardDialog.getByText('Regular Directory')).toBeVisible();
+			await wizardDialog.getByRole('button', { name: 'Continue' }).click();
+			await launched.window
+				.getByRole('dialog', { name: 'Existing Auto Run Documents Found' })
+				.getByRole('button', { name: /Delete & Start Fresh/ })
+				.click();
+
+			await expect(wizardDialog.getByRole('heading', { name: 'Project Discovery' })).toBeVisible();
+			await expect
+				.poll(
+					async () =>
+						(await getStubbedWizardRemoteDirectoryState(launched.electronApp)).deleteFolderCalls
+				)
+				.toEqual([seeded.projectDir]);
 		} finally {
 			await launched.cleanup();
 		}
