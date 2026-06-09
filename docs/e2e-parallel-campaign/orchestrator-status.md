@@ -1,6 +1,6 @@
 # Parallel E2E Orchestrator Status
 
-Last updated: 2026-06-09 00:01 EDT
+Last updated: 2026-06-09 00:06 EDT
 
 ## Base
 
@@ -37,7 +37,7 @@ coverage and the shell-lane tab coverage.
 | `shell-tabs-command`       | `codex/e2e-shell-tabs-command`       | `Maestro-worktrees/e2e-shell-tabs-command`       | `maestro-e2e-shell-tabs-command-campaign-goal`      | PM2 retry cycle after 503  | 81 active scenarios accepted; 185 remain        |
 | `files-docs-history`       | `codex/e2e-files-docs-history`       | `Maestro-worktrees/e2e-files-docs-history`       | `maestro-e2e-files-docs-history-campaign-goal`      | manual fallback accepted   | 47 active scenarios accepted; 302 remain        |
 | `autorun-ai-terminal`      | `codex/e2e-autorun-ai-terminal`      | `Maestro-worktrees/e2e-autorun-ai-terminal`      | `maestro-e2e-autorun-ai-terminal-campaign-goal`     | manual fallback accepted   | 140 active scenarios accepted; 133 remain       |
-| `wizard-settings-prompts`  | `codex/e2e-wizard-settings-prompts`  | `Maestro-worktrees/e2e-wizard-settings-prompts`  | `maestro-e2e-wizard-settings-prompts-campaign-goal` | manual fallback accepted   | 216 active scenarios accepted; 156 remain       |
+| `wizard-settings-prompts`  | `codex/e2e-wizard-settings-prompts`  | `Maestro-worktrees/e2e-wizard-settings-prompts`  | `maestro-e2e-wizard-settings-prompts-campaign-goal` | manual fallback accepted   | 232 active scenarios accepted; 140 remain       |
 | `git-groupchat-playbooks`  | `codex/e2e-git-groupchat-playbooks`  | `Maestro-worktrees/e2e-git-groupchat-playbooks`  | `maestro-e2e-git-groupchat-playbooks-campaign-goal` | manual fallback accepted   | 160 active scenarios accepted; 203 remain       |
 | `stats-graph-symphony`     | `codex/e2e-stats-graph-symphony`     | `Maestro-worktrees/e2e-stats-graph-symphony`     | `maestro-e2e-stats-graph-symphony-campaign-goal`    | manual fallback accepted   | 154 active scenarios accepted; 182 remain       |
 | `debug-accessibility`      | `codex/e2e-debug-accessibility`      | `Maestro-worktrees/e2e-debug-accessibility`      | not relaunched                                      | complete                   | 192 active scenarios accepted; 0 remain         |
@@ -51,7 +51,7 @@ coverage and the shell-lane tab coverage.
 - `files-docs-history` merged through `b409f4538`.
 - `mobile-web-bridge` merged through `33a5ace5f`.
 - `autorun-ai-terminal` merged through `f3710f189`.
-- `wizard-settings-prompts` merged through `2da9207fb`.
+- `wizard-settings-prompts` merged through `c8095b6eb`.
 - `stats-graph-symphony` merged through `f4d562a33`.
 - `debug-accessibility` merged through `e1879dd27`.
 - `fixtures-sharding-review` merged through `392c4527`.
@@ -292,6 +292,11 @@ coverage and the shell-lane tab coverage.
   Chat, Playbook Exchange, Spec Kit, and OpenSpec scenarios from the clean worker
   branch. Static Prettier, ESLint, TypeScript, `git diff --check`, inventory
   scans, and focused review passed. No E2E execution was run.
+- 2026-06-09 00:06 EDT: accepted manual `wizard-settings-prompts` through
+  `c8095b6eb` with 16 active Director's Notes Unified History and New Agent Wizard
+  Codex configuration scenarios from the clean worker branch. Static Prettier,
+  ESLint, TypeScript, `git diff --check`, inventory scans, and focused review
+  passed. No E2E execution was run.
 
 ## Blockers
 
