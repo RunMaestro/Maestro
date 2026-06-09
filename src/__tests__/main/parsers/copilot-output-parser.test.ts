@@ -224,6 +224,52 @@ describe('CopilotOutputParser', () => {
 		);
 	});
 
+	it('drops assistant.message_delta events from delegated subagents (parentToolCallId set)', () => {
+		// Without this filter, subagent deltas race the parent's deltas in the
+		// stdout stream and StdoutHandler's `streamedText` accumulator interleaves
+		// them character-by-character, producing garbled text like "Stri Since the
+		// indexercter" (parent "Strict … indexer" merged with subagent "Since the …").
+		const parser = new CopilotOutputParser();
+
+		const event = parser.parseJsonObject({
+			type: 'assistant.message_delta',
+			data: {
+				deltaContent: 'subagent narration that must not bleed into parent stream',
+				parentToolCallId: 'call_subagent_xyz',
+			},
+		});
+
+		expect(event).toBeNull();
+	});
+
+	it('drops assistant.reasoning_delta events from delegated subagents (parentToolCallId set)', () => {
+		const parser = new CopilotOutputParser();
+
+		const event = parser.parseJsonObject({
+			type: 'assistant.reasoning_delta',
+			data: {
+				deltaContent: 'subagent thinking that must not pollute parent thinking',
+				parentToolCallId: 'call_subagent_xyz',
+			},
+		});
+
+		expect(event).toBeNull();
+	});
+
+	it('drops assistant.reasoning summary events from delegated subagents (parentToolCallId set)', () => {
+		const parser = new CopilotOutputParser();
+
+		const event = parser.parseJsonObject({
+			type: 'assistant.reasoning',
+			data: {
+				content: 'subagent reasoning summary that must not bleed in',
+				parentToolCallId: 'call_subagent_xyz',
+			},
+		});
+
+		expect(event).toBeNull();
+	});
+
 	it('skips assistant reasoning summary when deltas already streamed the content', () => {
 		const parser = new CopilotOutputParser();
 

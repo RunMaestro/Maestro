@@ -304,8 +304,20 @@ export class CopilotOutputParser implements AgentOutputParser {
 		};
 	}
 
-	/** Parse assistant.message_delta events as partial streaming text. */
+	/** Parse assistant.message_delta events as partial streaming text.
+	 *
+	 *  Subagent gate: when Copilot delegates via the `task` tool, BOTH the parent
+	 *  and each delegated subagent emit `assistant.message_delta` events over the
+	 *  same stdout stream. The subagent events carry `data.parentToolCallId`.
+	 *  Without this filter, StdoutHandler's `streamedText` accumulator interleaves
+	 *  parent and subagent characters at chunk boundaries, producing garbled text
+	 *  like "Stri Since the indexercter" (parent "Strict … indexer" merged with
+	 *  subagent "Since the …"). The same filter exists at the whole-message layer
+	 *  in `parseAssistantMessage`; this is the delta-layer counterpart. */
 	private parseAssistantMessageDelta(msg: CopilotRawMessage): ParsedEvent | null {
+		if (msg.data?.parentToolCallId) {
+			return null;
+		}
 		const deltaContent = msg.data?.deltaContent || '';
 		if (!deltaContent) {
 			return null;
@@ -324,8 +336,16 @@ export class CopilotOutputParser implements AgentOutputParser {
 	 *  StdoutHandler can display them in thinking UI without accumulating
 	 *  them into the final response. The summary (assistant.reasoning)
 	 *  repeats content already streamed via deltas — when deltas were received,
-	 *  the summary is skipped to avoid double-accumulation. */
+	 *  the summary is skipped to avoid double-accumulation.
+	 *
+	 *  Subagent gate: same as `parseAssistantMessageDelta`. Subagent reasoning
+	 *  deltas would otherwise emit `thinking-chunk` events (for non-copilot
+	 *  agents) that visually intermix with the parent's thinking stream. Filtered
+	 *  here for symmetry with the message-delta path. */
 	private parseAssistantReasoning(msg: CopilotRawMessage): ParsedEvent | null {
+		if (msg.data?.parentToolCallId) {
+			return null;
+		}
 		const deltaContent = extractTextValue(msg.data?.deltaContent);
 
 		if (deltaContent) {
