@@ -330,6 +330,17 @@ const activeScenarioMatrix = [
 	{ id: 'WSP-262', title: "shows Director's Notes failed auto history detail status" },
 	{ id: 'WSP-263', title: "shows Director's Notes Unified History search result count" },
 	{ id: 'WSP-264', title: "reloads Director's Notes Unified History with all-time lookback" },
+	{ id: 'WSP-265', title: "filters Director's Notes Unified History user entries" },
+	{ id: 'WSP-266', title: "restores Director's Notes Unified History user entries" },
+	{ id: 'WSP-267', title: "shows Director's Notes Unified History no-filter state" },
+	{ id: 'WSP-268', title: "restores Director's Notes Unified History after all filters return" },
+	{ id: 'WSP-269', title: "closes Director's Notes Unified History search from the button" },
+	{ id: 'WSP-270', title: "shows Director's Notes Unified History empty time range state" },
+	{
+		id: 'WSP-271',
+		title: "reloads Director's Notes Unified History with seventy-two-hour lookback",
+	},
+	{ id: 'WSP-272', title: "reloads Director's Notes Unified History with one-month lookback" },
 ];
 
 const envGatedScenarioMatrix = [
@@ -9167,6 +9178,233 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 					return state.historyCalls.at(-1);
 				})
 				.toEqual({ lookbackDays: 0, filter: null, limit: 100, offset: 0 });
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[264].id} ${activeScenarioMatrix[264].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: createDirectorNotesEnabledSettings(),
+		});
+
+		try {
+			await stubDirectorNotesHistory(launched.electronApp);
+			const directorNotesDialog = await openDirectorNotesFromQuickActions(launched.window);
+
+			await expect(
+				directorNotesDialog.getByText('Reviewed billing prompt composer draft')
+			).toBeVisible();
+			await directorNotesDialog.getByRole('button', { name: 'USER' }).click();
+
+			await expect(
+				directorNotesDialog.getByText('Reviewed billing prompt composer draft')
+			).toBeHidden();
+			await expect(
+				directorNotesDialog.getByText('Refined onboarding copy for the setup wizard')
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[265].id} ${activeScenarioMatrix[265].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: createDirectorNotesEnabledSettings(),
+		});
+
+		try {
+			await stubDirectorNotesHistory(launched.electronApp);
+			const directorNotesDialog = await openDirectorNotesFromQuickActions(launched.window);
+
+			await directorNotesDialog.getByRole('button', { name: 'USER' }).click();
+			await expect(
+				directorNotesDialog.getByText('Reviewed billing prompt composer draft')
+			).toBeHidden();
+			await directorNotesDialog.getByRole('button', { name: 'USER' }).click();
+
+			await expect(
+				directorNotesDialog.getByText('Reviewed billing prompt composer draft')
+			).toBeVisible();
+			await expect(
+				directorNotesDialog.getByText('Refined onboarding copy for the setup wizard')
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[266].id} ${activeScenarioMatrix[266].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: createDirectorNotesEnabledSettings(),
+		});
+
+		try {
+			await stubDirectorNotesHistory(launched.electronApp);
+			const directorNotesDialog = await openDirectorNotesFromQuickActions(launched.window);
+
+			await directorNotesDialog.getByRole('button', { name: 'AUTO' }).click();
+			await directorNotesDialog.getByRole('button', { name: 'USER' }).click();
+
+			await expect(
+				directorNotesDialog.getByText('No entries match the current filters.')
+			).toBeVisible();
+			await expect(
+				directorNotesDialog.getByText('Refined onboarding copy for the setup wizard')
+			).toBeHidden();
+			await expect(
+				directorNotesDialog.getByText('Reviewed billing prompt composer draft')
+			).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[267].id} ${activeScenarioMatrix[267].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: createDirectorNotesEnabledSettings(),
+		});
+
+		try {
+			await stubDirectorNotesHistory(launched.electronApp);
+			const directorNotesDialog = await openDirectorNotesFromQuickActions(launched.window);
+
+			await directorNotesDialog.getByRole('button', { name: 'AUTO' }).click();
+			await directorNotesDialog.getByRole('button', { name: 'USER' }).click();
+			await expect(
+				directorNotesDialog.getByText('No entries match the current filters.')
+			).toBeVisible();
+			await directorNotesDialog.getByRole('button', { name: 'AUTO' }).click();
+			await directorNotesDialog.getByRole('button', { name: 'USER' }).click();
+
+			await expect(
+				directorNotesDialog.getByText('Refined onboarding copy for the setup wizard')
+			).toBeVisible();
+			await expect(
+				directorNotesDialog.getByText('Reviewed billing prompt composer draft')
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[268].id} ${activeScenarioMatrix[268].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: createDirectorNotesEnabledSettings(),
+		});
+
+		try {
+			await stubDirectorNotesHistory(launched.electronApp);
+			const directorNotesDialog = await openDirectorNotesFromQuickActions(launched.window);
+
+			await directorNotesDialog.getByTitle(/Search entries/).click();
+			const searchInput = directorNotesDialog.getByPlaceholder(
+				'Filter by summary or agent name...'
+			);
+			await searchInput.fill('onboarding');
+			await directorNotesDialog.getByTitle('Close search (Esc)').click();
+
+			await expect(searchInput).toBeHidden();
+			await expect(
+				directorNotesDialog.getByText('Refined onboarding copy for the setup wizard')
+			).toBeVisible();
+			await expect(
+				directorNotesDialog.getByText('Reviewed billing prompt composer draft')
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[269].id} ${activeScenarioMatrix[269].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: createDirectorNotesEnabledSettings(),
+		});
+
+		try {
+			await stubDirectorNotesHistory(launched.electronApp, []);
+			const directorNotesDialog = await openDirectorNotesFromQuickActions(launched.window);
+
+			await expect(
+				directorNotesDialog.getByText(
+					'No history entries in this time range. Try expanding the lookback period.'
+				)
+			).toBeVisible();
+			await expect(directorNotesDialog.getByText('Agents')).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[270].id} ${activeScenarioMatrix[270].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: createDirectorNotesEnabledSettings(),
+		});
+
+		try {
+			await stubDirectorNotesHistory(launched.electronApp);
+			const directorNotesDialog = await openDirectorNotesFromQuickActions(launched.window);
+
+			await directorNotesDialog
+				.locator('[title*="right-click to change"]')
+				.click({ button: 'right' });
+			await launched.window.getByRole('button', { name: '72 hours' }).click();
+
+			await expect
+				.poll(async () => {
+					const state = await getStubbedDirectorNotesHistoryState(launched.electronApp);
+					return state.historyCalls.at(-1);
+				})
+				.toEqual({ lookbackDays: 3, filter: null, limit: 100, offset: 0 });
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test(`${activeScenarioMatrix[271].id} ${activeScenarioMatrix[271].title}`, async () => {
+		const seeded = createWizardSettingsPromptsWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+			settings: createDirectorNotesEnabledSettings(),
+		});
+
+		try {
+			await stubDirectorNotesHistory(launched.electronApp);
+			const directorNotesDialog = await openDirectorNotesFromQuickActions(launched.window);
+
+			await directorNotesDialog
+				.locator('[title*="right-click to change"]')
+				.click({ button: 'right' });
+			await launched.window.getByRole('button', { name: '1 month' }).click();
+
+			await expect
+				.poll(async () => {
+					const state = await getStubbedDirectorNotesHistoryState(launched.electronApp);
+					return state.historyCalls.at(-1);
+				})
+				.toEqual({ lookbackDays: 30, filter: null, limit: 100, offset: 0 });
 		} finally {
 			await launched.cleanup();
 		}
