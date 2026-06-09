@@ -2895,6 +2895,119 @@ Recovered refresh sentinel.
 		}
 	});
 
+	test('closes the Codex prompt composer with Escape while preserving the edited draft', async () => {
+		const launched = await launchLaneWorkbench();
+		try {
+			const promptInput = await openCodexAiTerminal(launched.window);
+			const { composer, composerInput } = await openCodexPromptComposer(launched.window);
+
+			await composerInput.fill('Codex composer Escape draft sentinel');
+			await launched.window.keyboard.press('Escape');
+
+			await expect(composer).toBeHidden();
+			await expect(promptInput).toHaveValue('Codex composer Escape draft sentinel');
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('sends Codex prompt composer read-only metadata after the keyboard shortcut toggles it', async () => {
+		const launched = await launchLaneWorkbench();
+		try {
+			await stubCodexProcessSpawn(launched.electronApp);
+			const { composerInput } = await openCodexPromptComposer(launched.window);
+
+			await composerInput.fill('Codex composer read-only shortcut sentinel');
+			await composerInput.press('Control+R');
+			await launched.window.getByRole('button', { name: /^Send$/ }).click();
+
+			await expect
+				.poll(async () => (await getStubbedCodexProcessSpawnCalls(launched.electronApp)).length)
+				.toBe(1);
+			const calls = await getStubbedCodexProcessSpawnCalls(launched.electronApp);
+			expect(calls[0].prompt).toContain('Codex composer read-only shortcut sentinel');
+			expect(calls[0].readOnlyMode).toBe(true);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('inserts a tab character in the Codex prompt composer without dispatching', async () => {
+		const launched = await launchLaneWorkbench();
+		try {
+			await stubCodexProcessSpawn(launched.electronApp);
+			const { composerInput } = await openCodexPromptComposer(launched.window);
+
+			await composerInput.fill('Codex composer tab draft sentinel');
+			await composerInput.press('Tab');
+
+			await expect(composerInput).toHaveValue('Codex composer tab draft sentinel\t');
+			expect(await getStubbedCodexProcessSpawnCalls(launched.electronApp)).toHaveLength(0);
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('opens a Codex prompt composer staged image in the shared lightbox', async () => {
+		const launched = await launchLaneWorkbench();
+		const imagePath = path.join(launched.homeDir, 'codex-composer-lightbox.png');
+		try {
+			fs.writeFileSync(
+				imagePath,
+				Buffer.from(
+					'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=',
+					'base64'
+				)
+			);
+			const { composer } = await openCodexPromptComposer(launched.window);
+
+			await composer.locator('input[type="file"]').setInputFiles(imagePath);
+			await composer.getByRole('img', { name: 'Prompt composer staged image 1' }).click();
+
+			const lightbox = launched.window.getByRole('dialog', { name: 'Image Lightbox' });
+			await expect(lightbox).toBeVisible();
+			await expect(lightbox.getByRole('img', { name: 'Expanded image preview' })).toBeVisible();
+			await launched.window.keyboard.press('Escape');
+			await expect(lightbox).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('removes a Codex prompt composer staged image from the shared lightbox', async () => {
+		const launched = await launchLaneWorkbench();
+		const imagePath = path.join(launched.homeDir, 'codex-composer-lightbox-delete.png');
+		try {
+			fs.writeFileSync(
+				imagePath,
+				Buffer.from(
+					'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=',
+					'base64'
+				)
+			);
+			const { composer } = await openCodexPromptComposer(launched.window);
+
+			await composer.locator('input[type="file"]').setInputFiles(imagePath);
+			const stagedImage = composer.getByRole('img', {
+				name: 'Prompt composer staged image 1',
+			});
+			await stagedImage.click();
+
+			const lightbox = launched.window.getByRole('dialog', { name: 'Image Lightbox' });
+			await lightbox.getByTitle('Delete image (Delete key)').click();
+			const confirmDialog = launched.window.getByRole('dialog', { name: 'Confirm' });
+			await expect(
+				confirmDialog.getByText('Are you sure you want to remove this image?')
+			).toBeVisible();
+			await confirmDialog.getByRole('button', { name: 'Confirm' }).click();
+
+			await expect(lightbox).toBeHidden();
+			await expect(stagedImage).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
 	test('prevents duplicate Auto Run document creation in a Codex lane agent', async () => {
 		const launched = await launchLaneWorkbench();
 		try {
