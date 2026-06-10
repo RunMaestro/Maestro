@@ -81,6 +81,17 @@
 						"pages": ["provider-notes", "multi-claude", "cli"]
 					},
 					{
+						"group": "Testing",
+						"pages": [
+							"testing/index",
+							"testing/current-status",
+							"testing/game-plan",
+							"testing/e2e/README",
+							"testing/e2e/coverage-campaign",
+							"testing/e2e/parallel-campaign/README"
+						]
+					},
+					{
 						"group": "Integrations",
 						"pages": ["mcp-server"],
 						"icon": "plug"
