@@ -267,14 +267,16 @@ describe('CommandInputBar', () => {
 	});
 
 	describe('Disabled State', () => {
-		it('disables input when offline', () => {
+		it('keeps input editable when offline', () => {
 			renderComponent({ isOffline: true });
-			expect(screen.getByRole('textbox')).toBeDisabled();
+			expect(screen.getByRole('textbox')).not.toBeDisabled();
+			expect(screen.getByPlaceholderText('Offline...')).toBeInTheDocument();
 		});
 
-		it('disables input when not connected', () => {
+		it('keeps input editable when not connected', () => {
 			renderComponent({ isConnected: false });
-			expect(screen.getByRole('textbox')).toBeDisabled();
+			expect(screen.getByRole('textbox')).not.toBeDisabled();
+			expect(screen.getByPlaceholderText('Connecting...')).toBeInTheDocument();
 		});
 
 		it('disables input when disabled prop is true', () => {

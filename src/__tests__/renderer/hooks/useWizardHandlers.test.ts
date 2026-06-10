@@ -3745,6 +3745,7 @@ describe('useWizardHandlers', () => {
 				getModalActions().setWizardResumeModalOpen(true);
 
 				const deps = createResumeDeps();
+				deps.wizardContext.resetWizard = vi.fn();
 				const { result } = renderHook(() => useWizardHandlers(deps));
 
 				act(() => {
@@ -3752,11 +3753,13 @@ describe('useWizardHandlers', () => {
 				});
 
 				expect(useModalStore.getState().isOpen('wizardResume')).toBe(false);
+				expect(deps.wizardContext.resetWizard).toHaveBeenCalled();
 				expect(deps.wizardContext.openWizard).toHaveBeenCalled();
 			});
 
 			it('calls clearResumeState on wizard context', () => {
 				const deps = createResumeDeps();
+				deps.wizardContext.resetWizard = vi.fn();
 				const { result } = renderHook(() => useWizardHandlers(deps));
 
 				act(() => {

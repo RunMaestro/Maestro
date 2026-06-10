@@ -2,7 +2,7 @@
  * Tests for useGroupChatHandlers hook (extracted from App.tsx Phase 2B)
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { renderHook, act } from '@testing-library/react';
+import { renderHook, act, waitFor } from '@testing-library/react';
 import { useGroupChatHandlers } from '../../../renderer/hooks/groupChat/useGroupChatHandlers';
 import { useBatchStore } from '../../../renderer/stores/batchStore';
 import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
@@ -1042,7 +1042,14 @@ describe('useGroupChatHandlers', () => {
 	// handleProcessMonitorNavigateToGroupChat
 	// -----------------------------------------------------------------------
 	describe('handleProcessMonitorNavigateToGroupChat', () => {
-		it('sets active group chat, restores state, and closes process monitor', () => {
+		it('sets active group chat, restores state, and closes process monitor', async () => {
+			mockGroupChat.load.mockResolvedValueOnce({
+				id: 'gc-1',
+				name: 'Group Chat',
+				participants: [],
+			});
+			mockGroupChat.getMessages.mockResolvedValueOnce([]);
+			mockGroupChat.startModerator.mockResolvedValueOnce(null);
 			useGroupChatStore.setState({
 				groupChatStates: new Map([['gc-1', 'agent-working']]),
 				allGroupChatParticipantStates: new Map([['gc-1', new Map([['Agent A', 'working']])]]),
@@ -1052,19 +1059,28 @@ describe('useGroupChatHandlers', () => {
 			const { result } = renderHook(() => useGroupChatHandlers());
 			act(() => result.current.handleProcessMonitorNavigateToGroupChat('gc-1'));
 
-			expect(useGroupChatStore.getState().activeGroupChatId).toBe('gc-1');
+			await waitFor(() => expect(useGroupChatStore.getState().activeGroupChatId).toBe('gc-1'));
 			expect(useGroupChatStore.getState().groupChatState).toBe('agent-working');
 			const pmModal = useModalStore.getState().modals.get('processMonitor');
 			expect(pmModal?.open ?? false).toBe(false);
 		});
 
-		it('uses idle state and empty participants when process monitor has no saved state', () => {
+		it('uses idle state and empty participants when process monitor has no saved state', async () => {
+			mockGroupChat.load.mockResolvedValueOnce({
+				id: 'gc-missing',
+				name: 'Missing State Chat',
+				participants: [],
+			});
+			mockGroupChat.getMessages.mockResolvedValueOnce([]);
+			mockGroupChat.startModerator.mockResolvedValueOnce(null);
 			useModalStore.getState().openModal('processMonitor');
 
 			const { result } = renderHook(() => useGroupChatHandlers());
 			act(() => result.current.handleProcessMonitorNavigateToGroupChat('gc-missing'));
 
-			expect(useGroupChatStore.getState().activeGroupChatId).toBe('gc-missing');
+			await waitFor(() =>
+				expect(useGroupChatStore.getState().activeGroupChatId).toBe('gc-missing')
+			);
 			expect(useGroupChatStore.getState().groupChatState).toBe('idle');
 			expect(useGroupChatStore.getState().participantStates.size).toBe(0);
 		});

@@ -207,14 +207,14 @@ describe('ShortcutsTab', () => {
 		});
 
 		// Initially called with false
-		expect(onRecordingChange).toHaveBeenCalledWith(false);
+		expect(onRecordingChange).toHaveBeenCalledWith(false, undefined);
 		onRecordingChange.mockClear();
 
 		// Click to enter recording mode
 		const shortcutButton = screen.getByText('Meta+n');
 		fireEvent.click(shortcutButton);
 
-		expect(onRecordingChange).toHaveBeenCalledWith(true);
+		expect(onRecordingChange).toHaveBeenCalledWith(true, expect.any(Function));
 		onRecordingChange.mockClear();
 
 		// Cancel recording
@@ -224,7 +224,7 @@ describe('ShortcutsTab', () => {
 			stopPropagation: vi.fn(),
 		});
 
-		expect(onRecordingChange).toHaveBeenCalledWith(false);
+		expect(onRecordingChange).toHaveBeenCalledWith(false, undefined);
 	});
 
 	it('should show hasNoAgents message when set', async () => {

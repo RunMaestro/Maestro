@@ -5,6 +5,7 @@ Work in `/Users/jeffscottward/Github/tools/Maestro-worktrees/e2e-shell-tabs-comm
 Objective: author E2E test coverage for app shell, sidebars, global shortcuts, tabs, tab overlays, and command terminal workflows. The canonical matrix backs 266 remaining active scenarios. The source prompt says about 366; treat the extra 100 as a proposed expansion only if you can justify it in the lane progress file.
 
 Hard rules:
+
 - Do not use the E2E Runner skill.
 - Do not run `npm run test:e2e`, `playwright test`, headed/UI E2E, or full E2E validation.
 - Do not run `npx playwright test --list` unless the orchestrator later approves it.

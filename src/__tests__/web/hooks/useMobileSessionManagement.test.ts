@@ -447,7 +447,7 @@ describe('useMobileSessionManagement', () => {
 		const [stillInactive, updatedActive] = result.current.sessions;
 		expect(stillInactive).toBe(inactiveSession);
 		expect(updatedActive.bookmarked).toBe(true);
-		expect(updatedActive.aiTabs?.map((tab) => tab.id)).toEqual(['tab-2', 'tab-1']);
+		expect(updatedActive.aiTabs?.map((tab) => tab.id)).toEqual(['tab-1']);
 		expect(updatedActive.aiTabs?.find((tab) => tab.id === 'tab-1')?.starred).toBe(true);
 	});
 

@@ -3982,7 +3982,7 @@ describe('AgentSessionsBrowser', () => {
 			const input = screen.getByPlaceholderText('Enter session name...');
 			await act(async () => {
 				fireEvent.change(input, { target: { value: 'Still Editing' } });
-				fireEvent.keyDown(input, { key: 'Escape' });
+				fireEvent.keyDown(input, { key: 'ArrowLeft' });
 				await vi.runAllTimersAsync();
 			});
 

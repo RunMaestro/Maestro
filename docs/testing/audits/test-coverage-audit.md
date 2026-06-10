@@ -1,30 +1,40 @@
 # Test Coverage Audit
 
-Historical audit. The current E2E campaign has not been fully executed after parallel authoring, so older claims below about Electron E2E passing are not current evidence. Use `docs/testing/current-status.md` for the current source of truth and refresh this audit after branch cleanup and rebase.
+Historical audit. Use `docs/testing/current-status.md` for the current source of truth. Older Electron E2E and integration claims below are retained as historical checkpoints unless explicitly marked as part of the 2026-06-10 Phase 3 rerun.
 
 ## Current Coverage
 
-Measured with `npm run test:coverage` on branch `codex/e2e-coverage-campaign`.
+Measured with `npm run test:coverage` on branch `codex/full-e2e-coverage-campaign` after rebasing onto `upstream/main` at `f166b9309`.
 
 | Metric     | Original Baseline | After Initial Additions | Phase 1 Rerun | Latest Checkpoint |
 | ---------- | ----------------: | ----------------------: | ------------: | ----------------: |
-| Statements |            67.17% |                  67.30% |        67.30% |           100.00% |
-| Branches   |            60.58% |                  60.64% |        60.64% |           100.00% |
-| Functions  |            67.73% |                  67.85% |        67.86% |           100.00% |
-| Lines      |            67.81% |                  67.95% |        67.95% |           100.00% |
+| Statements |            67.17% |                  67.30% |        67.30% |            99.91% |
+| Branches   |            60.58% |                  60.64% |        60.64% |            99.84% |
+| Functions  |            67.73% |                  67.85% |        67.86% |            99.89% |
+| Lines      |            67.81% |                  67.95% |        67.95% |            99.92% |
 
-The unit suite currently reports 100% statements, branches, functions, and lines with global 100% thresholds enabled. The integration suite also passes after updating stale integration tests for the current Zustand-backed sidebar/right-panel state model and current Auto Run UI semantics. The Electron E2E suite passes after refreshing stale selectors for the current Auto Run and New Agent Wizard UI.
+The unit suite passes after updating stale mobile, wizard, group-chat, session-browser, shortcut, and tab-optimistic-update tests for the current code. The coverage command executes but fails the enforced 100% global thresholds, so unit coverage is not complete on this bucket branch.
 
 Latest checkpoint result:
 
 - Command: `npm run test:coverage`
-- Result: passed
+- Result: failed global 100% coverage thresholds
 - Test files: 730 passed, 1 skipped
-- Tests: 28,521 passed, 106 skipped
-- Duration: 141.60s
-- Coverage: 100% statements, 100% branches, 100% functions, 100% lines
+- Tests: 28,523 passed, 106 skipped
+- Coverage: 99.91% statements, 99.84% branches, 99.89% functions, 99.92% lines
+- Threshold errors: statements, branches, functions, and lines all remain below 100%.
 
-E2E checkpoint:
+Current top remaining coverage gaps from `coverage/coverage-final.json`:
+
+| File                                                          | Missed Lines |  Lines | Missed Branches | Branches |
+| ------------------------------------------------------------- | -----------: | -----: | --------------: | -------: |
+| `src/renderer/hooks/tabs/useTabHandlers.ts`                   |            8 | 98.75% |              16 |   96.73% |
+| `src/web/hooks/useMobileSessionManagement.ts`                 |            8 | 96.69% |              17 |   90.00% |
+| `src/web/mobile/App.tsx`                                      |            5 | 98.08% |               8 |   96.54% |
+| `src/renderer/components/DocumentGraph/DocumentGraphView.tsx` |            6 | 98.77% |               2 |   99.51% |
+| `src/renderer/components/FilePreview.tsx`                     |            5 | 99.41% |               5 |   99.30% |
+
+Historical E2E checkpoint:
 
 - Command: `npm run test:e2e`
 - Result: passed
@@ -36,21 +46,14 @@ Parallel E2E authoring checkpoint:
 
 - Campaign: `docs/testing/prompts/e2e-parallel-campaign-plan.md`
 - Result: in progress
-- Current authoring progress: 2329 / 3,025 active scenarios after accepting the
-  `shell-tabs-command` branch through `764bd1ac1`. This checkpoint added 5
-  active terminal output search, Quick Actions clear-history, SSH history
-  selection, and SSH slash-command routing rows without adding skipped or
-  env-gated rows.
+- Current authoring progress: 3,025 / 3,025 active matrix-backed scenarios after the documentation consolidation and rebase.
 - Accepted lanes so far: `shell-tabs-command`, `agent-crud-provider`,
   `files-docs-history`, `mobile-web-bridge`, `autorun-ai-terminal`,
   `wizard-settings-prompts`, `stats-graph-symphony`, `debug-accessibility`,
   `fixtures-sharding-review`, and `git-groupchat-playbooks`.
 - Execution policy: Playwright E2E tests are intentionally not executed in this phase.
 - Validation plan: static review of authored selectors, fixtures, scenario names, assertions, and lane progress logs; runtime validation is deferred to a later sharded execution phase.
-- Latest static validation: targeted Prettier, targeted ESLint, `git diff
---check`, `.only`/prohibited-command guards, and focused code-reviewer
-  checklist passed for the `shell-tabs-command` branch import. No
-  Playwright/E2E/listing command was run.
+- Latest static validation: stale-path scan passed, canonical matrix recomputed to 3,025 / 3,025, and no Playwright/E2E/listing command was run.
 
 Integration checkpoint:
 

@@ -398,31 +398,30 @@ export function useMobileSessionManagement(
 			// Notify desktop to close this tab
 			sendRef.current?.({ type: 'close_tab', sessionId: activeSessionId, tabId });
 
-			const tabs = activeSession?.aiTabs || [];
-			const closingIndex = tabs.findIndex((tab) => tab.id === tabId);
-			const remainingTabs = tabs.filter((tab) => tab.id !== tabId);
-			if (closingIndex === -1 || remainingTabs.length === 0) return;
-
-			const currentActiveTabId = activeSession?.activeTabId || activeTabIdRef.current || undefined;
-			const nextActiveTabId =
-				currentActiveTabId === tabId
-					? remainingTabs[Math.max(0, closingIndex - 1)]?.id
-					: currentActiveTabId;
-
-			if (currentActiveTabId === tabId && nextActiveTabId) {
-				activeTabIdRef.current = nextActiveTabId;
-				setActiveTabId(nextActiveTabId);
-			}
-
 			setSessions((prev) =>
-				prev.map((session) =>
-					session.id === activeSessionId
-						? { ...session, aiTabs: remainingTabs, activeTabId: nextActiveTabId || undefined }
-						: session
-				)
+				prev.map((session) => {
+					if (session.id !== activeSessionId) return session;
+					const tabs = session.aiTabs || [];
+					const closingIndex = tabs.findIndex((tab) => tab.id === tabId);
+					const remainingTabs = tabs.filter((tab) => tab.id !== tabId);
+					if (closingIndex === -1 || remainingTabs.length === 0) return session;
+
+					const currentActiveTabId = session.activeTabId || activeTabIdRef.current || undefined;
+					const nextActiveTabId =
+						currentActiveTabId === tabId
+							? remainingTabs[Math.max(0, closingIndex - 1)]?.id
+							: currentActiveTabId;
+
+					if (currentActiveTabId === tabId && nextActiveTabId) {
+						activeTabIdRef.current = nextActiveTabId;
+						setActiveTabId(nextActiveTabId);
+					}
+
+					return { ...session, aiTabs: remainingTabs, activeTabId: nextActiveTabId || undefined };
+				})
 			);
 		},
-		[activeSession, activeSessionId, sendRef, triggerHaptic, hapticTapPattern]
+		[activeSessionId, sendRef, triggerHaptic, hapticTapPattern]
 	);
 
 	// Handle renaming a tab

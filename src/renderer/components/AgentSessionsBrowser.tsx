@@ -768,16 +768,16 @@ export function AgentSessionsBrowser({
 											type="text"
 											value={renameValue}
 											onChange={(e) => setRenameValue(e.target.value)}
-										onKeyDown={(e) => {
-											e.stopPropagation();
-											if (e.key === 'Enter') {
-												e.preventDefault();
-												submitRename(viewingSession.sessionId);
-											} else if (e.key === 'Escape') {
-												e.preventDefault();
-												cancelRename();
-											}
-										}}
+											onKeyDown={(e) => {
+												e.stopPropagation();
+												if (e.key === 'Enter') {
+													e.preventDefault();
+													submitRename(viewingSession.sessionId);
+												} else if (e.key === 'Escape') {
+													e.preventDefault();
+													cancelRename();
+												}
+											}}
 											onBlur={() => submitRename(viewingSession.sessionId)}
 											placeholder="Enter session name..."
 											className="bg-transparent outline-none text-sm font-semibold px-2 py-0.5 rounded border"
@@ -797,12 +797,12 @@ export function AgentSessionsBrowser({
 											{viewingSession.sessionName}
 										</span>
 										<button
-												onClick={(e) => {
-													e.stopPropagation();
-													skipNextRenameSubmitRef.current = false;
-													setRenamingSessionId(viewingSession.sessionId);
-													setRenameValue(viewingSession.sessionName as string);
-													setTimeout(() => renameInputRef.current?.focus(), 50);
+											onClick={(e) => {
+												e.stopPropagation();
+												skipNextRenameSubmitRef.current = false;
+												setRenamingSessionId(viewingSession.sessionId);
+												setRenameValue(viewingSession.sessionName as string);
+												setTimeout(() => renameInputRef.current?.focus(), 50);
 											}}
 											className="p-0.5 rounded hover:bg-white/10 transition-colors"
 											title="Rename session"
@@ -820,12 +820,12 @@ export function AgentSessionsBrowser({
 											{viewingSession.sessionId.toUpperCase()}
 										</span>
 										<button
-												onClick={(e) => {
-													e.stopPropagation();
-													skipNextRenameSubmitRef.current = false;
-													setRenamingSessionId(viewingSession.sessionId);
-													setRenameValue('');
-													setTimeout(() => renameInputRef.current?.focus(), 50);
+											onClick={(e) => {
+												e.stopPropagation();
+												skipNextRenameSubmitRef.current = false;
+												setRenamingSessionId(viewingSession.sessionId);
+												setRenameValue('');
+												setTimeout(() => renameInputRef.current?.focus(), 50);
 											}}
 											className="p-0.5 rounded hover:bg-white/10 transition-colors"
 											title="Add session name"
