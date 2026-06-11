@@ -580,6 +580,12 @@ async function seedSystemLogs(page: Page) {
 	});
 }
 
+function getSystemLogEntry(logViewer: Locator, message: string) {
+	return logViewer
+		.getByText(message, { exact: true })
+		.locator('xpath=ancestor::div[contains(@class, "rounded") and contains(@class, "border")][1]');
+}
+
 async function stubUpdateCheck(electronApp: ElectronApplication) {
 	await electronApp.evaluate(({ ipcMain }) => {
 		ipcMain.removeHandler('updates:check');
@@ -896,9 +902,24 @@ async function openProcessMonitorFromQuickActions(page: Page) {
 
 async function openProcessKillConfirmation(page: Page, processMonitor: Locator) {
 	await processMonitor.getByTitle('Expand all').click();
-	await processMonitor.getByText('Debug Accessibility Agent - AI Agent (codex)').hover();
-	await processMonitor.getByTitle('Kill process').click();
-	await expect(page.getByText('Kill Process?')).toBeVisible();
+	const aiProcessRow = processMonitor
+		.locator('[tabindex="0"]')
+		.filter({ hasText: 'Debug Accessibility Agent - AI Agent (codex)' })
+		.first();
+	await aiProcessRow.hover();
+	await aiProcessRow.getByTitle('Kill process').click();
+	const confirmDialog = page
+		.getByText('Kill Process?', { exact: true })
+		.locator('xpath=ancestor::div[contains(@class, "rounded-lg")][1]');
+	await expect(confirmDialog).toBeVisible();
+	return confirmDialog;
+}
+
+async function selectFirstProcessRowWithKeyboard(page: Page, processMonitor: Locator) {
+	await processMonitor.focus();
+	await page.keyboard.press('ArrowDown');
+	await page.keyboard.press('ArrowRight');
+	await page.keyboard.press('ArrowRight');
 }
 
 async function openAboutFromQuickActions(page: Page) {
@@ -1183,7 +1204,7 @@ test.describe('Debug and accessibility smoke tranche', () => {
 			await logViewer.getByRole('button', { name: 'ERROR' }).click();
 			await expect(logViewer.getByText('No logs match your filter')).toBeVisible();
 
-			await logViewer.getByRole('button', { name: 'ALL' }).click();
+			await logViewer.getByRole('button', { name: 'ALL', exact: true }).click();
 			await expect(logViewer.getByText('Debug accessibility info sentinel')).toBeVisible();
 			await expect(logViewer.getByText('Debug accessibility error sentinel')).toBeVisible();
 		} finally {
@@ -1329,7 +1350,8 @@ test.describe('Debug and accessibility smoke tranche', () => {
 			await seedSystemLogs(launched.window);
 			const logViewer = await openSystemLogViewer(launched.window);
 
-			await logViewer.getByRole('button', { name: 'ALL' }).click();
+			await logViewer.getByRole('button', { name: 'INFO', exact: true }).click();
+			await logViewer.getByRole('button', { name: 'ERROR', exact: true }).click();
 			await expect(logViewer.getByText('No logs match your filter')).toBeVisible();
 			await expect(logViewer.getByText('Debug accessibility info sentinel')).toBeHidden();
 			await expect(logViewer.getByText('Debug accessibility error sentinel')).toBeHidden();
@@ -2443,11 +2465,12 @@ test.describe('Debug and accessibility smoke tranche', () => {
 		try {
 			await seedSystemLogs(launched.window);
 			const logViewer = await openSystemLogViewer(launched.window);
+			const infoEntry = getSystemLogEntry(logViewer, 'Debug accessibility info sentinel');
 
-			await logViewer.getByRole('button', { name: 'Show details' }).first().click();
+			await infoEntry.getByRole('button', { name: 'Show details' }).click();
 
 			await expect(
-				logViewer.locator('pre').filter({ hasText: 'debug-accessibility-' })
+				infoEntry.locator('pre').filter({ hasText: 'debug-accessibility-info' })
 			).toBeVisible();
 		} finally {
 			await launched.cleanup();
@@ -2459,13 +2482,14 @@ test.describe('Debug and accessibility smoke tranche', () => {
 		try {
 			await seedSystemLogs(launched.window);
 			const logViewer = await openSystemLogViewer(launched.window);
-			const structuredDetails = logViewer
+			const infoEntry = getSystemLogEntry(logViewer, 'Debug accessibility info sentinel');
+			const structuredDetails = infoEntry
 				.locator('pre')
-				.filter({ hasText: 'debug-accessibility-' });
+				.filter({ hasText: 'debug-accessibility-info' });
 
-			await logViewer.getByRole('button', { name: 'Show details' }).first().click();
+			await infoEntry.getByRole('button', { name: 'Show details' }).click();
 			await expect(structuredDetails).toBeVisible();
-			await logViewer.getByRole('button', { name: 'Hide details' }).click();
+			await infoEntry.getByRole('button', { name: 'Hide details' }).click();
 
 			await expect(structuredDetails).toBeHidden();
 		} finally {
@@ -2545,9 +2569,9 @@ test.describe('Debug and accessibility smoke tranche', () => {
 		try {
 			await stubActiveProcesses(launched.electronApp, [aiProcess]);
 			const processMonitor = await openProcessMonitorFromQuickActions(launched.window);
-			await openProcessKillConfirmation(launched.window, processMonitor);
+			const confirmDialog = await openProcessKillConfirmation(launched.window, processMonitor);
 
-			await launched.window.getByRole('button', { name: 'Kill Process' }).click();
+			await confirmDialog.getByRole('button', { name: 'Kill Process', exact: true }).click();
 
 			await expect
 				.poll(async () => (await getStubbedActiveProcessState(launched.electronApp))?.killCalls)
@@ -2590,9 +2614,9 @@ test.describe('Debug and accessibility smoke tranche', () => {
 		try {
 			await stubActiveProcesses(launched.electronApp, [aiProcess, terminalProcess]);
 			const processMonitor = await openProcessMonitorFromQuickActions(launched.window);
-			await openProcessKillConfirmation(launched.window, processMonitor);
+			const confirmDialog = await openProcessKillConfirmation(launched.window, processMonitor);
 
-			await launched.window.getByRole('button', { name: 'Kill Process' }).click();
+			await confirmDialog.getByRole('button', { name: 'Kill Process', exact: true }).click();
 
 			await expect
 				.poll(async () => (await getStubbedActiveProcessState(launched.electronApp))?.killCalls)
@@ -2695,7 +2719,7 @@ test.describe('Debug and accessibility smoke tranche', () => {
 			await expect(confirmDialog).toBeHidden();
 			await expect(logViewer.getByText('Debug accessibility info sentinel')).toBeHidden();
 			await expect(logViewer.getByText('Debug accessibility error sentinel')).toBeVisible();
-			await logViewer.getByRole('button', { name: 'ALL' }).click();
+			await logViewer.getByRole('button', { name: 'ALL', exact: true }).click();
 			await expect(logViewer.getByText('Debug accessibility info sentinel')).toBeVisible();
 			await expect(logViewer.getByText('Debug accessibility error sentinel')).toBeVisible();
 		} finally {
@@ -2750,17 +2774,14 @@ test.describe('Debug and accessibility smoke tranche', () => {
 				processMonitor.getByText('Debug Accessibility Agent - Terminal Shell')
 			).toBeVisible();
 
-			await launched.window.keyboard.press('ArrowDown');
-			await launched.window.keyboard.press('ArrowDown');
-			await launched.window.keyboard.press('ArrowDown');
+			await selectFirstProcessRowWithKeyboard(launched.window, processMonitor);
 			await launched.window.keyboard.press('Enter');
 
 			const detailView = launched.window.getByRole('dialog', { name: 'Process Details' });
 			await expect(detailView).toBeVisible();
-			await expect(
-				detailView.getByText('Debug Accessibility Agent - AI Agent (codex)')
-			).toBeVisible();
+			await expect(detailView.getByText('Debug Accessibility Agent').first()).toBeVisible();
 			await expect(detailView.getByText('Process Session ID')).toBeVisible();
+			await expect(detailView.getByText(`${launched.sessions[0].id}-ai-`)).toBeVisible();
 		} finally {
 			await launched.cleanup();
 		}
@@ -2778,6 +2799,7 @@ test.describe('Debug and accessibility smoke tranche', () => {
 				processMonitor.getByText('Debug Accessibility Agent - AI Agent (codex)')
 			).toBeVisible();
 
+			await processMonitor.focus();
 			await launched.window.keyboard.press('ArrowDown');
 			await launched.window.keyboard.press('Space');
 
@@ -2801,6 +2823,7 @@ test.describe('Debug and accessibility smoke tranche', () => {
 				processMonitor.getByText('Debug Accessibility Agent - AI Agent (codex)')
 			).toBeVisible();
 
+			await processMonitor.focus();
 			await launched.window.keyboard.press('ArrowDown');
 			await launched.window.keyboard.press('Space');
 			await expect(
@@ -2828,6 +2851,7 @@ test.describe('Debug and accessibility smoke tranche', () => {
 				processMonitor.getByText('Debug Accessibility Agent - Terminal Shell')
 			).toBeVisible();
 
+			await processMonitor.focus();
 			await launched.window.keyboard.press('ArrowUp');
 			await launched.window.keyboard.press('Enter');
 
@@ -2852,6 +2876,7 @@ test.describe('Debug and accessibility smoke tranche', () => {
 				processMonitor.getByText('Debug Accessibility Agent - AI Agent (codex)')
 			).toBeVisible();
 
+			await processMonitor.focus();
 			await launched.window.keyboard.press('ArrowDown');
 			await launched.window.keyboard.press('ArrowLeft');
 
@@ -2875,6 +2900,7 @@ test.describe('Debug and accessibility smoke tranche', () => {
 				processMonitor.getByText('Debug Accessibility Agent - AI Agent (codex)')
 			).toBeVisible();
 
+			await processMonitor.focus();
 			await launched.window.keyboard.press('ArrowDown');
 			await launched.window.keyboard.press('ArrowLeft');
 			await expect(
@@ -2902,6 +2928,7 @@ test.describe('Debug and accessibility smoke tranche', () => {
 				processMonitor.getByText('Debug Accessibility Agent - AI Agent (codex)')
 			).toBeVisible();
 
+			await processMonitor.focus();
 			await launched.window.keyboard.press('ArrowDown');
 			await launched.window.keyboard.press('ArrowRight');
 			await launched.window.keyboard.press('Enter');
@@ -3068,10 +3095,12 @@ test.describe('Debug and accessibility smoke tranche', () => {
 				processMonitor.getByText('Debug Accessibility Agent - AI Agent (codex)')
 			).toBeVisible();
 
+			await processMonitor.focus();
 			await launched.window.keyboard.press('ArrowDown');
 			await launched.window.keyboard.press('Enter');
 
-			await expect(processMonitor.getByText('Debug Accessibility Agent')).toBeVisible();
+			await expect(processMonitor.getByText('UNGROUPED AGENTS')).toBeVisible();
+			await expect(processMonitor.getByText('Debug Accessibility Agent')).toBeHidden();
 			await expect(
 				processMonitor.getByText('Debug Accessibility Agent - AI Agent (codex)')
 			).toBeHidden();
@@ -3092,8 +3121,7 @@ test.describe('Debug and accessibility smoke tranche', () => {
 				processMonitor.getByText('Debug Accessibility Agent - AI Agent (codex)')
 			).toBeVisible();
 
-			await launched.window.keyboard.press('ArrowDown');
-			await launched.window.keyboard.press('ArrowRight');
+			await selectFirstProcessRowWithKeyboard(launched.window, processMonitor);
 			await launched.window.keyboard.press('ArrowLeft');
 			await launched.window.keyboard.press('Enter');
 
@@ -3118,8 +3146,7 @@ test.describe('Debug and accessibility smoke tranche', () => {
 				processMonitor.getByText('Debug Accessibility Agent - AI Agent (codex)')
 			).toBeVisible();
 
-			await launched.window.keyboard.press('ArrowDown');
-			await launched.window.keyboard.press('ArrowRight');
+			await selectFirstProcessRowWithKeyboard(launched.window, processMonitor);
 			await launched.window.keyboard.press('Space');
 
 			const detailView = launched.window.getByRole('dialog', { name: 'Process Details' });
@@ -3186,11 +3213,11 @@ test.describe('Debug and accessibility smoke tranche', () => {
 	test(`${twentySecondTrancheActiveScenarioMatrix[0].id} ${twentySecondTrancheActiveScenarioMatrix[0].title}`, async () => {
 		const launched = await launchDebugAccessibilityWorkbench();
 		try {
-			await launched.window.evaluate(async () => {
-				await window.maestro.logger.clearLogs();
-			});
 			const logViewer = await openSystemLogViewer(launched.window);
+			const confirmDialog = await openSystemLogClearConfirmation(launched.window, logViewer);
 
+			await confirmDialog.getByRole('button', { name: 'Confirm' }).click();
+			await expect(confirmDialog).toBeHidden();
 			await expect(logViewer.getByText('No logs yet')).toBeVisible();
 			await expect(logViewer.getByText('0 entries')).toBeVisible();
 		} finally {
@@ -3204,6 +3231,12 @@ test.describe('Debug and accessibility smoke tranche', () => {
 			await seedSystemLogs(launched.window);
 			const logViewer = await openSystemLogViewer(launched.window);
 
+			await logViewer.evaluate((element) => {
+				element.dispatchEvent(
+					new KeyboardEvent('keydown', { key: 'f', ctrlKey: true, bubbles: true })
+				);
+			});
+			await logViewer.getByPlaceholder('Search logs...').fill('E2EDebug');
 			await expect(logViewer.getByText('2 entries')).toBeVisible();
 			await expect(logViewer.getByText('E2EDebug').first()).toBeVisible();
 			await expect(logViewer.getByText('Debug accessibility info sentinel')).toBeVisible();

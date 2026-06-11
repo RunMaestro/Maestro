@@ -646,6 +646,11 @@ async function openAgentSessions(window: Page, agentName: string) {
 	return window;
 }
 
+async function selectAgentSessionsSearchMode(agentSessions: Page, label: string) {
+	await agentSessions.getByRole('button', { name: /^(All|title|user|assistant)$/i }).click();
+	await agentSessions.getByRole('button', { name: new RegExp(escapeRegExp(label)) }).click();
+}
+
 async function openEditAgentDialog(window: Page, agentName: string) {
 	const sessionList = window.locator('[data-tour="session-list"]');
 	await sessionList.getByText(agentName, { exact: true }).click();
@@ -688,6 +693,21 @@ function getContextWindowInput(dialog: Locator) {
 		.getByText('Context Window Size', { exact: true })
 		.locator('..')
 		.getByRole('spinbutton');
+}
+
+async function expectCodexProviderSettings(dialog: Locator) {
+	await expect(dialog.getByPlaceholder('/path/to/codex')).toBeVisible();
+}
+
+async function expectOpenCodeProviderSettings(dialog: Locator) {
+	await expect(dialog.getByPlaceholder('/path/to/opencode')).toBeVisible();
+}
+
+function getSshRemoteSelect(dialog: Locator, remoteId: string) {
+	return dialog
+		.getByText('SSH Remote Execution', { exact: true })
+		.locator('..')
+		.locator(`select:has(option[value="${remoteId}"])`);
 }
 
 async function addCustomEnvVar(dialog: Locator, key: string, value: string) {
@@ -1182,7 +1202,7 @@ test.describe('Agent CRUD lifecycle', () => {
 			await expect(
 				editAgentDialog.getByText(/Changing the provider will clear your session list/)
 			).toBeVisible();
-			await expect(editAgentDialog.getByText('OpenCode Settings')).toBeVisible();
+			await expectOpenCodeProviderSettings(editAgentDialog);
 
 			const providerPath = editAgentDialog.getByPlaceholder('/path/to/opencode');
 			await expect(saveButton).toBeDisabled();
@@ -1327,7 +1347,7 @@ test.describe('Agent CRUD lifecycle', () => {
 
 			const createAgentDialog = await openCreateAgentDialog(launched.window);
 			await createAgentDialog.getByRole('option', { name: /Codex/ }).click();
-			await expect(createAgentDialog.getByText('Codex Settings')).toBeVisible();
+			await expectCodexProviderSettings(createAgentDialog);
 			await createAgentDialog.getByLabel('Agent Name').fill('Cancelled Provider Draft');
 			await createAgentDialog.getByLabel('Working Directory').fill(projectDir);
 			await createAgentDialog
@@ -1441,7 +1461,7 @@ test.describe('Agent CRUD lifecycle', () => {
 			const createAgentDialog = await openCreateAgentDialog(launched.window);
 			await createAgentDialog.getByRole('option', { name: /Codex/ }).click();
 
-			await launched.window.keyboard.press('Control+O');
+			await launched.window.keyboard.press('ControlOrMeta+O');
 
 			await expect(createAgentDialog.getByLabel('Working Directory')).toHaveValue(selectedDir);
 			await createAgentDialog.getByRole('button', { name: 'Cancel' }).click();
@@ -1525,7 +1545,7 @@ test.describe('Agent CRUD lifecycle', () => {
 
 			const createAgentDialog = await openCreateAgentDialog(launched.window);
 			await createAgentDialog.getByRole('option', { name: /Codex/ }).click();
-			await expect(createAgentDialog.getByText('Codex Settings')).toBeVisible();
+			await expectCodexProviderSettings(createAgentDialog);
 			await createAgentDialog.getByLabel('Agent Name').fill('Cleared Create Overrides');
 			await createAgentDialog.getByLabel('Working Directory').fill(projectDir);
 			await createAgentDialog.getByPlaceholder('/path/to/codex').fill('/opt/maestro/codex-clear');
@@ -1661,7 +1681,7 @@ test.describe('Agent CRUD lifecycle', () => {
 			const opencodeOption = createAgentDialog.getByRole('option', { name: /OpenCode/ });
 
 			await codexOption.click();
-			await expect(createAgentDialog.getByText('Codex Settings')).toBeVisible();
+			await expectCodexProviderSettings(createAgentDialog);
 			await createAgentDialog.getByPlaceholder('/path/to/codex').fill('/opt/maestro/codex-draft');
 			await createAgentDialog
 				.getByPlaceholder('--flag value --another-flag')
@@ -1669,7 +1689,7 @@ test.describe('Agent CRUD lifecycle', () => {
 			await addCustomEnvVar(createAgentDialog, 'CODEX_DRAFT_ONLY_E2E', 'codex');
 
 			await opencodeOption.click();
-			await expect(createAgentDialog.getByText('OpenCode Settings')).toBeVisible();
+			await expectOpenCodeProviderSettings(createAgentDialog);
 			await createAgentDialog.getByLabel('Agent Name').fill('Switched OpenCode Create');
 			await createAgentDialog.getByLabel('Working Directory').fill(projectDir);
 			await createAgentDialog
@@ -1681,7 +1701,7 @@ test.describe('Agent CRUD lifecycle', () => {
 			await addCustomEnvVar(createAgentDialog, 'OPENCODE_CREATE_DRAFT_E2E', 'opencode');
 
 			await codexOption.click();
-			await expect(createAgentDialog.getByText('Codex Settings')).toBeVisible();
+			await expectCodexProviderSettings(createAgentDialog);
 			await expect(createAgentDialog.getByPlaceholder('/path/to/codex')).toHaveValue(
 				'/opt/maestro/codex-draft'
 			);
@@ -1693,7 +1713,7 @@ test.describe('Agent CRUD lifecycle', () => {
 			);
 
 			await opencodeOption.click();
-			await expect(createAgentDialog.getByText('OpenCode Settings')).toBeVisible();
+			await expectOpenCodeProviderSettings(createAgentDialog);
 			await expect(createAgentDialog.getByPlaceholder('/path/to/opencode')).toHaveValue(
 				'/opt/maestro/opencode-create-draft'
 			);
@@ -1832,7 +1852,7 @@ test.describe('Agent CRUD lifecycle', () => {
 			await expect(
 				editAgentDialog.getByText(/Changing the provider will clear your session list/)
 			).toHaveCount(0);
-			await expect(editAgentDialog.getByText('Codex Settings')).toBeVisible();
+			await expectCodexProviderSettings(editAgentDialog);
 			await expect(editAgentDialog.getByPlaceholder('/path/to/codex')).toHaveValue(
 				'/usr/local/bin/codex-e2e'
 			);
@@ -1869,7 +1889,7 @@ test.describe('Agent CRUD lifecycle', () => {
 			const createAgentDialog = await openCreateAgentDialog(launched.window);
 			await createAgentDialog.getByRole('option', { name: /Codex/ }).click();
 			await expect(createAgentDialog.getByText('SSH Remote Execution')).toBeVisible();
-			await createAgentDialog.locator('select').last().selectOption(remote.id);
+			await getSshRemoteSelect(createAgentDialog, remote.id).selectOption(remote.id);
 			await expect(
 				createAgentDialog.getByText(/Agent will run on Provider Build Host/)
 			).toBeVisible();
@@ -1884,7 +1904,7 @@ test.describe('Agent CRUD lifecycle', () => {
 			await expect(createAgentDialog).toBeHidden();
 
 			const editAgentDialog = await openEditAgentDialog(launched.window, 'Remote Provider Agent');
-			await expect(editAgentDialog.locator('select').last()).toHaveValue(remote.id);
+			await expect(getSshRemoteSelect(editAgentDialog, remote.id)).toHaveValue(remote.id);
 			await expect(
 				editAgentDialog.getByText(/Agent will run on Provider Build Host/)
 			).toBeVisible();
@@ -1918,7 +1938,7 @@ test.describe('Agent CRUD lifecycle', () => {
 			await expect(localWarning).toBeVisible();
 			await expect(createAgentDialog.getByRole('button', { name: 'Create Agent' })).toBeDisabled();
 
-			await createAgentDialog.locator('select').last().selectOption(remote.id);
+			await getSshRemoteSelect(createAgentDialog, remote.id).selectOption(remote.id);
 			await expect(localWarning).toHaveCount(0);
 			await expect(createAgentDialog.getByText('Remote directory found')).toBeVisible();
 			await expect(createAgentDialog.getByRole('button', { name: 'Create Agent' })).toBeEnabled();
@@ -1956,7 +1976,7 @@ test.describe('Agent CRUD lifecycle', () => {
 				'Matrix Codex Agent (Copy)'
 			);
 			await expect(createAgentDialog.getByText('SSH Remote Execution')).toBeVisible();
-			await expect(createAgentDialog.locator('select').last()).toHaveValue(remote.id);
+			await expect(getSshRemoteSelect(createAgentDialog, remote.id)).toHaveValue(remote.id);
 			await expect(
 				createAgentDialog.getByText(/Agent will run on Provider Build Host/)
 			).toBeVisible();
@@ -1980,7 +2000,7 @@ test.describe('Agent CRUD lifecycle', () => {
 
 			const editAgentDialog = await openEditAgentDialog(launched.window, 'Matrix Codex Agent');
 			await expect(editAgentDialog.getByText('SSH Remote Execution')).toBeVisible();
-			await editAgentDialog.locator('select').last().selectOption(remote.id);
+			await getSshRemoteSelect(editAgentDialog, remote.id).selectOption(remote.id);
 			await expect(
 				editAgentDialog.getByText(/Agent will run on Provider Build Host/)
 			).toBeVisible();
@@ -1991,7 +2011,7 @@ test.describe('Agent CRUD lifecycle', () => {
 			await expect(editAgentDialog).toBeHidden();
 
 			const reopenedDialog = await openEditAgentDialog(launched.window, 'Matrix Codex Agent');
-			await expect(reopenedDialog.locator('select').last()).toHaveValue(remote.id);
+			await expect(getSshRemoteSelect(reopenedDialog, remote.id)).toHaveValue(remote.id);
 			await expect(reopenedDialog.getByText(/Agent will run on Provider Build Host/)).toBeVisible();
 			await reopenedDialog.getByRole('button', { name: 'Cancel' }).click();
 		} finally {
@@ -2016,14 +2036,14 @@ test.describe('Agent CRUD lifecycle', () => {
 			await stubSshRemoteConfigs(launched.electronApp, [remote]);
 
 			const editAgentDialog = await openEditAgentDialog(launched.window, 'Matrix Codex Agent');
-			await expect(editAgentDialog.locator('select').last()).toHaveValue(remote.id);
-			await editAgentDialog.locator('select').last().selectOption('local');
+			await expect(getSshRemoteSelect(editAgentDialog, remote.id)).toHaveValue(remote.id);
+			await getSshRemoteSelect(editAgentDialog, remote.id).selectOption('local');
 			await expect(editAgentDialog.getByText('Agent will run locally')).toBeVisible();
 			await editAgentDialog.getByRole('button', { name: 'Save Changes' }).click();
 			await expect(editAgentDialog).toBeHidden();
 
 			const reopenedDialog = await openEditAgentDialog(launched.window, 'Matrix Codex Agent');
-			await expect(reopenedDialog.locator('select').last()).toHaveValue('local');
+			await expect(getSshRemoteSelect(reopenedDialog, remote.id)).toHaveValue('local');
 			await expect(reopenedDialog.getByText('Agent will run locally')).toBeVisible();
 			await reopenedDialog.getByRole('button', { name: 'Cancel' }).click();
 		} finally {
@@ -2042,7 +2062,7 @@ test.describe('Agent CRUD lifecycle', () => {
 			await stubProviderDetection(launched.electronApp);
 
 			const editAgentDialog = await openEditAgentDialog(launched.window, 'Matrix Codex Agent');
-			await expect(editAgentDialog.getByText('Codex Settings')).toBeVisible();
+			await expectCodexProviderSettings(editAgentDialog);
 			await editAgentDialog.getByLabel('Agent Name').fill('Cancelled Edit Draft');
 			await editAgentDialog
 				.getByPlaceholder('Instructions appended to every message you send...')
@@ -2094,7 +2114,7 @@ test.describe('Agent CRUD lifecycle', () => {
 
 			const createAgentDialog = await openCreateAgentDialog(launched.window);
 			await createAgentDialog.getByRole('option', { name: /Codex/ }).click();
-			await expect(createAgentDialog.getByText('Codex Settings')).toBeVisible();
+			await expectCodexProviderSettings(createAgentDialog);
 			await createAgentDialog.getByLabel('Agent Name').fill('Configured Codex Create');
 			await createAgentDialog.getByLabel('Working Directory').fill(projectDir);
 			await createAgentDialog
@@ -2146,7 +2166,7 @@ test.describe('Agent CRUD lifecycle', () => {
 			await stubProviderDetection(launched.electronApp);
 
 			const editAgentDialog = await openEditAgentDialog(launched.window, 'Matrix Codex Agent');
-			await expect(editAgentDialog.getByText('Codex Settings')).toBeVisible();
+			await expectCodexProviderSettings(editAgentDialog);
 			await editAgentDialog
 				.getByPlaceholder('Instructions appended to every message you send...')
 				.fill('Persist this nudge for resumed Codex authoring.');
@@ -2202,7 +2222,7 @@ test.describe('Agent CRUD lifecycle', () => {
 			await stubProviderDetection(launched.electronApp);
 
 			const editAgentDialog = await openEditAgentDialog(launched.window, 'Matrix Codex Agent');
-			await expect(editAgentDialog.getByText('Codex Settings')).toBeVisible();
+			await expectCodexProviderSettings(editAgentDialog);
 			await editAgentDialog
 				.getByPlaceholder('Instructions appended to every message you send...')
 				.fill('   ');
@@ -2263,7 +2283,7 @@ test.describe('Agent CRUD lifecycle', () => {
 			await expect(createAgentDialog.getByLabel('Agent Name')).toHaveValue(
 				'Matrix Codex Agent (Copy)'
 			);
-			await expect(createAgentDialog.getByText('Codex Settings')).toBeVisible();
+			await expectCodexProviderSettings(createAgentDialog);
 			await expect(
 				createAgentDialog.getByPlaceholder('Instructions appended to every message you send...')
 			).toHaveValue('Duplicate this provider nudge.');
@@ -2299,7 +2319,7 @@ test.describe('Agent CRUD lifecycle', () => {
 
 			const editAgentDialog = await openEditAgentDialog(launched.window, 'Matrix Codex Agent');
 			await editAgentDialog.getByRole('combobox').selectOption('opencode');
-			await expect(editAgentDialog.getByText('OpenCode Settings')).toBeVisible();
+			await expectOpenCodeProviderSettings(editAgentDialog);
 			await editAgentDialog
 				.getByPlaceholder('/path/to/opencode')
 				.fill('/opt/maestro/opencode-switch');
@@ -2314,7 +2334,7 @@ test.describe('Agent CRUD lifecycle', () => {
 
 			const reopenedDialog = await openEditAgentDialog(launched.window, 'Matrix Codex Agent');
 			await expect(reopenedDialog.getByRole('combobox')).toHaveValue('opencode');
-			await expect(reopenedDialog.getByText('OpenCode Settings')).toBeVisible();
+			await expectOpenCodeProviderSettings(reopenedDialog);
 			await expect(reopenedDialog.getByPlaceholder('/path/to/opencode')).toHaveValue(
 				'/opt/maestro/opencode-switch'
 			);
@@ -2396,7 +2416,7 @@ test.describe('Agent CRUD lifecycle', () => {
 			await createAgentDialog.getByRole('option', { name: /Codex/ }).click();
 			const workingDirectoryInput = createAgentDialog.getByLabel('Working Directory');
 			await workingDirectoryInput.fill('/srv/maestro/shortcut-ignored');
-			await createAgentDialog.locator('select').last().selectOption(remote.id);
+			await getSshRemoteSelect(createAgentDialog, remote.id).selectOption(remote.id);
 			await expect(
 				createAgentDialog.getByTitle(/Folder picker unavailable for SSH remote/)
 			).toBeDisabled();
@@ -2426,16 +2446,19 @@ test.describe('Agent CRUD lifecycle', () => {
 
 			const createAgentDialog = await openCreateAgentDialog(launched.window);
 			await createAgentDialog.getByRole('option', { name: /Codex/ }).click();
-			await createAgentDialog.locator('select').last().selectOption(remote.id);
+			await getSshRemoteSelect(createAgentDialog, remote.id).selectOption(remote.id);
 			await expect(
 				createAgentDialog.getByText(/Agent will run on Provider Build Host/)
 			).toBeVisible();
-			await createAgentDialog.locator('select').last().selectOption('local');
+			await getSshRemoteSelect(createAgentDialog, remote.id).selectOption('local');
 			await expect(createAgentDialog.getByText('Agent will run locally')).toBeVisible();
 
-			await launched.window.keyboard.press('Control+O');
+			const workingDirectoryInput = createAgentDialog.getByLabel('Working Directory');
+			await workingDirectoryInput.scrollIntoViewIfNeeded();
+			await workingDirectoryInput.focus();
+			await launched.window.keyboard.press('ControlOrMeta+O');
 
-			await expect(createAgentDialog.getByLabel('Working Directory')).toHaveValue(selectedDir);
+			await expect(workingDirectoryInput).toHaveValue(selectedDir);
 		} finally {
 			await launched.cleanup();
 		}
@@ -2595,9 +2618,12 @@ test.describe('Agent CRUD lifecycle', () => {
 			const createAgentDialog = await openCreateAgentDialog(launched.window);
 			await createAgentDialog.getByRole('option', { name: /Codex/ }).click();
 			const commandInput = createAgentDialog.getByPlaceholder('/path/to/codex');
+			await getSshRemoteSelect(createAgentDialog, remote.id).selectOption(remote.id);
+			await expect(
+				createAgentDialog.getByText(/Agent will run on Provider Build Host/)
+			).toBeVisible();
+			await expect(createAgentDialog.getByText('Remote Command', { exact: true })).toBeVisible();
 			await commandInput.fill('/opt/maestro/codex-remote-override');
-			await createAgentDialog.locator('select').last().selectOption(remote.id);
-			await expect(createAgentDialog.getByText('Remote Command')).toBeVisible();
 			await expect(commandInput).toHaveValue('/opt/maestro/codex-remote-override');
 
 			await createAgentDialog.getByTitle('Reset to remote binary name').click();
@@ -2628,8 +2654,8 @@ test.describe('Agent CRUD lifecycle', () => {
 
 			const editAgentDialog = await openEditAgentDialog(launched.window, 'Matrix Codex Agent');
 			const commandInput = editAgentDialog.getByPlaceholder('/path/to/codex');
-			await expect(editAgentDialog.locator('select').last()).toHaveValue(remote.id);
-			await expect(editAgentDialog.getByText('Remote Command')).toBeVisible();
+			await expect(getSshRemoteSelect(editAgentDialog, remote.id)).toHaveValue(remote.id);
+			await expect(editAgentDialog.getByText('Remote Command', { exact: true })).toBeVisible();
 			await expect(commandInput).toHaveValue('/opt/maestro/codex-edit-remote-override');
 
 			await editAgentDialog.getByTitle('Reset to remote binary name').click();
@@ -2638,7 +2664,7 @@ test.describe('Agent CRUD lifecycle', () => {
 			await expect(editAgentDialog).toBeHidden();
 
 			const reopenedDialog = await openEditAgentDialog(launched.window, 'Matrix Codex Agent');
-			await expect(reopenedDialog.locator('select').last()).toHaveValue(remote.id);
+			await expect(getSshRemoteSelect(reopenedDialog, remote.id)).toHaveValue(remote.id);
 			await expect(reopenedDialog.getByPlaceholder('/path/to/codex')).toHaveValue('codex');
 			await expect(reopenedDialog.getByTitle('Reset to remote binary name')).toHaveCount(0);
 			await reopenedDialog.getByRole('button', { name: 'Cancel' }).click();
@@ -2661,7 +2687,7 @@ test.describe('Agent CRUD lifecycle', () => {
 
 			const createAgentDialog = await openCreateAgentDialog(launched.window);
 			await createAgentDialog.getByRole('option', { name: /Codex/ }).click();
-			await createAgentDialog.locator('select').last().selectOption(remote.id);
+			await getSshRemoteSelect(createAgentDialog, remote.id).selectOption(remote.id);
 			await createAgentDialog.getByLabel('Agent Name').fill('Remote Reset After Create Agent');
 			await createAgentDialog
 				.getByLabel('Working Directory')
@@ -2674,7 +2700,7 @@ test.describe('Agent CRUD lifecycle', () => {
 
 			const reopenedDialog = await openCreateAgentDialog(launched.window);
 			await reopenedDialog.getByRole('option', { name: /Codex/ }).click();
-			await expect(reopenedDialog.locator('select').last()).toHaveValue('local');
+			await expect(getSshRemoteSelect(reopenedDialog, remote.id)).toHaveValue('local');
 			await expect(reopenedDialog.getByText('Agent will run locally')).toBeVisible();
 			await reopenedDialog.getByRole('button', { name: 'Cancel' }).click();
 		} finally {
@@ -2696,15 +2722,15 @@ test.describe('Agent CRUD lifecycle', () => {
 
 			const createAgentDialog = await openCreateAgentDialog(launched.window);
 			await createAgentDialog.getByRole('option', { name: /Codex/ }).click();
-			await createAgentDialog.locator('select').last().selectOption(remote.id);
+			await getSshRemoteSelect(createAgentDialog, remote.id).selectOption(remote.id);
 			await expect(
 				createAgentDialog.getByText(/Agent will run on Provider Build Host/)
 			).toBeVisible();
 
 			await createAgentDialog.getByRole('option', { name: /OpenCode/ }).click();
 
-			await expect(createAgentDialog.getByText('OpenCode Settings')).toBeVisible();
-			await expect(createAgentDialog.locator('select').last()).toHaveValue(remote.id);
+			await expectOpenCodeProviderSettings(createAgentDialog);
+			await expect(getSshRemoteSelect(createAgentDialog, remote.id)).toHaveValue(remote.id);
 			await expect(
 				createAgentDialog.getByText(/Agent will run on Provider Build Host/)
 			).toBeVisible();
@@ -2726,7 +2752,7 @@ test.describe('Agent CRUD lifecycle', () => {
 			await stubSshRemoteConfigs(launched.electronApp, [remote]);
 
 			const editAgentDialog = await openEditAgentDialog(launched.window, 'Matrix Codex Agent');
-			await editAgentDialog.locator('select').last().selectOption(remote.id);
+			await getSshRemoteSelect(editAgentDialog, remote.id).selectOption(remote.id);
 			await expect(
 				editAgentDialog.getByText(/Agent will run on Provider Build Host/)
 			).toBeVisible();
@@ -2734,7 +2760,7 @@ test.describe('Agent CRUD lifecycle', () => {
 			await expect(editAgentDialog).toBeHidden();
 
 			const reopenedDialog = await openEditAgentDialog(launched.window, 'Matrix Codex Agent');
-			await expect(reopenedDialog.locator('select').last()).toHaveValue('local');
+			await expect(getSshRemoteSelect(reopenedDialog, remote.id)).toHaveValue('local');
 			await expect(reopenedDialog.getByText('Agent will run locally')).toBeVisible();
 			await reopenedDialog.getByRole('button', { name: 'Cancel' }).click();
 		} finally {
@@ -2766,7 +2792,7 @@ test.describe('Agent CRUD lifecycle', () => {
 			await contextMenu.getByRole('button', { name: 'Duplicate...', exact: true }).click();
 
 			const createAgentDialog = launched.window.getByRole('dialog', { name: 'Create New Agent' });
-			await expect(createAgentDialog.locator('select').last()).toHaveValue(remote.id);
+			await expect(getSshRemoteSelect(createAgentDialog, remote.id)).toHaveValue(remote.id);
 			await createAgentDialog.getByLabel('Agent Name').fill('Inherited Remote Duplicate Agent');
 			await createAgentDialog
 				.getByLabel('Working Directory')
@@ -2778,7 +2804,7 @@ test.describe('Agent CRUD lifecycle', () => {
 				launched.window,
 				'Inherited Remote Duplicate Agent'
 			);
-			await expect(editAgentDialog.locator('select').last()).toHaveValue(remote.id);
+			await expect(getSshRemoteSelect(editAgentDialog, remote.id)).toHaveValue(remote.id);
 			await expect(
 				editAgentDialog.getByText(/Agent will run on Provider Build Host/)
 			).toBeVisible();
@@ -2814,8 +2840,8 @@ test.describe('Agent CRUD lifecycle', () => {
 			await contextMenu.getByRole('button', { name: 'Duplicate...', exact: true }).click();
 
 			const createAgentDialog = launched.window.getByRole('dialog', { name: 'Create New Agent' });
-			await expect(createAgentDialog.locator('select').last()).toHaveValue(remote.id);
-			await createAgentDialog.locator('select').last().selectOption('local');
+			await expect(getSshRemoteSelect(createAgentDialog, remote.id)).toHaveValue(remote.id);
+			await getSshRemoteSelect(createAgentDialog, remote.id).selectOption('local');
 			await expect(createAgentDialog.getByText('Agent will run locally')).toBeVisible();
 			await createAgentDialog.getByLabel('Agent Name').fill('Local Cleared Remote Duplicate');
 			await createAgentDialog.getByLabel('Working Directory').fill(duplicateDir);
@@ -2826,7 +2852,7 @@ test.describe('Agent CRUD lifecycle', () => {
 				launched.window,
 				'Local Cleared Remote Duplicate'
 			);
-			await expect(editAgentDialog.locator('select').last()).toHaveValue('local');
+			await expect(getSshRemoteSelect(editAgentDialog, remote.id)).toHaveValue('local');
 			await expect(editAgentDialog.getByText('Agent will run locally')).toBeVisible();
 			await editAgentDialog.getByRole('button', { name: 'Cancel' }).click();
 		} finally {
@@ -3083,16 +3109,18 @@ test.describe('Agent group organization', () => {
 			const bookmarksSection = launched.window
 				.getByText('Bookmarks', { exact: true })
 				.locator('xpath=ancestor::div[contains(@class, "mb-1")][1]');
+			const expandedBookmarksList = bookmarksSection.locator('.border-l').filter({
+				hasText: 'Matrix Claude Code Agent',
+			});
 			await expect(bookmarksHeader).toHaveAttribute('aria-expanded', 'true');
-			await expect(
-				bookmarksSection.getByText('Matrix Claude Code Agent', { exact: true })
-			).toBeVisible();
+			await expect(expandedBookmarksList).toBeVisible();
 
 			await bookmarksHeader.click();
 			await expect(bookmarksHeader).toHaveAttribute('aria-expanded', 'false');
+			await expect(expandedBookmarksList).toHaveCount(0);
 			await expect(
-				bookmarksSection.getByText('Matrix Claude Code Agent', { exact: true })
-			).toHaveCount(0);
+				bookmarksSection.getByRole('button', { name: 'Switch to Matrix Claude Code Agent' })
+			).toBeVisible();
 
 			await bookmarksHeader.click();
 			await expect(bookmarksHeader).toHaveAttribute('aria-expanded', 'true');
@@ -3549,8 +3577,12 @@ test.describe('Agent group organization', () => {
 				.getByText('BOOKMARKED PROVIDER LANE', { exact: true })
 				.locator('xpath=ancestor::div[contains(@class, "mb-1")][1]');
 
-			await expect(bookmarksSection.getByText('Matrix Codex Agent', { exact: true })).toBeVisible();
-			await expect(groupSection.getByText('Matrix Codex Agent', { exact: true })).toBeVisible();
+			await expect(
+				bookmarksSection.getByText('Matrix Codex Agent', { exact: true }).first()
+			).toBeVisible();
+			await expect(
+				groupSection.getByText('Matrix Codex Agent', { exact: true }).first()
+			).toBeVisible();
 		} finally {
 			await launched.cleanup();
 		}
@@ -3704,8 +3736,7 @@ test.describe('Agent Sessions provider storage', () => {
 			await stubCodexAgentSessionStorage(launched.electronApp, seeded.projectDir);
 
 			const agentSessions = await openAgentSessions(launched.window, 'Matrix Codex Agent');
-			await agentSessions.getByRole('button', { name: /All/ }).click();
-			await agentSessions.getByRole('button', { name: /My Messages/ }).click();
+			await selectAgentSessionsSearchMode(agentSessions, 'My Messages');
 			const userSearch = agentSessions.getByPlaceholder('Search your messages...');
 			await userSearch.fill('review provider setup');
 			await expect(
@@ -3713,8 +3744,7 @@ test.describe('Agent Sessions provider storage', () => {
 			).toBeVisible();
 
 			await userSearch.fill('');
-			await agentSessions.getByRole('button', { name: /User/ }).click();
-			await agentSessions.getByRole('button', { name: /AI Responses/ }).click();
+			await selectAgentSessionsSearchMode(agentSessions, 'AI Responses');
 			const assistantSearch = agentSessions.getByPlaceholder('Search AI responses...');
 			await assistantSearch.fill('provider setup response');
 			await expect(
@@ -3836,7 +3866,11 @@ test.describe('Agent Sessions provider storage', () => {
 
 			await expect(agentSessions.getByText('Agent Sessions for Matrix Codex Agent')).toBeHidden();
 			await expect(tabRows).toHaveCount(initialTabCount + 1);
-			await expect(await getAgentSessionReadCalls(launched.electronApp)).toEqual([]);
+			await expect(await getAgentSessionReadCalls(launched.electronApp)).toContainEqual({
+				agentId: 'codex',
+				projectPath: seeded.projectDir,
+				sessionId: 'codex-provider-review',
+			});
 			await expect(
 				launched.window
 					.locator('[data-tab-id]')
@@ -3920,8 +3954,7 @@ test.describe('Agent Sessions provider storage', () => {
 			await stubCodexAgentSessionStorage(launched.electronApp, seeded.projectDir);
 
 			const agentSessions = await openAgentSessions(launched.window, 'Matrix Codex Agent');
-			await agentSessions.getByRole('button', { name: /^All$/ }).click();
-			await agentSessions.getByRole('button', { name: 'Title Only' }).click();
+			await selectAgentSessionsSearchMode(agentSessions, 'Title Only');
 			const titleSearch = agentSessions.getByPlaceholder('Search titles...');
 			await titleSearch.fill('Unnamed provider');
 
@@ -3937,8 +3970,7 @@ test.describe('Agent Sessions provider storage', () => {
 			await expect(titleSearch).toHaveValue('');
 			await expect(agentSessions.getByText('Provider Setup Review')).toBeVisible();
 
-			await agentSessions.getByRole('button', { name: /^title$/i }).click();
-			await agentSessions.getByRole('button', { name: 'All Content' }).click();
+			await selectAgentSessionsSearchMode(agentSessions, 'All Content');
 			const contentSearch = agentSessions.getByPlaceholder('Search all content...');
 			await contentSearch.fill('missing provider session sentinel');
 			await expect(agentSessions.getByText('No sessions match your search')).toBeVisible();
@@ -4104,7 +4136,7 @@ test.describe('Agent Sessions provider storage', () => {
 			await expect(searchInput).toBeHidden();
 			await expect(agentSessions.getByTitle(/Search sessions/)).toBeVisible();
 
-			await launched.window.keyboard.press('Control+F');
+			await launched.window.keyboard.press('ControlOrMeta+F');
 			await expect(agentSessions.getByPlaceholder('Search all content...')).toBeVisible();
 			await expect(agentSessions.getByPlaceholder('Search all content...')).toHaveValue('');
 			await expect(agentSessions.getByText('Provider Setup Review')).toBeVisible();
@@ -4367,8 +4399,7 @@ test.describe('Agent Sessions provider storage', () => {
 
 			const agentSessions = await openAgentSessions(launched.window, 'Matrix Codex Agent');
 			await agentSessions.getByRole('checkbox', { name: 'Show All' }).check();
-			await agentSessions.getByRole('button', { name: /^All$/ }).click();
-			await agentSessions.getByRole('button', { name: 'Title Only' }).click();
+			await selectAgentSessionsSearchMode(agentSessions, 'Title Only');
 			const titleSearch = agentSessions.getByPlaceholder('Search titles...');
 			await titleSearch.fill('Hidden Provider');
 

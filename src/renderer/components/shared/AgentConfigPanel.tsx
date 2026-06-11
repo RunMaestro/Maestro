@@ -406,14 +406,10 @@ export function AgentConfigPanel({
 						onBlur={onCustomPathBlur}
 						onClick={(e) => e.stopPropagation()}
 						placeholder={`/path/to/${agent.binaryName}`}
-						// When showing default SSH binary name, make field read-only to prevent accidental modification
-						readOnly={isSshEnabled && !customPath}
 						className="flex-1 p-2 rounded border bg-transparent outline-none text-xs font-mono"
 						style={{
 							borderColor: theme.colors.border,
 							color: theme.colors.textMain,
-							// Slightly dim read-only fields to show they're not editable
-							opacity: isSshEnabled && !customPath ? 0.7 : 1,
 						}}
 					/>
 					{customPath && (

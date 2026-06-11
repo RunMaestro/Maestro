@@ -633,6 +633,7 @@ describe('useModalHandlers', () => {
 			expect(useModalStore.getState().getData('agentError')).toEqual({
 				sessionId: 'session-1',
 			});
+			expect(result.current.effectiveAgentError).toMatchObject({ message: 'test error' });
 		});
 
 		it('handleShowAgentErrorModal does nothing when no active session', () => {
@@ -1519,7 +1520,26 @@ describe('useModalHandlers', () => {
 			expect(useModalStore.getState().isOpen('tabSwitcher')).toBe(true);
 		});
 
-		it('handleQuickActionsOpenTabSwitcher does nothing when not in AI mode', () => {
+		it('handleQuickActionsOpenTabSwitcher opens tab switcher for terminal mode sessions with AI tabs', () => {
+			const tab = createMockAITab({ id: 'tab-1' });
+			const session = createMockSession({
+				id: 'session-1',
+				inputMode: 'terminal' as any,
+				aiTabs: [tab],
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			const { result } = renderHook(() =>
+				useModalHandlers(createInputRef(), createTerminalOutputRef())
+			);
+			act(() => {
+				result.current.handleQuickActionsOpenTabSwitcher();
+			});
+
+			expect(useModalStore.getState().isOpen('tabSwitcher')).toBe(true);
+		});
+
+		it('handleQuickActionsOpenTabSwitcher does nothing when the active session has no AI tabs', () => {
 			const session = createMockSession({
 				id: 'session-1',
 				inputMode: 'terminal' as any,

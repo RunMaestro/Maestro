@@ -664,6 +664,24 @@ async function openQuickActions(window: Page) {
 	return quickActionsDialog;
 }
 
+function getRightPanelFrame(window: Page) {
+	return window
+		.getByRole('button', { name: 'Files' })
+		.locator('xpath=ancestor::div[contains(@class, "border-l")][1]');
+}
+
+async function expectRightPanelCollapsed(window: Page) {
+	const rightPanelFrame = getRightPanelFrame(window);
+	await expect(window.getByTitle(/Show right panel/)).toBeVisible();
+	await expect(rightPanelFrame).toHaveClass(/w-0/);
+	await expect(rightPanelFrame).toHaveCSS('opacity', '0');
+}
+
+async function expectAutoRunPanelOpen(window: Page) {
+	await expect(window.locator('[data-tour="autorun-panel"]')).toBeVisible();
+	await expect(window.getByRole('button', { name: /^Run$/ })).toBeVisible();
+}
+
 async function openUsageDashboard(window: Page) {
 	const quickActionsDialog = await openQuickActions(window);
 	await quickActionsDialog
@@ -3055,14 +3073,9 @@ test.describe('App shell seeded workbench', () => {
 		await window.keyboard.press('Alt+Meta+ArrowLeft');
 		await expect(window.locator('[data-tour="session-list"]')).toBeVisible();
 
-		const rightPanelFrame = window
-			.getByRole('button', { name: 'Files' })
-			.locator('xpath=ancestor::div[contains(@class, "border-l")][1]');
 		await window.getByTitle(/Collapse Right Panel/).click();
-		await expect(window.getByTitle(/Show right panel/)).toBeVisible();
+		await expectRightPanelCollapsed(window);
 		await expect(window.getByTitle(/Expand Right Panel/)).toBeVisible();
-		await expect(rightPanelFrame).toHaveClass(/w-0/);
-		await expect(rightPanelFrame).toHaveCSS('opacity', '0');
 
 		await window.getByTitle(/Show right panel/).click();
 		await expect(window.getByTitle(/Collapse Right Panel/)).toBeVisible();
@@ -3099,8 +3112,7 @@ test.describe('App shell seeded workbench', () => {
 		await quickActionsDialog.getByRole('button', { name: /Toggle Right Panel/ }).click();
 
 		await expect(quickActionsDialog).toBeHidden();
-		await expect(window.locator('[data-tour="files-panel"]')).toBeHidden();
-		await expect(window.getByTitle(/Show right panel/)).toBeVisible();
+		await expectRightPanelCollapsed(window);
 		await expect(window.getByText('File Preview Surface')).toBeVisible();
 	});
 
@@ -3133,8 +3145,7 @@ test.describe('App shell seeded workbench', () => {
 		await expect(window.locator('[data-tour="history-panel"]')).toBeVisible();
 
 		await window.keyboard.press('Alt+Meta+ArrowRight');
-		await expect(window.getByTitle(/Show right panel/)).toBeVisible();
-		await expect(window.locator('[data-tour="history-panel"]')).toBeHidden();
+		await expectRightPanelCollapsed(window);
 
 		await window.keyboard.press('Alt+Meta+ArrowRight');
 		await expect(window.locator('[data-tour="history-panel"]')).toBeVisible();
@@ -3145,7 +3156,7 @@ test.describe('App shell seeded workbench', () => {
 
 		await window.keyboard.press('Meta+Shift+F');
 		await expect(window.locator('[data-tour="files-panel"]')).toBeVisible();
-		await expect(window.getByText('README.md')).toBeVisible();
+		await expect(window.locator('[data-tour="files-panel"]').getByTitle('README.md')).toBeVisible();
 
 		await window.keyboard.press('Meta+Shift+H');
 		await expect(window.locator('[data-tour="history-panel"]')).toBeVisible();
@@ -3232,7 +3243,7 @@ test.describe('App shell seeded workbench', () => {
 		await expect(window.getByTitle(/Show right panel/)).toBeVisible();
 
 		await window.keyboard.press('Meta+Shift+1');
-		await expect(window.getByText('Auto Run Surface')).toBeVisible();
+		await expectAutoRunPanelOpen(window);
 		await expect(window.getByLabel('Terminal output')).toBeVisible();
 		await expect(terminalInput).toHaveValue('terminal draft before autorun shortcut sentinel');
 	});
@@ -3250,7 +3261,7 @@ test.describe('App shell seeded workbench', () => {
 		await expect(terminalInput).toHaveValue('terminal draft across right panel shortcuts sentinel');
 
 		await window.keyboard.press('Meta+Shift+1');
-		await expect(window.getByText('Auto Run Surface')).toBeVisible();
+		await expectAutoRunPanelOpen(window);
 		await expect(terminalInput).toHaveValue('terminal draft across right panel shortcuts sentinel');
 	});
 
@@ -3729,7 +3740,8 @@ test.describe('App shell seeded workbench', () => {
 		await filterInput.fill('Terminal');
 		await window.locator('[data-tour="session-list"]').getByText('E2E Terminal').click();
 
-		await expect(filterInput).toBeHidden();
+		await expect(filterInput).toBeVisible();
+		await expect(filterInput).toHaveValue('Terminal');
 		await expect(window.getByLabel('Terminal output')).toBeVisible();
 		await expect(window.getByText('terminal seeded output is visible')).toBeVisible();
 	});
@@ -3939,7 +3951,7 @@ test.describe('App shell seeded workbench', () => {
 
 		await window.keyboard.press('Meta+Shift+1');
 
-		await expect(window.getByText('Auto Run Surface')).toBeVisible();
+		await expectAutoRunPanelOpen(window);
 		await expect(window.getByLabel('Terminal output')).toBeVisible();
 		await expect(terminalInput).toHaveValue(
 			'terminal draft before autorun hidden restore sentinel'
@@ -4054,7 +4066,7 @@ test.describe('App shell seeded workbench', () => {
 
 		await expect(quickActionsDialog).toBeHidden();
 		await expect(window.getByLabel('Terminal output')).toBeVisible();
-		await expect(window.getByText('Auto Run Surface')).toBeVisible();
+		await expectAutoRunPanelOpen(window);
 	});
 
 	test('returns to the workbench from terminal cycling while History stays selected', async () => {
@@ -7924,7 +7936,7 @@ test.describe('App shell seeded workbench', () => {
 
 		await window.keyboard.press('Meta+Shift+F');
 		await expect(window.locator('[data-tour="files-panel"]')).toBeVisible();
-		await expect(window.getByText('README.md')).toBeVisible();
+		await expect(window.locator('[data-tour="files-panel"]').getByTitle('README.md')).toBeVisible();
 	});
 
 	test('keeps terminal draft after Tab Switcher closes over hidden Left Bar', async () => {
@@ -8000,7 +8012,7 @@ test.describe('App shell seeded workbench', () => {
 		await window.keyboard.press('Meta+Shift+F');
 
 		await expect(window.locator('[data-tour="files-panel"]')).toBeVisible();
-		await expect(window.getByText('README.md')).toBeVisible();
+		await expect(window.locator('[data-tour="files-panel"]').getByTitle('README.md')).toBeVisible();
 		await expect(terminalInput).toHaveValue('terminal draft before files restore sentinel');
 	});
 

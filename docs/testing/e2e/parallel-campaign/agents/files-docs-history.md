@@ -327,7 +327,7 @@ File explorer, file preview, document rendering, history.
   - Cumulative lane matrix rows: 47 active, 3 skipped, 2 env-gated
 - Active coverage IDs:
   - `FDH-A43` File Explorer context menu closes with Escape
-  - `FDH-A44` Hidden dotfiles reveal only after enabling dotfile visibility
+  - `FDH-A44` dotfiles hide after disabling dotfile visibility
   - `FDH-A45` File Explorer auto-refresh disables from the refresh menu
   - `FDH-A46` History list row duration and cost metadata renders
   - `FDH-A47` History achievement action opens the About Maestro modal
@@ -435,7 +435,7 @@ File explorer, file preview, document rendering, history.
   - Total matrix rows added: 5
   - Cumulative FDH spec matrix rows: 57 active, 3 skipped, 2 env-gated
 - New active IDs:
-  - `FDH-A53` hidden dotfile filtering after dotfile visibility is enabled
+  - `FDH-A53` visible dotfile filtering from File Explorer search
   - `FDH-A54` folder context menus omit file-only actions
   - `FDH-A55` unchanged file rename submissions remain disabled
   - `FDH-A56` file delete confirmation closes with Escape
@@ -585,7 +585,7 @@ File explorer, file preview, document rendering, history.
   - Env-gated external-state rows added: 0
   - Cumulative owned FDH explicit active rows: 354 active, 3 skipped, 2 env-gated
 - New active IDs:
-  - `FDH-A350` previews a hidden markdown file after dotfile opt-in
+  - `FDH-A350` previews a dotfile markdown file while dotfiles are visible
   - `FDH-A351` refreshes File Explorer after an external file removal
   - `FDH-A352` opens a nested markdown preview from filtered results
   - `FDH-A353` cancels markdown preview edits without changing disk content

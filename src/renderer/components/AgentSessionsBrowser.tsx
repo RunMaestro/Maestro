@@ -704,7 +704,12 @@ export function AgentSessionsBrowser({
 	const handleGlobalKeyDown = useCallback(
 		(e: KeyboardEvent) => {
 			// Only handle when not viewing a session and search panel is not already open
-			if (!viewingSession && !showSearchPanel && (e.metaKey || e.ctrlKey) && e.key === 'f') {
+			if (
+				!viewingSession &&
+				!showSearchPanel &&
+				(e.metaKey || e.ctrlKey) &&
+				e.key.toLowerCase() === 'f'
+			) {
 				e.preventDefault();
 				setShowSearchPanel(true);
 				// Focus the search input after state update

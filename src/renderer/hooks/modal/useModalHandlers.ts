@@ -405,9 +405,12 @@ export function useModalHandlers(
 	// Determine the effective error: historical wins when explicitly requested (user clicked Details),
 	// otherwise fall back to live session error
 	const isHistorical = !!historicalAgentError;
+	const activeTabError = errorSession?.aiTabs.find(
+		(tab) => tab.id === errorSession.activeTabId
+	)?.agentError;
 	const effectiveError = isHistorical
 		? historicalAgentError
-		: (errorSession?.agentError ?? undefined);
+		: (activeTabError ?? errorSession?.agentError ?? undefined);
 
 	// Use the agent error recovery hook to get recovery actions
 	// Historical errors get no recovery actions (they're read-only)
@@ -622,7 +625,7 @@ export function useModalHandlers(
 	const handleQuickActionsOpenTabSwitcher = useCallback(() => {
 		const { sessions: currentSessions, activeSessionId } = useSessionStore.getState();
 		const currentSession = currentSessions.find((s) => s.id === activeSessionId);
-		if (currentSession?.inputMode === 'ai' && currentSession.aiTabs) {
+		if (currentSession?.aiTabs?.length) {
 			getModalActions().setTabSwitcherOpen(true);
 		}
 	}, []);

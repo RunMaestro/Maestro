@@ -394,6 +394,30 @@ describe('TerminalOutput', () => {
 			expect(container.querySelector('mark')).not.toBeInTheDocument();
 		});
 
+		it('renders terminal search highlights as markup without exposing mark tags', () => {
+			const shellLogs: LogEntry[] = [
+				createLogEntry({
+					id: 'terminal-search-highlight-log',
+					text: 'terminal search sentinel',
+					source: 'stdout',
+				}),
+			];
+			const session = createDefaultSession({
+				inputMode: 'terminal',
+				shellLogs,
+			});
+
+			const { container } = render(
+				<TerminalOutput
+					{...createDefaultProps({ session, outputSearchQuery: 'terminal search' })}
+				/>
+			);
+
+			expect(container.textContent).toContain('terminal search sentinel');
+			expect(container.textContent).not.toContain('<mark');
+			expect(container.querySelector('mark')).toHaveTextContent('terminal search');
+		});
+
 		it('displays user messages with different styling', () => {
 			const logs: LogEntry[] = [createLogEntry({ text: 'User input here', source: 'user' })];
 

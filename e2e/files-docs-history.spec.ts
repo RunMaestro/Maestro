@@ -69,7 +69,7 @@ const activeScenarioMatrix = [
 	},
 	{ id: 'FDH-A42', title: 'copies failed History provider session id from detail metadata' },
 	{ id: 'FDH-A43', title: 'closes the File Explorer context menu with Escape' },
-	{ id: 'FDH-A44', title: 'reveals hidden dotfiles only after enabling dotfile visibility' },
+	{ id: 'FDH-A44', title: 'hides dotfiles after disabling dotfile visibility' },
 	{ id: 'FDH-A45', title: 'disables File Explorer auto-refresh from the refresh menu' },
 	{ id: 'FDH-A46', title: 'shows History duration and cost metadata in list rows' },
 	{ id: 'FDH-A47', title: 'opens the achievements modal from a History entry action' },
@@ -78,7 +78,7 @@ const activeScenarioMatrix = [
 	{ id: 'FDH-A50', title: 'shows remote markdown images blocked before opt-in' },
 	{ id: 'FDH-A51', title: 'refreshes File Explorer after a new markdown file is written' },
 	{ id: 'FDH-A52', title: 'searches History by session name across seeded entries' },
-	{ id: 'FDH-A53', title: 'filters hidden dotfiles after dotfile visibility is enabled' },
+	{ id: 'FDH-A53', title: 'filters visible dotfiles from File Explorer search' },
 	{ id: 'FDH-A54', title: 'omits file-only context actions from folder context menus' },
 	{ id: 'FDH-A55', title: 'keeps unchanged file rename submissions disabled' },
 	{ id: 'FDH-A56', title: 'dismisses file delete confirmation with Escape' },
@@ -93,7 +93,7 @@ const activeScenarioMatrix = [
 	{ id: 'FDH-A65', title: 'toggles successful History validation back off' },
 	{ id: 'FDH-A66', title: 'cancels deletion of a user-authored History entry' },
 	{ id: 'FDH-A67', title: 'closes History detail with the Close button' },
-	{ id: 'FDH-A350', title: 'previews a hidden markdown file after dotfile opt-in' },
+	{ id: 'FDH-A350', title: 'previews a dotfile markdown file while dotfiles are visible' },
 	{ id: 'FDH-A351', title: 'refreshes File Explorer after an external file removal' },
 	{ id: 'FDH-A352', title: 'opens a nested markdown preview from filtered results' },
 	{ id: 'FDH-A353', title: 'cancels markdown preview edits without changing disk content' },
@@ -460,10 +460,21 @@ async function seedHistoryEntries(page: Page, projectPath: string, sessionId: st
 	);
 }
 
+function fileTreeRowLocator(window: Page, name: string) {
+	return window
+		.locator('[data-file-index]')
+		.filter({ has: window.getByText(name, { exact: true }) })
+		.first();
+}
+
 async function getFileTreeRow(window: Page, name: string) {
-	const row = window.locator('[data-file-index]').filter({ hasText: name }).first();
+	const row = fileTreeRowLocator(window, name);
 	await expect(row).toBeVisible();
 	return row;
+}
+
+function getHistoryDetailModal(window: Page, detailText: string) {
+	return window.locator('.fixed.inset-0').filter({ hasText: detailText }).last();
 }
 
 async function openFileContextMenu(window: Page, name: string) {
@@ -520,9 +531,9 @@ const fileExplorerQuotaAssertions: readonly QuotaAssertion[] = [
 	},
 	async (window, workbench) => {
 		await expect(fs.existsSync(workbench.hiddenPath)).toBe(true);
-		await expect(
-			window.locator('[data-file-index]').filter({ hasText: '.secret.md' })
-		).toBeHidden();
+		await getFileTreeRow(window, '.secret.md');
+		await window.getByTitle('Hide dotfiles').click();
+		await expect(fileTreeRowLocator(window, '.secret.md')).toBeHidden();
 	},
 	async (window, workbench) => {
 		await window.getByTitle('Expand all folders').click();
@@ -534,7 +545,7 @@ const fileExplorerQuotaAssertions: readonly QuotaAssertion[] = [
 	},
 	async (window) => {
 		await window.getByTitle('Expand all folders').click();
-		await window.getByTitle('Refresh file tree').click();
+		await window.getByTitle(/Refresh file tree|Auto-refresh every \d+s/).click();
 		await getFileTreeRow(window, 'README.md');
 		await getFileTreeRow(window, 'docs');
 	},
@@ -597,7 +608,7 @@ const filePreviewQuotaAssertions: readonly QuotaAssertion[] = [
 	async (window) => {
 		await expect(window.getByText('Active tranche item')).toBeVisible();
 		await expect(window.getByText('Completed tranche item')).toBeVisible();
-		await expect(window.getByText('Preview')).toBeVisible();
+		await expect(window.getByRole('cell', { name: 'Preview', exact: true })).toBeVisible();
 	},
 	async (window) => {
 		await expect(window.getByText("const tranche = 'files-docs-history';")).toBeVisible();
@@ -636,7 +647,11 @@ const historyQuotaAssertions: readonly HistoryQuotaAssertion[] = [
 		await expect(
 			window.getByText('Failure detail includes a blocked external renderer path.')
 		).toBeVisible();
-		await expect(window.getByTitle('Task failed')).toBeVisible();
+		const detailModal = getHistoryDetailModal(
+			window,
+			'Failure detail includes a blocked external renderer path.'
+		);
+		await expect(detailModal.getByTitle('Task failed')).toBeVisible();
 	},
 	async (window) => {
 		const historyPanel = window.locator('[data-tour="history-panel"]');
@@ -728,9 +743,7 @@ test.describe(`Files docs history lane matrix (${activeScenarioCount} active, ${
 		await filterInput.fill('runbook');
 
 		await getFileTreeRow(window, 'runbook.md');
-		await expect(
-			window.locator('[data-file-index]').filter({ hasText: 'archive.md' })
-		).toBeHidden();
+		await expect(fileTreeRowLocator(window, 'archive.md')).toBeHidden();
 
 		await filterInput.press('Escape');
 		await expect(filterInput).toBeHidden();
@@ -823,7 +836,7 @@ test.describe(`Files docs history lane matrix (${activeScenarioCount} active, ${
 		await expect(window.getByText('Active tranche item')).toBeVisible();
 		await expect(window.getByText('Completed tranche item')).toBeVisible();
 		await expect(window.getByText('Scenario')).toBeVisible();
-		await expect(window.getByText('Preview')).toBeVisible();
+		await expect(window.getByRole('cell', { name: 'Preview', exact: true })).toBeVisible();
 		await expect(window.getByText("const tranche = 'files-docs-history';")).toBeVisible();
 	});
 
@@ -843,10 +856,14 @@ test.describe(`Files docs history lane matrix (${activeScenarioCount} active, ${
 		await expect(
 			window.getByText('History detail includes README.md and docs/runbook.md render checks.')
 		).toBeVisible();
-		await expect(window.getByTitle('Task completed successfully')).toBeVisible();
-		await expect(window.getByTitle('Copy session ID: codex-history-render')).toBeVisible();
-		await expect(window.getByText('1m 10s')).toBeVisible();
-		await expect(window.getByText('$0.04')).toBeVisible();
+		const detailModal = getHistoryDetailModal(
+			window,
+			'History detail includes README.md and docs/runbook.md render checks.'
+		);
+		await expect(detailModal.getByTitle('Task completed successfully')).toBeVisible();
+		await expect(detailModal.getByTitle('Copy session ID: codex-history-render')).toBeVisible();
+		await expect(detailModal.getByText('1m 10s')).toBeVisible();
+		await expect(detailModal.getByText('$0.04')).toBeVisible();
 	});
 
 	test(`${activeScenarioMatrix[8].id} ${activeScenarioMatrix[8].title}`, async () => {
@@ -855,12 +872,8 @@ test.describe(`Files docs history lane matrix (${activeScenarioCount} active, ${
 		await getFileTreeRow(window, 'runbook.md');
 
 		await window.getByTitle('Collapse all folders').click();
-		await expect(
-			window.locator('[data-file-index]').filter({ hasText: 'runbook.md' })
-		).toBeHidden();
-		await expect(
-			window.locator('[data-file-index]').filter({ hasText: 'archive.md' })
-		).toBeHidden();
+		await expect(fileTreeRowLocator(window, 'runbook.md')).toBeHidden();
+		await expect(fileTreeRowLocator(window, 'archive.md')).toBeHidden();
 
 		await window.getByTitle('Expand all folders').click();
 		await getFileTreeRow(window, 'runbook.md');
@@ -893,7 +906,7 @@ test.describe(`Files docs history lane matrix (${activeScenarioCount} active, ${
 
 		await expect(deleteDialog).toBeHidden();
 		await expect(window.getByText('Deleted "docs"')).toBeVisible();
-		await expect(window.locator('[data-file-index]').filter({ hasText: 'docs' })).toBeHidden();
+		await expect(fileTreeRowLocator(window, 'docs')).toBeHidden();
 		await expect(fs.existsSync(seededWorkbench.runbookPath)).toBe(false);
 		await expect(fs.existsSync(seededWorkbench.archivePath)).toBe(false);
 	});
@@ -920,10 +933,16 @@ test.describe(`Files docs history lane matrix (${activeScenarioCount} active, ${
 		await expect(
 			window.getByText('Failure detail includes a blocked external renderer path.')
 		).toBeVisible();
-		await expect(window.getByTitle('Task failed')).toBeVisible();
-		await expect(window.getByTitle('Copy session ID: codex-history-preview-failure')).toBeVisible();
-		await expect(window.getByText('14s')).toBeVisible();
-		await expect(window.getByTitle('Mark as human-validated')).toBeHidden();
+		const detailModal = getHistoryDetailModal(
+			window,
+			'Failure detail includes a blocked external renderer path.'
+		);
+		await expect(detailModal.getByTitle('Task failed')).toBeVisible();
+		await expect(
+			detailModal.getByTitle('Copy session ID: codex-history-preview-failure')
+		).toBeVisible();
+		await expect(detailModal.getByText('14s')).toBeVisible();
+		await expect(detailModal.getByTitle('Mark as human-validated')).toBeHidden();
 	});
 
 	test(`${activeScenarioMatrix[13].id} ${activeScenarioMatrix[13].title}`, async () => {
@@ -957,7 +976,7 @@ test.describe(`Files docs history lane matrix (${activeScenarioCount} active, ${
 		await expect(renameDialog).toBeHidden();
 		await expect(window.getByText('Renamed to "OVERVIEW.md"')).toBeVisible();
 		await getFileTreeRow(window, 'OVERVIEW.md');
-		await expect(window.locator('[data-file-index]').filter({ hasText: 'README.md' })).toBeHidden();
+		await expect(fileTreeRowLocator(window, 'README.md')).toBeHidden();
 		await expect(fs.existsSync(renamedPath)).toBe(true);
 		await expect(fs.existsSync(seededWorkbench.readmePath)).toBe(false);
 	});
@@ -975,7 +994,7 @@ test.describe(`Files docs history lane matrix (${activeScenarioCount} active, ${
 		await expect(renameDialog).toBeHidden();
 		await expect(window.getByText('Renamed to "guides"')).toBeVisible();
 		await getFileTreeRow(window, 'guides');
-		await expect(window.locator('[data-file-index]').filter({ hasText: 'docs' })).toBeHidden();
+		await expect(fileTreeRowLocator(window, 'docs')).toBeHidden();
 		await expect(fs.existsSync(renamedFolderPath)).toBe(true);
 		await expect(fs.existsSync(path.join(renamedFolderPath, 'runbook.md'))).toBe(true);
 		await expect(fs.existsSync(path.join(renamedFolderPath, 'archive.md'))).toBe(true);
@@ -1011,9 +1030,7 @@ test.describe(`Files docs history lane matrix (${activeScenarioCount} active, ${
 
 		await expect(deleteDialog).toBeHidden();
 		await expect(window.getByText('Deleted "archive.md"')).toBeVisible();
-		await expect(
-			window.locator('[data-file-index]').filter({ hasText: 'archive.md' })
-		).toBeHidden();
+		await expect(fileTreeRowLocator(window, 'archive.md')).toBeHidden();
 		await expect(fs.existsSync(seededWorkbench.archivePath)).toBe(false);
 		await expect(fs.existsSync(seededWorkbench.runbookPath)).toBe(true);
 	});
@@ -1096,9 +1113,7 @@ test.describe(`Files docs history lane matrix (${activeScenarioCount} active, ${
 
 		await expect(renameDialog).toBeHidden();
 		await getFileTreeRow(window, 'README.md');
-		await expect(
-			window.locator('[data-file-index]').filter({ hasText: 'CANCELLED.md' })
-		).toBeHidden();
+		await expect(fileTreeRowLocator(window, 'CANCELLED.md')).toBeHidden();
 		await expect(fs.existsSync(seededWorkbench.readmePath)).toBe(true);
 		await expect(fs.existsSync(path.join(seededWorkbench.projectDir, 'CANCELLED.md'))).toBe(false);
 	});
@@ -1184,9 +1199,7 @@ test.describe(`Files docs history lane matrix (${activeScenarioCount} active, ${
 		const filterInput = window.getByPlaceholder('Filter files...');
 		await filterInput.fill('plain');
 		const plainTextRow = await getFileTreeRow(window, 'plain.txt');
-		await expect(
-			window.locator('[data-file-index]').filter({ hasText: 'runbook.md' })
-		).toBeHidden();
+		await expect(fileTreeRowLocator(window, 'runbook.md')).toBeHidden();
 
 		await plainTextRow.dblclick();
 		await expect(window.getByText('Plain preview starting line.')).toBeVisible();
@@ -1431,13 +1444,13 @@ test.describe(`Files docs history lane matrix (${activeScenarioCount} active, ${
 
 	test(`${activeScenarioMatrix[43].id} ${activeScenarioMatrix[43].title}`, async () => {
 		await helpers.openRightPanelTab(window, 'Files');
-		await expect(window.getByText('.secret.md')).toBeHidden();
-
-		await window.getByTitle('Show dotfiles').click();
 		await getFileTreeRow(window, '.secret.md');
 
 		await window.getByTitle('Hide dotfiles').click();
-		await expect(window.getByText('.secret.md')).toBeHidden();
+		await expect(fileTreeRowLocator(window, '.secret.md')).toBeHidden();
+
+		await window.getByTitle('Show dotfiles').click();
+		await getFileTreeRow(window, '.secret.md');
 	});
 
 	test(`${activeScenarioMatrix[44].id} ${activeScenarioMatrix[44].title}`, async () => {
@@ -1528,7 +1541,6 @@ test.describe(`Files docs history lane matrix (${activeScenarioCount} active, ${
 
 	test(`${activeScenarioMatrix[52].id} ${activeScenarioMatrix[52].title}`, async () => {
 		await helpers.openRightPanelTab(window, 'Files');
-		await window.getByTitle('Show dotfiles').click();
 		const readmeRow = await getFileTreeRow(window, 'README.md');
 		await readmeRow.click();
 		await window.keyboard.press('Control+f');
@@ -1537,7 +1549,7 @@ test.describe(`Files docs history lane matrix (${activeScenarioCount} active, ${
 		await filterInput.fill('secret');
 
 		await getFileTreeRow(window, '.secret.md');
-		await expect(window.locator('[data-file-index]').filter({ hasText: 'README.md' })).toBeHidden();
+		await expect(fileTreeRowLocator(window, 'README.md')).toBeHidden();
 	});
 
 	test(`${activeScenarioMatrix[53].id} ${activeScenarioMatrix[53].title}`, async () => {
@@ -1658,7 +1670,7 @@ test.describe(`Files docs history lane matrix (${activeScenarioCount} active, ${
 
 		await expect(renameDialog).toBeHidden();
 		await getFileTreeRow(window, 'docs');
-		await expect(window.locator('[data-file-index]').filter({ hasText: 'guides' })).toBeHidden();
+		await expect(fileTreeRowLocator(window, 'guides')).toBeHidden();
 		await expect(fs.existsSync(seededWorkbench.runbookPath)).toBe(true);
 		await expect(fs.existsSync(seededWorkbench.archivePath)).toBe(true);
 	});
@@ -1715,8 +1727,12 @@ test.describe(`Files docs history lane matrix (${activeScenarioCount} active, ${
 		await expect(window.getByTitle('Mark as not validated')).toBeVisible();
 
 		await window.getByTitle('Mark as not validated').click();
-		await expect(window.getByTitle('Mark as human-validated')).toBeVisible();
-		await expect(window.getByTitle('Task completed successfully')).toBeVisible();
+		const detailModal = getHistoryDetailModal(
+			window,
+			'History detail includes README.md and docs/runbook.md render checks.'
+		);
+		await expect(detailModal.getByTitle('Mark as human-validated')).toBeVisible();
+		await expect(detailModal.getByTitle('Task completed successfully')).toBeVisible();
 	});
 
 	test(`${activeScenarioMatrix[65].id} ${activeScenarioMatrix[65].title}`, async () => {
@@ -1756,9 +1772,6 @@ test.describe(`Files docs history lane matrix (${activeScenarioCount} active, ${
 
 	test(`${activeScenarioMatrix[67].id} ${activeScenarioMatrix[67].title}`, async () => {
 		await helpers.openRightPanelTab(window, 'Files');
-		await expect(window.getByText('.secret.md')).toBeHidden();
-
-		await window.getByTitle('Show dotfiles').click();
 		const hiddenRow = await getFileTreeRow(window, '.secret.md');
 		await hiddenRow.dblclick();
 
@@ -1774,11 +1787,9 @@ test.describe(`Files docs history lane matrix (${activeScenarioCount} active, ${
 		await getFileTreeRow(window, 'archive.md');
 
 		fs.unlinkSync(seededWorkbench.archivePath);
-		await window.getByTitle('Refresh file tree').click();
+		await window.getByTitle(/Refresh file tree|Auto-refresh every \d+s/).click();
 
-		await expect(
-			window.locator('[data-file-index]').filter({ hasText: 'archive.md' })
-		).toBeHidden();
+		await expect(fileTreeRowLocator(window, 'archive.md')).toBeHidden();
 		await expect(fs.existsSync(seededWorkbench.archivePath)).toBe(false);
 		await getFileTreeRow(window, 'runbook.md');
 	});

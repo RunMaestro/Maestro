@@ -239,6 +239,36 @@ describe('ProcessMonitor', () => {
 		expect(['', 'transparent', 'rgba(0, 0, 0, 0)']).toContain(element.style.backgroundColor);
 	};
 
+	it('groups tab-based AI processes when session and tab ids contain -ai-', async () => {
+		const tabId = 'debug-accessibility-ai-tab';
+		const session = createSession({
+			id: 'debug-accessibility-ai-agent',
+			name: 'Debug AI Session',
+			activeTabId: tabId,
+			aiTabs: [
+				{
+					id: tabId,
+					name: 'Debug Tab',
+					logs: [],
+					agentSessionId: 'agent-session-1',
+					isStarred: false,
+					state: 'idle',
+				},
+			],
+		});
+		const process = createActiveProcess({
+			sessionId: `${session.id}-ai-${tabId}`,
+			toolType: 'codex',
+		});
+		getActiveProcessesMock().mockResolvedValue([process]);
+
+		render(<ProcessMonitor theme={theme} sessions={[session]} groups={[]} onClose={onClose} />);
+
+		await waitFor(() => {
+			expect(screen.getByText('Debug AI Session - AI Agent (codex)')).toBeInTheDocument();
+		});
+	});
+
 	describe('formatRuntime helper', () => {
 		// Test formatRuntime indirectly through process display
 		it('should format seconds correctly', async () => {
@@ -1355,6 +1385,27 @@ describe('ProcessMonitor', () => {
 			expect(onClose).not.toHaveBeenCalled();
 		});
 
+		it('should open process details with Enter from a directly focused process row', async () => {
+			getActiveProcessesMock().mockResolvedValue([createActiveProcess()]);
+
+			const session = createSession();
+			render(<ProcessMonitor theme={theme} sessions={[session]} groups={[]} onClose={onClose} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('Test Session - AI Agent (claude-code)')).toBeInTheDocument();
+			});
+
+			const processNode = screen
+				.getByText('Test Session - AI Agent (claude-code)')
+				.closest('div[tabindex="0"]')!;
+			fireEvent.focus(processNode);
+			fireEvent.keyDown(processNode, { key: 'Enter' });
+
+			await waitFor(() => {
+				expect(screen.getByText('Process Details')).toBeInTheDocument();
+			});
+		});
+
 		it('should refresh with R when the tree has visible nodes', async () => {
 			getActiveProcessesMock().mockResolvedValue([createActiveProcess()]);
 
@@ -1719,6 +1770,30 @@ describe('ProcessMonitor', () => {
 			});
 		});
 
+		it('should cancel kill from the backdrop without closing Process Monitor', async () => {
+			const process = createActiveProcess();
+			getActiveProcessesMock().mockResolvedValue([process]);
+
+			const session = createSession();
+			render(<ProcessMonitor theme={theme} sessions={[session]} groups={[]} onClose={onClose} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('Test Session - AI Agent (claude-code)')).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getAllByTitle('Kill process')[0]);
+
+			const confirmDialog = screen.getByText('Kill Process?').closest('div[tabindex="-1"]')!;
+			const backdrop = confirmDialog.parentElement!;
+			fireEvent.click(backdrop);
+
+			expect(screen.queryByText('Kill Process?')).not.toBeInTheDocument();
+			expect(screen.getByText('System Processes')).toBeInTheDocument();
+			expect(screen.getByText('Test Session - AI Agent (claude-code)')).toBeInTheDocument();
+			expect(onClose).not.toHaveBeenCalled();
+			expect(killMock()).not.toHaveBeenCalled();
+		});
+
 		it('should kill process when clicking Kill Process button', async () => {
 			const process = createActiveProcess();
 			getActiveProcessesMock().mockResolvedValue([process]);
@@ -1818,6 +1893,37 @@ describe('ProcessMonitor', () => {
 			await waitFor(() => {
 				expect(screen.queryByText('Kill Process?')).not.toBeInTheDocument();
 			});
+		});
+
+		it('should close confirmation but keep Process Monitor open from the layer Escape handler', async () => {
+			const process = createActiveProcess();
+			getActiveProcessesMock().mockResolvedValue([process]);
+
+			const session = createSession();
+			render(<ProcessMonitor theme={theme} sessions={[session]} groups={[]} onClose={onClose} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('Test Session - AI Agent (claude-code)')).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getAllByTitle('Kill process')[0]);
+			expect(screen.getByText('Kill Process?')).toBeInTheDocument();
+
+			await waitFor(() => {
+				expect(mockUpdateLayerHandler).toHaveBeenCalled();
+			});
+			const escapeHandler = mockUpdateLayerHandler.mock.calls.at(-1)?.[1] as
+				| (() => void)
+				| undefined;
+
+			act(() => {
+				escapeHandler?.();
+			});
+
+			expect(screen.queryByText('Kill Process?')).not.toBeInTheDocument();
+			expect(screen.getByText('System Processes')).toBeInTheDocument();
+			expect(screen.getByText('Test Session - AI Agent (claude-code)')).toBeInTheDocument();
+			expect(onClose).not.toHaveBeenCalled();
 		});
 
 		it('should ignore unrelated keys in the kill confirmation dialog', async () => {

@@ -567,7 +567,7 @@ describe('QuickActionsModal integration', () => {
 		});
 
 		expect(screen.queryByText(/Edit Agent/)).not.toBeInTheDocument();
-		expect(screen.queryByText(/Tab Switcher/)).not.toBeInTheDocument();
+		expect(screen.getByText(/Tab Switcher/)).toBeInTheDocument();
 		expect(screen.queryByText(/View Agent Sessions/)).not.toBeInTheDocument();
 		expect(screen.queryByText(/Publish Document as GitHub Gist/)).not.toBeInTheDocument();
 

@@ -198,12 +198,14 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 		return () => unregisterLayer(layerId);
 	}, [registerLayer, unregisterLayer]);
 
-	// Update handler when onClose or detailView changes
+	// Update handler when onClose, detailView, or kill confirmation changes
 	// If in detail view, Escape goes back to list; otherwise closes the modal
 	useEffect(() => {
 		if (layerIdRef.current) {
 			const handleEscape = () => {
-				if (detailView) {
+				if (killConfirmProcessId) {
+					setKillConfirmProcessId(null);
+				} else if (detailView) {
 					setDetailView(null);
 				} else {
 					onClose();
@@ -211,7 +213,7 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 			};
 			updateLayerHandler(layerIdRef.current, handleEscape);
 		}
-	}, [onClose, detailView, updateLayerHandler]);
+	}, [onClose, detailView, killConfirmProcessId, updateLayerHandler]);
 
 	// Fetch processes on mount and poll for updates
 	useEffect(() => {
@@ -286,6 +288,24 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 	// - {baseSessionId}-batch-{timestamp}
 	// - {baseSessionId}-synopsis-{timestamp}
 	const parseBaseSessionId = (processSessionId: string): string => {
+		const matchingSession = sessions
+			.slice()
+			.sort((a, b) => b.id.length - a.id.length)
+			.find((session) => {
+				const suffix = processSessionId.slice(session.id.length);
+				return (
+					processSessionId.startsWith(session.id) &&
+					(suffix === '-ai' ||
+						suffix === '-terminal' ||
+						(suffix.startsWith('-ai-') && suffix.length > '-ai-'.length) ||
+						(suffix.startsWith('-batch-') && /^\d+$/.test(suffix.slice('-batch-'.length))) ||
+						(suffix.startsWith('-synopsis-') && /^\d+$/.test(suffix.slice('-synopsis-'.length))))
+				);
+			});
+		if (matchingSession) {
+			return matchingSession.id;
+		}
+
 		// Check for batch mode pattern: {sessionId}-batch-{timestamp}
 		const batchMatch = processSessionId.match(/^(.+)-batch-\d+$/);
 		if (batchMatch) {
@@ -327,7 +347,13 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 	};
 
 	// Extract tab ID from process session ID (format: {sessionId}-ai-{tabId})
-	const parseTabId = (processSessionId: string): string | null => {
+	const parseTabId = (processSessionId: string, baseSessionId?: string): string | null => {
+		if (baseSessionId) {
+			const prefix = `${baseSessionId}-ai-`;
+			if (processSessionId.startsWith(prefix)) {
+				return processSessionId.slice(prefix.length);
+			}
+		}
 		const match = processSessionId.match(/-ai-(.+)$/);
 		return match ? match[1] : null;
 	};
@@ -394,7 +420,7 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 				let agentSessionId: string | undefined;
 				let tabId: string | undefined;
 				if (processType === 'ai' || processType === 'batch' || processType === 'synopsis') {
-					tabId = parseTabId(proc.sessionId) || undefined;
+					tabId = parseTabId(proc.sessionId, session.id) || undefined;
 					if (session.aiTabs) {
 						// First try to find by tab ID
 						if (tabId) {
@@ -795,6 +821,7 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 							setSelectedNodeId(node.id);
 							toggleNode(node.id);
 						}}
+						onFocus={() => setSelectedNodeId(node.id)}
 						className="w-full text-left px-4 py-2 flex items-center gap-2 hover:bg-opacity-5"
 						style={{
 							paddingLeft: `${paddingLeft}px`,
@@ -845,6 +872,7 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 							setSelectedNodeId(node.id);
 							toggleNode(node.id);
 						}}
+						onFocus={() => setSelectedNodeId(node.id)}
 						className="w-full text-left px-4 py-2 flex items-center gap-2 hover:bg-opacity-5"
 						style={{
 							paddingLeft: `${paddingLeft}px`,
@@ -915,6 +943,7 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 						outlineOffset: '-2px',
 					}}
 					onClick={() => setSelectedNodeId(node.id)}
+					onFocus={() => setSelectedNodeId(node.id)}
 					onDoubleClick={() => openProcessDetail(node)}
 					onMouseEnter={(e) => {
 						if (!isSelected) e.currentTarget.style.backgroundColor = `${theme.colors.accent}15`;
@@ -1071,6 +1100,7 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 						setSelectedNodeId(node.id);
 						toggleNode(node.id);
 					}}
+					onFocus={() => setSelectedNodeId(node.id)}
 					onKeyDown={(e) => {
 						if (e.target !== e.currentTarget) {
 							if (e.key === 'Enter' || e.key === ' ') e.stopPropagation();
@@ -1571,7 +1601,10 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 				<div
 					className="fixed inset-0 flex items-center justify-center z-[10000]"
 					style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}
-					onClick={() => setKillConfirmProcessId(null)}
+					onClick={(e) => {
+						e.stopPropagation();
+						setKillConfirmProcessId(null);
+					}}
 				>
 					<div
 						ref={killConfirmRef}
@@ -1582,9 +1615,11 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 						onKeyDown={(e) => {
 							if (e.key === 'Enter' && !isKilling) {
 								e.preventDefault();
+								e.stopPropagation();
 								killProcess(killConfirmProcessId);
 							} else if (e.key === 'Escape') {
 								e.preventDefault();
+								e.stopPropagation();
 								setKillConfirmProcessId(null);
 							}
 						}}

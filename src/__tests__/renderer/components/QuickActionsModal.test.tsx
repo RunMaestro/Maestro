@@ -1440,11 +1440,11 @@ describe('QuickActionsModal', () => {
 		});
 	});
 
-	describe('Tab-related actions (AI mode)', () => {
-		it('shows Tab Switcher when in AI mode with handler', () => {
+	describe('Tab-related actions', () => {
+		it('shows Tab Switcher when an active session has a handler', () => {
 			const onOpenTabSwitcher = vi.fn();
 			const props = createDefaultProps({
-				isAiMode: true,
+				isAiMode: false,
 				onOpenTabSwitcher,
 				tabShortcuts: { tabSwitcher: { id: 'tabSwitcher', keys: ['Cmd', 'K'], enabled: true } },
 			});
@@ -1517,7 +1517,7 @@ describe('QuickActionsModal', () => {
 			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
 		});
 
-		it('does not show tab actions when not in AI mode', () => {
+		it('does not show AI-only tab actions when not in AI mode', () => {
 			const props = createDefaultProps({
 				isAiMode: false,
 				onOpenTabSwitcher: vi.fn(),
@@ -1526,7 +1526,7 @@ describe('QuickActionsModal', () => {
 			});
 			render(<QuickActionsModal {...props} />);
 
-			expect(screen.queryByText('Tab Switcher')).not.toBeInTheDocument();
+			expect(screen.getByText('Tab Switcher')).toBeInTheDocument();
 			expect(screen.queryByText('Rename Tab')).not.toBeInTheDocument();
 			expect(screen.queryByText('Toggle Read-Only Mode')).not.toBeInTheDocument();
 		});

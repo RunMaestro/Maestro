@@ -147,6 +147,8 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					e.altKey && (e.metaKey || e.ctrlKey) && !e.shiftKey && codeKeyLower === 't';
 				// Allow toggleMode (Cmd+J) to switch to terminal view from file preview
 				const isToggleModeShortcut = ctx.isShortcut(e, 'toggleMode');
+				// Allow Quick Actions over non-modal overlays such as output search.
+				const isQuickActionShortcut = ctx.isShortcut(e, 'quickAction');
 				// Allow font size shortcuts (Cmd+=/+, Cmd+-, Cmd+0) even when modals/overlays are open
 				const isFontSizeShortcut =
 					(e.metaKey || e.ctrlKey) &&
@@ -187,6 +189,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 						!isTabManagementShortcut &&
 						!isTabSwitcherShortcut &&
 						!isToggleModeShortcut &&
+						!isQuickActionShortcut &&
 						!isFontSizeShortcut
 					) {
 						return;
@@ -542,18 +545,26 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				return;
 			}
 
-			// Tab shortcuts (AI mode only, requires an explicitly selected session, disabled in group chat view)
+			// Tab Switcher works for all active agent sessions, including terminal mode.
+			if (
+				ctx.activeSessionId &&
+				!!ctx.activeSession?.aiTabs?.length &&
+				!ctx.activeGroupChatId &&
+				ctx.isTabShortcut(e, 'tabSwitcher')
+			) {
+				e.preventDefault();
+				ctx.setTabSwitcherOpen(true);
+				trackShortcut('tabSwitcher');
+				return;
+			}
+
+			// Tab management shortcuts (AI mode only, requires an explicitly selected session, disabled in group chat view)
 			if (
 				ctx.activeSessionId &&
 				ctx.activeSession?.inputMode === 'ai' &&
 				ctx.activeSession?.aiTabs &&
 				!ctx.activeGroupChatId
 			) {
-				if (ctx.isTabShortcut(e, 'tabSwitcher')) {
-					e.preventDefault();
-					ctx.setTabSwitcherOpen(true);
-					trackShortcut('tabSwitcher');
-				}
 				if (ctx.isTabShortcut(e, 'newTab')) {
 					e.preventDefault();
 					const result = ctx.createTab(ctx.activeSession, {

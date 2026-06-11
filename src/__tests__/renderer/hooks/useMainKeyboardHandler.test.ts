@@ -411,7 +411,7 @@ describe('useMainKeyboardHandler', () => {
 				id: 'test-session',
 				name: 'Test',
 				inputMode: 'ai',
-				aiTabs: [],
+				aiTabs: [{ id: 'tab-1', name: 'Main', logs: [] }],
 				activeTabId: 'tab-1',
 				unifiedTabOrder: [],
 			};
@@ -455,7 +455,7 @@ describe('useMainKeyboardHandler', () => {
 				id: 'test-session',
 				name: 'Test',
 				inputMode: 'ai',
-				aiTabs: [],
+				aiTabs: [{ id: 'tab-1', name: 'Main', logs: [] }],
 				activeTabId: 'tab-1',
 				unifiedTabOrder: [],
 			};
@@ -482,6 +482,30 @@ describe('useMainKeyboardHandler', () => {
 
 			// Alt+Cmd+T should open tab switcher even when file preview overlay is open
 			expect(mockSetTabSwitcherOpen).toHaveBeenCalledWith(true);
+		});
+
+		it('should allow Quick Actions shortcut when only overlays are open', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+
+			const mockSetQuickActionInitialMode = vi.fn();
+			const mockSetQuickActionOpen = vi.fn();
+			result.current.keyboardHandlerRef.current = createMockContext({
+				hasOpenLayers: () => true,
+				hasOpenModal: () => false,
+				isShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'quickAction',
+				sessions: [{ id: 'session-1' }],
+				setQuickActionInitialMode: mockSetQuickActionInitialMode,
+				setQuickActionOpen: mockSetQuickActionOpen,
+			});
+
+			const { preventDefaultSpy } = dispatchKeydown({
+				key: 'k',
+				metaKey: true,
+			});
+
+			expect(preventDefaultSpy).toHaveBeenCalled();
+			expect(mockSetQuickActionInitialMode).toHaveBeenCalledWith('main');
+			expect(mockSetQuickActionOpen).toHaveBeenCalledWith(true);
 		});
 
 		it('should allow reopen closed tab shortcut (Cmd+Shift+T) when only overlays are open', () => {
@@ -3601,8 +3625,8 @@ describe('useMainKeyboardHandler', () => {
 			});
 		});
 
-		describe('tab shortcuts disabled in terminal mode', () => {
-			it('should not execute tab shortcuts when in terminal/shell mode', () => {
+		describe('tab shortcuts in terminal mode', () => {
+			it('should not execute AI-only tab shortcuts when in terminal/shell mode', () => {
 				const { result } = renderHook(() => useMainKeyboardHandler());
 
 				const mockCreateTab = vi.fn();
@@ -3635,6 +3659,40 @@ describe('useMainKeyboardHandler', () => {
 
 				// Tab shortcuts should be disabled in terminal mode
 				expect(mockCreateTab).not.toHaveBeenCalled();
+			});
+
+			it('should open Tab Switcher when in terminal/shell mode', () => {
+				const { result } = renderHook(() => useMainKeyboardHandler());
+
+				const mockSetTabSwitcherOpen = vi.fn();
+
+				result.current.keyboardHandlerRef.current = createUnifiedTabContext({
+					isTabShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'tabSwitcher',
+					setTabSwitcherOpen: mockSetTabSwitcherOpen,
+					activeSession: {
+						id: 'session-1',
+						aiTabs: [{ id: 'ai-tab-1', name: 'AI Tab 1', logs: [] }],
+						activeTabId: 'ai-tab-1',
+						filePreviewTabs: [],
+						activeFileTabId: null,
+						unifiedTabOrder: ['ai-tab-1'],
+						inputMode: 'terminal',
+					},
+				});
+
+				act(() => {
+					window.dispatchEvent(
+						new KeyboardEvent('keydown', {
+							key: 't',
+							code: 'KeyT',
+							altKey: true,
+							metaKey: true,
+							bubbles: true,
+						})
+					);
+				});
+
+				expect(mockSetTabSwitcherOpen).toHaveBeenCalledWith(true);
 			});
 		});
 

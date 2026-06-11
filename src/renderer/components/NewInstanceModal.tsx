@@ -981,6 +981,7 @@ export function NewInstanceModal({
 														onRefreshAgent={() => handleRefreshAgent(agent.id)}
 														refreshingAgent={refreshingAgent === agent.id}
 														showBuiltInEnvVars
+														isSshEnabled={isSshEnabled}
 													/>
 												</div>
 											)}

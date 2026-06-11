@@ -454,7 +454,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 					},
 				]
 			: []),
-		...(isAiMode && onOpenTabSwitcher
+		...(activeSession?.aiTabs?.length && onOpenTabSwitcher
 			? [
 					{
 						id: 'tabSwitcher',

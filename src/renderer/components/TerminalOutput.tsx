@@ -82,6 +82,28 @@ export const addTerminalHighlightMarkers = (
 	return result;
 };
 
+const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const addTerminalHtmlHighlightMarkers = (
+	html: string,
+	query: string,
+	warningColor: string,
+	themeMode: Theme['mode']
+): string => {
+	if (!query) return html;
+
+	const pattern = new RegExp(escapeRegExp(query), 'gi');
+	const markerStyle = `background-color: ${warningColor}; color: ${themeMode === 'light' ? '#fff' : '#000'}; padding: 1px 2px; border-radius: 2px;`;
+
+	return html
+		.split(/(<[^>]+>)/g)
+		.map((segment) => {
+			if (!segment || segment.startsWith('<')) return segment;
+			return segment.replace(pattern, (match) => `<mark style="${markerStyle}">${match}</mark>`);
+		})
+		.join('');
+};
+
 // ============================================================================
 // Tool display helpers (pure functions, hoisted out of render path)
 // ============================================================================
@@ -353,24 +375,27 @@ const LogItemComponent = memo(
 		// For stderr entries, use stderr content; for all others, use stdout content
 		const contentToDisplay = log.source === 'stderr' ? filteredStderr : filteredStdout;
 
-		// Apply search highlighting before ANSI conversion for terminal output
-		const contentWithHighlights =
-			isTerminal && log.source !== 'user' && outputSearchQuery
-				? addTerminalHighlightMarkers(
-						contentToDisplay,
-						outputSearchQuery,
-						theme.colors.warning,
-						theme.mode
-					)
-				: contentToDisplay;
+		const convertTerminalHtml = (text: string): string => {
+			if (!outputSearchQuery) {
+				return getCachedAnsiHtml(text, theme.id, ansiConverter);
+			}
 
-		// PERF: Convert ANSI codes to HTML, using cache when no search highlighting is applied
-		// When search is active, highlighting markers change the text so we can't use cache
+			const safeHtml = DOMPurify.sanitize(ansiConverter.toHtml(text));
+			return DOMPurify.sanitize(
+				addTerminalHtmlHighlightMarkers(
+					safeHtml,
+					outputSearchQuery,
+					theme.colors.warning,
+					theme.mode
+				)
+			);
+		};
+
+		// PERF: Convert ANSI codes to HTML, using cache when no search highlighting is applied.
+		// Search highlighting is applied after ANSI conversion so markup renders as HTML.
 		const htmlContent =
 			isTerminal && log.source !== 'user'
-				? outputSearchQuery
-					? DOMPurify.sanitize(ansiConverter.toHtml(contentWithHighlights))
-					: getCachedAnsiHtml(contentToDisplay, theme.id, ansiConverter)
+				? convertTerminalHtml(contentToDisplay)
 				: contentToDisplay;
 
 		const filteredText = contentToDisplay;
@@ -385,23 +410,10 @@ const LogItemComponent = memo(
 				? filteredText.split('\n').slice(0, maxOutputLines).join('\n')
 				: filteredText;
 
-		// Apply highlighting to truncated text as well
-		const displayTextWithHighlights =
-			shouldCollapse && !isExpanded && isTerminal && log.source !== 'user' && outputSearchQuery
-				? addTerminalHighlightMarkers(
-						displayText,
-						outputSearchQuery,
-						theme.colors.warning,
-						theme.mode
-					)
-				: displayText;
-
 		// PERF: Sanitize with DOMPurify, using cache when no search highlighting
 		const displayHtmlContent =
 			shouldCollapse && !isExpanded && isTerminal && log.source !== 'user'
-				? outputSearchQuery
-					? DOMPurify.sanitize(ansiConverter.toHtml(displayTextWithHighlights))
-					: getCachedAnsiHtml(displayText, theme.id, ansiConverter)
+				? convertTerminalHtml(displayText)
 				: htmlContent;
 
 		const isUserMessage = log.source === 'user';
