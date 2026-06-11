@@ -810,6 +810,7 @@ function MaestroConsoleInner() {
 		handleCloseCurrentTab,
 		handleRequestTabRename,
 		handleUpdateTabByClaudeSessionId,
+		handleUpdateTabDescription,
 		handleTabStar,
 		handleTabMarkUnread,
 		handleToggleTabReadOnlyMode,
@@ -2286,6 +2287,9 @@ function MaestroConsoleInner() {
 		handleTabReorder,
 		handleUnifiedTabReorder,
 		handleUpdateTabByClaudeSessionId,
+		handleUpdateTabDescription: encoreFeatures.tabDescription
+			? handleUpdateTabDescription
+			: undefined,
 		handleTabStar,
 		handleTabMarkUnread,
 		handleToggleTabReadOnlyMode,
