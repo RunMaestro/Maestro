@@ -86,8 +86,7 @@ maestro/
 │   │   └── templateVariables.ts # Template variable system
 │   └── web/               # Web interface (Remote Control)
 │       └── ...            # Mobile-optimized React app
-├── docs/                  # Mintlify documentation (hosted at docs.runmaestro.ai)
-│   ├── docs.json          # Mintlify configuration and navigation
+├── docs/                  # User documentation
 │   ├── screenshots/       # All documentation screenshots
 │   ├── assets/            # Logos, icons, and static assets
 │   └── *.md               # Documentation pages
@@ -1012,13 +1011,12 @@ GitHub Actions will build for all platforms and create a release. Tags containin
 
 ## Documentation
 
-User documentation is hosted on [Mintlify](https://mintlify.com) at **[docs.runmaestro.ai](https://docs.runmaestro.ai)**. The source files live in the `docs/` directory.
+User documentation source files live in the `docs/` directory.
 
 ### Documentation Structure
 
 ```
 docs/
-├── docs.json              # Mintlify configuration (navigation, theme, links)
 ├── index.md               # Homepage
 ├── screenshots/           # All documentation screenshots (PNG format)
 ├── assets/                # Logos, icons, favicons
@@ -1026,18 +1024,6 @@ docs/
 │   └── overview.md
 └── *.md                   # Feature and reference pages
 ```
-
-### Page Organization
-
-Pages are organized by topic in `docs.json` under `navigation.dropdowns`:
-
-| Group               | Pages                                                                                                                                                    | Purpose                                      |
-| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
-| **Overview**        | index, about/overview, features, screenshots                                                                                                             | Introduction and feature highlights          |
-| **Getting Started** | installation, getting-started                                                                                                                            | Onboarding new users                         |
-| **Usage**           | general-usage, history, context-management, autorun-playbooks, git-worktrees, group-chat, remote-access, slash-commands, speckit-commands, configuration | Feature documentation                        |
-| **Providers & CLI** | provider-notes, cli                                                                                                                                      | Provider configuration and command line docs |
-| **Reference**       | achievements, keyboard-shortcuts, troubleshooting                                                                                                        | Quick reference guides                       |
 
 ### Adding a New Documentation Page
 
@@ -1053,16 +1039,7 @@ Pages are organized by topic in `docs.json` under `navigation.dropdowns`:
    Content goes here...
    ```
 
-2. **Add to navigation** in `docs/docs.json`:
-
-   ```json
-   {
-   	"group": "Usage",
-   	"pages": ["existing-page", "my-feature"]
-   }
-   ```
-
-3. **Reference from other pages** using relative links:
+2. **Reference from other pages** using relative links:
    ```markdown
    See [My Feature](./my-feature) for details.
    ```
@@ -1071,11 +1048,11 @@ Pages are organized by topic in `docs.json` under `navigation.dropdowns`:
 
 Every documentation page needs YAML frontmatter:
 
-| Field         | Required | Description                                                                        |
-| ------------- | -------- | ---------------------------------------------------------------------------------- |
-| `title`       | Yes      | Page title (appears in navigation and browser tab)                                 |
-| `description` | Yes      | Brief description for SEO and page previews                                        |
-| `icon`        | No       | [Mintlify icon](https://mintlify.com/docs/content/components/icons) for navigation |
+| Field         | Required | Description                                 |
+| ------------- | -------- | ------------------------------------------- |
+| `title`       | Yes      | Page title                                  |
+| `description` | Yes      | Brief description for SEO and page previews |
+| `icon`        | No       | Optional icon metadata                      |
 
 ### Screenshots
 
@@ -1120,26 +1097,6 @@ Static assets like logos and icons live in `docs/assets/`:
 | `made-with-maestro.svg` | Badge for README                        |
 | `maestro-app-icon.png`  | High-res app icon                       |
 
-Reference assets with `/assets/` paths in `docs.json` configuration.
-
-### Mintlify Features
-
-Documentation supports Mintlify components:
-
-```markdown
-<Note>
-This is an informational note.
-</Note>
-
-<Warning>
-This is a warning message.
-</Warning>
-
-<Tip>
-This is a helpful tip.
-</Tip>
-```
-
 **Embed videos:**
 
 ```markdown
@@ -1152,18 +1109,6 @@ This is a helpful tip.
 ```
 
 **Tables, code blocks, and standard markdown** all work as expected.
-
-### Local Preview
-
-Mintlify provides a CLI for local preview. Install and run:
-
-```bash
-npm i -g mintlify
-cd docs
-mintlify dev
-```
-
-This starts a local server at `http://localhost:3000` with hot reload.
 
 ### MCP Server
 
@@ -1191,7 +1136,7 @@ See [MCP Server documentation](https://docs.runmaestro.ai/mcp-server) for full d
 
 ### Deployment
 
-Documentation is automatically deployed when changes to `docs/` are pushed to `main`. Mintlify handles the build and hosting.
+Documentation deployment is handled by the configured docs hosting pipeline when changes to `docs/` are pushed to `main`.
 
 ## Questions?
 

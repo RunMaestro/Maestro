@@ -160,7 +160,7 @@ src/
 │
 ├── shared/                 # Shared types and utilities
 │
-└── docs/                   # Mintlify documentation (docs.runmaestro.ai)
+└── docs/                   # User documentation (docs.runmaestro.ai)
 ```
 
 ---
@@ -193,7 +193,7 @@ src/
 | Modify wizard flow           | `src/renderer/components/Wizard/` (see [[CLAUDE-WIZARD.md]])                                                                                                            |
 | Add tour step                | `src/renderer/components/Wizard/tour/tourSteps.ts`                                                                                                                      |
 | Modify file linking          | `src/renderer/utils/remarkFileLinks.ts` (remark plugin for `[[wiki]]` and path links)                                                                                   |
-| Add documentation page       | `docs/*.md`, `docs/docs.json` (navigation)                                                                                                                              |
+| Add documentation page       | `docs/*.md`                                                                                                                                                             |
 | Add documentation screenshot | `docs/screenshots/` (PNG, kebab-case naming)                                                                                                                            |
 | MCP server integration       | See [MCP Server docs](https://docs.runmaestro.ai/mcp-server)                                                                                                            |
 | Add stats/analytics feature  | `src/main/stats-db.ts`, `src/main/ipc/handlers/stats.ts`                                                                                                                |
