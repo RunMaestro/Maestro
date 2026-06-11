@@ -54,6 +54,24 @@ interface SessionCommandDrafts {
 type CommandDraftStore = Record<string, SessionCommandDrafts>;
 const SESSION_LEVEL_AI_DRAFT_KEY = '__session__';
 
+export function resolveResponseViewerSelection(
+	lastResponse: LastResponsePreview,
+	allResponses: ResponseItem[]
+): { index: number; response: LastResponsePreview } {
+	const nextIndex = allResponses.findIndex(
+		({ response }) =>
+			response === lastResponse ||
+			(response.timestamp === lastResponse.timestamp &&
+				response.text === lastResponse.text &&
+				response.source === lastResponse.source)
+	);
+
+	return {
+		index: nextIndex >= 0 ? nextIndex : 0,
+		response: nextIndex >= 0 ? allResponses[nextIndex].response : lastResponse,
+	};
+}
+
 function getEmptyDrafts(): SessionCommandDrafts {
 	return {
 		aiByTab: {},
@@ -926,16 +944,9 @@ export default function MobileApp() {
 
 	const handleExpandResponse = useCallback(
 		(lastResponse: LastResponsePreview) => {
-			const nextIndex = allResponses.findIndex(
-				({ response }) =>
-					response === lastResponse ||
-					(response.timestamp === lastResponse.timestamp &&
-						response.text === lastResponse.text &&
-						response.source === lastResponse.source)
-			);
-
-			setResponseIndex(nextIndex >= 0 ? nextIndex : 0);
-			setSelectedResponse(nextIndex >= 0 ? allResponses[nextIndex].response : lastResponse);
+			const selection = resolveResponseViewerSelection(lastResponse, allResponses);
+			setResponseIndex(selection.index);
+			setSelectedResponse(selection.response);
 			setShowResponseViewer(true);
 		},
 		[allResponses]

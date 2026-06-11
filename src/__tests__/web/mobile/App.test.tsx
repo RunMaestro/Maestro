@@ -614,7 +614,7 @@ vi.mock('../../../web/mobile/SlashCommandAutocomplete', () => ({
 }));
 
 // Now import the component
-import MobileApp from '../../../web/mobile/App';
+import MobileApp, { resolveResponseViewerSelection } from '../../../web/mobile/App';
 import type { Session } from '../../../web/hooks/useSessions';
 
 // Helper to create mock sessions
@@ -722,6 +722,58 @@ describe('MobileApp', () => {
 	describe('pure functions', () => {
 		// We need to test the pure functions: formatCost, calculateContextUsage, getActiveTabFromSession
 		// These are not exported, but we can test their behavior through component rendering
+		describe('resolveResponseViewerSelection', () => {
+			it('selects the matching response by object identity', () => {
+				const response = { text: 'exact response', timestamp: 20, source: 'stdout' } as any;
+				const allResponses = [
+					{ response, sessionId: 'session-1', sessionName: 'Session 1' },
+					{
+						response: { text: 'older response', timestamp: 10, source: 'stdout' },
+						sessionId: 'session-2',
+						sessionName: 'Session 2',
+					},
+				] as any;
+
+				expect(resolveResponseViewerSelection(response, allResponses)).toEqual({
+					index: 0,
+					response,
+				});
+			});
+
+			it('selects the matching response by stable response fields', () => {
+				const matchingResponse = { text: 'same response', timestamp: 42, source: 'ai' } as any;
+				const allResponses = [
+					{
+						response: matchingResponse,
+						sessionId: 'session-1',
+						sessionName: 'Session 1',
+					},
+				] as any;
+
+				expect(
+					resolveResponseViewerSelection(
+						{ text: 'same response', timestamp: 42, source: 'ai' } as any,
+						allResponses
+					)
+				).toEqual({ index: 0, response: matchingResponse });
+			});
+
+			it('falls back to the provided response when it is not in navigation data', () => {
+				const orphanResponse = { text: 'orphan response', timestamp: 99, source: 'stderr' } as any;
+				const allResponses = [
+					{
+						response: { text: 'known response', timestamp: 1, source: 'stdout' },
+						sessionId: 'session-1',
+						sessionName: 'Session 1',
+					},
+				] as any;
+
+				expect(resolveResponseViewerSelection(orphanResponse, allResponses)).toEqual({
+					index: 0,
+					response: orphanResponse,
+				});
+			});
+		});
 
 		describe('formatCost (via UI)', () => {
 			it('displays cost with 4 decimals when less than 0.01', async () => {

@@ -2174,6 +2174,27 @@ describe('useTabHandlers', () => {
 			expect(session.aiTabs).toHaveLength(1);
 			expect(session.aiTabs[0].id).toBe('tab-1');
 		});
+
+		it('does not close tabs when explicit target disappears before confirmation', () => {
+			const tab1 = createMockAITab({ id: 'tab-1' });
+			const tab2 = createMockAITab({ id: 'tab-2', inputValue: 'draft text' });
+			const tab3 = createMockAITab({ id: 'tab-3' });
+			setupSessionWithTabs([tab1, tab2, tab3], [], 'tab-1');
+
+			const { result } = renderHook(() => useTabHandlers());
+			act(() => {
+				result.current.handleCloseOtherTabs('tab-1');
+			});
+			const modal = useModalStore.getState().modals.get('confirm');
+			expect(typeof (modal?.data as any)?.onConfirm).toBe('function');
+
+			act(() => {
+				setupSessionWithTabs([tab2, tab3], [], 'tab-2');
+				(modal?.data as any)?.onConfirm();
+			});
+
+			expect(getSession().aiTabs.map((tab) => tab.id)).toEqual(['tab-2', 'tab-3']);
+		});
 	});
 
 	// ========================================================================
@@ -3021,6 +3042,89 @@ describe('useTabHandlers', () => {
 			expect(updated.filePreviewTabs.some((t) => t.id === 'file-1')).toBe(true);
 			expect(updated.filePreviewTabs.some((t) => t.id === 'file-2')).toBe(false);
 		});
+
+		it('uses an explicit AI target that is missing from unified order', () => {
+			const tab1 = createMockAITab({ id: 'tab-1' });
+			const tab2 = createMockAITab({ id: 'tab-2' });
+			const session = createMockSession({
+				id: 'test-session',
+				aiTabs: [tab1, tab2],
+				activeTabId: 'tab-1',
+				filePreviewTabs: [],
+				activeFileTabId: null,
+				unifiedTabOrder: [{ type: 'ai', id: 'tab-1' }],
+			});
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'test-session',
+			});
+
+			const { result } = renderHook(() => useTabHandlers());
+			act(() => {
+				result.current.handleCloseOtherTabs('tab-2');
+			});
+
+			const updated = getSession();
+			expect(updated.aiTabs.map((tab) => tab.id)).toEqual(['tab-2']);
+			expect(updated.activeTabId).toBe('tab-2');
+		});
+
+		it('uses an explicit file target that is missing from unified order', () => {
+			const aiTab = createMockAITab({ id: 'ai-1' });
+			const fileTab = createMockFileTab({ id: 'file-1' });
+			const session = createMockSession({
+				id: 'test-session',
+				aiTabs: [aiTab],
+				activeTabId: 'ai-1',
+				filePreviewTabs: [fileTab],
+				activeFileTabId: null,
+				unifiedTabOrder: [{ type: 'ai', id: 'ai-1' }],
+			});
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'test-session',
+			});
+
+			const { result } = renderHook(() => useTabHandlers());
+			act(() => {
+				result.current.handleCloseOtherTabs('file-1');
+			});
+
+			const updated = getSession();
+			expect(updated.filePreviewTabs.map((tab) => tab.id)).toEqual(['file-1']);
+			expect(updated.activeFileTabId).toBeNull();
+		});
+
+		it('selects the explicit file target when the active file is closed', () => {
+			const aiTab = createMockAITab({ id: 'ai-1' });
+			const fileTab1 = createMockFileTab({ id: 'file-1' });
+			const fileTab2 = createMockFileTab({ id: 'file-2' });
+			const session = createMockSession({
+				id: 'test-session',
+				aiTabs: [aiTab],
+				activeTabId: 'ai-1',
+				filePreviewTabs: [fileTab1, fileTab2],
+				activeFileTabId: 'file-1',
+				unifiedTabOrder: [
+					{ type: 'file', id: 'file-1' },
+					{ type: 'file', id: 'file-2' },
+					{ type: 'ai', id: 'ai-1' },
+				],
+			});
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'test-session',
+			});
+
+			const { result } = renderHook(() => useTabHandlers());
+			act(() => {
+				result.current.handleCloseOtherTabs('file-2');
+			});
+
+			const updated = getSession();
+			expect(updated.filePreviewTabs.map((tab) => tab.id)).toEqual(['file-2']);
+			expect(updated.activeFileTabId).toBe('file-2');
+		});
 	});
 
 	// ========================================================================
@@ -3731,6 +3835,21 @@ describe('useTabHandlers', () => {
 
 			// No crash — state unchanged
 			expect(useSessionStore.getState().sessions).toEqual([]);
+		});
+
+		it('range close handlers are no-ops for missing explicit targets', () => {
+			const tab1 = createMockAITab({ id: 'tab-1' });
+			const tab2 = createMockAITab({ id: 'tab-2' });
+			setupSessionWithTabs([tab1, tab2], [], 'tab-1');
+
+			const { result } = renderHook(() => useTabHandlers());
+			act(() => {
+				result.current.handleCloseOtherTabs('missing-tab');
+				result.current.handleCloseTabsLeft('missing-tab');
+				result.current.handleCloseTabsRight('missing-tab');
+			});
+
+			expect(getSession().aiTabs.map((tab) => tab.id)).toEqual(['tab-1', 'tab-2']);
 		});
 
 		it('does not create AI tabs when the active session id is stale', () => {

@@ -53,6 +53,16 @@ const createSession = (overrides: Partial<Session> = {}): Session =>
 		...overrides,
 	}) as Session;
 
+const createDeferred = <T>() => {
+	let resolve!: (value: T) => void;
+	let reject!: (reason?: unknown) => void;
+	const promise = new Promise<T>((res, rej) => {
+		resolve = res;
+		reject = rej;
+	});
+	return { promise, resolve, reject };
+};
+
 describe('useMobileSessionManagement', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
@@ -185,6 +195,114 @@ describe('useMobileSessionManagement', () => {
 			shellLogs: [{ id: 'sh-1', timestamp: 2, text: 'shell log', source: 'stdout' }],
 		});
 		expect(result.current.isLoadingLogs).toBe(false);
+	});
+
+	it('merges fetched logs with unsynced local user logs for the same owner', async () => {
+		const jsonDeferred = createDeferred<any>();
+		const fetchSpy = vi.fn().mockResolvedValue({
+			ok: true,
+			json: vi.fn(() => jsonDeferred.promise),
+		});
+		vi.stubGlobal('fetch', fetchSpy);
+
+		const { result } = renderHook(() =>
+			useMobileSessionManagement({
+				...baseDeps,
+				isOffline: false,
+				savedActiveSessionId: 'session-1',
+				savedActiveTabId: 'tab-1',
+			})
+		);
+
+		await waitFor(() => {
+			expect(fetchSpy).toHaveBeenCalled();
+		});
+
+		act(() => {
+			result.current.addUserLogEntry('local only', 'ai');
+			result.current.addUserLogEntry('already synced', 'terminal');
+		});
+
+		await act(async () => {
+			jsonDeferred.resolve({
+				session: {
+					aiLogs: [
+						{ id: 'remote-ai', timestamp: 1, text: 'remote ai', source: 'stdout' },
+						{ id: 'local-ai', timestamp: 2, text: 'already synced', source: 'user' },
+					],
+					shellLogs: [{ id: 'remote-shell', timestamp: 3, text: 'already synced', source: 'user' }],
+				},
+			});
+			await jsonDeferred.promise;
+		});
+
+		await waitFor(() => {
+			expect(result.current.sessionLogs.aiLogs.map((entry) => entry.text)).toEqual([
+				'remote ai',
+				'already synced',
+				'local only',
+			]);
+		});
+		expect(result.current.sessionLogs.shellLogs.map((entry) => entry.text)).toEqual([
+			'already synced',
+		]);
+	});
+
+	it('ignores fetched logs when the active tab changes before the response returns', async () => {
+		const firstJson = createDeferred<any>();
+		const secondJson = createDeferred<any>();
+		const fetchSpy = vi
+			.fn()
+			.mockResolvedValueOnce({ ok: true, json: vi.fn(() => firstJson.promise) })
+			.mockResolvedValueOnce({ ok: true, json: vi.fn(() => secondJson.promise) });
+		vi.stubGlobal('fetch', fetchSpy);
+
+		const { result } = renderHook(() =>
+			useMobileSessionManagement({
+				...baseDeps,
+				isOffline: false,
+				savedActiveSessionId: 'session-1',
+				savedActiveTabId: 'tab-1',
+			})
+		);
+
+		await waitFor(() => {
+			expect(fetchSpy).toHaveBeenCalledTimes(1);
+		});
+
+		act(() => {
+			result.current.setActiveTabId('tab-2');
+		});
+
+		await waitFor(() => {
+			expect(fetchSpy).toHaveBeenCalledTimes(2);
+		});
+
+		await act(async () => {
+			firstJson.resolve({
+				session: {
+					aiLogs: [{ id: 'stale', timestamp: 1, text: 'stale tab', source: 'stdout' }],
+					shellLogs: [],
+				},
+			});
+			await firstJson.promise;
+		});
+
+		expect(result.current.sessionLogs.aiLogs).toEqual([]);
+
+		await act(async () => {
+			secondJson.resolve({
+				session: {
+					aiLogs: [{ id: 'fresh', timestamp: 2, text: 'fresh tab', source: 'stdout' }],
+					shellLogs: [],
+				},
+			});
+			await secondJson.promise;
+		});
+
+		await waitFor(() => {
+			expect(result.current.sessionLogs.aiLogs.map((entry) => entry.text)).toEqual(['fresh tab']);
+		});
 	});
 
 	it('handles empty and non-ok session log responses', async () => {
@@ -451,6 +569,43 @@ describe('useMobileSessionManagement', () => {
 		expect(updatedActive.aiTabs?.find((tab) => tab.id === 'tab-1')?.starred).toBe(true);
 	});
 
+	it('keeps close tab as a no-op when the tab is missing', () => {
+		const sendSpy = vi.fn();
+		const { result } = renderHook(() =>
+			useMobileSessionManagement({
+				...baseDeps,
+				savedActiveSessionId: 'session-1',
+				savedActiveTabId: 'tab-1',
+				sendRef: { current: sendSpy },
+			})
+		);
+		const activeSession = createSession({
+			aiTabs: [
+				{
+					id: 'tab-1',
+					agentSessionId: null,
+					name: 'Alpha',
+					starred: false,
+					inputValue: '',
+					createdAt: 1,
+					state: 'idle',
+				},
+			],
+		});
+
+		act(() => {
+			result.current.setSessions([activeSession]);
+			result.current.handleCloseTab('missing-tab');
+		});
+
+		expect(sendSpy).toHaveBeenCalledWith({
+			type: 'close_tab',
+			sessionId: 'session-1',
+			tabId: 'missing-tab',
+		});
+		expect(result.current.sessions[0]).toBe(activeSession);
+	});
+
 	it('keeps inactive command handlers as no-ops when there is no active session', () => {
 		const sendSpy = vi.fn();
 		const hapticSpy = vi.fn();
@@ -521,6 +676,32 @@ describe('useMobileSessionManagement', () => {
 
 		expect(result.current.activeSessionId).toBe('session-1');
 		expect(result.current.activeTabId).toBe('tab-3');
+	});
+
+	it('preserves requested active tab when a desktop update reports a different tab', () => {
+		const { result } = renderHook(() =>
+			useMobileSessionManagement({
+				...baseDeps,
+				savedActiveSessionId: 'session-1',
+				savedActiveTabId: 'tab-2',
+			})
+		);
+
+		act(() => {
+			result.current.sessionsHandlers.onSessionsUpdate([
+				createSession({
+					id: 'session-1',
+					activeTabId: 'tab-1',
+					aiTabs: [
+						{ id: 'tab-1', name: 'One' },
+						{ id: 'tab-2', name: 'Two' },
+					] as any,
+				}),
+			]);
+		});
+
+		expect(result.current.activeTabId).toBe('tab-2');
+		expect(result.current.sessions[0].activeTabId).toBe('tab-2');
 	});
 
 	it('handles empty session updates and first-session updates without an active tab', () => {
