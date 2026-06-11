@@ -3166,6 +3166,39 @@ describe('useTabHandlers', () => {
 			expect(updated.filePreviewTabs.some((t) => t.id === 'file-1')).toBe(false);
 			expect(updated.filePreviewTabs.some((t) => t.id === 'file-2')).toBe(true);
 		});
+
+		it('selects an explicit AI target when the active file is closed', () => {
+			const aiTab1 = createMockAITab({ id: 'ai-1' });
+			const aiTab2 = createMockAITab({ id: 'ai-2' });
+			const fileTab = createMockFileTab({ id: 'file-1' });
+			const session = createMockSession({
+				id: 'test-session',
+				aiTabs: [aiTab1, aiTab2],
+				activeTabId: 'ai-1',
+				filePreviewTabs: [fileTab],
+				activeFileTabId: 'file-1',
+				unifiedTabOrder: [
+					{ type: 'file', id: 'file-1' },
+					{ type: 'ai', id: 'ai-1' },
+					{ type: 'ai', id: 'ai-2' },
+				],
+			});
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'test-session',
+			});
+
+			const { result } = renderHook(() => useTabHandlers());
+			act(() => {
+				result.current.handleCloseTabsLeft('ai-2');
+			});
+
+			const updated = getSession();
+			expect(updated.aiTabs.map((tab) => tab.id)).toEqual(['ai-2']);
+			expect(updated.filePreviewTabs).toEqual([]);
+			expect(updated.activeTabId).toBe('ai-2');
+			expect(updated.activeFileTabId).toBeNull();
+		});
 	});
 
 	describe('handleCloseTabsRight with file tabs', () => {
@@ -3202,6 +3235,34 @@ describe('useTabHandlers', () => {
 			// ai-1 and file-2 should be closed (right of active file-1)
 			expect(updated.filePreviewTabs.some((t) => t.id === 'file-1')).toBe(true);
 			expect(updated.filePreviewTabs.some((t) => t.id === 'file-2')).toBe(false);
+		});
+
+		it('keeps the close-right result when a duplicate file target disappears after closing', () => {
+			const aiTab = createMockAITab({ id: 'ai-1' });
+			const fileTab = createMockFileTab({ id: 'file-1' });
+			const session = createMockSession({
+				id: 'test-session',
+				aiTabs: [aiTab],
+				activeTabId: 'ai-1',
+				filePreviewTabs: [fileTab],
+				activeFileTabId: 'file-1',
+				unifiedTabOrder: [
+					{ type: 'ai', id: 'ai-1' },
+					{ type: 'file', id: 'file-1' },
+					{ type: 'file', id: 'file-1' },
+				],
+			});
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'test-session',
+			});
+
+			const { result } = renderHook(() => useTabHandlers());
+			act(() => {
+				result.current.handleCloseTabsRight('file-1');
+			});
+
+			expect(getSession().filePreviewTabs).toEqual([]);
 		});
 	});
 

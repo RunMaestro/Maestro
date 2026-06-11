@@ -1171,6 +1171,39 @@ describe('FilePreview', () => {
 			expect(setMarkdownEditMode).toHaveBeenCalledWith(false);
 		});
 
+		it('keeps textarea Cmd+G and Ctrl+G shortcuts owned by edit mode', () => {
+			const onOpenFuzzySearch = vi.fn();
+			const { container } = render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'test.txt', content: 'original', path: '/test/test.txt' }}
+					markdownEditMode={true}
+					onOpenFuzzySearch={onOpenFuzzySearch}
+				/>
+			);
+
+			const textarea = container.querySelector('textarea')!;
+			expect(textarea).toBeInTheDocument();
+			for (const init of [
+				{ key: 'G', metaKey: true },
+				{ key: 'g', ctrlKey: true },
+			]) {
+				const reactPropsKey = Object.keys(textarea).find((key) => key.startsWith('__reactProps$'));
+				const preventDefault = vi.fn();
+				const stopPropagation = vi.fn();
+
+				(textarea as any)[reactPropsKey!].onKeyDown({
+					...init,
+					preventDefault,
+					stopPropagation,
+				});
+
+				expect(preventDefault).toHaveBeenCalled();
+				expect(stopPropagation).toHaveBeenCalled();
+			}
+			expect(onOpenFuzzySearch).not.toHaveBeenCalled();
+		});
+
 		it('moves the textarea cursor by page with Option+Arrow shortcuts', () => {
 			const content = 'aaaa\nbbbb\ncccc\ndddd\neeee';
 			render(

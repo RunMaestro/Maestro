@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, act, waitFor, createEvent } from '@testing-library/react';
 import { AgentSessionsBrowser } from '../../../renderer/components/AgentSessionsBrowser';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 import * as LayerStackContext from '../../../renderer/contexts/LayerStackContext';
@@ -2218,6 +2218,39 @@ describe('AgentSessionsBrowser', () => {
 			expect(screen.queryByPlaceholderText('Enter session name...')).not.toBeInTheDocument();
 		});
 
+		it('prevents default when Escape cancels list rename', async () => {
+			const sessions = [createMockClaudeSession({ sessionId: 'session-1' })];
+			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
+				sessions,
+				hasMore: false,
+				totalCount: 1,
+				nextCursor: null,
+			});
+
+			await act(async () => {
+				renderWithProvider(<AgentSessionsBrowser {...createDefaultProps()} />);
+				await vi.runAllTimersAsync();
+			});
+
+			const editButton = screen.getAllByTestId('icon-edit')[0].closest('button');
+			await act(async () => {
+				fireEvent.click(editButton!);
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			const input = screen.getByPlaceholderText('Enter session name...');
+			const event = createEvent.keyDown(input, { key: 'Escape' });
+			const preventDefault = vi.spyOn(event, 'preventDefault');
+
+			await act(async () => {
+				fireEvent(input, event);
+				await vi.runAllTimersAsync();
+			});
+
+			expect(preventDefault).toHaveBeenCalled();
+			expect(screen.queryByPlaceholderText('Enter session name...')).not.toBeInTheDocument();
+		});
+
 		it('submits rename on blur', async () => {
 			const sessions = [createMockClaudeSession({ sessionId: 'session-1' })];
 			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
@@ -4032,6 +4065,55 @@ describe('AgentSessionsBrowser', () => {
 			});
 
 			expect(window.maestro.claude.updateSessionName).not.toHaveBeenCalled();
+			expect(screen.queryByPlaceholderText('Enter session name...')).not.toBeInTheDocument();
+		});
+
+		it('prevents default when Escape cancels detail header rename', async () => {
+			const session = createMockClaudeSession({
+				sessionId: 'session-1',
+				sessionName: 'Named Session',
+			});
+			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
+				sessions: [session],
+				hasMore: false,
+				totalCount: 1,
+				nextCursor: null,
+			});
+
+			await act(async () => {
+				renderWithProvider(<AgentSessionsBrowser {...createDefaultProps()} />);
+				await vi.runAllTimersAsync();
+			});
+
+			await act(async () => {
+				fireEvent.click(screen.getByText('Named Session').closest('div[class*="cursor-pointer"]')!);
+				await vi.runAllTimersAsync();
+			});
+
+			const editButton = screen
+				.getAllByTitle('Rename session')
+				.find((button) => !button.closest('div[class*="cursor-pointer"]'));
+			await act(async () => {
+				fireEvent.click(editButton!);
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			const input = screen.getByPlaceholderText('Enter session name...');
+			const reactPropsKey = Object.keys(input).find((key) => key.startsWith('__reactProps$'));
+			const preventDefault = vi.fn();
+			const stopPropagation = vi.fn();
+
+			await act(async () => {
+				(input as any)[reactPropsKey!].onKeyDown({
+					key: 'Escape',
+					preventDefault,
+					stopPropagation,
+				});
+				await vi.runAllTimersAsync();
+			});
+
+			expect(preventDefault).toHaveBeenCalled();
+			expect(stopPropagation).toHaveBeenCalled();
 			expect(screen.queryByPlaceholderText('Enter session name...')).not.toBeInTheDocument();
 		});
 	});

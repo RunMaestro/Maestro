@@ -1162,6 +1162,43 @@ describe('useAutoRunImageHandling', () => {
 			}
 		});
 
+		it('should skip selected files when editing locks before FileReader loads', async () => {
+			const OriginalFileReader = global.FileReader;
+			let reader: MockFileReader | null = null;
+			class DeferredFileReader extends MockFileReader {
+				readAsDataURL = vi.fn(function (this: DeferredFileReader) {
+					reader = this;
+					this.result =
+						'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+				});
+			}
+			global.FileReader = DeferredFileReader as unknown as typeof FileReader;
+			const mockDeps = createMockDeps();
+			const { result, rerender } = renderHook(
+				(props: ReturnType<typeof createMockDeps>) => useAutoRunImageHandling(props),
+				{ initialProps: mockDeps }
+			);
+			const fileEvent = createMockFileInputEvent();
+
+			try {
+				await act(async () => {
+					await result.current.handleFileSelect(fileEvent);
+				});
+				rerender({ ...mockDeps, isLocked: true });
+				await act(async () => {
+					reader?.onload?.({
+						target: { result: reader.result },
+					} as unknown as ProgressEvent<FileReader>);
+				});
+
+				expect(window.maestro.autorun.saveImage).not.toHaveBeenCalled();
+				expect(mockDeps.setLocalContent).not.toHaveBeenCalled();
+				expect(fileEvent.target.value).toBe('');
+			} finally {
+				global.FileReader = OriginalFileReader;
+			}
+		});
+
 		it('should push undo state before modifying content', async () => {
 			vi.useFakeTimers();
 

@@ -3821,6 +3821,68 @@ describe('NewInstanceModal', () => {
 			);
 		});
 
+		it('allows saving a provider switch to an unavailable agent when a custom path is set', async () => {
+			const session = createSession({
+				toolType: 'claude-code',
+			});
+
+			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+				createAgentConfig({ id: 'claude-code', name: 'Claude Code', available: true }),
+				createAgentConfig({
+					id: 'codex',
+					name: 'Codex',
+					available: false,
+					path: undefined,
+					binaryName: 'codex',
+				}),
+			]);
+			vi.mocked(window.maestro.agents.getConfig).mockResolvedValue({});
+
+			render(
+				<EditAgentModal
+					isOpen={true}
+					onClose={onClose}
+					onSave={onSave}
+					theme={theme}
+					session={session}
+					existingSessions={[]}
+				/>
+			);
+
+			const providerSelect = await screen.findByRole('combobox');
+			fireEvent.change(providerSelect, { target: { value: 'codex' } });
+
+			await waitFor(() => {
+				expect(screen.getByText(/Changing the provider will clear/)).toBeInTheDocument();
+				expect(screen.getByPlaceholderText('/path/to/codex')).toBeInTheDocument();
+			});
+
+			const saveButton = screen.getByText('Save Changes');
+			expect(saveButton).toBeDisabled();
+
+			fireEvent.change(screen.getByPlaceholderText('/path/to/codex'), {
+				target: { value: '/custom/bin/codex' },
+			});
+
+			await waitFor(() => {
+				expect(saveButton).toBeEnabled();
+			});
+			fireEvent.click(saveButton);
+
+			expect(onSave).toHaveBeenCalledWith(
+				'session-1',
+				'Editable Agent',
+				'codex',
+				undefined,
+				'/custom/bin/codex',
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				{ enabled: false, remoteId: null }
+			);
+		});
+
 		it('should show remote path validation errors for SSH edit sessions', async () => {
 			const session = createSession({
 				projectRoot: '/remote/project',

@@ -356,6 +356,7 @@ describe('main process entrypoint', () => {
 		electronMocks.powerEvents.clear();
 		historyMocks.startWatchingCallback = undefined;
 		process.env.NODE_ENV = 'test';
+		delete process.env.MAESTRO_DATA_DIR;
 		delete process.env.USE_PROD_DATA;
 		delete process.env.VITE_PORT;
 		constantsMock.DEMO_MODE = false;
@@ -729,6 +730,20 @@ describe('main process entrypoint', () => {
 
 		expect(consoleLog).toHaveBeenCalledWith('[DEMO MODE] Using data directory: /demo-data');
 		expect(electronMocks.app.setPath).toHaveBeenCalledWith('userData', '/demo-data');
+	});
+
+	it('uses an explicit data directory before other data-dir modes', async () => {
+		process.env.MAESTRO_DATA_DIR = '/tmp/maestro-explicit-data';
+
+		await importMainAndWaitForStartup();
+
+		expect(electronMocks.app.setPath).toHaveBeenCalledWith(
+			'userData',
+			'/tmp/maestro-explicit-data'
+		);
+		expect(consoleLog).toHaveBeenCalledWith(
+			'[DATA DIR] Using explicit data directory: /tmp/maestro-explicit-data'
+		);
 	});
 
 	it('uses an isolated data directory during development unless production data is requested', async () => {

@@ -1291,6 +1291,8 @@ describe('DocumentGraphView', () => {
 			expect(screen.getByTitle('Preview text limit: 250 characters')).toHaveTextContent(
 				'Preview: 250'
 			);
+			fireEvent.keyDown(screen.getByDisplayValue('250'), { key: 'ArrowRight' });
+			expect(screen.getByText('Preview Characters')).toBeInTheDocument();
 			fireEvent.keyDown(screen.getByDisplayValue('250'), { key: 'Escape' });
 			expect(screen.queryByText('Preview Characters')).not.toBeInTheDocument();
 

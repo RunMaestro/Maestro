@@ -859,9 +859,7 @@ export function useTabHandlers(): TabHandlersReturn {
 				}
 
 				const target = getUnifiedTabRef(updatedSession, targetTabId);
-				return target
-					? selectTargetIfActiveWasClosed(updatedSession, target, tabsToClose)
-					: updatedSession;
+				return selectTargetIfActiveWasClosed(updatedSession, target!, tabsToClose);
 			})
 		);
 	}, []);

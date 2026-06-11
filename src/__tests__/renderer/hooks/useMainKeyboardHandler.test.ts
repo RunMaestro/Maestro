@@ -1144,6 +1144,46 @@ describe('useMainKeyboardHandler', () => {
 			}
 		});
 
+		it('should prevent fuzzy file search shortcuts from editable targets', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			const context = createMockContext({
+				activeSession: { id: 'session-1' },
+				setFuzzyFileSearchOpen: vi.fn(),
+				isShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'fuzzyFileSearch',
+			});
+			result.current.keyboardHandlerRef.current = context;
+
+			const input = document.createElement('input');
+			const textarea = document.createElement('textarea');
+			document.body.append(input, textarea);
+
+			try {
+				const inputEvent = new KeyboardEvent('keydown', { key: 'g', bubbles: true, metaKey: true });
+				const inputPreventDefault = vi.spyOn(inputEvent, 'preventDefault');
+				act(() => {
+					input.dispatchEvent(inputEvent);
+				});
+
+				textarea.focus();
+				const activeElementEvent = new KeyboardEvent('keydown', {
+					key: 'g',
+					bubbles: true,
+					metaKey: true,
+				});
+				const activeElementPreventDefault = vi.spyOn(activeElementEvent, 'preventDefault');
+				act(() => {
+					window.dispatchEvent(activeElementEvent);
+				});
+
+				expect(inputPreventDefault).toHaveBeenCalled();
+				expect(activeElementPreventDefault).toHaveBeenCalled();
+				expect(context.setFuzzyFileSearchOpen as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
+			} finally {
+				input.remove();
+				textarea.remove();
+			}
+		});
+
 		it('should invoke primary action shortcuts with expected handlers and payloads', () => {
 			const { result } = renderHook(() => useMainKeyboardHandler());
 

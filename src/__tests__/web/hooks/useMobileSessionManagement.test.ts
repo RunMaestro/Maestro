@@ -220,6 +220,7 @@ describe('useMobileSessionManagement', () => {
 
 		act(() => {
 			result.current.addUserLogEntry('local only', 'ai');
+			result.current.sessionsHandlers.onSessionOutput('session-1', 'local stdout', 'ai', 'tab-1');
 			result.current.addUserLogEntry('already synced', 'terminal');
 		});
 
@@ -606,6 +607,30 @@ describe('useMobileSessionManagement', () => {
 		expect(result.current.sessions[0]).toBe(activeSession);
 	});
 
+	it('keeps close tab as a no-op when the active session has no AI tab list', () => {
+		const sendSpy = vi.fn();
+		const { result } = renderHook(() =>
+			useMobileSessionManagement({
+				...baseDeps,
+				savedActiveSessionId: 'session-1',
+				sendRef: { current: sendSpy },
+			})
+		);
+		const sessionWithoutTabs = createSession({ aiTabs: undefined });
+
+		act(() => {
+			result.current.setSessions([sessionWithoutTabs]);
+			result.current.handleCloseTab('tab-1');
+		});
+
+		expect(sendSpy).toHaveBeenCalledWith({
+			type: 'close_tab',
+			sessionId: 'session-1',
+			tabId: 'tab-1',
+		});
+		expect(result.current.sessions[0]).toBe(sessionWithoutTabs);
+	});
+
 	it('selects the next tab when closing the first active tab', () => {
 		const sendSpy = vi.fn();
 		const { result } = renderHook(() =>
@@ -653,6 +678,90 @@ describe('useMobileSessionManagement', () => {
 			sessionId: 'session-1',
 			tabId: 'tab-1',
 		});
+	});
+
+	it('uses the hook active tab ref when closing a non-active tab without a session activeTabId', () => {
+		const { result } = renderHook(() =>
+			useMobileSessionManagement({
+				...baseDeps,
+				savedActiveSessionId: 'session-1',
+				savedActiveTabId: 'tab-2',
+			})
+		);
+		const activeSession = createSession({
+			activeTabId: undefined as unknown as string,
+			aiTabs: [
+				{
+					id: 'tab-1',
+					agentSessionId: null,
+					name: 'Alpha',
+					starred: false,
+					inputValue: '',
+					createdAt: 1,
+					state: 'idle',
+				},
+				{
+					id: 'tab-2',
+					agentSessionId: null,
+					name: 'Beta',
+					starred: false,
+					inputValue: '',
+					createdAt: 2,
+					state: 'idle',
+				},
+			],
+		});
+
+		act(() => {
+			result.current.setSessions([activeSession]);
+			result.current.handleCloseTab('tab-1');
+		});
+
+		expect(result.current.activeTabId).toBe('tab-2');
+		expect(result.current.sessions[0].activeTabId).toBe('tab-2');
+		expect(result.current.sessions[0].aiTabs?.map((tab) => tab.id)).toEqual(['tab-2']);
+	});
+
+	it('keeps activeTabId undefined when closing a non-active tab with no active tab fallback', () => {
+		const { result } = renderHook(() =>
+			useMobileSessionManagement({
+				...baseDeps,
+				savedActiveSessionId: 'session-1',
+				savedActiveTabId: null,
+			})
+		);
+		const activeSession = createSession({
+			activeTabId: undefined as unknown as string,
+			aiTabs: [
+				{
+					id: 'tab-1',
+					agentSessionId: null,
+					name: 'Alpha',
+					starred: false,
+					inputValue: '',
+					createdAt: 1,
+					state: 'idle',
+				},
+				{
+					id: 'tab-2',
+					agentSessionId: null,
+					name: 'Beta',
+					starred: false,
+					inputValue: '',
+					createdAt: 2,
+					state: 'idle',
+				},
+			],
+		});
+
+		act(() => {
+			result.current.setSessions([activeSession]);
+			result.current.handleCloseTab('tab-1');
+		});
+
+		expect(result.current.activeTabId).toBeNull();
+		expect(result.current.sessions[0].activeTabId).toBeUndefined();
+		expect(result.current.sessions[0].aiTabs?.map((tab) => tab.id)).toEqual(['tab-2']);
 	});
 
 	it('keeps inactive command handlers as no-ops when there is no active session', () => {

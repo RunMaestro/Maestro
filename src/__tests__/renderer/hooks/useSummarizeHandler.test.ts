@@ -749,6 +749,35 @@ describe('handleSummarizeAndContinue (Tier 3E)', () => {
 		consoleError.mockRestore();
 	});
 
+	it('handleSummarizeAndContinue falls back when summarization error detail is blank', async () => {
+		const session = createMockSession();
+		useSessionStore.setState({
+			sessions: [session],
+			activeSessionId: session.id,
+		});
+		(
+			contextSummarizationService.summarizeContext as ReturnType<typeof vi.fn>
+		).mockRejectedValueOnce(new Error('   '));
+
+		const { result } = renderHook(() => useSummarizeAndContinue(session));
+
+		act(() => {
+			result.current.handleSummarizeAndContinue();
+		});
+
+		await waitFor(() => {
+			expect(notifyToast).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'error',
+					title: 'Compaction Failed',
+					message: 'Failed to compact context.',
+					sessionId: 'session-1',
+					tabId: 'tab-1',
+				})
+			);
+		});
+	});
+
 	it('handleSummarizeAndContinue reports unexpected session update failures', async () => {
 		const session = createMockSession();
 		const originalSetSessions = useSessionStore.getState().setSessions;
@@ -784,6 +813,42 @@ describe('handleSummarizeAndContinue (Tier 3E)', () => {
 				})
 			);
 			expect(result.current.getTabSummarizeState('tab-1')).toBeNull();
+		} finally {
+			useSessionStore.setState({ setSessions: originalSetSessions });
+			consoleError.mockRestore();
+		}
+	});
+
+	it('handleSummarizeAndContinue falls back when an unexpected thrown value is empty', async () => {
+		const session = createMockSession();
+		const originalSetSessions = useSessionStore.getState().setSessions;
+		useSessionStore.setState({
+			sessions: [session],
+			activeSessionId: session.id,
+			setSessions: vi.fn(() => {
+				throw '';
+			}),
+		});
+		const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		try {
+			const { result } = renderHook(() => useSummarizeAndContinue(session));
+
+			act(() => {
+				result.current.handleSummarizeAndContinue();
+			});
+
+			await waitFor(() => {
+				expect(notifyToast).toHaveBeenCalledWith(
+					expect.objectContaining({
+						type: 'error',
+						title: 'Compaction Failed',
+						message: 'An unexpected error occurred during compaction.',
+						sessionId: 'session-1',
+						tabId: 'tab-1',
+					})
+				);
+			});
 		} finally {
 			useSessionStore.setState({ setSessions: originalSetSessions });
 			consoleError.mockRestore();
