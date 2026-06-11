@@ -70,6 +70,7 @@ Grep-verified 2026-04-10. Import from these canonical locations:
 - **Focus after render:** `useFocusAfterRender()` in `src/renderer/hooks/utils/useFocusAfterRender.ts` (do NOT use `useEffect + setTimeout(() => ref.focus())`)
 - **Event listeners:** `useEventListener()` in `src/renderer/hooks/utils/useEventListener.ts` (do NOT pair raw `addEventListener`/`removeEventListener` inside useEffect)
 - **Debounce/throttle:** `useDebouncedValue()`, `useDebouncedCallback()`, `useThrottledCallback()` in `src/renderer/hooks/utils/useThrottle.ts` (filename is misleading - all three live here)
+- **Render markdown:** `<Markdown preset="chat | document | wizard-bubble | release-notes">` from `src/renderer/components/Markdown/` (do NOT hand-roll `<ReactMarkdown>` + a per-surface `components`/plugin map). The chat preset is what `MarkdownRenderer` wraps. Shared internals: `buildMarkdownPlugins` (`Markdown/plugins.ts`), `preprocessMarkdown` (`Markdown/preprocess.ts`), leaf renderers in `Markdown/components/*`, and the document component map `createMarkdownComponents()` in `src/renderer/utils/markdownConfig.ts`. See [UI-PATTERNS.md → `<Markdown>`](docs/agent-guides/UI-PATTERNS.md).
 
 If your use case does NOT match an existing utility, prefer extending the canonical file over creating a new one. If you genuinely need something new, add it to the relevant guide in `docs/agent-guides/` so the next person can find it.
 

@@ -1,12 +1,8 @@
-import ReactMarkdown from 'react-markdown';
 import type { Theme } from '../../../../../types';
 import type { WizardMessage } from '../../../WizardContext';
 import { getConfidenceColor } from '../../../services/wizardPrompts';
 import { formatAgentName } from '../../../shared/wizardHelpers';
-import {
-	REMARK_GFM_PLUGINS,
-	type createWizardBubbleMarkdownComponents,
-} from '../../../../../utils/markdownConfig';
+import { Markdown } from '../../../../Markdown';
 import { formatTimestamp } from '../../../../../../shared/formatters';
 
 export function MessageBubble({
@@ -14,13 +10,11 @@ export function MessageBubble({
 	theme,
 	agentName,
 	providerName,
-	wizardMarkdownComponents,
 }: {
 	message: WizardMessage;
 	theme: Theme;
 	agentName: string;
 	providerName?: string;
-	wizardMarkdownComponents: ReturnType<typeof createWizardBubbleMarkdownComponents>;
 }): JSX.Element {
 	const isUser = message.role === 'user';
 	const isSystem = message.role === 'system';
@@ -78,9 +72,7 @@ export function MessageBubble({
 					{isUser ? (
 						<span className="whitespace-pre-wrap">{message.content}</span>
 					) : (
-						<ReactMarkdown remarkPlugins={REMARK_GFM_PLUGINS} components={wizardMarkdownComponents}>
-							{message.content}
-						</ReactMarkdown>
+						<Markdown preset="wizard-bubble" theme={theme} content={message.content} />
 					)}
 				</div>
 

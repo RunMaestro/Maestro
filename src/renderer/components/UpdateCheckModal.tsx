@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { UpdateStatus } from '../types';
 import {
 	X,
@@ -17,10 +17,9 @@ import { GhostIconButton } from './ui/GhostIconButton';
 import { Spinner } from './ui/Spinner';
 import type { Theme } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
-import ReactMarkdown from 'react-markdown';
 import { Modal } from './ui/Modal';
 import { useSettings } from '../hooks';
-import { createReleaseNotesMarkdownComponents } from '../utils/markdownConfig';
+import { Markdown } from './Markdown';
 import { openUrl } from '../utils/openUrl';
 import { selectIsAnySessionBusy, useSessionStore } from '../stores/sessionStore';
 import { selectHasAnyActiveBatch, useBatchStore } from '../stores/batchStore';
@@ -69,11 +68,6 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 	const isAppActive = anySessionBusy || anyBatchRunning;
 	const restartPending = useRestartPendingStore((s) => s.pending);
 	const setRestartPending = useRestartPendingStore((s) => s.setPending);
-	const releaseNotesMarkdownComponents = useMemo(
-		() => createReleaseNotesMarkdownComponents(theme),
-		[theme]
-	);
-
 	// Check for updates on mount
 	useEffect(() => {
 		checkForUpdates();
@@ -369,9 +363,11 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 												className="py-3 px-5 border-t text-xs prose prose-sm prose-invert max-w-none"
 												style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
 											>
-												<ReactMarkdown components={releaseNotesMarkdownComponents}>
-													{release.body || 'No release notes available.'}
-												</ReactMarkdown>
+												<Markdown
+													preset="release-notes"
+													theme={theme}
+													content={release.body || 'No release notes available.'}
+												/>
 											</div>
 										)}
 									</div>

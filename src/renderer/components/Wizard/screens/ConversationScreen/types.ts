@@ -2,7 +2,6 @@ import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
 import type { Theme, ToolType } from '../../../../types';
 import type { WizardMessage, WizardState } from '../../WizardContext';
 import type { WizardError } from '../../services/wizardErrorDetection';
-import type { createWizardBubbleMarkdownComponents } from '../../../../utils/markdownConfig';
 
 export interface ConversationScreenProps {
 	theme: Theme;
@@ -17,8 +16,6 @@ export interface ToolExecutionEvent {
 	state?: unknown;
 	timestamp: number;
 }
-
-export type WizardMarkdownComponents = ReturnType<typeof createWizardBubbleMarkdownComponents>;
 
 export interface ConversationRenderState {
 	messages: WizardMessage[];

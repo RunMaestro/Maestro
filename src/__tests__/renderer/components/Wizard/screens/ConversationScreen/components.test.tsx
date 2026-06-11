@@ -60,7 +60,6 @@ describe('ConversationScreen components', () => {
 				message={userMessage}
 				theme={mockTheme}
 				agentName="Project Agent"
-				wizardMarkdownComponents={{}}
 				providerName="Claude"
 			/>
 		);
@@ -73,7 +72,6 @@ describe('ConversationScreen components', () => {
 				message={assistantMessage}
 				theme={mockTheme}
 				agentName="Project Agent"
-				wizardMarkdownComponents={{}}
 				providerName="Claude"
 			/>
 		);

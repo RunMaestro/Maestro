@@ -23,7 +23,6 @@ import {
 	useConversationScrollFocus,
 	useWizardConversationSend,
 } from './hooks';
-import { createWizardBubbleMarkdownComponents } from '../../../../utils/markdownConfig';
 import { getConversationProviderName } from './utils/providerName';
 import type {
 	ConversationRefs,
@@ -37,11 +36,6 @@ export function ConversationScreen({
 	showThinking,
 	setShowThinking,
 }: ConversationScreenProps): JSX.Element {
-	const wizardMarkdownComponents = useMemo(
-		() => createWizardBubbleMarkdownComponents(theme),
-		[theme]
-	);
-
 	const {
 		state,
 		addMessage,
@@ -249,7 +243,6 @@ export function ConversationScreen({
 						message={message}
 						theme={theme}
 						agentName={agentName}
-						wizardMarkdownComponents={wizardMarkdownComponents}
 						providerName={providerName}
 					/>
 				))}

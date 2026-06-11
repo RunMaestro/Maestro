@@ -931,21 +931,24 @@ describe('hex color swatch in inline code', () => {
 	it('should render a color swatch span before hex color in createMarkdownComponents', () => {
 		const components = createMarkdownComponents({ theme: mockTheme });
 		const codeComponent = components.code as any;
-		const element = codeComponent({ children: '#FF0000' });
-		// Should have two children: the swatch span and the text
-		const children = React.Children.toArray(element.props.children);
-		expect(children).toHaveLength(2);
-		const swatch = children[0] as React.ReactElement;
-		expect(swatch.type).toBe('span');
-		expect(swatch.props.style.backgroundColor).toBe('#FF0000');
+		// Inline code now renders through the shared InlineCode leaf; render it to
+		// inspect the swatch in the DOM.
+		const { container } = render(codeComponent({ children: '#FF0000' }));
+		const code = container.querySelector('code');
+		expect(code).toBeInTheDocument();
+		const swatch = code!.querySelector('span');
+		expect(swatch).toBeInTheDocument();
+		expect(swatch!.getAttribute('style')).toContain('background-color');
+		expect(code!.textContent).toContain('#FF0000');
 	});
 
 	it('should not render swatch for non-hex inline code', () => {
 		const components = createMarkdownComponents({ theme: mockTheme });
 		const codeComponent = components.code as any;
-		const element = codeComponent({ children: 'console.log' });
-		const children = React.Children.toArray(element.props.children);
-		expect(children).toHaveLength(1);
+		const { container } = render(codeComponent({ children: 'console.log' }));
+		const code = container.querySelector('code');
+		expect(code!.querySelector('span')).toBeNull();
+		expect(code!.textContent).toBe('console.log');
 	});
 
 	it('should render swatch in wizard bubble inline code', () => {
