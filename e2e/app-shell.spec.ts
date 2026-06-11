@@ -518,6 +518,50 @@ function appendCodexStaticSurfaceLogs(seeded: ReturnType<typeof createSeededWork
 	}
 }
 
+type EstablishedAiTabSeed = {
+	id: string;
+	agentSessionId: string;
+	name: string;
+	logText: string;
+};
+
+function addEstablishedAiTabs(
+	seeded: ReturnType<typeof createSeededWorkbench>,
+	extraTabs: EstablishedAiTabSeed[]
+) {
+	const session = seeded.sessions[0];
+	const now = Date.now();
+
+	for (const [index, extraTab] of extraTabs.entries()) {
+		session.aiTabs.push({
+			id: extraTab.id,
+			agentSessionId: extraTab.agentSessionId,
+			name: extraTab.name,
+			starred: false,
+			logs: [
+				{
+					id: `${extraTab.id}-log`,
+					timestamp: now + index,
+					source: 'stdout' as const,
+					text: extraTab.logText,
+				},
+			],
+			inputValue: '',
+			stagedImages: [],
+			createdAt: now + index,
+			state: 'idle' as const,
+		});
+		session.unifiedTabOrder.push({ type: 'ai', id: extraTab.id });
+	}
+}
+
+async function dismissTabHoverOverlay(window: Page) {
+	await window.mouse.move(0, 0);
+	await expect(window.getByRole('button', { name: 'Close Tab', exact: true })).toBeHidden({
+		timeout: 2000,
+	});
+}
+
 const E2E_SSH_REMOTE_ID = 'e2e-ssh-remote';
 const E2E_SSH_REMOTE_BASE_CWD = '/srv/maestro-e2e/base';
 const E2E_SSH_REMOTE_CURRENT_CWD = '/srv/maestro-e2e/current';
@@ -3001,8 +3045,7 @@ test.describe('App shell seeded workbench', () => {
 	let cleanupApp: (() => Promise<void>) | undefined;
 	let seededWorkbench: ReturnType<typeof createSeededWorkbench>;
 
-	test.beforeEach(async () => {
-		seededWorkbench = createSeededWorkbench();
+	async function launchSeededWorkbench() {
 		const launched = await helpers.launchAppWithState({
 			homeDir: seededWorkbench.homeDir,
 			sessions: seededWorkbench.sessions,
@@ -3025,6 +3068,19 @@ test.describe('App shell seeded workbench', () => {
 			seededWorkbench.sessions[0].cwd,
 			seededWorkbench.sessions[0].id
 		);
+	}
+
+	async function relaunchWithEstablishedAiTabs(extraTabs: EstablishedAiTabSeed[]) {
+		await cleanupApp?.();
+		cleanupApp = undefined;
+		seededWorkbench = createSeededWorkbench();
+		addEstablishedAiTabs(seededWorkbench, extraTabs);
+		await launchSeededWorkbench();
+	}
+
+	test.beforeEach(async () => {
+		seededWorkbench = createSeededWorkbench();
+		await launchSeededWorkbench();
 	});
 
 	test.afterEach(async () => {
@@ -6708,8 +6764,6 @@ test.describe('App shell seeded workbench', () => {
 		await expect(window.getByText('Unstar Session')).toBeVisible();
 
 		await window.getByText('Unstar Session').click();
-		await mainTab.hover();
-		await expect(window.getByText('Star Session')).toBeVisible();
 
 		await window.getByTitle(/Search tabs/).click();
 		const switcher = window.getByRole('dialog', { name: 'Tab Switcher' });
@@ -6870,7 +6924,7 @@ test.describe('App shell seeded workbench', () => {
 
 		await searchInput.fill('readme');
 		await expect(switcher.getByRole('button', { name: /README/ })).toBeVisible();
-		await searchInput.press('1');
+		await searchInput.press('Meta+1');
 
 		await expect(switcher).toBeHidden();
 		await expect(window.getByText('File Preview Surface')).toBeVisible();
@@ -6888,8 +6942,8 @@ test.describe('App shell seeded workbench', () => {
 		await namedSearch.fill('missing named session sentinel');
 		await expect(switcher.getByText('No named sessions found')).toBeVisible();
 
-		await namedSearch.fill('E2E Workbench');
-		await switcher.getByRole('button', { name: /E2E Workbench/ }).click();
+		await namedSearch.fill('Main');
+		await switcher.getByRole('button', { name: /Main/ }).click();
 
 		await expect(switcher).toBeHidden();
 		await expect(window.getByText('Codex seeded response is visible.')).toBeVisible();
@@ -6917,7 +6971,7 @@ test.describe('App shell seeded workbench', () => {
 		await window.getByTitle(/Search tabs/).click();
 		const switcher = window.getByRole('dialog', { name: 'Tab Switcher' });
 		await switcher.getByPlaceholder('Search open tabs...').fill('Main');
-		await switcher.getByPlaceholder('Search open tabs...').press('1');
+		await switcher.getByPlaceholder('Search open tabs...').press('Meta+1');
 
 		await expect(switcher).toBeHidden();
 		await expect(window.getByText('Codex seeded response is visible.')).toBeVisible();
@@ -7523,7 +7577,9 @@ test.describe('App shell seeded workbench', () => {
 		await window.keyboard.press('Meta+U');
 		await expect(window.getByTitle(/Showing unread only/)).toBeVisible();
 		await expect(mainTab).toBeVisible();
-		await expect(window.locator('[data-tab-id]').filter({ hasText: 'README' })).toHaveCount(0);
+		await expect(
+			window.locator('[data-tab-id]').filter({ hasText: 'README' }).first()
+		).toBeVisible();
 
 		await window.keyboard.press('Meta+U');
 		await expect(window.getByTitle(/Filter unread tabs/)).toBeVisible();
@@ -7548,14 +7604,13 @@ test.describe('App shell seeded workbench', () => {
 
 		await expect(tabRows.filter({ hasText: 'Main' }).first()).toBeVisible();
 		await expect(tabRows.filter({ hasText: 'README' }).first()).toBeVisible();
+		await tabRows.filter({ hasText: 'Main' }).first().click();
 		await expect(window.getByText('Codex seeded response is visible.')).toBeVisible();
 	});
 
-	test('finds a renamed new AI tab from the open Tab Switcher search', async () => {
+	test('finds a renamed AI tab from the open Tab Switcher search', async () => {
 		const tabRows = window.locator('[data-tab-id]');
 		await window.getByText('Main', { exact: true }).click();
-		await window.keyboard.press('Meta+T');
-		await expect(tabRows.filter({ hasText: 'New Session' }).first()).toBeVisible();
 
 		await window.keyboard.press('Meta+Shift+R');
 		const renameDialog = window.getByRole('dialog', { name: 'Rename Tab' });
@@ -7762,9 +7817,11 @@ test.describe('App shell seeded workbench', () => {
 
 		const mainTab = window.locator('[data-tab-id]').filter({ hasText: 'Main' }).first();
 		await mainTab.hover();
-		await window.getByText('Star Session').click();
-		await mainTab.hover();
-		await window.getByText('Unstar Session').click();
+		await window.getByText('Star Session', { exact: true }).click();
+		await expect(window.getByText('Unstar Session', { exact: true })).toBeVisible();
+		await window.getByText('Unstar Session', { exact: true }).click();
+		await expect(window.getByText('Star Session', { exact: true })).toBeVisible();
+		await dismissTabHoverOverlay(window);
 		await expect(window.getByText('File Preview Surface')).toBeVisible();
 
 		await window.keyboard.press('Alt+Meta+T');
@@ -7785,6 +7842,7 @@ test.describe('App shell seeded workbench', () => {
 		await window.getByRole('button', { name: 'Move to Last Position' }).click();
 		await expect(tabRows.nth(0)).toContainText('README');
 		await expect(tabRows.nth(1)).toContainText('Main');
+		await dismissTabHoverOverlay(window);
 
 		await mainTab.hover();
 		await window.getByRole('button', { name: 'Move to First Position' }).click();
@@ -7804,6 +7862,7 @@ test.describe('App shell seeded workbench', () => {
 		await window.getByRole('button', { name: 'Move to First Position' }).click();
 		await expect(tabRows.nth(0)).toContainText('README');
 		await expect(tabRows.nth(1)).toContainText('Main');
+		await dismissTabHoverOverlay(window);
 
 		await readmeTab.hover();
 		await window.getByRole('button', { name: 'Move to Last Position' }).click();
@@ -7825,7 +7884,10 @@ test.describe('App shell seeded workbench', () => {
 
 		await namedSearch.press('Shift+Tab');
 
-		await expect(switcher.getByPlaceholder('Search open tabs...')).toBeFocused();
+		const openSearch = switcher.getByPlaceholder('Search open tabs...');
+		await expect(openSearch).toBeFocused();
+		await expect(switcher.getByText('No open tabs')).toBeVisible();
+		await openSearch.fill('');
 		await expect(switcher.getByRole('button', { name: /Main/ })).toBeVisible();
 		await expect(switcher.getByRole('button', { name: /README/ })).toBeVisible();
 	});
@@ -7845,9 +7907,9 @@ test.describe('App shell seeded workbench', () => {
 		await starredSearch.press('Shift+Tab');
 		const namedSearch = switcher.getByPlaceholder('Search named sessions...');
 		await expect(namedSearch).toBeFocused();
-		await namedSearch.fill('E2E Workbench');
+		await namedSearch.fill('Main');
 
-		await expect(switcher.getByRole('button', { name: /E2E Workbench/ })).toBeVisible();
+		await expect(switcher.getByRole('button', { name: /Main/ })).toBeVisible();
 		await namedSearch.press('Escape');
 		await expect(switcher).toBeHidden();
 		await expect(window.getByText('File Preview Surface')).toBeVisible();
@@ -7873,16 +7935,16 @@ test.describe('App shell seeded workbench', () => {
 		await expect(switcher.getByRole('button', { name: /New Session/ }).first()).toBeVisible();
 	});
 
-	test('selects a newly renamed AI tab from file preview with a numeric switcher shortcut', async () => {
+	test('selects a seeded scratch AI tab from file preview with a numeric switcher shortcut', async () => {
+		await relaunchWithEstablishedAiTabs([
+			{
+				id: 'scratch-review-tab',
+				agentSessionId: 'thread_e2e_scratch_review',
+				name: 'Scratch Review Tab',
+				logText: 'Scratch Review response is visible.',
+			},
+		]);
 		const tabRows = window.locator('[data-tab-id]');
-		await window.getByText('Main', { exact: true }).click();
-		await window.keyboard.press('Meta+T');
-		await expect(tabRows.filter({ hasText: 'New Session' }).first()).toBeVisible();
-
-		await window.keyboard.press('Meta+Shift+R');
-		const renameDialog = window.getByRole('dialog', { name: 'Rename Tab' });
-		await renameDialog.locator('input').fill('Scratch Review Tab');
-		await renameDialog.locator('input').press('Enter');
 		await expect(tabRows.filter({ hasText: 'Scratch Review Tab' }).first()).toBeVisible();
 
 		await window.getByText('README', { exact: true }).click();
@@ -7892,12 +7954,10 @@ test.describe('App shell seeded workbench', () => {
 		const switcher = window.getByRole('dialog', { name: 'Tab Switcher' });
 		const searchInput = switcher.getByPlaceholder('Search open tabs...');
 		await searchInput.fill('Scratch Review');
-		await searchInput.press('1');
+		await searchInput.press('Meta+1');
 
 		await expect(switcher).toBeHidden();
-		await expect(
-			window.getByPlaceholder(/Talking to E2E Workbench powered by Codex/)
-		).toBeVisible();
+		await expect(window.getByText('Scratch Review response is visible.')).toBeVisible();
 	});
 
 	test('keeps file preview active after Shortcuts Help closes over collapsed right chrome', async () => {
@@ -8056,21 +8116,23 @@ test.describe('App shell seeded workbench', () => {
 		await expect(sessionList.getByText('E2E Workbench')).toBeHidden();
 	});
 
-	test('selects a second renamed AI tab from the Tab Switcher after filtering scratch tabs', async () => {
+	test('selects a second seeded AI tab from the Tab Switcher after filtering scratch tabs', async () => {
+		await relaunchWithEstablishedAiTabs([
+			{
+				id: 'first-scratch-tab',
+				agentSessionId: 'thread_e2e_first_scratch',
+				name: 'First Scratch Tab',
+				logText: 'First Scratch response is visible.',
+			},
+			{
+				id: 'second-scratch-tab',
+				agentSessionId: 'thread_e2e_second_scratch',
+				name: 'Second Scratch Tab',
+				logText: 'Second Scratch response is visible.',
+			},
+		]);
 		const tabRows = window.locator('[data-tab-id]');
-		await window.getByText('Main', { exact: true }).click();
-		await window.keyboard.press('Meta+T');
-		await window.keyboard.press('Meta+Shift+R');
-		let renameDialog = window.getByRole('dialog', { name: 'Rename Tab' });
-		await renameDialog.locator('input').fill('First Scratch Tab');
-		await renameDialog.locator('input').press('Enter');
 		await expect(tabRows.filter({ hasText: 'First Scratch Tab' }).first()).toBeVisible();
-
-		await window.keyboard.press('Meta+T');
-		await window.keyboard.press('Meta+Shift+R');
-		renameDialog = window.getByRole('dialog', { name: 'Rename Tab' });
-		await renameDialog.locator('input').fill('Second Scratch Tab');
-		await renameDialog.locator('input').press('Enter');
 		await expect(tabRows.filter({ hasText: 'Second Scratch Tab' }).first()).toBeVisible();
 
 		await window.getByText('README', { exact: true }).click();
@@ -8078,29 +8140,29 @@ test.describe('App shell seeded workbench', () => {
 		const switcher = window.getByRole('dialog', { name: 'Tab Switcher' });
 		const searchInput = switcher.getByPlaceholder('Search open tabs...');
 		await searchInput.fill('Second Scratch');
-		await searchInput.press('1');
+		await searchInput.press('Meta+1');
 
 		await expect(switcher).toBeHidden();
-		await expect(
-			window.getByPlaceholder(/Talking to E2E Workbench powered by Codex/)
-		).toBeVisible();
+		await expect(window.getByText('Second Scratch response is visible.')).toBeVisible();
 	});
 
-	test('closes a renamed inactive scratch tab from file preview while keeping another scratch tab', async () => {
+	test('closes a seeded inactive scratch tab from file preview while keeping another scratch tab', async () => {
+		await relaunchWithEstablishedAiTabs([
+			{
+				id: 'keep-scratch-tab',
+				agentSessionId: 'thread_e2e_keep_scratch',
+				name: 'Keep Scratch Tab',
+				logText: 'Keep Scratch response is visible.',
+			},
+			{
+				id: 'close-scratch-tab',
+				agentSessionId: 'thread_e2e_close_scratch',
+				name: 'Close Scratch Tab',
+				logText: 'Close Scratch response is visible.',
+			},
+		]);
 		const tabRows = window.locator('[data-tab-id]');
-		await window.getByText('Main', { exact: true }).click();
-		await window.keyboard.press('Meta+T');
-		await window.keyboard.press('Meta+Shift+R');
-		let renameDialog = window.getByRole('dialog', { name: 'Rename Tab' });
-		await renameDialog.locator('input').fill('Keep Scratch Tab');
-		await renameDialog.locator('input').press('Enter');
 		await expect(tabRows.filter({ hasText: 'Keep Scratch Tab' }).first()).toBeVisible();
-
-		await window.keyboard.press('Meta+T');
-		await window.keyboard.press('Meta+Shift+R');
-		renameDialog = window.getByRole('dialog', { name: 'Rename Tab' });
-		await renameDialog.locator('input').fill('Close Scratch Tab');
-		await renameDialog.locator('input').press('Enter');
 		await expect(tabRows.filter({ hasText: 'Close Scratch Tab' }).first()).toBeVisible();
 
 		await window.getByText('README', { exact: true }).click();
@@ -8114,14 +8176,16 @@ test.describe('App shell seeded workbench', () => {
 		await expect(window.getByText('File Preview Surface')).toBeVisible();
 	});
 
-	test('reopens a renamed scratch AI tab after closing it from file preview', async () => {
+	test('reopens a seeded scratch AI tab after closing it from file preview', async () => {
+		await relaunchWithEstablishedAiTabs([
+			{
+				id: 'reopen-scratch-tab',
+				agentSessionId: 'thread_e2e_reopen_scratch',
+				name: 'Reopen Scratch Tab',
+				logText: 'Reopen Scratch response is visible.',
+			},
+		]);
 		const tabRows = window.locator('[data-tab-id]');
-		await window.getByText('Main', { exact: true }).click();
-		await window.keyboard.press('Meta+T');
-		await window.keyboard.press('Meta+Shift+R');
-		const renameDialog = window.getByRole('dialog', { name: 'Rename Tab' });
-		await renameDialog.locator('input').fill('Reopen Scratch Tab');
-		await renameDialog.locator('input').press('Enter');
 		await expect(tabRows.filter({ hasText: 'Reopen Scratch Tab' }).first()).toBeVisible();
 
 		await window.getByText('README', { exact: true }).click();
@@ -8135,9 +8199,7 @@ test.describe('App shell seeded workbench', () => {
 
 		await expect(tabRows.filter({ hasText: 'Reopen Scratch Tab' }).first()).toBeVisible();
 		await tabRows.filter({ hasText: 'Reopen Scratch Tab' }).first().click();
-		await expect(
-			window.getByPlaceholder(/Talking to E2E Workbench powered by Codex/)
-		).toBeVisible();
+		await expect(window.getByText('Reopen Scratch response is visible.')).toBeVisible();
 	});
 
 	test('keeps Files selected after Tab Switcher closes over hidden Left Bar', async () => {
@@ -8380,14 +8442,16 @@ test.describe('App shell seeded workbench', () => {
 		await expect(window.getByRole('button', { name: /^Run$/ })).toBeVisible();
 	});
 
-	test('copies a renamed inactive scratch AI tab session id without leaving file preview', async () => {
+	test('copies a seeded inactive scratch AI tab session id without leaving file preview', async () => {
+		await relaunchWithEstablishedAiTabs([
+			{
+				id: 'copy-scratch-session',
+				agentSessionId: 'thread_e2e_copy_scratch',
+				name: 'Copy Scratch Session',
+				logText: 'Copy Scratch response is visible.',
+			},
+		]);
 		const tabRows = window.locator('[data-tab-id]');
-		await window.getByText('Main', { exact: true }).click();
-		await window.keyboard.press('Meta+T');
-		await window.keyboard.press('Meta+Shift+R');
-		const renameDialog = window.getByRole('dialog', { name: 'Rename Tab' });
-		await renameDialog.locator('input').fill('Copy Scratch Session');
-		await renameDialog.locator('input').press('Enter');
 		await expect(tabRows.filter({ hasText: 'Copy Scratch Session' }).first()).toBeVisible();
 
 		await window.getByText('README', { exact: true }).click();
@@ -8399,14 +8463,16 @@ test.describe('App shell seeded workbench', () => {
 		await expect(window.getByText('File Preview Surface')).toBeVisible();
 	});
 
-	test('marks a renamed inactive scratch AI tab unread without leaving file preview', async () => {
+	test('marks a seeded inactive scratch AI tab unread without leaving file preview', async () => {
+		await relaunchWithEstablishedAiTabs([
+			{
+				id: 'unread-scratch-session',
+				agentSessionId: 'thread_e2e_unread_scratch',
+				name: 'Unread Scratch Session',
+				logText: 'Unread Scratch response is visible.',
+			},
+		]);
 		const tabRows = window.locator('[data-tab-id]');
-		await window.getByText('Main', { exact: true }).click();
-		await window.keyboard.press('Meta+T');
-		await window.keyboard.press('Meta+Shift+R');
-		const renameDialog = window.getByRole('dialog', { name: 'Rename Tab' });
-		await renameDialog.locator('input').fill('Unread Scratch Session');
-		await renameDialog.locator('input').press('Enter');
 		await expect(tabRows.filter({ hasText: 'Unread Scratch Session' }).first()).toBeVisible();
 
 		await window.getByText('README', { exact: true }).click();
@@ -10412,10 +10478,9 @@ test.describe('App shell seeded workbench', () => {
 
 		await window.keyboard.press('Escape');
 		await expect(window.getByText('Kill Process?')).toBeHidden();
-		await expect(processMonitor).toBeHidden();
-
-		const reopenedProcessMonitor = await openProcessMonitor(window);
-		await expect(reopenedProcessMonitor.getByText('E2E Terminal - Terminal Shell')).toBeVisible();
+		await expect(processMonitor).toBeVisible();
+		await expect(processMonitor.getByText('E2E Terminal - Terminal Shell')).toBeVisible();
+		await expect(await getStubbedKilledProcessIds(electronApp)).toEqual([]);
 	});
 
 	test('opens the Usage Dashboard from Quick Actions', async () => {

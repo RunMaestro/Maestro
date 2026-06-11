@@ -602,11 +602,12 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 		setContextMenu(null);
 	}, [contextMenu, handleFileClick, session]);
 
-	const handleCopyPath = useCallback(() => {
+	const handleCopyPath = useCallback(async () => {
 		const absolutePath = `${session.fullPath}/${contextMenu!.path}`;
-		safeClipboardWrite(absolutePath);
+		const ok = await safeClipboardWrite(absolutePath);
+		onShowFlash?.(ok ? 'File Path Copied to Clipboard' : 'Failed to Copy Path');
 		setContextMenu(null);
-	}, [contextMenu, session.fullPath]);
+	}, [contextMenu, onShowFlash, session.fullPath]);
 
 	const handleOpenInDefaultApp = useCallback(() => {
 		const absolutePath = `${session.fullPath}/${contextMenu!.path}`;

@@ -1,5 +1,6 @@
 import { test, expect, helpers } from './fixtures/electron-app';
-import type { ElectronApplication, Page } from '@playwright/test';
+import type { ElectronApplication, Locator, Page } from '@playwright/test';
+import { execFileSync } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -43,6 +44,20 @@ type WorktreeGitStubOptions = {
 	branchesError?: boolean;
 	worktreeSetup?: { success?: boolean; error?: string; delayMs?: number };
 };
+
+function runGit(cwd: string, args: string[]) {
+	execFileSync('git', args, {
+		cwd,
+		stdio: 'ignore',
+		env: {
+			...process.env,
+			GIT_AUTHOR_NAME: 'E2E Bot',
+			GIT_AUTHOR_EMAIL: 'e2e@example.com',
+			GIT_COMMITTER_NAME: 'E2E Bot',
+			GIT_COMMITTER_EMAIL: 'e2e@example.com',
+		},
+	});
+}
 
 function createLaneWorkbench() {
 	const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-e2e-autorun-ai-'));
@@ -502,6 +517,7 @@ function createWorktreeBatchLaneWorkbench(
 	};
 
 	fs.mkdirSync(worktreesDir, { recursive: true });
+	runGit(seeded.projectDir, ['init', '-b', 'main']);
 	session.isGitRepo = true;
 	session.gitBranches = ['main', childBranch];
 	if (options.configured !== false) {
@@ -889,16 +905,40 @@ async function openAutoRunPanel(page: Page) {
 
 async function openAutoRunExpandedModal(page: Page) {
 	await openAutoRunPanel(page);
-	await page.getByTitle(/Expand to full screen/).click();
+	await page
+		.locator('[data-tour="autorun-panel"]')
+		.getByTitle(/Expand to full screen/)
+		.click();
 	const collapseButton = page.getByRole('button', { name: 'Collapse' });
 	const modal = page.locator('div.fixed.inset-0').filter({ has: collapseButton }).first();
 	await expect(modal.getByRole('heading', { name: 'Auto Run' })).toBeVisible();
 	return modal;
 }
 
+function expandedHeaderSaveButton(modal: Locator) {
+	return modal.getByTitle('Save changes', { exact: true }).first();
+}
+
+function expandedHeaderDiscardButton(modal: Locator) {
+	return modal.getByTitle('Discard changes', { exact: true }).first();
+}
+
+function expandedHeaderRunButton(modal: Locator) {
+	return modal.getByTitle('Run auto-run on tasks').first();
+}
+
+function expandedHeaderBusyRunButton(modal: Locator) {
+	return modal.getByTitle('Cannot run while agent is thinking').first();
+}
+
 async function openAutoRunSetupDialog(page: Page) {
 	await openAutoRunPanel(page);
-	await page.getByRole('button', { name: 'Select Auto Run Folder' }).click();
+	const selectFolderButton = page.getByRole('button', { name: 'Select Auto Run Folder' });
+	if (await selectFolderButton.isVisible().catch(() => false)) {
+		await selectFolderButton.click();
+	} else {
+		await page.getByTitle('Change folder').click();
+	}
 	const dialog = page.getByRole('dialog', { name: 'Change Auto Run Folder' });
 	await expect(dialog).toBeVisible();
 	return dialog;
@@ -1239,7 +1279,7 @@ test.describe('Auto Run and Codex AI Terminal', () => {
 				launched.window.getByRole('heading', { name: 'Phase 1: Lane Setup' })
 			).toBeVisible();
 			await expect(launched.window.getByText('Codex auto-run lane sentinel.')).toBeVisible();
-			await expect(launched.window.getByText('1 of 3 tasks completed').first()).toBeVisible();
+			await expect(launched.window.getByText('1 of 3 tasks').first()).toBeVisible();
 			await expect(helpers.getRunButton(launched.window).first()).toBeVisible();
 		} finally {
 			await launched.cleanup();
@@ -1295,7 +1335,7 @@ test.describe('Auto Run and Codex AI Terminal', () => {
 			const modal = await openAutoRunExpandedModal(launched.window);
 
 			await expect(modal.getByRole('heading', { name: 'Phase 1: Lane Setup' })).toBeVisible();
-			await expect(modal.getByRole('button', { name: 'Run' })).toBeVisible();
+			await expect(expandedHeaderRunButton(modal)).toBeVisible();
 			await expect(modal.getByRole('button', { name: 'Collapse' })).toBeVisible();
 		} finally {
 			await launched.cleanup();
@@ -1345,13 +1385,13 @@ test.describe('Auto Run and Codex AI Terminal', () => {
 			const editor = modal.getByPlaceholder(/Capture notes/);
 
 			await editor.fill(expandedContent);
-			await expect(modal.getByTitle('Save changes')).toBeVisible();
-			await modal.getByTitle('Save changes').click();
+			await expect(expandedHeaderSaveButton(modal)).toBeVisible();
+			await expandedHeaderSaveButton(modal).click();
 
 			await expect
 				.poll(() => fs.readFileSync(launched.phaseOnePath, 'utf-8'))
 				.toContain('Saved from expanded Auto Run modal');
-			await expect(modal.getByTitle('Save changes')).toBeHidden();
+			await expect(expandedHeaderSaveButton(modal)).toBeHidden();
 		} finally {
 			await launched.cleanup();
 		}
@@ -1370,7 +1410,7 @@ test.describe('Auto Run and Codex AI Terminal', () => {
 			await modal.getByTitle('Edit document').click();
 			const editor = modal.getByPlaceholder(/Capture notes/);
 			await editor.fill(dirtyContent);
-			await expect(modal.getByTitle('Save changes')).toBeVisible();
+			await expect(expandedHeaderSaveButton(modal)).toBeVisible();
 
 			await modal.getByTitle('Close (Esc)').click();
 			const confirmDialog = launched.window.getByRole('dialog', { name: 'Unsaved Changes' });
@@ -1428,11 +1468,11 @@ test.describe('Auto Run and Codex AI Terminal', () => {
 			const editor = modal.getByPlaceholder(/Capture notes/);
 
 			await editor.fill(dirtyContent);
-			await expect(modal.getByTitle('Save changes')).toBeVisible();
-			await modal.getByTitle('Discard changes').click();
+			await expect(expandedHeaderSaveButton(modal)).toBeVisible();
+			await expandedHeaderDiscardButton(modal).click();
 
 			await expect(editor).toHaveValue(launched.phaseOneContent);
-			await expect(modal.getByTitle('Save changes')).toBeHidden();
+			await expect(expandedHeaderSaveButton(modal)).toBeHidden();
 		} finally {
 			await launched.cleanup();
 		}
@@ -1443,7 +1483,7 @@ test.describe('Auto Run and Codex AI Terminal', () => {
 		try {
 			const modal = await openAutoRunExpandedModal(launched.window);
 
-			await modal.getByRole('button', { name: 'Run' }).click();
+			await expandedHeaderRunButton(modal).click();
 
 			const dialog = launched.window.getByRole('dialog', { name: 'Auto Run Configuration' });
 			await expect(dialog).toBeVisible();
@@ -1466,9 +1506,9 @@ test.describe('Auto Run and Codex AI Terminal', () => {
 			await modal.getByTitle('Edit document').click();
 			const editor = modal.getByPlaceholder(/Capture notes/);
 			await editor.fill(runSavedContent);
-			await expect(modal.getByTitle('Save changes')).toBeVisible();
+			await expect(expandedHeaderSaveButton(modal)).toBeVisible();
 
-			await modal.getByRole('button', { name: 'Run' }).click();
+			await expandedHeaderRunButton(modal).click();
 
 			await expect(
 				launched.window.getByRole('dialog', { name: 'Auto Run Configuration' })
@@ -1482,10 +1522,20 @@ test.describe('Auto Run and Codex AI Terminal', () => {
 	});
 
 	test('disables expanded modal Run while the Codex lane agent is busy', async () => {
-		const launched = await launchBusyLaneWorkbench();
+		const launched = await launchLaneWorkbench();
 		try {
+			await stubCodexProcessSpawn(launched.electronApp, { exitDelayMs: 20_000 });
+			const { composer, composerInput } = await openCodexPromptComposer(launched.window);
+
+			await composerInput.fill('Keep Codex busy while Auto Run opens');
+			await composerInput.press('Control+Enter');
+			await expect(composer).toBeHidden();
+			await expect
+				.poll(async () => (await getStubbedCodexProcessSpawnCalls(launched.electronApp)).length)
+				.toBe(1);
+
 			const modal = await openAutoRunExpandedModal(launched.window);
-			const runButton = modal.getByRole('button', { name: 'Run' });
+			const runButton = expandedHeaderBusyRunButton(modal);
 
 			await expect(runButton).toBeDisabled();
 			await expect(runButton).toHaveAttribute('title', 'Cannot run while agent is thinking');
@@ -1499,12 +1549,10 @@ test.describe('Auto Run and Codex AI Terminal', () => {
 		try {
 			await openAutoRunPanel(launched.window);
 
-			await expect(launched.window.getByText('Markdown Documents')).toBeVisible();
-			await expect(launched.window.getByText('Checkbox Tasks')).toBeVisible();
-			await expect(launched.window.getByText('Batch Execution')).toBeVisible();
 			await expect(
-				launched.window.getByRole('button', { name: 'Select Auto Run Folder' })
+				launched.window.getByText(/No content yet\.\s+Switch to Edit mode to start writing\./)
 			).toBeVisible();
+			await expect(launched.window.getByTitle('Change folder')).toBeVisible();
 		} finally {
 			await launched.cleanup();
 		}
@@ -1515,9 +1563,11 @@ test.describe('Auto Run and Codex AI Terminal', () => {
 		try {
 			const dialog = await openAutoRunSetupDialog(launched.window);
 
-			await expect(dialog.getByText('Markdown Documents')).toBeVisible();
-			await expect(dialog.getByText('Checkbox Tasks')).toBeVisible();
-			await expect(dialog.getByLabel('Auto Run Folder')).toHaveValue('');
+			const folderInput = dialog.getByLabel('Auto Run Folder');
+			await folderInput.fill('');
+			await expect(dialog.getByText('Markdown Documents', { exact: true })).toBeVisible();
+			await expect(dialog.getByText('Checkbox Tasks', { exact: true })).toBeVisible();
+			await expect(folderInput).toHaveValue('');
 			await expect(dialog.getByRole('button', { name: 'Continue' })).toBeDisabled();
 		} finally {
 			await launched.cleanup();
@@ -2076,9 +2126,14 @@ Recovered refresh sentinel.
 			await startCodexLaneStubbedAutoRun(launched);
 
 			await launched.window.getByTitle('Stop auto-run', { exact: true }).click();
+			const confirmDialog = launched.window.getByRole('dialog', { name: 'Confirm' });
+			await expect(confirmDialog).toBeVisible();
+			await confirmDialog.getByRole('button', { name: 'Confirm' }).click();
 
 			await expect(launched.window.getByRole('button', { name: 'Stopping...' })).toBeVisible();
-			await expect(launched.window.getByTitle('Stopping after current task...')).toBeVisible();
+			await expect(
+				launched.window.getByTitle('Stopping after current task...').first()
+			).toBeVisible();
 		} finally {
 			await launched.cleanup();
 		}

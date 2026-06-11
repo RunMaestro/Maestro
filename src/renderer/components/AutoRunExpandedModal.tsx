@@ -132,44 +132,61 @@ export function AutoRunExpandedModal({
 
 	// Track dirty state from AutoRun component
 	const [isDirty, setIsDirty] = useState(false);
+	const isDirtyRef = useRef(false);
+	const sharedDraftDirtyRef = useRef(false);
+	const handleDirtyChange = useCallback((nextIsDirty: boolean) => {
+		isDirtyRef.current = nextIsDirty;
+		setIsDirty(nextIsDirty);
+	}, []);
 
 	// Poll dirty state from AutoRun ref
 	useEffect(() => {
 		const interval = setInterval(() => {
 			if (autoRunRef.current) {
-				setIsDirty(autoRunRef.current.isDirty());
+				handleDirtyChange(autoRunRef.current.isDirty());
 			}
 		}, 100);
 		return () => clearInterval(interval);
-	}, []);
+	}, [handleDirtyChange]);
 
 	// Save handler
 	const handleSave = useCallback(async () => {
 		if (autoRunRef.current) {
 			await autoRunRef.current.save();
-			setIsDirty(false);
+			handleDirtyChange(false);
 		}
-	}, []);
+	}, [handleDirtyChange]);
 
 	// Revert handler
 	const handleRevert = useCallback(() => {
 		if (autoRunRef.current) {
 			autoRunRef.current.revert();
-			setIsDirty(false);
+			handleDirtyChange(false);
 		}
-	}, []);
+	}, [handleDirtyChange]);
 
 	// Unsaved changes confirmation state
 	const [showUnsavedConfirm, setShowUnsavedConfirm] = useState(false);
+	const sharedDraftDirty =
+		autoRunProps.externalLocalContent !== undefined &&
+		autoRunProps.externalSavedContent !== undefined &&
+		autoRunProps.externalLocalContent !== autoRunProps.externalSavedContent;
+	sharedDraftDirtyRef.current = sharedDraftDirty;
+	isDirtyRef.current = isDirty || sharedDraftDirty;
+	const hasUnsavedChanges = useCallback(() => {
+		return (
+			(autoRunRef.current?.isDirty() ?? false) || isDirtyRef.current || sharedDraftDirtyRef.current
+		);
+	}, []);
 
 	// Close handler that checks for unsaved changes
 	const handleClose = useCallback(() => {
-		if (isDirty) {
+		if (hasUnsavedChanges()) {
 			setShowUnsavedConfirm(true);
 		} else {
 			onClose();
 		}
-	}, [isDirty, onClose]);
+	}, [hasUnsavedChanges, onClose]);
 	handleCloseRef.current = handleClose;
 
 	// Discard changes and close
@@ -370,10 +387,10 @@ export function AutoRunExpandedModal({
 							</button>
 						) : (
 							<button
-								onClick={() => {
+								onClick={async () => {
 									// Save before opening batch runner if dirty
-									if (isDirty) {
-										handleSave();
+									if (hasUnsavedChanges()) {
+										await handleSave();
 									}
 									onOpenBatchRunner?.();
 								}}
@@ -446,6 +463,7 @@ export function AutoRunExpandedModal({
 						sessionState={sessionState}
 						sessionId={sessionId}
 						hideTopControls
+						onDirtyChange={handleDirtyChange}
 						{...autoRunProps}
 					/>
 				</div>

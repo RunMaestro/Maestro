@@ -90,6 +90,7 @@ interface AutoRunProps {
 	onExternalLocalContentChange?: (content: string) => void;
 	externalSavedContent?: string;
 	onExternalSavedContentChange?: (content: string) => void;
+	onDirtyChange?: (isDirty: boolean) => void;
 
 	// Mode state
 	mode: 'edit' | 'preview';
@@ -469,6 +470,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		onExternalLocalContentChange,
 		externalSavedContent,
 		onExternalSavedContentChange,
+		onDirtyChange,
 		mode: externalMode,
 		onModeChange,
 		initialCursorPosition = 0,
@@ -572,9 +574,14 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 
 	// Always use internal state for display (provides immediate feedback)
 	const localContent = internalLocalContent;
+	const localContentRef = useRef(localContent);
+	useEffect(() => {
+		localContentRef.current = localContent;
+	}, [localContent]);
 
 	const setLocalContent = useCallback((newContent: string) => {
 		// Always update internal state for immediate feedback
+		localContentRef.current = newContent;
 		setInternalLocalContent(newContent);
 		// Also propagate to external callback if provided (for sharing with expanded modal)
 		if (externalLocalContentChangeRef.current) {
@@ -607,9 +614,14 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 
 	// Always use internal state for saved content comparison
 	const savedContent = internalSavedContent;
+	const savedContentRef = useRef(savedContent);
+	useEffect(() => {
+		savedContentRef.current = savedContent;
+	}, [savedContent]);
 
 	const setSavedContent = useCallback((newContent: string) => {
 		// Always update internal state
+		savedContentRef.current = newContent;
 		setInternalSavedContent(newContent);
 		// Also propagate to external callback if provided
 		if (externalSavedContentChangeRef.current) {
@@ -619,6 +631,9 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 
 	// Dirty state: true when localContent differs from savedContent
 	const isDirty = localContent !== savedContent;
+	useEffect(() => {
+		onDirtyChange?.(isDirty);
+	}, [isDirty, onDirtyChange]);
 
 	// Track previous session/document to detect switches
 	const prevSessionIdRef = useRef(sessionId);
@@ -647,25 +662,26 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 	// editing (during rapid session switches). The file watcher will pick up the
 	// change and update the correct session's content.
 	const handleSave = useCallback(async () => {
-		if (!folderPath || !selectedFile || !isDirty) return;
+		if (!folderPath || !selectedFile || localContentRef.current === savedContentRef.current) return;
 
 		try {
+			const contentToSave = localContentRef.current;
 			await window.maestro.autorun.writeDoc(
 				folderPath,
 				selectedFile + '.md',
-				localContent,
+				contentToSave,
 				sshRemoteId
 			);
-			setSavedContent(localContent);
+			setSavedContent(contentToSave);
 		} catch (err) {
 			console.error('Failed to save:', err);
 		}
-	}, [folderPath, selectedFile, localContent, isDirty, setSavedContent, sshRemoteId]);
+	}, [folderPath, selectedFile, setSavedContent, sshRemoteId]);
 
 	// Revert function - discard changes
 	const handleRevert = useCallback(() => {
-		setLocalContent(savedContent);
-	}, [savedContent, setLocalContent]);
+		setLocalContent(savedContentRef.current);
+	}, [setLocalContent]);
 
 	// Track mode before auto-run to restore when it ends
 	const modeBeforeAutoRunRef = useRef<'edit' | 'preview' | null>(null);
@@ -874,7 +890,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 				}
 			},
 			switchMode,
-			isDirty: () => isDirty,
+			isDirty: () => localContentRef.current !== savedContentRef.current,
 			save: handleSave,
 			revert: handleRevert,
 			openResetTasksModal: () => {
@@ -1762,10 +1778,10 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 						</button>
 					) : (
 						<button
-							onClick={() => {
+							onClick={async () => {
 								// Save before opening batch runner if dirty
 								if (isDirty) {
-									handleSave();
+									await handleSave();
 								}
 								onOpenBatchRunner?.();
 							}}

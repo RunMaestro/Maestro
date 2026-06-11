@@ -30,7 +30,7 @@ This plan covers organization, branch hygiene, fresh audit work, and eventual E2
 
 Use the E2E sharding rules in [e2e/parallel-campaign/README.md](e2e/parallel-campaign/README.md). Do not run one giant parallel Playwright invocation.
 
-Status checkpoint, 2026-06-11: targeted focused E2E repair runs are green for the app-shell Tab Switcher, debug/accessibility Process Monitor/System Log, Auto Run expanded save, and files/docs/history locator/default drift cases listed in [current-status.md](current-status.md). The full PM2-sharded Playwright/Electron suite remains pending.
+Status checkpoint, 2026-06-11: targeted focused E2E repair runs are green for app shell, git/group-chat/playbooks, debug/accessibility, Auto Run expanded modal/worktree/stop-state coverage, and files/docs/history cases listed in [current-status.md](current-status.md). The first PM2 shard attempt was stopped as stale discovery after local source fixes; launch fresh shards from rebuilt artifacts before treating Phase 4 as complete. The full PM2-sharded Playwright/Electron suite remains pending.
 
 Execution rules:
 

@@ -744,8 +744,8 @@ async function openPlaybookExchangeFromQuickActions(page: Page) {
 	await quickActionsDialog.getByRole('button', { name: /Playbook Exchange/ }).click();
 
 	await expect(quickActionsDialog).toBeHidden();
-	const marketplaceDialog = page.getByRole('dialog', { name: 'Playbook Exchange' });
-	await expect(marketplaceDialog).toBeVisible();
+	const marketplaceDialog = page.locator('.modal-overlay [role="dialog"]').first();
+	await expect(marketplaceDialog.getByText('Playbook Exchange')).toBeVisible();
 	return marketplaceDialog;
 }
 
@@ -762,13 +762,36 @@ async function openSeededGroupChat(page: Page) {
 
 async function openSettings(page: Page) {
 	const quickActionsDialog = await openQuickActions(page);
-	await quickActionsDialog.getByPlaceholder('Type a command or jump to agent...').fill('Settings');
-	await quickActionsDialog.getByRole('button', { name: /^Settings$/ }).click();
+	const searchInput = quickActionsDialog.getByPlaceholder('Type a command or jump to agent...');
+	await searchInput.fill('Settings');
+	await expect(quickActionsDialog.getByText('Settings', { exact: true })).toBeVisible();
+	await searchInput.press('Enter');
 
 	await expect(quickActionsDialog).toBeHidden();
 	const settingsDialog = page.getByRole('dialog', { name: 'Settings' });
 	await expect(settingsDialog).toBeVisible();
 	return settingsDialog;
+}
+
+async function openAICommandsSettings(page: Page) {
+	const settingsDialog = await openSettings(page);
+	await settingsDialog.getByTitle('AI Commands').click();
+	await expect(settingsDialog.getByText('AI Commands', { exact: true })).toBeVisible();
+	return settingsDialog;
+}
+
+function marketplacePreview(marketplaceDialog: Locator) {
+	return marketplaceDialog.locator('.marketplace-preview');
+}
+
+async function selectMarketplaceDocument(marketplaceDialog: Locator, documentLabel: string) {
+	await marketplaceDialog
+		.getByRole('button', { name: /^[\w-]+\.md$/ })
+		.first()
+		.click();
+	const option = marketplaceDialog.getByRole('button', { name: documentLabel, exact: true }).last();
+	await expect(option).toBeVisible();
+	await option.click();
 }
 
 async function openGroupChatHistorySearch(page: Page, historyPanel: Locator) {
@@ -1789,12 +1812,14 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 		const launched = await launchGitGroupChatPlaybooksWorkbench();
 		try {
 			await stubSpecKitAndOpenSpecCommands(launched.electronApp);
-			const settingsDialog = await openSettings(launched.window);
+			await openAICommandsSettings(launched.window);
+			const specKitPanel = commandPanelByHeading(launched.window, 'Spec Kit Commands');
+			const openSpecPanel = commandPanelByHeading(launched.window, 'OpenSpec Commands');
 
-			await expect(settingsDialog.getByText('Spec Kit Commands')).toBeVisible();
-			await expect(settingsDialog.getByText('/speckit.specify')).toBeVisible();
-			await expect(settingsDialog.getByText('OpenSpec Commands')).toBeVisible();
-			await expect(settingsDialog.getByText('/openspec.proposal')).toBeVisible();
+			await expect(specKitPanel).toBeVisible();
+			await expect(specKitPanel.getByText('/speckit.specify')).toBeVisible();
+			await expect(openSpecPanel).toBeVisible();
+			await expect(openSpecPanel.getByText('/openspec.proposal')).toBeVisible();
 		} finally {
 			await launched.cleanup();
 		}
@@ -1867,10 +1892,9 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 			const marketplaceDialog = await openPlaybookExchangeFromQuickActions(launched.window);
 
 			await marketplaceDialog.getByRole('button', { name: /Missing Docs Git Review/ }).click();
-			await expect(marketplaceDialog.getByText('No README available')).toBeVisible();
-			await marketplaceDialog.getByRole('button', { name: 'README.md' }).click();
-			await marketplaceDialog.getByRole('button', { name: 'missing-doc.md' }).click();
-			await expect(marketplaceDialog.getByText('Document not found')).toBeVisible();
+			await expect(marketplacePreview(marketplaceDialog)).toContainText(/No\s+README\s+available/);
+			await selectMarketplaceDocument(marketplaceDialog, 'missing-doc.md');
+			await expect(marketplacePreview(marketplaceDialog)).toContainText(/Document\s+not\s+found/);
 		} finally {
 			await launched.cleanup();
 		}
@@ -1880,12 +1904,14 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 		const launched = await launchGitGroupChatPlaybooksWorkbench();
 		try {
 			await stubBundledCommandLoadFailures(launched.electronApp);
-			const settingsDialog = await openSettings(launched.window);
+			await openAICommandsSettings(launched.window);
+			const specKitPanel = commandPanelByHeading(launched.window, 'Spec Kit Commands');
+			const openSpecPanel = commandPanelByHeading(launched.window, 'OpenSpec Commands');
 
-			await expect(settingsDialog.getByText('Spec Kit Commands')).toBeVisible();
-			await expect(settingsDialog.getByText('No spec-kit commands loaded')).toBeVisible();
-			await expect(settingsDialog.getByText('OpenSpec Commands')).toBeVisible();
-			await expect(settingsDialog.getByText('No OpenSpec commands loaded')).toBeVisible();
+			await expect(specKitPanel).toBeVisible();
+			await expect(specKitPanel.getByText('No spec-kit commands loaded')).toBeVisible();
+			await expect(openSpecPanel).toBeVisible();
+			await expect(openSpecPanel.getByText('No OpenSpec commands loaded')).toBeVisible();
 		} finally {
 			await launched.cleanup();
 		}
@@ -2003,9 +2029,9 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 			const marketplaceDialog = await openPlaybookExchangeFromQuickActions(launched.window);
 
 			await marketplaceDialog.getByRole('button', { name: /Git Lane Review/ }).click();
-			await expect(
-				marketplaceDialog.getByText('Use this playbook to review lane output.')
-			).toBeVisible();
+			await expect(marketplacePreview(marketplaceDialog)).toContainText(
+				/Use\s+this\s+playbook\s+to\s+review\s+lane\s+output\./
+			);
 			await marketplaceDialog
 				.locator('#marketplace-target-folder')
 				.fill('engineering/git-lane-imported');
@@ -2028,10 +2054,11 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 		const launched = await launchGitGroupChatPlaybooksWorkbench();
 		try {
 			await stubSpecKitAndOpenSpecCommands(launched.electronApp);
-			const settingsDialog = await openSettings(launched.window);
+			await openAICommandsSettings(launched.window);
+			const specKitPanel = commandPanelByHeading(launched.window, 'Spec Kit Commands');
 
-			await settingsDialog.getByText('/speckit.specify').click();
-			const commandCard = settingsDialog
+			await specKitPanel.getByText('/speckit.specify').click();
+			const commandCard = specKitPanel
 				.getByText('/speckit.specify')
 				.locator('xpath=ancestor::div[contains(@class, "rounded-lg")][1]');
 			await commandCard.getByRole('button', { name: 'Edit' }).click();
@@ -2051,10 +2078,11 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 		const launched = await launchGitGroupChatPlaybooksWorkbench();
 		try {
 			await stubSpecKitAndOpenSpecCommands(launched.electronApp);
-			const settingsDialog = await openSettings(launched.window);
+			await openAICommandsSettings(launched.window);
+			const openSpecPanel = commandPanelByHeading(launched.window, 'OpenSpec Commands');
 
-			await settingsDialog.getByText('/openspec.proposal').click();
-			const commandCard = settingsDialog
+			await openSpecPanel.getByText('/openspec.proposal').click();
+			const commandCard = openSpecPanel
 				.getByText('/openspec.proposal')
 				.locator('xpath=ancestor::div[contains(@class, "rounded-lg")][1]');
 			await commandCard.getByRole('button', { name: 'Edit' }).click();
@@ -2196,7 +2224,7 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 		const launched = await launchGitGroupChatPlaybooksWorkbench();
 		try {
 			await stubSpecKitAndOpenSpecCommands(launched.electronApp);
-			const settingsDialog = await openSettings(launched.window);
+			const settingsDialog = await openAICommandsSettings(launched.window);
 			const specKitPanel = commandPanelByHeading(launched.window, 'Spec Kit Commands');
 
 			await expect(specKitPanel.getByText('v1.2.3')).toBeVisible();
@@ -2212,7 +2240,7 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 		const launched = await launchGitGroupChatPlaybooksWorkbench();
 		try {
 			await stubSpecKitAndOpenSpecCommands(launched.electronApp);
-			const settingsDialog = await openSettings(launched.window);
+			const settingsDialog = await openAICommandsSettings(launched.window);
 			const openSpecPanel = commandPanelByHeading(launched.window, 'OpenSpec Commands');
 
 			await expect(openSpecPanel.getByText('v2.0.1')).toBeVisible();
@@ -2288,9 +2316,11 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 			const marketplaceDialog = await openPlaybookExchangeFromQuickActions(launched.window);
 
 			await marketplaceDialog.getByRole('button', { name: /Git Lane Review/ }).click();
-			await marketplaceDialog.getByRole('button', { name: 'review-plan.md' }).click();
-			await expect(marketplaceDialog.getByText('Review Plan')).toBeVisible();
-			await expect(marketplaceDialog.getByText('Review plan body for the git lane.')).toBeVisible();
+			await selectMarketplaceDocument(marketplaceDialog, 'review-plan.md');
+			await expect(marketplacePreview(marketplaceDialog)).toContainText(/Review\s+Plan/);
+			await expect(marketplacePreview(marketplaceDialog)).toContainText(
+				/Review\s+plan\s+body\s+for\s+the\s+git\s+lane\./
+			);
 		} finally {
 			await launched.cleanup();
 		}
@@ -2430,7 +2460,7 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 		const launched = await launchGitGroupChatPlaybooksWorkbench();
 		try {
 			await stubSpecKitAndOpenSpecCommands(launched.electronApp);
-			const settingsDialog = await openSettings(launched.window);
+			const settingsDialog = await openAICommandsSettings(launched.window);
 
 			await settingsDialog.getByText('/speckit.specify').click();
 			const commandCard = settingsDialog
@@ -2501,7 +2531,7 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 		const launched = await launchGitGroupChatPlaybooksWorkbench();
 		try {
 			await stubSpecKitAndOpenSpecCommands(launched.electronApp);
-			const settingsDialog = await openSettings(launched.window);
+			const settingsDialog = await openAICommandsSettings(launched.window);
 
 			await settingsDialog.getByText('/openspec.proposal').click();
 			const commandCard = settingsDialog
@@ -2670,16 +2700,18 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 			const marketplaceDialog = await openPlaybookExchangeFromQuickActions(launched.window);
 
 			await marketplaceDialog.getByRole('button', { name: /Git Lane Review/ }).click();
-			await expect(
-				marketplaceDialog.getByText('Use this playbook to review lane output.')
-			).toBeVisible();
+			await expect(marketplacePreview(marketplaceDialog)).toContainText(
+				/Use\s+this\s+playbook\s+to\s+review\s+lane\s+output\./
+			);
 			await launched.window.keyboard.press('Meta+Shift+]');
-			await expect(marketplaceDialog.getByText('Review Plan')).toBeVisible();
-			await expect(marketplaceDialog.getByText('Review plan body for the git lane.')).toBeVisible();
+			await expect(marketplacePreview(marketplaceDialog)).toContainText(/Review\s+Plan/);
+			await expect(marketplacePreview(marketplaceDialog)).toContainText(
+				/Review\s+plan\s+body\s+for\s+the\s+git\s+lane\./
+			);
 			await launched.window.keyboard.press('Meta+Shift+]');
-			await expect(
-				marketplaceDialog.getByText('Use this playbook to review lane output.')
-			).toBeVisible();
+			await expect(marketplacePreview(marketplaceDialog)).toContainText(
+				/Use\s+this\s+playbook\s+to\s+review\s+lane\s+output\./
+			);
 		} finally {
 			await launched.cleanup();
 		}
@@ -2765,17 +2797,15 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 			const marketplaceDialog = await openPlaybookExchangeFromQuickActions(launched.window);
 
 			await marketplaceDialog.getByRole('button', { name: /Git Lane Review/ }).click();
-			await expect(
-				marketplaceDialog.getByText('Use this playbook to review lane output.')
-			).toBeVisible();
-			await marketplaceDialog.getByRole('button', { name: 'README.md' }).click();
-			await marketplaceDialog.getByRole('button', { name: 'review-plan.md' }).click();
-			await expect(marketplaceDialog.getByText('Review Plan')).toBeVisible();
-			await marketplaceDialog.getByRole('button', { name: 'review-plan.md' }).click();
-			await marketplaceDialog.getByRole('button', { name: 'README.md' }).click();
-			await expect(
-				marketplaceDialog.getByText('Use this playbook to review lane output.')
-			).toBeVisible();
+			await expect(marketplacePreview(marketplaceDialog)).toContainText(
+				/Use\s+this\s+playbook\s+to\s+review\s+lane\s+output\./
+			);
+			await selectMarketplaceDocument(marketplaceDialog, 'review-plan.md');
+			await expect(marketplacePreview(marketplaceDialog)).toContainText(/Review\s+Plan/);
+			await selectMarketplaceDocument(marketplaceDialog, 'README.md');
+			await expect(marketplacePreview(marketplaceDialog)).toContainText(
+				/Use\s+this\s+playbook\s+to\s+review\s+lane\s+output\./
+			);
 		} finally {
 			await launched.cleanup();
 		}
@@ -2952,7 +2982,7 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 		const launched = await launchGitGroupChatPlaybooksWorkbench();
 		try {
 			await stubSpecKitAndOpenSpecCommands(launched.electronApp);
-			const settingsDialog = await openSettings(launched.window);
+			const settingsDialog = await openAICommandsSettings(launched.window);
 
 			await settingsDialog.getByText('/speckit.specify').click();
 			const commandCard = settingsDialog
@@ -2974,7 +3004,7 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 		const launched = await launchGitGroupChatPlaybooksWorkbench();
 		try {
 			await stubSpecKitAndOpenSpecCommands(launched.electronApp);
-			const settingsDialog = await openSettings(launched.window);
+			const settingsDialog = await openAICommandsSettings(launched.window);
 
 			await settingsDialog.getByText('/speckit.specify').click();
 			const commandCard = settingsDialog
@@ -2997,7 +3027,7 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 		const launched = await launchGitGroupChatPlaybooksWorkbench();
 		try {
 			await stubSpecKitAndOpenSpecCommands(launched.electronApp);
-			const settingsDialog = await openSettings(launched.window);
+			const settingsDialog = await openAICommandsSettings(launched.window);
 
 			await settingsDialog.getByText('/openspec.proposal').click();
 			const commandCard = settingsDialog
@@ -3019,7 +3049,7 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 		const launched = await launchGitGroupChatPlaybooksWorkbench();
 		try {
 			await stubSpecKitAndOpenSpecCommands(launched.electronApp);
-			const settingsDialog = await openSettings(launched.window);
+			const settingsDialog = await openAICommandsSettings(launched.window);
 
 			await settingsDialog.getByText('/openspec.proposal').click();
 			const commandCard = settingsDialog
@@ -3043,7 +3073,7 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 		try {
 			await stubSpecKitAndOpenSpecCommands(launched.electronApp);
 			await stubOpenExternal(launched.electronApp);
-			const settingsDialog = await openSettings(launched.window);
+			const settingsDialog = await openAICommandsSettings(launched.window);
 
 			await settingsDialog.getByRole('button', { name: 'github/spec-kit' }).click();
 			await expect
@@ -3059,7 +3089,7 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 		try {
 			await stubSpecKitAndOpenSpecCommands(launched.electronApp);
 			await stubOpenExternal(launched.electronApp);
-			const settingsDialog = await openSettings(launched.window);
+			const settingsDialog = await openAICommandsSettings(launched.window);
 
 			await settingsDialog.getByRole('button', { name: 'Fission-AI/OpenSpec' }).click();
 			await expect
@@ -3546,7 +3576,7 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 		const launched = await launchGitGroupChatPlaybooksWorkbench();
 		try {
 			await stubSpecKitAndOpenSpecCommands(launched.electronApp);
-			const settingsDialog = await openSettings(launched.window);
+			const settingsDialog = await openAICommandsSettings(launched.window);
 			const specKitPanel = commandPanelByHeading(launched.window, 'Spec Kit Commands');
 
 			await settingsDialog.getByText('/speckit.specify').click();
@@ -3574,7 +3604,7 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 		const launched = await launchGitGroupChatPlaybooksWorkbench();
 		try {
 			await stubSpecKitAndOpenSpecCommands(launched.electronApp);
-			const settingsDialog = await openSettings(launched.window);
+			const settingsDialog = await openAICommandsSettings(launched.window);
 			const openSpecPanel = commandPanelByHeading(launched.window, 'OpenSpec Commands');
 
 			await settingsDialog.getByText('/openspec.proposal').click();
@@ -3656,14 +3686,16 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 			const marketplaceDialog = await openPlaybookExchangeFromQuickActions(launched.window);
 
 			await marketplaceDialog.getByRole('button', { name: /Git Lane Review/ }).click();
-			await marketplaceDialog.getByRole('button', { name: 'review-plan.md' }).click();
-			await expect(marketplaceDialog.getByText('Review Plan')).toBeVisible();
+			await selectMarketplaceDocument(marketplaceDialog, 'review-plan.md');
+			await expect(marketplacePreview(marketplaceDialog)).toContainText(/Review\s+Plan/);
 			await marketplaceDialog.getByRole('button', { name: 'Read more...' }).click();
 
-			await expect(
-				marketplaceDialog.getByText('Use this playbook to review lane output.')
-			).toBeVisible();
-			await expect(marketplaceDialog.getByText('Review plan body for the git lane.')).toBeHidden();
+			await expect(marketplacePreview(marketplaceDialog)).toContainText(
+				/Use\s+this\s+playbook\s+to\s+review\s+lane\s+output\./
+			);
+			await expect(marketplacePreview(marketplaceDialog)).not.toContainText(
+				/Review\s+plan\s+body\s+for\s+the\s+git\s+lane\./
+			);
 		} finally {
 			await launched.cleanup();
 		}
@@ -4438,7 +4470,7 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 		const launched = await launchGitGroupChatPlaybooksWorkbench();
 		try {
 			await stubSpecKitAndOpenSpecCommands(launched.electronApp);
-			const settingsDialog = await openSettings(launched.window);
+			const settingsDialog = await openAICommandsSettings(launched.window);
 			await settingsDialog.getByText('/speckit.specify').click();
 			const commandCard = settingsDialog
 				.getByText('/speckit.specify')
@@ -4458,7 +4490,7 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 		const launched = await launchGitGroupChatPlaybooksWorkbench();
 		try {
 			await stubSpecKitAndOpenSpecCommands(launched.electronApp);
-			const settingsDialog = await openSettings(launched.window);
+			const settingsDialog = await openAICommandsSettings(launched.window);
 			await settingsDialog.getByText('/openspec.proposal').click();
 			const commandCard = settingsDialog
 				.getByText('/openspec.proposal')
@@ -4636,7 +4668,7 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 		const launched = await launchGitGroupChatPlaybooksWorkbench();
 		try {
 			await stubSpecKitAndOpenSpecCommands(launched.electronApp);
-			const settingsDialog = await openSettings(launched.window);
+			const settingsDialog = await openAICommandsSettings(launched.window);
 			await settingsDialog.getByText('/openspec.proposal').click();
 			const commandCard = settingsDialog
 				.getByText('/openspec.proposal')
@@ -4917,8 +4949,10 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 			const marketplaceDialog = await openPlaybookExchangeFromQuickActions(launched.window);
 
 			await marketplaceDialog.getByRole('button', { name: /Git Lane Review/ }).click();
-			await marketplaceDialog.getByRole('button', { name: 'review-plan.md' }).click();
-			await expect(marketplaceDialog.getByText('Review plan body for the git lane.')).toBeVisible();
+			await selectMarketplaceDocument(marketplaceDialog, 'review-plan.md');
+			await expect(marketplacePreview(marketplaceDialog)).toContainText(
+				/Review\s+plan\s+body\s+for\s+the\s+git\s+lane\./
+			);
 			await marketplaceDialog
 				.locator('#marketplace-target-folder')
 				.fill('engineering/review-after-preview');
@@ -4935,7 +4969,7 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 		const launched = await launchGitGroupChatPlaybooksWorkbench();
 		try {
 			await stubSpecKitAndOpenSpecCommands(launched.electronApp);
-			const settingsDialog = await openSettings(launched.window);
+			const settingsDialog = await openAICommandsSettings(launched.window);
 			await settingsDialog.getByText('/openspec.proposal').click();
 			const commandCard = settingsDialog
 				.getByText('/openspec.proposal')
@@ -5232,7 +5266,7 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 		const launched = await launchGitGroupChatPlaybooksWorkbench();
 		try {
 			await stubSpecKitAndOpenSpecCommands(launched.electronApp);
-			const settingsDialog = await openSettings(launched.window);
+			const settingsDialog = await openAICommandsSettings(launched.window);
 			await settingsDialog.getByText('/speckit.specify').click();
 			const commandCard = settingsDialog
 				.getByText('/speckit.specify')
@@ -5254,7 +5288,7 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 		const launched = await launchGitGroupChatPlaybooksWorkbench();
 		try {
 			await stubSpecKitAndOpenSpecCommands(launched.electronApp);
-			const settingsDialog = await openSettings(launched.window);
+			const settingsDialog = await openAICommandsSettings(launched.window);
 			const openSpecPanel = commandPanelByHeading(launched.window, 'OpenSpec Commands');
 
 			await expect(openSpecPanel.getByText('v2.0.1')).toBeVisible();
@@ -5679,7 +5713,7 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 					}
 					case 'speckit-version': {
 						await stubSpecKitAndOpenSpecCommands(launched.electronApp);
-						await openSettings(launched.window);
+						await openAICommandsSettings(launched.window);
 						const specKitPanel = commandPanelByHeading(launched.window, 'Spec Kit Commands');
 
 						await expect(specKitPanel.getByText('v1.2.3')).toBeVisible();
@@ -5687,7 +5721,7 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 					}
 					case 'speckit-refresh': {
 						await stubSpecKitAndOpenSpecCommands(launched.electronApp);
-						await openSettings(launched.window);
+						await openAICommandsSettings(launched.window);
 						const specKitPanel = commandPanelByHeading(launched.window, 'Spec Kit Commands');
 						await specKitPanel.getByRole('button', { name: 'Check for Updates' }).click();
 
@@ -5696,7 +5730,7 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 					}
 					case 'speckit-prompt': {
 						await stubSpecKitAndOpenSpecCommands(launched.electronApp);
-						const settingsDialog = await openSettings(launched.window);
+						const settingsDialog = await openAICommandsSettings(launched.window);
 						await settingsDialog.getByText('/speckit.specify').click();
 
 						await expect(
@@ -5706,7 +5740,7 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 					}
 					case 'speckit-edit-cancel': {
 						await stubSpecKitAndOpenSpecCommands(launched.electronApp);
-						const settingsDialog = await openSettings(launched.window);
+						const settingsDialog = await openAICommandsSettings(launched.window);
 						await settingsDialog.getByText('/speckit.specify').click();
 						const commandCard = settingsDialog
 							.getByText('/speckit.specify')
@@ -5720,7 +5754,7 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 					}
 					case 'openspec-version': {
 						await stubSpecKitAndOpenSpecCommands(launched.electronApp);
-						await openSettings(launched.window);
+						await openAICommandsSettings(launched.window);
 						const openSpecPanel = commandPanelByHeading(launched.window, 'OpenSpec Commands');
 
 						await expect(openSpecPanel.getByText('v2.0.1')).toBeVisible();
@@ -5728,7 +5762,7 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 					}
 					case 'openspec-refresh': {
 						await stubSpecKitAndOpenSpecCommands(launched.electronApp);
-						await openSettings(launched.window);
+						await openAICommandsSettings(launched.window);
 						const openSpecPanel = commandPanelByHeading(launched.window, 'OpenSpec Commands');
 						await openSpecPanel.getByRole('button', { name: 'Check for Updates' }).click();
 
@@ -5737,7 +5771,7 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 					}
 					case 'openspec-prompt': {
 						await stubSpecKitAndOpenSpecCommands(launched.electronApp);
-						const settingsDialog = await openSettings(launched.window);
+						const settingsDialog = await openAICommandsSettings(launched.window);
 						await settingsDialog.getByText('/openspec.proposal').click();
 
 						await expect(
@@ -5747,7 +5781,7 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 					}
 					case 'openspec-edit-cancel': {
 						await stubSpecKitAndOpenSpecCommands(launched.electronApp);
-						const settingsDialog = await openSettings(launched.window);
+						const settingsDialog = await openAICommandsSettings(launched.window);
 						await settingsDialog.getByText('/openspec.proposal').click();
 						const commandCard = settingsDialog
 							.getByText('/openspec.proposal')

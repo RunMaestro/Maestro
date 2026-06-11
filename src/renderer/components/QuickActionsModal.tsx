@@ -1418,6 +1418,13 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	}, [mode]);
 
 	const handleKeyDown = (e: React.KeyboardEvent) => {
+		if (e.key === 'Escape' && mode === 'move-to-group') {
+			e.preventDefault();
+			e.stopPropagation();
+			setMode('main');
+			return;
+		}
+
 		// Delegate to list navigation hook
 		listHandleKeyDown(e);
 

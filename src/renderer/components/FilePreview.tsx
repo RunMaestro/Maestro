@@ -1436,8 +1436,13 @@ export const FilePreview = React.memo(
 					}
 				}
 
-				// Update match count
-				setTotalMatches(allRanges.length);
+				const codeBlockMatches =
+					file?.content
+						.match(/```[\s\S]*?```/g)
+						?.reduce((count, block) => count + (block.match(searchRegex)?.length ?? 0), 0) ?? 0;
+				const matchCount = allRanges.length > 0 ? allRanges.length : codeBlockMatches;
+
+				setTotalMatches(matchCount);
 
 				// Create highlights
 				if (allRanges.length > 0) {

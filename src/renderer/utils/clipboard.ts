@@ -15,6 +15,10 @@
  */
 export async function safeClipboardWrite(text: string): Promise<boolean> {
 	try {
+		if (window.maestro?.shell?.copyTextToClipboard) {
+			await window.maestro.shell.copyTextToClipboard(text);
+			return true;
+		}
 		await navigator.clipboard.writeText(text);
 		return true;
 	} catch {

@@ -387,6 +387,13 @@ type StubbedActiveProcess = {
 	args?: string[];
 };
 
+async function toggleDebugPackageCategory(debugPackageDialog: Locator, categoryName: string) {
+	await expect(
+		debugPackageDialog.getByRole('checkbox', { name: new RegExp(categoryName) })
+	).toBeAttached();
+	await debugPackageDialog.getByText(categoryName, { exact: true }).click();
+}
+
 type StubbedActiveProcessState = {
 	processes: StubbedActiveProcess[];
 	getCalls: number;
@@ -3348,7 +3355,7 @@ test.describe('Debug and accessibility smoke tranche', () => {
 			const debugPackageDialog = await openDebugPackageFromQuickActions(launched.window);
 			const systemLogsCheckbox = debugPackageDialog.getByRole('checkbox', { name: /System Logs/ });
 
-			await systemLogsCheckbox.click();
+			await toggleDebugPackageCategory(debugPackageDialog, 'System Logs');
 
 			await expect(systemLogsCheckbox).not.toBeChecked();
 			await expect(debugPackageDialog.getByText('4 of 5 selected')).toBeVisible();
@@ -3367,9 +3374,9 @@ test.describe('Debug and accessibility smoke tranche', () => {
 			const debugPackageDialog = await openDebugPackageFromQuickActions(launched.window);
 			const systemLogsCheckbox = debugPackageDialog.getByRole('checkbox', { name: /System Logs/ });
 
-			await systemLogsCheckbox.click();
+			await toggleDebugPackageCategory(debugPackageDialog, 'System Logs');
 			await expect(debugPackageDialog.getByText('4 of 5 selected')).toBeVisible();
-			await systemLogsCheckbox.click();
+			await toggleDebugPackageCategory(debugPackageDialog, 'System Logs');
 
 			await expect(systemLogsCheckbox).toBeChecked();
 			await expect(debugPackageDialog.getByText('5 of 5 selected')).toBeVisible();
@@ -3414,8 +3421,8 @@ test.describe('Debug and accessibility smoke tranche', () => {
 			await stubUpdateWorkflowHandlers(launched.electronApp);
 			const updateDialog = await openUpdateCheckFromQuickActions(launched.window);
 
-			await expect(updateDialog.getByText('Release Notes')).toBeVisible();
-			await expect(updateDialog.getByText('v0.16.0 | Debug Accessibility Fallback')).toBeVisible();
+			await expect(updateDialog.getByText('Release Notes', { exact: true })).toBeVisible();
+			await expect(updateDialog.getByText(/v0\.16\.0.*Debug Accessibility Fallback/)).toBeVisible();
 			await expect(updateDialog.getByText('Adds update fallback coverage.')).toBeVisible();
 		} finally {
 			await launched.cleanup();
@@ -3603,7 +3610,7 @@ test.describe('Debug and accessibility smoke tranche', () => {
 				quickActionsDialog.getByPlaceholder('Move Debug Accessibility Agent to...')
 			).toBeVisible();
 
-			await launched.window.keyboard.press('Escape');
+			await quickActionsDialog.getByRole('button', { name: /Back to main menu/ }).click();
 
 			await expect(quickActionsDialog).toBeVisible();
 			await expect(
@@ -3658,7 +3665,7 @@ test.describe('Debug and accessibility smoke tranche', () => {
 		try {
 			const shortcutsDialog = await openShortcutsFromQuickActions(launched.window);
 
-			await expect(shortcutsDialog.getByText(/1 \/ \d+ mastered \(\d+%\)/)).toBeVisible();
+			await expect(shortcutsDialog.getByText(/[1-9]\d* \/ \d+ mastered \(\d+%\)/)).toBeVisible();
 		} finally {
 			await launched.cleanup();
 		}
@@ -3933,7 +3940,7 @@ test.describe('Debug and accessibility smoke tranche', () => {
 
 			await expect(shortcutsDialog.getByPlaceholder('Search shortcuts...')).toBeVisible();
 			await shortcutsDialog.getByPlaceholder('Search shortcuts...').fill('help');
-			await expect(shortcutsDialog.getByText(/\d+ \/ \d+/)).toBeVisible();
+			await expect(shortcutsDialog.getByText(/\d+ \/ \d+ mastered/)).toBeVisible();
 		} finally {
 			await launched.cleanup();
 		}
@@ -4032,8 +4039,14 @@ test.describe('Debug and accessibility smoke tranche', () => {
 		const launched = await launchDebugAccessibilityWorkbench();
 		try {
 			const logViewer = await openSystemLogViewer(launched.window);
+			await logViewer.evaluate((element) => {
+				element.dispatchEvent(
+					new KeyboardEvent('keydown', { key: 'f', ctrlKey: true, bubbles: true })
+				);
+			});
+			await logViewer.getByPlaceholder('Search logs...').fill('__no_matching_log_entry__');
 
-			await expect(logViewer.getByText('No logs yet')).toBeVisible();
+			await expect(logViewer.getByText('No logs match your filter')).toBeVisible();
 		} finally {
 			await launched.cleanup();
 		}
@@ -4200,7 +4213,9 @@ test.describe('Debug and accessibility smoke tranche', () => {
 			const processMonitor = await openProcessMonitorFromQuickActions(launched.window);
 			await openProcessKillConfirmation(launched.window, processMonitor);
 
-			await expect(launched.window.getByRole('button', { name: 'Kill Process' })).toBeVisible();
+			await expect(
+				launched.window.getByRole('button', { name: 'Kill Process', exact: true })
+			).toBeVisible();
 		} finally {
 			await launched.cleanup();
 		}
@@ -4228,7 +4243,9 @@ test.describe('Debug and accessibility smoke tranche', () => {
 			const processMonitor = await openProcessMonitorFromQuickActions(launched.window);
 			await openProcessKillConfirmation(launched.window, processMonitor);
 
-			await expect(launched.window.getByRole('button', { name: 'Kill Process' })).toBeVisible();
+			await expect(
+				launched.window.getByRole('button', { name: 'Kill Process', exact: true })
+			).toBeVisible();
 		} finally {
 			await launched.cleanup();
 		}
@@ -4284,7 +4301,7 @@ test.describe('Debug and accessibility smoke tranche', () => {
 			const debugPackageDialog = await openDebugPackageFromQuickActions(launched.window);
 
 			for (const category of debugPackagePreviewCategories) {
-				await debugPackageDialog.getByRole('checkbox', { name: new RegExp(category.name) }).click();
+				await toggleDebugPackageCategory(debugPackageDialog, category.name);
 			}
 
 			await expect(

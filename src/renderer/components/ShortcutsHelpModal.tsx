@@ -75,6 +75,7 @@ export function ShortcutsHelpModal({
 					onClick={onClose}
 					className="p-1 rounded hover:bg-white/10 transition-colors"
 					style={{ color: theme.colors.textDim }}
+					aria-label="Close modal"
 				>
 					<X className="w-4 h-4" />
 				</button>

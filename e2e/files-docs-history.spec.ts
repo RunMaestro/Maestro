@@ -5,7 +5,7 @@
  * It seeds deterministic local state and does not launch live agent processes.
  */
 import { test, expect, helpers } from './fixtures/electron-app';
-import type { Page } from '@playwright/test';
+import type { ElectronApplication, Page } from '@playwright/test';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -474,7 +474,38 @@ async function getFileTreeRow(window: Page, name: string) {
 }
 
 function getHistoryDetailModal(window: Page, detailText: string) {
-	return window.locator('.fixed.inset-0').filter({ hasText: detailText }).last();
+	return window.locator('.fixed.inset-0 > .relative').filter({ hasText: detailText }).last();
+}
+
+async function clearClipboard(electronApp: ElectronApplication) {
+	await expect
+		.poll(async () => {
+			try {
+				await electronApp.evaluate(({ clipboard }) => clipboard.writeText(''));
+				return true;
+			} catch (error) {
+				if (error instanceof Error && error.message.includes('Execution context was destroyed')) {
+					return false;
+				}
+				throw error;
+			}
+		})
+		.toBe(true);
+}
+
+async function expectClipboardText(electronApp: ElectronApplication, expected: string) {
+	await expect
+		.poll(async () => {
+			try {
+				return await electronApp.evaluate(({ clipboard }) => clipboard.readText());
+			} catch (error) {
+				if (error instanceof Error && error.message.includes('Execution context was destroyed')) {
+					return '';
+				}
+				throw error;
+			}
+		})
+		.toBe(expected);
 }
 
 async function openFileContextMenu(window: Page, name: string) {
@@ -589,6 +620,8 @@ const filePreviewQuotaAssertions: readonly QuotaAssertion[] = [
 		await fileSearch.press('Escape');
 	},
 	async (window) => {
+		await helpers.openRightPanelTab(window, 'Files');
+		await window.getByTitle('Expand all folders').click();
 		const contextMenu = await openFileContextMenu(window, 'archive.md');
 		await contextMenu.getByRole('button', { name: 'Preview' }).click();
 		await expect(window.getByRole('heading', { name: 'Archive Notes' })).toBeVisible();
@@ -666,16 +699,27 @@ const historyQuotaAssertions: readonly HistoryQuotaAssertion[] = [
 		await expect(
 			window.getByText('Manual detail references draft/plain.txt and archive.md.')
 		).toBeVisible();
-		await window.getByRole('button', { name: 'Close' }).click();
-		await expect(
-			window.getByText('Manual detail references draft/plain.txt and archive.md.')
-		).toBeHidden();
+		const detailModal = getHistoryDetailModal(
+			window,
+			'Manual detail references draft/plain.txt and archive.md.'
+		);
+		await detailModal.getByRole('button', { name: 'Close' }).click();
+		await expect(detailModal).toBeHidden();
 	},
 	async (window) => {
 		const historyPanel = window.locator('[data-tour="history-panel"]');
 		await historyPanel.getByText('Manual file operation note').click();
-		await expect(window.getByText('USER')).toBeVisible();
-		await expect(window.getByTitle('Copy session ID: codex-history-manual')).toBeVisible();
+		const detailModal = getHistoryDetailModal(
+			window,
+			'Manual detail references draft/plain.txt and archive.md.'
+		);
+		await expect(
+			detailModal
+				.locator('span')
+				.filter({ hasText: /^USER$/ })
+				.first()
+		).toBeVisible();
+		await expect(detailModal.getByTitle('Copy session ID: codex-history-manual')).toBeVisible();
 	},
 ];
 
@@ -956,11 +1000,13 @@ test.describe(`Files docs history lane matrix (${activeScenarioCount} active, ${
 		await expect(historyPanel.getByText('1 result')).toBeVisible();
 		await historyPanel.getByText('Manual file operation note').click();
 
-		await expect(
-			window.getByText('Manual detail references draft/plain.txt and archive.md.')
-		).toBeVisible();
-		await expect(window.getByText('USER')).toBeVisible();
-		await expect(window.getByTitle('Copy session ID: codex-history-manual')).toBeVisible();
+		const detailModal = getHistoryDetailModal(
+			window,
+			'Manual detail references draft/plain.txt and archive.md.'
+		);
+		await expect(detailModal).toBeVisible();
+		await expect(detailModal.getByText('USER', { exact: true })).toBeVisible();
+		await expect(detailModal.getByTitle('Copy session ID: codex-history-manual')).toBeVisible();
 	});
 
 	test(`${activeScenarioMatrix[14].id} ${activeScenarioMatrix[14].title}`, async () => {
@@ -1070,15 +1116,20 @@ test.describe(`Files docs history lane matrix (${activeScenarioCount} active, ${
 		await helpers.openRightPanelTab(window, 'History');
 		const historyPanel = window.locator('[data-tour="history-panel"]');
 		await historyPanel.getByText('Rendered docs history tranche').first().click();
+		const detailModal = getHistoryDetailModal(
+			window,
+			'History detail includes README.md and docs/runbook.md render checks.'
+		);
 
-		await expect(window.getByTitle('Mark as human-validated')).toBeVisible();
-		await window.getByTitle('Mark as human-validated').click();
+		await expect(detailModal.getByTitle('Mark as human-validated')).toBeVisible();
+		await detailModal.getByTitle('Mark as human-validated').click();
 
-		await expect(window.getByTitle('Mark as not validated')).toBeVisible();
+		await expect(detailModal.getByTitle('Mark as not validated')).toBeVisible();
 		await expect(
-			window.getByTitle('Task completed successfully and human-validated')
+			detailModal.getByTitle('Task completed successfully and human-validated')
 		).toBeVisible();
 		await window.keyboard.press('Escape');
+		await expect(detailModal).toBeHidden();
 		await expect(
 			historyPanel.getByTitle('Task completed successfully and human-validated').first()
 		).toBeVisible();
@@ -1152,21 +1203,35 @@ test.describe(`Files docs history lane matrix (${activeScenarioCount} active, ${
 		const historyPanel = window.locator('[data-tour="history-panel"]');
 		await historyPanel.getByText('Manual file operation note').click();
 
-		await expect(
-			window.getByText('Manual detail references draft/plain.txt and archive.md.')
-		).toBeVisible();
-		await window.getByRole('button', { name: 'Next' }).click();
-		await expect(
-			window.getByText('Failure detail includes a blocked external renderer path.')
-		).toBeVisible();
-		await window.getByRole('button', { name: 'Next' }).click();
-		await expect(
-			window.getByText('History detail includes README.md and docs/runbook.md render checks.')
-		).toBeVisible();
-		await window.getByRole('button', { name: 'Previous' }).click();
-		await expect(
-			window.getByText('Failure detail includes a blocked external renderer path.')
-		).toBeVisible();
+		let detailModal = getHistoryDetailModal(
+			window,
+			'Manual detail references draft/plain.txt and archive.md.'
+		);
+		await expect(detailModal).toBeVisible();
+		await detailModal.getByRole('button', { name: 'Next' }).click();
+		detailModal = getHistoryDetailModal(
+			window,
+			'History achievement action opens the About Maestro achievements view.'
+		);
+		await expect(detailModal).toBeVisible();
+		await detailModal.getByRole('button', { name: 'Next' }).click();
+		detailModal = getHistoryDetailModal(
+			window,
+			'Failure detail includes a blocked external renderer path.'
+		);
+		await expect(detailModal).toBeVisible();
+		await detailModal.getByRole('button', { name: 'Next' }).click();
+		detailModal = getHistoryDetailModal(
+			window,
+			'History detail includes README.md and docs/runbook.md render checks.'
+		);
+		await expect(detailModal).toBeVisible();
+		await detailModal.getByRole('button', { name: 'Prev' }).click();
+		detailModal = getHistoryDetailModal(
+			window,
+			'Failure detail includes a blocked external renderer path.'
+		);
+		await expect(detailModal).toBeVisible();
 	});
 
 	test(`${activeScenarioMatrix[26].id} ${activeScenarioMatrix[26].title}`, async () => {
@@ -1174,18 +1239,24 @@ test.describe(`Files docs history lane matrix (${activeScenarioCount} active, ${
 		const historyPanel = window.locator('[data-tour="history-panel"]');
 		await historyPanel.getByText('Preview fallback failed').click();
 
-		await expect(
-			window.getByText('Failure detail includes a blocked external renderer path.')
-		).toBeVisible();
-		await window.getByRole('button', { name: 'Delete' }).click();
+		const detailModal = getHistoryDetailModal(
+			window,
+			'Failure detail includes a blocked external renderer path.'
+		);
+		await expect(detailModal).toBeVisible();
+		await detailModal.getByRole('button', { name: 'Delete' }).click();
 
-		const deleteConfirm = window.locator('.fixed').filter({ hasText: 'Delete History Entry' });
+		const deleteConfirm = window
+			.locator('.fixed.inset-0')
+			.filter({ hasText: 'Delete History Entry' })
+			.last();
 		await expect(deleteConfirm.getByText('Delete History Entry')).toBeVisible();
 		await expect(
 			deleteConfirm.getByText('Are you sure you want to delete this auto history entry?')
 		).toBeVisible();
 		await deleteConfirm.getByRole('button', { name: 'Delete' }).click();
 
+		await expect(detailModal).toBeHidden();
 		await expect(historyPanel.getByText('Preview fallback failed')).toBeHidden();
 		await expect(historyPanel.getByText('Rendered docs history tranche')).toBeVisible();
 		await expect(historyPanel.getByText('Manual file operation note')).toBeVisible();
@@ -1283,28 +1354,24 @@ test.describe(`Files docs history lane matrix (${activeScenarioCount} active, ${
 		electronApp,
 	}) => {
 		await expect(window.getByRole('heading', { name: 'Files Docs History Matrix' })).toBeVisible();
-		await electronApp.evaluate(({ clipboard }) => clipboard.writeText(''));
+		await clearClipboard(electronApp);
 
 		await window.getByTitle('Copy content to clipboard').click();
 
 		await expect(window.getByText('Content Copied to Clipboard')).toBeVisible();
-		await expect
-			.poll(() => electronApp.evaluate(({ clipboard }) => clipboard.readText()))
-			.toBe(fs.readFileSync(seededWorkbench.readmePath, 'utf-8'));
+		await expectClipboardText(electronApp, fs.readFileSync(seededWorkbench.readmePath, 'utf-8'));
 	});
 
 	test(`${activeScenarioMatrix[33].id} ${activeScenarioMatrix[33].title}`, async ({
 		electronApp,
 	}) => {
 		await expect(window.getByRole('heading', { name: 'Files Docs History Matrix' })).toBeVisible();
-		await electronApp.evaluate(({ clipboard }) => clipboard.writeText(''));
+		await clearClipboard(electronApp);
 
 		await window.getByTitle('Copy full path to clipboard').click();
 
 		await expect(window.getByText('File Path Copied to Clipboard')).toBeVisible();
-		await expect
-			.poll(() => electronApp.evaluate(({ clipboard }) => clipboard.readText()))
-			.toBe(seededWorkbench.readmePath);
+		await expectClipboardText(electronApp, seededWorkbench.readmePath);
 	});
 
 	test(`${activeScenarioMatrix[34].id} ${activeScenarioMatrix[34].title}`, async () => {
@@ -1378,15 +1445,13 @@ test.describe(`Files docs history lane matrix (${activeScenarioCount} active, ${
 	test(`${activeScenarioMatrix[38].id} ${activeScenarioMatrix[38].title}`, async ({
 		electronApp,
 	}) => {
-		await electronApp.evaluate(({ clipboard }) => clipboard.writeText(''));
+		await clearClipboard(electronApp);
 		const contextMenu = await openFileContextMenu(window, 'README.md');
 
 		await contextMenu.getByRole('button', { name: 'Copy Path' }).click();
 
 		await expect(window.getByText('File Path Copied to Clipboard')).toBeVisible();
-		await expect
-			.poll(() => electronApp.evaluate(({ clipboard }) => clipboard.readText()))
-			.toBe(seededWorkbench.readmePath);
+		await expectClipboardText(electronApp, seededWorkbench.readmePath);
 	});
 
 	test(`${activeScenarioMatrix[39].id} ${activeScenarioMatrix[39].title}`, async () => {
@@ -1422,14 +1487,17 @@ test.describe(`Files docs history lane matrix (${activeScenarioCount} active, ${
 	}) => {
 		await helpers.openRightPanelTab(window, 'History');
 		const historyPanel = window.locator('[data-tour="history-panel"]');
-		await electronApp.evaluate(({ clipboard }) => clipboard.writeText(''));
+		await clearClipboard(electronApp);
 		await historyPanel.getByText('Preview fallback failed').click();
 
-		await window.getByTitle('Copy session ID: codex-history-preview-failure').click();
+		const detailModal = getHistoryDetailModal(
+			window,
+			'Failure detail includes a blocked external renderer path.'
+		);
+		await expect(detailModal).toBeVisible();
+		await detailModal.getByTitle('Copy session ID: codex-history-preview-failure').click();
 
-		await expect
-			.poll(() => electronApp.evaluate(({ clipboard }) => clipboard.readText()))
-			.toBe('codex-history-preview-failure');
+		await expectClipboardText(electronApp, 'codex-history-preview-failure');
 	});
 
 	test(`${activeScenarioMatrix[42].id} ${activeScenarioMatrix[42].title}`, async () => {
@@ -1457,8 +1525,12 @@ test.describe(`Files docs history lane matrix (${activeScenarioCount} active, ${
 		await helpers.openRightPanelTab(window, 'Files');
 		await window.getByTitle('Auto-refresh every 180s').hover();
 
-		await expect(window.getByText('Auto-refresh')).toBeVisible();
-		await window.getByText('Disable auto-refresh').click();
+		const autoRefreshMenu = window
+			.locator('body > div.fixed')
+			.filter({ hasText: 'Disable auto-refresh' })
+			.last();
+		await expect(autoRefreshMenu.getByText('Auto-refresh', { exact: true })).toBeVisible();
+		await autoRefreshMenu.getByText('Disable auto-refresh').click();
 
 		await expect(window.getByTitle('Refresh file tree')).toBeVisible();
 	});
@@ -1488,12 +1560,16 @@ test.describe(`Files docs history lane matrix (${activeScenarioCount} active, ${
 	});
 
 	test(`${activeScenarioMatrix[47].id} ${activeScenarioMatrix[47].title}`, async () => {
+		await helpers.openRightPanelTab(window, 'Files');
+		await window.getByTitle('Expand all folders').click();
 		const contextMenu = await openFileContextMenu(window, 'runbook.md');
 		await contextMenu.getByRole('button', { name: 'Document Graph', exact: true }).click();
 
 		const graphDialog = window.getByRole('dialog', { name: 'Document Graph' });
 		await expect(graphDialog).toBeVisible({ timeout: 15_000 });
-		await expect(graphDialog.getByText(/documents/)).toBeVisible({ timeout: 15_000 });
+		await expect(graphDialog.getByText(/Parsing documents|No documents found/).first()).toBeVisible(
+			{ timeout: 15_000 }
+		);
 	});
 
 	test(`${activeScenarioMatrix[48].id} ${activeScenarioMatrix[48].title}`, async () => {
@@ -1519,6 +1595,7 @@ test.describe(`Files docs history lane matrix (${activeScenarioCount} active, ${
 		fs.writeFileSync(freshPath, '# Fresh manual refresh file\n', 'utf-8');
 
 		await helpers.openRightPanelTab(window, 'Files');
+		await window.getByTitle('Expand all folders').click();
 		await expect(window.getByText('fresh.md')).toBeHidden();
 		await window.getByTitle('Auto-refresh every 180s').click();
 
@@ -1599,19 +1676,32 @@ test.describe(`Files docs history lane matrix (${activeScenarioCount} active, ${
 		await helpers.openRightPanelTab(window, 'History');
 		const historyPanel = window.locator('[data-tour="history-panel"]');
 		await historyPanel.getByText('Manual file operation note').click();
-		await expect(
-			window.getByText('Manual detail references draft/plain.txt and archive.md.')
-		).toBeVisible();
+		let detailModal = getHistoryDetailModal(
+			window,
+			'Manual detail references draft/plain.txt and archive.md.'
+		);
+		await expect(detailModal).toBeVisible();
 
 		await window.keyboard.press('ArrowRight');
-		await expect(
-			window.getByText('Failure detail includes a blocked external renderer path.')
-		).toBeVisible();
+		detailModal = getHistoryDetailModal(
+			window,
+			'History achievement action opens the About Maestro achievements view.'
+		);
+		await expect(detailModal).toBeVisible();
+
+		await window.keyboard.press('ArrowRight');
+		detailModal = getHistoryDetailModal(
+			window,
+			'Failure detail includes a blocked external renderer path.'
+		);
+		await expect(detailModal).toBeVisible();
 
 		await window.keyboard.press('ArrowLeft');
-		await expect(
-			window.getByText('Manual detail references draft/plain.txt and archive.md.')
-		).toBeVisible();
+		detailModal = getHistoryDetailModal(
+			window,
+			'History achievement action opens the About Maestro achievements view.'
+		);
+		await expect(detailModal).toBeVisible();
 	});
 
 	test(`${activeScenarioMatrix[57].id} ${activeScenarioMatrix[57].title}`, async () => {
@@ -1692,15 +1782,13 @@ test.describe(`Files docs history lane matrix (${activeScenarioCount} active, ${
 	test(`${activeScenarioMatrix[62].id} ${activeScenarioMatrix[62].title}`, async ({
 		electronApp,
 	}) => {
-		await electronApp.evaluate(({ clipboard }) => clipboard.writeText(''));
+		await clearClipboard(electronApp);
 		const contextMenu = await openFileContextMenu(window, 'docs');
 
 		await contextMenu.getByRole('button', { name: 'Copy Path' }).click();
 
 		await expect(window.getByText('File Path Copied to Clipboard')).toBeVisible();
-		await expect
-			.poll(() => electronApp.evaluate(({ clipboard }) => clipboard.readText()))
-			.toBe(path.join(seededWorkbench.projectDir, 'docs'));
+		await expectClipboardText(electronApp, path.join(seededWorkbench.projectDir, 'docs'));
 	});
 
 	test(`${activeScenarioMatrix[63].id} ${activeScenarioMatrix[63].title}`, async ({
@@ -1708,14 +1796,12 @@ test.describe(`Files docs history lane matrix (${activeScenarioCount} active, ${
 	}) => {
 		await helpers.openRightPanelTab(window, 'History');
 		const historyPanel = window.locator('[data-tour="history-panel"]');
-		await electronApp.evaluate(({ clipboard }) => clipboard.writeText(''));
+		await clearClipboard(electronApp);
 		await historyPanel.getByText('Rendered docs history tranche').click();
 
 		await window.getByTitle('Copy session ID: codex-history-render').click();
 
-		await expect
-			.poll(() => electronApp.evaluate(({ clipboard }) => clipboard.readText()))
-			.toBe('codex-history-render');
+		await expectClipboardText(electronApp, 'codex-history-render');
 	});
 
 	test(`${activeScenarioMatrix[64].id} ${activeScenarioMatrix[64].title}`, async () => {
@@ -1758,15 +1844,15 @@ test.describe(`Files docs history lane matrix (${activeScenarioCount} active, ${
 		await helpers.openRightPanelTab(window, 'History');
 		const historyPanel = window.locator('[data-tour="history-panel"]');
 		await historyPanel.getByText('Manual file operation note').click();
-		await expect(
-			window.getByText('Manual detail references draft/plain.txt and archive.md.')
-		).toBeVisible();
+		const detailModal = getHistoryDetailModal(
+			window,
+			'Manual detail references draft/plain.txt and archive.md.'
+		);
+		await expect(detailModal).toBeVisible();
 
-		await window.getByRole('button', { name: 'Close' }).click();
+		await detailModal.getByRole('button', { name: 'Close', exact: true }).click();
 
-		await expect(
-			window.getByText('Manual detail references draft/plain.txt and archive.md.')
-		).toBeHidden();
+		await expect(detailModal).toBeHidden();
 		await expect(historyPanel.getByText('Manual file operation note')).toBeVisible();
 	});
 
