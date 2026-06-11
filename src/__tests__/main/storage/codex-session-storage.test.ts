@@ -863,6 +863,35 @@ describe('CodexSessionStorage', () => {
 		});
 	});
 
+	it('finds the session file by session_meta payload.id when the filename UUID differs', async () => {
+		// Codex output reports the thread id, but the rollout filename can carry a
+		// different UUID. The stored session_meta records the real id under
+		// payload.id, so resume must match against it (issue #251, Repro B).
+		const threadId = 'tttttttt-tttt-tttt-tttt-tttttttttttt';
+		const filenameUuid = 'ffffffff-ffff-ffff-ffff-ffffffffffff';
+		const mismatchedFile = path.join(
+			sessionsDir,
+			'2026',
+			'05',
+			'11',
+			`rollout-20260511_181818_000-${filenameUuid}.jsonl`
+		);
+		setupLocalSessionTree({
+			[mismatchedFile]: jsonl(
+				sessionMeta(threadId, projectPath),
+				message('user', 'Find me by payload id'),
+				message('assistant', 'Resumed via payload id')
+			),
+		});
+
+		const result = await storage.readSessionMessages(projectPath, threadId);
+
+		expect(result.messages.map((message) => message.content)).toEqual([
+			'Find me by payload id',
+			'Resumed via payload id',
+		]);
+	});
+
 	it('reads local messages across Codex JSONL formats with pagination', async () => {
 		setupLocalSessionTree({
 			[sessionFilePath]: jsonl(

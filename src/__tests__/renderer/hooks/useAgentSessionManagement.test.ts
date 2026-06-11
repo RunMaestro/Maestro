@@ -481,6 +481,86 @@ describe('useAgentSessionManagement', () => {
 		expect(updatedSession.inputMode).toBe('ai');
 	});
 
+	it('reads cross-project history sessions from the provided project path', async () => {
+		// The active session lives in /test/project, but the history entry being
+		// resumed belongs to a different local project. The stored session must be
+		// read from that project's path, not the active session's root (issue #251).
+		const activeSession = createMockSession({ projectRoot: '/test/project' });
+		const setSessions = vi.fn();
+
+		window.maestro.agentSessions.read = vi.fn().mockResolvedValue({
+			messages: [
+				{ type: 'user', content: 'Hello', timestamp: '2024-01-01T00:00:00.000Z', uuid: 'msg-1' },
+			],
+			total: 1,
+			hasMore: false,
+		});
+		window.maestro.claude.getSessionOrigins = vi.fn().mockResolvedValue({});
+
+		const { result } = renderHook(() =>
+			useAgentSessionManagement({
+				activeSession,
+				setSessions,
+				setActiveAgentSessionId: vi.fn(),
+				setAgentSessionsOpen: vi.fn(),
+				rightPanelRef: createRightPanelRef(),
+				defaultSaveToHistory: true,
+			})
+		);
+
+		await act(async () => {
+			await result.current.handleResumeSession(
+				'agent-cross-project',
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				'/other/project'
+			);
+		});
+
+		expect(window.maestro.agentSessions.read).toHaveBeenCalledWith(
+			'claude-code',
+			'/other/project',
+			'agent-cross-project',
+			{ offset: 0, limit: 100 }
+		);
+		expect(window.maestro.claude.getSessionOrigins).toHaveBeenCalledWith('/other/project');
+	});
+
+	it('falls back to the active project root when no project path is provided', async () => {
+		const activeSession = createMockSession({ projectRoot: '/test/project' });
+		const setSessions = vi.fn();
+
+		window.maestro.agentSessions.read = vi.fn().mockResolvedValue({
+			messages: [],
+			total: 0,
+			hasMore: false,
+		});
+
+		const { result } = renderHook(() =>
+			useAgentSessionManagement({
+				activeSession,
+				setSessions,
+				setActiveAgentSessionId: vi.fn(),
+				setAgentSessionsOpen: vi.fn(),
+				rightPanelRef: createRightPanelRef(),
+				defaultSaveToHistory: true,
+			})
+		);
+
+		await act(async () => {
+			await result.current.handleResumeSession('agent-same-project');
+		});
+
+		expect(window.maestro.agentSessions.read).toHaveBeenCalledWith(
+			'claude-code',
+			'/test/project',
+			'agent-same-project',
+			{ offset: 0, limit: 100 }
+		);
+	});
+
 	it('uses Claude defaults and message fallbacks for sessions without a tool type', async () => {
 		const activeSession = createMockSession({
 			projectRoot: '/test/project',

@@ -324,7 +324,7 @@ describe('HistoryPanel integration', () => {
 
 		expect(await screen.findByText('Auto fixed build')).toBeInTheDocument();
 		fireEvent.click(screen.getByRole('button', { name: /Build Agent/i }));
-		expect(onOpenSessionAsTab).toHaveBeenCalledWith('auto-session-001');
+		expect(onOpenSessionAsTab).toHaveBeenCalledWith('auto-session-001', '/repo/project');
 		expect(
 			screen.queryByText('Detailed auto response with task evidence.')
 		).not.toBeInTheDocument();

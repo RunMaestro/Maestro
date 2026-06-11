@@ -1202,13 +1202,16 @@ export class CodexSessionStorage extends BaseSessionStorage {
 				return filePath;
 			}
 
-			// Also check by reading first line for session ID
+			// Also check by reading first line for session ID.
+			// New format stores the id under payload.id (session_meta); legacy format
+			// uses a top-level id. Match either so resume works when the session's
+			// thread id differs from the rollout filename UUID.
 			try {
 				const content = await fs.readFile(filePath, 'utf-8');
 				const firstLine = content.split('\n')[0];
 				if (firstLine) {
 					const metadata = JSON.parse(firstLine) as CodexSessionMetadata;
-					if (metadata.id === sessionId) {
+					if (metadata.payload?.id === sessionId || metadata.id === sessionId) {
 						return filePath;
 					}
 				}
@@ -1235,14 +1238,17 @@ export class CodexSessionStorage extends BaseSessionStorage {
 				return filePath;
 			}
 
-			// Also check by reading first line for session ID
+			// Also check by reading first line for session ID.
+			// New format stores the id under payload.id (session_meta); legacy format
+			// uses a top-level id. Match either so resume works when the session's
+			// thread id differs from the rollout filename UUID.
 			try {
 				const result = await readFileRemote(filePath, sshConfig);
 				if (result.success && result.data) {
 					const firstLine = result.data.split('\n')[0];
 					if (firstLine) {
 						const metadata = JSON.parse(firstLine) as CodexSessionMetadata;
-						if (metadata.id === sessionId) {
+						if (metadata.payload?.id === sessionId || metadata.id === sessionId) {
 							return filePath;
 						}
 					}

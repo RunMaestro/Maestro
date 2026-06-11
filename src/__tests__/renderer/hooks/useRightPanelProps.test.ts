@@ -63,6 +63,7 @@ describe('useRightPanelProps', () => {
 		result.current.setActiveRightTab('files');
 		result.current.onAutoRunCreateDocument('plan.md');
 		result.current.onOpenSessionAsTab('agent-session-1');
+		result.current.onOpenSessionAsTab('agent-session-2', '/other/project');
 		result.current.onFocusFileInGraph('docs/plan.md');
 
 		expect(result.current.theme).toBe(deps.theme);
@@ -70,7 +71,24 @@ describe('useRightPanelProps', () => {
 		expect(result.current.onAutoRunCreateDocument).toBe(handleAutoRunCreateDocument);
 		expect(handleSetActiveRightTab).toHaveBeenCalledWith('files');
 		expect(handleAutoRunCreateDocument).toHaveBeenCalledWith('plan.md');
-		expect(handleResumeSession).toHaveBeenCalledWith('agent-session-1');
+		// onOpenSessionAsTab forwards the (optional) project path to handleResumeSession's
+		// trailing parameter so cross-project history entries read from the right storage.
+		expect(handleResumeSession).toHaveBeenCalledWith(
+			'agent-session-1',
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined
+		);
+		expect(handleResumeSession).toHaveBeenCalledWith(
+			'agent-session-2',
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			'/other/project'
+		);
 		expect(handleFocusFileInGraph).toHaveBeenCalledWith('docs/plan.md');
 	});
 

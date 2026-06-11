@@ -8,7 +8,14 @@
  */
 
 import { useMemo } from 'react';
-import type { Session, Theme, RightPanelTab, BatchRunState } from '../../types';
+import type {
+	Session,
+	Theme,
+	RightPanelTab,
+	BatchRunState,
+	LogEntry,
+	UsageStats,
+} from '../../types';
 import type { FileTreeChanges } from '../../utils/fileExplorer';
 
 /**
@@ -73,7 +80,14 @@ export interface UseRightPanelPropsDeps {
 	handleAbortBatchOnError: () => void;
 	handleResumeAfterError: () => void;
 	handleJumpToAgentSession: (agentSessionId: string) => void;
-	handleResumeSession: (agentSessionId: string) => void;
+	handleResumeSession: (
+		agentSessionId: string,
+		providedMessages?: LogEntry[],
+		sessionName?: string,
+		starred?: boolean,
+		usageStats?: UsageStats,
+		projectPath?: string
+	) => void;
 
 	// Modal handlers
 	handleOpenAboutModal: () => void;
@@ -133,8 +147,27 @@ export function useRightPanelProps(deps: UseRightPanelPropsDeps) {
 			onAbortBatchOnError: deps.handleAbortBatchOnError,
 			onResumeAfterError: deps.handleResumeAfterError,
 			onJumpToAgentSession: deps.handleJumpToAgentSession,
-			onResumeSession: deps.handleResumeSession,
-			onOpenSessionAsTab: deps.handleResumeSession,
+			// History entries can belong to a different local project than the active
+			// session, so forward the entry's project path to handleResumeSession (its
+			// trailing parameter) and let it read the stored session from there.
+			onResumeSession: (agentSessionId: string, projectPath?: string) =>
+				deps.handleResumeSession(
+					agentSessionId,
+					undefined,
+					undefined,
+					undefined,
+					undefined,
+					projectPath
+				),
+			onOpenSessionAsTab: (agentSessionId: string, projectPath?: string) =>
+				deps.handleResumeSession(
+					agentSessionId,
+					undefined,
+					undefined,
+					undefined,
+					undefined,
+					projectPath
+				),
 
 			// Modal handlers
 			onOpenAboutModal: deps.handleOpenAboutModal,

@@ -35,7 +35,7 @@ interface HistoryDetailModalProps {
 	entry: HistoryEntry;
 	onClose: () => void;
 	onJumpToAgentSession?: (agentSessionId: string) => void;
-	onResumeSession?: (agentSessionId: string) => void;
+	onResumeSession?: (agentSessionId: string, projectPath?: string) => void;
 	onDelete?: (entryId: string) => void;
 	onUpdate?: (entryId: string, updates: { validated?: boolean }) => Promise<boolean>;
 	// Navigation props for prev/next
@@ -339,7 +339,7 @@ export function HistoryDetailModal({
 									{onResumeSession && (
 										<button
 											onClick={() => {
-												onResumeSession(entry.agentSessionId!);
+												onResumeSession(entry.agentSessionId!, entry.projectPath);
 												onClose();
 											}}
 											className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase transition-colors hover:opacity-80"

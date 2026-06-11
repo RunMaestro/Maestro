@@ -62,7 +62,8 @@ export interface UseAgentSessionManagementReturn {
 		providedMessages?: LogEntry[],
 		sessionName?: string,
 		starred?: boolean,
-		usageStats?: UsageStats
+		usageStats?: UsageStats,
+		projectPath?: string
 	) => Promise<void>;
 }
 
@@ -165,10 +166,18 @@ export function useAgentSessionManagement(
 			providedMessages?: LogEntry[],
 			sessionName?: string,
 			starred?: boolean,
-			usageStats?: UsageStats
+			usageStats?: UsageStats,
+			projectPath?: string
 		) => {
 			// Use projectRoot (not cwd) for consistent session storage access
 			if (!activeSession?.projectRoot) return;
+
+			// History entries can reference sessions stored in a *different* local
+			// project than the active one. When the caller knows the originating
+			// project path, read the stored session from there; otherwise fall back
+			// to the active session's root. Reading from the wrong path throws (or
+			// returns nothing), which is the root cause of the AgentSessions read error.
+			const readProjectPath = projectPath ?? activeSession.projectRoot;
 
 			// Check if a tab with this agentSessionId already exists
 			const existingTab = activeSession.aiTabs?.find(
@@ -194,11 +203,12 @@ export function useAgentSessionManagement(
 					messages = providedMessages;
 				} else {
 					// Load the session messages using the generic agentSessions API
-					// Use projectRoot (not cwd) for consistent session storage access
+					// Use the resolved project path so cross-project history entries
+					// read from their own storage location instead of the active one.
 					const agentId = activeSession.toolType || 'claude-code';
 					const result = await window.maestro.agentSessions.read(
 						agentId,
-						activeSession.projectRoot,
+						readProjectPath,
 						agentSessionId,
 						{ offset: 0, limit: 100 }
 					);
@@ -225,10 +235,8 @@ export function useAgentSessionManagement(
 					try {
 						// Look up session metadata from session origins (name, starred, contextUsage)
 						// Note: getSessionOrigins is still Claude-specific until we add generic origin tracking
-						// Use projectRoot (not cwd) for consistent session storage access
-						const origins = await window.maestro.claude.getSessionOrigins(
-							activeSession.projectRoot
-						);
+						// Use the resolved project path to match the project the session was stored under.
+						const origins = await window.maestro.claude.getSessionOrigins(readProjectPath);
 						const originData = origins[agentSessionId];
 						if (originData && typeof originData === 'object') {
 							if (sessionName === undefined && originData.sessionName) {
