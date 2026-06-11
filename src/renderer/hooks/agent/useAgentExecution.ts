@@ -19,6 +19,9 @@ import {
 import { estimateContextUsage } from '../../utils/contextUsage';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { logger } from '../../utils/logger';
+import { captureException } from '../../utils/sentry';
+
+const EXIT_ERROR_GRACE_MS = 25;
 
 /**
  * Result from agent spawn operations.
@@ -250,6 +253,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 					let responseText = '';
 					let taskUsageStats: UsageStats | undefined;
 					let lastUsageEvent: UsageStats | undefined; // Last (non-accumulated) event for context estimation
+					let didError = false;
 					const queryStartTime = Date.now(); // Track start time for stats
 					const isBatchProcess = options?.isAutoRun ?? false;
 					let lastOutputAt = Date.now();
@@ -272,6 +276,21 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 						settled = true;
 						cleanup();
 						resolve(result);
+					};
+
+					const resolveAfterErrorGrace = (
+						result: Omit<AgentSpawnResult, 'success'>,
+						didExitCleanly: boolean
+					) => {
+						if (settled) return;
+						settled = true;
+						setTimeout(() => {
+							cleanup();
+							resolve({
+								success: didExitCleanly && !didError,
+								...result,
+							});
+						}, EXIT_ERROR_GRACE_MS);
 					};
 
 					// Set up listeners for this specific agent run
@@ -300,6 +319,31 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 								taskUsageStats = accumulateUsageStats(taskUsageStats, usageStats);
 								// Keep the last event for context estimation (accumulated totals can exceed context window)
 								lastUsageEvent = usageStats;
+							}
+						})
+					);
+
+					// Track errors for this agent so onExit can resolve with correct success flag.
+					// The agent-error event may arrive before or after exit due to IPC ordering.
+					cleanupFns.push(
+						window.maestro.process.onAgentError((sid: string, error) => {
+							if (sid === targetSessionId) {
+								didError = true;
+								captureException(new Error(error.message), {
+									extra: {
+										operation: 'agentExecution:spawnAgentForSession',
+										sessionId,
+										targetSessionId,
+										agentSessionId,
+										agentType: session.toolType,
+										agentId: error.agentId,
+										errorType: error.type,
+										recoverable: error.recoverable,
+										errorSessionId: error.sessionId,
+										errorTimestamp: error.timestamp,
+										cwd: effectiveCwd,
+									},
+								});
 							}
 						})
 					);
@@ -496,15 +540,17 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 											!hasRunnableQueueItem(checkSession.executionQueue)
 										) {
 											// Queue drained (or only held items left) or session idle - safe to continue batch
-											resolveOnce({
-												success: didExitCleanly,
-												response: responseText,
-												agentSessionId,
-												usageStats: taskUsageStats,
-												contextUsage: taskContextUsage,
-												error: exitError,
-												errorKind: exitErrorKind,
-											});
+											resolveAfterErrorGrace(
+												{
+													response: responseText,
+													agentSessionId,
+													usageStats: taskUsageStats,
+													contextUsage: taskContextUsage,
+													error: exitError,
+													errorKind: exitErrorKind,
+												},
+												didExitCleanly
+											);
 										} else {
 											// Queue still processing - check again
 											setTimeout(waitForQueueDrain, 100);
@@ -514,15 +560,17 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 									setTimeout(waitForQueueDrain, 50);
 								} else {
 									// No queued items or worktree mode - resolve immediately
-									resolveOnce({
-										success: didExitCleanly,
-										response: responseText,
-										agentSessionId,
-										usageStats: taskUsageStats,
-										contextUsage: taskContextUsage,
-										error: exitError,
-										errorKind: exitErrorKind,
-									});
+									resolveAfterErrorGrace(
+										{
+											response: responseText,
+											agentSessionId,
+											usageStats: taskUsageStats,
+											contextUsage: taskContextUsage,
+											error: exitError,
+											errorKind: exitErrorKind,
+										},
+										didExitCleanly
+									);
 								}
 							}
 						})

@@ -1,13 +1,20 @@
 /**
  * Tests for useGroupChatHandlers hook (extracted from App.tsx Phase 2B)
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useGroupChatHandlers } from '../../../renderer/hooks/groupChat/useGroupChatHandlers';
 import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
+import { useBatchStore } from '../../../renderer/stores/batchStore';
 import { useModalStore } from '../../../renderer/stores/modalStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
+import {
+	consumeCompletedGroupChatAutoRun,
+	consumeGroupChatAutoRun,
+	consumeGroupChatAutoRunForCompletion,
+	registerGroupChatAutoRun,
+} from '../../../renderer/utils/groupChatAutoRunRegistry';
 
 // Mock notifyToast (module-level export can't be spied — must vi.mock)
 vi.mock('../../../renderer/stores/notificationStore', async () => {
@@ -34,8 +41,12 @@ const mockGroupChat = {
 	onParticipantsChanged: vi.fn().mockReturnValue(() => {}),
 	onModeratorUsage: vi.fn().mockReturnValue(() => {}),
 	onParticipantState: vi.fn().mockReturnValue(() => {}),
+	onParticipantLiveOutput: vi.fn().mockReturnValue(() => {}),
+	onAutoRunBatchComplete: vi.fn().mockReturnValue(() => {}),
 	onModeratorSessionIdChanged: vi.fn().mockReturnValue(() => {}),
 };
+
+const originalDispatchBatch = useBatchStore.getState().dispatchBatch;
 
 // ---------------------------------------------------------------------------
 // Store reset helper
@@ -71,6 +82,17 @@ beforeEach(() => {
 		(window.maestro as any).groupChat = mockGroupChat;
 	}
 	Object.assign((window.maestro as any).groupChat, mockGroupChat);
+});
+
+afterEach(() => {
+	vi.useRealTimers();
+	useBatchStore.setState({ dispatchBatch: originalDispatchBatch });
+	consumeGroupChatAutoRun('session-auto');
+	consumeGroupChatAutoRun('session-auto-1');
+	consumeGroupChatAutoRun('session-auto-other');
+	consumeCompletedGroupChatAutoRun('gc-1', 'Agent A');
+	consumeCompletedGroupChatAutoRun('gc-1', 'Agent B');
+	consumeCompletedGroupChatAutoRun('gc-2', 'Agent A');
 });
 
 // ===========================================================================
@@ -644,6 +666,7 @@ describe('useGroupChatHandlers', () => {
 	// -----------------------------------------------------------------------
 	describe('handleGroupChatDraftChange', () => {
 		it('updates draft message for the active group chat', () => {
+			vi.useFakeTimers();
 			useGroupChatStore.setState({
 				activeGroupChatId: 'gc-1',
 				groupChats: [{ id: 'gc-1', name: 'Chat', draftMessage: '' } as any],
@@ -651,17 +674,56 @@ describe('useGroupChatHandlers', () => {
 
 			const { result } = renderHook(() => useGroupChatHandlers());
 			act(() => result.current.handleGroupChatDraftChange('new draft'));
+			act(() => vi.advanceTimersByTime(300));
 
 			expect(useGroupChatStore.getState().groupChats[0].draftMessage).toBe('new draft');
+			vi.useRealTimers();
+		});
+
+		it('persists the draft to the chat that was active when the debounce started', () => {
+			vi.useFakeTimers();
+			useGroupChatStore.setState({
+				activeGroupChatId: 'gc-1',
+				groupChats: [
+					{ id: 'gc-1', name: 'Chat', draftMessage: '' } as any,
+					{ id: 'gc-2', name: 'Other Chat', draftMessage: 'keep me' } as any,
+				],
+			});
+
+			const { result } = renderHook(() => useGroupChatHandlers());
+			act(() => result.current.handleGroupChatDraftChange('gc-1 draft'));
+			act(() => useGroupChatStore.setState({ activeGroupChatId: 'gc-2' }));
+			act(() => vi.advanceTimersByTime(300));
+
+			expect(useGroupChatStore.getState().groupChats[0].draftMessage).toBe('gc-1 draft');
+			expect(useGroupChatStore.getState().groupChats[1].draftMessage).toBe('keep me');
+		});
+
+		it('clears a pending draft timer on unmount', () => {
+			vi.useFakeTimers();
+			useGroupChatStore.setState({
+				activeGroupChatId: 'gc-1',
+				groupChats: [{ id: 'gc-1', name: 'Chat', draftMessage: '' } as any],
+			});
+
+			const { result, unmount } = renderHook(() => useGroupChatHandlers());
+			act(() => result.current.handleGroupChatDraftChange('pending draft'));
+
+			unmount();
+			act(() => vi.advanceTimersByTime(300));
+
+			expect(useGroupChatStore.getState().groupChats[0].draftMessage).toBe('');
 		});
 
 		it('does nothing when no active group chat', () => {
+			vi.useFakeTimers();
 			useGroupChatStore.setState({
 				groupChats: [{ id: 'gc-1', name: 'Chat', draftMessage: '' } as any],
 			});
 
 			const { result } = renderHook(() => useGroupChatHandlers());
 			act(() => result.current.handleGroupChatDraftChange('test'));
+			act(() => vi.advanceTimersByTime(300));
 
 			expect(useGroupChatStore.getState().groupChats[0].draftMessage).toBe('');
 		});
@@ -1165,6 +1227,205 @@ describe('useGroupChatHandlers', () => {
 			// Global map
 			const allStates = useGroupChatStore.getState().allGroupChatParticipantStates;
 			expect(allStates.get('gc-1')?.get('Agent A')).toBe('working');
+		});
+
+		it('onParticipantState clears live output when a participant becomes idle', () => {
+			useGroupChatStore.setState({
+				activeGroupChatId: 'gc-1',
+				participantStates: new Map([['Agent A', 'working']]),
+				allGroupChatParticipantStates: new Map(),
+				participantLiveOutput: new Map([['gc-1:Agent A', 'still running']]),
+			});
+
+			let participantStateCallback: any;
+			mockGroupChat.onParticipantState.mockImplementationOnce((cb: any) => {
+				participantStateCallback = cb;
+				return () => {};
+			});
+
+			renderHook(() => useGroupChatHandlers());
+			act(() => participantStateCallback('gc-1', 'Agent A', 'idle'));
+
+			expect(useGroupChatStore.getState().participantLiveOutput.has('gc-1:Agent A')).toBe(false);
+		});
+
+		it('onParticipantState tracks non-active chats without changing active participant state', () => {
+			useGroupChatStore.setState({
+				activeGroupChatId: 'gc-1',
+				participantStates: new Map([['Agent A', 'working']]),
+				allGroupChatParticipantStates: new Map(),
+			});
+
+			let participantStateCallback: any;
+			mockGroupChat.onParticipantState.mockImplementationOnce((cb: any) => {
+				participantStateCallback = cb;
+				return () => {};
+			});
+
+			renderHook(() => useGroupChatHandlers());
+			act(() => participantStateCallback('gc-other', 'Agent B', 'working'));
+
+			expect(useGroupChatStore.getState().participantStates).toEqual(
+				new Map([['Agent A', 'working']])
+			);
+			expect(
+				useGroupChatStore.getState().allGroupChatParticipantStates.get('gc-other')?.get('Agent B')
+			).toBe('working');
+		});
+
+		it('onParticipantLiveOutput appends chunks for the active group chat only', () => {
+			useGroupChatStore.setState({
+				activeGroupChatId: 'gc-1',
+				participantLiveOutput: new Map(),
+			});
+
+			let liveOutputCallback: any;
+			mockGroupChat.onParticipantLiveOutput.mockImplementationOnce((cb: any) => {
+				liveOutputCallback = cb;
+				return () => {};
+			});
+
+			renderHook(() => useGroupChatHandlers());
+			act(() => liveOutputCallback('gc-1', 'Agent A', 'first'));
+			act(() => liveOutputCallback('gc-1', 'Agent A', ' second'));
+			act(() => liveOutputCallback('gc-other', 'Agent B', 'ignored'));
+
+			expect(useGroupChatStore.getState().participantLiveOutput.get('gc-1:Agent A')).toBe(
+				'first second'
+			);
+			expect(useGroupChatStore.getState().participantLiveOutput.has('gc-other:Agent B')).toBe(
+				false
+			);
+		});
+
+		it('onAutoRunBatchComplete completes the registered autorun session for the participant', () => {
+			const dispatchBatch = vi.fn();
+			useBatchStore.setState({ dispatchBatch });
+			useSessionStore.setState({
+				sessions: [{ id: 'session-auto', name: 'Agent A' } as any],
+			});
+			registerGroupChatAutoRun('session-auto', 'gc-1', 'Agent A');
+
+			let batchCompleteCallback: any;
+			mockGroupChat.onAutoRunBatchComplete.mockImplementationOnce((cb: any) => {
+				batchCompleteCallback = cb;
+				return () => {};
+			});
+
+			renderHook(() => useGroupChatHandlers());
+			act(() => batchCompleteCallback('gc-1', 'Agent A'));
+
+			expect(dispatchBatch).toHaveBeenCalledWith({
+				type: 'COMPLETE_BATCH',
+				sessionId: 'session-auto',
+			});
+
+			consumeGroupChatAutoRun('session-auto');
+		});
+
+		it('onAutoRunBatchComplete completes a consumed autorun session from scoped completion metadata', () => {
+			const dispatchBatch = vi.fn();
+			useBatchStore.setState({ dispatchBatch });
+			useSessionStore.setState({
+				sessions: [{ id: 'session-auto', name: 'Agent A' } as any],
+			});
+			registerGroupChatAutoRun('session-auto', 'gc-1', 'Agent A');
+			consumeGroupChatAutoRunForCompletion('session-auto');
+
+			let batchCompleteCallback: any;
+			mockGroupChat.onAutoRunBatchComplete.mockImplementationOnce((cb: any) => {
+				batchCompleteCallback = cb;
+				return () => {};
+			});
+
+			renderHook(() => useGroupChatHandlers());
+			act(() => batchCompleteCallback('gc-1', 'Agent A'));
+			act(() => batchCompleteCallback('gc-1', 'Agent A'));
+
+			expect(dispatchBatch).toHaveBeenCalledTimes(1);
+			expect(dispatchBatch).toHaveBeenCalledWith({
+				type: 'COMPLETE_BATCH',
+				sessionId: 'session-auto',
+			});
+		});
+
+		it('onAutoRunBatchComplete ignores participant-name matches without scoped autorun metadata', () => {
+			const dispatchBatch = vi.fn();
+			useBatchStore.setState({ dispatchBatch });
+			useSessionStore.setState({
+				sessions: [{ id: 'session-fallback', name: 'Agent B' } as any],
+			});
+
+			let batchCompleteCallback: any;
+			mockGroupChat.onAutoRunBatchComplete.mockImplementationOnce((cb: any) => {
+				batchCompleteCallback = cb;
+				return () => {};
+			});
+
+			renderHook(() => useGroupChatHandlers());
+			act(() => batchCompleteCallback('gc-1', 'Agent B'));
+			act(() => batchCompleteCallback('gc-1', 'Missing Agent'));
+
+			expect(dispatchBatch).not.toHaveBeenCalled();
+		});
+
+		it('onAutoRunBatchComplete does not complete another session when registry participant mismatches', () => {
+			const dispatchBatch = vi.fn();
+			useBatchStore.setState({ dispatchBatch });
+			useSessionStore.setState({
+				sessions: [
+					{ id: 'session-auto', name: 'Different Agent' } as any,
+					{ id: 'session-fallback', name: 'Agent A' } as any,
+				],
+			});
+			registerGroupChatAutoRun('session-auto', 'gc-1', 'Different Agent');
+
+			let batchCompleteCallback: any;
+			mockGroupChat.onAutoRunBatchComplete.mockImplementationOnce((cb: any) => {
+				batchCompleteCallback = cb;
+				return () => {};
+			});
+
+			renderHook(() => useGroupChatHandlers());
+			act(() => batchCompleteCallback('gc-1', 'Agent A'));
+
+			expect(dispatchBatch).not.toHaveBeenCalled();
+
+			consumeGroupChatAutoRun('session-auto');
+		});
+
+		it('onAutoRunBatchComplete scopes same-named participant completions by group chat', () => {
+			const dispatchBatch = vi.fn();
+			useBatchStore.setState({ dispatchBatch });
+			useSessionStore.setState({
+				sessions: [
+					{ id: 'session-auto', name: 'Agent A' } as any,
+					{ id: 'session-auto-other', name: 'Agent A' } as any,
+				],
+			});
+			registerGroupChatAutoRun('session-auto', 'gc-1', 'Agent A');
+			registerGroupChatAutoRun('session-auto-other', 'gc-2', 'Agent A');
+			consumeGroupChatAutoRunForCompletion('session-auto');
+			consumeGroupChatAutoRunForCompletion('session-auto-other');
+
+			let batchCompleteCallback: any;
+			mockGroupChat.onAutoRunBatchComplete.mockImplementationOnce((cb: any) => {
+				batchCompleteCallback = cb;
+				return () => {};
+			});
+
+			renderHook(() => useGroupChatHandlers());
+			act(() => batchCompleteCallback('gc-2', 'Agent A'));
+
+			expect(dispatchBatch).toHaveBeenCalledTimes(1);
+			expect(dispatchBatch).toHaveBeenCalledWith({
+				type: 'COMPLETE_BATCH',
+				sessionId: 'session-auto-other',
+			});
+			expect(dispatchBatch).not.toHaveBeenCalledWith({
+				type: 'COMPLETE_BATCH',
+				sessionId: 'session-auto',
+			});
 		});
 
 		it('onModeratorUsage callback updates moderator usage for active chat', () => {

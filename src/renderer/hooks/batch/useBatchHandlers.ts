@@ -32,7 +32,7 @@ import { generateId } from '../../utils/ids';
 import { takeNextRunnableQueueItem } from '../../utils/executionQueue';
 import { useBatchProcessor } from './useBatchProcessor';
 import { useBatchStore } from '../../stores/batchStore';
-import { consumeGroupChatAutoRun } from '../../utils/groupChatAutoRunRegistry';
+import { consumeGroupChatAutoRunForCompletion } from '../../utils/groupChatAutoRunRegistry';
 import type { RightPanelHandle } from '../../components/RightPanel';
 import type { AgentSpawnResult } from '../agent/useAgentExecution';
 import * as Sentry from '@sentry/electron/renderer';
@@ -512,7 +512,7 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 
 			// Group chat !autorun completion: notify the main process so the synthesis round fires.
 			// This MUST succeed for the moderator to receive the result and continue the conversation.
-			const gcAutoRun = consumeGroupChatAutoRun(info.sessionId);
+			const gcAutoRun = consumeGroupChatAutoRunForCompletion(info.sessionId);
 			if (gcAutoRun) {
 				const summary = info.wasStopped
 					? `Auto Run stopped: completed ${info.completedTasks} of ${info.totalTasks} tasks across ${info.documentsProcessed} document(s).`

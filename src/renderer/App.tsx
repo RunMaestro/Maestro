@@ -16,6 +16,7 @@ import { slashCommands } from './slashCommands';
 import { AppModals, type PRDetails, type FlatFileItem } from './components/AppModals';
 import { AppStandaloneModals } from './components/AppStandaloneModals';
 import { initializeRendererPrompts } from './services/promptInit';
+import { DEFAULT_BATCH_PROMPT } from './hooks/batch/batchUtils';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { MainPanel, type MainPanelHandle } from './components/MainPanel';
 // AppOverlays, PlaygroundPanel, DebugWizardModal, DebugPackageModal, WindowsWarningModal,
@@ -151,6 +152,11 @@ import { useModalActions, useModalStore } from './stores/modalStore';
 import { GitStatusProvider } from './contexts/GitStatusContext';
 import { InputProvider, useInputContext } from './contexts/InputContext';
 import { useGroupChatStore } from './stores/groupChatStore';
+import {
+	registerGroupChatAutoRun,
+	consumeGroupChatAutoRunForCompletion,
+} from './utils/groupChatAutoRunRegistry';
+import { resolveGroupChatAutoRunTarget } from './utils/groupChatAutoRun';
 import { useBatchStore } from './stores/batchStore';
 // All session state is read directly from useSessionStore in MaestroConsoleInner.
 import {
@@ -1431,6 +1437,123 @@ function MaestroConsoleInner() {
 		processQueuedItemRef,
 		handleClearAgentError,
 	});
+
+	// --- GROUP CHAT AUTO RUN BRIDGE ---
+	// When the moderator issues !autorun @AgentName, the main process emits
+	// groupChat:autoRunTriggered. Here we intercept that, find the session,
+	// and start a proper batch run via useBatchProcessor for full UI feedback.
+	const startBatchRunRef = useRef(startBatchRun);
+	startBatchRunRef.current = startBatchRun;
+
+	useEffect(() => {
+		const unsub = window.maestro.groupChat.onAutoRunTriggered?.(
+			(groupChatId, participantName, targetFilename) => {
+				// Helper: report failure back to the group chat as a system message so the
+				// moderator and user can see what went wrong and take corrective action.
+				const reportFailure = (reason: string) => {
+					console.warn(`[GroupChat:AutoRun] ${reason}`);
+					window.maestro.groupChat
+						.reportAutoRunComplete(
+							groupChatId,
+							participantName,
+							`⚠️ Auto Run could not start for @${participantName}: ${reason}`
+						)
+						.catch((e) =>
+							console.error('[GroupChat:AutoRun] Failed to report failure to moderator:', e)
+						);
+				};
+
+				const sessions = useSessionStore.getState().sessions;
+				const session = sessions.find((s) => s.name === participantName);
+				if (!session) {
+					reportFailure(
+						`No Maestro agent named "${participantName}" found. Make sure the agent exists and is open.`
+					);
+					return;
+				}
+				if (!session.autoRunFolderPath) {
+					reportFailure(
+						`Agent "${participantName}" has no Auto Run folder configured. Open the agent, go to the Auto Run tab, and configure a folder first.`
+					);
+					return;
+				}
+
+				// Fetch the document list, then start the batch run
+				window.maestro.autorun
+					.listDocs(session.autoRunFolderPath, session.sshRemoteId || undefined)
+					.then((result) => {
+						const allFiles = result.files || [];
+						if (allFiles.length === 0) {
+							reportFailure(
+								`No Auto Run documents found in "${session.autoRunFolderPath}". Create a document in the Auto Run tab first.`
+							);
+							return;
+						}
+
+						const resolvedTarget = resolveGroupChatAutoRunTarget(allFiles, targetFilename);
+						if ('error' in resolvedTarget) {
+							reportFailure(
+								`${resolvedTarget.error} in "${session.autoRunFolderPath}" for "${participantName}".`
+							);
+							return;
+						}
+						const files = resolvedTarget.files;
+
+						const documents = files.map((filename, i) => ({
+							id: `${session.id}-${i}`,
+							filename,
+							resetOnCompletion: false,
+							isDuplicate: false,
+						}));
+						const config = {
+							documents,
+							prompt: DEFAULT_BATCH_PROMPT,
+							loopEnabled: false,
+							maxLoops: null,
+						};
+						// Register AFTER validating docs exist so no stale entry on failure
+						registerGroupChatAutoRun(session.id, groupChatId, participantName);
+						const startFailureContext = {
+							extra: {
+								operation: 'groupChat:autoRun:startBatchRun',
+								groupChatId,
+								participantName,
+								sessionId: session.id,
+								session: { id: session.id },
+								requestedFilenames: files,
+							},
+						};
+						Promise.resolve()
+							.then(() => startBatchRunRef.current(session.id, config, session.autoRunFolderPath!))
+							.then(
+								() => {
+									// startBatchRun resolved — check if onComplete consumed the registry.
+									// If it's still registered, the batch hit an early return (0 tasks,
+									// session gone, etc.) and never called onComplete. Report so the
+									// moderator doesn't wait for a response that will never come.
+									const orphaned = consumeGroupChatAutoRunForCompletion(session.id);
+									if (orphaned) {
+										reportFailure(
+											`Auto Run batch finished without processing any tasks. The documents may have no unchecked tasks (- [ ]).`
+										);
+									}
+								},
+								(err) => {
+									captureException(err, startFailureContext);
+									const orphaned = consumeGroupChatAutoRunForCompletion(session.id);
+									if (orphaned) {
+										reportFailure(`Auto Run batch failed: ${String(err)}`);
+									}
+								}
+							);
+					})
+					.catch((err) => {
+						reportFailure(`Failed to read Auto Run folder: ${String(err)}`);
+					});
+			}
+		);
+		return () => unsub?.();
+	}, []); // Stable — reads sessions and startBatchRun from refs/store at call time
 
 	// --- AGENT IPC LISTENERS ---
 	// Extracted hook for all window.maestro.process.onXxx listeners

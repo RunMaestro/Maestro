@@ -164,6 +164,12 @@ import type { DurationPercentiles } from '../shared/percentiles';
 import type { MaestroCliStatus, MaestroCliInstallResult } from '../shared/maestro-cli';
 import type { GitWorktreeSetupResult, GitWorktreeCheckoutResult } from '../main/preload/git';
 
+type GroupChatAutoRunRefData = {
+	participantName: string;
+	relativePath: string;
+	triggerCommand: string;
+};
+
 interface MaestroAPI {
 	// Context merging API (for session context transfer and grooming)
 	context: {
@@ -2198,6 +2204,7 @@ interface MaestroAPI {
 				timestamp: string;
 				from: string;
 				content: string;
+				autoRunRefs?: GroupChatAutoRunRefData[];
 			}>
 		>;
 		saveImage: (id: string, imageData: string, filename: string) => Promise<string>;
@@ -2293,6 +2300,7 @@ interface MaestroAPI {
 					timestamp: string;
 					from: string;
 					content: string;
+					autoRunRefs?: GroupChatAutoRunRefData[];
 				}
 			) => void
 		) => () => void;

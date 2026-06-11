@@ -50,7 +50,7 @@ Maestro can update itself automatically! This feature was introduced in **v0.8.7
 
 🤖 **Factory.ai Droid Support** — Added support for the [Factory.ai](https://factory.ai/product/cli) droid agent. Full session management and output parsing integration.
 
-## Changes in v0.15.3
+### Changes in v0.15.3
 
 - **CLI settings management:** Full `maestro-cli settings` command suite — list, get, set, and reset any Maestro setting from the command line. Includes per-agent configuration (custom paths, args, env vars, model overrides). Supports category filtering, verbose descriptions, and machine-readable JSON output for scripting
 - **Live settings reload:** Settings changes made via the CLI are automatically detected by the running desktop app — no restart required
@@ -161,19 +161,19 @@ Thanks for the contributions: @t1mmen @aejfager @Crumbgrabber @whglaser @b3nw @d
 
 The big changes in the v0.12.x line are the following three:
 
-## Show Thinking
+### Show Thinking
 
 🤔 There is now a toggle to show thinking for the agent, the default for new tabs is off, though this can be changed under Settings > General. The toggle shows next to History and Read-Only. Very similar pattern. This has been the #1 most requested feature, though personally, I don't think I'll use it as I prefer to not see the details of the work, but the results of the work. Just as we work with our colleagues.
 
-## GitHub Spec-Kit Integration
+### GitHub Spec-Kit Integration
 
 🎯 Added [GitHub Spec-Kit](https://github.com/github/spec-kit) commands into Maestro with a built-in updater to grab the latest prompts from the repository. We do override `/speckit-implement` (the final step) to create Auto Run docs and guide the user through their execution, which thanks to Wortrees from v0.11.x allows us to run in parallel!
 
-## Context Management Tools
+### Context Management Tools
 
 📖 Added context management options from tab right-click menu. You can now compress, merge, and transfer contexts between agents. You will received (configurable) warnings at 60% and 80% context consumption with a hint to compact.
 
-## Changes Specific to v0.12.3:
+### Changes Specific to v0.12.3:
 
 - We now have hosted documentation through Mintlify 📚
 - Export any tab conversation as self-contained themed HTML file 📄
