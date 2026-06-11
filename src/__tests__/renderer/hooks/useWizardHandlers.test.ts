@@ -3138,6 +3138,78 @@ describe('useWizardHandlers', () => {
 			expect(useSessionStore.getState().sessions[0].name).toBe('claude-code Session');
 		});
 
+		it('uses a saved Windows document path for the auto run folder', async () => {
+			useSessionStore.setState({ sessions: [], activeSessionId: null });
+
+			const baseDeps = createMockDeps();
+			const deps = createMockDeps({
+				wizardContext: {
+					...baseDeps.wizardContext,
+					state: {
+						...baseDeps.wizardContext.state,
+						currentStep: 'review' as any,
+						isOpen: true,
+						agentName: 'Windows Project',
+						directoryPath: 'C:\\projects\\my-app',
+						generatedDocuments: [
+							{
+								filename: 'phase-2.md',
+								content: '# Phase 2',
+								taskCount: 1,
+								savedPath: 'C:\\projects\\my-app\\Auto Run Docs\\phase-2.md',
+							},
+						],
+					},
+				},
+			});
+
+			const { result } = renderHook(() => useWizardHandlers(deps));
+
+			await act(async () => {
+				await result.current.handleWizardLaunchSession(false);
+			});
+
+			const newSession = useSessionStore.getState().sessions[0];
+			expect(newSession.autoRunFolderPath).toBe('C:\\projects\\my-app\\Auto Run Docs');
+			expect(newSession.autoRunSelectedFile).toBe('phase-2');
+		});
+
+		it('falls back to the default auto run folder when saved path has no directory', async () => {
+			useSessionStore.setState({ sessions: [], activeSessionId: null });
+
+			const baseDeps = createMockDeps();
+			const deps = createMockDeps({
+				wizardContext: {
+					...baseDeps.wizardContext,
+					state: {
+						...baseDeps.wizardContext.state,
+						currentStep: 'review' as any,
+						isOpen: true,
+						agentName: 'Flat Path Project',
+						directoryPath: '/projects/flat',
+						generatedDocuments: [
+							{
+								filename: 'phase-3.md',
+								content: '# Phase 3',
+								taskCount: 1,
+								savedPath: 'phase-3.md',
+							},
+						],
+					},
+				},
+			});
+
+			const { result } = renderHook(() => useWizardHandlers(deps));
+
+			await act(async () => {
+				await result.current.handleWizardLaunchSession(false);
+			});
+
+			const newSession = useSessionStore.getState().sessions[0];
+			expect(newSession.autoRunFolderPath).toBe('/projects/flat/Auto Run Docs');
+			expect(newSession.autoRunSelectedFile).toBe('phase-3');
+		});
+
 		it('auto-starts batch run with first document that has tasks', async () => {
 			useSessionStore.setState({ sessions: [], activeSessionId: null });
 			const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});

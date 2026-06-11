@@ -2205,6 +2205,7 @@ describe('AgentSessionsBrowser', () => {
 			// Press Escape - this should call cancelRename which clears the value
 			await act(async () => {
 				fireEvent.keyDown(input, { key: 'Escape' });
+				fireEvent.blur(input);
 				await vi.runAllTimersAsync();
 			});
 
@@ -2214,6 +2215,7 @@ describe('AgentSessionsBrowser', () => {
 			const calls = vi.mocked(window.maestro.claude.updateSessionName).mock.calls;
 			const savedWithNewName = calls.some((call) => call[2] === 'New Name');
 			expect(savedWithNewName).toBe(false);
+			expect(screen.queryByPlaceholderText('Enter session name...')).not.toBeInTheDocument();
 		});
 
 		it('submits rename on blur', async () => {
@@ -3988,6 +3990,49 @@ describe('AgentSessionsBrowser', () => {
 
 			expect(screen.getByDisplayValue('Still Editing')).toBeInTheDocument();
 			expect(window.maestro.claude.updateSessionName).not.toHaveBeenCalled();
+		});
+
+		it('cancels detail rename on Escape without submitting on blur', async () => {
+			const session = createMockClaudeSession({
+				sessionId: 'session-1',
+				sessionName: 'Named Session',
+			});
+			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
+				sessions: [session],
+				hasMore: false,
+				totalCount: 1,
+				nextCursor: null,
+			});
+
+			await act(async () => {
+				renderWithProvider(<AgentSessionsBrowser {...createDefaultProps()} />);
+				await vi.runAllTimersAsync();
+			});
+
+			const sessionItem = screen.getByText('Named Session').closest('div[class*="cursor-pointer"]');
+			await act(async () => {
+				fireEvent.click(sessionItem!);
+				await vi.runAllTimersAsync();
+			});
+
+			const editButton = screen
+				.getAllByTitle('Rename session')
+				.find((button) => !button.closest('div[class*="cursor-pointer"]'));
+			await act(async () => {
+				fireEvent.click(editButton!);
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			const input = screen.getByPlaceholderText('Enter session name...');
+			await act(async () => {
+				fireEvent.change(input, { target: { value: 'Canceled Detail Name' } });
+				fireEvent.keyDown(input, { key: 'Escape' });
+				fireEvent.blur(input);
+				await vi.runAllTimersAsync();
+			});
+
+			expect(window.maestro.claude.updateSessionName).not.toHaveBeenCalled();
+			expect(screen.queryByPlaceholderText('Enter session name...')).not.toBeInTheDocument();
 		});
 	});
 

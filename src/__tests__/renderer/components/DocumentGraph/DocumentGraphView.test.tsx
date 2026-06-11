@@ -1291,6 +1291,8 @@ describe('DocumentGraphView', () => {
 			expect(screen.getByTitle('Preview text limit: 250 characters')).toHaveTextContent(
 				'Preview: 250'
 			);
+			fireEvent.keyDown(screen.getByDisplayValue('250'), { key: 'Escape' });
+			expect(screen.queryByText('Preview Characters')).not.toBeInTheDocument();
 
 			const externalToggle = screen.getByTitle('Show external links');
 			fireEvent.mouseEnter(externalToggle);
@@ -1586,6 +1588,21 @@ describe('DocumentGraphView', () => {
 			expect(depthBackdrop).not.toBeNull();
 			fireEvent.click(depthBackdrop!);
 			expect(screen.queryByText('Neighbor Depth')).not.toBeInTheDocument();
+
+			fireEvent.click(screen.getByTitle('Preview text limit: 100 characters'));
+			expect(screen.getByText('Preview Characters')).toBeInTheDocument();
+			const previewLayer = mockLayerStackState.layers.at(-1);
+			act(() => {
+				previewLayer?.layer.onEscape();
+			});
+			expect(screen.queryByText('Preview Characters')).not.toBeInTheDocument();
+
+			fireEvent.click(screen.getByTitle('Preview text limit: 100 characters'));
+			expect(screen.getByText('Preview Characters')).toBeInTheDocument();
+			const previewBackdrop = container.querySelector('.fixed.inset-0.z-40');
+			expect(previewBackdrop).not.toBeNull();
+			fireEvent.click(previewBackdrop!);
+			expect(screen.queryByText('Preview Characters')).not.toBeInTheDocument();
 
 			fireEvent.click(screen.getByTitle('Open help panel'));
 			expect(screen.getByRole('region', { name: 'Help panel' })).toBeInTheDocument();

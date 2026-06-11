@@ -1164,6 +1164,9 @@ describe('FilePreview', () => {
 				expect(onSave).toHaveBeenCalledWith('/test/test.txt', 'changed again');
 			});
 
+			fireEvent.keyDown(textarea, { key: 'g', ctrlKey: true });
+			expect(onSave).toHaveBeenCalledTimes(2);
+
 			fireEvent.keyDown(textarea, { key: 'Escape' });
 			expect(setMarkdownEditMode).toHaveBeenCalledWith(false);
 		});
@@ -1433,6 +1436,24 @@ describe('FilePreview', () => {
 			fireEvent.keyDown(root, { key: 'ArrowRight', metaKey: true });
 
 			expect(onNavigateBack).not.toHaveBeenCalled();
+			expect(onOpenFuzzySearch).not.toHaveBeenCalled();
+		});
+
+		it('keeps editor-owned fuzzy search shortcuts from opening global search', () => {
+			const onOpenFuzzySearch = vi.fn();
+			const { container } = render(
+				<FilePreview
+					{...defaultProps}
+					markdownEditMode={true}
+					onOpenFuzzySearch={onOpenFuzzySearch}
+					shortcuts={{ fuzzyFileSearch: { keys: ['g'] } }}
+				/>
+			);
+			const root = container.firstChild as HTMLElement;
+
+			fireEvent.keyDown(root, { key: 'g' });
+			fireEvent.keyDown(root, { key: 'g', ctrlKey: true });
+
 			expect(onOpenFuzzySearch).not.toHaveBeenCalled();
 		});
 

@@ -606,6 +606,55 @@ describe('useMobileSessionManagement', () => {
 		expect(result.current.sessions[0]).toBe(activeSession);
 	});
 
+	it('selects the next tab when closing the first active tab', () => {
+		const sendSpy = vi.fn();
+		const { result } = renderHook(() =>
+			useMobileSessionManagement({
+				...baseDeps,
+				savedActiveSessionId: 'session-1',
+				savedActiveTabId: 'tab-1',
+				sendRef: { current: sendSpy },
+			})
+		);
+		const activeSession = createSession({
+			activeTabId: 'tab-1',
+			aiTabs: [
+				{
+					id: 'tab-1',
+					agentSessionId: null,
+					name: 'Alpha',
+					starred: false,
+					inputValue: '',
+					createdAt: 1,
+					state: 'idle',
+				},
+				{
+					id: 'tab-2',
+					agentSessionId: null,
+					name: 'Beta',
+					starred: false,
+					inputValue: '',
+					createdAt: 2,
+					state: 'idle',
+				},
+			],
+		});
+
+		act(() => {
+			result.current.setSessions([activeSession]);
+			result.current.handleCloseTab('tab-1');
+		});
+
+		expect(result.current.activeTabId).toBe('tab-2');
+		expect(result.current.sessions[0].activeTabId).toBe('tab-2');
+		expect(result.current.sessions[0].aiTabs?.map((tab) => tab.id)).toEqual(['tab-2']);
+		expect(sendSpy).toHaveBeenCalledWith({
+			type: 'close_tab',
+			sessionId: 'session-1',
+			tabId: 'tab-1',
+		});
+	});
+
 	it('keeps inactive command handlers as no-ops when there is no active session', () => {
 		const sendSpy = vi.fn();
 		const hapticSpy = vi.fn();
@@ -979,6 +1028,49 @@ describe('useMobileSessionManagement', () => {
 		expect(result.current.activeTabId).toBe('tab-2');
 		expect(result.current.sessions.find((session) => session.id === 'session-1')?.aiTabs).toEqual(
 			nextTabs
+		);
+	});
+
+	it('preserves requested active tab when desktop sessions update multiple sessions', () => {
+		const { result } = renderHook(() =>
+			useMobileSessionManagement({
+				...baseDeps,
+				savedActiveSessionId: 'session-1',
+				savedActiveTabId: 'tab-2',
+			})
+		);
+
+		act(() => {
+			result.current.setSessions([
+				createSession({
+					id: 'session-1',
+					activeTabId: 'tab-2',
+					aiTabs: [
+						{ id: 'tab-1', name: 'One', state: 'idle' },
+						{ id: 'tab-2', name: 'Two', state: 'idle' },
+					] as any,
+				}),
+				createSession({ id: 'session-2', activeTabId: 'tab-3' }),
+			]);
+			result.current.sessionsHandlers.onSessionsUpdate([
+				createSession({
+					id: 'session-1',
+					activeTabId: 'tab-1',
+					aiTabs: [
+						{ id: 'tab-1', name: 'One', state: 'idle' },
+						{ id: 'tab-2', name: 'Two', state: 'idle' },
+					] as any,
+				}),
+				createSession({ id: 'session-2', activeTabId: 'tab-3' }),
+			]);
+		});
+
+		expect(result.current.activeTabId).toBe('tab-2');
+		expect(result.current.sessions.find((session) => session.id === 'session-1')?.activeTabId).toBe(
+			'tab-2'
+		);
+		expect(result.current.sessions.find((session) => session.id === 'session-2')?.activeTabId).toBe(
+			'tab-3'
 		);
 	});
 

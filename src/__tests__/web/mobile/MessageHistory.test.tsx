@@ -557,6 +557,31 @@ describe('MessageHistory', () => {
 			);
 		});
 
+		it('positions the new message indicator above the fixed input in full-height mode', async () => {
+			vi.useRealTimers();
+			const logs: LogEntry[] = [createLogEntry({ id: 'initial', text: 'Initial message' })];
+			const { container, rerender } = render(
+				<MessageHistory logs={logs} inputMode="ai" autoScroll={false} maxHeight="none" />
+			);
+
+			const scrollContainer = container.querySelector('[style*="overflow-y: auto"]') as HTMLElement;
+			setScrollMetrics(scrollContainer, { scrollHeight: 1000, scrollTop: 100, clientHeight: 300 });
+			mockScrollIntoView.mockClear();
+
+			rerender(
+				<MessageHistory
+					logs={[...logs, createLogEntry({ id: 'new-1', text: 'New full-height message' })]}
+					inputMode="ai"
+					autoScroll={false}
+					maxHeight="none"
+				/>
+			);
+
+			const button = await screen.findByTitle('Scroll to new messages');
+			expect(button).toHaveTextContent('1');
+			expect(button).toHaveStyle({ bottom: '112px' });
+		});
+
 		it('caps large new message counts at 99+', async () => {
 			vi.useRealTimers();
 			const logs: LogEntry[] = [createLogEntry({ id: 'initial', text: 'Initial' })];

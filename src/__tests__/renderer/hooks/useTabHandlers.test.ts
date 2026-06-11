@@ -3852,6 +3852,70 @@ describe('useTabHandlers', () => {
 			expect(getSession().aiTabs.map((tab) => tab.id)).toEqual(['tab-1', 'tab-2']);
 		});
 
+		it('range close handlers are no-ops when there is no active tab target', () => {
+			const tab1 = createMockAITab({ id: 'tab-1' });
+			const tab2 = createMockAITab({ id: 'tab-2' });
+			const session = createMockSession({
+				id: 'test-session',
+				aiTabs: [tab1, tab2],
+				activeTabId: null as any,
+				filePreviewTabs: [],
+				activeFileTabId: null,
+				unifiedTabOrder: [
+					{ type: 'ai', id: 'tab-1' },
+					{ type: 'ai', id: 'tab-2' },
+				],
+			});
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'test-session',
+			});
+
+			const { result } = renderHook(() => useTabHandlers());
+			act(() => {
+				result.current.handleCloseOtherTabs();
+				result.current.handleCloseTabsLeft();
+				result.current.handleCloseTabsRight();
+			});
+
+			expect(getSession().aiTabs.map((tab) => tab.id)).toEqual(['tab-1', 'tab-2']);
+		});
+
+		it('keeps an explicit AI target active when closing tabs to its right', () => {
+			const tab1 = createMockAITab({ id: 'tab-1' });
+			const tab2 = createMockAITab({ id: 'tab-2' });
+			const tab3 = createMockAITab({ id: 'tab-3' });
+			const fileTab = createMockFileTab({ id: 'file-1' });
+			const session = createMockSession({
+				id: 'test-session',
+				aiTabs: [tab1, tab2, tab3],
+				activeTabId: 'tab-3',
+				filePreviewTabs: [fileTab],
+				activeFileTabId: null,
+				unifiedTabOrder: [
+					{ type: 'ai', id: 'tab-1' },
+					{ type: 'ai', id: 'tab-2' },
+					{ type: 'file', id: 'file-1' },
+					{ type: 'ai', id: 'tab-3' },
+				],
+			});
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'test-session',
+			});
+
+			const { result } = renderHook(() => useTabHandlers());
+			act(() => {
+				result.current.handleCloseTabsRight('tab-2');
+			});
+
+			const updated = getSession();
+			expect(updated.aiTabs.map((tab) => tab.id)).toEqual(['tab-1', 'tab-2']);
+			expect(updated.filePreviewTabs).toEqual([]);
+			expect(updated.activeTabId).toBe('tab-2');
+			expect(updated.activeFileTabId).toBeNull();
+		});
+
 		it('does not create AI tabs when the active session id is stale', () => {
 			const tab = createMockAITab({ id: 'tab-1' });
 			setupSessionWithTabs([tab]);

@@ -227,6 +227,27 @@ describe('ShortcutsTab', () => {
 		expect(onRecordingChange).toHaveBeenCalledWith(false, undefined);
 	});
 
+	it('should let the recording cancel callback clear recording state', async () => {
+		const onRecordingChange = vi.fn();
+		render(<ShortcutsTab theme={mockTheme} onRecordingChange={onRecordingChange} />);
+
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(100);
+		});
+		onRecordingChange.mockClear();
+
+		const shortcutButton = screen.getByText('Meta+n').closest('button');
+		expect(shortcutButton).not.toBeNull();
+		fireEvent.click(shortcutButton!);
+
+		const cancelRecording = onRecordingChange.mock.calls[0][1] as () => void;
+		act(() => {
+			cancelRecording();
+		});
+
+		expect(screen.getByText('Meta+n')).toBeInTheDocument();
+	});
+
 	it('should show hasNoAgents message when set', async () => {
 		render(<ShortcutsTab theme={mockTheme} hasNoAgents={true} />);
 

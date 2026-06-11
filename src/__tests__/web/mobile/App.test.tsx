@@ -3050,6 +3050,37 @@ describe('MobileApp', () => {
 			expect(screen.queryByTestId('response-viewer')).not.toBeInTheDocument();
 		});
 
+		it('opens response viewer from the session status banner preview', async () => {
+			const response = {
+				text: 'Expandable response content',
+				timestamp: 42,
+				source: 'ai',
+				fullLength: 28,
+			};
+			render(<MobileApp />);
+
+			await act(async () => {
+				mockHandlers.onSessionsUpdate?.([
+					createMockSession({
+						id: 'session-1',
+						name: 'Session 1',
+						lastResponse: response,
+					} as any),
+				]);
+			});
+
+			fireEvent.click(screen.getByRole('button', { name: 'Expand last response' }));
+			fireEvent.click(screen.getByRole('button', { name: 'Tap to view full response' }));
+
+			expect(screen.getByTestId('response-viewer')).toBeInTheDocument();
+			expect(lastResponseViewerProps).toMatchObject({
+				isOpen: true,
+				response,
+				currentIndex: 0,
+				sessionName: 'Session 1',
+			});
+		});
+
 		// Note: handleExpandResponse is called from future UI components
 		// that aren't currently implemented. These tests cover the ResponseViewer
 		// integration points that are accessible.

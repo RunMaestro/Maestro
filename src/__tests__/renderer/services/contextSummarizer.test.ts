@@ -332,6 +332,26 @@ Continue with implementation.`);
 			expect(result!.compactedTokens).toBe(0);
 			expect(consoleLog).toHaveBeenCalledWith('[ContextSummarizer] Received response, length:', 0);
 		});
+
+		it('should wrap a string IPC rejection with its message', async () => {
+			mockGroomContext.mockRejectedValue('string failure');
+
+			const logs = [createMockLog({ text: 'Test' })];
+
+			await expect(service.summarizeContext(baseRequest, logs, () => {})).rejects.toThrow(
+				'string failure'
+			);
+		});
+
+		it('should wrap a non-string IPC rejection with the fallback message', async () => {
+			mockGroomContext.mockRejectedValue({ code: 'UNKNOWN' });
+
+			const logs = [createMockLog({ text: 'Test' })];
+
+			await expect(service.summarizeContext(baseRequest, logs, () => {})).rejects.toThrow(
+				'Context summarization failed'
+			);
+		});
 	});
 
 	describe('chunked summarization', () => {

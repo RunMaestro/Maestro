@@ -651,6 +651,26 @@ describe('InputArea', () => {
 
 			expect(screen.getByTitle('Run command (Enter)')).toBeInTheDocument();
 		});
+
+		it('shows terminal busy status and disables send while a terminal command is running', () => {
+			const processInput = vi.fn();
+			const props = createDefaultProps({
+				processInput,
+				session: createMockSession({
+					inputMode: 'terminal',
+					state: 'busy',
+					busySource: 'terminal',
+				}),
+			});
+			render(<InputArea {...props} />);
+
+			const sendButton = screen.getByTitle('Command already running');
+			expect(screen.getByTestId('thinking-status-pill')).toBeInTheDocument();
+			expect(sendButton).toBeDisabled();
+
+			fireEvent.click(sendButton);
+			expect(processInput).not.toHaveBeenCalled();
+		});
 	});
 
 	describe('Read-only Mode', () => {

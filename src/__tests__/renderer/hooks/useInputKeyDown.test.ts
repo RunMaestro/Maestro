@@ -1216,6 +1216,23 @@ describe('Slash command autocomplete — additional', () => {
 		expect(deps.setInputValue).not.toHaveBeenCalled();
 	});
 
+	it('Enter with matching slash commands but out-of-bounds index does not select a command', () => {
+		setActiveSession({ inputMode: 'ai' });
+		mockInputContext.slashCommandOpen = true;
+		mockInputContext.selectedSlashCommandIndex = 99;
+		const deps = createMockDeps({ inputValue: '/', allSlashCommands: commands });
+		const { result } = renderHook(() => useInputKeyDown(deps));
+		const e = createKeyEvent('Enter');
+
+		act(() => {
+			result.current.handleInputKeyDown(e);
+		});
+
+		expect(e.preventDefault).toHaveBeenCalled();
+		expect(deps.setInputValue).not.toHaveBeenCalled();
+		expect(mockInputContext.setSlashCommandOpen).not.toHaveBeenCalled();
+	});
+
 	it('filtering is case-insensitive', () => {
 		setActiveSession({ inputMode: 'ai' });
 		const deps = createMockDeps({ inputValue: '/HEL', allSlashCommands: commands });
