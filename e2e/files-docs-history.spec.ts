@@ -1474,7 +1474,7 @@ test.describe(`Files docs history lane matrix (${activeScenarioCount} active, ${
 		await expect(aboutDialog.getByRole('heading', { name: 'About Maestro' })).toBeVisible();
 	});
 
-	test(`${activeScenarioMatrix[42].id} ${activeScenarioMatrix[42].title}`, async () => {
+	test(`${activeScenarioMatrix[47].id} ${activeScenarioMatrix[47].title}`, async () => {
 		const contextMenu = await openFileContextMenu(window, 'runbook.md');
 		await contextMenu.getByRole('button', { name: 'Document Graph', exact: true }).click();
 
@@ -1483,7 +1483,7 @@ test.describe(`Files docs history lane matrix (${activeScenarioCount} active, ${
 		await expect(graphDialog.getByText(/documents/)).toBeVisible({ timeout: 15_000 });
 	});
 
-	test(`${activeScenarioMatrix[43].id} ${activeScenarioMatrix[43].title}`, async () => {
+	test(`${activeScenarioMatrix[48].id} ${activeScenarioMatrix[48].title}`, async () => {
 		await expect(window.getByRole('heading', { name: 'Files Docs History Matrix' })).toBeVisible();
 
 		await window.getByTitle('Table of Contents').click();
@@ -1494,14 +1494,14 @@ test.describe(`Files docs history lane matrix (${activeScenarioCount} active, ${
 		await expect(window.getByTitle('Runbook Follow-up')).toBeVisible();
 	});
 
-	test(`${activeScenarioMatrix[44].id} ${activeScenarioMatrix[44].title}`, async () => {
+	test(`${activeScenarioMatrix[49].id} ${activeScenarioMatrix[49].title}`, async () => {
 		await expect(window.getByRole('heading', { name: 'Files Docs History Matrix' })).toBeVisible();
 
 		await expect(window.getByText('Remote image blocked')).toBeVisible();
 		await expect(window.getByTitle('Show remote images')).toBeVisible();
 	});
 
-	test(`${activeScenarioMatrix[45].id} ${activeScenarioMatrix[45].title}`, async () => {
+	test(`${activeScenarioMatrix[50].id} ${activeScenarioMatrix[50].title}`, async () => {
 		const freshPath = path.join(seededWorkbench.projectDir, 'docs', 'fresh.md');
 		fs.writeFileSync(freshPath, '# Fresh manual refresh file\n', 'utf-8');
 
@@ -1512,7 +1512,7 @@ test.describe(`Files docs history lane matrix (${activeScenarioCount} active, ${
 		await getFileTreeRow(window, 'fresh.md');
 	});
 
-	test(`${activeScenarioMatrix[46].id} ${activeScenarioMatrix[46].title}`, async () => {
+	test(`${activeScenarioMatrix[51].id} ${activeScenarioMatrix[51].title}`, async () => {
 		await helpers.openRightPanelTab(window, 'History');
 		const historyPanel = window.locator('[data-tour="history-panel"]');
 		await historyPanel.locator('[tabindex="0"]').focus();

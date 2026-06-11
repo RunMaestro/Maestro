@@ -5336,6 +5336,12 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 		await expect(usageDashboard.getByTestId('summary-cards')).toBeVisible();
 	});
 
+	const closeoutScenarioIndexOffset = 20;
+	const closeoutScenarioTitle = (matrixIndex: number) => {
+		const scenario = activeScenarioMatrix[matrixIndex + closeoutScenarioIndexOffset];
+		return `${scenario.id} ${scenario.title}`;
+	};
+
 	const documentGraphCloseoutMatrix = [
 		{ matrixIndex: 224, action: 'search-refresh', query: 'readme', expected: 'README.md' },
 		{ matrixIndex: 225, action: 'search-refresh', query: 'runbook', expected: 'RUNBOOK.md' },
@@ -5538,7 +5544,7 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 	] as const;
 
 	for (const scenario of documentGraphCloseoutMatrix) {
-		test(`${activeScenarioMatrix[scenario.matrixIndex].id} ${activeScenarioMatrix[scenario.matrixIndex].title}`, async () => {
+		test(closeoutScenarioTitle(scenario.matrixIndex), async () => {
 			const graphDialog = await openDocumentGraphFromPreview(window);
 
 			switch (scenario.action) {
@@ -5784,7 +5790,7 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 	}
 
 	for (const scenario of symphonyCloseoutMatrix) {
-		test(`${activeScenarioMatrix[scenario.matrixIndex].id} ${activeScenarioMatrix[scenario.matrixIndex].title}`, async () => {
+		test(closeoutScenarioTitle(scenario.matrixIndex), async () => {
 			switch (scenario.action) {
 				case 'project-search': {
 					const symphonyDialog = await openSymphonyFromQuickActions(window);
@@ -6033,7 +6039,7 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 	] as const;
 
 	for (const scenario of recoveryTrancheMatrix) {
-		test(`${activeScenarioMatrix[scenario.matrixIndex].id} ${activeScenarioMatrix[scenario.matrixIndex].title}`, async () => {
+		test(closeoutScenarioTitle(scenario.matrixIndex), async () => {
 			switch (scenario.action) {
 				case 'usage-db-size': {
 					const usageDashboard = await openUsageDashboard(window);

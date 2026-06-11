@@ -66,6 +66,12 @@ pm2 logs maestro-e2e-<lane> --lines 200
 pm2 show maestro-e2e-<lane>
 ```
 
+Stop all Maestro E2E PM2 lanes and any Playwright/Electron child process groups with:
+
+```bash
+npm run test:e2e:stop
+```
+
 ## E2E Execution Sharding
 
 Post-authoring E2E execution is feasible as multiple PM2-managed Codex workers that each run a separate Playwright shard in its own Maestro/Electron app process. Do not make a single Playwright invocation parallel: `playwright.config.ts` intentionally keeps Electron E2E serial with `fullyParallel: false` and `workers: 1`.
@@ -96,3 +102,7 @@ VITE_PORT=<unique-port> \
 ```
 
 Scale past two shards only after confirming both shards exit cleanly and their artifacts stay separated.
+
+If a shard must be interrupted, use `npm run test:e2e:stop` instead of only
+`pm2 stop`; the stop script removes `maestro-e2e*` PM2 entries and sweeps
+their Playwright/Electron child process groups.
