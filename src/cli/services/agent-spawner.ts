@@ -7,6 +7,7 @@ import type { ToolType, UsageStats } from '../../shared/types';
 import type { AgentOutputParser } from '../../main/parsers/agent-output-parser';
 import { CodexOutputParser } from '../../main/parsers/codex-output-parser';
 import { OpenCodeOutputParser } from '../../main/parsers/opencode-output-parser';
+import { KiloOutputParser } from '../../main/parsers/kilo-output-parser';
 import { FactoryDroidOutputParser } from '../../main/parsers/factory-droid-output-parser';
 import { aggregateModelUsage } from '../../main/parsers/usage-aggregator';
 import { getAgentDefinition } from '../../main/agents/definitions';
@@ -141,6 +142,7 @@ export async function detectAgent(toolType: ToolType): Promise<DetectResult> {
 export const detectClaude = () => detectAgent('claude-code');
 export const detectCodex = () => detectAgent('codex');
 export const detectOpenCode = () => detectAgent('opencode');
+export const detectKilo = () => detectAgent('kilo');
 export const detectDroid = () => detectAgent('factory-droid');
 
 /**
@@ -158,6 +160,7 @@ export function getAgentCommand(toolType: ToolType): string {
 export const getClaudeCommand = () => getAgentCommand('claude-code');
 export const getCodexCommand = () => getAgentCommand('codex');
 export const getOpenCodeCommand = () => getAgentCommand('opencode');
+export const getKiloCommand = () => getAgentCommand('kilo');
 export const getDroidCommand = () => getAgentCommand('factory-droid');
 
 /**
@@ -324,6 +327,8 @@ function createParser(toolType: ToolType): AgentOutputParser {
 			return new CodexOutputParser();
 		case 'opencode':
 			return new OpenCodeOutputParser();
+		case 'kilo':
+			return new KiloOutputParser();
 		case 'factory-droid':
 			return new FactoryDroidOutputParser();
 		default:

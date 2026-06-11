@@ -21,6 +21,7 @@ import { parseDataUrl, buildImagePromptPrefix } from '../process-manager/utils/i
 const BASE_SSH_PATH_DIRS = [
 	'$HOME/.local/bin',
 	'$HOME/.opencode/bin',
+	'$HOME/.kilo/bin',
 	'$HOME/bin',
 	'/usr/local/bin',
 	'/opt/homebrew/bin',

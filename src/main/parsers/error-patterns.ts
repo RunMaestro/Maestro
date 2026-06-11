@@ -379,6 +379,14 @@ const OPENCODE_ERROR_PATTERNS: AgentErrorPatterns = {
 };
 
 // ============================================================================
+// Kilo Error Patterns
+// ============================================================================
+//
+// KiloCode is a 1:1 fork of OpenCode — patterns mirror OPENCODE_ERROR_PATTERNS.
+
+const KILO_ERROR_PATTERNS: AgentErrorPatterns = OPENCODE_ERROR_PATTERNS;
+
+// ============================================================================
 // Codex Error Patterns
 // ============================================================================
 
@@ -793,8 +801,8 @@ export const SSH_ERROR_PATTERNS: AgentErrorPatterns = {
 		{
 			// Agent command not found for other agents
 			pattern:
-				/bash:.*opencode.*command not found|sh:.*opencode.*command not found|zsh:.*command not found:.*opencode/i,
-			message: 'OpenCode command not found. Ensure OpenCode is installed.',
+				/bash:.*(opencode|kilo).*command not found|sh:.*(opencode|kilo).*command not found|zsh:.*command not found:.*(opencode|kilo)/i,
+			message: 'OpenCode/Kilo command not found. Ensure the agent is installed.',
 			recoverable: false,
 		},
 		{
@@ -809,7 +817,7 @@ export const SSH_ERROR_PATTERNS: AgentErrorPatterns = {
 			// More specific pattern: requires path-like structure before the binary name
 			// Matches: "/usr/local/bin/claude: No such file or directory"
 			// Does NOT match: "claude: error: File 'foo.txt': No such file or directory" (normal file errors)
-			pattern: /\/[^\s:]*\/(claude|opencode|codex):\s*No such file or directory/i,
+			pattern: /\/[^\s:]*\/(claude|opencode|kilo|codex):\s*No such file or directory/i,
 			message: 'Agent binary not found at the specified path. Ensure the agent is installed.',
 			recoverable: false,
 		},
@@ -862,6 +870,7 @@ export const SSH_ERROR_PATTERNS: AgentErrorPatterns = {
 const patternRegistry = new Map<ToolType, AgentErrorPatterns>([
 	['claude-code', CLAUDE_ERROR_PATTERNS],
 	['opencode', OPENCODE_ERROR_PATTERNS],
+	['kilo', KILO_ERROR_PATTERNS],
 	['codex', CODEX_ERROR_PATTERNS],
 	['factory-droid', FACTORY_DROID_ERROR_PATTERNS],
 ]);
