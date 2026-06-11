@@ -30,6 +30,7 @@ const LOG_CONTEXT = 'PathProber';
 export interface BinaryDetectionResult {
 	exists: boolean;
 	path?: string;
+	paths?: string[];
 }
 
 // ============ Environment Expansion ============
@@ -104,6 +105,7 @@ export function getExpandedEnv(): NodeJS.ProcessEnv {
 	} else {
 		// Unix-like paths (macOS/Linux)
 		additionalPaths = [
+			...detectNodeVersionManagerBinPaths(),
 			'/opt/homebrew/bin', // Homebrew on Apple Silicon
 			'/opt/homebrew/sbin',
 			'/usr/local/bin', // Homebrew on Intel, common install location
@@ -321,6 +323,31 @@ function getWindowsKnownPaths(binaryName: string): string[] {
 	return knownPaths[binaryName] || [];
 }
 
+function dedupePaths(pathsToDedupe: string[]): string[] {
+	const seen = new Set<string>();
+	const deduped: string[] = [];
+
+	for (const candidate of pathsToDedupe) {
+		const trimmed = candidate.trim();
+		if (!trimmed || seen.has(trimmed)) continue;
+		seen.add(trimmed);
+		deduped.push(trimmed);
+	}
+
+	return deduped;
+}
+
+function sortWindowsCandidates(candidates: string[]): string[] {
+	const dedupedCandidates = dedupePaths(candidates);
+	const exeCandidates = dedupedCandidates.filter((p) => p.toLowerCase().endsWith('.exe'));
+	const cmdCandidates = dedupedCandidates.filter((p) => p.toLowerCase().endsWith('.cmd'));
+	const extensionlessCandidates = dedupedCandidates.filter(
+		(p) => !p.toLowerCase().endsWith('.exe') && !p.toLowerCase().endsWith('.cmd')
+	);
+
+	return dedupePaths([...exeCandidates, ...extensionlessCandidates, ...cmdCandidates]);
+}
+
 /**
  * On Windows, directly probe known installation paths for a binary.
  * This is more reliable than `where` command which may fail in packaged Electron apps.
@@ -329,10 +356,15 @@ function getWindowsKnownPaths(binaryName: string): string[] {
  * Uses parallel probing for performance on slow file systems.
  */
 export async function probeWindowsPaths(binaryName: string): Promise<string | null> {
+	const candidates = await probeWindowsPathCandidates(binaryName);
+	return candidates[0] ?? null;
+}
+
+export async function probeWindowsPathCandidates(binaryName: string): Promise<string[]> {
 	const pathsToCheck = getWindowsKnownPaths(binaryName);
 
 	if (pathsToCheck.length === 0) {
-		return null;
+		return [];
 	}
 
 	// Check all paths in parallel for performance
@@ -343,16 +375,16 @@ export async function probeWindowsPaths(binaryName: string): Promise<string | nu
 		})
 	);
 
-	// Return the first successful result (maintains priority order from pathsToCheck)
+	const candidates: string[] = [];
 	for (let i = 0; i < results.length; i++) {
 		const result = results[i];
 		if (result.status === 'fulfilled') {
 			logger.debug(`Direct probe found ${binaryName}`, LOG_CONTEXT, { path: result.value });
-			return result.value;
+			candidates.push(result.value);
 		}
 	}
 
-	return null;
+	return dedupePaths(candidates);
 }
 
 // ============ Unix Path Probing ============
@@ -440,10 +472,15 @@ function getUnixKnownPaths(binaryName: string): string[] {
  * Uses parallel probing for performance on slow file systems.
  */
 export async function probeUnixPaths(binaryName: string): Promise<string | null> {
+	const candidates = await probeUnixPathCandidates(binaryName);
+	return candidates[0] ?? null;
+}
+
+export async function probeUnixPathCandidates(binaryName: string): Promise<string[]> {
 	const pathsToCheck = getUnixKnownPaths(binaryName);
 
 	if (pathsToCheck.length === 0) {
-		return null;
+		return [];
 	}
 
 	// Check all paths in parallel for performance
@@ -455,16 +492,125 @@ export async function probeUnixPaths(binaryName: string): Promise<string | null>
 		})
 	);
 
-	// Return the first successful result (maintains priority order from pathsToCheck)
+	const candidates: string[] = [];
 	for (let i = 0; i < results.length; i++) {
 		const result = results[i];
 		if (result.status === 'fulfilled') {
 			logger.debug(`Direct probe found ${binaryName}`, LOG_CONTEXT, { path: result.value });
-			return result.value;
+			candidates.push(result.value);
 		}
 	}
 
-	return null;
+	return dedupePaths(candidates);
+}
+
+async function scanPathCandidates(binaryName: string): Promise<string[]> {
+	const env = await getExpandedEnvWithShell();
+	const pathParts = (env.PATH || '').split(path.delimiter).filter(Boolean);
+	const candidates: string[] = [];
+
+	for (const pathPart of pathParts) {
+		if (isWindows()) {
+			const basePath = path.join(pathPart, binaryName);
+			const candidatePaths = binaryName.toLowerCase().endsWith('.exe')
+				? [basePath]
+				: binaryName.toLowerCase().endsWith('.cmd')
+					? [basePath]
+					: [`${basePath}.exe`, basePath, `${basePath}.cmd`];
+
+			for (const candidate of candidatePaths) {
+				try {
+					await fs.promises.access(candidate, fs.constants.F_OK);
+					candidates.push(candidate);
+				} catch {
+					// Continue probing remaining PATH entries.
+				}
+			}
+		} else {
+			const candidate = path.join(pathPart, binaryName);
+			try {
+				await fs.promises.access(candidate, fs.constants.F_OK | fs.constants.X_OK);
+				candidates.push(candidate);
+			} catch {
+				// Continue probing remaining PATH entries.
+			}
+		}
+	}
+
+	return dedupePaths(candidates);
+}
+
+async function lookupCommandCandidates(binaryName: string): Promise<string[]> {
+	try {
+		const command = getWhichCommand();
+		const env = await getExpandedEnvWithShell();
+		const result = await execFileNoThrow(command, [binaryName], undefined, env);
+
+		if (result.exitCode !== 0 || !result.stdout.trim()) {
+			return [];
+		}
+
+		const matches = result.stdout
+			.trim()
+			.split(/\r?\n/)
+			.map((p) => p.trim())
+			.filter(Boolean);
+
+		if (!isWindows()) {
+			return matches;
+		}
+
+		const resolvedMatches: string[] = [];
+		for (const match of matches) {
+			if (match.toLowerCase().endsWith('.exe') || match.toLowerCase().endsWith('.cmd')) {
+				resolvedMatches.push(match);
+				continue;
+			}
+
+			const exePath = `${match}.exe`;
+			const cmdPath = `${match}.cmd`;
+			try {
+				await fs.promises.access(exePath, fs.constants.F_OK);
+				resolvedMatches.push(exePath);
+				logger.debug(`Found .exe version of ${binaryName}`, LOG_CONTEXT, {
+					path: exePath,
+				});
+				continue;
+			} catch {
+				try {
+					await fs.promises.access(cmdPath, fs.constants.F_OK);
+					resolvedMatches.push(cmdPath);
+					logger.debug(`Found .cmd version of ${binaryName}`, LOG_CONTEXT, {
+						path: cmdPath,
+					});
+					continue;
+				} catch {
+					resolvedMatches.push(match);
+				}
+			}
+		}
+
+		return resolvedMatches;
+	} catch {
+		return [];
+	}
+}
+
+export async function findBinaryCandidates(binaryName: string): Promise<string[]> {
+	const directCandidates = isWindows()
+		? await probeWindowsPathCandidates(binaryName)
+		: await probeUnixPathCandidates(binaryName);
+	const pathCandidates = await scanPathCandidates(binaryName);
+	const candidatesBeforeLookup = dedupePaths([...directCandidates, ...pathCandidates]);
+	const lookupCandidates =
+		candidatesBeforeLookup.length === 0 ? await lookupCommandCandidates(binaryName) : [];
+
+	if (!isWindows()) {
+		return dedupePaths([...candidatesBeforeLookup, ...lookupCandidates]);
+	}
+
+	const candidates = dedupePaths([...candidatesBeforeLookup, ...lookupCandidates]);
+	return sortWindowsCandidates(candidates);
 }
 
 // ============ Binary Detection ============
@@ -478,104 +624,24 @@ export async function probeUnixPaths(binaryName: string): Promise<string | null>
  * 2. Fall back to which/where command with expanded PATH
  */
 export async function checkBinaryExists(binaryName: string): Promise<BinaryDetectionResult> {
-	// First try direct file probing of known installation paths
-	// This is more reliable than which/where in packaged Electron apps
+	const directCandidates = isWindows()
+		? sortWindowsCandidates(await probeWindowsPathCandidates(binaryName))
+		: await probeUnixPathCandidates(binaryName);
+	if (directCandidates.length > 0) {
+		return { exists: true, path: directCandidates[0], paths: directCandidates };
+	}
+
 	if (isWindows()) {
-		const probedPath = await probeWindowsPaths(binaryName);
-		if (probedPath) {
-			return { exists: true, path: probedPath };
-		}
 		logger.debug(`Direct probe failed for ${binaryName}, falling back to where`, LOG_CONTEXT);
 	} else {
-		// macOS/Linux: probe known paths first
-		const probedPath = await probeUnixPaths(binaryName);
-		if (probedPath) {
-			return { exists: true, path: probedPath };
-		}
 		logger.debug(`Direct probe failed for ${binaryName}, falling back to which`, LOG_CONTEXT);
 	}
 
-	try {
-		// Use 'which' on Unix-like systems, 'where' on Windows
-		const command = getWhichCommand();
-
-		// Use expanded PATH to find binaries in common installation locations.
-		// Prefer shell-provided PATH entries when available (they should be
-		// prioritized). This helps packaged apps locate user-installed tools.
-		const env = await getExpandedEnvWithShell();
-		const result = await execFileNoThrow(command, [binaryName], undefined, env);
-
-		if (result.exitCode === 0 && result.stdout.trim()) {
-			// Get all matches (Windows 'where' can return multiple)
-			// Handle both Unix (\n) and Windows (\r\n) line endings
-			const matches = result.stdout
-				.trim()
-				.split(/\r?\n/)
-				.map((p) => p.trim())
-				.filter((p) => p);
-
-			if (isWindows() && matches.length > 0) {
-				// On Windows, prefer .exe > extensionless (shell scripts) > .cmd
-				// This helps avoid cmd.exe limitations and supports PowerShell/bash scripts
-				const exeMatch = matches.find((p) => p.toLowerCase().endsWith('.exe'));
-				const cmdMatch = matches.find((p) => p.toLowerCase().endsWith('.cmd'));
-				const extensionlessMatch = matches.find(
-					(p) => !p.toLowerCase().endsWith('.exe') && !p.toLowerCase().endsWith('.cmd')
-				);
-
-				// Return the best match: .exe > extensionless shell scripts > .cmd
-				let bestMatch = (exeMatch || extensionlessMatch || cmdMatch)!;
-
-				// If the first match doesn't have an extension, check if .cmd or .exe version exists
-				// This handles cases where 'where' returns a path without extension
-				if (
-					!bestMatch.toLowerCase().endsWith('.exe') &&
-					!bestMatch.toLowerCase().endsWith('.cmd')
-				) {
-					const cmdPath = bestMatch + '.cmd';
-					const exePath = bestMatch + '.exe';
-
-					// Check if the .exe or .cmd version exists
-					try {
-						await fs.promises.access(exePath, fs.constants.F_OK);
-						bestMatch = exePath;
-						logger.debug(`Found .exe version of ${binaryName}`, LOG_CONTEXT, {
-							path: exePath,
-						});
-					} catch {
-						try {
-							await fs.promises.access(cmdPath, fs.constants.F_OK);
-							bestMatch = cmdPath;
-							logger.debug(`Found .cmd version of ${binaryName}`, LOG_CONTEXT, {
-								path: cmdPath,
-							});
-						} catch {
-							// Neither .exe nor .cmd exists, use the original path
-						}
-					}
-				}
-
-				logger.debug(`Windows binary detection for ${binaryName}`, LOG_CONTEXT, {
-					allMatches: matches,
-					selectedMatch: bestMatch,
-					isCmd: bestMatch.toLowerCase().endsWith('.cmd'),
-					isExe: bestMatch.toLowerCase().endsWith('.exe'),
-				});
-
-				return {
-					exists: true,
-					path: bestMatch,
-				};
-			}
-
-			return {
-				exists: true,
-				path: matches[0], // First match for Unix
-			};
-		}
-
-		return { exists: false };
-	} catch {
-		return { exists: false };
+	const lookupCandidates = await lookupCommandCandidates(binaryName);
+	const candidates = isWindows() ? sortWindowsCandidates(lookupCandidates) : lookupCandidates;
+	if (candidates.length > 0) {
+		return { exists: true, path: candidates[0], paths: candidates };
 	}
+
+	return { exists: false };
 }

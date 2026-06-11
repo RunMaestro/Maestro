@@ -935,6 +935,7 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 							theme={theme}
 							agent={configuringAgent}
 							customPath={customPath}
+							pathOptions={configuringAgent.pathCandidates || []}
 							onCustomPathChange={setCustomPath}
 							onCustomPathBlur={async () => {
 								// Sync custom path to agent detector before refreshing detection
@@ -947,6 +948,11 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 								setCustomPath('');
 								// Clear custom path in agent detector before refreshing
 								await window.maestro.agents.setCustomPath(configuringAgentId!, null);
+								await refreshAgentDetection();
+							}}
+							onPathOptionSelect={async (value) => {
+								setCustomPath(value);
+								await window.maestro.agents.setCustomPath(configuringAgentId!, value);
 								await refreshAgentDetection();
 							}}
 							customArgs={customArgs}

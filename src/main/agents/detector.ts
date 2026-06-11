@@ -18,7 +18,7 @@ import { execFileNoThrow } from '../utils/execFile';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
 import { getAgentCapabilities } from './capabilities';
-import { checkBinaryExists, checkCustomPath, getExpandedEnv } from './path-prober';
+import { checkCustomPath, findBinaryCandidates, getExpandedEnv } from './path-prober';
 import { AGENT_DEFINITIONS, type AgentConfig } from './definitions';
 import { isWindows } from '../../shared/platformDetection';
 
@@ -96,12 +96,24 @@ export class AgentDetector {
 
 		for (const agentDef of AGENT_DEFINITIONS) {
 			const customPath = this.customPaths[agentDef.id];
-			let detection: { exists: boolean; path?: string };
+			let detection: { exists: boolean; path?: string; paths?: string[] };
+			const binaryNames = Array.from(
+				new Set([...(agentDef.pathCandidateBinaryNames ?? []), agentDef.binaryName])
+			);
+			const detectCandidatePaths = async () => {
+				const candidatesByBinary = await Promise.all(
+					binaryNames.map((binaryName) => findBinaryCandidates(binaryName))
+				);
+				return Array.from(new Set(candidatesByBinary.flat()));
+			};
 
 			// If user has specified a custom path, check that first
 			if (customPath) {
 				detection = await checkCustomPath(customPath);
+				const detectedPaths = await detectCandidatePaths();
 				if (detection.exists) {
+					const orderedPaths = Array.from(new Set([detection.path!, ...detectedPaths]));
+					detection.paths = orderedPaths;
 					logger.info(
 						`Agent "${agentDef.name}" found at custom path: ${detection.path}`,
 						LOG_CONTEXT
@@ -109,7 +121,11 @@ export class AgentDetector {
 				} else {
 					logger.warn(`Agent "${agentDef.name}" custom path not valid: ${customPath}`, LOG_CONTEXT);
 					// Fall back to PATH detection
-					detection = await checkBinaryExists(agentDef.binaryName);
+					detection = {
+						exists: detectedPaths.length > 0,
+						path: detectedPaths[0],
+						paths: detectedPaths,
+					};
 					if (detection.exists) {
 						logger.info(
 							`Agent "${agentDef.name}" found in PATH at: ${detection.path}`,
@@ -118,7 +134,12 @@ export class AgentDetector {
 					}
 				}
 			} else {
-				detection = await checkBinaryExists(agentDef.binaryName);
+				const detectedPaths = await detectCandidatePaths();
+				detection = {
+					exists: detectedPaths.length > 0,
+					path: detectedPaths[0],
+					paths: detectedPaths,
+				};
 
 				if (detection.exists) {
 					logger.info(`Agent "${agentDef.name}" found at: ${detection.path}`, LOG_CONTEXT);
@@ -136,6 +157,7 @@ export class AgentDetector {
 				...agentDef,
 				available: detection.exists,
 				path: detection.path,
+				pathCandidates: detection.paths,
 				customPath: customPath || undefined,
 				capabilities: getAgentCapabilities(agentDef.id),
 			});

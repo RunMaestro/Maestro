@@ -43,7 +43,10 @@ export {
 	getExpandedEnv,
 	checkCustomPath,
 	probeWindowsPaths,
+	probeWindowsPathCandidates,
 	probeUnixPaths,
+	probeUnixPathCandidates,
+	findBinaryCandidates,
 	checkBinaryExists,
 } from './path-prober';
 

@@ -43,6 +43,7 @@ export interface AgentConfig {
 	args?: string[];
 	available: boolean;
 	path?: string;
+	pathCandidates?: string[];
 	capabilities?: AgentCapabilities;
 }
 

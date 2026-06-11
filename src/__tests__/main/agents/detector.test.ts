@@ -338,6 +338,38 @@ describe('agent-detector', () => {
 			expect(agents.find((a) => a.id === 'codex')?.available).toBe(false);
 		});
 
+		it('prefers the Codex multi-auth wrapper while retaining plain Codex as a candidate', async () => {
+			mockExecFileNoThrow.mockImplementation(async (_cmd, args) => {
+				const binaryName = args[0];
+				if (binaryName === 'bash') {
+					return { stdout: '/bin/bash\n', stderr: '', exitCode: 0 };
+				}
+				if (binaryName === 'codex-multi-auth-codex') {
+					return {
+						stdout: '/Users/test/.nvm/versions/node/v25.3.0/bin/codex-multi-auth-codex\n',
+						stderr: '',
+						exitCode: 0,
+					};
+				}
+				if (binaryName === 'codex') {
+					return { stdout: '/opt/homebrew/bin/codex\n', stderr: '', exitCode: 0 };
+				}
+				return { stdout: '', stderr: 'not found', exitCode: 1 };
+			});
+
+			const agents = await detector.detectAgents();
+			const codexAgent = agents.find((a) => a.id === 'codex');
+
+			expect(codexAgent?.available).toBe(true);
+			expect(codexAgent?.path).toBe(
+				'/Users/test/.nvm/versions/node/v25.3.0/bin/codex-multi-auth-codex'
+			);
+			expect(codexAgent?.pathCandidates).toEqual([
+				'/Users/test/.nvm/versions/node/v25.3.0/bin/codex-multi-auth-codex',
+				'/opt/homebrew/bin/codex',
+			]);
+		});
+
 		it('should use deduplication for parallel calls', async () => {
 			let callCount = 0;
 			mockExecFileNoThrow.mockImplementation(async () => {
@@ -1457,8 +1489,8 @@ describe('agent-detector', () => {
 			vi.doMock('../../../main/agents/path-prober', () => ({
 				getExpandedEnv: () => ({ PATH: 'C:\\Tools' }),
 				checkCustomPath: vi.fn(async () => ({ exists: false })),
-				checkBinaryExists: vi.fn(async (binaryName: string) =>
-					binaryName === 'opencode' ? { exists: true } : { exists: false }
+				findBinaryCandidates: vi.fn(async (binaryName: string) =>
+					binaryName === 'opencode' ? ['opencode'] : []
 				),
 			}));
 			vi.doMock('../../../main/utils/execFile', () => ({
@@ -1501,7 +1533,7 @@ describe('agent-detector', () => {
 				expect(details?.agents).toContainEqual(
 					expect.objectContaining({
 						id: 'opencode',
-						pathExtension: 'none',
+						pathExtension: '',
 						willUseShell: true,
 					})
 				);

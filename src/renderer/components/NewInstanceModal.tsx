@@ -390,6 +390,11 @@ export function NewInstanceModal({
 		}
 	}, []);
 
+	const persistAgentPath = React.useCallback(async (agentId: string, value: string | null) => {
+		const pathToSet = value?.trim() || null;
+		await window.maestro.agents.setCustomPath(agentId, pathToSet);
+	}, []);
+
 	// Load available models for an agent that supports model selection
 	const loadModelsForAgent = React.useCallback(
 		async (agentId: string, forceRefresh = false) => {
@@ -872,11 +877,12 @@ export function NewInstanceModal({
 														theme={theme}
 														agent={agent}
 														customPath={customAgentPaths[agent.id] || ''}
+														pathOptions={agent.pathCandidates || []}
 														onCustomPathChange={(value) => {
 															setCustomAgentPaths((prev) => ({ ...prev, [agent.id]: value }));
 														}}
 														onCustomPathBlur={() => {
-															/* Saved on agent create */
+															void persistAgentPath(agent.id, customAgentPaths[agent.id] || null);
 														}}
 														onCustomPathClear={() => {
 															setCustomAgentPaths((prev) => {
@@ -884,6 +890,10 @@ export function NewInstanceModal({
 																delete newPaths[agent.id];
 																return newPaths;
 															});
+															void persistAgentPath(agent.id, null);
+														}}
+														onPathOptionSelect={(value) => {
+															void persistAgentPath(agent.id, value);
 														}}
 														customArgs={customAgentArgs[agent.id] || ''}
 														onCustomArgsChange={(value) => {
@@ -1736,11 +1746,13 @@ export function EditAgentModal({
 								theme={theme}
 								agent={agent}
 								customPath={customPath}
+								pathOptions={agent.pathCandidates || []}
 								onCustomPathChange={setCustomPath}
 								onCustomPathBlur={() => {
 									/* Saved on modal save */
 								}}
 								onCustomPathClear={() => setCustomPath('')}
+								onPathOptionSelect={setCustomPath}
 								customArgs={customArgs}
 								onCustomArgsChange={setCustomArgs}
 								onCustomArgsBlur={() => {

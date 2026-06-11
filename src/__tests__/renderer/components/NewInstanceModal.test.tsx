@@ -1498,7 +1498,7 @@ describe('NewInstanceModal', () => {
 				expect(screen.getByPlaceholderText('/path/to/claude')).toBeInTheDocument();
 			});
 
-			// Set custom path and args, then blur both inputs. These values are local until create.
+			// Set custom path and args, then blur both inputs.
 			const customPathInput = screen.getByPlaceholderText('/path/to/claude');
 			fireEvent.change(customPathInput, { target: { value: '/custom/path/to/claude' } });
 			fireEvent.blur(customPathInput);
@@ -1727,6 +1727,49 @@ describe('NewInstanceModal', () => {
 
 			// Path should be reset to detected path
 			expect(customPathInput).toHaveValue('/detected/bin/claude');
+		});
+
+		it('persists a selected detected path as the next default for new agents', async () => {
+			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+				createAgentConfig({
+					id: 'codex',
+					name: 'Codex',
+					available: true,
+					binaryName: 'codex',
+					path: '/Users/test/.nvm/versions/node/v25.3.0/bin/codex-multi-auth-codex',
+					pathCandidates: [
+						'/Users/test/.nvm/versions/node/v25.3.0/bin/codex-multi-auth-codex',
+						'/opt/homebrew/bin/codex',
+					],
+				}),
+			]);
+
+			render(
+				<NewInstanceModal
+					isOpen={true}
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[]}
+				/>
+			);
+
+			await waitFor(() => {
+				expect(screen.getByText('Codex')).toBeInTheDocument();
+			});
+			fireEvent.click(screen.getByText('Codex'));
+
+			await waitFor(() => {
+				expect(screen.getByTitle('Choose detected path')).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getByTitle('Choose detected path'));
+			fireEvent.click(screen.getByText('/opt/homebrew/bin/codex'));
+
+			expect(window.maestro.agents.setCustomPath).toHaveBeenCalledWith(
+				'codex',
+				'/opt/homebrew/bin/codex'
+			);
 		});
 
 		it('should preload saved per-agent path, arguments, and environment variables', async () => {

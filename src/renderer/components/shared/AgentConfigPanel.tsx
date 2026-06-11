@@ -243,9 +243,11 @@ export interface AgentConfigPanelProps {
 	agent: AgentConfig;
 	// Custom path
 	customPath: string;
+	pathOptions?: string[];
 	onCustomPathChange: (value: string) => void;
 	onCustomPathBlur?: () => void;
 	onCustomPathClear: () => void;
+	onPathOptionSelect?: (value: string) => void;
 	// Custom arguments
 	customArgs: string;
 	onCustomArgsChange: (value: string) => void;
@@ -282,9 +284,11 @@ export function AgentConfigPanel({
 	theme,
 	agent,
 	customPath,
+	pathOptions = [],
 	onCustomPathChange,
 	onCustomPathBlur,
 	onCustomPathClear,
+	onPathOptionSelect,
 	customArgs,
 	onCustomArgsChange,
 	onCustomArgsBlur,
@@ -318,6 +322,8 @@ export function AgentConfigPanel({
 	};
 	const padding = compact ? 'p-2' : 'p-3';
 	const spacing = compact ? 'space-y-2' : 'space-y-3';
+	const [showPathOptions, setShowPathOptions] = useState(false);
+	const pathChooserRef = useRef<HTMLDivElement>(null);
 	// Track which built-in env var tooltip is showing
 	const [showingTooltip, setShowingTooltip] = useState<string | null>(null);
 
@@ -351,6 +357,35 @@ export function AgentConfigPanel({
 	const getKeyDisplayValue = (originalKey: string): string => {
 		return pendingKeyEditsRef.current.get(originalKey) ?? originalKey;
 	};
+
+	const displayedPath = customPath || (isSshEnabled ? agent.binaryName : agent.path) || '';
+	const selectablePathOptions = useMemo(() => {
+		if (isSshEnabled) return [];
+
+		const seen = new Set<string>();
+		const options: string[] = [];
+		for (const option of [customPath, agent.path, ...pathOptions]) {
+			const trimmed = option?.trim();
+			if (!trimmed || seen.has(trimmed)) continue;
+			seen.add(trimmed);
+			options.push(trimmed);
+		}
+		return options;
+	}, [agent.path, customPath, isSshEnabled, pathOptions]);
+	const hasPathOptions = selectablePathOptions.length > 1;
+
+	useEffect(() => {
+		const handleClickOutside = (e: MouseEvent) => {
+			if (pathChooserRef.current && !pathChooserRef.current.contains(e.target as Node)) {
+				setShowPathOptions(false);
+			}
+		};
+
+		if (showPathOptions) {
+			document.addEventListener('mousedown', handleClickOutside);
+			return () => document.removeEventListener('mousedown', handleClickOutside);
+		}
+	}, [showPathOptions]);
 
 	// Handle key input change (local only, deferred to blur)
 	const handleKeyInputChange = (originalKey: string, newKey: string) => {
@@ -399,23 +434,72 @@ export function AgentConfigPanel({
 					)}
 				</label>
 				<div className="flex gap-2">
-					<input
-						type="text"
-						value={customPath || (isSshEnabled ? agent.binaryName : agent.path) || ''}
-						onChange={(e) => onCustomPathChange(e.target.value)}
-						onBlur={onCustomPathBlur}
-						onClick={(e) => e.stopPropagation()}
-						placeholder={`/path/to/${agent.binaryName}`}
-						// When showing default SSH binary name, make field read-only to prevent accidental modification
-						readOnly={isSshEnabled && !customPath}
-						className="flex-1 p-2 rounded border bg-transparent outline-none text-xs font-mono"
-						style={{
-							borderColor: theme.colors.border,
-							color: theme.colors.textMain,
-							// Slightly dim read-only fields to show they're not editable
-							opacity: isSshEnabled && !customPath ? 0.7 : 1,
-						}}
-					/>
+					<div className="relative flex-1" ref={pathChooserRef}>
+						<input
+							type="text"
+							value={displayedPath}
+							onChange={(e) => onCustomPathChange(e.target.value)}
+							onBlur={onCustomPathBlur}
+							onClick={(e) => e.stopPropagation()}
+							placeholder={`/path/to/${agent.binaryName}`}
+							// When showing default SSH binary name, make field read-only to prevent accidental modification
+							readOnly={isSshEnabled && !customPath}
+							className="w-full p-2 rounded border bg-transparent outline-none text-xs font-mono pr-8"
+							style={{
+								borderColor: theme.colors.border,
+								color: theme.colors.textMain,
+								// Slightly dim read-only fields to show they're not editable
+								opacity: isSshEnabled && !customPath ? 0.7 : 1,
+							}}
+						/>
+						{hasPathOptions && (
+							<button
+								type="button"
+								onClick={(e) => {
+									e.stopPropagation();
+									setShowPathOptions((value) => !value);
+								}}
+								className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 rounded hover:bg-white/10"
+								style={{ color: theme.colors.textDim }}
+								title="Choose detected path"
+								aria-label="Choose detected path"
+							>
+								<ChevronDown
+									className={`w-3 h-3 transition-transform ${showPathOptions ? 'rotate-180' : ''}`}
+								/>
+							</button>
+						)}
+						{showPathOptions && (
+							<div
+								className="absolute z-50 left-0 right-0 top-full mt-1 max-h-48 overflow-y-auto rounded border shadow-lg"
+								style={{
+									backgroundColor: theme.colors.bgMain,
+									borderColor: theme.colors.border,
+								}}
+							>
+								{selectablePathOptions.map((option) => (
+									<button
+										key={option}
+										type="button"
+										onClick={(e) => {
+											e.stopPropagation();
+											onCustomPathChange(option);
+											onPathOptionSelect?.(option);
+											setShowPathOptions(false);
+										}}
+										className="w-full text-left px-3 py-2 text-xs font-mono hover:bg-white/10 transition-colors break-all"
+										style={{
+											color: option === displayedPath ? theme.colors.accent : theme.colors.textMain,
+											backgroundColor:
+												option === displayedPath ? 'rgba(255,255,255,0.05)' : undefined,
+										}}
+									>
+										{option}
+									</button>
+								))}
+							</div>
+						)}
+					</div>
 					{customPath && (
 						<button
 							onClick={(e) => {
