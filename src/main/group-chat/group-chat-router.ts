@@ -366,7 +366,7 @@ async function listRemoteAutoRunDocs(
 	return files.sort();
 }
 
-async function listSessionAutoRunDocs(session: SessionInfo): Promise<string[]> {
+async function listSessionAutoRunDocs(session: GroupChatSessionInfo): Promise<string[]> {
 	if (!session.autoRunFolderPath) {
 		return [];
 	}
