@@ -1,8 +1,9 @@
 import * as os from 'os';
 import * as path from 'path';
 import { STANDARD_UNIX_PATHS } from '../constants';
-import { detectNodeVersionManagerBinPaths, buildExpandedPath } from '../../../shared/pathUtils';
+import { detectNodeVersionManagerBinPaths } from '../../../shared/pathUtils';
 import { isWindows } from '../../../shared/platformDetection';
+import { buildSpawnPath } from '../../utils/spawnPath';
 
 /**
  * Build the base PATH for macOS/Linux with detected Node version manager paths.
@@ -35,8 +36,8 @@ export function buildUnixBasePath(): string {
  *
  * Platform-specific behavior:
  * - **Windows**: Inherits full parent environment + TERM setting
- * - **Unix/Linux/macOS**: Creates a minimal clean environment with essential variables and
- *   an expanded PATH that includes Node version manager paths
+ * - **Unix/Linux/macOS**: Inherits full parent environment with Electron/IDE variables stripped,
+ *   TERM forced to xterm-256color, and an expanded PATH that includes Node version manager paths
  *
  * @param {Record<string, string>} [shellEnvVars] - Optional custom environment variables to merge.
  *        These override process defaults. Supports `~/` path expansion (e.g., `~/workspace`).
@@ -59,7 +60,8 @@ export function buildUnixBasePath(): string {
  * // WORKSPACE will expand to /Users/john/projects (with path expansion)
  *
  * @note Path expansion (`~/` → home directory) is applied to all values
- * @note Terminal sessions do NOT strip Electron/IDE variables (full environment inherited on Windows)
+ * @note On Windows, the full environment is inherited without stripping. On Unix/Linux/macOS,
+ *       Electron/IDE variables listed in STRIPPED_ENV_VARS are removed to avoid shell/plugin issues.
  */
 export function buildPtyTerminalEnv(shellEnvVars?: Record<string, string>): NodeJS.ProcessEnv {
 	let env: NodeJS.ProcessEnv;
@@ -70,15 +72,32 @@ export function buildPtyTerminalEnv(shellEnvVars?: Record<string, string>): Node
 			TERM: 'xterm-256color',
 		};
 	} else {
-		const basePath = buildUnixBasePath();
+		// Use the full expanded PATH so common user install locations
+		// (~/.local/bin, ~/.claude/local, ~/.opencode/bin, Homebrew, npm-global, etc.)
+		// are available even when the user's shell doesn't source an rc file that
+		// augments PATH. bash falls through to .bashrc for login+interactive on
+		// Debian, but zsh only sources .zprofile/.zshrc if they exist — users
+		// without those would otherwise see `command not found` for tools like
+		// `claude` and `codex` that live in ~/.local/bin.
+		// Use buildSpawnPath() so the user's cached login-shell PATH is also
+		// included — covers custom node/python installs outside the standard
+		// version-manager paths we hardcode in buildExpandedPath().
 		env = {
-			HOME: process.env.HOME,
-			USER: process.env.USER,
-			SHELL: process.env.SHELL,
+			...process.env,
 			TERM: 'xterm-256color',
 			LANG: process.env.LANG || 'en_US.UTF-8',
-			PATH: basePath,
+			PATH: buildSpawnPath(),
 		};
+		for (const key of STRIPPED_ENV_VARS) {
+			delete env[key];
+		}
+	}
+
+	// Vim arrow-key ergonomics: when users launch `vi`/`vim` with distro defaults
+	// that force compatible mode, insert-mode arrows can degrade to literal ABCD.
+	// Provide a safe default for terminal sessions, but never override explicit user config.
+	if (!env.VIMINIT) {
+		env.VIMINIT = process.env.VIMINIT || 'set nocompatible | set esckeys';
 	}
 
 	// Apply custom shell environment variables
@@ -196,10 +215,46 @@ const STRIPPED_ENV_VARS = [
  * @see STRIPPED_ENV_VARS - List of variables that are always removed
  * @see buildPtyTerminalEnv() - Similar function for PTY terminal environments
  */
+/**
+ * Collect the environment variables that Maestro is explicitly setting on a
+ * spawned process, in the same precedence order as the build* helpers below
+ * (global → session-level, with session overriding global). The MAESTRO_SESSION_RESUMED
+ * marker is included when applicable. Inherited system env vars are deliberately
+ * excluded — this is the set the user can act on (Settings → Shell Configuration
+ * and per-agent / per-session overrides), surfaced in the Process Details modal.
+ *
+ * Applies `~/` path expansion the same way the build helpers do.
+ */
+export function collectMaestroEnvVars(
+	globalShellEnvVars?: Record<string, string>,
+	customEnvVars?: Record<string, string>,
+	isResuming?: boolean
+): Record<string, string> {
+	const home = os.homedir();
+	const expand = (value: string): string =>
+		value.startsWith('~/') ? path.join(home, value.slice(2)) : value;
+	const result: Record<string, string> = {};
+	if (globalShellEnvVars) {
+		for (const [key, value] of Object.entries(globalShellEnvVars)) {
+			result[key] = expand(value);
+		}
+	}
+	if (customEnvVars) {
+		for (const [key, value] of Object.entries(customEnvVars)) {
+			result[key] = expand(value);
+		}
+	}
+	if (isResuming) {
+		result.MAESTRO_SESSION_RESUMED = '1';
+	}
+	return result;
+}
+
 export function buildChildProcessEnv(
 	customEnvVars?: Record<string, string>,
 	isResuming?: boolean,
-	globalShellEnvVars?: Record<string, string>
+	globalShellEnvVars?: Record<string, string>,
+	extraPathDirs?: string[]
 ): NodeJS.ProcessEnv {
 	const env = { ...process.env };
 
@@ -210,8 +265,10 @@ export function buildChildProcessEnv(
 		delete env[key];
 	}
 
-	// Use the shared expanded PATH
-	env.PATH = buildExpandedPath();
+	// Build PATH that merges Maestro's hardcoded paths with the user's cached
+	// login-shell PATH and any caller-supplied dirs (typically the parent dir
+	// of the detected agent binary, so its shebang's interpreter resolves).
+	env.PATH = buildSpawnPath(extraPathDirs);
 
 	if (isResuming) {
 		env.MAESTRO_SESSION_RESUMED = '1';

@@ -23,8 +23,9 @@ import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
 import { EncoreTab } from '../../../../../renderer/components/Settings/tabs/EncoreTab';
-import type { Theme, AgentConfig } from '../../../../../renderer/types';
+import type { AgentConfig } from '../../../../../renderer/types';
 
+import { mockTheme } from '../../../../helpers/mockTheme';
 // Mock AgentConfigPanel to avoid deep rendering
 vi.mock('../../../../../renderer/components/shared/AgentConfigPanel', () => ({
 	AgentConfigPanel: (props: any) => (
@@ -44,13 +45,11 @@ vi.mock('../../../../../renderer/components/shared/AgentConfigPanel', () => ({
 				onClick={() => props.onCustomPathChange('/custom/path')}
 			/>
 			<button data-testid="trigger-custom-path-blur" onClick={() => props.onCustomPathBlur()} />
-			<button data-testid="trigger-custom-path-clear" onClick={() => props.onCustomPathClear()} />
 			<button
 				data-testid="trigger-custom-args-change"
 				onClick={() => props.onCustomArgsChange('--verbose')}
 			/>
 			<button data-testid="trigger-custom-args-blur" onClick={() => props.onCustomArgsBlur()} />
-			<button data-testid="trigger-custom-args-clear" onClick={() => props.onCustomArgsClear()} />
 			<button data-testid="trigger-env-var-add" onClick={() => props.onEnvVarAdd()} />
 			<button
 				data-testid="trigger-env-var-key-change"
@@ -68,7 +67,7 @@ vi.mock('../../../../../renderer/components/shared/AgentConfigPanel', () => ({
 			/>
 			<button
 				data-testid="trigger-config-blur"
-				onClick={() => props.onConfigBlur('model', 'test-model')}
+				onClick={() => props.onConfigBlur('model', 'claude-3-opus')}
 			/>
 			<button data-testid="trigger-refresh-models" onClick={() => props.onRefreshModels?.()} />
 			<button data-testid="trigger-refresh-agent" onClick={() => props.onRefreshAgent?.()} />
@@ -90,6 +89,11 @@ vi.mock('../../../../../renderer/components/Wizard/screens/AgentSelectionScreen'
 // Shared mock fns for useSettings setters
 const mockSetEncoreFeatures = vi.fn();
 const mockSetDirectorNotesSettings = vi.fn();
+const mockSetStatsCollectionEnabled = vi.fn();
+const mockSetDefaultStatsTimeRange = vi.fn();
+const mockSetWakatimeEnabled = vi.fn();
+const mockSetWakatimeApiKey = vi.fn();
+const mockSetWakatimeDetailedTracking = vi.fn();
 
 // Override mechanism for per-test customization
 let mockUseSettingsOverrides: Record<string, any> = {};
@@ -103,30 +107,24 @@ vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 			defaultLookbackDays: 7,
 		},
 		setDirectorNotesSettings: mockSetDirectorNotesSettings,
+		// Stats
+		statsCollectionEnabled: true,
+		setStatsCollectionEnabled: mockSetStatsCollectionEnabled,
+		defaultStatsTimeRange: 'week',
+		setDefaultStatsTimeRange: mockSetDefaultStatsTimeRange,
+		// WakaTime
+		wakatimeEnabled: false,
+		setWakatimeEnabled: mockSetWakatimeEnabled,
+		wakatimeApiKey: '',
+		setWakatimeApiKey: mockSetWakatimeApiKey,
+		wakatimeDetailedTracking: false,
+		setWakatimeDetailedTracking: mockSetWakatimeDetailedTracking,
+		// Symphony
+		symphonyRegistryUrls: [],
+		setSymphonyRegistryUrls: vi.fn(),
 		...mockUseSettingsOverrides,
 	}),
 }));
-
-const mockTheme: Theme = {
-	id: 'dracula',
-	name: 'Dracula',
-	mode: 'dark',
-	colors: {
-		bgMain: '#282a36',
-		bgSidebar: '#21222c',
-		bgActivity: '#343746',
-		border: '#44475a',
-		textMain: '#f8f8f2',
-		textDim: '#6272a4',
-		accent: '#bd93f9',
-		accentDim: '#bd93f920',
-		accentText: '#ff79c6',
-		accentForeground: '#ffffff',
-		success: '#50fa7b',
-		warning: '#ffb86c',
-		error: '#ff5555',
-	},
-};
 
 const mockAvailableAgents: AgentConfig[] = [
 	{
@@ -173,6 +171,10 @@ describe('EncoreTab', () => {
 		vi.mocked(window.maestro.agents.getConfig).mockResolvedValue({});
 		vi.mocked(window.maestro.agents.setConfig).mockResolvedValue(undefined);
 		vi.mocked(window.maestro.agents.getModels).mockResolvedValue([]);
+		vi.mocked(window.maestro.stats.getDatabaseSize).mockResolvedValue(1024 * 1024);
+		vi.mocked(window.maestro.stats.getEarliestTimestamp).mockResolvedValue(null);
+		vi.mocked(window.maestro.wakatime.checkCli).mockResolvedValue({ available: false });
+		vi.mocked(window.maestro.wakatime.validateApiKey).mockResolvedValue({ valid: false });
 	});
 
 	afterEach(() => {
@@ -223,7 +225,8 @@ describe('EncoreTab', () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			expect(screen.getByText('Beta')).toBeInTheDocument();
+			const betaBadges = screen.getAllByText('Beta');
+			expect(betaBadges.length).toBeGreaterThanOrEqual(1);
 		});
 
 		it("should render subtitle description for Director's Notes", async () => {
@@ -639,34 +642,6 @@ describe('EncoreTab', () => {
 			);
 		});
 
-		it('should clear custom path via callback', async () => {
-			render(<EncoreTab theme={mockTheme} isOpen={true} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			fireEvent.click(screen.getByTitle('Customize provider settings'));
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			// Set then clear
-			fireEvent.click(screen.getByTestId('trigger-custom-path-change'));
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(50);
-			});
-
-			fireEvent.click(screen.getByTestId('trigger-custom-path-clear'));
-
-			expect(mockSetDirectorNotesSettings).toHaveBeenCalledWith(
-				expect.objectContaining({
-					customPath: undefined,
-				})
-			);
-		});
-
 		it('should update custom args via AgentConfigPanel callback', async () => {
 			render(<EncoreTab theme={mockTheme} isOpen={true} />);
 
@@ -687,28 +662,6 @@ describe('EncoreTab', () => {
 			});
 
 			expect(screen.getByTestId('agent-config-custom-args')).toHaveTextContent('--verbose');
-		});
-
-		it('should clear custom args via callback', async () => {
-			render(<EncoreTab theme={mockTheme} isOpen={true} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			fireEvent.click(screen.getByTitle('Customize provider settings'));
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			fireEvent.click(screen.getByTestId('trigger-custom-args-clear'));
-
-			expect(mockSetDirectorNotesSettings).toHaveBeenCalledWith(
-				expect.objectContaining({
-					customArgs: undefined,
-				})
-			);
 		});
 	});
 
@@ -1427,6 +1380,194 @@ describe('EncoreTab', () => {
 			});
 
 			expect(window.maestro.agents.getConfig).toHaveBeenCalledWith('codex');
+		});
+	});
+
+	describe('Maestro Cue feature section', () => {
+		it('should render Maestro Cue section with toggle', async () => {
+			render(<EncoreTab theme={mockTheme} isOpen={true} />);
+
+			expect(screen.getByText('Maestro Cue')).toBeInTheDocument();
+			expect(screen.getByText(/Event-driven automation/)).toBeInTheDocument();
+		});
+
+		it('should use theme accent for border when Maestro Cue is enabled', async () => {
+			mockUseSettingsOverrides = {
+				encoreFeatures: { directorNotes: false, maestroCue: true },
+			};
+
+			const { container } = render(<EncoreTab theme={mockTheme} isOpen={true} />);
+
+			// Find the Maestro Cue section container (second .rounded-lg.border div)
+			const sections = container.querySelectorAll('.rounded-lg.border');
+			const cueSection = Array.from(sections).find((el) => el.textContent?.includes('Maestro Cue'));
+			expect(cueSection).toHaveStyle({ borderColor: mockTheme.colors.accent });
+		});
+
+		it('should use theme border color when Maestro Cue is disabled', async () => {
+			mockUseSettingsOverrides = {
+				encoreFeatures: { directorNotes: false, maestroCue: false },
+			};
+
+			const { container } = render(<EncoreTab theme={mockTheme} isOpen={true} />);
+
+			const sections = container.querySelectorAll('.rounded-lg.border');
+			const cueSection = Array.from(sections).find((el) => el.textContent?.includes('Maestro Cue'));
+			expect(cueSection).toHaveStyle({ borderColor: mockTheme.colors.border });
+		});
+
+		it('should use theme accent for toggle when Maestro Cue is enabled', async () => {
+			mockUseSettingsOverrides = {
+				encoreFeatures: { directorNotes: false, maestroCue: true },
+			};
+
+			const { container } = render(<EncoreTab theme={mockTheme} isOpen={true} />);
+
+			// The toggle is a rounded-full div inside the Maestro Cue button
+			const sections = container.querySelectorAll('.rounded-lg.border');
+			const cueSection = Array.from(sections).find((el) => el.textContent?.includes('Maestro Cue'));
+			const toggle = cueSection?.querySelector('.rounded-full');
+			expect(toggle).toHaveStyle({ backgroundColor: mockTheme.colors.accent });
+		});
+
+		it('should call setEncoreFeatures with maestroCue toggled when clicked', async () => {
+			mockUseSettingsOverrides = {
+				encoreFeatures: { directorNotes: false, maestroCue: false },
+			};
+
+			render(<EncoreTab theme={mockTheme} isOpen={true} />);
+
+			// Click the Maestro Cue section button
+			const cueButton = screen.getByText('Maestro Cue').closest('button');
+			expect(cueButton).toBeTruthy();
+			fireEvent.click(cueButton!);
+
+			expect(mockSetEncoreFeatures).toHaveBeenCalledWith(
+				expect.objectContaining({ maestroCue: true })
+			);
+		});
+	});
+
+	// ── Usage & Stats Feature Section ─────────────────────────────────────
+
+	describe('Usage & Stats feature section', () => {
+		it('should not render lookback dropdown when usageStats is disabled', async () => {
+			mockUseSettingsOverrides = {
+				encoreFeatures: { usageStats: false },
+			};
+
+			render(<EncoreTab theme={mockTheme} isOpen={true} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			expect(screen.queryByText('Default lookback window')).not.toBeInTheDocument();
+		});
+
+		it('should enable stats collection when feature is toggled on', async () => {
+			mockUseSettingsOverrides = {
+				encoreFeatures: { usageStats: false },
+			};
+
+			render(<EncoreTab theme={mockTheme} isOpen={true} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			// Click the Usage & Stats feature toggle
+			const toggleButton = screen.getByText('Usage & Stats').closest('button')!;
+			fireEvent.click(toggleButton);
+			expect(mockSetStatsCollectionEnabled).toHaveBeenCalledWith(true);
+		});
+
+		it('should disable stats collection when feature is toggled off', async () => {
+			mockUseSettingsOverrides = {
+				encoreFeatures: { usageStats: true },
+			};
+
+			render(<EncoreTab theme={mockTheme} isOpen={true} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			// Click the Usage & Stats feature toggle
+			const toggleButton = screen.getByText('Usage & Stats').closest('button')!;
+			fireEvent.click(toggleButton);
+			expect(mockSetStatsCollectionEnabled).toHaveBeenCalledWith(false);
+		});
+
+		it('should render default lookback window dropdown when usageStats is enabled', async () => {
+			mockUseSettingsOverrides = {
+				encoreFeatures: { usageStats: true },
+			};
+
+			render(<EncoreTab theme={mockTheme} isOpen={true} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			expect(screen.getByText('Default lookback window')).toBeInTheDocument();
+			const dropdown = screen.getByLabelText('Select default lookback window');
+			expect(dropdown).toBeInTheDocument();
+		});
+
+		it('should render all time range options in dropdown', async () => {
+			mockUseSettingsOverrides = {
+				encoreFeatures: { usageStats: true },
+			};
+
+			render(<EncoreTab theme={mockTheme} isOpen={true} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			const dropdown = screen.getByLabelText('Select default lookback window');
+			const options = dropdown.querySelectorAll('option');
+			expect(options).toHaveLength(6);
+			expect(options[0]).toHaveTextContent('Today');
+			expect(options[1]).toHaveTextContent('This Week');
+			expect(options[2]).toHaveTextContent('This Month');
+			expect(options[3]).toHaveTextContent('This Quarter');
+			expect(options[4]).toHaveTextContent('This Year');
+			expect(options[5]).toHaveTextContent('All Time');
+		});
+
+		it('should call setDefaultStatsTimeRange when dropdown value changes', async () => {
+			mockUseSettingsOverrides = {
+				encoreFeatures: { usageStats: true },
+				defaultStatsTimeRange: 'week',
+			};
+
+			render(<EncoreTab theme={mockTheme} isOpen={true} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			const dropdown = screen.getByLabelText('Select default lookback window');
+			fireEvent.change(dropdown, { target: { value: 'quarter' } });
+			expect(mockSetDefaultStatsTimeRange).toHaveBeenCalledWith('quarter');
+		});
+
+		it('should reflect current defaultStatsTimeRange value in dropdown', async () => {
+			mockUseSettingsOverrides = {
+				encoreFeatures: { usageStats: true },
+				defaultStatsTimeRange: 'month',
+			};
+
+			render(<EncoreTab theme={mockTheme} isOpen={true} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			const dropdown = screen.getByLabelText('Select default lookback window') as HTMLSelectElement;
+			expect(dropdown.value).toBe('month');
 		});
 	});
 });

@@ -16,18 +16,27 @@
 import { visit } from 'unist-util-visit';
 import type { Root, Text, Link, Image } from 'mdast';
 import type { FileNode } from '../types/fileTree';
-import { buildFileIndex as buildFileIndexShared, type FilePathEntry } from '../../shared/treeUtils';
+import {
+	buildFileTreeIndices,
+	findClosestMatch as findClosestMatchCore,
+	toRelativePath as toRelativePathCore,
+	validatePathReference as validatePathReferenceCore,
+	type FileTreeIndices,
+} from './fileLinks/matcher';
+import {
+	ABSOLUTE_PATH_PATTERN,
+	IMAGE_EMBED_PATTERN,
+	INLINE_CODE_EXT_PATTERN,
+	MAESTRO_DEEP_LINK_PATTERN,
+	PATH_PATTERN,
+	TILDE_PATH_PATTERN,
+	WIKI_LINK_PATTERN,
+} from './fileLinks/patterns';
 
-/**
- * Pre-built indices for file tree lookups.
- * Build these once with buildFileTreeIndices() and reuse across renders.
- */
-export interface FileTreeIndices {
-	/** Set of all relative paths in the tree */
-	allPaths: Set<string>;
-	/** Map from filename to array of paths containing that filename */
-	filenameIndex: Map<string, string[]>;
-}
+// Re-export the shared core so existing callers don't need to learn a new
+// import path. New code should import from `./fileLinks/matcher` directly.
+export { buildFileTreeIndices };
+export type { FileTreeIndices };
 
 export interface RemarkFileLinksOptions {
 	/** The file tree to validate paths against (used if indices not provided) */
@@ -38,225 +47,39 @@ export interface RemarkFileLinksOptions {
 	cwd: string;
 	/** Project root absolute path - used to convert absolute paths to relative */
 	projectRoot?: string;
+	/** User's home directory (e.g. /Users/pedram) - used to expand ~/... paths */
+	homeDir?: string;
 }
-
-/**
- * Build file tree indices for use with remarkFileLinks.
- * Call this once when fileTree changes and pass the result to remarkFileLinks.
- * This avoids O(n) tree traversal on every markdown render.
- */
-export function buildFileTreeIndices(fileTree: FileNode[]): FileTreeIndices {
-	const fileEntries = buildFileIndex(fileTree);
-	const allPaths = new Set(fileEntries.map((e) => e.relativePath));
-	const filenameIndex = buildFilenameIndex(fileEntries);
-	return { allPaths, filenameIndex };
-}
-
-/**
- * Build a flat index of all files in the tree for quick lookup
- * @see {@link buildFileIndexShared} from shared/treeUtils for the underlying implementation
- */
-function buildFileIndex(nodes: FileNode[], currentPath = ''): FilePathEntry[] {
-	return buildFileIndexShared(nodes, currentPath);
-}
-
-/**
- * Build a filename -> paths map for quick wiki-link lookup
- */
-function buildFilenameIndex(entries: FilePathEntry[]): Map<string, string[]> {
-	const index = new Map<string, string[]>();
-
-	for (const entry of entries) {
-		// Index by filename (with and without .md extension)
-		const paths = index.get(entry.filename) || [];
-		paths.push(entry.relativePath);
-		index.set(entry.filename, paths);
-
-		// Also index without .md extension for convenience
-		if (entry.filename.endsWith('.md')) {
-			const withoutExt = entry.filename.slice(0, -3);
-			const pathsNoExt = index.get(withoutExt) || [];
-			pathsNoExt.push(entry.relativePath);
-			index.set(withoutExt, pathsNoExt);
-		}
-	}
-
-	return index;
-}
-
-/**
- * Calculate path proximity - how "close" a file path is to the cwd
- * Lower score = closer
- */
-function calculateProximity(filePath: string, cwd: string): number {
-	const fileSegments = filePath.split('/');
-	const cwdSegments = cwd.split('/').filter(Boolean);
-
-	// Find common prefix length
-	let commonLength = 0;
-	for (let i = 0; i < Math.min(fileSegments.length, cwdSegments.length); i++) {
-		if (fileSegments[i] === cwdSegments[i]) {
-			commonLength++;
-		} else {
-			break;
-		}
-	}
-
-	// Score = steps up from cwd + steps down to file
-	const stepsUp = cwdSegments.length - commonLength;
-	const stepsDown = fileSegments.length - commonLength;
-
-	return stepsUp + stepsDown;
-}
-
-/**
- * Find the closest matching path for a wiki-style reference
- */
-function findClosestMatch(
-	reference: string,
-	filenameIndex: Map<string, string[]>,
-	allPaths: Set<string>,
-	cwd: string
-): string | null {
-	// First, try exact path match
-	if (allPaths.has(reference)) {
-		return reference;
-	}
-
-	// Try with .md extension
-	if (allPaths.has(`${reference}.md`)) {
-		return `${reference}.md`;
-	}
-
-	// Extract filename from reference (in case it includes a partial path)
-	const refParts = reference.split('/');
-	const filename = refParts[refParts.length - 1];
-
-	// Look up by filename
-	let candidates = filenameIndex.get(filename) || [];
-
-	// Also try with .md appended
-	if (candidates.length === 0 && !filename.endsWith('.md')) {
-		candidates = filenameIndex.get(`${filename}.md`) || [];
-	}
-
-	if (candidates.length === 0) {
-		return null;
-	}
-
-	if (candidates.length === 1) {
-		return candidates[0];
-	}
-
-	// Multiple matches - filter by partial path if provided
-	if (refParts.length > 1) {
-		const partialPath = reference;
-		const filtered = candidates.filter(
-			(c) => c.endsWith(partialPath) || c.endsWith(`${partialPath}.md`)
-		);
-		if (filtered.length === 1) {
-			return filtered[0];
-		}
-		if (filtered.length > 1) {
-			candidates = filtered;
-		}
-	}
-
-	// Pick closest to cwd
-	let closest = candidates[0];
-	let closestScore = calculateProximity(candidates[0], cwd);
-
-	for (let i = 1; i < candidates.length; i++) {
-		const score = calculateProximity(candidates[i], cwd);
-		if (score < closestScore) {
-			closestScore = score;
-			closest = candidates[i];
-		}
-	}
-
-	return closest;
-}
-
-/**
- * Check if a path-style reference is valid
- */
-function validatePathReference(reference: string, allPaths: Set<string>): string | null {
-	// Try exact match
-	if (allPaths.has(reference)) {
-		return reference;
-	}
-
-	// Try with .md extension
-	if (allPaths.has(`${reference}.md`)) {
-		return `${reference}.md`;
-	}
-
-	return null;
-}
-
-// Regex patterns
-// Image embed: ![[image.png]] or ![[folder/image.png]] or ![[image.png|300]] (with width)
-// Must have image extension (png, jpg, jpeg, gif, webp, svg, bmp, ico)
-// Optional |width syntax for sizing (e.g., |300 means 300px width)
-const IMAGE_EMBED_PATTERN =
-	/!\[\[([^\]|]+\.(?:png|jpg|jpeg|gif|webp|svg|bmp|ico))(?:\|(\d+))?\]\]/gi;
-
-// Wiki-style: [[Note Name]] or [[Folder/Note]] or [[Folder/Note|Display Text]]
-// The pipe syntax allows custom display text: [[path|display]]
-const WIKI_LINK_PATTERN = /\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g;
-
-// Path-style: Must contain a slash OR end with common file extensions
-// Avoid matching URLs (no :// prefix)
-const PATH_PATTERN =
-	/(?<![:\w])(?:(?:[A-Za-z0-9_-]+\/)+[A-Za-z0-9_.-]+|[A-Za-z0-9_-]+\.(?:md|txt|json|yaml|yml|toml|ts|tsx|js|jsx|py|rb|go|rs|java|c|cpp|h|hpp|css|scss|html|xml|sh|bash|zsh))(?![:\w/])/g;
-
-// Absolute path pattern: Starts with / and contains path segments
-// Matches paths like /Users/pedram/Project/file.md or /home/user/docs/note.txt
-// Must end with a file extension to avoid matching arbitrary paths
-// Supports spaces, unicode, emoji, and special characters in path segments
-// Lookahead allows: whitespace, end of string, or common punctuation (including period, backtick)
-const ABSOLUTE_PATH_PATTERN =
-	/\/(?:[^/\n]+\/)+[^/\n]+\.(?:md|txt|json|yaml|yml|toml|ts|tsx|js|jsx|py|rb|go|rs|java|c|cpp|h|hpp|css|scss|html|xml|sh|bash|zsh)(?=\s|$|[.,;:!?`'")\]}>])/g;
 
 /**
  * The remark plugin
  */
 export function remarkFileLinks(options: RemarkFileLinksOptions) {
-	const { fileTree, indices, cwd, projectRoot } = options;
+	const { fileTree, indices, cwd, projectRoot, homeDir } = options;
 
-	// Use pre-built indices if provided, otherwise build them (fallback for backwards compatibility)
-	let allPaths: Set<string>;
-	let filenameIndex: Map<string, string[]>;
+	// Resolve indices: prefer pre-built (caller memoized), build from fileTree
+	// as a fallback, or use empty indices when neither is provided.
+	const resolvedIndices: FileTreeIndices = indices
+		? indices
+		: fileTree
+			? buildFileTreeIndices(fileTree)
+			: { allPaths: new Set(), filenameIndex: new Map() };
 
-	if (indices) {
-		// Use pre-built indices - O(1) access
-		allPaths = indices.allPaths;
-		filenameIndex = indices.filenameIndex;
-	} else if (fileTree) {
-		// Fallback: build indices from fileTree - O(n) traversal
-		const fileEntries = buildFileIndex(fileTree);
-		allPaths = new Set(fileEntries.map((e) => e.relativePath));
-		filenameIndex = buildFilenameIndex(fileEntries);
-	} else {
-		// No file tree data provided - use empty indices
-		allPaths = new Set();
-		filenameIndex = new Map();
-	}
-
-	// Helper to convert absolute path to relative path
-	const toRelativePath = (absPath: string): string | null => {
-		if (!projectRoot) return null;
-		// Normalize projectRoot to not have trailing slash
-		const root = projectRoot.endsWith('/') ? projectRoot.slice(0, -1) : projectRoot;
-		if (absPath.startsWith(root + '/')) {
-			return absPath.slice(root.length + 1);
-		}
-		return null;
-	};
+	// Bind helpers that close over the resolved indices/projectRoot so call
+	// sites read like the original (which had locals in scope).
+	const findClosestMatch = (reference: string) =>
+		findClosestMatchCore(reference, resolvedIndices, cwd);
+	const validatePathReference = (reference: string) =>
+		validatePathReferenceCore(reference, resolvedIndices);
+	const toRelativePath = (absPath: string) => toRelativePathCore(absPath, projectRoot);
+	const allPaths = resolvedIndices.allPaths;
 
 	return (tree: Root) => {
 		visit(tree, 'text', (node: Text, index, parent) => {
 			if (!parent || index === undefined) return;
+
+			// Skip text nodes inside link nodes — the link visitor handles those
+			if (parent.type === 'link') return;
 
 			const text = node.value;
 			const replacements: (Text | Link | Image)[] = [];
@@ -272,10 +95,26 @@ export function remarkFileLinks(options: RemarkFileLinksOptions) {
 				isRelativeToCwd?: boolean; // For images: true if path needs cwd prepended (fallback paths)
 				isFromFileTree?: boolean; // For images: true if path was found in file tree (complete from project root)
 				imageWidth?: number; // For images: optional width in pixels
+				absoluteUrl?: string; // For links outside projectRoot: use file:// URL instead of maestro-file://
 			}
 			const matches: Match[] = [];
 
-			// Find image embeds first (before wiki-links, since ![[...]] contains [[...]])
+			// Find bare maestro:// deep link URLs so they auto-linkify in plain text.
+			let deepLinkMatch;
+			MAESTRO_DEEP_LINK_PATTERN.lastIndex = 0;
+			while ((deepLinkMatch = MAESTRO_DEEP_LINK_PATTERN.exec(text)) !== null) {
+				const url = deepLinkMatch[0];
+				matches.push({
+					start: deepLinkMatch.index,
+					end: deepLinkMatch.index + url.length,
+					display: url,
+					resolvedPath: url,
+					type: 'link',
+					absoluteUrl: url,
+				});
+			}
+
+			// Find image embeds (before wiki-links, since ![[...]] contains [[...]])
 			let imageMatch;
 			IMAGE_EMBED_PATTERN.lastIndex = 0;
 			while ((imageMatch = IMAGE_EMBED_PATTERN.exec(text)) !== null) {
@@ -284,7 +123,7 @@ export function remarkFileLinks(options: RemarkFileLinksOptions) {
 				const imageWidth = widthStr ? parseInt(widthStr, 10) : undefined;
 
 				// Try to find the image in the file tree first
-				const foundPath = findClosestMatch(imagePath, filenameIndex, allPaths, cwd);
+				const foundPath = findClosestMatch(imagePath);
 
 				// If not found in file tree, try common Obsidian attachment locations
 				// Obsidian stores attachments relative to the current document, typically in:
@@ -331,7 +170,7 @@ export function remarkFileLinks(options: RemarkFileLinksOptions) {
 				);
 				if (isInsideExisting) continue;
 
-				const resolvedPath = findClosestMatch(reference, filenameIndex, allPaths, cwd);
+				const resolvedPath = findClosestMatch(reference);
 
 				if (resolvedPath) {
 					matches.push({
@@ -374,6 +213,46 @@ export function remarkFileLinks(options: RemarkFileLinksOptions) {
 				}
 			}
 
+			// Find tilde path references (e.g., ~/Downloads/audio/file.wav)
+			if (homeDir) {
+				let tildeMatch;
+				TILDE_PATH_PATTERN.lastIndex = 0;
+				while ((tildeMatch = TILDE_PATH_PATTERN.exec(text)) !== null) {
+					const tildePath = tildeMatch[0];
+
+					// Skip if already inside another match
+					const isInsideExisting = matches.some(
+						(m) => tildeMatch!.index >= m.start && tildeMatch!.index < m.end
+					);
+					if (isInsideExisting) continue;
+
+					// Expand ~ to home directory
+					const absolutePath = homeDir + tildePath.slice(1);
+
+					// If within projectRoot, convert to relative maestro-file:// link
+					const relativePath = toRelativePath(absolutePath);
+					if (relativePath) {
+						matches.push({
+							start: tildeMatch.index,
+							end: tildeMatch.index + tildePath.length,
+							display: tildePath,
+							resolvedPath: relativePath,
+							type: 'link',
+						});
+					} else {
+						// Outside projectRoot — use file:// URL to open in system default app
+						matches.push({
+							start: tildeMatch.index,
+							end: tildeMatch.index + tildePath.length,
+							display: tildePath,
+							resolvedPath: absolutePath,
+							type: 'link',
+							absoluteUrl: `file://${absolutePath}`,
+						});
+					}
+				}
+			}
+
 			// Find path-style references (relative paths)
 			let pathMatch;
 			PATH_PATTERN.lastIndex = 0;
@@ -386,7 +265,7 @@ export function remarkFileLinks(options: RemarkFileLinksOptions) {
 				);
 				if (isInsideExisting) continue;
 
-				const resolvedPath = validatePathReference(reference, allPaths);
+				const resolvedPath = validatePathReference(reference);
 
 				if (resolvedPath) {
 					matches.push({
@@ -453,6 +332,14 @@ export function remarkFileLinks(options: RemarkFileLinksOptions) {
 							},
 						},
 					} as Image);
+				} else if (match.absoluteUrl) {
+					// External file link (outside projectRoot) — use file:// URL
+					// MarkdownRenderer's <a> handler calls shell.openPath for file:// URLs
+					replacements.push({
+						type: 'link',
+						url: match.absoluteUrl,
+						children: [{ type: 'text', value: match.display }],
+					});
 				} else {
 					// Add the link - use data-hProperties to pass the file path as a data attribute
 					// This survives rehype processing which may strip custom protocols from href
@@ -490,6 +377,9 @@ export function remarkFileLinks(options: RemarkFileLinksOptions) {
 		visit(tree, 'inlineCode', (node: any, index, parent) => {
 			if (!parent || index === undefined) return;
 
+			// Skip inline code inside link nodes — the link visitor handles those
+			if (parent.type === 'link') return;
+
 			const code = node.value;
 
 			// Check if this inline code is a file path
@@ -498,7 +388,7 @@ export function remarkFileLinks(options: RemarkFileLinksOptions) {
 			if (wikiMatch) {
 				const reference = wikiMatch[1];
 				const displayText = wikiMatch[2];
-				const resolvedPath = findClosestMatch(reference, filenameIndex, allPaths, cwd);
+				const resolvedPath = findClosestMatch(reference);
 				if (resolvedPath) {
 					const link: Link = {
 						type: 'link',
@@ -518,9 +408,7 @@ export function remarkFileLinks(options: RemarkFileLinksOptions) {
 			// Check for absolute path
 			if (projectRoot && code.startsWith('/')) {
 				// Check if it has a valid file extension
-				const extMatch = code.match(
-					/\.(?:md|txt|json|yaml|yml|toml|ts|tsx|js|jsx|py|rb|go|rs|java|c|cpp|h|hpp|css|scss|html|xml|sh|bash|zsh)$/i
-				);
+				const extMatch = code.match(INLINE_CODE_EXT_PATTERN);
 				if (extMatch) {
 					const relativePath = toRelativePath(code);
 					if (relativePath) {
@@ -542,12 +430,42 @@ export function remarkFileLinks(options: RemarkFileLinksOptions) {
 				}
 			}
 
+			// Check for tilde path (e.g., ~/Downloads/file.wav)
+			if (homeDir && code.startsWith('~/')) {
+				const extMatch = code.match(INLINE_CODE_EXT_PATTERN);
+				if (extMatch) {
+					const absolutePath = homeDir + code.slice(1);
+					const relativePath = toRelativePath(absolutePath);
+					const filename = code.split('/').pop() || code;
+					if (relativePath) {
+						const link: Link = {
+							type: 'link',
+							url: `maestro-file://${relativePath}`,
+							data: {
+								hProperties: {
+									'data-maestro-file': relativePath,
+								},
+							},
+							children: [{ type: 'text', value: filename }],
+						};
+						parent.children.splice(index, 1, link);
+						return index + 1;
+					} else {
+						// Outside projectRoot — open via file:// URL
+						const link: Link = {
+							type: 'link',
+							url: `file://${absolutePath}`,
+							children: [{ type: 'text', value: filename }],
+						};
+						parent.children.splice(index, 1, link);
+						return index + 1;
+					}
+				}
+			}
+
 			// Check for relative path (with slash or valid extension)
 			const hasSlash = code.includes('/') && !code.includes('://');
-			const hasValidExt =
-				/\.(?:md|txt|json|yaml|yml|toml|ts|tsx|js|jsx|py|rb|go|rs|java|c|cpp|h|hpp|css|scss|html|xml|sh|bash|zsh)$/i.test(
-					code
-				);
+			const hasValidExt = INLINE_CODE_EXT_PATTERN.test(code);
 			if ((hasSlash || hasValidExt) && allPaths.has(code)) {
 				const filename = code.split('/').pop() || code;
 				const link: Link = {
@@ -570,10 +488,11 @@ export function remarkFileLinks(options: RemarkFileLinksOptions) {
 		visit(tree, 'link', (node: Link) => {
 			const href = node.url;
 
-			// Skip if already processed, external URL, or anchor link
+			// Skip if already processed, external URL, deep link, or anchor link
 			if (
 				!href ||
 				href.startsWith('maestro-file://') ||
+				href.startsWith('maestro://') ||
 				href.startsWith('http://') ||
 				href.startsWith('https://') ||
 				href.startsWith('mailto:') ||
@@ -586,8 +505,31 @@ export function remarkFileLinks(options: RemarkFileLinksOptions) {
 			// Decode URL-encoded characters (e.g., %20 -> space)
 			const decodedHref = decodeURIComponent(href);
 
-			// Try to resolve the reference as a file path
-			const resolvedPath = findClosestMatch(decodedHref, filenameIndex, allPaths, cwd);
+			let resolvedPath: string | null = null;
+
+			// Handle absolute paths first — agents (e.g. Codex) emit [file.tsx](/Users/name/Project/src/file.tsx)
+			// These should be resolved directly, not searched via filename index
+			if (projectRoot && decodedHref.startsWith('/')) {
+				resolvedPath = toRelativePath(decodedHref);
+			}
+
+			// Handle tilde paths (e.g., [file](~/Projects/file.tsx))
+			if (!resolvedPath && homeDir && decodedHref.startsWith('~/')) {
+				const absolutePath = homeDir + decodedHref.slice(1);
+				const relativePath = toRelativePath(absolutePath);
+				if (relativePath) {
+					resolvedPath = relativePath;
+				} else {
+					// Outside projectRoot — use file:// URL
+					node.url = `file://${absolutePath}`;
+					return;
+				}
+			}
+
+			// Fall back to file tree search for relative references
+			if (!resolvedPath) {
+				resolvedPath = findClosestMatch(decodedHref);
+			}
 
 			if (resolvedPath) {
 				// Convert to maestro-file:// protocol

@@ -57,6 +57,10 @@ describe('agentConstants', () => {
 			expect(COMBINED_CONTEXT_AGENTS.has('codex')).toBe(true);
 		});
 
+		it('should contain copilot-cli (Copilot CLI normalizes input reporting cumulative-style)', () => {
+			expect(COMBINED_CONTEXT_AGENTS.has('copilot-cli')).toBe(true);
+		});
+
 		it('should not contain claude-code (Claude uses separate limits)', () => {
 			expect(COMBINED_CONTEXT_AGENTS.has('claude-code')).toBe(false);
 		});

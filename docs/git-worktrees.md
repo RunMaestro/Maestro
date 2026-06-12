@@ -46,10 +46,10 @@ Worktree sub-agents appear nested under their parent agent in the Left Bar:
 
 ![Worktree list](./screenshots/git-worktree-list.png)
 
-- **Nested Display** — Worktree sub-agents appear in a drawer below their parent agent, styled with a subtle accent background
-- **Branch Icon** — Worktree children show a `GitBranch` icon next to their name
-- **Collapse/Expand** — Click the worktree count band below the parent session to show/hide worktree children (e.g., "2 worktrees ▾")
-- **Independent Operation** — Each worktree agent has its own working directory, conversation history, and state
+- **Nested Display** - Worktree sub-agents appear in a drawer below their parent agent, styled with a subtle accent background
+- **Branch Icon** - Worktree children show a `GitBranch` icon next to their name
+- **Collapse/Expand** - Click the worktree count band below the parent session to show/hide worktree children (e.g., "2 worktrees ▾")
+- **Independent Operation** - Each worktree agent has its own working directory, conversation history, and state
 
 ### Creating a Worktree Sub-Agent
 
@@ -131,15 +131,17 @@ The confirmation dialog shows the full path to the worktree directory so you kno
 | **Code Review**          | Create a worktree to review and iterate on a PR without switching branches |
 | **Parallel Experiments** | Try different approaches simultaneously without git stash/pop              |
 
-**Auto Run integration:** You can dispatch an Auto Run directly into a new worktree from the run configuration modal — no need to create the worktree first. See [Run in Worktree](./autorun-playbooks#run-in-worktree) for details.
+**Auto Run integration:** You can dispatch an Auto Run directly into a new worktree from the run configuration modal - no need to create the worktree first. See [Run in Worktree](./autorun-playbooks#run-in-worktree) for details.
+
+**CLI integration:** The same worktree-backed Auto Run is also reachable from the command line via `maestro-cli auto-run --worktree --branch <name> --worktree-path <path> --launch` (add `--create-pr` to open a PR on completion). See [CLI - Configuring Auto-Run](./cli#configuring-auto-run).
 
 ## Tips
 
-- **Name branches descriptively** — The branch name becomes the worktree directory name
-- **Use a dedicated worktree folder** — Keep all worktrees in one place outside the main repo
-- **Clean up when done** — Remove worktree agents after merging PRs to avoid clutter
-- **Watch for Changes** — Enable file watching to keep the file tree in sync with worktree activity
-- **Run multiple dev instances** — Use `VITE_PORT` environment variable to run Maestro in multiple worktrees simultaneously:
+- **Name branches descriptively** - The branch name becomes the worktree directory name
+- **Use a dedicated worktree folder** - Keep all worktrees in one place outside the main repo
+- **Clean up when done** - Remove worktree agents after merging PRs to avoid clutter
+- **Watch for Changes** - Enable file watching to keep the file tree in sync with worktree activity
+- **Run multiple dev instances** - Use `VITE_PORT` environment variable to run Maestro in multiple worktrees simultaneously:
 
   ```bash
   # In main worktree

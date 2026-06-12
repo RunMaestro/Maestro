@@ -13,6 +13,7 @@ import path from 'path';
 import fs from 'fs/promises';
 import { logger } from './logger';
 import { encodeClaudeProjectPath } from '../../shared/pathUtils';
+import { captureException } from './sentry';
 
 // Re-export so existing consumers don't need import changes
 export { encodeClaudeProjectPath };
@@ -95,7 +96,7 @@ export const STATS_CACHE_VERSION = 2;
  * @param projectPath - The project directory path
  * @returns Absolute path to the cache JSON file
  */
-export function getStatsCachePath(projectPath: string): string {
+function getStatsCachePath(projectPath: string): string {
 	const encodedPath = encodeClaudeProjectPath(projectPath);
 	return path.join(app.getPath('userData'), 'stats-cache', `${encodedPath}.json`);
 }
@@ -133,6 +134,7 @@ export async function saveStatsCache(projectPath: string, cache: SessionStatsCac
 		await fs.mkdir(cacheDir, { recursive: true });
 		await fs.writeFile(cachePath, JSON.stringify(cache), 'utf-8');
 	} catch (error) {
+		void captureException(error);
 		logger.warn('Failed to save stats cache', 'ClaudeSessions', { projectPath, error });
 	}
 }
@@ -186,7 +188,7 @@ export const GLOBAL_STATS_CACHE_VERSION = 3;
  * Get the cache file path for global stats.
  * @returns Absolute path to the global stats cache JSON file
  */
-export function getGlobalStatsCachePath(): string {
+function getGlobalStatsCachePath(): string {
 	return path.join(app.getPath('userData'), 'stats-cache', 'global-stats.json');
 }
 
@@ -220,6 +222,7 @@ export async function saveGlobalStatsCache(cache: GlobalStatsCache): Promise<voi
 		await fs.mkdir(cacheDir, { recursive: true });
 		await fs.writeFile(cachePath, JSON.stringify(cache), 'utf-8');
 	} catch (error) {
+		void captureException(error);
 		logger.warn('Failed to save global stats cache', 'ClaudeSessions', { error });
 	}
 }

@@ -23,6 +23,7 @@ import { logger } from '../../utils/logger';
 import { withIpcErrorLogging } from '../../utils/ipcHandler';
 import { isWebContentsAvailable } from '../../utils/safe-send';
 import { getSessionStorage, hasSessionStorage, getAllSessionStorages } from '../../agents';
+import { getSshRemoteById as getSshRemoteByIdFromStore } from '../../stores';
 import { calculateClaudeCost } from '../../utils/pricing';
 import {
 	loadGlobalStatsCache,
@@ -41,7 +42,8 @@ import type {
 	SessionReadOptions,
 } from '../../agents';
 import type { GlobalAgentStats, ProviderStats, SshRemoteConfig } from '../../../shared/types';
-import type { MaestroSettings } from './persistence';
+import { captureException } from '../../utils/sentry';
+import { getHistoryManager } from '../../history-manager';
 
 // Re-export for backwards compatibility
 export type { GlobalAgentStats, ProviderStats };
@@ -68,24 +70,16 @@ export interface AgentSessionOriginsData {
 export interface AgentSessionsHandlerDependencies {
 	getMainWindow: () => BrowserWindow | null;
 	agentSessionOriginsStore?: Store<AgentSessionOriginsData>;
-	/** Settings store for SSH remote configuration lookup */
-	settingsStore?: Store<MaestroSettings>;
 }
 
-// Module-level reference to settings store (set during registration)
-let agentSessionsSettingsStore: Store<MaestroSettings> | undefined;
-
 /**
- * Get SSH remote configuration by ID from the settings store.
- * Returns undefined if not found or store not provided.
+ * Resolve an enabled SSH remote by ID via the shared settings store.
+ * Wrapper around the canonical getter; preserves the `enabled` filter that
+ * this handler used historically so disabled remotes never silently route SSH.
  */
 function getSshRemoteById(sshRemoteId: string): SshRemoteConfig | undefined {
-	if (!agentSessionsSettingsStore) {
-		logger.warn(`${LOG_CONTEXT} Settings store not available for SSH remote lookup`, LOG_CONTEXT);
-		return undefined;
-	}
-	const sshRemotes = agentSessionsSettingsStore.get('sshRemotes', []) as SshRemoteConfig[];
-	return sshRemotes.find((r) => r.id === sshRemoteId && r.enabled);
+	const remote = getSshRemoteByIdFromStore(sshRemoteId);
+	return remote?.enabled ? remote : undefined;
 }
 
 /**
@@ -378,9 +372,6 @@ function aggregateProviderStats(
 export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDependencies): void {
 	const getMainWindow = deps?.getMainWindow;
 
-	// Store settings reference for SSH remote lookups
-	agentSessionsSettingsStore = deps?.settingsStore;
-
 	// ============ List Sessions ============
 
 	ipcMain.handle(
@@ -621,12 +612,107 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 								)
 							);
 						} catch (error) {
+							void captureException(error);
 							logger.warn(
 								`Failed to get named sessions from ${storage.agentId}: ${error}`,
 								LOG_CONTEXT
 							);
 						}
 					}
+				}
+
+				// Also check the generic origins store for named sessions not found
+				// in provider-specific stores (e.g., sessions named via the generic API)
+				if (originsStore) {
+					const seenIds = new Set(
+						allNamedSessions.map((s) => `${s.agentId}:${s.projectPath}:${s.agentSessionId}`)
+					);
+					const genericOrigins = originsStore.get('origins', {});
+					for (const [agentId, projectEntries] of Object.entries(genericOrigins)) {
+						if (!projectEntries || typeof projectEntries !== 'object') continue;
+						for (const [projectPath, sessions] of Object.entries(
+							projectEntries as Record<
+								string,
+								Record<
+									string,
+									{
+										origin?: string;
+										sessionName?: string;
+										starred?: boolean;
+									}
+								>
+							>
+						)) {
+							if (!sessions || typeof sessions !== 'object') continue;
+							for (const [sessionId, info] of Object.entries(sessions)) {
+								if (!info?.sessionName) continue;
+								const key = `${agentId}:${projectPath}:${sessionId}`;
+								if (seenIds.has(key)) continue;
+
+								// Validate file exists via the storage provider
+								const storage = getSessionStorage(agentId);
+								if (storage) {
+									try {
+										const sessionPath = storage.getSessionPath(projectPath, sessionId);
+										if (sessionPath) {
+											await fs.stat(sessionPath);
+											allNamedSessions.push({
+												agentId,
+												agentSessionId: sessionId,
+												projectPath,
+												sessionName: info.sessionName,
+												starred: info.starred,
+											});
+										}
+									} catch {
+										// File doesn't exist, skip stale entry
+									}
+								}
+							}
+						}
+					}
+				}
+
+				// Fallback: pull names from history entries for sessions whose names were
+				// auto-set at synopsis time but never persisted to an origins store. This
+				// covers historical entries written before the synopsis-time persist call
+				// landed. We attribute each entry to the storage that actually contains
+				// the underlying session file; if no storage owns it, the entry is stale
+				// and skipped.
+				try {
+					const historyManager = getHistoryManager();
+					const seenIdsAfterOrigins = new Set(
+						allNamedSessions.map((s) => `${s.projectPath}:${s.agentSessionId}`)
+					);
+					const seenAcrossAgents = new Set<string>();
+					const storages = getAllSessionStorages();
+					const historyEntries = (await historyManager.getAllEntriesPaginated()).entries;
+					for (const entry of historyEntries) {
+						if (!entry.sessionName || !entry.agentSessionId || !entry.projectPath) continue;
+						const projectKey = `${entry.projectPath}:${entry.agentSessionId}`;
+						if (seenIdsAfterOrigins.has(projectKey) || seenAcrossAgents.has(projectKey)) continue;
+						for (const storage of storages) {
+							const sessionPath = storage.getSessionPath(entry.projectPath, entry.agentSessionId);
+							if (!sessionPath) continue;
+							try {
+								const stats = await fs.stat(sessionPath);
+								allNamedSessions.push({
+									agentId: storage.agentId,
+									agentSessionId: entry.agentSessionId,
+									projectPath: entry.projectPath,
+									sessionName: entry.sessionName,
+									lastActivityAt: stats.mtime.getTime(),
+								});
+								seenAcrossAgents.add(projectKey);
+								break;
+							} catch {
+								// Not in this storage, try next
+							}
+						}
+					}
+				} catch (error) {
+					void captureException(error);
+					logger.warn(`Failed to merge history-derived named sessions: ${error}`, LOG_CONTEXT);
 				}
 
 				logger.info(
@@ -922,6 +1008,7 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 						sendUpdate(cache, false);
 					}
 				} catch (error) {
+					void captureException(error);
 					logger.warn(`Failed to parse Claude session: ${file.sessionKey}`, LOG_CONTEXT, { error });
 				}
 			}
@@ -946,6 +1033,7 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 						sendUpdate(cache, false);
 					}
 				} catch (error) {
+					void captureException(error);
 					logger.warn(`Failed to parse Codex session: ${file.sessionKey}`, LOG_CONTEXT, { error });
 				}
 			}

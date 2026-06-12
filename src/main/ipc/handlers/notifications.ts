@@ -14,6 +14,9 @@ import { ipcMain, Notification, BrowserWindow } from 'electron';
 import { spawn, type ChildProcess } from 'child_process';
 import { logger } from '../../utils/logger';
 import { isWebContentsAvailable } from '../../utils/safe-send';
+import { parseDeepLink, dispatchDeepLink } from '../../deep-links';
+import { buildSessionDeepLink } from '../../../shared/deep-link-urls';
+import { captureException } from '../../utils/sentry';
 
 // ==========================================================================
 // Constants
@@ -88,6 +91,13 @@ interface ActiveNotificationProcess {
 /** Track active notification command processes by ID for stopping */
 const activeNotificationProcesses = new Map<number, ActiveNotificationProcess>();
 
+/**
+ * Keep OS Notification objects alive until clicked or closed.
+ * Without this, GC can collect the notification before the user
+ * interacts with it, silently dropping the click handler.
+ */
+const activeNotifications = new Set<Notification>();
+
 /** Counter for generating unique notification process IDs */
 let notificationProcessIdCounter = 0;
 
@@ -123,13 +133,22 @@ export function parseNotificationCommand(command?: string): string {
 }
 
 /**
- * Execute notification command - the actual implementation
- * Returns a Promise that resolves when the process completes (not just when it starts)
+ * Result from executeNotificationCommand.
+ * `response` is returned to the renderer immediately (contains the notificationId).
+ * `completed` resolves when the process exits (used by the queue for spacing).
  */
-async function executeNotificationCommand(
-	text: string,
-	command?: string
-): Promise<NotificationCommandResponse> {
+interface ExecuteResult {
+	response: NotificationCommandResponse;
+	completed: Promise<void>;
+}
+
+/**
+ * Execute notification command - the actual implementation.
+ * Returns immediately after spawning with the notificationId so the renderer
+ * can show a Stop button. The `completed` promise resolves when the process
+ * exits, allowing the queue to enforce spacing between notifications.
+ */
+function executeNotificationCommand(text: string, command?: string): ExecuteResult {
 	const fullCommand = parseNotificationCommand(command);
 	const textLength = text?.length || 0;
 	const textPreview = text
@@ -163,46 +182,44 @@ async function executeNotificationCommand(
 		const notificationId = ++notificationProcessIdCounter;
 		activeNotificationProcesses.set(notificationId, { process: child, command: fullCommand });
 
-		// Return a Promise that resolves when the process completes
-		return new Promise((resolve) => {
-			let resolved = false;
+		// Write the text to stdin and close it
+		if (child.stdin) {
+			// Handle stdin errors (EPIPE if process terminates before write completes)
+			child.stdin.on('error', (err: unknown) => {
+				const errorCode =
+					err && typeof err === 'object' && 'code' in err
+						? (err as NodeJS.ErrnoException).code
+						: undefined;
+
+				if (errorCode === 'EPIPE') {
+					logger.debug(
+						'Notification stdin EPIPE - process closed before write completed',
+						'Notification'
+					);
+				} else {
+					logger.error('Notification stdin error', 'Notification', {
+						error: String(err),
+						code: errorCode,
+					});
+				}
+			});
+
+			logger.debug('Notification writing to stdin', 'Notification', { textLength });
+			child.stdin.write(text, 'utf8', (err) => {
+				if (err) {
+					logger.error('Notification stdin write error', 'Notification', { error: String(err) });
+				} else {
+					logger.debug('Notification stdin write completed', 'Notification');
+				}
+				child.stdin!.end();
+			});
+		} else {
+			logger.error('Notification no stdin available on child process', 'Notification');
+		}
+
+		// Track process completion for queue spacing
+		const completed = new Promise<void>((resolveCompleted) => {
 			let stderrOutput = '';
-
-			// Write the text to stdin and close it
-			if (child.stdin) {
-				// Handle stdin errors (EPIPE if process terminates before write completes)
-				child.stdin.on('error', (err: unknown) => {
-					// Type-safe error code extraction
-					const errorCode =
-						err && typeof err === 'object' && 'code' in err
-							? (err as NodeJS.ErrnoException).code
-							: undefined;
-
-					if (errorCode === 'EPIPE') {
-						logger.debug(
-							'Notification stdin EPIPE - process closed before write completed',
-							'Notification'
-						);
-					} else {
-						logger.error('Notification stdin error', 'Notification', {
-							error: String(err),
-							code: errorCode,
-						});
-					}
-				});
-
-				logger.debug('Notification writing to stdin', 'Notification', { textLength });
-				child.stdin.write(text, 'utf8', (err) => {
-					if (err) {
-						logger.error('Notification stdin write error', 'Notification', { error: String(err) });
-					} else {
-						logger.debug('Notification stdin write completed', 'Notification');
-					}
-					child.stdin!.end();
-				});
-			} else {
-				logger.error('Notification no stdin available on child process', 'Notification');
-			}
 
 			child.on('error', (err) => {
 				logger.error('Notification spawn error', 'Notification', {
@@ -215,10 +232,13 @@ async function executeNotificationCommand(
 						: '(no text)',
 				});
 				activeNotificationProcesses.delete(notificationId);
-				if (!resolved) {
-					resolved = true;
-					resolve({ success: false, notificationId, error: String(err) });
-				}
+				// Notify renderer of completion even on error
+				BrowserWindow.getAllWindows().forEach((win) => {
+					if (isWebContentsAvailable(win)) {
+						win.webContents.send('notification:commandCompleted', notificationId);
+					}
+				});
+				resolveCompleted();
 			});
 
 			// Capture stderr for debugging
@@ -255,26 +275,32 @@ async function executeNotificationCommand(
 					}
 				});
 
-				// Resolve the promise now that process has completed
-				if (!resolved) {
-					resolved = true;
-					resolve({ success: code === 0, notificationId });
-				}
-			});
-
-			logger.info('Notification process spawned successfully', 'Notification', {
-				notificationId,
-				command: fullCommand,
-				textLength,
+				resolveCompleted();
 			});
 		});
+
+		logger.info('Notification process spawned successfully', 'Notification', {
+			notificationId,
+			command: fullCommand,
+			textLength,
+		});
+
+		// Return immediately with notificationId; completed resolves when process exits
+		return {
+			response: { success: true, notificationId },
+			completed,
+		};
 	} catch (error) {
+		void captureException(error);
 		logger.error('Notification error starting command', 'Notification', {
 			error: String(error),
 			command: fullCommand,
 			textPreview,
 		});
-		return { success: false, error: String(error) };
+		return {
+			response: { success: false, error: String(error) },
+			completed: Promise.resolve(),
+		};
 	}
 }
 
@@ -313,9 +339,11 @@ async function processNextNotification(): Promise<void> {
 		await new Promise((resolve) => setTimeout(resolve, delayNeeded));
 	}
 
-	// Execute the notification command
-	const result = await executeNotificationCommand(item.text, item.command);
-	item.resolve(result);
+	// Execute the notification command — resolve the IPC call immediately
+	// with the notificationId, then await completion for queue spacing
+	const { response, completed } = executeNotificationCommand(item.text, item.command);
+	item.resolve(response);
+	await completed;
 
 	// Record when this notification ended
 	lastNotificationEndTime = Date.now();
@@ -330,13 +358,26 @@ async function processNextNotification(): Promise<void> {
 // ==========================================================================
 
 /**
+ * Dependencies for notification handlers
+ */
+export interface NotificationsHandlerDependencies {
+	getMainWindow: () => BrowserWindow | null;
+}
+
+/**
  * Register all notification-related IPC handlers
  */
-export function registerNotificationsHandlers(): void {
-	// Show OS notification
+export function registerNotificationsHandlers(deps?: NotificationsHandlerDependencies): void {
+	// Show OS notification (with optional click-to-navigate support)
 	ipcMain.handle(
 		'notification:show',
-		async (_event, title: string, body: string): Promise<NotificationShowResponse> => {
+		async (
+			_event,
+			title: string,
+			body: string,
+			sessionId?: string,
+			tabId?: string
+		): Promise<NotificationShowResponse> => {
 			try {
 				if (Notification.isSupported()) {
 					const notification = new Notification({
@@ -344,14 +385,36 @@ export function registerNotificationsHandlers(): void {
 						body,
 						silent: true, // Don't play system sound - we have our own audio feedback option
 					});
+
+					// Prevent GC from collecting the notification before user interaction
+					activeNotifications.add(notification);
+					const releaseNotification = () => {
+						activeNotifications.delete(notification);
+					};
+					notification.on('close', releaseNotification);
+
+					// Wire click handler for navigation if session context is provided
+					if (sessionId && deps?.getMainWindow) {
+						const deepLinkUrl = buildSessionDeepLink(sessionId, tabId);
+
+						notification.on('click', () => {
+							const parsed = parseDeepLink(deepLinkUrl);
+							if (parsed) {
+								dispatchDeepLink(parsed, deps.getMainWindow);
+							}
+							releaseNotification();
+						});
+					}
+
 					notification.show();
-					logger.debug('Showed OS notification', 'Notification', { title, body });
+					logger.debug('Showed OS notification', 'Notification', { title, body, sessionId, tabId });
 					return { success: true };
 				} else {
 					logger.warn('OS notifications not supported on this platform', 'Notification');
 					return { success: false, error: 'Notifications not supported' };
 				}
 			} catch (error) {
+				void captureException(error);
 				logger.error('Error showing notification', 'Notification', error);
 				return { success: false, error: String(error) };
 			}
@@ -419,6 +482,7 @@ export function registerNotificationsHandlers(): void {
 
 				return { success: true };
 			} catch (error) {
+				void captureException(error);
 				logger.error('Notification error stopping process', 'Notification', {
 					notificationId,
 					error: String(error),
@@ -460,6 +524,7 @@ export function clearNotificationQueue(): void {
 export function resetNotificationState(): void {
 	notificationQueue.length = 0;
 	activeNotificationProcesses.clear();
+	activeNotifications.clear();
 	notificationProcessIdCounter = 0;
 	lastNotificationEndTime = 0;
 	isNotificationProcessing = false;

@@ -166,7 +166,7 @@ describe('PlaybookNameModal', () => {
 			renderWithProviders(<PlaybookNameModal theme={theme} onSave={onSave} onCancel={onCancel} />);
 
 			// Find the modal content container (has inline width of 400px)
-			const modalContent = document.querySelector('[style*="width: 400px"]');
+			const modalContent = document.querySelector('[style*="width: min(calc(400px"]');
 			expect(modalContent).toHaveStyle({
 				backgroundColor: theme.colors.bgSidebar,
 				borderColor: theme.colors.border,
@@ -727,7 +727,7 @@ describe('PlaybookNameModal', () => {
 				<PlaybookNameModal theme={lightTheme} onSave={onSave} onCancel={onCancel} />
 			);
 
-			const modalContent = document.querySelector('[style*="width: 400px"]');
+			const modalContent = document.querySelector('[style*="width: min(calc(400px"]');
 			expect(modalContent).toHaveStyle({
 				backgroundColor: '#ffffff',
 			});

@@ -12,7 +12,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
 	PerformanceMetrics,
-	createNoOpMetrics,
 	formatDuration,
 	PERFORMANCE_THRESHOLDS,
 	type PerformanceMetric,
@@ -432,20 +431,6 @@ describe('PerformanceMetrics', () => {
 			// Should still log the timing
 			expect(mockLogger).toHaveBeenCalled();
 		});
-	});
-});
-
-describe('createNoOpMetrics', () => {
-	it('should create a disabled metrics instance', () => {
-		const metrics = createNoOpMetrics();
-		expect(metrics.isEnabled()).toBe(false);
-	});
-
-	it('should not log anything', () => {
-		const metrics = createNoOpMetrics();
-		const start = metrics.start();
-		metrics.end(start, 'operation');
-		expect(metrics.getMetrics()).toHaveLength(0);
 	});
 });
 

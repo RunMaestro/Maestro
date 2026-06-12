@@ -34,9 +34,9 @@ function logTransition(
 	// Uncomment for debugging state transitions:
 	// const stateFrom = _fromState ?? 'IDLE';
 	// if (_valid) {
-	//   console.log(`[BatchStateMachine] ${_sessionId}: ${stateFrom} -> ${_toState} (${_event})`);
+	//   logger.info(`[BatchStateMachine] ${_sessionId}: ${stateFrom} -> ${_toState} (${_event})`);
 	// } else {
-	//   console.warn(`[BatchStateMachine] ${_sessionId}: INVALID transition ${stateFrom} + ${_event} (staying in ${stateFrom})`);
+	//   logger.warn(`[BatchStateMachine] ${_sessionId}: INVALID transition ${stateFrom} + ${_event} (staying in ${stateFrom})`);
 	// }
 }
 
@@ -158,6 +158,7 @@ export interface StartBatchPayload {
 	documents: string[];
 	lockedDocuments: string[];
 	totalTasksAcrossAllDocs: number;
+	completedTasksAcrossAllDocs?: number;
 	loopEnabled: boolean;
 	maxLoops?: number | null;
 	folderPath: string;
@@ -265,7 +266,7 @@ export function batchReducer(state: BatchState, action: BatchAction): BatchState
 					currentDocTasksTotal: 0,
 					currentDocTasksCompleted: 0,
 					totalTasksAcrossAllDocs: payload.totalTasksAcrossAllDocs,
-					completedTasksAcrossAllDocs: 0,
+					completedTasksAcrossAllDocs: payload.completedTasksAcrossAllDocs ?? 0,
 					// Loop mode
 					loopEnabled: payload.loopEnabled,
 					loopIteration: 0,

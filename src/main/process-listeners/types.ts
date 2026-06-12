@@ -6,11 +6,13 @@
 import type { ProcessManager } from '../process-manager';
 import type { WebServer } from '../web-server';
 import type { AgentDetector } from '../agents';
+import type { CueEngine } from '../cue/cue-engine';
 import type { SafeSendFn } from '../utils/safe-send';
 import type { StatsDB } from '../stats';
 import type { GroupChat, GroupChatParticipant } from '../group-chat/group-chat-storage';
 import type { GroupChatMessage, GroupChatState } from '../../shared/group-chat-types';
 import type { ParticipantState } from '../ipc/handlers/groupChat';
+import type { SshRemoteConfig } from '../../shared/types';
 
 // ==========================================================================
 // Constants
@@ -106,6 +108,7 @@ export interface ProcessListenerDependencies {
 			agentDetector: AgentDetector
 		) => Promise<void>;
 		clearActiveParticipantTaskSession: (groupChatId: string, participantName: string) => void;
+		clearModeratorResponseTimeout: (groupChatId: string) => void;
 	};
 	/** Group chat storage functions */
 	groupChatStorage: {
@@ -164,4 +167,22 @@ export interface ProcessListenerDependencies {
 		warn: (message: string, context: string, data?: Record<string, unknown>) => void;
 		debug: (message: string, context: string, data?: Record<string, unknown>) => void;
 	};
+	/** Function to get the Cue engine (for agent completion chain notifications) */
+	getCueEngine?: () => CueEngine | null;
+	/** Function to check if the Maestro Cue Encore Feature is enabled */
+	isCueEnabled?: () => boolean;
+	/**
+	 * Resolve an SSH remote configuration by display name.
+	 *
+	 * Used by the group chat exit listener to read on-disk usage data from
+	 * the remote host where a copilot-cli participant ran. Returns null
+	 * when no SSH remote with that name exists or the lookup is unavailable.
+	 */
+	getSshRemoteByName?: (name: string) => SshRemoteConfig | null;
+	/**
+	 * Resolve an agent's configured context window in tokens. Used to convert
+	 * the raw token count from copilot-cli's session.shutdown into a
+	 * percentage gauge.
+	 */
+	getAgentContextWindow?: (agentId: string) => number;
 }

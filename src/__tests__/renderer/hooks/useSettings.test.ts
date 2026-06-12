@@ -3,15 +3,21 @@ import { renderHook, act, waitFor } from '@testing-library/react';
 import { useSettings } from '../../../renderer/hooks';
 import type { AutoRunStats, OnboardingStats, CustomAICommand } from '../../../renderer/types';
 import { DEFAULT_SHORTCUTS } from '../../../renderer/constants/shortcuts';
-import {
-	useSettingsStore,
-	DEFAULT_CONTEXT_MANAGEMENT_SETTINGS,
-	DEFAULT_AUTO_RUN_STATS,
-	DEFAULT_USAGE_STATS,
-	DEFAULT_KEYBOARD_MASTERY_STATS,
-	DEFAULT_ONBOARDING_STATS,
-	DEFAULT_AI_COMMANDS,
-} from '../../../renderer/stores/settingsStore';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+
+// Deep-cloned defaults captured from a fresh store so mutations in tests can't
+// leak back into the reference. The store no longer exports these defaults.
+const _INITIAL_STATE = useSettingsStore.getState();
+const DEFAULT_CONTEXT_MANAGEMENT_SETTINGS = JSON.parse(
+	JSON.stringify(_INITIAL_STATE.contextManagementSettings)
+);
+const DEFAULT_AUTO_RUN_STATS = JSON.parse(JSON.stringify(_INITIAL_STATE.autoRunStats));
+const DEFAULT_USAGE_STATS = JSON.parse(JSON.stringify(_INITIAL_STATE.usageStats));
+const DEFAULT_KEYBOARD_MASTERY_STATS = JSON.parse(
+	JSON.stringify(_INITIAL_STATE.keyboardMasteryStats)
+);
+const DEFAULT_ONBOARDING_STATS = JSON.parse(JSON.stringify(_INITIAL_STATE.onboardingStats));
+const DEFAULT_AI_COMMANDS = JSON.parse(JSON.stringify(_INITIAL_STATE.customAICommands));
 import { TAB_SHORTCUTS } from '../../../renderer/constants/shortcuts';
 import { DEFAULT_CUSTOM_THEME_COLORS } from '../../../renderer/constants/themes';
 
@@ -31,6 +37,7 @@ describe('useSettings', () => {
 		useSettingsStore.setState({
 			settingsLoaded: false,
 			conductorProfile: '',
+			globalShowHotkey: [],
 			llmProvider: 'openrouter',
 			modelSlug: 'anthropic/claude-3.5-sonnet',
 			apiKey: '',
@@ -45,7 +52,6 @@ describe('useSettings', () => {
 			customThemeColors: DEFAULT_CUSTOM_THEME_COLORS,
 			customThemeBaseId: 'dracula',
 			enterToSendAI: false,
-			enterToSendTerminal: true,
 			defaultSaveToHistory: true,
 			defaultShowThinking: 'off',
 			leftSidebarWidth: 256,
@@ -57,7 +63,7 @@ describe('useSettings', () => {
 			terminalWidth: 100,
 			logLevel: 'info',
 			maxLogBuffer: 5000,
-			maxOutputLines: 25,
+			maxOutputLines: Infinity,
 			osNotificationsEnabled: true,
 			audioFeedbackEnabled: false,
 			audioFeedbackCommand: 'say',
@@ -73,6 +79,7 @@ describe('useSettings', () => {
 			autoRunStats: DEFAULT_AUTO_RUN_STATS,
 			usageStats: DEFAULT_USAGE_STATS,
 			ungroupedCollapsed: false,
+			groupChatsExpanded: true,
 			tourCompleted: false,
 			firstAutoRunCompleted: false,
 			onboardingStats: DEFAULT_ONBOARDING_STATS,
@@ -85,7 +92,7 @@ describe('useSettings', () => {
 			documentGraphShowExternalLinks: false,
 			documentGraphMaxNodes: 50,
 			documentGraphPreviewCharLimit: 100,
-			documentGraphLayoutType: 'mindmap',
+			documentGraphLayoutType: 'hierarchical',
 			statsCollectionEnabled: true,
 			defaultStatsTimeRange: 'week',
 			preventSleepEnabled: false,
@@ -155,19 +162,11 @@ describe('useSettings', () => {
 
 			expect(result.current.activeThemeId).toBe('dracula');
 			expect(result.current.enterToSendAI).toBe(false);
-			expect(result.current.enterToSendTerminal).toBe(true);
 			expect(result.current.defaultSaveToHistory).toBe(true);
 			expect(result.current.leftSidebarWidth).toBe(256);
 			expect(result.current.rightPanelWidth).toBe(384);
 			expect(result.current.markdownEditMode).toBe(false);
 			expect(result.current.fileExplorerIconTheme).toBe('default');
-		});
-
-		it('should have correct default values for terminal settings', async () => {
-			const { result } = renderHook(() => useSettings());
-			await waitForSettingsLoaded(result);
-
-			expect(result.current.terminalWidth).toBe(100);
 		});
 
 		it('should have correct default values for logging settings', async () => {
@@ -182,7 +181,7 @@ describe('useSettings', () => {
 			const { result } = renderHook(() => useSettings());
 			await waitForSettingsLoaded(result);
 
-			expect(result.current.maxOutputLines).toBe(25);
+			expect(result.current.maxOutputLines).toBe(Infinity);
 		});
 
 		it('should have correct default values for notification settings', async () => {
@@ -284,7 +283,6 @@ describe('useSettings', () => {
 			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
 				activeThemeId: 'gruvbox',
 				enterToSendAI: true,
-				enterToSendTerminal: false,
 				defaultSaveToHistory: true,
 				leftSidebarWidth: 300,
 				rightPanelWidth: 400,
@@ -296,7 +294,6 @@ describe('useSettings', () => {
 
 			expect(result.current.activeThemeId).toBe('gruvbox');
 			expect(result.current.enterToSendAI).toBe(true);
-			expect(result.current.enterToSendTerminal).toBe(false);
 			expect(result.current.defaultSaveToHistory).toBe(true);
 			expect(result.current.leftSidebarWidth).toBe(300);
 			expect(result.current.rightPanelWidth).toBe(400);
@@ -600,18 +597,6 @@ describe('useSettings', () => {
 			expect(window.maestro.settings.set).toHaveBeenCalledWith('enterToSendAI', true);
 		});
 
-		it('should update enterToSendTerminal and persist to settings', async () => {
-			const { result } = renderHook(() => useSettings());
-			await waitForSettingsLoaded(result);
-
-			act(() => {
-				result.current.setEnterToSendTerminal(false);
-			});
-
-			expect(result.current.enterToSendTerminal).toBe(false);
-			expect(window.maestro.settings.set).toHaveBeenCalledWith('enterToSendTerminal', false);
-		});
-
 		it('should update defaultSaveToHistory and persist to settings', async () => {
 			const { result } = renderHook(() => useSettings());
 			await waitForSettingsLoaded(result);
@@ -658,20 +643,6 @@ describe('useSettings', () => {
 
 			expect(result.current.markdownEditMode).toBe(true);
 			expect(window.maestro.settings.set).toHaveBeenCalledWith('markdownEditMode', true);
-		});
-	});
-
-	describe('setter functions - terminal settings', () => {
-		it('should update terminalWidth and persist to settings', async () => {
-			const { result } = renderHook(() => useSettings());
-			await waitForSettingsLoaded(result);
-
-			act(() => {
-				result.current.setTerminalWidth(120);
-			});
-
-			expect(result.current.terminalWidth).toBe(120);
-			expect(window.maestro.settings.set).toHaveBeenCalledWith('terminalWidth', 120);
 		});
 	});
 
@@ -727,13 +698,13 @@ describe('useSettings', () => {
 			expect(result.current.maxOutputLines).toBe(Infinity);
 		});
 
-		it('should keep default (25) when maxOutputLines is undefined', async () => {
+		it('should keep default (Infinity) when maxOutputLines is undefined', async () => {
 			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({});
 
 			const { result } = renderHook(() => useSettings());
 			await waitForSettingsLoaded(result);
 
-			expect(result.current.maxOutputLines).toBe(25);
+			expect(result.current.maxOutputLines).toBe(Infinity);
 		});
 	});
 

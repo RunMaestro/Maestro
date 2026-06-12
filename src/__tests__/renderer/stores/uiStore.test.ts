@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 
@@ -13,20 +13,18 @@ function resetStore() {
 		activeFocus: 'main',
 		activeRightTab: 'files',
 		bookmarksCollapsed: false,
-		groupChatsExpanded: true,
 		showUnreadOnly: false,
+		showUnreadAgentsOnly: false,
 		preFilterActiveTabId: null,
 		preTerminalFileTabId: null,
 		selectedSidebarIndex: 0,
-		flashNotification: null,
-		successFlashNotification: null,
-		outputSearchOpen: false,
-		outputSearchQuery: '',
+		outputSearchByKey: {},
 		sessionFilterOpen: false,
 		historySearchFilterOpen: false,
 		draggingSessionId: null,
 		editingGroupId: null,
 		editingSessionId: null,
+		usageDashboardViewMode: 'overview',
 	});
 }
 
@@ -44,20 +42,17 @@ describe('uiStore', () => {
 			expect(state.activeFocus).toBe('main');
 			expect(state.activeRightTab).toBe('files');
 			expect(state.bookmarksCollapsed).toBe(false);
-			expect(state.groupChatsExpanded).toBe(true);
 			expect(state.showUnreadOnly).toBe(false);
 			expect(state.preFilterActiveTabId).toBeNull();
 			expect(state.preTerminalFileTabId).toBeNull();
 			expect(state.selectedSidebarIndex).toBe(0);
-			expect(state.flashNotification).toBeNull();
-			expect(state.successFlashNotification).toBeNull();
-			expect(state.outputSearchOpen).toBe(false);
-			expect(state.outputSearchQuery).toBe('');
+			expect(state.outputSearchByKey).toEqual({});
 			expect(state.sessionFilterOpen).toBe(false);
 			expect(state.historySearchFilterOpen).toBe(false);
 			expect(state.draggingSessionId).toBeNull();
 			expect(state.editingGroupId).toBeNull();
 			expect(state.editingSessionId).toBeNull();
+			expect(state.usageDashboardViewMode).toBe('overview');
 		});
 	});
 
@@ -133,17 +128,15 @@ describe('uiStore', () => {
 			expect(useUIStore.getState().bookmarksCollapsed).toBe(false);
 		});
 
-		it('sets group chats expanded', () => {
-			useUIStore.getState().setGroupChatsExpanded(false);
-			expect(useUIStore.getState().groupChatsExpanded).toBe(false);
-		});
+		it('persists bookmarks collapse state so it survives restarts', () => {
+			const setSetting = (window as any).maestro.settings.set as ReturnType<typeof vi.fn>;
+			setSetting.mockClear();
 
-		it('toggles group chats expanded', () => {
-			expect(useUIStore.getState().groupChatsExpanded).toBe(true);
-			useUIStore.getState().toggleGroupChatsExpanded();
-			expect(useUIStore.getState().groupChatsExpanded).toBe(false);
-			useUIStore.getState().toggleGroupChatsExpanded();
-			expect(useUIStore.getState().groupChatsExpanded).toBe(true);
+			useUIStore.getState().setBookmarksCollapsed(true);
+			expect(setSetting).toHaveBeenCalledWith('bookmarksCollapsed', true);
+
+			useUIStore.getState().toggleBookmarksCollapsed();
+			expect(setSetting).toHaveBeenLastCalledWith('bookmarksCollapsed', false);
 		});
 	});
 
@@ -164,6 +157,19 @@ describe('uiStore', () => {
 			expect(useUIStore.getState().showUnreadOnly).toBe(true);
 			useUIStore.getState().toggleShowUnreadOnly();
 			expect(useUIStore.getState().showUnreadOnly).toBe(false);
+		});
+
+		it('sets show unread agents only', () => {
+			useUIStore.getState().setShowUnreadAgentsOnly(true);
+			expect(useUIStore.getState().showUnreadAgentsOnly).toBe(true);
+		});
+
+		it('toggles show unread agents only', () => {
+			expect(useUIStore.getState().showUnreadAgentsOnly).toBe(false);
+			useUIStore.getState().toggleShowUnreadAgentsOnly();
+			expect(useUIStore.getState().showUnreadAgentsOnly).toBe(true);
+			useUIStore.getState().toggleShowUnreadAgentsOnly();
+			expect(useUIStore.getState().showUnreadAgentsOnly).toBe(false);
 		});
 
 		it('sets pre-filter active tab id', () => {
@@ -196,33 +202,58 @@ describe('uiStore', () => {
 		});
 	});
 
-	describe('flash notification state', () => {
-		it('sets flash notification', () => {
-			useUIStore.getState().setFlashNotification('Commands disabled');
-			expect(useUIStore.getState().flashNotification).toBe('Commands disabled');
+	describe('flash notification setters (compatibility shims → centerFlashStore)', () => {
+		it('setFlashNotification fires a yellow center flash', async () => {
+			const { useCenterFlashStore } = await import('../../../renderer/stores/centerFlashStore');
+			useCenterFlashStore.getState().setActive(null);
 
+			useUIStore.getState().setFlashNotification('Commands disabled');
+			const active = useCenterFlashStore.getState().active;
+			expect(active?.message).toBe('Commands disabled');
+			expect(active?.color).toBe('yellow');
+
+			// Passing null is a no-op (auto-dismiss handles clearing)
 			useUIStore.getState().setFlashNotification(null);
-			expect(useUIStore.getState().flashNotification).toBeNull();
+			expect(useCenterFlashStore.getState().active?.message).toBe('Commands disabled');
 		});
 
-		it('sets success flash notification', () => {
+		it('setSuccessFlashNotification fires a themed center flash', async () => {
+			const { useCenterFlashStore } = await import('../../../renderer/stores/centerFlashStore');
+			useCenterFlashStore.getState().setActive(null);
+
 			useUIStore.getState().setSuccessFlashNotification('Refresh complete');
-			expect(useUIStore.getState().successFlashNotification).toBe('Refresh complete');
+			const active = useCenterFlashStore.getState().active;
+			expect(active?.message).toBe('Refresh complete');
+			expect(active?.color).toBe('theme');
 
 			useUIStore.getState().setSuccessFlashNotification(null);
-			expect(useUIStore.getState().successFlashNotification).toBeNull();
+			expect(useCenterFlashStore.getState().active?.message).toBe('Refresh complete');
 		});
 	});
 
-	describe('output search state', () => {
-		it('sets output search open', () => {
-			useUIStore.getState().setOutputSearchOpen(true);
-			expect(useUIStore.getState().outputSearchOpen).toBe(true);
+	describe('output search state (scoped per agent+tab key)', () => {
+		const KEY = 'agent-1::tab-1';
+
+		it('sets output search open for a key', () => {
+			useUIStore.getState().setOutputSearchOpen(KEY, true);
+			expect(useUIStore.getState().outputSearchByKey[KEY]?.open).toBe(true);
 		});
 
-		it('sets output search query', () => {
-			useUIStore.getState().setOutputSearchQuery('find this');
-			expect(useUIStore.getState().outputSearchQuery).toBe('find this');
+		it('sets output search query for a key', () => {
+			useUIStore.getState().setOutputSearchQuery(KEY, 'find this');
+			expect(useUIStore.getState().outputSearchByKey[KEY]?.query).toBe('find this');
+		});
+
+		it('keeps each key independent', () => {
+			useUIStore.getState().setOutputSearchOpen('a::1', true);
+			useUIStore.getState().setOutputSearchQuery('a::1', 'alpha');
+			expect(useUIStore.getState().outputSearchByKey['b::1']).toBeUndefined();
+		});
+
+		it('prunes a slot when closed with an empty query', () => {
+			useUIStore.getState().setOutputSearchOpen(KEY, true);
+			useUIStore.getState().setOutputSearchOpen(KEY, false);
+			expect(useUIStore.getState().outputSearchByKey[KEY]).toBeUndefined();
 		});
 	});
 
@@ -278,6 +309,21 @@ describe('uiStore', () => {
 		});
 	});
 
+	describe('usage dashboard view mode', () => {
+		it('sets the last-selected tab with a value', () => {
+			useUIStore.getState().setUsageDashboardViewMode('cue');
+			expect(useUIStore.getState().usageDashboardViewMode).toBe('cue');
+		});
+
+		it('sets the last-selected tab with an updater', () => {
+			useUIStore.getState().setUsageDashboardViewMode('autorun');
+			useUIStore
+				.getState()
+				.setUsageDashboardViewMode((prev) => (prev === 'autorun' ? 'activity' : 'overview'));
+			expect(useUIStore.getState().usageDashboardViewMode).toBe('activity');
+		});
+	});
+
 	describe('React hook integration', () => {
 		it('provides state to React components via selectors', () => {
 			const { result } = renderHook(() => useUIStore((s) => s.leftSidebarOpen));
@@ -306,7 +352,7 @@ describe('uiStore', () => {
 
 			// Change unrelated state
 			act(() => {
-				useUIStore.getState().setOutputSearchQuery('test');
+				useUIStore.getState().setOutputSearchQuery('k::1', 'test');
 			});
 
 			// Should not have re-rendered (selector isolation)
@@ -336,7 +382,7 @@ describe('uiStore', () => {
 		it('returns stable action references across state changes', () => {
 			const actionsBefore = useUIStore.getState();
 			useUIStore.getState().setLeftSidebarOpen(false);
-			useUIStore.getState().setOutputSearchQuery('changed');
+			useUIStore.getState().setOutputSearchQuery('k::1', 'changed');
 			const actionsAfter = useUIStore.getState();
 
 			// Actions must be the same function references after state mutations.

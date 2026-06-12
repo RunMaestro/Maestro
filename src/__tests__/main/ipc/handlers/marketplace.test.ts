@@ -165,6 +165,9 @@ describe('marketplace IPC handlers', () => {
 		mockApp = {
 			getPath: vi.fn().mockReturnValue('/mock/userData'),
 			on: vi.fn(),
+			// Default to a version that satisfies all sample-manifest minMaestroVersion entries.
+			// Individual tests can override this via vi.mocked(mockApp.getVersion).mockReturnValue(...).
+			getVersion: vi.fn().mockReturnValue('999.0.0'),
 		} as unknown as App;
 
 		// Setup mock settings store for SSH remote lookup
@@ -747,6 +750,89 @@ describe('marketplace IPC handlers', () => {
 			expect(writtenData.playbooks).toHaveLength(2);
 		});
 
+		it('should reject install when running version is below minMaestroVersion (defense-in-depth)', async () => {
+			// Manifest with one playbook gated on a future version.
+			const gatedManifest: MarketplaceManifest = {
+				lastUpdated: '2024-01-15',
+				playbooks: [
+					{
+						...sampleManifest.playbooks[0],
+						id: 'gated-playbook',
+						minMaestroVersion: '99.0.0',
+					},
+				],
+			};
+			const validCache: MarketplaceCache = {
+				fetchedAt: Date.now(),
+				manifest: gatedManifest,
+			};
+
+			vi.mocked(fs.readFile)
+				.mockResolvedValueOnce(JSON.stringify(validCache)) // Cache read
+				.mockRejectedValueOnce({ code: 'ENOENT' }); // No local manifest
+
+			// Override running version to one below the minimum.
+			vi.mocked(mockApp.getVersion).mockReturnValue('0.16.0');
+
+			const handler = handlers.get('marketplace:importPlaybook');
+			const result = await handler!(
+				{} as any,
+				'gated-playbook',
+				'gated-folder',
+				'/autorun',
+				'session-123'
+			);
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('99.0.0');
+			expect(result.error).toContain('0.16.0');
+			// No filesystem writes should have occurred for the blocked import.
+			expect(fs.mkdir).not.toHaveBeenCalled();
+			expect(fs.writeFile).not.toHaveBeenCalled();
+		});
+
+		it('should allow install when running version satisfies minMaestroVersion', async () => {
+			const gatedManifest: MarketplaceManifest = {
+				lastUpdated: '2024-01-15',
+				playbooks: [
+					{
+						...sampleManifest.playbooks[0],
+						id: 'gated-playbook',
+						minMaestroVersion: '0.16.17-rc',
+					},
+				],
+			};
+			const validCache: MarketplaceCache = {
+				fetchedAt: Date.now(),
+				manifest: gatedManifest,
+			};
+
+			vi.mocked(fs.readFile)
+				.mockResolvedValueOnce(JSON.stringify(validCache))
+				.mockRejectedValueOnce({ code: 'ENOENT' });
+			vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+
+			// Final release ≥ its own prerelease — should be allowed.
+			vi.mocked(mockApp.getVersion).mockReturnValue('0.16.17');
+
+			mockFetch
+				.mockResolvedValueOnce({ ok: true, text: () => Promise.resolve('# Phase 1') })
+				.mockResolvedValueOnce({ ok: true, text: () => Promise.resolve('# Phase 2') });
+
+			const handler = handlers.get('marketplace:importPlaybook');
+			const result = await handler!(
+				{} as any,
+				'gated-playbook',
+				'gated-folder',
+				'/autorun',
+				'session-123'
+			);
+
+			expect(result.playbook).toBeDefined();
+			expect(result.playbook.name).toBe('Test Playbook');
+		});
+
 		it('should return error for non-existent playbook', async () => {
 			const validCache: MarketplaceCache = {
 				fetchedAt: Date.now(),
@@ -973,19 +1059,23 @@ describe('marketplace IPC handlers', () => {
 				manifest: sampleManifest,
 			};
 
-			// Mock os.homedir() to return a predictable path
+			// Mock os.homedir() to return a predictable path. Marketplace
+			// service uses `import os from 'os'` (default import), so the
+			// mock must expose `default` plus the named export.
 			vi.mock('os', () => ({
+				default: { homedir: vi.fn().mockReturnValue('/Users/testuser') },
 				homedir: vi.fn().mockReturnValue('/Users/testuser'),
 			}));
 
 			// The tilde path ~/playbooks/my-tilde-playbook will be resolved to:
 			// /Users/testuser/playbooks/my-tilde-playbook (or similar based on os.homedir)
-			// For this test, we just verify that fs.readFile is called (not fetch)
+			// For this test, we just verify that fs.readFile is called (not fetch).
+			// Order: cache, local manifest, document content, playbooks file (ENOENT).
 			vi.mocked(fs.readFile)
-				.mockResolvedValueOnce(JSON.stringify(validCache))
-				.mockResolvedValueOnce(JSON.stringify(localManifest))
-				.mockResolvedValueOnce('# Setup from tilde path')
-				.mockRejectedValueOnce({ code: 'ENOENT' });
+				.mockResolvedValueOnce(JSON.stringify(validCache)) // cache
+				.mockResolvedValueOnce(JSON.stringify(localManifest)) // local manifest
+				.mockResolvedValueOnce('# Setup from tilde path') // document content
+				.mockRejectedValueOnce({ code: 'ENOENT' }); // playbooks file (no existing)
 
 			vi.mocked(fs.mkdir).mockResolvedValue(undefined);
 			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
@@ -1019,8 +1109,9 @@ describe('marketplace IPC handlers', () => {
 			};
 
 			vi.mocked(fs.readFile)
-				.mockResolvedValueOnce(JSON.stringify(validCache))
-				.mockRejectedValueOnce({ code: 'ENOENT' });
+				.mockResolvedValueOnce(JSON.stringify(validCache)) // cache
+				.mockRejectedValueOnce({ code: 'ENOENT' }) // local manifest
+				.mockRejectedValueOnce({ code: 'ENOENT' }); // playbooks file (no existing)
 			vi.mocked(fs.mkdir).mockResolvedValue(undefined);
 			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
 
@@ -1039,8 +1130,108 @@ describe('marketplace IPC handlers', () => {
 				'session-123'
 			);
 
-			// Should have imported the second doc
+			// Should have imported the second doc — and the persisted playbook
+			// should only reference docs that actually wrote to disk.
 			expect(result.importedDocs).toEqual(['phase-2']);
+			expect(result.playbook.documents.map((d: { filename: string }) => d.filename)).toEqual([
+				'Partial/phase-2',
+			]);
+		});
+
+		// Coderabbit feedback: the per-doc loop is intentionally tolerant so
+		// one bad file doesn't block the rest, but the previous code still
+		// persisted a playbook with `documents: []` and reported success when
+		// every doc failed — closing the marketplace sheet and leaving the
+		// user with an unusable imported entry. The service must now throw
+		// a MarketplaceImportError so the import flow surfaces the failure.
+		it('should fail the import when all documents fail to fetch', async () => {
+			const validCache: MarketplaceCache = {
+				fetchedAt: Date.now(),
+				manifest: sampleManifest,
+			};
+
+			vi.mocked(fs.readFile)
+				.mockResolvedValueOnce(JSON.stringify(validCache)) // cache
+				.mockRejectedValueOnce({ code: 'ENOENT' }); // local manifest
+			vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+
+			// Both documents fail to fetch
+			mockFetch
+				.mockRejectedValueOnce(new Error('Network error'))
+				.mockRejectedValueOnce(new Error('Network error'));
+
+			const handler = handlers.get('marketplace:importPlaybook');
+			const result = await handler!(
+				{} as any,
+				'test-playbook-1',
+				'AllFailed',
+				'/autorun',
+				'session-123'
+			);
+
+			// Without the guard, the handler would have returned success with
+			// an empty `documents: []` playbook. With the guard, the service
+			// throws MarketplaceImportError and the IPC handler converts it
+			// into a typed failure result.
+			expect(result.success).toBe(false);
+			expect(result.error).toMatch(/Failed to import any documents/);
+
+			// Critically, no playbook should have been persisted to the
+			// session's playbooks file.
+			expect(fs.writeFile).not.toHaveBeenCalledWith(
+				expect.stringMatching(/playbooks.*\.json$/),
+				expect.any(String),
+				'utf-8'
+			);
+		});
+
+		// Coderabbit feedback: the browse path falls back to a stale cache when
+		// fetchManifest() fails so the UI keeps working, but the import path
+		// previously left officialManifest null on the same failure — meaning a
+		// playbook that was just visible to the user could disappear at import
+		// time. Both paths must share the stale-cache fallback.
+		it('should fall back to expired cache when network fetch fails during import', async () => {
+			const cacheAge = 1000 * 60 * 60 * 7; // 7 hours, past the 6h TTL
+			const expiredCache: MarketplaceCache = {
+				fetchedAt: Date.now() - cacheAge,
+				manifest: sampleManifest,
+			};
+
+			vi.mocked(fs.readFile)
+				.mockResolvedValueOnce(JSON.stringify(expiredCache)) // cache (stale)
+				.mockRejectedValueOnce({ code: 'ENOENT' }) // local manifest
+				.mockRejectedValueOnce({ code: 'ENOENT' }); // playbooks file (no existing)
+			vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+
+			// Manifest fetch fails; document fetches succeed (would happen if
+			// only the manifest endpoint is degraded).
+			mockFetch
+				.mockRejectedValueOnce(new Error('Network error')) // manifest fetch
+				.mockResolvedValueOnce({
+					ok: true,
+					text: () => Promise.resolve('# Phase 1'),
+				})
+				.mockResolvedValueOnce({
+					ok: true,
+					text: () => Promise.resolve('# Phase 2'),
+				});
+
+			const handler = handlers.get('marketplace:importPlaybook');
+			const result = await handler!(
+				{} as any,
+				'test-playbook-1',
+				'StaleCacheImport',
+				'/autorun',
+				'session-123'
+			);
+
+			// Import should succeed because the stale cache was used to look up
+			// the playbook by id. Without the fallback, this would throw
+			// "Playbook not found".
+			expect(result.playbook).toBeDefined();
+			expect(result.importedDocs).toEqual(['phase-1', 'phase-2']);
 		});
 
 		describe('SSH remote import', () => {
@@ -1051,8 +1242,9 @@ describe('marketplace IPC handlers', () => {
 				};
 
 				vi.mocked(fs.readFile)
-					.mockResolvedValueOnce(JSON.stringify(validCache))
-					.mockRejectedValueOnce({ code: 'ENOENT' }); // No existing playbooks
+					.mockResolvedValueOnce(JSON.stringify(validCache)) // cache
+					.mockRejectedValueOnce({ code: 'ENOENT' }) // local manifest
+					.mockRejectedValueOnce({ code: 'ENOENT' }); // playbooks file (no existing)
 				vi.mocked(fs.mkdir).mockResolvedValue(undefined);
 				vi.mocked(fs.writeFile).mockResolvedValue(undefined);
 				// Remote functions return RemoteFsResult with success: true
@@ -1117,27 +1309,13 @@ describe('marketplace IPC handlers', () => {
 				expect(result.importedDocs).toEqual(['phase-1', 'phase-2']);
 			});
 
-			it('should fall back to local fs when SSH remote not found', async () => {
-				// Return empty array - no SSH remotes configured
+			it('should fail loudly when SSH remote ID does not resolve', async () => {
+				// The user explicitly opted into SSH; silently importing
+				// locally would land on the wrong host. The handler must
+				// reject before any filesystem call.
 				mockSettingsStore.get.mockImplementation((key: string, defaultValue?: unknown) => {
 					if (key === 'sshRemotes') return [];
 					return defaultValue;
-				});
-
-				const validCache: MarketplaceCache = {
-					fetchedAt: Date.now(),
-					manifest: sampleManifest,
-				};
-
-				vi.mocked(fs.readFile)
-					.mockResolvedValueOnce(JSON.stringify(validCache))
-					.mockRejectedValueOnce({ code: 'ENOENT' });
-				vi.mocked(fs.mkdir).mockResolvedValue(undefined);
-				vi.mocked(fs.writeFile).mockResolvedValue(undefined);
-
-				mockFetch.mockResolvedValue({
-					ok: true,
-					text: () => Promise.resolve('# Content'),
 				});
 
 				const handler = handlers.get('marketplace:importPlaybook');
@@ -1150,34 +1328,17 @@ describe('marketplace IPC handlers', () => {
 					'non-existent-ssh-remote'
 				);
 
-				// Should fall back to local fs operations
+				expect(result.success).toBe(false);
+				expect(result.error).toContain('SSH remote not found or disabled');
 				expect(mockMkdirRemote).not.toHaveBeenCalled();
 				expect(mockWriteFileRemote).not.toHaveBeenCalled();
-				expect(fs.mkdir).toHaveBeenCalled();
-				expect(result.success).toBe(true);
+				expect(fs.mkdir).not.toHaveBeenCalled();
 			});
 
-			it('should fall back to local fs when SSH remote is disabled', async () => {
-				// Return SSH remote that is disabled
+			it('should fail loudly when SSH remote is disabled', async () => {
 				mockSettingsStore.get.mockImplementation((key: string, defaultValue?: unknown) => {
 					if (key === 'sshRemotes') return [{ ...sampleSshRemote, enabled: false }];
 					return defaultValue;
-				});
-
-				const validCache: MarketplaceCache = {
-					fetchedAt: Date.now(),
-					manifest: sampleManifest,
-				};
-
-				vi.mocked(fs.readFile)
-					.mockResolvedValueOnce(JSON.stringify(validCache))
-					.mockRejectedValueOnce({ code: 'ENOENT' });
-				vi.mocked(fs.mkdir).mockResolvedValue(undefined);
-				vi.mocked(fs.writeFile).mockResolvedValue(undefined);
-
-				mockFetch.mockResolvedValue({
-					ok: true,
-					text: () => Promise.resolve('# Content'),
 				});
 
 				const handler = handlers.get('marketplace:importPlaybook');
@@ -1190,11 +1351,11 @@ describe('marketplace IPC handlers', () => {
 					'ssh-remote-1'
 				);
 
-				// Should fall back to local fs because remote is disabled
+				expect(result.success).toBe(false);
+				expect(result.error).toContain('SSH remote not found or disabled');
 				expect(mockMkdirRemote).not.toHaveBeenCalled();
 				expect(mockWriteFileRemote).not.toHaveBeenCalled();
-				expect(fs.mkdir).toHaveBeenCalled();
-				expect(result.success).toBe(true);
+				expect(fs.mkdir).not.toHaveBeenCalled();
 			});
 
 			it('should handle SSH mkdir failure gracefully', async () => {
@@ -1204,8 +1365,9 @@ describe('marketplace IPC handlers', () => {
 				};
 
 				vi.mocked(fs.readFile)
-					.mockResolvedValueOnce(JSON.stringify(validCache))
-					.mockRejectedValueOnce({ code: 'ENOENT' });
+					.mockResolvedValueOnce(JSON.stringify(validCache)) // cache
+					.mockRejectedValueOnce({ code: 'ENOENT' }) // local manifest
+					.mockRejectedValueOnce({ code: 'ENOENT' }); // playbooks file (no existing)
 				// Return RemoteFsResult with success: false and error message (use mockResolvedValueOnce)
 				mockMkdirRemote.mockResolvedValueOnce({ success: false, error: 'SSH connection failed' });
 
@@ -1242,8 +1404,9 @@ describe('marketplace IPC handlers', () => {
 				};
 
 				vi.mocked(fs.readFile)
-					.mockResolvedValueOnce(JSON.stringify(validCache))
-					.mockRejectedValueOnce({ code: 'ENOENT' });
+					.mockResolvedValueOnce(JSON.stringify(validCache)) // cache
+					.mockRejectedValueOnce({ code: 'ENOENT' }) // local manifest
+					.mockRejectedValueOnce({ code: 'ENOENT' }); // playbooks file (no existing)
 				vi.mocked(fs.mkdir).mockResolvedValue(undefined);
 				vi.mocked(fs.writeFile).mockResolvedValue(undefined);
 
@@ -1278,8 +1441,9 @@ describe('marketplace IPC handlers', () => {
 				};
 
 				vi.mocked(fs.readFile)
-					.mockResolvedValueOnce(JSON.stringify(validCache))
-					.mockRejectedValueOnce({ code: 'ENOENT' }); // No existing playbooks
+					.mockResolvedValueOnce(JSON.stringify(validCache)) // cache
+					.mockRejectedValueOnce({ code: 'ENOENT' }) // local manifest
+					.mockRejectedValueOnce({ code: 'ENOENT' }); // playbooks file (no existing)
 				vi.mocked(fs.mkdir).mockResolvedValue(undefined);
 				vi.mocked(fs.writeFile).mockResolvedValue(undefined);
 
@@ -1337,8 +1501,9 @@ describe('marketplace IPC handlers', () => {
 				};
 
 				vi.mocked(fs.readFile)
-					.mockResolvedValueOnce(JSON.stringify(validCache))
-					.mockRejectedValueOnce({ code: 'ENOENT' });
+					.mockResolvedValueOnce(JSON.stringify(validCache)) // cache
+					.mockRejectedValueOnce({ code: 'ENOENT' }) // local manifest
+					.mockRejectedValueOnce({ code: 'ENOENT' }); // playbooks file (no existing)
 				vi.mocked(fs.mkdir).mockResolvedValue(undefined);
 				vi.mocked(fs.writeFile).mockResolvedValue(undefined);
 
@@ -1381,8 +1546,9 @@ describe('marketplace IPC handlers', () => {
 				};
 
 				vi.mocked(fs.readFile)
-					.mockResolvedValueOnce(JSON.stringify(validCache))
-					.mockRejectedValueOnce({ code: 'ENOENT' });
+					.mockResolvedValueOnce(JSON.stringify(validCache)) // cache
+					.mockRejectedValueOnce({ code: 'ENOENT' }) // local manifest
+					.mockRejectedValueOnce({ code: 'ENOENT' }); // playbooks file (no existing)
 				vi.mocked(fs.mkdir).mockResolvedValue(undefined);
 				vi.mocked(fs.writeFile).mockResolvedValue(undefined);
 				mockMkdirRemote.mockResolvedValue({ success: true });

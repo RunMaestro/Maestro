@@ -9,7 +9,10 @@ import fs from 'fs/promises';
 import { logger } from '../utils/logger';
 import { execFileNoThrow } from '../utils/execFile';
 import { ensureForkSetup } from '../utils/symphony-fork';
+import { resolveGhPath } from '../utils/cliDetection';
 import type { DocumentReference } from '../../shared/symphony-types';
+import { PLAYBOOKS_DIR } from '../../shared/maestro-paths';
+import { captureException } from '../utils/sentry';
 
 const LOG_CONTEXT = '[SymphonyRunner]';
 
@@ -21,6 +24,7 @@ async function cleanupLocalRepo(localPath: string): Promise<void> {
 		await fs.rm(localPath, { recursive: true, force: true });
 		logger.info('Cleaned up local repository', LOG_CONTEXT, { localPath });
 	} catch (error) {
+		void captureException(error);
 		logger.warn('Failed to cleanup local repository', LOG_CONTEXT, { localPath, error });
 	}
 }
@@ -140,7 +144,8 @@ Closes #${issueNumber}
 		args.push('--head', `${forkOwner}:${branchName}`);
 	}
 
-	const result = await execFileNoThrow('gh', args, localPath);
+	const ghCommand = await resolveGhPath();
+	const result = await execFileNoThrow(ghCommand, args, localPath);
 
 	if (result.exitCode !== 0) {
 		return { success: false, error: `PR creation failed: ${result.stderr}` };
@@ -170,6 +175,7 @@ async function downloadFile(url: string, destPath: string): Promise<boolean> {
 		await fs.writeFile(destPath, Buffer.from(buffer));
 		return true;
 	} catch (error) {
+		void captureException(error);
 		logger.error('Error downloading file', LOG_CONTEXT, { url, error });
 		return false;
 	}
@@ -183,7 +189,7 @@ async function setupAutoRunDocs(
 	localPath: string,
 	documentPaths: DocumentReference[]
 ): Promise<string> {
-	const autoRunPath = path.posix.join(localPath, 'Auto Run Docs');
+	const autoRunPath = path.posix.join(localPath, PLAYBOOKS_DIR);
 	await fs.mkdir(autoRunPath, { recursive: true });
 
 	for (const doc of documentPaths) {
@@ -368,9 +374,10 @@ Processed all Auto Run documents for: ${issueTitle}`;
 	}
 
 	// Convert draft to ready for review
+	const ghCommand = await resolveGhPath();
 	const readyArgs = ['pr', 'ready', prNumber.toString()];
 	if (upstreamSlug) readyArgs.push('--repo', upstreamSlug);
-	const readyResult = await execFileNoThrow('gh', readyArgs, localPath);
+	const readyResult = await execFileNoThrow(ghCommand, readyArgs, localPath);
 	if (readyResult.exitCode !== 0) {
 		return { success: false, error: `Failed to mark PR ready: ${readyResult.stderr}` };
 	}
@@ -390,12 +397,12 @@ Closes #${issueNumber}
 
 	const editArgs = ['pr', 'edit', prNumber.toString(), '--body', body];
 	if (upstreamSlug) editArgs.push('--repo', upstreamSlug);
-	await execFileNoThrow('gh', editArgs, localPath);
+	await execFileNoThrow(ghCommand, editArgs, localPath);
 
 	// Get final PR URL
 	const viewArgs = ['pr', 'view', prNumber.toString(), '--json', 'url', '-q', '.url'];
 	if (upstreamSlug) viewArgs.push('--repo', upstreamSlug);
-	const prInfoResult = await execFileNoThrow('gh', viewArgs, localPath);
+	const prInfoResult = await execFileNoThrow(ghCommand, viewArgs, localPath);
 
 	return {
 		success: true,
@@ -413,6 +420,7 @@ export async function cancelContribution(
 	upstreamSlug?: string
 ): Promise<{ success: boolean; error?: string }> {
 	// Close the draft PR
+	const ghCommand = await resolveGhPath();
 	const closeArgs = ['pr', 'close', prNumber.toString()];
 	if (!upstreamSlug) {
 		// Only delete branch for non-fork PRs — cross-fork delete-branch fails due to permissions
@@ -420,7 +428,7 @@ export async function cancelContribution(
 	} else {
 		closeArgs.push('--repo', upstreamSlug);
 	}
-	const closeResult = await execFileNoThrow('gh', closeArgs, localPath);
+	const closeResult = await execFileNoThrow(ghCommand, closeArgs, localPath);
 	if (closeResult.exitCode !== 0) {
 		logger.warn('Failed to close PR', LOG_CONTEXT, { prNumber, error: closeResult.stderr });
 		return {

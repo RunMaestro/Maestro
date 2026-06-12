@@ -29,9 +29,8 @@ vi.mock('../../main/utils/statsCache', () => ({
 }));
 
 vi.mock('../../main/utils/remote-fs', () => ({
-	readDirRemote: vi.fn(),
 	readFileRemote: vi.fn(),
-	statRemote: vi.fn(),
+	listDirWithStatsRemote: vi.fn(),
 }));
 
 // Mock electron-store: each instantiation gets its own isolated in-memory store
@@ -1116,6 +1115,203 @@ describe('ClaudeSessionStorage', () => {
 			expect(originsB['sess-1'].starred).toBeUndefined();
 			expect(originsA['sess-1'].origin).toBe('user');
 			expect(originsB['sess-1'].origin).toBe('auto');
+		});
+	});
+
+	describe('readSessionMessages', () => {
+		let storage: ClaudeSessionStorage;
+
+		beforeEach(() => {
+			vi.clearAllMocks();
+			storage = new ClaudeSessionStorage();
+		});
+
+		it('should include messages with only tool_use blocks and no text content', async () => {
+			const content = jsonl(
+				userMsg('What files are in this directory?'),
+				assistantMsg([
+					{ type: 'tool_use', id: 'tool-1', name: 'list_directory', input: { path: '.' } },
+				])
+			);
+
+			vi.mocked(fs.readFile).mockResolvedValue(content);
+
+			const result = await storage.readSessionMessages('/test/project', 'sess-1');
+			expect(result.messages).toHaveLength(2);
+			expect(result.total).toBe(2);
+			// The tool-only message should have toolUse set and empty content
+			const toolMsg = result.messages.find((m) => m.toolUse)!;
+			expect(toolMsg).toBeDefined();
+			const toolUseBlocks = toolMsg.toolUse as Array<{ name: string }>;
+			expect(toolUseBlocks).toHaveLength(1);
+			expect(toolUseBlocks[0].name).toBe('list_directory');
+		});
+
+		it('should include messages with both text and tool_use blocks', async () => {
+			const content = jsonl(
+				userMsg('Read the config file'),
+				assistantMsg([
+					{ type: 'text', text: 'Let me read that file for you.' },
+					{ type: 'tool_use', id: 'tool-1', name: 'read_file', input: { path: 'config.json' } },
+				])
+			);
+
+			vi.mocked(fs.readFile).mockResolvedValue(content);
+
+			const result = await storage.readSessionMessages('/test/project', 'sess-1');
+			expect(result.messages).toHaveLength(2);
+			const assistantMessage = result.messages.find((m) => m.type === 'assistant');
+			expect(assistantMessage!.content).toBe('Let me read that file for you.');
+			expect(assistantMessage!.toolUse).toHaveLength(1);
+		});
+
+		it('should skip messages with no text and no tool_use', async () => {
+			const content = jsonl(
+				userMsg('Hello'),
+				// An assistant message with only an image block (no text, no tool_use)
+				assistantMsg([{ type: 'image', source: { type: 'base64', data: 'abc' } }])
+			);
+
+			vi.mocked(fs.readFile).mockResolvedValue(content);
+
+			const result = await storage.readSessionMessages('/test/project', 'sess-1');
+			// Only the user message should survive
+			expect(result.messages).toHaveLength(1);
+			expect(result.messages[0].type).toBe('user');
+		});
+	});
+
+	// ==========================================================================
+	// Remote SSH listing (regression: bulk stat, bounded read concurrency)
+	// ==========================================================================
+
+	describe('remote SSH listing', () => {
+		// Build a minimal session file whose content is enough for parseSessionContent
+		// to produce a non-null result with the given preview message.
+		function buildSessionContent(preview: string): string {
+			return jsonl(userMsg('hi'), assistantMsg(preview));
+		}
+
+		it('returns every session when the remote dir has hundreds of files', async () => {
+			// Regression for the bug where listing over SSH dropped sessions past
+			// OpenSSH MaxStartups (~29 visible out of 239). The bulk stat helper
+			// must emit one entry per file and all of them must reach the result.
+			const remoteFs = await import('../../main/utils/remote-fs');
+			const entries = Array.from({ length: 239 }, (_, i) => ({
+				name: `sess-${i}.jsonl`,
+				size: 2048,
+				mtime: 1_776_000_000_000 + i * 1000,
+			}));
+
+			vi.mocked(remoteFs.listDirWithStatsRemote).mockResolvedValue({
+				success: true,
+				data: entries,
+			});
+			vi.mocked(remoteFs.readFileRemote).mockResolvedValue({
+				success: true,
+				data: buildSessionContent('remote preview'),
+			});
+
+			const sshConfig = {
+				id: 'r1',
+				name: 'r1',
+				host: 'h',
+				port: 22,
+				username: 'u',
+				privateKeyPath: '~/.ssh/id_ed25519',
+				enabled: true,
+			} as const;
+
+			const storageForRemote = new ClaudeSessionStorage();
+			const sessions = await storageForRemote.listSessions('/remote/project', sshConfig);
+
+			expect(sessions).toHaveLength(239);
+			// Bulk stat must be a single SSH round-trip, not one-per-file.
+			expect(vi.mocked(remoteFs.listDirWithStatsRemote)).toHaveBeenCalledTimes(1);
+		});
+
+		it('paginates the remote listing while keeping the total count accurate', async () => {
+			const remoteFs = await import('../../main/utils/remote-fs');
+			const entries = Array.from({ length: 239 }, (_, i) => ({
+				name: `sess-${i}.jsonl`,
+				size: 1024,
+				mtime: 1_776_000_000_000 + i * 1000,
+			}));
+
+			vi.mocked(remoteFs.listDirWithStatsRemote).mockResolvedValue({
+				success: true,
+				data: entries,
+			});
+			vi.mocked(remoteFs.readFileRemote).mockResolvedValue({
+				success: true,
+				data: buildSessionContent('p'),
+			});
+
+			const sshConfig = {
+				id: 'r1',
+				name: 'r1',
+				host: 'h',
+				port: 22,
+				username: 'u',
+				privateKeyPath: '~/.ssh/id_ed25519',
+				enabled: true,
+			} as const;
+
+			const storageForRemote = new ClaudeSessionStorage();
+			const result = await storageForRemote.listSessionsPaginated(
+				'/remote/project',
+				{ limit: 100 },
+				sshConfig
+			);
+
+			expect(result.totalCount).toBe(239);
+			expect(result.sessions).toHaveLength(100);
+			expect(result.hasMore).toBe(true);
+			expect(result.nextCursor).toBeTruthy();
+		});
+
+		it('caps parallel remote file reads to the concurrency limit', async () => {
+			// If concurrency were unbounded, all 30 readFileRemote calls would be
+			// in flight at once. The cap is 6, so at any instant in-flight must
+			// be <= 6.
+			const remoteFs = await import('../../main/utils/remote-fs');
+			const entries = Array.from({ length: 30 }, (_, i) => ({
+				name: `sess-${i}.jsonl`,
+				size: 512,
+				mtime: 1_776_000_000_000 + i,
+			}));
+
+			vi.mocked(remoteFs.listDirWithStatsRemote).mockResolvedValue({
+				success: true,
+				data: entries,
+			});
+
+			let inFlight = 0;
+			let peakInFlight = 0;
+			vi.mocked(remoteFs.readFileRemote).mockImplementation(async () => {
+				inFlight++;
+				peakInFlight = Math.max(peakInFlight, inFlight);
+				await new Promise((r) => setTimeout(r, 5));
+				inFlight--;
+				return { success: true, data: buildSessionContent('x') };
+			});
+
+			const sshConfig = {
+				id: 'r1',
+				name: 'r1',
+				host: 'h',
+				port: 22,
+				username: 'u',
+				privateKeyPath: '~/.ssh/id_ed25519',
+				enabled: true,
+			} as const;
+
+			const storageForRemote = new ClaudeSessionStorage();
+			await storageForRemote.listSessions('/remote/project', sshConfig);
+
+			expect(peakInFlight).toBeLessThanOrEqual(6);
+			// And we actually exercised the parallelism, not just serialized.
+			expect(peakInFlight).toBeGreaterThan(1);
 		});
 	});
 });

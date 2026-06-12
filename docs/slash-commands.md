@@ -36,14 +36,14 @@ Skills are loaded from:
 Each skill is displayed with its name, approximate token count, and description. This command is only available when using Claude Code as your AI provider.
 
 <Note>
-The `/skills` command is a Maestro feature that reads skill files directly—it doesn't invoke Claude Code's native `/skills` command (which requires an interactive terminal).
+The `/skills` command is a Maestro feature that reads skill files directly - it doesn't invoke Claude Code's native `/skills` command (which requires an interactive terminal).
 </Note>
 
 ## Custom AI Commands
 
 Create your own slash commands in **Settings → AI Commands**. Each command has a trigger (e.g., `/deploy`) and a prompt that gets sent to the AI agent.
 
-Commands support **template variables** that are automatically substituted at runtime:
+Commands support **template variables** that are automatically substituted at runtime. These same variables also work in [core system prompts](/prompt-customization).
 
 ### Conductor Variables
 

@@ -117,7 +117,7 @@ describe('debug IPC handlers', () => {
 
 	describe('registration', () => {
 		it('should register all debug handlers', () => {
-			const expectedChannels = ['debug:createPackage', 'debug:previewPackage'];
+			const expectedChannels = ['debug:createPackage', 'debug:previewPackage', 'debug:getAppStats'];
 
 			for (const channel of expectedChannels) {
 				expect(handlers.has(channel)).toBe(true);

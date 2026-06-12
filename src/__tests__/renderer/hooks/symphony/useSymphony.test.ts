@@ -644,6 +644,59 @@ describe('useSymphony', () => {
 			expect(unsubscribe).toHaveBeenCalled();
 		});
 
+		it('should not invoke fetchSymphonyState after unmount even if debounce timer was queued', async () => {
+			let updateCallback: (() => void) | null = null;
+			vi.mocked(window.maestro.symphony.onUpdated).mockImplementation((callback) => {
+				updateCallback = callback;
+				return () => {};
+			});
+
+			const { unmount } = renderHook(() => useSymphony());
+
+			await act(async () => {
+				await Promise.resolve();
+				await Promise.resolve();
+			});
+
+			expect(updateCallback).not.toBe(null);
+
+			// Queue a debounced refetch
+			act(() => {
+				updateCallback!();
+			});
+
+			const callsBeforeUnmount = vi.mocked(window.maestro.symphony.getState).mock.calls.length;
+
+			// Unmount before the debounce timer fires
+			unmount();
+
+			// Advance past the debounce window
+			await act(async () => {
+				vi.advanceTimersByTime(1000);
+				await Promise.resolve();
+			});
+
+			// No additional getState calls after unmount
+			expect(vi.mocked(window.maestro.symphony.getState).mock.calls.length).toBe(
+				callsBeforeUnmount
+			);
+		});
+
+		it('should clear the auto-sync interval on unmount', async () => {
+			const clearIntervalSpy = vi.spyOn(globalThis, 'clearInterval');
+
+			const { unmount } = renderHook(() => useSymphony());
+
+			await act(async () => {
+				await Promise.resolve();
+			});
+
+			unmount();
+
+			expect(clearIntervalSpy).toHaveBeenCalled();
+			clearIntervalSpy.mockRestore();
+		});
+
 		it('should debounce to prevent excessive refetches', async () => {
 			let updateCallback: (() => void) | null = null;
 			vi.mocked(window.maestro.symphony.onUpdated).mockImplementation((callback) => {

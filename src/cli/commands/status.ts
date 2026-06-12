@@ -1,41 +1,40 @@
-// Status command
-// Checks whether the Maestro desktop app is reachable via CLI IPC.
+// Status command - check if Maestro desktop app is running and reachable
 
 import { readCliServerInfo, isCliServerRunning } from '../../shared/cli-server-discovery';
-import { formatError } from '../output/formatter';
 import { withMaestroClient } from '../services/maestro-client';
-
-interface SessionsListResult {
-	type: 'sessions_list';
-	sessions?: unknown[];
-}
 
 export async function status(): Promise<void> {
 	const info = readCliServerInfo();
 	if (!info) {
 		console.log('Maestro desktop app is not running');
+		process.exit(1);
 		return;
 	}
 
 	if (!isCliServerRunning()) {
 		console.log('Maestro discovery file is stale (app may have crashed)');
+		process.exit(1);
 		return;
 	}
 
 	try {
-		const sessionCount = await withMaestroClient(async (client) => {
-			await client.sendCommand({ type: 'ping' }, 'pong');
-			const result = await client.sendCommand<SessionsListResult>(
+		// Ping to verify WebSocket connectivity
+		await withMaestroClient(async (client) => {
+			await client.sendCommand<{ type: string }>({ type: 'ping' }, 'pong');
+
+			// Get session count
+			const sessionsResult = await client.sendCommand<{ type: string; sessions: unknown[] }>(
 				{ type: 'get_sessions' },
 				'sessions_list'
 			);
-			return Array.isArray(result.sessions) ? result.sessions.length : 0;
-		});
 
-		console.log(`Maestro is running on port ${info.port} with ${sessionCount} sessions`);
+			const sessionCount = sessionsResult.sessions?.length ?? 0;
+			console.log(
+				`Maestro is running on port ${info.port} with ${sessionCount} agent${sessionCount !== 1 ? 's' : ''}`
+			);
+		});
 	} catch (error) {
-		const message = error instanceof Error ? error.message : 'Unknown error';
-		console.error(formatError(`Failed to reach Maestro desktop app: ${message}`));
+		console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
 		process.exit(1);
 	}
 }

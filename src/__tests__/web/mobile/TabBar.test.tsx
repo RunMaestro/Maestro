@@ -103,7 +103,7 @@ describe('TabBar', () => {
 	});
 
 	describe('Render conditions', () => {
-		it('returns null when tabs array is empty', () => {
+		it('renders tab bar chrome even when tabs array is empty', () => {
 			const { container } = render(
 				<TabBar
 					tabs={[]}
@@ -113,10 +113,10 @@ describe('TabBar', () => {
 					onCloseTab={mockOnCloseTab}
 				/>
 			);
-			expect(container.firstChild).toBeNull();
+			expect(container.firstChild).not.toBeNull();
 		});
 
-		it('returns null when there is only one tab', () => {
+		it('renders tab bar chrome with a single tab', () => {
 			const { container } = render(
 				<TabBar
 					tabs={[defaultTab]}
@@ -126,7 +126,7 @@ describe('TabBar', () => {
 					onCloseTab={mockOnCloseTab}
 				/>
 			);
-			expect(container.firstChild).toBeNull();
+			expect(container.firstChild).not.toBeNull();
 		});
 
 		it('renders when there are two or more tabs', () => {
@@ -761,7 +761,7 @@ describe('TabBar', () => {
 			expect(lines).toHaveLength(2);
 		});
 
-		it('calls onNewTab when clicked', () => {
+		it('calls onNewTab when New AI Chat is selected from the menu', () => {
 			const tabs = [
 				createTab({ id: 'tab-1', name: 'First' }),
 				createTab({ id: 'tab-2', name: 'Second' }),
@@ -776,7 +776,11 @@ describe('TabBar', () => {
 				/>
 			);
 
+			// Click the "New Tab" button to open the dropdown menu
 			fireEvent.click(screen.getByTitle('New Tab'));
+
+			// Then click "New AI Chat" in the dropdown
+			fireEvent.click(screen.getByText('New AI Chat'));
 
 			expect(mockOnNewTab).toHaveBeenCalledTimes(1);
 		});
@@ -1324,6 +1328,301 @@ describe('TabBar', () => {
 		it('exports TabBar as default', async () => {
 			const module = await import('../../../web/mobile/TabBar');
 			expect(module.default).toBe(module.TabBar);
+		});
+	});
+
+	describe('Bell filter', () => {
+		it('renders the bell button', () => {
+			const tabs = [createTab({ id: 'tab-1', name: 'First' })];
+			render(
+				<TabBar
+					tabs={tabs}
+					activeTabId="tab-1"
+					onSelectTab={mockOnSelectTab}
+					onNewTab={mockOnNewTab}
+					onCloseTab={mockOnCloseTab}
+				/>
+			);
+			expect(screen.getByLabelText('Filter unread tabs')).toBeInTheDocument();
+		});
+
+		it('keeps the bell button clickable when no tabs have unread activity', () => {
+			// Mirrors the desktop Left Bar bell: always toggleable so the user
+			// can hide quiet tabs even when nothing is currently unread.
+			const tabs = [
+				createTab({ id: 'tab-1', name: 'First', hasUnread: false }),
+				createTab({ id: 'tab-2', name: 'Second', hasUnread: false }),
+			];
+			render(
+				<TabBar
+					tabs={tabs}
+					activeTabId="tab-1"
+					onSelectTab={mockOnSelectTab}
+					onNewTab={mockOnNewTab}
+					onCloseTab={mockOnCloseTab}
+				/>
+			);
+			expect(screen.getByLabelText('Filter unread tabs')).not.toBeDisabled();
+		});
+
+		it('does not show the indicator dot when the active AI tab is the only unread', () => {
+			// The active AI tab is already in front of the user, so flagging it
+			// as off-tab unread would be misleading.
+			const tabs = [
+				createTab({ id: 'tab-1', name: 'Active', hasUnread: true }),
+				createTab({ id: 'tab-2', name: 'Quiet' }),
+			];
+			render(
+				<TabBar
+					tabs={tabs}
+					activeTabId="tab-1"
+					onSelectTab={mockOnSelectTab}
+					onNewTab={mockOnNewTab}
+					onCloseTab={mockOnCloseTab}
+					inputMode="ai"
+				/>
+			);
+
+			const bell = screen.getByLabelText('Filter unread tabs');
+			// Indicator dot is absolutely-positioned, has no visible text, and
+			// is the only element with the accent background-color — so we
+			// detect it by querying for that style on a child span.
+			const dot = bell.querySelector('span[style*="border-radius: 50%"]');
+			expect(dot).toBeNull();
+		});
+
+		it('shows the indicator dot when an AI tab in terminal mode is unread', () => {
+			// In terminal mode the AI tab is no longer the focused view, so
+			// even the "active" AI tab should count as off-tab activity.
+			const tabs = [
+				createTab({ id: 'tab-1', name: 'Active', hasUnread: true }),
+				createTab({ id: 'tab-2', name: 'Quiet' }),
+			];
+			render(
+				<TabBar
+					tabs={tabs}
+					activeTabId="tab-1"
+					onSelectTab={mockOnSelectTab}
+					onNewTab={mockOnNewTab}
+					onCloseTab={mockOnCloseTab}
+					inputMode="terminal"
+				/>
+			);
+
+			const bell = screen.getByLabelText('Filter unread tabs');
+			const dot = bell.querySelector('span[style*="border-radius: 50%"]');
+			expect(dot).not.toBeNull();
+		});
+
+		it('shows the indicator dot for off-tab unread activity', () => {
+			const tabs = [
+				createTab({ id: 'tab-1', name: 'Active' }),
+				createTab({ id: 'tab-2', name: 'Other', hasUnread: true }),
+			];
+			render(
+				<TabBar
+					tabs={tabs}
+					activeTabId="tab-1"
+					onSelectTab={mockOnSelectTab}
+					onNewTab={mockOnNewTab}
+					onCloseTab={mockOnCloseTab}
+					inputMode="ai"
+				/>
+			);
+
+			const bell = screen.getByLabelText('Filter unread tabs');
+			const dot = bell.querySelector('span[style*="border-radius: 50%"]');
+			expect(dot).not.toBeNull();
+		});
+
+		it('toggling on with no unread tabs collapses the bar to the active tab', () => {
+			const tabs = [
+				createTab({ id: 'tab-1', name: 'Active' }),
+				createTab({ id: 'tab-2', name: 'Quiet' }),
+				createTab({ id: 'tab-3', name: 'AlsoQuiet' }),
+			];
+			render(
+				<TabBar
+					tabs={tabs}
+					activeTabId="tab-1"
+					onSelectTab={mockOnSelectTab}
+					onNewTab={mockOnNewTab}
+					onCloseTab={mockOnCloseTab}
+				/>
+			);
+
+			fireEvent.click(screen.getByLabelText('Filter unread tabs'));
+
+			expect(screen.getByText('Active')).toBeInTheDocument();
+			expect(screen.queryByText('Quiet')).not.toBeInTheDocument();
+			expect(screen.queryByText('AlsoQuiet')).not.toBeInTheDocument();
+		});
+
+		it('hides tabs with no unread/busy activity when bell is toggled on', () => {
+			const tabs = [
+				createTab({ id: 'tab-1', name: 'Active' }),
+				createTab({ id: 'tab-2', name: 'Quiet' }),
+				createTab({ id: 'tab-3', name: 'Unread', hasUnread: true }),
+			];
+			render(
+				<TabBar
+					tabs={tabs}
+					activeTabId="tab-1"
+					onSelectTab={mockOnSelectTab}
+					onNewTab={mockOnNewTab}
+					onCloseTab={mockOnCloseTab}
+				/>
+			);
+
+			fireEvent.click(screen.getByLabelText('Filter unread tabs'));
+
+			// Active tab is always kept visible so the user doesn't lose context
+			expect(screen.getByText('Active')).toBeInTheDocument();
+			expect(screen.getByText('Unread')).toBeInTheDocument();
+			expect(screen.queryByText('Quiet')).not.toBeInTheDocument();
+		});
+
+		it('always keeps the active tab visible even when it has no unread', () => {
+			const tabs = [
+				createTab({ id: 'tab-1', name: 'Active' }),
+				createTab({ id: 'tab-2', name: 'Unread', hasUnread: true }),
+			];
+			render(
+				<TabBar
+					tabs={tabs}
+					activeTabId="tab-1"
+					onSelectTab={mockOnSelectTab}
+					onNewTab={mockOnNewTab}
+					onCloseTab={mockOnCloseTab}
+				/>
+			);
+
+			fireEvent.click(screen.getByLabelText('Filter unread tabs'));
+
+			expect(screen.getByText('Active')).toBeInTheDocument();
+			expect(screen.getByText('Unread')).toBeInTheDocument();
+		});
+
+		it('keeps busy tabs visible when bell is on', () => {
+			const tabs = [
+				createTab({ id: 'tab-1', name: 'Active' }),
+				createTab({ id: 'tab-2', name: 'Busy', state: 'busy' }),
+				createTab({ id: 'tab-3', name: 'Quiet' }),
+			];
+			render(
+				<TabBar
+					tabs={tabs}
+					activeTabId="tab-1"
+					onSelectTab={mockOnSelectTab}
+					onNewTab={mockOnNewTab}
+					onCloseTab={mockOnCloseTab}
+				/>
+			);
+
+			fireEvent.click(screen.getByLabelText('Filter unread tabs'));
+
+			expect(screen.getByText('Active')).toBeInTheDocument();
+			expect(screen.getByText('Busy')).toBeInTheDocument();
+			expect(screen.queryByText('Quiet')).not.toBeInTheDocument();
+		});
+
+		it('updates aria-label and title when toggled on', () => {
+			const tabs = [
+				createTab({ id: 'tab-1', name: 'First' }),
+				createTab({ id: 'tab-2', name: 'Unread', hasUnread: true }),
+			];
+			render(
+				<TabBar
+					tabs={tabs}
+					activeTabId="tab-1"
+					onSelectTab={mockOnSelectTab}
+					onNewTab={mockOnNewTab}
+					onCloseTab={mockOnCloseTab}
+				/>
+			);
+
+			fireEvent.click(screen.getByLabelText('Filter unread tabs'));
+
+			const bell = screen.getByLabelText('Showing unread tabs only');
+			expect(bell).toBeInTheDocument();
+			expect(bell).toHaveAttribute('aria-pressed', 'true');
+		});
+
+		it('keeps the filter applied when unread activity settles (no auto-disable)', () => {
+			// Toggling is purely user-driven, matching the desktop Left Bar bell:
+			// once on, the filter stays on until the user turns it off, even if
+			// every tab becomes quiet in between.
+			const tabs = [
+				createTab({ id: 'tab-1', name: 'Active' }),
+				createTab({ id: 'tab-2', name: 'Quiet' }),
+				createTab({ id: 'tab-3', name: 'Unread', hasUnread: true }),
+			];
+			const { rerender } = render(
+				<TabBar
+					tabs={tabs}
+					activeTabId="tab-1"
+					onSelectTab={mockOnSelectTab}
+					onNewTab={mockOnNewTab}
+					onCloseTab={mockOnCloseTab}
+				/>
+			);
+
+			fireEvent.click(screen.getByLabelText('Filter unread tabs'));
+			expect(screen.queryByText('Quiet')).not.toBeInTheDocument();
+
+			act(() => {
+				rerender(
+					<TabBar
+						tabs={[
+							createTab({ id: 'tab-1', name: 'Active' }),
+							createTab({ id: 'tab-2', name: 'Quiet' }),
+							createTab({ id: 'tab-3', name: 'Unread', hasUnread: false }),
+						]}
+						activeTabId="tab-1"
+						onSelectTab={mockOnSelectTab}
+						onNewTab={mockOnNewTab}
+						onCloseTab={mockOnCloseTab}
+					/>
+				);
+			});
+
+			// Filter still on, so quiet tabs remain hidden and only the active
+			// tab is visible.
+			expect(screen.getByLabelText('Showing unread tabs only')).toBeInTheDocument();
+			expect(screen.getByText('Active')).toBeInTheDocument();
+			expect(screen.queryByText('Quiet')).not.toBeInTheDocument();
+			expect(screen.queryByText('Unread')).not.toBeInTheDocument();
+		});
+
+		it('reorder math uses the unfiltered tab index when bell is on', () => {
+			// First tab is active (always visible), second is hidden, third is unread.
+			// The visible "Unread" tab is the third in the original array (index 2).
+			const tabs = [
+				createTab({ id: 'tab-1', name: 'Active' }),
+				createTab({ id: 'tab-2', name: 'Quiet' }),
+				createTab({ id: 'tab-3', name: 'Unread', hasUnread: true }),
+			];
+			render(
+				<TabBar
+					tabs={tabs}
+					activeTabId="tab-1"
+					onSelectTab={mockOnSelectTab}
+					onNewTab={mockOnNewTab}
+					onCloseTab={mockOnCloseTab}
+					onRenameTab={mockOnRenameTab}
+					onStarTab={mockOnStarTab}
+					onReorderTab={mockOnReorderTab}
+				/>
+			);
+
+			fireEvent.click(screen.getByLabelText('Filter unread tabs'));
+
+			// Open the popover for the visible Unread tab
+			fireEvent.contextMenu(screen.getByText('Unread').closest('button')!);
+			fireEvent.click(screen.getByText('Move Left'));
+
+			// Should reorder using the original index (2 → 1), not the filtered index
+			expect(mockOnReorderTab).toHaveBeenCalledWith(2, 1);
 		});
 	});
 });

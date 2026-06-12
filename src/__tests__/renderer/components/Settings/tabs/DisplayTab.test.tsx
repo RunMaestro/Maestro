@@ -5,12 +5,12 @@
  * - Font family selection and loading
  * - Custom font management (add/remove)
  * - Font size toggle buttons
- * - Terminal width toggle buttons
  * - Max log buffer toggle buttons
  * - Max output lines toggle buttons
  * - User message alignment toggle
  * - Native title bar toggle
  * - Auto-hide menu bar toggle
+ * - Tab filtering (starred tabs in unread filter, file preview tabs in unread filter)
  * - Document Graph settings (external links, max nodes)
  * - Context window warnings (enable/disable, threshold sliders)
  * - Local ignore patterns (add/remove, honor gitignore)
@@ -20,14 +20,15 @@
 
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { logger } from '../../../../../renderer/utils/logger';
 import { render, screen, fireEvent, act, within } from '@testing-library/react';
 import { DisplayTab } from '../../../../../renderer/components/Settings/tabs/DisplayTab';
 import type { Theme } from '../../../../../renderer/types';
 
+import { mockTheme } from '../../../../helpers/mockTheme';
 // --- Mock setters (module-level for assertion access) ---
 const mockSetFontFamily = vi.fn();
 const mockSetFontSize = vi.fn();
-const mockSetTerminalWidth = vi.fn();
 const mockSetMaxLogBuffer = vi.fn();
 const mockSetMaxOutputLines = vi.fn();
 const mockSetBionifyReadingMode = vi.fn();
@@ -38,10 +39,20 @@ const mockSetFileExplorerIconTheme = vi.fn();
 const mockSetUseNativeTitleBar = vi.fn();
 const mockSetAutoHideMenuBar = vi.fn();
 const mockSetDocumentGraphShowExternalLinks = vi.fn();
+const mockSetLeftPanelCollapsedPillsPerRow = vi.fn();
 const mockSetDocumentGraphMaxNodes = vi.fn();
 const mockUpdateContextManagementSettings = vi.fn();
 const mockSetLocalIgnorePatterns = vi.fn();
 const mockSetLocalHonorGitignore = vi.fn();
+const mockSetFileExplorerMaxDepth = vi.fn();
+const mockSetFileExplorerMaxEntries = vi.fn();
+const mockSetSshReduceEntryCapEnabled = vi.fn();
+const mockSetSshReduceEntryCapFraction = vi.fn();
+const mockSetShowStarredInUnreadFilter = vi.fn();
+const mockSetShowFilePreviewsInUnreadFilter = vi.fn();
+const mockSetFileEditWordWrap = vi.fn();
+const mockSetFileEditShowLineNumbers = vi.fn();
+const mockSetFilePreviewToolbarButtonVisibility = vi.fn();
 
 // Per-test overrides (merged into useSettings return)
 let mockUseSettingsOverrides: Record<string, any> = {};
@@ -52,8 +63,6 @@ vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 		setFontFamily: mockSetFontFamily,
 		fontSize: 14,
 		setFontSize: mockSetFontSize,
-		terminalWidth: 100,
-		setTerminalWidth: mockSetTerminalWidth,
 		maxLogBuffer: 5000,
 		setMaxLogBuffer: mockSetMaxLogBuffer,
 		maxOutputLines: 25,
@@ -72,6 +81,8 @@ vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 		setUseNativeTitleBar: mockSetUseNativeTitleBar,
 		autoHideMenuBar: false,
 		setAutoHideMenuBar: mockSetAutoHideMenuBar,
+		leftPanelCollapsedPillsPerRow: 15,
+		setLeftPanelCollapsedPillsPerRow: mockSetLeftPanelCollapsedPillsPerRow,
 		documentGraphShowExternalLinks: true,
 		setDocumentGraphShowExternalLinks: mockSetDocumentGraphShowExternalLinks,
 		documentGraphMaxNodes: 200,
@@ -91,6 +102,38 @@ vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 		setLocalIgnorePatterns: mockSetLocalIgnorePatterns,
 		localHonorGitignore: true,
 		setLocalHonorGitignore: mockSetLocalHonorGitignore,
+		fileExplorerMaxDepth: 5,
+		setFileExplorerMaxDepth: mockSetFileExplorerMaxDepth,
+		fileExplorerMaxEntries: 100_000,
+		setFileExplorerMaxEntries: mockSetFileExplorerMaxEntries,
+		sshReduceEntryCapEnabled: false,
+		setSshReduceEntryCapEnabled: mockSetSshReduceEntryCapEnabled,
+		sshReduceEntryCapFraction: 0.1,
+		setSshReduceEntryCapFraction: mockSetSshReduceEntryCapFraction,
+		showStarredInUnreadFilter: false,
+		setShowStarredInUnreadFilter: mockSetShowStarredInUnreadFilter,
+		showFilePreviewsInUnreadFilter: false,
+		setShowFilePreviewsInUnreadFilter: mockSetShowFilePreviewsInUnreadFilter,
+		fileEditWordWrap: true,
+		setFileEditWordWrap: mockSetFileEditWordWrap,
+		fileEditShowLineNumbers: true,
+		setFileEditShowLineNumbers: mockSetFileEditShowLineNumbers,
+		filePreviewToolbarVisibility: {
+			save: true,
+			wordWrap: true,
+			remoteImages: true,
+			htmlRender: true,
+			previewTier: true,
+			editToggle: true,
+			editImage: true,
+			copyContent: true,
+			publishGist: true,
+			documentGraph: true,
+			openInBrowser: true,
+			openInDefault: true,
+			copyPath: true,
+		},
+		setFilePreviewToolbarButtonVisibility: mockSetFilePreviewToolbarButtonVisibility,
 		...mockUseSettingsOverrides,
 	}),
 }));
@@ -146,26 +189,6 @@ vi.mock('../../../../../renderer/components/ui/Modal', () => ({
 }));
 
 // Sample theme for testing
-const mockTheme: Theme = {
-	id: 'dracula',
-	name: 'Dracula',
-	mode: 'dark',
-	colors: {
-		bgMain: '#282a36',
-		bgSidebar: '#21222c',
-		bgActivity: '#343746',
-		border: '#44475a',
-		textMain: '#f8f8f2',
-		textDim: '#6272a4',
-		accent: '#bd93f9',
-		accentDim: '#bd93f920',
-		accentText: '#ff79c6',
-		accentForeground: '#ffffff',
-		success: '#50fa7b',
-		warning: '#ffb86c',
-		error: '#ff5555',
-	},
-};
 
 describe('DisplayTab', () => {
 	beforeEach(() => {
@@ -205,16 +228,41 @@ describe('DisplayTab', () => {
 	});
 
 	describe('Bionify Display Settings', () => {
-		it('renders intensity controls and algorithm input', () => {
+		it('renders the Reading Mode toggle and sub-options (ghosted when off)', () => {
 			render(<DisplayTab theme={mockTheme} />);
 
-			expect(screen.getByText('Reading Mode')).toBeInTheDocument();
+			expect(screen.getByText('Bionify Emphasis')).toBeInTheDocument();
+			const toggle = screen.getByRole('switch', { name: 'Bionify reading mode' });
+			expect(toggle).toHaveAttribute('aria-checked', 'false');
+			// Sub-options remain in the DOM but are ghosted via opacity/pointer-events
 			expect(screen.getByText('Intensity')).toBeInTheDocument();
+			expect(screen.getByLabelText('Bionify algorithm')).toBeInTheDocument();
+			const ghosted = screen.getByText('Intensity').closest('.space-y-4') as HTMLElement;
+			expect(ghosted.style.opacity).toBe('0.4');
+			expect(ghosted.style.pointerEvents).toBe('none');
+		});
+
+		it('enables Bionify when the toggle is clicked', () => {
+			render(<DisplayTab theme={mockTheme} />);
+
+			fireEvent.click(screen.getByRole('switch', { name: 'Bionify reading mode' }));
+
+			expect(mockSetBionifyReadingMode).toHaveBeenCalledWith(true);
+		});
+
+		it('un-ghosts sub-options when enabled', () => {
+			mockUseSettingsOverrides = { bionifyReadingMode: true };
+			render(<DisplayTab theme={mockTheme} />);
+
 			expect(screen.getByLabelText('Bionify algorithm')).toHaveValue('- 0 1 1 2 0.4');
 			expect(screen.getByRole('button', { name: 'Info' })).toBeInTheDocument();
+			const panel = screen.getByText('Intensity').closest('.space-y-4') as HTMLElement;
+			expect(panel.style.opacity).toBe('1');
+			expect(panel.style.pointerEvents).toBe('auto');
 		});
 
 		it('updates Bionify intensity when a new value is chosen', async () => {
+			mockUseSettingsOverrides = { bionifyReadingMode: true };
 			render(<DisplayTab theme={mockTheme} />);
 
 			fireEvent.click(screen.getByRole('button', { name: 'Strong' }));
@@ -223,6 +271,7 @@ describe('DisplayTab', () => {
 		});
 
 		it('updates the algorithm string when edited', () => {
+			mockUseSettingsOverrides = { bionifyReadingMode: true };
 			render(<DisplayTab theme={mockTheme} />);
 
 			const input = screen.getByLabelText('Bionify algorithm');
@@ -233,6 +282,7 @@ describe('DisplayTab', () => {
 		});
 
 		it('shows validation feedback and avoids persisting invalid algorithm input', () => {
+			mockUseSettingsOverrides = { bionifyReadingMode: true };
 			render(<DisplayTab theme={mockTheme} />);
 
 			const input = screen.getByLabelText('Bionify algorithm');
@@ -244,6 +294,7 @@ describe('DisplayTab', () => {
 		});
 
 		it('opens an info modal with the upstream algorithm breakdown', () => {
+			mockUseSettingsOverrides = { bionifyReadingMode: true };
 			render(<DisplayTab theme={mockTheme} />);
 
 			fireEvent.click(screen.getByRole('button', { name: 'Info' }));
@@ -653,82 +704,6 @@ describe('DisplayTab', () => {
 	});
 
 	// =========================================================================
-	// Terminal Width
-	// =========================================================================
-
-	describe('Terminal Width', () => {
-		it('should render Terminal Width label', async () => {
-			render(<DisplayTab theme={mockTheme} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(50);
-			});
-
-			expect(screen.getByText('Terminal Width (Columns)')).toBeInTheDocument();
-		});
-
-		it('should call setTerminalWidth with 80', async () => {
-			render(<DisplayTab theme={mockTheme} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(50);
-			});
-
-			fireEvent.click(screen.getByRole('button', { name: '80' }));
-			expect(mockSetTerminalWidth).toHaveBeenCalledWith(80);
-		});
-
-		it('should call setTerminalWidth with 100', async () => {
-			render(<DisplayTab theme={mockTheme} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(50);
-			});
-
-			// There may be multiple "100" on screen (e.g., from max nodes slider)
-			// so get the one in the terminal width section
-			const buttons = screen.getAllByRole('button', { name: '100' });
-			fireEvent.click(buttons[0]);
-			expect(mockSetTerminalWidth).toHaveBeenCalledWith(100);
-		});
-
-		it('should call setTerminalWidth with 120', async () => {
-			render(<DisplayTab theme={mockTheme} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(50);
-			});
-
-			fireEvent.click(screen.getByRole('button', { name: '120' }));
-			expect(mockSetTerminalWidth).toHaveBeenCalledWith(120);
-		});
-
-		it('should call setTerminalWidth with 160', async () => {
-			render(<DisplayTab theme={mockTheme} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(50);
-			});
-
-			fireEvent.click(screen.getByRole('button', { name: '160' }));
-			expect(mockSetTerminalWidth).toHaveBeenCalledWith(160);
-		});
-
-		it('should highlight selected terminal width (100)', async () => {
-			render(<DisplayTab theme={mockTheme} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(50);
-			});
-
-			// Find the 100 button that has ring-2 class (the active one)
-			const buttons = screen.getAllByRole('button', { name: '100' });
-			const activeButton = buttons.find((btn) => btn.classList.contains('ring-2'));
-			expect(activeButton).toBeTruthy();
-		});
-	});
-
-	// =========================================================================
 	// Max Log Buffer
 	// =========================================================================
 
@@ -795,7 +770,7 @@ describe('DisplayTab', () => {
 			});
 
 			expect(
-				screen.getByText(/Maximum number of log messages to keep in memory/)
+				screen.getByText(/Maximum number of entries to retain for history and system log viewer/)
 			).toBeInTheDocument();
 		});
 	});
@@ -1093,11 +1068,131 @@ describe('DisplayTab', () => {
 	});
 
 	// =========================================================================
+	// Tab Filtering
+	// =========================================================================
+
+	describe('Tab Filtering', () => {
+		it('should render starred tabs in unread filter toggle', async () => {
+			render(<DisplayTab theme={mockTheme} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			expect(screen.getByText('Show starred tabs when filtering by unread')).toBeInTheDocument();
+		});
+
+		it('should toggle starred in unread filter on when clicked (currently off)', async () => {
+			render(<DisplayTab theme={mockTheme} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			const label = screen.getByText('Show starred tabs when filtering by unread');
+			const section = label.closest('.flex.items-center.justify-between')!;
+			const toggle = section.querySelector('[role="switch"]') as HTMLElement;
+			fireEvent.click(toggle);
+
+			expect(mockSetShowStarredInUnreadFilter).toHaveBeenCalledWith(true);
+		});
+
+		it('should toggle starred in unread filter off when clicked (currently on)', async () => {
+			mockUseSettingsOverrides = { showStarredInUnreadFilter: true };
+			render(<DisplayTab theme={mockTheme} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			const label = screen.getByText('Show starred tabs when filtering by unread');
+			const section = label.closest('.flex.items-center.justify-between')!;
+			const toggle = section.querySelector('[role="switch"]') as HTMLElement;
+			fireEvent.click(toggle);
+
+			expect(mockSetShowStarredInUnreadFilter).toHaveBeenCalledWith(false);
+		});
+
+		it('should show aria-checked=true when starred in unread filter is enabled', async () => {
+			mockUseSettingsOverrides = { showStarredInUnreadFilter: true };
+			render(<DisplayTab theme={mockTheme} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			const label = screen.getByText('Show starred tabs when filtering by unread');
+			const section = label.closest('.flex.items-center.justify-between')!;
+			const toggle = section.querySelector('[role="switch"]') as HTMLElement;
+
+			expect(toggle.getAttribute('aria-checked')).toBe('true');
+		});
+
+		it('should render file preview tabs in unread filter toggle', async () => {
+			render(<DisplayTab theme={mockTheme} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			expect(
+				screen.getByText('Show file preview tabs when filtering by unread')
+			).toBeInTheDocument();
+		});
+
+		it('should toggle file previews in unread filter on when clicked (currently off)', async () => {
+			render(<DisplayTab theme={mockTheme} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			const label = screen.getByText('Show file preview tabs when filtering by unread');
+			const section = label.closest('.flex.items-center.justify-between')!;
+			const toggle = section.querySelector('[role="switch"]') as HTMLElement;
+			fireEvent.click(toggle);
+
+			expect(mockSetShowFilePreviewsInUnreadFilter).toHaveBeenCalledWith(true);
+		});
+
+		it('should toggle file previews in unread filter off when clicked (currently on)', async () => {
+			mockUseSettingsOverrides = { showFilePreviewsInUnreadFilter: true };
+			render(<DisplayTab theme={mockTheme} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			const label = screen.getByText('Show file preview tabs when filtering by unread');
+			const section = label.closest('.flex.items-center.justify-between')!;
+			const toggle = section.querySelector('[role="switch"]') as HTMLElement;
+			fireEvent.click(toggle);
+
+			expect(mockSetShowFilePreviewsInUnreadFilter).toHaveBeenCalledWith(false);
+		});
+
+		it('should show aria-checked=true when file previews in unread filter is enabled', async () => {
+			mockUseSettingsOverrides = { showFilePreviewsInUnreadFilter: true };
+			render(<DisplayTab theme={mockTheme} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			const label = screen.getByText('Show file preview tabs when filtering by unread');
+			const section = label.closest('.flex.items-center.justify-between')!;
+			const toggle = section.querySelector('[role="switch"]') as HTMLElement;
+
+			expect(toggle.getAttribute('aria-checked')).toBe('true');
+		});
+	});
+
+	// =========================================================================
 	// Document Graph
 	// =========================================================================
 
 	describe('Document Graph', () => {
-		it('should render Document Graph section with Beta badge', async () => {
+		it('should render Document Graph section', async () => {
 			render(<DisplayTab theme={mockTheme} />);
 
 			await act(async () => {
@@ -1105,7 +1200,6 @@ describe('DisplayTab', () => {
 			});
 
 			expect(screen.getByText('Document Graph')).toBeInTheDocument();
-			expect(screen.getByText('Beta')).toBeInTheDocument();
 		});
 
 		it('should render show external links toggle', async () => {
@@ -1172,10 +1266,12 @@ describe('DisplayTab', () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			// Multiple sliders exist (doc graph, yellow threshold, red threshold)
-			// The doc graph slider is the first one
-			const sliders = screen.getAllByRole('slider');
-			const docGraphSlider = sliders[0];
+			// Scope to the Document Graph section so unrelated sliders elsewhere on
+			// the tab (e.g. left-panel pills-per-row) don't shift positional indices.
+			const docGraphSection = document.querySelector(
+				'[data-setting-id="display-document-graph"]'
+			) as HTMLElement;
+			const docGraphSlider = within(docGraphSection).getByRole('slider');
 			fireEvent.change(docGraphSlider, { target: { value: '500' } });
 
 			expect(mockSetDocumentGraphMaxNodes).toHaveBeenCalledWith(500);
@@ -1326,10 +1422,11 @@ describe('DisplayTab', () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			// Find the yellow threshold slider (first range input in the threshold area)
-			const sliders = screen.getAllByRole('slider');
-			// First slider is document graph max nodes, second is yellow, third is red
-			const yellowSlider = sliders[1];
+			// Scope to the Context Window Warnings section: slider[0] is yellow, slider[1] is red.
+			const warningsSection = document.querySelector(
+				'[data-setting-id="display-context-warnings"]'
+			) as HTMLElement;
+			const yellowSlider = within(warningsSection).getAllByRole('slider')[0];
 			fireEvent.change(yellowSlider, { target: { value: '70' } });
 
 			expect(mockUpdateContextManagementSettings).toHaveBeenCalledWith({
@@ -1344,8 +1441,10 @@ describe('DisplayTab', () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			const sliders = screen.getAllByRole('slider');
-			const yellowSlider = sliders[1];
+			const warningsSection = document.querySelector(
+				'[data-setting-id="display-context-warnings"]'
+			) as HTMLElement;
+			const yellowSlider = within(warningsSection).getAllByRole('slider')[0];
 
 			// Set yellow to 85, which is >= red (80)
 			fireEvent.change(yellowSlider, { target: { value: '85' } });
@@ -1363,8 +1462,10 @@ describe('DisplayTab', () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			const sliders = screen.getAllByRole('slider');
-			const redSlider = sliders[2];
+			const warningsSection = document.querySelector(
+				'[data-setting-id="display-context-warnings"]'
+			) as HTMLElement;
+			const redSlider = within(warningsSection).getAllByRole('slider')[1];
 			fireEvent.change(redSlider, { target: { value: '90' } });
 
 			expect(mockUpdateContextManagementSettings).toHaveBeenCalledWith({
@@ -1379,8 +1480,10 @@ describe('DisplayTab', () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			const sliders = screen.getAllByRole('slider');
-			const redSlider = sliders[2];
+			const warningsSection = document.querySelector(
+				'[data-setting-id="display-context-warnings"]'
+			) as HTMLElement;
+			const redSlider = within(warningsSection).getAllByRole('slider')[1];
 
 			// Set red to 50, which is <= yellow (60)
 			fireEvent.change(redSlider, { target: { value: '50' } });
@@ -1522,7 +1625,7 @@ describe('DisplayTab', () => {
 				.fn()
 				.mockRejectedValue(new Error('Font detection failed'));
 
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 
 			render(<DisplayTab theme={mockTheme} />);
 
@@ -1541,7 +1644,11 @@ describe('DisplayTab', () => {
 			// After the rejection resolves, the select should reappear (fontLoading goes false)
 			const fontSelectAfter = screen.getByRole('combobox');
 			expect(fontSelectAfter).toBeInTheDocument();
-			expect(consoleSpy).toHaveBeenCalledWith('Failed to load fonts:', expect.any(Error));
+			expect(consoleSpy).toHaveBeenCalledWith(
+				'Failed to load fonts:',
+				undefined,
+				expect.any(Error)
+			);
 
 			consoleSpy.mockRestore();
 		});
@@ -1551,7 +1658,7 @@ describe('DisplayTab', () => {
 				.fn()
 				.mockRejectedValue(new Error('Font detection failed'));
 
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 
 			render(<DisplayTab theme={mockTheme} />);
 
@@ -1706,8 +1813,6 @@ describe('DisplayTab', () => {
 			expect(screen.getByText('Interface Font')).toBeInTheDocument();
 			// Font Size
 			expect(screen.getByText('Font Size')).toBeInTheDocument();
-			// Terminal Width
-			expect(screen.getByText('Terminal Width (Columns)')).toBeInTheDocument();
 			// Max Log Buffer
 			expect(screen.getByText('Maximum Log Buffer')).toBeInTheDocument();
 			// Max Output Lines

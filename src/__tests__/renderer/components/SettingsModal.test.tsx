@@ -16,9 +16,14 @@
 
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { logger } from '../../../renderer/utils/logger';
 import { render, screen, fireEvent, act, waitFor, within } from '@testing-library/react';
-import { SettingsModal } from '../../../renderer/components/Settings/SettingsModal';
+import {
+	SettingsModal,
+	__resetLastOpenSettingsTabForTests,
+} from '../../../renderer/components/Settings/SettingsModal';
 import { formatEnterToSend } from '../../../renderer/utils/shortcutFormatter';
+import { mockTheme } from '../../helpers/mockTheme';
 import type {
 	Theme,
 	Shortcut,
@@ -26,6 +31,11 @@ import type {
 	CustomAICommand,
 	AgentConfig,
 } from '../../../renderer/types';
+
+// __APP_VERSION__ / __COMMIT_HASH__ are injected by the bundler at build time.
+// The About tab renders them, so stub them for the jsdom test environment.
+(globalThis as unknown as { __APP_VERSION__: string }).__APP_VERSION__ = '1.0.0';
+(globalThis as unknown as { __COMMIT_HASH__: string }).__COMMIT_HASH__ = '';
 
 // Mock the LayerStackContext
 vi.mock('../../../renderer/contexts/LayerStackContext', () => ({
@@ -83,7 +93,6 @@ const mockSetShortcuts = vi.fn();
 const mockSetTabShortcuts = vi.fn();
 const mockSetFontFamily = vi.fn();
 const mockSetFontSize = vi.fn();
-const mockSetTerminalWidth = vi.fn();
 const mockSetLogLevel = vi.fn();
 const mockSetMaxLogBuffer = vi.fn();
 const mockSetMaxOutputLines = vi.fn();
@@ -93,15 +102,15 @@ const mockSetShellArgs = vi.fn();
 const mockSetShellEnvVars = vi.fn();
 const mockSetGhPath = vi.fn();
 const mockSetEnterToSendAI = vi.fn();
-const mockSetEnterToSendTerminal = vi.fn();
 const mockSetDefaultSaveToHistory = vi.fn();
 const mockSetDefaultShowThinking = vi.fn();
-const mockSetAutoScrollAiMode = vi.fn();
 const mockSetUserMessageAlignment = vi.fn();
 const mockSetOsNotificationsEnabled = vi.fn();
 const mockSetAudioFeedbackEnabled = vi.fn();
 const mockSetAudioFeedbackCommand = vi.fn();
 const mockSetToastDuration = vi.fn();
+const mockSetIdleNotificationEnabled = vi.fn();
+const mockSetIdleNotificationCommand = vi.fn();
 const mockSetCheckForUpdatesOnStartup = vi.fn();
 const mockSetEnableBetaUpdates = vi.fn();
 const mockSetCrashReportingEnabled = vi.fn();
@@ -155,8 +164,6 @@ vi.mock('../../../renderer/hooks/settings/useSettings', () => ({
 		setFontFamily: mockSetFontFamily,
 		fontSize: 14,
 		setFontSize: mockSetFontSize,
-		terminalWidth: 100,
-		setTerminalWidth: mockSetTerminalWidth,
 		logLevel: 'info',
 		setLogLevel: mockSetLogLevel,
 		maxLogBuffer: 5000,
@@ -177,14 +184,10 @@ vi.mock('../../../renderer/hooks/settings/useSettings', () => ({
 		// Input settings
 		enterToSendAI: true,
 		setEnterToSendAI: mockSetEnterToSendAI,
-		enterToSendTerminal: true,
-		setEnterToSendTerminal: mockSetEnterToSendTerminal,
 		defaultSaveToHistory: true,
 		setDefaultSaveToHistory: mockSetDefaultSaveToHistory,
 		defaultShowThinking: 'off',
 		setDefaultShowThinking: mockSetDefaultShowThinking,
-		autoScrollAiMode: true,
-		setAutoScrollAiMode: mockSetAutoScrollAiMode,
 		userMessageAlignment: 'left',
 		setUserMessageAlignment: mockSetUserMessageAlignment,
 		// Notification settings
@@ -196,6 +199,10 @@ vi.mock('../../../renderer/hooks/settings/useSettings', () => ({
 		setAudioFeedbackCommand: mockSetAudioFeedbackCommand,
 		toastDuration: 10,
 		setToastDuration: mockSetToastDuration,
+		idleNotificationEnabled: false,
+		setIdleNotificationEnabled: mockSetIdleNotificationEnabled,
+		idleNotificationCommand: 'say Maestro is idle',
+		setIdleNotificationCommand: mockSetIdleNotificationCommand,
 		// Update settings
 		checkForUpdatesOnStartup: true,
 		setCheckForUpdatesOnStartup: mockSetCheckForUpdatesOnStartup,
@@ -207,11 +214,14 @@ vi.mock('../../../renderer/hooks/settings/useSettings', () => ({
 		customAICommands: [],
 		setCustomAICommands: mockSetCustomAICommands,
 		// Encore features
-		encoreFeatures: { directorNotes: false },
+		encoreFeatures: { directorNotes: false, usageStats: true, symphony: true },
 		setEncoreFeatures: mockSetEncoreFeatures,
 		// Conductor profile settings
 		conductorProfile: '',
 		setConductorProfile: vi.fn(),
+		// Global show-Maestro hotkey
+		globalShowHotkey: [],
+		setGlobalShowHotkey: vi.fn(),
 		// Context management settings
 		contextManagementSettings: {
 			autoGroomContexts: true,
@@ -252,6 +262,15 @@ vi.mock('../../../renderer/hooks/settings/useSettings', () => ({
 		setLocalIgnorePatterns: vi.fn(),
 		localHonorGitignore: true,
 		setLocalHonorGitignore: vi.fn(),
+		// File explorer indexing limits
+		fileExplorerMaxDepth: 5,
+		setFileExplorerMaxDepth: vi.fn(),
+		fileExplorerMaxEntries: 100_000,
+		setFileExplorerMaxEntries: vi.fn(),
+		sshReduceEntryCapEnabled: false,
+		setSshReduceEntryCapEnabled: vi.fn(),
+		sshReduceEntryCapFraction: 0.1,
+		setSshReduceEntryCapFraction: vi.fn(),
 		// Automatic tab naming
 		automaticTabNamingEnabled: true,
 		setAutomaticTabNamingEnabled: vi.fn(),
@@ -273,31 +292,35 @@ vi.mock('../../../renderer/hooks/settings/useSettings', () => ({
 		setUseNativeTitleBar: vi.fn(),
 		autoHideMenuBar: false,
 		setAutoHideMenuBar: vi.fn(),
+		// Symphony registry URLs
+		symphonyRegistryUrls: [],
+		setSymphonyRegistryUrls: vi.fn(),
+		// File Edit & Preview settings
+		fileEditWordWrap: true,
+		setFileEditWordWrap: vi.fn(),
+		fileEditShowLineNumbers: true,
+		setFileEditShowLineNumbers: vi.fn(),
+		filePreviewToolbarVisibility: {
+			save: true,
+			wordWrap: true,
+			remoteImages: true,
+			htmlRender: true,
+			previewTier: true,
+			editToggle: true,
+			editImage: true,
+			copyContent: true,
+			publishGist: true,
+			documentGraph: true,
+			openInBrowser: true,
+			openInDefault: true,
+			copyPath: true,
+		},
+		setFilePreviewToolbarButtonVisibility: vi.fn(),
 		...mockUseSettingsOverrides,
 	}),
 }));
 
 // Sample theme for testing
-const mockTheme: Theme = {
-	id: 'dracula',
-	name: 'Dracula',
-	mode: 'dark',
-	colors: {
-		bgMain: '#282a36',
-		bgSidebar: '#21222c',
-		bgActivity: '#343746',
-		border: '#44475a',
-		textMain: '#f8f8f2',
-		textDim: '#6272a4',
-		accent: '#bd93f9',
-		accentDim: '#bd93f920',
-		accentText: '#ff79c6',
-		accentForeground: '#ffffff',
-		success: '#50fa7b',
-		warning: '#ffb86c',
-		error: '#ff5555',
-	},
-};
 
 const mockLightTheme: Theme = {
 	id: 'github-light',
@@ -368,6 +391,7 @@ const createDefaultProps = (overrides = {}) => ({
 describe('SettingsModal', () => {
 	beforeEach(() => {
 		vi.useFakeTimers();
+		__resetLastOpenSettingsTabForTests();
 
 		// Reset window.maestro mocks
 		vi.mocked(window.maestro.agents.detect).mockResolvedValue([
@@ -401,6 +425,12 @@ describe('SettingsModal', () => {
 		(window.maestro as any).agents.getAllCustomPaths = vi.fn().mockResolvedValue({});
 		(window.maestro as any).agents.setCustomPath = vi.fn().mockResolvedValue(undefined);
 		(window.maestro as any).agents.setConfig = vi.fn().mockResolvedValue(undefined);
+		// Generic capability-snapshot stubs so any agentStore call made from
+		// Settings stays inert in tests that don't exercise that pipeline.
+		(window.maestro as any).agents.getAllSnapshots = vi.fn().mockResolvedValue({});
+		(window.maestro as any).agents.getSnapshot = vi.fn().mockResolvedValue(null);
+		(window.maestro as any).agents.reprobe = vi.fn().mockResolvedValue(null);
+		(window.maestro as any).agents.onSnapshotUpdated = vi.fn().mockReturnValue(() => {});
 	});
 
 	afterEach(() => {
@@ -514,11 +544,115 @@ describe('SettingsModal', () => {
 
 			expect(screen.getByTestId('ai-commands-panel')).toBeInTheDocument();
 		});
+
+		it('should reopen on the last tab the user viewed (in-session)', async () => {
+			// Open, switch to Shortcuts, close.
+			const { unmount } = render(<SettingsModal {...createDefaultProps()} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			fireEvent.click(screen.getByTitle('Shortcuts'));
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			expect(screen.getByPlaceholderText('Filter shortcuts...')).toBeInTheDocument();
+
+			unmount();
+
+			// Reopen with no explicit initialTab — should land on Shortcuts, not General.
+			render(<SettingsModal {...createDefaultProps()} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			expect(screen.getByPlaceholderText('Filter shortcuts...')).toBeInTheDocument();
+		});
+
+		it('should remember and restore per-tab vertical scroll position', async () => {
+			const { container } = render(<SettingsModal {...createDefaultProps()} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			// The scrollable content panel is the one combining .p-6 + .overflow-y-auto
+			// (the sidebar nav uses overflow-y-auto but has no p-6).
+			const getContent = () => container.querySelector<HTMLDivElement>('.p-6.overflow-y-auto');
+			expect(getContent()).toBeTruthy();
+
+			// Scroll General down — simulates the user being deep in a long panel.
+			const general = getContent()!;
+			general.scrollTop = 420;
+			fireEvent.scroll(general);
+
+			// Switch to Shortcuts — never visited, should land at the top.
+			fireEvent.click(screen.getByTitle('Shortcuts'));
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+			expect(getContent()!.scrollTop).toBe(0);
+
+			// Scroll Shortcuts to a different position.
+			const shortcuts = getContent()!;
+			shortcuts.scrollTop = 180;
+			fireEvent.scroll(shortcuts);
+
+			// Back to General — restores 420.
+			fireEvent.click(screen.getByTitle('General'));
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+			expect(getContent()!.scrollTop).toBe(420);
+
+			// Back to Shortcuts — restores 180.
+			fireEvent.click(screen.getByTitle('Shortcuts'));
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+			expect(getContent()!.scrollTop).toBe(180);
+		});
+
+		it('should restore the saved scroll position when the modal is reopened', async () => {
+			const first = render(<SettingsModal {...createDefaultProps()} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			fireEvent.click(screen.getByTitle('Display'));
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			const getContent = (root: HTMLElement) =>
+				root.querySelector<HTMLDivElement>('.p-6.overflow-y-auto');
+			const display = getContent(first.container)!;
+			display.scrollTop = 300;
+			fireEvent.scroll(display);
+
+			first.unmount();
+
+			// Reopen — last tab AND last scroll position should be restored together.
+			const second = render(<SettingsModal {...createDefaultProps()} />);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			expect(getContent(second.container)?.scrollTop).toBe(300);
+		});
 	});
 
 	describe('keyboard tab navigation', () => {
-		it('should navigate to next tab with Cmd+Shift+]', async () => {
-			render(<SettingsModal {...createDefaultProps()} />);
+		// Sidebar is alphabetized by label, so the order under no LLM flag is:
+		// About, AI Commands, Display, Encore Features, Environment, General,
+		// Maestro Prompts, Notifications, Shortcuts, SSH Hosts, Themes.
+		it('should navigate to next tab with Cmd+Shift+] from default (general)', async () => {
+			render(<SettingsModal {...createDefaultProps({ initialTab: 'general' })} />);
 
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(50);
@@ -527,18 +661,18 @@ describe('SettingsModal', () => {
 			// Start on general tab
 			expect(screen.getByText('Default Terminal Shell')).toBeInTheDocument();
 
-			// Press Cmd+Shift+] to go to display
+			// Press Cmd+Shift+] — alphabetically the next tab after General is Maestro Prompts
 			fireEvent.keyDown(window, { key: ']', metaKey: true, shiftKey: true });
 
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
-			// Display tab has Font Size
-			expect(screen.getByText('Font Size')).toBeInTheDocument();
+			// Maestro Prompts tab should now be the active sidebar entry
+			expect(screen.getByTitle('Maestro Prompts')).toHaveClass('font-bold');
 		});
 
-		it('should navigate to previous tab with Cmd+Shift+[', async () => {
+		it('should navigate to previous tab with Cmd+Shift+[ from shortcuts', async () => {
 			render(<SettingsModal {...createDefaultProps({ initialTab: 'shortcuts' })} />);
 
 			await act(async () => {
@@ -548,56 +682,54 @@ describe('SettingsModal', () => {
 			// Start on shortcuts tab
 			expect(screen.getByPlaceholderText('Filter shortcuts...')).toBeInTheDocument();
 
-			// Press Cmd+Shift+[ to go back to display
+			// Press Cmd+Shift+[ — alphabetically the prev tab before Shortcuts is Notifications
 			fireEvent.keyDown(window, { key: '[', metaKey: true, shiftKey: true });
 
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
-			// Display tab has Font Size
-			expect(screen.getByText('Font Size')).toBeInTheDocument();
+			expect(screen.getByText('Operating System Notifications')).toBeInTheDocument();
 		});
 
-		it('should wrap around when navigating past last tab', async () => {
-			render(<SettingsModal {...createDefaultProps({ initialTab: 'encore' })} />);
+		it('should wrap around when navigating past last tab (Themes)', async () => {
+			render(<SettingsModal {...createDefaultProps({ initialTab: 'theme' })} />);
 
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			// Start on Encore Features tab (last tab)
-			expect(screen.getByText('Encore Features', { selector: 'h3' })).toBeInTheDocument();
+			// Themes is the last tab alphabetically
+			expect(screen.getByText('dark Mode')).toBeInTheDocument();
 
-			// Press Cmd+Shift+] to wrap to general
+			// Press Cmd+Shift+] to wrap to About (first tab alphabetically)
 			fireEvent.keyDown(window, { key: ']', metaKey: true, shiftKey: true });
 
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
-			// General tab has Default Terminal Shell
-			expect(screen.getByText('Default Terminal Shell')).toBeInTheDocument();
+			expect(screen.getByTitle('About')).toHaveClass('font-bold');
 		});
 
-		it('should wrap around when navigating before first tab', async () => {
-			render(<SettingsModal {...createDefaultProps()} />);
+		it('should wrap around when navigating before first tab (About)', async () => {
+			render(<SettingsModal {...createDefaultProps({ initialTab: 'about' })} />);
 
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			// Start on general tab (first tab)
-			expect(screen.getByText('Default Terminal Shell')).toBeInTheDocument();
+			// About is the first tab alphabetically
+			expect(screen.getByTitle('About')).toHaveClass('font-bold');
 
-			// Press Cmd+Shift+[ to wrap to Encore Features (last tab)
+			// Press Cmd+Shift+[ to wrap to Themes (last tab alphabetically)
 			fireEvent.keyDown(window, { key: '[', metaKey: true, shiftKey: true });
 
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
-			expect(screen.getByText('Encore Features', { selector: 'h3' })).toBeInTheDocument();
+			expect(screen.getByText('dark Mode')).toBeInTheDocument();
 		});
 	});
 
@@ -677,7 +809,12 @@ describe('SettingsModal', () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
-			fireEvent.click(screen.getByRole('button', { name: 'Small' }));
+			// Scope to the font-size section — the toast-width setting also renders
+			// Small/Medium/Large buttons, so an unscoped query is ambiguous.
+			const fontSizeSection = within(
+				document.querySelector('[data-setting-id="display-font-size"]') as HTMLElement
+			);
+			fireEvent.click(fontSizeSection.getByRole('button', { name: 'Small' }));
 			expect(mockSetFontSize).toHaveBeenCalledWith(12);
 		});
 
@@ -689,7 +826,10 @@ describe('SettingsModal', () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
-			fireEvent.click(screen.getByRole('button', { name: 'Medium' }));
+			const fontSizeSection = within(
+				document.querySelector('[data-setting-id="display-font-size"]') as HTMLElement
+			);
+			fireEvent.click(fontSizeSection.getByRole('button', { name: 'Medium' }));
 			expect(mockSetFontSize).toHaveBeenCalledWith(14);
 		});
 
@@ -701,7 +841,10 @@ describe('SettingsModal', () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
-			fireEvent.click(screen.getByRole('button', { name: 'Large' }));
+			const fontSizeSection = within(
+				document.querySelector('[data-setting-id="display-font-size"]') as HTMLElement
+			);
+			fireEvent.click(fontSizeSection.getByRole('button', { name: 'Large' }));
 			expect(mockSetFontSize).toHaveBeenCalledWith(16);
 		});
 
@@ -724,41 +867,11 @@ describe('SettingsModal', () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
-			const mediumButton = screen.getByText('Medium');
+			const fontSizeSection = within(
+				document.querySelector('[data-setting-id="display-font-size"]') as HTMLElement
+			);
+			const mediumButton = fontSizeSection.getByText('Medium');
 			expect(mediumButton).toHaveClass('ring-2');
-		});
-	});
-
-	describe('Display tab - Terminal width buttons', () => {
-		it('should call setTerminalWidth with 80', async () => {
-			const setTerminalWidth = vi.fn();
-			render(
-				<SettingsModal {...createDefaultProps({ setTerminalWidth, initialTab: 'display' })} />
-			);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			fireEvent.click(screen.getByRole('button', { name: '80' }));
-			expect(mockSetTerminalWidth).toHaveBeenCalledWith(80);
-		});
-
-		it('should call setTerminalWidth with 100', async () => {
-			const setTerminalWidth = vi.fn();
-			render(
-				<SettingsModal {...createDefaultProps({ setTerminalWidth, initialTab: 'display' })} />
-			);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			// Find the terminal width 100 button (not font size)
-			const buttons = screen.getAllByText('100');
-			const terminalWidthButton = buttons[0]; // First one is terminal width
-			fireEvent.click(terminalWidthButton);
-			expect(mockSetTerminalWidth).toHaveBeenCalledWith(100);
 		});
 	});
 
@@ -930,27 +1043,6 @@ describe('SettingsModal', () => {
 			expect(mockSetEnterToSendAI).toHaveBeenCalledWith(false);
 		});
 
-		it('should call setEnterToSendTerminal when toggled', async () => {
-			const setEnterToSendTerminal = vi.fn();
-			render(
-				<SettingsModal
-					{...createDefaultProps({ setEnterToSendTerminal, enterToSendTerminal: true })}
-				/>
-			);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			// Find the Terminal Mode section and click its toggle button
-			const terminalModeLabel = screen.getByText('Terminal Mode');
-			const terminalModeSection = terminalModeLabel.closest('.p-3');
-			const toggleButton = terminalModeSection?.querySelector('button');
-			fireEvent.click(toggleButton!);
-
-			expect(mockSetEnterToSendTerminal).toHaveBeenCalledWith(false);
-		});
-
 		it('should display Cmd+Enter (or Ctrl+Enter on non-Mac) when enter-to-send is false', async () => {
 			mockUseSettingsOverrides = { enterToSendAI: false };
 			render(<SettingsModal {...createDefaultProps()} />);
@@ -959,7 +1051,9 @@ describe('SettingsModal', () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
-			expect(screen.getByText(formatEnterToSend(false))).toBeInTheDocument();
+			// Both the AI Interaction Mode and Expanded AI Interaction Mode buttons can render
+			// this label depending on their respective settings; assert that at least one is shown.
+			expect(screen.getAllByText(formatEnterToSend(false)).length).toBeGreaterThan(0);
 		});
 	});
 
@@ -1003,7 +1097,8 @@ describe('SettingsModal', () => {
 		});
 
 		it('should show clear button when ghPath has value', async () => {
-			render(<SettingsModal {...createDefaultProps({ ghPath: '/usr/local/bin/gh' })} />);
+			mockUseSettingsOverrides = { ghPath: '/usr/local/bin/gh' };
+			render(<SettingsModal {...createDefaultProps()} />);
 
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(100);
@@ -1374,7 +1469,8 @@ describe('SettingsModal', () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
-			fireEvent.click(screen.getByRole('button', { name: 'Test' }));
+			const customSection = document.querySelector('[data-setting-id="notifications-custom"]')!;
+			fireEvent.click(within(customSection as HTMLElement).getByRole('button', { name: 'Test' }));
 
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(50);
@@ -1502,7 +1598,7 @@ describe('SettingsModal', () => {
 		it('should handle font detection failure gracefully', async () => {
 			(window.maestro as any).fonts.detect.mockRejectedValue(new Error('Font detection failed'));
 
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 
 			render(<SettingsModal {...createDefaultProps({ initialTab: 'display' })} />);
 
@@ -1528,7 +1624,7 @@ describe('SettingsModal', () => {
 				new Error('Shell detection failed')
 			);
 
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 
 			render(<SettingsModal {...createDefaultProps()} />);
 
@@ -1648,6 +1744,7 @@ describe('SettingsModal', () => {
 					return 'layer-123';
 				}),
 				unregisterLayer: vi.fn(),
+				updateLayerHandler: vi.fn(),
 				getTopLayer: vi.fn(),
 				closeTopLayer: vi.fn(),
 				getLayers: vi.fn(),
@@ -1698,7 +1795,8 @@ describe('SettingsModal', () => {
 			});
 
 			// Click Test button to start Command Chain
-			fireEvent.click(screen.getByRole('button', { name: 'Test' }));
+			const customSection = document.querySelector('[data-setting-id="notifications-custom"]')!;
+			fireEvent.click(within(customSection as HTMLElement).getByRole('button', { name: 'Test' }));
 
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(100);
@@ -1724,7 +1822,7 @@ describe('SettingsModal', () => {
 			});
 			vi.mocked(window.maestro.notification.stopSpeak).mockRejectedValue(new Error('Stop failed'));
 
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 
 			render(<SettingsModal {...createDefaultProps({ initialTab: 'notifications' })} />);
 
@@ -1733,7 +1831,8 @@ describe('SettingsModal', () => {
 			});
 
 			// Click Test button to start Command Chain
-			fireEvent.click(screen.getByRole('button', { name: 'Test' }));
+			const customSection = document.querySelector('[data-setting-id="notifications-custom"]')!;
+			fireEvent.click(within(customSection as HTMLElement).getByRole('button', { name: 'Test' }));
 
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(100);
@@ -1753,7 +1852,7 @@ describe('SettingsModal', () => {
 		it('should handle speak error gracefully', async () => {
 			vi.mocked(window.maestro.notification.speak).mockRejectedValue(new Error('Speak failed'));
 
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 
 			render(<SettingsModal {...createDefaultProps({ initialTab: 'notifications' })} />);
 
@@ -1762,7 +1861,8 @@ describe('SettingsModal', () => {
 			});
 
 			// Click Test button to trigger speak error
-			fireEvent.click(screen.getByRole('button', { name: 'Test' }));
+			const customSection = document.querySelector('[data-setting-id="notifications-custom"]')!;
+			fireEvent.click(within(customSection as HTMLElement).getByRole('button', { name: 'Test' }));
 
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(100);
@@ -1793,7 +1893,8 @@ describe('SettingsModal', () => {
 			});
 
 			// Click Test button to start Command Chain
-			fireEvent.click(screen.getByRole('button', { name: 'Test' }));
+			const customSection = document.querySelector('[data-setting-id="notifications-custom"]')!;
+			fireEvent.click(within(customSection as HTMLElement).getByRole('button', { name: 'Test' }));
 
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(100);
@@ -1819,7 +1920,10 @@ describe('SettingsModal', () => {
 			});
 
 			// Test button should be back
-			expect(screen.getByText('Test')).toBeInTheDocument();
+			const customSectionAfter = document.querySelector(
+				'[data-setting-id="notifications-custom"]'
+			)!;
+			expect(within(customSectionAfter as HTMLElement).getByText('Test')).toBeInTheDocument();
 		});
 	});
 
@@ -1998,36 +2102,6 @@ describe('SettingsModal', () => {
 		});
 	});
 
-	describe('Terminal width 120 and 160 buttons', () => {
-		it('should call setTerminalWidth with 120', async () => {
-			const setTerminalWidth = vi.fn();
-			render(
-				<SettingsModal {...createDefaultProps({ setTerminalWidth, initialTab: 'display' })} />
-			);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			fireEvent.click(screen.getByRole('button', { name: '120' }));
-			expect(mockSetTerminalWidth).toHaveBeenCalledWith(120);
-		});
-
-		it('should call setTerminalWidth with 160', async () => {
-			const setTerminalWidth = vi.fn();
-			render(
-				<SettingsModal {...createDefaultProps({ setTerminalWidth, initialTab: 'display' })} />
-			);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			fireEvent.click(screen.getByRole('button', { name: '160' }));
-			expect(mockSetTerminalWidth).toHaveBeenCalledWith(160);
-		});
-	});
-
 	describe('Max output lines 100 button', () => {
 		it('should call setMaxOutputLines with 100', async () => {
 			render(<SettingsModal {...createDefaultProps({ initialTab: 'display' })} />);
@@ -2070,143 +2144,6 @@ describe('SettingsModal', () => {
 			// JetBrains Mono is in the list, so it should be available
 			const options = fontSelect.querySelectorAll('option');
 			expect(options.length).toBeGreaterThan(0);
-		});
-	});
-
-	describe('WakaTime CLI status', () => {
-		it('should not check CLI when WakaTime is disabled', async () => {
-			render(<SettingsModal {...createDefaultProps()} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			expect(window.maestro.wakatime.checkCli).not.toHaveBeenCalled();
-		});
-
-		it('should check CLI when WakaTime is enabled', async () => {
-			mockUseSettingsOverrides = { wakatimeEnabled: true };
-			vi.mocked(window.maestro.wakatime.checkCli).mockResolvedValue({
-				available: true,
-				version: '1.0.0',
-			});
-
-			render(<SettingsModal {...createDefaultProps()} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			expect(window.maestro.wakatime.checkCli).toHaveBeenCalled();
-		});
-
-		it('should show auto-install message when CLI is not available', async () => {
-			mockUseSettingsOverrides = { wakatimeEnabled: true };
-			vi.mocked(window.maestro.wakatime.checkCli).mockResolvedValue({ available: false });
-
-			render(<SettingsModal {...createDefaultProps()} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			expect(
-				screen.getByText('WakaTime CLI is being installed automatically...')
-			).toBeInTheDocument();
-		});
-
-		it('should retry CLI check after 3 seconds when first check returns unavailable', async () => {
-			mockUseSettingsOverrides = { wakatimeEnabled: true };
-			vi.mocked(window.maestro.wakatime.checkCli)
-				.mockResolvedValueOnce({ available: false })
-				.mockResolvedValueOnce({ available: true, version: '1.0.0' });
-
-			render(<SettingsModal {...createDefaultProps()} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			// First check should have been called
-			expect(window.maestro.wakatime.checkCli).toHaveBeenCalledTimes(1);
-
-			// Advance to trigger retry
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(3000);
-			});
-
-			// Second check should have been called
-			expect(window.maestro.wakatime.checkCli).toHaveBeenCalledTimes(2);
-		});
-
-		it('should not retry CLI check when first check returns available', async () => {
-			mockUseSettingsOverrides = { wakatimeEnabled: true };
-			vi.mocked(window.maestro.wakatime.checkCli).mockResolvedValue({
-				available: true,
-				version: '1.0.0',
-			});
-
-			render(<SettingsModal {...createDefaultProps()} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			expect(window.maestro.wakatime.checkCli).toHaveBeenCalledTimes(1);
-
-			// Advance past retry timeout
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(3000);
-			});
-
-			// Should still be 1 — no retry needed
-			expect(window.maestro.wakatime.checkCli).toHaveBeenCalledTimes(1);
-		});
-
-		it('should not show auto-install message when CLI is available', async () => {
-			mockUseSettingsOverrides = { wakatimeEnabled: true };
-			vi.mocked(window.maestro.wakatime.checkCli).mockResolvedValue({
-				available: true,
-				version: '1.0.0',
-			});
-
-			render(<SettingsModal {...createDefaultProps()} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			expect(
-				screen.queryByText('WakaTime CLI is being installed automatically...')
-			).not.toBeInTheDocument();
-		});
-
-		it('should retry on error and update status after retry succeeds', async () => {
-			mockUseSettingsOverrides = { wakatimeEnabled: true };
-			vi.mocked(window.maestro.wakatime.checkCli)
-				.mockRejectedValueOnce(new Error('Network error'))
-				.mockResolvedValueOnce({ available: true, version: '1.0.0' });
-
-			render(<SettingsModal {...createDefaultProps()} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			// Should show the auto-install message after error
-			expect(
-				screen.getByText('WakaTime CLI is being installed automatically...')
-			).toBeInTheDocument();
-
-			// Advance to trigger retry
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(3000);
-			});
-
-			// After retry succeeds, message should disappear
-			expect(
-				screen.queryByText('WakaTime CLI is being installed automatically...')
-			).not.toBeInTheDocument();
 		});
 	});
 
@@ -2333,12 +2270,16 @@ describe('SettingsModal', () => {
 
 			expect(mockSetEncoreFeatures).toHaveBeenCalledWith({
 				directorNotes: true,
+				usageStats: true,
+				symphony: true,
 			});
 		});
 
 		it('should call setEncoreFeatures with false when toggling DN off', async () => {
 			mockSetEncoreFeatures.mockClear();
-			mockUseSettingsOverrides = { encoreFeatures: { directorNotes: true } };
+			mockUseSettingsOverrides = {
+				encoreFeatures: { directorNotes: true, usageStats: true, symphony: true },
+			};
 			render(<SettingsModal {...createDefaultProps()} />);
 
 			await act(async () => {
@@ -2357,12 +2298,154 @@ describe('SettingsModal', () => {
 
 			expect(mockSetEncoreFeatures).toHaveBeenCalledWith({
 				directorNotes: false,
+				usageStats: true,
+				symphony: true,
 			});
+		});
+
+		it('should show Usage & Stats feature toggle defaulting to on', async () => {
+			render(<SettingsModal {...createDefaultProps()} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			fireEvent.click(screen.getByTitle('Encore Features'));
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			expect(screen.getByText('Usage & Stats')).toBeInTheDocument();
+			// Settings should be visible when enabled (default on)
+			expect(screen.getByText('Default lookback window')).toBeInTheDocument();
+		});
+
+		it('should call setEncoreFeatures when Usage & Stats toggle is clicked off', async () => {
+			mockSetEncoreFeatures.mockClear();
+
+			render(<SettingsModal {...createDefaultProps()} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			fireEvent.click(screen.getByTitle('Encore Features'));
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			const usSection = screen.getByText('Usage & Stats').closest('button');
+			expect(usSection).toBeInTheDocument();
+			fireEvent.click(usSection!);
+
+			expect(mockSetEncoreFeatures).toHaveBeenCalledWith({
+				directorNotes: false,
+				usageStats: false,
+				symphony: true,
+			});
+		});
+
+		it('should show Maestro Symphony feature toggle defaulting to on', async () => {
+			render(<SettingsModal {...createDefaultProps()} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			fireEvent.click(screen.getByTitle('Encore Features'));
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			expect(screen.getByText('Maestro Symphony')).toBeInTheDocument();
+			// Settings should be visible when enabled (default on)
+			expect(screen.getByText('Registry Sources')).toBeInTheDocument();
+		});
+
+		it('should call setEncoreFeatures when Symphony toggle is clicked off', async () => {
+			mockSetEncoreFeatures.mockClear();
+
+			render(<SettingsModal {...createDefaultProps()} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			fireEvent.click(screen.getByTitle('Encore Features'));
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			const symphonySection = screen.getByText('Maestro Symphony').closest('button');
+			expect(symphonySection).toBeInTheDocument();
+			fireEvent.click(symphonySection!);
+
+			expect(mockSetEncoreFeatures).toHaveBeenCalledWith({
+				directorNotes: false,
+				usageStats: true,
+				symphony: false,
+			});
+		});
+
+		it('should call setEncoreFeatures when Symphony toggle is clicked on', async () => {
+			mockSetEncoreFeatures.mockClear();
+			mockUseSettingsOverrides = {
+				encoreFeatures: { directorNotes: false, usageStats: true, symphony: false },
+			};
+
+			render(<SettingsModal {...createDefaultProps()} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			fireEvent.click(screen.getByTitle('Encore Features'));
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			const symphonySection = screen.getByText('Maestro Symphony').closest('button');
+			expect(symphonySection).toBeInTheDocument();
+			fireEvent.click(symphonySection!);
+
+			expect(mockSetEncoreFeatures).toHaveBeenCalledWith({
+				directorNotes: false,
+				usageStats: true,
+				symphony: true,
+			});
+		});
+
+		it('should hide Symphony registry settings when symphony is disabled', async () => {
+			mockUseSettingsOverrides = {
+				encoreFeatures: { directorNotes: false, usageStats: true, symphony: false },
+			};
+
+			render(<SettingsModal {...createDefaultProps()} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			fireEvent.click(screen.getByTitle('Encore Features'));
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			expect(screen.getByText('Maestro Symphony')).toBeInTheDocument();
+			expect(screen.queryByText('Registry Sources')).not.toBeInTheDocument();
 		});
 
 		describe("with Director's Notes enabled", () => {
 			beforeEach(() => {
-				mockUseSettingsOverrides = { encoreFeatures: { directorNotes: true } };
+				mockUseSettingsOverrides = {
+					encoreFeatures: { directorNotes: true, usageStats: true, symphony: true },
+				};
 			});
 
 			it('should render provider dropdown with detected available agents', async () => {
@@ -2514,8 +2597,151 @@ describe('SettingsModal', () => {
 				});
 
 				expect(screen.getByText('1 day')).toBeInTheDocument();
-				expect(screen.getByText('90 days')).toBeInTheDocument();
+				// "90 days" appears in both the scale marker <span> and a <select> <option>
+				expect(screen.getAllByText('90 days').length).toBeGreaterThanOrEqual(1);
 			});
+		});
+	});
+
+	describe('settings search', () => {
+		it('should render search input', () => {
+			render(<SettingsModal {...createDefaultProps()} />);
+			expect(screen.getByPlaceholderText('Search settings...')).toBeInTheDocument();
+		});
+
+		it('should show search results when typing a query', async () => {
+			render(<SettingsModal {...createDefaultProps()} />);
+
+			const searchInput = screen.getByPlaceholderText('Search settings...');
+			fireEvent.change(searchInput, { target: { value: 'font' } });
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			// Text may be split by highlight spans, so use a function matcher
+			expect(
+				screen.getByText(
+					(_content, element) => element?.textContent === 'Font Family' && element.tagName === 'DIV'
+				)
+			).toBeInTheDocument();
+			expect(
+				screen.getByText(
+					(_content, element) => element?.textContent === 'Font Size' && element.tagName === 'DIV'
+				)
+			).toBeInTheDocument();
+		});
+
+		it('should show result count badge when searching', async () => {
+			render(<SettingsModal {...createDefaultProps()} />);
+
+			const searchInput = screen.getByPlaceholderText('Search settings...');
+			fireEvent.change(searchInput, { target: { value: 'font' } });
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			// The count badge should be visible
+			const badge = screen.getByText(/^\d+$/);
+			expect(badge).toBeInTheDocument();
+		});
+
+		it('should show no results message for unmatched query', async () => {
+			render(<SettingsModal {...createDefaultProps()} />);
+
+			const searchInput = screen.getByPlaceholderText('Search settings...');
+			fireEvent.change(searchInput, { target: { value: 'xyznonexistent' } });
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			expect(screen.getByText(/No settings found/)).toBeInTheDocument();
+		});
+
+		it('should hide sidebar and content when search is active', async () => {
+			render(<SettingsModal {...createDefaultProps()} />);
+
+			const searchInput = screen.getByPlaceholderText('Search settings...');
+			fireEvent.change(searchInput, { target: { value: 'shell' } });
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			// The sidebar+content wrapper should have the hidden class
+			const sidebar = screen.getByLabelText('Settings tabs');
+			expect(sidebar.closest('div.flex')?.className).toContain('hidden');
+		});
+
+		it('should clear search and show clear button', async () => {
+			render(<SettingsModal {...createDefaultProps()} />);
+
+			const searchInput = screen.getByPlaceholderText('Search settings...');
+			fireEvent.change(searchInput, { target: { value: 'notification' } });
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			// Clear button should be visible
+			const clearButton = screen.getByLabelText('Clear search');
+			expect(clearButton).toBeInTheDocument();
+
+			fireEvent.click(clearButton);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			// Search should be cleared, tab content visible again
+			expect(searchInput).toHaveValue('');
+		});
+
+		it('should search across multiple tabs', async () => {
+			render(<SettingsModal {...createDefaultProps()} />);
+
+			const searchInput = screen.getByPlaceholderText('Search settings...');
+			fireEvent.change(searchInput, { target: { value: 'ignore' } });
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			// The Display-tab "Local Ignore Patterns" entry was merged into the broader
+			// "File Indexing & File Panel Settings" section (still tagged with the
+			// ignore/gitignore keywords). The SSH-remote entry kept its original label.
+			expect(
+				screen.getByText(
+					(_content, element) =>
+						element?.textContent === 'File Indexing & File Panel Settings' &&
+						element.tagName === 'DIV'
+				)
+			).toBeInTheDocument();
+			expect(
+				screen.getByText(
+					(_content, element) =>
+						element?.textContent === 'SSH Remote Ignore Patterns' && element.tagName === 'DIV'
+				)
+			).toBeInTheDocument();
+		});
+
+		it('should group results by tab label', async () => {
+			render(<SettingsModal {...createDefaultProps()} />);
+
+			const searchInput = screen.getByPlaceholderText('Search settings...');
+			fireEvent.change(searchInput, { target: { value: 'ignore' } });
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			// Should show tab group headers (h3 elements in search results)
+			const groupHeaders = screen.getAllByRole('heading', { level: 3 });
+			const headerTexts = groupHeaders.map((h) => h.textContent);
+			expect(headerTexts).toContain('Display');
+			expect(headerTexts).toContain('SSH Hosts');
 		});
 	});
 });

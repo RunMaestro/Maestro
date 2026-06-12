@@ -12,6 +12,7 @@
 
 import { app } from 'electron';
 import Store from 'electron-store';
+import { parseJsonWithBom } from '../../shared/jsonUtils';
 
 import type {
 	BootstrapSettings,
@@ -19,6 +20,7 @@ import type {
 	SessionsData,
 	GroupsData,
 	AgentConfigsData,
+	AgentCapabilitiesData,
 	WindowState,
 	ClaudeSessionOriginsData,
 	AgentSessionOriginsData,
@@ -29,12 +31,17 @@ import {
 	SESSIONS_DEFAULTS,
 	GROUPS_DEFAULTS,
 	AGENT_CONFIGS_DEFAULTS,
+	AGENT_CAPABILITIES_DEFAULTS,
 	WINDOW_STATE_DEFAULTS,
 	CLAUDE_SESSION_ORIGINS_DEFAULTS,
 	AGENT_SESSION_ORIGINS_DEFAULTS,
 } from './defaults';
 
 import { getCustomSyncPath } from './utils';
+
+function deserializeStoreJson<T = Record<string, unknown>>(value: string): T {
+	return parseJsonWithBom<T>(value);
+}
 
 // ============================================================================
 // Store Instance Variables
@@ -45,6 +52,7 @@ let _settingsStore: Store<MaestroSettings> | null = null;
 let _sessionsStore: Store<SessionsData> | null = null;
 let _groupsStore: Store<GroupsData> | null = null;
 let _agentConfigsStore: Store<AgentConfigsData> | null = null;
+let _agentCapabilitiesStore: Store<AgentCapabilitiesData> | null = null;
 let _windowStateStore: Store<WindowState> | null = null;
 let _claudeSessionOriginsStore: Store<ClaudeSessionOriginsData> | null = null;
 let _agentSessionOriginsStore: Store<AgentSessionOriginsData> | null = null;
@@ -80,6 +88,7 @@ export function initializeStores(options: StoreInitOptions): {
 		name: 'maestro-bootstrap',
 		cwd: app.getPath('userData'),
 		defaults: {},
+		deserialize: deserializeStoreJson,
 	});
 
 	// 2. Determine sync path
@@ -95,18 +104,21 @@ export function initializeStores(options: StoreInitOptions): {
 		name: 'maestro-settings',
 		cwd: _syncPath,
 		defaults: SETTINGS_DEFAULTS,
+		deserialize: deserializeStoreJson,
 	});
 
 	_sessionsStore = new Store<SessionsData>({
 		name: 'maestro-sessions',
 		cwd: _syncPath,
 		defaults: SESSIONS_DEFAULTS,
+		deserialize: deserializeStoreJson,
 	});
 
 	_groupsStore = new Store<GroupsData>({
 		name: 'maestro-groups',
 		cwd: _syncPath,
 		defaults: GROUPS_DEFAULTS,
+		deserialize: deserializeStoreJson,
 	});
 
 	// Agent configs are ALWAYS stored in the production path, even in dev mode
@@ -115,12 +127,24 @@ export function initializeStores(options: StoreInitOptions): {
 		name: 'maestro-agent-configs',
 		cwd: _productionDataPath,
 		defaults: AGENT_CONFIGS_DEFAULTS,
+		deserialize: deserializeStoreJson,
+	});
+
+	// Agent capability snapshots — keyed by `agentId` or `agentId:remoteUuid`.
+	// Per-device because detection state (installed paths, auth status) is
+	// inherently local to the machine, even when other agent settings sync.
+	_agentCapabilitiesStore = new Store<AgentCapabilitiesData>({
+		name: 'maestro-agent-capabilities',
+		cwd: _productionDataPath,
+		defaults: AGENT_CAPABILITIES_DEFAULTS,
+		deserialize: deserializeStoreJson,
 	});
 
 	// Window state is intentionally NOT synced - it's per-device
 	_windowStateStore = new Store<WindowState>({
 		name: 'maestro-window-state',
 		defaults: WINDOW_STATE_DEFAULTS,
+		deserialize: deserializeStoreJson,
 	});
 
 	// Claude session origins - tracks which sessions were created by Maestro
@@ -128,6 +152,7 @@ export function initializeStores(options: StoreInitOptions): {
 		name: 'maestro-claude-session-origins',
 		cwd: _syncPath,
 		defaults: CLAUDE_SESSION_ORIGINS_DEFAULTS,
+		deserialize: deserializeStoreJson,
 	});
 
 	// Generic agent session origins - supports all agents (Codex, OpenCode, etc.)
@@ -135,6 +160,7 @@ export function initializeStores(options: StoreInitOptions): {
 		name: 'maestro-agent-session-origins',
 		cwd: _syncPath,
 		defaults: AGENT_SESSION_ORIGINS_DEFAULTS,
+		deserialize: deserializeStoreJson,
 	});
 
 	return {
@@ -160,6 +186,7 @@ export function getStoreInstances() {
 		sessionsStore: _sessionsStore,
 		groupsStore: _groupsStore,
 		agentConfigsStore: _agentConfigsStore,
+		agentCapabilitiesStore: _agentCapabilitiesStore,
 		windowStateStore: _windowStateStore,
 		claudeSessionOriginsStore: _claudeSessionOriginsStore,
 		agentSessionOriginsStore: _agentSessionOriginsStore,

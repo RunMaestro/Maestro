@@ -29,6 +29,9 @@ export const MODAL_PRIORITIES = {
 	/** Agent error modal - critical, shows recovery options */
 	AGENT_ERROR: 1010,
 
+	/** Forced parallel execution warning - one-time acknowledgment */
+	FORCED_PARALLEL_WARNING: 1005,
+
 	/** Confirmation dialogs - highest priority, always on top */
 	CONFIRM: 1000,
 
@@ -46,6 +49,9 @@ export const MODAL_PRIORITIES = {
 
 	/** Rename tab modal */
 	RENAME_TAB: 875,
+
+	/** Terminal tab startup command configuration modal */
+	TERMINAL_STARTUP_COMMAND: 873,
 
 	/** Director's Notes modal - unified history and AI overview */
 	DIRECTOR_NOTES: 848,
@@ -98,6 +104,9 @@ export const MODAL_PRIORITIES = {
 	/** Worktree configuration modal */
 	WORKTREE_CONFIG: 752,
 
+	/** New agent choice modal (Manual vs Wizard) */
+	NEW_AGENT_CHOICE: 756,
+
 	/** New instance creation modal */
 	NEW_INSTANCE: 750,
 
@@ -127,6 +136,10 @@ export const MODAL_PRIORITIES = {
 
 	/** Auto Run search bar (within expanded modal) */
 	AUTORUN_SEARCH: 706,
+
+	/** Auto Run document selector dropdown (above expanded modal so Esc closes
+	 * the dropdown first, leaving the modal open for a second Esc). */
+	AUTORUN_DOC_SELECTOR: 707,
 
 	/** Playbook Exchange modal - browse and import community playbooks (opens from BatchRunner or AutoRunExpanded, so needs higher priority than both) */
 	MARKETPLACE: 735,
@@ -170,6 +183,9 @@ export const MODAL_PRIORITIES = {
 	/** Agent sessions browser (Cmd+Shift+L) */
 	AGENT_SESSIONS: 680,
 
+	/** New memory filename modal (appears above Memory Viewer) */
+	MEMORY_CREATE: 695,
+
 	/** Execution queue browser modal */
 	EXECUTION_QUEUE_BROWSER: 670,
 
@@ -182,6 +198,12 @@ export const MODAL_PRIORITIES = {
 	/** Debug package generation modal */
 	DEBUG_PACKAGE: 605,
 
+	/** Debug: View Application Stats modal */
+	DEBUG_APPLICATION_STATS: 604,
+
+	/** Debug: Re-Probe Agents modal */
+	DEBUG_AGENT_PROBE: 603,
+
 	/** Windows warning modal - shown on startup for Windows users */
 	WINDOWS_WARNING: 615,
 
@@ -190,6 +212,9 @@ export const MODAL_PRIORITIES = {
 
 	/** Update check modal */
 	UPDATE_CHECK: 610,
+
+	/** Feedback modal */
+	FEEDBACK: 595,
 
 	/** Process monitor modal */
 	PROCESS_MONITOR: 550,
@@ -200,11 +225,33 @@ export const MODAL_PRIORITIES = {
 	/** Usage Dashboard modal */
 	USAGE_DASHBOARD: 540,
 
+	/** Per-agent detail sub-modal opened from the Usage Dashboard's Agents tab */
+	USAGE_DASHBOARD_AGENT_DETAIL: 541,
+
 	/** System log viewer overlay */
 	LOG_VIEWER: 500,
 
+	/** Maestro Cue backup diff viewer (above Cue modal + help) */
+	CUE_BACKUP_DIFF: 470,
+
+	/** Maestro Cue help modal (above Cue modal) */
+	CUE_HELP: 465,
+
+	/** Maestro Cue pattern preview modal (above YAML editor) */
+	CUE_PATTERN_PREVIEW: 464,
+
+	/** Maestro Cue YAML editor modal (above Cue modal, below help) */
+	CUE_YAML_EDITOR: 463,
+
+	/** Maestro Cue dashboard modal */
+	CUE_MODAL: 460,
+
 	/** SSH Remote configuration modal (above settings) */
-	SSH_REMOTE: 460,
+	SSH_REMOTE: 458,
+
+	/** Custom theme base-theme picker dropdown (above settings so Escape closes
+	 * the dropdown first, leaving the Settings modal open for a second Esc). */
+	CUSTOM_THEME_BASE_SELECTOR: 451,
 
 	/** Settings modal */
 	SETTINGS: 450,
@@ -217,6 +264,13 @@ export const MODAL_PRIORITIES = {
 
 	/** Save markdown modal */
 	SAVE_MARKDOWN: 160,
+
+	/** Image save destination modal (overwrite vs save-as) - above the annotator
+	 * so it layers correctly if the annotator is still settling closed. */
+	IMAGE_SAVE: 168,
+
+	/** Image annotator modal - above lightbox so Escape closes annotator first */
+	IMAGE_ANNOTATOR: 165,
 
 	/** Image lightbox overlay */
 	LIGHTBOX: 150,

@@ -9,6 +9,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import fs from 'fs/promises';
 import { ClaudeSessionStorage } from '../../../main/storage/claude-session-storage';
 import type { SshRemoteConfig } from '../../../shared/types';
 import type Store from 'electron-store';
@@ -53,9 +54,8 @@ vi.mock('fs/promises', () => ({
 
 // Mock remote-fs utilities
 vi.mock('../../../main/utils/remote-fs', () => ({
-	readDirRemote: vi.fn(),
 	readFileRemote: vi.fn(),
-	statRemote: vi.fn(),
+	listDirWithStatsRemote: vi.fn(),
 }));
 
 // Mock statsCache
@@ -411,6 +411,216 @@ describe('ClaudeSessionStorage', () => {
 			storage.registerSessionOrigin('/project', 'session-1', 'user');
 
 			expect(mockStore.set).toHaveBeenCalledWith('origins', expect.any(Object));
+		});
+	});
+
+	describe('readSessionMessages - image reconstruction', () => {
+		const jsonl = (entries: unknown[]): string => entries.map((e) => JSON.stringify(e)).join('\n');
+
+		it('reconstructs base64 data URLs from image content blocks', async () => {
+			const transcript = jsonl([
+				{
+					type: 'user',
+					timestamp: '2026-06-02T02:41:00.000Z',
+					uuid: 'u1',
+					message: {
+						role: 'user',
+						content: [
+							{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } },
+							{ type: 'text', text: 'look at this' },
+						],
+					},
+				},
+			]);
+			vi.mocked(fs.readFile).mockResolvedValue(transcript as never);
+
+			const result = await storage.readSessionMessages('/project', 'session-1');
+
+			expect(result.messages).toHaveLength(1);
+			expect(result.messages[0].images).toEqual(['data:image/png;base64,AAAA']);
+			expect(result.messages[0].content).toBe('look at this');
+		});
+
+		it('drops the synthetic [Image: ...] placeholder text when images are recovered', async () => {
+			const transcript = jsonl([
+				{
+					type: 'user',
+					timestamp: '2026-06-02T02:41:00.000Z',
+					uuid: 'u1',
+					message: {
+						role: 'user',
+						content: [
+							{ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: 'BBBB' } },
+							{
+								type: 'text',
+								text: '[Image: original 2808x1566, displayed at 2000x1115. Multiply coordinates by 1.40 to map to original image.]',
+							},
+						],
+					},
+				},
+			]);
+			vi.mocked(fs.readFile).mockResolvedValue(transcript as never);
+
+			const result = await storage.readSessionMessages('/project', 'session-1');
+
+			expect(result.messages).toHaveLength(1);
+			expect(result.messages[0].images).toEqual(['data:image/jpeg;base64,BBBB']);
+			expect(result.messages[0].content).toBe('');
+		});
+
+		it('drops a standalone placeholder-only message that has no image block', async () => {
+			// The harness sometimes emits the [Image: ...] description as its own
+			// follow-up message (an echo of an image shown in a prior turn). With no
+			// real image to render, the whole message collapses to nothing.
+			const transcript = jsonl([
+				{
+					type: 'user',
+					timestamp: '2026-06-02T02:41:00.000Z',
+					uuid: 'real',
+					message: {
+						role: 'user',
+						content: [
+							{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } },
+							{ type: 'text', text: 'Getting better but...' },
+						],
+					},
+				},
+				{
+					type: 'user',
+					timestamp: '2026-06-02T02:41:01.000Z',
+					uuid: 'echo',
+					message: {
+						role: 'user',
+						content: [
+							{
+								type: 'text',
+								text: '[Image: original 2808x1566, displayed at 2000x1115. Multiply coordinates by 1.40 to map to original image.]\n[Image: original 2828x1906, displayed at 2000x1348. Multiply coordinates by 1.41 to map to original image.]',
+							},
+						],
+					},
+				},
+			]);
+			vi.mocked(fs.readFile).mockResolvedValue(transcript as never);
+
+			const result = await storage.readSessionMessages('/project', 'session-1');
+
+			expect(result.messages).toHaveLength(1);
+			expect(result.messages[0].uuid).toBe('real');
+			expect(result.messages[0].images).toEqual(['data:image/png;base64,AAAA']);
+			expect(result.messages[0].content).toBe('Getting better but...');
+		});
+
+		it('keeps real text while stripping a placeholder line in the same block', async () => {
+			const transcript = jsonl([
+				{
+					type: 'user',
+					timestamp: '2026-06-02T02:41:00.000Z',
+					uuid: 'u1',
+					message: {
+						role: 'user',
+						content: [
+							{
+								type: 'text',
+								text: 'before\n[Image: original 100x100, displayed at 50x50. Multiply coordinates by 2.00 to map to original image.]\nafter',
+							},
+						],
+					},
+				},
+			]);
+			vi.mocked(fs.readFile).mockResolvedValue(transcript as never);
+
+			const result = await storage.readSessionMessages('/project', 'session-1');
+
+			expect(result.messages).toHaveLength(1);
+			expect(result.messages[0].content).toBe('before\nafter');
+		});
+
+		it('keeps a message that has only images and no text', async () => {
+			const transcript = jsonl([
+				{
+					type: 'user',
+					timestamp: '2026-06-02T02:41:00.000Z',
+					uuid: 'u1',
+					message: {
+						role: 'user',
+						content: [
+							{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'CCCC' } },
+						],
+					},
+				},
+			]);
+			vi.mocked(fs.readFile).mockResolvedValue(transcript as never);
+
+			const result = await storage.readSessionMessages('/project', 'session-1');
+
+			expect(result.messages).toHaveLength(1);
+			expect(result.messages[0].images).toEqual(['data:image/png;base64,CCCC']);
+		});
+
+		it('preserves multiple images in order', async () => {
+			const transcript = jsonl([
+				{
+					type: 'user',
+					timestamp: '2026-06-02T02:41:00.000Z',
+					uuid: 'u1',
+					message: {
+						role: 'user',
+						content: [
+							{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'one' } },
+							{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'two' } },
+							{ type: 'text', text: 'two shots' },
+						],
+					},
+				},
+			]);
+			vi.mocked(fs.readFile).mockResolvedValue(transcript as never);
+
+			const result = await storage.readSessionMessages('/project', 'session-1');
+
+			expect(result.messages[0].images).toEqual([
+				'data:image/png;base64,one',
+				'data:image/png;base64,two',
+			]);
+		});
+
+		it('does not set images for text-only messages', async () => {
+			const transcript = jsonl([
+				{
+					type: 'assistant',
+					timestamp: '2026-06-02T02:42:00.000Z',
+					uuid: 'a1',
+					message: { role: 'assistant', content: [{ type: 'text', text: 'plain reply' }] },
+				},
+			]);
+			vi.mocked(fs.readFile).mockResolvedValue(transcript as never);
+
+			const result = await storage.readSessionMessages('/project', 'session-1');
+
+			expect(result.messages[0].images).toBeUndefined();
+			expect(result.messages[0].content).toBe('plain reply');
+		});
+
+		it('ignores malformed image blocks lacking base64 data', async () => {
+			const transcript = jsonl([
+				{
+					type: 'user',
+					timestamp: '2026-06-02T02:41:00.000Z',
+					uuid: 'u1',
+					message: {
+						role: 'user',
+						content: [
+							{ type: 'image', source: { type: 'url', url: 'https://example.com/x.png' } },
+							{ type: 'text', text: 'with a url image' },
+						],
+					},
+				},
+			]);
+			vi.mocked(fs.readFile).mockResolvedValue(transcript as never);
+
+			const result = await storage.readSessionMessages('/project', 'session-1');
+
+			expect(result.messages[0].images).toBeUndefined();
+			expect(result.messages[0].content).toBe('with a url image');
 		});
 	});
 });

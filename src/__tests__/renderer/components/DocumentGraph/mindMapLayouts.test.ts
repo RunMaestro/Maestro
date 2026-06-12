@@ -1,7 +1,7 @@
 /**
  * Tests for the canvas-based mind map layout algorithms (mindMapLayouts.ts)
  *
- * Verifies the three layout algorithms (Mind Map, Radial, Force-Directed),
+ * Verifies the four layout algorithms (Mind Map, Radial, Hierarchical, Force-Directed),
  * the calculateLayout dispatcher, shared utilities, and constants.
  */
 
@@ -16,6 +16,7 @@ import {
 	calculateLayout,
 	calculateMindMapLayout,
 	calculateRadialLayout,
+	calculateHierarchicalLayout,
 	calculateForceLayout,
 	buildAdjacencyMap,
 	calculateNodeHeight,
@@ -135,8 +136,8 @@ describe('mindMapLayouts', () => {
 	// ====================================================================
 
 	describe('LAYOUT_LABELS', () => {
-		it('has entries for all three layout types', () => {
-			const types: MindMapLayoutType[] = ['mindmap', 'radial', 'force'];
+		it('has entries for all four layout types', () => {
+			const types: MindMapLayoutType[] = ['mindmap', 'radial', 'hierarchical', 'force'];
 			for (const type of types) {
 				expect(LAYOUT_LABELS[type]).toBeDefined();
 				expect(LAYOUT_LABELS[type].name).toBeTruthy();
@@ -509,6 +510,69 @@ describe('mindMapLayouts', () => {
 	});
 
 	// ====================================================================
+	// Hierarchical Layout (Top-Down)
+	// ====================================================================
+
+	describe('calculateHierarchicalLayout', () => {
+		it('returns empty result when center node not found', () => {
+			const result = calculateHierarchicalLayout(
+				[],
+				[],
+				buildAdjacencyMap([]),
+				'nonexistent',
+				2,
+				1200,
+				800,
+				false,
+				100
+			);
+			expect(result.nodes).toEqual([]);
+		});
+
+		it('places center at canvas center and children below it', () => {
+			const { nodes, links } = buildStarGraph();
+			const adjacency = buildAdjacencyMap(links);
+			const result = calculateHierarchicalLayout(
+				nodes,
+				links,
+				adjacency,
+				'center',
+				2,
+				1200,
+				800,
+				false,
+				100
+			);
+			const center = result.nodes.find((n) => n.id === 'center')!;
+			const children = result.nodes.filter((n) => n.id !== 'center');
+			expect(children.length).toBeGreaterThan(0);
+			for (const child of children) {
+				expect(child.y).toBeGreaterThan(center.y);
+			}
+		});
+
+		it('aligns siblings on the same horizontal row', () => {
+			const { nodes, links } = buildStarGraph();
+			const adjacency = buildAdjacencyMap(links);
+			const result = calculateHierarchicalLayout(
+				nodes,
+				links,
+				adjacency,
+				'center',
+				2,
+				1200,
+				800,
+				false,
+				100
+			);
+			const siblings = result.nodes.filter((n) => n.id !== 'center');
+			const ys = new Set(siblings.map((n) => n.y));
+			// Star graph has all neighbors at depth 1 — they should share a single row Y.
+			expect(ys.size).toBe(1);
+		});
+	});
+
+	// ====================================================================
 	// Force-Directed Layout
 	// ====================================================================
 
@@ -626,29 +690,141 @@ describe('mindMapLayouts', () => {
 
 			const mindmap = calculateMindMapLayout(...args);
 			const radial = calculateRadialLayout(...args);
+			const hierarchical = calculateHierarchicalLayout(...args);
 			const force = calculateForceLayout(...args);
 
 			// Each algorithm should produce positioned nodes
 			expect(mindmap.nodes.length).toBeGreaterThan(0);
 			expect(radial.nodes.length).toBeGreaterThan(0);
+			expect(hierarchical.nodes.length).toBeGreaterThan(0);
 			expect(force.nodes.length).toBeGreaterThan(0);
 
 			// At least some positions should differ between algorithms
 			// (comparing node A's position across layouts)
 			const mmA = mindmap.nodes.find((n) => n.id === 'A');
 			const rdA = radial.nodes.find((n) => n.id === 'A');
+			const hrA = hierarchical.nodes.find((n) => n.id === 'A');
 			const fcA = force.nodes.find((n) => n.id === 'A');
 
-			if (mmA && rdA && fcA) {
+			if (mmA && rdA && hrA && fcA) {
 				const positions = [
 					{ x: mmA.x, y: mmA.y },
 					{ x: rdA.x, y: rdA.y },
+					{ x: hrA.x, y: hrA.y },
 					{ x: fcA.x, y: fcA.y },
 				];
-				// Not all three should be identical
+				// Not all four should be identical
 				const allSame = positions.every((p) => p.x === positions[0].x && p.y === positions[0].y);
 				expect(allSame).toBe(false);
 			}
+		});
+	});
+
+	// ====================================================================
+	// Spacing scale: +/- key adjustment multiplier applied across layouts
+	// ====================================================================
+
+	describe('spacingScale parameter', () => {
+		it('expands mind map horizontal columns when scale > 1', () => {
+			const { nodes, links } = buildStarGraph();
+			const adjacency = buildAdjacencyMap(links);
+			const base = calculateMindMapLayout(
+				nodes,
+				links,
+				adjacency,
+				'center',
+				2,
+				1200,
+				800,
+				false,
+				100
+			);
+			const wide = calculateMindMapLayout(
+				nodes,
+				links,
+				adjacency,
+				'center',
+				2,
+				1200,
+				800,
+				false,
+				100,
+				2
+			);
+			const baseA = base.nodes.find((n) => n.id === 'A')!;
+			const wideA = wide.nodes.find((n) => n.id === 'A')!;
+			const center = base.nodes.find((n) => n.id === 'center')!;
+			expect(Math.abs(wideA.x - center.x)).toBeGreaterThan(Math.abs(baseA.x - center.x));
+		});
+
+		it('expands radial rings when scale > 1', () => {
+			const { nodes, links } = buildStarGraph();
+			const adjacency = buildAdjacencyMap(links);
+			const base = calculateRadialLayout(
+				nodes,
+				links,
+				adjacency,
+				'center',
+				2,
+				1200,
+				800,
+				false,
+				100
+			);
+			const wide = calculateRadialLayout(
+				nodes,
+				links,
+				adjacency,
+				'center',
+				2,
+				1200,
+				800,
+				false,
+				100,
+				2
+			);
+			const center = base.nodes.find((n) => n.id === 'center')!;
+			const baseRadius = Math.hypot(
+				base.nodes.find((n) => n.id === 'A')!.x - center.x,
+				base.nodes.find((n) => n.id === 'A')!.y - center.y
+			);
+			const wideRadius = Math.hypot(
+				wide.nodes.find((n) => n.id === 'A')!.x - center.x,
+				wide.nodes.find((n) => n.id === 'A')!.y - center.y
+			);
+			expect(wideRadius).toBeGreaterThan(baseRadius);
+		});
+
+		it('treats undefined spacingScale as 1 (backward compatible)', () => {
+			const { nodes, links } = buildStarGraph();
+			const adjacency = buildAdjacencyMap(links);
+			const noScale = calculateMindMapLayout(
+				nodes,
+				links,
+				adjacency,
+				'center',
+				2,
+				1200,
+				800,
+				false,
+				100
+			);
+			const explicitOne = calculateMindMapLayout(
+				nodes,
+				links,
+				adjacency,
+				'center',
+				2,
+				1200,
+				800,
+				false,
+				100,
+				1
+			);
+			const a1 = noScale.nodes.find((n) => n.id === 'A')!;
+			const a2 = explicitOne.nodes.find((n) => n.id === 'A')!;
+			expect(a2.x).toBe(a1.x);
+			expect(a2.y).toBe(a1.y);
 		});
 	});
 });

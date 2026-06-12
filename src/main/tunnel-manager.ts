@@ -1,6 +1,7 @@
-import { ChildProcess, spawn } from 'child_process';
+import { ChildProcess, spawn, execFileSync } from 'child_process';
 import { logger } from './utils/logger';
 import { getCloudflaredPath, isCloudflaredInstalled } from './utils/cliDetection';
+import { isWindows } from '../shared/platformDetection';
 
 export interface TunnelStatus {
 	isRunning: boolean;
@@ -44,10 +45,16 @@ class TunnelManager {
 				'TunnelManager'
 			);
 
-			this.process = spawn(cloudflaredBinary, ['tunnel', '--url', `http://localhost:${port}`]);
+			this.process = spawn(cloudflaredBinary, [
+				'tunnel',
+				'--url',
+				`http://localhost:${port}`,
+				'--protocol',
+				'http2',
+			]);
 
 			let resolved = false;
-			let stderrBuffer = '';
+			let outputBuffer = '';
 
 			// Timeout after 30 seconds
 			const timeout = setTimeout(() => {
@@ -59,23 +66,27 @@ class TunnelManager {
 				}
 			}, 30000);
 
-			// Cloudflare outputs the URL to stderr
-			// Accumulate buffer in case URL is split across chunks
-			this.process.stderr?.on('data', (data: Buffer) => {
+			const handleOutput = (data: Buffer) => {
 				const output = data.toString();
-				stderrBuffer += output;
+				outputBuffer += output;
 				logger.info(`cloudflared output: ${output}`, 'TunnelManager');
 
 				// Look for the trycloudflare.com URL in accumulated buffer
-				const urlMatch = stderrBuffer.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/i);
+				const urlMatch = outputBuffer.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/i);
 				if (urlMatch && !resolved) {
 					this.url = urlMatch[0];
 					clearTimeout(timeout);
 					resolved = true;
+					this.process?.stderr?.off('data', handleOutput);
+					this.process?.stdout?.off('data', handleOutput);
 					logger.info(`Tunnel established: ${this.url}`, 'TunnelManager');
 					resolve({ success: true, url: this.url });
 				}
-			});
+			};
+
+			// cloudflared outputs the URL to stderr, but also listen on stdout as a fallback
+			this.process.stderr?.on('data', handleOutput);
+			this.process.stdout?.on('data', handleOutput);
 
 			this.process.on('error', (err) => {
 				clearTimeout(timeout);
@@ -111,16 +122,32 @@ class TunnelManager {
 			logger.info('Stopping tunnel', 'TunnelManager');
 			this.stopping = true;
 			const proc = this.process;
-			proc.kill('SIGTERM');
+
+			if (isWindows() && proc.pid) {
+				// On Windows, POSIX signals don't terminate process trees.
+				// Use taskkill /t /f synchronously to ensure the process tree is
+				// dead before the app exits (stop() is called during shutdown).
+				try {
+					execFileSync('taskkill', ['/pid', String(proc.pid), '/t', '/f'], {
+						timeout: 5000,
+					});
+				} catch {
+					// taskkill returns non-zero if the process is already dead, which is fine
+				}
+			} else {
+				proc.kill('SIGTERM');
+			}
 
 			// Wait for process to exit with timeout
 			await new Promise<void>((resolve) => {
 				const timeout = setTimeout(() => {
-					// Force kill if SIGTERM didn't work
-					try {
-						proc.kill('SIGKILL');
-					} catch {
-						// Process may already be dead
+					// Force kill if SIGTERM didn't work (POSIX only; Windows already used taskkill)
+					if (!isWindows()) {
+						try {
+							proc.kill('SIGKILL');
+						} catch {
+							// Process may already be dead
+						}
 					}
 					resolve();
 				}, 3000);

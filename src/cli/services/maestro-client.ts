@@ -1,36 +1,28 @@
-import { randomUUID } from 'crypto';
+// CLI WebSocket client for communicating with the running Maestro desktop app.
+// Uses the discovery file from cli-server-discovery to find the server.
+
 import WebSocket from 'ws';
 import { readCliServerInfo, isCliServerRunning } from '../../shared/cli-server-discovery';
-import { getSessionById, readSessions, readSettings } from './storage';
+import { getSessionById, readSessions, readSettings, resolveAgentId } from './storage';
 
 const CONNECT_TIMEOUT_MS = 5000;
-const COMMAND_TIMEOUT_MS = 10000;
+const DEFAULT_COMMAND_TIMEOUT_MS = 10000;
 
-interface MaestroMessage {
-	type?: string;
-	requestId?: string;
-	success?: boolean;
-	error?: string;
-	message?: string;
-	[key: string]: unknown;
-}
-
-interface PendingRequest<T> {
-	responseType: string;
-	resolve: (value: T) => void;
-	reject: (reason?: unknown) => void;
-	timeout: NodeJS.Timeout;
-}
-
-export interface SessionResolutionOptions {
-	session?: string;
+interface PendingRequest {
+	resolve: (value: unknown) => void;
+	reject: (reason: Error) => void;
+	timeout: ReturnType<typeof setTimeout>;
+	expectedType: string;
 }
 
 export class MaestroClient {
 	private ws: WebSocket | null = null;
-	private pendingRequests = new Map<string, PendingRequest<unknown>>();
+	private pendingRequests: Map<string, PendingRequest> = new Map();
 
-	/** Connect to the running Maestro app. Throws if app not running. */
+	/**
+	 * Connect to the running Maestro app.
+	 * Throws if the app is not running or connection fails.
+	 */
 	async connect(): Promise<void> {
 		const info = readCliServerInfo();
 		if (!info) {
@@ -38,215 +30,240 @@ export class MaestroClient {
 		}
 
 		if (!isCliServerRunning()) {
-			throw new Error('Maestro desktop app is not running');
+			throw new Error('Maestro discovery file is stale (app may have crashed)');
 		}
 
-		await new Promise<void>((resolve, reject) => {
-			const ws = new WebSocket(`ws://localhost:${info.port}/${info.token}/ws`);
+		// Use 127.0.0.1 instead of `localhost` — Node 18's default DNS resolution
+		// resolves `localhost` to IPv6 (::1) first, but the desktop app binds to
+		// 0.0.0.0 (IPv4 only), so `localhost` yields ECONNREFUSED on ::1.
+		const url = `ws://127.0.0.1:${info.port}/${info.token}/ws`;
+
+		return new Promise<void>((resolve, reject) => {
 			let settled = false;
 
+			const ws = new WebSocket(url);
+
 			const timeout = setTimeout(() => {
-				if (settled) return;
-				settled = true;
-				ws.close();
-				reject(new Error('Timed out connecting to Maestro desktop app'));
+				if (!settled) {
+					settled = true;
+					ws.close();
+					reject(new Error('Connection to Maestro timed out'));
+				}
 			}, CONNECT_TIMEOUT_MS);
 
-			const cleanup = (): void => {
+			ws.on('open', () => {
+				if (settled) {
+					ws.close();
+					return;
+				}
+				settled = true;
 				clearTimeout(timeout);
-				ws.off('open', onOpen);
-				ws.off('error', onError);
-			};
-
-			const onOpen = (): void => {
-				if (settled) return;
-				settled = true;
-				cleanup();
 				this.ws = ws;
-				ws.on('message', (data) => this.handleMessage(data));
-				ws.on('close', () => this.rejectAllPending(new Error('Connection to Maestro closed')));
-				ws.on('error', (error) => this.rejectAllPending(error));
+				this.setupMessageHandler();
 				resolve();
-			};
+			});
 
-			const onError = (error: Error): void => {
+			ws.on('error', (err) => {
 				if (settled) return;
 				settled = true;
-				cleanup();
-				reject(error);
-			};
-
-			ws.once('open', onOpen);
-			ws.once('error', onError);
+				clearTimeout(timeout);
+				reject(new Error(`Failed to connect to Maestro: ${err.message}`));
+			});
 		});
 	}
 
-	/** Send a message and wait for a typed response. */
+	/**
+	 * Send a message and wait for a typed response.
+	 */
 	async sendCommand<T>(
-		message: object,
+		message: Record<string, unknown>,
 		responseType: string,
-		timeoutMs = COMMAND_TIMEOUT_MS
+		timeoutMs: number = DEFAULT_COMMAND_TIMEOUT_MS
 	): Promise<T> {
 		if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-			throw new Error('Not connected to Maestro desktop app');
+			throw new Error('Not connected to Maestro');
 		}
 
-		const requestId = randomUUID();
-		const payload = { ...message, requestId };
+		const requestId = `req_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
 		return new Promise<T>((resolve, reject) => {
 			const timeout = setTimeout(() => {
 				this.pendingRequests.delete(requestId);
-				reject(new Error(`Timed out waiting for ${responseType}`));
+				reject(new Error(`Command timed out waiting for ${responseType}`));
 			}, timeoutMs);
 
 			this.pendingRequests.set(requestId, {
-				responseType,
 				resolve: resolve as (value: unknown) => void,
 				reject,
 				timeout,
+				expectedType: responseType,
 			});
 
-			this.ws!.send(JSON.stringify(payload), (error) => {
-				if (!error) return;
-
-				const pending = this.pendingRequests.get(requestId);
-				if (pending) {
-					clearTimeout(pending.timeout);
-					this.pendingRequests.delete(requestId);
-					pending.reject(error);
-				}
-			});
+			this.ws!.send(JSON.stringify({ ...message, requestId }));
 		});
 	}
 
-	/** Disconnect gracefully. */
+	/**
+	 * Disconnect gracefully.
+	 */
 	disconnect(): void {
-		this.rejectAllPending(new Error('Disconnected from Maestro desktop app'));
+		for (const [, pending] of this.pendingRequests) {
+			clearTimeout(pending.timeout);
+			pending.reject(new Error('Client disconnected'));
+		}
+		this.pendingRequests.clear();
+
 		if (this.ws) {
 			this.ws.close();
 			this.ws = null;
 		}
 	}
 
-	private handleMessage(data: WebSocket.RawData): void {
-		let message: MaestroMessage;
-		try {
-			message = JSON.parse(data.toString()) as MaestroMessage;
-		} catch (error) {
-			this.rejectAllPending(new Error('Invalid message from Maestro desktop app'));
-			throw error;
-		}
+	private setupMessageHandler(): void {
+		if (!this.ws) return;
 
-		if (message.type === 'error') {
-			this.rejectMatchingOrAll(message);
-			return;
-		}
-
-		if (message.requestId) {
-			const pending = this.pendingRequests.get(message.requestId);
-			if (!pending || message.type !== pending.responseType) return;
-
-			clearTimeout(pending.timeout);
-			this.pendingRequests.delete(message.requestId);
-
-			if (message.success === false) {
-				pending.reject(new Error(this.getErrorMessage(message)));
-			} else {
-				pending.resolve(message);
-			}
-			return;
-		}
-
-		const matchingRequests = [...this.pendingRequests.entries()].filter(
-			([, pending]) => message.type === pending.responseType
-		);
-
-		if (matchingRequests.length > 1) {
-			const error = new Error(`Protocol error: response ${message.type} is missing requestId`);
-			for (const [requestId, pending] of matchingRequests) {
+		this.ws.on('close', (code?: number, reason?: Buffer) => {
+			const reasonStr = reason?.toString();
+			for (const [, pending] of this.pendingRequests) {
 				clearTimeout(pending.timeout);
-				this.pendingRequests.delete(requestId);
-				pending.reject(error);
+				pending.reject(
+					new Error(
+						`Connection closed${code ? ` (code=${code})` : ''}${reasonStr ? `: ${reasonStr}` : ''}`
+					)
+				);
 			}
-			return;
-		}
+			this.pendingRequests.clear();
+			this.ws = null;
+		});
 
-		const [match] = matchingRequests;
-		if (match) {
-			const [requestId, pending] = match;
-
-			clearTimeout(pending.timeout);
-			this.pendingRequests.delete(requestId);
-
-			if (message.success === false) {
-				pending.reject(new Error(this.getErrorMessage(message)));
-			} else {
-				pending.resolve(message);
+		this.ws.on('message', (data) => {
+			let msg: Record<string, unknown>;
+			try {
+				msg = JSON.parse(data.toString()) as Record<string, unknown>;
+			} catch (error) {
+				this.rejectAllPending(new Error('Invalid message from Maestro desktop app'));
+				throw error;
 			}
-			return;
-		}
+
+			const msgType = msg.type as string;
+			const msgRequestId = msg.requestId as string | undefined;
+
+			if (msgRequestId) {
+				const pending = this.pendingRequests.get(msgRequestId);
+				if (!pending) return;
+				if (pending.expectedType !== msgType && msgType !== 'error') return;
+				this.settleRequest(msgRequestId, pending, msg);
+				return;
+			}
+
+			const matchingRequests = [...this.pendingRequests.entries()].filter(
+				([, pending]) => pending.expectedType === msgType
+			);
+			if (matchingRequests.length === 1) {
+				const [requestId, pending] = matchingRequests[0];
+				this.settleRequest(requestId, pending, msg);
+			} else if (matchingRequests.length > 1) {
+				const error = new Error(`Ambiguous ${msgType} response without requestId`);
+				for (const [requestId, pending] of matchingRequests) {
+					clearTimeout(pending.timeout);
+					this.pendingRequests.delete(requestId);
+					pending.reject(error);
+				}
+			}
+		});
 	}
 
-	private rejectMatchingOrAll(message: MaestroMessage): void {
-		const error = new Error(this.getErrorMessage(message));
-
-		if (message.requestId) {
-			const pending = this.pendingRequests.get(message.requestId);
-			if (pending) {
-				clearTimeout(pending.timeout);
-				this.pendingRequests.delete(message.requestId);
-				pending.reject(error);
-			}
+	private settleRequest(
+		requestId: string,
+		pending: PendingRequest,
+		msg: Record<string, unknown>
+	): void {
+		clearTimeout(pending.timeout);
+		this.pendingRequests.delete(requestId);
+		if (msg.type === 'error' || msg.success === false) {
+			const message =
+				typeof msg.error === 'string'
+					? msg.error
+					: typeof msg.message === 'string'
+						? msg.message
+						: 'Command failed';
+			pending.reject(new Error(message));
 			return;
 		}
-
-		this.rejectAllPending(error);
+		pending.resolve(msg);
 	}
 
 	private rejectAllPending(error: Error): void {
-		for (const [requestId, pending] of this.pendingRequests) {
+		for (const [, pending] of this.pendingRequests) {
 			clearTimeout(pending.timeout);
-			this.pendingRequests.delete(requestId);
 			pending.reject(error);
 		}
-	}
-
-	private getErrorMessage(message: MaestroMessage): string {
-		return message.error || message.message || 'Maestro command failed';
+		this.pendingRequests.clear();
 	}
 }
 
-/** Helper: create client, connect, run action, disconnect. */
-export async function withMaestroClient<T>(
-	action: (client: MaestroClient) => Promise<T>
-): Promise<T> {
-	const client = new MaestroClient();
-	await client.connect();
-	try {
-		return await action(client);
-	} finally {
-		client.disconnect();
-	}
-}
-
-export function resolveSessionId(options: SessionResolutionOptions = {}): string {
+/**
+ * Resolve session ID from CLI options.
+ * Uses the provided --session value, or falls back to the first available session.
+ */
+export function resolveSessionId(options: { session?: string } = {}): string {
 	if (options.session) {
 		return options.session;
 	}
 
 	const settings = readSettings();
-	if (typeof settings.activeSessionId === 'string' && settings.activeSessionId) {
-		const activeSession = getSessionById(settings.activeSessionId);
-		if (activeSession) {
-			return activeSession.id;
+	if (typeof settings.activeSessionId === 'string' && getSessionById(settings.activeSessionId)) {
+		return settings.activeSessionId;
+	}
+
+	const sessions = readSessions();
+	if (sessions.length === 0) {
+		throw new Error('No Maestro sessions found. Pass --session <id> to target a specific session.');
+	}
+
+	return sessions[0].id;
+}
+
+/**
+ * Resolve a target agent (sessionId) from an optional `--agent` value, or fall
+ * back to the first available agent. Centralizes the duplicated try/catch +
+ * resolveSessionId pattern that several desktop-handoff verbs share.
+ *
+ * Only the known `resolveAgentId` errors (ambiguous / not-found) get the
+ * friendly stderr + exit(1) treatment. Anything else (e.g. corrupted store
+ * read in `readSessions`) re-throws so it surfaces as a stack trace — per the
+ * codebase's "let exceptions bubble up" rule for unexpected failures.
+ */
+export function resolveTargetSessionId(agent?: string): string {
+	if (agent) {
+		try {
+			return resolveAgentId(agent);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			const isExpected =
+				message.startsWith('Ambiguous agent ID') || message.startsWith('Agent not found:');
+			if (!isExpected) {
+				throw error;
+			}
+			console.error(`Error: ${message}`);
+			process.exit(1);
 		}
 	}
+	return resolveSessionId({});
+}
 
-	const firstSession = readSessions()[0];
-	if (firstSession) {
-		return firstSession.id;
+/**
+ * Helper: create client, connect, run action, disconnect.
+ * Handles the connect/disconnect lifecycle for one-shot commands.
+ */
+export async function withMaestroClient<T>(
+	action: (client: MaestroClient) => Promise<T>
+): Promise<T> {
+	const client = new MaestroClient();
+	try {
+		await client.connect();
+		return await action(client);
+	} finally {
+		client.disconnect();
 	}
-
-	throw new Error('No Maestro sessions found. Pass --session <id> to target a specific session.');
 }

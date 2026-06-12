@@ -60,8 +60,8 @@ describe('stores/instances', () => {
 		it('should initialize all stores', () => {
 			const result = initializeStores({ productionDataPath: '/mock/production/path' });
 
-			// Should create 8 stores
-			expect(mockStoreConstructorCalls).toHaveLength(8);
+			// Should create 9 stores (added agentCapabilitiesStore for snapshot persistence)
+			expect(mockStoreConstructorCalls).toHaveLength(9);
 
 			// Should return syncPath and bootstrapStore
 			expect(result.syncPath).toBe('/mock/user/data');
@@ -85,7 +85,19 @@ describe('stores/instances', () => {
 				name: 'maestro-bootstrap',
 				cwd: '/mock/user/data',
 				defaults: {},
+				deserialize: expect.any(Function),
 			});
+		});
+
+		it('configures stores with BOM-safe JSON deserialization', () => {
+			initializeStores({ productionDataPath: '/mock/production/path' });
+
+			for (const call of mockStoreConstructorCalls) {
+				expect(call.deserialize).toEqual(expect.any(Function));
+				expect((call.deserialize as (value: string) => unknown)('\uFEFF{"ok":true}')).toEqual({
+					ok: true,
+				});
+			}
 		});
 
 		it('should create settings store with sync path', () => {

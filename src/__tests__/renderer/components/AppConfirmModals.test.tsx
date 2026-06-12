@@ -14,6 +14,7 @@ import { render, screen } from '@testing-library/react';
 import { AppConfirmModals } from '../../../renderer/components/AppModals';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 import type { Theme, Session } from '../../../renderer/types';
+import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 
 // Mock lucide-react
 vi.mock('lucide-react', () => ({
@@ -21,6 +22,12 @@ vi.mock('lucide-react', () => ({
 	X: () => <svg data-testid="x-icon" />,
 	Trash2: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
 		<svg data-testid="trash2-icon" className={className} style={style} />
+	),
+	MessageSquare: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<svg data-testid="message-square-icon" className={className} style={style} />
+	),
+	Hourglass: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<svg data-testid="hourglass-icon" className={className} style={style} />
 	),
 }));
 
@@ -44,14 +51,7 @@ const testTheme: Theme = {
 };
 
 function createMockSession(overrides: Partial<Session>): Session {
-	return {
-		id: 'session-1',
-		name: 'Agent 1',
-		state: 'idle',
-		toolType: 'claude-code',
-		cwd: '/tmp',
-		...overrides,
-	} as Session;
+	return baseCreateMockSession({ name: 'Agent 1', cwd: '/tmp', ...overrides });
 }
 
 const defaultProps = {

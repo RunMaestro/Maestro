@@ -19,27 +19,11 @@ import { buildApiUrl } from '../utils/config';
 import { webLogger } from '../utils/logger';
 import { HistoryEntry } from '../../shared/types';
 import { stripAnsiCodes } from '../../shared/stringUtils';
-import { formatElapsedTime } from '../../shared/formatters';
+import { formatElapsedTime, formatTimestamp } from '../../shared/formatters';
 import { useSwipeGestures } from '../hooks/useSwipeGestures';
+import { calculateDisplayInputTokens } from '../../renderer/utils/contextUsage';
 
-/**
- * Format timestamp for display
- */
-function formatTime(timestamp: number): string {
-	const date = new Date(timestamp);
-	const now = new Date();
-	const isToday = date.toDateString() === now.toDateString();
-
-	if (isToday) {
-		return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-	} else {
-		return (
-			date.toLocaleDateString([], { month: 'short', day: 'numeric' }) +
-			' ' +
-			date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-		);
-	}
-}
+const formatTime = (timestamp: number) => formatTimestamp(timestamp, 'smart');
 
 /**
  * History entry card component
@@ -292,6 +276,11 @@ interface HistoryDetailViewProps {
 	totalCount: number;
 	/** Navigate to a specific index */
 	onNavigate: (index: number) => void;
+	/**
+	 * Active session's agent type. Used to compute display input tokens
+	 * correctly per agent (see issue #844).
+	 */
+	toolType?: string;
 }
 
 function HistoryDetailView({
@@ -300,6 +289,7 @@ function HistoryDetailView({
 	currentIndex,
 	totalCount,
 	onNavigate,
+	toolType,
 }: HistoryDetailViewProps) {
 	const colors = useThemeColors();
 
@@ -621,7 +611,8 @@ function HistoryDetailView({
 							}}
 						>
 							<span style={{ color: colors.accent }}>
-								In: {(entry.usageStats.inputTokens ?? 0).toLocaleString('en-US')}
+								In:{' '}
+								{calculateDisplayInputTokens(entry.usageStats, toolType).toLocaleString('en-US')}
 							</span>
 							<span style={{ color: colors.success }}>
 								Out: {(entry.usageStats.outputTokens ?? 0).toLocaleString('en-US')}
@@ -832,6 +823,11 @@ export interface MobileHistoryPanelProps {
 	projectPath?: string;
 	/** Current active session ID (for filtering) */
 	sessionId?: string;
+	/**
+	 * Active session's agent type (e.g. `claude-code`, `codex`).
+	 * Used to compute display input tokens correctly per agent (see issue #844).
+	 */
+	toolType?: string;
 	/** Initial filter state */
 	initialFilter?: 'all' | 'AUTO' | 'USER';
 	/** Initial search query */
@@ -858,6 +854,7 @@ export function MobileHistoryPanel({
 	onClose,
 	projectPath,
 	sessionId,
+	toolType,
 	initialFilter = 'all',
 	initialSearchQuery = '',
 	initialSearchOpen = false,
@@ -1402,6 +1399,7 @@ export function MobileHistoryPanel({
 					currentIndex={selectedIndex}
 					totalCount={filteredEntries.length}
 					onNavigate={handleNavigate}
+					toolType={toolType}
 				/>
 			)}
 		</>

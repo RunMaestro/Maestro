@@ -56,3 +56,9 @@ export type { AppInitializationReturn } from './useAppInitialization';
 
 // Tour actions listener (right panel control from tour overlay)
 export { useTourActions } from './useTourActions';
+
+// Idle notification (fires command when all agents/batches finish)
+export { useIdleNotification } from './useIdleNotification';
+
+// Deferred update-restart (installs downloaded update on idle transition)
+export { useRestartWhenIdle } from './useRestartWhenIdle';

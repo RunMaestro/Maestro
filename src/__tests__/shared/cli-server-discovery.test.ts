@@ -1,21 +1,23 @@
 /**
  * Tests for src/shared/cli-server-discovery.ts
  *
- * This module publishes the Electron app's CLI IPC server discovery file.
- * Tests mock Node.js fs, os, and process APIs to isolate behavior.
+ * This module provides functions for managing the CLI server discovery file,
+ * used by the Electron main process and CLI to locate the running server.
+ * Tests mock Node.js fs and os modules to isolate behavior.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
+// Mock the Node.js modules before importing the module under test
 vi.mock('fs', () => ({
 	readFileSync: vi.fn(),
 	writeFileSync: vi.fn(),
 	existsSync: vi.fn(),
 	mkdirSync: vi.fn(),
-	statSync: vi.fn(),
-	chmodSync: vi.fn(),
 	renameSync: vi.fn(),
 	unlinkSync: vi.fn(),
+	chmodSync: vi.fn(),
+	statSync: vi.fn(),
 }));
 
 vi.mock('os', () => ({
@@ -23,27 +25,32 @@ vi.mock('os', () => ({
 	homedir: vi.fn(),
 }));
 
+// Now import after mocks are set up
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
 import {
-	CliServerInfo,
+	writeCliServerInfo,
+	readCliServerInfo,
 	deleteCliServerInfo,
 	isCliServerRunning,
-	readCliServerInfo,
-	writeCliServerInfo,
 } from '../../shared/cli-server-discovery';
 
+// Local type alias mirroring the (now-internal) CliServerInfo shape
+// expected by writeCliServerInfo. Kept in sync with shared/cli-server-discovery.ts.
+type CliServerInfo = Parameters<typeof writeCliServerInfo>[0];
+
+// Type assertions for mocked modules
 const mockFs = {
 	readFileSync: fs.readFileSync as ReturnType<typeof vi.fn>,
 	writeFileSync: fs.writeFileSync as ReturnType<typeof vi.fn>,
 	existsSync: fs.existsSync as ReturnType<typeof vi.fn>,
 	mkdirSync: fs.mkdirSync as ReturnType<typeof vi.fn>,
-	statSync: fs.statSync as ReturnType<typeof vi.fn>,
-	chmodSync: fs.chmodSync as ReturnType<typeof vi.fn>,
 	renameSync: fs.renameSync as ReturnType<typeof vi.fn>,
 	unlinkSync: fs.unlinkSync as ReturnType<typeof vi.fn>,
+	chmodSync: fs.chmodSync as ReturnType<typeof vi.fn>,
+	statSync: fs.statSync as ReturnType<typeof vi.fn>,
 };
 
 const mockOs = {
@@ -52,129 +59,427 @@ const mockOs = {
 };
 
 describe('cli-server-discovery', () => {
-	const configDir = path.join('/Users/testuser', 'Library', 'Application Support', 'maestro');
-	const serverFile = path.join(configDir, 'cli-server.json');
 	const sampleInfo: CliServerInfo = {
-		port: 54321,
-		token: 'test-token',
+		port: 3456,
+		token: 'abc-123-def-456',
 		pid: 12345,
-		startedAt: 1710000000000,
+		startedAt: 1700000000000,
 	};
+
+	let savedUserDataEnv: string | undefined;
 
 	beforeEach(() => {
 		vi.clearAllMocks();
 
+		// Ensure MAESTRO_USER_DATA from the test runner's environment doesn't
+		// leak into platform-default tests; individual tests opt in by setting it.
+		savedUserDataEnv = process.env.MAESTRO_USER_DATA;
+		delete process.env.MAESTRO_USER_DATA;
+
+		// Default mock implementations
 		mockOs.platform.mockReturnValue('darwin');
 		mockOs.homedir.mockReturnValue('/Users/testuser');
 		mockFs.existsSync.mockReturnValue(true);
 		mockFs.readFileSync.mockReturnValue(JSON.stringify(sampleInfo));
 		mockFs.writeFileSync.mockReturnValue(undefined);
 		mockFs.mkdirSync.mockReturnValue(undefined);
-		mockFs.statSync.mockReturnValue({ mode: 0o700 } as fs.Stats);
-		mockFs.chmodSync.mockReturnValue(undefined);
 		mockFs.renameSync.mockReturnValue(undefined);
 		mockFs.unlinkSync.mockReturnValue(undefined);
-
-		vi.spyOn(console, 'error').mockImplementation(() => {});
+		mockFs.chmodSync.mockReturnValue(undefined);
+		mockFs.statSync.mockReturnValue({ mode: 0o700 });
 	});
 
 	afterEach(() => {
 		vi.restoreAllMocks();
+		if (savedUserDataEnv === undefined) {
+			delete process.env.MAESTRO_USER_DATA;
+		} else {
+			process.env.MAESTRO_USER_DATA = savedUserDataEnv;
+		}
+	});
+
+	describe('getConfigDir (internal via path construction)', () => {
+		it('should construct correct config path for macOS', () => {
+			mockOs.platform.mockReturnValue('darwin');
+			mockOs.homedir.mockReturnValue('/Users/testuser');
+
+			readCliServerInfo();
+
+			expect(mockFs.readFileSync).toHaveBeenCalledWith(
+				path.join(
+					'/Users/testuser',
+					'Library',
+					'Application Support',
+					'maestro',
+					'cli-server.json'
+				),
+				'utf-8'
+			);
+		});
+
+		it('should construct correct config path for Windows with APPDATA', () => {
+			mockOs.platform.mockReturnValue('win32');
+			mockOs.homedir.mockReturnValue('C:\\Users\\testuser');
+			const originalAppdata = process.env.APPDATA;
+			process.env.APPDATA = 'C:\\Users\\testuser\\AppData\\Roaming';
+
+			try {
+				readCliServerInfo();
+
+				expect(mockFs.readFileSync).toHaveBeenCalledWith(
+					path.join('C:\\Users\\testuser\\AppData\\Roaming', 'maestro', 'cli-server.json'),
+					'utf-8'
+				);
+			} finally {
+				if (originalAppdata === undefined) {
+					delete process.env.APPDATA;
+				} else {
+					process.env.APPDATA = originalAppdata;
+				}
+			}
+		});
+
+		it('should construct correct config path for Windows without APPDATA', () => {
+			mockOs.platform.mockReturnValue('win32');
+			mockOs.homedir.mockReturnValue('C:\\Users\\testuser');
+			const originalAppdata = process.env.APPDATA;
+			delete process.env.APPDATA;
+
+			try {
+				readCliServerInfo();
+
+				expect(mockFs.readFileSync).toHaveBeenCalledWith(
+					path.join('C:\\Users\\testuser', 'AppData', 'Roaming', 'maestro', 'cli-server.json'),
+					'utf-8'
+				);
+			} finally {
+				if (originalAppdata === undefined) {
+					delete process.env.APPDATA;
+				} else {
+					process.env.APPDATA = originalAppdata;
+				}
+			}
+		});
+
+		it('should construct correct config path for Linux with XDG_CONFIG_HOME', () => {
+			mockOs.platform.mockReturnValue('linux');
+			mockOs.homedir.mockReturnValue('/home/testuser');
+			const originalXdg = process.env.XDG_CONFIG_HOME;
+			process.env.XDG_CONFIG_HOME = '/home/testuser/.custom-config';
+
+			try {
+				readCliServerInfo();
+
+				expect(mockFs.readFileSync).toHaveBeenCalledWith(
+					path.join('/home/testuser/.custom-config', 'maestro', 'cli-server.json'),
+					'utf-8'
+				);
+			} finally {
+				if (originalXdg === undefined) {
+					delete process.env.XDG_CONFIG_HOME;
+				} else {
+					process.env.XDG_CONFIG_HOME = originalXdg;
+				}
+			}
+		});
+
+		it('should construct correct config path for Linux without XDG_CONFIG_HOME', () => {
+			mockOs.platform.mockReturnValue('linux');
+			mockOs.homedir.mockReturnValue('/home/testuser');
+			const originalXdg = process.env.XDG_CONFIG_HOME;
+			delete process.env.XDG_CONFIG_HOME;
+
+			try {
+				readCliServerInfo();
+
+				expect(mockFs.readFileSync).toHaveBeenCalledWith(
+					path.join('/home/testuser', '.config', 'maestro', 'cli-server.json'),
+					'utf-8'
+				);
+			} finally {
+				if (originalXdg === undefined) {
+					delete process.env.XDG_CONFIG_HOME;
+				} else {
+					process.env.XDG_CONFIG_HOME = originalXdg;
+				}
+			}
+		});
+
+		it('should honor MAESTRO_USER_DATA override over platform default', () => {
+			mockOs.platform.mockReturnValue('darwin');
+			mockOs.homedir.mockReturnValue('/Users/testuser');
+			const originalUserData = process.env.MAESTRO_USER_DATA;
+			process.env.MAESTRO_USER_DATA = '/Users/testuser/Library/Application Support/maestro-dev';
+
+			try {
+				readCliServerInfo();
+
+				expect(mockFs.readFileSync).toHaveBeenCalledWith(
+					path.join('/Users/testuser/Library/Application Support/maestro-dev', 'cli-server.json'),
+					'utf-8'
+				);
+			} finally {
+				if (originalUserData === undefined) {
+					delete process.env.MAESTRO_USER_DATA;
+				} else {
+					process.env.MAESTRO_USER_DATA = originalUserData;
+				}
+			}
+		});
+
+		it('should resolve relative MAESTRO_USER_DATA to absolute path', () => {
+			mockOs.platform.mockReturnValue('darwin');
+			mockOs.homedir.mockReturnValue('/Users/testuser');
+			const originalUserData = process.env.MAESTRO_USER_DATA;
+			process.env.MAESTRO_USER_DATA = './relative-data-dir';
+
+			try {
+				readCliServerInfo();
+
+				expect(mockFs.readFileSync).toHaveBeenCalledWith(
+					path.join(path.resolve('./relative-data-dir'), 'cli-server.json'),
+					'utf-8'
+				);
+			} finally {
+				if (originalUserData === undefined) {
+					delete process.env.MAESTRO_USER_DATA;
+				} else {
+					process.env.MAESTRO_USER_DATA = originalUserData;
+				}
+			}
+		});
 	});
 
 	describe('writeCliServerInfo', () => {
-		it('creates the discovery file with correct content using an atomic rename', () => {
+		it('should write the file with correct content via atomic rename', () => {
+			writeCliServerInfo(sampleInfo);
+
+			const expectedDir = path.join('/Users/testuser', 'Library', 'Application Support', 'maestro');
+			const expectedFile = path.join(expectedDir, 'cli-server.json');
+			const expectedTmp = expectedFile + '.tmp';
+
+			expect(mockFs.writeFileSync).toHaveBeenCalledWith(
+				expectedTmp,
+				JSON.stringify(sampleInfo, null, 2),
+				{
+					encoding: 'utf-8',
+					mode: 0o600,
+				}
+			);
+			expect(mockFs.chmodSync).toHaveBeenCalledWith(expectedTmp, 0o600);
+			expect(mockFs.renameSync).toHaveBeenCalledWith(expectedTmp, expectedFile);
+			expect(mockFs.chmodSync).toHaveBeenCalledWith(expectedFile, 0o600);
+		});
+
+		it('should create directory if it does not exist', () => {
 			mockFs.existsSync.mockReturnValue(false);
 
 			writeCliServerInfo(sampleInfo);
 
-			expect(mockFs.mkdirSync).toHaveBeenCalledWith(configDir, { recursive: true, mode: 0o700 });
-			expect(mockFs.writeFileSync).toHaveBeenCalledWith(
-				`${serverFile}.tmp`,
-				JSON.stringify(sampleInfo, null, 2),
-				{ encoding: 'utf-8', mode: 0o600 }
+			expect(mockFs.mkdirSync).toHaveBeenCalledWith(
+				path.join('/Users/testuser', 'Library', 'Application Support', 'maestro'),
+				{ recursive: true, mode: 0o700 }
 			);
-			expect(mockFs.chmodSync).toHaveBeenCalledWith(`${serverFile}.tmp`, 0o600);
-			expect(mockFs.renameSync).toHaveBeenCalledWith(`${serverFile}.tmp`, serverFile);
-			expect(mockFs.chmodSync).toHaveBeenCalledWith(serverFile, 0o600);
 		});
 
-		it('restricts an existing config directory when it is group or world accessible', () => {
-			mockFs.statSync.mockReturnValue({ mode: 0o755 } as fs.Stats);
+		it('should not create directory if it already exists', () => {
+			mockFs.existsSync.mockReturnValue(true);
 
 			writeCliServerInfo(sampleInfo);
 
-			expect(mockFs.chmodSync).toHaveBeenCalledWith(configDir, 0o700);
+			expect(mockFs.mkdirSync).not.toHaveBeenCalled();
+		});
+
+		it('should restrict existing config directory permissions when too broad', () => {
+			mockFs.existsSync.mockReturnValue(true);
+			mockFs.statSync.mockReturnValue({ mode: 0o755 });
+
+			writeCliServerInfo(sampleInfo);
+
+			expect(mockFs.chmodSync).toHaveBeenCalledWith(
+				path.join('/Users/testuser', 'Library', 'Application Support', 'maestro'),
+				0o700
+			);
 		});
 	});
 
 	describe('readCliServerInfo', () => {
-		it('returns null for a missing file', () => {
+		it('should return null for missing file', () => {
 			mockFs.readFileSync.mockImplementation(() => {
 				throw new Error('ENOENT: no such file or directory');
 			});
 
-			expect(readCliServerInfo()).toBeNull();
+			const result = readCliServerInfo();
+			expect(result).toBeNull();
 		});
 
-		it('returns parsed data for a valid file', () => {
+		it('should return null for invalid JSON', () => {
+			mockFs.readFileSync.mockReturnValue('not valid json');
+
+			const result = readCliServerInfo();
+			expect(result).toBeNull();
+		});
+
+		it('should return parsed data for valid file', () => {
 			mockFs.readFileSync.mockReturnValue(JSON.stringify(sampleInfo));
 
-			expect(readCliServerInfo()).toEqual(sampleInfo);
-			expect(mockFs.readFileSync).toHaveBeenCalledWith(serverFile, 'utf-8');
+			const result = readCliServerInfo();
+			expect(result).toEqual(sampleInfo);
+			expect(result!.port).toBe(3456);
+			expect(result!.token).toBe('abc-123-def-456');
+			expect(result!.pid).toBe(12345);
+			expect(result!.startedAt).toBe(1700000000000);
 		});
 
-		it('returns null for invalid discovery data', () => {
-			mockFs.readFileSync.mockReturnValue(JSON.stringify({ port: 54321, token: '' }));
-
-			expect(readCliServerInfo()).toBeNull();
-		});
-
-		it('returns null for non-integer or out-of-range discovery data', () => {
+		it('should return null when port is missing', () => {
 			mockFs.readFileSync.mockReturnValue(
-				JSON.stringify({ ...sampleInfo, port: 70000, pid: 0, startedAt: 1.5 })
+				JSON.stringify({
+					token: 'abc',
+					pid: 123,
+					startedAt: 1000,
+				})
 			);
 
-			expect(readCliServerInfo()).toBeNull();
+			const result = readCliServerInfo();
+			expect(result).toBeNull();
+		});
+
+		it('should return null when token is not a string', () => {
+			mockFs.readFileSync.mockReturnValue(
+				JSON.stringify({
+					port: 3456,
+					token: 123,
+					pid: 123,
+					startedAt: 1000,
+				})
+			);
+
+			const result = readCliServerInfo();
+			expect(result).toBeNull();
+		});
+
+		it('should return null when pid is missing', () => {
+			mockFs.readFileSync.mockReturnValue(
+				JSON.stringify({
+					port: 3456,
+					token: 'abc',
+					startedAt: 1000,
+				})
+			);
+
+			const result = readCliServerInfo();
+			expect(result).toBeNull();
+		});
+
+		it('should return null when startedAt is missing', () => {
+			mockFs.readFileSync.mockReturnValue(
+				JSON.stringify({
+					port: 3456,
+					token: 'abc',
+					pid: 123,
+				})
+			);
+
+			const result = readCliServerInfo();
+			expect(result).toBeNull();
+		});
+
+		it('should return null when port is outside TCP range', () => {
+			mockFs.readFileSync.mockReturnValue(JSON.stringify({ ...sampleInfo, port: 70000 }));
+
+			const result = readCliServerInfo();
+			expect(result).toBeNull();
+		});
+
+		it('should return null when pid is not positive', () => {
+			mockFs.readFileSync.mockReturnValue(JSON.stringify({ ...sampleInfo, pid: 0 }));
+
+			const result = readCliServerInfo();
+			expect(result).toBeNull();
+		});
+
+		it('should return null when startedAt is fractional', () => {
+			mockFs.readFileSync.mockReturnValue(JSON.stringify({ ...sampleInfo, startedAt: 1.5 }));
+
+			const result = readCliServerInfo();
+			expect(result).toBeNull();
 		});
 	});
 
 	describe('deleteCliServerInfo', () => {
-		it('removes the discovery file when it exists', () => {
+		it('should remove the file', () => {
 			deleteCliServerInfo();
 
-			expect(mockFs.unlinkSync).toHaveBeenCalledWith(serverFile);
+			const expectedFile = path.join(
+				'/Users/testuser',
+				'Library',
+				'Application Support',
+				'maestro',
+				'cli-server.json'
+			);
+			expect(mockFs.unlinkSync).toHaveBeenCalledWith(expectedFile);
 		});
 
-		it('does not remove the discovery file when it is missing', () => {
-			mockFs.existsSync.mockReturnValue(false);
+		it('should not throw when file does not exist', () => {
+			mockFs.unlinkSync.mockImplementation(() => {
+				throw new Error('ENOENT: no such file or directory');
+			});
 
-			deleteCliServerInfo();
-
-			expect(mockFs.unlinkSync).not.toHaveBeenCalled();
+			expect(() => deleteCliServerInfo()).not.toThrow();
 		});
 	});
 
 	describe('isCliServerRunning', () => {
-		it('returns true for the current PID', () => {
-			mockFs.readFileSync.mockReturnValue(JSON.stringify({ ...sampleInfo, pid: process.pid }));
-			const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true);
+		it('should return true for current PID', () => {
+			mockFs.readFileSync.mockReturnValue(JSON.stringify(sampleInfo));
 
-			expect(isCliServerRunning()).toBe(true);
-			expect(killSpy).toHaveBeenCalledWith(process.pid, 0);
-			expect(mockFs.unlinkSync).not.toHaveBeenCalled();
+			const originalKill = process.kill;
+			process.kill = vi.fn().mockReturnValue(true) as unknown as typeof process.kill;
+
+			try {
+				const result = isCliServerRunning();
+
+				expect(result).toBe(true);
+				expect(process.kill).toHaveBeenCalledWith(12345, 0);
+			} finally {
+				process.kill = originalKill;
+			}
 		});
 
-		it('returns false and removes stale discovery info for a non-existent PID', () => {
-			const missingPid = 999999;
-			mockFs.readFileSync.mockReturnValue(JSON.stringify({ ...sampleInfo, pid: missingPid }));
-			const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => {
-				throw new Error('ESRCH');
+		it('should return false for non-existent PID', () => {
+			mockFs.readFileSync.mockReturnValue(JSON.stringify(sampleInfo));
+
+			const originalKill = process.kill;
+			process.kill = vi.fn().mockImplementation(() => {
+				throw new Error('ESRCH: No such process');
+			}) as unknown as typeof process.kill;
+
+			try {
+				const result = isCliServerRunning();
+
+				expect(result).toBe(false);
+				expect(mockFs.unlinkSync).toHaveBeenCalled();
+			} finally {
+				process.kill = originalKill;
+			}
+		});
+
+		it('should return false when discovery file is missing', () => {
+			mockFs.readFileSync.mockImplementation(() => {
+				throw new Error('ENOENT: no such file or directory');
 			});
 
-			expect(isCliServerRunning()).toBe(false);
-			expect(killSpy).toHaveBeenCalledWith(missingPid, 0);
-			expect(mockFs.unlinkSync).toHaveBeenCalledWith(serverFile);
+			const result = isCliServerRunning();
+
+			expect(result).toBe(false);
+		});
+
+		it('should return false when discovery file has invalid data', () => {
+			mockFs.readFileSync.mockReturnValue('not json');
+
+			const result = isCliServerRunning();
+
+			expect(result).toBe(false);
 		});
 	});
 });

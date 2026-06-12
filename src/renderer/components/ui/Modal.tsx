@@ -36,6 +36,7 @@
 
 import React, { useRef, useEffect, ReactNode } from 'react';
 import { X } from 'lucide-react';
+import { GhostIconButton } from './GhostIconButton';
 import type { Theme } from '../../types';
 import { useModalLayer, type UseModalLayerOptions } from '../../hooks';
 
@@ -58,6 +59,21 @@ export interface ModalProps {
 	headerIcon?: ReactNode;
 	/** Modal width in pixels. Defaults to 400 */
 	width?: number;
+	/**
+	 * Scale the width with the Cmd+= font-size setting via --font-scale (14px
+	 * baseline → scale 1). `width` is the baseline and the modal grows/shrinks
+	 * proportionally with the font, clamped to 95vw. This is on by default: at
+	 * the baseline font it's a no-op, and at larger fonts it keeps button rows
+	 * and headers from wrapping/clipping inside a fixed-px shell. Pass `false`
+	 * only for a modal that must stay a literal pixel width regardless of font.
+	 */
+	scaleWidthWithFont?: boolean;
+	/**
+	 * Upper bound on the modal width as a CSS value, used as the clamp ceiling
+	 * for the font-scaled width. Defaults to '95vw'. Pass e.g. '50vw' to keep a
+	 * wide modal from dominating large displays.
+	 */
+	maxWidthCss?: string;
 	/** Max height as CSS value (e.g., '90vh', '600px'). Defaults to '90vh' */
 	maxHeight?: string;
 	/** Whether clicking the backdrop closes the modal. Defaults to false */
@@ -74,6 +90,12 @@ export interface ModalProps {
 	initialFocusRef?: React.RefObject<HTMLElement>;
 	/** Test ID for the modal container */
 	testId?: string;
+	/** Override className for the content wrapper (default: 'p-6 overflow-y-auto flex-1') */
+	contentClassName?: string;
+	/** Allow content to overflow the modal container (e.g., for dropdowns). Defaults to false */
+	allowOverflow?: boolean;
+	/** Ref to the inner modal card (used by callers that need to animate the card itself) */
+	cardRef?: React.Ref<HTMLDivElement>;
 }
 
 /**
@@ -89,6 +111,8 @@ export function Modal({
 	customHeader,
 	headerIcon,
 	width = 400,
+	scaleWidthWithFont = true,
+	maxWidthCss = '95vw',
 	maxHeight = '90vh',
 	closeOnBackdropClick = false,
 	zIndex = 9999,
@@ -97,6 +121,9 @@ export function Modal({
 	layerOptions,
 	initialFocusRef,
 	testId,
+	contentClassName,
+	allowOverflow = false,
+	cardRef,
 }: ModalProps) {
 	const containerRef = useRef<HTMLDivElement>(null);
 
@@ -116,8 +143,13 @@ export function Modal({
 	}, [initialFocusRef]);
 
 	const handleBackdropClick = (e: React.MouseEvent) => {
-		// Only close if clicking directly on backdrop, not on modal content
+		// Only close if clicking directly on backdrop, not on modal content.
+		// Stop propagation so a parent modal's backdrop handler doesn't also
+		// fire — matters when a Modal renders nested inside another modal
+		// (e.g. AgentDetailModal inside UsageDashboardModal); without this
+		// the outer modal would close too.
 		if (closeOnBackdropClick && e.target === e.currentTarget) {
+			e.stopPropagation();
 			onClose();
 		}
 	};
@@ -136,9 +168,12 @@ export function Modal({
 			data-testid={testId}
 		>
 			<div
-				className="border rounded-lg shadow-2xl overflow-hidden flex flex-col"
+				ref={cardRef}
+				className={`border rounded-lg shadow-2xl flex flex-col ${allowOverflow ? 'overflow-visible' : 'overflow-hidden'}`}
 				style={{
-					width: `${width}px`,
+					width: scaleWidthWithFont
+						? `min(calc(${width}px * var(--font-scale, 1)), ${maxWidthCss})`
+						: `${width}px`,
 					maxHeight,
 					backgroundColor: theme.colors.bgSidebar,
 					borderColor: theme.colors.border,
@@ -159,21 +194,19 @@ export function Modal({
 								</h2>
 							</div>
 							{showCloseButton && (
-								<button
-									type="button"
+								<GhostIconButton
 									onClick={onClose}
-									className="p-1 rounded hover:bg-white/10 transition-colors"
-									style={{ color: theme.colors.textDim }}
-									aria-label="Close modal"
+									ariaLabel="Close modal"
+									color={theme.colors.textDim}
 								>
 									<X className="w-4 h-4" />
-								</button>
+								</GhostIconButton>
 							)}
 						</div>
 					))}
 
 				{/* Content */}
-				<div className="p-6 overflow-y-auto flex-1">{children}</div>
+				<div className={contentClassName ?? 'p-6 overflow-y-auto flex-1'}>{children}</div>
 
 				{/* Footer */}
 				{footer && (

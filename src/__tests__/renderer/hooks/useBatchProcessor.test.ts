@@ -22,6 +22,8 @@ import type {
 // Import the exported functions directly
 import { countUnfinishedTasks, uncheckAllTasks, useBatchProcessor } from '../../../renderer/hooks';
 import { useBatchStore } from '../../../renderer/stores/batchStore';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 
 // Mock notifyToast so we can verify toast notifications
 const { mockNotifyToast } = vi.hoisted(() => ({
@@ -577,24 +579,15 @@ describe('countUnfinishedTasks + uncheckAllTasks integration', () => {
 
 describe('useBatchProcessor hook', () => {
 	// Mock sessions and groups
-	const createMockSession = (overrides?: Partial<Session>): Session => ({
-		id: 'test-session-id',
-		name: 'Test Session',
-		toolType: 'claude-code',
-		state: 'idle',
-		inputMode: 'ai',
-		cwd: '/test/path',
-		projectRoot: '/test/path',
-		aiPid: 0,
-		terminalPid: 0,
-		aiLogs: [],
-		shellLogs: [],
-		isGitRepo: true,
-		fileTree: [],
-		fileExplorerExpanded: [],
-		messageQueue: [],
-		...overrides,
-	});
+	const createMockSession = (overrides?: Partial<Session>): Session =>
+		baseCreateMockSession({
+			id: 'test-session-id',
+			cwd: '/test/path',
+			fullPath: '/test/path',
+			projectRoot: '/test/path',
+			isGitRepo: true,
+			...overrides,
+		});
 
 	const createMockGroup = (overrides?: Partial<Group>): Group => ({
 		id: 'test-group-id',
@@ -648,7 +641,7 @@ describe('useBatchProcessor hook', () => {
 			.fn()
 			.mockResolvedValue({ success: true, content: '# Tasks\n- [ ] Task 1\n- [ ] Task 2' });
 		mockWriteDoc = vi.fn().mockResolvedValue({ success: true });
-		mockCreateWorkingCopy = vi.fn().mockResolvedValue({ workingCopyPath: 'Runs/tasks-run-1.md' });
+		mockCreateWorkingCopy = vi.fn().mockResolvedValue({ workingCopyPath: 'runs/tasks-run-1.md' });
 		mockStatus = vi.fn().mockResolvedValue({ stdout: '' });
 		mockBranch = vi.fn().mockResolvedValue({ stdout: 'main' });
 		mockBroadcastAutoRunState = vi.fn();
@@ -913,6 +906,40 @@ describe('useBatchProcessor hook', () => {
 	});
 
 	describe('startBatchRun', () => {
+		it('should not start when autoRunDisabled is true', async () => {
+			useSettingsStore.setState({ autoRunDisabled: true });
+			const sessions = [createMockSession()];
+			const groups = [createMockGroup()];
+
+			const { result } = renderHook(() =>
+				useBatchProcessor({
+					sessions,
+					groups,
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+				})
+			);
+
+			await act(async () => {
+				await result.current.startBatchRun(
+					'test-session-id',
+					{
+						documents: [{ filename: 'test', resetOnCompletion: false }],
+						prompt: 'Test prompt',
+						loopEnabled: false,
+					},
+					'/test/folder'
+				);
+			});
+
+			expect(mockOnSpawnAgent).not.toHaveBeenCalled();
+			expect(mockNotifyToast).toHaveBeenCalledWith(expect.objectContaining({ type: 'warning' }));
+
+			// Reset for other tests
+			useSettingsStore.setState({ autoRunDisabled: false });
+		});
+
 		it('should not start if session is not found', async () => {
 			const sessions: Session[] = [];
 			const groups: Group[] = [];
@@ -1174,6 +1201,223 @@ describe('useBatchProcessor hook', () => {
 		});
 	});
 
+	describe('killBatchRun', () => {
+		it('should flush stats and history with non-zero elapsed time when force-killed', async () => {
+			const sessions = [createMockSession()];
+			const groups = [createMockGroup()];
+
+			// Hold the agent response so the batch stays "running" until we kill it
+			let resolveAgent: (value: { success: boolean; agentSessionId?: string }) => void;
+			const agentPromise = new Promise<{ success: boolean; agentSessionId?: string }>((resolve) => {
+				resolveAgent = resolve;
+			});
+			mockOnSpawnAgent.mockReturnValue(agentPromise);
+
+			const { result } = renderHook(() =>
+				useBatchProcessor({
+					sessions,
+					groups,
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+				})
+			);
+
+			// Start batch (don't await)
+			act(() => {
+				void result.current.startBatchRun(
+					'test-session-id',
+					{
+						documents: [{ filename: 'tasks', resetOnCompletion: false }],
+						prompt: 'Test',
+						loopEnabled: false,
+					},
+					'/test/folder'
+				);
+			});
+
+			// Wait for startAutoRun to fire (flush state ref is populated right after)
+			await waitFor(() => {
+				expect(window.maestro.stats.startAutoRun).toHaveBeenCalled();
+			});
+			// Wait for the agent to be spawned (batch is mid-task)
+			await waitFor(() => {
+				expect(mockOnSpawnAgent).toHaveBeenCalled();
+			});
+
+			// Give the tracker a visible chunk of elapsed time before killing
+			await new Promise((r) => setTimeout(r, 25));
+
+			// Force-kill the batch
+			await act(async () => {
+				await result.current.killBatchRun('test-session-id');
+			});
+
+			// endAutoRun must have been called with a non-zero duration so the recorded Auto Run
+			// time isn't lost. Previously this was called after timeTracking.stopTracking() had
+			// already zeroed the tracker, producing a 0ms duration.
+			expect(window.maestro.stats.endAutoRun).toHaveBeenCalledTimes(1);
+			const endCall = (window.maestro.stats.endAutoRun as ReturnType<typeof vi.fn>).mock.calls[0];
+			expect(endCall[0]).toBe('auto-run-id'); // statsAutoRunId from setup mock
+			expect(endCall[1]).toBeGreaterThan(0); // elapsed duration in ms
+			expect(endCall[2]).toBe(0); // completedTasks — nothing finished before kill
+
+			// A history entry tagged as AUTO must be written with the elapsed time
+			const historyEntry = mockOnAddHistoryEntry.mock.calls.find(
+				(call) => call[0]?.type === 'AUTO'
+			)?.[0];
+			expect(historyEntry).toBeDefined();
+			expect(historyEntry.elapsedTimeMs).toBeGreaterThan(0);
+			expect(historyEntry.success).toBe(false);
+
+			// Let the held agent promise resolve so the hung batch loop can unwind
+			resolveAgent!({ success: true, agentSessionId: 'test-session' });
+		});
+
+		it('should stop the processing loop after kill instead of dispatching another task', async () => {
+			// Regression: killBatchRun used to set stopRequestedRefs[sessionId] = true and
+			// then synchronously delete it before the async loop's next iteration could
+			// observe it. The loop's in-flight processTask would resolve (or reject from
+			// the killed agent), the catch/continue would fall through to the next inner
+			// while iteration, see the stop flag as undefined (falsy), and dispatch a
+			// fresh spawnAgent for the next task — keeping notifications and the agent
+			// process alive after the user clicked Kill.
+			const sessions = [createMockSession()];
+			const groups = [createMockGroup()];
+
+			// Doc with two unchecked tasks so the inner while loop has more work queued
+			// after the first task completes.
+			mockReadDoc.mockResolvedValue({
+				success: true,
+				content: '# Tasks\n- [ ] Task 1\n- [ ] Task 2',
+			});
+
+			// Hold the first agent spawn so the batch is mid-task when we kill.
+			let resolveAgent: (value: { success: boolean; agentSessionId?: string }) => void;
+			const agentPromise = new Promise<{ success: boolean; agentSessionId?: string }>((resolve) => {
+				resolveAgent = resolve;
+			});
+			mockOnSpawnAgent.mockReturnValue(agentPromise);
+
+			const { result } = renderHook(() =>
+				useBatchProcessor({
+					sessions,
+					groups,
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+				})
+			);
+
+			act(() => {
+				void result.current.startBatchRun(
+					'test-session-id',
+					{
+						documents: [{ filename: 'tasks', resetOnCompletion: false }],
+						prompt: 'Test',
+						loopEnabled: false,
+					},
+					'/test/folder'
+				);
+			});
+
+			// Wait until the loop has spawned the first task.
+			await waitFor(() => {
+				expect(mockOnSpawnAgent).toHaveBeenCalledTimes(1);
+			});
+
+			// User clicks Kill.
+			await act(async () => {
+				await result.current.killBatchRun('test-session-id');
+			});
+
+			// Simulate the killed agent's processTask completing (the held promise
+			// resolves once the process exits or the IPC kill succeeds). The loop
+			// must NOT dispatch another spawn for the second unchecked task.
+			await act(async () => {
+				resolveAgent!({ success: true, agentSessionId: 'test-session' });
+				// Yield twice so any queued microtasks/state updates inside the loop
+				// have a chance to run before we assert.
+				await Promise.resolve();
+				await Promise.resolve();
+			});
+
+			// Give the loop additional ticks to (incorrectly) re-enter the inner while.
+			await new Promise((r) => setTimeout(r, 50));
+
+			expect(mockOnSpawnAgent).toHaveBeenCalledTimes(1);
+		});
+
+		it('should fire onComplete with non-zero elapsed time on kill so the leaderboard receives it', async () => {
+			// Regression: killBatchRun used to call timeTracking.stopTracking() before the
+			// loop's natural cleanup ran. The natural cleanup then read getElapsedTime() as 0
+			// and invoked onComplete with elapsedTimeMs:0. The handler in useBatchHandlers
+			// gates leaderboard submission on `elapsedTimeMs > 0`, so kill events were silently
+			// dropped from the leaderboard tally. The fix moves the onComplete call into
+			// killBatchRun itself (where the elapsed time is still readable).
+			const sessions = [createMockSession()];
+			const groups = [createMockGroup()];
+
+			let resolveAgent: (value: { success: boolean; agentSessionId?: string }) => void;
+			const agentPromise = new Promise<{ success: boolean; agentSessionId?: string }>((resolve) => {
+				resolveAgent = resolve;
+			});
+			mockOnSpawnAgent.mockReturnValue(agentPromise);
+
+			const { result } = renderHook(() =>
+				useBatchProcessor({
+					sessions,
+					groups,
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+					onComplete: mockOnComplete,
+				})
+			);
+
+			act(() => {
+				void result.current.startBatchRun(
+					'test-session-id',
+					{
+						documents: [{ filename: 'tasks', resetOnCompletion: false }],
+						prompt: 'Test',
+						loopEnabled: false,
+					},
+					'/test/folder'
+				);
+			});
+
+			await waitFor(() => {
+				expect(window.maestro.stats.startAutoRun).toHaveBeenCalled();
+			});
+			await waitFor(() => {
+				expect(mockOnSpawnAgent).toHaveBeenCalled();
+			});
+
+			// Let the tracker accumulate a measurable chunk of elapsed time
+			await new Promise((r) => setTimeout(r, 25));
+
+			await act(async () => {
+				await result.current.killBatchRun('test-session-id');
+			});
+
+			expect(mockOnComplete).toHaveBeenCalled();
+			const completeArg = mockOnComplete.mock.calls[0][0];
+			expect(completeArg.wasStopped).toBe(true);
+			expect(completeArg.elapsedTimeMs).toBeGreaterThan(0);
+			expect(completeArg.sessionId).toBe('test-session-id');
+
+			// Let the held processTask resolve so the loop's natural cleanup can run.
+			resolveAgent!({ success: true, agentSessionId: 'test-session' });
+			await new Promise((r) => setTimeout(r, 25));
+
+			// Crucially, the natural cleanup must NOT fire a second onComplete with 0ms
+			// (which would otherwise be silently dropped by the leaderboard gate but is still
+			// a state-leak symptom that we want to lock down).
+			expect(mockOnComplete).toHaveBeenCalledTimes(1);
+		});
+	});
+
 	describe('worktree handling', () => {
 		it('should set up worktree when enabled', async () => {
 			const sessions = [createMockSession()];
@@ -1221,7 +1465,8 @@ describe('useBatchProcessor hook', () => {
 				'/test/path',
 				'/test/worktree',
 				'feature/test',
-				undefined // sshRemoteId (undefined for local sessions)
+				undefined, // sshRemoteId (undefined for local sessions)
+				undefined // baseBranch not specified in this test
 			);
 		});
 
@@ -1535,7 +1780,7 @@ describe('useBatchProcessor hook', () => {
 
 	describe('reset on completion', () => {
 		it('should create working copy when resetOnCompletion is enabled', async () => {
-			// Note: Reset-on-completion now uses working copies in /Runs/ directory
+			// Note: Reset-on-completion now uses working copies in /runs/ directory
 			// instead of modifying the original document. This preserves the original
 			// and allows the agent to work on a copy.
 			const sessions = [createMockSession()];
@@ -2394,12 +2639,18 @@ describe('useBatchProcessor hook', () => {
 			let doc1Calls = 0;
 			let doc2Calls = 0;
 
-			// Mock readDoc with call-count thresholds that account for the recount-all-documents
-			// logic after each task. For each document, reads happen at:
-			//   doc1: initial count, doc-loop entry, processTask post-read, recount-all
-			//   doc2: initial count, recount-all (after doc1), doc-loop entry, processTask post-read
-			// The "agent completed" transition (unchecked → checked) should happen after processTask,
-			// so doc1 returns checked on call 3+ and doc2 returns checked on call 4+.
+			// Mock readDoc with call-count thresholds that account for the per-task
+			// "baseline read of other docs" plus the recount-all-documents pass after
+			// each task. Per-doc read sequence (loopEnabled=false, single iteration):
+			//   doc1: initial count, doc-loop entry, processTask pre-spawn, processTask
+			//         post-spawn, recount-all (after doc1), baseline (during doc2),
+			//         recount-all (after doc2)
+			//   doc2: initial count, baseline (during doc1), recount-all (after doc1),
+			//         doc-loop entry, processTask pre-spawn, processTask post-spawn,
+			//         recount-all (after doc2)
+			// The "agent completed" transition (unchecked → checked) is simulated by
+			// flipping content on the first read after the doc's processTask is
+			// entered: doc1 flips on call 3+, doc2 flips on call 5+.
 			mockReadDoc.mockImplementation(async (_folder: string, filename: string) => {
 				readOrder.push(filename);
 
@@ -2410,7 +2661,7 @@ describe('useBatchProcessor hook', () => {
 				}
 				if (filename === 'doc2.md') {
 					doc2Calls++;
-					if (doc2Calls <= 3) return { success: true, content: '- [ ] Doc2 Task' };
+					if (doc2Calls <= 4) return { success: true, content: '- [ ] Doc2 Task' };
 					return { success: true, content: '- [x] Doc2 Task' };
 				}
 				return { success: true, content: '' };
@@ -4063,7 +4314,7 @@ describe('useBatchProcessor hook', () => {
 
 	describe('reset-on-completion in loop mode', () => {
 		it('should create working copy when document has resetOnCompletion enabled', async () => {
-			// Note: Reset-on-completion now uses working copies in /Runs/ directory
+			// Note: Reset-on-completion now uses working copies in /runs/ directory
 			// instead of modifying the original document. This preserves the original
 			// and allows the agent to work on a copy each loop iteration.
 			const sessions = [createMockSession()];
@@ -5357,7 +5608,8 @@ describe('useBatchProcessor hook', () => {
 				'/test/path', // session.cwd
 				'/remote/worktree',
 				'feature/ssh-test',
-				'ssh-worktree-remote' // sshRemoteId should be passed
+				'ssh-worktree-remote', // sshRemoteId should be passed
+				undefined // baseBranch not specified in this test
 			);
 		});
 
@@ -5400,6 +5652,60 @@ describe('useBatchProcessor hook', () => {
 				'/local/path',
 				'tasks.md',
 				undefined // No sshRemoteId for local sessions
+			);
+		});
+
+		it('should pass baseBranch through to worktreeSetup (regression: Auto Run silently used main)', async () => {
+			// Regression for the bug where the user picked a base branch in
+			// the Auto Run worktree picker but the new branch was created
+			// from the main repo's HEAD instead. The fix makes baseBranch a
+			// first-class arg threaded all the way through to the IPC layer.
+			// This is the legacy `config.worktree` path (no worktreeTarget) —
+			// covers the WorktreeManager.setupWorktree branch.
+			const session = createMockSession({
+				sshRemoteId: undefined,
+				sessionSshRemoteConfig: undefined,
+			});
+			const sessions = [session];
+			const groups = [createMockGroup()];
+
+			mockReadDoc.mockResolvedValue({ success: true, content: '- [x] Done' });
+
+			const { result } = renderHook(() =>
+				useBatchProcessor({
+					sessions,
+					groups,
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+					onComplete: mockOnComplete,
+				})
+			);
+
+			await act(async () => {
+				await result.current.startBatchRun(
+					'test-session-id',
+					{
+						documents: [{ filename: 'tasks', resetOnCompletion: false }],
+						prompt: 'Test',
+						loopEnabled: false,
+						worktree: {
+							enabled: true,
+							path: '/projects/worktrees/auto-run-rc-0514',
+							branchName: 'auto-run-rc-0514',
+							baseBranch: 'rc',
+						},
+					},
+					'/local/path'
+				);
+			});
+
+			expect(mockWorktreeSetup).toHaveBeenCalledWith(
+				'/test/path',
+				'/projects/worktrees/auto-run-rc-0514',
+				'auto-run-rc-0514',
+				undefined, // sshRemoteId
+				'rc' // baseBranch — must reach IPC, not get dropped
 			);
 		});
 	});

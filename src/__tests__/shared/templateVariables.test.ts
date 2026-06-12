@@ -65,6 +65,7 @@ describe('TEMPLATE_VARIABLES constant', () => {
 
 	it('should include key agent variables', () => {
 		const variables = TEMPLATE_VARIABLES.map((v) => v.variable);
+		expect(variables).toContain('{{AGENT_ID}}');
 		expect(variables).toContain('{{AGENT_NAME}}');
 		expect(variables).toContain('{{AGENT_PATH}}');
 		expect(variables).toContain('{{AGENT_GROUP}}');
@@ -91,6 +92,13 @@ describe('TEMPLATE_VARIABLES constant', () => {
 		const variables = TEMPLATE_VARIABLES.map((v) => v.variable);
 		expect(variables).toContain('{{GIT_BRANCH}}');
 		expect(variables).toContain('{{IS_GIT_REPO}}');
+	});
+
+	it('should include deep link variables', () => {
+		const variables = TEMPLATE_VARIABLES.map((v) => v.variable);
+		expect(variables).toContain('{{AGENT_DEEP_LINK}}');
+		expect(variables).toContain('{{TAB_DEEP_LINK}}');
+		expect(variables).toContain('{{GROUP_DEEP_LINK}}');
 	});
 
 	it('should mark Auto Run-only variables with autoRunOnly flag', () => {
@@ -162,6 +170,14 @@ describe('substituteTemplateVariables', () => {
 	});
 
 	describe('Agent Variables', () => {
+		it('should replace {{AGENT_ID}} with session.id', () => {
+			const context = createTestContext({
+				session: createTestSession({ id: 'agent-uuid-abc-123' }),
+			});
+			const result = substituteTemplateVariables('ID: {{AGENT_ID}}', context);
+			expect(result).toBe('ID: agent-uuid-abc-123');
+		});
+
 		it('should replace {{AGENT_NAME}} with session.name', () => {
 			const context = createTestContext({
 				session: createTestSession({ name: 'Agent Alpha' }),
@@ -328,13 +344,27 @@ describe('substituteTemplateVariables', () => {
 			expect(result).toBe('Folder: /session/autorun/path');
 		});
 
-		it('should replace {{AUTORUN_FOLDER}} with empty string when neither available', () => {
+		it('should fall back to derived path from session.cwd when neither autoRunFolder nor autoRunFolderPath available', () => {
 			const context = createTestContext({
 				session: createTestSession({ autoRunFolderPath: undefined }),
 				autoRunFolder: undefined,
 			});
 			const result = substituteTemplateVariables('Folder: {{AUTORUN_FOLDER}}', context);
-			expect(result).toBe('Folder: ');
+			expect(result).toBe('Folder: /Users/test/project/.maestro/playbooks');
+		});
+
+		it('should prefer fullPath over projectRoot over cwd for AUTORUN_FOLDER fallback', () => {
+			const context = createTestContext({
+				session: createTestSession({
+					autoRunFolderPath: undefined,
+					fullPath: '/full/path',
+					projectRoot: '/project/root',
+					cwd: '/cwd',
+				}),
+				autoRunFolder: undefined,
+			});
+			const result = substituteTemplateVariables('Folder: {{AUTORUN_FOLDER}}', context);
+			expect(result).toBe('Folder: /full/path/.maestro/playbooks');
 		});
 	});
 
@@ -565,6 +595,62 @@ describe('substituteTemplateVariables', () => {
 		});
 	});
 
+	describe('Deep Link Variables', () => {
+		it('should replace {{AGENT_DEEP_LINK}} with session deep link URL', () => {
+			const context = createTestContext({
+				session: createTestSession({ id: 'sess-abc' }),
+			});
+			const result = substituteTemplateVariables('Link: {{AGENT_DEEP_LINK}}', context);
+			expect(result).toBe('Link: maestro://session/sess-abc');
+		});
+
+		it('should replace {{TAB_DEEP_LINK}} with session+tab deep link when activeTabId provided', () => {
+			const context = createTestContext({
+				session: createTestSession({ id: 'sess-abc' }),
+				activeTabId: 'tab-def',
+			});
+			const result = substituteTemplateVariables('Link: {{TAB_DEEP_LINK}}', context);
+			expect(result).toBe('Link: maestro://session/sess-abc/tab/tab-def');
+		});
+
+		it('should replace {{TAB_DEEP_LINK}} with session-only link when no activeTabId', () => {
+			const context = createTestContext({
+				session: createTestSession({ id: 'sess-abc' }),
+			});
+			const result = substituteTemplateVariables('Link: {{TAB_DEEP_LINK}}', context);
+			expect(result).toBe('Link: maestro://session/sess-abc');
+		});
+
+		it('should replace {{GROUP_DEEP_LINK}} with group deep link when groupId provided', () => {
+			const context = createTestContext({
+				groupId: 'grp-789',
+			});
+			const result = substituteTemplateVariables('Link: {{GROUP_DEEP_LINK}}', context);
+			expect(result).toBe('Link: maestro://group/grp-789');
+		});
+
+		it('should replace {{GROUP_DEEP_LINK}} with empty string when no groupId', () => {
+			const context = createTestContext();
+			const result = substituteTemplateVariables('Link: {{GROUP_DEEP_LINK}}', context);
+			expect(result).toBe('Link: ');
+		});
+
+		it('should URI-encode special characters in deep link IDs', () => {
+			const context = createTestContext({
+				session: createTestSession({ id: 'id/with/slashes' }),
+				activeTabId: 'tab?special',
+				groupId: 'group#hash',
+			});
+			const agentResult = substituteTemplateVariables('{{AGENT_DEEP_LINK}}', context);
+			const tabResult = substituteTemplateVariables('{{TAB_DEEP_LINK}}', context);
+			const groupResult = substituteTemplateVariables('{{GROUP_DEEP_LINK}}', context);
+
+			expect(agentResult).toContain(encodeURIComponent('id/with/slashes'));
+			expect(tabResult).toContain(encodeURIComponent('tab?special'));
+			expect(groupResult).toContain(encodeURIComponent('group#hash'));
+		});
+	});
+
 	describe('Case Insensitivity', () => {
 		it('should handle lowercase variables', () => {
 			const context = createTestContext({
@@ -718,6 +804,63 @@ describe('substituteTemplateVariables', () => {
 			expect(result).toContain('Test');
 			expect(result.startsWith('Start')).toBe(true);
 			expect(result.endsWith('End')).toBe(true);
+		});
+	});
+
+	describe('Cue Variables', () => {
+		it('should replace file change type variable', () => {
+			const context = createTestContext({
+				cue: {
+					eventType: 'file.changed',
+					fileChangeType: 'add',
+				},
+			});
+			const result = substituteTemplateVariables('Type: {{CUE_FILE_CHANGE_TYPE}}', context);
+			expect(result).toBe('Type: add');
+		});
+
+		it('should replace agent.completed source metadata variables', () => {
+			const context = createTestContext({
+				cue: {
+					eventType: 'agent.completed',
+					sourceSession: 'builder',
+					sourceOutput: 'Build succeeded',
+					sourceStatus: 'completed',
+					sourceExitCode: '0',
+					sourceDuration: '15000',
+					sourceTriggeredBy: 'lint-on-save',
+				},
+			});
+			const result = substituteTemplateVariables(
+				'{{CUE_SOURCE_STATUS}} exit={{CUE_SOURCE_EXIT_CODE}} dur={{CUE_SOURCE_DURATION}} by={{CUE_SOURCE_TRIGGERED_BY}}',
+				context
+			);
+			expect(result).toBe('completed exit=0 dur=15000 by=lint-on-save');
+		});
+
+		it('should replace {{CUE_SOURCE_AGENT_ID}} when sourceAgentId is set', () => {
+			const context = createTestContext({
+				cue: {
+					sourceAgentId: 'agent-abc-123',
+				},
+			});
+			const result = substituteTemplateVariables('Target: {{CUE_SOURCE_AGENT_ID}}', context);
+			expect(result).toBe('Target: agent-abc-123');
+		});
+
+		it('should replace {{CUE_SOURCE_AGENT_ID}} with empty string when not set', () => {
+			const context = createTestContext({ cue: {} });
+			const result = substituteTemplateVariables('Target: {{CUE_SOURCE_AGENT_ID}}', context);
+			expect(result).toBe('Target: ');
+		});
+
+		it('should default missing cue variables to empty string', () => {
+			const context = createTestContext({ cue: {} });
+			const result = substituteTemplateVariables(
+				'[{{CUE_FILE_CHANGE_TYPE}}][{{CUE_SOURCE_STATUS}}][{{CUE_SOURCE_EXIT_CODE}}][{{CUE_SOURCE_DURATION}}][{{CUE_SOURCE_TRIGGERED_BY}}]',
+				context
+			);
+			expect(result).toBe('[][][][][]');
 		});
 	});
 

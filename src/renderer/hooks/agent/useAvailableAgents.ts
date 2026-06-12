@@ -17,6 +17,7 @@ import { getAgentIcon } from '../../constants/agentIcons';
 // Use AgentConfig from types - it has optional capabilities fields
 // The detect API may not return all capability fields
 import type { AgentConfig } from '../../types';
+import { logger } from '../../utils/logger';
 
 /**
  * Agent availability status for display in selection UIs
@@ -104,7 +105,7 @@ export function useAvailableAgents(
 			const detectedAgents = await window.maestro.agents.detect();
 			setRawAgents(detectedAgents);
 		} catch (err) {
-			console.error('Failed to detect agents:', err);
+			logger.error('Failed to detect agents:', undefined, err);
 			setError(err instanceof Error ? err.message : 'Failed to detect agents');
 			setRawAgents([]);
 		} finally {

@@ -14,7 +14,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { buildChildProcessEnv, buildPtyTerminalEnv } from '../envBuilder';
+import { buildChildProcessEnv, buildPtyTerminalEnv, collectMaestroEnvVars } from '../envBuilder';
 
 describe('envBuilder - Global Environment Variables', () => {
 	let originalProcessEnv: NodeJS.ProcessEnv;
@@ -306,6 +306,23 @@ describe('envBuilder - Global Environment Variables', () => {
 			expect((env.PATH as string).length).toBeGreaterThan(0);
 		});
 
+		it('should prepend extraPathDirs ahead of the expanded PATH', () => {
+			const originalPlatform = process.platform;
+			Object.defineProperty(process, 'platform', { value: 'darwin' });
+
+			try {
+				const env = buildChildProcessEnv(undefined, false, undefined, ['/Users/me/opt/node/bin']);
+				const parts = (env.PATH as string).split(path.delimiter);
+
+				// extraPathDirs entry must come first
+				expect(parts[0]).toBe('/Users/me/opt/node/bin');
+				// hardcoded expanded paths still present after
+				expect(parts).toContain('/opt/homebrew/bin');
+			} finally {
+				Object.defineProperty(process, 'platform', { value: originalPlatform });
+			}
+		});
+
 		it('should include detected Node version manager bins in PATH', () => {
 			const originalPlatform = process.platform;
 			Object.defineProperty(process, 'platform', { value: 'darwin' });
@@ -436,6 +453,98 @@ describe('envBuilder - Global Environment Variables', () => {
 
 			expect(env.TERM).toBe('xterm-256color');
 		});
+
+		it('should set a default VIMINIT for terminal sessions', () => {
+			delete process.env.VIMINIT;
+			const env = buildPtyTerminalEnv({});
+
+			expect(env.VIMINIT).toBe('set nocompatible | set esckeys');
+		});
+
+		it('should respect explicit VIMINIT from shell env vars', () => {
+			const env = buildPtyTerminalEnv({
+				VIMINIT: 'set compatible',
+			});
+
+			expect(env.VIMINIT).toBe('set compatible');
+		});
+
+		it('should preserve VIMINIT from process env when present', () => {
+			process.env.VIMINIT = 'set compatible';
+			const env = buildPtyTerminalEnv({});
+
+			expect(env.VIMINIT).toBe('set compatible');
+		});
+
+		it('should inherit parent process environment on Unix', () => {
+			const originalPlatform = process.platform;
+			Object.defineProperty(process, 'platform', { value: 'linux' });
+
+			try {
+				process.env.ZSH_CUSTOM_VAR = 'zsh-value';
+				process.env.XDG_CONFIG_HOME = '/home/test/.config';
+
+				const env = buildPtyTerminalEnv({});
+
+				expect(env.ZSH_CUSTOM_VAR).toBe('zsh-value');
+				expect(env.XDG_CONFIG_HOME).toBe('/home/test/.config');
+			} finally {
+				Object.defineProperty(process, 'platform', { value: originalPlatform });
+				delete process.env.ZSH_CUSTOM_VAR;
+				delete process.env.XDG_CONFIG_HOME;
+			}
+		});
+
+		it('should include common user install locations in PATH on Unix', () => {
+			const originalPlatform = process.platform;
+			Object.defineProperty(process, 'platform', { value: 'linux' });
+
+			try {
+				process.env.PATH = '/usr/bin:/bin';
+				const env = buildPtyTerminalEnv({});
+				const pathParts = (env.PATH as string).split(path.delimiter);
+				const home = os.homedir();
+
+				// These directories must be in PATH so tools installed by the user
+				// (claude, codex, opencode installers) are reachable without relying
+				// on the shell sourcing an rc file to extend PATH. Regression test
+				// for zsh-without-.zshrc yielding `command not found`.
+				expect(pathParts).toContain(`${home}/.local/bin`);
+				expect(pathParts).toContain(`${home}/.opencode/bin`);
+				expect(pathParts).toContain(`${home}/.claude/local`);
+			} finally {
+				Object.defineProperty(process, 'platform', { value: originalPlatform });
+			}
+		});
+
+		it('should strip Electron/IDE variables from PTY environment on Unix', () => {
+			const originalPlatform = process.platform;
+			Object.defineProperty(process, 'platform', { value: 'linux' });
+
+			try {
+				process.env.ELECTRON_RUN_AS_NODE = '1';
+				process.env.ELECTRON_NO_ASAR = '1';
+				process.env.ELECTRON_EXTRA_LAUNCH_ARGS = '--enable-features=something';
+				process.env.CLAUDECODE = 'true';
+				process.env.CLAUDE_CODE_ENTRYPOINT = '/path/to/entrypoint';
+				process.env.CLAUDE_AGENT_SDK_VERSION = '1.0.0';
+				process.env.CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING = 'true';
+				process.env.NODE_ENV = 'test';
+
+				const env = buildPtyTerminalEnv({});
+
+				expect(env.ELECTRON_RUN_AS_NODE).toBeUndefined();
+				expect(env.ELECTRON_NO_ASAR).toBeUndefined();
+				expect(env.ELECTRON_EXTRA_LAUNCH_ARGS).toBeUndefined();
+				expect(env.CLAUDECODE).toBeUndefined();
+				expect(env.CLAUDE_CODE_ENTRYPOINT).toBeUndefined();
+				expect(env.CLAUDE_AGENT_SDK_VERSION).toBeUndefined();
+				expect(env.CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING).toBeUndefined();
+				expect(env.NODE_ENV).toBeUndefined();
+			} finally {
+				Object.defineProperty(process, 'platform', { value: originalPlatform });
+			}
+		});
 	});
 
 	describe('Test 2.9: Edge Cases and Special Values', () => {
@@ -532,6 +641,39 @@ describe('envBuilder - Global Environment Variables', () => {
 
 			expect(env2.VAR2).toBe('value2');
 			expect(env2.VAR1).toBeUndefined();
+		});
+	});
+
+	describe('collectMaestroEnvVars', () => {
+		it('returns an empty object when no inputs are provided', () => {
+			expect(collectMaestroEnvVars()).toEqual({});
+		});
+
+		it('merges global and custom env vars with custom taking precedence', () => {
+			const result = collectMaestroEnvVars(
+				{ DEBUG: 'global', PROXY: 'http://global' },
+				{ DEBUG: 'session' }
+			);
+			expect(result).toEqual({ DEBUG: 'session', PROXY: 'http://global' });
+		});
+
+		it('expands ~/ paths in both global and custom values', () => {
+			const result = collectMaestroEnvVars({ WORKSPACE: '~/work' }, { CACHE_DIR: '~/cache' });
+			expect(result.WORKSPACE).toBe(path.join(os.homedir(), 'work'));
+			expect(result.CACHE_DIR).toBe(path.join(os.homedir(), 'cache'));
+		});
+
+		it('includes MAESTRO_SESSION_RESUMED only when isResuming is true', () => {
+			expect(
+				collectMaestroEnvVars(undefined, undefined, false).MAESTRO_SESSION_RESUMED
+			).toBeUndefined();
+			expect(collectMaestroEnvVars(undefined, undefined, true).MAESTRO_SESSION_RESUMED).toBe('1');
+		});
+
+		it('does not include inherited process env', () => {
+			process.env.SOMETHING_INHERITED = 'inherited';
+			const result = collectMaestroEnvVars({ ONLY_GLOBAL: 'g' });
+			expect(result).toEqual({ ONLY_GLOBAL: 'g' });
 		});
 	});
 });

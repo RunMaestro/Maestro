@@ -17,7 +17,9 @@ import {
 	existsRemote,
 	mkdirRemote,
 	deleteRemote,
+	statRemote,
 } from '../../utils/remote-fs';
+import { PLAYBOOKS_DIR, LEGACY_PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
 
 const LOG_CONTEXT = '[AutoRun]';
 
@@ -55,7 +57,21 @@ function getSshRemoteById(
 
 // State managed by this module
 const autoRunWatchers = new Map<string, FSWatcher>();
-let autoRunWatchDebounceTimer: NodeJS.Timeout | null = null;
+// One coalescing timer per folder. Pending changes within the debounce window
+// are flushed together so 10 files written in parallel produce one tick of work
+// instead of 10 staggered IPC bursts.
+type PendingFolderChanges = {
+	timer: NodeJS.Timeout;
+	changes: Map<string, string>;
+};
+const autoRunWatchPending = new Map<string, PendingFolderChanges>();
+
+const clearPendingChangesForFolder = (folderPath: string) => {
+	const pending = autoRunWatchPending.get(folderPath);
+	if (!pending) return;
+	clearTimeout(pending.timer);
+	autoRunWatchPending.delete(folderPath);
+};
 
 /**
  * Tree node interface for autorun directory scanning.
@@ -77,37 +93,71 @@ interface TreeNode {
 /**
  * Recursively scan directory for markdown files
  */
-async function scanDirectory(dirPath: string, relativePath: string = ''): Promise<TreeNode[]> {
+async function resolveLocalEntryType(
+	dirPath: string,
+	entry: { name: string; isDirectory(): boolean; isFile(): boolean; isSymbolicLink?: () => boolean }
+): Promise<{ isDirectory: boolean; isFile: boolean; isSymlink: boolean }> {
+	let isDirectory = entry.isDirectory();
+	let isFile = entry.isFile();
+	const isSymlink = typeof entry.isSymbolicLink === 'function' ? entry.isSymbolicLink() : false;
+	if (isSymlink) {
+		try {
+			const stats = await fs.stat(path.join(dirPath, entry.name));
+			isDirectory = stats.isDirectory();
+			isFile = stats.isFile();
+		} catch {
+			isDirectory = false;
+			isFile = false;
+		}
+	}
+	return { isDirectory, isFile, isSymlink };
+}
+
+async function scanDirectory(
+	dirPath: string,
+	relativePath: string = '',
+	visitedRealPaths: Set<string> = new Set()
+): Promise<TreeNode[]> {
+	const realPath =
+		typeof (fs as any).realpath === 'function'
+			? await fs.realpath(dirPath).catch(() => path.resolve(dirPath))
+			: path.resolve(dirPath);
+	if (visitedRealPaths.has(realPath)) {
+		return [];
+	}
+	visitedRealPaths.add(realPath);
+
 	const entries = await fs.readdir(dirPath, { withFileTypes: true });
 	const nodes: TreeNode[] = [];
 
 	// Resolve symlinks so symlinked folders/files are classified by target type.
 	// Broken symlinks are skipped (they can't contribute .md files).
-	const resolved = await Promise.all(
+	const resolvedEntries = await Promise.all(
 		entries
 			.filter((entry) => !entry.name.startsWith('.'))
-			.map(async (entry) => {
-				const fullPath = path.join(dirPath, entry.name);
-				const type = await resolveDirentType(entry, fullPath);
-				if (type.isBrokenSymlink) return null;
-				return { name: entry.name, isDir: type.isDirectory, isFile: type.isFile };
-			})
+			.map(async (entry) => ({
+				entry,
+				...(await resolveLocalEntryType(dirPath, entry)),
+			}))
 	);
-	const validEntries = resolved.filter((e): e is NonNullable<typeof e> => e !== null);
 
 	// Sort entries: folders first, then files, both alphabetically
-	const sortedEntries = validEntries.sort((a, b) => {
-		if (a.isDir && !b.isDir) return -1;
-		if (!a.isDir && b.isDir) return 1;
-		return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
+	const sortedEntries = resolvedEntries.sort((a, b) => {
+		if (a.isDirectory && !b.isDirectory) return -1;
+		if (!a.isDirectory && b.isDirectory) return 1;
+		return a.entry.name.toLowerCase().localeCompare(b.entry.name.toLowerCase());
 	});
 
-	for (const entry of sortedEntries) {
+	for (const { entry, isDirectory, isFile } of sortedEntries) {
 		const entryRelativePath = relativePath ? `${relativePath}/${entry.name}` : entry.name;
 
-		if (entry.isDir) {
+		if (isDirectory) {
 			// Recursively scan subdirectory
-			const children = await scanDirectory(path.join(dirPath, entry.name), entryRelativePath);
+			const children = await scanDirectory(
+				path.join(dirPath, entry.name),
+				entryRelativePath,
+				visitedRealPaths
+			);
 			// Only include folders that contain .md files (directly or in subfolders)
 			if (children.length > 0) {
 				nodes.push({
@@ -117,7 +167,7 @@ async function scanDirectory(dirPath: string, relativePath: string = ''): Promis
 					children,
 				});
 			}
-		} else if (entry.isFile && entry.name.toLowerCase().endsWith('.md')) {
+		} else if (isFile && entry.name.toLowerCase().endsWith('.md')) {
 			// Add .md file (without extension in name, but keep in path)
 			nodes.push({
 				name: entry.name.slice(0, -3),
@@ -130,6 +180,33 @@ async function scanDirectory(dirPath: string, relativePath: string = ''): Promis
 	return nodes;
 }
 
+async function resolveRemoteEntryType(
+	dirPath: string,
+	entry: { name: string; isDirectory: boolean; isSymlink: boolean },
+	sshRemote: SshRemoteConfig
+): Promise<{ isDirectory: boolean; isFile: boolean }> {
+	if (!entry.isSymlink) {
+		return {
+			isDirectory: entry.isDirectory,
+			isFile: !entry.isDirectory,
+		};
+	}
+
+	const fullPath = `${dirPath}/${entry.name}`;
+	const statResult = await statRemote(fullPath, sshRemote);
+	if (!statResult.success || !statResult.data) {
+		return {
+			isDirectory: false,
+			isFile: false,
+		};
+	}
+
+	return {
+		isDirectory: statResult.data.isDirectory,
+		isFile: !statResult.data.isDirectory,
+	};
+}
+
 /**
  * Recursively scan directory for markdown files on a remote host via SSH.
  * This is the SSH version of scanDirectory.
@@ -137,35 +214,57 @@ async function scanDirectory(dirPath: string, relativePath: string = ''): Promis
 async function scanDirectoryRemote(
 	dirPath: string,
 	sshRemote: SshRemoteConfig,
-	relativePath: string = ''
+	relativePath: string = '',
+	visitedPaths: Set<string> = new Set()
 ): Promise<TreeNode[]> {
+	const normalizedPath = dirPath.replace(/\/+/g, '/');
+	if (visitedPaths.has(normalizedPath)) {
+		return [];
+	}
+	visitedPaths.add(normalizedPath);
+
 	const result = await readDirRemote(dirPath, sshRemote);
 	if (!result.success || !result.data) {
 		logger.warn(`${LOG_CONTEXT} Failed to read remote directory: ${result.error}`, LOG_CONTEXT);
 		return [];
 	}
 
+	const resolvedEntries = await Promise.all(
+		result.data
+			.filter((entry) => !entry.name.startsWith('.'))
+			.map(async (entry) => ({
+				entry,
+				...(await resolveRemoteEntryType(dirPath, entry, sshRemote)),
+			}))
+	);
+
 	const nodes: TreeNode[] = [];
 
 	// Sort entries: folders first, then files, both alphabetically
-	const sortedEntries = result.data
-		.filter((entry) => !entry.name.startsWith('.'))
-		.sort((a, b) => {
-			if (a.isDirectory && !b.isDirectory) return -1;
-			if (!a.isDirectory && b.isDirectory) return 1;
-			return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
-		});
+	const sortedEntries = resolvedEntries.sort((a, b) => {
+		if (a.isDirectory && !b.isDirectory) return -1;
+		if (!a.isDirectory && b.isDirectory) return 1;
+		return a.entry.name.toLowerCase().localeCompare(b.entry.name.toLowerCase());
+	});
 
-	for (const entry of sortedEntries) {
+	for (const { entry, isDirectory, isFile } of sortedEntries) {
 		const entryRelativePath = relativePath ? `${relativePath}/${entry.name}` : entry.name;
 
-		if (entry.isDirectory) {
+		if (isDirectory) {
+			// Avoid infinite recursion on remote symlink cycles.
+			// We currently don't have remote realpath canonicalization in remote-fs,
+			// so skip descending into symlinked directories.
+			if (entry.isSymlink) {
+				continue;
+			}
+
 			// Recursively scan subdirectory
 			// Use forward slashes for remote paths (Unix style)
 			const children = await scanDirectoryRemote(
 				`${dirPath}/${entry.name}`,
 				sshRemote,
-				entryRelativePath
+				entryRelativePath,
+				visitedPaths
 			);
 			// Only include folders that contain .md files (directly or in subfolders)
 			if (children.length > 0) {
@@ -176,7 +275,7 @@ async function scanDirectoryRemote(
 					children,
 				});
 			}
-		} else if (!entry.isDirectory && entry.name.toLowerCase().endsWith('.md')) {
+		} else if (isFile && entry.name.toLowerCase().endsWith('.md')) {
 			// Add .md file (without extension in name, but keep in path)
 			nodes.push({
 				name: entry.name.slice(0, -3),
@@ -224,7 +323,19 @@ function validatePathWithinFolder(filePath: string, folderPath: string): boolean
  * Recursively check if a directory contains any markdown files.
  * Optimized to return early as soon as one .md file is found.
  */
-async function checkForMarkdownFiles(dirPath: string): Promise<boolean> {
+async function checkForMarkdownFiles(
+	dirPath: string,
+	visitedRealPaths: Set<string> = new Set()
+): Promise<boolean> {
+	const realPath =
+		typeof (fs as any).realpath === 'function'
+			? await fs.realpath(dirPath).catch(() => path.resolve(dirPath))
+			: path.resolve(dirPath);
+	if (visitedRealPaths.has(realPath)) {
+		return false;
+	}
+	visitedRealPaths.add(realPath);
+
 	const entries = await fs.readdir(dirPath, { withFileTypes: true });
 
 	for (const entry of entries) {
@@ -243,7 +354,7 @@ async function checkForMarkdownFiles(dirPath: string): Promise<boolean> {
 
 		if (resolved.isDirectory) {
 			// Recursively check subdirectory (follows symlinked folders)
-			const hasFiles = await checkForMarkdownFiles(fullPath);
+			const hasFiles = await checkForMarkdownFiles(fullPath, visitedRealPaths);
 			if (hasFiles) {
 				return true;
 			}
@@ -378,11 +489,12 @@ export function registerAutorunHandlers(
 					throw new Error('Invalid file path');
 				}
 
-				// Check if file exists
+				// Check if file exists — return empty content instead of throwing,
+				// since missing files are expected (deleted, renamed, stale references)
 				try {
 					await fs.access(filePath);
 				} catch {
-					throw new Error('File not found');
+					return { content: '', notFound: true };
 				}
 
 				// Read the file
@@ -401,15 +513,6 @@ export function registerAutorunHandlers(
 		createIpcHandler(
 			handlerOpts('writeDoc'),
 			async (folderPath: string, filename: string, content: string, sshRemoteId?: string) => {
-				// DEBUG: Log all write attempts to trace cross-session contamination
-				logger.info(
-					`[DEBUG] writeDoc called: folder=${folderPath}, file=${filename}, content.length=${content.length}, content.slice(0,50)="${content.slice(0, 50).replace(/\n/g, '\\n')}"`,
-					LOG_CONTEXT
-				);
-				console.log(
-					`[DEBUG writeDoc] folder=${folderPath}, file=${filename}, content.length=${content.length}`
-				);
-
 				// Decode any URL-encoded characters to catch encoded traversal attempts
 				let decodedFilename: string;
 				try {
@@ -647,6 +750,77 @@ export function registerAutorunHandlers(
 		)
 	);
 
+	// Replace an existing image at relativePath by overwriting it in place.
+	// Used by the image annotator to save edits back to the original file.
+	ipcMain.handle(
+		'autorun:replaceImage',
+		createIpcHandler(
+			handlerOpts('replaceImage'),
+			async (
+				folderPath: string,
+				relativePath: string,
+				base64Data: string,
+				sshRemoteId?: string
+			) => {
+				// Sanitize relativePath to prevent directory traversal
+				const normalizedPath = path.normalize(relativePath);
+				const normalizedPathPosix = normalizedPath.replace(/\\/g, '/');
+				if (
+					normalizedPath.includes('..') ||
+					path.isAbsolute(normalizedPath) ||
+					!normalizedPathPosix.startsWith('images/')
+				) {
+					throw new Error('Invalid image path');
+				}
+
+				const imageBuffer = Buffer.from(base64Data, 'base64');
+
+				if (sshRemoteId) {
+					const sshConfig = getSshRemoteById(settingsStore, sshRemoteId);
+					if (!sshConfig) {
+						throw new Error(`SSH remote not found: ${sshRemoteId}`);
+					}
+
+					const remotePath = `${folderPath}/${normalizedPathPosix}`;
+					logger.debug(`${LOG_CONTEXT} replaceImage via SSH: ${remotePath}`, LOG_CONTEXT);
+
+					// Mirror the local branch's "overwrite only" contract — without
+					// the existence check, a stale annotator save could silently
+					// recreate a file that was deleted on the remote.
+					const stat = await statRemote(remotePath, sshConfig);
+					if (!stat.success) {
+						throw new Error('Image file not found');
+					}
+
+					const result = await writeFileRemote(remotePath, imageBuffer, sshConfig);
+					if (!result.success) {
+						throw new Error(result.error || 'Failed to write remote image file');
+					}
+
+					logger.info(`Replaced remote Auto Run image: ${relativePath}`, LOG_CONTEXT);
+					return { relativePath: normalizedPathPosix };
+				}
+
+				const filePath = path.join(folderPath, normalizedPath);
+				const resolvedPath = path.resolve(filePath);
+				const resolvedFolder = path.resolve(folderPath);
+				if (!resolvedPath.startsWith(resolvedFolder)) {
+					throw new Error('Invalid file path');
+				}
+
+				try {
+					await fs.access(filePath);
+				} catch {
+					throw new Error('Image file not found');
+				}
+
+				await fs.writeFile(filePath, imageBuffer);
+				logger.info(`Replaced Auto Run image: ${relativePath}`, LOG_CONTEXT);
+				return { relativePath: normalizedPathPosix };
+			}
+		)
+	);
+
 	// List images for a document (by prefix match)
 	ipcMain.handle(
 		'autorun:listImages',
@@ -744,7 +918,8 @@ export function registerAutorunHandlers(
 		)
 	);
 
-	// Delete the entire Auto Run Docs folder (for wizard "start fresh" feature)
+	// Delete the playbooks folder (for wizard "start fresh" feature)
+	// Checks canonical .maestro/playbooks first, then legacy Auto Run Docs
 	ipcMain.handle(
 		'autorun:deleteFolder',
 		createIpcHandler(handlerOpts('deleteFolder'), async (projectPath: string) => {
@@ -753,38 +928,31 @@ export function registerAutorunHandlers(
 				throw new Error('Invalid project path');
 			}
 
-			// Construct the Auto Run Docs folder path
-			const autoRunFolder = path.join(projectPath, 'Auto Run Docs');
+			// Allowed playbook folder names (canonical + legacy)
+			const ALLOWED_FOLDER_NAMES = new Set(['playbooks', 'Auto Run Docs']);
 
-			// Verify the folder exists
-			try {
-				const stat = await fs.stat(autoRunFolder);
-				if (!stat.isDirectory()) {
-					throw new Error('Auto Run Docs path is not a directory');
+			// Try canonical path first, then legacy
+			const canonicalFolder = path.join(projectPath, PLAYBOOKS_DIR);
+			const legacyFolder = path.join(projectPath, LEGACY_PLAYBOOKS_DIR);
+
+			for (const autoRunFolder of [canonicalFolder, legacyFolder]) {
+				try {
+					const stat = await fs.stat(autoRunFolder);
+					if (!stat.isDirectory()) continue;
+				} catch {
+					continue;
 				}
-			} catch (e) {
-				// If stat throws ENOENT, folder doesn't exist - nothing to delete
-				if (e instanceof Error && e.message.includes('ENOENT')) {
-					return {};
+
+				// Safety check: ensure we're only deleting known playbook folders
+				const folderName = path.basename(autoRunFolder);
+				if (!ALLOWED_FOLDER_NAMES.has(folderName)) {
+					throw new Error('Safety check failed: not a playbooks folder');
 				}
-				// If it's our own "not a directory" error, rethrow
-				if (e instanceof Error && e.message === 'Auto Run Docs path is not a directory') {
-					throw e;
-				}
-				// Folder doesn't exist, nothing to delete
-				return {};
+
+				await fs.rm(autoRunFolder, { recursive: true, force: true });
+				logger.info(`Deleted playbooks folder: ${autoRunFolder}`, LOG_CONTEXT);
 			}
 
-			// Safety check: ensure we're only deleting "Auto Run Docs" folder
-			const folderName = path.basename(autoRunFolder);
-			if (folderName !== 'Auto Run Docs') {
-				throw new Error('Safety check failed: not an Auto Run Docs folder');
-			}
-
-			// Delete the folder recursively
-			await fs.rm(autoRunFolder, { recursive: true, force: true });
-
-			logger.info(`Deleted Auto Run Docs folder: ${autoRunFolder}`, LOG_CONTEXT);
 			return {};
 		})
 	);
@@ -827,6 +995,7 @@ export function registerAutorunHandlers(
 				if (autoRunWatchers.has(folderPath)) {
 					autoRunWatchers.get(folderPath)?.close();
 					autoRunWatchers.delete(folderPath);
+					clearPendingChangesForFolder(folderPath);
 				}
 
 				// Create folder if it doesn't exist (agent will create files in it)
@@ -855,36 +1024,42 @@ export function registerAutorunHandlers(
 					depth: 99, // Recursive watching
 				});
 
-				// Handler for file changes
+				// Handler for file changes — coalesces all pending changes for this folder
+				// into a single debounced flush so a burst of writes produces one tick of work.
 				const handleFileChange = (eventType: string) => (filePath: string) => {
 					// Only care about .md files
 					if (!filePath.toLowerCase().endsWith('.md')) {
 						return;
 					}
 
-					// Get filename relative to watch folder
 					const filename = path.relative(folderPath, filePath);
-
-					// Debounce to avoid flooding with events during rapid saves
-					if (autoRunWatchDebounceTimer) {
-						clearTimeout(autoRunWatchDebounceTimer);
+					const existing = autoRunWatchPending.get(folderPath);
+					if (existing) {
+						clearTimeout(existing.timer);
 					}
+					const changes = existing?.changes ?? new Map<string, string>();
+					// 'rename' (add/unlink) takes precedence over 'change' for the same file.
+					const prior = changes.get(filename);
+					changes.set(filename, prior === 'rename' ? 'rename' : eventType);
 
-					autoRunWatchDebounceTimer = setTimeout(() => {
-						autoRunWatchDebounceTimer = null;
-						// Send event to renderer
+					const timer = setTimeout(() => {
+						autoRunWatchPending.delete(folderPath);
 						const mainWindow = getMainWindow();
-						if (isWebContentsAvailable(mainWindow)) {
-							// Remove .md extension from filename to match autorun conventions
-							const filenameWithoutExt = filename.replace(/\.md$/i, '');
+						if (!isWebContentsAvailable(mainWindow)) return;
+						for (const [name, evt] of changes) {
+							const filenameWithoutExt = name.replace(/\.md$/i, '');
 							mainWindow.webContents.send('autorun:fileChanged', {
 								folderPath,
 								filename: filenameWithoutExt,
-								eventType,
+								eventType: evt,
 							});
-							logger.info(`Auto Run file changed: ${filename} (${eventType})`, LOG_CONTEXT);
 						}
-					}, 300); // 300ms debounce
+						logger.info(
+							`Auto Run flushed ${changes.size} change(s) for ${folderPath}`,
+							LOG_CONTEXT
+						);
+					}, 300);
+					autoRunWatchPending.set(folderPath, { timer, changes });
 				};
 
 				watcher.on('add', handleFileChange('rename'));
@@ -912,6 +1087,7 @@ export function registerAutorunHandlers(
 				autoRunWatchers.delete(folderPath);
 				logger.info(`Stopped watching Auto Run folder: ${folderPath}`, LOG_CONTEXT);
 			}
+			clearPendingChangesForFolder(folderPath);
 			return {};
 		})
 	);
@@ -1109,8 +1285,8 @@ export function registerAutorunHandlers(
 
 				// Return the relative path (without .md for consistency with other APIs)
 				const relativePath = subDir
-					? `Runs/${subDir}/${workingCopyName.slice(0, -3)}`
-					: `Runs/${workingCopyName.slice(0, -3)}`;
+					? `runs/${subDir}/${workingCopyName.slice(0, -3)}`
+					: `runs/${workingCopyName.slice(0, -3)}`;
 
 				// SSH remote: dispatch to remote operations
 				if (sshRemoteId) {
@@ -1121,7 +1297,7 @@ export function registerAutorunHandlers(
 
 					// Construct remote paths (use forward slashes)
 					const remoteSourcePath = `${folderPath}/${fullFilename}`;
-					const remoteRunsDir = subDir ? `${folderPath}/Runs/${subDir}` : `${folderPath}/Runs`;
+					const remoteRunsDir = subDir ? `${folderPath}/runs/${subDir}` : `${folderPath}/runs`;
 					const remoteWorkingCopyPath = `${remoteRunsDir}/${workingCopyName}`;
 
 					logger.debug(
@@ -1172,8 +1348,8 @@ export function registerAutorunHandlers(
 
 				// Create Runs directory (with subdirectory if needed)
 				const runsDir = subDir
-					? path.join(folderPath, 'Runs', subDir)
-					: path.join(folderPath, 'Runs');
+					? path.join(folderPath, 'runs', subDir)
+					: path.join(folderPath, 'runs');
 				await fs.mkdir(runsDir, { recursive: true });
 
 				const workingCopyPath = path.join(runsDir, workingCopyName);
@@ -1300,11 +1476,4 @@ export function registerAutorunHandlers(
 	});
 
 	logger.debug(`${LOG_CONTEXT} Auto Run IPC handlers registered`);
-}
-
-/**
- * Get the current number of active watchers (for testing/debugging)
- */
-export function getAutoRunWatcherCount(): number {
-	return autoRunWatchers.size;
 }

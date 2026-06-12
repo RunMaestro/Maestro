@@ -42,16 +42,42 @@ const LOG_CONTEXT = '[OpenCodeSessionStorage]';
 const TRAILING_SEP_RE = new RegExp(`${path.sep.replace('\\', '\\\\')}+$`);
 
 /**
- * Get OpenCode data base directory (platform-specific)
- * - Linux/macOS: ~/.local/share/opencode
- * - Windows: %APPDATA%\opencode
+ * Candidate OpenCode data base directories, in preference order.
+ *
+ * OpenCode (Go binary) uses XDG-style paths on all platforms — including
+ * Windows, where `opencode db path` resolves to `%USERPROFILE%\.local\share\opencode`
+ * rather than `%APPDATA%`. We keep `%APPDATA%\opencode` as a Windows-only
+ * fallback for any legacy/alternate installs.
+ */
+function getOpenCodeDataDirCandidates(): string[] {
+	const candidates: string[] = [];
+	const home = os.homedir();
+
+	if (process.env.XDG_DATA_HOME) {
+		candidates.push(path.join(process.env.XDG_DATA_HOME, 'opencode'));
+	}
+	candidates.push(path.join(home, '.local', 'share', 'opencode'));
+
+	if (isWindows()) {
+		const appData = process.env.APPDATA || path.join(home, 'AppData', 'Roaming');
+		candidates.push(path.join(appData, 'opencode'));
+	}
+
+	return candidates;
+}
+
+/**
+ * Pick the first candidate that exists on disk. If none exist, return the
+ * preferred candidate so callers still get a sensible default path to log.
  */
 function getOpenCodeDataDir(): string {
-	if (isWindows()) {
-		const appData = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
-		return path.join(appData, 'opencode');
+	const candidates = getOpenCodeDataDirCandidates();
+	for (const candidate of candidates) {
+		if (fsSync.existsSync(candidate)) {
+			return candidate;
+		}
 	}
-	return path.join(os.homedir(), '.local', 'share', 'opencode');
+	return candidates[0];
 }
 
 /**
@@ -62,10 +88,20 @@ function getOpenCodeStorageDir(): string {
 }
 
 /**
- * Get OpenCode SQLite database path (v1.2+)
+ * Get OpenCode SQLite database path (v1.2+).
+ *
+ * Checks each candidate data dir for an existing `opencode.db` and returns
+ * the first hit. Falls back to the preferred candidate's path when none exist,
+ * so callers still get a deterministic value (existence is re-checked at use).
  */
 function getOpenCodeDbPath(): string {
-	return path.join(getOpenCodeDataDir(), 'opencode.db');
+	for (const candidate of getOpenCodeDataDirCandidates()) {
+		const dbPath = path.join(candidate, 'opencode.db');
+		if (fsSync.existsSync(dbPath)) {
+			return dbPath;
+		}
+	}
+	return path.join(getOpenCodeDataDirCandidates()[0], 'opencode.db');
 }
 
 const OPENCODE_STORAGE_DIR = getOpenCodeStorageDir();

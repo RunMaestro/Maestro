@@ -296,7 +296,7 @@ describe('Auto Run sessions and tasks recorded correctly', () => {
 			const sessionId = db.insertAutoRunSession({
 				sessionId: 'maestro-session-123',
 				agentType: 'claude-code',
-				documentPath: 'Auto Run Docs/PHASE-1.md',
+				documentPath: '.maestro/playbooks/PHASE-1.md',
 				startTime,
 				duration: 0, // Duration is 0 at start
 				tasksTotal: 10,
@@ -314,7 +314,7 @@ describe('Auto Run sessions and tasks recorded correctly', () => {
 			// INSERT parameters: id, session_id, agent_type, document_path, start_time, duration, tasks_total, tasks_completed, project_path
 			expect(lastCall[1]).toBe('maestro-session-123'); // session_id
 			expect(lastCall[2]).toBe('claude-code'); // agent_type
-			expect(lastCall[3]).toBe('Auto Run Docs/PHASE-1.md'); // document_path
+			expect(lastCall[3]).toBe('.maestro/playbooks/PHASE-1.md'); // document_path
 			expect(lastCall[4]).toBe(startTime); // start_time
 			expect(lastCall[5]).toBe(0); // duration (0 at start)
 			expect(lastCall[6]).toBe(10); // tasks_total

@@ -16,14 +16,18 @@
 
 import React, { useState, useEffect, useRef, useMemo, useCallback, memo } from 'react';
 import { Search, ChevronRight, ChevronDown, GitMerge, Clipboard, Check, X } from 'lucide-react';
-import type { Theme, Session, AITab } from '../types';
+import { GhostIconButton } from './ui/GhostIconButton';
+import type { Theme, Session } from '../types';
 import type { MergeResult } from '../types/contextMerge';
 import { fuzzyMatchWithScore } from '../utils/search';
-import { useLayerStack } from '../contexts/LayerStackContext';
+import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { useListNavigation } from '../hooks';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { formatTokensCompact } from '../utils/formatters';
+import { estimateTokensFromLogs } from '../../shared/formatters';
 import { ScreenReaderAnnouncement, useAnnouncement } from './Wizard/ScreenReaderAnnouncement';
+import { getTabDisplayName } from '../utils/tabHelpers';
+import { logger } from '../utils/logger';
 
 /**
  * View modes for the modal
@@ -75,14 +79,7 @@ export interface MergeSessionModalProps {
 	) => Promise<MergeResult>;
 }
 
-/**
- * Estimate token count from log entries
- * Uses a simple heuristic: ~4 characters per token (average for English text)
- */
-function estimateTokens(logs: { text: string }[]): number {
-	const totalChars = logs.reduce((sum, log) => sum + (log.text?.length || 0), 0);
-	return Math.round(totalChars / 4);
-}
+const estimateTokens = estimateTokensFromLogs;
 
 /**
  * Animated token display component that highlights when value changes
@@ -138,17 +135,6 @@ function getSessionDisplayName(session: Session): string {
 }
 
 /**
- * Get display name for a tab
- */
-function getTabDisplayName(tab: AITab): string {
-	if (tab.name) return tab.name;
-	if (tab.agentSessionId) {
-		return tab.agentSessionId.split('-')[0].toUpperCase();
-	}
-	return 'New Tab';
-}
-
-/**
  * MergeSessionModal Component
  */
 export function MergeSessionModal({
@@ -192,7 +178,6 @@ export function MergeSessionModal({
 
 	// Refs
 	const inputRef = useRef<HTMLInputElement>(null);
-	const layerIdRef = useRef<string>();
 	const onCloseRef = useRef(onClose);
 	const scrollContainerRef = useRef<HTMLDivElement>(null);
 	const selectedItemRef = useRef<HTMLButtonElement>(null);
@@ -202,35 +187,13 @@ export function MergeSessionModal({
 		onCloseRef.current = onClose;
 	});
 
-	const { registerLayer, unregisterLayer, updateLayerHandler } = useLayerStack();
-
 	// Register layer on mount
-	useEffect(() => {
-		if (!isOpen) return;
-
-		layerIdRef.current = registerLayer({
-			type: 'modal',
-			priority: MODAL_PRIORITIES.MERGE_SESSION,
-			blocksLowerLayers: true,
-			capturesFocus: true,
-			focusTrap: 'strict',
-			ariaLabel: 'Merge Session Contexts',
-			onEscape: () => onCloseRef.current(),
-		});
-
-		return () => {
-			if (layerIdRef.current) {
-				unregisterLayer(layerIdRef.current);
-			}
-		};
-	}, [isOpen, registerLayer, unregisterLayer]);
-
-	// Update handler when onClose changes
-	useEffect(() => {
-		if (layerIdRef.current) {
-			updateLayerHandler(layerIdRef.current, () => onCloseRef.current());
-		}
-	}, [updateLayerHandler]);
+	useModalLayer(
+		MODAL_PRIORITIES.MERGE_SESSION,
+		'Merge Session Contexts',
+		() => onCloseRef.current(),
+		{ enabled: isOpen }
+	);
 
 	// Focus input on mount
 	useEffect(() => {
@@ -466,7 +429,7 @@ export function MergeSessionModal({
 			await onMerge(target.sessionId, target.tabId, options);
 			onClose();
 		} catch (error) {
-			console.error('Merge failed:', error);
+			logger.error('Merge failed:', undefined, error);
 		} finally {
 			setIsMerging(false);
 		}
@@ -591,7 +554,7 @@ export function MergeSessionModal({
 			<ScreenReaderAnnouncement {...announcementProps} />
 
 			<div
-				className="w-[600px] rounded-xl shadow-2xl border outline-none flex flex-col animate-slide-up"
+				className="modal-w-md rounded-xl shadow-2xl border outline-none flex flex-col animate-slide-up"
 				style={{
 					backgroundColor: theme.colors.bgSidebar,
 					borderColor: theme.colors.border,
@@ -617,15 +580,13 @@ export function MergeSessionModal({
 							Merge "{sourceTab ? getTabDisplayName(sourceTab) : 'Context'}" Into
 						</h2>
 					</div>
-					<button
-						type="button"
+					<GhostIconButton
 						onClick={onClose}
-						className="p-1 rounded hover:bg-white/10 transition-colors"
-						style={{ color: theme.colors.textDim }}
-						aria-label="Close merge dialog"
+						ariaLabel="Close merge dialog"
+						color={theme.colors.textDim}
 					>
 						<X className="w-4 h-4" aria-hidden="true" />
-					</button>
+					</GhostIconButton>
 				</div>
 
 				{/* Description for screen readers */}

@@ -177,6 +177,20 @@ describe('group-chat-log', () => {
 			expect(content).toContain('Line1\\nLine2\\|Data');
 		});
 
+		it('appends with image filenames', async () => {
+			const logPath = path.join(testDir, 'image-append.log');
+			await appendToLog(logPath, 'user', 'Check this', false, ['img-001.png', 'img-002.jpg']);
+			const content = await fs.readFile(logPath, 'utf-8');
+			expect(content).toContain('|images:img-001.png,img-002.jpg');
+		});
+
+		it('appends with readOnly and image filenames', async () => {
+			const logPath = path.join(testDir, 'ro-image.log');
+			await appendToLog(logPath, 'user', 'Read only with images', true, ['screenshot.png']);
+			const content = await fs.readFile(logPath, 'utf-8');
+			expect(content).toContain('|readOnly|images:screenshot.png');
+		});
+
 		it('uses ISO 8601 timestamp format', async () => {
 			const logPath = path.join(testDir, 'timestamp-chat.log');
 			const beforeTime = new Date().toISOString();
@@ -275,6 +289,39 @@ describe('group-chat-log', () => {
 			);
 			const messages = await readLog(logPath);
 			expect(messages).toHaveLength(2);
+		});
+
+		it('parses image filenames from log', async () => {
+			const logPath = path.join(testDir, 'images-parse.log');
+			await fs.writeFile(
+				logPath,
+				'2024-01-15T10:30:00.000Z|user|Check this|images:img-001.png,img-002.jpg\n'
+			);
+			const messages = await readLog(logPath);
+			expect(messages).toHaveLength(1);
+			expect(messages[0].content).toBe('Check this');
+			expect(messages[0].images).toEqual(['img-001.png', 'img-002.jpg']);
+		});
+
+		it('parses readOnly and images together', async () => {
+			const logPath = path.join(testDir, 'ro-images.log');
+			await fs.writeFile(
+				logPath,
+				'2024-01-15T10:30:00.000Z|user|Hello|readOnly|images:screenshot.png\n'
+			);
+			const messages = await readLog(logPath);
+			expect(messages).toHaveLength(1);
+			expect(messages[0].readOnly).toBe(true);
+			expect(messages[0].images).toEqual(['screenshot.png']);
+		});
+
+		it('round-trips with appendToLog including images', async () => {
+			const logPath = path.join(testDir, 'round-trip-images.log');
+			await appendToLog(logPath, 'user', 'With images', false, ['img.png']);
+			const messages = await readLog(logPath);
+			expect(messages).toHaveLength(1);
+			expect(messages[0].content).toBe('With images');
+			expect(messages[0].images).toEqual(['img.png']);
 		});
 
 		it('round-trips with appendToLog', async () => {

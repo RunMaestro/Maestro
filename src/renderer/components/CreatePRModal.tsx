@@ -1,8 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { X, GitPullRequest, Loader2, AlertTriangle, ExternalLink } from 'lucide-react';
+import { X, GitPullRequest, AlertTriangle, ExternalLink } from 'lucide-react';
+import { GhostIconButton } from './ui/GhostIconButton';
+import { Spinner } from './ui/Spinner';
 import type { Theme, GhCliStatus } from '../types';
-import { useLayerStack } from '../contexts/LayerStackContext';
+import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
+import { openUrl } from '../utils/openUrl';
 
 /**
  * Renders error text with URLs converted to clickable links
@@ -32,7 +35,7 @@ function renderErrorWithLinks(error: string, theme: Theme): React.ReactNode {
 					style={{ color: theme.colors.error }}
 					onClick={(e) => {
 						e.stopPropagation();
-						window.maestro.shell.openExternal(part);
+						openUrl(part);
 					}}
 				>
 					{displayText}
@@ -84,9 +87,13 @@ export function CreatePRModal({
 	availableBranches,
 	onPRCreated,
 }: CreatePRModalProps) {
-	const { registerLayer, unregisterLayer } = useLayerStack();
 	const onCloseRef = useRef(onClose);
 	onCloseRef.current = onClose;
+
+	useModalLayer(MODAL_PRIORITIES.CREATE_PR, undefined, () => onCloseRef.current(), {
+		focusTrap: 'lenient',
+		enabled: isOpen,
+	});
 
 	// Form state
 	const [targetBranch, setTargetBranch] = useState('main');
@@ -99,21 +106,6 @@ export function CreatePRModal({
 	const [error, setError] = useState<string | null>(null);
 	const [hasUncommittedChanges, setHasUncommittedChanges] = useState(false);
 	const [uncommittedCount, setUncommittedCount] = useState(0);
-
-	// Register with layer stack for Escape handling
-	useEffect(() => {
-		if (isOpen) {
-			const id = registerLayer({
-				type: 'modal',
-				priority: MODAL_PRIORITIES.CREATE_PR,
-				onEscape: () => onCloseRef.current(),
-				blocksLowerLayers: true,
-				capturesFocus: true,
-				focusTrap: 'lenient',
-			});
-			return () => unregisterLayer(id);
-		}
-	}, [isOpen, registerLayer, unregisterLayer]);
 
 	// Check gh CLI status and uncommitted changes on mount
 	useEffect(() => {
@@ -227,9 +219,9 @@ export function CreatePRModal({
 							Create Pull Request
 						</h2>
 					</div>
-					<button onClick={onClose} className="p-1 rounded hover:bg-white/10 transition-colors">
+					<GhostIconButton onClick={onClose} ariaLabel="Close">
 						<X className="w-4 h-4" style={{ color: theme.colors.textDim }} />
-					</button>
+					</GhostIconButton>
 				</div>
 
 				{/* Content */}
@@ -255,7 +247,7 @@ export function CreatePRModal({
 										type="button"
 										className="underline hover:opacity-80"
 										style={{ color: theme.colors.accent }}
-										onClick={() => window.maestro.shell.openExternal('https://cli.github.com')}
+										onClick={() => openUrl('https://cli.github.com')}
 									>
 										GitHub CLI
 									</button>{' '}
@@ -300,7 +292,7 @@ export function CreatePRModal({
 							className="flex items-center gap-2 text-sm"
 							style={{ color: theme.colors.textDim }}
 						>
-							<Loader2 className="w-4 h-4 animate-spin" />
+							<Spinner size={16} />
 							Checking GitHub CLI...
 						</div>
 					)}
@@ -471,7 +463,7 @@ export function CreatePRModal({
 					>
 						{isCreating ? (
 							<>
-								<Loader2 className="w-4 h-4 animate-spin" />
+								<Spinner size={16} />
 								Creating...
 							</>
 						) : (

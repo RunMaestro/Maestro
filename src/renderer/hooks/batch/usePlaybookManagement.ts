@@ -24,8 +24,9 @@ import { generateId } from '../../utils/ids';
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useClickOutside } from '../ui';
-import type { Playbook, BatchDocumentEntry } from '../../types';
+import type { Playbook, BatchDocumentEntry, TaskSelectionMode } from '../../types';
 import { DEFAULT_BATCH_PROMPT } from './batchUtils';
+import { logger } from '../../utils/logger';
 
 /**
  * Configuration passed to the hook for modification detection
@@ -36,6 +37,7 @@ export interface PlaybookConfigState {
 	loopEnabled: boolean;
 	maxLoops: number | null;
 	prompt: string;
+	taskSelectionMode: TaskSelectionMode;
 }
 
 /**
@@ -119,7 +121,7 @@ export function usePlaybookManagement(
 					setPlaybooks(result.playbooks);
 				}
 			} catch (error) {
-				console.error('Failed to load playbooks:', error);
+				logger.error('Failed to load playbooks:', undefined, error);
 			}
 			setLoadingPlaybooks(false);
 		};
@@ -134,7 +136,7 @@ export function usePlaybookManagement(
 	const isPlaybookModified = useMemo(() => {
 		if (!loadedPlaybook) return false;
 
-		const { documents, loopEnabled, maxLoops, prompt } = config;
+		const { documents, loopEnabled, maxLoops, prompt, taskSelectionMode } = config;
 
 		// Compare documents
 		const currentDocs = documents.map((d) => ({
@@ -162,6 +164,10 @@ export function usePlaybookManagement(
 
 		// Compare prompt
 		if (prompt !== loadedPlaybook.prompt) return true;
+
+		// Compare task selection mode (legacy playbooks → 'task')
+		const savedMode = loadedPlaybook.taskSelectionMode ?? 'task';
+		if (taskSelectionMode !== savedMode) return true;
 
 		return false;
 	}, [config, loadedPlaybook]);
@@ -193,6 +199,7 @@ export function usePlaybookManagement(
 				loopEnabled: playbook.loopEnabled,
 				maxLoops: playbook.maxLoops ?? null,
 				prompt: effectivePrompt,
+				taskSelectionMode: playbook.taskSelectionMode ?? 'task',
 			});
 
 			setLoadedPlaybook(playbook);
@@ -222,7 +229,7 @@ export function usePlaybookManagement(
 				}
 			}
 		} catch (error) {
-			console.error('Failed to delete playbook:', error);
+			logger.error('Failed to delete playbook:', undefined, error);
 		}
 
 		setShowDeleteConfirmModal(false);
@@ -241,10 +248,10 @@ export function usePlaybookManagement(
 			try {
 				const result = await window.maestro.playbooks.export(sessionId, playbook.id, folderPath);
 				if (!result.success && result.error !== 'Export cancelled') {
-					console.error('Failed to export playbook:', result.error);
+					logger.error('Failed to export playbook:', undefined, result.error);
 				}
 			} catch (error) {
-				console.error('Failed to export playbook:', error);
+				logger.error('Failed to export playbook:', undefined, error);
 			}
 		},
 		[sessionId, folderPath]
@@ -260,10 +267,10 @@ export function usePlaybookManagement(
 				// Load the imported playbook
 				handleLoadPlaybook(result.playbook);
 			} else if (result.error && result.error !== 'Import cancelled') {
-				console.error('Failed to import playbook:', result.error);
+				logger.error('Failed to import playbook:', undefined, result.error);
 			}
 		} catch (error) {
-			console.error('Failed to import playbook:', error);
+			logger.error('Failed to import playbook:', undefined, error);
 		}
 	}, [sessionId, folderPath, handleLoadPlaybook]);
 
@@ -274,7 +281,7 @@ export function usePlaybookManagement(
 
 			setSavingPlaybook(true);
 			try {
-				const { documents, loopEnabled, maxLoops, prompt } = config;
+				const { documents, loopEnabled, maxLoops, prompt, taskSelectionMode } = config;
 
 				// Build playbook data
 				// Note: Worktree settings are no longer stored in playbooks - see WorktreeConfigModal
@@ -287,6 +294,7 @@ export function usePlaybookManagement(
 					loopEnabled,
 					maxLoops,
 					prompt,
+					taskSelectionMode,
 				};
 
 				const result = await window.maestro.playbooks.create(sessionId, playbookData);
@@ -297,7 +305,7 @@ export function usePlaybookManagement(
 					setShowSavePlaybookModal(false);
 				}
 			} catch (error) {
-				console.error('Failed to save playbook:', error);
+				logger.error('Failed to save playbook:', undefined, error);
 			}
 			setSavingPlaybook(false);
 		},
@@ -310,7 +318,7 @@ export function usePlaybookManagement(
 
 		setSavingPlaybook(true);
 		try {
-			const { documents, loopEnabled, maxLoops, prompt } = config;
+			const { documents, loopEnabled, maxLoops, prompt, taskSelectionMode } = config;
 
 			// Build update data
 			// Note: Worktree settings are no longer stored in playbooks - see WorktreeConfigModal
@@ -322,6 +330,7 @@ export function usePlaybookManagement(
 				loopEnabled,
 				maxLoops,
 				prompt,
+				taskSelectionMode,
 				updatedAt: Date.now(),
 			};
 
@@ -338,7 +347,7 @@ export function usePlaybookManagement(
 				);
 			}
 		} catch (error) {
-			console.error('Failed to update playbook:', error);
+			logger.error('Failed to update playbook:', undefined, error);
 		}
 		setSavingPlaybook(false);
 	}, [sessionId, loadedPlaybook, config, savingPlaybook]);

@@ -18,6 +18,7 @@ import { FastifyInstance, FastifyReply } from 'fastify';
 import path from 'path';
 import { existsSync, readFileSync } from 'fs';
 import { logger } from '../../utils/logger';
+import { captureException } from '../../utils/sentry';
 
 // Logger context for all static route logs
 const LOG_CONTEXT = 'WebServer:Static';
@@ -151,6 +152,7 @@ export class StaticRoutes {
 
 			reply.type('text/html').send(html);
 		} catch (err) {
+			void captureException(err);
 			logger.error('Error serving index.html', LOG_CONTEXT, err);
 			reply.code(500).send({
 				error: 'Internal Server Error',

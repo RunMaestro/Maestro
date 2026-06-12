@@ -41,6 +41,20 @@ vi.mock('../../../cli/services/agent-spawner', () => ({
 	writeDoc: vi.fn(),
 }));
 
+// Mock the CLI system-prompt builder. Real-impl would read the bundled
+// `maestro-system-prompt` template from disk + call git — neither is
+// available or interesting under unit tests. We can still observe whether
+// runPlaybook calls it and what it produces by tweaking the mock per test.
+vi.mock('../../../cli/services/system-prompt', () => ({
+	prepareMaestroSystemPromptCli: vi.fn(),
+}));
+
+// Mock CLI prompt-loader so batch-processor can read the default Auto Run
+// + synopsis prompts without hitting disk. Per-test overrides allowed.
+vi.mock('../../../cli/services/prompt-loader', () => ({
+	getCliPrompt: vi.fn().mockResolvedValue('Default Auto Run prompt'),
+}));
+
 // Mock storage
 vi.mock('../../../cli/services/storage', () => ({
 	addHistoryEntry: vi.fn(),
@@ -67,7 +81,7 @@ vi.mock('../../../main/utils/logger', () => ({
 }));
 
 // Import after mocks
-import { runPlaybook } from '../../../cli/services/batch-processor';
+import { runPlaybook, detectHaltMarker } from '../../../cli/services/batch-processor';
 import {
 	spawnAgent,
 	readDocAndCountTasks,
@@ -77,6 +91,7 @@ import {
 } from '../../../cli/services/agent-spawner';
 import { addHistoryEntry, readGroups } from '../../../cli/services/storage';
 import { registerCliActivity, unregisterCliActivity } from '../../../shared/cli-activity';
+import { prepareMaestroSystemPromptCli } from '../../../cli/services/system-prompt';
 
 describe('batch-processor', () => {
 	// Helper to create mock session
@@ -126,6 +141,10 @@ describe('batch-processor', () => {
 			agentSessionId: 'claude-session-123',
 		});
 		vi.mocked(uncheckAllTasks).mockImplementation((content) => content.replace(/\[x\]/gi, '[ ]'));
+		// Default: system prompt builder returns undefined (matches the
+		// non-fatal fallback when the template can't be loaded). Tests that
+		// care about positive-case wiring override this in-test.
+		vi.mocked(prepareMaestroSystemPromptCli).mockResolvedValue(undefined);
 	});
 
 	afterEach(() => {
@@ -328,6 +347,74 @@ describe('batch-processor', () => {
 			expect(taskStartEvents.length).toBe(1);
 			expect(taskCompleteEvents.length).toBe(1);
 			expect(taskCompleteEvents[0]?.success).toBe(true);
+		});
+
+		it('injects the Maestro system prompt into the task spawn (parity with desktop Auto Run)', async () => {
+			vi.mocked(prepareMaestroSystemPromptCli).mockResolvedValue('the maestro context');
+			let callCount = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				callCount++;
+				if (callCount <= 3) return { content: '- [ ] Task', taskCount: 1 };
+				return { content: '', taskCount: 0 };
+			});
+
+			const session = mockSession();
+			const playbook = mockPlaybook();
+
+			await collectEvents(runPlaybook(session, playbook, '/playbooks'));
+
+			expect(prepareMaestroSystemPromptCli).toHaveBeenCalledWith(session);
+			// Spawn call #0 is the task spawn — must carry appendSystemPrompt
+			const taskSpawnOpts = vi.mocked(spawnAgent).mock.calls[0][4];
+			expect(taskSpawnOpts?.appendSystemPrompt).toBe('the maestro context');
+		});
+
+		it('omits the Maestro system prompt from the synopsis spawn (resume reuses the existing transcript)', async () => {
+			vi.mocked(prepareMaestroSystemPromptCli).mockResolvedValue('the maestro context');
+			let callCount = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				callCount++;
+				if (callCount <= 3) return { content: '- [ ] Task', taskCount: 1 };
+				return { content: '', taskCount: 0 };
+			});
+			vi.mocked(spawnAgent).mockResolvedValue({
+				success: true,
+				response: '**Summary:** ok\n**Details:** ok',
+				agentSessionId: 'claude-session-123',
+			});
+
+			const session = mockSession();
+			const playbook = mockPlaybook();
+
+			await collectEvents(runPlaybook(session, playbook, '/playbooks'));
+
+			// Two spawns: index 0 = task spawn, index 1 = synopsis (resume).
+			// Synopsis spawn must NOT carry appendSystemPrompt — matches the
+			// desktop `spawnBackgroundSynopsis` path which omits it on resume.
+			expect(vi.mocked(spawnAgent).mock.calls.length).toBeGreaterThanOrEqual(2);
+			const synopsisSpawnOpts = vi.mocked(spawnAgent).mock.calls[1][4];
+			expect(synopsisSpawnOpts?.appendSystemPrompt).toBeUndefined();
+		});
+
+		it('builds the system prompt once per playbook run, not once per task', async () => {
+			vi.mocked(prepareMaestroSystemPromptCli).mockResolvedValue('the maestro context');
+			// Three tasks then completion: scan + processing call + after-task call
+			let callCount = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				callCount++;
+				if (callCount <= 6) return { content: '- [ ] A\n- [ ] B', taskCount: 2 };
+				return { content: '', taskCount: 0 };
+			});
+
+			const session = mockSession();
+			const playbook = mockPlaybook();
+
+			await collectEvents(runPlaybook(session, playbook, '/playbooks'));
+
+			// Called exactly once for the playbook, not per-task — important for
+			// avoiding repeated git execFile + prompt-read overhead inside the
+			// task loop.
+			expect(prepareMaestroSystemPromptCli).toHaveBeenCalledTimes(1);
 		});
 
 		it('should call spawnAgent with combined prompt and document', async () => {
@@ -1043,6 +1130,150 @@ describe('batch-processor', () => {
 			// Should complete without infinite loop
 			const completeEvent = events.find((e) => e.type === 'complete');
 			expect(completeEvent).toBeDefined();
+		});
+	});
+
+	describe('detectHaltMarker', () => {
+		it('returns halted=false when no marker is present', () => {
+			expect(detectHaltMarker('# Doc\n\n- [ ] Task one\n- [ ] Task two')).toEqual({
+				halted: false,
+			});
+		});
+
+		it('returns halted=true with no reason for the bare marker', () => {
+			expect(detectHaltMarker('- [x] Task\n<!-- maestro:halt -->')).toEqual({
+				halted: true,
+				reason: undefined,
+			});
+		});
+
+		it('returns halted=true with reason for the colon form', () => {
+			expect(detectHaltMarker('- [x] Task\n<!-- maestro:halt: build is broken -->')).toEqual({
+				halted: true,
+				reason: 'build is broken',
+			});
+		});
+
+		it('is case-insensitive on the marker keyword', () => {
+			expect(detectHaltMarker('<!-- MAESTRO:HALT: nope -->')).toEqual({
+				halted: true,
+				reason: 'nope',
+			});
+		});
+
+		it('tolerates whitespace inside the marker', () => {
+			expect(detectHaltMarker('<!--   maestro:halt   :   spaced out   -->')).toEqual({
+				halted: true,
+				reason: 'spaced out',
+			});
+		});
+
+		it('does not match unrelated comments', () => {
+			expect(detectHaltMarker('<!-- TODO: halt later -->')).toEqual({ halted: false });
+			expect(detectHaltMarker('<!-- maestro:something -->')).toEqual({ halted: false });
+		});
+	});
+
+	describe('runPlaybook - halt marker pre-scan', () => {
+		it('emits HALT_MARKER_PRESENT error when a stale marker exists before any work', async () => {
+			vi.mocked(readDocAndCountTasks).mockReturnValue({
+				content: '- [ ] Task\n<!-- maestro:halt: stale from prior run -->',
+				taskCount: 1,
+			});
+
+			const session = mockSession();
+			const playbook = mockPlaybook();
+
+			const events = await collectEvents(runPlaybook(session, playbook, '/playbooks'));
+
+			const errorEvent = events.find((e) => e.type === 'error');
+			expect(errorEvent).toBeDefined();
+			expect(errorEvent?.code).toBe('HALT_MARKER_PRESENT');
+			expect(errorEvent?.message).toContain('stale from prior run');
+
+			// Pre-scan must run before any agent spawn
+			expect(spawnAgent).not.toHaveBeenCalled();
+			expect(unregisterCliActivity).toHaveBeenCalledWith(session.id);
+		});
+	});
+
+	describe('runPlaybook - mid-execution halt marker', () => {
+		it('emits halt event and stops dispatch when the agent writes the marker', async () => {
+			// Calls 1-4: initial scan, pre-scan halt check, doc-loop initial count,
+			// in-loop content read for prompt template — all clean.
+			// Call 5: post-spawn re-read — agent has written the halt marker.
+			let callCount = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				callCount++;
+				if (callCount <= 4) {
+					return { content: '- [ ] Task one\n- [ ] Task two', taskCount: 2 };
+				}
+				return {
+					content: '- [x] Task one\n- [ ] Task two\n<!-- maestro:halt: missing migration -->',
+					taskCount: 1,
+				};
+			});
+
+			const session = mockSession();
+			const playbook = mockPlaybook({
+				documents: [
+					{ filename: 'first', resetOnCompletion: false },
+					{ filename: 'second', resetOnCompletion: false },
+				],
+			});
+
+			const events = await collectEvents(
+				runPlaybook(session, playbook, '/playbooks', { skipSynopsis: true })
+			);
+
+			const haltEvent = events.find((e) => e.type === 'halt');
+			expect(haltEvent).toBeDefined();
+			expect(haltEvent?.document).toBe('first');
+			expect(haltEvent?.reason).toBe('missing migration');
+
+			const completeEvent = events.find((e) => e.type === 'complete');
+			expect(completeEvent?.success).toBe(false);
+			expect(completeEvent?.halted).toBe(true);
+			expect(completeEvent?.haltReason).toBe('missing migration');
+
+			// The second document must NOT be reached
+			const docStartEvents = events.filter((e) => e.type === 'document_start');
+			expect(docStartEvents.map((e) => e.document)).toEqual(['first']);
+
+			// CLI activity unregistered cleanly
+			expect(unregisterCliActivity).toHaveBeenCalledWith(session.id);
+		});
+
+		it('halts even when the agent did not check off the unfinishable task', async () => {
+			// 1 doc / 1 task call sequence:
+			//   1: initial scan, 2: doc-loop count, 3: in-loop content read,
+			//   4: post-spawn re-read (halt marker appears here)
+			let callCount = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				callCount++;
+				if (callCount <= 3) {
+					return { content: '- [ ] Task one', taskCount: 1 };
+				}
+				// Same task count — agent left it unchecked but wrote the marker
+				return {
+					content: '- [ ] Task one\n<!-- maestro:halt: cannot proceed -->',
+					taskCount: 1,
+				};
+			});
+
+			const session = mockSession();
+			const playbook = mockPlaybook();
+
+			const events = await collectEvents(
+				runPlaybook(session, playbook, '/playbooks', { skipSynopsis: true })
+			);
+
+			const haltEvent = events.find((e) => e.type === 'halt');
+			expect(haltEvent?.reason).toBe('cannot proceed');
+
+			const completeEvent = events.find((e) => e.type === 'complete');
+			expect(completeEvent?.halted).toBe(true);
+			expect(completeEvent?.totalTasksCompleted).toBe(0);
 		});
 	});
 });

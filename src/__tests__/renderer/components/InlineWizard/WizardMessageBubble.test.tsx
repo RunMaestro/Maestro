@@ -18,34 +18,9 @@ import {
 	WizardMessageBubble,
 	type WizardMessageBubbleMessage,
 } from '../../../../renderer/components/InlineWizard/WizardMessageBubble';
-import type { Theme } from '../../../../renderer/types';
 
+import { mockTheme } from '../../../helpers/mockTheme';
 // Mock theme for testing
-const mockTheme: Theme = {
-	id: 'test-theme',
-	name: 'Test Theme',
-	mode: 'dark',
-	colors: {
-		background: '#1a1a1a',
-		backgroundDim: '#0d0d0d',
-		backgroundBright: '#2a2a2a',
-		bgMain: '#1a1a1a',
-		bgSidebar: '#141414',
-		bgActivity: '#333333',
-		textMain: '#ffffff',
-		textDim: '#888888',
-		textMuted: '#666666',
-		textBright: '#ffffff',
-		border: '#333333',
-		borderBright: '#444444',
-		success: '#00ff00',
-		warning: '#ffff00',
-		error: '#ff0000',
-		accent: '#007bff',
-		accentForeground: '#ffffff',
-		accentText: '#66b2ff',
-	},
-};
 
 // Helper to create test messages
 function createMessage(

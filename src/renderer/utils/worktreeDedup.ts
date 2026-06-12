@@ -1,16 +1,34 @@
 /**
- * Shared dedup mechanism for worktree paths.
+ * Shared dedup + path-matching helpers for worktree sessions.
  *
- * When creating a worktree, the path is marked here BEFORE the directory is
- * created on disk. The file watcher in useWorktreeHandlers checks this set
- * to avoid creating a duplicate session for a worktree that was just created
- * programmatically (e.g., by useAutoRunHandlers or useWorktreeHandlers).
- *
- * Module-level so both hooks can share the same Set without prop drilling.
+ * Two concerns live here so consumers don't reimplement them:
+ * 1. A TTL-bounded Set of recently-created worktree paths used by the file
+ *    watcher in useWorktreeHandlers to avoid duplicate session creation when
+ *    a worktree was just created programmatically.
+ * 2. Path-matching primitives (`normalizePath`, `sessionMatchesWorktreeRoot`)
+ *    used by both useWorktreeHandlers and useAutoRunHandlers to locate an
+ *    existing session for a given worktree root.
  */
 
-function normalizePath(p: string): string {
+import type { Session } from '../types';
+
+/** Normalize a file path for comparison: forward slashes, no duplicate or trailing slashes. */
+export function normalizePath(p: string): string {
 	return p.replace(/\\/g, '/').replace(/\/+/g, '/').replace(/\/$/, '');
+}
+
+/**
+ * Match a session against a worktree root path. We check both `projectRoot`
+ * (the stable worktree root captured at session creation) and `cwd` (which
+ * may drift if the user `cd`s into a subdirectory of the worktree). Without
+ * the projectRoot fallback, a child session that has navigated into a subdir
+ * is missed and the recovery flow builds a duplicate session for the same
+ * worktree.
+ */
+export function sessionMatchesWorktreeRoot(session: Session, normalizedRoot: string): boolean {
+	if (session.projectRoot && normalizePath(session.projectRoot) === normalizedRoot) return true;
+	if (session.cwd && normalizePath(session.cwd) === normalizedRoot) return true;
+	return false;
 }
 
 const recentlyCreatedPaths = new Set<string>();

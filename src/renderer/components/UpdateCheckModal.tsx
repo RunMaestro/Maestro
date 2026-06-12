@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
+import type { UpdateStatus } from '../types';
 import {
 	X,
 	Download,
 	ExternalLink,
-	Loader2,
 	CheckCircle2,
 	AlertCircle,
 	RefreshCw,
@@ -11,13 +11,19 @@ import {
 	ChevronRight,
 	RotateCcw,
 	FlaskConical,
+	Clock,
 } from 'lucide-react';
+import { GhostIconButton } from './ui/GhostIconButton';
+import { Spinner } from './ui/Spinner';
 import type { Theme } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
-import ReactMarkdown from 'react-markdown';
 import { Modal } from './ui/Modal';
 import { useSettings } from '../hooks';
-import { createReleaseNotesMarkdownComponents } from '../utils/markdownConfig';
+import { Markdown } from './Markdown';
+import { openUrl } from '../utils/openUrl';
+import { selectIsAnySessionBusy, useSessionStore } from '../stores/sessionStore';
+import { selectHasAnyActiveBatch, useBatchStore } from '../stores/batchStore';
+import { useRestartPendingStore } from '../stores/restartPendingStore';
 
 interface Release {
 	tag_name: string;
@@ -38,20 +44,6 @@ interface UpdateCheckResult {
 	error?: string;
 }
 
-interface UpdateStatus {
-	status:
-		| 'idle'
-		| 'checking'
-		| 'available'
-		| 'not-available'
-		| 'downloading'
-		| 'downloaded'
-		| 'error';
-	info?: { version: string };
-	progress?: { percent: number; bytesPerSecond: number; total: number; transferred: number };
-	error?: string;
-}
-
 interface UpdateCheckModalProps {
 	theme: Theme;
 	onClose: () => void;
@@ -68,11 +60,14 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 	// Auto-updater state
 	const [downloadStatus, setDownloadStatus] = useState<UpdateStatus>({ status: 'idle' });
 	const [downloadError, setDownloadError] = useState<string | null>(null);
-	const releaseNotesMarkdownComponents = useMemo(
-		() => createReleaseNotesMarkdownComponents(theme),
-		[theme]
-	);
+	const [showBusyWarning, setShowBusyWarning] = useState(false);
 
+	// Idle / restart-pending state
+	const anySessionBusy = useSessionStore(selectIsAnySessionBusy);
+	const anyBatchRunning = useBatchStore(selectHasAnyActiveBatch);
+	const isAppActive = anySessionBusy || anyBatchRunning;
+	const restartPending = useRestartPendingStore((s) => s.pending);
+	const setRestartPending = useRestartPendingStore((s) => s.setPending);
 	// Check for updates on mount
 	useEffect(() => {
 		checkForUpdates();
@@ -152,7 +147,11 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 			progress: { percent: 0, bytesPerSecond: 0, total: 0, transferred: 0 },
 		});
 
-		const downloadResult = await window.maestro.updates.download();
+		// Hand the main process the exact release tag we're offering so it can fetch
+		// from GitHub's CDN asset path instead of the flaky `releases.atom` feed.
+		// `result.releases` is newest-first, so [0] is the version shown to the user.
+		const targetTag = result?.releases?.[0]?.tag_name;
+		const downloadResult = await window.maestro.updates.download(targetTag);
 		if (!downloadResult.success && downloadResult.error) {
 			setDownloadError(downloadResult.error);
 			setDownloadStatus({ status: 'error', error: downloadResult.error });
@@ -160,7 +159,26 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 	};
 
 	const handleInstallUpdate = () => {
+		if (isAppActive) {
+			setShowBusyWarning(true);
+			return;
+		}
 		window.maestro.updates.install();
+	};
+
+	const handleRestartNow = () => {
+		setShowBusyWarning(false);
+		setRestartPending(false);
+		window.maestro.updates.install();
+	};
+
+	const handleRestartWhenIdle = () => {
+		setShowBusyWarning(false);
+		setRestartPending(true);
+	};
+
+	const handleCancelPendingRestart = () => {
+		setRestartPending(false);
 	};
 
 	const isDownloading = downloadStatus.status === 'downloading';
@@ -190,13 +208,9 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 						style={{ color: theme.colors.textDim }}
 					/>
 				</button>
-				<button
-					onClick={onClose}
-					className="p-1 rounded hover:bg-white/10 transition-colors"
-					style={{ color: theme.colors.textDim }}
-				>
+				<GhostIconButton onClick={onClose} color={theme.colors.textDim} ariaLabel="Close">
 					<X className="w-4 h-4" />
-				</button>
+				</GhostIconButton>
 			</div>
 		</div>
 	);
@@ -208,13 +222,14 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 			priority={MODAL_PRIORITIES.UPDATE_CHECK}
 			onClose={onClose}
 			customHeader={customHeader}
-			width={625}
+			width={1250}
+			maxWidthCss="50vw"
 			maxHeight="80vh"
 		>
 			<div className="space-y-4 -my-2">
 				{loading ? (
 					<div className="flex flex-col items-center justify-center py-8 gap-3">
-						<Loader2 className="w-8 h-8 animate-spin" style={{ color: theme.colors.accent }} />
+						<Spinner size={32} color={theme.colors.accent} />
 						<span className="text-sm" style={{ color: theme.colors.textDim }}>
 							Checking for updates...
 						</span>
@@ -226,7 +241,7 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 							{result.error}
 						</span>
 						<button
-							onClick={() => window.maestro.shell.openExternal(result.releasesUrl)}
+							onClick={() => openUrl(result.releasesUrl)}
 							className="flex items-center gap-2 text-sm hover:underline"
 							style={{ color: theme.colors.accent }}
 						>
@@ -348,9 +363,11 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 												className="py-3 px-5 border-t text-xs prose prose-sm prose-invert max-w-none"
 												style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
 											>
-												<ReactMarkdown components={releaseNotesMarkdownComponents}>
-													{release.body || 'No release notes available.'}
-												</ReactMarkdown>
+												<Markdown
+													preset="release-notes"
+													theme={theme}
+													content={release.body || 'No release notes available.'}
+												/>
 											</div>
 										)}
 									</div>
@@ -374,7 +391,7 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 								</div>
 								<p style={{ color: theme.colors.textDim }}>{downloadError}</p>
 								<button
-									onClick={() => window.maestro.shell.openExternal(result.releasesUrl)}
+									onClick={() => openUrl(result.releasesUrl)}
 									className="flex items-center gap-1 mt-2 hover:underline"
 									style={{ color: theme.colors.accent }}
 								>
@@ -421,7 +438,119 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 
 						{/* Action Buttons */}
 						<div className="space-y-2">
-							{isDownloaded ? (
+							{isDownloaded && restartPending ? (
+								<div
+									className="p-3 rounded-lg border space-y-2"
+									style={{
+										backgroundColor: `${theme.colors.warning}15`,
+										borderColor: theme.colors.warning,
+									}}
+								>
+									<div className="flex items-start gap-2">
+										<Clock
+											className="w-4 h-4 mt-0.5 shrink-0"
+											style={{ color: theme.colors.warning }}
+										/>
+										<div className="flex-1">
+											<div className="text-sm font-bold" style={{ color: theme.colors.textMain }}>
+												Restart pending
+											</div>
+											<div className="text-xs mt-0.5" style={{ color: theme.colors.textDim }}>
+												{isAppActive
+													? 'Maestro will restart automatically once all agents and Auto Runs finish.'
+													: 'Restarting…'}
+											</div>
+										</div>
+									</div>
+									<div className="flex gap-2">
+										<button
+											onClick={handleCancelPendingRestart}
+											className="flex-1 p-2 rounded text-xs font-medium transition-colors hover:bg-white/10"
+											style={{
+												borderColor: theme.colors.border,
+												borderWidth: 1,
+												color: theme.colors.textMain,
+											}}
+										>
+											Cancel
+										</button>
+										<button
+											onClick={handleRestartNow}
+											className="flex-1 p-2 rounded text-xs font-bold transition-colors hover:opacity-90"
+											style={{
+												backgroundColor: theme.colors.warning,
+												color: theme.colors.bgMain,
+											}}
+										>
+											Restart Now Anyway
+										</button>
+									</div>
+								</div>
+							) : isDownloaded && showBusyWarning ? (
+								<div
+									className="p-3 rounded-lg border space-y-3"
+									style={{
+										backgroundColor: `${theme.colors.warning}15`,
+										borderColor: theme.colors.warning,
+									}}
+								>
+									<div className="flex items-start gap-2">
+										<AlertCircle
+											className="w-4 h-4 mt-0.5 shrink-0"
+											style={{ color: theme.colors.warning }}
+										/>
+										<div className="flex-1">
+											<div className="text-sm font-bold" style={{ color: theme.colors.textMain }}>
+												Maestro is busy
+											</div>
+											<div className="text-xs mt-0.5" style={{ color: theme.colors.textDim }}>
+												{anySessionBusy && anyBatchRunning
+													? 'Agents are working and Auto Runs are in progress.'
+													: anySessionBusy
+														? 'One or more agents are currently working.'
+														: 'One or more Auto Runs are in progress.'}{' '}
+												Restarting now will interrupt them.
+											</div>
+										</div>
+									</div>
+									<div className="flex flex-col gap-2">
+										<button
+											onClick={handleRestartWhenIdle}
+											className="w-full flex items-center justify-center gap-2 p-2 rounded text-sm font-bold transition-colors hover:opacity-90"
+											style={{
+												backgroundColor: theme.colors.accent,
+												color: theme.colors.bgMain,
+											}}
+										>
+											<Clock className="w-4 h-4" />
+											Restart App When Idle
+										</button>
+										<div className="flex gap-2">
+											<button
+												onClick={() => setShowBusyWarning(false)}
+												className="flex-1 p-2 rounded text-xs font-medium transition-colors hover:bg-white/10"
+												style={{
+													borderColor: theme.colors.border,
+													borderWidth: 1,
+													color: theme.colors.textMain,
+												}}
+											>
+												Cancel
+											</button>
+											<button
+												onClick={handleRestartNow}
+												className="flex-1 p-2 rounded text-xs font-bold transition-colors hover:opacity-90"
+												style={{
+													backgroundColor: theme.colors.warning,
+													color: theme.colors.bgMain,
+												}}
+											>
+												Restart Now Anyway
+											</button>
+										</div>
+									</div>
+								</div>
+							) : isDownloaded ? (
 								<button
 									onClick={handleInstallUpdate}
 									className="w-full flex items-center justify-center gap-2 p-3 rounded-lg font-bold text-sm transition-colors hover:opacity-90"
@@ -436,7 +565,7 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 									className="w-full flex items-center justify-center gap-2 p-3 rounded-lg text-sm"
 									style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
 								>
-									<Loader2 className="w-4 h-4 animate-spin" />
+									<Spinner size={16} />
 									Binaries are still building...
 								</div>
 							) : (
@@ -448,7 +577,7 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 								>
 									{isDownloading ? (
 										<>
-											<Loader2 className="w-4 h-4 animate-spin" />
+											<Spinner size={16} />
 											Downloading...
 										</>
 									) : (
@@ -462,7 +591,7 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 
 							{/* Fallback link */}
 							<button
-								onClick={() => window.maestro.shell.openExternal(result.releasesUrl)}
+								onClick={() => openUrl(result.releasesUrl)}
 								className="w-full flex items-center justify-center gap-2 p-2 rounded text-xs transition-colors hover:bg-white/5"
 								style={{ color: theme.colors.textDim }}
 							>
@@ -486,9 +615,7 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 						</div>
 						<button
 							onClick={() =>
-								window.maestro.shell.openExternal(
-									result?.releasesUrl || 'https://github.com/RunMaestro/Maestro/releases'
-								)
+								openUrl(result?.releasesUrl || 'https://github.com/RunMaestro/Maestro/releases')
 							}
 							className="flex items-center gap-2 text-xs hover:underline mt-2"
 							style={{ color: theme.colors.accent }}

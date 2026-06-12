@@ -10,30 +10,10 @@ import { RenameSessionModal } from '../../../renderer/components/RenameSessionMo
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 import type { Theme, Session } from '../../../renderer/types';
 
+import { createMockTheme } from '../../helpers/mockTheme';
+
 // Mock the window.maestro API
 vi.mock('../../../renderer/services/process', () => ({}));
-
-// Create a mock theme for testing
-const createMockTheme = (): Theme => ({
-	id: 'test-theme',
-	name: 'Test Theme',
-	mode: 'dark',
-	colors: {
-		bgMain: '#1a1a1a',
-		bgPanel: '#252525',
-		bgSidebar: '#202020',
-		bgActivity: '#2d2d2d',
-		textMain: '#ffffff',
-		textDim: '#888888',
-		accent: '#0066ff',
-		accentForeground: '#ffffff',
-		border: '#333333',
-		highlight: '#0066ff33',
-		success: '#00aa00',
-		warning: '#ffaa00',
-		error: '#ff0000',
-	},
-});
 
 // Create mock sessions
 const createMockSessions = (): Session[] => [
@@ -54,6 +34,8 @@ const createMockSessions = (): Session[] => [
 		fileTree: [],
 		fileExplorerExpanded: [],
 		agentSessionId: 'claude-123',
+		terminalTabs: [],
+		activeTerminalTabId: null,
 	},
 	{
 		id: 'session-2',
@@ -71,6 +53,8 @@ const createMockSessions = (): Session[] => [
 		isGitRepo: false,
 		fileTree: [],
 		fileExplorerExpanded: [],
+		terminalTabs: [],
+		activeTerminalTabId: null,
 	},
 ];
 
@@ -714,10 +698,11 @@ describe('RenameSessionModal', () => {
 				</TestWrapper>
 			);
 
-			// The Modal component now uses inline width style instead of Tailwind class
-			const modalBox = container.querySelector('.border.rounded-lg');
+			// The Modal component uses an inline width style that scales with the
+			// Cmd+= font setting by default (no-op at the baseline font scale).
+			const modalBox = container.querySelector('.border.rounded-lg') as HTMLElement;
 			expect(modalBox).toBeInTheDocument();
-			expect(modalBox).toHaveStyle({ width: '400px' });
+			expect(modalBox.style.width).toBe('min(calc(400px * var(--font-scale, 1)), 95vw)');
 		});
 	});
 });

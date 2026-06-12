@@ -13,7 +13,19 @@
 
 import { useState, useEffect } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
+import { GhostIconButton } from '../ui/GhostIconButton';
+import { isAbsolutePath } from '../../../shared/formatters';
 import type { Theme } from '../../types';
+
+/**
+ * Variable names whose values MUST be absolute filesystem paths. A relative
+ * value (e.g. `sm/Users/me/.claude-smash` — a real typo we shipped through)
+ * gets `path.resolve()`'d against the main-process cwd at sample time, which
+ * silently points the variable at a non-existent directory and produces
+ * confusing dashboard tabs. Validating here rejects the bad value at write
+ * time so the typo never lands on disk.
+ */
+const ABSOLUTE_PATH_KEYS = new Set<string>(['CLAUDE_CONFIG_DIR']);
 
 export interface EnvVarEntry {
 	id: number;
@@ -25,9 +37,19 @@ export interface EnvVarsEditorProps {
 	envVars: Record<string, string>;
 	setEnvVars: (vars: Record<string, string>) => void;
 	theme: Theme;
+	/** Optional label displayed above the editor. Pass null to hide. */
+	label?: string | null;
+	/** Optional description displayed below the editor. Pass null to hide. */
+	description?: string | null;
 }
 
-export function EnvVarsEditor({ envVars, setEnvVars, theme }: EnvVarsEditorProps) {
+export function EnvVarsEditor({
+	envVars,
+	setEnvVars,
+	theme,
+	label = 'Environment Variables (optional)',
+	description = 'Environment variables passed to all terminal sessions and AI agent processes.',
+}: EnvVarsEditorProps) {
 	// Convert object to array with stable IDs for editing
 	const [entries, setEntries] = useState<EnvVarEntry[]>(() => {
 		return Object.entries(envVars).map(([key, value], index) => ({
@@ -56,6 +78,12 @@ export function EnvVarsEditor({ envVars, setEnvVars, theme }: EnvVarsEditorProps
 			!entry.value.startsWith("'")
 		) {
 			return `Invalid value: contains disallowed special characters; quote or escape them if you intend to include them.`;
+		}
+		// Variables that are consumed as filesystem paths must be absolute —
+		// relative values get resolved against the main-process cwd at runtime
+		// (often `/`) and silently point at a non-existent directory.
+		if (ABSOLUTE_PATH_KEYS.has(entry.key) && entry.value && !isAbsolutePath(entry.value)) {
+			return `${entry.key} must be an absolute path (starting with /).`;
 		}
 		return null;
 	};
@@ -143,8 +171,15 @@ export function EnvVarsEditor({ envVars, setEnvVars, theme }: EnvVarsEditorProps
 	};
 
 	return (
-		<div>
-			<div className="block text-xs opacity-60 mb-1">Environment Variables (optional)</div>
+		<div
+			className="p-3 rounded border"
+			style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
+		>
+			{label !== null && (
+				<label className="block text-xs font-medium mb-2" style={{ color: theme.colors.textDim }}>
+					{label}
+				</label>
+			)}
 			<div className="space-y-2">
 				{entries.map((entry) => {
 					const error = validationErrors[entry.id];
@@ -155,19 +190,14 @@ export function EnvVarsEditor({ envVars, setEnvVars, theme }: EnvVarsEditorProps
 									type="text"
 									value={entry.key}
 									onChange={(e) => updateEntry(entry.id, 'key', e.target.value)}
-									placeholder="VARIABLE"
-									className={`flex-1 p-2 rounded border bg-transparent outline-none text-xs font-mono ${
-										entry.key.trim() &&
-										!validateEntry({ id: entry.id, key: entry.key, value: entry.value })
-											? ''
-											: ''
-									}`}
+									placeholder="VARIABLE_NAME"
+									className="flex-1 p-2 rounded border bg-transparent outline-none text-xs font-mono"
 									style={{
 										borderColor: error ? '#ef4444' : theme.colors.border,
 										color: theme.colors.textMain,
 									}}
 								/>
-								<span className="text-xs" style={{ color: theme.colors.textDim }}>
+								<span className="flex items-center text-xs" style={{ color: theme.colors.textDim }}>
 									=
 								</span>
 								<input
@@ -175,21 +205,21 @@ export function EnvVarsEditor({ envVars, setEnvVars, theme }: EnvVarsEditorProps
 									value={entry.value}
 									onChange={(e) => updateEntry(entry.id, 'value', e.target.value)}
 									placeholder="value"
-									className="flex-[2] p-2 rounded border bg-transparent outline-none text-xs font-mono"
+									className="flex-1 p-2 rounded border bg-transparent outline-none text-xs font-mono"
 									style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
 								/>
-								<button
+								<GhostIconButton
 									onClick={() => removeEntry(entry.id)}
-									className="p-2 rounded hover:bg-white/10 transition-colors"
+									padding="p-2"
 									title="Remove variable"
-									style={{ color: theme.colors.textDim }}
+									color={theme.colors.textDim}
 								>
 									<Trash2 className="w-3 h-3" />
-								</button>
+								</GhostIconButton>
 							</div>
 							{error && (
 								<p className="text-xs mt-1 px-2" style={{ color: '#ef4444' }}>
-									⚠ {error}
+									{error}
 								</p>
 							)}
 						</div>
@@ -204,16 +234,7 @@ export function EnvVarsEditor({ envVars, setEnvVars, theme }: EnvVarsEditorProps
 					Add Variable
 				</button>
 			</div>
-			<div className="mt-2 space-y-1">
-				<p className="text-xs opacity-50">
-					Environment variables passed to all terminal sessions and AI agent processes.
-				</p>
-				{Object.keys(envVars).length > 0 && (
-					<p className="text-xs opacity-60">
-						✓ Valid ({Object.keys(envVars).length} variables loaded)
-					</p>
-				)}
-			</div>
+			{description !== null && <p className="text-xs opacity-50 mt-2">{description}</p>}
 		</div>
 	);
 }

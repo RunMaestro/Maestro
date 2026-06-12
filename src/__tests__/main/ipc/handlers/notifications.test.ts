@@ -17,6 +17,7 @@ import { ipcMain } from 'electron';
 const mocks = vi.hoisted(() => ({
 	mockNotificationShow: vi.fn(),
 	mockNotificationIsSupported: vi.fn().mockReturnValue(true),
+	mockNotificationOn: vi.fn(),
 }));
 
 // Mock electron with a proper class for Notification
@@ -28,6 +29,9 @@ vi.mock('electron', () => {
 		}
 		show() {
 			mocks.mockNotificationShow();
+		}
+		on(event: string, handler: () => void) {
+			mocks.mockNotificationOn(event, handler);
 		}
 		static isSupported() {
 			return mocks.mockNotificationIsSupported();
@@ -53,6 +57,15 @@ vi.mock('../../../../main/utils/logger', () => ({
 		warn: vi.fn(),
 		error: vi.fn(),
 	},
+}));
+
+// Mock deep-links module (used by notification click handler)
+vi.mock('../../../../main/deep-links', () => ({
+	parseDeepLink: vi.fn((url: string) => {
+		if (url.includes('session/')) return { action: 'session', sessionId: 'test-session' };
+		return { action: 'focus' };
+	}),
+	dispatchDeepLink: vi.fn(),
 }));
 
 // Mock child_process - must include default export
@@ -99,6 +112,8 @@ import {
 describe('Notification IPC Handlers', () => {
 	let handlers: Map<string, Function>;
 
+	const mockGetMainWindow = vi.fn().mockReturnValue(null);
+
 	beforeEach(() => {
 		vi.clearAllMocks();
 		resetNotificationState();
@@ -107,13 +122,14 @@ describe('Notification IPC Handlers', () => {
 		// Reset mocks
 		mocks.mockNotificationIsSupported.mockReturnValue(true);
 		mocks.mockNotificationShow.mockClear();
+		mocks.mockNotificationOn.mockClear();
 
 		// Capture registered handlers
 		vi.mocked(ipcMain.handle).mockImplementation((channel: string, handler: Function) => {
 			handlers.set(channel, handler);
 		});
 
-		registerNotificationsHandlers();
+		registerNotificationsHandlers({ getMainWindow: mockGetMainWindow });
 	});
 
 	afterEach(() => {
@@ -183,6 +199,68 @@ describe('Notification IPC Handlers', () => {
 
 			expect(result.success).toBe(false);
 			expect(result.error).toBe('Error: Notification failed');
+		});
+	});
+
+	describe('notification:show click-to-navigate', () => {
+		it('should register close handler to prevent GC on all notifications', async () => {
+			const handler = handlers.get('notification:show')!;
+			await handler({}, 'Title', 'Body');
+
+			expect(mocks.mockNotificationOn).toHaveBeenCalledWith('close', expect.any(Function));
+		});
+
+		it('should register click handler when sessionId is provided', async () => {
+			const handler = handlers.get('notification:show')!;
+			await handler({}, 'Title', 'Body', 'session-123');
+
+			expect(mocks.mockNotificationOn).toHaveBeenCalledWith('close', expect.any(Function));
+			expect(mocks.mockNotificationOn).toHaveBeenCalledWith('click', expect.any(Function));
+		});
+
+		it('should register click handler when sessionId and tabId are provided', async () => {
+			const handler = handlers.get('notification:show')!;
+			await handler({}, 'Title', 'Body', 'session-123', 'tab-456');
+
+			expect(mocks.mockNotificationOn).toHaveBeenCalledWith('click', expect.any(Function));
+		});
+
+		it('should URI-encode sessionId and tabId in deep link URL', async () => {
+			const { parseDeepLink } = await import('../../../../main/deep-links');
+			const handler = handlers.get('notification:show')!;
+			await handler({}, 'Title', 'Body', 'id/with/slashes', 'tab?special');
+
+			// Find the click handler (not the close handler)
+			const clickCall = mocks.mockNotificationOn.mock.calls.find(
+				(call: any[]) => call[0] === 'click'
+			);
+			expect(clickCall).toBeDefined();
+			clickCall![1]();
+
+			expect(parseDeepLink).toHaveBeenCalledWith(
+				`maestro://session/${encodeURIComponent('id/with/slashes')}/tab/${encodeURIComponent('tab?special')}`
+			);
+		});
+
+		it('should not register click handler when sessionId is not provided', async () => {
+			const handler = handlers.get('notification:show')!;
+			await handler({}, 'Title', 'Body');
+
+			// close handler is registered, but not click
+			const clickCalls = mocks.mockNotificationOn.mock.calls.filter(
+				(call: any[]) => call[0] === 'click'
+			);
+			expect(clickCalls).toHaveLength(0);
+		});
+
+		it('should not register click handler when sessionId is undefined', async () => {
+			const handler = handlers.get('notification:show')!;
+			await handler({}, 'Title', 'Body', undefined, undefined);
+
+			const clickCalls = mocks.mockNotificationOn.mock.calls.filter(
+				(call: any[]) => call[0] === 'click'
+			);
+			expect(clickCalls).toHaveLength(0);
 		});
 	});
 

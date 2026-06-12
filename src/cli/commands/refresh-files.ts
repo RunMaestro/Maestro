@@ -1,39 +1,30 @@
-// Refresh files command
-// Refreshes the file tree in the running Maestro desktop app.
+// Refresh files command - refresh the file tree in the Maestro desktop app
 
-import { resolveSessionId, withMaestroClient } from '../services/maestro-client';
-import { formatError } from '../output/formatter';
+import { withMaestroClient, resolveTargetSessionId } from '../services/maestro-client';
 
 interface RefreshFilesOptions {
-	session?: string;
-}
-
-interface RefreshFilesResult {
-	type: 'refresh_file_tree_result';
-	success?: boolean;
-	sessionId?: string;
-	error?: string;
+	agent?: string;
 }
 
 export async function refreshFiles(options: RefreshFilesOptions): Promise<void> {
-	try {
-		const sessionId = resolveSessionId(options);
+	const sessionId = resolveTargetSessionId(options.agent);
 
-		await withMaestroClient(async (client) => {
-			const result = await client.sendCommand<RefreshFilesResult>(
+	try {
+		const result = await withMaestroClient(async (client) => {
+			return client.sendCommand<{ type: string; success: boolean; error?: string }>(
 				{ type: 'refresh_file_tree', sessionId },
 				'refresh_file_tree_result'
 			);
-
-			if (result.success === false) {
-				throw new Error(result.error || 'Failed to refresh file tree');
-			}
 		});
 
-		console.log('File tree refreshed');
+		if (result.success) {
+			console.log('File tree refreshed');
+		} else {
+			console.error(`Error: ${result.error || 'Failed to refresh file tree'}`);
+			process.exit(1);
+		}
 	} catch (error) {
-		const message = error instanceof Error ? error.message : 'Unknown error';
-		console.error(formatError(`Failed to refresh file tree: ${message}`));
+		console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
 		process.exit(1);
 	}
 }

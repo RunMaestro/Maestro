@@ -1,24 +1,67 @@
 /**
  * DisplayTab - Display settings tab for SettingsModal
  *
- * Contains: Font Configuration, Font Size, Terminal Width, Max Log Buffer,
+ * Contains: Font Configuration, Font Size, Max Log Buffer,
  * Max Output Lines, Message Alignment, Window Chrome, Document Graph,
  * Context Window Warnings, Local Ignore Patterns.
  */
 
 import { useState } from 'react';
-import { Sparkles, AlertTriangle, AppWindow, HelpCircle } from 'lucide-react';
+import {
+	Accessibility,
+	ALargeSmall,
+	AlignHorizontalJustifyCenter,
+	AlertTriangle,
+	AppWindow,
+	Database,
+	Eye,
+	FileText,
+	FolderSearch,
+	HelpCircle,
+	WrapText,
+	ListFilter,
+	PanelTop,
+	PanelLeft,
+	Palette,
+	Sparkles,
+} from 'lucide-react';
+import {
+	FILE_PREVIEW_TOOLBAR_BUTTON_KEYS,
+	type FilePreviewToolbarButton,
+} from '../../../stores/settingsStore';
 import { useSettings } from '../../../hooks';
+import { useSettingsStore } from '../../../stores/settingsStore';
 import type { Theme } from '../../../types';
 import { ToggleButtonGroup } from '../../ToggleButtonGroup';
+import { WorktreePill } from '../../ui/WorktreePill';
 import { FontConfigurationPanel } from '../../FontConfigurationPanel';
 import { IgnorePatternsSection } from '../IgnorePatternsSection';
+import { FilePanelSettingsSection } from '../FilePanelSettingsSection';
+import { SettingsSectionHeading } from '../SettingsSectionHeading';
 import { DEFAULT_LOCAL_IGNORE_PATTERNS } from '../../../stores/settingsStore';
+import { logger } from '../../../utils/logger';
 import { Modal } from '../../ui/Modal';
 import { MODAL_PRIORITIES } from '../../../constants/modalPriorities';
 import { DEFAULT_BIONIFY_ALGORITHM } from '../../../utils/bionifyReadingMode';
+import { isMacOSPlatform } from '../../../utils/platformUtils';
 
 const BIONIFY_ALGORITHM_PATTERN = /^[+-](\s+\d+){4}\s+(?:0(?:\.\d+)?|1(?:\.0+)?)$/;
+
+const TOOLBAR_BUTTON_LABELS: Record<FilePreviewToolbarButton, string> = {
+	save: 'Save',
+	wordWrap: 'Word wrap',
+	remoteImages: 'Show remote images',
+	htmlRender: 'Render HTML',
+	previewTier: 'Preview tier chip',
+	editToggle: 'Edit / preview toggle',
+	editImage: 'Edit image',
+	copyContent: 'Copy content',
+	publishGist: 'Publish as gist',
+	documentGraph: 'Document graph',
+	openInBrowser: 'Open in Maestro browser',
+	openInDefault: 'Open in default app',
+	copyPath: 'Copy file path',
+};
 
 export interface DisplayTabProps {
 	theme: Theme;
@@ -30,12 +73,12 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 		setFontFamily,
 		fontSize,
 		setFontSize,
-		terminalWidth,
-		setTerminalWidth,
 		maxLogBuffer,
 		setMaxLogBuffer,
 		maxOutputLines,
 		setMaxOutputLines,
+		colorBlindMode,
+		setColorBlindMode,
 		bionifyReadingMode,
 		setBionifyReadingMode,
 		bionifyIntensity,
@@ -46,10 +89,48 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 		setUserMessageAlignment,
 		fileExplorerIconTheme,
 		setFileExplorerIconTheme,
+		showStarredInUnreadFilter,
+		setShowStarredInUnreadFilter,
+		showFilePreviewsInUnreadFilter,
+		setShowFilePreviewsInUnreadFilter,
+		useCmd0AsLastTab,
+		setUseCmd0AsLastTab,
+		showBrowserTabDomain,
+		setShowBrowserTabDomain,
 		useNativeTitleBar,
 		setUseNativeTitleBar,
 		autoHideMenuBar,
 		setAutoHideMenuBar,
+		showAgentName,
+		setShowAgentName,
+		showSessionIdPill,
+		setShowSessionIdPill,
+		showSessionCostPill,
+		setShowSessionCostPill,
+		showWorktreePill,
+		setShowWorktreePill,
+		showWorktreeBranchName,
+		setShowWorktreeBranchName,
+		showStarredSessionsSection,
+		setShowStarredSessionsSection,
+		showLeftPanelGroupMemberCount,
+		setShowLeftPanelGroupMemberCount,
+		leftPanelCollapsedPillsPerRow,
+		setLeftPanelCollapsedPillsPerRow,
+		showLeftPanelLocationPills,
+		setShowLeftPanelLocationPills,
+		showLeftPanelGitIndicator,
+		setShowLeftPanelGitIndicator,
+		showLeftPanelCueIndicator,
+		setShowLeftPanelCueIndicator,
+		showLeftPanelStartupCommandIndicator,
+		setShowLeftPanelStartupCommandIndicator,
+		fileEditWordWrap,
+		setFileEditWordWrap,
+		fileEditShowLineNumbers,
+		setFileEditShowLineNumbers,
+		filePreviewToolbarVisibility,
+		setFilePreviewToolbarButtonVisibility,
 		documentGraphShowExternalLinks,
 		setDocumentGraphShowExternalLinks,
 		documentGraphMaxNodes,
@@ -60,7 +141,17 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 		setLocalIgnorePatterns,
 		localHonorGitignore,
 		setLocalHonorGitignore,
+		fileExplorerMaxDepth,
+		setFileExplorerMaxDepth,
+		fileExplorerMaxEntries,
+		setFileExplorerMaxEntries,
+		sshReduceEntryCapEnabled,
+		setSshReduceEntryCapEnabled,
+		sshReduceEntryCapFraction,
+		setSshReduceEntryCapFraction,
 	} = useSettings();
+
+	const maestroCueEnabled = useSettingsStore((s) => s.encoreFeatures.maestroCue);
 
 	const [systemFonts, setSystemFonts] = useState<string[]>([]);
 	const [customFonts, setCustomFonts] = useState<string[]>([]);
@@ -98,7 +189,7 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 			}
 			setFontsLoaded(true);
 		} catch (error) {
-			console.error('Failed to load fonts:', error);
+			logger.error('Failed to load fonts:', undefined, error);
 		} finally {
 			setFontLoading(false);
 		}
@@ -127,22 +218,24 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 	return (
 		<div className="space-y-5">
 			{/* Font Family */}
-			<FontConfigurationPanel
-				fontFamily={fontFamily}
-				setFontFamily={setFontFamily}
-				systemFonts={systemFonts}
-				fontsLoaded={fontsLoaded}
-				fontLoading={fontLoading}
-				customFonts={customFonts}
-				onAddCustomFont={addCustomFont}
-				onRemoveCustomFont={removeCustomFont}
-				onFontInteraction={handleFontInteraction}
-				theme={theme}
-			/>
+			<div data-setting-id="display-font-family">
+				<FontConfigurationPanel
+					fontFamily={fontFamily}
+					setFontFamily={setFontFamily}
+					systemFonts={systemFonts}
+					fontsLoaded={fontsLoaded}
+					fontLoading={fontLoading}
+					customFonts={customFonts}
+					onAddCustomFont={addCustomFont}
+					onRemoveCustomFont={removeCustomFont}
+					onFontInteraction={handleFontInteraction}
+					theme={theme}
+				/>
+			</div>
 
 			{/* Font Size */}
-			<div>
-				<div className="block text-xs font-bold opacity-70 uppercase mb-2">Font Size</div>
+			<div data-setting-id="display-font-size">
+				<SettingsSectionHeading icon={ALargeSmall}>Font Size</SettingsSectionHeading>
 				<ToggleButtonGroup
 					options={[
 						{ value: 12, label: 'Small' },
@@ -156,22 +249,9 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 				/>
 			</div>
 
-			{/* Terminal Width */}
-			<div>
-				<div className="block text-xs font-bold opacity-70 uppercase mb-2">
-					Terminal Width (Columns)
-				</div>
-				<ToggleButtonGroup
-					options={[80, 100, 120, 160]}
-					value={terminalWidth}
-					onChange={setTerminalWidth}
-					theme={theme}
-				/>
-			</div>
-
 			{/* Max Log Buffer */}
-			<div>
-				<div className="block text-xs font-bold opacity-70 uppercase mb-2">Maximum Log Buffer</div>
+			<div data-setting-id="display-max-log-buffer">
+				<SettingsSectionHeading icon={Database}>Maximum Log Buffer</SettingsSectionHeading>
 				<ToggleButtonGroup
 					options={[1000, 5000, 10000, 25000]}
 					value={maxLogBuffer}
@@ -179,15 +259,16 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 					theme={theme}
 				/>
 				<p className="text-xs opacity-50 mt-2">
-					Maximum number of log messages to keep in memory. Older logs are automatically removed.
+					Maximum number of entries to retain for history and system log viewer. Older entries are
+					automatically discarded as new ones arrive.
 				</p>
 			</div>
 
 			{/* Max Output Lines */}
-			<div>
-				<div className="block text-xs font-bold opacity-70 uppercase mb-2">
+			<div data-setting-id="display-max-output-lines">
+				<SettingsSectionHeading icon={WrapText}>
 					Max Output Lines per Response
-				</div>
+				</SettingsSectionHeading>
 				<ToggleButtonGroup
 					options={[
 						{ value: 15 },
@@ -207,10 +288,10 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 			</div>
 
 			{/* Message Alignment */}
-			<div>
-				<div className="block text-xs font-bold opacity-70 uppercase mb-2">
+			<div data-setting-id="display-message-alignment">
+				<SettingsSectionHeading icon={AlignHorizontalJustifyCenter}>
 					User Message Alignment
-				</div>
+				</SettingsSectionHeading>
 				<ToggleButtonGroup
 					options={[
 						{ value: 'left', label: 'Left' },
@@ -226,99 +307,8 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 				</p>
 			</div>
 
-			<div>
-				<div className="block text-xs font-bold opacity-70 uppercase mb-2">Reading Mode</div>
-				<ToggleButtonGroup
-					options={[
-						{ value: 'off', label: 'Off' },
-						{ value: 'on', label: 'Bionify' },
-					]}
-					value={bionifyReadingMode ? 'on' : 'off'}
-					onChange={(value) => setBionifyReadingMode(value === 'on')}
-					theme={theme}
-				/>
-				<p className="text-xs opacity-50 mt-2">
-					Applies Bionify-style emphasis only to opted-in long-form readers like File Preview and
-					Auto Run. Terminals, logs, and chat input stay unchanged.
-				</p>
-			</div>
-
-			<div>
-				<div
-					className="block text-xs font-bold opacity-70 uppercase mb-2 flex items-center gap-2"
-					style={{ color: theme.colors.textDim }}
-				>
-					<span>Intensity</span>
-					<button
-						type="button"
-						onClick={() => setShowBionifyInfoModal(true)}
-						className="inline-flex items-center justify-center rounded transition-colors hover:bg-white/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/30"
-						style={{ width: '20px', height: '20px', color: theme.colors.textDim }}
-						aria-label="Info"
-						title="Bionify algorithm info"
-					>
-						<HelpCircle className="w-3.5 h-3.5" />
-					</button>
-				</div>
-				<ToggleButtonGroup
-					options={[
-						{ value: 0.85, label: 'Soft' },
-						{ value: 1, label: 'Default' },
-						{ value: 1.35, label: 'Strong' },
-					]}
-					value={bionifyIntensity}
-					onChange={setBionifyIntensity}
-					theme={theme}
-				/>
-				<p className="text-xs opacity-50 mt-2">
-					Controls how hard the emphasis hits. Strong increases emphasis weight and fades the
-					remaining characters more aggressively.
-				</p>
-			</div>
-
-			<div>
-				<label
-					htmlFor="bionify-algorithm-input"
-					className="block text-xs font-bold opacity-70 uppercase mb-2"
-				>
-					Bionify Algorithm
-				</label>
-				<input
-					id="bionify-algorithm-input"
-					aria-label="Bionify algorithm"
-					type="text"
-					value={bionifyAlgorithmDraft}
-					onChange={(event) => setBionifyAlgorithmDraft(event.target.value)}
-					onBlur={commitBionifyAlgorithmDraft}
-					onKeyDown={(event) => {
-						if (event.key === 'Enter') {
-							event.currentTarget.blur();
-						}
-					}}
-					className="w-full px-3 py-2 rounded text-sm outline-none focus-visible:ring-1 focus-visible:ring-white/30"
-					style={{
-						backgroundColor: theme.colors.bgMain,
-						color: theme.colors.textMain,
-						border: `1px solid ${isBionifyAlgorithmValid ? theme.colors.border : theme.colors.warning}`,
-					}}
-					placeholder="- 0 1 1 2 0.4"
-					spellCheck={false}
-				/>
-				<p className="text-xs opacity-50 mt-2">
-					Format: sign, four fixed word-length rules, then a fallback fraction. Example: `- 0 1 1 2
-					0.4`
-				</p>
-				{!isBionifyAlgorithmValid && (
-					<p className="text-xs mt-2" style={{ color: theme.colors.warning }}>
-						Enter `+|- len1 len2 len3 len4 fraction`, for example `- 0 1 1 2 0.4`.
-					</p>
-				)}
-			</div>
-
-			<div>
-				<div className="block text-xs font-bold opacity-70 uppercase mb-2">
-					Files Pane Icon Theme
-				</div>
+			<div data-setting-id="display-icon-theme">
+				<SettingsSectionHeading icon={Palette}>Files Pane Icon Theme</SettingsSectionHeading>
 				<ToggleButtonGroup
 					options={[
 						{ value: 'default', label: 'Default' },
@@ -335,14 +325,8 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 			</div>
 
 			{/* Window Chrome Settings */}
-			<div>
-				<label
-					className="block text-xs font-bold opacity-70 uppercase mb-2 flex items-center gap-2"
-					style={{ color: theme.colors.textDim }}
-				>
-					<AppWindow className="w-3 h-3" />
-					Window Chrome
-				</label>
+			<div data-setting-id="display-window-chrome">
+				<SettingsSectionHeading icon={AppWindow}>Window Chrome</SettingsSectionHeading>
 				<div
 					className="p-3 rounded border space-y-3"
 					style={{
@@ -413,21 +397,714 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 				</div>
 			</div>
 
-			{/* Document Graph Settings */}
-			<div>
-				<div className="block text-xs font-bold opacity-70 uppercase mb-2 flex items-center gap-2">
-					<Sparkles className="w-3 h-3" />
-					Document Graph
-					<span
-						className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase"
-						style={{
-							backgroundColor: theme.colors.warning + '30',
-							color: theme.colors.warning,
-						}}
+			{/* Main Header Panel */}
+			<div data-setting-id="display-main-header-panel">
+				<SettingsSectionHeading icon={PanelTop}>Main Header Panel</SettingsSectionHeading>
+				<div
+					className="p-3 rounded border space-y-3"
+					style={{
+						borderColor: theme.colors.border,
+						backgroundColor: theme.colors.bgMain,
+					}}
+				>
+					{/* Show agent name */}
+					<div className="flex items-center justify-between">
+						<div>
+							<p className="text-sm" style={{ color: theme.colors.textMain }}>
+								Show agent name
+							</p>
+							<p className="text-xs opacity-50 mt-0.5">
+								Display the agent name in the main header.
+							</p>
+						</div>
+						<button
+							onClick={() => setShowAgentName(!showAgentName)}
+							className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0 outline-none"
+							tabIndex={0}
+							style={{
+								backgroundColor: showAgentName ? theme.colors.accent : theme.colors.bgActivity,
+							}}
+							role="switch"
+							aria-checked={showAgentName}
+							aria-label="Show agent name"
+						>
+							<span
+								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+									showAgentName ? 'translate-x-5' : 'translate-x-0.5'
+								}`}
+							/>
+						</button>
+					</div>
+
+					{/* Show session ID pill */}
+					<div
+						className="flex items-center justify-between pt-3 border-t"
+						style={{ borderColor: theme.colors.border }}
 					>
-						Beta
-					</span>
+						<div>
+							<p className="text-sm" style={{ color: theme.colors.textMain }}>
+								Show session ID pill
+							</p>
+							<p className="text-xs opacity-50 mt-0.5">
+								Display the provider session ID pill (short hash, e.g. &quot;B778BF42&quot;) in the
+								main header. Click the pill to copy the full ID.
+							</p>
+						</div>
+						<button
+							onClick={() => setShowSessionIdPill(!showSessionIdPill)}
+							className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0 outline-none"
+							tabIndex={0}
+							style={{
+								backgroundColor: showSessionIdPill ? theme.colors.accent : theme.colors.bgActivity,
+							}}
+							role="switch"
+							aria-checked={showSessionIdPill}
+							aria-label="Show session ID pill"
+						>
+							<span
+								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+									showSessionIdPill ? 'translate-x-5' : 'translate-x-0.5'
+								}`}
+							/>
+						</button>
+					</div>
+
+					{/* Show session cost pill */}
+					<div
+						className="flex items-center justify-between pt-3 border-t"
+						style={{ borderColor: theme.colors.border }}
+					>
+						<div>
+							<p className="text-sm" style={{ color: theme.colors.textMain }}>
+								Show session cost pill
+							</p>
+							<p className="text-xs opacity-50 mt-0.5">
+								Display the per-session running cost (e.g. &quot;$21.33&quot;) in the main header.
+							</p>
+						</div>
+						<button
+							onClick={() => setShowSessionCostPill(!showSessionCostPill)}
+							className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0 outline-none"
+							tabIndex={0}
+							style={{
+								backgroundColor: showSessionCostPill
+									? theme.colors.accent
+									: theme.colors.bgActivity,
+							}}
+							role="switch"
+							aria-checked={showSessionCostPill}
+							aria-label="Show session cost pill"
+						>
+							<span
+								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+									showSessionCostPill ? 'translate-x-5' : 'translate-x-0.5'
+								}`}
+							/>
+						</button>
+					</div>
 				</div>
+			</div>
+
+			{/* Left Side Panel */}
+			<div data-setting-id="display-left-side-panel">
+				<SettingsSectionHeading icon={PanelLeft}>Left Side Panel</SettingsSectionHeading>
+				<div
+					className="p-3 rounded border space-y-3"
+					style={{
+						borderColor: theme.colors.border,
+						backgroundColor: theme.colors.bgMain,
+					}}
+				>
+					{/* Show Starred Sessions section */}
+					<div
+						className="flex items-center justify-between"
+						data-setting-id="display-left-panel-starred-sessions"
+					>
+						<div>
+							<p className="text-sm" style={{ color: theme.colors.textMain }}>
+								Show Starred Sessions section
+							</p>
+							<p className="text-xs opacity-50 mt-0.5">
+								Display a Starred Sessions section at the top of the left side bar listing every
+								starred AI tab across all agents.
+							</p>
+						</div>
+						<button
+							onClick={() => setShowStarredSessionsSection(!showStarredSessionsSection)}
+							className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0 outline-none"
+							tabIndex={0}
+							style={{
+								backgroundColor: showStarredSessionsSection
+									? theme.colors.accent
+									: theme.colors.bgActivity,
+							}}
+							role="switch"
+							aria-checked={showStarredSessionsSection}
+							aria-label="Show Starred Sessions section in left side bar"
+						>
+							<span
+								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+									showStarredSessionsSection ? 'translate-x-5' : 'translate-x-0.5'
+								}`}
+							/>
+						</button>
+					</div>
+
+					{/* Show group member count */}
+					<div className="flex items-center justify-between">
+						<div>
+							<p className="text-sm" style={{ color: theme.colors.textMain }}>
+								Show group member count
+							</p>
+							<p className="text-xs opacity-50 mt-0.5">
+								Display the number of agents in parentheses after each group name in the left side
+								bar (e.g. &quot;UNGROUPED AGENTS (24)&quot;).
+							</p>
+						</div>
+						<button
+							onClick={() => setShowLeftPanelGroupMemberCount(!showLeftPanelGroupMemberCount)}
+							className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0 outline-none"
+							tabIndex={0}
+							style={{
+								backgroundColor: showLeftPanelGroupMemberCount
+									? theme.colors.accent
+									: theme.colors.bgActivity,
+							}}
+							role="switch"
+							aria-checked={showLeftPanelGroupMemberCount}
+							aria-label="Show group member count in left side bar"
+						>
+							<span
+								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+									showLeftPanelGroupMemberCount ? 'translate-x-5' : 'translate-x-0.5'
+								}`}
+							/>
+						</button>
+					</div>
+
+					{/* Collapsed pills per row */}
+					<div className="pt-3 border-t" style={{ borderColor: theme.colors.border }}>
+						<p className="text-sm" style={{ color: theme.colors.textMain }}>
+							Collapsed group pills per row
+						</p>
+						<p className="text-xs opacity-50 mt-0.5 mb-2">
+							When a group is collapsed, its agents render as a row of activity pills. Pills wrap to
+							a new row once this many are shown, so large groups stay readable instead of
+							condensing into invisible slivers.
+						</p>
+						<div className="flex items-center gap-3">
+							<input
+								type="range"
+								min={5}
+								max={50}
+								step={5}
+								value={leftPanelCollapsedPillsPerRow}
+								onChange={(e) => setLeftPanelCollapsedPillsPerRow(Number(e.target.value))}
+								className="flex-1 h-2 rounded-lg appearance-none cursor-pointer"
+								style={{
+									background: `linear-gradient(to right, ${theme.colors.accent} 0%, ${theme.colors.accent} ${((leftPanelCollapsedPillsPerRow - 5) / 45) * 100}%, ${theme.colors.bgActivity} ${((leftPanelCollapsedPillsPerRow - 5) / 45) * 100}%, ${theme.colors.bgActivity} 100%)`,
+								}}
+								aria-label="Collapsed group pills per row"
+							/>
+							<span
+								className="text-sm font-mono w-8 text-right"
+								style={{ color: theme.colors.textMain }}
+							>
+								{leftPanelCollapsedPillsPerRow}
+							</span>
+						</div>
+					</div>
+
+					{/* Show location pills */}
+					<div
+						className="flex items-center justify-between pt-3 border-t"
+						style={{ borderColor: theme.colors.border }}
+					>
+						<div>
+							<p className="text-sm" style={{ color: theme.colors.textMain }}>
+								Show location pills
+							</p>
+							<p className="text-xs opacity-50 mt-0.5">
+								Display the REMOTE / LOCAL / GIT badges next to each agent in the left side bar.
+								Turn off to simplify the agent rows.
+							</p>
+						</div>
+						<button
+							onClick={() => setShowLeftPanelLocationPills(!showLeftPanelLocationPills)}
+							className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0 outline-none"
+							tabIndex={0}
+							style={{
+								backgroundColor: showLeftPanelLocationPills
+									? theme.colors.accent
+									: theme.colors.bgActivity,
+							}}
+							role="switch"
+							aria-checked={showLeftPanelLocationPills}
+							aria-label="Show location pills in left side bar"
+						>
+							<span
+								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+									showLeftPanelLocationPills ? 'translate-x-5' : 'translate-x-0.5'
+								}`}
+							/>
+						</button>
+					</div>
+
+					{/* Show git change indicator */}
+					<div
+						className="flex items-center justify-between pt-3 border-t"
+						style={{ borderColor: theme.colors.border }}
+					>
+						<div>
+							<p className="text-sm" style={{ color: theme.colors.textMain }}>
+								Show git change indicator
+							</p>
+							<p className="text-xs opacity-50 mt-0.5">
+								Display the branch icon and dirty file count next to git repository agents.
+							</p>
+						</div>
+						<button
+							onClick={() => setShowLeftPanelGitIndicator(!showLeftPanelGitIndicator)}
+							className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0 outline-none"
+							tabIndex={0}
+							style={{
+								backgroundColor: showLeftPanelGitIndicator
+									? theme.colors.accent
+									: theme.colors.bgActivity,
+							}}
+							role="switch"
+							aria-checked={showLeftPanelGitIndicator}
+							aria-label="Show git change indicator in left side bar"
+						>
+							<span
+								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+									showLeftPanelGitIndicator ? 'translate-x-5' : 'translate-x-0.5'
+								}`}
+							/>
+						</button>
+					</div>
+
+					{/* Show Cue indicator — hidden entirely when the Cue Encore Feature is off */}
+					{maestroCueEnabled && (
+						<div
+							className="flex items-center justify-between pt-3 border-t"
+							style={{ borderColor: theme.colors.border }}
+						>
+							<div>
+								<p className="text-sm" style={{ color: theme.colors.textMain }}>
+									Show Cue indicator
+								</p>
+								<p className="text-xs opacity-50 mt-0.5">
+									Display the lightning-bolt indicator next to agents with active Maestro Cue
+									subscriptions.
+								</p>
+							</div>
+							<button
+								onClick={() => setShowLeftPanelCueIndicator(!showLeftPanelCueIndicator)}
+								className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0 outline-none"
+								tabIndex={0}
+								style={{
+									backgroundColor: showLeftPanelCueIndicator
+										? theme.colors.accent
+										: theme.colors.bgActivity,
+								}}
+								role="switch"
+								aria-checked={showLeftPanelCueIndicator}
+								aria-label="Show Cue indicator in left side bar"
+							>
+								<span
+									className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+										showLeftPanelCueIndicator ? 'translate-x-5' : 'translate-x-0.5'
+									}`}
+								/>
+							</button>
+						</div>
+					)}
+
+					{/* Show terminal startup-command indicator */}
+					<div
+						className="flex items-center justify-between pt-3 border-t"
+						style={{ borderColor: theme.colors.border }}
+					>
+						<div>
+							<p className="text-sm" style={{ color: theme.colors.textMain }}>
+								Show terminal startup-command indicator
+							</p>
+							<p className="text-xs opacity-50 mt-0.5">
+								Display the <span className="font-mono">{'>_'}</span> glyph next to agents that have
+								at least one terminal tab with a saved startup command.
+							</p>
+						</div>
+						<button
+							onClick={() =>
+								setShowLeftPanelStartupCommandIndicator(!showLeftPanelStartupCommandIndicator)
+							}
+							className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0 outline-none"
+							tabIndex={0}
+							style={{
+								backgroundColor: showLeftPanelStartupCommandIndicator
+									? theme.colors.accent
+									: theme.colors.bgActivity,
+							}}
+							role="switch"
+							aria-checked={showLeftPanelStartupCommandIndicator}
+							aria-label="Show terminal startup-command indicator in left side bar"
+						>
+							<span
+								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+									showLeftPanelStartupCommandIndicator ? 'translate-x-5' : 'translate-x-0.5'
+								}`}
+							/>
+						</button>
+					</div>
+
+					{/* Show WORKTREE pill */}
+					<div
+						className="flex items-center justify-between pt-3 border-t"
+						style={{ borderColor: theme.colors.border }}
+					>
+						<div>
+							<p
+								className="text-sm flex items-center gap-2"
+								style={{ color: theme.colors.textMain }}
+							>
+								Show <WorktreePill theme={theme} /> pill in subagent list
+							</p>
+							<p className="text-xs opacity-50 mt-0.5">
+								Display the worktree badge next to worktree child agents in the left panel.
+							</p>
+						</div>
+						<button
+							onClick={() => setShowWorktreePill(!showWorktreePill)}
+							className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0 outline-none"
+							tabIndex={0}
+							style={{
+								backgroundColor: showWorktreePill ? theme.colors.accent : theme.colors.bgActivity,
+							}}
+							role="switch"
+							aria-checked={showWorktreePill}
+							aria-label="Show worktree pill in left panel agent list"
+						>
+							<span
+								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+									showWorktreePill ? 'translate-x-5' : 'translate-x-0.5'
+								}`}
+							/>
+						</button>
+					</div>
+
+					{/* Show branch name */}
+					<div
+						className="flex items-center justify-between pt-3 border-t"
+						style={{ borderColor: theme.colors.border }}
+					>
+						<div>
+							<p className="text-sm" style={{ color: theme.colors.textMain }}>
+								Show worktree branch name in subagent list
+							</p>
+							<p className="text-xs opacity-50 mt-0.5">
+								Display the worktree branch name beneath the agent name in the left panel.
+							</p>
+						</div>
+						<button
+							onClick={() => setShowWorktreeBranchName(!showWorktreeBranchName)}
+							className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0 outline-none"
+							tabIndex={0}
+							style={{
+								backgroundColor: showWorktreeBranchName
+									? theme.colors.accent
+									: theme.colors.bgActivity,
+							}}
+							role="switch"
+							aria-checked={showWorktreeBranchName}
+							aria-label="Show branch name in left panel agent list"
+						>
+							<span
+								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+									showWorktreeBranchName ? 'translate-x-5' : 'translate-x-0.5'
+								}`}
+							/>
+						</button>
+					</div>
+				</div>
+			</div>
+
+			{/* File Edit & Preview */}
+			<div data-setting-id="display-file-edit-preview">
+				<SettingsSectionHeading icon={FileText}>File Edit & Preview</SettingsSectionHeading>
+				<div
+					className="p-3 rounded border space-y-3"
+					style={{
+						borderColor: theme.colors.border,
+						backgroundColor: theme.colors.bgMain,
+					}}
+				>
+					{/* Line numbers */}
+					<div className="flex items-center justify-between">
+						<div>
+							<p className="text-sm" style={{ color: theme.colors.textMain }}>
+								Show line numbers in the editor
+							</p>
+							<p className="text-xs opacity-50 mt-0.5">
+								Render a line-number gutter on the left edge of the file editor. Right-clicking a
+								line copies a maestro:// deep link to that line.
+							</p>
+						</div>
+						<button
+							onClick={() => setFileEditShowLineNumbers(!fileEditShowLineNumbers)}
+							className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0 outline-none"
+							tabIndex={0}
+							style={{
+								backgroundColor: fileEditShowLineNumbers
+									? theme.colors.accent
+									: theme.colors.bgActivity,
+							}}
+							role="switch"
+							aria-checked={fileEditShowLineNumbers}
+							aria-label="Show line numbers in the editor"
+						>
+							<span
+								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+									fileEditShowLineNumbers ? 'translate-x-5' : 'translate-x-0.5'
+								}`}
+							/>
+						</button>
+					</div>
+
+					{/* Word wrap default */}
+					<div
+						className="flex items-center justify-between pt-3 border-t"
+						style={{ borderColor: theme.colors.border }}
+					>
+						<div>
+							<p className="text-sm" style={{ color: theme.colors.textMain }}>
+								Wrap long lines in the editor
+							</p>
+							<p className="text-xs opacity-50 mt-0.5">
+								When on, long lines wrap at whitespace. When off, the editor scrolls horizontally.
+								Toggle live from the editor toolbar.
+							</p>
+						</div>
+						<button
+							onClick={() => setFileEditWordWrap(!fileEditWordWrap)}
+							className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0 outline-none"
+							tabIndex={0}
+							style={{
+								backgroundColor: fileEditWordWrap ? theme.colors.accent : theme.colors.bgActivity,
+							}}
+							role="switch"
+							aria-checked={fileEditWordWrap}
+							aria-label="Wrap long lines in the editor"
+						>
+							<span
+								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+									fileEditWordWrap ? 'translate-x-5' : 'translate-x-0.5'
+								}`}
+							/>
+						</button>
+					</div>
+
+					{/* Toolbar button visibility */}
+					<div className="pt-3 border-t" style={{ borderColor: theme.colors.border }}>
+						<p className="text-sm" style={{ color: theme.colors.textMain }}>
+							Toolbar buttons
+						</p>
+						<p className="text-xs opacity-50 mt-0.5">
+							Hide buttons you never use. Hidden actions stay reachable via command palette and
+							keyboard shortcuts.
+						</p>
+						<div className="grid grid-cols-2 gap-2 mt-3">
+							{FILE_PREVIEW_TOOLBAR_BUTTON_KEYS.map((key) => {
+								const label = TOOLBAR_BUTTON_LABELS[key];
+								const enabled = filePreviewToolbarVisibility[key];
+								return (
+									<label
+										key={key}
+										className="flex items-center justify-between gap-2 px-2 py-1 rounded cursor-pointer hover:bg-white/5 transition-colors"
+									>
+										<span className="text-xs" style={{ color: theme.colors.textMain }}>
+											{label}
+										</span>
+										<button
+											type="button"
+											onClick={() =>
+												setFilePreviewToolbarButtonVisibility(
+													key as FilePreviewToolbarButton,
+													!enabled
+												)
+											}
+											className="relative w-8 h-4 rounded-full transition-colors flex-shrink-0 outline-none"
+											tabIndex={0}
+											style={{
+												backgroundColor: enabled ? theme.colors.accent : theme.colors.bgActivity,
+											}}
+											role="switch"
+											aria-checked={enabled}
+											aria-label={`Show ${label} button`}
+										>
+											<span
+												className={`absolute left-0 top-0.5 w-3 h-3 rounded-full bg-white transition-transform ${
+													enabled ? 'translate-x-4' : 'translate-x-0.5'
+												}`}
+											/>
+										</button>
+									</label>
+								);
+							})}
+						</div>
+					</div>
+				</div>
+			</div>
+
+			{/* Starred Tabs in Unread Filter */}
+			<div data-setting-id="display-tab-filtering">
+				<SettingsSectionHeading icon={ListFilter}>Tab Options</SettingsSectionHeading>
+				<div
+					className="p-3 rounded border space-y-3"
+					style={{
+						borderColor: theme.colors.border,
+						backgroundColor: theme.colors.bgMain,
+					}}
+				>
+					<div className="flex items-center justify-between">
+						<div>
+							<p className="text-sm" style={{ color: theme.colors.textMain }}>
+								Show starred tabs when filtering by unread
+							</p>
+							<p className="text-xs opacity-50 mt-0.5">
+								When the unread filter is active, starred tabs remain visible even if they have no
+								unread messages.
+							</p>
+						</div>
+						<button
+							onClick={() => setShowStarredInUnreadFilter(!showStarredInUnreadFilter)}
+							className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0 outline-none"
+							tabIndex={0}
+							style={{
+								backgroundColor: showStarredInUnreadFilter
+									? theme.colors.accent
+									: theme.colors.bgActivity,
+							}}
+							role="switch"
+							aria-checked={showStarredInUnreadFilter}
+						>
+							<span
+								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+									showStarredInUnreadFilter ? 'translate-x-5' : 'translate-x-0.5'
+								}`}
+							/>
+						</button>
+					</div>
+
+					{/* Show File Preview Tabs in Unread Filter */}
+					<div
+						className="flex items-center justify-between pt-3 border-t"
+						style={{ borderColor: theme.colors.border }}
+					>
+						<div>
+							<p className="text-sm" style={{ color: theme.colors.textMain }}>
+								Show file preview tabs when filtering by unread
+							</p>
+							<p className="text-xs opacity-50 mt-0.5">
+								When the unread filter is active, file preview tabs remain visible instead of being
+								hidden.
+							</p>
+						</div>
+						<button
+							onClick={() => setShowFilePreviewsInUnreadFilter(!showFilePreviewsInUnreadFilter)}
+							className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0 outline-none"
+							tabIndex={0}
+							style={{
+								backgroundColor: showFilePreviewsInUnreadFilter
+									? theme.colors.accent
+									: theme.colors.bgActivity,
+							}}
+							role="switch"
+							aria-checked={showFilePreviewsInUnreadFilter}
+						>
+							<span
+								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+									showFilePreviewsInUnreadFilter ? 'translate-x-5' : 'translate-x-0.5'
+								}`}
+							/>
+						</button>
+					</div>
+
+					{/* Treat Command+0 as Last Tab */}
+					<div
+						className="flex items-center justify-between pt-3 border-t"
+						style={{ borderColor: theme.colors.border }}
+					>
+						<div>
+							<p className="text-sm" style={{ color: theme.colors.textMain }}>
+								Treat {isMacOSPlatform() ? 'Command' : 'Ctrl'}+0 as the last tab
+							</p>
+							<p className="text-xs opacity-50 mt-0.5">
+								Maestro-style: {isMacOSPlatform() ? 'Command' : 'Ctrl'}+1–9 jump to tabs 1–9, and{' '}
+								{isMacOSPlatform() ? 'Command' : 'Ctrl'}+0 jumps to the last tab. Disable to use
+								browser-style: {isMacOSPlatform() ? 'Command' : 'Ctrl'}+1–8 jump to tabs 1–8, and{' '}
+								{isMacOSPlatform() ? 'Command' : 'Ctrl'}+9 jumps to the last tab.
+							</p>
+						</div>
+						<button
+							onClick={() => setUseCmd0AsLastTab(!useCmd0AsLastTab)}
+							className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0 outline-none"
+							tabIndex={0}
+							style={{
+								backgroundColor: useCmd0AsLastTab ? theme.colors.accent : theme.colors.bgActivity,
+							}}
+							role="switch"
+							aria-checked={useCmd0AsLastTab}
+							aria-label="Treat Command+0 as the last tab"
+						>
+							<span
+								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+									useCmd0AsLastTab ? 'translate-x-5' : 'translate-x-0.5'
+								}`}
+							/>
+						</button>
+					</div>
+
+					{/* Show Domain Pill on Browser Tabs */}
+					<div
+						className="flex items-center justify-between pt-3 border-t"
+						style={{ borderColor: theme.colors.border }}
+					>
+						<div>
+							<p className="text-sm" style={{ color: theme.colors.textMain }}>
+								Show domain on browser tabs
+							</p>
+							<p className="text-xs opacity-50 mt-0.5">
+								Display a small domain pill (e.g. www.google.com) next to the page title on browser
+								tabs. Disable to hide it.
+							</p>
+						</div>
+						<button
+							onClick={() => setShowBrowserTabDomain(!showBrowserTabDomain)}
+							className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0 outline-none"
+							tabIndex={0}
+							style={{
+								backgroundColor: showBrowserTabDomain
+									? theme.colors.accent
+									: theme.colors.bgActivity,
+							}}
+							role="switch"
+							aria-checked={showBrowserTabDomain}
+							aria-label="Show domain on browser tabs"
+						>
+							<span
+								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+									showBrowserTabDomain ? 'translate-x-5' : 'translate-x-0.5'
+								}`}
+							/>
+						</button>
+					</div>
+				</div>
+			</div>
+
+			{/* Document Graph Settings */}
+			<div data-setting-id="display-document-graph">
+				<SettingsSectionHeading icon={Sparkles}>Document Graph</SettingsSectionHeading>
 				<div
 					className="p-3 rounded border space-y-3"
 					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
@@ -493,11 +1170,10 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 			</div>
 
 			{/* Context Window Warnings */}
-			<div>
-				<div className="block text-xs font-bold opacity-70 uppercase mb-2 flex items-center gap-2">
-					<AlertTriangle className="w-3 h-3" />
+			<div data-setting-id="display-context-warnings">
+				<SettingsSectionHeading icon={AlertTriangle}>
 					Context Window Warnings
-				</div>
+				</SettingsSectionHeading>
 				<div
 					className="p-3 rounded border space-y-3"
 					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
@@ -661,19 +1337,228 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 				</div>
 			</div>
 
-			{/* Local File Indexing Ignore Patterns */}
-			<IgnorePatternsSection
-				theme={theme}
-				title="Local Ignore Patterns"
-				description="Configure glob patterns for folders to exclude when indexing local files in the file explorer. Excluding large directories (like .git) reduces memory usage and speeds up file tree loading."
-				ignorePatterns={localIgnorePatterns}
-				onIgnorePatternsChange={setLocalIgnorePatterns}
-				defaultPatterns={DEFAULT_LOCAL_IGNORE_PATTERNS}
-				showHonorGitignore
-				honorGitignore={localHonorGitignore}
-				onHonorGitignoreChange={setLocalHonorGitignore}
-				onReset={() => setLocalHonorGitignore(true)}
-			/>
+			<div>
+				<SettingsSectionHeading icon={Accessibility}>Accessibility</SettingsSectionHeading>
+				<p className="text-xs opacity-50 mb-2">
+					Visual options that adapt the interface for color vision deficiencies and long-form
+					reading.
+				</p>
+
+				<div
+					data-setting-id="display-colorblind-mode"
+					className="p-3 rounded border space-y-3 mb-3"
+					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
+				>
+					<div
+						className="flex items-center justify-between cursor-pointer"
+						onClick={() => setColorBlindMode(!colorBlindMode)}
+						role="button"
+						tabIndex={0}
+						onKeyDown={(e) => {
+							if (e.key === 'Enter' || e.key === ' ') {
+								e.preventDefault();
+								setColorBlindMode(!colorBlindMode);
+							}
+						}}
+					>
+						<div className="flex-1 pr-3">
+							<div
+								className="font-medium flex items-center gap-2"
+								style={{ color: theme.colors.textMain }}
+							>
+								<Eye className="w-4 h-4" />
+								<span>Color Blind Mode</span>
+							</div>
+							<p className="text-xs opacity-60 mt-1" style={{ color: theme.colors.textDim }}>
+								Swap red/green/yellow semantics for Wong&apos;s colorblind-safe palette across agent
+								status dots, diff add/remove, git status, the activity graph, Usage Dashboard
+								charts, and file extension badges.
+							</p>
+						</div>
+						<button
+							onClick={(e) => {
+								e.stopPropagation();
+								setColorBlindMode(!colorBlindMode);
+							}}
+							className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0"
+							style={{
+								backgroundColor: colorBlindMode ? theme.colors.accent : theme.colors.bgActivity,
+							}}
+							role="switch"
+							aria-checked={colorBlindMode}
+							aria-label="Color blind mode"
+						>
+							<span
+								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+									colorBlindMode ? 'translate-x-5' : 'translate-x-0.5'
+								}`}
+							/>
+						</button>
+					</div>
+				</div>
+
+				<div
+					data-setting-id="display-bionify-reading-mode"
+					className="p-3 rounded border space-y-3"
+					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
+				>
+					<div
+						className="flex items-center justify-between cursor-pointer"
+						onClick={() => setBionifyReadingMode(!bionifyReadingMode)}
+						role="button"
+						tabIndex={0}
+						onKeyDown={(e) => {
+							if (e.key === 'Enter' || e.key === ' ') {
+								e.preventDefault();
+								setBionifyReadingMode(!bionifyReadingMode);
+							}
+						}}
+					>
+						<div className="flex-1 pr-3">
+							<div
+								className="font-medium flex items-center gap-2"
+								style={{ color: theme.colors.textMain }}
+							>
+								<span>Bionify Emphasis</span>
+								<button
+									type="button"
+									onClick={(e) => {
+										e.stopPropagation();
+										setShowBionifyInfoModal(true);
+									}}
+									className="inline-flex items-center justify-center rounded transition-colors hover:bg-white/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/30"
+									style={{ width: '20px', height: '20px', color: theme.colors.textDim }}
+									aria-label="Info"
+									title="Bionify algorithm info"
+								>
+									<HelpCircle className="w-3.5 h-3.5" />
+								</button>
+							</div>
+						</div>
+						<button
+							onClick={(e) => {
+								e.stopPropagation();
+								setBionifyReadingMode(!bionifyReadingMode);
+							}}
+							className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0"
+							style={{
+								backgroundColor: bionifyReadingMode ? theme.colors.accent : theme.colors.bgActivity,
+							}}
+							role="switch"
+							aria-checked={bionifyReadingMode}
+							aria-label="Bionify reading mode"
+						>
+							<span
+								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+									bionifyReadingMode ? 'translate-x-5' : 'translate-x-0.5'
+								}`}
+							/>
+						</button>
+					</div>
+
+					<div
+						className="space-y-4 pt-3 border-t"
+						style={{
+							borderColor: theme.colors.border,
+							opacity: bionifyReadingMode ? 1 : 0.4,
+							pointerEvents: bionifyReadingMode ? 'auto' : 'none',
+						}}
+					>
+						<div>
+							<div
+								className="block text-xs font-bold opacity-70 uppercase mb-2"
+								style={{ color: theme.colors.textDim }}
+							>
+								Intensity
+							</div>
+							<ToggleButtonGroup
+								options={[
+									{ value: 0.85, label: 'Soft' },
+									{ value: 1, label: 'Default' },
+									{ value: 1.35, label: 'Strong' },
+								]}
+								value={bionifyIntensity}
+								onChange={setBionifyIntensity}
+								theme={theme}
+							/>
+							<p className="text-xs opacity-50 mt-2">
+								Controls how hard the emphasis hits. Strong increases emphasis weight and fades the
+								remaining characters more aggressively.
+							</p>
+						</div>
+
+						<div>
+							<label
+								htmlFor="bionify-algorithm-input"
+								className="block text-xs font-bold opacity-70 uppercase mb-2"
+							>
+								Bionify Algorithm
+							</label>
+							<input
+								id="bionify-algorithm-input"
+								aria-label="Bionify algorithm"
+								type="text"
+								value={bionifyAlgorithmDraft}
+								onChange={(event) => setBionifyAlgorithmDraft(event.target.value)}
+								onBlur={commitBionifyAlgorithmDraft}
+								onKeyDown={(event) => {
+									if (event.key === 'Enter') {
+										event.currentTarget.blur();
+									}
+								}}
+								className="w-full px-3 py-2 rounded text-sm outline-none focus-visible:ring-1 focus-visible:ring-white/30"
+								style={{
+									backgroundColor: theme.colors.bgMain,
+									color: theme.colors.textMain,
+									border: `1px solid ${isBionifyAlgorithmValid ? theme.colors.border : theme.colors.warning}`,
+								}}
+								placeholder="- 0 1 1 2 0.4"
+								spellCheck={false}
+							/>
+							<p className="text-xs opacity-50 mt-2">
+								Format: sign, four fixed word-length rules, then a fallback fraction. Example: `- 0
+								1 1 2 0.4`
+							</p>
+							{!isBionifyAlgorithmValid && (
+								<p className="text-xs mt-2" style={{ color: theme.colors.warning }}>
+									Enter `+|- len1 len2 len3 len4 fraction`, for example `- 0 1 1 2 0.4`.
+								</p>
+							)}
+						</div>
+					</div>
+				</div>
+			</div>
+
+			{/* File Indexing — groups ignore patterns + file panel limits */}
+			<div data-setting-id="display-file-indexing">
+				<SettingsSectionHeading icon={FolderSearch}>File Indexing</SettingsSectionHeading>
+				<div className="space-y-3">
+					<IgnorePatternsSection
+						theme={theme}
+						title="Local Ignore Patterns"
+						description="Configure glob patterns for folders to exclude when indexing local files in the file explorer. Excluding large directories (like .git) reduces memory usage and speeds up file tree loading."
+						ignorePatterns={localIgnorePatterns}
+						onIgnorePatternsChange={setLocalIgnorePatterns}
+						defaultPatterns={DEFAULT_LOCAL_IGNORE_PATTERNS}
+						showHonorGitignore
+						honorGitignore={localHonorGitignore}
+						onHonorGitignoreChange={setLocalHonorGitignore}
+						onReset={() => setLocalHonorGitignore(true)}
+						hideEyebrow
+					/>
+					<FilePanelSettingsSection
+						theme={theme}
+						maxDepth={fileExplorerMaxDepth}
+						onMaxDepthChange={setFileExplorerMaxDepth}
+						maxEntries={fileExplorerMaxEntries}
+						onMaxEntriesChange={setFileExplorerMaxEntries}
+						sshReduceEntryCapEnabled={sshReduceEntryCapEnabled}
+						onSshReduceEntryCapEnabledChange={setSshReduceEntryCapEnabled}
+						sshReduceEntryCapFraction={sshReduceEntryCapFraction}
+						onSshReduceEntryCapFractionChange={setSshReduceEntryCapFraction}
+					/>
+				</div>
+			</div>
 
 			{showBionifyInfoModal && (
 				<Modal

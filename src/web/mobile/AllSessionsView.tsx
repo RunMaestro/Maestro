@@ -12,6 +12,8 @@
  * - Status indicator, mode badge, and working directory visible
  * - Swipe down to dismiss / back button at top
  * - Search/filter sessions
+ * - Long-press context menu for rename, move, delete
+ * - Floating "+" button to create new agents
  */
 
 import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react';
@@ -21,6 +23,21 @@ import type { Session, GroupInfo } from '../hooks/useSessions';
 import { triggerHaptic, HAPTIC_PATTERNS } from './constants';
 import { truncatePath } from '../../shared/formatters';
 import { getAgentDisplayName } from '../../shared/agentMetadata';
+import type { GroupData } from '../hooks/useWebSocket';
+
+/** Duration in ms to trigger long-press */
+const LONG_PRESS_DURATION = 500;
+
+/**
+ * Context menu action types for session management
+ */
+type ContextMenuAction = 'rename' | 'move' | 'delete';
+
+interface ContextMenuState {
+	session: Session;
+	x: number;
+	y: number;
+}
 
 /**
  * Session card component for the All Sessions view
@@ -35,6 +52,18 @@ interface SessionCardProps {
 interface MobileSessionCardPropsInternal extends SessionCardProps {
 	/** Display name (may include parent prefix for worktree children) */
 	displayName: string;
+	/** Whether this card is currently being renamed inline */
+	isRenaming: boolean;
+	/** Current rename value */
+	renameValue: string;
+	/** Callback for rename value changes */
+	onRenameChange: (value: string) => void;
+	/** Callback to confirm rename */
+	onRenameConfirm: () => void;
+	/** Callback to cancel rename */
+	onRenameCancel: () => void;
+	/** Long-press handler */
+	onLongPress: (session: Session, x: number, y: number) => void;
 }
 
 function MobileSessionCard({
@@ -42,8 +71,25 @@ function MobileSessionCard({
 	isActive,
 	onSelect,
 	displayName,
+	isRenaming,
+	renameValue,
+	onRenameChange,
+	onRenameConfirm,
+	onRenameCancel,
+	onLongPress,
 }: MobileSessionCardPropsInternal) {
 	const colors = useThemeColors();
+	const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const isLongPressTriggeredRef = useRef(false);
+	const renameInputRef = useRef<HTMLInputElement>(null);
+
+	// Focus rename input when entering rename mode
+	useEffect(() => {
+		if (isRenaming && renameInputRef.current) {
+			renameInputRef.current.focus();
+			renameInputRef.current.select();
+		}
+	}, [isRenaming]);
 
 	// Map session state to status for StatusDot
 	const getStatus = (): SessionStatus => {
@@ -68,14 +114,93 @@ function MobileSessionCard({
 		return getAgentDisplayName(session.toolType);
 	};
 
+	const clearLongPressTimer = useCallback(() => {
+		if (longPressTimerRef.current) {
+			clearTimeout(longPressTimerRef.current);
+			longPressTimerRef.current = null;
+		}
+	}, []);
+
+	const handleTouchStart = useCallback(
+		(e: React.TouchEvent) => {
+			isLongPressTriggeredRef.current = false;
+			const touch = e.touches[0];
+			const x = touch.clientX;
+			const y = touch.clientY;
+			longPressTimerRef.current = setTimeout(() => {
+				isLongPressTriggeredRef.current = true;
+				triggerHaptic(HAPTIC_PATTERNS.success);
+				onLongPress(session, x, y);
+			}, LONG_PRESS_DURATION);
+		},
+		[session, onLongPress]
+	);
+
+	const handleTouchEnd = useCallback(() => {
+		clearLongPressTimer();
+		if (!isLongPressTriggeredRef.current) {
+			triggerHaptic(HAPTIC_PATTERNS.tap);
+			onSelect(session.id);
+		}
+		isLongPressTriggeredRef.current = false;
+	}, [clearLongPressTimer, onSelect, session.id]);
+
+	const handleTouchMove = useCallback(() => {
+		clearLongPressTimer();
+	}, [clearLongPressTimer]);
+
+	const handleTouchCancel = useCallback(() => {
+		clearLongPressTimer();
+		isLongPressTriggeredRef.current = false;
+	}, [clearLongPressTimer]);
+
+	const handleContextMenu = useCallback(
+		(e: React.MouseEvent) => {
+			e.preventDefault();
+			triggerHaptic(HAPTIC_PATTERNS.success);
+			onLongPress(session, e.clientX, e.clientY);
+		},
+		[session, onLongPress]
+	);
+
 	const handleClick = useCallback(() => {
-		triggerHaptic(HAPTIC_PATTERNS.tap);
-		onSelect(session.id);
+		// For non-touch devices
+		if (!('ontouchstart' in window)) {
+			triggerHaptic(HAPTIC_PATTERNS.tap);
+			onSelect(session.id);
+		}
 	}, [session.id, onSelect]);
 
+	// Cleanup timer on unmount
+	useEffect(() => {
+		return () => clearLongPressTimer();
+	}, [clearLongPressTimer]);
+
+	const handleRenameKeyDown = useCallback(
+		(e: React.KeyboardEvent) => {
+			if (e.key === 'Enter') {
+				e.stopPropagation();
+				e.preventDefault();
+				onRenameConfirm();
+			} else if (e.key === 'Escape') {
+				e.stopPropagation();
+				e.preventDefault();
+				onRenameCancel();
+			}
+		},
+		[onRenameConfirm, onRenameCancel]
+	);
+
+	const CardContainer = isRenaming ? 'div' : 'button';
+
 	return (
-		<button
+		<CardContainer
 			onClick={handleClick}
+			onTouchStart={handleTouchStart}
+			onTouchEnd={handleTouchEnd}
+			onTouchMove={handleTouchMove}
+			onTouchCancel={handleTouchCancel}
+			onContextMenu={handleContextMenu}
 			style={{
 				display: 'flex',
 				flexDirection: 'column',
@@ -96,7 +221,7 @@ function MobileSessionCard({
 				WebkitUserSelect: 'none',
 			}}
 			aria-pressed={isActive}
-			aria-label={`${displayName} session, ${getStatusLabel()}, ${session.inputMode} mode${isActive ? ', active' : ''}`}
+			aria-label={`${displayName} session, ${getStatusLabel()}, ${session.inputMode} mode${isActive ? ', active' : ''}. Long press for actions.`}
 		>
 			{/* Top row: Status dot, name, and mode badge */}
 			<div
@@ -108,18 +233,43 @@ function MobileSessionCard({
 				}}
 			>
 				<StatusDot status={getStatus()} size="md" />
-				<span
-					style={{
-						fontSize: '15px',
-						fontWeight: isActive ? 600 : 500,
-						flex: 1,
-						overflow: 'hidden',
-						textOverflow: 'ellipsis',
-						whiteSpace: 'nowrap',
-					}}
-				>
-					{displayName}
-				</span>
+				{isRenaming ? (
+					<input
+						ref={renameInputRef}
+						type="text"
+						value={renameValue}
+						onChange={(e) => onRenameChange(e.target.value)}
+						onKeyDown={handleRenameKeyDown}
+						onBlur={onRenameConfirm}
+						onClick={(e) => e.stopPropagation()}
+						onTouchStart={(e) => e.stopPropagation()}
+						style={{
+							flex: 1,
+							fontSize: '15px',
+							fontWeight: 500,
+							backgroundColor: colors.bgMain,
+							border: `1px solid ${colors.accent}`,
+							borderRadius: '6px',
+							padding: '4px 8px',
+							color: colors.textMain,
+							outline: 'none',
+							minWidth: 0,
+						}}
+					/>
+				) : (
+					<span
+						style={{
+							fontSize: '15px',
+							fontWeight: isActive ? 600 : 500,
+							flex: 1,
+							overflow: 'hidden',
+							textOverflow: 'ellipsis',
+							whiteSpace: 'nowrap',
+						}}
+					>
+						{displayName}
+					</span>
+				)}
 				{/* Mode badge */}
 				<span
 					style={{
@@ -188,7 +338,473 @@ function MobileSessionCard({
 			>
 				{truncatePath(session.cwd, 40)}
 			</div>
-		</button>
+		</CardContainer>
+	);
+}
+
+/**
+ * Context menu component for session management actions
+ */
+function SessionContextMenu({
+	session,
+	x,
+	y,
+	onAction,
+	onClose,
+}: {
+	session: Session;
+	x: number;
+	y: number;
+	onAction: (action: ContextMenuAction, session: Session) => void;
+	onClose: () => void;
+}) {
+	const colors = useThemeColors();
+	const menuRef = useRef<HTMLDivElement>(null);
+
+	// Position the menu within viewport bounds
+	const calculatePosition = (): React.CSSProperties => {
+		const menuWidth = 180;
+		const menuHeight = 150;
+		const padding = 12;
+		const viewportWidth = window.innerWidth;
+		const viewportHeight = window.innerHeight;
+
+		let left = x;
+		let top = y;
+
+		if (left + menuWidth > viewportWidth - padding) {
+			left = viewportWidth - menuWidth - padding;
+		}
+		if (left < padding) {
+			left = padding;
+		}
+		if (top + menuHeight > viewportHeight - padding) {
+			top = viewportHeight - menuHeight - padding;
+		}
+
+		return {
+			position: 'fixed',
+			left: `${left}px`,
+			top: `${top}px`,
+			width: `${menuWidth}px`,
+			zIndex: 310,
+		};
+	};
+
+	// Close on outside click
+	useEffect(() => {
+		const handleClickOutside = (e: MouseEvent | TouchEvent) => {
+			if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+				onClose();
+			}
+		};
+		const timer = setTimeout(() => {
+			document.addEventListener('mousedown', handleClickOutside);
+			document.addEventListener('touchstart', handleClickOutside);
+		}, 50);
+		return () => {
+			clearTimeout(timer);
+			document.removeEventListener('mousedown', handleClickOutside);
+			document.removeEventListener('touchstart', handleClickOutside);
+		};
+	}, [onClose]);
+
+	const menuItemStyle: React.CSSProperties = {
+		display: 'flex',
+		alignItems: 'center',
+		gap: '10px',
+		width: '100%',
+		padding: '12px 14px',
+		border: 'none',
+		backgroundColor: 'transparent',
+		color: colors.textMain,
+		fontSize: '14px',
+		fontWeight: 500,
+		cursor: 'pointer',
+		textAlign: 'left',
+		touchAction: 'manipulation',
+		WebkitTapHighlightColor: 'transparent',
+	};
+
+	return (
+		<>
+			{/* Backdrop */}
+			<div
+				style={{
+					position: 'fixed',
+					top: 0,
+					left: 0,
+					right: 0,
+					bottom: 0,
+					backgroundColor: 'rgba(0, 0, 0, 0.3)',
+					zIndex: 300,
+				}}
+				onClick={onClose}
+				aria-hidden="true"
+			/>
+
+			{/* Menu */}
+			<div
+				ref={menuRef}
+				role="menu"
+				aria-label={`Actions for ${session.name}`}
+				style={{
+					...calculatePosition(),
+					backgroundColor: colors.bgSidebar,
+					borderRadius: '10px',
+					border: `1px solid ${colors.border}`,
+					boxShadow: '0 4px 20px rgba(0, 0, 0, 0.3)',
+					overflow: 'hidden',
+					animation: 'contextMenuFadeIn 0.12s ease-out',
+				}}
+			>
+				<button
+					role="menuitem"
+					onClick={() => {
+						triggerHaptic(HAPTIC_PATTERNS.tap);
+						onAction('rename', session);
+					}}
+					style={menuItemStyle}
+				>
+					<span style={{ fontSize: '16px', width: '20px', textAlign: 'center' }}>&#9998;</span>
+					Rename
+				</button>
+				<div style={{ height: '1px', backgroundColor: colors.border }} />
+				<button
+					role="menuitem"
+					onClick={() => {
+						triggerHaptic(HAPTIC_PATTERNS.tap);
+						onAction('move', session);
+					}}
+					style={menuItemStyle}
+				>
+					<span style={{ fontSize: '16px', width: '20px', textAlign: 'center' }}>&#8596;</span>
+					Move to Group
+				</button>
+				<div style={{ height: '1px', backgroundColor: colors.border }} />
+				<button
+					role="menuitem"
+					onClick={() => {
+						triggerHaptic(HAPTIC_PATTERNS.tap);
+						onAction('delete', session);
+					}}
+					style={{ ...menuItemStyle, color: '#ef4444' }}
+				>
+					<span style={{ fontSize: '16px', width: '20px', textAlign: 'center' }}>&#128465;</span>
+					Delete
+				</button>
+			</div>
+
+			<style>{`
+				@keyframes contextMenuFadeIn {
+					from { opacity: 0; transform: scale(0.95); }
+					to { opacity: 1; transform: scale(1); }
+				}
+			`}</style>
+		</>
+	);
+}
+
+/**
+ * Delete confirmation dialog
+ */
+function DeleteConfirmDialog({
+	sessionName,
+	onConfirm,
+	onCancel,
+}: {
+	sessionName: string;
+	onConfirm: () => void;
+	onCancel: () => void;
+}) {
+	const colors = useThemeColors();
+
+	return (
+		<>
+			{/* Backdrop */}
+			<div
+				style={{
+					position: 'fixed',
+					top: 0,
+					left: 0,
+					right: 0,
+					bottom: 0,
+					backgroundColor: 'rgba(0, 0, 0, 0.5)',
+					zIndex: 320,
+					display: 'flex',
+					alignItems: 'center',
+					justifyContent: 'center',
+				}}
+				onClick={onCancel}
+			>
+				{/* Dialog */}
+				<div
+					onClick={(e) => e.stopPropagation()}
+					style={{
+						backgroundColor: colors.bgSidebar,
+						borderRadius: '14px',
+						border: `1px solid ${colors.border}`,
+						boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3)',
+						width: 'min(320px, calc(100vw - 48px))',
+						padding: '24px 20px',
+						animation: 'dialogFadeIn 0.15s ease-out',
+					}}
+					role="alertdialog"
+					aria-label={`Delete agent ${sessionName}?`}
+				>
+					<h3
+						style={{
+							margin: '0 0 8px',
+							fontSize: '17px',
+							fontWeight: 600,
+							color: colors.textMain,
+						}}
+					>
+						Delete Agent
+					</h3>
+					<p
+						style={{
+							margin: '0 0 20px',
+							fontSize: '14px',
+							color: colors.textDim,
+							lineHeight: 1.4,
+						}}
+					>
+						Delete agent "{sessionName}"? This action cannot be undone.
+					</p>
+					<div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+						<button
+							onClick={onCancel}
+							style={{
+								padding: '10px 20px',
+								borderRadius: '8px',
+								border: `1px solid ${colors.border}`,
+								backgroundColor: colors.bgMain,
+								color: colors.textMain,
+								fontSize: '14px',
+								fontWeight: 500,
+								cursor: 'pointer',
+								touchAction: 'manipulation',
+								WebkitTapHighlightColor: 'transparent',
+								minHeight: '44px',
+							}}
+						>
+							Cancel
+						</button>
+						<button
+							onClick={() => {
+								triggerHaptic(HAPTIC_PATTERNS.send);
+								onConfirm();
+							}}
+							style={{
+								padding: '10px 20px',
+								borderRadius: '8px',
+								border: 'none',
+								backgroundColor: '#ef4444',
+								color: 'white',
+								fontSize: '14px',
+								fontWeight: 600,
+								cursor: 'pointer',
+								touchAction: 'manipulation',
+								WebkitTapHighlightColor: 'transparent',
+								minHeight: '44px',
+							}}
+						>
+							Delete
+						</button>
+					</div>
+				</div>
+			</div>
+
+			<style>{`
+				@keyframes dialogFadeIn {
+					from { opacity: 0; transform: scale(0.95); }
+					to { opacity: 1; transform: scale(1); }
+				}
+			`}</style>
+		</>
+	);
+}
+
+/**
+ * Move to Group bottom sheet
+ */
+function MoveToGroupSheet({
+	session,
+	groups,
+	onMove,
+	onClose,
+}: {
+	session: Session;
+	groups: GroupData[];
+	onMove: (sessionId: string, groupId: string | null) => void;
+	onClose: () => void;
+}) {
+	const colors = useThemeColors();
+	const [isVisible, setIsVisible] = useState(false);
+
+	useEffect(() => {
+		requestAnimationFrame(() => setIsVisible(true));
+	}, []);
+
+	const handleClose = useCallback(() => {
+		setIsVisible(false);
+		setTimeout(() => onClose(), 300);
+	}, [onClose]);
+
+	const handleMove = useCallback(
+		(groupId: string | null) => {
+			triggerHaptic(HAPTIC_PATTERNS.tap);
+			onMove(session.id, groupId);
+			handleClose();
+		},
+		[session.id, onMove, handleClose]
+	);
+
+	return (
+		<div
+			onClick={(e) => {
+				if (e.target === e.currentTarget) handleClose();
+			}}
+			style={{
+				position: 'fixed',
+				top: 0,
+				left: 0,
+				right: 0,
+				bottom: 0,
+				backgroundColor: `rgba(0, 0, 0, ${isVisible ? 0.5 : 0})`,
+				zIndex: 320,
+				display: 'flex',
+				alignItems: 'flex-end',
+				transition: 'background-color 0.3s ease-out',
+			}}
+		>
+			<div
+				style={{
+					width: '100%',
+					maxHeight: '60vh',
+					backgroundColor: colors.bgMain,
+					borderTopLeftRadius: '16px',
+					borderTopRightRadius: '16px',
+					display: 'flex',
+					flexDirection: 'column',
+					transform: isVisible ? 'translateY(0)' : 'translateY(100%)',
+					transition: 'transform 0.3s ease-out',
+					paddingBottom: 'max(16px, env(safe-area-inset-bottom))',
+				}}
+			>
+				{/* Drag handle */}
+				<div
+					style={{
+						display: 'flex',
+						justifyContent: 'center',
+						padding: '10px 0 4px',
+						flexShrink: 0,
+					}}
+				>
+					<div
+						style={{
+							width: '36px',
+							height: '4px',
+							borderRadius: '2px',
+							backgroundColor: `${colors.textDim}40`,
+						}}
+					/>
+				</div>
+
+				{/* Header */}
+				<div
+					style={{
+						padding: '8px 16px 12px',
+						flexShrink: 0,
+					}}
+				>
+					<h2
+						style={{
+							fontSize: '16px',
+							fontWeight: 600,
+							margin: 0,
+							color: colors.textMain,
+						}}
+					>
+						Move "{session.name}" to Group
+					</h2>
+				</div>
+
+				{/* Group list */}
+				<div
+					style={{
+						flex: 1,
+						overflowY: 'auto',
+						padding: '0 16px',
+					}}
+				>
+					{/* No group / Ungrouped */}
+					<button
+						onClick={() => handleMove(null)}
+						style={{
+							display: 'flex',
+							alignItems: 'center',
+							gap: '10px',
+							width: '100%',
+							padding: '14px',
+							marginBottom: '6px',
+							borderRadius: '10px',
+							border: `1px solid ${!session.groupId ? colors.accent : colors.border}`,
+							backgroundColor: !session.groupId ? `${colors.accent}10` : colors.bgSidebar,
+							color: colors.textMain,
+							fontSize: '14px',
+							fontWeight: 500,
+							cursor: 'pointer',
+							textAlign: 'left',
+							touchAction: 'manipulation',
+							WebkitTapHighlightColor: 'transparent',
+							outline: 'none',
+							minHeight: '44px',
+						}}
+					>
+						No Group
+					</button>
+					{groups.map((group) => {
+						const isCurrentGroup = session.groupId === group.id;
+						return (
+							<button
+								key={group.id}
+								onClick={() => handleMove(group.id)}
+								style={{
+									display: 'flex',
+									alignItems: 'center',
+									gap: '10px',
+									width: '100%',
+									padding: '14px',
+									marginBottom: '6px',
+									borderRadius: '10px',
+									border: `1px solid ${isCurrentGroup ? colors.accent : colors.border}`,
+									backgroundColor: isCurrentGroup ? `${colors.accent}10` : colors.bgSidebar,
+									color: colors.textMain,
+									fontSize: '14px',
+									fontWeight: 500,
+									cursor: 'pointer',
+									textAlign: 'left',
+									touchAction: 'manipulation',
+									WebkitTapHighlightColor: 'transparent',
+									outline: 'none',
+									minHeight: '44px',
+								}}
+							>
+								{group.emoji && <span style={{ fontSize: '16px' }}>{group.emoji}</span>}
+								<span>{group.name}</span>
+								{isCurrentGroup && (
+									<span style={{ marginLeft: 'auto', fontSize: '12px', color: colors.accent }}>
+										Current
+									</span>
+								)}
+							</button>
+						);
+					})}
+				</div>
+			</div>
+		</div>
 	);
 }
 
@@ -205,11 +821,7 @@ function MobileSessionCard({
 function findParentSession(session: Session, sessions: Session[]): Session | null {
 	// If parentSessionId is set, use it directly
 	if (session.parentSessionId) {
-		const parent = sessions.find((s) => s.id === session.parentSessionId) || null;
-		console.log(
-			`[findParentSession] ${session.name}: parentSessionId=${session.parentSessionId}, found=${parent?.name || 'null'}`
-		);
-		return parent;
+		return sessions.find((s) => s.id === session.parentSessionId) || null;
 	}
 
 	// Try to infer parent from path patterns
@@ -217,35 +829,21 @@ function findParentSession(session: Session, sessions: Session[]): Session | nul
 
 	// Check for worktree path patterns: ProjectName-WorkTrees/branch or ProjectNameWorkTrees/branch
 	const worktreeMatch = cwd.match(/^(.+?)[-]?WorkTrees[\/\\]([^\/\\]+)/i);
-	console.log(
-		`[findParentSession] ${session.name}: cwd=${cwd}, worktreeMatch=${JSON.stringify(worktreeMatch)}`
-	);
 
 	if (worktreeMatch) {
 		const basePath = worktreeMatch[1];
-		console.log(`[findParentSession] ${session.name}: basePath=${basePath}`);
-
-		// Log all potential parents
-		const potentialParents = sessions.filter((s) => s.id !== session.id && !s.parentSessionId);
-		console.log(
-			`[findParentSession] ${session.name}: potential parents:`,
-			potentialParents.map((s) => ({ name: s.name, cwd: s.cwd }))
-		);
 
 		// Find a session whose cwd matches the base path
-		const parent = sessions.find(
-			(s) =>
-				s.id !== session.id &&
-				!s.parentSessionId && // Not itself a worktree child
-				(s.cwd === basePath ||
-					s.cwd.startsWith(basePath + '/') ||
-					s.cwd.startsWith(basePath + '\\'))
+		return (
+			sessions.find(
+				(s) =>
+					s.id !== session.id &&
+					!s.parentSessionId && // Not itself a worktree child
+					(s.cwd === basePath ||
+						s.cwd.startsWith(basePath + '/') ||
+						s.cwd.startsWith(basePath + '\\'))
+			) || null
 		);
-		if (parent) {
-			console.log(`[findParentSession] ${session.name}: FOUND parent=${parent.name}`);
-			return parent;
-		}
-		console.log(`[findParentSession] ${session.name}: NO parent found for basePath=${basePath}`);
 	}
 
 	return null;
@@ -303,6 +901,13 @@ interface GroupSectionProps {
 	onToggleCollapse: (groupId: string) => void;
 	/** All sessions for parent lookup */
 	allSessions: Session[];
+	/** Currently renaming session id */
+	renamingSessionId: string | null;
+	renameValue: string;
+	onRenameChange: (value: string) => void;
+	onRenameConfirm: () => void;
+	onRenameCancel: () => void;
+	onLongPress: (session: Session, x: number, y: number) => void;
 }
 
 function GroupSection({
@@ -315,6 +920,12 @@ function GroupSection({
 	isCollapsed,
 	onToggleCollapse,
 	allSessions,
+	renamingSessionId,
+	renameValue,
+	onRenameChange,
+	onRenameConfirm,
+	onRenameCancel,
+	onLongPress,
 }: GroupSectionProps) {
 	const colors = useThemeColors();
 
@@ -402,6 +1013,12 @@ function GroupSection({
 							isActive={session.id === activeSessionId}
 							onSelect={onSelectSession}
 							displayName={getSessionDisplayName(session, allSessions)}
+							isRenaming={renamingSessionId === session.id}
+							renameValue={renameValue}
+							onRenameChange={onRenameChange}
+							onRenameConfirm={onRenameConfirm}
+							onRenameCancel={onRenameCancel}
+							onLongPress={onLongPress}
 						/>
 					))}
 				</div>
@@ -424,6 +1041,16 @@ export interface AllSessionsViewProps {
 	onClose: () => void;
 	/** Optional filter/search query */
 	searchQuery?: string;
+	/** Callback to rename an agent */
+	onRenameAgent?: (sessionId: string, newName: string) => Promise<boolean>;
+	/** Callback to delete an agent */
+	onDeleteAgent?: (sessionId: string) => Promise<boolean>;
+	/** Callback to move an agent to a group */
+	onMoveToGroup?: (sessionId: string, groupId: string | null) => Promise<boolean>;
+	/** Available groups for move-to-group */
+	groups?: GroupData[];
+	/** Callback to open agent creation sheet */
+	onOpenCreateAgent?: () => void;
 }
 
 /**
@@ -438,11 +1065,29 @@ export function AllSessionsView({
 	onSelectSession,
 	onClose,
 	searchQuery = '',
+	onRenameAgent,
+	onDeleteAgent,
+	onMoveToGroup,
+	groups = [],
+	onOpenCreateAgent,
 }: AllSessionsViewProps) {
 	const colors = useThemeColors();
 	const [collapsedGroups, setCollapsedGroups] = useState<Set<string> | null>(null);
 	const [localSearchQuery, setLocalSearchQuery] = useState(searchQuery);
 	const containerRef = useRef<HTMLDivElement>(null);
+
+	// Context menu state
+	const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+
+	// Inline rename state
+	const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
+	const [renameValue, setRenameValue] = useState('');
+
+	// Delete confirmation state
+	const [deleteSession, setDeleteSession] = useState<Session | null>(null);
+
+	// Move to group sheet state
+	const [moveSession, setMoveSession] = useState<Session | null>(null);
 
 	// Filter sessions by search query (including worktree display names)
 	const filteredSessions = useMemo(() => {
@@ -465,12 +1110,12 @@ export function AllSessionsView({
 	// Organize sessions by group, including a special "bookmarks" group
 	// Worktree children inherit their parent's group
 	const sessionsByGroup = useMemo((): Record<string, GroupInfo> => {
-		const groups: Record<string, GroupInfo> = {};
+		const groupMap: Record<string, GroupInfo> = {};
 
 		// Add bookmarked sessions to a special "bookmarks" group
 		const bookmarkedSessions = filteredSessions.filter((s) => s.bookmarked);
 		if (bookmarkedSessions.length > 0) {
-			groups['bookmarks'] = {
+			groupMap['bookmarks'] = {
 				id: 'bookmarks',
 				name: 'Bookmarks',
 				emoji: '★',
@@ -484,18 +1129,18 @@ export function AllSessionsView({
 			const effectiveGroup = getSessionEffectiveGroup(session, sessions);
 			const groupKey = effectiveGroup.groupId || 'ungrouped';
 
-			if (!groups[groupKey]) {
-				groups[groupKey] = {
+			if (!groupMap[groupKey]) {
+				groupMap[groupKey] = {
 					id: effectiveGroup.groupId,
 					name: effectiveGroup.groupName || 'Ungrouped',
 					emoji: effectiveGroup.groupEmoji,
 					sessions: [],
 				};
 			}
-			groups[groupKey].sessions.push(session);
+			groupMap[groupKey].sessions.push(session);
 		}
 
-		return groups;
+		return groupMap;
 	}, [filteredSessions, sessions]);
 
 	// Get sorted group keys (bookmarks first, ungrouped last)
@@ -580,6 +1225,59 @@ export function AllSessionsView({
 	const handleClearSearch = useCallback(() => {
 		setLocalSearchQuery('');
 	}, []);
+
+	// Long-press handler
+	const handleLongPress = useCallback((session: Session, x: number, y: number) => {
+		setContextMenu({ session, x, y });
+	}, []);
+
+	// Context menu action handler
+	const handleContextMenuAction = useCallback((action: ContextMenuAction, session: Session) => {
+		setContextMenu(null);
+		switch (action) {
+			case 'rename':
+				setRenamingSessionId(session.id);
+				setRenameValue(session.name);
+				break;
+			case 'move':
+				setMoveSession(session);
+				break;
+			case 'delete':
+				setDeleteSession(session);
+				break;
+		}
+	}, []);
+
+	// Rename confirm handler
+	const handleRenameConfirm = useCallback(async () => {
+		if (!renamingSessionId || !renameValue.trim() || !onRenameAgent) {
+			setRenamingSessionId(null);
+			return;
+		}
+		await onRenameAgent(renamingSessionId, renameValue.trim());
+		setRenamingSessionId(null);
+	}, [renamingSessionId, renameValue, onRenameAgent]);
+
+	// Rename cancel handler
+	const handleRenameCancel = useCallback(() => {
+		setRenamingSessionId(null);
+	}, []);
+
+	// Delete confirm handler
+	const handleDeleteConfirm = useCallback(async () => {
+		if (!deleteSession || !onDeleteAgent) return;
+		await onDeleteAgent(deleteSession.id);
+		setDeleteSession(null);
+	}, [deleteSession, onDeleteAgent]);
+
+	// Move to group handler
+	const handleMoveToGroup = useCallback(
+		async (sessionId: string, groupId: string | null) => {
+			if (!onMoveToGroup) return;
+			await onMoveToGroup(sessionId, groupId);
+		},
+		[onMoveToGroup]
+	);
 
 	// Close on escape key
 	useEffect(() => {
@@ -716,7 +1414,7 @@ export function AllSessionsView({
 					overflowY: 'auto',
 					overflowX: 'hidden',
 					padding: '16px',
-					paddingBottom: 'max(16px, env(safe-area-inset-bottom))',
+					paddingBottom: 'max(80px, env(safe-area-inset-bottom))',
 				}}
 			>
 				{filteredSessions.length === 0 ? (
@@ -755,6 +1453,12 @@ export function AllSessionsView({
 								isActive={session.id === activeSessionId}
 								onSelect={handleSelectSession}
 								displayName={getSessionDisplayName(session, sessions)}
+								isRenaming={renamingSessionId === session.id}
+								renameValue={renameValue}
+								onRenameChange={setRenameValue}
+								onRenameConfirm={handleRenameConfirm}
+								onRenameCancel={handleRenameCancel}
+								onLongPress={handleLongPress}
 							/>
 						))}
 					</div>
@@ -774,11 +1478,82 @@ export function AllSessionsView({
 								isCollapsed={collapsedGroups?.has(groupKey) ?? true}
 								onToggleCollapse={handleToggleCollapse}
 								allSessions={sessions}
+								renamingSessionId={renamingSessionId}
+								renameValue={renameValue}
+								onRenameChange={setRenameValue}
+								onRenameConfirm={handleRenameConfirm}
+								onRenameCancel={handleRenameCancel}
+								onLongPress={handleLongPress}
 							/>
 						);
 					})
 				)}
 			</div>
+
+			{/* Floating "+" button for creating new agents */}
+			{onOpenCreateAgent && (
+				<button
+					onClick={() => {
+						triggerHaptic(HAPTIC_PATTERNS.tap);
+						onOpenCreateAgent();
+					}}
+					style={{
+						position: 'absolute',
+						bottom: 'max(24px, env(safe-area-inset-bottom))',
+						right: '20px',
+						width: '56px',
+						height: '56px',
+						borderRadius: '28px',
+						backgroundColor: colors.accent,
+						border: 'none',
+						color: 'white',
+						fontSize: '28px',
+						fontWeight: 300,
+						cursor: 'pointer',
+						display: 'flex',
+						alignItems: 'center',
+						justifyContent: 'center',
+						boxShadow: '0 4px 16px rgba(0, 0, 0, 0.3)',
+						touchAction: 'manipulation',
+						WebkitTapHighlightColor: 'transparent',
+						zIndex: 210,
+						lineHeight: 1,
+					}}
+					aria-label="Create new agent"
+				>
+					+
+				</button>
+			)}
+
+			{/* Context menu */}
+			{contextMenu && (
+				<SessionContextMenu
+					session={contextMenu.session}
+					x={contextMenu.x}
+					y={contextMenu.y}
+					onAction={handleContextMenuAction}
+					onClose={() => setContextMenu(null)}
+				/>
+			)}
+
+			{/* Delete confirmation dialog */}
+			{deleteSession && (
+				<DeleteConfirmDialog
+					sessionName={deleteSession.name}
+					onConfirm={handleDeleteConfirm}
+					onCancel={() => setDeleteSession(null)}
+				/>
+			)}
+
+			{/* Move to group sheet */}
+			{moveSession && (
+				<MoveToGroupSheet
+					session={moveSession}
+					groups={groups}
+					onMove={handleMoveToGroup}
+					onClose={() => setMoveSession(null)}
+				/>
+			)}
 
 			{/* Animation keyframes */}
 			<style>{`

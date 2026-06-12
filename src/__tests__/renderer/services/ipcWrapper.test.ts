@@ -8,13 +8,14 @@ import {
 	IpcMethodOptionsWithDefault,
 	IpcMethodOptionsRethrow,
 } from '../../../renderer/services/ipcWrapper';
+import { logger } from '../../../renderer/utils/logger';
 
 describe('ipcWrapper', () => {
-	// Store console.error spy
+	// Store logger.error spy (Phase 11 migrated ipcWrapper from console.error to logger.error)
 	let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
 
 	beforeEach(() => {
-		consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		consoleErrorSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 	});
 
 	afterEach(() => {
@@ -42,7 +43,11 @@ describe('ipcWrapper', () => {
 				});
 
 				expect(result).toEqual({ data: 'default' });
-				expect(consoleErrorSpy).toHaveBeenCalledWith('Test operation error:', expect.any(Error));
+				expect(consoleErrorSpy).toHaveBeenCalledWith(
+					'Test operation error:',
+					undefined,
+					expect.any(Error)
+				);
 			});
 
 			it('should return empty array as default value', async () => {
@@ -123,7 +128,7 @@ describe('ipcWrapper', () => {
 					})
 				).rejects.toThrow('Spawn failed');
 
-				expect(consoleErrorSpy).toHaveBeenCalledWith('Process spawn error:', error);
+				expect(consoleErrorSpy).toHaveBeenCalledWith('Process spawn error:', undefined, error);
 			});
 
 			it('should apply transform function on success', async () => {
@@ -188,7 +193,11 @@ describe('ipcWrapper', () => {
 				defaultValue: null,
 			});
 
-			expect(consoleErrorSpy).toHaveBeenCalledWith('Git status error:', expect.any(Error));
+			expect(consoleErrorSpy).toHaveBeenCalledWith(
+				'Git status error:',
+				undefined,
+				expect.any(Error)
+			);
 		});
 
 		it('should include the original error object', async () => {
@@ -200,7 +209,7 @@ describe('ipcWrapper', () => {
 				defaultValue: null,
 			});
 
-			expect(consoleErrorSpy).toHaveBeenCalledWith('Operation error:', originalError);
+			expect(consoleErrorSpy).toHaveBeenCalledWith('Operation error:', undefined, originalError);
 		});
 
 		it('should handle non-Error objects as errors', async () => {
@@ -210,7 +219,7 @@ describe('ipcWrapper', () => {
 				defaultValue: null,
 			});
 
-			expect(consoleErrorSpy).toHaveBeenCalledWith('Operation error:', 'string error');
+			expect(consoleErrorSpy).toHaveBeenCalledWith('Operation error:', undefined, 'string error');
 		});
 	});
 });

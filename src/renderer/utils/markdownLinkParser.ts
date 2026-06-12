@@ -1,3 +1,4 @@
+import { logger } from './logger';
 /**
  * markdownLinkParser - Utility for extracting links and metadata from markdown files.
  *
@@ -388,7 +389,7 @@ export function parseMarkdownLinks(
 		frontMatter = parseFrontMatter(content);
 	} catch (error) {
 		// Log but don't crash - malformed front matter is common
-		console.warn(`Failed to parse front matter in ${filePath}:`, error);
+		logger.warn(`Failed to parse front matter in ${filePath}:`, undefined, error);
 		frontMatter = {};
 	}
 
@@ -429,7 +430,7 @@ export function parseMarkdownLinks(
 		}
 	} catch (error) {
 		// Log wiki link parsing failure but continue with markdown links
-		console.warn(`Failed to parse wiki links in ${filePath}:`, error);
+		logger.warn(`Failed to parse wiki links in ${filePath}:`, undefined, error);
 	}
 
 	// Parse standard markdown links: [text](url)
@@ -480,7 +481,7 @@ export function parseMarkdownLinks(
 		}
 	} catch (error) {
 		// Log markdown link parsing failure but return what we have
-		console.warn(`Failed to parse markdown links in ${filePath}:`, error);
+		logger.warn(`Failed to parse markdown links in ${filePath}:`, undefined, error);
 	}
 
 	return {

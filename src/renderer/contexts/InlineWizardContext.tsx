@@ -115,6 +115,9 @@ export function InlineWizardProvider({ children }: InlineWizardProviderProps) {
 			wizardState.streamingContent,
 			wizardState.generationProgress,
 			wizardState.wizardTabId,
+			wizardState.selectWizardTab,
+			wizardState.isWizardActiveForTab,
+			wizardState.wizardActiveSessions,
 		]
 	);
 

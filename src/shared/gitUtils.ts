@@ -14,7 +14,7 @@
 /**
  * Represents a file change from git status output
  */
-export interface GitFileStatus {
+interface GitFileStatus {
 	path: string;
 	status: string;
 }
@@ -22,7 +22,7 @@ export interface GitFileStatus {
 /**
  * Represents a file with numstat information (additions/deletions)
  */
-export interface GitNumstatFile {
+interface GitNumstatFile {
 	path: string;
 	additions: number;
 	deletions: number;
@@ -31,7 +31,7 @@ export interface GitNumstatFile {
 /**
  * Behind/ahead counts relative to upstream
  */
-export interface GitBehindAhead {
+interface GitBehindAhead {
 	behind: number;
 	ahead: number;
 }
@@ -227,30 +227,6 @@ export function parseGitTags(stdout: string): string[] {
 }
 
 /**
- * Clean and normalize a branch name from git output
- *
- * @param stdout - Raw stdout from `git rev-parse --abbrev-ref HEAD`
- * @returns Trimmed branch name or empty string
- *
- * @internal Currently used only in tests; available for future use
- */
-export function cleanBranchName(stdout: string): string {
-	return stdout?.trim() || '';
-}
-
-/**
- * Clean and normalize a path from git output
- *
- * @param stdout - Raw stdout from git commands returning paths
- * @returns Trimmed path or empty string
- *
- * @internal Currently used only in tests; available for future use
- */
-export function cleanGitPath(stdout: string): string {
-	return stdout?.trim() || '';
-}
-
-/**
  * Convert a git remote URL to a browser-friendly URL
  * Supports GitHub, GitLab, Bitbucket, and other common hosts
  *
@@ -309,9 +285,119 @@ export function remoteUrlToBrowserUrl(remoteUrl: string): string | null {
 }
 
 /**
+ * Detect git's "branch is already used / already checked out" stderr message
+ * emitted by `git worktree add` when the requested branch is already attached
+ * to another worktree on disk.
+ *
+ * Modern git: `fatal: '<branch>' is already checked out at '<path>'`
+ * Older git:  `fatal: '<branch>' is already used by worktree at '<path>'`
+ *
+ * @param stderr - Raw stderr from `git worktree add`
+ * @returns True if the error indicates the branch is already attached elsewhere
+ */
+export function isWorktreeAlreadyUsedError(stderr: string): boolean {
+	if (!stderr) return false;
+	return /is already (used by worktree|checked out) at/i.test(stderr);
+}
+
+/**
+ * Parse `git worktree list --porcelain` output and return the absolute path
+ * of the worktree currently checked out on the given branch, or null.
+ *
+ * Porcelain blocks look like:
+ *   worktree /abs/path
+ *   HEAD <sha>
+ *   branch refs/heads/<branch>
+ *
+ * Detached worktrees lack a `branch` line and are skipped.
+ *
+ * @param stdout - Raw stdout from `git worktree list --porcelain`
+ * @param branchName - Branch to look up (without refs/heads/ prefix)
+ * @returns Absolute worktree path, or null if no match
+ */
+export function parseWorktreePathForBranch(stdout: string, branchName: string): string | null {
+	if (!stdout || !branchName) return null;
+	const blocks = stdout.split(/\r?\n\r?\n/);
+	for (const block of blocks) {
+		const lines = block.split(/\r?\n/);
+		let wtPath: string | null = null;
+		let branch: string | null = null;
+		for (const line of lines) {
+			if (line.startsWith('worktree ')) {
+				wtPath = line.slice('worktree '.length).trim();
+			} else if (line.startsWith('branch ')) {
+				branch = line
+					.slice('branch '.length)
+					.trim()
+					.replace(/^refs\/heads\//, '');
+			}
+		}
+		if (wtPath && branch === branchName) return wtPath;
+	}
+	return null;
+}
+
+/**
+ * Sanitize a user-entered string into a valid git branch name.
+ *
+ * Applies the rules `git check-ref-format` enforces: spaces and other illegal
+ * characters become hyphens; leading/trailing invalid ref suffixes are trimmed.
+ * Returns an empty string when nothing usable remains (caller should treat that
+ * as invalid).
+ *
+ * `allowIncomplete` is for controlled inputs. It keeps incomplete trailing
+ * characters like `/` or `.` while the user is still typing so branch names can
+ * be entered left-to-right without cursor backtracking.
+ *
+ * Used by both the WorktreeRunSection (Auto Run "Create New Worktree") and the
+ * CreateWorktreeModal so the same input — e.g. "Cue Dashboard" — produces the
+ * same sanitized branch ("Cue-Dashboard") regardless of entry point.
+ */
+// Built from string form so the source file doesn't carry raw control bytes.
+// Matches ASCII control characters (U+0000–U+001F, U+007F) which git rejects in refs.
+const GIT_REF_CONTROL_CHARS_RE = new RegExp('[\\u0000-\\u001f\\u007f]', 'g');
+
+export interface SanitizeGitBranchNameOptions {
+	allowIncomplete?: boolean;
+}
+
+export function sanitizeGitBranchName(
+	input: string,
+	options: SanitizeGitBranchNameOptions = {}
+): string {
+	if (!input) return '';
+	const { allowIncomplete = false } = options;
+	let s = input.normalize('NFKC');
+	// Strip ASCII control chars first so they can't survive later substitutions.
+	s = s.replace(GIT_REF_CONTROL_CHARS_RE, '');
+	if (!allowIncomplete) {
+		s = s.trim();
+	}
+	// Replace any whitespace run with a single hyphen
+	s = s.replace(/\s+/g, '-');
+	// Replace characters git forbids in ref names
+	s = s.replace(/[~^:?*[\\]/g, '-');
+	// `..` and `@{` are illegal sequences — flatten them
+	s = s.replace(/\.\.+/g, '.');
+	s = s.replace(/@\{/g, '-');
+	// No consecutive slashes
+	s = s.replace(/\/+/g, '/');
+	// Collapse hyphen runs that the substitutions above may have produced
+	s = s.replace(/-+/g, '-');
+	// Refs cannot begin with `-`, `/`, or `.`
+	s = s.replace(/^[-/.]+/, '');
+	if (!allowIncomplete) {
+		// Refs cannot end with `/`, `.`, or `.lock`. A trailing `-` is valid.
+		s = s.replace(/\.lock$/i, '');
+		s = s.replace(/[/.]+$/, '');
+	}
+	return s;
+}
+
+/**
  * Common image file extensions for git file handling
  */
-export const GIT_IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg', 'ico'];
+const GIT_IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg', 'ico'];
 
 /**
  * Check if a file path is an image based on extension

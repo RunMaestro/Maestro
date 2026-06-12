@@ -17,6 +17,7 @@ import type {
 	SymphonyCategory,
 } from '../../../shared/symphony-types';
 import { SYMPHONY_CATEGORIES } from '../../../shared/symphony-constants';
+import { logger } from '../../utils/logger';
 
 // ============================================================================
 // Types
@@ -191,7 +192,7 @@ export function useSymphony(): UseSymphonyReturn {
 				setSymphonyState(response.state as SymphonyState);
 			}
 		} catch (err) {
-			console.error('Failed to fetch symphony state:', err);
+			logger.error('Failed to fetch symphony state:', undefined, err);
 		}
 	}, []);
 
@@ -208,7 +209,7 @@ export function useSymphony(): UseSymphonyReturn {
 				setIssueCounts(response.counts);
 			}
 		} catch (err) {
-			console.error('Failed to fetch issue counts:', err);
+			logger.error('Failed to fetch issue counts:', undefined, err);
 			setIssueCounts(null);
 		} finally {
 			setIsLoadingIssueCounts(false);
@@ -231,16 +232,23 @@ export function useSymphony(): UseSymphonyReturn {
 	// Real-time updates (matches Usage Dashboard pattern)
 	useEffect(() => {
 		let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+		let unmounted = false;
 
 		const unsubscribe = window.maestro.symphony.onUpdated(() => {
 			// Debounce to prevent excessive updates
 			if (debounceTimer) clearTimeout(debounceTimer);
 			debounceTimer = setTimeout(() => {
-				fetchSymphonyState();
+				if (unmounted) return;
+				fetchSymphonyState().catch((err) => {
+					if (!unmounted) {
+						logger.error('Debounced symphony state fetch failed:', undefined, err);
+					}
+				});
 			}, 500);
 		});
 
 		return () => {
+			unmounted = true;
 			unsubscribe();
 			if (debounceTimer) clearTimeout(debounceTimer);
 		};
@@ -250,23 +258,33 @@ export function useSymphony(): UseSymphonyReturn {
 	// This catches cases where status updates were missed due to connection issues
 	useEffect(() => {
 		const SYNC_INTERVAL_MS = 2 * 60 * 1000; // 2 minutes
+		let unmounted = false;
 
 		const syncActiveContributions = async () => {
+			if (unmounted) return;
 			try {
 				// Only sync if we have active contributions
 				const state = await window.maestro.symphony.getState();
+				if (unmounted) return;
 				if (state.state?.active && state.state.active.length > 0) {
 					await window.maestro.symphony.checkPRStatuses();
-					await fetchSymphonyState();
+					if (!unmounted) {
+						await fetchSymphonyState();
+					}
 				}
 			} catch (err) {
-				console.error('Auto-sync failed:', err);
+				if (!unmounted) {
+					logger.error('Auto-sync failed:', undefined, err);
+				}
 			}
 		};
 
 		const intervalId = setInterval(syncActiveContributions, SYNC_INTERVAL_MS);
 
-		return () => clearInterval(intervalId);
+		return () => {
+			unmounted = true;
+			clearInterval(intervalId);
+		};
 	}, [fetchSymphonyState]);
 
 	// ─────────────────────────────────────────────────────────────────────────
@@ -287,7 +305,7 @@ export function useSymphony(): UseSymphonyReturn {
 				setRepoIssues(response.issues as SymphonyIssue[]);
 			}
 		} catch (err) {
-			console.error('Failed to fetch issues:', err);
+			logger.error('Failed to fetch issues:', undefined, err);
 		} finally {
 			setIsLoadingIssues(false);
 		}
@@ -307,7 +325,7 @@ export function useSymphony(): UseSymphonyReturn {
 				await window.maestro.symphony.checkPRStatuses();
 				await fetchSymphonyState();
 			} catch (err) {
-				console.error('Failed to refresh symphony:', err);
+				logger.error('Failed to refresh symphony:', undefined, err);
 			} finally {
 				setIsRefreshing(false);
 			}

@@ -27,10 +27,10 @@
 	});
 
 	// Animate progress bar while waiting for React
+	// Caps at 40% — React takes over with explicit stage updates after this
 	var interval = setInterval(function () {
-		// Slow progress that caps at 70% until React takes over
-		progress += Math.random() * 3 + 1;
-		if (progress > 70) progress = 70;
+		progress += Math.random() * 2 + 0.5;
+		if (progress > 40) progress = 40;
 		if (progressBar) progressBar.style.width = progress + '%';
 	}, 100);
 
@@ -40,13 +40,21 @@
 		return progress;
 	};
 
+	// Update splash progress and status text from React during initialization stages
+	window.__updateSplash = function (newProgress, text) {
+		clearInterval(interval);
+		progress = newProgress;
+		if (progressBar) progressBar.style.width = progress + '%';
+		if (progressText && text) progressText.textContent = text;
+	};
+
 	// Function for React to call when ready
 	window.__hideSplash = function () {
 		clearInterval(interval);
 
 		// Complete the progress bar
 		if (progressBar) progressBar.style.width = '100%';
-		if (progressText) progressText.textContent = 'Ready';
+		if (progressText) progressText.textContent = 'Curtain up';
 
 		// Helper to fade out the splash
 		function fadeOut() {

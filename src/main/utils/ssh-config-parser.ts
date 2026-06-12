@@ -11,6 +11,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { expandTilde } from '../../shared/pathUtils';
+import { getPathAccessCache, defaultReadableProbe } from './path-access-cache';
 
 /**
  * Parsed SSH config host entry.
@@ -66,7 +67,10 @@ export interface SshConfigParserDeps {
 }
 
 /**
- * Default dependencies using real implementations.
+ * Default dependencies using real implementations. `fileExists` is wrapped
+ * in {@link PathAccessCache} so consecutive `parseSshConfig` calls (e.g.
+ * UI autocomplete refreshes) skip the duplicate stat. Test deps mock
+ * `fileExists` directly and bypass the cache entirely.
  */
 function getDefaultDeps(): SshConfigParserDeps {
 	return {
@@ -74,12 +78,7 @@ function getDefaultDeps(): SshConfigParserDeps {
 			return fs.readFileSync(filePath, 'utf-8');
 		},
 		fileExists: (filePath: string): boolean => {
-			try {
-				fs.accessSync(filePath, fs.constants.R_OK);
-				return true;
-			} catch {
-				return false;
-			}
+			return getPathAccessCache().check(filePath, defaultReadableProbe);
 		},
 		homeDir: process.env.HOME || process.env.USERPROFILE || '',
 	};
@@ -242,23 +241,6 @@ export function parseConfigContent(content: string, homeDir: string): SshConfigH
 	}
 
 	return hosts;
-}
-
-/**
- * Find a host entry in the SSH config by name.
- *
- * @param hostName The Host pattern to look for
- * @param deps Optional dependencies for testing
- * @returns The matching host entry or undefined
- */
-export function findSshConfigHost(
-	hostName: string,
-	deps?: Partial<SshConfigParserDeps>
-): SshConfigHost | undefined {
-	const result = parseSshConfig(deps);
-	if (!result.success) return undefined;
-
-	return result.hosts.find((h) => h.host.toLowerCase() === hostName.toLowerCase());
 }
 
 /**

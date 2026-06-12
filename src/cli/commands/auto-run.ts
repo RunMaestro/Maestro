@@ -1,122 +1,188 @@
-// Auto Run command
-// Configures or launches Auto Run in the running Maestro desktop app.
+// Auto-run command - configure and optionally launch an auto-run session in Maestro
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { resolveSessionId, withMaestroClient } from '../services/maestro-client';
-import { getSessionById } from '../services/storage';
-import { formatError } from '../output/formatter';
+import { withMaestroClient, resolveTargetSessionId } from '../services/maestro-client';
+import { readSessions } from '../services/storage';
 
 interface AutoRunOptions {
-	session?: string;
+	agent?: string;
 	prompt?: string;
 	loop?: boolean;
 	maxLoops?: string;
 	saveAs?: string;
 	launch?: boolean;
 	resetOnCompletion?: boolean;
+	worktree?: boolean;
+	branch?: string;
+	baseBranch?: string;
+	worktreePath?: string;
+	createPr?: boolean;
+	prTargetBranch?: string;
 }
 
-interface ConfigureAutoRunResult {
-	type: 'configure_auto_run_result';
-	success: boolean;
-	playbookId?: string;
-	error?: string;
-}
-
-function resolveMarkdownDocument(documentPathArg: string): string {
-	const documentPath = path.resolve(documentPathArg);
-
-	if (!fs.existsSync(documentPath)) {
-		throw new Error(`Document not found: ${documentPath}`);
+export async function autoRun(docs: string[], options: AutoRunOptions): Promise<void> {
+	if (!docs || docs.length === 0) {
+		console.error('Error: At least one document path is required');
+		process.exit(1);
 	}
 
-	const stats = fs.statSync(documentPath);
-	if (!stats.isFile()) {
-		throw new Error(`Document is not a file: ${documentPath}`);
-	}
+	// Resolve and validate each document path
+	const resolvedPaths: string[] = [];
+	for (const doc of docs) {
+		const absolutePath = path.resolve(doc);
 
-	if (path.extname(documentPath).toLowerCase() !== '.md') {
-		throw new Error(`Document must be a Markdown file: ${documentPath}`);
-	}
-
-	return documentPath;
-}
-
-function parseMaxLoops(value: string | undefined): number | undefined {
-	if (value === undefined) {
-		return undefined;
-	}
-
-	const maxLoops = Number.parseInt(value, 10);
-	if (!Number.isInteger(maxLoops) || maxLoops < 1 || String(maxLoops) !== value) {
-		throw new Error('--max-loops must be a positive integer');
-	}
-
-	return maxLoops;
-}
-
-export async function autoRun(documentPathArgs: string[], options: AutoRunOptions): Promise<void> {
-	try {
-		const documentPaths = documentPathArgs.map(resolveMarkdownDocument);
-		const maxLoops = parseMaxLoops(options.maxLoops);
-		const sessionId = resolveSessionId(options);
-		const session = getSessionById(sessionId);
-		if (!session) {
-			throw new Error(`Session not found: ${sessionId}`);
-		}
-		if (!session.autoRunFolderPath) {
-			throw new Error(`Session has no Auto Run folder configured: ${sessionId}`);
+		if (!fs.existsSync(absolutePath)) {
+			console.error(`Error: File not found: ${absolutePath}`);
+			process.exit(1);
 		}
 
-		const autoRunFolderPath = path.resolve(session.autoRunFolderPath);
-		const documents = documentPaths.map((documentPath) => ({
-			filename: getAutoRunDocumentFilename(documentPath, autoRunFolderPath),
+		if (path.extname(absolutePath).toLowerCase() !== '.md') {
+			console.error(`Error: File must be a .md file: ${absolutePath}`);
+			process.exit(1);
+		}
+
+		resolvedPaths.push(absolutePath);
+	}
+
+	const loopEnabled = options.loop || options.maxLoops !== undefined;
+	const maxLoops =
+		options.maxLoops !== undefined
+			? Number.isInteger(Number(options.maxLoops)) && Number(options.maxLoops) > 0
+				? Number(options.maxLoops)
+				: NaN
+			: undefined;
+
+	if (maxLoops !== undefined && (isNaN(maxLoops) || maxLoops < 1)) {
+		console.error('Error: --max-loops must be a positive integer');
+		process.exit(1);
+	}
+
+	const sessionId = resolveTargetSessionId(options.agent);
+	const session = readSessions().find((s) => s.id === sessionId);
+	if (!session?.autoRunFolderPath) {
+		console.error('Error: Selected agent has no Auto Run folder configured');
+		process.exit(1);
+		return;
+	}
+
+	const autoRunFolderPath = path.resolve(session.autoRunFolderPath);
+
+	const documents: Array<{ filename: string; resetOnCompletion: boolean }> = [];
+	for (const documentPath of resolvedPaths) {
+		const filename = resolveAutoRunDocumentFilename(documentPath, autoRunFolderPath);
+		if (!filename) return;
+		documents.push({
+			filename,
 			resetOnCompletion: options.resetOnCompletion || false,
-		}));
+		});
+	}
 
-		await withMaestroClient(async (client) => {
-			const result = await client.sendCommand<ConfigureAutoRunResult>(
+	// Worktree configuration: requires --launch and --branch.
+	// The desktop app handles worktree creation, branch checkout, and (optionally)
+	// PR creation on completion via the same code path used by the Auto Run UI.
+	let worktree:
+		| {
+				enabled: boolean;
+				path: string;
+				branchName: string;
+				baseBranch: string;
+				createPROnCompletion: boolean;
+				prTargetBranch: string;
+		  }
+		| undefined;
+	if (options.worktree) {
+		if (!options.launch) {
+			console.error('Error: --worktree requires --launch');
+			process.exit(1);
+		} else if (!options.branch || options.branch.trim() === '') {
+			console.error('Error: --worktree requires --branch <name>');
+			process.exit(1);
+		} else if (!options.worktreePath || options.worktreePath.trim() === '') {
+			console.error('Error: --worktree requires --worktree-path <path>');
+			process.exit(1);
+		} else {
+			worktree = {
+				enabled: true,
+				path: path.resolve(options.worktreePath),
+				branchName: options.branch.trim(),
+				baseBranch: options.baseBranch?.trim() || '',
+				createPROnCompletion: options.createPr || false,
+				prTargetBranch: options.prTargetBranch?.trim() || '',
+			};
+		}
+	} else if (
+		options.branch ||
+		options.baseBranch ||
+		options.worktreePath ||
+		options.createPr ||
+		options.prTargetBranch
+	) {
+		console.error(
+			'Error: --branch, --base-branch, --worktree-path, --create-pr, and --pr-target-branch require --worktree'
+		);
+		process.exit(1);
+	}
+
+	try {
+		const result = await withMaestroClient(async (client) => {
+			return client.sendCommand<{
+				type: string;
+				success: boolean;
+				playbookId?: string;
+				error?: string;
+			}>(
 				{
 					type: 'configure_auto_run',
 					sessionId,
 					documents,
 					prompt: options.prompt,
-					loopEnabled: options.loop || maxLoops !== undefined,
+					loopEnabled: loopEnabled || undefined,
 					maxLoops,
 					saveAsPlaybook: options.saveAs,
-					launch: options.launch || false,
+					launch: options.launch,
+					worktree,
 				},
 				'configure_auto_run_result'
 			);
-
-			if (!result.success) {
-				throw new Error(result.error || 'Failed to configure Auto Run');
-			}
 		});
 
-		if (options.saveAs) {
-			console.log(`Playbook '${options.saveAs}' saved`);
-		} else if (options.launch) {
-			console.log(`Auto-run launched with ${documents.length} documents`);
+		if (result.success) {
+			if (options.saveAs) {
+				console.log(
+					`Playbook '${options.saveAs}' saved${result.playbookId ? ` (ID: ${result.playbookId})` : ''}`
+				);
+			} else if (options.launch) {
+				console.log(
+					`Auto-run launched with ${documents.length} document${documents.length !== 1 ? 's' : ''}`
+				);
+			} else {
+				console.log(
+					`Auto-run configured with ${documents.length} document${documents.length !== 1 ? 's' : ''}`
+				);
+			}
 		} else {
-			console.log(`Auto-run configured with ${documents.length} documents`);
+			console.error(`Error: ${result.error || 'Failed to configure auto-run'}`);
+			process.exit(1);
 		}
 	} catch (error) {
-		const message = error instanceof Error ? error.message : 'Unknown error';
-		console.error(formatError(`Failed to configure Auto Run: ${message}`));
+		console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
 		process.exit(1);
 	}
 }
 
-function getAutoRunDocumentFilename(documentPath: string, autoRunFolderPath: string): string {
-	const resolvedDocumentPath = path.resolve(documentPath);
-	const documentDir = path.dirname(resolvedDocumentPath);
-	if (documentDir !== autoRunFolderPath) {
-		throw new Error(
-			`Document must be in the session Auto Run folder: ${autoRunFolderPath}. Received: ${resolvedDocumentPath}`
+function resolveAutoRunDocumentFilename(
+	documentPath: string,
+	autoRunFolderPath: string
+): string | null {
+	const relativePath = path.relative(autoRunFolderPath, documentPath);
+	if (relativePath === '' || relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
+		console.error(
+			`Error: File must be inside the selected agent's Auto Run folder: ${documentPath}`
 		);
+		process.exit(1);
+		return null;
 	}
 
-	return path.basename(resolvedDocumentPath);
+	return relativePath.split(path.sep).join('/');
 }

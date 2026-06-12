@@ -18,6 +18,7 @@ import path from 'path';
 import fs from 'fs/promises';
 
 import { logger } from '../../utils/logger';
+import { captureException } from '../../utils/sentry';
 
 /**
  * Dependencies required for attachments handlers
@@ -101,6 +102,7 @@ export function registerAttachmentsHandlers(deps: AttachmentsHandlerDependencies
 				});
 				return { success: true, path: filePath, filename: finalFilename };
 			} catch (error) {
+				void captureException(error);
 				logger.error('Error saving attachment', 'Attachments', error);
 				return { success: false, error: String(error) };
 			}
@@ -139,6 +141,7 @@ export function registerAttachmentsHandlers(deps: AttachmentsHandlerDependencies
 			});
 			return { success: true, dataUrl: `data:${mimeType};base64,${base64}` };
 		} catch (error) {
+			void captureException(error);
 			logger.error('Error loading attachment', 'Attachments', error);
 			return { success: false, error: String(error) };
 		}
@@ -158,6 +161,7 @@ export function registerAttachmentsHandlers(deps: AttachmentsHandlerDependencies
 			logger.info(`Deleted attachment: ${filePath}`, 'Attachments', { sessionId, filename });
 			return { success: true };
 		} catch (error) {
+			void captureException(error);
 			logger.error('Error deleting attachment', 'Attachments', error);
 			return { success: false, error: String(error) };
 		}
@@ -186,6 +190,7 @@ export function registerAttachmentsHandlers(deps: AttachmentsHandlerDependencies
 				throw err;
 			}
 		} catch (error) {
+			void captureException(error);
 			logger.error('Error listing attachments', 'Attachments', error);
 			return { success: false, error: String(error), files: [] };
 		}

@@ -380,6 +380,32 @@ describe('useSshRemotes', () => {
 			expect(testResult!.error).toBe('Connection refused');
 		});
 
+		it('reports failure when the IPC envelope succeeds but the connection itself failed', async () => {
+			// The IPC envelope `success` only means the handler did not throw. The
+			// real connection outcome lives in `result.result.success`. A failed SSH
+			// test still returns envelope `success: true`, so testConnection must
+			// surface the inner failure rather than reporting "Connected".
+			mockSshRemote.test.mockResolvedValue({
+				success: true,
+				result: { success: false, error: 'Permission denied (publickey)' },
+			});
+
+			const { result } = renderHook(() => useSshRemotes());
+
+			await waitFor(() => {
+				expect(result.current.loading).toBe(false);
+			});
+
+			let testResult: Awaited<ReturnType<typeof result.current.testConnection>>;
+			await act(async () => {
+				testResult = await result.current.testConnection('remote-1');
+			});
+
+			expect(testResult!.success).toBe(false);
+			expect(testResult!.error).toBe('Permission denied (publickey)');
+			expect(result.current.testingConfigId).toBeNull();
+		});
+
 		it('handles test exception', async () => {
 			mockSshRemote.test.mockRejectedValue(new Error('Network error'));
 

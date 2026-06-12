@@ -19,6 +19,7 @@ import { LayerStackProvider } from '../../../../renderer/contexts/LayerStackCont
 import type { Theme, AgentConfig } from '../../../../renderer/types';
 import { formatShortcutKeys } from '../../../../renderer/utils/shortcutFormatter';
 
+import { mockTheme } from '../../../helpers/mockTheme';
 // Mock lucide-react icons
 vi.mock('lucide-react', () => ({
 	X: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
@@ -169,30 +170,6 @@ const mockMaestro = {
 };
 
 // Mock theme
-const mockTheme: Theme = {
-	id: 'test-dark',
-	name: 'Test Dark',
-	mode: 'dark',
-	colors: {
-		bgMain: '#1a1a1a',
-		bgSidebar: '#252525',
-		bgActivity: '#2a2a2a',
-		border: '#333333',
-		textMain: '#ffffff',
-		textDim: '#888888',
-		textFaint: '#555555',
-		accent: '#4a9eff',
-		accentForeground: '#ffffff',
-		buttonBg: '#333333',
-		buttonHover: '#444444',
-		headerBg: '#202020',
-		scrollbarTrack: '#1a1a1a',
-		scrollbarThumb: '#444444',
-		success: '#22c55e',
-		warning: '#f59e0b',
-		error: '#ef4444',
-	},
-};
 
 // Mock available agents
 const mockAgents: AgentConfig[] = [

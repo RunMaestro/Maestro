@@ -10,6 +10,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
+import { logger } from '../../../renderer/utils/logger';
 import {
 	useNotificationStore,
 	notifyToast,
@@ -39,9 +40,10 @@ beforeEach(() => {
 			audioFeedbackEnabled: false,
 			audioFeedbackCommand: '',
 			osNotificationsEnabled: true,
+			idleNotificationEnabled: false,
+			idleNotificationCommand: '',
 		},
 	});
-	resetToastIdCounter();
 
 	// Mock window.maestro
 	(globalThis as any).window = {
@@ -213,15 +215,39 @@ describe('notificationStore', () => {
 		});
 	});
 
+	describe('setIdleNotification', () => {
+		it('enables idle notification with command', () => {
+			useNotificationStore.getState().setIdleNotification(true, 'say Maestro is idle');
+			const { config } = useNotificationStore.getState();
+			expect(config.idleNotificationEnabled).toBe(true);
+			expect(config.idleNotificationCommand).toBe('say Maestro is idle');
+		});
+
+		it('disables idle notification', () => {
+			useNotificationStore.getState().setIdleNotification(true, 'say idle');
+			useNotificationStore.getState().setIdleNotification(false, '');
+			const { config } = useNotificationStore.getState();
+			expect(config.idleNotificationEnabled).toBe(false);
+			expect(config.idleNotificationCommand).toBe('');
+		});
+
+		it('does not affect other config fields', () => {
+			useNotificationStore.getState().setAudioFeedback(true, 'say');
+			useNotificationStore.getState().setIdleNotification(true, 'notify-send idle');
+			expect(useNotificationStore.getState().config.audioFeedbackEnabled).toBe(true);
+			expect(useNotificationStore.getState().config.audioFeedbackCommand).toBe('say');
+		});
+	});
+
 	// ==========================================================================
 	// notifyToast wrapper
 	// ==========================================================================
 
 	describe('notifyToast', () => {
 		describe('ID generation', () => {
-			it('returns generated toast ID', () => {
+			it('returns generated toast ID with expected shape', () => {
 				const id = notifyToast({ type: 'success', title: 'Test', message: 'msg' });
-				expect(id).toMatch(/^toast-\d+-0$/);
+				expect(id).toMatch(/^toast-\d+-\d+$/);
 			});
 
 			it('generates unique IDs', () => {
@@ -230,10 +256,12 @@ describe('notificationStore', () => {
 				expect(id1).not.toBe(id2);
 			});
 
-			it('increments counter', () => {
-				notifyToast({ type: 'success', title: 'A', message: 'a' });
+			it('counter portion increments between consecutive calls', () => {
+				const id1 = notifyToast({ type: 'success', title: 'A', message: 'a' });
 				const id2 = notifyToast({ type: 'success', title: 'B', message: 'b' });
-				expect(id2).toMatch(/^toast-\d+-1$/);
+				const counter1 = Number(id1.split('-').pop());
+				const counter2 = Number(id2.split('-').pop());
+				expect(counter2).toBe(counter1 + 1);
 			});
 		});
 
@@ -305,6 +333,23 @@ describe('notificationStore', () => {
 						message: 'Task complete',
 						group: 'MyGroup',
 						project: 'MyProject',
+					})
+				);
+			});
+
+			it('includes sessionId and tabId in logged toast data for navigation', () => {
+				notifyToast({
+					type: 'success',
+					title: 'Done',
+					message: 'Task complete',
+					sessionId: 'sess-123',
+					tabId: 'tab-456',
+				});
+				expect(mockLoggerToast).toHaveBeenCalledWith(
+					'Done',
+					expect.objectContaining({
+						sessionId: 'sess-123',
+						tabId: 'tab-456',
 					})
 				);
 			});
@@ -383,7 +428,7 @@ describe('notificationStore', () => {
 		describe('OS notifications', () => {
 			it('calls show when enabled', () => {
 				notifyToast({ type: 'success', title: 'Done', message: 'Task complete.' });
-				expect(mockShow).toHaveBeenCalledWith('Done', 'Task complete.');
+				expect(mockShow).toHaveBeenCalledWith('Done', 'Task complete.', undefined, undefined);
 			});
 
 			it('does not call show when disabled', () => {
@@ -399,7 +444,7 @@ describe('notificationStore', () => {
 					message: 'Finished.',
 					project: 'MyAgent',
 				});
-				expect(mockShow).toHaveBeenCalledWith('MyAgent', 'Finished.');
+				expect(mockShow).toHaveBeenCalledWith('MyAgent', 'Finished.', undefined, undefined);
 			});
 
 			it('builds body with group prefix', () => {
@@ -409,7 +454,7 @@ describe('notificationStore', () => {
 					message: 'Finished.',
 					group: 'Backend',
 				});
-				expect(mockShow).toHaveBeenCalledWith('Done', 'Backend: Finished.');
+				expect(mockShow).toHaveBeenCalledWith('Done', 'Backend: Finished.', undefined, undefined);
 			});
 
 			it('builds body with tab prefix', () => {
@@ -419,7 +464,7 @@ describe('notificationStore', () => {
 					message: 'Finished.',
 					tabName: 'Tab1',
 				});
-				expect(mockShow).toHaveBeenCalledWith('Done', 'Tab1: Finished.');
+				expect(mockShow).toHaveBeenCalledWith('Done', 'Tab1: Finished.', undefined, undefined);
 			});
 
 			it('builds body with group > tab prefix', () => {
@@ -430,7 +475,12 @@ describe('notificationStore', () => {
 					group: 'Backend',
 					tabName: 'Tab1',
 				});
-				expect(mockShow).toHaveBeenCalledWith('Done', 'Backend > Tab1: Finished.');
+				expect(mockShow).toHaveBeenCalledWith(
+					'Done',
+					'Backend > Tab1: Finished.',
+					undefined,
+					undefined
+				);
 			});
 
 			it('uses short agentSessionId when no tabName', () => {
@@ -440,7 +490,7 @@ describe('notificationStore', () => {
 					message: 'Finished.',
 					agentSessionId: 'abcdefgh-1234-5678-9abc-def012345678',
 				});
-				expect(mockShow).toHaveBeenCalledWith('Done', 'abcdefgh: Finished.');
+				expect(mockShow).toHaveBeenCalledWith('Done', 'abcdefgh: Finished.', undefined, undefined);
 			});
 
 			it('extracts first sentence from message', () => {
@@ -449,7 +499,7 @@ describe('notificationStore', () => {
 					title: 'Done',
 					message: 'First sentence. Second sentence.',
 				});
-				expect(mockShow).toHaveBeenCalledWith('Done', 'First sentence.');
+				expect(mockShow).toHaveBeenCalledWith('Done', 'First sentence.', undefined, undefined);
 			});
 		});
 
@@ -482,20 +532,20 @@ describe('notificationStore', () => {
 	// Selectors
 	// ==========================================================================
 
-	describe('selectors', () => {
-		it('selectToasts returns toasts array', () => {
+	describe('store state access', () => {
+		it('toasts array reflects addToast calls', () => {
 			useNotificationStore.getState().addToast(createToast({ id: 'a' }));
-			expect(selectToasts(useNotificationStore.getState())).toHaveLength(1);
+			expect(useNotificationStore.getState().toasts).toHaveLength(1);
 		});
 
-		it('selectToastCount returns count', () => {
+		it('toasts length reflects count', () => {
 			useNotificationStore.getState().addToast(createToast({ id: 'a' }));
 			useNotificationStore.getState().addToast(createToast({ id: 'b' }));
-			expect(selectToastCount(useNotificationStore.getState())).toBe(2);
+			expect(useNotificationStore.getState().toasts).toHaveLength(2);
 		});
 
-		it('selectConfig returns config object', () => {
-			const config = selectConfig(useNotificationStore.getState());
+		it('config object exposes defaults', () => {
+			const { config } = useNotificationStore.getState();
 			expect(config.defaultDuration).toBe(20);
 			expect(config.osNotificationsEnabled).toBe(true);
 		});
@@ -506,20 +556,19 @@ describe('notificationStore', () => {
 	// ==========================================================================
 
 	describe('non-React access', () => {
-		it('getNotificationState returns current state', () => {
+		it('useNotificationStore.getState() returns current state', () => {
 			notifyToast({ type: 'info', title: 'Test', message: 'msg' });
-			expect(getNotificationState().toasts).toHaveLength(1);
+			expect(useNotificationStore.getState().toasts).toHaveLength(1);
 		});
 
-		it('getNotificationActions returns working action references', () => {
-			const actions = getNotificationActions();
-			actions.addToast(createToast({ id: 'from-actions' }));
+		it('useNotificationStore.getState() exposes working action references', () => {
+			useNotificationStore.getState().addToast(createToast({ id: 'from-actions' }));
 			expect(useNotificationStore.getState().toasts[0].id).toBe('from-actions');
 		});
 
-		it('getNotificationActions.clearToasts works', () => {
+		it('useNotificationStore.getState().clearToasts works', () => {
 			notifyToast({ type: 'info', title: 'A', message: 'a' });
-			getNotificationActions().clearToasts();
+			useNotificationStore.getState().clearToasts();
 			expect(useNotificationStore.getState().toasts).toHaveLength(0);
 		});
 	});
@@ -539,6 +588,7 @@ describe('notificationStore', () => {
 			expect(actions1.setDefaultDuration).toBe(actions2.setDefaultDuration);
 			expect(actions1.setAudioFeedback).toBe(actions2.setAudioFeedback);
 			expect(actions1.setOsNotifications).toBe(actions2.setOsNotifications);
+			expect(actions1.setIdleNotification).toBe(actions2.setIdleNotification);
 		});
 	});
 
@@ -558,6 +608,8 @@ describe('notificationStore', () => {
 					audioFeedbackEnabled: false,
 					audioFeedbackCommand: '',
 					osNotificationsEnabled: true,
+					idleNotificationEnabled: false,
+					idleNotificationCommand: '',
 				},
 			});
 
@@ -615,7 +667,7 @@ describe('notificationStore', () => {
 		});
 
 		it('handles speak() rejection gracefully', async () => {
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 			mockSpeak.mockRejectedValueOnce(new Error('speak failed'));
 			useNotificationStore.getState().setAudioFeedback(true, 'say');
 			notifyToast({ type: 'info', title: 'Test', message: 'Hello' });
@@ -624,19 +676,21 @@ describe('notificationStore', () => {
 			await vi.advanceTimersByTimeAsync(0);
 			expect(consoleSpy).toHaveBeenCalledWith(
 				'[notificationStore] Custom notification failed:',
+				undefined,
 				expect.any(Error)
 			);
 			consoleSpy.mockRestore();
 		});
 
 		it('handles show() rejection gracefully', async () => {
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 			mockShow.mockRejectedValueOnce(new Error('show failed'));
 			notifyToast({ type: 'info', title: 'Test', message: 'Hello' });
 
 			await vi.advanceTimersByTimeAsync(0);
 			expect(consoleSpy).toHaveBeenCalledWith(
 				'[notificationStore] Failed to show OS notification:',
+				undefined,
 				expect.any(Error)
 			);
 			consoleSpy.mockRestore();
@@ -706,7 +760,12 @@ describe('notificationStore', () => {
 				tabName: 'Tab2',
 			});
 			// project overrides title
-			expect(mockShow).toHaveBeenCalledWith('MyAgent', 'Backend > Tab2: Finished.');
+			expect(mockShow).toHaveBeenCalledWith(
+				'MyAgent',
+				'Backend > Tab2: Finished.',
+				undefined,
+				undefined
+			);
 		});
 
 		it('builds body with no prefix when no metadata', () => {
@@ -715,7 +774,7 @@ describe('notificationStore', () => {
 				title: 'Done',
 				message: 'Finished.',
 			});
-			expect(mockShow).toHaveBeenCalledWith('Done', 'Finished.');
+			expect(mockShow).toHaveBeenCalledWith('Done', 'Finished.', undefined, undefined);
 		});
 
 		it('handles message with no sentence-ending punctuation', () => {
@@ -724,7 +783,7 @@ describe('notificationStore', () => {
 				title: 'Done',
 				message: 'No period here',
 			});
-			expect(mockShow).toHaveBeenCalledWith('Done', 'No period here');
+			expect(mockShow).toHaveBeenCalledWith('Done', 'No period here', undefined, undefined);
 		});
 	});
 
@@ -759,6 +818,50 @@ describe('notificationStore', () => {
 			});
 			const toast = useNotificationStore.getState().toasts[0];
 			expect(toast.taskDuration).toBe(5000);
+		});
+
+		it('preserves clickAction (jump-session) on toast', () => {
+			notifyToast({
+				type: 'info',
+				title: 'Agent ready',
+				message: 'Click to jump.',
+				clickAction: { kind: 'jump-session', sessionId: 'sess-9', tabId: 'tab-3' },
+			});
+			const toast = useNotificationStore.getState().toasts[0];
+			expect(toast.clickAction).toEqual({
+				kind: 'jump-session',
+				sessionId: 'sess-9',
+				tabId: 'tab-3',
+			});
+		});
+
+		it('preserves clickAction (open-file) on toast', () => {
+			notifyToast({
+				type: 'info',
+				title: 'Diff ready',
+				message: 'Open the patch.',
+				clickAction: { kind: 'open-file', sessionId: 'sess-9', path: '/tmp/foo.ts' },
+			});
+			const toast = useNotificationStore.getState().toasts[0];
+			expect(toast.clickAction).toEqual({
+				kind: 'open-file',
+				sessionId: 'sess-9',
+				path: '/tmp/foo.ts',
+			});
+		});
+
+		it('preserves clickAction (open-url) on toast', () => {
+			notifyToast({
+				type: 'info',
+				title: 'Run finished',
+				message: 'View logs.',
+				clickAction: { kind: 'open-url', url: 'https://example.com/logs' },
+			});
+			const toast = useNotificationStore.getState().toasts[0];
+			expect(toast.clickAction).toEqual({
+				kind: 'open-url',
+				url: 'https://example.com/logs',
+			});
 		});
 	});
 

@@ -21,27 +21,37 @@ import {
 } from '../../../web/utils/cssCustomProperties';
 
 // Helper function to create a mock theme
-function createMockTheme(overrides?: Partial<Theme>): Theme {
+type ThemeOverrides = Omit<Partial<Theme>, 'colors'> & {
+	colors?: Partial<ThemeColors>;
+};
+
+const defaultMockColors: ThemeColors = {
+	bgMain: '#282a36',
+	bgSidebar: '#21222c',
+	bgActivity: '#44475a',
+	border: '#6272a4',
+	textMain: '#f8f8f2',
+	textDim: '#6272a4',
+	accent: '#bd93f9',
+	accentDim: 'rgba(189, 147, 249, 0.3)',
+	accentText: '#bd93f9',
+	accentForeground: '#282a36',
+	success: '#50fa7b',
+	warning: '#ffb86c',
+	error: '#ff5555',
+};
+
+function createMockTheme(overrides: ThemeOverrides = {}): Theme {
+	const { colors: colorOverrides, ...rest } = overrides;
 	return {
 		id: 'dracula',
 		name: 'Dracula',
 		mode: 'dark',
+		...rest,
 		colors: {
-			bgMain: '#282a36',
-			bgSidebar: '#21222c',
-			bgActivity: '#44475a',
-			border: '#6272a4',
-			textMain: '#f8f8f2',
-			textDim: '#6272a4',
-			accent: '#bd93f9',
-			accentDim: 'rgba(189, 147, 249, 0.3)',
-			accentText: '#bd93f9',
-			accentForeground: '#282a36',
-			success: '#50fa7b',
-			warning: '#ffb86c',
-			error: '#ff5555',
+			...defaultMockColors,
+			...(colorOverrides ?? {}),
 		},
-		...overrides,
 	};
 }
 
@@ -155,10 +165,7 @@ describe('cssCustomProperties', () => {
 
 		it('should handle themes with rgba colors', () => {
 			const theme = createMockTheme({
-				colors: {
-					...createMockTheme().colors,
-					accentDim: 'rgba(100, 200, 255, 0.5)',
-				},
+				colors: { accentDim: 'rgba(100, 200, 255, 0.5)' },
 			});
 			const properties = generateCSSProperties(theme);
 
@@ -167,10 +174,7 @@ describe('cssCustomProperties', () => {
 
 		it('should handle themes with hsl colors', () => {
 			const theme = createMockTheme({
-				colors: {
-					...createMockTheme().colors,
-					bgMain: 'hsl(230, 15%, 18%)',
-				},
+				colors: { bgMain: 'hsl(230, 15%, 18%)' },
 			});
 			const properties = generateCSSProperties(theme);
 
@@ -179,11 +183,7 @@ describe('cssCustomProperties', () => {
 
 		it('should handle themes with named colors', () => {
 			const theme = createMockTheme({
-				colors: {
-					...createMockTheme().colors,
-					error: 'red',
-					success: 'green',
-				},
+				colors: { error: 'red', success: 'green' },
 			});
 			const properties = generateCSSProperties(theme);
 
@@ -780,7 +780,6 @@ describe('cssCustomProperties', () => {
 		it('should handle themes with special characters in color values', () => {
 			const theme = createMockTheme({
 				colors: {
-					...createMockTheme().colors,
 					accentDim: 'rgba(255, 255, 255, 0.5)',
 					bgMain: 'hsla(230, 15%, 18%, 1)',
 				},

@@ -7,34 +7,7 @@ import {
 } from '../../../renderer/hooks';
 import type { Session } from '../../../renderer/types';
 import type { FileNode } from '../../../renderer/types/fileTree';
-
-// Helper to create a minimal session for testing
-const createMockSession = (overrides: Partial<Session> = {}): Session =>
-	({
-		id: 'test-session',
-		name: 'Test Session',
-		toolType: 'claude-code',
-		state: 'idle',
-		inputMode: 'ai',
-		cwd: '/project',
-		projectRoot: '/project',
-		aiPid: 0,
-		terminalPid: 0,
-		aiLogs: [],
-		shellLogs: [],
-		isGitRepo: false,
-		fileTree: [],
-		fileExplorerExpanded: [],
-		messageQueue: [],
-		isLive: false,
-		isNew: false,
-		scrollPosition: 0,
-		inputHistory: [],
-		inputHistoryIndex: -1,
-		shellCommandHistory: [],
-		shellCwd: '/project',
-		...overrides,
-	}) as Session;
+import { createMockSession } from '../../helpers/mockSession';
 
 // Helper to create a file tree
 const createFileTree = (): FileNode[] => [
@@ -368,15 +341,15 @@ describe('useTabCompletion', () => {
 
 		it('quotes paths that contain spaces', () => {
 			const session = createMockSession({
-				fileTree: [{ name: 'Auto Run Docs', type: 'folder', children: [] }],
+				fileTree: [{ name: 'My Folder', type: 'folder', children: [] }],
 			});
 			const { result } = renderHook(() => useTabCompletion(session));
 
-			const suggestions = result.current.getSuggestions('mv Scripts/Loop/ A');
+			const suggestions = result.current.getSuggestions('mv Scripts/Loop/ M');
 			const folderSuggestion = suggestions.find((s) => s.type === 'folder');
 
-			expect(folderSuggestion?.displayText).toBe('"Auto Run Docs/"');
-			expect(folderSuggestion?.value).toBe('mv Scripts/Loop/ "Auto Run Docs/"');
+			expect(folderSuggestion?.displayText).toBe('"My Folder/"');
+			expect(folderSuggestion?.value).toBe('mv Scripts/Loop/ "My Folder/"');
 		});
 
 		it('handles path-based completion (cd src/c)', () => {

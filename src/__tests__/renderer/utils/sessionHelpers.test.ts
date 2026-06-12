@@ -42,6 +42,15 @@ describe('sessionHelpers', () => {
 		(global as any).window = {
 			maestro: {
 				agents: mockAgentsApi,
+				prompts: {
+					get: vi.fn().mockResolvedValue({
+						success: true,
+						content: 'Maestro System Context: {{AGENT_NAME}}',
+					}),
+				},
+				history: {
+					getFilePath: vi.fn().mockResolvedValue(null),
+				},
 			},
 		};
 	});

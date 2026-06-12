@@ -19,8 +19,17 @@ vi.mock('../../../renderer/services/git', () => ({
 	},
 }));
 
+const refreshGitStatusMock = vi.fn().mockResolvedValue(undefined);
+vi.mock('../../../renderer/contexts/GitStatusContext', () => ({
+	useGitDetail: () => ({
+		getFileDetails: () => undefined,
+		refreshGitStatus: refreshGitStatusMock,
+	}),
+}));
+
 import { useModalHandlers } from '../../../renderer/hooks/modal/useModalHandlers';
 import { useModalStore, getModalActions } from '../../../renderer/stores/modalStore';
+import { useCenterFlashStore } from '../../../renderer/stores/centerFlashStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
@@ -28,6 +37,8 @@ import { useAgentStore } from '../../../renderer/stores/agentStore';
 import { useAgentErrorRecovery } from '../../../renderer/hooks/agent/useAgentErrorRecovery';
 import { gitService } from '../../../renderer/services/git';
 import type { Session, AITab } from '../../../renderer/types';
+import { createMockAITab as createBaseMockAITab } from '../../helpers/mockTab';
+import { createMockSession } from '../../helpers/mockSession';
 
 // ============================================================================
 // Helpers
@@ -41,57 +52,12 @@ const createTerminalOutputRef = () => ({
 	current: { focus: vi.fn() } as unknown as HTMLDivElement,
 });
 
-function createMockSession(overrides: Partial<Session> = {}): Session {
-	return {
-		id: overrides.id ?? 'session-1',
-		name: overrides.name ?? 'Test Session',
-		toolType: 'claude-code',
-		state: 'idle',
-		cwd: '/test',
-		fullPath: '/test',
-		projectRoot: '/test',
-		aiLogs: [],
-		shellLogs: [],
-		workLog: [],
-		contextUsage: 0,
-		inputMode: 'ai',
-		aiPid: 0,
-		terminalPid: 0,
-		port: 0,
-		isLive: false,
-		changedFiles: [],
-		isGitRepo: false,
-		fileTree: [],
-		fileExplorerExpanded: [],
-		fileExplorerScrollPos: 0,
-		executionQueue: [],
-		activeTimeMs: 0,
-		aiTabs: [],
-		activeTabId: '',
-		closedTabHistory: [],
-		filePreviewTabs: [],
-		activeFileTabId: null,
-		unifiedTabOrder: [],
-		unifiedClosedTabHistory: [],
-		...overrides,
-	} as Session;
-}
-
 function createMockAITab(overrides: Partial<AITab> = {}): AITab {
-	return {
-		id: overrides.id ?? 'tab-1',
-		agentSessionId: overrides.agentSessionId ?? null,
-		name: overrides.name ?? null,
-		starred: false,
-		logs: [],
-		inputValue: '',
-		stagedImages: [],
-		createdAt: Date.now(),
-		state: 'idle',
+	return createBaseMockAITab({
 		hasUnread: false,
 		isAtBottom: true,
 		...overrides,
-	} as AITab;
+	});
 }
 
 // ============================================================================
@@ -1291,7 +1257,7 @@ describe('useModalHandlers', () => {
 			expect(useModalStore.getState().isOpen('renameTab')).toBe(false);
 		});
 
-		it('handleQuickActionsRenameTab does nothing when tab has no agentSessionId', () => {
+		it('handleQuickActionsRenameTab works even when tab has no agentSessionId', () => {
 			const tab = createMockAITab({ id: 'tab-1', agentSessionId: null });
 			const session = createMockSession({
 				id: 'session-1',
@@ -1308,10 +1274,10 @@ describe('useModalHandlers', () => {
 				result.current.handleQuickActionsRenameTab();
 			});
 
-			expect(useModalStore.getState().isOpen('renameTab')).toBe(false);
+			expect(useModalStore.getState().isOpen('renameTab')).toBe(true);
 		});
 
-		it('handleQuickActionsOpenTabSwitcher opens tab switcher when in AI mode', () => {
+		it('handleQuickActionsOpenTabSwitcher opens tab switcher when session has aiTabs', () => {
 			const tab = createMockAITab({ id: 'tab-1' });
 			const session = createMockSession({
 				id: 'session-1',
@@ -1330,11 +1296,12 @@ describe('useModalHandlers', () => {
 			expect(useModalStore.getState().isOpen('tabSwitcher')).toBe(true);
 		});
 
-		it('handleQuickActionsOpenTabSwitcher does nothing when not in AI mode', () => {
+		it('handleQuickActionsOpenTabSwitcher opens tab switcher in shell mode when aiTabs exist', () => {
+			const tab = createMockAITab({ id: 'tab-1' });
 			const session = createMockSession({
 				id: 'session-1',
 				inputMode: 'terminal' as any,
-				aiTabs: [],
+				aiTabs: [tab],
 			});
 			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
 
@@ -1345,7 +1312,7 @@ describe('useModalHandlers', () => {
 				result.current.handleQuickActionsOpenTabSwitcher();
 			});
 
-			expect(useModalStore.getState().isOpen('tabSwitcher')).toBe(false);
+			expect(useModalStore.getState().isOpen('tabSwitcher')).toBe(true);
 		});
 
 		it('handleQuickActionsStartTour sets tourFromWizard false and opens tour', () => {
@@ -1843,6 +1810,30 @@ describe('useModalHandlers', () => {
 			expect(gitService.getDiff).toHaveBeenCalledWith('/projects/my-repo', undefined, undefined);
 			expect(useModalStore.getState().isOpen('gitDiff')).toBe(true);
 			expect(useModalStore.getState().getData('gitDiff')?.diff).toBe('diff --git a/file.ts');
+		});
+
+		it('flashes a notification and re-polls git status when the diff is empty', async () => {
+			const session = createMockSession({
+				isGitRepo: true,
+				cwd: '/projects/my-repo',
+				inputMode: 'ai',
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+			(gitService.getDiff as ReturnType<typeof vi.fn>).mockResolvedValue({ diff: '' });
+			useCenterFlashStore.getState().setActive(null);
+			refreshGitStatusMock.mockClear();
+
+			const { result } = renderHook(() =>
+				useModalHandlers(createInputRef(), createTerminalOutputRef())
+			);
+
+			await act(async () => {
+				await result.current.handleViewGitDiff();
+			});
+
+			expect(useModalStore.getState().isOpen('gitDiff')).toBe(false);
+			expect(useCenterFlashStore.getState().active?.message).toBe('No diff to examine');
+			expect(refreshGitStatusMock).toHaveBeenCalledTimes(1);
 		});
 
 		it('uses shellCwd when in terminal mode', async () => {

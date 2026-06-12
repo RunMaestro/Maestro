@@ -45,6 +45,9 @@ export const AGENT_ICONS: Record<string, string> = {
 	// Enterprise
 	'factory-droid': '🏭',
 
+	// GitHub
+	copilot: '✈️',
+
 	// Terminal/shell (internal)
 	terminal: '💻',
 };

@@ -44,7 +44,7 @@ export function useKeyboardShortcutHelpers(
 	 * - Arrow keys, Backspace, special characters
 	 * - Shift+bracket producing { and } characters
 	 * - Shift+number producing symbol characters (US layout)
-	 * - macOS Alt key producing special characters (uses e.code fallback)
+	 * - Alt-rewritten characters on macOS/AltGr layouts (uses e.code fallback)
 	 */
 	const isShortcut = useCallback(
 		(e: KeyboardEvent, actionId: string): boolean => {
@@ -72,9 +72,11 @@ export function useKeyboardShortcutHelpers(
 			if (mainKey === 'arrowup' && key === 'arrowup') return true;
 			if (mainKey === 'arrowdown' && key === 'arrowdown') return true;
 			if (mainKey === 'backspace' && key === 'backspace') return true;
-			// Handle Shift+[ producing { and Shift+] producing }
+			// Handle Shift producing different characters for punctuation keys
 			if (mainKey === '[' && (key === '[' || key === '{')) return true;
 			if (mainKey === ']' && (key === ']' || key === '}')) return true;
+			if (mainKey === ',' && (key === ',' || key === '<')) return true;
+			if (mainKey === '.' && (key === '.' || key === '>')) return true;
 			// Handle Shift+number producing symbol (US keyboard layout)
 			// Shift+1='!', Shift+2='@', Shift+3='#', etc.
 			const shiftNumberMap: Record<string, string> = {
@@ -91,8 +93,9 @@ export function useKeyboardShortcutHelpers(
 			};
 			if (shiftNumberMap[key] === mainKey) return true;
 
-			// For Alt+Meta shortcuts on macOS, e.key produces special characters (e.g., Alt+p = π, Alt+l = ¬)
-			// Use e.code to get the physical key pressed instead
+			// When Alt is held, e.key may be rewritten by the layout (macOS Alt+p = π,
+			// Alt+l = ¬; Windows/Linux AltGr variants). Fall back to e.code for the
+			// physical key. Must stay symmetric with buildKeysFromEvent in shortcutRecorder.ts.
 			if (altPressed && e.code) {
 				const codeKey = e.code.replace('Key', '').toLowerCase();
 				// Map e.code values to key characters for punctuation keys
@@ -144,12 +147,14 @@ export function useKeyboardShortcutHelpers(
 			if (altPressed !== configAlt) return false;
 
 			const mainKey = keys[keys.length - 1];
-			// Handle Shift+[ producing { and Shift+] producing }
+			// Handle Shift producing different characters for punctuation keys
 			if (mainKey === '[' && (key === '[' || key === '{')) return true;
 			if (mainKey === ']' && (key === ']' || key === '}')) return true;
+			if (mainKey === ',' && (key === ',' || key === '<')) return true;
+			if (mainKey === '.' && (key === '.' || key === '>')) return true;
 
-			// For Alt+Meta shortcuts on macOS, e.key produces special characters (e.g., Alt+t = †)
-			// Use e.code to get the physical key pressed instead
+			// When Alt is held, e.key may be rewritten by the layout (macOS Alt+t = †;
+			// Windows/Linux AltGr variants). Fall back to e.code for the physical key.
 			if (altPressed && e.code) {
 				const codeKey = e.code.replace('Key', '').toLowerCase();
 				// Map e.code values to key characters for punctuation keys

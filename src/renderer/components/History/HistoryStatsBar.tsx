@@ -1,5 +1,7 @@
 import React, { memo } from 'react';
-import { Layers, Hash, Bot, User, BarChart3 } from 'lucide-react';
+import { Layers, Hash, Bot, User, Zap, BarChart3, ListOrdered } from 'lucide-react';
+import { Spinner } from '../ui/Spinner';
+import { CUE_COLOR } from './historyConstants';
 import type { Theme } from '../../types';
 
 export interface HistoryStats {
@@ -7,7 +9,13 @@ export interface HistoryStats {
 	sessionCount: number;
 	autoCount: number;
 	userCount: number;
+	/** Total CUE entries; only rendered when provided and > 0 (gated by the Maestro Cue encore feature) */
+	cueCount?: number;
 	totalCount: number;
+	/** Number of agents currently in 'busy' state (live indicator) */
+	activeAgentCount?: number;
+	/** Total queued messages across all agents (live indicator) */
+	totalQueuedItems?: number;
 }
 
 interface HistoryStatsBarProps {
@@ -45,6 +53,10 @@ function StatItem({ icon, label, value, color, theme }: StatItemProps) {
 	);
 }
 
+const showLiveIndicators = (stats: HistoryStats) =>
+	(stats.activeAgentCount !== undefined && stats.activeAgentCount > 0) ||
+	(stats.totalQueuedItems !== undefined && stats.totalQueuedItems > 0);
+
 export const HistoryStatsBar = memo(function HistoryStatsBar({
 	stats,
 	theme,
@@ -80,6 +92,15 @@ export const HistoryStatsBar = memo(function HistoryStatsBar({
 				color={theme.colors.warning}
 				theme={theme}
 			/>
+			{stats.cueCount !== undefined && stats.cueCount > 0 && (
+				<StatItem
+					icon={<Zap className="w-3 h-3" />}
+					label="Cue"
+					value={stats.cueCount}
+					color={CUE_COLOR}
+					theme={theme}
+				/>
+			)}
 			<div className="w-px h-4 flex-shrink-0" style={{ backgroundColor: theme.colors.border }} />
 			<StatItem
 				icon={<BarChart3 className="w-3 h-3" />}
@@ -88,6 +109,50 @@ export const HistoryStatsBar = memo(function HistoryStatsBar({
 				color={theme.colors.textMain}
 				theme={theme}
 			/>
+
+			{/* Live activity indicators — only shown when provided and > 0 */}
+			{showLiveIndicators(stats) && (
+				<>
+					<div
+						className="w-px h-4 flex-shrink-0"
+						style={{ backgroundColor: theme.colors.border }}
+					/>
+					{stats.activeAgentCount !== undefined && stats.activeAgentCount > 0 && (
+						<div className="flex items-center gap-1.5">
+							<span
+								className="flex items-center justify-center w-5 h-5 rounded"
+								style={{
+									backgroundColor: theme.colors.warning + '15',
+									color: theme.colors.warning,
+								}}
+							>
+								<Spinner size={12} />
+							</span>
+							<span
+								className="text-[10px] uppercase tracking-wider"
+								style={{ color: theme.colors.textDim }}
+							>
+								Active
+							</span>
+							<span
+								className="text-xs font-bold tabular-nums"
+								style={{ color: theme.colors.warning }}
+							>
+								{stats.activeAgentCount}
+							</span>
+						</div>
+					)}
+					{stats.totalQueuedItems !== undefined && stats.totalQueuedItems > 0 && (
+						<StatItem
+							icon={<ListOrdered className="w-3 h-3" />}
+							label="Queued"
+							value={stats.totalQueuedItems}
+							color={theme.colors.accent}
+							theme={theme}
+						/>
+					)}
+				</>
+			)}
 		</div>
 	);
 });

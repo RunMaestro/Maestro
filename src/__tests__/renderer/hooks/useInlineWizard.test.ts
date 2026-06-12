@@ -5,6 +5,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { logger } from '../../../renderer/utils/logger';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { useInlineWizard } from '../../../renderer/hooks/batch/useInlineWizard';
 
@@ -30,7 +31,7 @@ vi.mock('../../../renderer/services/wizardIntentParser', () => ({
 vi.mock('../../../renderer/utils/existingDocsDetector', () => ({
 	hasExistingAutoRunDocs: vi.fn(),
 	getExistingAutoRunDocs: vi.fn(),
-	getAutoRunFolderPath: vi.fn((projectPath: string) => `${projectPath}/Auto Run Docs`),
+	getAutoRunFolderPath: vi.fn((projectPath: string) => `${projectPath}/.maestro/playbooks`),
 }));
 
 vi.mock('../../../renderer/services/inlineWizardConversation', () => ({
@@ -62,12 +63,12 @@ vi.mock('../../../renderer/services/inlineWizardDocumentGeneration', () => ({
 				filename: 'Phase-01-Setup.md',
 				content: '# Phase 01\n\n- [ ] Task 1',
 				taskCount: 1,
-				savedPath: '/test/project/Auto Run Docs/Test-Project/Phase-01-Setup.md',
+				savedPath: '/test/project/.maestro/playbooks/Test-Project/Phase-01-Setup.md',
 			},
 		],
 		rawOutput: 'test output',
 		subfolderName: 'Test-Project',
-		subfolderPath: '/test/project/Auto Run Docs/Test-Project',
+		subfolderPath: '/test/project/.maestro/playbooks/Test-Project',
 	}),
 	// By default, return the chunk as-is (pass-through for tests)
 	extractDisplayTextFromChunk: vi.fn().mockImplementation((chunk: string) => chunk),
@@ -161,7 +162,7 @@ describe('useInlineWizard', () => {
 
 				expect(result.current.isWizardActive).toBe(true);
 				expect(result.current.wizardMode).toBe('ask');
-				expect(mockListDocs).toHaveBeenCalledWith('/test/project/Auto Run Docs');
+				expect(mockListDocs).toHaveBeenCalledWith('/test/project/.maestro/playbooks');
 			});
 
 			it('should set mode to "new" when no existing docs', async () => {
@@ -377,7 +378,7 @@ describe('useInlineWizard', () => {
 				mockParseWizardIntent.mockReturnValue({ mode: 'iterate', goal: 'add feature' });
 
 				const { result } = renderHook(() => useInlineWizard());
-				const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+				const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 
 				await act(async () => {
 					await result.current.startWizard('add feature', undefined, '/test/project');
@@ -488,8 +489,8 @@ describe('useInlineWizard', () => {
 					);
 				});
 
-				// Should fall back to projectPath/Auto Run Docs
-				expect(result.current.state.autoRunFolderPath).toBe('/my/project/Auto Run Docs');
+				// Should fall back to projectPath/.maestro/playbooks
+				expect(result.current.state.autoRunFolderPath).toBe('/my/project/.maestro/playbooks');
 			});
 
 			it('should check for existing docs in configured folder', async () => {
@@ -859,7 +860,7 @@ describe('useInlineWizard', () => {
 	describe('retryLastMessage', () => {
 		it('should not retry when there is no error', async () => {
 			const { result } = renderHook(() => useInlineWizard());
-			const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+			const consoleSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
 
 			await act(async () => {
 				await result.current.retryLastMessage();
@@ -874,7 +875,7 @@ describe('useInlineWizard', () => {
 
 		it('should not retry when there is no last message', async () => {
 			const { result } = renderHook(() => useInlineWizard());
-			const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+			const consoleSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
 
 			// Set an error but don't send a message
 			act(() => {
@@ -922,7 +923,7 @@ describe('useInlineWizard', () => {
 							filename: 'Phase-01-Setup.md',
 							content: '# Phase 01\n\n- [ ] Task 1',
 							taskCount: 1,
-							savedPath: '/test/project/Auto Run Docs/Phase-01-Setup.md',
+							savedPath: '/test/project/.maestro/playbooks/Phase-01-Setup.md',
 						},
 					],
 					rawOutput: 'test output',
@@ -981,7 +982,49 @@ describe('useInlineWizard', () => {
 					agentType: 'claude-code',
 					directoryPath: '/test/project',
 					projectName: 'Test Project',
-					autoRunFolderPath: '/test/project/Auto Run Docs',
+					autoRunFolderPath: '/test/project/.maestro/playbooks',
+				})
+			);
+		});
+
+		it('should prefer AI-extracted projectName over sessionName when present', async () => {
+			const { sendWizardMessage } =
+				await import('../../../renderer/services/inlineWizardConversation');
+			const mockSendWizardMessage = vi.mocked(sendWizardMessage);
+			mockSendWizardMessage.mockResolvedValueOnce({
+				success: true,
+				response: {
+					confidence: 90,
+					ready: true,
+					message: 'Ready to build it.',
+					projectName: 'HTML Chat Interface',
+				},
+			});
+
+			const { result } = renderHook(() => useInlineWizard());
+
+			await act(async () => {
+				await result.current.startWizard(
+					'add a chat UI',
+					undefined,
+					'/test/project',
+					'claude-code',
+					'rc'
+				);
+			});
+
+			// One conversation turn that returns the projectName
+			await act(async () => {
+				await result.current.sendMessage('Build me a chat interface');
+			});
+
+			await act(async () => {
+				await result.current.generateDocuments();
+			});
+
+			expect(mockGenerateInlineDocuments).toHaveBeenLastCalledWith(
+				expect.objectContaining({
+					projectName: 'HTML Chat Interface',
 				})
 			);
 		});
@@ -1120,7 +1163,7 @@ describe('useInlineWizard', () => {
 								filename: 'Phase-01-Setup.md',
 								content: '# Phase 01\n\n- [ ] Task 1',
 								taskCount: 1,
-								savedPath: '/test/project/Auto Run Docs/Phase-01-Setup.md',
+								savedPath: '/test/project/.maestro/playbooks/Phase-01-Setup.md',
 							},
 						],
 						rawOutput: 'test output',
@@ -1157,13 +1200,13 @@ describe('useInlineWizard', () => {
 						filename: 'Phase-01-Setup.md',
 						content: '# Phase 01\n\n- [ ] Task 1',
 						taskCount: 1,
-						savedPath: '/test/project/Auto Run Docs/Phase-01-Setup.md',
+						savedPath: '/test/project/.maestro/playbooks/Phase-01-Setup.md',
 					});
 					config.callbacks?.onDocumentComplete?.({
 						filename: 'Phase-02-Build.md',
 						content: '# Phase 02\n\n- [ ] Task 2',
 						taskCount: 1,
-						savedPath: '/test/project/Auto Run Docs/Phase-02-Build.md',
+						savedPath: '/test/project/.maestro/playbooks/Phase-02-Build.md',
 					});
 					return {
 						success: true,
@@ -1172,13 +1215,13 @@ describe('useInlineWizard', () => {
 								filename: 'Phase-01-Setup.md',
 								content: '# Phase 01\n\n- [ ] Task 1',
 								taskCount: 1,
-								savedPath: '/test/project/Auto Run Docs/Phase-01-Setup.md',
+								savedPath: '/test/project/.maestro/playbooks/Phase-01-Setup.md',
 							},
 							{
 								filename: 'Phase-02-Build.md',
 								content: '# Phase 02\n\n- [ ] Task 2',
 								taskCount: 1,
-								savedPath: '/test/project/Auto Run Docs/Phase-02-Build.md',
+								savedPath: '/test/project/.maestro/playbooks/Phase-02-Build.md',
 							},
 						],
 						rawOutput: 'test output',
@@ -1222,7 +1265,7 @@ describe('useInlineWizard', () => {
 								filename: 'Phase-01-Setup.md',
 								content: '# Phase 01\n\n- [ ] Task 1',
 								taskCount: 1,
-								savedPath: '/test/project/Auto Run Docs/Phase-01-Setup.md',
+								savedPath: '/test/project/.maestro/playbooks/Phase-01-Setup.md',
 							},
 						],
 						rawOutput: 'test output',
@@ -1343,7 +1386,7 @@ describe('useInlineWizard', () => {
 							filename: 'Phase-01-Setup.md',
 							content: '# Phase 01\n\n- [ ] Task 1',
 							taskCount: 1,
-							savedPath: '/test/project/Auto Run Docs/Phase-01-Setup.md',
+							savedPath: '/test/project/.maestro/playbooks/Phase-01-Setup.md',
 						},
 					],
 					rawOutput: 'test output',

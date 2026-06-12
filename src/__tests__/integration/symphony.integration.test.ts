@@ -1986,7 +1986,7 @@ error: failed to push some refs to 'https://github.com/owner/protected-repo.git'
 			// Test paths with spaces - common in user-created directories
 			const pathsWithSpaces = [
 				'docs/my document.md',
-				'Auto Run Docs/task 1.md',
+				'.maestro/playbooks/task 1.md',
 				'path with spaces/sub folder/file.md',
 				'  leading-spaces.md', // Leading spaces
 				'trailing-spaces.md  ', // Trailing spaces (may be trimmed)

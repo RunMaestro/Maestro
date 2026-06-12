@@ -10,7 +10,7 @@ Maestro provides a hosted MCP (Model Context Protocol) server that allows AI app
 
 ## Overview
 
-The MCP server exposes a `SearchMaestro` tool that enables AI assistants to find relevant documentation, code examples, API references, and guides from the Maestro knowledge base. When connected, your AI assistant can proactively search the documentation while generating responses—not just when explicitly asked.
+The MCP server exposes a `SearchMaestro` tool that enables AI assistants to find relevant documentation, code examples, API references, and guides from the Maestro knowledge base. When connected, your AI assistant can proactively search the documentation while generating responses - not just when explicitly asked.
 
 **MCP Server URL:**
 

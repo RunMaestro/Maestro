@@ -17,6 +17,12 @@ const rootDir = path.resolve(__dirname, '..');
 
 const outfile = path.join(rootDir, 'dist/cli/maestro-cli.js');
 
+const pkgJson = JSON.parse(fs.readFileSync(path.join(rootDir, 'package.json'), 'utf8'));
+const cliVersion = pkgJson.version;
+if (typeof cliVersion !== 'string' || cliVersion.length === 0) {
+	throw new Error('Cannot build CLI: package.json is missing a valid "version" field');
+}
+
 /**
  * esbuild plugin to handle .md?raw imports (Vite-style raw imports)
  * Converts the file contents to a string export
@@ -59,6 +65,9 @@ async function build() {
 			// Note: shebang is already in src/cli/index.ts, no banner needed
 			external: [],
 			plugins: [rawMdPlugin],
+			define: {
+				__MAESTRO_CLI_VERSION__: JSON.stringify(cliVersion),
+			},
 		});
 
 		// Make the output executable

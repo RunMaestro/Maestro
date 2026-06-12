@@ -13,6 +13,7 @@ import {
 	getSshErrorPatterns,
 	registerErrorPatterns,
 	clearPatternRegistry,
+	ERROR_PATTERN_DEFAULT_MIN_CHUNK_LENGTH,
 	SSH_ERROR_PATTERNS,
 	type AgentErrorPatterns,
 } from '../../../main/parsers/error-patterns';
@@ -560,6 +561,30 @@ describe('error-patterns', () => {
 					expect(result?.type).toBe('agent_crashed');
 				});
 			});
+
+			describe('session_not_found patterns', () => {
+				// Real stderr emitted by `codex exec resume <id>` (codex-cli 0.130.0)
+				// when the rollout file backing the thread is missing. Regression
+				// guard for #1042 — must NOT fall through to agent_crashed.
+				it('should match Codex "no rollout found for thread id" resume failure', () => {
+					const stderr =
+						'Error: thread/resume: thread/resume failed: no rollout found for thread id 019e4aa3-5e01-73e1-9f61-d3961386dafd (code -32600)';
+					const result = matchErrorPattern(CODEX_ERROR_PATTERNS, stderr);
+					expect(result).not.toBeNull();
+					expect(result?.type).toBe('session_not_found');
+					expect(result?.recoverable).toBe(true);
+				});
+
+				it('should match "rollout not found"', () => {
+					const result = matchErrorPattern(CODEX_ERROR_PATTERNS, 'rollout not found');
+					expect(result?.type).toBe('session_not_found');
+				});
+
+				it('should match generic "session not found"', () => {
+					const result = matchErrorPattern(CODEX_ERROR_PATTERNS, 'session not found');
+					expect(result?.type).toBe('session_not_found');
+				});
+			});
 		});
 	});
 
@@ -874,6 +899,57 @@ describe('error-patterns', () => {
 			clearPatternRegistry();
 			expect(getErrorPatterns('claude-code')).toEqual({});
 			expect(getErrorPatterns('opencode')).toEqual({});
+		});
+	});
+
+	// PR-D 1.8: streaming-path optimizations
+	describe('matchErrorPattern length guard + priority ordering', () => {
+		it('exposes a default minimum chunk length', () => {
+			expect(ERROR_PATTERN_DEFAULT_MIN_CHUNK_LENGTH).toBeGreaterThan(0);
+			// Real error strings (timeout=7) should not be skipped by default.
+			expect(ERROR_PATTERN_DEFAULT_MIN_CHUNK_LENGTH).toBeLessThanOrEqual(7);
+		});
+
+		it('skips the regex bank for chunks shorter than the threshold', () => {
+			// "abc" is 3 chars — below threshold. Even if the patterns somehow
+			// matched, the length guard short-circuits before any regex runs.
+			const result = matchErrorPattern(CLAUDE_ERROR_PATTERNS, 'abc');
+			expect(result).toBeNull();
+		});
+
+		it('honors a caller-supplied minLength override (0 disables the guard)', () => {
+			// "rate limit" — would match rate_limited under the default guard
+			// because it's 10 chars. With minLength: 0 the same behavior holds;
+			// just verifying the option is wired.
+			const noGuard = matchErrorPattern(CLAUDE_ERROR_PATTERNS, 'rate limit exceeded', {
+				minLength: 0,
+			});
+			expect(noGuard).not.toBeNull();
+			expect(noGuard?.type).toBe('rate_limited');
+		});
+
+		it('honors a caller-supplied minLength that is higher than default', () => {
+			// "rate limit exceeded" is 19 chars — well above default. Pass a
+			// minLength of 100 to force the guard to short-circuit.
+			const guarded = matchErrorPattern(CLAUDE_ERROR_PATTERNS, 'rate limit exceeded', {
+				minLength: 100,
+			});
+			expect(guarded).toBeNull();
+		});
+
+		it('returns null for empty string regardless of guard', () => {
+			expect(matchErrorPattern(CLAUDE_ERROR_PATTERNS, '')).toBeNull();
+			expect(matchErrorPattern(CLAUDE_ERROR_PATTERNS, '', { minLength: 0 })).toBeNull();
+		});
+
+		it('priority ordering keeps first-match early-return contract', () => {
+			// Multiple patterns can match overlapping strings; the function
+			// must return the first hit it finds, ordered by error type.
+			// The new hit-frequency order puts rate_limited first; verify
+			// that a rate-limit-only string returns rate_limited (not
+			// something else if patterns happen to overlap).
+			const result = matchErrorPattern(CLAUDE_ERROR_PATTERNS, 'rate limit exceeded');
+			expect(result?.type).toBe('rate_limited');
 		});
 	});
 });

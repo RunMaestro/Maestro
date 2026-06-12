@@ -175,48 +175,7 @@ export function clearAnsiCache(): void {
 // Markdown Processing
 // ============================================================================
 
-/**
- * Strip markdown formatting to show plain text.
- * Removes code blocks, inline code, bold/italic, headers, blockquotes,
- * horizontal rules, links, images, strikethrough, and normalizes lists.
- *
- * @param text - Markdown-formatted text
- * @returns Plain text with markdown formatting removed
- */
-export const stripMarkdown = (text: string): string => {
-	return (
-		text
-			// Remove code blocks (```...```)
-			.replace(/```[\s\S]*?```/g, (match) => {
-				// Extract just the code content without the fence
-				const lines = match.split('\n');
-				// Remove first line (```lang) and last line (```)
-				return lines.slice(1, -1).join('\n');
-			})
-			// Remove inline code backticks
-			.replace(/`([^`]+)`/g, '$1')
-			// Remove bold/italic (***text***, **text**, *text*, ___text___, __text__, _text_)
-			.replace(/\*\*\*(.+?)\*\*\*/g, '$1')
-			.replace(/\*\*(.+?)\*\*/g, '$1')
-			.replace(/\*(.+?)\*/g, '$1')
-			.replace(/___(.+?)___/g, '$1')
-			.replace(/__(.+?)__/g, '$1')
-			.replace(/_(.+?)_/g, '$1')
-			// Remove headers (# text)
-			.replace(/^#{1,6}\s+/gm, '')
-			// Remove blockquotes (> text)
-			.replace(/^>\s*/gm, '')
-			// Remove horizontal rules
-			.replace(/^[-*_]{3,}\s*$/gm, '---')
-			// Remove link formatting [text](url) -> text
-			.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-			// Remove image formatting ![alt](url) -> alt
-			.replace(/!\[([^\]]*)\]\([^)]+\)/g, '$1')
-			// Remove strikethrough
-			.replace(/~~(.+?)~~/g, '$1')
-			// Clean up bullet points - convert to simple dashes
-			.replace(/^[\s]*[-*+]\s+/gm, '- ')
-			// Clean up numbered lists - keep the numbers
-			.replace(/^[\s]*(\d+)\.\s+/gm, '$1. ')
-	);
-};
+// Re-export from shared so renderer callers don't need to change imports.
+// Canonical definition lives in src/shared/markdown.ts (used by main-process
+// code paths like Cue history excerpt extraction).
+export { stripMarkdown } from '../../shared/markdown';

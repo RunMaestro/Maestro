@@ -25,3 +25,9 @@ export type {
 // Generic list navigation
 export { useListNavigation } from './useListNavigation';
 export type { UseListNavigationOptions, UseListNavigationReturn } from './useListNavigation';
+
+// Cmd/Ctrl+S save shortcut
+export { useSaveShortcut } from './useSaveShortcut';
+
+// Cmd/Ctrl+Z / Shift+Z text-input undo fallback
+export { useTextEditorUndo } from './useTextEditorUndo';

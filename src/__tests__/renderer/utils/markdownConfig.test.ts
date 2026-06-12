@@ -11,6 +11,18 @@ vi.mock('react-syntax-highlighter/dist/esm/styles/prism', () => ({
 	vs: {},
 }));
 
+// Mock openUrl so link-click tests can assert the exact options passed through
+// (specifically the translated `ctrlKey` modifier) without depending on the
+// settings store's useSystemBrowser default or whether an active session
+// exists. See bug #1060: cmd-click (metaKey) on macOS must translate to the
+// same ctrlKey:true inversion as ctrl-click.
+const { mockOpenUrl } = vi.hoisted(() => ({ mockOpenUrl: vi.fn() }));
+vi.mock('../../../renderer/utils/openUrl', () => ({
+	openUrl: mockOpenUrl,
+	openInSystemBrowser: vi.fn(),
+	openInMaestroBrowser: vi.fn(),
+}));
+
 import {
 	generateProseStyles,
 	generateAutoRunProseStyles,
@@ -24,6 +36,7 @@ import {
 } from '../../../renderer/utils/markdownConfig';
 import type { Theme } from '../../../shared/theme-types';
 
+import { mockTheme } from '../../helpers/mockTheme';
 /**
  * Tests for markdown configuration utilities.
  *
@@ -37,27 +50,6 @@ import type { Theme } from '../../../shared/theme-types';
 // ---------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------
-
-const mockTheme: Theme = {
-	id: 'dracula',
-	name: 'Dracula',
-	mode: 'dark',
-	colors: {
-		textMain: '#ffffff',
-		textDim: '#888888',
-		accent: '#0066ff',
-		accentDim: 'rgba(0, 102, 255, 0.2)',
-		accentText: '#0066ff',
-		accentForeground: '#ffffff',
-		success: '#00cc00',
-		warning: '#ffaa00',
-		error: '#ff0000',
-		bgMain: '#1a1a1a',
-		bgSidebar: '#2a2a2a',
-		bgActivity: '#333333',
-		border: '#444444',
-	},
-};
 
 // ---------------------------------------------------------------------------
 // generateProseStyles
@@ -99,6 +91,12 @@ describe('generateProseStyles', () => {
 			expect(css).toContain('.prose table');
 			expect(css).toContain('.prose th');
 			expect(css).toContain('.prose td');
+		});
+
+		it('should allow inline code to wrap when it cannot break cleanly', () => {
+			const css = generateProseStyles({ theme: mockTheme });
+			const codeRule = css.match(/\.prose code \{[^}]*\}/)?.[0] ?? '';
+			expect(codeRule).toContain('overflow-wrap: anywhere');
 		});
 
 		it('should include blockquote, link, and hr rules', () => {
@@ -349,9 +347,9 @@ describe('generateProseStyles', () => {
 			expect(css).toContain(`color: ${mockTheme.colors.textDim}`);
 		});
 
-		it('should inject accent into link color', () => {
+		it('should inject accentText into link color', () => {
 			const css = generateProseStyles({ theme: mockTheme });
-			expect(css).toContain(`.prose a { color: ${mockTheme.colors.accent}`);
+			expect(css).toContain(`.prose a { color: ${mockTheme.colors.accentText}`);
 		});
 
 		it('should inject bgActivity into code background', () => {
@@ -754,7 +752,7 @@ describe('createMarkdownComponents link handling', () => {
 		const element = aComponent({ node: null, href: 'https://example.com', children: 'link' });
 		const clickEvent = { preventDefault: vi.fn() } as any;
 		element.props.onClick(clickEvent);
-		expect(onExternalLinkClick).toHaveBeenCalledWith('https://example.com');
+		expect(onExternalLinkClick).toHaveBeenCalledWith('https://example.com', { ctrlKey: undefined });
 	});
 
 	it('should call onExternalLinkClick for mailto URLs', () => {
@@ -768,7 +766,41 @@ describe('createMarkdownComponents link handling', () => {
 		const element = aComponent({ node: null, href: 'mailto:test@example.com', children: 'email' });
 		const clickEvent = { preventDefault: vi.fn() } as any;
 		element.props.onClick(clickEvent);
-		expect(onExternalLinkClick).toHaveBeenCalledWith('mailto:test@example.com');
+		expect(onExternalLinkClick).toHaveBeenCalledWith('mailto:test@example.com', {
+			ctrlKey: undefined,
+		});
+	});
+
+	// Bug #1060: on macOS a Cmd+click sets metaKey (not ctrlKey). The handler
+	// must translate `metaKey || ctrlKey` into the ctrlKey option so the
+	// open-in-browser inversion still fires. Under the old `{ ctrlKey: e.ctrlKey }`
+	// code a metaKey-only click yielded ctrlKey:false, so this would fail.
+	it('should translate Cmd-click (metaKey) into ctrlKey:true for onExternalLinkClick', () => {
+		const onExternalLinkClick = vi.fn();
+		const components = createMarkdownComponents({
+			theme: mockTheme,
+			onExternalLinkClick,
+		});
+		const aComponent = components.a as any;
+
+		const element = aComponent({ node: null, href: 'https://example.com', children: 'link' });
+		const clickEvent = { preventDefault: vi.fn(), metaKey: true, ctrlKey: false } as any;
+		element.props.onClick(clickEvent);
+		expect(onExternalLinkClick).toHaveBeenCalledWith('https://example.com', { ctrlKey: true });
+	});
+
+	it('should pass ctrlKey:false to onExternalLinkClick on a plain click', () => {
+		const onExternalLinkClick = vi.fn();
+		const components = createMarkdownComponents({
+			theme: mockTheme,
+			onExternalLinkClick,
+		});
+		const aComponent = components.a as any;
+
+		const element = aComponent({ node: null, href: 'https://example.com', children: 'link' });
+		const clickEvent = { preventDefault: vi.fn(), metaKey: false, ctrlKey: false } as any;
+		element.props.onClick(clickEvent);
+		expect(onExternalLinkClick).toHaveBeenCalledWith('https://example.com', { ctrlKey: false });
 	});
 
 	it('should NOT call onExternalLinkClick for relative paths', () => {
@@ -794,6 +826,21 @@ describe('createMarkdownComponents link handling', () => {
 		}
 	});
 
+	it('should forward id and other props through heading components (rehype-slug support)', () => {
+		const components = createMarkdownComponents({
+			theme: mockTheme,
+			searchHighlight: { query: '', currentMatchIndex: 0 },
+		});
+
+		// rehype-slug adds an id prop to headings; the component overrides must forward it
+		for (const tag of ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'] as const) {
+			const Component = components[tag] as any;
+			expect(Component).toBeDefined();
+			const element = Component({ node: null, id: 'my-heading', children: 'Title' });
+			expect(element.props.id).toBe('my-heading');
+		}
+	});
+
 	it('should route relative paths to onFileClick when available', () => {
 		const onExternalLinkClick = vi.fn();
 		const onFileClick = vi.fn();
@@ -809,6 +856,124 @@ describe('createMarkdownComponents link handling', () => {
 		element.props.onClick(clickEvent);
 		expect(onFileClick).toHaveBeenCalledWith('LICENSE', { openInNewTab: false });
 		expect(onExternalLinkClick).not.toHaveBeenCalled();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// createWizardBubbleMarkdownComponents - link handling (#1060)
+// ---------------------------------------------------------------------------
+
+describe('createWizardBubbleMarkdownComponents link handling', () => {
+	beforeEach(() => {
+		mockOpenUrl.mockClear();
+	});
+
+	// Under the old `{ ctrlKey: e.ctrlKey }` code a metaKey-only click yielded
+	// ctrlKey:false, so this guard would fail. See bug #1060.
+	it('should translate Cmd-click (metaKey) into ctrlKey:true for openUrl', () => {
+		const components = createWizardBubbleMarkdownComponents(mockTheme);
+		const aComponent = components.a as any;
+
+		const element = aComponent({ href: 'https://example.com', children: 'link' });
+		const clickEvent = { preventDefault: vi.fn(), metaKey: true, ctrlKey: false } as any;
+		element.props.onClick(clickEvent);
+		expect(mockOpenUrl).toHaveBeenCalledWith('https://example.com', { ctrlKey: true });
+	});
+
+	it('should pass ctrlKey:false to openUrl on a plain click', () => {
+		const components = createWizardBubbleMarkdownComponents(mockTheme);
+		const aComponent = components.a as any;
+
+		const element = aComponent({ href: 'https://example.com', children: 'link' });
+		const clickEvent = { preventDefault: vi.fn(), metaKey: false, ctrlKey: false } as any;
+		element.props.onClick(clickEvent);
+		expect(mockOpenUrl).toHaveBeenCalledWith('https://example.com', { ctrlKey: false });
+	});
+});
+
+// ---------------------------------------------------------------------------
+// createReleaseNotesMarkdownComponents - link handling (#1060)
+// ---------------------------------------------------------------------------
+
+describe('createReleaseNotesMarkdownComponents link handling', () => {
+	beforeEach(() => {
+		mockOpenUrl.mockClear();
+	});
+
+	// Under the old `{ ctrlKey: e.ctrlKey }` code a metaKey-only click yielded
+	// ctrlKey:false, so this guard would fail. See bug #1060.
+	it('should translate Cmd-click (metaKey) into ctrlKey:true for openUrl', () => {
+		const components = createReleaseNotesMarkdownComponents(mockTheme);
+		const aComponent = components.a as any;
+
+		const element = aComponent({ href: 'https://example.com', children: 'link' });
+		const clickEvent = { preventDefault: vi.fn(), metaKey: true, ctrlKey: false } as any;
+		element.props.onClick(clickEvent);
+		expect(mockOpenUrl).toHaveBeenCalledWith('https://example.com', { ctrlKey: true });
+	});
+
+	it('should pass ctrlKey:false to openUrl on a plain click', () => {
+		const components = createReleaseNotesMarkdownComponents(mockTheme);
+		const aComponent = components.a as any;
+
+		const element = aComponent({ href: 'https://example.com', children: 'link' });
+		const clickEvent = { preventDefault: vi.fn(), metaKey: false, ctrlKey: false } as any;
+		element.props.onClick(clickEvent);
+		expect(mockOpenUrl).toHaveBeenCalledWith('https://example.com', { ctrlKey: false });
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Hex color swatch in inline code
+// ---------------------------------------------------------------------------
+
+describe('hex color swatch in inline code', () => {
+	it('should render a color swatch span before hex color in createMarkdownComponents', () => {
+		const components = createMarkdownComponents({ theme: mockTheme });
+		const codeComponent = components.code as any;
+		// Inline code now renders through the shared InlineCode leaf; render it to
+		// inspect the swatch in the DOM.
+		const { container } = render(codeComponent({ children: '#FF0000' }));
+		const code = container.querySelector('code');
+		expect(code).toBeInTheDocument();
+		const swatch = code!.querySelector('span');
+		expect(swatch).toBeInTheDocument();
+		expect(swatch!.getAttribute('style')).toContain('background-color');
+		expect(code!.textContent).toContain('#FF0000');
+	});
+
+	it('should not render swatch for non-hex inline code', () => {
+		const components = createMarkdownComponents({ theme: mockTheme });
+		const codeComponent = components.code as any;
+		const { container } = render(codeComponent({ children: 'console.log' }));
+		const code = container.querySelector('code');
+		expect(code!.querySelector('span')).toBeNull();
+		expect(code!.textContent).toBe('console.log');
+	});
+
+	it('should render swatch in wizard bubble inline code', () => {
+		const components = createWizardBubbleMarkdownComponents(mockTheme);
+		const codeComponent = components.code as any;
+		const element = codeComponent({ children: '#8B3FFC' });
+		const children = React.Children.toArray(element.props.children);
+		// swatch (or null filtered) + text
+		const swatch = children.find(
+			(c: any) => c?.type === 'span' && c?.props?.style?.backgroundColor
+		) as React.ReactElement | undefined;
+		expect(swatch).toBeDefined();
+		expect(swatch!.props.style.backgroundColor).toBe('#8B3FFC');
+	});
+
+	it('should render swatch in release notes inline code', () => {
+		const components = createReleaseNotesMarkdownComponents(mockTheme);
+		const codeComponent = components.code as any;
+		const element = codeComponent({ children: '#00CC00' });
+		const children = React.Children.toArray(element.props.children);
+		const swatch = children.find(
+			(c: any) => c?.type === 'span' && c?.props?.style?.backgroundColor
+		) as React.ReactElement | undefined;
+		expect(swatch).toBeDefined();
+		expect(swatch!.props.style.backgroundColor).toBe('#00CC00');
 	});
 });
 

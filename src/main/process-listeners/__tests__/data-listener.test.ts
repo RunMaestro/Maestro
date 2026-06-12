@@ -43,7 +43,7 @@ describe('Data Listener', () => {
 			REGEX_MODERATOR_SESSION: /^group-chat-(.+)-moderator-/,
 			REGEX_MODERATOR_SESSION_TIMESTAMP: /^group-chat-(.+)-moderator-\d+$/,
 			REGEX_AI_SUFFIX: /-ai-.+$/,
-			REGEX_AI_TAB_ID: /-ai-(.+)$/,
+			REGEX_AI_TAB_ID: /-ai-(.+?)(?:-fp-\d+)?$/,
 			REGEX_BATCH_SESSION: /-batch-\d+$/,
 			REGEX_SYNOPSIS_SESSION: /-synopsis-\d+$/,
 		};
@@ -207,15 +207,67 @@ describe('Data Listener', () => {
 		});
 	});
 
+	describe('Group Chat Cross-Domain Containment', () => {
+		// Regression: if a sessionId starts with GROUP_CHAT_PREFIX but does NOT
+		// match any recognized moderator/participant shape (e.g. malformed ID,
+		// unknown variant, or a regex tightening rejecting a legacy format),
+		// the data MUST be dropped, NOT forwarded to the regular process:data
+		// channel or the web broadcast path. Otherwise group-chat transcript
+		// bytes leak into the renderer/web-client stream — the suspected root
+		// cause of "group chat bled into cue pipeline output".
+		it('drops unrecognized group-chat session data instead of forwarding', () => {
+			// Moderator regex won't match (no "-moderator-" anywhere).
+			// parseParticipantSessionId mock returns null for anything below.
+			mockOutputParser.parseParticipantSessionId = vi.fn().mockReturnValue(null);
+			setupListener();
+			const handler = eventHandlers.get('data');
+
+			// Shape starts with group-chat- but matches neither moderator nor
+			// the participant parser (mocked to null).
+			handler?.('group-chat-something-weird-shape', 'secret transcript bytes');
+
+			expect(mockSafeSend).not.toHaveBeenCalled();
+			expect(mockWebServer.broadcastToSessionClients).not.toHaveBeenCalled();
+			expect(mockOutputBuffer.appendToGroupChatBuffer).not.toHaveBeenCalled();
+			expect(mockDebugLog).toHaveBeenCalledWith(
+				'GroupChat:Debug',
+				expect.stringContaining('unrecognized group-chat sessionId shape')
+			);
+		});
+
+		it('still forwards non-group-chat data normally', () => {
+			mockOutputParser.parseParticipantSessionId = vi.fn().mockReturnValue(null);
+			setupListener();
+			const handler = eventHandlers.get('data');
+
+			handler?.('plain-session', 'plain data');
+
+			expect(mockSafeSend).toHaveBeenCalledWith('process:data', 'plain-session', 'plain data');
+		});
+	});
+
 	describe('Web Broadcast Filtering', () => {
-		it('should skip PTY terminal output', () => {
+		it('should broadcast PTY terminal output as terminal_data', () => {
 			setupListener();
 			const handler = eventHandlers.get('data');
 
 			handler?.('session-123-terminal', 'terminal output');
 
-			expect(mockWebServer.broadcastToSessionClients).not.toHaveBeenCalled();
-			// But should still forward to renderer
+			// Should broadcast as terminal_data (for xterm.js in web client)
+			expect(mockWebServer.broadcastToSessionClients).toHaveBeenCalledWith(
+				'session-123',
+				expect.objectContaining({
+					type: 'terminal_data',
+					sessionId: 'session-123',
+					data: 'terminal output',
+				})
+			);
+			// Should NOT broadcast as session_output
+			expect(mockWebServer.broadcastToSessionClients).not.toHaveBeenCalledWith(
+				expect.anything(),
+				expect.objectContaining({ type: 'session_output' })
+			);
+			// Should still forward to renderer
 			expect(mockSafeSend).toHaveBeenCalledWith(
 				'process:data',
 				'session-123-terminal',

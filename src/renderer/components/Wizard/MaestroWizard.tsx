@@ -14,7 +14,7 @@ import {
 	INDEX_TO_STEP,
 	type WizardStep,
 } from './WizardContext';
-import { useLayerStack } from '../../contexts/LayerStackContext';
+import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { WizardExitConfirmModal } from './WizardExitConfirmModal';
 import { ScreenReaderAnnouncement } from './ScreenReaderAnnouncement';
@@ -111,8 +111,6 @@ export function MaestroWizard({
 		getCurrentStepNumber,
 	} = useWizard();
 
-	const { registerLayer, unregisterLayer } = useLayerStack();
-
 	// State for exit confirmation modal
 	const [showExitConfirm, setShowExitConfirm] = useState(false);
 
@@ -168,8 +166,8 @@ export function MaestroWizard({
 	/**
 	 * Handle confirmed exit - saves state and closes wizard
 	 */
-	const handleConfirmExit = useCallback(() => {
-		saveStateForResumeRef.current();
+	const handleConfirmExit = useCallback(async () => {
+		await saveStateForResumeRef.current();
 		setShowExitConfirm(false);
 		// Record wizard abandonment for analytics
 		if (onWizardAbandon) {
@@ -188,8 +186,8 @@ export function MaestroWizard({
 	/**
 	 * Handle quit without saving - clears state, resets wizard, and closes
 	 */
-	const handleQuitWithoutSaving = useCallback(() => {
-		clearResumeStateRef.current();
+	const handleQuitWithoutSaving = useCallback(async () => {
+		await clearResumeStateRef.current();
 		resetWizardRef.current(); // Reset in-memory state so next open starts fresh
 		setShowExitConfirm(false);
 		// Record wizard abandonment for analytics
@@ -275,20 +273,9 @@ export function MaestroWizard({
 	}, [state.isOpen, displayedStep, isTransitioning]);
 
 	// Register with layer stack for Escape handling
-	useEffect(() => {
-		if (state.isOpen && !showExitConfirm) {
-			const id = registerLayer({
-				type: 'modal',
-				priority: MODAL_PRIORITIES.WIZARD,
-				blocksLowerLayers: true,
-				capturesFocus: true,
-				focusTrap: 'strict',
-				ariaLabel: 'Setup Wizard',
-				onEscape: handleCloseRequest,
-			});
-			return () => unregisterLayer(id);
-		}
-	}, [state.isOpen, showExitConfirm, registerLayer, unregisterLayer, handleCloseRequest]);
+	useModalLayer(MODAL_PRIORITIES.WIZARD, 'Setup Wizard', handleCloseRequest, {
+		enabled: state.isOpen && !showExitConfirm,
+	});
 
 	// Capture-phase handler for global shortcuts that should work anywhere in the modal
 	// This ensures Cmd+Shift+K (thinking toggle) works even when focus is on header elements
@@ -456,7 +443,7 @@ export function MaestroWizard({
 
 			<div
 				ref={modalRef}
-				className="w-[90vw] h-[80vh] max-w-5xl rounded-xl border shadow-2xl flex flex-col overflow-hidden wizard-modal"
+				className="modal-w-2xl h-[85vh] rounded-xl border shadow-2xl flex flex-col overflow-hidden wizard-modal"
 				style={{
 					backgroundColor: theme.colors.bgMain,
 					borderColor: theme.colors.border,

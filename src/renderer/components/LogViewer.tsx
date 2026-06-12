@@ -9,16 +9,23 @@ import {
 	ChevronsDownUp,
 	ChevronsUpDown,
 	Pencil,
+	Copy,
+	Check,
 } from 'lucide-react';
 import type { Theme } from '../types';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
-import { useLayerStack } from '../contexts/LayerStackContext';
+import { useThrottledCallback } from '../hooks';
+import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
+import { safeClipboardWrite } from '../utils/clipboard';
 import { ConfirmModal } from './ConfirmModal';
+import { useSessionStore } from '../stores/sessionStore';
+import { logger } from '../utils/logger';
+import { formatRelativeTime } from '../../shared/formatters';
 
 interface SystemLogEntry {
 	timestamp: number;
-	level: 'debug' | 'info' | 'warn' | 'error' | 'toast' | 'autorun';
+	level: 'debug' | 'info' | 'warn' | 'error' | 'toast' | 'autorun' | 'cue';
 	message: string;
 	context?: string;
 	data?: unknown;
@@ -31,6 +38,7 @@ interface LogViewerProps {
 	savedSelectedLevels?: string[]; // Persisted filter selections
 	onSelectedLevelsChange?: (levels: string[]) => void; // Callback to persist filter changes
 	onShortcutUsed?: (shortcutId: string) => void; // Keyboard mastery tracking
+	onSessionClick?: (sessionId: string, tabId?: string) => void; // Navigate to agent/tab when clicking agent pill
 }
 
 // Log level priority for determining which levels are enabled
@@ -49,6 +57,7 @@ const LOG_LEVEL_COLORS: Record<string, { fg: string; bg: string }> = {
 	error: { fg: '#ef4444', bg: 'rgba(239, 68, 68, 0.15)' }, // Red
 	toast: { fg: '#a855f7', bg: 'rgba(168, 85, 247, 0.15)' }, // Purple
 	autorun: { fg: '#f97316', bg: 'rgba(249, 115, 22, 0.15)' }, // Orange
+	cue: { fg: '#06b6d4', bg: 'rgba(6, 182, 212, 0.15)' }, // Teal
 };
 
 export function LogViewer({
@@ -58,15 +67,23 @@ export function LogViewer({
 	savedSelectedLevels,
 	onSelectedLevelsChange,
 	onShortcutUsed,
+	onSessionClick,
 }: LogViewerProps) {
 	const [logs, setLogs] = useState<SystemLogEntry[]>([]);
 	const [filteredLogs, setFilteredLogs] = useState<SystemLogEntry[]>([]);
 	const [searchOpen, setSearchOpen] = useState(false);
 	const [searchQuery, setSearchQuery] = useState('');
 
+	// Resolve agent name to session ID for navigation from autorun/cue pills
+	const sessions = useSessionStore((s) => s.sessions);
+	const resolveSessionByName = useCallback(
+		(name: string): string | undefined => sessions.find((s) => s.name === name)?.id,
+		[sessions]
+	);
+
 	// Determine which log levels are enabled based on current log level setting
 	// Levels with priority >= current level are enabled
-	const enabledLevels = new Set<'debug' | 'info' | 'warn' | 'error' | 'toast' | 'autorun'>(
+	const enabledLevels = new Set<'debug' | 'info' | 'warn' | 'error' | 'toast' | 'autorun' | 'cue'>(
 		(['debug', 'info', 'warn', 'error'] as const).filter(
 			(level) => LOG_LEVEL_PRIORITY[level] >= LOG_LEVEL_PRIORITY[logLevel]
 		)
@@ -75,27 +92,29 @@ export function LogViewer({
 	enabledLevels.add('toast');
 	// Auto Run is always enabled (workflow tracking cannot be turned off)
 	enabledLevels.add('autorun');
+	// Cue is always enabled (event-driven automation tracking)
+	enabledLevels.add('cue');
 
 	// Initialize selectedLevels from saved settings if available
 	const [selectedLevels, setSelectedLevelsState] = useState<
-		Set<'debug' | 'info' | 'warn' | 'error' | 'toast' | 'autorun'>
+		Set<'debug' | 'info' | 'warn' | 'error' | 'toast' | 'autorun' | 'cue'>
 	>(() => {
 		if (savedSelectedLevels && savedSelectedLevels.length > 0) {
 			return new Set(
-				savedSelectedLevels as ('debug' | 'info' | 'warn' | 'error' | 'toast' | 'autorun')[]
+				savedSelectedLevels as ('debug' | 'info' | 'warn' | 'error' | 'toast' | 'autorun' | 'cue')[]
 			);
 		}
-		return new Set(['debug', 'info', 'warn', 'error', 'toast', 'autorun']);
+		return new Set(['debug', 'info', 'warn', 'error', 'toast', 'autorun', 'cue']);
 	});
 
 	// Wrapper to persist changes when selectedLevels changes
 	const setSelectedLevels = useCallback(
 		(
 			updater:
-				| Set<'debug' | 'info' | 'warn' | 'error' | 'toast' | 'autorun'>
+				| Set<'debug' | 'info' | 'warn' | 'error' | 'toast' | 'autorun' | 'cue'>
 				| ((
-						prev: Set<'debug' | 'info' | 'warn' | 'error' | 'toast' | 'autorun'>
-				  ) => Set<'debug' | 'info' | 'warn' | 'error' | 'toast' | 'autorun'>)
+						prev: Set<'debug' | 'info' | 'warn' | 'error' | 'toast' | 'autorun' | 'cue'>
+				  ) => Set<'debug' | 'info' | 'warn' | 'error' | 'toast' | 'autorun' | 'cue'>)
 		) => {
 			setSelectedLevelsState((prev) => {
 				const newSet = typeof updater === 'function' ? updater(prev) : updater;
@@ -109,16 +128,16 @@ export function LogViewer({
 		[onSelectedLevelsChange]
 	);
 	const [expandedData, setExpandedData] = useState<Set<number>>(new Set());
+	const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
 	const [showClearConfirm, setShowClearConfirm] = useState(false);
+	const [viewportPercent, setViewportPercent] = useState<number | null>(null);
 	const searchInputRef = useRef<HTMLInputElement>(null);
 	const containerRef = useRef<HTMLDivElement>(null);
-	const layerIdRef = useRef<string>();
+	const scrollTargetRef = useRef<HTMLDivElement | null>(null);
 
 	// Store onClose in ref to avoid re-registering layer when callback identity changes
 	const onCloseRef = useRef(onClose);
 	onCloseRef.current = onClose;
-
-	const { registerLayer, unregisterLayer, updateLayerHandler } = useLayerStack();
 
 	const toggleDataExpanded = (index: number) => {
 		setExpandedData((prev) => {
@@ -215,50 +234,33 @@ export function LogViewer({
 
 	// Register layer on mount
 	// Note: Using 'modal' type because LogViewer blocks all shortcuts (like the original modalOpen check)
-	useEffect(() => {
-		layerIdRef.current = registerLayer({
-			type: 'modal',
-			priority: MODAL_PRIORITIES.LOG_VIEWER,
-			blocksLowerLayers: true,
-			capturesFocus: true,
-			focusTrap: 'lenient',
-			ariaLabel: 'System Log Viewer',
-			onEscape: () => {
-				if (searchOpen) {
-					setSearchOpen(false);
-					setSearchQuery('');
-					containerRef.current?.focus();
-				} else {
-					onCloseRef.current();
-				}
-			},
-		});
-
-		return () => {
-			if (layerIdRef.current) {
-				unregisterLayer(layerIdRef.current);
+	useModalLayer(
+		MODAL_PRIORITIES.LOG_VIEWER,
+		'System Log Viewer',
+		() => {
+			if (searchOpen) {
+				setSearchOpen(false);
+				setSearchQuery('');
+				containerRef.current?.focus();
+			} else {
+				onCloseRef.current();
 			}
-		};
-	}, [registerLayer, unregisterLayer]); // Note: onClose NOT in deps (using ref)
-
-	// Update layer handler when dependencies change
-	useEffect(() => {
-		if (layerIdRef.current) {
-			updateLayerHandler(layerIdRef.current, () => {
-				if (searchOpen) {
-					setSearchOpen(false);
-					setSearchQuery('');
-					containerRef.current?.focus();
-				} else {
-					onCloseRef.current();
-				}
-			});
-		}
-	}, [searchOpen, updateLayerHandler]); // Note: onClose NOT in deps (using ref)
+		},
+		{ focusTrap: 'lenient' }
+	);
 
 	// Auto-focus container on mount for keyboard navigation
 	useEffect(() => {
 		containerRef.current?.focus();
+	}, []);
+
+	// Tick every 5s so relative timestamps ("10s ago", "5m ago") stay fresh
+	// without recomputing every render. 5s is finer than the smallest displayed
+	// unit (seconds), so the label can't drift by more than that interval.
+	const [, setRelativeTick] = useState(0);
+	useEffect(() => {
+		const id = window.setInterval(() => setRelativeTick((t) => t + 1), 5000);
+		return () => window.clearInterval(id);
 	}, []);
 
 	// Focus search input when opened
@@ -276,7 +278,7 @@ export function LogViewer({
 			// Reverse to show newest first
 			setLogs(systemLogs.reverse());
 		} catch (error) {
-			console.error('Failed to load logs:', error);
+			logger.error('Failed to load logs:', undefined, error);
 		}
 	};
 
@@ -286,7 +288,7 @@ export function LogViewer({
 			setLogs([]);
 			setFilteredLogs([]);
 		} catch (error) {
-			console.error('Failed to clear logs:', error);
+			logger.error('Failed to clear logs:', undefined, error);
 		}
 	};
 
@@ -308,6 +310,18 @@ export function LogViewer({
 		a.click();
 		URL.revokeObjectURL(url);
 	};
+
+	const handleCopyEntry = useCallback(async (log: SystemLogEntry, index: number) => {
+		const timestamp = new Date(log.timestamp).toISOString();
+		const contextStr = log.context ? `[${log.context}]` : '';
+		const dataStr = log.data ? `\n${JSON.stringify(log.data, null, 2)}` : '';
+		const text = `[${timestamp}] [${log.level.toUpperCase()}] ${contextStr} ${log.message}${dataStr}`;
+		const ok = await safeClipboardWrite(text);
+		if (ok) {
+			setCopiedIndex(index);
+			setTimeout(() => setCopiedIndex(null), 2000);
+		}
+	}, []);
 
 	const handleKeyDown = (e: React.KeyboardEvent) => {
 		// Open search with Cmd+F
@@ -355,6 +369,34 @@ export function LogViewer({
 			containerRef.current?.scrollBy({ top: 100, behavior: 'smooth' });
 		}
 	};
+
+	// Track scroll position for the viewport indicator on the timeline bar
+	const handleScrollInner = useCallback(() => {
+		const target = scrollTargetRef.current;
+		if (!target) return;
+		const maxScroll = target.scrollHeight - target.clientHeight;
+		if (maxScroll <= 0) {
+			setViewportPercent(null);
+			return;
+		}
+		const percent = (target.scrollTop / maxScroll) * 100;
+		// Hide indicator when fully at top or bottom
+		if (target.scrollTop < 10) {
+			setViewportPercent(null);
+		} else {
+			setViewportPercent(Math.max(0, Math.min(100, percent)));
+		}
+	}, []);
+
+	const throttledScrollHandler = useThrottledCallback(handleScrollInner, 16);
+
+	const handleScroll = useCallback(
+		(e: React.UIEvent<HTMLDivElement>) => {
+			scrollTargetRef.current = e.currentTarget;
+			throttledScrollHandler();
+		},
+		[throttledScrollHandler]
+	);
 
 	const getLevelColor = (level: string) => LOG_LEVEL_COLORS[level]?.fg ?? theme.colors.textDim;
 	const getLevelBgColor = (level: string) => LOG_LEVEL_COLORS[level]?.bg ?? 'transparent';
@@ -484,7 +526,7 @@ export function LogViewer({
 					ALL
 				</button>
 				{/* Individual level toggle buttons */}
-				{(['debug', 'info', 'warn', 'error', 'toast', 'autorun'] as const).map((level) => {
+				{(['debug', 'info', 'warn', 'error', 'toast', 'autorun', 'cue'] as const).map((level) => {
 					const isSelected = selectedLevels.has(level);
 					const isEnabled = enabledLevels.has(level);
 					return (
@@ -529,7 +571,19 @@ export function LogViewer({
 
 			{/* Visual Log History Timeline */}
 			<div className="sticky top-0 z-10 pt-2 px-4" style={{ backgroundColor: theme.colors.bgMain }}>
-				<div className="flex h-2 w-full mb-2 rounded-sm overflow-hidden">
+				<div className="flex h-2 w-full mb-2 rounded-sm overflow-hidden relative">
+					{/* Viewport position indicator */}
+					{viewportPercent !== null && (
+						<div
+							className="absolute top-0 bottom-0 pointer-events-none z-20"
+							style={{
+								left: `${viewportPercent}%`,
+								width: '2px',
+								backgroundColor: theme.colors.error,
+								transition: 'left 0.15s ease-out',
+							}}
+						/>
+					)}
 					{filteredLogs.map((log, idx) => (
 						<div
 							key={`${log.timestamp}-${log.level}-${idx}`}
@@ -586,6 +640,7 @@ export function LogViewer({
 			{/* Logs Container */}
 			<div
 				ref={containerRef}
+				onScroll={handleScroll}
 				className="flex-1 overflow-y-auto p-4 space-y-2 outline-none scrollbar-thin"
 				tabIndex={-1}
 				style={{ backgroundColor: theme.colors.bgMain }}
@@ -604,7 +659,7 @@ export function LogViewer({
 								borderColor: theme.colors.border,
 							}}
 						>
-							<div className="flex items-start gap-3">
+							<div className="flex items-start gap-3 group">
 								{/* Level Pill */}
 								<div
 									className="px-2 py-0.5 rounded text-xs font-bold uppercase flex-shrink-0"
@@ -616,34 +671,71 @@ export function LogViewer({
 									{log.level}
 								</div>
 
+								{/* Copy Button */}
+								<button
+									onClick={() => handleCopyEntry(log, index)}
+									className="p-1 rounded hover:bg-opacity-10 transition-all flex-shrink-0 opacity-0 group-hover:opacity-100"
+									style={{
+										color: copiedIndex === index ? theme.colors.accent : theme.colors.textDim,
+									}}
+									title={copiedIndex === index ? 'Copied!' : 'Copy log entry'}
+								>
+									{copiedIndex === index ? (
+										<Check className="w-3.5 h-3.5" />
+									) : (
+										<Copy className="w-3.5 h-3.5" />
+									)}
+								</button>
+
 								{/* Content */}
 								<div className="flex-1 min-w-0">
 									<div className="flex items-start gap-2 mb-1">
 										<span
-											className="text-xs opacity-50 font-mono flex-shrink-0"
-											style={{ color: theme.colors.textDim }}
+											className="text-xs font-mono flex-shrink-0"
+											style={{ color: theme.colors.textMain }}
 										>
-											{new Date(log.timestamp).toLocaleTimeString()}
+											{new Date(log.timestamp).toLocaleTimeString()}{' '}
+											<span style={{ color: theme.colors.textDim }}>
+												({formatRelativeTime(log.timestamp, { includeSeconds: true })})
+											</span>
 										</span>
 										{/* Context pill - show for non-toast/autorun entries */}
-										{log.level !== 'toast' && log.level !== 'autorun' && log.context && (
-											<span
-												className="text-xs px-1.5 py-0.5 rounded font-mono"
-												style={{ backgroundColor: theme.colors.bgMain, color: theme.colors.accent }}
-											>
-												{log.context}
-											</span>
-										)}
+										{log.level !== 'toast' &&
+											log.level !== 'autorun' &&
+											log.level !== 'cue' &&
+											log.context && (
+												<span
+													className="text-xs px-1.5 py-0.5 rounded font-mono"
+													style={{
+														backgroundColor: theme.colors.bgMain,
+														color: theme.colors.accent,
+													}}
+												>
+													{log.context}
+												</span>
+											)}
 										{/* Agent name pill for toast entries (from data.project) */}
 										{(() => {
 											if (log.level !== 'toast') return null;
-											const data = log.data as { project?: string } | undefined;
+											const data = log.data as
+												| { project?: string; sessionId?: string; tabId?: string }
+												| undefined;
 											const project = data?.project;
 											if (!project) return null;
+											const canNavigate = onSessionClick && data?.sessionId;
 											return (
 												<span
-													className="text-xs px-1.5 py-0.5 rounded flex items-center gap-1"
+													className={`text-xs px-1.5 py-0.5 rounded flex items-center gap-1${canNavigate ? ' cursor-pointer hover:brightness-125' : ''}`}
 													style={{ backgroundColor: 'rgba(34, 197, 94, 0.2)', color: '#22c55e' }}
+													onClick={
+														canNavigate
+															? (e) => {
+																	e.stopPropagation();
+																	onSessionClick(data.sessionId!, data.tabId);
+																}
+															: undefined
+													}
+													title={canNavigate ? `Jump to ${project}` : undefined}
 												>
 													<Pencil className="w-3 h-3" />
 													{project}
@@ -651,15 +743,55 @@ export function LogViewer({
 											);
 										})()}
 										{/* Agent name pill for autorun entries (from context) */}
-										{log.level === 'autorun' && log.context && (
-											<span
-												className="text-xs px-1.5 py-0.5 rounded flex items-center gap-1"
-												style={{ backgroundColor: 'rgba(34, 197, 94, 0.2)', color: '#22c55e' }}
-											>
-												<Pencil className="w-3 h-3" />
-												{log.context}
-											</span>
-										)}
+										{log.level === 'autorun' &&
+											log.context &&
+											(() => {
+												const sessionId = resolveSessionByName(log.context);
+												const canNavigate = onSessionClick && sessionId;
+												return (
+													<span
+														className={`text-xs px-1.5 py-0.5 rounded flex items-center gap-1${canNavigate ? ' cursor-pointer hover:brightness-125' : ''}`}
+														style={{ backgroundColor: 'rgba(34, 197, 94, 0.2)', color: '#22c55e' }}
+														onClick={
+															canNavigate
+																? (e) => {
+																		e.stopPropagation();
+																		onSessionClick(sessionId!);
+																	}
+																: undefined
+														}
+														title={canNavigate ? `Jump to ${log.context}` : undefined}
+													>
+														<Pencil className="w-3 h-3" />
+														{log.context}
+													</span>
+												);
+											})()}
+										{/* Agent name pill for cue entries (from context) */}
+										{log.level === 'cue' &&
+											log.context &&
+											(() => {
+												const sessionId = resolveSessionByName(log.context);
+												const canNavigate = onSessionClick && sessionId;
+												return (
+													<span
+														className={`text-xs px-1.5 py-0.5 rounded flex items-center gap-1${canNavigate ? ' cursor-pointer hover:brightness-125' : ''}`}
+														style={{ backgroundColor: 'rgba(6, 182, 212, 0.2)', color: '#06b6d4' }}
+														onClick={
+															canNavigate
+																? (e) => {
+																		e.stopPropagation();
+																		onSessionClick(sessionId!);
+																	}
+																: undefined
+														}
+														title={canNavigate ? `Jump to ${log.context}` : undefined}
+													>
+														<Pencil className="w-3 h-3" />
+														{log.context}
+													</span>
+												);
+											})()}
 									</div>
 									<div className="text-sm break-words" style={{ color: theme.colors.textMain }}>
 										{log.message}

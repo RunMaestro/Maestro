@@ -25,6 +25,8 @@ export interface GroupChatMessage {
 	from: string;
 	content: string;
 	readOnly?: boolean;
+	/** Base64 data URLs of images attached to this message */
+	images?: string[];
 }
 
 /**
@@ -78,19 +80,26 @@ export function unescapeContent(escaped: string): string {
  * @param from - Sender name (user, moderator, or participant name)
  * @param content - Message content
  * @param readOnly - Optional flag indicating read-only mode
+ * @param imageFilenames - Optional array of saved image filenames (not data URLs)
  */
 export async function appendToLog(
 	logPath: string,
 	from: string,
 	content: string,
-	readOnly?: boolean
+	readOnly?: boolean,
+	imageFilenames?: string[]
 ): Promise<void> {
 	const timestamp = new Date().toISOString();
 	const escapedContent = escapeContent(content);
-	// Format: TIMESTAMP|FROM|CONTENT or TIMESTAMP|FROM|CONTENT|readOnly
-	const line = readOnly
-		? `${timestamp}|${from}|${escapedContent}|readOnly\n`
-		: `${timestamp}|${from}|${escapedContent}\n`;
+	// Format: TIMESTAMP|FROM|CONTENT[|readOnly][|images:file1,file2,...]
+	let line = `${timestamp}|${from}|${escapedContent}`;
+	if (readOnly) {
+		line += '|readOnly';
+	}
+	if (imageFilenames && imageFilenames.length > 0) {
+		line += `|images:${imageFilenames.join(',')}`;
+	}
+	line += '\n';
 
 	// Ensure directory exists
 	await fs.mkdir(path.dirname(logPath), { recursive: true });
@@ -131,14 +140,34 @@ export async function readLog(logPath: string): Promise<GroupChatMessage[]> {
 				const timestamp = line.substring(0, pipeIndices[0]);
 				const from = line.substring(pipeIndices[0] + 1, pipeIndices[1]);
 
-				// Check if there's a 4th field (readOnly flag)
+				// Parse optional trailing fields (readOnly, images:...)
 				let escapedContent: string;
 				let readOnly = false;
+				let imageFilenames: string[] | undefined;
 
 				if (pipeIndices.length >= 3) {
 					escapedContent = line.substring(pipeIndices[1] + 1, pipeIndices[2]);
-					const flag = line.substring(pipeIndices[2] + 1);
-					readOnly = flag === 'readOnly';
+					// Parse remaining fields after content
+					for (let fi = 2; fi < pipeIndices.length; fi++) {
+						const nextEnd = fi + 1 < pipeIndices.length ? pipeIndices[fi + 1] : line.length;
+						const field = line.substring(pipeIndices[fi] + 1, nextEnd);
+						if (field === 'readOnly') {
+							readOnly = true;
+						} else if (field.startsWith('images:')) {
+							imageFilenames = field.substring(7).split(',').filter(Boolean);
+						}
+					}
+					// If there's only one trailing field and it's neither readOnly nor images:, it's part of content
+					// This handles the edge case of the last field
+					if (pipeIndices.length === 3) {
+						const trailingField = line.substring(pipeIndices[2] + 1);
+						if (trailingField !== 'readOnly' && !trailingField.startsWith('images:')) {
+							// Not a known flag — re-parse as content extending to end
+							escapedContent = line.substring(pipeIndices[1] + 1);
+							readOnly = false;
+							imageFilenames = undefined;
+						}
+					}
 				} else {
 					escapedContent = line.substring(pipeIndices[1] + 1);
 				}
@@ -148,6 +177,7 @@ export async function readLog(logPath: string): Promise<GroupChatMessage[]> {
 					from,
 					content: unescapeContent(escapedContent),
 					...(readOnly && { readOnly: true }),
+					...(imageFilenames && imageFilenames.length > 0 && { images: imageFilenames }),
 				});
 			}
 		}

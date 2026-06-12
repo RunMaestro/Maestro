@@ -9,7 +9,7 @@
  * runs inline within the existing AI conversation interface.
  */
 
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { logger } from '../../utils/logger';
 import { parseWizardIntent } from '../../services/wizardIntentParser';
 import { getAutoRunFolderPath, type ExistingDocument } from '../../utils/existingDocsDetector';
@@ -105,10 +105,19 @@ export interface InlineWizardState {
 	confidence: number;
 	/** Whether the AI is ready to proceed with document generation */
 	ready: boolean;
+	/**
+	 * Short human-readable name for the playbook, extracted from the wizard
+	 * conversation (e.g. "HTML Chat Interface"). Updated as the AI refines its
+	 * understanding. Used to name the playbook subfolder; falls back to
+	 * sessionName when absent so we never block generation on a missing field.
+	 */
+	extractedProjectName: string | null;
 	/** Conversation history for this wizard session */
 	conversationHistory: InlineWizardMessage[];
 	/** Whether documents are being generated */
 	isGeneratingDocs: boolean;
+	/** Wall-clock timestamp (ms) when document generation started; persisted so elapsed time survives tab switches */
+	docGenerationStartedAt?: number;
 	/** Generated documents (if any) */
 	generatedDocuments: InlineGeneratedDocument[];
 	/** Existing Auto Run documents loaded for iterate mode context */
@@ -208,6 +217,13 @@ export interface UseInlineWizardReturn {
 	/** Check if a specific tab has an active wizard */
 	isWizardActiveForTab: (tabId: string) => boolean;
 	/**
+	 * Map of session IDs (Session.id, not provider session) that have at least one
+	 * tab with the inline wizard active. Value carries an `isGeneratingDocs` flag
+	 * that's true when any such tab is in the Auto Run doc generation phase, so
+	 * the Left Bar indicator can pulse during generation.
+	 */
+	wizardActiveSessions: Map<string, { isGeneratingDocs: boolean }>;
+	/**
 	 * Start the wizard with intent parsing flow.
 	 * @param naturalLanguageInput - Optional input from `/wizard <text>` command
 	 * @param currentUIState - Current UI state to restore when wizard ends
@@ -242,19 +258,34 @@ export interface UseInlineWizardReturn {
 			customModel?: string;
 		}
 	) => Promise<void>;
-	/** End the wizard and restore previous UI state */
-	endWizard: () => Promise<PreviousUIState | null>;
+	/**
+	 * End the wizard and restore previous UI state.
+	 * @param explicitTabId - Optional tab ID to end. Pass when the caller knows which tab to evict —
+	 *   the hook's internal currentTabId only tracks the last-touched wizard, so closing a non-active
+	 *   wizard tab (e.g. via the tab strip's X button) without this leaves a stale tabStates entry
+	 *   that keeps the Left Bar wand indicator stuck on.
+	 */
+	endWizard: (explicitTabId?: string) => Promise<PreviousUIState | null>;
 	/**
 	 * Send a message to the wizard conversation.
 	 * @param content - Message content
 	 * @param images - Optional base64-encoded image data URLs to attach
 	 * @param callbacks - Optional callbacks for streaming progress
+	 * @param explicitTabId - Optional tab ID to send to. Pass when multiple wizards may be active
+	 *   concurrently and the caller knows which tab is in focus — the hook's internal currentTabId
+	 *   only tracks the last-touched wizard, so without this the message can land on the wrong tab.
 	 */
 	sendMessage: (
 		content: string,
 		images?: string[],
-		callbacks?: ConversationCallbacks
+		callbacks?: ConversationCallbacks,
+		explicitTabId?: string
 	) => Promise<void>;
+	/**
+	 * Mark the given tab as the "current" wizard. Used to keep currentTabId in sync with the
+	 * UI's active tab so per-tab setters route correctly when multiple concurrent wizards are open.
+	 */
+	selectWizardTab: (tabId: string) => void;
 	/**
 	 * Set the confidence level.
 	 * @param value - Confidence value (0-100)
@@ -314,6 +345,7 @@ const initialState: InlineWizardState = {
 	goal: null,
 	confidence: 0,
 	ready: false,
+	extractedProjectName: null,
 	conversationHistory: [],
 	isGeneratingDocs: false,
 	generatedDocuments: [],
@@ -455,7 +487,7 @@ export function useInlineWizard(): UseInlineWizardReturn {
 						});
 					}
 				} catch (error) {
-					console.warn(`[useInlineWizard] Failed to load ${doc.filename}:`, error);
+					logger.warn(`[useInlineWizard] Failed to load ${doc.filename}:`, undefined, error);
 					docsWithContent.push({
 						...doc,
 						content: '(Failed to load content)',
@@ -698,7 +730,7 @@ export function useInlineWizard(): UseInlineWizardReturn {
 			} catch (error) {
 				// Handle any errors during initialization
 				const errorMessage = error instanceof Error ? error.message : 'Failed to initialize wizard';
-				console.error('[useInlineWizard] startWizard error:', error);
+				logger.error('[useInlineWizard] startWizard error:', undefined, error);
 
 				setTabState(effectiveTabId, (prev) => ({
 					...prev,
@@ -715,38 +747,47 @@ export function useInlineWizard(): UseInlineWizardReturn {
 	 * End the wizard and return the previous UI state for restoration.
 	 * Uses the current tab ID to determine which wizard to end.
 	 */
-	const endWizard = useCallback(async (): Promise<PreviousUIState | null> => {
-		// Get the tab ID from the current state
-		const tabId = currentTabId || 'default';
+	const endWizard = useCallback(
+		async (explicitTabId?: string): Promise<PreviousUIState | null> => {
+			// Prefer an explicit tab id from the caller — currentTabId tracks the last-touched wizard
+			// and can point at the wrong tab when a non-active wizard is being closed (tab strip X).
+			const tabId = explicitTabId || currentTabId || 'default';
 
-		// Get previous UI state for this tab
-		const previousState = previousUIStateRefsMap.current.get(tabId) || null;
-		previousUIStateRefsMap.current.delete(tabId);
+			// Get previous UI state for this tab
+			const previousState = previousUIStateRefsMap.current.get(tabId) || null;
+			previousUIStateRefsMap.current.delete(tabId);
 
-		// Clean up conversation session for this tab
-		const session = conversationSessionsMap.current.get(tabId);
-		if (session) {
-			try {
-				await endInlineWizardConversation(session);
-				logger.info(`Wizard conversation ended`, '[InlineWizard]', {
-					tabId,
-					sessionId: session.sessionId,
-				});
-			} catch (error) {
-				console.warn('[useInlineWizard] Failed to end conversation session:', error);
+			// Drop the wizard state synchronously BEFORE awaiting any async cleanup.
+			// The wizard sync effect in useWizardHandlers re-runs after the caller
+			// clears `tab.wizardState`; if this delete is delayed past an await, the
+			// effect sees `isActive: true` here and resurrects the cleared state,
+			// trapping the user on the completion screen.
+			setTabStates((prevMap) => {
+				if (!prevMap.has(tabId)) return prevMap;
+				const newMap = new Map(prevMap);
+				newMap.delete(tabId);
+				return newMap;
+			});
+
+			// Clean up conversation session for this tab (async — kills underlying process)
+			const session = conversationSessionsMap.current.get(tabId);
+			if (session) {
+				try {
+					await endInlineWizardConversation(session);
+					logger.info(`Wizard conversation ended`, '[InlineWizard]', {
+						tabId,
+						sessionId: session.sessionId,
+					});
+				} catch (error) {
+					logger.warn('[useInlineWizard] Failed to end conversation session:', undefined, error);
+				}
+				conversationSessionsMap.current.delete(tabId);
 			}
-			conversationSessionsMap.current.delete(tabId);
-		}
 
-		// Remove the wizard state for this tab
-		setTabStates((prevMap) => {
-			const newMap = new Map(prevMap);
-			newMap.delete(tabId);
-			return newMap;
-		});
-
-		return previousState;
-	}, [currentTabId]);
+			return previousState;
+		},
+		[currentTabId]
+	);
 
 	/**
 	 * Send a user message to the wizard conversation.
@@ -757,10 +798,12 @@ export function useInlineWizard(): UseInlineWizardReturn {
 		async (
 			content: string,
 			images?: string[],
-			callbacks?: ConversationCallbacks
+			callbacks?: ConversationCallbacks,
+			explicitTabId?: string
 		): Promise<void> => {
-			// Get the tab ID from the current state, ensure currentTabId is set for visibility
-			const tabId = currentTabId || 'default';
+			// Prefer the caller's explicit tabId — currentTabId only tracks the last-touched wizard
+			// and goes stale when multiple wizards run concurrently across tabs.
+			const tabId = explicitTabId || currentTabId || 'default';
 			if (tabId !== currentTabId) {
 				setCurrentTabId(tabId);
 			}
@@ -768,7 +811,7 @@ export function useInlineWizard(): UseInlineWizardReturn {
 			// Guard against concurrent calls - prevents race conditions
 			const currentState = tabStatesRef.current.get(tabId);
 			if (currentState?.isWaiting) {
-				console.warn('[useInlineWizard] Already waiting for response, ignoring duplicate send');
+				logger.warn('[useInlineWizard] Already waiting for response, ignoring duplicate send');
 				return;
 			}
 
@@ -807,7 +850,7 @@ export function useInlineWizard(): UseInlineWizardReturn {
 					hasCapabilityCached(currentState.agentType, 'supportsWizard') &&
 					effectiveAutoRunFolderPath
 				) {
-					console.log('[useInlineWizard] Auto-creating session for direct message in ask mode');
+					logger.info('[useInlineWizard] Auto-creating session for direct message in ask mode');
 					// Use historyFilePath from state (fetched during startWizard)
 					session = startInlineWizardConversation({
 						mode: 'new',
@@ -828,14 +871,18 @@ export function useInlineWizard(): UseInlineWizardReturn {
 					conversationSessionsMap.current.set(tabId, session);
 					// Update mode to 'new' since we're proceeding with a new plan
 					setTabState(tabId, (prev) => ({ ...prev, mode: 'new' }));
-					console.log('[useInlineWizard] Session created:', session.sessionId);
+					logger.info('[useInlineWizard] Session created:', undefined, session.sessionId);
 				} else {
-					console.error('[useInlineWizard] No active conversation session, currentState:', {
-						mode: currentState?.mode,
-						agentType: currentState?.agentType,
-						projectPath: currentState?.projectPath,
-						autoRunFolderPath: currentState?.autoRunFolderPath,
-					});
+					logger.error(
+						'[useInlineWizard] No active conversation session, currentState:',
+						undefined,
+						{
+							mode: currentState?.mode,
+							agentType: currentState?.agentType,
+							projectPath: currentState?.projectPath,
+							autoRunFolderPath: currentState?.autoRunFolderPath,
+						}
+					);
 					setTabState(tabId, (prev) => ({
 						...prev,
 						isWaiting: false,
@@ -866,11 +913,15 @@ export function useInlineWizard(): UseInlineWizardReturn {
 					};
 
 					// Update state with response and capture agent session ID if available
+					const incomingProjectName = result.response.projectName?.trim();
 					setTabState(tabId, (prev) => ({
 						...prev,
 						conversationHistory: [...prev.conversationHistory, assistantMessage],
 						confidence: result.response!.confidence,
 						ready: result.response!.ready,
+						// Latest non-empty projectName from the AI wins; keep the previous
+						// value if this turn didn't emit one so we never regress to null.
+						extractedProjectName: incomingProjectName || prev.extractedProjectName,
 						isWaiting: false,
 						// Capture the first agentSessionId we receive (subsequent messages may not have it)
 						agentSessionId: prev.agentSessionId || result.agentSessionId || null,
@@ -888,7 +939,7 @@ export function useInlineWizard(): UseInlineWizardReturn {
 				} else {
 					// Handle error response
 					const errorMessage = result.error || 'Failed to get response from AI';
-					console.error('[useInlineWizard] sendWizardMessage error:', errorMessage);
+					logger.error('[useInlineWizard] sendWizardMessage error:', undefined, errorMessage);
 
 					setTabState(tabId, (prev) => ({
 						...prev,
@@ -900,7 +951,7 @@ export function useInlineWizard(): UseInlineWizardReturn {
 				}
 			} catch (error) {
 				const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
-				console.error('[useInlineWizard] sendMessage error:', error);
+				logger.error('[useInlineWizard] sendMessage error:', undefined, error);
 
 				setTabState(tabId, (prev) => ({
 					...prev,
@@ -1019,8 +1070,9 @@ export function useInlineWizard(): UseInlineWizardReturn {
 					});
 
 					conversationSessionsMap.current.set(tabId, session);
-					console.log(
+					logger.info(
 						'[useInlineWizard] Conversation session started after mode selection:',
+						undefined,
 						session.sessionId
 					);
 				}
@@ -1059,6 +1111,9 @@ export function useInlineWizard(): UseInlineWizardReturn {
 			setTabState(tabId, (prev) => ({
 				...prev,
 				isGeneratingDocs: generating,
+				docGenerationStartedAt: generating
+					? (prev.docGenerationStartedAt ?? Date.now())
+					: prev.docGenerationStartedAt,
 			}));
 		},
 		[getEffectiveTabId, setTabState]
@@ -1135,7 +1190,7 @@ export function useInlineWizard(): UseInlineWizardReturn {
 
 			// Only retry if we have a last message and there's an error
 			if (!lastContent || !currentState?.error) {
-				console.warn('[useInlineWizard] Cannot retry: no last message or no error');
+				logger.warn('[useInlineWizard] Cannot retry: no last message or no error');
 				return;
 			}
 
@@ -1240,7 +1295,7 @@ export function useInlineWizard(): UseInlineWizardReturn {
 			// Validate we have the required state
 			if (!currentState?.agentType || !effectiveAutoRunFolderPath) {
 				const errorMsg = 'Cannot generate documents: missing agent type or Auto Run folder path';
-				console.error('[useInlineWizard]', errorMsg);
+				logger.error('[useInlineWizard]', undefined, errorMsg);
 				setTabState(tabId, (prev) => ({ ...prev, error: errorMsg }));
 				callbacks?.onError?.(errorMsg);
 				return;
@@ -1250,6 +1305,7 @@ export function useInlineWizard(): UseInlineWizardReturn {
 			setTabState(tabId, (prev) => ({
 				...prev,
 				isGeneratingDocs: true,
+				docGenerationStartedAt: Date.now(),
 				generatedDocuments: [],
 				error: null,
 				streamingContent: '',
@@ -1258,11 +1314,16 @@ export function useInlineWizard(): UseInlineWizardReturn {
 			}));
 
 			try {
-				// Call the document generation service with the effective Auto Run folder path
+				// Call the document generation service with the effective Auto Run folder path.
+				// Prefer the AI-extracted project name from the conversation so the playbook
+				// folder reflects the feature (e.g. "HTML Chat Interface") rather than the
+				// agent's tab name (e.g. "rc" — typically a worktree/branch identifier).
+				const projectNameForGeneration =
+					currentState.extractedProjectName?.trim() || currentState.sessionName || 'Project';
 				const result = await generateInlineDocuments({
 					agentType: currentState.agentType,
 					directoryPath: currentState.projectPath || effectiveAutoRunFolderPath,
-					projectName: currentState.sessionName || 'Project',
+					projectName: projectNameForGeneration,
 					conversationHistory: currentState.conversationHistory,
 					existingDocuments: currentState.existingDocuments,
 					mode: currentState.mode === 'iterate' ? 'iterate' : 'new',
@@ -1277,11 +1338,11 @@ export function useInlineWizard(): UseInlineWizardReturn {
 					conductorProfile: currentState.conductorProfile,
 					callbacks: {
 						onStart: () => {
-							console.log('[useInlineWizard] Document generation started');
+							logger.info('[useInlineWizard] Document generation started');
 							callbacks?.onStart?.();
 						},
 						onProgress: (message) => {
-							console.log('[useInlineWizard] Progress:', message);
+							logger.info('[useInlineWizard] Progress:', undefined, message);
 							// Try to extract progress info from message (e.g., "Saving 1 of 3 document(s)...")
 							const progressMatch = message.match(/(\d+)\s+(?:of|\/)\s+(\d+)/);
 							if (progressMatch) {
@@ -1312,7 +1373,7 @@ export function useInlineWizard(): UseInlineWizardReturn {
 							callbacks?.onChunk?.(chunk);
 						},
 						onDocumentComplete: (doc) => {
-							console.log('[useInlineWizard] Document saved:', doc.filename);
+							logger.info('[useInlineWizard] Document saved:', undefined, doc.filename);
 							// Add document to the list as it completes
 							// Update progress and select the newly created document
 							setTabState(tabId, (prev) => {
@@ -1333,7 +1394,7 @@ export function useInlineWizard(): UseInlineWizardReturn {
 							callbacks?.onDocumentComplete?.(doc);
 						},
 						onComplete: (allDocs) => {
-							console.log('[useInlineWizard] All documents complete:', allDocs.length);
+							logger.info('[useInlineWizard] All documents complete:', undefined, allDocs.length);
 							// Set final state - mark generation as complete so UI shows Continue button
 							// Don't wait for the service function to return (it may be doing cleanup)
 							setTabState(tabId, (prev) => ({
@@ -1348,7 +1409,7 @@ export function useInlineWizard(): UseInlineWizardReturn {
 							callbacks?.onComplete?.(allDocs);
 						},
 						onError: (error) => {
-							console.error('[useInlineWizard] Generation error:', error);
+							logger.error('[useInlineWizard] Generation error:', undefined, error);
 							callbacks?.onError?.(error);
 						},
 					},
@@ -1394,7 +1455,7 @@ export function useInlineWizard(): UseInlineWizardReturn {
 			} catch (error) {
 				const errorMessage =
 					error instanceof Error ? error.message : 'Unknown error during document generation';
-				console.error('[useInlineWizard] generateDocuments error:', error);
+				logger.error('[useInlineWizard] generateDocuments error:', undefined, error);
 
 				// Clear streaming state on error
 				setTabState(tabId, (prev) => ({
@@ -1413,6 +1474,22 @@ export function useInlineWizard(): UseInlineWizardReturn {
 
 	// Compute readyToGenerate based on ready flag and confidence threshold
 	const readyToGenerate = state.ready && state.confidence >= READY_CONFIDENCE_THRESHOLD;
+
+	// Derived: sessions with at least one active-wizard tab, plus an OR-aggregate
+	// of `isGeneratingDocs` across that session's wizard tabs. Consumed by the
+	// Left Bar to render a wand glyph on agent rows and group headers without
+	// having to crack open per-tab state.
+	const wizardActiveSessions = useMemo(() => {
+		const map = new Map<string, { isGeneratingDocs: boolean }>();
+		for (const tabState of tabStates.values()) {
+			if (!tabState.isActive || !tabState.sessionId) continue;
+			const existing = map.get(tabState.sessionId);
+			map.set(tabState.sessionId, {
+				isGeneratingDocs: (existing?.isGeneratingDocs ?? false) || tabState.isGeneratingDocs,
+			});
+		}
+		return map;
+	}, [tabStates]);
 
 	// NOTE: We intentionally do NOT auto-send an initial greeting anymore.
 	// The user should always see the static welcome screen first and choose
@@ -1446,11 +1523,13 @@ export function useInlineWizard(): UseInlineWizardReturn {
 		// Per-tab state accessors
 		getStateForTab,
 		isWizardActiveForTab,
+		wizardActiveSessions,
 
 		// Actions
 		startWizard,
 		endWizard,
 		sendMessage,
+		selectWizardTab: setCurrentTabId,
 		setConfidence,
 		setMode,
 		setGoal,

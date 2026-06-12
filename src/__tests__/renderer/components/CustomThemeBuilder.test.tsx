@@ -7,36 +7,39 @@
 
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { CustomThemeBuilder } from '../../../renderer/components/CustomThemeBuilder';
+import { MODAL_PRIORITIES } from '../../../renderer/constants/modalPriorities';
 import type { Theme, ThemeColors, ThemeId } from '../../../shared/theme-types';
+
+import { mockTheme, mockThemeColors } from '../../helpers/mockTheme';
+
+// Capture layer-stack registrations so the base-theme dropdown's Escape
+// handling can be exercised without a real LayerStackProvider.
+const { registeredLayers } = vi.hoisted(() => ({
+	registeredLayers: new Map<string, { priority: number; onEscape: () => void }>(),
+}));
+
+vi.mock('../../../renderer/contexts/LayerStackContext', () => {
+	let counter = 0;
+	return {
+		useLayerStack: () => ({
+			registerLayer: (layer: { priority: number; onEscape: () => void }) => {
+				const id = `layer-${++counter}`;
+				registeredLayers.set(id, layer);
+				return id;
+			},
+			unregisterLayer: (id: string) => {
+				registeredLayers.delete(id);
+			},
+			updateLayerHandler: vi.fn(),
+		}),
+	};
+});
 
 // ============================================================================
 // Test Fixtures
 // ============================================================================
-
-const mockThemeColors: ThemeColors = {
-	bgMain: '#1a1a2e',
-	bgSidebar: '#16213e',
-	bgActivity: '#0f3460',
-	border: '#555555',
-	textMain: '#e0e0e0',
-	textDim: '#888888',
-	accent: '#8b5cf6',
-	accentDim: '#8b5cf640',
-	accentText: '#a78bfa',
-	accentForeground: '#ffffff',
-	success: '#10b981',
-	warning: '#f59e0b',
-	error: '#ef4444',
-};
-
-const mockTheme: Theme = {
-	id: 'dracula' as ThemeId,
-	name: 'Dracula',
-	mode: 'dark',
-	colors: mockThemeColors,
-};
 
 /**
  * Create a valid theme export JSON string
@@ -87,6 +90,7 @@ describe('CustomThemeBuilder', () => {
 		onSelect = vi.fn();
 		onImportError = vi.fn();
 		onImportSuccess = vi.fn();
+		registeredLayers.clear();
 	});
 
 	afterEach(() => {
@@ -670,7 +674,7 @@ describe('CustomThemeBuilder', () => {
 	});
 
 	describe('Reset Functionality', () => {
-		it('should reset colors when reset button is clicked', () => {
+		it('should ask for confirmation before resetting colors', () => {
 			render(
 				<CustomThemeBuilder
 					theme={mockTheme}
@@ -686,8 +690,49 @@ describe('CustomThemeBuilder', () => {
 			const resetButton = screen.getByTitle('Reset to default');
 			fireEvent.click(resetButton);
 
+			// Reset should not happen until the confirmation is accepted
+			expect(setCustomThemeColors).not.toHaveBeenCalled();
+			expect(screen.getByText('Reset Custom Theme')).toBeInTheDocument();
+		});
+
+		it('should reset colors when confirmation is accepted', () => {
+			render(
+				<CustomThemeBuilder
+					theme={mockTheme}
+					customThemeColors={mockThemeColors}
+					setCustomThemeColors={setCustomThemeColors}
+					customThemeBaseId="dracula"
+					setCustomThemeBaseId={setCustomThemeBaseId}
+					isSelected={false}
+					onSelect={onSelect}
+				/>
+			);
+
+			fireEvent.click(screen.getByTitle('Reset to default'));
+			fireEvent.click(screen.getByRole('button', { name: 'Reset' }));
+
 			expect(setCustomThemeColors).toHaveBeenCalled();
 			expect(setCustomThemeBaseId).toHaveBeenCalledWith('dracula');
+		});
+
+		it('should not reset colors when confirmation is cancelled', () => {
+			render(
+				<CustomThemeBuilder
+					theme={mockTheme}
+					customThemeColors={mockThemeColors}
+					setCustomThemeColors={setCustomThemeColors}
+					customThemeBaseId="dracula"
+					setCustomThemeBaseId={setCustomThemeBaseId}
+					isSelected={false}
+					onSelect={onSelect}
+				/>
+			);
+
+			fireEvent.click(screen.getByTitle('Reset to default'));
+			fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+			expect(setCustomThemeColors).not.toHaveBeenCalled();
+			expect(setCustomThemeBaseId).not.toHaveBeenCalled();
 		});
 	});
 
@@ -712,6 +757,55 @@ describe('CustomThemeBuilder', () => {
 			// Dropdown should now be visible with theme options
 			expect(screen.getByText('Monokai')).toBeInTheDocument();
 			expect(screen.getByText('Nord')).toBeInTheDocument();
+		});
+
+		it('should register a layer above Settings while the dropdown is open', () => {
+			render(
+				<CustomThemeBuilder
+					theme={mockTheme}
+					customThemeColors={mockThemeColors}
+					setCustomThemeColors={setCustomThemeColors}
+					customThemeBaseId="dracula"
+					setCustomThemeBaseId={setCustomThemeBaseId}
+					isSelected={false}
+					onSelect={onSelect}
+				/>
+			);
+
+			// No layer registered until the dropdown opens
+			expect(registeredLayers.size).toBe(0);
+
+			fireEvent.click(screen.getByRole('button', { name: /Initialize/i }));
+
+			const layers = [...registeredLayers.values()];
+			expect(layers).toHaveLength(1);
+			expect(layers[0].priority).toBe(MODAL_PRIORITIES.CUSTOM_THEME_BASE_SELECTOR);
+			expect(layers[0].priority).toBeGreaterThan(MODAL_PRIORITIES.SETTINGS);
+		});
+
+		it('should close only the dropdown when its Escape layer fires', () => {
+			render(
+				<CustomThemeBuilder
+					theme={mockTheme}
+					customThemeColors={mockThemeColors}
+					setCustomThemeColors={setCustomThemeColors}
+					customThemeBaseId="dracula"
+					setCustomThemeBaseId={setCustomThemeBaseId}
+					isSelected={false}
+					onSelect={onSelect}
+				/>
+			);
+
+			fireEvent.click(screen.getByRole('button', { name: /Initialize/i }));
+			expect(screen.getByText('Monokai')).toBeInTheDocument();
+
+			// Simulate the layer stack delegating Escape to the topmost layer
+			const layer = [...registeredLayers.values()][0];
+			act(() => layer.onEscape());
+
+			// Dropdown is gone; the builder itself stays mounted
+			expect(screen.queryByText('Monokai')).not.toBeInTheDocument();
+			expect(screen.getByText('Custom Theme')).toBeInTheDocument();
 		});
 	});
 

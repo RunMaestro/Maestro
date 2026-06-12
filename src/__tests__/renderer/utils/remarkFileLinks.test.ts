@@ -10,11 +10,12 @@ async function processMarkdown(
 	content: string,
 	fileTree: FileNode[],
 	cwd: string,
-	projectRoot?: string
+	projectRoot?: string,
+	homeDir?: string
 ): Promise<string> {
 	const result = await unified()
 		.use(remarkParse)
-		.use(remarkFileLinks, { fileTree, cwd, projectRoot })
+		.use(remarkFileLinks, { fileTree, cwd, projectRoot, homeDir })
 		.use(remarkStringify)
 		.process(content);
 	return String(result);
@@ -58,6 +59,15 @@ const sampleFileTree: FileNode[] = [
 		children: [
 			{ name: 'Pasted image 20250519123910.png', type: 'file' },
 			{ name: 'screenshot.jpg', type: 'file' },
+		],
+	},
+	{
+		name: 'output',
+		type: 'folder',
+		children: [
+			{ name: 'recording.wav', type: 'file' },
+			{ name: 'report.pdf', type: 'file' },
+			{ name: 'data.csv', type: 'file' },
 		],
 	},
 	{ name: 'README.md', type: 'file' },
@@ -415,6 +425,77 @@ describe('remarkFileLinks', () => {
 		});
 	});
 
+	describe('markdown links with absolute path hrefs', () => {
+		it('converts markdown link with absolute path href to maestro-file link', async () => {
+			// Agents like Codex emit [display](absolute-path) style links
+			const result = await processMarkdown(
+				'Modified [src/components/CameraModal.tsx](/Users/pedram/Project/src/components/CameraModal.tsx) to add callback.',
+				[
+					{
+						name: 'src',
+						type: 'folder',
+						children: [
+							{
+								name: 'components',
+								type: 'folder',
+								children: [{ name: 'CameraModal.tsx', type: 'file' }],
+							},
+						],
+					},
+				],
+				'',
+				'/Users/pedram/Project'
+			);
+			expect(result).toContain(
+				'[src/components/CameraModal.tsx](maestro-file://src/components/CameraModal.tsx)'
+			);
+		});
+
+		it('converts markdown link with absolute path href even when file not in tree', async () => {
+			// Absolute paths within projectRoot should link even without file tree match
+			const result = await processMarkdown(
+				'See [App.tsx](/Users/pedram/Project/src/App.tsx) for details.',
+				sampleFileTree,
+				'',
+				'/Users/pedram/Project'
+			);
+			expect(result).toContain('[App.tsx](maestro-file://src/App.tsx)');
+		});
+
+		it('does not convert markdown link with absolute path outside projectRoot', async () => {
+			const result = await processMarkdown(
+				'See [file.tsx](/other/path/file.tsx) for details.',
+				sampleFileTree,
+				'',
+				'/Users/pedram/Project'
+			);
+			// Should remain unconverted
+			expect(result).not.toContain('maestro-file://');
+		});
+
+		it('converts markdown link with tilde path href to maestro-file link', async () => {
+			const result = await processMarkdown(
+				'See [README.md](~/Project/OPSWAT/README.md) for details.',
+				sampleFileTree,
+				'',
+				'/Users/pedram/Project',
+				'/Users/pedram'
+			);
+			expect(result).toContain('[README.md](maestro-file://OPSWAT/README.md)');
+		});
+
+		it('converts markdown link with tilde path outside projectRoot to file:// URL', async () => {
+			const result = await processMarkdown(
+				'See [notes.md](~/Documents/notes.md) for details.',
+				sampleFileTree,
+				'',
+				'/Users/pedram/Project',
+				'/Users/pedram'
+			);
+			expect(result).toContain('[notes.md](file:///Users/pedram/Documents/notes.md)');
+		});
+	});
+
 	describe('inline code paths (backticks)', () => {
 		it('converts absolute path in backticks to link with filename display', async () => {
 			const result = await processMarkdown(
@@ -610,6 +691,137 @@ describe('remarkFileLinks', () => {
 			expect(indices.allPaths.has('OPSWAT')).toBe(false);
 			expect(indices.allPaths.has('Notes')).toBe(false);
 			expect(indices.allPaths.has('attachments')).toBe(false);
+		});
+	});
+
+	describe('extended file extensions', () => {
+		it('converts media file references (wav, mp3, etc.)', async () => {
+			const result = await processMarkdown(
+				'Listen to output/recording.wav for the sample.',
+				sampleFileTree,
+				''
+			);
+			expect(result).toContain('[output/recording.wav](maestro-file://output/recording.wav)');
+		});
+
+		it('converts document file references (pdf, csv, etc.)', async () => {
+			const result = await processMarkdown(
+				'See output/report.pdf and output/data.csv for results.',
+				sampleFileTree,
+				''
+			);
+			expect(result).toContain('[output/report.pdf](maestro-file://output/report.pdf)');
+			expect(result).toContain('[output/data.csv](maestro-file://output/data.csv)');
+		});
+
+		it('converts absolute paths with media extensions', async () => {
+			const result = await processMarkdown(
+				'File at /Users/pedram/Project/output/recording.wav here.',
+				sampleFileTree,
+				'',
+				'/Users/pedram/Project'
+			);
+			expect(result).toContain(
+				'[/Users/pedram/Project/output/recording.wav](maestro-file://output/recording.wav)'
+			);
+		});
+	});
+
+	describe('tilde path references', () => {
+		it('converts tilde paths within projectRoot to maestro-file links', async () => {
+			const result = await processMarkdown(
+				'See ~/Project/output/recording.wav for the audio.',
+				sampleFileTree,
+				'',
+				'/Users/pedram/Project',
+				'/Users/pedram'
+			);
+			expect(result).toContain(
+				'[~/Project/output/recording.wav](maestro-file://output/recording.wav)'
+			);
+		});
+
+		it('converts tilde paths outside projectRoot to file:// links', async () => {
+			const result = await processMarkdown(
+				'See ~/Downloads/audio/sample.wav for the sample.',
+				sampleFileTree,
+				'',
+				'/Users/pedram/Project',
+				'/Users/pedram'
+			);
+			expect(result).toContain(
+				'[~/Downloads/audio/sample.wav](file:///Users/pedram/Downloads/audio/sample.wav)'
+			);
+		});
+
+		it('does not convert tilde paths when homeDir is not provided', async () => {
+			const result = await processMarkdown(
+				'See ~/Downloads/audio/sample.wav for the sample.',
+				sampleFileTree,
+				'',
+				'/Users/pedram/Project'
+			);
+			expect(result).not.toContain('file://');
+			expect(result).not.toContain('maestro-file://');
+			expect(result).toContain('~/Downloads/audio/sample.wav');
+		});
+
+		it('handles multiple tilde paths in same text', async () => {
+			const result = await processMarkdown(
+				'Compare ~/Downloads/a.wav and ~/Downloads/b.mp3 side by side.',
+				sampleFileTree,
+				'',
+				'/Users/pedram/Project',
+				'/Users/pedram'
+			);
+			expect(result).toContain('[~/Downloads/a.wav](file:///Users/pedram/Downloads/a.wav)');
+			expect(result).toContain('[~/Downloads/b.mp3](file:///Users/pedram/Downloads/b.mp3)');
+		});
+
+		it('converts tilde path in inline code', async () => {
+			const result = await processMarkdown(
+				'Check `~/Downloads/audio/sample.wav` for the file.',
+				sampleFileTree,
+				'',
+				'/Users/pedram/Project',
+				'/Users/pedram'
+			);
+			expect(result).toContain('[sample.wav](file:///Users/pedram/Downloads/audio/sample.wav)');
+			expect(result).not.toContain('`~/Downloads');
+		});
+
+		it('converts tilde path in inline code within projectRoot', async () => {
+			const result = await processMarkdown(
+				'See `~/Project/output/recording.wav` here.',
+				sampleFileTree,
+				'',
+				'/Users/pedram/Project',
+				'/Users/pedram'
+			);
+			expect(result).toContain('[recording.wav](maestro-file://output/recording.wav)');
+		});
+	});
+
+	describe('bare maestro:// deep links', () => {
+		it('auto-linkifies a bare maestro:// URL in running text', async () => {
+			const result = await processMarkdown(
+				'Go to maestro://session/abc/tab/xyz now.',
+				sampleFileTree,
+				''
+			);
+			// remark-stringify emits CommonMark autolinks as <url> when the link
+			// text equals the URL, which is what we get when we wrap a bare URL.
+			expect(result).toContain('<maestro://session/abc/tab/xyz>');
+		});
+
+		it('does not rewrite an explicit markdown link with a maestro:// href', async () => {
+			const result = await processMarkdown(
+				'See [the agent](maestro://group/grp1).',
+				sampleFileTree,
+				''
+			);
+			expect(result).toContain('[the agent](maestro://group/grp1)');
+			expect(result).not.toContain('maestro-file://');
 		});
 	});
 

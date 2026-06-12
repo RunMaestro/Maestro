@@ -10,11 +10,12 @@ import {
 	parseGitBehindAhead,
 	parseGitBranches,
 	parseGitTags,
-	cleanBranchName,
-	cleanGitPath,
 	remoteUrlToBrowserUrl,
 	isImageFile,
 	getImageMimeType,
+	isWorktreeAlreadyUsedError,
+	parseWorktreePathForBranch,
+	sanitizeGitBranchName,
 } from '../../shared/gitUtils';
 
 describe('gitUtils', () => {
@@ -205,31 +206,6 @@ describe('gitUtils', () => {
 		});
 	});
 
-	describe('cleanBranchName', () => {
-		it('trims whitespace', () => {
-			expect(cleanBranchName('  main  ')).toBe('main');
-			expect(cleanBranchName('feature/foo\n')).toBe('feature/foo');
-		});
-
-		it('handles empty/null input', () => {
-			expect(cleanBranchName('')).toBe('');
-			expect(cleanBranchName(null as unknown as string)).toBe('');
-			expect(cleanBranchName(undefined as unknown as string)).toBe('');
-		});
-	});
-
-	describe('cleanGitPath', () => {
-		it('trims whitespace', () => {
-			expect(cleanGitPath('  /path/to/repo  ')).toBe('/path/to/repo');
-			expect(cleanGitPath('/path/to/repo\n')).toBe('/path/to/repo');
-		});
-
-		it('handles empty/null input', () => {
-			expect(cleanGitPath('')).toBe('');
-			expect(cleanGitPath(null as unknown as string)).toBe('');
-		});
-	});
-
 	describe('remoteUrlToBrowserUrl', () => {
 		it('handles empty/null input', () => {
 			expect(remoteUrlToBrowserUrl('')).toBeNull();
@@ -334,6 +310,128 @@ describe('gitUtils', () => {
 			expect(getImageMimeType('webp')).toBe('image/webp');
 			expect(getImageMimeType('ico')).toBe('image/ico');
 			expect(getImageMimeType('bmp')).toBe('image/bmp');
+		});
+	});
+
+	describe('isWorktreeAlreadyUsedError', () => {
+		it('detects modern git "already checked out" message', () => {
+			expect(
+				isWorktreeAlreadyUsedError(
+					"fatal: 'fix/files-panel-polish' is already checked out at '/home/chris/code/wt/fix/files-panel-polish'"
+				)
+			).toBe(true);
+		});
+
+		it('detects legacy "already used by worktree" message', () => {
+			expect(
+				isWorktreeAlreadyUsedError(
+					"fatal: 'main' is already used by worktree at '/home/chris/code/repo'"
+				)
+			).toBe(true);
+		});
+
+		it('is case insensitive', () => {
+			expect(isWorktreeAlreadyUsedError("FATAL: 'b' IS ALREADY CHECKED OUT AT '/x'")).toBe(true);
+		});
+
+		it('returns false for unrelated errors', () => {
+			expect(isWorktreeAlreadyUsedError('fatal: not a git repository')).toBe(false);
+			expect(isWorktreeAlreadyUsedError("fatal: '/x' already exists")).toBe(false);
+			expect(isWorktreeAlreadyUsedError('')).toBe(false);
+		});
+	});
+
+	describe('parseWorktreePathForBranch', () => {
+		const sample = [
+			'worktree /home/chris/code/repo',
+			'HEAD abc123',
+			'branch refs/heads/main',
+			'',
+			'worktree /home/chris/code/wt/fix/files-panel-polish',
+			'HEAD def456',
+			'branch refs/heads/fix/files-panel-polish',
+			'',
+			'worktree /home/chris/code/wt/detached',
+			'HEAD 789abc',
+			'detached',
+		].join('\n');
+
+		it('returns the worktree path for a matching branch', () => {
+			expect(parseWorktreePathForBranch(sample, 'fix/files-panel-polish')).toBe(
+				'/home/chris/code/wt/fix/files-panel-polish'
+			);
+		});
+
+		it('returns the worktree path for the main repo branch', () => {
+			expect(parseWorktreePathForBranch(sample, 'main')).toBe('/home/chris/code/repo');
+		});
+
+		it('returns null when the branch is not found', () => {
+			expect(parseWorktreePathForBranch(sample, 'nope')).toBeNull();
+		});
+
+		it('skips detached worktrees', () => {
+			expect(parseWorktreePathForBranch(sample, 'detached')).toBeNull();
+		});
+
+		it('handles CRLF line endings', () => {
+			const crlf = sample.replace(/\n/g, '\r\n');
+			expect(parseWorktreePathForBranch(crlf, 'main')).toBe('/home/chris/code/repo');
+		});
+
+		it('returns null for empty input', () => {
+			expect(parseWorktreePathForBranch('', 'main')).toBeNull();
+			expect(parseWorktreePathForBranch(sample, '')).toBeNull();
+		});
+	});
+
+	describe('sanitizeGitBranchName', () => {
+		it('replaces internal whitespace with a single hyphen', () => {
+			expect(sanitizeGitBranchName('Cue Dashboard')).toBe('Cue-Dashboard');
+			expect(sanitizeGitBranchName('feature   xyz')).toBe('feature-xyz');
+			expect(sanitizeGitBranchName('  leading and trailing  ')).toBe('leading-and-trailing');
+		});
+
+		it('substitutes characters that git refuses', () => {
+			expect(sanitizeGitBranchName('feat~bad')).toBe('feat-bad');
+			expect(sanitizeGitBranchName('with:colon')).toBe('with-colon');
+			expect(sanitizeGitBranchName('star*name')).toBe('star-name');
+			expect(sanitizeGitBranchName('back\\slash')).toBe('back-slash');
+		});
+
+		it('preserves valid characters and slashes', () => {
+			expect(sanitizeGitBranchName('feature/auth-flow_v2.1')).toBe('feature/auth-flow_v2.1');
+		});
+
+		it('flattens forbidden sequences', () => {
+			expect(sanitizeGitBranchName('a..b')).toBe('a.b');
+			expect(sanitizeGitBranchName('a@{b')).toBe('a-b');
+			expect(sanitizeGitBranchName('a//b')).toBe('a/b');
+		});
+
+		it('strips leading and trailing junk', () => {
+			expect(sanitizeGitBranchName('-leading')).toBe('leading');
+			expect(sanitizeGitBranchName('/leading')).toBe('leading');
+			expect(sanitizeGitBranchName('trailing/')).toBe('trailing');
+			expect(sanitizeGitBranchName('trailing.')).toBe('trailing');
+			expect(sanitizeGitBranchName('feat.lock')).toBe('feat');
+		});
+
+		it('keeps a trailing hyphen because git branch names allow it', () => {
+			expect(sanitizeGitBranchName('cue-dashboard-')).toBe('cue-dashboard-');
+		});
+
+		it('can preserve incomplete suffixes while editing a branch name', () => {
+			expect(sanitizeGitBranchName('cue-', { allowIncomplete: true })).toBe('cue-');
+			expect(sanitizeGitBranchName('feature/', { allowIncomplete: true })).toBe('feature/');
+			expect(sanitizeGitBranchName('release/v1.', { allowIncomplete: true })).toBe('release/v1.');
+			expect(sanitizeGitBranchName('feat.lock', { allowIncomplete: true })).toBe('feat.lock');
+		});
+
+		it('returns an empty string for input that has nothing usable', () => {
+			expect(sanitizeGitBranchName('')).toBe('');
+			expect(sanitizeGitBranchName('   ')).toBe('');
+			expect(sanitizeGitBranchName('///')).toBe('');
 		});
 	});
 });

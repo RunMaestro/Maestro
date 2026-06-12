@@ -2,28 +2,10 @@ import React from 'react';
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { HistoryFilterToggle } from '../../../../renderer/components/History';
-import type { Theme, HistoryEntryType } from '../../../../renderer/types';
+import type { HistoryEntryType } from '../../../../renderer/types';
 
+import { mockTheme } from '../../../helpers/mockTheme';
 // Create mock theme
-const mockTheme: Theme = {
-	id: 'test-theme',
-	name: 'Test Theme',
-	mode: 'dark',
-	colors: {
-		bgMain: '#1e1e1e',
-		bgSidebar: '#252526',
-		bgActivity: '#333333',
-		textMain: '#ffffff',
-		textDim: '#808080',
-		accent: '#007acc',
-		border: '#404040',
-		success: '#4ec9b0',
-		warning: '#dcdcaa',
-		error: '#f14c4c',
-		scrollbar: '#404040',
-		scrollbarHover: '#808080',
-	},
-};
 
 describe('HistoryFilterToggle', () => {
 	it('renders AUTO and USER filter buttons', () => {
@@ -135,7 +117,7 @@ describe('HistoryFilterToggle', () => {
 		expect(userButton).toHaveStyle({ color: mockTheme.colors.textDim });
 	});
 
-	it('renders both buttons even when no filters are active', () => {
+	it('renders all three buttons even when no filters are active', () => {
 		render(
 			<HistoryFilterToggle
 				activeFilters={new Set<HistoryEntryType>([])}
@@ -145,5 +127,110 @@ describe('HistoryFilterToggle', () => {
 		);
 		expect(screen.getByText('AUTO')).toBeInTheDocument();
 		expect(screen.getByText('USER')).toBeInTheDocument();
+		expect(screen.getByText('CUE')).toBeInTheDocument();
+	});
+
+	it('hides CUE button when visibleTypes excludes it', () => {
+		render(
+			<HistoryFilterToggle
+				activeFilters={new Set<HistoryEntryType>(['AUTO', 'USER'])}
+				onToggleFilter={vi.fn()}
+				theme={mockTheme}
+				visibleTypes={['AUTO', 'USER']}
+			/>
+		);
+		expect(screen.getByText('AUTO')).toBeInTheDocument();
+		expect(screen.getByText('USER')).toBeInTheDocument();
+		expect(screen.queryByText('CUE')).not.toBeInTheDocument();
+	});
+
+	it('shows CUE button when visibleTypes includes it', () => {
+		render(
+			<HistoryFilterToggle
+				activeFilters={new Set<HistoryEntryType>(['AUTO', 'USER', 'CUE'])}
+				onToggleFilter={vi.fn()}
+				theme={mockTheme}
+				visibleTypes={['AUTO', 'USER', 'CUE']}
+			/>
+		);
+		expect(screen.getByText('AUTO')).toBeInTheDocument();
+		expect(screen.getByText('USER')).toBeInTheDocument();
+		expect(screen.getByText('CUE')).toBeInTheDocument();
+	});
+
+	it('renders CUE filter button', () => {
+		render(
+			<HistoryFilterToggle
+				activeFilters={new Set<HistoryEntryType>(['AUTO', 'USER', 'CUE'])}
+				onToggleFilter={vi.fn()}
+				theme={mockTheme}
+			/>
+		);
+		expect(screen.getByText('CUE')).toBeInTheDocument();
+	});
+
+	it('calls onToggleFilter with CUE when CUE button is clicked', () => {
+		const onToggleFilter = vi.fn();
+		render(
+			<HistoryFilterToggle
+				activeFilters={new Set<HistoryEntryType>(['AUTO', 'USER', 'CUE'])}
+				onToggleFilter={onToggleFilter}
+				theme={mockTheme}
+			/>
+		);
+		fireEvent.click(screen.getByText('CUE'));
+		expect(onToggleFilter).toHaveBeenCalledWith('CUE');
+	});
+
+	it('styles active CUE button with teal colors', () => {
+		render(
+			<HistoryFilterToggle
+				activeFilters={new Set<HistoryEntryType>(['CUE'])}
+				onToggleFilter={vi.fn()}
+				theme={mockTheme}
+			/>
+		);
+		const cueButton = screen.getByText('CUE').closest('button')!;
+		expect(cueButton).toHaveStyle({ color: '#06b6d4' });
+	});
+
+	it('shows CUE button as inactive when not in active filters', () => {
+		render(
+			<HistoryFilterToggle
+				activeFilters={new Set<HistoryEntryType>(['AUTO', 'USER'])}
+				onToggleFilter={vi.fn()}
+				theme={mockTheme}
+			/>
+		);
+		const cueButton = screen.getByText('CUE').closest('button')!;
+		expect(cueButton.className).toContain('opacity-40');
+	});
+
+	it('renders pill icons by default', () => {
+		const { container } = render(
+			<HistoryFilterToggle
+				activeFilters={new Set<HistoryEntryType>(['AUTO', 'USER', 'CUE'])}
+				onToggleFilter={vi.fn()}
+				theme={mockTheme}
+			/>
+		);
+		// Three pills, each with an SVG icon when not compact.
+		expect(container.querySelectorAll('button svg').length).toBe(3);
+	});
+
+	it('hides pill icons when compact', () => {
+		const { container } = render(
+			<HistoryFilterToggle
+				activeFilters={new Set<HistoryEntryType>(['AUTO', 'USER', 'CUE'])}
+				onToggleFilter={vi.fn()}
+				theme={mockTheme}
+				compact
+			/>
+		);
+		expect(container.querySelectorAll('button svg').length).toBe(0);
+		// Labels still render so the controls remain usable in narrow panels.
+		expect(screen.getByText('AUTO')).toBeInTheDocument();
+		expect(screen.getByText('USER')).toBeInTheDocument();
+		expect(screen.getByText('CUE')).toBeInTheDocument();
 	});
 });

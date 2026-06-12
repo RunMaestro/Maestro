@@ -48,12 +48,19 @@ export function useInputMode(deps: UseInputModeDeps): UseInputModeReturn {
 				const newMode = s.inputMode === 'ai' ? 'terminal' : 'ai';
 
 				if (newMode === 'terminal') {
-					// Switching to terminal mode: save current file tab (if any) and clear it
+					// Switching to terminal mode: save current file tab (if any) and clear it.
+					// Also ensure activeTerminalTabId points to a valid tab (first one if unset).
 					useUIStore.getState().setPreTerminalFileTabId(s.activeFileTabId);
+					const terminalTabs = s.terminalTabs || [];
+					const resolvedTerminalTabId =
+						s.activeTerminalTabId && terminalTabs.some((t) => t.id === s.activeTerminalTabId)
+							? s.activeTerminalTabId
+							: (terminalTabs[0]?.id ?? null);
 					return {
 						...s,
 						inputMode: newMode,
 						activeFileTabId: null,
+						activeTerminalTabId: resolvedTerminalTabId,
 					};
 				} else {
 					// Switching to AI mode: restore previous file tab if it still exists

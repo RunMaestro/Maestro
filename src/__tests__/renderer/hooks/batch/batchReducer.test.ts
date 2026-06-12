@@ -82,6 +82,32 @@ describe('batchReducer', () => {
 			expect(result['existing-session'].completedTasksAcrossAllDocs).toBe(5);
 			expect(result['session-1'].completedTasksAcrossAllDocs).toBe(0);
 		});
+
+		it('should initialize completedTasksAcrossAllDocs from payload when provided', () => {
+			const initialState: BatchState = {};
+
+			const result = batchReducer(initialState, {
+				type: 'START_BATCH',
+				sessionId: 'session-1',
+				payload: {
+					documents: ['doc1.md'],
+					lockedDocuments: ['doc1.md'],
+					totalTasksAcrossAllDocs: 46,
+					completedTasksAcrossAllDocs: 4,
+					loopEnabled: false,
+					maxLoops: null,
+					folderPath: '/test/folder',
+					worktreeActive: false,
+					startTime: 1000,
+					cumulativeTaskTimeMs: 0,
+					accumulatedElapsedMs: 0,
+					lastActiveTimestamp: 1000,
+				},
+			});
+
+			expect(result['session-1'].totalTasksAcrossAllDocs).toBe(46);
+			expect(result['session-1'].completedTasksAcrossAllDocs).toBe(4);
+		});
 	});
 
 	// ============================================================================

@@ -34,22 +34,29 @@ import { createSshRemoteApi } from './sshRemote';
 import { createLoggerApi } from './logger';
 import { createClaudeApi, createAgentSessionsApi } from './sessions';
 import { createTempfileApi, createHistoryApi, createCliApi } from './files';
-import { createSpeckitApi, createOpenspecApi } from './commands';
+import { createSpeckitApi, createOpenspecApi, createBmadApi } from './commands';
 import { createAutorunApi, createPlaybooksApi, createMarketplaceApi } from './autorun';
 import { createDebugApi, createDocumentGraphApi } from './debug';
 import { createGroupChatApi } from './groupChat';
 import { createStatsApi } from './stats';
+import { createCueStatsApi } from './cueStats';
 import { createNotificationApi } from './notifications';
 import { createLeaderboardApi } from './leaderboard';
 import { createAttachmentsApi } from './attachments';
 import { createProcessApi } from './process';
 import { createGitApi } from './git';
+import { createFeedbackApi } from './feedback';
 import { createFsApi } from './fs';
 import { createAgentsApi } from './agents';
 import { createSymphonyApi } from './symphony';
 import { createTabNamingApi } from './tabNaming';
 import { createDirectorNotesApi } from './directorNotes';
+import { createCueApi } from './cue';
+import { createCueBackupApi } from './cueBackup';
 import { createWakatimeApi } from './wakatime';
+import { createMaestroCliApi } from './maestroCli';
+import { createPromptsApi } from './prompts';
+import { createMemoryApi } from './memory';
 
 // Expose protected methods that allow the renderer process to use
 // the ipcRenderer without exposing the entire object
@@ -65,6 +72,7 @@ contextBridge.exposeInMainWorld('maestro', {
 
 	// Process/Session API
 	process: createProcessApi(),
+	feedback: createFeedbackApi(),
 
 	// Agent Error Handling API
 	agentError: createAgentErrorApi(),
@@ -144,6 +152,9 @@ contextBridge.exposeInMainWorld('maestro', {
 	// OpenSpec API
 	openspec: createOpenspecApi(),
 
+	// BMAD API
+	bmad: createBmadApi(),
+
 	// Notification API
 	notification: createNotificationApi(),
 
@@ -177,6 +188,9 @@ contextBridge.exposeInMainWorld('maestro', {
 	// Stats API
 	stats: createStatsApi(),
 
+	// Cue Stats API (Cue Dashboard aggregation query)
+	cueStats: createCueStatsApi(),
+
 	// Leaderboard API
 	leaderboard: createLeaderboardApi(),
 
@@ -189,8 +203,21 @@ contextBridge.exposeInMainWorld('maestro', {
 	// Director's Notes API (unified history + synopsis)
 	directorNotes: createDirectorNotesApi(),
 
+	// Cue API (event-driven automation)
+	cue: createCueApi(),
+
+	// Cue Backup API (Cue modal Backup tab — snapshot/restore cue.yaml + prompts)
+	cueBackup: createCueBackupApi(),
+
 	// WakaTime API (CLI check, API key validation)
 	wakatime: createWakatimeApi(),
+
+	// Maestro CLI API (status + install/update)
+	maestroCli: createMaestroCliApi(),
+	// Core Prompts API (view, edit, reset system prompts)
+	prompts: createPromptsApi(),
+	// Per-project Memory API (Claude Code memory viewer)
+	memory: createMemoryApi(),
 });
 
 // Re-export factory functions for external consumers (e.g., tests)
@@ -231,6 +258,7 @@ export {
 	// Commands
 	createSpeckitApi,
 	createOpenspecApi,
+	createBmadApi,
 	// Auto Run
 	createAutorunApi,
 	createPlaybooksApi,
@@ -242,6 +270,8 @@ export {
 	createGroupChatApi,
 	// Stats
 	createStatsApi,
+	// Cue Stats (Phase 03 aggregation query)
+	createCueStatsApi,
 	// Notifications
 	createNotificationApi,
 	// Leaderboard
@@ -250,6 +280,8 @@ export {
 	createAttachmentsApi,
 	// Process
 	createProcessApi,
+	// Feedback
+	createFeedbackApi,
 	// Git
 	createGitApi,
 	// Filesystem
@@ -262,8 +294,18 @@ export {
 	createTabNamingApi,
 	// Director's Notes
 	createDirectorNotesApi,
+	// Cue
+	createCueApi,
+	// Cue Backup
+	createCueBackupApi,
 	// WakaTime
 	createWakatimeApi,
+	// Maestro CLI
+	createMaestroCliApi,
+	// Core Prompts
+	createPromptsApi,
+	// Memory Viewer
+	createMemoryApi,
 };
 
 // Re-export types for TypeScript consumers
@@ -303,6 +345,7 @@ export type {
 	ShellInfo,
 	UpdateStatus,
 } from './system';
+export type { ParsedDeepLink } from '../../shared/types';
 export type {
 	// From sshRemote
 	SshRemoteApi,
@@ -370,6 +413,12 @@ export type {
 	StatsAggregation,
 } from './stats';
 export type {
+	// From cueStats (Phase 03)
+	CueStatsApi,
+	CueStatsAggregation,
+	CueStatsTimeRange,
+} from './cueStats';
+export type {
 	// From notifications
 	NotificationApi,
 	NotificationShowResponse,
@@ -396,6 +445,12 @@ export type {
 	AttachmentListResponse,
 	AttachmentPathResponse,
 } from './attachments';
+export type {
+	// From feedback
+	FeedbackApi,
+	FeedbackAuthResponse,
+	FeedbackSubmitResponse,
+} from './feedback';
 export type {
 	// From process
 	ProcessApi,
@@ -469,6 +524,24 @@ export type {
 	SynopsisStats,
 } from './directorNotes';
 export type {
+	// From cue
+	CueApi,
+	CueRunResult,
+	CueSessionStatus,
+	CueEvent,
+	CueEventType,
+	CueRunStatus,
+} from './cue';
+export type {
 	// From wakatime
 	WakatimeApi,
 } from './wakatime';
+export type {
+	// From maestroCli
+	MaestroCliApi,
+} from './maestroCli';
+export type {
+	// From prompts
+	PromptsApi,
+	CorePromptData,
+} from './prompts';

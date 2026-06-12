@@ -5,7 +5,7 @@
  *
  * When AutoRun is active, shows a special AutoRun pill with total elapsed time instead.
  */
-import { memo, useState, useEffect } from 'react';
+import { memo, useState, useEffect, useRef } from 'react';
 import { GitBranch } from 'lucide-react';
 import type { Session, Theme, AITab, BatchRunState, ThinkingItem } from '../types';
 import { formatTokensCompact } from '../utils/formatters';
@@ -163,18 +163,59 @@ const AutoRunPill = memo(
 		theme,
 		autoRunState,
 		onStop,
+		thinkingItems,
+		namedSessions,
+		onSessionClick,
 	}: {
 		theme: Theme;
 		autoRunState: BatchRunState;
 		onStop?: () => void;
+		thinkingItems?: ThinkingItem[];
+		namedSessions?: Record<string, string>;
+		onSessionClick?: (sessionId: string, tabId?: string) => void;
 	}) => {
+		const [isExpanded, setIsExpanded] = useState(false);
+		const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 		const startTime = autoRunState.startTime || Date.now();
-		const { completedTasks, totalTasks, isStopping } = autoRunState;
+		const { isStopping, totalTasksAcrossAllDocs } = autoRunState;
+		// Prefer multi-doc aggregate counts when available; fall back to single-doc legacy
+		// fields. Mirrors the logic in RightPanel.tsx so both displays stay in sync.
+		const completedTasks =
+			totalTasksAcrossAllDocs && totalTasksAcrossAllDocs > 0
+				? autoRunState.completedTasksAcrossAllDocs
+				: autoRunState.completedTasks;
+		const totalTasks =
+			totalTasksAcrossAllDocs && totalTasksAcrossAllDocs > 0
+				? totalTasksAcrossAllDocs
+				: autoRunState.totalTasks;
+		const concurrentCount = thinkingItems?.length || 0;
+
+		const handleHoverEnter = () => {
+			if (closeTimerRef.current) {
+				clearTimeout(closeTimerRef.current);
+				closeTimerRef.current = null;
+			}
+			setIsExpanded(true);
+		};
+
+		const handleHoverLeave = () => {
+			if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+			closeTimerRef.current = setTimeout(() => {
+				setIsExpanded(false);
+				closeTimerRef.current = null;
+			}, 150);
+		};
+
+		useEffect(() => {
+			return () => {
+				if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+			};
+		}, []);
 
 		return (
 			<div className="relative flex justify-center pb-2 -mt-2">
 				<div
-					className="flex items-center gap-2 px-4 py-1.5 rounded-full"
+					className="relative flex items-center gap-2 px-4 py-1.5 rounded-full"
 					style={{
 						backgroundColor: theme.colors.accent + '20',
 						border: `1px solid ${theme.colors.accent}50`,
@@ -191,7 +232,7 @@ const AutoRunPill = memo(
 						className="text-xs font-semibold shrink-0"
 						style={{ color: isStopping ? theme.colors.warning : theme.colors.accent }}
 					>
-						{isStopping ? 'AutoRun Stopping...' : 'AutoRun'}
+						{isStopping ? 'AutoRun Stopping' : 'AutoRun'}
 					</span>
 
 					{/* Worktree indicator */}
@@ -266,6 +307,80 @@ const AutoRunPill = memo(
 							</button>
 						</>
 					)}
+
+					{/* Concurrent thinking items indicator */}
+					{concurrentCount > 0 && (
+						<>
+							<div className="w-px h-4 shrink-0" style={{ backgroundColor: theme.colors.border }} />
+							<div
+								onMouseEnter={handleHoverEnter}
+								onMouseLeave={handleHoverLeave}
+								className="w-5 h-5 rounded-full flex items-center justify-center cursor-pointer hover:scale-110 transition-transform"
+								style={{
+									backgroundColor: theme.colors.warning + '40',
+									border: `1px solid ${theme.colors.warning}60`,
+								}}
+								title={`+${concurrentCount} more running`}
+							>
+								<span className="text-[10px] font-bold" style={{ color: theme.colors.warning }}>
+									+{concurrentCount}
+								</span>
+							</div>
+						</>
+					)}
+
+					{/* Expanded dropdown — anchored to the pill so its width matches the pill. */}
+					{concurrentCount > 0 && isExpanded && (
+						<div
+							className="absolute inset-x-0 bottom-full pb-1 z-50"
+							onMouseEnter={handleHoverEnter}
+							onMouseLeave={handleHoverLeave}
+						>
+							<div
+								className="rounded-lg shadow-xl overflow-hidden"
+								style={{
+									backgroundColor: theme.colors.bgSidebar,
+									border: `1px solid ${theme.colors.border}`,
+								}}
+							>
+								<div
+									className="px-3 py-1.5 text-[10px] uppercase tracking-wide font-semibold"
+									style={{
+										color: theme.colors.textDim,
+										backgroundColor: theme.colors.bgActivity,
+									}}
+								>
+									Running Processes
+								</div>
+								{/* AutoRun entry */}
+								<div
+									className="flex items-center justify-between gap-3 w-full px-3 py-2"
+									style={{ color: theme.colors.textMain }}
+								>
+									<div className="flex items-center gap-2 min-w-0">
+										<div
+											className="w-2 h-2 rounded-full shrink-0 animate-pulse"
+											style={{ backgroundColor: theme.colors.accent }}
+										/>
+										<span className="text-xs font-medium">AutoRun</span>
+									</div>
+									<span className="text-xs" style={{ color: theme.colors.textDim }}>
+										{completedTasks}/{totalTasks} tasks
+									</span>
+								</div>
+								{/* Concurrent thinking items */}
+								{thinkingItems?.map((item) => (
+									<ThinkingItemRow
+										key={`${item.session.id}-${item.tab?.id ?? 'legacy'}`}
+										item={item}
+										theme={theme}
+										namedSessions={namedSessions}
+										onSessionClick={onSessionClick}
+									/>
+								))}
+							</div>
+						</div>
+					)}
 				</div>
 			</div>
 		);
@@ -280,7 +395,7 @@ AutoRunPill.displayName = 'AutoRunPill';
  * Each "thinking item" is a (session, tab) pair — one entry per busy tab across all agents.
  * Features: pulsing indicator, session name, bytes/tokens, elapsed time, Claude session UUID.
  *
- * When AutoRun is active for the active session, shows AutoRunPill instead.
+ * When AutoRun is active for the active session, shows AutoRunPill with +N badge for concurrent items.
  */
 function ThinkingStatusPillInner({
 	thinkingItems,
@@ -293,10 +408,47 @@ function ThinkingStatusPillInner({
 	onInterrupt,
 }: ThinkingStatusPillProps) {
 	const [isExpanded, setIsExpanded] = useState(false);
+	const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-	// If AutoRun is active for the current session, show the AutoRun pill instead
+	const handleHoverEnter = () => {
+		if (closeTimerRef.current) {
+			clearTimeout(closeTimerRef.current);
+			closeTimerRef.current = null;
+		}
+		setIsExpanded(true);
+	};
+
+	const handleHoverLeave = () => {
+		if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+		closeTimerRef.current = setTimeout(() => {
+			setIsExpanded(false);
+			closeTimerRef.current = null;
+		}, 150);
+	};
+
+	useEffect(() => {
+		return () => {
+			if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+		};
+	}, []);
+
+	// If AutoRun is active for the current session, show the AutoRun pill
+	// with concurrent thinking items badge for parallel operations.
+	// AutoRun spawns its agent in isolation and does NOT mark any tab as state='busy'
+	// (see useAgentExecution.spawnAgentForSession). Every entry in thinkingItems is
+	// therefore legitimate concurrent work (e.g. a plan-mode / read-only tab, or a
+	// force-parallel write tab) and must surface via the +N badge.
 	if (autoRunState?.isRunning) {
-		return <AutoRunPill theme={theme} autoRunState={autoRunState} onStop={onStopAutoRun} />;
+		return (
+			<AutoRunPill
+				theme={theme}
+				autoRunState={autoRunState}
+				onStop={onStopAutoRun}
+				thinkingItems={thinkingItems}
+				namedSessions={namedSessions}
+				onSessionClick={onSessionClick}
+			/>
+		);
 	}
 
 	// thinkingItems is pre-filtered by caller (PERF optimization)
@@ -342,9 +494,9 @@ function ThinkingStatusPillInner({
 	return (
 		// Thinking Pill - centered container with negative top margin to offset parent padding
 		<div className="relative flex justify-center pb-2 -mt-2">
-			{/* Thinking Pill - shrinks to fit content */}
+			{/* Thinking Pill - shrinks to fit content; `relative` anchors the expanded dropdown to the pill's full width. */}
 			<div
-				className="flex items-center gap-2 px-4 py-1.5 rounded-full"
+				className="relative flex items-center gap-2 px-4 py-1.5 rounded-full"
 				style={{
 					backgroundColor: theme.colors.warning + '20',
 					border: `1px solid ${theme.colors.border}`,
@@ -426,54 +578,18 @@ function ThinkingStatusPillInner({
 				{/* Additional thinking items indicator */}
 				{hasMultiple && (
 					<div
-						className="relative"
-						onMouseEnter={() => setIsExpanded(true)}
-						onMouseLeave={() => setIsExpanded(false)}
+						onMouseEnter={handleHoverEnter}
+						onMouseLeave={handleHoverLeave}
+						className="w-5 h-5 rounded-full flex items-center justify-center cursor-pointer hover:scale-110 transition-transform"
+						style={{
+							backgroundColor: theme.colors.warning + '40',
+							border: `1px solid ${theme.colors.warning}60`,
+						}}
+						title={`+${additionalItems.length} more thinking`}
 					>
-						<div
-							className="w-5 h-5 rounded-full flex items-center justify-center cursor-pointer hover:scale-110 transition-transform"
-							style={{
-								backgroundColor: theme.colors.warning + '40',
-								border: `1px solid ${theme.colors.warning}60`,
-							}}
-							title={`+${additionalItems.length} more thinking`}
-						>
-							<span className="text-[10px] font-bold" style={{ color: theme.colors.warning }}>
-								+{additionalItems.length}
-							</span>
-						</div>
-
-						{/* Expanded dropdown - positioned above to avoid going off-screen */}
-						{isExpanded && (
-							<div className="absolute right-0 bottom-full pb-1 z-50">
-								<div
-									className="min-w-[320px] rounded-lg shadow-xl overflow-hidden"
-									style={{
-										backgroundColor: theme.colors.bgSidebar,
-										border: `1px solid ${theme.colors.border}`,
-									}}
-								>
-									<div
-										className="px-3 py-1.5 text-[10px] uppercase tracking-wide font-semibold"
-										style={{
-											color: theme.colors.textDim,
-											backgroundColor: theme.colors.bgActivity,
-										}}
-									>
-										All Thinking Sessions
-									</div>
-									{thinkingItems.map((item) => (
-										<ThinkingItemRow
-											key={`${item.session.id}-${item.tab?.id ?? 'legacy'}`}
-											item={item}
-											theme={theme}
-											namedSessions={namedSessions}
-											onSessionClick={onSessionClick}
-										/>
-									))}
-								</div>
-							</div>
-						)}
+						<span className="text-[10px] font-bold" style={{ color: theme.colors.warning }}>
+							+{additionalItems.length}
+						</span>
 					</div>
 				)}
 
@@ -498,6 +614,42 @@ function ThinkingStatusPillInner({
 						</button>
 					</>
 				)}
+
+				{/* Expanded dropdown — anchored to the pill so its width matches the pill. */}
+				{hasMultiple && isExpanded && (
+					<div
+						className="absolute inset-x-0 bottom-full pb-1 z-50"
+						onMouseEnter={handleHoverEnter}
+						onMouseLeave={handleHoverLeave}
+					>
+						<div
+							className="rounded-lg shadow-xl overflow-hidden"
+							style={{
+								backgroundColor: theme.colors.bgSidebar,
+								border: `1px solid ${theme.colors.border}`,
+							}}
+						>
+							<div
+								className="px-3 py-1.5 text-[10px] uppercase tracking-wide font-semibold"
+								style={{
+									color: theme.colors.textDim,
+									backgroundColor: theme.colors.bgActivity,
+								}}
+							>
+								All Thinking Sessions
+							</div>
+							{thinkingItems.map((item) => (
+								<ThinkingItemRow
+									key={`${item.session.id}-${item.tab?.id ?? 'legacy'}`}
+									item={item}
+									theme={theme}
+									namedSessions={namedSessions}
+									onSessionClick={onSessionClick}
+								/>
+							))}
+						</div>
+					</div>
+				)}
 			</div>
 			{/* End Thinking Pill */}
 		</div>
@@ -518,12 +670,32 @@ export const ThinkingStatusPill = memo(ThinkingStatusPillInner, (prevProps, next
 		if (
 			prevAutoRun?.completedTasks !== nextAutoRun?.completedTasks ||
 			prevAutoRun?.totalTasks !== nextAutoRun?.totalTasks ||
+			prevAutoRun?.completedTasksAcrossAllDocs !== nextAutoRun?.completedTasksAcrossAllDocs ||
+			prevAutoRun?.totalTasksAcrossAllDocs !== nextAutoRun?.totalTasksAcrossAllDocs ||
 			prevAutoRun?.isStopping !== nextAutoRun?.isStopping ||
 			prevAutoRun?.startTime !== nextAutoRun?.startTime
 		) {
 			return false;
 		}
-		// Don't need to check thinking items when AutoRun is active
+		// Also check concurrent thinking items (shown as +N badge on AutoRun pill).
+		// AutoRun doesn't mark its tab as busy, so every thinkingItem is a concurrent item.
+		if (prevProps.activeSessionId !== nextProps.activeSessionId) return false;
+		const prevConcurrent = prevProps.thinkingItems;
+		const nextConcurrent = nextProps.thinkingItems;
+		if (prevConcurrent.length !== nextConcurrent.length) return false;
+		for (let i = 0; i < prevConcurrent.length; i++) {
+			const prev = prevConcurrent[i];
+			const next = nextConcurrent[i];
+			if (
+				prev.session.id !== next.session.id ||
+				prev.session.name !== next.session.name ||
+				prev.tab?.id !== next.tab?.id ||
+				prev.tab?.name !== next.tab?.name ||
+				prev.tab?.thinkingStartTime !== next.tab?.thinkingStartTime
+			) {
+				return false;
+			}
+		}
 		return prevProps.theme === nextProps.theme;
 	}
 
