@@ -34,6 +34,7 @@ describe('PlaygroundPanel header and tabs', () => {
 		expect(screen.getByRole('button', { name: /Confetti/ })).toHaveStyle({
 			color: mockTheme.colors.accent,
 			borderColor: mockTheme.colors.accent,
+			backgroundColor: 'rgba(189, 147, 249, 0.1)',
 		});
 	});
 });

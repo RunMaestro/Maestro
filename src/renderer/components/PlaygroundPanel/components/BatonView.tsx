@@ -125,7 +125,7 @@ export function BatonView({ theme, baton }: BatonViewProps) {
 							className="px-3 py-1 rounded text-sm font-medium transition-colors"
 							style={{
 								backgroundColor: baton.batonActive ? theme.colors.accent : theme.colors.bgMain,
-								color: baton.batonActive ? '#fff' : theme.colors.textMain,
+								color: baton.batonActive ? theme.colors.accentForeground : theme.colors.textMain,
 							}}
 						>
 							{baton.batonActive ? 'Active' : 'Paused'}
@@ -261,7 +261,10 @@ export function BatonView({ theme, baton }: BatonViewProps) {
 										style={{
 											backgroundColor:
 												baton.easing === easing ? theme.colors.accent : theme.colors.bgMain,
-											color: baton.easing === easing ? '#fff' : theme.colors.textMain,
+											color:
+												baton.easing === easing
+													? theme.colors.accentForeground
+													: theme.colors.textMain,
 										}}
 									>
 										{easing.startsWith('cubic') ? 'material' : easing}
@@ -278,7 +281,7 @@ export function BatonView({ theme, baton }: BatonViewProps) {
 						className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded font-medium transition-colors"
 						style={{
 							backgroundColor: baton.batonCopySuccess ? theme.colors.success : theme.colors.bgMain,
-							color: baton.batonCopySuccess ? '#fff' : theme.colors.textMain,
+							color: baton.batonCopySuccess ? theme.colors.accentForeground : theme.colors.textMain,
 							border: `1px solid ${baton.batonCopySuccess ? theme.colors.success : theme.colors.border}`,
 						}}
 					>

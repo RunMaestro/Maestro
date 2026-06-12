@@ -1,8 +1,12 @@
 import { act, renderHook } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { useAchievementPlayground } from '../../../../../renderer/components/PlaygroundPanel/hooks';
 
 describe('useAchievementPlayground', () => {
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
 	it('builds default mock Auto Run stats', () => {
 		const { result } = renderHook(() => useAchievementPlayground());
 
@@ -31,7 +35,6 @@ describe('useAchievementPlayground', () => {
 		expect(result.current.mockAutoRunStats.badgeHistory.map((entry) => entry.level)).toEqual([
 			1, 2,
 		]);
-		vi.useRealTimers();
 	});
 
 	it('preserves the current state when the None badge button action is invoked', () => {

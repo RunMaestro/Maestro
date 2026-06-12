@@ -23,6 +23,9 @@ export function PlaygroundPanel({ theme, themeMode, onClose }: PlaygroundPanelPr
 
 	const { tabs, achievements, confetti, baton } = usePlaygroundData();
 	const { activeTab, setActiveTab } = tabs;
+	const ovationBadge = CONDUCTOR_BADGES.find(
+		(badge) => badge.level === achievements.ovationBadgeLevel
+	);
 
 	useModalLayer(MODAL_PRIORITIES.STANDING_OVATION - 1, 'Developer Playground', () =>
 		onCloseRef.current()
@@ -60,11 +63,11 @@ export function PlaygroundPanel({ theme, themeMode, onClose }: PlaygroundPanelPr
 				</div>
 			</div>
 
-			{achievements.showStandingOvation && (
+			{achievements.showStandingOvation && ovationBadge && (
 				<StandingOvationOverlay
 					theme={theme}
 					themeMode={themeMode}
-					badge={CONDUCTOR_BADGES.find((b) => b.level === achievements.ovationBadgeLevel)!}
+					badge={ovationBadge}
 					cumulativeTimeMs={achievements.mockCumulativeTime}
 					recordTimeMs={achievements.mockLongestRun}
 					isNewRecord={achievements.ovationIsNewRecord}

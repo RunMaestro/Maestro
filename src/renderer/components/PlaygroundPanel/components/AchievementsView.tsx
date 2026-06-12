@@ -38,7 +38,7 @@ export function AchievementsView({ theme, achievements }: AchievementsViewProps)
 											: theme.colors.bgMain,
 									color:
 										achievements.mockAutoRunStats.currentBadgeLevel === level
-											? '#fff'
+											? theme.colors.accentForeground
 											: theme.colors.textMain,
 								}}
 							>
@@ -157,7 +157,7 @@ export function AchievementsView({ theme, achievements }: AchievementsViewProps)
 							className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded font-medium transition-colors"
 							style={{
 								backgroundColor: theme.colors.accent,
-								color: '#fff',
+								color: theme.colors.accentForeground,
 							}}
 						>
 							<Play className="w-4 h-4" />
@@ -223,8 +223,8 @@ export function AchievementsView({ theme, achievements }: AchievementsViewProps)
 							onClick={achievements.triggerKeyboardMastery}
 							className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded font-medium transition-colors"
 							style={{
-								backgroundColor: '#9B59B6',
-								color: '#fff',
+								backgroundColor: theme.colors.accent,
+								color: theme.colors.accentForeground,
 							}}
 						>
 							<Music className="w-4 h-4" />

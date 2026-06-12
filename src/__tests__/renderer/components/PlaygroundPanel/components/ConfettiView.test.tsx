@@ -60,7 +60,7 @@ describe('ConfettiView', () => {
 		const firstColorInput = document.querySelector('input[type="color"]') as HTMLInputElement;
 		fireEvent.change(firstColorInput, { target: { value: '#00ff00' } });
 		fireEvent.click(screen.getByRole('button', { name: '+' }));
-		fireEvent.click(screen.getAllByRole('button', { name: '×' })[0]);
+		fireEvent.click(screen.getAllByRole('button', { name: /Remove color/ })[0]);
 
 		expect(confetti.setColorAt).toHaveBeenCalledWith(0, '#00ff00');
 		expect(confetti.addColor).toHaveBeenCalledTimes(1);

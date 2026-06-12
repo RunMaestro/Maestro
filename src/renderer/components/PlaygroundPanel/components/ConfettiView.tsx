@@ -40,7 +40,7 @@ export function ConfettiView({ theme, confetti }: ConfettiViewProps) {
 										className="w-16 h-16 rounded-lg text-xs font-medium transition-all hover:scale-105"
 										style={{
 											backgroundColor: isSelected ? theme.colors.accent : theme.colors.bgMain,
-											color: isSelected ? '#fff' : theme.colors.textDim,
+											color: isSelected ? theme.colors.accentForeground : theme.colors.textDim,
 											border: `2px solid ${isSelected ? theme.colors.accent : theme.colors.border}`,
 										}}
 										title={label}
@@ -162,7 +162,9 @@ export function ConfettiView({ theme, confetti }: ConfettiViewProps) {
 									backgroundColor: confetti.shapes.includes(shape)
 										? theme.colors.accent
 										: theme.colors.bgMain,
-									color: confetti.shapes.includes(shape) ? '#fff' : theme.colors.textMain,
+									color: confetti.shapes.includes(shape)
+										? theme.colors.accentForeground
+										: theme.colors.textMain,
 								}}
 							>
 								{shapeLabel(shape)}
@@ -314,7 +316,12 @@ export function ConfettiView({ theme, confetti }: ConfettiViewProps) {
 								{confetti.colors.length > 1 && (
 									<button
 										onClick={() => confetti.removeColor(idx)}
-										className="absolute -top-1 -right-1 w-4 h-4 rounded-full text-xs bg-red-500 text-white opacity-0 group-hover:opacity-100 transition-opacity"
+										className="absolute -top-1 -right-1 w-4 h-4 rounded-full text-xs opacity-0 group-hover:opacity-100 transition-opacity"
+										style={{
+											backgroundColor: theme.colors.error,
+											color: theme.colors.accentForeground,
+										}}
+										aria-label={`Remove color ${idx + 1}`}
 									>
 										×
 									</button>
@@ -339,7 +346,7 @@ export function ConfettiView({ theme, confetti }: ConfettiViewProps) {
 					className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-lg font-bold text-lg transition-all hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed"
 					style={{
 						backgroundColor: theme.colors.accent,
-						color: '#fff',
+						color: theme.colors.accentForeground,
 					}}
 				>
 					<Sparkles className="w-5 h-5" />
@@ -351,7 +358,7 @@ export function ConfettiView({ theme, confetti }: ConfettiViewProps) {
 					className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded font-medium transition-colors"
 					style={{
 						backgroundColor: confetti.copySuccess ? theme.colors.success : theme.colors.bgMain,
-						color: confetti.copySuccess ? '#fff' : theme.colors.textMain,
+						color: confetti.copySuccess ? theme.colors.accentForeground : theme.colors.textMain,
 						border: `1px solid ${confetti.copySuccess ? theme.colors.success : theme.colors.border}`,
 					}}
 				>

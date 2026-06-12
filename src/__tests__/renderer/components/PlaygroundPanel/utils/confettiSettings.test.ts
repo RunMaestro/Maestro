@@ -19,6 +19,14 @@ describe('PlaygroundPanel confetti helpers', () => {
 		]);
 	});
 
+	it('skips invalid selected origin keys', () => {
+		const origins = originKeysToOrigins(
+			new Set(['bad', '0-0-extra', '1', '1-9', 'x-y', '-1-0', '2-1'])
+		);
+
+		expect(origins).toEqual([{ x: 0.5, y: 1 }]);
+	});
+
 	it('returns no launch options when no origins are selected', () => {
 		expect(buildConfettiLaunchOptions(DEFAULT_CONFETTI_SETTINGS, new Set())).toEqual([]);
 	});

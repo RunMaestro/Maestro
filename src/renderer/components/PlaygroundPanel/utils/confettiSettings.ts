@@ -83,8 +83,20 @@ export const DEFAULT_SELECTED_ORIGINS = new Set(['2-1']);
 export function originKeysToOrigins(selectedOrigins: Set<string>): ConfettiOrigin[] {
 	const origins: ConfettiOrigin[] = [];
 	selectedOrigins.forEach((key) => {
-		const [row, col] = key.split('-').map(Number);
-		const [x, y] = GRID_POSITIONS[row][col];
+		const keyParts = key.split('-');
+		if (keyParts.length !== 2) return;
+
+		const [row, col] = keyParts.map(Number);
+		if (!Number.isFinite(row) || !Number.isFinite(col)) return;
+		if (row < 0 || row >= GRID_POSITIONS.length) return;
+
+		const rowPositions = GRID_POSITIONS[row];
+		if (!rowPositions || col < 0 || col >= rowPositions.length) return;
+
+		const position = rowPositions[col];
+		if (!position) return;
+
+		const [x, y] = position;
 		origins.push({ x, y });
 	});
 	return origins;
