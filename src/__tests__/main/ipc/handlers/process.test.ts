@@ -206,6 +206,10 @@ vi.mock('../../../../shared/platformDetection', () => ({
 	isLinux: vi.fn(() => process.platform === 'linux'),
 }));
 
+vi.mock('../../../../main/process-manager/utils/childProcessInfo', () => ({
+	getChildProcesses: vi.fn().mockResolvedValue([]),
+}));
+
 // Mock fs/promises so the new temp-file tests can assert on writeFile/unlink
 // without touching the real filesystem. Other tests in this file don't use
 // fs/promises, so the module-level mock is safe.
