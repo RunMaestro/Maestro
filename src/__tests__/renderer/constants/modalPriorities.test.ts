@@ -122,8 +122,9 @@ describe('modalPriorities', () => {
 			expect(MODAL_PRIORITIES.FILE_PREVIEW).toBeLessThan(MODAL_PRIORITIES.SETTINGS);
 		});
 
-		it('LIGHTBOX should have lower priority than most modals', () => {
-			expect(MODAL_PRIORITIES.LIGHTBOX).toBeLessThan(MODAL_PRIORITIES.SETTINGS);
+		it('LIGHTBOX should have higher priority than prompt composers', () => {
+			expect(MODAL_PRIORITIES.LIGHTBOX).toBeGreaterThan(MODAL_PRIORITIES.PROMPT_COMPOSER);
+			expect(MODAL_PRIORITIES.LIGHTBOX).toBeGreaterThan(MODAL_PRIORITIES.AGENT_PROMPT_COMPOSER);
 		});
 
 		it('SLASH_AUTOCOMPLETE and FILE_TREE_FILTER should have very low priorities', () => {
@@ -202,12 +203,9 @@ describe('modalPriorities', () => {
 			expect(MODAL_PRIORITIES.ABOUT).toBeLessThan(700);
 		});
 
-		it('overlays and previews should be in 100-399 range', () => {
+		it('lower overlays and previews should be in 100-399 range', () => {
 			expect(MODAL_PRIORITIES.FILE_PREVIEW).toBeGreaterThanOrEqual(100);
 			expect(MODAL_PRIORITIES.FILE_PREVIEW).toBeLessThan(400);
-
-			expect(MODAL_PRIORITIES.LIGHTBOX).toBeGreaterThanOrEqual(100);
-			expect(MODAL_PRIORITIES.LIGHTBOX).toBeLessThan(400);
 		});
 
 		it('autocomplete should be in 1-99 range', () => {

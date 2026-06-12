@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { GitBranch, Info } from 'lucide-react';
 import type { Theme, Session, WorktreeRunTarget } from '../types';
-import { gitService } from '../services/git';
 import { getStatusColor } from '../utils/theme';
 import { captureException } from '../utils/sentry';
 
@@ -52,7 +51,9 @@ export function WorktreeRunSection({
 		setBranchLoadError(false);
 
 		Promise.all([
-			gitService.getBranches(activeSession.cwd),
+			window.maestro.git
+				.branches(activeSession.cwd, sshRemoteId)
+				.then((result) => result.branches || []),
 			window.maestro.git.branch(activeSession.cwd, sshRemoteId),
 		])
 			.then(([result, branchResult]) => {

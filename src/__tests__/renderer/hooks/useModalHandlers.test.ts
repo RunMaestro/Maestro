@@ -2357,7 +2357,7 @@ describe('useModalHandlers', () => {
 			expect(useModalStore.getState().getData('gitDiff')?.diff).toBe('terminal cwd diff');
 		});
 
-		it('does not open preview when git diff is empty', async () => {
+		it('opens preview when git diff is empty', async () => {
 			const session = createMockSession({
 				isGitRepo: true,
 				cwd: '/projects/my-repo',
@@ -2375,7 +2375,8 @@ describe('useModalHandlers', () => {
 			});
 
 			expect(gitService.getDiff).toHaveBeenCalledWith('/projects/my-repo', undefined, undefined);
-			expect(useModalStore.getState().isOpen('gitDiff')).toBe(false);
+			expect(useModalStore.getState().isOpen('gitDiff')).toBe(true);
+			expect(useModalStore.getState().getData('gitDiff')?.diff).toBe('');
 		});
 	});
 

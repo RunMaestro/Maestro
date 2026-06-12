@@ -562,7 +562,13 @@ export const MainPanel = React.memo(
 		// Compute context tokens and percentage using the shared helper.
 		// Handles accumulated multi-tool turns by falling back to session.contextUsage.
 		const { tokens: activeTabContextTokens, percentage: activeTabContextUsage } = useMemo(() => {
-			if (!activeTab?.usageStats) return { tokens: 0, percentage: 0 };
+			if (!activeTab?.usageStats) {
+				return {
+					tokens: 0,
+					percentage:
+						typeof activeSession?.contextUsage === 'number' ? activeSession.contextUsage : 0,
+				};
+			}
 			return calculateContextDisplay(
 				{
 					inputTokens: activeTab.usageStats.inputTokens,
@@ -751,9 +757,7 @@ export const MainPanel = React.memo(
 					: activeSession.cwd;
 			const diff = await gitService.getDiff(cwd, undefined, filePreviewSshRemoteId);
 
-			if (diff.diff) {
-				setGitDiffPreview(diff.diff);
-			}
+			setGitDiffPreview(diff.diff ?? '');
 		};
 
 		// Copy to clipboard handler with flash notification

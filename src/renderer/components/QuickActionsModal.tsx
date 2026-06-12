@@ -765,9 +765,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 									: undefined) ||
 								undefined;
 							const diff = await gitService.getDiff(cwd, undefined, sshRemoteId);
-							if (diff.diff) {
-								setGitDiffPreview(diff.diff);
-							}
+							setGitDiffPreview(diff.diff ?? '');
 							setQuickActionOpen(false);
 						},
 					},

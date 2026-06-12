@@ -104,6 +104,9 @@ describe('WorktreeRunSection', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		// Restore git.branch to default mock (previous tests may override it)
+		(window.maestro.git as Record<string, unknown>).branches = vi
+			.fn()
+			.mockResolvedValue({ branches: ['main', 'develop'] });
 		(window.maestro.git as Record<string, unknown>).branch = vi
 			.fn()
 			.mockResolvedValue({ stdout: 'main' });
@@ -1128,8 +1131,9 @@ describe('WorktreeRunSection', () => {
 	it('shows error message when getBranches fails', async () => {
 		const session = createMockSession();
 		const scanMock = vi.fn().mockResolvedValue({ gitSubdirs: [] });
+		const branchesMock = vi.fn().mockRejectedValue(new Error('git not found'));
 		(window.maestro.git as Record<string, unknown>).scanWorktreeDirectory = scanMock;
-		vi.mocked(gitService.getBranches).mockRejectedValue(new Error('git not found'));
+		(window.maestro.git as Record<string, unknown>).branches = branchesMock;
 
 		render(
 			<WorktreeRunSection
@@ -1162,10 +1166,11 @@ describe('WorktreeRunSection', () => {
 
 	it('ignores branch-loading failures after unmount', async () => {
 		const session = createMockSession();
-		const branchLoad = createDeferred<string[]>();
+		const branchLoad = createDeferred<{ branches: string[] }>();
+		const branchesMock = vi.fn().mockReturnValue(branchLoad.promise);
 		const scanMock = vi.fn().mockResolvedValue({ gitSubdirs: [] });
 		(window.maestro.git as Record<string, unknown>).scanWorktreeDirectory = scanMock;
-		vi.mocked(gitService.getBranches).mockReturnValue(branchLoad.promise);
+		(window.maestro.git as Record<string, unknown>).branches = branchesMock;
 
 		const { unmount } = render(
 			<WorktreeRunSection
@@ -1185,7 +1190,7 @@ describe('WorktreeRunSection', () => {
 			});
 		});
 		await waitFor(() => {
-			expect(gitService.getBranches).toHaveBeenCalledWith('/project');
+			expect(branchesMock).toHaveBeenCalledWith('/project', undefined);
 		});
 		unmount();
 

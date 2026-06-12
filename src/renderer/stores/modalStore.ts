@@ -739,7 +739,7 @@ export function getModalActions() {
 
 		// Git Diff Viewer
 		setGitDiffPreview: (diff: string | null) =>
-			diff ? openModal('gitDiff', { diff }) : closeModal('gitDiff'),
+			diff !== null ? openModal('gitDiff', { diff }) : closeModal('gitDiff'),
 
 		// Git Log Viewer
 		setGitLogOpen: (open: boolean) => (open ? openModal('gitLog') : closeModal('gitLog')),

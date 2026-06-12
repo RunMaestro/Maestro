@@ -811,9 +811,7 @@ export function useModalHandlers(
 			undefined;
 		const diff = await gitService.getDiff(cwd, undefined, sshRemoteId);
 
-		if (diff.diff) {
-			getModalActions().setGitDiffPreview(diff.diff);
-		}
+		getModalActions().setGitDiffPreview(diff.diff ?? '');
 	}, [activeSession]);
 
 	// ====================================================================

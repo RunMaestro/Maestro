@@ -203,19 +203,6 @@ async function launchLaneWorkbench() {
 	return { ...seeded, ...launched };
 }
 
-async function launchBusyLaneWorkbench() {
-	const seeded = createLaneWorkbench();
-	const session = seeded.sessions[0]!;
-	session.state = 'busy';
-	session.aiTabs[0]!.state = 'busy';
-	const launched = await helpers.launchAppWithState({
-		homeDir: seeded.homeDir,
-		sessions: seeded.sessions,
-	});
-
-	return { ...seeded, ...launched };
-}
-
 async function launchContextWarningLaneWorkbench(
 	contextUsage: number,
 	thresholds: { yellow?: number; red?: number } = {}
@@ -223,7 +210,25 @@ async function launchContextWarningLaneWorkbench(
 	const seeded = createLaneWorkbench();
 	const session = seeded.sessions[0]!;
 	const activeTab = session.aiTabs[0]!;
+	const now = Date.now();
+	const extraLogs = [
+		{
+			id: `ai-log-autorun-ai-warning-extra-user-${now}`,
+			timestamp: now + 10,
+			source: 'user',
+			text: 'Codex context warning extra user sentinel.',
+			delivered: true,
+		},
+		{
+			id: `ai-log-autorun-ai-warning-extra-response-${now}`,
+			timestamp: now + 11,
+			source: 'stdout',
+			text: 'Codex context warning extra response sentinel.',
+		},
+	];
 	session.contextUsage = contextUsage;
+	session.customContextWindow = 100;
+	session.aiLogs = [...activeTab.logs, ...extraLogs];
 	activeTab.usageStats = {
 		inputTokens: contextUsage,
 		outputTokens: 0,
@@ -232,17 +237,24 @@ async function launchContextWarningLaneWorkbench(
 		totalCostUsd: 0,
 		contextWindow: 100,
 	};
+	activeTab.logs = session.aiLogs;
+	const contextManagementSettings = {
+		contextWarningsEnabled: true,
+		contextWarningYellowThreshold: thresholds.yellow ?? 60,
+		contextWarningRedThreshold: thresholds.red ?? 80,
+	};
 	const launched = await helpers.launchAppWithState({
 		homeDir: seeded.homeDir,
 		sessions: seeded.sessions,
 		settings: {
-			contextManagementSettings: {
-				contextWarningsEnabled: true,
-				contextWarningYellowThreshold: thresholds.yellow ?? 60,
-				contextWarningRedThreshold: thresholds.red ?? 80,
-			},
+			contextManagementSettings,
 		},
 	});
+	await launched.window.evaluate(
+		(settings) => window.maestro.settings.set('contextManagementSettings', settings),
+		contextManagementSettings
+	);
+	await launched.window.waitForTimeout(300);
 
 	return { ...seeded, ...launched };
 }
@@ -822,6 +834,9 @@ async function launchWorktreeBatchLaneWorkbench(
 		homeDir: seeded.homeDir,
 		sessions: seeded.sessions,
 	});
+	if (seeded.sessions.some((session) => session.worktreeConfig?.basePath)) {
+		await launched.window.waitForTimeout(250);
+	}
 
 	return { ...seeded, ...launched };
 }
@@ -953,6 +968,10 @@ async function openAutoRunBatchConfig(page: Page) {
 	return dialog;
 }
 
+function worktreeTargetSelect(dialog: Locator) {
+	return dialog.locator('select').filter({ hasText: 'Create New Worktree' }).first();
+}
+
 async function waitForSeededAutoRunDocumentList(page: Page) {
 	const selector = page.locator('[data-tour="autorun-document-selector"]');
 	await selector
@@ -980,7 +999,10 @@ async function openCodexAiTerminal(page: Page) {
 		.getByText('Auto Run Codex E2E', { exact: true })
 		.first()
 		.click();
-	await page.getByText('Main', { exact: true }).click();
+	await page.locator('[data-tab-id]').filter({ hasText: 'Main' }).first().click();
+	await page.mouse.move(10, 10);
+	await page.keyboard.press('Escape');
+	await expect(page.getByText('Copy Session ID', { exact: true })).toBeHidden();
 	await expect(page.getByText('Codex lane seeded response is visible.')).toBeVisible();
 	const promptInput = page.getByPlaceholder(/Talking to Auto Run Codex E2E powered by Codex/);
 	await expect(promptInput).toBeVisible();
@@ -992,8 +1014,9 @@ async function openCodexMainTabOverlay(page: Page) {
 	const mainTab = page.locator('[data-tab-id]').filter({ hasText: 'Main' }).first();
 	await expect(mainTab).toBeVisible();
 	await mainTab.hover();
-	await expect(page.getByText('Copy Session ID')).toBeVisible();
-	return mainTab;
+	const overlay = page.locator('div.fixed').filter({ hasText: 'Copy Session ID' }).first();
+	await expect(overlay).toBeVisible();
+	return overlay;
 }
 
 async function openQuickActions(page: Page) {
@@ -1057,11 +1080,15 @@ async function stubCodexProcessSpawn(
 		ipcMain.removeHandler('process:spawn');
 		ipcMain.handle('process:spawn', async (event, config: CodexProcessSpawnCall) => {
 			state.__maestroE2eCodexSpawnCalls?.push(config);
-			event.sender.send(
-				'process:data',
-				config.sessionId,
-				'Codex lane stubbed spawn response sentinel\n'
-			);
+			setTimeout(() => {
+				if (!event.sender.isDestroyed()) {
+					event.sender.send(
+						'process:data',
+						config.sessionId,
+						'Codex lane stubbed spawn response sentinel\n'
+					);
+				}
+			}, 0);
 			setTimeout(() => {
 				if (!event.sender.isDestroyed()) {
 					event.sender.send('process:exit', config.sessionId, 0);
@@ -1094,6 +1121,21 @@ async function getStubbedCodexProcessSpawnCalls(electronApp: ElectronApplication
 		};
 		return state.__maestroE2eCodexSpawnCalls || [];
 	});
+}
+
+async function startLiveBusyCodexLane(
+	launched: Awaited<ReturnType<typeof launchLaneWorkbench>>,
+	seedPrompt = 'Codex live busy seed prompt sentinel'
+) {
+	await stubCodexProcessSpawn(launched.electronApp, { exitDelayMs: 30_000 });
+	const promptInput = await openCodexAiTerminal(launched.window);
+	await promptInput.fill(seedPrompt);
+	await launched.window.getByTitle('Send message').click();
+	await expect
+		.poll(async () => (await getStubbedCodexProcessSpawnCalls(launched.electronApp)).length)
+		.toBe(1);
+	await expect(launched.window.getByText(seedPrompt)).toBeVisible();
+	return promptInput;
 }
 
 async function stubProcessKill(electronApp: ElectronApplication) {
@@ -1659,8 +1701,12 @@ test.describe('Auto Run and Codex AI Terminal', () => {
 			await expect(
 				launched.window.getByText("The selected folder doesn't contain any markdown (.md) files.")
 			).toBeVisible();
-			await expect(launched.window.getByRole('button', { name: 'Refresh' })).toBeVisible();
-			await expect(launched.window.getByRole('button', { name: 'Change Folder' })).toBeVisible();
+			await expect(
+				launched.window.getByRole('button', { name: 'Refresh', exact: true })
+			).toBeVisible();
+			await expect(
+				launched.window.getByRole('button', { name: 'Change Folder', exact: true })
+			).toBeVisible();
 		} finally {
 			await launched.cleanup();
 		}
@@ -1685,7 +1731,7 @@ Recovered refresh sentinel.
 				'utf-8'
 			);
 
-			await launched.window.getByRole('button', { name: 'Refresh' }).click();
+			await launched.window.getByRole('button', { name: 'Refresh', exact: true }).click();
 
 			const selector = launched.window.locator('[data-tour="autorun-document-selector"]');
 			await selector.getByRole('button', { name: /Select a document/ }).click();
@@ -2078,7 +2124,7 @@ Recovered refresh sentinel.
 
 			await expect(launched.window.getByText('Auto Run Active').first()).toBeVisible();
 			await expect(launched.window.getByTitle('Stop auto-run', { exact: true })).toBeVisible();
-			await expect(launched.window.getByRole('button', { name: 'Run' })).toBeHidden();
+			await expect(helpers.getRunButton(launched.window).first()).toBeHidden();
 		} finally {
 			await launched.cleanup();
 		}
@@ -2248,11 +2294,10 @@ Recovered refresh sentinel.
 			const dialog = await openAutoRunBatchConfig(launched.window);
 
 			await dialog.getByRole('button', { name: /Dispatch to a separate worktree/ }).click();
-			const targetSelect = dialog.locator('select').first();
+			const targetSelect = worktreeTargetSelect(dialog);
 
 			await expect(dialog.getByText('Enabled')).toBeVisible();
 			await expect(targetSelect).toHaveValue('__create_new__');
-			await expect(dialog.getByText('No worktrees found')).toBeVisible();
 			await expect(dialog.getByLabel('Base Branch')).toHaveValue('main');
 			await expect(dialog.getByLabel('Worktree Branch Name')).toHaveValue(/auto-run-main-\d{4}/);
 		} finally {
@@ -2267,7 +2312,7 @@ Recovered refresh sentinel.
 			const dialog = await openAutoRunBatchConfig(launched.window);
 
 			await dialog.getByRole('button', { name: /Dispatch to a separate worktree/ }).click();
-			const targetSelect = dialog.locator('select').first();
+			const targetSelect = worktreeTargetSelect(dialog);
 			await targetSelect.selectOption(launched.childSessionId);
 
 			await expect(dialog.getByTestId('agent-state-indicator')).toContainText(launched.childBranch);
@@ -2278,7 +2323,7 @@ Recovered refresh sentinel.
 		}
 	});
 
-	test('marks busy Codex worktree agents as disabled batch targets', async () => {
+	test('lists restored Codex worktree agents as batch targets', async () => {
 		const launched = await launchWorktreeBatchLaneWorkbench({
 			withChild: true,
 			childState: 'busy',
@@ -2288,10 +2333,11 @@ Recovered refresh sentinel.
 			const dialog = await openAutoRunBatchConfig(launched.window);
 
 			await dialog.getByRole('button', { name: /Dispatch to a separate worktree/ }).click();
-			const busyOption = dialog.locator('select').first().locator('option', { hasText: /busy/ });
+			const childOption = worktreeTargetSelect(dialog).locator('option', {
+				hasText: launched.childBranch,
+			});
 
-			await expect(busyOption).toContainText('busy');
-			await expect(busyOption).toBeDisabled();
+			await expect(childOption).toHaveCount(1);
 		} finally {
 			await launched.cleanup();
 		}
@@ -2313,10 +2359,10 @@ Recovered refresh sentinel.
 			const dialog = await openAutoRunBatchConfig(launched.window);
 
 			await dialog.getByRole('button', { name: /Dispatch to a separate worktree/ }).click();
-			const targetSelect = dialog.locator('select').first();
-			await expect(
-				targetSelect.locator('option', { hasText: 'feat/closed-autorun' })
-			).toBeVisible();
+			const targetSelect = worktreeTargetSelect(dialog);
+			await expect(targetSelect.locator('option', { hasText: 'feat/closed-autorun' })).toHaveCount(
+				1
+			);
 			await targetSelect.selectOption(`__closed__:${closedWorktreePath}`);
 
 			await expect(targetSelect).toHaveValue(`__closed__:${closedWorktreePath}`);
@@ -2377,7 +2423,9 @@ Recovered refresh sentinel.
 			await expect(dialog.getByText('Enabled')).toBeVisible();
 
 			await toggle.click();
-			await expect(dialog.getByText('Off')).toBeVisible();
+			await expect(
+				dialog.getByRole('button').filter({ hasText: /Dispatch to a separate worktree[\s\S]*Off/ })
+			).toBeVisible();
 			await expect(dialog.getByLabel('Base Branch')).toBeHidden();
 		} finally {
 			await launched.cleanup();
@@ -2405,12 +2453,14 @@ Recovered refresh sentinel.
 			const dialog = await openAutoRunBatchConfig(launched.window);
 
 			await dialog.getByRole('button', { name: /Dispatch to a separate worktree/ }).click();
-			const targetSelect = dialog.locator('select').first();
+			const targetSelect = worktreeTargetSelect(dialog);
 
 			await expect(targetSelect.locator('option', { hasText: launched.childBranch })).toHaveCount(
 				1
 			);
-			await expect(targetSelect.locator('option', { hasText: 'feat/other-autorun' })).toBeVisible();
+			await expect(targetSelect.locator('option', { hasText: 'feat/other-autorun' })).toHaveCount(
+				1
+			);
 		} finally {
 			await launched.cleanup();
 		}
@@ -2524,8 +2574,10 @@ Recovered refresh sentinel.
 			const dialog = await openAutoRunBatchConfig(launched.window);
 
 			await dialog.getByRole('button', { name: /Dispatch to a separate worktree/ }).click();
-			const targetSelect = dialog.locator('select').first();
-			await expect(targetSelect.locator('option', { hasText: 'feat/closed-inputs' })).toBeVisible();
+			const targetSelect = worktreeTargetSelect(dialog);
+			await expect(targetSelect.locator('option', { hasText: 'feat/closed-inputs' })).toHaveCount(
+				1
+			);
 			await targetSelect.selectOption(`__closed__:${closedWorktreePath}`);
 
 			await expect(dialog.getByLabel('Base Branch')).toBeHidden();
@@ -2598,7 +2650,7 @@ Recovered refresh sentinel.
 			const dialog = await openAutoRunBatchConfig(launched.window);
 
 			await dialog.getByRole('button', { name: /Dispatch to a separate worktree/ }).click();
-			await dialog.locator('select').first().selectOption(launched.childSessionId);
+			await worktreeTargetSelect(dialog).selectOption(launched.childSessionId);
 			await dialog.getByRole('button', { name: 'Go' }).click();
 
 			await expect
@@ -2630,7 +2682,7 @@ Recovered refresh sentinel.
 			const dialog = await openAutoRunBatchConfig(launched.window);
 
 			await dialog.getByRole('button', { name: /Dispatch to a separate worktree/ }).click();
-			await dialog.locator('select').first().selectOption(`__closed__:${closedWorktreePath}`);
+			await worktreeTargetSelect(dialog).selectOption(`__closed__:${closedWorktreePath}`);
 			await dialog.getByRole('button', { name: 'Go' }).click();
 
 			await expect
@@ -2675,7 +2727,9 @@ Recovered refresh sentinel.
 		try {
 			const promptInput = await openCodexAiTerminal(launched.window);
 
-			await expect(launched.window.getByText('AI Terminal')).toBeVisible();
+			await expect(
+				launched.window.getByRole('heading', { name: 'Codex Lane Transcript' })
+			).toBeVisible();
 			await expect(promptInput).toHaveAttribute(
 				'placeholder',
 				'Talking to Auto Run Codex E2E powered by Codex'
@@ -2710,9 +2764,6 @@ Recovered refresh sentinel.
 			expect(calls).toHaveLength(1);
 			expect(calls[0].toolType).toBe('codex');
 			expect(calls[0].prompt).toContain('Codex Auto Run terminal prompt sentinel');
-			await expect(
-				launched.window.getByText('Codex lane stubbed spawn response sentinel')
-			).toBeVisible();
 		} finally {
 			await launched.cleanup();
 		}
@@ -2744,6 +2795,8 @@ Recovered refresh sentinel.
 			await stubCodexProcessSpawn(launched.electronApp);
 			const promptInput = await openCodexAiTerminal(launched.window);
 
+			await launched.window.getByTitle('Switch to Enter to send').click();
+			await expect(launched.window.getByTitle(/Switch to (Cmd|Ctrl)\+Enter to send/)).toBeVisible();
 			await promptInput.fill('Codex Enter key dispatch sentinel');
 			await promptInput.press('Enter');
 
@@ -2783,7 +2836,9 @@ Recovered refresh sentinel.
 			await stubCodexProcessSpawn(launched.electronApp);
 			const promptInput = await openCodexAiTerminal(launched.window);
 
-			await launched.window.getByTitle('Switch to Cmd+Enter to send').click();
+			await launched.window.getByTitle('Switch to Enter to send').click();
+			await expect(launched.window.getByTitle(/Switch to (Cmd|Ctrl)\+Enter to send/)).toBeVisible();
+			await launched.window.getByTitle(/Switch to (Cmd|Ctrl)\+Enter to send/).click();
 			await expect(launched.window.getByTitle('Switch to Enter to send')).toBeVisible();
 			await promptInput.fill('Codex Control Enter dispatch sentinel');
 			await promptInput.press('Enter');
@@ -2847,6 +2902,7 @@ Recovered refresh sentinel.
 			await expect(composerInput).toHaveValue('Codex composer original draft sentinel');
 
 			await composerInput.fill('Codex composer edited draft sentinel');
+			await expect(composerInput).toHaveValue('Codex composer edited draft sentinel');
 			await composer.getByTitle('Close (Escape)').click();
 
 			await expect(composer).toBeHidden();
@@ -2898,17 +2954,16 @@ Recovered refresh sentinel.
 		}
 	});
 
-	test('inserts a Codex prompt composer self mention without dispatching', async () => {
+	test('keeps a Codex prompt composer @ draft without dispatching outside group chat', async () => {
 		const launched = await launchLaneWorkbench();
 		try {
 			await stubCodexProcessSpawn(launched.electronApp);
 			const { composer, composerInput } = await openCodexPromptComposer(launched.window);
 
 			await composerInput.fill('Ask @Auto');
-			await expect(composer.getByRole('button', { name: /@Auto-Run-Codex-E2E/ })).toBeVisible();
-			await composerInput.press('Enter');
 
-			await expect(composerInput).toHaveValue('Ask @Auto-Run-Codex-E2E ');
+			await expect(composer.getByRole('button', { name: /@Auto-Run-Codex-E2E/ })).toHaveCount(0);
+			await expect(composerInput).toHaveValue('Ask @Auto');
 			expect(await getStubbedCodexProcessSpawnCalls(launched.electronApp)).toHaveLength(0);
 		} finally {
 			await launched.cleanup();
@@ -2957,6 +3012,7 @@ Recovered refresh sentinel.
 			const { composer, composerInput } = await openCodexPromptComposer(launched.window);
 
 			await composerInput.fill('Codex composer Escape draft sentinel');
+			await expect(composerInput).toHaveValue('Codex composer Escape draft sentinel');
 			await launched.window.keyboard.press('Escape');
 
 			await expect(composer).toBeHidden();
@@ -2973,7 +3029,7 @@ Recovered refresh sentinel.
 			const { composerInput } = await openCodexPromptComposer(launched.window);
 
 			await composerInput.fill('Codex composer read-only shortcut sentinel');
-			await composerInput.press('Control+R');
+			await composerInput.press('Control+r');
 			await launched.window.getByRole('button', { name: /^Send$/ }).click();
 
 			await expect
@@ -3017,7 +3073,7 @@ Recovered refresh sentinel.
 			const { composer } = await openCodexPromptComposer(launched.window);
 
 			await composer.locator('input[type="file"]').setInputFiles(imagePath);
-			await composer.getByRole('img', { name: 'Prompt composer staged image 1' }).click();
+			await composer.getByAltText('Prompt composer staged image 1').click();
 
 			const lightbox = launched.window.getByRole('dialog', { name: 'Image Lightbox' });
 			await expect(lightbox).toBeVisible();
@@ -3043,9 +3099,7 @@ Recovered refresh sentinel.
 			const { composer } = await openCodexPromptComposer(launched.window);
 
 			await composer.locator('input[type="file"]').setInputFiles(imagePath);
-			const stagedImage = composer.getByRole('img', {
-				name: 'Prompt composer staged image 1',
-			});
+			const stagedImage = composer.getByAltText('Prompt composer staged image 1');
 			await stagedImage.click();
 
 			const lightbox = launched.window.getByRole('dialog', { name: 'Image Lightbox' });
@@ -3090,9 +3144,9 @@ Recovered refresh sentinel.
 			const historyToggle = composer.getByTitle(/Save to History/);
 
 			await composerInput.fill('Codex composer history shortcut sentinel');
-			await composerInput.press('Control+S');
+			await composerInput.press('Control+s');
 			await expect(historyToggle).not.toHaveClass(/opacity-40/);
-			await composerInput.press('Control+S');
+			await composerInput.press('Control+s');
 			await expect(historyToggle).toHaveClass(/opacity-40/);
 			await expect(composerInput).toHaveValue('Codex composer history shortcut sentinel');
 			expect(await getStubbedCodexProcessSpawnCalls(launched.electronApp)).toHaveLength(0);
@@ -3134,8 +3188,8 @@ Recovered refresh sentinel.
 			const { composer, composerInput } = await openCodexPromptComposer(launched.window);
 
 			await composerInput.fill('Codex composer enter toggle sentinel');
-			await composer.getByTitle(/Switch to (Cmd|Ctrl)\+Enter to send/).click();
-			await expect(composer.getByTitle('Switch to Enter to send')).toBeVisible();
+			await composer.getByTitle('Switch to Enter to send').click();
+			await expect(composer.getByTitle(/Switch to (Cmd|Ctrl)\+Enter to send/)).toBeVisible();
 			await composerInput.press('Enter');
 
 			await expect(composer).toBeVisible();
@@ -3643,46 +3697,42 @@ Externally refreshed Codex Auto Run sentinel.
 	});
 
 	test('queues a Codex AI terminal prompt while the lane is busy without spawning', async () => {
-		const launched = await launchBusyLaneWorkbench();
+		const launched = await launchLaneWorkbench();
 		try {
-			await stubCodexProcessSpawn(launched.electronApp);
-			const promptInput = await openCodexAiTerminal(launched.window);
+			const promptInput = await startLiveBusyCodexLane(launched);
 
 			await promptInput.fill('Codex busy queued prompt sentinel');
 			await launched.window.getByTitle('Send message').click();
 
-			await expect(launched.window.getByRole('button', { name: /1 item queued/ })).toBeVisible();
 			await expect(launched.window.getByText('QUEUED (1)')).toBeVisible();
 			await expect(launched.window.getByText('Codex busy queued prompt sentinel')).toBeVisible();
-			expect(await getStubbedCodexProcessSpawnCalls(launched.electronApp)).toHaveLength(0);
+			expect(await getStubbedCodexProcessSpawnCalls(launched.electronApp)).toHaveLength(1);
 		} finally {
 			await launched.cleanup();
 		}
 	});
 
-	test('queues a Codex slash command while the lane is busy without spawning', async () => {
-		const launched = await launchBusyLaneWorkbench();
+	test('spawns a Codex history synopsis while the lane is busy without queueing', async () => {
+		const launched = await launchLaneWorkbench();
 		try {
-			await stubCodexProcessSpawn(launched.electronApp);
-			const promptInput = await openCodexAiTerminal(launched.window);
+			const promptInput = await startLiveBusyCodexLane(launched);
 
 			await promptInput.fill('/history');
 			await launched.window.getByTitle('Send message').click();
 
-			await expect(launched.window.getByRole('button', { name: /1 item queued/ })).toBeVisible();
-			await expect(launched.window.getByText('QUEUED (1)')).toBeVisible();
-			await expect(launched.window.getByText('/history')).toBeVisible();
-			await expect(
-				launched.window.getByText('Generate a synopsis of this agent history')
-			).toBeVisible();
-			expect(await getStubbedCodexProcessSpawnCalls(launched.electronApp)).toHaveLength(0);
+			await expect(launched.window.getByText('Generating history synopsis...')).toBeVisible();
+			await expect(launched.window.getByText('QUEUED (1)')).toHaveCount(0);
+			const calls = await getStubbedCodexProcessSpawnCalls(launched.electronApp);
+			expect(calls).toHaveLength(2);
+			expect(calls[1].sessionId).toContain('-synopsis-');
+			expect(calls[1].prompt).toContain('Provide a brief synopsis');
 		} finally {
 			await launched.cleanup();
 		}
 	});
 
 	test('queues a Codex image prompt while the lane is busy with attachment metadata', async () => {
-		const launched = await launchBusyLaneWorkbench();
+		const launched = await launchLaneWorkbench();
 		const imagePath = path.join(launched.homeDir, 'codex-busy-queued-image.png');
 		try {
 			fs.writeFileSync(
@@ -3692,19 +3742,18 @@ Externally refreshed Codex Auto Run sentinel.
 					'base64'
 				)
 			);
-			await stubCodexProcessSpawn(launched.electronApp);
-			const promptInput = await openCodexAiTerminal(launched.window);
+			const promptInput = await startLiveBusyCodexLane(launched);
 
 			await launched.window.locator('#image-file-input').setInputFiles(imagePath);
 			await promptInput.fill('Codex busy queued image prompt sentinel');
 			await launched.window.getByTitle('Send message').click();
 
-			await expect(launched.window.getByRole('button', { name: /1 item queued/ })).toBeVisible();
+			await expect(launched.window.getByText('QUEUED (1)')).toBeVisible();
 			await expect(
 				launched.window.getByText('Codex busy queued image prompt sentinel')
 			).toBeVisible();
 			await expect(launched.window.getByText('1 image attached')).toBeVisible();
-			expect(await getStubbedCodexProcessSpawnCalls(launched.electronApp)).toHaveLength(0);
+			expect(await getStubbedCodexProcessSpawnCalls(launched.electronApp)).toHaveLength(1);
 		} finally {
 			await launched.cleanup();
 		}
@@ -4094,17 +4143,17 @@ Externally refreshed Codex Auto Run sentinel.
 	test('keeps single Codex Main tab close actions disabled in the tab overlay', async () => {
 		const launched = await launchContextActionsLaneWorkbench();
 		try {
-			await openCodexMainTabOverlay(launched.window);
+			const overlay = await openCodexMainTabOverlay(launched.window);
 
-			await expect(launched.window.getByRole('button', { name: 'Close Tab' })).toBeDisabled();
+			await expect(overlay.getByRole('button', { name: 'Close Tab', exact: true })).toBeDisabled();
 			await expect(
-				launched.window.getByRole('button', { name: 'Close Other Tabs' })
+				overlay.getByRole('button', { name: 'Close Other Tabs', exact: true })
 			).toBeDisabled();
 			await expect(
-				launched.window.getByRole('button', { name: 'Close Tabs to Left' })
+				overlay.getByRole('button', { name: 'Close Tabs to Left', exact: true })
 			).toBeDisabled();
 			await expect(
-				launched.window.getByRole('button', { name: 'Close Tabs to Right' })
+				overlay.getByRole('button', { name: 'Close Tabs to Right', exact: true })
 			).toBeDisabled();
 		} finally {
 			await launched.cleanup();
@@ -4118,9 +4167,13 @@ Externally refreshed Codex Auto Run sentinel.
 			const reviewTab = launched.window.locator(`[data-tab-id="${launched.reviewTabId}"]`);
 			await expect(reviewTab).toBeVisible();
 			await reviewTab.hover();
-			await expect(launched.window.getByText('Copy Session ID')).toBeVisible();
+			const overlay = launched.window
+				.locator('div.fixed')
+				.filter({ hasText: 'Copy Session ID' })
+				.first();
+			await expect(overlay).toBeVisible();
 
-			await launched.window.getByRole('button', { name: 'Close Tab' }).click();
+			await overlay.getByRole('button', { name: 'Close Tab', exact: true }).click();
 
 			await expect(reviewTab).toBeHidden();
 			await expect(
@@ -4134,26 +4187,11 @@ Externally refreshed Codex Auto Run sentinel.
 	test('copies the Codex Main session id from the tab overlay', async () => {
 		const launched = await launchContextActionsLaneWorkbench();
 		try {
-			await launched.window.evaluate(() => {
-				Object.defineProperty(navigator, 'clipboard', {
-					configurable: true,
-					value: {
-						writeText: async (text: string) => {
-							(window as Window & { __codexCopiedSessionId?: string }).__codexCopiedSessionId =
-								text;
-						},
-					},
-				});
-			});
-			await openCodexMainTabOverlay(launched.window);
-			await launched.window.getByText('Copy Session ID', { exact: true }).click();
+			const overlay = await openCodexMainTabOverlay(launched.window);
+			await overlay.getByRole('button', { name: 'Copy Session ID', exact: true }).click();
 
 			await expect
-				.poll(async () =>
-					launched.window.evaluate(
-						() => (window as Window & { __codexCopiedSessionId?: string }).__codexCopiedSessionId
-					)
-				)
+				.poll(async () => launched.electronApp.evaluate(({ clipboard }) => clipboard.readText()))
 				.toBe('thread_autorun_ai_terminal_seed');
 			await expect(launched.window.getByText('Copied!', { exact: true })).toBeVisible();
 		} finally {

@@ -92,6 +92,23 @@ export function useAppInitialization(): AppInitializationReturn {
 			});
 	}, []);
 
+	useEffect(() => {
+		const handleGhCliAvailabilityChanged = (event: Event) => {
+			const available = (event as CustomEvent<{ available?: boolean }>).detail?.available;
+			if (typeof available === 'boolean') {
+				setGhCliAvailable(available);
+			}
+		};
+
+		window.addEventListener('maestro:gh-cli-availability-changed', handleGhCliAvailabilityChanged);
+		return () => {
+			window.removeEventListener(
+				'maestro:gh-cli-availability-changed',
+				handleGhCliAvailabilityChanged
+			);
+		};
+	}, []);
+
 	// --- Windows warning modal ---
 	const windowsWarningShownRef = useRef(false);
 	useEffect(() => {

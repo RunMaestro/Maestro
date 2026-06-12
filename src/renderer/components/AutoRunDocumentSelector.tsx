@@ -56,6 +56,7 @@ export function AutoRunDocumentSelector({
 	const dropdownRef = useRef<HTMLDivElement>(null);
 	const buttonRef = useRef<HTMLButtonElement>(null);
 	const createInputRef = useRef<HTMLInputElement>(null);
+	const createDocumentNameInputId = 'autorun-create-document-name';
 
 	// Check for duplicate document name (including path)
 	const normalizedNewName = newDocName.trim().toLowerCase().replace(/\.md$/i, '');
@@ -498,12 +499,14 @@ export function AutoRunDocumentSelector({
 							{/* Document Name Input */}
 							<div>
 								<label
+									htmlFor={createDocumentNameInputId}
 									className="block text-xs mb-2 font-medium"
 									style={{ color: theme.colors.textDim }}
 								>
 									Document Name
 								</label>
 								<input
+									id={createDocumentNameInputId}
 									ref={createInputRef}
 									type="text"
 									value={newDocName}

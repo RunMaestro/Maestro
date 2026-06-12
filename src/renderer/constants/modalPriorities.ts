@@ -8,9 +8,9 @@
  * Priority Ranges:
  * - 1000+: Critical modals (confirmations)
  * - 900-999: High priority modals (rename, create)
- * - 700-899: Standard modals (new instance, quick actions)
+ * - 700-899: Standard modals and modal-hosted overlays (new instance, quick actions)
  * - 400-699: Settings and informational modals
- * - 100-399: Overlays and previews
+ * - 100-399: Lower overlays and previews
  * - 1-99: Search and autocomplete
  */
 export const MODAL_PRIORITIES = {
@@ -218,8 +218,8 @@ export const MODAL_PRIORITIES = {
 	/** Save markdown modal */
 	SAVE_MARKDOWN: 160,
 
-	/** Image lightbox overlay */
-	LIGHTBOX: 150,
+	/** Image lightbox overlay - above prompt/composer modals when launched from them */
+	LIGHTBOX: 740,
 
 	/** File preview overlay */
 	FILE_PREVIEW: 100,

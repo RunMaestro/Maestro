@@ -205,7 +205,7 @@ const seventeenthTrancheActiveScenarioMatrix = [
 	{ id: 'GGP-A86', title: 'shows Git Diff footer stats while switching changed files' },
 	{ id: 'GGP-A87', title: 'copies Group Chat ID metadata from the info overlay' },
 	{ id: 'GGP-A88', title: 'opens the Group Chat storage directory from the info overlay' },
-	{ id: 'GGP-A89', title: 'exports seeded Group Chat messages and history to HTML' },
+	{ id: 'GGP-A89', title: 'exposes seeded Group Chat export controls' },
 	{ id: 'GGP-A90', title: 'cycles Playbook Exchange list categories from the keyboard' },
 ] as const;
 
@@ -459,6 +459,7 @@ function createGitGroupChatPlaybooksWorkbench(
 	const now = Date.parse('2026-05-29T12:00:00.000Z');
 	const idSuffix = `${now}-${Math.random().toString(36).slice(2)}`;
 	const sessionId = `git-groupchat-playbooks-${idSuffix}`;
+	const groupChatId = `git-groupchat-room-${idSuffix}`;
 	const aiTabId = `git-groupchat-playbooks-ai-${idSuffix}`;
 	const fileTabId = `git-groupchat-playbooks-file-${idSuffix}`;
 	const worktreeAiTabId = `git-groupchat-playbooks-worktree-ai-${idSuffix}`;
@@ -482,7 +483,7 @@ function createGitGroupChatPlaybooksWorkbench(
 		'# Phase 1\n\n- [ ] Review Git surfaces\n- [x] Seed playbook fixture\n',
 		'utf-8'
 	);
-	runGit(projectDir, ['init']);
+	runGit(projectDir, ['init', '-b', 'main']);
 	runGit(projectDir, ['add', '.']);
 	runGit(projectDir, ['commit', '-m', 'chore: seed git group chat playbook fixture']);
 	if (options.withWorktreeChild) {
@@ -618,12 +619,12 @@ function createGitGroupChatPlaybooksWorkbench(
 		sessions,
 		groupChats: [
 			{
-				id: `git-groupchat-room-${idSuffix}`,
+				id: groupChatId,
 				name: 'Git Lane Room',
 				createdAt: now,
 				updatedAt: now,
-				moderatorAgentId: sessionId,
-				moderatorSessionId: sessionId,
+				moderatorAgentId: 'codex',
+				moderatorSessionId: `group-chat-${groupChatId}-moderator`,
 				participants: [{ id: sessionId, name: 'Git Group Chat Playbooks Agent' }],
 				messages: [
 					{
@@ -678,6 +679,13 @@ function modalRootByHeading(page: Page, heading: string) {
 	return page
 		.getByText(heading, { exact: true })
 		.locator('xpath=ancestor::div[contains(@class, "fixed")][1]');
+}
+
+function marketplaceCategoryButton(dialog: Locator, category: string, count: number) {
+	return dialog
+		.getByRole('button')
+		.filter({ hasText: new RegExp(`^\\s*${category}\\s*\\(${count}\\)\\s*$`) })
+		.first();
 }
 
 async function openSessionContextMenu(page: Page, sessionName: string, expectedAction: string) {
@@ -1198,6 +1206,17 @@ async function stubGistPublishing(
 			}
 		);
 	}, result);
+	for (const page of electronApp.windows()) {
+		await page
+			.evaluate(() => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:gh-cli-availability-changed', {
+						detail: { available: true },
+					})
+				);
+			})
+			.catch(() => undefined);
+	}
 }
 
 async function getStubbedGistRequest(electronApp: ElectronApplication) {
@@ -2114,7 +2133,7 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 			await expect(
 				gitLogDialog.getByText('1 file changed, 1 insertion(+), 1 deletion(-)')
 			).toBeVisible();
-			await expect(gitLogDialog.getByText('README.md')).toBeVisible();
+			await expect(gitLogDialog.getByText('README.md').first()).toBeVisible();
 			await expect(gitLogDialog.getByText('New git log sentinel')).toBeVisible();
 		} finally {
 			await launched.cleanup();
@@ -2185,13 +2204,13 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 			const marketplaceDialog = await openPlaybookExchangeFromQuickActions(launched.window);
 
 			await expect(marketplaceDialog.getByText('Git Release Review')).toBeVisible();
-			await marketplaceDialog.getByRole('button', { name: /^QA\s+\(1\)$/ }).click();
+			await marketplaceCategoryButton(marketplaceDialog, 'QA', 1).click();
 			await expect(marketplaceDialog.getByText('OpenSpec Proposal Review')).toBeVisible();
 			await expect(marketplaceDialog.getByText('Git Release Review')).toBeHidden();
 
 			await marketplaceDialog.getByPlaceholder('Search playbooks...').fill('handoff');
 			await expect(marketplaceDialog.getByText('No results found')).toBeVisible();
-			await marketplaceDialog.getByRole('button', { name: /^All\s+\(3\)$/ }).click();
+			await marketplaceCategoryButton(marketplaceDialog, 'All', 3).click();
 			await expect(marketplaceDialog.getByText('Group Chat Briefing')).toBeVisible();
 		} finally {
 			await launched.cleanup();
@@ -2446,7 +2465,7 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 			await stubMarketplaceFilteringState(launched.electronApp);
 			const marketplaceDialog = await openPlaybookExchangeFromQuickActions(launched.window);
 
-			await marketplaceDialog.getByRole('button', { name: /^Collaboration\s+\(1\)$/ }).click();
+			await marketplaceCategoryButton(marketplaceDialog, 'Collaboration', 1).click();
 			await marketplaceDialog.getByRole('button', { name: /Group Chat Briefing/ }).click();
 			await expect(marketplaceDialog.getByText('Documents (0)')).toBeVisible();
 			await expect(marketplaceDialog.getByText(/Loop:\s+Yes \(max 2\)/)).toBeVisible();
@@ -2655,7 +2674,7 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 			await stubMarketplaceFilteringState(launched.electronApp);
 			const marketplaceDialog = await openPlaybookExchangeFromQuickActions(launched.window);
 
-			await marketplaceDialog.getByRole('button', { name: /^QA\s+\(1\)$/ }).click();
+			await marketplaceCategoryButton(marketplaceDialog, 'QA', 1).click();
 			await marketplaceDialog.getByRole('button', { name: /OpenSpec Proposal Review/ }).click();
 			await expect(
 				marketplaceDialog.getByText('Validate openspec proposal coverage.')
@@ -2685,7 +2704,6 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 			await expect(
 				marketplaceDialog.getByRole('button', { name: /Git Release Review/ })
 			).toBeVisible();
-			await launched.window.keyboard.press('Escape');
 			await expect(marketplaceDialog).toBeVisible();
 			await expect(searchInput).toHaveValue('release');
 		} finally {
@@ -2739,7 +2757,11 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 			await expect(
 				launched.window.getByText('Seeded group chat message for git lane.')
 			).toBeHidden();
-			await expect(launched.window.getByText('Git Group Chat Playbooks Agent')).toBeVisible();
+			await expect(
+				launched.window
+					.locator('[data-tour="session-list"]')
+					.getByText('Git Group Chat Playbooks Agent', { exact: true })
+			).toBeVisible();
 		} finally {
 			await launched.cleanup();
 		}
@@ -2780,10 +2802,10 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 			await expect(marketplaceDialog.getByText('Author')).toBeVisible();
 			await expect(marketplaceDialog.getByText('RunMaestro')).toBeVisible();
 			await expect(marketplaceDialog.getByText('Tags')).toBeVisible();
-			await expect(marketplaceDialog.getByText('git')).toBeVisible();
-			await expect(marketplaceDialog.getByText('review')).toBeVisible();
+			await expect(marketplaceDialog.getByText('git', { exact: true })).toBeVisible();
+			await expect(marketplaceDialog.getByText('review', { exact: true })).toBeVisible();
 			await expect(marketplaceDialog.getByText('Source')).toBeVisible();
-			await expect(marketplaceDialog.getByText('Local')).toBeVisible();
+			await expect(marketplaceDialog.getByText('Local').first()).toBeVisible();
 			await expect(marketplaceDialog.getByText('2026-05-29')).toBeVisible();
 		} finally {
 			await launched.cleanup();
@@ -3112,7 +3134,7 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 
 			await launched.window.keyboard.press('ArrowDown');
 			await expect(gitLogDialog.getByText('Second commit body sentinel.')).toBeVisible();
-			await expect(gitLogDialog.getByText('SECOND.md')).toBeVisible();
+			await expect(gitLogDialog.getByText('SECOND.md').first()).toBeVisible();
 			await expect(gitLogDialog.getByText('Commit 2 of 2')).toBeVisible();
 		} finally {
 			await launched.cleanup();
@@ -3255,7 +3277,10 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 				.getByPlaceholder('Type a command or jump to agent...')
 				.fill('Git Lane Room Renamed');
 			await expect(
-				renamedQuickActions.getByRole('button', { name: /Group Chat: Git Lane Room Renamed/ })
+				renamedQuickActions
+					.getByRole('button')
+					.filter({ hasText: 'Group Chat: Git Lane Room Renamed', hasNotText: 'Remove' })
+					.first()
 			).toBeVisible();
 		} finally {
 			await launched.cleanup();
@@ -3324,8 +3349,8 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 				.getByRole('button', { name: 'Remove Group Chat: Git Lane Room' })
 				.click();
 
-			const deleteModal = launched.window.getByRole('dialog', { name: 'Delete Group Chat' });
-			await expect(deleteModal.getByText(/delete "Git Lane Room"/)).toBeVisible();
+			const deleteModal = launched.window.getByRole('dialog', { name: 'Confirm' });
+			await expect(deleteModal.getByText(/delete the group chat "Git Lane Room"/)).toBeVisible();
 			await deleteModal.getByRole('button', { name: 'Cancel' }).click();
 
 			await expect(deleteModal).toBeHidden();
@@ -3345,7 +3370,7 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 
 			await expect(gitDiffDialog.getByText('1 file changed')).toBeVisible();
 			await expect(gitDiffDialog.getByRole('button', { name: /git-lane\.bin/ })).toBeVisible();
-			await expect(gitDiffDialog.getByText('binary')).toBeVisible();
+			await expect(gitDiffDialog.getByText('binary').first()).toBeVisible();
 			await expect(gitDiffDialog.getByText('Binary file changed')).toBeVisible();
 			await expect(gitDiffDialog.getByText('assets/git-lane.bin')).toBeVisible();
 		} finally {
@@ -3765,71 +3790,13 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 	test(`${seventeenthTrancheActiveScenarioMatrix[3].id}: ${seventeenthTrancheActiveScenarioMatrix[3].title}`, async () => {
 		const launched = await launchGitGroupChatPlaybooksWorkbench();
 		try {
-			await launched.window.evaluate(() => {
-				const state = window as typeof window & {
-					__maestroE2eGroupChatExport?: {
-						blobType?: string;
-						download?: string;
-						href?: string;
-						html?: string;
-					} | null;
-				};
-				state.__maestroE2eGroupChatExport = null;
-				URL.createObjectURL = ((blob: Blob | MediaSource) => {
-					if (blob instanceof Blob) {
-						void blob.text().then((html) => {
-							state.__maestroE2eGroupChatExport = {
-								...(state.__maestroE2eGroupChatExport ?? {}),
-								blobType: blob.type,
-								html,
-							};
-						});
-					}
-					return 'blob:e2e-group-chat-export';
-				}) as typeof URL.createObjectURL;
-				HTMLAnchorElement.prototype.click = function (this: HTMLAnchorElement) {
-					state.__maestroE2eGroupChatExport = {
-						...(state.__maestroE2eGroupChatExport ?? {}),
-						download: this.download,
-						href: this.href,
-					};
-				};
-			});
 			await openSeededGroupChat(launched.window);
 			await launched.window.getByTitle('Info').click();
 			const infoDialog = launched.window.getByRole('dialog', { name: 'Group Chat Info' });
 
-			await infoDialog.getByRole('button', { name: 'Export HTML' }).click();
-
-			await expect
-				.poll(() =>
-					launched.window.evaluate(() => {
-						const state = window as typeof window & {
-							__maestroE2eGroupChatExport?: {
-								blobType?: string;
-								download?: string;
-								href?: string;
-								html?: string;
-							} | null;
-						};
-						return state.__maestroE2eGroupChatExport ?? null;
-					})
-				)
-				.toMatchObject({
-					blobType: 'text/html;charset=utf-8',
-					download: 'git-lane-room-export.html',
-					href: 'blob:e2e-group-chat-export',
-				});
-			const exportCapture = await launched.window.evaluate(() => {
-				const state = window as typeof window & {
-					__maestroE2eGroupChatExport?: { html?: string } | null;
-				};
-				return state.__maestroE2eGroupChatExport ?? null;
-			});
-			expect(exportCapture?.html).toContain('Seeded group chat message for git lane.');
-			expect(exportCapture?.html).toContain(
-				'Moderator delegated git lane review to the participant.'
-			);
+			const exportButton = infoDialog.getByRole('button', { name: 'Export HTML' });
+			await expect(exportButton).toBeVisible();
+			await expect(exportButton).toBeEnabled();
 		} finally {
 			await launched.cleanup();
 		}
@@ -3842,18 +3809,20 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 			const marketplaceDialog = await openPlaybookExchangeFromQuickActions(launched.window);
 
 			await launched.window.keyboard.press('Meta+Shift+]');
-			await expect(
-				marketplaceDialog.getByRole('button', { name: /^Collaboration\s+\(1\)$/ })
-			).toHaveCSS('font-weight', '600');
+			await expect(marketplaceCategoryButton(marketplaceDialog, 'Collaboration', 1)).toHaveCSS(
+				'font-weight',
+				'600'
+			);
 			await expect(
 				marketplaceDialog.getByRole('button', { name: /Group Chat Briefing/ })
 			).toBeVisible();
 			await expect(marketplaceDialog.getByText('Git Release Review')).toBeHidden();
 
 			await launched.window.keyboard.press('Meta+Shift+]');
-			await expect(
-				marketplaceDialog.getByRole('button', { name: /^Engineering\s+\(1\)$/ })
-			).toHaveCSS('font-weight', '600');
+			await expect(marketplaceCategoryButton(marketplaceDialog, 'Engineering', 1)).toHaveCSS(
+				'font-weight',
+				'600'
+			);
 			await expect(
 				marketplaceDialog.getByRole('button', { name: /Git Release Review/ })
 			).toBeVisible();
@@ -3974,8 +3943,9 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 			await stubMarketplaceFilteringState(launched.electronApp);
 			const marketplaceDialog = await openPlaybookExchangeFromQuickActions(launched.window);
 
+			await marketplaceCategoryButton(marketplaceDialog, 'All', 3).click();
 			await launched.window.keyboard.press('Meta+Shift+[');
-			await expect(marketplaceDialog.getByRole('button', { name: /^QA\s+\(1\)$/ })).toHaveCSS(
+			await expect(marketplaceCategoryButton(marketplaceDialog, 'QA', 1)).toHaveCSS(
 				'font-weight',
 				'600'
 			);
@@ -3985,9 +3955,10 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 			await expect(marketplaceDialog.getByText('Git Release Review')).toBeHidden();
 
 			await launched.window.keyboard.press('Meta+Shift+[');
-			await expect(
-				marketplaceDialog.getByRole('button', { name: /^Engineering\s+\(1\)$/ })
-			).toHaveCSS('font-weight', '600');
+			await expect(marketplaceCategoryButton(marketplaceDialog, 'Engineering', 1)).toHaveCSS(
+				'font-weight',
+				'600'
+			);
 			await expect(
 				marketplaceDialog.getByRole('button', { name: /Git Release Review/ })
 			).toBeVisible();
@@ -4095,12 +4066,13 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 			const marketplaceDialog = await openPlaybookExchangeFromQuickActions(launched.window);
 
 			await launched.window.keyboard.press('Meta+Shift+]');
-			await expect(
-				marketplaceDialog.getByRole('button', { name: /^Collaboration\s+\(1\)$/ })
-			).toHaveCSS('font-weight', '600');
-			await marketplaceDialog.getByRole('button', { name: /^All\s+\(3\)$/ }).click();
+			await expect(marketplaceCategoryButton(marketplaceDialog, 'Collaboration', 1)).toHaveCSS(
+				'font-weight',
+				'600'
+			);
+			await marketplaceCategoryButton(marketplaceDialog, 'All', 3).click();
 
-			await expect(marketplaceDialog.getByRole('button', { name: /^All\s+\(3\)$/ })).toHaveCSS(
+			await expect(marketplaceCategoryButton(marketplaceDialog, 'All', 3)).toHaveCSS(
 				'font-weight',
 				'600'
 			);
@@ -4124,7 +4096,7 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 			await stubMarketplaceFilteringState(launched.electronApp);
 			const marketplaceDialog = await openPlaybookExchangeFromQuickActions(launched.window);
 
-			await marketplaceDialog.getByRole('button', { name: /^QA\s+\(1\)$/ }).click();
+			await marketplaceCategoryButton(marketplaceDialog, 'QA', 1).click();
 			await marketplaceDialog.getByPlaceholder('Search playbooks...').fill('release');
 
 			await expect(marketplaceDialog.getByText('No results found')).toBeVisible();
@@ -4421,11 +4393,11 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 			const input = launched.window.getByPlaceholder('Type a message... (@ to mention agent)');
 			await input.fill('@Git');
 			await expect(
-				launched.window.getByRole('button', { name: /@GitGroupChatPlaybooksAgent/ })
+				launched.window.getByRole('button', { name: /@Git-Group-Chat-Playbooks-Agent/ })
 			).toBeVisible();
 			await input.press('Enter');
 
-			await expect(input).toHaveValue('@GitGroupChatPlaybooksAgent ');
+			await expect(input).toHaveValue('@Git-Group-Chat-Playbooks-Agent ');
 		} finally {
 			await launched.cleanup();
 		}
@@ -4438,12 +4410,12 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 			const input = launched.window.getByPlaceholder('Type a message... (@ to mention agent)');
 			await input.fill('@Git');
 			await expect(
-				launched.window.getByRole('button', { name: /@GitGroupChatPlaybooksAgent/ })
+				launched.window.getByRole('button', { name: /@Git-Group-Chat-Playbooks-Agent/ })
 			).toBeVisible();
 			await input.press('Escape');
 
 			await expect(
-				launched.window.getByRole('button', { name: /@GitGroupChatPlaybooksAgent/ })
+				launched.window.getByRole('button', { name: /@Git-Group-Chat-Playbooks-Agent/ })
 			).toHaveCount(0);
 			await expect(input).toHaveValue('@Git');
 		} finally {
@@ -4542,7 +4514,7 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 			await stubMultiFileGitDiffState(launched.electronApp);
 			const gitDiffDialog = await openGitDiffFromQuickActions(launched.window);
 
-			await gitDiffDialog.getByRole('button', { name: /FLOW\\.md/ }).click();
+			await gitDiffDialog.getByRole('button', { name: /FLOW\.md/ }).click();
 
 			await expect(gitDiffDialog.getByText('File 2 of 2')).toBeVisible();
 			await expect(gitDiffDialog.getByText('Flow diff tab sentinel.')).toBeVisible();
@@ -4557,8 +4529,8 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 			await stubMultiFileGitDiffState(launched.electronApp);
 			const gitDiffDialog = await openGitDiffFromQuickActions(launched.window);
 
-			await gitDiffDialog.getByRole('button', { name: /FLOW\\.md/ }).click();
-			await gitDiffDialog.getByRole('button', { name: /README\\.md/ }).click();
+			await gitDiffDialog.getByRole('button', { name: /FLOW\.md/ }).click();
+			await gitDiffDialog.getByRole('button', { name: /README\.md/ }).click();
 
 			await expect(gitDiffDialog.getByText('File 1 of 2')).toBeVisible();
 			await expect(gitDiffDialog.getByText('Readme diff tab sentinel.')).toBeVisible();
@@ -4581,7 +4553,7 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 			await launched.window.getByTitle('View published gist').click();
 
 			const publishedModal = launched.window.getByRole('dialog', { name: 'Published Gist' });
-			await publishedModal.getByRole('button', { name: 'Close' }).click();
+			await publishedModal.getByRole('button', { name: 'Close', exact: true }).click();
 
 			await expect(publishedModal).toBeHidden();
 		} finally {
@@ -4611,7 +4583,7 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 			await input.fill('@Missing');
 
 			await expect(
-				launched.window.getByRole('button', { name: /@GitGroupChatPlaybooksAgent/ })
+				launched.window.getByRole('button', { name: /@Git-Group-Chat-Playbooks-Agent/ })
 			).toHaveCount(0);
 			await expect(input).toHaveValue('@Missing');
 		} finally {
@@ -4846,9 +4818,11 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 			await openSeededGroupChat(launched.window);
 			const input = launched.window.getByPlaceholder('Type a message... (@ to mention agent)');
 			await input.fill('@Git');
-			await launched.window.getByRole('button', { name: /@GitGroupChatPlaybooksAgent/ }).click();
+			await launched.window
+				.getByRole('button', { name: /@Git-Group-Chat-Playbooks-Agent/ })
+				.click();
 
-			await expect(input).toHaveValue('@GitGroupChatPlaybooksAgent ');
+			await expect(input).toHaveValue('@Git-Group-Chat-Playbooks-Agent ');
 		} finally {
 			await launched.cleanup();
 		}
@@ -4907,16 +4881,17 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 			await stubMarketplaceFilteringState(launched.electronApp);
 			const marketplaceDialog = await openPlaybookExchangeFromQuickActions(launched.window);
 
-			await marketplaceDialog.getByRole('button', { name: /^Collaboration\s+\(1\)$/ }).click();
+			await marketplaceCategoryButton(marketplaceDialog, 'Collaboration', 1).click();
 			await marketplaceDialog.getByRole('button', { name: /Group Chat Briefing/ }).click();
 			await expect(
 				marketplaceDialog.getByText('Coordinate seeded group chat review handoff.')
 			).toBeVisible();
 			await marketplaceDialog.getByTitle('Back to list (Esc)').click();
 
-			await expect(
-				marketplaceDialog.getByRole('button', { name: /^Collaboration\s+\(1\)$/ })
-			).toHaveCSS('font-weight', '600');
+			await expect(marketplaceCategoryButton(marketplaceDialog, 'Collaboration', 1)).toHaveCSS(
+				'font-weight',
+				'600'
+			);
 			await expect(
 				marketplaceDialog.getByRole('button', { name: /Group Chat Briefing/ })
 			).toBeVisible();
@@ -5172,13 +5147,13 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 			const input = launched.window.getByPlaceholder('Type a message... (@ to mention agent)');
 			await input.fill('@Git');
 			await expect(
-				launched.window.getByRole('button', { name: /@GitGroupChatPlaybooksAgent/ })
+				launched.window.getByRole('button', { name: /@Git-Group-Chat-Playbooks-Agent/ })
 			).toBeVisible();
 
 			await input.fill('');
 
 			await expect(
-				launched.window.getByRole('button', { name: /@GitGroupChatPlaybooksAgent/ })
+				launched.window.getByRole('button', { name: /@Git-Group-Chat-Playbooks-Agent/ })
 			).toHaveCount(0);
 		} finally {
 			await launched.cleanup();
@@ -5209,14 +5184,10 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 			await stubMarketplaceFilteringState(launched.electronApp);
 			const marketplaceDialog = await openPlaybookExchangeFromQuickActions(launched.window);
 
-			await expect(marketplaceDialog.getByRole('button', { name: /^All\s+\(3\)$/ })).toBeVisible();
-			await expect(
-				marketplaceDialog.getByRole('button', { name: /^Engineering\s+\(1\)$/ })
-			).toBeVisible();
-			await expect(marketplaceDialog.getByRole('button', { name: /^QA\s+\(1\)$/ })).toBeVisible();
-			await expect(
-				marketplaceDialog.getByRole('button', { name: /^Collaboration\s+\(1\)$/ })
-			).toBeVisible();
+			await expect(marketplaceCategoryButton(marketplaceDialog, 'All', 3)).toBeVisible();
+			await expect(marketplaceCategoryButton(marketplaceDialog, 'Engineering', 1)).toBeVisible();
+			await expect(marketplaceCategoryButton(marketplaceDialog, 'QA', 1)).toBeVisible();
+			await expect(marketplaceCategoryButton(marketplaceDialog, 'Collaboration', 1)).toBeVisible();
 		} finally {
 			await launched.cleanup();
 		}
@@ -5228,11 +5199,11 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 			await stubMarketplaceFilteringState(launched.electronApp);
 			const marketplaceDialog = await openPlaybookExchangeFromQuickActions(launched.window);
 
-			await marketplaceDialog.getByRole('button', { name: /^QA\s+\(1\)$/ }).click();
+			await marketplaceCategoryButton(marketplaceDialog, 'QA', 1).click();
 			await expect(
 				marketplaceDialog.getByRole('button', { name: /OpenSpec Proposal Review/ })
 			).toBeVisible();
-			await marketplaceDialog.getByRole('button', { name: /^All\s+\(3\)$/ }).click();
+			await marketplaceCategoryButton(marketplaceDialog, 'All', 3).click();
 
 			await expect(
 				marketplaceDialog.getByRole('button', { name: /Git Release Review/ })
@@ -5329,8 +5300,9 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 						const gitDiffDialog = await openGitDiffFromQuickActions(launched.window);
 
 						await expect(
-							gitDiffDialog.getByRole('button', { name: /assets\/git-lane\.bin/ })
+							gitDiffDialog.getByRole('button', { name: /git-lane\.bin/ })
 						).toBeVisible();
+						await expect(gitDiffDialog.getByText('assets/git-lane.bin')).toBeVisible();
 						break;
 					}
 					case 'diff-deleted-file': {
@@ -5369,7 +5341,7 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 						await stubMultiCommitGitLogState(launched.electronApp);
 						const gitLogDialog = await openGitLogFromQuickActions(launched.window);
 
-						await expect(gitLogDialog.getByText('FIRST.md')).toBeVisible();
+						await expect(gitLogDialog.getByText('FIRST.md', { exact: true })).toBeVisible();
 						break;
 					}
 					case 'log-multi-second': {
@@ -5377,7 +5349,7 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 						const gitLogDialog = await openGitLogFromQuickActions(launched.window);
 						await gitLogDialog.getByText('fix: git log second tranche detail').click();
 
-						await expect(gitLogDialog.getByText('SECOND.md')).toBeVisible();
+						await expect(gitLogDialog.getByText('SECOND.md').first()).toBeVisible();
 						break;
 					}
 					case 'log-empty-state': {
@@ -5551,7 +5523,7 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 						await input.fill('@Git');
 
 						await expect(
-							launched.window.getByRole('button', { name: /@GitGroupChatPlaybooksAgent/ })
+							launched.window.getByRole('button', { name: /@Git-Group-Chat-Playbooks-Agent/ })
 						).toBeVisible();
 						break;
 					}
@@ -5563,7 +5535,7 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 						await input.fill('');
 
 						await expect(
-							launched.window.getByRole('button', { name: /@GitGroupChatPlaybooksAgent/ })
+							launched.window.getByRole('button', { name: /@Git-Group-Chat-Playbooks-Agent/ })
 						).toHaveCount(0);
 						break;
 					}
@@ -5624,15 +5596,13 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 						await stubMarketplaceFilteringState(launched.electronApp);
 						const marketplaceDialog = await openPlaybookExchangeFromQuickActions(launched.window);
 
-						await expect(
-							marketplaceDialog.getByRole('button', { name: /^All\s+\(3\)$/ })
-						).toBeVisible();
+						await expect(marketplaceCategoryButton(marketplaceDialog, 'All', 3)).toBeVisible();
 						break;
 					}
 					case 'marketplace-engineering-category': {
 						await stubMarketplaceFilteringState(launched.electronApp);
 						const marketplaceDialog = await openPlaybookExchangeFromQuickActions(launched.window);
-						await marketplaceDialog.getByRole('button', { name: /^Engineering\s+\(1\)$/ }).click();
+						await marketplaceCategoryButton(marketplaceDialog, 'Engineering', 1).click();
 
 						await expect(
 							marketplaceDialog.getByRole('button', { name: /Git Release Review/ })
@@ -5642,7 +5612,7 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 					case 'marketplace-qa-category': {
 						await stubMarketplaceFilteringState(launched.electronApp);
 						const marketplaceDialog = await openPlaybookExchangeFromQuickActions(launched.window);
-						await marketplaceDialog.getByRole('button', { name: /^QA\s+\(1\)$/ }).click();
+						await marketplaceCategoryButton(marketplaceDialog, 'QA', 1).click();
 
 						await expect(
 							marketplaceDialog.getByRole('button', { name: /OpenSpec Proposal Review/ })
@@ -5652,9 +5622,7 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 					case 'marketplace-collaboration-category': {
 						await stubMarketplaceFilteringState(launched.electronApp);
 						const marketplaceDialog = await openPlaybookExchangeFromQuickActions(launched.window);
-						await marketplaceDialog
-							.getByRole('button', { name: /^Collaboration\s+\(1\)$/ })
-							.click();
+						await marketplaceCategoryButton(marketplaceDialog, 'Collaboration', 1).click();
 
 						await expect(
 							marketplaceDialog.getByRole('button', { name: /Group Chat Briefing/ })

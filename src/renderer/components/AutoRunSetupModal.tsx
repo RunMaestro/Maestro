@@ -228,6 +228,8 @@ export function AutoRunSetupModal({
 						label="Auto Run Folder"
 						value={selectedFolder}
 						onChange={setSelectedFolder}
+						onSubmit={handleContinue}
+						submitEnabled={!!selectedFolder.trim()}
 						placeholder={
 							sshRemoteId
 								? `Enter remote path${sshRemoteHost ? ` on ${sshRemoteHost}` : ''} (e.g., /home/user/docs)`

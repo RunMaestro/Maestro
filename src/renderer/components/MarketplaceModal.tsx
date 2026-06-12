@@ -989,11 +989,11 @@ export function MarketplaceModal({
 						// In list view: navigate between category tabs
 						if (e.key === '[') {
 							const currentIndex = categories.indexOf(selectedCategory);
-							const newIndex = Math.max(0, currentIndex - 1);
+							const newIndex = currentIndex <= 0 ? categories.length - 1 : currentIndex - 1;
 							handleCategoryChange(categories[newIndex]);
 						} else {
 							const currentIndex = categories.indexOf(selectedCategory);
-							const newIndex = Math.min(categories.length - 1, currentIndex + 1);
+							const newIndex = currentIndex >= categories.length - 1 ? 0 : currentIndex + 1;
 							handleCategoryChange(categories[newIndex]);
 						}
 					}

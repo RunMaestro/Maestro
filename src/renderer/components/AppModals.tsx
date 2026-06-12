@@ -1242,7 +1242,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 			)}
 
 			{/* --- GIT DIFF VIEWER (lazy-loaded) --- */}
-			{gitDiffPreview && activeSession && (
+			{gitDiffPreview !== null && activeSession && (
 				<Suspense fallback={null}>
 					<GitDiffViewer
 						diffText={gitDiffPreview}

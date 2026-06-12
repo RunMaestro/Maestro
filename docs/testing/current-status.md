@@ -1,6 +1,6 @@
 # Testing Current Status
 
-Last updated: 2026-06-11.
+Last updated: 2026-06-12.
 
 Verification basis: Phase 1 through Phase 3 of [game-plan.md](game-plan.md), plus targeted Phase 4 E2E stabilization and focused reruns. The full sharded Playwright/Electron suite is still not verified.
 
@@ -50,6 +50,11 @@ Verification basis: Phase 1 through Phase 3 of [game-plan.md](game-plan.md), plu
 - Focused Auto Run plus files/docs/history repair check passed: 6/6 for `saves Codex Auto Run edits from the expanded modal header|FDH-A04 |FDH-A07 |FDH-A08 |FDH-A11 |FDH-A13 `.
 - Focused Auto Run expanded modal/worktree rerun passed: 5/5 for dirty-close, save-before-run, busy Run disabled, and create-new worktree setup (`phase4-autorun-cluster2-20260611054910`).
 - Focused Auto Run stop-state rerun passed: 1/1 for graceful stop confirmation and Stopping state (`phase4-autorun-stop2-20260611054206`).
+- Focused Auto Run/Codex context warning rerun passed: 5/5 for yellow, dismissal, below-threshold, red-threshold, and custom-threshold context warning coverage (`phase5-autorun-context-warning-20260612`).
+- Focused Auto Run mixed repair rerun passed: 6/6 for duplicate document creation, busy prompt queueing, context warning, single-tab close disabled state, Review tab close, and session ID clipboard copy (`phase5-autorun-focused5-20260612`).
+- Focused Auto Run failed-family rerun passed: 16/16 for active batch state, batch worktree targeting, stubbed dispatch, Enter-to-send, prompt composer draft/read-only/lightbox, and non-dispatch display toggles (`phase5-autorun-failedfamilies-20260612`).
+- Focused Auto Run busy-state rerun passed: 3/3 for queued text prompts, built-in history synopsis spawning without queueing, and queued image prompts while the lane is busy (`phase5-autorun-busy-queue3-20260612`).
+- Focused Auto Run prompt-composer gap rerun passed: 3/3 for `@` draft preservation, image attachment removal, and Control-S history toggling without dispatch (`phase5-autorun-promptcomposer-missing-20260612`).
 - Focused files/docs/history dotfile and refresh drift check passed: 8/8 for `FDH-A44 |FDH-A53 |FDH-A350 |FDH-A351 |FDH-A112 |FDH-A114 |FDH-A136 |FDH-A138 `.
 - Focused files/docs/history stabilization rerun passed: 3/3 for `FDH-A169|FDH-A299|FDH-A300` (`phase4-fdh-focus-20260611054254`).
 - An accidental wider grep matched `FDH-A110+` quota cases and ran 26 tests: 20 passed, 6 failed. Those failures mapped to exact file-row collisions, visible-by-default dotfiles, and the refresh button title while auto-refresh is enabled; the directly affected cases were patched and rerun green in the focused checks above.

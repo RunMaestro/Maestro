@@ -238,6 +238,7 @@ export function PromptComposerModal({
 
 	const handleValueChange = useCallback(
 		(newValue: string) => {
+			valueRef.current = newValue;
 			setValue(newValue);
 
 			if (!hasMentions) return;
@@ -266,9 +267,12 @@ export function PromptComposerModal({
 
 	if (!isOpen) return null;
 
+	const getCurrentValue = () => textareaRef.current?.value ?? valueRef.current;
+
 	const handleSend = () => {
-		if (!value.trim()) return;
-		onSend(value);
+		const currentValue = getCurrentValue();
+		if (!currentValue.trim()) return;
+		onSend(currentValue);
 		onClose();
 	};
 
@@ -412,7 +416,7 @@ export function PromptComposerModal({
 			className="fixed inset-0 z-50 flex items-center justify-center"
 			style={{ backgroundColor: 'rgba(0,0,0,0.7)' }}
 			onClick={() => {
-				onSubmit(value);
+				onSubmit(getCurrentValue());
 				onClose();
 			}}
 		>
@@ -422,7 +426,7 @@ export function PromptComposerModal({
 				tabIndex={-1}
 				onClick={(e) => {
 					e.stopPropagation();
-					onSubmit(value);
+					onSubmit(getCurrentValue());
 					onClose();
 				}}
 				aria-label="Close prompt composer"
@@ -452,7 +456,7 @@ export function PromptComposerModal({
 					<div className="flex items-center gap-3">
 						<button
 							onClick={() => {
-								onSubmit(value);
+								onSubmit(getCurrentValue());
 								onClose();
 							}}
 							className="p-1.5 rounded hover:bg-white/10 transition-colors"
