@@ -289,34 +289,53 @@ export async function* runPlaybook(
 		addHistoryEntry(historyEntry);
 	};
 
-	// Helper to create total Auto Run summary
-	const createAutoRunSummary = (): void => {
-		if (!writeHistory) return;
-		// Only write if we completed multiple loops or if looping was enabled
-		if (!playbook.loopEnabled && loopIteration === 0) return;
+	// Reconcile in-memory counters with persisted history entries.
+	// In-memory counters reset on process restart, but history entries persist on disk.
+	// Scope to the current logical Auto Run session: entries written after the most
+	// recent prior "Auto Run" summary. A completed/stopped run ends with such a summary,
+	// but a restart/kill does not - so this spans restarts while excluding earlier runs
+	// on the same session (which would otherwise inflate the totals).
+	const computeReconciledTotals = (): {
+		tasks: number;
+		inputTokens: number;
+		outputTokens: number;
+		cost: number;
+		elapsedMs: number;
+	} => {
+		let tasks = totalCompletedTasks;
+		let inputTokens = totalInputTokens;
+		let outputTokens = totalOutputTokens;
+		let cost = totalCost;
+		let elapsedMs = Date.now() - batchStartTime;
 
-		let finalTotalTasks = totalCompletedTasks;
-		let finalTotalInputTokens = totalInputTokens;
-		let finalTotalOutputTokens = totalOutputTokens;
-		let finalTotalCost = totalCost;
-		let finalTotalElapsedMs = Date.now() - batchStartTime;
-
-		// Reconcile in-memory counters with persisted history entries.
-		// In-memory counters reset on process restart, but history entries persist on disk.
 		try {
 			const allEntries = readHistory(undefined, session.id);
 			if (allEntries.length > 0) {
+				// Boundary = timestamp of the most recent prior "Auto Run" summary entry.
+				let sessionBoundary = 0;
+				for (const e of allEntries) {
+					if (
+						e.type === 'AUTO' &&
+						e.summary &&
+						e.summary.startsWith('Auto Run ') &&
+						e.timestamp > sessionBoundary
+					) {
+						sessionBoundary = e.timestamp;
+					}
+				}
+
 				const taskEntries = allEntries.filter(
 					(e) =>
 						e.type === 'AUTO' &&
 						e.summary &&
+						e.timestamp > sessionBoundary &&
 						!e.summary.startsWith('Loop ') &&
 						!e.summary.startsWith('Auto Run ') &&
 						!e.summary.startsWith('PR created') &&
 						!e.summary.startsWith('PR creation failed')
 				);
 
-				if (taskEntries.length > finalTotalTasks) {
+				if (taskEntries.length > tasks) {
 					let historyInputTokens = 0;
 					let historyOutputTokens = 0;
 					let historyCost = 0;
@@ -331,28 +350,47 @@ export async function* runPlaybook(
 						historyElapsedMs += entry.elapsedTimeMs || 0;
 					}
 
-					finalTotalTasks = Math.max(finalTotalTasks, taskEntries.length);
-					finalTotalInputTokens = Math.max(finalTotalInputTokens, historyInputTokens);
-					finalTotalOutputTokens = Math.max(finalTotalOutputTokens, historyOutputTokens);
-					finalTotalCost = Math.max(finalTotalCost, historyCost);
-					finalTotalElapsedMs = Math.max(finalTotalElapsedMs, historyElapsedMs);
+					tasks = Math.max(tasks, taskEntries.length);
+					inputTokens = Math.max(inputTokens, historyInputTokens);
+					outputTokens = Math.max(outputTokens, historyOutputTokens);
+					cost = Math.max(cost, historyCost);
+					elapsedMs = Math.max(elapsedMs, historyElapsedMs);
 				}
 			}
-		} catch {
+		} catch (err) {
 			// Fall back to in-memory counters if history read fails
+			logger.warn('History reconciliation failed, using in-memory counters', session.name, {
+				error: String(err),
+				sessionId: session.id,
+			});
 		}
 
+		return { tasks, inputTokens, outputTokens, cost, elapsedMs };
+	};
+
+	// Helper to create total Auto Run summary from reconciled totals
+	const createAutoRunSummary = (reconciled: {
+		tasks: number;
+		inputTokens: number;
+		outputTokens: number;
+		cost: number;
+		elapsedMs: number;
+	}): void => {
+		if (!writeHistory) return;
+		// Only write if we completed multiple loops or if looping was enabled
+		if (!playbook.loopEnabled && loopIteration === 0) return;
+
 		const loopsCompleted = loopIteration + 1;
-		const summary = `Auto Run completed: ${finalTotalTasks} tasks in ${loopsCompleted} loop${loopsCompleted !== 1 ? 's' : ''}`;
+		const summary = `Auto Run completed: ${reconciled.tasks} tasks in ${loopsCompleted} loop${loopsCompleted !== 1 ? 's' : ''}`;
 
 		const totalUsageStats: UsageStats | undefined =
-			finalTotalInputTokens > 0 || finalTotalOutputTokens > 0
+			reconciled.inputTokens > 0 || reconciled.outputTokens > 0
 				? {
-						inputTokens: finalTotalInputTokens,
-						outputTokens: finalTotalOutputTokens,
+						inputTokens: reconciled.inputTokens,
+						outputTokens: reconciled.outputTokens,
 						cacheReadInputTokens: 0,
 						cacheCreationInputTokens: 0,
-						totalCostUsd: finalTotalCost,
+						totalCostUsd: reconciled.cost,
 						contextWindow: 0, // Set to 0 for summaries - these are cumulative totals, not per-task context
 					}
 				: undefined;
@@ -360,13 +398,13 @@ export async function* runPlaybook(
 		const details = [
 			`**Auto Run Summary**`,
 			'',
-			`- **Total Tasks Completed:** ${finalTotalTasks}`,
+			`- **Total Tasks Completed:** ${reconciled.tasks}`,
 			`- **Loops Completed:** ${loopsCompleted}`,
-			`- **Total Duration:** ${formatElapsedTime(finalTotalElapsedMs)}`,
-			finalTotalInputTokens > 0 || finalTotalOutputTokens > 0
-				? `- **Total Tokens:** ${(finalTotalInputTokens + finalTotalOutputTokens).toLocaleString()} (${finalTotalInputTokens.toLocaleString()} in / ${finalTotalOutputTokens.toLocaleString()} out)`
+			`- **Total Duration:** ${formatElapsedTime(reconciled.elapsedMs)}`,
+			reconciled.inputTokens > 0 || reconciled.outputTokens > 0
+				? `- **Total Tokens:** ${(reconciled.inputTokens + reconciled.outputTokens).toLocaleString()} (${reconciled.inputTokens.toLocaleString()} in / ${reconciled.outputTokens.toLocaleString()} out)`
 				: '',
-			finalTotalCost > 0 ? `- **Total Cost:** $${finalTotalCost.toFixed(4)}` : '',
+			reconciled.cost > 0 ? `- **Total Cost:** $${reconciled.cost.toFixed(4)}` : '',
 		]
 			.filter((line) => line !== '')
 			.join('\n');
@@ -380,7 +418,7 @@ export async function* runPlaybook(
 			projectPath: session.cwd,
 			sessionId: session.id,
 			success: true,
-			elapsedTimeMs: finalTotalElapsedMs,
+			elapsedTimeMs: reconciled.elapsedMs,
 			usageStats: totalUsageStats,
 		};
 		addHistoryEntry(historyEntry);
@@ -786,16 +824,20 @@ export async function* runPlaybook(
 	// Unregister CLI activity - session is no longer busy
 	unregisterCliActivity(session.id);
 
-	// Add total Auto Run summary (only if looping was used)
-	createAutoRunSummary();
+	// Reconcile cumulative totals against persisted history (spans restarts/resumes)
+	const reconciled = computeReconciledTotals();
 
-	// Emit complete event
+	// Add total Auto Run summary (only if looping was used)
+	createAutoRunSummary(reconciled);
+
+	// Emit complete event with the reconciled totals so resumed runs report
+	// cumulative stats to CLI/JSONL consumers, not just the persisted summary entry.
 	yield {
 		type: 'complete',
 		timestamp: Date.now(),
 		success: true,
-		totalTasksCompleted: totalCompletedTasks,
-		totalElapsedMs: Date.now() - batchStartTime,
-		totalCost,
+		totalTasksCompleted: reconciled.tasks,
+		totalElapsedMs: reconciled.elapsedMs,
+		totalCost: reconciled.cost,
 	};
 }

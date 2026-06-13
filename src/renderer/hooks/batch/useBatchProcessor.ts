@@ -1607,14 +1607,32 @@ export function useBatchProcessor({
 			// Reconcile in-memory counters with persisted history entries.
 			// In-memory counters reset on app restart, but history entries persist on disk.
 			// For long-running sessions spanning restarts, history is the source of truth.
+			// Scope to the current logical Auto Run session: entries written after the most
+			// recent prior "Auto Run" summary. A completed/stopped run ends with such a summary,
+			// but a restart/kill does not - so this spans restarts while excluding earlier runs
+			// on the same agent (which would otherwise inflate the totals).
 			try {
 				const allEntries = await window.maestro.history.getAll(session.cwd, sessionId);
 				if (Array.isArray(allEntries) && allEntries.length > 0) {
+					// Boundary = timestamp of the most recent prior "Auto Run" summary entry.
+					let sessionBoundary = 0;
+					for (const e of allEntries) {
+						if (
+							e.type === 'AUTO' &&
+							e.summary &&
+							e.summary.startsWith('Auto Run ') &&
+							e.timestamp > sessionBoundary
+						) {
+							sessionBoundary = e.timestamp;
+						}
+					}
+
 					// Filter to individual task entries (exclude loop/session summaries)
 					const taskEntries = allEntries.filter(
 						(e) =>
 							e.type === 'AUTO' &&
 							e.summary &&
+							e.timestamp > sessionBoundary &&
 							!e.summary.startsWith('Loop ') &&
 							!e.summary.startsWith('Auto Run ') &&
 							!e.summary.startsWith('PR created') &&
@@ -1645,8 +1663,12 @@ export function useBatchProcessor({
 						totalElapsedMs = Math.max(totalElapsedMs, historyElapsedMs);
 					}
 				}
-			} catch {
+			} catch (err) {
 				// Fall back to in-memory counters if history read fails
+				console.warn(
+					'[BatchProcessor] History reconciliation failed, using in-memory counters',
+					err
+				);
 			}
 
 			// Determine status based on stalled documents and completion
