@@ -19,6 +19,7 @@
  */
 
 import * as fs from 'fs';
+import * as path from 'path';
 import type { AgentConfig } from './definitions';
 import { selectMode as defaultSelectMode } from './claude-mode-selector';
 import type { UsageSnapshot } from './claude-mode-selector';
@@ -108,6 +109,14 @@ export interface ClaudeSpawnDecision {
 	 * only affects how the mode is reported/persisted.
 	 */
 	directBinary?: boolean;
+	/**
+	 * Interactive resolved for an SSH REMOTE spawn. maestro-p runs on the remote
+	 * host (not a local script via process.execPath), so `maestroPBinPath` is
+	 * null. SSH-wrapping callers realize this with {@link buildRemoteInteractiveSpawn}:
+	 * swap the remote command to `maestro-p`, prepend the interactive flags, and
+	 * point MAESTRO_CLAUDE_BIN at the remote claude when a custom path is set.
+	 */
+	remote?: boolean;
 }
 
 /**
@@ -121,8 +130,8 @@ export function resolveClaudeSpawnMode(input: ResolveClaudeSpawnModeInput): Clau
 	const isClaudeCode =
 		agent?.id === 'claude-code' && !!agent?.interactiveCommand && !!agent?.interactiveModeArgs;
 
-	// Non-Claude, or SSH (the TUI wrapper needs the local claude binary): API.
-	if (!isClaudeCode || sshEnabled) {
+	// Non-Claude agents never route through maestro-p.
+	if (!isClaudeCode) {
 		return { mode: 'api', reason: 'auto', maestroPBinPath: null };
 	}
 
@@ -137,8 +146,9 @@ export function resolveClaudeSpawnMode(input: ResolveClaudeSpawnModeInput): Clau
 		// Power-user setup: the Path field itself points at a maestro-p binary.
 		// The command already launches maestro-p, so we leave the spawn alone and
 		// only reflect that it's really interactive (for the TUI/API pill + the
-		// renderStyle tagger that reads claudeInteractive.mode).
-		if (d.isMaestroPBinaryPath(sessionCustomPath)) {
+		// renderStyle tagger that reads claudeInteractive.mode). Local-only: a
+		// remote custom path can't be probed against the local filesystem.
+		if (!sshEnabled && d.isMaestroPBinaryPath(sessionCustomPath)) {
 			return {
 				mode: 'interactive',
 				reason: 'auto',
@@ -152,6 +162,42 @@ export function resolveClaudeSpawnMode(input: ResolveClaudeSpawnModeInput): Clau
 		const configDirKey =
 			input.persisted?.mode === 'interactive' ? d.resolveConfigDirKey(envForKey) : undefined;
 		return { mode: 'api', reason: 'auto', maestroPBinPath: null, configDirKey };
+	}
+
+	// ── SSH remote: maestro-p runs on the REMOTE host ─────────────────────────
+	// The interactive wrapper used to be local-only because it needs the claude
+	// TUI binary. Over SSH that binary lives on the remote, and maestro-p (which
+	// the user must have installed on the remote PATH) drives it there. There is
+	// no local script to resolve, so the SSH-wrapping caller realizes the spawn
+	// via buildRemoteInteractiveSpawn.
+	//
+	// Only the explicit `interactive` (TUI) choice routes through maestro-p on
+	// remote. `dynamic` is NOT offered for SSH agents (the AgentConfigPanel
+	// selector hides it) because the auto-switch reads a LOCAL usage snapshot
+	// that says nothing about the remote account's quota - there's no honest
+	// signal to switch on. A `dynamic` value that reaches here anyway (e.g. a
+	// local agent later flipped to SSH) falls back to `api` rather than silently
+	// spending Max-plan quota the user never explicitly opted into.
+	if (sshEnabled) {
+		if (tokenMode === 'interactive') {
+			return {
+				mode: 'interactive',
+				reason: 'auto',
+				maestroPBinPath: null,
+				remote: true,
+				// A custom remote claude path, when set, becomes MAESTRO_CLAUDE_BIN on
+				// the remote; otherwise maestro-p defaults to `claude` on the remote PATH.
+				claudeRealBinPath: sessionCustomPath || undefined,
+				configDirKey: d.resolveConfigDirKey(envForKey),
+			};
+		}
+		// dynamic over SSH: no remote quota signal, fall back to API.
+		return {
+			mode: 'api',
+			reason: 'auto',
+			maestroPBinPath: null,
+			configDirKey: d.resolveConfigDirKey(envForKey),
+		};
 	}
 
 	// ── interactive / dynamic ─────────────────────────────────────────────────
@@ -213,6 +259,15 @@ export interface ApplyClaudeSpawnInput {
 	customEnvVars?: Record<string, string>;
 	/** Defaults to process.execPath; injectable for tests. */
 	execPath?: string;
+	/**
+	 * Overall idle budget for the maestro-p run, in seconds. Forwarded as
+	 * `--max-wait`. Background callers (Cue, Auto Run) MUST pass this so the run
+	 * honors their configured timeout instead of maestro-p's 300s default — the
+	 * default silently killed long-running background turns. Omit to let
+	 * maestro-p use its built-in default (fine for short interactive surfaces
+	 * like tab naming that enforce their own outer process timeout).
+	 */
+	maxWaitSeconds?: number;
 }
 
 export interface ApplyClaudeSpawnResult {
@@ -240,15 +295,116 @@ export function applyClaudeSpawnDecision(input: ApplyClaudeSpawnInput): ApplyCla
 
 	if (decision.mode === 'interactive' && decision.maestroPBinPath) {
 		const realBin = decision.claudeRealBinPath ?? command;
+		const env: Record<string, string> = {
+			...(customEnvVars ?? {}),
+			MAESTRO_CLAUDE_BIN: realBin,
+			// `process.execPath` is the Electron binary. Running it against a `.js`
+			// script (maestro-p) without this flag does NOT execute the script as
+			// Node: in dev the Electron binary happens to load it as an app entry
+			// and it works, but a PACKAGED app ignores the script arg entirely and
+			// just launches a second Maestro GUI - so maestro-p never runs, emits no
+			// stream-json, and the caller (tab naming, synopsis, group chat) gets a
+			// null result. This is the dev-works / packaged-fails discrepancy. Every
+			// other execPath node-script spawn sets this (claude-usage-sampler.ts,
+			// cue-cli-executor.ts, maestro-cli-manager.ts). buildChildProcessEnv
+			// strips ELECTRON_RUN_AS_NODE from the inherited env, but applies
+			// customEnvVars AFTER the strip, so setting it here survives.
+			ELECTRON_RUN_AS_NODE: '1',
+		};
+		// Under ELECTRON_RUN_AS_NODE, maestro-p runs as pure Node and does
+		// `require('node-pty')`, which esbuild left external. In a packaged app
+		// maestro-p.js sits at the resources root, OUTSIDE the asar, so Node can't
+		// find node-pty without help. Point NODE_PATH at the IN-ASAR node_modules
+		// (`<resources>/app.asar/node_modules`), NOT the unpacked copy. node-pty's
+		// JS loads from the asar (Electron's patched fs reads it; the native
+		// `pty.node` is auto-redirected to app.asar.unpacked), and critically
+		// node-pty computes its `spawn-helper` path by doing
+		// `helperPath.replace('app.asar', 'app.asar.unpacked')`. If we hand it the
+		// already-unpacked path, that replace double-applies to
+		// `app.asar.unpacked.unpacked` and the helper exec fails with
+		// "posix_spawn failed: No such file or directory" - verified against the
+		// packaged build. Feeding the asar path lets node-pty rewrite it once,
+		// correctly. In dev `resourcesPath` is empty and node-pty resolves from the
+		// project tree, so this only fires when packaged.
+		if (typeof process.resourcesPath === 'string' && process.resourcesPath.length > 0) {
+			const asarModules = path.join(process.resourcesPath, 'app.asar', 'node_modules');
+			const existing = env.NODE_PATH ?? process.env.NODE_PATH;
+			env.NODE_PATH = existing ? `${asarModules}${path.delimiter}${existing}` : asarModules;
+		}
+		// `--max-wait` must precede the batch args because those end with the
+		// `-- <prompt>` end-of-options marker; anything after `--` is read by
+		// maestro-p's parser as the prompt positional, not a flag. Slotting it
+		// right after the script keeps it inside the flag region.
+		const maxWaitArgs =
+			typeof input.maxWaitSeconds === 'number' && input.maxWaitSeconds > 0
+				? ['--max-wait', String(Math.ceil(input.maxWaitSeconds))]
+				: [];
 		return {
 			command: input.execPath ?? process.execPath,
-			args: [decision.maestroPBinPath, ...(interactiveModeArgs ?? []), ...args],
-			customEnvVars: {
-				...(customEnvVars ?? {}),
-				MAESTRO_CLAUDE_BIN: realBin,
-			},
+			args: [decision.maestroPBinPath, ...maxWaitArgs, ...(interactiveModeArgs ?? []), ...args],
+			customEnvVars: env,
 		};
 	}
 
 	return { command, args, customEnvVars };
+}
+
+/**
+ * Command name used to invoke maestro-p on a remote SSH host. The user must
+ * have maestro-p installed and on PATH there (e.g. an npm-global install of the
+ * Maestro CLI, which exposes a `maestro-p` bin). Unlike the local path it is a
+ * bare command, not an absolute path: the SSH stdin script's login-shell PATH
+ * setup resolves it the same way it resolves `claude` for the API path.
+ */
+export const REMOTE_MAESTRO_P_COMMAND = 'maestro-p';
+
+/** Substitutions an SSH-wrapping caller applies for a remote interactive spawn. */
+export interface RemoteInteractiveSpawn {
+	/** Remote command to exec instead of `claude` (i.e. `maestro-p`). */
+	command: string;
+	/** Flags to prepend ahead of the existing (headless) arg list + prompt. */
+	prependArgs: string[];
+	/** Env additions to merge into the remote env. */
+	env: Record<string, string>;
+}
+
+/**
+ * Realize an interactive {@link ClaudeSpawnDecision} for an SSH REMOTE spawn.
+ *
+ * Where {@link applyClaudeSpawnDecision} wraps a LOCAL maestro-p script via
+ * `process.execPath`, this returns the substitutions an SSH-wrapping caller
+ * folds into its remote command: run `maestro-p` on the remote host (it strips
+ * the headless-only flags, drives the remote claude TUI on the Max
+ * subscription, and reads the prompt from the stdin passthrough), prepend the
+ * interactive flags (and an optional `--max-wait` idle budget for background
+ * surfaces), and point MAESTRO_CLAUDE_BIN at the remote claude binary when a
+ * custom remote path is configured (otherwise maestro-p defaults to `claude`
+ * on the remote PATH).
+ *
+ * Returns null when the decision is not remote-interactive (API, or local
+ * interactive), so callers leave their SSH config untouched.
+ */
+export function buildRemoteInteractiveSpawn(input: {
+	decision: ClaudeSpawnDecision;
+	interactiveModeArgs?: string[];
+	remoteClaudeBin?: string;
+	maxWaitSeconds?: number;
+}): RemoteInteractiveSpawn | null {
+	const { decision, interactiveModeArgs, remoteClaudeBin } = input;
+	if (decision.mode !== 'interactive' || !decision.remote) {
+		return null;
+	}
+	const maxWaitArgs =
+		typeof input.maxWaitSeconds === 'number' && input.maxWaitSeconds > 0
+			? ['--max-wait', String(Math.ceil(input.maxWaitSeconds))]
+			: [];
+	const env: Record<string, string> = {};
+	if (remoteClaudeBin && remoteClaudeBin.length > 0) {
+		env.MAESTRO_CLAUDE_BIN = remoteClaudeBin;
+	}
+	return {
+		command: REMOTE_MAESTRO_P_COMMAND,
+		prependArgs: [...maxWaitArgs, ...(interactiveModeArgs ?? [])],
+		env,
+	};
 }

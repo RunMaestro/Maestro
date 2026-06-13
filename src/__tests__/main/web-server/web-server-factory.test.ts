@@ -77,6 +77,7 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setDeleteGroupCallback = vi.fn();
 			setMoveSessionToGroupCallback = vi.fn();
 			setCreateSessionCallback = vi.fn();
+			setCreateWorktreeSessionCallback = vi.fn();
 			setDeleteSessionCallback = vi.fn();
 			setRenameSessionCallback = vi.fn();
 			setUpdateSessionCwdCallback = vi.fn();

@@ -281,6 +281,13 @@ export interface MessageHandlerCallbacks {
 		groupId?: string,
 		config?: CreateSessionConfig
 	) => Promise<{ sessionId: string } | null>;
+	createWorktreeSession: (
+		parentSessionId: string,
+		config: {
+			branchName: string;
+			baseBranch?: string;
+		}
+	) => Promise<{ success: boolean; sessionId?: string; error?: string }>;
 	deleteSession: (sessionId: string) => Promise<boolean>;
 	renameSession: (sessionId: string, newName: string) => Promise<boolean>;
 	updateSessionCwd: (
@@ -507,6 +514,10 @@ export class WebSocketMessageHandler {
 
 			case 'configure_auto_run':
 				this.handleConfigureAutoRun(client, message);
+				break;
+
+			case 'create_worktree_session':
+				this.handleCreateWorktreeSession(client, message);
 				break;
 
 			case 'set_auto_run_folder':
@@ -2724,6 +2735,7 @@ export class WebSocketMessageHandler {
 		'colorBlindMode',
 		'conductorProfile',
 		'maxOutputLines',
+		'encoreFeatures',
 	]);
 
 	/**
@@ -2859,6 +2871,57 @@ export class WebSocketMessageHandler {
 			})
 			.catch((error) => {
 				this.sendError(client, `Failed to create session: ${error.message}`);
+			});
+	}
+
+	/**
+	 * Handle create_worktree_session message - create a new agent in a git
+	 * worktree branched off an existing parent agent, without an Auto Run
+	 * playbook. The desktop creates the worktree, builds a child session linked
+	 * to the parent, and returns the new agent's session id.
+	 */
+	private handleCreateWorktreeSession(client: WebClient, message: WebClientMessage): void {
+		const parentSessionId = message.parentSessionId as string;
+		const branchName = message.branchName as string;
+
+		if (!parentSessionId || typeof parentSessionId !== 'string') {
+			this.sendError(client, 'Missing or invalid parentSessionId');
+			return;
+		}
+
+		if (!branchName || typeof branchName !== 'string' || branchName.trim() === '') {
+			this.sendError(client, 'Missing or invalid branchName');
+			return;
+		}
+
+		if (message.baseBranch !== undefined && typeof message.baseBranch !== 'string') {
+			this.sendError(client, 'baseBranch must be a string');
+			return;
+		}
+
+		if (!this.callbacks.createWorktreeSession) {
+			this.sendError(client, 'Worktree session creation not configured');
+			return;
+		}
+
+		const config = {
+			branchName: branchName.trim(),
+			baseBranch: (message.baseBranch as string | undefined)?.trim() || undefined,
+		};
+
+		this.callbacks
+			.createWorktreeSession(parentSessionId, config)
+			.then((result) => {
+				this.send(client, {
+					type: 'create_worktree_session_result',
+					success: result.success,
+					sessionId: result.sessionId,
+					error: result.error,
+					requestId: message.requestId,
+				});
+			})
+			.catch((error) => {
+				this.sendError(client, `Failed to create worktree session: ${error.message}`);
 			});
 	}
 

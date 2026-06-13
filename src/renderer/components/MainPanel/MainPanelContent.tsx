@@ -8,13 +8,15 @@ import {
 	createTabPidChangeHandler,
 } from '../TerminalView';
 import { InputArea } from '../InputArea';
-import { FilePreview, type FilePreviewHandle } from '../FilePreview';
+import type { FilePreviewHandle } from '../FilePreview';
 import { WizardConversationView, DocumentGenerationView } from '../InlineWizard';
 import { BrowserTabView, type BrowserTabViewHandle } from './BrowserTabView';
 import { useBrowserTabMounting } from '../../hooks/browser/useBrowserTabMounting';
 import { useUIStore } from '../../stores/uiStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useTabStore } from '../../stores/tabStore';
+import { useLayerStack } from '../../contexts/LayerStackContext';
+import { outputSearchKeyFor } from '../../utils/outputSearch';
 import type {
 	Session,
 	Theme,
@@ -34,6 +36,17 @@ import type {
 	GroomingProgress,
 	MergeResult,
 } from '../../types/contextMerge';
+
+// Lazy-loaded: FilePreview is the single aggregation point that pulls mermaid,
+// react-syntax-highlighter, and the full react-markdown/remark/rehype stack into
+// the bundle. None of it is needed until the user actually opens a file-preview
+// tab (never on a fresh launch landing on an AI tab), so we code-split it behind
+// first open to cut cold-start cost and idle memory. React.lazy preserves ref
+// forwarding through FilePreview's memo()+forwardRef wrapper, so filePreviewRef
+// keeps working once the chunk has mounted.
+const FilePreview = React.lazy(() =>
+	import('../FilePreview').then((m) => ({ default: m.FilePreview }))
+);
 
 export interface MainPanelContentProps {
 	// Core state (guaranteed by parent guard)
@@ -152,6 +165,7 @@ export interface MainPanelContentProps {
 	onStopBatchRun?: (sessionId?: string) => void;
 	onRemoveQueuedItem?: (itemId: string) => void;
 	onTogglePauseQueuedItem?: (itemId: string) => void;
+	onReorderQueuedItem?: (fromIndex: number, toIndex: number, tabId?: string) => void;
 	onForceSendQueuedItem?: (itemId: string) => void;
 	forcedParallelEnabled?: boolean;
 	getForceSendContext?: (
@@ -334,6 +348,7 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 		onStopBatchRun,
 		onRemoveQueuedItem,
 		onTogglePauseQueuedItem,
+		onReorderQueuedItem,
 		onForceSendQueuedItem,
 		forcedParallelEnabled,
 		getForceSendContext,
@@ -417,9 +432,28 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 	const maxOutputLines = useSettingsStore((s) => s.maxOutputLines);
 	// Self-sourced from uiStore
 	const activeFocus = useUIStore((s) => s.activeFocus);
-	const outputSearchOpen = useUIStore((s) => s.outputSearchOpen);
-	const outputSearchQuery = useUIStore((s) => s.outputSearchQuery);
-	const outputSearchRegex = useUIStore((s) => s.outputSearchRegex);
+	// Output ("Find") search is scoped per agent+AI-tab. Read this window's slot
+	// by its key so the Find bar doesn't follow the user to other agents/tabs.
+	const outputSearchKey = outputSearchKeyFor(activeSession.id, activeSession.activeTabId);
+	const outputSearchSlot = useUIStore((s) => s.outputSearchByKey?.[outputSearchKey]);
+	const outputSearchOpen = outputSearchSlot?.open ?? false;
+	const outputSearchQuery = outputSearchSlot?.query ?? '';
+	const outputSearchRegex = outputSearchSlot?.regex ?? false;
+	const setOutputSearchOpen = React.useCallback(
+		(v: boolean | ((prev: boolean) => boolean)) =>
+			useUIStore.getState().setOutputSearchOpen(outputSearchKey, v),
+		[outputSearchKey]
+	);
+	const setOutputSearchQuery = React.useCallback(
+		(v: string | ((prev: string) => string)) =>
+			useUIStore.getState().setOutputSearchQuery(outputSearchKey, v),
+		[outputSearchKey]
+	);
+	const setOutputSearchRegex = React.useCallback(
+		(v: boolean | ((prev: boolean) => boolean)) =>
+			useUIStore.getState().setOutputSearchRegex(outputSearchKey, v),
+		[outputSearchKey]
+	);
 
 	// Browser tab keep-alive: which of this agent's browser tabs stay mounted.
 	// Under the default 'off' policy this is just the active browser tab (mount-only-active,
@@ -427,6 +461,11 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 	// page state survives switching away. All mounted tabs render through the persistent
 	// overlay block below (mirroring the terminal keep-alive overlay).
 	const mountedBrowserTabIds = useBrowserTabMounting(activeSession);
+	// Number of open modal/overlay layers. When any layer is open over a browser
+	// tab (e.g. the Tab Switcher), the guest <webview> must release Chromium input
+	// focus so keyboard navigation lands in the modal instead of the page. Driving
+	// isActive off this re-blurs the webview the moment a layer opens.
+	const { layerCount } = useLayerStack();
 	// Per-tab BrowserTabView handles. The single browserViewRef passed from MainPanel must
 	// point at the active (visible) tab's handle so resolveBrowserContent reads that webview.
 	const browserViewRefs = React.useRef<Map<string, BrowserTabViewHandle>>(new Map());
@@ -482,66 +521,68 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 					tabIndex={-1}
 					className="flex-1 overflow-hidden outline-none"
 				>
-					<FilePreview
-						ref={filePreviewRef}
-						file={memoizedFilePreviewFile}
-						onClose={handleFilePreviewClose}
-						isTabMode={true}
-						theme={theme}
-						markdownEditMode={activeFileTab.editMode}
-						setMarkdownEditMode={handleFilePreviewEditModeChange}
-						onSave={handleFilePreviewSave}
-						shortcuts={shortcuts}
-						fileTree={fileTree}
-						cwd={filePreviewCwd}
-						onFileClick={onFileClick}
-						// Per-tab navigation history for breadcrumb navigation
-						canGoBack={canGoBack}
-						canGoForward={canGoForward}
-						onNavigateBack={onNavigateBack}
-						onNavigateForward={onNavigateForward}
-						backHistory={backHistory}
-						forwardHistory={forwardHistory}
-						currentHistoryIndex={currentHistoryIndex}
-						onNavigateToIndex={onNavigateToIndex}
-						onOpenFuzzySearch={onOpenFuzzySearch}
-						onShortcutUsed={onShortcutUsed}
-						ghCliAvailable={ghCliAvailable}
-						onPublishGist={onPublishGist}
-						hasGist={hasGist}
-						onOpenInGraph={onOpenInGraph}
-						onOpenInBrowser={onOpenInBrowser}
-						sshRemoteId={filePreviewSshRemoteId}
-						// Pass external edit content for persistence across tab switches
-						externalEditContent={activeFileTab.editContent}
-						onEditContentChange={handleFilePreviewEditContentChange}
-						// Pass scroll position props for persistence across tab switches
-						initialScrollTop={activeFileTab.scrollTop}
-						onScrollPositionChange={handleFilePreviewScrollPositionChange}
-						// Pass search query props for persistence across tab switches
-						initialSearchQuery={activeFileTab.searchQuery}
-						onSearchQueryChange={handleFilePreviewSearchQueryChange}
-						// File change detection
-						lastModified={activeFileTab.lastModified}
-						onReloadFile={handleFilePreviewReload}
-						// Phase 2: per-tab preview tier override.
-						previewTierOverride={activeFileTab.previewTierOverride}
-						onPreviewTierChange={(tier) =>
-							useTabStore.getState().setFileTabPreviewTier(activeFileTabId, tier)
-						}
-						// HTML render mode (per-tab, persists across tab switches).
-						htmlRenderMode={activeFileTab.htmlRenderMode}
-						onHtmlRenderModeChange={(value) =>
-							useTabStore.getState().setFileTabHtmlRenderMode(activeFileTabId, value)
-						}
-						// Transient deep-link scroll target. FilePreview clears this
-						// via onPendingScrollToLineConsumed once the editor has
-						// jumped, so subsequent re-renders don't re-scroll.
-						pendingScrollToLine={activeFileTab.pendingScrollToLine}
-						onPendingScrollToLineConsumed={() =>
-							useTabStore.getState().clearFileTabPendingScrollToLine(activeFileTabId)
-						}
-					/>
+					<React.Suspense fallback={null}>
+						<FilePreview
+							ref={filePreviewRef}
+							file={memoizedFilePreviewFile}
+							onClose={handleFilePreviewClose}
+							isTabMode={true}
+							theme={theme}
+							markdownEditMode={activeFileTab.editMode}
+							setMarkdownEditMode={handleFilePreviewEditModeChange}
+							onSave={handleFilePreviewSave}
+							shortcuts={shortcuts}
+							fileTree={fileTree}
+							cwd={filePreviewCwd}
+							onFileClick={onFileClick}
+							// Per-tab navigation history for breadcrumb navigation
+							canGoBack={canGoBack}
+							canGoForward={canGoForward}
+							onNavigateBack={onNavigateBack}
+							onNavigateForward={onNavigateForward}
+							backHistory={backHistory}
+							forwardHistory={forwardHistory}
+							currentHistoryIndex={currentHistoryIndex}
+							onNavigateToIndex={onNavigateToIndex}
+							onOpenFuzzySearch={onOpenFuzzySearch}
+							onShortcutUsed={onShortcutUsed}
+							ghCliAvailable={ghCliAvailable}
+							onPublishGist={onPublishGist}
+							hasGist={hasGist}
+							onOpenInGraph={onOpenInGraph}
+							onOpenInBrowser={onOpenInBrowser}
+							sshRemoteId={filePreviewSshRemoteId}
+							// Pass external edit content for persistence across tab switches
+							externalEditContent={activeFileTab.editContent}
+							onEditContentChange={handleFilePreviewEditContentChange}
+							// Pass scroll position props for persistence across tab switches
+							initialScrollTop={activeFileTab.scrollTop}
+							onScrollPositionChange={handleFilePreviewScrollPositionChange}
+							// Pass search query props for persistence across tab switches
+							initialSearchQuery={activeFileTab.searchQuery}
+							onSearchQueryChange={handleFilePreviewSearchQueryChange}
+							// File change detection
+							lastModified={activeFileTab.lastModified}
+							onReloadFile={handleFilePreviewReload}
+							// Phase 2: per-tab preview tier override.
+							previewTierOverride={activeFileTab.previewTierOverride}
+							onPreviewTierChange={(tier) =>
+								useTabStore.getState().setFileTabPreviewTier(activeFileTabId, tier)
+							}
+							// HTML render mode (per-tab, persists across tab switches).
+							htmlRenderMode={activeFileTab.htmlRenderMode}
+							onHtmlRenderModeChange={(value) =>
+								useTabStore.getState().setFileTabHtmlRenderMode(activeFileTabId, value)
+							}
+							// Transient deep-link scroll target. FilePreview clears this
+							// via onPendingScrollToLineConsumed once the editor has
+							// jumped, so subsequent re-renders don't re-scroll.
+							pendingScrollToLine={activeFileTab.pendingScrollToLine}
+							onPendingScrollToLineConsumed={() =>
+								useTabStore.getState().clearFileTabPendingScrollToLine(activeFileTabId)
+							}
+						/>
+					</React.Suspense>
 				</div>
 			) : (
 				<>
@@ -606,9 +647,9 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 								outputSearchOpen={outputSearchOpen}
 								outputSearchQuery={outputSearchQuery}
 								outputSearchRegex={outputSearchRegex}
-								setOutputSearchOpen={useUIStore.getState().setOutputSearchOpen}
-								setOutputSearchQuery={useUIStore.getState().setOutputSearchQuery}
-								setOutputSearchRegex={useUIStore.getState().setOutputSearchRegex}
+								setOutputSearchOpen={setOutputSearchOpen}
+								setOutputSearchQuery={setOutputSearchQuery}
+								setOutputSearchRegex={setOutputSearchRegex}
 								setActiveFocus={useUIStore.getState().setActiveFocus}
 								setLightboxImage={setLightboxImage}
 								inputRef={inputRef}
@@ -617,6 +658,7 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 								onDeleteLog={onDeleteLog}
 								onRemoveQueuedItem={onRemoveQueuedItem}
 								onTogglePauseQueuedItem={onTogglePauseQueuedItem}
+								onReorderQueuedItem={onReorderQueuedItem}
 								onForceSendQueuedItem={onForceSendQueuedItem}
 								forcedParallelEnabled={forcedParallelEnabled}
 								getForceSendContext={getForceSendContext}
@@ -815,6 +857,11 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 				if (!browserTab) return null;
 				const isBrowserVisible =
 					activeSession.inputMode === 'ai' && activeSession.activeBrowserTabId === tabId;
+				// Hold keyboard focus only when no modal/overlay is layered above the
+				// page. The tab stays visually rendered (visibility/zIndex below are
+				// driven by isBrowserVisible), but the webview yields input focus to an
+				// open layer so its keyboard navigation works (e.g. the Tab Switcher).
+				const isBrowserFocusActive = isBrowserVisible && layerCount === 0;
 				return (
 					<div
 						key={tabId}
@@ -832,6 +879,7 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 							}}
 							tab={browserTab}
 							theme={theme}
+							isActive={isBrowserFocusActive}
 							onUpdateTab={(tid, updates) =>
 								handleBrowserTabUpdate?.(activeSession.id, tid, updates)
 							}

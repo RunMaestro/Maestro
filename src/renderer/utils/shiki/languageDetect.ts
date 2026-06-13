@@ -66,12 +66,51 @@ export interface DetectionResult {
 
 const MIN_RELEVANCE = 5;
 
+/**
+ * Whitelist of grammars `highlightAuto` is allowed to consider. By default hljs
+ * scores a snippet against *every* registered language, and niche grammars
+ * (MIPS / x86 assembly, exotic configs, etc.) routinely out-score plain prose
+ * or numeric text - that's how plaintext ends up rendered as MIPS assembly.
+ *
+ * Restricting the candidate set to languages people actually paste means a
+ * snippet that doesn't look like any of these scores low and falls through to
+ * plaintext, which is the desired behaviour when we aren't sure. ids are
+ * hljs language names; the winner is mapped to Shiki's id by `resolveLanguage`.
+ */
+const HLJS_DETECT_SUBSET = [
+	'javascript',
+	'typescript',
+	'python',
+	'bash',
+	'shell',
+	'json',
+	'xml', // hljs serves HTML under the xml grammar
+	'css',
+	'scss',
+	'markdown',
+	'yaml',
+	'rust',
+	'go',
+	'java',
+	'c',
+	'cpp',
+	'csharp',
+	'php',
+	'ruby',
+	'sql',
+	'diff',
+	'dockerfile',
+	'ini', // covers toml-style config
+	'kotlin',
+	'swift',
+];
+
 export async function detectLanguage(code: string): Promise<DetectionResult | null> {
 	const trimmed = code.trim();
 	if (trimmed.length < 8) return null;
 	try {
 		const hljs = await loadHljs();
-		const result = hljs.highlightAuto(trimmed);
+		const result = hljs.highlightAuto(trimmed, HLJS_DETECT_SUBSET);
 		if (!result.language || result.relevance < MIN_RELEVANCE) return null;
 		const shikiLang = await resolveLanguage(result.language);
 		if (!shikiLang) return null;

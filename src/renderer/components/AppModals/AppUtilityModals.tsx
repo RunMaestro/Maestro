@@ -92,9 +92,9 @@ export interface AppUtilityModalsProps {
 	onOpenTabSwitcher: () => void;
 	// Bulk tab close operations
 	onCloseAllTabs?: () => void;
-	onCloseOtherTabs?: () => void;
-	onCloseTabsLeft?: () => void;
-	onCloseTabsRight?: () => void;
+	onCloseOtherTabs?: (pivotTabId?: string) => void;
+	onCloseTabsLeft?: (pivotTabId?: string) => void;
+	onCloseTabsRight?: (pivotTabId?: string) => void;
 	setPlaygroundOpen?: (open: boolean) => void;
 	onRefreshGitFileState: () => Promise<void>;
 	onDebugReleaseQueuedItem: () => void;
@@ -271,6 +271,9 @@ export interface AppUtilityModalsProps {
 	onQuickActionsNewTerminalTab?: () => void;
 	// Next unread / draft tab navigation (shared with Alt+Cmd+Down)
 	onGoToNextUnread?: () => void;
+	// Session/tab history navigation (shared with Cmd+Shift+, / Cmd+Shift+.)
+	onNavBack?: () => void;
+	onNavForward?: () => void;
 }
 
 /**
@@ -478,6 +481,8 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 	onQuickActionsNewBrowserTab,
 	onQuickActionsNewTerminalTab,
 	onGoToNextUnread,
+	onNavBack,
+	onNavForward,
 }: AppUtilityModalsProps) {
 	// Read per-modal data from the modal store for modals that support it.
 	// `presetDocuments` is set by the inline wizard's "Start Auto Run" button so
@@ -595,6 +600,8 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 					onNewBrowserTab={onQuickActionsNewBrowserTab}
 					onNewTerminalTab={onQuickActionsNewTerminalTab}
 					onGoToNextUnread={onGoToNextUnread}
+					onNavBack={onNavBack}
+					onNavForward={onNavForward}
 				/>
 			)}
 

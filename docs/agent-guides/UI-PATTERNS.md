@@ -120,6 +120,18 @@ function SettingsModal({ theme, onClose }: Props) {
 
 `<ModalFooter>` provides a standard cancel/confirm button pair with optional `destructive` styling (red confirm button).
 
+### Modal Sizing (max footprint)
+
+**The Maestro Cue modal (`90vw x 90vh`) is the maximum modal size.** No modal should exceed it - not even an "expanded" or "fullscreen" state. The Cue modal (`src/renderer/components/CueModal/CueModal.tsx`) sets `width: '90vw'; height: '90vh'` on its container; treat that as the app-wide ceiling.
+
+Guidance:
+
+- A large, content-heavy modal (dashboards, editors, the expanded Prompt Composer) caps at `w-[90vw] h-[90vh]`.
+- A compact modal that has a roomier "expanded" mode toggles between a capped default (e.g. `w-[90vw] h-[80vh] max-w-5xl`) and the `90vw x 90vh` ceiling - never `w-screen h-screen`. Staying off the screen edges keeps the modal clear of the OS title bar / traffic lights, so no per-platform inset gymnastics are needed.
+- Standard form/dialog modals use the `<Modal>` component's `width` prop (a fixed pixel width) and size their height to content.
+
+The expanded Prompt Composer (`src/renderer/components/PromptComposerModal.tsx`) is the reference implementation of the compact-vs-`90vw x 90vh` toggle.
+
 ### Escape Key Flow
 
 1. `LayerStackProvider` attaches a **capture-phase** `keydown` listener on `window`.
@@ -670,18 +682,44 @@ React error boundary that catches render errors, reports to Sentry, and shows a 
 
 Default fallback shows error details, component stack trace, and "Try Again" / "Reload App" buttons. Reports to Sentry via `Sentry.captureException`.
 
-### `<MarkdownRenderer>` (`src/renderer/components/MarkdownRenderer.tsx`)
+### `<Markdown>` (`src/renderer/components/Markdown/`)
 
-Full-featured markdown renderer using `react-markdown` with:
+The single, unified react-markdown renderer for the desktop app. Pick a `preset`
+instead of wiring `react-markdown` by hand:
 
-- GFM support (`remark-gfm`)
-- Frontmatter rendering as tables (`remark-frontmatter`)
-- Wiki-link resolution (`remarkFileLinks`)
-- Syntax highlighting (`react-syntax-highlighter` / Prism)
-- Local image loading via IPC with caching
-- HTML sanitization via `DOMPurify`
-- Copy-to-clipboard for code blocks
-- Optional SSH remote file loading
+```tsx
+import { Markdown } from '../Markdown';
+
+<Markdown preset="document" theme={theme} content={md} onExternalLinkClick={openUrl} />;
+```
+
+Presets:
+
+- **`chat`** - richest surface (AI Terminal, Group Chat, History, Feedback,
+  Director's Notes, Document Graph). Shiki code fences with copy button + language
+  picker, file links via `remarkFileLinks`, right-click link/file context menus,
+  IPC-loaded local images, chat line breaks + KaTeX math, Bionify, raw-HTML +
+  DOMPurify. `MarkdownRenderer` is a thin wrapper around `<Markdown preset="chat">`.
+- **`document`** - file/doc preview. Prism highlighting, search highlight, anchor
+  (`#`) links, pluggable `imageRenderer`, `customLanguageRenderers` (mermaid),
+  `extraRemark/RehypePlugins`. Renders bare so callers keep their own scoped prose
+  container. Pass `frontmatter={false}` for GFM-only surfaces.
+- **`wizard-bubble`** / **`release-notes`** - minimal, tightly-styled presets.
+
+Shared internals (do NOT re-implement): plugin selection lives in
+`Markdown/plugins.ts` (`buildMarkdownPlugins`), text preprocessing in
+`Markdown/preprocess.ts` (`preprocessMarkdown`, `fixMarkdownLinkSpaces`), and the
+leaf renderers in `Markdown/components/*` (`MarkdownLink`, `InlineCode`,
+`HexSwatch`, `ShikiCodeBlock`, `PrismCodeBlock`, `LocalImage`). The document
+component map is `createMarkdownComponents()` in `utils/markdownConfig.ts`, which
+`<Markdown preset="document">` uses internally. A few advanced surfaces (AutoRun's
+keystroke-memoized preview, FilePreview's tier selection + from-tree image
+resolution, the Wizard DocumentEditor) consume `createMarkdownComponents()`
+directly rather than the shell, but share the same leaf implementation.
+
+Separate engines, intentionally not part of `<Markdown>`: `MarkdownPreviewFast`
+(markdown-it, virtualized for 64KB+ files) and `MobileMarkdownRenderer` (web
+bundle, no IPC).
 
 ### `<SettingCheckbox>` (`src/renderer/components/SettingCheckbox.tsx`)
 
@@ -918,19 +956,19 @@ beforeEach(() => {
 
 ## Key Files Reference
 
-| Pattern           | Primary Files                                                                           |
-| ----------------- | --------------------------------------------------------------------------------------- |
-| Layer stack       | `src/renderer/hooks/ui/useLayerStack.ts`, `src/renderer/contexts/LayerStackContext.tsx` |
-| Modal layer       | `src/renderer/hooks/ui/useModalLayer.ts`                                                |
-| Modal component   | `src/renderer/components/ui/Modal.tsx`                                                  |
-| Modal priorities  | `src/renderer/constants/modalPriorities.ts`                                             |
-| Layer types       | `src/renderer/types/layer.ts`                                                           |
-| Theme definitions | `src/shared/themes.ts`, `src/shared/theme-types.ts`                                     |
-| Shortcuts         | `src/renderer/constants/shortcuts.ts`                                                   |
-| Keyboard handler  | `src/renderer/hooks/keyboard/useMainKeyboardHandler.ts`                                 |
-| Notifications     | `src/renderer/stores/notificationStore.ts`, `src/renderer/components/Toast.tsx`         |
-| Form components   | `src/renderer/components/ui/FormInput.tsx`, `src/renderer/components/ui/Modal.tsx`      |
-| Error boundary    | `src/renderer/components/ErrorBoundary.tsx`                                             |
-| Markdown renderer | `src/renderer/components/MarkdownRenderer.tsx`                                          |
-| Settings hook     | `src/renderer/hooks/settings/useSettings.ts`                                            |
-| Settings store    | `src/renderer/stores/settingsStore.ts`                                                  |
+| Pattern           | Primary Files                                                                                               |
+| ----------------- | ----------------------------------------------------------------------------------------------------------- |
+| Layer stack       | `src/renderer/hooks/ui/useLayerStack.ts`, `src/renderer/contexts/LayerStackContext.tsx`                     |
+| Modal layer       | `src/renderer/hooks/ui/useModalLayer.ts`                                                                    |
+| Modal component   | `src/renderer/components/ui/Modal.tsx`                                                                      |
+| Modal priorities  | `src/renderer/constants/modalPriorities.ts`                                                                 |
+| Layer types       | `src/renderer/types/layer.ts`                                                                               |
+| Theme definitions | `src/shared/themes.ts`, `src/shared/theme-types.ts`                                                         |
+| Shortcuts         | `src/renderer/constants/shortcuts.ts`                                                                       |
+| Keyboard handler  | `src/renderer/hooks/keyboard/useMainKeyboardHandler.ts`                                                     |
+| Notifications     | `src/renderer/stores/notificationStore.ts`, `src/renderer/components/Toast.tsx`                             |
+| Form components   | `src/renderer/components/ui/FormInput.tsx`, `src/renderer/components/ui/Modal.tsx`                          |
+| Error boundary    | `src/renderer/components/ErrorBoundary.tsx`                                                                 |
+| Markdown renderer | `src/renderer/components/Markdown/` (`<Markdown preset=...>`; `MarkdownRenderer.tsx` wraps the chat preset) |
+| Settings hook     | `src/renderer/hooks/settings/useSettings.ts`                                                                |
+| Settings store    | `src/renderer/stores/settingsStore.ts`                                                                      |

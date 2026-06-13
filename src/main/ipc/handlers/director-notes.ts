@@ -39,6 +39,18 @@ import type { HistoryGraphData } from './history';
 
 const LOG_CONTEXT = '[DirectorNotes]';
 
+/** Filter accepted by the unified-history IPCs: a single type, an array of
+ *  types to include, or null/undefined for "all types". An empty array means
+ *  "no types selected" and therefore matches nothing. */
+type UnifiedHistoryFilter = 'AUTO' | 'USER' | 'CUE' | Array<'AUTO' | 'USER' | 'CUE'> | null;
+
+/** Whether an entry's type passes the given filter. */
+function entryPassesFilter(type: HistoryEntry['type'], filter: UnifiedHistoryFilter): boolean {
+	if (filter == null) return true;
+	if (Array.isArray(filter)) return filter.includes(type as 'AUTO' | 'USER' | 'CUE');
+	return type === filter;
+}
+
 // Helper to create handler options with consistent context
 const handlerOpts = (operation: string): Pick<CreateHandlerOptions, 'context' | 'operation'> => ({
 	context: LOG_CONTEXT,
@@ -99,7 +111,9 @@ export interface DirectorNotesHandlerDependencies {
 
 export interface UnifiedHistoryOptions {
 	lookbackDays: number;
-	filter?: 'AUTO' | 'USER' | 'CUE' | null; // null = both
+	// A single type, an array of types to include, or null for "all".
+	// An empty array selects nothing.
+	filter?: UnifiedHistoryFilter;
 	/** Number of entries to return per page (default: 100) */
 	limit?: number;
 	/** Number of entries to skip for pagination (default: 0) */
@@ -242,7 +256,7 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 						}
 
 						// Apply type filter for the result set
-						if (filter && entry.type !== filter) continue;
+						if (!entryPassesFilter(entry.type, filter ?? null)) continue;
 
 						allEntries.push({
 							...entry,
@@ -430,7 +444,7 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 			handlerOpts('getOffsetForTimestamp'),
 			async (
 				timestamp: number,
-				options?: { lookbackDays?: number; filter?: 'AUTO' | 'USER' | 'CUE' | null }
+				options?: { lookbackDays?: number; filter?: UnifiedHistoryFilter }
 			): Promise<number> => {
 				const sessionIds = await historyManager.listSessionsWithHistory();
 				const lookback = options?.lookbackDays ?? 0;
@@ -444,7 +458,7 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 				for (const entries of entriesArrays) {
 					for (const e of entries) {
 						if (cutoff > 0 && e.timestamp < cutoff) continue;
-						if (filter && e.type !== filter) continue;
+						if (!entryPassesFilter(e.type, filter)) continue;
 						all.push(e);
 					}
 				}

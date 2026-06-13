@@ -21,6 +21,23 @@ import {
 
 // Mock child components to simplify testing - must be before MainPanel import
 
+// LayerStack: MainPanelContent reads layerCount to blur the browser webview when a
+// modal/overlay is layered above it. These tests render MainPanel in isolation
+// without a LayerStackProvider, so stub the hook (no layers open => layerCount 0).
+vi.mock('../../../renderer/contexts/LayerStackContext', () => ({
+	useLayerStack: () => ({
+		registerLayer: vi.fn(() => 'layer-test'),
+		unregisterLayer: vi.fn(),
+		updateLayerHandler: vi.fn(),
+		getTopLayer: vi.fn(() => undefined),
+		closeTopLayer: vi.fn(async () => false),
+		getLayers: vi.fn(() => []),
+		hasOpenLayers: vi.fn(() => false),
+		hasOpenModal: vi.fn(() => false),
+		layerCount: 0,
+	}),
+}));
+
 // TerminalView: forwardRef stub that records render calls per session so we can
 // assert persistence (kept mounted) vs destruction (unmounted) across sessions.
 const terminalViewSessions: string[] = [];
@@ -751,13 +768,15 @@ describe('MainPanel', () => {
 			...overrides,
 		});
 
-		it('should render FilePreview when activeFileTab is set', () => {
+		it('should render FilePreview when activeFileTab is set', async () => {
 			const activeFileTab = createFileTab();
 			render(
 				<MainPanel {...defaultProps} activeFileTabId="file-tab-1" activeFileTab={activeFileTab} />
 			);
 
-			expect(screen.getByTestId('file-preview')).toBeInTheDocument();
+			// FilePreview is React.lazy-loaded behind Suspense, so it mounts on a
+			// microtask rather than synchronously - await it the first time.
+			expect(await screen.findByTestId('file-preview')).toBeInTheDocument();
 			expect(screen.getByText('File Preview: test.ts')).toBeInTheDocument();
 		});
 

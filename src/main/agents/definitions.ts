@@ -94,6 +94,7 @@ export interface AgentConfig extends BaseAgentConfig {
 	jsonOutputArgs?: string[]; // Args for JSON output format (e.g., ['--format', 'json'])
 	resumeArgs?: (sessionId: string) => string[]; // Function to build resume args
 	readOnlyArgs?: string[]; // Args for read-only/plan mode (e.g., ['--agent', 'plan'])
+	noToolsArgs?: string[]; // Args that disable ALL tool use, forcing a pure text response (e.g., ['--tools', ''] for Claude). Used by tab naming so a task-like first message produces a name instead of triggering a real agentic investigation.
 	modelArgs?: (modelId: string) => string[]; // Function to build model selection args (e.g., ['--model', modelId])
 	workingDirArgs?: (dir: string) => string[]; // Function to build working directory args (e.g., ['-C', dir])
 	imageArgs?: (imagePath: string) => string[]; // Function to build image attachment args (e.g., ['-i', imagePath] for Codex)
@@ -187,6 +188,7 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		resumeArgs: (sessionId: string) => ['--resume', sessionId], // Resume with session ID; works for both api and interactive (forwarded by maestro-p)
 		readOnlyArgs: ['--permission-mode', 'plan'], // Read-only/plan mode
 		readOnlyCliEnforced: true, // CLI enforces read-only via --permission-mode plan
+		noToolsArgs: ['--tools', ''], // `--tools ""` disables every built-in tool (used by tab naming)
 		modelArgs: (modelId: string) => ['--model', modelId], // Model selection: claude --model sonnet
 		// Disable Claude Code's background-task feature across every spawn path (desktop UI, CLI batch, --live, SSH).
 		// Two motivations: (a) batch sessions exit before background tasks finish, losing results (#861); and (b) the
@@ -218,6 +220,11 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 				label: 'Effort',
 				description: 'How much effort the model should put into its response.',
 				dynamic: true,
+				// Static safety net used when runtime discovery scrapes nothing from the
+				// Claude CLI (e.g. Anthropic rewords --help / the validation warning again).
+				// Without this the effort pill and dropdown vanish entirely. Discovery still
+				// wins when it succeeds, so newly-added levels surface automatically.
+				options: ['', 'low', 'medium', 'high', 'xhigh', 'max'],
 				default: '',
 				argBuilder: (value: string) => (value && value.trim() ? ['--effort', value.trim()] : []),
 			},

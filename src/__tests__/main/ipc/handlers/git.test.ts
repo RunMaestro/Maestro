@@ -25,6 +25,7 @@ vi.mock('electron', () => ({
 // Mock the execFile module
 vi.mock('../../../../main/utils/execFile', () => ({
 	execFileNoThrow: vi.fn(),
+	execFileBufferNoThrow: vi.fn(),
 }));
 
 // Mock the logger
@@ -1607,30 +1608,48 @@ export function Component() {
 			});
 		});
 
-		// Note: Image file handling tests use spawnSync which is mocked via vi.hoisted.
-		// The handler uses require('child_process') at runtime, which interacts with
-		// the mock through the gif error test below. Full success path testing for
-		// image files requires integration tests.
-
-		it('should recognize image files and use spawnSync for them', async () => {
-			// The handler takes different code paths for images vs text files.
-			// This test verifies that image files (gif) trigger the spawnSync path
-			// by checking the error response when spawnSync returns a failure status.
-			mockSpawnSync.mockReturnValue({
+		it('should recognize image files and read them via the async buffer exec', async () => {
+			// Image files take a different code path than text files: they read raw
+			// binary via execFileBufferNoThrow (async, non-blocking) instead of
+			// execFileNoThrow. Verify the image path by checking the error response
+			// when the buffer exec returns a non-zero exit code.
+			vi.mocked(execFile.execFileBufferNoThrow).mockResolvedValue({
 				stdout: Buffer.from(''),
-				stderr: undefined,
-				status: 1,
-				pid: 1234,
-				output: [null, Buffer.from(''), undefined],
-				signal: null,
+				stderr: '',
+				exitCode: 1,
 			});
 
 			const handler = handlers.get('git:showFile');
 			const result = await handler!({} as any, '/test/repo', 'HEAD', 'assets/logo.gif');
 
-			// The fact we get this specific error proves the spawnSync path was taken
+			// Reaching this specific error proves the image (buffer-exec) path was taken.
+			expect(execFile.execFileBufferNoThrow).toHaveBeenCalledWith(
+				'git',
+				['show', 'HEAD:assets/logo.gif'],
+				'/test/repo',
+				50 * 1024 * 1024
+			);
 			expect(result).toEqual({
 				error: 'Failed to read file from git',
+			});
+		});
+
+		it('should return a base64 data URL for an image read successfully', async () => {
+			// Success path is now unit-testable because the binary read goes through
+			// the mockable execFileBufferNoThrow helper (previously it used spawnSync
+			// and required integration tests).
+			const pngBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+			vi.mocked(execFile.execFileBufferNoThrow).mockResolvedValue({
+				stdout: pngBytes,
+				stderr: '',
+				exitCode: 0,
+			});
+
+			const handler = handlers.get('git:showFile');
+			const result = await handler!({} as any, '/test/repo', 'HEAD', 'assets/logo.png');
+
+			expect(result).toEqual({
+				content: `data:image/png;base64,${pngBytes.toString('base64')}`,
 			});
 		});
 
@@ -1670,15 +1689,12 @@ export function Component() {
 			);
 		});
 
-		it('should return fallback error when image spawnSync fails without stderr', async () => {
-			// When spawnSync fails without a stderr message, we get the fallback error
-			mockSpawnSync.mockReturnValue({
+		it('should return fallback error when image buffer exec fails without stderr', async () => {
+			// When the buffer exec fails without a stderr message, we get the fallback error.
+			vi.mocked(execFile.execFileBufferNoThrow).mockResolvedValue({
 				stdout: Buffer.from(''),
-				stderr: Buffer.from(''),
-				status: 128,
-				pid: 1234,
-				output: [null, Buffer.from(''), Buffer.from('')],
-				signal: null,
+				stderr: '',
+				exitCode: 128,
 			});
 
 			const handler = handlers.get('git:showFile');

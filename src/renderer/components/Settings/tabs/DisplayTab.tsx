@@ -125,6 +125,8 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 		setShowLeftPanelCueIndicator,
 		showLeftPanelStartupCommandIndicator,
 		setShowLeftPanelStartupCommandIndicator,
+		showFullGroupLabelInBookmarks,
+		setShowFullGroupLabelInBookmarks,
 		fileEditWordWrap,
 		setFileEditWordWrap,
 		fileEditShowLineNumbers,
@@ -753,6 +755,43 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 							<span
 								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
 									showLeftPanelStartupCommandIndicator ? 'translate-x-5' : 'translate-x-0.5'
+								}`}
+							/>
+						</button>
+					</div>
+
+					{/* Show full group label on bookmarked agents */}
+					<div
+						className="flex items-center justify-between pt-3 border-t"
+						style={{ borderColor: theme.colors.border }}
+					>
+						<div>
+							<p className="text-sm" style={{ color: theme.colors.textMain }}>
+								Show full group label on bookmarked agents
+							</p>
+							<p className="text-xs opacity-50 mt-0.5">
+								Display the full group name (e.g.{' '}
+								<span className="font-mono">[2] CASE/CONTENT-SYSTEM</span>) instead of the
+								abbreviated badge (e.g. <span className="font-mono">CCS</span>) next to bookmarked
+								agents. Long names are truncated with the full value on hover.
+							</p>
+						</div>
+						<button
+							onClick={() => setShowFullGroupLabelInBookmarks(!showFullGroupLabelInBookmarks)}
+							className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0 outline-none"
+							tabIndex={0}
+							style={{
+								backgroundColor: showFullGroupLabelInBookmarks
+									? theme.colors.accent
+									: theme.colors.bgActivity,
+							}}
+							role="switch"
+							aria-checked={showFullGroupLabelInBookmarks}
+							aria-label="Show full group label on bookmarked agents in left side bar"
+						>
+							<span
+								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+									showFullGroupLabelInBookmarks ? 'translate-x-5' : 'translate-x-0.5'
 								}`}
 							/>
 						</button>

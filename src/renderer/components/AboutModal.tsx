@@ -117,7 +117,7 @@ export function AboutModal({
 			title="About Maestro"
 			priority={MODAL_PRIORITIES.ABOUT}
 			onClose={handleEscape}
-			width={450}
+			width={560}
 			customHeader={customHeader}
 			showHeader={true}
 		>

@@ -16,13 +16,33 @@ vi.mock('../../main/constants', () => ({
 	},
 }));
 
-vi.mock('../../main/utils/pricing', () => ({
-	calculateClaudeCost: vi.fn(
-		(input: number, output: number, cacheRead: number, cacheCreation: number) => {
-			return (input * 3 + output * 15 + cacheRead * 0.3 + cacheCreation * 3.75) / 1_000_000;
+vi.mock('../../main/utils/pricing', () => {
+	const flatCost = (input: number, output: number, cacheRead: number, cacheCreation: number) =>
+		(input * 3 + output * 15 + cacheRead * 0.3 + cacheCreation * 3.75) / 1_000_000;
+	const sumMatches = (content: string, key: string) => {
+		let total = 0;
+		for (const m of content.matchAll(new RegExp(`"${key}"\\s*:\\s*(\\d+)`, 'g'))) {
+			total += parseInt(m[1], 10);
 		}
-	),
-}));
+		return total;
+	};
+	return {
+		calculateClaudeCost: vi.fn(flatCost),
+		computeClaudeUsageCost: vi.fn((content: string) => {
+			const inputTokens = sumMatches(content, 'input_tokens');
+			const outputTokens = sumMatches(content, 'output_tokens');
+			const cacheReadTokens = sumMatches(content, 'cache_read_input_tokens');
+			const cacheCreationTokens = sumMatches(content, 'cache_creation_input_tokens');
+			return {
+				inputTokens,
+				outputTokens,
+				cacheReadTokens,
+				cacheCreationTokens,
+				costUsd: flatCost(inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens),
+			};
+		}),
+	};
+});
 
 vi.mock('../../main/utils/statsCache', () => ({
 	encodeClaudeProjectPath: vi.fn((p: string) => p.replace(/[^a-zA-Z0-9]/g, '-')),
@@ -60,7 +80,7 @@ vi.mock('fs/promises', () => ({
 // ============================================================================
 
 import { ClaudeSessionStorage } from '../../main/storage/claude-session-storage';
-import { calculateClaudeCost } from '../../main/utils/pricing';
+import { computeClaudeUsageCost } from '../../main/utils/pricing';
 import Store from 'electron-store';
 import fs from 'fs/promises';
 
@@ -334,7 +354,7 @@ describe('ClaudeSessionStorage', () => {
 			expect(sessions[0].cacheCreationTokens).toBe(25); // 10 + 15
 		});
 
-		it('should calculate cost via calculateClaudeCost', async () => {
+		it('should calculate cost via computeClaudeUsageCost', async () => {
 			const content = jsonl(
 				userMsg('Hello'),
 				assistantMsg('World'),
@@ -353,7 +373,7 @@ describe('ClaudeSessionStorage', () => {
 			vi.mocked(fs.readFile).mockResolvedValue(content);
 
 			const sessions = await storage.listSessions('/test/project');
-			expect(calculateClaudeCost).toHaveBeenCalledWith(1000, 500, 200, 100);
+			expect(computeClaudeUsageCost).toHaveBeenCalledWith(content);
 			expect(sessions[0].costUsd).toBeDefined();
 			// Using mock formula: (1000*3 + 500*15 + 200*0.3 + 100*3.75) / 1000000
 			const expectedCost = (1000 * 3 + 500 * 15 + 200 * 0.3 + 100 * 3.75) / 1_000_000;

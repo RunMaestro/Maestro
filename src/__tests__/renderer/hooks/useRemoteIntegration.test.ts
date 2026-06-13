@@ -170,6 +170,10 @@ describe('useRemoteIntegration', () => {
 			return () => {};
 		}),
 		sendRemoteCreateSessionResponse: vi.fn(),
+		onRemoteCreateWorktreeSession: vi.fn().mockImplementation(() => {
+			return () => {};
+		}),
+		sendRemoteCreateWorktreeSessionResponse: vi.fn(),
 		onRemoteDeleteSession: vi.fn().mockImplementation(() => {
 			return () => {};
 		}),

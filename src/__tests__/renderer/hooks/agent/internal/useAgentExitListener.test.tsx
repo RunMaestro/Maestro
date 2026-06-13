@@ -112,6 +112,95 @@ describe('useAgentExitListener', () => {
 		expect(log?.text).toContain('exited with code 1');
 	});
 
+	it('retires a finished orphan and dispatches the next queued item for ANOTHER tab exactly once', async () => {
+		// Regression: A is a closed/orphaned tab whose turn just finished. B is a
+		// second closed/orphaned tab with a queued read-only message; C is an open
+		// tab with a queued read-only message. When A exits, the retire branch must
+		// dequeue B's item (in lockstep with the post-reducer spawn) and mark B busy
+		// - NOT leave it in the queue. Leaving it queued caused B to run twice (once
+		// from queuedItemToProcess at A's exit, again when that run exited) and never
+		// surface as busy in the UI.
+		const orphanA = createMockAITab({ id: 'tab-A', state: 'busy', thinkingStartTime: 0 });
+		const orphanB = createMockAITab({ id: 'tab-B', state: 'idle', agentSessionId: 'asid-B' });
+		const tabC = createMockAITab({ id: 'tab-C', state: 'idle' });
+		const itemB = {
+			id: 'item-B',
+			timestamp: 1,
+			tabId: 'tab-B',
+			type: 'message' as const,
+			text: 'BRAVO',
+			readOnlyMode: true,
+		};
+		const itemC = {
+			id: 'item-C',
+			timestamp: 2,
+			tabId: 'tab-C',
+			type: 'message' as const,
+			text: 'CHARLIE',
+			readOnlyMode: true,
+		};
+		const session = createMockSession({
+			id: 'sess-1',
+			aiTabs: [tabC],
+			orphanedThinkingTabs: [orphanA, orphanB],
+			activeTabId: 'tab-C',
+			state: 'busy',
+			busySource: 'ai',
+			executionQueue: [itemB, itemC] as any,
+		});
+		useSessionStore.setState({ sessions: [session] } as any);
+
+		const processQueuedItem = vi.fn().mockResolvedValue(undefined);
+		const deps = makeDeps();
+		deps.processQueuedItemRef.current = processQueuedItem as any;
+
+		renderHook(() => useAgentExitListener(deps));
+		await act(async () => {
+			await handler!('sess-1-ai-tab-A', 0);
+			// queued-item dispatch is fired on a setTimeout(0) after the reducer
+			await new Promise((r) => setTimeout(r, 0));
+		});
+
+		const updated = useSessionStore.getState().sessions[0];
+		// A retired; B promoted to busy and dequeued; C still queued.
+		expect(updated.orphanedThinkingTabs?.map((t) => t.id)).toEqual(['tab-B']);
+		expect(updated.orphanedThinkingTabs?.[0].state).toBe('busy');
+		expect(updated.executionQueue.map((i) => i.id)).toEqual(['item-C']);
+		expect(updated.state).toBe('busy');
+		// Spawned exactly once, with B's item.
+		expect(processQueuedItem).toHaveBeenCalledTimes(1);
+		expect(processQueuedItem.mock.calls[0][1].id).toBe('item-B');
+	});
+
+	it('retires a finished orphan with no queued work and goes idle', async () => {
+		const orphanA = createMockAITab({ id: 'tab-A', state: 'busy', thinkingStartTime: 0 });
+		const session = createMockSession({
+			id: 'sess-1',
+			aiTabs: [createMockAITab({ id: 'tab-C', state: 'idle' })],
+			orphanedThinkingTabs: [orphanA],
+			activeTabId: 'tab-C',
+			state: 'busy',
+			busySource: 'ai',
+			executionQueue: [],
+		});
+		useSessionStore.setState({ sessions: [session] } as any);
+
+		const processQueuedItem = vi.fn().mockResolvedValue(undefined);
+		const deps = makeDeps();
+		deps.processQueuedItemRef.current = processQueuedItem as any;
+
+		renderHook(() => useAgentExitListener(deps));
+		await act(async () => {
+			await handler!('sess-1-ai-tab-A', 0);
+			await new Promise((r) => setTimeout(r, 0));
+		});
+
+		const updated = useSessionStore.getState().sessions[0];
+		expect(updated.orphanedThinkingTabs).toBeUndefined();
+		expect(updated.state).toBe('idle');
+		expect(processQueuedItem).not.toHaveBeenCalled();
+	});
+
 	it('deletes activeHiddenToolRef entry on AI exit', async () => {
 		const tab = createMockAITab({ id: 'tab-1', state: 'busy' });
 		const session = createMockSession({

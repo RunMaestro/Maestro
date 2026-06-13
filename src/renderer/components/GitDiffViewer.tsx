@@ -161,7 +161,7 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 				onClick={onClose}
 			>
 				<div
-					className="w-[85%] max-w-[1400px] h-[90%] rounded-lg shadow-2xl flex flex-col overflow-hidden"
+					className="w-[90vw] h-[90vh] rounded-lg shadow-2xl flex flex-col overflow-hidden"
 					style={{
 						backgroundColor: theme.colors.bgMain,
 						border: `1px solid ${theme.colors.border}`,
@@ -207,7 +207,7 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 			onClick={onClose}
 		>
 			<div
-				className="w-[85%] max-w-[1400px] h-[90%] rounded-lg shadow-2xl flex flex-col overflow-hidden"
+				className="w-[90vw] h-[90vh] rounded-lg shadow-2xl flex flex-col overflow-hidden"
 				style={{
 					backgroundColor: theme.colors.bgMain,
 					borderColor: theme.colors.border,

@@ -67,6 +67,9 @@ interface InMemoryCueEventRow {
 	createdAt: number;
 	completedAt: number | null;
 	payload: string | null;
+	providerSessionId?: string | null;
+	errorMessage?: string | null;
+	exitCode?: number | null;
 }
 
 /** Phase 12A queue persistence row. */
@@ -118,10 +121,20 @@ export interface InMemoryCueDb {
 		status: string;
 		payload?: string;
 	}): void;
-	updateCueEventStatus(id: string, status: string): void;
+	updateCueEventStatus(
+		id: string,
+		status: string,
+		providerSessionId?: string | null,
+		failure?: { errorMessage?: string | null; exitCode?: number | null }
+	): void;
 	getRecentCueEvents(since: number, limit?: number): CueEventRecord[];
 	safeRecordCueEvent(event: Parameters<InMemoryCueDb['recordCueEvent']>[0]): void;
-	safeUpdateCueEventStatus(id: string, status: string): void;
+	safeUpdateCueEventStatus(
+		id: string,
+		status: string,
+		providerSessionId?: string | null,
+		failure?: { errorMessage?: string | null; exitCode?: number | null }
+	): void;
 	// Heartbeat
 	updateHeartbeat(): void;
 	getLastHeartbeat(): number | null;
@@ -234,7 +247,7 @@ export function createInMemoryCueDb(): InMemoryCueDb {
 			state.eventOrder.push(event.id);
 		},
 
-		updateCueEventStatus(id, status) {
+		updateCueEventStatus(id, status, providerSessionId, failure) {
 			requireReady();
 			consumePendingFailure();
 			const row = state.events.get(id);
@@ -245,6 +258,11 @@ export function createInMemoryCueDb(): InMemoryCueDb {
 			}
 			row.status = status;
 			row.completedAt = now();
+			if (providerSessionId) row.providerSessionId = providerSessionId;
+			if (failure) {
+				row.errorMessage = failure.errorMessage ?? null;
+				row.exitCode = failure.exitCode ?? null;
+			}
 		},
 
 		getRecentCueEvents(since, limit) {
@@ -268,9 +286,9 @@ export function createInMemoryCueDb(): InMemoryCueDb {
 			}
 		},
 
-		safeUpdateCueEventStatus(id, status) {
+		safeUpdateCueEventStatus(id, status, providerSessionId, failure) {
 			try {
-				this.updateCueEventStatus(id, status);
+				this.updateCueEventStatus(id, status, providerSessionId, failure);
 			} catch {
 				// Same contract as safeRecordCueEvent — non-throwing.
 			}
@@ -437,12 +455,21 @@ export function buildCueDbModuleMock(getDb: () => InMemoryCueDb) {
 		isCueDbReady: () => getDb().isCueDbReady(),
 		recordCueEvent: (event: Parameters<InMemoryCueDb['recordCueEvent']>[0]) =>
 			getDb().recordCueEvent(event),
-		updateCueEventStatus: (id: string, status: string) => getDb().updateCueEventStatus(id, status),
+		updateCueEventStatus: (
+			id: string,
+			status: string,
+			providerSessionId?: string | null,
+			failure?: { errorMessage?: string | null; exitCode?: number | null }
+		) => getDb().updateCueEventStatus(id, status, providerSessionId, failure),
 		getRecentCueEvents: (since: number, limit?: number) => getDb().getRecentCueEvents(since, limit),
 		safeRecordCueEvent: (event: Parameters<InMemoryCueDb['recordCueEvent']>[0]) =>
 			getDb().safeRecordCueEvent(event),
-		safeUpdateCueEventStatus: (id: string, status: string) =>
-			getDb().safeUpdateCueEventStatus(id, status),
+		safeUpdateCueEventStatus: (
+			id: string,
+			status: string,
+			providerSessionId?: string | null,
+			failure?: { errorMessage?: string | null; exitCode?: number | null }
+		) => getDb().safeUpdateCueEventStatus(id, status, providerSessionId, failure),
 		updateHeartbeat: () => getDb().updateHeartbeat(),
 		getLastHeartbeat: () => getDb().getLastHeartbeat(),
 		pruneCueEvents: (olderThanMs: number) => getDb().pruneCueEvents(olderThanMs),

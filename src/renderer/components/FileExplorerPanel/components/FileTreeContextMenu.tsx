@@ -68,15 +68,20 @@ export function FileTreeContextMenu({
 	onOpenRename,
 	onOpenDelete,
 }: FileTreeContextMenuProps) {
-	const isFolder = contextMenu.node.type === 'folder';
-	const isFile = contextMenu.node.type === 'file';
-	const nodeName = contextMenu.node.name.toLowerCase();
+	// node === null is the empty-space / workspace-root menu (no row under the
+	// cursor). It only offers "New Folder", targeting the workspace root.
+	const node = contextMenu.node;
+	const isRoot = node === null;
+	const isFolder = node?.type === 'folder';
+	const isFile = node?.type === 'file';
+	const nodeName = node?.name.toLowerCase() ?? '';
 	// Count previewable files under this folder (recursively, excluding ones that
 	// open externally). Drives the dynamic label and lets us hide the option when
 	// there's nothing to preview. Reuses the same collector the action runs.
 	const previewableCount = useMemo(
-		() => (isFolder ? collectPreviewableFiles(contextMenu.node, contextMenu.path).length : 0),
-		[isFolder, contextMenu.node, contextMenu.path]
+		() =>
+			node && node.type === 'folder' ? collectPreviewableFiles(node, contextMenu.path).length : 0,
+		[node, contextMenu.path]
 	);
 	const platform = window.maestro?.platform ?? 'unknown';
 	const isHtml = isFile && (nodeName.endsWith('.html') || nodeName.endsWith('.htm'));
@@ -96,7 +101,16 @@ export function FileTreeContextMenu({
 			}}
 		>
 			<div className="p-1">
-				{isMultiSelectionContext && selectedCount > 1 ? (
+				{isRoot ? (
+					<button
+						onClick={onOpenNewFolder}
+						className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+						style={{ color: theme.colors.textMain }}
+					>
+						<FolderPlus className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+						<span>New Folder</span>
+					</button>
+				) : isMultiSelectionContext && selectedCount > 1 ? (
 					<>
 						<button
 							onClick={onPreviewMulti}
@@ -160,6 +174,23 @@ export function FileTreeContextMenu({
 										</span>
 									</button>
 								)}
+								<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
+							</>
+						)}
+
+						{/* New Folder - for files too, so a folder can be created alongside
+						    the file (in its parent dir, i.e. the workspace root for
+						    top-level files). Mirrors the folder menu's creation actions. */}
+						{isFile && (
+							<>
+								<button
+									onClick={onOpenNewFolder}
+									className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+									style={{ color: theme.colors.textMain }}
+								>
+									<FolderPlus className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+									<span>New Folder</span>
+								</button>
 								<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
 							</>
 						)}

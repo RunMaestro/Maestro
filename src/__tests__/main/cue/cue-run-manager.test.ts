@@ -436,8 +436,12 @@ describe('createCueRunManager', () => {
 			await vi.advanceTimersByTimeAsync(0);
 
 			// Third arg is the run's provider session id (undefined here — the
-			// mocked result sets none).
-			expect(updateCueEventStatus).toHaveBeenCalledWith('run-1', 'completed', undefined);
+			// mocked result sets none). Fourth is the failure diagnostics: a
+			// completed run has no error message but still carries its exit code.
+			expect(updateCueEventStatus).toHaveBeenCalledWith('run-1', 'completed', undefined, {
+				errorMessage: null,
+				exitCode: 0,
+			});
 		});
 
 		it('updates DB status to stopped on manual stop', () => {
@@ -511,7 +515,8 @@ describe('createCueRunManager', () => {
 			expect(safeUpdateCueEventStatus).toHaveBeenCalledWith(
 				expect.any(String),
 				'completed',
-				undefined
+				undefined,
+				{ errorMessage: null, exitCode: 0 }
 			);
 			// And a log should explain the run was recorded post-stop AND
 			// include the structured runFinished payload so the renderer
@@ -543,10 +548,13 @@ describe('createCueRunManager', () => {
 			resolveRun!(makeResult({ status: 'failed', stderr: 'boom' }));
 			await vi.advanceTimersByTimeAsync(0);
 
+			// Failure diagnostics propagate: stderr becomes error_message and the
+			// exit code is carried so the activity log can explain the failure.
 			expect(safeUpdateCueEventStatus).toHaveBeenCalledWith(
 				expect.any(String),
 				'failed',
-				undefined
+				undefined,
+				{ errorMessage: 'boom', exitCode: 0 }
 			);
 		});
 
@@ -664,7 +672,8 @@ describe('createCueRunManager', () => {
 			expect(safeUpdateCueEventStatus).toHaveBeenCalledWith(
 				expect.any(String),
 				'completed',
-				undefined
+				undefined,
+				{ errorMessage: null, exitCode: 0 }
 			);
 			// And the post-stop log MUST include the structured runFinished
 			// payload so renderer listeners observe the transition.

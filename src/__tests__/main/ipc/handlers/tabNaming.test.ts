@@ -72,6 +72,18 @@ vi.mock('../../../../shared/platformDetection', () => ({
 	isLinux: vi.fn(() => false),
 }));
 
+// Mock fs.existsSync so the shared Claude spawn-mode resolver's maestro-p binary
+// existence check passes. resolveClaudeSpawnMode reads fs.existsSync via its
+// default `fileExists` dependency, and the tab-naming handler calls the resolver
+// with default deps (no injection point at the IPC layer).
+vi.mock('fs', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('fs')>();
+	return {
+		...actual,
+		existsSync: vi.fn(() => true),
+	};
+});
+
 // Capture registered handlers
 const registeredHandlers: Map<string, (...args: unknown[]) => Promise<unknown>> = new Map();
 
@@ -404,6 +416,102 @@ describe('Tab Naming IPC Handlers', () => {
 
 			const result = await resultPromise;
 			expect(result).toBe('Dark Mode Toggle');
+		});
+
+		it('extracts the tab name from Claude stream-json output (the real-world path)', async () => {
+			// Regression: tab naming inherits the agent's default args, which include
+			// `--output-format stream-json`. The generated name therefore arrives buried
+			// inside JSON envelopes, and every line is far longer than extractTabName's
+			// 40-char filter. Without parsing the stream-json first, extraction always
+			// returns null and tabs never get named. We must lift the `result` text out.
+			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
+			let onExitCallback: ((sessionId: string, code?: number) => void) | undefined;
+
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Help me build a Rick and Morty side scroller game',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalled();
+			});
+
+			// A representative slice of real `claude --output-format stream-json` output:
+			// a long init line, an assistant message, and the terminating result.
+			const streamJson = [
+				JSON.stringify({
+					type: 'system',
+					subtype: 'init',
+					session_id: 'abc',
+					tools: ['Bash', 'Read', 'Grep'],
+					slash_commands: ['/help', '/compact'],
+				}),
+				JSON.stringify({
+					type: 'assistant',
+					message: { role: 'assistant', content: [{ type: 'text', text: 'Side-Scroller Game' }] },
+					session_id: 'abc',
+				}),
+				JSON.stringify({
+					type: 'result',
+					subtype: 'success',
+					is_error: false,
+					result: 'Side-Scroller Game',
+					session_id: 'abc',
+				}),
+			].join('\n');
+
+			onDataCallback?.('tab-naming-mock-uuid-1234', streamJson);
+			onExitCallback?.('tab-naming-mock-uuid-1234', 0);
+
+			const result = await resultPromise;
+			expect(result).toBe('Side-Scroller Game');
+		});
+
+		it('extracts from streaming assistant text when no result event arrives (early extraction)', async () => {
+			// Early extraction resolves before the process exits, so only assistant
+			// (streaming) events are present - no terminating result line yet.
+			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
+			let onExitCallback: ((sessionId: string, code?: number) => void) | undefined;
+
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Add a leaderboard endpoint',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalled();
+			});
+
+			const streamJson = [
+				JSON.stringify({ type: 'system', subtype: 'init', session_id: 'abc' }),
+				JSON.stringify({
+					type: 'assistant',
+					message: { role: 'assistant', content: [{ type: 'text', text: 'Leaderboard Endpoint' }] },
+					session_id: 'abc',
+				}),
+			].join('\n');
+
+			onDataCallback?.('tab-naming-mock-uuid-1234', streamJson);
+			onExitCallback?.('tab-naming-mock-uuid-1234', 0);
+
+			const result = await resultPromise;
+			expect(result).toBe('Leaderboard Endpoint');
 		});
 
 		it('returns null for empty output', async () => {
@@ -908,6 +1016,183 @@ describe('Tab Naming IPC Handlers', () => {
 					cwd: '/test',
 				})
 			).rejects.toThrow('Process manager');
+		});
+	});
+
+	describe('Claude token-source resolution', () => {
+		// A realistic claude-code agent that supports the maestro-p interactive
+		// wrapper (interactiveCommand + interactiveModeArgs present), so the shared
+		// resolver can pick the TUI path.
+		const interactiveClaudeAgent: AgentConfig = {
+			id: 'claude-code',
+			name: 'Claude Code',
+			command: 'claude',
+			path: '/usr/local/bin/claude',
+			args: [
+				'--print',
+				'--verbose',
+				'--output-format',
+				'stream-json',
+				'--dangerously-skip-permissions',
+			],
+			interactiveCommand: 'maestro-p',
+			interactiveModeArgs: ['--dangerously-skip-permissions'],
+		};
+
+		// Wire process events so we can drive the spawn to completion and resolve
+		// the handler's promise after asserting on the spawn call. Returns a
+		// `finish()` that simulates output + a clean exit.
+		function wireProcessEvents(): () => void {
+			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
+			let onExitCallback: ((sessionId: string, code?: number) => void) | undefined;
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
+			return () => {
+				onDataCallback?.('tab-naming-mock-uuid-1234', 'Generated Tab Name');
+				onExitCallback?.('tab-naming-mock-uuid-1234', 0);
+			};
+		}
+
+		it('wraps the spawn with maestro-p when the agent selected interactive (TUI) mode', async () => {
+			mockAgentDetector.getAgent.mockResolvedValue(interactiveClaudeAgent);
+			const finish = wireProcessEvents();
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Help me implement a login form',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+				enableMaestroP: true,
+				maestroPMode: 'interactive',
+				// Explicit override so the resolver doesn't depend on the bundled
+				// lookup; fs.existsSync is mocked to true so the binary "exists".
+				maestroPPath: '/bundled/maestro-p.js',
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalled();
+			});
+
+			const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
+			// Interactive mode runs maestro-p (a Node script) via process.execPath,
+			// with the maestro-p script as the first positional arg.
+			expect(spawnCall.command).toBe(process.execPath);
+			expect(spawnCall.args[0]).toMatch(/maestro-p\.js$/);
+			// maestro-p is told which real claude binary to drive.
+			expect(spawnCall.customEnvVars?.MAESTRO_CLAUDE_BIN).toBe('/usr/local/bin/claude');
+
+			finish();
+			await resultPromise;
+		});
+
+		it('spawns plain claude when the agent is API-only (enableMaestroP false)', async () => {
+			mockAgentDetector.getAgent.mockResolvedValue(interactiveClaudeAgent);
+			const finish = wireProcessEvents();
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Help me implement a login form',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+				enableMaestroP: false,
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalled();
+			});
+
+			const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
+			// API mode leaves the original claude command/args untouched - no
+			// process.execPath wrap, no maestro-p script.
+			expect(spawnCall.command).toBe('/usr/local/bin/claude');
+			expect(spawnCall.command).not.toBe(process.execPath);
+			expect(spawnCall.args[0]).not.toMatch(/maestro-p\.js$/);
+			expect(spawnCall.args).toContain('--print');
+
+			finish();
+			await resultPromise;
+		});
+
+		it('runs maestro-p on the remote host when an SSH agent selected interactive (TUI) mode', async () => {
+			// SSH used to be force-downgraded to `claude --print`. It now honors the
+			// selection: TUI routes to maestro-p on the REMOTE host (driving the
+			// remote claude TUI on the Max plan), realized by swapping the SSH
+			// remote command to `maestro-p` and prepending the interactive flags.
+			const { getSshRemoteConfig } = await import('../../../../main/utils/ssh-remote-resolver');
+			const { buildSshCommand } = await import('../../../../main/utils/ssh-command-builder');
+			(getSshRemoteConfig as Mock).mockReturnValue({
+				config: { id: 'r1', host: 'h', port: 22 },
+				source: 'session',
+			});
+			(buildSshCommand as Mock).mockResolvedValue({ command: 'ssh', args: ['remote', 'cmd'] });
+
+			mockAgentDetector.getAgent.mockResolvedValue({
+				...interactiveClaudeAgent,
+				capabilities: { supportsStreamJsonInput: true },
+			});
+			const finish = wireProcessEvents();
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Help me implement a login form',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+				enableMaestroP: true,
+				maestroPMode: 'interactive',
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' },
+			});
+
+			await vi.waitFor(() => {
+				expect(buildSshCommand).toHaveBeenCalled();
+			});
+
+			// The remote command handed to buildSshCommand is maestro-p (not claude),
+			// with the interactive flags prepended ahead of the existing arg list.
+			const sshCall = (buildSshCommand as Mock).mock.calls[0][1];
+			expect(sshCall.command).toBe('maestro-p');
+			expect(sshCall.args[0]).toBe('--dangerously-skip-permissions');
+			// stream-json prompt still flows over stdin.
+			expect(sshCall.useStdin).toBe(true);
+
+			finish();
+			await resultPromise;
+		});
+
+		it('spawns plain claude over SSH when the agent is API-only (enableMaestroP false)', async () => {
+			const { getSshRemoteConfig } = await import('../../../../main/utils/ssh-remote-resolver');
+			const { buildSshCommand } = await import('../../../../main/utils/ssh-command-builder');
+			(getSshRemoteConfig as Mock).mockReturnValue({
+				config: { id: 'r1', host: 'h', port: 22 },
+				source: 'session',
+			});
+			(buildSshCommand as Mock).mockResolvedValue({ command: 'ssh', args: ['remote', 'cmd'] });
+
+			mockAgentDetector.getAgent.mockResolvedValue({
+				...interactiveClaudeAgent,
+				capabilities: { supportsStreamJsonInput: true },
+			});
+			const finish = wireProcessEvents();
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Help me implement a login form',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+				enableMaestroP: false,
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' },
+			});
+
+			await vi.waitFor(() => {
+				expect(buildSshCommand).toHaveBeenCalled();
+			});
+
+			// API path keeps the plain remote claude binary - no maestro-p swap.
+			const sshCall = (buildSshCommand as Mock).mock.calls[0][1];
+			expect(sshCall.command).toBe('claude');
+			expect(sshCall.args).not.toContain('--dangerously-skip-permissions');
+
+			finish();
+			await resultPromise;
 		});
 	});
 });

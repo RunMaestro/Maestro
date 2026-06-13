@@ -203,8 +203,17 @@ const prepareSessionForPersistence = (session: Session): Session => {
 export interface UseDebouncedPersistenceReturn {
 	/** True if there are pending changes that haven't been persisted yet */
 	isPending: boolean;
-	/** Force immediate persistence of pending changes */
-	flushNow: () => void;
+	/**
+	 * Force immediate persistence of pending changes.
+	 *
+	 * Optionally pass the freshest sessions array. Callers that fire flushNow
+	 * synchronously right after a store mutation (e.g. a modal's onSave) run
+	 * BEFORE React has re-rendered, so the hook's internal `sessions` ref and
+	 * `isPending` flag are both still stale - the no-arg path would flush old
+	 * data or nothing at all. Passing the post-mutation sessions snapshot lets
+	 * the flush persist the just-made change without waiting for the debounce.
+	 */
+	flushNow: (latestSessions?: Session[]) => void;
 }
 
 /** Default debounce delay in milliseconds */
@@ -367,18 +376,33 @@ export function useDebouncedPersistence(
 	 * - App quit/visibility change
 	 * - Tab switching
 	 */
-	const flushNow = useCallback(() => {
-		// Clear any pending timer
-		if (timerRef.current) {
-			clearTimeout(timerRef.current);
-			timerRef.current = null;
-		}
+	const flushNow = useCallback(
+		(latestSessions?: Session[]) => {
+			// Clear any pending timer
+			if (timerRef.current) {
+				clearTimeout(timerRef.current);
+				timerRef.current = null;
+			}
 
-		// Only flush if there are pending changes
-		if (isPending) {
-			persistSessions();
-		}
-	}, [isPending, persistSessions]);
+			// When the caller hands us the post-mutation snapshot, seed the ref
+			// with it and flush unconditionally. The render-synced `isPending`
+			// flag can't be trusted here: flushNow is called synchronously from
+			// the mutating event handler, before React re-renders, so a change
+			// just written to the store reads as "not pending" yet. persistInternal
+			// diffs against the baseline, so a no-op flush is harmless.
+			if (latestSessions) {
+				sessionsRef.current = latestSessions;
+				persistSessions();
+				return;
+			}
+
+			// No snapshot: only flush if there are known pending changes.
+			if (isPending) {
+				persistSessions();
+			}
+		},
+		[isPending, persistSessions]
+	);
 
 	// Debounced persistence effect
 	useEffect(() => {

@@ -687,6 +687,7 @@ describe('restoreSession — Runtime state reset', () => {
 					name: null,
 					state: 'busy' as const,
 					thinkingStartTime: 999,
+					isGeneratingName: true,
 					logs: [],
 					starred: false,
 					inputValue: '',
@@ -699,6 +700,7 @@ describe('restoreSession — Runtime state reset', () => {
 					name: null,
 					state: 'error' as const,
 					thinkingStartTime: 888,
+					isGeneratingName: true,
 					logs: [],
 					starred: false,
 					inputValue: '',
@@ -718,6 +720,10 @@ describe('restoreSession — Runtime state reset', () => {
 		expect(restored!.aiTabs[0].thinkingStartTime).toBeUndefined();
 		expect(restored!.aiTabs[1].state).toBe('idle');
 		expect(restored!.aiTabs[1].thinkingStartTime).toBeUndefined();
+		// A naming call interrupted by reload must not leave the flag stranded -
+		// otherwise the namingNotInFlight guard blocks auto-naming retries forever.
+		expect(restored!.aiTabs[0].isGeneratingName).toBe(false);
+		expect(restored!.aiTabs[1].isGeneratingName).toBe(false);
 	});
 
 	it('preserves shellLogs', async () => {

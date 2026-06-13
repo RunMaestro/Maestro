@@ -715,11 +715,11 @@ export const ActivityHeatmap = memo(function ActivityHeatmap({
 			{use4HourBlockLayout && blockGrid && (
 				<div className="flex gap-2">
 					{/* Time block labels (Y-axis) */}
-					<div className="flex flex-col flex-shrink-0" style={{ width: 52, paddingTop: 22 }}>
+					<div className="flex flex-col flex-shrink-0" style={{ width: 60, paddingTop: 22 }}>
 						{TIME_BLOCK_LABELS.map((label, idx) => (
 							<div
 								key={idx}
-								className="text-xs text-right flex items-center justify-end pr-2"
+								className="text-xs text-right flex items-center justify-end pr-2 whitespace-nowrap"
 								style={{
 									color: theme.colors.textDim,
 									height: 20,

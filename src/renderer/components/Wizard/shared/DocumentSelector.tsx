@@ -34,6 +34,8 @@ export interface DocumentSelectorProps {
 	isOpen?: boolean;
 	/** Called when dropdown open state changes (controlled mode) */
 	onOpenChange?: (isOpen: boolean) => void;
+	/** Whether to show task count badges in dropdown rows */
+	showTaskCounts?: boolean;
 }
 
 /**
@@ -51,6 +53,7 @@ export function DocumentSelector({
 	disabled = false,
 	isOpen: controlledIsOpen,
 	onOpenChange,
+	showTaskCounts = false,
 }: DocumentSelectorProps): JSX.Element {
 	const [internalIsOpen, setInternalIsOpen] = useState(false);
 	const dropdownRef = useRef<HTMLDivElement>(null);
@@ -167,7 +170,24 @@ export function DocumentSelector({
 										index === selectedIndex ? theme.colors.bgActivity : 'transparent',
 								}}
 							>
-								{doc.filename}
+								{showTaskCounts ? (
+									<div className="flex items-center justify-between">
+										<span>{doc.filename}</span>
+										{doc.taskCount > 0 && (
+											<span
+												className="text-xs px-1.5 py-0.5 rounded"
+												style={{
+													backgroundColor: `${theme.colors.accent}20`,
+													color: theme.colors.accent,
+												}}
+											>
+												{doc.taskCount} tasks
+											</span>
+										)}
+									</div>
+								) : (
+									doc.filename
+								)}
 							</button>
 						))
 					)}

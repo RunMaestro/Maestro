@@ -11,8 +11,15 @@ import type { Theme } from '../../../constants/themes';
  */
 export interface MarkdownEditorHandle {
 	focus(): void;
-	/** Logical-line based jump used by `maestro://file/...#L<n>` deep links. */
-	scrollToLine(line: number): void;
+	/**
+	 * Logical-line based jump used by `maestro://file/...#L<n>` deep links and
+	 * the preview ⇄ edit toggle. By default the target line is also selected
+	 * (deep-link behavior); pass `{ select: false }` to scroll the line to the
+	 * top without disturbing the cursor (used when syncing from the preview).
+	 */
+	scrollToLine(line: number, opts?: { select?: boolean }): void;
+	/** 1-based source line currently at the top of the editor viewport. */
+	getTopLine(): number;
 	/** Vertical scroll percent (0..1) of the editor's scroller. */
 	getScrollPercent(): number;
 	setScrollPercent(percent: number): void;

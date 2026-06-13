@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import ReactMarkdown from 'react-markdown';
 import {
 	ArrowLeft,
 	Music,
@@ -20,11 +19,8 @@ import {
 	SYMPHONY_CATEGORIES,
 	SYMPHONY_BLOCKING_LABEL,
 } from '../../../../shared/symphony-constants';
-import {
-	REMARK_GFM_PLUGINS,
-	generateProseStyles,
-	createMarkdownComponents,
-} from '../../../utils/markdownConfig';
+import { generateProseStyles } from '../../../utils/markdownConfig';
+import { Markdown } from '../../Markdown';
 import { openUrl } from '../../../utils/openUrl';
 import { STATUS_COLORS } from '../helpers/statusInfo';
 import { useDocumentCycle } from '../hooks/useDocumentCycle';
@@ -78,19 +74,6 @@ export function RepositoryDetailView({
 				compactSpacing: false,
 				includeCheckboxStyles: true,
 				scopeSelector: '.symphony-preview',
-			}),
-		[theme]
-	);
-
-	const markdownComponents = useMemo(
-		() =>
-			createMarkdownComponents({
-				theme,
-				onExternalLinkClick: (href, opts) => {
-					if (/^https?:\/\/|^mailto:/.test(href)) {
-						openUrl(href, opts);
-					}
-				},
 			}),
 		[theme]
 	);
@@ -445,12 +428,13 @@ export function RepositoryDetailView({
 										className="prose prose-sm max-w-none"
 										style={{ color: theme.colors.textMain }}
 									>
-										<ReactMarkdown
-											remarkPlugins={REMARK_GFM_PLUGINS}
-											components={markdownComponents}
-										>
-											{documentPreview}
-										</ReactMarkdown>
+										<Markdown
+											preset="document"
+											frontmatter={false}
+											theme={theme}
+											content={documentPreview}
+											onExternalLinkClick={openUrl}
+										/>
 									</div>
 								) : (
 									<div className="flex flex-col items-center justify-center h-full">

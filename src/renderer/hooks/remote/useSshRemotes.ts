@@ -250,7 +250,15 @@ export function useSshRemotes(): UseSshRemotesReturn {
 				setTestingConfigId(null);
 
 				if (result.success && result.result) {
-					return { success: true, result: result.result };
+					// result.success is only the IPC envelope flag (handler did not
+					// throw). The real connection outcome lives in result.result.success;
+					// surface that so callers do not report a failed SSH test as
+					// "Connected".
+					return {
+						success: result.result.success,
+						result: result.result,
+						error: result.result.error,
+					};
 				} else {
 					return { success: false, error: result.error || 'Connection test failed' };
 				}

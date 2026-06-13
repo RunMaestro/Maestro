@@ -18,6 +18,7 @@ import type { Session, Group, LogEntry, AITab } from '../types';
 import { generateId } from '../utils/ids';
 import { getActiveTab } from '../utils/tabHelpers';
 import { logger } from '../utils/logger';
+import { useUIStore } from './uiStore';
 
 // ============================================================================
 // Store Types
@@ -207,6 +208,11 @@ export const useSessionStore = create<SessionStore>()((set) => ({
 	// Active session
 	setActiveSessionId: (id) => {
 		set({ activeSessionId: id, cyclePosition: -1 });
+		// Activating an agent through the public setter (clicks, external jumps)
+		// clears the Starred/Group-Chat keyboard cursor so a stale non-agent
+		// highlight never lingers. The cycle re-sets it afterward when it lands on
+		// a starred row (see useCycleSession.activateVisualItem).
+		useUIStore.getState().setSidebarExtraSelection(null);
 		// Fire-and-forget: persist to disk for restore on next launch.
 		// Not awaited — UI state must update synchronously; if the write
 		// fails the only consequence is the session won't be pre-selected

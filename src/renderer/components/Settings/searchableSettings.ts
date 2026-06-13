@@ -179,6 +179,15 @@ export const GENERAL_SETTINGS: SearchableSetting[] = [
 		keywords: ['history', 'synopsis', 'save', 'toggle'],
 	},
 	{
+		id: 'general-synopsis-debounce',
+		tab: 'general',
+		tabLabel: 'General',
+		label: 'Synopsis Debounce',
+		description:
+			'Idle time to wait before generating a History synopsis; coalesces rapid completions into one',
+		keywords: ['synopsis', 'debounce', 'coalesce', 'history', 'delay', 'throttle', 'idle'],
+	},
+	{
 		id: 'general-thinking-mode',
 		tab: 'general',
 		tabLabel: 'General',
@@ -598,7 +607,7 @@ export const DISPLAY_SETTINGS: SearchableSetting[] = [
 		tabLabel: 'Display',
 		label: 'Left Side Panel',
 		description:
-			'Configure the left side bar: group member counts, collapsed pills per row, location pills, git change indicator, Cue indicator, and worktree badges',
+			'Configure the left side bar: group member counts, collapsed pills per row, location pills, git change indicator, Cue indicator, worktree badges, and full vs abbreviated group labels on bookmarked agents',
 		keywords: [
 			'left',
 			'side',
@@ -644,6 +653,16 @@ export const DISPLAY_SETTINGS: SearchableSetting[] = [
 			'branch name',
 			'agent list',
 			'session list',
+			'bookmark',
+			'bookmarks',
+			'bookmarked',
+			'full',
+			'full name',
+			'full label',
+			'abbreviated',
+			'abbreviation',
+			'tag',
+			'label',
 		],
 	},
 	{

@@ -48,6 +48,7 @@ export function EditAgentModal({
 	const [customArgs, setCustomArgs] = useState('');
 	const [customEnvVars, setCustomEnvVars] = useState<Record<string, string>>({});
 	const [enableMaestroP, setEnableMaestroP] = useState(false);
+	const [maestroPMode, setMaestroPMode] = useState<'interactive' | 'dynamic'>('dynamic');
 	const [maestroPPath, setMaestroPPath] = useState('');
 	const [detectedMaestroPPath, setDetectedMaestroPPath] = useState<string | undefined>(undefined);
 	const [editDynamicOptions, setEditDynamicOptions] = useState<Record<string, string[]>>({});
@@ -236,12 +237,14 @@ export function EditAgentModal({
 			setCustomArgs('');
 			setCustomEnvVars({});
 			setEnableMaestroP(false);
+			setMaestroPMode('dynamic');
 			setMaestroPPath('');
 		} else {
 			setCustomPath(session.customPath ?? '');
 			setCustomArgs(session.customArgs ?? '');
 			setCustomEnvVars(session.customEnvVars ?? {});
 			setEnableMaestroP(session.enableMaestroP ?? false);
+			setMaestroPMode(session.maestroPMode ?? 'dynamic');
 			setMaestroPPath(session.maestroPPath ?? '');
 		}
 
@@ -345,7 +348,8 @@ export function EditAgentModal({
 			contextWindowValue,
 			sessionSshRemoteConfig,
 			enableMaestroP || undefined,
-			enableMaestroP && maestroPPath.trim() ? maestroPPath.trim() : undefined
+			enableMaestroP && maestroPPath.trim() ? maestroPPath.trim() : undefined,
+			enableMaestroP ? maestroPMode : undefined
 		);
 		onClose();
 	}, [
@@ -357,6 +361,7 @@ export function EditAgentModal({
 		customArgs,
 		customEnvVars,
 		enableMaestroP,
+		maestroPMode,
 		maestroPPath,
 		agentConfig,
 		sshRemoteConfig,
@@ -658,6 +663,8 @@ export function EditAgentModal({
 							isSshEnabled={isSshEnabled}
 							enableMaestroP={enableMaestroP}
 							onEnableMaestroPChange={setEnableMaestroP}
+							maestroPMode={maestroPMode}
+							onMaestroPModeChange={setMaestroPMode}
 							claudeInteractive={session?.claudeInteractive}
 							maestroPPath={maestroPPath}
 							onMaestroPPathChange={setMaestroPPath}

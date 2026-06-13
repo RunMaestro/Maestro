@@ -344,9 +344,10 @@ export class AgentDetector {
 					// Discover models dynamically from two sources:
 					// 1. Well-known aliases (always valid, resolve to latest in each tier)
 					//    Includes [1m] variants for 1M extended context window
-					//    (requires extra usage enabled at claude.ai/settings/usage)
+					//    (requires extra usage enabled at claude.ai/settings/usage).
+					//    fable has no [1m] variant (Claude Code exposes 1M only for opus/sonnet).
 					// 2. Historical model usage from ~/.claude/stats-cache.json
-					const models: string[] = ['sonnet', 'opus', 'haiku', 'opus[1m]', 'sonnet[1m]'];
+					const models: string[] = ['fable', 'sonnet', 'opus', 'haiku', 'opus[1m]', 'sonnet[1m]'];
 					try {
 						const statsPath = path.join(os.homedir(), '.claude', 'stats-cache.json');
 						const statsContent = fs.readFileSync(statsPath, 'utf8');
@@ -577,8 +578,14 @@ export class AgentDetector {
 							}
 						}
 
-						logger.debug('Could not discover effort levels for Claude Code', LOG_CONTEXT);
-						return [];
+						logger.debug(
+							'Could not discover effort levels for Claude Code; using static fallback',
+							LOG_CONTEXT
+						);
+						// Fall through to the static-options fallback below rather than
+						// returning [] - that keeps the effort pill/dropdown populated even
+						// when the CLI reworded its --help/validation output yet again.
+						break;
 					}
 					break;
 				}

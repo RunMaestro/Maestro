@@ -106,6 +106,14 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 		description: 'Git commit command prompt',
 		category: 'commands',
 	},
+	// Per-agent prompt preambles
+	{
+		id: 'copilot-preamble',
+		filename: 'copilot-preamble.md',
+		description:
+			'Prepended to every Copilot-CLI batch prompt to push back on premature task_complete and produce a richer summary',
+		category: 'agent-preambles',
+	},
 	// System
 	{
 		id: 'maestro-system-prompt',
@@ -270,6 +278,8 @@ export const PROMPT_IDS = {
 	// Commands
 	IMAGE_ONLY_DEFAULT: 'image-only-default',
 	COMMIT_COMMAND: 'commit-command',
+	// Per-agent prompt preambles
+	COPILOT_PREAMBLE: 'copilot-preamble',
 	// System
 	MAESTRO_SYSTEM_PROMPT: 'maestro-system-prompt',
 	// Group Chat

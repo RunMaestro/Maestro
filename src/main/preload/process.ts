@@ -714,6 +714,48 @@ export function createProcessApi() {
 		},
 
 		/**
+		 * Subscribe to remote create-worktree-agent from the CLI. Creates a new
+		 * agent in a git worktree branched off a parent agent, without Auto Run.
+		 */
+		onRemoteCreateWorktreeSession: (
+			callback: (parentSessionId: string, config: any, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (
+				_: unknown,
+				parentSessionId: string,
+				config: any,
+				responseChannel: string
+			) => {
+				try {
+					// callback may return a promise even though typed as void
+					Promise.resolve(callback(parentSessionId, config, responseChannel)).catch((error) => {
+						ipcRenderer.send(responseChannel, {
+							success: false,
+							error: error instanceof Error ? error.message : String(error),
+						});
+					});
+				} catch (error) {
+					ipcRenderer.send(responseChannel, {
+						success: false,
+						error: error instanceof Error ? error.message : String(error),
+					});
+				}
+			};
+			ipcRenderer.on('remote:createWorktreeSession', handler);
+			return () => ipcRenderer.removeListener('remote:createWorktreeSession', handler);
+		},
+
+		/**
+		 * Send response for remote create-worktree-agent
+		 */
+		sendRemoteCreateWorktreeSessionResponse: (
+			responseChannel: string,
+			result: { success: boolean; sessionId?: string; error?: string }
+		): void => {
+			ipcRenderer.send(responseChannel, result);
+		},
+
+		/**
 		 * Subscribe to remote set Auto Run folder from web interface
 		 * (request-response). Web clients use this to repoint a session at a
 		 * different `.maestro/` folder, mirroring desktop's `dialog.selectFolder`

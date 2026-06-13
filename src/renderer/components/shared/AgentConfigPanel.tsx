@@ -16,12 +16,31 @@
 import { useState, useRef, useMemo, useEffect } from 'react';
 import { RefreshCw, Plus, Trash2, HelpCircle, ChevronDown } from 'lucide-react';
 import { GhostIconButton } from '../ui/GhostIconButton';
-import { ToggleSwitch } from '../ui/ToggleSwitch';
+import { ToggleButtonGroup } from '../ToggleButtonGroup';
 import type { Theme, AgentConfig, AgentConfigOption } from '../../types';
+import {
+	getClaudeTokenMode,
+	toClaudeTokenModeSource,
+	type ClaudeTokenMode,
+} from '../../../shared/claudeTokenMode';
 import { logger } from '../../utils/logger';
 
 // Counter for generating stable IDs for env vars
 let envVarIdCounter = 0;
+
+// Claude token-source selector (claude-code only). Maps the tri-state
+// ClaudeTokenMode onto the segmented control labels plus a one-line hint each.
+const CLAUDE_TOKEN_MODE_OPTIONS: { value: ClaudeTokenMode; label: string }[] = [
+	{ value: 'api', label: 'API' },
+	{ value: 'interactive', label: 'TUI' },
+	{ value: 'dynamic', label: 'Dynamic' },
+];
+
+const CLAUDE_TOKEN_MODE_HINTS: Record<ClaudeTokenMode, string> = {
+	api: 'Always use claude --print (per-token API credit).',
+	interactive: 'Always drive the maestro-p TUI against your Max plan quota.',
+	dynamic: 'Start on the Max plan TUI, then auto-switch to API when the quota is near exhaustion.',
+};
 
 // Built-in environment variables that Maestro sets automatically
 const BUILT_IN_ENV_VARS: { key: string; description: string; value: string }[] = [
@@ -304,6 +323,9 @@ export interface AgentConfigPanelProps {
 	// `claude --print` (API Limits) based on the latest usage snapshot. Off by default.
 	enableMaestroP?: boolean;
 	onEnableMaestroPChange?: (value: boolean) => void;
+	/** Refinement of the maestro-p opt-in: always-TUI ('interactive') vs auto-switch ('dynamic'). */
+	maestroPMode?: 'interactive' | 'dynamic';
+	onMaestroPModeChange?: (mode: 'interactive' | 'dynamic') => void;
 	maestroPPath?: string;
 	onMaestroPPathChange?: (value: string) => void;
 	onMaestroPPathBlur?: () => void;
@@ -346,8 +368,13 @@ export function AgentConfigPanel({
 	compact = false,
 	showBuiltInEnvVars = false,
 	isSshEnabled = false,
-	enableMaestroP = false,
+	// Left undefined when never configured (NOT coerced to false): getClaudeTokenMode
+	// reads that "unset" state to default an SSH agent to the TUI. An explicit
+	// false (user picked API) collapses to api as usual.
+	enableMaestroP,
 	onEnableMaestroPChange,
+	maestroPMode,
+	onMaestroPModeChange,
 	maestroPPath = '',
 	onMaestroPPathChange,
 	onMaestroPPathBlur,
@@ -364,6 +391,28 @@ export function AgentConfigPanel({
 	};
 	const padding = compact ? 'p-2' : 'p-3';
 	const spacing = compact ? 'space-y-2' : 'space-y-3';
+	// Collapse the stored (enableMaestroP, maestroPMode) pair into the tri-state the
+	// segmented "Claude Token Source" selector renders. Source not API => show the
+	// maestro-p path input and the live Time/API-limits pill.
+	// Over SSH an unconfigured agent defaults to the TUI (Max plan), so pass the
+	// SSH flag through - getClaudeTokenMode flips the unset default from api to
+	// interactive for remote.
+	const claudeTokenMode = getClaudeTokenMode(
+		{ enableMaestroP, maestroPMode },
+		{ sshEnabled: isSshEnabled }
+	);
+	// SSH-remote agents only offer TUI / API, never Dynamic: the auto-switch
+	// reads a LOCAL usage snapshot that says nothing about the remote account's
+	// quota, so there's no honest signal to switch on. Drop the Dynamic segment
+	// and, when a stored Dynamic value meets SSH, display (and behave) as API -
+	// mirroring resolveClaudeSpawnMode, which falls a dynamic+SSH spawn back to
+	// api. The stored preference is left untouched so disabling SSH restores it.
+	const claudeTokenModeOptions = isSshEnabled
+		? CLAUDE_TOKEN_MODE_OPTIONS.filter((o) => o.value !== 'dynamic')
+		: CLAUDE_TOKEN_MODE_OPTIONS;
+	const displayClaudeTokenMode: ClaudeTokenMode =
+		isSshEnabled && claudeTokenMode === 'dynamic' ? 'api' : claudeTokenMode;
+	const showMaestroPDetails = displayClaudeTokenMode !== 'api';
 	// Track which built-in env var tooltip is showing
 	const [showingTooltip, setShowingTooltip] = useState<string | null>(null);
 
@@ -449,19 +498,18 @@ export function AgentConfigPanel({
 				<div className="flex gap-2">
 					<input
 						type="text"
-						value={customPath || (isSshEnabled ? agent.binaryName : agent.path) || ''}
+						// Over SSH the default is the remote binary name, shown as a placeholder so
+						// the field stays editable (an empty customPath means "use the default").
+						// Locally the field pre-fills with the detected path so it can be overridden.
+						value={customPath || (isSshEnabled ? '' : agent.path) || ''}
 						onChange={(e) => onCustomPathChange(e.target.value)}
 						onBlur={onCustomPathBlur}
 						onClick={(e) => e.stopPropagation()}
-						placeholder={`/path/to/${agent.binaryName}`}
-						// When showing default SSH binary name, make field read-only to prevent accidental modification
-						readOnly={isSshEnabled && !customPath}
+						placeholder={isSshEnabled ? agent.binaryName : `/path/to/${agent.binaryName}`}
 						className="flex-1 p-2 rounded border bg-transparent outline-none text-xs font-mono"
 						style={{
 							borderColor: theme.colors.border,
 							color: theme.colors.textMain,
-							// Slightly dim read-only fields to show they're not editable
-							opacity: isSshEnabled && !customPath ? 0.7 : 1,
 						}}
 					/>
 				</div>
@@ -472,51 +520,62 @@ export function AgentConfigPanel({
 				</p>
 			</div>
 
-			{/* Adaptive Mode toggle — Claude Code only. When enabled, the spawner uses
-			    maestro-p to drive the Claude TUI against your Max plan ("Time Limits")
-			    and falls back to `claude --print` ("API Limits") when the 5-hour or
-			    weekly window is near exhaustion (>=99%). Holds the fallback until
-			    BOTH windows have reset, then snaps back to Time Limits. Hidden over
-			    SSH — the wrapper needs the real claude binary on the local machine. */}
-			{agent.id === 'claude-code' && !isSshEnabled && onEnableMaestroPChange && (
+			{/* Claude Token Source selector - Claude Code only. Picks how this agent
+			    spends Claude quota: API (claude --print, per-token), TUI (maestro-p
+			    driving the Claude TUI against the Max plan), or Dynamic (start on the
+			    TUI, fall back to API when the 5-hour or weekly window is near
+			    exhaustion, then snap back once both windows reset). Over SSH only
+			    API / TUI are offered (Dynamic needs a local quota snapshot that
+			    doesn't reflect the remote account) and maestro-p runs on the remote
+			    host's PATH, so the local Maestro-P Path override is hidden. */}
+			{agent.id === 'claude-code' && onEnableMaestroPChange && (
 				<div
 					className={`${padding} rounded border`}
 					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
 				>
-					<div className="flex items-center justify-between mb-2">
-						<div className="flex items-center gap-2 min-w-0">
-							<span className="text-xs font-medium" style={{ color: theme.colors.textDim }}>
-								Adaptive Mode
+					<div className="flex items-center gap-2 min-w-0 mb-2">
+						<span className="text-xs font-medium" style={{ color: theme.colors.textDim }}>
+							Claude Token Source
+						</span>
+						{showMaestroPDetails && claudeInteractive && (
+							<span
+								className="text-[10px] font-mono px-1.5 py-0.5 rounded whitespace-nowrap"
+								style={{
+									backgroundColor: theme.colors.bgActivity,
+									color:
+										claudeInteractive.mode === 'interactive'
+											? theme.colors.accent
+											: (theme.colors.warning ?? theme.colors.accent),
+								}}
+								title={
+									claudeInteractive.modeReason === 'limit'
+										? 'Forced fallback: Max plan 5-hour or weekly quota is exhausted.'
+										: 'Selected automatically based on current usage.'
+								}
+							>
+								{claudeInteractive.mode === 'interactive' ? 'Time Limits' : 'API Limits'}
 							</span>
-							{enableMaestroP && claudeInteractive && (
-								<span
-									className="text-[10px] font-mono px-1.5 py-0.5 rounded whitespace-nowrap"
-									style={{
-										backgroundColor: theme.colors.bgActivity,
-										color:
-											claudeInteractive.mode === 'interactive'
-												? theme.colors.accent
-												: (theme.colors.warning ?? theme.colors.accent),
-									}}
-									title={
-										claudeInteractive.modeReason === 'limit'
-											? 'Forced fallback: Max plan 5-hour or weekly quota is exhausted.'
-											: 'Selected automatically based on current usage.'
-									}
-								>
-									{claudeInteractive.mode === 'interactive' ? 'Time Limits' : 'API Limits'}
-								</span>
-							)}
-						</div>
-						<ToggleSwitch
-							checked={enableMaestroP}
-							onChange={onEnableMaestroPChange}
-							theme={theme}
-							ariaLabel="Adaptive Mode"
-						/>
+						)}
 					</div>
-					<p className="text-xs opacity-50">Automatically Manage Claude Token Source</p>
-					{enableMaestroP && (
+					<ToggleButtonGroup
+						options={claudeTokenModeOptions}
+						value={displayClaudeTokenMode}
+						onChange={(mode) => {
+							const src = toClaudeTokenModeSource(mode);
+							onEnableMaestroPChange(src.enableMaestroP);
+							onMaestroPModeChange?.(src.maestroPMode);
+						}}
+						theme={theme}
+					/>
+					<p className="text-xs opacity-50 mt-2">
+						{CLAUDE_TOKEN_MODE_HINTS[displayClaudeTokenMode]}
+						{isSshEnabled && displayClaudeTokenMode === 'interactive'
+							? ' Runs maestro-p on the remote host (must be on its PATH).'
+							: ''}
+					</p>
+					{/* Local Maestro-P Path override is local-only: over SSH maestro-p
+					    is resolved as a bare command on the remote PATH, so hide it. */}
+					{showMaestroPDetails && !isSshEnabled && (
 						<div className="mt-3">
 							<label
 								className="block text-xs font-medium mb-2"

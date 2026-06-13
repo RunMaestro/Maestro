@@ -572,6 +572,69 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		}
 	});
 
+	// Handle remote create-worktree-agent from the CLI. Creates a new agent in a
+	// git worktree branched off a parent agent, without an Auto Run playbook.
+	// Reuses spawnWorktreeAgentAndDispatch (the same helper the Auto Run launch
+	// path uses) but skips the batch dispatch: the new agent is left idle, and
+	// the CLI optionally follows up with `dispatch` to send an initial prompt.
+	useEventListener('maestro:createWorktreeSession', async (e: Event) => {
+		const { parentSessionId, config, responseChannel } = (e as CustomEvent).detail;
+
+		try {
+			const parent = sessionsRef.current.find((s) => s.id === parentSessionId);
+			if (!parent) {
+				window.maestro.process.sendRemoteCreateWorktreeSessionResponse(responseChannel, {
+					success: false,
+					error: `Parent agent ${parentSessionId} not found`,
+				});
+				return;
+			}
+
+			// If the addressed agent is itself a worktree child, resolve to its
+			// parent so the new worktree branches off the main repo (mirrors the
+			// desktop and remote Auto Run launch paths).
+			let parentForSpawn = parent;
+			if (parent.parentSessionId) {
+				const grandparent = selectSessionById(parent.parentSessionId)(useSessionStore.getState());
+				if (grandparent) parentForSpawn = grandparent;
+			}
+
+			const spawnConfig: BatchRunConfig = {
+				documents: [],
+				prompt: '',
+				loopEnabled: false,
+				worktreeTarget: {
+					mode: 'create-new',
+					newBranchName: config.branchName,
+					baseBranch: config.baseBranch || undefined,
+					createPROnCompletion: false,
+				},
+			};
+
+			const newSessionId = await spawnWorktreeAgentAndDispatch(parentForSpawn, spawnConfig);
+			if (!newSessionId) {
+				// spawnWorktreeAgentAndDispatch already surfaced a toast describing why.
+				window.maestro.process.sendRemoteCreateWorktreeSessionResponse(responseChannel, {
+					success: false,
+					error: 'Failed to create worktree agent',
+				});
+				return;
+			}
+
+			window.maestro.process.sendRemoteCreateWorktreeSessionResponse(responseChannel, {
+				success: true,
+				sessionId: newSessionId,
+			});
+		} catch (error) {
+			captureException(error, { extra: { parentSessionId, responseChannel } });
+			logger.error('[Remote] Failed to create worktree agent:', undefined, error);
+			window.maestro.process.sendRemoteCreateWorktreeSessionResponse(responseChannel, {
+				success: false,
+				error: error instanceof Error ? error.message : String(error),
+			});
+		}
+	});
+
 	// Handle remote get auto-run docs from web interface
 	useEventListener('maestro:getAutoRunDocs', async (e: Event) => {
 		const { sessionId, responseChannel } = (e as CustomEvent).detail;

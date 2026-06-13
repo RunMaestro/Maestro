@@ -1,10 +1,6 @@
 import { useMemo, useRef } from 'react';
-import ReactMarkdown from 'react-markdown';
-import {
-	REMARK_GFM_PLUGINS,
-	createMarkdownComponents,
-	generateProseStyles,
-} from '../../../utils/markdownConfig';
+import { generateProseStyles } from '../../../utils/markdownConfig';
+import { Markdown } from '../../Markdown';
 import { openUrl } from '../../../utils/openUrl';
 import { useEventListener } from '../../../hooks/utils/useEventListener';
 import { Spinner } from '../../ui/Spinner';
@@ -69,15 +65,6 @@ export function MarkdownPreviewPane({
 		[theme]
 	);
 
-	const markdownComponents = useMemo(
-		() =>
-			createMarkdownComponents({
-				theme,
-				onExternalLinkClick: (href, opts) => openUrl(href, opts),
-			}),
-		[theme]
-	);
-
 	return (
 		<div
 			ref={previewScrollRef}
@@ -91,11 +78,17 @@ export function MarkdownPreviewPane({
 				</div>
 			) : (
 				<div className="prose prose-sm max-w-none" style={{ color: theme.colors.textMain }}>
-					<ReactMarkdown remarkPlugins={REMARK_GFM_PLUGINS} components={markdownComponents}>
-						{selectedDocFilename
-							? documentContent || '*Document not found*'
-							: readmeContent || '*No README available*'}
-					</ReactMarkdown>
+					<Markdown
+						preset="document"
+						frontmatter={false}
+						theme={theme}
+						content={
+							selectedDocFilename
+								? documentContent || '*Document not found*'
+								: readmeContent || '*No README available*'
+						}
+						onExternalLinkClick={openUrl}
+					/>
 				</div>
 			)}
 		</div>

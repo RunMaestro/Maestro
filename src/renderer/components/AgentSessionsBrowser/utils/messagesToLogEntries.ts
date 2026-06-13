@@ -10,6 +10,7 @@ export function messagesToLogEntries(messages: SessionMessage[], sessionId: stri
 			id: msg.uuid || `${sessionId}-${idx}`,
 			timestamp: new Date(msg.timestamp).getTime(),
 			source: msg.type === 'user' ? ('user' as const) : ('stdout' as const),
-			text: msg.content || '[No content]',
+			text: msg.content || (msg.images && msg.images.length > 0 ? '' : '[No content]'),
+			...(msg.images && msg.images.length > 0 && { images: msg.images }),
 		}));
 }

@@ -1,6 +1,5 @@
 import { useCallback } from 'react';
 import { useInlineWizardContext } from '../../../contexts/InlineWizardContext';
-import { useModalStore } from '../../../stores/modalStore';
 import { selectActiveSession, useSessionStore } from '../../../stores/sessionStore';
 import type { Session } from '../../../types';
 import { clearLiveDraft } from '../../../utils/liveDraftStore';
@@ -15,13 +14,12 @@ import { getTerminalSessionId } from '../../../utils/terminalTabHelpers';
 import type { CloseCurrentTabResult, UnifiedTabHandlersReturn } from './types';
 import {
 	applyUnifiedTabClosures,
-	getActiveUnifiedIndex,
+	excludeDraftRefs,
 	getRefsExceptActive,
 	getRefsLeftOfActive,
 	getRefsRightOfActive,
 	getTerminalTabIds,
 	getWizardTabIds,
-	hasDraftInRefs,
 } from './unifiedCloseHelpers';
 
 interface UseUnifiedTabHandlersOptions {
@@ -108,70 +106,38 @@ export function useUnifiedTabHandlers({
 		[endInlineWizard]
 	);
 
-	const performCloseOtherTabs = useCallback(() => {
-		closeRefs(getRefsExceptActive, 'close-others');
-	}, [closeRefs]);
+	// Bulk close operations never destroy a tab with an unsent draft — such tabs
+	// are filtered out of the close set so they survive. The rest close silently
+	// (no confirmation prompt).
+	const handleCloseOtherTabs = useCallback(
+		(pivotTabId?: string) => {
+			closeRefs(
+				(session) => excludeDraftRefs(session, getRefsExceptActive(session, pivotTabId)),
+				'close-others'
+			);
+		},
+		[closeRefs]
+	);
 
-	const handleCloseOtherTabs = useCallback(() => {
-		const session = selectActiveSession(useSessionStore.getState());
-		if (!session) return;
+	const handleCloseTabsLeft = useCallback(
+		(pivotTabId?: string) => {
+			closeRefs(
+				(session) => excludeDraftRefs(session, getRefsLeftOfActive(session, pivotTabId)),
+				'close-left'
+			);
+		},
+		[closeRefs]
+	);
 
-		const activeTabId = session.activeFileTabId ?? session.activeTabId;
-		const otherAiTabs = session.aiTabs.filter((t) => t.id !== activeTabId);
-		const hasAnyDraft = otherAiTabs.some((tab) => hasDraft(tab));
-		if (hasAnyDraft) {
-			useModalStore.getState().openModal('confirm', {
-				message: 'Some tabs have unsent drafts. Are you sure you want to close them?',
-				onConfirm: performCloseOtherTabs,
-			});
-		} else {
-			performCloseOtherTabs();
-		}
-	}, [performCloseOtherTabs]);
-
-	const performCloseTabsLeft = useCallback(() => {
-		closeRefs(getRefsLeftOfActive, 'close-left');
-	}, [closeRefs]);
-
-	const handleCloseTabsLeft = useCallback(() => {
-		const session = selectActiveSession(useSessionStore.getState());
-		if (!session) return;
-
-		const activeIndex = getActiveUnifiedIndex(session);
-		if (activeIndex <= 0) return;
-
-		const tabRefsToClose = session.unifiedTabOrder.slice(0, activeIndex);
-		if (hasDraftInRefs(session, tabRefsToClose)) {
-			useModalStore.getState().openModal('confirm', {
-				message: 'Some tabs have unsent drafts. Are you sure you want to close them?',
-				onConfirm: performCloseTabsLeft,
-			});
-		} else {
-			performCloseTabsLeft();
-		}
-	}, [performCloseTabsLeft]);
-
-	const performCloseTabsRight = useCallback(() => {
-		closeRefs(getRefsRightOfActive, 'close-right');
-	}, [closeRefs]);
-
-	const handleCloseTabsRight = useCallback(() => {
-		const session = selectActiveSession(useSessionStore.getState());
-		if (!session) return;
-
-		const activeIndex = getActiveUnifiedIndex(session);
-		if (activeIndex < 0 || activeIndex >= session.unifiedTabOrder.length - 1) return;
-
-		const tabRefsToClose = session.unifiedTabOrder.slice(activeIndex + 1);
-		if (hasDraftInRefs(session, tabRefsToClose)) {
-			useModalStore.getState().openModal('confirm', {
-				message: 'Some tabs have unsent drafts. Are you sure you want to close them?',
-				onConfirm: performCloseTabsRight,
-			});
-		} else {
-			performCloseTabsRight();
-		}
-	}, [performCloseTabsRight]);
+	const handleCloseTabsRight = useCallback(
+		(pivotTabId?: string) => {
+			closeRefs(
+				(session) => excludeDraftRefs(session, getRefsRightOfActive(session, pivotTabId)),
+				'close-right'
+			);
+		},
+		[closeRefs]
+	);
 
 	const handleCloseCurrentTab = useCallback((): CloseCurrentTabResult => {
 		const { setSessions } = useSessionStore.getState();

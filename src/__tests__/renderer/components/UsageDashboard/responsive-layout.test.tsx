@@ -793,12 +793,19 @@ describe('UsageDashboard Responsive Layout', () => {
 			});
 		});
 
-		it('activity heatmap has minimum height of 200px', async () => {
+		it('activity heatmap has minimum height of 300px', async () => {
 			render(<UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />);
 
 			await waitFor(() => {
+				expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
+			});
+
+			// Activity heatmap lives on the Activity tab - switch to it before checking.
+			fireEvent.click(screen.getByRole('tab', { name: 'Activity' }));
+
+			await waitFor(() => {
 				const heatmapSection = screen.getByTestId('section-activity-heatmap');
-				expect(heatmapSection).toHaveStyle({ minHeight: '200px' });
+				expect(heatmapSection).toHaveStyle({ minHeight: '300px' });
 			});
 		});
 
@@ -809,7 +816,7 @@ describe('UsageDashboard Responsive Layout', () => {
 				expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
 			});
 
-			// Duration trends moved to the Activity tab — switch to it before checking.
+			// Duration trends moved to the Activity tab - switch to it before checking.
 			fireEvent.click(screen.getByRole('tab', { name: 'Activity' }));
 
 			await waitFor(() => {
@@ -832,6 +839,13 @@ describe('UsageDashboard Responsive Layout', () => {
 
 		it('activity heatmap has horizontal scroll for year view', async () => {
 			render(<UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
+			});
+
+			// Activity heatmap lives on the Activity tab - switch to it before checking.
+			fireEvent.click(screen.getByRole('tab', { name: 'Activity' }));
 
 			await waitFor(() => {
 				const heatmapSection = screen.getByTestId('section-activity-heatmap');

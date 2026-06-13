@@ -257,12 +257,16 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 		};
 
 		const handleDocumentDrop = (e: DragEvent) => {
-			console.log(
-				'[DND-DEBUG] document drop (capture) — clearing draggingSessionId; current=',
-				useUIStore.getState().draggingSessionId
-			);
+			// This fires in the CAPTURE phase (document -> target), i.e. BEFORE the
+			// bubble-phase React onDrop on a group / ungrouped zone. preventDefault()
+			// here keeps Chromium's drop zone valid for subsequent drags, but we must
+			// NOT clear the session drag state yet: the React drop handler reads
+			// draggingSessionId to decide which agent to move. Clearing here would
+			// null it out before the move runs, silently breaking drag-to-group and
+			// drag-to-ungroup. The ghost state is cleared instead by the successful
+			// React drop (handleDropOnGroup / handleDropOnUngrouped) or, on a missed
+			// drop / cancel, by the dragend listener which always fires after drop.
 			e.preventDefault();
-			handleDragEnd();
 		};
 
 		// Escape during a drag doesn't reliably fire `dragend` for OS-initiated
@@ -287,14 +291,6 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 		// call handleDragEnd() mid-drag, clear draggingSessionId, and silently
 		// break drag-to-group / drag-to-ungroup before the drop ever lands.
 		const handleDocumentDragLeave = (e: DragEvent) => {
-			console.log(
-				'[DND-DEBUG] document dragleave — counter=',
-				dragCounterRef.current,
-				'relatedTarget=',
-				e.relatedTarget,
-				'dragging=',
-				useUIStore.getState().draggingSessionId
-			);
 			if (dragCounterRef.current === 0) return;
 			const leftWindow =
 				e.relatedTarget === null ||
@@ -313,10 +309,6 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 		// on mouseup so a row can never stay faded once the mouse is up.
 		const handleMouseUp = () => {
 			if (useUIStore.getState().draggingSessionId !== null) {
-				console.log(
-					'[DND-DEBUG] mouseup — clearing draggingSessionId=',
-					useUIStore.getState().draggingSessionId
-				);
 				useUIStore.getState().setDraggingSessionId(null);
 			}
 		};

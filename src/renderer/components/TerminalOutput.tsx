@@ -42,6 +42,8 @@ import { useSettingsStore } from '../stores/settingsStore';
 import { useMessageGistStore } from '../stores/messageGistStore';
 import { useSessionStore } from '../stores/sessionStore';
 import { SessionRecoveryCard } from './SessionRecoveryCard';
+import { getTokenSourcePill } from '../../shared/claudeTokenModeLabel';
+import { getClaudeTokenMode } from '../../shared/claudeTokenMode';
 
 // ============================================================================
 // Tool display helpers (pure functions, hoisted out of render path)
@@ -134,6 +136,37 @@ const summarizeToolInput = (input: unknown): ToolSummary | null => {
 	const detail = parts.length > 0 ? parts.join('  ') : undefined;
 	if (!detail && !description) return null;
 	return { description, detail: detail ?? '' };
+};
+
+/** Max lines of tool output to preview inline before truncating. */
+const TOOL_OUTPUT_PREVIEW_LINES = 8;
+
+/**
+ * Summarize tool output for inline display. MCP tools (and others) return their
+ * result in `toolState.output`; without this the compact tool log shows only the
+ * name + status icon and drops the result entirely. Strings render as-is, objects
+ * are JSON-stringified. Output is capped to a short preview so large results don't
+ * flood the chat.
+ */
+const summarizeToolOutput = (output: unknown): string | null => {
+	if (output === undefined || output === null) return null;
+	let text: string;
+	if (typeof output === 'string') {
+		text = output;
+	} else {
+		try {
+			text = JSON.stringify(output, null, 2);
+		} catch {
+			return null;
+		}
+	}
+	text = text.trim();
+	if (!text) return null;
+	const lines = text.split('\n');
+	if (lines.length > TOOL_OUTPUT_PREVIEW_LINES) {
+		return lines.slice(0, TOOL_OUTPUT_PREVIEW_LINES).join('\n') + '\n…';
+	}
+	return text;
 };
 
 const isHiddenProgressEntry = (log: LogEntry): boolean =>
@@ -666,6 +699,14 @@ const LogItemComponent = memo(
 								toolInput !== undefined && toolInput !== null
 									? summarizeToolInput(toolInput)
 									: null;
+							// Show the tool result once it has finished. Without this the
+							// compact tool log drops the output entirely (e.g. MCP calls
+							// like squash_repos that take no args render as a bare name).
+							const toolStatus = log.metadata?.toolState?.status;
+							const outputSummary =
+								toolStatus === 'completed' || toolStatus === 'failed' || toolStatus === 'error'
+									? summarizeToolOutput(log.metadata?.toolState?.output)
+									: null;
 
 							return (
 								<div
@@ -721,6 +762,17 @@ const LogItemComponent = memo(
 											}}
 										>
 											{toolSummary.detail}
+										</div>
+									)}
+									{outputSummary && (
+										<div
+											className="mt-1 ml-1 pl-2 opacity-60 break-words whitespace-pre-wrap border-l"
+											style={{
+												color: theme.colors.textMain,
+												borderColor: `${theme.colors.success}40`,
+											}}
+										>
+											{outputSummary}
 										</div>
 									)}
 								</div>
@@ -971,11 +1023,10 @@ const LogItemComponent = memo(
 					{isClaudeCode &&
 						log.source !== 'user' &&
 						(() => {
-							const isTui = log.renderStyle === 'text-stream';
-							const label = `${isAdaptiveMode ? 'Adaptive ' : ''}${isTui ? 'TUI' : 'API'}`;
-							const title = isTui
-								? `Captured via maestro-p driving the Claude TUI${isAdaptiveMode ? ' (Adaptive Mode enabled)' : ''}`
-								: `Captured via claude --print${isAdaptiveMode ? ' (Adaptive Mode enabled — fell back to API)' : ''}`;
+							const { label, title } = getTokenSourcePill({
+								mode: log.renderStyle === 'text-stream' ? 'interactive' : 'api',
+								adaptive: isAdaptiveMode,
+							});
 							return (
 								<span
 									className="absolute bottom-2 left-1/2 -translate-x-1/2 text-[10px] px-1.5 py-0.5 rounded pointer-events-none select-none"
@@ -1225,6 +1276,7 @@ interface TerminalOutputProps {
 	onDeleteLog?: (logId: string) => number | null; // Returns the index to scroll to after deletion
 	onRemoveQueuedItem?: (itemId: string) => void; // Callback to remove a queued item from execution queue
 	onTogglePauseQueuedItem?: (itemId: string) => void; // Callback to toggle held/paused state of a queued item
+	onReorderQueuedItem?: (fromIndex: number, toIndex: number, tabId?: string) => void; // Reorder a queued item within the active tab's queue
 	onForceSendQueuedItem?: (itemId: string) => void; // Callback to Force Send a queued item (parallel execution)
 	forcedParallelEnabled?: boolean; // Whether forcedParallelExecution setting is on (gates Force Send button)
 	getForceSendContext?: (
@@ -1290,6 +1342,7 @@ export const TerminalOutput = memo(
 			onDeleteLog,
 			onRemoveQueuedItem,
 			onTogglePauseQueuedItem,
+			onReorderQueuedItem,
 			onForceSendQueuedItem,
 			forcedParallelEnabled,
 			getForceSendContext,
@@ -1375,6 +1428,11 @@ export const TerminalOutput = memo(
 		isAtBottomRef.current = isAtBottom;
 		// Track whether auto-scroll is paused because user scrolled up (state so button re-renders)
 		const [autoScrollPaused, setAutoScrollPaused] = useState(false);
+		// Ref mirror of autoScrollPaused for the MutationObserver closure so a freshly
+		// restored scroll position can suppress auto-scroll synchronously, before the
+		// state-driven re-render re-runs the observer effect (avoids a one-frame yank).
+		const autoScrollPausedRef = useRef(false);
+		autoScrollPausedRef.current = autoScrollPaused;
 		// Guard flag: prevents the scroll handler from pausing auto-scroll
 		// during programmatic scrollTo() calls from the MutationObserver effect.
 		const isProgrammaticScrollRef = useRef(false);
@@ -1874,7 +1932,7 @@ export const TerminalOutput = memo(
 			const container = scrollContainerRef.current;
 			if (!container) return;
 
-			const shouldAutoScroll = () => !autoScrollPaused || isAtBottomRef.current;
+			const shouldAutoScroll = () => !autoScrollPausedRef.current || isAtBottomRef.current;
 
 			const scrollToBottom = () => {
 				if (!scrollContainerRef.current) return;
@@ -1932,6 +1990,17 @@ export const TerminalOutput = memo(
 						// Clamp to max scrollable area
 						const maxScroll = Math.max(0, scrollHeight - clientHeight);
 						const targetScroll = Math.min(initialScrollTop, maxScroll);
+						// If the saved position is not at the bottom, pause auto-scroll so the
+						// MutationObserver doesn't immediately yank the view back down (uses the
+						// same 50px bottom threshold as handleScrollInner). Flip the refs first
+						// so the observer's live shouldAutoScroll() sees the pause this frame,
+						// before the state update re-renders.
+						if (targetScroll < maxScroll - 50) {
+							autoScrollPausedRef.current = true;
+							isAtBottomRef.current = false;
+							setAutoScrollPaused(true);
+							setIsAtBottom(false);
+						}
 						scrollContainerRef.current.scrollTop = targetScroll;
 					}
 				});
@@ -2263,7 +2332,7 @@ export const TerminalOutput = memo(
 							bionifyAlgorithm={globalBionifyAlgorithm}
 							userMessageAlignment={userMessageAlignment}
 							isClaudeCode={session.toolType === 'claude-code'}
-							isAdaptiveMode={session.enableMaestroP === true}
+							isAdaptiveMode={getClaudeTokenMode(session) === 'dynamic'}
 						/>
 					))}
 
@@ -2274,6 +2343,12 @@ export const TerminalOutput = memo(
 							theme={theme}
 							onRemoveQueuedItem={onRemoveQueuedItem}
 							onTogglePauseQueuedItem={onTogglePauseQueuedItem}
+							onReorderItems={
+								onReorderQueuedItem
+									? (fromIndex, toIndex) =>
+											onReorderQueuedItem(fromIndex, toIndex, activeTabId || undefined)
+									: undefined
+							}
 							onForceSendQueuedItem={onForceSendQueuedItem}
 							forcedParallelEnabled={forcedParallelEnabled}
 							getForceSendContext={getForceSendContext}

@@ -56,6 +56,7 @@ import type {
 	DeleteGroupCallback,
 	MoveSessionToGroupCallback,
 	CreateSessionCallback,
+	CreateWorktreeSessionCallback,
 	CreateSessionConfig,
 	DeleteSessionCallback,
 	RenameSessionCallback,
@@ -162,6 +163,7 @@ export interface WebServerCallbacks {
 	deleteGroup: DeleteGroupCallback | null;
 	moveSessionToGroup: MoveSessionToGroupCallback | null;
 	createSession: CreateSessionCallback | null;
+	createWorktreeSession: CreateWorktreeSessionCallback | null;
 	deleteSession: DeleteSessionCallback | null;
 	renameSession: RenameSessionCallback | null;
 	updateSessionCwd: UpdateSessionCwdCallback | null;
@@ -243,6 +245,7 @@ export class CallbackRegistry {
 		deleteGroup: null,
 		moveSessionToGroup: null,
 		createSession: null,
+		createWorktreeSession: null,
 		deleteSession: null,
 		renameSession: null,
 		updateSessionCwd: null,
@@ -567,6 +570,17 @@ export class CallbackRegistry {
 	): Promise<{ sessionId: string } | null> {
 		if (!this.callbacks.createSession) return null;
 		return this.callbacks.createSession(name, toolType, cwd, groupId, config);
+	}
+
+	async createWorktreeSession(
+		parentSessionId: string,
+		config: {
+			branchName: string;
+			baseBranch?: string;
+		}
+	): Promise<{ success: boolean; sessionId?: string; error?: string }> {
+		if (!this.callbacks.createWorktreeSession) return { success: false, error: 'Not configured' };
+		return this.callbacks.createWorktreeSession(parentSessionId, config);
 	}
 
 	async deleteSession(sessionId: string): Promise<boolean> {
@@ -959,6 +973,10 @@ export class CallbackRegistry {
 
 	setCreateSessionCallback(callback: CreateSessionCallback): void {
 		this.callbacks.createSession = callback;
+	}
+
+	setCreateWorktreeSessionCallback(callback: CreateWorktreeSessionCallback): void {
+		this.callbacks.createWorktreeSession = callback;
 	}
 
 	setDeleteSessionCallback(callback: DeleteSessionCallback): void {

@@ -17,6 +17,14 @@ import { useEventListener } from '../hooks/utils/useEventListener';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import type { Session, Theme, QueuedItem } from '../types';
 import { safeClipboardWrite } from '../utils/clipboard';
+import {
+	useQueueReorder,
+	useQueueRowDrag,
+	QueueDropZone,
+	QueueDragHandle,
+	QueueDragShimmer,
+	queueDragCardStyle,
+} from './queue/queueDrag';
 
 interface ExecutionQueueBrowserProps {
 	isOpen: boolean;
@@ -28,17 +36,6 @@ interface ExecutionQueueBrowserProps {
 	onSwitchSession: (sessionId: string, tabId?: string) => void;
 	onReorderItems?: (sessionId: string, fromIndex: number, toIndex: number) => void;
 	onToggleItemPause?: (sessionId: string, itemId: string) => void;
-}
-
-interface DragState {
-	sessionId: string;
-	itemId: string;
-	fromIndex: number;
-}
-
-interface DropIndicator {
-	sessionId: string;
-	index: number;
 }
 
 /**
@@ -57,8 +54,10 @@ export function ExecutionQueueBrowser({
 	onToggleItemPause,
 }: ExecutionQueueBrowserProps) {
 	const [viewMode, setViewMode] = useState<'current' | 'global'>('current');
-	const [dragState, setDragState] = useState<DragState | null>(null);
-	const [dropIndicator, setDropIndicator] = useState<DropIndicator | null>(null);
+	// Drag-to-reorder orchestration shared with the inline queued-items list.
+	// The group key is the sessionId so each session's queue reorders independently.
+	const { dragState, dropIndicator, isAnyDragging, startDrag, overDrag, endDrag, cancelDrag } =
+		useQueueReorder(onReorderItems);
 	const onCloseRef = useRef(onClose);
 	onCloseRef.current = onClose;
 
@@ -83,39 +82,6 @@ export function ExecutionQueueBrowser({
 		},
 		{ enabled: isOpen }
 	);
-
-	// Drag handlers
-	const handleDragStart = (sessionId: string, itemId: string, index: number) => {
-		setDragState({ sessionId, itemId, fromIndex: index });
-	};
-
-	const handleDragOver = (sessionId: string, index: number) => {
-		// Allow dropping within the same session only (cross-session would require moving items)
-		if (dragState && dragState.sessionId === sessionId) {
-			setDropIndicator({ sessionId, index });
-		}
-	};
-
-	const handleDragEnd = () => {
-		if (dragState && dropIndicator && onReorderItems) {
-			const { sessionId, fromIndex } = dragState;
-			const toIndex = dropIndicator.index;
-
-			// Only reorder if indices differ
-			if (fromIndex !== toIndex && fromIndex !== toIndex - 1) {
-				// Adjust toIndex if dropping after the dragged item
-				const adjustedToIndex = toIndex > fromIndex ? toIndex - 1 : toIndex;
-				onReorderItems(sessionId, fromIndex, adjustedToIndex);
-			}
-		}
-		setDragState(null);
-		setDropIndicator(null);
-	};
-
-	const handleDragCancel = () => {
-		setDragState(null);
-		setDropIndicator(null);
-	};
 
 	if (!isOpen) return null;
 
@@ -254,12 +220,12 @@ export function ExecutionQueueBrowser({
 									{session.executionQueue?.map((item, index) => (
 										<React.Fragment key={item.id}>
 											{/* Drop indicator before this item */}
-											<DropZone
+											<QueueDropZone
 												theme={theme}
 												isActive={
-													dropIndicator?.sessionId === session.id && dropIndicator?.index === index
+													dropIndicator?.key === session.id && dropIndicator?.index === index
 												}
-												onDragOver={() => handleDragOver(session.id, index)}
+												onDragOver={() => overDrag(session.id, index)}
 											/>
 											<QueueItemRow
 												item={item}
@@ -276,26 +242,24 @@ export function ExecutionQueueBrowser({
 													onSwitchSession(session.id, item.tabId);
 													onClose();
 												}}
-												isDragging={dragState?.itemId === item.id}
+												isDragging={dragState?.key === session.id && dragState?.fromIndex === index}
 												canDrag={!!onReorderItems && (session.executionQueue?.length || 0) > 1}
-												isAnyDragging={!!dragState}
-												onDragStart={() => handleDragStart(session.id, item.id, index)}
-												onDragEnd={handleDragEnd}
-												onDragCancel={handleDragCancel}
-												onDragOverItem={(dropIndex) => handleDragOver(session.id, dropIndex)}
+												isAnyDragging={isAnyDragging}
+												onDragStart={() => startDrag(session.id, index)}
+												onDragEnd={endDrag}
+												onDragCancel={cancelDrag}
+												onDragOverItem={(gapIndex) => overDrag(session.id, gapIndex)}
 											/>
 										</React.Fragment>
 									))}
 									{/* Final drop zone after all items */}
-									<DropZone
+									<QueueDropZone
 										theme={theme}
 										isActive={
-											dropIndicator?.sessionId === session.id &&
+											dropIndicator?.key === session.id &&
 											dropIndicator?.index === (session.executionQueue?.length || 0)
 										}
-										onDragOver={() =>
-											handleDragOver(session.id, session.executionQueue?.length || 0)
-										}
+										onDragOver={() => overDrag(session.id, session.executionQueue?.length || 0)}
 									/>
 								</div>
 							</div>
@@ -312,27 +276,6 @@ export function ExecutionQueueBrowser({
 					conflicts.
 				</div>
 			</div>
-		</div>
-	);
-}
-
-interface DropZoneProps {
-	theme: Theme;
-	isActive: boolean;
-	onDragOver: () => void;
-}
-
-function DropZone({ theme, isActive, onDragOver }: DropZoneProps) {
-	return (
-		<div className="relative h-1 -my-0.5 z-10" onMouseEnter={onDragOver}>
-			<div
-				className="absolute inset-x-3 top-1/2 -translate-y-1/2 h-0.5 rounded-full transition-all duration-200"
-				style={{
-					backgroundColor: isActive ? theme.colors.accent : 'transparent',
-					boxShadow: isActive ? `0 0 8px ${theme.colors.accent}` : 'none',
-					transform: `translateY(-50%) scaleX(${isActive ? 1 : 0})`,
-				}}
-			/>
 		</div>
 	);
 }
@@ -362,117 +305,49 @@ function QueueItemRow({
 	isPaused,
 	onTogglePause,
 	onSwitchToSession,
-	isDragging,
-	canDrag,
-	isAnyDragging,
+	isDragging = false,
+	canDrag = false,
+	isAnyDragging = false,
 	onDragStart,
 	onDragEnd,
 	onDragCancel,
 	onDragOverItem,
 }: QueueItemRowProps) {
-	const [isPressed, setIsPressed] = useState(false);
-	const [isHovered, setIsHovered] = useState(false);
 	const [copied, setCopied] = useState(false);
-	const pressTimerRef = useRef<NodeJS.Timeout | null>(null);
 	const copyResetTimerRef = useRef<NodeJS.Timeout | null>(null);
-	const isDraggingRef = useRef(false);
-	const rowRef = useRef<HTMLDivElement>(null);
+
+	// Shared drag mechanics + visual flags (handle, press-to-grab, drop detection).
+	const { rowRef, visual, wrapperHandlers, cardHandlers } = useQueueRowDrag({
+		index,
+		canDrag,
+		isDragging,
+		isAnyDragging,
+		onDragStart: () => onDragStart?.(),
+		onDragEnd: () => onDragEnd?.(),
+		onDragCancel: () => onDragCancel?.(),
+		onDragOver: (gapIndex) => onDragOverItem?.(gapIndex),
+	});
+	const { showDragReady, showGrabbed, isDimmed } = visual;
 
 	const isCommand = item.type === 'command';
-	const displayText = isCommand
-		? item.command
-		: (item.text?.length || 0) > 100
-			? item.text?.slice(0, 100) + '...'
-			: item.text;
+	// Read up to the first 4k characters and let CSS line-clamp truncate to
+	// whatever fits the card's height (the 3-button action stack reserves the
+	// vertical room). The native ellipsis fills the space without wrapping past
+	// the card, so longer messages show as much as fits rather than a hard 100-char cut.
+	const displayText = isCommand ? item.command : item.text?.slice(0, 4000);
 
 	const timeSinceQueued = Date.now() - item.timestamp;
 	const minutes = Math.floor(timeSinceQueued / 60000);
 	const timeDisplay = minutes < 1 ? 'Just now' : `${minutes}m ago`;
 
-	// When another item is being dragged, use cursor position relative to this item's
-	// vertical midpoint to determine if the drop should be before or after this item.
-	const handleMouseMoveForDrop = (e: React.MouseEvent) => {
-		if (!isAnyDragging || isDragging || !rowRef.current || !onDragOverItem) return;
-		const rect = rowRef.current.getBoundingClientRect();
-		const midY = rect.top + rect.height / 2;
-		onDragOverItem(e.clientY < midY ? index : index + 1);
-	};
-
-	// Handle mouse down for drag initiation
-	const handleMouseDown = (e: React.MouseEvent) => {
-		if (!canDrag || e.button !== 0) return;
-
-		// Don't start drag if clicking on buttons
-		if ((e.target as HTMLElement).closest('button')) return;
-
-		setIsPressed(true);
-
-		// Small delay before initiating drag to allow for click detection
-		pressTimerRef.current = setTimeout(() => {
-			isDraggingRef.current = true;
-			onDragStart?.();
-		}, 150);
-	};
-
-	const handleMouseUp = () => {
-		if (pressTimerRef.current) {
-			clearTimeout(pressTimerRef.current);
-			pressTimerRef.current = null;
-		}
-
-		if (isDraggingRef.current) {
-			onDragEnd?.();
-			isDraggingRef.current = false;
-		}
-
-		setIsPressed(false);
-	};
-
-	const handleMouseLeave = () => {
-		setIsHovered(false);
-
-		if (pressTimerRef.current) {
-			clearTimeout(pressTimerRef.current);
-			pressTimerRef.current = null;
-		}
-
-		// Don't cancel drag on leave - let mouse up handle it
-		if (!isDraggingRef.current) {
-			setIsPressed(false);
-		}
-	};
-
-	// Cleanup timer on unmount
+	// Cleanup copy-feedback timer on unmount
 	useEffect(() => {
 		return () => {
-			if (pressTimerRef.current) {
-				clearTimeout(pressTimerRef.current);
-			}
 			if (copyResetTimerRef.current) {
 				clearTimeout(copyResetTimerRef.current);
 			}
 		};
 	}, []);
-
-	// Handle escape key + global mouseup to cancel/complete drag (only attached
-	// while a drag is in progress).
-	useEventListener(
-		'keydown',
-		(e) => {
-			if ((e as KeyboardEvent).key === 'Escape') {
-				onDragCancel?.();
-				isDraggingRef.current = false;
-				setIsPressed(false);
-			}
-		},
-		{ enabled: !!isDragging }
-	);
-	useEventListener('mouseup', () => handleMouseUp(), { enabled: !!isDragging });
-
-	// Visual states
-	const showDragReady = canDrag && isHovered && !isDragging && !isAnyDragging;
-	const showGrabbed = isPressed || isDragging;
-	const isDimmed = isAnyDragging && !isDragging;
 
 	return (
 		<div
@@ -481,7 +356,7 @@ function QueueItemRow({
 			style={{
 				zIndex: isDragging ? 50 : 1,
 			}}
-			onMouseMove={handleMouseMoveForDrop}
+			{...wrapperHandlers}
 		>
 			<div
 				className="flex items-start gap-3 px-3 py-2.5 rounded-lg border group select-none"
@@ -493,64 +368,13 @@ function QueueItemRow({
 							? theme.colors.accent + '80'
 							: theme.colors.border,
 					cursor: canDrag ? (isDragging ? 'grabbing' : 'grab') : 'default',
-					transform: isDragging
-						? 'scale(1.02) rotate(1deg)'
-						: showGrabbed
-							? 'scale(1.01)'
-							: 'scale(1)',
-					boxShadow: isDragging
-						? `0 8px 32px ${theme.colors.accent}40, 0 4px 16px rgba(0,0,0,0.3)`
-						: showGrabbed
-							? `0 4px 16px ${theme.colors.accent}20`
-							: 'none',
-					transition: isDragging ? 'none' : 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+					...queueDragCardStyle(theme, { isDragging, showGrabbed }),
 					opacity: isDragging ? 0.95 : isPaused ? 0.45 : isDimmed ? 0.5 : 1,
 				}}
-				onMouseDown={handleMouseDown}
-				onMouseUp={handleMouseUp}
-				onMouseEnter={() => setIsHovered(true)}
-				onMouseLeave={handleMouseLeave}
+				{...cardHandlers}
 			>
 				{/* Drag handle indicator */}
-				{canDrag && (
-					<div
-						className="absolute left-1 top-1/2 -translate-y-1/2 flex flex-col gap-0.5 transition-opacity duration-200"
-						style={{
-							opacity: showDragReady || showGrabbed ? 0.6 : 0,
-						}}
-					>
-						<div className="flex gap-0.5">
-							<div
-								className="w-1 h-1 rounded-full"
-								style={{ backgroundColor: theme.colors.textDim }}
-							/>
-							<div
-								className="w-1 h-1 rounded-full"
-								style={{ backgroundColor: theme.colors.textDim }}
-							/>
-						</div>
-						<div className="flex gap-0.5">
-							<div
-								className="w-1 h-1 rounded-full"
-								style={{ backgroundColor: theme.colors.textDim }}
-							/>
-							<div
-								className="w-1 h-1 rounded-full"
-								style={{ backgroundColor: theme.colors.textDim }}
-							/>
-						</div>
-						<div className="flex gap-0.5">
-							<div
-								className="w-1 h-1 rounded-full"
-								style={{ backgroundColor: theme.colors.textDim }}
-							/>
-							<div
-								className="w-1 h-1 rounded-full"
-								style={{ backgroundColor: theme.colors.textDim }}
-							/>
-						</div>
-					</div>
-				)}
+				{canDrag && <QueueDragHandle theme={theme} visible={showDragReady || showGrabbed} />}
 
 				{/* Position indicator */}
 				<span
@@ -617,7 +441,7 @@ function QueueItemRow({
 						)}
 					</div>
 					<div
-						className={`mt-1 text-sm ${isCommand ? 'font-mono' : ''}`}
+						className={`mt-1 text-sm line-clamp-3 break-words ${isCommand ? 'font-mono' : ''}`}
 						style={{ color: theme.colors.textMain }}
 					>
 						{displayText}
@@ -688,15 +512,7 @@ function QueueItemRow({
 			</div>
 
 			{/* Shimmer effect when grabbed */}
-			{showGrabbed && (
-				<div
-					className="absolute inset-0 rounded-lg pointer-events-none overflow-hidden"
-					style={{
-						background: `linear-gradient(90deg, transparent, ${theme.colors.accent}10, transparent)`,
-						animation: 'shimmer 1.5s infinite',
-					}}
-				/>
-			)}
+			<QueueDragShimmer theme={theme} visible={showGrabbed} />
 		</div>
 	);
 }

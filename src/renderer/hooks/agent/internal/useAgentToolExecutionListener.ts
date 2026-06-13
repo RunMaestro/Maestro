@@ -18,6 +18,7 @@
 import { useEffect } from 'react';
 import { useSessionStore } from '../../../stores/sessionStore';
 import { REGEX_AI_TAB } from '../../../utils/sessionIdParser';
+import { thinkingLogsRecorded } from './helpers/thinkingLogs';
 import type { LogEntry } from '../../../types';
 
 export function useAgentToolExecutionListener(): void {
@@ -53,7 +54,7 @@ export function useAgentToolExecutionListener(): void {
 
 						const targetTab = s.aiTabs.find((t) => t.id === tabId);
 						if (!targetTab) return s;
-						if (!targetTab.showThinking || targetTab.showThinking === 'off') return s;
+						if (!thinkingLogsRecorded(targetTab.showThinking)) return s;
 
 						const newState = toolEvent.state as
 							| NonNullable<LogEntry['metadata']>['toolState']

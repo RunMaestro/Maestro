@@ -5,7 +5,9 @@
  * - Loading bundled prompts from disk
  * - User customization persistence
  * - Resetting to defaults
- * - Parsing AGENTS.md for upstream command extraction
+ *
+ * Note: the upstream refresh path (refreshOpenSpecPrompts) fetches and parses
+ * GitHub sources over the network and is not exercised here.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';

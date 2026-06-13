@@ -391,6 +391,12 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				...tab,
 				state: 'idle' as const,
 				thinkingStartTime: undefined,
+				// Clear any stranded naming-in-flight flag. The promise that would
+				// reset it lives in the renderer and cannot survive a reload/restart,
+				// so a tab whose generateTabName() call was interrupted would otherwise
+				// stay isGeneratingName:true forever, permanently blocking the
+				// namingNotInFlight guard in useInputProcessing from ever retrying.
+				isGeneratingName: false,
 			}));
 
 			// Terminal tabs don't persist across app restart unless they carry a

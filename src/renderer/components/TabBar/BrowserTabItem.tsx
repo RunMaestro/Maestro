@@ -8,9 +8,12 @@ import {
 	Clipboard,
 	ArrowRightCircle,
 	Check,
+	Pencil,
+	RotateCcw,
 } from 'lucide-react';
 import type { BrowserTab, Theme } from '../../types';
 import { useTabHoverOverlay } from '../../hooks/tabs/useTabHoverOverlay';
+import { getBrowserTabLabel } from '../../utils/browserTabPersistence';
 import { getTabKindColor } from './tabBarUtils';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
@@ -21,6 +24,10 @@ export interface BrowserTabItemProps {
 	theme: Theme;
 	onSelect: (tabId: string) => void;
 	onClose: (tabId: string) => void;
+	/** Open the rename dialog for this tab. */
+	onRename?: (tabId: string) => void;
+	/** Clear the user-assigned name, letting the website set the title again. */
+	onResetName?: (tabId: string) => void;
 	onDragStart: (tabId: string, e: React.DragEvent) => void;
 	onDragOver: (tabId: string, e: React.DragEvent) => void;
 	onDragEnd: () => void;
@@ -44,20 +51,6 @@ export interface BrowserTabItemProps {
 	shortcutHint?: number | null;
 }
 
-function getBrowserTabLabel(tab: BrowserTab): string {
-	const title = tab.title?.trim();
-	if (title) return title;
-	const url = tab.url?.trim();
-	if (!url || url === 'about:blank') return 'New Tab';
-
-	try {
-		const parsed = new URL(url);
-		return parsed.host || parsed.href;
-	} catch {
-		return url;
-	}
-}
-
 function getBrowserTabHost(url: string): string | null {
 	if (!url || url === 'about:blank') return null;
 
@@ -75,6 +68,8 @@ export const BrowserTabItem = memo(function BrowserTabItem({
 	theme,
 	onSelect,
 	onClose,
+	onRename,
+	onResetName,
 	onDragStart,
 	onDragOver,
 	onDragEnd,
@@ -168,6 +163,23 @@ export const BrowserTabItem = memo(function BrowserTabItem({
 	);
 
 	const handleTabSelect = useCallback(() => onSelect(tab.id), [onSelect, tab.id]);
+	const handleDoubleClick = useCallback(() => onRename?.(tab.id), [onRename, tab.id]);
+	const handleRenameClick = useCallback(
+		(e: React.MouseEvent) => {
+			e.stopPropagation();
+			onRename?.(tab.id);
+			setOverlayOpen(false);
+		},
+		[onRename, tab.id, setOverlayOpen]
+	);
+	const handleResetNameClick = useCallback(
+		(e: React.MouseEvent) => {
+			e.stopPropagation();
+			onResetName?.(tab.id);
+			setOverlayOpen(false);
+		},
+		[onResetName, tab.id, setOverlayOpen]
+	);
 	const handleTabDragStart = useCallback(
 		(e: React.DragEvent) => onDragStart(tab.id, e),
 		[onDragStart, tab.id]
@@ -285,6 +297,7 @@ export const BrowserTabItem = memo(function BrowserTabItem({
 			style={tabStyle}
 			title={tab.url || label}
 			onClick={handleTabSelect}
+			onDoubleClick={handleDoubleClick}
 			onFocus={handleMouseEnter}
 			onBlur={() => {
 				if (isOverOverlayRef.current) return;
@@ -426,6 +439,33 @@ export const BrowserTabItem = memo(function BrowserTabItem({
 							</div>
 
 							<div className="p-1">
+								{onRename && (
+									<button
+										onClick={handleRenameClick}
+										className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+										style={{ color: theme.colors.textMain }}
+									>
+										<Pencil className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+										Rename
+									</button>
+								)}
+
+								{onResetName && tab.customTitle && (
+									<button
+										onClick={handleResetNameClick}
+										className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+										style={{ color: theme.colors.textMain }}
+										title="Clear the custom name and let the website set the tab title again"
+									>
+										<RotateCcw className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+										Reset Name
+									</button>
+								)}
+
+								{onRename && (
+									<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
+								)}
+
 								{(onMoveToFirst || onMoveToLast) && (
 									<>
 										{onMoveToFirst && !isFirstTab && (

@@ -1,4 +1,3 @@
-import React from 'react';
 import { AlertTriangle, Trash2 } from 'lucide-react';
 import { Modal, ModalFooter } from '../../ui/Modal';
 import { MODAL_PRIORITIES } from '../../../constants/modalPriorities';

@@ -76,7 +76,6 @@ const OVERVIEW_SECTIONS = [
 	'source-distribution',
 	'location-distribution',
 	'radial-activity',
-	'activity-heatmap',
 ] as const;
 const AGENTS_SECTIONS = ['agent-overview-cards'] as const;
 const AGENT_OVERVIEW_SECTIONS = ['session-stats', 'agent-efficiency', 'agent-usage'] as const;
@@ -1285,34 +1284,6 @@ export function UsageDashboardModal({
 												/>
 											</ChartErrorBoundary>
 										</div>
-									</div>
-
-									{/* Activity Heatmap - Full width */}
-									<div
-										ref={setSectionRef('activity-heatmap')}
-										tabIndex={0}
-										role="region"
-										aria-label={getSectionLabel('activity-heatmap')}
-										onKeyDown={(e) => handleSectionKeyDown(e, 'activity-heatmap')}
-										className="outline-none rounded-lg transition-shadow dashboard-section-enter"
-										style={{
-											minHeight: '200px',
-											boxShadow:
-												focusedSection === 'activity-heatmap'
-													? `0 0 0 2px ${theme.colors.accent}`
-													: 'none',
-											animationDelay: '200ms',
-										}}
-										data-testid="section-activity-heatmap"
-									>
-										<ChartErrorBoundary theme={theme} chartName="Activity Heatmap">
-											<ActivityHeatmap
-												data={data}
-												timeRange={timeRange}
-												theme={theme}
-												colorBlindMode={colorBlindMode}
-											/>
-										</ChartErrorBoundary>
 									</div>
 								</>
 							)}

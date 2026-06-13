@@ -299,4 +299,94 @@ describe('AgentConfigPanel', () => {
 			expect(screen.getByText('Environment Variables (optional)')).toBeInTheDocument();
 		});
 	});
+
+	describe('Claude Token Source selector', () => {
+		it('offers API / TUI / Dynamic for a local claude-code agent', () => {
+			render(<AgentConfigPanel {...createDefaultProps({ onEnableMaestroPChange: vi.fn() })} />);
+
+			expect(screen.getByText('Claude Token Source')).toBeInTheDocument();
+			expect(screen.getByText('API')).toBeInTheDocument();
+			expect(screen.getByText('TUI')).toBeInTheDocument();
+			expect(screen.getByText('Dynamic')).toBeInTheDocument();
+		});
+
+		it('defaults an unconfigured SSH agent to TUI (remote maestro-p), not API', () => {
+			// enableMaestroP left undefined (never configured) + SSH => TUI is the
+			// default selection, and the remote-host hint renders.
+			render(
+				<AgentConfigPanel
+					{...createDefaultProps({ onEnableMaestroPChange: vi.fn(), isSshEnabled: true })}
+				/>
+			);
+
+			const tuiButton = screen.getByText('TUI').closest('button');
+			const apiButton = screen.getByText('API').closest('button');
+			expect(tuiButton?.className).toContain('ring-2');
+			expect(apiButton?.className).not.toContain('ring-2');
+			expect(screen.getByText(/Runs maestro-p on the remote host/)).toBeInTheDocument();
+		});
+
+		it('honors an explicit API choice on an SSH agent (does not force TUI)', () => {
+			render(
+				<AgentConfigPanel
+					{...createDefaultProps({
+						onEnableMaestroPChange: vi.fn(),
+						isSshEnabled: true,
+						enableMaestroP: false,
+					})}
+				/>
+			);
+
+			const apiButton = screen.getByText('API').closest('button');
+			const tuiButton = screen.getByText('TUI').closest('button');
+			expect(apiButton?.className).toContain('ring-2');
+			expect(tuiButton?.className).not.toContain('ring-2');
+		});
+
+		it('renders the selector for SSH agents but drops the Dynamic option', () => {
+			render(
+				<AgentConfigPanel
+					{...createDefaultProps({ onEnableMaestroPChange: vi.fn(), isSshEnabled: true })}
+				/>
+			);
+
+			expect(screen.getByText('Claude Token Source')).toBeInTheDocument();
+			expect(screen.getByText('API')).toBeInTheDocument();
+			expect(screen.getByText('TUI')).toBeInTheDocument();
+			expect(screen.queryByText('Dynamic')).not.toBeInTheDocument();
+		});
+
+		it('hides the local Maestro-P Path override when SSH is enabled and TUI is selected', () => {
+			render(
+				<AgentConfigPanel
+					{...createDefaultProps({
+						onEnableMaestroPChange: vi.fn(),
+						onMaestroPModeChange: vi.fn(),
+						isSshEnabled: true,
+						enableMaestroP: true,
+						maestroPMode: 'interactive',
+					})}
+				/>
+			);
+
+			// The remote TUI hint shows, but the local-script path input does not.
+			expect(screen.getByText(/Runs maestro-p on the remote host/)).toBeInTheDocument();
+			expect(screen.queryByText('Maestro-P Path (optional)')).not.toBeInTheDocument();
+		});
+
+		it('still shows the local Maestro-P Path override for a local TUI agent', () => {
+			render(
+				<AgentConfigPanel
+					{...createDefaultProps({
+						onEnableMaestroPChange: vi.fn(),
+						onMaestroPModeChange: vi.fn(),
+						enableMaestroP: true,
+						maestroPMode: 'interactive',
+					})}
+				/>
+			);
+
+			expect(screen.getByText('Maestro-P Path (optional)')).toBeInTheDocument();
+		});
+	});
 });

@@ -9,6 +9,7 @@
 
 import { useMemo } from 'react';
 import type { Session, Theme } from '../../types';
+import type { StarredItem } from '../session/useStarredItems';
 
 /**
  * Dependencies for computing SessionList props.
@@ -25,6 +26,10 @@ export interface UseSessionListPropsDeps {
 	showSessionJumpNumbers: boolean;
 	visibleSessions: Session[];
 	navIndexMap: Map<string, number>;
+
+	// Starred Sessions (computed in App via useStarredItems, shared with cycling)
+	starredItems: StarredItem[];
+	activateStarredItem: (item: StarredItem) => void | Promise<void>;
 
 	// Ref
 	sidebarContainerRef: React.RefObject<HTMLDivElement>;
@@ -92,6 +97,8 @@ export function useSessionListProps(deps: UseSessionListPropsDeps) {
 			webInterfaceUrl: deps.webInterfaceUrl,
 			showSessionJumpNumbers: deps.showSessionJumpNumbers,
 			visibleSessions: deps.visibleSessions,
+			starredItems: deps.starredItems,
+			activateStarredItem: deps.activateStarredItem,
 
 			// Ref
 			sidebarContainerRef: deps.sidebarContainerRef,
@@ -144,6 +151,8 @@ export function useSessionListProps(deps: UseSessionListPropsDeps) {
 			deps.webInterfaceUrl,
 			deps.showSessionJumpNumbers,
 			deps.visibleSessions,
+			deps.starredItems,
+			deps.activateStarredItem,
 			deps.sidebarContainerRef,
 			// Stable callbacks
 			deps.toggleGlobalLive,

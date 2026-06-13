@@ -77,6 +77,7 @@ import { getParentDir, getBasename } from '../../../shared/formatters';
 import { FilePreviewToc } from './FilePreviewToc';
 import { MarkdownEditor } from './markdownEditor';
 import type { MarkdownEditorHandle } from './markdownEditor';
+import { domGetTopLine, domScrollToLine } from './lineSync';
 import { logger } from '../../utils/logger';
 
 // Lazy-loaded large-file markdown renderer. Keeping it out of the main bundle
@@ -200,6 +201,13 @@ export const FilePreview = React.memo(
 		// Imperative handle for the lazy-loaded Giant tier preview. Cmd+F in
 		// Giant tier opens CodeMirror's native search panel via this handle.
 		const giantRef = useRef<import('./giantPreview').GiantPreviewHandle>(null);
+		// Top source line of each view, kept fresh by a capture-phase scroll
+		// listener so toggling between preview and edit can re-anchor on the
+		// same line. The conditional render unmounts the outgoing view before
+		// effects run, so we cannot read its scroll position at toggle time -
+		// hence the running refs.
+		const previewTopLineRef = useRef(1);
+		const editorTopLineRef = useRef(1);
 
 		// Reset full content view when file changes
 		useEffect(() => {
@@ -208,17 +216,27 @@ export const FilePreview = React.memo(
 
 		// File change detection state
 		const [fileChangedOnDisk, setFileChangedOnDisk] = useState(false);
+		// True once the file can no longer be stat'd at its cached path (deleted, or
+		// moved/renamed elsewhere). Distinct from fileChangedOnDisk: there is nothing
+		// to reload, so the banner offers only Dismiss.
+		const [fileMissingOnDisk, setFileMissingOnDisk] = useState(false);
 		const lastModifiedRef = useRef(lastModified);
 
 		// Keep ref in sync with prop (reset when parent reloads content with new lastModified)
 		useEffect(() => {
 			lastModifiedRef.current = lastModified;
 			setFileChangedOnDisk(false);
+			setFileMissingOnDisk(false);
 		}, [lastModified]);
+
+		// Reset the missing banner when navigating to a different file.
+		useEffect(() => {
+			setFileMissingOnDisk(false);
+		}, [file?.path]);
 
 		// Poll file stat to detect external changes (every 3s for the active file)
 		useEffect(() => {
-			if (!file?.path || !lastModified || fileChangedOnDisk) return;
+			if (!file?.path || !lastModified || fileChangedOnDisk || fileMissingOnDisk) return;
 
 			const interval = setInterval(async () => {
 				try {
@@ -229,12 +247,15 @@ export const FilePreview = React.memo(
 						setFileChangedOnDisk(true);
 					}
 				} catch {
-					// Silently ignore — file may have been deleted or become inaccessible
+					// stat threw: the file no longer exists at this path. It was deleted
+					// or moved/renamed out from under the open tab. Surface it so the user
+					// knows their edits would no longer save in place.
+					setFileMissingOnDisk(true);
 				}
 			}, 3000);
 
 			return () => clearInterval(interval);
-		}, [file?.path, lastModified, sshRemoteId, fileChangedOnDisk]);
+		}, [file?.path, lastModified, sshRemoteId, fileChangedOnDisk, fileMissingOnDisk]);
 
 		// Handle reload click
 		const handleReloadFile = useCallback(() => {
@@ -671,38 +692,124 @@ export const FilePreview = React.memo(
 		}, [file?.content, file?.path, externalEditContent]);
 
 		// Focus appropriate element and sync scroll position when mode changes
+		// Which active preview reports real source lines (vs. percent-only views
+		// like CSV/JSON/HTML/rendered-markdown). Mirrors the render branch order
+		// below so it agrees with what's actually on screen.
+		const previewSyncSource = (): 'giant' | 'text-fast' | 'text-dom' | null => {
+			if (isHtml && htmlRenderMode) return null;
+			if (isCsv) return null;
+			if (isJsonl || (isJson && searchMode === 'jq')) return null;
+			if (previewTier === 'giant') return 'giant';
+			if (isMarkdown) return null; // rich + fast markdown render, no 1:1 line map
+			if (isReadableText && previewTier === 'fast') return 'text-fast';
+			if (isReadableText) return 'text-dom';
+			return null;
+		};
+
+		// 1-based source line at the top of the active preview, or null when the
+		// active view can't report one.
+		const readPreviewTopLine = (): number | null => {
+			switch (previewSyncSource()) {
+				case 'giant':
+					return giantRef.current?.getTopLine() ?? null;
+				case 'text-fast':
+					return textFastRef.current?.getTopLine() ?? null;
+				case 'text-dom': {
+					const scroller = contentRef.current;
+					const containerEl = markdownContainerRef.current;
+					if (!scroller || !containerEl) return null;
+					return domGetTopLine(scroller, containerEl, displayContent);
+				}
+				default:
+					return null;
+			}
+		};
+
+		// Scroll the active preview so `line` sits at the top. Returns false when
+		// the active view has no line mapping (caller falls back to percent).
+		const scrollPreviewToLine = (line: number): boolean => {
+			switch (previewSyncSource()) {
+				case 'giant':
+					giantRef.current?.scrollToLine(line);
+					return true;
+				case 'text-fast':
+					textFastRef.current?.scrollToLine(line);
+					return true;
+				case 'text-dom': {
+					const scroller = contentRef.current;
+					const containerEl = markdownContainerRef.current;
+					if (!scroller || !containerEl) return false;
+					domScrollToLine(scroller, containerEl, displayContent, line);
+					return true;
+				}
+				default:
+					return false;
+			}
+		};
+
+		// Capture-phase scroll listener keeps the top-line refs fresh. Stored in a
+		// ref so the listener (attached once) always runs against current state.
+		const captureTopLineRef = useRef<() => void>(() => {});
+		captureTopLineRef.current = () => {
+			if (markdownEditMode) {
+				const line = editorRef.current?.getTopLine();
+				if (line) editorTopLineRef.current = line;
+			} else {
+				const line = readPreviewTopLine();
+				if (line != null) previewTopLineRef.current = line;
+			}
+		};
+
+		useEffect(() => {
+			const root = contentRef.current;
+			if (!root) return;
+			let raf: number | null = null;
+			const onScroll = () => {
+				if (raf != null) return;
+				raf = requestAnimationFrame(() => {
+					raf = null;
+					captureTopLineRef.current();
+				});
+			};
+			// Capture phase so scrolls from the nested tier scrollers (CodeMirror,
+			// the virtualized fast tiers) and the editor all reach this one listener.
+			root.addEventListener('scroll', onScroll, true);
+			return () => {
+				if (raf != null) cancelAnimationFrame(raf);
+				root.removeEventListener('scroll', onScroll, true);
+			};
+		}, [file?.path]);
+
 		const prevMarkdownEditModeRef = useRef(markdownEditMode);
 		useEffect(() => {
 			const wasEditMode = prevMarkdownEditModeRef.current;
 			prevMarkdownEditModeRef.current = markdownEditMode;
+			if (markdownEditMode === wasEditMode) return;
 
 			if (markdownEditMode && editorRef.current) {
-				// Entering edit mode - focus editor and sync scroll from preview
-				if (!wasEditMode && contentRef.current) {
-					const { scrollTop, scrollHeight, clientHeight } = contentRef.current;
-					const maxScroll = scrollHeight - clientHeight;
-					const scrollPercent = maxScroll > 0 ? scrollTop / maxScroll : 0;
-
-					// Apply after the editor has had a chance to mount and lay out.
-					requestAnimationFrame(() => {
-						editorRef.current?.setScrollPercent(scrollPercent);
-					});
-				}
+				// Entering edit mode - focus the editor and land it on the line that
+				// was at the top of the preview (so the view doesn't jump).
+				const canSyncLine = previewSyncSource() !== null;
+				const line = previewTopLineRef.current;
+				editorTopLineRef.current = line;
+				requestAnimationFrame(() => {
+					if (canSyncLine) {
+						editorRef.current?.scrollToLine(line, { select: false });
+					} else if (contentRef.current) {
+						// Percent fallback for views without a 1:1 line map.
+						const { scrollTop, scrollHeight, clientHeight } = contentRef.current;
+						const maxScroll = scrollHeight - clientHeight;
+						editorRef.current?.setScrollPercent(maxScroll > 0 ? scrollTop / maxScroll : 0);
+					}
+				});
 				editorRef.current.focus();
 			} else if (!markdownEditMode && wasEditMode && containerRef.current) {
-				// Exiting edit mode - focus container and sync scroll from editor
-				if (editorRef.current && contentRef.current) {
-					const scrollPercent = editorRef.current.getScrollPercent();
-
-					requestAnimationFrame(() => {
-						if (contentRef.current) {
-							const { scrollHeight: previewScrollHeight, clientHeight: previewClientHeight } =
-								contentRef.current;
-							const previewMaxScroll = previewScrollHeight - previewClientHeight;
-							contentRef.current.scrollTop = Math.round(scrollPercent * previewMaxScroll);
-						}
-					});
-				}
+				// Exiting edit mode - the editor has already unmounted, so use the
+				// scroll-tracked top line to re-anchor the preview.
+				const line = editorTopLineRef.current;
+				requestAnimationFrame(() => {
+					scrollPreviewToLine(line);
+				});
 				containerRef.current.focus();
 			}
 		}, [markdownEditMode]);
@@ -1362,6 +1469,39 @@ export const FilePreview = React.memo(
 							<GhostIconButton onClick={() => setFileChangedOnDisk(false)} title="Dismiss">
 								<X className="w-3 h-3" style={{ color: theme.colors.textDim }} />
 							</GhostIconButton>
+						</div>
+					</div>
+				)}
+
+				{/* File no longer on disk banner (deleted or moved/renamed elsewhere) */}
+				{fileMissingOnDisk && (
+					<div
+						className="flex items-center gap-3 px-6 py-2 border-b shrink-0"
+						style={{
+							backgroundColor: theme.colors.warning + '15',
+							borderColor: theme.colors.warning + '40',
+						}}
+					>
+						<AlertTriangle
+							className="w-3.5 h-3.5 shrink-0"
+							style={{ color: theme.colors.warning }}
+						/>
+						<span className="flex-1 text-xs" style={{ color: theme.colors.textMain }}>
+							This file no longer exists at its original location. It may have been deleted or
+							moved.
+							{hasChanges ? ' Saving will prompt you for a new location.' : ''}
+						</span>
+						<div className="flex items-center gap-2 shrink-0">
+							<button
+								onClick={() => setFileMissingOnDisk(false)}
+								className="px-2 py-1 text-xs font-medium rounded hover:opacity-80 transition-opacity"
+								style={{
+									backgroundColor: theme.colors.warning,
+									color: theme.colors.accentForeground ?? '#000',
+								}}
+							>
+								Dismiss
+							</button>
 						</div>
 					</div>
 				)}

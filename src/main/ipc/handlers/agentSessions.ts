@@ -24,7 +24,7 @@ import { withIpcErrorLogging } from '../../utils/ipcHandler';
 import { isWebContentsAvailable } from '../../utils/safe-send';
 import { getSessionStorage, hasSessionStorage, getAllSessionStorages } from '../../agents';
 import { getSshRemoteById as getSshRemoteByIdFromStore } from '../../stores';
-import { calculateClaudeCost } from '../../utils/pricing';
+import { calculateModelCost, computeClaudeUsageCost } from '../../utils/pricing';
 import {
 	loadGlobalStatsCache,
 	saveGlobalStatsCache,
@@ -108,22 +108,8 @@ function parseClaudeSessionContent(
 	const userMessageCount = (content.match(/"type"\s*:\s*"user"/g) || []).length;
 	const assistantMessageCount = (content.match(/"type"\s*:\s*"assistant"/g) || []).length;
 
-	let inputTokens = 0;
-	let outputTokens = 0;
-	let cacheReadTokens = 0;
-	let cacheCreationTokens = 0;
-
-	const inputMatches = content.matchAll(/"input_tokens"\s*:\s*(\d+)/g);
-	for (const m of inputMatches) inputTokens += parseInt(m[1], 10);
-
-	const outputMatches = content.matchAll(/"output_tokens"\s*:\s*(\d+)/g);
-	for (const m of outputMatches) outputTokens += parseInt(m[1], 10);
-
-	const cacheReadMatches = content.matchAll(/"cache_read_input_tokens"\s*:\s*(\d+)/g);
-	for (const m of cacheReadMatches) cacheReadTokens += parseInt(m[1], 10);
-
-	const cacheCreationMatches = content.matchAll(/"cache_creation_input_tokens"\s*:\s*(\d+)/g);
-	for (const m of cacheCreationMatches) cacheCreationTokens += parseInt(m[1], 10);
+	const { inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, costUsd } =
+		computeClaudeUsageCost(content);
 
 	return {
 		messages: userMessageCount + assistantMessageCount,
@@ -133,6 +119,7 @@ function parseClaudeSessionContent(
 		cacheCreationTokens,
 		cachedInputTokens: 0,
 		sizeBytes,
+		costUsd,
 	};
 }
 
@@ -332,6 +319,7 @@ function aggregateProviderStats(
 	let totalCacheCreationTokens = 0;
 	let totalCachedInputTokens = 0;
 	let totalSizeBytes = 0;
+	let totalCostUsd = 0;
 
 	for (const stats of Object.values(sessions)) {
 		totalMessages += stats.messages;
@@ -341,16 +329,19 @@ function aggregateProviderStats(
 		totalCacheCreationTokens += stats.cacheCreationTokens;
 		totalCachedInputTokens += stats.cachedInputTokens;
 		totalSizeBytes += stats.sizeBytes;
+		// Prefer the per-model cost stored at parse time; fall back to flat-rate
+		// pricing for cache entries written before per-model cost was tracked.
+		totalCostUsd +=
+			stats.costUsd ??
+			calculateModelCost({
+				inputTokens: stats.inputTokens,
+				outputTokens: stats.outputTokens,
+				cacheReadTokens: stats.cacheReadTokens,
+				cacheCreationTokens: stats.cacheCreationTokens,
+			});
 	}
 
-	const costUsd = hasCostData
-		? calculateClaudeCost(
-				totalInputTokens,
-				totalOutputTokens,
-				totalCacheReadTokens,
-				totalCacheCreationTokens
-			)
-		: 0;
+	const costUsd = hasCostData ? totalCostUsd : 0;
 
 	return {
 		sessions: Object.keys(sessions).length,

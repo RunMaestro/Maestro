@@ -26,11 +26,36 @@ export interface ClaudeTokenModeSource {
 	maestroPMode?: 'interactive' | 'dynamic';
 }
 
+/** Options refining how an unconfigured source collapses. */
+export interface GetClaudeTokenModeOptions {
+	/**
+	 * SSH-remote spawn. Flips the DEFAULT for an unconfigured agent from `api`
+	 * to `interactive` (the remote maestro-p TUI): a remote agent the user
+	 * spun up to run on their Max plan should default to the TUI, not per-token
+	 * API credit. Only the never-chosen state (`enableMaestroP === undefined`)
+	 * is affected - an explicit `false` (the user picked API) is still honored.
+	 */
+	sshEnabled?: boolean;
+}
+
 /**
  * Collapse the stored `(enableMaestroP, maestroPMode)` pair into the canonical
  * tri-state. The single source of truth every spawn surface reads through.
+ *
+ * Default (`enableMaestroP` unset): `api` locally, `interactive` over SSH (see
+ * {@link GetClaudeTokenModeOptions.sshEnabled}). Note SSH never resolves to
+ * `dynamic` at spawn time - the auto-switch reads a local usage snapshot that
+ * can't see the remote account - so a stored `dynamic` on an SSH agent is
+ * surfaced here unchanged but falls back to `api` in resolveClaudeSpawnMode.
  */
-export function getClaudeTokenMode(src: ClaudeTokenModeSource | null | undefined): ClaudeTokenMode {
+export function getClaudeTokenMode(
+	src: ClaudeTokenModeSource | null | undefined,
+	opts?: GetClaudeTokenModeOptions
+): ClaudeTokenMode {
+	// Remote default: an unconfigured SSH agent starts on the TUI (Max plan).
+	if (opts?.sshEnabled && src?.enableMaestroP === undefined) {
+		return 'interactive';
+	}
 	if (!src?.enableMaestroP) {
 		return 'api';
 	}

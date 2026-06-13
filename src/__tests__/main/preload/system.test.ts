@@ -421,7 +421,16 @@ describe('System Preload API', () => {
 
 				const result = await api.download();
 
-				expect(mockInvoke).toHaveBeenCalledWith('updates:download');
+				expect(mockInvoke).toHaveBeenCalledWith('updates:download', undefined);
+				expect(result).toEqual({ success: true });
+			});
+
+			it('should forward an explicit target tag', async () => {
+				mockInvoke.mockResolvedValue({ success: true });
+
+				const result = await api.download('v1.2.3');
+
+				expect(mockInvoke).toHaveBeenCalledWith('updates:download', 'v1.2.3');
 				expect(result).toEqual({ success: true });
 			});
 		});

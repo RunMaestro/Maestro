@@ -24,6 +24,7 @@ import { useSettingsStore } from '../../stores/settingsStore';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { useTerminalMounting } from '../../hooks/terminal/useTerminalMounting';
 import { getTerminalTabDisplayName } from '../../utils/terminalTabHelpers';
+import { aiTabFocusFields } from '../../utils/tabHelpers';
 import { useSshRemoteName } from '../../hooks/mainPanel/useSshRemoteName';
 import { useContextWindow } from '../../hooks/mainPanel/useContextWindow';
 import { useFilePreviewHandlers } from '../../hooks/mainPanel/useFilePreviewHandlers';
@@ -101,6 +102,7 @@ export const MainPanel = React.memo(
 			onStopBatchRun,
 			onRemoveQueuedItem,
 			onTogglePauseQueuedItem,
+			onReorderQueuedItem,
 			onForceSendQueuedItem,
 			forcedParallelEnabled,
 			getForceSendContext,
@@ -194,6 +196,8 @@ export const MainPanel = React.memo(
 			onNewBrowserTab,
 			onBrowserTabSelect,
 			onBrowserTabClose,
+			onBrowserTabRename,
+			onBrowserTabResetName,
 			onBrowserTabUpdate,
 			onFileTabEditModeChange,
 			onFileTabEditContentChange,
@@ -249,15 +253,8 @@ export const MainPanel = React.memo(
 				setSessions((prev) =>
 					prev.map((s) => {
 						if (s.id !== sessionId) return s;
-						if (tabId && !s.aiTabs?.some((t) => t.id === tabId)) {
-							return { ...s, activeFileTabId: null, inputMode: 'ai' as const };
-						}
-						return {
-							...s,
-							...(tabId && { activeTabId: tabId }),
-							activeFileTabId: null,
-							inputMode: 'ai' as const,
-						};
+						const targetTabId = tabId && s.aiTabs?.some((t) => t.id === tabId) ? tabId : undefined;
+						return { ...s, ...aiTabFocusFields(targetTabId) };
 					})
 				);
 			},
@@ -546,6 +543,7 @@ export const MainPanel = React.memo(
 				if (!handle || handle.getTabId() !== tabId) return null;
 				const content = await handle.getContent();
 				const displayName =
+					(browserTab.customTitle && browserTab.customTitle.trim()) ||
 					(browserTab.title && browserTab.title.trim()) ||
 					(() => {
 						try {
@@ -819,6 +817,8 @@ export const MainPanel = React.memo(
 									onNewBrowserTab={onNewBrowserTab}
 									onBrowserTabSelect={onBrowserTabSelect}
 									onBrowserTabClose={onBrowserTabClose}
+									onBrowserTabRename={onBrowserTabRename}
+									onBrowserTabResetName={onBrowserTabResetName}
 									// Terminal tab props (Phase 8)
 									onNewTerminalTab={onNewTerminalTab}
 									activeTerminalTabId={activeSession.activeTerminalTabId}
@@ -943,6 +943,7 @@ export const MainPanel = React.memo(
 							onStopBatchRun={onStopBatchRun}
 							onRemoveQueuedItem={onRemoveQueuedItem}
 							onTogglePauseQueuedItem={onTogglePauseQueuedItem}
+							onReorderQueuedItem={onReorderQueuedItem}
 							onForceSendQueuedItem={onForceSendQueuedItem}
 							forcedParallelEnabled={forcedParallelEnabled}
 							getForceSendContext={getForceSendContext}

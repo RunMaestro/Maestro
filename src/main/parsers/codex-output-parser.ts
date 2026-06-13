@@ -257,6 +257,34 @@ function extractErrorText(error: CodexRawMessage['error'], fallback = 'Unknown e
 }
 
 /**
+ * Extract the human-readable reasoning text from a `response_item` reasoning payload.
+ *
+ * Codex emits `summary` in two shapes depending on the CLI version:
+ *  - string[]                                                       (older app-server)
+ *  - Array<{ type: 'summary_text'; text: string }>                  (newer Responses API)
+ *
+ * If `summary` is absent, empty, or only contains blank strings, returns '' so the
+ * caller can fall back to a non-displayable `system` event (encrypted_content only).
+ */
+function extractReasoningSummaryText(summary: unknown): string {
+	if (!Array.isArray(summary) || summary.length === 0) {
+		return '';
+	}
+	const parts: string[] = [];
+	for (const entry of summary) {
+		if (typeof entry === 'string') {
+			if (entry.trim()) parts.push(entry);
+		} else if (entry && typeof entry === 'object') {
+			const obj = entry as { type?: unknown; text?: unknown };
+			if (obj.type === 'summary_text' && typeof obj.text === 'string' && obj.text.trim()) {
+				parts.push(obj.text);
+			}
+		}
+	}
+	return parts.join('\n').trim();
+}
+
+/**
  * Codex CLI Output Parser Implementation
  *
  * Transforms Codex's JSON format into normalized ParsedEvents.
@@ -531,9 +559,24 @@ export class CodexOutputParser implements AgentOutputParser {
 			};
 		}
 
-		// reasoning: model's thinking process (may be encrypted/empty)
+		// reasoning: model's thinking process.
+		// Codex emits reasoning in two shapes depending on version:
+		//   - summary: string[]                              (older app-server shape)
+		//   - summary: Array<{ type: 'summary_text', text }> (newer Responses API shape)
+		// If only `encrypted_content` is present (no plain-text summary), there is
+		// nothing to show, so fall through to a system event so the line is preserved
+		// in the raw buffer for debugging.
 		if (payload.type === 'reasoning') {
-			// Reasoning content may be encrypted; emit summary if available
+			const summaryText = extractReasoningSummaryText(payload.summary);
+			if (summaryText) {
+				return {
+					type: 'text',
+					text: this.formatReasoningText(summaryText),
+					isPartial: true,
+					isReasoning: true,
+					raw: msg,
+				};
+			}
 			return {
 				type: 'system',
 				raw: msg,

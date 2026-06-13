@@ -409,6 +409,8 @@ const mockMaestro = {
 	autorun: {
 		readDoc: vi.fn().mockResolvedValue({ success: true, content: '' }),
 		writeDoc: vi.fn().mockResolvedValue({ success: true }),
+		saveImage: vi.fn().mockResolvedValue({ success: true, path: 'images/test.png' }),
+		deleteImage: vi.fn().mockResolvedValue({ success: true }),
 		watchFolder: vi.fn().mockReturnValue(() => {}),
 		unwatchFolder: vi.fn(),
 		readFolder: vi.fn().mockResolvedValue({ success: true, files: [] }),

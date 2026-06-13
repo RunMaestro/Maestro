@@ -54,6 +54,9 @@ interface BrowserTabGuestContents {
 	): void;
 	on(event: string, handler: (...args: any[]) => void): void;
 	executeJavaScript(code: string): Promise<unknown>;
+	// Privileged Electron paste: bypasses the web-facing `clipboard-read`
+	// permission that the permission handler denies to webviews (issue #1063).
+	paste(): void;
 }
 
 function isAllowedBrowserTabUrl(rawUrl: string): boolean {
@@ -354,11 +357,24 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 					if (!input.meta && !input.control && !input.alt) return;
 					if (input.type !== 'keyDown') return;
 					const k = input.key.toLowerCase();
-					// Let standard text-editing shortcuts pass through to the page.
-					// `f` is intentionally NOT in this list: Cmd+F must reach the
-					// renderer so the in-page find bar can open.
+					// Cmd/Ctrl+V: drive paste through the trusted guest webContents API.
+					// Chromium's native paste needs the `clipboard-read` permission, which
+					// the permission handler denies to webviews as a security boundary, so
+					// native paste silently fails inside browser-tab form fields (issue
+					// #1063). guest.paste() is a privileged Electron call that bypasses
+					// that web-facing permission, mirroring the right-click Paste menu
+					// item (issue #1065).
+					const isPaste = (input.meta || input.control) && !input.alt && !input.shift && k === 'v';
+					if (isPaste) {
+						event.preventDefault();
+						guest.paste();
+						return;
+					}
+					// Let the remaining standard text-editing shortcuts pass through to
+					// the page. `f` is intentionally NOT in this list: Cmd+F must reach
+					// the renderer so the in-page find bar can open.
 					const isTextEditing =
-						(input.meta || input.control) && !input.alt && !input.shift && 'acvxz'.includes(k);
+						(input.meta || input.control) && !input.alt && !input.shift && 'acxz'.includes(k);
 					const isRedo = (input.meta || input.control) && !input.alt && input.shift && k === 'z';
 					if (isTextEditing || isRedo) return;
 					event.preventDefault();
@@ -383,7 +399,7 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 						var hasAlt=e.altKey;
 						if(!hasMod&&!hasAlt)return;
 						var k=e.key.toLowerCase();
-						var te=hasMod&&!hasAlt&&!e.shiftKey&&'acvxz'.indexOf(k)!==-1;
+						var te=hasMod&&!hasAlt&&!e.shiftKey&&'acxz'.indexOf(k)!==-1;
 						var re=hasMod&&!hasAlt&&e.shiftKey&&k==='z';
 						if(te||re)return;
 						e.preventDefault();
@@ -428,13 +444,24 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 			// file inside the renderer dir through, which meant a stray <a href="foo.md">
 			// in chat output could resolve relative to index.html and unload the app to
 			// a non-existent bundle file.
-			const allowedDevOrigin = isDevelopment ? new URL(devServerUrl).origin : null;
+			// The dev server serves the app at its root. A previous guard allowed the
+			// ENTIRE dev origin through, which let any same-origin path (a game served
+			// by the dev server, or a stray relative <a href="game/"> in chat/markdown
+			// output) unload the app and take over the whole window. Page content
+			// belongs in a <webview> browser tab, never the top-level frame, so the dev
+			// guard is now as strict as production: only the app's own entry document
+			// (origin AND pathname) may load top-level. HMR/full-reloads target the same
+			// root URL and the renderer has no top-level URL routing, so this is safe.
+			const devEntryUrl = isDevelopment ? new URL(devServerUrl) : null;
+			const allowedDevOrigin = devEntryUrl ? devEntryUrl.origin : null;
+			const allowedDevPathname = devEntryUrl ? devEntryUrl.pathname || '/' : null;
 			const allowedProdOrigin = isDevelopment ? null : new URL(rendererProductionUrl).origin;
 			const allowedProdEntryUrl = isDevelopment ? null : rendererProductionUrl;
 			mainWindow.webContents.on('will-navigate', (event, url) => {
 				const parsedUrl = new URL(url);
 				if (isDevelopment) {
-					if (parsedUrl.origin === allowedDevOrigin) return;
+					const pathname = parsedUrl.pathname || '/';
+					if (parsedUrl.origin === allowedDevOrigin && pathname === allowedDevPathname) return;
 				} else {
 					if (parsedUrl.origin === allowedProdOrigin && url === allowedProdEntryUrl) return;
 				}

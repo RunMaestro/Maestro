@@ -122,22 +122,21 @@ Process tasks from this document:
 Check off tasks and add any relevant notes around the completion directly within that document.
 `;
 
-export const autorunSynopsisPrompt = `Provide a brief synopsis of what you just accomplished in this task using this exact format:
+export const autorunSynopsisPrompt = `Give a brief synopsis of what you just accomplished, in exactly this format:
 
-**Summary:** [1-2 sentences describing the key outcome]
+**Summary:** [2-3 sentences (~25-60 words). First sentence: a commit-title-style headline leading with a verb and the concrete artifact (file/feature/fix/function), e.g. "Fixed tooltip clipping in FilePreview". Following sentence(s): add real substance - files/modules touched, behavior changed, or the key decision. This is the only text shown in the History list.]
 
-**Details:** [A paragraph with more specifics about what was done, files changed, etc.]
+**Details:** [Plain prose, scientific-log style: factual, concise, naming specific files, functions, and behaviors changed. Report what was actually done, not attempted.]
 
-Rules:
+Summary must NOT:
+- be just status/meta ("Task complete", "Pushed", "Done", "All set", "Ready to ship", "Nothing to commit") - that's not a description.
+- open with filler ("Excellent!", "Perfect!", "Done!").
+- include session preamble ("You asked me to...", "This is our first interaction...").
+- be prefixed with a playbook/task ID like "[2026-05-16-.../POST-MVP-07]".
 
-- Write in a scientific log style: factual, concise, and informative. Example: "Added user authentication endpoint with JWT validation" not "I helped you add authentication".
-- Be specific about what was actually accomplished, not what was attempted.
-- Focus only on meaningful work that was done. Omit filler phrases like "the task is complete", "no further action needed", "everything is working", etc.
-- NEVER start with conversational words like "Excellent!", "Perfect!", "Great!", "Awesome!", "Done!", or any similar expressions. These add no information value.
-- NEVER include preamble about session context, interaction history, or caveats like "This is our first interaction", "there's no prior work to summarize", "you asked me to", etc. Jump straight to the accomplishment.
-- Start directly with the action taken using a verb (e.g., "Fixed button visibility..." not "You asked me to fix..." and not "Excellent! Fixed...").
-- If nothing meaningful was accomplished (no code changes, no files modified, no research completed, just greetings or introductions), respond with ONLY the text: NOTHING_TO_REPORT
-- Use NOTHING_TO_REPORT when the conversation was just a greeting, introduction, or there genuinely was no work to summarize.
+Details must NOT lead with a markdown heading or bold title line - the lede already lives in Summary.
+
+If nothing meaningful was accomplished (no code/file changes, no research - just greetings), respond with ONLY: NOTHING_TO_REPORT
 `;
 
 export const commitCommandPrompt = `Examine the current git diff and determine if we need to make any updates to the README.md or CLAUDE.md files.

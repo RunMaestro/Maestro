@@ -59,6 +59,21 @@ export interface ModalProps {
 	headerIcon?: ReactNode;
 	/** Modal width in pixels. Defaults to 400 */
 	width?: number;
+	/**
+	 * Scale the width with the Cmd+= font-size setting via --font-scale (14px
+	 * baseline → scale 1). `width` is the baseline and the modal grows/shrinks
+	 * proportionally with the font, clamped to 95vw. This is on by default: at
+	 * the baseline font it's a no-op, and at larger fonts it keeps button rows
+	 * and headers from wrapping/clipping inside a fixed-px shell. Pass `false`
+	 * only for a modal that must stay a literal pixel width regardless of font.
+	 */
+	scaleWidthWithFont?: boolean;
+	/**
+	 * Upper bound on the modal width as a CSS value, used as the clamp ceiling
+	 * for the font-scaled width. Defaults to '95vw'. Pass e.g. '50vw' to keep a
+	 * wide modal from dominating large displays.
+	 */
+	maxWidthCss?: string;
 	/** Max height as CSS value (e.g., '90vh', '600px'). Defaults to '90vh' */
 	maxHeight?: string;
 	/** Whether clicking the backdrop closes the modal. Defaults to false */
@@ -96,6 +111,8 @@ export function Modal({
 	customHeader,
 	headerIcon,
 	width = 400,
+	scaleWidthWithFont = true,
+	maxWidthCss = '95vw',
 	maxHeight = '90vh',
 	closeOnBackdropClick = false,
 	zIndex = 9999,
@@ -154,7 +171,9 @@ export function Modal({
 				ref={cardRef}
 				className={`border rounded-lg shadow-2xl flex flex-col ${allowOverflow ? 'overflow-visible' : 'overflow-hidden'}`}
 				style={{
-					width: `${width}px`,
+					width: scaleWidthWithFont
+						? `min(calc(${width}px * var(--font-scale, 1)), ${maxWidthCss})`
+						: `${width}px`,
 					maxHeight,
 					backgroundColor: theme.colors.bgSidebar,
 					borderColor: theme.colors.border,

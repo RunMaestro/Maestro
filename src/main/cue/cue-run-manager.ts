@@ -21,7 +21,12 @@ import type {
 	CueSettings,
 	CueSubscription,
 } from './cue-types';
-import { updateCueEventStatus, safeRecordCueEvent, safeUpdateCueEventStatus } from './cue-db';
+import {
+	updateCueEventStatus,
+	safeRecordCueEvent,
+	safeUpdateCueEventStatus,
+	type CueEventFailureInfo,
+} from './cue-db';
 import type { CueQueuePersistence } from './cue-queue-persistence';
 import { SOURCE_OUTPUT_MAX_CHARS } from './cue-fan-in-tracker';
 import { sliceHeadByChars } from './cue-text-utils';
@@ -29,6 +34,28 @@ import { captureException } from '../utils/sentry';
 import { substituteTemplateVariables, type TemplateContext } from '../../shared/templateVariables';
 import { buildCueTemplateContext } from './cue-template-context-builder';
 import { runMaestroCliSend } from './cue-cli-executor';
+
+/** Cap on persisted error_message length — enough to carry an agent error
+ *  envelope / stderr tail without bloating the journal DB. */
+const MAX_CUE_ERROR_MESSAGE_CHARS = 2000;
+
+/**
+ * Map a run result to the failure diagnostics persisted on its `cue_events`
+ * row. `errorMessage` is the trimmed/capped stderr, set only for non-completed
+ * runs (a success has nothing to explain); `exitCode` is always carried so the
+ * activity log can distinguish failure modes — e.g. a maestro-p idle timeout
+ * (3) from a first_byte_timeout (5) from a plain non-zero agent exit.
+ */
+function failureInfoFromResult(
+	result: Pick<CueRunResult, 'status' | 'stderr' | 'exitCode'>
+): CueEventFailureInfo {
+	const trimmed = result.stderr?.trim() ?? '';
+	const errorMessage =
+		result.status !== 'completed' && trimmed
+			? sliceHeadByChars(trimmed, MAX_CUE_ERROR_MESSAGE_CHARS)
+			: null;
+	return { errorMessage, exitCode: result.exitCode ?? null };
+}
 
 /** Phase of a run in the state machine: running → stopping | finished */
 export type RunPhase = 'running' | 'stopping' | 'finished';
@@ -433,7 +460,12 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 				// flight. The finally block's cleanup is gated on activeRuns
 				// having this run, so without an explicit DB write the row
 				// would stay `running` forever in the activity log.
-				safeUpdateCueEventStatus(runId, runResult.status, runResult.providerSessionId);
+				safeUpdateCueEventStatus(
+					runId,
+					runResult.status,
+					runResult.providerSessionId,
+					failureInfoFromResult(runResult)
+				);
 				// Emit with the structured runFinished payload so live
 				// listeners (activity log, queue indicators) observe the
 				// transition identically to a normal completion — this is
@@ -536,7 +568,12 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 					// as `safeUpdateCueEventStatus`, which is too coarse to
 					// tell this failure mode apart from a normal run update.
 					try {
-						updateCueEventStatus(outputRunId, outputStatus, outputResult?.providerSessionId);
+						updateCueEventStatus(
+							outputRunId,
+							outputStatus,
+							outputResult?.providerSessionId,
+							outputResult ? failureInfoFromResult(outputResult) : undefined
+						);
 					} catch (finalizeErr) {
 						captureException(finalizeErr, {
 							operation: 'cue:finalizeOutputRunStatus',
@@ -555,7 +592,12 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 					// false. Finalize it here so the activity log doesn't show a
 					// phantom never-ending run. Mirrors the earlier handling at
 					// line ~245 for the pre-output-prompt case.
-					safeUpdateCueEventStatus(runId, result.status, result.providerSessionId);
+					safeUpdateCueEventStatus(
+						runId,
+						result.status,
+						result.providerSessionId,
+						failureInfoFromResult(result)
+					);
 					deps.onLog(
 						'cue',
 						`[CUE] Run "${subscriptionName}" output phase completed after engine stop — parent status recorded (${result.status}), result discarded`,
@@ -664,7 +706,12 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 				drainQueue(sessionId);
 
 				try {
-					updateCueEventStatus(runId, result.status, result.providerSessionId);
+					updateCueEventStatus(
+						runId,
+						result.status,
+						result.providerSessionId,
+						failureInfoFromResult(result)
+					);
 				} catch (err) {
 					deps.onLog('warn', `[CUE] Failed to update DB status for run ${runId}`);
 					captureException(err, {

@@ -25,6 +25,7 @@ import { notifyToast } from '../../stores/notificationStore';
 import { useMergeSessionWithSessions } from './useMergeSession';
 import { useSendToAgentWithSessions } from './useSendToAgent';
 import { captureException } from '../../utils/sentry';
+import { aiTabFocusFields } from '../../utils/tabHelpers';
 import { getStdinFlags, prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
 
 // ============================================================================
@@ -173,13 +174,7 @@ export function useMergeTransferHandlers(
 					setSessions((prev) =>
 						prev.map((s) => {
 							if (s.id !== result.targetSessionId) return s;
-							return {
-								...s,
-								activeTabId: targetTabId,
-								activeFileTabId: null,
-								activeTerminalTabId: null,
-								inputMode: 'ai' as const,
-							};
+							return { ...s, ...aiTabFocusFields(targetTabId) };
 						})
 					);
 				}
@@ -435,10 +430,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 							busySource: 'ai',
 							thinkingStartTime: Date.now(),
 							aiTabs: [...s.aiTabs, newTab],
-							activeTabId: newTabId,
-							activeFileTabId: null,
-							activeTerminalTabId: null,
-							inputMode: 'ai' as const,
+							...aiTabFocusFields(newTabId),
 							unifiedTabOrder: [
 								...(s.unifiedTabOrder || []),
 								{ type: 'ai' as const, id: newTabId },
@@ -578,17 +570,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 			const currentSession = sessionsRef.current.find((s) => s.id === activeSessionIdRef.current);
 			if (currentSession) {
 				setSessions((prev) =>
-					prev.map((s) =>
-						s.id === currentSession.id
-							? {
-									...s,
-									activeTabId: tabId,
-									activeFileTabId: null,
-									activeTerminalTabId: null,
-									inputMode: 'ai' as const,
-								}
-							: s
-					)
+					prev.map((s) => (s.id === currentSession.id ? { ...s, ...aiTabFocusFields(tabId) } : s))
 				);
 			}
 			getModalActions().setMergeSessionModalOpen(true);
@@ -601,17 +583,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 			const currentSession = sessionsRef.current.find((s) => s.id === activeSessionIdRef.current);
 			if (currentSession) {
 				setSessions((prev) =>
-					prev.map((s) =>
-						s.id === currentSession.id
-							? {
-									...s,
-									activeTabId: tabId,
-									activeFileTabId: null,
-									activeTerminalTabId: null,
-									inputMode: 'ai' as const,
-								}
-							: s
-					)
+					prev.map((s) => (s.id === currentSession.id ? { ...s, ...aiTabFocusFields(tabId) } : s))
 				);
 			}
 			getModalActions().setSendToAgentModalOpen(true);

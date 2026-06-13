@@ -98,7 +98,7 @@ A campaign isn't killed on its first bad week - it's flagged for pause, given a 
 
 ### 5. Insufficient-data no-op
 
-> "If <5 replies measured in the window, write a 'no-op, insufficient data' entry to strategy_evolution.md and exit without editing STRATEGY.md."
+> "If `<5` replies measured in the window, write a 'no-op, insufficient data' entry to strategy_evolution.md and exit without editing STRATEGY.md."
 
 This is the discipline the case study's _Cost Control_ section gestures at, done properly. The applier _must_ tolerate small samples without acting on noise. The no-op entry is still logged - so you can see "yes, the loop fired this week, but there wasn't enough signal to do anything" - which is different from "the loop didn't fire."
 

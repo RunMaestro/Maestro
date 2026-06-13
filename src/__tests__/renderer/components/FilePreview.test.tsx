@@ -593,6 +593,51 @@ describe('FilePreview', () => {
 
 			vi.useRealTimers();
 		});
+
+		it('shows the missing-on-disk banner when polling stat throws (file gone)', async () => {
+			vi.useFakeTimers();
+
+			// stat rejects: the file no longer resolves at its cached path.
+			window.maestro.fs.stat = vi.fn().mockRejectedValue(new Error('ENOENT'));
+
+			render(<FilePreview {...defaultProps} lastModified={1000} onReloadFile={vi.fn()} />);
+
+			expect(
+				screen.queryByText(/no longer exists at its original location/)
+			).not.toBeInTheDocument();
+
+			await act(async () => {
+				vi.advanceTimersByTime(3000);
+			});
+
+			expect(screen.getByText(/no longer exists at its original location/)).toBeInTheDocument();
+			// There is nothing to reload, so no Reload button is offered.
+			expect(screen.queryByText('Reload')).not.toBeInTheDocument();
+
+			vi.useRealTimers();
+		});
+
+		it('dismisses the missing-on-disk banner when Dismiss is clicked', async () => {
+			vi.useFakeTimers();
+
+			window.maestro.fs.stat = vi.fn().mockRejectedValue(new Error('ENOENT'));
+
+			render(<FilePreview {...defaultProps} lastModified={1000} onReloadFile={vi.fn()} />);
+
+			await act(async () => {
+				vi.advanceTimersByTime(3000);
+			});
+
+			expect(screen.getByText(/no longer exists at its original location/)).toBeInTheDocument();
+
+			fireEvent.click(screen.getByText('Dismiss'));
+
+			expect(
+				screen.queryByText(/no longer exists at its original location/)
+			).not.toBeInTheDocument();
+
+			vi.useRealTimers();
+		});
 	});
 
 	describe('text file editing', () => {

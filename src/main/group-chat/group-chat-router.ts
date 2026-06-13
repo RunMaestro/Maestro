@@ -856,7 +856,9 @@ ${readOnly ? 'READ-ONLY MODE is active. You and all participants can only inspec
 						getCustomEnvVarsCallback?.(chat.moderatorAgentId),
 					agentConfigValues,
 					sshRemoteConfig: chat.moderatorConfig?.sshRemoteConfig,
-					tokenMode: getClaudeTokenMode(chat.moderatorConfig),
+					tokenMode: getClaudeTokenMode(chat.moderatorConfig, {
+						sshEnabled: !!chat.moderatorConfig?.sshRemoteConfig?.enabled,
+					}),
 					maestroPPath: chat.moderatorConfig?.maestroPPath,
 					sshStore,
 					processManager,
@@ -1318,7 +1320,9 @@ export async function routeModeratorResponse(
 						getCustomEnvVarsCallback?.(participant.agentId),
 					agentConfigValues,
 					sshRemoteConfig: matchingSession?.sshRemoteConfig,
-					tokenMode: getClaudeTokenMode(matchingSession),
+					tokenMode: getClaudeTokenMode(matchingSession, {
+						sshEnabled: !!matchingSession?.sshRemoteConfig?.enabled,
+					}),
 					maestroPPath: matchingSession?.maestroPPath,
 					sshStore,
 					processManager,
@@ -1691,7 +1695,9 @@ Review the agent responses above. Either:
 				getCustomEnvVarsCallback?.(chat.moderatorAgentId),
 			agentConfigValues,
 			sshRemoteConfig: chat.moderatorConfig?.sshRemoteConfig,
-			tokenMode: getClaudeTokenMode(chat.moderatorConfig),
+			tokenMode: getClaudeTokenMode(chat.moderatorConfig, {
+				sshEnabled: !!chat.moderatorConfig?.sshRemoteConfig?.enabled,
+			}),
 			maestroPPath: chat.moderatorConfig?.maestroPPath,
 			sshStore,
 			processManager,
@@ -1844,7 +1850,9 @@ export async function respawnParticipantWithRecovery(
 			configResolution.effectiveCustomEnvVars ?? getCustomEnvVarsCallback?.(participant.agentId),
 		agentConfigValues,
 		sshRemoteConfig: matchingSession?.sshRemoteConfig,
-		tokenMode: getClaudeTokenMode(matchingSession),
+		tokenMode: getClaudeTokenMode(matchingSession, {
+			sshEnabled: !!matchingSession?.sshRemoteConfig?.enabled,
+		}),
 		maestroPPath: matchingSession?.maestroPPath,
 		sshStore,
 		processManager,

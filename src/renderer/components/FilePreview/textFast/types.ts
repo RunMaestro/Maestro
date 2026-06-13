@@ -36,6 +36,10 @@ export interface TextPreviewFastHandle {
 	findInContent(query: string): SearchHit[];
 	/** Scroll the virtualizer to the matched page AND the matched text within it. */
 	scrollToMatch(hit: SearchHit): void;
+	/** 1-based source line currently at the top of the viewport. */
+	getTopLine(): number;
+	/** Scroll the given 1-based source line to the top of the viewport. */
+	scrollToLine(line: number): void;
 }
 
 /**

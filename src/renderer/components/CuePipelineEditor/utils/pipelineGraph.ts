@@ -349,16 +349,26 @@ export function convertToReactFlowNodes(
 					y: minY - PIPELINE_GROUP_PADDING,
 				},
 				data: groupData,
-				selectable: false,
 				// Group is the user-grabbable handle for the whole pipeline in
-				// pointer/select mode. ReactFlow honors per-node `draggable`
-				// even when the global `nodesDraggable` is false (which it is
-				// in All Pipelines view). In hand/pan mode we opt out so a
-				// left-drag on the group's empty area falls through to canvas
-				// pan — pan tool should never move groups.
+				// pointer/select mode. ReactFlow honors per-node `draggable` /
+				// `selectable` even when the global `nodesDraggable` /
+				// `elementsSelectable` are false (both are, in All Pipelines
+				// view), so the group participates while content nodes stay
+				// inert. In hand/pan mode we opt out so a left-drag on the
+				// group's empty area falls through to canvas pan - pan tool
+				// should never move groups.
+				selectable: !isHandMode,
 				draggable: !isHandMode,
 				focusable: false,
-				zIndex: -1,
+				// Never delete a pipeline via the canvas Delete key - selection
+				// makes that reachable, but removal must go through the toolbar.
+				deletable: false,
+				// In pointer/select mode the card sits ABOVE its content nodes so
+				// the entire body is a drag handle (the 8%-alpha fill keeps the
+				// content readable underneath). In hand/pan mode it drops behind
+				// (zIndex -1) so a left-drag on the card's empty area falls
+				// through to the canvas pan instead of being captured here.
+				zIndex: isHandMode ? -1 : 5,
 			});
 		}
 	}

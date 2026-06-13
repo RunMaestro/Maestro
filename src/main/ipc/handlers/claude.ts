@@ -24,7 +24,7 @@ import { logger } from '../../utils/logger';
 import { withIpcErrorLogging } from '../../utils/ipcHandler';
 import { isWebContentsAvailable } from '../../utils/safe-send';
 import { CLAUDE_SESSION_PARSE_LIMITS } from '../../constants';
-import { calculateClaudeCost } from '../../utils/pricing';
+import { calculateModelCost, computeClaudeUsageCost } from '../../utils/pricing';
 import {
 	encodeClaudeProjectPath,
 	loadStatsCache,
@@ -50,6 +50,8 @@ interface LegacyGlobalStatsCache {
 			cacheCreationTokens: number;
 			sizeBytes: number;
 			fileMtimeMs: number;
+			/** Per-model cost (USD) at parse time; absent for pre-existing cache entries. */
+			costUsd?: number;
 		}
 	>;
 	totals: {
@@ -228,33 +230,14 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 							}
 						}
 
-						// Fast regex-based token extraction
-						let totalInputTokens = 0;
-						let totalOutputTokens = 0;
-						let totalCacheReadTokens = 0;
-						let totalCacheCreationTokens = 0;
-
-						const inputMatches = content.matchAll(/"input_tokens"\s*:\s*(\d+)/g);
-						for (const m of inputMatches) totalInputTokens += parseInt(m[1], 10);
-
-						const outputMatches = content.matchAll(/"output_tokens"\s*:\s*(\d+)/g);
-						for (const m of outputMatches) totalOutputTokens += parseInt(m[1], 10);
-
-						const cacheReadMatches = content.matchAll(/"cache_read_input_tokens"\s*:\s*(\d+)/g);
-						for (const m of cacheReadMatches) totalCacheReadTokens += parseInt(m[1], 10);
-
-						const cacheCreationMatches = content.matchAll(
-							/"cache_creation_input_tokens"\s*:\s*(\d+)/g
-						);
-						for (const m of cacheCreationMatches) totalCacheCreationTokens += parseInt(m[1], 10);
-
-						// Calculate cost estimate
-						const costUsd = calculateClaudeCost(
-							totalInputTokens,
-							totalOutputTokens,
-							totalCacheReadTokens,
-							totalCacheCreationTokens
-						);
+						// Per-model token + cost extraction (a session may mix models).
+						const {
+							inputTokens: totalInputTokens,
+							outputTokens: totalOutputTokens,
+							cacheReadTokens: totalCacheReadTokens,
+							cacheCreationTokens: totalCacheCreationTokens,
+							costUsd,
+						} = computeClaudeUsageCost(content);
 
 						// Extract last timestamp for duration
 						let lastTimestamp = timestamp;
@@ -445,33 +428,14 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 								}
 							}
 
-							// Token extraction
-							let totalInputTokens = 0;
-							let totalOutputTokens = 0;
-							let totalCacheReadTokens = 0;
-							let totalCacheCreationTokens = 0;
-
-							const inputMatches = content.matchAll(/"input_tokens"\s*:\s*(\d+)/g);
-							for (const m of inputMatches) totalInputTokens += parseInt(m[1], 10);
-
-							const outputMatches = content.matchAll(/"output_tokens"\s*:\s*(\d+)/g);
-							for (const m of outputMatches) totalOutputTokens += parseInt(m[1], 10);
-
-							const cacheReadMatches = content.matchAll(/"cache_read_input_tokens"\s*:\s*(\d+)/g);
-							for (const m of cacheReadMatches) totalCacheReadTokens += parseInt(m[1], 10);
-
-							const cacheCreationMatches = content.matchAll(
-								/"cache_creation_input_tokens"\s*:\s*(\d+)/g
-							);
-							for (const m of cacheCreationMatches) totalCacheCreationTokens += parseInt(m[1], 10);
-
-							// Calculate cost
-							const costUsd = calculateClaudeCost(
-								totalInputTokens,
-								totalOutputTokens,
-								totalCacheReadTokens,
-								totalCacheCreationTokens
-							);
+							// Per-model token + cost extraction (a session may mix models).
+							const {
+								inputTokens: totalInputTokens,
+								outputTokens: totalOutputTokens,
+								cacheReadTokens: totalCacheReadTokens,
+								cacheCreationTokens: totalCacheCreationTokens,
+								costUsd,
+							} = computeClaudeUsageCost(content);
 
 							// Extract last timestamp for duration
 							let lastTimestamp = timestamp;
@@ -577,29 +541,8 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 				const assistantMessageCount = (content.match(/"type"\s*:\s*"assistant"/g) || []).length;
 				const messages = userMessageCount + assistantMessageCount;
 
-				let inputTokens = 0;
-				let outputTokens = 0;
-				let cacheReadTokens = 0;
-				let cacheCreationTokens = 0;
-
-				const inputMatches = content.matchAll(/"input_tokens"\s*:\s*(\d+)/g);
-				for (const m of inputMatches) inputTokens += parseInt(m[1], 10);
-
-				const outputMatches = content.matchAll(/"output_tokens"\s*:\s*(\d+)/g);
-				for (const m of outputMatches) outputTokens += parseInt(m[1], 10);
-
-				const cacheReadMatches = content.matchAll(/"cache_read_input_tokens"\s*:\s*(\d+)/g);
-				for (const m of cacheReadMatches) cacheReadTokens += parseInt(m[1], 10);
-
-				const cacheCreationMatches = content.matchAll(/"cache_creation_input_tokens"\s*:\s*(\d+)/g);
-				for (const m of cacheCreationMatches) cacheCreationTokens += parseInt(m[1], 10);
-
-				const costUsd = calculateClaudeCost(
-					inputTokens,
-					outputTokens,
-					cacheReadTokens,
-					cacheCreationTokens
-				);
+				// Per-model token + cost extraction (a session may mix models).
+				const { inputTokens, outputTokens, costUsd } = computeClaudeUsageCost(content);
 
 				let oldestTimestamp: string | null = null;
 				const lines = content.split('\n').filter((l) => l.trim());
@@ -971,11 +914,19 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 					totalSizeBytes += stats.sizeBytes;
 				}
 
-				const totalCostUsd = calculateClaudeCost(
-					totalInputTokens,
-					totalOutputTokens,
-					totalCacheReadTokens,
-					totalCacheCreationTokens
+				// Prefer the per-model cost stored at parse time; fall back to flat-rate
+				// pricing for cache entries written before per-model cost was tracked.
+				const totalCostUsd = Object.values(c.sessions).reduce(
+					(sum, stats) =>
+						sum +
+						(stats.costUsd ??
+							calculateModelCost({
+								inputTokens: stats.inputTokens,
+								outputTokens: stats.outputTokens,
+								cacheReadTokens: stats.cacheReadTokens,
+								cacheCreationTokens: stats.cacheCreationTokens,
+							})),
+					0
 				);
 
 				return {
@@ -1001,24 +952,9 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 					const assistantMessageCount = (content.match(/"type"\s*:\s*"assistant"/g) || []).length;
 					const messages = userMessageCount + assistantMessageCount;
 
-					let inputTokens = 0;
-					let outputTokens = 0;
-					let cacheReadTokens = 0;
-					let cacheCreationTokens = 0;
-
-					const inputMatches = content.matchAll(/"input_tokens"\s*:\s*(\d+)/g);
-					for (const m of inputMatches) inputTokens += parseInt(m[1], 10);
-
-					const outputMatches = content.matchAll(/"output_tokens"\s*:\s*(\d+)/g);
-					for (const m of outputMatches) outputTokens += parseInt(m[1], 10);
-
-					const cacheReadMatches = content.matchAll(/"cache_read_input_tokens"\s*:\s*(\d+)/g);
-					for (const m of cacheReadMatches) cacheReadTokens += parseInt(m[1], 10);
-
-					const cacheCreationMatches = content.matchAll(
-						/"cache_creation_input_tokens"\s*:\s*(\d+)/g
-					);
-					for (const m of cacheCreationMatches) cacheCreationTokens += parseInt(m[1], 10);
+					// Per-model token + cost extraction (a session may mix models).
+					const { inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, costUsd } =
+						computeClaudeUsageCost(content);
 
 					newCache.sessions[sessionKey] = {
 						fileMtimeMs: mtimeMs,
@@ -1028,6 +964,7 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 						cacheReadTokens,
 						cacheCreationTokens,
 						sizeBytes: fileStat.size,
+						costUsd,
 					};
 
 					processedCount++;

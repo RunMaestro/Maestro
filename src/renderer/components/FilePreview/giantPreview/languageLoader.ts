@@ -1,14 +1,83 @@
 import type { Extension } from '@codemirror/state';
+import { StreamLanguage } from '@codemirror/language';
 import { captureException } from '../../../utils/sentry';
 
 /**
- * Lazy per-language extension loader for the Giant tier.
+ * Lazy per-language extension loader for the CodeMirror editor (Giant tier
+ * preview AND the inline file/markdown editor).
  *
  * Each `@codemirror/lang-*` package weighs 10-30 KB gz. Dynamic `import()`
  * means the only language pack that ever enters the bundle is the one the
- * user actually opens. Unknown languages get plain text — still useful for
- * huge files since CM6 handles them with line numbers and search.
+ * user actually opens. Unknown languages get plain text — still useful since
+ * CM6 handles them with line numbers and search.
  *
+ * The language ids here mirror what `getLanguageFromFilename()` (see
+ * `filePreviewUtils.ts`) emits, so anything the read-only Prism view
+ * highlights also highlights while editing. Dedicated Lezer packs are used
+ * where they exist; the long tail (ruby, shell, toml, scss, csharp) rides on
+ * `@codemirror/legacy-modes` via `StreamLanguage`.
+ */
+
+type LanguageLoader = () => Promise<Extension>;
+
+/**
+ * Canonical language id → lazy loader. Aliases are resolved to a canonical id
+ * by {@link ALIASES} before lookup, so each grammar is declared exactly once.
+ * This map is the single source of truth: {@link hasLanguageSupport} derives
+ * its answer from it, so the two can never drift.
+ */
+const LANGUAGE_LOADERS: Record<string, LanguageLoader> = {
+	markdown: async () => (await import('@codemirror/lang-markdown')).markdown(),
+	javascript: async () => (await import('@codemirror/lang-javascript')).javascript(),
+	jsx: async () => (await import('@codemirror/lang-javascript')).javascript({ jsx: true }),
+	typescript: async () =>
+		(await import('@codemirror/lang-javascript')).javascript({ typescript: true }),
+	tsx: async () =>
+		(await import('@codemirror/lang-javascript')).javascript({ typescript: true, jsx: true }),
+	python: async () => (await import('@codemirror/lang-python')).python(),
+	json: async () => (await import('@codemirror/lang-json')).json(),
+	yaml: async () => (await import('@codemirror/lang-yaml')).yaml(),
+	go: async () => (await import('@codemirror/lang-go')).go(),
+	rust: async () => (await import('@codemirror/lang-rust')).rust(),
+	java: async () => (await import('@codemirror/lang-java')).java(),
+	cpp: async () => (await import('@codemirror/lang-cpp')).cpp(),
+	php: async () => (await import('@codemirror/lang-php')).php(),
+	html: async () => (await import('@codemirror/lang-html')).html(),
+	css: async () => (await import('@codemirror/lang-css')).css(),
+	sql: async () => (await import('@codemirror/lang-sql')).sql(),
+	xml: async () => (await import('@codemirror/lang-xml')).xml(),
+	ruby: async () =>
+		StreamLanguage.define((await import('@codemirror/legacy-modes/mode/ruby')).ruby),
+	shell: async () =>
+		StreamLanguage.define((await import('@codemirror/legacy-modes/mode/shell')).shell),
+	toml: async () =>
+		StreamLanguage.define((await import('@codemirror/legacy-modes/mode/toml')).toml),
+	scss: async () => StreamLanguage.define((await import('@codemirror/legacy-modes/mode/css')).sCSS),
+	csharp: async () =>
+		StreamLanguage.define((await import('@codemirror/legacy-modes/mode/clike')).csharp),
+};
+
+/** Alias → canonical id. Keeps the loader map declared once per grammar. */
+const ALIASES: Record<string, string> = {
+	md: 'markdown',
+	mdx: 'markdown',
+	js: 'javascript',
+	ts: 'typescript',
+	py: 'python',
+	jsonl: 'json',
+	ndjson: 'json',
+	yml: 'yaml',
+	c: 'cpp',
+	bash: 'shell',
+	sh: 'shell',
+};
+
+function resolveLanguageId(language: string): string {
+	const normalized = language.toLowerCase();
+	return ALIASES[normalized] ?? normalized;
+}
+
+/**
  * Returns `null` when the language is unrecognized OR when the dynamic
  * import fails (network / packaging issue). Import failures are reported to
  * Sentry with context so we hear about packaging regressions in field data,
@@ -16,53 +85,18 @@ import { captureException } from '../../../utils/sentry';
  * without syntax highlighting — degraded UX is better than no preview.
  */
 export async function loadLanguageExtension(language: string): Promise<Extension | null> {
-	const normalized = language.toLowerCase();
+	const id = resolveLanguageId(language);
+	const loader = LANGUAGE_LOADERS[id];
+	if (!loader) return null;
 
 	try {
-		switch (normalized) {
-			case 'markdown':
-			case 'md':
-			case 'mdx': {
-				const { markdown } = await import('@codemirror/lang-markdown');
-				return markdown();
-			}
-			case 'javascript':
-			case 'js':
-			case 'jsx': {
-				const { javascript } = await import('@codemirror/lang-javascript');
-				return javascript({ jsx: normalized === 'jsx' });
-			}
-			case 'typescript':
-			case 'ts':
-			case 'tsx': {
-				const { javascript } = await import('@codemirror/lang-javascript');
-				return javascript({ typescript: true, jsx: normalized === 'tsx' });
-			}
-			case 'python':
-			case 'py': {
-				const { python } = await import('@codemirror/lang-python');
-				return python();
-			}
-			case 'json':
-			case 'jsonl':
-			case 'ndjson': {
-				const { json } = await import('@codemirror/lang-json');
-				return json();
-			}
-			case 'yaml':
-			case 'yml': {
-				const { yaml } = await import('@codemirror/lang-yaml');
-				return yaml();
-			}
-			default:
-				return null;
-		}
+		return await loader();
 	} catch (err) {
 		// Dynamic import failed (offline, packaging error, bad chunk URL).
 		// Report so we hear about it, then fall through to the plain-text
 		// editor so the user still gets a preview.
 		captureException(err, {
-			extra: { component: 'giantPreview/languageLoader', language: normalized },
+			extra: { component: 'giantPreview/languageLoader', language: id },
 		});
 		return null;
 	}
@@ -70,30 +104,10 @@ export async function loadLanguageExtension(language: string): Promise<Extension
 
 /**
  * Predicate companion to `loadLanguageExtension`: true when we have a
- * dedicated CM6 language pack for the given identifier. Used by the
- * component to decide whether to await the loader at all (skipping it for
- * plain text saves a microtask).
+ * dedicated CM6 grammar for the given identifier. Used by the component to
+ * decide whether to await the loader at all (skipping it for plain text saves
+ * a microtask).
  */
 export function hasLanguageSupport(language: string): boolean {
-	const normalized = language.toLowerCase();
-	return (
-		[
-			'markdown',
-			'md',
-			'mdx',
-			'javascript',
-			'js',
-			'jsx',
-			'typescript',
-			'ts',
-			'tsx',
-			'python',
-			'py',
-			'json',
-			'jsonl',
-			'ndjson',
-			'yaml',
-			'yml',
-		].indexOf(normalized) !== -1
-	);
+	return resolveLanguageId(language) in LANGUAGE_LOADERS;
 }

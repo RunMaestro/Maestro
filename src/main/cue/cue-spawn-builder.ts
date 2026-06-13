@@ -12,6 +12,12 @@ import { getAgentDefinition, getAgentCapabilities } from '../agents';
 import { buildAgentArgs, applyAgentConfigOverrides } from '../utils/agent-args';
 import { wrapSpawnWithSsh, type SshSpawnWrapConfig } from '../utils/ssh-spawn-wrapper';
 import { sanitizeCustomEnvVars } from './cue-env-sanitizer';
+import {
+	resolveClaudeSpawnMode,
+	applyClaudeSpawnDecision,
+	buildRemoteInteractiveSpawn,
+} from '../agents/resolveClaudeSpawnMode';
+import { getClaudeTokenMode } from '../../shared/claudeTokenMode';
 
 // ─── Types ──────���────────────────────────────────────────────────────────────
 
@@ -134,15 +140,58 @@ export async function buildSpawnSpec(
 	let stdinPrompt: string | undefined;
 	let sshRemoteUsed: SpawnSpec['sshRemoteUsed'];
 
+	// 3b. Resolve the Claude token source (TUI / API / dynamic) the same way the
+	// desktop `process:spawn` handler does, so a Cue run honors the triggering
+	// agent's selection. The decision is computed here (the command + sanitized
+	// env are now known) but APPLIED after the prompt is appended below, so
+	// maestro-p's "prompt is the trailing positional" contract stays intact.
+	// SSH spawns resolve to `api` (the resolver short-circuits on sshEnabled),
+	// because maestro-p needs the local TUI and SSH runs `claude --print`.
+	const tokenMode = getClaudeTokenMode(
+		{
+			enableMaestroP: config.enableMaestroP,
+			maestroPMode: config.maestroPMode,
+		},
+		// Remote agents default to the TUI when the user hasn't chosen.
+		{ sshEnabled: !!sshRemoteConfig?.enabled }
+	);
+	const claudeSpawnDecision = resolveClaudeSpawnMode({
+		agent: {
+			id: agentDef.id,
+			interactiveCommand: agentDef.interactiveCommand,
+			interactiveModeArgs: agentDef.interactiveModeArgs,
+			defaultEnvVars: agentDef.defaultEnvVars,
+		},
+		tokenMode,
+		sshEnabled: !!sshRemoteConfig?.enabled,
+		command,
+		sessionCustomPath: config.customPath,
+		sessionCustomEnvVars: effectiveEnvVars,
+		maestroPPath: config.maestroPPath,
+		now: new Date(),
+	});
+
 	// 4. Apply SSH wrapping if configured
 	if (sshRemoteConfig?.enabled && sshStore) {
+		// Claude interactive/dynamic over SSH runs maestro-p on the remote host
+		// (must be on its PATH) to drive the remote TUI on the Max subscription,
+		// honoring the Cue run's configured timeout as the idle budget. Returns
+		// null for the API path, leaving the SSH config on the plain claude binary.
+		const remoteInteractive = buildRemoteInteractiveSpawn({
+			decision: claudeSpawnDecision,
+			interactiveModeArgs: agentDef.interactiveModeArgs,
+			remoteClaudeBin: claudeSpawnDecision.claudeRealBinPath,
+			maxWaitSeconds: Math.ceil(config.timeoutMs / 1000),
+		});
 		const sshWrapConfig: SshSpawnWrapConfig = {
 			command,
-			args: finalArgs,
+			args: remoteInteractive ? [...remoteInteractive.prependArgs, ...finalArgs] : finalArgs,
 			cwd: projectRoot,
 			prompt: substitutedPrompt,
-			customEnvVars: effectiveEnvVars,
-			agentBinaryName: agentDef.binaryName,
+			customEnvVars: remoteInteractive
+				? { ...effectiveEnvVars, ...remoteInteractive.env }
+				: effectiveEnvVars,
+			agentBinaryName: remoteInteractive ? remoteInteractive.command : agentDef.binaryName,
 			promptArgs: agentDef.promptArgs,
 			noPromptSeparator: agentDef.noPromptSeparator,
 		};
@@ -171,6 +220,34 @@ export async function buildSpawnSpec(
 		} else {
 			spawnArgs = [...spawnArgs, '--', substitutedPrompt];
 		}
+	}
+
+	// 6. Realize an interactive (maestro-p) decision for local spawns. Applied
+	// AFTER the prompt append so the maestro-p script + interactive flags come
+	// FIRST and the prompt stays LAST (maestro-p strips the headless-only flags,
+	// forwards the rest to the claude TUI, and reads the trailing positional as
+	// the prompt). The injected MAESTRO_CLAUDE_BIN flows into the spec env below
+	// via spawnEnvVars. SSH was already handled above and resolves to `api`.
+	if (
+		!sshRemoteUsed &&
+		claudeSpawnDecision.mode === 'interactive' &&
+		claudeSpawnDecision.maestroPBinPath
+	) {
+		const applied = applyClaudeSpawnDecision({
+			decision: claudeSpawnDecision,
+			interactiveModeArgs: agentDef.interactiveModeArgs,
+			command,
+			args: spawnArgs,
+			customEnvVars: spawnEnvVars,
+			// Honor the Cue run's configured timeout as maestro-p's idle budget
+			// (`--max-wait`) instead of its 300s default. Without this a Cue
+			// prompt dispatch through maestro-p was capped at 300s regardless of
+			// `timeout_minutes`, killing every long-running background turn.
+			maxWaitSeconds: Math.ceil(config.timeoutMs / 1000),
+		});
+		command = applied.command;
+		spawnArgs = applied.args;
+		spawnEnvVars = applied.customEnvVars;
 	}
 
 	return {

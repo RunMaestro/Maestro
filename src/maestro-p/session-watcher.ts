@@ -38,6 +38,17 @@ export interface DiscoverSessionIdOptions {
 	timeoutMs?: number;
 	/** Polling cadence. Default 75ms (matches JsonlTailer). */
 	pollIntervalMs?: number;
+	/**
+	 * When set, the caller pre-assigned this session id to the TUI via
+	 * `claude --session-id <uuid>`, so we poll for exactly `<uuid>.jsonl`
+	 * instead of guessing "the earliest new file". This is RACE-FREE: when
+	 * multiple fresh-session TUIs run concurrently in the same cwd, the
+	 * earliest-new-file heuristic can attach one maestro-p instance to a
+	 * sibling's transcript (observed cross-talk: a tab-naming turn returning
+	 * another concurrent turn's answer). Watching for the known id eliminates
+	 * that entirely. Falls back to earliest-new only when this is absent.
+	 */
+	expectSessionId?: string;
 }
 
 export interface DiscoverSessionIdResult {
@@ -77,17 +88,43 @@ export async function discoverSessionId(
 	// Scan immediately so a file already on disk (claude wrote it before
 	// we started polling) is picked up without waiting a full interval.
 	for (;;) {
-		const candidate = await findEarliestNewJsonl(projectsDir, options.spawnTimestamp);
+		const candidate = options.expectSessionId
+			? await findExpectedJsonl(projectsDir, options.expectSessionId)
+			: await findEarliestNewJsonl(projectsDir, options.spawnTimestamp);
 		if (candidate) {
 			return { sessionId: candidate.sessionId, jsonlPath: candidate.jsonlPath };
 		}
 		if (Date.now() >= deadline) {
-			throw new Error(
-				`session-watcher: no new .jsonl appeared in ${projectsDir} within ${timeoutMs}ms`
-			);
+			// Preserve the legacy wording for the earliest-new path (callers and
+			// tests match on it); use a distinct message for the expected-id path.
+			const detail = options.expectSessionId
+				? `session ${options.expectSessionId}.jsonl did not appear`
+				: 'no new .jsonl appeared';
+			throw new Error(`session-watcher: ${detail} in ${projectsDir} within ${timeoutMs}ms`);
 		}
 		await sleep(pollIntervalMs);
 	}
+}
+
+/**
+ * Race-free lookup for a pre-assigned session id (`claude --session-id`).
+ * Returns the candidate as soon as `<sessionId>.jsonl` exists, regardless of
+ * any other transcripts being written concurrently in the same directory.
+ */
+async function findExpectedJsonl(
+	projectsDir: string,
+	sessionId: string
+): Promise<Candidate | null> {
+	const jsonlPath = path.join(projectsDir, `${sessionId}.jsonl`);
+	try {
+		const stat = await fsp.stat(jsonlPath);
+		if (!stat.isFile()) return null;
+	} catch (err) {
+		// Not created yet (ENOENT) — keep polling. Anything else is unexpected.
+		if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+		throw err;
+	}
+	return { sessionId, jsonlPath, createdMs: 0 };
 }
 
 async function findEarliestNewJsonl(

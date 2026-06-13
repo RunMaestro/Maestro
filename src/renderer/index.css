@@ -1138,22 +1138,30 @@ svg.wand-sparkle-active path:nth-child(8) {
  * unset` on the structural elements so prose styles (e.g. `.terminal-output
  * code { color: ... }` in markdownConfig) don't cascade past Shiki's per-token
  * inline colors via the `<code>` element. */
-.shiki-host pre.shiki {
+/* `.code-fence` scope raises specificity above the runtime-injected prose
+ * styles (`.prose pre { padding: 1em }` in markdownConfig.ts). Those <style>
+ * tags load after this file, so an equal-specificity selector would lose the
+ * cascade tie and the extra padding below would be clobbered back to 1em. */
+.code-fence .shiki-host pre.shiki {
 	margin: 0;
-	padding: 1em;
+	/* Extra top padding reserves room for the language picker (top-left) and
+	 * copy button (top-right) overlaid by CodeFence so the first line never
+	 * renders underneath them. Kept in sync with the plain-<pre> fallback
+	 * (fallbackPreStyle in CodeFence.tsx). */
+	padding: 2.75em 1em 1em !important;
 	border-radius: 0;
 	overflow-x: auto;
 	white-space: pre;
 	font-family: inherit;
 }
 
-.shiki-host pre.shiki code {
+.code-fence .shiki-host pre.shiki code {
 	font-family: inherit;
 	background: transparent !important;
 	color: unset !important;
 	padding: 0 !important;
 }
 
-.shiki-host pre.shiki .line {
+.code-fence .shiki-host pre.shiki .line {
 	color: unset;
 }

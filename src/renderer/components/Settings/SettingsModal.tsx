@@ -467,8 +467,12 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 			aria-label="Settings"
 		>
 			<div
-				className="modal-w-xl h-[720px] rounded-xl border shadow-2xl overflow-hidden flex flex-col select-none"
-				style={{ backgroundColor: theme.colors.bgSidebar, borderColor: theme.colors.border }}
+				className="h-[900px] rounded-xl border shadow-2xl overflow-hidden flex flex-col select-none"
+				style={{
+					width: 'min(calc(980px * var(--font-scale, 1)), 95vw)',
+					backgroundColor: theme.colors.bgSidebar,
+					borderColor: theme.colors.border,
+				}}
 			>
 				{/* Search Bar + Close Button */}
 				<div className="flex items-center border-b" style={{ borderColor: theme.colors.border }}>
@@ -504,7 +508,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 				<div className={`flex flex-1 overflow-hidden ${searchActive ? 'hidden' : ''}`}>
 					{/* Left Sidebar Tabs */}
 					<nav
-						className="w-[200px] flex-shrink-0 border-r py-2 overflow-y-auto scrollbar-thin"
+						className="w-[248px] flex-shrink-0 border-r py-2 overflow-y-auto scrollbar-thin"
 						style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgSidebar }}
 						aria-label="Settings tabs"
 					>

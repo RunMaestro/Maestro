@@ -37,6 +37,46 @@ describe('getClaudeTokenMode', () => {
 		);
 		expect(getClaudeTokenMode({ enableMaestroP: true, maestroPMode: 'dynamic' })).toBe('dynamic');
 	});
+
+	describe('SSH default (sshEnabled option)', () => {
+		it('defaults an UNCONFIGURED SSH agent to interactive (the remote TUI)', () => {
+			// enableMaestroP unset over SSH => default to the Max-plan TUI, not API.
+			expect(getClaudeTokenMode({}, { sshEnabled: true })).toBe('interactive');
+			expect(getClaudeTokenMode(undefined, { sshEnabled: true })).toBe('interactive');
+			expect(getClaudeTokenMode(null, { sshEnabled: true })).toBe('interactive');
+			expect(getClaudeTokenMode({ maestroPMode: 'dynamic' }, { sshEnabled: true })).toBe(
+				'interactive'
+			);
+		});
+
+		it('still honors an EXPLICIT api choice over SSH (false is not unset)', () => {
+			expect(getClaudeTokenMode({ enableMaestroP: false }, { sshEnabled: true })).toBe('api');
+			expect(
+				getClaudeTokenMode(
+					{ enableMaestroP: false, maestroPMode: 'interactive' },
+					{ sshEnabled: true }
+				)
+			).toBe('api');
+		});
+
+		it('honors an explicit opt-in over SSH unchanged', () => {
+			expect(
+				getClaudeTokenMode(
+					{ enableMaestroP: true, maestroPMode: 'interactive' },
+					{ sshEnabled: true }
+				)
+			).toBe('interactive');
+			// dynamic is still surfaced here; resolveClaudeSpawnMode falls it back to api on SSH.
+			expect(
+				getClaudeTokenMode({ enableMaestroP: true, maestroPMode: 'dynamic' }, { sshEnabled: true })
+			).toBe('dynamic');
+		});
+
+		it('does NOT change the local (non-SSH) default for an unconfigured agent', () => {
+			expect(getClaudeTokenMode({}, { sshEnabled: false })).toBe('api');
+			expect(getClaudeTokenMode(undefined)).toBe('api');
+		});
+	});
 });
 
 describe('toClaudeTokenModeSource', () => {

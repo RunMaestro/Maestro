@@ -1,8 +1,3 @@
----
-name: technical-research
-description: 'Conduct technical research on technologies and architecture. Use when the user says "create a technical research report on [topic]".'
----
-
 # Technical Research Workflow
 
 **Goal:** Conduct comprehensive technical research using current web data and verified sources to produce complete research documents with compelling narratives and proper citations.
@@ -63,7 +58,7 @@ After gathering the topic and goals:
 
 The following upstream BMAD files are embedded so this Maestro prompt remains self-contained.
 
-## src/bmm/workflows/1-analysis/research/research.template.md
+## src/bmm/workflows/1-analysis/research/bmad-technical-research/research.template.md
 
 ```md
 ---
@@ -97,7 +92,7 @@ source_verification: true
 <!-- Content will be appended sequentially through research workflow steps -->
 ```
 
-## src/bmm/workflows/1-analysis/research/technical-steps/step-01-init.md
+## src/bmm/workflows/1-analysis/research/bmad-technical-research/technical-steps/step-01-init.md
 
 ````md
 # Technical Research Step 1: Technical Research Scope Confirmation
@@ -180,7 +175,7 @@ For **{{research_topic}}**, I will research:
 
 - Document scope confirmation in research file
 - Update frontmatter: `stepsCompleted: [1]`
-- Load: `{project-root}/_bmad/bmm/workflows/1-analysis/research/technical-steps/step-02-technical-overview.md`
+- Load: `./step-02-technical-overview.md`
 
 ## APPEND TO DOCUMENT:
 
@@ -235,13 +230,13 @@ When user selects 'C', append scope confirmation:
 
 ## NEXT STEP:
 
-After user selects 'C', load `{project-root}/_bmad/bmm/workflows/1-analysis/research/technical-steps/step-02-technical-overview.md` to begin technology stack analysis.
+After user selects 'C', load `./step-02-technical-overview.md` to begin technology stack analysis.
 
 Remember: This is SCOPE CONFIRMATION ONLY - no actual technical research yet, just confirming the research approach and scope!
 
 ````
 
-## src/bmm/workflows/1-analysis/research/technical-steps/step-02-technical-overview.md
+## src/bmm/workflows/1-analysis/research/bmad-technical-research/technical-steps/step-02-technical-overview.md
 
 ```md
 # Technical Research Step 2: Technology Stack Analysis
@@ -426,7 +421,7 @@ _Source: [URL]_
 
 - **CONTENT ALREADY WRITTEN TO DOCUMENT**
 - Update frontmatter: `stepsCompleted: [1, 2]`
-- Load: `{project-root}/_bmad/bmm/workflows/1-analysis/research/technical-steps/step-03-integration-patterns.md`
+- Load: `./step-03-integration-patterns.md`
 
 ## APPEND TO DOCUMENT:
 
@@ -480,7 +475,7 @@ Content is already written to document when generated in step 4. No additional a
 
 ## NEXT STEP:
 
-After user selects 'C', load `{project-root}/_bmad/bmm/workflows/1-analysis/research/technical-steps/step-03-integration-patterns.md` to analyze APIs, communication protocols, and system interoperability for {{research_topic}}.
+After user selects 'C', load `./step-03-integration-patterns.md` to analyze APIs, communication protocols, and system interoperability for {{research_topic}}.
 
 Remember: Always write research content to document immediately and emphasize current technology data with rigorous source verification!
 

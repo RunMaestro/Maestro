@@ -18,7 +18,7 @@ import Store from 'electron-store';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
 import { CLAUDE_SESSION_PARSE_LIMITS } from '../constants';
-import { calculateClaudeCost } from '../utils/pricing';
+import { computeClaudeUsageCost } from '../utils/pricing';
 import { encodeClaudeProjectPath } from '../utils/statsCache';
 import { readFileRemote, listDirWithStatsRemote } from '../utils/remote-fs';
 import { mapWithConcurrency, REMOTE_SESSION_READ_CONCURRENCY } from '../utils/concurrency';
@@ -49,6 +49,31 @@ type StoredOriginData = ClaudeSessionOrigin | ClaudeSessionOriginInfo;
 
 const LOG_CONTEXT = '[ClaudeSessionStorage]';
 const MAX_SESSION_FILE_SIZE = 100 * 1024 * 1024; // 100 MB
+
+/**
+ * Matches the synthetic placeholder text the harness writes alongside an image
+ * content block, e.g. "[Image: original 2808x1566, displayed at 2000x1115.
+ * Multiply coordinates by 1.40 to map to original image.]". When we recover the
+ * real image we drop this text so the restored bubble isn't a duplicate.
+ */
+const IMAGE_PLACEHOLDER_PATTERN = /^\s*\[Image:[^\]]*to map to original image\.?\]\s*$/;
+
+function isImagePlaceholderText(text: string | undefined): boolean {
+	return typeof text === 'string' && IMAGE_PLACEHOLDER_PATTERN.test(text);
+}
+
+/**
+ * Remove any synthetic `[Image: ...]` placeholder lines from a text blob,
+ * returning the trimmed remainder. A message that is nothing but placeholder
+ * lines collapses to an empty string so callers can drop it entirely.
+ */
+function stripImagePlaceholderLines(text: string): string {
+	return text
+		.split('\n')
+		.filter((line) => !isImagePlaceholderText(line))
+		.join('\n')
+		.trim();
+}
 
 /**
  * Extract semantic text from message content.
@@ -124,30 +149,14 @@ function parseSessionContent(
 		// Use assistant response as preview if available, otherwise fall back to user message
 		const previewMessage = firstAssistantMessage || firstUserMessage;
 
-		// Fast regex-based token extraction
-		let totalInputTokens = 0;
-		let totalOutputTokens = 0;
-		let totalCacheReadTokens = 0;
-		let totalCacheCreationTokens = 0;
-
-		const inputMatches = content.matchAll(/"input_tokens"\s*:\s*(\d+)/g);
-		for (const m of inputMatches) totalInputTokens += parseInt(m[1], 10);
-
-		const outputMatches = content.matchAll(/"output_tokens"\s*:\s*(\d+)/g);
-		for (const m of outputMatches) totalOutputTokens += parseInt(m[1], 10);
-
-		const cacheReadMatches = content.matchAll(/"cache_read_input_tokens"\s*:\s*(\d+)/g);
-		for (const m of cacheReadMatches) totalCacheReadTokens += parseInt(m[1], 10);
-
-		const cacheCreationMatches = content.matchAll(/"cache_creation_input_tokens"\s*:\s*(\d+)/g);
-		for (const m of cacheCreationMatches) totalCacheCreationTokens += parseInt(m[1], 10);
-
-		const costUsd = calculateClaudeCost(
-			totalInputTokens,
-			totalOutputTokens,
-			totalCacheReadTokens,
-			totalCacheCreationTokens
-		);
+		// Per-model token + cost extraction (a session may mix models).
+		const {
+			inputTokens: totalInputTokens,
+			outputTokens: totalOutputTokens,
+			cacheReadTokens: totalCacheReadTokens,
+			cacheCreationTokens: totalCacheCreationTokens,
+			costUsd,
+		} = computeClaudeUsageCost(content);
 
 		// Extract last timestamp for duration
 		let lastTimestamp = timestamp;
@@ -678,6 +687,7 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 				if (entry.type === 'user' || entry.type === 'assistant') {
 					let msgContent = '';
 					let toolUse = undefined;
+					let images: string[] | undefined;
 
 					if (entry.message?.content) {
 						if (typeof entry.message.content === 'string') {
@@ -689,15 +699,45 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 							const toolBlocks = entry.message.content.filter(
 								(b: { type?: string }) => b.type === 'tool_use'
 							);
+							const imageBlocks = entry.message.content.filter(
+								(b: { type?: string }) => b.type === 'image'
+							);
 
-							msgContent = textBlocks.map((b: { text?: string }) => b.text).join('\n');
+							// Reconstruct base64 data URLs from image content blocks so a
+							// resumed tab re-renders the original images instead of falling
+							// back to the harness's synthetic `[Image: ...]` placeholder text.
+							if (imageBlocks.length > 0) {
+								const urls = imageBlocks
+									.map((b: { source?: { type?: string; media_type?: string; data?: string } }) => {
+										const src = b.source;
+										if (src?.type === 'base64' && src.media_type && src.data) {
+											return `data:${src.media_type};base64,${src.data}`;
+										}
+										return null;
+									})
+									.filter((url: string | null): url is string => url !== null);
+								if (urls.length > 0) {
+									images = urls;
+								}
+							}
+
+							// Always drop the synthetic `[Image: ... Multiply coordinates by
+							// ...]` placeholder lines. They are redundant either way: when the
+							// image is in this same message we render the recovered image, and
+							// when the placeholder arrives as its own follow-up message it is a
+							// text echo of an image already shown in a prior message. Filtering
+							// line-by-line lets a placeholder-only message collapse to empty so
+							// it is dropped entirely below.
+							msgContent = stripImagePlaceholderLines(
+								textBlocks.map((b: { text?: string }) => b.text || '').join('\n')
+							);
 							if (toolBlocks.length > 0) {
 								toolUse = toolBlocks;
 							}
 						}
 					}
 
-					if ((msgContent && msgContent.trim()) || toolUse) {
+					if ((msgContent && msgContent.trim()) || toolUse || images) {
 						messages.push({
 							type: entry.type,
 							role: entry.message?.role,
@@ -705,6 +745,7 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 							timestamp: entry.timestamp,
 							uuid: entry.uuid,
 							toolUse,
+							...(images && { images }),
 						});
 					}
 				}

@@ -17,6 +17,7 @@ import { v4 as uuidv4 } from 'uuid';
 import type { ModeratorConfig, GroupChatHistoryEntry } from '../../shared/group-chat-types';
 import { hasCapability } from '../agents/capabilities';
 import { logger } from '../utils/logger';
+import { atomicWriteJson, createKeyedWriteQueue } from '../utils/atomic-json-store';
 
 // ---------------------------------------------------------------------------
 // Write serialization & atomic file I/O
@@ -25,59 +26,12 @@ import { logger } from '../utils/logger';
 /**
  * Per-chat write queue. Serializes all metadata writes for a given group chat
  * ID so concurrent callers (usage-listener, session-id-listener, router) don't
- * race on the same metadata.json file.
+ * race on the same metadata.json file. Backed by the shared keyed-write-queue
+ * utility; `atomicWriteJson` provides the partial-read-safe file write.
  */
-const writeQueues = new Map<string, Promise<void>>();
-
-/**
- * Enqueue an async callback so it runs after all previously queued writes for
- * the same group chat ID have settled. Returns the callback's result.
- * Automatically cleans up the queue entry once it settles to prevent
- * unbounded Map growth from long-lived processes.
- */
-function enqueueWrite<T>(chatId: string, fn: () => Promise<T>): Promise<T> {
-	const prev = writeQueues.get(chatId) ?? Promise.resolve();
-	const next = prev.then(fn, fn); // run fn regardless of prior success/failure
-	// Store the void version so the queue keeps its shape
-	const settled = next.then(
-		() => {},
-		() => {}
-	);
-	writeQueues.set(chatId, settled);
-	// Clean up the queue entry once this write settles — if nothing new was
-	// enqueued in the meantime the Map entry is just a resolved promise.
-	settled.then(() => {
-		if (writeQueues.get(chatId) === settled) {
-			writeQueues.delete(chatId);
-		}
-	});
-	return next;
-}
-
-/**
- * Atomically write JSON content to a file by writing to a temp file first,
- * then renaming. rename() is atomic on POSIX and effectively atomic on NTFS.
- * This prevents partial/corrupt reads if the process crashes mid-write.
- * Retries on EPERM/EBUSY errors (Windows file locks from OneDrive/antivirus).
- */
-async function atomicWriteJson(filePath: string, data: unknown): Promise<void> {
-	const tmp = filePath + '.tmp';
-	await fs.writeFile(tmp, JSON.stringify(data, null, 2), 'utf-8');
-	const maxRetries = 3;
-	for (let attempt = 0; attempt <= maxRetries; attempt++) {
-		try {
-			await fs.rename(tmp, filePath);
-			return;
-		} catch (err) {
-			const code = (err as NodeJS.ErrnoException).code;
-			if ((code === 'EPERM' || code === 'EBUSY') && attempt < maxRetries) {
-				await new Promise((resolve) => setTimeout(resolve, 100 * Math.pow(2, attempt)));
-				continue;
-			}
-			throw err;
-		}
-	}
-}
+const groupChatWriteQueue = createKeyedWriteQueue();
+const enqueueWrite = <T>(chatId: string, fn: () => Promise<T>): Promise<T> =>
+	groupChatWriteQueue.enqueue(chatId, fn);
 
 import type { BootstrapSettings } from '../stores/types';
 

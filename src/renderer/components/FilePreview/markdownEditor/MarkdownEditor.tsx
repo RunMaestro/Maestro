@@ -203,16 +203,26 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 				focus() {
 					viewRef.current?.focus();
 				},
-				scrollToLine(line: number) {
+				scrollToLine(line: number, opts?: { select?: boolean }) {
 					const view = viewRef.current;
 					if (!view) return;
 					const totalLines = view.state.doc.lines;
 					const targetLine = Math.min(Math.max(1, Math.floor(line)), totalLines);
 					const lineInfo = view.state.doc.line(targetLine);
+					const select = opts?.select ?? true;
 					view.dispatch({
-						selection: EditorSelection.single(lineInfo.from),
-						effects: EditorView.scrollIntoView(lineInfo.from, { y: 'start', yMargin: 80 }),
+						selection: select ? EditorSelection.single(lineInfo.from) : undefined,
+						effects: EditorView.scrollIntoView(lineInfo.from, {
+							y: 'start',
+							yMargin: select ? 80 : 0,
+						}),
 					});
+				},
+				getTopLine() {
+					const view = viewRef.current;
+					if (!view) return 1;
+					const block = view.lineBlockAtHeight(view.scrollDOM.scrollTop);
+					return view.state.doc.lineAt(block.from).number;
 				},
 				getScrollPercent() {
 					const view = viewRef.current;

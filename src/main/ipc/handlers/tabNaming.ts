@@ -20,6 +20,14 @@ import {
 	CreateHandlerOptions,
 } from '../../utils/ipcHandler';
 import { buildAgentArgs, applyAgentConfigOverrides } from '../../utils/agent-args';
+import { createOutputParser } from '../../parsers/parser-factory';
+import {
+	resolveClaudeSpawnMode,
+	applyClaudeSpawnDecision,
+	buildRemoteInteractiveSpawn,
+	type ClaudeSpawnDecision,
+} from '../../agents/resolveClaudeSpawnMode';
+import { getClaudeTokenMode } from '../../../shared/claudeTokenMode';
 import { getSshRemoteConfig, createSshRemoteStoreAdapter } from '../../utils/ssh-remote-resolver';
 import { buildSshCommand } from '../../utils/ssh-command-builder';
 import { getPrompt } from '../../prompt-manager';
@@ -94,6 +102,13 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 					remoteId: string | null;
 					workingDirOverride?: string;
 				};
+				// Claude token-source selection for the triggering agent, forwarded
+				// from the renderer's session (tab naming has no sessionId to look up
+				// the persisted session by, so the caller passes these inline). When
+				// absent, getClaudeTokenMode() collapses to 'api'.
+				enableMaestroP?: boolean;
+				maestroPMode?: 'interactive' | 'dynamic';
+				maestroPPath?: string;
 			}): Promise<string | null> => {
 				const processManager = requireDependency(getProcessManager, 'Process manager');
 				const agentDetector = requireDependency(getAgentDetector, 'Agent detector');
@@ -142,11 +157,63 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 					});
 					finalArgs = configResolution.args;
 
+					// Disable all tools for tab naming. A tab name is a pure text transform
+					// of the user's first message - the agent must NOT investigate the
+					// codebase. Without this, a task-like first message (e.g. "investigate
+					// the ingestion lag and propose fixes") makes the model run a full
+					// agentic session (Bash/Read/Grep) instead of emitting a name: it never
+					// returns a result inside the timeout, so extraction fails with
+					// empty_output. `noToolsArgs` (claude: `--tools ""`) forces a one-shot
+					// text reply. Agents without the field are left untouched.
+					if (agent.noToolsArgs?.length) {
+						finalArgs = [...finalArgs, ...agent.noToolsArgs];
+					}
+
 					// Determine command and working directory
 					let command = agent.path || agent.command;
 					let cwd = config.cwd;
-					const customEnvVars: Record<string, string> | undefined =
+					let customEnvVars: Record<string, string> | undefined =
 						configResolution.effectiveCustomEnvVars;
+
+					// Resolve the triggering agent's Claude token source ONCE, up front,
+					// so BOTH the SSH-remote path (maestro-p on the remote host) and the
+					// local path (maestro-p via process.execPath) realize the same
+					// decision. Tab naming spawns claude directly (it does NOT route
+					// through process:spawn where the resolver normally lives), so without
+					// this it would always run `claude --print`.
+					//
+					// SSH now HONORS the selection instead of forcing API: API ->
+					// `claude --print`, TUI -> remote maestro-p driving the remote claude
+					// TUI on the Max plan. (`dynamic` over SSH has no remote quota signal,
+					// so the resolver collapses it back to API.) For LOCAL spawns the
+					// resolver already falls back to `claude --print` when no maestro-p
+					// binary is found; the remote path trusts maestro-p on the remote PATH.
+					//
+					// NOTE: interactive tab-naming (local OR remote) drives the maestro-p
+					// TUI and therefore spends Max-plan quota on a short, low-value turn.
+					// That's the correct behavior when the user picked TUI/Dynamic.
+					let claudeSpawnDecision: ClaudeSpawnDecision | null = null;
+					if (agent.id === 'claude-code') {
+						const sshEnabled = !!config.sessionSshRemoteConfig?.enabled;
+						const tokenMode = getClaudeTokenMode(
+							{
+								enableMaestroP: config.enableMaestroP,
+								maestroPMode: config.maestroPMode,
+							},
+							// Match the agent's own spawn: an unconfigured SSH agent defaults
+							// to the remote TUI rather than per-token API credit.
+							{ sshEnabled }
+						);
+						claudeSpawnDecision = resolveClaudeSpawnMode({
+							agent,
+							tokenMode,
+							sshEnabled,
+							command,
+							sessionCustomEnvVars: customEnvVars,
+							maestroPPath: config.maestroPPath,
+							now: new Date(),
+						});
+					}
 
 					// Handle SSH remote execution if configured
 					// IMPORTANT: For SSH, we must send the prompt via stdin to avoid shell escaping issues.
@@ -163,7 +230,7 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 						if (sshResult.config) {
 							// Use the agent's command (not path) for remote execution
 							// since the path is local and remote host has its own binary location
-							const remoteCommand = agent.command;
+							let remoteCommand = agent.command;
 							const remoteCwd = config.sessionSshRemoteConfig.workingDirOverride || config.cwd;
 
 							// For agents that support stream-json input, use stdin for the prompt
@@ -208,6 +275,32 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 								});
 							}
 
+							// Claude TUI/dynamic over SSH runs maestro-p on the REMOTE host
+							// (must be on its PATH) to drive the remote claude TUI on the Max
+							// subscription. Returns null for the API path and non-claude
+							// agents, leaving the spawn on the plain claude binary. The
+							// interactive flags are prepended ahead of the existing arg list
+							// (incl. `--input-format stream-json`): maestro-p strips the
+							// headless-only flags, parses the stream-json prompt from stdin,
+							// and drives the TUI. We do NOT pre-probe the remote FS for
+							// maestro-p; if it's absent this throwaway naming turn just fails
+							// and the tab keeps its default name.
+							const remoteInteractive = claudeSpawnDecision
+								? buildRemoteInteractiveSpawn({
+										decision: claudeSpawnDecision,
+										interactiveModeArgs: agent.interactiveModeArgs,
+										remoteClaudeBin: claudeSpawnDecision.claudeRealBinPath,
+									})
+								: null;
+							if (remoteInteractive) {
+								remoteCommand = remoteInteractive.command;
+								finalArgs = [...remoteInteractive.prependArgs, ...finalArgs];
+								customEnvVars = { ...(customEnvVars ?? {}), ...remoteInteractive.env };
+								logger.debug('Tab naming resolved to remote maestro-p TUI over SSH', LOG_CONTEXT, {
+									sessionId,
+								});
+							}
+
 							const sshCommand = await buildSshCommand(sshResult.config, {
 								command: remoteCommand,
 								args: finalArgs,
@@ -220,6 +313,28 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 							// Local cwd is not used for SSH commands - the command runs on remote
 							cwd = process.cwd();
 						}
+					}
+
+					// Realize a LOCAL interactive (maestro-p) decision by wrapping the
+					// spawn with maestro-p via `process.execPath`. The SSH-remote case was
+					// already handled above (remote maestro-p), and its decision carries a
+					// null `maestroPBinPath`, so this guard naturally skips it. API and
+					// non-claude spawns pass through unchanged on `claude --print`.
+					if (claudeSpawnDecision?.mode === 'interactive' && claudeSpawnDecision.maestroPBinPath) {
+						const applied = applyClaudeSpawnDecision({
+							decision: claudeSpawnDecision,
+							interactiveModeArgs: agent.interactiveModeArgs,
+							command,
+							args: finalArgs,
+							customEnvVars,
+						});
+						command = applied.command;
+						finalArgs = applied.args;
+						customEnvVars = applied.customEnvVars;
+						logger.debug('Tab naming resolved to interactive maestro-p TUI', LOG_CONTEXT, {
+							sessionId,
+							maestroPBin: claudeSpawnDecision.maestroPBinPath,
+						});
 					}
 
 					// Create a promise that resolves when we get the tab name
@@ -267,7 +382,7 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 						// without waiting for the full process to exit.
 						const earlyExtractIntervalId = setInterval(() => {
 							if (resolved || !output.trim()) return;
-							const earlyResult = extractTabName(output);
+							const earlyResult = extractTabNameFromOutput(config.agentType, output);
 							if (earlyResult.name) {
 								resolveWith(earlyResult.name, 'resolved early from partial output');
 							}
@@ -299,7 +414,7 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 								});
 							}
 
-							const extraction = extractTabName(output);
+							const extraction = extractTabNameFromOutput(config.agentType, output);
 							if (!extraction.name) {
 								logger.warn('Tab naming extraction failed', LOG_CONTEXT, {
 									sessionId,
@@ -366,6 +481,69 @@ interface TabNameExtractionResult {
 	name: string | null;
 	/** Human-readable reason for the outcome (useful for debugging failures) */
 	reason: string;
+}
+
+/**
+ * Pull the agent's actual response text out of its raw process output before
+ * extracting a tab name.
+ *
+ * Tab naming inherits the agent's default args, which for Claude (and other
+ * stream-json agents) include `--output-format stream-json`. That means the
+ * generated name arrives buried inside JSON envelopes
+ * (`{"type":"result","result":"My Tab Name"}`), and every line is far longer
+ * than extractTabName's 40-char line filter - so plain-text extraction always
+ * discards it and returns null. We reuse the agent's own output parser to
+ * normalize the stream and lift out the final `result` text (or, mid-stream,
+ * the accumulated assistant text) before the plain-text cleanup runs.
+ *
+ * Returns null when the output isn't structured JSON at all (e.g. the
+ * maestro-p TUI emits plain terminal text), so the caller falls back to
+ * running extractTabName over the raw output exactly as before.
+ */
+function extractAgentResponseText(agentType: string, output: string): string | null {
+	const parser = createOutputParser(agentType);
+	if (!parser) return null;
+
+	let sawJson = false;
+	let resultText = '';
+	let assistantText = '';
+	for (const line of output.split('\n')) {
+		const trimmed = line.trim();
+		if (!trimmed) continue;
+		let parsed: unknown;
+		try {
+			parsed = JSON.parse(trimmed);
+		} catch {
+			// Non-JSON line (e.g. maestro-p TUI text) - not stream-json output.
+			continue;
+		}
+		if (!parsed || typeof parsed !== 'object') continue;
+		sawJson = true;
+		const event = parser.parseJsonObject(parsed);
+		if (!event?.text) continue;
+		if (event.type === 'result') {
+			// The final result carries the complete response; last one wins.
+			resultText = event.text;
+		} else if (event.type === 'text') {
+			// Streaming assistant chunks - accumulate so early extraction can
+			// resolve before the terminating result event arrives.
+			assistantText += event.text;
+		}
+	}
+
+	if (!sawJson) return null;
+	const text = (resultText || assistantText).trim();
+	return text.length > 0 ? text : null;
+}
+
+/**
+ * Extract a tab name from raw agent process output, normalizing structured
+ * (stream-json) output via the agent's parser first and falling back to
+ * plain-text extraction over the raw output.
+ */
+function extractTabNameFromOutput(agentType: string, output: string): TabNameExtractionResult {
+	const responseText = extractAgentResponseText(agentType, output);
+	return extractTabName(responseText ?? output);
 }
 
 /**

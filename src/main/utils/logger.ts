@@ -83,6 +83,40 @@ class Logger extends EventEmitter {
 		}
 	}
 
+	private createLogFileStream(filePath: string): fs.WriteStream {
+		const fd = fs.openSync(filePath, 'a');
+		let stream: fs.WriteStream;
+
+		try {
+			stream = fs.createWriteStream(filePath, { fd, autoClose: true });
+		} catch (error) {
+			fs.closeSync(fd);
+			throw error;
+		}
+
+		stream.on('error', (error) => {
+			if (this.logFileStream === stream) {
+				const fileLogEnabled = this.fileLogEnabled;
+				const logFilePath = this.logFilePath;
+
+				void import('./sentry')
+					.then(({ captureException }) =>
+						captureException(error, {
+							fileLogEnabled,
+							logFilePath,
+						})
+					)
+					.catch(() => {});
+
+				this.logFileStream = null;
+				this.fileLogEnabled = false;
+				console.error('[Logger] File log stream error:', error);
+			}
+		});
+
+		return stream;
+	}
+
 	/**
 	 * Enable logging to a file. Useful for debugging on Windows where
 	 * console output may not be easily accessible.
@@ -127,7 +161,7 @@ class Logger extends EventEmitter {
 			}
 
 			// Open log file in append mode
-			this.logFileStream = fs.createWriteStream(this.logFilePath, { flags: 'a' });
+			this.logFileStream = this.createLogFileStream(this.logFilePath);
 			this.fileLogEnabled = true;
 
 			// Write a startup marker
@@ -181,7 +215,7 @@ class Logger extends EventEmitter {
 			}
 
 			// Open new log file in append mode
-			this.logFileStream = fs.createWriteStream(nextLogFilePath, { flags: 'a' });
+			this.logFileStream = this.createLogFileStream(nextLogFilePath);
 			this.logFilePath = nextLogFilePath;
 			this.currentLogDate = todayDate;
 

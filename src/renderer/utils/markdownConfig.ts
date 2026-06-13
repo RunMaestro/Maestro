@@ -17,15 +17,11 @@
  */
 
 import type { Components } from 'react-markdown';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { getSyntaxStyle } from './syntaxTheme';
 import React from 'react';
 import type { Theme } from '../types';
-import { SyntaxHighlightBoundary } from '../components/SyntaxHighlightBoundary';
 import { REMARK_GFM_PLUGINS } from '../../shared/markdownPlugins';
 import { extractHexColor } from '../../shared/hexColor';
 import { openUrl } from './openUrl';
-import { openMaestroLink } from './openMaestroLink';
 import { BionifyText, getBionifyReadingModeStyles } from './bionifyReadingMode';
 import {
 	INLINE_CODE_CLICK_PROPS,
@@ -33,6 +29,9 @@ import {
 	buildInlineCodeHandlers,
 } from './inlineCodeCopy';
 import { COLORBLIND_DIFF_COLORS } from '../constants/colorblindPalettes';
+import { createMarkdownLink } from '../components/Markdown/components/MarkdownLink';
+import { createPrismCodeBlock } from '../components/Markdown/components/PrismCodeBlock';
+import { InlineCode } from '../components/Markdown/components/InlineCode';
 
 // ============================================================================
 // Types
@@ -170,7 +169,7 @@ export function generateProseStyles(options: ProseStylesOptions): string {
     ${s} pre { background-color: ${colors.bgActivity}; color: ${colors.textMain}; padding: 1em; border-radius: 6px; overflow-x: auto; ${compactSpacing ? 'margin: 0.35em 0 !important;' : ''} }
     ${s} pre code { background: none; padding: 0; }
     ${s} blockquote { border-left: ${compactSpacing ? '3px' : '4px'} solid ${colors.border}; padding-left: ${compactSpacing ? '0.75em' : '1em'}; margin: ${compactSpacing ? '0.25em 0' : '0.5em 0'} !important; color: ${colors.textDim}; }
-    ${s} a { color: ${colors.accent}; text-decoration: underline; }
+    ${s} a { color: ${colors.accentText}; text-decoration: underline; }
     ${s} hr { border: none; border-top: ${compactSpacing ? '1px' : '2px'} solid ${colors.border}; margin: ${hrMargin} !important; }
     ${s} table { border-collapse: collapse; width: 100%; margin: ${compactSpacing ? '0.35em 0' : '0.5em 0'} !important; }
     ${s} th, ${s} td { border: 1px solid ${colors.border}; padding: ${compactSpacing ? '0.25em 0.5em' : '0.5em'}; text-align: left; }
@@ -436,96 +435,12 @@ export function createMarkdownComponents(options: MarkdownComponentsOptions): Pa
 		strong: ({ children }: any) =>
 			React.createElement('strong', null, withReadableTransforms(children)),
 		em: ({ children }: any) => React.createElement('em', null, withReadableTransforms(children)),
-		// Block code: extract code element from <pre><code>...</code></pre> and render with SyntaxHighlighter
-		pre: ({ children }: any) => {
-			const codeElement = React.Children.toArray(children).find(
-				(child: any) => child?.type === 'code' || child?.props?.node?.tagName === 'code'
-			) as React.ReactElement<any> | undefined;
-
-			if (codeElement?.props) {
-				const { className, children: codeChildren } = codeElement.props;
-				const match = (className || '').match(/language-(\w+)/);
-				const language = match ? match[1] : 'text';
-				const codeContent = String(codeChildren).replace(/\n$/, '');
-
-				// Check for custom language renderer (e.g., mermaid)
-				if (customLanguageRenderers[language]) {
-					const CustomRenderer = customLanguageRenderers[language];
-					return React.createElement(CustomRenderer, { code: codeContent, theme });
-				}
-
-				// Standard syntax-highlighted code block
-				// Use light/dark base style depending on theme mode, then
-				// override text color & background so plain-text / unknown-language
-				// code blocks match inline code across all themes.
-				const baseStyle = getSyntaxStyle(theme.mode);
-				const themedStyle = {
-					...baseStyle,
-					'pre[class*="language-"]': {
-						...(baseStyle as any)['pre[class*="language-"]'],
-						color: theme.colors.textMain,
-						background: theme.colors.bgActivity,
-					},
-					'code[class*="language-"]': {
-						...(baseStyle as any)['code[class*="language-"]'],
-						color: theme.colors.textMain,
-					},
-				};
-				return React.createElement(SyntaxHighlightBoundary, {
-					code: codeContent,
-					theme,
-					children: React.createElement(SyntaxHighlighter, {
-						language,
-						style: themedStyle,
-						customStyle: {
-							margin: codeBlockStyle?.margin ?? '0.5em 0',
-							padding: codeBlockStyle?.padding ?? '1em',
-							background: codeBlockStyle?.backgroundColor ?? theme.colors.bgActivity,
-							fontSize: codeBlockStyle?.fontSize ?? '0.9em',
-							borderRadius: codeBlockStyle?.borderRadius ?? '6px',
-						},
-						PreTag: 'div',
-						translate: 'no',
-						children: codeContent,
-					}),
-				});
-			}
-
-			// Fallback: render as-is
-			return React.createElement('pre', { translate: 'no' }, children);
-		},
-		// Inline code only — block code is handled by the pre component above
-		code: ({ node: _node, className, children, ...props }: any) => {
-			const hexColor = extractHexColor(children);
-			const handlers = buildInlineCodeHandlers(children);
-			const codeProps = {
-				className,
-				...props,
-				...INLINE_CODE_CLICK_PROPS,
-				...handlers,
-				style: { ...(props.style ?? {}), ...INLINE_CODE_CLICK_STYLE },
-			};
-			if (hexColor) {
-				return React.createElement(
-					'code',
-					codeProps,
-					React.createElement('span', {
-						style: {
-							display: 'inline-block',
-							width: '0.75em',
-							height: '0.75em',
-							backgroundColor: hexColor,
-							borderRadius: '2px',
-							marginRight: '0.35em',
-							verticalAlign: 'middle',
-							border: '1px solid rgba(128, 128, 128, 0.3)',
-						},
-					}),
-					children
-				);
-			}
-			return React.createElement('code', codeProps, children);
-		},
+		// Block code: rendered via the shared Prism code-block leaf (custom
+		// language renderers like mermaid + theme-aware syntax highlighting).
+		pre: createPrismCodeBlock({ theme, customLanguageRenderers, codeBlockStyle }),
+		// Inline code only — block code is handled by the pre component above.
+		code: ({ node: _node, className, children, style, ...props }: any) =>
+			React.createElement(InlineCode, { className, style, passthrough: props, children }),
 	};
 
 	// Custom image renderer if provided
@@ -535,63 +450,18 @@ export function createMarkdownComponents(options: MarkdownComponentsOptions): Pa
 		};
 	}
 
-	// Link handler - supports internal file links, anchor links, and external links
+	// Link handler - supports internal file links, anchor links, and external
+	// links via the shared MarkdownLink leaf (document behavior).
 	if (onFileClick || onExternalLinkClick || onAnchorClick) {
-		components.a = ({ node: _node, href, children, ...props }: any) => {
-			// Check for maestro-file:// protocol OR data-maestro-file attribute
-			// (data attribute is fallback when rehype strips custom protocols)
-			const dataFilePath = props['data-maestro-file'];
-			const isMaestroFile = href?.startsWith('maestro-file://') || !!dataFilePath;
-			const filePath =
-				dataFilePath ||
-				(href?.startsWith('maestro-file://') ? href.replace('maestro-file://', '') : null);
-
-			// Check for anchor links (same-page navigation)
-			const isAnchorLink = href?.startsWith('#');
-			const anchorId = isAnchorLink ? href.slice(1) : null;
-
-			return React.createElement(
-				'a',
-				{
-					href,
-					...props,
-					onClick: (e: React.MouseEvent) => {
-						e.preventDefault();
-						if (isMaestroFile && filePath && onFileClick) {
-							onFileClick(filePath, { openInNewTab: e.metaKey || e.ctrlKey });
-						} else if (href && href.startsWith('maestro://')) {
-							// Route in-app deep links through the renderer's deep link handler.
-							openMaestroLink(href);
-						} else if (isAnchorLink && anchorId) {
-							// Handle anchor links - scroll to the target element
-							if (onAnchorClick) {
-								onAnchorClick(anchorId);
-							} else {
-								// Default behavior: find element by ID and scroll to it
-								const targetElement = containerRef?.current
-									? containerRef.current.querySelector(`#${CSS.escape(anchorId)}`)
-									: document.getElementById(anchorId);
-								if (targetElement) {
-									targetElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
-								}
-							}
-						} else if (href && onExternalLinkClick && /^https?:\/\/|^mailto:/.test(href)) {
-							onExternalLinkClick(href, { ctrlKey: e.ctrlKey });
-						} else if (
-							href &&
-							onFileClick &&
-							!href.startsWith('mailto:') &&
-							!/^https?:\/\//.test(href)
-						) {
-							// Treat relative paths (e.g. LICENSE, ./README.md) as file links
-							onFileClick(href, { openInNewTab: e.metaKey || e.ctrlKey });
-						}
-					},
-					style: { color: theme.colors.accent, textDecoration: 'underline', cursor: 'pointer' },
-				},
-				children
-			);
-		};
+		components.a = createMarkdownLink({
+			theme,
+			linkColor: 'accent',
+			onFileClick,
+			onExternalLinkClick,
+			onAnchorClick,
+			containerRef,
+			behavior: { anchors: true, relativeAsFile: true, fileClickOptions: true },
+		});
 	}
 
 	// Strip event handler attributes (e.g. onToggle) that rehype-raw may
@@ -759,7 +629,7 @@ export function createWizardBubbleMarkdownComponents(theme: Theme): Partial<Comp
 					style: { color: theme.colors.accent },
 					onClick: (e: React.MouseEvent) => {
 						if (href && /^https?:\/\/|^mailto:/.test(href)) {
-							openUrl(href, { ctrlKey: e.ctrlKey });
+							openUrl(href, { ctrlKey: e.metaKey || e.ctrlKey });
 						}
 					},
 				},
@@ -878,7 +748,7 @@ export function createReleaseNotesMarkdownComponents(theme: Theme): Partial<Comp
 					onClick: (e: React.MouseEvent) => {
 						e.preventDefault();
 						if (href && /^https?:\/\/|^mailto:/.test(href)) {
-							openUrl(href, { ctrlKey: e.ctrlKey });
+							openUrl(href, { ctrlKey: e.metaKey || e.ctrlKey });
 						}
 					},
 					className: 'hover:underline cursor-pointer',

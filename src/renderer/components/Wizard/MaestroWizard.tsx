@@ -166,8 +166,8 @@ export function MaestroWizard({
 	/**
 	 * Handle confirmed exit - saves state and closes wizard
 	 */
-	const handleConfirmExit = useCallback(() => {
-		saveStateForResumeRef.current();
+	const handleConfirmExit = useCallback(async () => {
+		await saveStateForResumeRef.current();
 		setShowExitConfirm(false);
 		// Record wizard abandonment for analytics
 		if (onWizardAbandon) {
@@ -186,8 +186,8 @@ export function MaestroWizard({
 	/**
 	 * Handle quit without saving - clears state, resets wizard, and closes
 	 */
-	const handleQuitWithoutSaving = useCallback(() => {
-		clearResumeStateRef.current();
+	const handleQuitWithoutSaving = useCallback(async () => {
+		await clearResumeStateRef.current();
 		resetWizardRef.current(); // Reset in-memory state so next open starts fresh
 		setShowExitConfirm(false);
 		// Record wizard abandonment for analytics

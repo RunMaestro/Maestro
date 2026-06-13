@@ -24,12 +24,26 @@ export interface HoverTooltipProps {
 	theme: Theme;
 	/** Skip rendering the tooltip entirely. */
 	disabled?: boolean;
+	/**
+	 * Where the tooltip sits relative to the trigger. `"vertical"` (default)
+	 * prefers below and flips above; `"left"` sits to the left and flips right
+	 * when there's no room - the right placement for a vertical, right-edge
+	 * toolbar where below/above would overlap neighboring buttons.
+	 */
+	placement?: 'vertical' | 'left';
 }
 
 const VIEWPORT_MARGIN = 8;
 const TRIGGER_GAP = 6;
 
-export function HoverTooltip({ label, shortcut, children, theme, disabled }: HoverTooltipProps) {
+export function HoverTooltip({
+	label,
+	shortcut,
+	children,
+	theme,
+	disabled,
+	placement = 'vertical',
+}: HoverTooltipProps) {
 	const triggerRef = useRef<HTMLSpanElement>(null);
 	const tooltipRef = useRef<HTMLDivElement>(null);
 	const [open, setOpen] = useState(false);
@@ -44,6 +58,22 @@ export function HoverTooltip({ label, shortcut, children, theme, disabled }: Hov
 		const tip = tooltipRef.current.getBoundingClientRect();
 		const viewportW = window.innerWidth;
 		const viewportH = window.innerHeight;
+
+		if (placement === 'left') {
+			// Sit to the left; flip to the right if there isn't room.
+			let left = trigger.left - TRIGGER_GAP - tip.width;
+			if (left < VIEWPORT_MARGIN) {
+				left = Math.min(viewportW - tip.width - VIEWPORT_MARGIN, trigger.right + TRIGGER_GAP);
+			}
+			// Center vertically on the trigger, then clamp to the viewport.
+			let top = trigger.top + trigger.height / 2 - tip.height / 2;
+			if (top + tip.height + VIEWPORT_MARGIN > viewportH) {
+				top = viewportH - tip.height - VIEWPORT_MARGIN;
+			}
+			if (top < VIEWPORT_MARGIN) top = VIEWPORT_MARGIN;
+			setPos({ left, top });
+			return;
+		}
 
 		// Prefer below; flip above if there isn't room below.
 		let top = trigger.bottom + TRIGGER_GAP;
@@ -60,7 +90,7 @@ export function HoverTooltip({ label, shortcut, children, theme, disabled }: Hov
 		if (left < VIEWPORT_MARGIN) left = VIEWPORT_MARGIN;
 
 		setPos({ left, top });
-	}, [open, label, shortcut]);
+	}, [open, label, shortcut, placement]);
 
 	if (disabled || !label) {
 		return <>{children}</>;

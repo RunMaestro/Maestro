@@ -64,6 +64,7 @@ vi.mock('lucide-react', () => ({
 	Trash2: () => <span data-testid="icon-trash" />,
 	Edit3: () => <span data-testid="icon-edit" />,
 	Smile: () => <span data-testid="icon-smile" />,
+	Fingerprint: () => <span data-testid="icon-fingerprint" />,
 	FolderInput: () => <span data-testid="icon-folder-input" />,
 	FolderPlus: () => <span data-testid="icon-folder-plus" />,
 	Download: () => <span data-testid="icon-download" />,
@@ -208,6 +209,8 @@ const createDefaultProps = (overrides: Partial<Parameters<typeof SessionList>[0]
 	webInterfaceUrl: null,
 	showSessionJumpNumbers: false,
 	visibleSessions: [] as Session[],
+	starredItems: [],
+	activateStarredItem: vi.fn(),
 	toggleGlobalLive: vi.fn(),
 	restartWebServer: vi.fn().mockResolvedValue(null),
 	toggleGroup: vi.fn(),
@@ -249,6 +252,7 @@ describe('SessionList', () => {
 			leftSidebarOpen: true,
 			activeFocus: 'main' as const,
 			selectedSidebarIndex: -1,
+			sidebarExtraSelection: null,
 			editingGroupId: null,
 			editingSessionId: null,
 			draggingSessionId: null,
@@ -991,7 +995,7 @@ describe('SessionList', () => {
 			expect(screen.queryByText('Remove Group and Agents')).not.toBeInTheDocument();
 		});
 
-		it('shows "Change Emoji..." in the group context menu', () => {
+		it('does not show "Change Emoji..." in the group context menu (emoji is changed via Rename)', () => {
 			const group = createMockGroup({ id: 'g1', name: 'My Group', emoji: '🚀' });
 			useSessionStore.setState({ sessions: [], groups: [group] });
 			useUIStore.setState({ leftSidebarOpen: true });
@@ -1000,7 +1004,7 @@ describe('SessionList', () => {
 
 			fireEvent.contextMenu(screen.getByText('My Group'), { clientX: 100, clientY: 100 });
 
-			expect(screen.getByText('Change Emoji...')).toBeInTheDocument();
+			expect(screen.queryByText('Change Emoji...')).not.toBeInTheDocument();
 		});
 
 		it('shows "Remove Group and Agents" for a non-empty worktree group', () => {
@@ -1175,6 +1179,26 @@ describe('SessionList', () => {
 				expect.stringContaining('Delete Me'),
 				expect.any(Function)
 			);
+		});
+
+		it('copies agent GUID to clipboard from context menu', async () => {
+			const mockClipboard = { writeText: vi.fn().mockResolvedValue(undefined) };
+			Object.assign(navigator, { clipboard: mockClipboard });
+
+			const sessions = [createMockSession({ id: 'agent-guid-1', name: 'Copy GUID Me' })];
+			useSessionStore.setState({ sessions: sessions });
+			useUIStore.setState({ leftSidebarOpen: true });
+			const props = createDefaultProps({
+				sortedSessions: sessions,
+			});
+			render(<SessionList {...props} />);
+
+			// Open context menu
+			fireEvent.contextMenu(screen.getByText('Copy GUID Me'), { clientX: 100, clientY: 100 });
+
+			fireEvent.click(screen.getByText('Copy Agent GUID to Clipboard'));
+
+			expect(mockClipboard.writeText).toHaveBeenCalledWith('agent-guid-1');
 		});
 
 		it('toggles bookmark from context menu', () => {
@@ -2279,6 +2303,27 @@ describe('SessionList', () => {
 			// Active session should have accent border color
 			const activeSession = screen.getByText('Active Session').closest('[style*="border"]');
 			expect(activeSession).toHaveStyle({ borderColor: defaultTheme.colors.accent });
+		});
+
+		it('suppresses the agent active border while a Starred keyboard cursor is live', () => {
+			// Cycling onto a Starred row activates its parent agent. Without suppression
+			// the agent row would show its (stronger) active border and steal visual
+			// focus from the Starred row the keyboard cursor is actually on.
+			const sessions = [createMockSession({ id: 's1', name: 'Active Session' })];
+			useSessionStore.setState({
+				sessions,
+				activeSessionId: 's1',
+			});
+			useUIStore.setState({
+				leftSidebarOpen: true,
+				sidebarExtraSelection: { kind: 'starred', key: 'open:s1:t1' },
+			});
+			const props = createDefaultProps({ sortedSessions: sessions });
+			const { container } = render(<SessionList {...props} />);
+
+			const agentRow = screen.getByText('Active Session').closest('[style*="border"]');
+			// Border must NOT be the accent color (active styling suppressed).
+			expect(agentRow).not.toHaveStyle({ borderColor: defaultTheme.colors.accent });
 		});
 
 		it('highlights active session in collapsed mode without ring', () => {

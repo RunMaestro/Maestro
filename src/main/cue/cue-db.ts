@@ -39,6 +39,22 @@ export interface CueEventRecord {
 	 * run finishes, for command/shell runs, or when stdout carried no id.
 	 */
 	providerSessionId?: string | null;
+	/**
+	 * Failure reason for a non-completed run (trimmed stderr / agent error
+	 * envelope). NULL for successful runs and for rows that never finished.
+	 * Written on run completion so the activity log can explain WHY a dispatch
+	 * failed without a DB dig — previously only `status` + the trigger payload
+	 * were stored, which is what made the maestro-p 300s-timeout bug opaque.
+	 */
+	errorMessage?: string | null;
+	/**
+	 * Process exit code the run terminated with. For agent runs through
+	 * maestro-p this is the distinguishing signal (3 = idle timeout, 4 =
+	 * ready_timeout, 5 = first_byte_timeout, 1 = tui_exited, 2 = limit, 0 =
+	 * success). NULL when the run never produced an exit code (spawn error,
+	 * still running) or for status flips that aren't run completions.
+	 */
+	exitCode?: number | null;
 }
 
 // ============================================================================
@@ -59,20 +75,27 @@ const CREATE_CUE_EVENTS_SQL = `
     pipeline_id TEXT,
     chain_root_id TEXT,
     parent_event_id TEXT,
-    provider_session_id TEXT
+    provider_session_id TEXT,
+    error_message TEXT,
+    exit_code INTEGER
   )
 `;
 
 // Additive columns. These are nullable on purpose: existing callers that don't
 // pass lineage / pipeline metadata (e.g. when usageStats is off) must continue
-// to record events. `provider_session_id` is written on run completion (NULL
-// at record time, and for command/shell runs). The migration block in
-// initCueDb() ALTERs existing databases to match the CREATE TABLE schema.
+// to record events. `provider_session_id`, `error_message`, and `exit_code`
+// are written on run completion (NULL at record time, and for command/shell
+// runs that carry no equivalent). Each entry carries its own column type
+// (`exit_code` is INTEGER; the rest are TEXT) — same shape as the
+// `cue_github_seen` additive set. The migration block in initCueDb() ALTERs
+// existing databases to match the CREATE TABLE schema.
 const CUE_EVENTS_ADDITIVE_COLUMNS = [
-	'pipeline_id',
-	'chain_root_id',
-	'parent_event_id',
-	'provider_session_id',
+	{ name: 'pipeline_id', type: 'TEXT' },
+	{ name: 'chain_root_id', type: 'TEXT' },
+	{ name: 'parent_event_id', type: 'TEXT' },
+	{ name: 'provider_session_id', type: 'TEXT' },
+	{ name: 'error_message', type: 'TEXT' },
+	{ name: 'exit_code', type: 'INTEGER' },
 ] as const;
 
 const CREATE_CUE_EVENTS_INDEXES_SQL = `
@@ -281,8 +304,8 @@ function migrateCueEventsAdditiveColumns(database: Database.Database): void {
 	const existing = database.pragma('table_info(cue_events)') as Array<{ name: string }>;
 	const existingNames = new Set(existing.map((row) => row.name));
 	for (const column of CUE_EVENTS_ADDITIVE_COLUMNS) {
-		if (!existingNames.has(column)) {
-			database.prepare(`ALTER TABLE cue_events ADD COLUMN ${column} TEXT`).run();
+		if (!existingNames.has(column.name)) {
+			database.prepare(`ALTER TABLE cue_events ADD COLUMN ${column.name} ${column.type}`).run();
 		}
 	}
 }
@@ -367,6 +390,14 @@ export function recordCueEvent(event: {
 		);
 }
 
+/** Optional failure diagnostics stamped on an event row at completion time. */
+export interface CueEventFailureInfo {
+	/** Trimmed stderr / agent error reason; null when the run had no error. */
+	errorMessage?: string | null;
+	/** Process exit code; null when none was produced. */
+	exitCode?: number | null;
+}
+
 /**
  * Update the status (and completed_at) of a previously recorded event.
  *
@@ -375,23 +406,37 @@ export function recordCueEvent(event: {
  * Omitting it leaves the column untouched — callers that don't have a session
  * id (command/shell runs, or status flips that aren't run completions) simply
  * don't pass it rather than clobbering a previously-written value with NULL.
+ *
+ * When `failure` is provided, `error_message` and `exit_code` are written too
+ * (NULL is fine for a success — these are completion-time writes). Status flips
+ * that aren't run completions (e.g. 'stopped') omit it and leave both columns
+ * untouched. This is what lets the activity log explain WHY a dispatch failed
+ * without a DB dig.
  */
 export function updateCueEventStatus(
 	id: string,
 	status: string,
-	providerSessionId?: string | null
+	providerSessionId?: string | null,
+	failure?: CueEventFailureInfo
 ): void {
+	const columns = ['status = ?', 'completed_at = ?'];
+	const values: Array<string | number | null> = [status, Date.now()];
+
 	if (providerSessionId) {
-		getDb()
-			.prepare(
-				`UPDATE cue_events SET status = ?, completed_at = ?, provider_session_id = ? WHERE id = ?`
-			)
-			.run(status, Date.now(), providerSessionId, id);
-		return;
+		columns.push('provider_session_id = ?');
+		values.push(providerSessionId);
 	}
+	if (failure) {
+		columns.push('error_message = ?');
+		values.push(failure.errorMessage ?? null);
+		columns.push('exit_code = ?');
+		values.push(failure.exitCode ?? null);
+	}
+
+	values.push(id);
 	getDb()
-		.prepare(`UPDATE cue_events SET status = ?, completed_at = ? WHERE id = ?`)
-		.run(status, Date.now(), id);
+		.prepare(`UPDATE cue_events SET ${columns.join(', ')} WHERE id = ?`)
+		.run(...values);
 }
 
 /**
@@ -438,7 +483,8 @@ export function safeRecordCueEvent(event: Parameters<typeof recordCueEvent>[0]):
 export function safeUpdateCueEventStatus(
 	id: string,
 	status: string,
-	providerSessionId?: string | null
+	providerSessionId?: string | null,
+	failure?: CueEventFailureInfo
 ): void {
 	if (!db) {
 		// Expected during shutdown or before init completes — log and skip Sentry.
@@ -449,7 +495,7 @@ export function safeUpdateCueEventStatus(
 		return;
 	}
 	try {
-		updateCueEventStatus(id, status, providerSessionId);
+		updateCueEventStatus(id, status, providerSessionId, failure);
 	} catch (err) {
 		log(
 			'warn',
@@ -499,6 +545,8 @@ export function getRecentCueEvents(since: number, limit?: number): CueEventRecor
 		chain_root_id: string | null;
 		parent_event_id: string | null;
 		provider_session_id: string | null;
+		error_message: string | null;
+		exit_code: number | null;
 	}>;
 
 	return rows.map((row) => ({
@@ -515,6 +563,8 @@ export function getRecentCueEvents(since: number, limit?: number): CueEventRecor
 		chainRootId: row.chain_root_id,
 		parentEventId: row.parent_event_id,
 		providerSessionId: row.provider_session_id,
+		errorMessage: row.error_message,
+		exitCode: row.exit_code,
 	}));
 }
 

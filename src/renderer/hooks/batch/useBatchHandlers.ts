@@ -27,7 +27,7 @@ import { useModalStore, getModalActions } from '../../stores/modalStore';
 import { collectActiveOperations } from '../../utils/collectActiveOperations';
 import { notifyToast } from '../../stores/notificationStore';
 import { CONDUCTOR_BADGES, getBadgeForTime } from '../../constants/conductorBadges';
-import { getActiveTab } from '../../utils/tabHelpers';
+import { resolveQueuedItemTarget } from '../../utils/tabHelpers';
 import { generateId } from '../../utils/ids';
 import { takeNextRunnableQueueItem } from '../../utils/executionQueue';
 import { useBatchProcessor } from './useBatchProcessor';
@@ -569,8 +569,8 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 					prev.map((s) => {
 						if (s.id !== sessionId) return s;
 
-						const targetTab = s.aiTabs.find((tab) => tab.id === nextItem.tabId) || getActiveTab(s);
-						if (!targetTab) {
+						const target = resolveQueuedItemTarget(s, nextItem);
+						if (!target) {
 							return {
 								...s,
 								state: 'busy' as SessionState,
@@ -580,33 +580,53 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 							};
 						}
 
-						// For message items, add a log entry to the target tab
-						let updatedAiTabs = s.aiTabs;
-						if (nextItem.type === 'message' && nextItem.text) {
-							const logEntry: LogEntry = {
-								id: generateId(),
-								timestamp: Date.now(),
-								source: 'user',
-								text: nextItem.text,
-								images: nextItem.images,
+						const logEntry: LogEntry | null =
+							nextItem.type === 'message' && nextItem.text
+								? {
+										id: generateId(),
+										timestamp: Date.now(),
+										source: 'user',
+										text: nextItem.text,
+										images: nextItem.images,
+									}
+								: null;
+
+						// Orphan target: the user closed this tab while the message was still
+						// queued. Route busy-state + the user log to orphanedThinkingTabs and
+						// leave the active tab untouched - the send is fire-and-forget.
+						if (target.location === 'orphan') {
+							return {
+								...s,
+								state: 'busy' as SessionState,
+								busySource: 'ai',
+								...(logEntry &&
+									s.orphanedThinkingTabs && {
+										orphanedThinkingTabs: s.orphanedThinkingTabs.map((tab) =>
+											tab.id === target.tabId
+												? { ...tab, logs: [...tab.logs, logEntry], state: 'busy' as const }
+												: tab
+										),
+									}),
+								executionQueue: remainingQueue,
+								thinkingStartTime: Date.now(),
 							};
-							updatedAiTabs = s.aiTabs.map((tab) =>
-								tab.id === targetTab.id
-									? {
-											...tab,
-											logs: [...tab.logs, logEntry],
-											state: 'busy' as const,
-										}
-									: tab
-							);
 						}
+
+						// Foreground target: mark it busy, append the user log, bring into view.
+						const updatedAiTabs = logEntry
+							? s.aiTabs.map((tab) =>
+									tab.id === target.tabId
+										? { ...tab, logs: [...tab.logs, logEntry], state: 'busy' as const }
+										: tab
+								)
+							: s.aiTabs;
 
 						return {
 							...s,
 							state: 'busy' as SessionState,
 							busySource: 'ai',
 							aiTabs: updatedAiTabs,
-							activeTabId: targetTab.id,
+							activeTabId: target.tabId,
 							executionQueue: remainingQueue,
 							thinkingStartTime: Date.now(),
 						};
@@ -794,6 +814,10 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 			if (!ops.hasActiveOperations && !ops.hasFeedbackDraft) {
 				window.maestro.app.confirmQuit();
 			} else {
+				// Tell main the modal is up so it disarms the dead-renderer safety
+				// timeout — otherwise the app force-quits after a few seconds while
+				// the user is still deciding.
+				window.maestro.app.quitConfirmationPending?.();
 				getModalActions().setQuitConfirmModalOpen(true, {
 					activeTerminalTasks: ops.activeTerminalTasks,
 					activeCueRunCount: ops.activeCueRunCount,

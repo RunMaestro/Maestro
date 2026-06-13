@@ -29,7 +29,11 @@ import { logger } from '../utils/logger';
  *   the event bubbles to Maestro's window-level shortcut handler instead.
  * - 'handle': xterm should handle this key normally (return true to xterm).
  */
-export type XtermKeyAction = 'passthrough' | 'handle' | { action: 'write'; data: string };
+export type XtermKeyAction =
+	| 'passthrough'
+	| 'handle'
+	| { action: 'write'; data: string }
+	| { action: 'scroll'; amount: number | 'top' | 'bottom' };
 
 /**
  * Return the escape sequence for a terminal-navigation key combo, or null
@@ -64,6 +68,20 @@ export function evaluateCustomKeyEvent(e: KeyboardEvent): XtermKeyAction {
 	// must be checked before the blanket Alt/Meta passthrough rules.
 	const navSeq = getTerminalNavSequence(e);
 	if (navSeq) return { action: 'write', data: navSeq };
+
+	// Scrollback navigation (checked before the blanket Alt/Meta passthrough):
+	//   Option (Alt) + Up/Down → scroll the scrollback one line at a time
+	//   Cmd (Meta) + Up/Down   → jump to top/bottom of the scrollback
+	if (e.type === 'keydown') {
+		if (e.altKey && !e.metaKey && !e.ctrlKey) {
+			if (e.key === 'ArrowUp') return { action: 'scroll', amount: -1 };
+			if (e.key === 'ArrowDown') return { action: 'scroll', amount: 1 };
+		}
+		if (e.metaKey && !e.altKey && !e.ctrlKey) {
+			if (e.key === 'ArrowUp') return { action: 'scroll', amount: 'top' };
+			if (e.key === 'ArrowDown') return { action: 'scroll', amount: 'bottom' };
+		}
+	}
 
 	// Let Ctrl+Shift+` through for new-terminal-tab shortcut
 	if (e.ctrlKey && e.shiftKey && e.code === 'Backquote') return 'passthrough';
@@ -521,6 +539,12 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 			const action = evaluateCustomKeyEvent(e);
 			if (typeof action === 'object' && action.action === 'write') {
 				window.maestro.process.write(sessionId, action.data);
+				return false;
+			}
+			if (typeof action === 'object' && action.action === 'scroll') {
+				if (action.amount === 'top') term.scrollToTop();
+				else if (action.amount === 'bottom') term.scrollToBottom();
+				else term.scrollLines(action.amount);
 				return false;
 			}
 			if (action === 'passthrough' && e.type === 'keydown') {

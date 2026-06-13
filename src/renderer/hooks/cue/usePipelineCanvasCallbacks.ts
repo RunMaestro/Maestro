@@ -99,13 +99,26 @@ export function usePipelineCanvasCallbacks({
 	const { setPipelineState, persistLayout } = actions;
 	const { setSelectedNodeId, setSelectedEdgeId } = selection;
 
+	// Always-fresh view of displayNodes so dragStart can snapshot child
+	// positions synchronously (the drag callbacks use empty dep arrays, so the
+	// `nodes` closure would otherwise be stale on the first gesture).
+	const displayNodesRef = useRef(nodes);
+	displayNodesRef.current = nodes;
+
 	// Pipeline-group drag tracking. Captured at dragStart, used by onNodeDrag
 	// to translate child nodes alongside the group, and by onNodeDragStop to
 	// commit the cumulative delta into the pipeline's `viewOffset`.
+	// `childStart` holds each content node's position AT DRAG START so onNodeDrag
+	// can place them at start+delta (absolute), which is order-independent.
+	// An incremental per-frame delta breaks: ReactFlow runs onNodesChange (which
+	// moves the group node) BEFORE onNodeDrag, so reading the group's "previous"
+	// position mid-drag already reflects the new spot and yields a zero delta -
+	// the children never move and detach from the card.
 	const groupDragRef = useRef<{
 		groupId: string;
 		pipelineId: string;
 		startGroupPos: { x: number; y: number };
+		childStart: Map<string, { x: number; y: number }>;
 	} | null>(null);
 
 	// Apply ALL node changes (including mid-drag) to the local displayNodes
@@ -182,39 +195,49 @@ export function usePipelineCanvasCallbacks({
 				groupDragRef.current = null;
 				return;
 			}
+			// Snapshot every content node's start position (composite id
+			// "pipelineId:nodeId"). The group node's own id is "pipeline-group:…"
+			// and never matches this prefix, so it's correctly excluded.
+			const pipelinePrefix = `${pipelineId}:`;
+			const childStart = new Map<string, { x: number; y: number }>();
+			for (const dn of displayNodesRef.current) {
+				if (dn.id.startsWith(pipelinePrefix)) {
+					childStart.set(dn.id, { x: dn.position.x, y: dn.position.y });
+				}
+			}
 			groupDragRef.current = {
 				groupId: node.id,
 				pipelineId,
 				startGroupPos: { x: node.position.x, y: node.position.y },
+				childStart,
 			};
 		},
 		[]
 	);
 
-	// While dragging the group, translate every child node in displayNodes
-	// by the same delta so visually the entire pipeline moves together.
-	// Children's canonical pipelineState positions are NOT touched here —
-	// the cumulative delta is committed once on drag stop as a viewOffset.
+	// While dragging the group, place every child node at its captured start
+	// position plus the group's TOTAL delta from drag start. Absolute (not
+	// incremental) so it's immune to ReactFlow's event ordering — onNodesChange
+	// moves the group before onNodeDrag fires, which would zero out a per-frame
+	// delta and strand the children. Children's canonical pipelineState
+	// positions are NOT touched here — the delta is committed once on drag stop
+	// as a viewOffset.
 	const onNodeDrag = useCallback(
 		(_event: React.MouseEvent, node: Node, _draggedNodes: Node[]) => {
 			const drag = groupDragRef.current;
 			if (!drag || node.id !== drag.groupId || node.type !== 'pipeline-group') return;
-			const pipelinePrefix = `${drag.pipelineId}:`;
-			setDisplayNodes((prev) => {
-				// Read the group's previous on-screen position from the previous
-				// frame so we apply only the incremental delta this frame.
-				const prevGroup = prev.find((dn) => dn.id === drag.groupId);
-				const prevPos = prevGroup?.position ?? drag.startGroupPos;
-				const dx = node.position.x - prevPos.x;
-				const dy = node.position.y - prevPos.y;
-				if (dx === 0 && dy === 0) return prev;
-				return prev.map((dn) => {
-					if (dn.id.startsWith(pipelinePrefix)) {
-						return { ...dn, position: { x: dn.position.x + dx, y: dn.position.y + dy } };
-					}
-					return dn;
-				});
-			});
+			const dx = node.position.x - drag.startGroupPos.x;
+			const dy = node.position.y - drag.startGroupPos.y;
+			setDisplayNodes((prev) =>
+				prev.map((dn) => {
+					const start = drag.childStart.get(dn.id);
+					if (!start) return dn;
+					const nx = start.x + dx;
+					const ny = start.y + dy;
+					if (dn.position.x === nx && dn.position.y === ny) return dn;
+					return { ...dn, position: { x: nx, y: ny } };
+				})
+			);
 		},
 		[setDisplayNodes]
 	);

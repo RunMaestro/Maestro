@@ -99,6 +99,8 @@ export interface UseSettingsReturn {
 	setEnterToSendAIExpanded: (value: boolean) => void;
 	defaultSaveToHistory: boolean;
 	setDefaultSaveToHistory: (value: boolean) => void;
+	synopsisDebounceSeconds: number;
+	setSynopsisDebounceSeconds: (value: number) => void;
 
 	// Default thinking toggle (three states: 'off' | 'on' | 'sticky')
 	defaultShowThinking: ThinkingMode;
@@ -416,6 +418,8 @@ export interface UseSettingsReturn {
 	setShowLeftPanelCueIndicator: (value: boolean) => void;
 	showLeftPanelStartupCommandIndicator: boolean;
 	setShowLeftPanelStartupCommandIndicator: (value: boolean) => void;
+	showFullGroupLabelInBookmarks: boolean;
+	setShowFullGroupLabelInBookmarks: (value: boolean) => void;
 
 	// File Edit & Preview
 	fileEditWordWrap: boolean;

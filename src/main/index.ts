@@ -167,6 +167,7 @@ import {
 import { sampleUsage as sampleClaudeUsage } from './agents/claude-usage-sampler';
 import { setSnapshot as setClaudeUsageSnapshot } from './stores/claudeUsageStore';
 import { getMaestroPBinPath, runStartupUsageSampling } from './agents/claude-usage-startup';
+import { UsageRefreshScheduler } from './agents/usage-refresh-scheduler';
 import type { ProcessConfig as ProcessSpawnConfig } from './process-manager/types';
 import type { TemplateContext } from '../shared/templateVariables';
 
@@ -354,6 +355,7 @@ let processManager: ProcessManager | null = null;
 let webServer: WebServer | null = null;
 let agentDetector: AgentDetector | null = null;
 let cueEngine: CueEngine | null = null;
+let usageRefreshScheduler: UsageRefreshScheduler | null = null;
 let interactiveReplayController: InteractiveReplayController<ProcessSpawnConfig> | null = null;
 
 // Create safeSend with dependency injection (Phase 2 refactoring)
@@ -376,7 +378,10 @@ const settingsWatcher = createSettingsWatcher({
 	getAgentConfigsPath: () => productionDataPath,
 });
 
-const devServerPort = process.env.VITE_PORT ? parseInt(process.env.VITE_PORT, 10) : 5173;
+// Fallback must match DEFAULT_START_PORT in scripts/dev-port.mjs. Never 5173
+// (Vite's default) - sharing it lets an agent-built dev server hijack the port
+// and replace the whole app window. See scripts/dev-port.mjs for the rationale.
+const devServerPort = process.env.VITE_PORT ? parseInt(process.env.VITE_PORT, 10) : 17173;
 const devServerUrl = `http://localhost:${devServerPort}`;
 
 // Forward declaration: quitHandler is constructed after the window, but the
@@ -721,6 +726,19 @@ app
 			});
 		});
 
+		// Background quota refresh: drives the Usage Dashboard's per-provider
+		// "Auto refresh" cadence from the main process so it keeps sampling even
+		// when the dashboard is closed (the old renderer setInterval died on
+		// unmount). Reads the persisted `usageRefreshIntervals` map and re-arms on
+		// change. Idempotent; arms nothing until the user picks an interval.
+		usageRefreshScheduler = new UsageRefreshScheduler({
+			sessionsStore,
+			agentConfigsStore,
+			settingsStore: store,
+			agentDetector,
+		});
+		usageRefreshScheduler.start();
+
 		// Initialize Cue Engine for event-driven automation
 		cueEngine = new CueEngine({
 			getSessions: () => {
@@ -928,6 +946,12 @@ app
 					customEnvVars: storedSession.customEnvVars,
 					customModel: storedSession.customModel,
 					customEffort: storedSession.customEffort,
+					// Claude token-source selection (TUI / API / dynamic), read from
+					// the same persisted session record that supplies customModel
+					// above, so Cue runs honor the triggering agent's choice.
+					enableMaestroP: storedSession.enableMaestroP,
+					maestroPMode: storedSession.maestroPMode,
+					maestroPPath: storedSession.maestroPPath,
 					onLog: (level, message) => {
 						if (level === 'error') {
 							logger.error(message, 'Cue');
@@ -1247,6 +1271,8 @@ quitHandler = createQuitHandler({
 		if (cueEngine?.isEnabled()) {
 			cueEngine.stop();
 		}
+		// Tear down the background quota refresh timers.
+		usageRefreshScheduler?.stop();
 	},
 	stopSettingsWatcher: () => settingsWatcher.stop(),
 	powerManager,

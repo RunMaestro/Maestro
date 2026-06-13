@@ -110,7 +110,8 @@ export interface AppModalsProps {
 		customEffort?: string,
 		groupId?: string,
 		enableMaestroP?: boolean,
-		maestroPPath?: string
+		maestroPPath?: string,
+		maestroPMode?: 'interactive' | 'dynamic'
 	) => void;
 	existingSessions: Session[];
 	duplicatingSessionId?: string | null; // Session ID to duplicate from
@@ -133,7 +134,8 @@ export interface AppModalsProps {
 			workingDirOverride?: string;
 		},
 		enableMaestroP?: boolean,
-		maestroPPath?: string
+		maestroPPath?: string,
+		maestroPMode?: 'interactive' | 'dynamic'
 	) => void;
 	editAgentSession: Session | null;
 	renameSessionValue: string;
@@ -212,9 +214,9 @@ export interface AppModalsProps {
 	onQuickActionsOpenTabSwitcher: () => void;
 	// Bulk tab close operations (for QuickActionsModal)
 	onCloseAllTabs?: () => void;
-	onCloseOtherTabs?: () => void;
-	onCloseTabsLeft?: () => void;
-	onCloseTabsRight?: () => void;
+	onCloseOtherTabs?: (pivotTabId?: string) => void;
+	onCloseTabsLeft?: (pivotTabId?: string) => void;
+	onCloseTabsRight?: (pivotTabId?: string) => void;
 	setPlaygroundOpen?: (open: boolean) => void;
 	onQuickActionsRefreshGitFileState: () => Promise<void>;
 	onQuickActionsDebugReleaseQueuedItem: () => void;
@@ -356,6 +358,9 @@ export interface AppModalsProps {
 	onQuickActionsNewTerminalTab?: () => void;
 	// Next unread / draft tab navigation (shared with Alt+Cmd+Down)
 	onGoToNextUnread?: () => void;
+	// Session/tab history navigation (shared with Cmd+Shift+, / Cmd+Shift+.)
+	onNavBack?: () => void;
+	onNavForward?: () => void;
 
 	// --- AppGroupChatModals props ---
 	onCloseNewGroupChatModal: () => void;
@@ -802,6 +807,8 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		onQuickActionsNewBrowserTab,
 		onQuickActionsNewTerminalTab,
 		onGoToNextUnread,
+		onNavBack,
+		onNavForward,
 		// Group Chat modals
 		onCloseNewGroupChatModal,
 		onCreateGroupChat,
@@ -1151,6 +1158,8 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				onQuickActionsNewBrowserTab={onQuickActionsNewBrowserTab}
 				onQuickActionsNewTerminalTab={onQuickActionsNewTerminalTab}
 				onGoToNextUnread={onGoToNextUnread}
+				onNavBack={onNavBack}
+				onNavForward={onNavForward}
 				onRemoveQueueItem={onRemoveQueueItem}
 				onSwitchQueueSession={onSwitchQueueSession}
 				onReorderQueueItems={onReorderQueueItems}

@@ -10,11 +10,11 @@
  * affordance from its header without re-implementing the canvas pipeline.
  *
  * The full image-generation logic lives here verbatim from its previous home;
- * keep edits in lockstep with the visual design — the resulting PNG is what
+ * keep edits in lockstep with the visual design. The resulting PNG is what
  * users post to social.
  */
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback } from 'react';
 import { Share2, Copy, Download, Check } from 'lucide-react';
 import type { Theme, AutoRunStats, MaestroUsageStats, LeaderboardRegistration } from '../types';
 import { getBadgeForTime, formatCumulativeTime } from '../constants/conductorBadges';
@@ -23,6 +23,7 @@ import maestroWandIcon from '../assets/icon-wand.png';
 import { safeClipboardWriteBlob } from '../utils/clipboard';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
+import { useClickOutside } from '../hooks/ui/useClickOutside';
 
 /** Shape of the global stats subset the share image consumes. Mirrors the
  * structure used by `AchievementCard`; defined here to keep the new module
@@ -51,7 +52,7 @@ export interface AchievementShareButtonProps {
 	/**
 	 * Visual variant. `default` matches the inline-card placement (small
 	 * subdued icon button). `header` makes the button match the surrounding
-	 * action buttons (Export CSV, etc.) on a modal toolbar — slightly larger
+	 * action buttons (Export CSV, etc.) on a modal toolbar: slightly larger
 	 * hit area, accent tint background.
 	 */
 	variant?: 'default' | 'header';
@@ -102,7 +103,7 @@ function wrapText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number)
 /**
  * Fetch a remote image as a base64 data URL via the main process (CORS-safe)
  * and resolve it as an `HTMLImageElement` for canvas drawing. Resolves to
- * `null` on any failure — callers fall back to a drawn placeholder.
+ * `null` on any failure. Callers fall back to a drawn placeholder.
  */
 async function loadImage(url: string): Promise<HTMLImageElement | null> {
 	try {
@@ -137,23 +138,14 @@ export function AchievementShareButton({
 	const currentBadge = getBadgeForTime(autoRunStats.cumulativeTimeMs);
 	const currentLevel = currentBadge?.level || 0;
 
-	// Close on outside click. setTimeout guards against the click that opened
-	// the menu also triggering the close handler in the same tick.
-	useEffect(() => {
-		if (!shareMenuOpen) return;
-		const handleClickOutside = (e: MouseEvent) => {
-			if (shareMenuRef.current && !shareMenuRef.current.contains(e.target as Node)) {
-				setShareMenuOpen(false);
-			}
-		};
-		const timeoutId = setTimeout(() => {
-			document.addEventListener('click', handleClickOutside);
-		}, 0);
-		return () => {
-			clearTimeout(timeoutId);
-			document.removeEventListener('click', handleClickOutside);
-		};
-	}, [shareMenuOpen]);
+	const closeShareMenu = useCallback(() => {
+		setShareMenuOpen(false);
+	}, []);
+
+	useClickOutside(shareMenuRef, closeShareMenu, shareMenuOpen, {
+		delay: true,
+		eventType: 'click',
+	});
 
 	const generateShareImage = useCallback(async (): Promise<HTMLCanvasElement> => {
 		const canvas = document.createElement('canvas');
@@ -362,9 +354,9 @@ export function AchievementShareButton({
 		const totalTokens = globalStats
 			? globalStats.totalInputTokens + globalStats.totalOutputTokens
 			: 0;
-		const tokensValue = totalTokens > 0 ? formatTokensCompact(totalTokens) : '—';
-		const sessionsValue = globalStats?.totalSessions?.toLocaleString() || '—';
-		const handsOnValue = handsOnTimeMs ? formatHandsOnTime(handsOnTimeMs) : '—';
+		const tokensValue = totalTokens > 0 ? formatTokensCompact(totalTokens) : '-';
+		const sessionsValue = globalStats?.totalSessions?.toLocaleString() || '-';
+		const handsOnValue = handsOnTimeMs ? formatHandsOnTime(handsOnTimeMs) : '-';
 		const autoRunTotal = formatCumulativeTime(autoRunStats.cumulativeTimeMs);
 		const autoRunBest = formatCumulativeTime(autoRunStats.longestRunMs);
 

@@ -135,14 +135,15 @@ describe('HistoryEntryItem', () => {
 	it('shows CUE event type metadata when present', () => {
 		render(
 			<HistoryEntryItem
-				entry={createMockEntry({ type: 'CUE', cueEventType: 'file_change' })}
+				entry={createMockEntry({ type: 'CUE', cueEventType: 'file.changed' })}
 				index={0}
 				isSelected={false}
 				theme={mockTheme}
 				onOpenDetailModal={vi.fn()}
 			/>
 		);
-		expect(screen.getByText('Triggered by: file_change')).toBeInTheDocument();
+		// The raw type is humanized for display (raw value kept in the title attr).
+		expect(screen.getByText('Triggered by: File Change')).toBeInTheDocument();
 	});
 
 	it('does not show CUE metadata for non-CUE entries', () => {

@@ -8,7 +8,7 @@ icon: hammer
 
 Maestro bundles a curated set of prompts from [bmad-code-org/BMAD-METHOD](https://github.com/bmad-code-org/BMAD-METHOD) and exposes them in **Settings -> AI Commands**.
 
-You can review, edit, reset, and refresh these prompts the same way you can with Spec-Kit and OpenSpec.
+You can review, edit, and reset these prompts the same way you can with Spec-Kit and OpenSpec.
 
 ## What Is Included
 
@@ -27,11 +27,11 @@ Many BMAD prompts assume the target repository already contains BMAD's project a
 
 If those files are missing, the prompt may still provide guidance, but BMAD works best when the repository has already been prepared with the BMAD installer or equivalent project structure.
 
-## Updating The Bundle
+## Bundle Version
 
-From the AI Commands settings panel, use **Check for Updates** in the BMAD section to pull the latest upstream workflow text from BMAD.
+The BMAD bundle is pinned to **v6.2.0**, the last BMAD release whose workflows run as standalone slash commands. Newer releases moved to a skills-based architecture that requires a local install and a resolver script, so they are not compatible with Maestro's paste-in prompt model.
 
-This updates Maestro's cached copy of the upstream prompts while preserving any local edits you have made in the app.
+For this reason the BMAD section shows a **Frozen** badge instead of a "Check for Updates" button. Spec-Kit and OpenSpec still pull updates from upstream; BMAD does not.
 
 ## Editing Prompts
 

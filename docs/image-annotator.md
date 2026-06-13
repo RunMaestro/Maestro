@@ -21,19 +21,19 @@ A pencil button appears on every image thumbnail Maestro renders:
 
 ## Tools
 
-The vertical toolbar lives on the right edge of the modal. Click an icon to switch tools.
+The vertical toolbar lives on the right edge of the modal. Click an icon to switch tools, or press the tool's hotkey. Hotkeys work whenever the annotator is open and you're not typing in a text label.
 
-| Tool          | Description                                                                                                                        |
-| ------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| **Pen**       | Freehand strokes powered by [perfect-freehand](https://github.com/steveruizok/perfect-freehand) for natural, pressure-aware lines. |
-| **Eraser**    | Click any stroke to remove it. Strokes are erased atomically - there's no per-pixel scrubbing.                                     |
-| **Pan**       | Click and drag to reposition the image. You can also hold `Space` or `Shift` while using any other tool.                           |
-| **Rectangle** | Drag to draw a bounding box. Toggle the fill handle to switch between outline and filled.                                          |
-| **Ellipse**   | Drag to draw an oval - useful for circling specific regions.                                                                       |
-| **Arrow**     | Drag from the tail to the head. Direction is preserved.                                                                            |
-| **Text**      | Click to place a text label and type inline. Click an existing label to drag it; double-click empty area to place another.         |
-| **Undo**      | Removes the last stroke, shape, or text label. Walks a unified history so it works regardless of which tool created the item.      |
-| **Clear**     | Wipes every stroke and shape. Inline confirmation prompt so you don't lose work by accident.                                       |
+| Tool          | Key | Description                                                                                                                                                                                                      |
+| ------------- | --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Pen**       | `D` | Freehand strokes (Draw) powered by [perfect-freehand](https://github.com/steveruizok/perfect-freehand) for natural, pressure-aware lines. Hold `Shift` while drawing to constrain the stroke to a straight line. |
+| **Eraser**    | `E` | Click any stroke to remove it. Strokes are erased atomically - there's no per-pixel scrubbing.                                                                                                                   |
+| **Pan**       | `P` | Click and drag to reposition the image. You can also hold `Space` while using any other tool, or `Shift` with any tool except the Pen.                                                                           |
+| **Rectangle** | `S` | Drag to draw a bounding box (Square). Toggle the fill handle to switch between outline and filled.                                                                                                               |
+| **Ellipse**   | `C` | Drag to draw an oval (Circle) - useful for circling specific regions.                                                                                                                                            |
+| **Arrow**     | `A` | Drag from the tail to the head. Direction is preserved.                                                                                                                                                          |
+| **Text**      | `T` | Click to place a text label and type inline. Click an existing label to drag it; double-click empty area to place another.                                                                                       |
+| **Undo**      |     | Removes the last stroke, shape, or text label. Walks a unified history so it works regardless of which tool created the item.                                                                                    |
+| **Clear**     |     | Wipes every stroke and shape. Inline confirmation prompt so you don't lose work by accident.                                                                                                                     |
 
 Shapes are first-class objects after they're committed:
 
@@ -75,21 +75,22 @@ When you open the annotator from the **File Preview** pane, saving opens a desti
 
 ## Keyboard shortcuts
 
-| Shortcut                          | Action                                               |
-| --------------------------------- | ---------------------------------------------------- |
-| `Cmd+E` / `Ctrl+E` (in Lightbox)  | Open the annotator on the current lightbox image     |
-| `Opt+Cmd+E` / `Alt+Ctrl+E`        | Open the annotator on the current clipboard image    |
-| `Cmd+S` / `Ctrl+S`                | Save and exit                                        |
-| `Cmd+C` / `Ctrl+C`                | Copy the annotated image to the clipboard            |
-| `Cmd+Z` / `Ctrl+Z`                | Undo last stroke or shape                            |
-| `Esc`                             | Cancel selection or close the modal                  |
-| `Delete` / `Backspace`            | Delete the selected shape or text label              |
-| `Cmd/Ctrl+Enter` (in text editor) | Commit the text label and exit the editor            |
-| `0`                               | Reset zoom and pan                                   |
-| `f`                               | Fit image to viewport                                |
-| `Space` (hold)                    | Temporarily switch to pan, regardless of active tool |
-| `Shift` (hold)                    | Same - temporary pan                                 |
-| Mouse wheel / trackpad scroll     | Zoom at cursor (5%-2000%)                            |
+| Shortcut                          | Action                                                                  |
+| --------------------------------- | ----------------------------------------------------------------------- |
+| `Cmd+E` / `Ctrl+E` (in Lightbox)  | Open the annotator on the current lightbox image                        |
+| `Opt+Cmd+E` / `Alt+Ctrl+E`        | Open the annotator on the current clipboard image                       |
+| `Cmd+S` / `Ctrl+S`                | Save and exit                                                           |
+| `Cmd+C` / `Ctrl+C`                | Copy the annotated image to the clipboard                               |
+| `Cmd+Z` / `Ctrl+Z`                | Undo last stroke or shape                                               |
+| `Esc`                             | Cancel selection or close the modal                                     |
+| `Delete` / `Backspace`            | Delete the selected shape or text label                                 |
+| `Cmd/Ctrl+Enter` (in text editor) | Commit the text label and exit the editor                               |
+| `D` `E` `P` `S` `C` `A` `T`       | Select tool: Draw / Eraser / Pan / Square / Circle / Arrow / Text       |
+| `0`                               | Reset zoom and pan                                                      |
+| `f`                               | Fit image to viewport                                                   |
+| `Space` (hold)                    | Temporarily switch to pan, regardless of active tool                    |
+| `Shift` (hold)                    | Constrain the Pen to a straight line; temporary pan with any other tool |
+| Mouse wheel / trackpad scroll     | Zoom at cursor (5%-2000%)                                               |
 
 The annotator's shortcuts are bound at the modal layer with capture-phase priority, so they always win over the rest of the app's keymap while the modal is open.
 
@@ -98,5 +99,6 @@ The annotator's shortcuts are bound at the modal layer with capture-phase priori
 - The annotator works directly on the image's native pixels - no resampling - so saved annotations are pixel-perfect even on retina captures.
 - Pair with the **Image Carousel** (`Cmd+Y` / `Ctrl+Y`) to flip through staged images and annotate each in turn.
 - For long-form markup (mockups, design feedback), draw with **Streamline** turned up to ~0.7 - it gives surprisingly clean lines from a regular trackpad.
+- Hold `Shift` while drawing with the **Pen** to snap the stroke to a straight line - handy for underlines, crop guides, or connecting two points cleanly.
 - The clipboard copy flow is the fastest way to share an annotated screenshot outside Maestro: open the lightbox on any past attachment, press `Cmd+E`, mark it up, then click the copy icon and paste anywhere.
 - To mark up a screenshot you just captured (without attaching it to a prompt first), copy it to the clipboard and press `Opt+Cmd+E` / `Alt+Ctrl+E`. Edit, save, and the result lands right back on the clipboard to paste wherever you need it.

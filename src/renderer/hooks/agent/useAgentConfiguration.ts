@@ -46,6 +46,12 @@ export interface UseAgentConfigurationOptions {
 		customPath?: string;
 		customArgs?: string;
 		customEnvVars?: Record<string, string>;
+		/** Claude token-source: legacy Adaptive opt-in (off => pure API). */
+		enableMaestroP?: boolean;
+		/** Refines `enableMaestroP`: 'interactive' always TUI, 'dynamic' auto-switch. */
+		maestroPMode?: 'interactive' | 'dynamic';
+		/** Optional override path to the maestro-p binary. */
+		maestroPPath?: string;
 	};
 }
 
@@ -71,6 +77,14 @@ export interface UseAgentConfigurationReturn {
 	setCustomArgs: (args: string) => void;
 	customEnvVars: Record<string, string>;
 	setCustomEnvVars: (vars: Record<string, string>) => void;
+
+	// Claude token source (maestro-p TUI vs `claude --print` API)
+	enableMaestroP: boolean;
+	setEnableMaestroP: (enabled: boolean) => void;
+	maestroPMode: 'interactive' | 'dynamic';
+	setMaestroPMode: (mode: 'interactive' | 'dynamic') => void;
+	maestroPPath: string;
+	setMaestroPPath: (path: string) => void;
 
 	// Agent config (model, context window, etc.)
 	agentConfig: Record<string, any>;
@@ -134,6 +148,13 @@ export function useAgentConfiguration(
 		initialValues?.customEnvVars ?? {}
 	);
 
+	// Claude token source (maestro-p TUI vs `claude --print` API)
+	const [enableMaestroP, setEnableMaestroP] = useState(initialValues?.enableMaestroP ?? false);
+	const [maestroPMode, setMaestroPMode] = useState<'interactive' | 'dynamic'>(
+		initialValues?.maestroPMode ?? 'dynamic'
+	);
+	const [maestroPPath, setMaestroPPath] = useState(initialValues?.maestroPPath ?? '');
+
 	// Agent config
 	const [agentConfig, setAgentConfig] = useState<Record<string, any>>({});
 	const agentConfigRef = useRef<Record<string, any>>({});
@@ -167,6 +188,9 @@ export function useAgentConfiguration(
 		setCustomPath('');
 		setCustomArgs('');
 		setCustomEnvVars({});
+		setEnableMaestroP(false);
+		setMaestroPMode('dynamic');
+		setMaestroPPath('');
 		setAgentConfig({});
 		agentConfigRef.current = {};
 		setAvailableModels([]);
@@ -302,6 +326,9 @@ export function useAgentConfiguration(
 			setCustomPath('');
 			setCustomArgs('');
 			setCustomEnvVars({});
+			setEnableMaestroP(false);
+			setMaestroPMode('dynamic');
+			setMaestroPPath('');
 			setAgentConfig({});
 			agentConfigRef.current = {};
 			setAvailableModels([]);
@@ -374,6 +401,14 @@ export function useAgentConfiguration(
 		setCustomArgs,
 		customEnvVars,
 		setCustomEnvVars,
+
+		// Claude token source
+		enableMaestroP,
+		setEnableMaestroP,
+		maestroPMode,
+		setMaestroPMode,
+		maestroPPath,
+		setMaestroPPath,
 
 		// Agent config
 		agentConfig,

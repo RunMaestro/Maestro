@@ -163,18 +163,25 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 	// repopulates). The panel is kept mounted under `display:none` so the
 	// auto-refresh timer survives tab switches (see RightPanel), but while hidden
 	// the scroll element measures 0×0 and the still-running auto-refresh rebuilds
-	// the tree — changing row count/sizes and clamping scrollTop without emitting
-	// a scroll event. TanStack only updates its internal scrollOffset on a real
-	// scroll event, so on show the offset can be stale, painting a blank gap at
-	// the top until the user scrolls. Forcing a measure + offset re-sync repaints
-	// the correct window immediately.
+	// the tree, changing row count and clamping scrollTop without emitting a
+	// scroll event. TanStack only refreshes its cached scrollOffset from a real
+	// scroll event, so on show the offset is stale and it paints a blank gap at
+	// the top until the user scrolls.
+	//
+	// scrollToOffset() can't fix this: it just sets element.scrollTop, and when
+	// that value is unchanged (a short tree already clamped to 0) the browser
+	// emits no scroll event, so the offset never refreshes. Assign scrollOffset
+	// directly to the DOM's (clamped) truth instead - it persists, so the next
+	// range recompute (here via measure(), or a later ResizeObserver tick once
+	// the element has real size) uses the correct offset and repaints the right
+	// window immediately.
 	useEffect(() => {
 		if (activeRightTab !== 'files') return;
 		const el = parentRef.current;
 		if (!el) return;
 		const raf = requestAnimationFrame(() => {
+			virtualizer.scrollOffset = el.scrollTop;
 			virtualizer.measure();
-			virtualizer.scrollToOffset(el.scrollTop);
 		});
 		return () => cancelAnimationFrame(raf);
 	}, [activeRightTab, flattenedTree.length, virtualizer]);
@@ -303,6 +310,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 		contextMenuRef,
 		contextMenuPos,
 		openContextMenu,
+		openRootContextMenu,
 		handleCopyPath,
 		handleOpenInDefaultApp,
 		handleOpenInMaestroBrowser,
@@ -701,7 +709,10 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 					{!session.fileTreeLoading &&
 						(!session.fileTree || session.fileTree.length === 0) &&
 						!fileTreeFilter && (
-							<div className="flex flex-col items-center justify-center gap-2 py-8">
+							<div
+								className="flex flex-col items-center justify-center gap-2 py-8"
+								onContextMenu={openRootContextMenu}
+							>
 								<Folder className="w-8 h-8 opacity-30" style={{ color: theme.colors.textDim }} />
 								<div
 									className="text-xs opacity-50 text-center"
@@ -712,7 +723,12 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 							</div>
 						)}
 					{flattenedTree.length > 0 && (
-						<div ref={parentRef} data-file-list-scroll className="flex-1 min-h-0 overflow-auto">
+						<div
+							ref={parentRef}
+							data-file-list-scroll
+							className="flex-1 min-h-0 overflow-auto"
+							onContextMenu={openRootContextMenu}
+						>
 							<div
 								style={{
 									height: `${virtualizer.getTotalSize()}px`,

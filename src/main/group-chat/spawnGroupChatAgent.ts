@@ -16,7 +16,11 @@ import type { SshRemoteSettingsStore } from '../utils/ssh-remote-resolver';
 import { getWindowsSpawnConfig } from './group-chat-config';
 import type { AgentConfig } from '../agents/definitions';
 import type { AgentSshRemoteConfig } from '../../shared/types';
-import { resolveClaudeSpawnMode, applyClaudeSpawnDecision } from '../agents/resolveClaudeSpawnMode';
+import {
+	resolveClaudeSpawnMode,
+	applyClaudeSpawnDecision,
+	buildRemoteInteractiveSpawn,
+} from '../agents/resolveClaudeSpawnMode';
 import type { ClaudeTokenMode } from '../../shared/claudeTokenMode';
 
 export interface SpawnGroupChatAgentConfig {
@@ -146,16 +150,31 @@ export async function spawnGroupChatAgent(
 		if (debugLabel) {
 			console.log(`[GroupChat:Debug] Applying SSH wrapping for ${debugLabel}...`);
 		}
+		// Claude interactive/dynamic over SSH runs maestro-p on the remote host
+		// (must be on its PATH) to drive the remote TUI on the Max subscription.
+		// Returns null for the API path, leaving the SSH config untouched.
+		const remoteInteractive = buildRemoteInteractiveSpawn({
+			decision: claudeDecision,
+			interactiveModeArgs: agent.interactiveModeArgs,
+			remoteClaudeBin: claudeDecision.claudeRealBinPath,
+		});
+		if (remoteInteractive && debugLabel) {
+			console.log(
+				`[GroupChat:Debug] ${debugLabel} resolved to remote maestro-p over SSH (tokenMode=${config.tokenMode})`
+			);
+		}
 		const sshWrapped = await wrapSpawnWithSsh(
 			{
 				command: baseCommand,
-				args,
+				args: remoteInteractive ? [...remoteInteractive.prependArgs, ...args] : args,
 				cwd,
 				prompt,
-				customEnvVars,
+				customEnvVars: remoteInteractive
+					? { ...(customEnvVars ?? {}), ...remoteInteractive.env }
+					: customEnvVars,
 				promptArgs: agent.promptArgs,
 				noPromptSeparator: agent.noPromptSeparator,
-				agentBinaryName: agent.binaryName,
+				agentBinaryName: remoteInteractive ? remoteInteractive.command : agent.binaryName,
 			},
 			sshRemoteConfig,
 			sshStore

@@ -14,7 +14,6 @@ function setup(overrides: Record<string, unknown> = {}) {
 		group,
 		memberCount: 0,
 		onRename: vi.fn(),
-		onChangeEmoji: vi.fn(),
 		onNewAgent: vi.fn(),
 		onDelete: vi.fn(),
 		onDismiss: vi.fn(),
@@ -25,15 +24,8 @@ function setup(overrides: Record<string, unknown> = {}) {
 }
 
 describe('GroupContextMenu', () => {
-	it('renders Change Emoji when onChangeEmoji is provided and fires it (plus dismiss)', () => {
-		const props = setup();
-		fireEvent.click(screen.getByText('Change Emoji...'));
-		expect(props.onChangeEmoji).toHaveBeenCalledTimes(1);
-		expect(props.onDismiss).toHaveBeenCalledTimes(1);
-	});
-
-	it('omits Change Emoji when onChangeEmoji is not provided', () => {
-		setup({ onChangeEmoji: undefined });
+	it('does not render a Change Emoji option (emoji is changed via Rename)', () => {
+		setup();
 		expect(screen.queryByText('Change Emoji...')).toBeNull();
 		// Rename is always present.
 		expect(screen.getByText('Rename Group...')).toBeTruthy();

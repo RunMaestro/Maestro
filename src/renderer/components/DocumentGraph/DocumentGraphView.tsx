@@ -1511,7 +1511,7 @@ export function DocumentGraphView({
 											<button
 												key={type}
 												onClick={() => handleLayoutTypeChange(type)}
-												className="w-full px-3 py-2 text-left text-sm transition-colors flex items-center justify-between"
+												className="w-full px-3 py-2 text-left text-sm transition-colors flex items-center justify-between gap-3"
 												style={{
 													backgroundColor:
 														layoutType === type ? `${theme.colors.accent}15` : 'transparent',
@@ -1525,8 +1525,11 @@ export function DocumentGraphView({
 														layoutType === type ? `${theme.colors.accent}15` : 'transparent')
 												}
 											>
-												<span>{LAYOUT_LABELS[type].name}</span>
-												<span className="text-xs" style={{ color: theme.colors.textDim }}>
+												<span className="whitespace-nowrap">{LAYOUT_LABELS[type].name}</span>
+												<span
+													className="text-xs whitespace-nowrap shrink-0"
+													style={{ color: theme.colors.textDim }}
+												>
 													{LAYOUT_LABELS[type].description}
 												</span>
 											</button>

@@ -20,6 +20,7 @@ import { useEffect, useRef } from 'react';
 import { useSessionStore } from '../../../stores/sessionStore';
 import { REGEX_AI_TAB } from '../../../utils/sessionIdParser';
 import { isLikelyConcatenatedToolNames } from '../../../constants/app';
+import { thinkingLogsRecorded } from './helpers/thinkingLogs';
 import { generateId } from '../../../utils/ids';
 import { logger } from '../../../utils/logger';
 import type { LogEntry } from '../../../types';
@@ -80,7 +81,7 @@ export function useAgentThinkingListener(): void {
 									const targetTab = updatedTabs.find((t) => t.id === chunkTabId);
 									if (!targetTab) continue;
 
-									if (!targetTab.showThinking || targetTab.showThinking === 'off') continue;
+									if (!thinkingLogsRecorded(targetTab.showThinking)) continue;
 
 									if (isLikelyConcatenatedToolNames(bufferedContent)) {
 										logger.warn(

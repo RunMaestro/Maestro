@@ -43,12 +43,12 @@ export interface TabBarProps {
 	onOpenOutputSearch?: () => void;
 	/** Handler to close all tabs */
 	onCloseAllTabs?: () => void;
-	/** Handler to close all tabs except active */
-	onCloseOtherTabs?: () => void;
-	/** Handler to close tabs to the left of active tab */
-	onCloseTabsLeft?: () => void;
-	/** Handler to close tabs to the right of active tab */
-	onCloseTabsRight?: () => void;
+	/** Handler to close all tabs except the pivot (clicked) tab, or the active tab when no id is given */
+	onCloseOtherTabs?: (pivotTabId?: string) => void;
+	/** Handler to close tabs to the left of the pivot (clicked) tab, or the active tab when no id is given */
+	onCloseTabsLeft?: (pivotTabId?: string) => void;
+	/** Handler to close tabs to the right of the pivot (clicked) tab, or the active tab when no id is given */
+	onCloseTabsRight?: (pivotTabId?: string) => void;
 
 	// === Unified Tab System Props (Phase 3) ===
 	/** Merged ordered list of AI and file preview tabs for unified rendering */
@@ -65,6 +65,10 @@ export interface TabBarProps {
 	onBrowserTabSelect?: (tabId: string) => void;
 	/** Handler to close a browser tab */
 	onBrowserTabClose?: (tabId: string) => void;
+	/** Handler to open the rename dialog for a browser tab */
+	onBrowserTabRename?: (tabId: string) => void;
+	/** Handler to clear a browser tab's user-assigned name */
+	onBrowserTabResetName?: (tabId: string) => void;
 
 	// === Terminal Tab Props (Phase 8) ===
 	/** Currently active terminal tab ID (null if no terminal tab is active) */

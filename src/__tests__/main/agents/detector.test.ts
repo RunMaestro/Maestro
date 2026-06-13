@@ -1082,6 +1082,7 @@ describe('agent-detector', () => {
 
 			const models = await detector.discoverModels('claude-code');
 			// Should include aliases + [1m] variants + historical models
+			expect(models).toContain('fable');
 			expect(models).toContain('sonnet');
 			expect(models).toContain('opus');
 			expect(models).toContain('haiku');
@@ -1090,7 +1091,7 @@ describe('agent-detector', () => {
 			expect(models).toContain('claude-opus-4-6');
 			expect(models).toContain('claude-sonnet-4-6');
 			expect(logger.info).toHaveBeenCalledWith(
-				expect.stringContaining('Discovered 7 models'),
+				expect.stringContaining('Discovered 8 models'),
 				'AgentDetector',
 				expect.any(Object)
 			);
@@ -1116,7 +1117,7 @@ describe('agent-detector', () => {
 			await detector.detectAgents();
 
 			const models = await detector.discoverModels('claude-code');
-			expect(models).toEqual(['sonnet', 'opus', 'haiku', 'opus[1m]', 'sonnet[1m]']);
+			expect(models).toEqual(['fable', 'sonnet', 'opus', 'haiku', 'opus[1m]', 'sonnet[1m]']);
 		});
 
 		it('should discover models for Codex from models_cache.json', async () => {
@@ -1631,6 +1632,46 @@ describe('agent-detector', () => {
 						stdout: 'claude-code/2.0.0\n',
 						stderr:
 							"Warning: Unknown --effort value '__maestro_probe__' - ignoring it and using the default effort. Valid values: low, medium, high, xhigh, max.\n",
+						exitCode: 0,
+					};
+				}
+				return { stdout: '', stderr: 'not found', exitCode: 1 };
+			});
+
+			detector.clearCache();
+			await detector.detectAgents();
+
+			const options = await detector.discoverConfigOptions('claude-code', 'effort');
+			expect(options).toEqual(['', 'low', 'medium', 'high', 'xhigh', 'max']);
+		});
+
+		it('falls back to static Claude effort levels when every discovery path fails', async () => {
+			// Durability guard: the CLI scraping is inherently fragile (Anthropic has
+			// reworded --help and the validation message more than once). If a future
+			// build defeats both the --help regex AND the probe regex, discovery must
+			// still return the static list from definitions.ts so the effort pill and
+			// dropdown never silently vanish - not [].
+			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
+				const binaryName = args[0];
+				if (binaryName === 'claude') {
+					return { stdout: '/usr/bin/claude\n', stderr: '', exitCode: 0 };
+				}
+				if (binaryName === 'bash') {
+					return { stdout: '/bin/bash\n', stderr: '', exitCode: 0 };
+				}
+				if (cmd === '/usr/bin/claude' && args[0] === '--help') {
+					// No parenthetical, and reworded so the --effort regex misses entirely.
+					return {
+						stdout: '  --effort <level>   Set the reasoning budget for this run\n',
+						stderr: '',
+						exitCode: 0,
+					};
+				}
+				if (cmd === '/usr/bin/claude' && args[0] === '--effort') {
+					// Probe output the regex can't parse (hypothetical future phrasing).
+					return {
+						stdout: 'claude-code/3.0.0\n',
+						stderr: "Ignoring unrecognized --effort '__maestro_probe__'.\n",
 						exitCode: 0,
 					};
 				}

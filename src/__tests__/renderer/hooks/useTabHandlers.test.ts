@@ -1897,8 +1897,8 @@ describe('useTabHandlers', () => {
 	// handleCloseOtherTabs — draft confirmation
 	// ========================================================================
 
-	describe('handleCloseOtherTabs draft confirmation', () => {
-		it('shows confirmation modal when other tabs have drafts', () => {
+	describe('handleCloseOtherTabs draft handling', () => {
+		it('preserves other tabs with unsent drafts instead of prompting', () => {
 			const tab1 = createMockAITab({ id: 'tab-1' });
 			const tab2 = createMockAITab({ id: 'tab-2', inputValue: 'draft text' });
 			setupSessionWithTabs([tab1, tab2], [], 'tab-1');
@@ -1908,7 +1908,10 @@ describe('useTabHandlers', () => {
 				result.current.handleCloseOtherTabs();
 			});
 
-			expect(useModalStore.getState().isOpen('confirm')).toBe(true);
+			// Bulk close never destroys a draft tab and never prompts: the draft
+			// tab is filtered out of the close set and survives alongside the active tab.
+			expect(useModalStore.getState().isOpen('confirm')).toBe(false);
+			expect(getSession().aiTabs.map((t) => t.id)).toEqual(['tab-1', 'tab-2']);
 		});
 
 		it('does not show modal when active tab has draft but others do not', () => {
@@ -1933,8 +1936,8 @@ describe('useTabHandlers', () => {
 	// handleCloseTabsLeft/Right — draft confirmation
 	// ========================================================================
 
-	describe('handleCloseTabsLeft draft confirmation', () => {
-		it('shows confirmation modal when left tabs have drafts', () => {
+	describe('handleCloseTabsLeft draft handling', () => {
+		it('preserves left tabs with unsent drafts instead of prompting', () => {
 			const tab1 = createMockAITab({ id: 'tab-1', inputValue: 'draft' });
 			const tab2 = createMockAITab({ id: 'tab-2' });
 			const tab3 = createMockAITab({ id: 'tab-3' });
@@ -1945,12 +1948,15 @@ describe('useTabHandlers', () => {
 				result.current.handleCloseTabsLeft();
 			});
 
-			expect(useModalStore.getState().isOpen('confirm')).toBe(true);
+			// The draft tab to the left is preserved (filtered from the close set);
+			// no confirmation modal is shown.
+			expect(useModalStore.getState().isOpen('confirm')).toBe(false);
+			expect(getSession().aiTabs.some((t) => t.id === 'tab-1')).toBe(true);
 		});
 	});
 
-	describe('handleCloseTabsRight draft confirmation', () => {
-		it('shows confirmation modal when right tabs have drafts', () => {
+	describe('handleCloseTabsRight draft handling', () => {
+		it('preserves right tabs with unsent drafts instead of prompting', () => {
 			const tab1 = createMockAITab({ id: 'tab-1' });
 			const tab2 = createMockAITab({ id: 'tab-2' });
 			const tab3 = createMockAITab({ id: 'tab-3', inputValue: 'draft' });
@@ -1961,7 +1967,10 @@ describe('useTabHandlers', () => {
 				result.current.handleCloseTabsRight();
 			});
 
-			expect(useModalStore.getState().isOpen('confirm')).toBe(true);
+			// The draft tab to the right is preserved (filtered from the close set);
+			// no confirmation modal is shown.
+			expect(useModalStore.getState().isOpen('confirm')).toBe(false);
+			expect(getSession().aiTabs.some((t) => t.id === 'tab-3')).toBe(true);
 		});
 	});
 
@@ -2294,10 +2303,17 @@ describe('useTabHandlers', () => {
 
 			const updated = getSession();
 			expect(updated.browserTabs).toHaveLength(0);
-			expect(updated.unifiedClosedTabHistory[0]).toMatchObject({
-				type: 'browser',
-				tab: expect.objectContaining({ id: 'browser-1', title: 'Docs' }),
-			});
+			// Bulk close now records AI tabs into the unified history too (so they
+			// are restorable via Cmd+Shift+T), so the browser entry is no longer
+			// guaranteed to be first. Assert the history contains it regardless of order.
+			expect(updated.unifiedClosedTabHistory).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({
+						type: 'browser',
+						tab: expect.objectContaining({ id: 'browser-1', title: 'Docs' }),
+					}),
+				])
+			);
 		});
 	});
 

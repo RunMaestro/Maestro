@@ -831,9 +831,14 @@ describe('GeneralTab', () => {
 			expect(
 				screen.getByText('Show AI thinking/reasoning content for new tabs')
 			).toBeInTheDocument();
-			expect(screen.getByRole('button', { name: 'Off' })).toBeInTheDocument();
-			expect(screen.getByRole('button', { name: 'On' })).toBeInTheDocument();
-			expect(screen.getByRole('button', { name: 'Sticky' })).toBeInTheDocument();
+			// Scope to the thinking-mode section: the Synopsis Debounce toggle also
+			// renders an "Off" button, so a bare getByRole would be ambiguous.
+			const thinkingSection = screen
+				.getByText('Show AI thinking/reasoning content for new tabs')
+				.closest('[data-setting-id="general-thinking-mode"]') as HTMLElement;
+			expect(within(thinkingSection).getByRole('button', { name: 'Off' })).toBeInTheDocument();
+			expect(within(thinkingSection).getByRole('button', { name: 'On' })).toBeInTheDocument();
+			expect(within(thinkingSection).getByRole('button', { name: 'Sticky' })).toBeInTheDocument();
 		});
 
 		it('should call setDefaultShowThinking with on when On is clicked', async () => {
@@ -866,7 +871,12 @@ describe('GeneralTab', () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
-			fireEvent.click(screen.getByRole('button', { name: 'Off' }));
+			// Scope to the thinking-mode section: the Synopsis Debounce toggle also
+			// renders an "Off" button, so a bare getByRole would be ambiguous.
+			const thinkingSection = screen
+				.getByText('Show AI thinking/reasoning content for new tabs')
+				.closest('[data-setting-id="general-thinking-mode"]') as HTMLElement;
+			fireEvent.click(within(thinkingSection).getByRole('button', { name: 'Off' }));
 			expect(mockSetDefaultShowThinking).toHaveBeenCalledWith('off');
 		});
 

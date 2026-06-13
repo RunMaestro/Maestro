@@ -213,6 +213,13 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: true,
 		category: 'appearance',
 	},
+	showFullGroupLabelInBookmarks: {
+		description:
+			'Show the full group name (e.g. "[2] CASE/CONTENT-SYSTEM") instead of the abbreviated badge (e.g. "CCS") next to bookmarked agents in the left side bar. Long names are truncated with the complete value available on hover.',
+		type: 'boolean',
+		default: false,
+		category: 'appearance',
+	},
 	fileEditWordWrap: {
 		description:
 			'Wrap long lines in the file editor at whitespace boundaries instead of scrolling horizontally.',
@@ -254,9 +261,9 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 	},
 	toastWidth: {
 		description:
-			'Width of toast notifications. Options: small (default), medium, large, dynamic (match the Right Bar width).',
+			'Width of toast notifications. Options: small, medium, large, dynamic (default, matches the Right Bar width).',
 		type: 'string',
-		default: 'small',
+		default: 'dynamic',
 		category: 'appearance',
 	},
 	disableConfetti: {
@@ -374,6 +381,13 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		description: 'Whether completed tasks are saved to history by default.',
 		type: 'boolean',
 		default: true,
+		category: 'editor',
+	},
+	synopsisDebounceSeconds: {
+		description:
+			'Seconds of idle time to wait after a task completes before generating its History synopsis. Rapid back-to-back completions are coalesced into one synopsis. 0 generates a synopsis immediately after each completion.',
+		type: 'number',
+		default: 0,
 		category: 'editor',
 	},
 	defaultShowThinking: {
@@ -888,6 +902,13 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		description: 'Whether the "Group Chats" section in the left bar is expanded.',
 		type: 'boolean',
 		default: true,
+		category: 'onboarding',
+	},
+	groupChatSortAlphabetical: {
+		description:
+			'Sort group chats alphabetically (true) instead of by most recent activity (false).',
+		type: 'boolean',
+		default: false,
 		category: 'onboarding',
 	},
 	starredSessionsCollapsed: {

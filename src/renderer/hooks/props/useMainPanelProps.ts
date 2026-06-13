@@ -162,6 +162,7 @@ export interface UseMainPanelPropsDeps {
 	handleDeleteLog: (logId: string) => number | null;
 	handleRemoveQueuedItem: (itemId: string) => void;
 	handleToggleQueuedItemPause: (itemId: string) => void;
+	handleReorderQueuedItem: (fromIndex: number, toIndex: number, tabId?: string) => void;
 	handleForceSendQueuedItem: (itemId: string) => void;
 	forcedParallelEnabled: boolean;
 	getForceSendContext: (
@@ -206,6 +207,8 @@ export interface UseMainPanelPropsDeps {
 	handleNewBrowserTab: () => void;
 	handleBrowserTabSelect: (tabId: string) => void;
 	handleBrowserTabClose: (tabId: string) => void;
+	handleBrowserTabRename: (tabId: string) => void;
+	handleBrowserTabResetName: (tabId: string) => void;
 	handleBrowserTabUpdate: (
 		sessionId: string,
 		tabId: string,
@@ -393,6 +396,7 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			onDeleteLog: deps.handleDeleteLog,
 			onRemoveQueuedItem: deps.handleRemoveQueuedItem,
 			onTogglePauseQueuedItem: deps.handleToggleQueuedItemPause,
+			onReorderQueuedItem: deps.handleReorderQueuedItem,
 			onForceSendQueuedItem: deps.handleForceSendQueuedItem,
 			forcedParallelEnabled: deps.forcedParallelEnabled,
 			getForceSendContext: deps.getForceSendContext,
@@ -427,6 +431,8 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			onNewBrowserTab: deps.handleNewBrowserTab,
 			onBrowserTabSelect: deps.handleBrowserTabSelect,
 			onBrowserTabClose: deps.handleBrowserTabClose,
+			onBrowserTabRename: deps.handleBrowserTabRename,
+			onBrowserTabResetName: deps.handleBrowserTabResetName,
 			onBrowserTabUpdate: deps.handleBrowserTabUpdate,
 			// Terminal tab callbacks (Phase 8)
 			onNewTerminalTab: deps.handleOpenTerminalTab,
@@ -643,6 +649,7 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			deps.handleDeleteLog,
 			deps.handleRemoveQueuedItem,
 			deps.handleToggleQueuedItemPause,
+			deps.handleReorderQueuedItem,
 			deps.handleForceSendQueuedItem,
 			deps.forcedParallelEnabled,
 			deps.getForceSendContext,
@@ -679,6 +686,8 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			deps.handleNewBrowserTab,
 			deps.handleBrowserTabSelect,
 			deps.handleBrowserTabClose,
+			deps.handleBrowserTabRename,
+			deps.handleBrowserTabResetName,
 			deps.handleBrowserTabUpdate,
 			// Terminal tab (Phase 8)
 			deps.handleOpenTerminalTab,

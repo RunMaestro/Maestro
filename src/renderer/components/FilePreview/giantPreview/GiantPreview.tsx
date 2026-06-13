@@ -6,6 +6,7 @@ import { buildEditorTheme } from './themeAdapter';
 import { loadLanguageExtension, hasLanguageSupport } from './languageLoader';
 import { findAllInDoc } from './searchEngine';
 import { softWrapLongLines, mapToWrappedOffset, SOFT_WRAP_MAX_LINE_LENGTH } from './softWrap';
+import { nthLineStartOffset } from '../lineSync';
 import type { GiantPreviewHandle, GiantPreviewProps } from './types';
 
 /**
@@ -127,6 +128,33 @@ export const GiantPreview = forwardRef<GiantPreviewHandle, GiantPreviewProps>(fu
 				view.dispatch({
 					selection: EditorSelection.single(from, to),
 					effects: EditorView.scrollIntoView(from, { y: 'center' }),
+				});
+			},
+			getTopLine: () => {
+				const view = viewRef.current;
+				if (!view) return 1;
+				// Wrapped doc line at the top, then subtract the synthetic lines
+				// soft-wrap inserted above it to recover the SOURCE line.
+				const block = view.lineBlockAtHeight(view.scrollDOM.scrollTop);
+				const wrappedLine = view.state.doc.lineAt(block.from).number;
+				const ins = wrap.insertionsAt;
+				let synthetic = 0;
+				// `ins[k] + k` is the wrapped offset of the k-th inserted newline.
+				for (let k = 0; k < ins.length; k++) {
+					if (ins[k] + k < block.from) synthetic++;
+					else break;
+				}
+				return Math.max(1, wrappedLine - synthetic);
+			},
+			scrollToLine: (line: number) => {
+				const view = viewRef.current;
+				if (!view) return;
+				const srcOffset = nthLineStartOffset(content, line);
+				const wrappedOffset = mapToWrappedOffset(wrap.insertionsAt, srcOffset);
+				const docLength = view.state.doc.length;
+				const from = view.state.doc.lineAt(Math.max(0, Math.min(wrappedOffset, docLength))).from;
+				view.dispatch({
+					effects: EditorView.scrollIntoView(from, { y: 'start', yMargin: 0 }),
 				});
 			},
 		}),

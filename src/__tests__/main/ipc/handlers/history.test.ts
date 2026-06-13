@@ -349,6 +349,92 @@ describe('history IPC handlers', () => {
 			expect(result.total).toBe(1);
 		});
 
+		it('should apply the types filter before pagination', async () => {
+			// Regression: a Cue-heavy agent floods the newest entries with CUE,
+			// so a type-blind window leaves no room for older USER/AUTO entries.
+			// The server-side type filter must drop CUE before slicing so the
+			// window holds the newest USER/AUTO entries.
+			const entries = [
+				createMockEntry({ id: 'cue1', type: 'CUE', timestamp: 5000 }),
+				createMockEntry({ id: 'cue2', type: 'CUE', timestamp: 4000 }),
+				createMockEntry({ id: 'user1', type: 'USER', timestamp: 3000 }),
+				createMockEntry({ id: 'auto1', type: 'AUTO', timestamp: 2000 }),
+			];
+			vi.mocked(mockHistoryManager.getEntries).mockReturnValue(entries);
+
+			const handler = handlers.get('history:getAllPaginated');
+			const result = await handler!({} as any, {
+				sessionId: 'session-1',
+				pagination: { limit: 100, offset: 0 },
+				types: ['USER', 'AUTO'],
+			});
+
+			// CUE entries drop out even though they're newest; total reflects
+			// the filtered set, not the full on-disk count.
+			expect(result.entries.map((e: { id: string }) => e.id)).toEqual(['user1', 'auto1']);
+			expect(result.total).toBe(2);
+		});
+
+		it('should return no entries when the types filter is empty', async () => {
+			const entries = [
+				createMockEntry({ id: 'u', type: 'USER', timestamp: 2000 }),
+				createMockEntry({ id: 'c', type: 'CUE', timestamp: 1000 }),
+			];
+			vi.mocked(mockHistoryManager.getEntries).mockReturnValue(entries);
+
+			const handler = handlers.get('history:getAllPaginated');
+			const result = await handler!({} as any, {
+				sessionId: 'session-1',
+				pagination: { limit: 100, offset: 0 },
+				types: [],
+			});
+
+			expect(result.entries).toEqual([]);
+			expect(result.total).toBe(0);
+		});
+
+		it('should apply the host filter before pagination', async () => {
+			// Regression: the picker count comes from the full-source graph
+			// aggregate, so selecting a host whose entries fall outside the
+			// loaded page used to show nothing despite "(N)". The host filter
+			// must run server-side (like types) so the window holds the newest
+			// N entries OF THE SELECTED HOST.
+			const entries = [
+				createMockEntry({ id: 'remote1', hostname: 'dev-box', timestamp: 5000 }),
+				createMockEntry({ id: 'local1', timestamp: 4000 }),
+				createMockEntry({ id: 'remote2', hostname: 'dev-box', timestamp: 3000 }),
+			];
+			vi.mocked(mockHistoryManager.getEntries).mockReturnValue(entries);
+
+			const handler = handlers.get('history:getAllPaginated');
+			const result = await handler!({} as any, {
+				sessionId: 'session-1',
+				pagination: { limit: 100, offset: 0 },
+				hostKey: 'dev-box',
+			});
+
+			expect(result.entries.map((e: { id: string }) => e.id)).toEqual(['remote1', 'remote2']);
+			expect(result.total).toBe(2);
+		});
+
+		it('should match local (no-hostname) entries via the synthetic __local__ host key', async () => {
+			const entries = [
+				createMockEntry({ id: 'remote1', hostname: 'dev-box', timestamp: 5000 }),
+				createMockEntry({ id: 'local1', timestamp: 4000 }),
+			];
+			vi.mocked(mockHistoryManager.getEntries).mockReturnValue(entries);
+
+			const handler = handlers.get('history:getAllPaginated');
+			const result = await handler!({} as any, {
+				sessionId: 'session-1',
+				pagination: { limit: 100, offset: 0 },
+				hostKey: '__local__',
+			});
+
+			expect(result.entries.map((e: { id: string }) => e.id)).toEqual(['local1']);
+			expect(result.total).toBe(1);
+		});
+
 		it('should handle undefined options', async () => {
 			const mockResult = {
 				entries: [],
@@ -364,6 +450,33 @@ describe('history IPC handlers', () => {
 
 			expect(mockHistoryManager.getAllEntriesPaginated).toHaveBeenCalledWith(undefined);
 			expect(result).toEqual(mockResult);
+		});
+	});
+
+	describe('history:getOffsetForTimestamp', () => {
+		it('mirrors the list type filter so the offset lines up with rendered indices', async () => {
+			// The activity-graph jump resolves an offset into the SAME type-filtered
+			// list the panel renders. If the offset path ignored the filter, a newest
+			// CUE entry would shift every offset by one and the jump would land on the
+			// wrong row. Keep this in lockstep with getAllPaginated's type filter.
+			const entries = [
+				createMockEntry({ id: 'cue1', type: 'CUE', timestamp: 5000 }),
+				createMockEntry({ id: 'user1', type: 'USER', timestamp: 3000 }),
+				createMockEntry({ id: 'auto1', type: 'AUTO', timestamp: 2000 }),
+			];
+			vi.mocked(mockHistoryManager.getEntries).mockReturnValue(entries);
+
+			const handler = handlers.get('history:getOffsetForTimestamp');
+
+			// Filtered list (newest-first) is [user1, auto1]. Targeting auto1's
+			// timestamp resolves to offset 1 within the filtered set.
+			const filtered = await handler!({} as any, 'session-1', 2000, null, ['USER', 'AUTO']);
+			expect(filtered).toBe(1);
+
+			// Without the filter the leading CUE entry pushes the same target to
+			// offset 2 - proving the filter is what aligns the offset.
+			const unfiltered = await handler!({} as any, 'session-1', 2000, null);
+			expect(unfiltered).toBe(2);
 		});
 	});
 

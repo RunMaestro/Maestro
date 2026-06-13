@@ -40,11 +40,26 @@ vi.mock('../../../../main/process-manager/utils/imageUtils', () => ({
 	cleanupTempFiles: vi.fn(),
 }));
 
+// SSH config resolution: real getters require initialized stores, which don't
+// exist in unit tests. Mock so each test controls whether the remote resolves.
+vi.mock('../../../../main/stores/getters', () => ({
+	getSshRemoteById: vi.fn(() => null),
+}));
+
+// For SSH-remote Copilot sessions the events file is read over SSH via
+// remote-fs. Mock the two read paths the shutdown reconciliation uses.
+vi.mock('../../../../main/utils/remote-fs', () => ({
+	readFileRemote: vi.fn(),
+	readFileTailRemote: vi.fn(),
+}));
+
 // ── Imports (after mocks) ──────────────────────────────────────────────────
 
 import { ExitHandler } from '../../../../main/process-manager/handlers/ExitHandler';
 import { DataBufferManager } from '../../../../main/process-manager/handlers/DataBufferManager';
 import { matchSshErrorPattern } from '../../../../main/parsers/error-patterns';
+import { getSshRemoteById } from '../../../../main/stores/getters';
+import { readFileRemote, readFileTailRemote } from '../../../../main/utils/remote-fs';
 import type { ManagedProcess } from '../../../../main/process-manager/types';
 import type { AgentOutputParser, ParsedEvent } from '../../../../main/parsers';
 
@@ -104,6 +119,13 @@ describe('ExitHandler', () => {
 		emitter = new EventEmitter();
 		bufferManager = new DataBufferManager(processes, emitter);
 		exitHandler = new ExitHandler({ processes, emitter, bufferManager });
+		// Default: no SSH remote resolves and no remote reads happen. Individual
+		// SSH tests override these. Reset so per-test mock values don't leak.
+		vi.mocked(getSshRemoteById)
+			.mockReset()
+			.mockReturnValue(null as never);
+		vi.mocked(readFileRemote).mockReset();
+		vi.mocked(readFileTailRemote).mockReset();
 	});
 
 	describe('stream-json jsonBuffer processing at exit', () => {
@@ -459,7 +481,12 @@ describe('ExitHandler', () => {
 			}
 		});
 
-		it('skips the wait entirely for SSH-remote Copilot sessions (local disk not available)', async () => {
+		it('skips reconciliation when the SSH remote cannot be resolved (no leaking to local disk)', async () => {
+			// The agent opted into SSH but the remote id no longer resolves. We must
+			// NOT fall back to reading a local events.jsonl (which would never match);
+			// the handler skips reconciliation and exits cleanly.
+			vi.mocked(getSshRemoteById).mockReturnValue(null as never);
+
 			const proc = createMockProcess({
 				toolType: 'copilot-cli',
 				isStreamJsonMode: true,
@@ -479,6 +506,72 @@ describe('ExitHandler', () => {
 
 			expect(exitEvents).toEqual([0]);
 			expect(elapsed).toBeLessThan(200); // no polling delay
+			expect(readFileTailRemote).not.toHaveBeenCalled();
+			expect(readFileRemote).not.toHaveBeenCalled();
+		});
+
+		it('reconciles over SSH when the remote resolves, overriding streamedText with the remote final answer', async () => {
+			// The events file lives on the remote host; the readers must go over SSH.
+			// Without this the remote context gauge stays stuck at 0% and the stale
+			// parent narration is never replaced by the real final answer.
+			vi.mocked(getSshRemoteById).mockReturnValue({
+				id: 'remote-1',
+				name: 'remote',
+				host: 'remote.example',
+				port: 22,
+				username: 'pedram',
+				privateKeyPath: '/tmp/key',
+				enabled: true,
+			} as never);
+
+			// The waiter tails the remote file and sees the shutdown marker.
+			vi.mocked(readFileTailRemote).mockResolvedValue({
+				success: true,
+				data:
+					[
+						JSON.stringify({ type: 'session.start', data: { sessionId: 'cp-ssh-session' } }),
+						JSON.stringify({ type: 'session.shutdown', data: { currentTokens: 99 } }),
+					].join('\n') + '\n',
+			});
+			// The final-answer / usage readers read the whole remote file.
+			vi.mocked(readFileRemote).mockResolvedValue({
+				success: true,
+				data:
+					[
+						JSON.stringify({ type: 'session.start', data: { sessionId: 'cp-ssh-session' } }),
+						JSON.stringify({
+							type: 'assistant.message',
+							data: { content: 'planning narration', toolRequests: [] },
+						}),
+						JSON.stringify({
+							type: 'session.task_complete',
+							data: { summary: 'Remote final answer.' },
+						}),
+						JSON.stringify({ type: 'session.shutdown', data: { currentTokens: 99 } }),
+					].join('\n') + '\n',
+			});
+
+			const proc = createMockProcess({
+				toolType: 'copilot-cli',
+				isStreamJsonMode: true,
+				isBatchMode: true,
+				agentSessionId: 'cp-ssh-session',
+				sshRemoteId: 'remote-1',
+				streamedText: 'planning narration',
+			});
+			processes.set('test-session', proc);
+
+			const dataEvents: string[] = [];
+			const exitEvents: number[] = [];
+			emitter.on('data', (_sid: string, data: string) => dataEvents.push(data));
+			emitter.on('exit', (_sid: string, code: number) => exitEvents.push(code));
+
+			await exitHandler.handleExit('test-session', 0);
+
+			expect(readFileTailRemote).toHaveBeenCalled();
+			expect(dataEvents).toContain('Remote final answer.');
+			expect(exitEvents).toEqual([0]);
+			expect(processes.has('test-session')).toBe(false);
 		});
 
 		it('skips the wait when agentSessionId was never observed (Copilot crashed before session.start)', async () => {

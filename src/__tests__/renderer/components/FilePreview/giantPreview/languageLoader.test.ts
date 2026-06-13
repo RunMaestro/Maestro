@@ -29,9 +29,35 @@ describe('hasLanguageSupport', () => {
 		expect(hasLanguageSupport('yml')).toBe(true);
 	});
 
+	it('returns true for compiled-language packs', () => {
+		expect(hasLanguageSupport('go')).toBe(true);
+		expect(hasLanguageSupport('rust')).toBe(true);
+		expect(hasLanguageSupport('java')).toBe(true);
+		expect(hasLanguageSupport('cpp')).toBe(true);
+		expect(hasLanguageSupport('c')).toBe(true);
+		expect(hasLanguageSupport('php')).toBe(true);
+	});
+
+	it('returns true for web / data / query grammars', () => {
+		expect(hasLanguageSupport('html')).toBe(true);
+		expect(hasLanguageSupport('css')).toBe(true);
+		expect(hasLanguageSupport('scss')).toBe(true);
+		expect(hasLanguageSupport('sql')).toBe(true);
+		expect(hasLanguageSupport('xml')).toBe(true);
+	});
+
+	it('returns true for legacy-mode grammars', () => {
+		expect(hasLanguageSupport('ruby')).toBe(true);
+		expect(hasLanguageSupport('bash')).toBe(true);
+		expect(hasLanguageSupport('sh')).toBe(true);
+		expect(hasLanguageSupport('toml')).toBe(true);
+		expect(hasLanguageSupport('csharp')).toBe(true);
+	});
+
 	it('is case-insensitive', () => {
 		expect(hasLanguageSupport('MARKDOWN')).toBe(true);
 		expect(hasLanguageSupport('Python')).toBe(true);
+		expect(hasLanguageSupport('Rust')).toBe(true);
 	});
 
 	it('returns false for plain text', () => {
@@ -39,9 +65,8 @@ describe('hasLanguageSupport', () => {
 	});
 
 	it('returns false for languages we have not packaged', () => {
-		expect(hasLanguageSupport('rust')).toBe(false);
-		expect(hasLanguageSupport('go')).toBe(false);
 		expect(hasLanguageSupport('cobol')).toBe(false);
+		expect(hasLanguageSupport('fortran')).toBe(false);
 	});
 
 	it('returns false for unknown identifiers', () => {
@@ -85,6 +110,31 @@ describe('loadLanguageExtension', () => {
 	it('loads yaml extension', async () => {
 		expect(await loadLanguageExtension('yaml')).toBeTruthy();
 		expect(await loadLanguageExtension('yml')).toBeTruthy();
+	});
+
+	it('loads dedicated Lezer packs for compiled languages', async () => {
+		expect(await loadLanguageExtension('go')).toBeTruthy();
+		expect(await loadLanguageExtension('rust')).toBeTruthy();
+		expect(await loadLanguageExtension('java')).toBeTruthy();
+		expect(await loadLanguageExtension('cpp')).toBeTruthy();
+		expect(await loadLanguageExtension('c')).toBeTruthy();
+		expect(await loadLanguageExtension('php')).toBeTruthy();
+	});
+
+	it('loads web / data / query grammars', async () => {
+		expect(await loadLanguageExtension('html')).toBeTruthy();
+		expect(await loadLanguageExtension('css')).toBeTruthy();
+		expect(await loadLanguageExtension('sql')).toBeTruthy();
+		expect(await loadLanguageExtension('xml')).toBeTruthy();
+	});
+
+	it('loads legacy-mode grammars via StreamLanguage', async () => {
+		expect(await loadLanguageExtension('ruby')).toBeTruthy();
+		expect(await loadLanguageExtension('bash')).toBeTruthy();
+		expect(await loadLanguageExtension('sh')).toBeTruthy();
+		expect(await loadLanguageExtension('toml')).toBeTruthy();
+		expect(await loadLanguageExtension('scss')).toBeTruthy();
+		expect(await loadLanguageExtension('csharp')).toBeTruthy();
 	});
 
 	it('returns null for plain text', async () => {

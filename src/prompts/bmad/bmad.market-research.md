@@ -1,8 +1,3 @@
----
-name: market-research
-description: 'Conduct market research on competition and customers. Use when the user says "create a market research report about [business idea]".'
----
-
 # Market Research Workflow
 
 **Goal:** Conduct comprehensive market research using current web data and verified sources to produce complete research documents with compelling narratives and proper citations.
@@ -50,7 +45,7 @@ After gathering the topic and goals:
 2. Set `research_topic = [discovered topic from discussion]`
 3. Set `research_goals = [discovered goals from discussion]`
 4. Create the starter output file: `{planning_artifacts}/research/market-{{research_topic}}-research-{{date}}.md` with exact copy of the `./research.template.md` contents
-5. Load: `./market-steps/step-01-init.md` with topic context
+5. Load: `./steps/step-01-init.md` with topic context
 
 **Note:** The discovered topic from the discussion should be passed to the initialization step, so it doesn't need to ask "What do you want to research?" again - it can focus on refining the scope for market research.
 
@@ -62,7 +57,7 @@ After gathering the topic and goals:
 
 The following upstream BMAD files are embedded so this Maestro prompt remains self-contained.
 
-## src/bmm/workflows/1-analysis/research/research.template.md
+## src/bmm/workflows/1-analysis/research/bmad-market-research/research.template.md
 
 ```md
 ---
@@ -96,7 +91,7 @@ source_verification: true
 <!-- Content will be appended sequentially through research workflow steps -->
 ```
 
-## src/bmm/workflows/1-analysis/research/market-steps/step-01-init.md
+## src/bmm/workflows/1-analysis/research/bmad-market-research/steps/step-01-init.md
 
 ````md
 # Market Research Step 1: Market Research Initialization
@@ -234,13 +229,15 @@ Show initial scope document and present continue option:
 [C] Continue - Confirm scope and proceed to customer insights analysis
 [Modify] Suggest changes to research scope before proceeding
 
+**HALT — wait for user response before proceeding.**
+
 ### 5. Handle User Response
 
 #### If 'C' (Continue):
 
 - Update frontmatter: `stepsCompleted: [1]`
 - Add confirmation note to document: "Scope confirmed by user on {{date}}"
-- Load: `{project-root}/_bmad/bmm/workflows/1-analysis/research/market-steps/step-02-customer-behavior.md`
+- Load: `./step-02-customer-behavior.md`
 
 #### If 'Modify':
 
@@ -279,13 +276,13 @@ This step ensures:
 
 ## NEXT STEP:
 
-After user confirmation and scope finalization, load `{project-root}/_bmad/bmm/workflows/1-analysis/research/market-steps/step-02-customer-behavior.md` to begin detailed market research with customer insights analysis.
+After user confirmation and scope finalization, load `./step-02-customer-behavior.md` to begin detailed market research with customer insights analysis.
 
 Remember: Init steps confirm understanding and scope, not generate research content!
 
 ````
 
-## src/bmm/workflows/1-analysis/research/market-steps/step-02-customer-behavior.md
+## src/bmm/workflows/1-analysis/research/bmad-market-research/steps/step-02-customer-behavior.md
 
 ```md
 # Market Research Step 2: Customer Behavior and Segments
@@ -463,13 +460,15 @@ _Source: [URL]_
 **Ready to proceed to customer pain points?**
 [C] Continue - Save this to document and proceed to pain points analysis
 
+**HALT — wait for user response before proceeding.**
+
 ### 6. Handle Continue Selection
 
 #### If 'C' (Continue):
 
 - **CONTENT ALREADY WRITTEN TO DOCUMENT**
 - Update frontmatter: `stepsCompleted: [1, 2]`
-- Load: `{project-root}/_bmad/bmm/workflows/1-analysis/research/market-steps/step-03-customer-pain-points.md`
+- Load: `./step-03-customer-pain-points.md`
 
 ## APPEND TO DOCUMENT:
 
@@ -522,7 +521,7 @@ Content is already written to document when generated in step 4. No additional a
 
 ## NEXT STEP:
 
-After user selects 'C', load `{project-root}/_bmad/bmm/workflows/1-analysis/research/market-steps/step-03-customer-pain-points.md` to analyze customer pain points, challenges, and unmet needs for {{research_topic}}.
+After user selects 'C', load `./step-03-customer-pain-points.md` to analyze customer pain points, challenges, and unmet needs for {{research_topic}}.
 
 Remember: Always write research content to document immediately and emphasize current customer data with rigorous source verification!
 

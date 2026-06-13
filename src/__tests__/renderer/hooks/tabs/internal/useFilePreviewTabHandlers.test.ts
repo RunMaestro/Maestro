@@ -5,6 +5,7 @@ import { useModalStore } from '../../../../../renderer/stores/modalStore';
 import { useSettingsStore } from '../../../../../renderer/stores/settingsStore';
 import {
 	createMockAITab,
+	createMockBrowserTab,
 	createMockFileTab,
 	getSession,
 	resetTabHandlerStores,
@@ -43,6 +44,74 @@ describe('useFilePreviewTabHandlers', () => {
 		});
 		expect(session.activeFileTabId).toBe(session.filePreviewTabs[0].id);
 		expect(session.unifiedTabOrder.map((ref) => ref.type)).toEqual(['ai', 'file']);
+	});
+
+	it('clears the active browser tab when opening a new file tab', () => {
+		setupSession({
+			browserTabs: [createMockBrowserTab({ id: 'browser-1' })],
+			activeBrowserTabId: 'browser-1',
+		});
+		const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+		act(() => {
+			result.current.handleOpenFileTab({
+				path: '/repo/src/app.ts',
+				name: 'app.ts',
+				content: 'content',
+			});
+		});
+
+		const session = getSession();
+		expect(session.activeBrowserTabId).toBeNull();
+		expect(session.activeFileTabId).toBe(session.filePreviewTabs[0].id);
+		expect(session.inputMode).toBe('ai');
+	});
+
+	it('clears the active browser tab when re-opening an existing file tab', () => {
+		const fileTab = createMockFileTab({ id: 'file-1', path: '/repo/src/app.ts' });
+		setupSession({
+			filePreviewTabs: [fileTab],
+			browserTabs: [createMockBrowserTab({ id: 'browser-1' })],
+			activeBrowserTabId: 'browser-1',
+		});
+		const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+		act(() => {
+			result.current.handleOpenFileTab({
+				path: '/repo/src/app.ts',
+				name: 'app.ts',
+				content: 'new',
+			});
+		});
+
+		const session = getSession();
+		expect(session.activeBrowserTabId).toBeNull();
+		expect(session.activeFileTabId).toBe('file-1');
+		expect(session.inputMode).toBe('ai');
+	});
+
+	it('clears the active browser tab when replacing the current file tab in place', () => {
+		const fileTab = createMockFileTab({ id: 'file-1', path: '/repo/b.ts', name: 'b' });
+		setupSession({
+			filePreviewTabs: [fileTab],
+			activeFileTabId: 'file-1',
+			browserTabs: [createMockBrowserTab({ id: 'browser-1' })],
+			activeBrowserTabId: 'browser-1',
+		});
+		const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+		act(() => {
+			result.current.handleOpenFileTab(
+				{ path: '/repo/d.ts', name: 'd.ts', content: 'd' },
+				{ openInNewTab: false }
+			);
+		});
+
+		const session = getSession();
+		expect(session.activeBrowserTabId).toBeNull();
+		expect(session.activeFileTabId).toBe('file-1');
+		expect(session.filePreviewTabs[0].path).toBe('/repo/d.ts');
+		expect(session.inputMode).toBe('ai');
 	});
 
 	it('updates and selects an existing file tab by path', () => {

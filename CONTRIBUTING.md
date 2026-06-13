@@ -158,14 +158,14 @@ MAESTRO_DEMO_DIR=~/Desktop/my-demo npm run dev
 When working with multiple git worktrees, you can run Maestro instances in parallel by specifying different ports using the `VITE_PORT` environment variable:
 
 ```bash
-# In the main worktree (uses default port 5173)
+# In the main worktree (uses default port 17173)
 npm run dev
 
 # In worktree 2 (in another directory and terminal)
-VITE_PORT=5174 npm run dev
+VITE_PORT=17174 npm run dev
 
 # In worktree 3
-VITE_PORT=5175 npm run dev
+VITE_PORT=17175 npm run dev
 ```
 
 This allows you to develop and test different branches simultaneously without port conflicts.

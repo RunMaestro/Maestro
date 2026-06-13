@@ -22,6 +22,7 @@ const mockGuestWebContents = {
 		guestWebContentsEventHandlers.set(event, handler);
 	}),
 	executeJavaScript: vi.fn().mockResolvedValue(undefined),
+	paste: vi.fn(),
 };
 
 // Mock BrowserWindow instance methods
@@ -939,7 +940,7 @@ describe('app-lifecycle/window-manager', () => {
 			expect(mockEvent.preventDefault).toHaveBeenCalled();
 		});
 
-		it('should allow dev server navigation in development mode', async () => {
+		it('should allow only the dev server entry document in development mode', async () => {
 			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
 
 			const windowManager = createWindowManager({
@@ -961,10 +962,18 @@ describe('app-lifecycle/window-manager', () => {
 			);
 			const navigateHandler = willNavigateCall![1];
 
-			// Should allow dev server navigation
-			const mockEvent = { preventDefault: vi.fn() };
-			navigateHandler(mockEvent, 'http://localhost:5173/some/path');
-			expect(mockEvent.preventDefault).not.toHaveBeenCalled();
+			// The dev guard now matches production: only the app's own entry document
+			// (origin AND root pathname) may load top-level. The root URL is allowed
+			// so HMR/full-reloads keep working.
+			const rootEvent = { preventDefault: vi.fn() };
+			navigateHandler(rootEvent, 'http://localhost:5173/');
+			expect(rootEvent.preventDefault).not.toHaveBeenCalled();
+
+			// Same-origin sub-paths are blocked - page content belongs in a <webview>
+			// browser tab, never the top-level frame.
+			const subPathEvent = { preventDefault: vi.fn() };
+			navigateHandler(subPathEvent, 'http://localhost:5173/some/path');
+			expect(subPathEvent.preventDefault).toHaveBeenCalled();
 		});
 
 		it('should block file:// navigation in development mode', async () => {
@@ -1252,6 +1261,135 @@ describe('app-lifecycle/window-manager', () => {
 					permission: 'clipboard-read',
 					type: 'webview',
 				})
+			);
+		});
+
+		it('pastes into browser-tab form fields via guest.paste() on Cmd/Ctrl+V (#1063)', async () => {
+			// The permission handler denies `clipboard-read` to webviews, so
+			// Chromium's native Cmd/Ctrl+V silently fails inside browser-tab form
+			// fields. The before-input-event handler must intercept the paste chord
+			// and drive the privileged guest.paste() instead.
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+
+			const windowManager = createWindowManager({
+				windowStateStore: mockWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['windowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/path/to/preload.js',
+				rendererProductionUrl: 'app://app/index.html',
+				devServerUrl: 'http://localhost:5173',
+				useNativeTitleBar: false,
+				autoHideMenuBar: false,
+			});
+
+			windowManager.createWindow();
+
+			const attachHandler = webContentsEventHandlers.get('did-attach-webview');
+			attachHandler?.({} as any, mockGuestWebContents as any);
+
+			const beforeInputHandler = guestWebContentsEventHandlers.get('before-input-event');
+			expect(beforeInputHandler).toBeDefined();
+
+			// Cmd+V (macOS)
+			const metaEvent = { preventDefault: vi.fn() };
+			beforeInputHandler?.(metaEvent, {
+				type: 'keyDown',
+				key: 'v',
+				code: 'KeyV',
+				meta: true,
+				control: false,
+				alt: false,
+				shift: false,
+			});
+			expect(metaEvent.preventDefault).toHaveBeenCalled();
+			expect(mockGuestWebContents.paste).toHaveBeenCalledTimes(1);
+
+			// Ctrl+V (Windows/Linux)
+			const ctrlEvent = { preventDefault: vi.fn() };
+			beforeInputHandler?.(ctrlEvent, {
+				type: 'keyDown',
+				key: 'v',
+				code: 'KeyV',
+				meta: false,
+				control: true,
+				alt: false,
+				shift: false,
+			});
+			expect(ctrlEvent.preventDefault).toHaveBeenCalled();
+			expect(mockGuestWebContents.paste).toHaveBeenCalledTimes(2);
+
+			// The paste chord must NOT also be forwarded to the renderer as an app
+			// shortcut - it is fully consumed here.
+			expect(mockWebContents.send).not.toHaveBeenCalledWith(
+				'browser-tab:shortcutKey',
+				expect.objectContaining({ key: 'v' })
+			);
+
+			// The page-level fallback must also exclude V from its passthrough
+			// list. Otherwise it can race the privileged paste path above.
+			guestWebContentsEventHandlers.get('dom-ready')?.();
+			const injectedScript = mockGuestWebContents.executeJavaScript.mock.calls.at(-1)?.[0];
+			expect(injectedScript).toContain("'acxz'.indexOf(k)");
+			expect(injectedScript).not.toContain("'acvxz'.indexOf(k)");
+		});
+
+		it('does not hijack non-paste edit chords or plain "v" on browser-tab guests', async () => {
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+
+			const windowManager = createWindowManager({
+				windowStateStore: mockWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['windowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/path/to/preload.js',
+				rendererProductionUrl: 'app://app/index.html',
+				devServerUrl: 'http://localhost:5173',
+				useNativeTitleBar: false,
+				autoHideMenuBar: false,
+			});
+
+			windowManager.createWindow();
+
+			const attachHandler = webContentsEventHandlers.get('did-attach-webview');
+			attachHandler?.({} as any, mockGuestWebContents as any);
+
+			const beforeInputHandler = guestWebContentsEventHandlers.get('before-input-event');
+
+			// Plain "v" (no modifier) is normal typing - must pass through untouched.
+			const plainEvent = { preventDefault: vi.fn() };
+			beforeInputHandler?.(plainEvent, {
+				type: 'keyDown',
+				key: 'v',
+				code: 'KeyV',
+				meta: false,
+				control: false,
+				alt: false,
+				shift: false,
+			});
+			expect(plainEvent.preventDefault).not.toHaveBeenCalled();
+
+			// Cmd+Shift+V (paste-and-match-style etc.) is not the plain paste chord.
+			const shiftEvent = { preventDefault: vi.fn() };
+			beforeInputHandler?.(shiftEvent, {
+				type: 'keyDown',
+				key: 'v',
+				code: 'KeyV',
+				meta: true,
+				control: false,
+				alt: false,
+				shift: true,
+			});
+
+			// Cmd+Shift+V is not the plain paste chord, so the handler must NOT
+			// drive the privileged paste path. It is also not a text-editing
+			// passthrough, so it is consumed (preventDefault) and forwarded to the
+			// renderer as an app shortcut rather than reaching the page.
+			expect(mockGuestWebContents.paste).not.toHaveBeenCalled();
+			expect(shiftEvent.preventDefault).toHaveBeenCalled();
+			expect(mockWebContents.send).toHaveBeenCalledWith(
+				'browser-tab:shortcutKey',
+				expect.objectContaining({ key: 'v', shift: true })
 			);
 		});
 

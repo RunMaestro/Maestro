@@ -17,6 +17,10 @@ export interface GiantPreviewHandle {
 	findInContent(query: string): SearchHit[];
 	/** Select + scroll the matched range into view. No-op on out-of-range offsets. */
 	scrollToMatch(hit: SearchHit): void;
+	/** 1-based *source* line at the top of the viewport (soft-wrap aware). */
+	getTopLine(): number;
+	/** Scroll the given 1-based *source* line to the top of the viewport. */
+	scrollToLine(line: number): void;
 }
 
 /**
