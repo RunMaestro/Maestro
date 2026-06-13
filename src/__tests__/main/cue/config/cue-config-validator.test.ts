@@ -75,10 +75,21 @@ describe('validateSubscription — time.once', () => {
 		).toBe(true);
 	});
 
+	it('rejects a non-canonical fire_at (space instead of T) that Date.parse may accept', () => {
+		const found = errs({ ...base, fire_at: '2026-05-22 14:30:00-05:00' });
+		expect(
+			found.some((e) =>
+				/fire_at is required for time\.once events and must be an ISO-8601 timestamp with timezone/.test(
+					e
+				)
+			)
+		).toBe(true);
+	});
+
 	it('rejects fire_at without a timezone offset (naive local time)', () => {
 		const found = errs({ ...base, fire_at: '2026-05-22T14:30:00' });
 		expect(
-			found.some((e) => /fire_at must include a timezone offset \(Z or ±HH:MM\)/.test(e))
+			found.some((e) => /fire_at must include a timezone offset \(Z, ±HH:MM, or ±HHMM\)/.test(e))
 		).toBe(true);
 	});
 

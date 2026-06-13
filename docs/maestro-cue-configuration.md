@@ -45,7 +45,7 @@ subscriptions:
     interval_minutes: number # Required for time.heartbeat
     schedule_times: list # Required for time.scheduled (HH:MM strings)
     schedule_days: list # Optional for time.scheduled (mon, tue, wed, thu, fri, sat, sun)
-    fire_at: string # Required for time.once. ISO-8601 timestamp with timezone offset (Z or ±HH:MM)
+    fire_at: string # Required for time.once. ISO-8601 timestamp with timezone offset (Z, ±HH:MM, or ±HHMM)
     grace_minutes: number # Optional for time.once. Missed-fire window in minutes (default 360)
     self_destruct_on_failure: boolean # Optional for time.once. Remove sub on failed/timeout (default true)
     watch: string # Required for file.changed, task.pending (glob pattern)
@@ -372,7 +372,7 @@ The engine validates your YAML on every load. Common validation errors:
 | `"interval_minutes" is required`           | `time.heartbeat` events must specify a positive interval                                            |
 | `"schedule_times" is required`             | `time.scheduled` events must have at least one `HH:MM` time                                         |
 | `"fire_at" is required`                    | `time.once` events need an ISO-8601 timestamp with timezone offset (use `maestro-cli cue schedule`) |
-| `"fire_at" must include a timezone offset` | `time.once` `fire_at` must end with `Z` or `±HH:MM`                                                 |
+| `"fire_at" must include a timezone offset` | `time.once` `fire_at` must end with `Z`, `±HH:MM`, or `±HHMM`                                       |
 | `"watch" is required`                      | `file.changed` and `task.pending` events need a glob pattern                                        |
 | `"source_session" is required`             | `agent.completed` events need the name of the source agent                                          |
 | `"max_concurrent" must be between 1-10`    | Keep concurrent runs within the allowed range                                                       |

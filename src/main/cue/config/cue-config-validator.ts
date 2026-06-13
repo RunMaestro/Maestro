@@ -331,20 +331,26 @@ function validateEventSpecificFields(
 			}
 		}
 	} else if (event === 'time.once') {
-		// One-shot scheduled fire. `fire_at` must include a timezone — naive
-		// local times produce surprising behavior across DST boundaries and
-		// SSH-spawned remote runs (engine parses with `Date.parse`).
+		// One-shot scheduled fire. `fire_at` must be a canonical ISO-8601
+		// timestamp WITH a timezone - naive local times produce surprising
+		// behavior across DST boundaries and SSH-spawned remote runs. We match a
+		// strict subset rather than trusting `Date.parse`, whose acceptance of
+		// non-canonical strings (e.g. a space instead of `T`) is engine-dependent:
+		// ECMAScript only guarantees the Date Time String Format.
+		const fireAtBody = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?/;
+		const fireAtWithTz =
+			/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:?\d{2})$/;
 		if (
 			typeof sub.fire_at !== 'string' ||
-			sub.fire_at.length === 0 ||
+			!fireAtBody.test(sub.fire_at) ||
 			!Number.isFinite(Date.parse(sub.fire_at))
 		) {
 			errors.push(
 				`${prefix}: fire_at is required for time.once events and must be an ISO-8601 timestamp with timezone (e.g. "2026-05-22T14:30:00-05:00")`
 			);
-		} else if (!/Z$|[+-]\d{2}:?\d{2}$/.test(sub.fire_at)) {
+		} else if (!fireAtWithTz.test(sub.fire_at)) {
 			errors.push(
-				`${prefix}: fire_at must include a timezone offset (Z or ±HH:MM) — naive local times produce surprising behavior across DST/SSH boundaries`
+				`${prefix}: fire_at must include a timezone offset (Z, ±HH:MM, or ±HHMM) - naive local times produce surprising behavior across DST/SSH boundaries`
 			);
 		}
 		if (sub.grace_minutes !== undefined) {

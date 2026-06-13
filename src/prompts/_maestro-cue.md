@@ -33,7 +33,7 @@ Each subscription has a unique `name`, an `event` type, an `enabled` flag, a `pr
 
 `time.once` is the subsystem you should reach for **any time a user asks for a one-off action tied to a clock**. Phrases like "in 20 minutes do X", "tomorrow at 9am email me a summary", "remind me at 4pm to push the rc branch", or "schedule a 1h check-in" all map to `time.once` - not to `time.heartbeat`, not to `time.scheduled`, and definitely not to hand-rolled `setTimeout` shims in a prompt.
 
-**Trigger:** poll-based at roughly 30-second granularity. The required `fire_at` field is an ISO-8601 timestamp **with a timezone** (`Z` or `±HH:MM`); anything missing the offset is rejected at load time. The subscription fires once when the wall clock crosses `fire_at`.
+**Trigger:** poll-based at roughly 30-second granularity. The required `fire_at` field is an ISO-8601 timestamp **with a timezone** (`Z`, `±HH:MM`, or the colon-less `±HHMM`); anything missing the offset is rejected at load time. The subscription fires once when the wall clock crosses `fire_at`.
 
 **Actions:** every `action` already supported by Cue works here.
 

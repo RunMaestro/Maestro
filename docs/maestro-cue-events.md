@@ -147,9 +147,9 @@ Fires exactly once at a specific wall-clock moment, then deletes itself from `cu
 
 **Required fields:**
 
-| Field     | Type              | Description                                                                                                                                |
-| --------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `fire_at` | string (ISO-8601) | The wall-clock moment to fire. **Must include a timezone offset** (`Z` or `±HH:MM`). Anything missing the offset is rejected at load time. |
+| Field     | Type              | Description                                                                                                                                                         |
+| --------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `fire_at` | string (ISO-8601) | The wall-clock moment to fire. **Must include a timezone offset** (`Z`, `±HH:MM`, or the colon-less `±HHMM`). Anything missing the offset is rejected at load time. |
 
 **Optional fields:**
 
