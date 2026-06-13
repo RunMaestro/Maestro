@@ -58,12 +58,20 @@ export interface WebHandlerDependencies {
  * can locate it. Centralized so `ensureCliServer` and `live:startServer`
  * cannot drift on pid/startedAt semantics or future fields.
  */
-function refreshCliDiscoveryFile(port: number, token: string): void {
+function getMatchingCliDiscoveryStartedAt(port: number, token: string): number | undefined {
+	const info = readCliServerInfo();
+	if (info?.port === port && info.token === token && info.pid === process.pid) {
+		return info.startedAt;
+	}
+	return undefined;
+}
+
+function refreshCliDiscoveryFile(port: number, token: string, startedAt = Date.now()): void {
 	writeCliServerInfo({
 		port,
 		token,
 		pid: process.pid,
-		startedAt: Date.now(),
+		startedAt,
 	});
 }
 
@@ -112,7 +120,9 @@ export async function ensureCliServer(deps: WebHandlerDependencies): Promise<boo
 				logger.info(`CLI server running on port ${port}`, 'CliServer');
 				refreshCliDiscoveryFile(port, token);
 			} else {
-				refreshCliDiscoveryFile(webServer.getPort(), webServer.getSecurityToken());
+				const port = webServer.getPort();
+				const token = webServer.getSecurityToken();
+				refreshCliDiscoveryFile(port, token, getMatchingCliDiscoveryStartedAt(port, token));
 			}
 
 			if (discoveryFileMatches(webServer.getPort(), webServer.getSecurityToken())) {
@@ -208,7 +218,7 @@ export function startCliDiscoveryWatchdog(
 		}
 		logger.warn('CLI discovery file is missing or stale — watchdog republishing', 'CliServer');
 		try {
-			refreshCliDiscoveryFile(port, token);
+			refreshCliDiscoveryFile(port, token, getMatchingCliDiscoveryStartedAt(port, token));
 		} catch (err: any) {
 			logger.error(
 				`Watchdog failed to refresh CLI discovery file: ${err?.message ?? err}`,
@@ -454,7 +464,9 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 			// Already running — refresh discovery file in case it's stale.
 			// Same non-fatal treatment: server is up, CLI discovery is secondary.
 			try {
-				refreshCliDiscoveryFile(webServer.getPort(), webServer.getSecurityToken());
+				const port = webServer.getPort();
+				const token = webServer.getSecurityToken();
+				refreshCliDiscoveryFile(port, token, getMatchingCliDiscoveryStartedAt(port, token));
 			} catch (err: any) {
 				logger.error(`Failed to refresh CLI discovery file: ${err?.message ?? err}`, 'WebServer');
 			}

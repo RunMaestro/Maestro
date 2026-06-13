@@ -1454,6 +1454,32 @@ describe('WebSocketMessageHandler', () => {
 			expect(callbacks.configureAutoRun).not.toHaveBeenCalled();
 		});
 
+		it('should reject configure auto run with absolute document filename', () => {
+			handler.handleMessage(client, {
+				type: 'configure_auto_run',
+				sessionId: 'session-1',
+				documents: [{ filename: '/tmp/doc.md' }],
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('error');
+			expect(response.message).toContain('Invalid document filename');
+			expect(callbacks.configureAutoRun).not.toHaveBeenCalled();
+		});
+
+		it('should reject configure auto run with traversal document filename', () => {
+			handler.handleMessage(client, {
+				type: 'configure_auto_run',
+				sessionId: 'session-1',
+				documents: [{ filename: '../doc.md' }],
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('error');
+			expect(response.message).toContain('Invalid document filename');
+			expect(callbacks.configureAutoRun).not.toHaveBeenCalled();
+		});
+
 		it('should forward configure auto run with saveAsPlaybook', async () => {
 			(callbacks.configureAutoRun as any).mockResolvedValue({
 				success: true,

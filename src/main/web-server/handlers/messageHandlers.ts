@@ -1577,6 +1577,10 @@ export class WebSocketMessageHandler {
 				this.sendError(client, 'Each document must have a non-empty string filename');
 				return;
 			}
+			if (!this.isSafeAutoRunFilename(doc.filename)) {
+				this.sendError(client, 'Invalid document filename');
+				return;
+			}
 			if (doc.resetOnCompletion !== undefined && typeof doc.resetOnCompletion !== 'boolean') {
 				this.sendError(client, 'resetOnCompletion must be a boolean if provided');
 				return;
@@ -2289,10 +2293,7 @@ export class WebSocketMessageHandler {
 		if (
 			typeof filename !== 'string' ||
 			filename.length === 0 ||
-			filename.includes('..') ||
-			filename.includes('\\') ||
-			filename.startsWith('/') ||
-			/^[A-Za-z]:[\\/]/.test(filename)
+			!this.isSafeAutoRunFilename(filename)
 		) {
 			this.sendError(client, 'Invalid filename');
 			return;
@@ -2705,9 +2706,7 @@ export class WebSocketMessageHandler {
 			if (!entry || typeof entry !== 'object') return null;
 			const e = entry as { filename?: unknown; resetOnCompletion?: unknown };
 			if (typeof e.filename !== 'string' || e.filename.trim() === '') return null;
-			if (e.filename.includes('..') || e.filename.includes('\\')) return null;
-			if (e.filename.startsWith('/')) return null;
-			if (/^[A-Za-z]:[\\/]/.test(e.filename)) return null;
+			if (!this.isSafeAutoRunFilename(e.filename)) return null;
 			let resetOnCompletion = false;
 			if (e.resetOnCompletion !== undefined) {
 				if (typeof e.resetOnCompletion !== 'boolean') return null;
@@ -2719,6 +2718,16 @@ export class WebSocketMessageHandler {
 			});
 		}
 		return out;
+	}
+
+	private isSafeAutoRunFilename(filename: string): boolean {
+		return (
+			filename.length > 0 &&
+			!filename.includes('..') &&
+			!filename.includes('\\') &&
+			!filename.startsWith('/') &&
+			!/^[A-Za-z]:[\\/]/.test(filename)
+		);
 	}
 
 	/**

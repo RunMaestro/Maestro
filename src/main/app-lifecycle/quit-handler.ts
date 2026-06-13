@@ -367,6 +367,7 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 		webServer?.stop().catch((err: unknown) => {
 			logger.error(`Error stopping web server: ${err}`, 'Shutdown');
 		});
+		deleteCliServerInfo();
 
 		// Delete CLI server discovery file so CLI knows we're gone
 		logger.info('Deleting CLI server discovery file', 'Shutdown');

@@ -289,6 +289,7 @@ export interface AppModalsProps {
 	onCloseBatchRunner: () => void;
 	onStartBatchRun: (config: BatchRunConfig) => void | Promise<void>;
 	onSaveBatchPrompt: (prompt: string) => void;
+	initialBatchRunConfig?: Partial<BatchRunConfig> | null;
 	showConfirmation: (message: string, onConfirm: () => void) => void;
 	autoRunDocumentList: string[];
 	autoRunDocumentTree?: Array<{
@@ -754,6 +755,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		onCloseBatchRunner,
 		onStartBatchRun,
 		onSaveBatchPrompt,
+		initialBatchRunConfig,
 		showConfirmation,
 		autoRunDocumentList,
 		autoRunDocumentTree,
@@ -1111,6 +1113,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				onCloseBatchRunner={onCloseBatchRunner}
 				onStartBatchRun={onStartBatchRun}
 				onSaveBatchPrompt={onSaveBatchPrompt}
+				initialBatchRunConfig={initialBatchRunConfig}
 				showConfirmation={showConfirmation}
 				autoRunDocumentList={autoRunDocumentList}
 				autoRunDocumentTree={autoRunDocumentTree}

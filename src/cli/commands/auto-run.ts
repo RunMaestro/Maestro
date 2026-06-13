@@ -3,6 +3,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { withMaestroClient, resolveTargetSessionId } from '../services/maestro-client';
+import { readSessions } from '../services/storage';
 
 interface AutoRunOptions {
 	agent?: string;
@@ -44,13 +45,6 @@ export async function autoRun(docs: string[], options: AutoRunOptions): Promise<
 		resolvedPaths.push(absolutePath);
 	}
 
-	const sessionId = resolveTargetSessionId(options.agent);
-
-	const documents = resolvedPaths.map((d) => ({
-		filename: d,
-		resetOnCompletion: options.resetOnCompletion || false,
-	}));
-
 	const loopEnabled = options.loop || options.maxLoops !== undefined;
 	const maxLoops =
 		options.maxLoops !== undefined
@@ -62,6 +56,26 @@ export async function autoRun(docs: string[], options: AutoRunOptions): Promise<
 	if (maxLoops !== undefined && (isNaN(maxLoops) || maxLoops < 1)) {
 		console.error('Error: --max-loops must be a positive integer');
 		process.exit(1);
+	}
+
+	const sessionId = resolveTargetSessionId(options.agent);
+	const session = readSessions().find((s) => s.id === sessionId);
+	if (!session?.autoRunFolderPath) {
+		console.error('Error: Selected agent has no Auto Run folder configured');
+		process.exit(1);
+		return;
+	}
+
+	const autoRunFolderPath = path.resolve(session.autoRunFolderPath);
+
+	const documents: Array<{ filename: string; resetOnCompletion: boolean }> = [];
+	for (const documentPath of resolvedPaths) {
+		const filename = resolveAutoRunDocumentFilename(documentPath, autoRunFolderPath);
+		if (!filename) return;
+		documents.push({
+			filename,
+			resetOnCompletion: options.resetOnCompletion || false,
+		});
 	}
 
 	// Worktree configuration: requires --launch and --branch.
@@ -155,4 +169,20 @@ export async function autoRun(docs: string[], options: AutoRunOptions): Promise<
 		console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
 		process.exit(1);
 	}
+}
+
+function resolveAutoRunDocumentFilename(
+	documentPath: string,
+	autoRunFolderPath: string
+): string | null {
+	const relativePath = path.relative(autoRunFolderPath, documentPath);
+	if (relativePath === '' || relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
+		console.error(
+			`Error: File must be inside the selected agent's Auto Run folder: ${documentPath}`
+		);
+		process.exit(1);
+		return null;
+	}
+
+	return relativePath.split(path.sep).join('/');
 }

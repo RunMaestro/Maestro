@@ -13,7 +13,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 
-interface CliServerInfo {
+export interface CliServerInfo {
 	port: number;
 	token: string;
 	pid: number;
@@ -55,11 +55,40 @@ export function writeCliServerInfo(info: CliServerInfo): void {
 	const filePath = getDiscoveryFilePath();
 	const dir = path.dirname(filePath);
 	if (!fs.existsSync(dir)) {
-		fs.mkdirSync(dir, { recursive: true });
+		fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+	} else {
+		const stat = fs.statSync(dir);
+		if ((stat.mode & 0o077) !== 0) {
+			fs.chmodSync(dir, 0o700);
+		}
 	}
 	const tmpPath = filePath + '.tmp';
-	fs.writeFileSync(tmpPath, JSON.stringify(info, null, 2), 'utf-8');
+	fs.writeFileSync(tmpPath, JSON.stringify(info, null, 2), {
+		encoding: 'utf-8',
+		mode: 0o600,
+	});
+	fs.chmodSync(tmpPath, 0o600);
 	fs.renameSync(tmpPath, filePath);
+	fs.chmodSync(filePath, 0o600);
+}
+
+function isValidCliServerInfo(data: unknown): data is CliServerInfo {
+	if (!data || typeof data !== 'object') return false;
+	const info = data as Partial<CliServerInfo>;
+	return (
+		typeof info.port === 'number' &&
+		Number.isInteger(info.port) &&
+		info.port >= 1 &&
+		info.port <= 65535 &&
+		typeof info.token === 'string' &&
+		info.token.length > 0 &&
+		typeof info.pid === 'number' &&
+		Number.isInteger(info.pid) &&
+		info.pid > 0 &&
+		typeof info.startedAt === 'number' &&
+		Number.isInteger(info.startedAt) &&
+		info.startedAt >= 0
+	);
 }
 
 /**
@@ -70,16 +99,8 @@ export function readCliServerInfo(): CliServerInfo | null {
 	try {
 		const filePath = getDiscoveryFilePath();
 		const content = fs.readFileSync(filePath, 'utf-8');
-		const data = JSON.parse(content) as CliServerInfo;
-		if (
-			typeof data.port === 'number' &&
-			typeof data.token === 'string' &&
-			typeof data.pid === 'number' &&
-			typeof data.startedAt === 'number'
-		) {
-			return data;
-		}
-		return null;
+		const data = JSON.parse(content);
+		return isValidCliServerInfo(data) ? data : null;
 	} catch {
 		return null;
 	}
@@ -109,6 +130,7 @@ export function isCliServerRunning(): boolean {
 		process.kill(info.pid, 0); // Doesn't kill, just checks if process exists
 		return true;
 	} catch {
+		deleteCliServerInfo();
 		return false;
 	}
 }

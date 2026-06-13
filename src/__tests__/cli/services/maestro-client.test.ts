@@ -44,6 +44,9 @@ vi.mock('../../../shared/cli-server-discovery', () => ({
 
 vi.mock('../../../cli/services/storage', () => ({
 	readSessions: vi.fn(),
+	readSettings: vi.fn(),
+	getSessionById: vi.fn(),
+	resolveAgentId: vi.fn(),
 }));
 
 import {
@@ -52,7 +55,7 @@ import {
 	resolveSessionId,
 } from '../../../cli/services/maestro-client';
 import { readCliServerInfo, isCliServerRunning } from '../../../shared/cli-server-discovery';
-import { readSessions } from '../../../cli/services/storage';
+import { getSessionById, readSessions, readSettings } from '../../../cli/services/storage';
 import WebSocket from 'ws';
 
 describe('MaestroClient', () => {
@@ -253,19 +256,48 @@ describe('MaestroClient', () => {
 			expect(result.type).toBe('pong');
 		});
 
-		it('should ignore non-JSON messages', async () => {
+		it('should reject pending requests and surface non-JSON messages', async () => {
 			const client = await createConnectedClient();
 
 			const commandPromise = client.sendCommand<{ type: string }>({ type: 'ping' }, 'pong');
 
 			// Send invalid JSON
-			mockWsInstance.emit('message', 'not json');
+			expect(() => mockWsInstance.emit('message', 'not json')).toThrow();
 
-			// Then send valid matching message
+			await expect(commandPromise).rejects.toThrow('Invalid message from Maestro desktop app');
+		});
+
+		it('should reject ambiguous responses without requestId', async () => {
+			const client = await createConnectedClient();
+
+			const firstPromise = client.sendCommand<{ type: string }>({ type: 'ping' }, 'pong');
+			const secondPromise = client.sendCommand<{ type: string }>({ type: 'ping' }, 'pong');
+
 			mockWsInstance.emit('message', JSON.stringify({ type: 'pong' }));
 
-			const result = await commandPromise;
-			expect(result.type).toBe('pong');
+			await expect(firstPromise).rejects.toThrow('Ambiguous pong response without requestId');
+			await expect(secondPromise).rejects.toThrow('Ambiguous pong response without requestId');
+		});
+
+		it('should reject error responses matched by requestId', async () => {
+			const client = await createConnectedClient();
+
+			const commandPromise = client.sendCommand<{ type: string }>({ type: 'ping' }, 'pong');
+			const sentPayload = JSON.parse(mockWsInstance.send.mock.calls[0][0] as string) as Record<
+				string,
+				unknown
+			>;
+
+			mockWsInstance.emit(
+				'message',
+				JSON.stringify({
+					type: 'error',
+					message: 'desktop failed',
+					requestId: sentPayload.requestId,
+				})
+			);
+
+			await expect(commandPromise).rejects.toThrow('desktop failed');
 		});
 	});
 
@@ -382,6 +414,8 @@ describe('withMaestroClient()', () => {
 describe('resolveSessionId()', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		vi.mocked(readSettings).mockReturnValue({});
+		vi.mocked(getSessionById).mockReturnValue(undefined);
 	});
 
 	it('should return provided session option directly', () => {
@@ -412,19 +446,9 @@ describe('resolveSessionId()', () => {
 		expect(result).toBe('first-session');
 	});
 
-	it('should exit when no sessions exist and no option provided', () => {
+	it('should throw when no sessions exist and no option provided', () => {
 		vi.mocked(readSessions).mockReturnValue([]);
-		const processExitSpy = vi.spyOn(process, 'exit').mockImplementation(() => {
-			throw new Error('process.exit called');
-		});
-		const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-		expect(() => resolveSessionId({})).toThrow('process.exit called');
-
-		expect(processExitSpy).toHaveBeenCalledWith(1);
-		expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('No agents found'));
-
-		processExitSpy.mockRestore();
-		consoleErrorSpy.mockRestore();
+		expect(() => resolveSessionId({})).toThrow('No Maestro sessions found');
 	});
 });

@@ -8,11 +8,13 @@ export async function status(): Promise<void> {
 	if (!info) {
 		console.log('Maestro desktop app is not running');
 		process.exit(1);
+		return;
 	}
 
 	if (!isCliServerRunning()) {
 		console.log('Maestro discovery file is stale (app may have crashed)');
 		process.exit(1);
+		return;
 	}
 
 	try {

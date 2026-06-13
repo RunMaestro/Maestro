@@ -770,6 +770,27 @@ describe('web handlers', () => {
 			);
 		});
 
+		it('preserves startedAt when republishing an already-running matching server', async () => {
+			mockWebServer.isActive.mockReturnValue(true);
+			lastWrittenInfo = {
+				port: 8080,
+				token: 'mock-security-token',
+				pid: process.pid,
+				startedAt: 1700000000000,
+			};
+
+			const ok = await ensureCliServer(buildDeps());
+
+			expect(ok).toBe(true);
+			expect(writeCliServerInfo).toHaveBeenCalledWith(
+				expect.objectContaining({
+					port: 8080,
+					token: 'mock-security-token',
+					startedAt: 1700000000000,
+				})
+			);
+		});
+
 		it('retries when start() throws and succeeds on a subsequent attempt', async () => {
 			webServerRef.current = null;
 			const failingServer = {

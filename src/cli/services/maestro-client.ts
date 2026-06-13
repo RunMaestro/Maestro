@@ -3,7 +3,7 @@
 
 import WebSocket from 'ws';
 import { readCliServerInfo, isCliServerRunning } from '../../shared/cli-server-discovery';
-import { readSessions, resolveAgentId } from './storage';
+import { getSessionById, readSessions, readSettings, resolveAgentId } from './storage';
 
 const CONNECT_TIMEOUT_MS = 5000;
 const DEFAULT_COMMAND_TIMEOUT_MS = 10000;
@@ -137,33 +137,68 @@ export class MaestroClient {
 		});
 
 		this.ws.on('message', (data) => {
+			let msg: Record<string, unknown>;
 			try {
-				const msg = JSON.parse(data.toString()) as Record<string, unknown>;
-				const msgType = msg.type as string;
-				const msgRequestId = msg.requestId as string | undefined;
+				msg = JSON.parse(data.toString()) as Record<string, unknown>;
+			} catch (error) {
+				this.rejectAllPending(new Error('Invalid message from Maestro desktop app'));
+				throw error;
+			}
 
-				// Try matching by requestId first (exact match)
-				if (msgRequestId && this.pendingRequests.has(msgRequestId)) {
-					const pending = this.pendingRequests.get(msgRequestId)!;
+			const msgType = msg.type as string;
+			const msgRequestId = msg.requestId as string | undefined;
+
+			if (msgRequestId) {
+				const pending = this.pendingRequests.get(msgRequestId);
+				if (!pending) return;
+				if (pending.expectedType !== msgType && msgType !== 'error') return;
+				this.settleRequest(msgRequestId, pending, msg);
+				return;
+			}
+
+			const matchingRequests = [...this.pendingRequests.entries()].filter(
+				([, pending]) => pending.expectedType === msgType
+			);
+			if (matchingRequests.length === 1) {
+				const [requestId, pending] = matchingRequests[0];
+				this.settleRequest(requestId, pending, msg);
+			} else if (matchingRequests.length > 1) {
+				const error = new Error(`Ambiguous ${msgType} response without requestId`);
+				for (const [requestId, pending] of matchingRequests) {
 					clearTimeout(pending.timeout);
-					this.pendingRequests.delete(msgRequestId);
-					pending.resolve(msg);
-					return;
+					this.pendingRequests.delete(requestId);
+					pending.reject(error);
 				}
-
-				// Fall back to matching by response type
-				for (const [requestId, pending] of this.pendingRequests) {
-					if (pending.expectedType === msgType) {
-						clearTimeout(pending.timeout);
-						this.pendingRequests.delete(requestId);
-						pending.resolve(msg);
-						return;
-					}
-				}
-			} catch {
-				// Ignore non-JSON messages
 			}
 		});
+	}
+
+	private settleRequest(
+		requestId: string,
+		pending: PendingRequest,
+		msg: Record<string, unknown>
+	): void {
+		clearTimeout(pending.timeout);
+		this.pendingRequests.delete(requestId);
+		if (msg.type === 'error' || msg.success === false) {
+			const message =
+				typeof msg.error === 'string'
+					? msg.error
+					: typeof msg.message === 'string'
+						? msg.message
+						: 'Command failed';
+			pending.reject(new Error(message));
+			return;
+		}
+		pending.resolve(msg);
+	}
+
+	private rejectAllPending(error: Error): void {
+		for (const [, pending] of this.pendingRequests) {
+			clearTimeout(pending.timeout);
+			pending.reject(error);
+		}
+		this.pendingRequests.clear();
 	}
 }
 
@@ -171,15 +206,19 @@ export class MaestroClient {
  * Resolve session ID from CLI options.
  * Uses the provided --session value, or falls back to the first available session.
  */
-export function resolveSessionId(options: { session?: string }): string {
+export function resolveSessionId(options: { session?: string } = {}): string {
 	if (options.session) {
 		return options.session;
 	}
 
+	const settings = readSettings();
+	if (typeof settings.activeSessionId === 'string' && getSessionById(settings.activeSessionId)) {
+		return settings.activeSessionId;
+	}
+
 	const sessions = readSessions();
 	if (sessions.length === 0) {
-		console.error('Error: No agents found. Create an agent in Maestro first.');
-		process.exit(1);
+		throw new Error('No Maestro sessions found. Pass --session <id> to target a specific session.');
 	}
 
 	return sessions[0].id;

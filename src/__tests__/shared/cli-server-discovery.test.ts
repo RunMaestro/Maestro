@@ -16,6 +16,8 @@ vi.mock('fs', () => ({
 	mkdirSync: vi.fn(),
 	renameSync: vi.fn(),
 	unlinkSync: vi.fn(),
+	chmodSync: vi.fn(),
+	statSync: vi.fn(),
 }));
 
 vi.mock('os', () => ({
@@ -47,6 +49,8 @@ const mockFs = {
 	mkdirSync: fs.mkdirSync as ReturnType<typeof vi.fn>,
 	renameSync: fs.renameSync as ReturnType<typeof vi.fn>,
 	unlinkSync: fs.unlinkSync as ReturnType<typeof vi.fn>,
+	chmodSync: fs.chmodSync as ReturnType<typeof vi.fn>,
+	statSync: fs.statSync as ReturnType<typeof vi.fn>,
 };
 
 const mockOs = {
@@ -81,6 +85,8 @@ describe('cli-server-discovery', () => {
 		mockFs.mkdirSync.mockReturnValue(undefined);
 		mockFs.renameSync.mockReturnValue(undefined);
 		mockFs.unlinkSync.mockReturnValue(undefined);
+		mockFs.chmodSync.mockReturnValue(undefined);
+		mockFs.statSync.mockReturnValue({ mode: 0o700 });
 	});
 
 	afterEach(() => {
@@ -255,9 +261,14 @@ describe('cli-server-discovery', () => {
 			expect(mockFs.writeFileSync).toHaveBeenCalledWith(
 				expectedTmp,
 				JSON.stringify(sampleInfo, null, 2),
-				'utf-8'
+				{
+					encoding: 'utf-8',
+					mode: 0o600,
+				}
 			);
+			expect(mockFs.chmodSync).toHaveBeenCalledWith(expectedTmp, 0o600);
 			expect(mockFs.renameSync).toHaveBeenCalledWith(expectedTmp, expectedFile);
+			expect(mockFs.chmodSync).toHaveBeenCalledWith(expectedFile, 0o600);
 		});
 
 		it('should create directory if it does not exist', () => {
@@ -267,7 +278,7 @@ describe('cli-server-discovery', () => {
 
 			expect(mockFs.mkdirSync).toHaveBeenCalledWith(
 				path.join('/Users/testuser', 'Library', 'Application Support', 'maestro'),
-				{ recursive: true }
+				{ recursive: true, mode: 0o700 }
 			);
 		});
 
@@ -277,6 +288,18 @@ describe('cli-server-discovery', () => {
 			writeCliServerInfo(sampleInfo);
 
 			expect(mockFs.mkdirSync).not.toHaveBeenCalled();
+		});
+
+		it('should restrict existing config directory permissions when too broad', () => {
+			mockFs.existsSync.mockReturnValue(true);
+			mockFs.statSync.mockReturnValue({ mode: 0o755 });
+
+			writeCliServerInfo(sampleInfo);
+
+			expect(mockFs.chmodSync).toHaveBeenCalledWith(
+				path.join('/Users/testuser', 'Library', 'Application Support', 'maestro'),
+				0o700
+			);
 		});
 	});
 
@@ -360,6 +383,27 @@ describe('cli-server-discovery', () => {
 			const result = readCliServerInfo();
 			expect(result).toBeNull();
 		});
+
+		it('should return null when port is outside TCP range', () => {
+			mockFs.readFileSync.mockReturnValue(JSON.stringify({ ...sampleInfo, port: 70000 }));
+
+			const result = readCliServerInfo();
+			expect(result).toBeNull();
+		});
+
+		it('should return null when pid is not positive', () => {
+			mockFs.readFileSync.mockReturnValue(JSON.stringify({ ...sampleInfo, pid: 0 }));
+
+			const result = readCliServerInfo();
+			expect(result).toBeNull();
+		});
+
+		it('should return null when startedAt is fractional', () => {
+			mockFs.readFileSync.mockReturnValue(JSON.stringify({ ...sampleInfo, startedAt: 1.5 }));
+
+			const result = readCliServerInfo();
+			expect(result).toBeNull();
+		});
 	});
 
 	describe('deleteCliServerInfo', () => {
@@ -414,6 +458,7 @@ describe('cli-server-discovery', () => {
 				const result = isCliServerRunning();
 
 				expect(result).toBe(false);
+				expect(mockFs.unlinkSync).toHaveBeenCalled();
 			} finally {
 				process.kill = originalKill;
 			}
