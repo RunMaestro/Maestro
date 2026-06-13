@@ -206,6 +206,14 @@ export class HistoryManager {
 			data = { version: HISTORY_VERSION, sessionId, projectPath, entries: [] };
 		}
 
+		// A file can parse as valid JSON yet still lack a usable `entries` array
+		// (legacy/partial writes, hand-edited files, or `null`/non-object content).
+		// The catch above only covers JSON.parse throwing, so guard the shape here
+		// before unshift can throw "Cannot read properties of undefined". (MAESTRO-QK)
+		if (!data || typeof data !== 'object' || !Array.isArray(data.entries)) {
+			data = { version: HISTORY_VERSION, sessionId, projectPath, entries: [] };
+		}
+
 		// Add to beginning (most recent first)
 		data.entries.unshift(entry);
 

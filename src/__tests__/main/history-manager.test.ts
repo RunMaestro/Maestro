@@ -625,6 +625,47 @@ describe('HistoryManager', () => {
 			expect(written.entries[0].id).toBe('new-entry');
 		});
 
+		// Regression: a file that parses as valid JSON but has no `entries` array
+		// (legacy/partial write) must not crash with "Cannot read properties of
+		// undefined (reading 'unshift')". (MAESTRO-QK)
+		it('should recover when existing file parses but lacks an entries array', () => {
+			const filePath = path.join(
+				'/mock/userData',
+				'history',
+				`${sanitizeSessionId('session-1')}.json`
+			);
+			mockExistsSync.mockImplementation((p: fs.PathLike) => p.toString() === filePath);
+			mockReadFileSync.mockReturnValue(
+				JSON.stringify({ version: HISTORY_VERSION, sessionId: 'session-1' })
+			);
+
+			const entry = createMockEntry({ id: 'recovered' });
+			// Should not throw
+			manager.addEntry('session-1', '/test/project', entry);
+
+			const written = JSON.parse(mockWriteFileSync.mock.calls[0][1] as string);
+			expect(written.entries).toHaveLength(1);
+			expect(written.entries[0].id).toBe('recovered');
+		});
+
+		it('should recover when existing file parses to null or a non-object', () => {
+			const filePath = path.join(
+				'/mock/userData',
+				'history',
+				`${sanitizeSessionId('session-1')}.json`
+			);
+			mockExistsSync.mockImplementation((p: fs.PathLike) => p.toString() === filePath);
+			mockReadFileSync.mockReturnValue('null');
+
+			const entry = createMockEntry({ id: 'from-null' });
+			// Should not throw "Cannot set/read properties of null"
+			manager.addEntry('session-1', '/test/project', entry);
+
+			const written = JSON.parse(mockWriteFileSync.mock.calls[0][1] as string);
+			expect(written.entries).toHaveLength(1);
+			expect(written.entries[0].id).toBe('from-null');
+		});
+
 		it('should log error on write failure', () => {
 			mockExistsSync.mockReturnValue(false);
 			mockWriteFileSync.mockImplementation(() => {

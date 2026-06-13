@@ -772,6 +772,10 @@ export function DocumentGraphView({
 		window.maestro.fs
 			.stat(fullPath, sshRemoteId)
 			.then((stats) => {
+				if (!stats) {
+					setSelectedNodeStats(null);
+					return;
+				}
 				setSelectedNodeStats({
 					createdAt: stats.createdAt ? new Date(stats.createdAt) : null,
 					modifiedAt: stats.modifiedAt ? new Date(stats.modifiedAt) : null,

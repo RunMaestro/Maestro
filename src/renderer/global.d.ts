@@ -639,7 +639,7 @@ interface MaestroAPI {
 			modifiedAt: string;
 			isDirectory: boolean;
 			isFile: boolean;
-		}>;
+		} | null>;
 		directorySize: (
 			dirPath: string,
 			sshRemoteId?: string

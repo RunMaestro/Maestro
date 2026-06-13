@@ -460,9 +460,9 @@ describe('filesystem IPC integration', () => {
 		});
 		await expect(invoke('fs:delete', defaultDeleteDir)).resolves.toEqual({ success: true });
 
-		await expect(invoke('fs:stat', path.join(workspace, 'missing.txt'))).rejects.toThrow(
-			'Failed to get file stats:'
-		);
+		// Missing files now resolve to null instead of throwing so callers can
+		// handle absence without an unhandled IPC rejection. (MAESTRO-MH/ME)
+		await expect(invoke('fs:stat', path.join(workspace, 'missing.txt'))).resolves.toBeNull();
 		await expect(
 			invoke('fs:writeFile', path.join(workspace, 'missing', 'file.txt'), 'x')
 		).rejects.toThrow('Failed to write file:');

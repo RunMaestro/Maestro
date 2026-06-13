@@ -1023,11 +1023,15 @@ export const FilePreview = React.memo(
 				window.maestro.fs
 					.stat(file.path, sshRemoteId)
 					.then((stats) =>
-						setFileStats({
-							size: stats.size,
-							createdAt: stats.createdAt,
-							modifiedAt: stats.modifiedAt,
-						})
+						setFileStats(
+							stats
+								? {
+										size: stats.size,
+										createdAt: stats.createdAt,
+										modifiedAt: stats.modifiedAt,
+									}
+								: null
+						)
 					)
 					.catch((err) => {
 						console.error('Failed to get file stats:', err);
