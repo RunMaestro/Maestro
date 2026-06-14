@@ -77,7 +77,13 @@ import { getParentDir, getBasename } from '../../../shared/formatters';
 import { FilePreviewToc } from './FilePreviewToc';
 import { MarkdownEditor } from './markdownEditor';
 import type { MarkdownEditorHandle } from './markdownEditor';
-import { domGetTopLine, domScrollToLine } from './lineSync';
+import {
+	domGetTopLine,
+	domScrollToLine,
+	domGetTopLineByAttr,
+	domScrollToLineByAttr,
+} from './lineSync';
+import { rehypeSourceLine } from './rehypeSourceLine';
 import { logger } from '../../utils/logger';
 
 // Lazy-loaded large-file markdown renderer. Keeping it out of the main bundle
@@ -554,8 +560,10 @@ export const FilePreview = React.memo(
 			[fileTree, fileTreeIndices, cwd, homeDir]
 		);
 
-		// Memoize rehypePlugins array to prevent unnecessary re-renders
-		const rehypePlugins = useMemo(() => [rehypeRaw, rehypeSlug], []);
+		// Memoize rehypePlugins array to prevent unnecessary re-renders.
+		// rehypeSourceLine runs first so it reads the original source positions
+		// before rehypeRaw re-parses raw HTML (which discards position info).
+		const rehypePlugins = useMemo(() => [rehypeSourceLine, rehypeRaw, rehypeSlug], []);
 
 		// Memoize ReactMarkdown components to prevent infinite render loops
 		// The img component was causing loops because MarkdownImage useEffect sets state,
@@ -695,12 +703,17 @@ export const FilePreview = React.memo(
 		// Which active preview reports real source lines (vs. percent-only views
 		// like CSV/JSON/HTML/rendered-markdown). Mirrors the render branch order
 		// below so it agrees with what's actually on screen.
-		const previewSyncSource = (): 'giant' | 'text-fast' | 'text-dom' | null => {
+		const previewSyncSource = (): 'giant' | 'text-fast' | 'text-dom' | 'markdown-dom' | null => {
 			if (isHtml && htmlRenderMode) return null;
 			if (isCsv) return null;
 			if (isJsonl || (isJson && searchMode === 'jq')) return null;
 			if (previewTier === 'giant') return 'giant';
-			if (isMarkdown) return null; // rich + fast markdown render, no 1:1 line map
+			// Fast-tier markdown scrolls inside its own virtuoso container, which
+			// the data-source-line walk can't target - leave it on percent.
+			if (isMarkdown && previewTier === 'fast') return null;
+			// Rich markdown renders into markdownContainerRef inside contentRef;
+			// rehypeSourceLine tags each block so we can map render ⇄ source line.
+			if (isMarkdown) return 'markdown-dom';
 			if (isReadableText && previewTier === 'fast') return 'text-fast';
 			if (isReadableText) return 'text-dom';
 			return null;
@@ -719,6 +732,12 @@ export const FilePreview = React.memo(
 					const containerEl = markdownContainerRef.current;
 					if (!scroller || !containerEl) return null;
 					return domGetTopLine(scroller, containerEl, displayContent);
+				}
+				case 'markdown-dom': {
+					const scroller = contentRef.current;
+					const containerEl = markdownContainerRef.current;
+					if (!scroller || !containerEl) return null;
+					return domGetTopLineByAttr(scroller, containerEl);
 				}
 				default:
 					return null;
@@ -741,6 +760,12 @@ export const FilePreview = React.memo(
 					if (!scroller || !containerEl) return false;
 					domScrollToLine(scroller, containerEl, displayContent, line);
 					return true;
+				}
+				case 'markdown-dom': {
+					const scroller = contentRef.current;
+					const containerEl = markdownContainerRef.current;
+					if (!scroller || !containerEl) return false;
+					return domScrollToLineByAttr(scroller, containerEl, line);
 				}
 				default:
 					return false;

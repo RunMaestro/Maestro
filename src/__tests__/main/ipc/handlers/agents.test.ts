@@ -182,6 +182,7 @@ describe('agents IPC handlers', () => {
 				'agents:getAllSnapshots',
 				'agents:reprobe',
 				'agents:getMaestroPDetectedPath',
+				'agents:getRemoteMaestroPAvailable',
 				'agents:getClaudeUsageSnapshots',
 				'agents:getClaudeUsageAccountKeys',
 				'claude:usage:refresh-all',
@@ -351,9 +352,11 @@ describe('agents IPC handlers', () => {
 
 				// Every probe should invoke 'command -v <binary>', never 'which'.
 				// Asserting one call per AGENT_DEFINITION catches regressions that
-				// silently skip agents instead of just dropping to zero.
+				// silently skip agents instead of just dropping to zero. The remote
+				// detection also piggybacks one extra `command -v maestro-p` probe
+				// (remote TUI availability), hence the +1.
 				const calls = vi.mocked(buildSshCommand).mock.calls;
-				expect(calls.length).toBe(agentCapabilities.AGENT_DEFINITIONS.length);
+				expect(calls.length).toBe(agentCapabilities.AGENT_DEFINITIONS.length + 1);
 				for (const [, options] of calls) {
 					expect(options.command).toBe('command');
 					expect(options.args[0]).toBe('-v');

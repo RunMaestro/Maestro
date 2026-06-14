@@ -1569,17 +1569,25 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 	// unconfigured remote agent to API) when the remote can't run it. Returns a
 	// fresh cached result, otherwise probes the remote on demand. `null` means
 	// the availability could not be determined (no such remote / unreachable).
+	//
+	// `force` bypasses the TTL cache and re-probes the remote immediately - wired
+	// to the Refresh button next to the Claude Token Source selector, so a user
+	// who just installed maestro-p on the remote can re-check without waiting out
+	// the 5-minute cache window.
 	ipcMain.handle(
 		'agents:getRemoteMaestroPAvailable',
 		withIpcErrorLogging(
 			handlerOpts('getRemoteMaestroPAvailable'),
-			async (sshRemoteId?: string): Promise<boolean | null> => {
+			async (sshRemoteId?: string, force?: boolean): Promise<boolean | null> => {
 				if (!sshRemoteId) {
 					return null;
 				}
 				const sshConfig = getSshRemoteById(settingsStore, sshRemoteId);
 				if (!sshConfig) {
 					return null;
+				}
+				if (force) {
+					return (await probeRemoteMaestroP(sshConfig)) ?? null;
 				}
 				return (await ensureRemoteMaestroPProbed(sshConfig)) ?? null;
 			}

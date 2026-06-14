@@ -229,9 +229,10 @@ export function createAgentsApi() {
 		 * Whether `maestro-p` is on the PATH of an SSH remote (used to disable the
 		 * TUI token-source option when the remote can't run it). Returns a fresh
 		 * cached result or probes on demand; `null` when it can't be determined.
+		 * Pass `force` to bypass the cache and re-probe immediately (Refresh button).
 		 */
-		getRemoteMaestroPAvailable: (sshRemoteId: string): Promise<boolean | null> =>
-			ipcRenderer.invoke('agents:getRemoteMaestroPAvailable', sshRemoteId),
+		getRemoteMaestroPAvailable: (sshRemoteId: string, force?: boolean): Promise<boolean | null> =>
+			ipcRenderer.invoke('agents:getRemoteMaestroPAvailable', sshRemoteId, force),
 
 		/**
 		 * Fetch the live Claude plan usage snapshot map keyed by canonical

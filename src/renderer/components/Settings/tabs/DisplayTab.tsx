@@ -555,7 +555,10 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 					</div>
 
 					{/* Show group member count */}
-					<div className="flex items-center justify-between">
+					<div
+						className="flex items-center justify-between pt-3 border-t"
+						style={{ borderColor: theme.colors.border }}
+					>
 						<div>
 							<p className="text-sm" style={{ color: theme.colors.textMain }}>
 								Show group member count

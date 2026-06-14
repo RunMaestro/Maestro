@@ -403,9 +403,11 @@ export function AgentConfigPanel({
 	// run the TUI, so the TUI option is disabled and the agent defaults to API
 	// (mirrors resolveClaudeSpawnMode, which falls a remote TUI spawn back to api).
 	// undefined = unknown (not SSH, still probing, or unreachable): stay optimistic.
-	const remoteMaestroPAvailable = useRemoteMaestroPAvailable(
-		isSshEnabled ? sshRemoteId : undefined
-	);
+	const {
+		available: remoteMaestroPAvailable,
+		isProbing: remoteMaestroPProbing,
+		refresh: refreshRemoteMaestroP,
+	} = useRemoteMaestroPAvailable(isSshEnabled ? sshRemoteId : undefined);
 	const remoteMaestroPMissing = isSshEnabled && remoteMaestroPAvailable === false;
 	// Collapse the stored (enableMaestroP, maestroPMode) pair into the tri-state the
 	// segmented "Claude Token Source" selector renders. Source not API => show the
@@ -559,6 +561,22 @@ export function AgentConfigPanel({
 						<span className="text-xs font-medium" style={{ color: theme.colors.textDim }}>
 							Claude Token Source
 						</span>
+						{isSshEnabled && (
+							<button
+								type="button"
+								onClick={(e) => {
+									e.stopPropagation();
+									refreshRemoteMaestroP();
+								}}
+								disabled={remoteMaestroPProbing}
+								title="Re-check whether maestro-p is installed on the remote host"
+								className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border disabled:opacity-50"
+								style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
+							>
+								<RefreshCw className={`w-3 h-3 ${remoteMaestroPProbing ? 'animate-spin' : ''}`} />
+								Re-check
+							</button>
+						)}
 						{showMaestroPDetails && claudeInteractive && (
 							<span
 								className="text-[10px] font-mono px-1.5 py-0.5 rounded whitespace-nowrap"

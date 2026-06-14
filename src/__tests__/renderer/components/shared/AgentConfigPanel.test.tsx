@@ -375,6 +375,47 @@ describe('AgentConfigPanel', () => {
 			).maestro.agents.getRemoteMaestroPAvailable.mockResolvedValue(null);
 		});
 
+		it('re-probes the remote with force when the Re-check button is clicked', async () => {
+			const probeFn = (
+				window as unknown as {
+					maestro: { agents: { getRemoteMaestroPAvailable: ReturnType<typeof vi.fn> } };
+				}
+			).maestro.agents.getRemoteMaestroPAvailable;
+			// First probe (mount): maestro-p absent. After the user installs it on the
+			// remote and clicks Re-check, the forced re-probe reports it present.
+			probeFn.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+
+			render(
+				<AgentConfigPanel
+					{...createDefaultProps({
+						onEnableMaestroPChange: vi.fn(),
+						isSshEnabled: true,
+						sshRemoteId: 'remote-just-got-maestro-p',
+					})}
+				/>
+			);
+
+			// Mount probe resolves to absent: TUI option missing, warning shown.
+			await waitFor(() =>
+				expect(screen.getByText(/maestro-p was not found on the remote/)).toBeInTheDocument()
+			);
+			expect(probeFn).toHaveBeenLastCalledWith('remote-just-got-maestro-p', false);
+
+			fireEvent.click(screen.getByText('Re-check'));
+
+			// The refresh forces a cache-bypassing re-probe...
+			await waitFor(() =>
+				expect(probeFn).toHaveBeenLastCalledWith('remote-just-got-maestro-p', true)
+			);
+			// ...which now reports maestro-p present: the warning clears and TUI returns.
+			await waitFor(() =>
+				expect(screen.queryByText(/maestro-p was not found on the remote/)).not.toBeInTheDocument()
+			);
+			expect(screen.getByText('TUI')).toBeInTheDocument();
+
+			probeFn.mockResolvedValue(null);
+		});
+
 		it('renders the selector for SSH agents but drops the Dynamic option', () => {
 			render(
 				<AgentConfigPanel
