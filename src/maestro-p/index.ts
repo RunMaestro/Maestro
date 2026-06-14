@@ -100,6 +100,40 @@ function resolveBinPath(): string {
 	return envBin && envBin.length > 0 ? envBin : 'claude';
 }
 
+// Env vars that mark the CURRENT process as running inside a Claude Code
+// session. When maestro-p is invoked from within a Claude agent (or any
+// process that inherited these), they leak into the claude TUI we spawn and
+// make that child claude believe it is a NESTED/child session: it then runs in
+// an ephemeral mode and never writes its own `<session-id>.jsonl` transcript.
+// Since the JSONL is maestro-p's only source of truth, the run produces no
+// `assistant`/`result` envelopes and times out with `first_byte_timeout` even
+// though the answer rendered on screen - the "synopsis/tab-naming returns
+// empty in TUI mode" bug. Verified by A/B: keeping CLAUDE_CODE_SESSION_ID /
+// CLAUDE_CODE_CHILD_SESSION reproduces the empty-result timeout; stripping both
+// makes the TUI write its transcript and the run succeed. We strip the whole
+// CLAUDE_CODE_* identity family plus the CLAUDECODE marker defensively; auth
+// and config (CLAUDE_CONFIG_DIR, ANTHROPIC_*, MAESTRO_CLAUDE_BIN) are kept.
+const CLAUDE_SESSION_IDENTITY_ENV_VARS = [
+	'CLAUDECODE',
+	'CLAUDE_CODE_SESSION_ID',
+	'CLAUDE_CODE_CHILD_SESSION',
+	'CLAUDE_CODE_ENTRYPOINT',
+] as const;
+
+/**
+ * Return a copy of `process.env` with the Claude session-identity markers
+ * removed, so the claude TUI maestro-p drives starts as a clean top-level
+ * session that persists its own JSONL transcript. See
+ * {@link CLAUDE_SESSION_IDENTITY_ENV_VARS} for the why.
+ */
+function sanitizeChildEnv(): NodeJS.ProcessEnv {
+	const env: NodeJS.ProcessEnv = { ...process.env };
+	for (const key of CLAUDE_SESSION_IDENTITY_ENV_VARS) {
+		delete env[key];
+	}
+	return env;
+}
+
 function waitForEvent(emitter: EventEmitter, event: string): Promise<void> {
 	return new Promise<void>((resolve) => emitter.once(event, () => resolve()));
 }
@@ -215,7 +249,7 @@ async function runMode(args: ParsedArgs): Promise<never> {
 		binPath,
 		args: passThroughArgs,
 		cwd,
-		env: process.env,
+		env: sanitizeChildEnv(),
 	});
 
 	if (args.streamThinking) {
@@ -587,7 +621,7 @@ async function statusMode(args: ParsedArgs): Promise<never> {
 		binPath,
 		args: args.passThroughArgs,
 		cwd,
-		env: process.env,
+		env: sanitizeChildEnv(),
 	});
 
 	const lines: string[] = [];
